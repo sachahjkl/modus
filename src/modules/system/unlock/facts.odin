@@ -1,26 +1,31 @@
 package unlock
 
+import "modus:contract/errors"
+import op "modus:contract/operation"
 import "modus:contract/tpm_service"
 import "modus:contract/value_kinds"
 import "modus:support/principals"
+import "modus:support/system"
 
 // The log facts of unlock (src/md/features/log_facts.md, "The migration"):
-// the opens and the refusals of a passphrase and of a recovery key, the
-// seals and the writes of the file of a principal and of the record of the
-// machine key, and the answers of the root service, of the store and of
-// the TPM service, as records of fields. Each fact template is the
+// each line of unlock, as a record of fields. Each fact template is the
 // sentence that the line wrote before it was a fact, so a wait of a
 // machine test on that sentence reads it as before. A line whose sentence
 // differs by its case is one fact type for each case: the template has no
-// condition. No field has the name of a column of the head of facts():
-// number, time, process, level.
+// condition. A line with no value is a fact type with no field, whose
+// sentence is its template. No field has the name of a column of the head
+// of facts(): number, time, process, level.
 //
-// A status that a line writes as its number is an Integer field: a Status
-// field writes the name of its member, and the sentence holds the number.
-// A sentence from a closed set (a problem of a file, the words of a step
-// of the interface of the TPM, the request to the TPM) is a Text field, as
-// the cause of a silent disk is. A Text field is the last field, and is
-// [N]u8 with N written out, as the tool reads it.
+// A status of a kernel operation or of the root service is a field of
+// op.Status_Word, which a reader writes by the name of its member: the
+// sentence says "status No_Right" where the line said "status 7"
+// (src/md/features/log_facts.md, "Field kinds"). A status of the client of
+// the store (storage.Status) is an Integer field, and the sentence keeps
+// its number: that enum is of a support package, and no reader has the
+// names of its members. A sentence from a closed set (a problem of a file,
+// the words of a step of the interface of the TPM, the request to the
+// TPM) is a Text field, as the cause of a silent disk is. A Text field is
+// the last field, and is [N]u8 with N written out, as the tool reads it.
 
 // The bytes of the Text field of the name of a principal: a name has at
 // most principals.NAME_LIMIT bytes, and a zero byte follows it.
@@ -53,9 +58,9 @@ Versions_Erased :: struct {
 }
 
 // The root service did not take the record of the principal.
-@(log_fact = "unlock: the root service did not take the record of the principal \"{principal_name}\": status {status_word}")
+@(log_fact = "unlock: the root service did not take the record of the principal \"{principal_name}\": status {status}")
 Record_Not_Taken :: struct {
-	status_word:    u64,
+	status:         op.Status_Word,
 	principal_name: [24]u8,
 }
 
@@ -131,9 +136,9 @@ Passphrase_Opened_Seal :: struct {
 
 // The root service did not take the key of the disk grant table of
 // principal 0.
-@(log_fact = "unlock: the root service did not take the key of the disk grant table of principal 0: status {status_word}")
+@(log_fact = "unlock: the root service did not take the key of the disk grant table of principal 0: status {status}")
 Machine_Table_Key_Not_Taken :: struct {
-	status_word: u64,
+	status: op.Status_Word,
 }
 
 // The keys are sealed by the TPM, and no TPM service runs.
@@ -183,15 +188,15 @@ Machine_Passphrase_Set :: struct {
 }
 
 // The ring of the TPM service does not open.
-@(log_fact = "unlock: the ring of the TPM service does not open: status {status_word}")
+@(log_fact = "unlock: the ring of the TPM service does not open: status {status}")
 Tpm_Ring_Not_Opened :: struct {
-	status_word: u64,
+	status: op.Status_Word,
 }
 
 // The region of the TPM service does not map.
-@(log_fact = "unlock: the region of the TPM service does not map: status {status_word}")
+@(log_fact = "unlock: the region of the TPM service does not map: status {status}")
 Tpm_Region_Not_Mapped :: struct {
-	status_word: u64,
+	status: op.Status_Word,
 }
 
 // The TPM service gave a status word that names no status.
@@ -459,9 +464,9 @@ Passphrase_Change_Unknown :: struct {
 }
 
 // The root service did not take the end of a change.
-@(log_fact = "unlock: the root service did not take the end of the change: status {status_word}")
+@(log_fact = "unlock: the root service did not take the end of the change: status {status}")
 Change_End_Not_Taken :: struct {
-	status_word: u64,
+	status: op.Status_Word,
 }
 
 // The store did not answer a write: the object is read back.
@@ -558,10 +563,10 @@ Machine_Tpm_Passphrase_Record_Refused :: struct {
 }
 
 // The root service did not start the session of a principal.
-@(log_fact = "unlock: the root service did not start the session of principal {principal}: status {status_word}")
+@(log_fact = "unlock: the root service did not start the session of principal {principal}: status {status}")
 Session_Not_Started :: struct {
-	principal:   u64,
-	status_word: u64,
+	principal: u64,
+	status:    op.Status_Word,
 }
 
 // The recovery key of a principal is not typed.
@@ -601,9 +606,9 @@ Principal_Tpm_File_Refused :: struct {
 }
 
 // The root service did not take the state of the machine passphrase.
-@(log_fact = "unlock: the root service did not take the state of the machine passphrase: status {status_word}")
+@(log_fact = "unlock: the root service did not take the state of the machine passphrase: status {status}")
 Machine_State_Not_Taken :: struct {
-	status_word: u64,
+	status: op.Status_Word,
 }
 
 // The root service gave a mode word that names no mode of unlock.
@@ -620,9 +625,9 @@ Change_Asked :: struct {
 }
 
 // No memory for the blocks of Argon2id.
-@(log_fact = "unlock: no memory for the derivation of the key: status {status_word}")
+@(log_fact = "unlock: no memory for the derivation of the key: status {status}")
 Derivation_Memory_Refused :: struct {
-	status_word: u64,
+	status: op.Status_Word,
 }
 
 // Ctrl+R asks for the recovery key of a principal.
@@ -631,6 +636,396 @@ Principal_Recovery_Asked :: struct {
 	principal:      u64,
 	principal_name: [24]u8,
 }
+
+// The store failed the erase of the versions of an object, with its error
+// record. The fields of the record come first, in the order of
+// errors.Error_Record_Fact_Fields, and the name of the object last: a
+// reader filters on both, so the record is not a distinct type of that
+// shape, which holds no other field. The template ends with the words of
+// each fact of an error record.
+@(log_fact = "unlock: the store did not erase the versions of the object \"{object}\", and the next unlock tries again: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Versions_Erase_Failed :: struct {
+	kind:      errors.Kind_Word,
+	unit:      errors.Unit_Word,
+	operation: i64,
+	argument:  i64,
+	value:     i64,
+	limit:     i64,
+	found:     i64,
+	object:    [72]u8,
+}
+
+// The client of the store gave another status than a failure of the
+// export to the erase of the versions of an object: no error record.
+@(log_fact = "unlock: the store did not erase the versions of the object \"{object}\": status {status_word}; the next unlock tries again")
+Versions_Not_Erased :: struct {
+	status_word: u64,
+	object:      [72]u8,
+}
+
+// The TPM refused a request with a response code.
+@(log_fact = "unlock: the TPM refuses the {request}: response code {response_code} to the command {command_code}")
+Tpm_Refused_With_Response_Code :: struct {
+	response_code: value_kinds.Hexadecimal_Sixteen_Digits,
+	command_code:  value_kinds.Hexadecimal_Sixteen_Digits,
+	request:       [8]u8,
+}
+
+// A change refused: the keys are sealed under the passphrase alone, and
+// that form has no copy under a recovery key.
+@(log_fact = "unlock: principal {principal} \"{principal_name}\" is not changed: the keys are sealed under the passphrase alone, and a recovery key for that form is not built")
+Change_Refused_No_Recovery_Copy :: struct {
+	principal:      u64,
+	principal_name: [24]u8,
+}
+
+// A change refused: the keys are sealed by the TPM, and no TPM service
+// runs.
+@(log_fact = "unlock: principal {principal} \"{principal_name}\" is not changed: the keys are sealed by the TPM, and no TPM service runs: the current passphrase opens nothing without it")
+Change_Refused_No_Tpm_Service :: struct {
+	principal:      u64,
+	principal_name: [24]u8,
+}
+
+// A change refused: Secure Boot is off, and a new seal is not allowed.
+@(log_fact = "unlock: principal {principal} \"{principal_name}\" is not changed: the firmware did not verify the boot program (Secure Boot is off): a new seal by the TPM would trust a boot program that nothing verified")
+Change_Refused_Seal_Not_Allowed :: struct {
+	principal:      u64,
+	principal_name: [24]u8,
+}
+
+// A change refused: the file has neither form.
+@(log_fact = "unlock: principal {principal} \"{principal_name}\" is not changed: the file of the principal has neither form")
+Change_Refused_Unknown_Form :: struct {
+	principal:      u64,
+	principal_name: [24]u8,
+}
+
+// A change refused: the mode is not a change.
+@(log_fact = "unlock: principal {principal} \"{principal_name}\" is not changed: the mode is not a change")
+Change_Refused_Unknown_Change :: struct {
+	principal:      u64,
+	principal_name: [24]u8,
+}
+
+// The lines with no value: each is a fact type with no field, whose
+// sentence is its template.
+
+// Secure Boot is off: the keys of a new principal are sealed under its
+// passphrase alone.
+@(log_fact = "unlock: the firmware did not verify the boot program (Secure Boot is off): the keys of the new principal are sealed under its passphrase alone, as a seal by the TPM would trust a boot program that nothing verified")
+New_Principal_Sealed_Without_Secure_Boot :: struct {}
+
+// No TPM service: the keys of a new principal are sealed under its
+// passphrase alone.
+@(log_fact = "unlock: no TPM service: the keys of the new principal are sealed under its passphrase alone, with no recovery key")
+New_Principal_Sealed_Without_Tpm :: struct {}
+
+// The seed is too weak: no principal is created.
+@(log_fact = "unlock: the seed of this process is too weak for a key: no principal is created")
+Principal_Not_Created_Seed_Too_Weak :: struct {}
+
+// The seed is too weak: the keys are not sealed under the passphrase.
+@(log_fact = "unlock: the seed of this process is too weak for a key: the keys are not sealed")
+Keys_Not_Sealed_Seed_Too_Weak :: struct {}
+
+// No screen: the machine passphrase and its recovery key cannot be typed.
+@(log_fact = "unlock: no screen: the machine passphrase and the recovery key of the machine key cannot be typed: the disk grants of principal 0 and its client keys of remote stay absent")
+No_Screen_For_Machine_Passphrase :: struct {}
+
+// No screen: the window cannot be shown.
+@(log_fact = "unlock: no screen: the window of unlock cannot be shown: nothing is typed, and nothing changes")
+No_Screen_For_Window :: struct {}
+
+// The machine passphrase alone opened the machine key.
+@(log_fact = "unlock: the machine passphrase opens the machine key; the root service receives the key of the disk grant table only")
+Machine_Passphrase_Opened :: struct {}
+
+// Secure Boot is off: the machine key is sealed under the machine
+// passphrase alone.
+@(log_fact = "unlock: the firmware did not verify the boot program (Secure Boot is off): the machine key is sealed under the machine passphrase alone, as a seal by the TPM would trust a boot program that nothing verified")
+Machine_Passphrase_Set_Without_Secure_Boot :: struct {}
+
+// No TPM service: the machine key is sealed under the machine passphrase
+// alone.
+@(log_fact = "unlock: no TPM service: the machine key is sealed under the machine passphrase alone, with no recovery key")
+Machine_Passphrase_Set_Without_Tpm :: struct {}
+
+// The seed is too weak: no machine passphrase is set.
+@(log_fact = "unlock: the seed of this process is too weak for a key: no machine passphrase is set")
+Machine_Passphrase_Not_Set_Seed_Too_Weak :: struct {}
+
+// The root service did not take the key of a new machine passphrase.
+@(log_fact = "unlock: the root service did not take the key of the new machine passphrase; the record stays, and its passphrase opens it at the next start")
+Machine_Passphrase_Key_Not_Taken :: struct {}
+
+// The TPM service stopped before this run asked it anything.
+@(log_fact = "unlock: the TPM service stopped: the machine key sealed by the TPM opens with its recovery key only")
+Tpm_Service_Stopped_At_Start :: struct {}
+
+// The TPM service stopped during a request.
+@(log_fact = "unlock: the TPM service stopped during a request")
+Tpm_Service_Stopped_During_Request :: struct {}
+
+// The TPM service gave parts of a sealed object that a record does not
+// take.
+@(log_fact = "unlock: the TPM service gave parts or PCRs that a record sealed by the TPM does not take")
+Tpm_Seal_Parts_Refused :: struct {}
+
+// The seed is too weak: no machine key is sealed by the TPM.
+@(log_fact = "unlock: the seed of this process is too weak for a key: no machine key is sealed by the TPM")
+Machine_Key_Not_Sealed_Seed_Too_Weak :: struct {}
+
+// The TPM service did not seal a new machine key.
+@(log_fact = "unlock: no machine key is sealed by the TPM: the TPM service did not seal it")
+Machine_Key_Not_Sealed_By_Tpm :: struct {}
+
+// The copy of a new machine key under its recovery key failed.
+@(log_fact = "unlock: the seal of the copy under the recovery key failed: no machine key is sealed by the TPM")
+Machine_Key_Recovery_Copy_Failed :: struct {}
+
+// A new machine key sealed by the TPM, whose recovery key the window
+// shows.
+@(log_fact = "unlock: the machine key is sealed by the TPM to PCR 7 and PCR 11, with a copy under a recovery key; the window shows the recovery key one time, and the record is written when it is written down")
+Machine_Key_Sealed_By_Tpm :: struct {}
+
+// The store did not keep the record of a new machine key sealed by the
+// TPM.
+@(log_fact = "unlock: the store did not keep the record of the machine key; no machine key is sealed by the TPM")
+Machine_Key_Record_Not_Kept :: struct {}
+
+// The store gave no answer on the record of a new machine key sealed by
+// the TPM, and its read back failed.
+@(log_fact = "unlock: the store gave no answer on the record of the machine key sealed by the TPM, and its read back failed: the record may be on the disk; the window shows the recovery key until Enter again, and the root service receives no key")
+Machine_Key_Record_Write_Unknown :: struct {}
+
+// The store keeps the record of a new machine key sealed by the TPM.
+@(log_fact = "unlock: the record of the machine key sealed by the TPM is in the store of unlock: its recovery key is written down")
+Machine_Key_Record_Kept :: struct {}
+
+// The root service did not take the key of a new machine key.
+@(log_fact = "unlock: the root service did not take the key of the new machine key; the record stays, and the TPM opens it at the next start")
+Machine_Key_Not_Taken :: struct {}
+
+// The machine key is sealed by the TPM, and no TPM service runs.
+@(log_fact = "unlock: the machine key is sealed by the TPM, and no TPM service runs: the recovery key opens it")
+Machine_Key_Needs_Tpm :: struct {}
+
+// The key that the TPM released fails the key check of the record.
+@(log_fact = "unlock: the key that the TPM released does not have the key check of the record: it is erased, and the recovery key opens the record")
+Machine_Key_Check_Failed :: struct {}
+
+// The TPM released the machine key, and the root service did not take the
+// key of its table.
+@(log_fact = "unlock: the TPM released the machine key, and the root service did not take the key of its table: the disk grants of principal 0 stay absent until the next start")
+Machine_Key_Released_Not_Taken :: struct {}
+
+// The TPM released the machine key with no passphrase.
+@(log_fact = "unlock: the TPM releases the machine key: the system is the system of the seal; the root service receives the key of the disk grant table only")
+Machine_Key_Released_By_Tpm :: struct {}
+
+// No TPM service: the machine key is not sealed again after a recovery.
+@(log_fact = "unlock: no TPM service: the machine key is not sealed again, and the recovery key opens it at the next start too")
+Machine_Key_Not_Resealed_Without_Tpm :: struct {}
+
+// Secure Boot is off: the machine key is not sealed again after a
+// recovery.
+@(log_fact = "unlock: the firmware did not verify the boot program (Secure Boot is off): the machine key is not sealed again, as its seal would trust a boot program that nothing verified; the recovery key opens it at the next start too")
+Machine_Key_Not_Resealed_Without_Secure_Boot :: struct {}
+
+// The new seal of the machine key after a recovery failed.
+@(log_fact = "unlock: the machine key is not sealed again: the recovery key opens it at the next start too")
+Machine_Key_Not_Resealed :: struct {}
+
+// The machine key is sealed again to the system that runs.
+@(log_fact = "unlock: the machine key is sealed again to PCR 7 and PCR 11 of the system that runs: its next start needs no recovery key")
+Machine_Key_Resealed :: struct {}
+
+// The recovery key opened the machine key.
+@(log_fact = "unlock: the recovery key opens the machine key; the root service receives the key of the disk grant table only")
+Machine_Recovery_Key_Opened :: struct {}
+
+// The machine key waits for its recovery key.
+@(log_fact = "unlock: the machine key waits for its recovery key: the disk grants of principal 0 come when it is typed")
+Machine_Recovery_Awaited :: struct {}
+
+// The seed is too weak: the machine key is not sealed by the TPM with the
+// machine passphrase.
+@(log_fact = "unlock: the seed of this process is too weak for a key: the machine key is not sealed by the TPM")
+Machine_Key_Not_Sealed_With_Passphrase_Seed_Too_Weak :: struct {}
+
+// The seed is too weak: the keys of a principal are not sealed by the TPM.
+@(log_fact = "unlock: the seed of this process is too weak for a key: the keys are not sealed by the TPM")
+Keys_Not_Sealed_By_Tpm_Seed_Too_Weak :: struct {}
+
+// The TPM service did not seal the machine key with the machine
+// passphrase.
+@(log_fact = "unlock: the TPM service did not seal the machine key with the machine passphrase")
+Machine_Key_Not_Sealed_With_Passphrase :: struct {}
+
+// The window shows the recovery key of a new machine passphrase.
+@(log_fact = "unlock: the window shows the recovery key of the new machine passphrase one time; the record is written when it is written down")
+Machine_Passphrase_Recovery_Key_Shown :: struct {}
+
+// The store did not keep the record of a machine passphrase sealed by the
+// TPM.
+@(log_fact = "unlock: the store did not keep the record of the machine passphrase; no machine passphrase is set")
+Machine_Passphrase_Tpm_Record_Not_Kept :: struct {}
+
+// The store gave no answer on the record of a machine passphrase sealed by
+// the TPM, and its read back failed.
+@(log_fact = "unlock: the store gave no answer on the record of the machine passphrase, and its read back failed: the record may be on the disk; the window shows the recovery key until Enter again, and the root service receives no key")
+Machine_Passphrase_Record_Write_Unknown :: struct {}
+
+// The TPM seals the machine key with a new machine passphrase.
+@(log_fact = "unlock: the machine passphrase is set: the TPM seals the machine key with it, with a copy under a recovery key, in the store of unlock")
+Machine_Passphrase_Sealed_By_Tpm :: struct {}
+
+// The TPM refuses each try of the machine passphrase for now.
+@(log_fact = "unlock: the TPM refuses each try of the machine passphrase for now: it counted too many wrong passphrases; the recovery key opens the machine key")
+Machine_Passphrase_Locked_Out :: struct {}
+
+// The machine key does not open under the secret that the TPM released.
+@(log_fact = "unlock: the machine key does not open under the secret that the TPM released: the record is not consistent, and the recovery key opens it")
+Machine_Key_Not_Consistent_With_Tpm_Secret :: struct {}
+
+// The TPM released the machine key to the machine passphrase.
+@(log_fact = "unlock: the TPM releases the machine key to the machine passphrase: the system is the system of the seal; the root service receives the key of the disk grant table only")
+Machine_Key_Released_To_Passphrase :: struct {}
+
+// After a recovery, the window asks for a new machine passphrase.
+@(log_fact = "unlock: the machine key waits for a new machine passphrase: the TPM seals it again to it and to the system that runs")
+Machine_Passphrase_Reseal_Awaited :: struct {}
+
+// The machine key is sealed again to the system that runs and to a new
+// machine passphrase.
+@(log_fact = "unlock: the machine key is sealed again to PCR 7 and PCR 11 of the system that runs and to the new machine passphrase: its next start needs no recovery key")
+Machine_Key_Resealed_With_Passphrase :: struct {}
+
+// The store did not keep the file of a new principal sealed by the TPM.
+@(log_fact = "unlock: the store did not keep the file of the principal; no principal is created")
+New_Principal_File_Not_Kept :: struct {}
+
+// The store gave no answer on the file of a new principal, and its read
+// back failed.
+@(log_fact = "unlock: the store gave no answer on the file of the new principal, and its read back failed: the file may be on the disk; the window shows the recovery key until Enter again, and the root service receives no record")
+New_Principal_File_Write_Unknown :: struct {}
+
+// The root service did not take the record of a new principal sealed by
+// the TPM.
+@(log_fact = "unlock: the root service did not take the record of the new principal; its file stays, and its passphrase opens it at the next start")
+New_Principal_Record_Not_Taken :: struct {}
+
+// The record of the machine key has none of the three forms.
+@(log_fact = "unlock: the record of the machine key is refused: it starts with none of MACHINEK, MACHINET and MACHINEP")
+Machine_Record_Form_Unknown :: struct {}
+
+// Enter with no machine passphrase.
+@(log_fact = "unlock: the machine passphrase is not typed: the disk grants of principal 0 stay absent until unlock asks again")
+Machine_Passphrase_Not_Typed :: struct {}
+
+// Enter with no recovery key of the machine key: the window asks for the
+// machine passphrase again.
+@(log_fact = "unlock: the recovery key of the machine key is not typed: the window asks for the machine passphrase again")
+Machine_Recovery_Key_Not_Typed_Passphrase_Asked :: struct {}
+
+// Enter with no recovery key of the machine key.
+@(log_fact = "unlock: the recovery key is not typed: the disk grants of principal 0 stay absent until unlock asks again")
+Machine_Recovery_Key_Not_Typed :: struct {}
+
+// Enter on a recovery key that the window shows: the write comes now.
+@(log_fact = "unlock: Enter on the recovery key: it is written down, and the record or the file that holds its copy is written now")
+Recovery_Key_Written_Down :: struct {}
+
+// Enter with no new machine passphrase after a recovery.
+@(log_fact = "unlock: no new machine passphrase is typed: the machine key is not sealed again, and the recovery key opens it at the next start too")
+Machine_Reseal_Passphrase_Not_Typed :: struct {}
+
+// The file of the principal has neither form.
+@(log_fact = "unlock: the file of the principal is refused: it starts with neither PRINCIPL nor PRINCIPT")
+Principal_File_Form_Unknown :: struct {}
+
+// No record of the machine key, before the start policy.
+@(log_fact = "unlock: no record of the machine key: the disk grants of principal 0 last until the machine stops, and the start policy of the boot image runs")
+No_Machine_Record :: struct {}
+
+// The record of the machine key cannot be read, before the start policy.
+@(log_fact = "unlock: the record of the machine key cannot be read: the disk grants of principal 0 stay absent, and the start policy of the boot image runs")
+Machine_Record_Unreadable_Before_Start_Policy :: struct {}
+
+// The machine key opens with the machine passphrase, after the start
+// policy.
+@(log_fact = "unlock: the machine key opens with the machine passphrase: the window of unlock asks for it after the start policy starts")
+Machine_Key_Opens_With_Passphrase :: struct {}
+
+// The TPM did not release the machine key before the start policy.
+@(log_fact = "unlock: the TPM did not release the machine key before the start policy: the window of unlock asks for its recovery key after the start policy starts")
+Machine_Key_Not_Released_Before_Start_Policy :: struct {}
+
+// The root service gave no random seed.
+@(log_fact = "unlock: the root service gave no random seed")
+No_Random_Seed :: struct {}
+
+// No ring to the root service.
+@(log_fact = "unlock: no ring to the root service")
+No_Root_Ring :: struct {}
+
+// No store.
+@(log_fact = "unlock: no store: no named principal can be kept")
+No_Store :: struct {}
+
+// A seal of the machine key asked with no TPM service.
+@(log_fact = "unlock: no TPM service: no machine key is sealed by the TPM")
+Machine_Key_Seal_Without_Tpm :: struct {}
+
+// A seal of the machine key asked with Secure Boot off.
+@(log_fact = "unlock: the firmware did not verify the boot program (Secure Boot is off): no machine key is sealed by the TPM")
+Machine_Key_Seal_Without_Secure_Boot :: struct {}
+
+// A seal of the machine key asked when a record exists.
+@(log_fact = "unlock: the machine has a record of its machine key already: a change is not built")
+Machine_Key_Record_Exists :: struct {}
+
+// A seal of the machine key asked when the record cannot be read.
+@(log_fact = "unlock: the record of the machine key cannot be read: no new machine key replaces it")
+Machine_Key_Record_Unreadable :: struct {}
+
+// The name of a new principal is refused.
+@(log_fact = "unlock: the name of the new principal is refused")
+New_Principal_Name_Refused :: struct {}
+
+// A machine passphrase asked when one exists.
+@(log_fact = "unlock: the machine has a passphrase already: a change is not built")
+Machine_Passphrase_Exists :: struct {}
+
+// A machine passphrase asked when the record cannot be read.
+@(log_fact = "unlock: the record of the machine passphrase cannot be read: no new passphrase replaces it")
+Machine_Passphrase_Record_Unreadable :: struct {}
+
+// A change asked with no named principal.
+@(log_fact = "unlock: no named principal: there is no passphrase to change")
+No_Principal_To_Change :: struct {}
+
+// The machine key is sealed by the TPM with the machine passphrase, and no
+// TPM service runs.
+@(log_fact = "unlock: the machine key is sealed by the TPM with the machine passphrase, and no TPM service runs: the recovery key opens it")
+Machine_Key_With_Passphrase_Needs_Tpm :: struct {}
+
+// The record of the machine key cannot be read at an unlock.
+@(log_fact = "unlock: the record of the machine passphrase cannot be read: the disk grants of principal 0 stay absent, and nothing replaces the record")
+Machine_Record_Unreadable :: struct {}
+
+// The window asks for the machine passphrase.
+@(log_fact = "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed")
+Machine_Passphrase_Awaited :: struct {}
+
+// No named principal and no record to ask for.
+@(log_fact = "unlock: no named principal: the machine runs as principal 0, with no unlock")
+No_Named_Principal :: struct {}
+
+// Ctrl+R asks for the recovery key of the machine key.
+@(log_fact = "unlock: the recovery key of the machine key is asked in the window: the TPM counts no try of the machine passphrase")
+Machine_Recovery_Asked :: struct {}
 
 // The tool reads the length of a Text field as a literal: the constants
 // name the same bytes.
@@ -641,6 +1036,7 @@ Principal_Recovery_Asked :: struct {
 #assert(size_of(Tpm_No_Answer) == REQUEST_FIELD_BYTES)
 #assert(size_of(Tpm_Interface_Failed) == REQUEST_FIELD_BYTES + STEP_FIELD_BYTES)
 #assert(size_of(Passphrase_Changed) == 8 + PRINCIPAL_NAME_FIELD_BYTES + HOW_FIELD_BYTES)
+#assert(size_of(Versions_Erase_Failed) == size_of(errors.Error_Record_Fact_Fields) + OBJECT_FIELD_BYTES)
 
 // principal_name_field gives the Text field of the name of the principal
 // of this run.
@@ -678,4 +1074,39 @@ how_field :: proc "contextless" (how: string) -> [HOW_FIELD_BYTES]u8 {
 // field with its unit.
 derivation_field :: proc "contextless" (milliseconds: u64) -> value_kinds.Time_In_Milliseconds {
 	return value_kinds.Time_In_Milliseconds(milliseconds)
+}
+
+// sixteen_digits_field gives a code of the TPM as a field that a reader
+// writes in 16 hexadecimal digits, as system.Hex wrote it.
+sixteen_digits_field :: proc "contextless" (code: u64) -> value_kinds.Hexadecimal_Sixteen_Digits {
+	return value_kinds.Hexadecimal_Sixteen_Digits(code)
+}
+
+// status_field gives the word of a status of a kernel operation or of a
+// completion of the root service as a field. The word is copied with no
+// cast to the enum: a word that names no member stays its number, which
+// the reader writes.
+status_field :: proc "contextless" (word: u32) -> op.Status_Word {
+	return op.Status_Word(word)
+}
+
+// change_refusal_log writes why a change of the principal of this run is
+// refused: one fact type for each problem, as a template has no condition
+// and the longest sentence with the number and the name passes the bytes
+// of the values of a fact.
+change_refusal_log :: proc "contextless" (problem: principals.Change_Problem) {
+	switch problem {
+	case .None:
+		// No problem: the change is made, and nothing is refused.
+	case .No_Recovery_Copy:
+		system.log_fact(.Info, Change_Refused_No_Recovery_Copy{principal = number, principal_name = principal_name_field()})
+	case .No_Tpm_Service:
+		system.log_fact(.Info, Change_Refused_No_Tpm_Service{principal = number, principal_name = principal_name_field()})
+	case .Seal_Not_Allowed:
+		system.log_fact(.Info, Change_Refused_Seal_Not_Allowed{principal = number, principal_name = principal_name_field()})
+	case .Unknown_Form:
+		system.log_fact(.Info, Change_Refused_Unknown_Form{principal = number, principal_name = principal_name_field()})
+	case .Unknown_Change:
+		system.log_fact(.Info, Change_Refused_Unknown_Change{principal = number, principal_name = principal_name_field()})
+	}
 }
