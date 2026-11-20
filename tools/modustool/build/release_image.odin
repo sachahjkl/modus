@@ -24,10 +24,10 @@ import "modustool:resources"
 // The forms of the keys and of the signature are those of the package
 // signing of gui_toolkit and of the .sig files of its package update: a
 // key is 32 bytes in base64url with no padding, and a signature covers a
-// context, then the bytes. The code is the Ed25519 code of the system: the
-// compiler refuses a second package named ed25519 in the build of the
-// tool, and the copy of the system is the code of core:crypto/ed25519 with
-// only its imports changed.
+// context, then the bytes. The code is the Ed25519 code of the system,
+// which the tool links already: the copy of the system is the code of
+// core:crypto/ed25519 with only its package name and its imports changed,
+// and a second Ed25519 in the tool would be a second code for one concept.
 
 // The folder of the published files, and the folder of the disk before
 // its compression.

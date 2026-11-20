@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-11a, core/crypto/aes/aes.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/aes/aes.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 The `AES` block cipher and some common modes.
 
@@ -7,7 +7,7 @@ See:
 - [[ https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf ]]
 - [[ https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf ]]
 */
-package aes
+package modus_aes
 
 import "modus:support/cryptography/_aes"
 

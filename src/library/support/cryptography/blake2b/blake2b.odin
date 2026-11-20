@@ -1,4 +1,4 @@
-// Altered source: Odin dev-2026-11a, core/crypto/blake2b/blake2b.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/blake2b/blake2b.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 `BLAKE2b` hash algorithm.
 
@@ -6,7 +6,7 @@ See:
 - [[ https://datatracker.ietf.org/doc/html/rfc7693 ]]
 - [[ https://www.blake2.net ]]
 */
-package blake2b
+package modus_blake2b
 
 /*
     Copyright 2021 zhibog

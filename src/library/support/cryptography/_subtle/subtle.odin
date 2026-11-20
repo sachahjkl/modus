@@ -1,8 +1,8 @@
-// Altered source: Odin dev-2026-11a, core/crypto/_subtle/subtle.odin; only its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
+// Altered source: Odin dev-2026-11a, core/crypto/_subtle/subtle.odin; only its package name and its imports changed (src/library/support/cryptography/origin.manifest, docs/CRYPTOGRAPHY.md).
 /*
 Various useful bit operations in constant time.
 */
-package _subtle
+package modus__subtle
 
 import "base:intrinsics"
 

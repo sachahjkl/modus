@@ -4,7 +4,7 @@
 // place with the procedures of core/crypto/aes/aes_impl_hw_gen.odin,
 // unchanged: AES runs in the constant-time bitsliced code of _aes/ct64
 // (docs/CRYPTOGRAPHY.md).
-package aes
+package modus_aes
 
 @(private = "file")
 ERR_HW_NOT_SUPPORTED :: "crypto/aes: hardware implementation unsupported"
