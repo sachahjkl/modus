@@ -147,6 +147,8 @@ module_builds := [?]Module_Build {
 	{name = "output_wiring", source = TEST_MODULE_SOURCES + "output_wiring", entry = true, image = true},
 	{name = "output_writer", source = TEST_MODULE_SOURCES + "output_writer", entry = true, image = true},
 	{name = "log_flood", source = TEST_MODULE_SOURCES + "log_flood", entry = true, image = true},
+	{name = "generic_wiring", source = TEST_MODULE_SOURCES + "generic_wiring", entry = true, image = true},
+	{name = "generic_source", source = TEST_MODULE_SOURCES + "generic_source", entry = true, image = true},
 	{name = "log_follower", source = TEST_MODULE_SOURCES + "log_follower", entry = true, image = true},
 	{name = "output_reader", source = TEST_MODULE_SOURCES + "output_reader", entry = true, image = true},
 	{name = "output_side", source = TEST_MODULE_SOURCES + "output_side", entry = true, image = true},
@@ -231,6 +233,12 @@ module_builds := [?]Module_Build {
 	// no setting: its window layer is its own code.
 	{name = "interface_through_module", source = DEMONSTRATION_MODULE_SOURCES + "interface_through_module", entry = true, imports = {"interface_module", DRAWING_MODULE}, image = true},
 	{name = "text_rendering", source = LIBRARY_MODULE_SOURCES + "text_rendering", image = true},
+	// The utility modules of the record streams: each one runs as a
+	// process, with a generic record input and a generic record output
+	// (src/md/features/module_outputs.md, "Generic record inputs and the
+	// utility modules").
+	{name = "merge", source = LIBRARY_MODULE_SOURCES + "merge", entry = true, image = true},
+	{name = "filter", source = LIBRARY_MODULE_SOURCES + "filter", entry = true, image = true},
 	{name = "vector_glyphs", source = DEMONSTRATION_MODULE_SOURCES + "vector_glyphs", entry = true, image = true},
 	{name = "interface_font", source = DEMONSTRATION_MODULE_SOURCES + "interface_font", entry = true, image = true},
 	{name = "pointers", source = DEMONSTRATION_MODULE_SOURCES + "pointers", entry = true, image = true},

@@ -19,6 +19,9 @@ Description_Difference :: enum u8 {
 	Size          = 3, // The sizes of the two records differ.
 	Field_Count   = 4, // The counts of the fields differ.
 	Field         = 5, // A field differs: part is its number, from 1.
+	// A generic record output whose generic record input has no fixed type: no wiring fixed it yet, or its
+	// count is Many_Types, which keeps a type for each wiring and so names no one type.
+	Not_Fixed     = 6,
 }
 
 // record_descriptions_compare compares the record index of file with the

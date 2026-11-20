@@ -183,15 +183,19 @@ stream_index_read :: proc "contextless" (index: ^u32) -> u32 {
 
 // input_has_writer says if a record input has an end now, after the ends
 // that wait in the wiring ring are taken.
-input_has_writer :: proc "contextless" (stream: ^Record_Input($Record_Type, $wirings)) -> bool {
-	stream_ends_take()
-	index := stream_index_read(&stream.index)
-	for &end in stream_ends {
-		if end.command == .Reader_End && end.index == index && index != 0 {
-			return true
-		}
-	}
-	return false
+input_has_writer :: proc {
+	input_has_writer_plain,
+	input_has_writer_with_terms,
+}
+
+input_has_writer_plain :: proc "contextless" (stream: ^Record_Input($Record_Type, $wirings)) -> bool {
+	_, found := input_end_of(&stream.state, 0)
+	return found
+}
+
+input_has_writer_with_terms :: proc "contextless" (stream: ^Record_Input_With_Terms($Record_Type, $Terms_Type, $wirings)) -> bool {
+	_, found := input_end_of(&stream.state, 0)
+	return found
 }
 
 // Why a reader that waits for its full ring to hold its writer stops.
@@ -704,7 +708,7 @@ compartment_push_to :: proc "contextless" (end: ^Stream_End, kind: output.Compar
 // takes. A ring of the pace Always_Holds_Writer holds the writer whatever
 // wait says. With no reader, the record is discarded and counted:
 // No_Reader. It gives Ended after output_end.
-output_write :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing), record: Record_Type, wait := true, deadline: u64 = WAIT_FOREVER) -> output.Stream_Status {
+output_write :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing), record: Record_Type, wait := true, deadline: u64 = WAIT_FOREVER) -> output.Stream_Status where Record_Type != Any_Record {
 	state := &stream.state
 	if state.ended {
 		return .Ended
@@ -712,6 +716,54 @@ output_write :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairin
 	copy_of_record := record
 	bytes := ([^]u8)(&copy_of_record)[:size_of(Record_Type)]
 	return output_write_bytes(state, bytes, wait, deadline)
+}
+
+// output_size_set gives a generic record output the size of its record:
+// the size of the type that the wiring of its generic record input fixed,
+// which the writer reads in the item of a read or in the description of
+// its record input. Each ring of it has that record, so the library opens
+// no ring before it knows the size: a generic writer calls it before its
+// first write, its first gap and its end. false: a size of 0, past a
+// record of a record description, or another size than the one set.
+output_size_set :: proc "contextless" (stream: ^Record_Output(Any_Record, $pairing), size: u32) -> bool {
+	if size == 0 || size > module.RECORD_SIZE_LIMIT {
+		return false
+	}
+	if stream.state.record_size != 0 {
+		return stream.state.record_size == size
+	}
+	stream.state.record_size = size
+	return true
+}
+
+// output_write_any writes one record of a generic record output: bytes of
+// the size that output_size_set gave, as a generic reader read them. A
+// first write with no size set gives the size. Bad_Record: another size.
+output_write_any :: proc "contextless" (stream: ^Record_Output(Any_Record, $pairing), bytes: []u8, wait := true, deadline: u64 = WAIT_FOREVER) -> output.Stream_Status {
+	state := &stream.state
+	if state.ended {
+		return .Ended
+	}
+	if !output_size_set(stream, u32(len(bytes))) {
+		return .Bad_Record
+	}
+	return output_write_bytes(state, bytes, wait, deadline)
+}
+
+// output_ends_live gives the live ends of a record output with the size of
+// its record: the size of its type, or for a generic record output the size
+// that output_size_set gave. A generic record output with no size yet opens
+// no end: an end opened with another size would be closed.
+@(private = "file")
+output_ends_live :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)) -> int {
+	when Record_Type == Any_Record {
+		if stream.state.record_size == 0 {
+			return 0
+		}
+		return output_ends_of(&stream.state, stream.state.record_size)
+	} else {
+		return output_ends_of(&stream.state, u32(size_of(Record_Type)))
+	}
 }
 
 @(private = "file")
@@ -882,7 +934,7 @@ output_end :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)
 	if state.ended {
 		return .Ended
 	}
-	output_ends_of(state, u32(size_of(Record_Type)))
+	output_ends_live(stream)
 	status := output.Stream_Status.Ok
 	index := stream_index_read(&state.index)
 	for &end in stream_ends {
@@ -948,7 +1000,7 @@ output_gap :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)
 	if count == 0 {
 		return .Ok
 	}
-	if output_ends_of(state, u32(size_of(Record_Type))) == 0 {
+	if output_ends_live(stream) == 0 {
 		state.next_serial += count
 		return .No_Reader
 	}
@@ -1066,12 +1118,12 @@ ring_room_seen :: proc "contextless" (end: ^Stream_End) -> output.Ring_Room {
 // output_read_by says if a record output has a reader now: a writer that
 // builds a costly record asks it first.
 output_read_by :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)) -> bool {
-	return output_ends_of(&stream.state, u32(size_of(Record_Type))) > 0
+	return output_ends_live(stream) > 0
 }
 
 // output_reader_count gives the readers of a record output now.
 output_reader_count :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)) -> int {
-	return output_ends_of(&stream.state, u32(size_of(Record_Type)))
+	return output_ends_live(stream)
 }
 
 // What a read gives besides the record: the kind of the compartment and
@@ -1085,6 +1137,14 @@ Input_Item :: struct {
 	stop_cause:   op.Stop_Cause, // Writer_Stopped: the stop of the writer, through the border of the end words.
 	stop_outcome: op.Stop_Outcome,
 	refusal:      errors.Error_Record, // Bad_Record: the error record that names the field.
+	// The ring of the item: the number of its wiring. A record input of the
+	// counts Many and Many_Types reads several rings, and its reader tells
+	// them apart by it: their serials, joined records and ends are each of
+	// one ring. 0 when no ring gave the item.
+	tag:          u32,
+	// The size of the record of that ring, from its description file: a
+	// generic reader copies that many bytes, and writes them on.
+	record_size:  u32,
 }
 
 // input_read reads the next compartment of a record input: a record, which
@@ -1094,16 +1154,97 @@ Input_Item :: struct {
 // Bad_Record, with its error record in the item, and a completion that
 // tells the writer.
 input_read :: proc "contextless" (stream: ^Record_Input($Record_Type, $wirings), into: ^Record_Type, deadline: u64 = WAIT_FOREVER) -> (item: Input_Item, status: output.Stream_Status) {
-	state := &stream.state
+	return input_state_read(&stream.state, ([^]u8)(into)[:size_of(Record_Type)], false, deadline)
+}
+
+// input_read_any reads the next compartment of a generic record input
+// (src/md/features/module_outputs.md, "Generic record inputs and the
+// utility modules"): into holds the largest record that a ring of it can
+// carry, module.RECORD_SIZE_LIMIT bytes, and the record takes its first
+// item.record_size bytes. Each ring of the record input has the record of
+// its wiring: one type for the counts One and Many, a type for each ring
+// for Many_Types. The rings are read in turn, each in its order; no order
+// across rings is given.
+input_read_any :: proc {
+	input_read_any_plain,
+	input_read_any_with_terms,
+}
+
+input_read_any_plain :: proc "contextless" (stream: ^Record_Input(Any_Record, $wirings), into: []u8, deadline: u64 = WAIT_FOREVER) -> (item: Input_Item, status: output.Stream_Status) {
+	return input_state_read(&stream.state, into, true, deadline)
+}
+
+input_read_any_with_terms :: proc "contextless" (stream: ^Record_Input_With_Terms(Any_Record, $Terms_Type, $wirings), into: []u8, deadline: u64 = WAIT_FOREVER) -> (item: Input_Item, status: output.Stream_Status) {
+	return input_state_read(&stream.state, into, true, deadline)
+}
+
+// input_state_read is the one read of a record input, of a record or
+// generic.
+@(private = "file")
+input_state_read :: proc "contextless" (state: ^Input_State, into: []u8, generic: bool, deadline: u64) -> (item: Input_Item, status: output.Stream_Status) {
 	index := stream_index_read(&state.index)
 	if index == 0 {
 		return {}, .No_Writer
 	}
-	item, status = stream_read(.Reader_End, index, 0, ([^]u8)(into)[:size_of(Record_Type)], deadline)
+	item, status = stream_read(.Reader_End, index, 0, into, deadline, generic = generic, turn = &state.turn)
 	if status == .Ok && item.kind == .Record {
 		state.read += 1
 	}
 	return item, status
+}
+
+// input_terms copies the wiring terms of one ring of a record input into
+// into: the ring of the wiring tag, or with tag 0 the first ring that the
+// record input holds, its one ring for the count One. The root service
+// checked their size against the description of the terms; the reader
+// checks their fields, as each record. false: no such ring, or no terms.
+input_terms :: proc "contextless" (stream: ^Record_Input_With_Terms($Record_Type, $Terms_Type, $wirings), into: ^Terms_Type, tag: u32 = 0) -> bool {
+	end := input_end_of(&stream.state, tag) or_return
+	if end.terms_memory == 0 {
+		return false
+	}
+	address, status := memory_map(end.terms_memory, {})
+	if status != .Ok {
+		return false
+	}
+	defer memory_unmap(address)
+	intrinsics.mem_copy_non_overlapping(into, address, size_of(Terms_Type))
+	return true
+}
+
+// input_description gives the description file and the record description
+// of one ring of a record input, as input_terms names it: what a generic
+// reader checks each record against, and what it reads its fields from.
+input_description :: proc {
+	input_description_plain,
+	input_description_with_terms,
+}
+
+input_description_plain :: proc "contextless" (stream: ^Record_Input($Record_Type, $wirings), tag: u32 = 0) -> (file: []u8, description: module.Record, ok: bool) {
+	end := input_end_of(&stream.state, tag) or_return
+	return end.description_file, end.description, true
+}
+
+input_description_with_terms :: proc "contextless" (stream: ^Record_Input_With_Terms($Record_Type, $Terms_Type, $wirings), tag: u32 = 0) -> (file: []u8, description: module.Record, ok: bool) {
+	end := input_end_of(&stream.state, tag) or_return
+	return end.description_file, end.description, true
+}
+
+// input_end_of gives the end of a record input of the wiring tag, or with
+// tag 0 the first one, after it took the ends that the wiring ring holds.
+@(private = "file")
+input_end_of :: proc "contextless" (state: ^Input_State, tag: u32) -> (end: ^Stream_End, ok: bool) {
+	stream_ends_take()
+	index := stream_index_read(&state.index)
+	if index == 0 {
+		return nil, false
+	}
+	for &item in stream_ends {
+		if item.command == .Reader_End && item.index == index && (tag == 0 || item.tag == tag) {
+			return &item, true
+		}
+	}
+	return nil, false
 }
 
 // asker_read reads the next compartment of a wiring whose reader is this
@@ -1152,33 +1293,52 @@ asker_close :: proc "contextless" (number: u32) -> bool {
 	return false
 }
 
+// One wait of a reader holds each end of the process: the 16 ends at most
+// fit the 64 words of a wait (output.reader_wait_words), so a read never
+// needs groups of rings.
+#assert(output.READER_WAIT_WORDS_BESIDE_RINGS + output.READER_WAIT_WORDS_OF_A_RING * STREAM_END_CAPACITY <= op.WORD_WAIT_CAPACITY)
+
 // stream_read is the reader of input_read and asker_read: the ends of one
-// record input, or the one end of an asker, read in the order of the
-// table.
+// record input, or the one end of an asker. A record input reads its ends
+// in turn from turn, the place after the end that gave the last item
+// (output.ring_turn_next), so a fast ring keeps no slow one out; no order
+// across rings is given. A generic reader takes an end of any record that
+// into holds, and copies its record into the first bytes of into; any
+// other reader takes only an end of the size of into, its record.
 @(private = "file")
-stream_read :: proc "contextless" (command: output.Wiring_Command, index: u32, tag: u32, into: []u8, deadline: u64, wake_word: ^u32 = nil, wake_value: u32 = 0) -> (item: Input_Item, status: output.Stream_Status) {
+stream_read :: proc "contextless" (command: output.Wiring_Command, index: u32, tag: u32, into: []u8, deadline: u64, wake_word: ^u32 = nil, wake_value: u32 = 0, generic := false, turn: ^u32 = nil) -> (item: Input_Item, status: output.Stream_Status) {
 	for {
 		if wake_word != nil && intrinsics.atomic_load(wake_word) != wake_value {
 			return {}, .No_Record
 		}
 		stream_ends_take()
 		found := false
-		for &end in stream_ends {
+		start := turn != nil ? int(turn^) % len(stream_ends) : 0
+		for offset in 0 ..< len(stream_ends) {
+			place := (start + offset) % len(stream_ends)
+			end := &stream_ends[place]
 			if end.command != command || (command == .Reader_End && end.index != index) || (command == .Asker_End && end.tag != tag) {
 				continue
 			}
 			// The record of the variable has the size of the description
 			// that the root service compared: an end of another size is no
-			// end of this variable.
-			if end.description.size != u32(len(into)) || !stream_end_open(&end, end.description.size) {
+			// end of this variable. A generic variable takes the record of
+			// each wiring, up to the size of its buffer.
+			fits := generic ? end.description.size <= u32(len(into)) : end.description.size == u32(len(into))
+			if !fits || !stream_end_open(end, end.description.size) {
 				if end.command != .None {
-					stream_end_finish(&end)
+					stream_end_finish(end)
 				}
 				continue
 			}
 			found = true
-			read, read_status, done := stream_end_read(&end, into)
+			ring_tag, record_size := end.tag, end.description.size
+			read, read_status, done := stream_end_read(end, into[:record_size])
 			if done {
+				read.tag, read.record_size = ring_tag, record_size
+				if turn != nil {
+					turn^ = u32(output.ring_turn_next(place, len(stream_ends)))
+				}
 				return read, read_status
 			}
 		}

@@ -181,7 +181,7 @@ The packages that become kernel parts are those that the kernel alone reaches: `
 Property 10 says that a library and the module of a process are one thing: a module ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "10. One code module"). The old folders src/programs and src/modules ("the modules that are not programs") said the opposite. They become one folder, `src/modules`, grouped by what each module is for:
 
 - **`system`**: the root service, the device services, the shared services, the desktop, and the tools that a principal uses (`manual`, `monitor`, `log`, `inspect`, `debugger_window`, `pages`, `boot`).
-- **`libraries`**: the modules that export functions and have no entry function, which other modules import (`drawing`, `cryptography`, `math`, `calendar`, `text_rendering`, `interface_module`).
+- **`libraries`**: the modules that serve other modules with no window and no grant: those that export functions and have no entry function, which other modules import (`drawing`, `cryptography`, `math`, `calendar`, `text_rendering`, `interface_module`), and the utility modules of the record streams, which have an entry and work on a stream of any record, which a starter wires to them (`merge`, `filter`; [`../features/module_outputs.md`](../features/module_outputs.md), "Generic record inputs and the utility modules"). A group says what a module is for, not whether it starts.
 - **`demonstrations`**: the modules that each show a property to a principal, and the children that a demonstration starts (`node`, `twin`, `locker`).
 - **`tests`**: the test modules. A test module is started or imported by a machine test only, and is wrong on purpose or shows nothing of its own: `test_callee`, `hostile_exports`, `lonely`, `calendar_fixed`, `debug_target`, `iommu_device`, `store_library`.
 
@@ -190,7 +190,7 @@ The group of each module is decided; step 4 builds it:
 | Group | Count | Modules |
 |---|---|---|
 | `system` | 25 | `block`, `boot`, `compositor`, `console`, `date`, `debugger`, `debugger_window`, `entropy`, `frame`, `host`, `input`, `inspect`, `log`, `manual`, `module_files`, `monitor`, `network`, `pages`, `remote`, `root`, `settings`, `storage`, `terminal`, `tpm`, `unlock` |
-| `libraries` | 6 | `calendar`, `cryptography`, `drawing`, `interface_module`, `math`, `text_rendering` |
+| `libraries` | 8 | `calendar`, `cryptography`, `drawing`, `filter`, `interface_module`, `math`, `merge`, `text_rendering` |
 | `demonstrations` | 50 | `address_space`, `agenda`, `budget`, `clock`, `counters`, `crowd`, `cryptography_vectors`, `debugged`, `disk`, `errors`, `extended_state`, `fault`, `fault_ring`, `fetch`, `flow`, `frames`, `guest_demo`, `hall_of_fame`, `heron`, `imports`, `interface_elements`, `interface_font`, `interface_through_module`, `kernel_events`, `life`, `limits`, `locker`, `locks`, `net`, `node`, `notes`, `origin`, `paint`, `plasma`, `pointers`, `processors`, `quic_echo`, `randomness`, `return_fault`, `rights`, `rings`, `sample`, `scheduler`, `server`, `tables`, `tally`, `threads`, `twin`, `vector_glyphs`, `workers` |
 | `tests` | 22 | `arena`, `calendar_changed`, `calendar_fixed`, `debug_target`, `flood`, `hierarchy`, `hostile_exports`, `hostile_terminal`, `iommu`, `iommu_device`, `lonely`, `log_reader`, `probe`, `ranges`, `shortage`, `stops_failed`, `stops_refused`, `store_importer`, `store_library`, `test_callee`, `test_caller`, `visitor` |
 
