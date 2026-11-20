@@ -1,6 +1,7 @@
 #+build !freestanding
 package value_kinds
 
+import "base:intrinsics"
 import "core:testing"
 
 // A record of 168 bytes, as a log record holds (operation.LOG_TEXT_CAPACITY):
@@ -317,6 +318,10 @@ each_field_kind_has_its_value_kind :: proc(t: ^testing.T) {
 	testing.expect_value(t, field_kind_value_kind(.Module_Name), Value_Kind.Module)
 	testing.expect_value(t, field_kind_value_kind(.Hash), Value_Kind.Version)
 	testing.expect_value(t, field_kind_value_kind(.Fact_Values), Value_Kind.Number)
+	testing.expect_value(t, field_kind_value_kind(.Hexadecimal_Sixteen_Digits), Value_Kind.Number)
+	testing.expect_value(t, field_kind_value_kind(.Hash_Head), Value_Kind.Version)
+	testing.expect_value(t, field_kind_value_kind(.Hundredths), Value_Kind.Number)
+	testing.expect_value(t, field_kind_value_kind(.Nanoseconds_As_Microseconds), Value_Kind.Time)
 }
 
 // The table of the types of a field kind gives each name once, with the
@@ -325,27 +330,36 @@ each_field_kind_has_its_value_kind :: proc(t: ^testing.T) {
 @(test)
 each_field_kind_type_has_its_size :: proc(t: ^testing.T) {
 	Named_Size :: struct {
-		name: string,
-		size: u32,
+		name:     string,
+		size:     u32,
+		unsigned: bool,
 	}
+	// The sign is the sign of the type, which the compiler gives: the
+	// table that the tool reads must not say another one.
 	sizes := [?]Named_Size {
-		{"Hexadecimal_8", size_of(Hexadecimal_8)},
-		{"Hexadecimal_16", size_of(Hexadecimal_16)},
-		{"Hexadecimal_32", size_of(Hexadecimal_32)},
-		{"Hexadecimal_64", size_of(Hexadecimal_64)},
-		{"Module_Name_Field", size_of(Module_Name_Field)},
-		{"Hash_Field", size_of(Hash_Field)},
-		{"Fact_Values_Field", size_of(Fact_Values_Field)},
+		{"Hexadecimal_8", size_of(Hexadecimal_8), intrinsics.type_is_unsigned(Hexadecimal_8)},
+		{"Hexadecimal_16", size_of(Hexadecimal_16), intrinsics.type_is_unsigned(Hexadecimal_16)},
+		{"Hexadecimal_32", size_of(Hexadecimal_32), intrinsics.type_is_unsigned(Hexadecimal_32)},
+		{"Hexadecimal_64", size_of(Hexadecimal_64), intrinsics.type_is_unsigned(Hexadecimal_64)},
+		{"Module_Name_Field", size_of(Module_Name_Field), false},
+		{"Hash_Field", size_of(Hash_Field), false},
+		{"Hash_Sixteen_Bytes_Field", size_of(Hash_Sixteen_Bytes_Field), false},
+		{"Fact_Values_Field", size_of(Fact_Values_Field), false},
+		{"Hexadecimal_Sixteen_Digits", size_of(Hexadecimal_Sixteen_Digits), intrinsics.type_is_unsigned(Hexadecimal_Sixteen_Digits)},
+		{"Hash_Head_Field", size_of(Hash_Head_Field), false},
+		{"Hundredths", size_of(Hundredths), intrinsics.type_is_unsigned(Hundredths)},
+		{"Nanoseconds_As_Microseconds", size_of(Nanoseconds_As_Microseconds), intrinsics.type_is_unsigned(Nanoseconds_As_Microseconds)},
 	}
 	testing.expect_value(t, len(FIELD_KIND_TYPES), len(sizes))
 	for item, index in FIELD_KIND_TYPES {
-		size, named := u32(0), false
+		size, unsigned, named := u32(0), false, false
 		for row in sizes {
 			if row.name == item.name {
-				size, named = row.size, true
+				size, unsigned, named = row.size, row.unsigned, true
 			}
 		}
 		testing.expectf(t, named && size == item.size, "the type %s has %d bytes in the table", item.name, item.size)
+		testing.expectf(t, unsigned == item.unsigned, "the type %s has the sign unsigned = %v in the table", item.name, item.unsigned)
 		testing.expectf(t, item.kind != .Plain && item.kind != .Status, "the type %s has the kind %v", item.name, item.kind)
 		found, ok := field_kind_of_type_name(item.name)
 		testing.expectf(t, ok && found == item, "the name %s gives %v", item.name, found)
@@ -362,6 +376,10 @@ each_field_kind_type_has_its_size :: proc(t: ^testing.T) {
 	// it in a fixed buffer of two digits for each byte.
 	testing.expect_value(t, size_of(Hash_Field), HASH_FIELD_BYTES)
 	testing.expect_value(t, size_of(Fact_Values_Field), FACT_VALUES_FIELD_BYTES)
+	// The head of a hash is written from a whole hash: the field holds
+	// each byte, and the head is a part of it.
+	testing.expect_value(t, size_of(Hash_Head_Field), HASH_FIELD_BYTES)
+	testing.expect(t, HASH_HEAD_BYTES >= 1 && HASH_HEAD_BYTES < HASH_FIELD_BYTES)
 }
 
 // Each contract enum but None names a type of the contract, and no two
@@ -375,8 +393,19 @@ each_contract_enum_names_one_type :: proc(t: ^testing.T) {
 		}
 		row := CONTRACT_ENUM_TYPES[which]
 		testing.expectf(t, row.package_name != "" && row.name != "", "the enum %v names no type", which)
+		testing.expectf(t, row.word_name != row.name, "the enum %v has its own name as its word type", which)
 		for other in Contract_Enum {
-			testing.expectf(t, other == which || CONTRACT_ENUM_TYPES[other] != row, "the enums %v and %v name one type", which, other)
+			if other == which {
+				continue
+			}
+			other_row := CONTRACT_ENUM_TYPES[other]
+			if other_row.package_name != row.package_name {
+				continue
+			}
+			// A name names one type of a package: the tool reads a field
+			// of that name as the one enum.
+			testing.expectf(t, other_row.name != row.name && other_row.name != row.word_name, "the enums %v and %v name one type", which, other)
+			testing.expectf(t, row.word_name == "" || other_row.word_name != row.word_name, "the enums %v and %v name one word type", which, other)
 		}
 	}
 }
