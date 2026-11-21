@@ -556,6 +556,31 @@ handle_list_page :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 }
 
 @(private = "file")
+process_module_name :: proc "contextless" (idx: int) -> string {
+	if idx < 0 || idx >= len(state.processes) || !state.processes[idx].active {
+		return ""
+	}
+	pe := &state.processes[idx]
+	for &entry in system.image_entries(image) {
+		if entry.offset == pe.module_offset && entry.size == pe.module_size {
+			return system.name_of(entry.name[:])
+		}
+	}
+	return ""
+}
+
+@(private = "file")
+log_wiring_created :: proc "contextless" (plan: ^wiring_core.Row_Plan, number: u32) {
+	writer_name := process_module_name(plan.writer_index)
+	reader_name := process_module_name(plan.reader_index)
+	if plan.row.writer_stream == .Log {
+		system.log(.Info, "wiring: wired the record output log of ", system.Module_Name{writer_name}, " to ", plan.row.reader_end == .Asker ? "its asker " : "", system.Module_Name{reader_name}, ", wiring ", u64(number))
+		return
+	}
+	system.log(.Info, "wiring: wired the record output ", u64(plan.row.writer_index), " of ", system.Module_Name{writer_name}, " to ", plan.row.reader_end == .Asker ? "its asker " : "", system.Module_Name{reader_name}, ", wiring ", u64(number))
+}
+
+@(private = "file")
 handle_wire :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	op_code := u32(root_ring.Root_Command.Wire)
 	region_read_request()
@@ -607,6 +632,7 @@ handle_wire :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 		return {status = .Refused, tag = cmd.tag, error_record = rec}
 	}
 	wiring_core.wiring_mark_delivered(&state, slot, plan)
+	log_wiring_created(plan, number)
 	return {
 		status        = .Ok,
 		tag           = cmd.tag,
@@ -789,6 +815,7 @@ handle_commit_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respons
 			continue
 		}
 		wiring_core.wiring_mark_delivered(&state, slot, plan)
+		log_wiring_created(plan, plan.allocated_number)
 		if plan.row.reader_end == .Asker && response_staging.asker_wiring_count < output.WIRING_ASKER_ROWS_OF_A_START {
 			response_staging.asker_numbers[response_staging.asker_wiring_count] = plan.allocated_number
 			response_staging.asker_wiring_count += 1

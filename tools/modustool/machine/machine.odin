@@ -2968,7 +2968,7 @@ scenario := [?]Step {
 	// does not fail it. A WRONG line of
 	// output_wiring ends this wait at the hang bound. No step waits for a
 	// line of log_flood.
-	{kind = .Wait, text = "root: wired the record output log of log_flood to its asker output_wiring, wiring ", fails_on = "output_wiring: WRONG"},
+	{kind = .Wait, text = "wiring: wired the record output log of log_flood to its asker output_wiring, wiring ", fails_on = "output_wiring: WRONG"},
 	// The asker reads the stop of log_flood before it writes its line, so
 	// the stop of the root service comes first: the wait for it does not
 	// move the place, and the line of the asker is looked for from there.
@@ -2997,7 +2997,7 @@ scenario := [?]Step {
 	// its log budget, and writes its last line in a new second: the wait
 	// for it never follows more lines than its budget of one second.
 	{kind = .Type, text = "start(\"log_follower\")"},
-	{kind = .Wait, text = "root: wired the record output 1 of log to its asker log_follower, wiring "},
+	{kind = .Wait, text = "wiring: wired the record output 1 of log to its asker log_follower, wiring "},
 	{kind = .Wait, text = "log_follower: log.follow gave ", fails_on = "log_follower: WRONG"},
 	{kind = .Wait, text = "root: log_follower stopped: itself, done"},
 	// The generic record inputs, merge and filter, through start lists
@@ -3089,7 +3089,7 @@ scenario := [?]Step {
 	{kind = .Type, text = "merge.merged"},
 	{kind = .Wait, text = "[console] error: merge.merged is generic: it writes the record that the first wiring of the generic record input of merge fixed, and no list of a start of merge by this console fixed one"},
 	{kind = .Type, text = "start(\"merge\", wire(where(output_counter.counts, status = 404), merge.sources))"},
-	{kind = .Wait, text = "root: wired the record output 1 of output_counter to merge, wiring "},
+	{kind = .Wait, text = "wiring: wired the record output 1 of output_counter to merge, wiring "},
 	{kind = .Type, text = "merge.merged |> first(2)"},
 	{kind = .Wait, text = "[console] 2 rows of Counted"},
 	{kind = .Type, text = "stop(\"merge\")"},

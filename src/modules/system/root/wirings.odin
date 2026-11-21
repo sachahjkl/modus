@@ -621,12 +621,11 @@ wire_begin :: proc "contextless" (asker: ^Started, record: ring.Record, values: 
 		}
 		return .Ok, true
 	case .Apply:
-		if budget_st := wiring_asker_budget_ensure(asker, command, values); budget_st != .Ok {
-			lent_handles_close(asker)
-			return budget_st, false
-		}
 		if stage_st := list_stage_for_wiring(asker, .Wire, command, 0, 0, values); stage_st != .Ok {
 			return stage_st, false
+		}
+		if budget_st := wiring_asker_budget_ensure(asker, command, values); budget_st != .Ok {
+			return budget_st, false
 		}
 		stag := next_service_tag()
 		cmd := ws.Command{kind = .Wire, tag = stag, process = {asker.process_slot, asker.process_serial}, flags = process_flags_of(asker)}
@@ -682,14 +681,13 @@ start_with_wiring_begin :: proc "contextless" (asker: ^Started, tag: u32, name: 
 	if !asker.wiring_registered {
 		wiring_register_process(asker)
 	}
-	if budget_st := wiring_asker_budget_ensure(asker, command, values); budget_st != .Ok {
-		lent_handles_close(asker)
-		written^ = true
-		return budget_st, false
-	}
 	if stage_st := list_stage_for_wiring(asker, .Start, command, child_offset, child_size, values); stage_st != .Ok {
 		written^ = true
 		return stage_st, false
+	}
+	if budget_st := wiring_asker_budget_ensure(asker, command, values); budget_st != .Ok {
+		written^ = true
+		return budget_st, false
 	}
 	stag := next_service_tag()
 	cmd := ws.Command{

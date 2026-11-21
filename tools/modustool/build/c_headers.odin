@@ -330,7 +330,7 @@ c_render_modus_ring_h :: proc(allocator := context.temp_allocator) -> string {
 @(private = "file")
 c_render_modus_operation_h :: proc(allocator := context.temp_allocator) -> string {
 	out := strings.builder_make(allocator)
-	c_header_begin(&out, "MODUS_OPERATION_H", "modus_operation.h - Kernel operations and ABI records for modus", {"\"modus_types.h\""})
+	c_header_begin(&out, "MODUS_OPERATION_H", "modus_operation.h - Kernel operations and ABI records for modus", {"\"modus_types.h\"", "\"modus_errors.h\""})
 
 	fmt.sbprintfln(&out, "#define MODUS_WAIT_FOREVER ((uint64_t)0x%016XULL)", op.WAIT_FOREVER)
 	fmt.sbprintfln(&out, "#define MODUS_PROCESS_BASE ((uint64_t)0x%016XULL)", u64(op.PROCESS_BASE))
@@ -537,6 +537,7 @@ c_render_modus_operation_h :: proc(allocator := context.temp_allocator) -> strin
 	fmt.sbprintfln(&out, "\tModus_Stop_Frame frames[%d];", op.STOP_FRAME_CAPACITY)
 	fmt.sbprintln(&out, "\tuint64_t process_serial;")
 	fmt.sbprintln(&out, "\tuint64_t hidden_value_count;")
+	fmt.sbprintln(&out, "\tModus_Error_Record error;")
 	fmt.sbprintln(&out, "} Modus_Stop_Report;")
 	c_emit_size_assert(&out, "Modus_Stop_Report", size_of(op.Stop_Report))
 	c_emit_offset_assert(&out, "Modus_Stop_Report", "cause", offset_of(op.Stop_Report, cause))
@@ -548,6 +549,7 @@ c_render_modus_operation_h :: proc(allocator := context.temp_allocator) -> strin
 	c_emit_offset_assert(&out, "Modus_Stop_Report", "frames", offset_of(op.Stop_Report, frames))
 	c_emit_offset_assert(&out, "Modus_Stop_Report", "process_serial", offset_of(op.Stop_Report, process_serial))
 	c_emit_offset_assert(&out, "Modus_Stop_Report", "hidden_value_count", offset_of(op.Stop_Report, hidden_value_count))
+	c_emit_offset_assert(&out, "Modus_Stop_Report", "error", offset_of(op.Stop_Report, error))
 	fmt.sbprintln(&out)
 
 	fmt.sbprintln(&out, "typedef struct Modus_Context {")

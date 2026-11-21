@@ -688,7 +688,7 @@ edge_cases :: proc "contextless" (ctx: ^system.Context) {
 		// the object is still mapped with the flags that the kernel knows.
 		memory, _ := system.memory_create(1)
 		alone_record, beside_record: errors.Error_Record
-		_, alone := system.call_with_error(&alone_record, .Memory_Map, u64(memory), 0, 0, 1 << 3, 0, 0)
+		_, alone := system.call_with_error(&alone_record, .Memory_Map, u64(memory), 0, 0, 1 << 4, 0, 0)
 		_, beside := system.call_with_error(&beside_record, .Memory_Map, u64(memory), 0, 0, 1 << 63 | transmute(u64)op.Map_Flags{.Write}, 0, 0)
 		address, known := system.memory_map(memory, {.Write})
 		edge_case_results[13] = alone == .Bad_Operation && beside == .Bad_Operation && alone_record.kind == i64(errors.Kind.Bad_Flags) && alone_record.argument == 4 && beside_record.kind == i64(errors.Kind.Bad_Flags) && known == .Ok

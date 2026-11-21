@@ -148,7 +148,7 @@ scenario_tcp_real := [?]Step {
 	{kind = .Wait, text = "root: connected console to the service server"},
 	{kind = .Http, text = "requests 10"},
 	{kind = .Type, text = "server.requests |> where(status = 404)"},
-	{kind = .Wait, text = "root: wired the record output 1 of server to its asker console, wiring "},
+	{kind = .Wait, text = "wiring: wired the record output 1 of server to its asker console, wiring "},
 	{kind = .Http, text = "missing nothing.txt"},
 	{kind = .Wait, text = "[console] joined after 10 records"},
 	{kind = .Wait, text = "/nothing.txt"},
@@ -156,7 +156,7 @@ scenario_tcp_real := [?]Step {
 	{kind = .Wait, text = "[console] Escape closed the stream after "},
 	// first gives a Table once one record of the status 404 came.
 	{kind = .Type, text = "server.requests |> where(status = 404) |> first(1)"},
-	{kind = .Wait, text = "root: wired the record output 1 of server to its asker console, wiring "},
+	{kind = .Wait, text = "wiring: wired the record output 1 of server to its asker console, wiring "},
 	{kind = .Http, text = "missing other.txt"},
 	{kind = .Wait, text = "[console] 1 row of Access_Record"},
 	{kind = .Fetch, text = "/"},
@@ -206,12 +206,12 @@ scenario_tcp_real := [?]Step {
 	// The server is not held by the ring of the console in any case: the
 	// pace Writer_Chooses and a write with no wait refuse with Full.
 	{kind = .Type, text = "server.requests |> where(status = 500)"},
-	{kind = .Wait, text = "root: wired the record output 1 of server to its asker console, wiring "},
+	{kind = .Wait, text = "wiring: wired the record output 1 of server to its asker console, wiring "},
 	{kind = .Http, text = "keep-alive"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "[console] Escape closed the stream after "},
 	{kind = .Type, text = "stream_counts(server.requests)"},
-	{kind = .Wait, text = "root: wired the record output 1 of server to its asker console, wiring "},
+	{kind = .Wait, text = "wiring: wired the record output 1 of server to its asker console, wiring "},
 	{kind = .Http, text = "requests 1"},
 	{kind = .Wait, text = "[console] Writer_Counts"},
 	// Each count is a row of the record, the last one the rings that the

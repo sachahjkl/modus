@@ -597,6 +597,7 @@ the_texts_of_the_compositor_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	most["typed"] = 64
 	most["profile"] = u32(len("the processor profile"))
 	most["profile_reason"] = u32(len("the system drives no GPU device"))
+	most["viewer_key_head"] = 8
 	facts_expect_text_fields_last(t, file, most)
 }
 
