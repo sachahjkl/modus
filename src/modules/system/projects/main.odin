@@ -220,13 +220,19 @@ handle_command :: proc "contextless" (command: ring.Record) {
 			ring.Record{
 				kind   = u32(pr.Service_Ring_Status.Ok),
 				tag    = command.tag,
-				values = {ctx.console_id, u64(ctx.module_count), u64(ctx.store_count), 0, 0, 0, 0},
+				values = {ctx.console_id, u64(ctx.module_count), u64(ctx.store_count), u64(ctx.depth), 0, 0, 0},
 			},
 		)
 	case .Exit_Project:
 		console_id := command.values[0]
 		principal := command.values[1]
-		refusal := projects_core.exit_project(&service_state, console_id, principal)
+		report: projects_core.Exit_Teardown_Report
+		refusal: pr.Project_Refusal
+		if console_id == 0 {
+			report, refusal = projects_core.exit_current_project(&service_state, principal)
+		} else {
+			report, refusal = projects_core.exit_project_with_report(&service_state, console_id, principal)
+		}
 		if refusal != .None {
 			system.log_fact(.Warning, Project_Command_Refused{refusal_code = u64(refusal)})
 			ring.push(
@@ -239,13 +245,13 @@ handle_command :: proc "contextless" (command: ring.Record) {
 			)
 			return
 		}
-		system.log_fact(.Info, Project_Exited{console_id = console_id, principal = principal})
+		system.log_fact(.Info, Project_Exited{console_id = report.exited_console_id, principal = principal})
 		ring.push(
 			&service_ring.completions,
 			ring.Record{
 				kind   = u32(pr.Service_Ring_Status.Ok),
 				tag    = command.tag,
-				values = {console_id, service_state.counters.active_consoles, 0, 0, 0, 0, 0},
+				values = {report.exited_console_id, service_state.counters.active_consoles, report.restored_parent_id, u64(report.restored_depth), u64(report.revoked_module_count), u64(report.revoked_store_count), 0},
 			},
 		)
 	}
@@ -273,7 +279,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		service_region_bytes = pages * system.PAGE_SIZE
 	}
 
-	projects_core.state_init(&service_state)
+	projects_core.state_init(&service_state, u32(ctx.values[pr.PROJECTS_CONTEXT_VALUE_DISPLAY_SLOT]))
 	system.log_fact(.Info, Service_Ready{})
 
 	for {

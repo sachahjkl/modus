@@ -931,6 +931,13 @@ commands_start :: proc "contextless" () {
 	// It needs the grant **machine**. Without it: "error: the console has
 	// no grant to stop the machine".
 	command("shutdown", {}, .None, "stop the machine", shutdown)
+	// Leaves the child console of a project opened by `projects.enter`,
+	// revoking its temporary module connections and store shares and
+	// returning control to the parent console. It gives nothing.
+	//
+	// Error: "exit: no project console is active" when called outside a
+	// child project console.
+	command("exit", {}, .None, "leave the console of a project", exit_project_console)
 	// Forgets the line history, in the memory of the console and in its
 	// store, and gives the count of the lines that it forgot.
 	//
@@ -3648,6 +3655,9 @@ clear :: proc "contextless" (arguments: []Value) -> Value {
 	return {}
 }
 
+// Nesting depth of the active child project console (0 in the root console).
+project_console_depth: u32
+
 shutdown :: proc "contextless" (arguments: []Value) -> Value {
 	// The line history first: the machine stops in the call.
 	history_save()
@@ -3656,4 +3666,12 @@ shutdown :: proc "contextless" (arguments: []Value) -> Value {
 		return fail("the console has no grant to stop the machine")
 	}
 	return {}
+}
+
+exit_project_console :: proc "contextless" (arguments: []Value) -> Value {
+	if project_console_depth == 0 {
+		return fail("exit: no project console is active")
+	}
+	history_save()
+	system.stop(.Done)
 }
