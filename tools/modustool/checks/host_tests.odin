@@ -352,4 +352,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/software_machine",
 	foundation.SOURCE_FOLDER_CONTRACT + "/virtio_gpu",
 	foundation.SOURCE_FOLDER_CONTRACT + "/webgpu_subset",
+	foundation.SOURCE_FOLDER_PUBLIC + "/quic_server",
+	foundation.SOURCE_FOLDER_INTERNAL + "/terminal/grid_resize",
+	foundation.SOURCE_FOLDER_CONTRACT + "/memory_screen",
 }

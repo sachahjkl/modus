@@ -2,6 +2,7 @@ package remote_display_service
 
 import "modus:contract/value_kinds"
 import "modus:quic"
+import "modus:quic_server"
 
 // The log facts of the remote display (src/md/features/log_facts.md, "The
 // facts of the device services and of the network"): the viewer keys that
@@ -228,7 +229,7 @@ Listening :: struct {
 key_field :: proc "contextless" (key: [32]u8) -> [KEY_FIELD_BYTES]u8 {
 	bytes := key
 	text: [64]u8
-	return value_kinds.text_field(hex_text(text[:], bytes[:]), KEY_FIELD_BYTES)
+	return value_kinds.text_field(quic_server.hex_text(text[:], bytes[:]), KEY_FIELD_BYTES)
 }
 
 // key_head_field gives the Text field of the head of a viewer key: its
@@ -236,11 +237,11 @@ key_field :: proc "contextless" (key: [32]u8) -> [KEY_FIELD_BYTES]u8 {
 key_head_field :: proc "contextless" (key: [32]u8) -> [KEY_HEAD_FIELD_BYTES]u8 {
 	bytes := key
 	text: [16]u8
-	return value_kinds.text_field(hex_text(text[:], bytes[:8]), KEY_HEAD_FIELD_BYTES)
+	return value_kinds.text_field(quic_server.hex_text(text[:], bytes[:8]), KEY_HEAD_FIELD_BYTES)
 }
 
 // peer_field gives the Text field of the address and the port of a host.
 peer_field :: proc "contextless" (peer: quic.Remote) -> [PEER_FIELD_BYTES]u8 {
 	text: [40]u8
-	return value_kinds.text_field(address_text(text[:], peer), PEER_FIELD_BYTES)
+	return value_kinds.text_field(quic_server.address_text(text[:], peer), PEER_FIELD_BYTES)
 }

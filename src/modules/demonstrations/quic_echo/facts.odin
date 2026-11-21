@@ -2,6 +2,7 @@ package quic_echo
 
 import "modus:contract/value_kinds"
 import "modus:quic"
+import "modus:quic_server"
 
 // The log facts of quic_echo (src/md/features/log_facts.md): each fact
 // template is the line that the process wrote before it was a fact, so a
@@ -143,5 +144,5 @@ Listening :: struct {
 // peer_field gives the Text field of the address of a host.
 peer_field :: proc "contextless" (remote: quic.Remote) -> [PEER_FIELD_BYTES]u8 {
 	text: [PEER_FIELD_BYTES]u8
-	return value_kinds.text_field(address_text(text[:], remote), PEER_FIELD_BYTES)
+	return value_kinds.text_field(quic_server.address_text(text[:], remote), PEER_FIELD_BYTES)
 }

@@ -7,6 +7,7 @@ import "modus:display"
 import "modus:graphics"
 import "modus:interface"
 import "modus:quic"
+import "modus:quic_server"
 
 WIDTH :: 960
 HEIGHT :: 640
@@ -57,7 +58,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	content := interface.card(&frame, {8, 8, WIDTH - 16, 100}, "THE SERVER", "QUIC in this process, over a listen grant of UDP", graphics.colors.process)
 	column := interface.column_of(content)
 	key: [64]u8
-	interface.label_value_line(&frame, interface.column_take(&column, LINE), "public key", hex_text(key[:], public_key[:]), graphics.colors.text, 120)
+	interface.label_value_line(&frame, interface.column_take(&column, LINE), "public key", quic_server.hex_text(key[:], public_key[:]), graphics.colors.text, 120)
 	interface.label_value_line(&frame, interface.column_take(&column, LINE), "UDP port", number_text(&builder, u64(listen_port), ", Ed25519, a raw public key that a client pins"), graphics.colors.text, 120)
 
 	content = interface.card(&frame, {8, 116, WIDTH - 16, CONNECTIONS_HEIGHT}, "THE CONNECTIONS", "up to 4 streams each: each byte goes back", graphics.colors.machine)
@@ -85,7 +86,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		row += 1
 		interface.row_split(line, sizes[:], cells[:], 16)
 		remote_text: [40]u8
-		interface.cell_text(&frame, cells[0], address_text(remote_text[:], record.remote), graphics.colors.text)
+		interface.cell_text(&frame, cells[0], quic_server.address_text(remote_text[:], record.remote), graphics.colors.text)
 		interface.cell_text(&frame, cells[1], state_text(connection), graphics.colors.dim)
 		interface.cell_text(&frame, cells[2], number_text(&builder, connection.data_consumed_total, " bytes"), graphics.colors.text, .Right)
 		interface.cell_text(&frame, cells[3], number_text(&builder, connection.data_sent_total, " bytes"), graphics.colors.text, .Right)

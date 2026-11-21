@@ -50,7 +50,6 @@
 package remote_display_service
 
 import "base:intrinsics"
-import "modus:contract/datagram"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/pointer_pictures"
@@ -60,8 +59,8 @@ import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:interface"
-import "modus:network"
 import "modus:quic"
+import "modus:quic_server"
 import "modus:random"
 import "modus:system"
 
@@ -127,17 +126,8 @@ VIEWER_FRAME_WRITE_LIMIT_SHARED :: 2_000
 // not at the idle timeout of QUIC.
 RECORD_READ_LIMIT :: 10_000
 
-// The datagram region: 256 places of 2048 bytes, as `remote`.
-PLACE_SIZE :: 2048
-PLACE_COUNT :: datagram.REGION_PAGES * system.PAGE_SIZE / PLACE_SIZE
 RECEIVE_PLACES :: 64
-SEND_TAG :: 1000
-CALL_TAG :: 100_000
-VALIDATE_TAG :: u32(1) << 31
-VALIDATE_PLACE_BITS :: 4
-VALIDATE_GENERATION_MASK :: (u64(1) << (31 - VALIDATE_PLACE_BITS)) - 1
-#assert(CAPACITY <= 1 << VALIDATE_PLACE_BITS)
-HELD_CAPACITY :: PLACE_COUNT + 2 * RECEIVE_PLACES + CAPACITY
+#assert(CAPACITY <= quic_server.MAX_CAPACITY)
 
 // The records to the compositor that its ring did not take: the commands of
 // the capture face, and the keys and the pointer of the viewers. While it is
@@ -158,16 +148,9 @@ quic_connections: []quic.Connection
 streams: []quic.Stream
 public_key: [32]u8
 listen_port: u16
-local_address: u32
 
-endpoint: ring.Ring
-region: []u8
-free_places: [PLACE_COUNT - RECEIVE_PLACES]u32
-free_count: int
-held_commands: [HELD_CAPACITY]ring.Record
-held_command_count: int
-log_second: u64
-log_count: u64
+quic_endpoint: quic_server.Endpoint
+log_budget := quic_server.Log_Budget{limit = LOG_LIMIT}
 
 // The ring of the window of this process: the capture face and the input
 // face of the compositor ride it.
@@ -282,101 +265,16 @@ fail :: proc "contextless" (text: string) -> ! {
 	system.stop(.Failed)
 }
 
+held_overflow_fail :: proc "contextless" () {
+	fail("the held commands passed their bound")
+}
+
 now_microseconds :: proc "contextless" () -> u64 {
 	return system.nanoseconds() / 1000
 }
 
-place_bytes :: proc "contextless" (place: u32) -> []u8 {
-	return region[int(place) * PLACE_SIZE:][:PLACE_SIZE]
-}
-
-command_push_or_hold :: proc "contextless" (record: ring.Record) {
-	if held_command_count == 0 && ring.push(&endpoint.commands, record) {
-		return
-	}
-	if held_command_count == HELD_CAPACITY {
-		fail("the held commands passed their bound")
-	}
-	held_commands[held_command_count] = record
-	held_command_count += 1
-}
-
-held_commands_push :: proc "contextless" () {
-	done := 0
-	for done < held_command_count && ring.push(&endpoint.commands, held_commands[done]) {
-		done += 1
-	}
-	copy(held_commands[:], held_commands[done:held_command_count])
-	held_command_count -= done
-}
-
-post :: proc "contextless" (place: u32) {
-	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Receive), tag = place, values = {0 = u64(place) * PLACE_SIZE, 1 = PLACE_SIZE}})
-}
-
-data_bytes :: proc "contextless" (place: u32) -> []u8 {
-	return place_bytes(place)[network.UDP_HEADER:]
-}
-
-send :: proc "contextless" (place: u32, length: int, peer: quic.Remote) {
-	whole := network.udp_header_write(place_bytes(place), local_address, peer.address, listen_port, peer.port, length)
-	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Send), tag = SEND_TAG + place, values = {0 = u64(place) * PLACE_SIZE, 1 = u64(whole), 2 = u64(peer.address)}})
-}
-
-validate :: proc "contextless" (peer: quic.Remote, place: int) {
-	tag := VALIDATE_TAG | u32(records[place].generation & VALIDATE_GENERATION_MASK) << VALIDATE_PLACE_BITS | u32(place)
-	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Validate), tag = tag, values = {0 = u64(peer.address), 1 = u64(peer.port)}})
-}
-
-validation_completed :: proc "contextless" (completion: ring.Record) {
-	place := int(completion.tag & ((1 << VALIDATE_PLACE_BITS) - 1))
-	generation_bits := u64(completion.tag & ~VALIDATE_TAG) >> VALIDATE_PLACE_BITS
-	if place >= CAPACITY || !records[place].in_use || records[place].generation & VALIDATE_GENERATION_MASK != generation_bits {
-		return
-	}
-	quic.server_validation_confirmed(&server, place, records[place].generation, datagram.Status(completion.kind) == .Ok && completion.values[0] == 1)
-}
-
-release :: proc "contextless" (peer: quic.Remote) {
-	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Release), tag = CALL_TAG, values = {0 = u64(peer.address), 1 = u64(peer.port)}})
-}
-
-place_take :: proc "contextless" () -> (place: u32, ok: bool) {
-	if free_count == 0 {
-		return 0, false
-	}
-	free_count -= 1
-	return free_places[free_count], true
-}
-
-hex_text :: proc "contextless" (buffer: []u8, bytes: []u8) -> string {
-	digits := "0123456789abcdef"
-	count := 0
-	for byte in bytes {
-		if count + 2 > len(buffer) {
-			break
-		}
-		buffer[count], buffer[count + 1] = digits[byte >> 4], digits[byte & 0x0F]
-		count += 2
-	}
-	return string(buffer[:count])
-}
-
-address_text :: proc "contextless" (buffer: []u8, peer: quic.Remote) -> string {
-	writer := system.Writer{buffer = buffer}
-	network.address_write(&writer, peer.address)
-	system.write_bytes(&writer, transmute([]u8)string(" port "))
-	system.write_unsigned(&writer, u64(peer.port))
-	return system.written(&writer)
-}
-
 log_allowed :: proc "contextless" () -> bool {
-	second := system.time() / 1000
-	if second != log_second {
-		log_second, log_count = second, 0
-	}
-	log_count += 1
-	return log_count <= LOG_LIMIT
+	return quic_server.log_allowed(&log_budget, system.time())
 }
 
 // compositor_send gives a record to the compositor, after the records that
@@ -1158,69 +1056,7 @@ capture_follow :: proc "contextless" () {
 	}
 }
 
-// exchange gives the server the datagrams that arrived, runs its timers,
-// moves the viewers, and sends what the connections have.
-exchange :: proc "contextless" (arrived: []ring.Record) -> (deadline: u64) {
-	now := now_microseconds()
-	batch: [RECEIVE_PLACES]quic.Server_Datagram
-	batch_count := 0
-	for record in arrived {
-		data, whole := network.udp_data_read(place_bytes(record.tag)[:min(record.values[1], PLACE_SIZE)], u32(record.values[2]), local_address, .Do_Not_Verify)
-		if !whole {
-			continue
-		}
-		batch[batch_count] = {data, quic.Remote{u32(record.values[2]), u16(record.values[3])}}
-		batch_count += 1
-	}
-	order: [RECEIVE_PLACES]int
-	count := quic.server_batch_order(&server, batch[:batch_count], order[:])
-	for index in order[:count] {
-		bytes, peer := batch[index].bytes, batch[index].remote
-		answer_place, has_place := place_take()
-		answer: []u8
-		if has_place {
-			answer = data_bytes(answer_place)
-		}
-		outcome := quic.server_datagram_receive(&server, bytes, peer, answer, now)
-		if outcome.answer_length > 0 {
-			send(answer_place, outcome.answer_length, peer)
-		} else if has_place {
-			free_places[free_count] = answer_place
-			free_count += 1
-		}
-		if outcome.validate_remote && outcome.record >= 0 {
-			validate(peer, outcome.record)
-		}
-		if outcome.release_remote {
-			release(peer)
-		}
-	}
-	quic.server_time_passes(&server, now)
-	for _ in 0 ..< 4 {
-		viewers_work()
-		sent := 0
-		for free_count > 0 {
-			place, _ := place_take()
-			length, peer := quic.server_datagram_send(&server, data_bytes(place), now)
-			if length == 0 {
-				free_places[free_count] = place
-				free_count += 1
-				break
-			}
-			send(place, length, peer)
-			sent += 1
-		}
-		if sent == 0 {
-			break
-		}
-	}
-	ended: [CAPACITY]quic.Remote
-	ended_count := quic.server_sweep(&server, ended[:])
-	for peer in ended[:ended_count] {
-		release(peer)
-	}
-	return quic.server_deadline(&server)
-}
+
 
 // The entry of the remote display: it makes its key, checks its grants,
 // then runs QUIC, the viewers and the capture face until the machine stops.
@@ -1261,17 +1097,19 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("the module cryptography refused to make the public key")
 	}
 	key_text: [64]u8
-	system.log_fact(.Info, Public_Key_Made{public_key = value_kinds.text_field(hex_text(key_text[:], public_key[:]), KEY_FIELD_BYTES)})
-	status: system.Status
-	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
+	system.log_fact(.Info, Public_Key_Made{public_key = value_kinds.text_field(quic_server.hex_text(key_text[:], public_key[:]), KEY_FIELD_BYTES)})
+	switch quic_server.endpoint_open(&quic_endpoint, ctx, RECEIVE_PLACES, CAPACITY, remote.HOST_ADDRESS, true) {
+	case .None:
+	case .No_Ring:
 		fail("no endpoint: the process has no grant of the network")
-	}
-	address, map_status := system.memory_map(ctx.handles[datagram.GRANT_REGION], {.Write})
-	region_pages, size_status := system.memory_size(ctx.handles[datagram.GRANT_REGION])
-	if map_status != .Ok || size_status != .Ok || region_pages < datagram.REGION_PAGES {
+	case .No_Region:
 		fail("no datagram region")
+	case .Info_Timeout, .Bad_Grant, .Bad_Config:
+		fail("the grant is not a listen grant of UDP for the address of the host only")
 	}
-	region = ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]
+	quic_endpoint.on_held_overflow = held_overflow_fail
+	listen_port = quic_endpoint.listen_port
+	status: system.Status
 	window_memory = ctx.handles[system.GRANT_DISPLAY]
 	if window, status = system.ring_open(window_memory); status != .Ok {
 		fail("no ring of a window: the capture face rides it")
@@ -1282,24 +1120,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	client_table = (^remote.Client_Table)(client_table_address)
 	configuration.tls.client_key_check = client_key_allowed
-	system.send(&endpoint.commands, ring.Record{kind = u32(datagram.Command.Info), tag = CALL_TAG})
-	info: ring.Record
-	for {
-		record, has := system.receive(&endpoint.completions)
-		if has {
-			info = record
-			break
-		}
-		wait: system.Wait
-		system.wait_records(&wait, &endpoint.completions)
-		system.wait_end(&wait, system.time() + 2000)
-	}
-	grant, grant_known := datagram.grant_unpack(info.values[6])
-	if !grant_known || grant.tcp || !grant.listen || grant.address != remote.HOST_ADDRESS {
-		fail("the grant is not a listen grant of UDP for the address of the host only")
-	}
-	listen_port = grant.port
-	local_address = u32(info.values[0])
 	memory, memory_status := system.memory_create(TABLE_PAGES)
 	table, table_status := system.memory_map(memory, {.Write})
 	if memory_status != .Ok || table_status != .Ok {
@@ -1315,53 +1135,27 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("the server refused its configuration")
 	}
 	quic.secret_erase(&configuration.tls.server_private_key, size_of(configuration.tls.server_private_key))
-	for place in 0 ..< RECEIVE_PLACES {
-		post(u32(place))
-	}
-	for place in RECEIVE_PLACES ..< PLACE_COUNT {
-		free_places[free_count] = u32(place)
-		free_count += 1
-	}
-	system.wake_reader(&endpoint.commands)
+	quic_server.endpoint_post_receives(&quic_endpoint)
+	quic_server.endpoint_wake(&quic_endpoint)
 	system.log_fact(.Info, Listening{listen_port = u64(listen_port), viewer_capacity = u64(CAPACITY)})
 
 	arrived: [RECEIVE_PLACES]ring.Record
 	for {
 		wait := system.wait_begin()
-		held_commands_push()
 		compositor_held_push()
-		count := 0
-		for record in system.receive(&endpoint.completions) {
-			switch {
-			case record.tag < RECEIVE_PLACES:
-				if datagram.Status(record.kind) == .Ok {
-					arrived[count] = record
-					count += 1
-				} else {
-					post(record.tag)
-				}
-			case record.tag & VALIDATE_TAG != 0:
-				validation_completed(record)
-			case record.tag >= SEND_TAG && record.tag < SEND_TAG + PLACE_COUNT:
-				free_places[free_count] = record.tag - SEND_TAG
-				free_count += 1
-			}
-		}
+		count := quic_server.completions_drain(&quic_endpoint, &server, records[:], arrived[:])
 		capture_events()
 		capture_apply()
-		deadline := exchange(arrived[:count])
-		for record in arrived[:count] {
-			post(record.tag)
-		}
+		deadline := quic_server.exchange(&quic_endpoint, &server, records[:], arrived[:count], now_microseconds(), viewers_work)
 		capture_follow()
 		// A picture that the viewers no longer hold back goes into the copy
 		// in this pass, and the viewer frames that it damaged go at once.
 		capture_apply()
-		system.wake_reader(&endpoint.commands)
-		if !ring.empty(&endpoint.completions) || !ring.empty(&window.completions) {
+		quic_server.endpoint_wake(&quic_endpoint)
+		if !ring.empty(&quic_endpoint.datagrams.completions) || !ring.empty(&window.completions) {
 			continue
 		}
-		system.wait_records(&wait, &endpoint.completions)
+		system.wait_records(&wait, &quic_endpoint.datagrams.completions)
 		system.wait_records(&wait, &window.completions)
 		if compositor_held_count > 0 {
 			system.wait_room(&wait, &window.commands)

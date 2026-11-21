@@ -5,6 +5,7 @@ import "modus:contract/remote"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:quic_server"
 import "modus:system"
 
 // An answer with an error record: the call ran, and the service gave its
@@ -89,7 +90,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	// The key that the host pins: 64 hexadecimal digits.
 	key: [64]u8
 	at := interface.draw_text(table, inside.x, inside.y + BAR_Y + 12 + LINE + 8, "public key ", graphics.colors.dim)
-	interface.draw_text(table, at, inside.y + BAR_Y + 12 + LINE + 8, hex_text(key[:], public_key[:]), graphics.colors.text)
+	interface.draw_text(table, at, inside.y + BAR_Y + 12 + LINE + 8, quic_server.hex_text(key[:], public_key[:]), graphics.colors.text)
 
 	// The connections that the root service made.
 	inside = interface.card(&frame, {8, 208, WIDTH - 16, 144}, "CONNECTIONS", "root: Connect, a call ring and a call region of 64 KiB", graphics.colors.memory)

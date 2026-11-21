@@ -81,6 +81,7 @@
 // between two writers: one terminal serves one process.
 package terminal_process
 
+import "internal:terminal/grid_resize"
 import "modus:contract/enum_word"
 import op "modus:contract/operation"
 import "modus:display"
@@ -136,20 +137,31 @@ scroll_area: interface.Area // The scroll bar of the lines: at the right edge of
 text_view_area: interface.Area // The rows of the lines: the wheel over them moves the view.
 scroll_identity: interface.Element_Identity
 
-layout :: proc "contextless" () {
+chrome_size :: proc "contextless" () -> (chrome_width, chrome_height: int) {
+	chrome_width = TEXT_X + SCROLL_GAP + SCROLL_WIDTH
+	chrome_height = (measure ? HEAD_HEIGHT + 24 : MARGIN) + 8 + CELL_HEIGHT + 6
+	return
+}
+
+layout_for_size :: proc "contextless" (surface_width, surface_height: int) {
 	text_y = measure ? HEAD_HEIGHT : MARGIN
 	text_width = columns * CELL_WIDTH
 	text_height = rows * CELL_HEIGHT
-	status_y = text_y + text_height + 8
-	hint_y = measure ? status_y + 24 : status_y
-	width = TEXT_X + text_width + SCROLL_GAP + SCROLL_WIDTH
-	height = hint_y + CELL_HEIGHT + 6
+	width = surface_width
+	height = surface_height
+	hint_y = height - CELL_HEIGHT - 6
+	status_y = measure ? hint_y - 24 : hint_y
 	graph_x = TEXT_X + text_width - HISTORY * GRAPH_BAR
 	scroll_top := measure ? HEAD_HEIGHT - 6 : 0
 	scroll_area = {width - SCROLL_WIDTH, scroll_top, SCROLL_WIDTH, status_y - 4 - scroll_top}
 	text_view_area = {TEXT_X, text_y, text_width, text_height}
 	scroll_identity = interface.identity("the scroll bar of the lines")
 	list_scroll_identity = interface.identity("the scroll bar of the completion list")
+}
+
+layout :: proc "contextless" () {
+	chrome_w, chrome_h := chrome_size()
+	layout_for_size(chrome_w + columns * CELL_WIDTH, chrome_h + rows * CELL_HEIGHT)
 }
 
 FRAME_TIME :: 16 // Milliseconds.
@@ -338,6 +350,7 @@ View :: struct {
 
 request: Request
 view: View
+grid: grid_resize.Resizable_Grid
 request_word: u32 // 1: the drawer asks for a view. The reader sets 0 when the view is ready.
 reader_idle: u32 // The reader waits, or will wait.
 drawer_waits: u32
@@ -1040,7 +1053,7 @@ drawing_start :: proc "contextless" () {
 // view_grid gives the cells of the view that the window shows: the rows
 // and the columns of this terminal, in the cells of the largest view.
 view_grid :: proc "contextless" () -> interface.Text_Grid {
-	return {cells = ([^]Cell)(&view.cells[0][0])[:ROWS_LIMIT * COLUMNS_LIMIT], columns = columns, rows = rows, stride = COLUMNS_LIMIT}
+	return grid_resize.grid_text_grid(&grid)
 }
 
 tile :: proc "contextless" (table: ^interface.Draw_Table, x: int, label: string, value: u64, color: graphics.Color) {
@@ -1334,6 +1347,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		fail("no surface")
 	}
+	// Bind the resizable grid to view.cells and declare window resize limits.
+	_ = grid_resize.grid_init(&grid, ([^]Cell)(&view.cells[0][0])[:ROWS_LIMIT * COLUMNS_LIMIT], COLUMNS_LIMIT, columns, rows, grid_resize.TERMINAL_WINDOW_BOUNDS)
+	chrome_w, chrome_h := chrome_size()
+	if limits, limits_ok := grid_resize.window_size_limits(chrome_w, chrome_h, CELL_WIDTH, CELL_HEIGHT, grid_resize.TERMINAL_WINDOW_BOUNDS); limits_ok {
+		_, _ = display.resizable_set(&window, limits)
+	}
 	// The surface is text: the pointer over it is the text shape.
 	display.pointer_shape_set(&window, .Text)
 	drawing_start()
@@ -1457,6 +1476,30 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			// An answer of a surface request: the window may hold a new
 			// surface, whose pictures hold nothing yet (display, scale.odin).
 			if event.kind == .Surface_Answer {
+				interface.draw_whole_window_next(&drawing)
+				dirty = true
+				continue
+			}
+			// A window resize: compute new grid dimensions, resize the surface
+			// and cell buffer atomically, update layout, and notify the client.
+			if event.kind == .Resized {
+				cw, ch := chrome_size()
+				new_columns, new_rows, resize_err := grid_resize.grid_dimensions_from_window(event.width, event.height, cw, ch, CELL_WIDTH, CELL_HEIGHT, grid.bounds)
+				if resize_err != .None {
+					_ = display.resize_decline(&window)
+					continue
+				}
+				if display.surface_resize(&window, event.width, event.height) != .Ok {
+					continue
+				}
+				if grid_resize.grid_resize_cells(&grid, new_columns, new_rows) == .None {
+					columns = grid.columns
+					rows = grid.rows
+					layout_for_size(window.width, window.height)
+					if process != 0 {
+						_ = system.send(&source.completions, ring.Record{kind = u32(terminal.Input.Resized), values = {0 = u64(columns), 1 = u64(rows)}})
+					}
+				}
 				interface.draw_whole_window_next(&drawing)
 				dirty = true
 				continue

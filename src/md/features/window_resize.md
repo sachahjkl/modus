@@ -123,4 +123,4 @@ It ignores the event. Its next `present` sends `Resize_Declined` before the pict
 
 ## State
 
-Built: the declaration, the drag of each edge and corner with its shapes and its outline, `Resized` with one request at a time, `surface_resize` and `Resize_Declined`, the change at the first `Present` with the place kept on the screen, the interface package, and `clock` as a resizable window. The terminal (and so the console) stays fixed: its text grid has a size that the terminal ring states, and a change of it is a change of the protocol of the terminal.
+Built: the declaration, the drag of each edge and corner with its shapes and its outline, `Resized` with one request at a time, `surface_resize` and `Resize_Declined`, the change at the first `Present` with the place kept on the screen, the interface package, `clock` as a resizable window, the freestanding terminal grid resize core (`src/library/internal/terminal/grid_resize`) with host tests, and resizable window handling in `src/modules/system/terminal` with `terminal.Input.Resized` client notifications. Left: console reflow on `Resized` and a machine test that drags a terminal window.

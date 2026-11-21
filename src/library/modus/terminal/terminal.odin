@@ -226,13 +226,16 @@ Input :: enum u32 {
 	None       = 0, // Not a record: the process skips it.
 	Key        = 1, // A key was pressed.
 	List_First = 2, // The scroll bar of the completion list asks for a first row.
+	Resized    = 3, // The terminal window changed its text grid size: values[0] columns, values[1] rows.
 }
 
 // One input record, as `input` gives it to the process.
 Input_Record :: struct {
-	kind:       Input, // Key or List_First.
+	kind:       Input, // Key, List_First, or Resized.
 	key:        Key, // Key: the key.
 	list_first: int, // List_First: the first row of the whole list that the scroll bar asks for.
+	columns:    int, // Resized: the new count of columns, 1 to COLUMNS_LIMIT.
+	rows:       int, // Resized: the new count of rows, 1 to ROWS_LIMIT.
 }
 
 // One key, as `key` gives it to the process.
@@ -678,6 +681,11 @@ input_of_record :: proc "contextless" (record: ring.Record) -> (given: Input_Rec
 		// The number is the number of another process: the reader
 		// cuts it to its own list.
 		return {kind = .List_First, list_first = int(min(record.values[0], u64(max(i32))))}, true
+	case .Resized:
+		if record.values[0] < 1 || record.values[0] > COLUMNS_LIMIT || record.values[1] < 1 || record.values[1] > ROWS_LIMIT {
+			return {}, false
+		}
+		return {kind = .Resized, columns = int(record.values[0]), rows = int(record.values[1])}, true
 	}
 	return {}, false
 }
