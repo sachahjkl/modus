@@ -280,7 +280,7 @@ module_builds := [?]Module_Build {
 	{name = "display_conformance", source = TEST_MODULE_SOURCES + "display_conformance"},
 	// The delegated powerbox service implementing Role.Powerbox
 	// (src/md/features/powerbox.md).
-	{name = "powerbox", source = SYSTEM_MODULE_SOURCES + "powerbox", entry = true},
+	{name = "powerbox", source = SYSTEM_MODULE_SOURCES + "powerbox", entry = true, image = true},
 	// The probe module for client-funded work budgets and per-connection work
 	// threads (src/md/features/work_accounting.md).
 	{name = "work_accounting_probe", source = TEST_MODULE_SOURCES + "work_accounting_probe", image = true},
