@@ -111,7 +111,7 @@ character_of_face :: proc "contextless" (face: text_rendering.Face, canvas: Canv
 face_glyph_draw :: #force_no_inline proc "contextless" (face: text_rendering.Face, character: rune, size, position: int, square_root: ^[4096]u8, tables: ^Blend_Tables, order: Subpixel_Order, canvas: Canvas, x, y: int, color: Color, alpha: u32) -> bool {
 	entry, words, source := text_rendering.glyph(face, character, size, position)
 	switch source {
-	case .Missing:
+	case .Missing, .Busy:
 		return false
 	case .Private_Cache, .Not_Kept:
 		glyph_words_draw(entry, words, square_root, tables, order, canvas, x, y, color, alpha)

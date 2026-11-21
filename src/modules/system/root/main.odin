@@ -266,9 +266,10 @@ Started :: struct {
 	revoked:         system.Root_Grants,
 	writer:          ^Started, // A terminal: the process that writes in it. nil after that process stopped.
 	is_terminal:     bool,
-	driver:          ^Started, // The block service that serves this process. nil: none, or it stopped.
-	is_driver:       bool, // A block service: it has the device at `device`.
-	device:          pci.Place,
+	driver:            ^Started, // The device service that serves this process. nil: none, or it stopped.
+	is_driver:         bool, // A device service: it has the device at `device`.
+	bus_master_active: bool, // True while PCI Bus Master is on for this device service.
+	device:            pci.Place,
 	bridge_group:    Bridge_Group, // A device behind a conventional bridge: the buses behind it, whose devices this service holds too (devices.odin). Zero: none.
 	queues:          system.Handle, // A block service: the memory of the queue of its device.
 	network:            ring.Ring, // The network service: the control ring from this service.
@@ -1116,7 +1117,7 @@ control_ring_serve :: proc "contextless" () {
 					if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
 						unlock_stop_ask()
 					}
-					system.process_stop(item.process)
+					started_process_stop(&item)
 				}
 			}
 		}
@@ -1997,7 +1998,7 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	// A terminal that stops: its process stops. A process that stops: its
 	// terminal stays, and shows what the process wrote.
 	if item.writer != nil && item.writer.process != 0 {
-		system.process_stop(item.writer.process)
+		started_process_stop(item.writer)
 	}
 	// A debugged process that stops, a debugger service that stops, and a
 	// caller of the debugger service that stops: the debug access ends.
@@ -2026,10 +2027,10 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	// The connection for a kept stop report ends with its caller and with
 	// the debugger service.
 	debug_store_release(item)
-	// A client that stops: its block service stops. A block service that
-	// stops: the device stops using memory.
+	// A client that stops: its device service stops (bus master off first).
+	// A device service that stops: the device stops using memory.
 	if item.driver != nil && item.driver.process != 0 {
-		system.process_stop(item.driver.process)
+		started_process_stop(item.driver)
 	}
 	if item.is_driver {
 		driver_end(item)

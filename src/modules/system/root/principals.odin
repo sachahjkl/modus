@@ -284,7 +284,7 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 	count: u64
 	for &item in started {
 		if item.process != 0 && item.principal == number {
-			system.process_stop(item.process)
+			started_process_stop(&item)
 			if !item.is_terminal {
 				count += 1
 			}
@@ -308,7 +308,7 @@ principal_lock :: proc "contextless" (completion: ^[7]u64) -> system.Status {
 	// (unlock_for_a_locked_principal).
 	if running := find("unlock"); running != nil {
 		unlock_stop_ask()
-		system.process_stop(running.process)
+		started_process_stop(running)
 		system.log_fact(.Info, Unlock_Stopped_By_Lock{unlock_mode = text_field(principals.mode_words(unlock_run.mode), 40)})
 		return .Ok
 	}

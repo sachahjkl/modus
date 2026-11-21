@@ -110,12 +110,16 @@ text_memory_reserve :: proc "contextless" () -> bool {
 
 // text_not_kept_tell writes one line on the log of the process, once,
 // after the first frame whose glyphs filled its private glyph cache: its
-// pixels were right, and it cost more time; and one line, once, when the
-// budget refused the glyph memory. A process calls it after
-// text_frame_begin; the drawing module does not.
+// pixels were right, and it cost more time; one line, once, when the
+// budget refused the glyph memory; and one line, once, when a second
+// thread was refused from the private glyph cache. A process calls it
+// after text_frame_begin; the drawing module does not.
 text_not_kept_tell :: proc "contextless" () {
 	if count, report := text_rendering.not_kept_report(); report {
 		system.log(.Info, "text_rendering: the glyphs of one frame fill the private glyph cache: ", count, " glyphs drawn and not kept")
+	}
+	if count, report := text_rendering.concurrent_draw_report(); report {
+		system.log(.Warning, "text_rendering: a second thread drew into the private glyph cache while a draw ran: ", count, " calls refused")
 	}
 	if text_memory_status != .Ok && !text_memory_told {
 		text_memory_told = true

@@ -48,7 +48,7 @@ With no IOMMU, a device reaches all memory, and the process that drives it holds
 
 A device service that stops is started again by the root service. The class service keeps its side of the ring and its own state, and takes the ring back from the new device service. For the block ring, the storage service sends again each request that had no completion; for the frame ring, a lost frame is a loss that the protocols above already accept.
 
-The kernel already ends the device domain of a stopped device service before its handles close ([../infrastructure/iommu.md](../infrastructure/iommu.md)). The new device service asks the device for a reset before it uses it. A device that does not reset is left with no service, with one line.
+Before calling `Process_Stop` on any device service, the root service clears PCI Bus Master on its device (`started_process_stop` and `internal:root/device_stop`), so the device makes no access to memory between the stop of its service and the reap, also on a machine with no IOMMU. When a device service stops on its own, `driver_end` turns Bus Master off at the reap before closing its queue memory. The kernel already ends the device domain of a stopped device service before its handles close ([../infrastructure/iommu.md](../infrastructure/iommu.md)). The new device service asks the device for a reset before it uses it. A device that does not reset is left with no service, with one line.
 
 ## Firmware blobs
 

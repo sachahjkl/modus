@@ -80,8 +80,8 @@ entropy_service_start :: proc "contextless" () {
 	}
 	opened: ring.Ring
 	if opened, status = system.ring_open(ring_memory); status != .Ok {
-		// reap takes the device back when the service stopped.
-		system.process_stop(driver.process)
+		// Turn off bus master before stopping the entropy service; reap closes its queue memory.
+		started_process_stop(driver)
 		system.close(ring_memory)
 		system.log_fact(.Warning, Entropy_Ring_Open_Failed{status = status})
 		return
@@ -182,7 +182,7 @@ entropy_reads_late_end :: proc "contextless" () {
 	fresh_bytes_deadline = system.WAIT_FOREVER
 	intrinsics.mem_zero_volatile(&entropy_mixing, size_of(entropy_mixing)) // No read comes after these.
 	system.log_fact(.Warning, Entropy_Reads_Late{deadline_seconds = u64(entropy_read_deadline.READ_DEADLINE_MILLISECONDS / 1000), late_reads = u64(late)})
-	system.process_stop(entropy_process.process)
+	started_process_stop(entropy_process)
 }
 
 // fresh_bytes_read_ask asks the entropy service for the next read of the

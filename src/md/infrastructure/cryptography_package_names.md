@@ -6,7 +6,7 @@ The repository holds a copy of the cryptography of `core:crypto` in `src/library
 
 Odin refuses one program that imports two packages of one name ("Duplicate declaration of 'package _subtle'"). With the names of the origin, a host program could not import both the copy and `core:crypto`:
 
-- The tool `tools/modustool` imports the copy through the system description, the replacement rows and QUIC. It could not import `core:crypto`, so it carries its own SipHash (`tools/modustool/build/fact_key.odin`).
+- The tool `tools/modustool` imports the copy through the system description, the replacement rows and QUIC. Before the rename, it could not import `core:crypto` and carried its own SipHash in `tools/modustool/build/fact_key.odin`.
 - A host program that uses `gui_toolkit` imports `core:crypto/hash` and MD5. It could not also import the QUIC packages of the system. The native viewer of the remote display is such a program.
 
 A name that `core:crypto` does not use removes the clash for each host program at once.
@@ -51,4 +51,4 @@ Only the declared name collides: two packages of one declared name in one progra
 
 ## State
 
-The packages are renamed, and the check and its host tests accept the new names and refuse each other difference. A host test of the tool imports `core:crypto/sha2` and the copy of `sha2` in one package, and both give the SHA-256 of FIPS 180-2. The SipHash of the tool is still its own code. `ROADMAP.md` holds its removal.
+The packages are renamed, and the check and its host tests accept the new names and refuse each other difference. A host test of the tool imports `core:crypto/sha2` and the copy of `sha2` in one package, and both give the SHA-256 of FIPS 180-2. `tools/modustool/build/fact_key.odin` now calls `core:crypto/siphash` directly.

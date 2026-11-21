@@ -1,5 +1,6 @@
 package text_rendering
 
+import "base:intrinsics"
 import "modus:hash_table"
 
 // The private glyph cache (src/md/features/text_rendering.md, "The cache"):
@@ -108,31 +109,59 @@ Glyph_Memory :: struct {
 
 // The counts of a private glyph cache, since the start of the process.
 Private_Counts :: struct {
-	drawn:    u64, // The glyphs drawn into the cache.
-	refused:  u64, // The outlines that the renderer refused.
-	evicted:  u64, // The glyphs that left the cache: each of an older frame.
-	not_kept: u64, // The glyphs drawn and not kept, because the glyphs of their frame filled the cache.
-	banded:   u64, // The glyphs drawn band by band: larger than the largest block, or before the copy had its glyph memory.
+	drawn:              u64, // The glyphs drawn into the cache.
+	refused:            u64, // The outlines that the renderer refused.
+	evicted:            u64, // The glyphs that left the cache: each of an older frame.
+	not_kept:           u64, // The glyphs drawn and not kept, because the glyphs of their frame filled the cache.
+	banded:             u64, // The glyphs drawn band by band: larger than the largest block, or before the copy had its glyph memory.
+	concurrent_refused: u64, // Calls refused because another thread held the private glyph cache.
 }
 
-// Cache_State: what stays global of the cache of this copy, 56 bytes: the
-// glyph memory once given, and the counts and the flags of the frames.
+// Cache_State: what stays global of the cache of this copy: the glyph
+// memory once given, the single-drawer guard, and the counts and flags of
+// the frames.
 Cache_State :: struct {
-	memory:        ^Glyph_Memory, // nil until memory_give.
-	wanted:        bool, // A glyph needed the glyph memory, and the copy had none.
-	frame_full:    bool, // The glyphs of the frame in progress fill the cache: frame_begin clears it.
-	not_kept_told: bool, // not_kept_report gave its one report.
-	counts:        Private_Counts,
+	memory:          ^Glyph_Memory, // nil until memory_give.
+	wanted:          bool, // A glyph needed the glyph memory, and the copy had none.
+	frame_full:      bool, // The glyphs of the frame in progress fill the cache: frame_begin clears it.
+	not_kept_told:   bool, // not_kept_report gave its one report.
+	drawer_active:   u32, // 1 while a thread holds the private glyph cache; 0 when idle.
+	concurrent_told: u32, // 1 after concurrent_draw_report gave its one report.
+	counts:          Private_Counts,
 }
 
 cache_state: Cache_State
+
+// drawer_enter takes the single-drawer guard of the private glyph cache.
+// When another thread already holds the cache, it counts the refusal
+// atomically and returns false so the second thread touches no cache list.
+@(private)
+drawer_enter :: proc "contextless" () -> bool {
+	_, ok := intrinsics.atomic_compare_exchange_strong_explicit(&cache_state.drawer_active, 0, 1, .Acquire, .Relaxed)
+	if !ok {
+		intrinsics.atomic_add_explicit(&cache_state.counts.concurrent_refused, 1, .Relaxed)
+		return false
+	}
+	return true
+}
+
+// drawer_leave releases the single-drawer guard taken by drawer_enter.
+@(private)
+drawer_leave :: proc "contextless" () {
+	intrinsics.atomic_store_explicit(&cache_state.drawer_active, 0, .Release)
+}
 
 // memory_give makes a memory of the caller the glyph memory of this copy:
 // on a machine, pages that display.text_memory_reserve takes from the
 // budget of the process; in a host test, memory of the test. The memory
 // must be all zero: the cache starts empty. A second give replaces the
-// first, which the caller then owns again.
+// first, which the caller then owns again. Refuses without changing memory
+// when another thread holds the cache.
 memory_give :: proc "contextless" (memory: ^Glyph_Memory) {
+	if !drawer_enter() {
+		return
+	}
+	defer drawer_leave()
 	cache_state.memory = memory
 	cache_state.wanted = false
 	cache_state.frame_full = false
@@ -162,7 +191,9 @@ entry_hash_of_reference :: proc "contextless" (owner: rawptr, reference: u64) ->
 
 // counts gives the counts of the private glyph cache of this copy.
 counts :: proc "contextless" () -> Private_Counts {
-	return cache_state.counts
+	result := cache_state.counts
+	result.concurrent_refused = intrinsics.atomic_load_explicit(&cache_state.counts.concurrent_refused, .Relaxed)
+	return result
 }
 
 // not_kept_report gives the count of the glyphs drawn and not kept, once:
@@ -175,6 +206,20 @@ not_kept_report :: proc "contextless" () -> (count: u64, report: bool) {
 	}
 	cache_state.not_kept_told = true
 	return cache_state.counts.not_kept, true
+}
+
+// concurrent_draw_report gives the count of calls refused because another
+// thread held the private glyph cache, once: report is true at the first
+// call after the first refusal, and never again. The caller writes its one
+// line on the log: this package calls no operation of the kernel, so the
+// host tests run it.
+concurrent_draw_report :: proc "contextless" () -> (count: u64, report: bool) {
+	count = intrinsics.atomic_load_explicit(&cache_state.counts.concurrent_refused, .Acquire)
+	if count == 0 {
+		return 0, false
+	}
+	_, first := intrinsics.atomic_compare_exchange_strong_explicit(&cache_state.concurrent_told, 0, 1, .Acq_Rel, .Relaxed)
+	return count, first
 }
 
 // ---- The runs of blocks.
@@ -429,9 +474,14 @@ not_kept_glyph :: proc "contextless" (box: Raster_Box) -> (entry: Glyph_Entry, w
 }
 
 // private_glyph gives the glyph of a key from the private glyph cache, and
-// draws it there at its first use.
+// draws it there at its first use. Refuses with Busy when another thread
+// already holds the cache, leaving its lists untouched.
 @(private)
 private_glyph :: proc "contextless" (face: Face, font: Outline_Font, glyph_index, size, position: int) -> (entry: Glyph_Entry, words: [^]u32, source: Glyph_Source) {
+	if !drawer_enter() {
+		return {}, nil, .Busy
+	}
+	defer drawer_leave()
 	// The key holds 16 bits of the glyph index: a larger index, which no
 	// font file of TrueType gives, would be the key of another glyph.
 	if glyph_index < 0 || glyph_index > GLYPH_INDEX_LIMIT {

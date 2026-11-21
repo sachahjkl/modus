@@ -270,7 +270,7 @@ start_abandon :: proc "contextless" (work: ^Start_Work) {
 		work.view^ = {}
 	}
 	if work.driver != nil {
-		system.process_stop(work.driver.process)
+		started_process_stop(work.driver)
 	}
 }
 
@@ -638,7 +638,7 @@ start_finish :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	}
 	if work.view != nil {
 		if status := terminal_start(work.view, slot, work.shared[0], work.shared[1]); status != .Ok {
-			system.process_stop(slot.process)
+			started_process_stop(slot)
 			return status
 		}
 		started_log(work.name, work.principal, true)
