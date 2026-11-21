@@ -1,0 +1,3 @@
+type: Added
+
+**Declarative plans, recipes, and projects contracts and services**: added the `plans_recipes` contract package with canonical plan hashing, grant-difference computation feeding `powerbox` (`Show_Plan_Difference`), `applied_plans` store records and rollback validation, domain-separated `recipe_hash` and `Substitution_Policy` cache verification, deterministic `pins.lex` formatting and strict parsing, unified source resolver records, and `projects.enter`/`exit` console specifications; added the pure `plans_core`, `recipes_core`, and `projects_core` state machines with adversarial host tests; and added the freestanding `plans`, `recipes`, and `projects` system service modules.
