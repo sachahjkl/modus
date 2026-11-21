@@ -461,7 +461,11 @@ line_enter :: proc "contextless" () {
 	system.unlock(&output_lock)
 	if len(text) > 0 {
 		system.lock(&history_lock)
-		line_editor.history_add(&history, text)
+		if line_editor.history_add(&history, text) {
+			// The frecency counts the lines that the history holds, so
+			// that a load builds the same table from the kept lines.
+			line_editor.frecency_note_line(&completion_frecency, text)
+		}
 		system.unlock(&history_lock)
 		system.log_fact(.Info, Line_Entered{}, text)
 		work.count = copy(work.text[:], text)

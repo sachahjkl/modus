@@ -222,8 +222,9 @@ one_ranked_list_over_the_kinds :: proc(t: ^testing.T) {
 	testing.expect(t, chosen_entry(panel) == nil)
 }
 
-// A recent choice comes first among equal scores only: a better match
-// always comes before it.
+// A recent choice comes first among equal scores. Its frecency bonus, at
+// most line_editor.FRECENCY_BONUS_LIMIT points, never passes a match with
+// one more start of a word or one more run.
 @(test)
 a_recent_choice_wins_a_tie_only :: proc(t: ^testing.T) {
 	panel := panel_make()
@@ -248,6 +249,29 @@ a_recent_choice_wins_a_tie_only :: proc(t: ^testing.T) {
 	testing.expect_value(t, row_text(panel, 0), "plasma (window)")
 	testing.expect_value(t, row_text(panel, 1), "plasma (module)")
 	testing.expect_value(t, row_text(panel, 2), "sample (module)")
+}
+
+// Each run counts in the frecency of the panel, and a used entry passes a
+// match that differs only by a gap: "abc" gives abxc 93 points and axxbc
+// 92, and one run of axxbc adds 4. The close of a window counts nothing.
+@(test)
+the_frecency_of_the_runs :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	names := [?]string{"abxc", "axxbc"}
+	entries_collect(panel, names[:], {{title = "w"}})
+	type_text(panel, "abc")
+	testing.expect_value(t, row_text(panel, 0), "abxc (module)")
+	testing.expect_value(t, row_text(panel, 1), "axxbc (module)")
+	recent_note(panel, &panel.list.entries[2]) // axxbc
+	testing.expect_value(t, line_editor.frecency_bonus(&panel.frecency, "axxbc"), 4)
+	recent_note(panel, &panel.list.entries[panel.list.entry_count - 1]) // close w
+	testing.expect_value(t, line_editor.frecency_score(&panel.frecency, "close w"), 0)
+	entries_collect(panel, names[:], {{title = "w"}})
+	testing.expect_value(t, row_text(panel, 0), "axxbc (module)")
+	testing.expect_value(t, row_text(panel, 1), "abxc (module)")
+	// The places stay the places of the match.
+	testing.expect_value(t, panel.list.rows[0].places, line_editor.Match_Places{0, 3, 4})
 }
 
 // With no typed part: the windows, the front one first, then the modules
@@ -991,7 +1015,7 @@ table_make :: proc(given: []Given) -> []u8 {
 
 @(private = "file")
 collect_with_table :: proc(panel: ^Panel, table: []u8) -> palette_table.Problem {
-	problem, _ := list_collect(panel.list, nil, MODULE_NAMES[:], {{title = "console", number = 3, focus = true}}, table)
+	problem, _ := list_collect(panel.list, {}, MODULE_NAMES[:], {{title = "console", number = 3, focus = true}}, table)
 	list_build(panel)
 	return problem
 }

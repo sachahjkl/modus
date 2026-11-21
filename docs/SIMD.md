@@ -4,7 +4,7 @@ This document says which procedures of the system compute with vectors, in which
 
 **The idea in plain words.** A processor has registers that hold several numbers side by side, and instructions that compute on all of them at once. A procedure that works on many pixels or many words can use them: it does the work of four values with one instruction. That is its **vector form**. The same procedure written with one value for each instruction is its **scalar form**. In this system a procedure that has a vector form also keeps its scalar form, and the two must give the same bytes for every input: the vector form is only faster, never different. Host tests compare the two, so a fault of the vector form shows as a wrong byte, not as a wrong picture.
 
-**What has a vector form today.** Four procedures, all with the 128-bit registers of SSE2:
+**What has a vector form today.** Five procedures, all with 128-bit registers (SSE2 on x86-64):
 
 | Procedure | Scalar form | Vector form | Values for each step |
 |---|---|---|---|
@@ -12,12 +12,13 @@ This document says which procedures of the system compute with vectors, in which
 | The blend of colors with straight alpha: the colors of the draw records and the pictures with alpha | `blend_straight_alpha_row_scalar` (`src/library/support/graphics/blend.odin`) | `blend_straight_alpha_row_sse2` (`src/library/support/graphics/blend_vectors_amd64.odin`) | 4 pixels |
 | The blend of a picture with premultiplied alpha | `blend_premultiplied_alpha_row_scalar` (`src/library/support/graphics/blend.odin`) | `blend_premultiplied_alpha_row_sse2` (`src/library/support/graphics/blend_vectors_amd64.odin`) | 4 pixels |
 | The BLAKE3 hash of a subtree of four chunks | `chunk_value`, four times (`src/library/contract/blake3/blake3.odin`) | `four_chunk_values_side_by_side` (`src/library/contract/blake3/chunks_side_by_side_amd64.odin`) | 4 chunks |
+| The fuzzy match of a query against a name | `fuzzy_match_scalar` (`src/library/support/line_editor/fuzzy_match.odin`) | `fuzzy_match_vectors` (`src/library/support/line_editor/fuzzy_match_vectors.odin`) | 16 bytes |
 
 **What this document is not.** It is not the rule on the vector registers of the kernel. The kernel has no vector instruction at all, and it saves the registers of each thread: `docs/ARCHITECTURE.md`, "The extended state of the processor". It is not the design of the blend in linear light either: `docs/FONTS.md`, "The blend in linear light".
 
 **For whom.** A reader who writes or changes a vector form, and a reader who measures one.
 
-**The map of this document.** Section 1: the rule of the same bytes. Section 2: why one form, SSE2. Sections 3 to 5: the blend of a glyph, the compositor, BLAKE3. Section 6: how to measure on the machine. Section 7: limits.
+**The map of this document.** Section 1: the rule of the same bytes. Section 2: why one form, SSE2. Sections 3 to 5: the blend of a glyph, the compositor, BLAKE3. Section 6: how to measure on the machine. Section 7: limits. Section 8: the fuzzy match.
 
 ## 1. The rule of the same bytes
 
@@ -47,7 +48,7 @@ blend_premultiplied_alpha_row :: #force_inline proc "contextless" (to: [^]Color,
 - the edge values often: 0, 1, 254 and 255 in each byte, whole words of 0, of all ones and of full coverage;
 - guard words before and after each row: a form that writes outside its columns changes them.
 
-When a test fails, it gives the first wrong pixel, the value of each form, and the count of pixels changed outside the drawn columns. The tests of the blends are in `src/library/support/graphics/blend_vectors_test_amd64.odin` (`coverage_forms_give_the_bytes_of_the_scalar_form`, `coverage_forms_meet_each_channel_value`, `premultiplied_forms_give_the_bytes_of_the_scalar_form`, `premultiplied_forms_meet_each_channel_value`, `straight_alpha_forms_give_the_bytes_of_the_scalar_form`, `straight_alpha_forms_meet_each_channel_value`, `coverage_forms_with_alpha_give_the_bytes_of_the_scalar_form`). The tests of the hash are in `src/library/contract/blake3/chunks_side_by_side_test_amd64.odin` (`sse2_form_gives_the_hash_of_the_scalar_form`, `subtrees_side_by_side_at_each_counter`). `modustool check` runs them.
+When a test fails, it gives the first wrong pixel, the value of each form, and the count of pixels changed outside the drawn columns. The tests of the blends are in `src/library/support/graphics/blend_vectors_test_amd64.odin` (`coverage_forms_give_the_bytes_of_the_scalar_form`, `coverage_forms_meet_each_channel_value`, `premultiplied_forms_give_the_bytes_of_the_scalar_form`, `premultiplied_forms_meet_each_channel_value`, `straight_alpha_forms_give_the_bytes_of_the_scalar_form`, `straight_alpha_forms_meet_each_channel_value`, `coverage_forms_with_alpha_give_the_bytes_of_the_scalar_form`). The tests of the hash are in `src/library/contract/blake3/chunks_side_by_side_test_amd64.odin` (`sse2_form_gives_the_hash_of_the_scalar_form`, `subtrees_side_by_side_at_each_counter`). The tests of the fuzzy match are in `src/library/support/line_editor/fuzzy_match_vectors_test.odin` (`vector_form_at_the_edges`, `vector_form_gives_the_result_of_the_scalar_form`). `modustool check` runs them.
 
 ## 2. One form: SSE2
 
@@ -207,6 +208,7 @@ On the host, with the optimisation of a module. Each test prints the time of eac
 ```
 nix develop -c odin test src/library/support/graphics -o:speed -vet -collection:modus=src/library -define:ODIN_TEST_NAMES=graphics.glyph_draw_cost_of_each_form
 nix develop -c odin test src/library/contract/blake3 -o:speed -vet -collection:modus=src/library -define:ODIN_TEST_NAMES=blake3.hash_cost_of_each_form
+nix develop -c odin test src/library/support/line_editor -o:speed -microarch:x86-64 -vet -collection:modus=src/library -define:MEASURE=true -define:ODIN_TEST_NAMES=line_editor.fuzzy_match_speed_of_each_form
 ```
 
 `graphics.text_speed_of_each_blend` gives the time of one glyph with the blend table, with the SSE2 form alone and with the scalar form alone, in the same way.
@@ -217,3 +219,33 @@ nix develop -c odin test src/library/contract/blake3 -o:speed -vet -collection:m
 - The object code of the SSE2 forms is not read yet: the measures say if the compiler lowered the 16-bit products to `pmullw` and `pmulhuw`.
 - The cryptography of the system has no vector form: it keeps the portable implementations of its origin (`docs/CRYPTOGRAPHY.md`).
 - No vector form uses a usable instruction set above SSE2. The package `src/library/support/instruction_sets` has two users, the test modules `extended_state` and `return_fault`.
+
+## 8. The fuzzy match (`src/library/support/line_editor`)
+
+**Where it runs.** The console completion and the ranking thread of the palette match each candidate name against the typed query (`fuzzy_match`, `rank_candidates`). The scoring rule is in `docs/CONSOLE.md`, "3. The fuzzy match", and the design is in `src/md/features/fuzzy_match.md`.
+
+**The portable vector form** is `fuzzy_match_vectors` in `src/library/support/line_editor/fuzzy_match_vectors.odin`. It uses `#simd[16]u8` vectors and `base:intrinsics` only, so it compiles on every architecture without a target guard: SSE2 on x86-64, NEON on ARM64.
+
+- **Blocks of 16 bytes.** The name is read in at most 8 blocks (`NAME_SCAN_LIMIT = 128`). A partial last block is copied into zeros so no load reads past the slice of the caller.
+- **ASCII check.** All blocks are OR-ed and `simd_extract_msbs` checks bit 7. Any name or query with a byte past ASCII falls back to `fuzzy_match_scalar`.
+- **Lowering in lanes.** `A` to `Z` become `a` to `z`, and control bytes (`< 0x20` or `0x7F`) become `0x80` (`CONTROL_MARK`), matching how the scalar form decodes them as the replacement character.
+- **Bitmask prefilter and two passes.** For each query character, comparing against each lowered block and extracting MSBs yields one `u128` mask (clipped to the length of the name). A zero mask above the previous position stops the match at once. The forward pass takes `count_trailing_zeros` to find the earliest end; the backward pass takes `count_leading_zeros` to find the latest start of the shortest window.
+
+**Verification.** `vector_form_at_the_edges` tests empty inputs, block borders (15, 16, 17, 31, 32, 33 bytes), scan and query bounds (64/65 and 127/128/129 bytes), zero bytes against padding, control bytes, and non-ASCII UTF-8. `vector_form_gives_the_result_of_the_scalar_form` compares `fuzzy_match_vectors` against `fuzzy_match_scalar` on 200 000 deterministic cases (seed `0x9E3779B97F4A7C15`), checking exact equality of `matched`, `score`, and `places`.
+
+**Host measure** (`-o:speed -microarch:x86-64 -define:MEASURE=true`, host load 6.90, four queries over realistic exports, module names, and file paths):
+
+| Candidates | Query (matches) | Scalar (M names/s) | Vector (M names/s) | Speedup |
+|---|---|---|---|---|
+| 100 | `mcnt` (5) | 8.4 | 60.6 | 7.2x |
+| 100 | `stwr` (9) | 8.7 | 51.9 | 6.0x |
+| 100 | `srclinedit` (0) | 7.6 | 52.1 | 6.8x |
+| 100 | `zqj` (0) | 8.0 | 53.0 | 6.7x |
+| 10 000 | `mcnt` (1130) | 7.4 | 35.7 | 4.8x |
+| 10 000 | `stwr` (472) | 7.0 | 36.5 | 5.2x |
+| 10 000 | `srclinedit` (59) | 5.8 | 32.4 | 5.6x |
+| 10 000 | `zqj` (0) | 8.1 | 66.2 | 8.2x |
+| 100 000 | `mcnt` (11 419) | 8.0 | 37.7 | 4.7x |
+| 100 000 | `stwr` (4894) | 7.4 | 35.7 | 4.9x |
+| 100 000 | `srclinedit` (606) | 6.8 | 34.3 | 5.1x |
+| 100 000 | `zqj` (0) | 8.7 | 64.9 | 7.5x |

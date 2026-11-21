@@ -90,7 +90,18 @@ decode_lowered :: proc "contextless" (bytes: string, decoded: ^Decoded_Text($Cap
 // character of the query is missing, or the query is longer than
 // QUERY_LIMIT bytes. places gets the places that gave the score. An empty
 // query matches each name with the score 0 and no place.
-fuzzy_match :: proc "contextless" (query: string, name: string) -> (score: int, places: Match_Places, matched: bool) {
+//
+// The portable vector form runs (fuzzy_match_vectors.odin); it gives the
+// result of the scalar form for every input
+// (src/md/features/fuzzy_match.md).
+fuzzy_match :: #force_inline proc "contextless" (query: string, name: string) -> (score: int, places: Match_Places, matched: bool) {
+	return fuzzy_match_vectors(query, name)
+}
+
+// fuzzy_match_scalar is the reference form of fuzzy_match: it decodes the
+// name and the query into characters and walks them. It is also the code
+// of a name with a byte past ASCII.
+fuzzy_match_scalar :: proc "contextless" (query: string, name: string) -> (score: int, places: Match_Places, matched: bool) {
 	if len(query) > QUERY_LIMIT {
 		return 0, {}, false
 	}
@@ -177,12 +188,16 @@ Candidate :: struct {
 	kind:      Candidate_Kind, // What the name is.
 	tie_order: u32, // Equal scores: the smaller first. A history gives the age of the line (0: the newest).
 	number:    u32, // For the caller: the index of the thing in its own table.
+	// The frecency bonus of the name (frecency_bonus), 0 to
+	// FRECENCY_BONUS_LIMIT: added to the score of a match, it never makes
+	// a name match.
+	bonus:     u8,
 }
 
 // One name that matched, in the order of the ranking.
 Ranked :: struct {
 	candidate: int, // The index in the table of candidates.
-	score:     int, // The score of the match: higher is better.
+	score:     int, // The score of the match with the frecency bonus of the candidate: higher is better.
 	places:    Match_Places, // The bytes of the name that matched.
 }
 
@@ -234,6 +249,7 @@ rank_candidates :: proc "contextless" (query: string, candidates: []Candidate, r
 			continue
 		}
 		matched += 1
+		score += int(min(candidate.bonus, FRECENCY_BONUS_LIMIT))
 		entry := Ranked {
 			candidate = index,
 			score     = score,
