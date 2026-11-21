@@ -91,7 +91,10 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 		case .Path:
 			range := transmute(Range_Fields)new.fields
 			return points_places_agree(before, range.first, now, range.first) && texts_equal(before, range.first, now, range.first, range.count)
-		case .None, .Rectangle, .Gradient, .Clip_Push, .Clip_Pop, .Picture, .Text_Grid:
+		case .Element_Push:
+			fields := transmute(draw_record.Element_Push_Fields)new.fields
+			return element_push_payload_equal(before, fields, now, fields)
+		case .None, .Rectangle, .Gradient, .Clip_Push, .Clip_Pop, .Element_Pop, .Picture, .Text_Grid:
 			return true
 		}
 		return true
@@ -115,10 +118,54 @@ records_equal :: proc "contextless" (before: ^Draw_Table, old: Draw_Record, now:
 			return false
 		}
 		return texts_equal(before, old_range.first, now, new_range.first, new_range.count)
-	case .None, .Rectangle, .Gradient, .Clip_Push, .Clip_Pop, .Picture:
+	case .Element_Push:
+		old_fields := transmute(draw_record.Element_Push_Fields)old.fields
+		new_fields := transmute(draw_record.Element_Push_Fields)new.fields
+		old_norm, new_norm := old_fields, new_fields
+		old_norm.name_first, new_norm.name_first = 0, 0
+		old_norm.detail_first, new_norm.detail_first = 0, 0
+		if old.element != new.element || old.left != new.left || old.top != new.top || old.right != new.right || old.bottom != new.bottom || old.reserved != new.reserved || old_norm != new_norm {
+			return false
+		}
+		return element_push_payload_equal(before, old_fields, now, new_fields)
+	case .None, .Rectangle, .Gradient, .Clip_Push, .Clip_Pop, .Element_Pop, .Picture:
 		return false
 	}
 	return false
+}
+
+// element_push_payload_equal compares the name and detail byte ranges of two
+// Element_Push records across two frames.
+@(private)
+element_push_payload_equal :: proc "contextless" (before: ^Draw_Table, old_fields: draw_record.Element_Push_Fields, now: ^Draw_Table, new_fields: draw_record.Element_Push_Fields) -> bool {
+	if old_fields.name_count != new_fields.name_count || old_fields.detail_count != new_fields.detail_count {
+		return false
+	}
+	if old_fields.name_count > 0 && !texts_equal(before, old_fields.name_first, now, new_fields.name_first, u32(old_fields.name_count)) {
+		return false
+	}
+	if old_fields.detail_count > 0 {
+		detail_bytes := u32(old_fields.detail_count) * draw_record.ELEMENT_DETAIL_RECORD_SIZE
+		if !points_places_agree(before, old_fields.detail_first, now, new_fields.detail_first) {
+			return false
+		}
+		if !texts_equal(before, old_fields.detail_first, now, new_fields.detail_first, detail_bytes) {
+			return false
+		}
+	}
+	return true
+}
+
+// record_draws reports whether a record can change pixels on the surface.
+// Element_Push and Element_Pop carry semantic metadata only and draw nothing,
+// so a change to them damages zero pixels.
+@(private)
+record_draws :: proc "contextless" (record: Draw_Record) -> bool {
+	kind, known := draw_record.draw_kind_of_word(record.kind)
+	if !known {
+		return true
+	}
+	return kind != .Element_Push && kind != .Element_Pop
 }
 
 // points_places_agree says if the points of two paths are at places that
@@ -220,14 +267,24 @@ damage_by_difference :: proc "contextless" (before, now: ^Draw_Table, damage: ^D
 			damage_rest(before, now, index, damage)
 			return
 		}
-		damage_add(damage, record_rectangle(old))
-		damage_add(damage, record_rectangle(new))
+		if record_draws(old) {
+			damage_add(damage, record_rectangle(old))
+		}
+		if record_draws(new) {
+			damage_add(damage, record_rectangle(new))
+		}
 	}
 	for index in shared ..< before.record_count {
-		damage_add(damage, record_rectangle(draw_record.copy_once(&before.records[index])))
+		record := draw_record.copy_once(&before.records[index])
+		if record_draws(record) {
+			damage_add(damage, record_rectangle(record))
+		}
 	}
 	for index in shared ..< now.record_count {
-		damage_add(damage, record_rectangle(draw_record.copy_once(&now.records[index])))
+		record := draw_record.copy_once(&now.records[index])
+		if record_draws(record) {
+			damage_add(damage, record_rectangle(record))
+		}
 	}
 }
 
@@ -239,7 +296,7 @@ damage_rest :: proc "contextless" (before, now: ^Draw_Table, first: int, damage:
 	for table in tables {
 		for index in first ..< table.record_count {
 			record := draw_record.copy_once(&table.records[index])
-			if clip_word_of(record) == .Not_A_Clip {
+			if clip_word_of(record) == .Not_A_Clip && record_draws(record) {
 				damage_add(damage, record_rectangle(record))
 			}
 		}

@@ -60,6 +60,10 @@ record_view :: proc(record: Draw_Record) -> Record_View {
 		view.kind = .Clip_Push
 	case draw_record.Draw_Clip_Pop:
 		view.kind = .Clip_Pop
+	case draw_record.Draw_Element_Push:
+		view.kind = .Element_Push
+	case draw_record.Draw_Element_Pop:
+		view.kind = .Element_Pop
 	case draw_record.Draw_Rectangle:
 		view.kind, view.repetition = .Rectangle, fields.repetition
 		view.color, view.alpha = draw_record.channels_of(fields.color), draw_record.alpha_of(fields.color)

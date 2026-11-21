@@ -62,9 +62,16 @@ fuzz_draw_record_execute :: proc(input: []u8) -> Fuzz_Verdict {
 			if !draw_record.path_fields_valid(value) {
 				return fuzz_broken(.Contract, "the record %d: read takes a path whose range or stroke is out of its bounds", index)
 			}
-		case draw_record.Draw_Clip_Pop:
+		case draw_record.Draw_Clip_Pop, draw_record.Draw_Element_Pop:
 			if record.left != 0 || record.top != 0 || record.right != 0 || record.bottom != 0 {
-				return fuzz_broken(.Contract, "the record %d: read takes a pop of a clip whose box is not 0", index)
+				return fuzz_broken(.Contract, "the record %d: read takes a pop whose box is not 0", index)
+			}
+		case draw_record.Draw_Element_Push:
+			if record.element == 0 {
+				return fuzz_broken(.Contract, "the record %d: read takes an element push with element 0", index)
+			}
+			if value.name_count > draw_record.ELEMENT_NAME_LIMIT || value.detail_count > draw_record.ELEMENT_DETAIL_LIMIT {
+				return fuzz_broken(.Contract, "the record %d: read takes an element push past its name or detail bound", index)
 			}
 		case draw_record.Draw_Text:
 			if int(value.size) < draw_record.TEXT_SIZE_MINIMUM || int(value.size) > draw_record.TEXT_SIZE_LIMIT {
@@ -134,7 +141,7 @@ draw_color_problem :: proc(primitive: draw_record.Draw_Primitive) -> string {
 		if (value.stroke_color == 0) != (value.stroke_width == 0) {
 			return "a path whose stroke has a width and no color, or a color and no width"
 		}
-	case draw_record.Draw_Nothing, draw_record.Draw_Clip_Push, draw_record.Draw_Clip_Pop, draw_record.Draw_Picture, draw_record.Draw_Text_Grid:
+	case draw_record.Draw_Nothing, draw_record.Draw_Clip_Push, draw_record.Draw_Clip_Pop, draw_record.Draw_Element_Push, draw_record.Draw_Element_Pop, draw_record.Draw_Picture, draw_record.Draw_Text_Grid:
 	}
 	return ""
 }

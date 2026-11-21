@@ -174,7 +174,7 @@ scroll_bar_along :: proc "contextless" (area: Area, direction: Scroll_Bar_Direct
 // thumb has none: it moves each time the content grows, and each move
 // would be a line of the log. A bar too short for its arrow buttons names
 // no button.
-scroll_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, direction: Scroll_Bar_Direction, range: Scroll_Range, steps: Scroll_Bar_Steps = {}, name := "", view: Area = {}) -> (result: Scroll_Bar_Result) {
+scroll_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, direction: Scroll_Bar_Direction, range: Scroll_Range, steps: Scroll_Bar_Steps = {}, name := "", view: Area = {}, controls: u32 = 0) -> (result: Scroll_Bar_Result) {
 	state := frame.state
 	input := frame.input
 	vertical := direction == .Vertical
@@ -281,7 +281,20 @@ scroll_bar :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 	if look.under_pointer || look.pressed == .Thumb {
 		frame.scroll_bar_lit = element
 	}
+	draw_element_push(frame.table, area, u32(element), .Scroll_Bar, {
+		name              = name != "" ? name : "scroll bar",
+		orientation       = vertical ? .Vertical : .Horizontal,
+		has_value_now     = true,
+		value_now         = i64(first),
+		has_value_minimum = true,
+		value_minimum     = 0,
+		has_value_maximum = true,
+		value_maximum     = i64(geometry.range),
+		controls          = controls,
+		actions           = {.Increment, .Decrement, .Set_Value},
+	})
 	scroll_bar_draw(frame.table, area, direction, drawn, look, nil, u32(element))
+	draw_element_pop(frame.table)
 	if name != "" {
 		scroll_bar_parts_name(frame, area, direction, drawn, name)
 		if view.width > 0 && view.height > 0 {

@@ -24,6 +24,9 @@ bar_frame_begin :: proc(memory: ^Bar_Frame) -> Frame {
 records_inside :: proc(t: ^testing.T, table: ^Draw_Table, area: Area, name: string) {
 	for record in table.records[:table.record_count] {
 		view := record_view(record)
+		if view.kind == .Element_Pop || view.kind == .Clip_Pop {
+			continue
+		}
 		inside := view.x >= area.x && view.y >= area.y && view.x + view.width <= area.x + area.width && view.y + view.height <= area.y + area.height
 		testing.expectf(t, inside, "%s: a record at %d,%d of %d x %d passes the area", name, view.x, view.y, view.width, view.height)
 	}
@@ -83,18 +86,20 @@ bar_with_value_places_the_bar_and_the_value :: proc(t: ^testing.T) {
 	frame := bar_frame_begin(&memory)
 	area := Area{284, 40, 300, TABLE_LINE}
 	bar_with_value(&frame, area, 200, 50, 100, graphics.colors.process)
-	testing.expect_value(t, memory.table.record_count, 3)
-	track := record_view(memory.table.records[0])
+	testing.expect_value(t, memory.table.record_count, 5)
+	testing.expect_value(t, record_view(memory.table.records[0]).kind, Draw_Kind.Element_Push)
+	track := record_view(memory.table.records[1])
 	testing.expect(t, is_solid_rectangle(track), "the track is a solid rectangle")
 	testing.expect_value(t, track.x, area.x)
 	testing.expect_value(t, track.y, area.y + (TABLE_LINE - BAR_WITH_VALUE_THICKNESS) / 2)
 	testing.expect_value(t, track.width, 200)
 	testing.expect_value(t, track.height, BAR_WITH_VALUE_THICKNESS)
-	full := record_view(memory.table.records[1])
+	full := record_view(memory.table.records[2])
 	testing.expect_value(t, full.width, 100)
-	value := record_view(memory.table.records[2])
+	value := record_view(memory.table.records[3])
 	testing.expect_value(t, value.kind, Draw_Kind.Text)
 	testing.expect_value(t, value.x, area.x + 200 + BAR_WITH_VALUE_GAP)
 	testing.expect_value(t, value.y, area.y + (TABLE_LINE - line_height({})) / 2)
 	testing.expect_value(t, string(memory.text[value.first:][:value.count]), "50")
+	testing.expect_value(t, record_view(memory.table.records[4]).kind, Draw_Kind.Element_Pop)
 }

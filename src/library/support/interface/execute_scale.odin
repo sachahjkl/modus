@@ -74,7 +74,7 @@ record_at_scale_draw :: proc "contextless" (table: ^Draw_Table, canvas: graphics
 	x, y := place.left - area.left, place.top - area.top
 	width, height := place.right - place.left, place.bottom - place.top
 	switch fields in primitive {
-	case draw_record.Draw_Nothing, draw_record.Draw_Clip_Push, draw_record.Draw_Clip_Pop:
+	case draw_record.Draw_Nothing, draw_record.Draw_Clip_Push, draw_record.Draw_Clip_Pop, draw_record.Draw_Element_Push, draw_record.Draw_Element_Pop:
 	case draw_record.Draw_Rectangle:
 		// The box on the screen is on whole pixels: no pixel is covered
 		// in part.
