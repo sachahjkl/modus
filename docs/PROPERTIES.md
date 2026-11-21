@@ -1,6 +1,6 @@
 # Kernel properties
 
-This document gives the 23 properties on which `modus` is built: the rules that every part of the system obeys, what each rule forbids, and what it costs. They are the fundamental concepts of the system: a design that breaks one is wrong until the property itself changes.
+This document gives the 24 properties on which `modus` is built: the rules that every part of the system obeys, what each rule forbids, and what it costs. They are the fundamental concepts of the system: a design that breaks one is wrong until the property itself changes.
 
 ## How to read this document
 
@@ -13,8 +13,8 @@ This document gives the 23 properties on which `modus` is built: the rules that 
 | Section | What it says |
 |---|---|
 | "Objective", "Assumptions" | What the system aims at, and the three rules of every decision |
-| "Summary" | The 23 properties in one table, with their status |
-| "1. Small kernel with a small, counted interface" to "23. A role is a contract; its implementation is replaceable" | One section for each property |
+| "Summary" | The 24 properties in one table, with their status |
+| "1. Small kernel with a small, counted interface" to "24. Every input of a process passes through a channel that can be recorded" | One section for each property |
 | "Tensions between properties" | Where two properties pull against each other, and the answer |
 | "Reuse list", "Open decisions", "First milestone" | What the system takes from others, what is still open, and the first end-to-end system |
 
@@ -88,6 +88,7 @@ Three rules apply to every decision:
 | 21 | Principals: who acts, without users | Decided (layers 1 and 2); direction for the rest |
 | 22 | General mechanisms, and a plain expression for each frequent task | Decided |
 | 23 | A role is a contract; its implementation is replaceable | Decided (designed, not built) |
+| 24 | Every input of a process passes through a channel that can be recorded | Decided (mechanism designed, not built) |
 
 ## 1. Small kernel with a small, counted interface
 
@@ -580,6 +581,43 @@ Status: Decided. The mechanism is designed, not built.
 - **Open**: the description of a face that is a ring and not a call: the window ring of the display, the terminal ring and the class rings of the devices carry handles, which a description of the module format cannot carry today. Whether each service that a process connects to is a role. The holder of a role in the trusted path that a principal chooses from the disk.
 - **State**: designed, not built (`src/md/features/roles_and_contracts.md`). The root service gives each role to a module by its name, and many clients depend on the private protocol of the holder of today; the work that removes each dependency is in `ROADMAP.md`. The root service itself is split by this property into a core and delegated services (`src/md/api/root_service_split.md`).
 
+## 24. Every input of a process passes through a channel that can be recorded
+
+Status: Decided. The mechanism is designed, not built (`src/md/features/record_and_replay.md`).
+
+**In short.** A process learns nothing from outside its own code except through a channel that the kernel can record: its context, its kernel entries, its faults, the pages that another party writes, the cycle counter and the answers of `cpuid`. So the kernel can write each input of one process in order, and a replay runs that process again alone, with the same values at the same instructions.
+
+- **Rule**: No input reaches a process except through a channel that can be recorded. A process input is a value that a process reads and that neither its own code nor its earlier process inputs fix: a byte that another party wrote, a value that an instruction reads from the machine, the order in which its threads run.
+- **Rule**: Each process input enters at an input point of one thread: a kernel entry, a fault, or an interrupt. While a process is recorded, nothing that it can read changes between two input points of its threads, except by its own threads.
+- **Rule**: Each channel has one form of record. The kernel writes the record into the input history of the process:
+
+| Channel | Its record |
+|---|---|
+| The context, the modules and the resources of the image | The context once, at the start. A module and a resource by their hash, never by their bytes (property 11) |
+| A kernel entry | Its commands, its completions, the time that it gives, and each byte that the kernel writes into the memory of the process for it |
+| A fault that a handler of the process takes | The fault record and its answer |
+| A page that another party writes and that the process maps without Write: the time page, the date page, the settings page, the fresh bytes page | A point copy: a page that the kernel maps in place of the shared page and refreshes at each input point. The history holds each changed range |
+| Memory that the process and another process both map with Write: a ring, a region | A shared writer runs only while each thread of the recorded process is at an input point. The history holds each range that it changed |
+| The cycle counter (`rdtsc`, `rdtscp`) | A fault at each read, by the flag `CR4.TSD` of the recorded thread. The history holds the value |
+| `cpuid` | A fault at each run, by the CPUID faulting of the processor. The history holds the answer, which hides `rdrand`, `rdseed`, `rdpid` and the transactions of the processor |
+| The number of the processor (`rdpid`) | One fixed value in `TSC_AUX` while a recorded thread runs |
+| The order of the threads | One thread at a time. Each switch is at an input point |
+
+- **Rule**: A recording needs the right `Debug` on the process handle. The history holds each byte that the process received, its secrets too, so it is the debug access of property 20, line 2, and no more.
+- **Rule**: A process that nobody records pays one test of a flag at each switch, and nothing more: the cycle counter reads with no fault, `cpuid` runs, and its threads run on any processor at once.
+- **Rule**: Four exceptions, each with its reason:
+  1. **A process that holds a device**: device memory, ports, an interrupt, or memory that a device writes (`Memory_Physical`). The device services, `date`, and the services that map a region that a device writes: the storage service, `disk` and the network service. A device writes and answers at any instruction, and a read of a register can change the device. The device service is the edge of the system: its class ring carries the inputs of the processes above it, and that ring is recorded.
+  2. **The root service.** It reads the generator of the processor and the bus at the start, and no process holds `Debug` on it. The seed that it gives each process is in the context, which is recorded.
+  3. **A process that runs a guest.** A guest is another system, with its own inputs (Objective, rule 3). Its exits are completions, which are recorded; its instructions are not, until a layer records the guest.
+  4. **The instructions that no fault of the kernel catches**: `rdrand`, `rdseed` and a transaction (`xbegin`) in code that does not ask `cpuid` first, and `sgdt` and the four others that UMIP covers, on a processor with no UMIP. The code of the system runs `rdrand` and `rdseed` in the seed of the root service only, and the tool checks it. Other code that runs them while it is recorded reads a value that the history does not hold: the replay finds the divergence at the first input point where the value shows.
+- **Forbids**: a delivery into a process between two input points (a signal, an asynchronous call); a kernel answer outside the kernel ring, the fault ring and the bytes that a kernel entry writes; an instruction of the system code that reads the machine and that no fault of the kernel can catch; a channel that only a library of the process records, because a process that does not use the library escapes it.
+- **Cost**: The kernel gets a record mode and a replay mode, at the five places where a process input reaches a process: the kernel entry, the copy into the memory of a process, a fault, the switch, and the trap of `rdtsc` and `cpuid`. It gets no new operation.
+- **Cost**: While a process is recorded, it runs one thread at a time, each read of the cycle counter is a fault, and a shared writer waits while the recorded process is between two input points. In the first layer a recorded thread that runs one turn with no kernel entry while a writer waits ends the history. The cost of each part is a measure to take (`src/md/features/record_and_replay.md`, "The size and the cost").
+- **Cost**: A process with many shared writers, such as the compositor, slows each of them while it is recorded.
+- **Reuse**: rr (Mozilla), whose design this follows most: one thread at a time, the trap of `rdtsc`, the CPUID faulting, the count of retired conditional branches that places an interrupt, a replay from checkpoints for a step back. QEMU record and replay, which records a whole machine at its devices. The deterministic simulation of FoundationDB and TigerBeetle, which send each source of change through one interface. Windows Time Travel Debugging and Pernosco, for the questions that a history answers in a debugger.
+- **Open**: an interrupt at any instruction, placed by a count of retired conditional branches: it needs exact counters, which a machine with no counters and QEMU with TCG do not have (the second layer). The record of a service that maps memory that a device writes. The cycle counter as a grant for each process, which this mechanism makes cheap (property 20, line 17).
+- **State**: not built. Today no process can be recorded, and two channels escape: a process reads the cycle counter and runs `cpuid` with no fault. The audit of each channel: `src/md/features/record_and_replay.md`, "The audit of the process inputs".
+
 ## Tensions between properties
 
 - **Sandbox (2) against direct device access (5)**: Direct access is safe only when the hardware isolates queues. On the first machine the hypervisor does this. On real hardware an IOMMU is a requirement. The kernel programs the IOMMU of Intel and the IOMMU of AMD (property 5, "As built, the devices").
@@ -593,6 +631,10 @@ Status: Decided. The mechanism is designed, not built.
 - **Replaceable holders (23) against the trusted path (17, 20 line 8)**: The holder of the display draws the trusted surfaces and receives every key, so a hostile holder can draw a false dialog. The answer: a role in the trusted path takes the holder of the signed image, or a holder that principal 0 chose, measured into PCR 12 before it runs. No other principal chooses it.
 - **Interposed holders (23) against one mechanism and no copy tool (22)**: A holder that only passes each call to the next holder adds a hop and no function, as `tee` adds no function to a record output. The answer: an interposed holder must add a function (a filter, an audit, a nesting, a view from another machine); one that adds none is refused.
 - **Replaceable holders (23) against speed**: An interposed holder adds one hop to each call and each record. The answer: the root service connects a client to the holder directly when no holder stands between them, and the cost of each hop is measured, never assumed.
+- **Inputs that can be recorded (24) against a small kernel (1) and the kernel off the data path (5)**: The kernel must see each process input, so it gets a record mode and a replay mode, and while it records it copies the pages that another party writes. The answer: no new operation; the work is at the five places where an input already reaches a process; the kernel touches shared data only while a principal records, and a process that nobody records pays one test at each switch.
+- **Inputs that can be recorded (24) against drivers outside the kernel (7)**: A device writes and answers at any instruction, so a device service cannot be recorded. The answer is the first exception of property 24: the device service is the edge, and the class ring above it is recorded. A service that maps memory that a device writes (the storage service, the network service) is in the exception too, until its record has a design.
+- **Inputs that can be recorded (24) against no ambient access (20, lines 16 and 17)**: A shared writer waits while the recorded process is between two input points, so a recording takes processor time from a process that the recorder holds no handle to. The answer: the wait of a writer has a bound of one turn, after which the history ends and the writer runs; the recording never changes the placement or the share of a writer. Line 17 says that a precise clock is a grant, and today the cycle counter is open to every process: property 24 does not cause that hole, it shows it. The flag of the kernel that traps the cycle counter for a recorded process is the mechanism that can close it; the choice is open.
+- **Inputs that can be recorded (24) against one wait (4)**: A full input history holds the recorded thread until the recorder reads, so the thread waits where it asked for no wait. The answer: it is a hold of the thread by its recorder, as a stop of a debugger is, and not a blocking operation of the interface; no history drops a process input.
 
 ## Reuse list
 

@@ -1,6 +1,6 @@
 # The demonstration of each property
 
-This document gives, for each of the 23 properties of `PROPERTIES.md`, what the machine test shows, the picture, and what no test shows. A row changes when the system changes what the test shows.
+This document gives, for each of the 24 properties of `PROPERTIES.md`, what the machine test shows, the picture, and what no test shows. A row changes when the system changes what the test shows.
 
 A property is a promise of the system. A promise counts only when a test makes the machine keep it: the machine test (`modustool test`) starts real machines under QEMU, runs processes, and waits for the lines that prove each case. This table is the source of the page "Status" of the site: each row gives the promise, what the tests show of it, the pictures that the tests take, and what is not shown yet. `docs/TOOLS.md`, "The parts of the machine test", names the machines.
 
@@ -37,12 +37,13 @@ A property is a promise of the system. A promise counts only when a test makes t
 | 21 | Principals | Shown in part | Layer 1: a caller acts for the principal of its session or not (`CALLER_ACTS_FOR_PRINCIPAL`), a grant of the root service that the console revokes. Layer 2: principal 0 is the machine, with the measure of the system. Layer 3: `principal_create("alice")` in the console, the passphrase typed two times in the window of `unlock` (dots); `notes` from the menu runs in the session of principal 1 and has a store of its own (`notes.principal.1`), apart from the store of `notes` of principal 0; the grants name the principal; the console acts for principal 0 only, and the storage service refuses it the store of principal 1 (`open_store` gives No_Grant, `stores()` does not list it); `lock()` stops the processes of the session; a wrong passphrase opens nothing; the right one starts the session again, and the note is there after a restart of the machine (`test principals`) | `principals_unlock`, `revocation` | No seal by the TPM: the passphrase alone protects the keys, against tries on a copy of the disk. The stores of a principal are not encrypted. No recovery of a lost passphrase. Several principals, identity across machines: not built |
 | 22 | General mechanisms, and a plain expression for each frequent task | Not shown | No test runs a frequent task of a design: the examples of the property (`facts(storage.Bad_Block)`, the filter of `server.requests` by its status, the copy of a record output to each reader) are designed, not built |  | The expression of each frequent task that the designs of the log facts and of the record outputs list; no check of the tool finds an incantation, only a review |
 | 23 | A role is a contract; its implementation is replaceable | Not shown | No role has a role contract yet: the root service gives each role to a module by its name, and the clients use the protocol of the holder of today |  | A second holder of one role that passes the conformance suite of its contract, and a machine test whose clients run the same with either holder (`src/md/features/roles_and_contracts.md`) |
+| 24 | Every input of a process passes through a channel that can be recorded | Not shown | No test records a process: the record mode and the replay are designed, not built. Each kernel operation already writes its answer in the kernel ring or in memory of the caller, and the faults that already reach a process are records of the fault ring |  | A recorded process and its replay; the trap of the cycle counter and of `cpuid`, which a process reads with no fault today; a shared writer that waits for an input point |
 
 ## Counts
 
 - Shown: 11 properties (1, 2, 4, 6, 7, 9, 10, 11, 12, 15, 19).
 - Shown in part: 9 properties (3, 5, 8, 13, 14, 16, 17, 20, 21).
-- Not shown: 3 properties (18, 22, 23).
+- Not shown: 4 properties (18, 22, 23, 24).
 
 ## What removes each "in part" and each "not shown"
 
@@ -57,3 +58,4 @@ A property is a promise of the system. A promise counts only when a test makes t
 9. Property 1: a check that compares the count of `op.Operation` with the number written in `PROPERTIES.md`.
 10. Property 22: the log facts and the record outputs, built, with a machine test that runs the expression of each frequent task that their designs list.
 11. Property 23: the role contract of the display, a second holder that passes its conformance suite, and the machine test that runs its clients with each holder (`ROADMAP.md`).
+12. Property 24: the first layer of the record and the replay, with a test module that is recorded, then replayed to the same end, and a planted `rdrand` that the replay finds as a divergence (`src/md/features/record_and_replay.md`, "The layers").
