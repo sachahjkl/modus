@@ -114,7 +114,7 @@ connection_page_border_refuses_corrupt_and_inconsistent_pages :: proc(t: ^testin
 	}
 
 	// Invalid role words.
-	for bad_role in ([?]u64{0, u64(role_contract.Role.Recipes) + 1, max(u64)}) {
+	for bad_role in ([?]u64{0, u64(max(role_contract.Role)) + 1, max(u64)}) {
 		p := base
 		p.role_word = bad_role
 		_, r := connection_page_read(&p)

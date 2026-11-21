@@ -52,6 +52,7 @@ import "modustool:fuzz"
 import "modustool:similarity"
 import "modustool:machine"
 import "modustool:site"
+import "modustool:cache_server"
 
 // The one source library of the project (docs/glossary/communication.md, "Source
 // library"). An import names the library, then one of its two parts:
@@ -599,6 +600,18 @@ COMMANDS :: [?]foundation.Command {
 	// A system signed with the test key is for a test machine only: its
 	// private key is published.
 	{name = "key", about = "key new <folder outside the repository>: write a new signing key of the system description (the private key, readable by its owner only, and the public key), with the firmware signing key and the release signing key; `key write <folder>`: the same folder from the variables of the secrets of a workflow; `key show`: print the public key that the build uses (" + build.SIGNING_KEY_VARIABLE + ", or the test signing key)", run = build.run_key},
+	// Serves a content-addressed object cache on the host over framed streams:
+	// objects by BLAKE3 or tree hash, and signed realisations.
+	//
+	// - `--dir <path>`: the folder of the store (`objects/` and `realisations/`).
+	// - `--listen <host:port>` (optional): the address to listen on; defaults to
+	//   `127.0.0.1:7200`.
+	// - `--signer-key <path>` (optional, repeatable): a 64-hex-digit Ed25519
+	//   private key file whose derived public key may upload objects and signed
+	//   realisations.
+	// - `--authorized-key <path>` (optional, repeatable): a 64-hex-digit Ed25519
+	//   public key file allowed to upload objects and signed realisations.
+	{name = "cache-serve", about = "cache-serve --dir <path> [--listen <host:port>] [--signer-key <path>] [--authorized-key <path>]: serve a content-addressed object cache of blobs, canonical trees and signed realisations", run = cache_server.run_cache_serve},
 }
 
 main :: proc() {
@@ -613,9 +626,10 @@ main :: proc() {
 		usage()
 		return
 	}
-	// The command module-build runs from the folder of another project: it
-	// finds the folder of the system by itself, and refuses a wrong one.
-	if os.args[1] != "module-build" && !os.exists(foundation.ROOT_MARK) {
+	// The commands module-build and cache-serve can run outside the repository:
+	// module-build finds the system folder itself, and cache-serve operates on
+	// the store directory named by --dir.
+	if os.args[1] != "module-build" && os.args[1] != "cache-serve" && !os.exists(foundation.ROOT_MARK) {
 		fmt.eprintln("modustool: start it from the root of the repository")
 		os.exit(foundation.EXIT_USAGE)
 	}
