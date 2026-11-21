@@ -7,54 +7,91 @@ package assembler
 
 // What an instruction does.
 Operation :: enum u8 {
-	Move         = 0, // mov
-	Add          = 1, // add
-	Subtract     = 2, // sub
-	Compare      = 3, // cmp
-	Load_Address = 4, // lea
-	Push         = 5, // push
-	Pop          = 6, // pop
-	Jump         = 7, // jmp
-	Jump_If      = 8, // the 16 conditional jumps
-	Call         = 9, // call
-	Return       = 10, // ret
-	// movsxd: a 32-bit value with its sign, into a 64-bit register. The C
-	// compiler loads each `int` with it.
-	Move_Sign_Extended = 11,
+	Move                         = 0, // mov
+	Add                          = 1, // add
+	Subtract                     = 2, // sub
+	Compare                      = 3, // cmp
+	Load_Address                 = 4, // lea
+	Push                         = 5, // push
+	Pop                          = 6, // pop
+	Jump                         = 7, // jmp
+	Jump_If                      = 8, // the 16 conditional jumps
+	Call                         = 9, // call
+	Return                       = 10, // ret
+	Move_Sign_Extended           = 11, // movsxd, movslq, movsbw, movsbl, movsbq, movswl, movswq, movsb, movsw, movsx
+	Move_Zero_Extended           = 12, // movzbw, movzbl, movzbq, movzwl, movzwq, movzb, movzw, movzx
+	Bitwise_And                  = 13, // and
+	Bitwise_Or                   = 14, // or
+	Bitwise_Xor                  = 15, // xor
+	Test                         = 16, // test
+	Multiply_Signed              = 17, // imul
+	Divide_Signed                = 18, // idiv
+	Divide_Unsigned              = 19, // div
+	Negate                       = 20, // neg
+	Bitwise_Not                  = 21, // not
+	Increment                    = 22, // inc
+	Decrement                    = 23, // dec
+	Shift_Left                   = 24, // shl, sal
+	Shift_Right_Logical          = 25, // shr
+	Shift_Right_Arithmetic       = 26, // sar
+	Set_If                       = 27, // the 16 conditional byte sets
+	Sign_Extend_Byte_To_Word     = 28, // cbw
+	Sign_Extend_Word_To_Long     = 29, // cwtl, cwde
+	Sign_Extend_Long_To_Quad     = 30, // cltq, cdqe
+	Sign_Extend_Word_To_Double   = 31, // cwd
+	Sign_Extend_Long_To_Double   = 32, // cdq, cltd
+	Sign_Extend_Quad_To_Octaword = 33, // cqo, cqto
+	Store_Byte                   = 34, // stosb
+	Repeat_Store_Byte            = 35, // rep stosb
 }
 
-// The condition of a conditional jump: its value is the low 4 bits of the
-// opcode 0F 80+cc of the Intel manual.
+// The condition of a conditional jump or conditional set: its value is the
+// low 4 bits of the opcodes 0F 80+cc and 0F 90+cc of the Intel manual.
 Condition :: enum u8 {
-	Overflow         = 0x0, // jo
-	Not_Overflow     = 0x1, // jno
-	Below            = 0x2, // jb
-	Above_Or_Equal   = 0x3, // jae
-	Equal            = 0x4, // je
-	Not_Equal        = 0x5, // jne
-	Below_Or_Equal   = 0x6, // jbe
-	Above            = 0x7, // ja
-	Sign             = 0x8, // js
-	Not_Sign         = 0x9, // jns
-	Parity           = 0xA, // jp
-	Not_Parity       = 0xB, // jnp
-	Less             = 0xC, // jl
-	Greater_Or_Equal = 0xD, // jge
-	Less_Or_Equal    = 0xE, // jle
-	Greater          = 0xF, // jg
+	Overflow         = 0x0, // jo, seto
+	Not_Overflow     = 0x1, // jno, setno
+	Below            = 0x2, // jb, setb
+	Above_Or_Equal   = 0x3, // jae, setae
+	Equal            = 0x4, // je, sete
+	Not_Equal        = 0x5, // jne, setne
+	Below_Or_Equal   = 0x6, // jbe, setbe
+	Above            = 0x7, // ja, seta
+	Sign             = 0x8, // js, sets
+	Not_Sign         = 0x9, // jns, setns
+	Parity           = 0xA, // jp, setp
+	Not_Parity       = 0xB, // jnp, setnp
+	Less             = 0xC, // jl, setl
+	Greater_Or_Equal = 0xD, // jge, setge
+	Less_Or_Equal    = 0xE, // jle, setle
+	Greater          = 0xF, // jg, setg
 }
 
 // The size of an operation.
 Operand_Size :: enum u8 {
 	Unknown = 0, // No suffix and no register gives it yet.
-	Bits_32 = 1, // The suffix `l`, or a register such as %eax.
-	Bits_64 = 2, // The suffix `q`, or a register such as %rax.
+	Bits_8  = 1, // The suffix `b`, or an 8-bit register such as %al.
+	Bits_16 = 2, // The suffix `w`, or a 16-bit register such as %ax.
+	Bits_32 = 3, // The suffix `l`, or a 32-bit register such as %eax.
+	Bits_64 = 4, // The suffix `q`, or a 64-bit register such as %rax.
 }
 
-// A register: its number in the encoding, 0 to 15, and its size.
+// How an 8-bit register interacts with the prefix REX:
+// - %spl, %bpl, %sil and %dil share the numbers 4 to 7 with %ah, %ch, %dh
+//   and %bh, and need a prefix REX (0x40 when no other bit is set).
+// - %ah, %ch, %dh and %bh cannot be encoded in an instruction that has any
+//   prefix REX.
+Register_Byte_Kind :: enum u8 {
+	Standard  = 0,
+	Low_Rex   = 1,
+	High_Byte = 2,
+}
+
+// A register: its number in the encoding, 0 to 15, its size, and its REX
+// rule when it is 8 bits.
 Register :: struct {
-	number: u8,
-	size:   Operand_Size,
+	number:    u8,
+	size:      Operand_Size,
+	byte_kind: Register_Byte_Kind,
 }
 
 @(private)
@@ -63,26 +100,37 @@ Register_Name :: struct {
 	register: Register,
 }
 
-// The registers of the subset. The number is the one of the Intel manual:
-// its low 3 bits go in the ModRM byte, its bit 3 in the prefix REX.
+// The registers of x86-64. The number is the one of the Intel manual: its
+// low 3 bits go in the ModRM or SIB byte, its bit 3 in the prefix REX.
 @(private, rodata)
 REGISTER_NAMES := [?]Register_Name {
-	{"rax", {0, .Bits_64}}, {"rcx", {1, .Bits_64}}, {"rdx", {2, .Bits_64}}, {"rbx", {3, .Bits_64}},
-	{"rsp", {4, .Bits_64}}, {"rbp", {5, .Bits_64}}, {"rsi", {6, .Bits_64}}, {"rdi", {7, .Bits_64}},
-	{"r8", {8, .Bits_64}}, {"r9", {9, .Bits_64}}, {"r10", {10, .Bits_64}}, {"r11", {11, .Bits_64}},
-	{"r12", {12, .Bits_64}}, {"r13", {13, .Bits_64}}, {"r14", {14, .Bits_64}}, {"r15", {15, .Bits_64}},
-	{"eax", {0, .Bits_32}}, {"ecx", {1, .Bits_32}}, {"edx", {2, .Bits_32}}, {"ebx", {3, .Bits_32}},
-	{"esp", {4, .Bits_32}}, {"ebp", {5, .Bits_32}}, {"esi", {6, .Bits_32}}, {"edi", {7, .Bits_32}},
-	{"r8d", {8, .Bits_32}}, {"r9d", {9, .Bits_32}}, {"r10d", {10, .Bits_32}}, {"r11d", {11, .Bits_32}},
-	{"r12d", {12, .Bits_32}}, {"r13d", {13, .Bits_32}}, {"r14d", {14, .Bits_32}}, {"r15d", {15, .Bits_32}},
+	{"rax", {0, .Bits_64, .Standard}}, {"rcx", {1, .Bits_64, .Standard}}, {"rdx", {2, .Bits_64, .Standard}}, {"rbx", {3, .Bits_64, .Standard}},
+	{"rsp", {4, .Bits_64, .Standard}}, {"rbp", {5, .Bits_64, .Standard}}, {"rsi", {6, .Bits_64, .Standard}}, {"rdi", {7, .Bits_64, .Standard}},
+	{"r8", {8, .Bits_64, .Standard}}, {"r9", {9, .Bits_64, .Standard}}, {"r10", {10, .Bits_64, .Standard}}, {"r11", {11, .Bits_64, .Standard}},
+	{"r12", {12, .Bits_64, .Standard}}, {"r13", {13, .Bits_64, .Standard}}, {"r14", {14, .Bits_64, .Standard}}, {"r15", {15, .Bits_64, .Standard}},
+	{"eax", {0, .Bits_32, .Standard}}, {"ecx", {1, .Bits_32, .Standard}}, {"edx", {2, .Bits_32, .Standard}}, {"ebx", {3, .Bits_32, .Standard}},
+	{"esp", {4, .Bits_32, .Standard}}, {"ebp", {5, .Bits_32, .Standard}}, {"esi", {6, .Bits_32, .Standard}}, {"edi", {7, .Bits_32, .Standard}},
+	{"r8d", {8, .Bits_32, .Standard}}, {"r9d", {9, .Bits_32, .Standard}}, {"r10d", {10, .Bits_32, .Standard}}, {"r11d", {11, .Bits_32, .Standard}},
+	{"r12d", {12, .Bits_32, .Standard}}, {"r13d", {13, .Bits_32, .Standard}}, {"r14d", {14, .Bits_32, .Standard}}, {"r15d", {15, .Bits_32, .Standard}},
+	{"ax", {0, .Bits_16, .Standard}}, {"cx", {1, .Bits_16, .Standard}}, {"dx", {2, .Bits_16, .Standard}}, {"bx", {3, .Bits_16, .Standard}},
+	{"sp", {4, .Bits_16, .Standard}}, {"bp", {5, .Bits_16, .Standard}}, {"si", {6, .Bits_16, .Standard}}, {"di", {7, .Bits_16, .Standard}},
+	{"r8w", {8, .Bits_16, .Standard}}, {"r9w", {9, .Bits_16, .Standard}}, {"r10w", {10, .Bits_16, .Standard}}, {"r11w", {11, .Bits_16, .Standard}},
+	{"r12w", {12, .Bits_16, .Standard}}, {"r13w", {13, .Bits_16, .Standard}}, {"r14w", {14, .Bits_16, .Standard}}, {"r15w", {15, .Bits_16, .Standard}},
+	{"al", {0, .Bits_8, .Standard}}, {"cl", {1, .Bits_8, .Standard}}, {"dl", {2, .Bits_8, .Standard}}, {"bl", {3, .Bits_8, .Standard}},
+	{"ah", {4, .Bits_8, .High_Byte}}, {"ch", {5, .Bits_8, .High_Byte}}, {"dh", {6, .Bits_8, .High_Byte}}, {"bh", {7, .Bits_8, .High_Byte}},
+	{"spl", {4, .Bits_8, .Low_Rex}}, {"bpl", {5, .Bits_8, .Low_Rex}}, {"sil", {6, .Bits_8, .Low_Rex}}, {"dil", {7, .Bits_8, .Low_Rex}},
+	{"r8b", {8, .Bits_8, .Standard}}, {"r9b", {9, .Bits_8, .Standard}}, {"r10b", {10, .Bits_8, .Standard}}, {"r11b", {11, .Bits_8, .Standard}},
+	{"r12b", {12, .Bits_8, .Standard}}, {"r13b", {13, .Bits_8, .Standard}}, {"r14b", {14, .Bits_8, .Standard}}, {"r15b", {15, .Bits_8, .Standard}},
 }
 
 @(private)
 Mnemonic :: struct {
-	name:       string,
-	operation:  Operation,
-	condition:  Condition,
-	suffixable: bool, // The name takes the suffix `q` or `l`.
+	name:             string,
+	operation:        Operation,
+	condition:        Condition,
+	source_size:      Operand_Size, // For extending moves: fixed source size, or Unknown.
+	destination_size: Operand_Size, // For extending moves: fixed destination size, or Unknown.
+	suffixable:       bool, // The name takes the suffix `b`, `w`, `l` or `q`.
 }
 
 @(private, rodata)
@@ -91,34 +139,126 @@ MNEMONICS := [?]Mnemonic {
 	{name = "add", operation = .Add, suffixable = true},
 	{name = "sub", operation = .Subtract, suffixable = true},
 	{name = "cmp", operation = .Compare, suffixable = true},
+	{name = "and", operation = .Bitwise_And, suffixable = true},
+	{name = "or", operation = .Bitwise_Or, suffixable = true},
+	{name = "xor", operation = .Bitwise_Xor, suffixable = true},
+	{name = "test", operation = .Test, suffixable = true},
+	{name = "imul", operation = .Multiply_Signed, suffixable = true},
+	{name = "idiv", operation = .Divide_Signed, suffixable = true},
+	{name = "div", operation = .Divide_Unsigned, suffixable = true},
+	{name = "neg", operation = .Negate, suffixable = true},
+	{name = "not", operation = .Bitwise_Not, suffixable = true},
+	{name = "inc", operation = .Increment, suffixable = true},
+	{name = "dec", operation = .Decrement, suffixable = true},
+	{name = "shl", operation = .Shift_Left, suffixable = true},
+	{name = "sal", operation = .Shift_Left, suffixable = true},
+	{name = "shr", operation = .Shift_Right_Logical, suffixable = true},
+	{name = "sar", operation = .Shift_Right_Arithmetic, suffixable = true},
 	{name = "lea", operation = .Load_Address, suffixable = true},
 	{name = "push", operation = .Push, suffixable = true},
 	{name = "pop", operation = .Pop, suffixable = true},
 	{name = "jmp", operation = .Jump},
 	{name = "call", operation = .Call},
 	{name = "ret", operation = .Return},
-	// No suffix: the name says both sizes.
-	{name = "movsxd", operation = .Move_Sign_Extended},
+	{name = "stosb", operation = .Store_Byte},
+	// Zero-operand sign extensions.
+	{name = "cbw", operation = .Sign_Extend_Byte_To_Word},
+	{name = "cwtl", operation = .Sign_Extend_Word_To_Long},
+	{name = "cwde", operation = .Sign_Extend_Word_To_Long},
+	{name = "cltq", operation = .Sign_Extend_Long_To_Quad},
+	{name = "cdqe", operation = .Sign_Extend_Long_To_Quad},
+	{name = "cwd", operation = .Sign_Extend_Word_To_Double},
+	{name = "cdq", operation = .Sign_Extend_Long_To_Double},
+	{name = "cltd", operation = .Sign_Extend_Long_To_Double},
+	{name = "cqo", operation = .Sign_Extend_Quad_To_Octaword},
+	{name = "cqto", operation = .Sign_Extend_Quad_To_Octaword},
+	// Sign-extending and zero-extending moves: the name states one, both,
+	// or neither size; no extra suffix is accepted.
+	{name = "movsbw", operation = .Move_Sign_Extended, source_size = .Bits_8, destination_size = .Bits_16},
+	{name = "movsbl", operation = .Move_Sign_Extended, source_size = .Bits_8, destination_size = .Bits_32},
+	{name = "movsbq", operation = .Move_Sign_Extended, source_size = .Bits_8, destination_size = .Bits_64},
+	{name = "movswl", operation = .Move_Sign_Extended, source_size = .Bits_16, destination_size = .Bits_32},
+	{name = "movswq", operation = .Move_Sign_Extended, source_size = .Bits_16, destination_size = .Bits_64},
+	{name = "movslq", operation = .Move_Sign_Extended, source_size = .Bits_32, destination_size = .Bits_64},
+	{name = "movsxd", operation = .Move_Sign_Extended, source_size = .Bits_32, destination_size = .Bits_64},
+	{name = "movsb", operation = .Move_Sign_Extended, source_size = .Bits_8},
+	{name = "movsw", operation = .Move_Sign_Extended, source_size = .Bits_16},
+	{name = "movsx", operation = .Move_Sign_Extended},
+	{name = "movzbw", operation = .Move_Zero_Extended, source_size = .Bits_8, destination_size = .Bits_16},
+	{name = "movzbl", operation = .Move_Zero_Extended, source_size = .Bits_8, destination_size = .Bits_32},
+	{name = "movzbq", operation = .Move_Zero_Extended, source_size = .Bits_8, destination_size = .Bits_64},
+	{name = "movzwl", operation = .Move_Zero_Extended, source_size = .Bits_16, destination_size = .Bits_32},
+	{name = "movzwq", operation = .Move_Zero_Extended, source_size = .Bits_16, destination_size = .Bits_64},
+	{name = "movzb", operation = .Move_Zero_Extended, source_size = .Bits_8},
+	{name = "movzw", operation = .Move_Zero_Extended, source_size = .Bits_16},
+	{name = "movzx", operation = .Move_Zero_Extended},
+	// Conditional jumps and their standard aliases.
 	{name = "jo", operation = .Jump_If, condition = .Overflow},
 	{name = "jno", operation = .Jump_If, condition = .Not_Overflow},
 	{name = "jb", operation = .Jump_If, condition = .Below},
+	{name = "jc", operation = .Jump_If, condition = .Below},
+	{name = "jnae", operation = .Jump_If, condition = .Below},
 	{name = "jae", operation = .Jump_If, condition = .Above_Or_Equal},
+	{name = "jnb", operation = .Jump_If, condition = .Above_Or_Equal},
+	{name = "jnc", operation = .Jump_If, condition = .Above_Or_Equal},
 	{name = "je", operation = .Jump_If, condition = .Equal},
+	{name = "jz", operation = .Jump_If, condition = .Equal},
 	{name = "jne", operation = .Jump_If, condition = .Not_Equal},
+	{name = "jnz", operation = .Jump_If, condition = .Not_Equal},
 	{name = "jbe", operation = .Jump_If, condition = .Below_Or_Equal},
+	{name = "jna", operation = .Jump_If, condition = .Below_Or_Equal},
 	{name = "ja", operation = .Jump_If, condition = .Above},
+	{name = "jnbe", operation = .Jump_If, condition = .Above},
 	{name = "js", operation = .Jump_If, condition = .Sign},
 	{name = "jns", operation = .Jump_If, condition = .Not_Sign},
 	{name = "jp", operation = .Jump_If, condition = .Parity},
+	{name = "jpe", operation = .Jump_If, condition = .Parity},
 	{name = "jnp", operation = .Jump_If, condition = .Not_Parity},
+	{name = "jpo", operation = .Jump_If, condition = .Not_Parity},
 	{name = "jl", operation = .Jump_If, condition = .Less},
+	{name = "jnge", operation = .Jump_If, condition = .Less},
 	{name = "jge", operation = .Jump_If, condition = .Greater_Or_Equal},
+	{name = "jnl", operation = .Jump_If, condition = .Greater_Or_Equal},
 	{name = "jle", operation = .Jump_If, condition = .Less_Or_Equal},
+	{name = "jng", operation = .Jump_If, condition = .Less_Or_Equal},
 	{name = "jg", operation = .Jump_If, condition = .Greater},
+	{name = "jnle", operation = .Jump_If, condition = .Greater},
+	// Conditional byte sets and their standard aliases.
+	{name = "seto", operation = .Set_If, condition = .Overflow},
+	{name = "setno", operation = .Set_If, condition = .Not_Overflow},
+	{name = "setb", operation = .Set_If, condition = .Below},
+	{name = "setc", operation = .Set_If, condition = .Below},
+	{name = "setnae", operation = .Set_If, condition = .Below},
+	{name = "setae", operation = .Set_If, condition = .Above_Or_Equal},
+	{name = "setnb", operation = .Set_If, condition = .Above_Or_Equal},
+	{name = "setnc", operation = .Set_If, condition = .Above_Or_Equal},
+	{name = "sete", operation = .Set_If, condition = .Equal},
+	{name = "setz", operation = .Set_If, condition = .Equal},
+	{name = "setne", operation = .Set_If, condition = .Not_Equal},
+	{name = "setnz", operation = .Set_If, condition = .Not_Equal},
+	{name = "setbe", operation = .Set_If, condition = .Below_Or_Equal},
+	{name = "setna", operation = .Set_If, condition = .Below_Or_Equal},
+	{name = "seta", operation = .Set_If, condition = .Above},
+	{name = "setnbe", operation = .Set_If, condition = .Above},
+	{name = "sets", operation = .Set_If, condition = .Sign},
+	{name = "setns", operation = .Set_If, condition = .Not_Sign},
+	{name = "setp", operation = .Set_If, condition = .Parity},
+	{name = "setpe", operation = .Set_If, condition = .Parity},
+	{name = "setnp", operation = .Set_If, condition = .Not_Parity},
+	{name = "setpo", operation = .Set_If, condition = .Not_Parity},
+	{name = "setl", operation = .Set_If, condition = .Less},
+	{name = "setnge", operation = .Set_If, condition = .Less},
+	{name = "setge", operation = .Set_If, condition = .Greater_Or_Equal},
+	{name = "setnl", operation = .Set_If, condition = .Greater_Or_Equal},
+	{name = "setle", operation = .Set_If, condition = .Less_Or_Equal},
+	{name = "setng", operation = .Set_If, condition = .Less_Or_Equal},
+	{name = "setg", operation = .Set_If, condition = .Greater},
+	{name = "setnle", operation = .Set_If, condition = .Greater},
 }
 
 // mnemonic_of_word reads a mnemonic, with its suffix of size when it has
-// one: `movq` is `mov` of 64 bits, `addl` is `add` of 32 bits.
+// one: `movq` is `mov` of 64 bits, `addl` is `add` of 32 bits, `movw` of
+// 16 bits, `movb` of 8 bits.
 @(private)
 mnemonic_of_word :: proc "contextless" (word: string) -> (mnemonic: Mnemonic, size: Operand_Size, ok: bool) {
 	for item in MNEMONICS {
@@ -135,6 +275,10 @@ mnemonic_of_word :: proc "contextless" (word: string) -> (mnemonic: Mnemonic, si
 		size = .Bits_64
 	case 'l':
 		size = .Bits_32
+	case 'w':
+		size = .Bits_16
+	case 'b':
+		size = .Bits_8
 	case:
 		return {}, .Unknown, false
 	}
@@ -148,24 +292,39 @@ mnemonic_of_word :: proc "contextless" (word: string) -> (mnemonic: Mnemonic, si
 
 // The kinds of operands that the syntax reads.
 Operand_Kind :: enum u8 {
-	Register  = 0, // %rax
+	Register  = 0, // %rax, %eax, %ax, %al
 	Immediate = 1, // $42
-	Memory    = 2, // 8(%rbp), table(%rip)
-	Label     = 3, // the target of a jump or a call
+	Memory    = 2, // 8(%rbp), table(%rip), 16(%rax,%rcx,4), (,%rcx,8)
+	Label     = 3, // the target of a direct jump or call
+}
+
+// The scale of an index register in a memory operand: its value is the
+// 2-bit field ss of the byte SIB.
+Index_Scale :: enum u8 {
+	Scale_1 = 0,
+	Scale_2 = 1,
+	Scale_4 = 2,
+	Scale_8 = 3,
 }
 
 @(private)
 Operand :: struct {
 	kind:                        Operand_Kind,
-	register:                    Register, // A Register; the base of a Memory.
+	indirect:                    bool, // `*` before a register or memory operand, for `call` and `jmp`.
+	register:                    Register, // A Register; the base of a Memory when has_base is true.
+	has_base:                    bool, // A Memory: a 64-bit base register is present.
 	base_is_instruction_pointer: bool, // A Memory: the base is %rip.
+	has_index:                   bool, // A Memory: an index register is present.
+	index_register:              Register, // The index register of a Memory.
+	scale:                       Index_Scale, // The scale of the index register.
 	value:                       i128, // An Immediate: its value. A Memory: its displacement.
 	label:                       int, // A Label, or a Memory whose displacement is a label: the index of the label. -1: none.
 	place:                       Place,
 }
 
-// operand_read reads one operand: `%register`, `$number`, `displacement(%base)`
-// with a number or a label as its displacement, or a label alone.
+// operand_read reads one operand: `%register`, `$number`,
+// `displacement(base, index, scale)` with optional parts, `*register` or
+// `*memory`, or a label alone.
 @(private)
 operand_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) -> (operand: Operand, refusal: Refusal_Record) {
 	blanks_skip(cursor)
@@ -173,8 +332,21 @@ operand_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) -> (
 	if cursor.position >= cursor.end {
 		return operand, refuse(.Operand_Not_Valid, operand.place)
 	}
+	if cursor.text[cursor.position] == '*' {
+		operand.indirect = true
+		cursor.position += 1
+		blanks_skip(cursor)
+		if cursor.position >= cursor.end {
+			return operand, refuse(.Operand_Not_Valid, operand.place)
+		}
+		// An indirect operand takes a register or memory only.
+		if cursor.text[cursor.position] == '$' || cursor.text[cursor.position] == '*' {
+			return operand, refuse(.Operand_Not_Valid, operand.place)
+		}
+	}
 	switch cursor.text[cursor.position] {
 	case '%':
+		register_place := place_here(cursor)
 		cursor.position += 1
 		name := word_read(cursor)
 		if name == "rip" {
@@ -182,7 +354,7 @@ operand_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) -> (
 		}
 		register, known := register_of_name(name)
 		if !known {
-			return operand, refuse(.Register_Unknown, operand.place)
+			return operand, refuse(.Register_Unknown, register_place)
 		}
 		operand.kind = .Register
 		operand.register = register
@@ -217,25 +389,80 @@ operand_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) -> (
 	if cursor.position < cursor.end && cursor.text[cursor.position] == '(' {
 		cursor.position += 1
 		blanks_skip(cursor)
-		base_place := place_here(cursor)
-		if cursor.position >= cursor.end || cursor.text[cursor.position] != '%' {
-			return operand, refuse(.Operand_Not_Valid, base_place)
+		if cursor.position >= cursor.end {
+			return operand, refuse(.Operand_Not_Valid, place_here(cursor))
 		}
-		cursor.position += 1
-		name := word_read(cursor)
-		if name == "rip" {
-			operand.base_is_instruction_pointer = true
-		} else {
-			register, known := register_of_name(name)
+		if cursor.text[cursor.position] == '%' {
+			base_place := place_here(cursor)
+			cursor.position += 1
+			name := word_read(cursor)
+			if name == "rip" {
+				operand.base_is_instruction_pointer = true
+			} else {
+				register, known := register_of_name(name)
+				if !known {
+					return operand, refuse(.Register_Unknown, base_place)
+				}
+				if register.size != .Bits_64 {
+					return operand, refuse(.Operand_Size_Wrong, base_place)
+				}
+				operand.register = register
+				operand.has_base = true
+			}
+		} else if cursor.text[cursor.position] != ',' {
+			return operand, refuse(.Operand_Not_Valid, place_here(cursor))
+		}
+		if next_is(cursor, ',') {
+			if operand.base_is_instruction_pointer {
+				// %rip-relative addressing has no SIB form.
+				return operand, refuse(.Operand_Not_Valid, place_here(cursor))
+			}
+			blanks_skip(cursor)
+			index_place := place_here(cursor)
+			if cursor.position >= cursor.end || cursor.text[cursor.position] != '%' {
+				return operand, refuse(.Operand_Not_Valid, index_place)
+			}
+			cursor.position += 1
+			index_name := word_read(cursor)
+			if index_name == "rip" {
+				return operand, refuse(.Operand_Not_Valid, index_place)
+			}
+			index_register, known := register_of_name(index_name)
 			if !known {
-				return operand, refuse(.Register_Unknown, base_place)
+				return operand, refuse(.Register_Unknown, index_place)
 			}
-			if register.size != .Bits_64 {
-				return operand, refuse(.Operand_Size_Wrong, base_place)
+			if index_register.size != .Bits_64 {
+				return operand, refuse(.Operand_Size_Wrong, index_place)
 			}
-			operand.register = register
+			// SIB index 4 with REX.X = 0 means no index, so %rsp cannot be
+			// an index register; %r12 has REX.X = 1 and is valid.
+			if index_register.number == 4 {
+				return operand, refuse(.Operand_Not_Valid, index_place)
+			}
+			operand.has_index = true
+			operand.index_register = index_register
+			operand.scale = .Scale_1
+			if next_is(cursor, ',') {
+				blanks_skip(cursor)
+				scale_place := place_here(cursor)
+				scale_value, ok := signed_number_read(cursor)
+				if !ok {
+					return operand, refuse(.Number_Not_Valid, scale_place)
+				}
+				switch scale_value {
+				case 1:
+					operand.scale = .Scale_1
+				case 2:
+					operand.scale = .Scale_2
+				case 4:
+					operand.scale = .Scale_4
+				case 8:
+					operand.scale = .Scale_8
+				case:
+					return operand, refuse(.Operand_Not_Valid, scale_place)
+				}
+			}
 		}
-		// An index register (`(%rax,%rbx,8)`) is not in the subset.
 		if !next_is(cursor, ')') {
 			return operand, refuse(.Operand_Not_Valid, place_here(cursor))
 		}
@@ -245,10 +472,10 @@ operand_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) -> (
 			return operand, refuse(.Operand_Not_Valid, operand.place)
 		}
 		operand.kind = .Memory
-	} else if label_name != "" {
+	} else if label_name != "" && !operand.indirect {
 		operand.kind = .Label
 	} else {
-		// A number alone is an absolute address.
+		// A number alone is an absolute address; `*label` is no indirect form.
 		return operand, refuse(.Operand_Not_Valid, operand.place)
 	}
 	if label_name != "" {
@@ -287,6 +514,12 @@ put_byte :: proc "contextless" (encoding: ^Encoding, value: u8) {
 }
 
 @(private)
+put_u16 :: proc "contextless" (encoding: ^Encoding, value: u16) {
+	put_byte(encoding, u8(value))
+	put_byte(encoding, u8(value >> 8))
+}
+
+@(private)
 put_u32 :: proc "contextless" (encoding: ^Encoding, value: u32) {
 	for shift := u32(0); shift < 32; shift += 8 {
 		put_byte(encoding, u8(value >> shift))
@@ -300,25 +533,85 @@ put_u64 :: proc "contextless" (encoding: ^Encoding, value: u64) {
 	}
 }
 
-// put_prefix writes the prefix REX when one of its bits is set: W for a
-// 64-bit operation, R for bit 3 of the field reg of ModRM, B for bit 3 of
-// the field rm, of the base, or of the register of the opcode.
+// rex_flags_of inspects register operands for 8-bit registers that force or
+// forbid a prefix REX.
 @(private)
-put_prefix :: proc "contextless" (encoding: ^Encoding, wide: bool, reg_number: u8, rm_number: u8) {
+rex_flags_of :: proc "contextless" (operands: ..Operand) -> (force_rex: bool, forbid_rex: bool, conflict_place: Place) {
+	for operand in operands {
+		if operand.kind != .Register {
+			continue
+		}
+		switch operand.register.byte_kind {
+		case .Standard:
+		case .Low_Rex:
+			force_rex = true
+		case .High_Byte:
+			forbid_rex = true
+			conflict_place = operand.place
+		}
+	}
+	return force_rex, forbid_rex, conflict_place
+}
+
+// put_rex writes the prefix REX when wide is true, when any high bit
+// (reg, index, base/rm) is set, or when force_rex is true (for %spl, %bpl,
+// %sil, %dil). It refuses when a REX byte is needed and forbid_rex is true
+// (for %ah, %ch, %dh, %bh).
+@(private)
+put_rex :: proc "contextless" (
+	encoding: ^Encoding,
+	wide: bool,
+	reg_number: u8,
+	index_num: u8,
+	rm_number: u8,
+	force_rex: bool,
+	forbid_rex: bool,
+	conflict_place: Place,
+) -> Refusal_Record {
 	prefix := u8(0x40)
 	if wide {
 		prefix |= 0x08
 	}
 	prefix |= (reg_number >> 3 & 1) << 2
+	prefix |= (index_num >> 3 & 1) << 1
 	prefix |= rm_number >> 3 & 1
-	if prefix != 0x40 {
+	need_rex := force_rex || prefix != 0x40
+	if need_rex && forbid_rex {
+		return refuse(.Operand_Form_Not_Valid, conflict_place)
+	}
+	if need_rex {
 		put_byte(encoding, prefix)
 	}
+	return {}
+}
+
+// put_operand_prefixes writes the 16-bit operand-size override (0x66) and
+// the prefix REX in the order required by x86-64.
+@(private)
+put_operand_prefixes :: proc "contextless" (
+	encoding: ^Encoding,
+	size: Operand_Size,
+	reg_number: u8,
+	index_num: u8,
+	rm_number: u8,
+	force_rex: bool,
+	forbid_rex: bool,
+	conflict_place: Place,
+) -> Refusal_Record {
+	if size == .Bits_16 {
+		put_byte(encoding, 0x66)
+	}
+	return put_rex(encoding, size == .Bits_64, reg_number, index_num, rm_number, force_rex, forbid_rex, conflict_place)
 }
 
 @(private)
 modrm :: proc "contextless" (mode: u8, reg_field: u8, rm_field: u8) -> u8 {
 	return mode << 6 | (reg_field & 7) << 3 | rm_field & 7
+}
+
+@(private)
+sib :: proc "contextless" (scale: Index_Scale, index_field: u8, base_field: u8) -> u8 {
+	return u8(scale) << 6 | (index_field & 7) << 3 | base_field & 7
 }
 
 @(private)
@@ -331,21 +624,50 @@ fits_signed_32 :: proc "contextless" (value: i128) -> bool {
 	return value >= i128(min(i32)) && value <= i128(max(i32))
 }
 
-// The number of the base of a memory operand for the prefix REX: %rip
-// sets no bit.
+// The number of the base of a memory operand for REX.B: %rip and an
+// omitted base set no bit.
 @(private)
 base_number :: proc "contextless" (operand: Operand) -> u8 {
-	return operand.base_is_instruction_pointer ? 0 : operand.register.number
+	return operand.has_base ? operand.register.number : 0
+}
+
+// The number of the index of a memory operand for REX.X: no index sets no
+// bit.
+@(private)
+index_number :: proc "contextless" (operand: Operand) -> u8 {
+	return operand.has_index ? operand.index_register.number : 0
+}
+
+@(private)
+rm_number_of :: proc "contextless" (operand: Operand) -> u8 {
+	return operand.kind == .Register ? operand.register.number : base_number(operand)
+}
+
+@(private)
+rm_index_of :: proc "contextless" (operand: Operand) -> u8 {
+	return operand.kind == .Memory ? index_number(operand) : 0
+}
+
+// put_rm_body writes ModRM (and SIB/displacement for memory) for an r/m
+// operand.
+@(private)
+put_rm_body :: proc "contextless" (encoding: ^Encoding, reg_field: u8, operand: Operand) -> Refusal_Record {
+	if operand.kind == .Register {
+		put_byte(encoding, modrm(3, reg_field, operand.register.number))
+		return {}
+	}
+	return put_memory(encoding, reg_field, operand)
 }
 
 // put_memory writes ModRM, SIB and the displacement of a memory operand.
 //
 // - %rip: ModRM 00 reg 101 and 4 bytes; a label gives a reference.
-// - A base with a displacement 0: ModRM 00, but %rbp and %r13, whose 00
-//   form means %rip or no base, take 01 and one byte 0.
-// - A displacement of one byte with a sign: ModRM 01; else 10 and 4 bytes.
-// - %rsp and %r12, whose rm 100 means "a byte SIB follows", take SIB 24:
-//   no index, the base alone.
+// - Index without base (`disp(,index,scale)`): ModRM 00 reg 100, SIB with
+//   base 101, and a 4-byte signed displacement.
+// - Base with index (`disp(base,index,scale)`): ModRM mod reg 100, SIB,
+//   and displacement (0, 1 or 4 bytes; %rbp/%r13 with disp 0 take disp8 0).
+// - Base alone: ModRM mod reg base&7 (%rsp/%r12 take SIB 24; %rbp/%r13
+//   with disp 0 take disp8 0).
 @(private)
 put_memory :: proc "contextless" (encoding: ^Encoding, reg_field: u8, operand: Operand) -> Refusal_Record {
 	if operand.base_is_instruction_pointer {
@@ -367,6 +689,13 @@ put_memory :: proc "contextless" (encoding: ^Encoding, reg_field: u8, operand: O
 	if !fits_signed_32(operand.value) {
 		return refuse(.Displacement_Too_Large, operand.place)
 	}
+	if !operand.has_base {
+		// Scaled index with no base always encodes mod=00, rm=4, SIB.base=5, disp32.
+		put_byte(encoding, modrm(0, reg_field, 4))
+		put_byte(encoding, sib(operand.scale, operand.index_register.number, 5))
+		put_u32(encoding, u32(i32(operand.value)))
+		return {}
+	}
 	low := operand.register.number & 7
 	mode: u8
 	switch {
@@ -377,9 +706,14 @@ put_memory :: proc "contextless" (encoding: ^Encoding, reg_field: u8, operand: O
 	case:
 		mode = 2
 	}
-	put_byte(encoding, modrm(mode, reg_field, low))
-	if low == 4 {
-		put_byte(encoding, 0x24)
+	if operand.has_index {
+		put_byte(encoding, modrm(mode, reg_field, 4))
+		put_byte(encoding, sib(operand.scale, operand.index_register.number, low))
+	} else {
+		put_byte(encoding, modrm(mode, reg_field, low))
+		if low == 4 {
+			put_byte(encoding, 0x24)
+		}
 	}
 	switch mode {
 	case 1:
@@ -390,10 +724,11 @@ put_memory :: proc "contextless" (encoding: ^Encoding, reg_field: u8, operand: O
 	return {}
 }
 
-// The opcodes of the operations of two operands (Intel manual, volume 2):
-// `store` is the form r/m ← reg (MOV 89, ADD 01, SUB 29, CMP 39), `load`
-// the form reg ← r/m (8B, 03, 2B, 3B), `extension` the field reg of the
-// forms with an immediate (MOV C7 /0, ADD 83 or 81 /0, SUB /5, CMP /7).
+// The opcodes of the two-operand ALU and move family (Intel manual,
+// volume 2): `store` is r/m <- r (89, 01, 29, 39, 21, 09, 31; 8-bit is
+// store - 1), `load` is r <- r/m (8B, 03, 2B, 3B, 23, 0B, 33; 8-bit is
+// load - 1), `extension` is the field reg of the immediate form (C6/C7 /0,
+// 80/81/83 /n).
 @(private)
 Two_Operand_Opcodes :: struct {
 	store:     u8,
@@ -408,11 +743,24 @@ two_operand_opcodes :: proc "contextless" (operation: Operation) -> (opcodes: Tw
 		return {store = 0x89, load = 0x8B, extension = 0}, true
 	case .Add:
 		return {store = 0x01, load = 0x03, extension = 0}, true
+	case .Bitwise_Or:
+		return {store = 0x09, load = 0x0B, extension = 1}, true
+	case .Bitwise_And:
+		return {store = 0x21, load = 0x23, extension = 4}, true
 	case .Subtract:
 		return {store = 0x29, load = 0x2B, extension = 5}, true
+	case .Bitwise_Xor:
+		return {store = 0x31, load = 0x33, extension = 6}, true
 	case .Compare:
 		return {store = 0x39, load = 0x3B, extension = 7}, true
-	case .Load_Address, .Push, .Pop, .Jump, .Jump_If, .Call, .Return, .Move_Sign_Extended:
+	case .Load_Address, .Push, .Pop, .Jump, .Jump_If, .Call, .Return,
+	     .Move_Sign_Extended, .Move_Zero_Extended, .Test, .Multiply_Signed,
+	     .Divide_Signed, .Divide_Unsigned, .Negate, .Bitwise_Not,
+	     .Increment, .Decrement, .Shift_Left, .Shift_Right_Logical,
+	     .Shift_Right_Arithmetic, .Set_If, .Sign_Extend_Byte_To_Word,
+	     .Sign_Extend_Word_To_Long, .Sign_Extend_Long_To_Quad,
+	     .Sign_Extend_Word_To_Double, .Sign_Extend_Long_To_Double,
+	     .Sign_Extend_Quad_To_Octaword, .Store_Byte, .Repeat_Store_Byte:
 	}
 	return {}, false
 }
@@ -427,19 +775,35 @@ failed :: proc "contextless" (refusal: Refusal_Record) -> bool {
 // writes it at the end of the code.
 @(private)
 instruction_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace, word: string, word_place: Place) -> Refusal_Record {
-	mnemonic, suffix_size, known := mnemonic_of_word(word)
+	mnemonic: Mnemonic
+	suffix_size: Operand_Size
+	known: bool
+	if word == "rep" {
+		blanks_skip(cursor)
+		next_place := place_here(cursor)
+		next_word := word_read(cursor)
+		if next_word == "stosb" {
+			mnemonic = {name = "rep stosb", operation = .Repeat_Store_Byte}
+			known = true
+		} else {
+			return refuse(.Mnemonic_Unknown, next_word == "" ? word_place : next_place)
+		}
+	} else {
+		mnemonic, suffix_size, known = mnemonic_of_word(word)
+	}
 	if !known {
 		return refuse(.Mnemonic_Unknown, word_place)
 	}
 	if cursor.section^ != .Code {
 		return refuse(.Instruction_In_Data, word_place)
 	}
-	operands: [2]Operand
+	operands: [3]Operand
+	max_operands := mnemonic.operation == .Multiply_Signed ? 3 : 2
 	count := 0
 	if !at_end(cursor) {
 		for {
-			if count == len(operands) {
-				// A third operand: count each one, for the value of the record.
+			if count == max_operands {
+				// Past the operand limit for this operation.
 				blanks_skip(cursor)
 				return refuse(.Operand_Count_Wrong, place_here(cursor), u64(count + 1))
 			}
@@ -482,9 +846,8 @@ instruction_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace, 
 	return {}
 }
 
-// operation_size gives the size of an operation of two operands: the
-// suffix, and each register that is not the base of a memory operand. The
-// sizes must agree.
+// operation_size gives the size of an operation from its suffix and each
+// register operand. The sizes must agree.
 @(private)
 operation_size :: proc "contextless" (suffix_size: Operand_Size, operands: []Operand) -> (size: Operand_Size, refusal: Refusal_Record) {
 	size = suffix_size
@@ -504,25 +867,102 @@ operation_size :: proc "contextless" (suffix_size: Operand_Size, operands: []Ope
 // instruction_encode writes the bytes of one instruction.
 @(private)
 instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemonic, suffix_size: Operand_Size, operands: []Operand, word_place: Place) -> Refusal_Record {
-	// The operations by their count of operands.
+	// Only direct/indirect `call` and `jmp` accept `*` operands.
+	if mnemonic.operation != .Call && mnemonic.operation != .Jump {
+		for operand in operands {
+			if operand.indirect {
+				return refuse(.Operand_Form_Not_Valid, operand.place)
+			}
+		}
+	}
+
+	// Variable-count operations check their counts in their own encoders.
+	switch mnemonic.operation {
+	case .Multiply_Signed:
+		return multiply_signed_encode(encoding, suffix_size, operands, word_place)
+	case .Shift_Left, .Shift_Right_Logical, .Shift_Right_Arithmetic:
+		return shift_encode(encoding, mnemonic.operation, suffix_size, operands, word_place)
+	case .Move, .Add, .Subtract, .Compare, .Load_Address, .Push, .Pop,
+	     .Jump, .Jump_If, .Call, .Return, .Move_Sign_Extended,
+	     .Move_Zero_Extended, .Bitwise_And, .Bitwise_Or, .Bitwise_Xor,
+	     .Test, .Divide_Signed, .Divide_Unsigned, .Negate, .Bitwise_Not,
+	     .Increment, .Decrement, .Set_If, .Sign_Extend_Byte_To_Word,
+	     .Sign_Extend_Word_To_Long, .Sign_Extend_Long_To_Quad,
+	     .Sign_Extend_Word_To_Double, .Sign_Extend_Long_To_Double,
+	     .Sign_Extend_Quad_To_Octaword, .Store_Byte, .Repeat_Store_Byte:
+	}
+
 	wanted := 2
 	switch mnemonic.operation {
-	case .Return:
+	case .Return, .Sign_Extend_Byte_To_Word, .Sign_Extend_Word_To_Long,
+	     .Sign_Extend_Long_To_Quad, .Sign_Extend_Word_To_Double,
+	     .Sign_Extend_Long_To_Double, .Sign_Extend_Quad_To_Octaword,
+	     .Store_Byte, .Repeat_Store_Byte:
 		wanted = 0
-	case .Jump, .Call, .Jump_If, .Push, .Pop:
+	case .Jump, .Call, .Jump_If, .Push, .Pop, .Divide_Signed, .Divide_Unsigned,
+	     .Negate, .Bitwise_Not, .Increment, .Decrement, .Set_If:
 		wanted = 1
-	case .Move, .Add, .Subtract, .Compare, .Load_Address, .Move_Sign_Extended:
+	case .Move, .Add, .Subtract, .Compare, .Bitwise_And, .Bitwise_Or,
+	     .Bitwise_Xor, .Test, .Load_Address, .Move_Sign_Extended,
+	     .Move_Zero_Extended, .Multiply_Signed, .Shift_Left,
+	     .Shift_Right_Logical, .Shift_Right_Arithmetic:
 	}
 	if len(operands) != wanted {
 		return refuse(.Operand_Count_Wrong, word_place, u64(len(operands)))
 	}
+
 	switch mnemonic.operation {
 	case .Return:
 		// RET: C3.
 		put_byte(encoding, 0xC3)
+	case .Store_Byte:
+		// STOSB: AA.
+		put_byte(encoding, 0xAA)
+	case .Repeat_Store_Byte:
+		// REP STOSB: F3 AA.
+		put_byte(encoding, 0xF3)
+		put_byte(encoding, 0xAA)
+	case .Sign_Extend_Byte_To_Word:
+		// CBW: 66 98.
+		put_byte(encoding, 0x66)
+		put_byte(encoding, 0x98)
+	case .Sign_Extend_Word_To_Long:
+		// CWDE / CWTL: 98.
+		put_byte(encoding, 0x98)
+	case .Sign_Extend_Long_To_Quad:
+		// CDQE / CLTQ: 48 98.
+		put_byte(encoding, 0x48)
+		put_byte(encoding, 0x98)
+	case .Sign_Extend_Word_To_Double:
+		// CWD: 66 99.
+		put_byte(encoding, 0x66)
+		put_byte(encoding, 0x99)
+	case .Sign_Extend_Long_To_Double:
+		// CDQ / CLTD: 99.
+		put_byte(encoding, 0x99)
+	case .Sign_Extend_Quad_To_Octaword:
+		// CQO / CQTO: 48 99.
+		put_byte(encoding, 0x48)
+		put_byte(encoding, 0x99)
 	case .Jump, .Call, .Jump_If:
-		// JMP rel32: E9 cd. CALL rel32: E8 cd. Jcc rel32: 0F 80+cc cd.
 		target := operands[0]
+		if target.indirect {
+			// CALL r/m64: FF /2. JMP r/m64: FF /4. 64-bit size is default
+			// in 64-bit mode, so REX.W is not needed.
+			if target.kind == .Register && target.register.size != .Bits_64 {
+				return refuse(.Operand_Size_Wrong, target.place)
+			}
+			if target.kind != .Register && target.kind != .Memory {
+				return refuse(.Operand_Form_Not_Valid, target.place)
+			}
+			extension := mnemonic.operation == .Call ? u8(2) : u8(4)
+			if refusal := put_rex(encoding, false, 0, rm_index_of(target), rm_number_of(target), false, false, target.place); failed(refusal) {
+				return refusal
+			}
+			put_byte(encoding, 0xFF)
+			return put_rm_body(encoding, extension, target)
+		}
+		// JMP rel32: E9 cd. CALL rel32: E8 cd. Jcc rel32: 0F 80+cc cd.
 		if target.kind != .Label {
 			return refuse(.Operand_Form_Not_Valid, target.place)
 		}
@@ -539,6 +979,23 @@ instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemoni
 		encoding.reference_kind = .Jump_Target
 		encoding.reference_place = target.place
 		put_u32(encoding, 0)
+	case .Set_If:
+		// SETcc r/m8: [REX] 0F 90+cc /0.
+		operand := operands[0]
+		if operand.kind == .Register {
+			if operand.register.size != .Bits_8 {
+				return refuse(.Operand_Size_Wrong, operand.place)
+			}
+		} else if operand.kind != .Memory {
+			return refuse(.Operand_Form_Not_Valid, operand.place)
+		}
+		force_rex, forbid_rex, conflict_place := rex_flags_of(operand)
+		if refusal := put_rex(encoding, false, 0, rm_index_of(operand), rm_number_of(operand), force_rex, forbid_rex, conflict_place); failed(refusal) {
+			return refusal
+		}
+		put_byte(encoding, 0x0F)
+		put_byte(encoding, 0x90 | u8(mnemonic.condition))
+		return put_rm_body(encoding, 0, operand)
 	case .Push, .Pop:
 		operand := operands[0]
 		switch operand.kind {
@@ -548,10 +1005,12 @@ instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemoni
 			if operand.register.size != .Bits_64 {
 				return refuse(.Operand_Size_Wrong, operand.place)
 			}
-			if suffix_size == .Bits_32 {
+			if suffix_size != .Unknown && suffix_size != .Bits_64 {
 				return refuse(.Operand_Size_Wrong, word_place)
 			}
-			put_prefix(encoding, false, 0, operand.register.number)
+			if refusal := put_rex(encoding, false, 0, 0, operand.register.number, false, false, operand.place); failed(refusal) {
+				return refusal
+			}
 			opcode := mnemonic.operation == .Push ? u8(0x50) : u8(0x58)
 			put_byte(encoding, opcode + operand.register.number & 7)
 		case .Immediate:
@@ -559,7 +1018,7 @@ instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemoni
 			if mnemonic.operation != .Push {
 				return refuse(.Operand_Form_Not_Valid, operand.place)
 			}
-			if suffix_size == .Bits_32 {
+			if suffix_size != .Unknown && suffix_size != .Bits_64 {
 				return refuse(.Operand_Size_Wrong, word_place)
 			}
 			switch {
@@ -587,51 +1046,93 @@ instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemoni
 		if destination.register.size != .Bits_64 {
 			return refuse(.Operand_Size_Wrong, destination.place)
 		}
-		if suffix_size == .Bits_32 {
+		if suffix_size != .Unknown && suffix_size != .Bits_64 {
 			return refuse(.Operand_Size_Wrong, word_place)
 		}
-		put_prefix(encoding, true, destination.register.number, base_number(source))
+		if refusal := put_rex(encoding, true, destination.register.number, index_number(source), base_number(source), false, false, destination.place); failed(refusal) {
+			return refusal
+		}
 		put_byte(encoding, 0x8D)
 		return put_memory(encoding, destination.register.number, source)
-	case .Move_Sign_Extended:
-		return sign_extended_move_encode(encoding, operands[0], operands[1])
-	case .Move, .Add, .Subtract, .Compare:
+	case .Move_Sign_Extended, .Move_Zero_Extended:
+		return extending_move_encode(encoding, mnemonic, operands[0], operands[1], word_place)
+	case .Move, .Add, .Subtract, .Compare, .Bitwise_And, .Bitwise_Or, .Bitwise_Xor:
 		return two_operand_encode(encoding, mnemonic.operation, suffix_size, operands[0], operands[1], word_place)
+	case .Test:
+		return test_encode(encoding, suffix_size, operands[0], operands[1], word_place)
+	case .Divide_Signed, .Divide_Unsigned, .Negate, .Bitwise_Not, .Increment, .Decrement:
+		return unary_encode(encoding, mnemonic.operation, suffix_size, operands[0], word_place)
+	case .Multiply_Signed, .Shift_Left, .Shift_Right_Logical, .Shift_Right_Arithmetic:
 	}
 	return {}
 }
 
-// sign_extended_move_encode writes movsxd: MOVSXD r64, r/m32 is REX.W 63 /r.
-// The source is a 32-bit register or memory, the destination a 64-bit
-// register: the two sizes differ by design, so the name takes no suffix.
+// extending_move_encode writes sign-extending (MOVSX / MOVSXD) and
+// zero-extending (MOVZX) moves from an 8-, 16- or 32-bit register or
+// memory operand into a wider register.
 @(private)
-sign_extended_move_encode :: proc "contextless" (encoding: ^Encoding, source: Operand, destination: Operand) -> Refusal_Record {
+extending_move_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemonic, source: Operand, destination: Operand, word_place: Place) -> Refusal_Record {
 	if destination.kind != .Register {
 		return refuse(.Operand_Form_Not_Valid, destination.place)
 	}
-	if destination.register.size != .Bits_64 {
+	if source.kind != .Register && source.kind != .Memory {
+		return refuse(.Operand_Form_Not_Valid, source.place)
+	}
+	dest_size := destination.register.size
+	if mnemonic.destination_size != .Unknown && dest_size != mnemonic.destination_size {
 		return refuse(.Operand_Size_Wrong, destination.place)
 	}
-	switch source.kind {
-	case .Register:
-		if source.register.size != .Bits_32 {
+	src_size: Operand_Size
+	if mnemonic.source_size != .Unknown {
+		if source.kind == .Register && source.register.size != mnemonic.source_size {
 			return refuse(.Operand_Size_Wrong, source.place)
 		}
-		put_prefix(encoding, true, destination.register.number, source.register.number)
-		put_byte(encoding, 0x63)
-		put_byte(encoding, modrm(3, destination.register.number, source.register.number))
-		return {}
-	case .Memory:
-		put_prefix(encoding, true, destination.register.number, base_number(source))
-		put_byte(encoding, 0x63)
-		return put_memory(encoding, destination.register.number, source)
-	case .Immediate, .Label:
+		src_size = mnemonic.source_size
+	} else {
+		// Unsized `movsx` / `movzx` cannot infer a memory operand's width.
+		if source.kind != .Register {
+			return refuse(.Operand_Size_Unknown, word_place)
+		}
+		src_size = source.register.size
 	}
-	return refuse(.Operand_Form_Not_Valid, source.place)
+	valid_pair := false
+	switch src_size {
+	case .Bits_8:
+		valid_pair = dest_size == .Bits_16 || dest_size == .Bits_32 || dest_size == .Bits_64
+	case .Bits_16:
+		valid_pair = dest_size == .Bits_32 || dest_size == .Bits_64
+	case .Bits_32:
+		// x86-64 has MOVSXD for 32->64 sign extension, and no 32->64 MOVZX.
+		valid_pair = mnemonic.operation == .Move_Sign_Extended && dest_size == .Bits_64
+	case .Bits_64, .Unknown:
+	}
+	if !valid_pair {
+		return refuse(.Operand_Size_Wrong, src_size == .Bits_64 || (src_size == .Bits_32 && mnemonic.operation == .Move_Zero_Extended) ? source.place : destination.place)
+	}
+	force_rex, forbid_rex, conflict_place := rex_flags_of(source, destination)
+	if dest_size == .Bits_16 {
+		put_byte(encoding, 0x66)
+	}
+	if refusal := put_rex(encoding, dest_size == .Bits_64, destination.register.number, rm_index_of(source), rm_number_of(source), force_rex, forbid_rex, conflict_place); failed(refusal) {
+		return refusal
+	}
+	if src_size == .Bits_32 {
+		// MOVSXD r64, r/m32: REX.W 63 /r.
+		put_byte(encoding, 0x63)
+	} else if mnemonic.operation == .Move_Sign_Extended {
+		// MOVSX r, r/m8: 0F BE /r. MOVSX r, r/m16: 0F BF /r.
+		put_byte(encoding, 0x0F)
+		put_byte(encoding, src_size == .Bits_8 ? u8(0xBE) : u8(0xBF))
+	} else {
+		// MOVZX r, r/m8: 0F B6 /r. MOVZX r, r/m16: 0F B7 /r.
+		put_byte(encoding, 0x0F)
+		put_byte(encoding, src_size == .Bits_8 ? u8(0xB6) : u8(0xB7))
+	}
+	return put_rm_body(encoding, destination.register.number, source)
 }
 
-// two_operand_encode writes mov, add, sub and cmp: the source first, as
-// the syntax of AT&T writes it.
+// two_operand_encode writes mov, add, sub, cmp, and, or and xor: the
+// source first, as the syntax of AT&T writes it.
 @(private)
 two_operand_encode :: proc "contextless" (encoding: ^Encoding, operation: Operation, suffix_size: Operand_Size, source: Operand, destination: Operand, word_place: Place) -> Refusal_Record {
 	operands := [2]Operand{source, destination}
@@ -654,96 +1155,456 @@ two_operand_encode :: proc "contextless" (encoding: ^Encoding, operation: Operat
 	if size == .Unknown {
 		return refuse(.Operand_Size_Unknown, word_place)
 	}
-	wide := size == .Bits_64
+	force_rex, forbid_rex, conflict_place := rex_flags_of(source, destination)
 	switch source.kind {
 	case .Register:
-		// MOV r/m, r: 89 /r. ADD 01 /r, SUB 29 /r, CMP 39 /r.
-		if destination.kind == .Register {
-			put_prefix(encoding, wide, source.register.number, destination.register.number)
-			put_byte(encoding, opcodes.store)
-			put_byte(encoding, modrm(3, source.register.number, destination.register.number))
-			return {}
+		// r/m <- r: 8-bit is store-1, 16/32/64-bit is store.
+		opcode := size == .Bits_8 ? opcodes.store - 1 : opcodes.store
+		if refusal = put_operand_prefixes(encoding, size, source.register.number, rm_index_of(destination), rm_number_of(destination), force_rex, forbid_rex, conflict_place); failed(refusal) {
+			return refusal
 		}
-		put_prefix(encoding, wide, source.register.number, base_number(destination))
-		put_byte(encoding, opcodes.store)
-		return put_memory(encoding, source.register.number, destination)
+		put_byte(encoding, opcode)
+		return put_rm_body(encoding, source.register.number, destination)
 	case .Memory:
-		// MOV r, r/m: 8B /r. ADD 03 /r, SUB 2B /r, CMP 3B /r.
-		put_prefix(encoding, wide, destination.register.number, base_number(source))
-		put_byte(encoding, opcodes.load)
+		// r <- r/m: 8-bit is load-1, 16/32/64-bit is load.
+		opcode := size == .Bits_8 ? opcodes.load - 1 : opcodes.load
+		if refusal = put_operand_prefixes(encoding, size, destination.register.number, index_number(source), base_number(source), force_rex, forbid_rex, conflict_place); failed(refusal) {
+			return refusal
+		}
+		put_byte(encoding, opcode)
 		return put_memory(encoding, destination.register.number, source)
 	case .Immediate:
-		return immediate_encode(encoding, operation, opcodes, wide, source, destination)
+		return immediate_encode(encoding, operation, opcodes, size, source, destination)
 	case .Label:
 	}
 	return refuse(.Operand_Form_Not_Valid, source.place)
 }
 
-// immediate_encode writes an operation of an immediate on a register or on
-// memory.
+// normalize_immediate checks that value fits the immediate width of size
+// and returns the sign-normalized value for short-form selection.
 //
-// - A 64-bit operation takes an immediate of 32 bits with a sign, which
-//   the processor extends; `mov` to a register alone takes 64 bits, with
-//   REX.W B8+rd io.
-// - A 32-bit operation takes -2^31 to 2^32 - 1: the 32 bits of the value.
+// - 8-bit: -128 .. 255.
+// - 16-bit: -32768 .. 65535 (unsigned values above 32767 fold to negative).
+// - 32-bit: -2^31 .. 2^32 - 1 (unsigned values above 2^31 - 1 fold to negative).
+// - 64-bit: -2^31 .. 2^31 - 1 (sign-extended by the processor).
 @(private)
-immediate_encode :: proc "contextless" (encoding: ^Encoding, operation: Operation, opcodes: Two_Operand_Opcodes, wide: bool, source: Operand, destination: Operand) -> Refusal_Record {
-	value := source.value
-	if wide {
-		long_move := operation == .Move && destination.kind == .Register && !fits_signed_32(value)
-		if long_move {
-			// MOV r64, imm64: REX.W B8+rd io.
-			if value < i128(min(i64)) || value > i128(max(u64)) {
-				return refuse(.Immediate_Too_Large, source.place)
-			}
-			put_prefix(encoding, true, 0, destination.register.number)
-			put_byte(encoding, 0xB8 + destination.register.number & 7)
-			put_u64(encoding, u64(value & i128(max(u64))))
-			return {}
+normalize_immediate :: proc "contextless" (size: Operand_Size, raw: i128, place: Place) -> (value: i128, refusal: Refusal_Record) {
+	value = raw
+	switch size {
+	case .Bits_8:
+		if value < i128(min(i8)) || value > i128(max(u8)) {
+			return 0, refuse(.Immediate_Too_Large, place)
 		}
-		if !fits_signed_32(value) {
-			return refuse(.Immediate_Too_Large, source.place)
+	case .Bits_16:
+		if value < i128(min(i16)) || value > i128(max(u16)) {
+			return 0, refuse(.Immediate_Too_Large, place)
 		}
-	} else {
+		if value > i128(max(i16)) {
+			value -= i128(1) << 16
+		}
+	case .Bits_32:
 		if value < i128(min(i32)) || value > i128(max(u32)) {
-			return refuse(.Immediate_Too_Large, source.place)
+			return 0, refuse(.Immediate_Too_Large, place)
 		}
 		if value > i128(max(i32)) {
 			value -= i128(1) << 32
 		}
-	}
-	if operation == .Move {
-		if destination.kind == .Register && !wide {
-			// MOV r32, imm32: B8+rd id.
-			put_prefix(encoding, false, 0, destination.register.number)
-			put_byte(encoding, 0xB8 + destination.register.number & 7)
-			put_u32(encoding, u32(i32(value)))
-			return {}
+	case .Bits_64:
+		if !fits_signed_32(value) {
+			return 0, refuse(.Immediate_Too_Large, place)
 		}
-		// MOV r/m, imm32: C7 /0 id.
-		put_prefix(encoding, wide, 0, destination.kind == .Register ? destination.register.number : base_number(destination))
-		put_byte(encoding, 0xC7)
-		if destination.kind == .Register {
-			put_byte(encoding, modrm(3, 0, destination.register.number))
-		} else if refusal := put_memory(encoding, 0, destination); failed(refusal) {
+	case .Unknown:
+		return 0, refuse(.Operand_Size_Unknown, place)
+	}
+	return value, {}
+}
+
+// immediate_encode writes an operation of an immediate on a register or on
+// memory.
+@(private)
+immediate_encode :: proc "contextless" (encoding: ^Encoding, operation: Operation, opcodes: Two_Operand_Opcodes, size: Operand_Size, source: Operand, destination: Operand) -> Refusal_Record {
+	force_rex, forbid_rex, conflict_place := rex_flags_of(destination)
+	// 64-bit MOV imm64 to a register: REX.W B8+rd io.
+	if operation == .Move && size == .Bits_64 && destination.kind == .Register && !fits_signed_32(source.value) {
+		if source.value < i128(min(i64)) || source.value > i128(max(u64)) {
+			return refuse(.Immediate_Too_Large, source.place)
+		}
+		if refusal := put_rex(encoding, true, 0, 0, destination.register.number, false, false, destination.place); failed(refusal) {
 			return refusal
 		}
-		put_u32(encoding, u32(i32(value)))
+		put_byte(encoding, 0xB8 + destination.register.number & 7)
+		put_u64(encoding, u64(source.value & i128(max(u64))))
 		return {}
 	}
-	// ADD, SUB, CMP r/m, imm8: 83 /n ib; r/m, imm32: 81 /n id.
+	value, refusal := normalize_immediate(size, source.value, source.place)
+	if failed(refusal) {
+		return refusal
+	}
+	if operation == .Move {
+		if destination.kind == .Register && size != .Bits_64 {
+			// MOV r8, imm8: B0+rb ib. MOV r16, imm16: 66 B8+rw iw. MOV r32, imm32: B8+rd id.
+			if refusal = put_operand_prefixes(encoding, size, 0, 0, destination.register.number, force_rex, forbid_rex, conflict_place); failed(refusal) {
+				return refusal
+			}
+			base_opcode := size == .Bits_8 ? u8(0xB0) : u8(0xB8)
+			put_byte(encoding, base_opcode + destination.register.number & 7)
+			switch size {
+			case .Bits_8:
+				put_byte(encoding, u8(value & 0xFF))
+			case .Bits_16:
+				put_u16(encoding, u16(value & 0xFFFF))
+			case .Bits_32:
+				put_u32(encoding, u32(i32(value)))
+			case .Bits_64, .Unknown:
+			}
+			return {}
+		}
+		// MOV r/m8, imm8: C6 /0 ib. MOV r/m16, imm16: 66 C7 /0 iw. MOV r/m32/64, imm32: C7 /0 id.
+		if refusal = put_operand_prefixes(encoding, size, 0, rm_index_of(destination), rm_number_of(destination), force_rex, forbid_rex, conflict_place); failed(refusal) {
+			return refusal
+		}
+		put_byte(encoding, size == .Bits_8 ? u8(0xC6) : u8(0xC7))
+		if refusal = put_rm_body(encoding, 0, destination); failed(refusal) {
+			return refusal
+		}
+		switch size {
+		case .Bits_8:
+			put_byte(encoding, u8(value & 0xFF))
+		case .Bits_16:
+			put_u16(encoding, u16(value & 0xFFFF))
+		case .Bits_32, .Bits_64:
+			put_u32(encoding, u32(i32(value)))
+		case .Unknown:
+		}
+		return {}
+	}
+	// ALU r/m8, imm8: 80 /n ib.
+	if size == .Bits_8 {
+		if refusal = put_rex(encoding, false, 0, rm_index_of(destination), rm_number_of(destination), force_rex, forbid_rex, conflict_place); failed(refusal) {
+			return refusal
+		}
+		put_byte(encoding, 0x80)
+		if refusal = put_rm_body(encoding, opcodes.extension, destination); failed(refusal) {
+			return refusal
+		}
+		put_byte(encoding, u8(value & 0xFF))
+		return {}
+	}
+	// ALU r/m16/32/64, imm8: 83 /n ib; else 81 /n iw/id.
 	short := fits_signed_8(value)
-	put_prefix(encoding, wide, 0, destination.kind == .Register ? destination.register.number : base_number(destination))
+	if refusal = put_operand_prefixes(encoding, size, 0, rm_index_of(destination), rm_number_of(destination), force_rex, forbid_rex, conflict_place); failed(refusal) {
+		return refusal
+	}
 	put_byte(encoding, short ? u8(0x83) : u8(0x81))
-	if destination.kind == .Register {
-		put_byte(encoding, modrm(3, opcodes.extension, destination.register.number))
-	} else if refusal := put_memory(encoding, opcodes.extension, destination); failed(refusal) {
+	if refusal = put_rm_body(encoding, opcodes.extension, destination); failed(refusal) {
 		return refusal
 	}
 	if short {
 		put_byte(encoding, u8(i8(value)))
+	} else if size == .Bits_16 {
+		put_u16(encoding, u16(value & 0xFFFF))
 	} else {
 		put_u32(encoding, u32(i32(value)))
 	}
 	return {}
+}
+
+// test_encode writes TEST: r/m with r (84 /r, 85 /r) and r/m with imm
+// (F6 /0 ib, F7 /0 iw/id).
+@(private)
+test_encode :: proc "contextless" (encoding: ^Encoding, suffix_size: Operand_Size, source: Operand, destination: Operand, word_place: Place) -> Refusal_Record {
+	operands := [2]Operand{source, destination}
+	size, refusal := operation_size(suffix_size, operands[:])
+	if failed(refusal) {
+		return refusal
+	}
+	destination_ok := destination.kind == .Register || destination.kind == .Memory
+	source_ok := source.kind == .Register || source.kind == .Immediate || source.kind == .Memory && destination.kind == .Register
+	if source.kind == .Label || !source_ok {
+		return refuse(.Operand_Form_Not_Valid, source.place)
+	}
+	if !destination_ok {
+		return refuse(.Operand_Form_Not_Valid, destination.place)
+	}
+	if size == .Unknown {
+		return refuse(.Operand_Size_Unknown, word_place)
+	}
+	force_rex, forbid_rex, conflict_place := rex_flags_of(source, destination)
+	switch source.kind {
+	case .Register:
+		// TEST r/m, r: 84 /r (8-bit), 85 /r (16/32/64-bit).
+		if refusal = put_operand_prefixes(encoding, size, source.register.number, rm_index_of(destination), rm_number_of(destination), force_rex, forbid_rex, conflict_place); failed(refusal) {
+			return refusal
+		}
+		put_byte(encoding, size == .Bits_8 ? u8(0x84) : u8(0x85))
+		return put_rm_body(encoding, source.register.number, destination)
+	case .Memory:
+		// TEST is commutative: `test mem, reg` encodes as TEST r/m, r with
+		// destination in reg and source in r/m.
+		if refusal = put_operand_prefixes(encoding, size, destination.register.number, index_number(source), base_number(source), force_rex, forbid_rex, conflict_place); failed(refusal) {
+			return refusal
+		}
+		put_byte(encoding, size == .Bits_8 ? u8(0x84) : u8(0x85))
+		return put_memory(encoding, destination.register.number, source)
+	case .Immediate:
+		// TEST r/m, imm: F6 /0 ib (8-bit), F7 /0 iw/id (16/32/64-bit).
+		value: i128
+		value, refusal = normalize_immediate(size, source.value, source.place)
+		if failed(refusal) {
+			return refusal
+		}
+		if refusal = put_operand_prefixes(encoding, size, 0, rm_index_of(destination), rm_number_of(destination), force_rex, forbid_rex, conflict_place); failed(refusal) {
+			return refusal
+		}
+		put_byte(encoding, size == .Bits_8 ? u8(0xF6) : u8(0xF7))
+		if refusal = put_rm_body(encoding, 0, destination); failed(refusal) {
+			return refusal
+		}
+		switch size {
+		case .Bits_8:
+			put_byte(encoding, u8(value & 0xFF))
+		case .Bits_16:
+			put_u16(encoding, u16(value & 0xFFFF))
+		case .Bits_32, .Bits_64:
+			put_u32(encoding, u32(i32(value)))
+		case .Unknown:
+		}
+		return {}
+	case .Label:
+	}
+	return refuse(.Operand_Form_Not_Valid, source.place)
+}
+
+// unary_encode writes one-operand ALU instructions: NOT (F6/F7 /2),
+// NEG (F6/F7 /3), DIV (F6/F7 /6), IDIV (F6/F7 /7), INC (FE/FF /0),
+// DEC (FE/FF /1).
+@(private)
+unary_encode :: proc "contextless" (encoding: ^Encoding, operation: Operation, suffix_size: Operand_Size, operand: Operand, word_place: Place) -> Refusal_Record {
+	if operand.kind != .Register && operand.kind != .Memory {
+		return refuse(.Operand_Form_Not_Valid, operand.place)
+	}
+	operands := [1]Operand{operand}
+	size, refusal := operation_size(suffix_size, operands[:])
+	if failed(refusal) {
+		return refusal
+	}
+	if size == .Unknown {
+		return refuse(.Operand_Size_Unknown, word_place)
+	}
+	opcode_8: u8
+	opcode_wide: u8
+	extension: u8
+	switch operation {
+	case .Bitwise_Not:
+		opcode_8, opcode_wide, extension = 0xF6, 0xF7, 2
+	case .Negate:
+		opcode_8, opcode_wide, extension = 0xF6, 0xF7, 3
+	case .Divide_Unsigned:
+		opcode_8, opcode_wide, extension = 0xF6, 0xF7, 6
+	case .Divide_Signed:
+		opcode_8, opcode_wide, extension = 0xF6, 0xF7, 7
+	case .Increment:
+		opcode_8, opcode_wide, extension = 0xFE, 0xFF, 0
+	case .Decrement:
+		opcode_8, opcode_wide, extension = 0xFE, 0xFF, 1
+	case .Move, .Add, .Subtract, .Compare, .Load_Address, .Push, .Pop,
+	     .Jump, .Jump_If, .Call, .Return, .Move_Sign_Extended,
+	     .Move_Zero_Extended, .Bitwise_And, .Bitwise_Or, .Bitwise_Xor,
+	     .Test, .Multiply_Signed, .Shift_Left, .Shift_Right_Logical,
+	     .Shift_Right_Arithmetic, .Set_If, .Sign_Extend_Byte_To_Word,
+	     .Sign_Extend_Word_To_Long, .Sign_Extend_Long_To_Quad,
+	     .Sign_Extend_Word_To_Double, .Sign_Extend_Long_To_Double,
+	     .Sign_Extend_Quad_To_Octaword, .Store_Byte, .Repeat_Store_Byte:
+		return refuse(.Mnemonic_Unknown, word_place)
+	}
+	force_rex, forbid_rex, conflict_place := rex_flags_of(operand)
+	if refusal = put_operand_prefixes(encoding, size, 0, rm_index_of(operand), rm_number_of(operand), force_rex, forbid_rex, conflict_place); failed(refusal) {
+		return refusal
+	}
+	put_byte(encoding, size == .Bits_8 ? opcode_8 : opcode_wide)
+	return put_rm_body(encoding, extension, operand)
+}
+
+// multiply_signed_encode writes IMUL in its 1-, 2- and 3-operand forms:
+// - 1 operand: IMUL r/m (F6 /5, F7 /5).
+// - 2 operands: IMUL r, r/m (0F AF /r) or IMUL r, r, imm (6B /r ib, 69 /r iw/id).
+// - 3 operands: IMUL r, r/m, imm (6B /r ib, 69 /r iw/id).
+@(private)
+multiply_signed_encode :: proc "contextless" (encoding: ^Encoding, suffix_size: Operand_Size, operands: []Operand, word_place: Place) -> Refusal_Record {
+	switch len(operands) {
+	case 1:
+		operand := operands[0]
+		if operand.kind != .Register && operand.kind != .Memory {
+			return refuse(.Operand_Form_Not_Valid, operand.place)
+		}
+		size, refusal := operation_size(suffix_size, operands)
+		if failed(refusal) {
+			return refusal
+		}
+		if size == .Unknown {
+			return refuse(.Operand_Size_Unknown, word_place)
+		}
+		force_rex, forbid_rex, conflict_place := rex_flags_of(operand)
+		if refusal = put_operand_prefixes(encoding, size, 0, rm_index_of(operand), rm_number_of(operand), force_rex, forbid_rex, conflict_place); failed(refusal) {
+			return refusal
+		}
+		put_byte(encoding, size == .Bits_8 ? u8(0xF6) : u8(0xF7))
+		return put_rm_body(encoding, 5, operand)
+	case 2:
+		source, destination := operands[0], operands[1]
+		if destination.kind != .Register {
+			return refuse(.Operand_Form_Not_Valid, destination.place)
+		}
+		if source.kind == .Immediate {
+			return multiply_signed_immediate_encode(encoding, suffix_size, source, destination, destination, word_place)
+		}
+		if source.kind != .Register && source.kind != .Memory {
+			return refuse(.Operand_Form_Not_Valid, source.place)
+		}
+		size, refusal := operation_size(suffix_size, operands)
+		if failed(refusal) {
+			return refusal
+		}
+		if size == .Bits_8 {
+			return refuse(.Operand_Size_Wrong, destination.place)
+		}
+		if refusal = put_operand_prefixes(encoding, size, destination.register.number, rm_index_of(source), rm_number_of(source), false, false, destination.place); failed(refusal) {
+			return refusal
+		}
+		put_byte(encoding, 0x0F)
+		put_byte(encoding, 0xAF)
+		return put_rm_body(encoding, destination.register.number, source)
+	case 3:
+		immediate, source, destination := operands[0], operands[1], operands[2]
+		if immediate.kind != .Immediate {
+			return refuse(.Operand_Form_Not_Valid, immediate.place)
+		}
+		if source.kind != .Register && source.kind != .Memory {
+			return refuse(.Operand_Form_Not_Valid, source.place)
+		}
+		if destination.kind != .Register {
+			return refuse(.Operand_Form_Not_Valid, destination.place)
+		}
+		return multiply_signed_immediate_encode(encoding, suffix_size, immediate, source, destination, word_place)
+	}
+	return refuse(.Operand_Count_Wrong, word_place, u64(len(operands)))
+}
+
+@(private)
+multiply_signed_immediate_encode :: proc "contextless" (encoding: ^Encoding, suffix_size: Operand_Size, immediate: Operand, source: Operand, destination: Operand, word_place: Place) -> Refusal_Record {
+	sized := [2]Operand{source, destination}
+	size, refusal := operation_size(suffix_size, sized[:])
+	if failed(refusal) {
+		return refusal
+	}
+	if size == .Bits_8 {
+		return refuse(.Operand_Size_Wrong, destination.place)
+	}
+	if size == .Unknown {
+		return refuse(.Operand_Size_Unknown, word_place)
+	}
+	value: i128
+	value, refusal = normalize_immediate(size, immediate.value, immediate.place)
+	if failed(refusal) {
+		return refusal
+	}
+	short := fits_signed_8(value)
+	if refusal = put_operand_prefixes(encoding, size, destination.register.number, rm_index_of(source), rm_number_of(source), false, false, destination.place); failed(refusal) {
+		return refusal
+	}
+	put_byte(encoding, short ? u8(0x6B) : u8(0x69))
+	if refusal = put_rm_body(encoding, destination.register.number, source); failed(refusal) {
+		return refusal
+	}
+	if short {
+		put_byte(encoding, u8(i8(value)))
+	} else if size == .Bits_16 {
+		put_u16(encoding, u16(value & 0xFFFF))
+	} else {
+		put_u32(encoding, u32(i32(value)))
+	}
+	return {}
+}
+
+// shift_encode writes SHL/SAL (/4), SHR (/5) and SAR (/7):
+// - 1 operand (`shl %rax`): shift by 1 (D0 /n, D1 /n).
+// - 2 operands with `%cl` (`shl %cl, %rax`): shift by CL (D2 /n, D3 /n).
+// - 2 operands with `$imm` (`shl $8, %rax`): D0/D1 for $1, else C0/C1 ib.
+@(private)
+shift_encode :: proc "contextless" (encoding: ^Encoding, operation: Operation, suffix_size: Operand_Size, operands: []Operand, word_place: Place) -> Refusal_Record {
+	if len(operands) != 1 && len(operands) != 2 {
+		return refuse(.Operand_Count_Wrong, word_place, u64(len(operands)))
+	}
+	extension: u8
+	switch operation {
+	case .Shift_Left:
+		extension = 4
+	case .Shift_Right_Logical:
+		extension = 5
+	case .Shift_Right_Arithmetic:
+		extension = 7
+	case .Move, .Add, .Subtract, .Compare, .Load_Address, .Push, .Pop,
+	     .Jump, .Jump_If, .Call, .Return, .Move_Sign_Extended,
+	     .Move_Zero_Extended, .Bitwise_And, .Bitwise_Or, .Bitwise_Xor,
+	     .Test, .Multiply_Signed, .Divide_Signed, .Divide_Unsigned, .Negate,
+	     .Bitwise_Not, .Increment, .Decrement, .Set_If,
+	     .Sign_Extend_Byte_To_Word, .Sign_Extend_Word_To_Long,
+	     .Sign_Extend_Long_To_Quad, .Sign_Extend_Word_To_Double,
+	     .Sign_Extend_Long_To_Double, .Sign_Extend_Quad_To_Octaword,
+	     .Store_Byte, .Repeat_Store_Byte:
+		return refuse(.Mnemonic_Unknown, word_place)
+	}
+	target := operands[len(operands) - 1]
+	if target.kind != .Register && target.kind != .Memory {
+		return refuse(.Operand_Form_Not_Valid, target.place)
+	}
+	sized := [1]Operand{target}
+	size, refusal := operation_size(suffix_size, sized[:])
+	if failed(refusal) {
+		return refusal
+	}
+	if size == .Unknown {
+		return refuse(.Operand_Size_Unknown, word_place)
+	}
+	force_rex, forbid_rex, conflict_place := rex_flags_of(target)
+	if len(operands) == 1 {
+		if refusal = put_operand_prefixes(encoding, size, 0, rm_index_of(target), rm_number_of(target), force_rex, forbid_rex, conflict_place); failed(refusal) {
+			return refusal
+		}
+		put_byte(encoding, size == .Bits_8 ? u8(0xD0) : u8(0xD1))
+		return put_rm_body(encoding, extension, target)
+	}
+	count := operands[0]
+	switch count.kind {
+	case .Register:
+		// Only %cl can supply a variable shift count.
+		if count.register.size != .Bits_8 || count.register.number != 1 || count.register.byte_kind != .Standard {
+			return refuse(.Operand_Form_Not_Valid, count.place)
+		}
+		if refusal = put_operand_prefixes(encoding, size, 0, rm_index_of(target), rm_number_of(target), force_rex, forbid_rex, conflict_place); failed(refusal) {
+			return refusal
+		}
+		put_byte(encoding, size == .Bits_8 ? u8(0xD2) : u8(0xD3))
+		return put_rm_body(encoding, extension, target)
+	case .Immediate:
+		if count.value < 0 || count.value > 255 {
+			return refuse(.Immediate_Too_Large, count.place)
+		}
+		if refusal = put_operand_prefixes(encoding, size, 0, rm_index_of(target), rm_number_of(target), force_rex, forbid_rex, conflict_place); failed(refusal) {
+			return refusal
+		}
+		if count.value == 1 {
+			put_byte(encoding, size == .Bits_8 ? u8(0xD0) : u8(0xD1))
+			return put_rm_body(encoding, extension, target)
+		}
+		put_byte(encoding, size == .Bits_8 ? u8(0xC0) : u8(0xC1))
+		if refusal = put_rm_body(encoding, extension, target); failed(refusal) {
+			return refusal
+		}
+		put_byte(encoding, u8(count.value))
+		return {}
+	case .Memory, .Label:
+		return refuse(.Operand_Form_Not_Valid, count.place)
+	}
+	return refuse(.Operand_Form_Not_Valid, count.place)
 }

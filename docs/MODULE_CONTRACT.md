@@ -564,7 +564,7 @@ assemble(source: Bytes, file: Handle) -> Integer
 5
 ```
 
-**The text.** A statement ends at a new line or at `;`, so a whole program fits in one line of the console. `#` starts a comment to the end of the line. A label is a name and `:`. The instructions are in the syntax of AT&T: the source first, `%rax`, `$42`, `8(%rbp)`, `table(%rip)`, and the suffixes `q` and `l`.
+**The text.** A statement ends at a new line or at `;`, so a whole program fits in one line of the console. `#` starts a comment to the end of the line. A label is a name and `:`. The instructions are in the syntax of AT&T: the source first, `%rax`, `$42`, `8(%rbp)`, `16(%rax,%rcx,4)`, `table(%rip)`, `*reg`, and the suffixes `b`, `w`, `l` and `q`.
 
 | Directive | What it does |
 |---|---|
@@ -576,14 +576,22 @@ assemble(source: Bytes, file: Handle) -> Integer
 | Instruction | Forms |
 |---|---|
 | `mov` | register, memory or immediate to a register; register or immediate to memory. A 64-bit immediate to a register only |
-| `add`, `sub`, `cmp` | the forms of `mov`, with an immediate of 32 bits at most |
-| `lea` | memory to a 64-bit register |
-| `movsxd` | a 32-bit register or memory to a 64-bit register, with its sign; no suffix |
+| `add`, `sub`, `cmp`, `and`, `or`, `xor` | the forms of `mov`, with an immediate of 32 bits at most |
+| `test` | register and register, register and memory in either order, or immediate with register or memory |
+| `imul` | 1-operand `r/m`; 2-operand `r/m` to a 16/32/64-bit register; 2-operand and 3-operand immediate forms |
+| `idiv`, `div`, `neg`, `not`, `inc`, `dec` | register or memory of 8, 16, 32 or 64 bits |
+| `shl`, `sal`, `shr`, `sar` | 1-operand shift by 1, 2-operand by `%cl`, or 2-operand by an unsigned 8-bit immediate |
+| `lea` | memory (base, scaled index or `%rip`-relative) to a 64-bit register |
+| `movsbw`, `movsbl`, `movsbq`, `movswl`, `movswq`, `movslq`, `movsxd`, `movsb`, `movsw`, `movsx`, `movzbw`, `movzbl`, `movzbq`, `movzwl`, `movzwq`, `movzb`, `movzw`, `movzx` | sign-extending or zero-extending move from a smaller register or memory operand to a wider register |
+| `cbw`, `cwtl`/`cwde`, `cltq`/`cdqe`, `cwd`, `cdq`/`cltd`, `cqo`/`cqto` | zero-operand sign extensions of the accumulator |
+| `stosb`, `rep stosb` | zero-operand byte store |
 | `push`, `pop` | a 64-bit register; `push` also an immediate |
-| `jmp`, `call`, `jo`, `jno`, `jb`, `jae`, `je`, `jne`, `jbe`, `ja`, `js`, `jns`, `jp`, `jnp`, `jl`, `jge`, `jle`, `jg` | a label of the code |
+| `jmp`, `call` | a direct label of the code, or an indirect 64-bit register or memory operand (`*reg`, `*mem`) |
+| `jo`, `jno`, `jb`, `jae`, `je`, `jne`, `jbe`, `ja`, `js`, `jns`, `jp`, `jnp`, `jl`, `jge`, `jle`, `jg` (and standard aliases) | a label of the code |
+| `seto`, `setno`, `setb`, `setae`, `sete`, `setne`, `setbe`, `seta`, `sets`, `setns`, `setp`, `setnp`, `setl`, `setge`, `setle`, `setg` (and standard aliases) | an 8-bit register or memory operand |
 | `ret` | none |
 
-The registers are those of 64 and 32 bits. A memory operand is a displacement of 32 bits and a base: a 64-bit register, or `%rip` with a label. Each form has one encoding, the encoding of the Intel manual, and a jump always takes 32 bits.
+The registers are those of 8, 16, 32 and 64 bits (`%al`..`%r15b`, `%ah`..`%bh`, `%spl`..`%dil`, `%ax`..`%r15w`, `%eax`..`%r15d`, `%rax`..`%r15`). A memory operand is a displacement of 32 bits with a 64-bit base register, a scaled index `disp(base, index, scale)` or `disp(, index, scale)` with scale 1, 2, 4 or 8, or `%rip` with a number or a label. Each form has one encoding, the encoding of the Intel manual, and a direct jump always takes 32 bits.
 
 **The refusals.** The assembler takes a text whole or not at all. Each refusal of `assembler.Refusal` has the line and the column of its first byte: an empty text, a text past 1 MiB or a line past 1024 bytes, a control byte, an unknown mnemonic, register, section or type, a form out of the subset, operands of two sizes or of no size, a value past its field, a label defined twice or never, a jump to the data, a label more than 2 GiB away, a section past 64 KiB of bytes or 1 TiB, more than 512 labels, 2048 references or 32 exports, a text with no instruction. The export gives the error record `Bad_Byte` for the argument `source`: the value is the offset of the byte, found is the byte. The log of the call host has the sentence:
 
@@ -622,7 +630,7 @@ compile(source: Bytes, output: Handle) -> Integer
 
 **The exports of the C source.** Each function that is not `static` becomes an export of the assembled module: an `export` directive with its parameters, each `int` or `long` an Integer, and an `int` or `long` result an Integer, a `void` result none. A function that is not `static` with another type is refused: make it `static`.
 
-**The C that passes.** The compiler takes C11, and the assembler takes the part of its output that its subset holds: functions of `int` and `long` with constants, `+`, `-`, locals with a separate assignment, `return`, and `if`, `while` and `for` on a value with no comparison. A floating constant is refused by the compiler; each other instruction is refused by the assembler, with its line and its column in the text of `compile`. The list of the instructions that the assembler lacks: `src/md/features/c_compiler.md`, "The gaps of the assembler".
+**The C that passes.** The compiler takes C11, and the assembler takes the integer subset of its output: functions using signed and unsigned `char`, `short`, `int`, `long`, `_Bool`, pointers, arrays, structs, local initializers, arithmetic (`+`, `-`, `*`, `/`, `%`, unary `-`), bitwise and shift operations (`&`, `|`, `^`, `~`, `<<`, `>>`), comparisons and logical operations, `if`, `while`, `for`, `do`, `switch`, and calls (including recursion) between functions of the same source. A floating constant is refused by the compiler; any instruction outside the subset (floating-point SSE, `alloca`, atomics) is refused by the assembler, with its line and its column in the text of `compile`. The remaining gaps: `src/md/features/c_compiler.md`, "The gaps of the assembler".
 
 **The refusals.** An empty source gives `Empty`; a source past 64 KiB gives `Too_Long`. A source that the compiler refuses gives `Bad_Byte` for the argument `source`, with the offset of the byte that the diagnostic names; the log of the call host has the diagnostic of `chibicc`:
 
