@@ -137,6 +137,7 @@ module_builds := [?]Module_Build {
 	{name = "debugged", source = DEMONSTRATION_MODULE_SOURCES + "debugged", entry = true, image = true},
 	{name = "debugger", source = SYSTEM_MODULE_SOURCES + "debugger", entry = true, image = true},
 	{name = "debug_target", source = TEST_MODULE_SOURCES + "debug_target", entry = true, image = true},
+	{name = "replay_probe", source = TEST_MODULE_SOURCES + "replay_probe", entry = true, image = true},
 	{name = "kernel_events", source = DEMONSTRATION_MODULE_SOURCES + "kernel_events", entry = true, image = true},
 	{name = "guest_demo", source = DEMONSTRATION_MODULE_SOURCES + "guest_demo", entry = true, image = true},
 	{name = "counters", source = DEMONSTRATION_MODULE_SOURCES + "counters", entry = true, image = true},

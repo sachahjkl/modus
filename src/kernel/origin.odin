@@ -172,6 +172,8 @@ holding_end :: proc "contextless" (holding: Holding, changes: u64) -> End {
 	if !same {
 		return .Changed
 	}
+	// A revocation never waits for a recording: end the input history at once.
+	record_replay_on_revocation(index)
 	n := holding & 0xFF
 	if n < HANDLE_CAPACITY {
 		slot := &process.handles[n]

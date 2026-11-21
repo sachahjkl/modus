@@ -1,6 +1,7 @@
 package kernel
 
 import "modus:contract/errors"
+import "modus:contract/input_history"
 import "modus:contract/ring"
 import "base:intrinsics"
 import op "modus:contract/operation"
@@ -58,6 +59,10 @@ Region :: struct {
 	bridge_function: u32, // A function behind a conventional bridge: 1 + its own requester identifier, while `requester` names the one that it shares with the devices behind the bridge. 0: a function with its own requester.
 	declared:          u32, // A bit for each device slot of the IOMMU whose domain maps the pages (iommu.odin). Frame lock.
 	declared_writable: u32, // The slots of `declared` whose device can also write the pages. Frame lock.
+	// Count of mappings of this region currently held by active recorded or
+	// replayed processes (record_replay.odin). Atomic: prevents another process
+	// from gaining a writable mapping to a recorded/replayed region.
+	recorded_mappings: u32,
 }
 
 // The state of a page in its slot of the frame list (docs/ARCHITECTURE.md,
@@ -204,6 +209,9 @@ Thread :: struct #align (64) {
 	// not count reads no other line for it. Only the processor that runs
 	// the thread writes it: the thread in its own kernel entry.
 	counting: bool,
+	// Whether this thread is recorded or replayed (record_replay.odin).
+	// Kept in the hot line so switching normal threads reads no extra line.
+	record_mode: input_history.Record_Mode,
 	frame:        Frame,
 	extended_state: Extended_State_Area, // Complete while the thread is on no processor: schedule saves it when a processor leaves the thread, and restores it when a processor takes it (docs/ARCHITECTURE.md, "The extended state of the processor").
 	process:      u32,
@@ -311,10 +319,15 @@ Thread :: struct #align (64) {
 	// the thread reads and writes them: the release of the run lock at the
 	// leave orders them before the take of another processor.
 	counter_totals: [processor_counters.Event]u64,
+	// Per-thread record/replay entry state (record_replay.odin). Written and
+	// read only by the processor running this thread.
+	replay_return_time:  u64,  // Return value placed in rax on kernel entry return.
+	record_wait_pending: bool, // Pure wait entry deferred until wake so post-wake time and point copies are recorded.
 }
 
 #assert(offset_of(Thread, placed) < 64)
 #assert(offset_of(Thread, counting) < 64)
+#assert(offset_of(Thread, record_mode) < 64)
 #assert(offset_of(Thread, has_breakpoints) < 64)
 #assert(offset_of(Thread, placement_restricted) < 64)
 // One bit of a set of processors for each processor that runs threads.
@@ -1008,6 +1021,7 @@ handle_close :: proc "contextless" (process: ^Process, slot: ^Handle_Slot) {
 		// both come here.
 		if .Debug in slot.rights {
 			debug_right_closed(process, slot)
+			record_right_closed(process, slot)
 		}
 		if intrinsics.atomic_sub(&processes[slot.object].references, 1) == 1 {
 			stops_pending |= 1 << slot.object
@@ -1047,6 +1061,9 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	// An object with marks of protection is mapped once: the marks are of
 	// the object, and would reach a second mapping.
 	if intrinsics.atomic_load(&region.marked_pages) != 0 {
+		return 0, .Bad_State
+	}
+	if record_replay_map_conflict(index_of_process(process), region_index, flags) {
 		return 0, .Bad_State
 	}
 	count := count
@@ -1209,6 +1226,9 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	// thread_create in this file, the start of the root service in main.odin).
 	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index, present_page_count = present_page_count, limit_bits = limit_bits, large = large}
 	intrinsics.atomic_add(&region.references, 1)
+	if process_records[index_of_process(process)].mode != .None {
+		intrinsics.atomic_add(&region.recorded_mappings, 1)
+	}
 	process.mapped_pages += count
 	return address, .Ok
 }
@@ -1325,6 +1345,8 @@ unmap :: proc "contextless" (process: ^Process, mapping: ^Mapping) {
 	// processor that loads the table after the read sees the 0 entries.
 	intrinsics.atomic_thread_fence(.Seq_Cst)
 	processor_sync(processors_with_table(process.table))
+	// Release any point copies inside the unmapped range after shoot-down.
+	record_replay_on_unmap(index_of_process(process), mapping.region, mapping.address, mapping.page_count)
 	// No processor walks into a freed table now: the frames can serve again.
 	page_tables_free(process.table, &process.budget, &freed)
 	// The test build checks the count of the present pages against the
@@ -1637,6 +1659,16 @@ thread_create :: proc "contextless" (process_index: u32, budget: u32, entry, sta
 	if process.state != .Created && process.state != .Ready {
 		return 0, .Bad_State
 	}
+	// Single-thread record/replay mode refuses creating a second thread and
+	// requires the pinned processor to intersect the creator's placement limit.
+	every_processor := machine_processors()
+	placement_limit := processors_limit & every_processor
+	if placement_limit == 0 {
+		placement_limit = every_processor
+	}
+	if record_replay_thread_create_refused(process_index, placement_limit) {
+		return 0, .Bad_State
+	}
 	number := u32(op.THREAD_CAPACITY)
 	for candidate in 0 ..< u32(op.THREAD_CAPACITY) {
 		if process.thread_areas & (1 << candidate) == 0 {
@@ -1700,11 +1732,6 @@ thread_create :: proc "contextless" (process_index: u32, budget: u32, entry, sta
 	// The limit of a thread that lives is never empty and holds only
 	// processors of the machine; 0 here is the first thread of the root
 	// service, or a caller with no limit to give.
-	every_processor := machine_processors()
-	placement_limit := processors_limit & every_processor
-	if placement_limit == 0 {
-		placement_limit = every_processor
-	}
 	thread.processors = placement_limit
 	thread.processors_limit = placement_limit
 	thread.placement_restricted = placement_limit != every_processor
@@ -1720,6 +1747,7 @@ thread_create :: proc "contextless" (process_index: u32, budget: u32, entry, sta
 	budgets[budget].amounts.threads -= 1
 	process.thread_areas |= 1 << number
 	process.thread_count += 1
+	record_replay_thread_init(process_index, thread)
 	thread_queue(thread)
 	return index, .Ok
 }
@@ -1885,6 +1913,7 @@ process_stop :: proc "contextless" (index: u32, cause: op.Stop_Cause, outcome: o
 	// is free for another process, and no ring takes a record of a process
 	// that stops.
 	debug_handler_end(index)
+	record_replay_end_locked(index, .Normal_Stop)
 	process_unlock(index, taken)
 	self := processor_self()
 	running: u64
@@ -1944,6 +1973,7 @@ process_cleanup :: proc "contextless" (index: u32) {
 	// The event table belongs to the process that gave it: it ends with it,
 	// before its handles close (events.odin). No process lock is held here.
 	event_table_end_for(index)
+	record_replay_recorder_stopped(index, process.serial)
 	for &thread, slot in threads[1:] {
 		if thread.process == index && thread.state == .Stopped && !thread.finished {
 			thread_finish(u32(slot + 1), thread.serial)
@@ -2158,11 +2188,15 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 			cpu.busy_time += 1
 			thread.run_time += 1
 			intrinsics.atomic_add(&processes[thread.process].run_time, 1)
-			if strategy_tick(cpu, thread, budget_charge(cpu)) {
+			stint_ended := strategy_tick(cpu, thread, budget_charge(cpu))
+			if stint_ended {
 				cpu.slice_left = 0 // The strategy ends the stint.
 			}
 			if budget_spent(intrinsics.atomic_load(&thread.budget)) {
 				cpu.slice_left = 0 // The budget has no time left in this period.
+			}
+			if intrinsics.atomic_load(&thread.record_mode) == .Recording && stint_ended {
+				record_replay_stint_bound_check(thread)
 			}
 		}
 		// The first processor counts the time.
@@ -2239,6 +2273,10 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		if event_wanted(cpu, OBSERVED_FAULT, .Fault, thread.process) {
 			event_record(cpu, .Fault, thread.process, thread.number, frame.vector, fault_address, u64(op.Event_Fault_Outcome.First_Use))
 		}
+	case from_process && frame.vector == VECTOR_PROTECTION_FAULT && (intrinsics.atomic_load(&thread.record_mode) != .None || cpu.record_traps_loaded) && record_replay_handle_gp(cpu, thread):
+		// Emulated rdtsc, rdtscp, or cpuid for a recorded or replayed thread
+		// (or stale trap unload after recording ended); never delivered to a
+		// user fault handler.
 	case:
 		delivery := Fault_Delivery.Stops_The_Process
 		if from_process && frame.vector < VECTOR_INTERRUPT_BASE {

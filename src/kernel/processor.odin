@@ -1,6 +1,7 @@
 package kernel
 
 import "base:intrinsics"
+import "modus:contract/input_history"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "kernel:stolen_time"
@@ -146,6 +147,9 @@ Processor :: struct {
 	// debug exception of a thread whose breakpoints were removed, clears
 	// it with the control register.
 	breakpoints_loaded: bool,
+	// CR4.TSD and CPUID faulting are enabled on this processor for a recorded
+	// or replayed thread (record_replay.odin). Only this processor writes it.
+	record_traps_loaded: bool,
 	// The kinds of kernel events that the event table has rules for: bit n
 	// for the Event_Kind n; 0 with no table (events.odin). Each event point
 	// reads it first. It is in the first line of the record, which each
@@ -244,6 +248,13 @@ Processor :: struct {
 	// writes: copied from the caller once, checked here, then copied to the
 	// thread, so the caller cannot change it between the check and the use.
 	extended_state_written: Extended_State_Area,
+	// Scratch buffers for encoding page deltas, snapshotting live shared pages,
+	// snapshotting replay history records once, and capturing kernel-to-user
+	// output bytes during process recording/replay (record_replay.odin).
+	page_snapshot_scratch:  [PAGE_SIZE]u8,
+	page_delta_scratch:     [input_history.PAGE_DELTA_MAX_BYTES]u8,
+	record_copy_scratch:    [RECORD_COPY_SCRATCH_BYTES]u8,
+	replay_record_scratch:  [REPLAY_RECORD_SCRATCH_BYTES]u8,
 	segments:      [7]u64,
 	task_state:    Task_State,
 }
@@ -301,9 +312,13 @@ sync_acknowledge :: proc "contextless" (cpu: ^Processor) {
 	// answers here. That process can end meanwhile and free its tables: so
 	// the processor keeps a table only if it is the one of its thread, and
 	// run loads that one before the return.
+	current := intrinsics.atomic_load(&cpu.current)
 	current_table: u64
-	if current := intrinsics.atomic_load(&cpu.current); current != 0 {
+	if current != 0 {
 		current_table = processes[threads[current].process].table
+	}
+	if cpu.record_traps_loaded && (current == 0 || intrinsics.atomic_load(&threads[current].record_mode) == .None) {
+		record_traps_unload(cpu)
 	}
 	if current_table == 0 || intrinsics.atomic_load(&cpu.table) != current_table {
 		intrinsics.atomic_store(&cpu.table, kernel_table)
@@ -490,6 +505,7 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	apic_setup(cpu)
 	guest_processor_setup(cpu)
 	thread_counters_processor_setup(cpu)
+	record_replay_processor_setup(cpu)
 }
 
 // processor_start prepares the first processor.
@@ -547,6 +563,7 @@ processor_start :: proc "contextless" () {
 	return_to_process_log()
 	control_registers_log()
 	thread_counters_log()
+	record_replay_log()
 	timer_calibrate()
 	timer_start()
 }

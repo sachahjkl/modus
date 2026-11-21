@@ -102,6 +102,9 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	if op.thread_control_counts_the_caller(command) {
 		return thread_counters_control(caller_index, caller_process, command, v, results)
 	}
+	if op.thread_control_records_a_process(command) {
+		return record_replay_control(caller_index, caller_process, command, v, results)
+	}
 	target_index: u32
 	owner := caller_process_index
 	by_machine := false // The machine handle names the thread: a write sets its weight limit, or the limit of its placement.
@@ -309,6 +312,10 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		return .Bad_Operation
 	case .Start_Counters, .Read_Counters, .Stop_Counters:
 		// They act on the calling thread: thread_counters_control runs them
+		// before a thread is named.
+		return .Bad_Operation
+	case .Record_Start, .Record_End, .Replay_Start:
+		// They act on a process handle: record_replay_control runs them
 		// before a thread is named.
 		return .Bad_Operation
 	case .Read_Memory:
@@ -631,6 +638,9 @@ thread_placement_read :: proc "contextless" (thread: ^Thread) -> (placement: op.
 // home and the take of the locks: then the locks are freed and the choice
 // starts again.
 thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Thread_Placement, by_machine: bool, is_caller: bool) -> (status: Operation_Outcome, refusal: op.Thread_Write_Refusal, most: u64) {
+	if intrinsics.atomic_load(&thread.record_mode) != .None {
+		return .Bad_State, .None, 0
+	}
 	every_processor := machine_processors()
 	held := op.Thread_Placement {
 		processors       = intrinsics.atomic_load(&thread.processors),
