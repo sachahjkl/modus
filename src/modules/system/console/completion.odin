@@ -83,6 +83,13 @@ Completion :: struct {
 
 completion: Completion
 
+// The names that the lines of the history used, how often and how lately
+// (src/md/features/fuzzy_match.md, "The frecency model"). The first thread
+// counts each line that the history adds and reads it at each key; the
+// load builds it from the kept lines, and history_clear empties it while a
+// line runs, when no list is open.
+completion_frecency: line_editor.Frecency
+
 // A table of candidates in memory of the console: the list of the first
 // thread has one, the measure of the second thread has its own.
 Candidate_Table :: struct {
@@ -267,7 +274,7 @@ candidate_add :: proc "contextless" (table: ^Candidate_Table, name: string, kind
 		table.dropped += 1
 		return
 	}
-	table.items[table.count] = {name = name, kind = kind, number = u32(number)}
+	table.items[table.count] = {name = name, kind = kind, number = u32(number), bonus = line_editor.frecency_bonus(&completion_frecency, name)}
 	table.count += 1
 }
 

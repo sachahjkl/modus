@@ -95,6 +95,7 @@ Entry :: struct {
 	kind:        Entry_Kind, // What the entry is.
 	mark:        Entry_Mark, // The fact that its icon says.
 	recent:      u8, // 0: not chosen lately. Else its age among the remembered choices: 1 is the newest.
+	bonus:       u8, // The frecency bonus of its name, 0 to line_editor.FRECENCY_BONUS_LIMIT: added to the score of a match.
 	name_length: u8, // The bytes of `name` in use.
 	flags:       Entry_Flags, // Its facts.
 	windows:     u8, // A module: the windows that its processes have now.
@@ -235,6 +236,10 @@ Panel :: struct {
 	typed_since_list: bool,
 	recents:       [RECENT_CAPACITY]Recent, // The chosen entries, the newest first.
 	recent_count:  int, // The remembered choices in use.
+	// The names of the entries that the input ran, how often and how
+	// lately (src/md/features/fuzzy_match.md, "The frecency model"). In the
+	// memory of the compositor only, as the recent choices.
+	frecency:      line_editor.Frecency,
 	form:          Form, // Arguments: the fields of the chosen entry.
 	sent_name:     [NAME_CAPACITY]u8, // Running and Result: the name of the entry that the panel sent.
 	sent_length:   int, // The bytes of `sent_name` in use.
@@ -258,7 +263,7 @@ typed_text :: proc "contextless" (panel: ^Panel) -> string {
 // entry_add appends one entry. A name that is empty or longer than
 // NAME_CAPACITY is not listed, and a full table takes no more entry.
 @(private)
-entry_add :: proc "contextless" (list: ^List, recents: []Recent, added: Entry, name_start, name_end: string) {
+entry_add :: proc "contextless" (list: ^List, uses: Uses, added: Entry, name_start, name_end: string) {
 	length := len(name_start) + len(name_end)
 	if length == 0 || length > NAME_CAPACITY || list.entry_count >= ENTRY_CAPACITY {
 		return
@@ -268,8 +273,23 @@ entry_add :: proc "contextless" (list: ^List, recents: []Recent, added: Entry, n
 	entry.name_length = u8(length)
 	copy(entry.name[:], name_start)
 	copy(entry.name[len(name_start):], name_end)
-	entry.recent = recent_age_in(recents, entry.kind, entry_name(entry))
+	entry.recent = recent_age_in(uses.recents, entry.kind, entry_name(entry))
+	entry.bonus = line_editor.frecency_bonus(uses.frecency, entry_name(entry))
 	list.entry_count += 1
+}
+
+// What the panel remembers of the entries that the input ran, as the
+// owner gives it to list_collect: the recent choices, the newest first,
+// and the frecency (nil: none).
+Uses :: struct {
+	recents:  []Recent,
+	frecency: ^line_editor.Frecency,
+}
+
+// panel_uses gives what the panel remembers of the entries that the input
+// ran.
+panel_uses :: proc "contextless" (panel: ^Panel) -> Uses {
+	return {recents = panel.recents[:clamp(panel.recent_count, 0, RECENT_CAPACITY)], frecency = &panel.frecency}
 }
 
 CLOSE_NAME_START :: "close " // The start of the name of the close of a window: "close plasma".
@@ -281,14 +301,15 @@ CLOSE_NAME_START :: "close " // The start of the name of the close of a window: 
 // no provider: the list copies it and checks the copy
 // (palette_table.snapshot_take), and reads only the copy after that. A
 // table that fails gives a list with no entry of a provider, and its
-// problem. recents: the choices that the panel remembers.
-list_collect :: proc "contextless" (list: ^List, recents: []Recent, process_names: []string, windows: []Window, table: []u8) -> (problem: palette_table.Problem, problem_index: int) {
+// problem. uses: what the panel remembers of the entries that the input
+// ran (panel_uses).
+list_collect :: proc "contextless" (list: ^List, uses: Uses, process_names: []string, windows: []Window, table: []u8) -> (problem: palette_table.Problem, problem_index: int) {
 	list.entry_count = 0
 	list.provider = .Absent
 	for window in windows {
 		added := Entry{kind = .Window, mark = window.focus ? Entry_Mark.Has_Focus : Entry_Mark.Window, number = window.number}
 		copy(added.hash_prefix[:], window.hash_prefix)
-		entry_add(list, recents, added, window.title, "")
+		entry_add(list, uses, added, window.title, "")
 	}
 	for name, index in process_names {
 		count := 0
@@ -297,12 +318,12 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, process_name
 				count += 1
 			}
 		}
-		entry_add(list, recents, {kind = .Module, mark = count > 0 ? Entry_Mark.Has_Window : Entry_Mark.No_Window, windows = u8(min(count, 255)), number = u32(index)}, name, "")
+		entry_add(list, uses, {kind = .Module, mark = count > 0 ? Entry_Mark.Has_Window : Entry_Mark.No_Window, windows = u8(min(count, 255)), number = u32(index)}, name, "")
 	}
 	for window in windows {
 		added := Entry{kind = .Close_Window, mark = .Destroys, flags = {.Destroys}, number = window.number}
 		copy(added.hash_prefix[:], window.hash_prefix)
-		entry_add(list, recents, added, CLOSE_NAME_START, window.title)
+		entry_add(list, uses, added, CLOSE_NAME_START, window.title)
 	}
 	if table == nil {
 		list.snapshot.entry_count = 0
@@ -327,7 +348,7 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, process_name
 		if given_index >= singles_end {
 			run := setting_run_length(&list.snapshot, given_index)
 			if run > 0 && run <= BUTTON_CAPACITY {
-				entry_add(list, recents, {kind = .Setting, value_count = u8(run), number = u32(given_index), act = act}, string(given.setting_name[:given.setting_name_length]), "")
+				entry_add(list, uses, {kind = .Setting, value_count = u8(run), number = u32(given_index), act = act}, string(given.setting_name[:given.setting_name_length]), "")
 				given_index += run
 				continue
 			}
@@ -363,7 +384,7 @@ list_collect :: proc "contextless" (list: ^List, recents: []Recent, process_name
 			// it gives a list that the panel draws again.
 			mark = .In_Use
 		}
-		entry_add(list, recents, {kind = kind, mark = mark, flags = flags, number = u32(given_index), act = act}, string(given.name[:given.name_length]), "")
+		entry_add(list, uses, {kind = kind, mark = mark, flags = flags, number = u32(given_index), act = act}, string(given.name[:given.name_length]), "")
 		given_index += 1
 	}
 	return .None, 0
@@ -404,7 +425,7 @@ entries_collect :: proc "contextless" (panel: ^Panel, process_names: []string, w
 	// The list is made in its own memory: what the panel showed is kept
 	// first.
 	shown := panel_shown(panel)
-	list_collect(panel.list, panel.recents[:clamp(panel.recent_count, 0, RECENT_CAPACITY)], process_names, windows, nil)
+	list_collect(panel.list, panel_uses(panel), process_names, windows, nil)
 	list_rank(panel.list, typed_text(panel))
 	return panel_adopt_after(panel, panel.list, shown)
 }
@@ -569,8 +590,9 @@ kind_tie_order :: proc "contextless" (kind: Entry_Kind) -> u32 {
 
 // tie_order gives the order of an entry among the entries with the same
 // score: first the entries chosen lately, the newest first; then the kind;
-// then the order of the table. A better match always comes before a recent
-// one: the ranking reads this number only for equal scores.
+// then the order of the table. The ranking reads this number only for
+// equal scores; the frecency is in the score, as a bonus of at most
+// line_editor.FRECENCY_BONUS_LIMIT points.
 tie_order :: proc "contextless" (entry: ^Entry, index: int) -> u32 {
 	recent := entry.recent != 0 ? u32(entry.recent) - 1 : RECENT_CAPACITY
 	return recent << 24 | kind_tie_order(entry.kind) << 16 | u32(index) & 0xFFFF
@@ -644,7 +666,8 @@ prefix_admits :: proc "contextless" (prefix: Prefix, kind: Entry_Kind) -> bool {
 // the order of their tables.
 //
 // With a typed part: one list, the best match first (the fuzzy match of
-// src/library/support/line_editor), with no heading: the best match is the first row.
+// src/library/support/line_editor, with the frecency bonus of each entry),
+// with no heading: the best match is the first row.
 // With no typed part: three groups, each under its heading: the entries
 // chosen lately, the windows with the front one first, the modules in the
 // order of their table. A group with no entry is absent. The entries that
@@ -734,7 +757,7 @@ rows_rank :: proc "contextless" (list: ^List, query: string) {
 	admitted := 0
 	for &entry, index in list.entries[:list.entry_count] {
 		if prefix_admits(prefix, entry.kind) {
-			list.candidates[admitted] = {name = entry_name(&entry), tie_order = tie_order(&entry, index), number = u32(index)}
+			list.candidates[admitted] = {name = entry_name(&entry), tie_order = tie_order(&entry, index), number = u32(index), bonus = entry.bonus}
 			admitted += 1
 		}
 	}
@@ -862,14 +885,16 @@ recent_age_in :: proc "contextless" (recents: []Recent, kind: Entry_Kind, name: 
 	return 0
 }
 
-// recent_note remembers that the input chose an entry: it becomes the
-// newest choice, and the oldest one leaves when the table is full. An
-// entry that destroys is not remembered: its thing is gone after it. The
-// memory is the memory of the panel only: a restart of the machine loses it.
+// recent_note remembers that the input ran an entry: it becomes the
+// newest choice, and the oldest one leaves when the table is full; its
+// name counts one use in the frecency. An entry that destroys is not
+// remembered: its thing is gone after it. The memory is the memory of the
+// panel only: a restart of the machine loses it.
 recent_note :: proc "contextless" (panel: ^Panel, entry: ^Entry) {
 	if entry_destroys(entry) {
 		return
 	}
+	line_editor.frecency_note_use(&panel.frecency, {entry_name(entry)})
 	noted := Recent{kind = entry.kind, name_length = entry.name_length, name = entry.name}
 	count := min(panel.recent_count, RECENT_CAPACITY)
 	// The place that the choice had, or the last place of a full table.

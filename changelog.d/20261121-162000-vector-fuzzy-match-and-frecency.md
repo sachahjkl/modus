@@ -1,0 +1,3 @@
+type: Added
+
+**Vector fuzzy matching and frecency ranking.** Console completion and the desktop palette now rank matches with a bounded frecency bonus (0 to 8 points, use-counted decay of 1/32, capacity 64, rebuilt from the line history in the console and kept in compositor memory for the palette) and match ASCII names with a portable 128-bit vector form verified score-for-score against the scalar reference. Measured on the host (`-o:speed -microarch:x86-64`, load 6.90), the vector form matches 51.9 to 60.6 million names a second over 100 names (6.0x to 7.2x scalar), 32.4 to 66.2 million over 10 000 names (4.8x to 8.2x), and 34.3 to 64.9 million over 100 000 names (4.7x to 7.5x).

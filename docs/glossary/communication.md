@@ -310,6 +310,16 @@ The design: `docs/CONSOLE.md`, "3. The fuzzy match".
 
 Do not use: fuzzy search, subsequence search, filter (for this).
 
+### Frecency
+
+Frecency is a bounded score of how often and how lately the principal used a name, decaying by uses rather than by clock time.
+
+It adds a small bonus (0 to 8 points) to a fuzzy match score so frequently used names come first among near equal matches, without overriding a better structural match. The console derives it from its line history; the palette keeps it in the memory of the compositor.
+
+The design: `src/md/features/fuzzy_match.md`, "The frecency model", and `docs/CONSOLE.md`, "3. The fuzzy match".
+
+Do not use: popularity, usage score, MRU score.
+
 ### Line history
 
 The line history is the lines that were entered in the console, in a ring of bytes in its memory, the newest first.

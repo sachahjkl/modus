@@ -9,6 +9,7 @@ import "modus:contract/value_kinds"
 import "modus:private/compositor/bar"
 import "modus:support/display"
 import "modus:support/interface"
+import "modus:support/line_editor"
 import "modus:private/compositor/palette"
 import "modus:support/system"
 import "base:intrinsics"
@@ -76,6 +77,7 @@ Ranking :: struct {
 	window_count:   int,
 	recents:        [palette.RECENT_CAPACITY]palette.Recent, // The remembered choices.
 	recent_count:   int,
+	frecency:       line_editor.Frecency, // The frecency of the panel.
 	requested:      u32, // The number of the newest request. The thread waits on this word.
 	published:      u32, // The lists that the thread published. The loop waits on this word.
 	published_list: u32, // The index of the newest whole list.
@@ -89,6 +91,9 @@ Ranking :: struct {
 }
 
 palette_ranking: Ranking
+// The copy of the frecency of a request, for the ranking thread only: a
+// global, because the stack of that thread is small.
+palette_ranking_frecency: line_editor.Frecency
 palette_published_seen: u32 // The value of `published` that the loop saw last.
 palette_enter_waits: bool // Enter came while the list of the typed part was not made yet: it runs when the list comes.
 palette_go_to_waits: bool // Shift with Enter came while the list of the typed part was not made yet: it goes when the list comes.
@@ -169,13 +174,14 @@ palette_ranking_thread :: proc "c" (parameter: rawptr) -> ! {
 			}
 		}
 		recent_count := copy(recents[:], ranking.recents[:clamp(ranking.recent_count, 0, len(ranking.recents))])
+		palette_ranking_frecency = ranking.frecency
 		system.unlock(&ranking.lock)
 
 		target := 1 - intrinsics.atomic_load_explicit(&ranking.published_list, .Relaxed)
 		list := &palette_lists[target]
 		start := system.nanoseconds()
 		system.lock(&ranking.table_lock)
-		problem, problem_index := palette.list_collect(list, recents[:recent_count], bar.names[:], windows[:window_count], ranking.table)
+		problem, problem_index := palette.list_collect(list, {recents = recents[:recent_count], frecency = &palette_ranking_frecency}, bar.names[:], windows[:window_count], ranking.table)
 		system.unlock(&ranking.table_lock)
 		palette.list_rank(list, string(query[:query_length]))
 		list.sequence = sequence
@@ -228,6 +234,7 @@ palette_entries_refresh :: proc "contextless" () {
 		ranking.window_count += 1
 	}
 	ranking.recent_count = copy(ranking.recents[:], palette_panel.recents[:clamp(palette_panel.recent_count, 0, palette.RECENT_CAPACITY)])
+	ranking.frecency = palette_panel.frecency
 	intrinsics.atomic_add(&ranking.requested, 1)
 	system.unlock(&ranking.lock)
 	system.word_wake(&ranking.requested)
