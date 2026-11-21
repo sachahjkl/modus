@@ -46,10 +46,10 @@ import "modus:contract/isolated"
 import "modus:contract/module"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 
 // The draw tables of the interface, and the tables of the rows: 2536
 // pages. And the glyph memory of the copy of the text rendering of the

@@ -62,12 +62,12 @@ import "modus:contract/fixed_addresses"
 import "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import rounds "modus:private/kernel_events/kernel_events_rounds"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import rounds "internal:kernel_events/kernel_events_rounds"
+import "modus:random"
+import "modus:system"
 
 // Process_Create takes the process and its first thread from this budget.
 // The tool counts its module, a stack and a thread area for each of its 7
@@ -143,7 +143,7 @@ MEASURE_TIME :: 300 // Milliseconds of one measure.
 LOAD_AMOUNTS :: system.Budget_Amounts{pages = 256 + LOADERS_MOST * (16 + 3), processes = 1, threads = 1 + LOADERS_MOST, processor = (1 + LOADERS_MOST) * 1_000_000, log_records = 0}
 WAITER_AMOUNTS :: system.Budget_Amounts{pages = 320, processes = 1, threads = 1, processor = 100_000, log_records = 0}
 
-// The rounds of the load child: modus:private/kernel_events/kernel_events_rounds.
+// The rounds of the load child: internal:kernel_events/kernel_events_rounds.
 Round :: rounds.Round
 
 // The page that the parent shares with each child, at SHARED_ADDRESS in the

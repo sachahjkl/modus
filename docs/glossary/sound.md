@@ -16,7 +16,7 @@ The stream ring is the ring between the sound service and its one client: one co
 
 The root service makes it and gives it to both, in the slot of the device ring of the client. The service answers the commands in order; the completion of a `Play` comes when the device took the period that holds its last frame, so a record holds one place of the ring until then. A completion that is not `Ok` carries an error record. It is not a queue of the device: only the service sees those.
 
-The design: `src/library/contract/timed_stream`.
+The design: `src/library/modus/contract/timed_stream`.
 
 Do not use: audio queue, PCM ring.
 
@@ -26,7 +26,7 @@ The sample region is the memory object of the client of the sound service that h
 
 The client makes it from its own budget and lends it with `Attach`, with the right Read only: the service never writes it, and the device never reads it. A record names the place of its first frame in the region in bytes, never an address, and the service refuses a frame past its end. The service copies the frames of a record when it fills the period that holds them, so the client keeps them unchanged until the completion of the record.
 
-The design: `src/library/contract/timed_stream`.
+The design: `src/library/modus/contract/timed_stream`.
 
 Do not use: audio buffer, DMA buffer.
 
@@ -36,7 +36,7 @@ In the group Sound, a frame is one sample of each channel of a timed stream: 4 b
 
 The frame is the unit of the time of a stream: 48000 frames play in one second, and a record names a count of frames. The sound service maps a time of the system clock to a frame. It is not the Ethernet frame of the group Devices, and not the frame of QUIC: each group of the glossary defines its own.
 
-The design: `src/library/contract/timed_stream`.
+The design: `src/library/modus/contract/timed_stream`.
 
 Do not use: sample (for this), tick.
 
@@ -46,7 +46,7 @@ In the group Sound, a sample is the value of one channel at one frame: a signed 
 
 Two samples, left then right, make one frame of the one format. The process writes them in its sample region; no service changes them. It is not the sample of a developer tool in the group Network, which is one read of its reports.
 
-The design: `src/library/contract/timed_stream`.
+The design: `src/library/modus/contract/timed_stream`.
 
 Do not use: frame (for this), PCM word.
 

@@ -473,7 +473,7 @@ START_POLICY_SOURCE_LINE_LIMIT :: 400
 // holds the decisions of the wiring rows, with their host tests, so the
 // start policy keeps only their calls.
 @(rodata)
-START_POLICY_ALLOWED_IMPORTS := [?]string{"modus:contract/start_list", "modus:contract/root_ring", "modus:contract/ring", "modus:contract/operation", "modus:contract/value_kinds", "modus:private/start_policy/wiring_rows", "modus:support/system"}
+START_POLICY_ALLOWED_IMPORTS := [?]string{"modus:contract/start_list", "modus:contract/root_ring", "modus:contract/ring", "modus:contract/operation", "modus:contract/value_kinds", "internal:start_policy/wiring_rows", "modus:system"}
 
 // source_import_problems gives each import of the sources, tests not
 // counted, that allowed refuses, each foreign import or block, and each
@@ -538,7 +538,7 @@ start_policy_source_problems :: proc(sources: [][2]string) -> []string {
 // The library part of the wiring rows of the start policy: it makes no
 // call of the kernel, so its host tests reach each decision
 // (src/md/features/start_policy.md, "The rescue start policy").
-WIRING_ROWS_FOLDER :: foundation.SOURCE_FOLDER_PRIVATE + "/start_policy/wiring_rows"
+WIRING_ROWS_FOLDER :: foundation.SOURCE_FOLDER_INTERNAL + "/start_policy/wiring_rows"
 
 // wiring_rows_source_problems gives each import of the sources of
 // wiring_rows, tests not counted, that is not base: or a contract: a

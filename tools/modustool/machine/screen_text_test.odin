@@ -3,7 +3,7 @@ package machine
 import "core:testing"
 
 import "modus:contract/font_characters"
-import "modus:support/graphics"
+import "modus:graphics"
 
 // A text drawn in Spleen 8x16 into a picture of the tool is read back, and a
 // cell with one pixel more is no glyph: the read never guesses.

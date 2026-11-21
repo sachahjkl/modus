@@ -5,7 +5,7 @@ import "base:intrinsics"
 import "modus:contract/errors"
 import "core:testing"
 import "core:thread"
-import "modus:support/system"
+import "modus:system"
 
 // Another thread of the caller changes a record of the shared call region
 // while sum_words reads it: a hostile caller can do this. The export
@@ -82,8 +82,8 @@ weigh_reads_nine_parameters_in_their_places :: proc(t: ^testing.T) {
 	testing.expect_value(t, error.limit, WEIGH_LABEL_LIMIT)
 }
 
-// The test runs on the host: the module links src/library/support/system, whose entries
-// of the machine (src/library/support/system/enter.asm) are not on the host. The
+// The test runs on the host: the module links src/library/modus/system, whose entries
+// of the machine (src/library/modus/system/enter.asm) are not on the host. The
 // package gives the two entries of the kernel for a host
 // (kernel_entry_on_the_host.odin); this definition gives the call of an
 // export. It is never called by sum_words, and stops the test if it is.

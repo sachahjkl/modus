@@ -97,28 +97,28 @@
 // The design: (docs/ARCHITECTURE.md, "U2. Root service").
 package root
 
-import "modus:support/bochs_display"
-import "modus:support/bootscreen"
-import "modus:support/bootscreen/collect"
-import "modus:support/display"
-import "modus:support/graphics"
+import "modus:bochs_display"
+import "modus:bootscreen"
+import "modus:bootscreen/collect"
+import "modus:display"
+import "modus:graphics"
 import info "modus:contract/boot_info"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
-import "modus:support/random"
-import "modus:support/screen_presence"
-import "modus:support/system"
-import terminal "modus:support/terminal"
+import "modus:random"
+import "modus:screen_presence"
+import "modus:system"
+import terminal "modus:terminal"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
 import "modus:contract/log_scope"
 import "modus:contract/root_ring"
-import "modus:support/pci"
-import "modus:support/principals"
-import "modus:support/disk_process"
+import "modus:pci"
+import "modus:principals"
+import "modus:disk_process"
 import "modus:contract/settings"
 import "modus:contract/palette_table"
 import "modus:contract/start_grant"
@@ -127,7 +127,7 @@ import "modus:contract/value_kinds"
 
 // What a process receives, by name: a start grant. The list and the name of
 // each one are a contract, because the reader of an error record names the
-// start grant that refused a debug access (src/library/contract/start_grant).
+// start grant that refused a debug access (src/library/modus/contract/start_grant).
 Grant :: start_grant.Grant
 
 // The context of the input service: the slots that src/modules/system/input
@@ -602,7 +602,7 @@ failure_show :: proc "contextless" (text: string, status: system.Status) {
 }
 
 // The random generator of the root service: its seed comes from the
-// sources of the processor (src/library/support/random/entropy.odin), not from a
+// sources of the processor (src/library/modus/random/entropy.odin), not from a
 // starter. It gives the seed of each process that root starts.
 process_generator: random.Generator
 entropy_report: random.Entropy_Report
@@ -639,7 +639,7 @@ entropy_report: random.Entropy_Report
 //    the compositor) start by their procedures here,
 //    each other process with the grants of its start grant set.
 //
-// With no screen before the first start (modus:support/screen_presence),
+// With no screen before the first start (modus:screen_presence),
 // this service writes the line "root: no screen: no console, no window;
 // the other services start" once, and the machine parts page has no
 // screen: the processes that start with no screen are a decision of the
@@ -760,7 +760,7 @@ boot_image_take :: proc "contextless" (ctx: ^system.Context) {
 
 // boot_display_take maps the framebuffer for the boot display, and says if
 // the machine has a screen, by the test that the compositor makes too
-// (modus:support/screen_presence). With no screen, the boot display shows
+// (modus:screen_presence). With no screen, the boot display shows
 // nothing and the start goes on.
 boot_display_take :: proc "contextless" (ctx: ^system.Context) -> (present: bool) {
 	pixels, map_status := system.memory_map(ctx.handles[op.ROOT_FRAMEBUFFER], {.Write})
@@ -1794,7 +1794,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	// The storage service names the store of a connection by the name that
 	// it receives: the store of the history has the name of the caller and
 	// ".history", which no module of the boot image has, and the store of a
-	// named principal has its number after it (src/library/support/principals). Each
+	// named principal has its number after it (src/library/modus/principals). Each
 	// other service receives the name of the process. A name that does not
 	// fit is refused before anything is made: a cut name can be the name of
 	// another store.

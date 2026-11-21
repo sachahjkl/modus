@@ -132,8 +132,8 @@ import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:random"
+import "modus:system"
 
 // Its rows and its call region, 64 pages, the budgets of its two children,
 // CHILD_PAGES each, and the budget of its storm child, STORM_PAGES: no

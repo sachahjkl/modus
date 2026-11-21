@@ -1,4 +1,4 @@
-// A web client of this system: TCP in the process (src/library/support/tcp) over a
+// A web client of this system: TCP in the process (src/library/modus/tcp) over a
 // segment endpoint with a client grant. The root service granted it
 // 10.0.2.100 port 80 and nothing else. In the test of TCP against a stack
 // that this project did not write, QEMU gives that address to a listener
@@ -38,14 +38,14 @@ import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/network"
-import "modus:support/random"
-import "modus:support/system"
-import "modus:support/tcp"
-import "modus:support/web"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:network"
+import "modus:random"
+import "modus:system"
+import "modus:tcp"
+import "modus:web"
 
 REMOTE :: 0x0A000264 // 10.0.2.100
 REMOTE_PORT :: 80

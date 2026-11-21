@@ -18,7 +18,7 @@ import "modus:contract/blake3"
 import info "modus:contract/boot_info"
 import debug_object "modus:contract/debug_object"
 import module "modus:contract/module"
-import "modus:support/disk_process"
+import "modus:disk_process"
 import "modustool:foundation"
 
 // The name of the module build file, in the folder of the module.
@@ -203,9 +203,9 @@ outside_module_sources_hold :: proc(build: foundation.Module_Build) -> bool {
 	}
 	// The compiler names a file where it is after each link; the folder
 	// as the tool names it is a second form of the same folder.
-	library_by_name := foundation.join(root, "/", foundation.SOURCE_FOLDER_LIBRARY)
+	library_by_name := foundation.join(root, "/", foundation.SOURCE_FOLDER_PUBLIC)
 	library_by_link := library_by_name
-	if resolved, resolve_error := os.get_absolute_path(foundation.SOURCE_FOLDER_LIBRARY, context.temp_allocator); resolve_error == nil {
+	if resolved, resolve_error := os.get_absolute_path(foundation.SOURCE_FOLDER_PUBLIC, context.temp_allocator); resolve_error == nil {
 		library_by_link = resolved
 	}
 	compiler_folder := odin_root()
@@ -218,7 +218,7 @@ outside_module_sources_hold :: proc(build: foundation.Module_Build) -> bool {
 		if outside_module_source_has_a_place(path, build.source, library_by_link, compiler_folder) || outside_module_source_has_a_place(path, build.source, library_by_name, compiler_folder) {
 			continue
 		}
-		fmt.eprintfln("modustool: module-build: %s: the source %s is refused: a source of a module is in the folder of the module (%s) or under it, in the source library %s (%s), or in the libraries of the compiler. Remove the import that names its package", build.name, path, build.source, foundation.SOURCE_LIBRARY_NAME, foundation.SOURCE_FOLDER_LIBRARY)
+		fmt.eprintfln("modustool: module-build: %s: the source %s is refused: a source of a module is in the folder of the module (%s) or under it, in the source library %s (%s), or in the libraries of the compiler. Remove the import that names its package", build.name, path, build.source, foundation.SOURCE_LIBRARY_NAME, foundation.SOURCE_FOLDER_PUBLIC)
 		hold = false
 	}
 	return hold
@@ -359,9 +359,9 @@ run_module_build :: proc(args: []string) -> int {
 			return foundation.EXIT_USAGE
 		}
 	}
-	if !os.is_dir(foundation.SOURCE_FOLDER_LIBRARY) || !os.exists(RUNTIME_MEMORY) {
+	if !os.is_dir(foundation.SOURCE_FOLDER_PUBLIC) || !os.exists(RUNTIME_MEMORY) {
 		system_folder, _ := os.get_working_directory(context.temp_allocator)
-		fmt.eprintfln("modustool: module-build: %s is not the folder of the system: it has no %s or no %s. Name the folder of the system with --system, or with the environment variable %s", system_folder, foundation.SOURCE_FOLDER_LIBRARY, RUNTIME_MEMORY, SYSTEM_FOLDER_VARIABLE)
+		fmt.eprintfln("modustool: module-build: %s is not the folder of the system: it has no %s or no %s. Name the folder of the system with --system, or with the environment variable %s", system_folder, foundation.SOURCE_FOLDER_PUBLIC, RUNTIME_MEMORY, SYSTEM_FOLDER_VARIABLE)
 		return foundation.EXIT_USAGE
 	}
 	return outside_module_build(folder, out) ? 0 : foundation.EXIT_FAILURE

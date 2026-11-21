@@ -10,7 +10,7 @@ import "core:testing"
 STREAM_TEST_FOLDER :: "src/modules/tests/record_stream_probe"
 // A support package that declares a record stream, which no module may do.
 @(private = "file")
-STREAM_TEST_OTHER_FOLDER :: "src/library/support/record_stream_sample"
+STREAM_TEST_OTHER_FOLDER :: "src/library/modus/record_stream_sample"
 
 // The record types of the sources of these tests: two records with each
 // byte named, one with padding inside, one with padding at its end, one
@@ -45,7 +45,7 @@ Lent_Record :: struct {
 // and the body of a procedure.
 @(private = "file")
 stream_test_source :: proc(declarations, body: string) -> Fact_Source {
-	text := fmt.tprintf("package record_stream_probe\n\nimport \"modus:support/system\"\n\n%s\n\n%s\n\nwrite :: proc() {{\n%s\n}}\n", STREAM_TEST_TYPES, declarations, body)
+	text := fmt.tprintf("package record_stream_probe\n\nimport \"modus:system\"\n\n%s\n\n%s\n\nwrite :: proc() {{\n%s\n}}\n", STREAM_TEST_TYPES, declarations, body)
 	return {path = STREAM_TEST_FOLDER + "/main.odin", source = text}
 }
 
@@ -128,13 +128,13 @@ a_record_stream_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 	// compiler read for the module.
 	other := Fact_Source {
 		path   = STREAM_TEST_OTHER_FOLDER + "/sample.odin",
-		source = "package record_stream_sample\n\nimport \"modus:support/system\"\n\nSample :: struct {\n\tplace: u64,\n}\n\nelsewhere: system.Record_Output(Sample)\n",
+		source = "package record_stream_sample\n\nimport \"modus:system\"\n\nSample :: struct {\n\tplace: u64,\n}\n\nelsewhere: system.Record_Output(Sample)\n",
 	}
 	_, other_ok := stream_test_streams(stream_test_source("", ""), other)
 	testing.expect(t, !other_ok)
 	// The same package with a pointer to a stream only: no declaration.
 	pointer := other
-	pointer.source = "package record_stream_sample\n\nimport \"modus:support/system\"\n\nSample :: struct {\n\tplace: u64,\n}\n\nwrite :: proc(stream: ^system.Record_Output(Sample)) {}\n"
+	pointer.source = "package record_stream_sample\n\nimport \"modus:system\"\n\nSample :: struct {\n\tplace: u64,\n}\n\nwrite :: proc(stream: ^system.Record_Output(Sample)) {}\n"
 	pointer_description, pointer_ok := stream_test_streams(stream_test_source("", ""), pointer)
 	testing.expect(t, pointer_ok && len(pointer_description.record_outputs) == 0 && len(pointer_description.record_inputs) == 0)
 }

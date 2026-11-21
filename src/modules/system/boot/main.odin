@@ -21,7 +21,7 @@
 //
 // **Its grants**: **Inspect**, the machine handle that reads the
 // [boot record](term:boot-record) and the other reports of the kernel
-// (`src/library/support/bootscreen/collect`), and **Image**, the boot image, read-only,
+// (`src/library/modus/bootscreen/collect`), and **Image**, the boot image, read-only,
 // for the names and the kinds of its files. It changes nothing.
 //
 // **What it shows of the design.** One picture, three parts of the system
@@ -30,11 +30,11 @@
 // rules of the picture are in docs/DESIGN.md.
 package boot
 
-import "modus:support/bootscreen"
-import "modus:support/bootscreen/collect"
-import "modus:support/display"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:bootscreen"
+import "modus:bootscreen/collect"
+import "modus:display"
+import "modus:interface"
+import "modus:system"
 
 INTERVAL :: 500
 

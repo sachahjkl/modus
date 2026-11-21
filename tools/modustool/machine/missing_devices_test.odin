@@ -2,7 +2,7 @@ package machine
 
 import "core:strings"
 import "core:testing"
-import "modus:private/root/entropy_read_deadline"
+import "internal:root/entropy_read_deadline"
 
 // The step that waits for the line of the deadline of an entropy read has a
 // bound larger than that deadline, and the line names the deadline of the

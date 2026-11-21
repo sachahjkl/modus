@@ -2,8 +2,8 @@ package machine
 
 import "modus:contract/reference_screen"
 import "modus:contract/scale_factor"
-import "modus:support/graphics"
-import "modus:support/text_rendering"
+import "modus:graphics"
+import "modus:text_rendering"
 
 // The places of the scenarios at the scale of the desktop
 // (src/md/features/desktop_to_browser.md, "The reference screen"). A step

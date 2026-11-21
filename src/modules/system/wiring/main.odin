@@ -29,8 +29,8 @@ import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import ws "modus:contract/wiring_service"
-import "modus:private/wiring/wiring_core"
-import "modus:support/system"
+import "internal:wiring/wiring_core"
+import "modus:system"
 
 // One thread serves SERVICE_RING, SERVICE_STOPS_RING, and mapped process
 // wiring rings. All stream rings, end pages, terms pages, description files,

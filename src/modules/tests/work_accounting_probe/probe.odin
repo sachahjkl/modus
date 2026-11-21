@@ -12,7 +12,7 @@ import "base:intrinsics"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/work_budget"
-import "modus:support/system"
+import "modus:system"
 
 // Default budget requirements for the probe service: one work thread stack,
 // 8 pages of per-connection scratch space, and a 50 ms/s minimum time limit.
@@ -25,7 +25,7 @@ PROBE_REQUIREMENTS :: work_budget.Work_Budget_Requirements{
 }
 
 // Kernel operation callbacks used by Accounted_Service. On modus,
-// modus_runtime_ops binds every callback directly to modus:support/system.
+// modus_runtime_ops binds every callback directly to modus:system.
 // Host tests supply a deterministic fake runtime to verify isolation invariants.
 Worker_Runtime_Ops :: struct {
 	state:                   rawptr,

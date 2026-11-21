@@ -37,7 +37,7 @@
 //   (`square_root(-4)` of the module `math`);
 // - calls of the storage service that fail: an empty name, a name too
 //   long, a zero byte, a write over the limit of the store, an absent name;
-// - the other families of calls: a wrapper of src/library/support/system, a ring of
+// - the other families of calls: a wrapper of src/library/modus/system, a ring of
 //   the root service, an export of a service (`tally.add`);
 // - a fault three calls deep, with its stack trace from the
 //   [debug image](term:debug-image).
@@ -84,16 +84,16 @@ import "modus:contract/fixed_addresses"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/storage"
-import terminal "modus:support/terminal"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:storage"
+import terminal "modus:terminal"
 import "modus:contract/ring"
-import "modus:support/random"
+import "modus:random"
 import "modus:contract/root_ring"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 import "base:intrinsics"
 
 // It starts fault and its child, and 3 threads under contention: 1476
@@ -128,7 +128,7 @@ SENTENCE_ROOM :: WIDTH - 40 // The width of the box of a sentence, in pixels: fr
 // The colors of docs/DESIGN.md: a name is dim, a value (the sentence of a
 // record, the expected kind, the answer) is in the text color, a wrong
 // answer is in the color "failed". The colors are the table of
-// src/library/support/graphics (rules.odin).
+// src/library/modus/graphics (rules.odin).
 
 // One case: what the process does, the error kind that it expects, and the
 // sentence of the error record that the system gave.
@@ -189,7 +189,7 @@ ctx_log: system.Handle
 // The measures, in nanoseconds for one call.
 kernel_good, kernel_failed, direct_good, direct_failed: u64
 
-// The kernel cases use the wrappers of src/library/support/system with their last
+// The kernel cases use the wrappers of src/library/modus/system with their last
 // parameter `error`: the record is a value of the call, in memory of this
 // process. An operation with no wrapper that gives a status uses
 // system.call_with_error.
@@ -1255,7 +1255,7 @@ contend :: proc "contextless" () -> bool {
 key_names := "abcdefghijklmnopqrstuvwxyz0123456789"
 FAULT_CASE :: 18
 
-// The random generator of this process (src/library/support/random).
+// The random generator of this process (src/library/modus/random).
 process_generator: random.Generator
 
 // entry runs every case once, then the measures, then shows the cases in

@@ -37,7 +37,7 @@ import "base:intrinsics"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The process itself and the region of the reads: 180 pages, as the other
 // small processes that hold no window, and the pages of the region. The

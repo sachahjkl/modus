@@ -16,7 +16,7 @@ STOP_WORDS_REFUSED :: `package user
 
 import op "modus:contract/operation"
 import "modus:contract/ring"
-import "modus:support/system"
+import "modus:system"
 
 Outcome :: op.Stop_Outcome
 Chained :: Outcome
@@ -73,7 +73,7 @@ stop_with_none_of_an_alias :: proc "contextless" () {
 STOP_WORDS_ACCEPTED :: `package user
 
 import op "modus:contract/operation"
-import "modus:support/system"
+import "modus:system"
 
 DONE :: op.Stop_Outcome.Done
 
@@ -114,7 +114,7 @@ border :: proc "contextless" (word: u32) -> Stop_Outcome {
 STOP_WORDS_HOME_SYSTEM :: `package system
 
 import op "modus:contract/operation"
-import other "modus:support/system"
+import other "modus:system"
 
 state :: proc "contextless" (process: u64) {
 	other.call(.Process_State, process)
@@ -201,9 +201,9 @@ an_exception_of_the_stop_words_holds_its_count :: proc(t: ^testing.T) {
 the_borders_and_the_homes_are_accepted :: proc(t: ^testing.T) {
 	sources := []Export_Source {
 		{path = "src/modules/tests/user/main.odin", text = STOP_WORDS_ACCEPTED},
-		{path = "src/library/contract/operation/stop.odin", text = STOP_WORDS_HOME_CONTRACT},
-		{path = "src/library/support/system/stop.odin", text = STOP_WORDS_HOME_SYSTEM},
-		{path = "src/kernel/dispatch.odin", text = STOP_WORDS_HOME_KERNEL},
+		{path = "src/library/modus/contract/operation/stop.odin", text = STOP_WORDS_HOME_CONTRACT},
+		{path = "src/library/modus/system/stop.odin", text = STOP_WORDS_HOME_SYSTEM},
+		{path = "src/modulus/dispatch.odin", text = STOP_WORDS_HOME_KERNEL},
 		{path = foundation.TOOL_SOURCE_FOLDER + "/fuzz/parameters.odin", text = STOP_WORDS_HOME_TOOL},
 	}
 	faults, ok := stop_word_faults_of_sources(sources)

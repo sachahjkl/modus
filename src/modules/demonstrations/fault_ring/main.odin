@@ -136,12 +136,12 @@ import "base:intrinsics"
 import "modus:contract/fixed_addresses"
 import "modus:contract/module"
 import op "modus:contract/operation"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/random"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:random"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // One child at a time: 512 pages and 20 threads (17 that fault in a full
 // ring, its main thread and its handler); one thread of its own that spins
@@ -1560,7 +1560,7 @@ child_run :: proc "contextless" (role: Role, name: string, parent_thread_handle:
 	for deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS; left_behind && system.time() < deadline; {
 		after, _ = system.budget_read()
 		// The start also made page tables of this process for its views of
-		// the module of the child (src/library/support/system, module_prepare and
+		// the module of the child (src/library/modus/system, module_prepare and
 		// segment_copy); each unmap of a view gave them back.
 		left_behind = after.pages != before.pages || after.threads != before.threads || after.processes != before.processes
 		if left_behind {

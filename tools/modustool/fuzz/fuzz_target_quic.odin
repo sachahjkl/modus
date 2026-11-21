@@ -2,10 +2,10 @@ package fuzz
 
 import "core:slice"
 import "modus:contract/errors"
-import "modus:support/quic"
-import "modus:support/random"
+import "modus:quic"
+import "modus:random"
 import "modustool:foundation"
-import "modus:private/cryptography/cryptography_primitives"
+import "modus:cryptography_primitives"
 
 // The fuzz targets of QUIC and TLS 1.3 (src/md/infrastructure/fuzzing.md,
 // "The targets, in order of value"): they read the network before any key

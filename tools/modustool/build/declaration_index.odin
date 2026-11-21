@@ -44,7 +44,7 @@ comment_links :: proc(text: string) -> (targets: []string, starts: []int) {
 
 // The folders whose declarations the index holds: the sources of the system.
 // The tool is not read: its names are not names of the system.
-DECLARATION_INDEX_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_BOOT, foundation.SOURCE_FOLDER_CONTRACT, foundation.SOURCE_FOLDER_SUPPORT, foundation.SOURCE_FOLDER_PRIVATE, foundation.SOURCE_FOLDER_MODULES}
+DECLARATION_INDEX_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_BOOT, foundation.SOURCE_FOLDER_PUBLIC, foundation.SOURCE_FOLDER_INTERNAL, foundation.SOURCE_FOLDER_MODULES}
 
 Declaration_Kind :: enum {
 	Procedure,
@@ -64,7 +64,7 @@ declaration_kind_names := [Declaration_Kind]string {
 Indexed_Declaration :: struct {
 	name:           string,
 	package_name:   string, // The name after "package" in its file.
-	folder:         string, // The folder of its file: "src/library/support/graphics".
+	folder:         string, // The folder of its file: "src/library/modus/graphics".
 	file:           string,
 	line:           int,
 	kind:           Declaration_Kind,

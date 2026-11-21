@@ -26,8 +26,8 @@ import "core:strings"
 import "core:sync"
 import "modus:contract/blake3"
 import "modus:contract/object_cache"
-import crypto_compat "modus:support/cryptography/compatibility_crypto"
-import "modus:support/cryptography/ed25519"
+import crypto_compat "modus:cryptography/compatibility_crypto"
+import "modus:cryptography/ed25519"
 import "modustool:foundation"
 
 // Default TCP listen address for `modustool cache-serve`.

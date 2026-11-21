@@ -5,7 +5,7 @@ import "modus:contract/errors"
 import "modus:contract/log_scope"
 import "modus:contract/value_kinds"
 import op "modus:contract/operation"
-import "modus:support/system"
+import "modus:system"
 import "base:intrinsics"
 
 // The log is also a service: records() gives the log records as a table of

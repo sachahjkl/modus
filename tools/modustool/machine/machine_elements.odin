@@ -5,7 +5,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 
-import "modus:private/compositor/bar"
+import "internal:compositor/bar"
 import "modustool:build"
 import "modustool:foundation"
 

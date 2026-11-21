@@ -39,11 +39,11 @@ import "modus:contract/errors"
 import "modus:contract/storage_status"
 import "modus:contract/isolated"
 import "modus:contract/ring"
-import "modus:support/disk_process"
-import "modus:support/principals"
-import "modus:support/storage"
+import "modus:disk_process"
+import "modus:principals"
+import "modus:storage"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 
 // The tries of one write. Each try has the deadline of a load; the bound
 // ends the tries when the storage service fails for good.

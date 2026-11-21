@@ -6,18 +6,18 @@ package server
 // connection table (tcp.Table, tcp.Connection) or a count of this process.
 
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/network"
-import "modus:support/system"
-import "modus:support/tcp"
-import "modus:support/web"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:network"
+import "modus:system"
+import "modus:tcp"
+import "modus:web"
 
 WIDTH :: 976
 HEIGHT :: 680
 
-// The colors of the concepts (src/library/support/graphics/rules.odin, docs/DESIGN.md
+// The colors of the concepts (src/library/modus/graphics/rules.odin, docs/DESIGN.md
 // section 4) that this window uses for TCP:
 //   boot program  a connection that starts: the handshake.
 //   process       a connection that runs.
@@ -206,7 +206,7 @@ access_row_height :: proc "contextless" (record: ^Access_Row) -> int {
 
 // access_row_draw draws the row of a request. The target is whole, on the
 // lines that it needs in its column (the rule of interface.text_wrap_line;
-// the window draws with src/library/support/graphics).
+// the window draws with src/library/modus/graphics).
 access_row_draw :: proc "contextless" (canvas: graphics.Canvas, y: int, record: ^Access_Row, band: bool) {
 	if band {
 		graphics.fill(canvas, -8, y - 4, canvas.width + 16, access_row_height(record), graphics.colors.track)
@@ -281,7 +281,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 	fact(inside, 40, "new connections", best_new_connection_rate == 0 ? "" : system.format(buffer[:], best_new_connection_rate, " requests in 1 s, the best"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
 	fact(inside, 60, "one second", best_second_requests == 0 ? "" : system.format(buffer[:], best_second_requests, " requests at most"), graphics.colors.machine, MEASURES_VALUE_COLUMN)
 	fact(inside, 80, "one draw", draw_time == 0 ? "" : time_text(buffer[:], draw_time), graphics.colors.text, MEASURES_VALUE_COLUMN)
-	fact(inside, 100, "ISN secret", system.format(buffer[:], "modus:support/random, ", process_generator.served, " B"), graphics.colors.text, MEASURES_VALUE_COLUMN)
+	fact(inside, 100, "ISN secret", system.format(buffer[:], "modus:random, ", process_generator.served, " B"), graphics.colors.text, MEASURES_VALUE_COLUMN)
 
 	// The connection table, live, then the connections that ended.
 	inside = card(canvas, 8, TABLES_Y, 536, TABLES_HEIGHT, "CONNECTIONS", "tcp.Connection", graphics.colors.process)

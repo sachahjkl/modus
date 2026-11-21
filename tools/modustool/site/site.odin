@@ -8,7 +8,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
-import "modus:support/graphics"
+import "modus:graphics"
 import "modustool:foundation"
 import "modustool:checks"
 

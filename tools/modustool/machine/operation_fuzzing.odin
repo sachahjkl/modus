@@ -59,7 +59,7 @@ OPERATION_BOOT_TRIES :: 2
 // of its finding: enough that two signatures of one run never share them.
 OPERATION_FINDING_NAME_DIGITS :: 16
 // The digits of a value that the kernel writes in hexadecimal, with no
-// prefix (src/kernel/serial.odin, the type Hex).
+// prefix (src/modulus/serial.odin, the type Hex).
 OPERATION_KERNEL_HEX_DIGITS :: 16
 // How long the tool reads the log after the last sequence of a life, for a
 // line of a fault that a queued record of the log brings after the count.
@@ -147,7 +147,7 @@ Operation_Fault :: struct {
 }
 
 // The reasons of a stop of the kernel, as the kernel writes them to the
-// debug exit port (src/kernel/serial.odin, Machine_Stop_Reason). QEMU then
+// debug exit port (src/modulus/serial.odin, Machine_Stop_Reason). QEMU then
 // ends with the status of twice the code, plus one.
 Kernel_Stop_Reason :: enum u64 {
 	Normal_End       = 0,

@@ -3,7 +3,7 @@ package root
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The log facts of a load that the loader refused
 // (src/md/features/log_facts.md, "The load error as facts"). A line of the

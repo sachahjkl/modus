@@ -26,9 +26,9 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
-import "modus:private/root/start_policy_rules"
-import "modus:support/principals"
-import "modus:support/system"
+import "internal:root/start_policy_rules"
+import "modus:principals"
+import "modus:system"
 
 // The answer of a command of the root ring: the completion that the sender
 // receives, or none yet.
@@ -425,7 +425,7 @@ start_edit_command :: proc "contextless" (item: ^Started, record: ring.Record, s
 
 // root_command_refusal gives the error record of a command of the root
 // ring that this service refused, in the values of its completion. As the
-// kernel does (src/kernel/diagnose.odin), it reads the state again after
+// kernel does (src/modulus/diagnose.odin), it reads the state again after
 // the refusal, and names a cause only when the state shows it now: else the
 // record is Refused, with the status. The record names the argument of the
 // caller, and no fact of another process that the status does not give.

@@ -8,7 +8,7 @@ import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
-import "modus:support/sentence"
+import "modus:sentence"
 import "modustool:foundation"
 
 // The fuzz targets of the text between processes

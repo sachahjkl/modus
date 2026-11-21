@@ -29,7 +29,7 @@ words :: proc "contextless" (mode: u64) -> string {
 @(private = "file")
 CHOICES_USED :: `package user
 
-import "modus:support/choices"
+import "modus:choices"
 
 run :: proc "contextless" () {
 	choices.start(u64(choices.MODE_STOP))
@@ -68,7 +68,7 @@ a_family_used_through_a_package_of_the_tool_is_refused :: proc(t: ^testing.T) {
 @(test)
 a_family_used_in_a_switch_and_as_an_argument_is_refused :: proc(t: ^testing.T) {
 	sources := []Export_Source {
-		{path = "src/library/support/choices/choices.odin", text = CHOICES_DECLARED},
+		{path = "src/library/modus/choices/choices.odin", text = CHOICES_DECLARED},
 		{path = "src/processes/user/main.odin", text = CHOICES_USED},
 	}
 	families, ok := choice_families_of_sources(sources)
@@ -78,7 +78,7 @@ a_family_used_in_a_switch_and_as_an_argument_is_refused :: proc(t: ^testing.T) {
 		return
 	}
 	family := families[0]
-	testing.expect_value(t, family.folder, "src/library/support/choices")
+	testing.expect_value(t, family.folder, "src/library/modus/choices")
 	testing.expect_value(t, family.word, "MODE")
 	testing.expect_value(t, family.word_place, Choice_Word_Place.First)
 	testing.expect_value(t, len(family.members), 2)
@@ -86,7 +86,7 @@ a_family_used_in_a_switch_and_as_an_argument_is_refused :: proc(t: ^testing.T) {
 		testing.expect_value(t, family.members[0], "MODE_STOP")
 		testing.expect_value(t, family.members[1], "MODE_WRITE")
 	}
-	testing.expect_value(t, family.use_file, "src/library/support/choices/choices.odin")
+	testing.expect_value(t, family.use_file, "src/library/modus/choices/choices.odin")
 	testing.expect_value(t, family.use_line, 13)
 	testing.expect_value(t, family.use_form, Choice_Use_Form.Case_Of_A_Switch)
 	testing.expect(t, choice_exception_of(family) == nil)
@@ -98,7 +98,7 @@ a_family_used_in_a_switch_and_as_an_argument_is_refused :: proc(t: ^testing.T) {
 @(private = "file")
 CHOICES_OF_EACH_FORM :: `package forms
 
-import other "modus:support/choices"
+import other "modus:choices"
 
 KIND_FIRST :: 1
 KIND_SECOND :: 2
@@ -132,7 +132,7 @@ fill :: proc "contextless" (values: ^[8]u64) -> Thing {
 @(test)
 each_form_of_a_use_as_a_choice_is_refused :: proc(t: ^testing.T) {
 	sources := []Export_Source {
-		{path = "src/library/support/choices/choices.odin", text = "package choices\n\nMODE_WAIT :: 0\nMODE_WRITE :: 1\n\nstart :: proc \"contextless\" (mode: u64) {}\n"},
+		{path = "src/library/modus/choices/choices.odin", text = "package choices\n\nMODE_WAIT :: 0\nMODE_WRITE :: 1\n\nstart :: proc \"contextless\" (mode: u64) {}\n"},
 		{path = "src/processes/forms/main.odin", text = CHOICES_OF_EACH_FORM},
 	}
 	families, ok := choice_families_of_sources(sources)
@@ -434,7 +434,7 @@ more_forms :: proc "contextless" (word: u32, bytes: [4]u32) -> (Chained, Distinc
 @(private = "file")
 CASTS_IMPORTED :: `package importer
 
-import other "modus:support/casts"
+import other "modus:casts"
 
 through_an_import :: proc "contextless" (word: u32) {
 	other.use(other.Mode(word))
@@ -452,7 +452,7 @@ through_an_imported_alias :: proc "contextless" (word: u32) -> Imported_Alias {
 @(private = "file")
 CASTS_THROUGH_TWO_IMPORTS :: `package third
 
-import "modus:support/importer"
+import "modus:importer"
 
 through_two_imports :: proc "contextless" (word: u32) -> importer.Imported_Alias {
 	return importer.Imported_Alias(word)
@@ -462,7 +462,7 @@ through_two_imports :: proc "contextless" (word: u32) -> importer.Imported_Alias
 @(private = "file")
 CASTS_RELATIVE :: `package relative
 
-import neighbour "../../library/support/casts"
+import neighbour "../../library/modus/casts"
 
 through_a_relative_import :: proc "contextless" (word: u32) -> neighbour.Mode {
 	return neighbour.Mode(word)
@@ -474,8 +474,8 @@ through_a_relative_import :: proc "contextless" (word: u32) -> neighbour.Mode {
 @(test)
 a_cast_of_a_word_to_an_enum_is_refused :: proc(t: ^testing.T) {
 	sources := []Export_Source {
-		{path = "src/library/support/casts/casts.odin", text = CASTS_DECLARED},
-		{path = "src/library/support/importer/importer.odin", text = CASTS_IMPORTED},
+		{path = "src/library/modus/casts/casts.odin", text = CASTS_DECLARED},
+		{path = "src/library/modus/importer/importer.odin", text = CASTS_IMPORTED},
 		{path = "src/processes/third/main.odin", text = CASTS_THROUGH_TWO_IMPORTS},
 		{path = "src/processes/relative/main.odin", text = CASTS_RELATIVE},
 	}
@@ -487,7 +487,7 @@ a_cast_of_a_word_to_an_enum_is_refused :: proc(t: ^testing.T) {
 		type_name: string,
 		form:      Enum_Cast_Form,
 	}
-	DECLARED :: "src/library/support/casts/casts.odin"
+	DECLARED :: "src/library/modus/casts/casts.odin"
 	expected := [?]Expected {
 		{DECLARED, 13, "Mode", .Kept}, // A declaration.
 		{DECLARED, 15, "Alias", .Kept}, // An assignment, through an alias.
@@ -505,8 +505,8 @@ a_cast_of_a_word_to_an_enum_is_refused :: proc(t: ^testing.T) {
 		{DECLARED, 61, "^Mode", .Kept}, // A pointer.
 		{DECLARED, 62, "[]Mode", .Kept}, // An array.
 		{DECLARED, 63, AUTO_CAST_TYPE_NAME, .Kept}, // An auto_cast, whose target is no type of the tree.
-		{"src/library/support/importer/importer.odin", 6, "other.Mode", .Passed},
-		{"src/library/support/importer/importer.odin", 12, "Imported_Alias", .Kept}, // An alias through an import.
+		{"src/library/modus/importer/importer.odin", 6, "other.Mode", .Passed},
+		{"src/library/modus/importer/importer.odin", 12, "Imported_Alias", .Kept}, // An alias through an import.
 		{"src/processes/relative/main.odin", 6, "neighbour.Mode", .Kept}, // A relative import.
 		{"src/processes/third/main.odin", 6, "importer.Imported_Alias", .Kept}, // The alias of an import, from a third package.
 	}
@@ -564,7 +564,7 @@ a_broken_source_is_no_source_with_no_cast :: proc(t: ^testing.T) {
 @(private = "file")
 CASTS_ACCEPTED :: `package accepted
 
-import other "modus:support/casts"
+import other "modus:casts"
 
 Mode :: enum u32 {
 	First  = 1,
@@ -591,7 +591,7 @@ compared :: proc "contextless" (word: u32) -> bool {
 @(test)
 a_cast_compared_with_a_member_is_accepted :: proc(t: ^testing.T) {
 	sources := []Export_Source {
-		{path = "src/library/support/casts/casts.odin", text = CASTS_DECLARED},
+		{path = "src/library/modus/casts/casts.odin", text = CASTS_DECLARED},
 		{path = "src/processes/accepted/main.odin", text = CASTS_ACCEPTED},
 	}
 	casts, ok := enum_casts_of_sources(sources)

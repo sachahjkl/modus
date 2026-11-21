@@ -34,12 +34,12 @@ package notes
 import "modus:contract/errors"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
-import "modus:support/calendar"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/storage"
-import "modus:support/system"
+import "modus:calendar"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:storage"
+import "modus:system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)

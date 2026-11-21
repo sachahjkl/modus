@@ -46,14 +46,14 @@
 package locks
 
 import "base:intrinsics"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/lockers"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:lockers"
 import op "modus:contract/operation"
 import "modus:contract/ring"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:random"
+import "modus:system"
 
 // Four lockers of 1024 pages, then three at a time of the stress case:
 // 7745 pages. And the glyph memory of the copy of the text rendering of
@@ -609,7 +609,7 @@ stopper_run :: proc "c" (parameter: rawptr) -> ! {
 	system.thread_stop()
 }
 
-// The random generator of this process (src/library/support/random).
+// The random generator of this process (src/library/modus/random).
 process_generator: random.Generator
 
 // entry starts the four lockers, runs the measures with 1, 2 and 4 of

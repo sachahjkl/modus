@@ -31,8 +31,8 @@ package hostile_terminal
 import "base:intrinsics"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/system"
-import terminal "modus:support/terminal"
+import "modus:system"
+import terminal "modus:terminal"
 
 // The words of the kind of a record that name no record.
 @(rodata)

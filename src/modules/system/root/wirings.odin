@@ -26,9 +26,9 @@ import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import ws "modus:contract/wiring_service"
-import "modus:private/root/start_policy_rules"
-import "modus:support/random"
-import "modus:support/system"
+import "internal:root/start_policy_rules"
+import "modus:random"
+import "modus:system"
 
 // Bound on restarts of the delegated wiring service after a crash.
 WIRING_RESTART_LIMIT :: 3

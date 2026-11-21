@@ -8,14 +8,14 @@ import "modus:contract/blake3"
 import "modustool:foundation"
 
 // The cryptography of the system is code of Odin's `core:crypto`, taken
-// into src/library/support/cryptography and changed in a listed way only
+// into src/library/modus/cryptography and changed in a listed way only
 // (docs/CRYPTOGRAPHY.md). This check proves it for each file of the
 // manifest: the origin file in the compiler that the flake pins has the
 // BLAKE3 hash of the manifest, and the origin with the changes below gives
 // the file of the repository, byte for byte. A reader audits the changes
 // here, not in a diff of each file.
 
-// The files of src/library/support/cryptography that the system wrote itself (the
+// The files of src/library/modus/cryptography that the system wrote itself (the
 // compatibility layer, the files in the place of a hardware dispatch, the
 // tests), each with its BLAKE3 hash: a change of one of them shows in the
 // check and in review, as a change of a taken file does.
@@ -28,7 +28,7 @@ CRYPTOGRAPHY_ORIGIN_RELEASE :: "dev-2026-11a" // The release of Odin that flake.
 
 // With the package name of the copy (cryptography_packages below), the only
 // changes of a file that is taken: its imports go to the copies in
-// src/library/support/cryptography, and to the compatibility layer for the helpers of
+// src/library/modus/cryptography, and to the compatibility layer for the helpers of
 // the origin. Order matters: the base package first, with its quote.
 // The packages of the compatibility layer have their own names
 // (compatibility_crypto, ...), so that a test that also imports a package of
@@ -36,12 +36,12 @@ CRYPTOGRAPHY_ORIGIN_RELEASE :: "dev-2026-11a" // The release of Odin that flake.
 // the origin as its alias.
 @(rodata)
 cryptography_import_changes := [?][2]string {
-	{"\"core:crypto\"", "crypto \"modus:support/cryptography/compatibility_crypto\""},
-	{"\"core:crypto/hash\"", "hash \"modus:support/cryptography/compatibility_hash\""},
-	{"\"core:crypto/", "\"modus:support/cryptography/"},
-	{"\"core:encoding/endian\"", "endian \"modus:support/cryptography/compatibility_endian\""},
-	{"\"core:math/bits\"", "bits \"modus:support/cryptography/compatibility_bits\""},
-	{"\"core:bytes\"", "bytes \"modus:support/cryptography/compatibility_bytes\""},
+	{"\"core:crypto\"", "crypto \"modus:cryptography/compatibility_crypto\""},
+	{"\"core:crypto/hash\"", "hash \"modus:cryptography/compatibility_hash\""},
+	{"\"core:crypto/", "\"modus:cryptography/"},
+	{"\"core:encoding/endian\"", "endian \"modus:cryptography/compatibility_endian\""},
+	{"\"core:math/bits\"", "bits \"modus:cryptography/compatibility_bits\""},
+	{"\"core:bytes\"", "bytes \"modus:cryptography/compatibility_bytes\""},
 }
 
 // The start of the declared name of each package of the copy; the name of
@@ -55,7 +55,7 @@ cryptography_import_changes := [?][2]string {
 CRYPTOGRAPHY_PACKAGE_PREFIX :: "modus_"
 
 // A package of core:crypto that the copy holds: its folder under
-// core/crypto, which the copy keeps under src/library/support/cryptography,
+// core/crypto, which the copy keeps under src/library/modus/cryptography,
 // and the name of its package in the origin.
 Cryptography_Package :: struct {
 	folder:      string,
@@ -202,7 +202,7 @@ cryptography_adjustments := [?]Cryptography_Adjustment {
 	{
 		"core/crypto/argon2id/argon2id.odin",
 		"import \"core:mem\"\n",
-		"import mem \"modus:support/cryptography/compatibility_memory\"\n",
+		"import mem \"modus:cryptography/compatibility_memory\"\n",
 	},
 	{
 		"core/crypto/argon2id/argon2id.odin",
@@ -360,9 +360,9 @@ cryptography_system_files_check :: proc(listed: ^map[string]string) -> bool {
 }
 
 // run_cryptography_system_hashes prints the line of the list of the files of
-// the system for each .odin file of src/library/support/cryptography that the manifest of
+// the system for each .odin file of src/library/modus/cryptography that the manifest of
 // the origin does not name: the coordinator checks the files, then puts the
-// lines in src/library/support/cryptography/system_files.manifest.
+// lines in src/library/modus/cryptography/system_files.manifest.
 run_cryptography_system_hashes :: proc(args: []string) -> int {
 	taken := make(map[string]bool, context.temp_allocator)
 	lines, ok := foundation.manifest_lines(foundation.CRYPTOGRAPHY_MANIFEST)
@@ -397,7 +397,7 @@ run_cryptography_system_hashes :: proc(args: []string) -> int {
 // cryptography_origin_check reads the manifest: one file on each line, as
 // "<file of the repository> <file under the root of Odin> <BLAKE3 of the
 // origin>"; a line that starts with # is a comment. Then it reads the list
-// of the files of the system, and walks the folders of src/library/support/cryptography:
+// of the files of the system, and walks the folders of src/library/modus/cryptography:
 // each .odin file must be in one list. It gives false at the first file that
 // does not agree.
 cryptography_origin_check :: proc() -> bool {

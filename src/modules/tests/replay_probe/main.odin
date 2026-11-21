@@ -9,7 +9,7 @@ package replay_probe
 
 import "base:intrinsics"
 import "modus:contract/enum_word"
-import "modus:support/system"
+import "modus:system"
 
 // Working memory: 128 pages for the stack and probe scratch. Threads: 1, the main thread of the probe.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 128, processes = 1, threads = 1}

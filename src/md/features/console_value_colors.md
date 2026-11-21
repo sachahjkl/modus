@@ -74,7 +74,7 @@ A plain Text field has no kind: a text is not classified by its look.
 
 **The palette.** A result that the console draws in the palette has the same parts: `palette_table.Run_Part` has one member for each part of `console_results.Part`, `Module` and `Version` too.
 
-**The contrast.** Each color is the color of the log on a dark surface, and the console has the background of a dark surface. `src/library/support/graphics/value_colors_test.odin` keeps each kind at 4.5 to 1 or more there.
+**The contrast.** Each color is the color of the log on a dark surface, and the console has the background of a dark surface. `src/library/modus/graphics/value_colors_test.odin` keeps each kind at 4.5 to 1 or more there.
 
 ## Refused forms
 

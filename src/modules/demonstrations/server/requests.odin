@@ -1,7 +1,7 @@
 package server
 
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The access records of server as a record output
 // (src/md/features/module_outputs.md, "The migration"). A reader wires

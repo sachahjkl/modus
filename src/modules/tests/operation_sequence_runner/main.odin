@@ -17,7 +17,7 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/operation_sequence"
 import "modus:contract/ring"
-import "modus:support/system"
+import "modus:system"
 
 // The sequence, read again from the copy that the service mapped: the
 // copy is read-only here, and this process checks what it runs.

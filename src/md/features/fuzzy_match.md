@@ -1,6 +1,6 @@
 # The fuzzy match and the frecency
 
-The console completion and the palette find a name from a few typed characters: `mcnt` finds `monitor.count`. One matcher serves both: `src/library/support/line_editor` (`fuzzy_match`, `rank_candidates`). This file records why the matcher has its rule, its vector form and its bounds, and why a name that the principal uses often comes first. The rule as a reader sees it is in [`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "3. The fuzzy match"; the vector form is in [`docs/SIMD.md`](../../../docs/SIMD.md), "10. The fuzzy match".
+The console completion and the palette find a name from a few typed characters: `mcnt` finds `monitor.count`. One matcher serves both: `src/library/modus/line_editor` (`fuzzy_match`, `rank_candidates`). This file records why the matcher has its rule, its vector form and its bounds, and why a name that the principal uses often comes first. The rule as a reader sees it is in [`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "3. The fuzzy match"; the vector form is in [`docs/SIMD.md`](../../../docs/SIMD.md), "10. The fuzzy match".
 
 ## The constraints
 
@@ -19,7 +19,7 @@ Refused: **the best alignment** (Smith–Waterman with affine gaps, fzf v2, friz
 
 The scalar form (`fuzzy_match_scalar`) decodes the name and the query into characters, then walks them. It is the reference: it stays, and it is the code of a name or a query with a byte past ASCII.
 
-The vector form (`fuzzy_match_vectors`, `src/library/support/line_editor/fuzzy_match_vectors.odin`) uses portable 128-bit vectors (`#simd[16]u8`) and `base:intrinsics`, which lower to SSE2 on x86-64 and NEON on ARM64. It runs on every architecture with no target guard, reading the name in blocks of 16 bytes, after the idea of the prefilter of frizbee:
+The vector form (`fuzzy_match_vectors`, `src/library/modus/line_editor/fuzzy_match_vectors.odin`) uses portable 128-bit vectors (`#simd[16]u8`) and `base:intrinsics`, which lower to SSE2 on x86-64 and NEON on ARM64. It runs on every architecture with no target guard, reading the name in blocks of 16 bytes, after the idea of the prefilter of frizbee:
 
 1. **The bit-7 mask.** The bytes of the name are OR-ed and their high bits taken (`simd_extract_msbs`). A name with a byte past ASCII goes to the scalar form. A query with a byte past ASCII also goes to the scalar form: an invalid byte decodes as the replacement character, which equals a control byte of the name.
 2. **The lowered name.** Each byte from `A` to `Z` gets `0x20`, and each control byte (`< 0x20` or `0x7F`) becomes `0x80` (`CONTROL_MARK`), in lanes: compares, shifts and masks, so two control bytes equal each other as the replacement character.
@@ -44,7 +44,7 @@ A typo-tolerant match (frizbee counts a missing or a changed character as a boun
 
 ## The frecency model
 
-A name that the principal uses often, and lately, comes first among near equal matches. The term comes from Mozilla Places; zoxide gives the same idea for folders. This section is the whole model: it names no store and no process, so a program with another store (`gui_toolkit` keeps its table in LMDB) follows it as it is. The code is `src/library/support/line_editor/frecency.odin`.
+A name that the principal uses often, and lately, comes first among near equal matches. The term comes from Mozilla Places; zoxide gives the same idea for folders. This section is the whole model: it names no store and no process, so a program with another store (`gui_toolkit` keeps its table in LMDB) follows it as it is. The code is `src/library/modus/line_editor/frecency.odin`.
 
 **A use.** A use is one act of the principal that names one or more names: the run of an entry of a list, or a line that runs. Each name of a use counts once in that use, however often the use names it. A use counts its first 16 names (`FRECENCY_NAMES_PER_USE`); an empty name counts nothing. A use with no name still decays the table. A choice that does not run (a name taken into a line that never runs, a row that is only chosen) is no use. An act that destroys its thing (the close of a window) is no use: the name is gone after it.
 

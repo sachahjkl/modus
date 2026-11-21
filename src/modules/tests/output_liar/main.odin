@@ -14,7 +14,7 @@ package output_liar
 import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
-import "modus:support/system"
+import "modus:system"
 
 // The record of output_counter: the console reads it with the same
 // condition.

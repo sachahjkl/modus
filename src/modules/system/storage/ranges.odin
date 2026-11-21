@@ -4,14 +4,14 @@ import "base:intrinsics"
 import "modus:contract/errors"
 import format "modus:contract/store"
 import "modus:contract/value_kinds"
-import block_tree "modus:private/storage/storage_object"
-import "modus:support/system"
+import block_tree "internal:storage/storage_object"
+import "modus:system"
 
 // Ranges (docs/STORAGE.md, "Ranges"): a connection writes ranges of an
 // object and changes its size as pending changes, then commits them in one
 // commit. A pending change is a copy of a block of data in the service: it
 // is not on the disk, and no hash is computed for it. The commit puts the
-// pending blocks in the block tree of the object (src/library/private/storage/storage_object),
+// pending blocks in the block tree of the object (src/library/internal/storage/storage_object),
 // computes the values of those blocks and of the nodes above them, and the
 // hash on the path of the last block: never at each write, and never over
 // the whole object. A loss of power before the commit loses the pending

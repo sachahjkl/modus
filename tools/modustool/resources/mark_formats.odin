@@ -15,7 +15,7 @@ package resources
 import "core:fmt"
 import "core:hash"
 import "core:strings"
-import "modus:support/mark"
+import "modus:mark"
 import "modustool:foundation"
 
 // The format of the file of a request.

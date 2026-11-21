@@ -10,7 +10,7 @@ package site
 import "core:fmt"
 import "core:slice"
 import "core:strings"
-import "modus:support/vector_font"
+import "modus:vector_font"
 import "modustool:resources"
 
 // The font of the text of the diagrams: the interface font of the system,

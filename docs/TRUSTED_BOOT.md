@@ -84,7 +84,7 @@ It does not protect against:
 
 ## 3. The system description
 
-The system description is one file. It is the identity of one version of the whole system (`src/library/contract/system_description`). It lists each file of the system with its size and its hash, in one fixed order, so one system has exactly one description and one hash: two machines with the same hash of the description run the same bytes.
+The system description is one file. It is the identity of one version of the whole system (`src/library/modus/contract/system_description`). It lists each file of the system with its size and its hash, in one fixed order, so one system has exactly one description and one hash: two machines with the same hash of the description run the same bytes.
 
 ```
 Header, 24 bytes:
@@ -230,7 +230,7 @@ PCR 11 says which system started; PCR 12 says which start policy that system ran
 
 ### A measure that does not depend on the event path of the firmware
 
-Designed, not built. When `HashLogExtendEvent` fails, the boot program can send `TPM2_PCR_Extend` itself through `SubmitCommand`, with the SHA-256 hash of the description that it computes with `src/library/support/cryptography/sha2` (the boot program links it already for Ed25519). The event log of the firmware then has no entry, and the display must say "measured, with no entry in the event log". It is not built because it does not help in the case that the test machines show: in the firmware of EDK II, as far as its source is known here, `SubmitCommand` checks the same flag "TPM present" as `HashLogExtendEvent`, and fails at once when the firmware cleared it. The one path that does not depend on that flag is a driver of the interface of the TPM in the boot program, and the boot program has no TPM driver: it talks to the TPM through the firmware.
+Designed, not built. When `HashLogExtendEvent` fails, the boot program can send `TPM2_PCR_Extend` itself through `SubmitCommand`, with the SHA-256 hash of the description that it computes with `src/library/modus/cryptography/sha2` (the boot program links it already for Ed25519). The event log of the firmware then has no entry, and the display must say "measured, with no entry in the event log". It is not built because it does not help in the case that the test machines show: in the firmware of EDK II, as far as its source is known here, `SubmitCommand` checks the same flag "TPM present" as `HashLogExtendEvent`, and fails at once when the firmware cleared it. The one path that does not depend on that flag is a driver of the interface of the TPM in the boot program, and the boot program has no TPM driver: it talks to the TPM through the firmware.
 
 ### The machines of the TPM
 
@@ -284,22 +284,22 @@ The machines with this firmware run with four processors, as every other machine
 
 | Part | File |
 |---|---|
-| The format, its reader and its checks | `src/library/contract/system_description/system_description.odin` |
-| The trust record | `src/library/contract/boot_info/boot_info.odin` (`Boot_Trust`) |
+| The format, its reader and its checks | `src/library/modus/contract/system_description/system_description.odin` |
+| The trust record | `src/library/modus/contract/boot_info/boot_info.odin` (`Boot_Trust`) |
 | The checks and the measure of the boot program | `src/boot/trust.odin` |
-| The stop of the boot program, on the boot display, and the read of the memory map | `src/boot/main.odin` (`stop`, `boot_stop`, `read_memory_map`), `src/library/private/boot_program/firmware_memory_map` |
+| The stop of the boot program, on the boot display, and the read of the memory map | `src/boot/main.odin` (`stop`, `boot_stop`, `read_memory_map`), `src/library/internal/boot_program/firmware_memory_map` |
 | The check of the root service | `src/modules/system/root/trust.odin` |
-| The line of the trust and the line of the check on the boot display | `src/library/support/bootscreen/bootscreen.odin` (`trust_line`, `check_line`) |
-| The places of the card of the boot image | `src/library/support/bootscreen/image_card` |
+| The line of the trust and the line of the check on the boot display | `src/library/modus/bootscreen/bootscreen.odin` (`trust_line`, `check_line`) |
+| The places of the card of the boot image | `src/library/modus/bootscreen/image_card` |
 | The signature, the keys, the key numbers, the command `key` | `tools/modustool/build/system_description.odin`, `resources/keys/key_numbers` |
 | The eighteen machines of `test trusted_boot`, and the plant of another system with swtpm alone | `tools/modustool/machine/trusted_boot_scenario.odin` |
 | The check and the raise of the TPM floors by the boot program | `src/boot/trust.odin` (`floors_check`, `floor_raise`) |
-| The commands of the indices of the floors, the checks of their answers, the decisions | `src/library/support/tpm2` |
+| The commands of the indices of the floors, the checks of their answers, the decisions | `src/library/modus/tpm2` |
 | The firmware signing key, `sbsign`, the variable store with Secure Boot | `tools/modustool/build/secure_boot.odin` |
 | The release volume, the GPT disk, the release signature, `release`, `verify`, `key write` | `tools/modustool/build/release_image.odin` |
-| The Ed25519 code of the boot program | `src/library/support/cryptography/ed25519` (`docs/CRYPTOGRAPHY.md`) |
-| The TPM service, after the start | `src/modules/system/tpm`, `src/library/support/tpm2`, `src/library/contract/tpm_service` |
-| The key R, the load options and the rescue boot entry | `src/boot/rescue.odin`; the start request and the record of the load options in `src/library/contract/boot_info/boot_info.odin` |
+| The Ed25519 code of the boot program | `src/library/modus/cryptography/ed25519` (`docs/CRYPTOGRAPHY.md`) |
+| The TPM service, after the start | `src/modules/system/tpm`, `src/library/modus/tpm2`, `src/library/modus/contract/tpm_service` |
+| The key R, the load options and the rescue boot entry | `src/boot/rescue.odin`; the start request and the record of the load options in `src/library/modus/contract/boot_info/boot_info.odin` |
 
 ## 10. The TPM floors
 

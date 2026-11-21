@@ -261,20 +261,19 @@
       if [ ! -x "$system/build/tool/modustool" ]; then
         mkdir -p "$system/build/tool"
         # The compiler reads the paths of the tool from the folder of the system.
-        (cd "$system" && odin build tools/modustool -vet -collection:modus=src/library -collection:kernel=src/kernel -collection:modustool=tools/modustool -custom-attribute:log_fact,enum_getters,optional_parameters,member_texts -out:build/tool/modustool.first && mv build/tool/modustool.first build/tool/modustool) || exit 1
+        (cd "$system" && odin build tools/modustool -vet -collection:modus=src/library/modus -collection:internal=src/library/internal -collection:modulus=src/modulus -collection:modustool=tools/modustool -custom-attribute:log_fact,enum_getters,optional_parameters,member_texts -out:build/tool/modustool.first && mv build/tool/modustool.first build/tool/modustool) || exit 1
       fi
       exec "$system/build/tool/modustool" "$@"
     '';
 
     # The files that the compile of the tool reads in the repository: the
-    # sources of its package, of the source library, of the kernel parts
-    # (each folder under src/kernel, not the kernel), of the module
-    # cryptography that the peer imports by a relative path, and the font
+    # sources of its package, of the two source libraries, of the kernel parts
+    # (each folder under src/modulus, not the kernel), and the fonts
     # that a fuzz target loads. A host test is not a source of the binary:
     # its name ends with _test, before the suffixes of a platform that the
     # compiler reads (blend_vectors_test_amd64.odin).
     sourcesOfOdin = inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "odin" && builtins.match ".*_test(_[a-z0-9]+)*\\.odin" file.name == null);
-    kernelParts = map (name: ./src/kernel + "/${name}") (builtins.attrNames (inputs.nixpkgs.lib.filterAttrs (_: type: type == "directory") (builtins.readDir ./src/kernel)));
+    kernelParts = map (name: ./src/modulus + "/${name}") (builtins.attrNames (inputs.nixpkgs.lib.filterAttrs (_: type: type == "directory") (builtins.readDir ./src/modulus)));
     # The cryptography of the library links the memory procedures of the
     # host in assembly, which nasm assembles at the compile of the tool; that
     # file includes the memory procedures of the system.
@@ -294,7 +293,7 @@
       nativeBuildInputs = [odin pkgs.nasm];
       buildPhase = ''
         export HOME=$TMPDIR
-        odin build tools/modustool -vet -collection:modus=src/library -collection:kernel=src/kernel -collection:modustool=tools/modustool -custom-attribute:log_fact,enum_getters,optional_parameters,member_texts -define:TOOL_BUILDS_ITSELF=false -show-timings -out:modustool
+        odin build tools/modustool -vet -collection:modus=src/library/modus -collection:internal=src/library/internal -collection:modulus=src/modulus -collection:modustool=tools/modustool -custom-attribute:log_fact,enum_getters,optional_parameters,member_texts -define:TOOL_BUILDS_ITSELF=false -show-timings -out:modustool
       '';
       installPhase = ''
         install -D modustool $out/bin/modustool

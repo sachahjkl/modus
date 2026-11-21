@@ -50,11 +50,11 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:random"
+import "modus:system"
 
 // 64 MiB of large pages, two ranges of 1 GiB with their page tables, and
 // a child: 40530 pages. And the glyph memory of the copy of the text

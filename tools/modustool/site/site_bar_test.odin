@@ -3,7 +3,7 @@ package site
 import "core:fmt"
 import "core:strings"
 import "core:testing"
-import "modus:support/mark"
+import "modus:mark"
 
 // A site with a page for the home and for each section that the test names.
 @(private = "file")

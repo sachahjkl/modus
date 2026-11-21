@@ -13,9 +13,9 @@ package console
 // one is the time of the work.
 
 import "modus:contract/value_kinds"
-import "modus:support/line_editor"
-import "modus:support/system"
-import terminal "modus:support/terminal"
+import "modus:line_editor"
+import "modus:system"
+import terminal "modus:terminal"
 
 COMPLETION_MEASURE_BATCHES :: 20
 COMPLETION_MEASURE_KEYS :: 10

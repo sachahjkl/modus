@@ -27,9 +27,9 @@ import "modus:contract/blake3"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:contract/value_kinds"
-import "modus:support/line_editor"
-import "modus:support/storage"
-import "modus:support/system"
+import "modus:line_editor"
+import "modus:storage"
+import "modus:system"
 
 HISTORY_OBJECT_NAME :: "line_history"
 // The time that the console waits for the connection at its start: the

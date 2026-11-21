@@ -3,7 +3,7 @@
 // of the repository, the pictures of the site, its icons, its tile maps,
 // and what the command `modustool mark` writes. A request says what to
 // draw and how; the generator gives the bytes of the file, or the sentence
-// of a refusal. The data of the mark is in src/library/support/mark; no other file of
+// of a refusal. The data of the mark is in src/library/modus/mark; no other file of
 // the tool calls its drawing procedures for a picture file.
 //
 // The parts of the generator:
@@ -23,7 +23,7 @@ package resources
 import "core:fmt"
 import "core:image/png"
 import "core:strings"
-import "modus:support/mark"
+import "modus:mark"
 
 // One picture of the mark: how it is drawn. The heron is in a variant that
 // the request names (docs/DESIGN.md, "The variants of the mark"), at a

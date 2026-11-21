@@ -1,15 +1,15 @@
 package root
 
 import "modus:contract/block"
-import "modus:support/bochs_display"
+import "modus:bochs_display"
 import "modus:contract/bridge_requester"
 import "modus:contract/entropy_service"
 import "modus:contract/frame"
 import op "modus:contract/operation"
 import "modus:contract/ring"
-import "modus:support/pci"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:pci"
+import "modus:random"
+import "modus:system"
 import "modus:contract/timed_stream"
 
 // The devices of the bus. This service holds the two ports of the
@@ -34,7 +34,7 @@ device_handle :: proc "contextless" (kind: op.Device_Kind, a, b: u64) -> (handle
 // that it serves to its one client.
 Driver :: struct {
 	name:          string,
-	device:        u32, // The device number of the class on the bus (src/library/support/pci).
+	device:        u32, // The device number of the class on the bus (src/library/modus/pci).
 	ring_capacity: u32,
 	ring_role:     int, // The role of the ring in the context of the device service.
 }

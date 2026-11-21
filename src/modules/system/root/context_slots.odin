@@ -7,13 +7,13 @@ import "modus:contract/frame"
 import "modus:contract/remote"
 import "modus:contract/settings"
 import "modus:contract/tpm_service"
-import "modus:support/disk_process"
-import "modus:support/principals"
-import "modus:support/system"
+import "modus:disk_process"
+import "modus:principals"
+import "modus:system"
 
 // The slots that a contract package or a support package names for its
 // reader, checked against the one table of the context slots
-// (src/library/support/system/grants.odin). A contract package imports no
+// (src/library/modus/system/grants.odin). A contract package imports no
 // support package, so it keeps its own number; this service writes each
 // slot by the name of the table, and the build stops when the two differ.
 #assert(block.GRANT_RING == system.GRANT_DEVICE_RING)

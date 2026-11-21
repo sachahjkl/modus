@@ -143,7 +143,7 @@ Site_Type_Row :: struct {
 // whose type is named has the name that the compiler gives it.
 site_contract_type_rows :: proc() -> []Site_Type_Row {
 	rows := [?]Site_Type_Row {
-		// src/library/contract/operation
+		// src/library/modus/contract/operation
 		{"operation", "Form", type_info_of(op.Form)},
 		{"operation", "Parameter_Form", type_info_of(op.Parameter_Form)},
 		{"operation", "Operation_Form", type_info_of(op.Operation_Form)},
@@ -240,7 +240,7 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"operation", "Process_Report", type_info_of(op.Process_Report)},
 		{"operation", "Context", type_info_of(op.Context)},
 		{"operation", "Seed_Strength", type_info_of(op.Seed_Strength)},
-		// src/library/contract/errors
+		// src/library/modus/contract/errors
 		{"errors", "Error_Record", type_info_of(errors.Error_Record)},
 		{"errors", "Kind", type_info_of(errors.Kind)},
 		{"errors", "Unit", type_info_of(errors.Unit)},
@@ -249,11 +249,11 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"errors", "Error_Record_Fact_Fields", type_info_of(errors.Error_Record_Fact_Fields)},
 		{"errors", "Kind_Word", type_info_of(errors.Kind_Word)},
 		{"errors", "Unit_Word", type_info_of(errors.Unit_Word)},
-		// src/library/contract/fixed_addresses
+		// src/library/modus/contract/fixed_addresses
 		{"fixed_addresses", "Fixed_Range", type_info_of(fixed_addresses.Fixed_Range)},
 		{"fixed_addresses", "Fixed_Ranges", type_info_of(fixed_addresses.Fixed_Ranges)},
 		{"fixed_addresses", "Address_Range", type_info_of(fixed_addresses.Address_Range)},
-		// src/library/contract/module
+		// src/library/modus/contract/module
 		{"module", "Load_Stage", type_info_of(module.Load_Stage)},
 		{"module", "Difference", type_info_of(module.Difference)},
 		{"module", "Described", type_info_of(module.Described)},
@@ -304,7 +304,7 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"module", "Error", type_info_of(module.Error)},
 		{"module", "Bound_Import", type_info_of(module.Bound_Import)},
 		{"module", "Replacement", type_info_of(module.Replacement)},
-		// src/library/contract/start_grant
+		// src/library/modus/contract/start_grant
 		{"start_grant", "Grant", type_info_of(start_grant.Grant)},
 	}
 	list := make([]Site_Type_Row, len(rows), context.temp_allocator)
@@ -804,7 +804,7 @@ site_types_read :: proc(site: ^Site) -> bool {
 }
 
 // site_record_field_size gives the size and the alignment of a field of a
-// record of a module (src/library/contract/module, Field): an Integer of its size, 8
+// record of a module (src/library/modus/contract/module, Field): an Integer of its size, 8
 // when the detail is 0; a Handle of the size of a handle; a Text of its
 // detail bytes, which hold no number.
 site_record_field_size :: proc(field: build.Field_Description) -> (size: int, alignment: int) {

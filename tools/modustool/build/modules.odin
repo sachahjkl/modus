@@ -199,17 +199,18 @@ module_compile_command :: proc(build: foundation.Module_Build) -> []string {
 		// of the next build of this module.
 		"-export-dependencies:json",
 		foundation.join("-export-dependencies-file:", module_dependency_file(build.name)),
-		// The same one library for each module, the kernel too: one package
-		// has one import line in each file. The compiler then accepts an
-		// import of a support package in the kernel; the check of the
-		// imports refuses it before this command runs
-		// (library_imports_check.odin).
+		// The public source library, which ships in the SDK.
 		foundation.SOURCE_LIBRARY_FLAG,
 		// The attribute of a fact type, which the compiler ignores
 		// (src/md/features/log_facts.md).
 		foundation.CUSTOM_ATTRIBUTES_FLAG,
 		foundation.join("-out:", llvm_ir_folder),
 	)
+	// Internal parts belong to modules of the system only: the compiler
+	// refuses internal: in the kernel and in an outside module.
+	if !build.kernel && outside_source_folder == "" {
+		append(&compile, foundation.INTERNAL_LIBRARY_FLAG)
+	}
 	// The line program of DWARF, for the line table of the debug object.
 	// The module itself has no byte of it: the converter copies the
 	// segments only, and `check` proves that each module is the same bytes

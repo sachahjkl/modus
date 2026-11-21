@@ -1,10 +1,10 @@
 package compositor
 
-import "modus:private/compositor/quality"
+import "internal:compositor/quality"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/system"
+import "modus:display"
+import "modus:system"
 
 // The three measures of the standard of quality, on the path of the
 // system, and the quality profile at the start

@@ -4,10 +4,10 @@ import "modus:contract/pointer_pictures"
 import "modus:contract/ring"
 import "modus:contract/scale_factor"
 import "modus:contract/value_kinds"
-import "modus:private/compositor/bar"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/system"
+import "internal:compositor/bar"
+import "modus:display"
+import "modus:graphics"
+import "modus:system"
 
 // The windows that the principal resizes (src/md/features/window_resize.md).
 //

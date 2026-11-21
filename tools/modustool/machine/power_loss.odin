@@ -11,7 +11,7 @@ import "core:slice"
 import "core:strings"
 import "core:sync"
 import "core:time"
-import "modus:private/storage/storage_mount"
+import "internal:storage/storage_mount"
 import "modustool:foundation"
 import "modustool:build"
 import "modustool:fuzz"
@@ -28,7 +28,7 @@ import "modustool:fuzz"
 // writes, and the last of them can be torn (some of its sectors new, the
 // others old). The tool builds many such images and checks each one on the
 // host with the code that the storage service runs at its start
-// (src/library/private/storage/storage_mount): no machine for each image.
+// (src/library/internal/storage/storage_mount): no machine for each image.
 //
 // What each image must give:
 //   - the disk opens, with no wrong block, no block named two times, and the

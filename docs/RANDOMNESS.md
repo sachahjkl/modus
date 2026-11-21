@@ -36,7 +36,7 @@ The forms that the system can take, weighed against the properties:
 
 ## 2. The generator
 
-`src/library/support/random/generator.odin`: ChaCha20 with fast key erasure (D. J. Bernstein, "Fast-key-erasure random-number generators", 2017).
+`src/library/modus/random/generator.odin`: ChaCha20 with fast key erasure (D. J. Bernstein, "Fast-key-erasure random-number generators", 2017).
 
 - Each refill runs ChaCha20 with the key of the generator and the nonce 0 for 13 blocks (832 bytes). The first 32 bytes are the next key; the next 800 bytes are served in order.
 - The key that made a refill is overwritten at once. Each byte is erased (`erase_secret_bytes`) when it is served. So a copy of the state after a draw does not give the bytes before it.
@@ -62,7 +62,7 @@ The root service hashes, with BLAKE3, each value of each source, each with its l
 
 The strength of the seed is the strongest source that gave all its values. The root service writes it on the log: "root: the random seed of the system, strength ...". It gives the facts of the gathering, never the seed, to the process `randomness` (its context values 0 to 7).
 
-**The reads are not merged.** The reads of `rdrand` and `rdseed` through a procedure value (`processor_values` in `src/library/support/random`) carry `#side_effects`: without it, LLVM keeps one value for all the reads (a machine test then shows "rdrand present, 1 good, 255 refused").
+**The reads are not merged.** The reads of `rdrand` and `rdseed` through a procedure value (`processor_values` in `src/library/modus/random`) carry `#side_effects`: without it, LLVM keeps one value for all the reads (a machine test then shows "rdrand present, 1 good, 255 refused").
 
 **No claim beyond the sources.** The system does not test the output of `rdseed` or `rdrand` for quality. A processor whose generator is wrong or hostile gives a wrong seed, with no sign; the jitter of the cycle counter is mixed in so that such a processor alone does not fix the seed, but this system claims no bits from it.
 
@@ -89,7 +89,7 @@ root: the entropy device gave 64 bytes in 2 reads: 64 bytes mixed into the rando
 - **A read that adds nothing is refused.** A read with no byte, a read whose bytes all have one value (zeros, all ones), and a read equal to the read before it leave the key as it was. Each one counts in "refused reads", as does a read that the entropy service answered with an error. These checks find a broken device. They are not a protection against a hostile one, which passes them with ease: the protection is the mix, whose key always has the bytes of the processor in it.
 - **The strength does not change.** The seed strength stays the claim of the processor: the system cannot check the bytes of the device, and the processes that start before the reads have no bytes of the device.
 - **Which seeds have the bytes.** Each process that the root service starts after the line. `input`, the compositor and the processes that start while the device answers have the seed of the processor only.
-- **The entropy service and its ring.** The service holds the registers of the device, one message interrupt, the memory of its queue, the machine with the right Physical and a copy of the configuration of the device. The root service makes the entropy ring, of 32 records (`RING_CAPACITY` of `src/library/contract/entropy_service`), and gives it to the service as the role 0 of its context. The completion of a `Read` carries the count that the device gave, at most the count asked whatever length the device says, then the bytes, 8 in each of its six other values. Its status is `Ok`, `Bad_Command` or `Device_Error`; when it is not `Ok`, the values are an error record. The service answers one command at a time, in order, and erases its buffer after each answer. At its start its log has `entropy: ok, a queue of <size>`.
+- **The entropy service and its ring.** The service holds the registers of the device, one message interrupt, the memory of its queue, the machine with the right Physical and a copy of the configuration of the device. The root service makes the entropy ring, of 32 records (`RING_CAPACITY` of `src/library/modus/contract/entropy_service`), and gives it to the service as the role 0 of its context. The completion of a `Read` carries the count that the device gave, at most the count asked whatever length the device says, then the bytes, 8 in each of its six other values. Its status is `Ok`, `Bad_Command` or `Device_Error`; when it is not `Ok`, the values are an error record. The service answers one command at a time, in order, and erases its buffer after each answer. At its start its log has `entropy: ok, a queue of <size>`.
 - **A machine with no device** starts as before, with one line: `root: no entropy device at the place 19 of the bus: the random seed of the system has the sources of the processor only`.
 
 The entropy report carries the facts of the device to the process `randomness`: present or absent, the bytes mixed, the refused reads. It counts the two reads of the start only. The design is in `src/md/features/entropy_device.md`.
@@ -111,13 +111,13 @@ root: the first fresh bytes: 32 bytes of the entropy device mixed into the rando
 
 A refused read writes one warning. After 3 refused reads in a row, the root service asks for no more, with `root: the entropy device gave 3 refused reads in a row: no more fresh bytes for the running processes`. An entropy service that stops writes `root: the entropy service stopped: no more fresh bytes for the running processes`. The lines of a refused read are log facts of the root service, with the counts as fields: `root.Fresh_Bytes_Read_Added_Nothing`, `root.Fresh_Bytes_Reads_Refused_In_A_Row`, `root.Entropy_Answer_Out_Of_Order`, `root.Entropy_Reads_Late` and `root.Entropy_Service_Stopped_Early` (`docs/TOOLS.md`, "The log").
 
-**A read that never completes.** Each read has a deadline of 60 seconds from its ask, `READ_DEADLINE_MILLISECONDS` of `src/library/private/root/entropy_read_deadline`: the hang bound of the system, not a measure of the device. Each other document points here for this number. The entropy service serves one read at a time, so a device that takes a read and never ends it holds every later read. Past the deadline, each read in flight counts as refused, in the entropy report for the reads of the start, the root service stops the entropy service, and it writes one line, here for the two reads of the start: `root: the entropy device did not answer a read in <seconds> seconds: 2 reads count as refused, and the entropy service stops: no more bytes of the device`, with the deadline in seconds. The seed keeps the sources of the processor and the reads that ended. The design is in `src/md/features/missing_hardware.md`.
+**A read that never completes.** Each read has a deadline of 60 seconds from its ask, `READ_DEADLINE_MILLISECONDS` of `src/library/internal/root/entropy_read_deadline`: the hang bound of the system, not a measure of the device. Each other document points here for this number. The entropy service serves one read at a time, so a device that takes a read and never ends it holds every later read. Past the deadline, each read in flight counts as refused, in the entropy report for the reads of the start, the root service stops the entropy service, and it writes one line, here for the two reads of the start: `root: the entropy device did not answer a read in <seconds> seconds: 2 reads count as refused, and the entropy service stops: no more bytes of the device`, with the deadline in seconds. The seed keeps the sources of the processor and the reads that ended. The design is in `src/md/features/missing_hardware.md`.
 
 The design is in `src/md/features/fresh_bytes.md`.
 
 ## 4. The tests
 
-- Host tests (`odin test src/library/support/random`):
+- Host tests (`odin test src/library/modus/random`):
   - the generator gives the ChaCha20 stream of its key after its first 32 bytes, then the stream of the next key;
   - each served byte is erased;
   - two seeds give two streams, a zero seed is refused, and a child seed is not part of the later stream of its starter;
@@ -126,9 +126,9 @@ The design is in `src/md/features/fresh_bytes.md`.
   - a read of the entropy device of zeros, of all ones, of one byte, with no byte, or equal to the read before leaves the key as it was and counts as refused; a good read changes the key and counts its bytes; the strength does not change;
   - the report goes through the context values and back, with the facts of the device;
   - a change of the fresh bytes page is mixed at the next refill and once, not at a draw from the buffer; a key and a child seed mix it at once, and the bytes of the key are the stream of BLAKE3 of the domain text, the old key and the page; a page in the middle of a change and a key refused for its strength mix nothing; `generator_from_context` attaches the page only when its range is mapped.
-- `odin test src/library/contract/entropy_service`: the bytes of a read go through the values of a completion and back, and a count above the limit gives the limit.
-- `odin test src/library/contract/fresh_bytes`: a write is read once, a change in progress and a cleared page give no bytes, and the page of a process is at its fixed range only with the bit of its range.
-- `odin test src/library/private/root/entropy_read_deadline`: a time before the ask and one before the deadline are not past it, a deadline that does not fit is the end of the clock, and the deadline and each later time are past it.
+- `odin test src/library/modus/contract/entropy_service`: the bytes of a read go through the values of a completion and back, and a count above the limit gives the limit.
+- `odin test src/library/modus/contract/fresh_bytes`: a write is read once, a change in progress and a cleared page give no bytes, and the page of a process is at its fixed range only with the bit of its range.
+- `odin test src/library/internal/root/entropy_read_deadline`: a time before the ask and one before the deadline are not past it, a deadline that does not fit is the end of the clock, and the deadline and each later time are past it.
 - `modustool test missing_devices`, its third machine: an entropy device whose source never answers; the root service writes the line of the deadline, and a process `randomness` started after it logs "randomness: the entropy device: 0 bytes mixed after the gathering; refused reads: 2".
 - `modustool test random`, three machines:
   - two with the processor of the host (strength `entropy`), with two processes `randomness` in the first;

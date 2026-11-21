@@ -3,7 +3,7 @@ package hierarchy
 import op "modus:contract/operation"
 import "modus:contract/storage_status"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The log facts of the test of the hierarchy of a store
 // (src/md/features/log_facts.md): each line, as a record of fields. Each

@@ -2,19 +2,19 @@ package console
 
 import "modus:contract/errors"
 import module "modus:contract/module"
-import "modus:support/console_condition"
-import "modus:support/console_language"
-import "modus:private/console/console_stream"
-import "modus:support/lex_evaluator"
-import "modus:support/lex_parser"
-import "modus:support/sentence"
-import "modus:support/system"
+import "modus:console_condition"
+import "modus:console_language"
+import "internal:console/console_stream"
+import "modus:lex_evaluator"
+import "modus:lex_parser"
+import "modus:sentence"
+import "modus:system"
 
 // The console as the evaluation host of Lex in mode `console`.
 //
-// The parser of Lex (src/library/support/lex_parser) gives the
+// The parser of Lex (src/library/modus/lex_parser) gives the
 // syntax tree of a line, and the evaluator
-// (src/library/support/lex_evaluator) forces it whole, from the
+// (src/library/modus/lex_evaluator) forces it whole, from the
 // left: the calls before a fault run, then the line fails. This file gives
 // the evaluator the names, the commands and the runs of the calls, and
 // writes the sentence of each refusal. The form of each parameter of a
@@ -28,7 +28,7 @@ import "modus:support/system"
 // The pipe operator has the lowest priority: `a |> f(b)` is `f(a, b)`, and
 // `a |> f` is `f(a)`. The parser reads no "|>": before any call,
 // pipe_nested_line writes the line with calls in calls
-// (src/library/support/console_language/pipe.odin), so a line with
+// (src/library/modus/console_language/pipe.odin), so a line with
 // "|>" checks and runs as that line.
 //
 // A value is an Integer, a Text, a Record, a Handle, a Table or Bytes. An

@@ -16,7 +16,7 @@
 // **What a reader sees.** The root service starts the console at each
 // boot, after the compositor and `date`. The console has no surface: it
 // writes records to its [terminal](term:terminal) and reads keys from it
-// (src/library/support/terminal); the process `terminal` draws them in a window. The
+// (src/library/modus/terminal); the process `terminal` draws them in a window. The
 // first line is `kernel console. A command is a typed function: try
 // help()`, and the log gets `console: ready`. Each line that the input
 // enters goes to the log too, after the prompt `> `.
@@ -120,13 +120,13 @@ package console
 
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
-import "modus:support/lex_evaluator"
-import "modus:support/display"
-import "modus:support/key_path"
-import "modus:support/line_editor"
-import "modus:support/random"
-import "modus:support/system"
-import terminal "modus:support/terminal"
+import "modus:lex_evaluator"
+import "modus:display"
+import "modus:key_path"
+import "modus:line_editor"
+import "modus:random"
+import "modus:system"
+import terminal "modus:terminal"
 import "base:intrinsics"
 
 // Itself and four sandboxes, each a call host with its thread. The working
@@ -197,7 +197,7 @@ log_count: int
 
 ctx: ^system.Context
 
-// The random generator of this process (src/library/support/random).
+// The random generator of this process (src/library/modus/random).
 process_generator: random.Generator
 
 // entry starts the console and runs its first thread: it reads the keys

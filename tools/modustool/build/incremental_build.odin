@@ -52,7 +52,7 @@ DEPENDENCY_FILE_NAME :: "dependencies.json"
 // hashes each of their files once, before the first compiler starts. A
 // file outside them (the libraries of the compiler) is hashed at its first
 // use.
-INPUT_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_BOOT, foundation.SOURCE_FOLDER_CONTRACT, foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_MODULES, foundation.RESOURCE_FOLDER, foundation.SOURCE_FOLDER_RUNTIME, foundation.SOURCE_FOLDER_SUPPORT, foundation.SOURCE_FOLDER_PRIVATE, foundation.TOOL_SOURCE_FOLDER}
+INPUT_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_BOOT, foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_MODULES, foundation.RESOURCE_FOLDER, foundation.SOURCE_FOLDER_RUNTIME, foundation.SOURCE_FOLDER_PUBLIC, foundation.SOURCE_FOLDER_INTERNAL, foundation.TOOL_SOURCE_FOLDER}
 
 // The threads that read and hash files at once. A thread holds one whole
 // file in memory, and a boot volume is 64 MiB.
@@ -756,8 +756,8 @@ path_without_dots :: proc(path: string) -> string {
 }
 
 // imported_folders_of_source adds the folder of each package of the
-// repository that a source file imports: "modus:contract/x" is src/library/contract/x,
-// "modus:support/x" is src/library/support/x, "modustool:x" is the package x of
+// repository that a source file imports: "modus:contract/x" is src/library/modus/contract/x,
+// "modus:x" is src/library/modus/x, "modustool:x" is the package x of
 // the tool, and a path with no library is relative to the folder of the
 // file. A library of the compiler ("core:", "base:") is not a folder of the
 // repository: the compiler itself is an input.

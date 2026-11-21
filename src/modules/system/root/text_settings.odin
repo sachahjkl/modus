@@ -2,7 +2,7 @@ package root
 
 import "modus:contract/font_outlines"
 import "modus:contract/settings"
-import "modus:support/system"
+import "modus:system"
 
 // The text of the system and the settings of the system (docs/FONTS.md):
 // this service creates the settings page, checks the hash and the format

@@ -34,7 +34,7 @@ package requests_reader
 
 import "modus:contract/output"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The access record of `server`, as its writer describes it: the type check
 // of the root service compares the two descriptions at the wiring, so a

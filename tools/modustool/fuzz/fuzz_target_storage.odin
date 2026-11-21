@@ -2,10 +2,10 @@ package fuzz
 
 import "base:runtime"
 import "core:slice"
-import "modus:support/disk_process"
+import "modus:disk_process"
 import format "modus:contract/store"
-import "modus:private/storage/storage_mount"
-import tree "modus:private/storage/storage_tree"
+import "internal:storage/storage_mount"
+import tree "internal:storage/storage_tree"
 import "modustool:build"
 
 // The fuzz targets of the storage format on the disk

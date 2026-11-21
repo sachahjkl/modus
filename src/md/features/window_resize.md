@@ -1,6 +1,6 @@
 # Windows that the principal resizes
 
-The principal drags an edge or a corner of a window, and the process draws its next frame at the new size. The guide is [`docs/DESIGN.md`](../../../docs/DESIGN.md), "Windows"; the protocol is in `src/library/support/display`.
+The principal drags an edge or a corner of a window, and the process draws its next frame at the new size. The guide is [`docs/DESIGN.md`](../../../docs/DESIGN.md), "Windows"; the protocol is in `src/library/modus/display`.
 
 ## Constraints
 
@@ -115,7 +115,7 @@ It ignores the event. Its next `present` sends `Resize_Declined` before the pict
 
 - The process side refuses what the compositor refuses (another size, no request, a size outside the limits) before any kernel operation, so an honest process never makes a surface that the compositor refuses. A host test runs these refusals and `No_Slot` on a ring in plain memory; `No_Budget` comes from the kernel, and no test makes it yet.
 - `Resizable`, `Surface_Resize` and `Resized` cross a border as words: the size limits as `u64`, read before any cast to `int`, so a word past the limit is refused and never becomes a negative size.
-- The edges of a drag are a `bit_set` of an enum (`bar.Resize_Edges`), and a corner is two members. The pure procedures of the edges and the sizes are in `src/library/private/compositor/bar/window_size.odin`, with host tests.
+- The edges of a drag are a `bit_set` of an enum (`bar.Resize_Edges`), and a corner is two members. The pure procedures of the edges and the sizes are in `src/library/internal/compositor/bar/window_size.odin`, with host tests.
 - The drag moves an edge by one logical pixel for each logical pixel of the pointer: the edge follows the pointer, and the size is the one that the principal drags, cut only by a limit or the screen ([`docs/DESIGN.md`](../../../docs/DESIGN.md), "6. Spacing"; [spacing_tokens.md](spacing_tokens.md)). The drag first moved by steps of 8, which the spacing tokens replaced.
 - The budget of `clock` counts its window at its largest size, and its working memory holds a second surface at the largest size, for a resize between two large sizes, when both exist. A process whose budget counts its window at its first size gets `No_Budget` for a larger one: the designed refusal.
 - The compositor maps the new surface beside the old one for the time between `Surface_Resize` and `Present`. Its budget counts the page tables of one such second mapping of the largest surface for each client (34 pages for 2816 × 2816 pixels of the screen, 1088 for 32 clients); the arithmetic is beside `MODULE_BUDGET` in `src/modules/system/compositor/main.odin`.

@@ -7,15 +7,15 @@
 // cells. A script that plays the animations copies tiles and places them:
 // it computes no picture.
 //
-// The rule of the animations and of the moves is the data of src/library/support/mark
+// The rule of the animations and of the moves is the data of src/library/modus/mark
 // (animation.odin, motion.odin). Also here: the row of the drawn forms of
 // the picture for a developer.
 package resources
 
 import "core:fmt"
 import "core:strings"
-import "modus:support/graphics"
-import "modus:support/mark"
+import "modus:graphics"
+import "modus:mark"
 import "modustool:foundation"
 
 // One step of the play of an animation on the home: one picture for a
@@ -275,7 +275,7 @@ mark_tile_map_png :: proc(tile_map: ^Mark_Tile_Map) -> (file: []u8, ok: bool) {
 //   animations: for each animation of the tile map its name, its time, its
 //     frames, each [sprite, milliseconds], the steps of its play and, when
 //     it moves, the keys of its move (mark_animation_play_write).
-// Each number comes from src/library/support/mark or from the layout: a script that
+// Each number comes from src/library/modus/mark or from the layout: a script that
 // reads the table holds no number of the mark of its own.
 mark_tile_map_table_fields_write :: proc(b: ^strings.Builder, tile_map: ^Mark_Tile_Map) {
 	layout := tile_map.layout

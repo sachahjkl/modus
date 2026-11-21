@@ -1,6 +1,6 @@
 // The text rendering as a module (src/md/features/text_rendering.md, "The
 // library module"): each export calls one function of
-// src/library/support/text_rendering over the bytes and the tables of the
+// src/library/modus/text_rendering over the bytes and the tables of the
 // caller. The caller gives the font outlines as bytes: the resource
 // font_outlines that its starter mapped, or a copy of it. Each call opens
 // the fonts of those bytes on its stack and measures with them; the module
@@ -31,8 +31,8 @@ package text_rendering_module
 
 import "modus:contract/errors"
 import "modus:contract/font_outlines"
-import "modus:support/system"
-import "modus:support/text_rendering"
+import "modus:system"
+import "modus:text_rendering"
 
 // The most records or bytes of a table of a caller, its count included: no
 // count times a size wraps, and a count holds in the i64 of the result.

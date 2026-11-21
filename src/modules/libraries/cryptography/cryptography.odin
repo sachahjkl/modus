@@ -1,5 +1,5 @@
 // The cryptography of the system as one module of code: each export is a
-// primitive of Odin's core:crypto that the system took (src/library/support/cryptography,
+// primitive of Odin's core:crypto that the system took (src/library/modus/cryptography,
 // docs/CRYPTOGRAPHY.md), in the forms of the system.
 //
 // The code of each export but argon2id is in the private part
@@ -28,10 +28,10 @@ package cryptography
 
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
-import "modus:private/cryptography/cryptography_primitives"
-import "modus:support/cryptography/argon2id"
-import crypto "modus:support/cryptography/compatibility_crypto"
-import "modus:support/system"
+import "modus:cryptography_primitives"
+import "modus:cryptography/argon2id"
+import crypto "modus:cryptography/compatibility_crypto"
+import "modus:system"
 
 ERROR :: -1
 

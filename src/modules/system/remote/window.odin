@@ -2,10 +2,10 @@ package remote_service
 
 import "modus:contract/isolated"
 import "modus:contract/remote"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 
 // An answer with an error record: the call ran, and the service gave its
 // error as a value. Not the color "failed" (no call failed to run), and not

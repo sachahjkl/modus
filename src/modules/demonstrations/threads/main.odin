@@ -29,10 +29,10 @@
 // "started" after a key.
 package threads
 
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 import "base:intrinsics"
 
 // The working memory: the rest of the pages that the root service gave it

@@ -61,8 +61,8 @@ Site_Reference :: struct {
 	error_kinds:      []foundation.Enumeration_Member,
 	error_units:      []foundation.Enumeration_Member,
 	unit_names:       map[string]string,
-	start_grants:     []foundation.Enumeration_Member, // Grant of src/library/contract/start_grant: what a process receives at its start.
-	root_grants:      []foundation.Enumeration_Member, // Root_Grant of src/library/support/system: what the root service records and can revoke.
+	start_grants:     []foundation.Enumeration_Member, // Grant of src/library/modus/contract/start_grant: what a process receives at its start.
+	root_grants:      []foundation.Enumeration_Member, // Root_Grant of src/library/modus/system: what the root service records and can revoke.
 	root_grant_names: map[string]string,
 	start_grant_sets:    []foundation.Start_Grant_Set_Row, // start_grant_sets of the root service: the whole start grant set of each process.
 	fixed_ranges:     []foundation.Enumeration_Member,
@@ -324,7 +324,7 @@ site_code_link :: proc(site: ^Site, code: string) -> (target: string, found: boo
 }
 
 // site_type_text gives a type as the console prints it
-// (src/library/support/sentence, write_type and write_parameter_type).
+// (src/library/modus/sentence, write_type and write_parameter_type).
 site_type_text :: proc(description: build.Module_Description, type: module.Type, detail: u32, direction: module.Direction, parameter: bool) -> string {
 	record_name := "Record"
 	if detail >= 1 && int(detail) <= len(description.records) {

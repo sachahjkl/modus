@@ -32,10 +32,10 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/remote"
 import "modus:contract/ring"
-import "modus:support/disk_process"
-import "modus:support/principals"
+import "modus:disk_process"
+import "modus:principals"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 
 // The rows of every principal fit in the client table, so a key of a disk
 // grant table always gets a row, or is contested when another principal

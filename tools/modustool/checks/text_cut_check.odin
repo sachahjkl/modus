@@ -6,16 +6,16 @@ import "core:strings"
 import "modustool:foundation"
 
 // A text is never cut in silence (docs/ARCHITECTURE.md): the writer of
-// src/library/support/sentence counts the bytes that its buffer does not hold, and its
+// src/library/modus/sentence counts the bytes that its buffer does not hold, and its
 // text (written) ends with the cut mark. A source that sets the count of a
 // writer by hand keeps the count of the dropped bytes of the text before;
 // a source that reads the buffer of a writer by hand reads a text with no
-// mark. This check refuses both, outside src/library/support/sentence, for a variable
+// mark. This check refuses both, outside src/library/modus/sentence, for a variable
 // named `writer`: the name that each source of the system gives to its
 // writer today. It cannot see a writer of another name: it reads text, not
 // types.
-TEXT_CUT_CHECKED_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_CONTRACT, foundation.SOURCE_FOLDER_SUPPORT, foundation.SOURCE_FOLDER_PRIVATE, foundation.SOURCE_FOLDER_MODULES}
-TEXT_CUT_WRITER_FOLDER :: foundation.SOURCE_FOLDER_SUPPORT + "/sentence"
+TEXT_CUT_CHECKED_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_PUBLIC, foundation.SOURCE_FOLDER_INTERNAL, foundation.SOURCE_FOLDER_MODULES}
+TEXT_CUT_WRITER_FOLDER :: foundation.SOURCE_FOLDER_PUBLIC + "/sentence"
 
 text_cut_check :: proc() -> bool {
 	files := make([dynamic]string, context.temp_allocator)

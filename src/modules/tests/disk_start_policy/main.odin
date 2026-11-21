@@ -31,7 +31,7 @@ import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // One thread; the working memory pays its root ring, the machine parts
 // page and their page tables.

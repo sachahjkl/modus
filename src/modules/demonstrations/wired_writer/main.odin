@@ -15,7 +15,7 @@
 // numbers to 1 reader, and ended numbers".
 package wired_writer
 
-import "modus:support/system"
+import "modus:system"
 
 // One number and its square. wired_reader declares the same record: the
 // root service compares the two descriptions at the wiring.

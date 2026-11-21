@@ -1,7 +1,7 @@
 package remote_display_service
 
 import "modus:contract/value_kinds"
-import "modus:support/quic"
+import "modus:quic"
 
 // The log facts of the remote display (src/md/features/log_facts.md, "The
 // facts of the device services and of the network"): the viewer keys that

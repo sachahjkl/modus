@@ -25,7 +25,7 @@ BUDGET_FIRST_THREAD_PAGES :: op.STACK_PAGES + 1 + (op.THREAD_AREA_PAGES - 1) + o
 BUDGET_OTHER_THREAD_PAGES :: op.THREAD_STACK_PAGES + (op.THREAD_AREA_PAGES - 1)
 
 // A window has two pictures of 4 bytes for each pixel, as display.open
-// makes them (src/library/support/display, display.odin).
+// makes them (src/library/modus/display, display.odin).
 BUDGET_WINDOW_PICTURES :: 2
 BUDGET_WINDOW_PIXEL_BYTES :: 4
 

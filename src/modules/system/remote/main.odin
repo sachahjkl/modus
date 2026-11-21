@@ -1,7 +1,7 @@
 // The remote service: the calls of the host (docs/MODULE_CONTRACT.md,
 // section 4, "A call from the host"; docs/QUIC.md, section 7).
 //
-// QUIC in the process (src/library/support/quic), over a datagram endpoint with a
+// QUIC in the process (src/library/modus/quic), over a datagram endpoint with a
 // listen grant of UDP on the port remote.LISTEN_PORT that admits the
 // address of the host only (remote.HOST_ADDRESS): the network service drops
 // a datagram of another address before this process sees it. Each call is
@@ -81,13 +81,13 @@ import "modus:contract/isolated"
 import "modus:contract/remote"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/interface"
-import "modus:support/network"
-import "modus:support/quic"
-import "modus:support/random"
+import "modus:display"
+import "modus:interface"
+import "modus:network"
+import "modus:quic"
+import "modus:random"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 
 // 2 QUIC connections of about 85 KiB each, 8 streams of about 130 KiB for
 // each, and a buffer of a request or an answer of about 64 KiB for each
@@ -207,7 +207,7 @@ datagrams_malformed: u64 // Datagrams with no whole UDP header: the network serv
 
 // The phases of one call stream. A record of a stream frees when the host
 // read the end of this side and this side read the end of the host
-// (src/library/support/quic, stream_read); the call place is then empty again.
+// (src/library/modus/quic, stream_read); the call place is then empty again.
 Call_Phase :: enum u8 {
 	None, // No stream in this place.
 	Reading, // The request comes. Bound: REQUEST_TIME_LIMIT.

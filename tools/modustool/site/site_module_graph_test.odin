@@ -2,7 +2,7 @@ package site
 
 import "core:strings"
 import "core:testing"
-import "modus:support/graphics"
+import "modus:graphics"
 import "modustool:foundation"
 import "modustool:resources"
 

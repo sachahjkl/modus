@@ -1,7 +1,7 @@
 package server
 
 import "modus:contract/value_kinds"
-import "modus:support/web"
+import "modus:web"
 
 // The log facts of server (src/md/features/log_facts.md): each fact
 // template is the line that the process wrote before it was a fact, so a

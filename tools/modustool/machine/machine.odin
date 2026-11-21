@@ -4,10 +4,10 @@ import "base:runtime"
 import "modus:contract/font_outlines"
 import op "modus:contract/operation"
 import "modus:contract/store"
-import tree "modus:private/storage/storage_tree"
-import "modus:private/compositor/bar"
-import "modus:private/compositor/palette"
-import "modus:support/text_rendering"
+import tree "internal:storage/storage_tree"
+import "internal:compositor/bar"
+import "internal:compositor/palette"
+import "modus:text_rendering"
 import "core:fmt"
 import "core:math/rand"
 import "core:os"
@@ -32,7 +32,7 @@ SCREEN_DUMP_SUFFIX :: "_screen.ppm"
 // The bound of a Wait for the line of a case that writes a count of its
 // progress, which the process reads: the process bounds a stall of the
 // count and the whole case (TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS in
-// src/library/support/system, 600 s), and this bound is larger, so that the report of
+// src/library/modus/system, 600 s), and this bound is larger, so that the report of
 // the process comes first.
 PROGRESS_CASE_HANG_BOUND_SECONDS :: 660
 // The bound of the first Wait of each machine: its boot ("compositor:
@@ -823,7 +823,7 @@ scenario_network := [?]Step {
 }
 
 // The data disk of the test of persistence, read with the format of the
-// storage service (src/library/contract/store).
+// storage service (src/library/modus/contract/store).
 disk_open :: proc(path: string) -> (file: ^os.File, ok: bool) {
 	err: os.Error
 	if file, err = os.open(path, {.Read, .Write}); err != nil {
@@ -934,7 +934,7 @@ object_damage :: proc(path: string, store_name: string, object_name: string) -> 
 }
 
 // tree_entry_find finds an entry of a tree on a disk file: the walk down
-// the B+ tree of the tree, as src/library/private/storage/storage_tree does.
+// the B+ tree of the tree, as src/library/internal/storage/storage_tree does.
 tree_entry_find :: proc(file: ^os.File, root: store.Pointer, name: string) -> (found_entry: store.Entry, found: bool, ok: bool) {
 	key := store.entry_name(name)
 	pointer := root
@@ -3709,7 +3709,7 @@ scenario := [?]Step {
 	{kind = .Close, text = "vector_glyphs"},
 	{kind = .Wait, text = "root: vector_glyphs stopped"},
 	// The interface font (docs/FONTS.md, section 12): B612 placed by
-	// src/library/support/text_rendering and drawn by graphics.text_proportional.
+	// src/library/modus/text_rendering and drawn by graphics.text_proportional.
 	// Its Greek letters are past the glyph cache: the process draws them
 	// from B612, the box-drawing characters from Paper Mono, the second
 	// font of the chain, and Π, ρ and Ж draw the replacement glyph

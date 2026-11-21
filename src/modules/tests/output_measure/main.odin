@@ -24,7 +24,7 @@ package output_measure
 import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 
 // The counts of readers of the measure of the fan-out.
 READER_COUNTS :: [4]int{1, 2, 4, 8}

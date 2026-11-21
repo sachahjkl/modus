@@ -56,9 +56,9 @@ package inspect
 
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:private/inspect/addresses"
-import "modus:support/display"
-import "modus:support/system"
+import "internal:inspect/addresses"
+import "modus:display"
+import "modus:system"
 
 SAMPLE_INTERVAL :: 250 // Milliseconds.
 KEY_TAB :: 0x0F

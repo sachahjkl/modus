@@ -24,7 +24,7 @@
 package probe
 
 import op "modus:contract/operation"
-import "modus:support/system"
+import "modus:system"
 import "base:intrinsics"
 
 // peek reads 8 bytes at an address. In a call host, the address space has

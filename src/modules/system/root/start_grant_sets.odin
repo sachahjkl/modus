@@ -1,7 +1,7 @@
 package root
 
-import "modus:support/disk_process"
-import terminal "modus:support/terminal"
+import "modus:disk_process"
+import terminal "modus:terminal"
 
 // The start grant set of a process of the boot image: what this service gives it at
 // its start, by its name. start_grant_set_of reads it one time, at the start; the

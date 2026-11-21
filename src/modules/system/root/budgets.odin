@@ -3,8 +3,8 @@ package root
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/disk_process"
-import "modus:support/system"
+import "modus:disk_process"
+import "modus:system"
 
 // The budget of each process that this service starts. The module asks for
 // it: the table Budget of its file, which the build writes from the

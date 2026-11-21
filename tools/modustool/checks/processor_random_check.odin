@@ -14,12 +14,12 @@ import "modustool:foundation"
 //
 // Outside a hypervisor, rdrand and rdseed cannot be trapped when a process is
 // recorded. The code of the system executes them only inside random.entropy_gather
-// in src/library/support/random/entropy.odin (for the seed of the root
+// in src/library/modus/random/entropy.odin (for the seed of the root
 // service). Every other Odin source, assembly file, and LLVM IR unit of src/
 // is refused if it invokes rdrand or rdseed through an asm template, an
 // intrinsic, or raw assembly.
 
-PROCESSOR_RANDOM_ALLOWED_FILE :: foundation.SOURCE_FOLDER_SUPPORT + "/random/entropy.odin"
+PROCESSOR_RANDOM_ALLOWED_FILE :: foundation.SOURCE_FOLDER_PUBLIC + "/random/entropy.odin"
 
 PROCESSOR_RANDOM_CHECKED_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_KERNEL,
@@ -283,7 +283,7 @@ processor_random_uses_of_tree :: proc(root: string) -> (uses: []Processor_Random
 }
 
 // processor_random_check refuses rdrand and rdseed anywhere in src/ outside
-// random.entropy_gather (src/library/support/random/entropy.odin).
+// random.entropy_gather (src/library/modus/random/entropy.odin).
 processor_random_check :: proc() -> bool {
 	uses, file_count, ok := processor_random_uses_of_tree("")
 	if !ok {

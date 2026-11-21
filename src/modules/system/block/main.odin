@@ -1,15 +1,15 @@
 // The block service: the device service of one virtio block device (virtio
 // 1.x over PCI, the "modern" interface). It serves the block contract
-// (src/library/contract/block) to one client, through the block ring that the root
+// (src/library/modus/contract/block) to one client, through the block ring that the root
 // service gives to both.
 //
 // It has one device and nothing else: the registers of the device, one
 // message interrupt, memory for the queue, the machine with the right
 // Physical only, and a copy of the configuration of the device. The root
 // service found the device, enabled it and set its interrupt
-// (src/library/support/pci). The kernel has no code for this device: the code that
+// (src/library/modus/pci). The kernel has no code for this device: the code that
 // knows a device is a module: a service or a library. The code that each virtio
-// device service shares is in src/library/support/virtio.
+// device service shares is in src/library/modus/virtio.
 //
 // The device reads and writes the data region of the client: the kernel is
 // not on the path of the data, so data moves with no kernel entry. The
@@ -35,7 +35,7 @@
 //
 // No other process can name the device or the ring.
 //
-// **The commands of the block ring** (`src/library/contract/block`), each answered by
+// **The commands of the block ring** (`src/library/modus/contract/block`), each answered by
 // one completion with the same tag:
 //
 // - `Attach`: take the data region of the client.
@@ -70,9 +70,9 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/pci"
-import "modus:support/system"
-import "modus:support/virtio"
+import "modus:pci"
+import "modus:system"
+import "modus:virtio"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module and its thread.

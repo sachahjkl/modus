@@ -54,17 +54,19 @@ import "modustool:machine"
 import "modustool:site"
 import "modustool:cache_server"
 
-// The one source library of the project (docs/glossary/communication.md, "Source
-// library"). An import names the library, then one of its two parts:
-// "modus:contract/ring", "modus:support/system".
-//   contract   what two parties agree on: records, numbers, and the code
-//              that reads them. It uses no kernel operation. The kernel
-//              imports these packages and its own kernel parts only.
-//   support    what a module compiles in to use the contracts.
-// The kernel parts are a second source library, "kernel:iommu". The names,
-// the folders and the flags of the two libraries are in
-// source_folders.odin; the rule of the kernel is held by
-// library_imports_check.odin.
+// The three source libraries of the system (docs/glossary/communication.md,
+// "Source library"):
+//   modus      the public library (src/library/modus), shipped in the SDK:
+//              "modus:contract/ring" (what two parties agree on, no kernel
+//              operation) and "modus:system" (what two modules or more
+//              compile in, or what a program outside needs).
+//   internal   the internal parts (src/library/internal): what one module
+//              alone compiles in ("internal:storage/storage_tree"). The
+//              compiler refuses it in the kernel and in an outside module.
+//   modulus    the kernel parts (src/modulus): pure packages that the kernel
+//              alone compiles in ("modulus:iommu").
+// The names, folders and flags are in source_folders.odin; the import rules
+// are held by library_imports_check.odin.
 
 // The commands of the tool. The name is the first argument; the help after
 // it is what `modustool help` prints, one line for each command. The comment
@@ -284,8 +286,8 @@ COMMANDS :: [?]foundation.Command {
 	// - `heron`: the film of the process heron.
 	{name = "film", about = "build, start the machine, film a scenario (" + machine.FILM_NAMES + "; no argument: terminal), and write " + machine.FILM_FOLDER + "/<name>.mp4, " + machine.FILM_FOLDER + "/<name>.webm, the film cues " + machine.FILM_FOLDER + "/<name>" + machine.FILM_CUES_SUFFIX + ", a copy of the MP4 file in a new folder of the development log " + foundation.DEVELOPMENT_LOG_NAME + " beside the main working tree, and " + checks.FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = machine.run_film},
 	// Converts the BDF files of Spleen (8x16, 12x24, 16x32 and 32x64, from the
-	// folder `FONT_SOURCE`) to Odin data in `src/library/support/graphics/font.odin`
-	// and `src/library/support/bootscreen/spleen_sizes.odin`. The results are
+	// folder `FONT_SOURCE`) to Odin data in `src/library/modus/graphics/font.odin`
+	// and `src/library/modus/bootscreen/spleen_sizes.odin`. The results are
 	// in the repository, so a build does not need the BDF files: run it only
 	// to change the font.
 	{name = "font", about = "convert the BDF files of the font to " + foundation.FONT_OUTPUT + " and " + foundation.BOOT_DISPLAY_FONT_OUTPUT, run = resources.run_font},
@@ -304,7 +306,7 @@ COMMANDS :: [?]foundation.Command {
 	// reads the files of the repository (docs/FONTS.md).
 	{name = "vector_fonts", about = "subset the vector font candidates of " + resources.VECTOR_FONT_SOURCES_VARIABLE + " to " + resources.VECTOR_FONT_FOLDER + " and draw " + resources.CANDIDATES_PICTURE, run = resources.run_vector_fonts},
 	// Draws the files of the mark of the system from its geometry in
-	// `src/library/support/mark`: the icons in `resources/logo`, the font of the name of
+	// `src/library/modus/mark`: the icons in `resources/logo`, the font of the name of
 	// the mark, the picture of the project, and one picture of every frame
 	// of the animations of the mark.
 	//
@@ -371,7 +373,7 @@ COMMANDS :: [?]foundation.Command {
 	// - `file`: its path in the repository.
 	{name = "cryptography-take", about = "cryptography-take <file under the root of Odin> <file of the repository>: copy a file of core:crypto with the listed import changes, and print its line of the manifest", run = checks.run_cryptography_take},
 	// Prints the line of the list of the system files for each `.odin` file of
-	// `src/library/support/cryptography` that the manifest of the origin does not name:
+	// `src/library/modus/cryptography` that the manifest of the origin does not name:
 	// the files that the project wrote, which a reviewer checks before the
 	// lines go into the list.
 	{name = "cryptography-system-hashes", about = "print the line of " + checks.CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of " + foundation.CRYPTOGRAPHY_FOLDER + " that is not taken from Odin", run = checks.run_cryptography_system_hashes},
@@ -1062,7 +1064,7 @@ run_check :: proc(args: []string) -> int {
 	}
 	// The full check proves the build: it keeps no output of an earlier build.
 	build.build_whole = true
-	if !foundation.run({"odin", "check", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG}) {
+	if !foundation.run({"odin", "check", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG}) {
 		return foundation.EXIT_FAILURE
 	}
 	// The kernel and the contract packages import no support package. The

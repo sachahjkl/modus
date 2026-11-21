@@ -316,7 +316,7 @@ A right is one kind of operation that a handle permits on its object.
 
 The rights are Give, Read, Write, Execute, Control, Inspect, Devices, Stop, Spend, Physical, Schedule, Commit, Events, Debug and Counters. Each one means something for each kind of object: Read on a memory object is a mapping that reads, Control on a process starts and stops it. A new object has each right of its kind; `Handle_Give` copies a handle with a part of its rights, and no operation adds a right. Narrow rights let a process give exactly what another needs: Commit pays pages of one object, and nothing more.
 
-The list: `src/library/contract/operation/operation.odin`.
+The list: `src/library/modus/contract/operation/operation.odin`.
 
 Do not use: permission, privilege, mode.
 
@@ -390,7 +390,7 @@ Do not use: default budget, minimum budget.
 
 The largest budget is the most that a starter gives to one process for each part of a budget request.
 
-A part above it starts the process with the largest budget of that part, and the starter writes one line on the log. The largest budget of the root service is 16384 pages, 8 processes and 32 threads for a process of the boot image (`LARGEST_BUDGET` in `src/modules/system/root/budgets.odin`). A disk process, and a module of another project, has a smaller one, 8192 pages, one process and 4 threads, and one budget of the root service pays all of them together (`src/library/support/disk_process/budget.odin`).
+A part above it starts the process with the largest budget of that part, and the starter writes one line on the log. The largest budget of the root service is 16384 pages, 8 processes and 32 threads for a process of the boot image (`LARGEST_BUDGET` in `src/modules/system/root/budgets.odin`). A disk process, and a module of another project, has a smaller one, 8192 pages, one process and 4 threads, and one budget of the root service pays all of them together (`src/library/modus/disk_process/budget.odin`).
 
 Do not use: maximum budget, cap, ceiling.
 
@@ -456,7 +456,7 @@ Do not use: permission, authorization, consent.
 
 A start grant is one thing of the list of what the root service gives a process by its name: a service, a private store, a right of the machine.
 
-The root service takes the start grants of a process from its row of `start_grant_sets` at its start, and keeps them in its start grant set. Each later rule reads them there: the sender of a root ring command, the grant of a connection, the debug access. The list and the number of each start grant are a contract (`src/library/contract/start_grant`). A start grant is not a recorded grant: `Inspect`, `Stop` and `Schedule` are rights of the one recorded grant `machine`.
+The root service takes the start grants of a process from its row of `start_grant_sets` at its start, and keeps them in its start grant set. Each later rule reads them there: the sender of a root ring command, the grant of a connection, the debug access. The list and the number of each start grant are a contract (`src/library/modus/contract/start_grant`). A start grant is not a recorded grant: `Inspect`, `Stop` and `Schedule` are rights of the one recorded grant `machine`.
 
 Example: `debug("notes")` is refused: "the grant Store of the process refuses it".
 
@@ -468,7 +468,7 @@ Do not use: capability set, permission, privilege.
 
 A recorded grant is a handle, or a connection, that the root service gave a process and can end while the process runs.
 
-The root service records it by the process and by one of eleven names in lower case (`Root_Grant` and `root_grant_names` in `src/library/support/system/grants.odin`): `log`, `machine`, `image`, `store`, `debug`, `wirings`. `grants("notes")` in the console shows the recorded grants of a process, and `revoke("notes", "store")` ends one: the kernel ends each handle and each mapping that came from it.
+The root service records it by the process and by one of eleven names in lower case (`Root_Grant` and `root_grant_names` in `src/library/modus/system/grants.odin`): `log`, `machine`, `image`, `store`, `debug`, `wirings`. `grants("notes")` in the console shows the recorded grants of a process, and `revoke("notes", "store")` ends one: the kernel ends each handle and each mapping that came from it.
 
 A recorded grant is not a start grant, which says what the root service gives a process by its name, and whose name has capital letters (`Store`).
 
@@ -532,7 +532,7 @@ Do not use: subsystem, manager, privileged helper, broker.
 
 The root ring is the ring of a process to the root service: the process writes a command record on it, and the root service answers with a completion.
 
-A process receives a root ring at its start only when its start grant set holds a start grant that sends a command (Root_Ring, Connect, Principals, Debugger, Start_Policy); a disk process has none. The root service reads the kind of each record at one border, which refuses a word that names no command, then checks the sender with the table `ROOT_COMMAND_SENDERS`, then runs the command. The commands and their words are the contract `src/library/contract/root_ring`.
+A process receives a root ring at its start only when its start grant set holds a start grant that sends a command (Root_Ring, Connect, Principals, Debugger, Start_Policy); a disk process has none. The root service reads the kind of each record at one border, which refuses a word that names no command, then checks the sender with the table `ROOT_COMMAND_SENDERS`, then runs the command. The commands and their words are the contract `src/library/modus/contract/root_ring`.
 
 Example: `start("clock")` in the console sends `Root_Command.Start` with the name `clock` on the root ring of the console.
 

@@ -1,10 +1,10 @@
 package compositor
 
-import "modus:private/compositor/bar"
-import "modus:support/display"
-import "modus:support/key_path"
+import "internal:compositor/bar"
+import "modus:display"
+import "modus:key_path"
 import "modus:contract/ring"
-import "modus:support/system"
+import "modus:system"
 
 // The events of a window whose ring is full
 // (docs/ARCHITECTURE.md, "The path of a key").

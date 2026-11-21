@@ -26,7 +26,7 @@ import "core:strings"
 // processor.asm on purpose: its fninit and ldmxcsr run once, at the start of
 // a processor, before it runs any thread, and its first thread is restored.
 
-// The procedures of src/kernel/processor.asm that save and restore the
+// The procedures of src/modulus/processor.asm that save and restore the
 // extended state: the only code of the kernel that may name these
 // registers. A NASM label inside one of them is "name.label", and each one
 // ends with the label "name_end".
@@ -94,7 +94,7 @@ vector_mnemonic_exceptions := [?]string{"verr", "verw"}
 // The instructions of virtualization: they start with "v" and use no
 // extended state, and they enter a guest. The check lets them through in
 // the procedure that enters a guest only (guest_enter in
-// src/kernel/processor.asm), and refuses them anywhere else.
+// src/modulus/processor.asm), and refuses them anywhere else.
 @(rodata)
 virtualization_mnemonics := [?]string{"vmrun", "vmload", "vmsave"}
 GUEST_ENTRY_PROCEDURE :: "guest_enter"

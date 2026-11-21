@@ -6,8 +6,8 @@ package console
 // The console knows the names: its commands, the exports of the modules
 // and services that it loaded or connected (from their descriptions), its
 // variables, the modules of the boot image, the processes that run. It
-// ranks them with the fuzzy match of src/library/support/line_editor, and gives the
-// rows to show to its terminal (src/library/support/terminal, List_Row and List). The
+// ranks them with the fuzzy match of src/library/modus/line_editor, and gives the
+// rows to show to its terminal (src/library/modus/terminal, List_Row and List). The
 // terminal owns the cells and draws the list over its text. The rows go
 // through the text region of this console and its terminal, which no third
 // process reads: the terminal already shows each name that help() prints.
@@ -20,13 +20,13 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
-import "modus:support/console_language"
-import "modus:private/console/console_stream"
-import "modus:support/lex_evaluator"
-import "modus:support/display"
-import "modus:support/line_editor"
-import "modus:support/system"
-import terminal "modus:support/terminal"
+import "modus:console_language"
+import "internal:console/console_stream"
+import "modus:lex_evaluator"
+import "modus:display"
+import "modus:line_editor"
+import "modus:system"
+import terminal "modus:terminal"
 
 List_Mode :: enum u8 {
 	Closed  = 0,

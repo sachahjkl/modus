@@ -7,13 +7,13 @@ import "core:sync"
 import "core:time"
 import "modus:contract/byte_order"
 import "modus:contract/datagram"
-import "modus:support/tcp"
-import "modus:support/web"
+import "modus:tcp"
+import "modus:web"
 import "modustool:foundation"
 
 // The peer as a TCP client of the process `server` (docs/NETWORK.md, "With
 // the controlled peer"). The tool asks for one case at a time (step Peer);
-// the thread of the peer runs it with src/library/support/tcp, the library of the
+// the thread of the peer runs it with src/library/modus/tcp, the library of the
 // system, so the cases test the library against itself; the machine with
 // libslirp tests it against another implementation.
 //

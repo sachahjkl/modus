@@ -11,7 +11,7 @@ import "modustool:foundation"
 // processor that states its frequency would start the machine with the
 // cycle counter as its time base. No machine of QEMU gives that on every
 // host: QEMU fills no leaf 0x15, `tsc-frequency` does not fill it, and the
-// processor of TCG is not of Intel. So the host tests of src/kernel/time_base
+// processor of TCG is not of Intel. So the host tests of src/modulus/time_base
 // hold that path.
 
 TEST_OUTPUT_NO_PIT :: foundation.BUILD_FOLDER + "/test_output_no_pit.txt"

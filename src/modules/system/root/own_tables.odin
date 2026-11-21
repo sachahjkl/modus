@@ -11,7 +11,7 @@ package root
 // full table refuses still says the count of each table.
 
 import op "modus:contract/operation"
-import "modus:support/system"
+import "modus:system"
 
 // The report of the mappings of this service: 8 KiB, so not on the stack.
 // Read only for a line.

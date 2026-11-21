@@ -1,12 +1,12 @@
 package heron
 
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/mark"
+import "modus:graphics"
+import "modus:interface"
+import "modus:mark"
 
 // The free way of a move: what the grid way is compared with. The rule of
 // the system is the grid way (docs/DESIGN.md, "The moves"): the heron takes
-// the drawn forms of src/library/support/mark at places in whole cells. The free way
+// the drawn forms of src/library/modus/mark at places in whole cells. The free way
 // reads the same keys and does what a picture that is scaled does: the
 // frame of the heron, as it is, is stretched to the box of the form of the
 // key, and the box goes from a key to the next one pixel by pixel. So the
@@ -14,7 +14,7 @@ import "modus:support/mark"
 // stands between two cells. It is in this process only, for a reader to
 // see why the forms are drawn.
 
-// The two ways to draw a move from the keys of src/library/support/mark.
+// The two ways to draw a move from the keys of src/library/modus/mark.
 Move_Way :: enum u8 {
 	On_The_Grid, // The drawn form of the key, in whole square cells, at a place in whole cells.
 	Free, // The frame stretched to the box of the form, at any pixel.

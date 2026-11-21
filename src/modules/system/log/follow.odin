@@ -3,7 +3,7 @@ package log
 import "base:intrinsics"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
-import "modus:support/system"
+import "modus:system"
 
 // log.follow: the records of the whole log from the next one on, as a
 // record output of this service, which the console reads as a Stream

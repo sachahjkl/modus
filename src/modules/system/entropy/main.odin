@@ -7,8 +7,8 @@
 // message interrupt, memory for the queue, the machine with the right
 // Physical only, a copy of the configuration of the device, and the
 // entropy ring. The root service found the device, enabled it and set its
-// interrupt (src/library/support/pci). The code that each virtio device
-// service shares is in src/library/support/virtio.
+// interrupt (src/library/modus/pci). The code that each virtio device
+// service shares is in src/library/modus/virtio.
 //
 // **What it is for.** It gives the seed of the system a source that is not
 // the processor. The root service mixes the bytes in: they add to the seed
@@ -20,7 +20,7 @@
 // an entropy device at the place `pci.ENTROPY_DEVICE`, and is its one
 // client. No other process can name the device or the ring.
 //
-// **The commands of the entropy ring** (`src/library/contract/entropy_service`):
+// **The commands of the entropy ring** (`src/library/modus/contract/entropy_service`):
 // `Read`, with a count of 1 to 48 bytes. Its completion carries the bytes
 // that the device gave, at most the count. A refusal gives a status and the
 // values of an [error record](term:error-record).
@@ -39,9 +39,9 @@ import "modus:contract/entropy_service"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/pci"
-import "modus:support/system"
-import "modus:support/virtio"
+import "modus:pci"
+import "modus:system"
+import "modus:virtio"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module and its thread. With the

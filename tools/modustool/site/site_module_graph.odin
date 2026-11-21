@@ -10,7 +10,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "modus:contract/blake3"
-import "modus:support/graphics"
+import "modus:graphics"
 import "modustool:foundation"
 import "modustool:build"
 

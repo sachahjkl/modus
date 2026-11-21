@@ -36,7 +36,7 @@ package sample
 import "base:intrinsics"
 import "modus:contract/errors"
 import op "modus:contract/operation"
-import "modus:support/system"
+import "modus:system"
 
 // A rectangle, in any unit.
 Rectangle :: struct {

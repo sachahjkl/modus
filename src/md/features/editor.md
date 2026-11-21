@@ -29,7 +29,7 @@ A principal who works in modus writes text: the source of a project, a declarati
 
 ### The text model
 
-The text, its layout and the walk over the versions are pure procedures in the private part `modus:private/edit/text_model`, with host tests. They call no operation of the system: the module gives them the bytes from the store and the keys.
+The text, its layout and the walk over the versions are pure procedures in the private part `internal:edit/text_model`, with host tests. They call no operation of the system: the module gives them the bytes from the store and the keys.
 
 - **A gap buffer of 32768 bytes.** A key moves the gap to the caret and writes into it, so a run of keys at one place copies no byte of the rest. The bound is the call region of the storage service (64 KiB): a whole write of the text and its name goes in one call.
 - **Each border checks.** An insert that is not text of the editor (an invalid sequence, a control character but the line end and the tab), an empty insert, and an insert past the bound are refused whole: the text and the selection do not change. A place from outside the model (a press of the pointer) is clamped to the text and moved back to the start of its character. The caret is never inside a character.
@@ -63,7 +63,7 @@ The walk keeps the generation that the editor shows after a restore, and a list 
 |---|---|
 | Edit the text of the editor | `start("edit")` |
 | Edit a text of a store | `edit(notes, "today.txt")` |
-| Edit a source of a project, in its console | `projects.enter(kernel)`, then `edit(kernel, "src/kernel/enter.odin")`; in the child console, `kernel` is the store that the field `console` of the project grants |
+| Edit a source of a project, in its console | `projects.enter(kernel)`, then `edit(kernel, "src/modulus/enter.odin")`; in the child console, `kernel` is the store that the field `console` of the project grants |
 | See the versions of the text | `versions(notes, "today.txt")` |
 
 ## The refused forms

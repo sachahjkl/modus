@@ -17,7 +17,7 @@ import "modustool:foundation"
 // datagram of the peer to the device as one frame. No frame leaves the host:
 // the test is closed, and it has the same answers at each run.
 //
-// The peer reads each frame with its own code, not with src/library/support/network:
+// The peer reads each frame with its own code, not with src/library/modus/network:
 // a fault of the network service in a checksum or a length is a fault that
 // the peer sees. It answers ARP, an echo request (ICMP) and a datagram to
 // port 7. Before it answers the first datagram, it sends the frames that the

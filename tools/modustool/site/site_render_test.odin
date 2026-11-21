@@ -3,7 +3,7 @@ package site
 import "core:os"
 import "core:strings"
 import "core:testing"
-import "modus:support/mark"
+import "modus:mark"
 import "modustool:foundation"
 import "modustool:resources"
 import "modustool:checks"

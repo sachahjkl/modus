@@ -2,7 +2,7 @@
 // section 7). This process builds the same frame in two ways: through the
 // exports of the module interface_module, which it imports (each call
 // passes the draw table and the text table of this process as table
-// parameters, with no copy), and with the package src/library/support/interface
+// parameters, with no copy), and with the package src/library/modus/interface
 // compiled in. It compares the two draw tables and measures the two builds.
 // It draws its window through the drawing module, which it imports too:
 // the damage by difference and the draw of the records into its pixels are
@@ -35,11 +35,11 @@ package interface_through_module
 import "modus:contract/draw_record"
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
 import module "modus:contract/module"
-import "modus:support/system"
+import "modus:system"
 
 // The records of the module, as this process declares them: the layout is
 // the description.

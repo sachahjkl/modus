@@ -16,7 +16,7 @@
 // one line when it wrote, or "generic_source: WRONG: ...".
 package generic_source
 
-import "modus:support/system"
+import "modus:system"
 
 // One probe: its side (1: left, 2: right), its number on its side, and its
 // mark.

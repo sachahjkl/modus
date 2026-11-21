@@ -4,9 +4,9 @@ import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/tpm_service"
 import "modus:contract/value_kinds"
-import "modus:support/random"
-import "modus:support/system"
-import "modus:support/tpm2"
+import "modus:random"
+import "modus:system"
+import "modus:tpm2"
 
 // The TPM service (src/md/features/tpm_sealed_machine_key.md): the device
 // service of the TPM. This service starts it at boot when the boot program

@@ -3,8 +3,8 @@ package build
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/console_condition"
-import "modus:support/sentence"
+import "modus:console_condition"
+import "modus:sentence"
 import "core:fmt"
 import "core:strconv"
 import "core:strings"
@@ -16,7 +16,7 @@ import "core:strings"
 // before the machine starts, so a renamed fact type or field fails at once
 // with its cause, not at the end of a bound. The condition has the form of
 // the condition of `where` in the console, and the same package reads and
-// checks it (modus:support/console_condition): one form, one set
+// checks it (modus:console_condition): one form, one set
 // of refusals, one sentence for each.
 
 // Why a step of a fact is refused before the run.

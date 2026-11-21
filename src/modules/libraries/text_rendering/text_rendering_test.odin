@@ -6,9 +6,9 @@ import "core:testing"
 import "core:time"
 import "modus:contract/errors"
 import "modus:contract/font_outlines"
-import "modus:support/system"
-import "modus:support/text_rendering"
-import "modus:support/vector_font"
+import "modus:system"
+import "modus:text_rendering"
+import "modus:vector_font"
 
 // The measures of this file run only with -define:MEASURE=true: a test
 // that measures time is opt-in, and a normal run prints nothing.

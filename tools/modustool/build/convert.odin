@@ -68,7 +68,7 @@ Module_Description :: struct {
 }
 
 // The parts of the budget that a source states: the record
-// system.Stated_Budget of the source (src/library/support/system,
+// system.Stated_Budget of the source (src/library/modus/system,
 // budget_request.odin). The tool cannot import that package, so it has
 // the same fields here.
 Stated_Budget :: struct {
@@ -700,7 +700,7 @@ module_file_refusal_text :: proc(parts: module_file_writer.Module_Parts, refusal
 		}
 	case .None, .Segments, .Imports, .Import_Slots, .Rebases, .Strings, .Documentation, .Budget, .Facts, .Own_Hash:
 	}
-	return fmt.tprintf("the module file writer refuses the module: %v in the table %v, part %d%s, value %d (src/library/contract/module_file_writer)", refusal.refusal, refusal.table, refusal.index, part, refusal.value)
+	return fmt.tprintf("the module file writer refuses the module: %v in the table %v, part %d%s, value %d (src/library/modus/contract/module_file_writer)", refusal.refusal, refusal.table, refusal.index, part, refusal.value)
 }
 
 // own_hash_place_of_elf gives the memory offset of the own-hash place: the

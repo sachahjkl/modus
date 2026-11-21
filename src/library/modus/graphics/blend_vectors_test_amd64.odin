@@ -1,0 +1,826 @@
+#+build !freestanding
+package graphics
+
+import "modus:contract/font_characters"
+import "core:fmt"
+import "core:sync"
+import "core:testing"
+import "core:time"
+import "modus:text_rendering"
+
+// The SSE2 forms of the blends against their scalar forms (docs/SIMD.md):
+// the same bytes for every input. The inputs come from a generator with a
+// fixed seed, with the edge values often: 0, 1, 254, 255 in each byte, and
+// whole words of 0, of all ones and of full coverage. Each row has guard
+// words before and after it: a form that writes outside its columns
+// changes them.
+
+@(private = "file")
+Test_Random :: struct {
+	state: u64,
+}
+
+// next_random is xorshift64*: enough for test inputs, and the same on each host.
+@(private = "file")
+next_random :: proc(random: ^Test_Random) -> u32 {
+	random.state ~= random.state >> 12
+	random.state ~= random.state << 25
+	random.state ~= random.state >> 27
+	return u32((random.state * 0x2545F4914F6CDD1D) >> 32)
+}
+
+@(private = "file")
+edge_byte :: proc(random: ^Test_Random) -> u32 {
+	switch next_random(random) % 8 {
+	case 0:
+		return 0
+	case 1:
+		return 255
+	case 2:
+		return 1
+	case 3:
+		return 254
+	}
+	return next_random(random) & 0xFF
+}
+
+@(private = "file")
+edge_word :: proc(random: ^Test_Random) -> u32 {
+	switch next_random(random) % 10 {
+	case 0:
+		return 0
+	case 1:
+		return 0xFFFFFFFF
+	case 2:
+		return 0x00FFFFFF
+	case 3:
+		return 0xFF000000
+	}
+	return edge_byte(random) << 24 | edge_byte(random) << 16 | edge_byte(random) << 8 | edge_byte(random)
+}
+
+// The forms of a blend that the tests run.
+@(private = "file")
+Blend_Form :: enum u8 {
+	Scalar,
+	Sse2,
+}
+
+// The forms that the tests compare with the scalar form.
+@(private = "file")
+VECTOR_FORMS :: [?]Blend_Form{.Sse2}
+
+@(private = "file")
+coverage_row_in_form :: proc(form: Blend_Form, line: [^]Color, words: [^]u32, first, last: int, color: Color, order: Subpixel_Order, table: ^[4096]u8, alpha: u32 = OPAQUE) {
+	switch order {
+	case .Red_Green_Blue:
+		coverage_row_in_form_and_order(form, line, words, first, last, color, .Red_Green_Blue, table, alpha)
+	case .Blue_Green_Red:
+		coverage_row_in_form_and_order(form, line, words, first, last, color, .Blue_Green_Red, table, alpha)
+	case .None:
+		coverage_row_in_form_and_order(form, line, words, first, last, color, .None, table, alpha)
+	}
+}
+
+@(private = "file")
+coverage_row_in_form_and_order :: proc(form: Blend_Form, line: [^]Color, words: [^]u32, first, last: int, color: Color, $ORDER: Subpixel_Order, table: ^[4096]u8, alpha: u32) {
+	switch form {
+	case .Scalar:
+		blend_coverage_row_in_order(line, words, first, last, color, ORDER, table, alpha)
+	case .Sse2:
+		blend_coverage_row_sse2(line, words, first, last, color, ORDER, table, alpha)
+	}
+}
+
+// The coverage of a text with alpha: the SSE2 form gives the bytes of the
+// scalar form for each alpha of the edges (1, 2, 127, 128, 254) and others,
+// every length from 0 to 67, every place against 16 bytes, three first
+// columns and the three orders.
+@(test)
+coverage_forms_with_alpha_give_the_bytes_of_the_scalar_form :: proc(t: ^testing.T) {
+	table: [4096]u8
+	square_root_table_fill(&table)
+	forms := VECTOR_FORMS
+	random := Test_Random{state = 0xA0761D6478BD642F}
+	GUARD :: 16
+	LONGEST :: 67
+	SIZE :: GUARD + 3 + 2 + LONGEST + GUARD
+	alphas := [?]u32{1, 2, 127, 128, 200, 254}
+	wrong := 0
+	for alpha in alphas {
+		for order in Subpixel_Order {
+			for length in 0 ..= LONGEST {
+				for place in 0 ..< 4 {
+					for first in 0 ..< 3 {
+						words, reference: [SIZE]u32
+						for &word in words {
+							word = edge_word(&random)
+						}
+						for &pixel in reference {
+							pixel = edge_word(&random)
+						}
+						color := edge_word(&random) & 0xFFFFFF
+						before := reference
+						coverage_row_in_form(.Scalar, raw_data(reference[GUARD + place:]), raw_data(words[GUARD + (3 - place):]), first, first + length, color, order, &table, alpha)
+						for form in forms {
+							pixels := before
+							coverage_row_in_form(form, raw_data(pixels[GUARD + place:]), raw_data(words[GUARD + (3 - place):]), first, first + length, color, order, &table, alpha)
+							if pixels != reference {
+								wrong += 1
+								if wrong <= 5 {
+									drawn_start := GUARD + place + first
+									found := difference_of(reference[:], pixels[:], drawn_start, drawn_start + length)
+									testing.expectf(t, false, "%v, alpha %d, order %v, length %d, place %d, first %d: index %d: scalar %08x, the form %08x; %d pixels differ outside", form, alpha, order, length, place, first, found.index, found.expected, found.found, found.outside_count)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	testing.expect_value(t, wrong, 0)
+}
+
+// The alpha scales the coverage: the scalar form with an alpha gives the
+// bytes of the scalar form with no alpha over words whose coverage the
+// test scaled by coverage_with_alpha, for each coverage and each alpha but
+// where a scaled coverage is 0 over a word that is not 0 (it keeps the
+// channels of its pixel, with the high byte 0). Alpha 255 gives the bytes
+// of no alpha; coverage_with_alpha is round(c * a / 255).
+@(test)
+coverage_with_alpha_is_the_coverage_times_the_alpha :: proc(t: ^testing.T) {
+	table: [4096]u8
+	square_root_table_fill(&table)
+	wrong := 0
+	for alpha in u32(0) ..= 255 {
+		for coverage in u32(0) ..= 255 {
+			expected := (coverage * alpha * 2 + 255) / 510
+			wrong += int(coverage_with_alpha(coverage, alpha) != expected)
+		}
+	}
+	testing.expect_value(t, wrong, 0)
+	mismatch := 0
+	alphas := [4]u32{1, 77, 254, OPAQUE}
+	for alpha in alphas {
+		words, scaled: [256]u32
+		pixels, reference: [256]Color
+		for column in 0 ..< 256 {
+			coverage := u32(column)
+			words[column] = coverage << 16 | (255 - coverage) << 8 | coverage / 2
+			scaled[column] = coverage_with_alpha(coverage, alpha) << 16 | coverage_with_alpha(255 - coverage, alpha) << 8 | coverage_with_alpha(coverage / 2, alpha)
+			pixels[column] = u32(column) * 0x010203 & 0x00FFFFFF
+		}
+		reference = pixels
+		blend_coverage_row_in_order(raw_data(pixels[:]), raw_data(words[:]), 0, 256, 0x00C08040, .Red_Green_Blue, &table, alpha)
+		blend_coverage_row_in_order(raw_data(reference[:]), raw_data(scaled[:]), 0, 256, 0x00C08040, .Red_Green_Blue, &table)
+		for column in 0 ..< 256 {
+			if scaled[column] == 0 && words[column] != 0 {
+				continue
+			}
+			mismatch += int(pixels[column] != reference[column])
+		}
+	}
+	testing.expect_value(t, mismatch, 0)
+}
+
+@(private = "file")
+premultiplied_row_in_form :: proc(form: Blend_Form, to: [^]Color, from: [^]u32, count: int) {
+	switch form {
+	case .Scalar:
+		blend_premultiplied_alpha_row_scalar(to, from, count)
+	case .Sse2:
+		blend_premultiplied_alpha_row_sse2(to, from, count)
+	}
+}
+
+// Difference is the first pixel where a form differs from the scalar form,
+// and the count of pixels that differ outside the columns that the call
+// draws: the guard words and the columns before first.
+@(private = "file")
+Difference :: struct {
+	index:         int, // In the array of the test; -1 when no pixel differs.
+	expected:      u32,
+	found:         u32,
+	outside_count: int,
+}
+
+@(private = "file")
+difference_of :: proc(expected, found: []u32, drawn_start, drawn_end: int) -> (result: Difference) {
+	result.index = -1
+	for index in 0 ..< len(expected) {
+		if expected[index] == found[index] {
+			continue
+		}
+		if result.index < 0 {
+			result.index = index
+			result.expected = expected[index]
+			result.found = found[index]
+		}
+		if index < drawn_start || index >= drawn_end {
+			result.outside_count += 1
+		}
+	}
+	return
+}
+
+// Every length from 0 to 67, every place of the words and of the pixels
+// against a boundary of 16 bytes (a pixel is 4 bytes, so 4 places), three
+// first columns, the three orders.
+@(test)
+coverage_forms_give_the_bytes_of_the_scalar_form :: proc(t: ^testing.T) {
+	table: [4096]u8
+	square_root_table_fill(&table)
+	forms := VECTOR_FORMS
+	random := Test_Random{state = 0x9E3779B97F4A7C15}
+	GUARD :: 16
+	LONGEST :: 67
+	SIZE :: GUARD + 3 + 2 + LONGEST + GUARD
+	wrong := 0
+	for order in Subpixel_Order {
+		for length in 0 ..= LONGEST {
+			for word_place in 0 ..< 4 {
+				for pixel_place in 0 ..< 4 {
+					for first in 0 ..< 3 {
+						words, reference: [SIZE]u32
+						for &word in words {
+							word = edge_word(&random)
+						}
+						for &pixel in reference {
+							pixel = edge_word(&random)
+						}
+						color := edge_word(&random)
+						if next_random(&random) % 2 == 0 {
+							color &= 0xFFFFFF
+						}
+						before := reference
+						coverage_row_in_form(.Scalar, raw_data(reference[GUARD + pixel_place:]), raw_data(words[GUARD + word_place:]), first, first + length, color, order, &table)
+						for form in forms {
+							pixels := before
+							coverage_row_in_form(form, raw_data(pixels[GUARD + pixel_place:]), raw_data(words[GUARD + word_place:]), first, first + length, color, order, &table)
+							if pixels != reference {
+								wrong += 1
+								if wrong <= 5 {
+									drawn_start := GUARD + pixel_place + first
+									found := difference_of(reference[:], pixels[:], drawn_start, drawn_start + length)
+									column := found.index - drawn_start
+									word: u32 // The word of a column outside the drawn columns is not read.
+									if column >= 0 && column < length {
+										word = words[GUARD + word_place + first + column]
+									}
+									testing.expectf(t, false, "%v, order %v, length %d, places %d %d, first %d: column %d (pixel %08x, word %08x, color %08x): scalar %08x, the form %08x; %d pixels differ outside the drawn columns", form, order, length, word_place, pixel_place, first, column, before[found.index], word, color, found.expected, found.found, found.outside_count)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	testing.expect_value(t, wrong, 0)
+}
+
+// Each pixel value d and each coverage a of a channel, under colors with
+// the edge values and others: each lane of the arithmetic meets each value.
+@(test)
+coverage_forms_meet_each_channel_value :: proc(t: ^testing.T) {
+	table: [4096]u8
+	square_root_table_fill(&table)
+	forms := VECTOR_FORMS
+	text_colors := [?]Color{0x000000, 0xFFFFFF, 0x01FE80, 0xFE017F, DARK_TEXT, DARK_DIM, 0xFF123456}
+	wrong := 0
+	for order in Subpixel_Order {
+		for color in text_colors {
+			for coverage in u32(0) ..= 255 {
+				words: [256]u32
+				reference: [256]Color
+				for column in 0 ..< 256 {
+					value := u32(column)
+					// Each byte of the word has the coverage, except one
+					// stripe in the columns of a third of the row.
+					words[column] = coverage << 24 | coverage << 16 | coverage << 8 | coverage
+					if column % 3 == 1 {
+						words[column] &= 0xFFFF00FF
+					}
+					reference[column] = (255 - value) << 24 | value << 16 | value << 8 | value
+				}
+				before := reference
+				coverage_row_in_form(.Scalar, raw_data(reference[:]), raw_data(words[:]), 0, 256, color, order, &table)
+				for form in forms {
+					pixels := before
+					coverage_row_in_form(form, raw_data(pixels[:]), raw_data(words[:]), 0, 256, color, order, &table)
+					if pixels != reference {
+						wrong += 1
+						if wrong <= 5 {
+							found := difference_of(reference[:], pixels[:], 0, 256)
+							testing.expectf(t, false, "%v, order %v, color %08x, coverage %d: column %d (pixel %08x, word %08x): scalar %08x, the form %08x", form, order, color, coverage, found.index, before[found.index], words[found.index], found.expected, found.found)
+						}
+					}
+				}
+			}
+		}
+	}
+	testing.expect_value(t, wrong, 0)
+}
+
+// The scalar form once read the channels of a pixel 0xFFFFFFFF as 0: it took
+// that value for "no pixel yet". A row that starts with such a pixel.
+@(test)
+coverage_scalar_form_reads_a_pixel_of_all_ones :: proc(t: ^testing.T) {
+	table: [4096]u8
+	square_root_table_fill(&table)
+	pixels := [1]Color{0xFFFFFFFF}
+	words := [1]u32{0x00808080}
+	blend_coverage_row_in_order(raw_data(pixels[:]), raw_data(words[:]), 0, 1, 0xFFFFFF, .Red_Green_Blue, &table)
+	// Under white, white at any coverage is white.
+	testing.expect_value(t, pixels[0], Color(0xFFFFFF))
+}
+
+@(test)
+premultiplied_forms_give_the_bytes_of_the_scalar_form :: proc(t: ^testing.T) {
+	forms := VECTOR_FORMS
+	random := Test_Random{state = 0x2545F4914F6CDD1D}
+	GUARD :: 16
+	LONGEST :: 67
+	SIZE :: GUARD + 3 + LONGEST + GUARD
+	wrong := 0
+	for length in 0 ..= LONGEST {
+		for source_place in 0 ..< 4 {
+			for pixel_place in 0 ..< 4 {
+				for _ in 0 ..< 4 {
+					source, reference: [SIZE]u32
+					for &value in source {
+						value = edge_word(&random)
+						// Most sources are premultiplied, as a picture is; the
+						// others make the channels carry.
+						if next_random(&random) % 4 != 0 {
+							alpha := value >> 24
+							value = alpha << 24 | min(value >> 16 & 0xFF, alpha) << 16 | min(value >> 8 & 0xFF, alpha) << 8 | min(value & 0xFF, alpha)
+						}
+					}
+					for &pixel in reference {
+						pixel = edge_word(&random)
+					}
+					before := reference
+					premultiplied_row_in_form(.Scalar, raw_data(reference[GUARD + pixel_place:]), raw_data(source[GUARD + source_place:]), length)
+					for form in forms {
+						pixels := before
+						premultiplied_row_in_form(form, raw_data(pixels[GUARD + pixel_place:]), raw_data(source[GUARD + source_place:]), length)
+						if pixels != reference {
+							wrong += 1
+							if wrong <= 5 {
+								drawn_start := GUARD + pixel_place
+								found := difference_of(reference[:], pixels[:], drawn_start, drawn_start + length)
+								column := found.index - drawn_start
+								source_value: u32 // The source of a column outside the drawn columns is not read.
+								if column >= 0 && column < length {
+									source_value = source[GUARD + source_place + column]
+								}
+								testing.expectf(t, false, "%v, length %d, places %d %d: column %d (pixel %08x, source %08x): scalar %08x, the form %08x; %d pixels differ outside the drawn columns", form, length, source_place, pixel_place, column, before[found.index], source_value, found.expected, found.found, found.outside_count)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	testing.expect_value(t, wrong, 0)
+}
+
+// Each alpha, each destination value, and source values with the edge
+// values: 0, the alpha (the largest premultiplied value), and 255 (a value
+// that is not premultiplied: the channels carry).
+@(test)
+premultiplied_forms_meet_each_channel_value :: proc(t: ^testing.T) {
+	forms := VECTOR_FORMS
+	wrong := 0
+	for alpha in u32(0) ..= 255 {
+		source_values := [5]u32{0, 1, alpha / 2, alpha, 255}
+		for source_value in source_values {
+			source: [256]u32
+			reference: [256]Color
+			for column in 0 ..< 256 {
+				value := u32(column)
+				source[column] = alpha << 24 | source_value << 16 | (255 - source_value) << 8 | source_value
+				reference[column] = (255 - value) << 24 | value << 16 | (255 - value) << 8 | value
+			}
+			before := reference
+			premultiplied_row_in_form(.Scalar, raw_data(reference[:]), raw_data(source[:]), 256)
+			for form in forms {
+				pixels := before
+				premultiplied_row_in_form(form, raw_data(pixels[:]), raw_data(source[:]), 256)
+				if pixels != reference {
+					wrong += 1
+				}
+			}
+		}
+	}
+	testing.expect_value(t, wrong, 0)
+}
+
+@(private = "file")
+straight_alpha_row_in_form :: proc(form: Blend_Form, to: [^]Color, from: [^]u32, count: int, table: ^[4096]u8) {
+	switch form {
+	case .Scalar:
+		blend_straight_alpha_row_scalar(to, from, count, table)
+	case .Sse2:
+		blend_straight_alpha_row_sse2(to, from, count, table)
+	}
+}
+
+// The colors with straight alpha of the draw records: every length from 0
+// to 67, every place of the colors and of the pixels against 16 bytes, the
+// edge values often, groups of four transparent or four opaque colors, and
+// guard words around each row: each form gives the bytes of the scalar
+// form and writes nothing outside its columns.
+@(test)
+straight_alpha_forms_give_the_bytes_of_the_scalar_form :: proc(t: ^testing.T) {
+	forms := VECTOR_FORMS
+	table: [4096]u8
+	square_root_table_fill(&table)
+	random := Test_Random{state = 0xD1B54A32D192ED03}
+	GUARD :: 16
+	LONGEST :: 67
+	SIZE :: GUARD + 3 + LONGEST + GUARD
+	wrong := 0
+	for length in 0 ..= LONGEST {
+		for source_place in 0 ..< 4 {
+			for pixel_place in 0 ..< 4 {
+				for round in 0 ..< 6 {
+					source, reference: [SIZE]u32
+					for &value, index in source {
+						value = edge_word(&random)
+						// Some rounds hold runs of one alpha: whole groups of
+						// transparent or of opaque colors take their own path.
+						switch round {
+						case 4:
+							value &= 0x00FFFFFF
+							if index % 9 == 0 {
+								value |= 0x80000000
+							}
+						case 5:
+							value |= 0xFF000000
+							if index % 11 == 0 {
+								value = value & 0x00FFFFFF | 0x7F000000
+							}
+						}
+					}
+					for &pixel in reference {
+						pixel = edge_word(&random)
+					}
+					before := reference
+					straight_alpha_row_in_form(.Scalar, raw_data(reference[GUARD + pixel_place:]), raw_data(source[GUARD + source_place:]), length, &table)
+					for form in forms {
+						pixels := before
+						straight_alpha_row_in_form(form, raw_data(pixels[GUARD + pixel_place:]), raw_data(source[GUARD + source_place:]), length, &table)
+						if pixels != reference {
+							wrong += 1
+							if wrong <= 5 {
+								drawn_start := GUARD + pixel_place
+								found := difference_of(reference[:], pixels[:], drawn_start, drawn_start + length)
+								column := found.index - drawn_start
+								source_value: u32 // The source of a column outside the drawn columns is not read.
+								if column >= 0 && column < length {
+									source_value = source[GUARD + source_place + column]
+								}
+								testing.expectf(t, false, "%v, length %d, places %d %d: column %d (pixel %08x, color %08x): scalar %08x, the form %08x; %d pixels differ outside the drawn columns", form, length, source_place, pixel_place, column, before[found.index], source_value, found.expected, found.found, found.outside_count)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	testing.expect_value(t, wrong, 0)
+}
+
+// Each alpha over each value of a pixel, with the edge values of a color:
+// each form gives the bytes of the scalar form, and the scalar form gives
+// the bytes of the blend of a glyph whose word covers the three channels
+// with the alpha. One rule for a glyph and for a color with alpha.
+@(test)
+straight_alpha_forms_meet_each_channel_value :: proc(t: ^testing.T) {
+	forms := VECTOR_FORMS
+	table: [4096]u8
+	square_root_table_fill(&table)
+	wrong := 0
+	glyph_wrong := 0
+	for alpha in u32(0) ..= 255 {
+		color_values := [5]u32{0, 1, 127, 254, 255}
+		for color_value in color_values {
+			channels := color_value << 16 | (255 - color_value) << 8 | color_value / 2
+			source: [256]u32
+			words: [256]u32
+			reference: [256]Color
+			for column in 0 ..< 256 {
+				value := u32(column)
+				source[column] = alpha << 24 | channels
+				words[column] = alpha << 24
+				reference[column] = (255 - value) << 24 | value << 16 | (255 - value) << 8 | value
+			}
+			before := reference
+			straight_alpha_row_in_form(.Scalar, raw_data(reference[:]), raw_data(source[:]), 256, &table)
+			for form in forms {
+				pixels := before
+				straight_alpha_row_in_form(form, raw_data(pixels[:]), raw_data(source[:]), 256, &table)
+				if pixels != reference {
+					wrong += 1
+				}
+			}
+			glyph := before
+			blend_coverage_row_in_order(raw_data(glyph[:]), raw_data(words[:]), 0, 256, channels, .None, &table)
+			if glyph != reference {
+				glyph_wrong += 1
+			}
+		}
+	}
+	testing.expect_value(t, wrong, 0)
+	testing.expect_value(t, glyph_wrong, 0)
+}
+
+// glyph_in_form draws one glyph as glyph_words_draw does, with the rows
+// blended in one form: the choice of the process does not decide here.
+@(private = "file")
+glyph_in_form :: proc(form: Blend_Form, glyphs: ^Test_Glyphs, table: ^[4096]u8, order: Subpixel_Order, canvas: Canvas, x, y: int, value: rune, color: Color, scale: int, position := 0) {
+	entry, words, found := test_glyph(glyphs, value, scale, position)
+	if !found || entry.row_count == 0 {
+		return
+	}
+	// The words of a row start at the column left of the origin.
+	column_x := x + int(entry.left)
+	width := int(entry.width)
+	first_column := max(0, -column_x)
+	last_column := min(width, canvas.width - column_x)
+	first_row := max(0, -(y + int(entry.first_row)))
+	last_row := min(int(entry.row_count), canvas.height - y - int(entry.first_row))
+	if first_column >= last_column || first_row >= last_row {
+		return
+	}
+	for row in first_row ..< last_row {
+		line := canvas.pixels[(y + int(entry.first_row) + row) * canvas.stride + column_x:]
+		coverage_row_in_form(form, line, words[row * width:], first_column, last_column, color, order, table)
+	}
+}
+
+// The glyphs of the face of the cells drawn in each form: the same pixels,
+// and the time of one glyph in each form, on the host. A build of the tests
+// with no optimisation puts no procedure inline: its times only rank the
+// forms.
+@(test)
+glyph_draw_cost_of_each_form :: proc(t: ^testing.T) {
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
+	glyphs := test_glyphs_of(t, .Cells)
+	defer test_glyphs_free(glyphs)
+	table: [4096]u8
+	square_root_table_fill(&table)
+	sample := "Rag{0}%e"
+	WIDTH :: 24 * 10
+	HEIGHT :: 48
+	draw_all :: proc(form: Blend_Form, glyphs: ^Test_Glyphs, table: ^[4096]u8, pixels: []Color) {
+		canvas := Canvas{pixels = raw_data(pixels), width = WIDTH, height = HEIGHT, stride = WIDTH}
+		for &pixel, index in pixels {
+			pixel = index % 7 == 0 ? DARK_CARD_TOP : DARK_CARD_BOTTOM
+		}
+		for order in Subpixel_Order {
+			for scale in 1 ..= 3 {
+				for character in rune(32) ..= 126 {
+					// Places that cut the glyph at each edge, and places inside.
+					x := int(character) % 13 * 19 - 8
+					y := int(character) % 5 * 11 - 6
+					glyph_in_form(form, glyphs, table, order, canvas, x, y, character, DARK_TEXT, scale)
+				}
+			}
+		}
+	}
+	reference := make([]Color, WIDTH * HEIGHT)
+	defer delete(reference)
+	draw_all(.Scalar, glyphs, &table, reference)
+	forms := VECTOR_FORMS
+	pixels := make([]Color, WIDTH * HEIGHT)
+	defer delete(pixels)
+	for form in forms {
+		draw_all(form, glyphs, &table, pixels)
+		found := difference_of(reference, pixels, 0, len(pixels))
+		testing.expectf(t, found.index < 0, "%v: the glyphs differ from the scalar form: pixel %d (x %d, y %d): scalar %08x, the form %08x", form, found.index, found.index % WIDTH, found.index / WIDTH, found.expected, found.found)
+	}
+	canvas := Canvas{pixels = raw_data(pixels), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	REPEAT :: 200_000
+	all_forms := [?]Blend_Form{.Scalar, .Sse2}
+	for form in all_forms {
+		start := time.tick_now()
+		for index in 0 ..< REPEAT {
+			glyph_in_form(form, glyphs, &table, .Red_Green_Blue, canvas, 8, 8, rune(sample[index % len(sample)]), DARK_TEXT, 1)
+		}
+		fmt.printfln("graphics: one glyph of the face of the cells on the host, the %v form: %v ns", form, time.duration_nanoseconds(time.tick_since(start)) / REPEAT)
+	}
+}
+
+// The faces of the system whose glyphs the tests of the three blends
+// draw: Paper Mono with the grid fit, its SemiBold, and B612 with its
+// three positions (left sides other than 0, glyphs that overlap). The
+// caller holds fallback_test_lock.
+@(private = "file")
+test_faces_glyphs :: proc(t: ^testing.T) -> (glyphs: [3]^Test_Glyphs) {
+	faces := [3]text_rendering.Face{.Cells, .Cells_Bold, .Interface}
+	for face, index in faces {
+		glyphs[index] = test_glyphs_of(t, face)
+	}
+	return glyphs
+}
+
+// The three blends of a glyph give the same bytes: the table blend of the
+// modules (glyph_words_draw, with its fallback in the form of the target),
+// the SSE2 form alone and the scalar form alone. For each face of the
+// system, each scale, each position, each order of the stripes, three
+// colors, over a flat color, the gradient of a card, a gradient across and
+// noise, in two passes (the second over the first). The glyphs are 6
+// pixels apart for each scale, so the glyphs of B612 overlap.
+@(test)
+three_blends_give_the_same_bytes_for_each_face :: proc(t: ^testing.T) {
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
+	faces := test_faces_glyphs(t)
+	defer for glyphs in faces {
+		test_glyphs_free(glyphs)
+	}
+	table: [4096]u8
+	square_root_table_fill(&table)
+	tables := new(Blend_Tables)
+	defer free(tables)
+	WIDTH :: 6 * 3 * 96 + 64
+	HEIGHT :: 48
+	drawn: [3][]Color
+	for &pixels in drawn {
+		pixels = make([]Color, WIDTH * HEIGHT)
+	}
+	defer for pixels in drawn {
+		delete(pixels)
+	}
+	canvases: [3]Canvas
+	for pixels, index in drawn {
+		canvases[index] = {pixels = raw_data(pixels), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	}
+	text_colors := [?]Color{DARK_TEXT, DARK_PROCESS, COLOR_WHITE}
+	differences: [2]int // The table blend, then the SSE2 form, against the scalar form.
+	for glyphs in faces {
+		for scale in 1 ..= TEST_SCALE_COUNT {
+			for position in 0 ..< glyphs.position_count {
+				for background in Speed_Background {
+					for order in Subpixel_Order {
+						for color in text_colors {
+							for canvas in canvases {
+								background_fill(canvas, background)
+							}
+							for _ in 0 ..< 2 {
+								for character in 32 ..< 127 {
+									x := 8 + (character - 32) * 6 * scale
+									value := rune(character)
+									glyph_in_form(.Scalar, glyphs, &table, order, canvases[0], x, 0, value, color, scale, position)
+									glyph_in_form(.Sse2, glyphs, &table, order, canvases[1], x, 0, value, color, scale, position)
+									test_glyph_fast_draw(glyphs, &table, tables, order, canvases[2], x, 0, value, color, scale, OPAQUE, position)
+								}
+							}
+							for pixel, index in drawn[0] {
+								if drawn[2][index] != pixel {
+									differences[0] += 1
+								}
+								if drawn[1][index] != pixel {
+									differences[1] += 1
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		testing.expectf(t, differences == [2]int{}, "%v: the table blend differs from the scalar form in %v pixels, the SSE2 form in %v", glyphs.face, differences[0], differences[1])
+		fmt.printfln("graphics: %v: the table blend, the SSE2 form and the scalar form: %v and %v pixels differ", glyphs.face, differences[0], differences[1])
+		differences = {}
+	}
+}
+
+// The time of one glyph at scale 1 of Paper Mono in each blend, over a
+// flat color, a gradient across and noise, on the host: run with `taskset
+// -c N` and -o:speed, the least of SPEED_BATCHES batches of one line (as
+// text_speed_parts). The table blend is the path of the modules; the SSE2
+// form alone and the scalar form alone draw each row with that form.
+@(test)
+text_speed_of_each_blend :: proc(t: ^testing.T) {
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
+	glyphs := test_glyphs_of(t, .Cells)
+	defer test_glyphs_free(glyphs)
+	Blend_Speed_Data :: struct {
+		glyphs: ^Test_Glyphs,
+		table:  [4096]u8,
+		tables: Blend_Tables,
+		form:   Blend_Form,
+	}
+	data := new(Blend_Speed_Data)
+	defer free(data)
+	data.glyphs = glyphs
+	square_root_table_fill(&data.table)
+	pixels := make([]Color, 640 * 48)
+	defer delete(pixels)
+	canvas := Canvas{pixels = raw_data(pixels), width = 640, height = 48, stride = 640}
+	SAMPLE :: "compositor  12.4 ms  2 418 pages {fill} [rings] gi Rb 0O 1lI"
+	#assert(len(SAMPLE) == SPEED_GLYPHS)
+	least_of :: proc(canvas: Canvas, background: Speed_Background, data: ^Blend_Speed_Data, tables: bool) -> f64 {
+		least := max(i64)
+		text := SAMPLE
+		for _ in 0 ..< SPEED_BATCHES {
+			background_fill(canvas, background) // Not in the time.
+			start := time.tick_now()
+			for index in 0 ..< SPEED_GLYPHS {
+				if tables {
+					test_glyph_fast_draw(data.glyphs, &data.table, &data.tables, .Red_Green_Blue, canvas, 8 * index, 8, rune(text[index]), DARK_TEXT, 1)
+				} else {
+					glyph_in_form(data.form, data.glyphs, &data.table, .Red_Green_Blue, canvas, 8 * index, 8, rune(text[index]), DARK_TEXT, 1)
+				}
+			}
+			least = min(least, time.duration_nanoseconds(time.tick_since(start)))
+		}
+		return f64(least) / SPEED_GLYPHS
+	}
+	backgrounds := [3]Speed_Background{.Flat, .Across, .Noise}
+	for background in backgrounds {
+		data.tables = {}
+		with_tables := least_of(canvas, background, data, true)
+		data.form = .Sse2
+		sse2 := least_of(canvas, background, data, false)
+		data.form = .Scalar
+		scalar := least_of(canvas, background, data, false)
+		fmt.printfln("graphics: one glyph of paper_mono at scale 1 over %v: the table blend %.1f ns, the SSE2 form %.1f ns, the scalar form %.1f ns", background, with_tables, sse2, scalar)
+	}
+}
+
+// The text of a proportional face, drawn with text_proportional_with from
+// the private glyph cache (the table blend, with the form of the target as
+// its fallback), gives the bytes of the same placed glyphs of the face,
+// copied out of the cache and drawn with the SSE2 form alone and with the
+// scalar form alone, each glyph at the position that position_of gives.
+// The texts have pairs and glyphs that overlap; three places, a fraction of
+// a pixel apart; each order of the stripes; the four backgrounds.
+@(test)
+proportional_text_gives_the_same_bytes_in_each_blend :: proc(t: ^testing.T) {
+	sync.mutex_lock(&fallback_test_lock)
+	defer sync.mutex_unlock(&fallback_test_lock)
+	glyphs := test_glyphs_of(t, .Interface)
+	defer test_glyphs_free(glyphs)
+	// The places from the font file of B612.
+	defer text_rendering.state = {}
+	words := fallback_open_for_test(t)
+	defer delete(words)
+	spacing, spacing_ok := text_rendering.spacing_of(.Interface, text_rendering.TEXT_SIZE_OF_SCALE_ONE)
+	testing.expect(t, spacing_ok)
+	table: [4096]u8
+	square_root_table_fill(&table)
+	tables := new(Blend_Tables)
+	defer free(tables)
+	WIDTH :: 640
+	HEIGHT :: 48
+	drawn: [3][]Color
+	for &pixels in drawn {
+		pixels = make([]Color, WIDTH * HEIGHT)
+	}
+	defer for pixels in drawn {
+		delete(pixels)
+	}
+	canvases: [3]Canvas
+	for pixels, index in drawn {
+		canvases[index] = {pixels = raw_data(pixels), width = WIDTH, height = HEIGHT, stride = WIDTH}
+	}
+	texts := [?]string{"To LT Ty AVATAR Wave", "The quick brown fox jumps over the lazy dog.", "0123456789 {fill} [rings] gi Rb 0O 1lI"}
+	places := [3]i64{8 * 64, 8 * 64 + 21, 8 * 64 + 43}
+	differences: [2]int
+	for sample_text in texts {
+		placed: [64]text_rendering.Placed_Glyph
+		count, _, _ := text_rendering.shape(&spacing, transmute([]u8)sample_text, placed[:])
+		for place in places {
+			for background in Speed_Background {
+				for order in Subpixel_Order {
+					for canvas in canvases {
+						background_fill(canvas, background)
+					}
+					for glyph in placed[:count] {
+						pixel, position := text_rendering.position_of(place + i64(glyph.x), glyphs.position_count)
+						value, _ := font_characters.character_of_index(int(glyph.glyph))
+						glyph_in_form(.Scalar, glyphs, &table, order, canvases[0], int(pixel), 8, value, DARK_TEXT, 1, position)
+						glyph_in_form(.Sse2, glyphs, &table, order, canvases[1], int(pixel), 8, value, DARK_TEXT, 1, position)
+					}
+					text_proportional_with(.Interface, &table, tables, order, canvases[2], place, 8, placed[:count], text_rendering.TEXT_SIZE_OF_SCALE_ONE, DARK_TEXT)
+					for pixel, index in drawn[0] {
+						if drawn[2][index] != pixel {
+							differences[0] += 1
+						}
+						if drawn[1][index] != pixel {
+							differences[1] += 1
+						}
+					}
+				}
+			}
+		}
+	}
+	testing.expectf(t, differences == [2]int{}, "the text of B612: the table blend differs from the scalar form in %v pixels, the SSE2 form in %v", differences[0], differences[1])
+}

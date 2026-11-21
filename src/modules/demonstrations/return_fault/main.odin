@@ -48,12 +48,12 @@ import "modus:contract/enum_word"
 import "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import sets "modus:support/instruction_sets"
-import "modus:support/interface"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import sets "modus:instruction_sets"
+import "modus:interface"
+import "modus:random"
+import "modus:system"
 
 // One child at a time, with one thread: 1353 pages. And the glyph memory
 // of the copy of the text rendering of the drawing module, which draws its

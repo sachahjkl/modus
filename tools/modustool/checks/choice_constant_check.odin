@@ -29,7 +29,7 @@ CHOICE_VALUE_DEPTH_LIMIT :: 16
 
 // A copy of a package of the Odin library: its forms are not the forms of
 // this system.
-CHOICE_CONSTANT_SKIPPED_FOLDER :: foundation.SOURCE_FOLDER_SUPPORT + "/cryptography"
+CHOICE_CONSTANT_SKIPPED_FOLDER :: foundation.SOURCE_FOLDER_PUBLIC + "/cryptography"
 
 // The largest magnitude of a constant that can be a member of a family, on
 // each side of 0: a larger value is a mask, an address, a magic number or
@@ -98,19 +98,19 @@ Choice_Constant_Exception :: struct {
 // choices by their use.
 @(rodata)
 CHOICE_CONSTANT_EXCEPTIONS := [?]Choice_Constant_Exception {
-	{foundation.SOURCE_FOLDER_SUPPORT + "/quic", "FRAME", .First, "the frame types of QUIC (RFC 9000, section 12.4): the numbers of the wire, read and written as numbers"},
-	{foundation.SOURCE_FOLDER_SUPPORT + "/quic", "PARAMETER", .First, "the transport parameters of QUIC (RFC 9000, section 18.2): a receiver ignores a parameter that it does not know"},
-	{foundation.SOURCE_FOLDER_SUPPORT + "/network", "PROTOCOL", .First, "the protocol numbers of IPv4 (IANA): a packet of another protocol is legal and is not read"},
-	{foundation.SOURCE_FOLDER_SUPPORT + "/network", "ICMP", .First, "the message types of ICMP (RFC 792): a message of another type is legal and is not read"},
-	{foundation.SOURCE_FOLDER_SUPPORT + "/virtio", "CAPABILITY", .First, "the capability types of virtio (virtio 1.2, section 4.1.4): a capability of another type is legal and is skipped"},
+	{foundation.SOURCE_FOLDER_PUBLIC + "/quic", "FRAME", .First, "the frame types of QUIC (RFC 9000, section 12.4): the numbers of the wire, read and written as numbers"},
+	{foundation.SOURCE_FOLDER_PUBLIC + "/quic", "PARAMETER", .First, "the transport parameters of QUIC (RFC 9000, section 18.2): a receiver ignores a parameter that it does not know"},
+	{foundation.SOURCE_FOLDER_PUBLIC + "/network", "PROTOCOL", .First, "the protocol numbers of IPv4 (IANA): a packet of another protocol is legal and is not read"},
+	{foundation.SOURCE_FOLDER_PUBLIC + "/network", "ICMP", .First, "the message types of ICMP (RFC 792): a message of another type is legal and is not read"},
+	{foundation.SOURCE_FOLDER_PUBLIC + "/virtio", "CAPABILITY", .First, "the capability types of virtio (virtio 1.2, section 4.1.4): a capability of another type is legal and is skipped"},
 	{foundation.SOURCE_FOLDER_KERNEL + "/iommu", "AMD", .First, "the entry and block types of the ACPI table IVRS and the event codes of the event log of AMD-Vi (AMD I/O virtualization, sections 2.5 and 5.2): an entry of another type is legal and is skipped by its length, and an event of another code is written with its number"},
 	{foundation.SOURCE_FOLDER_KERNEL + "/iommu", "STRUCTURE", .First, "the structure types of the ACPI table DMAR (Intel VT-d, section 8.1): a structure of another type is legal and is skipped by its length"},
 	{foundation.SOURCE_FOLDER_KERNEL + "/iommu", "SCOPE", .First, "the device scope types of the ACPI table DMAR (Intel VT-d, section 8.3.1): a scope of another type is legal and is skipped"},
 	{foundation.SOURCE_FOLDER_KERNEL + "/acpi_processors", "ENTRY", .First, "the entry types of the ACPI table APIC (ACPI 6.5, section 5.2.12): an entry of another type is legal and is skipped by its length"},
-	{foundation.SOURCE_FOLDER_SUPPORT + "/display", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
-	{foundation.SOURCE_FOLDER_PRIVATE + "/input/keyboard_layout", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
+	{foundation.SOURCE_FOLDER_PUBLIC + "/display", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
+	{foundation.SOURCE_FOLDER_INTERNAL + "/input/keyboard_layout", "KEY", .First, "the scan codes of the keyboard (PS/2 set 1): a key record carries any scan code, and a key with no name is a legal key"},
 	{foundation.SYSTEM_MODULE_SOURCES + "input", "SCAN", .First, "the scan codes of the keyboard (PS/2 set 1): the device sends any scan code"},
-	{foundation.SOURCE_FOLDER_SUPPORT + "/key_path", "MOUSE", .First, "the identity bytes of a PS/2 mouse: another device answers another byte, which is legal and is read as a mouse with no wheel"},
+	{foundation.SOURCE_FOLDER_PUBLIC + "/key_path", "MOUSE", .First, "the identity bytes of a PS/2 mouse: another device answers another byte, which is legal and is read as a mouse with no wheel"},
 	{foundation.SOURCE_FOLDER_KERNEL, "GUEST", .First, "the exit codes of AMD SVM (AMD64 volume 2, appendix C): the processor gives any code, and an exit that the kernel does not serve stops the guest with its number"},
 	{foundation.TOOL_SOURCE_FOLDER + "/build", "DW", .First, "the forms, the tags and the base type encodings of DWARF 5 (sections 7.5 and 7.8): a debug object holds codes that the tool does not read, and it skips them by their form"},
 	{foundation.TOOL_SOURCE_FOLDER + "/build", "ELF", .First, "the section, program header and relocation types of ELF (System V ABI, chapter 4): an object file holds types that the tool does not read, and it skips them"},

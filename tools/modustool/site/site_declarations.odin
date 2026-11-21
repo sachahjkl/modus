@@ -53,8 +53,8 @@ site_declarations_read :: proc(site: ^Site) -> bool {
 }
 
 // site_context_folders gives the folders of the index that a text names:
-// "src/library/support/graphics" and "src/library/support/graphics/blend.odin" both give
-// "src/library/support/graphics". The heading and the paragraph of a span give the
+// "src/library/modus/graphics" and "src/library/modus/graphics/blend.odin" both give
+// "src/library/modus/graphics". The heading and the paragraph of a span give the
 // packages that the span most likely means.
 site_context_folders :: proc(index: ^build.Declaration_Index, text: string) -> []string {
 	folders := make([dynamic]string, context.temp_allocator)

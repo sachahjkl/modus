@@ -1,7 +1,7 @@
 package processor_frame
 
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The log facts of processor_frame (src/md/features/log_facts.md): each
 // fact template is the line that the process wrote before it was a fact, so

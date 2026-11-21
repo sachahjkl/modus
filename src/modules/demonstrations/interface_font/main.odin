@@ -1,5 +1,5 @@
 // The interface font (docs/FONTS.md, section 12): B612 Regular and Bold,
-// placed by src/library/support/text_rendering and drawn by graphics.text_proportional.
+// placed by src/library/modus/text_rendering and drawn by graphics.text_proportional.
 // It shows a paragraph, three pairs with and without their adjustment, one
 // word at the three positions of a pixel, enlarged, the digits in columns,
 // three lines of characters past the Latin-1 Supplement (Greek letters of
@@ -41,11 +41,11 @@ package interface_font
 
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
-import "modus:support/text_rendering"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
+import "modus:text_rendering"
 
 WIDTH :: 800
 HEIGHT :: 720

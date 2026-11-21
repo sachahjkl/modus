@@ -27,7 +27,7 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
-import "modus:support/system"
+import "modus:system"
 
 // The record of its record output, as the asker reads it.
 Probe :: struct {

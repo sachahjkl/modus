@@ -2,7 +2,7 @@ package remote_service
 
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
-import "modus:support/quic"
+import "modus:quic"
 
 // The log facts of the remote service (src/md/features/log_facts.md, "The
 // facts of the device services and of the network"): the keys of the

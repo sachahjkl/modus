@@ -7,7 +7,7 @@ import "core:time"
 import info "modus:contract/boot_info"
 import "modus:contract/release"
 import "modus:contract/system_description"
-import "modus:support/tpm2"
+import "modus:tpm2"
 import "modustool:foundation"
 import "modustool:build"
 

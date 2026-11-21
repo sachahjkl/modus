@@ -3,12 +3,12 @@ package root
 // Role holder registry and plan-bound local service resolution for the root
 // service (src/md/features/roles_and_contracts.md).
 //
-// Delegates pure policy decisions to modus:private/root/role_policy so every
+// Delegates pure policy decisions to internal:root/role_policy so every
 // scope rule, trusted-path check, contract check, and local-name isolation rule
 // is verified by host tests.
 
 import "modus:contract/role_contract"
-import "modus:private/root/role_policy"
+import "internal:root/role_policy"
 
 // The active role holder and local service binding table of this root service.
 // Zero-initialized empty state.

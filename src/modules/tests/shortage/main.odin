@@ -39,7 +39,7 @@ import "base:intrinsics"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 THREAD_COUNT :: 4
 OBJECT_PAGES :: 4096 // The first size of the objects; it halves when the budget cannot pay it.

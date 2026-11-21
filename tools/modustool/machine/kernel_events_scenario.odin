@@ -103,7 +103,7 @@ scenario_thread_counters := [?]Step {
 // The boot line of the kernel that names its counter plan, the part of it
 // that says that the machine has none, and the part that says that the
 // first processor passed the trial of its registers
-// (src/kernel/thread_counters.odin). A processor whose trial fails writes a
+// (src/modulus/thread_counters.odin). A processor whose trial fails writes a
 // later line with the same start: the last one decides.
 THREAD_COUNTERS_BOOT_LINE :: "kernel: performance counters"
 THREAD_COUNTERS_NONE :: ": none that the kernel uses: "

@@ -148,7 +148,7 @@ The cost of (a) is the speed of computation, and the work of a software processo
 
 ### What stays exactly as on hardware
 
-- **The page tables:** the same format of x86-64 in four levels, written by the same code of `src/kernel`, with the counts in bits 52 to 62 and the large pages of 2 MiB ([`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "The page tables of a process").
+- **The page tables:** the same format of x86-64 in four levels, written by the same code of `src/modulus`, with the counts in bits 52 to 62 and the large pages of 2 MiB ([`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "The page tables of a process").
 - **The handles, the budgets and the memory objects**, and each kernel operation: the count of [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "1. Small kernel with a small, counted interface", does not change.
 - **The rings:** the kernel ring of each thread and the rings between processes, in the same shared memory.
 - **The root service, the start policy, the loader, the device services and every module**, at their hashes.
@@ -156,7 +156,7 @@ The cost of (a) is the speed of computation, and the work of a software processo
 
 ### How the software processor works
 
-The software processor is a kernel part, a pure package in a folder of its own under `src/kernel`, with host tests. On a browser machine the kernel calls it; on the host its tests call it.
+The software processor is a kernel part, a pure package in a folder of its own under `src/modulus`, with host tests. On a browser machine the kernel calls it; on the host its tests call it.
 
 - **The walk.** It walks the table that the kernel names, as the processor does: present, write, user, no execute, large pages. It sets the bit Accessed, and Dirty on a write, with an atomic OR, as the hardware does: the counts of the kernel in the same entries change with atomic additions, and they stay right. A walk that fails gives a page fault with the error code and the address of the hardware.
 - **The translation cache.** A small table of each processor holds the frames of the recent pages for a read, a write and an execute. A flush of the kernel empties it.
@@ -178,7 +178,7 @@ The device models play the devices of the test machine, at the same fixed places
 
 A model of the page that writes the class ring itself, in place of a device service, was refused ("The refused forms"). The virtio queue is the lower border: below it, even the device services see no change.
 
-The models run in a worker of their own, never in a processor and never on the thread of the document. They are Odin code built for `freestanding_wasm64p32`, which reads the virtio records of `modus:support/virtio`. The JavaScript of the page holds only the calls of the browser: the canvas, the events, the audio, the storage and the network.
+The models run in a worker of their own, never in a processor and never on the thread of the document. They are Odin code built for `freestanding_wasm64p32`, which reads the virtio records of `modus:virtio`. The JavaScript of the page holds only the calls of the browser: the canvas, the events, the audio, the storage and the network.
 
 | Device | Model | What the system sees |
 |---|---|---|

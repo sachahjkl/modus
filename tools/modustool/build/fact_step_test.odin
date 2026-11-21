@@ -1,7 +1,7 @@
 package build
 
 import module "modus:contract/module"
-import "modus:support/console_condition"
+import "modus:console_condition"
 import "core:strings"
 import "core:testing"
 

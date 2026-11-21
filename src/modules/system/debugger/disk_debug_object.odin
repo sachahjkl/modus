@@ -25,9 +25,9 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/disk_process"
-import "modus:support/storage"
-import "modus:support/system"
+import "modus:disk_process"
+import "modus:storage"
+import "modus:system"
 
 // The answer of the root service to Debug_Store and the read of the object
 // have this one deadline together. With the ROOT_ANSWER_MILLISECONDS of the

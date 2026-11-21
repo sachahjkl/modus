@@ -3,8 +3,8 @@ package log_reader
 import "modus:contract/isolated"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:random"
+import "modus:system"
 
 // The facts of several records (src/md/features/log_facts.md, "A fact of
 // several records"), through the kernel:

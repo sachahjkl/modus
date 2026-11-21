@@ -7,7 +7,7 @@ import "core:net"
 import "core:strings"
 import "core:sync"
 import "core:thread"
-import block_tree "modus:private/storage/storage_object"
+import block_tree "internal:storage/storage_object"
 
 // A disk that the modus tool serves to QEMU with the Network Block Device
 // protocol (NBD, "fixed newstyle" handshake, simple replies), so that the
@@ -81,7 +81,7 @@ Network_Block_Device :: struct {
 	reads:    int,
 	failure:  string, // A request that the protocol does not permit.
 	// The loss of power: at the first write of a root (blocks 0 and 1 of
-	// the data disk, src/library/contract/store) that is not durable at its
+	// the data disk, src/library/modus/contract/store) that is not durable at its
 	// reply, from the root with the number power_off_at_root (from 1) on,
 	// the disk answers nothing more, as a disk whose power went off during
 	// that write. The write of a root is the hardest moment: the blocks of

@@ -47,19 +47,19 @@
 // root service names these slots INPUT_GRANT_ too.
 //
 // **What it does not prove.** It works with the PS/2 controller that QEMU
-// emulates, with two keyboard layouts (src/library/private/input/keyboard_layout);
+// emulates, with two keyboard layouts (src/library/internal/input/keyboard_layout);
 // AltGr, the right Alt key, gives the third level of the layout of France.
 // It has no USB.
 package input
 
-import "modus:support/display"
-import "modus:support/key_path"
-import "modus:private/input/keyboard_layout"
-import "modus:private/input/ps2_controller"
+import "modus:display"
+import "modus:key_path"
+import "internal:input/keyboard_layout"
+import "internal:input/ps2_controller"
 import "modus:contract/fixed_addresses"
 import "modus:contract/ring"
 import "modus:contract/settings"
-import "modus:support/system"
+import "modus:system"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module and its thread.
@@ -72,7 +72,7 @@ GRANT_KEYBOARD_INTERRUPT :: 2
 GRANT_MOUSE_INTERRUPT :: 3
 
 PORT_DATA :: 0x60
-PORT_STATUS :: 0x64 // Its bits are in src/library/private/input/ps2_controller.
+PORT_STATUS :: 0x64 // Its bits are in src/library/internal/input/ps2_controller.
 
 // The settings page, when the root service mapped it: the layout of the
 // keyboard is read there at each key, so a change of the setting holds from

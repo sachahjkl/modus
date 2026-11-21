@@ -14,8 +14,8 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/disk_process"
-import "modus:support/system"
+import "modus:disk_process"
+import "modus:system"
 
 // One frame of the stop report of a disk process: stop_report(). 256
 // bytes, the most that a row of a described record has.

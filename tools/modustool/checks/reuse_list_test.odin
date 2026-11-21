@@ -173,7 +173,7 @@ reuse_license_expressions :: proc(t: ^testing.T) {
 @(test)
 reuse_list_imports_of_the_core_library :: proc(t: ^testing.T) {
 	imports := make([dynamic]string, context.temp_allocator)
-	reuse_core_imports_of_source("package a\n\nimport \"base:intrinsics\"\nimport \"core:reflect\"\nimport other \"core:reflect\"\nimport \"modus:support/system\"\n// import \"core:fmt\"\n", &imports)
+	reuse_core_imports_of_source("package a\n\nimport \"base:intrinsics\"\nimport \"core:reflect\"\nimport other \"core:reflect\"\nimport \"modus:system\"\n// import \"core:fmt\"\n", &imports)
 	testing.expect_value(t, len(imports), 1)
 	if len(imports) == 1 {
 		testing.expect_value(t, imports[0], "core:reflect")

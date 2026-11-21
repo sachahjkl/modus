@@ -284,7 +284,7 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 		append(&system_rows, row)
 	}
 
-	// Spleen: the fallback font, compiled into src/library/support/graphics.
+	// Spleen: the fallback font, compiled into src/library/modus/graphics.
 	spleen_text := foundation.read_text_file(resources.SPLEEN_LICENSE_FILE) or_return
 	spleen_lines := foundation.lines_of_text(spleen_text)
 	spleen := Site_License_Row {
@@ -461,7 +461,7 @@ Site_Image_Entry :: struct {
 }
 
 // site_boot_image_read reads the table of the boot image of the last build
-// (src/library/contract/boot_info: a header, then one entry for each module and each
+// (src/library/modus/contract/boot_info: a header, then one entry for each module and each
 // resource). An absent file gives no entry: the image is not built.
 site_boot_image_read :: proc(path: string) -> (entries: []Site_Image_Entry, problem: string) {
 	if !os.exists(path) {

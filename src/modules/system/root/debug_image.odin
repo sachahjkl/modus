@@ -3,7 +3,7 @@ package root
 import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The debug image (docs/MODULE_CONTRACT.md, "Debug information"): the
 // debug objects of the modules, which the boot program read from the boot

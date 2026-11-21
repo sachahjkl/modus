@@ -2,9 +2,9 @@ package inspect
 
 import module "modus:contract/module"
 import op "modus:contract/operation"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 
 // The bytes of the memory of this process itself (docs/TOOLS.md): the
 // reports of the kernel give no byte of another process, and this tool has

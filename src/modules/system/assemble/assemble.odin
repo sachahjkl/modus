@@ -22,8 +22,8 @@ import "base:intrinsics"
 import "modus:contract/errors"
 import writer "modus:contract/module_file_writer"
 import "modus:contract/value_kinds"
-import "modus:private/assemble/assembler"
-import "modus:support/system"
+import "internal:assemble/assembler"
+import "modus:system"
 
 // The bytes of a text that the module takes. The text is copied before it
 // is read: in an isolated call it is in the call region, which the caller

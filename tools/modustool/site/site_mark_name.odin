@@ -10,7 +10,7 @@ package site
 
 import "core:fmt"
 import "core:strings"
-import "modus:support/mark"
+import "modus:mark"
 import "modustool:resources"
 
 // The font in the site. Its address carries no version: the preload of a

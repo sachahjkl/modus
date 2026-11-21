@@ -5,7 +5,7 @@ import info "modus:contract/boot_info"
 import op "modus:contract/operation"
 import "modus:contract/system_description"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The check of the root service (docs/TRUSTED_BOOT.md, "Layer 1: the signed system description").
 //

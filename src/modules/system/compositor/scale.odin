@@ -12,8 +12,8 @@ package compositor
 
 import "modus:contract/scale_factor"
 import "modus:contract/settings"
-import "modus:private/compositor/bar"
-import "modus:support/system"
+import "internal:compositor/bar"
+import "modus:system"
 
 // The scale of the desktop: the scale of the settings page. The compositor
 // names it to each window in Settings_Changed, and each window rescales to

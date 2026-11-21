@@ -19,14 +19,14 @@ package compositor
 // service draws from its own state: the service names its viewers, and
 // cannot hide the mark.
 
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:private/compositor/bar"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "internal:compositor/bar"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/key_path"
-import "modus:support/system"
+import "modus:key_path"
+import "modus:system"
 
 // The largest code of a key of a viewer: a scan code of set 1, with the
 // bit of its prefix.

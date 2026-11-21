@@ -1,4 +1,4 @@
-// A check and a measure of the block service (src/library/contract/block), on a disk
+// A check and a measure of the block service (src/library/modus/contract/block), on a disk
 // of its own: the disk of the measures, that holds no data of a process.
 //
 // The process reads and writes blocks in five runs: one block in each
@@ -63,10 +63,10 @@ import "modus:contract/block"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(512, 8192)

@@ -500,7 +500,7 @@ Do not use: upgrade script, conversion, schema change.
 
 A shipped description is the canonical description of a stored type that a release shipped.
 
-From the release 1.0.0, the release command writes each one beside `src/library/contract/release/release.odin`. The check of the stored types needs a migration from each shipped description of a type to its new description, and back. It refuses a migration from a description that no release shipped. It is designed for after 1.0, not built.
+From the release 1.0.0, the release command writes each one beside `src/library/modus/contract/release/release.odin`. The check of the stored types needs a migration from each shipped description of a type to its new description, and back. It refuses a migration from a description that no release shipped. It is designed for after 1.0, not built.
 
 The design: `src/md/features/data_evolution.md`.
 

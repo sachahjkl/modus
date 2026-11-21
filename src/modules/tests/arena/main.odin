@@ -34,7 +34,7 @@ package arena
 import "base:intrinsics"
 import "modus:contract/errors"
 import op "modus:contract/operation"
-import "modus:support/system"
+import "modus:system"
 
 // entry runs the test, writes its result on the log, and stops.
 @(export, link_name = "entry")

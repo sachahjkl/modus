@@ -6,12 +6,12 @@ import "modus:contract/palette_table"
 import "modus:contract/ring"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
-import "modus:private/compositor/bar"
-import "modus:support/display"
-import "modus:support/interface"
-import "modus:support/line_editor"
-import "modus:private/compositor/palette"
-import "modus:support/system"
+import "internal:compositor/bar"
+import "modus:display"
+import "modus:interface"
+import "modus:line_editor"
+import "internal:compositor/palette"
+import "modus:system"
 import "base:intrinsics"
 
 // The palette of the desktop (docs/DESIGN.md, "Palette"): the panel that
@@ -19,7 +19,7 @@ import "base:intrinsics"
 // and the pointer that reach it, its two sources of entries (the names of
 // the modules and the client table), what a chosen entry does, its draw
 // table and its lines in the log. The state, the ranking and the draw
-// records are in src/library/private/compositor/palette, where the host tests run them.
+// records are in src/library/internal/compositor/palette, where the host tests run them.
 //
 // The panel holds no right. A process starts through the root service as
 // the start menu starts it; a window comes to the front as a

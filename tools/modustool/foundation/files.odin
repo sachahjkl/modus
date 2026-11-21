@@ -218,7 +218,7 @@ manifest_lines :: proc(path: string) -> (lines: [][]string, ok: bool) {
 
 CRYPTOGRAPHY_MANIFEST :: CRYPTOGRAPHY_FOLDER + "/origin.manifest"
 
-CRYPTOGRAPHY_FOLDER :: SOURCE_FOLDER_SUPPORT + "/cryptography"
+CRYPTOGRAPHY_FOLDER :: SOURCE_FOLDER_PUBLIC + "/cryptography"
 
 // text_slug gives an id from a text: the lowercase letters and the digits,
 // one "-" for each run of other characters, none at the ends.

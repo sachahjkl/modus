@@ -1,8 +1,8 @@
 package machine
 
 import "modus:contract/settings"
-import "modus:support/appearance"
-import "modus:support/calendar"
+import "modus:appearance"
+import "modus:calendar"
 import "core:fmt"
 import "core:strconv"
 import "core:strings"

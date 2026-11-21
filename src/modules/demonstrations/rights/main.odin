@@ -36,11 +36,11 @@
 // ..." for each unexpected answer.
 package rights
 
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
 import op "modus:contract/operation"
-import "modus:support/system"
+import "modus:system"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module, its threads and its

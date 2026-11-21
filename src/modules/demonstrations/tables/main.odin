@@ -45,11 +45,11 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:random"
+import "modus:system"
 
 // A table of 65536 readings in a memory object (640 pages), and two call
 // hosts (sample, hostile_exports) with their threads: 2561 pages. And the
@@ -538,7 +538,7 @@ MEASURES_HEIGHT :: CARD_HEAD + 5 * LINE
 
 // text_lines draws a text in a box of `room` pixels, on the lines that it
 // needs (the rule of interface.text_wrap_line), and gives their count. This
-// window draws with src/library/support/graphics: the rule is the one of
+// window draws with src/library/modus/graphics: the rule is the one of
 // the interface package, the pixels are its own.
 text_lines :: proc "contextless" (canvas: graphics.Canvas, x, y, room: int, text: string, color: graphics.Color) -> (count: int) {
 	rest := text

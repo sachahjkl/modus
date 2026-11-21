@@ -8,8 +8,8 @@ package boot
 // record. Both give the same Rescue in the boot record.
 
 import info "modus:contract/boot_info"
-import "modus:private/boot_program/rescue_entry"
-import "modus:support/bootscreen"
+import "internal:boot_program/rescue_entry"
+import "modus:bootscreen"
 import "base:intrinsics"
 
 // The keys that one read takes from the buffer of the firmware at most: a

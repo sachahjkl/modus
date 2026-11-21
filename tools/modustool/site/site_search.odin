@@ -2,11 +2,11 @@
 // search.json, and one small script, search.js, that the tool writes. No
 // server and no request to another host: the script reads the index of
 // this site on the first key, and filters it with the fuzzy match and the
-// order of the console of the system (src/library/support/line_editor/fuzzy_match.odin).
+// order of the console of the system (src/library/modus/line_editor/fuzzy_match.odin).
 //
 // The match of the script is a port of that file, rule for rule. Two things
 // keep the two in step:
-//   - the tool writes the scoring constants of src/library/support/line_editor into the
+//   - the tool writes the scoring constants of src/library/modus/line_editor into the
 //     script, so a change of a constant reaches the script at the next site;
 //   - site_search_match_names and site_search_match_orders below are one
 //     table of queries, names and expected scores and orders. The host test
@@ -21,7 +21,7 @@ import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
 import "core:unicode/utf8"
-import "modus:support/line_editor"
+import "modus:line_editor"
 import "modustool:foundation"
 import "modustool:checks"
 
@@ -674,7 +674,7 @@ site_search_field_problem :: proc(page: Site_Page, html: string) -> string {
 }
 
 // The source of the match of the console, which the script ports.
-SITE_SEARCH_MATCH_SOURCE :: foundation.SOURCE_FOLDER_SUPPORT + "/line_editor/fuzzy_match.odin"
+SITE_SEARCH_MATCH_SOURCE :: foundation.SOURCE_FOLDER_PUBLIC + "/line_editor/fuzzy_match.odin"
 
 // The script. The match is that of SITE_SEARCH_MATCH_SOURCE: lower, fuzzy_match,
 // ranked_before and rank_candidates (with no skip of equal names), on the

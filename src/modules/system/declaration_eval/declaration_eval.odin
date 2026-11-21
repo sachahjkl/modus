@@ -10,9 +10,9 @@ package declaration_eval_module
 import "base:intrinsics"
 import contract "modus:contract/declaration_eval"
 import "modus:contract/errors"
-import "modus:support/lex_evaluator"
-import "modus:support/lex_parser"
-import "modus:support/system"
+import "modus:lex_evaluator"
+import "modus:lex_parser"
+import "modus:system"
 
 SOURCE_BYTES_MOST :: lex_parser.DECLARATION_TEXT_BYTES_MOST
 FIELD_PATH_BYTES_MOST :: 256

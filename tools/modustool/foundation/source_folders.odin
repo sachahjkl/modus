@@ -9,14 +9,14 @@ package foundation
 import "core:os"
 import "core:strings"
 
-SOURCE_FOLDER_KERNEL :: "src/kernel" // The kernel.
+SOURCE_FOLDER_KERNEL :: "src/modulus" // The kernel.
 SOURCE_FOLDER_BOOT :: "src/boot" // The boot program.
 SOURCE_FOLDER_RUNTIME :: "src/runtime" // The memory procedures in assembly.
 SOURCE_FOLDER_MODULES :: "src/modules" // Each module of the system: one folder for each, in the folder of its module group.
-SOURCE_FOLDER_LIBRARY :: "src/library" // The source library of the system: the three folders below, and nothing else.
-SOURCE_FOLDER_CONTRACT :: SOURCE_FOLDER_LIBRARY + "/" + LIBRARY_PART_CONTRACT // The contract packages.
-SOURCE_FOLDER_SUPPORT :: SOURCE_FOLDER_LIBRARY + "/" + LIBRARY_PART_SUPPORT // The support packages.
-SOURCE_FOLDER_PRIVATE :: SOURCE_FOLDER_LIBRARY + "/" + LIBRARY_PART_PRIVATE // The private parts: one folder for each module that has one, named by the module.
+SOURCE_FOLDER_LIBRARY :: "src/library" // The two source libraries of the modules: modus and internal.
+SOURCE_FOLDER_PUBLIC :: SOURCE_FOLDER_LIBRARY + "/" + SOURCE_LIBRARY_NAME // The public library: contracts and support packages.
+SOURCE_FOLDER_CONTRACT :: SOURCE_FOLDER_PUBLIC + "/" + LIBRARY_PART_CONTRACT // The contract packages.
+SOURCE_FOLDER_INTERNAL :: SOURCE_FOLDER_LIBRARY + "/" + INTERNAL_LIBRARY_NAME // The internal parts: one folder for each module that has one, named by the module.
 
 // The works of others in C that a module compiles in: one folder for each
 // work, with its license, the patches of the system, its entry and the thin
@@ -28,7 +28,7 @@ SOURCE_FOLDER_OUTSIDE :: "src/outside"
 // Each folder of the sources of the system. A list of the tool that reads
 // a part of them names its folders by their constants, in its own order:
 // the order of a list can be the order of an output.
-SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_CONTRACT, SOURCE_FOLDER_SUPPORT, SOURCE_FOLDER_PRIVATE}
+SOURCE_FOLDERS :: [?]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_MODULES, SOURCE_FOLDER_PUBLIC, SOURCE_FOLDER_INTERNAL}
 
 // The folder of the programs of the host that build, test and tell the
 // system: this tool. It is not a folder of the sources of the system, but
@@ -40,7 +40,7 @@ TOOLS_FOLDER :: "tools"
 // The folders of the sources that a move removed. The check of the source
 // paths in the documents reads a code span that starts with one of them,
 // and refuses it: a document that still names the old place is stale.
-SOURCE_FOLDERS_GONE :: [?]string{"src/programs"}
+SOURCE_FOLDERS_GONE :: [?]string{"src/programs", "src/library/support", "src/library/contract", "src/library/private", "src/kernel"}
 
 // The module groups (src/md/infrastructure/repository_layout.md, "The
 // module groups"): the folder of src/modules that holds a module says what
@@ -81,32 +81,31 @@ module_group_of_source :: proc(source: string) -> (group: Module_Group, found: b
 	return .System, false
 }
 
-// The name of the one source library of the system: the word before the
-// ":" of an import line (docs/glossary/communication.md, "Source library"). The name is
-// not the folder: the flag of the compiler joins the two.
+// The public source library of the system: the word before the ":" of an
+// import line (docs/glossary/communication.md, "Source library"). Its
+// folder is SOURCE_FOLDER_PUBLIC (src/library/modus), which holds the
+// contract packages under contract/ and the support packages at its top.
 SOURCE_LIBRARY_NAME :: "modus"
-
-// The three parts of the library: the first folder of the path of a
-// package, after the ":" of an import line.
 LIBRARY_PART_CONTRACT :: "contract" // What two parties agree on.
-LIBRARY_PART_SUPPORT :: "support" // What two modules or more compile in.
-LIBRARY_PART_PRIVATE :: "private" // What one module alone compiles in: "private/<module>/<part>".
 
-// The start of the path of an import of each part: "modus:contract/ring",
-// "modus:support/system", "modus:private/storage/storage_tree".
+// The start of the path of an import of the public library:
+// "modus:contract/ring", "modus:system".
 SOURCE_LIBRARY_IMPORT_START :: SOURCE_LIBRARY_NAME + ":"
 CONTRACT_IMPORT_START :: SOURCE_LIBRARY_IMPORT_START + LIBRARY_PART_CONTRACT + "/"
-SUPPORT_IMPORT_START :: SOURCE_LIBRARY_IMPORT_START + LIBRARY_PART_SUPPORT + "/"
-PRIVATE_IMPORT_START :: SOURCE_LIBRARY_IMPORT_START + LIBRARY_PART_PRIVATE + "/"
 
-// The one flag of the compiler for the library. Each command of the tool
-// that runs the compiler gives it, the compile of the kernel too: flake.nix
-// gives the same flag when it builds this tool, and the build of a module
-// outside the repository gives it with the path of this folder. With one library the
-// compiler accepts an import of a support package in the kernel, so the
-// tool refuses it before the first compiler starts
-// (library_imports_check.odin).
-SOURCE_LIBRARY_FLAG :: "-collection:" + SOURCE_LIBRARY_NAME + "=" + SOURCE_FOLDER_LIBRARY
+// The flag of the compiler for the public library. Each compile of the
+// system, each host test, the build of an outside module, and the tool
+// give it.
+SOURCE_LIBRARY_FLAG :: "-collection:" + SOURCE_LIBRARY_NAME + "=" + SOURCE_FOLDER_PUBLIC
+
+// The internal source library: the packages that one module of the system
+// alone compiles in ("internal:storage/storage_tree"). Only the modules of
+// the system, the boot program, the non-kernel host tests and the tool get
+// its flag: the compiler refuses internal: in the kernel and in an outside
+// module.
+INTERNAL_LIBRARY_NAME :: "internal"
+INTERNAL_IMPORT_START :: INTERNAL_LIBRARY_NAME + ":"
+INTERNAL_LIBRARY_FLAG :: "-collection:" + INTERNAL_LIBRARY_NAME + "=" + SOURCE_FOLDER_INTERNAL
 
 // The name of the attribute of a fact type, on a record type of the source
 // (src/md/features/log_facts.md, "The fact type in the source"). The
@@ -132,17 +131,17 @@ MEMBER_TEXTS_ATTRIBUTE_NAME :: "member_texts"
 // when it builds this tool.
 CUSTOM_ATTRIBUTES_FLAG :: "-custom-attribute:" + LOG_FACT_ATTRIBUTE_NAME + "," + ENUM_GETTERS_ATTRIBUTE_NAME + "," + OPTIONAL_PARAMETERS_ATTRIBUTE_NAME + "," + MEMBER_TEXTS_ATTRIBUTE_NAME
 
-// The second source library: the kernel parts, the pure packages in the
-// folders under src/kernel that the kernel alone compiles in
+// The source library of the kernel, modulus: the pure kernel parts in the
+// folders under src/modulus that the kernel alone compiles in
 // (src/md/infrastructure/repository_layout.md, "The kernel parts and the
 // second source library"). Its folder is the folder of the kernel:
-// "kernel:iommu" is the folder iommu of the kernel. Only the compile of the
-// kernel, the host tests of the folders under src/kernel and the compile of
-// this tool get its flag, so the compiler refuses the import in each module
-// and in each host test of the library. The check of the imports refuses
-// it in each other file of src/ too, because a language server gives one
-// set of source libraries to every folder.
-KERNEL_LIBRARY_NAME :: "kernel"
+// "modulus:iommu" is the folder iommu of src/modulus. Only the compile of
+// the kernel, the host tests of the folders under src/modulus and the
+// compile of this tool get its flag, so the compiler refuses the import in
+// each module and in each host test of the libraries. The check of the
+// imports refuses it in each other file of src/ too, because a language
+// server gives one set of source libraries to every folder.
+KERNEL_LIBRARY_NAME :: "modulus"
 KERNEL_IMPORT_START :: KERNEL_LIBRARY_NAME + ":"
 KERNEL_LIBRARY_FLAG :: "-collection:" + KERNEL_LIBRARY_NAME + "=" + SOURCE_FOLDER_KERNEL
 
@@ -155,6 +154,13 @@ source_folder_takes_kernel_library :: proc(folder: string) -> bool {
 	return folder == SOURCE_FOLDER_KERNEL || strings.has_prefix(folder, SOURCE_FOLDER_KERNEL + "/") || source_folder_is_of_the_tool(folder)
 }
 
+// source_folder_takes_internal_library says if the host test of a folder
+// gets the flag of the internal parts: every folder except the kernel and
+// its kernel parts.
+source_folder_takes_internal_library :: proc(folder: string) -> bool {
+	return folder != SOURCE_FOLDER_KERNEL && !strings.has_prefix(folder, SOURCE_FOLDER_KERNEL + "/")
+}
+
 // source_folder_is_of_the_tool says if a folder is the folder of the
 // command of the tool or of one of its packages: its compile and its host
 // test get the flag of the source library of the tool.
@@ -163,13 +169,18 @@ source_folder_is_of_the_tool :: proc(folder: string) -> bool {
 }
 
 // source_library_package_folder gives the folder of the package that the
-// path of an import line names in one of the two source libraries of the
-// system: "modus:contract/ring" is the folder ring of the contract
-// packages, "kernel:iommu" the kernel part iommu. A path of another library
-// ("core:fmt") and a relative path are not found.
+// path of an import line names in one of the three source libraries of the
+// system: "modus:contract/ring" is src/library/modus/contract/ring,
+// "modus:system" is src/library/modus/system, "internal:storage/storage_tree"
+// is src/library/internal/storage/storage_tree, and "modulus:iommu" is
+// src/modulus/iommu. A path of another library ("core:fmt") and a relative
+// path are not found.
 source_library_package_folder :: proc(import_path: string, allocator := context.temp_allocator) -> (folder: string, found: bool) {
 	if len(import_path) > len(SOURCE_LIBRARY_IMPORT_START) && strings.has_prefix(import_path, SOURCE_LIBRARY_IMPORT_START) {
-		return strings.concatenate({SOURCE_FOLDER_LIBRARY, "/", import_path[len(SOURCE_LIBRARY_IMPORT_START):]}, allocator), true
+		return strings.concatenate({SOURCE_FOLDER_PUBLIC, "/", import_path[len(SOURCE_LIBRARY_IMPORT_START):]}, allocator), true
+	}
+	if len(import_path) > len(INTERNAL_IMPORT_START) && strings.has_prefix(import_path, INTERNAL_IMPORT_START) {
+		return strings.concatenate({SOURCE_FOLDER_INTERNAL, "/", import_path[len(INTERNAL_IMPORT_START):]}, allocator), true
 	}
 	if len(import_path) > len(KERNEL_IMPORT_START) && strings.has_prefix(import_path, KERNEL_IMPORT_START) {
 		return strings.concatenate({SOURCE_FOLDER_KERNEL, "/", import_path[len(KERNEL_IMPORT_START):]}, allocator), true
@@ -259,9 +270,9 @@ OPERATION_SOURCE :: SOURCE_FOLDER_CONTRACT + "/operation/operation.odin"
 
 TOOL_SOURCE_FOLDER :: "tools/modustool"
 
-FONT_OUTPUT :: SOURCE_FOLDER_SUPPORT + "/graphics/font.odin"
+FONT_OUTPUT :: SOURCE_FOLDER_PUBLIC + "/graphics/font.odin"
 // The sizes 12x24, 16x32 and 32x64 of Spleen, which only the boot display draws.
-BOOT_DISPLAY_FONT_OUTPUT :: SOURCE_FOLDER_SUPPORT + "/bootscreen/spleen_sizes.odin"
+BOOT_DISPLAY_FONT_OUTPUT :: SOURCE_FOLDER_PUBLIC + "/bootscreen/spleen_sizes.odin"
 
 // The table of the start grant sets of the root service (start_grant_sets_check.odin).
 ROOT_START_GRANT_SETS_FILE :: SYSTEM_MODULE_SOURCES + "root/start_grant_sets.odin"

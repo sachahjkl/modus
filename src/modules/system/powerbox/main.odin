@@ -13,8 +13,8 @@ import "modus:contract/powerbox"
 import "modus:contract/ring"
 import "modus:contract/role_contract"
 import "modus:contract/value_kinds"
-import "modus:private/powerbox/powerbox_core"
-import "modus:support/system"
+import "internal:powerbox/powerbox_core"
+import "modus:system"
 
 // Working memory budget for the freestanding powerbox service process.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 256, processes = 1, threads = 1}

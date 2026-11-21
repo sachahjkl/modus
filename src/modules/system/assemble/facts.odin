@@ -2,7 +2,7 @@ package assemble
 
 import "modus:contract/module_file_writer"
 import "modus:contract/value_kinds"
-import "modus:private/assemble/assembler"
+import "internal:assemble/assembler"
 
 // The log facts of the assembler (src/md/features/log_facts.md): the
 // refusal of a source, the refusals of the writer of module files, and the

@@ -3,7 +3,7 @@
 // (src/md/features/remote_display.md; docs/QUIC.md, "8. The remote
 // display").
 //
-// QUIC in the process (src/library/support/quic), over a datagram endpoint
+// QUIC in the process (src/library/modus/quic), over a datagram endpoint
 // with a listen grant of UDP on the port remote_display.LISTEN_PORT that
 // admits the address of the host only, as `remote` has. The viewer proves
 // its own Ed25519 key in the handshake (mutual TLS 1.3 with raw public
@@ -57,12 +57,12 @@ import "modus:contract/remote"
 import protocol "modus:contract/remote_display"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/interface"
-import "modus:support/network"
-import "modus:support/quic"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:display"
+import "modus:interface"
+import "modus:network"
+import "modus:quic"
+import "modus:random"
+import "modus:system"
 
 // The copy of the screen of the largest screen, the two pictures and the
 // header of the capture face, the QUIC connections and their streams, and

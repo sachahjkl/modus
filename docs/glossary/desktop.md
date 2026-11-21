@@ -84,7 +84,7 @@ Do not use: dirty region, invalid area.
 
 The boot display is the picture of how the machine started, drawn from the boot record and the other records of the kernel.
 
-The boot display shows each stage of the start and its time, the memory, the firmware, the processors, the processes and the modules of the boot image. Three parts of the system draw it with one package, `src/library/support/bootscreen`: the boot program, the root service while it starts the first processes, so that a failure stays on the screen with its cause, and the process `boot`. The boot display is not a splash screen and not a log of text: it is made of cards with measures.
+The boot display shows each stage of the start and its time, the memory, the firmware, the processors, the processes and the modules of the boot image. Three parts of the system draw it with one package, `src/library/modus/bootscreen`: the boot program, the root service while it starts the first processes, so that a failure stays on the screen with its cause, and the process `boot`. The boot display is not a splash screen and not a log of text: it is made of cards with measures.
 
 The design: `docs/DESIGN.md`, "12. The card of the boot image".
 
@@ -234,7 +234,7 @@ Do not use: recording light, share indicator.
 
 The bar is the line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the palette, and the clock.
 
-The bar is the fixed place of the desktop where the input starts a process or finds a window. A press on a button opens its menu under it. `src/library/private/compositor/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the processes, `bar.names`: the compositor draws from it, and the modus tool presses the same places in the machine tests. The bar is not a task bar and not a dock: it holds two menus and no state of a process.
+The bar is the fixed place of the desktop where the input starts a process or finds a window. A press on a button opens its menu under it. `src/library/internal/compositor/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the processes, `bar.names`: the compositor draws from it, and the modus tool presses the same places in the machine tests. The bar is not a task bar and not a dock: it holds two menus and no state of a process.
 
 The design: `docs/DESIGN.md`, "Background and bar".
 
@@ -294,7 +294,7 @@ Do not use: palette item, palette command, action.
 
 A kind icon is the small picture of one kind of thing, a grid of 12 by 12 square cells, that each display of the system and the site draw from one table.
 
-It lets a reader tell a window from a process, or a handle from a number, before the reader reads a word. `src/library/support/kind_icons` holds the cells only, with no color: the display gives the color. The system draws a cell as a square of 1, 2 or 3 pixels, and the site draws the same cells in SVG, so an icon is never scaled by a filter. A kind icon is not the mark of the system, and it never stands alone: the row says the kind in words too.
+It lets a reader tell a window from a process, or a handle from a number, before the reader reads a word. `src/library/modus/kind_icons` holds the cells only, with no color: the display gives the color. The system draws a cell as a square of 1, 2 or 3 pixels, and the site draws the same cells in SVG, so an icon is never scaled by a filter. A kind icon is not the mark of the system, and it never stands alone: the row says the kind in words too.
 
 The design: `docs/DESIGN.md`, "The icons of the kinds".
 
@@ -352,7 +352,7 @@ Do not use: command table of the palette, entry file, palette registry.
 
 ### Interface package
 
-The interface package is `src/library/support/interface`: the code that builds the window of a process as a draw table at each frame, lays it out with the spacing tokens, takes the pointer and the keys, finds the damage, and draws.
+The interface package is `src/library/modus/interface`: the code that builds the window of a process as a draw table at each frame, lays it out with the spacing tokens, takes the pointer and the keys, finds the damage, and draws.
 
 The package gives each process one way to draw its window by the design rules. It works in immediate mode: at each frame, the process calls an element procedure for each part of its window, such as `button`. Each call appends draw records and gives back what the input did to that element. The package allocates nothing, and an error is a value. Example: `disk`, `monitor` and the palette are drawn with it. The interface package is not a toolkit with objects, callbacks and a tree.
 
@@ -444,7 +444,7 @@ Do not use: clip region, clip mask, clip list.
 
 A draw table is the draw records of one frame of a window, the bytes of their texts, the cells of their text grids and the points of their paths, and the picture memories that they name, in the memory of the process.
 
-It is the one 2D interface of the system: each window and the compositor draw through it, and a GPU later draws the same table through WebGPU. The process owns it (`Draw_Table` of `src/library/support/interface`) and keeps the table of the frame before, to find the damage by difference. A full table sets `full`; a record that names memory outside the table sets `refused`. A draw table is not a tree: two tables compare record by record at the same index.
+It is the one 2D interface of the system: each window and the compositor draw through it, and a GPU later draws the same table through WebGPU. The process owns it (`Draw_Table` of `src/library/modus/interface`) and keeps the table of the frame before, to find the damage by difference. A full table sets `full`; a record that names memory outside the table sets `refused`. A draw table is not a tree: two tables compare record by record at the same index.
 
 The design: `docs/INTERFACE.md`, "2.1 Draw record"; its rationalised form: `src/md/api/draw_table.md`.
 
@@ -464,7 +464,7 @@ Do not use: text buffer, payload buffer, arena.
 
 A window memory is the record of a process that holds the drawing of one window and the memory of its two draw tables.
 
-The process declares one for each window (`Window_Memory(RECORDS, TEXT)` of `src/library/support/interface`), with the capacity of each draw table in records and in bytes of text, and starts each frame with `window_frame_start`. The record is memory of the process, so the package allocates nothing. Example: `budget` keeps `window_memory: interface.Window_Memory(512, 8192)`.
+The process declares one for each window (`Window_Memory(RECORDS, TEXT)` of `src/library/modus/interface`), with the capacity of each draw table in records and in bytes of text, and starts each frame with `window_frame_start`. The record is memory of the process, so the package allocates nothing. Example: `budget` keeps `window_memory: interface.Window_Memory(512, 8192)`.
 
 A window memory is not the surface of the window: the pixels are in the memory object of the surface, which the compositor reads.
 
@@ -872,7 +872,7 @@ Do not use: cursor theme, icon theme.
 
 A pointer theme file is one pointer theme in the format of the system: a header, a table of shapes, a table of pictures, then the pixels.
 
-One file for a whole theme lets a process map it read-only and read it in place, with no parse at run time. The format is `src/library/contract/pointer_pictures`. One function, `pointer_pictures.validate`, checks every field once; the tool and the compositor run it, and the compositor does not trust the file even from the root service. A pointer theme file is not an Xcursor file or a `.cur` file: the tool reads those formats only to make this one.
+One file for a whole theme lets a process map it read-only and read it in place, with no parse at run time. The format is `src/library/modus/contract/pointer_pictures`. One function, `pointer_pictures.validate`, checks every field once; the tool and the compositor run it, and the compositor does not trust the file even from the root service. A pointer theme file is not an Xcursor file or a `.cur` file: the tool reads those formats only to make this one.
 
 The design: `docs/POINTERS.md`, "3. The format of the system: one pointer theme file".
 
@@ -954,7 +954,7 @@ Do not use: visual line, soft-wrapped line, screen line.
 
 A gap buffer is a text in one array with a free part, the gap, at the place where the keys act.
 
-A typed key moves the gap to the caret and writes into it, so a run of keys at one place copies no byte of the rest of the text. The editor `edit` keeps its text of at most 32768 bytes in one, in the private part `modus:private/edit/text_model`. It is not a file and not a copy of the object in the store.
+A typed key moves the gap to the caret and writes into it, so a run of keys at one place copies no byte of the rest of the text. The editor `edit` keeps its text of at most 32768 bytes in one, in the private part `internal:edit/text_model`. It is not a file and not a copy of the object in the store.
 
 The design: `src/md/features/editor.md`, "The text model".
 

@@ -342,7 +342,7 @@ module_import_folder := ""
 
 MODULE_BUILD_FOLDER :: BUILD_FOLDER + "/modules"
 
-SYSTEM_LIBRARY_FOLDER :: SOURCE_FOLDER_SUPPORT + "/system"
+SYSTEM_LIBRARY_FOLDER :: SOURCE_FOLDER_PUBLIC + "/system"
 
 // The boot image of the operation sequences: the modules of the boot image,
 // and the two modules that only it holds (src/md/infrastructure/kernel_fuzzing.md).
@@ -366,7 +366,7 @@ START_POLICY_MODULE :: "start_policy"
 OPERATION_SEQUENCE_RUNNER_MODULE :: "operation_sequence_runner"
 
 // The drawing module, and the setting of a module that draws its window
-// through it (src/library/support/interface, window_drawing.odin). A module with the
+// through it (src/library/modus/interface, window_drawing.odin). A module with the
 // setting imports the module: a host test checks it
 // (import_declarations_test.odin).
 DRAWING_MODULE :: "drawing"

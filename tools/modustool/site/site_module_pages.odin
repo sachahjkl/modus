@@ -10,7 +10,7 @@ import "modus:contract/value_kinds"
 import "core:fmt"
 import "core:strings"
 import module "modus:contract/module"
-import "modus:support/graphics"
+import "modus:graphics"
 import "modustool:foundation"
 import "modustool:build"
 

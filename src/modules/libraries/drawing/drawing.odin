@@ -52,10 +52,10 @@ import "modus:contract/draw_record"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/scale_factor"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 
 // The names of the exports say which draw record they read.
 #assert(interface.DRAW_RECORD_VERSION == 20)
@@ -141,7 +141,7 @@ ARGUMENT_RECTANGLES :: 6
 //
 // The rule of the callers: one thread of a process at a time calls
 // execute_draw_table_in_rectangles_20. It is the rule of the text state of
-// the graphics package, which changes "between two frames" (src/library/support/graphics,
+// the graphics package, which changes "between two frames" (src/library/modus/graphics,
 // text.odin), and each window of the system has one loop that draws. The
 // module takes no lock for it and waits for no other thread: the load
 // below, the choice of the settings that each draw applies, the square
@@ -201,7 +201,7 @@ process_text_load :: proc "contextless" () {
 //
 // The module does not check the text range of each record here: the
 // package checks each range where it uses the record
-// (src/library/support/interface, difference.odin and execute.odin), so one place
+// (src/library/modus/interface, difference.odin and execute.odin), so one place
 // holds the rule. These checks protect a correct caller from a wrong count
 // or a wrong record: no fault, and no write outside the pixels. They are
 // not a defence against a caller that changes its tables during the call.

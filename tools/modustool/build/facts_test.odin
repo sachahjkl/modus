@@ -11,14 +11,14 @@ import "core:testing"
 FACT_TEST_FOLDER :: "src/modules/tests/fact_probe"
 // A support package that declares a fact type, for a call through an import.
 @(private = "file")
-FACT_TEST_SUPPORT_FOLDER :: "src/library/support/fact_sample"
+FACT_TEST_SUPPORT_FOLDER :: "src/library/modus/fact_sample"
 
 // fact_test_source gives a source of the module of these tests: the
 // package, the import of system, then the declarations and the body of a
 // procedure that writes.
 @(private = "file")
 fact_test_source :: proc(declarations, body: string) -> Fact_Source {
-	text := fmt.tprintf("package fact_probe\n\nimport \"modus:support/system\"\nimport \"modus:support/fact_sample\"\n\n%s\n\nwrite :: proc() {{\n%s\n}}\n", declarations, body)
+	text := fmt.tprintf("package fact_probe\n\nimport \"modus:system\"\nimport \"modus:fact_sample\"\n\n%s\n\nwrite :: proc() {{\n%s\n}}\n", declarations, body)
 	return {path = FACT_TEST_FOLDER + "/main.odin", source = text}
 }
 

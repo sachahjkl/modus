@@ -9,7 +9,7 @@ import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
-import "modus:support/mark"
+import "modus:mark"
 import "modustool:foundation"
 
 MARK_COMMAND_USAGE :: "modustool mark still | frame | animation | tile_map | table | uses | developer" +

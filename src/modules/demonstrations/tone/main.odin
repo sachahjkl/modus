@@ -37,8 +37,8 @@ import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/timed_stream"
 import "modus:contract/value_kinds"
-import "modus:support/system"
-import "modus:support/trigonometry"
+import "modus:system"
+import "modus:trigonometry"
 
 // The sample region: 500 ms of frames, and the rest of its last page.
 TONE_FRAMES :: timed_stream.FRAME_RATE / 2

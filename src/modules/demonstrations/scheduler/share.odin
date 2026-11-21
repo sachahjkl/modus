@@ -18,8 +18,8 @@ import "modus:contract/isolated"
 import "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:random"
+import "modus:system"
 
 // The process slots that a round reads: the slot 0 holds no process.
 PROCESS_SLOT_LIMIT :: 64

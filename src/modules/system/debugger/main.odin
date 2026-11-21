@@ -68,10 +68,10 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
 import "modus:contract/ring"
-import "modus:private/debugger/debugging"
+import "internal:debugger/debugging"
 import "modus:contract/root_ring"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The results of an export that fails: a negative number, with an error
 // record.

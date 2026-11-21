@@ -647,7 +647,7 @@ site_build :: proc(address: string, commands: []foundation.Command) -> bool {
 	}
 	site_write_file(&site, resources.SITE_PICTURE_FOLDER + "/" + SITE_MAKER_PICTURE, maker_picture) or_return
 	// The font of the name of the mark, built from the letters of
-	// src/library/support/mark as the pictures above are drawn from its cells: the bytes
+	// src/library/modus/mark as the pictures above are drawn from its cells: the bytes
 	// of the file of the repository, which `modustool check` compares.
 	mark_font := resources.mark_font_of_the_repository() or_return
 	site_write_file(&site, SITE_MARK_FONT, mark_font) or_return

@@ -44,7 +44,7 @@ similarity_test_procedure :: proc(name: string, names := SIMILARITY_TEST_NAMES, 
 
 @(private = "file")
 similarity_test_file :: proc(package_name: string, bodies: ..string) -> string {
-	return strings.concatenate({"package ", package_name, "\n\nimport \"modus:support/shared_package\"\n\n", strings.join(bodies, "\n", context.temp_allocator)}, context.temp_allocator)
+	return strings.concatenate({"package ", package_name, "\n\nimport \"modus:shared_package\"\n\n", strings.join(bodies, "\n", context.temp_allocator)}, context.temp_allocator)
 }
 
 @(private = "file")
@@ -69,8 +69,8 @@ similarity_test_text :: proc(analysis: ^Similarity_Analysis, node: i32) -> strin
 @(test)
 similarity_equal_procedures_in_two_packages :: proc(t: ^testing.T) {
 	sources := []Similarity_Source {
-		{path = "src/library/support/first_package/first.odin", text = similarity_test_file("first_package", similarity_test_procedure("first_sum"))},
-		{path = "src/library/support/second_package/second.odin", text = similarity_test_file("second_package", similarity_test_procedure("second_sum", {"sum", "number", "item", "items", "bound"}))},
+		{path = "src/library/modus/first_package/first.odin", text = similarity_test_file("first_package", similarity_test_procedure("first_sum"))},
+		{path = "src/library/modus/second_package/second.odin", text = similarity_test_file("second_package", similarity_test_procedure("second_sum", {"sum", "number", "item", "items", "bound"}))},
 	}
 	analysis := similarity_analyse(sources, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
@@ -84,7 +84,7 @@ similarity_equal_procedures_in_two_packages :: proc(t: ^testing.T) {
 	testing.expect_value(t, family.template.parameter_count, 0)
 	testing.expect_value(t, family.template.gaps, 0)
 	testing.expect_value(t, similarity_lowest_score_of(family.template), 1.0)
-	testing.expect_value(t, family.home, "modus:support/shared_package")
+	testing.expect_value(t, family.home, "modus:shared_package")
 }
 
 @(private = "file")
@@ -340,8 +340,8 @@ similarity_run_that_control_leaves :: proc(t: ^testing.T) {
 @(test)
 similarity_kernel_and_support_are_kept_apart :: proc(t: ^testing.T) {
 	sources := []Similarity_Source {
-		{path = "src/kernel/sums.odin", text = similarity_test_file("kernel", similarity_test_procedure("kernel_sum"))},
-		{path = "src/library/support/sums/sums.odin", text = similarity_test_file("sums", similarity_test_procedure("support_sum"))},
+		{path = "src/modulus/sums.odin", text = similarity_test_file("kernel", similarity_test_procedure("kernel_sum"))},
+		{path = "src/library/modus/sums/sums.odin", text = similarity_test_file("sums", similarity_test_procedure("support_sum"))},
 	}
 	analysis := similarity_analyse(sources, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
@@ -446,8 +446,8 @@ similarity_greedy_selection_counts_shared_nodes_once :: proc(t: ^testing.T) {
 @(test)
 similarity_kept_list :: proc(t: ^testing.T) {
 	sources := []Similarity_Source {
-		{path = "src/library/support/first_package/first.odin", text = similarity_test_file("first_package", similarity_test_procedure("first_sum"))},
-		{path = "src/library/support/second_package/second.odin", text = similarity_test_file("second_package", similarity_test_procedure("second_sum"))},
+		{path = "src/library/modus/first_package/first.odin", text = similarity_test_file("first_package", similarity_test_procedure("first_sum"))},
+		{path = "src/library/modus/second_package/second.odin", text = similarity_test_file("second_package", similarity_test_procedure("second_sum"))},
 	}
 	first_run := similarity_analyse(sources, "", context.temp_allocator)
 	families := similarity_test_families(first_run, .Procedure)
@@ -479,8 +479,8 @@ similarity_kept_list :: proc(t: ^testing.T) {
 @(test)
 similarity_platform_variant :: proc(t: ^testing.T) {
 	sources := []Similarity_Source {
-		{path = "src/library/support/watch/watch_linux.odin", text = similarity_test_file("watch", similarity_test_procedure("watch_sum"))},
-		{path = "src/library/support/watch/watch_other.odin", text = similarity_test_file("watch", similarity_test_procedure("watch_sum"))},
+		{path = "src/library/modus/watch/watch_linux.odin", text = similarity_test_file("watch", similarity_test_procedure("watch_sum"))},
+		{path = "src/library/modus/watch/watch_other.odin", text = similarity_test_file("watch", similarity_test_procedure("watch_sum"))},
 	}
 	analysis := similarity_analyse(sources, "", context.temp_allocator)
 	defer similarity_analysis_destroy(analysis)
@@ -533,8 +533,8 @@ similarity_near_filter_drops_no_pair :: proc(t: ^testing.T) {
 @(test)
 similarity_output_is_reproducible :: proc(t: ^testing.T) {
 	sources := []Similarity_Source {
-		{path = "src/library/support/first_package/first.odin", text = similarity_test_file("first_package", similarity_test_procedure("first_sum"), similarity_test_procedure("first_limit", extra = "\n\ttotal += 1000"))},
-		{path = "src/library/support/second_package/second.odin", text = similarity_test_file("second_package", similarity_test_procedure("second_sum", {"sum", "number", "item", "items", "bound"}), similarity_test_procedure("second_limit", extra = "\n\ttotal += 2000"))},
+		{path = "src/library/modus/first_package/first.odin", text = similarity_test_file("first_package", similarity_test_procedure("first_sum"), similarity_test_procedure("first_limit", extra = "\n\ttotal += 1000"))},
+		{path = "src/library/modus/second_package/second.odin", text = similarity_test_file("second_package", similarity_test_procedure("second_sum", {"sum", "number", "item", "items", "bound"}), similarity_test_procedure("second_limit", extra = "\n\ttotal += 2000"))},
 		{path = "src/processes/runs/main.odin", text = similarity_test_run_sources("total = 1000")[0].text},
 	}
 	outputs: [2][3]string

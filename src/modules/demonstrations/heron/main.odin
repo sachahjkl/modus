@@ -5,7 +5,7 @@
 //
 // **What it is for.** It shows the graphics of the system with the mark of
 // the system: the heron stands in its water, drawn large from the cells of
-// `src/library/support/mark`, and plays its 15 animations in an order of chance. Four
+// `src/library/modus/mark`, and plays its 15 animations in an order of chance. Four
 // animations move the whole heron: in the dash it leaves the window by the
 // right and comes back by the left, in the forms of the crouch and of the
 // run. The process draws again only the part of its window that changed,
@@ -28,7 +28,7 @@
 //   few cells.
 // - `z` changes the cell size: 12, 8 or 4 pixels.
 // - `g` chooses the way of a move. **On the grid**, the way of the system:
-//   the heron takes the forms of `src/library/support/mark`, the same drawings as on
+//   the heron takes the forms of `src/library/modus/mark`, the same drawings as on
 //   the home of the site, each in whole square cells, at places in whole
 //   cells (`mark.move_pose`, `mark.form_cells`). **Free**, to compare: the
 //   frame of the heron is stretched to the box of the form, so its cells
@@ -76,13 +76,13 @@ package heron
 
 import "modus:contract/enum_word"
 import "modus:contract/errors"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/mark"
-import "modus:support/random"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:mark"
+import "modus:random"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The stage: the part of the window where the heron stands and moves. It
 // is cut in square tiles; each tile is one picture of the window, with a
@@ -270,7 +270,7 @@ play :: proc "c" (name: ^string, error: ^errors.Error_Record) -> i64 {
 
 // animations gives one row for each animation of the heron, in the order of the keys of the window: its name, the count of its frames, its time in milliseconds, and 1 when the whole heron moves during it.
 //
-// The names, the frames, the times and the moves are the data of `src/library/support/mark`: the same as on the home of the site.
+// The names, the frames, the times and the moves are the data of `src/library/modus/mark`: the same as on the home of the site.
 //
 // - **result**: a table of `Animation_Row` rows that the call fills. A table shorter than the count gets the
 //   first rows only; the result still counts every animation.
@@ -468,7 +468,7 @@ stage_rectangle_clear :: proc "contextless" (rectangle: interface.Rectangle) {
 }
 
 // form_picture_draw draws a form of a frame into the form picture, at a
-// cell size: the drawing of src/library/support/mark, with the top left corner of the
+// cell size: the drawing of src/library/modus/mark, with the top left corner of the
 // natural heron at the reach of the forms from the corner of the picture.
 form_picture_draw :: proc "contextless" (form: mark.Form, frame, cell: int) {
 	picture := graphics.Canvas{pixels = raw_data(form_pixels[:]), width = mark.FORM_COLUMNS_MOST * cell, height = mark.FORM_ROWS_MOST * cell, stride = FORM_PICTURE_WIDTH}
@@ -515,7 +515,7 @@ water_draw :: proc "contextless" (water: interface.Rectangle, cell: int) {
 }
 
 // stage_draw draws the heron of this moment on the stage, when the stage
-// does not show it yet. On the grid it asks src/library/support/mark for the form and
+// does not show it yet. On the grid it asks src/library/modus/mark for the form and
 // the place of the heron at this time, and copies the drawing of that
 // form to that place: whole cells at a place in whole cells. In the free
 // way it stretches the natural form of the frame to the box of this time.
@@ -837,7 +837,7 @@ played_line_write :: proc "contextless" () {
 // change of the lines or of the way, a step of a frame, or an animation
 // key while the play is paused. Each value of the line is what the
 // process drew: the animation and its frame, whether the play holds it,
-// the way with the form and the place of src/library/support/mark or with the size of
+// the way with the form and the place of src/library/modus/mark or with the size of
 // the stretched frame, the lines, and the cells that the frame changed.
 shows_line_write :: proc "contextless" () {
 	lines := lines_shown ? "shown" : "hidden"

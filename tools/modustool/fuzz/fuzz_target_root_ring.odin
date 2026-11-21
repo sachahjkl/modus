@@ -8,7 +8,7 @@ import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/start_grant"
-import "modus:support/system"
+import "modus:system"
 
 // The fuzz target of the root ring (src/md/infrastructure/fuzzing.md, "The
 // targets, in order of value"): the decision of the dispatch of the root

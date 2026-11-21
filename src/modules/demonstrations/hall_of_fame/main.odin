@@ -19,11 +19,11 @@
 // **Its grants**: none. A window is all that it needs.
 package hall_of_fame
 
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 WIDTH :: 1000
 HEIGHT :: 696

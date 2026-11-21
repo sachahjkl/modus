@@ -112,14 +112,14 @@ package scheduler
 import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:contract/isolated"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:random"
+import "modus:system"
 
 // Threads: 12 spinners, two threads that wake each other, one that sleeps,
 // a changer, a thread that starts threads; later, with its first thread,

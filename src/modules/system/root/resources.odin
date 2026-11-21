@@ -3,7 +3,7 @@ package root
 import "modus:contract/blake3"
 import "modus:contract/pointer_pictures"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The resources of the boot image (docs/ARCHITECTURE.md, U2b): files that
 // are not modules, each with its name and the hash of its bytes. This

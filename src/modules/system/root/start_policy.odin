@@ -14,11 +14,11 @@ import op "modus:contract/operation"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
 import "modus:contract/value_kinds"
-import "modus:private/root/start_policy_rules"
-import "modus:support/disk_process"
-import "modus:support/pci"
-import "modus:support/principals"
-import "modus:support/system"
+import "internal:root/start_policy_rules"
+import "modus:disk_process"
+import "modus:pci"
+import "modus:principals"
+import "modus:system"
 
 // What this service waits for of the start policy. The decisions on the
 // commands of a start policy are in the private part start_policy_rules,
@@ -73,7 +73,7 @@ machine_parts: start_list.Machine_Parts
 // machine_parts_page_create checks each part of the machine that a start
 // row can need, and writes the page. A part that this service cannot check
 // is absent: the page never says that a part is present by default. The
-// screen is the one test of the boot display (modus:support/screen_presence),
+// screen is the one test of the boot display (modus:screen_presence),
 // so the page and the line of a machine with no screen agree. The PS/2
 // controller is no part of the page: the input service reads its absence.
 machine_parts_page_create :: proc "contextless" () {

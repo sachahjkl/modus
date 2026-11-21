@@ -11,18 +11,18 @@ package root
 // keeps the bytes whose hash an import names. No name and no hash that the
 // storage service gives decides what runs: a name only says which entry to
 // read. The account of the scan and its bounds are in
-// modus:support/disk_process (import_scan.odin).
+// modus:disk_process (import_scan.odin).
 
 import "modus:contract/blake3"
 import "modus:contract/storage_status"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
-import "modus:support/disk_process"
-import "modus:support/storage"
+import "modus:disk_process"
+import "modus:storage"
 import "modus:contract/root_ring"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // One page of the list: its rows, and the bytes of their names.
 LIST_PAGE_ROWS :: 16

@@ -3,14 +3,14 @@ package console
 // The colors of the code of the console (docs/CONSOLE.md, section 7): the
 // edit line at each key, the line that the console writes back when the
 // input enters it, and the rows of the completion list. The scanner of
-// src/library/support/console_language gives what each part is; the console gives the
+// src/library/modus/console_language gives what each part is; the console gives the
 // roles of its names; the terminal maps each kind to a color.
 
-import "modus:support/console_language"
-import "modus:support/lex_evaluator"
-import "modus:support/line_editor"
-import "modus:support/system"
-import terminal "modus:support/terminal"
+import "modus:console_language"
+import "modus:lex_evaluator"
+import "modus:line_editor"
+import "modus:system"
+import terminal "modus:terminal"
 
 // console_name_role gives what a name is for this console now: a command or
 // an export, a command that makes a record, a service or a module that the

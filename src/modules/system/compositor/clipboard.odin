@@ -1,10 +1,10 @@
 package compositor
 
-import clipboard_rules "modus:private/compositor/clipboard"
+import clipboard_rules "internal:compositor/clipboard"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/system"
+import "modus:display"
+import "modus:system"
 
 // The clipboard (src/md/features/clipboard.md): one slot of the
 // compositor, which a process reaches only at a key of the principal.

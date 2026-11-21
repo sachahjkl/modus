@@ -1,6 +1,6 @@
 # Swiss tables and the fast hash
 
-`src/library/support/hash_table` provides fixed-capacity Swiss tables (`Hash_Table` and `Hash_Index`) for lookups by outside keys in system modules. `src/library/support/fast_hash` provides rapidhash V3 and a folded 64-bit word mixer for short in-memory keys. The SSE2 group-match specification and host speed measures are in [`docs/SIMD.md`](../../../docs/SIMD.md), "9. The 16-tag group match".
+`src/library/modus/hash_table` provides fixed-capacity Swiss tables (`Hash_Table` and `Hash_Index`) for lookups by outside keys in system modules. `src/library/modus/fast_hash` provides rapidhash V3 and a folded 64-bit word mixer for short in-memory keys. The SSE2 group-match specification and host speed measures are in [`docs/SIMD.md`](../../../docs/SIMD.md), "9. The 16-tag group match".
 
 ## Purpose
 
@@ -23,8 +23,8 @@ Lookups in modus fall into two distinct classes. Only the second belongs in a ha
 
 When the system itself issues an identifier to a caller, it indexes directly into a fixed array by slot and checks a generation or serial counter. No hash table is needed and no collision can occur:
 
-- **Kernel handles** (`src/kernel/process.odin`): `Process.handles` is a fixed array of `Handle_Slot`; an `op.Handle` packs `(index + 1) | (generation << 16)`. Closing increments `generation`, so stale handles fail in one array read.
-- **Kernel objects and waits** (`src/kernel/process.odin`, `src/kernel/wait.odin`): `processes[slot].serial`, `threads[slot].serial`, `regions[slot].serial`, and `thread.wait_serial`.
+- **Kernel handles** (`src/modulus/process.odin`): `Process.handles` is a fixed array of `Handle_Slot`; an `op.Handle` packs `(index + 1) | (generation << 16)`. Closing increments `generation`, so stale handles fail in one array read.
+- **Kernel objects and waits** (`src/modulus/process.odin`, `src/modulus/wait.odin`): `processes[slot].serial`, `threads[slot].serial`, `regions[slot].serial`, and `thread.wait_serial`.
 - **Process references across services** (`root`, `monitor`, `inspect`, `debugger`, `log`): `(process_slot, process_serial)` pairs (`process_page.row_find`, `logged_disk_process[slot]`).
 - **Compositor surfaces, clipboards, and key serials** (`src/modules/system/compositor/`): `surface_serial`, `resize_serial`, `clipboard.lend_serial`, and `key_serial`.
 - **Host tool candidates** (`tools/modustool/`): dense tables addressed by internal handles in host tools belong in Odin's `core:container/handle_map` (slot + generation). Outside-key symbol and path maps in `tools/modustool` (`site/`, `similarity/`, `build/`) already use Odin's built-in `map`.
@@ -33,19 +33,19 @@ When the system itself issues an identifier to a caller, it indexes directly int
 
 When keys are chosen externally (glyph descriptors, hashes, IP addresses, names):
 
-- **First user — private glyph cache** (`src/library/support/text_rendering/private_cache.odin`): up to 4 096 entries keyed by a packed 64-bit glyph key, queried on every glyph of every drawn text run in every window process. Switched from a custom chained table to `hash_table.Hash_Index`.
+- **First user — private glyph cache** (`src/library/modus/text_rendering/private_cache.odin`): up to 4 096 entries keyed by a packed 64-bit glyph key, queried on every glyph of every drawn text run in every window process. Switched from a custom chained table to `hash_table.Hash_Index`.
 - **Future candidates**:
-  - **Storage hash index** (`src/library/private/storage/storage_mount/hash_index.odin`, [hash_index.md](hash_index.md)): up to 262 144 object roots keyed by `(hash_prefix, size, store)`, currently seeded linear probing at 1/2 load with a hard `HASH_PROBE_LIMIT` and single-slot-per-key rule. Candidate for `Hash_Index(u32, ...)` when its probe bound and duplicate-key rules are adapted.
-  - **QUIC per-address budgets** (`src/library/support/quic/server_budgets.odin`): 1 024 entries keyed by remote IPv4 address (`u32`), currently scanned linearly; hostile remote addresses make a seeded Swiss table a direct fit.
-  - **QUIC and TCP connection tables** (`src/library/support/quic/server.odin`, `src/library/support/tcp/`) and **storage block cache** (`src/modules/system/storage/engine.odin`, 64 cached blocks): small today, candidates for `Hash_Index` if their capacities grow beyond linear-scan range.
+  - **Storage hash index** (`src/library/internal/storage/storage_mount/hash_index.odin`, [hash_index.md](hash_index.md)): up to 262 144 object roots keyed by `(hash_prefix, size, store)`, currently seeded linear probing at 1/2 load with a hard `HASH_PROBE_LIMIT` and single-slot-per-key rule. Candidate for `Hash_Index(u32, ...)` when its probe bound and duplicate-key rules are adapted.
+  - **QUIC per-address budgets** (`src/library/modus/quic/server_budgets.odin`): 1 024 entries keyed by remote IPv4 address (`u32`), currently scanned linearly; hostile remote addresses make a seeded Swiss table a direct fit.
+  - **QUIC and TCP connection tables** (`src/library/modus/quic/server.odin`, `src/library/modus/tcp/`) and **storage block cache** (`src/modules/system/storage/engine.odin`, 64 cached blocks): small today, candidates for `Hash_Index` if their capacities grow beyond linear-scan range.
 - **Stay linear scans**: small name tables with tens of entries (`disk_process.Grant_Table`, `root` roles and running processes, `console` commands and variables, `network` ARP neighbors, `storage` store names).
-- **Excluded**: the kernel wait table (`src/kernel/wait.odin`, 64 intrusive linked-list buckets keyed by physical word address). The kernel imports no support packages and executes no SSE2 instructions.
+- **Excluded**: the kernel wait table (`src/modulus/wait.odin`, 64 intrusive linked-list buckets keyed by physical word address). The kernel imports no support packages and executes no SSE2 instructions.
 
 ## The chosen form
 
 ### Two table types sharing one probe
 
-`src/library/support/hash_table` provides two generic fixed-capacity structs with `GROUP_COUNT > 0` groups of 16 slots (`GROUP_WIDTH :: 16`):
+`src/library/modus/hash_table` provides two generic fixed-capacity structs with `GROUP_COUNT > 0` groups of 16 slots (`GROUP_WIDTH :: 16`):
 
 - **`Hash_Table(Key, Value, GROUP_COUNT)`**: stores `controls`, `keys`, and `values` in flat parallel arrays. Keys are hashed and compared by their raw bytes; compile-time constraints (`intrinsics.type_is_simple_compare` and `!intrinsics.type_struct_has_implicit_padding`) refuse structs with implicit padding, floats, pointers, and strings.
 - **`Hash_Index(Reference, GROUP_COUNT)`**: stores only `controls` (1 byte per slot) and integer `references` (`u16`, `u32`, ...) pointing into the caller's own record array. The caller computes the hash (`index_hash_word` or `index_hash_bytes`), walks candidates with `index_search_begin` / `index_search_next`, compares keys on its own records, and removes by slot (`index_remove_slot`). This avoids duplicating keys when records already store them for eviction or iteration.
@@ -68,17 +68,17 @@ When keys are chosen externally (glyph descriptors, hashes, IP addresses, names)
 
 ## The hash
 
-`src/library/support/fast_hash` implements **rapidhash V3** (`rapidhash_withSeed` with compact, fast defaults) in Odin from the published algorithm, verified against 105 reference vectors covering every length branch from 0 to 1 000 bytes, three seeds, and all 16 byte alignments.
+`src/library/modus/fast_hash` implements **rapidhash V3** (`rapidhash_withSeed` with compact, fast defaults) in Odin from the published algorithm, verified against 105 reference vectors covering every length branch from 0 to 1 000 bytes, three seeds, and all 16 byte alignments.
 
 - **`hash_bytes` / `hash_bytes_with_prepared_seed`**: rapidhash V3 for byte slices (measured on the host with `-o:speed -microarch:x86-64`: 2.68 ns on 8 B and 16 B, 3.71 ns on 32 B, 6.19 ns on 64 B).
 - **`hash_word_with_prepared_seed`**: rapidhash V3 of an 8-byte little-endian word without a memory read.
 - **`mix_word_with_prepared_seed`**: single 64x64->128 folded multiply `multiply_and_fold(word ~ prepared_seed, SECRET[0])`, matching Abseil's integer mixer so that both the high 32 bits (H1 group) and low 7 bits (H2 tag) depend on every bit of the word at half the cost of full rapidhash. Used by `Hash_Table` for 8-byte keys and by `Hash_Index.index_hash_word`.
-- **Why BLAKE3 stays for identity and security.** rapidhash is a non-cryptographic hash optimised for short in-memory keys. Module hashes, resource verification, content addressing, and cryptographic protocols keep BLAKE3 (`src/library/contract/blake3`).
-- **Hash-flooding protection.** `seed_set` prepares a per-table 64-bit seed once (`seed_prepare`). Tables exposed to untrusted keys seed from `modus:support/random` (or the fresh bytes of the process) at startup. `seed_set` refuses a non-empty table or a table containing tombstones and leaves it unchanged.
+- **Why BLAKE3 stays for identity and security.** rapidhash is a non-cryptographic hash optimised for short in-memory keys. Module hashes, resource verification, content addressing, and cryptographic protocols keep BLAKE3 (`src/library/modus/contract/blake3`).
+- **Hash-flooding protection.** `seed_set` prepares a per-table 64-bit seed once (`seed_prepare`). Tables exposed to untrusted keys seed from `modus:random` (or the fresh bytes of the process) at startup. `seed_set` refuses a non-empty table or a table containing tombstones and leaves it unchanged.
 
 ## First user: the private glyph cache
 
-`src/library/support/text_rendering/private_cache.odin` (`Private_Cache`) is the first user outside the kernel. It maps packed 64-bit glyph keys to up to 4 096 `Private_Entry` records in every process that draws text (`compositor`, `terminal`, `settings`, `drawing`, and all window processes).
+`src/library/modus/text_rendering/private_cache.odin` (`Private_Cache`) is the first user outside the kernel. It maps packed 64-bit glyph keys to up to 4 096 `Private_Entry` records in every process that draws text (`compositor`, `terminal`, `settings`, `drawing`, and all window processes).
 
 - Switched from its custom chained bucket array (`buckets: [8192]u16`, 16 384 bytes, plus `next_in_bucket` chain pointers) to `hash_table.Hash_Index(u16, 340)` (5 440 slots, 4 760 capacity at 7/8 load, 75.3% peak load at 4 096 entries, 16 344 bytes).
 - Keeps `size_of(Glyph_Memory)` within the exact 354-page budget (`display.GLYPH_MEMORY_PAGES_IN_THE_BUDGETS`) declared by every window process.
@@ -111,4 +111,4 @@ Both packages are clean Odin implementations of published algorithms, with no co
 
 ## State
 
-Built: `src/library/support/fast_hash` (rapidhash V3 + word mixers, 6 host tests including 105 reference vectors and opt-in host measure), `src/library/support/hash_table` (`Hash_Table`, `Hash_Index`, SSE2 and scalar 16-tag group match, 19 host tests including 700 000 deterministic fuzz operations and opt-in host measure), and the first user `src/library/support/text_rendering/private_cache.odin`. Left: adopting `Hash_Index` in `quic/server_budgets.odin` and evaluating `storage_mount/hash_index.odin` against its probe-bound rules.
+Built: `src/library/modus/fast_hash` (rapidhash V3 + word mixers, 6 host tests including 105 reference vectors and opt-in host measure), `src/library/modus/hash_table` (`Hash_Table`, `Hash_Index`, SSE2 and scalar 16-tag group match, 19 host tests including 700 000 deterministic fuzz operations and opt-in host measure), and the first user `src/library/modus/text_rendering/private_cache.odin`. Left: adopting `Hash_Index` in `quic/server_budgets.odin` and evaluating `storage_mount/hash_index.odin` against its probe-bound rules.

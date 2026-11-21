@@ -6,8 +6,8 @@ import "core:strings"
 import "core:testing"
 import "modus:contract/reference_screen"
 import "modus:contract/scale_factor"
-import "modus:private/compositor/bar"
-import "modus:private/compositor/palette"
+import "internal:compositor/bar"
+import "internal:compositor/palette"
 import "modustool:build"
 
 // The places of the scenarios that name an edge of the screen are on the

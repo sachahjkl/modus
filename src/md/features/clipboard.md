@@ -1,6 +1,6 @@
 # The clipboard
 
-The principal copies a text in one window and pastes it in another. A process reads the clipboard only at a paste of the principal, and writes it only at a copy of the principal. The guide is [`docs/DESIGN.md`](../../../docs/DESIGN.md), "The clipboard"; the protocol is in `src/library/support/display`.
+The principal copies a text in one window and pastes it in another. A process reads the clipboard only at a paste of the principal, and writes it only at a copy of the principal. The guide is [`docs/DESIGN.md`](../../../docs/DESIGN.md), "The clipboard"; the protocol is in `src/library/modus/display`.
 
 ## Constraints
 
@@ -76,7 +76,7 @@ Until the next copy that the compositor takes, or until the process that copied 
 - The serial of each answer names its key: a late answer to a key that a newer key replaced, or to a lend that ended, never changes the state of now. The machine test waits for the line of the console, `console: the line shows "hello" after a paste`, which the console writes after it gives the terminal its line: the terminal then has a picture due, and the picture waits for it.
 - A key of the clipboard is a key record that the compositor counts as each key, so a machine test that waits for its key records still counts them.
 - The words of `Pasted` and of `Copy` are read as words: a handle past 32 bits, a kind that names no member, a count of 0 or past the limit, a serial of 0, are refused before any cast.
-- The pure decisions are host-tested: `src/library/private/compositor/clipboard` (the key of a record, the refusal of a `Copy`, the serials, the answers to each key, what the end of a client ends) and `src/library/support/display` (the check of a text, of the facts of a paste before its copy, and of the words of the events).
+- The pure decisions are host-tested: `src/library/internal/compositor/clipboard` (the key of a record, the refusal of a `Copy`, the serials, the answers to each key, what the end of a client ends) and `src/library/modus/display` (the check of a text, of the facts of a paste before its copy, and of the words of the events).
 
 ## State
 

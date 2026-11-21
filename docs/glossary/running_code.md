@@ -174,7 +174,7 @@ Do not use: FPU area, XSAVE area, save area.
 
 A usable instruction set is a group of instructions of the processor (SSE4.2, AVX2, AVX-512 F, BMI2, ...) that the processor has and whose registers the kernel saves.
 
-A process reads the sets once with `src/library/support/instruction_sets`, from `CPUID` and `XCR0`, with no kernel operation. A set that the processor has but whose state the kernel does not save is not usable: an instruction of it stops the process with an invalid opcode.
+A process reads the sets once with `src/library/modus/instruction_sets`, from `CPUID` and `XCR0`, with no kernel operation. A set that the processor has but whose state the kernel does not save is not usable: an instruction of it stops the process with an invalid opcode.
 
 Do not use: CPU feature, ISA extension.
 
@@ -1122,7 +1122,7 @@ Do not use: argv, argc, environment (for this), arguments.
 
 A context slot is one place of the context, a handle or a value, with the role that the starter and its process agree on.
 
-The context slots of a process that the root service starts are one table: the `GRANT_` constants of `src/library/support/system/grants.odin`. The root service writes each handle with `system.grant_put`, which refuses a context slot that holds a handle already, so a process never starts with a handle lost. A context slot is not an import slot, which holds the address of an export.
+The context slots of a process that the root service starts are one table: the `GRANT_` constants of `src/library/modus/system/grants.odin`. The root service writes each handle with `system.grant_put`, which refuses a context slot that holds a handle already, so a process never starts with a handle lost. A context slot is not an import slot, which holds the address of an export.
 
 Example: the handle 7 is the call ring of the private store; the text region of a terminal is the handle 4.
 
@@ -1174,7 +1174,7 @@ Do not use: boot loader, bootloader.
 
 A fixed range is an address and a span of the address space of a process where the system places one mapping that it gives: the settings page, the font outlines, the date page, the disk process page, the fresh bytes page, the files of a module.
 
-Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. Each written value is the slot and the bit of the range. The slots of the ranges that left name no member, and the border refuses their bits. A mapping that a process places by its own choice is outside the band, from `OWN_CHOICE_START`. `modustool check` refuses an address of the band written another way.
+Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/modus/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. Each written value is the slot and the bit of the range. The slots of the ranges that left name no member, and the border refuses their bits. A mapping that a process places by its own choice is outside the band, from `OWN_CHOICE_START`. `modustool check` refuses an address of the band written another way.
 
 Do not use: well-known address, fixed mapping.
 

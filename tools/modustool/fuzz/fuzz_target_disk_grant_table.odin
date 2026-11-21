@@ -2,7 +2,7 @@ package fuzz
 
 import "core:fmt"
 import "core:slice"
-import "modus:support/disk_process"
+import "modus:disk_process"
 
 // The fuzz target of the disk grant table (src/md/infrastructure/fuzzing.md,
 // "The subtle points"): the root service reads the persisted table of a

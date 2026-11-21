@@ -3,7 +3,7 @@ package site
 import "core:log"
 import "core:strings"
 import "core:testing"
-import "modus:support/graphics"
+import "modus:graphics"
 import "modustool:foundation"
 import "modustool:resources"
 

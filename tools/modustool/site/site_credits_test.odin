@@ -28,5 +28,5 @@ site_credits_tables_render_all_three_categories :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(html, "seL4"))
 	testing.expect(t, strings.contains(html, "<code>base:runtime</code>"))
 	testing.expect(t, strings.contains(html, `href="https://github.com/sponsors/gingerBill"`))
-	testing.expect(t, strings.contains(html, `src/kernel/schedule.odin`))
+	testing.expect(t, strings.contains(html, `src/modulus/schedule.odin`))
 }

@@ -9,11 +9,11 @@ import "modus:contract/scale_factor"
 import "core:log"
 import "core:sync"
 import "core:testing"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
-import "modus:support/text_rendering"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
+import "modus:text_rendering"
 
 // The text state of the graphics package and the text of the module are
 // one for the host process of the tests, and the tests run on several threads: each
@@ -1249,7 +1249,7 @@ the_parts_of_a_screen_draw_the_same_bytes_as_the_package :: proc(t: ^testing.T) 
 }
 
 // A terminal that scrolls, drawn through the exports into the two pictures
-// of a surface, as the window layer draws it (src/library/support/interface,
+// of a surface, as the window layer draws it (src/library/modus/interface,
 // window_drawing.odin): the difference with the last table that was
 // presented, the draw of the changed rectangles and of the debt of the
 // picture, the present of the rectangle where the screen differs, and the

@@ -5,8 +5,8 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:private/debugger/debugging"
-import "modus:support/system"
+import "internal:debugger/debugging"
+import "modus:system"
 
 // The exports of the debugger service: each one gives a table of records.
 // A caller that does not act for the principal gets a refusal; each export

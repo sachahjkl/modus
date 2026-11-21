@@ -44,7 +44,7 @@ TEST_OUTPUT_RETURN_FAULT :: foundation.BUILD_FOLDER + "/test_output_return_fault
 TEST_OUTPUT_RETURN_FAULT_WITHOUT_CHECK :: foundation.BUILD_FOLDER + "/test_output_return_fault_without_check.txt"
 
 // The boot line of kernel_without_return_check: the same text as
-// TEST_BUILD_LINE_WITHOUT_RETURN_CHECK in src/kernel/return_to_process.odin.
+// TEST_BUILD_LINE_WITHOUT_RETURN_CHECK in src/modulus/return_to_process.odin.
 TEST_KERNEL_WITHOUT_RETURN_CHECK_LINE :: "kernel: TEST BUILD: the check of the instruction address before a return to a process is skipped"
 
 RETURN_FAULT_OK :: "return_fault: ok, 5 cases: each child stopped as its own fault or returned with the flags of a process, and the machine goes on"

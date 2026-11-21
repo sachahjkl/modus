@@ -16,11 +16,11 @@
 // of its place and of the frame number, in integers.
 package plasma
 
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
-import "modus:support/trigonometry"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
+import "modus:trigonometry"
 
 WIDTH :: 320
 HEIGHT :: 200

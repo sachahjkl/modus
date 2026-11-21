@@ -5,10 +5,10 @@ import "modus:contract/errors"
 import format "modus:contract/store"
 import "modus:contract/tree_hash"
 import "modus:contract/value_kinds"
-import "modus:private/storage/immutable_tree"
-import "modus:private/storage/module_gc"
-import tree "modus:private/storage/storage_tree"
-import "modus:support/system"
+import "internal:storage/immutable_tree"
+import "internal:storage/module_gc"
+import tree "internal:storage/storage_tree"
+import "modus:system"
 
 // Immutable content-addressed trees and mark-and-sweep garbage collection for
 // the storage service (src/md/features/declarations.md;

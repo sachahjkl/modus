@@ -4,8 +4,8 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/settings"
 import "modus:contract/value_kinds"
-import "modus:support/appearance"
-import "modus:support/system"
+import "modus:appearance"
+import "modus:system"
 
 // The log facts of settings (src/md/features/log_facts.md, "The
 // migration"): each line, as a record of fields. Each fact template is the

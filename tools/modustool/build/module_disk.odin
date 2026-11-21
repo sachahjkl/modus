@@ -11,8 +11,8 @@ import "core:strings"
 import "modus:contract/blake3"
 import debug_object "modus:contract/debug_object"
 import format "modus:contract/store"
-import "modus:support/disk_process"
-import block_tree "modus:private/storage/storage_object"
+import "modus:disk_process"
+import block_tree "internal:storage/storage_object"
 
 // The generation of the root that the writer makes. The first root of a
 // format has the generation 1 and names no store: the open takes a disk

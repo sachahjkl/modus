@@ -38,7 +38,7 @@ import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 
 // One row of log.follow, as the log service declares it: this process
 // reads it as the asker, whose end the root service checks by its size.

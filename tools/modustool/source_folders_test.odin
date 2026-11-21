@@ -15,11 +15,12 @@ import "modustool:site"
 @(test)
 source_folders_are_folders_of_the_repository :: proc(t: ^testing.T) {
 	folders := foundation.SOURCE_FOLDERS
-	testing.expect_value(t, len(folders), 7)
+	testing.expect_value(t, len(folders), 6)
 	for folder in folders {
 		testing.expectf(t, os.is_dir(folder), "%s is not a folder of the repository", folder)
 	}
 	testing.expectf(t, os.is_dir(foundation.SOURCE_FOLDER_LIBRARY), "%s is not a folder of the repository", foundation.SOURCE_FOLDER_LIBRARY)
+	testing.expectf(t, os.is_dir(foundation.SOURCE_FOLDER_CONTRACT), "%s is not a folder of the repository", foundation.SOURCE_FOLDER_CONTRACT)
 	// The files that the tool names by a path of their own.
 	for file in ([]string{build.RUNTIME_MEMORY, build.BOOT_PROGRAM_JUMP_SOURCE, build.RELEASE_NUMBER_SOURCE, foundation.CRYPTOGRAPHY_MANIFEST, checks.CRYPTOGRAPHY_SYSTEM_FILES, machine.FAULT_SOURCE_FILE, machine.DEBUG_TARGET_SOURCE_FILE, site.SITE_SEARCH_MATCH_SOURCE, site.SITE_OPERATION_FILE, site.SITE_ERRORS_FILE, site.SITE_FIXED_ADDRESSES_FILE, foundation.SYSTEM_GRANTS_FILE, foundation.ROOT_START_GRANT_SETS_FILE, site.SITE_ROOT_BUDGETS_FILE, site.SITE_START_GRANT_FILE, foundation.FONT_OUTPUT, foundation.BOOT_DISPLAY_FONT_OUTPUT, resources.HALL_OF_FAME_CREDITS_FILE, resources.HALL_OF_FAME_MODULE_FILE}) {
 		testing.expectf(t, os.is_file(file), "%s is not a file of the repository", file)

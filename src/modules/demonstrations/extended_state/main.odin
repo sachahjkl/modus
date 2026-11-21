@@ -42,12 +42,12 @@
 package extended_state
 
 import "base:intrinsics"
-import "modus:support/display"
-import "modus:support/graphics"
-import sets "modus:support/instruction_sets"
-import "modus:support/interface"
+import "modus:display"
+import "modus:graphics"
+import sets "modus:instruction_sets"
+import "modus:interface"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The main thread and up to 31 threads that hold their registers: 928
 // pages. And the glyph memory of the copy of the text rendering of the

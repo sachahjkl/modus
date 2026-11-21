@@ -64,7 +64,7 @@ Do not use: character (for the form), symbol.
 
 An outline is the set of closed contours of line segments and quadratic curves that bound a glyph or a pointer shape, in units of its font or of its design size.
 
-The outline is what a TrueType font stores in its table `glyf`: points in units of the font, each on or off the curve. The renderer of `src/library/support/vector_font` cuts each curve into segments, scales the points to the grid, applies the grid fit, and accumulates the coverage of each pixel in fixed point. A pointer shape of the theme of the system is also an outline, written in its pointer manifest, and the same renderer draws it. The modus tool reads no outline of CFF (cubic curves) and no SVG file.
+The outline is what a TrueType font stores in its table `glyf`: points in units of the font, each on or off the curve. The renderer of `src/library/modus/vector_font` cuts each curve into segments, scales the points to the grid, applies the grid fit, and accumulates the coverage of each pixel in fixed point. A pointer shape of the theme of the system is also an outline, written in its pointer manifest, and the same renderer draws it. The modus tool reads no outline of CFF (cubic curves) and no SVG file.
 
 The design: `docs/FONTS.md`, "4. Fixed point".
 
@@ -134,7 +134,7 @@ Do not use: glyph id (for this), glyph number, character offset.
 
 The font outlines are one resource of the boot image that holds the font files of the system, from which each process draws each glyph of its text.
 
-The resource is `font_outlines` (`src/library/contract/font_outlines`): a header, one record for each font with the BLAKE3 hash of its file, then the font files of the faces. The root service checks its hash once and maps it read-only at the fixed range `Font_Outlines` in each process with a surface, each terminal and the compositor. A process validates its header once. The font outlines are not a glyph cache: they hold outlines, not drawn words.
+The resource is `font_outlines` (`src/library/modus/contract/font_outlines`): a header, one record for each font with the BLAKE3 hash of its file, then the font files of the faces. The root service checks its hash once and maps it read-only at the fixed range `Font_Outlines` in each process with a surface, each terminal and the compositor. A process validates its header once. The font outlines are not a glyph cache: they hold outlines, not drawn words.
 
 The design: `src/md/features/text_rendering.md`.
 
@@ -186,7 +186,7 @@ Do not use: locale, language code, language enum.
 
 A dead key is a key of a layout of the keyboard that gives no character itself, and puts its accent on the character of the next key.
 
-The layout of France has four: the circumflex and the diaeresis on the key right of P, and the tilde and the grave accent with AltGr. `^` then `e` gives ê, because the words of French need accented letters that the keyboard has no other key for. A space after a dead key gives the accent alone; a key with no accented form gives the accent, then its own character. The input service keeps the accent that waits; the tables are in `src/library/private/input/keyboard_layout`.
+The layout of France has four: the circumflex and the diaeresis on the key right of P, and the tilde and the grave accent with AltGr. `^` then `e` gives ê, because the words of French need accented letters that the keyboard has no other key for. A space after a dead key gives the accent alone; a key with no accented form gives the accent, then its own character. The input service keeps the accent that waits; the tables are in `src/library/internal/input/keyboard_layout`.
 
 The design: `src/md/features/keyboard_layout.md`.
 
@@ -226,7 +226,7 @@ Do not use: theme (for this: a pointer theme is a set of pointer pictures), dark
 
 The appearance in force is the appearance, dark or light, that each process draws now.
 
-It is one word of the settings page. With the setting `dark` or `light` it is that value; with `auto` it is the value of the rule of the day at this moment, which `src/library/support/appearance` computes from the date page. The process `settings` writes it with each change of the values, and the root service writes it at 07:00 and 19:00 of the local time. A process reads it at each frame through `src/library/support/display`, which gives it to `graphics.appearance_use`; the compositor sends `Settings_Changed` to each window when it changes, so each window draws once.
+It is one word of the settings page. With the setting `dark` or `light` it is that value; with `auto` it is the value of the rule of the day at this moment, which `src/library/modus/appearance` computes from the date page. The process `settings` writes it with each change of the values, and the root service writes it at 07:00 and 19:00 of the local time. A process reads it at each frame through `src/library/modus/display`, which gives it to `graphics.appearance_use`; the compositor sends `Settings_Changed` to each window when it changes, so each window draws once.
 
 The design: `src/md/features/appearance.md`.
 
@@ -238,7 +238,7 @@ A color token is a named color of the design rules that has one value in each ap
 
 `graphics.Color_Tokens` holds each token; `graphics.colors` holds their values in the appearance in force of a process, so a drawer writes `graphics.colors.text` and draws the text of the dark or of the light appearance. The `DARK_` constants of the package are the values of the dark appearance, for constant tables and for what is always dark (the boot display, the mark). White, black and the ink of a text on white are not tokens: they are the same in both appearances.
 
-The design: `src/md/features/appearance.md`, and `src/library/support/graphics/rules.odin`.
+The design: `src/md/features/appearance.md`, and `src/library/modus/graphics/rules.odin`.
 
 Do not use: palette color (the palette is a panel of the desktop), design token, swatch.
 
@@ -306,7 +306,7 @@ Do not use: fixed-width font (for this), terminal font.
 
 The interface font is the proportional font of the titles, the labels, the buttons, the menus and the bar: B612.
 
-B612 has 19 different advances in ASCII, and all its digits have one advance, so a column of numbers aligns in it too. Its Bold weight has scale 1 only, for titles. A process uses it through `src/library/support/interface`: an element that names or explains draws a `Text` record in the interface font, which text shaping places and the faces `Interface` and `Interface_Bold` draw. If the font outlines lack B612, or if the setting `font` is `spleen`, each element draws in the font of the cells.
+B612 has 19 different advances in ASCII, and all its digits have one advance, so a column of numbers aligns in it too. Its Bold weight has scale 1 only, for titles. A process uses it through `src/library/modus/interface`: an element that names or explains draws a `Text` record in the interface font, which text shaping places and the faces `Interface` and `Interface_Bold` draw. If the font outlines lack B612, or if the setting `font` is `spleen`, each element draws in the font of the cells.
 
 The design: `docs/FONTS.md`, "12. The interface font and the text shaping module".
 
@@ -318,7 +318,7 @@ An interface text is a text that a draw table draws in the interface font: the d
 
 Its rectangle is the measured box of the text widened by the ink margin on each side, so the damage of the record covers every pixel of its ink. Its origin is `text_origin_thirds` thirds of a pixel (0, 1 or 2) after `x` and the margin, so a label can start between two pixels. The table shapes the text and draws its placed glyphs with `graphics.text_proportional`. A text in the font of the cells is the same record with the font `Cells_8x16`, its origin the left edge of its box.
 
-The design: `docs/FONTS.md`, "12.5 What changes in `src/library/support/interface`".
+The design: `docs/FONTS.md`, "12.5 What changes in `src/library/modus/interface`".
 
 Do not use: proportional text record.
 
@@ -328,7 +328,7 @@ The font in use is the font that actually draws a text of a draw table: the inte
 
 A text asks for the interface font, but three things make it fall back: the table has no interface font (an isolated call: the call host maps no font outlines), the setting `font` is `spleen`, or the text is longer than 256 bytes (`INTERFACE_TEXT_LIMIT`). `interface.font_in_use` decides, and both the measure and the draw call it. So a text is always measured in the font that draws it, and an element never passes its box in either font.
 
-The design: `docs/FONTS.md`, "12.5 What changes in `src/library/support/interface`".
+The design: `docs/FONTS.md`, "12.5 What changes in `src/library/modus/interface`".
 
 Do not use: effective font.
 
@@ -386,7 +386,7 @@ Do not use: crossed zero, zero with a slash.
 
 Text shaping is the step that turns the characters of a text into placed glyphs, with the advances and the pair adjustments of one font.
 
-A proportional text needs it: the x of each glyph is the sum of the advances and adjustments before it. The package `src/library/support/text_rendering` does it for a direct call, and the library module `text_rendering` exports the same work over the font outlines of its caller: `shape_text` gives the placed glyphs of one text, `measure_texts` the width of many text ranges in one call, and `break_text` the lines of a text in a box. Text shaping here does advances and pairs only: no ligature, no other script.
+A proportional text needs it: the x of each glyph is the sum of the advances and adjustments before it. The package `src/library/modus/text_rendering` does it for a direct call, and the library module `text_rendering` exports the same work over the font outlines of its caller: `shape_text` gives the placed glyphs of one text, `measure_texts` the width of many text ranges in one call, and `break_text` the lines of a text in a box. Text shaping here does advances and pairs only: no ligature, no other script.
 
 The design: `docs/FONTS.md`, "12.3 The text shaping module".
 
@@ -466,7 +466,7 @@ Do not use: lookup table (alone), LUT.
 
 A Markdown block is one unit of the Markdown of a source comment that stands on its own rows: a paragraph, a list item, a fenced block or an example.
 
-The reader of the system (`src/library/private/manual/source_comment_markdown`) gives the blocks of a documentation text in order. A block is a range of bytes of that text, with its kind. A list item has its mark and its depth, a fenced block has the word after its opening fence, and a block says whether an empty line is before it. The Markdown spans of a block follow it. Example: `manual` starts a row for each block, and draws a band behind a fenced block. It is not a block of storage.
+The reader of the system (`src/library/internal/manual/source_comment_markdown`) gives the blocks of a documentation text in order. A block is a range of bytes of that text, with its kind. A list item has its mark and its depth, a fenced block has the word after its opening fence, and a block says whether an empty line is before it. The Markdown spans of a block follow it. Example: `manual` starts a row for each block, and draws a band behind a fenced block. It is not a block of storage.
 
 The design: `docs/SITE.md`, "The reader of the system".
 

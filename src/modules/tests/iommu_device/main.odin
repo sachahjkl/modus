@@ -49,9 +49,9 @@ package iommu_device_service
 
 import "modus:contract/block"
 import "modus:contract/ring"
-import "modus:support/pci"
-import "modus:support/system"
-import "modus:support/virtio"
+import "modus:pci"
+import "modus:system"
+import "modus:virtio"
 
 // The budget of a block service: it drives one disk through one ring.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, processes = 1, threads = 1}

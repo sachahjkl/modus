@@ -30,7 +30,7 @@ package c_compiler
 import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The bytes of a source that the module takes. The source is copied
 // before the C part reads it: in an isolated call it is in the call

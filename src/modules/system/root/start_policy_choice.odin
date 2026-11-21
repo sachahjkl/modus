@@ -4,7 +4,7 @@ package root
 // (src/md/features/start_policy.md, "A start policy from the disk").
 //
 // The choice is one row of the disk grant table of principal 0, with the
-// disk grant Start_Policy (modus:support/disk_process). Principal 0 makes it
+// disk grant Start_Policy (modus:disk_process). Principal 0 makes it
 // with the command Start_Policy_Choice; it takes effect at the next start.
 // At that start this service reads it before any start policy runs: it
 // starts `unlock` with no window, which has the TPM release the machine
@@ -20,12 +20,12 @@ import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/errors"
 import "modus:contract/start_list"
-import "modus:private/root/start_policy_rules"
-import "modus:support/disk_process"
-import "modus:support/principals"
-import "modus:support/random"
-import "modus:support/storage"
-import "modus:support/system"
+import "internal:root/start_policy_rules"
+import "modus:disk_process"
+import "modus:principals"
+import "modus:random"
+import "modus:storage"
+import "modus:system"
 import "modus:contract/value_kinds"
 
 // What the read of the choice waits for, before any start policy runs.

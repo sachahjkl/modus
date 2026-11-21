@@ -20,7 +20,7 @@ VIEWS_TEST_FOLDER :: "src/modules/tests/fact_views_probe"
 @(private = "file")
 VIEWS_TEST_IMPORTS :: `package fact_views_probe
 
-import "modus:support/system"
+import "modus:system"
 import "modus:contract/value_kinds"
 `
 

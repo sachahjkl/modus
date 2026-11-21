@@ -36,7 +36,7 @@ import op "modus:contract/operation"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import "modus:contract/ring"
-import "modus:support/system"
+import "modus:system"
 
 file: []u8
 region: []u8

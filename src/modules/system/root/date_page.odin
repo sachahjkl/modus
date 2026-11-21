@@ -1,9 +1,9 @@
 package root
 
 import "modus:contract/date"
-import "modus:support/system"
+import "modus:system"
 
-// The date (src/library/contract/date): this service creates the date page, gives it
+// The date (src/library/modus/contract/date): this service creates the date page, gives it
 // with Write and the two ports of the real-time clock to the process
 // `date`, and maps it read-only into each process that it starts.
 

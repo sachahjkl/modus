@@ -26,8 +26,8 @@
 // it shares with its terminal. Nothing else.
 package flood
 
-import "modus:support/system"
-import terminal "modus:support/terminal"
+import "modus:system"
+import terminal "modus:terminal"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module and its thread.

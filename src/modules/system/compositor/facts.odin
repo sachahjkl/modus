@@ -5,9 +5,9 @@ import "modus:contract/palette_table"
 import "modus:contract/pointer_pictures"
 import "modus:contract/settings"
 import "modus:contract/value_kinds"
-import "modus:private/compositor/palette"
-import "modus:support/interface"
-import "modus:support/system"
+import "internal:compositor/palette"
+import "modus:interface"
+import "modus:system"
 
 // The log facts of the compositor (src/md/features/log_facts.md, "The facts
 // of the compositor and of the windows"): the lines of the windows that a

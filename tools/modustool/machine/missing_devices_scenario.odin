@@ -1,7 +1,7 @@
 package machine
 
 import "core:fmt"
-import "modus:private/root/entropy_read_deadline"
+import "internal:root/entropy_read_deadline"
 import "modustool:build"
 import "modustool:foundation"
 

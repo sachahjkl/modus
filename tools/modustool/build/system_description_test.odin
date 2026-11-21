@@ -2,7 +2,7 @@ package build
 
 import info "modus:contract/boot_info"
 import "modus:contract/system_description"
-import "modus:support/cryptography/ed25519"
+import "modus:cryptography/ed25519"
 import "core:fmt"
 import "core:strings"
 import "core:testing"

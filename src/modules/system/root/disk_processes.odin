@@ -17,7 +17,7 @@ package root
 // The disk grant table of each principal binds a nickname, the name of the
 // entry, to the hash of one file, with the grants of that file
 // (docs/MODULE_CONTRACT.md, "The grants of a disk process"). Its rules are
-// in modus:support/disk_process; this file applies them at each start and
+// in modus:disk_process; this file applies them at each start and
 // serves the commands Disk_Grant and Nickname_Move. The store is the one
 // grant that a command gives: the store of the nickname, so it follows the
 // nickname to its next file.
@@ -32,13 +32,13 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/start_grant"
-import "modus:support/disk_process"
-import "modus:support/display"
-import "modus:support/principals"
-import "modus:support/random"
-import "modus:support/storage"
+import "modus:disk_process"
+import "modus:display"
+import "modus:principals"
+import "modus:random"
+import "modus:storage"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 import "modus:contract/value_kinds"
 
 // What the load that runs waits for.

@@ -22,13 +22,13 @@ Each work of others that the system ships in a module or in the boot image, or t
 | Iosevka, as the subset "Iosevka ASCII" | `resources/fonts/iosevka.ttf` | Iosevka | Belleve Invis | OFL-1.1 | `resources/fonts/OFL.txt` | https://github.com/sponsors/be5invis |
 | B612, as the subset "B612 ASCII" | `resources/fonts/b612.ttf` | B612 | Airbus, Intactile DESIGN, PolarSys | OFL-1.1 | `resources/fonts/OFL.txt` | — |
 | B612 Bold, as the subset "B612 ASCII Bold" | `resources/fonts/b612_bold.ttf` | B612 | Airbus, Intactile DESIGN, PolarSys | OFL-1.1 | `resources/fonts/OFL.txt` | — |
-| Spleen 8x16, the fallback font | `src/library/support/graphics/font.odin` | Spleen | Frederic Cambus | BSD-2-Clause | `src/library/support/graphics/FONT_LICENSE` | https://github.com/sponsors/fcambus |
-| Spleen 12x24, 16x32 and 32x64, the text of the boot display at 12, 16 and 32 eighths | `src/library/support/bootscreen/spleen_sizes.odin` | Spleen | Frederic Cambus | BSD-2-Clause | `src/library/support/graphics/FONT_LICENSE` | https://github.com/sponsors/fcambus |
+| Spleen 8x16, the fallback font | `src/library/modus/graphics/font.odin` | Spleen | Frederic Cambus | BSD-2-Clause | `src/library/modus/graphics/FONT_LICENSE` | https://github.com/sponsors/fcambus |
+| Spleen 12x24, 16x32 and 32x64, the text of the boot display at 12, 16 and 32 eighths | `src/library/modus/bootscreen/spleen_sizes.odin` | Spleen | Frederic Cambus | BSD-2-Clause | `src/library/modus/graphics/FONT_LICENSE` | https://github.com/sponsors/fcambus |
 | The pointer theme "Posy's Cursor", in the boot image of a development build that has it, never in a release image | `resources/pointers/posy.manifest` | Posy's Cursor | Michiel de Boer (Posy) | CC-BY-NC-4.0 | `resources/pointers/posy.manifest` | — |
-| The cryptography of Odin's `core:crypto`, the files of `origin.manifest` | `src/library/support/cryptography` | Odin core library | Ginger Bill, Yawning Angel, Odin contributors | Zlib | `src/library/support/cryptography/LICENSE.odin.txt` | https://github.com/sponsors/gingerBill |
-| The field arithmetic of fiat-crypto, in Odin's port | `src/library/support/cryptography/_fiat` | fiat-crypto | MIT PLV (Andres Erbsen, Jade Philipoom, Jason Gross, Robert Sloan, Adam Chlipala) | BSD-1-Clause | `src/library/support/cryptography/LICENSE.fiat-crypto.txt` | — |
-| The runtime of the Odin compiler, in each module and in the boot program | `base:runtime` | Odin | Ginger Bill and Odin contributors | Zlib | `src/library/support/cryptography/LICENSE.odin.txt` | https://github.com/sponsors/gingerBill |
-| The package `reflect` of the core library of Odin, in the module `cryptography` | `core:reflect` | Odin | Ginger Bill and Odin contributors | Zlib | `src/library/support/cryptography/LICENSE.odin.txt` | https://github.com/sponsors/gingerBill |
+| The cryptography of Odin's `core:crypto`, the files of `origin.manifest` | `src/library/modus/cryptography` | Odin core library | Ginger Bill, Yawning Angel, Odin contributors | Zlib | `src/library/modus/cryptography/LICENSE.odin.txt` | https://github.com/sponsors/gingerBill |
+| The field arithmetic of fiat-crypto, in Odin's port | `src/library/modus/cryptography/_fiat` | fiat-crypto | MIT PLV (Andres Erbsen, Jade Philipoom, Jason Gross, Robert Sloan, Adam Chlipala) | BSD-1-Clause | `src/library/modus/cryptography/LICENSE.fiat-crypto.txt` | — |
+| The runtime of the Odin compiler, in each module and in the boot program | `base:runtime` | Odin | Ginger Bill and Odin contributors | Zlib | `src/library/modus/cryptography/LICENSE.odin.txt` | https://github.com/sponsors/gingerBill |
+| The package `reflect` of the core library of Odin, in the module `cryptography` | `core:reflect` | Odin | Ginger Bill and Odin contributors | Zlib | `src/library/modus/cryptography/LICENSE.odin.txt` | https://github.com/sponsors/gingerBill |
 | The C compiler `chibicc`, at a pinned commit with four patches, in the module `c_compiler` | `src/outside/chibicc` | chibicc | Rui Ueyama | MIT | `src/outside/chibicc/LICENSE` | https://github.com/sponsors/rui314 |
 | The portrait of Jonathan Blow: a credited frame of a video | `resources/hall_of_fame/jonathan_blow.png` | Hall of fame portrait | Credited video frame (see `CREDITS.md`) | NONE | `resources/hall_of_fame/CREDITS.md` | — |
 | The portrait of Andreas Kling | `resources/hall_of_fame/andreas_kling.png` | Hall of fame portrait | See `resources/hall_of_fame/CREDITS.md` | CC-BY-3.0 | `resources/hall_of_fame/CREDITS.md` | — |
@@ -42,16 +42,16 @@ Algorithms and specifications implemented from scratch in `src/` without copying
 
 | Algorithm | Authors | Upstream | Reference license | Place | Funding |
 |---|---|---|---|---|---|
-| EEVDF (Earliest Eligible Virtual Deadline First) scheduling | Ion Stoica, Hussein Abdel-Wahab; Peter Zijlstra (Linux EEVDF) | EEVDF paper (1995), Linux scheduler | Paper / GPL-2.0 | `src/kernel/schedule.odin` | https://www.linuxfoundation.org/about/donate |
-| Exact-area analytic glyph rasterizer | Raph Levien, Sean Barrett | font-rs, stb_truetype 2 | Apache-2.0 / MIT | `src/library/support/vector_font/raster.odin` | https://github.com/sponsors/raphlinus |
-| Exact-area analytic path and text rasterizer | Raph Levien, Sean Barrett | font-rs, stb_truetype 2 | Apache-2.0 / MIT | `src/library/support/text_rendering/raster.odin` | https://github.com/sponsors/raphlinus |
-| Copy-on-write B-tree object store | Kent Overstreet, Fuchsia Fxfs authors | bcachefs, Fuchsia Fxfs | GPL-2.0 / BSD-3-Clause | `src/library/private/storage/storage_tree/storage_tree.odin` | https://www.patreon.com/bcachefs |
-| QUIC transport and TLS 1.3 key schedule | IETF QUIC and TLS Working Groups | RFC 9000, RFC 9001, RFC 9002 | IETF Standard | `src/library/support/quic` | https://www.ietf.org/support/ |
-| Turns-based polynomial trigonometry | Casey Muratori (turns convention) | Turns angle convention | Public domain | `src/library/support/trigonometry/trigonometry.odin` | — |
-| Vector UTF-8 validation (16 bytes at a time) | John Keiser, Daniel Lemire | simdutf (Keiser & Lemire 2021) | Apache-2.0 / MIT | `src/library/contract/text_encoding/text_valid_sixteen_bytes_at_a_time.odin` | https://github.com/sponsors/lemire |
-| Swiss tables (16-tag SIMD open addressing) | Matt Kulukundis (Google Abseil), Facebook Folly F14 authors | Abseil SwissTable, Folly F14 | Apache-2.0 | `src/library/support/hash_table/hash_table.odin` | — |
-| rapidhash V3 fast short-key hash | Nicolas De Carli, Wang Yi (wyhash) | rapidhash | MIT | `src/library/support/fast_hash/fast_hash.odin` | — |
-| Vector fuzzy matching and frecency | Dmitriy Kovalenko (fff / frizbee), Junegunn Choi (fzf), Mozilla Places authors | fff, frizbee, fzf | MIT | `src/library/support/line_editor/fuzzy_match_vectors.odin` | https://github.com/sponsors/junegunn |
+| EEVDF (Earliest Eligible Virtual Deadline First) scheduling | Ion Stoica, Hussein Abdel-Wahab; Peter Zijlstra (Linux EEVDF) | EEVDF paper (1995), Linux scheduler | Paper / GPL-2.0 | `src/modulus/schedule.odin` | https://www.linuxfoundation.org/about/donate |
+| Exact-area analytic glyph rasterizer | Raph Levien, Sean Barrett | font-rs, stb_truetype 2 | Apache-2.0 / MIT | `src/library/modus/vector_font/raster.odin` | https://github.com/sponsors/raphlinus |
+| Exact-area analytic path and text rasterizer | Raph Levien, Sean Barrett | font-rs, stb_truetype 2 | Apache-2.0 / MIT | `src/library/modus/text_rendering/raster.odin` | https://github.com/sponsors/raphlinus |
+| Copy-on-write B-tree object store | Kent Overstreet, Fuchsia Fxfs authors | bcachefs, Fuchsia Fxfs | GPL-2.0 / BSD-3-Clause | `src/library/internal/storage/storage_tree/storage_tree.odin` | https://www.patreon.com/bcachefs |
+| QUIC transport and TLS 1.3 key schedule | IETF QUIC and TLS Working Groups | RFC 9000, RFC 9001, RFC 9002 | IETF Standard | `src/library/modus/quic` | https://www.ietf.org/support/ |
+| Turns-based polynomial trigonometry | Casey Muratori (turns convention) | Turns angle convention | Public domain | `src/library/modus/trigonometry/trigonometry.odin` | — |
+| Vector UTF-8 validation (16 bytes at a time) | John Keiser, Daniel Lemire | simdutf (Keiser & Lemire 2021) | Apache-2.0 / MIT | `src/library/modus/contract/text_encoding/text_valid_sixteen_bytes_at_a_time.odin` | https://github.com/sponsors/lemire |
+| Swiss tables (16-tag SIMD open addressing) | Matt Kulukundis (Google Abseil), Facebook Folly F14 authors | Abseil SwissTable, Folly F14 | Apache-2.0 | `src/library/modus/hash_table/hash_table.odin` | — |
+| rapidhash V3 fast short-key hash | Nicolas De Carli, Wang Yi (wyhash) | rapidhash | MIT | `src/library/modus/fast_hash/fast_hash.odin` | — |
+| Vector fuzzy matching and frecency | Dmitriy Kovalenko (fff / frizbee), Junegunn Choi (fzf), Mozilla Places authors | fff, frizbee, fzf | MIT | `src/library/modus/line_editor/fuzzy_match_vectors.odin` | https://github.com/sponsors/junegunn |
 
 ## Inspirations
 

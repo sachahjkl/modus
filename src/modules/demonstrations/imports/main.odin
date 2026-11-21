@@ -50,14 +50,14 @@ package imports
 
 import "base:intrinsics"
 import "modus:contract/errors"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:random"
+import "modus:system"
 
 // Itself and two processes that import calendar: 808 pages. And the glyph
 // memory of the copy of the text rendering of the drawing module, which
@@ -333,7 +333,7 @@ starter_records_check :: proc "contextless" () -> (found: Starter_Records) {
 	return found
 }
 
-// The random generator of this process (src/library/support/random).
+// The random generator of this process (src/library/modus/random).
 process_generator: random.Generator
 
 // entry runs each load case once with the loader of the system, calls

@@ -1,7 +1,7 @@
 // The interface package as a module (docs/INTERFACE.md, section 7; the
 // test of the claim "the functions are written so the package can become a
 // module later with the same calls"). Each export calls one function of
-// src/library/support/interface over two tables in memory of the caller: the draw
+// src/library/modus/interface over two tables in memory of the caller: the draw
 // table (Table of Draw_Record, Append) and the text table (Bytes, Append).
 // The module holds no state of the process: a frame of the package is made
 // over the two tables for the time of one call.
@@ -30,10 +30,10 @@ import "base:intrinsics"
 import "modus:contract/accessibility"
 import "modus:contract/draw_record"
 import "modus:contract/errors"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 
 // A rectangle of the surface: the place of an element.
 Area :: struct {

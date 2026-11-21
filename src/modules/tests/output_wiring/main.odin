@@ -48,7 +48,7 @@ import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 
 // The probe of the writer, to read the wiring of which this process is
 // the asker.

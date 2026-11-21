@@ -36,7 +36,7 @@ The terminal sends the due state, then waits. So each wait of the loop starts wi
 
 **A frame that did not reach the compositor is still owed.** When the full command ring refused the `Present`, the compositor left the frame out, or the drawing module refused the draw, the window layer does not keep the frame as the last one (`drawing.drawn` false, or `drawing.late`). The terminal then marks the view changed, so the next turn draws it again and says before its wait that it is due. Without this, the next turn saw no change, waited with nothing to draw, and the screen kept the older picture until the next record or key.
 
-**The decision is a procedure with no state.** It reads no clock and no word, so a host test drives it with each case (`src/library/support/terminal/picture_wait_test.odin`).
+**The decision is a procedure with no state.** It reads no clock and no word, so a host test drives it with each case (`src/library/modus/terminal/picture_wait_test.odin`).
 
 ## The refused forms
 

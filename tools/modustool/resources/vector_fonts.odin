@@ -6,7 +6,7 @@ import "core:slice"
 import "core:strings"
 import "modus:contract/font_outlines"
 import "modus:contract/font_characters"
-import "modus:support/vector_font"
+import "modus:vector_font"
 import "modustool:foundation"
 
 // The vector fonts of the system (docs/FONTS.md).

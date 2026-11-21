@@ -5,7 +5,7 @@ import "core:testing"
 // The two packages of one name before the copy had its own names: this test
 // package compiles only when the names differ.
 import origin_sha2 "core:crypto/sha2"
-import copy_sha2 "modus:support/cryptography/sha2"
+import copy_sha2 "modus:cryptography/sha2"
 import "modustool:foundation"
 
 @(private = "file")
@@ -19,7 +19,7 @@ CRYPTOGRAPHY_TEST_ORIGIN_PATH :: CRYPTOGRAPHY_ORIGIN_PREFIX + "sha2/sha2.odin"
 CRYPTOGRAPHY_TEST_ORIGIN :: "/*\npackage sha2 implements the SHA2 hash algorithms.\n*/\npackage sha2\n\nimport \"core:crypto\"\nimport \"core:crypto/_aes\"\nimport \"core:crypto/_aes/ct64\"\nimport subtle \"core:crypto/_subtle\"\nimport \"core:crypto/hash\"\nimport \"core:math/bits\"\n"
 
 @(private = "file")
-CRYPTOGRAPHY_TEST_COPY :: "/*\npackage sha2 implements the SHA2 hash algorithms.\n*/\npackage modus_sha2\n\nimport crypto \"modus:support/cryptography/compatibility_crypto\"\nimport \"modus:support/cryptography/_aes\"\nimport \"modus:support/cryptography/_aes/ct64\"\nimport subtle \"modus:support/cryptography/_subtle\"\nimport hash \"modus:support/cryptography/compatibility_hash\"\nimport bits \"modus:support/cryptography/compatibility_bits\"\n"
+CRYPTOGRAPHY_TEST_COPY :: "/*\npackage sha2 implements the SHA2 hash algorithms.\n*/\npackage modus_sha2\n\nimport crypto \"modus:cryptography/compatibility_crypto\"\nimport \"modus:cryptography/_aes\"\nimport \"modus:cryptography/_aes/ct64\"\nimport subtle \"modus:cryptography/_subtle\"\nimport hash \"modus:cryptography/compatibility_hash\"\nimport bits \"modus:cryptography/compatibility_bits\"\n"
 
 // An origin outside each folder of the copy has no name in the copy.
 @(test)

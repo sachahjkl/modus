@@ -12,7 +12,7 @@ import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/object_cache"
 import "modus:contract/tree_hash"
-import "modus:support/cryptography/ed25519"
+import "modus:cryptography/ed25519"
 import "modustool:foundation"
 
 @(private = "file")

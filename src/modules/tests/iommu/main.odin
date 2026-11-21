@@ -14,7 +14,7 @@ package iommu_client
 
 import "modus:contract/block"
 import "modus:contract/ring"
-import "modus:support/system"
+import "modus:system"
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {

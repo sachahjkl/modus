@@ -11,8 +11,8 @@ package root
 
 import op "modus:contract/operation"
 import "modus:contract/root_ring"
-import "modus:support/principals"
-import "modus:support/system"
+import "modus:principals"
+import "modus:system"
 
 #assert(root_ring.ROOT_WAIT_PERSISTED_TABLES == principals.PRINCIPAL_CAPACITY)
 // STARTED_CAPACITY processes could hold two queues each, more than the wait

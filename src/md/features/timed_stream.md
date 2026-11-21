@@ -101,7 +101,7 @@ The sound service drives a virtio sound device (virtio 1.2, section 5.14; QEMU `
 3. At `Start` it gives the device the periods and sends `PCM_START`.
 4. Each period is a request of the transmit queue: a header with the stream, the frames of the period, and a status that the device writes.
 
-The device writes its answers and the statuses. The readers of them are pure procedures in the private part `src/library/private/sound/sound_device`, with host tests: a code shorter than its size, a refused code, a `PCM_INFO` with fewer records than asked, a used entry that names no first descriptor, no period in flight, a period out of order, and a status that is not Ok.
+The device writes its answers and the statuses. The readers of them are pure procedures in the private part `src/library/internal/sound/sound_device`, with host tests: a code shorter than its size, a refused code, a `PCM_INFO` with fewer records than asked, a used entry that names no first descriptor, no period in flight, a period out of order, and a status that is not Ok.
 
 **The order of the periods.** The service requires that the device ends the periods in the order in which it gave them, and stops on a device that breaks it. A period completes the records up to its end, so a period ended out of order would complete a record whose earlier frames the device still holds. The service could instead complete only up to the oldest period in flight, but a device that reorders the periods of one stream plays them out of order too, and no record can be right on it. QEMU 10.2 ends them in order: its stream is one queue.
 
@@ -139,4 +139,4 @@ Refused forms of the proof: a recording of the sound card of the host, which a t
 
 ## State
 
-Built: the class protocol in `src/library/contract/timed_stream` with its host tests, the sound service `sound` for virtio-snd with the readers of the device answers in its private part and their host tests, the hold of a device that takes the periods too fast, the start grant `Sound_Device`, the process `tone`, and the machine test `sound` with the check of the file. Left: the correction of the drift, capture, mixing in a class service, a second format, and a measure of the underruns on a loaded machine.
+Built: the class protocol in `src/library/modus/contract/timed_stream` with its host tests, the sound service `sound` for virtio-snd with the readers of the device answers in its private part and their host tests, the hold of a device that takes the periods too fast, the start grant `Sound_Device`, the process `tone`, and the machine test `sound` with the check of the file. Left: the correction of the drift, capture, mixing in a class service, a second format, and a measure of the underruns on a loaded machine.

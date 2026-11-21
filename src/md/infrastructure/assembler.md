@@ -13,5 +13,5 @@ The assembly files stay in the syntax of `nasm`. `nasm` is a small program, and 
 ## The refused form: the assembler of LLVM
 
 - Every comment changes its mark, and each memory operand and each macro changes its form. The code is then harder to read and to comment.
-- The 16-bit and 32-bit start of a processor (`src/kernel/processor.asm`) would go through the Intel syntax of LLVM, which is less tested than its other syntax.
+- The 16-bit and 32-bit start of a processor (`src/modulus/processor.asm`) would go through the Intel syntax of LLVM, which is less tested than its other syntax.
 - The host tests still need `nasm`: the compiler calls it itself for a file `.asm` that a package imports. So the build environment keeps `nasm` in each case.

@@ -24,9 +24,9 @@ import "modus:contract/blake3"
 import info "modus:contract/boot_info"
 import "modus:contract/byte_order"
 import "modus:contract/system_description"
-import "modus:support/bootscreen"
-import "modus:support/cryptography/ed25519"
-import "modus:support/tpm2"
+import "modus:bootscreen"
+import "modus:cryptography/ed25519"
+import "modus:tpm2"
 
 // The key of the system, 40 bytes: the public key of the signing key, then
 // its key number as a little-endian u64. The tool writes it before it

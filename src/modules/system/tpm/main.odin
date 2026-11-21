@@ -25,7 +25,7 @@
 // service.
 //
 // **The commands of the TPM.** The service builds each one itself
-// (modus:support/tpm2): a client sends Seal or Unseal, never a raw command,
+// (modus:tpm2): a client sends Seal or Unseal, never a raw command,
 // so no client extends a PCR or clears the TPM. On the measure ring the
 // root service sends Measure_Start_Policy before each start policy runs:
 // the service extends PCR 12, twice at most in one start
@@ -59,9 +59,9 @@ import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/tpm_service"
 import "modus:contract/value_kinds"
-import "modus:support/random"
-import "modus:support/system"
-import "modus:support/tpm2"
+import "modus:random"
+import "modus:system"
+import "modus:tpm2"
 
 // One thread serves the ring, one request at a time. Its working memory
 // holds the ring, the region of its client and the buffers of one TPM

@@ -10,7 +10,7 @@ A process that keeps two copies of one document, a picture under two names, or t
 
 - **The disk format does not change for it.** An entry keeps the hash of its object already. The reference counts are already in memory, and the open counts them again from the roots.
 - **A loss of power must leave nothing to repair.** A commit is one switch of the root block; a structure on the disk beside the trees would be one more thing that a cut write can leave half done.
-- **A block is named from one store only** (`src/library/contract/store`): the limit of a store counts its blocks, and the open takes a block that two stores name for a fault of the engine.
+- **A block is named from one store only** (`src/library/modus/contract/store`): the limit of a store counts its blocks, and the open takes a block that two stores name for a fault of the engine.
 - **The disk is not trusted.** The hash in an entry is a value that the open does not compare with the bytes. A wrong hash must never make one entry name the bytes of another object.
 - **The cost of a commit stays bounded by the blocks that it changes**, not by the count of the objects of the store.
 

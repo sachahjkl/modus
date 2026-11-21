@@ -34,7 +34,7 @@ REUSE_COMPILER_RUNTIME :: "base:runtime"
 // compiler.
 REUSE_CORE_LIBRARY_START :: "core:"
 // The fallback font is compiled into the graphics package from this file.
-REUSE_SPLEEN_FONT_DATA :: foundation.SOURCE_FOLDER_SUPPORT + "/graphics/font.odin"
+REUSE_SPLEEN_FONT_DATA :: foundation.SOURCE_FOLDER_PUBLIC + "/graphics/font.odin"
 REUSE_FIAT_FOLDER :: foundation.CRYPTOGRAPHY_FOLDER + "/_fiat"
 // The build tag of a file that only the host compiles.
 REUSE_HOST_ONLY_TAG :: "!freestanding"

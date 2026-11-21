@@ -5,7 +5,7 @@ import "modustool:build"
 
 // QUIC through the network service (docs/QUIC.md, section 6): the network
 // device goes to the peer of the tool. `quic_echo` listens on the UDP port
-// 4433 with a listen grant; the peer is its QUIC client, with src/library/support/quic
+// 4433 with a listen grant; the peer is its QUIC client, with src/library/modus/quic
 // and the module cryptography compiled for the host, case by case.
 //
 // The weak seed: the machine of the randomness with no rdrand and no

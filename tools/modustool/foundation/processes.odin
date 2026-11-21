@@ -137,7 +137,7 @@ test_processors_of :: proc(host_processors: int, nix_build_cores: string) -> int
 // reason of its own: a loaded host runs the machine many times slower, and
 // that says nothing about the system. It is larger than the bound of a hang
 // in the checks of a process (TEST_HANG_BOUND_MILLISECONDS in
-// src/library/support/system, 60 s), so that the process writes its own report first.
+// src/library/modus/system, 60 s), so that the process writes its own report first.
 HANG_BOUND :: 120 * time.Second
 
 // The calls and the names of an allocator. A call is the name, then "(",

@@ -1,7 +1,7 @@
 package build
 
 import info "modus:contract/boot_info"
-import iommu "kernel:iommu"
+import iommu "modulus:iommu"
 import op "modus:contract/operation"
 import "core:fmt"
 import "core:os"
@@ -17,7 +17,7 @@ import "modustool:foundation"
 
 // The frame that interrupt_common and kernel_enter push before they call
 // kernel_interrupt: the 15 registers, the vector, the error code, and the
-// five values of the processor (src/kernel/processor.asm).
+// five values of the processor (src/modulus/processor.asm).
 KERNEL_ENTRY_FRAME_BYTES :: 22 * 8
 // The return address that a call pushes: the frame of llc does not hold
 // it.
@@ -45,7 +45,7 @@ STACK_SCAN_DEPTH_MOST :: KERNEL_STACK_BYTES
 STACK_SCAN_NOT_REACHED :: -1
 
 // An interrupt stack and what kernel_interrupt runs on it. The gate of each
-// of its vectors names it in the task state (src/kernel/processor.odin).
+// of its vectors names it in the task state (src/modulus/processor.odin).
 Kernel_Stack_Interrupt_Stack :: struct {
 	label:            string,
 	bytes:            int,
@@ -177,7 +177,7 @@ kernel_stack_rules := Kernel_Stack_Rules {
 		{"memmove", 0},
 		{"fill_bytes_with_value", 0},
 		{"memset", 0},
-		// src/kernel/edge_counters.asm, in the counted kernel only: the
+		// src/modulus/edge_counters.asm, in the counted kernel only: the
 		// callback of each edge pushes nothing.
 		{"__sanitizer_cov_trace_pc_guard", 0},
 	},
@@ -243,7 +243,7 @@ kernel_stack_rules := Kernel_Stack_Rules {
 		{"the machine check", op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE, op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE / STACK_LEAST_FREE_PART, true},
 		// The stub returns from a debug trap of the kernel with no compiled
 		// code, and moves the frame of a trap of a process to the kernel
-		// stack before kernel_interrupt (src/kernel/processor.asm).
+		// stack before kernel_interrupt (src/modulus/processor.asm).
 		{"the debug exception", op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE, op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE / STACK_LEAST_FREE_PART, false},
 	},
 	// The report: kernel_interrupt starts the report of a fault, writes its
@@ -265,7 +265,7 @@ kernel_stack_rules := Kernel_Stack_Rules {
 	nested_report_callees = {"kernel::fault_report_begin"},
 	report_never_reaches = {"kernel::lock_take", "kernel::word_wake"},
 	// The trials of the counter registers at the start of a processor and
-	// in the self test (src/kernel/register_trial.odin).
+	// in the self test (src/modulus/register_trial.odin).
 	register_trials = {"model_specific_register_trial_read", "model_specific_register_trial_write"},
 	refusal_callee = "kernel::register_trial_refusal_address",
 }

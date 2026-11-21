@@ -2,12 +2,12 @@ package console
 
 import module "modus:contract/module"
 import "modus:contract/value_kinds"
-import "modus:support/console_condition"
-import "modus:private/console/console_results"
-import "modus:private/console/console_stream"
-import "modus:support/lex_evaluator"
-import "modus:support/lex_parser"
-import "modus:support/sentence"
+import "modus:console_condition"
+import "internal:console/console_results"
+import "internal:console/console_stream"
+import "modus:lex_evaluator"
+import "modus:lex_parser"
+import "modus:sentence"
 
 // Tables: a value that holds records of one record description, one after
 // the other (module.Type.Table). A Table result of an export gives one, and

@@ -3,8 +3,8 @@ package interface_module
 
 import "core:testing"
 import "modus:contract/errors"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:interface"
+import "modus:system"
 
 // A capacity over the largest int, as a hostile caller gives it: the
 // capacity is refused with an error record of the draw table, and a table

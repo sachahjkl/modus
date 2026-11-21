@@ -28,8 +28,8 @@ package visitor
 
 import "base:intrinsics"
 import op "modus:contract/operation"
-import "modus:support/storage"
-import "modus:support/system"
+import "modus:storage"
+import "modus:system"
 
 // The object of the store that holds the count of the starts.
 VISITS_OBJECT :: "visits"

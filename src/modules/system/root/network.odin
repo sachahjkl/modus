@@ -6,12 +6,12 @@ import op "modus:contract/operation"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
 import "modus:contract/ring"
-import "modus:support/system"
+import "modus:system"
 
 // The network. The network service is the one client of the frame service of
 // the network device; it starts when a process with the grant Network starts
 // (on demand, as the storage service). This service gives each such process
-// one endpoint (src/library/contract/datagram): a datagram ring that it gives to the two
+// one endpoint (src/library/modus/contract/datagram): a datagram ring that it gives to the two
 // processes, and a grant that it names on the control ring of the network
 // service. The process cannot choose its remote or its local port: it has
 // no ambient network, and no port is a global name.

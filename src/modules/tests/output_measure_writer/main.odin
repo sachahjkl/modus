@@ -28,7 +28,7 @@
 package output_measure_writer
 
 import op "modus:contract/operation"
-import "modus:support/system"
+import "modus:system"
 
 // One record of the measures: the size and the Text fields of the access
 // record of `server`, with the count of the readers of the run and the

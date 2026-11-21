@@ -17,9 +17,9 @@ package root
 
 import "modus:contract/errors"
 import "modus:contract/replacement_list"
-import "modus:private/root/replacement_signature"
+import "internal:root/replacement_signature"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 
 // replace changes the replacement table of the machine, for a process with
 // the grant Replace: where a module imports the module `name`, the loaders

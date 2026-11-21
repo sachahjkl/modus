@@ -18,7 +18,7 @@
 // The design: (docs/MODULE_CONTRACT.md, "Replacement of an import").
 package agenda
 
-import "modus:support/system"
+import "modus:system"
 
 foreign _ {
 	days_in_month :: proc "c" (month, year: i64) -> i64 ---

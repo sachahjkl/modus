@@ -13,7 +13,7 @@ import "core:sync"
 import "core:time"
 import "modustool:foundation"
 import "modus:contract/reference_screen"
-import "modus:support/graphics"
+import "modus:graphics"
 import "modustool:build"
 
 MEASURE_RECORD_FOLDER :: "docs/measures"

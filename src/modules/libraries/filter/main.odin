@@ -26,7 +26,7 @@ package filter
 import "modus:contract/errors"
 import "modus:contract/module"
 import "modus:contract/output"
-import "modus:support/system"
+import "modus:system"
 
 // The stream to filter, with its condition as wiring terms.
 source: system.Record_Input_With_Terms(system.Any_Record, output.Condition_Terms)

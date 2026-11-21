@@ -20,7 +20,7 @@ A machine with no host makes a module, and calls it. The assembler is the smalle
 
 ### Two parts
 
-- **The package** `modus:private/assemble/assembler` turns a text into a `Module_Parts` of the module file writer. It has no kernel operation call and no allocator: its workspace is a record of fixed tables that the caller gives. Its host tests run each encoding and each refusal.
+- **The package** `internal:assemble/assembler` turns a text into a `Module_Parts` of the module file writer. It has no kernel operation call and no allocator: its workspace is a record of fixed tables that the caller gives. Its host tests run each encoding and each refusal.
 - **The module** `assemble` (`src/modules/system/assemble`) exports `assemble(source: Bytes, file: Handle) -> Integer`. It copies the text, calls the package, asks `file_size_needed`, maps the memory object `file` that the caller lends with Read and Write, writes the file there with `write`, and gives its size. A refusal is an error record, and one line of the log with the line, the column and the sentence of the refusal.
 
 ### The syntax: AT&T
