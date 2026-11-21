@@ -1,6 +1,6 @@
 // Derived migration planner, fail-closed record and object executor, and
 // pre-flight rollback loss checker (src/md/features/data_evolution.md,
-// "The kinds of change" and "A rollback").
+// "The kinds of change").
 //
 // Given an older description, a newer description, optional declared renames
 // and enum member maps, and a migration direction (Forward or Backward), the
