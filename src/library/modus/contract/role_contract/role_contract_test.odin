@@ -73,7 +73,7 @@ build_compliant_display_module :: proc(t: ^testing.T, include_extra_export: bool
 @(test)
 border_conversions_refuse_unknown_and_zero_words :: proc(t: ^testing.T) {
 	// Zero, one past the last enum value, and max(u64) are refused.
-	for bad_role in ([?]u64{0, u64(Role.Powerbox) + 1, u64(Role.Powerbox) + 100, 0xFFFF_FFFF, max(u64)}) {
+	for bad_role in ([?]u64{0, u64(max(Role)) + 1, u64(max(Role)) + 100, 0xFFFF_FFFF, max(u64)}) {
 		role, ok := role_from_word(bad_role)
 		testing.expectf(t, !ok && role == .None, "word %d must be refused", bad_role)
 	}
