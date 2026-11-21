@@ -1,6 +1,6 @@
 // The wire protocol, signed realisations, and substitution policy of the
 // object cache (src/md/features/recipes.md, "The object cache and its
-// protocol" and "The substitution policy").
+// protocol").
 //
 // An object cache serves two distinct things over a framed byte stream:
 //

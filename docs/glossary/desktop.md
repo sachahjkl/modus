@@ -374,7 +374,7 @@ Do not use: shared library, dynamic library, runtime library.
 
 The drawing module is the module `drawing`: the code that finds the damage between two draw tables and draws the records of a draw table into pixels, for each process that imports it.
 
-It is the first library module. A window calls `damage_of_draw_table_19` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_19` once to draw the records in them, into the pixels of its surface. Each argument is memory of the process, passed by address. The 17 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the process that calls it.
+It is the first library module. A window calls `damage_of_draw_table_20` once for a frame to get the damage rectangles, then `execute_draw_table_in_rectangles_20` once to draw the records in them, into the pixels of its surface. Each argument is memory of the process, passed by address. The 17 in the names is the version of the draw record. The terminal and the compositor draw through it too. The drawing module is not a render service: it runs in the process that calls it.
 
 The design: `docs/INTERFACE.md`, "7. Where it lives: the elements in each process, the drawing in a module".
 

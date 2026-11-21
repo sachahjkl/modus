@@ -20,8 +20,8 @@ CLIP_FILL :: graphics.Color(0x00C08040)
 
 @(private = "file")
 Clip_Tables :: struct {
-	records: [64]Draw_Record,
-	text:    [64]u8,
+	records: [128]Draw_Record,
+	text:    [1024]u8,
 }
 
 @(private = "file")
@@ -498,12 +498,16 @@ a_list_pushes_the_clip_of_its_area :: proc(t: ^testing.T) {
 	frame_end(&frame)
 	testing.expect(t, !table.refused && !table.full, "the list is not written")
 	testing.expect_value(t, record_view(table.records[0]).kind, Draw_Kind.Clip_Push)
-	list_push := record_view(table.records[1])
+	testing.expect_value(t, record_view(table.records[1]).kind, Draw_Kind.Element_Push)
+	list_push := record_view(table.records[2])
 	testing.expect(t, list_push.kind == .Clip_Push && list_push.x == 4 && list_push.y == 4 && list_push.width == 60 && list_push.height == 3 * TABLE_LINE, "the list does not push its area")
-	testing.expect_value(t, record_view(table.records[table.record_count - 2]).kind, Draw_Kind.Clip_Pop)
+	testing.expect_value(t, record_view(table.records[table.record_count - 3]).kind, Draw_Kind.Clip_Pop)
+	testing.expect_value(t, record_view(table.records[table.record_count - 2]).kind, Draw_Kind.Element_Pop)
 	testing.expect_value(t, record_view(table.records[table.record_count - 1]).kind, Draw_Kind.Clip_Pop)
 	problem, _ := draw_record.clip_order_check(table.records[:table.record_count])
 	testing.expect_value(t, problem, draw_record.Clip_Order_Problem.None)
+	table_problem, _ := draw_record.table_order_check(table.records[:table.record_count])
+	testing.expect_value(t, table_problem, draw_record.Table_Order_Problem.None)
 	pixels: [CLIP_CANVAS_WIDTH * CLIP_CANVAS_HEIGHT]graphics.Color
 	clip_draw(&table, pixels[:])
 	for y in 0 ..< CLIP_CANVAS_HEIGHT {

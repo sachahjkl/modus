@@ -1,5 +1,6 @@
 package interface
 
+import "modus:contract/accessibility"
 import "modus:support/display"
 import "modus:support/graphics"
 
@@ -289,6 +290,21 @@ action_bar_keys_width :: proc "contextless" (table: ^Draw_Table, item: ^Action_B
 // a bar shows it whole, or puts it in the list.
 action_bar_item_width :: proc "contextless" (table: ^Draw_Table, item: ^Action_Bar_Item) -> int {
 	return 2 * ACTION_BAR_ITEM_MARGIN + action_bar_keys_width(table, item) + ACTION_BAR_NAME_GAP + text_measured_width(table, FONT_INTERFACE, item.name)
+}
+
+// action_bar_shortcuts_text formats the key combination of an item as a single
+// aria-keyshortcuts string (for example "Shift+Tab" or "Ctrl+F").
+@(private = "file")
+action_bar_shortcuts_text :: proc "contextless" (builder: ^Text_Builder, item: ^Action_Bar_Item) -> string {
+	builder.count = 0
+	count := action_bar_face_count(item)
+	for face, index in item.faces[:count] {
+		if index > 0 {
+			text_put(builder, ACTION_BAR_JOIN_TEXT)
+		}
+		text_put(builder, face)
+	}
+	return text_of(builder)
 }
 
 // action_bar_more_text writes the text of the button "more": the count of
@@ -661,8 +677,10 @@ action_bar :: proc "contextless" (frame: ^Frame, area: Area, items: []Action_Bar
 	}
 
 	// The band and its line at the top.
-	draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.card_bottom)
-	draw_rectangle(table, area.x, area.y, area.width, 1, graphics.colors.track)
+	bar_id := identity("action_bar")
+	draw_element_push(table, area, u32(bar_id), .Toolbar, {name = "actions"})
+	draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.card_bottom, u32(bar_id))
+	draw_rectangle(table, area.x, area.y, area.width, 1, graphics.colors.track, u32(bar_id))
 	lit := false
 	previous_right, previous_y := -1, -1
 	for index in 0 ..< count {
@@ -680,7 +698,17 @@ action_bar :: proc "contextless" (frame: ^Frame, area: Area, items: []Action_Bar
 		hot &&= takes_press
 		pressed &&= takes_press
 		lit ||= hot
+		item_id := identity_with(bar_id, index)
+		shortcut_builder: Text_Builder
+		shortcuts := action_bar_shortcuts_text(&shortcut_builder, &items[index])
+		draw_element_push(table, box, u32(item_id), .Button, {
+			name          = items[index].name,
+			key_shortcuts = shortcuts,
+			states        = takes_press ? {} : {.Disabled},
+			actions       = takes_press ? {.Press} : {},
+		})
 		action_bar_item_draw(table, box, &items[index], hot, pressed)
+		draw_element_pop(table)
 		element_name(frame, box, items[index].name)
 	}
 	if layout.more_box.width > 0 {
@@ -691,23 +719,34 @@ action_bar :: proc "contextless" (frame: ^Frame, area: Area, items: []Action_Bar
 		hot := under.kind == .More && (bar.held.kind == .None || bar.held == under)
 		pressed := hot && bar.held.kind == .More
 		lit ||= hot
+		more_id := identity_in(bar_id, ACTION_BAR_MORE_NAME)
+		draw_element_push(table, box, u32(more_id), .Button, {
+			name      = ACTION_BAR_MORE_NAME,
+			expanded  = bar.open ? .Expanded : .Collapsed,
+			has_popup = .Menu,
+			actions   = bar.open ? {.Press, .Show_Menu, .Collapse} : {.Press, .Show_Menu, .Expand},
+		})
 		action_bar_more_draw(table, box, layout.listed_count, hot, pressed || bar.open)
+		draw_element_pop(table)
 		element_name(frame, box, ACTION_BAR_MORE_NAME)
 	}
+	draw_element_pop(table)
 
 	// The list, over the content: the caller draws the bar last.
 	bar.list_area = {}
 	bar.listed_count = 0
 	if bar.open && list_rows > 0 {
 		bar.list_area = list
-		draw_rectangle(table, list.x, list.y, list.width, list.height, graphics.colors.not_usable)
-		draw_rectangle(table, list.x + ACTION_BAR_LIST_BORDER, list.y + ACTION_BAR_LIST_BORDER, list.width - 2 * ACTION_BAR_LIST_BORDER, list.height - 2 * ACTION_BAR_LIST_BORDER, graphics.colors.card_top)
+		menu_id := identity_in(bar_id, "more menu")
+		draw_element_push(table, list, u32(menu_id), .Menu, {name = ACTION_BAR_MORE_NAME})
+		draw_rectangle(table, list.x, list.y, list.width, list.height, graphics.colors.not_usable, u32(menu_id))
+		draw_rectangle(table, list.x + ACTION_BAR_LIST_BORDER, list.y + ACTION_BAR_LIST_BORDER, list.width - 2 * ACTION_BAR_LIST_BORDER, list.height - 2 * ACTION_BAR_LIST_BORDER, graphics.colors.card_top, u32(menu_id))
 		for row in 0 ..< list_rows {
 			index := layout.listed[row]
 			box := action_bar_list_row(list, row)
 			if row > 0 {
 				// The line between two rows, inside the margins of a row.
-				draw_rectangle(table, box.x + ACTION_BAR_ITEM_MARGIN, box.y - ACTION_BAR_DIVIDER_WIDTH, box.width - 2 * ACTION_BAR_ITEM_MARGIN, ACTION_BAR_DIVIDER_WIDTH, graphics.colors.track)
+				draw_rectangle(table, box.x + ACTION_BAR_ITEM_MARGIN, box.y - ACTION_BAR_DIVIDER_WIDTH, box.width - 2 * ACTION_BAR_ITEM_MARGIN, ACTION_BAR_DIVIDER_WIDTH, graphics.colors.track, u32(menu_id))
 			}
 			press, takes_press := action_bar_key_of(&items[index])
 			bar.listed_keys[row] = press
@@ -716,9 +755,26 @@ action_bar :: proc "contextless" (frame: ^Frame, area: Area, items: []Action_Bar
 			hot := takes_press && under.kind == .Row && under.index == row && (bar.held.kind == .None || bar.held == under)
 			pressed := hot && bar.held.kind == .Row
 			lit ||= hot
+			row_id := identity_with(menu_id, index)
+			shortcut_builder: Text_Builder
+			shortcuts := action_bar_shortcuts_text(&shortcut_builder, &items[index])
+			row_states := takes_press ? accessibility.Element_States{} : accessibility.Element_States{.Disabled}
+			if chosen {
+				row_states += {.Selected}
+			}
+			draw_element_push(table, box, u32(row_id), .Menu_Item, {
+				name            = items[index].name,
+				key_shortcuts   = shortcuts,
+				states          = row_states,
+				actions         = takes_press ? {.Press} : {},
+				position_in_set = u32(row + 1),
+				set_size        = u32(list_rows),
+			})
 			action_bar_item_draw(table, box, &items[index], hot, pressed || chosen)
+			draw_element_pop(table)
 			element_name(frame, box, items[index].name)
 		}
+		draw_element_pop(table)
 		bar.listed_count = list_rows
 	} else if bar.open {
 		action_bar_close(bar)

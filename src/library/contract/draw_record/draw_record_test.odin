@@ -6,8 +6,8 @@ import "core:testing"
 // A record of each kind that the border reads, in a box of whole pixels.
 // The other cases break one field of one of them.
 @(private = "file")
-sample_primitives :: proc() -> [12]Draw_Primitive {
-	return [12]Draw_Primitive {
+sample_primitives :: proc() -> [14]Draw_Primitive {
+	return [14]Draw_Primitive {
 		Draw_Nothing{},
 		Draw_Rectangle{color = 0xFF102030},
 		Draw_Rectangle{color = 0xFF18212D, repetition = SAMPLE_PATTERN},
@@ -16,6 +16,8 @@ sample_primitives :: proc() -> [12]Draw_Primitive {
 		Draw_Text{origin_x = units_of_pixels(10), first = 3, count = 5, color = 0xFFABCDEF, size = 2 * SAMPLE_SIZE, weight = .Bold},
 		Draw_Clip_Push{},
 		Draw_Clip_Pop{},
+		Draw_Element_Push{role = .Button, live = .Polite, toggle = .True, expanded = .Expanded, states = {.Focusable, .Focused}, name_first = 4, name_count = 6, detail_first = 12, detail_count = 2},
+		Draw_Element_Pop{},
 		Draw_Picture{memory = 1, first = 7, stride = 40, generation = 9},
 		Draw_Text_Grid{first = 8, count = 32, columns = 2, size = SAMPLE_SIZE},
 		Draw_Path{first = 12, count = 3 * PATH_POINT_SIZE, fill_color = 0x80708090, stroke_color = 0xFF102030, stroke_width = 3 * UNITS_PER_PIXEL / 2},
@@ -44,7 +46,10 @@ SAMPLE_SIZE :: 16 * UNITS_PER_PIXEL
 // the one box that the border reads for it.
 @(private = "file")
 sample_record :: proc(primitive: Draw_Primitive) -> Draw_Record {
-	if _, is_pop := primitive.(Draw_Clip_Pop); is_pop {
+	if _, is_clip_pop := primitive.(Draw_Clip_Pop); is_clip_pop {
+		return record_of(primitive, 77, 0, 0, 0, 0)
+	}
+	if _, is_element_pop := primitive.(Draw_Element_Pop); is_element_pop {
 		return record_of(primitive, 77, 0, 0, 0, 0)
 	}
 	return record_of(primitive, 77, units_of_pixels(10), units_of_pixels(20), units_of_pixels(110), units_of_pixels(44))
@@ -67,8 +72,10 @@ Reserved_Run :: struct {
 @(private = "file")
 reserved_runs_of :: proc(kind: Draw_Kind) -> (runs: [2]Reserved_Run, count: int) {
 	switch kind {
-	case .None, .Clip_Push, .Clip_Pop:
+	case .None, .Clip_Push, .Clip_Pop, .Element_Pop:
 		return {{0, FIELDS_SIZE}, {}}, 1
+	case .Element_Push:
+		return {{int(offset_of(Element_Push_Fields, name_reserved)), size_of(Element_Push_Fields{}.name_reserved)}, {int(offset_of(Element_Push_Fields, detail_reserved)), size_of(Element_Push_Fields{}.detail_reserved)}}, 2
 	case .Rectangle:
 		return {{int(offset_of(Rectangle_Fields, reserved)), size_of(Rectangle_Fields{}.reserved)}, {}}, 1
 	case .Gradient:
@@ -453,7 +460,7 @@ named_bytes_of :: proc(kind: Draw_Kind) -> int {
 			named = ends[index]
 		}
 		return named
-	case .None, .Rectangle, .Text, .Clip_Push, .Clip_Pop, .Picture, .Text_Grid, .Path:
+	case .None, .Rectangle, .Text, .Clip_Push, .Clip_Pop, .Element_Push, .Element_Pop, .Picture, .Text_Grid, .Path:
 	}
 	return 0
 }
@@ -540,11 +547,11 @@ read_takes_a_box_inside_a_pixel_for_a_rectangle_and_a_gradient :: proc(t: ^testi
 			inside = value.repetition == (Repetition{})
 		case Draw_Gradient:
 			inside = true
-		case Draw_Clip_Pop:
+		case Draw_Clip_Pop, Draw_Element_Pop:
 			// Its box is 0: an edge moved inward inverts it. Its own test
 			// gives it each box.
 			continue
-		case Draw_Nothing, Draw_Clip_Push, Draw_Text, Draw_Picture, Draw_Text_Grid, Draw_Path:
+		case Draw_Nothing, Draw_Clip_Push, Draw_Element_Push, Draw_Text, Draw_Picture, Draw_Text_Grid, Draw_Path:
 		}
 		for part in parts {
 			for side in 0 ..< 4 {

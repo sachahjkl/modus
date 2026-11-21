@@ -48,7 +48,7 @@ import "modus:contract/enum_word"
 // of a bound that changes what a record draws, or of a rule of the
 // execution is a new version, and the names of the exports of the drawing
 // module carry it.
-VERSION :: 19
+VERSION :: 20
 
 RECORD_SIZE :: 48 // The bytes of one record.
 HEADER_SIZE :: 24 // The bytes of the header: the kind, the reserved bytes, the element and the box.
@@ -133,15 +133,17 @@ CLIP_DEPTH_LIMIT :: 16
 // and a new kind takes a new value, so that a record of an older form is
 // refused and never read with other fields.
 Draw_Kind :: enum u8 {
-	None      = 0, // Nothing.
-	Rectangle = 1, // The box in one color, or a pattern of cells of that color that repeats, cut to the box.
-	Text      = 4, // A text run in a font, from its origin at the top of the box.
-	Picture   = 8, // The pixels of a picture of the caller, by values in a picture memory.
-	Text_Grid = 9, // A grid of text cells, copied into the text table.
-	Gradient  = 12, // The box in a color that goes from a color at one point to a color at another, along the line of the two points.
-	Path      = 13, // Lines and quadratic curves, from points in the text table: filled, then stroked, with antialiased edges, cut to the box.
-	Clip_Push = 14, // The records after it, until its Clip_Pop, are cut to the box and to the cut before it. The box is on whole pixels.
-	Clip_Pop  = 15, // Gives back the cut before the last Clip_Push that is open. The box is 0.
+	None         = 0,  // Nothing.
+	Rectangle    = 1,  // The box in one color, or a pattern of cells of that color that repeats, cut to the box.
+	Text         = 4,  // A text run in a font, from its origin at the top of the box.
+	Picture      = 8,  // The pixels of a picture of the caller, by values in a picture memory.
+	Text_Grid    = 9,  // A grid of text cells, copied into the text table.
+	Gradient     = 12, // The box in a color that goes from a color at one point to a color at another, along the line of the two points.
+	Path         = 13, // Lines and quadratic curves, from points in the text table: filled, then stroked, with antialiased edges, cut to the box.
+	Clip_Push    = 14, // The records after it, until its Clip_Pop, are cut to the box and to the cut before it. The box is on whole pixels.
+	Clip_Pop     = 15, // Gives back the cut before the last Clip_Push that is open. The box is 0.
+	Element_Push = 16, // Draws nothing: opens a semantic element node whose records follow until its Element_Pop. The box is on whole pixels.
+	Element_Pop  = 17, // Draws nothing: closes the last Element_Push that is open. The box is 0.
 }
 
 // Why the border of the order of the clips refuses a table.
@@ -407,6 +409,8 @@ Draw_Primitive :: union {
 	Draw_Text,
 	Draw_Clip_Push,
 	Draw_Clip_Pop,
+	Draw_Element_Push,
+	Draw_Element_Pop,
 	Draw_Picture,
 	Draw_Text_Grid,
 	Draw_Path,
@@ -548,6 +552,48 @@ read :: proc "contextless" (record: Draw_Record) -> (primitive: Draw_Primitive, 
 			return nil, .Reserved_Not_Zero
 		}
 		return Draw_Clip_Pop{}, .None
+	case .Element_Push:
+		fields := transmute(Element_Push_Fields)record.fields
+		if fields.name_reserved != 0 || fields.detail_reserved != 0 {
+			return nil, .Reserved_Not_Zero
+		}
+		if record.element == 0 {
+			return nil, .Field_Past_Bound
+		}
+		role, role_ok := element_role_of_word(fields.role)
+		live, live_ok := live_mode_of_word(fields.live)
+		toggle, toggle_ok := toggle_state_of_word(fields.toggle)
+		expanded, expanded_ok := expanded_state_of_word(fields.expanded)
+		states, states_ok := element_states_of_word(fields.states)
+		if !role_ok || !live_ok || !toggle_ok || !expanded_ok || !states_ok {
+			return nil, .Field_Past_Bound
+		}
+		if fields.name_count > ELEMENT_NAME_LIMIT || fields.detail_count > ELEMENT_DETAIL_LIMIT {
+			return nil, .Field_Past_Bound
+		}
+		if (fields.name_count == 0 && fields.name_first != 0) || (fields.detail_count == 0 && fields.detail_first != 0) {
+			return nil, .Field_Past_Bound
+		}
+		if fields.detail_count > 0 && fields.detail_first % 4 != 0 {
+			return nil, .Field_Past_Bound
+		}
+		return Draw_Element_Push{
+			role         = role,
+			live         = live,
+			toggle       = toggle,
+			expanded     = expanded,
+			states       = states,
+			name_first   = fields.name_first,
+			name_count   = fields.name_count,
+			detail_first = fields.detail_first,
+			detail_count = fields.detail_count,
+		}, .None
+	case .Element_Pop:
+		// A pop names no byte of its box and has no fields.
+		if !all_zero(record.fields) || record.left != 0 || record.top != 0 || record.right != 0 || record.bottom != 0 {
+			return nil, .Reserved_Not_Zero
+		}
+		return Draw_Element_Pop{}, .None
 	case .Rectangle:
 		fields := transmute(Rectangle_Fields)record.fields
 		if !all_zero(fields.reserved) {
@@ -642,6 +688,21 @@ record_of :: proc "contextless" (primitive: Draw_Primitive, element: u32, left, 
 		record.kind = u8(Draw_Kind.Clip_Push)
 	case Draw_Clip_Pop:
 		record.kind = u8(Draw_Kind.Clip_Pop)
+	case Draw_Element_Push:
+		record.kind = u8(Draw_Kind.Element_Push)
+		record.fields = transmute([FIELDS_SIZE]u8)Element_Push_Fields{
+			role         = u8(value.role),
+			live         = u8(value.live),
+			toggle       = u8(value.toggle),
+			expanded     = u8(value.expanded),
+			states       = transmute(u32)value.states,
+			name_first   = value.name_first,
+			name_count   = value.name_count,
+			detail_first = value.detail_first,
+			detail_count = value.detail_count,
+		}
+	case Draw_Element_Pop:
+		record.kind = u8(Draw_Kind.Element_Pop)
 	case Draw_Rectangle:
 		record.kind = u8(Draw_Kind.Rectangle)
 		pattern := value.repetition
@@ -676,7 +737,7 @@ byte_range_of :: proc "contextless" (primitive: Draw_Primitive) -> (first, count
 		return value.first, value.count, true
 	case Draw_Path:
 		return value.first, value.count, true
-	case Draw_Nothing, Draw_Clip_Push, Draw_Clip_Pop, Draw_Rectangle, Draw_Gradient, Draw_Picture:
+	case Draw_Nothing, Draw_Clip_Push, Draw_Clip_Pop, Draw_Element_Push, Draw_Element_Pop, Draw_Rectangle, Draw_Gradient, Draw_Picture:
 	}
 	return 0, 0, false
 }
@@ -699,7 +760,7 @@ with_byte_place :: proc "contextless" (primitive: Draw_Primitive, first: u32) ->
 		moved := value
 		moved.first = first
 		return moved
-	case Draw_Nothing, Draw_Clip_Push, Draw_Clip_Pop, Draw_Rectangle, Draw_Gradient, Draw_Picture:
+	case Draw_Nothing, Draw_Clip_Push, Draw_Clip_Pop, Draw_Element_Push, Draw_Element_Pop, Draw_Rectangle, Draw_Gradient, Draw_Picture:
 	}
 	return primitive
 }
@@ -1098,7 +1159,7 @@ clip_order_check :: proc "contextless" (records: []Draw_Record) -> (problem: Cli
 			if step := clip_order_pop(&order); step != .None {
 				return step, place
 			}
-		case .None, .Rectangle, .Text, .Picture, .Text_Grid, .Gradient, .Path:
+		case .None, .Rectangle, .Text, .Picture, .Text_Grid, .Gradient, .Path, .Element_Push, .Element_Pop:
 		}
 	}
 	if end := clip_order_end(order); end != .None {

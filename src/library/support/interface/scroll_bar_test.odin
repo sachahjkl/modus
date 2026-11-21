@@ -13,7 +13,7 @@ import "core:testing"
 @(private = "file")
 Bar_Tables :: struct {
 	records: [128]Draw_Record,
-	text:    [64]u8,
+	text:    [512]u8,
 }
 
 @(private = "file")
@@ -408,45 +408,48 @@ scroll_bar_at_rest_draws_the_table :: proc(t: ^testing.T) {
 	bar_frame(&table, &state, &input, 37)
 	colors := graphics.scroll_bar_colors_dark
 	records := table.records[:table.record_count]
-	testing.expect_value(t, table.record_count, 24)
-	if table.record_count != 24 {
+	testing.expect_value(t, table.record_count, 26)
+	if table.record_count != 26 {
 		return
 	}
+	testing.expect_value(t, record_view(records[0]).kind, Draw_Kind.Element_Push)
+	testing.expect_value(t, record_view(records[25]).kind, Draw_Kind.Element_Pop)
+	drawn := records[1:25]
 	// The track: its border under the whole bar, then its three stops as
 	// two gradients across the 15 pixels inside the border.
-	expect_record(t, records[0], .Rectangle, 0, 0, 17, 428, colors.track_border)
-	expect_record(t, records[1], .Gradient, 1, 1, 8, 426, colors.track[0], colors.track[1])
-	expect_record(t, records[2], .Gradient, 8, 1, 8, 426, colors.track[1], colors.track[2])
+	expect_record(t, drawn[0], .Rectangle, 0, 0, 17, 428, colors.track_border)
+	expect_record(t, drawn[1], .Gradient, 1, 1, 8, 426, colors.track[0], colors.track[1])
+	expect_record(t, drawn[2], .Gradient, 8, 1, 8, 426, colors.track[1], colors.track[2])
 	// At rest an arrow button is its triangle: rows of 1, 3, 5 and 7
 	// pixels, the point toward its end of the bar, on the column 8.
-	expect_record(t, records[3], .Rectangle, 8, 6, 1, 1, colors.triangle)
-	expect_record(t, records[4], .Rectangle, 7, 7, 3, 1, colors.triangle)
-	expect_record(t, records[5], .Rectangle, 6, 8, 5, 1, colors.triangle)
-	expect_record(t, records[6], .Rectangle, 5, 9, 7, 1, colors.triangle)
-	expect_record(t, records[7], .Rectangle, 5, 417, 7, 1, colors.triangle)
-	expect_record(t, records[10], .Rectangle, 8, 420, 1, 1, colors.triangle)
+	expect_record(t, drawn[3], .Rectangle, 8, 6, 1, 1, colors.triangle)
+	expect_record(t, drawn[4], .Rectangle, 7, 7, 3, 1, colors.triangle)
+	expect_record(t, drawn[5], .Rectangle, 6, 8, 5, 1, colors.triangle)
+	expect_record(t, drawn[6], .Rectangle, 5, 9, 7, 1, colors.triangle)
+	expect_record(t, drawn[7], .Rectangle, 5, 417, 7, 1, colors.triangle)
+	expect_record(t, drawn[10], .Rectangle, 8, 420, 1, 1, colors.triangle)
 	// The thumb, at 163 ..< 265: its border, the inner line (the stops of
 	// its fill moved toward white), its fill inside the line, the two
 	// sides of the line.
-	expect_record(t, records[11], .Rectangle, 0, 163, 17, 102, colors.thumb_border)
+	expect_record(t, drawn[11], .Rectangle, 0, 163, 17, 102, colors.thumb_border)
 	lined: [4]graphics.Color
 	for &color, index in lined {
 		color = graphics.mix(colors.thumb_rest[index], graphics.COLOR_WHITE, colors.thumb_line_level)
 	}
-	expect_record(t, records[12], .Gradient, 1, 164, 7, 100, lined[0], lined[1])
-	expect_record(t, records[13], .Gradient, 7, 164, 3, 100, lined[1], lined[2])
-	expect_record(t, records[14], .Gradient, 9, 164, 7, 100, lined[2], lined[3])
-	expect_record(t, records[15], .Gradient, 1, 165, 7, 98, colors.thumb_rest[0], colors.thumb_rest[1])
-	expect_record(t, records[16], .Gradient, 7, 165, 3, 98, colors.thumb_rest[1], colors.thumb_rest[2])
-	expect_record(t, records[17], .Gradient, 9, 165, 7, 98, colors.thumb_rest[2], colors.thumb_rest[3])
-	expect_record(t, records[18], .Rectangle, 1, 165, 1, 98, lined[0])
-	expect_record(t, records[19], .Rectangle, 15, 165, 1, 98, lined[3])
+	expect_record(t, drawn[12], .Gradient, 1, 164, 7, 100, lined[0], lined[1])
+	expect_record(t, drawn[13], .Gradient, 7, 164, 3, 100, lined[1], lined[2])
+	expect_record(t, drawn[14], .Gradient, 9, 164, 7, 100, lined[2], lined[3])
+	expect_record(t, drawn[15], .Gradient, 1, 165, 7, 98, colors.thumb_rest[0], colors.thumb_rest[1])
+	expect_record(t, drawn[16], .Gradient, 7, 165, 3, 98, colors.thumb_rest[1], colors.thumb_rest[2])
+	expect_record(t, drawn[17], .Gradient, 9, 165, 7, 98, colors.thumb_rest[2], colors.thumb_rest[3])
+	expect_record(t, drawn[18], .Rectangle, 1, 165, 1, 98, lined[0])
+	expect_record(t, drawn[19], .Rectangle, 15, 165, 1, 98, lined[3])
 	// The grip: four lines of 7 pixels in the middle of the thumb.
 	for grip_line in 0 ..< 4 {
-		expect_record(t, records[20 + grip_line], .Rectangle, 5, 210 + 2 * grip_line, 7, 1, colors.grip)
+		expect_record(t, drawn[20 + grip_line], .Rectangle, 5, 210 + 2 * grip_line, 7, 1, colors.grip)
 	}
-	// Each record has the identity of the bar, and stays inside it.
-	for record in records {
+	// Each drawn record and the push have the identity of the bar, and stay inside it.
+	for record in records[:25] {
 		testing.expect_value(t, record.element, u32(identity("bar")))
 		view := record_view(record)
 		testing.expect(t, view.x >= 0 && view.y >= 0 && view.x + view.width <= 17 && view.y + view.height <= 428)
@@ -468,7 +471,7 @@ scroll_bar_states_draw_the_colors_of_the_table :: proc(t: ^testing.T) {
 	// the hot fill and the lit grip.
 	pointer_at(&input, 8, 200, false)
 	bar_frame(&table, &state, &input, 37)
-	testing.expect_value(t, table.record_count, 28)
+	testing.expect_value(t, table.record_count, 30)
 	count, record = records_of(&table, .Rectangle, colors.lit_border)
 	testing.expect_value(t, count, 2)
 	expect_record(t, record, .Rectangle, 0, 411, 17, 17, colors.lit_border)
@@ -527,7 +530,7 @@ scroll_bar_states_draw_the_colors_of_the_table :: proc(t: ^testing.T) {
 	bar_frame(&table, &state, &input, 37)
 
 	// The pointer away: the records of the bar at rest.
-	testing.expect_value(t, table.record_count, 24)
+	testing.expect_value(t, table.record_count, 26)
 	count, _ = records_of(&table, .Rectangle, colors.thumb_border)
 	testing.expect_value(t, count, 1)
 }

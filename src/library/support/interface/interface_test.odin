@@ -312,33 +312,42 @@ case_lines_has_a_band_as_high_as_its_answer :: proc(t: ^testing.T) {
 	testing.expect(t, drawn)
 	testing.expect_value(t, count, text_wrapped_line_count(&table, {}, ANSWER, 200))
 	testing.expect(t, count >= 4)
-	// The band of the case at an even place: the whole row, 8 pixels wider
-	// on each side.
-	band := table.records[0]
+	// The row push, then the band of the case at an even place: the whole
+	// row, 8 pixels wider on each side.
+	testing.expect_value(t, record_view(table.records[0]).kind, Draw_Kind.Element_Push)
+	band := table.records[1]
 	testing.expect(t, is_solid_rectangle(record_view(band)), "the band is a solid rectangle")
 	testing.expect_value(t, record_view(band).x, 8)
 	testing.expect_value(t, record_view(band).width, 416)
 	testing.expect_value(t, record_view(band).height, TABLE_LINE + (count - 1) * LINE)
 	testing.expect_value(t, column.used, record_view(band).height)
-	// The text of the case, then each line of the answer; the lines of the
-	// answer, joined, are the answer.
-	testing.expect_value(t, table.record_count, 2 + count)
+	// The row push/pop + two cell push/pops (6 semantic records), the band,
+	// the text of the case, then each line of the answer.
+	testing.expect_value(t, table.record_count, 8 + count)
 	joined: [128]u8
 	length := 0
-	for record, line in table.records[2:table.record_count] {
-		testing.expect_value(t, record_view(record).x, 16 + 200)
-		testing.expect(t, record_view(record).width <= 200, "a line of the answer stays in its box")
-		if line > 0 {
+	answer_lines := 0
+	for record in table.records[:table.record_count] {
+		view := record_view(record)
+		if view.kind != .Text || view.x != 16 + 200 {
+			continue
+		}
+		testing.expect(t, view.width <= 200, "a line of the answer stays in its box")
+		if answer_lines > 0 {
 			length += copy(joined[length:], " ")
 		}
 		length += copy(joined[length:], record_text(&table, record))
+		answer_lines += 1
 	}
+	testing.expect_value(t, answer_lines, count)
 	testing.expect_value(t, string(joined[:length]), ANSWER)
 	// The case after it has no band, and starts under the band.
 	before := table.record_count
 	case_lines(&frame, &column, 1, "ARP", "answered", 200, graphics.colors.dim, graphics.colors.process)
-	testing.expect_value(t, record_view(table.records[before]).kind, Draw_Kind.Text)
-	testing.expect_value(t, record_view(table.records[before]).y, record_view(band).height + (TABLE_LINE - LINE) / 2)
+	testing.expect_value(t, record_view(table.records[before]).kind, Draw_Kind.Element_Push)
+	testing.expect_value(t, record_view(table.records[before + 1]).kind, Draw_Kind.Element_Push)
+	testing.expect_value(t, record_view(table.records[before + 2]).kind, Draw_Kind.Text)
+	testing.expect_value(t, record_view(table.records[before + 2]).y, record_view(band).height + (TABLE_LINE - LINE) / 2)
 }
 
 @(test)
@@ -2287,13 +2296,15 @@ text_input_line_draws_a_caret_at_any_place :: proc(t: ^testing.T) {
 		}
 		return {}
 	}
-	rectangle_of :: proc(x, y, width, height: int, color: graphics.Color) -> Draw_Record {
-		return draw_record.record_of(draw_record.Draw_Rectangle{color = draw_record.opaque(color)}, 0, draw_record.units_of_pixels(x), draw_record.units_of_pixels(y), draw_record.units_of_pixels(x + width), draw_record.units_of_pixels(y + height))
+	rectangle_of :: proc(x, y, width, height: int, color: graphics.Color, element: u32) -> Draw_Record {
+		return draw_record.record_of(draw_record.Draw_Rectangle{color = draw_record.opaque(color)}, element, draw_record.units_of_pixels(x), draw_record.units_of_pixels(y), draw_record.units_of_pixels(x + width), draw_record.units_of_pixels(y + height))
 	}
 	build(&table, &state, &input, "", 0, 2)
-	// The field, then its line, from edge to edge.
-	testing.expect_value(t, table.records[0], rectangle_of(32, 16, 320, 46, graphics.colors.track))
-	testing.expect_value(t, table.records[1], rectangle_of(32, 62, 320, 2, graphics.colors.title))
+	// The element push, then the field and its line, from edge to edge.
+	line_element := u32(identity("text_input_line"))
+	testing.expect_value(t, record_view(table.records[0]).kind, Draw_Kind.Element_Push)
+	testing.expect_value(t, table.records[1], rectangle_of(32, 16, 320, 46, graphics.colors.track, line_element))
+	testing.expect_value(t, table.records[2], rectangle_of(32, 62, 320, 2, graphics.colors.title, line_element))
 	testing.expect(t, has_text(&table, "type here"))
 	caret := caret_of(&table)
 	testing.expect_value(t, record_view(caret).x, 32 + TEXT_INPUT_LINE_MARGIN)
@@ -2323,6 +2334,9 @@ text_input_line_draws_a_caret_at_any_place :: proc(t: ^testing.T) {
 	testing.expect(t, has_text(&table, long[:17]))
 	for record in table.records[:table.record_count] {
 		view := record_view(record)
+		if view.kind == .Element_Pop || view.kind == .Clip_Pop {
+			continue
+		}
 		testing.expect(t, view.x >= 32 && view.x + view.width <= 32 + 320, "no record passes the field")
 	}
 	// A size that no record holds draws nothing and sets refused: 1, one

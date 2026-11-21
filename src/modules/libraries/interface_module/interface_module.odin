@@ -27,6 +27,7 @@
 package interface_module
 
 import "base:intrinsics"
+import "modus:contract/accessibility"
 import "modus:contract/draw_record"
 import "modus:contract/errors"
 import "modus:support/display"
@@ -195,8 +196,22 @@ element_frame_append_to_caller :: proc "contextless" (element: ^Element_Frame, d
 		return errors.fail(error, ERROR, .Full, .Bytes, 0, 0, ELEMENT_TEXT_CAPACITY)
 	}
 	text_base := text != nil ? text.count : 0
-	if text_base + u64(element.table.text_count) > u64(max(u32)) {
-		return errors.fail(error, ERROR, .Out_Of_Range, .Bytes, ARGUMENT_TEXT, value_of_size(text_base + u64(element.table.text_count)), i64(max(u32)))
+	pad := u64(0)
+	if text != nil {
+		// Align the appended byte block to 4 bytes when any Element_Push carries
+		// 16-byte detail records so detail_first stays a multiple of 4.
+		for record in element.records[:element.table.record_count] {
+			if primitive, problem := draw_record.read(record); problem == .None {
+				if push, is_push := primitive.(draw_record.Draw_Element_Push); is_push && push.detail_count > 0 {
+					pad = (4 - (text_base & 3)) & 3
+					break
+				}
+			}
+		}
+	}
+	shifted_base := text_base + pad
+	if shifted_base + u64(element.table.text_count) > u64(max(u32)) {
+		return errors.fail(error, ERROR, .Out_Of_Range, .Bytes, ARGUMENT_TEXT, value_of_size(shifted_base + u64(element.table.text_count)), i64(max(u32)))
 	}
 	for record in element.records[:element.table.record_count] {
 		// The element frame wrote each record: the border reads it, and a
@@ -205,12 +220,33 @@ element_frame_append_to_caller :: proc "contextless" (element: ^Element_Frame, d
 		placed := record
 		if primitive, problem := draw_record.read(record); problem == .None {
 			if first, _, has_range := draw_record.byte_range_of(primitive); has_range {
-				placed = draw_record.record_of(draw_record.with_byte_place(primitive, first + u32(text_base)), record.element, record.left, record.top, record.right, record.bottom)
+				placed = draw_record.record_of(draw_record.with_byte_place(primitive, first + u32(shifted_base)), record.element, record.left, record.top, record.right, record.bottom)
+			} else if push, is_push := primitive.(draw_record.Draw_Element_Push); is_push {
+				moved := push
+				if moved.name_count > 0 {
+					moved.name_first += u32(shifted_base)
+				}
+				if moved.detail_count > 0 {
+					if u64(moved.detail_first) + u64(moved.detail_count) * accessibility.ELEMENT_DETAIL_RECORD_SIZE <= u64(element.table.text_count) {
+						details := ([^]accessibility.Element_Detail_Record)(&element.text[moved.detail_first])[:moved.detail_count]
+						for &d in details {
+							if dk, dk_ok := accessibility.element_detail_kind_of_word(d.kind); dk_ok && accessibility.element_detail_kind_is_text_range(dk) && d.value_high > 0 {
+								d.value_low += u32(shifted_base)
+							}
+						}
+					}
+					moved.detail_first += u32(shifted_base)
+				}
+				placed = draw_record.record_of(moved, record.element, record.left, record.top, record.right, record.bottom)
 			}
 		}
 		system.table_append(drawn, placed)
 	}
 	if text != nil {
+		if pad > 0 {
+			zeros: [4]u8
+			system.bytes_append(text, zeros[:pad])
+		}
 		system.bytes_append(text, element.text[:element.table.text_count])
 	}
 	return i64(min(drawn.count, u64(max(i64))))

@@ -396,7 +396,7 @@ Processor_Copy_Features :: struct {
 
 // The drawing module refused a draw of the screen: the part is not drawn,
 // and the line comes one time.
-@(log_fact = "compositor: the drawing module refused execute_draw_table_in_rectangles_19 (the error kind {error_kind}, the argument {error_argument}): the part of the screen is not drawn. The compositor writes this line one time")
+@(log_fact = "compositor: the drawing module refused execute_draw_table_in_rectangles_20 (the error kind {error_kind}, the argument {error_argument}): the part of the screen is not drawn. The compositor writes this line one time")
 Screen_Draw_Refused :: struct {
 	error_kind:     u64,
 	error_argument: u64,

@@ -1,5 +1,6 @@
 package interface
 
+import "modus:contract/accessibility"
 import "modus:contract/text_encoding"
 import "modus:support/display"
 import "modus:support/graphics"
@@ -68,10 +69,13 @@ background :: proc "contextless" (frame: ^Frame, area: Area) {
 // right. It gives the area of its content.
 card :: proc "contextless" (frame: ^Frame, area: Area, title, caption: string, accent: graphics.Color, count := "") -> Area {
 	table := frame.table
-	draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(accent, 28), graphics.shade(accent, 14))
-	draw_vertical_gradient(table, area.x + 1, area.y + 1, area.width - 2, area.height - 2, graphics.colors.card_top, graphics.colors.card_bottom)
+	card_id := title != "" ? identity_in(identity("card"), title) : identity("card")
+	draw_element_push(table, area, u32(card_id), .Group, {name = title, description = caption})
+	defer draw_element_pop(table)
+	draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(accent, 28), graphics.shade(accent, 14), u32(card_id))
+	draw_vertical_gradient(table, area.x + 1, area.y + 1, area.width - 2, area.height - 2, graphics.colors.card_top, graphics.colors.card_bottom, u32(card_id))
 	title_top := area.y + 12
-	draw_vertical_gradient(table, area.x + graphics.MARGIN, title_top, 4, 16, graphics.shade(accent, 130), accent)
+	draw_vertical_gradient(table, area.x + graphics.MARGIN, title_top, 4, 16, graphics.shade(accent, 130), accent, u32(card_id))
 	// The title, then the caption, take the room before the count: a
 	// narrow card cuts them, so they never run past the border.
 	title_left := area.x + graphics.MARGIN + 12
@@ -79,13 +83,17 @@ card :: proc "contextless" (frame: ^Frame, area: Area, title, caption: string, a
 	if count != "" {
 		right -= text_measured_width(table, {}, count) + 2 * graphics.GAP
 	}
-	after := draw_text(table, title_left, title_top, text_fit(table, FONT_INTERFACE_BOLD, title, right - title_left), accent, FONT_INTERFACE_BOLD)
+	shown_title := text_fit(table, FONT_INTERFACE_BOLD, title, right - title_left)
+	heading_id := identity_in(card_id, "heading")
+	draw_element_push(table, {title_left, title_top, max(right - title_left, 0), LINE}, u32(heading_id), .Heading, {level = 2, name = shown_title != title ? title : ""})
+	after := draw_text(table, title_left, title_top, shown_title, accent, FONT_INTERFACE_BOLD, u32(heading_id))
+	draw_element_pop(table)
 	if count != "" {
-		draw_text_right(table, area.x + area.width - graphics.MARGIN, title_top, count, graphics.colors.text)
+		draw_text_right(table, area.x + area.width - graphics.MARGIN, title_top, count, graphics.colors.text, {}, u32(card_id))
 	}
 	caption_left := after + 2 * graphics.GAP
 	caption_top := text_top_on_baseline(table, FONT_INTERFACE_BOLD, title_top, FONT_CAPTION)
-	draw_text(table, caption_left, caption_top, text_fit(table, FONT_CAPTION, caption, right - caption_left), graphics.colors.dim, FONT_CAPTION)
+	draw_text(table, caption_left, caption_top, text_fit(table, FONT_CAPTION, caption, right - caption_left), graphics.colors.dim, FONT_CAPTION, u32(card_id))
 	return {area.x + graphics.MARGIN, area.y + graphics.TITLE, area.width - 2 * graphics.MARGIN, area.height - graphics.TITLE - graphics.GAP}
 }
 
@@ -154,7 +162,20 @@ two_texts_lines :: proc "contextless" (frame: ^Frame, column: ^Column, first: st
 		return count, false
 	}
 	if band_index >= 0 {
+		row_id := identity_with(identity("case_row"), band_index)
+		draw_element_push(table, area, u32(row_id), .Row, {row_index = u32(band_index + 1)})
+		defer draw_element_pop(table)
 		table_band(frame, {area.x - 8, area.y, area.width + 16, area.height}, band_index)
+		y := area.y + (line - line_height({})) / 2
+		first_cell_id := identity_in(row_id, "cell_1")
+		draw_element_push(table, {area.x, area.y, max(first_room, 0), area.height}, u32(first_cell_id), .Cell, {column_index = 1})
+		draw_text_wrapped(table, area.x, y, first_room, first, first_color, first_font)
+		draw_element_pop(table)
+		second_cell_id := identity_in(row_id, "cell_2")
+		draw_element_push(table, {area.x + second_x, area.y, max(second_room, 0), area.height}, u32(second_cell_id), .Cell, {column_index = 2})
+		draw_text_wrapped(table, area.x + second_x, y, second_room, second, second_color)
+		draw_element_pop(table)
+		return count, true
 	}
 	y := area.y + (line - line_height({})) / 2
 	draw_text_wrapped(table, area.x, y, first_room, first, first_color, first_font)
@@ -242,11 +263,23 @@ BAR_WITH_VALUE_GAP :: 8 // From the end of the bar of bar_with_value to its valu
 // it never passes the area: the caller gives the area the width of the
 // largest value that it shows. A bar wider than the area is cut to it.
 bar_with_value :: proc "contextless" (frame: ^Frame, area: Area, bar_width: int, value, maximum: u64, color: graphics.Color) {
+	builder: Text_Builder
+	value_str := number_text(&builder, value)
+	meter_id := identity_with(identity("meter"), area.y * 4096 + area.x)
+	draw_element_push(frame.table, area, u32(meter_id), .Meter, {
+		has_value_now     = true,
+		value_now         = i64(min(value, u64(max(i64)))),
+		has_value_minimum = true,
+		value_minimum     = 0,
+		has_value_maximum = true,
+		value_maximum     = i64(min(maximum, u64(max(i64)))),
+		value_text        = value_str,
+	})
+	defer draw_element_pop(frame.table)
 	shown_width := clamp(bar_width, 0, max(area.width, 0))
 	bar(frame, {area.x, area.y + (area.height - BAR_WITH_VALUE_THICKNESS) / 2, shown_width, BAR_WITH_VALUE_THICKNESS}, value, maximum, color)
 	value_x := area.x + shown_width + BAR_WITH_VALUE_GAP
-	builder: Text_Builder
-	cell_text(frame, {value_x, area.y, area.x + area.width - value_x, area.height}, number_text(&builder, value), graphics.colors.text)
+	cell_text(frame, {value_x, area.y, area.x + area.width - value_x, area.height}, value_str, graphics.colors.text)
 }
 
 // bar_parts draws parts of one total side by side on a track, each in its
@@ -294,7 +327,13 @@ caption_height :: proc "contextless" (table: ^Draw_Table, text: string, room: in
 // the lines that it needs: a title is never cut. It gives the height that
 // it took, which heading_height gives before the draw.
 draw_heading :: proc "contextless" (frame: ^Frame, x, y, room: int, text: string, color: graphics.Color) -> int {
-	return draw_text_wrapped(frame.table, x, y, room, text, color, FONT_HEADING) * line_height(FONT_HEADING)
+	lines := text_wrapped_line_count(frame.table, FONT_HEADING, text, room)
+	height := lines * line_height(FONT_HEADING)
+	heading_id := text != "" ? identity_in(identity("heading"), text) : identity("heading")
+	draw_element_push(frame.table, {x, y, max(room, 0), height}, u32(heading_id), .Heading, {level = 1})
+	drawn := draw_text_wrapped(frame.table, x, y, room, text, color, FONT_HEADING) * line_height(FONT_HEADING)
+	draw_element_pop(frame.table)
+	return drawn
 }
 
 // heading_height gives the height of a heading in a box of `room` pixels:
@@ -307,7 +346,7 @@ heading_height :: proc "contextless" (table: ^Draw_Table, text: string, room: in
 // or the pointer is over it. Enter or Space with the focus, or a press and a
 // release of the pointer on it, activate it. Its label is its element name
 // (element_name).
-button :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, label: string, open := false) -> Element_Result {
+button :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, label: string, open := false, toggle: accessibility.Toggle_State = .None) -> Element_Result {
 	result := element_interact(frame, element, area, .Button)
 	element_name(frame, area, label)
 	color := graphics.Color(graphics.colors.track)
@@ -317,8 +356,20 @@ button :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identi
 	case result.focused || result.under_pointer:
 		color = graphics.shade(graphics.colors.title, 60)
 	}
-	draw_rectangle(frame.table, area.x, area.y, area.width, area.height, color, u32(element))
 	shown := text_fit(frame.table, FONT_INTERFACE, label, area.width - 16)
+	states := accessibility.Element_States{.Focusable}
+	if result.focused {
+		states += {.Focused}
+	}
+	effective_toggle := toggle != .None ? toggle : (open ? accessibility.Toggle_State.True : accessibility.Toggle_State.None)
+	draw_element_push(frame.table, area, u32(element), .Button, {
+		toggle  = effective_toggle,
+		states  = states,
+		actions = {.Press, .Focus},
+		name    = shown != label ? label : "",
+	})
+	defer draw_element_pop(frame.table)
+	draw_rectangle(frame.table, area.x, area.y, area.width, area.height, color, u32(element))
 	draw_text(frame.table, area.x + 8, area.y + (area.height - LINE) / 2, shown, color == graphics.colors.track ? graphics.colors.text : graphics.COLOR_WHITE, FONT_INTERFACE, u32(element))
 	// The focus has its own mark, a white frame of 2 pixels inside the
 	// button: a button that is open, or the value in use, is blue already,
@@ -341,6 +392,7 @@ List_Options :: struct {
 	marked:      string, // A line of 2 pixels is under this part of each name (a search).
 	chosen_hint: string, // A text at the right of the chosen line ("enter: start").
 	empty_text:  string, // The text of a list with no line.
+	name:        string, // Accessible name of the listbox; defaults to "list" when empty.
 }
 
 // list_with_choice draws the lines of a list, the chosen line in blue, and
@@ -352,6 +404,16 @@ List_Options :: struct {
 // one line shows the part of the line that it holds.
 list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, names: []string, choice: ^int, options: List_Options = {}) -> Element_Result {
 	result := element_interact(frame, element, area, .List)
+	list_states := accessibility.Element_States{.Focusable}
+	if result.focused {
+		list_states += {.Focused}
+	}
+	draw_element_push(frame.table, area, u32(element), .List_Box, {
+		states  = list_states,
+		actions = {.Focus, .Press, .Increment, .Decrement},
+		name    = options.name != "" ? options.name : "list",
+	})
+	defer draw_element_pop(frame.table)
 	draw_clip_push(frame.table, area.x, area.y, area.width, area.height)
 	defer draw_clip_pop(frame.table)
 	rows := max(area.height / TABLE_LINE, 1)
@@ -384,7 +446,7 @@ list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Elem
 		bar_area := Area{area.x + area.width - scroll_width, area.y, scroll_width, rows * TABLE_LINE}
 		// The wheel over the lines moves the view too: the whole list is
 		// the view of the bar.
-		moved := scroll_bar(frame, bar_area, identity_in(element, "scroll bar"), .Vertical, {total = len(names), visible = rows, first = first}, {}, "", area)
+		moved := scroll_bar(frame, bar_area, identity_in(element, "scroll bar"), .Vertical, {total = len(names), visible = rows, first = first}, {}, "", area, u32(element))
 		if moved.changed {
 			choice^ = min(moved.first + rows - 1, len(names) - 1)
 			first = max(choice^ - rows + 1, 0)
@@ -419,24 +481,37 @@ list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Elem
 		y := area.y + row * TABLE_LINE
 		chosen := index == choice^
 		name_room := line_width - 16
-		if chosen {
-			draw_rectangle(table, area.x, y, line_width, TABLE_LINE, graphics.colors.chosen, u32(element))
-			if options.chosen_hint != "" && hint_width <= line_width - 16 {
-				draw_text_right(table, area.x + line_width - 8, y + 4, options.chosen_hint, graphics.COLOR_WHITE, FONT_INTERFACE)
-				name_room -= hint_width + 8
-			}
+		if chosen && options.chosen_hint != "" && hint_width <= line_width - 16 {
+			name_room -= hint_width + 8
 		}
-		name := names[index]
+		full_name := names[index]
+		name := full_name
 		if row >= measured_count || widths[row] > name_room {
 			name = text_fit(table, FONT_INTERFACE, name, name_room)
 		}
-		draw_text(table, area.x + 8, y + 4, name, chosen ? graphics.COLOR_WHITE : graphics.colors.text, FONT_INTERFACE)
+		option_id := identity_with(element, index)
+		option_states := chosen ? accessibility.Element_States{.Selected} : accessibility.Element_States{}
+		draw_element_push(table, {area.x, y, line_width, TABLE_LINE}, u32(option_id), .Option, {
+			states          = option_states,
+			actions         = {.Select},
+			name            = name != full_name ? full_name : "",
+			position_in_set = u32(index + 1),
+			set_size        = u32(len(names)),
+		})
+		if chosen {
+			draw_rectangle(table, area.x, y, line_width, TABLE_LINE, graphics.colors.chosen, u32(option_id))
+			if options.chosen_hint != "" && hint_width <= line_width - 16 {
+				draw_text_right(table, area.x + line_width - 8, y + 4, options.chosen_hint, graphics.COLOR_WHITE, FONT_INTERFACE, u32(option_id))
+			}
+		}
+		draw_text(table, area.x + 8, y + 4, name, chosen ? graphics.COLOR_WHITE : graphics.colors.text, FONT_INTERFACE, u32(option_id))
 		// The marked part, measured in the font of the name.
 		if at := find_without_case(name, options.marked); len(options.marked) > 0 && at >= 0 {
 			start := text_measured_width(table, FONT_INTERFACE, name[:at])
 			end := text_measured_width(table, FONT_INTERFACE, name[:at + len(options.marked)])
-			draw_rectangle(table, area.x + 8 + start, y + 20, end - start, 2, chosen ? graphics.COLOR_WHITE : graphics.colors.kernel)
+			draw_rectangle(table, area.x + 8 + start, y + 20, end - start, 2, chosen ? graphics.COLOR_WHITE : graphics.colors.kernel, u32(option_id))
 		}
+		draw_element_pop(table)
 	}
 	return result
 }
@@ -447,7 +522,7 @@ list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Elem
 // one; Enter activates it, in the order of the keys of the frame: the keys
 // after Enter are not taken. The text is in the memory of the caller. Its
 // placeholder, when it has one, is its element name (element_name).
-text_input :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, text: []u8, count: ^int, placeholder := "") -> Element_Result {
+text_input :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identity, text: []u8, count: ^int, placeholder := "", name := "", protected := false) -> Element_Result {
 	result := element_interact(frame, element, area, .Text_Input)
 	if placeholder != "" {
 		element_name(frame, area, placeholder)
@@ -496,8 +571,26 @@ text_input :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 		}
 	}
 	table := frame.table
+	states := accessibility.Element_States{.Focusable}
+	if result.focused {
+		states += {.Focused}
+	}
+	if protected {
+		states += {.Protected}
+	}
+	actions := protected ? accessibility.Element_Actions{.Focus, .Press} : accessibility.Element_Actions{.Focus, .Press, .Insert_Text}
+	draw_element_push(table, area, u32(element), .Text_Box, {
+		states      = states,
+		actions     = actions,
+		name        = name,
+		placeholder = placeholder,
+		value_text  = protected ? "" : string(text[:count^]),
+		has_caret   = !protected,
+		caret       = protected ? 0 : u64(text_encoding.character_count(text[:count^])),
+	})
+	defer draw_element_pop(table)
 	draw_rectangle(table, area.x, area.y, area.width, area.height, graphics.colors.track, u32(element))
-	draw_rectangle(table, area.x, area.y + area.height - 2, area.width, 2, result.focused ? graphics.colors.title : graphics.colors.not_usable)
+	draw_rectangle(table, area.x, area.y + area.height - 2, area.width, 2, result.focused ? graphics.colors.title : graphics.colors.not_usable, u32(element))
 	y := area.y + (area.height - LINE) / 2
 	// The typed text is a value, in the font of the cells: its end shows,
 	// with room for the caret, so it never passes the field.
@@ -508,12 +601,12 @@ text_input :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 		_, length, _ := text_encoding.character_decode(transmute([]u8)visible, 0)
 		visible = visible[max(length, 1):]
 	}
-	after := draw_text(table, area.x + 8, y, visible, graphics.colors.text_strong)
+	after := draw_text(table, area.x + 8, y, visible, graphics.colors.text_strong, {}, u32(element))
 	if result.focused {
-		draw_rectangle(table, after + 1, y, 2, LINE, graphics.colors.title)
+		draw_rectangle(table, after + 1, y, 2, LINE, graphics.colors.title, u32(element))
 	}
 	if count^ == 0 && placeholder != "" {
-		draw_text(table, after + 8, y, text_fit(table, FONT_INTERFACE, placeholder, area.x + area.width - 8 - (after + 8)), graphics.colors.dim, FONT_INTERFACE)
+		draw_text(table, after + 8, y, text_fit(table, FONT_INTERFACE, placeholder, area.x + area.width - 8 - (after + 8)), graphics.colors.dim, FONT_INTERFACE, u32(element))
 	}
 	return result
 }
@@ -573,6 +666,8 @@ List_Rows_Options :: struct {
 	scroll_bar:   Element_Identity,
 	scrolled:     ^Scroll_Bar_Result, // Where the list writes what the pointer did to its scroll bar. nil: the caller does not read it.
 	scroll_bar_name: string, // The element name of the scroll bar that takes the pointer, for the names of its parts (scroll_bar). Empty: its parts have none.
+	element:         Element_Identity, // Optional identity of the list container in the semantic tree.
+	name:            string, // Optional accessible name of the list container.
 }
 
 LIST_ROW_ICON_X :: 16 // From the left of a row to its icon, and to the text of a heading.
@@ -614,6 +709,10 @@ draw_kind_icon :: proc "contextless" (table: ^Draw_Table, x, y: int, icon: ^kind
 // clip open around it.
 list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row, options: List_Rows_Options) -> int {
 	table := frame.table
+	list_id := options.element != 0 ? options.element : identity("list_of_rows")
+	list_role := options.chosen >= 0 ? accessibility.Element_Role.List_Box : accessibility.Element_Role.List
+	draw_element_push(table, area, u32(list_id), list_role, {name = options.name})
+	defer draw_element_pop(table)
 	draw_clip_push(table, area.x, area.y, area.width, area.height)
 	defer draw_clip_pop(table)
 	shown_count := min(len(rows), area.height / TABLE_LINE, LIST_MEASURE_CAPACITY)
@@ -630,28 +729,42 @@ list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row,
 	if shown_count > 0 {
 		texts_measure(table, FONT_INTERFACE, names[:shown_count], widths[:shown_count])
 	}
+	set_size := u32(max(options.total, len(rows)))
 	for index in 0 ..< shown_count {
 		row := rows[index]
 		y := area.y + index * TABLE_LINE
+		row_id := identity_with(list_id, options.first + index)
 		if row.kind == .Heading {
-			draw_text(table, area.x + LIST_ROW_ICON_X, y + 4, text_fit(table, FONT_INTERFACE, row.name, line_width - 2 * LIST_ROW_ICON_X), graphics.colors.dim, FONT_INTERFACE)
+			shown_heading := text_fit(table, FONT_INTERFACE, row.name, line_width - 2 * LIST_ROW_ICON_X)
+			draw_element_push(table, {area.x, y, line_width, TABLE_LINE}, u32(row_id), .Heading, {level = 2, name = shown_heading != row.name ? row.name : ""})
+			draw_text(table, area.x + LIST_ROW_ICON_X, y + 4, shown_heading, graphics.colors.dim, FONT_INTERFACE, u32(row_id))
+			draw_element_pop(table)
 			continue
 		}
 		chosen := index == options.chosen
+		row_role := options.chosen >= 0 ? accessibility.Element_Role.Option : accessibility.Element_Role.List_Item
+		draw_element_push(table, {area.x, y, line_width, TABLE_LINE}, u32(row_id), row_role, {
+			states          = chosen ? {.Selected} : {},
+			actions         = options.chosen >= 0 ? {.Select} : {},
+			name            = row.name,
+			description     = row.detail,
+			position_in_set = u32(options.first + index + 1),
+			set_size        = set_size,
+		})
 		if chosen {
-			draw_rectangle(table, area.x, y, line_width, TABLE_LINE, chosen_color)
+			draw_rectangle(table, area.x, y, line_width, TABLE_LINE, chosen_color, u32(row_id))
 		}
 		// The icon of a chosen row is white, as its text is: no color of
 		// the rules keeps the contrast of a graphic on each fill of a
 		// chosen row.
-		draw_kind_icon(table, area.x + LIST_ROW_ICON_X, y + (TABLE_LINE - LIST_ROW_ICON_SIZE) / 2, row.icon, 1, chosen ? graphics.COLOR_WHITE : row.icon_color)
+		draw_kind_icon(table, area.x + LIST_ROW_ICON_X, y + (TABLE_LINE - LIST_ROW_ICON_SIZE) / 2, row.icon, 1, chosen ? graphics.COLOR_WHITE : row.icon_color, u32(row_id))
 		// The text at the right takes its room first; the name takes the rest.
 		right_text := chosen && options.chosen_hint != "" ? options.chosen_hint : row.right_text
 		name_room := line_width - LIST_ROW_NAME_X - LIST_ROW_RIGHT_MARGIN
 		if right_text != "" {
 			right_width := text_measured_width(table, FONT_INTERFACE, right_text)
 			if right_width <= name_room - 16 {
-				draw_text_right(table, area.x + line_width - LIST_ROW_RIGHT_MARGIN, y + 4, right_text, chosen ? graphics.COLOR_WHITE : graphics.colors.dim, FONT_INTERFACE)
+				draw_text_right(table, area.x + line_width - LIST_ROW_RIGHT_MARGIN, y + 4, right_text, chosen ? graphics.COLOR_WHITE : graphics.colors.dim, FONT_INTERFACE, u32(row_id))
 				name_room -= right_width + 16
 			}
 		}
@@ -664,9 +777,9 @@ list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row,
 		}
 		name_x := area.x + LIST_ROW_NAME_X
 		name_color := row.name_color != 0 ? row.name_color : graphics.Color(graphics.colors.text)
-		draw_text(table, name_x, y + 4, name, chosen ? graphics.COLOR_WHITE : name_color, name_font)
+		draw_text(table, name_x, y + 4, name, chosen ? graphics.COLOR_WHITE : name_color, name_font, u32(row_id))
 		if row.detail != "" {
-			draw_text(table, name_x + name_width, y + 4, text_fit(table, {}, row.detail, name_room - name_width), chosen ? graphics.COLOR_WHITE : graphics.colors.dim)
+			draw_text(table, name_x + name_width, y + 4, text_fit(table, {}, row.detail, name_room - name_width), chosen ? graphics.COLOR_WHITE : graphics.colors.dim, {}, u32(row_id))
 		}
 		// One line under each run of matched characters, measured in the
 		// font of the name: at most one measure for each end of a run.
@@ -676,8 +789,9 @@ list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row,
 			}
 			start_x := text_measured_width(table, name_font, name[:run.start])
 			end_x := text_measured_width(table, name_font, name[:run.end])
-			draw_rectangle(table, name_x + start_x, y + 20, end_x - start_x, 2, chosen ? graphics.COLOR_WHITE : graphics.colors.kernel)
+			draw_rectangle(table, name_x + start_x, y + 20, end_x - start_x, 2, chosen ? graphics.COLOR_WHITE : graphics.colors.kernel, u32(row_id))
 		}
+		draw_element_pop(table)
 	}
 	if scroll_width != 0 && options.total > 0 {
 		// The caller owns the choice and the view. A caller that names
@@ -688,7 +802,7 @@ list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row,
 		range := Scroll_Range{total = options.total, visible = visible_rows, first = options.first}
 		if options.scroll_bar != 0 {
 			// The rows are the view of the bar: the wheel over them moves it.
-			moved := scroll_bar(frame, bar_area, options.scroll_bar, .Vertical, range, {}, options.scroll_bar_name, area)
+			moved := scroll_bar(frame, bar_area, options.scroll_bar, .Vertical, range, {}, options.scroll_bar_name, area, u32(list_id))
 			if options.scrolled != nil {
 				options.scrolled^ = moved
 			}
@@ -711,7 +825,7 @@ TEXT_INPUT_LINE_MARGIN :: 16 // From the left and the right of the field to its 
 // longer than the field shows the part that holds the caret. It takes no
 // input: the caller edits the line (src/library/support/line_editor). A
 // size that no record holds draws nothing and sets `refused`.
-text_input_line :: proc "contextless" (frame: ^Frame, area: Area, text: string, caret: int, size: u16, placeholder := "") {
+text_input_line :: proc "contextless" (frame: ^Frame, area: Area, text: string, caret: int, size: u16, placeholder := "", element: Element_Identity = 0, name := "", protected := false) {
 	table := frame.table
 	font := Font{size = size}
 	if !font_size_valid(font) {
@@ -721,16 +835,32 @@ text_input_line :: proc "contextless" (frame: ^Frame, area: Area, text: string, 
 	cell_width := cell_width_of(font)
 	text_height := line_height(font)
 	caret_width := 2 * max(1, cell_width / graphics.CELL_WIDTH)
-	draw_rectangle(table, area.x, area.y, area.width, area.height - 2, graphics.colors.track)
-	draw_rectangle(table, area.x, area.y + area.height - 2, area.width, 2, graphics.colors.title)
+	bytes := transmute([]u8)text
+	caret_place := text_encoding.character_count(bytes[:clamp(caret, 0, len(text))])
+	el := element != 0 ? element : identity("text_input_line")
+	states := accessibility.Element_States{.Focusable, .Focused}
+	if protected {
+		states += {.Protected}
+	}
+	actions := protected ? accessibility.Element_Actions{.Focus, .Press} : accessibility.Element_Actions{.Focus, .Press, .Insert_Text}
+	draw_element_push(table, area, u32(el), .Text_Box, {
+		states      = states,
+		actions     = actions,
+		name        = name,
+		placeholder = placeholder,
+		value_text  = protected ? "" : text,
+		has_caret   = !protected,
+		caret       = protected ? 0 : u64(caret_place),
+	})
+	defer draw_element_pop(table)
+	draw_rectangle(table, area.x, area.y, area.width, area.height - 2, graphics.colors.track, u32(el))
+	draw_rectangle(table, area.x, area.y + area.height - 2, area.width, 2, graphics.colors.title, u32(el))
 	text_x := area.x + TEXT_INPUT_LINE_MARGIN
 	text_y := area.y + (area.height - text_height) / 2
 	fit := max((area.width - 2 * TEXT_INPUT_LINE_MARGIN - caret_width) / cell_width, 1)
 	// The text is UTF-8: one cell for each character, so the caret and the
 	// part that shows are counted in characters, and a part starts and
 	// ends after a whole character.
-	bytes := transmute([]u8)text
-	caret_place := text_encoding.character_count(bytes[:clamp(caret, 0, len(text))])
 	character_total := text_encoding.character_count(bytes)
 	first := character_total > fit ? max(caret_place - fit, 0) : 0
 	byte_of_character :: proc "contextless" (text_bytes: []u8, number: int) -> int {
@@ -746,11 +876,11 @@ text_input_line :: proc "contextless" (frame: ^Frame, area: Area, text: string, 
 	}
 	shown := text[byte_of_character(bytes, first):byte_of_character(bytes, min(first + fit, character_total))]
 	// The caret first: a glyph beside it draws over its edge, not under it.
-	draw_rectangle(table, text_x + (caret_place - first) * cell_width, text_y, caret_width, text_height, graphics.colors.title)
-	draw_text(table, text_x, text_y, shown, graphics.colors.text_strong, font)
+	draw_rectangle(table, text_x + (caret_place - first) * cell_width, text_y, caret_width, text_height, graphics.colors.title, u32(el))
+	draw_text(table, text_x, text_y, shown, graphics.colors.text_strong, font, u32(el))
 	if len(text) == 0 && placeholder != "" {
 		placeholder_x := text_x + cell_width
 		placeholder_font := Font{kind = .Interface, size = size}
-		draw_text(table, placeholder_x, text_y, text_fit(table, placeholder_font, placeholder, area.x + area.width - TEXT_INPUT_LINE_MARGIN - placeholder_x), graphics.colors.dim, placeholder_font)
+		draw_text(table, placeholder_x, text_y, text_fit(table, placeholder_font, placeholder, area.x + area.width - TEXT_INPUT_LINE_MARGIN - placeholder_x), graphics.colors.dim, placeholder_font, u32(el))
 	}
 }

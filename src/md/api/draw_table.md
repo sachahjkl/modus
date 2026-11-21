@@ -81,9 +81,11 @@ with d the pixel, c the color and a the cover. It is the blend of the text of to
 | 8 | `Picture` | `memory` u8 at 24, `format` u8 at 25, `first` u32 at 28, `stride` u32 at 32, `width`, `height` 2 x u32 at 36, `generation` u32 at 44 |
 | 14 | `Clip_Push` | None: the box is the clip (built; a new value, as for the gradient: the word 5 was the `Clip` of version 16, which replaced the cut) |
 | 15 | `Clip_Pop` | None, and a box of zeros |
+| 16 | `Element_Push` | `role`, `live`, `toggle`, `expanded` 4 x u8 at 24; `states` u32 at 28; `name_first` u32 at 32; `name_count` u16 at 36; `detail_first` u32 at 40; `detail_count` u16 at 44 (built in version 20; draws nothing) |
+| 17 | `Element_Pop` | None, and a box of zeros (built in version 20; draws nothing) |
 | 9 | `Text_Grid` | `first` u32 at 24, `count` u32 at 28, `columns` u32 at 32, `size` u16 at 36; kept until the measure below decides |
 
-Two more kinds are designed, not built: `Element_Push` (16) and `Element_Pop` (17), which draw nothing and give the records between them an element role, its states and an accessible name. A record under an open element push carries the element word of the innermost push, or 0, and the border of the order checks it, with the clips, in one order. The design is [../features/accessibility.md](../features/accessibility.md), "1. The semantic tree".
+`Element_Push` (16) and `Element_Pop` (17) draw nothing and give the records between them an element role, its states, an accessible name and 16-byte details. A record under an open element push carries the element word of the innermost push, or 0, and `draw_record.table_order_check` checks clips and elements in one stack. The design is [../features/accessibility.md](../features/accessibility.md), "1. The semantic tree".
 
 **Rectangle.** The box in one color. With `step_x` and `step_y` above 0, the rectangle repeats: a cell of `cell_width` by `cell_height` at (`cell_x` + n × `step_x`, `cell_y` + m × `step_y`) of the surface for each integers n and m, cut to the box. A step of 0 on both axes is one rectangle, the whole box, and then each field of the pattern is 0. The border refuses a cell or a step below 1 pixel, a step below the cell, one step of 0 with the other above 0, and a place past `COORDINATE_LIMIT`. So a rectangle reaches each pixel at most one time, and its pixel writes are at most the pixels of its box. A repeated rectangle is a pattern: points, stripes, the lines of a grid.
 
@@ -255,7 +257,9 @@ The text, the pictures and the opaque rectangles on whole pixels cost what they 
 
 ## What is built and what is left
 
-Built: version 19 of the record. A text and a text grid carry a text size in 1/64 pixel in place of one of three scales (version 18), up to 128 logical pixels, the largest size of the rasterizer at the scale 2 (version 19).
+Built: version 20 of the record. `Element_Push` (16) and `Element_Pop` (17) carry the semantic tree inside the draw table, validated with clips in one stack by `draw_record.table_order_check`; the exports are `damage_of_draw_table_20` and `execute_draw_table_in_rectangles_20`.
+
+Before it, version 19 of the record. A text and a text grid carry a text size in 1/64 pixel in place of one of three scales (version 18), up to 128 logical pixels, the largest size of the rasterizer at the scale 2 (version 19).
 
 - **The fields.** `size` u16 at 42 of a `Text`, after `font` at 40 and `weight` at 41; `size` u16 at 36 of a `Text_Grid`. The border (`draw_record.text_size_valid`) refuses a size under `TEXT_SIZE_MINIMUM` or past `TEXT_SIZE_LIMIT`, 0 too, with `Field_Past_Bound`; the bound of the origin of a text is the larger of 16 pixels and one line. The exports are `damage_of_draw_table_19` and `execute_draw_table_in_rectangles_19`.
 - **The writers.** `interface.Font` holds a text size, 0 for the body; a writer refuses a size that the border refuses and sets `refused`. The fonts of the text size tokens, `FONT_CAPTION` to `FONT_LARGEST`, give the elements their sizes ([../features/text_rendering.md](../features/text_rendering.md), "The text size tokens").

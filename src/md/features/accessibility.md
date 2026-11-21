@@ -294,4 +294,9 @@ Each layer works alone, on a system that works.
 
 ## State
 
-Designed, not built. Property 18 names the element push in its closed set ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One 2D interface: the draw table"). The steps are in `ROADMAP.md`.
+Layer 1 (semantic tree in the draw table) is partially built:
+
+- `draw_record` version 20 adds `Element_Push` (16) and `Element_Pop` (17), the 81 concrete WAI-ARIA 1.2 element roles, element states, live modes, toggle and expanded states, `Element_Push_Fields`, 16-byte `Element_Detail_Record`, and the unified clip-and-element border `table_order_check`. The drawing module exports `damage_of_draw_table_20` and `execute_draw_table_in_rectangles_20`, validates the unified order before drawing, skips semantic records during rasterization, and damages zero pixels when only semantic records change.
+- Contract package `src/library/contract/accessibility` implements strict border converters for all WAI-ARIA 1.2 roles, states, live modes, declared actions and 16-byte details, flat `Semantic_Tree` reconstruction (`semantic_tree_extract`), accessibility auditing (`semantic_tree_audit`), and snapshot diffing (`semantic_tree_diff`) producing typed events (`Focus_Changed`, `Name_Changed`, `State_Changed`, `Value_Changed`, `Live_Announcement`, `Tree_Changed`), with host tests.
+- `src/library/support/interface` provides `draw_element_push` / `draw_element_pop` with LIFO nesting guards and emits semantic records in `button`, `text_input`, `text_input_line`, `list_with_choice`, `list_of_rows`, `scroll_bar`, `action_bar`, `card`, `draw_heading`, `bar_with_value`, and `case_lines`.
+- Remaining in Layer 1: the test module `semantic_probe` and the machine-test steps `Element` and `Act`. Layers 2 to 10 remain designed, not built. The steps are in `ROADMAP.md`.
