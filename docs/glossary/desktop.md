@@ -982,15 +982,53 @@ Do not use: undo stack, undo history, undo log.
 
 ### Picker
 
-The picker is the surface of the document service where the principal chooses a document; its result is a grant to the process that asked.
+The picker is the part of a grant dialog where the principal chooses the object of a grant item; its result is a grant to the process that asked.
 
-The picker makes the choice of the principal the grant: a process cannot list documents, and gets a handle to the one document that the principal chose. The document service records each grant, so that the principal can list and revoke it. The document service and its picker are not built.
+The picker makes the choice of the principal the grant: the trusted display draws the candidates that the service of the objects gives through the root service, a store of the storage service first, a document of the document service later. The process that asks never sees the list, and gets a handle to the one object chosen. The picker is not a file dialog that a process draws. It is not built.
 
-The picker is not a file dialog that a process draws: it is the surface of another process, so the process that asks sees only the result.
+The design: `src/md/features/powerbox.md`, "The choice of the object".
 
-The design: `docs/ARCHITECTURE.md`, "U6. Document service".
+Do not use: file dialog, file chooser.
 
-Do not use: file dialog, powerbox.
+### Trusted display
+
+The trusted display is the role of the one process that draws each surface on which the principal answers the system: the grant dialog, the picker, the screen of a wide grant, the confirmation of the palette and the marks.
+
+The root service gives the role by the start grant `Trusted_Display`, today to the compositor. A replacement that holds the role fills the same contract and gets the same trust; a process without it that draws a dialog draws a window. The contract fixes the content, the act, the focus and the marks; the holder chooses the look. A contract test checks any holder.
+
+The design: `src/md/features/powerbox.md`, "The trusted display".
+
+Do not use: secure desktop, system UI server, shell.
+
+### Grant dialog
+
+A grant dialog is the one screen of the trusted display that lists each pending grant item of one process, grouped by kind, for the principal to keep or refuse.
+
+Each request of a process joins its pending grant dialog, up to 16 rows, so many requests give one screen. Each row has a tick; the principal allows the ticked rows, refuses all, or refuses and asks never to be asked again. An answer counts only after an arm time of 500 ms, with the focus moved to allow. The difference of a plan shows on the same contract, whole, with no tick.
+
+The design: `src/md/features/powerbox.md`, "The pending dialog: one screen for many requests".
+
+Do not use: permission prompt, consent screen, popup.
+
+### Screen of a wide grant
+
+The screen of a wide grant is the screen of the trusted display that states in plain words what a wide grant lets an agent see and do, and where the principal tunes it.
+
+It names the agent by its key or its module, and lists each wide scope with its place bound, its mode (asks each time, or at any time) and the time bound. The principal unticks, picks and bounds, then proves its passphrase in the window of `unlock`, with the keys of the machine only. It is never the grant dialog, and no input of the remote display answers it.
+
+The design: `src/md/features/wide_grants.md`, "The screen of a wide grant".
+
+Do not use: consent screen, warning dialog.
+
+### Mark of wide authority
+
+The mark of wide authority is the mark that the trusted display shows, on a place that no process covers, while a wide grant holds.
+
+It shows the word "agent", the hash prefix of the key and the time left, from the records of the root service, so no process can hide it. One press shows the scopes, the bounds and the count of acts, with revoke, which ends the wide grant at once. It is not the mark of a viewer, which says only that the screen is seen.
+
+The design: `src/md/features/wide_grants.md`, "The mark".
+
+Do not use: indicator light, recording dot.
 
 ### Quality profile
 

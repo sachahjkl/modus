@@ -580,6 +580,86 @@ The design: `docs/MODULE_CONTRACT.md`, "The grants of a disk process".
 
 Do not use: permission table, access list, manifest.
 
+### Powerbox
+
+The powerbox is the path by which a running process asks for a grant, the principal answers on the trusted display, and the root service gives reduced, revocable handles.
+
+A process with a window writes a grant request on its grant request ring. The root service checks it at one border, merges the requests of one process into one grant dialog, and gives the dialog to the trusted display. It makes a handle for each item that the principal kept, with the rights kept, and records it as a requested grant. The asker never draws the dialog and never sees the candidates of a picker.
+
+The design: `src/md/features/powerbox.md`.
+
+Do not use: permission prompt, consent dialog, UAC.
+
+### Grant request
+
+A grant request is the typed record in which a process asks the powerbox for 1 to 16 grant items at once.
+
+The process writes the items in its grant request region and sends `Ask` on its grant request ring. The border refuses a kind, a rights word or a reason that names no member, an object that the kind does not take, and a scope of wide authority. The answer is one record that gives, item by item, the outcome, the rights given and the handles. A grant request holds no text that the principal reads.
+
+The design: `src/md/features/powerbox.md`, "The grant request".
+
+Do not use: permission request, intent, scope string.
+
+### Grant item
+
+A grant item is one line of a grant request: the kind of one object, the object or a choice of the principal, the rights asked, and an optional reason.
+
+The kinds at first are a network endpoint, a store that the principal picks, and a service connection. The reason is a member of `Grant_Reason`, which the trusted display shows as a claim of the process. Two items with the same kind, object and rights are merged into one row of the grant dialog. An item can name a requested grant that the process holds, to ask for more rights on its object.
+
+The design: `src/md/features/powerbox.md`, "The grant request".
+
+Do not use: scope, permission.
+
+### Requested grant
+
+A requested grant is a grant that the root service made from a grant item that the principal kept, recorded by the process and a number.
+
+It lasts for the run of its process, or, for a disk process, always for the hash of its module, in the disk grant table of the principal. `grants("name")` lists the requested grants of a process under the recorded grant `requested`, and `revoke("name", "requested", number)` ends one through `Handle_Revoke`. A requested grant is not a start grant: no role holds it.
+
+The design: `src/md/features/powerbox.md`, "The grant".
+
+Do not use: runtime permission, granted scope.
+
+### Wide grant
+
+A wide grant is a grant of wide authority to one agent: a set of wide scopes with their bounds in time and in place, given after a proof of the principal.
+
+Its holder is a client key of `remote`, later the hash of a module. The trusted display shows the screen of a wide grant, never the ordinary grant dialog, and the passphrase of the principal, typed with the keys of the machine, gives it. While it holds, the mark of wide authority shows in the trusted display; each act under it is an act record. It is never written on the disk.
+
+The design: `src/md/features/wide_grants.md`.
+
+Do not use: full access, admin mode, override, superuser.
+
+### Wide scope
+
+A wide scope is one member of the closed set of what a wide grant can give: the lines of an agent console, the screen, the input, the processes, the log, the stores.
+
+Each wide scope has a boundary that one mechanism enforces: the role of the agent console, the uses of a client key, the input face of the trusted display, the shares of the picked stores. The principal unticks a scope, bounds it in place, and sets it to ask each time. No wide scope changes a grant or answers a trusted surface, and none joins a grant request.
+
+The design: `src/md/features/wide_grants.md`, "The wide scopes".
+
+Do not use: permission, entitlement, OAuth scope.
+
+### Agent console
+
+An agent console is a console that the root service starts for a wide grant, whose lines an agent sends and whose role is the union of the wide scopes that the principal kept.
+
+It runs in the session of the principal and reaches only what its scopes give: no command that changes a grant, no command of the principals. Each line is an act record before it runs. It stops at the end of its wide grant. It is not the console of the principal, whose role holds each grant of a console.
+
+The design: `src/md/features/wide_grants.md`, "The wide scopes".
+
+Do not use: agent shell, bot session.
+
+### Act record
+
+An act record is the record of one act done under a wide grant, written on a record output before the act runs.
+
+The root service, the agent console, `remote` and the trusted display each write the acts that they do for the agent, and the collector keeps them in a space that the agent cannot read or erase. A writer that finds its ring full refuses the act, so no act runs without its record. The principal reads them with `acts(key)`. An act record is not a log fact, which the log can lose.
+
+The design: `src/md/features/wide_grants.md`, "The record of each act".
+
+Do not use: audit log, activity log.
+
 ### Guest
 
 A guest is a machine that a process of the system runs on the processor, with the virtualization support of the processor, and with its own kernel and its own processes.
