@@ -20,7 +20,7 @@ Recipe_Build_Completed :: struct {
 	refusal_code: u64,
 }
 
-@(log_fact = "recipes: realisation disagreement detected for recipe")
+@(log_fact = "recipes: realisation disagreement detected for recipe ({disagreements} total)")
 Realisation_Disagreement :: struct {
 	disagreements: u64,
 }
