@@ -11,7 +11,7 @@ import "core:testing"
 
 // expect_code assembles a text and compares the bytes of its code with the
 // bytes of the Intel manual.
-@(private = "file")
+@(private)
 expect_code :: proc(t: ^testing.T, text: string, expected: []u8, loc := #caller_location) {
 	workspace := new(Workspace)
 	defer free(workspace)
@@ -25,7 +25,7 @@ expect_code :: proc(t: ^testing.T, text: string, expected: []u8, loc := #caller_
 
 // expect_refusal assembles a text that must be refused, and checks the
 // refusal, its place, and that no part is given.
-@(private = "file")
+@(private)
 expect_refusal :: proc(t: ^testing.T, text: string, refusal: Refusal, line: u32, column: u32, loc := #caller_location) -> Refusal_Record {
 	workspace := new(Workspace)
 	defer free(workspace)
@@ -150,7 +150,7 @@ sign_extended_moves_of_a_wrong_form_are_refused :: proc(t: ^testing.T) {
 	// The name says both sizes: a suffix of size is no mnemonic.
 	expect_refusal(t, "movsxdq %eax, %rax", .Mnemonic_Unknown, 1, 1)
 	expect_refusal(t, "movsxdl %eax, %rax", .Mnemonic_Unknown, 1, 1)
-	expect_refusal(t, "movslq %eax, %rax", .Mnemonic_Unknown, 1, 1)
+	expect_refusal(t, "movslqq %eax, %rax", .Mnemonic_Unknown, 1, 1)
 }
 
 // The text that the module c_compiler writes for
@@ -347,7 +347,7 @@ unknown_words_are_refused :: proc(t: ^testing.T) {
 	// A suffix on a word that takes none, and a suffix that is no size.
 	expect_refusal(t, "retq", .Mnemonic_Unknown, 1, 1)
 	expect_refusal(t, "jmpq top; top: ret", .Mnemonic_Unknown, 1, 1)
-	expect_refusal(t, "movb %al, %bl", .Mnemonic_Unknown, 1, 1)
+	expect_refusal(t, "movk %al, %bl", .Mnemonic_Unknown, 1, 1)
 	expect_refusal(t, "q", .Mnemonic_Unknown, 1, 1)
 	expect_refusal(t, "$1", .Mnemonic_Unknown, 1, 1)
 	expect_refusal(t, "mov %rax, %rzz", .Register_Unknown, 1, 11)
@@ -361,9 +361,10 @@ unknown_words_are_refused :: proc(t: ^testing.T) {
 
 @(test)
 operands_out_of_the_subset_are_refused :: proc(t: ^testing.T) {
-	// An index register, an absolute address, %rip alone, a label from a
-	// base that is not %rip, no comma, no base after the parenthesis.
-	expect_refusal(t, "mov (%rax,%rbx), %rcx", .Operand_Not_Valid, 1, 10)
+	// %rsp as index, an invalid scale, an absolute address, %rip alone, a
+	// label from a base that is not %rip, no comma, no base after `(`.
+	expect_refusal(t, "mov (%rax,%rsp), %rcx", .Operand_Not_Valid, 1, 11)
+	expect_refusal(t, "mov (%rax,%rbx,3), %rcx", .Operand_Not_Valid, 1, 16)
 	expect_refusal(t, "mov 4096, %rax", .Operand_Not_Valid, 1, 5)
 	expect_refusal(t, "mov %rip, %rax", .Operand_Not_Valid, 1, 5)
 	expect_refusal(t, "mov table(%rax), %rcx; table: ret", .Operand_Not_Valid, 1, 5)
@@ -553,7 +554,9 @@ tables_past_their_capacity_are_refused :: proc(t: ^testing.T) {
 @(test)
 each_refusal_has_a_sentence :: proc(t: ^testing.T) {
 	for member in Refusal {
-		testing.expectf(t, refusal_sentence(member) != "an unknown refusal", "%v has no sentence", member)
+		sentence := refusal_sentence(member)
+		testing.expectf(t, sentence != "an unknown refusal", "%v has no sentence", member)
+		testing.expectf(t, len(sentence) < 124, "%v sentence has %d bytes, past the 123-byte log field", member, len(sentence))
 	}
 }
 

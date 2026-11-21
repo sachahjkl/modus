@@ -50,7 +50,7 @@ Refusal :: enum u32 {
 	Character_Not_Valid    = 4, // A control byte other than a tab, or a byte past ASCII outside a comment. value: the byte.
 	Mnemonic_Unknown       = 5, // The first word of a statement is no instruction of the subset and no directive.
 	Register_Unknown       = 6, // A word after `%` names no register.
-	Operand_Not_Valid      = 7, // An operand that the syntax does not read: no `)`, an index register, an absolute address, `%rip` alone.
+	Operand_Not_Valid      = 7, // An operand that the syntax does not read: no `)`, invalid scale, `%rsp` as index, an absolute address, `%rip` alone.
 	Operand_Count_Wrong    = 8, // The instruction takes another count of operands. value: the count given.
 	Operand_Form_Not_Valid = 9, // The instruction has no form with these kinds of operands: memory to memory, `push` of memory, `lea` of a register.
 	Operand_Size_Wrong     = 10, // Two sizes disagree (a suffix and a register, two registers), or the form has no such size (`push %eax`).
@@ -188,7 +188,7 @@ refusal_sentence :: proc "contextless" (refusal: Refusal) -> string {
 	case .Register_Unknown:
 		return "no register has this name"
 	case .Operand_Not_Valid:
-		return "the operand has no form of the syntax: a register, $ and a number, a displacement and a base in parentheses, or a label"
+		return "the operand has no form of the syntax: a register, $number, a memory operand, *operand, or a label"
 	case .Operand_Count_Wrong:
 		return "the instruction takes another count of operands"
 	case .Operand_Form_Not_Valid:
