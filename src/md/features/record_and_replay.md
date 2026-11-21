@@ -215,4 +215,12 @@ Later, with no order: a record that starts on a running process, with a checkpoi
 
 ## State
 
-Designed, not built. Property 24 is decided. Today no process can be recorded: the cycle counter, `cpuid` and `rdpid` are open to every process with no fault, and the kernel has no record mode. The planned work is in `ROADMAP.md`.
+Layer 1 kernel, contract, test module, and tool check are built:
+
+- Contract `src/library/contract/input_history` defines the fixed-layout input history header, record headers, payloads (`Kernel_Completion`, `Cycle_Counter`, `Processor_Identification`, `Page_Delta`, `History_End`), strict border readers/writers, page-delta encoder/validator/applier, and the pure divergence comparator `replay_step_check`, with host tests.
+- Pure kernel part `src/kernel/replay_filter` decodes trapped `rdtsc` (`0F 31`), `rdtscp` (`0F 01 F9`), and `cpuid` (`0F A2`), filters unrecordable CPUID feature bits (`rdrand`, `rdseed`, `rdpid`, `HLE`/`RTM`, `waitpkg`), and classifies operations for replay, with host tests.
+- `Thread_Control` adds `Record_Start`, `Record_End`, and `Replay_Start` under the `Debug` right without adding a kernel operation (35 operations unchanged). The kernel probes CPUID faulting via register trials at processor start, toggles `CR4.TSD` and `MSR_MISC_FEATURES_ENABLES` bit 0 only for recorded/replayed threads, emulates trapped `rdtsc`/`rdtscp`/`cpuid` in `#GP`, maintains point copies for read-only shared pages, pins recorded/replayed processes to one processor, enforces the one-stint bound, ends history immediately on revocation, and stops replay on divergence.
+- Test module `src/modules/tests/replay_probe` exercises deterministic arithmetic, `system.nanoseconds`, `cpuid`, and opt-in divergence modes.
+- Tool check `tools/modustool/checks/processor_random_check.odin` refuses `rdrand` and `rdseed` anywhere in `src/` outside `random.entropy_gather` (`src/library/support/random/entropy.odin`).
+
+Left: machine-test integration and measures for layer 1, shared writers (layer 2), debugger replay/checkpoints/step-back (layer 3), machine-test recording and `modustool replay` (layer 4), and branch-count interrupts (layer 5). The planned work is in `ROADMAP.md`.

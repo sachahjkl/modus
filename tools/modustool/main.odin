@@ -1060,7 +1060,7 @@ run_check :: proc(args: []string) -> int {
 	// state, no source of the system calls an allocator, each export that
 	// fails gives an error record, and no family of integer constants is a
 	// closed set of choices.
-	if !checks.operation_count_check() || !checks.allocator_check() || !checks.export_error_record_check() || !checks.choice_constant_check() {
+	if !checks.operation_count_check() || !checks.allocator_check() || !checks.export_error_record_check() || !checks.choice_constant_check() || !checks.processor_random_check() {
 		return foundation.EXIT_FAILURE
 	}
 	host_test_folders := checks.HOST_TEST_FOLDERS

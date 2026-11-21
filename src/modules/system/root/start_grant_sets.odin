@@ -356,6 +356,7 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	{name = "extended_state"},
 	// The process that the test of the debugger debugs.
 	{name = "debug_target"},
+	{name = "replay_probe"},
 	// A guest in its own memory.
 	{name = "guest_demo"},
 	// A child of `frames`: its starter gives it its handles.

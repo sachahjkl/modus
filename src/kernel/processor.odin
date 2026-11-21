@@ -1,6 +1,7 @@
 package kernel
 
 import "base:intrinsics"
+import "modus:contract/input_history"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "kernel:stolen_time"
@@ -146,6 +147,9 @@ Processor :: struct {
 	// debug exception of a thread whose breakpoints were removed, clears
 	// it with the control register.
 	breakpoints_loaded: bool,
+	// CR4.TSD and CPUID faulting are enabled on this processor for a recorded
+	// or replayed thread (record_replay.odin). Only this processor writes it.
+	record_traps_loaded: bool,
 	// The kinds of kernel events that the event table has rules for: bit n
 	// for the Event_Kind n; 0 with no table (events.odin). Each event point
 	// reads it first. It is in the first line of the record, which each
@@ -244,6 +248,10 @@ Processor :: struct {
 	// writes: copied from the caller once, checked here, then copied to the
 	// thread, so the caller cannot change it between the check and the use.
 	extended_state_written: Extended_State_Area,
+	// Scratch buffers for encoding page deltas and capturing kernel-to-user
+	// output bytes during process recording (record_replay.odin).
+	page_delta_scratch:     [input_history.PAGE_DELTA_MAX_BYTES]u8,
+	record_copy_scratch:    [RECORD_COPY_SCRATCH_BYTES]u8,
 	segments:      [7]u64,
 	task_state:    Task_State,
 }
@@ -490,6 +498,7 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	apic_setup(cpu)
 	guest_processor_setup(cpu)
 	thread_counters_processor_setup(cpu)
+	record_replay_processor_setup(cpu)
 }
 
 // processor_start prepares the first processor.
@@ -547,6 +556,7 @@ processor_start :: proc "contextless" () {
 	return_to_process_log()
 	control_registers_log()
 	thread_counters_log()
+	record_replay_log()
 	timer_calibrate()
 	timer_start()
 }

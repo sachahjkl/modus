@@ -102,6 +102,9 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	if op.thread_control_counts_the_caller(command) {
 		return thread_counters_control(caller_index, caller_process, command, v, results)
 	}
+	if op.thread_control_records_a_process(command) {
+		return record_replay_control(caller_index, caller_process, command, v, results)
+	}
 	target_index: u32
 	owner := caller_process_index
 	by_machine := false // The machine handle names the thread: a write sets its weight limit, or the limit of its placement.
@@ -309,6 +312,10 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		return .Bad_Operation
 	case .Start_Counters, .Read_Counters, .Stop_Counters:
 		// They act on the calling thread: thread_counters_control runs them
+		// before a thread is named.
+		return .Bad_Operation
+	case .Record_Start, .Record_End, .Replay_Start:
+		// They act on a process handle: record_replay_control runs them
 		// before a thread is named.
 		return .Bad_Operation
 	case .Read_Memory:

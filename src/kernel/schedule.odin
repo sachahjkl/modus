@@ -502,6 +502,9 @@ schedule :: proc "contextless" () -> ! {
 		if cpu.breakpoints_loaded {
 			breakpoints_unload(cpu)
 		}
+		if cpu.record_traps_loaded {
+			record_traps_unload(cpu)
+		}
 		// The counters of the thread leave the processor with it, before
 		// the release of the run lock below orders its totals before a take
 		// on another processor (thread_counters.odin).
@@ -611,6 +614,13 @@ schedule :: proc "contextless" () -> ! {
 			if thread.counting {
 				thread_counters_load()
 			}
+			// One byte of the hot line: a normal thread pays this test only.
+			if thread.record_mode != .None {
+				record_traps_load(cpu)
+				if thread.record_mode == .Recording {
+					record_replay_stint_start(thread.process)
+				}
+			}
 			// The event point of a switch of threads (events.odin). The
 			// thread is the current thread of this processor now.
 			if event_wanted(cpu, OBSERVED_SWITCH, .Switch, thread.process) {
@@ -689,9 +699,16 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 		cpu.record_serial = thread.serial
 		model_specific_register_write(MSR_KERNEL_GS_BASE, thread.record)
 	}
+	if wants_traps := intrinsics.atomic_load(&thread.record_mode) != .None; cpu.record_traps_loaded != wants_traps {
+		if wants_traps {
+			record_traps_load(cpu)
+		} else {
+			record_traps_unload(cpu)
+		}
+	}
 	if thread.in_enter {
 		thread.in_enter = false
-		thread.frame.rax = intrinsics.atomic_load(&time_milliseconds)
+		thread.frame.rax = intrinsics.atomic_load(&thread.record_mode) != .None ? record_replay_entry_return_time(thread.process) : intrinsics.atomic_load(&time_milliseconds)
 	}
 	resume(&thread.frame)
 }

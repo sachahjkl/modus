@@ -14,9 +14,14 @@ import "modus:contract/value_kinds"
 
 enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 	thread := &threads[index]
+	if intrinsics.atomic_load(&thread.record_mode) == .Replaying {
+		replay_enter(cpu, index)
+		return
+	}
 	intrinsics.atomic_add(&processes[thread.process].entries, 1)
 	thread.in_enter = true
 	wait_begin(thread)
+	commands_ran := false
 	for _ in 0 ..< ring.CAPACITY {
 		if ring.empty(&thread.ring.commands) {
 			break
@@ -35,6 +40,7 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		if !ok {
 			break
 		}
+		commands_ran = true
 		completion := ring.Record{tag = command.tag}
 		// The event point of an operation (events.odin): with no rule of
 		// this kind, one branch on a word of this processor; with a rule for
@@ -53,6 +59,9 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		}
 		// The operation can end the thread: then it does nothing more.
 		if intrinsics.atomic_load(&thread.stop_requested) {
+			if intrinsics.atomic_load(&thread.record_mode) == .Recording {
+				record_kernel_completion(cpu, thread, command, status, completion.values)
+			}
 			return
 		}
 		completion.kind = u32(status)
@@ -61,11 +70,17 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			// table of error details that the command names (diagnose.odin).
 			completion.values = transmute([7]u64)diagnose_command(thread.process, command, status)
 		}
+		if intrinsics.atomic_load(&thread.record_mode) == .Recording {
+			record_kernel_completion(cpu, thread, command, status, completion.values)
+		}
 		// The room was checked before the run, and only the reader changes
 		// the read counter: the push fails only after a thread of the
 		// process wrote a false count into this ring, and the loss is then
 		// the process's alone.
 		_ = ring.push(&thread.ring.completions, completion)
+	}
+	if !commands_ran && intrinsics.atomic_load(&thread.record_mode) == .Recording {
+		record_kernel_completion(cpu, thread, ring.Record{values = {0 = thread.frame.rdi}}, .Ok, {})
 	}
 	// A word that changed before the wait: the thread reads it again.
 	wait_end(thread, thread.frame.rdi)

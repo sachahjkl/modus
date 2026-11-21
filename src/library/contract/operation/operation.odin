@@ -2233,6 +2233,29 @@ Thread_Control_Command :: enum u64 {
 	// on each machine: it only takes a capability away, so a thread whose
 	// right was revoked can still stop.
 	Stop_Counters        = 18,
+	// Starts recording process inputs of the target process (handle in
+	// `thread` with Debug) into the contiguous memory object named by the
+	// handle in `number` (with Read and Write) -> nothing. The target must
+	// be in state Created, hold no device or shared writable mapping, and
+	// not already be recorded or replayed.
+	Record_Start         = 19,
+	// Ends recording or replay of the target process (handle in `thread`
+	// with Debug), writes the end record into the input history, and
+	// restores any point copies -> nothing.
+	Record_End           = 20,
+	// Starts replaying the target process (handle in `thread` with Debug)
+	// from the input history in the contiguous memory object named by the
+	// handle in `number` (with Read and Write) -> nothing. The target must
+	// be in state Created and not already be recorded or replayed.
+	Replay_Start         = 21,
+}
+
+// thread_control_records_a_process says if a command of Thread_Control
+// controls record or replay of a process: it takes the process handle with
+// the right Debug (and for Record_Start / Replay_Start, the memory handle of
+// the contiguous input history in `number`).
+thread_control_records_a_process :: proc "contextless" (command: Thread_Control_Command) -> bool {
+	return command == .Record_Start || command == .Record_End || command == .Replay_Start
 }
 
 // thread_control_counts_the_caller says if a command of Thread_Control is a
@@ -2302,7 +2325,7 @@ thread_control_rights :: proc "contextless" (command: Thread_Control_Command) ->
 		return {.Inspect, .Write}
 	case .Write_Schedule, .Write_Placement:
 		return {.Control}
-	case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
+	case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Write_Breakpoints, .Read_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start:
 		return {.Inspect}
 	}
 	// Only a cast that skipped the border of the command reaches this line:
@@ -2331,7 +2354,7 @@ thread_control_machine_rights :: proc "contextless" (command: Thread_Control_Com
 	switch command {
 	case .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule:
 		return {.Schedule, .Inspect}, true
-	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Start_Counters, .Read_Counters, .Stop_Counters:
+	case .None, .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start:
 		return {}, false
 	}
 	// Only a cast that skipped the border of the command reaches this line.
@@ -2349,7 +2372,7 @@ thread_control_takes_debug_handle :: proc "contextless" (command: Thread_Control
 	switch command {
 	case .None, .Read_Schedule, .Write_Schedule, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
 		return false
-	case .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory:
+	case .Stop, .Resume, .Read_Registers, .Write_Registers, .Read_Extended_State, .Write_Extended_State, .Read_Breakpoints, .Write_Breakpoints, .Read_Memory, .Record_Start, .Record_End, .Replay_Start:
 		return true
 	}
 	// Only a cast that skipped the border of the command reaches this line.

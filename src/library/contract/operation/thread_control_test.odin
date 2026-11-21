@@ -133,12 +133,19 @@ the_rights_of_each_command :: proc(t: ^testing.T) {
 			// thread, through the machine handle with Counters only.
 			testing.expect(t, thread_control_counts_the_caller(command))
 			testing.expect_value(t, THREAD_COUNTERS_RIGHTS, Rights{.Counters})
+		case .Record_Start, .Record_End, .Replay_Start:
+			// Record and replay take the process handle with Debug.
+			testing.expect(t, thread_control_records_a_process(command))
+			testing.expect(t, thread_control_takes_debug_handle(command))
 		}
 		if command != .Read_Process_Schedule && command != .Write_Process_Schedule {
 			testing.expect(t, !thread_control_names_a_process(command))
 		}
 		if command != .Start_Counters && command != .Read_Counters && command != .Stop_Counters {
 			testing.expect(t, !thread_control_counts_the_caller(command))
+		}
+		if command != .Record_Start && command != .Record_End && command != .Replay_Start {
+			testing.expect(t, !thread_control_records_a_process(command))
 		}
 		// The machine handle: the schedule and the placement only, with
 		// Schedule and Inspect for each: a read is a report of the machine,
