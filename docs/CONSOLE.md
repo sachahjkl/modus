@@ -59,11 +59,13 @@ factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "("
            | "[" [ pipeline { "," pipeline } ] "]"
 arguments  = argument { "," argument }
 argument   = [ name "=" ] pipeline
+comment    = "//" { a byte that is no line end }      (between two tokens: no token)
 ```
 
 - **A name** starts with a letter or `_`, and goes on with letters, digits, `_` and `.`: `monitor.count` and `r.value` are one name each. `let`, `in`, `with` and `_` alone are words of Lex, never names: a variable, a field, a binding or a named argument with one of them is refused.
 - **An integer** is decimal digits. It has 64 bits with a sign. A number that is larger than 9223372036854775807 is an error of the line. A result of `+`, `-`, `*` or `/` that does not fit is an error of the line too: no result wraps. The checks are `number_value`, `integer_add`, `integer_subtract`, `integer_multiply`, `integer_negate` and `integer_divide` of `src/library/private/console/console_language`. The least integer has no literal: write `-9223372036854775807 - 1`.
 - **A text** is the bytes between two quotes. A text has no escape, so it cannot hold a quote.
+- **A comment** is `//` outside a text, to the end of the line: `area(r) // the area of r`. It adds nothing to the line, and a line of only a comment does nothing. `//` inside a text is a part of the text, and `a / / b` is two divisions, an error. Lex has no block comment.
 - **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them; `+` on two tables of equal record descriptions gives the rows of the left one, then the rows of the right one, and refuses two tables of different records. A division by zero is an error. So is the one division whose result does not fit: the least integer `/` `-1`. Its remainder fits: the least integer `%` `-1` is 0. The pipe operator `|>` has the lowest priority ("The pipe operator", below).
 
 Examples:
@@ -196,7 +198,7 @@ A record is a group of named fields, as a module describes it. The command with 
 - **A function with no call runs nothing**: its body runs only in a call.
 - **A recursion** through a `let`, `let f = (n) => f(n - 1) in f(3)`, never ends, because Lex has no condition yet: the line stops when the evaluator has taken 512 KiB of stack, at about 90 calls, or at the evaluation budget.
 
-**A list** is `[a, b, …]`: its items in order, of any kinds. **`map(list, function)`** calls the function on each item from the first, and gives the list of the results. `map` is a name of Lex, not a command: it takes a list and a function of one parameter. A literal or a member in a list stays untyped until a parameter receives it, as a literal does ("Records").
+**A list** is `[a, b, …]`: its items in order, of any kinds. **`map(list, function)`** calls the function on each item from the first, and gives the list of the results. `map` is a name of Lex, not a command: it takes a list and a function of one parameter, and it comes before an export named `map` of a loaded module. A list holds no Stream, no Record_Input and no item with no value. A literal or a member in a list stays untyped until a parameter receives it, as a literal does ("Records").
 
 ```
 > map([1, 2, 3], (x) => x * 2)
@@ -457,7 +459,9 @@ A line that fails has one result: its error. The first error ends the line: the 
 | A binding of a `let` that needs its own value | `error: the binding a needs its own value: a let cannot read a binding in its own value` |
 | A word of Lex as a name | `error: with is a word of Lex, not a name` |
 | A parameter of a function named twice | `error: the parameter x is named twice in one function` |
-| A call of a function with another count of arguments | `error: f: the call gives 2 arguments, and the function takes 1` |
+| A call of a function with another count of arguments | `error: f: the call gives 2 arguments, and the function takes 1 argument` |
+| `map` with another count of arguments | `error: map takes 2 arguments, a list and a function; the call gives 1 argument` |
+| An item of a list with no value, or a Stream | `error: a list holds no Stream: a Stream lives in the wiring of its line` |
 | A call of a name whose value is no function | `error: f is Integer, not a function: a call of a binding needs a function` |
 | A function or a list given to a command | `error: area: argument 1 is a function: a function and a list stay in their line, and no command takes one` |
 | A function or a list kept by a variable | `error: a variable keeps no function: a function reads the values of its line, which end with the line` |
@@ -876,7 +880,7 @@ The edit line, the line that the console writes back when Enter is pressed, and 
 | Variable | A variable, also before `=` and before `.field`; a binding of a `let` and a parameter of a function, where it is bound and where it is read | none | | | |
 | Number, Text, Text_Unfinished | A number; a text in quotes; a text with no end quote yet | Literal | `0x38C0B0` | 8.47 | 7.22 |
 | Operator, Arrow | `+ - * / % = ( ) , : . { } [ ] < > !`, `\|>`, `->`, `=>`, and the words `let`, `in`, `with` and `_` | Punctuation | `0xB0B8C1` | 9.51 | 8.10 |
-| Words | The words of a row that are not code: "export of", "command", "3 lines ago" | Comment | `0x9CA6B2` | 7.73 | 6.58 |
+| Words | The words of a row that are not code: "export of", "command", "3 lines ago"; a comment of a line, `// …` | Comment | `0x9CA6B2` | 7.73 | 6.58 |
 | Unknown | A name that is no command, module or variable; a byte that Lex does not take | Comment | `0x9CA6B2` | 7.73 | 6.58 |
 
 A part with no class has the color of the text around it: the tone of the line, or the text color `0xDCE4EC` in a row of the list (14.84 and 12.64). A host test computes each contrast on the background and on both colors of the card; the bound is 4.5 (`src/library/support/terminal/code_runs_test.odin`).

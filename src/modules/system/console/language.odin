@@ -289,7 +289,8 @@ run_line :: proc "contextless" (text: string) {
 	name: string
 	assigned := false
 	value: Value
-	if !failed {
+	// A line of spaces and a comment has no token: it does nothing.
+	if !failed && console_language.token_next(nested, 0).kind != .None {
 		lex_parser.parse(nested, {form_of = parameter_form_of}, &line_tree)
 		name = line_tree.assigned_name
 		assigned = len(name) > 0
@@ -393,12 +394,21 @@ assign :: proc "contextless" (name: string, value: Value) {
 	}
 }
 
+// The most bytes of stack that the evaluation of a line took in this run:
+// a line that takes more logs the new measure.
+deepest_line_stack: uint
+
 // line_evaluate forces the tree of the line whole, in mode `console`, then
 // writes the sentence of the refusal of the evaluator, if any. A refusal of
 // the host has written its own.
 line_evaluate :: proc "contextless" () -> Value {
 	lex_evaluator.evaluation_start(&line_evaluation, &line_tree, .Console, console_host())
 	value, ok := lex_evaluator.line_force(&line_evaluation)
+	// A line that the bound stopped measures the bound, not the line.
+	if line_evaluation.refusal.refusal != .Stack_Exceeded && line_evaluation.stack_deepest > deepest_line_stack {
+		deepest_line_stack = line_evaluation.stack_deepest
+		system.log_fact(.Info, Evaluator_Stack_Deepest{stack_bytes = u64(deepest_line_stack), bound_bytes = u64(line_evaluation.stack_bytes)})
+	}
 	if !ok {
 		evaluation_refusal_fail(line_evaluation.refusal)
 		return {}
@@ -487,10 +497,19 @@ evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Rec
 			fail(record.command, " is ", kind_names[record.left_kind], ", not a function: a call of a binding needs a function")
 		}
 	case .Function_Arguments:
-		if record.parameter == 2 {
-			fail("map calls its function with one argument, and this function takes ", record.right)
+		switch {
+		case record.parameter == 2:
+			fail("map calls its function with 1 argument, and this function takes ", arguments_text(record.right))
+		case record.command == lex_evaluator.MAP_NAME:
+			fail("map takes 2 arguments, a list and a function; the call gives ", arguments_text(record.left))
+		case:
+			fail(record.command, ": the call gives ", arguments_text(record.left), ", and the function takes ", arguments_text(record.right))
+		}
+	case .List_Item_Kind:
+		if record.left_kind == .None {
+			fail("an item of a list has no value: the expression gives none")
 		} else {
-			fail(record.command, ": the call gives ", record.left, " arguments, and the function takes ", record.right)
+			fail("a list holds no ", kind_names[record.left_kind], ": a ", kind_names[record.left_kind], " lives in the wiring of its line")
 		}
 	case .Value_At_Border:
 		fail(record.command, ": argument ", i64(record.parameter), " is ", kind_names[record.left_kind], ": a function and a list stay in their line, and no command takes one")
@@ -507,6 +526,12 @@ evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Rec
 	case .Not_A_List:
 		fail("map: argument 1 is ", kind_names[record.left_kind], ", not a list")
 	}
+}
+
+// arguments_text gives a count of arguments with its noun: "1 argument",
+// "2 arguments". The text lasts for one line.
+arguments_text :: proc "contextless" (count: i64) -> string {
+	return scratch_text(count, count == 1 ? " argument" : " arguments")
 }
 
 // enum_members_text gives the members of an enum as a line names them:

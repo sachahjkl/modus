@@ -1082,6 +1082,16 @@ The design: `src/md/features/declarations.md`, "The functions of layer 4 as buil
 
 Do not use: array, vector, sequence.
 
+### Comment of Lex
+
+A comment of Lex is `//` outside a text and the rest of its line: words for a reader, which the evaluation never reads.
+
+The scanner skips it as a space: it gives no token and no node, and the console draws it in the color of a comment. A line of the console can end with one; a line of only a comment does nothing. `//` inside a text is a part of the text. Lex has no block comment. Example: `area(r) // the area of r`. It is not a comment of a source of Odin, which the compiler reads.
+
+The design: `src/md/features/declarations.md`, "Comments".
+
+Do not use: remark, annotation, block comment.
+
 ### Evaluation stack bound
 
 The evaluation stack bound is the bytes of stack that one evaluation of Lex can take, 512 KiB, measured from its first force.

@@ -268,8 +268,13 @@ function_text :: proc "contextless" (value: Value) -> string {
 	text := line_tree.text
 	open := clamp(int(node.integer), 0, len(text))
 	arrow_end := clamp(int(node.end), open, len(text))
-	_, end := console_language.pipe_trim(text, open, console_language.function_body_end(text, arrow_end))
-	return text[open:max(end, arrow_end)]
+	// The end of the last token of the body: no space and no comment after it.
+	body_end := console_language.function_body_end(text, arrow_end)
+	end := arrow_end
+	for token := console_language.token_next(text, arrow_end); token.kind != .None && token.start < body_end; token = console_language.token_next(text, token.end) {
+		end = token.end
+	}
+	return text[open:end]
 }
 
 // list_inline says if a list draws on one line: each item is an Integer, a

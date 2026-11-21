@@ -360,6 +360,10 @@ pipe_pieces_of_functions_and_lists :: proc(t: ^testing.T) {
 		{"let f = (x) => x |> g in f(1)", "let f = (x) => g(x) in f(1)"},
 		{"[1, 2] |> map((x) => x) |> map((y) => y |> g)", "map(map([1, 2], (x) => x), (y) => g(y))"},
 		{"x |> f((y) => y, _)", "f((y) => y, x)"},
+		// A comment is no part of the nested form, and its bytes hide no
+		// "|>" and no '|'.
+		{"x |> f // a note", "f(x)"},
+		{"x |> f(1) // a | b |> c", "f(x, 1)"},
 	}
 	for item in cases {
 		form := nested_of(item[0], memory[:], stages[:])

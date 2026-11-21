@@ -64,10 +64,34 @@ operator_byte :: proc "contextless" (character: u8) -> bool {
 	return false
 }
 
-// space_end gives the first byte at or after position that is not a space.
+// space_end gives the first byte at or after position that is not a space
+// and not in a comment: "//" outside a text, to the end of its line. So a
+// comment gives no token, and the parser and the nested form never see one.
 space_end :: proc "contextless" (text: string, position: int) -> int {
 	place := clamp(position, 0, len(text))
-	for place < len(text) && text[place] == ' ' {
+	for place < len(text) {
+		if text[place] == ' ' {
+			place += 1
+		} else if comment_starts(text, place) {
+			place = comment_end(text, place)
+		} else {
+			break
+		}
+	}
+	return place
+}
+
+// comment_starts says if a comment starts at a byte: "//". A '/' with a
+// space after it, as in "a / / b", is an operator.
+comment_starts :: proc "contextless" (text: string, place: int) -> bool {
+	return place >= 0 && place + 1 < len(text) && text[place] == '/' && text[place + 1] == '/'
+}
+
+// comment_end gives the end of the comment that starts at start: the end
+// of its line, before its '\n', or the end of the text.
+comment_end :: proc "contextless" (text: string, start: int) -> int {
+	place := clamp(start, 0, len(text))
+	for place < len(text) && text[place] != '\n' {
 		place += 1
 	}
 	return place
@@ -254,6 +278,9 @@ line_runs :: proc "contextless" (text: string, first: int, caret: int, lookup: N
 	after_pipe := false // The token before is "|>".
 	for count < len(runs) {
 		token := token_next(text, position)
+		// The comment before the token, which gives no token: in the color
+		// of the words of a row, the color of a comment.
+		count = comment_runs(text, position, token.start, runs, count)
 		if token.kind == .None {
 			break
 		}
@@ -360,6 +387,23 @@ line_runs :: proc "contextless" (text: string, first: int, caret: int, lookup: N
 		first_token = false
 	}
 	return count
+}
+
+// comment_runs writes a run of the kind Words for each comment between two
+// tokens, text[from:to], which holds only spaces and comments.
+comment_runs :: proc "contextless" (text: string, from, to: int, runs: []terminal.Code_Run, count: int) -> int {
+	written := count
+	place := clamp(from, 0, len(text))
+	for place < min(to, len(text)) {
+		if comment_starts(text, place) {
+			end := comment_end(text, place)
+			written = run_add(runs, written, place, end, .Words)
+			place = end
+		} else {
+			place += 1
+		}
+	}
+	return written
 }
 
 // word_of_lex says if a token is a word of Lex: `let`, `in`, `with`, or the
@@ -492,13 +536,53 @@ bound_by_function :: proc "contextless" (text: string, token: Token) -> bool {
 		if !in_head && !in_body {
 			continue
 		}
-		for parameter := token_next(text, open.end); parameter.kind != .None && parameter.start < close; parameter = token_next(text, parameter.end) {
-			if parameter.kind == .Name && text[parameter.start:parameter.end] == name {
+		parameters: [HEAD_PARAMETERS_READ]Token
+		for parameter in parameters[:head_parameters(text, open.end, close, parameters[:])] {
+			if text[parameter.start:parameter.end] == name && (in_body || parameter.start == token.start) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// The parameters of a head that the colors and the completion read: those
+// of a function, 12, and room for a head that the parser refuses.
+HEAD_PARAMETERS_READ :: 16
+
+// head_parameters writes into tokens the parameters of a function head
+// whose parentheses hold text[first:close]: each name with no '.' alone
+// between the '(' or a ',' and a ',' or the ')', as the parser reads them.
+// A name in a group or before a '(' is no parameter.
+head_parameters :: proc "contextless" (text: string, first, close: int, tokens: []Token) -> int {
+	count := 0
+	depth := 0
+	alone := true // The token before is the '(' or a ',' at the level of the head.
+	for token := token_next(text, first); token.kind != .None && token.start < close; token = token_next(text, token.end) {
+		switch {
+		case opens(text, token):
+			depth += 1
+			alone = false
+		case closes(text, token):
+			depth -= 1
+			alone = false
+		case depth == 0 && token.kind == .Operator && text[token.start] == ',':
+			alone = true
+		case:
+			next := token_next(text, token.end)
+			ends := next.start >= close || next.kind == .Operator && text[next.start] == ','
+			dotted := false
+			for character in text[token.start:token.end] {
+				dotted ||= character == '.'
+			}
+			if depth == 0 && alone && token.kind == .Name && !dotted && ends && count < len(tokens) {
+				tokens[count] = token
+				count += 1
+			}
+			alone = false
+		}
+	}
+	return count
 }
 
 // parameters_at writes into tokens the parameters of each function of the
@@ -514,12 +598,7 @@ parameters_at :: proc "contextless" (text: string, place: int, tokens: []Token) 
 		if !found || place < arrow_end || place > function_body_end(text, arrow_end) {
 			continue
 		}
-		for parameter := token_next(text, open.end); parameter.kind != .None && parameter.start < close; parameter = token_next(text, parameter.end) {
-			if parameter.kind == .Name && count < len(tokens) {
-				tokens[count] = parameter
-				count += 1
-			}
-		}
+		count += head_parameters(text, open.end, close, tokens[count:])
 	}
 	return count
 }

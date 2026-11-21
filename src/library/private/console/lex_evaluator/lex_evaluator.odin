@@ -141,6 +141,7 @@ Refusal :: enum u8 {
 	Calls_Full            = 27, // A call of a function past CALL_CAPACITY calls or CALL_THUNK_CAPACITY thunks.
 	Lists_Full            = 28, // A list past LIST_ITEM_CAPACITY items in all.
 	Not_A_List            = 29, // The first argument of map is no List: command, parameter, left_kind.
+	List_Item_Kind        = 30, // An item of a list with no value, or a Stream or a Record_Input, which live in their wiring: left_kind; the place of the item, or of map.
 }
 
 // The first refusal of an evaluation, and what its sentence needs.
@@ -500,7 +501,7 @@ compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_I
 		}
 		return {kind = .Function, integer = i64(index), call = evaluation.call}, true
 	case .List_Literal:
-		return list_compute(evaluation, node)
+		return list_compute(evaluation, index, node)
 	case .Literal_Field, .Named_Argument, .Let_Binding, .Parameter:
 		// Their parent forces their value; a call gives a parameter.
 		break
@@ -903,12 +904,14 @@ call_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.N
 	named := false
 	count := 0
 	given := 0
+	text_refused := false
 	for argument := node.first_child; argument != lex_parser.NO_NODE; argument = lex_parser.next_of(tree, argument) {
 		argument_node := lex_parser.node_at(tree, argument)
 		slot := -1
 		switch argument_node.kind {
 		case .Refused:
 			// A refusal of the text: the arguments before it run, then it.
+			text_refused = true
 			continue
 		case .Named_Argument:
 			given += 1
@@ -966,14 +969,16 @@ call_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.N
 		if slots[parameter] != lex_parser.NO_NODE || parameter == parameter_count - 1 && signature.optional_last || signature.optional[parameter] {
 			continue
 		}
-		if named {
+		if named && !text_refused {
 			return refuse(evaluation, {refusal = .Argument_Missing, place = node.place, node = index, command = name, field = signature.names[parameter]})
 		}
 		missing = true
 	}
 	// A function and map count their arguments themselves, before any
-	// argument runs.
-	if signature.untyped && (count > parameter_count || !named && given != parameter_count) {
+	// argument runs. A call whose text stops in its arguments has no count:
+	// the arguments before the fault run, then the refusal of the text
+	// comes at its place, as for a command of the host.
+	if signature.untyped && !text_refused && (count > parameter_count || !named && given != parameter_count) {
 		return refuse(evaluation, {refusal = .Function_Arguments, place = node.place, node = index, command = name, left = i64(given), right = i64(parameter_count)})
 	}
 	if named || !missing {
@@ -1121,28 +1126,49 @@ map_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.No
 	evaluation.list_item_count += count
 	for item_number in 0 ..< count {
 		item := [1]Value{evaluation.list_items[int(list.integer) + item_number]}
-		evaluation.list_items[first + item_number] = function_call(evaluation, index, node, function, item[:]) or_return
+		result := function_call(evaluation, index, node, function, item[:]) or_return
+		if !list_item_takes(result.kind) {
+			return refuse(evaluation, {refusal = .List_Item_Kind, place = node.place, node = index, left_kind = result.kind})
+		}
+		evaluation.list_items[first + item_number] = result
 	}
 	return {kind = .List, integer = i64(first), detail = u32(count)}, true
+}
+
+// list_item_takes says if a list holds a value of a kind: each value but
+// none, and a Stream or a Record_Input, which live in the wiring of their
+// line and have no item to draw.
+@(private)
+list_item_takes :: proc "contextless" (kind: Kind) -> bool {
+	switch kind {
+	case .None, .Stream, .Record_Input:
+		return false
+	case .Integer, .Text, .Record, .Handle, .Table, .Bytes, .Record_Literal, .Enum, .Member, .Function, .List:
+	}
+	return true
 }
 
 // list_compute forces the items of a list from the left, and gives the
 // List. Its items take their places first: an item can make a list too.
 @(private)
-list_compute :: proc "contextless" (evaluation: ^Evaluation, node: ^lex_parser.Node) -> (value: Value, ok: bool) {
+list_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.Node_Index, node: ^lex_parser.Node) -> (value: Value, ok: bool) {
 	tree := evaluation.tree
 	count := 0
 	for item := node.first_child; item != lex_parser.NO_NODE; item = lex_parser.next_of(tree, item) {
 		count += 1
 	}
 	if count > LIST_ITEM_CAPACITY - evaluation.list_item_count {
-		return refuse(evaluation, {refusal = .Lists_Full, place = node.place})
+		return refuse(evaluation, {refusal = .Lists_Full, place = node.place, node = index})
 	}
 	first := evaluation.list_item_count
 	evaluation.list_item_count += count
 	place := first
 	for item := node.first_child; item != lex_parser.NO_NODE; item = lex_parser.next_of(tree, item) {
-		evaluation.list_items[place] = force(evaluation, item) or_return
+		item_value := force(evaluation, item) or_return
+		if !list_item_takes(item_value.kind) {
+			return refuse(evaluation, {refusal = .List_Item_Kind, place = lex_parser.node_at(tree, item).place, node = item, left_kind = item_value.kind})
+		}
+		evaluation.list_items[place] = item_value
 		place += 1
 	}
 	return {kind = .List, integer = i64(first), detail = u32(count)}, true

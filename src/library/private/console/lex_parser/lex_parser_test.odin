@@ -870,6 +870,42 @@ parse_trees_of_functions_and_lists :: proc(t: ^testing.T) {
 	testing.expect_value(t, node_text(tree, function), "=>")
 }
 
+// A comment gives no node: a line can end with one; a line of only a
+// comment holds no expression; "//" in a text is a part of the text; a '/'
+// alone and "/ /" stay faults.
+@(test)
+parse_comments :: proc(t: ^testing.T) {
+	Case :: struct {
+		text:    string,
+		refusal: Refusal,
+		column:  u32,
+		form:    string,
+	}
+	cases := [?]Case {
+		{"1 + 2 // three", .None, 0, "(1 + 2)"},
+		{"f(1) // f(2", .None, 0, "f(1)"},
+		{"x = 1 // a variable", .None, 0, "1"},
+		{"\"a // b\"", .None, 0, "\"a // b\""},
+		{"(x) => x // the body ends here", .None, 0, "fn(x => @x)"},
+		{"1//2", .None, 0, "1"},
+		{"// only a comment", .Line_Ends_Too_Soon, 18, "!Line_Ends_Too_Soon"},
+		{"1 + // two", .Line_Ends_Too_Soon, 11, "(1 + !Line_Ends_Too_Soon)"},
+		{"/", .Unexpected, 1, "!Unexpected"},
+		{"1 / / 2", .Unexpected, 5, "(1 / !Unexpected)"},
+		{"/ / 2", .Unexpected, 1, "!Unexpected"},
+	}
+	for item in cases {
+		tree := parse_of(item.text)
+		form := tree_form(tree, tree.root)
+		testing.expectf(t, tree.refusal.refusal == item.refusal && (item.refusal == .None || tree.refusal.place.column == item.column) && form == item.form, "%q: %v at column %d, %q; not %v at column %d, %q", item.text, tree.refusal.refusal, tree.refusal.place.column, form, item.refusal, item.column, item.form)
+	}
+	tree := parse_of("x = 1 // a variable")
+	testing.expect_value(t, tree.assigned_name, "x")
+	// The nodes: the comment takes none.
+	tree = parse_of("1 // 2 + 3")
+	testing.expect_value(t, tree.node_count, 1)
+}
+
 // The edges of a function and of a list: no parameter, the most parameters
 // that a call takes, the deepest nesting of functions that a line holds,
 // then one more level; the most items that a line holds.

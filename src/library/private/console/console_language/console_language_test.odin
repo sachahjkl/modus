@@ -1,7 +1,9 @@
 #+build !freestanding
 package console_language
 
+import "core:fmt"
 import "core:testing"
+import "core:time"
 import terminal "modus:support/terminal"
 
 // The names of a console of the tests.
@@ -463,4 +465,78 @@ line_runs_of_functions :: proc(t: ^testing.T) {
 	testing.expect_value(t, parameters_at(line, 7, tokens[:]), 1)
 	testing.expect_value(t, parameters_at("f((a) => a, 1)", 12, tokens[:]), 0)
 	testing.expect_value(t, parameters_at("(a, b, c, d, e) => a", 19, tokens[:2]), 2)
+
+	// Only a name alone between the '(' or a ',' and a ',' or the ')' is a
+	// parameter, as the parser reads it: no name of a call, of a group or
+	// of a dotted name in a head that the parser refuses.
+	head := "(f(1), [g], h.i, j) => f + g + h + j"
+	testing.expect_value(t, head_parameters(head, 1, 18, tokens[:]), 1)
+	testing.expect_value(t, head[tokens[0].start:tokens[0].end], "j")
+	for name in ([]string{"f", "g", "h"}) {
+		place := 23
+		for head[place:place + 1] != name {
+			place += 1
+		}
+		testing.expectf(t, !bound_by_function(head, token_next(head, place)), "%s in the body is no parameter", name)
+	}
+	testing.expect(t, bound_by_function(head, token_next(head, 35)))
+	testing.expect(t, !bound_by_function(head, token_next(head, 1)))
+	testing.expect_value(t, parameters_at(head, 30, tokens[:]), 1)
+}
+
+// The time of the colors of the longest line of functions: the colors read
+// the line again for each name. A measure, which no test reads.
+@(test)
+line_runs_of_functions_measure :: proc(t: ^testing.T) {
+	builder: [TEST_LINE_BYTES]u8
+	count := 0
+	part := "(a) => (b) => a + b, "
+	for count + len(part) <= len(builder) {
+		count += copy(builder[count:], part)
+	}
+	text := string(builder[:count])
+	runs: [256]terminal.Code_Run
+	started := time.tick_now()
+	written := 0
+	for _ in 0 ..< 100 {
+		written = line_runs(text, 0, NO_CARET, test_names, runs[:])
+	}
+	fmt.printfln("console_language: measure: the colors of a line of %d bytes and %d runs take %v", len(text), written, time.tick_since(started) / 100)
+}
+
+@(private = "file")
+TEST_LINE_BYTES :: 200
+
+// A comment: "//" outside a text, to the end of its line. It gives no
+// token, and the colors draw it in the color of the words. "//" in a text
+// is a part of the text, and "/ /" is two operators.
+@(test)
+comments_of_a_line :: proc(t: ^testing.T) {
+	token := token_next("1 // two", 1)
+	testing.expect(t, token.kind == .None && token.start == 8)
+	token = token_next("// a\nb", 0)
+	testing.expect(t, token.kind == .Unknown && token.start == 4)
+	token = token_next("\"a // b\"", 0)
+	testing.expect(t, token.kind == .Text && token.end == 8)
+	token = token_next("/ / 2", 0)
+	testing.expect(t, token.kind == .Operator && token.end == 1)
+	testing.expect_value(t, token_next("/ / 2", 1).start, 2)
+	token = token_next("/", 0)
+	testing.expect(t, token.kind == .Operator && token.end == 1)
+	testing.expect_value(t, space_end("  // c", 0), 6)
+	testing.expect_value(t, space_end("//", 0), 2)
+
+	runs: [16]terminal.Code_Run
+	text := "1 + 2 // three |> f(\"x\")"
+	count := line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"1", .Number}, {"+", .Operator}, {"2", .Number}, {"// three |> f(\"x\")", .Words}})
+	text = "// only a comment"
+	count = line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"// only a comment", .Words}})
+	text = "length(\"a // b\") "
+	count = line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"length", .Function}, {"(", .Operator}, {"\"a // b\"", .Text}, {")", .Operator}})
+	text = "1 / / 2"
+	count = line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"1", .Number}, {"/", .Operator}, {"/", .Operator}, {"2", .Number}})
 }

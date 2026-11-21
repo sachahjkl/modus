@@ -1766,12 +1766,24 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] 24"},
 	{kind = .Type, text = "[1, 2] |> map((w) => area({x = 0, y = 0, width = w, height = 5}))"},
 	{kind = .Wait, text = "[console] [5, 10]"},
-	{kind = .Type, text = "(x) => x + 1"},
+	{kind = .Type, text = "(x) => x + 1 // a comment ends the line"},
 	{kind = .Wait, text = "[console] (x) => x + 1"},
+	// A line of only a comment does nothing: the next line gives its value
+	// with no error before it.
+	{kind = .Type, text = "// a line of only a comment"},
+	{kind = .Type, text = "6 * 7"},
+	{kind = .Wait, text = "[console] 42", fails_on = "[console] error:"},
 	{kind = .Type, text = "area((x) => x)"},
 	{kind = .Wait, text = "[console] error: area: argument 1 is a function: a function and a list stay in their line, and no command takes one"},
 	{kind = .Type, text = "f = (x) => x"},
 	{kind = .Wait, text = "[console] error: a variable keeps no function"},
+	// The deepest line of calls of a command: 31 calls of hash inside each
+	// other and length in 197 bytes, a call of the host at the deepest
+	// place. It is the deepest line of the run so far, so its measure of
+	// the stack of the evaluator goes to the log before its result.
+	{kind = .Type, text = "length(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(\"\")))))))))))))))))))))))))))))))))"},
+	{kind = .Wait, text = "console: the deepest line so far took"},
+	{kind = .Wait, text = "[console] 64"},
 	{kind = .Type, text = "let f = (n) => f(n) in f(1)"},
 	{kind = .Wait, text = "[console] error: the line nests deeper than the stack of the evaluator holds: 524288 bytes"},
 	{kind = .Type, text = "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1"},
