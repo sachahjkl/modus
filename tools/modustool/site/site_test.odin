@@ -73,7 +73,7 @@ site_properties_of_the_repository :: proc(t: ^testing.T) {
 	testing.expect(t, err == nil, "cannot read docs/PROPERTIES.md")
 	principles, problem := site_properties_parse(string(data))
 	testing.expect_value(t, problem, "")
-	testing.expect_value(t, len(principles.properties), 22)
+	testing.expect_value(t, len(principles.properties), 23)
 	testing.expect_value(t, len(principles.rules), 3)
 	testing.expect(t, strings.has_prefix(principles.objective, "Build a kernel"))
 	for property, index in principles.properties {
@@ -81,7 +81,7 @@ site_properties_of_the_repository :: proc(t: ^testing.T) {
 		testing.expectf(t, property.title != "" && property.status != "", "the property %d has no title or no status", property.number)
 		testing.expectf(t, strings.has_suffix(property.sentence, "."), "the sentence of the property %d does not end with a period: %s", property.number, property.sentence)
 	}
-	if len(principles.properties) != 22 {
+	if len(principles.properties) != 23 {
 		return
 	}
 	testing.expect(t, strings.has_prefix(principles.properties[0].sentence, "The kernel does four things"))

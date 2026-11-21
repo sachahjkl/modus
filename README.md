@@ -199,7 +199,7 @@ The guides below give the details. `docs/DEMONSTRATIONS.md` says what the test s
 
 | File | Content |
 |---|---|
-| `docs/PROPERTIES.md` | The 22 properties that the system is built on: each rule, what it forbids, what it costs, and its state |
+| `docs/PROPERTIES.md` | The 23 properties that the system is built on: each rule, what it forbids, what it costs, and its state |
 | `docs/ARCHITECTURE.md` | The systems of the kernel and of user space, what each owns and how they connect; then the inside of the kernel: its locks, the virtual memory of a process, the extended state, the return to a process, kernel events |
 | `docs/MODULE_CONTRACT.md` | The module format, the loader, the call form (direct, isolated, from the host), the types, the context of a process, and the errors that diagnose |
 | `docs/TOOLS.md` | The developer tools, and what each one reads |
@@ -209,7 +209,7 @@ The guides below give the details. `docs/DEMONSTRATIONS.md` says what the test s
 | `docs/POINTERS.md` | The pointer pictures: Xcursor, hyprcursor and the others; the format and the manifest of the system; the license of the Posy theme |
 | `docs/TRUSTED_BOOT.md` | The trusted boot: what verifies what at the start, with which key; the signing key; the measure; what each layer does not protect |
 | `docs/INSTALL.md` | The disk image of a release: its files, their verification with the tool or with OpenSSL, the write to a USB key, and the start with Secure Boot on or off |
-| `docs/DEMONSTRATIONS.md` | For each of the 22 properties: what the machine test shows, the picture, and what no test shows yet |
+| `docs/DEMONSTRATIONS.md` | For each of the 23 properties: what the machine test shows, the picture, and what no test shows yet |
 | `docs/PRINCIPALS.md` | The principals: the machine, a named principal, its unlock and its lock, the session of each process, the store of a principal, and what is not built |
 | `docs/CONSOLE.md` | The line of the console: the caret, the completion list, the history and its search, the colors of the code |
 | `docs/CRYPTOGRAPHY.md` | The cryptography of QUIC and TLS 1.3: which proven code the system takes, and how it checks it |

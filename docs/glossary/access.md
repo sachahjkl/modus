@@ -480,13 +480,53 @@ Do not use: permission, access right, token.
 
 A process role is what the root service gives a process at its start: its start grants and the terms beside them, kept with the process while it runs.
 
-At its start, the root service reads the role of a process of the boot image from its row in the table `process_roles`: its start grants, the services that it can connect to, the blocks of its private store, the size of its terminal. Each rule after the start reads that role, never the name. A disk process has the role of the row of its nickname in the disk grant table.
+The root service reads it from the row of the process in the table `process_roles`: its start grants, the services that it can connect to, the blocks of its store, the size of its terminal. Each later rule reads it, never the name. A disk process has the row of its nickname in the disk grant table. A process role is not a role: it gives the grants of the roles that its process holds.
 
 Example: the role of `remote` holds Connect, Network, Acts_For_Principal and Remote_Clients, and the nine services that it connects to.
 
 The design: `src/md/api/root_ring.md`.
 
-Do not use: permission set.
+Do not use: permission set, role (alone, for this).
+
+### Role
+
+A role is a place of the system that one process fills for the others, such as the display, the console, the storage or a device class, named by a member of the enum `Role`.
+
+The set of the roles is closed. The root service gives each role to a role holder, which the plan names, after a check against its role contract. A client gets a connection to the holder in its context, or with `connect(role.display)` when its process role holds that right; it never finds the holder by a name.
+
+The design: `src/md/features/roles_and_contracts.md`.
+
+Do not use: service name, interface, well-known name, bus name.
+
+### Role holder
+
+A role holder is the process to which the root service gave a role, for one scope: the machine, a session, one client or one device.
+
+The plan names the module of each holder, and the signed image names a default one. The root service checks the module against the role contract before it gives the role, and gives the grants that the role needs. A holder of the display, the input or the console from the disk needs a choice of principal 0, measured into PCR 12. Example: the compositor holds `Display` for the machine.
+
+The design: `src/md/features/roles_and_contracts.md`.
+
+Do not use: provider (for this), implementation, daemon, server.
+
+### Interposed holder
+
+An interposed holder is a role holder that stands between the clients of a role and the holder below it, and fills the same role contract.
+
+A client sees no difference, because it holds a connection to the contract only. The holder forwards each call and record, and adds one function: a filter, an audit, a nesting, a view from another machine. Each handle that crosses it comes from it, so its revocation ends all of them. A holder that adds no function is refused. Each one adds a hop, which is measured.
+
+The design: `src/md/features/roles_and_contracts.md`, "Composition by interposition".
+
+Do not use: proxy, middleware, wrapper, membrane (for this).
+
+### Delegated service
+
+A delegated service is a process to which the root service gives one attenuated class of its own authority, such as the wiring of record outputs or the disk grant tables.
+
+The root service keeps a small core: the making of a process, the origin of each handle, the roles, the start. Each other domain goes to a delegated service, which holds a role and a narrow grant, and which the core checks at its border as any process. It acts only for the principal of its caller. A revocation by the core ends each handle that it gave.
+
+The design: `src/md/api/root_service_split.md`.
+
+Do not use: subsystem, manager, privileged helper, broker.
 
 ### Root ring
 

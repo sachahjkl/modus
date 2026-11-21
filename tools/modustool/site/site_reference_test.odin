@@ -227,7 +227,7 @@ site_demonstrations_of_the_repository :: proc(t: ^testing.T) {
 	rows, removals, problem := site_demonstrations_read(read_text(t, SITE_DEMONSTRATIONS_FILE))
 	testing.expect_value(t, problem, "")
 	// One row for each property, in order, each with a state and a text.
-	testing.expect_value(t, len(rows), 22)
+	testing.expect_value(t, len(rows), 23)
 	for row, index in rows {
 		testing.expect_value(t, row.number, index + 1)
 		testing.expectf(t, row.state != "" && row.shown != "" && row.missing != "", "the row of the property %d has an empty cell", row.number)

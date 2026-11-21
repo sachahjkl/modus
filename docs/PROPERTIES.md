@@ -1,6 +1,6 @@
 # Kernel properties
 
-This document gives the 22 properties on which `modus` is built: the rules that every part of the system obeys, what each rule forbids, and what it costs. They are the fundamental concepts of the system: a design that breaks one is wrong until the property itself changes.
+This document gives the 23 properties on which `modus` is built: the rules that every part of the system obeys, what each rule forbids, and what it costs. They are the fundamental concepts of the system: a design that breaks one is wrong until the property itself changes.
 
 ## How to read this document
 
@@ -13,8 +13,8 @@ This document gives the 22 properties on which `modus` is built: the rules that 
 | Section | What it says |
 |---|---|
 | "Objective", "Assumptions" | What the system aims at, and the three rules of every decision |
-| "Summary" | The 22 properties in one table, with their status |
-| "1. Small kernel with a small, counted interface" to "22. General mechanisms, and a plain expression for each frequent task" | One section for each property |
+| "Summary" | The 23 properties in one table, with their status |
+| "1. Small kernel with a small, counted interface" to "23. A role is a contract; its implementation is replaceable" | One section for each property |
 | "Tensions between properties" | Where two properties pull against each other, and the answer |
 | "Reuse list", "Open decisions", "First milestone" | What the system takes from others, what is still open, and the first end-to-end system |
 
@@ -87,6 +87,7 @@ Three rules apply to every decision:
 | 20 | No ambient access: the other holes to close | Decided |
 | 21 | Principals: who acts, without users | Decided (layers 1 and 2); direction for the rest |
 | 22 | General mechanisms, and a plain expression for each frequent task | Decided |
+| 23 | A role is a contract; its implementation is replaceable | Decided (designed, not built) |
 
 ## 1. Small kernel with a small, counted interface
 
@@ -558,6 +559,27 @@ Status: Decided.
 - **Reuse**: The aliases and the functions of a shell, as the form of a named short form. PowerShell and Nushell, where typed records in a pipeline make a frequent filter one call. The `tee` and `xargs` of Unix, as specific tools and encodings that this property refuses.
 - **Open**: what makes a task frequent: the proposal is a task that a guide, a machine test or the console shows, or that a principal does each day. No check of the tool finds an incantation; a review finds it.
 
+## 23. A role is a contract; its implementation is replaceable
+
+Status: Decided. The mechanism is designed, not built.
+
+**In short.** The display, the console, the storage and each other role of the system is a typed contract. The root service gives each role to a process, and every other process depends on the contract, never on the module that fills it. A principal can put another module in the place of a role, or a module between a role and its clients.
+
+- **Rule**: The roles of the system are a closed set: the display and the input, the console, the terminal, the start policy, the storage, the network, each device class, the remote display, and the services `plans`, `projects` and `recipes`. A role name is a member of an enum, never a text.
+- **Rule**: A role contract is a description in the module format: exports, record types, record outputs and record inputs. Its identity is the hash of that description, and it has a version. A module declares the role contracts that it fills.
+- **Rule**: The root service gives a role to a process, the role holder. Before it gives the role, it compares the descriptions of the module with the role contract, by the rule of the check of a replacement. A module that does not fill the contract does not get the role.
+- **Rule**: A process gets a connection to the holder of a role, and never finds one. It gets the connection in a context slot at its start, or with `connect(role.display)` when its process role holds that right. The root service makes the connection, then leaves the data path.
+- **Rule**: The plan says which module holds each role: `plan { roles = { display = catalog.compositor } }`. A change of a holder shows its difference, and takes effect only when the principal accepts it. The signed boot image gives the default holder of each role, so the system starts before any plan exists. No process looks up a role by a name at run time.
+- **Rule**: A process that fills a role contract can stand between a holder and its clients: a filter, an auditor, a nested compositor, the remote display. A client sees no difference, because it holds a connection to the contract only.
+- **Rule**: An event of a role is a record output of its contract. Each subscriber has its own typed ring, with no loss, which a revocation ends. The system has no broadcast, and no broker that sees the traffic.
+- **Rule**: Each role contract has a conformance suite. A holder must pass it, so a role that is replaceable is a checked fact.
+- **Rule**: The trust of a process comes from the role that the root service gave it, never from the name of its module.
+- **Forbids**: a message bus with a global namespace of text names; a registry of services by text name; the discovery of a service at run time; broadcast signals; a broker that sees the traffic between two processes; a client that names the module of a holder, compiles in a private part of it, or waits for a fact that only one holder writes; a trust that the name of a module gives.
+- **Cost**: Each role needs a contract with a version and a conformance suite. A contract that is too narrow makes a holder add a side path; a contract that is too wide makes each holder large. An interposed holder adds one hop to each call and each record, which is a cost to measure. A holder of a role in the trusted path (the display, the input, the console) sees the keys and draws the trusted surfaces: a module from the disk gets such a role only by a choice of principal 0, measured as the choice of a start policy is.
+- **Reuse**: The interfaces of Wayland, as typed contracts with a version that a compositor fills. The protocols of Fuchsia FIDL and its capability routing, as a contract named by its type and given by a parent. The membranes of the capability systems (Mark S. Miller, "Robust Composition", 2006), as the form of an interposed holder. The portals of xdg-desktop-portal, as a role that a desktop fills with its own module. D-Bus, as the form that this property refuses (`src/md/features/roles_and_contracts.md`).
+- **Open**: the description of a face that is a ring and not a call: the window ring of the display, the terminal ring and the class rings of the devices carry handles, which a description of the module format cannot carry today. Whether each service that a process connects to is a role. The holder of a role in the trusted path that a principal chooses from the disk.
+- **State**: designed, not built (`src/md/features/roles_and_contracts.md`). The root service gives each role to a module by its name, and many clients depend on the private protocol of the holder of today; the work that removes each dependency is in `ROADMAP.md`. The root service itself is split by this property into a core and delegated services (`src/md/api/root_service_split.md`).
+
 ## Tensions between properties
 
 - **Sandbox (2) against direct device access (5)**: Direct access is safe only when the hardware isolates queues. On the first machine the hypervisor does this. On real hardware an IOMMU is a requirement. The kernel programs the IOMMU of Intel and the IOMMU of AMD (property 5, "As built, the devices").
@@ -567,6 +589,10 @@ Status: Decided.
 - **Small interface (1) against typed resources (3)**: Types multiply operations. The ring of property 4 solves this: the kernel has few entry operations, and the typed commands are records in a ring.
 - **Named forms (22) against a small, counted interface (1) and permanent descriptions (19)**: Each named form of a frequent task is one more name to learn and to keep, and a name in the description of an export is a permanent contract. The answer: a named form lives in a library or in the console, never as a kernel operation, and it adds no mechanism. A named form whose task is no longer frequent is removed, as each name of the system is (no backward compatibility).
 - **New storage engine (9) against reliability**: The engine is small and each commit is tested against a stop of the machine. SQLite is not used.
+- **Role names (23) against no global name (2, 20 line 11)**: A role name is a name that every process knows. The answer: the set is closed and typed, and a role name opens nothing by itself. A process reaches a holder only through a connection in its context, or with the right of its process role; a name with no right gives a refusal that says nothing of the holder.
+- **Replaceable holders (23) against the trusted path (17, 20 line 8)**: The holder of the display draws the trusted surfaces and receives every key, so a hostile holder can draw a false dialog. The answer: a role in the trusted path takes the holder of the signed image, or a holder that principal 0 chose, measured into PCR 12 before it runs. No other principal chooses it.
+- **Interposed holders (23) against one mechanism and no copy tool (22)**: A holder that only passes each call to the next holder adds a hop and no function, as `tee` adds no function to a record output. The answer: an interposed holder must add a function (a filter, an audit, a nesting, a view from another machine); one that adds none is refused.
+- **Replaceable holders (23) against speed**: An interposed holder adds one hop to each call and each record. The answer: the root service connects a client to the holder directly when no holder stands between them, and the cost of each hop is measured, never assumed.
 
 ## Reuse list
 
