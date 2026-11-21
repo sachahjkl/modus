@@ -260,3 +260,26 @@ damage_tracking_and_window_chrome_helpers :: proc(t: ^testing.T) {
 	_, _, err = grid_dimensions_from_window(chrome_w, chrome_h, chrome_w, chrome_h, graphics.CELL_WIDTH, graphics.CELL_HEIGHT, TERMINAL_WINDOW_BOUNDS)
 	testing.expect_value(t, err, Resize_Error.Invalid_Pixels)
 }
+
+@(test)
+window_size_limits_refuses_signed_integer_overflow :: proc(t: ^testing.T) {
+	// Cell dimensions that overflow bounds.max_columns * cell_width or bounds.max_rows * cell_height.
+	_, ok := window_size_limits(0, 0, max(int), 16, TERMINAL_WINDOW_BOUNDS)
+	testing.expect(t, !ok)
+	_, ok = window_size_limits(0, 0, 8, max(int), TERMINAL_WINDOW_BOUNDS)
+	testing.expect(t, !ok)
+	_, ok = window_size_limits(0, 0, max(int) / terminal.COLUMNS_LIMIT + 1, 16, TERMINAL_WINDOW_BOUNDS)
+	testing.expect(t, !ok)
+	_, ok = window_size_limits(0, 0, 8, max(int) / terminal.ROWS_LIMIT + 1, TERMINAL_WINDOW_BOUNDS)
+	testing.expect(t, !ok)
+
+	// Chrome dimensions that overflow chrome + bounds * cell.
+	_, ok = window_size_limits(max(int), 0, 8, 16, TERMINAL_WINDOW_BOUNDS)
+	testing.expect(t, !ok)
+	_, ok = window_size_limits(0, max(int), 8, 16, TERMINAL_WINDOW_BOUNDS)
+	testing.expect(t, !ok)
+	_, ok = window_size_limits(max(int) - terminal.COLUMNS_LIMIT * 8 + 1, 0, 8, 16, TERMINAL_WINDOW_BOUNDS)
+	testing.expect(t, !ok)
+	_, ok = window_size_limits(0, max(int) - terminal.ROWS_LIMIT * 16 + 1, 8, 16, TERMINAL_WINDOW_BOUNDS)
+	testing.expect(t, !ok)
+}

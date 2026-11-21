@@ -160,10 +160,21 @@ window_size_limits :: proc "contextless" (
 	if cell_width <= 0 || cell_height <= 0 || chrome_width < 0 || chrome_height < 0 || !bounds_valid(bounds) {
 		return {}, false
 	}
-	least_w := max(display.RESIZABLE_LEAST_WIDTH, chrome_width + bounds.min_columns * cell_width)
-	least_h := max(display.RESIZABLE_LEAST_HEIGHT, chrome_height + bounds.min_rows * cell_height)
-	largest_w := min(display.SURFACE_LIMIT, chrome_width + bounds.max_columns * cell_width)
-	largest_h := min(display.SURFACE_LIMIT, chrome_height + bounds.max_rows * cell_height)
+	// Guard against signed int overflow before multiplying or adding chrome.
+	if bounds.max_columns > max(int) / cell_width || bounds.max_rows > max(int) / cell_height {
+		return {}, false
+	}
+	min_text_w := bounds.min_columns * cell_width
+	min_text_h := bounds.min_rows * cell_height
+	max_text_w := bounds.max_columns * cell_width
+	max_text_h := bounds.max_rows * cell_height
+	if chrome_width > max(int) - max_text_w || chrome_height > max(int) - max_text_h {
+		return {}, false
+	}
+	least_w := max(display.RESIZABLE_LEAST_WIDTH, chrome_width + min_text_w)
+	least_h := max(display.RESIZABLE_LEAST_HEIGHT, chrome_height + min_text_h)
+	largest_w := min(display.SURFACE_LIMIT, chrome_width + max_text_w)
+	largest_h := min(display.SURFACE_LIMIT, chrome_height + max_text_h)
 	if least_w > largest_w || least_h > largest_h {
 		return {}, false
 	}

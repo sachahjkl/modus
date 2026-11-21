@@ -69,7 +69,8 @@ Log_Budget :: struct {
 }
 
 // State of one UDP listen endpoint shared by a QUIC service: its datagram
-// ring, region, free send places, held-command queue, and error counters.
+// ring, region, free send places, per-place in-flight state, held-command
+// queue, and error counters.
 Endpoint :: struct {
 	datagrams:           ring.Ring,
 	region:              []u8,
@@ -80,6 +81,10 @@ Endpoint :: struct {
 	held_capacity:       int,
 	free_places:         [PLACE_COUNT]u32,
 	free_count:          int,
+	// Tracks whether each buffer slot (receive or send) is currently owned
+	// by an in-flight operation so duplicate or forged completions can never
+	// double-free a send slot or post overlapping receives on one slot.
+	place_in_flight:     [PLACE_COUNT]bool,
 	held_commands:       [HELD_CAPACITY]ring.Record,
 	held_command_count:  int,
 	held_overflows:      u64,
@@ -87,6 +92,7 @@ Endpoint :: struct {
 	sends_refused:       u64,
 	send_refusal_last:   u32,
 	bad_completions:     u64,
+	arrivals_dropped:    u64,
 	on_held_overflow:    proc "contextless" (),
 }
 
@@ -130,10 +136,38 @@ endpoint_init :: proc "contextless" (
 	return true
 }
 
+// info_completion_check validates an Info completion record from the network
+// service: checks CALL_TAG, Ok status through the enum border, valid IPv4
+// local address, and a UDP listen grant (optionally restricted to
+// required_address).
+info_completion_check :: proc "contextless" (
+	info: ring.Record,
+	required_address: u32 = 0,
+	require_address: bool = false,
+) -> (local_address: u32, listen_port: u16, err: Open_Error) {
+	if info.tag != CALL_TAG {
+		return 0, 0, .Bad_Grant
+	}
+	status, status_ok := enum_word.member_of_word(datagram.Status, u64(info.kind))
+	if !status_ok || status != .Ok {
+		return 0, 0, .Bad_Grant
+	}
+	if info.values[0] > u64(max(u32)) {
+		return 0, 0, .Bad_Grant
+	}
+	grant, grant_known := datagram.grant_unpack(info.values[6])
+	if !grant_known || grant.tcp || !grant.listen {
+		return 0, 0, .Bad_Grant
+	}
+	if require_address && grant.address != required_address {
+		return 0, 0, .Bad_Grant
+	}
+	return u32(info.values[0]), grant.port, .None
+}
+
 // endpoint_open opens the datagram ring and region from the process context,
-// queries Info from the network service, checks that the grant is a UDP
-// listen grant (optionally restricted to required_address), and initializes
-// the Endpoint.
+// queries Info from the network service with a fixed deadline, validates the
+// Info completion and UDP listen grant, and initializes the Endpoint.
 endpoint_open :: proc "contextless" (
 	endpoint: ^Endpoint,
 	ctx: ^system.Context,
@@ -161,31 +195,58 @@ endpoint_open :: proc "contextless" (
 		return .No_Region
 	}
 	region := ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]
-	system.send(&datagrams.commands, ring.Record{kind = u32(datagram.Command.Info), tag = CALL_TAG})
+	if !system.send(&datagrams.commands, ring.Record{kind = u32(datagram.Command.Info), tag = CALL_TAG}) {
+		return .Info_Timeout
+	}
 	info: ring.Record
 	got_info := false
+	deadline := system.time() + INFO_WAIT_MILLISECONDS
 	for {
-		record, has := system.receive(&datagrams.completions)
-		if has {
+		for _ in 0 ..< system.records_of_turn(&datagrams.completions) {
+			record, has := system.receive(&datagrams.completions)
+			if !has {
+				break
+			}
+			if record.tag != CALL_TAG {
+				continue
+			}
 			info = record
 			got_info = true
 			break
 		}
+		if got_info {
+			break
+		}
+		if system.time() >= deadline {
+			return .Info_Timeout
+		}
 		wait: system.Wait
 		system.wait_records(&wait, &datagrams.completions)
-		system.wait_end(&wait, system.time() + INFO_WAIT_MILLISECONDS)
+		now := system.wait_end(&wait, deadline)
+		if now >= deadline {
+			// Check once more after waking at the deadline before timing out.
+			for _ in 0 ..< system.records_of_turn(&datagrams.completions) {
+				record, has := system.receive(&datagrams.completions)
+				if !has {
+					break
+				}
+				if record.tag == CALL_TAG {
+					info = record
+					got_info = true
+					break
+				}
+			}
+			break
+		}
 	}
 	if !got_info {
 		return .Info_Timeout
 	}
-	grant, grant_known := datagram.grant_unpack(info.values[6])
-	if !grant_known || grant.tcp || !grant.listen {
-		return .Bad_Grant
+	local_address, listen_port, check_err := info_completion_check(info, required_address, require_address)
+	if check_err != .None {
+		return check_err
 	}
-	if require_address && grant.address != required_address {
-		return .Bad_Grant
-	}
-	if !endpoint_init(endpoint, datagrams, region, u32(info.values[0]), grant.port, receive_places, record_capacity) {
+	if !endpoint_init(endpoint, datagrams, region, local_address, listen_port, receive_places, record_capacity) {
 		return .Bad_Config
 	}
 	return .None
@@ -250,15 +311,23 @@ held_commands_push :: proc "contextless" (endpoint: ^Endpoint) -> int {
 	return done
 }
 
-// post_receive posts a Receive command for a receive place index.
+// post_receive posts a Receive command for an idle receive place index and
+// marks it in flight. Refuses out-of-range places or places already in flight.
 post_receive :: proc "contextless" (endpoint: ^Endpoint, place: u32) -> bool {
 	if endpoint == nil || place >= u32(endpoint.receive_places) {
 		return false
 	}
-	return command_push_or_hold(
+	if endpoint.place_in_flight[place] {
+		return false
+	}
+	if !command_push_or_hold(
 		endpoint,
 		ring.Record{kind = u32(datagram.Command.Receive), tag = place, values = {0 = u64(place) * PLACE_SIZE, 1 = PLACE_SIZE}},
-	)
+	) {
+		return false
+	}
+	endpoint.place_in_flight[place] = true
+	return true
 }
 
 // endpoint_post_receives posts all initial receive places 0 ..< receive_places.
@@ -281,17 +350,21 @@ endpoint_wake :: proc "contextless" (endpoint: ^Endpoint) {
 	}
 }
 
-// place_take pops one free send place index.
+// place_take pops one free send place index and marks it in flight.
 place_take :: proc "contextless" (endpoint: ^Endpoint) -> (place: u32, ok: bool) {
 	if endpoint == nil || endpoint.free_count <= 0 {
 		return 0, false
 	}
 	endpoint.free_count -= 1
-	return endpoint.free_places[endpoint.free_count], true
+	place = endpoint.free_places[endpoint.free_count]
+	endpoint.place_in_flight[place] = true
+	return place, true
 }
 
-// place_return returns a send place index to the free stack, refusing receive
-// places, out-of-range places, or a full free stack.
+// place_return returns an in-flight send place index to the free stack.
+// Refuses receive places, out-of-range places, places not currently in
+// flight, or a full free stack so a duplicate or forged completion can never
+// double-free a DMA send slot.
 place_return :: proc "contextless" (endpoint: ^Endpoint, place: u32) -> bool {
 	if endpoint == nil {
 		return false
@@ -299,10 +372,14 @@ place_return :: proc "contextless" (endpoint: ^Endpoint, place: u32) -> bool {
 	if place < u32(endpoint.receive_places) || place >= PLACE_COUNT {
 		return false
 	}
+	if !endpoint.place_in_flight[place] {
+		return false
+	}
 	send_capacity := PLACE_COUNT - endpoint.receive_places
 	if endpoint.free_count >= send_capacity {
 		return false
 	}
+	endpoint.place_in_flight[place] = false
 	endpoint.free_places[endpoint.free_count] = place
 	endpoint.free_count += 1
 	return true
@@ -310,14 +387,27 @@ place_return :: proc "contextless" (endpoint: ^Endpoint, place: u32) -> bool {
 
 // send_datagram writes the UDP header and checksum for payload length bytes
 // already placed at data_bytes(endpoint, place), then pushes a Send command.
+// Refuses places not in flight, out-of-range payload lengths (including past
+// network.UDP_DATA_LIMIT), or any udp_header_write failure without emitting a
+// Send record.
 send_datagram :: proc "contextless" (endpoint: ^Endpoint, place: u32, length: int, peer: quic.Remote) -> bool {
 	if endpoint == nil || place < u32(endpoint.receive_places) || place >= PLACE_COUNT {
 		return false
 	}
-	if length < 0 || length > PLACE_SIZE - network.UDP_HEADER {
+	if !endpoint.place_in_flight[place] {
 		return false
 	}
-	whole := network.udp_header_write(place_bytes(endpoint, place), endpoint.local_address, peer.address, endpoint.listen_port, peer.port, length)
+	if length < 0 || length > network.UDP_DATA_LIMIT || length > PLACE_SIZE - network.UDP_HEADER {
+		return false
+	}
+	buf := place_bytes(endpoint, place)
+	if buf == nil {
+		return false
+	}
+	whole := network.udp_header_write(buf, endpoint.local_address, peer.address, endpoint.listen_port, peer.port, length)
+	if whole == 0 {
+		return false
+	}
 	return command_push_or_hold(
 		endpoint,
 		ring.Record{
@@ -397,30 +487,42 @@ release_remote :: proc "contextless" (endpoint: ^Endpoint, peer: quic.Remote) ->
 	)
 }
 
-// completions_drain_queue drains the completion queue without issuing any
-// kernel wake: pushes held commands, collects arrived Receive records into
-// arrived, applies Validate completions, and returns completed Send places.
-completions_drain_queue :: proc "contextless" (
+// completions_drain_bounded drains at most one turn's worth of completions
+// (bounded by system.records_of_turn) without issuing any kernel wake.
+@(private)
+completions_drain_bounded :: proc "contextless" (
 	endpoint: ^Endpoint,
 	server: ^quic.Server,
 	records: []quic.Server_Record,
 	arrived: []ring.Record,
-) -> (count: int) {
+) -> (count: int, popped: int) {
 	if endpoint == nil || endpoint.datagrams.head == nil {
-		return 0
+		return 0, 0
 	}
 	held_commands_push(endpoint)
-	for {
+	turn_limit := system.records_of_turn(&endpoint.datagrams.completions)
+	for _ in 0 ..< turn_limit {
 		record, has := ring.pop(&endpoint.datagrams.completions)
 		if !has {
 			break
 		}
+		popped += 1
 		status, status_ok := enum_word.member_of_word(datagram.Status, u64(record.kind))
 		switch {
 		case record.tag < u32(endpoint.receive_places):
-			if status_ok && status == .Ok && count < len(arrived) {
-				arrived[count] = record
-				count += 1
+			if !endpoint.place_in_flight[record.tag] {
+				endpoint.bad_completions += 1
+				continue
+			}
+			endpoint.place_in_flight[record.tag] = false
+			if status_ok && status == .Ok {
+				if count < len(arrived) {
+					arrived[count] = record
+					count += 1
+				} else {
+					endpoint.arrivals_dropped += 1
+					post_receive(endpoint, record.tag)
+				}
 			} else {
 				if !status_ok {
 					endpoint.bad_completions += 1
@@ -437,6 +539,7 @@ completions_drain_queue :: proc "contextless" (
 			place := record.tag - SEND_TAG
 			if !place_return(endpoint, place) {
 				endpoint.bad_completions += 1
+				continue
 			}
 			if !status_ok || status != .Ok {
 				endpoint.sends_refused += 1
@@ -450,29 +553,45 @@ completions_drain_queue :: proc "contextless" (
 			endpoint.bad_completions += 1
 		}
 	}
+	return count, popped
+}
+
+// completions_drain_queue drains up to one turn of completions without
+// issuing any kernel wake: pushes held commands, collects arrived Receive
+// records into arrived, applies Validate completions, and returns completed
+// in-flight Send places.
+completions_drain_queue :: proc "contextless" (
+	endpoint: ^Endpoint,
+	server: ^quic.Server,
+	records: []quic.Server_Record,
+	arrived: []ring.Record,
+) -> (count: int) {
+	count, _ = completions_drain_bounded(endpoint, server, records, arrived)
 	return count
 }
 
-// completions_drain drains completions and wakes the network service if it
-// waited for completion room.
+// completions_drain drains up to one turn of completions and wakes the
+// network service only when at least one completion was popped.
 completions_drain :: proc "contextless" (
 	endpoint: ^Endpoint,
 	server: ^quic.Server,
 	records: []quic.Server_Record,
 	arrived: []ring.Record,
 ) -> (count: int) {
-	count = completions_drain_queue(endpoint, server, records, arrived)
-	if endpoint != nil && endpoint.datagrams.head != nil {
+	popped: int
+	count, popped = completions_drain_bounded(endpoint, server, records, arrived)
+	if popped > 0 && endpoint != nil && endpoint.datagrams.head != nil {
 		system.wake_writer(&endpoint.datagrams.completions)
 	}
 	return count
 }
 
 // exchange runs one full QUIC server pass over the arrived datagram records:
-// validates UDP framing, orders known connections before new handshakes,
-// feeds datagrams to the QUIC server, advances timers, runs up to SEND_ROUNDS
-// of application work and outgoing datagram sends, sweeps ended connections,
-// and reposts every arrived receive place.
+// validates receive tags, field ranges, and UDP framing, orders known
+// connections before new handshakes, feeds datagrams to the QUIC server,
+// advances timers, runs up to SEND_ROUNDS of application work and outgoing
+// datagram sends, sweeps ended connections, and reposts valid arrived receive
+// places.
 exchange :: proc "contextless" (
 	endpoint: ^Endpoint,
 	server: ^quic.Server,
@@ -490,6 +609,14 @@ exchange :: proc "contextless" (
 		if batch_count >= RECEIVE_PLACES_LIMIT {
 			break
 		}
+		if record.tag >= u32(endpoint.receive_places) {
+			endpoint.datagrams_malformed += 1
+			continue
+		}
+		if record.values[1] < network.UDP_HEADER || record.values[1] > PLACE_SIZE || record.values[2] > u64(max(u32)) || record.values[3] > u64(max(u16)) {
+			endpoint.datagrams_malformed += 1
+			continue
+		}
 		buf := place_bytes(endpoint, record.tag)
 		if buf == nil {
 			endpoint.datagrams_malformed += 1
@@ -497,7 +624,7 @@ exchange :: proc "contextless" (
 		}
 		// QUIC authenticates every packet; skipping UDP checksum verification
 		// avoids a redundant pass over payload bytes.
-		data, whole := network.udp_data_read(buf[:min(record.values[1], PLACE_SIZE)], u32(record.values[2]), endpoint.local_address, .Do_Not_Verify)
+		data, whole := network.udp_data_read(buf[:record.values[1]], u32(record.values[2]), endpoint.local_address, .Do_Not_Verify)
 		if !whole {
 			endpoint.datagrams_malformed += 1
 			continue
@@ -515,8 +642,10 @@ exchange :: proc "contextless" (
 			answer = data_bytes(endpoint, answer_place)
 		}
 		outcome := quic.server_datagram_receive(server, bytes, peer, answer, now_microseconds)
-		if outcome.answer_length > 0 {
-			send_datagram(endpoint, answer_place, outcome.answer_length, peer)
+		if outcome.answer_length > 0 && has_place {
+			if !send_datagram(endpoint, answer_place, outcome.answer_length, peer) {
+				place_return(endpoint, answer_place)
+			}
 		} else if has_place {
 			place_return(endpoint, answer_place)
 		}
@@ -539,11 +668,14 @@ exchange :: proc "contextless" (
 				break
 			}
 			length, peer := quic.server_datagram_send(server, data_bytes(endpoint, place), now_microseconds)
-			if length == 0 {
+			if length <= 0 {
 				place_return(endpoint, place)
 				break
 			}
-			send_datagram(endpoint, place, length, peer)
+			if !send_datagram(endpoint, place, length, peer) {
+				place_return(endpoint, place)
+				break
+			}
 			sent += 1
 		}
 		if sent == 0 {
@@ -556,7 +688,9 @@ exchange :: proc "contextless" (
 		release_remote(endpoint, peer)
 	}
 	for record in arrived {
-		post_receive(endpoint, record.tag)
+		if record.tag < u32(endpoint.receive_places) {
+			post_receive(endpoint, record.tag)
+		}
 	}
 	return quic.server_deadline(server)
 }
