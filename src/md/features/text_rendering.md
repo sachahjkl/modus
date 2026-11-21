@@ -127,7 +127,7 @@ The words of a key are a function of the key and of the font file: an eviction n
 
 No other process reads the cache, and the eviction is inside the process. The font outlines are pages of the boot image that no process writes. So the cache tells no process what another draws (property 20, row 17).
 
-**Its cost.** A draw finds a glyph by a hash of its key in a table of 8 192 places: one or two compares, about 10 to 20 ns (an estimate). Today a glyph of a glyph cache is one load by its character index, and a glyph costs 109 ns over a flat color at a line of 16. The first draw of a glyph costs its raster, once in each process and each size.
+**Its cost.** A draw finds a glyph by a hash of its key in a Swiss table (`hash_table.Hash_Index` of 340 groups of 16 slots, 5 440 slots, 16 344 bytes; [../data/swiss_table.md](../data/swiss_table.md)): one 16-tag SIMD compare and one key compare on a hit, measured at 2.07 ns on the host at 4 096 entries. Today a glyph of a glyph cache is one load by its character index, and a glyph costs 109 ns over a flat color at a line of 16. The first draw of a glyph costs its raster, once in each process and each size.
 
 ### The glyph caches of the boot image and the demand cache: removed
 

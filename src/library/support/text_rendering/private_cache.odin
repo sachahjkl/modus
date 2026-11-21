@@ -1,5 +1,7 @@
 package text_rendering
 
+import "modus:support/hash_table"
+
 // The private glyph cache (src/md/features/text_rendering.md, "The cache"):
 // the glyphs that this copy of the package drew, in its own memory, which
 // the budget of the process pays. No other process reads it, so its
@@ -32,9 +34,12 @@ ORDER_COUNT :: 10
 #assert(WORD_CAPACITY % GLYPH_WORDS_LIMIT == 0)
 LARGEST_RUN_COUNT :: WORD_CAPACITY / GLYPH_WORDS_LIMIT
 ENTRY_CAPACITY :: 4096 // The glyphs that the cache holds at most.
-BUCKET_BITS :: 13
-BUCKET_COUNT :: 1 << BUCKET_BITS // The places of the hash table: twice the entries.
-#assert(BUCKET_COUNT == 2 * ENTRY_CAPACITY)
+// The Swiss table index of the entries: 340 groups of 16 slots (5440 slots,
+// 4760 capacity at 7/8 load, 16 344 bytes) keeps the peak load at 75% and
+// fits in the same page count of Glyph_Memory as the 16 384-byte chained
+// bucket array it replaced.
+INDEX_GROUP_COUNT :: 340
+#assert(INDEX_GROUP_COUNT * hash_table.GROUP_WIDTH / 8 * hash_table.LOAD_BOUND_EIGHTHS >= ENTRY_CAPACITY)
 // An index of an entry or a block is stored plus one: 0 is no index, so
 // the cache of all zero is empty and valid.
 #assert(ENTRY_CAPACITY < 1 << 16 && BLOCK_COUNT < 1 << 16)
@@ -64,22 +69,22 @@ Glyph_Entry :: struct #packed {
 #assert(size_of(Glyph_Entry) == 12)
 
 Private_Entry :: struct {
-	key:            u64, // key_of; 0: a free entry.
-	glyph:          Glyph_Entry, // word_offset: from the first word of the cache.
-	frame:          u64, // The frame of its last use.
-	newer, older:   u16, // Its neighbours in the order of use, plus one.
-	next_in_bucket: u16, // The next entry of its place in the table, plus one; for a free entry, the next free entry.
-	first_block:    u16, // The first block of its words.
-	order:          u8, // The size of its run: BLOCK_WORDS << order words.
-	has_words:      bool, // A glyph with no ink, and a glyph that the renderer refused, have no words.
-	drawn:          bool, // false: the renderer refused its outline: the glyph is Missing.
+	key:          u64, // key_of; 0: a free entry.
+	glyph:        Glyph_Entry, // word_offset: from the first word of the cache.
+	frame:        u64, // The frame of its last use.
+	newer, older: u16, // Its neighbours in the order of use, plus one.
+	next_free:    u16, // For a free entry, the next free entry, plus one.
+	first_block:  u16, // The first block of its words.
+	order:        u8, // The size of its run: BLOCK_WORDS << order words.
+	has_words:    bool, // A glyph with no ink, and a glyph that the renderer refused, have no words.
+	drawn:        bool, // false: the renderer refused its outline: the glyph is Missing.
 }
 
 Private_Cache :: struct {
 	entries:        [ENTRY_CAPACITY]Private_Entry,
 	entries_used:   int, // The entries taken once: the next new entry.
 	free_entry:     u16, // The first free entry, plus one.
-	buckets:        [BUCKET_COUNT]u16, // The first entry of each place, plus one.
+	index:          hash_table.Hash_Index(u16, INDEX_GROUP_COUNT), // Swiss table from glyph key to entry index.
 	newest, oldest: u16, // The two ends of the order of use, plus one.
 	words:          [WORD_CAPACITY]u32,
 	// For the first block of a free run: its order plus one; 0 for each
@@ -150,8 +155,9 @@ key_of :: #force_inline proc "contextless" (face: Face, font: Outline_Font, glyp
 }
 
 @(private)
-bucket_of :: #force_inline proc "contextless" (key: u64) -> int {
-	return int((key * 0x9E37_79B9_7F4A_7C15) >> (64 - BUCKET_BITS))
+entry_hash_of_reference :: proc "contextless" (owner: rawptr, reference: u64) -> u64 {
+	cache := (^Private_Cache)(owner)
+	return hash_table.index_hash_word(&cache.index, cache.entries[reference].key)
 }
 
 // counts gives the counts of the private glyph cache of this copy.
@@ -290,41 +296,26 @@ order_push_newest :: proc "contextless" (cache: ^Private_Cache, index: int) {
 	cache.newest = u16(index + 1)
 }
 
-// entry_find gives the index of the entry of a key, or -1. The walk of a
-// place ends after ENTRY_CAPACITY entries, whatever the links say.
+// entry_find gives the index of the entry of a key, or -1.
 entry_find :: proc "contextless" (cache: ^Private_Cache, key: u64) -> int {
-	next := cache.buckets[bucket_of(key)]
-	for _ in 0 ..< ENTRY_CAPACITY {
-		if next == 0 {
-			return -1
+	search := hash_table.index_search_begin(&cache.index, hash_table.index_hash_word(&cache.index, key))
+	for reference, _ in hash_table.index_search_next(&cache.index, &search) {
+		if cache.entries[reference].key == key {
+			return int(reference)
 		}
-		entry := &cache.entries[next - 1]
-		if entry.key == key {
-			return int(next - 1)
-		}
-		next = entry.next_in_bucket
 	}
 	return -1
 }
 
 @(private)
-bucket_unlink :: proc "contextless" (cache: ^Private_Cache, index: int) {
-	place := &cache.buckets[bucket_of(cache.entries[index].key)]
-	if place^ == u16(index + 1) {
-		place^ = cache.entries[index].next_in_bucket
-		return
-	}
-	next := place^
-	for _ in 0 ..< ENTRY_CAPACITY {
-		if next == 0 {
+index_unlink :: proc "contextless" (cache: ^Private_Cache, index: int) {
+	key := cache.entries[index].key
+	search := hash_table.index_search_begin(&cache.index, hash_table.index_hash_word(&cache.index, key))
+	for reference, slot in hash_table.index_search_next(&cache.index, &search) {
+		if int(reference) == index {
+			hash_table.index_remove_slot(&cache.index, slot)
 			return
 		}
-		entry := &cache.entries[next - 1]
-		if entry.next_in_bucket == u16(index + 1) {
-			entry.next_in_bucket = cache.entries[index].next_in_bucket
-			return
-		}
-		next = entry.next_in_bucket
 	}
 }
 
@@ -343,12 +334,12 @@ evict_oldest :: proc "contextless" (cache: ^Private_Cache, frame: u64) -> bool {
 		return false
 	}
 	order_unlink(cache, index)
-	bucket_unlink(cache, index)
+	index_unlink(cache, index)
 	if entry.has_words {
 		run_give(cache, int(entry.first_block), int(entry.order))
 	}
 	cache_state.counts.evicted += 1
-	entry^ = {next_in_bucket = cache.free_entry}
+	entry^ = {next_free = cache.free_entry}
 	cache.free_entry = u16(index + 1)
 	return true
 }
@@ -366,7 +357,7 @@ entry_take :: proc "contextless" (cache: ^Private_Cache, frame: u64) -> (index: 
 		return 0, false
 	}
 	index = int(cache.free_entry - 1)
-	cache.free_entry = cache.entries[index].next_in_bucket
+	cache.free_entry = cache.entries[index].next_free
 	cache.entries[index] = {}
 	return index, true
 }
@@ -375,19 +366,18 @@ entry_take :: proc "contextless" (cache: ^Private_Cache, frame: u64) -> (index: 
 // glyph: it is in no list.
 @(private)
 entry_give :: proc "contextless" (cache: ^Private_Cache, index: int) {
-	cache.entries[index] = {next_in_bucket = cache.free_entry}
+	cache.entries[index] = {next_free = cache.free_entry}
 	cache.free_entry = u16(index + 1)
 }
 
-// entry_insert puts a new entry in the table and at the newest end.
+// entry_insert puts a new entry in the index and at the newest end.
 @(private)
 entry_insert :: proc "contextless" (cache: ^Private_Cache, index: int, key: u64, frame: u64) {
 	entry := &cache.entries[index]
 	entry.key = key
 	entry.frame = frame
-	place := &cache.buckets[bucket_of(key)]
-	entry.next_in_bucket = place^
-	place^ = u16(index + 1)
+	hash := hash_table.index_hash_word(&cache.index, key)
+	hash_table.index_insert(&cache.index, hash, u16(index), cache, entry_hash_of_reference)
 	order_push_newest(cache, index)
 }
 

@@ -559,7 +559,7 @@ Host: AMD Ryzen 7 5800X, one core (`taskset`), `-o:speed`, each time the least o
 
 | Measure | Value |
 |---|---|
-| The private glyph cache, in each copy of `text_rendering` that draws a glyph | 1 MiB of words, 4 096 entries of 48 bytes, a table of 8 192 places and the blocks, and about 150 KiB of render memory: about 1.4 MiB, one memory object that the process takes from its budget at the frame after its first such glyph (section 14.4) |
+| The private glyph cache, in each copy of `text_rendering` that draws a glyph | 1 MiB of words, 4 096 entries of 48 bytes, a Swiss table index of 340 groups (5 440 slots, 16 344 bytes) and the blocks, and about 150 KiB of render memory: about 1.4 MiB (354 pages), one memory object that the process takes from its budget at the frame after its first such glyph (section 14.4) |
 | The globals of each copy of `text_rendering` | about 25 KiB: the memory of one outline (13 KiB), which the measure needs too, a band of one row (11 KiB), and the state; a copy that only measures carries the outline and the state |
 | The font outlines | the four subsets: about 195 KB in the boot image |
 
