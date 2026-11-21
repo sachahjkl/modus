@@ -147,10 +147,11 @@ cpace_clear :: proc "contextless" (session: ^Cpace_Session) {
 }
 
 // cpace_calculate_generator implements calculate_generator(PRS, CI, sid) from
-// IRTF draft-irtf-cfrg-cpace for CPaceRistretto255:
+// IRTF draft-irtf-cfrg-cpace (Section 8.1 and Appendix A.2) for
+// CPaceRistretto255:
 //
 //   len_zpad = max(0, SHA512_BLOCK_SIZE - 1 - len(lv(PRS)) - len(lv(DSI)))
-//   gen_str  = lv_cat(DSI, PRS, zero_bytes(len_zpad), sid, CI)
+//   gen_str  = lv_cat(DSI, PRS, zero_bytes(len_zpad), CI, sid)
 //   gen_hash = SHA-512(gen_str)
 //   G        = ristretto255_from_uniform_bytes(gen_hash)
 cpace_calculate_generator :: proc "contextless" (
@@ -180,8 +181,8 @@ cpace_calculate_generator :: proc "contextless" (
 	sha512_update_lv(&hash_state, pairing_secret)
 	zeros: [SHA512_BLOCK_SIZE]u8
 	sha512_update_lv(&hash_state, zeros[:zpad_len])
-	sha512_update_lv(&hash_state, session_identifier)
 	sha512_update_lv(&hash_state, channel_identifier)
+	sha512_update_lv(&hash_state, session_identifier)
 	gen_hash := sha512_final(&hash_state)
 	defer clear_bytes_explicitly(gen_hash[:])
 
@@ -295,6 +296,8 @@ cpace_finish :: proc "contextless" (
 		return {}, .Refused_Bad_Phase
 	}
 	if len(peer_associated_data) > CPACE_MAX_AD_BYTES {
+		session.phase = .Failed
+		clear_bytes_explicitly(session.secret_scalar[:])
 		return {}, .Refused_Input_Too_Long
 	}
 
@@ -363,10 +366,14 @@ cpace_finish :: proc "contextless" (
 	sha512_update_lv(&hash_state, yb[:])
 	sha512_update_lv(&hash_state, adb)
 	isk := sha512_final(&hash_state)
+	defer clear_bytes_explicitly(isk[:])
 
 	initiator_tag := derive_cpace_subkey(CPACE_CONFIRM_INITIATOR_DSI, sid, &isk, &ya, ada, &yb, adb)
+	defer clear_bytes_explicitly(initiator_tag[:])
 	responder_tag := derive_cpace_subkey(CPACE_CONFIRM_RESPONDER_DSI, sid, &isk, &ya, ada, &yb, adb)
+	defer clear_bytes_explicitly(responder_tag[:])
 	derived_session_key := derive_cpace_subkey(CPACE_SESSION_KEY_DSI, sid, &isk, &ya, ada, &yb, adb)
+	defer clear_bytes_explicitly(derived_session_key[:])
 
 	session.peer_public_element = peer_copy
 	session.intermediate_session_key = isk

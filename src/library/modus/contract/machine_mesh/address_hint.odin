@@ -150,6 +150,7 @@ compute_address_hint_tag :: proc "contextless" (
 	copy(tag_input[36:52], addr_copy[:])
 	copy(tag_input[52:68], nonce_copy[:])
 	tag := blake3.derive_key(ADDRESS_HINT_TAG_DOMAIN, tag_input[:])
+	clear_bytes_explicitly(key_copy[:])
 	clear_bytes_explicitly(tag_input[:])
 	return tag
 }

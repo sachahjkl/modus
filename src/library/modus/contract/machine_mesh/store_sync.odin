@@ -22,7 +22,9 @@ SYNC_WIRE_MAGIC :: [4]u8{'M', 'S', 'Y', 'N'}
 SYNC_WIRE_VERSION :: u8(1)
 SYNC_FRAME_HEADER_SIZE :: 12
 
-// Domain separation contexts for deterministic conflict fork and conflict value hashes.
+// Domain separation contexts for deterministic version node, conflict fork,
+// and conflict value hashes.
+VERSION_NODE_HASH_DOMAIN :: "modus version node v1"
 CONFLICT_FORK_HASH_DOMAIN :: "modus sync conflict fork v1"
 CONFLICT_VALUE_HASH_DOMAIN :: "modus sync conflict value v1"
 
@@ -164,6 +166,12 @@ Sync_Session_State :: enum u8 {
 	Refused         = 4,
 }
 
+// Expected content-addressed object requested during a delta sync receive session.
+Expected_Sync_Object :: struct {
+	kind: Sync_Object_Kind,
+	hash: blake3.Hash,
+}
+
 // Pure state machine tracking one peer's delta sync session for a single store.
 Sync_Session :: struct {
 	state:                Sync_Session_State,
@@ -174,6 +182,7 @@ Sync_Session :: struct {
 	remote_head_hash:     blake3.Hash,
 	expected_count:       u8,
 	expected_hashes:      [MAX_SYNC_WANT_OBJECTS]blake3.Hash,
+	expected_kinds:       [MAX_SYNC_WANT_OBJECTS]Sync_Object_Kind,
 	received_mask:        u64,
 	reconcile_result:     Reconcile_Result,
 	last_refusal_reason:  Sync_Refusal_Reason,
@@ -621,10 +630,13 @@ reconcile_heads :: proc "contextless" (
 		if has_common_base {
 			return Reconcile_Result{outcome = .Refused_Invalid_Hashes}
 		}
+		// Keep common base empty until the remote has pulled and acknowledged
+		// local_head_hash; advancing it now would lose local commits if the
+		// remote commits offline before pulling.
 		return Reconcile_Result {
 			outcome              = .Remote_Behind_Local,
 			resulting_head_hash  = local_head_hash,
-			new_common_base_hash = local_head_hash,
+			new_common_base_hash = {},
 		}
 	}
 	if keys_equal_constant_time(local_head_hash, remote_head_hash) {
@@ -705,8 +717,15 @@ reconcile_object :: proc "contextless" (
 	}
 }
 
+// version_node_hash computes the domain-separated BLAKE3 hash of a store
+// version node so version nodes can never collide with plain Blob or Tree hashes.
+version_node_hash :: proc "contextless" (payload: []u8) -> blake3.Hash {
+	return blake3.derive_key(VERSION_NODE_HASH_DOMAIN, payload)
+}
+
 // sync_object_verify verifies that payload matches expected_hash according to
-// object_kind (plain BLAKE3 for Blob/Version_Node, canonical tree hash for Tree).
+// object_kind: plain BLAKE3 for Blob, canonical tree hash for Tree, and
+// domain-separated BLAKE3 for Version_Node.
 sync_object_verify :: proc "contextless" (
 	object_kind: Sync_Object_Kind,
 	expected_hash: blake3.Hash,
@@ -723,7 +742,7 @@ sync_object_verify :: proc "contextless" (
 		return false
 	}
 	switch checked_kind {
-	case .Blob, .Version_Node:
+	case .Blob:
 		computed := blake3.hash(payload)
 		return keys_equal_constant_time(computed, expected_hash)
 	case .Tree:
@@ -732,34 +751,41 @@ sync_object_verify :: proc "contextless" (
 			return false
 		}
 		return keys_equal_constant_time(computed, expected_hash)
+	case .Version_Node:
+		computed := version_node_hash(payload)
+		return keys_equal_constant_time(computed, expected_hash)
 	}
 	return false
 }
 
 // sync_session_begin_receive starts a receiving delta sync session when a peer
-// offers a remote head and lists the objects missing locally. If missing_hashes
-// is empty, reconciliation completes immediately without waiting for objects.
+// offers a remote head and lists the typed objects missing locally. If
+// missing_objects is empty, reconciliation completes immediately without
+// waiting for objects.
 sync_session_begin_receive :: proc "contextless" (
 	store_id: blake3.Hash,
 	has_common_base: bool,
 	common_base_hash: blake3.Hash,
 	local_head_hash: blake3.Hash,
 	remote_head_hash: blake3.Hash,
-	missing_hashes: []blake3.Hash,
+	missing_objects: []Expected_Sync_Object,
 ) -> (session: Sync_Session, ok: bool) {
-	if key_is_zero(store_id) || len(missing_hashes) > MAX_SYNC_WANT_OBJECTS {
+	if key_is_zero(store_id) || len(missing_objects) > MAX_SYNC_WANT_OBJECTS {
 		return Sync_Session{state = .Refused, last_refusal_reason = .Protocol_Error}, false
 	}
 	preview := reconcile_heads(has_common_base, common_base_hash, local_head_hash, remote_head_hash)
 	if preview.outcome == .Refused_Invalid_Hashes {
 		return Sync_Session{state = .Refused, last_refusal_reason = .Protocol_Error}, false
 	}
-	for hash, index in missing_hashes {
-		if key_is_zero(hash) {
+	for item, index in missing_objects {
+		if key_is_zero(item.hash) {
+			return Sync_Session{state = .Refused, last_refusal_reason = .Protocol_Error}, false
+		}
+		if _, kind_ok := sync_object_kind_of_word(u64(item.kind)); !kind_ok {
 			return Sync_Session{state = .Refused, last_refusal_reason = .Protocol_Error}, false
 		}
 		for earlier in 0 ..< index {
-			if keys_equal_constant_time(missing_hashes[earlier], hash) {
+			if keys_equal_constant_time(missing_objects[earlier].hash, item.hash) {
 				return Sync_Session{state = .Refused, last_refusal_reason = .Protocol_Error}, false
 			}
 		}
@@ -769,11 +795,13 @@ sync_session_begin_receive :: proc "contextless" (
 	session.common_base_hash = common_base_hash
 	session.local_head_hash = local_head_hash
 	session.remote_head_hash = remote_head_hash
-	session.expected_count = u8(len(missing_hashes))
-	for hash, index in missing_hashes {
-		session.expected_hashes[index] = hash
+	session.expected_count = u8(len(missing_objects))
+	for item, index in missing_objects {
+		checked_kind, _ := sync_object_kind_of_word(u64(item.kind))
+		session.expected_hashes[index] = item.hash
+		session.expected_kinds[index] = checked_kind
 	}
-	if len(missing_hashes) == 0 {
+	if len(missing_objects) == 0 {
 		session.reconcile_result = preview
 		session.state = .Reconciled
 	} else {
@@ -783,10 +811,11 @@ sync_session_begin_receive :: proc "contextless" (
 }
 
 // sync_session_receive_object processes one incoming Send_Object frame.
-// Refuses wrong state, wrong store, unexpected object hash, duplicate delivery,
-// or hash mismatch without mutating previously verified progress. Once every
-// missing object is verified, the session transitions to Reconciled with the
-// deterministic fast-forward or conflict-fork outcome.
+// Refuses wrong state, wrong store, unexpected object hash, mismatched object
+// kind, duplicate delivery, or hash mismatch without mutating previously
+// verified progress. Once every missing object is verified, the session
+// transitions to Reconciled with the deterministic fast-forward or
+// conflict-fork outcome.
 sync_session_receive_object :: proc "contextless" (
 	session: ^Sync_Session,
 	frame: ^Sync_Frame,
@@ -800,6 +829,10 @@ sync_session_receive_object :: proc "contextless" (
 	if !keys_equal_constant_time(frame.store_id, session.store_id) {
 		return .Unknown_Store, false
 	}
+	checked_kind, kind_ok := sync_object_kind_of_word(u64(frame.object_kind))
+	if !kind_ok {
+		return .Protocol_Error, false
+	}
 	slot := -1
 	for index in 0 ..< int(session.expected_count) {
 		if keys_equal_constant_time(session.expected_hashes[index], frame.object_hash) {
@@ -810,11 +843,14 @@ sync_session_receive_object :: proc "contextless" (
 	if slot < 0 {
 		return .Protocol_Error, false
 	}
+	if checked_kind != session.expected_kinds[slot] {
+		return .Protocol_Error, false
+	}
 	bit := u64(1) << u64(slot)
 	if session.received_mask & bit != 0 {
 		return .Protocol_Error, false
 	}
-	if !sync_object_verify(frame.object_kind, frame.object_hash, frame.payload) {
+	if !sync_object_verify(checked_kind, frame.object_hash, frame.payload) {
 		return .Hash_Mismatch, false
 	}
 	session.received_mask |= bit

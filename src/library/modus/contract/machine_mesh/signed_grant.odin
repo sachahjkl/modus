@@ -146,6 +146,7 @@ Grant_Check_Status :: enum u8 {
 	Refused_Expired                          = 19,
 	Refused_Buffer_Too_Small                 = 20,
 	Refused_Malformed_Wire                   = 21,
+	Refused_Serving_Machine_Not_Active       = 22,
 }
 
 // Closed status returned by revocation_list_validate and revocation updates.
@@ -170,13 +171,19 @@ share_rights_word :: proc "contextless" (rights: Share_Rights) -> u64 {
 }
 
 // share_rights_of_word is the single border converting a transport word into a
-// non-empty Share_Rights bit_set. Zero rights and unknown bits are refused.
+// non-empty Share_Rights bit_set. Zero rights, unknown bits, and Write without
+// Read are refused (src/md/features/several_machines.md, "Sharing between two
+// principals").
 share_rights_of_word :: proc "contextless" (word: u64) -> (rights: Share_Rights, ok: bool) {
 	known := share_rights_word({.Read, .Write})
 	if word == 0 || word & ~known != 0 {
 		return {}, false
 	}
-	return transmute(Share_Rights)word, true
+	rights = transmute(Share_Rights)word
+	if .Write in rights && .Read not_in rights {
+		return {}, false
+	}
+	return rights, true
 }
 
 // grant_target_kind_of_word is the single border converting a transport word
@@ -431,6 +438,9 @@ signed_grant_check :: proc "contextless" (
 	}
 	if !keys_equal_constant_time(grant.serving_machine_id, serving_machine_id) {
 		return .Refused_Wrong_Serving_Machine
+	}
+	if _, serving_active := machine_list_find_active_by_machine_id(grantor_machine_list, serving_machine_id); !serving_active {
+		return .Refused_Serving_Machine_Not_Active
 	}
 	if !keys_equal_constant_time(grant.grantee_root_public_key, expected_grantee_root_key) {
 		return .Refused_Wrong_Grantee

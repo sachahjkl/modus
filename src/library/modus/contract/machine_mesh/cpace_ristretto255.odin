@@ -518,7 +518,9 @@ ristretto255_from_uniform_bytes :: proc "contextless" (bytes: [RISTRETTO255_UNIF
 	copy(first[:], bytes_copy[0:32])
 	copy(second[:], bytes_copy[32:64])
 	p0 := map_elligator_ristretto255(first)
+	defer ristretto255_point_clear(&p0)
 	p1 := map_elligator_ristretto255(second)
+	defer ristretto255_point_clear(&p1)
 	clear_bytes_explicitly(bytes_copy[:])
 	clear_bytes_explicitly(first[:])
 	clear_bytes_explicitly(second[:])
@@ -530,6 +532,9 @@ ristretto255_from_uniform_bytes :: proc "contextless" (bytes: [RISTRETTO255_UNIF
 @(private = "file")
 scalar_reduce_bytes_mod_l :: proc "contextless" (input: []u8) -> (reduced: [RISTRETTO255_SCALAR_SIZE]u8) {
 	acc: [4]u64
+	diff: [4]u64
+	defer clear_bytes_explicitly(([^]u8)(&acc[0])[:size_of(acc)])
+	defer clear_bytes_explicitly(([^]u8)(&diff[0])[:size_of(diff)])
 	order := GROUP_ORDER_L
 	total_bits := len(input) * 8
 	for bit_index := total_bits - 1; bit_index >= 0; bit_index -= 1 {
@@ -543,18 +548,12 @@ scalar_reduce_bytes_mod_l :: proc "contextless" (input: []u8) -> (reduced: [RIST
 		acc[1] = (acc[1] << 1) | (acc[0] >> 63)
 		acc[0] = (acc[0] << 1) | in_bit
 
-		// Compute diff = acc - l with borrow propagation.
-		diff: [4]u64
+		// Compute diff = acc - l branchlessly using 128-bit borrow extraction.
 		borrow: u64 = 0
 		for limb in 0 ..< 4 {
-			a := acc[limb]
-			b := order[limb]
-			sub1 := a - b
-			b1: u64 = a < b ? 1 : 0
-			sub2 := sub1 - borrow
-			b2: u64 = sub1 < borrow ? 1 : 0
-			diff[limb] = sub2
-			borrow = b1 | b2
+			wide := u128(acc[limb]) - u128(order[limb]) - u128(borrow)
+			diff[limb] = u64(wide)
+			borrow = u64(wide >> 127)
 		}
 
 		// Keep diff when borrow == 0 (acc >= l), otherwise keep acc.
@@ -566,7 +565,6 @@ scalar_reduce_bytes_mod_l :: proc "contextless" (input: []u8) -> (reduced: [RIST
 	for limb in 0 ..< 4 {
 		byte_order.write_u64_little_endian(reduced[:], limb * 8, acc[limb])
 	}
-	clear_bytes_explicitly(([^]u8)(&acc[0])[:size_of(acc)])
 	return reduced
 }
 
@@ -609,6 +607,8 @@ ristretto255_scalar_mul :: proc "contextless" (
 	}
 
 	result := ristretto255_identity()
+	chosen: Ristretto_Point
+	defer ristretto255_point_clear(&chosen)
 	// Process 64 nibbles from MSB (byte 31 high nibble) to LSB (byte 0 low nibble).
 	for byte_index := 31; byte_index >= 0; byte_index -= 1 {
 		for shift := uint(4); ; shift -= 4 {
@@ -618,7 +618,7 @@ ristretto255_scalar_mul :: proc "contextless" (
 			result = ristretto255_double(result)
 
 			nibble := u64((reduced[byte_index] >> shift) & 0x0F)
-			chosen := table[0]
+			chosen = table[0]
 			for entry_index in 1 ..< 16 {
 				diff := nibble ~ u64(entry_index)
 				is_equal := 1 ~ ((diff | (0 - diff)) >> 63)

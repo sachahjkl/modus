@@ -188,9 +188,15 @@ validate_machine_list_structure :: proc "contextless" (list: ^Signed_Machine_Lis
 		if key_is_zero(entry.machine_id) || key_is_zero(entry.signing_public_key) || key_is_zero(entry.transport_public_key) {
 			return false, .Refused_Zero_Key
 		}
-		// A per-machine signing key must never equal the offline principal root key.
+		// No per-machine key may ever reuse the offline principal root public key.
+		if keys_equal_constant_time(entry.machine_id, list.principal_root_public_key) {
+			return false, .Refused_Duplicate_Machine_Id
+		}
 		if keys_equal_constant_time(entry.signing_public_key, list.principal_root_public_key) {
 			return false, .Refused_Duplicate_Signing_Key
+		}
+		if keys_equal_constant_time(entry.transport_public_key, list.principal_root_public_key) {
+			return false, .Refused_Duplicate_Transport_Key
 		}
 		if _, uses_ok := remote.client_uses_of_word(remote.client_uses_word(entry.uses)); !uses_ok {
 			return false, .Refused_Bad_Uses

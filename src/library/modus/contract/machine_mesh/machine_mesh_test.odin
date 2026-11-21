@@ -452,6 +452,14 @@ cpace_refuses_zero_identity_invalid_points_and_edge_inputs :: proc(t: ^testing.T
 	_, st = cpace_verify_peer_confirmation(&uninit, [32]u8{})
 	testing.expect_value(t, st, Cpace_Status.Refused_Bad_Phase)
 
+	// Oversized peer_associated_data in cpace_finish refuses, marks Failed, and wipes secret_scalar.
+	_, st = cpace_start(&session, .Initiator, prs, nil, nil, nil, valid_scalar)
+	testing.expect_value(t, st, Cpace_Status.Ok)
+	_, st = cpace_finish(&session, [32]u8{0 = 4}, big_buf[:CPACE_MAX_AD_BYTES + 1])
+	testing.expect_value(t, st, Cpace_Status.Refused_Input_Too_Long)
+	testing.expect_value(t, session.phase, Cpace_Phase.Failed)
+	testing.expect(t, bytes_all_zero(session.secret_scalar[:]))
+
 	// Zero / identity peer point refused and secret scalar erased.
 	_, st = cpace_start(&session, .Initiator, prs, nil, nil, nil, valid_scalar)
 	testing.expect_value(t, st, Cpace_Status.Ok)
@@ -468,6 +476,57 @@ cpace_refuses_zero_identity_invalid_points_and_edge_inputs :: proc(t: ^testing.T
 	testing.expect_value(t, st, Cpace_Status.Refused_Invalid_Peer_Point)
 	testing.expect_value(t, session.phase, Cpace_Phase.Failed)
 	testing.expect(t, bytes_all_zero(session.secret_scalar[:]))
+}
+
+@(test)
+cpace_generator_hashes_channel_identifier_before_session_identifier :: proc(t: ^testing.T) {
+	prs := transmute([]u8)string("PAIR-9876")
+	ci := transmute([]u8)string("channel-binding-alpha")
+	sid := transmute([]u8)string("session-id-beta")
+
+	gen_ci_then_sid, st_a := cpace_calculate_generator(prs, ci, sid)
+	testing.expect_value(t, st_a, Cpace_Status.Ok)
+
+	// Swapping CI and sid when CI != sid must produce a distinct generator.
+	gen_swapped, st_b := cpace_calculate_generator(prs, sid, ci)
+	testing.expect_value(t, st_b, Cpace_Status.Ok)
+	testing.expect(t, !ristretto255_equal(gen_ci_then_sid, gen_swapped))
+
+	// Cross-verify exact IRTF draft-irtf-cfrg-cpace lv_cat(DSI, PRS, Z_pad, CI, sid) layout.
+	zpad_len := SHA512_BLOCK_SIZE - 1 - (1 + len(prs)) - (1 + len(CPACE_DSI))
+	manual_input: [512]u8
+	pos := 0
+	manual_input[pos] = u8(len(CPACE_DSI))
+	pos += 1
+	copy(manual_input[pos:], CPACE_DSI)
+	pos += len(CPACE_DSI)
+	manual_input[pos] = u8(len(prs))
+	pos += 1
+	copy(manual_input[pos:], prs)
+	pos += len(prs)
+	manual_input[pos] = u8(zpad_len)
+	pos += 1
+	pos += zpad_len
+	manual_input[pos] = u8(len(ci))
+	pos += 1
+	copy(manual_input[pos:], ci)
+	pos += len(ci)
+	manual_input[pos] = u8(len(sid))
+	pos += 1
+	copy(manual_input[pos:], sid)
+	pos += len(sid)
+
+	expected_hash: [sha2.DIGEST_SIZE_512]u8
+	ctx: sha2.Context_512
+	sha2.init_512(&ctx)
+	sha2.update(&ctx, manual_input[:pos])
+	sha2.final(&ctx, expected_hash[:])
+
+	ref_ge: ristretto255.Group_Element
+	ristretto255.ge_set_wide_bytes(&ref_ge, expected_hash[:])
+	expected_bytes: [32]u8
+	ristretto255.ge_bytes(&ref_ge, expected_bytes[:])
+	testing.expect_value(t, ristretto255_encode(gen_ci_then_sid), expected_bytes)
 }
 
 // ============================================================================
@@ -602,9 +661,17 @@ machine_list_refuses_replay_downgrade_duplicates_and_bad_signatures :: proc(t: ^
 	dup_trans.entries[1].transport_public_key = entry_a.transport_public_key
 	testing.expect_value(t, machine_list_validate(nil, &dup_trans, policy, ed25519_verify_callback), Machine_List_Status.Refused_Duplicate_Transport_Key)
 
+	root_as_machine_id := list_v5
+	root_as_machine_id.entries[0].machine_id = root_pub
+	testing.expect_value(t, machine_list_validate(nil, &root_as_machine_id, policy, ed25519_verify_callback), Machine_List_Status.Refused_Duplicate_Machine_Id)
+
 	root_as_machine_sig := list_v5
 	root_as_machine_sig.entries[0].signing_public_key = root_pub
 	testing.expect_value(t, machine_list_validate(nil, &root_as_machine_sig, policy, ed25519_verify_callback), Machine_List_Status.Refused_Duplicate_Signing_Key)
+
+	root_as_machine_transport := list_v5
+	root_as_machine_transport.entries[0].transport_public_key = root_pub
+	testing.expect_value(t, machine_list_validate(nil, &root_as_machine_transport, policy, ed25519_verify_callback), Machine_List_Status.Refused_Duplicate_Transport_Key)
 
 	// Unknown state, bad uses (empty, Input without View), bad timestamps.
 	bad_state := list_v5
@@ -902,7 +969,57 @@ signed_grant_short_lived_and_long_lived_with_revocation :: proc(t: ^testing.T) {
 	revoked_grantor_list.entries[0].state = .Revoked
 	revoked_grantor_list.entries[0].revoked_at_ms = 20_000
 	sign_machine_list(&revoked_grantor_list, &grantor_root_priv)
-	testing.expect_value(t, signed_grant_check(&short_grant, &revoked_grantor_list, machine_entry.machine_id, grantee_root_pub, issued + 100, nil, ed25519_verify_callback), Grant_Check_Status.Refused_Grantor_Key_Not_Active)
+	testing.expect_value(t, signed_grant_check(&short_grant, &revoked_grantor_list, machine_entry.machine_id, grantee_root_pub, issued + 100, nil, ed25519_verify_callback), Grant_Check_Status.Refused_Serving_Machine_Not_Active)
+
+	// Machine B (active) signs a grant served by Machine A; revoking Machine A at seq 2 refuses the grant even while Machine B remains active.
+	machine_b, machine_b_signing_priv := make_machine_entry(0xA6, true, .Active, 1_500, 0)
+	two_machine_v1 := Signed_Machine_List {
+		principal_root_public_key = grantor_root_pub,
+		sequence_number           = 1,
+		entry_count               = 2,
+	}
+	two_machine_v1.entries[0] = machine_entry
+	two_machine_v1.entries[1] = machine_b
+	sign_machine_list(&two_machine_v1, &grantor_root_priv)
+
+	cross_machine_grant := Signed_Grant {
+		grant_serial               = 200,
+		grantor_root_public_key    = grantor_root_pub,
+		grantor_signing_public_key = machine_b.signing_public_key,
+		serving_machine_id         = machine_entry.machine_id,
+		grantee_root_public_key    = grantee_root_pub,
+		target_kind                = .Store_Object,
+		target_hash                = store_hash,
+		rights                     = {.Read},
+		issued_at_ms               = issued,
+		expires_at_ms              = issued + MAX_SHORT_GRANT_LIFE_MS,
+		revocation_list_epoch      = 0,
+	}
+	sign_grant(&cross_machine_grant, &machine_b_signing_priv)
+	testing.expect_value(t, signed_grant_check(&cross_machine_grant, &two_machine_v1, machine_entry.machine_id, grantee_root_pub, issued + 100, nil, ed25519_verify_callback), Grant_Check_Status.Accepted)
+
+	// Revoke Machine A (serving machine) at seq 2 while Machine B (signer) stays active.
+	two_machine_v2 := two_machine_v1
+	two_machine_v2.sequence_number = 2
+	two_machine_v2.entries[0].state = .Revoked
+	two_machine_v2.entries[0].revoked_at_ms = 25_000
+	sign_machine_list(&two_machine_v2, &grantor_root_priv)
+	testing.expect_value(t, signed_grant_check(&cross_machine_grant, &two_machine_v2, machine_entry.machine_id, grantee_root_pub, issued + 100, nil, ed25519_verify_callback), Grant_Check_Status.Refused_Serving_Machine_Not_Active)
+
+	// Revoke Machine B (signer) at seq 3 while Machine A stays active -> Refused_Grantor_Key_Not_Active.
+	two_machine_v3 := two_machine_v1
+	two_machine_v3.sequence_number = 3
+	two_machine_v3.entries[1].state = .Revoked
+	two_machine_v3.entries[1].revoked_at_ms = 30_000
+	sign_machine_list(&two_machine_v3, &grantor_root_priv)
+	testing.expect_value(t, signed_grant_check(&cross_machine_grant, &two_machine_v3, machine_entry.machine_id, grantee_root_pub, issued + 100, nil, ed25519_verify_callback), Grant_Check_Status.Refused_Grantor_Key_Not_Active)
+
+	// Unlisted serving_machine_id is also refused even when grant matches it.
+	_, unlisted_machine_id := make_keypair(0xAC)
+	unlisted_grant := cross_machine_grant
+	unlisted_grant.serving_machine_id = unlisted_machine_id
+	sign_grant(&unlisted_grant, &machine_b_signing_priv)
+	testing.expect_value(t, signed_grant_check(&unlisted_grant, &two_machine_v1, unlisted_machine_id, grantee_root_pub, issued + 100, nil, ed25519_verify_callback), Grant_Check_Status.Refused_Serving_Machine_Not_Active)
 }
 
 @(test)
@@ -943,9 +1060,11 @@ signed_grant_refuses_all_adversarial_inputs :: proc(t: ^testing.T) {
 	testing.expect_value(t, dec_st, Grant_Check_Status.Accepted)
 	testing.expect_value(t, signed_grant_check(&decoded, &grantor_list, machine_entry.machine_id, grantee_root_pub, 5_500, nil, ed25519_verify_callback), Grant_Check_Status.Accepted)
 
-	// Zero rights and unknown rights bits refused.
+	// Zero rights, Write without Read, and unknown rights bits refused.
 	_, rights_zero_ok := share_rights_of_word(0)
 	testing.expect(t, !rights_zero_ok)
+	_, rights_write_only_ok := share_rights_of_word(share_rights_word({.Write}))
+	testing.expect(t, !rights_write_only_ok)
 	_, rights_unknown_ok := share_rights_of_word(4)
 	testing.expect(t, !rights_unknown_ok)
 	_, rights_max_ok := share_rights_of_word(max(u64))
@@ -954,6 +1073,14 @@ signed_grant_refuses_all_adversarial_inputs :: proc(t: ^testing.T) {
 	bad := base_grant
 	bad.rights = {}
 	testing.expect_value(t, signed_grant_check(&bad, &grantor_list, machine_entry.machine_id, grantee_root_pub, 5_500, nil, ed25519_verify_callback), Grant_Check_Status.Refused_Bad_Rights)
+
+	bad = base_grant
+	bad.rights = {.Write}
+	testing.expect_value(t, signed_grant_check(&bad, &grantor_list, machine_entry.machine_id, grantee_root_pub, 5_500, nil, ed25519_verify_callback), Grant_Check_Status.Refused_Bad_Rights)
+	bad_wire_write_only := wire
+	byte_order.write_u64_little_endian(bad_wire_write_only[:], 176, share_rights_word({.Write}))
+	_, st_write_only_wire := signed_grant_decode(bad_wire_write_only[:])
+	testing.expect_value(t, st_write_only_wire, Grant_Check_Status.Refused_Bad_Rights)
 
 	bad = base_grant
 	bad.grant_serial = 0
@@ -1192,6 +1319,17 @@ sync_three_way_reconcile_fast_forward_conflict_fork_and_session :: proc(t: ^test
 	testing.expect_value(t, res_init.outcome, Reconcile_Outcome.Fast_Forward_Local)
 	testing.expect_value(t, res_init.resulting_head_hash, remote_h)
 
+	// 5b. Empty remote with no common base must NOT prematurely advance common base to local_h,
+	// so an offline remote commit R1 before pulling L1 triggers Conflict_Fork preserving both L1 and R1.
+	res_remote_empty := reconcile_heads(false, {}, local_h, {})
+	testing.expect_value(t, res_remote_empty.outcome, Reconcile_Outcome.Remote_Behind_Local)
+	testing.expect_value(t, res_remote_empty.resulting_head_hash, local_h)
+	testing.expect(t, key_is_zero(res_remote_empty.new_common_base_hash))
+	res_after_offline_remote := reconcile_heads(false, res_remote_empty.new_common_base_hash, local_h, remote_h)
+	testing.expect_value(t, res_after_offline_remote.outcome, Reconcile_Outcome.Conflict_Fork)
+	testing.expect_value(t, res_after_offline_remote.conflict_fork.local_head_hash, local_h)
+	testing.expect_value(t, res_after_offline_remote.conflict_fork.remote_head_hash, remote_h)
+
 	// 6. Invalid hash combinations refused.
 	testing.expect_value(t, reconcile_heads(false, {}, {}, {}).outcome, Reconcile_Outcome.Refused_Invalid_Hashes)
 	testing.expect_value(t, reconcile_heads(true, {}, local_h, remote_h).outcome, Reconcile_Outcome.Refused_Invalid_Hashes)
@@ -1223,9 +1361,17 @@ sync_three_way_reconcile_fast_forward_conflict_fork_and_session :: proc(t: ^test
 	testing.expect_value(t, cv_a.remote_hash, remote_h)
 	testing.expect_value(t, h_conf_a, h_conf_b)
 
-	// 8. Full Sync_Session receiving a blob and a canonical tree, refusing corruption without losing progress.
+	// 8. Full Sync_Session receiving a Blob, a canonical Tree, and a domain-separated Version_Node,
+	// refusing kind confusion and corruption without losing verified progress.
 	blob_payload := transmute([]u8)string("note paragraph from laptop")
 	blob_hash := blake3.hash(blob_payload)
+	version_payload := transmute([]u8)string("note paragraph from laptop") // Same bytes, distinct domain hash.
+	version_hash := version_node_hash(version_payload)
+	testing.expect(t, !keys_equal_constant_time(blob_hash, version_hash))
+	testing.expect(t, sync_object_verify(.Blob, blob_hash, blob_payload))
+	testing.expect(t, !sync_object_verify(.Version_Node, blob_hash, blob_payload))
+	testing.expect(t, sync_object_verify(.Version_Node, version_hash, version_payload))
+	testing.expect(t, !sync_object_verify(.Blob, version_hash, version_payload))
 
 	tree_entry, entry_ref := tree_hash.tree_entry_make(.Object, "note.txt", blob_hash)
 	testing.expect_value(t, entry_ref, tree_hash.Tree_Refusal.None)
@@ -1237,7 +1383,11 @@ sync_three_way_reconcile_fast_forward_conflict_fork_and_session :: proc(t: ^test
 	computed_tree_hash, tree_h_ref := tree_hash.tree_hash(tree_bytes)
 	testing.expect_value(t, tree_h_ref, tree_hash.Tree_Refusal.None)
 
-	missing := [2]blake3.Hash{blob_hash, computed_tree_hash}
+	missing := [3]Expected_Sync_Object {
+		{kind = .Blob, hash = blob_hash},
+		{kind = .Tree, hash = computed_tree_hash},
+		{kind = .Version_Node, hash = version_hash},
+	}
 	session, begin_ok := sync_session_begin_receive(store_id, true, base_h, local_h, remote_h, missing[:])
 	testing.expect(t, begin_ok)
 	testing.expect_value(t, session.state, Sync_Session_State.Waiting_Objects)
@@ -1258,6 +1408,31 @@ sync_three_way_reconcile_fast_forward_conflict_fork_and_session :: proc(t: ^test
 	testing.expect_value(t, reason, Sync_Refusal_Reason.Hash_Mismatch)
 	testing.expect_value(t, session.received_mask, u64(0))
 	testing.expect_value(t, session.state, Sync_Session_State.Waiting_Objects)
+
+	// Kind confusion: a Blob masquerading as a Version_Node (and vice versa) is refused.
+	blob_as_version := Sync_Frame {
+		kind        = .Send_Object,
+		store_id    = store_id,
+		object_hash = blob_hash,
+		object_kind = .Version_Node,
+		payload     = blob_payload,
+	}
+	reason, recv_ok = sync_session_receive_object(&session, &blob_as_version)
+	testing.expect(t, !recv_ok)
+	testing.expect_value(t, reason, Sync_Refusal_Reason.Protocol_Error)
+	testing.expect_value(t, session.received_mask, u64(0))
+
+	version_as_blob := Sync_Frame {
+		kind        = .Send_Object,
+		store_id    = store_id,
+		object_hash = version_hash,
+		object_kind = .Blob,
+		payload     = version_payload,
+	}
+	reason, recv_ok = sync_session_receive_object(&session, &version_as_blob)
+	testing.expect(t, !recv_ok)
+	testing.expect_value(t, reason, Sync_Refusal_Reason.Protocol_Error)
+	testing.expect_value(t, session.received_mask, u64(0))
 
 	// Wrong store ID refused with Unknown_Store.
 	wrong_store := bad_send
@@ -1284,7 +1459,7 @@ sync_three_way_reconcile_fast_forward_conflict_fork_and_session :: proc(t: ^test
 	testing.expect(t, !recv_ok)
 	testing.expect_value(t, reason, Sync_Refusal_Reason.Protocol_Error)
 
-	// Valid canonical tree completes the session and reconciles into the conflict fork.
+	// Valid canonical tree accepted while version node is still pending.
 	good_tree := Sync_Frame {
 		kind        = .Send_Object,
 		store_id    = store_id,
@@ -1293,6 +1468,18 @@ sync_three_way_reconcile_fast_forward_conflict_fork_and_session :: proc(t: ^test
 		payload     = tree_bytes,
 	}
 	_, recv_ok = sync_session_receive_object(&session, &good_tree)
+	testing.expect(t, recv_ok)
+	testing.expect_value(t, session.state, Sync_Session_State.Waiting_Objects)
+
+	// Valid domain-separated Version_Node completes the session and reconciles into the conflict fork.
+	good_version := Sync_Frame {
+		kind        = .Send_Object,
+		store_id    = store_id,
+		object_hash = version_hash,
+		object_kind = .Version_Node,
+		payload     = version_payload,
+	}
+	_, recv_ok = sync_session_receive_object(&session, &good_version)
 	testing.expect(t, recv_ok)
 	testing.expect_value(t, session.state, Sync_Session_State.Reconciled)
 	testing.expect_value(t, session.reconcile_result.outcome, Reconcile_Outcome.Conflict_Fork)
