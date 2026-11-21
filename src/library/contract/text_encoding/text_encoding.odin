@@ -134,6 +134,13 @@ invalid_sequence_find :: proc "contextless" (bytes: []u8) -> (place: int, found:
 
 // text_valid says if a text has no invalid sequence: the check of a text at a border.
 text_valid :: proc "contextless" (bytes: []u8) -> bool {
+	return text_valid_sixteen_bytes_at_a_time(bytes)
+}
+
+// text_valid_byte_by_byte is the scalar form of text_valid: it reads one
+// character at a time with character_decode. The host tests compare the
+// vector form, text_valid_sixteen_bytes_at_a_time, with it.
+text_valid_byte_by_byte :: proc "contextless" (bytes: []u8) -> bool {
 	_, found := invalid_sequence_find(bytes)
 	return !found
 }
