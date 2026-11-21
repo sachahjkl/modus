@@ -333,4 +333,5 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.TEST_MODULE_SOURCES + "work_accounting_probe",
 	foundation.SOURCE_FOLDER_CONTRACT + "/wide_grants",
 	foundation.SOURCE_FOLDER_INTERNAL + "/collector/collector_core",
+	foundation.SOURCE_FOLDER_CONTRACT + "/guest_builder",
 }

@@ -287,6 +287,10 @@ module_builds := [?]Module_Build {
 	// The delegated collector and wide-grant audit service
 	// (src/md/features/module_outputs.md, src/md/features/wide_grants.md).
 	{name = "collector", source = SYSTEM_MODULE_SOURCES + "collector", entry = true, image = true},
+	// The sandboxed guest builder: runs a deterministic, zero-network guest
+	// with a read-only input disk and a blank writable output disk
+	// (src/md/features/recipes.md).
+	{name = "guest_builder", source = SYSTEM_MODULE_SOURCES + "guest_builder", image = true},
 }
 
 // The counted kernel and its setting. Each other kernel gets the setting
