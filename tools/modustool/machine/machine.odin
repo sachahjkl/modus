@@ -1561,6 +1561,28 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the palette goes back to the search"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// A getter of a module in the process of the console is never called:
+	// a direct call has no bound. The panel opens with the row of mode_set,
+	// and its refresh ends with that getter not called; a call of it logs
+	// a fact, which fails the step. The console must still be the provider:
+	// a refresh is a part of the provider.
+	{kind = .Type, text = "load(\"hostile_exports\")"},
+	{kind = .Wait, text = "[console]   module     hostile_exports"},
+	{kind = .Wait, text = "[console]   commands   6"},
+	{kind = .Wait, text = "[console]   call       direct"},
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	// The two processes log in an order that the system does not fix; no
+	// refresh before the load had a getter in the console.
+	{kind = .Wait, text = "getters sent, 1 getters in the process of the console not called", any_order = true, fails_on = "hostile_exports: the getter mode ran"},
+	{kind = .Keys, text = ":mode"},
+	{kind = .Wait, text = "mode (setting)", fails_on = "hostile_exports: the getter mode ran"},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	{kind = .Type, text = "unload(\"hostile_exports\")"},
+	{kind = .Wait, text = "[console]   module    hostile_exports"},
+	{kind = .Wait, text = "[console]   commands  6"},
+	{kind = .Wait, text = "[console]   memory    left the console"},
 	// The grant of the provider ends: the commands leave the list, and the
 	// palette keeps the processes and the windows.
 	{kind = .Type, text = "revoke(\"console\", \"palette\")"},
@@ -1897,20 +1919,6 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console]   module     hostile_exports"},
 	{kind = .Wait, text = "[console]   commands   6"},
 	{kind = .Wait, text = "[console]   call       direct"},
-	// A getter of a module in the process of the console is never called:
-	// a direct call has no bound. The panel opens with the row of mode_set,
-	// and its refresh ends with that getter not called; a call of it logs
-	// a fact, which fails the step.
-	{kind = .Key, text = "meta_l"},
-	{kind = .Wait, text = "compositor: the palette is open"},
-	// The two processes log in an order that the system does not fix; no
-	// refresh before the load had a getter in the console.
-	{kind = .Wait, text = "getters sent, 1 getters in the process of the console not called", any_order = true, fails_on = "hostile_exports: the getter mode ran"},
-	{kind = .Keys, text = ":mode"},
-	{kind = .Wait, text = "mode (setting)", fails_on = "hostile_exports: the getter mode ran"},
-	{kind = .Key, text = "esc"},
-	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
-	{kind = .Front, text = "console"},
 	{kind = .Type, text = "g = grow(r, 5)"},
 	{kind = .Type, text = "g.width * g.height + keep(b) + kept()"},
 	{kind = .Wait, text = "[console] 12848"},
