@@ -633,9 +633,9 @@ kernel_call_graph_read :: proc(listing: string, frames: map[u64]int) -> []Stack_
 						procedure.first_indirect_call = instruction.text
 					}
 					procedure.indirect_call_pushed_bytes = max(procedure.indirect_call_pushed_bytes, pushed_bytes)
-				} else if compiled && counts[position] == 0 {
-					// No frame stays: the jump leaves the procedure. Above 0
-					// it is a branch of a table of a switch.
+				} else if compiled && counts[position] == 0 && !stack_is_switch_table_jump(procedure.instructions[:], position) {
+					// No frame stays: the jump leaves the procedure, unless it is
+					// a shrink-wrapped PIC jump table for a local switch.
 					procedure.indirect_tail_calls += 1
 					if procedure.first_indirect_tail_call == "" {
 						procedure.first_indirect_tail_call = instruction.text
@@ -843,7 +843,7 @@ stack_pointer_scan :: proc(procedure: ^Stack_Procedure, procedures: []Stack_Proc
 					return counts
 				}
 			case stack_is_jump(mnemonic) && !instruction.direct:
-				if count > 0 {
+				if count > 0 || stack_is_switch_table_jump(instructions, position) {
 					table_count = max(table_count, count)
 				}
 			case stack_is_jump(mnemonic):
@@ -902,6 +902,47 @@ stack_pointer_scan :: proc(procedure: ^Stack_Procedure, procedures: []Stack_Proc
 		}
 	}
 	return counts
+}
+
+// stack_is_switch_table_jump recognises the PIC jump table that llc emits for
+// a switch inside a shrink-wrapped procedure (before any frame is pushed):
+//   leaq   <disp>(%rip), %base
+//   movslq (%base, %idx, 4), %target
+//   addq   %base, %target
+//   jmpq   *%target
+@(private = "file")
+stack_is_switch_table_jump :: proc(instructions: []Stack_Instruction, position: int) -> bool {
+	if position < 3 {
+		return false
+	}
+	jump := instructions[position]
+	if !strings.has_prefix(jump.operands, "*%") {
+		return false
+	}
+	target_reg := jump.operands[1:]
+	add := instructions[position - 1]
+	load := instructions[position - 2]
+	base_lea := instructions[position - 3]
+	if add.mnemonic != "addq" || load.mnemonic != "movslq" || base_lea.mnemonic != "leaq" {
+		return false
+	}
+	add_comma := strings.last_index(add.operands, ", ")
+	if add_comma < 0 || add.operands[add_comma + 2:] != target_reg {
+		return false
+	}
+	base_reg := strings.trim_space(add.operands[:add_comma])
+	if !strings.has_prefix(base_reg, "%") {
+		return false
+	}
+	lea_comma := strings.last_index(base_lea.operands, "(%rip), ")
+	if lea_comma < 0 || base_lea.operands[lea_comma + len("(%rip), "):] != base_reg {
+		return false
+	}
+	load_comma := strings.last_index(load.operands, ", ")
+	if load_comma < 0 || load.operands[load_comma + 2:] != target_reg {
+		return false
+	}
+	return strings.has_prefix(load.operands, "(") && strings.has_prefix(load.operands[1:], base_reg) && strings.has_prefix(load.operands[1 + len(base_reg):], ",")
 }
 
 // stack_is_padding says if an instruction is the filler that the

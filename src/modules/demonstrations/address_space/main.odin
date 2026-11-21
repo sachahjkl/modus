@@ -73,9 +73,9 @@ PROTECT_PAGES :: 256
 PROTECT_CALLS :: 40 // One batch.
 PROTECT_BATCHES :: 5
 LARGE_OBJECT_PAGES :: 16384 // 64 MiB.
-LARGE_ADDRESS :: 0x0000_4100_0000_0000 // Aligned on 2 MiB: the mapping of large pages.
-SMALL_ADDRESS :: 0x0000_4200_0000_1000 // Not aligned: the same object with pages of 4 KiB.
-GUARD_ADDRESS :: 0x0000_4300_0000_0000 // The stack of the child: the guard page, then 63 pages.
+LARGE_ADDRESS :: fixed_addresses.OWN_CHOICE_START + 0x0000_0100_0000_0000 // Aligned on 2 MiB: the mapping of large pages.
+SMALL_ADDRESS :: fixed_addresses.OWN_CHOICE_START + 0x0000_0200_0000_1000 // Not aligned: the same object with pages of 4 KiB.
+GUARD_ADDRESS :: fixed_addresses.OWN_CHOICE_START + 0x0000_0300_0000_0000 // The stack of the child: the guard page, then 63 pages.
 // Places of this process's own choice: outside the band of the fixed
 // ranges of the system, which grows by its end.
 #assert(LARGE_ADDRESS >= fixed_addresses.OWN_CHOICE_START && SMALL_ADDRESS >= fixed_addresses.OWN_CHOICE_START && GUARD_ADDRESS >= fixed_addresses.OWN_CHOICE_START)
@@ -1267,7 +1267,7 @@ addresses_reused :: proc "contextless" () {
 // entry of the top table, of the third level and of the second level, and a
 // mapping there needs three new tables. No other mapping of this process is
 // in that band.
-SPREAD_ADDRESS :: 0x0000_4400_0000_0000
+SPREAD_ADDRESS :: fixed_addresses.OWN_CHOICE_START + 0x0000_0400_0000_0000
 SPREAD_STRIDE :: 0x0000_0080_4020_0000
 SPREAD_COUNT :: 64
 #assert(SPREAD_ADDRESS >= fixed_addresses.OWN_CHOICE_START && SPREAD_ADDRESS > GUARD_ADDRESS)
