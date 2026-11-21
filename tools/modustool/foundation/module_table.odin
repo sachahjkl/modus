@@ -281,6 +281,12 @@ module_builds := [?]Module_Build {
 	// The delegated powerbox service implementing Role.Powerbox
 	// (src/md/features/powerbox.md).
 	{name = "powerbox", source = SYSTEM_MODULE_SOURCES + "powerbox", entry = true, image = true},
+	// The delegated plans, recipes, and projects services implementing
+	// Role.Plans, Role.Recipes, and Role.Projects
+	// (src/md/features/declarations.md; src/md/features/recipes.md).
+	{name = "plans", source = SYSTEM_MODULE_SOURCES + "plans", entry = true, image = true},
+	{name = "recipes", source = SYSTEM_MODULE_SOURCES + "recipes", entry = true, image = true},
+	{name = "projects", source = SYSTEM_MODULE_SOURCES + "projects", entry = true, image = true},
 	// The probe module for client-funded work budgets and per-connection work
 	// threads (src/md/features/work_accounting.md).
 	{name = "work_accounting_probe", source = TEST_MODULE_SOURCES + "work_accounting_probe", image = true},

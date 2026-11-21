@@ -329,6 +329,10 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.TEST_MODULE_SOURCES + "display_conformance",
 	foundation.SOURCE_FOLDER_CONTRACT + "/powerbox",
 	foundation.SOURCE_FOLDER_INTERNAL + "/powerbox/powerbox_core",
+	foundation.SOURCE_FOLDER_CONTRACT + "/plans_recipes",
+	foundation.SOURCE_FOLDER_INTERNAL + "/plans/plans_core",
+	foundation.SOURCE_FOLDER_INTERNAL + "/recipes/recipes_core",
+	foundation.SOURCE_FOLDER_INTERNAL + "/projects/projects_core",
 	foundation.SOURCE_FOLDER_CONTRACT + "/work_budget",
 	foundation.TEST_MODULE_SOURCES + "work_accounting_probe",
 }
