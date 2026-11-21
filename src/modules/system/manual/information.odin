@@ -3,15 +3,15 @@ package manual
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/value_kinds"
-import "modus:support/graphics"
-import "modus:private/manual/information"
-import "modus:support/sentence"
-import "modus:support/system"
+import "modus:graphics"
+import "internal:manual/information"
+import "modus:sentence"
+import "modus:system"
 
 // The manual is also the service of the information of the modules,
 // through functions and with no query language: each export below gives a
 // table of records, from the flat
-// tables of the modules of the boot image (src/library/private/manual/information). The
+// tables of the modules of the boot image (src/library/internal/manual/information). The
 // console combines the tables with where, sort, join and columns.
 //
 // What runs comes from the kernel: the module records of each process,
@@ -37,7 +37,7 @@ catalog :: proc "contextless" () -> information.Catalog {
 
 // table_count gives the count of a Table result: the count of rows, or a
 // negative error.
-// A failure writes the error record (src/library/contract/errors): Absent (-1), the
+// A failure writes the error record (src/library/modus/contract/errors): Absent (-1), the
 // module of the argument 1 breaks a rule of the format: Malformed (-2), with
 // the kind of the problem and the byte of the file, or the kernel refused a
 // report: Refused (-3), with the status.

@@ -3,14 +3,14 @@
 // datagram to an echo server and its answer, the refusals of the grant, the
 // frames from the wire that the network service refused, and the measures.
 //
-// The process holds one endpoint (src/library/contract/datagram): the root service
+// The process holds one endpoint (src/library/modus/contract/datagram): the root service
 // granted it the remote 10.0.2.2, port 7, and nothing else. It has no
 // address to choose and no port to open. The window shows each case, the
 // answer, and whether it is the expected answer.
 //
 // The process writes the UDP header and the checksum of each datagram that
 // it sends, and checks the checksum of each datagram that it receives
-// (src/library/support/network, udp_header_write and udp_data_read): the network
+// (src/library/modus/network, udp_header_write and udp_data_read): the network
 // service copies a datagram and computes no checksum of it. Two cases show
 // what follows: a datagram with a wrong checksum reaches this endpoint,
 // and this process drops it; a datagram that this process writes with
@@ -61,11 +61,11 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/network"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:network"
+import "modus:system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
 window_memory: interface.Window_Memory(1024, 16384)

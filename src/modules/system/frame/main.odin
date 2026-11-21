@@ -1,6 +1,6 @@
 // The frame service: the device service of one virtio network device
 // (virtio 1.x over PCI, the "modern" interface). It serves the frame
-// contract (src/library/contract/frame) to one client, through the frame ring that the
+// contract (src/library/modus/contract/frame) to one client, through the frame ring that the
 // root service gives to both.
 //
 // It has one device and nothing else: the registers of the device, one
@@ -9,7 +9,7 @@
 // service found the device, enabled it and set its interrupt. The kernel has
 // no code for this device: the code that knows a device is a module: a service
 // or a library. The code of virtio that the block service also uses is in
-// src/library/support/virtio.
+// src/library/modus/virtio.
 //
 // The device reads and writes the frame region of the client, and reads its
 // read regions: the kernel is not on the path of the data, so data moves
@@ -26,7 +26,7 @@
 // which builds and checks each frame. It gives the
 // [frame ring](term:frame-ring) to that one client.
 //
-// **The commands of the frame ring** (`src/library/contract/frame`):
+// **The commands of the frame ring** (`src/library/modus/contract/frame`):
 //
 // - `Attach`: take the frame region of the client.
 // - `Info`: the [hardware address](term:hardware-address), whether the
@@ -59,9 +59,9 @@ import "modus:contract/frame"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/pci"
-import "modus:support/system"
-import "modus:support/virtio"
+import "modus:pci"
+import "modus:system"
+import "modus:virtio"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module and its thread.
@@ -483,7 +483,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	interrupt = ctx.handles[pci.GRANT_INTERRUPT]
 	ring_memory = ctx.handles[frame.SERVICE_RING]
 	status: system.Status
-	if clients, status = system.ring_open(ring_memory); status != .Ok {
+	if clients, status = system.ring_open(ring_memory, receive_handles = true); status != .Ok {
 		fail("no frame ring")
 	}
 	configuration_address, configuration_status := system.memory_map(ctx.handles[pci.GRANT_CONFIGURATION], {})

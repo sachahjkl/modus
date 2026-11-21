@@ -5,8 +5,8 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/system"
-import terminal "modus:support/terminal"
+import "modus:system"
+import terminal "modus:terminal"
 
 // The log records of a line.
 //

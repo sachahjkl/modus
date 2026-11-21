@@ -7,10 +7,10 @@ import "modus:contract/isolated"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/text_encoding"
-import "modus:support/display"
-import "modus:support/key_path"
-import "modus:support/system"
-import terminal "modus:support/terminal"
+import "modus:display"
+import "modus:key_path"
+import "modus:system"
+import terminal "modus:terminal"
 
 // The fuzz target of the records between processes that a process reads
 // from a ring (src/md/infrastructure/fuzzing.md, "The targets, in order of

@@ -44,7 +44,7 @@ The planned domains get a delegated service from their first line:
 - **The powerbox** is a service of its own, `powerbox`, with one grant: a share of an object of a store of the principal of its caller, with Read or with Read and Write, given to the process that asked, after a pick on a trusted surface of the display. It reads no object.
 - **The mapping of a language pack** stays a mapping of a resource of the image by its hash, which the core makes at the start of a process; the choice of the pack is a setting of `settings`.
 
-The core keeps the rest: about 6 300 lines today (`main.odin` without the fixed starters, `start.odin`, `roles.odin`, `root_ring.odin`, `start_policy.odin`, `budgets.odin`, `trust.odin`, `replacement.odin`, `fresh_bytes.odin`, the pages, the debug access, and their log facts). The fixed starters leave it as role grants, and the roles of the plan come in.
+The core keeps the rest: about 6 300 lines today (`main.odin` without the fixed starters, `start.odin`, `start_grant_sets.odin`, `root_ring.odin`, `start_policy.odin`, `budgets.odin`, `trust.odin`, `replacement.odin`, `fresh_bytes.odin`, the pages, the debug access, and their log facts). The fixed starters leave it as role grants, and the roles of the plan come in.
 
 ## The refused forms
 
@@ -66,17 +66,24 @@ The core keeps the rest: about 6 300 lines today (`main.odin` without the fixed 
 
 ## The order of the split
 
-Each step moves one domain, leaves a system that works, and is one roadmap entry. The first steps give the most resilience for the least work.
+Each step moves one domain, leaves a system that works, and is one roadmap entry. The first steps give the most resilience for the least work. The split starts with the wiring: it is the largest hostile input of the core, in one domain with few ties to the others, so it proves the form of a delegated service at the least risk.
 
-1. **The record output `stops` and the command `Start_From_Bytes` of the core.** The two faces that the delegated services need, with their host tests. Nothing moves yet.
+1. **The record output `stops` and the command `Start_From_Bytes` of the core.** The two faces that the delegated services need, with their host tests. The wiring service is their first user: `stops` tells it of the end of each writer and each reader. Nothing moves yet.
 2. **The wiring service.** The largest hostile input that any process reaches (a list page, lent handles), in one file with its own contract. A fault in a wiring list then stops `wiring`, not the root.
 3. **The disk processes service.** The core no longer reads a module file from the disk, nor waits for the storage service at a load; it checks the hash of the bytes itself.
 4. **The principals service.** The keys of the principals, the disk grant tables and the client keys leave the core, and the core is the client of no storage service.
 5. **The devices service.** The configuration space and the device grants leave the core; the order of the start changes, so it comes after the steps that do not.
 6. **The settings page to `settings`.** One writer of the appearance in force; small, and at any time.
 
-The fixed starters of the display, the input and the terminal become role grants in the steps of the display in `ROADMAP.md`, before this order.
+The fixed starters of the display, the input and the terminal become role grants in the steps of the display in `ROADMAP.md`. Those steps change the core and move no domain, so they do not wait for this order, and this order does not wait for them.
 
 ## State
 
-Designed, not built. The root service holds every domain of this file.
+Built:
+
+- The contract package `src/library/modus/contract/wiring_service/` (`Command`, `Response`, `Process_Stop_Notice`, `Attenuated_Grant_Kind`, and shared-region request/response records with strict borders and host tests).
+- The pure wiring state machine `src/library/internal/wiring/wiring_core/` (record-type equality, generic stream resolution, duplicate and cycle detection, capacity bounds, unwire/revocation, and stop cleanup with host tests).
+- The delegated `wiring` service (`src/modules/system/wiring/`, 948 lines), registered with `{.System_Part}` in `start_grant_sets.odin` and holding only its attenuated grants (core ring, `stops` ring, read-only boot image, shared transfer region, per-asker `Spend`-only child wiring budgets, and per-process `Give`-only process tokens plus wiring rings).
+- The root service core bridge (`src/modules/system/root/wirings.odin` reduced from 1 577 to 952 lines; `src/modules/system/root/` reduced from 14 780 to 14 031 lines, net -749 lines): starts `wiring` on demand, emits `Process_Stop_Notice` records on `stops` at reap and release, supplies attenuated grants, and drives wiring requests asynchronously from `root_loop_pass`.
+
+Left: the `Start_From_Bytes` face and the remaining domains (`disk_processes`, `principals`, `devices`, `settings`).

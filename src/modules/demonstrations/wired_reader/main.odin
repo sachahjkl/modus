@@ -17,7 +17,7 @@
 // "wired_reader: WRONG: ..." and the stop Failed.
 package wired_reader
 
-import "modus:support/system"
+import "modus:system"
 
 // One number and its square, as wired_writer describes it.
 Wired_Number :: struct {

@@ -27,12 +27,12 @@
 // 1 process and 4 threads: the limits that the steps reach.
 package budget
 
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The pages that its cases spend: 598. And the glyph memory of the copy
 // of the text rendering of the drawing module, which draws its text: 354

@@ -18,7 +18,7 @@
 // of the system.
 //
 // **Start**: `start("vector_glyphs")` in the console, or the bar of the
-// desktop. Its row of `process_roles` has no grant.
+// desktop. Its row of `start_grant_sets` has no grant.
 //
 // **What a reader sees**: one block for each candidate and one for Spleen
 // 8x16. The log has:
@@ -35,12 +35,12 @@
 package vector_glyphs
 
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
-import "modus:support/text_rendering"
-import "modus:support/vector_font"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
+import "modus:text_rendering"
+import "modus:vector_font"
 
 // Its own memory: 1023 pages, with no glyph of a candidate kept: each is
 // drawn band by band at each draw. And the glyph memory of its two

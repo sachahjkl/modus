@@ -3,7 +3,7 @@ package machine
 import "core:testing"
 import "modus:contract/byte_order"
 import "modus:contract/timed_stream"
-import "modus:support/trigonometry"
+import "modus:trigonometry"
 
 // A wave file as QEMU writes it at a stop that is not clean: the sizes of
 // the header are 0. `tone_first` is the first frame of a cosine of

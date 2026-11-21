@@ -3,9 +3,9 @@ package debugger
 import debug_object "modus:contract/debug_object"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/disk_process"
+import "modus:disk_process"
 import "modus:contract/storage_status"
-import "modus:support/system"
+import "modus:system"
 
 // The log facts of the debugger (src/md/features/log_facts.md): the debug
 // objects that it reads from the store or refuses, the sessions that it

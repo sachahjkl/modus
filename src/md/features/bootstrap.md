@@ -21,11 +21,21 @@ A recipe proves that an output follows from its inputs and its builder. It does 
 
 `modustool` builds `modustool`:
 
-1. The tool of release N − 1, taken from the cache, builds the source of release N: the output is N₁.
-2. N₁ builds the same source: the output is N₂.
-3. The check is H₁ == H₂, the hashes of the two outputs.
+1. The current tool builds the source of `tools/modustool` into an isolated directory `stage1/modustool` (N₁).
+2. `stage1/modustool` builds the same source into a second isolated directory `stage2/modustool` (N₂) with identical deterministic flags (`-use-single-module`, `-source-code-locations:filename`, `-define:TOOL_BUILDS_ITSELF=false`, `-Wl,--build-id=none`, and `NIX_LDFLAGS` cleared).
+3. The check compares the BLAKE3 hashes of both binaries (H₁ == H₂) and reports the exact byte offset of the first divergence if they differ.
 
-The compiler of both builds is the compiler of the flake. So the check proves that the steps of the tool are a function of its source, not of the tool that ran them. It does not prove the compiler; the chain below does.
+The compiler of both builds is the compiler of the flake. So the check proves that the steps of the tool are a function of its source, not of the tool that ran them or the directory that staged them. It does not prove the compiler; the chain below does. The command is `modustool self-host` ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The self-hosting check").
+
+### Stage-by-stage chain verification and C-world validation
+
+Each bootstrap chain is expressed as a directed acyclic graph of typed stages backed by `plans_recipes.Recipe_Spec` and, for guest stages, `guest_builder.Guest_Build_Spec`:
+
+- **C compiler self-host chain**: host-built `chibicc` seed → Stage 1 (`chibicc` compiles `chibicc` sources) → Stage 2 (Stage 1 compiles the same sources again), with the fixed-point invariant `blake3(stage1) == blake3(stage2)`.
+- **Seed bootstrap chain**: `hex0` (~500-byte auditable seed) → `stage0-posix` → `mescc` → `tcc` → `gcc` → `LLVM 18` → `odin` fork → `modustool`, comparing the final output hash against the host build.
+- **C-world validation recipes**: deterministic recipe descriptors, language-neutral `module.manifest` declarations, and validation test vectors for SQLite, Lua, and zstd compiled into freestanding `.modus` modules through the `ET_REL` conversion pipeline.
+
+A pure verifier (`bootstrap_chain_verify` in `tools/modustool/build/bootstrap.odin`) enforces acyclic topological order, cryptographic linkage from each upstream stage's output hash to downstream builder and input hashes, zero network, read-only inputs, frozen epoch clock, and fixed-point equality.
 
 ### The bootstrap from a seed
 
@@ -70,4 +80,6 @@ Each arrow is a recipe. Its builder is the stage before it, its inputs are the s
 
 ## State
 
-Designed, not built. Tier 1 builds the system on the host; no realisation is published.
+Built: the deterministic `modustool self-host` command and bootstrap verification harness (`tools/modustool/build/bootstrap.odin` and `tools/modustool/build/bootstrap_test.odin`). `modustool self-host` compiles `tools/modustool` in two isolated staging directories (`stage1/modustool` builds `stage2/modustool`) and verifies exact BLAKE3 fixed-point equality (`H₁ == H₂`) or reports the first diverging byte offset. `bootstrap_chain_verify` validates the stage-by-stage `plans_recipes.Recipe_Spec` and `guest_builder.Guest_Build_Spec` DAGs for the `chibicc` Stage 1 == Stage 2 self-host chain, the `hex0` → `stage0-posix` → `mescc` → `tcc` → `gcc` → `LLVM 18` → `odin` seed bootstrap chain, and the SQLite, Lua, and zstd freestanding C-world validation recipes, alongside host tests compiling multi-file freestanding C into verified `.modus` modules.
+
+Left: publishing signed Tier 1 realisations to the object cache, executing the full Tier 2 live-bootstrap chain inside the Linux guest builder, running the `chibicc` self-host recipe natively inside modus, and running the full upstream SQLite, Lua, and zstd test suites inside modus.

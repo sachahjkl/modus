@@ -670,7 +670,7 @@ import_declarations_check :: proc(build: foundation.Module_Build, imports: []Imp
 // import slot. The loader writes it for one base, so a starter keeps one
 // prepared part of it for each address where an importer has the module:
 // with many importers, its table of prepared modules fills, and the next
-// process does not start (src/library/support/system, load.odin).
+// process does not start (src/library/modus/system, load.odin).
 //
 // A segment of that range of the linker that the loader writes nowhere is
 // not such a segment: the module file writer gives it the flags of a

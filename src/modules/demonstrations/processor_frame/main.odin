@@ -39,10 +39,10 @@ import "modus:contract/draw_record"
 import "modus:contract/errors"
 import "modus:contract/reference_screen"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 
 // The process draws through the drawing module only: the interface
 // package declares its exports with this setting, which the row of the

@@ -54,3 +54,9 @@ Input_Ring_Full :: struct {}
 // The input ring has room again.
 @(log_fact = "input: the input ring has room again")
 Input_Ring_Room_Again :: struct {}
+
+// The virtio tablet device is ready alongside the PS/2 fallback.
+@(log_fact = "input: virtio tablet ready, a queue of {queue_size}")
+Tablet_Ready :: struct {
+	queue_size: u64,
+}

@@ -2,13 +2,13 @@ package manual
 
 import "modus:contract/blake3"
 import "modus:contract/manual_pages"
-import "modus:support/display"
-import "modus:private/manual/manual_navigation"
-import "modus:support/graphics"
-import "modus:support/interface"
-import markdown "modus:private/manual/source_comment_markdown"
+import "modus:display"
+import "internal:manual/manual_navigation"
+import "modus:graphics"
+import "modus:interface"
+import markdown "internal:manual/source_comment_markdown"
 import module "modus:contract/module"
-import "modus:support/system"
+import "modus:system"
 
 // The text of a page: rows of parts. A part of a row is a run of text with
 // one font and one color. The facts of a module (its sizes, its imports, the

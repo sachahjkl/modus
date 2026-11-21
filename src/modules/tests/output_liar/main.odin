@@ -14,7 +14,7 @@ package output_liar
 import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
-import "modus:support/system"
+import "modus:system"
 
 // The record of output_counter: the console reads it with the same
 // condition.
@@ -66,7 +66,7 @@ command_wait :: proc "contextless" () -> ring.Record {
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	opened, status := system.ring_open(ctx.handles[op.CONTEXT_WIRING_RING])
+	opened, status := system.ring_open(ctx.handles[op.CONTEXT_WIRING_RING], receive_handles = true)
 	if status != .Ok {
 		wrong("no wiring ring; the status", u64(status))
 	}

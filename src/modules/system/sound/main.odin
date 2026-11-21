@@ -7,13 +7,13 @@
 // message interrupt, memory for the queues, the machine with the right
 // Physical only, a copy of the configuration of the device, and the stream
 // ring. The root service found the device, enabled it and set its
-// interrupt (src/library/support/pci), when the process with the grant
+// interrupt (src/library/modus/pci), when the process with the grant
 // **Sound_Device** started; it stops this service when that process stops.
 //
 // **What it is for.** A process plays sound at a time of the system clock,
 // and never sees the device, its queues or its clock.
 //
-// **The commands of the stream ring** (`src/library/contract/timed_stream`):
+// **The commands of the stream ring** (`src/library/modus/contract/timed_stream`):
 // `Attach` with the sample region, `Start`, then `Play` for each record.
 // The completion of a `Play` comes when the device took the period that
 // holds its last frame. A refusal gives a status and the values of an
@@ -37,10 +37,10 @@ import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/timed_stream"
 import "modus:contract/value_kinds"
-import "modus:private/sound/sound_device"
-import "modus:support/pci"
-import "modus:support/system"
-import "modus:support/virtio"
+import "internal:sound/sound_device"
+import "modus:pci"
+import "modus:system"
+import "modus:virtio"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module and its thread. As for the
@@ -573,7 +573,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]
 	clients_memory = ctx.handles[timed_stream.SERVICE_RING]
 	status: system.Status
-	if clients, status = system.ring_open(clients_memory); status != .Ok {
+	if clients, status = system.ring_open(clients_memory, receive_handles = true); status != .Ok {
 		fail("no stream ring")
 	}
 	// The table of the pending records has one place for each place of

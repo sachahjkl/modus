@@ -50,11 +50,11 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:random"
+import "modus:system"
 
 // 64 MiB of large pages, two ranges of 1 GiB with their page tables, and
 // a child: 40530 pages. And the glyph memory of the copy of the text
@@ -73,9 +73,9 @@ PROTECT_PAGES :: 256
 PROTECT_CALLS :: 40 // One batch.
 PROTECT_BATCHES :: 5
 LARGE_OBJECT_PAGES :: 16384 // 64 MiB.
-LARGE_ADDRESS :: 0x0000_4100_0000_0000 // Aligned on 2 MiB: the mapping of large pages.
-SMALL_ADDRESS :: 0x0000_4200_0000_1000 // Not aligned: the same object with pages of 4 KiB.
-GUARD_ADDRESS :: 0x0000_4300_0000_0000 // The stack of the child: the guard page, then 63 pages.
+LARGE_ADDRESS :: fixed_addresses.OWN_CHOICE_START + 0x0000_0100_0000_0000 // Aligned on 2 MiB: the mapping of large pages.
+SMALL_ADDRESS :: fixed_addresses.OWN_CHOICE_START + 0x0000_0200_0000_1000 // Not aligned: the same object with pages of 4 KiB.
+GUARD_ADDRESS :: fixed_addresses.OWN_CHOICE_START + 0x0000_0300_0000_0000 // The stack of the child: the guard page, then 63 pages.
 // Places of this process's own choice: outside the band of the fixed
 // ranges of the system, which grows by its end.
 #assert(LARGE_ADDRESS >= fixed_addresses.OWN_CHOICE_START && SMALL_ADDRESS >= fixed_addresses.OWN_CHOICE_START && GUARD_ADDRESS >= fixed_addresses.OWN_CHOICE_START)
@@ -1267,7 +1267,7 @@ addresses_reused :: proc "contextless" () {
 // entry of the top table, of the third level and of the second level, and a
 // mapping there needs three new tables. No other mapping of this process is
 // in that band.
-SPREAD_ADDRESS :: 0x0000_4400_0000_0000
+SPREAD_ADDRESS :: fixed_addresses.OWN_CHOICE_START + 0x0000_0400_0000_0000
 SPREAD_STRIDE :: 0x0000_0080_4020_0000
 SPREAD_COUNT :: 64
 #assert(SPREAD_ADDRESS >= fixed_addresses.OWN_CHOICE_START && SPREAD_ADDRESS > GUARD_ADDRESS)
@@ -1417,7 +1417,7 @@ page_tables_return :: proc "contextless" () {
 		rounds_wrong: u64
 		// The rounds go on after the count until the other thread ran
 		// beside one of them: the case is the two threads at the same
-		// time, and a processor can give the other thread no turn during
+		// time, and a processor can give the other thread no stint during
 		// a thousand rounds. The bound only ends a hang.
 		rounds_deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 		for round := u64(0); round < NEIGHBOUR_ROUNDS || (intrinsics.atomic_load(&neighbour.touches) == touches_before && system.time() < rounds_deadline); round += 1 {

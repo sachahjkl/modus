@@ -1,8 +1,8 @@
 package root
 
 import process_page "modus:contract/disk_process_page"
-import "modus:support/disk_process"
-import "modus:support/system"
+import "modus:disk_process"
+import "modus:system"
 
 // The disk process page (modus:contract/disk_process_page): this service
 // writes the nickname and the hash of each disk process that runs, at the

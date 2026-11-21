@@ -1,8 +1,8 @@
 package network_service
 
 import "modus:contract/value_kinds"
-import "modus:support/network"
-import "modus:support/system"
+import "modus:network"
+import "modus:system"
 
 // The log facts of the network service (src/md/features/log_facts.md, "The
 // facts of the device services and of the network"): the endpoints made,

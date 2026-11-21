@@ -3,11 +3,11 @@ package resources
 import "core:fmt"
 import "core:image/png"
 import "core:os"
-import "modus:support/mark"
+import "modus:mark"
 import "modustool:foundation"
 
 // The files of the mark of the system in the repository (docs/DESIGN.md,
-// section "The mark"). src/library/support/mark holds the mark as data. The command
+// section "The mark"). src/library/modus/mark holds the mark as data. The command
 // `logo` is a caller of the generator of the pictures of the mark
 // (mark_pictures.odin): it asks for each row of the repository of the table
 // of the uses, and writes the file. `check` verifies that the files of the
@@ -20,7 +20,7 @@ import "modustool:foundation"
 
 // The package that holds the mark as data: its geometry, its letters and
 // its animations.
-MARK_SOURCE_FOLDER :: foundation.SOURCE_FOLDER_SUPPORT + "/mark"
+MARK_SOURCE_FOLDER :: foundation.SOURCE_FOLDER_PUBLIC + "/mark"
 
 run_logo :: proc(args: []string) -> int {
 	if len(args) != 0 {

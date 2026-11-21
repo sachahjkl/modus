@@ -14,11 +14,11 @@ import op "modus:contract/operation"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
 import "modus:contract/value_kinds"
-import "modus:private/root/start_policy_rules"
-import "modus:support/disk_process"
-import "modus:support/pci"
-import "modus:support/principals"
-import "modus:support/system"
+import "internal:root/start_policy_rules"
+import "modus:disk_process"
+import "modus:pci"
+import "modus:principals"
+import "modus:system"
 
 // What this service waits for of the start policy. The decisions on the
 // commands of a start policy are in the private part start_policy_rules,
@@ -73,7 +73,7 @@ machine_parts: start_list.Machine_Parts
 // machine_parts_page_create checks each part of the machine that a start
 // row can need, and writes the page. A part that this service cannot check
 // is absent: the page never says that a part is present by default. The
-// screen is the one test of the boot display (modus:support/screen_presence),
+// screen is the one test of the boot display (modus:screen_presence),
 // so the page and the line of a machine with no screen agree. The PS/2
 // controller is no part of the page: the input service reads its absence.
 machine_parts_page_create :: proc "contextless" () {
@@ -303,7 +303,7 @@ start_policy_running :: proc "contextless" () -> ^Started {
 	for &item in started {
 		// A failed start policy whose stop this service asked can still run
 		// past the bound of the stage Stopping: it is not the one that runs.
-		if item.process != 0 && .Start_Policy in item.role.grants && !item.stop_asked_by_root_service {
+		if item.process != 0 && .Start_Policy in item.start_grant_set.grants && !item.stop_asked_by_root_service {
 			if state, _, _ := system.process_state(item.process); state != .Stopped {
 				return &item
 			}
@@ -408,7 +408,7 @@ start_policy_step :: proc "contextless" () {
 	case .Stopping:
 		left := 0
 		for &item in started {
-			if item.process != 0 && (item.asked_by_start_policy || .Start_Policy in item.role.grants) {
+			if item.process != 0 && (item.asked_by_start_policy || .Start_Policy in item.start_grant_set.grants) {
 				left += 1
 			}
 		}
@@ -462,7 +462,7 @@ start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) ->
 
 // start_policy_start runs a Start from the start policy that runs. A part
 // of the system starts by its own procedure, which only this service holds
-// the handles of; each other name starts with the grants of its role, and
+// the handles of; each other name starts with the grants of its start grant set, and
 // with the wiring list of the wiring rows of its start list
 // (src/md/features/module_outputs.md, "The wiring rows of a start list").
 // The completion has a handle of the process with the rights Read and
@@ -470,7 +470,7 @@ start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) ->
 // lends it as the reader of a later wiring row.
 // written: the procedure wrote the error record of its refusal, and the
 // dispatch must not write over it.
-start_policy_start :: proc "contextless" (sender: ^Started, name: string, list: root_ring.Start_Wiring_List, values: ^[7]u64, written: ^bool) -> system.Status {
+start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: string, list: root_ring.Start_Wiring_List, values: ^[7]u64, written: ^bool, held: ^bool) -> system.Status {
 	// The checks before any start (start_policy_rules.start_step, with its
 	// host tests): a list for a part of the system, whose procedure takes
 	// none; a start policy, a name that runs, and a process of a test
@@ -508,23 +508,14 @@ start_policy_start :: proc "contextless" (sender: ^Started, name: string, list: 
 	case .Unlock:
 		status = unlock_start(.Unlock, "")
 	case .None:
-		// One path with a list and without: the asker is the start policy,
-		// and a refusal that names its cause has its record. A list is
-		// whole or refused, as the list of each asker: its take closes each
-		// lent number.
-		work: ^Wiring_Work
 		if listed {
-			work = &wire_work
-			work^ = {asker = sender, command = .Start, form = .Start}
-			status = wiring_list_take(work)
+			is_held: bool
+			status, is_held = start_with_wiring_begin(sender, tag, name, principals.MACHINE, .Process_Handle, true, step.counted, values, written)
+			held^ = is_held
+			return status
 		}
-		if status == .Ok {
-			// start refuses a part of the system with Bad_Operation.
-			status = start(name, principals.MACHINE, sender, work, &started_place, &refusal)
-		}
-		if work != nil && work.refusal != ([7]u64{}) {
-			refusal = work.refusal
-		}
+		// start refuses a part of the system with Bad_Operation.
+		status = start(name, principals.MACHINE, sender, nil, &started_place, &refusal)
 		if status != .Ok && refusal != ([7]u64{}) {
 			values^ = refusal
 			written^ = true
@@ -561,7 +552,7 @@ start_policy_facts :: proc "contextless" (sender: ^Started, name: string) -> sta
 	return {
 		sender_runs               = sender == start_policy_process,
 		name_runs                 = find_running(name) != nil,
-		name_is_a_start_policy    = .Start_Policy in role_of(name).grants,
+		name_is_a_start_policy    = .Start_Policy in start_grant_set_of(name).grants,
 		name_is_of_a_test_machine = start_list.root_procedure_of(name) == .Shortage || start_list.root_procedure_of(name) == .Operation_Fuzzing,
 		name_in_image             = len(system.image_find(image, name)) != 0,
 	}

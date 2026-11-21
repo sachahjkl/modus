@@ -2,7 +2,7 @@ package fuzz
 
 import "core:slice"
 import info "modus:contract/boot_info"
-import "modus:support/tpm2"
+import "modus:tpm2"
 
 // The fuzz target of the answers of the TPM (src/md/infrastructure/fuzzing.md,
 // "The targets, in order of value"): the TPM service and the boot program

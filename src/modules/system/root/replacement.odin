@@ -9,7 +9,7 @@ package root
 // does. So this service writes a replacement only for a replacement row of
 // the boot image whose signature verifies under the signing key of the
 // system: the key that verified the system description. The process with
-// the role Replace names the two modules; it chooses among the rows that
+// the grant Replace names the two modules; it chooses among the rows that
 // the key signed, and gives no row of its own.
 //
 // The check runs at each request, not at the start: a row that does not
@@ -17,12 +17,12 @@ package root
 
 import "modus:contract/errors"
 import "modus:contract/replacement_list"
-import "modus:private/root/replacement_signature"
+import "internal:root/replacement_signature"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 
 // replace changes the replacement table of the machine, for a process with
-// the role Replace: where a module imports the module `name`, the loaders
+// the grant Replace: where a module imports the module `name`, the loaders
 // give the module of entry `by` of the boot image (from 1). 0 removes the
 // record. It writes the error record of a refusal in values.
 replace :: proc "contextless" (asker: ^Started, name: string, by: u64, values: ^[7]u64) -> system.Status {
@@ -47,7 +47,7 @@ replace :: proc "contextless" (asker: ^Started, name: string, by: u64, values: ^
 // Then it refuses a pair that no row signed by the signing key of the
 // system names. decision is Accepted for every other result.
 replacement_table_change :: proc "contextless" (asker: ^Started, name: string, by: u64) -> (status: system.Status, decision: replacement_signature.Decision) {
-	if .Replace not_in asker.role.grants {
+	if .Replace not_in asker.start_grant_set.grants {
 		return .No_Right, .Accepted
 	}
 	entries := system.image_entries(image)

@@ -82,13 +82,13 @@ After `plans.rollback()` ([declarations.md](declarations.md), "Apply, the differ
 - **The difference.** The root service reads the module files of both plans already. It compares their stored objects and migrations, and the difference that the principal accepts names each stored type that goes back and each stated loss. The root service reads no record.
 - **The migration start.** Before the next start of the older module, the root service starts the newer module with the store of the package and no other grant, and with the descriptions to reach in its context. It runs its backward migrations and stops with the outcome Done; then the older module starts. A refused record stops it with the outcome Refused and its error record, and the older module does not start.
 - **No backward migration.** `plans.rollback` is refused before any change, with the module and the type named.
-- **A rollback of the system image.** The older image has no copy of the newer module, so no migration start runs. The older module refuses the object, runs on zero records in memory, and refuses a write of that object with an error record that names the newer description. The data waits on the disk for the newer system, or for a restore that the principal chooses.
+- **A rollback of the system image.** The older image has no copy of the newer modules, so an update keeps the newer modules in the store `module_files`, and the garbage collection of that store keeps them while an older image can still start. At the rollback of the image, the root service runs the migration start of each newer module from `module_files`, as for `plans.rollback()`, before the older module starts. A newer module that the store no longer holds gives no migration start: the older module then refuses the object, runs on zero records in memory, and refuses a write of that object with an error record that names the newer description. The data waits on the disk for the newer system, or for a restore that the principal chooses.
 
 ## The tests and the check
 
 A module that changes a stored type declares its migration in both directions, and a test that reads the data of the description before. The tool checks this before any machine, as it checks the fact waits ([../infrastructure/scenario_fault_loop.md](../infrastructure/scenario_fault_loop.md), "The check of the fact waits").
 
-- **The shipped descriptions.** At each release from 1.0.0, `modustool changelog release` writes the canonical description of each stored type of the release, beside `src/library/contract/release/release.odin`. No person edits them.
+- **The shipped descriptions.** At each release from 1.0.0, `modustool changelog release` writes the canonical description of each stored type of the release, beside `src/library/modus/contract/release/release.odin`. No person edits them.
 - **The check refuses** a stored type whose description no release shipped, with no forward migration from each shipped description of that type and no backward migration to it; a migration from a description that no release shipped (a stale migration, as a stale wait); a declared rename that no shipped description needs; a stored type with a Handle field, padding, or an enum field with no members in its description.
 - **The samples.** For each shipped description, the tool writes a typed object of edge values: 0, 1, the largest and the smallest value of each type, each member of each enum, a Text field full to its last byte. The forward migration of the sample passes the border of the new description; the backward migration of that result gives the sample again, but for the stated losses; a damaged sample is refused by the border before any migration.
 - **A declared migration** also has a host test of its author, with real records of the version before: the meaning of a split or of a map is not in the description.
@@ -104,6 +104,7 @@ A module that changes a stored type declares its migration in both directions, a
 - **A rollback that restores the store as it was at the apply.** It drops each change of the principal since, in silence. It stays a choice of the principal, through the versions.
 - **A move of records between objects.** The storage service commits one object at a time; a stop between two commits breaks the link of the two objects.
 - **Writing over an object of an unknown description.** That turns a rollback into a loss.
+- **A rollback of the system image with no copy of the newer modules.** Each typed object that the newer image migrated then waits, unreadable to the older modules, until the newer system comes back.
 
 ## Subtle points
 
@@ -122,17 +123,16 @@ All of it starts at the preparation of 1.0:
 3. The typed store package: the pass at the start, the border at a read, the never-write-over rule, the derived migrations.
 4. The stores of that time in the typed form, each breaking its old data, as before 1.0.
 5. The shipped descriptions and the check, from the release 1.0.0.
-6. The migration start at a rollback, with the stored types in the difference. It needs the service `plans`.
+6. The migration start at a rollback, with the stored types in the difference. It needs the service `plans`. The rollback of a system image runs it from the newer modules that `module_files` keeps.
 7. The upgrade test: a machine test boots the signed image of the release before, writes each store, then boots the new image and reads it.
 
 ## Open questions
 
-- **The oldest release whose data a module reads.** Each migration of each release step stays, or a release states a floor and the principal steps through an intermediate release.
+- **The oldest release whose data a module reads.** Each migration of each release step stays, or a release states a floor and the principal steps through an intermediate release. This question stays open until 1.0 is near: the choice needs the count and the size of the migrations of real releases.
 - **A version kept for a rollback.** The state before a forward migration is an ordinary version, which the retention rule can thin.
 - **A store with many typed objects.** The pass at the start reads each stored object. A store of a million records needs a measure, then a pass while the module serves or an index of the descriptions.
 - **A move of records between objects.** It needs a commit of several objects in one commit of the storage service.
-- **A rollback of the system image.** The newer modules can stay in the store `module_files` after an update, so that the rollback of an image runs their backward migrations.
 
 ## State
 
-Designed for after 1.0, not built; nothing of it runs before 1.0. Each store keeps its own form today, and a change of it breaks the old data.
+The freestanding contract package `src/library/modus/contract/data_evolution/` is built with host tests: canonical stored type descriptions and domain-separated BLAKE3 description hashes (`"modus stored type v1"`), the `MODTYPE1` self-describing typed object container with strict border validation, the derived forward and backward migration planner and fail-closed record and object executor, stated-loss accounting, and the pre-flight rollback checker. No existing store runs migrations before 1.0; each store keeps its own form today, and a change of it breaks the old data until the preparation of 1.0.

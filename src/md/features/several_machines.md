@@ -17,8 +17,8 @@ Today a machine of modus is alone. A client of `remote` or a viewer of `remote_d
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "19. A command is a function: no text between processes": the protocols between machines carry records.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "21. Principals: who acts, without users": the identity across machines is a public key; layer 5 says that the key of the principal signs the key of each machine, and that a signed grant that left a machine needs a short lifetime or a revocation list.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "22. General mechanisms, and a plain expression for each frequent task": a paired machine is a client key with uses, not a second mechanism beside the client table.
-- **Property 23, in progress in another branch**: a role is a typed contract that the root service gives to a role holder, and a client gets a connection to the holder, never finds one. An interposed holder fills the same contract between a client and the holder. A role held on another machine is such an interposed holder.
-- **The design of supervision, in progress in another branch**: what the root service does when a holder fails. A link that breaks is a failure of a holder, seen from its clients.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "23. A role is a contract; its implementation is replaceable", and [roles_and_contracts.md](roles_and_contracts.md): a role is a typed contract that the root service gives to a role holder, and a client gets a connection to the holder, never finds one. An interposed holder fills the same contract between a client and the holder. A role held on another machine is such an interposed holder.
+- [supervision.md](supervision.md): what the root service does when a holder fails. A link that breaks is a failure of a holder, seen from its clients.
 
 ## The chosen form
 
@@ -44,14 +44,17 @@ A client key stays the key of a client that is not a machine of modus: the tool,
 
 ### A principal across machines
 
-A principal is one signing key across its machines: its identity across machines is its public key (property 21). On each machine, the principal has its own session, its own stores, its own disk grant table and its own grants. A pairing never gives a process of one machine a grant on another machine; it gives a row of the client table, which the principal sees and revokes.
+A principal is one principal root key across its machines: its identity across machines is the public key of that root key (property 21). The root key stays offline. Each machine of the principal holds its own keys of the principal, which the root key signs. On each machine, the principal has its own session, its own stores, its own disk grant table and its own grants. A pairing never gives a process of one machine a grant on another machine; it gives a row of the client table, which the principal sees and revokes.
 
-- **The keys travel once, at a join.** When a principal joins a machine that does not know it, the machine that knows it sends its two secret keys inside the pairing connection, after the code verified. `unlock` on the new machine asks for the passphrase two times and seals the keys in the form `PRINCIPT` with the TPM of that machine, with a recovery key of its own. The keys are never on a network in clear, and never in a store that crosses a machine.
-- **The machine list.** The principal signs, with its signing key, one record for its machines: the identity key of each machine and its uses, and a number that only grows. Each machine of the list keeps the newest list that it has seen, and refuses a list with a lower number. So pairing with one machine of the list makes the new machine known to all of them at their next contact, and the removal of a lost machine is a new list with no row for it, signed on any machine of the list. This is the form of a release pointer ([declarations.md](declarations.md), "Declaration inputs, pins and release pointers"), with the principal as its publisher.
+- **The principal root key stays offline.** It is an Ed25519 key pair whose secret key is on no machine of modus: on a removable disk, or as a recovery text on paper, which the principal brings to a machine for an act of the root key and takes away after it. No store holds it, no TPM seals it, and no machine keeps it after the act.
+- **One key for each machine.** At a join, `unlock` on the new machine makes the keys of the principal there, as it makes them for a new named principal, and seals them in the form `PRINCIPT` with the TPM of that machine, with a recovery key of its own. No secret key of the principal crosses a network, also not inside the pairing connection.
+- **The root key signs each machine key.** The act of the join brings the root key to the new machine: the root service there signs, with the root key, the public signing key of the principal on that machine, with the identity key of the machine and its uses, in a new machine list. The root key then leaves the machine.
+- **The machine list.** The root key signs one record for the machines of the principal: for each machine, the identity key of the machine, the public signing key of the principal on that machine, its uses, and a number that only grows. Each machine of the list keeps the newest list that it has seen, and refuses a list with a lower number. So a join on one machine makes the new machine known to all of them at their next contact, and the removal of a lost machine is a new list with no row for it, signed by the root key on any machine of the list. This is the form of a release pointer ([declarations.md](declarations.md), "Declaration inputs, pins and release pointers"), with the principal as its publisher.
+- **A machine with no TPM, or with Secure Boot off, refuses the join of a named principal by default.** There the keys of the principal are under the passphrase alone, so a copy of the disk allows an attack on the passphrase away from any TPM, with no count of the tries. The setting `principal_join_without_tpm` of principal 0 on that machine accepts the join; `unlock` then shows a warning in its window that says this, before the principal types the passphrase. The pairing of principal 0 needs no such setting: it carries no key of a named principal.
 - **The rows of each machine.** The root service of each machine derives, from the newest machine list of a principal, one row of the client table for each other machine of the list, with the uses of the list, for that principal. The rows last as the disk grant table of the principal lasts. A row with no list behind it is a pairing of principal 0, which has no signing key: the two machines then know each other only by the rows that the pairing wrote.
 - **The grants on each machine are per machine.** The plan of the principal on each machine says which roles another machine holds for it and which stores it exchanges. A plan can name a paired machine only by its identity key, through the machine list.
 
-**What a stolen machine gives.** The thief holds a copy of the signing key, sealed by the TPM of that machine with the passphrase. Without the passphrase, the count of the TPM limits the tries. With it, the thief can sign a machine list. So the removal of a stolen machine is a new list with a higher number, and the principal must also change the signing key when the passphrase is known to be lost: a new identity, whose new list each machine takes only from a machine that is still in the old list.
+**What a stolen machine gives.** The thief holds the keys of the principal on that machine, sealed by its TPM with the passphrase. Without the passphrase, the count of the TPM limits the tries. With it, the thief acts as the principal on that machine and toward the other machines, while the machine is in the list. The thief cannot sign a machine list, because the root key was never kept there. So the removal of a stolen machine is a new list with no row for it, signed by the root key, and the principal keeps its identity.
 
 ### A role held on another machine
 
@@ -110,7 +113,7 @@ The cache protocol of [recipes.md](recipes.md), "The object cache and its protoc
 
 **What never leaves a machine:**
 
-- the records of the keys: the machine key, the file of a named principal, the recovery copies, and each store of `unlock`. Each is sealed to one TPM and one system, so a copy elsewhere is useless and only gives an attacker a target. A secret key of a principal crosses once, inside a join, and is sealed again on arrival;
+- the records of the keys: the machine key, the file of a named principal, the recovery copies, and each store of `unlock`. Each is sealed to one TPM and one system, so a copy elsewhere is useless and only gives an attacker a target. No secret key of a principal crosses: each machine makes its own, and the root key is on no machine;
 - the disk grant table and the client table: a grant is a fact of one machine, signed with the key of the tag of that machine;
 - the applied plans and the row "current plan": the system that a machine runs is a fact of that machine. The declaration that gave it is a tree, which can cross;
 - the log, the fault records, the measures and the TPM floors;
@@ -122,15 +125,51 @@ The cache protocol of [recipes.md](recipes.md), "The object cache and its protoc
 A machine finds another only when the principal pairs them by an explicit act. The pairing gives each machine the identity key of the other, the uses, and an address to try.
 
 1. On the first machine, in a console that acts for the principal, `machine_pair()` asks the root service for a pairing, and `unlock` shows the **pairing code** in its window, a trusted surface: an address of the machine, and a secret of one use of 50 bits as ten groups of base32. A QR code in the same window holds the same code and the whole identity key, for a device with a camera.
-2. On the second machine, `machine_join("<code>")` makes `remote` connect to the address. Neither key is pinned yet: the handshake proves each identity key, and the pairing code then runs a PAKE over the TLS exporter of the connection, so both sides prove the same code and bind it to both identity keys. A relay on the path that does not know the code learns nothing and cannot pass the check.
+2. On the second machine, `machine_join("<code>")` makes `remote` connect to the address. Neither key is pinned yet: the handshake proves each identity key, and the pairing code then runs the PAKE CPace over the group Ristretto255 over the TLS exporter of the connection, so both sides prove the same code and bind it to both identity keys. A relay on the path that does not know the code learns nothing and cannot pass the check.
 3. Each window then shows the head of the identity key of the other machine and the uses, and the principal accepts on each machine with a key. Each root service writes the row of the other machine in the client table and in the disk grant table of the principal.
 4. One wrong code ends the pairing on both sides, and the code is spent. The code ends 10 minutes after it was shown.
 
+**The PAKE is CPace over Ristretto255.** CPace is a balanced PAKE of the CFRG of the IRTF, still a draft; the design follows the draft until it is published as an RFC, and then follows the RFC. It needs one exchange of one point each way and a hash, over the group Ristretto255, which the cryptography of Odin has and the copy of the system adds for it. A balanced PAKE fits: both machines know the code, and no machine stores a verifier.
+
 **The address.** The pairing code holds an address, and each connection after it tells the paired machine the addresses of the machine. When an address changes, the next contact from the other machine carries the new one; when both changed, the principal gives an address with `machine_address(key, "…")`. An address is never a grant: the handshake decides, by the identity key.
+
+**A machine behind a NAT.** The principal gives a reachable address: a port that the router of the network forwards to the machine, given with `machine_address`. A relay that carries the encrypted datagrams of two machines behind NATs is later work; it is a server that learns when two machines speak, so it comes with its own design.
+
+**The address hint on the local network.** It is off by default, and the setting `machine_address_hint` turns it on for one machine. When it is on, the machine sends on the local link only, at its start and at each change of its address, a datagram that holds its address and a tag that only its paired machines can check: a keyed BLAKE2b of the identity key over a fresh nonce, with the nonce. It holds no name and no identity key in clear. A paired machine that checks the tag takes the address as a hint and tries it; the handshake decides, as for each address. It is off by default because it tells each host of the local network that a machine of modus is there.
 
 **The listen grant.** Today the listen grant of `remote` admits only the host at the gateway. A machine that pairs gets a listen grant that admits each address, and the handshake with the client table decides. The Retry and the budgets of work of QUIC ([`docs/QUIC.md`](../../../docs/QUIC.md), "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)") bound what an unknown address costs.
 
-**mDNS broadcast is refused as a source of authority.** Any host of the local network can answer an mDNS question with any name and any address, so a name that a broadcast gives proves nothing. A name of the network that every process can resolve is a global name (property 20, line 11). A machine that announces itself tells each network where it is, which is a fact that the principal did not grant. A grant must come from the principal, as a record that the principal sees; a packet from the network is no such record. An address hint that the handshake checks is an open question, not a part of this design.
+**mDNS broadcast is refused as a source of authority.** Any host of the local network can answer an mDNS question with any name and any address, so a name that a broadcast gives proves nothing. A name of the network that every process can resolve is a global name (property 20, line 11). A machine that announces itself tells each network where it is, which is a fact that the principal did not grant. A grant must come from the principal, as a record that the principal sees; a packet from the network is no such record. The address hint above is no discovery: it reaches only a machine that was paired already, and it gives an address, never a grant.
+
+### Sharing between two principals
+
+A principal shares an object or a role with another principal by a **signed grant**: a record that the signing key of the giver signs for the public root key of the receiver. Sharing between principals is the second half of layer 5 of property 21; it uses the machine lists and the client table of this file, and adds one record and one check.
+
+**The record.** A signed grant holds:
+
+- what it gives: a share of one object of a store of the giver, with Read or with Read and Write, or a connection to one role of a machine of the giver, by its role contract;
+- the identity key of the machine that serves it, which is a machine of the machine list of the giver;
+- the public root key of the receiver;
+- an end time on the clock of the system, and a grant serial that names the grant in a revocation list;
+- the signature of the signing key of the giver on the machine where the giver made the grant, a key that the newest machine list of the giver names.
+
+**The check.** The receiver connects to the serving machine with a key of a machine of its own list, and presents the grant and its newest machine list. The root service of the serving machine checks, in this order, and refuses at the first fault with an error record that names it: the signature of the giver against a key of the newest machine list of the giver that this machine holds; the identity key of this machine in the grant; the machine list of the receiver, signed by the root key that the grant names; the key of the handshake in that list; the end time; the grant serial against the revocation list of the giver. Then it makes the connection that the grant names, for the receiver, as it makes a connection for a row of the client table, and it writes the grant in the act records of the giver.
+
+**A short life or a revocation list.** A signed grant left the machine that made it, so a revocation does not reach a copy of it at once (property 21, "Cost"). Two forms bound it, and each grant takes one:
+
+- **A short life.** The end time is at most one day after the grant, and the receiver asks the giver for a new grant to go on. No list is needed: a grant that leaks ends with its day.
+- **A revocation list.** A grant with a longer life holds the grant serial of a revocation list of the giver: a record that the signing key of the giver signs, with the serials of the revoked grants and a number that only grows. Each machine of the giver keeps the newest list, and it crosses with the machine list. The machine that serves the grant is a machine of the giver, so a revocation made there holds at once; a revocation made on another machine of the giver holds at the next contact between the two.
+
+**What the receiver gets.** A connection for its own principal, never a row of the client table of the giver and never a grant of the giver. The receiver cannot give the grant on: a signed grant names one receiver root key, and the serving machine checks the key of the handshake against that root key. A receiver that wants to share further asks the giver.
+
+**The frequent tasks.**
+
+| Task | Expression |
+|---|---|
+| Share a store with another principal for a day | `share_with(principal_key, store("notes"), rights = .Read)` |
+| Share for longer, with a revocation | `share_with(principal_key, store("notes"), rights = .Read, until = date(2027, 6, 1))` |
+| See what this principal shared | `shared()` |
+| End a share | `share_revoke(serial)` |
 
 ## The prior art
 
@@ -139,6 +178,7 @@ A machine finds another only when the principal pairs them by an explicit act. T
 | Plan 9: 9P, per-process namespaces, cpu servers, factotum | A resource of another machine has the same interface as a local one: a remote role fills the same contract. A process sees what its starter gave it, as a namespace of Plan 9 is per process. The secret key in an agent with no network that signs for the network code (factotum). The cpu server as a later remote role of a builder | Files and text as the one interface (properties 3 and 19). A mount by a path. A process that changes its own view of the world: here the plan and the starter decide |
 | Syncthing | A device is the hash of its key. Both sides add each other before any exchange. The exchange of content by hash in blocks | A conflict as a file beside the original, with a name that the principal must find. The broadcast of the local discovery, and the global discovery servers, which know where each device is |
 | Tailscale and WireGuard | A peer is its public key and nothing else, and the key decides what the peer reaches (the routing by key of WireGuard). The address learned from the last authenticated packet | The coordination server of Tailscale as the authority of the keys, and the login through an identity provider. A tunnel of layer 3, which gives a whole network and each port of the other machine in place of one role |
+| SPKI/SDSI and UCAN | A grant as a record that one key signs for another key, with an end time, checked by the party that serves it with no server of authority | The chain of delegations, by which a receiver gives a part of its grant on: here a receiver asks the giver. A name of SDSI as a second name of a key |
 | Fuchsia Overnet | A typed protocol carried between devices by a part that looks local to both ends | A mesh that routes between nodes, so a node reaches the nodes behind another. Any handle passed across devices: a handle names an object of one kernel, and its revocation is no longer local. mDNS as the way to find a device |
 
 ## The frequent tasks
@@ -161,7 +201,14 @@ A machine finds another only when the principal pairs them by an explicit act. T
 - **The long-term key in `remote`.** `remote` parses hostile bytes; a fault there then gives the identity of the machine for ever.
 - **The TPM signs each handshake.** Few TPMs sign with Ed25519, the transport speaks Ed25519 only, and each handshake then waits for the TPM service. The TPM roots the identity through the seal and the quote.
 - **A key of the machine apart from the machine key.** A new record, a new seal and a new recovery key, for the same life and the same root.
-- **A separate key of the principal on each machine, under a root key.** Two levels of keys, and the root key still needs a machine and a recovery key. It stays an open question, with its strength against a stolen machine.
+- **One signing key of the principal, copied to each machine.** A thief of one machine who learns the passphrase can sign a machine list, and the only answer is a new identity of the principal, whose new list each machine takes only from a machine of the old list. With one key for each machine under a root key that stays offline, a stolen machine is removed by a new list and the identity stays.
+- **The root key kept on a machine, sealed by its TPM.** The theft of that machine with the passphrase then gives the root key, and the gain of the two levels is lost.
+- **The join of a named principal on a machine with no TPM, or with Secure Boot off, with no setting.** A copy of its disk gives an attack on the passphrase with no count of the tries. The setting makes the choice visible and the warning says its cost.
+- **SPAKE2 as the PAKE.** It is an RFC (RFC 9382), but it needs two fixed points of the group whose discrete logarithm no one must know. CPace needs no fixed point, and the CFRG chose it as its balanced PAKE.
+- **A relay of the project for the machines behind a NAT, now.** A relay learns when two machines speak, and the project then runs a server for every principal. The principal gives a reachable address first; a relay is later work, with its own design.
+- **The address hint on by default.** Each machine then tells each local network where it goes that a machine of modus is there.
+- **A signed grant with no end time and no revocation list.** A copy of it gives access for ever, against property 20, line 13.
+- **A signed grant that its receiver gives on.** A chain of delegations makes each check walk the chain, and the giver no longer knows who holds its object.
 - **A certificate authority, X.509 certificates, or a name that a server gives.** A server of authority over every machine of every principal.
 - **Discovery by mDNS, by a broadcast, or by a directory server.** See "Pairing, and no discovery".
 - **A pairing by a long code typed by hand.** A whole key in base32 is 52 characters; a short code with a PAKE gives the same proof.
@@ -197,23 +244,21 @@ Each step adds one capability to a system that works.
 1. **The identity key from the machine key**, signed by the root service for `remote`, and the server key of `remote` and of `remote_display` as that key. The tool pins one key for the life of the machine key.
 2. **Pairing of principal 0 by a code**: the PAKE, the window of `unlock`, the row of a paired machine in the client table, and the listen grant of each address. Two test machines on one network of the tool pair, then one refuses a wrong code.
 3. **Objects by hash between paired machines**: the cache protocol over `remote`, with a paired machine as a source of the substitution policy.
-4. **A principal joins a second machine**: its keys sealed there, and the machine list.
+4. **A principal joins a second machine**: the principal root key, the keys of the principal made and sealed on the new machine, the machine list that the root key signs, and the setting for a machine with no TPM.
 5. **A remote role** of a contract of calls and records, with `Unknown_Outcome`, `Unreachable` and the gap record.
 6. **Versions as a graph, with a tree hash for each version of a store**, after the object identifiers.
 7. **The store exchange and the merge**, with the merge export and the conflict value.
 8. **The quote of the TPM** over the identity key, after the attestation key.
+9. **Signed grants between two principals**, with the short life and the revocation list.
+10. **The address hint on the local network**, behind its setting.
 
 ## Open questions
 
-- **A key of the principal on each machine, or one signing key copied to each machine.** The chosen form copies the signing key, sealed by each TPM. A key for each machine, signed by a root key that stays on one machine or offline, ends a stolen machine with no change of identity, at the cost of two levels of keys. Which one, before step 4.
-- **Pairing with a machine with no TPM, or with Secure Boot off.** The copy of the signing key there is under the passphrase alone, and a copy of its disk allows an attack away from any TPM. The proposal: refuse the join of a named principal on such a machine, and allow the pairing of principal 0 only.
-- **The PAKE**: CPace over Ristretto255 (an IRTF draft) or SPAKE2 (RFC 9382). Each needs the group Ristretto255, which the cryptography of Odin has and the copy of the system does not have yet.
-- **A machine behind a NAT on the Internet.** A relay that carries encrypted datagrams and sees nothing, in the manner of the relays of Tailscale, or the principal gives a reachable address. A relay is a server that knows when two machines speak.
-- **An address hint on the local network** that the handshake checks, with no name and no authority. It tells the network that the machine is there.
 - **The life of a row of the machine list**, and whether a machine that does not meet the others for that time loses its rows.
 - **A fallback holder of a remote role** when the link breaks: a second holder in the plan, or nothing. It belongs to supervision.
-- **Sharing between two principals**: a grant that the signing key of one principal signs for the public key of another, with a short life or a revocation list. This file covers one principal on several machines.
 
 ## State
 
-Designed, not built.
+The freestanding contract layer in `src/library/modus/contract/machine_mesh` is built and tested on the host: the monotonic signed machine list under the offline principal root key with default non-TPM join refusal and opt-in warning, the off-by-default keyed BLAKE3 local network address hint, signed cross-principal grants with one-day expiry or monotonic revocation lists, the store delta sync wire protocol with pure three-way fast-forward and conflict-fork reconciliation, and CPace PAKE over Ristretto255 (`CPaceRistretto255`) with mutual key confirmation.
+
+The integration into the root service, `unlock`, `remote`, `storage`, and multi-machine QEMU tests is left.

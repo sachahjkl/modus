@@ -134,7 +134,7 @@ Do not use: per-CPU data.
 
 A switch of threads is the moment when a processor leaves one thread and takes another one, or the same one again, from a run queue (`schedule`).
 
-A processor leaves a thread when the thread waits, when its turn ends, at a preemption or at a stop. The kernel saves the extended state of the thread that it leaves and restores the extended state of the thread that it takes there, and nowhere else: a kernel entry saves no vector register, because the kernel has no vector code. A kernel event `Switch` records each switch for a process with the right Events.
+A processor leaves a thread when the thread waits, when its stint ends, at a preemption or at a stop. The kernel saves the extended state of the thread that it leaves and restores the extended state of the thread that it takes there, and nowhere else: a kernel entry saves no vector register, because the kernel has no vector code. A kernel event `Switch` records each switch for a process with the right Events.
 
 The design: `docs/ARCHITECTURE.md`, "The extended state of the processor".
 
@@ -174,7 +174,7 @@ Do not use: FPU area, XSAVE area, save area.
 
 A usable instruction set is a group of instructions of the processor (SSE4.2, AVX2, AVX-512 F, BMI2, ...) that the processor has and whose registers the kernel saves.
 
-A process reads the sets once with `src/library/support/instruction_sets`, from `CPUID` and `XCR0`, with no kernel operation. A set that the processor has but whose state the kernel does not save is not usable: an instruction of it stops the process with an invalid opcode.
+A process reads the sets once with `src/library/modus/instruction_sets`, from `CPUID` and `XCR0`, with no kernel operation. A set that the processor has but whose state the kernel does not save is not usable: an instruction of it stops the process with an invalid opcode.
 
 Do not use: CPU feature, ISA extension.
 
@@ -714,21 +714,21 @@ The design: `docs/SCHEDULING.md`, "2. What this system takes".
 
 Do not use: scheduler class, policy, scheduling algorithm, governor.
 
-### Turn
+### Stint
 
-A turn is the time that a thread runs on a processor from its pick to the moment when it leaves: it waits, its budget has no time, or its strategy ends the turn.
+A stint is the time that a thread runs on a processor from its pick to the moment when it leaves: it waits, its budget has no time, or its strategy ends the stint.
 
-A turn is not a state of a thread: a wake preemption ends a turn, and the thread stays ready.
+A stint is not a state of a thread: a wake preemption ends a stint, and the thread stays ready.
 
-Do not use: quantum, timeslice (for this).
+Do not use: quantum, timeslice (for this), turn (for this; a turn is a unit of angle).
 
 ### Time slice
 
-The time slice is the longest turn under each strategy: 10 ticks.
+The time slice is the longest stint under each strategy: 10 ticks.
 
-At the end of a time slice the processor passes through the balance between the processors. So each processor that has a thread looks at the other queues at least each 10 ms. Under round robin each turn has this length.
+At the end of a time slice the processor passes through the balance between the processors. So each processor that has a thread looks at the other queues at least each 10 ms. Under round robin each stint has this length.
 
-The design: `docs/SCHEDULING.md`, "The time slice is the longest turn".
+The design: `docs/SCHEDULING.md`, "The time slice is the longest stint".
 
 Do not use: quantum.
 
@@ -778,9 +778,9 @@ Do not use: runnable (for this).
 
 ### Request
 
-A request is the processor time that a thread asks for at each turn under EEVDF, in microseconds: 1 to 100 000, and 0 is 3000.
+A request is the processor time that a thread asks for at each stint under EEVDF, in microseconds: 1 to 100 000, and 0 is 3000.
 
-The request sets the virtual deadline, not the share: a short request makes the thread run sooner and more often, for shorter turns. Its cost, more switches, is in the time of the thread, which its budget pays. A write of the thread schedule changes it while the thread lives: a process only lowers it, and the holder of the right **Schedule** on the machine also raises it.
+The request sets the virtual deadline, not the share: a short request makes the thread run sooner and more often, for shorter stints. Its cost, more switches, is in the time of the thread, which its budget pays. A write of the thread schedule changes it while the thread lives: a process only lowers it, and the holder of the right **Schedule** on the machine also raises it.
 
 The design: `docs/SCHEDULING.md`, "Weights and requests: a field at thread creation".
 
@@ -876,9 +876,9 @@ Do not use: deadline (alone: the deadline of a wait).
 
 ### Wake preemption
 
-A wake preemption is the end of the turn of the thread that runs on a processor because a thread that woke must run first, by the rule of the strategy.
+A wake preemption is the end of the stint of the thread that runs on a processor because a thread that woke must run first, by the rule of the strategy.
 
-When the processor of the woken thread is the waker's own, the waker ends the turn itself. On another processor, the waker sets a flag of that processor and sends it an interrupt. A thread of another process preempts one processor at most once in each millisecond: without this limit, a process with threads that wake each other makes other processes pay for the interrupts. Round robin has no wake preemption.
+When the processor of the woken thread is the waker's own, the waker ends the stint itself. On another processor, the waker sets a flag of that processor and sends it an interrupt. A thread of another process preempts one processor at most once in each millisecond: without this limit, a process with threads that wake each other makes other processes pay for the interrupts. Round robin has no wake preemption.
 
 The design: `docs/SCHEDULING.md`, "Wake preemption, also on another processor".
 
@@ -1122,7 +1122,7 @@ Do not use: argv, argc, environment (for this), arguments.
 
 A context slot is one place of the context, a handle or a value, with the role that the starter and its process agree on.
 
-The context slots of a process that the root service starts are one table: the `GRANT_` constants of `src/library/support/system/grants.odin`. The root service writes each handle with `system.grant_put`, which refuses a context slot that holds a handle already, so a process never starts with a handle lost. A context slot is not an import slot, which holds the address of an export.
+The context slots of a process that the root service starts are one table: the `GRANT_` constants of `src/library/modus/system/grants.odin`. The root service writes each handle with `system.grant_put`, which refuses a context slot that holds a handle already, so a process never starts with a handle lost. A context slot is not an import slot, which holds the address of an export.
 
 Example: the handle 7 is the call ring of the private store; the text region of a terminal is the handle 4.
 
@@ -1134,13 +1134,21 @@ Do not use: argument index, environment slot.
 
 The kernel is the code that runs with processor privilege: it isolates the processes, schedules the processors, owns the handle tables and grants access to memory and devices.
 
-The kernel has five systems: the handle table, memory, the scheduler, rings and wait, and the device grant. It has no file system, no network protocol, no device driver, no loader and no names. It is a module, which the boot program checks against the system description and loads. Its interface is a short list of kernel operations, counted in `docs/PROPERTIES.md`.
+The kernel of modus is named `modulus`. It has five systems: the handle table, memory, the scheduler, rings and wait, and the device grant. It has no file system, no network protocol, no device driver, no loader and no names. Its interface is a short list of kernel operations, counted in `docs/PROPERTIES.md`.
 
 The kernel is the control plane: it checks a right once and maps memory, and data then moves between processes with no kernel entry.
 
 The design: `docs/ARCHITECTURE.md`, "Kernel systems", and `docs/PROPERTIES.md`, "1. Small kernel with a small, counted interface".
 
 Do not use: core, supervisor.
+
+### Modulus
+
+`modulus` is the kernel of modus: the privileged code that isolates processes, schedules processors, owns handle tables and grants access to memory and devices.
+
+The project has three names. `modus` is the full operating system: the kernel, the system services, the desktop, the modules and the tools. `modulus` is the kernel of `modus`. `lex` is the language and runtime of `modus`. "Kernel" stays the technical concept in terms such as kernel ring, kernel operation and kernel stack.
+
+The design: `docs/ARCHITECTURE.md`, "Kernel systems", and `docs/PROPERTIES.md`, "1. Small kernel with a small, counted interface".
 
 ### Kernel operation
 
@@ -1166,7 +1174,7 @@ Do not use: boot loader, bootloader.
 
 A fixed range is an address and a span of the address space of a process where the system places one mapping that it gives: the settings page, the font outlines, the date page, the disk process page, the fresh bytes page, the files of a module.
 
-Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. Each written value is the slot and the bit of the range. The slots of the ranges that left name no member, and the border refuses their bits. A mapping that a process places by its own choice is outside the band, from `OWN_CHOICE_START`. `modustool check` refuses an address of the band written another way.
+Each fixed range is one member of the enumeration `Fixed_Range` of `src/library/modus/contract/fixed_addresses`, one slot of 1 TiB of the band from `BAND_START`. So no two ranges overlap, and the compiler checks that the band holds every member. Each written value is the slot and the bit of the range. The slots of the ranges that left name no member, and the border refuses their bits. A mapping that a process places by its own choice is outside the band, from `OWN_CHOICE_START`. `modustool check` refuses an address of the band written another way.
 
 Do not use: well-known address, fixed mapping.
 
@@ -1232,7 +1240,7 @@ Do not use: shadow page, page snapshot.
 
 A shared writer of a recorded process is a process that maps with Write a memory object that the recorded process also maps with Write.
 
-The other side of a ring, of a call region or of a surface is one. A shared writer runs only while each thread of the recorded process is at an input point; the kernel writes the ranges that it changed into the input history before the kernel entry returns. A shared writer waits at most one turn: past it, the input history ends and the writer runs. Its placement and its share never change.
+The other side of a ring, of a call region or of a surface is one. A shared writer runs only while each thread of the recorded process is at an input point; the kernel writes the ranges that it changed into the input history before the kernel entry returns. A shared writer waits at most one stint: past it, the input history ends and the writer runs. Its placement and its share never change.
 
 The design: `src/md/features/record_and_replay.md`.
 

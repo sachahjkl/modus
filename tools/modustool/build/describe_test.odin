@@ -340,7 +340,7 @@ field_value_writes_each_kind :: proc(t: ^testing.T) {
 TABLE_PARAMETER_SOURCE :: `// Tables as parameters.
 package sample
 
-import "modus:support/system"
+import "modus:system"
 
 Kind :: enum u8 {
 	None = 0,
@@ -441,8 +441,8 @@ describe_rejects_what_has_no_description :: proc(t: ^testing.T) {
 		{"an integer field of an enum with no backing type", "package p\nK :: enum {A}\nR :: struct {k: K}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
 		{"a Text field of 300 bytes", "package p\nR :: struct {a: [300]u8}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
 		{"a field kind of a type that value_kinds does not have", "package p\nimport \"modus:contract/value_kinds\"\nR :: struct {a: value_kinds.Hexadecimal_128}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
-		{"a field kind of a package that is not value_kinds", "package p\nimport value_kinds \"modus:support/system\"\nR :: struct {a: value_kinds.Hash_Field}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
-		{"a status of a package that is not the contract", "package p\nimport op \"modus:support/system\"\nR :: struct {a: op.Log_Level}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
+		{"a field kind of a package that is not value_kinds", "package p\nimport value_kinds \"modus:system\"\nR :: struct {a: value_kinds.Hash_Field}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
+		{"a status of a package that is not the contract", "package p\nimport op \"modus:system\"\nR :: struct {a: op.Log_Level}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
 		{"a field kind as a parameter", "package p\nimport \"modus:contract/value_kinds\"\n// f gives x.\n@(export)\nf :: proc \"c\" (x: value_kinds.Hexadecimal_64) -> i64 {return 0}\n"},
 	}
 	for item in cases {

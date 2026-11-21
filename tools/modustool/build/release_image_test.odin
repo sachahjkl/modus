@@ -9,7 +9,7 @@ import "core:testing"
 import "modus:contract/pointer_pictures"
 import "modus:contract/replacement_list"
 import "modus:contract/system_description"
-import "modus:support/cryptography/ed25519"
+import "modus:cryptography/ed25519"
 import "modustool:foundation"
 import "modustool:resources"
 

@@ -3,8 +3,8 @@ package inspect
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
-import "modus:private/inspect/addresses"
-import "modus:support/system"
+import "internal:inspect/addresses"
+import "modus:system"
 
 // The same facts as the window, as tables of records, not text: a caller
 // that acts for the principal reads them, the remote service among them:

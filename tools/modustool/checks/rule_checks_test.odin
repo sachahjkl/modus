@@ -51,7 +51,7 @@ remake(3)
 		testing.expect_value(t, uses[3].line, 9)
 		testing.expect_value(t, uses[3].what, "new(")
 	}
-	testing.expect(t, source_is_a_test("src/library/support/graphics/blend_vectors_test_amd64.odin"))
+	testing.expect(t, source_is_a_test("src/library/modus/graphics/blend_vectors_test_amd64.odin"))
 	testing.expect(t, source_is_a_test("a/b_test.odin"))
 	testing.expect(t, !source_is_a_test("a_test/b.odin"))
 }

@@ -392,7 +392,7 @@ fuzz_step_records_write :: proc(choices: ^Fuzz_Choices, sequence: ^operation_seq
 				form := fuzz_record_form_choose(choices)
 				area := fuzz_extended_state_write(choices, form)
 				fuzz_record_place(&place, .Extended_State_Area, form, area[:])
-			case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Write_Schedule, .Read_Breakpoints, .Read_Memory, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters:
+			case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Write_Schedule, .Read_Breakpoints, .Read_Memory, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start:
 				// No record type is described for these commands yet, or
 				// the command reads no record.
 			}

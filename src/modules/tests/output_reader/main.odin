@@ -24,7 +24,7 @@ package output_reader
 
 import op "modus:contract/operation"
 import "modus:contract/output"
-import "modus:support/system"
+import "modus:system"
 
 // One probe, as the writer describes it: the type check compares the two
 // descriptions.

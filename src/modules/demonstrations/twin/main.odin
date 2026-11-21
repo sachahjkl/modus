@@ -1,6 +1,6 @@
 // A module that the process `frames` starts several times, to show the
 // shared code of a module and a page that two processes share (package
-// modus:support/twins). The value MODE of its context says what it does.
+// modus:twins). The value MODE of its context says what it does.
 //
 // **What it is for.** Two facts of the memory of the system need a second
 // process to show them: the code pages of one module are shared between
@@ -9,13 +9,13 @@
 // counts of the kernel while its twins run.
 //
 // **Start**: only `frames` starts it, from the boot image. Its row of
-// `process_roles` has no grant. It has no window and writes nothing on the
+// `start_grant_sets` has no grant. It has no window and writes nothing on the
 // log.
 package twin
 
 import "base:intrinsics"
-import "modus:support/system"
-import "modus:support/twins"
+import "modus:system"
+import "modus:twins"
 
 // The entry of twin: it does what its mode says, then sleeps until
 // `frames` stops it.

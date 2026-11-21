@@ -87,7 +87,7 @@ On the serial port, each line of a process starts with the name of the process i
 
 ### The writer states the kind
 
-A line of the log is made of parts, after its level: `system.log(.Warning, "storage: the block ", block, " has a wrong check")`, and `log` and `log_with_level` in the kernel. A text is plain. Each other part is a value with a value kind (`src/library/contract/value_kinds`):
+A line of the log is made of parts, after its level: `system.log(.Warning, "storage: the block ", block, " has a wrong check")`, and `log` and `log_with_level` in the kernel. A text is plain. Each other part is a value with a value kind (`src/library/modus/contract/value_kinds`):
 
 | Part | Writes | Value kind |
 |---|---|---|
@@ -108,7 +108,7 @@ A run that fails its check costs the record its colors, never its text: the text
 
 ### The cost of the value runs
 
-On the path of `log` in the kernel: one store of 6 bytes for each value, and at most 12 runs on the stack (72 bytes, `KERNEL_LOG_RUN_LIMIT` in `src/kernel/serial.odin`). In `log_record`, under the log lock: one pass over the runs for each record, at most 32 steps. No allocation. The serial port gets the same bytes as a record with no runs.
+On the path of `log` in the kernel: one store of 6 bytes for each value, and at most 12 runs on the stack (72 bytes, `KERNEL_LOG_RUN_LIMIT` in `src/modulus/serial.odin`). In `log_record`, under the log lock: one pass over the runs for each record, at most 32 steps. No allocation. The serial port gets the same bytes as a record with no runs.
 
 ### Log facts
 
@@ -295,7 +295,7 @@ A stop report gives addresses, and a reader wants the name of a procedure and a 
 
 The kernel gives an address of a stop report as an address in a module record. The module names its exports only. The names of its other procedures and its source lines are in its debug object (`glossary/code.md`; `MODULE_CONTRACT.md`, "Debug information").
 
-The debug object also holds what a debugger shows: the types, the global variables, and the parameters and the local variables of each procedure with their variable locations (`MODULE_CONTRACT.md`, "The types and the variables"). The names and the lines come from the symbol table and from the line program of the linked file; the types and the variables come from the entries of its DWARF. A process reads all of them through `src/library/contract/debug_object`, with no parser of DWARF.
+The debug object also holds what a debugger shows: the types, the global variables, and the parameters and the local variables of each procedure with their variable locations (`MODULE_CONTRACT.md`, "The types and the variables"). The names and the lines come from the symbol table and from the line program of the linked file; the types and the variables come from the entries of its DWARF. A process reads all of them through `src/library/modus/contract/debug_object`, with no parser of DWARF.
 
 - **One module, one debug object**: the debug object holds the BLAKE3 hash of its module file. A reader uses it only for a loaded module with that hash (`debug_object.describes_module`).
 - **The source of a line**: the debug object holds, for each source file, its path from the root of the repository and the BLAKE3 hash of its content at the build. `debug_object.source_line_of` gives the path, the hash and the line of an instruction. A reader shows the text of the line only from a file with that hash, and says so when the hash differs.
@@ -312,14 +312,14 @@ Lines of the machine test, after the console called the module `probe`, which te
 ```
 [console] error: frame 0: peek + 0x4 in probe (src/modules/tests/probe/probe.odin:18), the instruction
 [console] error: frame 1: host + 0x2e14
-[console] error: frame 2: entry + 0x224d in host (src/library/support/system/service.odin:337)
+[console] error: frame 2: entry + 0x224d in host (src/library/modus/system/service.odin:337)
 ```
 
 ## The debugger
 
 A debugger stops a process where its author asks, shows its threads, its registers, its stack and its variables, and runs it one instruction at a time. The debugger of the system is a service, the process `debugger`. Each command of the debugger is an export of that service, and each export gives a table of records: the console, a window and a developer on another machine call the same exports.
 
-The code is `src/modules/system/debugger` (the service), `src/library/private/debugger/debugging` (the parts with no kernel operation: the path of a value, the walk of the frames, the place of a breakpoint, the location of a variable, the text of a value), `src/library/contract/debug_object` (the reader of the debug objects) and `src/modules/system/console/debugger_commands.odin` (the short names). The kernel part is in `ARCHITECTURE.md`, "The debugger of a process"; the reasons of the form are in "The debugger: the design" below.
+The code is `src/modules/system/debugger` (the service), `src/library/internal/debugger/debugging` (the parts with no kernel operation: the path of a value, the walk of the frames, the place of a breakpoint, the location of a variable, the text of a value), `src/library/modus/contract/debug_object` (the reader of the debug objects) and `src/modules/system/console/debugger_commands.odin` (the short names). The kernel part is in `ARCHITECTURE.md`, "The debugger of a process"; the reasons of the form are in "The debugger: the design" below.
 
 ### The service
 
@@ -337,7 +337,7 @@ The root service gives the debug access: the handle of the process with the righ
 The rule compares two sets of grants. It names no process:
 
 1. **The caller acts for the principal whose session runs the process.** The caller holds the grant to act for the principal, and the process is in the session of the same principal (`PRINCIPALS.md`). A process of the machine does not debug a process of a named principal, and a process of one principal does not debug a process of another.
-2. **Each grant of the process is a grant that the caller holds.** A debugger acts with each handle of the process that it debugs and reads each byte of it, so the right `Debug` on a process is each grant of that process. The grants of the process are those that the root service gave it at its start, which the root service keeps in the state of the process that runs (`Started.role` in `src/modules/system/root/main.odin`): the rule reads no table by the name of a process, so it holds for a process that comes from a disk as for a process of the boot image.
+2. **Each grant of the process is a grant that the caller holds.** A debugger acts with each handle of the process that it debugs and reads each byte of it, so the right `Debug` on a process is each grant of that process. The grants of the process are those that the root service gave it at its start, which the root service keeps in the state of the process that runs (`Started.start_grant_set` in `src/modules/system/root/main.odin`): the rule reads no table by the name of a process, so it holds for a process that comes from a disk as for a process of the boot image.
 3. **A revoked grant is not a grant that the caller holds.** After `revoke("console", "machine")`, the console does not debug a process that has a right of the machine.
 4. **A grant refuses the debug access for each caller when what it reaches belongs to that one process.** Two holders of such a grant do not hold the same thing, so the caller does not hold what the process holds. The grants (`GRANTS_OF_ONE_PROCESS` in `src/modules/system/root/main.odin`): Serve (a service holds what its callers lent it and what it keeps for them); Store and History_Store (a store of its own: a caller that acts for the principal reads each store of that principal and writes only its own, and through the registers of the process a debugger would write the store of the process); Terminal (a terminal of its own, with the keys typed in it); Network (an endpoint names its own remote and its own ports); Connect (the services that a process can connect to are its own list); Data_Disk, Scratch_Disk, Network_Device and Sound_Device (a device service started for the process alone); Principals (a ring of its own, and the records of the principals); Remote_Clients (a connection for a row of the client table acts for the principal of that row, which is not the principal of the caller); Start_Policy (a root ring that starts and stops the processes of the machine, which no caller holds); Screen_Capture (the copy of the screen and the input of the desktop, which show and drive each window of the principal in front). Each other grant reaches one thing that each of its holders reaches: the machine by its rights, the boot image, the debug image, the replacement table, the settings page, the date page, the records of the log, the commands of the root ring.
 5. **A revocation ends a debugging that the rule no longer gives.** After each revocation of a grant of a caller, the root service checks each debugging of that caller against the rule again, and ends each one that fails: the process is given back as on a detach, with no thread left stopped. So `revoke("console", "machine")` ends the debugging of `clock` by the console, and `revoke("remote", "acts_for_principal")` ends each debugging of the host. The end needs nothing of the caller. `detach()` needs no grant either.
@@ -358,13 +358,13 @@ What follows from the rule:
 | A device service, a terminal | Refused: the grant System_Part, which the root service gives to the parts of the system that it starts by itself, and which no caller holds |
 | A process with a grant that the console does not hold (`scheduler`: Schedule; `kernel_events`: Events) | Refused: that grant |
 
-The grant that a refusal names is the first one of the process that refuses, in the order of the enumeration `Grant` (`src/library/contract/start_grant`).
+The grant that a refusal names is the first one of the process that refuses, in the order of the enumeration `Grant` (`src/library/modus/contract/start_grant`).
 
 A start grant and a recorded grant are not one to one. Several start grants are one recorded grant: `Inspect`, `Stop`, `Schedule`, `Events` and `Counters` are rights of the one handle `machine`. A start grant such as `Serve` has no recorded grant, and the recorded grants `log` and `debug` have no start grant.
 
 **A window is not a grant.** Each process with no terminal has a window, and no grant names it, so the rule does not see it. The debugger of a process draws in the window of that process and reads the keys and the pointer events that the compositor sends to it. For the console this is the shell of the same principal, at the same screen.
 
-A refusal is an error record of the kind `No_Grant` with the unit `Debug_Access`; `found` is 1 + the number of the start grant that refuses, in the enumeration `Grant` of `src/library/contract/start_grant`. The sentence of the record and the log of the root service name that grant with the same word, from the one table `GRANT_NAMES` of that package: the console prints "debugger.attach: the caller has no grant for this: the debug access to this process: the grant Store of the process refuses it", and the log has "root: refused console the debug access to notes: the grant Store of the process refuses it". The name of a start grant is the name of its member, with its capital letters (`Store`, `System_Part`); a name in lower case (`store`, `machine`) is a recorded grant, which `grants` shows and `revoke` takes. The number of a start grant does not change when a start grant is added: the new one takes the next number. A reader that does not know a number, because the root service is of a later build, writes "a grant of the process refuses it, the start grant number 28, which this process does not know". The other refusals: `No_Grant`, `Acts_For_Principal` (rule 1); `Absent`, `Processes` (no process has the name); `Full`, `Debugged_Processes` (another caller debugs the process).
+A refusal is an error record of the kind `No_Grant` with the unit `Debug_Access`; `found` is 1 + the number of the start grant that refuses, in the enumeration `Grant` of `src/library/modus/contract/start_grant`. The sentence of the record and the log of the root service name that grant with the same word, from the one table `GRANT_NAMES` of that package: the console prints "debugger.attach: the caller has no grant for this: the debug access to this process: the grant Store of the process refuses it", and the log has "root: refused console the debug access to notes: the grant Store of the process refuses it". The name of a start grant is the name of its member, with its capital letters (`Store`, `System_Part`); a name in lower case (`store`, `machine`) is a recorded grant, which `grants` shows and `revoke` takes. The number of a start grant does not change when a start grant is added: the new one takes the next number. A reader that does not know a number, because the root service is of a later build, writes "a grant of the process refuses it, the start grant number 28, which this process does not know". The other refusals: `No_Grant`, `Acts_For_Principal` (rule 1); `Absent`, `Processes` (no process has the name); `Full`, `Debugged_Processes` (another caller debugs the process).
 
 The grant is a record of the root service: `debug` in `grants()`, a grant of the caller. `revoke` ends each handle that came from it, and the kernel ends the debugging with the last handle. The handle also ends when the connection of the caller to the service ends, when the caller stops, and when a revocation of another grant of the caller takes the access away (rule 5). After `detach()`, the service tells the root service that the debugging ended, with the same command.
 
@@ -495,7 +495,7 @@ Debugging from another machine needs no mechanism of its own.
 
 ### The test
 
-`modustool test debugger` runs two machines. The first one is the contract of the kernel (the process `debugged`). The second one is the commands: the console starts the process `debug_target`, which has no grant and values that the test knows, and waits for exact rows: a breakpoint by a procedure name and by a file and a line, the frames of the stack, a local variable of a caller, the fields of a record inside a record, an element of an array, the name of an enumeration value, a text, one step, one line, a watch of a global, and the detach. Then the rule: a process with a private store, a service and a device service are refused; a process with a right of the machine is given, the revocation of the grant `machine` of the console ends its debugging, and a new attach is refused; the revocation of the grant to act for the principal, while a thread is held, gives the process back. Then the same exports from the host through `remote`, with the source line that the tool reads in the repository. The parts with no kernel operation have host tests (`src/library/private/debugger/debugging`).
+`modustool test debugger` runs two machines. The first one is the contract of the kernel (the process `debugged`). The second one is the commands: the console starts the process `debug_target`, which has no grant and values that the test knows, and waits for exact rows: a breakpoint by a procedure name and by a file and a line, the frames of the stack, a local variable of a caller, the fields of a record inside a record, an element of an array, the name of an enumeration value, a text, one step, one line, a watch of a global, and the detach. Then the rule: a process with a private store, a service and a device service are refused; a process with a right of the machine is given, the revocation of the grant `machine` of the console ends its debugging, and a new attach is refused; the revocation of the grant to act for the principal, while a thread is held, gives the process back. Then the same exports from the host through `remote`, with the source line that the tool reads in the repository. The parts with no kernel operation have host tests (`src/library/internal/debugger/debugging`).
 
 ### The window of the debugger
 
@@ -578,7 +578,7 @@ A comment must stay true for a reader who has only the source file. A number of 
 
 `modustool check` reads each comment of the sources and refuses a comment that names a property, a choice, a step, a review or a decision by its number, its label or its date. A comment gives the reason itself, in plain words. When the reason is long, a pointer names a document and its heading, as `(docs/MODULE_CONTRACT.md, "Did not fit, across calls")`, or a numbered section, as `(docs/CONSOLE.md, section 3)`.
 
-The check reads the `.odin`, `.asm` and `.nix` files of `src/kernel`, `src/boot`, `src/runtime`, `src/library/contract`, `src/library/support`, `src/library/private`, `src/modules` and `tools`, with their tests, and `flake.nix`. It reads a comment with the scanner of the site (`tools/modustool/foundation/site_source_readers.odin`): the lines of comment that follow each other are one text. A form that a line break cuts is found, at the line where it starts. A string of the code is not a comment.
+The check reads the `.odin`, `.asm` and `.nix` files of `src/modulus`, `src/boot`, `src/runtime`, `src/library/modus/contract`, `src/library/modus`, `src/library/internal`, `src/modules` and `tools`, with their tests, and `flake.nix`. It reads a comment with the scanner of the site (`tools/modustool/foundation/site_source_readers.odin`): the lines of comment that follow each other are one text. A form that a line break cuts is found, at the line where it starts. A string of the code is not a comment.
 
 | Form | Example | Message |
 |---|---|---|
@@ -614,7 +614,7 @@ The check prefers a comment breach that it does not see to a correct comment tha
 - a step of one digit, and a date of a decision with no word of a decision in the 48 bytes before it;
 - a comment `/* ... */`, and a line of a string that runs over several lines (the scanner reads one line at a time).
 
-A file that `src/library/support/cryptography/origin.manifest` lists is not read: it is taken from the cryptography of Odin, `modustool cryptography-origin` proves that it is its origin with listed changes only, and its comments are those of Odin. A file is exempt only by a manifest that the table of exemptions of `tools/modustool/checks/comment_rule_check.odin` names, with the reason.
+A file that `src/library/modus/cryptography/origin.manifest` lists is not read: it is taken from the cryptography of Odin, `modustool cryptography-origin` proves that it is its origin with listed changes only, and its comments are those of Odin. A file is exempt only by a manifest that the table of exemptions of `tools/modustool/checks/comment_rule_check.odin` names, with the reason.
 
 The marks of Markdown (next section) are not words: a list item, a mark of bold or a link is not a breach, and a breach in bold or in a list item is still a breach. The host test `comment_markdown_and_the_comment_rules` checks both.
 
@@ -643,7 +643,7 @@ A link is a claim of its author: `modustool site` stops on a link whose target n
 
 A module carries the same text, with its marks, and the process `manual` reads them in the system (`MODULE_CONTRACT.md`, "Description tables"): a bold word is in the bold weight, a word in italics has a thin line under it, a code span is in the font of the cells, a list item has its mark and its indentation, an example is a block, and a link is a colored name. The help of an export is the first sentence of the comment with the marks removed: the console prints it as one plain line. So the first sentence of a comment must read well with no mark.
 
-The documentation of the kernel operations is the model: for each operation, one sentence that says what it does, its arguments as a list, its results, its statuses as a list with when each comes, the rights that it needs in bold, links to its records and to its guide, and an example call through `src/library/support/system` when one helps.
+The documentation of the kernel operations is the model: for each operation, one sentence that says what it does, its arguments as a list, its results, its statuses as a list with when each comes, the rights that it needs in bold, links to its records and to its guide, and an example call through `src/library/modus/system` when one helps.
 
 ## The record outputs and the record inputs of the build
 
@@ -705,8 +705,8 @@ A span that starts with `tools/` is read too: the tool is no source of the syste
 
 | Span | How the check reads it |
 |---|---|
-| `src/kernel/enter.odin`, `src/library/support/system`, `tools/modustool/main.odin` | A file or a folder: it must exist |
-| `src/kernel/enter.odin:34` | The path before the `:`. A line number is not checked |
+| `src/modulus/enter.odin`, `src/library/modus/system`, `tools/modustool/main.odin` | A file or a folder: it must exist |
+| `src/modulus/enter.odin:34` | The path before the `:`. A line number is not checked |
 | `src/modules/system/*/main.odin`, `src/modules/system/<name>/main.odin` | A name that is not written out ends the path at the folder before it: `src/modules/system` must exist |
 | `build/modules/x`, `docs/reference/modules/` | Not a source path: the name of a source folder is inside a longer path |
 | `modustool check`, `kernel`, `"modus:contract/ring"` | Not a source path: the span does not start with the name of a folder and a `/` |
@@ -723,44 +723,44 @@ A path is read from the root of the repository. A path that names nothing gives 
 
 ## The imports of the sources of the system
 
-The system has one source library, so the compiler accepts each package of the library in each source: an import of a support package compiles in the kernel, and so does an import of a package of the core library. Six rules are then held by the tool, with `library_imports_check` (`tools/modustool/build/library_imports_check.odin`): a source that is not a test imports no package of the core library, which reaches the host; the kernel imports no support package; a kernel part is imported from the kernel only; a private part is imported from its module only; a support package has two owners or more; and no relative import lands in the folder of a module from outside it, in `src/` or in `tools/`.
+The system has three source libraries (`modus`, `internal`, `modulus`), and the compiler accepts each package of `modus` in each source: an import of a support package compiles in the kernel, and so does an import of a package of the core library. Six rules are then held by the tool, with `library_imports_check` (`tools/modustool/build/library_imports_check.odin`): a source that is not a test imports no package of the core library, which reaches the host; the kernel imports no support package and no internal part; a kernel part is imported from the kernel only; an internal part is imported from its module only; a support package has two owners or more (or one owner of the group `libraries`); and no relative import lands in the folder of a module from outside it, in `src/` or in `tools/`.
 
-**The kernel parts.** A kernel part is a pure package in a folder under `src/kernel`, with host tests: `iommu`, `acpi_processors`, `debug_exception`, `processor_counters`, `stolen_time`, `time_base`, `delivery_count`. It is imported through a second source library, `kernel`, with the flag `-collection:kernel=src/kernel`: `import "kernel:iommu"`. The tool gives that flag to the compile of the kernel, to the host test of each folder under `src/kernel`, and to its own compile, because two fuzz targets and the depth of the kernel stack read two kernel parts. No other module and no other host test gets it, so the compiler refuses a kernel part there. The check refuses it too in each file of `src/` outside `src/kernel`, because a language server gives one set of source libraries to every folder.
+**The kernel parts.** A kernel part is a pure package in a folder under `src/modulus`, with host tests: `iommu`, `acpi_processors`, `debug_exception`, `processor_counters`, `stolen_time`, `time_base`, `delivery_count`, `replay_filter`. It is imported through the source library `modulus`, with the flag `-collection:modulus=src/modulus`: `import "modulus:iommu"`. The tool gives that flag to the compile of the kernel, to the host test of each folder under `src/modulus`, and to its own compile, because two fuzz targets and the depth of the kernel stack read two kernel parts. No other module and no other host test gets it, so the compiler refuses a kernel part there. The check refuses it too in each file of `src/` outside `src/modulus`, because a language server gives one set of source libraries to every folder.
 
 **The rule of each file.** Each import of each source file of `src/` names one of these, and nothing else:
 
 | File | Imports allowed |
 |---|---|
-| A source of `src/kernel` or of a kernel part that is not a test | A package of `base:`, a contract package, or a kernel part (`kernel:<part>`) |
-| A test of `src/kernel` or of a kernel part | The same, and a package of `core:` |
-| A source of `src/library/contract` that is not a test | A package of `base:`, or a contract package |
-| A test of `src/library/contract` | The same, and a package of `core:` |
-| Any other source of `src/` that is not a test | A package of `base:`, or a package of `modus:` |
-| Any other test of `src/` | The same, a package of `core:`, or a relative path of the repository that does not land in `src/kernel` or in the folder of another module |
-| A file that `src/library/support/cryptography/origin.manifest` names | A package of `base:`, of `modus:`, of `core:`, or a relative path of the copy |
+| A source of `src/modulus` or of a kernel part that is not a test | A package of `base:`, a contract package, or a kernel part (`modulus:<part>`) |
+| A test of `src/modulus` or of a kernel part | The same, and a package of `core:` |
+| A source of `src/library/modus/contract` that is not a test | A package of `base:`, or a contract package |
+| A test of `src/library/modus/contract` | The same, and a package of `core:` |
+| Any other source of `src/` that is not a test | A package of `base:`, of `modus:`, or of `internal:` (its own module only) |
+| Any other test of `src/` | The same, a package of `core:`, or a relative path of the repository that does not land in `src/modulus` or in the folder of another module |
+| A file that `src/library/modus/cryptography/origin.manifest` names | A package of `base:`, of `modus:`, of `core:`, or a relative path of the copy |
 
 Each other import is refused:
 
 - a package of `core:` in a source that is not a test: it reaches the host, and the system runs on the machine;
-- a support package in a source of the kernel or of a contract package (`"modus:support/sentence"`);
-- a kernel part in a file outside `src/kernel`: `"kernel:iommu"` in a module, a support package, a contract package or their tests, and a relative path that lands in `src/kernel` (`"../../../kernel/iommu"` in a host test of a support package), which the compiler reads from the folder of the file and accepts in a host test;
-- `"kernel:"` alone and `"kernel:."`, which name the package of the kernel itself, and a part `.` after the name of a library (`"modus:contract/./ring"`), a second spelling of a package;
-- a relative path in a source that is not a test, and in any file of the kernel or of a contract package (`"../../support/sentence"`);
-- a relative path that lands in the folder of a module, `src/modules/<group>/<module>` or under it, from a file outside that folder: from a host test of `src/` (`"../../../modules/libraries/cryptography"`) and from a file of `tools/` (`"../../src/modules/libraries/cryptography"`). The check reads each file of `tools/` for this rule alone, and resolves the path from the folder of the file. The code that a module and a host program both need is a private part of the module, imported by its name (below). A foreign import is not this rule: a host test links the assembly of `src/runtime` by a relative path;
-- a path with `..` after the name of a library (`"modus:contract/../support/sentence"`, `"kernel:../processes/clock"`);
+- a support package or an internal part in a source of the kernel or of a contract package (`"modus:sentence"`, `"internal:console/console_results"`);
+- a kernel part in a file outside `src/modulus`: `"modulus:iommu"` in a module, a support package, a contract package or their tests, and a relative path that lands in `src/modulus` (`"../../../modulus/iommu"` in a host test of a support package), which the compiler reads from the folder of the file and accepts in a host test;
+- `"modulus:"` alone and `"modulus:."`, which name the package of the kernel itself, and a part `.` after the name of a library (`"modus:contract/./ring"`), a second spelling of a package;
+- a relative path in a source that is not a test, and in any file of the kernel or of a contract package (`"../../sentence"`);
+- a relative path that lands in the folder of a module, `src/modules/<group>/<module>` or under it, from a file outside that folder: from a host test of `src/` (`"../../../modules/libraries/cryptography"`) and from a file of `tools/` (`"../../src/modules/libraries/cryptography"`). The check reads each file of `tools/` for this rule alone, and resolves the path from the folder of the file. The code that a module and a host program both need is a support package of the public library or an internal part of the module (below). A foreign import is not this rule: a host test links the assembly of `src/runtime` by a relative path;
+- a path with `..` after the name of a library (`"modus:contract/../sentence"`, `"modulus:../modules/demonstrations/clock"`);
 - a package of another library, the vendor library of the compiler too.
 
-**The private parts.** A private part is a package that one module alone compiles in, with its host tests, in `src/library/private/<module>/<part>`: `import "modus:private/storage/storage_tree"`. The check refuses an import of a private part from any file of `src/` other than the folder of its module and the private parts of the same module, its host tests too, and a path whose `<module>` names no module of the table of the modules or that names no part. The boot program, which is no module, has its private parts in `src/library/private/boot_program/<part>`, imported from `src/boot` only. One reader more is allowed: a host test may import a private part of a module of the group `libraries`, because a host program cannot load a module, and such a test stands in for the module whose exports its package calls. The host tests of `quic` import `modus:private/cryptography/cryptography_primitives`, the code of the exports of the module `cryptography`. The tool is outside `src/`: it reads some private parts, as the disk images of the storage service and that same cryptography for its QUIC peers, and is no reader that the rule counts.
+**The internal parts.** An internal part is a package that one module alone compiles in, with its host tests, in `src/library/internal/<module>/<part>`: `import "internal:storage/storage_tree"`. The check refuses an import of an internal part from any file of `src/` other than the folder of its module and the internal parts of the same module, its host tests too, and a path whose `<module>` names no module of the table of the modules or that names no part. The boot program, which is no module, has its internal parts in `src/library/internal/boot_program/<part>`, imported from `src/boot` only. One reader more is allowed: a host test may import an internal part of a module of the group `libraries`, because a host program cannot load a module, and such a test stands in for the module whose exports its package calls. The tool is outside `src/`: it reads some internal parts, as the disk images of the storage service, and is no reader that the rule counts.
 
-**The owners of a package.** The owners of a package of the library are the bodies of code (the kernel, the boot program, each module) whose chain of imports reaches it; a test is no owner. A support package, with each folder under it, has two owners or more, and a private part has its module as its one owner. The check counts owners, never importing files: a package that a module and a private part of that module import has one owner. A refusal names the folder of the package and its one owner:
+**The owners of a package.** The owners of a package of the libraries are the bodies of code (the kernel, the boot program, each module) whose chain of imports reaches it; a test is no owner. A support package, with each folder under it, has two owners or more, or one owner that is a module of the group `libraries` (`modus:cryptography_primitives`, the code of the exports of the module `cryptography`, which a program outside the repository compiles in); an internal part has its module as its one owner. The check counts owners, never importing files: a package that a module and an internal part of that module import has one owner. A refusal names the folder of the package and its one owner:
 
 ```
-modustool: src/library/support/alone: only console reaches this support package: a support package has two owners or more, and a package of one module is its private part, in src/library/private/<module>/
+modustool: src/library/modus/alone: only console reaches this support package: a support package has two owners or more, or one owner of the group libraries, and a package of one module is its internal part, in src/library/internal/<module>/
 ```
 
 **The build line of a host test.** A test that imports a package of `core:` runs on the host: its first build line is `#+build !freestanding`, so that no build of the system reads it. A test with no such line is refused, with its file and the line of its first import of `core:`.
 
-**The copy of the cryptography of Odin.** `src/library/support/cryptography/origin.manifest` names the files that the system took from the cryptography of Odin. They keep the imports of their origin, and `modustool cryptography-origin` proves that nothing else changed. A file that the manifest does not name follows the rule of its folder.
+**The copy of the cryptography of Odin.** `src/library/modus/cryptography/origin.manifest` names the files that the system took from the cryptography of Odin. They keep the imports of their origin, and `modustool cryptography-origin` proves that nothing else changed. A file that the manifest does not name follows the rule of its folder.
 
 **A kernel part is pure.** The same parser walk reads each source of a kernel part that is not a test, so that its host tests run each procedure with no machine. It refuses, with the file and the line:
 
@@ -779,15 +779,15 @@ The package of the kernel itself holds the state of the kernel, and this rule do
 **When it runs.** Before the first compiler of each build starts: `build`, `test`, `run`, `measure`, `screenshots`, `film`, `repeat`, and `module <name>` with no step. `modustool check` runs it first, and `modustool library-imports` runs it alone. A refused import, and a test with no build line, stop the build with the file, the line and the text:
 
 ```
-modustool: src/kernel/serial.odin:12: the import "modus:support/sentence" is refused: a source of src/kernel imports a package of base:, under modus:contract/ or under kernel:, by a path with no ".."; the kernel imports no support package
-modustool: src/library/support/sentence/parse_test.odin:4: the test imports "core:testing" and has no build line: a test of src/ that imports a package of core: starts with "#+build !freestanding", so that no build of the system reads it
+modustool: src/modulus/serial.odin:12: the import "modus:sentence" is refused: a source of src/modulus imports a package of base:, under modus:contract/ or under modulus:, by a path with no ".."; the kernel imports no support package and no internal part
+modustool: src/library/modus/sentence/parse_test.odin:4: the test imports "core:testing" and has no build line: a test of src/ that imports a package of core: starts with "#+build !freestanding", so that no build of the system reads it
 ```
 
 **What it does not prove.** It does not prove that a contract package uses no kernel operation: that rule is held by review.
 
-## The table of the roles of the root service
+## The table of the start grant sets of the root service
 
-The root service gives each process of the boot image the role of its row in the table `process_roles` (`src/modules/system/root/roles.odin`): its start grants and the other terms of its role. A name with no row gets the zero role, so the tool keeps the table whole (`tools/modustool/build/process_roles_check.odin`). It reads the rows with the parser of Odin and refuses:
+The root service gives each process of the boot image the start grant set of its row in the table `start_grant_sets` (`src/modules/system/root/start_grant_sets.odin`): its start grants and the other terms of its start grant set. A name with no row gets the zero start grant set, so the tool keeps the table whole (`tools/modustool/build/start_grant_sets_check.odin`). It reads the rows with the parser of Odin and refuses:
 
 - a module of the boot image (a row of the table of the modules marked `entry`, in the boot image, not the module of a disk process) with no row, the root service apart;
 - a row that names no module of the boot image, a disk process or the root service;
@@ -800,10 +800,10 @@ The root service gives each process of the boot image the role of its row in the
 **When it runs.** Before the first compiler of each build starts, after the check of the imports, and when `modustool site` reads the table for the page of the grants. A fault stops the build with the file and the line:
 
 ```
-modustool: src/modules/system/root/roles.odin: the process clock of the boot image has no row in process_roles: write its role, with no grant when it needs none
+modustool: src/modules/system/root/start_grant_sets.odin: the process clock of the boot image has no row in start_grant_sets: write its start grant set, with no grant when it needs none
 ```
 
-The host test `the_table_of_the_roles_is_whole` gives each fault to the check, the test `each_role_of_process_roles_takes_each_context_slot_once` checks that the handles of each row take one context slot each, and `the_layout_of_a_device_service_takes_each_slot_once` tries the ring of a device contract in each slot of the layout of a device service.
+The host test `the_table_of_the_start_grant_sets_is_whole` gives each fault to the check, the test `each_start_grant_set_takes_each_context_slot_once` checks that the handles of each row take one context slot each, and `the_layout_of_a_device_service_takes_each_slot_once` tries the ring of a device contract in each slot of the layout of a device service.
 
 ## The start lists
 
@@ -820,13 +820,13 @@ The wiring rows of a list are a second table of the tool, beside its start rows:
 
 The list of the image `missing_console` has a row of the console that names a module that does not exist, for the test of the rescue: the build checks that the check refuses it for that row alone, then writes it into that image only. The rescue list of that image adds two rows with 2 restarts each, for the test of the restarts: `stops_refused` stops with the stop outcome `Refused` and the start policy writes that it does not start again, and `stops_failed` stops with `Failed` and starts again with 1, then 0 restarts left, then stays stopped. Only that image holds the two test modules.
 
-**The source of the start policy.** Before the first image is written, the tool reads the sources of `src/modules/system/start_policy`, the tests left out, and refuses more than 400 lines in all, and an import that is not `base:`, `modus:contract/start_list`, `modus:contract/root_ring`, `modus:contract/ring`, `modus:contract/operation`, `modus:contract/value_kinds`, `modus:private/start_policy/wiring_rows` or `modus:support/system`: the start policy reads a list in its order and holds no logic of its own. The contracts `operation` and `value_kinds` give the types of the fields of its log facts. The tool also refuses in `src/library/private/start_policy/wiring_rows`, the tests left out, each import that is not `base:` or a contract: that part makes no call of the kernel, so its host tests reach each of its decisions. The host tests `a_start_list_that_is_not_valid_is_refused`, `a_wiring_row_that_the_module_files_refuse_is_refused` and `a_start_policy_past_its_bound_is_refused` give each fault to the checks.
+**The source of the start policy.** Before the first image is written, the tool reads the sources of `src/modules/system/start_policy`, the tests left out, and refuses more than 400 lines in all, and an import that is not `base:`, `modus:contract/start_list`, `modus:contract/root_ring`, `modus:contract/ring`, `modus:contract/operation`, `modus:contract/value_kinds`, `internal:start_policy/wiring_rows` or `modus:system`: the start policy reads a list in its order and holds no logic of its own. The contracts `operation` and `value_kinds` give the types of the fields of its log facts. The tool also refuses in `src/library/internal/start_policy/wiring_rows`, the tests left out, each import that is not `base:` or a contract: that part makes no call of the kernel, so its host tests reach each of its decisions. The host tests `a_start_list_that_is_not_valid_is_refused`, `a_wiring_row_that_the_module_files_refuse_is_refused` and `a_start_policy_past_its_bound_is_refused` give each fault to the checks.
 
 ## The rules that a check holds
 
 Four rules of the system are checked when the tool builds, not only read.
 
-**The count of the kernel operations.** `PROPERTIES.md` states how many operations the kernel has, in the sentence "The kernel has <number> operations". The enumeration `Operation` of `src/library/contract/operation/operation.odin` declares them. The tool counts the members of the enumeration, without `None`, and compares the two numbers. A new operation is then refused until the property states the new count, with its reason.
+**The count of the kernel operations.** `PROPERTIES.md` states how many operations the kernel has, in the sentence "The kernel has <number> operations". The enumeration `Operation` of `src/library/modus/contract/operation/operation.odin` declares them. The tool counts the members of the enumeration, without `None`, and compares the two numbers. A new operation is then refused until the property states the new count, with its reason.
 
 **No source of the system calls an allocator.** A process has no heap: its memory is a mapping that it asks the kernel for, or a variable of its module. The tool reads each source file of the kernel, of the boot program, of the modules and of the source library that is not a test, and refuses a line that calls `make`, `new`, `new_clone`, `delete`, `free` or `free_all`, or that names `context.allocator`, `context.temp_allocator` or `[dynamic]`. A comment and the text of a string are not read. A procedure of the system whose name ends with one of these words, as `caller_grant_make`, is not a call of the built-in procedure. The compiler also gets `-default-to-nil-allocator`: with it a call of an allocator fails when the process runs; the check refuses the call before the process exists.
 
@@ -854,7 +854,7 @@ What it does not see: a `return` of a variable that holds a negative number, a h
 A refused family stops the check with its place:
 
 ```
-modustool: src/library/support/principals/principals.odin:93: the constants MODE_ of src/library/support/principals are a closed set of choices (MODE_CHANGE_PASSPHRASE, MODE_CREATE_PRINCIPAL, MODE_NEW_RECOVERY_KEY, MODE_SEAL_MACHINE_KEY, MODE_SET_MACHINE_PASSPHRASE, here a case of a switch): make them an enum, with the values of the contract when the value crosses a border, and one conversion at the border that refuses a value that names no member (src/md/infrastructure/choice_constants.md)
+modustool: src/library/modus/principals/principals.odin:93: the constants MODE_ of src/library/modus/principals are a closed set of choices (MODE_CHANGE_PASSPHRASE, MODE_CREATE_PRINCIPAL, MODE_NEW_RECOVERY_KEY, MODE_SEAL_MACHINE_KEY, MODE_SET_MACHINE_PASSPHRASE, here a case of a switch): make them an enum, with the values of the contract when the value crosses a border, and one conversion at the border that refuses a value that names no member (src/md/infrastructure/choice_constants.md)
 ```
 
 A short list of exceptions in the source names the open sets of outside standards (the frame types of QUIC, the protocol numbers of IPv4, the scan codes of the keyboard, the codes of DWARF and of ELF that the tool reads), and the places of the fields of a remote request, each with its reason. An exception that names no family stops the check too.
@@ -862,7 +862,7 @@ A short list of exceptions in the source names the open sets of outside standard
 **A cast of a word to an enum.** The same check refuses a cast of a word to an enum, `Mode(word)`, `cast(Mode)word` or `transmute(Mode)word`, that the code keeps (a declaration, an assignment, a field, a return, an index, an operand of another expression), passes to a procedure, or switches on. A cast accepts each word, so it skips the border: the word becomes a member that the writer may not have named. The check accepts a cast only as one operand of `==` or `!=` whose other operand is a member (`.Ok`, `Status.Ok`, `system.Status.Ok`): the value is compared once and never kept. It knows each enum type of each package, those of a `when` block of a file included, a `distinct` type of one, and an alias of one (`Entry_Kind :: store_contract.Entry_Kind`), through the imports of each file, a relative import included. A cast to a pointer, an array or a slice of an enum (`(^Mode)(&word)^`, `transmute([4]Mode)bytes`) is refused the same way. Each `auto_cast` is refused: its target is a type that the compiler infers, which the syntax tree does not hold, so a conversion names its type. A refused cast stops the check with its place, the enum and its form:
 
 ```
-modustool: src/library/support/sentence/error.odin:30: a cast of a word to the enum op.Object_Kind is kept: read the word through its border, which refuses a word that names no member, and pass the member; a cast is allowed only as one operand of == or != with a member (src/md/infrastructure/choice_constants.md)
+modustool: src/library/modus/sentence/error.odin:30: a cast of a word to the enum op.Object_Kind is kept: read the word through its border, which refuses a word that names no member, and pass the member; a cast is allowed only as one operand of == or != with a member (src/md/infrastructure/choice_constants.md)
 ```
 
 A second short list names the casts of a design, each with its reason: the dispatch of the kernel on the kind of a command record, and the two tests that write a word of no member on purpose (the machine test of an unknown operation, and the peer that breaks a field of a remote request). A row names its file, its enum and its count of casts in the file: another count of such casts in the file, none included, refuses the row and its casts. The tool chooses a member by its place, from 0 (a draw of the fuzzer), with `enum_member_at`, which stops the tool on a place past the last member.
@@ -885,25 +885,22 @@ What the check does not see: a `#partial switch`, a constant declared inside a p
 
 ## The reuse list
 
-The section "Reuse list" of `PROPERTIES.md` names each work of others that the system ships in a module or in the boot image, or that the repository holds as a copy. `modustool check` runs `reuse_list_check` (`tools/modustool/checks/reuse_list.odin`), which compares the table with the records of the repository. The design: `src/md/infrastructure/reuse_list.md`.
+`CREDITS.md` is the one checked document for reused code, reimplemented algorithms, design inspirations, and upstream funding links. `modustool check` runs `reuse_list_check` (`tools/modustool/checks/reuse_list.odin`), which verifies all three tables of `CREDITS.md` and compares Reused code with the records of the repository. The design: `src/md/infrastructure/credits_and_licences.md`.
 
-**The form of the table.** The header is `| Work | Place | License | License file |`. Each row has four cells:
+**The form of the three tables.**
 
-| Cell | What it holds |
-|---|---|
-| Work | The name of the work, in words |
-| Place | One code span: the path of the work in the repository, or the import path of a library of the compiler (`base:runtime`). The check matches a row and a work by this cell |
-| License | An SPDX identifier, or identifiers joined by `OR` and `AND`. `NONE` is a work with no license |
-| License file | One code span: the file of the repository with the text of the license, or the notice that the license asks for |
+- `## Reused code`: `| Work | Place | Upstream | Authors | License | License file | Funding |`. `Place` and `License file` are code spans; `License` is an SPDX expression (or `NONE`); every cell is non-empty (`—` for Funding when none is known).
+- `## Reimplemented algorithms`: `| Algorithm | Authors | Upstream | Reference license | Place | Funding |`. `Place` is a code span naming an existing path in `src/`; every cell is non-empty.
+- `## Inspirations`: `| System or idea | Authors | Took and left | Link | Funding |`. Every cell is non-empty and no two rows share a system or idea name.
 
 **Where the tool finds the reused works.**
 
 | Works | Record |
 |---|---|
 | The fonts | The three lists of `tools/modustool/resources/vector_fonts.odin`; for each, `resources/fonts/<name>.license`, its line `License of the source: <words>.`, and the license file of the list |
-| Spleen 8x16 | `src/library/support/graphics/FONT_LICENSE`, its line `SPDX-License-Identifier: <identifier>` |
+| Spleen 8x16 | `src/library/modus/graphics/FONT_LICENSE`, its line `SPDX-License-Identifier: <identifier>` |
 | The pointer themes | Each theme that the build makes (`pointer_theme_builds`) whose manifest has a line `license` that is not the license of `LICENSE` |
-| The cryptography of Odin | `src/library/support/cryptography/origin.manifest`: one line or more gives the work of `LICENSE.odin.txt`; a line under `_fiat/` gives the work of `LICENSE.fiat-crypto.txt` |
+| The cryptography of Odin | `src/library/modus/cryptography/origin.manifest`: one line or more gives the work of `LICENSE.odin.txt`; a line under `_fiat/` gives the work of `LICENSE.fiat-crypto.txt` |
 | The libraries of the compiler | `base:runtime`, always: the compiler puts it in each module. Each package of `core:` that a source of the system imports, in a file that is not a test and whose first line is not a build tag with `!freestanding`. Their license file is `LICENSE.odin.txt` |
 | The portraits | Each row of `resources/hall_of_fame/CREDITS.md` |
 | The works in C | Each outside source of the module table (`foundation.outside_sources`): its folder of the repository is the place, the first line of its `LICENSE` gives the license, and that file is the license file |
@@ -943,7 +940,7 @@ nix develop -c modustool similarity pair src/modules/system/root/main.odin:300 s
 - `near <file>:<line>` prints the procedures whose similarity score with the procedure that holds the line is 0.5 or more, at most 20, each with its template and its blanks.
 - `pair <file>:<line> <file>:<line>` prints the score of two procedures, whatever its value, with their template and each blank.
 
-**What it does not read.** The copies of the works of others that `src/library/support/cryptography/origin.manifest` names, and the sources that a command of the tool writes: `src/library/support/graphics/font.odin`, and each file whose first line starts with `// This file is the output of`. The report lists each file that it does not read, with the reason. It keeps three areas apart in each measure: the system (`src/`, no test), the tool (`tools/`, no test), and the tests (a file `_test.odin`, a scenario of the tool, a file whose first line is a build tag with `!freestanding`).
+**What it does not read.** The copies of the works of others that `src/library/modus/cryptography/origin.manifest` names, and the sources that a command of the tool writes: `src/library/modus/graphics/font.odin`, and each file whose first line starts with `// This file is the output of`. The report lists each file that it does not read, with the reason. It keeps three areas apart in each measure: the system (`src/`, no test), the tool (`tools/`, no test), and the tests (a file `_test.odin`, a scenario of the tool, a file whose first line is a build tag with `!freestanding`).
 
 **The normal form.** Before it compares, the finder removes the differences that do not change what the code does: the layout, the comments, the parentheses, the names of the locals (each one becomes the order of its declaration in its procedure), the name of an import, the direction of a comparison (`a > b` is `b < a`), a negated equality, a double negation, `x += y` (it is `x = x + y`), the order of the operands of `==`, `!=`, `&`, `|` and `~` when both are pure, a counted `for` loop (it is `for i in a..<b`), a negated condition with two branches, a boolean return (`if c { return true }; return false` is `return c`), and the arithmetic of integer literals. The order of `+`, `*`, `&&` and `||`, the names of the fields and the names of the globals stay: without the types, the syntax does not prove that they are the same behaviour.
 
@@ -975,7 +972,7 @@ A place that some members do not have is a gap, printed `?-`.
 
 A family whose members are all inside the members of a larger family, with as many uses or more, is not reported. Each member of a family covers at least 70% of its nodes with the template.
 
-**The home.** The finder proposes the home of a factored procedure: the package of the members when they are in one package; "a contract package, by a decision" when a member is in `src/kernel` or `src/library/contract`, which import no support package; else the support package that each file of the members imports, or a new support package.
+**The home.** The finder proposes the home of a factored procedure: the package of the members when they are in one package; "a contract package, by a decision" when a member is in `src/modulus` or `src/library/modus/contract`, which import no support package; else the support package that each file of the members imports, or a new support package.
 
 **The ranking.** A factoring of a family of `k` uses whose template has `|T|` nodes saves `(k - 1) · |T| - k` nodes, less one node for each value or type parameter and two for each place or procedure parameter. The finder takes the family that saves the most, marks the nodes of its members as used, counts the other families again without those nodes, and repeats. So the headline "a factoring of the ranked families saves N nodes and L lines" counts each node once.
 
@@ -1003,7 +1000,7 @@ The template hash does not change when a file moves, when a local is renamed, or
 
 `modustool module-build` builds an outside module (`glossary/communication.md`, "Outside module"): a module whose source is in a folder of another project. It writes the module file and the debug object. The build is the build of a module of the system: the same two steps, in the same procedures (`MODULE_CONTRACT.md`, "The steps of one module, as implemented"). The code is `tools/modustool/build/outside_module.odin`.
 
-**What the folder holds.** One Odin package, its `.asm` files if it has some, and the module build file, `module.txt`. A source imports the packages of the system from the source library `modus`: `import "modus:support/system"`.
+**What the folder holds.** One Odin package, its `.asm` files if it has some, and the module build file, `module.txt`. A source imports the packages of the system from the source library `modus`: `import "modus:system"`.
 
 **The module build file.** Each line that is not empty is `key: value`. Each key is written at most one time.
 
@@ -1136,6 +1133,44 @@ modustool: the module c_compiler compiles in the C files of chibicc, and the var
 
 **A new patch.** Make the change in a checkout of the work at the pinned commit, write it with `git diff` as a file of `src/outside/<work>/patches/` with a name after the last one, add the file to git, and build: Nix applies it, and a patch that does not apply stops the shell with the line of the patch.
 
+## The SDK
+
+The SDK (`glossary/communication.md`, "SDK") packages the public surface of modus into a self-contained directory so a developer can build an outside module in Odin or in any compiled language with no repository checkout and no Nix. The design is `src/md/infrastructure/sdk.md` and `src/md/infrastructure/language_neutral_abi.md`; the code is `tools/modustool/build/sdk.odin`.
+
+**What an SDK directory holds.**
+
+- `<sdk>/SDK_MANIFEST.txt`: canonical manifest with `sdk_format`, `release`, `target`, `module_format`, `compiler`, BLAKE3 `root_digest`, optional Ed25519 `public_key` and `signature`, and sorted `<blake3>  <relative-path>` lines for every other file in the directory.
+- `<sdk>/library/modus/`: clean copy of `src/library/modus/` only. No file from `src/library/internal/` or `src/modulus/` is included, and both packaging and verification refuse any path segment named `internal` or `modulus`.
+- `<sdk>/runtime/`: freestanding memory assembly routines copied from `src/runtime/`.
+- `<sdk>/modules/`: `catalog.txt` listing the public system and library modules of the release and verified `.module` files for declaring imports without a checkout.
+- `<sdk>/examples/hello_odin/` and `<sdk>/examples/hello_c/`: minimal freestanding Odin and C outside module examples.
+
+**The commands.**
+
+```
+modustool sdk-pack <output-dir> [--sign-key <path>] [--modules-dir <path>]
+modustool sdk-verify <sdk-dir> [--public-key <path>]
+modustool sdk-convert <object.o> <module.manifest> <output.modus> [--sdk <sdk-dir>] [--import-dir <dir>]
+```
+
+- `sdk-pack` assembles the SDK directory deterministically, signs `root_digest` with Ed25519 via `modus:cryptography_primitives` when `--sign-key` is supplied (accepting 64 hexadecimal digits or unpadded base64url), and runs `sdk-verify` before returning.
+- `sdk-verify` runs outside a repository checkout, parses `SDK_MANIFEST.txt` strictly, checks `root_digest` and the Ed25519 signature (pinning `--public-key` when supplied), walks the directory while refusing symbolic links, stray files, missing files, and any `internal` or `modulus` path, and checks every file's BLAKE3 hash.
+- `sdk-convert` runs outside a repository checkout and converts any freestanding System V AMD64 relocatable ELF object (`ET_REL`) paired with a language-neutral `module.manifest` into a verified modus module file validated by `module.validate`, resolving imports from `<sdk-dir>/modules/` or `--import-dir`.
+- `modustool module-build <folder> --system <sdk-dir>` detects `SDK_MANIFEST.txt` in `<sdk-dir>`, verifies the SDK, and builds either an Odin outside module (`module.txt`, passing only `-collection:modus=<sdk-dir>/library/modus`) or a language-neutral module (`module.manifest` with `.o` or `.c`) against the SDK.
+
+## The self-hosting check
+
+`modustool self-host` verifies that `modustool` builds itself to identical bytes in two isolated staging directories. The design is in `src/md/features/bootstrap.md`; the code is `tools/modustool/build/bootstrap.odin`.
+
+```
+modustool self-host [--staging-dir <folder>] [--verify-chains]
+```
+
+1. The running tool clears `<staging>/stage1` and `<staging>/stage2` (default root: `build/self_host`), unsets `NIX_LDFLAGS`, sets `SOURCE_DATE_EPOCH=0`, and compiles `tools/modustool` into `stage1/modustool` with deterministic flags (`-define:TOOL_BUILDS_ITSELF=false`, `-source-code-locations:filename`, `-use-single-module`, `-extra-linker-flags:-Wl,--build-id=none`).
+2. The tool runs `stage1/modustool self-host --emit-binary <staging>/stage2/modustool`, so the Stage 1 binary compiles Stage 2 with the same flags.
+3. The tool computes the BLAKE3 hash of both binaries and verifies `blake3(stage1) == blake3(stage2)`. When the two binaries differ, the command fails and prints the exact byte offset of the first divergence.
+4. When `--verify-chains` is passed, the command also verifies the stage-by-stage `plans_recipes.Recipe_Spec` and `guest_builder.Guest_Build_Spec` DAGs for the `chibicc` self-host chain, the `hex0` to `odin` live-bootstrap guest chain, and the SQLite, Lua, and zstd freestanding C-world validation recipes.
+
 ## The commands of the tool
 
 All the automation of the project is one program of the host, `tools/modustool`. It is one command over packages, one for each concern: `foundation`, `resources`, `build`, `checks`, `fuzz`, `similarity`, `machine` and `site`, in the order of their imports. A package imports another one as `"modustool:<package>"`, with the flag `-collection:modustool=tools/modustool`, never by a relative path. The layout is in "The packages of the tool", below; the design is in `src/md/infrastructure/repository_layout.md`. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c modustool <command>`; `modustool help` prints the list with one line for each.
@@ -1144,8 +1179,11 @@ All the automation of the project is one program of the host, `tools/modustool`.
 |---|---|
 | `build [whole] [host_processes]` | Builds the modules, the boot images and the boot programs: the usual one, and one for each volume that a test or a measure needs (a start that fails, a shortage of frames, a measure run, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel). It keeps each module and each boot volume when its inputs are the same, and only converts a module when the file of an import changed; `build whole` keeps nothing ("The incremental build") |
 | `module <name> ...` | Builds one module of the table, and its debug object; with `compile` or `convert` as its last argument, runs one of the two steps alone. The parallel build runs it for each step; run it by hand to see the errors of one module alone |
-| `module-build <folder> [--system <folder>] [--out <folder>]` | Builds one outside module from a folder of another project, with its module build file `module.txt`: writes `<name>.module` and `<name>.debug`, and prints the hash of the module and the names of its exports ("A module from a source outside the repository") |
+| `module-build <folder> [--system <folder>] [--out <folder>]` | Builds one outside module from a folder of another project, with its module build file `module.txt` (or against an unpacked SDK directory holding `SDK_MANIFEST.txt`): writes `<name>.module` and `<name>.debug`, and prints the hash of the module and the names of its exports ("A module from a source outside the repository") |
 | `module-disk <disk file> <module file> ...` | Writes a data disk whose store `module_files` holds each module file under the name of its file, and prints the line of the console that starts each one ("A module from a source outside the repository") |
+| `sdk-pack <output-dir> [--sign-key <path>] [--modules-dir <path>]` | Packs a deterministic, self-contained SDK directory with public library, runtime, public module catalog and `.module` files, examples, and canonical `SDK_MANIFEST.txt` with BLAKE3 root digest and optional Ed25519 signature ("The SDK") |
+| `sdk-verify <sdk-dir> [--public-key <path>]` | Verifies every file BLAKE3 hash, absence of stray, missing, symlink, or `internal`/`modulus` paths, and Ed25519 signature of an unpacked SDK directory ("The SDK") |
+| `sdk-convert <object.o> <module.manifest> <output.modus> [--sdk <sdk-dir>] [--import-dir <dir>]` | Converts a freestanding `ET_REL` object (`.o`) paired with a language-neutral `module.manifest` into a verified modus module file with no repository checkout ("The SDK") |
 | `volume <name>` | Builds one boot volume: its boot image with the system description, its boot program, and the volume file. The build runs it for each volume that it must build; run it by hand, after a build, to see the errors of one volume alone |
 | `run [without_checks]`, `run --remote-display <viewer key>` | Builds the modules and the main boot volume, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `modustool call`, draws the key of its client for this run, and prints it with the line to type in a console of the machine: `remote_allow("<key>")`. With `--remote-display`, the machine has no window and a new data disk: the tool starts `remote_display`, prints the port of the UDP relay of the peer to its port 7101 and the line of its key, allows the viewer key for the view and the input, waits until a viewer came and went, then stops the machine ("A machine for a viewer on the host" in `src/md/features/remote_display.md`) |
 | `call <key> "<call>"` | Calls an export of a service of the machine that `run` started, through the process `remote` over QUIC, and prints the typed result. The call acts for the principal that allowed the key of the client of the peer; with no such principal it fails: "remote refused the key of this client in the handshake (access_denied)" |
@@ -1163,6 +1201,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `fuzz list`, `fuzz <target> [executions [host_processes [seed]]]`, `fuzz all [executions]`, `fuzz show <target> <file>`, `fuzz minimize <target> <file>`, `fuzz regression <target> <file>`, `fuzz corpus <target>` | Fuzzes the readers of the system on the host: the module file, the debug object, the storage format, QUIC and TLS, TCP and HTTP, the remote protocol and the call region, the records of a ring, the disk grant table, the system description and the boot image, the fonts, the pointer theme and the tables of the firmware. It builds the instrumented child, runs a fuzz target, and minimizes each fuzz finding ("The fuzzing") |
 | `fuzz operations <executions> [seed]`, `fuzz regression operations <finding>`, `fuzz replay operations <file>` | Fuzzes the kernel operations on machines of the counted kernel: operation sequences that the counters of the kernel guide, a new machine after each fault, each fault of the kernel kept one time for its signature and minimized by machine lives and by steps, and the reach inputs of the corpus at the end of the run; a fixed finding into the corpus with the answers of the kernel that ships; or one sequence again on the kernel that ships ("The fuzzing of the kernel operations", "The corpus of the kernel operations", "The operation sequences") |
 | `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`). Each of its builds is a whole build |
+| `self-host [--staging-dir <folder>] [--emit-binary <path>] [--verify-chains]` | Builds `stage1/modustool`, invokes it to build `stage2/modustool` with identical deterministic flags, and verifies `blake3(stage1) == blake3(stage2)` or reports the first diverging byte offset ("The self-hosting check") |
 | `module-hashes write <file>`, `module-hashes compare <file>` | Records the hash of each module of the build in a file, or compares the build with such a record and fails when a module has another hash ("The hashes of the modules of two builds") |
 | `site` | Writes the site in `build/site/` |
 | `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |
@@ -1217,10 +1256,10 @@ The tool is compiled once for each change of its sources, not at each command. T
 
 - **At once.** At most one host process for each processor: the processors of the host, or `NIX_BUILD_CORES` when it is fewer. The tool comes first in the list, because it takes the longest. After a failure no new folder starts; the folders that run end.
 - **The files of a folder.** Its log is `build/host_tests/<name>.txt`, where the name is the path of the folder with `_` for each `/`. Its compiler has its own temporary folder, `build/host_tests/<name>`, so that two compilers never write one object of an assembly file.
-- **What the check prints.** One line for each folder that passed, with its time: `modustool: measure: the host tests of src/library/support/quic: <seconds> s`, then the time of all on the clock. For a folder that failed, the path of its log and its last 40 lines. Each time is a measure, never a condition.
-- **The flag of the kernel parts** goes to the host tests of the folders under `src/kernel` and of each folder of the tool only. **The flag of the source library of the tool**, `-collection:modustool=tools/modustool`, goes to each folder of the tool: the command and each of its packages.
+- **What the check prints.** One line for each folder that passed, with its time: `modustool: measure: the host tests of src/library/modus/quic: <seconds> s`, then the time of all on the clock. For a folder that failed, the path of its log and its last 40 lines. Each time is a measure, never a condition.
+- **The flag of the kernel parts** goes to the host tests of the folders under `src/modulus` and of each folder of the tool only. **The flag of the source library of the tool**, `-collection:modustool=tools/modustool`, goes to each folder of the tool: the command and each of its packages.
 - **The flag of the attribute of a fact type**, `-custom-attribute:log_fact`, goes to each folder, as to each compile of a package of `src/`: a module, the kernel, the boot program and the tool. With it the compiler accepts the attribute `log_fact` of a fact type and ignores it (`src/md/features/log_facts.md`). The host test `the_fact_key_is_the_typeid_of_the_compiler` of the package `build` declares one fact type, and checks that the fact key that the tool computes is the typeid that the compiler gives it.
-- **One folder alone**: `nix develop -c odin test <folder> -vet -collection:modus=src/library -custom-attribute:log_fact`, with `-collection:kernel=src/kernel` for a kernel part, and with both `-collection:kernel=src/kernel` and `-collection:modustool=tools/modustool` for a folder of the tool.
+- **One folder alone**: `nix develop -c odin test <folder> -vet -collection:modus=src/library/modus -collection:internal=src/library/internal -custom-attribute:log_fact`, with `-collection:modulus=src/modulus` (and no `internal`) for a kernel part, and with `-collection:modulus=src/modulus` and `-collection:modustool=tools/modustool` for a folder of the tool.
 
 ### The fuzzing
 
@@ -1230,7 +1269,7 @@ A fuzz target gives the real code of the system millions of fuzz inputs, and che
 
 | Target | Kind | What it checks |
 |---|---|---|
-| `module_file`, `module_generated` | raw, generated | A module file that `validate` accepts gives no read out of bounds through any reader of `src/library/contract/module`; a module built by the rules passes `validate` |
+| `module_file`, `module_generated` | raw, generated | A module file that `validate` accepts gives no read out of bounds through any reader of `src/library/modus/contract/module`; a module built by the rules passes `validate` |
 | `debug_object`, `debug_object_generated` | raw, generated | A debug object that `check` accepts gives each reader with no fault, and `encode` of its tables gives its bytes back |
 | `storage_tree` | generated | The B-tree against a sorted model, its walk after each commit, then damaged nodes |
 | `storage_mount` | generated | The open of a disk gives back each object of the writer of the tool; the open of a damaged disk never gives a wrong object as whole |
@@ -1245,7 +1284,7 @@ A fuzz target gives the real code of the system millions of fuzz inputs, and che
 | `remote_display_records` | raw | A record of the remote display of each direction that its border takes writes again to its bytes and stays in its ranges, and a screen piece that decodes codes and decodes to the same pixels |
 | `isolated_call` | raw | `isolated.decode` of a description and a call region gives only slices inside the call region |
 | `ring_records` | raw | Each input event, terminal input, service command and root command is the member that its word names, or a refusal with the zero value |
-| `root_ring` | raw | The dispatch of a record of the root ring, for any role of its sender, stops at the border with `Unsupported` or at the sender with `No_Grant` exactly when the table of the senders refuses it; each word of a command and each refused Replace gives its member or its record; nothing changes |
+| `root_ring` | raw | The dispatch of a record of the root ring, for any start grant set of its sender, stops at the border with `Unsupported` or at the sender with `No_Grant` exactly when the table of the senders refuses it; each word of a command and each refused Replace gives its member or its record; nothing changes |
 | `disk_grant_table` | raw | A table behind its tag holds rows by its rules, and encodes and decodes to its part that persists |
 | `system_description`, `boot_image_generated` | raw, generated | A description that `entries` accepts is the one that its writer gives; a boot image as built passes the checks, and a changed byte of a file or of the description fails them |
 | `vector_font` | raw | A font that `font_open` accepts gives each glyph, outline, pair and substitution, and draws a glyph |
@@ -1269,7 +1308,7 @@ A raw target reads its input as the bytes that the system reads. A generated tar
 
 **The child.** The tool runs a target in a child host process, `modustool fuzz-child`, which a fault ends. The child and the tool share the mailbox, a file in `build/fuzzing/<target>/`: before each execution the child copies the input there and adds one to its count of executions. When the count stays still for the hang bound, the tool ends the child, and the input is an input that never returns. The child places each input against a page with no access, after it or before it, so that a read past the input faults even through a raw pointer.
 
-**The instrumented child.** `modustool fuzz` and `modustool check` build `build/fuzzing/instrumented/modustool_instrumented`: the compiler writes the LLVM IR of each package, `opt -passes=sancov-module` adds an 8-bit edge counter to each edge of the packages under test and traces their comparisons (a package is the name that its sources declare: the folder `src/library/support/terminal` holds `terminal_records`), `llc` makes the objects, and `clang` links them with the flags that the compiler prints. The engine keeps an input that gives an edge a count in a class that no kept input gave.
+**The instrumented child.** `modustool fuzz` and `modustool check` build `build/fuzzing/instrumented/modustool_instrumented`: the compiler writes the LLVM IR of each package, `opt -passes=sancov-module` adds an 8-bit edge counter to each edge of the packages under test and traces their comparisons (a package is the name that its sources declare: the folder `src/library/modus/terminal` holds `terminal_records`), `llc` makes the objects, and `clang` links them with the flags that the compiler prints. The engine keeps an input that gives an edge a count in a class that no kept input gave.
 
 **The corpus.** The corpus of each target is in `tools/modustool/fuzz/fuzzing_corpus/<target>/`: the regression inputs in `regression/` and the reach inputs in `reach/`, one file for each input, named by the BLAKE3 hash of its bytes. A target holds at most 512 inputs and 1 MiB; the whole corpus holds at most 16 MiB. `modustool check` refuses a corpus over a bound, a name that is not the hash of its bytes, and a folder that names no target, but `operations`, the corpus of the kernel operations ("The corpus of the kernel operations").
 
@@ -1414,7 +1453,7 @@ The part runs the seed sequences: one step of each operation with arguments that
 
 `modustool fuzz operations <executions> [seed]` runs that count of operation sequences on machines of the volume `operation_fuzzing`, through the same mailbox and the same oracles as the test part. The volume holds the image of the test part and the counted kernel `kernel_edge_counters`. The design is in `src/md/infrastructure/kernel_fuzzing.md`.
 
-- **The counted kernel.** The build makes it from the sources of the kernel with the setting `KERNEL_EDGE_COUNTERS`, and adds a call of a callback in `src/kernel/edge_counters.asm` at each edge of its code with `opt`; no other kernel links that file, and each other kernel gets the setting false. It counts only the commands and the exceptions of the runner and of the processes that it creates. It runs on one processor: it stops at its start on a machine with more, and when another processor ran its code or was not reset. Its boot line `kernel: TEST BUILD: edge counters at <address>, <count> edges` names the physical address and the count of its counters, in decimal. The tool refuses a count of 0 or past 262 144, a number with a sign or a leading zero, and a range outside the memory of the machine, as an error of the build. No process reads the counters: the tool reads them through the memory file of the machine.
+- **The counted kernel.** The build makes it from the sources of the kernel with the setting `KERNEL_EDGE_COUNTERS`, and adds a call of a callback in `src/modulus/edge_counters.asm` at each edge of its code with `opt`; no other kernel links that file, and each other kernel gets the setting false. It counts only the commands and the exceptions of the runner and of the processes that it creates. It runs on one processor: it stops at its start on a machine with more, and when another processor ran its code or was not reset. Its boot line `kernel: TEST BUILD: edge counters at <address>, <count> edges` names the physical address and the count of its counters, in decimal. The tool refuses a count of 0 or past 262 144, a number with a sign or a leading zero, and a range outside the memory of the machine, as an error of the build. No process reads the counters: the tool reads them through the memory file of the machine.
 - **The checks of the counters.** Each run checks that each counter is 0 after the boot, and again before each sequence, and that each counter past the guards of the linked kernel stays 0 after each sequence. A counter that breaks one ends the run with the exit code 1: a fault of the counted kernel, not a finding. Each build checks that the module `kernel` holds no text `kernel: TEST BUILD:` and that each test kernel holds it.
 - **The engine.** The tool writes zeros over the counters before each sequence and reads them after its end line. A sequence whose counters give an edge a count in a class that the run has not seen runs again as the next execution, and the tool keeps its choices when the two runs agree on such a class. The choices of a sequence are, in order: a second run that waits, each reach input of the corpus once, one new draw in four, else a kept input with 1, 2, 4 or 8 mutations. The run prints the kept inputs, the features and the edges, and the second runs.
 - **The reach inputs.** At the end of a run that ends with no error and that ran each reach input of the corpus, the tool writes the smallest set of the kept inputs that gives each of their features into `reach/` of the corpus of the kernel operations, smallest first, in the room that the regression inputs leave in the bounds of the corpus, and removes each other file of `reach/`. It prints how many it wrote and how many it left out. Read the change of `reach/` before the commit.
@@ -1500,7 +1539,7 @@ A fifth machine starts on the same disk. The scenario skips the machine passphra
 
 A sixth machine starts on the same disk. The scenario skips the machine passphrase and types the passphrase of alice. The root service reads her table, 1 row and 1 client key, writes nothing, and the key holds again for alice with no new allow (`PRINCIPALS.md`, "The client keys of remote"). In a console of her session, `start_from_disk("visitor", "")` has the grant store again, and the visit 2. Then `remote` starts, and a call of the peer acts for alice. `remote_disallow` in her console writes the table with no key, `remote` ends the open connection with the code Revoked, and refuses the key in the next handshake.
 
-Host tests check the writer with the code of the open of the storage service (`src/library/private/storage/storage_mount`): no block of the image is wrong, the counts of the store are the counts of what it names, each object gives its bytes, each entry has the hash that its block tree gives, and a file with no hole has the BLAKE3 hash of its bytes.
+Host tests check the writer with the code of the open of the storage service (`src/library/internal/storage/storage_mount`): no block of the image is wrong, the counts of the store are the counts of what it names, each object gives its bytes, each entry has the hash that its block tree gives, and a file with no hole has the BLAKE3 hash of its bytes.
 
 ### The clock of a test machine
 
@@ -1508,7 +1547,7 @@ The setting `appearance` is `auto` on a new disk, and `auto` follows the hour of
 
 The tool keeps the difference between the clock that it gave and the clock of the host. Each check of a date of the machine (the step `Date`, a call with `date_after`, the field `Date` of `server`) takes the difference off, then checks the date by order against the clock of the host.
 
-The step `Appearance_Auto` checks the line that the setting `auto` writes: "settings: the appearance in force is dark: auto, light from 07:00 to 19:00 of the local time; the local time is 01:04 with a zone of 0 s, at 1794791040 s since 1970". The tool checks the date of the line as a step `Date` does, then computes the rule of the day over that date and that zone with the procedure of the system (`src/library/support/appearance`), and the line must name the same appearance. The test does not choose the hour: it checks the rule at the hour that the machine read. With `expected`, the zone of the line, in seconds, must be that number.
+The step `Appearance_Auto` checks the line that the setting `auto` writes: "settings: the appearance in force is dark: auto, light from 07:00 to 19:00 of the local time; the local time is 01:04 with a zone of 0 s, at 1794791040 s since 1970". The tool checks the date of the line as a step `Date` does, then computes the rule of the day over that date and that zone with the procedure of the system (`src/library/modus/appearance`), and the line must name the same appearance. The test does not choose the hour: it checks the rule at the hour that the machine read. With `expected`, the zone of the line, in seconds, must be that number.
 
 The test of the time zone (`src/md/features/time_zone.md`) sets `settings.set_time_zone("+08:00")`: the local time of the machine is then from 09:00 to 15:00, in the day. The step `Appearance_Auto` with `expected = "28800"` checks the line of the root service ("root: the appearance in force is light: ..."), which comes after the process `date` copied the zone. The step `Bar_Local_Time` checks the line of the bar: "compositor: the bar shows the local time 2026-11-16 09:04:05 with the time zone +08:00, at 1794791045 s since 1970". The tool checks the date of UTC as a step `Date` does, the zone against `expected`, and the local time against that date in that zone. The test then sets `+00:00` again and checks the dark appearance and the bar in UTC.
 
@@ -1572,10 +1611,10 @@ A source names an export of an import in a `foreign` block: a name, the paramete
 
 | Input | How the tool knows it |
 |---|---|
-| The source files of the module and of each package that it imports, to any depth: the folder of the module, the source library (`modus:contract/`, `modus:support/`), and the libraries of the compiler (`base:`, `core:`) | The list of the compiler; the tool hashes each file |
+| The source files of the module and of each package that it imports, to any depth: the folder of the module, the source library (`modus:contract/`, `modus:`), and the libraries of the compiler (`base:`, `core:`) | The list of the compiler; the tool hashes each file |
 | The files of `#load` | The same list |
 | Every other file of the folder of each of these packages | The tool lists each folder. A file that the compiler did not read becomes a source with no change of a listed file in one way only: it is in such a folder (a new file, or a file whose build tag now admits the target) |
-| The assembly files that the module links: `src/runtime/memory.asm`, the `.asm` files of its folder, and those of `src/library/support/system` for a module with an entry | The tool lists them as the build does |
+| The assembly files that the module links: `src/runtime/memory.asm`, the `.asm` files of its folder, and those of `src/library/modus/system` for a module with an entry | The tool lists them as the build does |
 | The command of the compiler and the command of `llc`, with each flag: the checks of the kernel, the kind of debug information (`-debug-info:same-code`), the direction of the instruction scheduler of `llc` (`-misched-topdown`), the settings of the module, the features of the target | The text of the two commands (`module_compile_command`, `module_object_command`) |
 | The C files of an outside source | The command of `clang` for each one (`module_c_commands`): it names the folder of the store, whose path holds the hash of the source, of the patches and of the files of `src/outside/<work>` |
 | The host programs `odin`, `llc`, `nasm`, `ld.lld` and `clang` | The path of each file after each link, its size and its time. In the store of Nix the path holds the hash of the package |
@@ -1597,8 +1636,8 @@ A source names an export of an import in a `foreign` block: a name, the paramete
 - **The body of an export.** The compiler, `llc` and the link never open a file of the import, so no body of it can be inlined in the importer. To inline across two bodies of code, their sources are compiled into one module (`MODULE_CONTRACT.md`, "Closed rules"); then they are sources of that module, and the list of the compiler holds them.
 - **The description of an export** (its name, its parameters, its result). The compiled code depends on the declaration in the `foreign` block of the importer, which is a source of the importer. The description in the file of the import is not read by the compile step. The conversion compares the two: it reads each `foreign` procedure of the sources of the importer and the description of the export of that name in the module file of the import, and a declaration with another count of parameters, another type, direction, record layout, result, error record or calling convention stops the build with its file and its line, and so does a symbol that became an import slot of the importer and has no compared declaration (`import_declarations.odin`; `MODULE_CONTRACT.md`, "The declaration of an import is checked"). A change of the sources changes the key of the compile step, which the key of the conversion holds, and a change of the import changes the key of the conversion: each runs the comparison again.
 - **A library module** (`glossary/desktop.md`; the field `library` of the module table, set for `drawing`). The conversion refuses its module file when a segment that the loader writes is read-only after the load: a segment with a rebase (a table of addresses) or an import slot (`MODULE_CONTRACT.md`, "A library as a module"). A segment of that range of the linker with no rebase and no import slot is a constant segment for every module, and is not refused. After the modules, each build prints one measure line for each library module: the size of its file, and the size of the file of each module that imports it with their sum: "modustool: measure: the library module drawing has ... bytes; the files of the 24 modules that import it have ... bytes in all". It is a measure to compare two builds; no check reads it.
-- **A module that draws through the drawing module** has two entries in its line of the module table: the import `drawing`, and the compiler setting `DRAWING_THROUGH_MODULE=true`, which makes the window layer of `src/library/support/interface` call the exports. A host test of the tool (`modules_that_draw_through_the_drawing_module_follow_its_rules`) refuses a line with the setting and no import, a line with the setting before the line of the drawing module in the table, and a source of such a module that starts a child of its own file with no load source. The build refuses an import that is not before its importer in the table, so the drawing module comes before the compositor.
-- **The layout of a record, and a constant.** An importer that uses a record or a constant of a library imports the package that declares it (`modus:contract/`, `modus:support/`, or the folder of the module). That package is in the list of the compiler, so its files are inputs of the compile step.
+- **A module that draws through the drawing module** has two entries in its line of the module table: the import `drawing`, and the compiler setting `DRAWING_THROUGH_MODULE=true`, which makes the window layer of `src/library/modus/interface` call the exports. A host test of the tool (`modules_that_draw_through_the_drawing_module_follow_its_rules`) refuses a line with the setting and no import, a line with the setting before the line of the drawing module in the table, and a source of such a module that starts a child of its own file with no load source. The build refuses an import that is not before its importer in the table, so the drawing module comes before the compositor.
+- **The layout of a record, and a constant.** An importer that uses a record or a constant of a library imports the package that declares it (`modus:contract/`, `modus:`, or the folder of the module). That package is in the list of the compiler, so its files are inputs of the compile step.
 - **A file of `#load`.** It is in the list of the compiler. No source loads a module file of the build; if one did, the list names that file, and the key of the compile step holds its hash.
 - **The number of an export, and the hash of the import.** They are in the module file only, and the conversion writes them. They are why the conversion holds the whole file of the import, not its description.
 
@@ -1928,7 +1967,7 @@ These times never stand for a condition. After each key of `Film_Type` the tool 
 
 ### The pictures of the mark
 
-One generator makes each file of the mark (`tools/modustool/resources/mark_pictures.odin`, `mark_formats.odin`, `mark_tile_map.odin`, `mark_developer_picture.odin`). The data of the mark is in `src/library/support/mark`; the generator turns a request into the bytes of a file. Three commands ask it:
+One generator makes each file of the mark (`tools/modustool/resources/mark_pictures.odin`, `mark_formats.odin`, `mark_tile_map.odin`, `mark_developer_picture.odin`). The data of the mark is in `src/library/modus/mark`; the generator turns a request into the bytes of a file. Three commands ask it:
 
 | Command | What it asks |
 |---|---|
@@ -1981,10 +2020,10 @@ The fifth example writes the bytes of `favicon.ico` of the site, and the sixth t
 | `png` | The pixels of one picture, or of a tile map | `still`, `frame`, `tile_map` |
 | `ico` | An icon file: a directory, then one PNG file of the generator for each entry. The first entry is the picture of the request, and each `--entry` adds one. A reader chooses an entry by its size | `still`, `frame` |
 | `svg` | A vector file: the pixels of the picture as rectangles of one color. A run of cells of one color in a row is one rectangle, at each cell size. With `--dark-rule yes`, a rule of style gives each rectangle its color of the dark scheme for a reader that asks for dark | `still`, `frame`, in the cells variant |
-| `apng` | An animated PNG file: each frame of one animation as one picture, in its place, for the time that `src/library/support/mark` gives it. The file plays with no end. A reader that does not know the animated form shows the first frame | `animation` |
+| `apng` | An animated PNG file: each frame of one animation as one picture, in its place, for the time that `src/library/modus/mark` gives it. The file plays with no end. A reader that does not know the animated form shows the first frame | `animation` |
 | `json` | The text of the table of a tile map | `table` |
 
-- The smooth variant is not written as a vector file. The gradient of a part is linear across the picture, and a vector file can state a linear gradient. But the reader of the file then computes each color: it goes between the two rounded colors of the ends, and it rounds in its own way. Some pixels are then one unit away from the colors of `src/library/support/mark`, on some readers. In the cells variant the tool computes the one color of each cell, and a rectangle of one color is the same in every reader.
+- The smooth variant is not written as a vector file. The gradient of a part is linear across the picture, and a vector file can state a linear gradient. But the reader of the file then computes each color: it goes between the two rounded colors of the ends, and it rounds in its own way. Some pixels are then one unit away from the colors of `src/library/modus/mark`, on some readers. In the cells variant the tool computes the one color of each cell, and a rectangle of one color is the same in every reader.
 - An animated PNG file is a PNG file with three more kinds of chunk: `acTL` holds the count of the frames, `fcTL` the size and the time of one frame, and `fdAT` the data of a frame after the first. The data of each frame is the data of the PNG file that the generator writes for that frame.
 - An animated PNG file shows the frames of the heron in its place. It does not show the move of the heron across a page: that is the work of the script of the home of the site.
 - Some places choose the reader of a file by the end of its name. For such a place, name the animated file with `--out <name>.png`: the bytes are a PNG file.
@@ -2006,7 +2045,7 @@ The generator refuses a request with no sense, with a sentence, and writes no fi
 
 A PNG file of the generator is the smallest that the encoder of the Odin standard library writes for its pixels: the highest level of its deflate, once with each row filter, the smallest kept. No pixel is lost. The picture for a developer is written at the common level, in one pass.
 
-The host tests of the generator are in `mark_pictures_test.odin` and `mark_formats_test.odin`: each kind of request, each refusal, the table of the uses, the words of the command, and each format read back. The test of the icon file compares each entry with the PNG file of its picture, byte for byte. The test of the vector file draws its rectangles as a reader does, for each color scheme, and compares each pixel with the picture. The test of the animated file builds one PNG file from the data of each frame, decodes it, and compares its pixels and its time with the frame. `only_the_generator_draws_the_mark` fails when a file of the tool outside the generator calls a drawing procedure of `src/library/support/mark`, or builds an icon file, a vector file or an animated file of the mark.
+The host tests of the generator are in `mark_pictures_test.odin` and `mark_formats_test.odin`: each kind of request, each refusal, the table of the uses, the words of the command, and each format read back. The test of the icon file compares each entry with the PNG file of its picture, byte for byte. The test of the vector file draws its rectangles as a reader does, for each color scheme, and compares each pixel with the picture. The test of the animated file builds one PNG file from the data of each frame, decodes it, and compares its pixels and its time with the frame. `only_the_generator_draws_the_mark` fails when a file of the tool outside the generator calls a drawing procedure of `src/library/modus/mark`, or builds an icon file, a vector file or an animated file of the mark.
 
 ### The release
 
@@ -2039,7 +2078,7 @@ A release (`glossary/project.md`, "Release") is one section of `CHANGELOG.md`, o
 **What `ship` does, in order.**
 
 1. It refuses a branch other than `master`, a tree with changes that are not committed, and a `master` that does not hold `origin/master` after a fetch.
-2. It takes the newest release: the higher of `RELEASE_NUMBER` in `src/library/contract/release/release.odin`, read from the file, and of the highest tag `v*`. It takes the next number from it.
+2. It takes the newest release: the higher of `RELEASE_NUMBER` in `src/library/modus/contract/release/release.odin`, read from the file, and of the highest tag `v*`. It takes the next number from it.
 3. It runs `changelog release`. If that fails, it puts the tree back to the last commit, and removes the copy of the measure record that git does not track yet.
 4. It commits `CHANGELOG.md`, the source of the release number, the deleted fragments and the copy of the measure record, with the message `Release <number>`.
 5. It makes the release tag with `git tag -s -a`: annotated, and signed by the git configuration of the publisher of the system. If git cannot sign, `ship` undoes the commit and stops.
@@ -2181,7 +2220,7 @@ A test checks a condition: a value, a state, a line of the log. A test that depe
 - **A time in a test has one role: to end a hang.** The bound is generous, and the same for each wait that has no reason of its own. It is never tuned to how fast the work is on some host.
   - A step of a machine test, and each wait of the tool after an input (the keys, the pointer, a reply of QEMU): `HANG_BOUND`, 120 s (`tools/modustool/foundation/processes.odin`). The QUIC cases and the cases of `remote` of the peer, the HTTP client of the host, the calls of the host, the wait for a key and the start of swtpm use the same bound. A TCP case of the peer has `CASE_TIME_LIMIT`, 180 s: one case runs several timers of the server of 10 s and more, in time of the machine.
   - The first Wait of a machine, its boot: `BOOT_HANG_BOUND`, 180 s.
-  - The checks of a process that a machine test runs: `system.TEST_HANG_BOUND_MILLISECONDS`, 60 s (`src/library/support/system/test_bounds.odin`). It is under the bound of a step, so that the process writes its own report of the hang before the tool ends the machine.
+  - The checks of a process that a machine test runs: `system.TEST_HANG_BOUND_MILLISECONDS`, 60 s (`src/library/modus/system/test_bounds.odin`). It is under the bound of a step, so that the process writes its own report of the hang before the tool ends the machine.
 - **A case that can count its progress has a bound on a stall.** It ends when its count does not grow for `system.TEST_HANG_BOUND_MILLISECONDS`, or after `system.TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS` (600 s) in all. The report names the step where the count stopped: a step that stays still tells a lost wake from a slow host. The Wait for the line of such a case has `PROGRESS_CASE_HANG_BOUND_SECONDS` (660 s), more than the overall bound of the process.
 - **A number of speed is a measure.** A duration, a rate, a count in one second or "at most N ms" is printed, and can go to the measure record (`docs/measures/measures.txt`). It never makes a test fail. A rate over a duration is measured in a measure run only ("A check by count, a measure by time").
 - **A behaviour in time of the system is checked by order and by its own clock.** A deadline that ends a wait, a budget of processor time that throttles a process, a timer of TCP, the idle timeout of QUIC and the clock are behaviours. The check has a lower bound where the behaviour is "not before" ("the idle end held its bound": the end came no earlier than the idle timeout, in time of the machine). Its upper side is the hang bound only, and the line prints how late the end came. A wake is checked by a deadline that is the hang bound: a wait that ended before its deadline was woken.
@@ -2213,7 +2252,7 @@ A **measure run** is a machine whose boot image holds the resource `measure_run`
 | `crowd` | 50 000 records from each writer through each of 5 queues, each one read one time | Records in one second, for 1 s for each queue |
 | `disk` | 256 requests in each of 5 runs, 0 errors; 128 blocks written, flushed and read back | Blocks in one second, for 1 s for each run |
 | `locks` | 16 384 kernel entries and 2048 pages on first use for each locker, with 1, 2 and 4 lockers; 2000 turns of the word wait alone and while 2 lockers enter the kernel 65 536 times each; 16 objects of 600 pages and 2048 pages for each locker of the case of the frames | Kernel entries and pages on first use in one second (300 ms for each row), wakes in one second (500 ms), rounds of 500 ms of the case of the frames |
-| `scheduler` | Under each strategy: 16 turns of the two threads, and 8 turns that a wake ended under EEVDF, by the counts of the kernel; each spinner ran 30 ticks, by the thread report, in each case of the shares; each of the four processes of the share policy ran 30 ticks, by its process report | Wakes in one second (400 ms), the late wakes of a thread that sleeps 2 ms 60 times, the work in one second and the shares over 500 ms; the shares of the four processes of the share policy over 1 s |
+| `scheduler` | Under each strategy: 16 rounds of the two threads, and 8 stints that a wake ended under EEVDF, by the counts of the kernel; each spinner ran 30 ticks, by the thread report, in each case of the shares; each of the four processes of the share policy ran 30 ticks, by its process report | Wakes in one second (400 ms), the late wakes of a thread that sleeps 2 ms 60 times, the work in one second and the shares over 500 ms; the shares of the four processes of the share policy over 1 s |
 | `limits` | The processor time of each budget in the first whole interval of one second, against its limit | The same in the second interval, where each thread computes from the start of the interval |
 | `log_reader` | Its own records, the records of its children, the refusals of `Log` and the three facts that it reads back ("The log") | The write of one line as text and as a fact, the operation `Log` of each form, and the render of a fact, after its checks ("The measures of the log facts"). The console starts it, since the start menu does not list it. The measure run first starts the window `log`, which is the service `log` that it connects to, and waits for its line "log: ok, ", as the main test does: the start list starts no process of that service, and the root service refuses a connection to a service with no process |
 | `output_measure` | With 1, 2, 4 and 8 readers in turn: each reader reads the joined record of 0, the 2 200 records of the writer in order and its clean end record, and each process stops itself with the outcome Done | In cycles, the least and the median: a write of a record of 120 bytes into each ring, of 1000 writes, for each count of readers; with one reader, a log fact of the same record, of 200 facts, and the time from a write to the read of a reader that waits, of 200 records, with the wakes of a burst of 1000 records (`src/md/features/module_outputs.md`, "The measures that decide it", 1, 2 and 4). The writer and the reader print the lines, which the run prints after those of the asker (`helpers` in `measure_processes`). One asker holds 8 wirings at most: 16 readers are not measured. The console starts it |

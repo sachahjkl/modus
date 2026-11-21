@@ -32,7 +32,7 @@ The step that describes the exports reads it from the tree of the parser, as it 
 
 - **The compiler checks the names.** The constant has the type of the record, so a field with a wrong name stops the compile. The tool reads only integer literals: the number in the file is the number in the source, with no evaluation.
 - **The source and the table are two records.** `system.Stated_Budget` exists only in a source; `module.Budget_Request` exists only in a file. A field `pages` that meant the working memory in a source and the whole pages in a file would be one name for two concepts.
-- **No new import.** Each module imports `modus:support/system`. A module of another project states it the same way.
+- **No new import.** Each module imports `modus:system`. A module of another project states it the same way.
 - **The comment before the constant gives the reasons of the working memory.** The tool refuses the constant with no comment. The site shows the comment beside the parts on the page of the module.
 - **No silent least budget.** A declaration named `MODULE_BUDGET` that the tool would not read is an error of the tool: inside a `when` (the tool reads the source with no setting of the build, and cannot know the branch that the compiler takes), or with other names in one declaration. A refused form says why in its message.
 - **The forms of Odin that hold the same value are taken.** The type can be on the declaration, `MODULE_BUDGET : system.Stated_Budget : {...}`, and a part can be written with the prefix `0x`, `0o` or `0b` and with `_` between its digits.

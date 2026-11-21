@@ -17,7 +17,7 @@ package root
 // The disk grant table of each principal binds a nickname, the name of the
 // entry, to the hash of one file, with the grants of that file
 // (docs/MODULE_CONTRACT.md, "The grants of a disk process"). Its rules are
-// in modus:support/disk_process; this file applies them at each start and
+// in modus:disk_process; this file applies them at each start and
 // serves the commands Disk_Grant and Nickname_Move. The store is the one
 // grant that a command gives: the store of the nickname, so it follows the
 // nickname to its next file.
@@ -32,13 +32,13 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/start_grant"
-import "modus:support/disk_process"
-import "modus:support/display"
-import "modus:support/principals"
-import "modus:support/random"
-import "modus:support/storage"
+import "modus:disk_process"
+import "modus:display"
+import "modus:principals"
+import "modus:random"
+import "modus:storage"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 import "modus:contract/value_kinds"
 
 // What the load that runs waits for.
@@ -200,7 +200,7 @@ row_persistence_log :: proc "contextless" (principal: u64, nickname, persistence
 // service: the store of its nickname when its start gave it the grant
 // store, and the grant was not revoked; else none.
 disk_store_limit :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
-	if .Store not_in caller.role.grants || .Store in caller.revoked || system.name_of(service.name[:]) != "storage" {
+	if .Store not_in caller.start_grant_set.grants || .Store in caller.revoked || system.name_of(service.name[:]) != "storage" {
 		return 0
 	}
 	// The budget that a module asks for has no part for a store yet: the
@@ -259,7 +259,7 @@ disk_name_refusal :: proc "contextless" (name: string, values: ^[7]u64) -> (refu
 		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
 		return true
 	}
-	if name_is_a_system_part(name) || role_names_the_process(name) {
+	if name_is_a_system_part(name) || start_grant_set_names_the_process(name) {
 		system.log_fact(.Warning, Disk_Load_Refused_Name_In_Grant_Table{refused_process = module_name_field(name)})
 		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
 		return true
@@ -295,7 +295,7 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 	}
 	file, _, problem_of_the_nickname := disk_process.start_file(table, name, hash)
 	switch problem_of_the_nickname {
-	case .None, .Absent, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Start_Policy_Row, .Holds_Store:
+	case .None, .Absent, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Bad_Uses, .Start_Policy_Row, .Holds_Store:
 		// start_file gives only None, No_File and Other_File: the start goes on.
 	case .No_File:
 		system.log_fact(.Warning, Disk_Load_Refused_Nickname_Without_Row{principal = asker.principal, refused_process = module_name_field(name)})
@@ -656,7 +656,7 @@ disk_load_start :: proc "contextless" () {
 
 // disk_process_run starts a disk process from the bytes of its file, which
 // this service checked. The process receives what each process receives
-// and nothing of a role: the log with the right Write, a window, the date
+// and nothing of a start grant set: the log with the right Write, a window, the date
 // page, the settings page and the font outlines, read-only. It has no row
 // in the tables by name of this service, and the budget of a process that
 // no table names. Its grants are the grants of its nickname in the disk
@@ -696,11 +696,11 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	copy(slot.name[:len(slot.name) - 1], name)
 	slot.principal = principal
 	slot.from_disk = true
-	// Its role is the grants of its row, and never a row of the tables of
+	// Its start grant set is the grants of its row, and never a row of the tables of
 	// this service: it has no root ring, so it sends no root command
 	// (root_ring.ROOT_RING_GRANTS).
 	if .Store in disk_grants {
-		slot.role = {grants = {.Store}}
+		slot.start_grant_set = {grants = {.Store}}
 	}
 	context_grants: system.Context_Grants
 	values: system.Context_Values
@@ -901,7 +901,7 @@ disk_grant_change :: proc "contextless" (caller: ^Started, record: ring.Record, 
 		values^ = errors.ring_fail(kind, .Reserved, .Grants, 1)
 		system.log_fact(.Warning, Disk_Grant_Refused_Start_Policy{nickname = module_name_field(nickname), grant = text_field(grant_name, 24)})
 		return .Bad_Operation
-	case .No_File, .Other_File, .Absent, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Holds_Store:
+	case .No_File, .Other_File, .Absent, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Bad_Uses, .Holds_Store:
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}
@@ -1001,7 +1001,7 @@ disk_grant_persistence :: proc "contextless" (caller: ^Started, record: ring.Rec
 		values^ = errors.ring_fail(kind, .Reserved, .Grants, 1)
 		system.log_fact(.Warning, Persistence_Refused_Start_Policy{nickname = module_name_field(nickname)})
 		return .Bad_Operation
-	case .Absent, .No_File, .Other_File, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Holds_Store:
+	case .Absent, .No_File, .Other_File, .Full, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Bad_Uses, .Holds_Store:
 		values^ = errors.ring_fail(kind, .Absent, .Grants, 1)
 		system.log_fact(.Warning, Persistence_Refused_No_Row{principal = caller.principal, nickname = module_name_field(nickname)})
 		return .Bad_Handle

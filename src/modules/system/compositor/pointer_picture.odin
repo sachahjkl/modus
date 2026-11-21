@@ -16,10 +16,10 @@ import "modus:contract/pointer_pictures"
 import "modus:contract/ring"
 import "modus:contract/settings"
 import "modus:contract/value_kinds"
-import "modus:private/compositor/bar"
-import "modus:support/graphics"
-import "modus:private/compositor/palette"
-import "modus:support/system"
+import "internal:compositor/bar"
+import "modus:graphics"
+import "internal:compositor/palette"
+import "modus:system"
 
 // The values of the context that give the theme file, mapped read-only.
 VALUE_POINTER_THEME_ADDRESS :: 6

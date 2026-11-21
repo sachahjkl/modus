@@ -40,7 +40,7 @@ package guest_demo
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The process itself and its guest. The working memory holds what the
 // counted parts do not: the load of the process (its page tables, its

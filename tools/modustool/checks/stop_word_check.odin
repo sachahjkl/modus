@@ -35,7 +35,7 @@ STOP_ENUM_FOLDER :: foundation.SOURCE_FOLDER_CONTRACT + "/operation"
 
 // The home package of the stops and of the raw calls of the two
 // operations.
-STOP_OPERATION_FOLDER :: foundation.SOURCE_FOLDER_SUPPORT + "/system"
+STOP_OPERATION_FOLDER :: foundation.SOURCE_FOLDER_PUBLIC + "/system"
 
 // The folders that name the operations of a stop as a part of their
 // design: the dispatch of the kernel and its parts, the forms of the

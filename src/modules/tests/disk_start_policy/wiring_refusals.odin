@@ -2,7 +2,7 @@ package disk_start_policy
 
 import "modus:contract/errors"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 
 // wiring_refusals asks the root service for the wiring that a start policy
 // from the disk does not get (src/md/features/module_outputs.md, "The

@@ -1,0 +1,22 @@
+# The files of src/library/modus/cryptography that the system wrote itself: the
+# compatibility layer, the files in the place of a hardware dispatch of the
+# origin, and the tests (docs/CRYPTOGRAPHY.md, section 3). Each line: the
+# file, the BLAKE3 hash of the file. `modustool cryptography-origin` (also in
+# `modustool check`) checks each hash, and that each .odin file of
+# src/library/modus/cryptography is in this list or in origin.manifest. After a review
+# of a change, `modustool cryptography-system-hashes` prints the new lines.
+src/library/modus/cryptography/_aes/hw/no_hardware.odin fafed5c8f028dde63ebc806b2705bece2e9e00a3bb74794df654c1d20b35804f
+src/library/modus/cryptography/aes/aes_implementation_portable.odin 2782023641a972737768a40730bd935ebbf270a980c7186c6756b3a9fedf2e53
+src/library/modus/cryptography/chacha20/chacha20_implementation_portable.odin aba1b680df59cef38effe292fda6dbf816bc3752f491e951dcb23f295b8017d1
+src/library/modus/cryptography/chacha20/vectors_test.odin 2043fb38f1c3031974115c0cd0ffad2996249cbe790f5542efbcb8ab08cf5094
+src/library/modus/cryptography/compatibility_bits/bits.odin d5d4df35278f4769cd7c14a75c8f5adefde79c775f21a23108ff466386e300ff
+src/library/modus/cryptography/compatibility_bytes/bytes.odin 9864ff03522356bfe4c67e650a2216a156ca5ac03adae442408e463a7e3b9ad0
+src/library/modus/cryptography/compatibility_crypto/crypto.odin 510253aecd96b698d06b2099b73d4bb9840c3cb3c4388109087f286c0d7b9f00
+src/library/modus/cryptography/compatibility_crypto/erase_in_a_module.odin 6cb45a7cb77881650f0e16cb3a4bfc054353eaf089bfe680e584407f9c0982c1
+src/library/modus/cryptography/compatibility_crypto/erase_on_the_host.odin d3914c0c45bf9af606fb691aec695e5bf6866fa45aef69a0a9afd0fea8d262c6
+src/library/modus/cryptography/compatibility_memory/memory.odin 1919818e322b7b1cccd4562aff9f4b62e4d95d4f804486f9129969e0aff73e47
+src/library/modus/cryptography/compatibility_endian/endian.odin 15f7940cd444b003b4595265a4a214e89444e37bad4d083e4a3021361c9b8935
+src/library/modus/cryptography/compatibility_hash/hash.odin 2de80d400d0a97e324e077fd8d7c23687899396866a461bd4cfb87387a954c80
+src/library/modus/cryptography/sha2/sha256_implementation_portable.odin 892b78f48cd6b3b8d95383a9c554239b3ef9849a8792142c61c3c718ca7c98f0
+src/library/modus/cryptography/vectors/vectors_test.odin 3c865e9ee7d157e1ba418545f9d7b47db42dcb34b5e8b9531063cf2d6811b597
+src/library/modus/cryptography/vectors/argon2id_vectors_test.odin 2fefd35d80911a8a08cc997d2c7caac3d86757fb9dbb050c2135ced2b1e9faf5

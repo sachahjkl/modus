@@ -6,12 +6,12 @@ import op "modus:contract/operation"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
 import "modus:contract/ring"
-import "modus:support/system"
+import "modus:system"
 
 // The network. The network service is the one client of the frame service of
 // the network device; it starts when a process with the grant Network starts
 // (on demand, as the storage service). This service gives each such process
-// one endpoint (src/library/contract/datagram): a datagram ring that it gives to the two
+// one endpoint (src/library/modus/contract/datagram): a datagram ring that it gives to the two
 // processes, and a grant that it names on the control ring of the network
 // service. The process cannot choose its remote or its local port: it has
 // no ambient network, and no port is a global name.
@@ -121,13 +121,13 @@ endpoint_open :: proc "contextless" (slot: ^Started, name: string) -> (ring_memo
 	region_memory, status = system.memory_create(datagram.REGION_PAGES, 0, region_flags)
 	given: [2]system.Handle
 	if status == .Ok {
-		given[0], status = system.give(service.network_memory, ring_memory, {.Read, .Write})
+		given[0], status = give_through_service_ring(service.process, service.network_memory, ring_memory, {.Read, .Write}, &service.network_ring_ready)
 	}
 	if status == .Ok {
-		given[1], status = system.give(service.network_memory, region_memory, {.Read, .Write, .Give})
+		given[1], status = give_through_service_ring(service.process, service.network_memory, region_memory, {.Read, .Write, .Give}, &service.network_ring_ready)
 	}
 	grant := endpoint_of(name)
-	grant.inspect = .Inspect in slot.role.grants
+	grant.inspect = .Inspect in slot.start_grant_set.grants
 	packed := system.name_pack(name)
 	if status == .Ok && !system.send(&service.network.commands, ring.Record{kind = u32(datagram.Control.Endpoint_Add), values = {0 = u64(given[0]), 1 = u64(given[1]), 2 = datagram.grant_pack(grant), 3 = packed[0], 4 = packed[1], 5 = packed[2], 6 = packed[3]}}) {
 		status = .No_Slot

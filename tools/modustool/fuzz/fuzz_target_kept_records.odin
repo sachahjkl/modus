@@ -4,7 +4,7 @@ import "core:mem"
 import "core:slice"
 import op "modus:contract/operation"
 import "modus:contract/settings"
-import "modus:support/disk_process"
+import "modus:disk_process"
 import "modustool:foundation"
 
 // The fuzz targets of the records that a process keeps

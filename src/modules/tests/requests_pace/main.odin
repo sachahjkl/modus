@@ -30,7 +30,7 @@ import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The access record of `server`. This process reads it as the asker, with
 // no record input: the root service compares no description for it, and
@@ -175,7 +175,7 @@ requests_row :: proc "contextless" (reader_end: output.Wiring_End, reader_handle
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	requests_memory = ctx.handles[system.GRANT_ROOT]
-	opened, ring_status := system.ring_open(requests_memory)
+	opened, ring_status := system.ring_open(requests_memory, receive_handles = true)
 	if ring_status != .Ok {
 		wrong("no root ring; the status", u64(ring_status))
 	}

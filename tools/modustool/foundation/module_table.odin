@@ -16,7 +16,7 @@ Module_Build :: struct {
 	imports: []string,
 	kernel:  bool,
 	// A module with an entry function, which the root service
-	// starts. The roles of the root service name each such module of the
+	// starts. The start grant sets of the root service name each such module of the
 	// boot image, the site shows it as a module with an entry, and a host test checks that
 	// its source has the entry. A module of any group can be one: a module
 	// group says what a module is for, not whether it starts.
@@ -137,6 +137,7 @@ module_builds := [?]Module_Build {
 	{name = "debugged", source = DEMONSTRATION_MODULE_SOURCES + "debugged", entry = true, image = true},
 	{name = "debugger", source = SYSTEM_MODULE_SOURCES + "debugger", entry = true, image = true},
 	{name = "debug_target", source = TEST_MODULE_SOURCES + "debug_target", entry = true, image = true},
+	{name = "replay_probe", source = TEST_MODULE_SOURCES + "replay_probe", entry = true, image = true},
 	{name = "kernel_events", source = DEMONSTRATION_MODULE_SOURCES + "kernel_events", entry = true, image = true},
 	{name = "guest_demo", source = DEMONSTRATION_MODULE_SOURCES + "guest_demo", entry = true, image = true},
 	{name = "counters", source = DEMONSTRATION_MODULE_SOURCES + "counters", entry = true, image = true},
@@ -184,6 +185,7 @@ module_builds := [?]Module_Build {
 	{name = "frame", source = SYSTEM_MODULE_SOURCES + "frame", entry = true, image = true},
 	{name = "iommu_device", source = TEST_MODULE_SOURCES + "iommu_device", entry = true, image = true},
 	{name = "tpm", source = SYSTEM_MODULE_SOURCES + "tpm", entry = true, image = true},
+	{name = "wiring", source = SYSTEM_MODULE_SOURCES + "wiring", entry = true, image = true},
 	{name = "entropy", source = SYSTEM_MODULE_SOURCES + "entropy", entry = true, image = true},
 	{name = "sound", source = SYSTEM_MODULE_SOURCES + "sound", entry = true, image = true},
 	{name = "tone", source = DEMONSTRATION_MODULE_SOURCES + "tone", entry = true, image = true},
@@ -208,6 +210,9 @@ module_builds := [?]Module_Build {
 	// The C compiler: chibicc, ported. The console calls it in a call
 	// host, and gives its text to assemble (src/md/features/c_compiler.md).
 	{name = "c_compiler", source = SYSTEM_MODULE_SOURCES + "c_compiler", image = true, c_source = CHIBICC},
+	// The sandboxed declaration evaluator: evaluates .lex files lazily with
+	// zero grants in a call host (src/md/features/declarations.md).
+	{name = "declaration_eval", source = SYSTEM_MODULE_SOURCES + "declaration_eval", image = true},
 	{name = "probe", source = TEST_MODULE_SOURCES + "probe", image = true},
 	{name = "math", source = LIBRARY_MODULE_SOURCES + "math", image = true},
 	{name = "cryptography", source = LIBRARY_MODULE_SOURCES + "cryptography", image = true},
@@ -270,6 +275,31 @@ module_builds := [?]Module_Build {
 	// A start policy in the store `module_files` only: principal 0 chooses
 	// it, and the next start runs it (src/md/features/start_policy.md).
 	{name = DISK_START_POLICY_MODULE, source = TEST_MODULE_SOURCES + DISK_START_POLICY_MODULE, entry = true, image = true, disk = true},
+	// The conformance suite for any holder of Role.Display
+	// (src/md/features/roles_and_contracts.md).
+	{name = "display_conformance", source = TEST_MODULE_SOURCES + "display_conformance"},
+	// The delegated powerbox service implementing Role.Powerbox
+	// (src/md/features/powerbox.md).
+	{name = "powerbox", source = SYSTEM_MODULE_SOURCES + "powerbox", entry = true, image = true},
+	// The delegated plans, recipes, and projects services implementing
+	// Role.Plans, Role.Recipes, and Role.Projects
+	// (src/md/features/declarations.md; src/md/features/recipes.md).
+	{name = "plans", source = SYSTEM_MODULE_SOURCES + "plans", entry = true, image = true},
+	{name = "recipes", source = SYSTEM_MODULE_SOURCES + "recipes", entry = true, image = true},
+	{name = "projects", source = SYSTEM_MODULE_SOURCES + "projects", entry = true, image = true},
+	// The probe module for client-funded work budgets and per-connection work
+	// threads (src/md/features/work_accounting.md).
+	{name = "work_accounting_probe", source = TEST_MODULE_SOURCES + "work_accounting_probe", image = true},
+	// The delegated collector and wide-grant audit service
+	// (src/md/features/module_outputs.md, src/md/features/wide_grants.md).
+	{name = "collector", source = SYSTEM_MODULE_SOURCES + "collector", entry = true, image = true},
+	// The sandboxed guest builder: runs a deterministic, zero-network guest
+	// with a read-only input disk and a blank writable output disk
+	// (src/md/features/recipes.md).
+	{name = "guest_builder", source = SYSTEM_MODULE_SOURCES + "guest_builder", image = true},
+	// The VirtIO-GPU device service: 2D scanout setup and Venus capability
+	// probing over the VirtIO-GPU 1.2 control queue (src/md/features/gpu_access.md).
+	{name = "gpu_device", source = SYSTEM_MODULE_SOURCES + "gpu_device", entry = true, image = true},
 }
 
 // The counted kernel and its setting. Each other kernel gets the setting
@@ -328,7 +358,7 @@ module_import_folder := ""
 
 MODULE_BUILD_FOLDER :: BUILD_FOLDER + "/modules"
 
-SYSTEM_LIBRARY_FOLDER :: SOURCE_FOLDER_SUPPORT + "/system"
+SYSTEM_LIBRARY_FOLDER :: SOURCE_FOLDER_PUBLIC + "/system"
 
 // The boot image of the operation sequences: the modules of the boot image,
 // and the two modules that only it holds (src/md/infrastructure/kernel_fuzzing.md).
@@ -352,7 +382,7 @@ START_POLICY_MODULE :: "start_policy"
 OPERATION_SEQUENCE_RUNNER_MODULE :: "operation_sequence_runner"
 
 // The drawing module, and the setting of a module that draws its window
-// through it (src/library/support/interface, window_drawing.odin). A module with the
+// through it (src/library/modus/interface, window_drawing.odin). A module with the
 // setting imports the module: a host test checks it
 // (import_declarations_test.odin).
 DRAWING_MODULE :: "drawing"

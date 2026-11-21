@@ -1,7 +1,7 @@
 package site
 
 import "core:testing"
-import "modus:support/mark"
+import "modus:mark"
 import "modustool:resources"
 
 // The sizes of the name of the mark on the site: a whole count of pixels

@@ -1,6 +1,6 @@
 # The clipboard
 
-The principal copies a text in one window and pastes it in another. A process reads the clipboard only at a paste of the principal, and writes it only at a copy of the principal. The guide is [`docs/DESIGN.md`](../../../docs/DESIGN.md), "The clipboard"; the protocol is in `src/library/support/display`.
+The principal copies a text in one window and pastes it in another. A process reads the clipboard only at a paste of the principal, and writes it only at a copy of the principal. The guide is [`docs/DESIGN.md`](../../../docs/DESIGN.md), "The clipboard"; the protocol is in `src/library/modus/display`.
 
 ## Constraints
 
@@ -18,9 +18,9 @@ The compositor. It sees the keys of the principal before any process, and it alr
 
 ### The keys
 
-- **Control+C** copies, **Control+V** pastes. The compositor reads them from the input service by the character of the key (the layout gives it) with the bit Control, takes the press and the release, and gives them to no process as keys. A process never sees them, and no process can send them: a process writes no record of the input ring.
+- **Control+C** copies, **Control+X** cuts, **Control+V** pastes. The compositor reads them from the input service by the character of the key (the layout gives it) with the bit Control, takes the press and the release, and gives them to no process as keys. A process never sees them, and no process can send them: a process writes no record of the input ring. Control+C and Control+X both send `Copy_Asked`, with `values[1]` carrying `display.Copy_Action` (`.Copy` or `.Cut`).
 - While the palette is open, it takes the keys first, as for each key.
-- Control+X (a cut) and a paste from a menu come later: they are the same two actions with another source of the principal.
+- A paste from a menu comes later: it is the same action with another source of the principal.
 
 ### A copy
 
@@ -38,7 +38,7 @@ The compositor reads no byte of the content: the process that copied can still h
 
 ### The border of a text
 
-`display.clipboard_text_problem` takes a text of 1 to `CLIPBOARD_TEXT_LIMIT` bytes, and no more than the room of the place, in UTF-8 with no control character. It also refuses each character that a reader does not see, or that changes the order in which a text shows: U+200B to U+200F (the spaces and the joiners of no width, the marks of direction), U+202A to U+202E (the embeddings and the overrides of direction), U+2066 to U+2069 (the isolates), U+2028 and U+2029 (the separators of lines and of paragraphs) and U+FEFF (the mark of the byte order). A pasted line of the console with one of them could show as another line, which the principal then runs.
+`display.clipboard_text_problem` takes a text of 1 to `CLIPBOARD_TEXT_LIMIT` bytes, no more than the room of the place, and a `Clipboard_Text_Form` (`.Single_Line` or `.Multi_Line`). In `.Multi_Line` (used by `copy_send` and multi-line paste targets such as `edit`), LF (`\n`) and tab (`\t`) are allowed while CR (`\r`), NUL, every other C0/C1 control and invalid UTF-8 are refused. In `.Single_Line` (the default of `paste_read`, used by the terminal and single-line text fields), every control character including LF and tab is refused so a paste never runs a line of the console. Both forms also refuse each character that a reader does not see, or that changes the order in which a text shows: U+200B to U+200F (the spaces and the joiners of no width, the marks of direction), U+202A to U+202E (the embeddings and the overrides of direction), U+2066 to U+2069 (the isolates), U+2028 and U+2029 (the separators of lines and of paragraphs) and U+FEFF (the mark of the byte order). A pasted line of the console with one of them could show as another line, which the principal then runs.
 
 A paste goes only at a key of the principal: no record of a process asks for one, and the one record of a paste that a process sends, `Paste_Taken`, is refused when no paste of the principal came before it.
 
@@ -76,8 +76,8 @@ Until the next copy that the compositor takes, or until the process that copied 
 - The serial of each answer names its key: a late answer to a key that a newer key replaced, or to a lend that ended, never changes the state of now. The machine test waits for the line of the console, `console: the line shows "hello" after a paste`, which the console writes after it gives the terminal its line: the terminal then has a picture due, and the picture waits for it.
 - A key of the clipboard is a key record that the compositor counts as each key, so a machine test that waits for its key records still counts them.
 - The words of `Pasted` and of `Copy` are read as words: a handle past 32 bits, a kind that names no member, a count of 0 or past the limit, a serial of 0, are refused before any cast.
-- The pure decisions are host-tested: `src/library/private/compositor/clipboard` (the key of a record, the refusal of a `Copy`, the serials, the answers to each key, what the end of a client ends) and `src/library/support/display` (the check of a text, of the facts of a paste before its copy, and of the words of the events).
+- The pure decisions are host-tested: `src/library/internal/compositor/clipboard` (the key of a record, the refusal of a `Copy`, the serials, the answers to each key, what the end of a client ends) and `src/library/modus/display` (the check of a text, of the facts of a paste before its copy, and of the words of the events).
 
 ## State
 
-Built: Control+C and Control+V in the compositor, the slot and its end with the process that copied, the lent handle of a paste, `copy_send`, `copy_decline` and `paste_read`, the text field of the interface package as a source and a target, and the console as a target through the terminal. Left: a cut, a selection, the palette as a target, a paste from a menu, other kinds, and a kernel copy out of a memory object for the paster (see the known risk).
+Built: Control+C, Control+X and Control+V in the compositor, the slot and its end with the process that copied, the lent handle of a paste, `copy_send`, `copy_decline` and `paste_read` with `.Single_Line` and `.Multi_Line` text borders, the editor `edit` as a multi-line source and target (copy, cut, paste), the text field of the interface package as a single-line source and target, and the console as a single-line target through the terminal. Left: a selection in single-line fields and the terminal, the palette as a target, a paste from a menu, other kinds, and a kernel copy out of a memory object for the paster (see the known risk).

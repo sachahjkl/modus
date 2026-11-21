@@ -17,7 +17,7 @@
 // that it needs; this process shows that strength.
 //
 // **Start**: `start("randomness")` in the console, or the bar of the
-// desktop. Its row of `process_roles` has no grant: the root service writes the
+// desktop. Its row of `start_grant_sets` has no grant: the root service writes the
 // facts of the seed into its context because of its name, and these are
 // facts, not the seed.
 //
@@ -45,11 +45,11 @@ package randomness
 
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:random"
+import "modus:system"
 
 LINE :: interface.TABLE_LINE
 WIDTH :: 896

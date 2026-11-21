@@ -1,5 +1,5 @@
 // A simple HTTP/1.1 server of this system (RFC 9110, RFC 9112): TCP in the
-// process (src/library/support/tcp), one thread, one table of connections, and records
+// process (src/library/modus/tcp), one thread, one table of connections, and records
 // of fixed size for all its state. It allocates nothing.
 //
 // What it can reach comes from its grants only, with no ambient access:
@@ -53,12 +53,12 @@ import "modus:contract/date"
 import "modus:contract/datagram"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/network"
-import "modus:support/storage"
-import "modus:support/random"
-import "modus:support/system"
-import "modus:support/tcp"
+import "modus:display"
+import "modus:network"
+import "modus:storage"
+import "modus:random"
+import "modus:system"
+import "modus:tcp"
 
 // Its table of connections with their buffers (CAPACITY): 3490 pages. And
 // the glyph memory of its own copy of the text rendering, which draws its
@@ -479,6 +479,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	start_time = system.time()
 	service, _ = system.service_open(ctx)
+	system.wiring_ring_open()
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
 		fail("no endpoint: the process has no grant of the network")

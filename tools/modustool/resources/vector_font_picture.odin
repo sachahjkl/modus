@@ -2,14 +2,14 @@ package resources
 
 import "core:fmt"
 import "core:os"
-import "modus:support/graphics"
-import "modus:support/text_rendering"
+import "modus:graphics"
+import "modus:text_rendering"
 import "modustool:foundation"
 
 // The picture of the choice of the font (docs/FONTS.md, "The font file"):
 // the same lines of the system in each candidate and in Spleen, at the
 // scales 1, 2 and 3, then one word of each enlarged 5 times so that the
-// pixels and the color stripes show. src/library/support/graphics draws it
+// pixels and the color stripes show. src/library/modus/graphics draws it
 // with the blend of the system, each candidate through the face of the
 // cells of a font set that holds it (text_rendering.font_file_open): the
 // rasterizer of the text of the system, as if it were the font of the

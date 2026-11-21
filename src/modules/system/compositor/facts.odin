@@ -5,9 +5,9 @@ import "modus:contract/palette_table"
 import "modus:contract/pointer_pictures"
 import "modus:contract/settings"
 import "modus:contract/value_kinds"
-import "modus:private/compositor/palette"
-import "modus:support/interface"
-import "modus:support/system"
+import "internal:compositor/palette"
+import "modus:interface"
+import "modus:system"
 
 // The log facts of the compositor (src/md/features/log_facts.md, "The facts
 // of the compositor and of the windows"): the lines of the windows that a
@@ -278,6 +278,12 @@ Copy_Key_Sent :: struct {
 	window: value_kinds.Module_Name_Field,
 }
 
+// The cut key went to the window in front.
+@(log_fact = "compositor: the cut key goes to {window}")
+Cut_Key_Sent :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
 // A paste with an empty clipboard: nothing goes to the window.
 @(log_fact = "compositor: a paste with an empty clipboard: nothing goes to {window}")
 Paste_Of_Empty_Clipboard :: struct {
@@ -390,7 +396,7 @@ Processor_Copy_Features :: struct {
 
 // The drawing module refused a draw of the screen: the part is not drawn,
 // and the line comes one time.
-@(log_fact = "compositor: the drawing module refused execute_draw_table_in_rectangles_19 (the error kind {error_kind}, the argument {error_argument}): the part of the screen is not drawn. The compositor writes this line one time")
+@(log_fact = "compositor: the drawing module refused execute_draw_table_in_rectangles_20 (the error kind {error_kind}, the argument {error_argument}): the part of the screen is not drawn. The compositor writes this line one time")
 Screen_Draw_Refused :: struct {
 	error_kind:     u64,
 	error_argument: u64,

@@ -14,7 +14,7 @@
 // prints the hash. `start("visitor")` is refused: the boot image has no
 // such module.
 //
-// **Grants**: none by its name. It has no row in `process_roles`. After
+// **Grants**: none by its name. It has no row in `start_grant_sets`. After
 // `allow("visitor", "store")`, its next start has the store of its
 // nickname, `disk-visitor`.
 //
@@ -28,8 +28,8 @@ package visitor
 
 import "base:intrinsics"
 import op "modus:contract/operation"
-import "modus:support/storage"
-import "modus:support/system"
+import "modus:storage"
+import "modus:system"
 
 // The object of the store that holds the count of the starts.
 VISITS_OBJECT :: "visits"

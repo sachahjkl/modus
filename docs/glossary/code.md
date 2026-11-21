@@ -134,7 +134,7 @@ Do not use: replacement certificate, allow list entry.
 
 The replacement list is the resource `replacement_list` of the boot image: the replacement rows that the tool signed when it wrote the boot image.
 
-The tool signs each row with the key that signs the system description of the volume, so the system description lists the list and a test volume signs it with the test signing key. The format is `src/library/contract/replacement_list`: a header of 16 bytes, then rows of 136 bytes, at most 64. The root service reads it at each `replace` that adds a record, and verifies the row of the pair; it is not the replacement table, which holds the replacements that apply now.
+The tool signs each row with the key that signs the system description of the volume, so the system description lists the list and a test volume signs it with the test signing key. The format is `src/library/modus/contract/replacement_list`: a header of 16 bytes, then rows of 136 bytes, at most 64. The root service reads it at each `replace` that adds a record, and verifies the row of the pair; it is not the replacement table, which holds the replacements that apply now.
 
 The design: `docs/MODULE_CONTRACT.md`, "Who may replace a module".
 
@@ -152,7 +152,7 @@ Do not use: override list, LD_PRELOAD, redirection table.
 
 ### Loader
 
-The loader is the code in user space that builds a process or a module space from a module and its imports (`src/library/support/system/load.odin`).
+The loader is the code in user space that builds a process or a module space from a module and its imports (`src/library/modus/system/load.odin`).
 
 The kernel loads no module: it maps memory objects and records what the loader asserts. The loader finds each module by hash in its load source, maps its segments, rebases them, binds each import slot, and writes a module record. On a failure the module space stays as it was, and the caller receives a load error. The loader runs in the process that starts another process, such as the root service, or in a process that loads a module for itself. It has no search path.
 
@@ -322,7 +322,7 @@ Examples of kinds: an empty argument, a handle that was revoked (`Handle_Ended`)
 
 The documentation of an export names the kinds that it gives, and `manual` shows them.
 
-The list: `src/library/contract/errors/errors.odin`.
+The list: `src/library/modus/contract/errors/errors.odin`.
 
 Do not use: error code, errno value, exception type.
 
@@ -486,7 +486,7 @@ Do not use: descriptor, span, fat pointer, buffer record (for this).
 
 ### Information function
 
-An information function is a function that reads the flat tables of modules, the module records of the kernel or the replacement table, and fills a table in memory of the caller (`src/library/private/manual/information`).
+An information function is a function that reads the flat tables of modules, the module records of the kernel or the replacement table, and fills a table in memory of the caller (`src/library/internal/manual/information`).
 
 The information functions replace a database of modules. They allocate nothing and keep no state; each one reads the tables in a line and gives records. The manual service exports them, so the console can combine them: `manual.running()`, `manual.edges()`, `manual.check()`. A new kind of question is a new function, or a combination of functions in the console.
 
@@ -514,7 +514,7 @@ Do not use: exception, errno, error code.
 
 The boot image is the one block of data that the boot program loads with the kernel: the modules of the first processes and the resources, each with its name and its hash.
 
-The boot image starts the system with no file system. Its header has a table of modules and a table of resources (`src/library/contract/boot_info`), each entry with a name, the BLAKE3 hash of the bytes, the offset and the size. The boot program checks each entry against the system description before the kernel starts, and the root service checks them again. The root service is the load source of the first processes; another process receives the boot image only by the grant `Image`.
+The boot image starts the system with no file system. Its header has a table of modules and a table of resources (`src/library/modus/contract/boot_info`), each entry with a name, the BLAKE3 hash of the bytes, the offset and the size. The boot program checks each entry against the system description before the kernel starts, and the root service checks them again. The root service is the load source of the first processes; another process receives the boot image only by the grant `Image`.
 
 The design: `docs/ARCHITECTURE.md`, "U2b. Resources of the boot image".
 
@@ -544,7 +544,7 @@ Do not use: plain C version, fallback (for this), slow path.
 
 An instruction template is an `asm` procedure of Odin: instructions of the processor, with parameters and results in registers that it names, that the compiler puts in the code of each caller with no call and no return.
 
-The kernel writes its small instructions this way: ports, model-specific registers and control registers. Code that owns the stack or the frame stays in the assembler file `src/kernel/processor.asm`.
+The kernel writes its small instructions this way: ports, model-specific registers and control registers. Code that owns the stack or the frame stays in the assembler file `src/modulus/processor.asm`.
 
 The design: `docs/ARCHITECTURE.md`, "The instructions of the kernel".
 
@@ -654,7 +654,7 @@ Do not use: module writer (for this), linker, emitter.
 
 The assembler is the module `assemble`, which reads a text of x86-64 assembly and writes a module file into a memory object that its caller lends.
 
-Its syntax is the syntax of AT&T, with directives of modus: `section`, `export` with the types of the parameters and of the result, `byte` and `zero`. Its package `modus:private/assemble/assembler` gives the parts of the module file writer, and refuses each text that it does not assemble whole, with the line and the column. It is the first program of modus that writes a program. It is not the assembler of the host that the build of a module runs.
+Its syntax is the syntax of AT&T, with directives of modus: `section`, `export` with the types of the parameters and of the result, `byte` and `zero`. Its package `internal:assemble/assembler` gives the parts of the module file writer, and refuses each text that it does not assemble whole, with the line and the column. It is the first program of modus that writes a program. It is not the assembler of the host that the build of a module runs.
 
 The design: `src/md/features/assembler.md`; the guide: `docs/MODULE_CONTRACT.md`, "The assembler".
 
@@ -914,7 +914,7 @@ Do not use: stage comparison, triple test.
 
 A turn is the unit of each angle in the system: 1 is a whole circle, 0.25 a right angle.
 
-An angle in code is a value in turns, and its type or its name says so: `angle_turns`, `phase_turns`. The trigonometric routines of the system, `modus:support/trigonometry`, take turns. A quarter, a half and an eighth of a turn are exact in binary, and the code holds no π. A derivative of a function of an angle in turns gains a factor of 2π: code that takes a formula of calculus from a book must add it. It is not the turn of a thread on a processor.
+An angle in code is a value in turns, and its type or its name says so: `angle_turns`, `phase_turns`. The trigonometric routines of the system, `modus:trigonometry`, take turns. A quarter, a half and an eighth of a turn are exact in binary, and the code holds no π. A derivative of a function of an angle in turns gains a factor of 2π: code that takes a formula of calculus from a book must add it. It is not a stint, the time of a thread on a processor.
 
 The design: `src/md/data/angles_in_turns.md`.
 

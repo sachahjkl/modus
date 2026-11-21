@@ -7,7 +7,7 @@
 // checks the answers against the forms of the kernel operations.
 //
 // **Start**: only `operation_fuzzing` starts it, from the boot image of the
-// operation sequences. Its row of `process_roles` has no grant. It writes
+// operation sequences. Its row of `start_grant_sets` has no grant. It writes
 // nothing on the log, unless a step writes there.
 package operation_sequence_runner
 
@@ -17,7 +17,7 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/operation_sequence"
 import "modus:contract/ring"
-import "modus:support/system"
+import "modus:system"
 
 // The sequence, read again from the copy that the service mapped: the
 // copy is read-only here, and this process checks what it runs.

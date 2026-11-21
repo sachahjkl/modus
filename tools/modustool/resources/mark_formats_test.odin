@@ -3,7 +3,7 @@ package resources
 import "core:fmt"
 import "core:strings"
 import "core:testing"
-import "modus:support/mark"
+import "modus:mark"
 
 // The value of an attribute of an element of a vector file, or "".
 @(private = "file")

@@ -5,7 +5,7 @@ import "core:slice"
 import "modus:contract/blake3"
 import "modus:contract/font_outlines"
 import "modus:contract/font_characters"
-import "modus:support/vector_font"
+import "modus:vector_font"
 
 // The fuzz targets of the fonts (src/md/infrastructure/fuzzing.md, "The
 // targets, in order of value"): each process with text reads the font

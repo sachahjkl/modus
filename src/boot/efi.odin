@@ -227,7 +227,7 @@ Efi_Loaded_Image :: struct {
 
 // One node of a device path: a type, a subtype and the bytes of the node,
 // the 4 of the header included. The last node has the type End. The walk
-// of a path is modus:private/boot_program/rescue_entry.
+// of a path is internal:boot_program/rescue_entry.
 Efi_Device_Path_Node :: struct {
 	type:    u8,
 	subtype: u8,

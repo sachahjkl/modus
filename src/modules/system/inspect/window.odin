@@ -2,11 +2,11 @@ package inspect
 
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:private/inspect/addresses"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "internal:inspect/addresses"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 
 // The window follows docs/DESIGN.md: cards with a title in the accent of
 // their concept and a caption that names their record, rectangles only, the

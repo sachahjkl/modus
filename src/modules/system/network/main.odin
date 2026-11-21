@@ -1,9 +1,9 @@
 // The network service: the one client of the frame service of the network
 // device, and the service that gives each process with the grant one
-// endpoint of datagrams (src/library/contract/datagram).
+// endpoint of datagrams (src/library/modus/contract/datagram).
 //
 // It speaks Ethernet, ARP, IPv4 and ICMP echo (request and answer), with
-// the protocol library src/library/support/network: this process does the input and
+// the protocol library src/library/modus/network: this process does the input and
 // output, the library reads and writes the frames. UDP and TCP are in the
 // process that holds the endpoint: this service reads the header of a
 // datagram or a segment, never its data. It has one static address
@@ -16,8 +16,8 @@
 // a listen grant (one local TCP port, and the remotes that sent a segment
 // to it). A request to another remote is refused with the detail of the
 // grant; a datagram or a segment from another remote does not reach the
-// process. TCP itself is in the process (src/library/support/tcp), and so are the
-// header and the checksum of UDP (src/library/support/network, udp_header_write and
+// process. TCP itself is in the process (src/library/modus/tcp), and so are the
+// header and the checksum of UDP (src/library/modus/network, udp_header_write and
 // udp_data_read): this service checks the IPv4 header, the lengths and the
 // ports of each datagram and each segment, computes no checksum of their
 // bytes, and keeps no state of a connection
@@ -84,8 +84,8 @@ import "modus:contract/errors"
 import "modus:contract/frame"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/network"
-import "modus:support/system"
+import "modus:network"
+import "modus:system"
 
 LOCAL_ADDRESS :: 0x0A00020F // 10.0.2.15
 GATEWAY_ADDRESS :: 0x0A000202 // 10.0.2.2
@@ -1263,7 +1263,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if kind, rights, _ := system.handle_state(frame_service); kind != .Process || .Read not_in rights {
 		fail("no handle of the frame service with the right Read: a wait for the device would have no end")
 	}
-	if control, status = system.ring_open(control_memory); status != .Ok {
+	if control, status = system.ring_open(control_memory, receive_handles = true); status != .Ok {
 		fail("no control ring")
 	}
 	// The frame region: the device reads and writes it, so it is contiguous.

@@ -1,8 +1,8 @@
-// The date of the machine: this service reads the real-time clock of the machine (the CMOS clock, ports 0x70 and 0x71) at its start and each 10 seconds, and writes in the date page the date of the time 0 of the system. Each process reads the date from the page and the time page, with no kernel entry and no call (src/library/contract/date).
+// The date of the machine: this service reads the real-time clock of the machine (the CMOS clock, ports 0x70 and 0x71) at its start and each 10 seconds, and writes in the date page the date of the time 0 of the system. Each process reads the date from the page and the time page, with no kernel entry and no call (src/library/modus/contract/date).
 //
 // A driver of a clock is a process, not a part of the kernel: the root service gives this process the two ports and the page with the right Write, and nothing else.
 //
-// The clock gives whole seconds. The service waits for the clock to change its second, so the date of the time 0 is exact to about one millisecond. The clock of the machine keeps UTC (QEMU: -rtc base=utc). Leap seconds are not counted. The year has two digits: the dates are from 2020 to 2099 (src/library/support/calendar, clock_seconds).
+// The clock gives whole seconds. The service waits for the clock to change its second, so the date of the time 0 is exact to about one millisecond. The clock of the machine keeps UTC (QEMU: -rtc base=utc). Leap seconds are not counted. The year has two digits: the dates are from 2020 to 2099 (src/library/modus/calendar, clock_seconds).
 //
 // **What it is for.** It gives the system a [date](term:date) with no
 // kernel entry for a read: the service writes once, in the
@@ -44,8 +44,8 @@ import "modus:contract/date"
 import "modus:contract/fixed_addresses"
 import "modus:contract/settings"
 import "modus:contract/value_kinds"
-import "modus:support/calendar"
-import "modus:support/system"
+import "modus:calendar"
+import "modus:system"
 
 PORT_INDEX :: 0x70
 PORT_DATA :: 0x71

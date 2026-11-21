@@ -150,7 +150,7 @@ Each reported family has one category. The first that applies, in this order: pl
 The finder proposes the home from the packages of the members and from what the template names:
 
 - If all the members are in one package, the home is that package.
-- If a member is in `src/kernel` or in `src/library/contract`, the home can only be a contract package, because those two import no support package. The category is then "kept apart by the rules", and the home is "a contract package, by a decision". A contract package holds what two parties agree on, so the move is a decision, and the finder does not propose a package by name.
+- If a member is in `src/modulus` or in `src/library/modus/contract`, the home can only be a contract package, because those two import no support package. The category is then "kept apart by the rules", and the home is "a contract package, by a decision". A contract package holds what two parties agree on, so the move is a decision, and the finder does not propose a package by name.
 - Else the home is a support package. The finder proposes the support package that each file of the members already imports, if one exists. Else it proposes a new support package.
 - A home under `src/` cannot hold a template that calls an allocator or names a package that the system does not import (`fmt`, `os`). A family with such a template, a member under `src/` and a member under `tools/` is kept apart by the rules.
 
@@ -212,7 +212,7 @@ Host tests of the tool, on small sources in the test, each with a known answer:
 - An expression with five uses: one family "repeated expression" with 5 uses.
 - A run of statements in two procedures, with one input and one output: the template names them.
 - A run with a `return`: marked "control leaves the run".
-- One member under `src/kernel` and one under `src/library/support`: "kept apart by the rules", and the home "a contract package, by a decision", as section 9 says.
+- One member under `src/modulus` and one under `src/library/modus`: "kept apart by the rules", and the home "a contract package, by a decision", as section 9 says.
 - Two procedures that differ by one field name: a blank that is not a parameter, "similar behaviour".
 - Two procedures that differ by one added statement: one child that only the longer has, the shorter matched whole, and the score `1 - (difference of the sizes) / (sum of the sizes)`.
 - The runs inside two equal procedures: held by the family of the procedures, and not reported.

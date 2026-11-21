@@ -27,7 +27,7 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
-import "modus:support/system"
+import "modus:system"
 
 // The record of its record output, as the asker reads it.
 Probe :: struct {
@@ -113,7 +113,7 @@ probe_write :: proc "contextless" (command: ring.Record) {
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	opened, status := system.ring_open(ctx.handles[op.CONTEXT_WIRING_RING])
+	opened, status := system.ring_open(ctx.handles[op.CONTEXT_WIRING_RING], receive_handles = true)
 	if status != .Ok {
 		wrong("no wiring ring; the status", u64(status))
 	}

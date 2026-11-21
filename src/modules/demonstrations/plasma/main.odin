@@ -8,7 +8,7 @@
 //
 // **Start**: `start("plasma")` in the console, or the bar of the desktop.
 // The log has "plasma: ok" after the first picture. Its row of
-// `process_roles` has no grant: a window is all that it needs.
+// `start_grant_sets` has no grant: a window is all that it needs.
 //
 // **How it computes**: a table of the sine in 256 steps of a turn, from
 // `trigonometry.sine` once at the start, and a palette of 256 colors from
@@ -16,11 +16,11 @@
 // of its place and of the frame number, in integers.
 package plasma
 
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
-import "modus:support/trigonometry"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
+import "modus:trigonometry"
 
 WIDTH :: 320
 HEIGHT :: 200

@@ -5,15 +5,15 @@ import "core:fmt"
 import "core:sync"
 import "core:time"
 import "modus:contract/errors"
-import "modus:support/quic"
-import "modus:support/random"
-import "modus:support/web"
+import "modus:quic"
+import "modus:random"
+import "modus:web"
 import "modustool:foundation"
 import "modustool:fuzz"
 
 // The peer as QUIC clients of the process `quic_echo` (docs/QUIC.md,
 // section 6). The tool asks for one case at a time (step Peer_Quic); the
-// thread of the peer runs it with src/library/support/quic, the library of the system,
+// thread of the peer runs it with src/library/modus/quic, the library of the system,
 // and the module cryptography compiled for the host. The client pins the
 // public key that the machine printed (step Quic_Key).
 //

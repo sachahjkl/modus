@@ -316,7 +316,7 @@ A right is one kind of operation that a handle permits on its object.
 
 The rights are Give, Read, Write, Execute, Control, Inspect, Devices, Stop, Spend, Physical, Schedule, Commit, Events, Debug and Counters. Each one means something for each kind of object: Read on a memory object is a mapping that reads, Control on a process starts and stops it. A new object has each right of its kind; `Handle_Give` copies a handle with a part of its rights, and no operation adds a right. Narrow rights let a process give exactly what another needs: Commit pays pages of one object, and nothing more.
 
-The list: `src/library/contract/operation/operation.odin`.
+The list: `src/library/modus/contract/operation/operation.odin`.
 
 Do not use: permission, privilege, mode.
 
@@ -390,7 +390,7 @@ Do not use: default budget, minimum budget.
 
 The largest budget is the most that a starter gives to one process for each part of a budget request.
 
-A part above it starts the process with the largest budget of that part, and the starter writes one line on the log. The largest budget of the root service is 16384 pages, 8 processes and 32 threads for a process of the boot image (`LARGEST_BUDGET` in `src/modules/system/root/budgets.odin`). A disk process, and a module of another project, has a smaller one, 8192 pages, one process and 4 threads, and one budget of the root service pays all of them together (`src/library/support/disk_process/budget.odin`).
+A part above it starts the process with the largest budget of that part, and the starter writes one line on the log. The largest budget of the root service is 16384 pages, 8 processes and 32 threads for a process of the boot image (`LARGEST_BUDGET` in `src/modules/system/root/budgets.odin`). A disk process, and a module of another project, has a smaller one, 8192 pages, one process and 4 threads, and one budget of the root service pays all of them together (`src/library/modus/disk_process/budget.odin`).
 
 Do not use: maximum budget, cap, ceiling.
 
@@ -456,7 +456,7 @@ Do not use: permission, authorization, consent.
 
 A start grant is one thing of the list of what the root service gives a process by its name: a service, a private store, a right of the machine.
 
-The root service takes the start grants of a process from its row of `process_roles` at its start, and keeps them in its process role. Each later rule reads them there: the sender of a root ring command, the grant of a connection, the debug access. The list and the number of each start grant are a contract (`src/library/contract/start_grant`). A start grant is not a recorded grant: `Inspect`, `Stop` and `Schedule` are rights of the one recorded grant `machine`.
+The root service takes the start grants of a process from its row of `start_grant_sets` at its start, and keeps them in its start grant set. Each later rule reads them there: the sender of a root ring command, the grant of a connection, the debug access. The list and the number of each start grant are a contract (`src/library/modus/contract/start_grant`). A start grant is not a recorded grant: `Inspect`, `Stop` and `Schedule` are rights of the one recorded grant `machine`.
 
 Example: `debug("notes")` is refused: "the grant Store of the process refuses it".
 
@@ -468,7 +468,7 @@ Do not use: capability set, permission, privilege.
 
 A recorded grant is a handle, or a connection, that the root service gave a process and can end while the process runs.
 
-The root service records it by the process and by one of eleven names in lower case (`Root_Grant` and `root_grant_names` in `src/library/support/system/grants.odin`): `log`, `machine`, `image`, `store`, `debug`, `wirings`. `grants("notes")` in the console shows the recorded grants of a process, and `revoke("notes", "store")` ends one: the kernel ends each handle and each mapping that came from it.
+The root service records it by the process and by one of eleven names in lower case (`Root_Grant` and `root_grant_names` in `src/library/modus/system/grants.odin`): `log`, `machine`, `image`, `store`, `debug`, `wirings`. `grants("notes")` in the console shows the recorded grants of a process, and `revoke("notes", "store")` ends one: the kernel ends each handle and each mapping that came from it.
 
 A recorded grant is not a start grant, which says what the root service gives a process by its name, and whose name has capital letters (`Store`).
 
@@ -476,23 +476,23 @@ The design: `docs/ARCHITECTURE.md`, "U2. Root service".
 
 Do not use: permission, access right, token.
 
-### Process role
+### Start grant set
 
-A process role is what the root service gives a process at its start: its start grants and the terms beside them, kept with the process while it runs.
+A start grant set is what the root service gives a process at its start: its start grants and the terms beside them, kept with the process while it runs.
 
-The root service reads it from the row of the process in the table `process_roles`: its start grants, the services that it can connect to, the blocks of its store, the size of its terminal. Each later rule reads it, never the name. A disk process has the row of its nickname in the disk grant table. A process role is not a role: it gives the grants of the roles that its process holds.
+The root service reads it from the row of the process in the table `start_grant_sets`: its start grants, the services that it can connect to, the blocks of its store, the size of its terminal. Each later rule reads it, never the name. A disk process has the row of its nickname in the disk grant table. A start grant set is not a role: it gives the grants of the roles that its process holds.
 
-Example: the role of `remote` holds Connect, Network, Acts_For_Principal and Remote_Clients, and the nine services that it connects to.
+Example: the start grant set of `remote` holds Connect, Network, Acts_For_Principal and Remote_Clients, and the nine services that it connects to.
 
 The design: `src/md/api/root_ring.md`.
 
-Do not use: permission set, role (alone, for this).
+Do not use: process role, permission set, role (alone, for this).
 
 ### Role
 
 A role is a place of the system that one process fills for the others, such as the display, the console, the storage or a device class, named by a member of the enum `Role`.
 
-The set of the roles is closed. The root service gives each role to a role holder, which the plan names, after a check against its role contract. A client gets a connection to the holder in its context, or with `connect(role.display)` when its process role holds that right; it never finds the holder by a name.
+The set of the roles is closed. The root service gives each role to a role holder, which the plan names, after a check against its role contract. A client gets a connection to the holder in its context, or with `connect(role.display)` when its start grant set holds that right; it never finds the holder by a name.
 
 The design: `src/md/features/roles_and_contracts.md`.
 
@@ -502,7 +502,7 @@ Do not use: service name, interface, well-known name, bus name.
 
 A role holder is the process to which the root service gave a role, for one scope: the machine, a session, one client or one device.
 
-The plan names the module of each holder, and the signed image names a default one. The root service checks the module against the role contract before it gives the role, and gives the grants that the role needs. A holder of the display, the input or the console from the disk needs a choice of principal 0, measured into PCR 12. Example: the compositor holds `Display` for the machine.
+A role has one holder in each scope; the assistive role is the one exception, with several holders at once. The plan names the module of each holder, and the signed image names a default one. The root service checks the module against the role contract before it gives the role, and gives the grants that the role needs. A holder of the display, the input, the console or the assistive role from the disk needs a choice of principal 0, measured into PCR 12. Example: the compositor holds `Display` for the machine.
 
 The design: `src/md/features/roles_and_contracts.md`.
 
@@ -532,7 +532,7 @@ Do not use: subsystem, manager, privileged helper, broker.
 
 The root ring is the ring of a process to the root service: the process writes a command record on it, and the root service answers with a completion.
 
-A process receives a root ring at its start only when its process role holds a start grant that sends a command (Root_Ring, Connect, Principals, Debugger, Start_Policy); a disk process has none. The root service reads the kind of each record at one border, which refuses a word that names no command, then checks the sender with the table `ROOT_COMMAND_SENDERS`, then runs the command. The commands and their words are the contract `src/library/contract/root_ring`.
+A process receives a root ring at its start only when its start grant set holds a start grant that sends a command (Root_Ring, Connect, Principals, Debugger, Start_Policy); a disk process has none. The root service reads the kind of each record at one border, which refuses a word that names no command, then checks the sender with the table `ROOT_COMMAND_SENDERS`, then runs the command. The commands and their words are the contract `src/library/modus/contract/root_ring`.
 
 Example: `start("clock")` in the console sends `Root_Command.Start` with the name `clock` on the root ring of the console.
 
@@ -574,7 +574,7 @@ Do not use: program table, origin page.
 
 A disk grant table is the table of the root service that binds each nickname of one principal to the hash of one module file, with the grants of that file.
 
-The root service keeps one disk grant table for each principal. `allow` and `disallow` change the grants of a row, and each start of a disk process reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. It persists under a key of its principal, with a keyed BLAKE2b tag; a table whose tag fails gives no grant. Principal 0 keeps its chosen start policy there. It is not the table of the roles of the boot image (`process_roles`).
+The root service keeps one disk grant table for each principal. `allow` and `disallow` change the grants of a row, and each start of a disk process reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. It persists under a key of its principal, with a keyed BLAKE2b tag; a table whose tag fails gives no grant. Principal 0 keeps its chosen start policy there. It is not the table `start_grant_sets` of the boot image.
 
 The design: `docs/MODULE_CONTRACT.md`, "The grants of a disk process".
 
@@ -634,7 +634,7 @@ Do not use: full access, admin mode, override, superuser.
 
 A wide scope is one member of the closed set of what a wide grant can give: the lines of an agent console, the screen, the input, the processes, the log, the stores.
 
-Each wide scope has a boundary that one mechanism enforces: the role of the agent console, the uses of a client key, the input face of the trusted display, the shares of the picked stores. The principal unticks a scope, bounds it in place, and sets it to ask each time. No wide scope changes a grant or answers a trusted surface, and none joins a grant request.
+Each wide scope has a boundary that one mechanism enforces: the start grant set of the agent console, the uses of a client key, the input face of the trusted display, the shares of the picked stores. The principal unticks a scope, bounds it in place, and sets it to ask each time. No wide scope changes a grant or answers a trusted surface, and none joins a grant request.
 
 The design: `src/md/features/wide_grants.md`, "The wide scopes".
 
@@ -642,9 +642,9 @@ Do not use: permission, entitlement, OAuth scope.
 
 ### Agent console
 
-An agent console is a console that the root service starts for a wide grant, whose lines an agent sends and whose role is the union of the wide scopes that the principal kept.
+An agent console is a console that the root service starts for a wide grant, whose lines an agent sends and whose start grant set is the union of the wide scopes that the principal kept.
 
-It runs in the session of the principal and reaches only what its scopes give: no command that changes a grant, no command of the principals. Each line is an act record before it runs. It stops at the end of its wide grant. It is not the console of the principal, whose role holds each grant of a console.
+It runs in the session of the principal and reaches only what its scopes give: no command that changes a grant, no command of the principals. Each line is an act record before it runs. It stops at the end of its wide grant. It is not the console of the principal, whose start grant set holds each grant of a console.
 
 The design: `src/md/features/wide_grants.md`, "The wide scopes".
 
@@ -918,7 +918,7 @@ Do not use: discovery, enrolment, bonding, trust on first use.
 
 A pairing code is a secret of one use, with an address, that one machine shows in the window of `unlock` and that the principal gives to the other machine.
 
-It holds 50 bits as ten groups of base32, and a QR code holds the same with the whole identity key. The two machines run a PAKE over the TLS exporter of their connection with it, so both prove the same code and bind it to both identity keys. One wrong code ends the pairing on both sides, and a code ends 10 minutes after it was shown. Designed, not built.
+It holds 50 bits as ten groups of base32, and a QR code holds the same with the whole identity key. The two machines run the PAKE CPace over Ristretto255 over the TLS exporter of their connection with it, so both prove the same code and bind it to both identity keys. One wrong code ends the pairing on both sides, and a code ends 10 minutes after it was shown. Designed, not built.
 
 The design: `src/md/features/several_machines.md`, "Pairing, and no discovery".
 
@@ -936,13 +936,33 @@ Do not use: peer (for this), node, device, remote host, cluster member.
 
 ### Machine list
 
-The machine list is the record that the signing key of a principal signs: the identity key of each of its machines with its uses, and a number that only grows.
+The machine list is the record that the principal root key of a principal signs: for each of its machines, the identity key of the machine, the public signing key of the principal there and its uses, and a number that only grows.
 
-Each machine of the list keeps the newest list that it has seen and refuses a lower number, and its root service derives from it a row of the client table for each other machine. So a pairing with one machine of the list reaches all of them, and a lost machine is removed by a new list signed on any other. It has the form of a release pointer. Designed, not built.
+Each machine of the list keeps the newest list that it has seen and refuses a lower number, and its root service derives from it a row of the client table for each other machine. So a join on one machine of the list reaches all of them, and a lost machine is removed by a new list that the root key signs on any other. It has the form of a release pointer. Designed, not built.
 
 The design: `src/md/features/several_machines.md`, "A principal across machines".
 
 Do not use: device list, roster, keyring.
+
+### Principal root key
+
+The principal root key is the Ed25519 key pair whose public key is the identity of a principal across its machines, and whose secret key stays on no machine.
+
+It signs the machine list: the keys that the principal has on each machine, which each machine makes and seals with its own TPM. The principal brings it to a machine for a join or a removal, from a removable disk or a recovery text, and takes it away after the act. So the theft of one machine never gives it, and a stolen machine is removed with no change of the identity. It is not the signing key of the system, and not a key of a machine. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "A principal across machines".
+
+Do not use: master key, primary key, account key.
+
+### Signed grant
+
+A signed grant is a record that the signing key of one principal signs for the principal root key of another principal: one object or one role of a machine of the giver, an end time, and a grant serial.
+
+The machine that serves it checks the signature against the machine list of the giver, the key of the receiver against the machine list of the receiver, the end time and the revocation list of the giver, then makes a connection for the receiver. A grant has a short life of at most one day, or names a revocation list. The receiver cannot give it on. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "Sharing between two principals".
+
+Do not use: token, capability token, invitation, certificate.
 
 ### Remote role
 

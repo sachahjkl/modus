@@ -6,8 +6,8 @@ package resources
 
 import "core:fmt"
 import "core:os"
-import "modus:support/graphics"
-import "modus:support/mark"
+import "modus:graphics"
+import "modus:mark"
 import "modustool:foundation"
 
 // The picture of every frame for a developer, written by `modustool logo`

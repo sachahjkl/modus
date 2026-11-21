@@ -8,9 +8,9 @@ import "base:runtime"
 import "core:slice"
 import "core:strings"
 import format "modus:contract/store"
-import "modus:private/storage/storage_mount"
-import block_tree "modus:private/storage/storage_object"
-import tree "modus:private/storage/storage_tree"
+import "internal:storage/storage_mount"
+import block_tree "internal:storage/storage_object"
+import tree "internal:storage/storage_tree"
 
 // The bytes of an object that the search keeps whole. A larger object is
 // compared by the values of its blocks, and a version of it by its root:

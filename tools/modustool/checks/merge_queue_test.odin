@@ -60,7 +60,7 @@ queue_test_merge :: proc(data: rawptr, branches: []string) -> Queue_Merge_Result
 			// Not a slice literal: its array would be on the stack of this
 			// procedure after its return.
 			files := make([]string, 1, context.temp_allocator)
-			files[0] = "src/kernel/enter.odin"
+			files[0] = "src/modulus/enter.odin"
 			return {outcome = .Conflict, conflict_place = index, conflict_files = files}
 		}
 	}
@@ -197,7 +197,7 @@ queue_gives_each_merge_the_summary_of_its_branch :: proc(t: ^testing.T) {
 
 @(test)
 queue_takes_the_tree_side_for_the_pictures_and_the_record_only :: proc(t: ^testing.T) {
-	files := []string{foundation.DOCUMENT_SCREENSHOT_FOLDER + "/console.png", MEASURE_RECORD_FILE, foundation.DOCUMENT_SCREENSHOT_FOLDER + "_old/console.png", MEASURE_RECORD_FOLDER + "/releases/0.93.0.txt", MEASURE_RECORD_FILE + ".bak", "src/kernel/enter.odin", foundation.DOCUMENT_SCREENSHOT_FOLDER}
+	files := []string{foundation.DOCUMENT_SCREENSHOT_FOLDER + "/console.png", MEASURE_RECORD_FILE, foundation.DOCUMENT_SCREENSHOT_FOLDER + "_old/console.png", MEASURE_RECORD_FOLDER + "/releases/0.93.0.txt", MEASURE_RECORD_FILE + ".bak", "src/modulus/enter.odin", foundation.DOCUMENT_SCREENSHOT_FOLDER}
 	tree_side, others := queue_conflicts_split(files)
 	testing.expect_value(t, len(tree_side), 2)
 	testing.expect_value(t, len(others), 5)

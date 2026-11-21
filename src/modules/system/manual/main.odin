@@ -58,15 +58,15 @@
 package manual
 
 import "modus:contract/errors"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:private/manual/manual_navigation"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "internal:manual/manual_navigation"
 import info "modus:contract/boot_info"
 import "modus:contract/manual_pages"
 import module "modus:contract/module"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The window is built with the interface package (docs/INTERFACE.md).
 // The page, and the action bar with its open list (about 120 records).

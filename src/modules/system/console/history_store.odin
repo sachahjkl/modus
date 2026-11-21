@@ -27,9 +27,9 @@ import "modus:contract/blake3"
 import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:contract/value_kinds"
-import "modus:support/line_editor"
-import "modus:support/storage"
-import "modus:support/system"
+import "modus:line_editor"
+import "modus:storage"
+import "modus:system"
 
 HISTORY_OBJECT_NAME :: "line_history"
 // The time that the console waits for the connection at its start: the
@@ -77,7 +77,7 @@ history_store_open :: proc "contextless" () -> (opened: bool) {
 	}
 	client.file = file
 	ring_status, region_status, size_status: system.Status
-	client.calls, ring_status = system.ring_open(client.ring_memory)
+	client.calls, ring_status = system.ring_open(client.ring_memory, receive_handles = true)
 	address: rawptr
 	address, region_status = system.memory_map(client.region_memory)
 	region_pages: u64
@@ -133,6 +133,8 @@ history_load :: proc "contextless" () {
 			system.log_fact(.Info, History_Restored{lines = u64(line_editor.history_count(&history))})
 		}
 	}
+	// A refused file left an empty history, so an empty frecency.
+	line_editor.frecency_from_history(&completion_frecency, &history)
 	history_saved_lines = history.lines_written
 }
 
@@ -180,6 +182,9 @@ history_clear :: proc "contextless" (arguments: []Value) -> Value {
 	system.lock(&history_lock)
 	count := line_editor.history_count(&history)
 	history = {}
+	// The frecency is made of the lines of the history: it goes with
+	// them. No list is open while a line runs, so no ranking reads it now.
+	completion_frecency = {}
 	system.unlock(&history_lock)
 	history_place = 0
 	history_saved_lines = history.lines_written

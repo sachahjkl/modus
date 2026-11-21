@@ -10,9 +10,8 @@ package root
 // prepared parts used least recently (handles_room_make). A start that a
 // full table refuses still says the count of each table.
 
-import "modus:contract/output"
 import op "modus:contract/operation"
-import "modus:support/system"
+import "modus:system"
 
 // The report of the mappings of this service: 8 KiB, so not on the stack.
 // Read only for a line.
@@ -22,7 +21,7 @@ own_mappings_report: op.Process_Mapping_Report
 own_slot: u64
 
 // The handles that one start takes in this service while it runs, past
-// the parts of its modules: the handles of the role that the start closes
+// the parts of its modules: the handles of the start grant set that the start closes
 // at its end (8: the ring of a device, the ring and the region of a store,
 // the ring and the region of an endpoint, the clock ports, two shared
 // objects), the process, its budget and the copy kept for a sender of Wire,
@@ -41,25 +40,10 @@ START_HANDLES_MOST :: 16
 MODULE_HANDLES_MOST :: 3
 MODULES_OF_A_START_PREPARED_MOST :: 3
 
-// The handles of one row of a wiring list while the start or the Wire
-// makes it: its ring, its end page, its description file, its terms and
-// the page of its condition; and the wiring page of the asker, once.
-WIRING_ROW_HANDLES_MOST :: 5
-WIRING_PAGE_HANDLES :: 1
-
-// The handles of a List_Page: the list page and the wiring ring of an
-// asker that has none.
-LIST_PAGE_HANDLES :: 2
-
-// start_handles_needed gives the free handles that one start needs: a
-// start with no list 25, a start with the full list of an asker
-// (output.WIRINGS_OF_AN_ASKER_MOST rows) 66.
-start_handles_needed :: proc "contextless" (rows: int) -> int {
-	needed := START_HANDLES_MOST + MODULES_OF_A_START_PREPARED_MOST * MODULE_HANDLES_MOST
-	if rows > 0 {
-		needed += min(rows, output.WIRINGS_OF_AN_ASKER_MOST) * WIRING_ROW_HANDLES_MOST + WIRING_PAGE_HANDLES
-	}
-	return needed
+// start_handles_needed gives the free handles that one start needs: wiring
+// objects are created in the delegated wiring service, not in the root core.
+start_handles_needed :: proc "contextless" () -> int {
+	return START_HANDLES_MOST + MODULES_OF_A_START_PREPARED_MOST * MODULE_HANDLES_MOST
 }
 
 // own_slot_find finds the process slot of this service by its name, once.

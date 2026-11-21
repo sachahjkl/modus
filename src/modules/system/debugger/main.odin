@@ -68,10 +68,10 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import op "modus:contract/operation"
 import "modus:contract/ring"
-import "modus:private/debugger/debugging"
+import "internal:debugger/debugging"
 import "modus:contract/root_ring"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The results of an export that fails: a negative number, with an error
 // record.
@@ -920,7 +920,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	debug_names = system.debug_names_of(ctx)
 	requests_memory = ctx.handles[system.GRANT_ROOT]
-	requests, _ = system.ring_open(requests_memory)
+	requests, _ = system.ring_open(requests_memory, receive_handles = true)
 	opened: bool
 	service, opened = system.service_open(ctx)
 	if !opened {

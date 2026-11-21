@@ -44,11 +44,11 @@ import "modustool:foundation"
 //     the buffer of a Table result of the record Name. The result type is
 //     i64, the count of records, and the record has no Handle.
 //   - A parameter of type Lent({.Read, .Write}) is a Handle that the caller
-//     lends, with the rights that the callee needs (src/library/support/system).
+//     lends, with the rights that the callee needs (src/library/modus/system).
 //   - A parameter of type ^Table_To_Read(Name), ^Table_To_Change(Name) or
 //     ^Table_To_Append(Name) is a Table of the record Name with the
 //     direction of its name; ^Bytes_To_Read, ^Bytes_To_Change and
-//     ^Bytes_To_Append are Bytes (src/library/support/system, docs/MODULE_CONTRACT.md
+//     ^Bytes_To_Append are Bytes (src/library/modus/system, docs/MODULE_CONTRACT.md
 //     "Tables and bytes as parameters"). A record of a table has no Handle.
 //   - A field of a record can also be an integer of 1, 2 or 4 bytes (u8,
 //     i8, u16, i16, u32, i32, u64), or an enum of the package with such a
@@ -396,7 +396,7 @@ integer_unit_of_parameter :: proc(state: ^Describe_State, type: ^ast.Expr) -> (i
 }
 
 // contract_type_name gives the name of a type `package.Name` of the
-// contract package package_name (the folder under src/library/contract),
+// contract package package_name (the folder under src/library/modus/contract),
 // through an import of that package under any name. "" for another type: a
 // type of the same name in another package is not the type of the
 // contract.
@@ -407,7 +407,7 @@ integer_unit_of_parameter :: proc(state: ^Describe_State, type: ^ast.Expr) -> (i
 // as the shape errors.Error_Record_Fact_Fields names Kind_Word.
 @(private = "file")
 contract_type_name :: proc(state: ^Describe_State, type: ^ast.Expr, package_name: string, prefix := "") -> string {
-	contract_folder := strings.concatenate({foundation.SOURCE_FOLDER_CONTRACT, "/", package_name}, context.temp_allocator)
+	contract_folder := strings.concatenate({foundation.active_source_library_public_folder(), "/", foundation.LIBRARY_PART_CONTRACT, "/", package_name}, context.temp_allocator)
 	if identifier, is_identifier := type.derived.(^ast.Ident); is_identifier && strings.has_suffix(prefix, ".") {
 		if folder, imported := state.imports[prefix[:len(prefix) - 1]]; imported && folder == contract_folder {
 			return identifier.name

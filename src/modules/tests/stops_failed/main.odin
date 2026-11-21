@@ -14,7 +14,7 @@
 // start policy about each stop.
 package stops_failed
 
-import "modus:support/system"
+import "modus:system"
 
 @(export, link_name = "entry")
 entry :: proc "c" (_: ^system.Context) -> ! {

@@ -4,7 +4,7 @@
 // this first version: a bar with the start menu and the menu of
 // the windows, and windows that the input moves. It follows the design
 // rules (docs/DESIGN.md): rectangles only, the spacing tokens, the colors
-// of src/library/support/graphics.
+// of src/library/modus/graphics.
 //
 // **What it is for.** No process writes to the screen. A process asks the
 // compositor for a [surface](term:surface): memory that the process and the
@@ -63,7 +63,7 @@
 // of the screen. The root service also maps its own file (for its exports),
 // two [pointer themes](term:pointer-theme), the
 // [settings page](term:settings-page), the font outlines and the
-// [date page](term:date-page). Its row of `process_roles` has the grants
+// [date page](term:date-page). Its row of `start_grant_sets` has the grants
 // Serve and System_Part: the root service gives these handles by name.
 //
 // **Its exports**: `pointer` and `windows`, to a caller that
@@ -88,26 +88,27 @@
 // pointer is in docs/POINTERS.md.
 package compositor
 
-import "modus:support/bochs_display"
-import "modus:support/display"
+import "modus:bochs_display"
+import "modus:display"
 import "modus:contract/errors"
 import "modus:contract/settings"
 import "modus:contract/scale_factor"
 import "modus:contract/date"
-import "modus:support/calendar"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/text_rendering"
-import "modus:private/compositor/bar"
-import "modus:support/mark"
-import "modus:support/screen_presence"
-import "modus:private/compositor/palette"
-import "modus:private/compositor/quality"
-import clipboard_rules "modus:private/compositor/clipboard"
+import "modus:calendar"
+import "modus:graphics"
+import "modus:interface"
+import "modus:text_rendering"
+import "internal:compositor/bar"
+import "modus:mark"
+import "modus:screen_presence"
+import "internal:compositor/palette"
+import "internal:compositor/quality"
+import clipboard_rules "internal:compositor/clipboard"
 import "modus:contract/ring"
-import "modus:support/key_path"
-import "modus:support/system"
+import "modus:key_path"
+import "modus:system"
 import "modus:contract/pointer_pictures"
+import "modus:contract/virtio_input"
 import process_page "modus:contract/disk_process_page"
 import "modus:contract/value_kinds"
 import "base:intrinsics"
@@ -418,7 +419,7 @@ damage_menu_of :: proc "contextless" (layout: bar.Layout) {
 // lines of the menus, the titles of the windows, the names of the
 // palette, a hint) in the interface font; the values (the clock, the date,
 // the text that the input types, a count) in the font of the cells. The
-// interface font is the one of src/library/support/display (interface_font_load); with
+// interface font is the one of src/library/modus/display (interface_font_load); with
 // none, or with the setting Spleen 8x16, each text is in the font of the
 // cells with the same layout rules.
 bar_layout: bar.Layout
@@ -527,7 +528,7 @@ windows_log :: proc "contextless" () {
 	}
 }
 
-// The bar shows the local date and time of day (src/library/contract/date):
+// The bar shows the local date and time of day (src/library/modus/contract/date):
 // the date of UTC and the time zone of the date page. A zone is whole
 // minutes, so the second changes at the same moments as in UTC. With no
 // date the bar shows the time since boot. second_of_bar gives the
@@ -636,7 +637,7 @@ screen_pages_open :: proc "contextless" (ctx: ^system.Context) {
 //    and count each `Present` that a process sent before the call.
 // 6. A frame, at most one each 16 ms, when the screen has damage.
 //
-// **The stop.** With no framebuffer (modus:support/screen_presence), the
+// **The stop.** With no framebuffer (modus:screen_presence), the
 // compositor writes `compositor: no framebuffer` and stops with `Failed`;
 // with no input ring or no control ring, it writes `compositor: no input
 // ring or no control ring` and stops with `Failed`. When its budget
@@ -829,7 +830,40 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// The input service is a process: a count of notches far
 				// past a hand is cut, as the window layer cuts it.
 				wheel := int(clamp(i64(record.values[3]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
+				before_x, before_y := pointer_x, pointer_y
 				pointer_moved(int(i64(record.values[0])), int(i64(record.values[1])), u32(record.values[2]), wheel)
+				if pointer_x != before_x || pointer_y != before_y {
+					capture_note_machine_pointer_move()
+				}
+				pointer_moves += 1
+			case .Pointer_Absolute:
+				x_word, y_word := record.values[0], record.values[1]
+				width_word, height_word := record.values[4], record.values[5]
+				if width_word == 0 || height_word == 0 || width_word > u64(max(i32)) || height_word > u64(max(i32)) || x_word >= width_word || y_word >= height_word {
+					continue
+				}
+				target_x, target_y: u32
+				if width_word > 1 {
+					scaled_x, x_problem := virtio_input.scale_axis_coordinate(i32(x_word), {0, i32(width_word - 1)}, u32(desktop_width))
+					if x_problem != .None {
+						continue
+					}
+					target_x = scaled_x
+				}
+				if height_word > 1 {
+					scaled_y, y_problem := virtio_input.scale_axis_coordinate(i32(y_word), {0, i32(height_word - 1)}, u32(desktop_height))
+					if y_problem != .None {
+						continue
+					}
+					target_y = scaled_y
+				}
+				wheel := int(clamp(i64(record.values[3]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
+				buttons_masked := u32(record.values[2] & u64(display.BUTTON_LEFT | display.BUTTON_RIGHT))
+				before_x, before_y := pointer_x, pointer_y
+				pointer_moved(int(target_x) - pointer_x, int(target_y) - pointer_y, buttons_masked, wheel)
+				if pointer_x != before_x || pointer_y != before_y {
+					capture_note_machine_pointer_move()
+				}
 				pointer_moves += 1
 			}
 		}
@@ -989,7 +1023,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 // settings_changed gives the new font to the text of the desktop, draws the
 // whole screen again, and tells each window: its process draws again
-// (src/library/support/display gives it the new font before the event).
+// (src/library/modus/display gives it the new font before the event).
 settings_changed :: proc "contextless" (choice: settings.Choice) {
 	_ = display.text_settings_apply()
 	// A new scale: the desktop has another logical size, and its grid of
@@ -1052,7 +1086,7 @@ client_add :: proc "contextless" (record: ring.Record) {
 		if client.ring_memory != 0 {
 			continue
 		}
-		opened, status := system.ring_open(memory)
+		opened, status := system.ring_open(memory, receive_handles = true)
 		if status != .Ok {
 			break
 		}
@@ -1118,7 +1152,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	// The process wrote the number of the handle: it can name any handle of
 	// the compositor, among them the surface or the ring of another client.
 	// The kernel proves that this process gave the handle through its own
-	// ring (src/library/support/system, handle_state). A number with no proof is not a
+	// ring (src/library/modus/system, handle_state). A number with no proof is not a
 	// gift of this process: the compositor neither uses it nor closes it.
 	// The handle is in the low 32 bits of the first word; the word of the
 	// scale of the surface is above them (display.SURFACE_CREATE_SCALE_SHIFT).
@@ -2014,7 +2048,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 }
 
 // window_frame_of gives the frame that the compositor draws around the
-// surface of a client, for the places of src/library/private/compositor/bar.
+// surface of a client, for the places of src/library/internal/compositor/bar.
 window_frame_of :: proc "contextless" (client: ^Client) -> bar.Window_Frame {
 	return {outer_width = client.width + 2 * BORDER, border = BORDER, close_size = CLOSE_SIZE, title_height = TITLE_HEIGHT}
 }

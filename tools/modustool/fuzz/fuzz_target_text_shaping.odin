@@ -4,7 +4,7 @@ import "core:mem"
 import "core:slice"
 import "modus:contract/font_outlines"
 import "modus:contract/text_encoding"
-import "modus:support/text_rendering"
+import "modus:text_rendering"
 
 // The fuzz target of the text shaping (src/md/infrastructure/fuzzing.md,
 // "The targets, in order of value"): the package text_rendering places the

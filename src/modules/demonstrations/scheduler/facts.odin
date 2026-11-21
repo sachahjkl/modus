@@ -3,7 +3,7 @@ package scheduler
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The log facts of scheduler (src/md/features/log_facts.md): each fact
 // template is the line that the process wrote before it was a fact, so a
@@ -93,31 +93,31 @@ share_load_error_log :: proc "contextless" (error: ^module.Load_Error) {
 // One strategy in a measure run: the wakes of two threads in one second
 // and the late wakes. The measure record reads the wakes after "a spinner
 // on each processor: ".
-@(log_fact = "scheduler: {strategy}: two threads that wake each other, a spinner on each processor: {wakes} wakes in one second ({local_turns} turns ended on the processor of the waker, {interrupt_turns} by an interrupt, {pair_moves} moves); a thread that sleeps 2 ms among 8 spinners: late by {late_middle} in the middle, {late_worst} at worst")
+@(log_fact = "scheduler: {strategy}: two threads that wake each other, a spinner on each processor: {wakes} wakes in one second ({local_stints} stints ended on the processor of the waker, {interrupt_stints} by an interrupt, {pair_moves} moves); a thread that sleeps 2 ms among 8 spinners: late by {late_middle} in the middle, {late_worst} at worst")
 Strategy_Wakes_Measured :: struct {
-	wakes:           u64,
-	local_turns:     u64,
-	interrupt_turns: u64,
-	pair_moves:      u64,
-	late_middle:     value_kinds.Time_In_Microseconds,
-	late_worst:      value_kinds.Time_In_Microseconds,
-	strategy:        [16]u8,
+	wakes:            u64,
+	local_stints:     u64,
+	interrupt_stints: u64,
+	pair_moves:       u64,
+	late_middle:      value_kinds.Time_In_Microseconds,
+	late_worst:       value_kinds.Time_In_Microseconds,
+	strategy:         [16]u8,
 }
 
-// One strategy in the check of a test: the turns of the check, with no
+// One strategy in the check of a test: the rounds of the check, with no
 // rate.
-@(log_fact = "scheduler: {strategy}: two threads that wake each other, a spinner on each processor: {turns} turns of the first thread and more ({local_turns} turns ended on the processor of the waker, {interrupt_turns} by an interrupt, {pair_moves} moves)")
+@(log_fact = "scheduler: {strategy}: two threads that wake each other, a spinner on each processor: {rounds} rounds of the first thread and more ({local_stints} stints ended on the processor of the waker, {interrupt_stints} by an interrupt, {pair_moves} moves)")
 Strategy_Wakes_Checked :: struct {
-	turns:           u64,
-	local_turns:     u64,
-	interrupt_turns: u64,
-	pair_moves:      u64,
-	strategy:        [16]u8,
+	rounds:           u64,
+	local_stints:     u64,
+	interrupt_stints: u64,
+	pair_moves:       u64,
+	strategy:         [16]u8,
 }
 
 // One strategy in a measure run: the shares, the work, and the costs in
 // the kernel.
-@(log_fact = "scheduler: {strategy}: 8 spinners of one weight: shares {least_share} % to {most_share} %, work {work} million in one second; 12 spinners, weights 1 2 4: a spinner of each weight {weight_one_share} %, {weight_two_share} %, {weight_four_share} %; {wake_turns} turns ended by a wake, {moves} moves, one pick {pick}, one preemption by an interrupt {interrupt_preemption} in the kernel")
+@(log_fact = "scheduler: {strategy}: 8 spinners of one weight: shares {least_share} % to {most_share} %, work {work} million in one second; 12 spinners, weights 1 2 4: a spinner of each weight {weight_one_share} %, {weight_two_share} %, {weight_four_share} %; {wake_stints} stints ended by a wake, {moves} moves, one pick {pick}, one preemption by an interrupt {interrupt_preemption} in the kernel")
 Strategy_Shares_Measured :: struct {
 	least_share:          value_kinds.Hundredths,
 	most_share:           value_kinds.Hundredths,
@@ -125,7 +125,7 @@ Strategy_Shares_Measured :: struct {
 	weight_one_share:     value_kinds.Hundredths,
 	weight_two_share:     value_kinds.Hundredths,
 	weight_four_share:    value_kinds.Hundredths,
-	wake_turns:           u64,
+	wake_stints:          u64,
 	moves:                u64,
 	pick:                 value_kinds.Time_In_Nanoseconds,
 	interrupt_preemption: value_kinds.Time_In_Nanoseconds,
@@ -134,14 +134,14 @@ Strategy_Shares_Measured :: struct {
 
 // One strategy in the check of a test: the shares and the costs in the
 // kernel, with no work in one second.
-@(log_fact = "scheduler: {strategy}: 8 spinners of one weight: shares {least_share} % to {most_share} %; 12 spinners, weights 1 2 4: a spinner of each weight {weight_one_share} %, {weight_two_share} %, {weight_four_share} %; {wake_turns} turns ended by a wake, {moves} moves, one pick {pick}, one preemption by an interrupt {interrupt_preemption} in the kernel")
+@(log_fact = "scheduler: {strategy}: 8 spinners of one weight: shares {least_share} % to {most_share} %; 12 spinners, weights 1 2 4: a spinner of each weight {weight_one_share} %, {weight_two_share} %, {weight_four_share} %; {wake_stints} stints ended by a wake, {moves} moves, one pick {pick}, one preemption by an interrupt {interrupt_preemption} in the kernel")
 Strategy_Shares_Checked :: struct {
 	least_share:          value_kinds.Hundredths,
 	most_share:           value_kinds.Hundredths,
 	weight_one_share:     value_kinds.Hundredths,
 	weight_two_share:     value_kinds.Hundredths,
 	weight_four_share:    value_kinds.Hundredths,
-	wake_turns:           u64,
+	wake_stints:          u64,
 	moves:                u64,
 	pick:                 value_kinds.Time_In_Nanoseconds,
 	interrupt_preemption: value_kinds.Time_In_Nanoseconds,
@@ -588,10 +588,10 @@ Eevdf_Wakes_Compared :: struct {
 }
 
 // Each check of the strategies passed.
-@(log_fact = "scheduler: ok, no spinner starved under 3 strategies, a wake ended {eevdf_turns} turns under EEVDF and 0 under round robin, the weights ordered the shares, each thread ran after {changes} changes, 0 wakes lost, a change needs the right Schedule")
+@(log_fact = "scheduler: ok, no spinner starved under 3 strategies, a wake ended {eevdf_stints} stints under EEVDF and 0 under round robin, the weights ordered the shares, each thread ran after {changes} changes, 0 wakes lost, a change needs the right Schedule")
 Strategies_Passed :: struct {
-	eevdf_turns: u64,
-	changes:     u64,
+	eevdf_stints: u64,
+	changes:      u64,
 }
 
 // A check failed: the first one.

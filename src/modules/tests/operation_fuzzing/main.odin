@@ -17,8 +17,8 @@ import "modus:contract/enum_word"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/operation_sequence"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:random"
+import "modus:system"
 
 // The budget of each sequence, from the budget of this process: the
 // runner, its areas, its results and what its steps create.

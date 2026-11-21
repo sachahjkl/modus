@@ -77,10 +77,10 @@ import "modus:contract/enum_word"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 
 ROWS :: 30
 // The processes that the window counts one by one: two for each process
@@ -695,6 +695,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	service, _ = system.service_open(ctx)
+	system.wiring_ring_open()
 	logged := false
 	picture_owed := true // The window does not show each record that was taken.
 	for {

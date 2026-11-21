@@ -1,6 +1,6 @@
 # The package names of the copy of the cryptography of Odin
 
-The repository holds a copy of the cryptography of `core:crypto` in `src/library/support/cryptography` ([`docs/CRYPTOGRAPHY.md`](../../../docs/CRYPTOGRAPHY.md), "3. The layout"). Each package of the copy has the name of its package in the origin after the prefix `modus_`: `modus_sha2`, `modus__subtle`, `modus_aes_ct64`. The folders keep the names of the origin.
+The repository holds a copy of the cryptography of `core:crypto` in `src/library/modus/cryptography` ([`docs/CRYPTOGRAPHY.md`](../../../docs/CRYPTOGRAPHY.md), "3. The layout"). Each package of the copy has the name of its package in the origin after the prefix `modus_`: `modus_sha2`, `modus__subtle`, `modus_aes_ct64`. The folders keep the names of the origin.
 
 ## Purpose
 
@@ -28,7 +28,7 @@ Only the declared name collides: two packages of one declared name in one progra
 ## The chosen form
 
 - **One prefix, then the name of the origin whole.** The check derives the name of the copy from the name of the origin with one concatenation. A reader sees the origin name in each name. `_chacha20` and `chacha20` stay two names: `modus__chacha20` and `modus_chacha20`. The double `_` is the leading `_` of an internal package of the origin.
-- **The folders keep the names of the origin.** The path of a taken file is the path of its origin under another start. The rule `"core:crypto/` to `"modus:support/cryptography/` stays one rule, and the manifest and the reuse list keep their paths.
+- **The folders keep the names of the origin.** The path of a taken file is the path of its origin under another start. The rule `"core:crypto/` to `"modus:cryptography/` stays one rule, and the manifest and the reuse list keep their paths.
 - **No import changes for the name.** The check never adds an alias. Each importer in `src/` and `tools/` keeps its import as it was, and its code keeps `sha2.` and `ed25519.`.
 - **One table in the check.** `cryptography_packages` in `tools/modustool/checks/cryptography_origin.odin` names each folder of the copy with the package name of its origin. For a taken file, the check finds the row of its folder. It then needs the line `package <name of the origin>` exactly one time, as a whole line, and puts the line of the copy in its place. A comment line that starts with the same words is another line (`argon2id` has one). The check refuses a folder with no row, and a package line that is missing or doubled.
 - **A file of the system in a folder of the copy declares the package of the copy.** Each file of one folder must declare one name, and a file in the place of a hardware dispatch, or a test, could keep the name of the origin and bring the clash back. The check reads its package line beside its hash.

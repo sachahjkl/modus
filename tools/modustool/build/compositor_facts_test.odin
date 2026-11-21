@@ -16,7 +16,7 @@ import "modustool:foundation"
 
 // The folder of the support package interface.
 @(private = "file")
-INTERFACE_SOURCES :: foundation.SOURCE_FOLDER_SUPPORT + "/interface"
+INTERFACE_SOURCES :: foundation.SOURCE_FOLDER_PUBLIC + "/interface"
 // The bytes of a Text field of an element line: interface.ELEMENT_FACT_TEXT_BYTES.
 @(private = "file")
 ELEMENT_TEXT_BYTES :: 40

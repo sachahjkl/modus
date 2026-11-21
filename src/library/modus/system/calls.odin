@@ -1,0 +1,383 @@
+package system
+
+import "base:intrinsics"
+import info "modus:contract/boot_info"
+import "modus:contract/call_status"
+import "modus:contract/errors"
+import "modus:contract/isolated"
+import module "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:contract/ring"
+import "modus:contract/root_ring"
+
+// The caller side of one description, three ways to call
+// (docs/MODULE_CONTRACT.md, "Tables and bytes as parameters"):
+//
+//   call_direct      a module in this process (a module space): the
+//                    registers of the call form, no copy.
+//   call_isolated    a call host or a service: the same arguments go into
+//                    the call region or into a lent memory object, and
+//                    the answer comes back into the memory of the caller.
+//
+// The arguments are the same isolated.Argument records in each way: the
+// export does not know which way ran.
+
+// export_call takes one integer for each argument that a description can
+// have: the receiver of an isolated call passes its isolated.Call to it.
+#assert(CALL_INTEGERS == module.PARAMETER_CAPACITY)
+
+// A way to the exports of a module in another process: a call host that
+// this process started, or a connection to a service.
+Call_Connection :: struct {
+	process:       Handle, // The call host or the service: its state says if it stopped.
+	ring_memory:   Handle, // The memory of the call ring.
+	region_memory: Handle, // The memory of the call region.
+	files_memory:  Handle, // A call host: the page of the list of its files.
+	calls:         ring.Ring, // The call ring, mapped in this process.
+	region:        []u8, // The call region, mapped in this process.
+	tag:           u32, // The tag of the last call: each call takes the next one, and its completion must have it.
+}
+
+// call_direct calls an export of a module that is in this process, with
+// the call form: an Integer and a Handle in a register, a Text as the
+// address of its slice, a Record as its address, a Table or Bytes as the
+// address of a table place over the memory of the argument. The export
+// works in that memory: a Change table and an Append table are changed in
+// place, and the count of an Append table is its new count. An export with
+// an error record writes it at `error`.
+// It does the descriptions with an Integer result or none; another result
+// gives Not_Done: else it gives the address of the error record where the
+// export reads its buffer. It checks the
+// description as the receiver of an isolated call does (record_size), and
+// the record of each table.
+call_direct :: proc "contextless" (file: []u8, address: uintptr, function: module.Function, arguments: []isolated.Argument, error: ^errors.Error_Record = nil) -> (result: i64, status: call_status.Call_Status) {
+	function := function
+	not_done :: proc "contextless" (error: ^errors.Error_Record, argument: int, value: u64) -> (i64, call_status.Call_Status) {
+		if error != nil {
+			error^ = errors.error_make(.Bad_Value, .None, i64(argument), i64(value))
+		}
+		return 0, .Not_Done
+	}
+	if _, described := isolated.record_size(function); !described || len(arguments) != int(function.parameter_count) {
+		return not_done(error, 0, u64(len(arguments)))
+	}
+	if function.result != u8(module.Type.Integer) && function.result != u8(module.Type.None) && function.result != u8(module.Type.Enum) {
+		return not_done(error, 0, u64(function.result))
+	}
+	integers: [CALL_INTEGERS]u64
+	places: [module.PARAMETER_CAPACITY]module.Table_Place
+	slices: [module.PARAMETER_CAPACITY]isolated.Slice
+	for word, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
+		argument := &arguments[index]
+		// record_size refused each byte that names no type, and the type
+		// None; the border reads the byte again.
+		type, type_ok := module.type_of_word(word)
+		if !type_ok {
+			return not_done(error, index + 1, u64(word))
+		}
+		switch type {
+		case .None, .Integer, .Handle, .Enum:
+			integers[index] = argument.integer
+		case .Text:
+			slices[index] = {u64(uintptr(raw_data(argument.text))), u64(len(argument.text))}
+			integers[index] = u64(uintptr(&slices[index]))
+		case .Record:
+			integers[index] = u64(uintptr(raw_data(argument.record)))
+		case .Table, .Bytes:
+			size, _, valid := isolated.table_record(file, word, function.parameter_details[index])
+			if !valid {
+				return not_done(error, index + 1, u64(function.parameter_details[index]))
+			}
+			capacity := u64(len(argument.table.records)) / size
+			// An Append count can be over the capacity: earlier calls did
+			// not fit (docs/MODULE_CONTRACT.md, "Did not fit, across calls").
+			if function.parameter_directions[index] != .Append && argument.table.count > capacity {
+				return not_done(error, index + 1, argument.table.count)
+			}
+			places[index] = {address = u64(uintptr(raw_data(argument.table.records))), count = argument.table.count, capacity = capacity}
+			integers[index] = u64(uintptr(&places[index]))
+		}
+	}
+	// record_size checked that an argument of the call form is free for it.
+	local_error: errors.Error_Record
+	if function.error_record != 0 {
+		integers[function.parameter_count] = u64(uintptr(error != nil ? error : &local_error))
+	}
+	floats: [CALL_FLOATS]u64
+	out: [CALL_RESULTS]u64
+	export_call(address, &integers, &floats, &out)
+	for word, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
+		if isolated.is_table_or_bytes(word) && function.parameter_directions[index] == .Append {
+			arguments[index].table.count = places[index].count
+		}
+	}
+	result = i64(out[0])
+	return result, function.error_record != 0 && result < 0 ? .Failed : .Ok
+}
+
+// call_isolated calls an export of a module in another process, through a
+// connection. It lends the handles and the memory objects of the
+// arguments, writes the argument record, waits for the answer, and copies
+// the answer of each Change and Append table back into the memory of the
+// caller. An export that fails gives a negative result and its error
+// record at `error`; of the tables, only its table of error details comes
+// back then.
+//
+// The seam of the three forms: a table argument with a memory object
+// (Table_Argument.memory_handle) goes into the call region when it fits there, and
+// through its memory object only when it does not: the measures of the
+// process tables give the call region the lower cost at each size that
+// fits (docs/MODULE_CONTRACT.md). keep_memory_objects lends each memory
+// object as given: for a measure, or for a table that the caller wants in
+// one place.
+//
+// `rows`: the memory of the caller for the records of a Table result. The
+// result is then the count of the records that were copied there: the
+// records that the export gave, at most those that `rows` holds.
+call_isolated :: proc "contextless" (connection: ^Call_Connection, file: []u8, export: u32, arguments: []isolated.Argument, error: ^errors.Error_Record = nil, keep_memory_objects := false, rows: []u8 = nil) -> (result: i64, status: call_status.Call_Status) {
+	function, described := module.function(file, export)
+	if !described {
+		return 0, .Refused
+	}
+	// lend writes the handles of the receiver in the arguments: the caller
+	// keeps its own for the next call. (A Handle field of a Record is
+	// written in the bytes of the record: give a copy of the record.)
+	kept_integers: [module.PARAMETER_CAPACITY]u64
+	kept_memories: [module.PARAMETER_CAPACITY]u64
+	for argument, index in arguments[:min(len(arguments), module.PARAMETER_CAPACITY)] {
+		kept_integers[index], kept_memories[index] = argument.integer, argument.table.memory_handle
+	}
+	defer for &argument, index in arguments[:min(len(arguments), module.PARAMETER_CAPACITY)] {
+		argument.integer, argument.table.memory_handle = kept_integers[index], kept_memories[index]
+	}
+	if !keep_memory_objects {
+		for &argument in arguments[:min(len(arguments), module.PARAMETER_CAPACITY)] {
+			argument.table.memory_handle = 0
+		}
+		// Each table that does not fit takes its memory object back.
+		for _ in 0 ..< module.PARAMETER_CAPACITY {
+			missing := isolated.room_missing(file, function, arguments, u64(len(connection.region)))
+			if missing.parameter == 0 || kept_memories[missing.parameter - 1] == 0 {
+				break
+			}
+			arguments[missing.parameter - 1].table.memory_handle = kept_memories[missing.parameter - 1]
+		}
+	}
+	lending: Lending
+	defer lend_end(&lending)
+	if lend(file, function, arguments, connection.ring_memory, &lending) != .Ok {
+		return 0, .Lend_Failed
+	}
+	offset, size, result_place, error_place, encoded := isolated.encode(file, function, arguments, connection.region)
+	if !encoded {
+		return 0, .No_Room
+	}
+	connection.tag += 1
+	if !send(&connection.calls.commands, ring.Record{kind = export, tag = connection.tag, values = {0 = offset, 1 = size}}) {
+		return 0, .Ring_Full
+	}
+	for {
+		wait := wait_begin()
+		for _ in 0 ..< ring.CAPACITY {
+			completion, has := receive(&connection.calls.completions)
+			if !has {
+				break
+			}
+			if completion.tag != connection.tag {
+				continue
+			}
+			if completion.kind != u32(isolated.Status.Ok) {
+				// The values of a refusal hold its error record.
+				if error != nil {
+					error^ = transmute(errors.Error_Record)completion.values
+				}
+				return 0, .Refused
+			}
+			result = i64(completion.values[0])
+			if error_place.count != 0 && result < 0 {
+				if error != nil {
+					intrinsics.mem_copy_non_overlapping(error, raw_data(connection.region[error_place.start:]), size_of(errors.Error_Record))
+				}
+				// The error details come back with the error record: one
+				// answer. A wrong table of details keeps the count of the
+				// caller and the record of the export: the record says why
+				// the export failed, the status says that the details did
+				// not come.
+				if problem, _ := isolated.error_details_return(file, function, arguments, connection.region, offset); problem != .None {
+					return result, .Failed_With_Wrong_Details
+				}
+				return result, .Failed
+			}
+			if problem, parameter := isolated.tables_return(file, function, arguments, connection.region, offset); problem != .None {
+				if error != nil {
+					error^ = errors.error_make(.Bad_Value, .Records, i64(parameter), i64(problem))
+				}
+				return result, .Wrong_Answer
+			}
+			// A Table result: the records are in the call region, and the
+			// count comes from the other process. The caller gets the
+			// records that fit `rows`, and the count of them as the result:
+			// never more than the region holds.
+			if rows != nil && function.result == u8(module.Type.Table) && result > 0 {
+				described, has_record := module.record_type(file, function.result_detail)
+				if !has_record || described.size == 0 {
+					return 0, .Wrong_Answer
+				}
+				table, _ := isolated.result_table(connection.region, result_place, u64(result), u64(described.size))
+				copied := copy(rows, table) / int(described.size)
+				return i64(copied), .Ok
+			}
+			return result, .Ok
+		}
+		if state, _, _ := process_state(connection.process); state == .Stopped || state == .None {
+			return 0, .Stopped
+		}
+		wait_records(&wait, &connection.calls.completions)
+		if wait_spin(&wait) {
+			continue
+		}
+		wait_end(&wait)
+	}
+}
+
+// The log records of each second that a call host gets by default.
+CALL_HOST_LOG_RECORDS :: 100
+
+// call_host_start starts a call host (the module "host" of the boot
+// image) for one module, and maps the file of the module and of its
+// imports in it, read-only: the call host has the call ring and the call
+// region, and no other handle. image_memory is the handle of the boot
+// image. values_with_seed has the random seed of the call host, which the
+// caller draws from its own generator (random.values_with_seed of no
+// values): a process does not start with no seed. On a failure of the load,
+// load_error has the record that the call host wrote. log_records are the
+// log records of each second that the call host takes from the budget of
+// the caller: 100 by default, so a caller with 1000 records starts nine
+// hosts and keeps 100; a caller that starts more gives each fewer.
+call_host_start :: proc "contextless" (image: []u8, image_memory: Handle, file: []u8, name: string, values_with_seed: [op.CONTEXT_VALUES]u64, load_error: ^module.Load_Error, log_records: u64 = CALL_HOST_LOG_RECORDS) -> (connection: Call_Connection, status: Status) {
+	files: [MODULE_SPACE_CAPACITY + IMPORT_CAPACITY]^info.Image_Entry
+	source := Load_Source {
+		image = image,
+	}
+	count := source_closure(source, file, &files)
+	list_size := size_of(info.Image_Header) + count * size_of(info.Image_Entry)
+	if count == 0 || list_size > PAGE_SIZE {
+		return {}, .Bad_Operation
+	}
+	defer if status != .Ok {
+		call_connection_end(&connection)
+	}
+	connection.files_memory = memory_create(1) or_return
+	page_address := memory_map(connection.files_memory) or_return
+	page := ([^]u8)(page_address)[:PAGE_SIZE]
+	(^info.Image_Header)(page_address)^ = {magic = info.IMAGE_MAGIC, count = u32(count)}
+	entries := ([^]info.Image_Entry)(raw_data(page[size_of(info.Image_Header):]))[:count]
+	mappings: [MODULE_SPACE_CAPACITY + IMPORT_CAPACITY + 1]Mapping
+	mappings[0] = {memory = connection.files_memory, address = isolated.FILE_ADDRESS}
+	offset := u64(PAGE_SIZE)
+	for item, index in files[:count] {
+		if item.offset % PAGE_SIZE != 0 {
+			memory_unmap(page_address)
+			return connection, .Bad_Operation
+		}
+		entries[index] = item^
+		entries[index].offset = offset
+		pages := (item.size + PAGE_SIZE - 1) / PAGE_SIZE
+		mappings[index + 1] = {memory = image_memory, address = isolated.FILE_ADDRESS + offset, first = item.offset / PAGE_SIZE, page_count = pages}
+		offset += pages * PAGE_SIZE
+	}
+	memory_unmap(page_address)
+	connection.ring_memory, connection.calls = ring_create() or_return
+	connection.region_memory = memory_create(isolated.REGION_PAGES) or_return
+	region_address := memory_map(connection.region_memory) or_return
+	connection.region = ([^]u8)(region_address)[:isolated.REGION_PAGES * PAGE_SIZE]
+	grants: [op.CONTEXT_HANDLES]Grant
+	values := values_with_seed
+	grants[isolated.GRANT_RING] = {connection.ring_memory, {.Read, .Write}}
+	grants[isolated.GRANT_REGION] = {connection.region_memory, {.Read, .Write}}
+	values[isolated.VALUE_FILE_ADDRESS] = isolated.FILE_ADDRESS
+	values[isolated.VALUE_FILE_SIZE] = offset
+	connection.process = process_start(image_find(image, "host"), name, grants, values, {pages = 512, processes = 1, threads = 1, processor = 500_000, log_records = log_records}, mappings[:count + 1]) or_return
+	// The first completion says if the call host loaded the module.
+	limit := time() + 5000
+	for {
+		wait := wait_begin()
+		state, _, _ := process_state(connection.process)
+		for _ in 0 ..< ring.CAPACITY {
+			completion, has := receive(&connection.calls.completions)
+			if !has {
+				break
+			}
+			if completion.tag != 0 {
+				continue
+			}
+			if completion.kind == u32(isolated.Status.Ok) {
+				return connection, .Ok
+			}
+			if load_error != nil {
+				intrinsics.mem_copy_non_overlapping(load_error, raw_data(connection.region), size_of(module.Load_Error))
+			}
+			return connection, .Bad_State
+		}
+		if state == .Stopped {
+			return connection, .Bad_State
+		}
+		wait_records(&wait, &connection.calls.completions)
+		if wait_end(&wait, limit) >= limit {
+			return connection, .Bad_State
+		}
+	}
+}
+
+// service_connection asks the root service for a connection to the
+// service with a name, through a ring to the root service (GRANT_ROOT): a
+// ring of the grant Root_Ring or of the grant Connect.
+service_connection :: proc "contextless" (requests: ^ring.Ring, tag: u32, name: string) -> (connection: Call_Connection, status: Status) {
+	packed := name_pack(name)
+	if !send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Connect), tag = tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}}) {
+		return {}, .No_Slot
+	}
+	limit := time() + 5000
+	for {
+		for record in receive(&requests.completions) {
+			if record.tag != tag {
+				continue
+			}
+			if record.kind != u32(Status.Ok) {
+				refused, _ := status_of_word(record.kind)
+				return {}, refused
+			}
+			connection = {process = Handle(record.values[0]), ring_memory = Handle(record.values[1]), region_memory = Handle(record.values[2])}
+			defer if status != .Ok {
+				call_connection_end(&connection)
+			}
+			connection.calls = ring_open(connection.ring_memory, receive_handles = true) or_return
+			region_pages := memory_size(connection.region_memory) or_return
+			address := memory_map(connection.region_memory) or_return
+			connection.region = ([^]u8)(address)[:region_pages * PAGE_SIZE]
+			return connection, .Ok
+		}
+		wait: Wait
+		wait_records(&wait, &requests.completions)
+		if wait_end(&wait, limit) >= limit {
+			return {}, .Bad_State
+		}
+	}
+}
+
+// call_connection_end closes what this process holds of a connection. A
+// call host stops: no handle names it. A service continues.
+call_connection_end :: proc "contextless" (connection: ^Call_Connection) {
+	if connection.calls.head != nil {
+		ring_close(&connection.calls)
+	}
+	if connection.region != nil {
+		memory_unmap(raw_data(connection.region))
+	}
+	for handle in ([4]Handle{connection.process, connection.ring_memory, connection.region_memory, connection.files_memory}) {
+		if handle != 0 {
+			close(handle)
+		}
+	}
+	connection^ = {}
+}

@@ -232,8 +232,17 @@ Client_Key_Uses_Added :: struct {
 }
 
 // A principal allowed a client key for the remote display only.
-@(log_fact = "root: principal {principal} allowed the client key {client_key} for the remote display: {uses}; the uses of the remote display last until the machine stops")
+@(log_fact = "root: principal {principal} allowed the client key {client_key} for the remote display: {uses}")
 Client_Key_Allowed_For_Display :: struct {
+	principal:  u64,
+	client_key: [24]u8,
+	uses:       [24]u8,
+}
+
+// A client key of the remote display holds again for a principal, from its
+// disk grant table, with its persisted uses.
+@(log_fact = "root: the client key {client_key} of the remote display holds again for principal {principal}, from its disk grant table: {uses}")
+Client_Key_Restored_For_Display :: struct {
 	principal:  u64,
 	client_key: [24]u8,
 	uses:       [24]u8,

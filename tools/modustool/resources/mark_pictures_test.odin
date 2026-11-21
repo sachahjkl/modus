@@ -5,7 +5,7 @@ import "core:image/png"
 import "core:os"
 import "core:strings"
 import "core:testing"
-import "modus:support/mark"
+import "modus:mark"
 import "modustool:foundation"
 
 // The request of a test: the still picture of the home of the site.
@@ -15,7 +15,7 @@ home_request :: proc(what: Mark_What) -> Mark_Request {
 }
 
 // Each kind of request gives its file: the still mark and a frame are PNG
-// pictures of the size of the request with the pixels of src/library/support/mark; a
+// pictures of the size of the request with the pixels of src/library/modus/mark; a
 // tile map is a PNG picture of the size of its layout; a table is JSON.
 @(test)
 mark_generator_serves_each_kind_of_request :: proc(t: ^testing.T) {
@@ -431,7 +431,7 @@ MARK_DRAWING_FILES :: [?]string{"tools/modustool/resources/mark_pictures.odin", 
 @(private = "file")
 MARK_FORMAT_FILES :: [?]string{"tools/modustool/resources/mark_pictures.odin", "tools/modustool/resources/mark_formats.odin"}
 
-// No other file of the tool calls a drawing procedure of src/library/support/mark:
+// No other file of the tool calls a drawing procedure of src/library/modus/mark:
 // each picture file of the mark comes from the generator. The same for
 // the icons: no other file builds an icon file, a vector file or an
 // animated file of the mark; a caller asks for a row of the table of the

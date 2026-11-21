@@ -15,7 +15,7 @@
 // reader leaves. It runs until a principal stops it: `stop("output_counter")`.
 package output_counter
 
-import "modus:support/system"
+import "modus:system"
 
 // One record of the count: its serial, and a status of the form of the
 // status of an HTTP answer.

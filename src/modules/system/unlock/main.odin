@@ -6,7 +6,7 @@
 // key, to unlock documents. Its record is the file "principal" of the store
 // of this process: its name, its two public keys, and its two secret keys
 // sealed with ChaCha20-Poly1305 under a key that Argon2id derives from the
-// passphrase and a salt (src/library/support/principals). A wrong passphrase gives
+// passphrase and a salt (src/library/modus/principals). A wrong passphrase gives
 // another key, and the seal does not open: no passphrase and no hash of it
 // is kept or compared.
 //
@@ -120,19 +120,19 @@ import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/text_encoding"
 import "modus:contract/tpm_service"
-import "modus:support/disk_process"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/principals"
-import "modus:support/random"
-import "modus:support/storage"
+import "modus:disk_process"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:principals"
+import "modus:random"
+import "modus:storage"
 import "modus:contract/root_ring"
-import "modus:support/system"
-import "modus:support/tpm2"
+import "modus:system"
+import "modus:tpm2"
 
 // The blocks of Argon2id, 19 MiB (4864 pages)
-// (src/library/support/principals, DERIVATION_MEMORY_PAGES), and the rest:
+// (src/library/modus/principals, DERIVATION_MEMORY_PAGES), and the rest:
 // 5765 pages. And the glyph memory of the copy of the text rendering of
 // the drawing module, which draws its text: 354 pages
 // (display.TEXT_MEMORY_PAGES). 5765 + 354 = 6119.
@@ -2611,7 +2611,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Info, No_Random_Seed{})
 	}
 	status: system.Status
-	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT]); status != .Ok {
+	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true); status != .Ok {
 		system.log_fact(.Info, No_Root_Ring{})
 		system.stop(.Refused)
 	}

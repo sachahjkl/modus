@@ -3,7 +3,7 @@ package log_reader
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The measures of the log facts (src/md/features/log_facts.md, "The
 // measures that decide it"), in a measure run only: the write of one line

@@ -3,7 +3,7 @@
 // and the list through their borders, starts each row in its order, sends
 // Machine_Usable when each row with the mark Needed runs, then starts a
 // row again at its stop within its restarts. The start of a writer row
-// carries the wiring list that modus:private/start_policy/wiring_rows
+// carries the wiring list that internal:start_policy/wiring_rows
 // decides. Its one grant is Start_Policy: a root ring for Start, Stop,
 // Machine_Usable and Wire, and the machine parts page. The tool refuses its
 // source past 400 lines and an import past its set: it holds no logic of
@@ -14,8 +14,8 @@ import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
 import "modus:contract/value_kinds"
-import "modus:private/start_policy/wiring_rows"
-import "modus:support/system"
+import "internal:start_policy/wiring_rows"
+import "modus:system"
 
 // 32 pages for what it maps at its start, with their page tables, and the
 // reserve of its wirings, which the tool checks against each list.
@@ -46,7 +46,7 @@ list_page: []u8
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_status: system.Status
 	requests_memory = ctx.handles[system.GRANT_ROOT]
-	requests, ring_status = system.ring_open(requests_memory)
+	requests, ring_status = system.ring_open(requests_memory, receive_handles = true)
 	if ring_status != .Ok {
 		system.log_fact(.Error, Root_Ring_Refused{status = ring_status})
 		system.stop(.Failed)

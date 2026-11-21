@@ -52,18 +52,22 @@ import "modustool:fuzz"
 import "modustool:similarity"
 import "modustool:machine"
 import "modustool:site"
+import "modustool:cache_server"
+import "modustool:agent_bridge"
 
-// The one source library of the project (docs/glossary/communication.md, "Source
-// library"). An import names the library, then one of its two parts:
-// "modus:contract/ring", "modus:support/system".
-//   contract   what two parties agree on: records, numbers, and the code
-//              that reads them. It uses no kernel operation. The kernel
-//              imports these packages and its own kernel parts only.
-//   support    what a module compiles in to use the contracts.
-// The kernel parts are a second source library, "kernel:iommu". The names,
-// the folders and the flags of the two libraries are in
-// source_folders.odin; the rule of the kernel is held by
-// library_imports_check.odin.
+// The three source libraries of the system (docs/glossary/communication.md,
+// "Source library"):
+//   modus      the public library (src/library/modus), shipped in the SDK:
+//              "modus:contract/ring" (what two parties agree on, no kernel
+//              operation) and "modus:system" (what two modules or more
+//              compile in, or what a program outside needs).
+//   internal   the internal parts (src/library/internal): what one module
+//              alone compiles in ("internal:storage/storage_tree"). The
+//              compiler refuses it in the kernel and in an outside module.
+//   modulus    the kernel parts (src/modulus): pure packages that the kernel
+//              alone compiles in ("modulus:iommu").
+// The names, folders and flags are in source_folders.odin; the import rules
+// are held by library_imports_check.odin.
 
 // The commands of the tool. The name is the first argument; the help after
 // it is what `modustool help` prints, one line for each command. The comment
@@ -148,6 +152,38 @@ COMMANDS :: [?]foundation.Command {
 	// (docs/TOOLS.md, "A module from a source outside the repository").
 	// Writes a data disk whose store of the module files holds module files: a
 	// machine with that disk starts each one from its console, by its hash.
+	// Packs a self-contained, deterministic SDK directory containing the public
+	// `modus:` library, runtime assembly, public module catalog and verified
+	// `.module` files, minimal freestanding Odin and C examples, and a canonical
+	// `SDK_MANIFEST.txt` with BLAKE3 root digest and optional Ed25519 signature.
+	//
+	// - `output-dir`: target directory to write the unpacked SDK.
+	// - `--sign-key <path>` (optional): 32-byte Ed25519 private key seed (64 hex
+	//   digits or unpadded base64url) used to sign the manifest root digest.
+	// - `--modules-dir <path>` (optional): directory containing built `.module`
+	//   files; defaults to `build/modules` when present.
+	{name = "sdk-pack", about = "sdk-pack <output-dir> [--sign-key <path>] [--modules-dir <path>]: assemble a deterministic, self-contained SDK directory with public library, runtime, module catalog, examples, and signed or unsigned SDK_MANIFEST.txt", run = build.run_sdk_pack},
+	// Verifies an unpacked SDK directory against its `SDK_MANIFEST.txt`: checks
+	// every file's BLAKE3 hash, rejects missing or stray unlisted files, rejects
+	// symbolic links and any `internal` or `modulus` path, and verifies the
+	// Ed25519 signature when present or required by `--public-key`.
+	//
+	// - `sdk-dir`: directory of the unpacked SDK.
+	// - `--public-key <path>` (optional): 32-byte Ed25519 public key (64 hex
+	//   digits or unpadded base64url); requires a valid signature by this key.
+	{name = "sdk-verify", about = "sdk-verify <sdk-dir> [--public-key <path>]: verify every file hash, absence of stray or internal/modulus paths, and Ed25519 signature of an unpacked SDK directory", run = build.run_sdk_verify},
+	// Converts a freestanding x86-64 relocatable ELF object (`.o`, from C, Rust,
+	// Zig, Odin, or assembly) paired with a language-neutral `module.manifest`
+	// into a verified modus module file with no repository checkout.
+	//
+	// - `object.o`: freestanding System V AMD64 `ET_REL` relocatable object.
+	// - `module.manifest`: plain-text language-neutral module description.
+	// - `output.modus`: destination path for the validated modus module file.
+	// - `--sdk <sdk-dir>` (optional): verified SDK directory whose modules folder
+	//   resolves declared imports.
+	// - `--import-dir <dir>` (optional, repeatable): extra directory searched for
+	//   imported `.module` or `.modus` files.
+	{name = "sdk-convert", about = "sdk-convert <object.o> <module.manifest> <output.modus> [--sdk <sdk-dir>] [--import-dir <dir>]: convert a freestanding ET_REL object and language-neutral module.manifest into a validated modus module file", run = build.run_sdk_convert},
 	{name = "module-disk", about = "module-disk <disk file to write> <module file> [<module file> ...]: write a data disk whose store `module_files` holds each module file under the name of its file, with the debug object `<name>.debug` beside it under the hash of the module, and print the line of the console that starts each one", run = build.run_module_disk},
 	{name = "module-build", about = "module-build <folder of the module> [--system <folder of the system>] [--out <folder of the outputs>]: build one module from a folder outside the repository, with its module build file `" + build.MODULE_BUILD_FILE_NAME + "`: write <name>.module and <name>.debug, and print the hash of the module and the names of its exports", run = build.run_module_build},
 	// Builds one boot volume in this process: its boot image with the system
@@ -283,8 +319,8 @@ COMMANDS :: [?]foundation.Command {
 	// - `heron`: the film of the process heron.
 	{name = "film", about = "build, start the machine, film a scenario (" + machine.FILM_NAMES + "; no argument: terminal), and write " + machine.FILM_FOLDER + "/<name>.mp4, " + machine.FILM_FOLDER + "/<name>.webm, the film cues " + machine.FILM_FOLDER + "/<name>" + machine.FILM_CUES_SUFFIX + ", a copy of the MP4 file in a new folder of the development log " + foundation.DEVELOPMENT_LOG_NAME + " beside the main working tree, and " + checks.FILM_DOCUMENT_FOLDER + "/<name>.webm when a news entry names the film (needs ffmpeg)", run = machine.run_film},
 	// Converts the BDF files of Spleen (8x16, 12x24, 16x32 and 32x64, from the
-	// folder `FONT_SOURCE`) to Odin data in `src/library/support/graphics/font.odin`
-	// and `src/library/support/bootscreen/spleen_sizes.odin`. The results are
+	// folder `FONT_SOURCE`) to Odin data in `src/library/modus/graphics/font.odin`
+	// and `src/library/modus/bootscreen/spleen_sizes.odin`. The results are
 	// in the repository, so a build does not need the BDF files: run it only
 	// to change the font.
 	{name = "font", about = "convert the BDF files of the font to " + foundation.FONT_OUTPUT + " and " + foundation.BOOT_DISPLAY_FONT_OUTPUT, run = resources.run_font},
@@ -303,7 +339,7 @@ COMMANDS :: [?]foundation.Command {
 	// reads the files of the repository (docs/FONTS.md).
 	{name = "vector_fonts", about = "subset the vector font candidates of " + resources.VECTOR_FONT_SOURCES_VARIABLE + " to " + resources.VECTOR_FONT_FOLDER + " and draw " + resources.CANDIDATES_PICTURE, run = resources.run_vector_fonts},
 	// Draws the files of the mark of the system from its geometry in
-	// `src/library/support/mark`: the icons in `resources/logo`, the font of the name of
+	// `src/library/modus/mark`: the icons in `resources/logo`, the font of the name of
 	// the mark, the picture of the project, and one picture of every frame
 	// of the animations of the mark.
 	//
@@ -362,6 +398,19 @@ COMMANDS :: [?]foundation.Command {
 	// - `all count [host_processes]`: every module and the boot program, one row
 	//   each.
 	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count> [host_processes]`: every module and the boot program, one row each", run = build.run_repeat},
+	// Proves two-stage self-hosting fixed-point determinism of modustool:
+	// builds `tools/modustool` into `stage1/modustool`, invokes that binary to
+	// build `stage2/modustool` with identical deterministic flags, compares
+	// their BLAKE3 hashes, and reports the first diverging byte offset if they
+	// differ (docs/TOOLS.md, "The self-hosting check").
+	//
+	// - `--staging-dir <folder>` (optional): isolated staging directory root;
+	//   defaults to `build/self_host`.
+	// - `--emit-binary <path>` (optional): compile `tools/modustool` once with
+	//   deterministic self-host flags into `<path>` (invoked by stage1).
+	// - `--verify-chains` (optional): also verify the C compiler self-host,
+	//   live-bootstrap seed, and SQLite/Lua/zstd C-world recipe chains.
+	{name = "self-host", about = "self-host [--staging-dir <folder>] [--emit-binary <path>] [--verify-chains]: build stage1/modustool, invoke stage1 to build stage2/modustool with deterministic flags, and prove blake3(stage1) == blake3(stage2)", run = build.run_self_host},
 	// Copies a file of `core:crypto` of the Odin compiler into the repository
 	// with the package name of the copy and the listed changes of its imports,
 	// and prints its line of the manifest of the origin.
@@ -370,7 +419,7 @@ COMMANDS :: [?]foundation.Command {
 	// - `file`: its path in the repository.
 	{name = "cryptography-take", about = "cryptography-take <file under the root of Odin> <file of the repository>: copy a file of core:crypto with the listed import changes, and print its line of the manifest", run = checks.run_cryptography_take},
 	// Prints the line of the list of the system files for each `.odin` file of
-	// `src/library/support/cryptography` that the manifest of the origin does not name:
+	// `src/library/modus/cryptography` that the manifest of the origin does not name:
 	// the files that the project wrote, which a reviewer checks before the
 	// lines go into the list.
 	{name = "cryptography-system-hashes", about = "print the line of " + checks.CRYPTOGRAPHY_SYSTEM_FILES + " for each .odin file of " + foundation.CRYPTOGRAPHY_FOLDER + " that is not taken from Odin", run = checks.run_cryptography_system_hashes},
@@ -599,6 +648,33 @@ COMMANDS :: [?]foundation.Command {
 	// A system signed with the test key is for a test machine only: its
 	// private key is published.
 	{name = "key", about = "key new <folder outside the repository>: write a new signing key of the system description (the private key, readable by its owner only, and the public key), with the firmware signing key and the release signing key; `key write <folder>`: the same folder from the variables of the secrets of a workflow; `key show`: print the public key that the build uses (" + build.SIGNING_KEY_VARIABLE + ", or the test signing key)", run = build.run_key},
+	// Serves a content-addressed object cache on the host over framed streams:
+	// objects by BLAKE3 or tree hash, and signed realisations.
+	//
+	// - `--dir <path>`: the folder of the store (`objects/` and `realisations/`).
+	// - `--listen <host:port>` (optional): the address to listen on; defaults to
+	//   `127.0.0.1:7200`.
+	// - `--signer-key <path>` (optional, repeatable): a 64-hex-digit Ed25519
+	//   private key file whose derived public key may upload objects and signed
+	//   realisations.
+	// - `--authorized-key <path>` (optional, repeatable): a 64-hex-digit Ed25519
+	//   public key file allowed to upload objects and signed realisations.
+	{name = "cache-serve", about = "cache-serve --dir <path> [--listen <host:port>] [--signer-key <path>] [--authorized-key <path>]: serve a content-addressed object cache of blobs, canonical trees and signed realisations", run = cache_server.run_cache_serve},
+	// Serves the typed host agent bridge over line-delimited JSON-RPC 2.0 on
+	// standard input and output, enforcing client-key permissions, remote key
+	// uses, active wide-grant window scopes, append-only BLAKE3 act recording,
+	// and explicit principal approval for grant-adding plans.
+	//
+	// - `--remote-key <64-hex>`: public key of `remote` pinned by the transport.
+	// - `--client-key <64-hex>`: client public key authorized by the principal.
+	// - `--socket <path>` (optional): path to the call socket of the peer.
+	// - `--principal <id>` (optional): principal identifier; defaults to `0`.
+	// - `--permissions <csv>` (optional): comma-separated subset of
+	//   `eval_lex,read_screen,send_input,read_log_facts`.
+	// - `--wide-grant-serial <u64>`, `--wide-grant-windows <id,...>`,
+	//   `--wide-grant-duration-ms <u64>` (optional): active wide-grant window
+	//   scope required for synthetic input.
+	{name = "agent-bridge", about = "agent-bridge --remote-key <64-hex> --client-key <64-hex> [--socket <path>] [--principal <id>] [--permissions <csv>] [--wide-grant-serial <u64> --wide-grant-windows <id,...> [--wide-grant-duration-ms <u64>]]: serve the typed host agent bridge over stdio JSON-RPC 2.0", run = agent_bridge.run_agent_bridge},
 }
 
 main :: proc() {
@@ -613,9 +689,10 @@ main :: proc() {
 		usage()
 		return
 	}
-	// The command module-build runs from the folder of another project: it
-	// finds the folder of the system by itself, and refuses a wrong one.
-	if os.args[1] != "module-build" && !os.exists(foundation.ROOT_MARK) {
+	// Commands that operate on external directories or unpacked SDKs can run
+	// outside a repository checkout.
+	outside_repo_ok := os.args[1] == "module-build" || os.args[1] == "cache-serve" || os.args[1] == "sdk-verify" || os.args[1] == "sdk-convert" || os.args[1] == "agent-bridge"
+	if !outside_repo_ok && !os.exists(foundation.ROOT_MARK) {
 		fmt.eprintln("modustool: start it from the root of the repository")
 		os.exit(foundation.EXIT_USAGE)
 	}
@@ -1048,7 +1125,7 @@ run_check :: proc(args: []string) -> int {
 	}
 	// The full check proves the build: it keeps no output of an earlier build.
 	build.build_whole = true
-	if !foundation.run({"odin", "check", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG}) {
+	if !foundation.run({"odin", "check", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG}) {
 		return foundation.EXIT_FAILURE
 	}
 	// The kernel and the contract packages import no support package. The
@@ -1060,7 +1137,7 @@ run_check :: proc(args: []string) -> int {
 	// state, no source of the system calls an allocator, each export that
 	// fails gives an error record, and no family of integer constants is a
 	// closed set of choices.
-	if !checks.operation_count_check() || !checks.allocator_check() || !checks.export_error_record_check() || !checks.choice_constant_check() {
+	if !checks.operation_count_check() || !checks.allocator_check() || !checks.export_error_record_check() || !checks.choice_constant_check() || !checks.processor_random_check() {
 		return foundation.EXIT_FAILURE
 	}
 	host_test_folders := checks.HOST_TEST_FOLDERS

@@ -49,9 +49,9 @@ package iommu_device_service
 
 import "modus:contract/block"
 import "modus:contract/ring"
-import "modus:support/pci"
-import "modus:support/system"
-import "modus:support/virtio"
+import "modus:pci"
+import "modus:system"
+import "modus:virtio"
 
 // The budget of a block service: it drives one disk through one ring.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 180, processes = 1, threads = 1}
@@ -176,7 +176,7 @@ page_holds :: proc "contextless" (bytes: [^]u8, value: u8) -> bool {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine := ctx.handles[pci.GRANT_MACHINE]
-	clients, ring_status := system.ring_open(ctx.handles[block.SERVICE_RING])
+	clients, ring_status := system.ring_open(ctx.handles[block.SERVICE_RING], receive_handles = true)
 	if ring_status != .Ok {
 		fail("no block ring")
 	}

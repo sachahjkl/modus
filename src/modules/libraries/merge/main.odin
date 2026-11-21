@@ -31,7 +31,7 @@ package merge
 
 import "modus:contract/errors"
 import "modus:contract/module"
-import "modus:support/system"
+import "modus:system"
 
 // The streams to join, each of the record that the first one fixed.
 sources: system.Record_Input(system.Any_Record, .Many)

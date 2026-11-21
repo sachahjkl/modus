@@ -2,8 +2,8 @@ package resources
 
 import "core:strings"
 import "core:testing"
-import "modus:support/mark"
-import "modus:support/vector_font"
+import "modus:mark"
+import "modus:vector_font"
 
 // A license for the tests: the font of a test does not depend on the text
 // of the license of the repository.
@@ -40,7 +40,7 @@ mark_font_test_winding :: proc(outline: ^vector_font.Outline, x, y: int) -> int 
 // The font is read by the reader of fonts of the system, which did not
 // write it. Each glyph of a letter, sampled at the centre of each cell with
 // the rule of the winding that is not zero, is the cells of the letter in
-// src/library/support/mark. The area of the outline is the area of the filled cells with
+// src/library/modus/mark. The area of the outline is the area of the filled cells with
 // the sign of a clockwise turn: the outer contours turn clockwise, the holes
 // the other way, and no contour covers another.
 @(test)
@@ -86,7 +86,7 @@ mark_font_glyphs_are_the_cells_of_the_letters :: proc(t: ^testing.T) {
 					filled_count += 1
 				}
 				winding := mark_font_test_winding(&outline, column * cell + cell / 2, (mark.NAME_ROWS - 1 - row) * cell + cell / 2)
-				testing.expectf(t, winding == (-1 if filled else 0), "%s: the cell at the column %d and the row %d is %v in src/library/support/mark, and the outline turns %d times around its centre", name, column, row, filled, winding)
+				testing.expectf(t, winding == (-1 if filled else 0), "%s: the cell at the column %d and the row %d is %v in src/library/modus/mark, and the outline turns %d times around its centre", name, column, row, filled, winding)
 			}
 		}
 		// Twice the area, by the corners; under 0 for a clockwise turn.

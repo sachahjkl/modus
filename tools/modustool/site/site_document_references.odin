@@ -814,7 +814,7 @@ site_document_of_code_span :: proc(site: ^Site, code: string) -> (path: string, 
 // The folders whose source comments the check of the pointers reads: the
 // sources of the system. The tool is not read: its tests hold pointers
 // that do not resolve on purpose.
-SITE_POINTER_SOURCE_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_MODULES, foundation.SOURCE_FOLDER_SUPPORT, foundation.SOURCE_FOLDER_PRIVATE, foundation.SOURCE_FOLDER_CONTRACT, foundation.SOURCE_FOLDER_RUNTIME, foundation.SOURCE_FOLDER_BOOT}
+SITE_POINTER_SOURCE_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_MODULES, foundation.SOURCE_FOLDER_PUBLIC, foundation.SOURCE_FOLDER_INTERNAL, foundation.SOURCE_FOLDER_RUNTIME, foundation.SOURCE_FOLDER_BOOT}
 
 // site_pointer_problem gives the fault of a pointer whose labels do not all
 // find their place, or "": a pointer to no document of docs/ is not one.
@@ -947,7 +947,7 @@ site_document_pointer_problems :: proc(site: ^Site) -> []string {
 }
 
 // The documents at the root of the repository that a text can name.
-SITE_ROOT_DOCUMENTS :: [?]string{"README.md", "CHANGELOG.md", "ROADMAP.md", "AGENTS.md"}
+SITE_ROOT_DOCUMENTS :: [?]string{"README.md", "CHANGELOG.md", "ROADMAP.md", "AGENTS.md", "CONTRIBUTING.md"}
 
 // site_document_names gives the name of each document of the repository: each
 // guide, each working record, and the documents of the root.

@@ -1,15 +1,15 @@
 package root
 
 import "modus:contract/block"
-import "modus:support/bochs_display"
+import "modus:bochs_display"
 import "modus:contract/bridge_requester"
 import "modus:contract/entropy_service"
 import "modus:contract/frame"
 import op "modus:contract/operation"
 import "modus:contract/ring"
-import "modus:support/pci"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:pci"
+import "modus:random"
+import "modus:system"
 import "modus:contract/timed_stream"
 
 // The devices of the bus. This service holds the two ports of the
@@ -34,7 +34,7 @@ device_handle :: proc "contextless" (kind: op.Device_Kind, a, b: u64) -> (handle
 // that it serves to its one client.
 Driver :: struct {
 	name:          string,
-	device:        u32, // The device number of the class on the bus (src/library/support/pci).
+	device:        u32, // The device number of the class on the bus (src/library/modus/pci).
 	ring_capacity: u32,
 	ring_role:     int, // The role of the ring in the context of the device service.
 }
@@ -237,10 +237,10 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	// The slots of a device service are the layout of package pci and of
 	// the ring of its contract: each handle takes its own slot, so a new
 	// handle of the layout cannot take the slot of another in silence.
-	role := role_of(kind.name)
+	start_grant_set := start_grant_set_of(kind.name)
 	context_grants: system.Context_Grants
 	values: system.Context_Values
-	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role))
+	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set))
 	system.grant_put(&context_grants, pci.GRANT_MACHINE, {machine, {.Physical}})
 
 	// Behind a conventional bridge, the registers of each other device
@@ -371,7 +371,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	if behind_conventional_bridge {
 		driver.bridge_group = group
 	}
-	driver.role = role
+	driver.start_grant_set = start_grant_set
 	driver.granted = {.Log}
 	copy(driver.name[:len(driver.name) - 1], kind.name)
 	if place.bus == 0 {

@@ -1,5 +1,5 @@
 // A module that the process `locks` starts several times, to load the
-// kernel from several processes at one time (package modus:support/lockers). It
+// kernel from several processes at one time (package modus:lockers). It
 // works only on its own objects: another process never waits for it, unless
 // the kernel makes it wait.
 //
@@ -31,8 +31,8 @@ package locker
 
 import "base:intrinsics"
 import "modus:contract/enum_word"
-import "modus:support/lockers"
-import "modus:support/system"
+import "modus:lockers"
+import "modus:system"
 
 // entries enters the kernel with one cheap operation on an own object,
 // until the time is end or the count is limit (0: no limit).

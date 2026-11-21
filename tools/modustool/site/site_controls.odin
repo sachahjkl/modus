@@ -21,7 +21,7 @@
 package site
 
 import "core:strings"
-import "modus:support/graphics"
+import "modus:graphics"
 
 // The three forms of a control: each has its own colors for its states.
 Site_Control_Form :: enum {

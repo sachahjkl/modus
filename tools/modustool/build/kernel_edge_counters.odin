@@ -8,7 +8,7 @@ import "modustool:foundation"
 
 // The build of the counted kernel (src/md/infrastructure/kernel_fuzzing.md,
 // "The test kernel"): between the compile and llc, opt adds a call of the
-// callback of src/kernel/edge_counters.asm at each edge of the IR of the
+// callback of src/modulus/edge_counters.asm at each edge of the IR of the
 // kernel; the tool then removes the list of the constructors that the pass
 // adds, counts the guards, and gives the count to nasm for that one file.
 // No other kernel links the file.

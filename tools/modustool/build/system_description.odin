@@ -10,9 +10,9 @@ import "core:mem"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
-import crypto "modus:support/cryptography/compatibility_crypto"
-import "modus:support/cryptography/ed25519"
-import "modus:support/cryptography/sha2"
+import crypto "modus:cryptography/compatibility_crypto"
+import "modus:cryptography/ed25519"
+import "modus:cryptography/sha2"
 import "modustool:foundation"
 
 // The system description and its signature (docs/TRUSTED_BOOT.md).

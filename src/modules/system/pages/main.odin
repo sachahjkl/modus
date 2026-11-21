@@ -37,12 +37,12 @@
 package pages
 
 import info "modus:contract/boot_info"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 MARGIN :: 12
 // The columns of a run, each as wide as its longest text, so that no text

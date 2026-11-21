@@ -9,12 +9,14 @@ source_library_package_folder_of_an_import :: proc(t: ^testing.T) {
 	folder, found := source_library_package_folder(CONTRACT_IMPORT_START + "ring")
 	testing.expect(t, found)
 	testing.expect_value(t, folder, SOURCE_FOLDER_CONTRACT + "/ring")
-	folder, found = source_library_package_folder(SUPPORT_IMPORT_START + "cryptography/ed25519")
+	folder, found = source_library_package_folder(SOURCE_LIBRARY_IMPORT_START + "cryptography/ed25519")
 	testing.expect(t, found)
-	testing.expect_value(t, folder, SOURCE_FOLDER_SUPPORT + "/cryptography/ed25519")
-	// The two names that the libraries had before they became one are not
-	// names of a library.
-	for path in ([]string{"core:fmt", "base:runtime", "../shared", SOURCE_LIBRARY_NAME, SOURCE_LIBRARY_IMPORT_START, SOURCE_LIBRARY_NAME + "s:contract/ring", "system:c", "contract:ring", "support:system", KERNEL_LIBRARY_NAME, KERNEL_IMPORT_START, KERNEL_LIBRARY_NAME + "s:iommu"}) {
+	testing.expect_value(t, folder, SOURCE_FOLDER_PUBLIC + "/cryptography/ed25519")
+	folder, found = source_library_package_folder(INTERNAL_IMPORT_START + "storage/storage_tree")
+	testing.expect(t, found)
+	testing.expect_value(t, folder, SOURCE_FOLDER_INTERNAL + "/storage/storage_tree")
+	// The old library names and incomplete paths are not names of a library.
+	for path in ([]string{"core:fmt", "base:runtime", "../shared", SOURCE_LIBRARY_NAME, SOURCE_LIBRARY_IMPORT_START, SOURCE_LIBRARY_NAME + "s:contract/ring", INTERNAL_LIBRARY_NAME, INTERNAL_IMPORT_START, INTERNAL_LIBRARY_NAME + "s:storage/storage_tree", "system:c", "contract:ring", "support:system", "kernel:iommu", KERNEL_LIBRARY_NAME, KERNEL_IMPORT_START, KERNEL_LIBRARY_NAME + "s:iommu"}) {
 		_, other_found := source_library_package_folder(path)
 		testing.expectf(t, !other_found, "%q is not an import of a source library", path)
 	}
@@ -29,18 +31,21 @@ source_library_package_folder_of_an_import :: proc(t: ^testing.T) {
 // library that imports a kernel part then does not compile.
 @(test)
 the_folders_that_take_the_kernel_parts :: proc(t: ^testing.T) {
-	for folder in ([]string{SOURCE_FOLDER_CONTRACT + "/ring", SOURCE_FOLDER_SUPPORT + "/system", SYSTEM_MODULE_SOURCES + "root", LIBRARY_MODULE_SOURCES + "drawing", SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_KERNEL + "s", TOOL_SOURCE_FOLDER + "s", TOOLS_FOLDER, "src", ""}) {
+	for folder in ([]string{SOURCE_FOLDER_CONTRACT + "/ring", SOURCE_FOLDER_PUBLIC + "/system", SOURCE_FOLDER_INTERNAL + "/storage/storage_tree", SYSTEM_MODULE_SOURCES + "root", LIBRARY_MODULE_SOURCES + "drawing", SOURCE_FOLDER_BOOT, SOURCE_FOLDER_RUNTIME, SOURCE_FOLDER_KERNEL + "s", TOOL_SOURCE_FOLDER + "s", TOOLS_FOLDER, "src", ""}) {
 		testing.expectf(t, !source_folder_takes_kernel_library(folder), "%q does not take the kernel parts", folder)
+		testing.expectf(t, source_folder_takes_internal_library(folder), "%q takes the internal library", folder)
 		testing.expectf(t, !source_folder_is_of_the_tool(folder), "%q is no folder of the tool", folder)
 	}
 	for folder in ([]string{SOURCE_FOLDER_KERNEL, SOURCE_FOLDER_KERNEL + "/iommu", SOURCE_FOLDER_KERNEL + "/acpi_processors"}) {
 		testing.expectf(t, source_folder_takes_kernel_library(folder), "%q takes the kernel parts", folder)
+		testing.expectf(t, !source_folder_takes_internal_library(folder), "%q does not take the internal library", folder)
 		testing.expectf(t, !source_folder_is_of_the_tool(folder), "%q is no folder of the tool", folder)
 	}
 	// The command of the tool and each of its packages take the kernel
-	// parts and the source library of the tool.
+	// parts, the internal library and the source library of the tool.
 	for folder in ([]string{TOOL_SOURCE_FOLDER, TOOL_SOURCE_FOLDER + "/foundation"}) {
 		testing.expectf(t, source_folder_takes_kernel_library(folder), "%q takes the kernel parts", folder)
+		testing.expectf(t, source_folder_takes_internal_library(folder), "%q takes the internal library", folder)
 		testing.expectf(t, source_folder_is_of_the_tool(folder), "%q is a folder of the tool", folder)
 	}
 	// Each module of the table that is a kernel, and no other, gets the flag
@@ -55,5 +60,5 @@ the_folders_that_take_the_kernel_parts :: proc(t: ^testing.T) {
 path_from_a_folder_to_the_root :: proc(t: ^testing.T) {
 	testing.expect_value(t, path_from_folder_to_root("boot"), "../")
 	testing.expect_value(t, path_from_folder_to_root("src/boot"), "../../")
-	testing.expect_value(t, path_from_folder_to_root("src/library/support/"), "../../../")
+	testing.expect_value(t, path_from_folder_to_root("src/library/modus/"), "../../../")
 }

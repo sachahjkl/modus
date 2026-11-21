@@ -25,7 +25,7 @@
 // - a revocation of a handle that the process does not have: `Bad_Handle`.
 //
 // **Start**: `start("origin")` in the console, or the bar of the desktop.
-// Its row of `process_roles` has no grant: everything that it uses, it makes. Its
+// Its row of `start_grant_sets` has no grant: everything that it uses, it makes. Its
 // budget has room for two processes: itself and the process "held", which
 // never runs and only receives.
 //
@@ -36,12 +36,12 @@
 // with 2".
 package origin
 
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // Itself and one process that only receives: 1372 pages. And the glyph
 // memory of the copy of the text rendering of the drawing module, which

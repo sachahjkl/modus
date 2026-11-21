@@ -1,6 +1,6 @@
 # The byte order and the checksum of the Internet
 
-Formats of the network, of the TPM and of the files of the system hold numbers in a fixed byte order. The package `src/library/contract/byte_order` is the one place that reads and writes them, and the one place of the checksum of RFC 1071. What the network does with it is in [`docs/NETWORK.md`](../../../docs/NETWORK.md), "One place for the byte order and the checksum".
+Formats of the network, of the TPM and of the files of the system hold numbers in a fixed byte order. The package `src/library/modus/contract/byte_order` is the one place that reads and writes them, and the one place of the checksum of RFC 1071. What the network does with it is in [`docs/NETWORK.md`](../../../docs/NETWORK.md), "One place for the byte order and the checksum".
 
 ## Constraints
 
@@ -22,4 +22,4 @@ Formats of the network, of the TPM and of the files of the system hold numbers i
 
 ## State
 
-Built: the package, its host tests, and its callers in the network, the TPM, the boot program, the line editor, the principals, the disk process and the manual pages. Left: `src/library/support/vector_font` and `src/kernel/iommu` keep their own reads.
+Built: the package, its host tests, and its callers in the network, the TPM, the boot program, the line editor, the principals, the disk process and the manual pages. Left: `src/library/modus/vector_font` and `src/modulus/iommu` keep their own reads.

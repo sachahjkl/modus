@@ -25,7 +25,7 @@
 package output_writer
 
 import "modus:contract/output"
-import "modus:support/system"
+import "modus:system"
 
 // One probe: its serial in the record output, and a mark of it.
 Probe :: struct {

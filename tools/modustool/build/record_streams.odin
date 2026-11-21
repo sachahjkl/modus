@@ -41,7 +41,7 @@ import "modustool:foundation"
 //     checks the place of each one against each other write of its load.
 
 // The names of the declarations in the support package system
-// (src/library/support/system/record_streams.odin).
+// (src/library/modus/system/record_streams.odin).
 RECORD_OUTPUT_TYPE_NAME :: "Record_Output"
 RECORD_INPUT_TYPE_NAME :: "Record_Input"
 RECORD_INPUT_WITH_TERMS_TYPE_NAME :: "Record_Input_With_Terms"

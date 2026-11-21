@@ -3,7 +3,7 @@ package machine
 import "core:os"
 import "core:strings"
 import "core:testing"
-import "modus:support/vector_font"
+import "modus:vector_font"
 import "modustool:resources"
 
 // source_font_path gives the path of a source font from VECTOR_FONT_SOURCES,

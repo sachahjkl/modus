@@ -61,7 +61,7 @@ What this system takes from it, and what not:
 
 ### The pointer shapes
 
-One enum of the system, `Pointer_Shape` in `src/library/contract/pointer_pictures`, with one long name for each. Zero is the arrow: a zero record asks for the default (ZII). The CSS names are the sources in the manifest of the Posy theme. The name of a shape in a manifest and on the log is the name of this table (`SHAPE_NAMES`).
+One enum of the system, `Pointer_Shape` in `src/library/modus/contract/pointer_pictures`, with one long name for each. Zero is the arrow: a zero record asks for the default (ZII). The CSS names are the sources in the manifest of the Posy theme. The name of a shape in a manifest and on the log is the name of this table (`SHAPE_NAMES`).
 
 | Number | Name | CSS name | Where the system uses it today |
 |---|---|---|---|
@@ -85,7 +85,7 @@ Not taken: the CSS names that no part of the system has a use for (`context-menu
 
 ### The request of a process
 
-A process asks for a pointer shape with the display command `Pointer_Shape` (`src/library/support/display`, `display.pointer_shape_set`):
+A process asks for a pointer shape with the display command `Pointer_Shape` (`src/library/modus/display`, `display.pointer_shape_set`):
 
 ```odin
 display.pointer_shape_set(&window, .Text)
@@ -124,7 +124,7 @@ Two processes ask today: `terminal` and `pointers` (the shape of the tile under 
 
 ## 3. The format of the system: one pointer theme file
 
-`src/library/contract/pointer_pictures`. One file for a whole theme, mapped read-only and read in place: no parse at run time, one validation at the start. All numbers are little-endian; each header is of fixed size; no field depends on a language.
+`src/library/modus/contract/pointer_pictures`. One file for a whole theme, mapped read-only and read in place: no parse at run time, one validation at the start. All numbers are little-endian; each header is of fixed size; no field depends on a language.
 
 ```
 Header           512 bytes  at 0
@@ -138,9 +138,9 @@ pixels           u32 each   at pixel_offset, pixel_size bytes
 - **Shape_Entry**: `shape` (the number of the enum), `first_picture`, `size_count`, `frame_count`. The pictures of a shape are `size_count * frame_count` entries from `first_picture`: the frames of the smallest size, then of the next. Two shapes can name the same pictures (two names, one file, as the links of an Xcursor theme).
 - **Forms**: the shape table holds `shape_count` entries for each form, the dark form first (`Pointer_Form`: `Dark` 0, `Light` 1). Each form has its own entries and can name its own pictures; two forms can also name the same pictures. `choose`, `shape_entries` and `shape_entry_of` take the form; a theme with one form gives that form for both.
 - **Picture_Entry**: `nominal_size`, `width`, `height`, `hot_spot_x`, `hot_spot_y`, `delay_milliseconds` (0 for a shape with one frame), `pixel_offset` (from the start of the pixels).
-- **Pixels**: 0xAARRGGBB with premultiplied alpha, the form of an Xcursor file and the form of a canvas of `src/library/support/graphics` (0x00RRGGBB) plus alpha in the high byte. The blend reads the alpha from the same word and adds the source to the destination with no conversion. Straight alpha needs three more multiplications for each pixel.
+- **Pixels**: 0xAARRGGBB with premultiplied alpha, the form of an Xcursor file and the form of a canvas of `src/library/modus/graphics` (0x00RRGGBB) plus alpha in the high byte. The blend reads the alpha from the same word and adds the source to the destination with no conversion. Straight alpha needs three more multiplications for each pixel.
 
-**The limits of the format** (constants of `src/library/contract/pointer_pictures`):
+**The limits of the format** (constants of `src/library/modus/contract/pointer_pictures`):
 
 | Limit | Value |
 |---|---|
@@ -208,11 +208,11 @@ coordinate = digits [ "." digits ]          units: 1 to 3 digits, then at most 3
 - **The edge is 1 pixel at every size, inside the contours.** For `fill` and `accent`, the tool paints the contours in the edge color, then the contours moved in by 1 pixel in the color of the layer: the contours are the whole shape, and a larger size has a finer edge, not a thicker one. `inside` paints the contours with no edge, for a part on the fill. `edge` paints the edge color as drawn: the line between two parts. `clear` paints the edge color on its contours moved out by 1 pixel, then makes its contours transparent: a hole has an edge too.
 - **Joins.** Two contours of one layer that must join overlap by 2 units: their moved contours meet. A part thinner than 2 units has no fill: its moved contour is inside out, and the tool drops it.
 - **The forms.** A manifest with an outline makes two forms: the dark form (fill white, edge `COLOR_INK`, the darkest color of the rules) and the light form (fill `COLOR_INK`, edge white). A shape from a source keeps its pictures in both forms.
-- **The accents** are color tokens of the design rules, by the name of their field in `graphics.Color_Tokens` (`src/library/support/graphics`). An accent takes the value of its token for the color around it: the fill for `inside`, else the edge. Around the dark, it takes the value of the token in the dark appearance (`DARK_COLOR_TOKENS`); around white, its value in the light appearance (`LIGHT_COLOR_TOKENS`), whose surfaces are light. No manifest holds a color value. The tokens that a manifest can name: `title` (the blue of the focus), `stop_process` (the red of "stop a process") and `boot_program` (the amber of "starts" and of a match).
+- **The accents** are color tokens of the design rules, by the name of their field in `graphics.Color_Tokens` (`src/library/modus/graphics`). An accent takes the value of its token for the color around it: the fill for `inside`, else the edge. Around the dark, it takes the value of the token in the dark appearance (`DARK_COLOR_TOKENS`); around white, its value in the light appearance (`LIGHT_COLOR_TOKENS`), whose surfaces are light. No manifest holds a color value. The tokens that a manifest can name: `title` (the blue of the focus), `stop_process` (the red of "stop a process") and `boot_program` (the amber of "starts" and of a match).
 
 - **Frames.** The layers before the first `frame` are in every frame. Each `frame` adds the layers after it, over those. An animation has two frames at least.
 - **The option `hot`** is required, and inside the square.
-- **The drawing.** At each size and in each form, the tool draws each layer with the rasterizer of the vector font (`src/library/support/vector_font`): the exact coverage of each pixel, from 0 to 255, then the paint over the pixel with that weight, in premultiplied integers. The pictures of one size have one box: the pixels that some frame draws, and the hot spot.
+- **The drawing.** At each size and in each form, the tool draws each layer with the rasterizer of the vector font (`src/library/modus/vector_font`): the exact coverage of each pixel, from 0 to 255, then the paint over the pixel with that weight, in premultiplied integers. The pictures of one size have one box: the pixels that some frame draws, and the hot spot.
 - An error gives the file, the line, the column, and what was expected: `resources/pointers/posy.manifest:12:7: expected a pointer shape name such as "arrow"; found "arow"`.
 - No JSON, no TOML: the system has no general parser and needs none.
 

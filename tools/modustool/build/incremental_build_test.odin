@@ -19,7 +19,7 @@ source_tree_make :: proc(t: ^testing.T) -> (root: string) {
 	// finds the package of an import of the library there.
 	// A package of the tool is at the folder of the tool, as the tool finds
 	// the package of an import of its own source library.
-	for name in ([]string{"process", "library", "unused", "tool", foundation.SOURCE_FOLDER_CONTRACT + "/record", foundation.SOURCE_FOLDER_SUPPORT + "/draw", foundation.SOURCE_FOLDER_SUPPORT + "/idle", foundation.TOOL_SOURCE_FOLDER + "/shared", foundation.TOOL_SOURCE_FOLDER + "/unimported"}) {
+	for name in ([]string{"process", "library", "unused", "tool", foundation.SOURCE_FOLDER_CONTRACT + "/record", foundation.SOURCE_FOLDER_PUBLIC + "/draw", foundation.SOURCE_FOLDER_PUBLIC + "/idle", foundation.TOOL_SOURCE_FOLDER + "/shared", foundation.TOOL_SOURCE_FOLDER + "/unimported"}) {
 		_ = os.make_directory_all(fmt.tprintf("%s/%s", folder, name))
 	}
 	file_write(folder, "process/main.odin", "package process\n\nimport \"../library\"\n\nmain :: proc() {library.work()}\n")
@@ -28,12 +28,12 @@ source_tree_make :: proc(t: ^testing.T) -> (root: string) {
 	file_write(folder, "process/picture.pixels", "pixels")
 	file_write(folder, "library/library.odin", "package library\n\nwork :: proc() {}\n")
 	file_write(folder, "unused/unused.odin", "package unused\n")
-	file_write(folder, "tool/main.odin", "package tool\n\nimport \"core:fmt\"\nimport record \"modus:contract/record\"\n\t import \"modus:support/draw\"\nimport \"" + foundation.TOOL_IMPORT_START + "shared\"\nSAMPLE :: `\nimport \"modus:support/absent\"\n`\n")
+	file_write(folder, "tool/main.odin", "package tool\n\nimport \"core:fmt\"\nimport record \"modus:contract/record\"\n\t import \"modus:draw\"\nimport \"" + foundation.TOOL_IMPORT_START + "shared\"\nSAMPLE :: `\nimport \"modus:absent\"\n`\n")
 	file_write(folder, foundation.TOOL_SOURCE_FOLDER + "/shared/shared.odin", "package shared\n")
 	file_write(folder, foundation.TOOL_SOURCE_FOLDER + "/unimported/unimported.odin", "package unimported\n")
 	file_write(folder, foundation.SOURCE_FOLDER_CONTRACT + "/record/record.odin", "package record\n")
-	file_write(folder, foundation.SOURCE_FOLDER_SUPPORT + "/draw/draw.odin", "package draw\n\nimport \"modus:contract/record\"\n")
-	file_write(folder, foundation.SOURCE_FOLDER_SUPPORT + "/idle/idle.odin", "package idle\n")
+	file_write(folder, foundation.SOURCE_FOLDER_PUBLIC + "/draw/draw.odin", "package draw\n\nimport \"modus:contract/record\"\n")
+	file_write(folder, foundation.SOURCE_FOLDER_PUBLIC + "/idle/idle.odin", "package idle\n")
 	return folder
 }
 
@@ -43,7 +43,7 @@ file_write :: proc(root, name, text: string) {
 }
 
 @(private = "file")
-SOURCE_TREE_FOLDERS :: [?]string{"process", "library", "unused", "tool", foundation.SOURCE_FOLDER_CONTRACT, foundation.SOURCE_FOLDER_SUPPORT}
+SOURCE_TREE_FOLDERS :: [?]string{"process", "library", "unused", "tool", foundation.SOURCE_FOLDER_PUBLIC}
 
 // The inputs of the key of the importer of the tree, as a compiler lists them.
 @(private = "file")
@@ -343,11 +343,11 @@ imports_of_a_source_name_the_folders_of_the_repository :: proc(t: ^testing.T) {
 	folders := make([dynamic]string, context.temp_allocator)
 	// "modustool:" names no package, and "modustoolx:" is another library:
 	// neither is a folder of the repository.
-	source := "package modustool\n\nimport \"core:fmt\"\nimport module \"modus:contract/module\"\nimport \"modus:support/cryptography/ed25519\"\nimport \"../shared\"\nimport\t\"./beside\"\nimport \"" + foundation.TOOL_IMPORT_START + "build\"\nimport \"" + foundation.TOOL_IMPORT_START + "\"\nimport \"" + foundation.TOOL_LIBRARY_NAME + "x:build\"\nimported := 1\n// the word import in a comment\nforeign import library \"system:c\"\n"
+	source := "package modustool\n\nimport \"core:fmt\"\nimport module \"modus:contract/module\"\nimport \"modus:cryptography/ed25519\"\nimport \"../shared\"\nimport\t\"./beside\"\nimport \"" + foundation.TOOL_IMPORT_START + "build\"\nimport \"" + foundation.TOOL_IMPORT_START + "\"\nimport \"" + foundation.TOOL_LIBRARY_NAME + "x:build\"\nimported := 1\n// the word import in a comment\nforeign import library \"system:c\"\n"
 	imported_folders_of_source(source, foundation.TOOL_SOURCE_FOLDER, &folders)
 	testing.expect_value(t, len(folders), 5)
 	testing.expect_value(t, folders[0], foundation.SOURCE_FOLDER_CONTRACT + "/module")
-	testing.expect_value(t, folders[1], foundation.SOURCE_FOLDER_SUPPORT + "/cryptography/ed25519")
+	testing.expect_value(t, folders[1], foundation.SOURCE_FOLDER_PUBLIC + "/cryptography/ed25519")
 	testing.expect_value(t, folders[2], "tools/shared")
 	testing.expect_value(t, folders[3], foundation.TOOL_SOURCE_FOLDER + "/beside")
 	testing.expect_value(t, folders[4], foundation.TOOL_SOURCE_FOLDER + "/build")
@@ -375,11 +375,11 @@ tool_identity_follows_the_imports_of_the_tool :: proc(t: ^testing.T) {
 	first := identity_of(t, root)
 	testing.expect_value(t, identity_of(t, root), first)
 
-	file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/idle/idle.odin", "package idle\n\nchanged :: 1\n")
+	file_write(root, foundation.SOURCE_FOLDER_PUBLIC + "/idle/idle.odin", "package idle\n\nchanged :: 1\n")
 	file_write(root, "process/main.odin", "package process\n")
 	testing.expect_value(t, identity_of(t, root), first)
 
-	file_write(root, foundation.SOURCE_FOLDER_SUPPORT + "/draw/draw.odin", "package draw\n\nimport \"modus:contract/record\"\n\nchanged :: 1\n")
+	file_write(root, foundation.SOURCE_FOLDER_PUBLIC + "/draw/draw.odin", "package draw\n\nimport \"modus:contract/record\"\n\nchanged :: 1\n")
 	after_import := identity_of(t, root)
 	testing.expect(t, after_import != first, "a package that the tool imports is a source of the tool")
 

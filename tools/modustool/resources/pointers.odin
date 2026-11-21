@@ -1,8 +1,8 @@
 package resources
 
 import "modus:contract/pointer_pictures"
-import "modus:support/graphics"
-import "modus:support/vector_font"
+import "modus:graphics"
+import "modus:vector_font"
 import "core:fmt"
 import "core:math"
 import "core:mem"

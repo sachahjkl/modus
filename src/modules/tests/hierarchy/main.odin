@@ -22,8 +22,8 @@ package hierarchy
 import "modus:contract/errors"
 import "modus:contract/storage_status"
 import format "modus:contract/store"
-import "modus:support/storage"
-import "modus:support/system"
+import "modus:storage"
+import "modus:system"
 
 STORE_NAME :: "hierarchy" // Its private store: the root service names it after the process.
 TOP_TREES :: 100

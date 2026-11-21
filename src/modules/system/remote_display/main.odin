@@ -3,7 +3,7 @@
 // (src/md/features/remote_display.md; docs/QUIC.md, "8. The remote
 // display").
 //
-// QUIC in the process (src/library/support/quic), over a datagram endpoint
+// QUIC in the process (src/library/modus/quic), over a datagram endpoint
 // with a listen grant of UDP on the port remote_display.LISTEN_PORT that
 // admits the address of the host only, as `remote` has. The viewer proves
 // its own Ed25519 key in the handshake (mutual TLS 1.3 with raw public
@@ -53,16 +53,17 @@ import "base:intrinsics"
 import "modus:contract/datagram"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
+import "modus:contract/pointer_pictures"
 import "modus:contract/remote"
 import protocol "modus:contract/remote_display"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/interface"
-import "modus:support/network"
-import "modus:support/quic"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:display"
+import "modus:interface"
+import "modus:network"
+import "modus:quic"
+import "modus:random"
+import "modus:system"
 
 // The copy of the screen of the largest screen, the two pictures and the
 // header of the capture face, the QUIC connections and their streams, and
@@ -207,12 +208,16 @@ mirror_memory: system.Handle
 mirror_pixels: int
 mirror_valid: bool // The first record of the face, the whole screen, is in the copy.
 pointer_place: protocol.Pointer_Place_Body
+pointer_shape: protocol.Pointer_Shape_Body
+pointer_shape_valid: bool
 captures: u64 // The records of the compositor that went into the copy.
 
 // What one viewer is at in its viewer frame.
 Viewer_Frame_Step :: enum u8 {
 	None, // No viewer frame: the viewer waits for damage, or took the last viewer frame.
-	Pointer_Place, // The place of the pointer goes first, when it moved.
+	Pointer_Shape, // The shape of the pointer goes first when it changed.
+	Pointer_Warp, // A machine-initiated cursor move goes before the frame.
+	Pointer_Place, // The place of the pointer goes before the frame, when it moved.
 	Viewer_Frame_Start,
 	Screen_Pieces,
 	Viewer_Frame_End,
@@ -255,9 +260,14 @@ Viewer :: struct {
 	step_started_at:  u64, // Milliseconds of the machine: the start of the write bound or of the take bound.
 	read_started_at:  u64, // Milliseconds of the machine: the first byte of the record that is read.
 	viewer_frame_started_at: u64, // Nanoseconds: Viewer_Frame_Start went into the stream.
-	pointer_sent:     protocol.Pointer_Place_Body,
-	frames:           u64,
-	whole_logged:     bool,
+	pointer_sent:           protocol.Pointer_Place_Body,
+	pointer_shape_sent:     protocol.Pointer_Shape_Body,
+	pointer_shape_has_sent: bool,
+	pointer_warp_pending:   bool,
+	input_received_count:   u64,
+	input_echo_count:       u64,
+	frames:                 u64,
+	whole_logged:           bool,
 }
 viewers: [CAPACITY]Viewer
 
@@ -580,7 +590,7 @@ viewer_record_take :: proc "contextless" (connection: ^quic.Connection, viewer: 
 		return
 	}
 	switch record.kind {
-	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place:
+	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place, .Pointer_Shape, .Pointer_Picture, .Pointer_Warp:
 		// The border took a record of the viewer only.
 		viewer_refuse(connection, viewer, .Bad_Record, protocol.RECORD_PROBLEM_SENTENCES[.Wrong_Direction])
 	case .Session_Start:
@@ -603,12 +613,13 @@ viewer_record_take :: proc "contextless" (connection: ^quic.Connection, viewer: 
 			viewers_tell()
 			return
 		}
+		viewer.input_received_count += 1
 		if record.kind == .Key {
 			key := record.key
-			compositor_send({kind = u32(display.Command.Remote_Key), values = {0 = u64(key.code), 1 = u64(key.character), 2 = u64(key.pressed), 3 = u64(key.modifiers)}}, viewer.place, viewer.generation)
+			compositor_send({kind = u32(display.Command.Remote_Key), values = {0 = u64(key.code), 1 = u64(key.character), 2 = u64(key.pressed), 3 = u64(key.modifiers), 4 = u64(viewer.place), 5 = viewer.input_received_count, 6 = viewer.generation}}, viewer.place, viewer.generation)
 		} else {
 			pointer := record.pointer
-			compositor_send({kind = u32(display.Command.Remote_Pointer), values = {0 = u64(pointer.x), 1 = u64(pointer.y), 2 = u64(pointer.buttons), 3 = u64(i64(pointer.wheel))}}, viewer.place, viewer.generation)
+			compositor_send({kind = u32(display.Command.Remote_Pointer), values = {0 = u64(pointer.x), 1 = u64(pointer.y), 2 = u64(pointer.buttons), 3 = u64(i64(pointer.wheel)), 4 = u64(viewer.place), 5 = viewer.input_received_count, 6 = viewer.generation}}, viewer.place, viewer.generation)
 		}
 	}
 }
@@ -709,17 +720,45 @@ viewer_next_record :: proc "contextless" (viewer: ^Viewer) -> bool {
 		}
 		viewer.viewer_frame_serial += 1
 		viewer.viewer_frame_rectangle, viewer.viewer_frame_piece = 0, 0
-		viewer.viewer_frame_step = viewer.pointer_sent == pointer_place ? .Viewer_Frame_Start : .Pointer_Place
+		viewer.viewer_frame_step = .Pointer_Shape
 		viewer.step_started_at = now
 		return viewer_next_record(viewer)
+	case .Pointer_Shape:
+		viewer.viewer_frame_step = .Pointer_Warp
+		if pointer_shape_valid && (!viewer.pointer_shape_has_sent || viewer.pointer_shape_sent != pointer_shape) {
+			bytes, _ := protocol.record_write(viewer.outgoing[:], .Pointer_Shape, pointer_shape)
+			viewer.outgoing_length = len(bytes)
+			viewer.pointer_shape_sent = pointer_shape
+			viewer.pointer_shape_has_sent = true
+			return true
+		}
+		return viewer_next_record(viewer)
+	case .Pointer_Warp:
+		viewer.viewer_frame_step = .Pointer_Place
+		if viewer.pointer_warp_pending && pointer_place.x < screen.width && pointer_place.y < screen.height {
+			viewer.pointer_warp_pending = false
+			warp := protocol.Pointer_Warp_Body{x = pointer_place.x, y = pointer_place.y, input_echo_count = viewer.input_echo_count}
+			bytes, _ := protocol.record_write(viewer.outgoing[:], .Pointer_Warp, warp)
+			viewer.outgoing_length = len(bytes)
+			return true
+		}
+		return viewer_next_record(viewer)
 	case .Pointer_Place:
-		bytes, _ := protocol.record_write(viewer.outgoing[:], .Pointer_Place, pointer_place)
-		viewer.outgoing_length = len(bytes)
-		viewer.pointer_sent = pointer_place
 		viewer.viewer_frame_step = .Viewer_Frame_Start
-		return true
+		if viewer.pointer_sent != pointer_place {
+			bytes, _ := protocol.record_write(viewer.outgoing[:], .Pointer_Place, pointer_place)
+			viewer.outgoing_length = len(bytes)
+			viewer.pointer_sent = pointer_place
+			return true
+		}
+		return viewer_next_record(viewer)
 	case .Viewer_Frame_Start:
-		start := protocol.Viewer_Frame_Start_Body{serial = viewer.viewer_frame_serial, screen_piece_count = viewer.viewer_frame_pieces, bytes = 0}
+		start := protocol.Viewer_Frame_Start_Body{
+			serial             = viewer.viewer_frame_serial,
+			screen_piece_count = viewer.viewer_frame_pieces,
+			bytes              = 0,
+			input_echo_count   = viewer.input_echo_count,
+		}
 		// The bytes of the screen pieces are known when they are coded: the
 		// header gives the bound of the viewer frame, its screen pieces at their worst.
 		start.bytes = u64(viewer.viewer_frame_pieces) * (protocol.RECORD_HEADER_SIZE + size_of(protocol.Screen_Piece_Header)) + viewer.viewer_frame_pixels * protocol.CODED_PIXEL_LIMIT
@@ -782,7 +821,7 @@ viewer_write :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewe
 // come from the copy of the screen, which must not change under them.
 viewer_writing :: proc "contextless" (viewer: ^Viewer) -> bool {
 	switch viewer.viewer_frame_step {
-	case .Pointer_Place, .Viewer_Frame_Start, .Screen_Pieces, .Viewer_Frame_End:
+	case .Pointer_Shape, .Pointer_Warp, .Pointer_Place, .Viewer_Frame_Start, .Screen_Pieces, .Viewer_Frame_End:
 		return true
 	case .None, .In_Flight:
 		return viewer.outgoing_written < viewer.outgoing_length
@@ -1062,6 +1101,32 @@ capture_apply :: proc "contextless" () {
 	place := protocol.Pointer_Place_Body{x = header.pointer_x, y = header.pointer_y, left = header.pointer_left, top = header.pointer_top, right = header.pointer_right, bottom = header.pointer_bottom}
 	if place.x < screen.width && place.y < screen.height && place.right <= screen.width && place.bottom <= screen.height {
 		pointer_place = place
+	}
+	if _, shape_ok := enum_word.member_of_word(pointer_pictures.Pointer_Shape, u64(header.pointer_shape)); shape_ok {
+		if _, form_ok := enum_word.member_of_word(pointer_pictures.Pointer_Form, u64(header.pointer_form)); form_ok {
+			if header.pointer_size >= protocol.POINTER_SIZE_MINIMUM && header.pointer_size <= protocol.POINTER_SIZE_MAXIMUM && header.pointer_hot_spot_x < header.pointer_size && header.pointer_hot_spot_y < header.pointer_size {
+				pointer_shape = {
+					shape      = header.pointer_shape,
+					form       = header.pointer_form,
+					size       = header.pointer_size,
+					hot_spot_x = header.pointer_hot_spot_x,
+					hot_spot_y = header.pointer_hot_spot_y,
+				}
+				pointer_shape_valid = true
+			}
+		}
+	}
+	for &viewer in viewers {
+		if !viewer.bound || viewer.place < 0 || viewer.place >= display.CAPTURE_VIEWER_CAPACITY {
+			continue
+		}
+		if header.viewer_input_generation[viewer.place] == viewer.generation {
+			echo := min(header.viewer_input_echo[viewer.place], viewer.input_received_count)
+			viewer.input_echo_count = max(viewer.input_echo_count, echo)
+		}
+		if header.pointer_warped_mask & (u32(1) << u32(viewer.place)) != 0 {
+			viewer.pointer_warp_pending = true
+		}
 	}
 	captures += 1
 	held_picture = -1

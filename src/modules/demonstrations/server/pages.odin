@@ -18,9 +18,9 @@ package server
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/value_kinds"
-import "modus:support/storage"
-import "modus:support/system"
-import "modus:support/web"
+import "modus:storage"
+import "modus:system"
+import "modus:web"
 
 PAGE_CAPACITY :: 16
 PAGE_SIZE_LIMIT :: 60 * 1024 // Bytes of one page: the call region of a connection has 64 KiB.

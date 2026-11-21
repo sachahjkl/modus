@@ -16,7 +16,7 @@
 // **What a reader sees.** The root service starts the console at each
 // boot, after the compositor and `date`. The console has no surface: it
 // writes records to its [terminal](term:terminal) and reads keys from it
-// (src/library/support/terminal); the process `terminal` draws them in a window. The
+// (src/library/modus/terminal); the process `terminal` draws them in a window. The
 // first line is `kernel console. A command is a typed function: try
 // help()`, and the log gets `console: ready`. Each line that the input
 // enters goes to the log too, after the prompt `> `.
@@ -87,7 +87,7 @@
 // isolated call when the input presses Escape. A slow command never
 // freezes the edit line.
 //
-// **Its grants** (the root service, `process_roles`), each for one group of
+// **Its grants** (the root service, `start_grant_sets`), each for one group of
 // commands:
 //
 // - **Root_Ring**: start and stop processes, and connect to every service.
@@ -120,13 +120,13 @@ package console
 
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
-import "modus:private/console/lex_evaluator"
-import "modus:support/display"
-import "modus:support/key_path"
-import "modus:support/line_editor"
-import "modus:support/random"
-import "modus:support/system"
-import terminal "modus:support/terminal"
+import "modus:lex_evaluator"
+import "modus:display"
+import "modus:key_path"
+import "modus:line_editor"
+import "modus:random"
+import "modus:system"
+import terminal "modus:terminal"
 import "base:intrinsics"
 
 // Itself and four sandboxes, each a call host with its thread. The working
@@ -197,7 +197,7 @@ log_count: int
 
 ctx: ^system.Context
 
-// The random generator of this process (src/library/support/random).
+// The random generator of this process (src/library/modus/random).
 process_generator: random.Generator
 
 // entry starts the console and runs its first thread: it reads the keys
@@ -461,7 +461,11 @@ line_enter :: proc "contextless" () {
 	system.unlock(&output_lock)
 	if len(text) > 0 {
 		system.lock(&history_lock)
-		line_editor.history_add(&history, text)
+		if line_editor.history_add(&history, text) {
+			// The frecency counts the lines that the history holds, so
+			// that a load builds the same table from the kept lines.
+			line_editor.frecency_note_line(&completion_frecency, text)
+		}
 		system.unlock(&history_lock)
 		system.log_fact(.Info, Line_Entered{}, text)
 		work.count = copy(work.text[:], text)
@@ -583,7 +587,7 @@ edit_show :: proc "contextless" () {
 }
 
 // The columns of the window of the console: the root service gives its
-// terminal 96 columns (src/modules/system/root, role_terminal). The terminal draws no
+// terminal 96 columns (src/modules/system/root, start_grant_set_terminal). The terminal draws no
 // byte past its last column, so the console starts a new row there: a long
 // value goes on under its own start, and no byte of it is lost.
 WINDOW_COLUMNS :: 96

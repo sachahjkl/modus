@@ -57,8 +57,8 @@ import "modus:contract/errors"
 import "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:random"
+import "modus:system"
 
 // Two children at a time, the process that is debugged and a second
 // debugger, each with a budget of two threads; its main thread, and one

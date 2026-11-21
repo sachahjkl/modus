@@ -119,7 +119,7 @@ Similarity_File :: struct {
 	text:            string,
 	area:            Similarity_Area,
 	line_count:      i32,
-	support_imports: []string, // The import paths under modus:support/, sorted.
+	support_imports: []string, // The import paths under modus:, sorted.
 	parsed:          bool,
 }
 
@@ -382,8 +382,8 @@ similarity_read_sources :: proc(analysis: ^Similarity_Analysis, sources: []Simil
 				for declaration in tree.imports {
 					name, path := similarity_import_name(declaration)
 					builder.imports[name] = path
-					// A private part is compiled in as a support package is.
-					if strings.has_prefix(path, foundation.SUPPORT_IMPORT_START) || strings.has_prefix(path, foundation.PRIVATE_IMPORT_START) {
+					// An internal part is compiled in as a support package is.
+					if (strings.has_prefix(path, foundation.SOURCE_LIBRARY_IMPORT_START) && !strings.has_prefix(path, foundation.CONTRACT_IMPORT_START)) || strings.has_prefix(path, foundation.INTERNAL_IMPORT_START) {
 						append(&support, path)
 					}
 				}

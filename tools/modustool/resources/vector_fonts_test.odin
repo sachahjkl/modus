@@ -5,7 +5,7 @@ import "core:os"
 import "core:strings"
 import "core:testing"
 import "modus:contract/font_characters"
-import "modus:support/vector_font"
+import "modus:vector_font"
 
 // Each source font of VECTOR_FONT_SOURCES has a glyph for each character
 // of a glyph cache, through the reader of the tool: with its own glyph, or

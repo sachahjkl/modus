@@ -8,7 +8,7 @@ The details of the page are in [`docs/SITE.md`](../../../docs/SITE.md), "The byt
 
 ## Constraints
 
-- The layout must never differ from the code. The names, the offsets and the sizes come from the contract, `src/library/contract/module/format.odin`, at each build of the site.
+- The layout must never differ from the code. The names, the offsets and the sizes come from the contract, `src/library/modus/contract/module/format.odin`, at each build of the site.
 - A reader of the raw Markdown, on the host of the repository or in a terminal, must get the facts too: the guide holds a text form.
 - The page holds no style attribute and no script of its own: the rules are in the style sheet (`site_inline_code_problem`).
 - No text is cut, and no text lies over another text, at every width of the window.

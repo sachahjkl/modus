@@ -23,7 +23,7 @@ A replacement row (`docs/glossary/code.md`, "Replacement row") is a record of th
 - **A refusal is one line of the log**, which names the two modules and the reason, and an error record for the asker. The table does not change, so each importer loads the module that its import names.
 - **The removal of a replacement needs no row.** It gives back the module that the importer names, which the system description lists.
 - **The tool signs the rows when it writes the boot image of a volume**, with the key that signs its system description: the key of `SYSTEM_SIGNING_KEY`, else the test signing key. The test machine signs with the test key, as its boot image is signed. The rows of the build are a table of the tool, by the names of the modules.
-- **The format** is the contract package `src/library/contract/replacement_list` (its reader copies nothing: the list is in the pages of the boot image, which no process writes, and the root service checked its hash against the system description). The signature and its check are the private part `src/library/private/root/replacement_signature` of the root service, which the tool and the root service compile in.
+- **The format** is the contract package `src/library/modus/contract/replacement_list` (its reader copies nothing: the list is in the pages of the boot image, which no process writes, and the root service checked its hash against the system description). The signature and its check are the private part `src/library/internal/root/replacement_signature` of the root service, which the tool and the root service compile in.
 
 ## The refused forms
 

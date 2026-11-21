@@ -396,6 +396,7 @@ dropped_file_readers := [?]string {
 	"tool_build_current",
 	// The build of an outside module, by its own compiler, in its folder.
 	"outside_module_sources_hold",
+	"sdk_build_outside_odin",
 	// The path of each kind, which reads no file.
 	"build_file_of_module",
 	// A test of the build that `check` runs after its build.

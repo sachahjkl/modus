@@ -15,15 +15,15 @@
 // click on a strategy, change it.
 //
 // A case of the check ends after a count, never after a time. The two
-// threads go on until the first one did its turns and, under EEVDF, the
-// kernel counted the turns that a wake ended. The spinners go on until the
+// threads go on until the first one did its rounds and, under EEVDF, the
+// kernel counted the stints that a wake ended. The spinners go on until the
 // thread report says that each one ran SHARE_TICKS_CHECKED ticks: the
 // shares are the work of each spinner in that interval. A measure run
 // gives each case a fixed time, and writes the wakes in one second, the
 // late wakes and the work in one second.
 //
 // The process checks what does not depend on the load of the host: no
-// spinner starved, a wake ended turns under EEVDF and none under round
+// spinner starved, a wake ended stints under EEVDF and none under round
 // robin (the counts of the kernel; the wakes in one second are measures),
 // the weights order the shares under the strategies with weights, each
 // thread runs after the changes, no wake was lost, the kernel refuses a
@@ -112,14 +112,14 @@ package scheduler
 import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:contract/isolated"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:random"
+import "modus:system"
 
 // Threads: 12 spinners, two threads that wake each other, one that sleeps,
 // a changer, a thread that starts threads; later, with its first thread,
@@ -144,16 +144,16 @@ SLEEP_COUNT :: 60
 SHARE_TIME :: 500 // Milliseconds: the spinners share the processors.
 WARM_TIME :: 50 // Milliseconds before a measure: the spinners started.
 // The counts of the check.
-// The turns of the first of the two threads. Under round robin a turn can
-// wait for the end of the turn of a spinner, so the count is small.
+// The rounds of the first of the two threads. Under round robin a round can
+// wait for the end of the stint of a spinner, so the count is small.
 PAIR_ROUNDS_CHECKED :: 16
-// The turns that a wake must end under EEVDF before the case ends: the
-// check that EEVDF ends a turn by a wake is this count of the kernel.
+// The stints that a wake must end under EEVDF before the case ends: the
+// check that EEVDF ends a stint by a wake is this count of the kernel.
 PAIR_PREEMPTIONS_CHECKED :: 8
 // The ticks of processor time that each spinner runs in a case of the
 // shares, by the thread report. The spinner with the least share has
-// several turns in it, so the order of the shares by weight is in the
-// counts and not in where a turn happened to end.
+// several stints in it, so the order of the shares by weight is in the
+// counts and not in where a stint happened to end.
 SHARE_TICKS_CHECKED :: 30
 SHARE_POLL_TIME :: 2 // Milliseconds between two reads of the thread report: a poll period, not a wait.
 // A wait that ends at this deadline after its word changed lost its wake. A
@@ -178,7 +178,7 @@ Spinner :: struct #align (64) {
 Result :: struct {
 	measured:    bool, // The cases ran under this strategy.
 	wakes:       u64, // In one second: a measure run only.
-	// During the case of the two threads: the turns that a wake ended on the
+	// During the case of the two threads: the stints that a wake ended on the
 	// processor of the waker and by an interrupt, and the moves.
 	pair_local, pair_interrupts, pair_moves: u64,
 	median:      u64, // Microseconds: a measure run only.
@@ -638,9 +638,9 @@ measure :: proc "contextless" (index: int, processors: u64) {
 		result.wakes = rounds * 1_000_000_000 / elapsed
 	} else {
 		// The start of the threads is not in the counts: each spinner runs,
-		// and each of the two threads did one turn. Then the case goes on
-		// until the first thread did its turns and, under EEVDF, the kernel
-		// counted the turns that a wake ended. The bound only ends a hang.
+		// and each of the two threads did one round. Then the case goes on
+		// until the first thread did its rounds and, under EEVDF, the kernel
+		// counted the stints that a wake ended. The bound only ends a hang.
 		started_numbers: [SPINNER_LIMIT]u64
 		pair_deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 		spinners_run := spinner_machine_numbers(0, int(processors), &started_numbers)
@@ -650,14 +650,14 @@ measure :: proc "contextless" (index: int, processors: u64) {
 		start_rounds := intrinsics.atomic_load(&pair.rounds[0])
 		pair_before = counts(processors)
 		wanted_preemptions: u64 = strategies[index] == .Eevdf ? PAIR_PREEMPTIONS_CHECKED : 0
-		turns_done := false
-		for spinners_run && !turns_done && system.time() < pair_deadline {
+		rounds_done := false
+		for spinners_run && !rounds_done && system.time() < pair_deadline {
 			system.sleep(system.time() + 1)
 			pair_after = counts(processors)
-			turns_done = intrinsics.atomic_load(&pair.rounds[0]) - start_rounds >= PAIR_ROUNDS_CHECKED && pair_after.preemptions - pair_before.preemptions >= wanted_preemptions
+			rounds_done = intrinsics.atomic_load(&pair.rounds[0]) - start_rounds >= PAIR_ROUNDS_CHECKED && pair_after.preemptions - pair_before.preemptions >= wanted_preemptions
 		}
-		if !turns_done {
-			fail("the two threads did not do the turns of the check, or EEVDF did not end the turns by a wake")
+		if !rounds_done {
+			fail("the two threads did not do the rounds of the check, or EEVDF did not end the stints by a wake")
 		}
 	}
 	result.pair_interrupts = pair_after.interrupt_preemptions - pair_before.interrupt_preemptions
@@ -796,11 +796,11 @@ log_result :: proc "contextless" (index: int) {
 	}
 	strategy := strategy_field(strategies[index])
 	if system.measure_run() {
-		system.log_fact(.Info, Strategy_Wakes_Measured{wakes = result.wakes, local_turns = result.pair_local, interrupt_turns = result.pair_interrupts, pair_moves = result.pair_moves, late_middle = value_kinds.Time_In_Microseconds(result.median), late_worst = value_kinds.Time_In_Microseconds(result.worst), strategy = strategy})
-		system.log_fact(.Info, Strategy_Shares_Measured{least_share = share_field(least), most_share = share_field(most), work = result.work / 1_000_000, weight_one_share = share_field(result.weighted[0]), weight_two_share = share_field(result.weighted[1]), weight_four_share = share_field(result.weighted[2]), wake_turns = result.preemptions, moves = result.moves, pick = value_kinds.Time_In_Nanoseconds(result.pick), interrupt_preemption = value_kinds.Time_In_Nanoseconds(result.interrupt_preemption), strategy = strategy})
+		system.log_fact(.Info, Strategy_Wakes_Measured{wakes = result.wakes, local_stints = result.pair_local, interrupt_stints = result.pair_interrupts, pair_moves = result.pair_moves, late_middle = value_kinds.Time_In_Microseconds(result.median), late_worst = value_kinds.Time_In_Microseconds(result.worst), strategy = strategy})
+		system.log_fact(.Info, Strategy_Shares_Measured{least_share = share_field(least), most_share = share_field(most), work = result.work / 1_000_000, weight_one_share = share_field(result.weighted[0]), weight_two_share = share_field(result.weighted[1]), weight_four_share = share_field(result.weighted[2]), wake_stints = result.preemptions, moves = result.moves, pick = value_kinds.Time_In_Nanoseconds(result.pick), interrupt_preemption = value_kinds.Time_In_Nanoseconds(result.interrupt_preemption), strategy = strategy})
 	} else {
-		system.log_fact(.Info, Strategy_Wakes_Checked{turns = u64(PAIR_ROUNDS_CHECKED), local_turns = result.pair_local, interrupt_turns = result.pair_interrupts, pair_moves = result.pair_moves, strategy = strategy})
-		system.log_fact(.Info, Strategy_Shares_Checked{least_share = share_field(least), most_share = share_field(most), weight_one_share = share_field(result.weighted[0]), weight_two_share = share_field(result.weighted[1]), weight_four_share = share_field(result.weighted[2]), wake_turns = result.preemptions, moves = result.moves, pick = value_kinds.Time_In_Nanoseconds(result.pick), interrupt_preemption = value_kinds.Time_In_Nanoseconds(result.interrupt_preemption), strategy = strategy})
+		system.log_fact(.Info, Strategy_Wakes_Checked{rounds = u64(PAIR_ROUNDS_CHECKED), local_stints = result.pair_local, interrupt_stints = result.pair_interrupts, pair_moves = result.pair_moves, strategy = strategy})
+		system.log_fact(.Info, Strategy_Shares_Checked{least_share = share_field(least), most_share = share_field(most), weight_one_share = share_field(result.weighted[0]), weight_two_share = share_field(result.weighted[1]), weight_four_share = share_field(result.weighted[2]), wake_stints = result.preemptions, moves = result.moves, pick = value_kinds.Time_In_Nanoseconds(result.pick), interrupt_preemption = value_kinds.Time_In_Nanoseconds(result.interrupt_preemption), strategy = strategy})
 	}
 }
 
@@ -1753,7 +1753,7 @@ draw :: proc "contextless" (window: ^display.Window, report: op.System_Report, p
 		number_row(inside, y, "work, millions in 1 s", values(proc "contextless" (result: ^Result) -> u64 {return result.work / 1_000_000}), most_work / 1_000_000, "")
 		y += ROW
 	}
-	number_row(inside, y, "turns ended by a wake", values(proc "contextless" (result: ^Result) -> u64 {return result.preemptions}), 0, "")
+	number_row(inside, y, "stints ended by a wake", values(proc "contextless" (result: ^Result) -> u64 {return result.preemptions}), 0, "")
 	y += ROW
 	number_row(inside, y, "one pick", values(proc "contextless" (result: ^Result) -> u64 {return result.pick}), 0, " ns")
 	for index in 0 ..< STRATEGY_COUNT {
@@ -1991,7 +1991,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	round_robin_preemptions := results[0].pair_local + results[0].pair_interrupts
 	eevdf_preemptions := results[2].pair_local + results[2].pair_interrupts
 	if results[0].measured && results[2].measured && (round_robin_preemptions != 0 || eevdf_preemptions == 0) {
-		fail("round robin ended a turn by a wake, or EEVDF never did")
+		fail("round robin ended a stint by a wake, or EEVDF never did")
 	}
 	stress()
 	system.strategy_set(machine, original)
@@ -2006,7 +2006,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Info, Eevdf_Wakes_Compared{ratio = results[2].wakes / max(results[0].wakes, 1)})
 	}
 	if right {
-		system.log_fact(.Info, Strategies_Passed{eevdf_turns = eevdf_preemptions, changes = stress_changes})
+		system.log_fact(.Info, Strategies_Passed{eevdf_stints = eevdf_preemptions, changes = stress_changes})
 	} else {
 		system.log_fact(.Info, Check_Failed{problem = value_kinds.text_field(problem, PROBLEM_FIELD_BYTES)})
 	}

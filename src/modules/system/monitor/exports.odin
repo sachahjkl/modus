@@ -6,8 +6,8 @@ import "modus:contract/isolated"
 import "modus:contract/value_kinds"
 import process_page "modus:contract/disk_process_page"
 import op "modus:contract/operation"
-import "modus:support/disk_process"
-import "modus:support/system"
+import "modus:disk_process"
+import "modus:system"
 
 // The monitor is also a service: its exports give what its window shows, as
 // tables of records, not text. The console calls them through a

@@ -9,10 +9,10 @@ package server
 
 import "modus:contract/date"
 import "modus:contract/value_kinds"
-import "modus:support/calendar"
-import "modus:support/system"
-import "modus:support/tcp"
-import "modus:support/web"
+import "modus:calendar"
+import "modus:system"
+import "modus:tcp"
+import "modus:web"
 
 // The limits of a connection that makes no progress (milliseconds), so
 // that one host cannot keep a record for ever. 10 s is long for a request
@@ -562,5 +562,5 @@ second_measure :: proc "contextless" (now: u64) {
 	second_connections = accepted
 }
 
-// The date page of this process (src/library/contract/date), for the field Date.
+// The date page of this process (src/library/modus/contract/date), for the field Date.
 date_page: ^date.Page

@@ -9,7 +9,7 @@
 // draws what each one holds.
 //
 // **Start**: `rings` starts it from the boot image and gives it its four
-// handles. Its row of `process_roles` has no grant: a start by the root
+// handles. Its row of `start_grant_sets` has no grant: a start by the root
 // service does not give it these handles, so it has no use there.
 //
 // **Its context**, as the package relay names the places:
@@ -25,9 +25,9 @@
 // It writes nothing on the log and has no window.
 package node
 
-import "modus:support/relay"
+import "modus:relay"
 import "modus:contract/ring"
-import "modus:support/system"
+import "modus:system"
 
 // The entry of a node: it maps its four memory objects, then passes records
 // for ever.

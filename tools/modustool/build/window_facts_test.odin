@@ -5,7 +5,7 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/pointer_pictures"
 import "modus:contract/value_kinds"
-import "modus:support/sentence"
+import "modus:sentence"
 import "core:fmt"
 import "core:strings"
 import "core:testing"
@@ -485,7 +485,7 @@ the_other_facts_of_the_compositor_write_the_lines_of_before :: proc(t: ^testing.
 		facts_expect_line(t, render(t, file, "Compositor_Ready", {{"width", count}, {"height", other}}), line_of_before("compositor: ok ", count, "x", other))
 		facts_expect_line(t, render(t, file, "Left_Button_Pressed", {{"x", count}, {"y", other}}), line_of_before("compositor: a press of the left button at ", count, ",", other))
 		facts_expect_line(t, render(t, file, "Page_Flip_Refused", {{"screen_page", count}}), line_of_before("compositor: the display refused the page flip to the screen page ", count, ": each later frame is written into the screen page 0, which the display shows"))
-		facts_expect_line(t, render(t, file, "Screen_Draw_Refused", {{"error_kind", count}, {"error_argument", other}}), line_of_before("compositor: the drawing module refused execute_draw_table_in_rectangles_19 (the error kind ", count, ", the argument ", other, "): the part of the screen is not drawn. The compositor writes this line one time"))
+		facts_expect_line(t, render(t, file, "Screen_Draw_Refused", {{"error_kind", count}, {"error_argument", other}}), line_of_before("compositor: the drawing module refused execute_draw_table_in_rectangles_20 (the error kind ", count, ", the argument ", other, "): the part of the screen is not drawn. The compositor writes this line one time"))
 		facts_expect_line(t, render(t, file, "Provider_Table_Refused", {{"entry_index", count}, {"table_problem", "a text that is not UTF-8 or has a control character, or a name that is not ASCII"}}), line_of_before("compositor: the table of the palette provider is refused: ", "a text that is not UTF-8 or has a control character, or a name that is not ASCII", ", entry ", count, "; the palette lists the processes and the windows only"))
 		facts_expect_line(t, render(t, file, "Palette_Candidates_Ready", {{"candidates", count}, {"field", other}, {"buttons_words", ", as a row of buttons"}}), line_of_before("compositor: the palette has ", count, " candidates for the field ", other, ", as a row of buttons"))
 		facts_expect_line(t, render(t, file, "Palette_Candidates_Ready", {{"candidates", count}, {"field", other}, {"buttons_words", ""}}), line_of_before("compositor: the palette has ", count, " candidates for the field ", other))

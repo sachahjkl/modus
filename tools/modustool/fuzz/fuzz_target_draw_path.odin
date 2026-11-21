@@ -3,8 +3,8 @@ package fuzz
 import "core:mem"
 import "core:slice"
 import "modus:contract/draw_record"
-import "modus:support/graphics"
-import "modus:support/interface"
+import "modus:graphics"
+import "modus:interface"
 
 // The fuzz target of the rasterizer of a path (src/md/api/draw_table.md,
 // "The execution"): the fuzzed points become one Path record, drawn into a

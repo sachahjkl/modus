@@ -20,7 +20,7 @@ The guide: [`docs/INTERFACE.md`](../../../docs/INTERFACE.md), "The text in a box
 
 ## The chosen form
 
-Three procedures of `src/library/support/interface/text.odin` hold the rule:
+Three procedures of `src/library/modus/interface/text.odin` hold the rule:
 
 - `text_wrap_line` gives the first line of a text in a width, and the rest. The caller loops over the rest.
 - `text_wrapped_line_count` gives the count of the lines, so that a caller knows the height of a row before it draws it.
@@ -28,7 +28,7 @@ Three procedures of `src/library/support/interface/text.odin` hold the rule:
 
 Two elements use them, and take their height from a column: `label_value_lines`, a name and a value that each take the lines that they need; and `case_lines`, the row of a table of cases, which is the same row with a band and with both texts in the font of the cells. Four modules had the same table of cases, each with its own loop and its own fixed line: one element holds it now.
 
-**A window that does not draw with the package takes the rule alone.** `text_wrap_line` reads only the font of a text. For the font of the cells it needs no draw table, so a window that draws its pixels with `src/library/support/graphics` (`tables`, `server`, `log`, `pages`, the boot display) asks the package where each line ends and draws the line itself. The rule has one implementation; a window is not converted for it.
+**A window that does not draw with the package takes the rule alone.** `text_wrap_line` reads only the font of a text. For the font of the cells it needs no draw table, so a window that draws its pixels with `src/library/modus/graphics` (`tables`, `server`, `log`, `pages`, the boot display) asks the package where each line ends and draws the line itself. The rule has one implementation; a window is not converted for it.
 
 **A text that the kernel keeps in parts is joined before it is broken.** The kernel keeps a log text longer than one record in several records, cut at a count of bytes. The window of `log` showed each record as one row, so a word was cut where a record ended. The record format is a storage format and stays; the window joins the records of one text and breaks the joined text by the rule.
 

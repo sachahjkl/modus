@@ -17,7 +17,7 @@ import "modustool:foundation"
 
 // The folders whose sources the check reads, with their tests, and the
 // sources at the root of the repository.
-COMMENT_RULE_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_BOOT, foundation.SOURCE_FOLDER_RUNTIME, foundation.SOURCE_FOLDER_CONTRACT, foundation.SOURCE_FOLDER_SUPPORT, foundation.SOURCE_FOLDER_PRIVATE, foundation.SOURCE_FOLDER_MODULES, "tools"}
+COMMENT_RULE_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_BOOT, foundation.SOURCE_FOLDER_RUNTIME, foundation.SOURCE_FOLDER_PUBLIC, foundation.SOURCE_FOLDER_INTERNAL, foundation.SOURCE_FOLDER_MODULES, "tools"}
 COMMENT_RULE_ROOT_FILES :: [?]string{"flake.nix"}
 
 // The forms that a comment must not have.

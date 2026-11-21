@@ -1,7 +1,7 @@
 package build
 
 import module "modus:contract/module"
-import "modus:support/sentence"
+import "modus:sentence"
 import "core:strings"
 import "core:testing"
 import "modustool:foundation"

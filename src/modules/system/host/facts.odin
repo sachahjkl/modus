@@ -1,7 +1,7 @@
 package host
 
 import module "modus:contract/module"
-import "modus:support/system"
+import "modus:system"
 
 // The log facts of the call host (src/md/features/log_facts.md): the module
 // that it loaded, and the grants that it lacks, as records of fields. Each

@@ -253,6 +253,7 @@ boot_program_compile_command :: proc(volume: Boot_Volume) -> []string {
 		"-export-dependencies:json",
 		foundation.join("-export-dependencies-file:", boot_volume_dependency_file(volume)),
 		foundation.SOURCE_LIBRARY_FLAG,
+		foundation.INTERNAL_LIBRARY_FLAG,
 		foundation.CUSTOM_ATTRIBUTES_FLAG,
 		foundation.join("-define:BOOT_IMAGE=", to_root, signed_image_path(volume.path)),
 		foundation.join("-define:SYSTEM_KEY=", to_root, boot_volume_system_key_path(volume)),
@@ -891,7 +892,7 @@ self_tests := [?]Self_Test {
 	{5, "read the memory of a process outside a copy", {" vector 14 ", ": the kernel used memory of a process outside a copy"}, MACHINE_STOP_FAULT},
 	{6, "execute the code of a process", {" vector 14 ", ": the kernel executed memory of a process"}, MACHINE_STOP_FAULT},
 	// The way back from a register that the processor refuses
-	// (src/kernel/register_trial.odin): the kernel writes an address that is
+	// (src/modulus/register_trial.odin): the kernel writes an address that is
 	// not canonical to the gs base of a process, IA32_KERNEL_GS_BASE.
 	{7, "write an address that is not canonical to a register in a register trial", {"kernel: self test: the processor refused the write to the register 00000000c0000102 in a register trial, and the kernel went on after it: as it must"}, MACHINE_STOP_OK},
 }

@@ -6,7 +6,7 @@ import "core:strings"
 import "modustool:foundation"
 
 // The fixed ranges have one source: the enumeration Fixed_Range of
-// src/library/contract/fixed_addresses (its comment says why). A constant of another
+// src/library/modus/contract/fixed_addresses (its comment says why). A constant of another
 // file written as BAND_START + n * SLOT would be a range with no member,
 // which no check of the package sees. So no file of these folders, but the
 // package itself, names BAND_START or SLOT of that package.
@@ -14,7 +14,7 @@ FIXED_ADDRESSES_FOLDER :: foundation.SOURCE_FOLDER_CONTRACT + "/fixed_addresses"
 // The end of the line that imports the package, with its quotes.
 FIXED_ADDRESSES_IMPORT :: "\"" + foundation.CONTRACT_IMPORT_START + "fixed_addresses\""
 // The kernel too, with its kernel parts: a part can import the package.
-FIXED_ADDRESSES_CHECKED_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_CONTRACT, foundation.SOURCE_FOLDER_SUPPORT, foundation.SOURCE_FOLDER_PRIVATE, foundation.SOURCE_FOLDER_MODULES}
+FIXED_ADDRESSES_CHECKED_FOLDERS :: [?]string{foundation.SOURCE_FOLDER_KERNEL, foundation.SOURCE_FOLDER_PUBLIC, foundation.SOURCE_FOLDER_INTERNAL, foundation.SOURCE_FOLDER_MODULES}
 FIXED_ADDRESSES_PRIVATE_NAMES :: [?]string{"BAND_START", "SLOT"}
 
 fixed_addresses_check :: proc() -> bool {

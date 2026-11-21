@@ -7,13 +7,13 @@ import "modus:contract/frame"
 import "modus:contract/remote"
 import "modus:contract/settings"
 import "modus:contract/tpm_service"
-import "modus:support/disk_process"
-import "modus:support/principals"
-import "modus:support/system"
+import "modus:disk_process"
+import "modus:principals"
+import "modus:system"
 
 // The slots that a contract package or a support package names for its
 // reader, checked against the one table of the context slots
-// (src/library/support/system/grants.odin). A contract package imports no
+// (src/library/modus/system/grants.odin). A contract package imports no
 // support package, so it keeps its own number; this service writes each
 // slot by the name of the table, and the build stops when the two differ.
 #assert(block.GRANT_RING == system.GRANT_DEVICE_RING)
@@ -36,7 +36,7 @@ import "modus:support/system"
 #assert(principals.VALUE_SEAL_ALLOWED == system.GRANT_VALUE_SEAL_ALLOWED)
 
 // grant_slot_refused writes the line of a start that a taken slot stopped:
-// two roles of the process have one slot, and the process does not start
+// two grants of the start grant set of the process have one slot, and the process does not start
 // with one of the two handles lost. A slot is an int that the starter
 // named, which can be negative: the line writes its word.
 grant_slot_refused :: proc "contextless" (name: string, slot: int) {

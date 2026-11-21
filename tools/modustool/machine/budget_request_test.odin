@@ -9,7 +9,7 @@ import "modustool:build"
 // integer literal, a part left out 0.
 @(test)
 budget_request_read_takes_the_constant :: proc(t: ^testing.T) {
-	source :: "package p\n\nimport \"modus:support/system\"\n\n// Its loop, and one more thread.\nMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4_096, threads = 2}\n"
+	source :: "package p\n\nimport \"modus:system\"\n\n// Its loop, and one more thread.\nMODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4_096, threads = 2}\n"
 	state: build.Describe_State
 	file, parsed := build.parse_source("budget.odin", source, &state)
 	if !testing.expect(t, parsed) {

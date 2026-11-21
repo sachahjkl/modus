@@ -1,7 +1,7 @@
 package debugger_window
 
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The log facts of the window of the debugger (src/md/features/log_facts.md,
 // "The migration"): each line, as a record of fields. Each

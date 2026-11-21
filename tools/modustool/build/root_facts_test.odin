@@ -3,7 +3,7 @@ package build
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/sentence"
+import "modus:sentence"
 import "core:strings"
 import "core:testing"
 import "modustool:foundation"

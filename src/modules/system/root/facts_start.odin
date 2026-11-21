@@ -77,10 +77,10 @@ Start_Refused_Budget_Too_Small :: struct {
 	refused_process: value_kinds.Module_Name_Field,
 }
 
-// A start refused: two grants of the role of the process take one handle
+// A start refused: two grants of the start grant set of the process take one handle
 // slot of its context. The slot is the word of the starter, which can be
 // negative: the line wrote its bits as an unsigned number.
-@(log_fact = "root: cannot start {refused_process}: two grants of its role take the handle {slot} of its context, and a handle would be lost")
+@(log_fact = "root: cannot start {refused_process}: two grants of its start grant set take the handle {slot} of its context, and a handle would be lost")
 Start_Refused_Context_Handle :: struct {
 	slot:            u64,
 	refused_process: value_kinds.Module_Name_Field,

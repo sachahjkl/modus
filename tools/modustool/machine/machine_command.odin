@@ -9,8 +9,8 @@ import "core:strings"
 import "modus:contract/reference_screen"
 import "modus:contract/remote"
 import "modus:contract/timed_stream"
-import "modus:support/bochs_display"
-import "modus:support/pci"
+import "modus:bochs_display"
+import "modus:pci"
 import "modustool:build"
 import "modustool:foundation"
 
@@ -511,7 +511,7 @@ disk_prepare :: proc(path: string, size: int, fresh: bool) -> bool {
 	return true
 }
 
-// The disks beside the boot volume (src/library/support/pci has their places on the
+// The disks beside the boot volume (src/library/modus/pci has their places on the
 // bus). The data disk keeps the stores of the storage service: `run` uses
 // one that stays from run to run; each part of the test makes a new one of
 // its own (Test_Part_Run). The disk of the measures holds no data that a

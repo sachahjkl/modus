@@ -21,7 +21,7 @@ KERNEL_EDGES_MOST :: 1 << 18
 
 // The boot line of the counted kernel: the physical address of its
 // counters, then their count, in decimal
-// (src/kernel/edge_counters.odin, TEST_BUILD_LINE_EDGE_COUNTERS).
+// (src/modulus/edge_counters.odin, TEST_BUILD_LINE_EDGE_COUNTERS).
 KERNEL_EDGE_COUNTERS_LINE_START :: "kernel: TEST BUILD: edge counters at "
 KERNEL_EDGE_COUNTERS_LINE_MIDDLE :: ", "
 KERNEL_EDGE_COUNTERS_LINE_END :: " edges"

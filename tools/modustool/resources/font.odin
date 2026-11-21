@@ -203,4 +203,4 @@ glyph_rows_write :: proc(out: ^strings.Builder, rows: []u32, height, digits: int
 
 // The license of Spleen, beside the data that this command writes; the
 // reuse list and the site read it.
-SPLEEN_LICENSE_FILE :: foundation.SOURCE_FOLDER_SUPPORT + "/graphics/FONT_LICENSE"
+SPLEEN_LICENSE_FILE :: foundation.SOURCE_FOLDER_PUBLIC + "/graphics/FONT_LICENSE"

@@ -16,7 +16,16 @@ reuse_test_works := [?]Reused_Work {
 
 @(private = "file")
 reuse_test_every_file_exists :: proc(path: string) -> bool {
-	return path == "resources/fonts/OFL.txt" || path == "LICENSE.odin.txt" || path == "CREDITS.md"
+	switch path {
+	case "resources/fonts/a.ttf",
+		"resources/fonts/OFL.txt",
+		"LICENSE.odin.txt",
+		"resources/hall_of_fame/a.png",
+		"CREDITS.md",
+		"src/kernel/schedule.odin":
+		return true
+	}
+	return false
 }
 
 @(private = "file")
@@ -24,24 +33,29 @@ reuse_test_credits_are_gone :: proc(path: string) -> bool {
 	return path != "CREDITS.md" && reuse_test_every_file_exists(path)
 }
 
-REUSE_TEST_HEAD :: "# Properties\n\nText.\n\n## Reuse list\n\nEach work of others.\n\n" + REUSE_LIST_HEADER_ROW + "\n|---|---|---|---|\n"
+REUSE_TEST_HEAD :: "# Credits and licences\n\n" + REUSE_LIST_HEADING + "\n\n" + REUSE_LIST_HEADER_ROW + "\n|---|---|---|---|---|---|---|\n"
 
-// The table of the next section is not a part of the list.
-REUSE_TEST_TAIL :: "\n## Open decisions\n\n| A | table | of | another section |\n|---|---|---|---|\n| `x` | `y` | z | `w` |\n"
+REUSE_TEST_ALGO_SECTION :: "\n" + CREDITS_ALGORITHMS_HEADING + "\n\n" + CREDITS_ALGORITHMS_HEADER_ROW + "\n|---|---|---|---|---|---|\n" +
+	"| EEVDF | Stoica | Linux | Paper | `src/kernel/schedule.odin` | — |\n"
+
+REUSE_TEST_INSP_SECTION :: "\n" + CREDITS_INSPIRATIONS_HEADING + "\n\n" + CREDITS_INSPIRATIONS_HEADER_ROW + "\n|---|---|---|---|---|\n" +
+	"| seL4 | seL4 Foundation | Took microkernel; left proofs. | https://sel4.systems/ | https://sel4.systems/Foundation/Donate/ |\n"
+
+REUSE_TEST_TAIL :: REUSE_TEST_ALGO_SECTION + REUSE_TEST_INSP_SECTION
 
 REUSE_TEST_GOOD_LIST :: REUSE_TEST_HEAD +
-	"| Font A, as a subset | `resources/fonts/a.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |\n" +
-	"| The runtime of the compiler | `base:runtime` | Zlib | `LICENSE.odin.txt` |\n" +
-	"| A portrait: a credited frame | `resources/hall_of_fame/a.png` | NONE | `CREDITS.md` |\n" +
+	"| Font A, as a subset | `resources/fonts/a.ttf` | Font A | Author A | OFL-1.1 | `resources/fonts/OFL.txt` | — |\n" +
+	"| The runtime of the compiler | `base:runtime` | Odin | Ginger Bill | Zlib | `LICENSE.odin.txt` | https://github.com/sponsors/gingerBill |\n" +
+	"| A portrait: a credited frame | `resources/hall_of_fame/a.png` | Portrait | Author P | NONE | `CREDITS.md` | — |\n" +
 	REUSE_TEST_TAIL
 
-// Four faults: the font has no row, a row names a font that is gone, the
-// runtime has a wrong license, and (with reuse_test_credits_are_gone) the
-// license file of the portrait does not exist.
+// Five faults: the font has no row, a row names a font that is gone (and does
+// not exist), the runtime has a wrong license, and (with
+// reuse_test_credits_are_gone) the license file of the portrait does not exist.
 REUSE_TEST_BAD_LIST :: REUSE_TEST_HEAD +
-	"| A font that is gone | `resources/fonts/gone.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |\n" +
-	"| The runtime of the compiler | `base:runtime` | MIT | `LICENSE.odin.txt` |\n" +
-	"| A portrait: a credited frame | `resources/hall_of_fame/a.png` | NONE | `CREDITS.md` |\n" +
+	"| A font that is gone | `resources/fonts/gone.ttf` | Font G | Author G | OFL-1.1 | `resources/fonts/OFL.txt` | — |\n" +
+	"| The runtime of the compiler | `base:runtime` | Odin | Ginger Bill | MIT | `LICENSE.odin.txt` | — |\n" +
+	"| A portrait: a credited frame | `resources/hall_of_fame/a.png` | Portrait | Author P | NONE | `CREDITS.md` | — |\n" +
 	REUSE_TEST_TAIL
 
 @(private = "file")
@@ -70,9 +84,9 @@ reuse_list_good_list_has_no_problem :: proc(t: ^testing.T) {
 @(test)
 reuse_list_bad_list_has_each_fault :: proc(t: ^testing.T) {
 	problems := reuse_list_problems(REUSE_TEST_BAD_LIST, reuse_test_works[:], reuse_test_credits_are_gone)
-	testing.expect_value(t, len(problems), 4)
 	testing.expect(t, reuse_test_some_problem_holds(problems, "resources/fonts/a.ttf", "has no row"))
 	testing.expect(t, reuse_test_some_problem_holds(problems, "resources/fonts/gone.ttf", "does not ship"))
+	testing.expect(t, reuse_test_some_problem_holds(problems, "resources/fonts/gone.ttf", "does not exist"))
 	testing.expect(t, reuse_test_some_problem_holds(problems, "base:runtime", "MIT", "Zlib"))
 	testing.expect(t, reuse_test_some_problem_holds(problems, "CREDITS.md", "does not exist"))
 }
@@ -83,17 +97,61 @@ reuse_list_refuses_a_row_out_of_its_form :: proc(t: ^testing.T) {
 		row:   string,
 		words: string,
 	} {
-		{"| Font A | `resources/fonts/a.ttf` | SIL OFL 1.1 | `resources/fonts/OFL.txt` |\n", "not an SPDX identifier"},
-		{"| Font A | resources/fonts/a.ttf | OFL-1.1 | `resources/fonts/OFL.txt` |\n", "one code span"},
-		{"| Font A | `resources/fonts/a.ttf` | OFL-1.1 |\n", "cells"},
-		{"| Font A | `resources/fonts/a.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |\n| Font A again | `resources/fonts/a.ttf` | OFL-1.1 | `resources/fonts/OFL.txt` |\n", "a second time"},
+		{"| Font A | `resources/fonts/a.ttf` | Font A | Author A | SIL OFL 1.1 | `resources/fonts/OFL.txt` | — |\n", "not an SPDX identifier"},
+		{"| Font A | resources/fonts/a.ttf | Font A | Author A | OFL-1.1 | `resources/fonts/OFL.txt` | — |\n", "one code span"},
+		{"| Font A | `resources/fonts/a.ttf` | Font A | Author A | OFL-1.1 | `resources/fonts/OFL.txt` |\n", "cells"},
+		{"| Font A | `resources/fonts/a.ttf` | Font A | Author A | OFL-1.1 | `resources/fonts/OFL.txt` | |\n", "empty Funding"},
+		{"| Font A | `resources/fonts/a.ttf` | Font A | | OFL-1.1 | `resources/fonts/OFL.txt` | — |\n", "empty Authors"},
+		{"| Font A | `resources/fonts/a.ttf` | Font A | Author A | OFL-1.1 | `resources/fonts/OFL.txt` | — |\n| Font A again | `resources/fonts/a.ttf` | Font A | Author A | OFL-1.1 | `resources/fonts/OFL.txt` | — |\n", "a second time"},
 	}
 	for test_case in cases {
 		problems := reuse_list_problems(strings.concatenate({REUSE_TEST_HEAD, test_case.row, REUSE_TEST_TAIL}, context.temp_allocator), reuse_test_works[:1], reuse_test_every_file_exists)
 		testing.expectf(t, reuse_test_some_problem_holds(problems, test_case.words), "the row %q gives no problem with %q", test_case.row, test_case.words)
 	}
-	no_section := reuse_list_problems("# Properties\n\n## Open decisions\n", nil, reuse_test_every_file_exists)
-	testing.expect(t, reuse_test_some_problem_holds(no_section, "no section"))
+	no_sections := reuse_list_problems("# Credits\n", nil, reuse_test_every_file_exists)
+	testing.expect(t, reuse_test_some_problem_holds(no_sections, "no section", REUSE_LIST_HEADING))
+	testing.expect(t, reuse_test_some_problem_holds(no_sections, "no section", CREDITS_ALGORITHMS_HEADING))
+	testing.expect(t, reuse_test_some_problem_holds(no_sections, "no section", CREDITS_INSPIRATIONS_HEADING))
+}
+
+@(test)
+credits_refuses_broken_algorithms_and_inspirations :: proc(t: ^testing.T) {
+	REUSED_ONE :: REUSE_TEST_HEAD + "| Font A | `resources/fonts/a.ttf` | Font A | Author A | OFL-1.1 | `resources/fonts/OFL.txt` | — |\n"
+
+	// Broken path in Reimplemented algorithms.
+	bad_algo_path := REUSED_ONE +
+		"\n" + CREDITS_ALGORITHMS_HEADING + "\n\n" + CREDITS_ALGORITHMS_HEADER_ROW + "\n|---|---|---|---|---|---|\n" +
+		"| EEVDF | Stoica | Linux | Paper | `src/kernel/does_not_exist.odin` | — |\n" +
+		REUSE_TEST_INSP_SECTION
+	problems := reuse_list_problems(bad_algo_path, reuse_test_works[:1], reuse_test_every_file_exists)
+	testing.expect(t, reuse_test_some_problem_holds(problems, "src/kernel/does_not_exist.odin", "does not exist"))
+
+	// Duplicate algorithm.
+	dup_algo := REUSED_ONE +
+		"\n" + CREDITS_ALGORITHMS_HEADING + "\n\n" + CREDITS_ALGORITHMS_HEADER_ROW + "\n|---|---|---|---|---|---|\n" +
+		"| EEVDF | Stoica | Linux | Paper | `src/kernel/schedule.odin` | — |\n" +
+		"| EEVDF | Stoica | Linux | Paper | `src/kernel/schedule.odin` | — |\n" +
+		REUSE_TEST_INSP_SECTION
+	problems = reuse_list_problems(dup_algo, reuse_test_works[:1], reuse_test_every_file_exists)
+	testing.expect(t, reuse_test_some_problem_holds(problems, "EEVDF", "a second time"))
+
+	// Missing column in Reimplemented algorithms.
+	short_algo := REUSED_ONE +
+		"\n" + CREDITS_ALGORITHMS_HEADING + "\n\n" + CREDITS_ALGORITHMS_HEADER_ROW + "\n|---|---|---|---|---|---|\n" +
+		"| EEVDF | Stoica | Linux | Paper | `src/kernel/schedule.odin` |\n" +
+		REUSE_TEST_INSP_SECTION
+	problems = reuse_list_problems(short_algo, reuse_test_works[:1], reuse_test_every_file_exists)
+	testing.expect(t, reuse_test_some_problem_holds(problems, "Reimplemented algorithms", "cells"))
+
+	// Duplicate inspiration and empty column in Inspirations.
+	bad_insp := REUSED_ONE + REUSE_TEST_ALGO_SECTION +
+		"\n" + CREDITS_INSPIRATIONS_HEADING + "\n\n" + CREDITS_INSPIRATIONS_HEADER_ROW + "\n|---|---|---|---|---|\n" +
+		"| seL4 | seL4 Foundation | Took microkernel. | https://sel4.systems/ | — |\n" +
+		"| seL4 | seL4 Foundation | Took microkernel. | https://sel4.systems/ | — |\n" +
+		"| Nix | Eelco | Took store. | https://nixos.org/ | |\n"
+	problems = reuse_list_problems(bad_insp, reuse_test_works[:1], reuse_test_every_file_exists)
+	testing.expect(t, reuse_test_some_problem_holds(problems, "seL4", "a second time"))
+	testing.expect(t, reuse_test_some_problem_holds(problems, "Inspirations", "empty Funding"))
 }
 
 @(test)
@@ -115,7 +173,7 @@ reuse_license_expressions :: proc(t: ^testing.T) {
 @(test)
 reuse_list_imports_of_the_core_library :: proc(t: ^testing.T) {
 	imports := make([dynamic]string, context.temp_allocator)
-	reuse_core_imports_of_source("package a\n\nimport \"base:intrinsics\"\nimport \"core:reflect\"\nimport other \"core:reflect\"\nimport \"modus:support/system\"\n// import \"core:fmt\"\n", &imports)
+	reuse_core_imports_of_source("package a\n\nimport \"base:intrinsics\"\nimport \"core:reflect\"\nimport other \"core:reflect\"\nimport \"modus:system\"\n// import \"core:fmt\"\n", &imports)
 	testing.expect_value(t, len(imports), 1)
 	if len(imports) == 1 {
 		testing.expect_value(t, imports[0], "core:reflect")

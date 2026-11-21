@@ -1,10 +1,10 @@
 package compositor
 
-import clipboard_rules "modus:private/compositor/clipboard"
+import clipboard_rules "internal:compositor/clipboard"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/system"
+import "modus:display"
+import "modus:system"
 
 // The clipboard (src/md/features/clipboard.md): one slot of the
 // compositor, which a process reaches only at a key of the principal.
@@ -54,7 +54,11 @@ clipboard_key :: proc "contextless" (character: rune, modifiers: u32, pressed: b
 		return false
 	case .Copy:
 		if pressed {
-			clipboard_copy_key()
+			clipboard_copy_key(.Copy)
+		}
+	case .Cut:
+		if pressed {
+			clipboard_copy_key(.Cut)
 		}
 	case .Paste:
 		if pressed {
@@ -76,10 +80,10 @@ clipboard_lend_end :: proc "contextless" () {
 	clipboard_lend_client, clipboard_lend_handle, clipboard_lend_owner = -1, 0, -1
 }
 
-// clipboard_copy_key sends Copy_Asked with a new serial to the window in
-// front. A copy that waited for it is replaced: a process that lost the
-// event answers the newest one.
-clipboard_copy_key :: proc "contextless" () {
+// clipboard_copy_key sends Copy_Asked with a new serial and action (Copy
+// or Cut) to the window in front. A copy that waited for it is replaced: a
+// process that lost the event answers the newest one.
+clipboard_copy_key :: proc "contextless" (action: display.Copy_Action = .Copy) {
 	clipboard_lend_end()
 	if order_count == 0 {
 		system.log_fact(.Info, Copy_Key_Without_Window{})
@@ -88,8 +92,13 @@ clipboard_copy_key :: proc "contextless" () {
 	client := &clients[order[order_count - 1]]
 	serial := clipboard_rules.serial_next(&clipboard_serials)
 	clipboard_rules.copy_key_take(&client.clipboard, serial)
-	send(client, .Copy_Asked, {0 = serial})
-	system.log_fact(.Info, Copy_Key_Sent{window = window_field(client.title[:])})
+	send(client, .Copy_Asked, {0 = serial, 1 = u64(action)})
+	switch action {
+	case .Copy:
+		system.log_fact(.Info, Copy_Key_Sent{window = window_field(client.title[:])})
+	case .Cut:
+		system.log_fact(.Info, Cut_Key_Sent{window = window_field(client.title[:])})
+	}
 }
 
 // clipboard_paste_key lends the content to the window in front: a copy of

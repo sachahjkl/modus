@@ -18,7 +18,7 @@
 package output_measure_reader
 
 import "modus:contract/output"
-import "modus:support/system"
+import "modus:system"
 
 // The record of the writer: the type check of the root service compares
 // the two descriptions at the wiring.

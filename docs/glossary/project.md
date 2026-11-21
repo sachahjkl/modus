@@ -4,7 +4,7 @@ The words of this group name how the project is run and published: the documents
 
 ### Property
 
-A property is one of the 24 fundamental concepts of the system, each with its rule, its reasons and its costs, in `docs/PROPERTIES.md`.
+A property is one of the 25 fundamental concepts of the system, each with its rule, its reasons and its costs, in `docs/PROPERTIES.md`.
 
 The properties are the reference against which every proposal is measured: a proposal that contradicts one is named as such before any work on it. Each property has a number, a title ("10. One code module") and a status in the summary table of the document. The status page of the site shows each property with its status. A comment in a source never names a property by its number: it states the reason in words. `modustool check` refuses "(property 14)" as a comment breach.
 
@@ -14,11 +14,11 @@ Do not use: principle (for this), requirement, axiom.
 
 ### Reuse list
 
-The reuse list is the table of `docs/PROPERTIES.md` that names each reused work: a work of others that the system ships in a module or in the boot image, or that the repository holds as a copy.
+The reuse list is the "Reused code" table of `docs/CREDITS.md` that names each reused work: a work of others that the system ships in a module or in the boot image, or that the repository holds as a copy.
 
-Each row gives the work, its place in the repository, its license as an SPDX identifier, and the file with the text of that license. A font subset, a pointer theme, the copied cryptography and each portrait of the hall of fame are reused works. A tool of the host that builds or tests the system (QEMU, the compiler) is not, and neither is a design or a standard that the system follows. `modustool check` compares the list with the records of the repository.
+Each row gives the work, its place in the repository, its upstream project, its authors, its license as an SPDX identifier, the file with the text of that license, and an upstream funding link. A font subset, a pointer theme, the copied cryptography and each portrait of the hall of fame are reused works. A tool of the host that builds or tests the system (QEMU, the compiler) is not, and neither is a design or a standard that the system follows. `modustool check` compares the list with the records of the repository.
 
-The design: `src/md/infrastructure/reuse_list.md`.
+The design: `src/md/infrastructure/credits_and_licences.md`.
 
 Do not use: third-party list, dependency list, bill of materials.
 
@@ -148,7 +148,7 @@ Do not use: version (a stored object has versions), tag, build.
 
 The release number is the number of a release, in the form `<major>.<minor>.<patch>`.
 
-The project is before its first major release, so a release number is `0.N.0` for a release of new work and `0.N.1` for a correction after it. `RELEASE_NUMBER` in `src/library/contract/release` holds the newest one, and `modustool release_number` prints it; the foot of each page of the site and the page graph name it. The tool writes it; no one edits it by hand. `modustool ship step` takes the next `0.N.0`, `modustool ship correction` the next `0.N.1`.
+The project is before its first major release, so a release number is `0.N.0` for a release of new work and `0.N.1` for a correction after it. `RELEASE_NUMBER` in `src/library/modus/contract/release` holds the newest one, and `modustool release_number` prints it; the foot of each page of the site and the page graph name it. The tool writes it; no one edits it by hand. `modustool ship step` takes the next `0.N.0`, `modustool ship correction` the next `0.N.1`.
 
 The design: `docs/SITE.md`, "The pages"; `src/md/infrastructure/releases.md`.
 
@@ -298,7 +298,7 @@ Do not use: search box, search bar, omnibox.
 
 The mark is the picture that stands for the system: a heron on a grid of 24 by 24 square cells, each part filled with one gradient.
 
-`src/library/support/mark` holds it as data: the rows of the still heron, the colors of each part and the animations of the mark. Every picture of the mark comes from that one table. One generator of the tool draws each picture file, in the variant of the mark that its use names: `modustool logo` for `resources/logo`, `modustool site` for the site, and `modustool mark` for one picture. The system draws the mark on the boot display and in the bar.
+`src/library/modus/mark` holds it as data: the rows of the still heron, the colors of each part and the animations of the mark. Every picture of the mark comes from that one table. One generator of the tool draws each picture file, in the variant of the mark that its use names: `modustool logo` for `resources/logo`, `modustool site` for the site, and `modustool mark` for one picture. The system draws the mark on the boot display and in the bar.
 
 The design: `docs/DESIGN.md`, "11. The mark".
 
@@ -326,7 +326,7 @@ Do not use: logo font, wordmark font, pixel font.
 
 ### Still heron
 
-The still heron is the heron of the mark with no animation: the 24 rows of `heron_rows` in `src/library/support/mark`.
+The still heron is the heron of the mark with no animation: the 24 rows of `heron_rows` in `src/library/modus/mark`.
 
 Each animation starts from it and ends on it, and it is the frame 0 of each one. A picture that does not move (a file of `resources/logo`, an icon, the boot display) shows it.
 
@@ -338,7 +338,7 @@ Do not use: rest pose, idle frame, base frame (a base frame is another thing: se
 
 An animation of the mark is a short list of frames in which a few cells of the still heron change.
 
-In a frame a cell takes the letter of another part, or becomes empty. Each frame has a duration, and starts from the still heron or from an earlier frame of the same animation, its base frame. After its last frame the heron is still again. The animations are data in `src/library/support/mark/animation.odin`, from the blink of one cell to the dash. The data does not say when one plays: the order of play of the place that shows them chooses which one comes next.
+In a frame a cell takes the letter of another part, or becomes empty. Each frame has a duration, and starts from the still heron or from an earlier frame of the same animation, its base frame. After its last frame the heron is still again. The animations are data in `src/library/modus/mark/animation.odin`, from the blink of one cell to the dash. The data does not say when one plays: the order of play of the place that shows them chooses which one comes next.
 
 The design: `docs/DESIGN.md`, "11. The mark".
 
@@ -368,7 +368,7 @@ Do not use: idle ratio, duty cycle, pause.
 
 A move of the heron is the list of the forms and of the places that the heron takes during an animation of the mark, each in whole cells.
 
-An animation of the mark changes cells; a move takes the whole heron above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a crouch. The water stays in its place. A move is a list of keys in `src/library/support/mark` (`move_keys`): a time, a form of the heron and a place in whole cells. The heron is never between two cells, and no picture of it changes its size. The home of the site and the process `heron` play the same keys.
+An animation of the mark changes cells; a move takes the whole heron above the line of the water: across the window in the dash, up in the hop and the flap, wider and lower in a crouch. The water stays in its place. A move is a list of keys in `src/library/modus/mark` (`move_keys`): a time, a form of the heron and a place in whole cells. The heron is never between two cells, and no picture of it changes its size. The home of the site and the process `heron` play the same keys.
 
 The design: `docs/DESIGN.md`, "The moves".
 
@@ -378,7 +378,7 @@ Do not use: tween, sprite motion, scale.
 
 A form of the heron is one drawing, in whole cells, of the part of the heron above the water: the natural heron, or the heron squashed or stretched.
 
-A cell of the heron is a square of one size, so a squashed heron is not a picture made wider: it is the heron drawn with more columns and fewer rows of the same cells. A form names the columns and the rows of a frame that it repeats or leaves out, chosen by hand, then cells corrected by hand (`form_lines` and `form_corrections` in `src/library/support/mark`). The head, the eye, the beak and the crest are the same in every form. Example: the crouch is 28 by 19 cells.
+A cell of the heron is a square of one size, so a squashed heron is not a picture made wider: it is the heron drawn with more columns and fewer rows of the same cells. A form names the columns and the rows of a frame that it repeats or leaves out, chosen by hand, then cells corrected by hand (`form_lines` and `form_corrections` in `src/library/modus/mark`). The head, the eye, the beak and the crest are the same in every form. Example: the crouch is 28 by 19 cells.
 
 The design: `docs/DESIGN.md`, "The moves".
 
@@ -748,7 +748,7 @@ Do not use: entry, item, API (for this).
 
 A value kind is what a technical value is for a reader, such as a number, a size, a time, a handle, a status or a module, so that every place that shows the value can give it one look.
 
-The kinds are one enumeration of the system, `value_kinds.Value_Kind` (`src/library/contract/value_kinds`). One table gives each kind its color in each color scheme, and another its kind icon. The site and the log use the same kinds, so a size has one color on a page and in the log. The writer of a table, a symbol or a line of the log states the kind of each value: no text is classified by its look. It is not a type of a language: `Size` and `Number` can both be an `int`.
+The kinds are one enumeration of the system, `value_kinds.Value_Kind` (`src/library/modus/contract/value_kinds`). One table gives each kind its color in each color scheme, and another its kind icon. The site and the log use the same kinds, so a size has one color on a page and in the log. The writer of a table, a symbol or a line of the log states the kind of each value: no text is classified by its look. It is not a type of a language: `Size` and `Number` can both be an `int`.
 
 The design: `docs/SITE.md`, "The kinds of values".
 
@@ -848,7 +848,7 @@ Do not use: tag, badge, cross-reference (for this).
 
 ### Wire form
 
-A wire form is one of the types of the call form of the module contract, a member of `Type` of `src/library/contract/module`: Integer, Text, Record, Handle, Table or Bytes.
+A wire form is one of the types of the call form of the module contract, a member of `Type` of `src/library/modus/contract/module`: Integer, Text, Record, Handle, Table or Bytes.
 
 It says how a call carries a parameter or a result: in one word of the call form, and what that word holds or points to. An Integer is the value; a Text, a Record, a Table and Bytes are an address of memory of the caller with a header; a Handle is a handle number. Because each parameter has a wire form in the description of an export, one export serves a direct call, an isolated call and the console with no glue code.
 

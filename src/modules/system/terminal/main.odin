@@ -1,10 +1,10 @@
 // The terminal: it shows the text that a process gives as records, and it
-// gives the keys that the input types to that process (src/library/support/terminal).
+// gives the keys that the input types to that process (src/library/modus/terminal).
 //
 // The terminal starts no process. The root service starts a process and its
 // terminal, and gives the same terminal ring and text region to the two.
 // The terminal holds a surface, these two memory objects, and a handle that
-// reads the state of the process: it has nothing of the role of the process.
+// reads the state of the process: it has nothing of the start grant set of the process.
 // The name of the process, the size of the text and what the window shows
 // are values of its context.
 //
@@ -14,7 +14,7 @@
 // The pointer: the scroll bar at the right of the lines moves the view. A
 // press on an arrow button moves it by one line, and again while the
 // button is held; a press on the track by one page; the thumb follows the
-// pointer while it is held (src/library/support/interface/scroll_bar.odin).
+// pointer while it is held (src/library/modus/interface/scroll_bar.odin).
 //
 // Two threads:
 //   the reader   It reads the records of the terminal ring and keeps the
@@ -44,7 +44,7 @@
 //
 // **Start**: nothing starts it by name. The root service starts one
 // terminal with each process that has the grant **Terminal**, and refuses
-// `start("terminal")`. Its row of `process_roles` has the grant
+// `start("terminal")`. Its row of `start_grant_sets` has the grant
 // System_Part only: it receives only the handles above.
 //
 // **What a reader sees**: a window with the name of the process, its
@@ -83,17 +83,17 @@ package terminal_process
 
 import "modus:contract/enum_word"
 import op "modus:contract/operation"
-import "modus:support/display"
-import "modus:support/text_rendering"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/key_path"
-import "modus:support/kind_icons"
+import "modus:display"
+import "modus:text_rendering"
+import "modus:graphics"
+import "modus:interface"
+import "modus:key_path"
+import "modus:kind_icons"
 import "modus:contract/value_kinds"
 import "modus:contract/ring"
 import "modus:contract/text_encoding"
-import "modus:support/system"
-import terminal "modus:support/terminal"
+import "modus:system"
+import terminal "modus:terminal"
 import "base:intrinsics"
 
 // The lines that it keeps, and the two pictures of its window: their size
@@ -569,7 +569,7 @@ style_color :: proc "contextless" (style: terminal.Style) -> graphics.Color {
 
 // The text of each record is UTF-8 from another process: a cell holds one
 // character, decoded once here, and an invalid sequence is one cell of the replacement
-// character (src/library/contract/text_encoding). A count of bytes of a
+// character (src/library/modus/contract/text_encoding). A count of bytes of a
 // record (a cursor, a mark, a match, a run of code) names the character
 // that starts at that byte.
 
@@ -713,7 +713,7 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 
 // list_icon_form gives the form and the color of the kind icon of a row of
 // the completion list, the same as a row of the palette has for the same
-// kind (src/library/private/compositor/palette, entry_icon). nil: no icon.
+// kind (src/library/internal/compositor/palette, entry_icon). nil: no icon.
 //
 // - A service, a module and a process take the form of a module.
 // - An export is a part of a module: its own form, in the color of a module.

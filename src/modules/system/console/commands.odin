@@ -11,13 +11,13 @@ import "modus:contract/ring"
 import "modus:contract/start_grant"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
-import "modus:support/disk_process"
-import "modus:support/principals"
-import "modus:support/random"
+import "modus:disk_process"
+import "modus:principals"
+import "modus:random"
 import "modus:contract/root_ring"
 import "modus:contract/enum_word"
-import "modus:private/console/lex_parser"
-import "modus:support/system"
+import "modus:lex_parser"
+import "modus:system"
 import "base:intrinsics"
 
 // A command: a function with typed parameters and a typed result.
@@ -234,7 +234,7 @@ commands_start :: proc "contextless" () {
 	}
 	debug_names = system.debug_names_of(ctx)
 	requests_memory = ctx.handles[system.GRANT_ROOT]
-	requests, _ = system.ring_open(requests_memory)
+	requests, _ = system.ring_open(requests_memory, receive_handles = true)
 	if address, status := system.memory_map(ctx.handles[system.GRANT_REPLACEMENTS], {}); status == .Ok {
 		replacement_table = (^system.Replacement_Table)(address)
 	}
@@ -496,6 +496,22 @@ commands_start :: proc "contextless" () {
 	// lent handles; the console keeps the handles of 8 started processes
 	// with a record output at most.
 	command("start", {.Text, .Table}, .None, "start a process, by module name, with a wiring list or none", start_process, optional_last = true)
+	// Starts the editor `edit` on a text object of a store of the principal
+	// of this console. It gives nothing.
+	//
+	// - `store`: the name of a store of this principal, as `storage.stores()`
+	//   lists it, 1 to 31 bytes.
+	// - `name`: the name or `/`-separated path of the text object in that
+	//   store, 1 to 256 bytes.
+	//
+	// ```
+	// > edit("notes", "today.txt")
+	// ```
+	//
+	// Errors: invalid store name or object path; the store belongs to another
+	// principal or the console lacks `acts_for_principal`; the root service
+	// refused the start or did not answer.
+	command("edit", {.Text, .Text}, .None, "edit a text object of a store in the editor", edit_object)
 	// Asks the root service to start a disk process: a process whose module
 	// file is an object of the store `module_files` of the storage service, and
 	// not a file of the boot image. It gives nothing.
@@ -1731,7 +1747,7 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 	sandbox.ring_memory = system.Handle(completion.values[1])
 	sandbox.region_memory = system.Handle(completion.values[2])
 	hash := transmute([32]u8)[4]u64{completion.values[3], completion.values[4], completion.values[5], completion.values[6]}
-	calls, ring_status := system.ring_open(sandbox.ring_memory)
+	calls, ring_status := system.ring_open(sandbox.ring_memory, receive_handles = true)
 	bytes, region_status := system.memory_map(sandbox.region_memory)
 	sandbox.ring = calls
 	// A refused handle has no pages: the region is empty.
@@ -1906,7 +1922,7 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 			integers[index] = u64(uintptr(&argument.text))
 		case .Record:
 			integers[index] = u64(uintptr(raw_data(argument.record)))
-		case .None, .Integer, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .List:
+		case .None, .Integer, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 			// The check of the line gave each other kind its integer: a
 			// handle is its number, a member its value or the absent word,
 			// and a Table or Bytes parameter took its place above. An export
@@ -1976,7 +1992,7 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 		return {kind = .Record, record = record, file = item.file, detail = item.function.result_detail}
 	case .Table:
 		return table_take(item, &table, results[0])
-	case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List:
+	case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		// None gives no value; callable_by_console refuses an export with
 		// a Handle or a Bytes result, and no export gives a Stream.
 	}
@@ -2482,7 +2498,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 					return {kind = .Table, record = bytes, file = item.file, detail = item.function.result_detail}
 				case .Enum:
 					return enum_result(item, i64(completion.values[0]))
-				case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List:
+				case .None, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 					// None gives no value; callable_by_console refuses an
 					// export with a Handle or a Bytes result, and no export
 					// gives a Stream.
@@ -2827,6 +2843,63 @@ start_process :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	if !stream_owner_keep(name, system.Handle(completion.values[0])) {
 		return fail("start: ", name, " runs, and has no typed name: the console names the record outputs of ", u64(STREAM_OWNER_CAPACITY), " processes that it started at most, until one of them stops")
+	}
+	return {}
+}
+
+// edit_object starts `edit` on the named text object of a store of the
+// principal of this console (Root_Command.Start_Edit).
+edit_object :: proc "contextless" (arguments: []Value) -> Value {
+	store_name := arguments[0].text
+	object_path := arguments[1].text
+	store_refusal, store_offset := root_ring.edit_store_validate(store_name)
+	switch store_refusal {
+	case .None:
+	case .Empty:
+		return fail("edit: the store name is empty; it must have 1 to ", u64(root_ring.EDIT_TARGET_STORE_LIMIT), " bytes")
+	case .Too_Long:
+		return fail("edit: the store name has ", u64(len(store_name)), " bytes; a store name has at most ", u64(root_ring.EDIT_TARGET_STORE_LIMIT))
+	case .Bad_Byte:
+		return fail("edit: the byte ", u64(store_offset), " of the store name is not valid")
+	}
+	path_refusal, path_offset := root_ring.edit_path_validate(object_path)
+	switch path_refusal {
+	case .None:
+	case .Empty:
+		return fail("edit: the object name is empty; it must have 1 to ", u64(root_ring.EDIT_TARGET_PATH_LIMIT), " bytes")
+	case .Too_Long:
+		return fail("edit: the object path has ", u64(len(object_path)), " bytes; a path has at most ", u64(root_ring.EDIT_TARGET_PATH_LIMIT))
+	case .Too_Deep:
+		return fail("edit: the object path has too many nested trees")
+	case .Bad_Segment:
+		return fail("edit: the object path has an invalid name at byte ", u64(path_offset))
+	}
+	if requests.head == nil {
+		return fail_no_answer()
+	}
+	path_memory, create_status := system.memory_create(1)
+	if create_status != .Ok {
+		return fail("edit: cannot allocate memory for the object path: ", op.STATUS_NAMES[create_status])
+	}
+	mapped, map_status := system.memory_map(path_memory)
+	if map_status != .Ok {
+		system.close(path_memory)
+		return fail("edit: cannot map memory for the object path: ", op.STATUS_NAMES[map_status])
+	}
+	intrinsics.mem_copy_non_overlapping(mapped, raw_data(object_path), len(object_path))
+	system.memory_unmap(mapped)
+	given_path, give_status := system.give(requests_memory, path_memory, {.Read})
+	system.close(path_memory)
+	if give_status != .Ok {
+		return fail("edit: cannot give the object path to the root service: ", op.STATUS_NAMES[give_status])
+	}
+	packed := system.name_pack(store_name)
+	completion, answered := disk_request(.Start_Edit, {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(given_path), 5 = u64(len(object_path)), 6 = 0}, 3000)
+	if !answered {
+		return fail_no_answer()
+	}
+	if status, _ := system.status_of_word(completion.kind); status != .Ok {
+		return fail_root("edit", completion)
 	}
 	return {}
 }
@@ -3524,7 +3597,7 @@ list_variables :: proc "contextless" (arguments: []Value) -> Value {
 			buffer = value_buffer[:],
 		}
 		switch value.kind {
-		case .None, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List:
+		case .None, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 			// No value, and bytes with no description: the cell stays empty.
 			// No variable keeps a Stream or a member not typed.
 		case .Integer:

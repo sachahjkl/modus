@@ -391,4 +391,4 @@ Each layer is a step that works on its own. The subset (English and French, Lati
 
 ## State
 
-Not built. This file is the design. The roadmap holds the layers.
+Layer 1 contract foundation is built in `src/library/modus/contract/interface_messages`: the canonical BCP 47 `Language_List` (at most 8 tags) with RFC 4647 Lookup fallback resolution, the freestanding zero-allocation W3C MessageFormat 2 parser and evaluator (`.input`, `.local`, `.match` with exact keys, CLDR cardinal plural rules for English, French, Arabic, Russian, Polish, Czech/Slovak, Croatian/Serbian/Bosnian, and Japanese/Chinese/Korean, mandatory catch-all `*` fallback, and `:integer`, `:number`, and `:string`), and the `MODLANG1` binary language pack encoder, validator, and O(log N) lookup with BLAKE3 integrity digests. Settings page integration, build-time `.mf2` compilation into module tables, CLDR locale tables, root-service pack mapping, and subsequent layers remain to be built.

@@ -129,7 +129,7 @@ DEBUG_TARGET_RUNS :: "debug_target: 64 more rounds ran, so the process is not he
 // its number.
 DEBUGGER_WINDOW_PLACE_FIELD :: "the debug place"
 // The sentence of a refused debug access names the start grant that
-// refuses, by its name (src/library/contract/start_grant): the name goes between the
+// refuses, by its name (src/library/modus/contract/start_grant): the name goes between the
 // two parts.
 DEBUG_ACCESS_REFUSED_BY_THE_GRANT :: "debugger.attach: the caller has no grant for this: the debug access to this process: the grant "
 REFUSES_THE_DEBUG_ACCESS :: " of the process refuses it (-4)"

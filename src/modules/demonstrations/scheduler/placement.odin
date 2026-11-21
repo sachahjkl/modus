@@ -14,7 +14,7 @@ package scheduler
 import "base:intrinsics"
 import "modus:contract/errors"
 import op "modus:contract/operation"
-import "modus:support/system"
+import "modus:system"
 
 PLACEMENT_SAMPLES :: 50 // Reports of one thread, after the first one that shows it inside its set.
 PLACEMENT_LIMIT_ROUNDS :: 1000
@@ -51,7 +51,7 @@ refusal_recorded :: proc "contextless" (error: ^errors.Error_Record, part: op.Th
 // placement_settles waits until the thread report shows a thread of this
 // process inside a set, then takes PLACEMENT_SAMPLES more reports and
 // counts those that show it outside. A thread that ran on a processor
-// outside the set leaves it at the end of its turn at the latest, so the
+// outside the set leaves it at the end of its stint at the latest, so the
 // wait is for a state of the kernel; its bound only ends a hang. must_run:
 // the thread can run, and the case waits until the kernel counted one more
 // tick of its run after the first report inside, so that the samples are
@@ -107,7 +107,7 @@ own_placement: Own_Placement
 
 // The thread reads its placement, keeps one processor, and reads its own
 // record in the thread report: at the first return of its write it is on
-// that processor, because its own turn ended in that kernel entry. Each
+// that processor, because its own stint ended in that kernel entry. Each
 // later sample is taken after the kernel counted one more tick of its run.
 own_placement_run :: proc "c" (parameter: rawptr) -> ! {
 	result := &own_placement
@@ -553,7 +553,7 @@ placement_apart :: proc "contextless" (processors: u64) -> bool {
 // - the two spinners do not get the processor 0, which can be idle;
 // - the first thread stays on the processors of the pacers, so its wakes
 //   name those queues only.
-// A pacer ends a turn at each time slice, and its processor then looks
+// A pacer ends a stint at each time slice, and its processor then looks
 // for a thread with no hint: this is the pick that must pass the busiest
 // queue. So the case needs no wake of the first thread. A thread of
 // another process that wakes with the processor 1 as its home can still
@@ -674,7 +674,7 @@ placement_balance :: proc "contextless" (processors: u64) -> bool {
 // other processor. The machine handle gives the spinner of the list the
 // processor 1 too. That write makes the processors look at the list, so
 // the processor 1, when it is idle, takes the spinner: the condition is a
-// report that shows it on the processor 1. The end of a turn wakes no
+// report that shows it on the processor 1. The end of a stint wakes no
 // processor, so without that look the spinner stays on the processor 0
 // until a thread of another process makes the processor 1 pick.
 //

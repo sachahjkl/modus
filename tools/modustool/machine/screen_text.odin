@@ -5,7 +5,7 @@ import "core:strings"
 import "core:time"
 
 import "modus:contract/font_characters"
-import "modus:support/graphics"
+import "modus:graphics"
 import "modustool:build"
 import "modustool:foundation"
 

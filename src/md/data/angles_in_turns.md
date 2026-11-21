@@ -1,6 +1,6 @@
 # Angles in turns
 
-Each angle of the system is in turns: 1 is a whole circle, 0.25 a right angle. The type or the name of a value says so: `angle_turns`, `phase_turns`, `hue_256ths_of_a_turn`. The trigonometric routines of the system, `modus:support/trigonometry`, take turns. The glossary term is "Turn" ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Turn").
+Each angle of the system is in turns: 1 is a whole circle, 0.25 a right angle. The type or the name of a value says so: `angle_turns`, `phase_turns`, `hue_256ths_of_a_turn`. The trigonometric routines of the system, `modus:trigonometry`, take turns. The glossary term is "Turn" ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Turn").
 
 ## Why turns
 
@@ -19,7 +19,7 @@ A derivative of a function of an angle in turns gains a factor of 2π: the deriv
 
 ## Host code
 
-The Odin core library (`core:math`) takes radians. Host code that must call it converts at that one call, with a comment. Host code that only needs a sine or a cosine imports `modus:support/trigonometry`, as the tool does for the tone of its sound test.
+The Odin core library (`core:math`) takes radians. Host code that must call it converts at that one call, with a comment. Host code that only needs a sine or a cosine imports `modus:trigonometry`, as the tool does for the tone of its sound test.
 
 ## Refused forms
 
@@ -30,4 +30,4 @@ The Odin core library (`core:math`) takes radians. Host code that must call it c
 
 ## State
 
-Built: the package `modus:support/trigonometry` with its host tests, `tone`, the sine table of `plasma` and the sound test of the tool on it, the phase of the wave of `threads`, the hue of `graphics.hue_color`, the comments of the outlines of circles and the chevron of the site in turns. The text sample of `interface_font` keeps "θ = 45°": it is a text that shows the glyph °, not an angle that code computes.
+Built: the package `modus:trigonometry` with its host tests, `tone`, the sine table of `plasma` and the sound test of the tool on it, the phase of the wave of `threads`, the hue of `graphics.hue_color`, the comments of the outlines of circles and the chevron of the site in turns. The text sample of `interface_font` keeps "θ = 45°": it is a text that shows the glyph °, not an angle that code computes.

@@ -24,7 +24,7 @@ Do not use: encryption (for this), record protection.
 
 Header protection is the mask that hides the low bits of the first byte and the packet number of a QUIC packet, made from a sample of the protected payload.
 
-Without it, an observer reads the packet numbers and the key phase of every packet. The mask is 5 bytes, from AES or ChaCha20 over a sample of the protected payload. The cryptography module exports the two masks, and `src/library/support/quic` applies them to the first byte and the packet number. The receiver removes it first (`header_protection_remove`), with a key that does not change at a key update, then reads the key phase and chooses the keys for the open.
+Without it, an observer reads the packet numbers and the key phase of every packet. The mask is 5 bytes, from AES or ChaCha20 over a sample of the protected payload. The cryptography module exports the two masks, and `src/library/modus/quic` applies them to the first byte and the packet number. The receiver removes it first (`header_protection_remove`), with a key that does not change at a key update, then reads the key phase and chooses the keys for the open.
 
 The design: `docs/QUIC.md`, "3. Packet protection (the first layer, built)".
 
@@ -94,7 +94,7 @@ Do not use: handshake hash (for the bytes).
 
 The key schedule is the chain of the secrets of TLS 1.3, each one derived from the one before with HKDF and a transcript hash: early, handshake, master, and the traffic secrets of each side.
 
-The X25519 shared secret enters at the handshake secret; the hash of the transcript at each point binds the secrets to the messages. QUIC takes its packet keys from the traffic secrets: `tls_packet_keys` gives the Handshake and the Application keys through `packet_keys_from_secret`, with the labels "quic key", "quic iv" and "quic hp". The code is `src/library/support/quic/tls_key_schedule.odin`, tested against the trace "Simple 1-RTT Handshake" of RFC 8448. The secrets of TLS are erased once the 1-RTT keys are installed.
+The X25519 shared secret enters at the handshake secret; the hash of the transcript at each point binds the secrets to the messages. QUIC takes its packet keys from the traffic secrets: `tls_packet_keys` gives the Handshake and the Application keys through `packet_keys_from_secret`, with the labels "quic key", "quic iv" and "quic hp". The code is `src/library/modus/quic/tls_key_schedule.odin`, tested against the trace "Simple 1-RTT Handshake" of RFC 8448. The secrets of TLS are erased once the 1-RTT keys are installed.
 
 The design: `docs/QUIC.md`, "4. TLS 1.3 for QUIC (the second layer, built)".
 
@@ -204,7 +204,7 @@ Do not use: receive window (for this).
 
 The anti-amplification limit is the rule that a server sends at most 3 times the bytes that it received from a client whose address it did not validate.
 
-An attacker can forge the source address of a datagram, and without the limit one small forged datagram can make a server send a large answer to a victim. The limit is held twice: by `src/library/support/quic` in the process, until the address validation of the connection, and by the network service, which knows no QUIC and refuses a Send past 3 times (the status `Amplification`) until the process sends the command `Validate`. A Retry packet answers a datagram of 1200 bytes with at most 113 bytes.
+An attacker can forge the source address of a datagram, and without the limit one small forged datagram can make a server send a large answer to a victim. The limit is held twice: by `src/library/modus/quic` in the process, until the address validation of the connection, and by the network service, which knows no QUIC and refuses a Send past 3 times (the status `Amplification`) until the process sends the command `Validate`. A Retry packet answers a datagram of 1200 bytes with at most 113 bytes.
 
 The design: `docs/QUIC.md`, "The listen grant of UDP".
 

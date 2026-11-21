@@ -37,13 +37,13 @@
 // run. The check is of order and of count, not of speed.
 package crowd
 
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 import "base:intrinsics"
 
 // The working memory: the rest of the pages that the root service gave it

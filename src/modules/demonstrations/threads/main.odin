@@ -20,7 +20,7 @@
 // the first thread reads the sum in the shared memory.
 //
 // **Start**: `start("threads")` in the console, or the bar of the desktop.
-// Its row of `process_roles` has no grant; its budget has room for 6 threads.
+// Its row of `start_grant_sets` has no grant; its budget has room for 6 threads.
 //
 // **What a reader sees**: four squares, each with its thread and its count
 // of frames, or "stopped". The log has "threads: a thread added the numbers
@@ -29,10 +29,10 @@
 // "started" after a key.
 package threads
 
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 import "base:intrinsics"
 
 // The working memory: the rest of the pages that the root service gave it

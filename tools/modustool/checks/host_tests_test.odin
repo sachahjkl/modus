@@ -36,7 +36,7 @@ host_test_folders_with_one_name_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, host_test_names_first_repeat(folders[:]), "")
 }
 
-// The flag of the kernel parts goes to the host tests of src/kernel/* and
+// The flag of the kernel parts goes to the host tests of src/modulus/* and
 // of the tool only, as in the compile of each; each command has its own
 // temporary folder and its own test program.
 @(test)
@@ -47,6 +47,13 @@ host_test_commands_take_the_kernel_parts_where_they_compile :: proc(t: ^testing.
 		command := host_test_command(folder, "/temporary")
 		testing.expect_value(t, command[0], "env")
 		testing.expect_value(t, command[1], "TMPDIR=/temporary")
+		internal_flag_count := 0
+		for word in command {
+			if word == foundation.INTERNAL_LIBRARY_FLAG {
+				internal_flag_count += 1
+			}
+		}
+		testing.expectf(t, internal_flag_count == (foundation.source_folder_takes_internal_library(folder) ? 1 : 0), "%s: the flag of the internal parts %d times", folder, internal_flag_count)
 		kernel_flag_count := 0
 		for word in command {
 			if word == foundation.KERNEL_LIBRARY_FLAG {

@@ -4,10 +4,10 @@ import info "modus:contract/boot_info"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:private/console/console_results"
-import "modus:private/console/lex_parser"
-import "modus:support/system"
-import terminal "modus:support/terminal"
+import "internal:console/console_results"
+import "modus:lex_parser"
+import "modus:system"
+import terminal "modus:terminal"
 
 // The log facts in the console (src/md/features/log_facts.md, "The reader
 // path"; src/md/features/log_facts.md, "Filters of a reader: one form").

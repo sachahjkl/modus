@@ -3,7 +3,7 @@
 // links terms of the glossary, headings of the guides and declarations of
 // the sources that no module describes; the process `manual` reads only the
 // boot image, so the build writes the page of each such target in one
-// resource, in the format of src/library/contract/manual_pages.
+// resource, in the format of src/library/modus/contract/manual_pages.
 package build
 
 import "core:fmt"
@@ -69,7 +69,7 @@ build_manual_pages :: proc() -> (resource: resources.Resource_File, ok: bool) {
 	}
 	buffer := make([]u8, manual_pages.encoded_size(sources), context.temp_allocator)
 	if !manual_pages.encode(sources, buffer) {
-		fmt.eprintfln("modustool: the link pages of the manual break a rule of src/library/contract/manual_pages")
+		fmt.eprintfln("modustool: the link pages of the manual break a rule of src/library/modus/contract/manual_pages")
 		return {}, false
 	}
 	if err := os.write_entire_file(MANUAL_PAGES_FILE, buffer); err != nil {

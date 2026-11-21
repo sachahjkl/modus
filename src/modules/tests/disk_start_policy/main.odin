@@ -17,7 +17,7 @@
 // Machine_Usable and Wire, and the machine parts page, read-only. It asks
 // for the wiring that the root service refuses to a start policy from the
 // disk (wiring_refusals.odin). It has no row in
-// `process_roles`.
+// `start_grant_sets`.
 //
 // **What a reader sees.** No window. The log has "disk_start_policy: ok",
 // the handles of its context, the refusal of a start of the start policy
@@ -31,7 +31,7 @@ import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // One thread; the working memory pays its root ring, the machine parts
 // page and their page tables.
@@ -51,7 +51,7 @@ next_tag: u32 = 1
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Running{})
 	ring_status: system.Status
-	requests, ring_status = system.ring_open(ctx.handles[system.GRANT_ROOT])
+	requests, ring_status = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true)
 	if ring_status != .Ok {
 		system.log_fact(.Info, Root_Ring_Refused{status = ring_status})
 		system.stop(.Failed)

@@ -1,8 +1,8 @@
 package fuzz
 
 import "core:slice"
-import "modus:support/tcp"
-import "modus:support/web"
+import "modus:tcp"
+import "modus:web"
 
 // The fuzz targets of TCP and of the reader of an HTTP request
 // (src/md/infrastructure/fuzzing.md, "The targets, in order of value"):

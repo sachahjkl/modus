@@ -8,7 +8,7 @@ import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
-import "modus:support/sentence"
+import "modus:sentence"
 import "modustool:foundation"
 
 // The fuzz targets of the text between processes
@@ -38,7 +38,8 @@ fuzz_invalid_sequence_of_library :: proc(bytes: []u8) -> (place: int, found: boo
 }
 
 // fuzz_text_encoding_execute: the check agrees with the reader of the
-// Odin library; each character that it decodes encodes to its own bytes; a
+// Odin library, and its vector form (text_valid) with its scalar form
+// (invalid_sequence_find); each character that it decodes encodes to its own bytes; a
 // text with its invalid sequences replaced passes the check and keeps each
 // valid character; a cut of a valid text ends on a whole character; and an
 // identifier is a valid text. No reader changes the bytes.
@@ -143,9 +144,38 @@ fuzz_text_encoding_seeds :: proc(seeds: ^[dynamic][]u8) {
 		{0x80},
 		{'x', 0xE2, 0x82},
 		{'l', 0xC3, 0xA9, 't', 0xC3, 0xA9, ' ', 0xE2, 0x82, 0xAC, ' ', 0xF0, 0x9F, 0x98, 0x80, '\n'},
+		// A character of four bytes across the end of the first group of
+		// sixteen bytes of the vector form, then one cut short there.
+		{'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 0xF0, 0x9F, 0x98, 0x80, 'b'},
+		{'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 0xF0, 0x9F, 0x98, 'b'},
 	}
 	for text in texts {
 		append(seeds, slice.clone(text))
+	}
+	// The leads with a bound on their second byte (E0, ED, F4) and C2,
+	// with the second byte at each side of its bound, across the end of
+	// the first group of sixteen bytes: the lead at the place 15, then at
+	// the place 14.
+	across := [?][]u8 {
+		{0xE0, 0xA0, 0x80},
+		{0xE0, 0x9F, 0xBF},
+		{0xED, 0x9F, 0xBF},
+		{0xED, 0xA0, 0x80},
+		{0xF4, 0x8F, 0xBF, 0xBF},
+		{0xF4, 0x90, 0x80, 0x80},
+		{0xC2, 0xA0},
+		{0xC2, 0x9F},
+	}
+	for sequence in across {
+		for place in 14 ..= 15 {
+			seed := make([dynamic]u8)
+			for _ in 0 ..< place {
+				append(&seed, 'a')
+			}
+			append(&seed, ..sequence)
+			append(&seed, 'b', 'c')
+			append(seeds, seed[:])
+		}
 	}
 }
 

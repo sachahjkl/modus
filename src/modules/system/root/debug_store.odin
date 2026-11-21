@@ -18,9 +18,9 @@ package root
 // no debug access (src/md/features/debug_object_of_a_disk_process.md).
 
 import "modus:contract/errors"
-import "modus:support/disk_process"
+import "modus:disk_process"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 
 // The caller record of that connection. This service is no row of its own
 // table of started processes, so the connection has this record as its

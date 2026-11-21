@@ -12,7 +12,7 @@ package machine
 // object nodes of each file, one leaf with the entries, the store block,
 // then the root. It is not the engine of the storage service: it writes a
 // whole disk one time, and changes none. A host test opens its image with
-// the code of the open of the service (src/library/private/storage/storage_mount),
+// the code of the open of the service (src/library/internal/storage/storage_mount),
 // and compares each object and each hash (disk_processes_test.odin).
 
 import "core:fmt"
@@ -20,7 +20,7 @@ import "core:slice"
 import "core:strings"
 import "modus:contract/blake3"
 import "modus:contract/disk_process_page"
-import "modus:support/disk_process"
+import "modus:disk_process"
 import "modustool:foundation"
 import "modustool:build"
 

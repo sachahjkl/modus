@@ -92,7 +92,7 @@ The order of the reads: each entry one time, in the order of the list; then an e
 root: refused store_importer from the disk: store_importer imports 3a9c…, and no file of the boot image or of the store module_files has bytes with this hash; the import scan read 7 files
 ```
 
-**The bounds.** The scan runs inside the load, so each rule of the load holds: one connection, the deadline of 30 seconds for the whole load, a progress at each answer, 4 MiB at most for each file. Three bounds are its own (`src/library/support/disk_process/import_scan.odin`):
+**The bounds.** The scan runs inside the load, so each rule of the load holds: one connection, the deadline of 30 seconds for the whole load, a progress at each answer, 4 MiB at most for each file. Three bounds are its own (`src/library/modus/disk_process/import_scan.odin`):
 
 - **64 entries.** The scan notes the first 64 objects of the list. The line of a refusal says when the store has more.
 - **8 modules of the store, 4 levels.** The imports of the module are level 1, their imports level 2. A ninth hash, or a fifth level, refuses the start. A process has 16 modules at most anyway.
@@ -144,11 +144,11 @@ The writer of the tool is checked by the open of the storage service: a host tes
 
 ### The grants of a disk process
 
-The principal gives a disk process a grant with a command. The rules of the table are in `src/library/support/disk_process` (`grant_table.odin`), with no allocator and no kernel operation, so the host tests run each rule.
+The principal gives a disk process a grant with a command. The rules of the table are in `src/library/modus/disk_process` (`grant_table.odin`), with no allocator and no kernel operation, so the host tests run each rule.
 
 **The nickname.** The name of the entry of a file in the store `module_files` is its nickname: the principal chooses it, and the file never does. The root service names the process by its nickname (the slot, the log, `grants`, `stop`, the monitor), and the log writes the hash of the file beside it.
 
-**The disk grant table.** The root service keeps one disk grant table for each principal ([`docs/glossary/access.md`](../../../docs/glossary/access.md), "Disk grant table"). A row binds a nickname to the hash of one file, and holds the grants of that file. 16 rows at most. It is apart from the table of the roles by name of the root service (`process_roles`), which a disk process never reaches.
+**The disk grant table.** The root service keeps one disk grant table for each principal ([`docs/glossary/access.md`](../../../docs/glossary/access.md), "Disk grant table"). A row binds a nickname to the hash of one file, and holds the grants of that file. 16 rows at most. It is apart from the table of the start grant sets by name of the root service (`start_grant_sets`), which a disk process never reaches.
 
 **Two hashes never share a nickname.** The rule holds in the root service, at `start_from_disk`, and not in the storage service:
 
@@ -184,7 +184,7 @@ The size of the store is a line of the budget that the module asks for (`src/md/
 - The nickname in the field `name`: the kernel name of a disk process is its nickname already, as the root service gives it at the start. The page is the source that the root service states, as for the window, and a second field would hold the same text. The empty `hash` is what tells a process of the system that has the same name.
 - No version of the record. A new field changes its description, and the console and the host read each table by its description and its field names. No field kept its place with another meaning.
 
-The root service learns the process slot and the process serial of the process that it started from `Process_State`, which gives them as its results 5 and 6 (the reference of the operation in `src/library/contract/operation`). A process handle with the right Read already gives the state of that one process; its place in the table of the kernel is a fact of the same process.
+The root service learns the process slot and the process serial of the process that it started from `Process_State`, which gives them as its results 5 and 6 (the reference of the operation in `src/library/modus/contract/operation`). A process handle with the right Read already gives the state of that one process; its place in the table of the kernel is a fact of the same process.
 
 **A disk process has no child.** Its budget holds one process, its own slot (`disk_process.LARGEST_BUDGET`, whatever its file asks for). The process itself takes that one process of its budget at its start, and a budget that it makes takes from the same amounts, so `Process_Create` refuses each child with `No_Budget`. Each process from a disk is then a process that the root service started, with a row of the page. A child could take any kernel name, `console` too, and the monitor would show that name with no hash, as it shows the real console. A disk process that needs a child needs a mark of a name that the root service did not give first.
 
@@ -319,7 +319,7 @@ The read and the write are states of the loop of the root service, as the load o
 - **The name of the caller of the connection is `module_files`.** The root service is no row of its own table of started processes, so the connection has a caller record of its own. Its grant is the limit of the store, with no grant to act for a principal.
 - **The connection ends with the load.** The root service holds no handle of the storage service between two loads.
 - **The rule of the debug access needs no change.** It reads the grants that a process received at its start. A disk process with no grant can be debugged by a caller that acts for its principal. A disk process with the grant `store` cannot: a store is a grant of one process.
-- **The root service finds a disk process by a flag of its slot, not by its name.** The connection of a disk process to the storage service gets the store of its nickname and the limit of that store, from the grants of its start, and never the grants that `process_roles` gives a name.
+- **The root service finds a disk process by a flag of its slot, not by its name.** The connection of a disk process to the storage service gets the store of its nickname and the limit of that store, from the grants of its start, and never the grants that `start_grant_sets` gives a name.
 - **A move does not change a process that runs.** It keeps its grants and its connections. The next start reads the row again.
 - **A read makes no commit.** The storage service writes the limit of a store at a change only. A machine whose disk has no store `module_files` gets no new store from a refused command.
 - **The tag does not stop an older table.** The storage service keeps the versions of `grant_table`, and a caller that acts for the principal of the table can restore one in its store `module_files`. The tag of an older version verifies: a grant that `disallow` took can come back. A counter that only grows, in the TPM, ends it; it is not built.

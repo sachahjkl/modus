@@ -14,7 +14,7 @@ Today the root service gives each role to a module by its name: it starts `compo
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "11. Reproducible system": an identity is a hash.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "17. Trusted boot: UEFI program, Secure Boot, TPM": the display, the input and the console are the trusted path, and a choice of principal 0 that changes the start is measured.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "22. General mechanisms, and a plain expression for each frequent task": one mechanism for every role, and no copy tool.
-- [../api/root_ring.md](../api/root_ring.md): trust already comes from the process role and never from the name.
+- [../api/root_ring.md](../api/root_ring.md): trust already comes from the start grant set and never from the name.
 
 ## The chosen form
 
@@ -22,9 +22,19 @@ Today the root service gives each role to a module by its name: it starts `compo
 
 A role contract is a file of the module format with no code: the exports of the role, its record types, its record outputs and its record inputs, as a module describes its own. The hash of the file is the identity of the contract. The contract has a number of version, which only orders the versions for a reader; the hash decides each check.
 
-The set of the roles is the enum `Role` of a contract package: `Display`, `Input`, `Console`, `Terminal`, `Start_Policy`, `Storage`, `Network`, `Block_Device`, `Network_Device`, `Sound_Device`, `Entropy_Device`, `Tpm`, `Remote_Display`, `Plans`, `Projects`, `Recipes`. A word of a record becomes a role at one border, which refuses a word that names no member ([../infrastructure/choice_constants.md](../infrastructure/choice_constants.md)). A new role is a new member, with its contract, in a commit that changes this file.
+The set of the roles is a closed list: the enum `Role` of a contract package: `Display`, `Input`, `Console`, `Assistive`, `Speech`, `Terminal`, `Start_Policy`, `Storage`, `Network`, `Block_Device`, `Network_Device`, `Sound_Device`, `Entropy_Device`, `Tpm`, `Remote_Display`, `Plans`, `Projects`, `Recipes`. `Assistive` and `Speech` are the roles of [accessibility.md](accessibility.md). A word of a record becomes a role at one border, which refuses a word that names no member ([../infrastructure/choice_constants.md](../infrastructure/choice_constants.md)). A new role is a new member, with its contract, in a commit that changes this file. Each delegated service of [../api/root_service_split.md](../api/root_service_split.md) becomes a member in the commit that builds it.
 
 A module declares the contracts that it fills: a table of its module file lists the hash of each role contract that it fills. A module that fills two roles lists two hashes. The table is a statement of the author; the check below proves the types of it, and the conformance suite proves the behaviour.
+
+### A service that is not a role
+
+Not each service is a role. A role is a place that a principal or a third party can fill with another module, so it costs a contract with a version and a conformance suite. A service that one module serves, such as `manual`, `debugger` or `log`, is not a role until a second module must fill its place.
+
+**The name is local, and the plan gives the hash.** A process reaches such a service as a declared dependency: its start grant set lists each service that it connects to under a local name, such as `manual`. The plan binds each local name to a module hash, and the signed image gives the default binding, as it gives the default roles. So the code says `manual`, and what it reaches is the module whose hash the plan fixes ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "11. Reproducible system"). A change of that hash is a change of the plan, which the principal sees in its difference.
+
+**The name opens nothing by itself.** The root service makes a connection only to a local name that the start grant set of the caller lists. Any other name gives `No_Grant`, before the root service says whether a process of that name runs. A local name is a name of one start grant set and of one plan, never a global name. The tool checks each declared dependency against the bindings of the image at each build, as it checks the start grant sets today ([../api/root_ring.md](../api/root_ring.md)).
+
+A client of such a service depends on the module that the plan binds: no conformance suite proves another module in its place, and no interposed holder stands in front of it. When a second module must fill its place, the service becomes a role, with its contract, its member of `Role` and its conformance suite, and each client then reaches it by the role.
 
 ### The check when the root service gives a role
 
@@ -36,8 +46,8 @@ The check runs when the root service reads the plan, before any start: a plan th
 
 A client of a role reaches the holder in one of two ways:
 
-- **In its context, at its start.** Its process role names the roles that it needs: a window for each process with a surface, a terminal, a private store. The root service puts a connection to the holder of each in a context slot, as it does today for the window ring and the store.
-- **With `connect(role.display)`, while it runs.** The argument is a member of `Role`, never a text. The root service refuses it with `No_Grant` when the process role of the caller does not hold the right to connect to that role, before it says whether a holder exists.
+- **In its context, at its start.** Its start grant set names the roles that it needs: a window for each process with a surface, a terminal, a private store. The root service puts a connection to the holder of each in a context slot, as it does today for the window ring and the store.
+- **With `connect(role.display)`, while it runs.** The argument is a member of `Role`, never a text. The root service refuses it with `No_Grant` when the start grant set of the caller does not hold the right to connect to that role, before it says whether a holder exists.
 
 The root service makes the rings and the region of the connection, gives one end to each side, and then leaves the data path. It never forwards a record. The connection carries the hash of the contract that the client was built against, so the holder serves each client in the form of its version.
 
@@ -47,7 +57,7 @@ The plan holds a table of the roles: `plan { roles = { display = catalog.composi
 
 - **The default roles of the signed image.** The boot image holds a resource `default_roles`: one row for each role, with the name of a module of the image. The system description signs and measures it, as the start list. The root service gives these roles before any plan exists, and the tool refuses an image whose table names a module that fails the check of its contract.
 - **The plan of principal 0** can name another holder for a role. The root service reads it at step 4 of its start, as the choice of a start policy ([start_policy.md](start_policy.md)), and gives the roles before the start policy runs. A change of a holder takes effect at the next start of the machine, never while the clients run.
-- **A role in the trusted path** (`Display`, `Input`, `Console`) takes a module of the disk only from the plan of principal 0, and the root service measures the hash of each such holder into PCR 12 before it runs, as it measures a start policy.
+- **A role in the trusted path** (`Display`, `Input`, `Console`, `Assistive`) takes a module of the disk only from the plan of principal 0, and the root service measures the hash of each such holder into PCR 12 before it runs, as it measures a start policy. These roles see the keys, draw the trusted surfaces or read each window, so no other principal chooses their holder, also not for its own session: a named principal chooses only among the holders that the image or principal 0 gives.
 - **The rescue start policy uses the default roles of the image only.** A holder from the disk that fails cannot lock the principal out: the key R gives the rescue, its roles and its console.
 
 Nothing looks a role up by a name at run time. The name of a role in a plan is a member of `Role`, which the evaluation process checks.
@@ -62,7 +72,7 @@ A client holds a connection to the holder of a contract, and nothing else. So a 
 
 ### Events without a bus
 
-A role contract declares its record outputs: the windows that open and close for the display, the stops of the processes for the start policy, the changes of a setting. A process that needs one receives a wiring from the root service, by its process role or by the plan, as each record output is wired ([module_outputs.md](module_outputs.md)). Each subscriber has its own typed ring with no loss. A revocation ends one subscriber. No record goes to a process that has no wiring, and no process sees the records of another subscriber.
+A role contract declares its record outputs: the windows that open and close for the display, the stops of the processes for the start policy, the changes of a setting. A process that needs one receives a wiring from the root service, by its start grant set or by the plan, as each record output is wired ([module_outputs.md](module_outputs.md)). Each subscriber has its own typed ring with no loss. A revocation ends one subscriber. No record goes to a process that has no wiring, and no process sees the records of another subscriber.
 
 ### Conformance
 
@@ -72,7 +82,7 @@ The tests of one holder stay: a test of the bar of our compositor waits for the 
 
 ### Trust comes from the role
 
-A right of a process comes from its process role, which names the roles that it holds and the grants that each needs: the holder of `Display` gets the framebuffer and the input ring, the holder of `Console` gets the grant `Palette`. No rule reads the name of a module. The root service already applies this to the senders of the root ring ([../api/root_ring.md](../api/root_ring.md)); this design applies it to the roles.
+A right of a process comes from its start grant set, which names the roles that it holds and the grants that each needs: the holder of `Display` gets the framebuffer and the input ring, the holder of `Console` gets the grant `Palette`. No rule reads the name of a module. The root service already applies this to the senders of the root ring ([../api/root_ring.md](../api/root_ring.md)); this design applies it to the roles.
 
 ## What a client can depend on
 
@@ -92,6 +102,8 @@ The audit of the code against this table is in `ROADMAP.md`, one entry for each 
 | `Display` | `compositor` | The machine | The window ring, the capture face, the control ring, the palette ring; record outputs to design |
 | `Input` | `input` | The machine | The input ring to the display holder |
 | `Console` | `console` | The session | The palette provider; the line of Lex |
+| `Assistive` | none yet | The machine, several holders at once | The assistive face of the display ([accessibility.md](accessibility.md)) |
+| `Speech` | none yet | The machine | The record input of utterances and a timed stream ([accessibility.md](accessibility.md), "5. Speech") |
 | `Terminal` | `terminal` | One client | The terminal ring and its text region |
 | `Start_Policy` | `start_policy` | The machine | The root ring commands `Start`, `Stop`, `Machine_Usable`, `Wire` |
 | `Storage` | `storage` | The machine | The exports of the storage service |
@@ -100,17 +112,25 @@ The audit of the code against this table is in `ROADMAP.md`, one entry for each 
 | `Remote_Display` | `remote_display` | The machine | Its protocol over QUIC; a client of the capture face |
 | `Plans`, `Projects`, `Recipes` | none yet | The machine | The exports of [declarations.md](declarations.md) |
 
-A role has one holder in one scope. The scope of a terminal is one client, so each process with a terminal has its own holder; the scope of a device class is one device.
+**One holder per scope.** A scope is the machine, a session, one client or one device, and a role has one holder in each of its scopes. The scope of a terminal is one client, so each process with a terminal has its own holder; the scope of a device class is one device. So "one holder" never means "one process for the machine": a role whose scope is a session has one holder in each session.
+
+**The one exception is `Assistive`.** A principal with low vision uses a magnifier and a screen reader together, so the role takes several holders at once in one scope. Each holder has its own ring of the assistive face and its own wiring of each record output, and the display serves each one apart ([accessibility.md](accessibility.md), "2. The assistive role"). No other role takes several holders: two holders of the display or of the storage in one scope are two sources of one truth.
 
 ## The refused forms
 
 - **A bus, in the manner of D-Bus.** D-Bus gives every process a global namespace of text names, lets a process find each service by its name, routes every call through a broker that sees the traffic, and broadcasts signals to each listener. Each of these is a hole of property 20: a global name, ambient discovery, a deputy that sees all, and an event that reaches a process that nobody wired. What modus takes from D-Bus: the idea that a service is reached by what it does and not by where it runs. What it refuses: the names, the discovery, the broker and the broadcast.
-- **A registry of services by text name.** It is a global name that each process can ask for: the discovery that property 2 forbids, and a text that the root service parses. The role name is a member of an enum, and the process role is the right.
+- **A registry of services by text name.** It is a global name that each process can ask for: the discovery that property 2 forbids, and a text that the root service parses. The role name is a member of an enum, and the start grant set is the right.
 - **Broadcast signals.** A broadcast reaches each process that listens, with no grant, and drops a record for a slow listener or holds the writer for all. A record output gives each subscriber its own ring, with no loss.
 - **A contract named by a text, such as an interface name with a version in text.** Two contracts with one name and two meanings meet at run time. The hash of the description is the identity, and the check compares descriptions.
 - **The check of the name of a module before a role is given.** A module name is a statement of its author; the descriptions and the conformance suite are facts.
 - **A role given while its clients run.** The clients hold handles of the old holder. The next start gives one holder and one state, as for the start policy.
 - **A forwarder that adds nothing.** An interposed holder with no function adds a hop and is refused, as the `tee` module is refused by property 22.
+- **Each service a role.** Each role costs a contract with a version and a conformance suite. A service that one module serves gets nothing from it until a second module must fill its place. It is reached by a local name of the start grant set, which the plan binds to a module hash ("A service that is not a role").
+- **A service that is not a role, reached by its name with no declared dependency.** Such a name is a global name that any process can ask for, against property 20, line 11.
+- **The local name resolved to a module by its name at run time.** A name then chooses the code, against property 11. The plan binds each local name to a hash, so the hash chooses the code.
+- **A holder of a role of the trusted path chosen by a named principal, for its own session.** The holder sees the keys of the unlock, draws the trusted surfaces, or reads each window. A choice that principal 0 does not make and the TPM does not measure opens the trusted path to any module of the disk.
+- **One process for each role on the machine.** A terminal, a console and a device class have one holder for each client, session or device. The rule is one holder per scope.
+- **Several holders of any role.** Two holders of one role in one scope are two sources of one truth: two displays of one screen, two stores of one disk. Only `Assistive` takes several, because each holder only reads the trees and acts through declared actions.
 
 What modus takes from the other prior art:
 
@@ -128,7 +148,7 @@ What modus takes from the other prior art:
 - **A nested holder.** A nested compositor holds `Display` for the processes that it starts and is a client of the holder of the machine. Its children see a holder like any other. Its own window is one window of the machine holder, so its clients reach no key and no pixel outside it.
 - **The cost of an interposed holder.** Each call and each record crosses one more ring and one more process. The cost is measured on the three measures of the desktop ([desktop_to_browser.md](desktop_to_browser.md), "The three measures on the path of the system") with an auditor of the display and with none, and on a call of the storage service through an auditor. No number is assumed before the measure.
 - **A face that is a ring.** The window ring, the terminal ring and the class rings carry handles in their records. A description of the module format cannot carry a handle in a record today: the record outputs refuse a Handle field ([module_outputs.md](module_outputs.md)). The contract of such a role needs a ring face in the module format: a command record type and an event record type, each a record description, with a field kind for a handle that the record gives and its rights. The display needs it first.
-- **The palette provider is a role.** The compositor takes its provider from the grant `Palette`, which is right, and then brings to the front the window of the module `console`, which is not. The provider is the holder of `Console`, and the window to raise is the window of that holder.
+- **The palette provider is a role.** The compositor takes its provider from the start grant `Palette`, which is right, and then brings to the front the window of the module `console`, which is not. The provider is the holder of `Console`, and the window to raise is the window of that holder.
 
 ## The frequent tasks
 
@@ -142,4 +162,10 @@ What modus takes from the other prior art:
 
 ## State
 
-Designed, not built. Nothing of this file is in the code: the root service gives each role to a module by its name, and the clients depend on the holder of today. The steps, starting with the display, are in `ROADMAP.md`. The split of the root service by the same rule is [../api/root_service_split.md](../api/root_service_split.md).
+Built: the first layer of role contracts and Display conformance:
+
+- **The contract package** (`src/library/modus/contract/role_contract`): the closed `Role`, `Role_Scope`, `Trust_Path_Class`, and `Face_Kind` enums with border conversions that refuse zero and unknown words; `role_properties` enforcing scope, trusted-path class (`Display`, `Input`, `Console`, `Assistive`), and single-holder multiplicity (with `Assistive` as the one multi-holder exception); deterministic BLAKE3 contract hashing (`contract_hash`) over canonical little-endian contract bytes with domain tag `MODUS_ROLE_CONTRACT_V1`; `module_fills_contract` checking module validity, declared contract hash, exports (signatures, parameter directions, details, error records), ring faces, and record streams; and the concrete `Display` role contract version 1 (`pointer`, `windows`, `screen` exports plus `window_ring`, `control_ring`, `input_ring`, and `palette_ring` faces) with BLAKE3 hash `72458a56d9d269439c07c5ceb935ebb136b52aac170953e0c102a7e9cb4107fd`.
+- **The root service role registry** (`src/library/internal/root/role_policy` and `src/modules/system/root/role_registry.odin`): per-scope holder table enforcing single holder per scope (multi-holder up to 8 for `Assistive`), principal 0 requirement for disk holders of trusted-path roles, rescue mode refusal of disk holders, contract verification before binding, and per-caller local non-role service resolution against declared callable dependencies without global lookup.
+- **The Display conformance suite** (`src/modules/tests/display_conformance`): holder-agnostic conformance suite testing contract hash and metadata, surface lifecycle, present and frame accounting, invalid draw and surface record refusal, and two-client isolation, verified on the host against compliant and fault-injected mock holders.
+
+Left: native `Ring_Faces` and `Role_Contracts` tables in the module file format, switching the root service start path and clients from module names to role handles, `default_roles` in the boot image, plan integration, and conformance suites for the other roles (`ROADMAP.md`). The split of the root service by the same rule is [../api/root_service_split.md](../api/root_service_split.md).

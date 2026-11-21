@@ -3,8 +3,8 @@ package build
 import "core:fmt"
 import "modus:contract/blake3"
 import "modus:contract/replacement_list"
-import "modus:support/cryptography/ed25519"
-import "modus:private/root/replacement_signature"
+import "modus:cryptography/ed25519"
+import "internal:root/replacement_signature"
 
 // The replacement list of a boot image (docs/MODULE_CONTRACT.md, "Who may
 // replace a module"): the replacement rows that the signing key of the

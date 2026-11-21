@@ -4,10 +4,10 @@ import "base:runtime"
 import "modus:contract/font_outlines"
 import op "modus:contract/operation"
 import "modus:contract/store"
-import tree "modus:private/storage/storage_tree"
-import "modus:private/compositor/bar"
-import "modus:private/compositor/palette"
-import "modus:support/text_rendering"
+import tree "internal:storage/storage_tree"
+import "internal:compositor/bar"
+import "internal:compositor/palette"
+import "modus:text_rendering"
 import "core:fmt"
 import "core:math/rand"
 import "core:os"
@@ -32,7 +32,7 @@ SCREEN_DUMP_SUFFIX :: "_screen.ppm"
 // The bound of a Wait for the line of a case that writes a count of its
 // progress, which the process reads: the process bounds a stall of the
 // count and the whole case (TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS in
-// src/library/support/system, 600 s), and this bound is larger, so that the report of
+// src/library/modus/system, 600 s), and this bound is larger, so that the report of
 // the process comes first.
 PROGRESS_CASE_HANG_BOUND_SECONDS :: 660
 // The bound of the first Wait of each machine: its boot ("compositor:
@@ -50,7 +50,7 @@ KEYS_HELD_LINE :: "1000 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 - 1 
 
 // The places of the scroll bar of the window of the console, inside its
 // surface (src/modules/system/terminal/main.odin, layout; src/modules/system/root/main.odin,
-// role_terminal: 96 columns and 26 rows). The surface is 8 + 96 * 8 + 8 + 17
+// start_grant_set_terminal: 96 columns and 26 rows). The surface is 8 + 96 * 8 + 8 + 17
 // = 801 pixels wide: a gap of 8 before the bar; the bar is its last 17
 // pixels, from y = 0 to the line over the status at 8 + 26 * 16 + 8 - 4 =
 // 428, with an arrow button of 17 pixels at each end. A press on a button
@@ -823,7 +823,7 @@ scenario_network := [?]Step {
 }
 
 // The data disk of the test of persistence, read with the format of the
-// storage service (src/library/contract/store).
+// storage service (src/library/modus/contract/store).
 disk_open :: proc(path: string) -> (file: ^os.File, ok: bool) {
 	err: os.Error
 	if file, err = os.open(path, {.Read, .Write}); err != nil {
@@ -934,7 +934,7 @@ object_damage :: proc(path: string, store_name: string, object_name: string) -> 
 }
 
 // tree_entry_find finds an entry of a tree on a disk file: the walk down
-// the B+ tree of the tree, as src/library/private/storage/storage_tree does.
+// the B+ tree of the tree, as src/library/internal/storage/storage_tree does.
 tree_entry_find :: proc(file: ^os.File, root: store.Pointer, name: string) -> (found_entry: store.Entry, found: bool, ok: bool) {
 	key := store.entry_name(name)
 	pointer := root
@@ -3272,7 +3272,7 @@ scenario := [?]Step {
 	// of 4096 records. The terminal reads them in one thread and draws in
 	// another: the display does not slow the process.
 	// The root service starts the process and its terminal: the terminal
-	// starts no process, and has nothing of the role of the process.
+	// starts no process, and has nothing of the start grant set of the process.
 	{kind = .Launch, text = "flood"},
 	{kind = .Wait, text = "flood: ok", any_order = true},
 	{kind = .Wait, text = "terminal: ok, flood writes in a ring of 4096 records", any_order = true},
@@ -3619,7 +3619,7 @@ scenario := [?]Step {
 	// A table from the host: rows of field values go into the call region
 	// of the monitor. A Change table is refused by the tool: its rows would
 	// not come back. The service sample is not reachable from the network
-	// (the row of remote in process_roles).
+	// (the row of remote in start_grant_sets).
 	{kind = .Call, text = "monitor.counts_named([(\"processes\"), (\"processors\")])", expected = "2 rows of Count"},
 	{kind = .Call, text = "monitor.counts_named([(\"processes\"), (\"nothing\")])", outcome = .Failed, expected = "names nothing that exists"},
 	// The table of error details: each row that names nothing, not only the first.
@@ -3709,7 +3709,7 @@ scenario := [?]Step {
 	{kind = .Close, text = "vector_glyphs"},
 	{kind = .Wait, text = "root: vector_glyphs stopped"},
 	// The interface font (docs/FONTS.md, section 12): B612 placed by
-	// src/library/support/text_rendering and drawn by graphics.text_proportional.
+	// src/library/modus/text_rendering and drawn by graphics.text_proportional.
 	// Its Greek letters are past the glyph cache: the process draws them
 	// from B612, the box-drawing characters from Paper Mono, the second
 	// font of the chain, and Π, ρ and Ж draw the replacement glyph

@@ -26,8 +26,8 @@ import "modus:contract/errors"
 import "modus:contract/storage_status"
 import format "modus:contract/store"
 import "modus:contract/value_kinds"
-import "modus:support/storage"
-import "modus:support/system"
+import "modus:storage"
+import "modus:system"
 
 GIB :: u64(1) << 30
 BLOCK :: 4096

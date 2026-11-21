@@ -2,7 +2,7 @@ package ranges
 
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The log facts of the test of the range writes of a store
 // (src/md/features/log_facts.md): each line, as a record of fields. Each

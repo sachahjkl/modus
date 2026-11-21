@@ -9,7 +9,7 @@ What changed after the first outlines: the edge was a second contour drawn by ha
 ## Constraints
 
 - **The compositor changes as little as possible.** It already blends 8 bits of premultiplied alpha. A form is one more argument of `choose`.
-- **One rasterizer.** The pictures are drawn with the exact coverage of `src/library/support/vector_font` ([`docs/FONTS.md`](../../../docs/FONTS.md), "4. Fixed point").
+- **One rasterizer.** The pictures are drawn with the exact coverage of `src/library/modus/vector_font` ([`docs/FONTS.md`](../../../docs/FONTS.md), "4. Fixed point").
 - **Text in the repository.** A shape is a diff of a few lines, and a color is the name of a token of the design rules, never a value.
 - **Own work under MIT.** Each shape is drawn for this system.
 - **Readable on the surfaces of its appearance.** The dark form passes over the dark desktop and the cards; the light form over the light surfaces.

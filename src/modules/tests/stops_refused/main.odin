@@ -14,7 +14,7 @@
 // the start policy about its stop.
 package stops_refused
 
-import "modus:support/system"
+import "modus:system"
 
 @(export, link_name = "entry")
 entry :: proc "c" (_: ^system.Context) -> ! {

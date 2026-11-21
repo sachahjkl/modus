@@ -97,7 +97,7 @@ JSPI has one use: the idle wait of a browser machine with no shared memory ("The
 ### The timer and the cycle counter
 
 - **The clock.** The kernel reads one import of the page: `performance.timeOrigin + performance.now()`, in nanoseconds. Each worker has its own `performance.now()` origin, so the sum is the one clock of all the processors. The kernel part `time_base` gets a third source beside the 8254 and `CPUID`: the clock of the page, at 1 GHz, with its resolution on the log.
-- **The resolution.** The engine coarsens this clock ([High Resolution Time](https://www.w3.org/TR/hr-time-3/): 5 µs when the page is cross-origin isolated, 100 µs otherwise). The charge of processor time at a switch is then a multiple of that step. A budget holds its limit over a period of 100 ms, so the step changes a turn, not the limit ([`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "Processor time").
+- **The resolution.** The engine coarsens this clock ([High Resolution Time](https://www.w3.org/TR/hr-time-3/): 5 µs when the page is cross-origin isolated, 100 µs otherwise). The charge of processor time at a switch is then a multiple of that step. A budget holds its limit over a period of 100 ms, so the step changes a stint, not the limit ([`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "Processor time").
 - **The timer.** A one-shot deadline in the processor record. The software processor reads the clock at the end of each slice of instructions and at each exit; a deadline that passed is the interrupt of the timer. The idle wait takes the deadline as its bound. A slice is a count of instructions, and each exit costs a part of it, so a loop of cheap kernel entries still sees its tick (unkernel found the same need: `.agents/kernel.md`, "IRQs and time").
 - **No interrupt inside the kernel.** An interrupt waits for the next exit or the next end of a slice. The kernel runs each entry to its end, as with interrupts off. A spin of the kernel that waits for another processor reads the words of the other processor; it never waits for an interrupt.
 
@@ -107,7 +107,8 @@ Each processor is a worker with an instance of the kernel on one `WebAssembly.Me
 
 The limits of the browsers:
 
-- **Shared memory needs cross-origin isolation:** the headers `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`. A page in an `iframe` is isolated only when the page above it is isolated and allows `cross-origin-isolated`. Without it, the machine has one processor and no shared memory.
+- **Shared memory needs cross-origin isolation:** the headers `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`. A page in an `iframe` is isolated only when the page above it is isolated and allows `cross-origin-isolated`.
+- **A page with no cross-origin isolation runs one processor.** Most pages that embed another one set no isolation, so they get no shared memory. The machine then runs one processor in one worker, the device models in the same worker, and its idle wait suspends with JSPI, so the worker gives the browser its events while the machine waits. An embed does not require isolation: the page reads `crossOriginIsolated` at its start and takes this form when it is false.
 - **The count.** unkernel starts half the threads of the device, at most 4 on a desktop, 2 in Firefox and 1 on a phone and in Safari (README, "Try it in the browser"). The page takes the same rule until a measure of modus gives another.
 - **The memory is fixed at the start.** The page creates the shared memory with its size and its maximum, and the memory map of the boot gives that size. The memory of a machine never grows, so this matches the model of modus.
 - **The data of the kernel is written once.** With a shared memory, each new instance runs the start function that writes the passive data segments, unless a flag says that it is done. The second worker must see that flag before its start (unkernel: `.agents/kernel/smp.md`, "The data-segment flag").
@@ -147,7 +148,7 @@ The cost of (a) is the speed of computation, and the work of a software processo
 
 ### What stays exactly as on hardware
 
-- **The page tables:** the same format of x86-64 in four levels, written by the same code of `src/kernel`, with the counts in bits 52 to 62 and the large pages of 2 MiB ([`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "The page tables of a process").
+- **The page tables:** the same format of x86-64 in four levels, written by the same code of `src/modulus`, with the counts in bits 52 to 62 and the large pages of 2 MiB ([`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "The page tables of a process").
 - **The handles, the budgets and the memory objects**, and each kernel operation: the count of [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "1. Small kernel with a small, counted interface", does not change.
 - **The rings:** the kernel ring of each thread and the rings between processes, in the same shared memory.
 - **The root service, the start policy, the loader, the device services and every module**, at their hashes.
@@ -155,7 +156,7 @@ The cost of (a) is the speed of computation, and the work of a software processo
 
 ### How the software processor works
 
-The software processor is a kernel part, a pure package in a folder of its own under `src/kernel`, with host tests. On a browser machine the kernel calls it; on the host its tests call it.
+The software processor is a kernel part, a pure package in a folder of its own under `src/modulus`, with host tests. On a browser machine the kernel calls it; on the host its tests call it.
 
 - **The walk.** It walks the table that the kernel names, as the processor does: present, write, user, no execute, large pages. It sets the bit Accessed, and Dirty on a write, with an atomic OR, as the hardware does: the counts of the kernel in the same entries change with atomic additions, and they stay right. A walk that fails gives a page fault with the error code and the address of the hardware.
 - **The translation cache.** A small table of each processor holds the frames of the recent pages for a read, a write and an execute. A flush of the kernel empties it.
@@ -177,12 +178,12 @@ The device models play the devices of the test machine, at the same fixed places
 
 A model of the page that writes the class ring itself, in place of a device service, was refused ("The refused forms"). The virtio queue is the lower border: below it, even the device services see no change.
 
-The models run in a worker of their own, never in a processor and never on the thread of the document. They are Odin code built for `freestanding_wasm64p32`, which reads the virtio records of `modus:support/virtio`. The JavaScript of the page holds only the calls of the browser: the canvas, the events, the audio, the storage and the network.
+The models run in a worker of their own, never in a processor and never on the thread of the document. They are Odin code built for `freestanding_wasm64p32`, which reads the virtio records of `modus:virtio`. The JavaScript of the page holds only the calls of the browser: the canvas, the events, the audio, the storage and the network.
 
 | Device | Model | What the system sees |
 |---|---|---|
 | The data disk | virtio-blk on the origin private file system (OPFS), through a synchronous access handle in the worker of the models; a `Flush` is `flush()` of the handle | The block service and the storage service, unchanged. The page asks the browser to keep the storage (`navigator.storage.persist()`) |
-| The network | virtio-net; each frame crosses a datagram of WebTransport to a link relay, or a message of WebSocket where the engine has no WebTransport | The frame service and the network service, unchanged; the TCP and QUIC of the system end to end |
+| The network | virtio-net; each frame crosses a datagram of WebTransport to the link relay that the embedding page names, or a message of WebSocket where the engine has no WebTransport. With no relay named, the machine has no network device | The frame service and the network service, unchanged; the TCP and QUIC of the system end to end. With no relay, the paths of a machine with no network device |
 | The screen | The standard VGA of QEMU: its video memory in the shared memory, its display registers through ports | The compositor and its page flip, unchanged ([../infrastructure/whole_frame.md](../infrastructure/whole_frame.md)) |
 | The keys | The PS/2 controller with the keyboard: `KeyboardEvent.code` to the bytes of the keyboard | The input service, its layout and its path of the keys, unchanged |
 | The pointer | The virtio tablet: the place of the pointer in the canvas, as the roadmap entry "An absolute pointer in a virtual machine" makes it on QEMU | The absolute pointer record of the input service |
@@ -195,14 +196,14 @@ The models run in a worker of their own, never in a processor and never on the t
 
 - **The size.** The screen has the size of the canvas in device pixels, read with `ResizeObserver` and its `devicePixelContentBoxSize`, so one pixel of the system is one pixel of the display, with no blur.
 - **The scale factor** is the eighth of the system nearest to `devicePixelRatio` among the scales that exist ([desktop_to_browser.md](desktop_to_browser.md), "The reference screen"). A ratio of 2 gives the largest scale until the scales past 1.375 exist.
-- **A resize of the canvas after the start** waits for the class protocol of the display, which gives a mode and its change ([device_services.md](device_services.md), "The open points"). Until then, the screen keeps its size at the start, centered in the canvas.
+- **A resize of the canvas after the start** is a change of the mode of the display, which the class protocol of the display gives ([device_services.md](device_services.md), "The open points"). A fixed size at the start is not enough: a page that the reader resizes, or turns on a phone, then shows a screen of the wrong size. So the browser machine comes after the class protocol of the display, and each resize of the canvas is a change of the mode.
 - **The present.** At each animation frame, the thread of the document copies the screen page that the display registers name into a texture of WebGL2, and a shader swaps the blue and the red. The copy is whole: the display has no damage. Its cost is a measure.
 
 ### The trust
 
 The system trusts the page no more than it trusts QEMU: the page holds the whole memory of the machine, as QEMU does. The rules of today hold at the border of each device: a device service copies, then checks, each record of its device. The browser machine has no IOMMU, so each device model reaches all memory, as each device of a machine with no IOMMU does, and the root service refuses each device service from the disk, as it does there ([device_services.md](device_services.md), "No IOMMU, no third party").
 
-The page sets the policy of its own document: `Content-Security-Policy` with `script-src 'self' 'wasm-unsafe-eval'` (the compiled tier makes modules), `worker-src 'self'`, and a `connect-src` that names the link relay. A page to embed sets `frame-ancestors` to the sites that can embed it. The headers of the site of today forbid both ([`docs/SITE.md`](../../../docs/SITE.md), "How the site is published"): the path of the browser machine gets its own rule.
+The page sets the policy of its own document: `Content-Security-Policy` with `script-src 'self' 'wasm-unsafe-eval'` (the compiled tier makes modules), `worker-src 'self'`, and a `connect-src` that names the link relay of the embedding page, when it names one. A page to embed sets `frame-ancestors` to the sites that can embed it. The headers of the site of today forbid both ([`docs/SITE.md`](../../../docs/SITE.md), "How the site is published"): the path of the browser machine gets its own rule.
 
 ## The boot
 
@@ -231,7 +232,8 @@ The processor profile of the browser machine comes from these measures, as the p
 
 The tool runs the scenarios of the machine test on a browser machine, through a headless browser that it starts, with no window on the desktop of the developer.
 
-- **The tool serves the page** from a server on the loopback, with the headers of isolation, and starts Chromium with `--headless=new` on its address. A second engine, Firefox in its headless mode, runs the same parts.
+- **The tool serves the page** from a server on the loopback, with the headers of isolation, and starts Chromium with `--headless=new` on its address. A second engine, Firefox in its headless mode, runs the same parts. A part also runs with no headers of isolation, on one processor.
+- **Safari is not tested, and it is accepted.** Safari runs only on macOS, and the hosts of the tests run Linux. The page runs on Safari with the features that it has, and the page of the site says that no test runs on Safari.
 - **The page connects back to the tool** by a WebSocket of the loopback. Through it the tool does what it does to QEMU through its monitor: it sends keys and pointer moves to the models, it reads the lines of the serial port, and it takes a picture of the video memory. No protocol of browser automation is needed: the page is the machine, and its models are its QEMU.
 - **The data disk is the disk of the tool.** The model of the disk reads and writes the disk of the run through that WebSocket, so the tool knows each write and each flush, and the tests of a stop of the machine run as they run today ([`docs/ARCHITECTURE.md`](../../../docs/ARCHITECTURE.md), "U5. Storage service").
 - **The network is the peer of the tool.** The model of the network sends its frames over the same WebSocket to the peer of the tool.
@@ -240,17 +242,17 @@ The tool runs the scenarios of the machine test on a browser machine, through a 
 
 ## The order of the work
 
-Each layer adds one capability to a system that works. Each layer is an entry of `ROADMAP.md`, in "Later".
+Each layer adds one capability to a system that works. Each layer is an entry of `ROADMAP.md`, in "Later". The browser machine comes after the class protocol of the display, so that the desktop in a page follows each resize of the page.
 
 1. **The software processor on the host.** The kernel part, with host tests, the fuzz target that runs random runs of instructions on it and on the processor of the host and compares the registers, the flags and the memory, and the check of the instructions of each module. It works alone: the tool proves that every module of the image runs on it.
 2. **The kernel in a page, on one processor.** The arch layer for WebAssembly, the processor loop, the boot of the page with the signed description of the browser machine, the serial port, the bus, the clock and the entropy device, with no disk and no screen: the paths of a machine that lacks them. The tool runs a part with no screen on it, through the headless browser. It works alone: modus starts in a page to "the machine is usable".
-3. **The desktop in a page.** The display and its scale, the keys and the tablet. It needs the absolute pointer on QEMU first. The parts with pictures run on the browser machine, and their pictures equal the pictures of QEMU.
+3. **The desktop in a page.** The display and its scale, the change of its mode at each resize, the keys and the tablet. It needs the absolute pointer on QEMU and the class protocol of the display first. The parts with pictures run on the browser machine, and their pictures equal the pictures of QEMU.
 4. **A disk that survives a reload.** The data disk on OPFS. A principal finds its documents after a reload of the page.
 5. **The compiled tier.** Hot blocks as modules of WebAssembly. The measures of the software processor improve.
 6. **The demonstration on the site.** The page of the release, with its headers, and a guide that embeds a console.
 7. **Several processors.** The workers on one shared memory.
 8. **The sound of the page.** virtio-snd to an `AudioWorklet`.
-9. **The network of the page.** virtio-net and the link relay.
+9. **The network of the page.** virtio-net and the link relay that the embedding page names.
 
 ## The refused forms
 
@@ -264,6 +266,9 @@ Each layer adds one capability to a system that works. Each layer is an entry of
 - **A TPM in software in the page.** Its keys are in the same memory as everything else, so a seal protects nothing, and the system claims a measure that nobody can check.
 - **Node as a second runtime of the page.** A second runtime is a second set of models. A headless browser runs the tests as easily.
 - **A kernel built for memory64.** See "What Odin gives".
+- **An embed that requires cross-origin isolation.** Most pages that embed set no isolation, so with this rule most readers get no machine.
+- **A link relay that the project runs.** A relay is a router of the internet: it needs a policy against abuse, and its operator answers for each machine that uses it. The embedding page names its own relay, and the site of the project runs none, so a browser machine of the site has no network.
+- **A fixed size of the screen at the start.** A resize of the page or a turn of a phone then leaves a screen of the wrong size, centered in a canvas that no longer fits it.
 
 ## The contradictions
 
@@ -287,17 +292,13 @@ Each layer adds one capability to a system that works. Each layer is an entry of
 - **The size of a frame on the link.** A datagram of WebTransport has a smaller payload than a frame of 1514 bytes. The model of the network states its MTU in the field of virtio-net, and the network service must read it ([../infrastructure/network_data_path.md](../infrastructure/network_data_path.md)).
 - **The sound before the first gesture.** A browser starts no audio before an action of the reader. The model of the sound takes the periods at their time and drops them until then, so the timed stream never waits ([timed_stream.md](timed_stream.md)).
 - **The keys that the browser keeps.** Some keys never reach the page (Control+W, Control+T) unless the page is in full screen with the keyboard lock of the browser. The key super of the palette must have a key that a page receives.
-- **The link relay is a router of the internet.** Each machine that uses it reaches the network through its address. It needs the origins that it accepts, a rate bound for each machine, and a policy against abuse. Without one, a browser machine has no network.
+- **The link relay is a router of the internet.** Each machine that uses it reaches the network through its address. It needs the origins that it accepts, a rate bound for each machine, and a policy against abuse. So the embedding page brings its own relay and its rules; without one, a browser machine has no network.
 
 ## The open questions
 
 1. **The pointers of the kernel.** `wasm64p32` and a text of the assumption that binds the addresses that cross a border, or a target `wasm64` with memory64 in the fork, which Safari does not run today.
-2. **A browser machine with no shared memory.** A page that is not cross-origin isolated (most pages that embed) can still run one processor with JSPI in its idle wait and the models in the same worker. Is that form wanted, or does an embed require isolation?
-3. **The link relay.** Who runs it, for which origins, and with which bound. Or is the browser machine of the site always without network?
-4. **The engines.** The tests run Chromium and Firefox. Safari runs only on macOS: is a browser machine that no test runs on Safari accepted?
-5. **The translation ahead of time.** Is it wanted at all, or does the compiled tier suffice? It waits for a measure of the start of the large modules.
-6. **The resize of the screen.** Does a resize of the page wait for the class protocol of the display, or is a fixed size at the start enough for the demonstration?
+2. **The translation ahead of time.** Is it wanted at all, or does the compiled tier suffice? It waits for a measure of the start of the large modules.
 
 ## State
 
-Designed, not built. Nothing of the browser machine exists: no build of the kernel for WebAssembly, no software processor, no device model, no boot of the page and no test back end. The absolute pointer through the virtio tablet, on which layer 3 depends, is an entry of `ROADMAP.md`, "Next".
+Layer 1 foundation built in `src/library/modus/contract/software_machine`: the freestanding Software MMU (4-level x86-64 page-table walker matching `modulus` bits including 2 MiB large pages, canonical-address checks, W^X/NX enforcement, physical RAM bounds, atomic page-straddling reads and writes, and a direct-mapped software TLB with full and single-page invalidation), the freestanding x86-64 user-mode software processor (general-purpose integer instructions, `gs:` base reads, `syscall`/`int3`/`ud2`, step-budgeted `rep movsb`/`rep stosb`, and core SSE2 vector operations), and the browser machine configuration border (single-worker fallback without cross-origin isolation, engine-capped multi-worker mode with isolation, and optional bring-your-own link relay URL validation). Both `freestanding_amd64_sysv` and `freestanding_wasm64p32` compile checks and host tests pass. What remains: the module instruction-set check, differential fuzzing against the host processor, the WebAssembly arch layer of the kernel, the boot of the page, the device models, the compiled tier, and the headless browser machine tests.

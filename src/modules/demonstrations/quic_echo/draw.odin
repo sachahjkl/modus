@@ -3,10 +3,10 @@ package quic_echo
 // The window: the public key of the server (a client pins it), its
 // connections with their counts, and what the server refused.
 
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/quic"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:quic"
 
 WIDTH :: 960
 HEIGHT :: 640

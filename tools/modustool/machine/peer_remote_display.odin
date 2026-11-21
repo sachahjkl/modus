@@ -9,9 +9,9 @@ import "core:sync"
 import "core:time"
 import "modus:contract/errors"
 import protocol "modus:contract/remote_display"
-import "modus:support/display"
-import "modus:support/quic"
-import "modus:support/random"
+import "modus:display"
+import "modus:quic"
+import "modus:random"
 import "modustool:foundation"
 import "modustool:fuzz"
 
@@ -99,6 +99,13 @@ Peer_Remote_Display :: struct {
 	shown:             []u32,
 	shown_pointer:     protocol.Pointer_Place_Body,
 	pointer:           protocol.Pointer_Place_Body,
+	pointer_shape:     protocol.Pointer_Shape_Body,
+	has_pointer_shape: bool,
+	pointer_warp:      protocol.Pointer_Warp_Body,
+	has_pointer_warp:  bool,
+	inputs_sent:       u64,
+	echo_tracker:      protocol.Input_Echo_Tracker,
+	last_echo_count:   u64,
 	in_frame:          bool,
 	frame_serial:      u64,
 	pieces_left:       u32,
@@ -230,6 +237,9 @@ peer_display_queue :: proc(state: ^Peer_Remote_Display, kind: protocol.Record_Ki
 		return false
 	}
 	state.outgoing_length += len(bytes)
+	if kind == .Key || kind == .Pointer {
+		state.inputs_sent += 1
+	}
 	return true
 }
 
@@ -263,11 +273,29 @@ peer_display_record :: proc(state: ^Peer_Remote_Display, record: protocol.Servic
 		state.screen = {record.screen_size.width, record.screen_size.height}
 	case .Pointer_Place:
 		state.pointer = record.pointer_place
+	case .Pointer_Shape:
+		state.pointer_shape = record.pointer_shape
+		state.has_pointer_shape = true
+	case .Pointer_Picture:
+		state.has_pointer_shape = true
+	case .Pointer_Warp:
+		if protocol.input_echo_check(&state.echo_tracker, record.pointer_warp.input_echo_count, state.inputs_sent) != .None {
+			peer_display_refuse(state, "a Pointer_Warp with a bad input echo count")
+			return
+		}
+		state.pointer_warp = record.pointer_warp
+		state.has_pointer_warp = true
+		state.last_echo_count = record.pointer_warp.input_echo_count
 	case .Viewer_Frame_Start:
 		if state.in_frame || state.screen.width == 0 {
 			peer_display_refuse(state, "a Viewer_Frame_Start in a viewer frame, or before Screen_Size")
 			return
 		}
+		if protocol.input_echo_check(&state.echo_tracker, record.viewer_frame_start.input_echo_count, state.inputs_sent) != .None {
+			peer_display_refuse(state, "a Viewer_Frame_Start with a bad input echo count")
+			return
+		}
+		state.last_echo_count = record.viewer_frame_start.input_echo_count
 		state.in_frame = true
 		state.frame_serial = record.viewer_frame_start.serial
 		state.pieces_left = record.viewer_frame_start.screen_piece_count
@@ -394,6 +422,9 @@ peer_display_tick_one :: proc(peer: ^Peer, state: ^Peer_Remote_Display) {
 		state.has_stream, state.session_started = false, false
 		state.outgoing_length, state.outgoing_written, state.incoming_count = 0, 0, 0
 		state.screen = {}
+		state.pointer_shape, state.has_pointer_shape = {}, false
+		state.pointer_warp, state.has_pointer_warp = {}, false
+		state.inputs_sent, state.echo_tracker, state.last_echo_count = 0, {}, 0
 		state.in_frame, state.frames_taken = false, 0
 		state.port = state.next_port
 		state.next_port += 1
@@ -705,7 +736,7 @@ remote_display_case_run :: proc(machine: ^Machine, name: string) -> (passed: boo
 		return peer_display_refusal_case(state, viewer_key, "a Viewer_Frame_Taken of no viewer frame in flight", peer_display_record_bytes(.Viewer_Frame_Taken, protocol.Viewer_Frame_Taken_Body{serial = 1 << 40}), .Out_Of_Order)
 	case "unknown kind":
 		// The word between the two directions names no kind.
-		return peer_display_refusal_case(state, viewer_key, "a record whose kind names no record", peer_display_header_bytes(u32(protocol.Record_Kind.Pointer_Place) + 1, 8), .Bad_Record)
+		return peer_display_refusal_case(state, viewer_key, "a record whose kind names no record", peer_display_header_bytes(u32(protocol.Record_Kind.Pointer_Warp) + 1, 8), .Bad_Record)
 	case "other direction":
 		return peer_display_refusal_case(state, viewer_key, "a Screen_Size from the viewer", peer_display_record_bytes(.Screen_Size, protocol.Screen_Size_Body{1, 1}), .Bad_Record)
 	case "damaged request":

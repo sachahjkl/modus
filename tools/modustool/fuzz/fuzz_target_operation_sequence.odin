@@ -20,7 +20,7 @@ import "modustool:foundation"
 // The reference comments of the kernel operations: the generator reads the
 // kind of the result of each operation there, as the site reads its
 // signature. The file is in the binary, so a fuzz child reads no file.
-fuzz_operation_reference := #load("../../../src/library/contract/operation/operation.odin", string)
+fuzz_operation_reference := #load("../../../src/library/modus/contract/operation/operation.odin", string)
 
 // The first address of the upper half, which only the kernel maps: a
 // canonical address that a process never reaches.

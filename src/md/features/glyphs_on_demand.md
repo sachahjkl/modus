@@ -30,7 +30,7 @@ Two layers, and a chain of fonts. A shared layer between them, layer 1, was buil
 
 ### Layer 0: the outlines, shared and read-only
 
-The font outlines are one resource of the boot image, `font_outlines`, in the format of `src/library/contract/font_outlines`: a header, one record for each font (its name, the BLAKE3 hash of its file, its place and its size), then the font files. The modus tool writes it from the subsets in `resources/fonts`: the files of the glyph caches, B612 Regular and Bold, Paper Mono and Paper Mono SemiBold. The root service checks its hash once, and maps it read-only at the fixed range `Font_Outlines` in each process that gets the glyph caches (each process with a surface, each terminal, the compositor, a process from a disk). The bytes never change, so they tell no process anything.
+The font outlines are one resource of the boot image, `font_outlines`, in the format of `src/library/modus/contract/font_outlines`: a header, one record for each font (its name, the BLAKE3 hash of its file, its place and its size), then the font files. The modus tool writes it from the subsets in `resources/fonts`: the files of the glyph caches, B612 Regular and Bold, Paper Mono and Paper Mono SemiBold. The root service checks its hash once, and maps it read-only at the fixed range `Font_Outlines` in each process that gets the glyph caches (each process with a surface, each terminal, the compositor, a process from a disk). The bytes never change, so they tell no process anything.
 
 A process validates the header once (`font_outlines.validate`), as it validates a glyph cache: the root service maps the pages with the right Read only from the boot image, whose one handle has no right Write.
 

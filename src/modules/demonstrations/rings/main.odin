@@ -43,14 +43,14 @@
 package rings
 
 import "modus:contract/draw_record"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
 import op "modus:contract/operation"
-import "modus:support/relay"
+import "modus:relay"
 import "modus:contract/ring"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:random"
+import "modus:system"
 
 // Six nodes: 4114 pages. And the glyph memory of the copy of the text
 // rendering of the drawing module, which draws its text: 354 pages
@@ -156,7 +156,7 @@ pending :: proc "contextless" (queue: ^ring.Queue) -> (first, count: u32) {
 // frame now and of the frame on the surface.
 window_memory: interface.Window_Memory(384, 2048)
 
-// The random generator of this process (src/library/support/random).
+// The random generator of this process (src/library/modus/random).
 process_generator: random.Generator
 
 // The entry of rings: it makes the rings, starts the six nodes, puts five

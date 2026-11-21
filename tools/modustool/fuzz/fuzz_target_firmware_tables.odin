@@ -1,8 +1,8 @@
 package fuzz
 
 import "core:slice"
-import "kernel:acpi_processors"
-import iommu "kernel:iommu"
+import "modulus:acpi_processors"
+import iommu "modulus:iommu"
 import "modustool:foundation"
 
 // The fuzz targets of the tables of the firmware

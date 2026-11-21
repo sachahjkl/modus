@@ -22,7 +22,7 @@ KINDS_TEST_FOLDER :: "src/modules/tests/fact_kinds_probe"
 @(private = "file")
 KINDS_TEST_IMPORTS :: `package fact_kinds_probe
 
-import "modus:support/system"
+import "modus:system"
 import "modus:contract/value_kinds"
 import "modus:contract/errors"
 import op "modus:contract/operation"

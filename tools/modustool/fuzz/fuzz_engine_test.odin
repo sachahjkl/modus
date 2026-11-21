@@ -191,13 +191,13 @@ the_printed_commands_of_the_compiler_are_split :: proc(t: ^testing.T) {
 the_package_of_a_folder_is_the_name_that_its_sources_declare :: proc(t: ^testing.T) {
 	// The folder support/terminal holds the package terminal_records: a
 	// selection by the name of the folder counted none of its edges.
-	testing.expect_value(t, fuzz_package_name_of_folder(foundation.SOURCE_FOLDER_SUPPORT + "/terminal"), "terminal_records")
+	testing.expect_value(t, fuzz_package_name_of_folder(foundation.SOURCE_FOLDER_PUBLIC + "/terminal"), "terminal_records")
 	testing.expect_value(t, fuzz_package_name_of_folder(foundation.SOURCE_FOLDER_CONTRACT + "/module"), "module")
 	// A kernel part is a folder under the kernel.
 	testing.expect_value(t, fuzz_package_name_of_folder(foundation.SOURCE_FOLDER_KERNEL + "/iommu"), "iommu")
 	// A folder that does not exist gives the name of the folder.
-	testing.expect_value(t, fuzz_package_name_of_folder(foundation.SOURCE_FOLDER_SUPPORT + "/no_such_folder"), "no_such_folder")
-	names := fuzz_package_names({foundation.SOURCE_FOLDER_SUPPORT + "/terminal", foundation.SOURCE_FOLDER_SUPPORT + "/quic"})
+	testing.expect_value(t, fuzz_package_name_of_folder(foundation.SOURCE_FOLDER_PUBLIC + "/no_such_folder"), "no_such_folder")
+	names := fuzz_package_names({foundation.SOURCE_FOLDER_PUBLIC + "/terminal", foundation.SOURCE_FOLDER_PUBLIC + "/quic"})
 	testing.expect(t, slice.equal(names, []string{"terminal_records", "quic"}))
 	// A line with no name, a name that is no identifier, a name with more
 	// words after it (a line of prose in a comment), or no package line at

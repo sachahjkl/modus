@@ -89,16 +89,17 @@ It is the C library that `chibicc` calls, and nothing more, in C beside the work
 
 ### The gaps of the assembler
 
-What `chibicc` writes for a C source, and what the assembler did not take:
+What `chibicc` writes for a C source, and how the assembler handles it:
 
-| Lines of `chibicc` | What the system did |
+| Lines of `chibicc` | What the system does |
 |---|---|
 | `.file`, `.loc`, `.globl`, `.local`, `.text`, `.data`, `.bss`, `.type`, `.size`, `.align`, `.comm`, `.byte`, `.zero` | The patch writes the directives of modus, or nothing |
-| `movsxd (%rax), %rax`, `movsxd %eax, %rax`: the load of an `int` and the sign of a result | Added to the assembler (`REX.W 63 /r`), with its host tests |
+| `movsxd`/`movslq`, `movsbl`, `movsbq`, `movswl`, `movswq`, `movsbw`, `movsb`, `movsw`, `movsx`, `movzbl`, `movzbq`, `movzwl`, `movzwq`, `movzbw`, `movzb`, `movzw`, `movzx`, `cbw`, `cwtl`, `cltq`, `cwd`, `cdq`, `cqo` | Assembled, with host tests |
+| `sete` and all 16 `setcc`, `test`, `imul`, `idiv`, `div`, `and`, `or`, `xor`, `not`, `neg`, `inc`, `dec`, `shl`/`sal`, `shr`, `sar`, `rep stosb`, 8- and 16-bit registers (`%al`..`%r15b`, `%ax`..`%r15w`), scaled indexed addressing, indirect `call *reg` / `jmp *reg` | Assembled, with host tests |
 | `.quad label`, `mov x@GOTPCREL(%rip), %rax`, a section of thread-local data | Refused by the compiler: an address in data needs a rebase, a symbol of another module an import slot, and the module format has no thread-local data |
-| `movsbl`, `movswl`, `movzbl`, `movzwl`, `sete` and the other `set`, `imul`, `idiv`, `cqo`, `and`, `or`, `xor`, `not`, `neg`, `shl`, `sar`, `shr`, `test`, `rep stosb`, the registers of 8 and 16 bits, `call *%r10`, `movss`, `movsd` and the SSE forms, an index register | Not added: the assembler refuses each with its line and its column |
+| `movss`, `movsd`, x87 and SSE instructions, numeric local labels (`1:`/`1f`/`1b` in `alloca` and atomics), `lock cmpxchg`, `xchg` | Not added: the assembler refuses each with its line and its column |
 
-So the C subset that passes today is a function of `int` and `long` parameters and locals, with constants, `+`, `-`, an assignment, `return`, and `if`, `while` and `for` on a value with no comparison. A declaration with an initializer (`int x = a;`) is refused: `chibicc` clears the variable with `rep stosb` first. Each instruction past the subset is a change of the assembler with its encodings and its host tests, which the next C programs bring.
+So the C subset that passes today covers integer C functions: signed and unsigned `char`, `short`, `int`, `long`, `_Bool`, pointers, local and global arrays, structs, local initializers (`rep stosb`), comparisons, `if`/`else`, `while`, `for`, `do`, `switch`, `&&`/`||`/`!`/`?:`, `+`, `-`, `*`, `/`, `%`, bitwise `&`/`|`/`^`/`~`/`<<`/`>>`, unary `-`, and direct or recursive calls to functions in the same translation unit (`call *%r10`). Exported functions still take and return `int` or `long` (`Integer`) or `void`; `static` helper functions can take any integer, pointer, or small struct type.
 
 ## The refused forms
 
@@ -108,7 +109,7 @@ So the C subset that passes today is a function of `int` and `long` parameters a
 - **An `align` directive.** The compiler knows the offset of each variable, so the padding costs no directive. An `align` waits for a text that is written by hand.
 - **The state of `chibicc` reset by a patch.** The static variables are in eight files. A patch that sets each to its start would be large and would miss the next one that the work adds.
 - **A copy of the writable data at the first call, written back at each call.** The tool would need the bounds of the writable data of the C part in the module, which the link mixes with the data of the Odin package.
-- **An export for each C type.** A `char`, a `short` and the unsigned types need the extension instructions that the assembler lacks; a pointer needs a table or a handle in the description. They come with the instructions.
+- **An export for each C type.** A `char`, a `short` and the unsigned types need agreed export conventions; a pointer needs a table or a handle in the description.
 
 ## Subtle points
 
@@ -119,4 +120,4 @@ So the C subset that passes today is a function of `int` and `long` parameters a
 
 ## State
 
-Built: the module `c_compiler` with its export `compile`, the four patches, the thin libc, the table of the include files, the instruction `movsxd` of the assembler with its host tests, and the step of the main machine test that compiles `add`, assembles it, isolates it and gives 5. Left: the export `build` with the store "out", the instructions of the gaps above, a call of another function (`call *%r10`), the extension instructions and with them the other integer types, the calls of an import through an import slot, the floating point, and the next ported C program.
+Built: the module `c_compiler` with its export `compile`, the four patches, the thin libc, the table of the include files, the expanded integer instruction subset of the assembler (comparisons, `setcc`, loops, indirect calls, `imul`, `idiv`/`div`, `cqo`/`cdq`, bitwise and shift operations, 8/16/32/64-bit registers, sign/zero-extending moves, `rep stosb`, scaled indexed SIB addressing) with end-to-end host tests running `chibicc` output for factorial, recursive Fibonacci, signed/unsigned division and modulo, comparisons, bitwise ops and byte/short arrays, and the step of the main machine test. Left: the export `build` with the store "out", exports with non-`int`/`long` C types, the calls of an import through an import slot, floating-point instructions, `alloca`/atomics, and the next ported C program.

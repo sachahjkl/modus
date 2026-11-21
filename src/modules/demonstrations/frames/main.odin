@@ -34,14 +34,14 @@
 package frames
 
 import "base:intrinsics"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
 import op "modus:contract/operation"
-import "modus:support/random"
+import "modus:random"
 import "modus:contract/value_kinds"
-import "modus:support/system"
-import "modus:support/twins"
+import "modus:system"
+import "modus:twins"
 
 // 8192 pages at a time, and five twins: 11446 pages. And the glyph memory
 // of the copy of the text rendering of the drawing module, which draws its
@@ -274,7 +274,7 @@ shared_code_cases :: proc "contextless" () {
 	system.log_fact(.Info, Twins_Paid{own_copy_pages = u64(own_paid), shared_code_pages = u64(shared_paid), module_pages = u64(shared_pages)})
 }
 
-// The random generator of this process (src/library/support/random).
+// The random generator of this process (src/library/modus/random).
 process_generator: random.Generator
 
 // entry runs each case and each measure once, writes the lines of the

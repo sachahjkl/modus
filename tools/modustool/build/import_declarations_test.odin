@@ -16,7 +16,7 @@ EXPORT_SOURCE :: `// A module of the tests.
 package exports_of_the_test
 
 import "modus:contract/errors"
-import "modus:support/system"
+import "modus:system"
 
 Reading :: struct {
 	sensor: i64,
@@ -39,7 +39,7 @@ sum_values :: proc "c" (readings: ^system.Table_To_Read(Reading), factor: i64, n
 IMPORTER_HEAD :: `package importer_of_the_test
 
 import "modus:contract/errors"
-import "modus:support/system"
+import "modus:system"
 
 Measure :: struct {
 	place:  i64,
@@ -176,7 +176,7 @@ declared_unit_difference :: proc(t: ^testing.T, signature: string) -> (differenc
 	source := strings.concatenate({`package importer_of_units
 
 import "modus:contract/value_kinds"
-import other_units "modus:support/system"
+import other_units "modus:system"
 
 foreign _ {
 	reserve :: proc "c" `, signature, ` ---
@@ -248,7 +248,7 @@ NINE_PARAMETER_SOURCE :: `// A module of the tests.
 package nine_of_the_test
 
 import "modus:contract/errors"
-import "modus:support/system"
+import "modus:system"
 
 Reading :: struct {
 	sensor: i64,
@@ -276,7 +276,7 @@ declared_nine_difference :: proc(t: ^testing.T, signature: string) -> (differenc
 	source := strings.concatenate({`package importer_of_nine
 
 import "modus:contract/errors"
-import "modus:support/system"
+import "modus:system"
 
 Measure :: struct {
 	place:  i64,
@@ -507,7 +507,7 @@ each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T)
 		// The declarations of the drawing module are in the window layer of
 		// the interface package, for each module with the setting.
 		if slice.contains(build.defines, foundation.DRAWING_THROUGH_MODULE) {
-			append(&paths, foundation.SOURCE_FOLDER_SUPPORT + "/interface/window_drawing.odin")
+			append(&paths, foundation.SOURCE_FOLDER_PUBLIC + "/interface/window_drawing.odin")
 		}
 		compared := 0
 		for path in paths {
@@ -530,7 +530,7 @@ each_declaration_of_the_repository_agrees_with_its_export :: proc(t: ^testing.T)
 }
 
 // The rules of a module that draws its window through the drawing module
-// (src/library/support/interface, window_drawing.odin):
+// (src/library/modus/interface, window_drawing.odin):
 //   - it imports the module, which is a library module of the table, and
 //     the module is before it in the table;
 //   - it starts no child of its own file with no load source: the loader

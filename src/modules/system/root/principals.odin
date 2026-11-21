@@ -3,10 +3,10 @@ package root
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/system_description"
-import "modus:support/principals"
+import "modus:principals"
 import "modus:contract/root_ring"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The principals in the root service (docs/PRINCIPALS.md).
 //

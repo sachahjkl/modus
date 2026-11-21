@@ -36,7 +36,7 @@ An endpoint is what a process holds to send and receive datagrams or segments: a
 
 An endpoint replaces the socket of other systems, but the process does not choose its remote. The root service names the grant, and the network service enforces it: a request to another remote fails with `Not_Granted`, and what another remote sends never reaches the process. An endpoint is a datagram endpoint (UDP) or a segment endpoint (TCP), each with a client grant or a listen grant. A process has one. The console shows its grant with `grants` and ends it with `revoke`. An endpoint is not a connection.
 
-The design: `src/library/contract/datagram`.
+The design: `src/library/modus/contract/datagram`.
 
 Do not use: socket, port (for this), connection (for this).
 
@@ -46,7 +46,7 @@ A datagram is one UDP datagram: its header of 8 bytes and its data, 1472 bytes o
 
 1472 bytes is the data of one Ethernet frame after the IPv4 and UDP headers, so a datagram is never a fragment. The process writes the whole datagram in a place of its datagram region, with the header and its checksum (`network.udp_header_write`), and sends it with `Send`. The network service checks the ports in its own copy of the header, and the device reads the rest from the place. Example: QUIC is a library in the process over datagrams. A datagram is not a frame and not a segment.
 
-The design: `src/library/contract/datagram`.
+The design: `src/library/modus/contract/datagram`.
 
 Do not use: packet, message.
 
@@ -56,7 +56,7 @@ A remote is the IPv4 address and the UDP port or TCP port at the other end of a 
 
 A grant names remotes: a client grant names one, and a listen grant admits the remotes that came to it. A command of the datagram ring names a remote by its address and its port. An error record of `Not_Granted` holds the remote of the request and the remote of the grant. Example: the remote of the client grant of `fetch` is 10.0.2.100 port 80. A remote is not the host, which is the computer that runs QEMU, and not the peer, which is one part of the modus tool.
 
-The design: `src/library/contract/datagram`.
+The design: `src/library/modus/contract/datagram`.
 
 Do not use: peer (for this), destination, host.
 
@@ -66,7 +66,7 @@ A UDP port is the 16-bit number of UDP that names one endpoint at an address.
 
 The network service finds the endpoint of a datagram that arrives by its destination port. With a client grant, the network service gives the local port, and the command `Info` returns it. The process writes that port as the source port of each datagram, and the network service refuses another one. A listen grant names its port: the remote service listens on the UDP port 7100. A UDP port is not the Ports object of the kernel, and not a TCP port: one number names two different ports in UDP and in TCP.
 
-The design: `src/library/contract/datagram`.
+The design: `src/library/modus/contract/datagram`.
 
 Do not use: port (alone), socket number.
 
@@ -174,7 +174,7 @@ Do not use: socket table, connection pool.
 
 The datagram ring is the ring between a process and the network service for one endpoint.
 
-Its commands, in `src/library/contract/datagram`:
+Its commands, in `src/library/modus/contract/datagram`:
 
 - `Send` and `Receive`: a datagram, or a whole segment.
 - `Info`, `Statistics` and `Problems`: the facts, the counts and the refused frames.
@@ -183,7 +183,7 @@ Its commands, in `src/library/contract/datagram`:
 
 Many requests are in flight. A `Receive` stays in flight until a datagram arrives, and the network service drops a datagram when no place waits. A refused request has an error record. A datagram ring is not a socket: a request names a place in the datagram region, never an address.
 
-The design: `src/library/contract/datagram`.
+The design: `src/library/modus/contract/datagram`.
 
 Do not use: socket, channel.
 
@@ -203,7 +203,7 @@ A neighbor is an address of the link and its hardware address, which the network
 
 A frame needs the hardware address of the next machine on the link. The network service asks it by ARP and keeps the answer in a table of neighbors. It learns only an address that one of its own requests asked, so an ARP frame that nobody asked for changes nothing. When the table is full, the answer replaces the oldest entry that no waiting request uses. A process asks for a new resolution with the command `Resolve`. A neighbor is not an entry of a cache that each ARP frame of the link can change.
 
-The design: `src/library/support/network`.
+The design: `src/library/modus/network`.
 
 Do not use: ARP cache entry, neighbour entry.
 
@@ -305,7 +305,7 @@ A call answer is the bytes of a call stream from the remote service to the host:
 
 The header has 112 bytes: the status, the integer result, the error record, and the count of the bytes of the result that follow (`total`). The host trusts nothing in it: `remote.answer_check` checks that the bytes are exactly a header and its total, and that the status names a member. The host decodes the result with the description of the export and prints it. The answers come back in any order; the host matches each one to its call by its stream. A call answer is not a response of HTTP: it has no headers of text.
 
-The design: `src/library/contract/remote`.
+The design: `src/library/modus/contract/remote`.
 
 Do not use: response, reply.
 

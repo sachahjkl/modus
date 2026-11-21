@@ -17,7 +17,7 @@
 // Done, or Failed after a WRONG line.
 package output_count_reader
 
-import "modus:support/system"
+import "modus:system"
 
 // The record of output_counter: the same record description, so the root
 // service wires the two.

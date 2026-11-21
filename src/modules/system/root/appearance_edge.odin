@@ -4,8 +4,8 @@ import "base:intrinsics"
 import "modus:contract/date"
 import "modus:contract/settings"
 import "modus:contract/value_kinds"
-import "modus:support/appearance"
-import "modus:support/system"
+import "modus:appearance"
+import "modus:system"
 
 // The appearance in force at each edge of the rule of the day
 // (src/md/features/appearance.md, "Who writes the appearance in force, and

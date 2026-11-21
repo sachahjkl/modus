@@ -19,7 +19,7 @@ The `Text` of the module contract is UTF-8 already ([`docs/MODULE_CONTRACT.md`](
 
 ## The chosen form
 
-**One rule, in one contract package.** `src/library/contract/text_encoding` holds the rule and the procedures. It is a contract package because the palette table, the store, the cut mark and the kernel check text with it, and none of them can import a support package. A support package or a module imports it as well.
+**One rule, in one contract package.** `src/library/modus/contract/text_encoding` holds the rule and the procedures. It is a contract package because the palette table, the store, the cut mark and the kernel check text with it, and none of them can import a support package. A support package or a module imports it as well.
 
 **A text is UTF-8, as RFC 3629 defines it.** A character is one well-formed sequence:
 
@@ -40,7 +40,7 @@ Each other byte that starts a sequence is an invalid sequence: an overlong form 
 **The procedures.**
 
 - `character_decode` reads one character, each byte once. A byte that starts no well-formed sequence is an invalid sequence of one byte; a control character keeps the length of its sequence.
-- `text_valid` and `invalid_sequence_find` are the check at a border: the first gives a verdict, the second the place of the first invalid sequence.
+- `text_valid` and `invalid_sequence_find` are the check at a border: the first gives a verdict, the second the place of the first invalid sequence. `text_valid` checks sixteen bytes at a time ([utf8_validation.md](utf8_validation.md)).
 - `invalid_sequences_replace` writes `?` in place of each byte of each invalid sequence. The length stays, so each offset into the text stays.
 - `complete_characters` is the one way to cut a text: a writer with room for `n` bytes keeps `complete_characters(text[:n])` bytes. It moved here from the cut mark, which uses it.
 - `character_count` counts the cells of a text: one for each character, one for each invalid sequence.
@@ -65,7 +65,7 @@ A border that refuses keeps the rule of its contract: a table that fails is no t
 
 **The fonts hold two ranges and a list: 32 to 126, the Latin-1 Supplement and the added characters.** The characters of a font are the 95 printable characters of ASCII, the 96 characters U+00A0 to U+00FF, and the added characters (`font_characters.added_characters`): today the euro sign U+20AC alone. That is 192 characters (`font_characters.CHARACTER_COUNT`). The two ranges are the characters of the languages of Western Europe. The euro sign is the one character that a key of the layout of France gives outside them: AltGr with `e` ([../features/keyboard_layout.md](../features/keyboard_layout.md)). U+0080 to U+009F are control characters, which a text never holds, so the two ranges have no gap that a character of a text could fall in.
 
-The **character index** (`font_characters.character_index`, in the contract `src/library/contract/font_characters`) numbers them: 0 to 94 for 32 to 126, then 95 to 190 for U+00A0 to U+00FF, then 191 and up for the added characters, in the order of their list. Each table that keys a character keys it by this index: the placed glyph of the shaper, the glyphs of a subset, and the Spleen data. A reader finds a glyph by its code point with one call, and each table has no hole. The glyph cache file keyed its glyphs, its advances and its pairs by it too, until it left the system. The vector fonts in `resources/fonts` are subsets with the same 192 characters (`modustool vector_fonts`), and the Spleen data holds them (`modustool font`): Spleen 2.1.0 draws each character of the Latin-1 Supplement and the euro sign.
+The **character index** (`font_characters.character_index`, in the contract `src/library/modus/contract/font_characters`) numbers them: 0 to 94 for 32 to 126, then 95 to 190 for U+00A0 to U+00FF, then 191 and up for the added characters, in the order of their list. Each table that keys a character keys it by this index: the placed glyph of the shaper, the glyphs of a subset, and the Spleen data. A reader finds a glyph by its code point with one call, and each table has no hole. The glyph cache file keyed its glyphs, its advances and its pairs by it too, until it left the system. The vector fonts in `resources/fonts` are subsets with the same 192 characters (`modustool vector_fonts`), and the Spleen data holds them (`modustool font`): Spleen 2.1.0 draws each character of the Latin-1 Supplement and the euro sign.
 
 **A character past Latin-1 is added to a list, not by a range.** The next characters that a principal can need are far apart in Unicode: Œ (U+0152), Ÿ (U+0178), the dashes and the quotation marks (U+2013 to U+201E), the ellipsis (U+2026), the euro sign (U+20AC). A range that holds them holds about 8 000 characters. Each font must draw each character of a cache, so with a range the build would refuse each font of the system, or the tables would get back the holes that the character index removed. A list holds only the characters that were chosen, and each font draws each of them. The rules of the list:
 

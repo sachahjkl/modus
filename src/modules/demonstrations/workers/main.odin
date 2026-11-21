@@ -17,7 +17,7 @@
 // exists.
 //
 // **Start**: `start("workers")` in the console, or the bar of the desktop.
-// Its row of `process_roles` has no grant; its budget has room for 9 threads.
+// Its row of `start_grant_sets` has no grant; its budget has room for 9 threads.
 //
 // **What a reader sees**: the picture in the tints of the four threads,
 // which zooms in at each new picture, the tiles of each thread and the
@@ -32,10 +32,10 @@
 //   picture.
 package workers
 
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 import "base:intrinsics"
 
 // The working memory: the rest of the pages that the root service gave it

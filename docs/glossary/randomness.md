@@ -14,7 +14,7 @@ Do not use: entropy (for this), salt.
 
 A random generator is a record of fixed size in the memory of a process that gives it random bytes, with no kernel entry and no call.
 
-It is `random.Generator` (`src/library/support/random`): ChaCha20 with fast key erasure, so a copy of its state after a draw does not give the bytes before it. `random.fill` draws bytes; `random.fill_for_a_key` draws a secret only above a least seed strength; `random.seed_for_a_child` seeds a child or a second thread. One generator belongs to one thread. It is not a kernel device and not a service: a kernel entry or a call for each draw costs too much on a hot path, and a shared pool is a shared state.
+It is `random.Generator` (`src/library/modus/random`): ChaCha20 with fast key erasure, so a copy of its state after a draw does not give the bytes before it. `random.fill` draws bytes; `random.fill_for_a_key` draws a secret only above a least seed strength; `random.seed_for_a_child` seeds a child or a second thread. One generator belongs to one thread. It is not a kernel device and not a service: a kernel entry or a call for each draw costs too much on a hot path, and a shared pool is a shared state.
 
 The design: `docs/RANDOMNESS.md`, "2. The generator".
 
@@ -104,7 +104,7 @@ Do not use: crypto library, libcrypto.
 
 Not authentic is the error kind of a sealed text whose tag does not verify, or of a message whose signature does not verify.
 
-`Not_Authentic` (`src/library/contract/errors`) tells a caller that the bytes are forged, damaged or from another key, and it is the one answer: the call says nothing about which byte was wrong. A failed open leaves no byte of the text in the result. A point of small order given to `x25519` is `Bad_Value`, not `Not_Authentic`: it shares no secret, but it is not a forged text.
+`Not_Authentic` (`src/library/modus/contract/errors`) tells a caller that the bytes are forged, damaged or from another key, and it is the one answer: the call says nothing about which byte was wrong. A failed open leaves no byte of the text in the result. A point of small order given to `x25519` is `Bad_Value`, not `Not_Authentic`: it shares no secret, but it is not a forged text.
 
 The design: `docs/CRYPTOGRAPHY.md`, "6. The module `cryptography`".
 
@@ -112,7 +112,7 @@ Do not use: MAC failure, bad tag.
 
 ### Compatibility layer
 
-The compatibility layer is the packages of `src/library/support/cryptography` that give the code taken from Odin the helpers that it expects from its origin, over the primitives of this system.
+The compatibility layer is the packages of `src/library/modus/cryptography` that give the code taken from Odin the helpers that it expects from its origin, over the primitives of this system.
 
 The code of `core:crypto` imports helpers of the library of Odin. The system does not change that code: it changes only its import lines, so that they name the packages of the layer under the names of their origin. Those packages implement the helpers with the primitives of the system: the erase of a secret, for example, is one that the compiler cannot remove. A change of a file of the layer fails `modustool check` until its new hash is written.
 

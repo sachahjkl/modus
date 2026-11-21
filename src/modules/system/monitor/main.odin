@@ -44,11 +44,11 @@ import process_page "modus:contract/disk_process_page"
 import "modus:contract/draw_record"
 import "modus:contract/value_kinds"
 import op "modus:contract/operation"
-import "modus:private/monitor/sample_history"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "internal:monitor/sample_history"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 
 // The window is built with the interface package (docs/INTERFACE.md). The
 // text table holds the points of the three graphs too: 2 916 bytes each.

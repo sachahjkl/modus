@@ -11,8 +11,8 @@ package root
 
 import op "modus:contract/operation"
 import "modus:contract/root_ring"
-import "modus:support/principals"
-import "modus:support/system"
+import "modus:principals"
+import "modus:system"
 
 #assert(root_ring.ROOT_WAIT_PERSISTED_TABLES == principals.PRINCIPAL_CAPACITY)
 // STARTED_CAPACITY processes could hold two queues each, more than the wait
@@ -23,7 +23,9 @@ import "modus:support/system"
 root_wait_full_told: bool
 
 // root_waited_queues gives the queues that the loop waits on now, with
-// those of a place whose start is not done.
+// those of a place whose start is not done, plus the delegated wiring
+// service ring when running. Per-process wiring rings are waited on by
+// the delegated wiring service, not the root core.
 root_waited_queues :: proc "contextless" () -> (count: int) {
 	for &item in started {
 		if item.requests.head != nil {
@@ -32,17 +34,18 @@ root_waited_queues :: proc "contextless" () -> (count: int) {
 		if item.network.head != nil {
 			count += 1
 		}
-		if item.wiring.head != nil || item.wiring_memory != 0 {
-			count += 1
-		}
+	}
+	if wiring_ring.head != nil {
+		count += 1
 	}
 	return count
 }
 
 // start_waited_queues gives the queues that the start of a module of the
-// image brings to the loop.
+// image brings to the root core loop.
 start_waited_queues :: proc "contextless" (grants: bit_set[Grant], file: []u8) -> int {
-	return root_ring.start_waited_queues(grants, system.module_declares_record_streams(file))
+	_ = file
+	return root_ring.start_waited_queues(grants, false)
 }
 
 // waited_queues_refusal gives the error record of a command whose added

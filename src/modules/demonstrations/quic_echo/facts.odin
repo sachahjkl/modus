@@ -1,7 +1,7 @@
 package quic_echo
 
 import "modus:contract/value_kinds"
-import "modus:support/quic"
+import "modus:quic"
 
 // The log facts of quic_echo (src/md/features/log_facts.md): each fact
 // template is the line that the process wrote before it was a fact, so a

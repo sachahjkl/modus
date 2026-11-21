@@ -1,7 +1,7 @@
 package build
 
 import info "modus:contract/boot_info"
-import iommu "kernel:iommu"
+import iommu "modulus:iommu"
 import op "modus:contract/operation"
 import "core:fmt"
 import "core:os"
@@ -17,7 +17,7 @@ import "modustool:foundation"
 
 // The frame that interrupt_common and kernel_enter push before they call
 // kernel_interrupt: the 15 registers, the vector, the error code, and the
-// five values of the processor (src/kernel/processor.asm).
+// five values of the processor (src/modulus/processor.asm).
 KERNEL_ENTRY_FRAME_BYTES :: 22 * 8
 // The return address that a call pushes: the frame of llc does not hold
 // it.
@@ -45,7 +45,7 @@ STACK_SCAN_DEPTH_MOST :: KERNEL_STACK_BYTES
 STACK_SCAN_NOT_REACHED :: -1
 
 // An interrupt stack and what kernel_interrupt runs on it. The gate of each
-// of its vectors names it in the task state (src/kernel/processor.odin).
+// of its vectors names it in the task state (src/modulus/processor.odin).
 Kernel_Stack_Interrupt_Stack :: struct {
 	label:            string,
 	bytes:            int,
@@ -177,7 +177,7 @@ kernel_stack_rules := Kernel_Stack_Rules {
 		{"memmove", 0},
 		{"fill_bytes_with_value", 0},
 		{"memset", 0},
-		// src/kernel/edge_counters.asm, in the counted kernel only: the
+		// src/modulus/edge_counters.asm, in the counted kernel only: the
 		// callback of each edge pushes nothing.
 		{"__sanitizer_cov_trace_pc_guard", 0},
 	},
@@ -243,7 +243,7 @@ kernel_stack_rules := Kernel_Stack_Rules {
 		{"the machine check", op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE, op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE / STACK_LEAST_FREE_PART, true},
 		// The stub returns from a debug trap of the kernel with no compiled
 		// code, and moves the frame of a trap of a process to the kernel
-		// stack before kernel_interrupt (src/kernel/processor.asm).
+		// stack before kernel_interrupt (src/modulus/processor.asm).
 		{"the debug exception", op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE, op.KERNEL_INTERRUPT_STACK_PAGES * info.PAGE_SIZE / STACK_LEAST_FREE_PART, false},
 	},
 	// The report: kernel_interrupt starts the report of a fault, writes its
@@ -265,7 +265,7 @@ kernel_stack_rules := Kernel_Stack_Rules {
 	nested_report_callees = {"kernel::fault_report_begin"},
 	report_never_reaches = {"kernel::lock_take", "kernel::word_wake"},
 	// The trials of the counter registers at the start of a processor and
-	// in the self test (src/kernel/register_trial.odin).
+	// in the self test (src/modulus/register_trial.odin).
 	register_trials = {"model_specific_register_trial_read", "model_specific_register_trial_write"},
 	refusal_callee = "kernel::register_trial_refusal_address",
 }
@@ -633,9 +633,9 @@ kernel_call_graph_read :: proc(listing: string, frames: map[u64]int) -> []Stack_
 						procedure.first_indirect_call = instruction.text
 					}
 					procedure.indirect_call_pushed_bytes = max(procedure.indirect_call_pushed_bytes, pushed_bytes)
-				} else if compiled && counts[position] == 0 {
-					// No frame stays: the jump leaves the procedure. Above 0
-					// it is a branch of a table of a switch.
+				} else if compiled && counts[position] == 0 && !stack_is_switch_table_jump(procedure.instructions[:], position) {
+					// No frame stays: the jump leaves the procedure, unless it is
+					// a shrink-wrapped PIC jump table for a local switch.
 					procedure.indirect_tail_calls += 1
 					if procedure.first_indirect_tail_call == "" {
 						procedure.first_indirect_tail_call = instruction.text
@@ -843,7 +843,7 @@ stack_pointer_scan :: proc(procedure: ^Stack_Procedure, procedures: []Stack_Proc
 					return counts
 				}
 			case stack_is_jump(mnemonic) && !instruction.direct:
-				if count > 0 {
+				if count > 0 || stack_is_switch_table_jump(instructions, position) {
 					table_count = max(table_count, count)
 				}
 			case stack_is_jump(mnemonic):
@@ -902,6 +902,47 @@ stack_pointer_scan :: proc(procedure: ^Stack_Procedure, procedures: []Stack_Proc
 		}
 	}
 	return counts
+}
+
+// stack_is_switch_table_jump recognises the PIC jump table that llc emits for
+// a switch inside a shrink-wrapped procedure (before any frame is pushed):
+//   leaq   <disp>(%rip), %base
+//   movslq (%base, %idx, 4), %target
+//   addq   %base, %target
+//   jmpq   *%target
+@(private = "file")
+stack_is_switch_table_jump :: proc(instructions: []Stack_Instruction, position: int) -> bool {
+	if position < 3 {
+		return false
+	}
+	jump := instructions[position]
+	if !strings.has_prefix(jump.operands, "*%") {
+		return false
+	}
+	target_reg := jump.operands[1:]
+	add := instructions[position - 1]
+	load := instructions[position - 2]
+	base_lea := instructions[position - 3]
+	if add.mnemonic != "addq" || load.mnemonic != "movslq" || base_lea.mnemonic != "leaq" {
+		return false
+	}
+	add_comma := strings.last_index(add.operands, ", ")
+	if add_comma < 0 || add.operands[add_comma + 2:] != target_reg {
+		return false
+	}
+	base_reg := strings.trim_space(add.operands[:add_comma])
+	if !strings.has_prefix(base_reg, "%") {
+		return false
+	}
+	lea_comma := strings.last_index(base_lea.operands, "(%rip), ")
+	if lea_comma < 0 || base_lea.operands[lea_comma + len("(%rip), "):] != base_reg {
+		return false
+	}
+	load_comma := strings.last_index(load.operands, ", ")
+	if load_comma < 0 || load.operands[load_comma + 2:] != target_reg {
+		return false
+	}
+	return strings.has_prefix(load.operands, "(") && strings.has_prefix(load.operands[1:], base_reg) && strings.has_prefix(load.operands[1 + len(base_reg):], ",")
 }
 
 // stack_is_padding says if an instruction is the filler that the

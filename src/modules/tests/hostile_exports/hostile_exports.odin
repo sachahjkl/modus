@@ -25,7 +25,7 @@ package hostile_exports
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import op "modus:contract/operation"
-import "modus:support/system"
+import "modus:system"
 
 // The value of the Memory_Map command that holds the memory handle, from 1:
 // the argument that an error record of the kernel names for it.

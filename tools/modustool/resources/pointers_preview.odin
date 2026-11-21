@@ -1,7 +1,7 @@
 package resources
 
 import "modus:contract/pointer_pictures"
-import "modus:support/graphics"
+import "modus:graphics"
 import "core:fmt"
 import "core:os"
 import "core:time"

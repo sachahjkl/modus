@@ -24,7 +24,7 @@ package output_measure
 import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 
 // The counts of readers of the measure of the fan-out.
 READER_COUNTS :: [4]int{1, 2, 4, 8}
@@ -273,7 +273,7 @@ wirings_ended_wait :: proc "contextless" () {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	requests_memory = ctx.handles[system.GRANT_ROOT]
-	opened, ring_status := system.ring_open(requests_memory)
+	opened, ring_status := system.ring_open(requests_memory, receive_handles = true)
 	if ring_status != .Ok {
 		wrong("no root ring; the status", u64(ring_status))
 	}

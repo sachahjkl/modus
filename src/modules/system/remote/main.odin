@@ -1,7 +1,7 @@
 // The remote service: the calls of the host (docs/MODULE_CONTRACT.md,
 // section 4, "A call from the host"; docs/QUIC.md, section 7).
 //
-// QUIC in the process (src/library/support/quic), over a datagram endpoint with a
+// QUIC in the process (src/library/modus/quic), over a datagram endpoint with a
 // listen grant of UDP on the port remote.LISTEN_PORT that admits the
 // address of the host only (remote.HOST_ADDRESS): the network service drops
 // a datagram of another address before this process sees it. Each call is
@@ -60,7 +60,7 @@
 // - **Remote_Clients**: the client table, read-only: the key of each
 //   client that a principal allowed, and that principal.
 // - **Connect**: a ring to the root service for `Connect` and `Disconnect`,
-//   to the services of its role (`process_roles`): compositor, date, debugger, inspect,
+//   to the services of its start grant set (`start_grant_sets`): compositor, date, debugger, inspect,
 //   log, manual, monitor, settings and storage, each for one row of the
 //   client table. A call to another service fails with the refusal of the
 //   root service.
@@ -81,13 +81,13 @@ import "modus:contract/isolated"
 import "modus:contract/remote"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/interface"
-import "modus:support/network"
-import "modus:support/quic"
-import "modus:support/random"
+import "modus:display"
+import "modus:interface"
+import "modus:network"
+import "modus:quic"
+import "modus:random"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 
 // 2 QUIC connections of about 85 KiB each, 8 streams of about 130 KiB for
 // each, and a buffer of a request or an answer of about 64 KiB for each
@@ -207,7 +207,7 @@ datagrams_malformed: u64 // Datagrams with no whole UDP header: the network serv
 
 // The phases of one call stream. A record of a stream frees when the host
 // read the end of this side and this side read the end of the host
-// (src/library/support/quic, stream_read); the call place is then empty again.
+// (src/library/modus/quic, stream_read); the call place is then empty again.
 Call_Phase :: enum u8 {
 	None, // No stream in this place.
 	Reading, // The request comes. Bound: REQUEST_TIME_LIMIT.
@@ -273,7 +273,7 @@ Service_Connection :: struct {
 	count:         u64, // The calls through this connection.
 }
 
-// The 9 services of the row of "remote" in process_roles in the root service, for each of
+// The 9 services of the row of "remote" in start_grant_sets in the root service, for each of
 // the CAPACITY connections, each of which can have a key of another row.
 SERVICE_CONNECTION_CAPACITY :: 24
 
@@ -1023,7 +1023,7 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 			}
 			copy(connection.name[:len(connection.name) - 1], name)
 			ring_status: system.Status
-			connection.calls, ring_status = system.ring_open(connection.ring_memory)
+			connection.calls, ring_status = system.ring_open(connection.ring_memory, receive_handles = true)
 			address, map_status := system.memory_map(connection.region_memory)
 			region_pages, size_status := system.memory_size(connection.region_memory)
 			if ring_status != .Ok || map_status != .Ok || size_status != .Ok {
@@ -1250,7 +1250,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("no datagram region")
 	}
 	region = ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]
-	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT]); status != .Ok {
+	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true); status != .Ok {
 		fail("no ring to the root service")
 	}
 	// The client table, read-only: the root service writes it, and this

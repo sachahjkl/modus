@@ -45,10 +45,10 @@ import "modus:contract/blake3"
 import "modus:contract/enum_word"
 import "modus:contract/pointer_pictures"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 
 // The pointer themes that it checks: 1616 pages. And the glyph memory of
 // its own copy of the text rendering, which draws its text: 354 pages

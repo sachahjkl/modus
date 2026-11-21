@@ -2,7 +2,7 @@
 //
 // The kernel gives it every handle that exists at boot: the machine, the
 // boot image, the framebuffer, the devices. It starts the other processes,
-// and it gives each one only the handles of its role. It is the **only
+// and it gives each one only the handles of its start grant set. It is the **only
 // process that creates access from nothing**: each other handle of the
 // system came from it, directly or through a chain of processes.
 //
@@ -10,9 +10,9 @@
 // it at its start, or it asks this service on its *root ring*, and this
 // service answers by the tables of this file:
 //
-// - `process_roles` (roles.odin): the role of each module of the boot
+// - `start_grant_sets` (start_grant_sets.odin): the start grant set of each module of the boot
 //   image, by its name, in one row: its start grants and the other terms
-//   of its role (the services that a process with the grant `Connect` can
+//   of its start grant set (the services that a process with the grant `Connect` can
 //   reach, the blocks of a private store, the log with Give, the size of a
 //   terminal), with the reason of each. The site shows them in the table
 //   "The grants of each process", and the build stops when a process of
@@ -21,8 +21,8 @@
 //   asks for, accepted up to the largest budget of a process, and the table
 //   of the exceptions, each with its reason.
 //
-// A start reads the role of a process one time (`role_of`), and the
-// process keeps it in `Started.role`: each rule after the start reads it
+// A start reads the start grant set of a process one time (`start_grant_set_of`), and the
+// process keeps it in `Started.start_grant_set`: each rule after the start reads it
 // there, never by the name. A process whose row has no grant receives the
 // log and a window. A disk process is never a row of these tables: this
 // service refuses a file of a disk whose name one of them names, or whose
@@ -32,7 +32,7 @@
 // root_ring, root_ring.odin). The table `root_ring.ROOT_COMMAND_SENDERS`
 // says who sends each one: a process with the grant **Root_Ring** (the
 // console) sends most of them; a process with **Connect** sends `Connect`
-// to the services of its role, and `Disconnect`; the process with
+// to the services of its start grant set, and `Disconnect`; the process with
 // **Principals** sends `Principal_Record`, `Principal_Unlock`,
 // `Machine_Key` and `Principal_Change_End`, and no other process can; the
 // process with **Debugger** sends `Debug` and `Debug_Store`.
@@ -97,28 +97,28 @@
 // The design: (docs/ARCHITECTURE.md, "U2. Root service").
 package root
 
-import "modus:support/bochs_display"
-import "modus:support/bootscreen"
-import "modus:support/bootscreen/collect"
-import "modus:support/display"
-import "modus:support/graphics"
+import "modus:bochs_display"
+import "modus:bootscreen"
+import "modus:bootscreen/collect"
+import "modus:display"
+import "modus:graphics"
 import info "modus:contract/boot_info"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
-import "modus:support/random"
-import "modus:support/screen_presence"
-import "modus:support/system"
-import terminal "modus:support/terminal"
+import "modus:random"
+import "modus:screen_presence"
+import "modus:system"
+import terminal "modus:terminal"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/fixed_addresses"
 import "modus:contract/log_scope"
 import "modus:contract/root_ring"
-import "modus:support/pci"
-import "modus:support/principals"
-import "modus:support/disk_process"
+import "modus:pci"
+import "modus:principals"
+import "modus:disk_process"
 import "modus:contract/settings"
 import "modus:contract/palette_table"
 import "modus:contract/start_grant"
@@ -127,7 +127,7 @@ import "modus:contract/value_kinds"
 
 // What a process receives, by name: a start grant. The list and the name of
 // each one are a contract, because the reader of an error record names the
-// start grant that refused a debug access (src/library/contract/start_grant).
+// start grant that refused a debug access (src/library/modus/contract/start_grant).
 Grant :: start_grant.Grant
 
 // The context of the input service: the slots that src/modules/system/input
@@ -168,7 +168,7 @@ POINTER_THEME_SPACING :: fixed_addresses.RANGE_SPAN / 2 // The second theme is t
 
 // grant_for gives what a caller receives in a service (isolated.Service_Command).
 // The storage service: the private store of the caller, with the limit of
-// blocks of its role. Each service: the principal of the session of the
+// blocks of its start grant set. Each service: the principal of the session of the
 // caller, and the flag that the caller acts for that principal (the manual
 // gives what runs only to such a caller).
 grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
@@ -194,7 +194,7 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	// the whole log (src/md/features/log_reader_scope.md). A disk process
 	// never acts for a principal.
 	if system.name_of(service.name[:]) == "log" {
-		whole_log := !caller.from_disk && .Acts_For_Principal in caller.role.grants && .Acts_For_Principal not_in caller.revoked
+		whole_log := !caller.from_disk && .Acts_For_Principal in caller.start_grant_set.grants && .Acts_For_Principal not_in caller.revoked
 		return isolated.caller_grant_make(own_records_amount_of(caller), caller.principal, whole_log)
 	}
 	// A disk process: the grants of its start, never the grants of a name,
@@ -202,16 +202,16 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	if caller.from_disk {
 		return isolated.caller_grant_make(disk_store_limit(caller, service), caller.principal, false)
 	}
-	role := &caller.role
+	start_grant_set := &caller.start_grant_set
 	amount: u64
-	if .Store in role.grants && .Store not_in caller.revoked && system.name_of(service.name[:]) == "storage" {
-		amount = role_store_blocks(role)
+	if .Store in start_grant_set.grants && .Store not_in caller.revoked && system.name_of(service.name[:]) == "storage" {
+		amount = start_grant_set_store_blocks(start_grant_set)
 	}
-	acts := .Acts_For_Principal in role.grants && .Acts_For_Principal not_in caller.revoked
+	acts := .Acts_For_Principal in start_grant_set.grants && .Acts_For_Principal not_in caller.revoked
 	grant := isolated.caller_grant_make(amount, caller.principal, acts)
 	// The grant to erase versions is a right over the private store: it goes
 	// with the store, to the storage service only.
-	if amount != 0 && .Versions_Erase in role.grants {
+	if amount != 0 && .Versions_Erase in start_grant_set.grants {
 		grant |= isolated.CALLER_ERASES_VERSIONS
 	}
 	return grant
@@ -236,11 +236,11 @@ own_records_amount_of :: proc "contextless" (caller: ^Started) -> u64 {
 }
 
 // log_grant gives the grant of the log: each process that this service
-// starts can write on the log. A process whose role says so can also give
+// starts can write on the log. A process whose start grant set says so can also give
 // the log to the processes that it starts.
-log_grant :: proc "contextless" (role: Process_Role) -> system.Grant {
+log_grant :: proc "contextless" (start_grant_set: Start_Grant_Set) -> system.Grant {
 	rights := system.Rights{.Write}
-	if role.log_gives {
+	if start_grant_set.log_gives {
 		rights += {.Give}
 	}
 	return {system.context_record().handles[op.CONTEXT_LOG], rights}
@@ -252,15 +252,16 @@ Started :: struct {
 	client:          system.Handle, // The ring of the process, as the compositor names it.
 	requests:        ring.Ring, // The ring from the process to this service, if it has one.
 	requests_memory: system.Handle,
-	service:         ring.Ring, // The service ring of the process, if it is a service.
-	service_memory:  system.Handle,
+	service:            ring.Ring, // The service ring of the process, if it is a service.
+	service_memory:     system.Handle,
+	service_ring_ready: bool, // True once Handle_Give succeeded on service_memory (no startup retry after).
 	hash:            [32]u8, // The hash of the file of the process.
 	name:            system.Name,
-	// The role that this service gave the process when it started it: each
+	// The start grant set that this service gave the process when it started it: each
 	// rule after the start reads it here, in the state of the process that
 	// runs, and never in a table by the name of the process (the sender of
 	// a command, the debug access, the grant of a connection).
-	role:            Process_Role,
+	start_grant_set:            Start_Grant_Set,
 	granted:         system.Root_Grants, // What the process has from this service, of the grants that this service can revoke.
 	revoked:         system.Root_Grants,
 	writer:          ^Started, // A terminal: the process that writes in it. nil after that process stopped.
@@ -270,8 +271,9 @@ Started :: struct {
 	device:          pci.Place,
 	bridge_group:    Bridge_Group, // A device behind a conventional bridge: the buses behind it, whose devices this service holds too (devices.odin). Zero: none.
 	queues:          system.Handle, // A block service: the memory of the queue of its device.
-	network:         ring.Ring, // The network service: the control ring from this service.
-	network_memory:  system.Handle,
+	network:            ring.Ring, // The network service: the control ring from this service.
+	network_memory:     system.Handle,
+	network_ring_ready: bool, // True once Handle_Give succeeded on network_memory.
 	endpoint:        system.Handle, // A process with an endpoint: its datagram ring, as the network service names it.
 	network_service: ^Started,
 	// The principal whose session the process belongs to (docs/PRINCIPALS.md):
@@ -284,7 +286,7 @@ Started :: struct {
 	// stopped, or the grant was revoked.
 	debugger:        ^Started,
 	// A disk process: its name is a nickname, which no table by name of
-	// this service reads. Its grants are `role`, from the disk grant table
+	// this service reads. Its grants are `start_grant_set`, from the disk grant table
 	// of its principal at its start, and its store is the store of the
 	// nickname (disk_processes.odin).
 	from_disk:       bool,
@@ -313,43 +315,28 @@ Started :: struct {
 	// rule of an end Started of a wiring (wirings.odin). nil: this service
 	// started it by itself, or the asker stopped.
 	asker:           ^Started,
-	// The module file of the process, in the boot image: the record
-	// descriptions of its record outputs and record inputs. Empty for a
-	// process that this service did not start with start(): no wiring
-	// names it.
-	file:            []u8,
+	// Canonical kernel identity cached at start for Process_Stop_Notice
+	// and delegated services (src/md/api/root_service_split.md).
+	process_slot:    u64,
+	process_serial:  u64,
+	// Slice of the module file of the process in the boot image, for the
+	// delegated wiring service's read-only boot image view.
+	module_offset:   u64,
+	module_size:     u64,
 	// A handle of the budget of the process with Read and Spend, for a
-	// process that can send Wire, the one kind of asker: the wirings that
-	// the process asks for are paid from it. Closed at the stop of the
-	// process (src/md/features/module_outputs.md, "The budget").
+	// process that can send Wire, so the core can carve its Spend-only
+	// child wiring budget (`wiring_budget`). Closed at stop.
 	budget:          system.Handle,
-	// The wiring ring of a process that declares a record output or a
-	// record input, or of an asker that asked for its list page, mapped in
-	// this service, which writes its commands.
-	wiring:          ring.Ring,
+	wiring_budget:   system.Handle,
+	// The wiring ring of a process that declares record streams or asked
+	// for a list page: handed to the delegated `wiring` service, never
+	// mapped in the root core.
 	wiring_memory:   system.Handle,
-	// The words of its wiring ring that named no wiring of the process:
-	// one line at the first, and the count at its stop.
-	unknown_wiring_words: u64,
-	// The list page of an asker, as this service holds it: the asker
-	// writes its wiring lists there, and this service copies them from
-	// this handle, which a revocation by the asker does not reach.
+	// Read-only handle to an asker's list page so the core can prove and
+	// close lent handles on the asker's root ring.
 	list_memory:     system.Handle,
-	// The wiring pages of the wirings that the process asked for.
-	wiring_pages:    ^Wiring_Page,
-	// The wirings that the process asked for and that run, and the ends
-	// that it holds: each is bounded (wirings.odin).
-	wirings_asked:   int,
-	ends_given:      int,
-	// Of ends_given, the end of the record output log, which is in the
-	// context and never in the wiring ring: it keeps no mapping of the
-	// wiring ring in this service.
-	log_ends_given:  int,
-	// The types that wirings fixed for its generic record inputs of the
-	// counts One and Many: each lasts until the stop of the process
-	// (wirings.odin).
-	generic_types:      [GENERIC_TYPES_OF_A_PROCESS_MOST]Generic_Type,
-	generic_type_count: int,
+	// Whether the delegated wiring service currently holds this process.
+	wiring_registered: bool,
 }
 
 // place_is_free says if a place of the table of the processes holds no
@@ -470,7 +457,7 @@ shortage_start :: proc "contextless" () -> system.Status {
 	context_grants: system.Context_Grants
 	values: system.Context_Values
 	system.grant_put(&context_grants, system.GRANT_MACHINE, {machine, {.Inspect, .Stop}})
-	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role_of("shortage")))
+	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set_of("shortage")))
 	if context_refused("shortage", &context_grants, &values) {
 		shortage_failed()
 	}
@@ -505,16 +492,19 @@ part_place_take :: proc "contextless" () -> ^Started {
 	return nil
 }
 
-// part_place_fill records such a process in its place: its role, its name
+// part_place_fill records such a process in its place: its start grant set, its name
 // and the hash of its file.
 part_place_fill :: proc "contextless" (slot: ^Started, name: string, process: system.Handle) {
 	slot.process = process
-	slot.role = role_of(name)
+	slot.process_slot, slot.process_serial, _ = system.process_place(process)
+	slot.start_grant_set = start_grant_set_of(name)
 	slot.granted = {.Log}
 	copy(slot.name[:len(slot.name) - 1], name)
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == name {
 			slot.hash = item.hash
+			slot.module_offset = item.offset
+			slot.module_size = item.size
 		}
 	}
 }
@@ -538,10 +528,10 @@ operation_fuzzing_start :: proc "contextless" () -> system.Status {
 	own, _ := system.budget_read()
 	context_grants: system.Context_Grants
 	values: system.Context_Values
-	role := role_of(OPERATION_FUZZING_NAME)
+	start_grant_set := start_grant_set_of(OPERATION_FUZZING_NAME)
 	system.grant_put(&context_grants, system.GRANT_MACHINE, {machine, {.Physical}})
 	system.grant_put(&context_grants, system.GRANT_IMAGE, {image_memory, {.Read}})
-	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role))
+	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set))
 	system.value_put(&values, system.GRANT_VALUE_IMAGE_SIZE, u64(len(image)))
 	if context_refused(OPERATION_FUZZING_NAME, &context_grants, &values) {
 		return .Bad_State
@@ -614,7 +604,7 @@ failure_show :: proc "contextless" (text: string, status: system.Status) {
 }
 
 // The random generator of the root service: its seed comes from the
-// sources of the processor (src/library/support/random/entropy.odin), not from a
+// sources of the processor (src/library/modus/random/entropy.odin), not from a
 // starter. It gives the seed of each process that root starts.
 process_generator: random.Generator
 entropy_report: random.Entropy_Report
@@ -649,9 +639,9 @@ entropy_report: random.Entropy_Report
 //    start policy with the list rescue_list (start_policy.odin). The start
 //    policy asks for each other start: the parts of the system (`input`,
 //    the compositor) start by their procedures here,
-//    each other process with the grants of its role.
+//    each other process with the grants of its start grant set.
 //
-// With no screen before the first start (modus:support/screen_presence),
+// With no screen before the first start (modus:screen_presence),
 // this service writes the line "root: no screen: no console, no window;
 // the other services start" once, and the machine parts page has no
 // screen: the processes that start with no screen are a decision of the
@@ -772,7 +762,7 @@ boot_image_take :: proc "contextless" (ctx: ^system.Context) {
 
 // boot_display_take maps the framebuffer for the boot display, and says if
 // the machine has a screen, by the test that the compositor makes too
-// (modus:support/screen_presence). With no screen, the boot display shows
+// (modus:screen_presence). With no screen, the boot display shows
 // nothing and the start goes on.
 boot_display_take :: proc "contextless" (ctx: ^system.Context) -> (present: bool) {
 	pixels, map_status := system.memory_map(ctx.handles[op.ROOT_FRAMEBUFFER], {.Write})
@@ -855,7 +845,7 @@ input_start :: proc "contextless" () -> system.Status {
 	system.grant_put(&context_grants, INPUT_GRANT_PORTS, {devices[0], {}})
 	system.grant_put(&context_grants, INPUT_GRANT_KEYBOARD_INTERRUPT, {devices[1], {.Read}})
 	system.grant_put(&context_grants, INPUT_GRANT_MOUSE_INTERRUPT, {devices[2], {.Read}})
-	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role_of("input")))
+	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set_of("input")))
 	// The settings page, read-only: the input service reads the layout of
 	// the keyboard there at each key.
 	// With no settings page, no mapping and no bit of its range: the input
@@ -945,8 +935,8 @@ compositor_start :: proc "contextless" () -> system.Status {
 	}
 	system.grant_put(&context_grants, COMPOSITOR_GRANT_INPUT, {input_memory, {.Read, .Write}})
 	system.grant_put(&context_grants, COMPOSITOR_GRANT_CONTROL, {control_memory, {.Read, .Write}})
-	role := role_of("compositor")
-	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role))
+	start_grant_set := start_grant_set_of("compositor")
+	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set))
 	values: system.Context_Values
 	system.value_put(&values, COMPOSITOR_VALUE_WIDTH, root_screen_values[0])
 	system.value_put(&values, COMPOSITOR_VALUE_HEIGHT, root_screen_values[1])
@@ -1011,8 +1001,15 @@ compositor_start :: proc "contextless" () -> system.Status {
 		return status
 	}
 	served.process = compositor
-	served.role = role
+	served.process_slot, served.process_serial, _ = system.process_place(compositor)
+	served.start_grant_set = start_grant_set
 	copy(served.name[:len(served.name) - 1], "compositor")
+	for &item in system.image_entries(image) {
+		if system.name_of(item.name[:]) == "compositor" {
+			served.module_offset = item.offset
+			served.module_size = item.size
+		}
+	}
 	started_log("compositor", principals.MACHINE, false)
 	return .Ok
 }
@@ -1056,17 +1053,7 @@ root_loop_pass :: proc "contextless" () {
 		if item.process != 0 && item.requests.head != nil {
 			root_ring_serve(&item)
 		}
-		// The answers of the process to the ends of its wirings: Taken,
-		// Closed or a refusal. They are in the wait below, so an answer
-		// starts a pass and never waits for another event.
-		if item.process != 0 && item.wiring.head != nil {
-			wiring_completions_read(&item)
-		}
 	}
-	// A wiring ring whose process holds no end is unmapped: this service
-	// holds one mapping for each process with an end, and the wait below
-	// skips a ring that no answer can come in.
-	wiring_rings_let_go()
 	// Before reap: an entropy service that answered and stopped still has
 	// its answers in the ring.
 	entropy_answers(&wait)
@@ -1080,13 +1067,11 @@ root_loop_pass :: proc "contextless" () {
 	disk_load_step(&wait)
 	persisted_tables_step(&wait)
 	network_answers(&wait)
+	wiring_request_step(&wait)
 	system.wait_records(&wait, &control.completions)
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {
 			system.wait_records(&wait, &item.requests.commands)
-		}
-		if item.process != 0 && item.wiring.head != nil {
-			system.wait_records(&wait, &item.wiring.completions)
 		}
 	}
 	// The appearance in force at an edge of the rule of the day
@@ -1098,9 +1083,10 @@ root_loop_pass :: proc "contextless" () {
 	// A load from the disk and a call for the disk grant table have a
 	// deadline: the wait ends there, with or without an answer of the
 	// storage service. The next read of the fresh bytes has one too, a
-	// read of the entropy device in flight (entropy.odin), and the hang
-	// bound of a start policy that runs.
-	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), appearance_deadline, fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake()))
+	// read of the entropy device in flight (entropy.odin), the hang
+	// bound of a start policy that runs, and any in-flight request to
+	// the delegated wiring service.
+	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), appearance_deadline, fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline()))
 }
 
 // control_ring_serve answers the control ring of the compositor: a start
@@ -1185,7 +1171,7 @@ find :: proc "contextless" (name: string) -> ^Started {
 // The revocation names a grant of system.Root_Grant; the machine is one
 // handle, so its revocation ends each right of the machine.
 grants_held :: proc "contextless" (item: ^Started) -> bit_set[Grant] {
-	held := item.role.grants
+	held := item.start_grant_set.grants
 	if .Machine in item.revoked {
 		held -= {.Inspect, .Stop, .Schedule, .Events, .Counters}
 	}
@@ -1220,7 +1206,7 @@ grants_held :: proc "contextless" (item: ^Started) -> bit_set[Grant] {
 // one comparison of two sets of grants, with no name of a process in it:
 //
 // - each grant that this service gave the process at its start
-//   (Started.role) is a grant that the caller holds itself and that was not
+//   (Started.start_grant_set) is a grant that the caller holds itself and that was not
 //   revoked from it (grants_held): the caller then gains nothing that this
 //   service did not give it;
 // - a grant refuses the debug access for each caller when what it reaches
@@ -1242,7 +1228,7 @@ grants_held :: proc "contextless" (item: ^Started) -> bit_set[Grant] {
 debug_refusing_grant :: proc "contextless" (caller: ^Started, target: ^Started) -> (grant: Grant, refuses: bool) {
 	held := grants_held(caller)
 	for candidate in Grant {
-		if candidate in target.role.grants && (candidate in GRANTS_OF_ONE_PROCESS || candidate not_in held) {
+		if candidate in target.start_grant_set.grants && (candidate in GRANTS_OF_ONE_PROCESS || candidate not_in held) {
 			return candidate, true
 		}
 	}
@@ -1417,14 +1403,14 @@ debug_end :: proc "contextless" (target: ^Started) -> (count: u64) {
 // from it, and the kernel ends what came from it in that process
 // (Handle_Revoke). What the process gave to other processes ends too.
 // values is the completion of Root_Command.Revoke.
-revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> system.Status {
-	status := revoke_grant(name, grant, values)
-	if status == .Ok {
+revoke :: proc "contextless" (caller: ^Started, tag: u32, name: string, grant: u64, values: ^[7]u64) -> (status: system.Status, held: bool) {
+	status, held = revoke_grant(caller, tag, name, grant, values)
+	if status == .Ok && !held {
 		if item := find(name); item != nil {
 			debug_check_again(item)
 		}
 	}
-	return status
+	return status, held
 }
 
 // debug_check_again ends each debugging that runs for a caller and that
@@ -1449,17 +1435,17 @@ debug_check_again :: proc "contextless" (caller: ^Started) {
 
 // revoke_grant is revoke, before the check of the debuggings of the
 // process.
-revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> system.Status {
+revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, grant: u64, values: ^[7]u64) -> (status: system.Status, held: bool) {
 	item := find(name)
 	if item == nil {
-		return .Bad_Handle
+		return .Bad_Handle, false
 	}
 	which, known := enum_word.member_of_word(system.Root_Grant, grant)
 	if !known {
-		return .Bad_Operation
+		return .Bad_Operation, false
 	}
 	if which not_in item.granted {
-		return .Bad_State
+		return .Bad_State, false
 	}
 	handle: system.Handle
 	switch which {
@@ -1476,7 +1462,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 			// it stay.
 			kept := grant_for(item, connection.service) &~ (isolated.CALLER_AMOUNT_MASK | isolated.CALLER_ERASES_VERSIONS)
 			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = kept}}) {
-				return .No_Slot
+				return .No_Slot, false
 			}
 			count += 1
 		}
@@ -1484,7 +1470,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.revoked += {which}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Connections{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), connections = count})
-		return .Ok
+		return .Ok, false
 	case .Acts_For_Principal:
 		// The grant is data of each service that the process is connected
 		// to: the root service tells each one that the grant of the
@@ -1499,7 +1485,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		// shrink between the check and the sends.
 		if service := grant_room_short(item); service != nil {
 			system.log_fact(.Warning, Acts_For_Principal_Revocation_Refused{holder = module_name_field(name), service = module_name_field(system.name_of(service.name[:]))})
-			return .No_Slot
+			return .No_Slot, false
 		}
 		item.granted -= {which}
 		item.revoked += {which}
@@ -1514,7 +1500,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Connections{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), connections = count})
-		return .Ok
+		return .Ok, false
 	case .History:
 		// The store of the history is data of the storage service, as the
 		// private store: the storage service ends the grant of the
@@ -1527,13 +1513,13 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 				continue
 			}
 			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = isolated.caller_grant_make(0, item.principal, false)}}) {
-				return .No_Slot
+				return .No_Slot, false
 			}
 			count += 1
 		}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Connections{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), connections = count})
-		return .Ok
+		return .Ok, false
 	case .Network:
 		// The endpoint is data of the network service, as a store is data of
 		// the storage service: the network service ends the grant.
@@ -1542,7 +1528,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.revoked += {which}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Endpoints{holder = module_name_field(name), endpoints = count})
-		return .Ok
+		return .Ok, false
 	case .Debug:
 		// One handle for each process that the command Debug named for
 		// this caller: each one ends in the debugger service, and the
@@ -1558,7 +1544,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.revoked += {which}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Holdings{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), holdings = count})
-		return .Ok
+		return .Ok, false
 	case .Palette:
 		// The table and the ring end in the process, and the compositor
 		// unmaps its side: the palette keeps the modules and the windows.
@@ -1567,16 +1553,13 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.revoked += {which}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Holdings{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), holdings = count})
-		return .Ok
+		return .Ok, false
 	case .Wirings:
 		// Each wiring that the process asked for ends with the end word
-		// Revoked; the process can ask for new ones, as a revocation ends
-		// what was given and not the right to ask.
-		count := wirings_revoke(item)
-		item.granted -= {which}
-		values[0] = count
-		system.log(.Info, "root: revoked the grant wirings of ", system.Module_Name{name}, ", wirings ended: ", count)
-		return .Ok
+		// Revoked in the delegated wiring service; the process can ask for
+		// new ones, as a revocation ends what was given and not the right
+		// to ask.
+		return wirings_revoke_begin(caller, item, tag, values)
 	case .Log:
 		handle = system.context_record().handles[op.CONTEXT_LOG]
 	case .Machine:
@@ -1586,12 +1569,53 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 	case .Log_Records:
 		handle = system.context_record().handles[op.ROOT_LOG_RECORDS]
 	}
-	count := system.handle_revoke(handle, item.process) or_return
+	count, revoke_status := system.handle_revoke(handle, item.process)
+	if revoke_status != .Ok {
+		return revoke_status, false
+	}
 	item.granted -= {which}
 	item.revoked += {which}
 	values[0] = count
 	system.log_fact(.Info, Grant_Revoked_Holdings{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), holdings = count})
-	return .Ok
+	return .Ok, false
+}
+
+// Tight startup grace bound (milliseconds) for a freshly started service to
+// complete its first ring_open(..., receive_handles = true). Once ready^ is
+// true, no retry runs so a live service that unmaps its ring cannot stall root.
+SERVICE_RING_STARTUP_GRACE_MS :: 200
+
+// give_through_service_ring gives a handle to a service through a ring that
+// the service opens with Receive_Handles at its start. Retries Bad_Handle
+// only while !ready^ (freshly started) within SERVICE_RING_STARTUP_GRACE_MS,
+// failing immediately if the service stops or refuses consent (No_Right).
+give_through_service_ring :: proc "contextless" (target_process, ring_memory, handle: system.Handle, rights: system.Rights, ready: ^bool) -> (given: system.Handle, status: system.Status) {
+	given, status = system.give(ring_memory, handle, rights)
+	if status == .Ok {
+		ready^ = true
+		return given, .Ok
+	}
+	if status != .Bad_Handle || ready^ {
+		return 0, status
+	}
+	deadline := system.time() + SERVICE_RING_STARTUP_GRACE_MS
+	for system.time() < deadline {
+		if target_process != 0 {
+			if state, _, _ := system.process_state(target_process); state == .Stopped || state == .None {
+				return 0, .Bad_State
+			}
+		}
+		system.sleep(system.time() + 1)
+		given, status = system.give(ring_memory, handle, rights)
+		if status == .Ok {
+			ready^ = true
+			return given, .Ok
+		}
+		if status != .Bad_Handle {
+			return 0, status
+		}
+	}
+	return 0, status
 }
 
 // The palette provider (docs/CONSOLE.md, "8. The palette provider"): the one
@@ -1608,14 +1632,18 @@ palette_table_in_compositor, palette_ring_in_compositor: system.Handle
 // compositor gets it with Read only, and learns of both on its control
 // ring. values is the completion of Root_Command.Palette_Provide.
 palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> system.Status {
-	if .Palette not_in caller.role.grants || .Palette in caller.revoked {
+	if .Palette not_in caller.start_grant_set.grants || .Palette in caller.revoked {
 		return .No_Right
 	}
 	if palette_provider != nil {
 		return .Bad_State
 	}
 	status: system.Status
-	palette_table_memory, status = system.memory_create(palette_table.TABLE_PAGES)
+	initial_pages, pages_ok := palette_table.table_pages_for(palette_table.INITIAL_ENTRY_CAPACITY)
+	if !pages_ok {
+		return .Bad_Operation
+	}
+	palette_table_memory, status = system.memory_create(initial_pages)
 	if status != .Ok {
 		return status
 	}
@@ -1675,7 +1703,7 @@ palette_provider_end :: proc "contextless" (item: ^Started, revoke: bool) -> (co
 // terminal_start starts the terminal of a process that runs. The terminal
 // receives a surface, the terminal ring, the text region with the right
 // Read, and a handle that reads the state of the process. It receives
-// nothing of the role of the process.
+// nothing of the start grant set of the process.
 terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_memory, text_memory: system.Handle) -> system.Status {
 	view^ = {}
 	display_memory := system.memory_create(ring.PAGE_COUNT) or_return
@@ -1684,11 +1712,11 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(client)}})
 
 	// The slots of a terminal are its own: the terminal has no other role.
-	role := role_of("terminal")
+	start_grant_set := start_grant_set_of("terminal")
 	context_grants: system.Context_Grants
 	values: system.Context_Values
-	columns, rows, measure := role_terminal(&writer.role)
-	handles := terminal.Terminal_Handles{display = display_memory, ring = ring_memory, text = text_memory, writer = writer.process, log = log_grant(role)}
+	columns, rows, measure := start_grant_set_terminal(&writer.start_grant_set)
+	handles := terminal.Terminal_Handles{display = display_memory, ring = ring_memory, text = text_memory, writer = writer.process, log = log_grant(start_grant_set)}
 	terminal.context_of(&context_grants, &values, handles, system.name_pack(system.name_of(writer.name[:])), columns, rows, measure)
 	// The settings page and the font outlines.
 	mappings: [2]system.Mapping
@@ -1711,7 +1739,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 		return status
 	}
 	view.process, view.client, view.writer, view.is_terminal = process, client, writer, true
-	view.role = role
+	view.start_grant_set = start_grant_set
 	view.principal = writer.principal // The lock stops the terminal of a process of the session with it.
 	copy(view.name[:len(view.name) - 1], "terminal")
 	return .Ok
@@ -1770,7 +1798,7 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 // the service with a name, and starts the service if it starts on demand.
 // It gives the call ring and the call region: give them to the caller,
 // then close them.
-connection_open :: proc "contextless" (caller: ^Started, name: string, history := false, client: Client_Grant = {}) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, status: system.Status) {
+connection_open :: proc "contextless" (caller: ^Started, name: string, history := false, client: Client_Grant = {}, store_override: string = "", store_limit_override: u64 = 0) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, status: system.Status) {
 	for pass in 0 ..< 2 {
 		for &item in started {
 			if item.process != 0 && item.service.head != nil && system.name_of(item.name[:]) == name {
@@ -1810,25 +1838,32 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	// The storage service names the store of a connection by the name that
 	// it receives: the store of the history has the name of the caller and
 	// ".history", which no module of the boot image has, and the store of a
-	// named principal has its number after it (src/library/support/principals). Each
+	// named principal has its number after it (src/library/modus/principals). Each
 	// other service receives the name of the process. A name that does not
 	// fit is refused before anything is made: a cut name can be the name of
 	// another store.
 	store_name: system.Name
 	if system.name_of(service.name[:]) == "storage" {
-		// The store of a disk process is the store of its nickname, with a
-		// prefix that no module name has (disk_processes.odin).
-		process_of_the_store := system.name_of(caller.name[:])
-		disk_store_name: [32]u8
-		if caller.from_disk {
-			process_of_the_store = disk_process.store_process_name(&disk_store_name, process_of_the_store)
-		}
-		// A connection for a row of the client table belongs to the
-		// principal of the row.
-		principal_of_the_store := client.place != 0 ? client.principal : caller.principal
-		if !principals.store_name_write(&store_name, process_of_the_store, principal_of_the_store, history) {
-			system.log_fact(.Warning, Store_Name_Too_Long{principal = caller.principal, caller = module_name_field(system.name_of(caller.name[:]))})
-			return nil, nil, 0, 0, .Bad_Operation
+		if store_override != "" {
+			if len(store_override) >= len(store_name) {
+				return nil, nil, 0, 0, .Bad_Operation
+			}
+			copy(store_name[:len(store_name) - 1], store_override)
+		} else {
+			// The store of a disk process is the store of its nickname, with a
+			// prefix that no module name has (disk_processes.odin).
+			process_of_the_store := system.name_of(caller.name[:])
+			disk_store_name: [32]u8
+			if caller.from_disk {
+				process_of_the_store = disk_process.store_process_name(&disk_store_name, process_of_the_store)
+			}
+			// A connection for a row of the client table belongs to the
+			// principal of the row.
+			principal_of_the_store := client.place != 0 ? client.principal : caller.principal
+			if !principals.store_name_write(&store_name, process_of_the_store, principal_of_the_store, history) {
+				system.log_fact(.Warning, Store_Name_Too_Long{principal = caller.principal, caller = module_name_field(system.name_of(caller.name[:]))})
+				return nil, nil, 0, 0, .Bad_Operation
+			}
 		}
 	} else {
 		copy(store_name[:len(store_name) - 1], system.name_of(caller.name[:]))
@@ -1837,10 +1872,10 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	region_memory, status = system.memory_create(isolated.REGION_PAGES)
 	in_service_ring, in_service_region: system.Handle
 	if status == .Ok {
-		in_service_ring, status = system.give(service.service_memory, ring_memory, {.Read, .Write})
+		in_service_ring, status = give_through_service_ring(service.process, service.service_memory, ring_memory, {.Read, .Write}, &service.service_ring_ready)
 	}
 	if status == .Ok {
-		in_service_region, status = system.give(service.service_memory, region_memory, {.Read, .Write})
+		in_service_region, status = give_through_service_ring(service.process, service.service_memory, region_memory, {.Read, .Write}, &service.service_ring_ready)
 	}
 	if status != .Ok {
 		system.close(ring_memory)
@@ -1852,6 +1887,8 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	caller_name := transmute([4]u64)store_name
 	grant: u64
 	switch {
+	case store_override != "":
+		grant = isolated.caller_grant_make(store_limit_override, caller.principal, false)
 	case history:
 		grant = isolated.caller_grant_make(HISTORY_STORE_LIMIT, caller.principal, false)
 	case client.place != 0:
@@ -1967,11 +2004,11 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	if item.debugger != nil {
 		debug_end(item)
 	}
-	// Each wiring that names the process ends, with the end word of its
-	// part, before its handle closes: the other side reads the end, with
-	// the stop that the kernel recorded for a writer, as the reap read it
-	// for the fact of the stop.
-	wirings_at_stop(item, stop.state, stop.cause, stop.outcome)
+	// Emit Process_Stop_Notice on the core's `stops` output so the
+	// delegated wiring service ends each wiring of this process and frees
+	// its slots, then release core wiring handles.
+	wiring_service_end(item)
+	wiring_emit_stop_notice(item, stop)
 	for &other in started {
 		if other.process != 0 && (other.debugger == item || other.debug_for == item) {
 			debug_end(&other)
@@ -2095,7 +2132,7 @@ reap :: proc "contextless" () {
 			// after the wirings of the asker ended, as a measure of its
 			// margin (own_tables.odin).
 			asker_name: system.Name
-			asker_measured := root_ring.sender_allowed(.Wire, item.role.grants)
+			asker_measured := root_ring.sender_allowed(.Wire, item.start_grant_set.grants)
 			if asker_measured {
 				asker_name = item.name
 			}

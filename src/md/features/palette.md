@@ -161,7 +161,14 @@ Refused forms:
 
 ## Any count of entries
 
-The list of the panel is already virtual: it draws only the rows on the screen. The bound is in the data: a provider writes a table of at most 256 entries (`palette_table.ENTRY_CAPACITY`), and the panel holds at most 512. The chosen form: a provider gives its entries in a memory object sized by their count, which the root service maps read-only in the compositor, and the panel keeps the ranking and the matches in memory sized by that count when the table changes, never at each frame. The rows of a machine with many modules, settings and windows are then all listed, and a new kind of entry needs no new bound. Refused: a larger fixed table, which moves the bound and costs its memory on each machine; pages of entries asked on a scroll, which make each scroll a request to the provider. Not built.
+The list of the panel draws only the visible viewport window (`first_visible ..< first_visible + LIST_ROWS`), so drawing cost per frame is O(`LIST_ROWS`) regardless of entry count. The provider protocol (`modus:contract/palette_table`, version 8) removes the fixed 256-entry cap:
+
+- `Header` carries `entry_count` and `byte_length`, checked strictly at the border (`header_read` and `snapshot_take`): `byte_length` must equal `ENTRIES_OFFSET + entry_count * size_of(Entry)` without overflow and must fit within the mapped region. Truncated regions and malformed headers are refused with no state change.
+- `Snapshot` holds a caller-sized `entries: []Entry` slice instead of a fixed array. When a provider's entry count exceeds its current shared memory object, it allocates a memory object sized for the entries, writes the table, gives a read-only handle through the palette ring, and sends `Outcome.Table_Replaced`; the compositor proves the handle, checks the header, maps it read-only, and replaces the old mapping.
+- In `internal:compositor/palette`, `List` stores caller-sized slices (`entries`, `rows`, `candidates`, `ranked`, and `snapshot.entries`) with `u32` entry indexes. `rows_rank` matches all entries off the main thread using `line_editor.fuzzy_match` (SIMD) with frecency bonus and sorts matches in place in O(M log M) without heap allocation. The compositor's ranking thread grows its two double-buffered list memory objects on demand off the main thread, never during a frame.
+- Viewport scroll offset clamping (`list_first_row`) clamps `first_row` to `0 ..= max(row_count - LIST_ROWS, 0)` across drawing, hit testing, and scrolling so top, middle, bottom, and past-end offsets always show a valid viewport.
+
+Refused: a larger fixed table, which moves the bound and costs its memory on each machine; pages of entries asked on a scroll, which make each scroll a request to the provider. Built.
 
 ## The film
 

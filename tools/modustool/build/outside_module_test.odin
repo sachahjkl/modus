@@ -103,21 +103,22 @@ outside_module_examples_follow_the_module_table :: proc(t: ^testing.T) {
 @(test)
 outside_module_source_places :: proc(t: ^testing.T) {
 	module_folder :: "/home/someone/projects/my_process"
-	library_folder :: "/home/someone/modus/src/library"
+	library_folder :: "/home/someone/modus/src/library/modus"
 	compiler_folder :: "/nix/store/odin/share"
 	place :: proc(path: string) -> bool {
 		return outside_module_source_has_a_place(path, module_folder, library_folder, compiler_folder)
 	}
 	testing.expect(t, place("/home/someone/projects/my_process/main.odin"))
 	testing.expect(t, place("/home/someone/projects/my_process/parts/draw.odin"))
-	testing.expect(t, place("/home/someone/modus/src/library/support/system/system.odin"))
+	testing.expect(t, place("/home/someone/modus/src/library/modus/system/system.odin"))
+	testing.expect(t, !place("/home/someone/modus/src/library/internal/storage/storage_tree/storage_tree.odin"))
 	testing.expect(t, place("/nix/store/odin/share/base/runtime/core.odin"))
 	// A relative import that leaves the folder of the module.
 	testing.expect(t, !place("/home/someone/projects/shared/text.odin"))
 	// A folder beside the folder of the module whose name starts with it.
 	testing.expect(t, !place("/home/someone/projects/my_process_tools/main.odin"))
 	// A folder of the system that is not its library.
-	testing.expect(t, !place("/home/someone/modus/src/kernel/enter.odin"))
+	testing.expect(t, !place("/home/someone/modus/src/modulus/enter.odin"))
 	testing.expect(t, !place("/home/someone/modus/src/processes/tally/main.odin"))
 	// With no answer of the compiler, the layout of its installation.
 	testing.expect(t, outside_module_source_has_a_place("/nix/store/other/share/core/fmt/fmt.odin", module_folder, library_folder, ""))
@@ -139,7 +140,7 @@ outside_module_source_path_in_a_debug_object :: proc(t: ^testing.T) {
 	testing.expect(t, is_outside)
 	testing.expect_value(t, recorded, "my_process/main.odin")
 	// A source of the system, and a build of a module of the system.
-	_, is_outside = outside_source_path("/home/someone/modus/src/library/support/system/system.odin", "/home/someone/projects/my_process")
+	_, is_outside = outside_source_path("/home/someone/modus/src/library/modus/system/system.odin", "/home/someone/projects/my_process")
 	testing.expect(t, !is_outside)
 	_, is_outside = outside_source_path("/home/someone/projects/my_process/main.odin", "")
 	testing.expect(t, !is_outside)

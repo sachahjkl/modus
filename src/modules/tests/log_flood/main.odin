@@ -34,7 +34,7 @@
 package log_flood
 
 import "base:intrinsics"
-import "modus:support/system"
+import "modus:system"
 
 // The counts of the test, which the asker shares.
 FLOOD_LINES :: 600

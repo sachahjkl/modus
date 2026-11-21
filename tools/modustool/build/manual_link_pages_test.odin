@@ -178,7 +178,7 @@ manual_link_pages_of_a_whole_guide :: proc(t: ^testing.T) {
 // The sources of the tests: one file of a support package, with a
 // procedure that has a comment and a constant that has none.
 @(private = "file")
-MANUAL_TEST_SOURCE_PATH :: "src/library/support/system/wait.odin"
+MANUAL_TEST_SOURCE_PATH :: "src/library/modus/system/wait.odin"
 @(private = "file")
 MANUAL_TEST_SOURCE :: `package system
 

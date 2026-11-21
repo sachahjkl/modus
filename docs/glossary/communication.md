@@ -26,7 +26,7 @@ The root service starts a process and its terminal, and gives the two a terminal
 
 A terminal is not a TTY: no escape sequence and no line discipline exist. The process edits its own line and sends records with a kind and typed fields.
 
-The contract: `src/library/support/terminal/terminal.odin`.
+The contract: `src/library/modus/terminal/terminal.odin`.
 
 Do not use: TTY, pty, terminal emulator, standard output, standard input.
 
@@ -36,7 +36,7 @@ A shared queue is one queue of records in shared memory that several threads wri
 
 Each record has a turn word that says whose turn it is on it. A writer takes a count with one compare-and-exchange, writes the record, then changes the turn word; a reader does the same. So two writers never have the same count, and a reader never reads a record before its writer completed it. Use a shared queue when several threads take work from one place; use a ring for one writer and one reader.
 
-The contract: `src/library/contract/ring/shared.odin`.
+The contract: `src/library/modus/contract/ring/shared.odin`.
 
 Do not use: MPMC queue, channel, work queue, mailbox.
 
@@ -52,7 +52,7 @@ Do not use: condition variable, semaphore, signal, barrier.
 
 A source library is a named folder of source packages that a module compiles in.
 
-An import of the source names the library and the package: `modus:contract/ring`. The system has three: `modus`, the public library; `internal`, for the internal parts; `kernel`, for the kernel parts (`kernel:iommu`). The flag of the compiler is `-collection`. Today the modules have one source library, `modus`, in `src/library`, in three parts: `contract`, `support` and `private`. A source library is not a module: it has no file, no hash and no edge in the module graph.
+An import of the source names the library and the package: `modus:contract/ring`. The system has three: `modus`, the public library (`src/library/modus`); `internal`, for the internal parts (`src/library/internal`); `modulus`, for the kernel parts (`src/modulus`, `modulus:iommu`). The flag of the compiler is `-collection`. A source library is not a module: it has no file, no hash and no edge in the module graph.
 
 The design: `src/md/infrastructure/repository_layout.md`, "The two source libraries of the modules".
 
@@ -62,7 +62,7 @@ Do not use: collection, libc, static library.
 
 The public library is the source library `modus`: the contract packages and the support packages, the one part of the sources of the system that ships.
 
-Its folder is `src/library/modus`: `modus:contract/ring` for a contract, `modus:quic` for a support package. A module of the system and an outside module import it with the same lines. The SDK holds its folder whole. A package that a program outside the repository needs is a package of the public library. It holds no internal part and no kernel part. Today its packages are under `src/library/contract` and `src/library/support`.
+Its folder is `src/library/modus`: `modus:contract/ring` for a contract, `modus:quic` for a support package. A module of the system and an outside module import it with the same lines. The SDK holds its folder whole. A package that a program outside the repository needs is a package of the public library. It holds no internal part and no kernel part.
 
 The design: `src/md/infrastructure/repository_layout.md`, "The two source libraries of the modules".
 
@@ -72,7 +72,7 @@ Do not use: standard library, runtime, framework.
 
 An internal part is a package of the source library `internal` that one module alone compiles in, with its host tests.
 
-It holds the logic of one module that has host tests: a module package has none, because a test of it builds the whole module for the host. Its folder is `src/library/internal/<module>/<part>`, and its import line names the module: `internal:storage/storage_tree`. The tool refuses its import from another module, and the compiler refuses it in the kernel and in an outside module, which get no flag `internal`. It never ships. Today its folder is `src/library/private/<module>/<part>`.
+It holds the logic of one module that has host tests: a module package has none, because a test of it builds the whole module for the host. Its folder is `src/library/internal/<module>/<part>`, and its import line names the module: `internal:storage/storage_tree`. The tool refuses its import from another module, and the compiler refuses it in the kernel and in an outside module, which get no flag `internal`. It never ships.
 
 The design: `src/md/infrastructure/repository_layout.md`, "Where the internal part of a module lives".
 
@@ -80,9 +80,9 @@ Do not use: private part, private package, helper package, program package.
 
 ### Kernel part
 
-A kernel part is a pure package in a folder under `src/kernel`, which the kernel alone compiles in, with its host tests.
+A kernel part is a pure package in a folder under `src/modulus`, which the kernel alone compiles in, with its host tests.
 
-A kernel part is imported through a second source library, `kernel`: `kernel:iommu`. Only the kernel, the host tests of its parts and the tool get that source library: the compiler refuses the import in a module, and the tool in each other file of `src/`. A kernel part is pure: the tool refuses a package variable that is not `@(rodata)`, a foreign block, asm and an intrinsic that reads the machine. A format that only the kernel reads, such as an ACPI table, is a kernel part and not a contract.
+A kernel part is imported through the source library `modulus`: `modulus:iommu`. Only the kernel, the host tests of its parts and the tool get that source library: the compiler refuses the import in a module, and the tool in each other file of `src/`. A kernel part is pure: the tool refuses a package variable that is not `@(rodata)`, a foreign block, asm and an intrinsic that reads the machine. A format that only the kernel reads, such as an ACPI table, is a kernel part and not a contract.
 
 The design: `src/md/infrastructure/repository_layout.md`.
 
@@ -96,7 +96,7 @@ The group of a module is the folder of its source, and the tool reads it from th
 
 The design: `src/md/infrastructure/repository_layout.md`.
 
-Do not use: role (the term is program role, the grants of a program), category, kind of module.
+Do not use: role (a role is a contract, and the grants of a program are its start grant set), category, kind of module.
 
 ### Test module
 
@@ -224,7 +224,7 @@ Do not use: writer stall, push back.
 
 A loss period is the time from the first record that a full queue refuses to the moment when the queue takes a record again.
 
-A writer that cannot wait counts each record that it loses, and writes two lines in the log for one period: one when the loss begins, one with the count when it ends. It writes no line for each record: a queue that refuses 1000 keys must not fill the log. The compositor has one for each window, the terminal one for its process, the console one for the keys that wait during a line. The code: `key_path.Loss_Period` (`src/library/support/key_path`). The design: `ARCHITECTURE.md`, "The path of a key".
+A writer that cannot wait counts each record that it loses, and writes two lines in the log for one period: one when the loss begins, one with the count when it ends. It writes no line for each record: a queue that refuses 1000 keys must not fill the log. The compositor has one for each window, the terminal one for its process, the console one for the keys that wait during a line. The code: `key_path.Loss_Period` (`src/library/modus/key_path`). The design: `ARCHITECTURE.md`, "The path of a key".
 
 Do not use: drop window, loss burst.
 
@@ -234,7 +234,7 @@ The terminal ring is the ring between a process and its terminal.
 
 In the command queue, a record from the process has a kind (text, status, clear, edit line, hint line, completion list, runs of code), a count of bytes in the text region and a style; it has no place on the screen. In the completion queue, a record from the terminal is a key record; it holds 4096 keys. The terminal never waits for a process: a key that finds the queue full is lost and counted. A record whose kind names no record is refused and counted, with one line at the first one.
 
-The contract: `src/library/support/terminal/terminal.odin`.
+The contract: `src/library/modus/terminal/terminal.odin`.
 
 Do not use: escape sequence, control character, stream.
 
@@ -256,7 +256,7 @@ Do not use: line discipline, readline, cursor addressing, prompt.
 
 ### Line editor
 
-The line editor is the procedures of `src/library/support/line_editor` that change an edit line with keys: the caret, a character at the caret, Backspace, Delete.
+The line editor is the procedures of `src/library/modus/line_editor` that change an edit line with keys: the caret, a character at the caret, Backspace, Delete.
 
 They have no state of their own: the line is a record of the process. The line is UTF-8, and each key moves the caret over a whole character, or inserts or removes a whole character. The caret is a place in bytes, always before a whole character.
 
@@ -310,6 +310,16 @@ The design: `docs/CONSOLE.md`, "3. The fuzzy match".
 
 Do not use: fuzzy search, subsequence search, filter (for this).
 
+### Frecency
+
+Frecency is a bounded score of how often and how lately the principal used a name, decaying by uses rather than by clock time.
+
+It adds a small bonus (0 to 8 points) to a fuzzy match score so frequently used names come first among near equal matches, without overriding a better structural match. The console derives it from its line history; the palette keeps it in the memory of the compositor.
+
+The design: `src/md/features/fuzzy_match.md`, "The frecency model", and `docs/CONSOLE.md`, "3. The fuzzy match".
+
+Do not use: popularity, usage score, MRU score.
+
 ### Line history
 
 The line history is the lines that were entered in the console, in a ring of bytes in its memory, the newest first.
@@ -322,7 +332,7 @@ Do not use: history (alone), scrollback, command log.
 
 ### Line history file
 
-The line history file is the line history as bytes, kept in the history store: a version, the lines, and a BLAKE3 hash (`src/library/support/line_editor/history_file.odin`).
+The line history file is the line history as bytes, kept in the history store: a version, the lines, and a BLAKE3 hash (`src/library/modus/line_editor/history_file.odin`).
 
 A file that fails a check gives an empty history: a damaged file never stops the console.
 
@@ -374,7 +384,7 @@ Do not use: color code, severity (for text).
 
 A token is the smallest part of a line of the console: a name, a number, a text, an operator, the arrow `->`, the pipe operator `|>`, or one byte of no other token.
 
-One scanner (`src/library/private/console/console_language`) gives them to the parser of Lex and to the colors of the console, so the colors never disagree with the parser.
+One scanner (`src/library/modus/console_language`) gives them to the parser of Lex and to the colors of the console, so the colors never disagree with the parser.
 
 Do not use: lexeme, word (for this).
 
@@ -382,7 +392,7 @@ Do not use: lexeme, word (for this).
 
 A code kind is what a part of a line of the console or of a row of its list is: a function, a module, a type, a parameter, a variable, a number, a text, an unfinished text, an operator, the arrow, words that are not code, or unknown.
 
-A process sends kinds, not colors; the terminal maps each kind to a code class (`src/library/support/terminal/code_runs.odin`).
+A process sends kinds, not colors; the terminal maps each kind to a code class (`src/library/modus/terminal/code_runs.odin`).
 
 The design: `docs/CONSOLE.md`, "7. The colors of the code".
 

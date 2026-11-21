@@ -2,8 +2,8 @@ package root
 
 import "base:intrinsics"
 import "modus:contract/fresh_bytes"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:random"
+import "modus:system"
 
 // The fresh bytes (src/md/features/fresh_bytes.md): this service creates
 // one memory object with one page for each place of `started`, and maps

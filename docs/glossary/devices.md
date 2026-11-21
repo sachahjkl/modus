@@ -154,7 +154,7 @@ Do not use: IR, IRTE, interrupt translation.
 
 The bus is the PCI bus of the machine: each device has a place on it (bus, device, function) and a configuration of 256 bytes or more.
 
-A process that can write the configuration of any device can make any device read or write any memory. So only the root service holds the ports of the configuration. It checks the device at each fixed place, enables it, and starts its device service with a read-only copy of the configuration, the device memory of its registers and one message interrupt. The kernel finds no device; with an IOMMU, it only reads the bus. The code of the bus is `src/library/support/pci`.
+A process that can write the configuration of any device can make any device read or write any memory. So only the root service holds the ports of the configuration. It checks the device at each fixed place, enables it, and starts its device service with a read-only copy of the configuration, the device memory of its registers and one message interrupt. The kernel finds no device; with an IOMMU, it only reads the bus. The code of the bus is `src/library/modus/pci`.
 
 The design: `docs/ARCHITECTURE.md`, "U4. Device services".
 
@@ -194,7 +194,7 @@ Do not use: drive, volume (except the boot volume), LUN.
 
 A block is 4096 bytes of a disk at a number from 0: the unit of each read and write of the block contract.
 
-A block service reads and writes whole blocks (`BLOCK_SIZE` in `src/library/contract/block`). A request names its first block, a count of blocks and a place in the data region; a device with smaller sectors still serves whole blocks. The storage service builds everything that it writes from blocks: a node, an object node, a block of data, a root block. A block has the size of a page, but a block is on the disk and a page is in memory: the two words are not exchangeable.
+A block service reads and writes whole blocks (`BLOCK_SIZE` in `src/library/modus/contract/block`). A request names its first block, a count of blocks and a place in the data region; a device with smaller sectors still serves whole blocks. The storage service builds everything that it writes from blocks: a node, an object node, a block of data, a root block. A block has the size of a page, but a block is on the disk and a page is in memory: the two words are not exchangeable.
 
 The design: `docs/STORAGE.md`, "3.1 The blocks".
 
@@ -206,7 +206,7 @@ A block service is the device service of one disk: it serves read, write and flu
 
 A block service keeps the code that knows a disk device out of the kernel and out of the storage service. The first one is the process `block`, for a virtio block device. The client sends `Attach` with its data region, then reads, writes and flushes. The device moves the bytes with no copy and no kernel entry for each request. A write is on the disk only after a later `Flush`. A block service is not a block layer: it has no cache, no scheduler and no partition.
 
-The design: `src/library/contract/block`.
+The design: `src/library/modus/contract/block`.
 
 Do not use: disk driver, block layer.
 
@@ -216,7 +216,7 @@ The block ring is the ring between a block service and its one client: one comma
 
 The block ring carries each request of a client to its disk with no kernel entry for each request. The root service makes it and gives it to the block service and to its client. A command has a kind (`Attach`, `Info`, `Read`, `Write`, `Flush`, `Statistics`), a tag and values. Many requests are in flight, and the device does them in any order. A completion that is not `Ok` carries an error record. A block ring is not a queue of the device: only the block service sees those.
 
-The design: `src/library/contract/block`.
+The design: `src/library/modus/contract/block`.
 
 Do not use: I/O queue, submission queue.
 
@@ -226,7 +226,7 @@ The data region is the memory object of the client of a block service where the 
 
 The device moves the bytes of a block to and from memory of the client, so no process copies them. The client makes the region `Contiguous` and gives it to the block service with `Attach`. A request names a place in the region in bytes, never an address, and the service checks that each byte is in the region: a client cannot make the device write outside its own memory. The data region is not a cache: the client decides what it holds. The frame region is the same idea for a frame service.
 
-The design: `src/library/contract/block`.
+The design: `src/library/modus/contract/block`.
 
 Do not use: DMA buffer, bounce buffer.
 
@@ -274,9 +274,9 @@ Do not use: NIC, network card, network adapter.
 
 In the group Devices, a frame is one Ethernet frame: the bytes from the destination hardware address to the end of the data, with no check sequence, 1514 bytes at most.
 
-A frame is the unit that a network device sends and receives, and the unit of the frame contract: 14 bytes of header and 1500 bytes of data. The device adds and removes the check sequence. The network service builds and reads each frame with `src/library/support/network`. A datagram or a segment fits one frame, so the system never fragments. A frame is not a datagram and not a packet of IPv4: those are its content. It is not the frame of QUIC either, which has its own entry.
+A frame is the unit that a network device sends and receives, and the unit of the frame contract: 14 bytes of header and 1500 bytes of data. The device adds and removes the check sequence. The network service builds and reads each frame with `src/library/modus/network`. A datagram or a segment fits one frame, so the system never fragments. A frame is not a datagram and not a packet of IPv4: those are its content. It is not the frame of QUIC either, which has its own entry.
 
-The design: `src/library/contract/frame`.
+The design: `src/library/modus/contract/frame`.
 
 Do not use: packet (for this), datagram (for this), message.
 
@@ -288,7 +288,7 @@ A frame names its destination and its source by hardware addresses. The network 
 
 A hardware address has meaning on one link only: it is not an address of IPv4 and it does not cross the gateway.
 
-The design: `src/library/contract/frame`.
+The design: `src/library/modus/contract/frame`.
 
 Do not use: MAC address, physical address (for this).
 
@@ -298,7 +298,7 @@ A frame service is the device service of one network device: it sends and receiv
 
 The frame service keeps the code that knows a network device out of the kernel and out of the network service. The first one is the process `frame`, for a virtio network device. Its one client, the network service, sends `Attach` with its frame region, then `Send` for each frame and `Receive` for each place where a frame can arrive. The device reads and writes the frames with no copy, and drops a frame when no `Receive` waits. A frame service is not a network stack: it knows no protocol.
 
-The design: `src/library/contract/frame`.
+The design: `src/library/modus/contract/frame`.
 
 Do not use: NIC driver, network driver.
 
@@ -308,7 +308,7 @@ The frame ring is the ring between a frame service and its one client: one comma
 
 The frame ring carries the requests of the client to its device with no kernel entry for each request. Its commands are `Attach`, `Info`, `Send`, `Receive`, `Statistics`, `Read_Region_Add` and `Read_Region_Remove`. Many requests are in flight. A `Receive` stays in flight until a frame arrives: the client gives the places before the frames come, so the service allocates no memory for a frame. A frame ring is not one queue for each direction: one ring carries both, and the tag of the command says which request completed.
 
-The design: `src/library/contract/frame`.
+The design: `src/library/modus/contract/frame`.
 
 Do not use: TX queue, RX queue, descriptor ring (for this).
 
@@ -318,7 +318,7 @@ The frame region is the memory object of the client of a frame service where the
 
 It is the data region of the frame contract: contiguous, and given to the service with `Attach`. A request names a place in the region in bytes, never an address; a byte outside it gives `Out_Of_Range`. The network service owns the frame region. It copies each datagram that arrives one time, from the frame region to the datagram region of a process, and writes only the headers of a datagram to send. A frame region is not a socket buffer: a process with an endpoint never sees it.
 
-The design: `src/library/contract/frame`.
+The design: `src/library/modus/contract/frame`.
 
 Do not use: DMA buffer, skb, mbuf.
 
@@ -336,7 +336,7 @@ Do not use: send buffer, transmit buffer, scatter list.
 
 Virtio is the standard of devices that work through queues in shared memory, which the first machine uses for its disks and its network device.
 
-A virtio device is already a set of queues in memory, so a device service translates between these queues and a ring with little code. The system uses virtio 1 over PCI, the modern interface only. `src/library/support/virtio` holds what each virtio device service does the same way: the capabilities, the features and the split queues. The block service and the frame service use it. Virtio is not a part of the kernel: the kernel has no code for any device.
+A virtio device is already a set of queues in memory, so a device service translates between these queues and a ring with little code. The system uses virtio 1 over PCI, the modern interface only. `src/library/modus/virtio` holds what each virtio device service does the same way: the capabilities, the features and the split queues. The block service and the frame service use it. Virtio is not a part of the kernel: the kernel has no code for any device.
 
 The design: `docs/ARCHITECTURE.md`, "U4. Device services".
 

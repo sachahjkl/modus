@@ -1,5 +1,5 @@
 // A QUIC echo server (docs/QUIC.md, section 6): QUIC in the process
-// (src/library/support/quic), over a datagram endpoint with a listen grant of UDP. A
+// (src/library/modus/quic), over a datagram endpoint with a listen grant of UDP. A
 // client opens up to STREAMS_PER_CONNECTION streams at one time; on each
 // one the server writes back each byte that it reads, then ends the stream
 // after the client ended it, or resets it after the client reset it.
@@ -54,11 +54,11 @@ import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/network"
-import "modus:support/quic"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:display"
+import "modus:network"
+import "modus:quic"
+import "modus:random"
+import "modus:system"
 
 // 16 QUIC connections of about 85 KiB each, 4 streams of about 130 KiB for
 // each, and an echo buffer of 16 KiB for each stream: about 2770 pages, in

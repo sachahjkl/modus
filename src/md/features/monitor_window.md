@@ -29,7 +29,7 @@ A sample is one read of the system report and of each process report (`docs/glos
 
 ### The sample history
 
-`modus:private/monitor/sample_history` holds it, with host tests:
+`internal:monitor/sample_history` holds it, with host tests:
 
 - **A fixed array of 120 values in the process**, with the place of the oldest and the count. The newest value replaces the oldest one: no allocation, no copy of the array.
 - **The points of the curve are computed at each push and kept** in the record: the stroke (120 points at most) and the area (123 points). A push is one pass over at most 120 values: the largest value for a rounded scale, then the places. A frame gives the two arrays to `draw_path`: no computation over the samples.
@@ -53,7 +53,7 @@ A gauge is a bar on the track whose length is a share: the memory bar under the 
 - **The color is never the only sign.** The share is written at the right of each bar, and the memory in MiB above its bar.
 - **The new token `near_limit`.** Dark `0xF2843C`, an orange between the yellow of `warning` and the coral of `failed`. Light `0xA85C29`, `shade(DARK_NEAR_LIMIT, 70)`: the shade that keeps 4.5 to 1 on the light surfaces, by the rule of every concept.
 
-The contrast of each color of a gauge, which the host tests compute (`src/library/support/graphics/intensity_test.odin`, `appearance_test.odin`):
+The contrast of each color of a gauge, which the host tests compute (`src/library/modus/graphics/intensity_test.odin`, `appearance_test.odin`):
 
 | Color | Dark: on the track `0x1C2633` | Dark: on the background | Light: on the track `0xD6DBE0` | Light: on the background |
 |---|---|---|---|---|

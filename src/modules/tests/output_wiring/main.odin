@@ -48,7 +48,7 @@ import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
-import "modus:support/system"
+import "modus:system"
 
 // The probe of the writer, to read the wiring of which this process is
 // the asker.
@@ -419,7 +419,7 @@ asker_ends_close :: proc "contextless" (numbers: []u32, $Record_Type: typeid) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	requests_memory = ctx.handles[system.GRANT_ROOT]
-	opened, ring_status := system.ring_open(requests_memory)
+	opened, ring_status := system.ring_open(requests_memory, receive_handles = true)
 	if ring_status != .Ok {
 		wrong("no root ring; the status", u64(ring_status))
 	}

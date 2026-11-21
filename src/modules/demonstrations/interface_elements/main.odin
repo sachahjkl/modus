@@ -33,10 +33,10 @@
 package interface_elements
 
 import "modus:contract/value_kinds"
-import "modus:support/display"
-import "modus:support/graphics"
-import "modus:support/interface"
-import "modus:support/system"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
 
 WIDTH :: 816
 HEIGHT :: 560
@@ -96,7 +96,7 @@ build :: proc "contextless" (frame: ^interface.Frame, number: u64) -> interface.
 	// The keys of the window are in its action bar, not in the count of
 	// this card: one fact once on a screen.
 	interface.action_bar_input_take(frame, &bar)
-	content := interface.card(frame, {8 + offset, 8, ELEMENTS_CARD_WIDTH, CARDS_HEIGHT}, "ELEMENTS", "modus:support/interface", graphics.colors.kernel)
+	content := interface.card(frame, {8 + offset, 8, ELEMENTS_CARD_WIDTH, CARDS_HEIGHT}, "ELEMENTS", "modus:interface", graphics.colors.kernel)
 	column := interface.column_of(content, 8)
 	pressed := interface.button(frame, interface.column_take(&column, 24), interface.identity("press"), "press this button")
 	if pressed.activated {

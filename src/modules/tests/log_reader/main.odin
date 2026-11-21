@@ -132,8 +132,8 @@ import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/random"
-import "modus:support/system"
+import "modus:random"
+import "modus:system"
 
 // Its rows and its call region, 64 pages, the budgets of its two children,
 // CHILD_PAGES each, and the budget of its storm child, STORM_PAGES: no
@@ -339,7 +339,7 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 	if ctx.handles[system.GRANT_ROOT] == 0 {
 		return "this process has no ring to the root service"
 	}
-	requests, opened := system.ring_open(ctx.handles[system.GRANT_ROOT])
+	requests, opened := system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true)
 	if opened != .Ok {
 		return "the ring to the root service does not open"
 	}

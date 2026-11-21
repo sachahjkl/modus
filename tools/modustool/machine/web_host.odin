@@ -3,7 +3,7 @@ package machine
 import "base:runtime"
 import "core:strconv"
 
-import "modus:support/calendar"
+import "modus:calendar"
 
 import "core:fmt"
 import "core:net"
@@ -12,7 +12,7 @@ import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
-import "modus:support/web"
+import "modus:web"
 import "modustool:foundation"
 
 // The test of TCP against a stack that this project did not write

@@ -12,8 +12,8 @@ package root
 // 1. The border: command_of_word reads the kind. A word that names no
 //    command, and None, get `Unsupported`, and nothing runs.
 // 2. The sender: the table root_ring.ROOT_COMMAND_SENDERS, with the start
-//    grants that the process received at its start (Started.role), and for
-//    a Connect the services of its role. A refusal gets `No_Grant`, before
+//    grants that the process received at its start (Started.start_grant_set), and for
+//    a Connect the services of its start grant set. A refusal gets `No_Grant`, before
 //    any other check, so a process learns nothing of a command that it
 //    cannot send.
 // 3. The command: one case of a whole switch. The table
@@ -21,13 +21,14 @@ package root
 //    record of its refusal: this dispatch, from the name and the word of
 //    the record, or the procedure of the command.
 
+import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
-import "modus:private/root/start_policy_rules"
-import "modus:support/principals"
-import "modus:support/system"
+import "internal:root/start_policy_rules"
+import "modus:principals"
+import "modus:system"
 
 // The answer of a command of the root ring: the completion that the sender
 // receives, or none yet.
@@ -57,13 +58,13 @@ root_ring_serve :: proc "contextless" (item: ^Started) {
 }
 
 // root_command_answer runs the three steps of one record: the border and
-// the sender, which root_ring.dispatch_decide decides from the role that
+// the sender, which root_ring.dispatch_decide decides from the start grant set that
 // the process received at its start and never from its name (a disk
 // process has the nickname that it chose), then the command.
 root_command_answer :: proc "contextless" (item: ^Started, record: ring.Record) -> (answer: Command_Answer) {
 	name_bytes := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
 	name := system.name_of(name_bytes[:])
-	decision := root_ring.dispatch_decide(record.kind, item.role.grants, role_may_connect(&item.role, name))
+	decision := root_ring.dispatch_decide(record.kind, item.start_grant_set.grants, start_grant_set_may_connect(&item.start_grant_set, name))
 	switch decision.step {
 	case .Border, .Sender:
 		return {status = decision.status, values = decision.refusal}
@@ -88,13 +89,13 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		// The start policy starts the parts of the system too, and gets a
 		// handle of each process (start_policy.odin). A process that a
 		// process starts belongs to the session of the process that asks.
-		answer.status = start_command(item, record, name, &answer.values, &answer.written)
+		answer.status = start_command(item, record, name, &answer.values, &answer.written, &answer.held)
 	case .Stop:
 		answer.status = .Bad_Handle
 		for &other in started {
 			// The compositor is not a process that the console stops, and
 			// the start policy stops only a process that it asked for.
-			if .Start_Policy in item.role.grants && !other.asked_by_start_policy {
+			if .Start_Policy in item.start_grant_set.grants && !other.asked_by_start_policy {
 				continue
 			}
 			if other.process != 0 && other.process != compositor && !other.is_terminal && system.name_of(other.name[:]) == name {
@@ -105,7 +106,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		}
 		// A start policy learns nothing of a process that it did not ask
 		// for: each refusal is the one record Absent.
-		if answer.status != .Ok && .Start_Policy in item.role.grants {
+		if answer.status != .Ok && .Start_Policy in item.start_grant_set.grants {
 			answer.values = start_policy_rules.stop_record()
 			answer.written = true
 		}
@@ -132,12 +133,12 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 			answer.status = .Ok
 		}
 	case .Revoke:
-		answer.status = revoke(name, record.values[4], &answer.values)
+		answer.status, answer.held = revoke(item, record.tag, name, record.values[4], &answer.values)
 	case .Replace:
 		answer.status = replace(item, name, record.values[4], &answer.values)
 	case .Connect_History:
 		answer.status = .No_Right
-		if .History_Store in item.role.grants && .History not_in item.revoked && name == "storage" {
+		if .History_Store in item.start_grant_set.grants && .History not_in item.revoked && name == "storage" {
 			answer.status = connect(item, "storage", &answer.values, history = true)
 		}
 	case .Principal_Create:
@@ -190,7 +191,9 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 	case .Start_Policy_Choice:
 		answer.status = start_policy_choice_command(item, record, &answer.values)
 	case .Wire:
-		answer.status = wire(item, record, &answer.values)
+		answer.status, answer.held = wire_begin(item, record, &answer.values)
+	case .Start_Edit:
+		answer.status = start_edit_command(item, record, name, &answer.values)
 	}
 	return answer
 }
@@ -200,7 +203,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 // starts the parts of the system too, and gets a handle of each process
 // (start_policy.odin), with the wiring list of the wiring rows of its
 // start list.
-start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: string, values: ^[7]u64, written: ^bool) -> system.Status {
+start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: string, values: ^[7]u64, written: ^bool, held: ^bool) -> system.Status {
 	command := root_ring.Root_Command.Start
 	list, list_ok := root_ring.start_wiring_list_of_word(record.values[4])
 	answer, answer_ok := root_ring.start_answer_of_word(record.values[5])
@@ -220,8 +223,8 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 		written^ = true
 		return .Bad_Operation
 	}
-	if .Start_Policy in item.role.grants {
-		return start_policy_start(item, name, list, values, written)
+	if .Start_Policy in item.start_grant_set.grants {
+		return start_policy_start(item, record.tag, name, list, values, written, held)
 	}
 	// A process that a process starts belongs to the session of the
 	// process that asks, and the asker of its start is that process.
@@ -242,39 +245,9 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 		return status
 	case .In_The_List_Page:
 	}
-	work := &wire_work
-	work^ = {asker = item, command = command, form = .Start}
-	if status := wiring_list_take(work); status != .Ok {
-		values^ = work.refusal
-		written^ = true
-		return status
-	}
-	status := start(name, item.principal, item, work, &started_place)
-	if status != .Ok {
-		// A refusal of the list has its record; another refusal of the
-		// start has the record of the dispatch.
-		if work.refusal != ([7]u64{}) {
-			values^ = work.refusal
-			written^ = true
-		}
-		return status
-	}
-	// The number of each row whose reader is the sender, in the order of
-	// the rows: its end comes in the wiring ring of the sender with this
-	// tag. A row that ended keeps its place, with 0.
-	asker_place := 1
-	for number in 1 ..= work.list.row_count {
-		plan := &work.plans[number - 1]
-		if plan.row.reader_end != .Asker {
-			continue
-		}
-		values[asker_place] = plan.kept != nil ? u64(plan.number) : 0
-		asker_place += 1
-	}
-	if answer == .Process_Handle && started_place != nil {
-		values[0], _ = start_process_handle_give(item, started_place)
-	}
-	return .Ok
+	status, is_held := start_with_wiring_begin(item, record.tag, name, item.principal, answer, false, nil, values, written)
+	held^ = is_held
+	return status
 }
 
 // start_process_handle_give gives the asker of a start the handle of the
@@ -298,7 +271,7 @@ start_process_handle_give :: proc "contextless" (asker: ^Started, process: ^Star
 // of its refusal, and a connection that fails after it gets the record of
 // root_command_refusal.
 root_connect :: proc "contextless" (item: ^Started, record: ring.Record, name: string, values: ^[7]u64) -> (status: system.Status) {
-	if .Remote_Clients in item.role.grants || record.values[4] != 0 {
+	if .Remote_Clients in item.start_grant_set.grants || record.values[4] != 0 {
 		client: Client_Grant
 		client, status = client_grant_of(item, record.values[4], record.values[5], values)
 		if status != .Ok {
@@ -314,9 +287,145 @@ root_connect :: proc "contextless" (item: ^Started, record: ring.Record, name: s
 	return status
 }
 
+// edit_store_limit gives the block limit to use when opening a store for
+// `edit(store, name)`: the limit of the matching start grant set when the
+// store belongs to a known module, HISTORY_STORE_LIMIT for a history
+// store, or edit's own store block limit for any other store name.
+edit_store_limit :: proc "contextless" (store_name: string) -> u64 {
+	// Strip optional ".principal.<number>" suffix to match the module row.
+	base := store_name
+	marker := ".principal."
+	for index := 0; index + len(marker) < len(store_name); index += 1 {
+		if store_name[index:index + len(marker)] == marker {
+			base = store_name[:index]
+			break
+		}
+	}
+	suffix := ".history"
+	if len(base) > len(suffix) && base[len(base) - len(suffix):] == suffix {
+		return HISTORY_STORE_LIMIT
+	}
+	row := start_grant_set_of(base)
+	if .Store in row.grants {
+		return start_grant_set_store_blocks(&row)
+	}
+	edit_row := start_grant_set_of("edit")
+	return start_grant_set_store_blocks(&edit_row)
+}
+
+// start_edit_command runs Start_Edit: starts `edit` connected to a store
+// of the principal of the caller, editing the named object path.
+start_edit_command :: proc "contextless" (item: ^Started, record: ring.Record, store_name: string, values: ^[7]u64) -> system.Status {
+	command := u32(root_ring.Root_Command.Start_Edit)
+	path_handle := system.Handle(record.values[4])
+	path_count := record.values[5]
+	kind, rights, through := system.handle_state(path_handle, item.requests_memory)
+	defer if through {
+		system.close(path_handle)
+	}
+	// The caller must act for its principal to reach another store.
+	if .Acts_For_Principal not_in item.start_grant_set.grants || .Acts_For_Principal in item.revoked {
+		values^ = errors.ring_fail(command, .No_Grant, .Acts_For_Principal, 1)
+		return .No_Right
+	}
+	if record.values[6] != 0 {
+		values^ = root_ring.word_refusal(.Start_Edit, 3, record.values[6], 0)
+		return .Bad_Operation
+	}
+	store_refusal, store_offset := root_ring.edit_store_validate(store_name)
+	switch store_refusal {
+	case .None:
+	case .Empty:
+		values^ = errors.ring_fail(command, .Empty, .Bytes, 1, 0, root_ring.EDIT_TARGET_STORE_LIMIT)
+		return .Bad_Operation
+	case .Too_Long:
+		values^ = errors.ring_fail(command, .Too_Long, .Bytes, 1, i64(len(store_name)), root_ring.EDIT_TARGET_STORE_LIMIT)
+		return .Bad_Operation
+	case .Bad_Byte:
+		values^ = errors.ring_fail(command, .Bad_Byte, .Bytes, 1, i64(store_offset), 0, i64(store_name[store_offset]))
+		return .Bad_Operation
+	}
+	// Principal isolation: a caller for principal N opens stores of principal N only.
+	if principals.store_name_principal(store_name) != item.principal {
+		values^ = errors.ring_fail(command, .No_Grant, .Acts_For_Principal, 1)
+		return .No_Right
+	}
+	if !through || kind != .Memory || .Read not_in rights {
+		values^ = errors.ring_fail(command, .Bad_Value, .Objects, 2)
+		return .Bad_Handle
+	}
+	if path_count == 0 {
+		values^ = errors.ring_fail(command, .Empty, .Bytes, 2, 0, root_ring.EDIT_TARGET_PATH_LIMIT)
+		return .Bad_Operation
+	}
+	if path_count > root_ring.EDIT_TARGET_PATH_LIMIT {
+		values^ = errors.ring_fail(command, .Too_Long, .Bytes, 2, i64(min(path_count, u64(max(i64)))), root_ring.EDIT_TARGET_PATH_LIMIT)
+		return .Bad_Operation
+	}
+	pages, size_status := system.memory_size(path_handle)
+	if size_status != .Ok || pages * system.PAGE_SIZE < path_count {
+		values^ = errors.ring_fail(command, .Too_Long, .Bytes, 2, i64(path_count))
+		return .Bad_Operation
+	}
+	mapped, map_status := system.memory_map(path_handle, {})
+	if map_status != .Ok {
+		values^ = errors.ring_fail(command, .Refused, .None, 0, 0, 0, i64(map_status))
+		return map_status
+	}
+	path_bytes: [root_ring.EDIT_TARGET_PATH_LIMIT]u8
+	intrinsics.mem_copy_non_overlapping(&path_bytes[0], mapped, int(path_count))
+	system.memory_unmap(mapped)
+	path := string(path_bytes[:int(path_count)])
+	path_refusal, path_offset := root_ring.edit_path_validate(path)
+	switch path_refusal {
+	case .None:
+	case .Empty:
+		values^ = errors.ring_fail(command, .Empty, .Bytes, 2, 0, root_ring.EDIT_TARGET_PATH_LIMIT)
+		return .Bad_Operation
+	case .Too_Long:
+		values^ = errors.ring_fail(command, .Too_Long, .Bytes, 2, i64(len(path)), root_ring.EDIT_TARGET_PATH_LIMIT)
+		return .Bad_Operation
+	case .Too_Deep:
+		values^ = errors.ring_fail(command, .Too_Long, .Objects, 2, i64(path_offset))
+		return .Bad_Operation
+	case .Bad_Segment:
+		found := path_offset < len(path) ? i64(path[path_offset]) : 0
+		values^ = errors.ring_fail(command, .Bad_Byte, .Bytes, 2, i64(path_offset), 0, found)
+		return .Bad_Operation
+	}
+	target_page, page_status := system.memory_create(1)
+	if page_status != .Ok {
+		values^ = errors.ring_fail(command, .Refused, .None, 0, 0, 0, i64(page_status))
+		return page_status
+	}
+	defer system.close(target_page)
+	target_address, target_map_status := system.memory_map(target_page)
+	if target_map_status != .Ok {
+		values^ = errors.ring_fail(command, .Refused, .None, 0, 0, 0, i64(target_map_status))
+		return target_map_status
+	}
+	target := (^root_ring.Edit_Target)(target_address)
+	target^ = {}
+	target.store_length = u32(len(store_name))
+	target.path_length = u32(len(path))
+	copy(target.store[:], store_name)
+	copy(target.path[:], path)
+	system.memory_unmap(target_address)
+	refusal: [7]u64
+	start_status := start("edit", item.principal, item, nil, nil, &refusal, store_override = store_name, store_limit_override = edit_store_limit(store_name), edit_target_page = target_page)
+	if start_status != .Ok {
+		if refusal != ([7]u64{}) {
+			values^ = refusal
+		} else {
+			values^ = errors.ring_fail(command, .Refused, .None, 0, 0, 0, i64(start_status))
+		}
+	}
+	return start_status
+}
+
 // root_command_refusal gives the error record of a command of the root
 // ring that this service refused, in the values of its completion. As the
-// kernel does (src/kernel/diagnose.odin), it reads the state again after
+// kernel does (src/modulus/diagnose.odin), it reads the state again after
 // the refusal, and names a cause only when the state shows it now: else the
 // record is Refused, with the status. The record names the argument of the
 // caller, and no fact of another process that the status does not give.
@@ -324,12 +433,12 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 	kind := u32(command)
 	// The start policy is no part of the system, and only this service
 	// starts it: a Start of its name is refused as one.
-	of_the_system := name_is_a_system_part(name) || .Start_Policy in role_of(name).grants
+	of_the_system := name_is_a_system_part(name) || .Start_Policy in start_grant_set_of(name).grants
 	switch command {
-	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client, .Machine_Usable, .Start_Policy_Choice, .Wire:
+	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client, .Machine_Usable, .Start_Policy_Choice, .Wire, .Start_Edit:
 		// No cause that the state shows: the record Refused, with the status.
 	case .Connect_History, .Palette_Provide:
-		// A grant of the role that the command needs, and that the process
+		// A grant of the start grant set that the command needs, and that the process
 		// lacks or lost by a revocation.
 		if status == .No_Right {
 			return root_ring.sender_refusal(command)

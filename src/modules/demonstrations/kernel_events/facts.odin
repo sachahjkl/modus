@@ -3,7 +3,7 @@ package kernel_events
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
-import "modus:support/system"
+import "modus:system"
 
 // The log facts of kernel_events (src/md/features/log_facts.md): each fact
 // template is the line that the process wrote before it was a fact, so a
