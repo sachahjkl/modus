@@ -198,17 +198,29 @@ The rotations by 16, 12, 8 and 7 bits are written as two shifts and an or (`rota
 
 **Three differences from the other vector forms.**
 
-- The source has no `_amd64` suffix and `text_valid` calls it on each target: it uses only operations that each vector unit has (compares, saturating subtraction, shuffles by constant places, the mask of bit 7).
+- The source has no `_amd64` suffix and `text_valid` calls it on each target: each of its operations (compares, saturating subtraction, shuffles by constant places, the mask of bit 7) compiles for each vector unit. Some take more than one instruction: SSE2 has no unsigned compare of bytes, and NEON has no mask of bit 7.
 - The last bytes go through the vector form, in a group of spaces, not through the scalar form.
 - The kernel compiles the package in and calls none of it: it replaces invalid sequences with `invalid_sequences_replace`, which is scalar. The build refuses a vector instruction in the kernel.
 
-**The host tests** (`text_valid_sixteen_bytes_at_a_time_test.odin`): each length around a group (0, 1, 15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64) with a control at the end; each valid and refused sequence at each place of texts of each length up to 50, so each sequence crosses each boundary of a group at each of its bytes; a sequence cut by the end of the slice; and 400 000 random texts of 0 to 300 bytes (random bytes, edge bytes, valid texts with one byte changed, inserted or removed) against the scalar form, with a fixed seed that the failure prints. The fuzz target `text_encoding` compares the two forms too.
+**The host tests** (`text_valid_sixteen_bytes_at_a_time_test.odin`): each length around a group (0, 1, 15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64) with a control at the end; each valid and refused sequence at each place of texts of each length up to 50, so each sequence crosses each boundary of a group at each of its bytes; a sequence cut by the end of the slice; slices that start at each place 1 to 15 of a larger buffer; each window of three bytes at the places 13, 14 and 15 of a text of 32 bytes, one window in 251 in each run and all 2^24 with `-define:EXHAUSTIVE=true` (8 s with no optimisation); each lead F0 to F4 at the places 12 to 15 with each second byte and the edge classes of the third and fourth bytes; a lead cut at the end of a group that is not ASCII, before groups of ASCII and with no last bytes; and 400 000 random texts of 0 to 300 bytes (random bytes, edge bytes, valid texts, valid texts with one, two or three bytes changed, inserted or removed) against the scalar form, with a fixed seed that the failure prints. The fuzz target `text_encoding` compares the two forms too.
 
-**The measure on the host**, with the target of a module. The test prints the time of each form, and fails only when the forms give different answers:
+**The measure on the host**, with the target of a module. The test is opt-in: it runs only with `-define:MEASURE=true`. It prints the time of each form, and fails only when the forms give different answers:
 
 ```
-nix develop -c odin test src/library/contract/text_encoding -o:speed -microarch:x86-64 -vet -collection:modus=src/library -define:ODIN_TEST_NAMES=text_encoding.text_valid_speed_of_each_form
+nix develop -c odin test src/library/contract/text_encoding -o:speed -microarch:x86-64 -vet -collection:modus=src/library -define:MEASURE=true -define:ODIN_TEST_NAMES=text_encoding.text_valid_speed_of_each_form
 ```
+
+The numbers of the last measure, with a load of 1.7, the least of 5 runs:
+
+| Text | Scalar form | Vector form |
+|---|---|---|
+| ASCII, 64 bytes | 482 MiB/s | 11 505 MiB/s |
+| ASCII, 4 KiB | 482 MiB/s | 17 316 MiB/s |
+| ASCII, 1 MiB | 480 MiB/s | 17 742 MiB/s |
+| French and CJK, 63 bytes | 591 MiB/s | 3 243 MiB/s |
+| French and CJK, 4 KiB | 609 MiB/s | 5 891 MiB/s |
+| French and CJK, 1 MiB | 341 MiB/s | 5 949 MiB/s |
+| Random bytes, 64 bytes, refused | 4.6 ns | 4.0 ns |
 
 ## 7. How to measure on the machine
 

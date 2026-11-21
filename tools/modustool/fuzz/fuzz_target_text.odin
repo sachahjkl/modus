@@ -152,6 +152,31 @@ fuzz_text_encoding_seeds :: proc(seeds: ^[dynamic][]u8) {
 	for text in texts {
 		append(seeds, slice.clone(text))
 	}
+	// The leads with a bound on their second byte (E0, ED, F4) and C2,
+	// with the second byte at each side of its bound, across the end of
+	// the first group of sixteen bytes: the lead at the place 15, then at
+	// the place 14.
+	across := [?][]u8 {
+		{0xE0, 0xA0, 0x80},
+		{0xE0, 0x9F, 0xBF},
+		{0xED, 0x9F, 0xBF},
+		{0xED, 0xA0, 0x80},
+		{0xF4, 0x8F, 0xBF, 0xBF},
+		{0xF4, 0x90, 0x80, 0x80},
+		{0xC2, 0xA0},
+		{0xC2, 0x9F},
+	}
+	for sequence in across {
+		for place in 14 ..= 15 {
+			seed := make([dynamic]u8)
+			for _ in 0 ..< place {
+				append(&seed, 'a')
+			}
+			append(&seed, ..sequence)
+			append(&seed, 'b', 'c')
+			append(seeds, seed[:])
+		}
+	}
 }
 
 // ---------------------------------------------------------------------

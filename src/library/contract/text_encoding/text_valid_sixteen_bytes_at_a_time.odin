@@ -9,13 +9,16 @@
 //
 // The source names no instruction and no target: each operation (compare,
 // saturating subtraction, shuffle by constant places, the mask of bit 7)
-// exists in each vector unit, so a later target compiles the same source.
+// compiles for each vector unit, so a later target compiles the same
+// source. Some operations take more than one instruction on some units:
+// SSE2 has no unsigned compare of bytes, and NEON has no mask of bit 7.
 // The kernel, which has no vector unit, calls none of it: the build refuses
 // a vector instruction in the kernel.
 package text_encoding
 
 import "base:intrinsics"
 
+@(private = "file")
 Sixteen_Bytes :: #simd[16]u8
 
 @(private = "file")

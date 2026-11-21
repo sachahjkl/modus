@@ -2,7 +2,19 @@
 
 ## Purpose
 
-Each border that takes a text from another party checks it with `text_valid` ([text_encoding.md](text_encoding.md)): a palette table, a store name, a history file, a clipboard paste, a display text, a remote call. The scalar form reads one character at a time with `character_decode`, at 330 to 600 MiB/s on the host. The vector form checks sixteen bytes in one pass of comparisons with no branch for each character: on the host, 5 times faster on a mixed text of 63 bytes, 10 to 18 times on a mixed text of 4 KiB or more, 27 to 44 times on ASCII. A check of a text then costs less than the copy of the text.
+Each border that takes a text from another party checks it with `text_valid` ([text_encoding.md](text_encoding.md)): a palette table, a store name, a history file, a clipboard paste, a display text, a remote call. The scalar form reads one character at a time with `character_decode`. The vector form checks sixteen bytes in one pass of comparisons with no branch for each character. Measured on the host for the module target (`-o:speed -microarch:x86-64`, a load of 1.7, the least of 5 runs):
+
+| Text | Scalar form | Vector form |
+| --- | --- | --- |
+| ASCII, 64 bytes | 482 MiB/s | 11 505 MiB/s |
+| ASCII, 4 KiB | 482 MiB/s | 17 316 MiB/s |
+| ASCII, 1 MiB | 480 MiB/s | 17 742 MiB/s |
+| French and CJK, 63 bytes | 591 MiB/s | 3 243 MiB/s |
+| French and CJK, 4 KiB | 609 MiB/s | 5 891 MiB/s |
+| French and CJK, 1 MiB | 341 MiB/s | 5 949 MiB/s |
+| Random bytes, 64 bytes, refused | 4.6 ns | 4.0 ns |
+
+So the vector form is 5 to 17 times faster on mixed text and 24 to 37 times on ASCII. Random bytes are refused at their first bytes by both forms, so their number is the time of one refusal.
 
 The rule does not change: a text is well-formed UTF-8 (RFC 3629) with no control character (U+0000 to U+001F, U+007F, U+0080 to U+009F). The vector form gives the answer of the scalar form for every input.
 
@@ -30,8 +42,8 @@ The vector form stops at the first group with an error: a text from another part
 
 ## The chosen form
 
-- **One source for every target.** `text_valid_sixteen_bytes_at_a_time` (`src/library/contract/text_encoding/text_valid_sixteen_bytes_at_a_time.odin`) is written with `#simd[16]u8` and the operations of `base:intrinsics`: compares, saturating subtraction, shuffle by constant places, `simd_extract_msbs`. Each one exists in SSE2, NEON and the SIMD of WebAssembly, so the source names no instruction and no target, and has no `_amd64` suffix. `core:simd` is a package of the core library, which a source of the system does not import; it wraps the same intrinsics.
-- **Comparisons in place of the three lookups.** On SSE2 the compiler writes a lookup of 16 entries (`simd_runtime_swizzle`) as 16 loads of one byte. Measured on the host for the module target (`-microarch:x86-64`, `-o:speed`), on French and CJK text of 1 MiB: the form with comparisons 5497 MiB/s, the form with the three lookups 559 MiB/s, the scalar form 329 MiB/s. With SSSE3 (`-microarch:native`) the two vector forms were within 20 % of each other. The host load was about 10, above the limit of 8, so these numbers rank the forms and are not valid measures of speed. So the system keeps one vector form, the one with comparisons.
+- **One source for every target.** `text_valid_sixteen_bytes_at_a_time` (`src/library/contract/text_encoding/text_valid_sixteen_bytes_at_a_time.odin`) is written with `#simd[16]u8` and the operations of `base:intrinsics`: compares, saturating subtraction, shuffle by constant places, `simd_extract_msbs`. Each one compiles for SSE2, NEON and the SIMD of WebAssembly, so the source names no instruction and no target, and has no `_amd64` suffix. Some take more than one instruction on some units: SSE2 has no unsigned compare of bytes (the compiler writes a saturating subtraction and a compare of equality, or a flip of bit 7 and a signed compare), and NEON has no mask of bit 7 (the compiler writes an and with the weights of the lanes and additions across them). `core:simd` is a package of the core library, which a source of the system does not import; it wraps the same intrinsics.
+- **Comparisons in place of the three lookups.** On SSE2 the compiler writes a lookup of 16 entries (`simd_runtime_swizzle`) as 16 loads of one byte. A form with the three lookups was measured on the host, then removed (`-o:speed`, a load of 5.6, two runs, French and CJK text of 1 MiB). For the module target (`-microarch:x86-64`): the lookups 554 to 561 MiB/s, the comparisons 5 726 to 5 818 MiB/s. With SSSE3 (`-microarch:native`): the lookups 8 415 to 8 435 MiB/s, the comparisons 7 943 to 8 126 MiB/s; on 63 bytes and on 4 KiB the lookups were 4 to 7 % faster too. So the system keeps one vector form, the one with comparisons.
 - **The scalar form stays.** `text_valid_byte_by_byte` is the reference of the host tests and the code of `invalid_sequence_find`, which gives a place. `text_valid` calls the vector form.
 - **Groups of 16 bytes.** A group of 32 bytes was not measured: a text of a contract is often shorter than 64 bytes, and a group of 32 doubles the copy of the last bytes.
 
@@ -39,7 +51,7 @@ The vector form stops at the first group with an error: a text from another part
 
 - **The library simdutf.** It is C++, and it holds conversions between UTF-8, UTF-16 and UTF-32, Latin-1 and base64 that the system does not need. The system takes the algorithm, not the code.
 - **A state machine with a table of the bytes (DFA).** One load and one step for each byte: faster than `character_decode`, still one byte at a time.
-- **The three lookups with SSSE3 and a test of the processor.** A contract package imports no support package, so it cannot read `instruction_sets`; and where SSSE3 exists the lookups gained 6 to 20 % on mixed text, less than the cost of a second vector form to test.
+- **The three lookups with SSSE3 and a test of the processor.** A contract package imports no support package, so it cannot read `instruction_sets`; and where SSSE3 exists the lookups were 4 to 7 % faster (see "Comparisons in place of the three lookups"), less than the cost of a second vector form to test.
 - **A test of the mask only at the end of the text.** It saves one compare for each group of a valid text and checks the whole of a long invalid text.
 
 ## Subtle points
@@ -55,6 +67,6 @@ Keiser and Lemire publish the algorithm in the paper; simdutf is under Apache-2.
 
 ## State
 
-Built: the vector form, `text_valid` on it, the host tests (each length around a group, each sequence at each place, the refused forms, 400 000 random texts against the scalar form) and the measure `text_valid_speed_of_each_form`; the fuzz target `text_encoding` compares the two forms.
+Built: the vector form, `text_valid` on it, the host tests (each length around a group, each sequence at each place, slices that start at each place of a group, each window of three bytes across a group boundary, one in 251 by default and all 2^24 with `-define:EXHAUSTIVE=true`, the leads of four bytes at the end of a group, a lead cut before groups of ASCII, 400 000 random texts against the scalar form) and the measure `text_valid_speed_of_each_form` with `-define:MEASURE=true`; the fuzz target `text_encoding` compares the two forms.
 
 Left: `invalid_sequence_find` reads the whole text with the scalar form. The vector form can find the first group with an error, and the scalar form then finds the place in it. `display_text_valid` checks with the vector form, then reads each character with `character_decode` to find a hidden character.
