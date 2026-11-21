@@ -468,6 +468,11 @@
   in {
     formatter.${system} = pkgs.alejandra;
 
+    packages.${system} = {
+      default = modustoolBinary;
+      modustool = modustoolBinary;
+    };
+
     checks.${system} = {
       pre-commit = preCommitCheck;
       boot-test = bootTest;
