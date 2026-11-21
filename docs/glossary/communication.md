@@ -496,6 +496,36 @@ One command record names one connection that starts or ends, with the grant of t
 
 Do not use: control channel, accept queue.
 
+### Connection page
+
+A connection page is one page for each connection that the root service writes alone, and that the client and the holder map with the right Read only.
+
+It holds the holder serial (the process serial of the holder that serves the connection), the `Connection_State` (`Held`, `Holder_Stopped`, `Ended`), and the stop cause and the stop outcome of the last holder that stopped. A client waits on it beside its call ring. When a holder starts again, the connection keeps its call ring and its call region, and only the page changes. It is paid by the work budget of the connection. Designed, not built.
+
+The design: `src/md/features/supervision.md`, "What a client sees when the holder of its role stops".
+
+Do not use: heartbeat, status channel, reconnect event.
+
+### Call in doubt
+
+A call in doubt is a call that a holder took from its call ring and did not answer before it stopped: it ran, or it did not.
+
+The library of the client knows it: the holder serial changed, the command was read, and no completion came. At the new holder serial, the library writes it again once, if its export is idempotent or carries a request serial. A call of an export that is neither, and a call whose replay met a second stop, goes to its caller with the status `Holder_Stopped`.
+
+The design: `src/md/features/supervision.md`, "The calls in flight".
+
+Do not use: pending call, lost call, retry.
+
+### Request serial
+
+A request serial is the number that the library of a client gives each call of an export that is not idempotent, one more on each connection.
+
+The holder writes the serial and the completion record of the call in the same commit as its effect. A replayed call whose serial is at or below the kept serial gets the kept completion and does not run again. A holder keeps 8 answers for each connection, and the library holds a ninth such call until a place is free. The answer of such a call is in the values of its completion, never in the call region.
+
+The design: `src/md/features/supervision.md`, "The rule that makes a replay safe".
+
+Do not use: idempotency key, sequence number, nonce.
+
 ### Argument record
 
 An argument record is the record that holds the arguments of one isolated call: one field for each parameter, in order.

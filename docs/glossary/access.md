@@ -410,6 +410,36 @@ A thread of a budget that used its part of the period does not run until the nex
 
 Do not use: window, slice.
 
+### Work budget
+
+A work budget is the budget that the root service takes from the budget of a client at each `Connect`, and gives to the service with the right Spend.
+
+The service pays from it the memory of its work for that client: the call ring, the call region, the connection page, and the tables of the connection. Its work thread runs on it, so the kernel counts that time in the client. A spent work budget gives the client `No_Budget` of the unit `Work_Budget`, and changes nothing in the service. At the end of the connection, what it holds goes back to the client. Designed, not built.
+
+The design: `src/md/features/work_accounting.md`.
+
+Do not use: client quota, resource container, donated budget.
+
+### Work thread
+
+A work thread is the thread of a service that runs the calls of one connection, created with the work budget of that connection.
+
+Its time counts in the work budget and in each budget above it, so the limit of the client holds for its own threads and for its work in the service together. A client that spends its time delays only its own calls. A work thread never changes the state that all clients share: it prepares a change and gives it to the shared step. Designed, not built.
+
+The design: `src/md/features/work_accounting.md`, "The work thread".
+
+Do not use: worker, handler thread, borrowed thread.
+
+### Shared step
+
+A shared step is the bounded part of a call that changes the state of all clients, which the thread of the service runs, never a work thread.
+
+A commit of the storage service and a frame of the compositor are shared steps. The service measures the time of each one and adds it to the step debt of its connection, and takes the next step from the connection with the least step debt. So a client that asks for large steps waits behind the clients that ask for small ones, and no work thread holds a lock while its budget runs out.
+
+The design: `src/md/features/work_accounting.md`, "The shared step".
+
+Do not use: critical section, server work, commit queue.
+
 ### Grant
 
 A grant is the act that gives a handle to a process, and the record of that act.

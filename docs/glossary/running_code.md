@@ -242,6 +242,36 @@ Each part is a member of the closed enum `Machine_Part`: a screen with its size,
 
 Do not use: hardware list, device tree, inventory.
 
+### Supervision
+
+Supervision is the rule that the starter of a process starts it again when it stops, and that the process takes its state back from its private store.
+
+The starter is the process that asked for the start: the core of the root service, the start policy, or any process that started a child. So the tree of supervision is the tree of the starts, and no second tree is declared. One for one is the rule; a restart group starts together. Designed, not built.
+
+The design: `src/md/features/supervision.md`.
+
+Do not use: supervisor, watchdog, process manager, respawn.
+
+### Restart group
+
+A restart group is a holder and the processes that hold one of its rings in their context, which its starter starts again together.
+
+A ring in a context slot cannot be given to a process again with no new start, so its holder and its clients stop and start as one: the holder first. The root service derives the group from the role table, and no list declares it. A connection that a client gets after its start is no reason for a group. Example: today the block service and the storage service, whose context holds the block ring.
+
+The design: `src/md/features/supervision.md`, "The restart strategies".
+
+Do not use: one for all, linked set, dependency group.
+
+### Restart bound
+
+The restart bound of a start row is the most restarts in its restart window; past it the row starts no more, and its starter escalates.
+
+The count is the field of restarts of the row, at most 16. The restart window is in seconds of the clock of the system, and its zero value is the whole run of the machine, so no clock decides the restarts of a row that names no window. A stop with the stop outcome `Done` or `Refused` starts no restart and does not count. A needed row past its bound stops the start policy, and the rescue starts.
+
+The design: `src/md/features/supervision.md`, "The restart bound".
+
+Do not use: restart intensity, start limit, burst.
+
 ### Card
 
 A card is the frame of one subject in a display: a title in its accent, a caption that names its record, and its content.
