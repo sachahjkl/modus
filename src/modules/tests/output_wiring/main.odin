@@ -737,9 +737,9 @@ start_case :: proc "contextless" () {
 	refused("a seventh row of the asker", before, status, answer, .Bad_Operation, fail(.Start, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Reader_End), output.WIRING_ASKER_ROWS_OF_A_START + 1, output.WIRING_ASKER_ROWS_OF_A_START))
 	// Six rings of the largest record and the largest capacity: the budget
 	// refuses one of them, and each one made before it goes back. The
-	// kernel writes the record: the budget handle of the root service, and
-	// the cost and the room of the object that did not fit, which depend
-	// on the rows made before it; the root service gives that row.
+	// delegated wiring service holds the child budget with Spend only (no
+	// Read right), so the kernel returns Budget_Hidden with the cost of
+	// the object that did not fit; wiring gives that row in found.
 	large_rows: [output.WIRING_ASKER_ROWS_OF_A_START]output.Wiring
 	for &each in large_rows {
 		each = row(.Child, 0, WRITER_LARGE, .Asker, 0, 0)
@@ -747,7 +747,7 @@ start_case :: proc "contextless" () {
 	}
 	list_write(large_rows[:], nil)
 	status, answer = start_listed("output_writer", true)
-	refused("rings past the budget, after some of them were made", before, status, answer, .No_Budget, fail(.Start, .Budget, .Pages, 1), {.Value, .Limit, .Found})
+	refused("rings past the budget, after some of them were made", before, status, answer, .No_Budget, fail(.Start, .Budget_Hidden, .Pages, 1), {.Value, .Limit, .Found})
 	if found := errors.completion_record(answer).found; found < 1 || found > output.WIRING_ASKER_ROWS_OF_A_START {
 		wrong("the rings past the budget name the row", u64(found))
 	}
