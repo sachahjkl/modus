@@ -297,6 +297,9 @@ module_builds := [?]Module_Build {
 	// with a read-only input disk and a blank writable output disk
 	// (src/md/features/recipes.md).
 	{name = "guest_builder", source = SYSTEM_MODULE_SOURCES + "guest_builder", image = true},
+	// The VirtIO-GPU device service: 2D scanout setup and Venus capability
+	// probing over the VirtIO-GPU 1.2 control queue (src/md/features/gpu_access.md).
+	{name = "gpu_device", source = SYSTEM_MODULE_SOURCES + "gpu_device", entry = true, image = true},
 }
 
 // The counted kernel and its setting. Each other kernel gets the setting

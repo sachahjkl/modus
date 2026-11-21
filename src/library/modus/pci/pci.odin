@@ -207,9 +207,12 @@ SOUND_DEVICE :: 0x14
 // The virtio tablet device, when the machine has one: the input service
 // drives it alongside the PS/2 fallback.
 TABLET_DEVICE :: 0x15
+// The virtio GPU device, when the machine has one.
+GPU_DEVICE :: 0x16
 VENDOR_VIRTIO :: 0x1AF4 // The vendor identifier of the virtio devices.
 DEVICE_VIRTIO_BLOCK :: 0x1042 // A virtio 1 block device with no older interface.
 DEVICE_VIRTIO_NETWORK :: 0x1041 // A virtio 1 network device with no older interface.
 DEVICE_VIRTIO_ENTROPY :: 0x1044 // A virtio 1 entropy device with no older interface.
+DEVICE_VIRTIO_GPU :: 0x1050 // A virtio 1 GPU device (0x1040 + 16) with no older interface.
 DEVICE_VIRTIO_INPUT :: 0x1052 // A virtio 1 input device (0x1040 + 18): tablet, keyboard, or mouse.
 DEVICE_VIRTIO_SOUND :: 0x1059 // A virtio 1 sound device: 0x1040 and the device number 25; it has no older interface.

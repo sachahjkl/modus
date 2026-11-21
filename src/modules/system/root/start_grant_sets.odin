@@ -314,6 +314,8 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	{name = "entropy", grants = {.System_Part}},
 	// The sound device and the ring of its one client (driver_start).
 	{name = "sound", grants = {.System_Part}},
+	// The VirtIO-GPU device and the ring of its one client (driver_start).
+	{name = "gpu_device", grants = {.System_Part}},
 	// The registers of the TPM, and the ring and the region that `unlock`
 	// receives (tpm_service_start).
 	{name = "tpm", grants = {.System_Part}},
@@ -470,7 +472,7 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 // (tools/modustool/build/start_grant_sets_check.odin), because the debug access to
 // a process reads that grant. The names are strings that the tool reads.
 @(rodata)
-system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "wiring", "powerbox", "collector", "plans", "recipes", "projects"}
+system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "gpu_device", "wiring", "powerbox", "collector", "plans", "recipes", "projects"}
 
 // name_is_a_system_part says if a name is one of system_part_names.
 name_is_a_system_part :: proc "contextless" (name: string) -> bool {
