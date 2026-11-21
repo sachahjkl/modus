@@ -331,4 +331,5 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_INTERNAL + "/powerbox/powerbox_core",
 	foundation.SOURCE_FOLDER_CONTRACT + "/work_budget",
 	foundation.TEST_MODULE_SOURCES + "work_accounting_probe",
+	foundation.SOURCE_FOLDER_CONTRACT + "/machine_mesh",
 }

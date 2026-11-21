@@ -259,4 +259,6 @@ Each step adds one capability to a system that works.
 
 ## State
 
-Designed, not built.
+The freestanding contract layer in `src/library/modus/contract/machine_mesh` is built and tested on the host: the monotonic signed machine list under the offline principal root key with default non-TPM join refusal and opt-in warning, the off-by-default keyed BLAKE3 local network address hint, signed cross-principal grants with one-day expiry or monotonic revocation lists, the store delta sync wire protocol with pure three-way fast-forward and conflict-fork reconciliation, and CPace PAKE over Ristretto255 (`CPaceRistretto255`) with mutual key confirmation.
+
+The integration into the root service, `unlock`, `remote`, `storage`, and multi-machine QEMU tests is left.
