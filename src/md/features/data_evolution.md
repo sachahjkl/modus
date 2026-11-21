@@ -135,4 +135,4 @@ All of it starts at the preparation of 1.0:
 
 ## State
 
-Designed for after 1.0, not built; nothing of it runs before 1.0. Each store keeps its own form today, and a change of it breaks the old data.
+The freestanding contract package `src/library/modus/contract/data_evolution/` is built with host tests: canonical stored type descriptions and domain-separated BLAKE3 description hashes (`"modus stored type v1"`), the `MODTYPE1` self-describing typed object container with strict border validation, the derived forward and backward migration planner and fail-closed record and object executor, stated-loss accounting, and the pre-flight rollback checker. No existing store runs migrations before 1.0; each store keeps its own form today, and a change of it breaks the old data until the preparation of 1.0.

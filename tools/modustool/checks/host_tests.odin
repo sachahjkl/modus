@@ -346,4 +346,5 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/remote_display",
 	foundation.SOURCE_FOLDER_CONTRACT + "/guest_builder",
 	foundation.SOURCE_FOLDER_CONTRACT + "/machine_mesh",
+	foundation.SOURCE_FOLDER_CONTRACT + "/data_evolution",
 }
