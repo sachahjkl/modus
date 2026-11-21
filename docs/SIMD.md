@@ -295,7 +295,7 @@ nix develop -c odin test src/library/support/fast_hash -o:speed -microarch:x86-6
 | 32 bytes | 3.71 ns | 270 million/s |
 | 64 bytes | 6.19 ns | 162 million/s |
 
-## 10. The fuzzy match (`src/library/support/line_editor`)
+## 10. The fuzzy match
 
 **Where it runs.** The console completion and the ranking thread of the palette match each candidate name against the typed query (`fuzzy_match`, `rank_candidates`). The scoring rule is in `docs/CONSOLE.md`, "3. The fuzzy match", and the design is in `src/md/features/fuzzy_match.md`.
 
