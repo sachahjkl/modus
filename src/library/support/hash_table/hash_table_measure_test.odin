@@ -13,7 +13,7 @@ import "core:time"
 // Two forms of keys: the keys of the glyph cache (a glyph index that
 // counts up, which the golden ratio spreads with no collision), and random
 // keys. Build with -o:speed -define:MEASURE=true for a number that means
-// something (docs/SIMD.md, "8. The 16-tag group match").
+// something (docs/SIMD.md, "9. The 16-tag group match").
 
 // An entry of the size and the form of the entry of the glyph cache.
 Chained_Entry :: struct {

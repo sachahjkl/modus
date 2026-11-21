@@ -1,6 +1,6 @@
 # Swiss tables and the fast hash
 
-`src/library/support/hash_table` provides fixed-capacity Swiss tables (`Hash_Table` and `Hash_Index`) for lookups by outside keys in system modules. `src/library/support/fast_hash` provides rapidhash V3 and a folded 64-bit word mixer for short in-memory keys. The SSE2 group-match specification and host speed measures are in [`docs/SIMD.md`](../../../docs/SIMD.md), "8. The 16-tag group match".
+`src/library/support/hash_table` provides fixed-capacity Swiss tables (`Hash_Table` and `Hash_Index`) for lookups by outside keys in system modules. `src/library/support/fast_hash` provides rapidhash V3 and a folded 64-bit word mixer for short in-memory keys. The SSE2 group-match specification and host speed measures are in [`docs/SIMD.md`](../../../docs/SIMD.md), "9. The 16-tag group match".
 
 ## Purpose
 

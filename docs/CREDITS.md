@@ -48,10 +48,14 @@ Algorithms and specifications implemented from scratch in `src/` without copying
 | Copy-on-write B-tree object store | Kent Overstreet, Fuchsia Fxfs authors | bcachefs, Fuchsia Fxfs | GPL-2.0 / BSD-3-Clause | `src/library/private/storage/storage_tree/storage_tree.odin` | https://www.patreon.com/bcachefs |
 | QUIC transport and TLS 1.3 key schedule | IETF QUIC and TLS Working Groups | RFC 9000, RFC 9001, RFC 9002 | IETF Standard | `src/library/support/quic` | https://www.ietf.org/support/ |
 | Turns-based polynomial trigonometry | Casey Muratori (turns convention) | Turns angle convention | Public domain | `src/library/support/trigonometry/trigonometry.odin` | — |
+| Vector UTF-8 validation (16 bytes at a time) | John Keiser, Daniel Lemire | simdutf (Keiser & Lemire 2021) | Apache-2.0 / MIT | `src/library/contract/text_encoding/text_valid_sixteen_bytes_at_a_time.odin` | https://github.com/sponsors/lemire |
+| Swiss tables (16-tag SIMD open addressing) | Matt Kulukundis (Google Abseil), Facebook Folly F14 authors | Abseil SwissTable, Folly F14 | Apache-2.0 | `src/library/support/hash_table/hash_table.odin` | — |
+| rapidhash V3 fast short-key hash | Nicolas De Carli, Wang Yi (wyhash) | rapidhash | MIT | `src/library/support/fast_hash/fast_hash.odin` | — |
+| Vector fuzzy matching and frecency | Dmitriy Kovalenko (fff / frizbee), Junegunn Choi (fzf), Mozilla Places authors | fff, frizbee, fzf | MIT | `src/library/support/line_editor/fuzzy_match_vectors.odin` | https://github.com/sponsors/junegunn |
 
 ## Inspirations
 
-Systems, papers, and ideas that shaped the 24 properties and the design of `modus`, covering every **Reuse** field of `PROPERTIES.md`.
+Systems, papers, and ideas that shaped the 25 properties and the design of `modus`, covering every **Reuse** field of `PROPERTIES.md`.
 
 | System or idea | Authors | Took and left | Link | Funding |
 |---|---|---|---|---|

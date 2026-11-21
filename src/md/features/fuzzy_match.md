@@ -1,6 +1,6 @@
 # The fuzzy match and the frecency
 
-The console completion and the palette find a name from a few typed characters: `mcnt` finds `monitor.count`. One matcher serves both: `src/library/support/line_editor` (`fuzzy_match`, `rank_candidates`). This file records why the matcher has its rule, its vector form and its bounds, and why a name that the principal uses often comes first. The rule as a reader sees it is in [`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "3. The fuzzy match"; the vector form is in [`docs/SIMD.md`](../../../docs/SIMD.md), "8. The fuzzy match".
+The console completion and the palette find a name from a few typed characters: `mcnt` finds `monitor.count`. One matcher serves both: `src/library/support/line_editor` (`fuzzy_match`, `rank_candidates`). This file records why the matcher has its rule, its vector form and its bounds, and why a name that the principal uses often comes first. The rule as a reader sees it is in [`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "3. The fuzzy match"; the vector form is in [`docs/SIMD.md`](../../../docs/SIMD.md), "10. The fuzzy match".
 
 ## The constraints
 

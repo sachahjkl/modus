@@ -211,7 +211,7 @@ single_bit_changes_word_hashes :: proc(t: ^testing.T) {
 
 // Prints the time of one hash of a short key on the host, as a measure:
 // the least of 20 batches. Build with -o:speed -define:MEASURE=true for a
-// number that means something (docs/SIMD.md, "8. The 16-tag group match").
+// number that means something (docs/SIMD.md, "9. The 16-tag group match").
 @(test)
 hash_cost_of_short_keys :: proc(t: ^testing.T) {
 	if !MEASURE {
