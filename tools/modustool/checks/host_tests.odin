@@ -205,6 +205,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.TOOL_SOURCE_FOLDER + "/resources",
 	foundation.TOOL_SOURCE_FOLDER + "/similarity",
 	foundation.TOOL_SOURCE_FOLDER + "/cache_server",
+	foundation.TOOL_SOURCE_FOLDER + "/agent_bridge",
 	foundation.TOOL_SOURCE_FOLDER + "/foundation",
 	foundation.SOURCE_FOLDER_RUNTIME,
 	foundation.SOURCE_FOLDER_CONTRACT + "/blake3",
@@ -346,4 +347,5 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/remote_display",
 	foundation.SOURCE_FOLDER_CONTRACT + "/guest_builder",
 	foundation.SOURCE_FOLDER_CONTRACT + "/machine_mesh",
+	foundation.SOURCE_FOLDER_CONTRACT + "/agent_bridge",
 }

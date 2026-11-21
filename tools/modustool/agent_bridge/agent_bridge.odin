@@ -5,7 +5,7 @@
 // enforces client-key permissions, remote key uses, active wide-grant window
 // scopes, append-only BLAKE3 collector act recording, and the principal
 // approval invariant before delegating to a pluggable Machine_Transport.
-package agent_bridge
+package host_agent_bridge
 
 import "core:encoding/base64"
 import "core:encoding/hex"
@@ -1204,7 +1204,8 @@ format_input_delivered_json :: proc(
 	builder := strings.builder_make(allocator)
 	strings.write_string(&builder, `{"jsonrpc":"2.0","id":`)
 	json_write_id(&builder, id_value, has_id)
-	fmt.sbprintf(&builder, `,"result":{"status":"Ok","delivered":true,"window_id":%d,"act_sequence":%d,"act_record_hash":`, window_id, act_record.sequence_number)
+	strings.write_string(&builder, `,"result":{"status":"Ok","delivered":true,"window_id":`)
+	fmt.sbprintf(&builder, `%d,"act_sequence":%d,"act_record_hash":`, window_id, act_record.sequence_number)
 	json_write_escaped_string(&builder, hex_encode_bytes(record_hash[:], context.temp_allocator))
 	strings.write_string(&builder, `}}`)
 	return strings.to_string(builder)
@@ -1220,12 +1221,14 @@ format_log_facts_json :: proc(
 	builder := strings.builder_make(allocator)
 	strings.write_string(&builder, `{"jsonrpc":"2.0","id":`)
 	json_write_id(&builder, id_value, has_id)
-	fmt.sbprintf(&builder, `,"result":{"status":"Ok","count":%d,"facts":[`, len(facts))
+	strings.write_string(&builder, `,"result":{"status":"Ok","count":`)
+	fmt.sbprintf(&builder, `%d,"facts":[`, len(facts))
 	for fact, f_idx in facts {
 		if f_idx > 0 {
 			strings.write_byte(&builder, ',')
 		}
-		fmt.sbprintf(&builder, `{"sequence":%d,"timestamp_ms":%d,"module":`, fact.sequence, fact.timestamp_ms)
+		strings.write_string(&builder, `{"sequence":`)
+		fmt.sbprintf(&builder, `%d,"timestamp_ms":%d,"module":`, fact.sequence, fact.timestamp_ms)
 		json_write_escaped_string(&builder, fact.module_name)
 		strings.write_string(&builder, `,"fact_name":`)
 		json_write_escaped_string(&builder, fact.fact_name)
