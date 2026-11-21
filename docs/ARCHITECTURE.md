@@ -1,6 +1,6 @@
 # Architecture
 
-This document names the key systems of `modus` and shows how they connect: the kernel, the services in user space, and the processes. Then it gives the inside of the parts of the kernel that the rest of the system depends on: its locks, the virtual memory of a process, the extended state of the processor, the return to a process, its instructions, and its events.
+This document names the key systems of `modus` and shows how they connect: the kernel (`modulus`), the services in user space, and the processes. Then it gives the inside of the parts of the kernel that the rest of the system depends on: its locks, the virtual memory of a process, the extended state of the processor, the return to a process, its instructions, and its events.
 
 ## About this document
 
@@ -110,7 +110,7 @@ The same picture in text:
 
 ## Kernel systems
 
-The kernel is small on purpose: it does only what a process cannot do safely for itself (P1, P4). It has five systems, and the kernel operations reach them (`src/library/contract/operation`, `Operation`; their count is in `PROPERTIES.md`, "1. Small kernel with a small, counted interface"). Each system owns a small set of flat tables of fixed size (P13), so the kernel allocates nothing while it runs.
+The kernel, `modulus`, is small on purpose: it does only what a process cannot do safely for itself (P1, P4). It has five systems, and the kernel operations reach them (`src/library/contract/operation`, `Operation`; their count is in `PROPERTIES.md`, "1. Small kernel with a small, counted interface"). Each system owns a small set of flat tables of fixed size (P13), so the kernel allocates nothing while it runs.
 
 The fixed sizes of the tables, from `src/kernel/process.odin`, `src/kernel/processor.odin` and `src/library/contract/operation`:
 

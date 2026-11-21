@@ -1134,13 +1134,21 @@ Do not use: argument index, environment slot.
 
 The kernel is the code that runs with processor privilege: it isolates the processes, schedules the processors, owns the handle tables and grants access to memory and devices.
 
-The kernel has five systems: the handle table, memory, the scheduler, rings and wait, and the device grant. It has no file system, no network protocol, no device driver, no loader and no names. It is a module, which the boot program checks against the system description and loads. Its interface is a short list of kernel operations, counted in `docs/PROPERTIES.md`.
+The kernel of modus is named `modulus`. It has five systems: the handle table, memory, the scheduler, rings and wait, and the device grant. It has no file system, no network protocol, no device driver, no loader and no names. Its interface is a short list of kernel operations, counted in `docs/PROPERTIES.md`.
 
 The kernel is the control plane: it checks a right once and maps memory, and data then moves between processes with no kernel entry.
 
 The design: `docs/ARCHITECTURE.md`, "Kernel systems", and `docs/PROPERTIES.md`, "1. Small kernel with a small, counted interface".
 
 Do not use: core, supervisor.
+
+### Modulus
+
+`modulus` is the kernel of modus: the privileged code that isolates processes, schedules processors, owns handle tables and grants access to memory and devices.
+
+The project has three names. `modus` is the full operating system: the kernel, the system services, the desktop, the modules and the tools. `modulus` is the kernel of `modus`. `lex` is the language and runtime of `modus`. "Kernel" stays the technical concept in terms such as kernel ring, kernel operation and kernel stack.
+
+The design: `docs/ARCHITECTURE.md`, "Kernel systems", and `docs/PROPERTIES.md`, "1. Small kernel with a small, counted interface".
 
 ### Kernel operation
 
