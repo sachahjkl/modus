@@ -1796,7 +1796,7 @@ scenario := [?]Step {
 	// other and length in 197 bytes, a call of the host at the deepest
 	// place. It is the deepest line of the run so far, so its measure of
 	// the stack of the evaluator goes to the log before its result.
-	{kind = .Type, text = "length(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(\"\")))))))))))))))))))))))))))))))))"},
+	{kind = .Type, text = "length(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(\"\"))))))))))))))))))))))))))))))))"},
 	{kind = .Wait, text = "console: the deepest line so far took"},
 	{kind = .Wait, text = "[console] 64"},
 	{kind = .Type, text = "let f = (n) => f(n) in f(1)"},
