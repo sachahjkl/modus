@@ -183,11 +183,15 @@ COMMANDS :: [?]foundation.Command {
 	//   inputs of a folder, with no build: the command of a part derivation
 	//   of the flake. It writes the count of its checks in
 	//   build/checks_passed.txt.
+	// - `steps <first> to <last>` (optional, after a part): the boot steps,
+	//   the setup steps of each `with <first> to <last>`, and the steps of
+	//   the range, of the first machine of the part or of the machine that
+	//   `of <log name>` names; then the part ends.
 	//
 	// ```
 	// nix develop -c modustool test network
 	// ```
-	{name = "test", about = "build, then run the parts of the machine test, several at once: start each machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test <part>`: one part only; `test <part> from <folder>`: one part on the test inputs of a folder, with no build", run = run_test},
+	{name = "test", about = "build, then run the parts of the machine test, several at once: start each machine under QEMU, press its keys and move its pointer, check the log, save pictures of the screen; `test <part>`: one part only; `test <part> from <folder>`: one part on the test inputs of a folder, with no build; `test <part> steps <first> to <last> [of <machine>] [with <first> to <last>]...`: the boot steps, the setup steps and the steps of a range of one machine", run = run_test},
 	// Copies the test inputs of the build folder (the files of a whole build
 	// that the machine test reads) into `<folder>/test_inputs`, and writes
 	// the names of the test parts into `<folder>/test_parts.json`: the
@@ -205,6 +209,17 @@ COMMANDS :: [?]foundation.Command {
 	// derivations of the parts of each. Each evaluation builds the test
 	// inputs of its tree, so it costs two whole builds.
 	{name = "part_cache", about = "check that a change of a document or of a host test of the tool leaves the derivation of each test part the same, so Nix runs no part again", run = run_part_cache},
+	// Builds the modules, then holds each text of the log that a step of a
+	// scenario waits for against the fact templates of the module files:
+	// a fact wait that no template renders fails here, before any machine
+	// (src/md/infrastructure/scenario_fault_loop.md). `check` and `test`
+	// run the same check after their build.
+	{name = "fact_waits", about = "build the modules, then check that each fact wait of the scenarios is the start of a sentence that a fact template of the build renders, with no machine", run = run_fact_waits},
+	// After a build of the check of the flake with --keep-going: the host
+	// checks and each part whose output is not in the store, with its first
+	// failed step and its whole build log in build/failed_parts/.
+	// `screenshots` runs it after a failed build.
+	{name = "failed_parts", about = "list the host checks and each test part of the check of the flake that failed or did not run, with the first failed step and the path of the whole log of each", run = run_failed_parts},
 	// Builds, then starts the machine under QEMU in a window, with the log of
 	// the kernel on this terminal: the way to use the system by hand.
 	//
@@ -702,6 +717,12 @@ run_test :: proc(args: []string) -> int {
 		if build_code != 0 {
 			return build_code
 		}
+		// A wait on a fact that no module renders fails here, not at the
+		// end of a hang bound. A part derivation has no source of the tool:
+		// the host checks of the flake run this check there.
+		if !checks.scenario_waits_check() {
+			return foundation.EXIT_FAILURE
+		}
 	}
 	if !foundation.reset_folder(machine.SCREENSHOT_FOLDER) {
 		return foundation.EXIT_FAILURE
@@ -721,7 +742,12 @@ run_test :: proc(args: []string) -> int {
 		at_once = machine.test_parts_at_once_on_this_host(parts, processors)
 	}
 	machine.picture_names_forget(&machine.picture_names)
-	runs, passed := machine.test_parts_run(parts, at_once)
+	// A step range: some steps of one machine of the part
+	// (src/md/infrastructure/scenario_fault_loop.md, "A step range").
+	step_range, range_given := machine.test_arguments_give_step_range(args)
+	defer delete(step_range.setup)
+	defer delete(step_range.machine)
+	runs, passed := machine.test_parts_run(parts, at_once, step_range = step_range)
 	defer {
 		for &part_run in runs {
 			machine.test_part_run_free(&part_run)
@@ -735,6 +761,11 @@ run_test :: proc(args: []string) -> int {
 	// The join of the check of the flake adds up the counts of the parts.
 	if inputs_given && !machine.checks_passed_write(sync.atomic_load(&foundation.test_passed_count)) {
 		return foundation.EXIT_FAILURE
+	}
+	if range_given {
+		// A range proves its steps after their setup, not the part.
+		fmt.println("modustool: the step range passed; the part is proved by its whole run")
+		return 0
 	}
 	fmt.println("modustool: all tests passed")
 	return 0
@@ -752,6 +783,29 @@ run_test_inputs :: proc(args: []string) -> int {
 // run_test_join is the command `test_join` (test_derivations.odin).
 run_test_join :: proc(args: []string) -> int {
 	return machine.test_join(args) ? 0 : foundation.EXIT_FAILURE
+}
+
+// run_failed_parts is the command `failed_parts` (failed_parts.odin): the
+// list after a `nix flake check --keep-going` by hand.
+run_failed_parts :: proc(args: []string) -> int {
+	if len(args) != 0 {
+		fmt.eprintln("modustool: failed_parts takes no argument")
+		return foundation.EXIT_USAGE
+	}
+	return machine.failed_parts_report(FLAKE_CHECK_ATTRIBUTE) ? 0 : foundation.EXIT_FAILURE
+}
+
+// run_fact_waits is the command `fact_waits` (scenario_waits_check.odin):
+// the module files of the main volume are the catalog of the check.
+run_fact_waits :: proc(args: []string) -> int {
+	if len(args) != 0 {
+		fmt.eprintln("modustool: fact_waits takes no argument")
+		return foundation.EXIT_USAGE
+	}
+	if code := build.build_system(build.boot_volumes_of_command("fact_waits")); code != 0 {
+		return code
+	}
+	return checks.scenario_waits_check() ? 0 : foundation.EXIT_FAILURE
 }
 
 // run_part_cache is the command `part_cache` (test_derivations.odin).
@@ -815,8 +869,10 @@ run_screenshots :: proc(args: []string) -> int {
 	processors := foundation.test_processors_of(os.get_processor_core_count(), "")
 	most_jobs := machine.test_parts_at_once_on_this_host(machine.test_parts[:], processors)
 	// The check of the flake runs the host checks, each test part and the
-	// second build in the sandbox; it fails when one of them fails.
-	if !foundation.run({"nix", "build", FLAKE_CHECK_ATTRIBUTE, "--out-link", FLAKE_CHECK_LINK, "--print-build-logs", "--max-jobs", fmt.tprintf("%d", most_jobs)}) {
+	// second build in the sandbox; it fails when one of them fails. Nix
+	// goes on past a failed part, so one run lists every failed part.
+	if !foundation.run({"nix", "build", FLAKE_CHECK_ATTRIBUTE, "--out-link", FLAKE_CHECK_LINK, "--print-build-logs", "--keep-going", "--max-jobs", fmt.tprintf("%d", most_jobs)}) {
+		_ = machine.failed_parts_report(FLAKE_CHECK_ATTRIBUTE)
 		return foundation.EXIT_FAILURE
 	}
 	if !flake_check_outputs_take() {
@@ -1056,6 +1112,11 @@ run_check :: proc(args: []string) -> int {
 		// the modules and the main volume, whose boot program it compares.
 		if code := build.build_system([]string{build.BOOT_VOLUME}); code != 0 {
 			return code
+		}
+		// The waits of the scenarios against the module files of this
+		// build: the check of the flake runs no machine in this form.
+		if !checks.scenario_waits_check() {
+			return foundation.EXIT_FAILURE
 		}
 	} else if run_test(nil) != 0 {
 		return foundation.EXIT_FAILURE

@@ -580,7 +580,6 @@ test_join :: proc(args: []string) -> bool {
 
 // host_command_output runs a host process (Nix, git) and gives its standard
 // output. Its standard error is printed only when the command fails.
-@(private = "file")
 host_command_output :: proc(command: []string) -> (output: string, ok: bool) {
 	state, standard_output, standard_error, exec_error := os.process_exec({command = command}, context.temp_allocator)
 	if exec_error != nil {

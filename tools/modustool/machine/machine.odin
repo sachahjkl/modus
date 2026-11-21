@@ -4179,6 +4179,12 @@ Machine :: struct {
 	record_found: i64, // The number of the first log record of the text that the last Record step found: a later step names it {record}.
 	record_found_any: bool, // A Record step found a record: record_found holds its number.
 	powered_off: bool, // A step Power_Loss ended QEMU: the machine has no exit status.
+	// The steps of a step range (step_range.odin): the place of each step
+	// that runs in its scenario, and the start of its boot steps, of its
+	// setup steps and of its range, for the measures. nil: every step.
+	range_places: []int,
+	range_selection: Step_Selection,
+	range_phase_started: [Step_Range_Phase]time.Tick,
 	disk_server: ^Network_Block_Device, // The data disk, when the tool serves it.
 	client:      Call_Client,
 	serial_input: ^Serial_Input, // The input of the serial line, when the machine has one (Machine_Options.serial_input).
@@ -4781,9 +4787,50 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 	volume, output, exit_status := options.volume, options.output, options.exit_status
 	data_disk := options.data_disk != "" ? options.data_disk : part.data_disk
 	firmware, tpm_device := options.firmware, options.tpm_device
+	// A step range: the machines before the named one run whole, the named
+	// one runs its selection, and no machine after it starts. A machine
+	// after it gives a failure to the procedure of its part, so a chain of
+	// machines and checks stops; the worker reads the outcome of the range.
+	selected := steps
+	selection: Step_Selection
+	range_steps: []Step
+	defer delete(range_steps)
+	defer delete(selection.places)
+	range_target := false
+	if part.step_range.given {
+		if part.step_range.ran {
+			return false
+		}
+		name := machine_name_of_log(output)
+		if part.step_range.machine == "" || part.step_range.machine == name {
+			range_target = true
+			part.step_range.ran = true
+			problem: string
+			selection, problem = step_range_select(steps, part.step_range)
+			if problem == "" {
+				problem = step_range_setup_problem(steps, selection)
+			}
+			if problem != "" {
+				// The places are in the temporary memory: the defer that
+				// frees the clone must not free them.
+				selection = {}
+				fmt.eprintfln("modustool: test failed: the step range of %s is refused before its machine starts: %s", name, problem)
+				return false
+			}
+			// The heap: the first step of the scenario frees the temporary
+			// memory, and the selection lives as long as the machine.
+			range_steps = make([]Step, len(selection.places))
+			for place, position in selection.places {
+				range_steps[position] = steps[place]
+			}
+			selection.places = slice.clone(selection.places)
+			selected = range_steps
+			fmt.printfln("modustool: the machine %s runs %d boot steps, %d setup steps and the steps %d to %d of its %d steps", name, selection.boot, selection.setup, part.step_range.span.first, part.step_range.span.last, len(steps))
+		}
+	}
 	// A scenario that cannot pass is refused before its machine starts,
 	// with the cause of each fault, not at the end of a bound.
-	if !scenario_check_before_start(steps) {
+	if !scenario_check_before_start(selected, range_target ? selection.places : nil) {
 		return false
 	}
 	machine_test_started := time.tick_now()
@@ -4919,8 +4966,15 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		serial_input = &serial_input,
 		fact_outside_modules = options.fact_outside_modules,
 	}
-	passed := qmp_opened && scenario_run(&machine, steps)
+	if range_target {
+		machine.range_places = selection.places
+		machine.range_selection = selection
+	}
+	passed := qmp_opened && scenario_run(&machine, selected)
 	scenario_ended := time.tick_now()
+	if range_target && qmp_opened {
+		step_range_times_print(&machine, scenario_ended, passed)
+	}
 	// First after a failure, before any other act: the processors of a
 	// stall must not move on before the tool reads where they are.
 	if qmp_opened && !passed {
@@ -4952,7 +5006,10 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		call_client_close(&machine.client)
 	}
 	state: os.Process_State
-	if passed && machine.powered_off {
+	if range_target {
+		// A range does not stop its machine as the whole scenario does:
+		// the tool ends QEMU below, and checks no exit status.
+	} else if passed && machine.powered_off {
 		state, _ = os.process_wait(host_process, foundation.HANG_BOUND)
 	} else if passed {
 		wait_err: os.Error
@@ -4986,7 +5043,7 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		// The records of the start, the module files of the first writers
 		// of facts and the lines by the bytes of their body, from the log
 		// of the main machine only: the measure record keeps its lines.
-		if output == checks.TEST_OUTPUT && !build.log_measures_write(output) {
+		if output == checks.TEST_OUTPUT && !range_target && !build.log_measures_write(output) {
 			passed = false
 		}
 		delete(machine.fact_rendered)
@@ -5044,6 +5101,12 @@ machine_test :: proc(part: ^Test_Part_Run, steps: []Step, options: Machine_Optio
 		fmt.eprint(strings.to_string(whole))
 	}
 	test_times_machine_end(&machine, passed, machine_test_started, machine.started_at, scenario_ended)
+	if range_target {
+		// The part ends here: a failure stops the chain of its procedure,
+		// and the worker reads the outcome of the range.
+		part.step_range.passed = passed
+		return false
+	}
 	return passed
 }
 
@@ -5073,13 +5136,10 @@ remote_key_problem :: proc(steps: []Step) -> string {
 			key_read = false
 			continue
 		}
-		#partial switch step.kind {
-		case .Remote_Key:
+		if step.kind == .Remote_Key {
 			key_read = true
-		case .Call, .Record, .Agree, .Remote_Case, .Point:
-			if !key_read {
-				return fmt.tprintf("step %d (%v %s) calls remote with no step Remote_Key since the last start of remote", index + 1, step.kind, step.text)
-			}
+		} else if step_calls_remote(step.kind) && !key_read {
+			return fmt.tprintf("step %d (%v %s) calls remote with no step Remote_Key since the last start of remote", index + 1, step.kind, step.text)
 		}
 	}
 	return ""
@@ -5089,16 +5149,22 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 	peer_case_started := 0 // The number of the case of the last step Peer_Start.
 	first_wait := true // The first Wait of the machine is its boot: BOOT_HANG_BOUND.
 	generation_base: i64 = -1 // The number that the last step Generation read; -1: none.
-	for given_step, index in steps {
+	for given_step, position in steps {
 		step := given_step
+		// The number of the step in its scenario: a step range runs some of
+		// its steps, and each line names a step by its number there.
+		index := step_place(machine.range_places, position)
+		if machine.range_places != nil {
+			step_range_phase_note(machine, position)
+		}
 		// The time of the step, for a step that passes and for one that fails.
 		step_started := time.tick_now()
 		test_times_step_start(machine)
 		defer test_times_step_end(machine, index, given_step, step_started)
-		if index > 0 {
-			console_echo_note_step(&machine.echo, steps[index - 1]) // The step before passed.
+		if position > 0 {
+			console_echo_note_step(&machine.echo, steps[position - 1]) // The step before passed.
 		}
-		if index > 0 && remote_starts_or_ends(steps[index - 1]) && machine.peer != nil && machine.peer.remote != nil {
+		if position > 0 && remote_starts_or_ends(steps[position - 1]) && machine.peer != nil && machine.peer.remote != nil {
 			// The step before started or closed `remote`: its key of the
 			// start before is forgotten, and the tool no longer reads the
 			// pointer through it until a call with pointer again.
