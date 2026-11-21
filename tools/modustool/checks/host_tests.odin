@@ -53,7 +53,11 @@ host_test_command :: proc(folder, temporary_folder: string) -> []string {
 	if temporary_folder != "" {
 		append(&command, "env", foundation.join("TMPDIR=", temporary_folder))
 	}
-	append(&command, "odin", "test", folder, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG)
+	// Each folder runs in its own process inside the parallel pool, so one
+	// test thread per process avoids oversubscription and prevents unrelated
+	// host tests from racing on process-global caches (such as the private
+	// glyph cache single-drawer guard).
+	append(&command, "odin", "test", folder, "-vet", "-define:ODIN_TEST_THREADS=1", foundation.SOURCE_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG)
 	if foundation.source_folder_takes_internal_library(folder) {
 		append(&command, foundation.INTERNAL_LIBRARY_FLAG)
 	}

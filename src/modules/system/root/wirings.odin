@@ -289,10 +289,12 @@ wiring_asker_budget_ensure :: proc "contextless" (asker: ^Started, command: root
 		values^ = errors.ring_fail(u32(command), .Budget_Hidden, .Pages)
 		return .No_Budget
 	}
-	pages := min(avail.pages, u64(WIRING_ASKER_BUDGET_PAGES_MOST))
-	if pages < WIRING_ASKER_BUDGET_PAGES_MIN {
-		pages = WIRING_ASKER_BUDGET_PAGES_MIN
+	list_cost := op.memory_cost(output.WIRING_LIST_PAGES_MOST)
+	if avail.pages < list_cost {
+		values^ = errors.ring_fail(u32(command), .Budget, .Pages, 1, 0, i64(list_cost), i64(avail.pages))
+		return .No_Budget
 	}
+	pages := min(avail.pages, u64(WIRING_ASKER_BUDGET_PAGES_MOST))
 	err: errors.Error_Record
 	child, status := system.budget_create({pages = pages}, asker.budget, error = &err)
 	if status != .Ok {
