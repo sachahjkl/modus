@@ -316,7 +316,7 @@
     # (docs/films: absent in a tree where no entry names a film); the check of
     # the font of the name of the mark reads LICENSE, whose text the font
     # carries; the build reads the guides for the pages of the manual.
-    checkFiles = lib.fileset.unions [./flake.nix ./flake.lock ./CHANGELOG.md ./ROADMAP.md ./changelog.d ./news ./README.md ./AGENTS.md ./LICENSE (lib.fileset.fileFilter (file: file.hasExt "md") ./docs) (lib.fileset.maybeMissing ./docs/films) ./resources ./src ./tools ./.project];
+    checkFiles = lib.fileset.unions [./flake.nix ./flake.lock ./CHANGELOG.md ./ROADMAP.md ./CONTRIBUTING.md ./changelog.d ./news ./README.md ./AGENTS.md ./LICENSE (lib.fileset.fileFilter (file: file.hasExt "md") ./docs) (lib.fileset.maybeMissing ./docs/films) ./resources ./src ./tools ./.project];
 
     # A whole build of the tree, then the test inputs and the hash of their
     # folder, as Nix hashes a path, and the names of the test parts, in the
