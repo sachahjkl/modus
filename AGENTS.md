@@ -1,6 +1,6 @@
 # Rules for an agent that works on this repository
 
-Read `src/md/README.md` first: the system on one page, the points that agents get wrong, and the index of the intent files. `docs/PROPERTIES.md` holds the 22 properties: the fundamental concepts of the system.
+Read `src/md/README.md` first: the system on one page, the points that agents get wrong, and the index of the intent files. `docs/PROPERTIES.md` holds the 24 properties: the fundamental concepts of the system.
 
 Each kind of content has one place. The intent of a design is in `src/md`. A guide of `docs/` says what the system does and how to use it. The planned work is in `ROADMAP.md`. The record of the changes is `CHANGELOG.md`, `changelog.d/` and `news/`. The fixed constraints are `docs/PROPERTIES.md`. The rules of work are this file. Git keeps who decided what, and when. Do not add a document that competes with one of these places.
 

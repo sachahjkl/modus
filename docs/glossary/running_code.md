@@ -1127,3 +1127,93 @@ The mapped ranges are the fixed ranges that the starter of a process mapped for 
 A process reads nothing at a range whose bit is clear (`fixed_addresses.ranges_mapped`).
 
 Do not use: mapping flags, present mask.
+
+### Process input
+
+A process input is a value that a process reads and that neither its own code nor its earlier process inputs fix.
+
+Examples: a completion of the kernel ring, a byte that another process wrote in a ring, the value of the cycle counter, the answer of `cpuid`, the order in which its threads run. Property 24 says that each one passes through a channel that the kernel can record. It is not the input of the desktop, the keys and the pointer, which reach a process as ring records: one channel among the others.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: nondeterminism, external event, side input.
+
+### Input point
+
+An input point is a place in the run of a thread where a process input can enter: a kernel entry, a fault, or an interrupt.
+
+While a process is recorded, nothing that it can read changes between two input points, except by its own threads. A kernel entry and a fault are at an instruction that the code fixes. An interrupt comes at any instruction, so the branch count places it; that is a later layer. Each input point has a number in the input history, and a replay reaches the same points in the same order.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: sync point, safe point.
+
+### Input history
+
+The input history of a process is each process input of that process, at its input point, in their order, which the kernel writes while the process is recorded.
+
+It is a ring of entries of 64 bytes in a memory object of the recorder. It holds the context, the module by its hash, the commands and the answers of each kernel entry, the bytes that the kernel wrote, the changed ranges of shared pages, the trapped values of the cycle counter and of `cpuid`, and each switch. It is as secret as the process. A replay reads it.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: trace (of a run), recording (a film), tape, replay log.
+
+### Recorded process
+
+A recorded process is a process whose kernel writes its input history while it runs.
+
+A holder of the process handle with the right `Debug` starts the record with `Record_Start`: the debugger service, or the creator of the process. While it is recorded, its threads run one at a time, its reads of the cycle counter and its `cpuid` fault, and its shared writers wait for its input points. A process that holds a device, the root service and a process that runs a guest cannot be recorded.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: traced process, tracee.
+
+### Point copy
+
+A point copy is a page that the kernel maps into a recorded process in place of a page that another party writes and that the process maps without Write, and that the kernel refreshes at each input point.
+
+The time page, the date page, the settings page and the fresh bytes page of a recorded process are point copies. At each input point the kernel compares the shared page with the copy, writes each changed range into the input history, and copies it. The writer of the page is never held. The budget of the recorder pays the page.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: shadow page, page snapshot.
+
+### Shared writer
+
+A shared writer of a recorded process is a process that maps with Write a memory object that the recorded process also maps with Write.
+
+The other side of a ring, of a call region or of a surface is one. A shared writer runs only while each thread of the recorded process is at an input point; the kernel writes the ranges that it changed into the input history before the kernel entry returns. A shared writer waits at most one turn: past it, the input history ends and the writer runs. Its placement and its share never change.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: co-writer.
+
+### Replay
+
+A replay is a run of a module, in a new process that the replayer made, whose process inputs come from an input history and from no other process.
+
+The kernel runs for real only the commands that build its address space and its threads, and answers each other command from the history. A replay holds no connection and no ring to another process, so it changes nothing outside itself. The debugger steps back by a replay from a checkpoint. A replay is a process for the debugger: breakpoints and watches work.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: playback, rerun.
+
+### Divergence
+
+A divergence is a replay that reaches an input point in another state than its input history.
+
+The kernel compares the commands that a thread writes at each kernel entry, and the instruction address and the stack pointer at each input point. A difference stops the replay with the number of the point and the two values. Its usual causes: an instruction that no fault catches, such as `rdrand` in code that does not ask `cpuid`, a history of another build, or a fault of the kernel.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: desync, mismatch.
+
+### Branch count
+
+The branch count of a thread is the count of the conditional branches that its user code retired, from a counter of the processor, which places an interrupt in an input history.
+
+With the instruction address and the registers, it names one instruction of the run, also inside a loop. A replay programs the counter to stop the thread a few branches before the count, then runs to the instruction with a breakpoint. It needs exact counters: QEMU with TCG has none. It is a later layer of the record; the first layer has no interrupt as an input point.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: ticks (of rr), instruction count.
