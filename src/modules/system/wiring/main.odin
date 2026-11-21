@@ -404,6 +404,15 @@ wiring_end_give :: proc "contextless" (proc_idx: int, end: output.Given_End) -> 
 }
 
 @(private = "file")
+revoke_row_objects :: proc "contextless" (obj: ^Row_Objects) {
+	for h in ([5]system.Handle{obj.ring_memory, obj.end_memory, obj.terms_memory, obj.description_memory, obj.condition_memory}) {
+		if h != 0 {
+			_, _ = system.handle_revoke(h, 0)
+		}
+	}
+}
+
+@(private = "file")
 abort_prepared_batch :: proc "contextless" () {
 	if !prepared_batch.active {
 		return
@@ -418,6 +427,7 @@ abort_prepared_batch :: proc "contextless" () {
 			wiring_ring_capacity[plan.allocated_slot] = 0
 			plan.allocated_slot = -1
 		}
+		revoke_row_objects(obj)
 		close_row_objects(obj, keep_end = false, keep_ring = false)
 	}
 	prepared_batch = {}
@@ -669,6 +679,9 @@ handle_prepare_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respon
 	prepared_batch.id = batch_id
 	response_staging = {batch_id = batch_id}
 
+	// Phase 1: allocate every row's memory objects and wiring slot before
+	// giving any handle to the core, so a budget or slot refusal on a later
+	// row never leaves unclaimed handles in the core's handle table.
 	for number in 1 ..= prepared_batch.work.list.row_count {
 		plan := &prepared_batch.work.plans[number - 1]
 		obj := &prepared_batch.objects[number - 1]
@@ -694,8 +707,12 @@ handle_prepare_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respon
 			response_staging.asker_numbers[response_staging.asker_wiring_count] = plan.allocated_number
 			response_staging.asker_wiring_count += 1
 		}
-		// Give child's handles to the core through SERVICE_RING so core passes
-		// them into system.process_start before the child's first instruction.
+	}
+	// Phase 2: all rows fit; now give child handles to the core through
+	// SERVICE_RING so core passes them into system.process_start.
+	for number in 1 ..= prepared_batch.work.list.row_count {
+		plan := &prepared_batch.work.plans[number - 1]
+		obj := &prepared_batch.objects[number - 1]
 		if plan.writer_index == wiring_core.CHILD_PROCESS_INDEX && plan.row.writer_stream == .Log {
 			g_ring, g_st := system.give(core_ring_memory, obj.ring_memory, {.Read, .Write, .Give})
 			g_end: system.Handle
