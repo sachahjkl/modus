@@ -455,3 +455,53 @@ A tree that does not change after its commit has one tree hash, so it is named b
 The design: `src/md/features/recipes.md`, "Trees".
 
 Do not use: Merkle root, tree checksum, commit hash.
+
+### Stored type
+
+A stored type is a record type whose records a module keeps in its store.
+
+The module names it in its module file, with the objects that hold it. Its description has no Handle field and holds the members of each enum field. From 1.0, a change of it needs a migration; before 1.0, a change breaks the old data. A document has no stored type. It is designed for after 1.0, not built.
+
+The design: `src/md/features/data_evolution.md`.
+
+Do not use: schema, persisted struct, file format.
+
+### Typed object
+
+A typed object is an object that holds tables of records of stored types, each with its canonical description.
+
+The process that owns the store reads it through one border, which checks each description and each record, and refuses a description that the module does not know. The module never writes over an object that it refused. The console shows a typed object by the descriptions in it. It is designed for after 1.0, not built.
+
+The design: `src/md/features/data_evolution.md`.
+
+Do not use: record file, container, typed file.
+
+### Description hash
+
+The description hash is the BLAKE3 hash of the canonical description of a stored type.
+
+It names the form of the records of a table. The reader computes it from the description in the typed object, and the tool computes it at the build. Two descriptions that differ in one field, unit, kind or member have two hashes. It is not a version number: it gives no order. It is designed for after 1.0, not built.
+
+The design: `src/md/features/data_evolution.md`.
+
+Do not use: schema version, format number, fingerprint.
+
+### Migration
+
+A migration is the procedure that takes the records of a typed object from one description to another.
+
+A forward migration runs in the process that owns the store, at the first start of the new module and at a read that meets an older description. A backward migration runs in the newer module, in a migration start before a rollback. A migration is derived from the two descriptions, or declared by the author, and commits one object. The system has none before 1.0. It is designed for after 1.0, not built.
+
+The design: `src/md/features/data_evolution.md`.
+
+Do not use: upgrade script, conversion, schema change.
+
+### Shipped description
+
+A shipped description is the canonical description of a stored type that a release shipped.
+
+From the release 1.0.0, the release command writes each one beside `src/library/contract/release/release.odin`. The check of the stored types needs a migration from each shipped description of a type to its new description, and back. It refuses a migration from a description that no release shipped. It is designed for after 1.0, not built.
+
+The design: `src/md/features/data_evolution.md`.
+
+Do not use: frozen schema, baseline.
