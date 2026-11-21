@@ -14,11 +14,11 @@ Do not use: principle (for this), requirement, axiom.
 
 ### Reuse list
 
-The reuse list is the table of `docs/PROPERTIES.md` that names each reused work: a work of others that the system ships in a module or in the boot image, or that the repository holds as a copy.
+The reuse list is the "Reused code" table of `docs/CREDITS.md` that names each reused work: a work of others that the system ships in a module or in the boot image, or that the repository holds as a copy.
 
-Each row gives the work, its place in the repository, its license as an SPDX identifier, and the file with the text of that license. A font subset, a pointer theme, the copied cryptography and each portrait of the hall of fame are reused works. A tool of the host that builds or tests the system (QEMU, the compiler) is not, and neither is a design or a standard that the system follows. `modustool check` compares the list with the records of the repository.
+Each row gives the work, its place in the repository, its upstream project, its authors, its license as an SPDX identifier, the file with the text of that license, and an upstream funding link. A font subset, a pointer theme, the copied cryptography and each portrait of the hall of fame are reused works. A tool of the host that builds or tests the system (QEMU, the compiler) is not, and neither is a design or a standard that the system follows. `modustool check` compares the list with the records of the repository.
 
-The design: `src/md/infrastructure/reuse_list.md`.
+The design: `src/md/infrastructure/credits_and_licences.md`.
 
 Do not use: third-party list, dependency list, bill of materials.
 

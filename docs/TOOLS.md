@@ -885,16 +885,13 @@ What the check does not see: a `#partial switch`, a constant declared inside a p
 
 ## The reuse list
 
-The section "Reuse list" of `PROPERTIES.md` names each work of others that the system ships in a module or in the boot image, or that the repository holds as a copy. `modustool check` runs `reuse_list_check` (`tools/modustool/checks/reuse_list.odin`), which compares the table with the records of the repository. The design: `src/md/infrastructure/reuse_list.md`.
+`CREDITS.md` is the one checked document for reused code, reimplemented algorithms, design inspirations, and upstream funding links. `modustool check` runs `reuse_list_check` (`tools/modustool/checks/reuse_list.odin`), which verifies all three tables of `CREDITS.md` and compares Reused code with the records of the repository. The design: `src/md/infrastructure/credits_and_licences.md`.
 
-**The form of the table.** The header is `| Work | Place | License | License file |`. Each row has four cells:
+**The form of the three tables.**
 
-| Cell | What it holds |
-|---|---|
-| Work | The name of the work, in words |
-| Place | One code span: the path of the work in the repository, or the import path of a library of the compiler (`base:runtime`). The check matches a row and a work by this cell |
-| License | An SPDX identifier, or identifiers joined by `OR` and `AND`. `NONE` is a work with no license |
-| License file | One code span: the file of the repository with the text of the license, or the notice that the license asks for |
+- `## Reused code`: `| Work | Place | Upstream | Authors | License | License file | Funding |`. `Place` and `License file` are code spans; `License` is an SPDX expression (or `NONE`); every cell is non-empty (`—` for Funding when none is known).
+- `## Reimplemented algorithms`: `| Algorithm | Authors | Upstream | Reference license | Place | Funding |`. `Place` is a code span naming an existing path in `src/`; every cell is non-empty.
+- `## Inspirations`: `| System or idea | Authors | Took and left | Link | Funding |`. Every cell is non-empty and no two rows share a system or idea name.
 
 **Where the tool finds the reused works.**
 
