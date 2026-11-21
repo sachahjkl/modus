@@ -100,6 +100,26 @@ A machine has several processors. The kernel keeps one processor record and one 
 
 Do not use: core, CPU, hart.
 
+### Browser machine
+
+A browser machine is a machine that a page of a web browser gives: the kernel built for WebAssembly, its processors as workers on one shared memory, and its devices played by the code of the page.
+
+A reader tries the system in a page, with nothing to install. The boot image is the image of the release, with the same hashes; only the kernel and the boot differ. The processes run their x86-64 code on the software processor, and the device services drive device models of the page. A browser machine has no IOMMU, no TPM and no Secure Boot. It is not a whole PC emulated in a page.
+
+The design: `src/md/features/browser_machine.md`.
+
+Do not use: web VM, wasm port, Linux in the browser (for this).
+
+### Software processor
+
+The software processor is the part of the kernel of a browser machine that runs the x86-64 code of the processes: it decodes their instructions, runs them, compiles the hot blocks to WebAssembly, and translates each address through the page tables of the kernel.
+
+It is the processor and the MMU of a browser machine. Its walk reads the tables that the kernel writes, in the format of x86-64, and gives the same page faults as the hardware. A thread stays its frame, so the scheduler, the debugger and the fault ring do not change. It adds no kernel operation.
+
+The design: `src/md/features/browser_machine.md`, "The software MMU".
+
+Do not use: CPU emulator, kwemu, interpreter (for this), JIT (for this).
+
 ### Processor record
 
 The processor record is the record that the kernel keeps for one processor: its kernel stack, its current thread, its page table, its frame cache, its counts and its observed kinds.

@@ -341,3 +341,13 @@ A virtio device is already a set of queues in memory, so a device service transl
 The design: `docs/ARCHITECTURE.md`, "U4. Device services".
 
 Do not use: paravirtual device.
+
+### Device model
+
+A device model is the code outside the system that plays a device for a machine: QEMU for the test machine, the code of the page for a browser machine.
+
+A device service drives a device model as it drives a device: through its registers, its queues and its message interrupts. The models of a browser machine play the devices of the test machine at the same places of the bus, so the device services do not change. Like a device on a machine with no IOMMU, a model reaches all memory, and a device service still checks each record that it reads.
+
+The design: `src/md/features/browser_machine.md`, "The devices of the page".
+
+Do not use: emulated device, virtual device (for this).
