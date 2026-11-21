@@ -1,26 +1,32 @@
-// The editor of a text: one text object of the private store of this
-// process, in a window, with the keys that most principals know from other
-// systems and no modes (src/md/features/editor.md).
+// The editor of a text: a text object of its private store, or of any
+// granted store opened with `edit(store, name)`, in a window, with the
+// keys that most principals know from other systems and no modes
+// (src/md/features/editor.md).
 //
 // The text has no save action. The editor commits a group of changes when
 // the group ends: after a space, a tab or a line end, before a change of
 // another kind (a deletion after typed characters), when the caret moves
-// to another line, and before an undo or a redo. Each commit is a version
-// of the object, so Ctrl+Z restores the version before the one shown, also
-// after a restart; Ctrl+Y goes forward again along the restores that
-// Ctrl+Z made. A stop of the process loses only the group in progress.
+// to another line, after a cut or a paste, and before an undo, a redo or
+// a search. Each commit is a version of the object, so Ctrl+Z restores
+// the version before the one shown, also after a restart; Ctrl+Y goes
+// forward again along the restores that Ctrl+Z made. A stop of the
+// process loses only the group in progress.
 //
 // **What it is for.** It edits the text that a principal writes in modus,
 // and shows that undo needs no code of its own to keep the states: the
 // store keeps each one.
 //
-// **Start**: `start("edit")` in the console. Keys: a character goes in at
-// the caret, in place of the selection; the arrows, Home, End, Page Up and
-// Page Down move the caret, and Control with Home or End goes to the start
-// or the end of the text; with Shift each of them selects. Backspace and
-// Delete remove the selection or one character. Escape ends the selection.
-// Ctrl+Z is undo, Ctrl+Y is redo. A press of the pointer places the caret,
-// a drag selects, and the wheel scrolls.
+// **Start**: `start("edit")` or `edit(store, name)` in the console. Keys:
+// a character goes in at the caret, in place of the selection; the
+// arrows, Home, End, Page Up and Page Down move the caret, and Control
+// with Home or End goes to the start or the end of the text; with Shift
+// each of them selects; Ctrl+A selects all. Backspace and Delete remove
+// the selection or one character. Escape ends the selection or closes
+// search. Ctrl+C copies, Ctrl+X cuts, Ctrl+V pastes multi-line UTF-8 text
+// through the compositor clipboard. Ctrl+F opens incremental search;
+// Enter or F3 finds next, Shift+Enter or Shift+F3 finds previous,
+// wrapping around the text. Ctrl+Z is undo, Ctrl+Y is redo. A press of
+// the pointer places the caret, a drag selects, and the wheel scrolls.
 //
 // **Grants**, as the root service gives them:
 //
@@ -44,7 +50,11 @@
 package edit
 
 import "modus:contract/errors"
+import "modus:contract/fixed_addresses"
+import "modus:contract/root_ring"
 import "modus:contract/storage_status"
+import store_contract "modus:contract/store"
+import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:private/edit/text_model"
 import "modus:support/display"
@@ -99,42 +109,61 @@ VERSION_ROWS_CAPACITY :: 1024
 
 // The problem that the status line shows.
 Window_Problem :: enum u8 {
-	None     = 0,
-	No_Store = 1, // No store, or the text cannot be read: nothing is kept.
-	Damaged  = 2, // The object is damaged: the next change writes a new text.
-	Too_Long = 3, // The object is longer than a text of the editor: nothing is kept.
-	Not_Kept = 4, // The store refused a commit: the changes after it are not kept.
-	Full     = 5, // The text has TEXT_CAPACITY bytes: a key that adds one is refused.
+	None               = 0,
+	No_Store           = 1, // No store, or the text cannot be read: nothing is kept.
+	Damaged            = 2, // The object is damaged: the next change writes a new text.
+	Too_Long           = 3, // The object is longer than a text of the editor: nothing is kept.
+	Not_Kept           = 4, // The store refused a commit: the changes after it are not kept.
+	Full               = 5, // The text has TEXT_CAPACITY bytes: a key or paste that adds one is refused.
+	Selection_Too_Long = 6, // The selection is longer than CLIPBOARD_TEXT_LIMIT: copy or cut is refused.
+	Invalid_Target     = 7, // The target store or object path is invalid: nothing is kept.
 }
 
 // The text of each problem. Each fits on one line of the status.
 @(rodata)
 window_problem_texts := [Window_Problem]string {
-	.None     = "",
-	.No_Store = "no store: the text is not kept",
-	.Damaged  = "the text in the store is damaged: the next change writes a new text",
-	.Too_Long = "the text in the store is too long for the editor: nothing is kept",
-	.Not_Kept = "the store refused the text: the changes are not kept",
-	.Full     = "the text is full: a key that adds a byte is refused",
+	.None               = "",
+	.No_Store           = "no store: the text is not kept",
+	.Damaged            = "the text in the store is damaged: the next change writes a new text",
+	.Too_Long           = "the text in the store is too long for the editor: nothing is kept",
+	.Not_Kept           = "the store refused the text: the changes are not kept",
+	.Full               = "the text is full: a key that adds a byte is refused",
+	.Selection_Too_Long = "the selection is longer than the clipboard limit of 4096 bytes",
+	.Invalid_Target     = "the target object is not valid: nothing is kept",
 }
 
 // The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
 // action bar"). A procedure, not a global array: an item is made by a
 // call, and a freestanding process runs no call before its entry.
-bar_items :: proc "contextless" () -> [2]interface.Action_Bar_Item {
-	return {interface.action_bar_item("undo", 2, "Ctrl", "Z"), interface.action_bar_item("redo", 1, "Ctrl", "Y")}
+bar_items :: proc "contextless" () -> [3]interface.Action_Bar_Item {
+	return {
+		interface.action_bar_item("find", 3, "Ctrl", "F"),
+		interface.action_bar_item("undo", 2, "Ctrl", "Z"),
+		interface.action_bar_item("redo", 1, "Ctrl", "Y"),
+	}
 }
 bar: interface.Action_Bar_State
 
 text: text_model.Text
 layout: text_model.Layout // Computed after each change of the text, never in a frame.
 walk: text_model.Version_Walk
+search: text_model.Search
 waiting_kind: text_model.Change_Kind // The kind of the changes that wait for a commit.
 top_row: int // The first display row in the window.
 
 client: storage.Client
 keeping: bool // The store takes the changes.
 problem_shown: Window_Problem
+
+target_place: storage.Place = storage.ROOT
+target_object_bytes: [store_contract.ENTRY_NAME_CAPACITY]u8
+target_object_length: int
+target_path_bytes: [root_ring.EDIT_TARGET_PATH_LIMIT]u8
+target_path_length: int
+target_title_bytes: [31]u8
+target_title_length: int
+target_has_custom: bool
+target_invalid: bool
 
 pointer_buttons_before: u32
 pointer_dragging: bool // The left button went down in the text, and is still down.
@@ -143,13 +172,52 @@ pointer_dragging: bool // The left button went down in the text, and is still do
 // larger object shows as one.
 read_buffer: [text_model.TEXT_CAPACITY + 1]u8
 clean_buffer: [text_model.TEXT_CAPACITY]u8
+clipboard_buffer: [display.CLIPBOARD_TEXT_LIMIT]u8
 version_rows: [VERSION_ROWS_CAPACITY]storage.Version
 version_generations: [VERSION_ROWS_CAPACITY]i64
+
+target_object_name :: proc "contextless" () -> string {
+	return string(target_object_bytes[:target_object_length])
+}
+
+// target_read reads an optional Edit_Target page mapped by the root
+// service for edit(store, name), and returns the window title.
+target_read :: proc "contextless" (ctx: ^system.Context) -> string {
+	if .Edit_Target_Page not_in fixed_addresses.ranges_mapped(&ctx.values) {
+		copy(target_object_bytes[:], OBJECT_NAME)
+		target_object_length = len(OBJECT_NAME)
+		return "edit"
+	}
+	page := (^root_ring.Edit_Target)(uintptr(fixed_addresses.EDIT_TARGET_PAGE_ADDRESS))
+	_, path, ok := root_ring.edit_target_read(page)
+	if !ok {
+		target_invalid = true
+		return "edit"
+	}
+	copy(target_path_bytes[:len(path)], path)
+	target_path_length = len(path)
+	target_has_custom = true
+	writer := system.Writer{buffer = target_title_bytes[:]}
+	system.write_part(&writer, "edit: ")
+	room := len(target_title_bytes) - writer.count
+	shown := path
+	if len(shown) > room {
+		shown = shown[:text_encoding.complete_characters(transmute([]u8)shown[:room])]
+	}
+	system.write_part(&writer, shown)
+	target_title_length = writer.count
+	return string(target_title_bytes[:target_title_length])
+}
 
 // store_open reads the text of the last run. A store that cannot give it
 // whole is never written: the editor starts empty and keeps nothing, so
 // a text that it could not read is not lost.
 store_open :: proc "contextless" (ctx: ^system.Context) {
+	if target_invalid {
+		problem_shown = .Invalid_Target
+		system.log_fact(.Info, Target_Invalid{})
+		return
+	}
 	opened: bool
 	if client, opened = storage.open(ctx); !opened {
 		problem_shown = .No_Store
@@ -157,7 +225,35 @@ store_open :: proc "contextless" (ctx: ^system.Context) {
 		return
 	}
 	error: errors.Error_Record
-	bytes, found, read_status := storage.read(&client, storage.ROOT, OBJECT_NAME, read_buffer[:], &error)
+	target_place = storage.ROOT
+	if target_has_custom {
+		path := string(target_path_bytes[:target_path_length])
+		cursor := 0
+		for {
+			segment, next, is_last := root_ring.edit_path_next_segment(path, cursor)
+			if is_last {
+				copy(target_object_bytes[:len(segment)], segment)
+				target_object_length = len(segment)
+				break
+			}
+			next_place, open_status := storage.open_tree(&client, target_place, segment, &error)
+			if open_status != .Ok {
+				if target_place != storage.ROOT {
+					_ = storage.close_tree(&client, target_place)
+					target_place = storage.ROOT
+				}
+				problem_shown = .No_Store
+				log_storage_failure(.Read_Text, open_status, &error)
+				return
+			}
+			if target_place != storage.ROOT {
+				_ = storage.close_tree(&client, target_place)
+			}
+			target_place = next_place
+			cursor = next
+		}
+	}
+	bytes, found, read_status := storage.read(&client, target_place, target_object_name(), read_buffer[:], &error)
 	switch {
 	case read_status == .Damaged:
 		// The versions of the object are still in the store: a change
@@ -237,7 +333,7 @@ group_commit :: proc "contextless" () {
 		return
 	}
 	error: errors.Error_Record
-	generation, write_status := storage.write(&client, storage.ROOT, OBJECT_NAME, text_model.text_bytes(&text), &error)
+	generation, write_status := storage.write(&client, target_place, target_object_name(), text_model.text_bytes(&text), &error)
 	if write_status != .Ok || generation < 0 {
 		keeping, problem_shown = false, .Not_Kept
 		log_storage_failure(.Write_Text, write_status, &error)
@@ -281,10 +377,13 @@ change_begin :: proc "contextless" (kind: text_model.Change_Kind) {
 change_end :: proc "contextless" (kind: text_model.Change_Kind) {
 	waiting_kind = kind
 	text_model.walk_changed(&walk)
-	if problem_shown == .Full {
+	if problem_shown == .Full || problem_shown == .Selection_Too_Long {
 		problem_shown = .None
 	}
 	layout_refresh()
+	if search.query_count > 0 {
+		text_model.search_recompute(&search, &text, text.caret, false)
+	}
 }
 
 insert_typed :: proc "contextless" (character: rune) {
@@ -346,7 +445,7 @@ selection_log :: proc "contextless" () {
 // oldest first and the current one last.
 versions_list :: proc "contextless" (action: string) -> (generations: []i64, ok: bool) {
 	error: errors.Error_Record
-	rows, total, list_status := storage.versions(&client, storage.ROOT, OBJECT_NAME, version_rows[:], &error)
+	rows, total, list_status := storage.versions(&client, target_place, target_object_name(), version_rows[:], &error)
 	if list_status != .Ok {
 		log_storage_failure(.List_Versions, list_status, &error)
 		return nil, false
@@ -366,7 +465,7 @@ versions_list :: proc "contextless" (action: string) -> (generations: []i64, ok:
 // store refused, and nothing changed.
 version_restore :: proc "contextless" (generation: i64, action: string) -> bool {
 	error: errors.Error_Record
-	bytes, read_status := storage.version(&client, storage.ROOT, OBJECT_NAME, generation, read_buffer[:], &error)
+	bytes, read_status := storage.version(&client, target_place, target_object_name(), generation, read_buffer[:], &error)
 	if read_status != .Ok {
 		log_storage_failure(.Read_Version, read_status, &error)
 		return false
@@ -376,13 +475,16 @@ version_restore :: proc "contextless" (generation: i64, action: string) -> bool 
 		system.log_fact(.Info, Version_Too_Long{generation = generation, action = value_kinds.text_field(action, ACTION_FIELD_BYTES)})
 		return false
 	}
-	commit, restore_status := storage.restore(&client, storage.ROOT, OBJECT_NAME, generation, &error)
+	commit, restore_status := storage.restore(&client, target_place, target_object_name(), generation, &error)
 	if restore_status != .Ok || commit < 0 {
 		log_storage_failure(.Restore_Version, restore_status, &error)
 		return false
 	}
 	text_model.text_replace_whole(&text, clean_buffer[:count])
 	layout_refresh()
+	if search.query_count > 0 {
+		text_model.search_recompute(&search, &text, text.caret, false)
+	}
 	system.log_fact(.Info, Version_Restored{length = value_kinds.Size_In_Bytes(count), caret = u64(text.caret), generation = generation, action = value_kinds.text_field(action, ACTION_FIELD_BYTES), replaced_words = value_kinds.text_field(replaced > 0 ? REPLACED_WORDS : "", REPLACED_WORDS_FIELD_BYTES)})
 	return true
 }
@@ -423,9 +525,54 @@ redo :: proc "contextless" () {
 	}
 }
 
+// search_key_run handles one key while the search bar is active.
+search_key_run :: proc "contextless" (press: interface.Key_Press) {
+	shift := press.modifiers & display.MODIFIER_SHIFT != 0
+	if press.modifiers & display.MODIFIER_CONTROL != 0 {
+		switch press.character {
+		case 'f', 'F':
+			// Already in search mode.
+		}
+		return
+	}
+	switch press.code {
+	case display.KEY_ESCAPE:
+		text_model.search_close(&search)
+	case display.KEY_ENTER, display.KEY_F3:
+		moved := shift ? text_model.search_previous(&search, &text) : text_model.search_next(&search, &text)
+		if moved {
+			scroll_to_caret()
+		}
+	case display.KEY_BACKSPACE:
+		if text_model.search_query_delete_before(&search, &text) {
+			scroll_to_caret()
+		}
+	case display.KEY_DELETE:
+		if text_model.search_query_delete_after(&search, &text) {
+			scroll_to_caret()
+		}
+	case display.KEY_LEFT:
+		text_model.search_query_move(&search, .Left)
+	case display.KEY_RIGHT:
+		text_model.search_query_move(&search, .Right)
+	case display.KEY_HOME:
+		text_model.search_query_move(&search, .Start)
+	case display.KEY_END:
+		text_model.search_query_move(&search, .End)
+	case:
+		if press.character != 0 && text_model.search_query_insert_character(&search, &text, press.character) == .None {
+			scroll_to_caret()
+		}
+	}
+}
+
 // key_run runs one key: a typed key, or the key of an item of the action
 // bar that a press ran.
 key_run :: proc "contextless" (press: interface.Key_Press) {
+	if search.active {
+		search_key_run(press)
+		return
+	}
 	shift := press.modifiers & display.MODIFIER_SHIFT != 0
 	if press.modifiers & display.MODIFIER_CONTROL != 0 {
 		switch press.code {
@@ -439,6 +586,13 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 		// The character of a letter depends on the layout of the
 		// keyboard: the editor compares the character, not the code.
 		switch press.character {
+		case 'a', 'A':
+			text_model.text_select_all(&text)
+			scroll_to_caret()
+			selection_log()
+		case 'f', 'F':
+			group_commit()
+			text_model.search_open(&search, &text)
 		case 'z', 'Z':
 			undo()
 		case 'y', 'Y':
@@ -463,6 +617,11 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 		move(.Page_Up, shift)
 	case display.KEY_PAGE_DOWN:
 		move(.Page_Down, shift)
+	case display.KEY_F3:
+		moved := shift ? text_model.search_previous(&search, &text) : text_model.search_next(&search, &text)
+		if moved {
+			scroll_to_caret()
+		}
 	case display.KEY_BACKSPACE:
 		delete_key(false)
 	case display.KEY_DELETE:
@@ -477,6 +636,79 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 		if press.character != 0 {
 			insert_typed(press.character)
 		}
+	}
+}
+
+// copy_event answers Copy_Asked (Ctrl+C or Ctrl+X) from the compositor.
+// On Cut, the selection is deleted and committed only after copy_send
+// succeeds, so a refused copy never loses text.
+copy_event :: proc "contextless" (window: ^display.Window, action: display.Copy_Action) {
+	if search.active {
+		if search.query_count == 0 {
+			display.copy_decline(window)
+			return
+		}
+		problem, _ := display.copy_send(window, text_model.search_query_bytes(&search))
+		if action == .Cut && problem == .None {
+			_ = text_model.search_query_set(&search, &text, nil)
+		}
+		return
+	}
+	count, copy_problem := text_model.selection_copy(&text, clipboard_buffer[:])
+	switch copy_problem {
+	case .Empty, .Not_Text:
+		display.copy_decline(window)
+		return
+	case .Too_Long:
+		display.copy_decline(window)
+		problem_shown = .Selection_Too_Long
+		return
+	case .None:
+	}
+	send_problem, _ := display.copy_send(window, clipboard_buffer[:count])
+	if send_problem != .None {
+		return
+	}
+	if problem_shown == .Selection_Too_Long {
+		problem_shown = .None
+	}
+	if action == .Cut {
+		group_commit()
+		if text_model.selection_delete(&text) {
+			change_end(.Delete)
+			group_commit()
+			system.log_fact(.Info, Selection_Cut{length = value_kinds.Size_In_Bytes(count)})
+		}
+	}
+}
+
+// paste_event answers Pasted (Ctrl+V) from the compositor. In search mode
+// only single-line text is taken; in the document multi-line text (LF and
+// tab) is taken and committed atomically.
+paste_event :: proc "contextless" (window: ^display.Window, event: display.Event) {
+	if search.active {
+		pasted, paste_problem := display.paste_read(window, event, clipboard_buffer[:], .Single_Line)
+		if paste_problem != .None {
+			return
+		}
+		if text_model.search_query_insert(&search, &text, clipboard_buffer[:pasted]) == .None {
+			scroll_to_caret()
+		}
+		return
+	}
+	pasted, paste_problem := display.paste_read(window, event, clipboard_buffer[:], .Multi_Line)
+	if paste_problem != .None {
+		return
+	}
+	group_commit()
+	switch text_model.text_insert(&text, clipboard_buffer[:pasted]) {
+	case .None:
+		change_end(.Insert)
+		group_commit()
+		system.log_fact(.Info, Text_Pasted{length = value_kinds.Size_In_Bytes(pasted)})
+	case .Too_Long:
+		problem_shown = .Full
+	case .Empty, .Not_Text:
 	}
 }
 
@@ -506,6 +738,9 @@ pointer_event :: proc "contextless" (event: display.Event) {
 	// A press that the action bar takes (its list is open, or the press is
 	// on it) is not a press in the text.
 	case pressed && inside_text(event.x, event.y) && !interface.action_bar_takes_pointer(&bar, event.x, event.y):
+		if search.active {
+			text_model.search_close(&search)
+		}
 		pointer_dragging = true
 		place := place_of_pointer(event.x, event.y)
 		line_before := line_of_caret()
@@ -528,12 +763,42 @@ pointer_event :: proc "contextless" (event: display.Event) {
 	}
 }
 
-// row_draw draws the text of one display row, and the selection under
-// it: the selected characters in white on the chosen blue, in runs, so
-// each run is one text record.
+// The visual style of one text run inside a display row.
+Run_Style :: enum u8 {
+	Normal   = 0,
+	Selected = 1, // Active selection or active search match: white on chosen blue.
+	Match    = 2, // Other visible search match: strong text on track with warning underline.
+}
+
+// row_draw draws the text of one display row, and any selection or search
+// match highlights under it: O(log match_count) lookup per visible row,
+// never scanning the full text in a frame.
 row_draw :: proc "contextless" (table: ^interface.Draw_Table, row: int, y: int, first, last: int) {
 	start := int(layout.rows[row].start)
 	end := text_model.row_bytes_end(&layout, &text, row)
+	// Search match rectangles on this row (when search bar is open).
+	match_first := search.match_count
+	if search.active && search.match_count > 0 && search.query_count > 0 {
+		match_first = text_model.search_first_match_overlapping(&search, start)
+		for index := match_first; index < search.match_count; index += 1 {
+			m_start := int(search.matches[index])
+			if m_start >= end {
+				break
+			}
+			m_end := m_start + search.query_count
+			hl_from, hl_to := max(m_start, start), min(m_end, end)
+			if hl_from < hl_to {
+				left := TEXT_LEFT + text_model.column_of(&layout, &text, row, hl_from) * graphics.CELL_WIDTH
+				right := TEXT_LEFT + text_model.column_of(&layout, &text, row, hl_to) * graphics.CELL_WIDTH
+				if index == search.active_match {
+					interface.draw_rectangle(table, left, y, right - left, graphics.CELL_HEIGHT, graphics.colors.chosen)
+				} else {
+					interface.draw_rectangle(table, left, y, right - left, graphics.CELL_HEIGHT, graphics.colors.track)
+					interface.draw_rectangle(table, left, y + graphics.CELL_HEIGHT - 2, right - left, 2, graphics.colors.warning)
+				}
+			}
+		}
+	}
 	from, to := max(first, start), min(last, end)
 	if from < to {
 		left := TEXT_LEFT + text_model.column_of(&layout, &text, row, from) * graphics.CELL_WIDTH
@@ -547,16 +812,30 @@ row_draw :: proc "contextless" (table: ^interface.Draw_Table, row: int, y: int, 
 	}
 	buffer: [ROW_BUFFER_SIZE]u8
 	count, column, run_column := 0, 0, 0
-	run_selected := false
+	run_style := Run_Style.Normal
+	match_cursor := match_first
 	place := start
 	for place < end {
-		selected := place >= first && place < last
-		if selected != run_selected && count > 0 {
-			run_draw(table, run_column, y, string(buffer[:count]), run_selected)
+		style := Run_Style.Normal
+		if place >= first && place < last {
+			style = .Selected
+		} else if search.active && search.query_count > 0 {
+			for match_cursor < search.match_count && int(search.matches[match_cursor]) + search.query_count <= place {
+				match_cursor += 1
+			}
+			if match_cursor < search.match_count {
+				m_start := int(search.matches[match_cursor])
+				if place >= m_start && place < m_start + search.query_count {
+					style = match_cursor == search.active_match ? .Selected : .Match
+				}
+			}
+		}
+		if style != run_style && count > 0 {
+			run_draw(table, run_column, y, string(buffer[:count]), run_style)
 			count = 0
 		}
 		if count == 0 {
-			run_column, run_selected = column, selected
+			run_column, run_style = column, style
 		}
 		value := text_model.byte_at(&text, place)
 		if value == text_model.TAB {
@@ -578,13 +857,77 @@ row_draw :: proc "contextless" (table: ^interface.Draw_Table, row: int, y: int, 
 		}
 	}
 	if count > 0 {
-		run_draw(table, run_column, y, string(buffer[:count]), run_selected)
+		run_draw(table, run_column, y, string(buffer[:count]), run_style)
 	}
 }
 
-run_draw :: proc "contextless" (table: ^interface.Draw_Table, column: int, y: int, run: string, selected: bool) {
-	color := selected ? graphics.COLOR_WHITE : graphics.colors.text
+run_draw :: proc "contextless" (table: ^interface.Draw_Table, column: int, y: int, run: string, style: Run_Style) {
+	color: graphics.Color
+	switch style {
+	case .Normal:
+		color = graphics.colors.text
+	case .Selected:
+		color = graphics.COLOR_WHITE
+	case .Match:
+		color = graphics.colors.text_strong
+	}
 	interface.draw_text(table, TEXT_LEFT + column * graphics.CELL_WIDTH, y, run, color)
+}
+
+SEARCH_BAR_HEIGHT :: 28
+
+// search_bar_draw draws the incremental search bar in the status band:
+// query with caret on the left, match index and count ("2 of 5" or "no
+// match") right-aligned on the right, with guaranteed separation.
+search_bar_draw :: proc "contextless" (table: ^interface.Draw_Table) {
+	interface.draw_rectangle(table, MARGIN, STATUS_Y, STATUS_WIDTH, SEARCH_BAR_HEIGHT, graphics.colors.track)
+	interface.draw_rectangle(table, MARGIN, STATUS_Y + SEARCH_BAR_HEIGHT - 2, STATUS_WIDTH, 2, graphics.colors.title)
+	text_y := STATUS_Y + (SEARCH_BAR_HEIGHT - graphics.CELL_HEIGHT) / 2
+	// Match status at the right: only shown when a query is typed.
+	count_buffer: [32]u8
+	count_text := ""
+	count_color := graphics.colors.dim
+	if search.query_count > 0 {
+		if search.match_count == 0 {
+			count_text = "no match"
+			count_color = graphics.colors.failed
+		} else {
+			writer := system.Writer{buffer = count_buffer[:]}
+			system.write_number(&writer, u64(search.active_match + 1))
+			system.write_part(&writer, " of ")
+			system.write_number(&writer, u64(search.match_count))
+			count_text = system.written(&writer)
+		}
+		interface.draw_text_right(table, MARGIN + STATUS_WIDTH - 8, text_y, count_text, count_color)
+	}
+	query_left := MARGIN + 8
+	right_reserve := len(count_text) > 0 ? len(count_text) * graphics.CELL_WIDTH + 24 : 16
+	visible_cells := max((STATUS_WIDTH - 8 - right_reserve) / graphics.CELL_WIDTH, 1)
+	if search.query_count == 0 {
+		interface.draw_rectangle(table, query_left, text_y, CARET_WIDTH, graphics.CELL_HEIGHT, graphics.colors.title)
+		interface.draw_text(table, query_left + 8, text_y, "find", graphics.colors.dim)
+		return
+	}
+	// Scroll the visible slice of the query so the caret stays in view and
+	// never passes the right reserve.
+	query := text_model.search_query_bytes(&search)
+	caret_cells := text_encoding.character_count(query[:search.query_caret])
+	skip_cells := caret_cells >= visible_cells ? caret_cells - visible_cells + 1 : 0
+	byte_start := 0
+	for skipped := 0; skipped < skip_cells && byte_start < len(query); skipped += 1 {
+		_, length, _ := text_encoding.character_decode(query, byte_start)
+		byte_start += max(length, 1)
+	}
+	byte_end := byte_start
+	shown_cells := 0
+	for byte_end < len(query) && shown_cells < visible_cells {
+		_, length, _ := text_encoding.character_decode(query, byte_end)
+		byte_end += max(length, 1)
+		shown_cells += 1
+	}
+	interface.draw_text(table, query_left, text_y, string(query[byte_start:byte_end]), graphics.colors.text_strong)
+	caret_x := query_left + (caret_cells - skip_cells) * graphics.CELL_WIDTH
+	interface.draw_rectangle(table, caret_x, text_y, CARET_WIDTH, graphics.CELL_HEIGHT, graphics.colors.title)
 }
 
 // draw builds one frame: the rows in the window only, from the layout that
@@ -603,12 +946,16 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		}
 		row_draw(table, row, y, first, last)
 	}
-	caret_row := text_model.row_of(&layout, text.caret)
-	if caret_row >= top_row && caret_row < end_row {
-		column := text_model.column_of(&layout, &text, caret_row, text.caret)
-		interface.draw_rectangle(table, TEXT_LEFT + column * graphics.CELL_WIDTH, TEXT_TOP + (caret_row - top_row) * graphics.CELL_HEIGHT, CARET_WIDTH, graphics.CELL_HEIGHT, graphics.colors.text_strong)
+	if !search.active {
+		caret_row := text_model.row_of(&layout, text.caret)
+		if caret_row >= top_row && caret_row < end_row {
+			column := text_model.column_of(&layout, &text, caret_row, text.caret)
+			interface.draw_rectangle(table, TEXT_LEFT + column * graphics.CELL_WIDTH, TEXT_TOP + (caret_row - top_row) * graphics.CELL_HEIGHT, CARET_WIDTH, graphics.CELL_HEIGHT, graphics.colors.text_strong)
+		}
 	}
-	if problem_shown != .None {
+	if search.active {
+		search_bar_draw(table)
+	} else if problem_shown != .None {
 		interface.draw_text_wrapped(table, MARGIN, STATUS_Y, STATUS_WIDTH, window_problem_texts[problem_shown], graphics.colors.failed)
 	}
 	items := bar_items()
@@ -623,12 +970,12 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 // With no window it stops with `Failed`. With no store it runs, and keeps
 // nothing. Then one loop waits for the events of the window and draws
 // after each of them: a key, a press of the pointer, a drag, a turn of
-// the wheel. The editor does not take part in the clipboard yet: it
-// declines a copy and refuses a paste, so no key of the clipboard waits
-// for it.
+// the wheel, and the clipboard events Copy_Asked (Ctrl+C, Ctrl+X) and
+// Pasted (Ctrl+V).
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	window, ok := display.open(ctx, WIDTH, HEIGHT, "edit")
+	title := target_read(ctx)
+	window, ok := display.open(ctx, WIDTH, HEIGHT, title)
 	if !ok {
 		system.stop(.Failed)
 	}
@@ -669,9 +1016,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					key_run(press)
 				}
 			case .Copy_Asked:
-				display.copy_decline(&window)
+				copy_event(&window, event.copy_action)
 			case .Pasted:
-				display.paste_refuse(&window, event)
+				paste_event(&window, event)
 			case .None, .Settings_Changed, .Go_To, .Resized, .Capture_Size, .Capture_Frame, .Surface_Answer:
 			// next_event never gives None, and this window does nothing for the other events.
 			}

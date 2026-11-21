@@ -37,7 +37,7 @@ import op "modus:contract/operation"
 // The band of the fixed ranges: one slot of 1 TiB for each range.
 BAND_START :: 0x0000_3000_0000_0000
 SLOT :: 0x0000_0100_0000_0000 // 1 TiB: the addresses of one range.
-SLOT_COUNT :: 17 // The slots of the band: the values 0 to 16 of Fixed_Range, the slots 3, 4, 5, 9, 10 and 13 with no member.
+SLOT_COUNT :: 18 // The slots of the band: the values 0 to 17 of Fixed_Range, the slots 3, 4, 5, 9, 10 and 13 with no member.
 BAND_END :: BAND_START + SLOT_COUNT * SLOT
 // The first address of a mapping that a process places by its own choice.
 OWN_CHOICE_START :: BAND_END
@@ -120,6 +120,9 @@ Fixed_Range :: enum u8 {
 	// policy starts, and maps the list that the start policy reads after
 	// it: a resource of the boot image, with its size in a value of the
 	// context.
+	Edit_Target_Page = 17, // The target store name and object path, read-only, in an editor started with edit(store, name) (modus:contract/root_ring).
+	// One page, read-only, that the root service writes before the editor
+	// starts when a principal opens an object of a store with edit(store, name).
 }
 #assert(int(max(Fixed_Range)) < SLOT_COUNT)
 
@@ -175,6 +178,7 @@ DISK_PROCESS_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Disk_Process_Pa
 FONT_OUTLINES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Font_Outlines)
 FRESH_BYTES_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Fresh_Bytes_Page)
 START_POLICY_PAGES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Start_Policy_Pages)
+EDIT_TARGET_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Edit_Target_Page)
 
 // The addresses of one range.
 Address_Range :: struct {

@@ -5,6 +5,7 @@ package root
 // and one context whose handles each take their own slot.
 
 import info "modus:contract/boot_info"
+import "modus:contract/fixed_addresses"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
@@ -57,6 +58,11 @@ Start_Work :: struct {
 	wiring:         system.Start_Wiring,
 	// Pre-allocated child ends from the delegated wiring service, or nil.
 	premade_wiring: ^Premade_Start_Wiring,
+	// Optional override for edit(store, name): connects `edit` to the
+	// named store of its principal and maps the read-only Edit_Target page.
+	store_override:       string,
+	store_limit_override: u64,
+	edit_target_page:     system.Handle,
 	// Where a refusal that names its cause writes its error record, or nil:
 	// the completion of the command that asked for the start. A start that
 	// this one starts first writes there too.
@@ -70,12 +76,15 @@ Start_Work :: struct {
 // not nil, receives the place of the process; refusal, when not nil,
 // receives the error record of a refusal that names its cause, which the
 // state after the start no longer shows.
-start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, asker: ^Started = nil, premade_wiring: ^Premade_Start_Wiring = nil, place: ^^Started = nil, refusal: ^[7]u64 = nil) -> system.Status {
+start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, asker: ^Started = nil, premade_wiring: ^Premade_Start_Wiring = nil, place: ^^Started = nil, refusal: ^[7]u64 = nil, store_override: string = "", store_limit_override: u64 = 0, edit_target_page: system.Handle = 0) -> system.Status {
 	work := Start_Work {
-		name           = name,
-		principal      = principal,
-		premade_wiring = premade_wiring,
-		refusal        = refusal,
+		name                 = name,
+		principal            = principal,
+		premade_wiring       = premade_wiring,
+		store_override       = store_override,
+		store_limit_override = store_limit_override,
+		edit_target_page     = edit_target_page,
+		refusal              = refusal,
 	}
 	defer start_handles_close(&work)
 	// The handles of the start are free before any is made: the table of
@@ -360,7 +369,7 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	}
 	storage_service: ^Started
 	status: system.Status
-	_, storage_service, work.store_ring, work.store_region, status = connection_open(work.slot, "storage")
+	_, storage_service, work.store_ring, work.store_region, status = connection_open(work.slot, "storage", store_override = work.store_override, store_limit_override = work.store_limit_override)
 	if status != .Ok {
 		return status
 	}
@@ -523,6 +532,10 @@ start_pages_give :: proc "contextless" (work: ^Start_Work) {
 		start_policy_pages_give(work)
 	} else if .Terminal not_in grants {
 		text_settings_give(work.mappings[:], &work.mapping_count, &work.values)
+	}
+	if work.edit_target_page != 0 {
+		start_mapping_add(work, "the target of edit", {memory = work.edit_target_page, address = fixed_addresses.EDIT_TARGET_PAGE_ADDRESS, first = 0, page_count = 1})
+		system.range_mapped_put(&work.values, .Edit_Target_Page)
 	}
 }
 

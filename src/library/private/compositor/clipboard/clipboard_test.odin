@@ -3,30 +3,34 @@ package clipboard
 
 import "core:testing"
 
-// The keys that are no key of the clipboard come first: c and v with no
+// The keys that are no key of the clipboard come first: c, x and v with no
 // Control, Control with another character, with no character, and with
-// the largest code point; then Control with c and v, in both cases, and
+// the largest code point; then Control with c, x and v, in both cases, and
 // with Shift too.
 @(test)
-clipboard_key_of_takes_control_with_c_and_v_only :: proc(t: ^testing.T) {
+clipboard_key_of_takes_control_with_c_x_and_v_only :: proc(t: ^testing.T) {
 	SHIFT :: 1
 	none := [?]struct {
 		character: rune,
 		modifiers: u32,
 	}{
 		{'c', 0},
+		{'x', 0},
+		{'x', SHIFT},
 		{'v', SHIFT},
-		{'x', MODIFIER_CONTROL},
 		{'r', MODIFIER_CONTROL},
 		{0, MODIFIER_CONTROL},
 		{rune(0x10FFFF), MODIFIER_CONTROL},
 		{'c', ~u32(MODIFIER_CONTROL)},
+		{'x', ~u32(MODIFIER_CONTROL)},
 	}
 	for each in none {
 		testing.expectf(t, clipboard_key_of(each.character, each.modifiers) == .None, "%v with %x is a key of the clipboard", each.character, each.modifiers)
 	}
 	testing.expect_value(t, clipboard_key_of('c', MODIFIER_CONTROL), Clipboard_Key.Copy)
 	testing.expect_value(t, clipboard_key_of('C', MODIFIER_CONTROL | SHIFT), Clipboard_Key.Copy)
+	testing.expect_value(t, clipboard_key_of('x', MODIFIER_CONTROL), Clipboard_Key.Cut)
+	testing.expect_value(t, clipboard_key_of('X', MODIFIER_CONTROL | SHIFT), Clipboard_Key.Cut)
 	testing.expect_value(t, clipboard_key_of('v', MODIFIER_CONTROL), Clipboard_Key.Paste)
 	testing.expect_value(t, clipboard_key_of('V', ~u32(0)), Clipboard_Key.Paste)
 }

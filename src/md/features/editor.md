@@ -19,11 +19,11 @@ A principal who works in modus writes text: the source of a project, a declarati
 - **A native module in Odin**, on the package `interface`, so it has the look, the keys and the damage rules of every window. The window has a fixed size: 80 cells and 28 rows of text.
 - **The keys, with no modes:**
   - Ctrl+Z restores the version before; Ctrl+Y goes forward again.
-  - Ctrl+F finds a text in the object.
-  - Shift with an arrow, Home, End, Page Up or Page Down, or a drag of the pointer, selects.
-  - Ctrl+C and Ctrl+V go through the clipboard of the compositor ([clipboard.md](clipboard.md)): the compositor takes the keys, the editor answers `Copy_Asked` with its selection and inserts the text of `Pasted`. Ctrl+X comes with the cut of the clipboard, which is planned work there.
+  - Ctrl+F opens the incremental search bar; Enter or F3 finds the next match, Shift+Enter or Shift+F3 finds the previous match wrapping around the text, and Escape closes search and returns focus to the caret.
+  - Shift with an arrow, Home, End, Page Up or Page Down, Ctrl+A, or a drag of the pointer, selects.
+  - Ctrl+C (copy), Ctrl+X (cut) and Ctrl+V (paste) go through the clipboard of the compositor ([clipboard.md](clipboard.md)): the compositor takes the keys, sends `Copy_Asked` with `Copy_Action` (`.Copy` or `.Cut`) and `Pasted`, and the editor copies, cuts or inserts multi-line UTF-8 text (preserving LF line ends and tabs). On a cut, the selection is deleted and committed only after `copy_send` succeeds.
   - The pointer places the caret, selects with a drag, and scrolls.
-  - The action bar shows the keys ([action_bar.md](action_bar.md)).
+  - The action bar shows the keys (`Ctrl+F`, `Ctrl+Z`, `Ctrl+Y`, [action_bar.md](action_bar.md)).
 - **No save action.** The editor sends each group of changes to the storage service when the group ends. A commit of the object is a version (property 9).
 - **Undo is a walk over the versions.** Ctrl+Z restores the version before the current one; Ctrl+Y the version after. After a restart, the versions are still there, so Ctrl+Z still works.
 
@@ -86,14 +86,14 @@ The walk keeps the generation that the editor shows after a restore, and a list 
 - **The list of the versions has a bound.** The store gives the oldest first; the editor lists 1024. An object with more versions refuses the undo with one line of the log, until the thinning removes some.
 - **A text that the editor cannot hold is never written.** A damaged object starts an empty text that the next change writes as a new version, with the old one kept. An object that cannot be read, or that is too long, ends the keeping: the editor keeps nothing, so it never writes over a text that it did not read.
 - **One object, not a store.** The editor gets a connection to a store; the grant of one object waits for the document service with its picker.
-- **The clipboard refuses a line end.** A text of the clipboard holds no control character ([clipboard.md](clipboard.md), "The border of a text"), and a line end and a tab are control characters. A copy of a selection over two lines is then refused. The clipboard needs a kind of text with line ends and tabs before the editor copies more than one line.
+- **Edit any object of a store (`edit(store, name)`).** The console validates the store name and `/`-separated object path and sends `Root_Command.Start_Edit` to the root service. The root service checks `Acts_For_Principal` and principal isolation (`principals.store_name_principal`), connects the started `edit` process to that store (without giving `edit` `Acts_For_Principal`), and maps a read-only `Edit_Target` page at `fixed_addresses.EDIT_TARGET_PAGE_ADDRESS`. `edit` walks any parent trees with `storage.open_tree` and reads, commits and walks versions on that object.
+- **Multi-line clipboard border.** `display.clipboard_text_problem` takes `Clipboard_Text_Form` (`.Single_Line` or `.Multi_Line`). `copy_send` allows LF (`\n`) and tab (`\t`) while refusing CR (`\r`), NUL, all other C0/C1 controls, hidden characters and invalid UTF-8 within `CLIPBOARD_TEXT_LIMIT` (4096 bytes). `paste_read` defaults to `.Single_Line`, so the terminal and single-line text fields refuse line ends and tabs; `edit` reads pastes with `.Multi_Line` for the document and `.Single_Line` for the search bar.
 
 ## Open questions
 
 - **The size of a group of changes**, from a measure of the cost of a commit.
 - **The grant of one object** in place of a whole store, before the document service.
-- **A text with line ends on the clipboard**: a new member of `Clipboard_Kind`, or a border that takes the line end and the tab for every text.
 
 ## State
 
-Built: the module `edit`, with its own store and the object `text`; the text model with its host tests; the keys of the caret and of the selection, Backspace, Delete, Escape; the pointer (a press, a drag, the wheel); the display rows with the gutter; the groups of changes as commits; Ctrl+Z and Ctrl+Y as the walk over the versions; the machine step that types two lines, undoes, redoes and selects. Left: the clipboard (the editor declines a copy and refuses a paste), Ctrl+F, the edit of another object (`edit(store, name)`), a resizable window, the loss of the focus as the end of a group, and texts larger than one call region.
+Built: the module `edit`, with its own store and the object `text`, and any text object of any store of the principal via `edit(store, name)` (`Root_Command.Start_Edit` and `Edit_Target_Page`); the text model and incremental search with their host tests; the keys of the caret and of the selection, Ctrl+A, Backspace, Delete, Escape; multi-line clipboard Copy (Ctrl+C), Cut (Ctrl+X) and Paste (Ctrl+V); incremental search (Ctrl+F, Enter/F3, Shift+Enter/Shift+F3, Escape, match count and visible match highlights); the pointer (a press, a drag, the wheel); the display rows with the gutter; the groups of changes as commits; Ctrl+Z and Ctrl+Y as the walk over the versions; the machine step that types two lines, undoes, redoes and selects. Left: a resizable window, the loss of the focus as the end of a group, and texts larger than one call region.

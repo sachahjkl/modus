@@ -17,13 +17,14 @@ TEXT_LIMIT :: 4096
 Clipboard_Key :: enum {
 	None, // Not a key of the clipboard: it goes on its usual path.
 	Copy, // Control+C.
+	Cut, // Control+X.
 	Paste, // Control+V.
 }
 
 // clipboard_key_of reads a key record of the input service: Control with
-// the character c or v, in either case, as the layout gives it. The press
-// and the release are both keys of the clipboard, so no process sees the
-// release of a key whose press it did not see; only the press acts.
+// the character c, x or v, in either case, as the layout gives it. The
+// press and the release are both keys of the clipboard, so no process sees
+// the release of a key whose press it did not see; only the press acts.
 clipboard_key_of :: proc "contextless" (character: rune, modifiers: u32) -> Clipboard_Key {
 	if modifiers & MODIFIER_CONTROL == 0 {
 		return .None
@@ -31,6 +32,8 @@ clipboard_key_of :: proc "contextless" (character: rune, modifiers: u32) -> Clip
 	switch character {
 	case 'c', 'C':
 		return .Copy
+	case 'x', 'X':
+		return .Cut
 	case 'v', 'V':
 		return .Paste
 	}

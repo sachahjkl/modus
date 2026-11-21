@@ -414,6 +414,19 @@ Root_Command :: enum u32 {
 	// refusals and their error records: src/md/features/module_outputs.md,
 	// "Errors".
 	Wire = 29,
+	// Start_Edit starts `edit` connected to a store of the principal of
+	// the caller, to edit the named object path (src/md/features/editor.md).
+	// values[0..3]: the name of the store, 1 to 31 bytes with zero bytes
+	// after it (system.name_pack).
+	// values[4]: the handle of a read-only memory object given through the
+	// root ring holding the UTF-8 bytes of the object path.
+	// values[5]: the byte length of the object path, 1 to
+	// EDIT_TARGET_PATH_LIMIT.
+	// values[6]: 0.
+	// The caller must have the start grant Root_Ring and act for its
+	// principal (Acts_For_Principal); the store must belong to the
+	// principal of the caller.
+	Start_Edit = 30,
 }
 
 // values[0] of a Wire: what it does.
@@ -592,6 +605,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Machine_Usable         = .Start_Policy,
 	.Start_Policy_Choice    = .Root_Ring,
 	.Wire                   = .Root_Ring_Or_Start_Policy,
+	.Start_Edit             = .Root_Ring,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -768,6 +782,7 @@ ROOT_COMMAND_REFUSAL_WRITERS := [Root_Command]Refusal_Writer {
 	.Machine_Usable         = .Command,
 	.Start_Policy_Choice    = .Command,
 	.Wire                   = .Command,
+	.Start_Edit             = .Command,
 }
 
 // The step at which the dispatch of one record ends, in the order of the
@@ -941,6 +956,7 @@ root_command_names := [Root_Command]string {
 	.Machine_Usable         = "Machine_Usable",
 	.Start_Policy_Choice    = "Start_Policy_Choice",
 	.Wire                   = "Wire",
+	.Start_Edit             = "Start_Edit",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -977,6 +993,7 @@ root_first_argument_names := [Root_Command]string {
 	.Machine_Usable         = "name",
 	.Start_Policy_Choice    = "nickname",
 	.Wire                   = "step",
+	.Start_Edit             = "store",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1014,6 +1031,7 @@ root_second_argument_names := [Root_Command]string {
 	.Machine_Usable         = "",
 	.Start_Policy_Choice    = "hash",
 	.Wire                   = "",
+	.Start_Edit             = "name",
 }
 
 // command_of_record reads the command that an error record names: the

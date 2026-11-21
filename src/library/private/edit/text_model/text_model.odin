@@ -194,6 +194,63 @@ selection_count :: proc "contextless" (text: ^Text) -> int {
 	return last - first
 }
 
+// text_select_all selects the whole text: anchor at 0, caret at the end.
+text_select_all :: proc "contextless" (text: ^Text) {
+	text.anchor = 0
+	text.caret = text_length(text)
+	text.has_goal = false
+}
+
+// selection_copy copies the selected bytes into target without changing
+// the text or moving the gap. Empty when nothing is selected; Too_Long
+// when target cannot hold the selection.
+selection_copy :: proc "contextless" (text: ^Text, target: []u8) -> (count: int, problem: Edit_Problem) {
+	first, last := selection(text)
+	selected := last - first
+	if selected == 0 {
+		return 0, .Empty
+	}
+	if selected > len(target) {
+		return 0, .Too_Long
+	}
+	switch {
+	case last <= text.before_count:
+		copy(target[:selected], text.bytes[first:last])
+	case first >= text.before_count:
+		after_start := TEXT_CAPACITY - text.after_count + (first - text.before_count)
+		copy(target[:selected], text.bytes[after_start:after_start + selected])
+	case:
+		left := text.before_count - first
+		copy(target[:left], text.bytes[first:text.before_count])
+		after_start := TEXT_CAPACITY - text.after_count
+		copy(target[left:selected], text.bytes[after_start:after_start + (selected - left)])
+	}
+	return selected, .None
+}
+
+// selection_delete removes the selected bytes and puts the caret at the
+// start of the selection. false when nothing is selected.
+selection_delete :: proc "contextless" (text: ^Text) -> bool {
+	if selection_count(text) == 0 {
+		return false
+	}
+	first, last := selection(text)
+	range_remove(text, first, last)
+	return true
+}
+
+// selection_cut copies the selected bytes into target and removes them
+// from the text. A refused copy (Empty or Too_Long) leaves the text and
+// the selection unchanged.
+selection_cut :: proc "contextless" (text: ^Text, target: []u8) -> (count: int, problem: Edit_Problem) {
+	count, problem = selection_copy(text, target)
+	if problem != .None {
+		return 0, problem
+	}
+	selection_delete(text)
+	return count, .None
+}
+
 // range_remove removes the bytes from first to last, and puts the caret
 // at first with nothing selected.
 @(private)

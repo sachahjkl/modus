@@ -278,6 +278,12 @@ Copy_Key_Sent :: struct {
 	window: value_kinds.Module_Name_Field,
 }
 
+// The cut key went to the window in front.
+@(log_fact = "compositor: the cut key goes to {window}")
+Cut_Key_Sent :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
 // A paste with an empty clipboard: nothing goes to the window.
 @(log_fact = "compositor: a paste with an empty clipboard: nothing goes to {window}")
 Paste_Of_Empty_Clipboard :: struct {

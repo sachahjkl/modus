@@ -201,7 +201,24 @@ capture_pages :: proc "contextless" (width, height: int) -> u64 {
 // member at one place only (clipboard_kind_of_word).
 Clipboard_Kind :: enum u32 {
 	None = 0, // No content.
-	Text = 1, // UTF-8 with no control character.
+	Text = 1, // UTF-8 with no control character, or with LF line ends and tabs for multi-line text.
+}
+
+// Which action of Copy_Asked the principal asked for: Control+C copies,
+// Control+X cuts (copies and removes the selection when the copy succeeds).
+// A word of a record becomes a member at copy_action_of_word only.
+Copy_Action :: enum u64 {
+	Copy = 0, // Control+C.
+	Cut  = 1, // Control+X.
+}
+
+// Whether a clipboard text border takes line ends and tabs or refuses them:
+// single-line fields (the console, a text input) refuse them so a paste
+// never runs a line; multi-line editors take LF and tab while still
+// refusing CR, NUL and every other control character.
+Clipboard_Text_Form :: enum u8 {
+	Single_Line = 0, // No control character at all (text_encoding.text_valid).
+	Multi_Line  = 1, // LF ('\n') and tab ('\t') allowed; CR, NUL and all other controls refused.
 }
 
 // The most bytes of a text on the clipboard: one page, a field or a line
@@ -213,6 +230,12 @@ CLIPBOARD_TEXT_LIMIT :: 4096
 clipboard_kind_of_word :: proc "contextless" (word: u64) -> (kind: Clipboard_Kind, ok: bool) {
 	member := enum_word.member_of_word(Clipboard_Kind, word) or_return
 	return member, member != .None
+}
+
+// copy_action_of_word is the border of values[1] of Copy_Asked: the member,
+// or false for a word that names no member.
+copy_action_of_word :: proc "contextless" (word: u64) -> (action: Copy_Action, ok: bool) {
+	return enum_word.member_of_word(Copy_Action, word)
 }
 
 // The rule that a text to copy, or the copy of a paste, breaks. None: it
@@ -247,20 +270,50 @@ CLIPBOARD_PROBLEM_SENTENCES := [Clipboard_Problem]string {
 	.Kernel_Refused = "the kernel refused",
 }
 
+// clipboard_text_valid checks that bytes are well-formed UTF-8 with no
+// control characters (Single_Line) or with LF and tab allowed (Multi_Line).
+// CR, NUL, every other C0/C1 control and invalid UTF-8 are always refused.
+clipboard_text_valid :: proc "contextless" (text: []u8, form: Clipboard_Text_Form = .Multi_Line) -> bool {
+	switch form {
+	case .Single_Line:
+		return text_encoding.text_valid(text)
+	case .Multi_Line:
+		for place := 0; place < len(text); {
+			if text[place] == '\n' || text[place] == '\t' {
+				place += 1
+				continue
+			}
+			_, length, valid := text_encoding.character_decode(text, place)
+			if !valid {
+				return false
+			}
+			place += length
+		}
+		return true
+	}
+	return false
+}
+
 // clipboard_text_problem checks a text at a border of the clipboard: the
 // text to copy before it is made, and the copy of a paste after it is
-// copied. room is the most bytes that the place takes. It reads and
-// changes no state, so a host test gives it each refused text.
-clipboard_text_problem :: proc "contextless" (text: []u8, room: int) -> Clipboard_Problem {
+// copied. room is the most bytes that the place takes. form chooses
+// whether LF line ends and tabs are taken (Multi_Line) or refused
+// (Single_Line). It reads and changes no state, so a host test gives it
+// each refused text.
+clipboard_text_problem :: proc "contextless" (text: []u8, room: int, form: Clipboard_Text_Form = .Multi_Line) -> Clipboard_Problem {
 	switch {
 	case len(text) == 0:
 		return .Empty
 	case len(text) > CLIPBOARD_TEXT_LIMIT || len(text) > room:
 		return .Too_Large
-	case !text_encoding.text_valid(text):
+	case !clipboard_text_valid(text, form):
 		return .Not_Text
 	}
 	for place := 0; place < len(text); {
+		if form == .Multi_Line && (text[place] == '\n' || text[place] == '\t') {
+			place += 1
+			continue
+		}
 		character, length, _ := text_encoding.character_decode(text, place)
 		if length == 0 {
 			break
@@ -401,6 +454,7 @@ KEY_ESCAPE :: 0x01 // Escape.
 KEY_BACKSPACE :: 0x0E // Backspace.
 KEY_ENTER :: 0x1C // Enter.
 KEY_TAB :: 0x0F // Tab.
+KEY_F3 :: 0x3D // F3.
 KEY_DELETE :: KEY_EXTENDED | 0x53
 KEY_UP :: KEY_EXTENDED | 0x48
 KEY_DOWN :: KEY_EXTENDED | 0x50
@@ -495,6 +549,7 @@ Event :: struct {
 	clipboard_kind: Clipboard_Kind, // Pasted: the kind of the content, never None.
 	byte_count:     int, // Pasted: the bytes of the content, 1 to CLIPBOARD_TEXT_LIMIT.
 	clipboard_serial: u64, // Copy_Asked and Pasted: the serial of the key, never 0; the answer names it.
+	copy_action:    Copy_Action, // Copy_Asked: Copy (Ctrl+C) or Cut (Ctrl+X).
 	key_serial: u64, // A key: the serial that the compositor gave it, or 0. A process that shows the key names it (key_shown).
 	scale: scale_factor.Scale, // Settings_Changed: the scale of the compositor.
 	surface_answer: Surface_Answer_Kind, // Surface_Answer: the answer.
@@ -1104,10 +1159,12 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 		}
 		event.width, event.height = int(width), int(height)
 	case .Copy_Asked:
-		if record.values[0] == 0 {
+		action, action_ok := copy_action_of_word(record.values[1])
+		if record.values[0] == 0 || !action_ok {
 			return {}, false
 		}
 		event.clipboard_serial = record.values[0]
+		event.copy_action = action
 	case .Pasted:
 		// A handle is 32 bits, a kind a member, a count 1 to the limit, a
 		// serial not 0: each is checked as the word that the compositor

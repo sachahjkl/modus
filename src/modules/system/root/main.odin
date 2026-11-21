@@ -1754,7 +1754,7 @@ connect :: proc "contextless" (caller: ^Started, name: string, values: ^[7]u64, 
 // the service with a name, and starts the service if it starts on demand.
 // It gives the call ring and the call region: give them to the caller,
 // then close them.
-connection_open :: proc "contextless" (caller: ^Started, name: string, history := false, client: Client_Grant = {}) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, status: system.Status) {
+connection_open :: proc "contextless" (caller: ^Started, name: string, history := false, client: Client_Grant = {}, store_override: string = "", store_limit_override: u64 = 0) -> (free: ^Connection, service: ^Started, ring_memory, region_memory: system.Handle, status: system.Status) {
 	for pass in 0 ..< 2 {
 		for &item in started {
 			if item.process != 0 && item.service.head != nil && system.name_of(item.name[:]) == name {
@@ -1800,19 +1800,26 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	// another store.
 	store_name: system.Name
 	if system.name_of(service.name[:]) == "storage" {
-		// The store of a disk process is the store of its nickname, with a
-		// prefix that no module name has (disk_processes.odin).
-		process_of_the_store := system.name_of(caller.name[:])
-		disk_store_name: [32]u8
-		if caller.from_disk {
-			process_of_the_store = disk_process.store_process_name(&disk_store_name, process_of_the_store)
-		}
-		// A connection for a row of the client table belongs to the
-		// principal of the row.
-		principal_of_the_store := client.place != 0 ? client.principal : caller.principal
-		if !principals.store_name_write(&store_name, process_of_the_store, principal_of_the_store, history) {
-			system.log_fact(.Warning, Store_Name_Too_Long{principal = caller.principal, caller = module_name_field(system.name_of(caller.name[:]))})
-			return nil, nil, 0, 0, .Bad_Operation
+		if store_override != "" {
+			if len(store_override) >= len(store_name) {
+				return nil, nil, 0, 0, .Bad_Operation
+			}
+			copy(store_name[:len(store_name) - 1], store_override)
+		} else {
+			// The store of a disk process is the store of its nickname, with a
+			// prefix that no module name has (disk_processes.odin).
+			process_of_the_store := system.name_of(caller.name[:])
+			disk_store_name: [32]u8
+			if caller.from_disk {
+				process_of_the_store = disk_process.store_process_name(&disk_store_name, process_of_the_store)
+			}
+			// A connection for a row of the client table belongs to the
+			// principal of the row.
+			principal_of_the_store := client.place != 0 ? client.principal : caller.principal
+			if !principals.store_name_write(&store_name, process_of_the_store, principal_of_the_store, history) {
+				system.log_fact(.Warning, Store_Name_Too_Long{principal = caller.principal, caller = module_name_field(system.name_of(caller.name[:]))})
+				return nil, nil, 0, 0, .Bad_Operation
+			}
 		}
 	} else {
 		copy(store_name[:len(store_name) - 1], system.name_of(caller.name[:]))
@@ -1836,6 +1843,8 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	caller_name := transmute([4]u64)store_name
 	grant: u64
 	switch {
+	case store_override != "":
+		grant = isolated.caller_grant_make(store_limit_override, caller.principal, false)
 	case history:
 		grant = isolated.caller_grant_make(HISTORY_STORE_LIMIT, caller.principal, false)
 	case client.place != 0:
