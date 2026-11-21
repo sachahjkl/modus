@@ -16,7 +16,7 @@ Problem_Kind :: enum u32 {
 	Text      = 7, // A name or a text is not inside the string table.
 	Function  = 8, // A description of an export has more than module.PARAMETER_CAPACITY arguments, or a type that does not exist, or names no record.
 	Record    = 9, // A record description has a field outside the record, a field of no type, a field unit out of the contract, or more than 256 bytes.
-	Slot      = 10, // A slot names no import.
+	Import_Slot = 10, // An import slot names no import.
 	Refused   = 11, // The kernel refused a report: `value` is the status. The machine handle needs the right Inspect.
 	Direction = 12, // A direction of a parameter is not Read, Change or Append, or a parameter that is not a Table or Bytes has one.
 	Enum      = 13, // An Enum parameter or result breaks a rule of module.function_enums_check: `value` is the module.Enum_Problem.
@@ -35,7 +35,7 @@ problem_names := [Problem_Kind]string {
 	.Text      = "text",
 	.Function  = "function",
 	.Record    = "record",
-	.Slot      = "slot",
+	.Import_Slot = "import slot",
 	.Refused   = "refused",
 	.Direction = "direction",
 	.Enum      = "enum",
@@ -48,7 +48,7 @@ table_names := [module.Table_Kind]string {
 	.None          = "header",
 	.Segments      = "Segments",
 	.Imports       = "Imports",
-	.Slots         = "Slots",
+	.Import_Slots  = "Import_Slots",
 	.Exports       = "Exports",
 	.Rebases       = "Rebases",
 	.Functions     = "Functions",
@@ -122,7 +122,7 @@ problem_texts := [Problem_Kind]string {
 	.Text      = "a text is not inside the string table",
 	.Function  = "the description of the export has a bad count or type",
 	.Record    = "the record description has a bad field",
-	.Slot      = "the slot names no import",
+	.Import_Slot = "the import slot names no import",
 	.Refused   = "the kernel refused the report",
 	.Direction = "a parameter has a direction that its type does not take",
 	.Enum      = "an enum of the export, its members or its getter break a rule",
@@ -145,7 +145,7 @@ text_inside :: proc "contextless" (file: []u8, offset, count: u32) -> (value, li
 
 // check gives the first problem of a module file: the header, the range of
 // each table, the segments, the exports, the descriptions of the exports
-// and of the records, each name and text, and the slots. kind None: the
+// and of the records, each name and text, and the import slots. kind None: the
 // module keeps each of these rules, and the functions of this package read
 // it as it is.
 check :: proc "contextless" (file: []u8) -> Problem {
@@ -220,10 +220,10 @@ check :: proc "contextless" (file: []u8) -> Problem {
 		}
 	}
 	imports := module.count(file, .Imports)
-	for index in 1 ..< module.count(file, .Slots) {
-		slot, _ := module.record(file, .Slots, index, module.Slot)
-		if slot.import_index == 0 || slot.import_index >= imports {
-			return {kind = .Slot, table = .Slots, index = index, offset = place(file, .Slots, index, offset_of(module.Slot, import_index)), value = u64(slot.import_index), limit = u64(max(imports, 1))}
+	for index in 1 ..< module.count(file, .Import_Slots) {
+		import_slot, _ := module.record(file, .Import_Slots, index, module.Import_Slot)
+		if import_slot.import_index == 0 || import_slot.import_index >= imports {
+			return {kind = .Import_Slot, table = .Import_Slots, index = index, offset = place(file, .Import_Slots, index, offset_of(module.Import_Slot, import_index)), value = u64(import_slot.import_index), limit = u64(max(imports, 1))}
 		}
 	}
 	return {}

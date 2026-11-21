@@ -48,7 +48,7 @@ Segment_Part :: struct {
 	memory_offset: u64, // From the base of the module: a multiple of module.PAGE_SIZE.
 	memory_size:   u64, // A multiple of module.PAGE_SIZE.
 	// The access before the relocations. The writer removes Write and
-	// Read_Only_After_Load from a segment that no rebase and no slot writes
+	// Read_Only_After_Load from a segment that no rebase and no import slot writes
 	// (segment_flags_after_the_relocations).
 	flags:         module.Segment_Flags,
 	data:          []u8, // The bytes from memory_offset: at most memory_size. The zero bytes at its end are not stored.
@@ -152,7 +152,7 @@ Module_Parts :: struct {
 	segments:           []Segment_Part, // In the order of their memory offsets, no two on one page.
 	exports:            []Export_Part,
 	imports:            [][module.HASH_SIZE]u8, // The hash of the file of each imported module.
-	slots:              []module.Slot, // Each in writable data, its import an index of imports from 1.
+	import_slots:       []module.Import_Slot, // Each in writable data, its import an index of imports from 1.
 	rebases:            []u64, // The memory offsets that a loader rebases: in order, each one time, each in writable data.
 	records:            []Record_Description,
 	enums:              []Enum_Description, // The file has the tables Enums and Members when there is one.
@@ -183,7 +183,7 @@ Refusal :: enum u32 {
 	Segment_Data_Past_Size        = 10, // A segment has more bytes of data than its memory size.
 	Segment_Overlap               = 11, // A segment starts before the end of the segment before it.
 	Segment_Written_And_Executed  = 12, // A segment has Execute with Write or with Read_Only_After_Load.
-	Slot_Not_Valid                = 13, // A slot names no import or no export, or its 8 bytes are not in writable data.
+	Import_Slot_Not_Valid         = 13, // An import slot names no import or no export, or its 8 bytes are not in writable data.
 	Rebase_Not_Valid              = 14, // A rebase is not after the one before it, not on 8 bytes, or not in writable data. value: the offset.
 	Record_Not_Valid              = 15, // A record description is refused by module.record_type.
 	Fact_Not_Valid                = 16, // A fact has the key 0, a key not after the one before it, no record, or no template.
@@ -293,18 +293,18 @@ is_name :: proc "contextless" (text: string) -> bool {
 }
 
 // segment_flags_after_the_relocations gives the flags of a segment once
-// each rebase and each slot of the module is known. A segment that is
-// read-only after the load and that holds no rebase and no slot is a
+// each rebase and each import slot of the module is known. A segment that is
+// read-only after the load and that holds no rebase and no import slot is a
 // segment that no loader writes: it loses Write and Read_Only_After_Load,
 // and is a constant segment. Each other segment keeps its flags.
 //
 // Why it is sound: a loader writes a segment in two ways only, a rebase
-// and a slot, and both lists are complete here. The pages of such a
+// and an import slot, and both lists are complete here. The pages of such a
 // segment are then the same at each base and with each binding, which is
 // what makes a segment a part of the shared code of a module. Its
 // protection in a process does not change: a segment that is read-only
 // after the load was never writable there.
-segment_flags_after_the_relocations :: proc "contextless" (segment: module.Segment, rebases: []u64, slots: []module.Slot) -> module.Segment_Flags {
+segment_flags_after_the_relocations :: proc "contextless" (segment: module.Segment, rebases: []u64, import_slots: []module.Import_Slot) -> module.Segment_Flags {
 	if .Read_Only_After_Load not_in segment.flags {
 		return segment.flags
 	}
@@ -313,8 +313,8 @@ segment_flags_after_the_relocations :: proc "contextless" (segment: module.Segme
 			return segment.flags
 		}
 	}
-	for slot in slots {
-		if slot.memory_offset >= segment.memory_offset && slot.memory_offset - segment.memory_offset < segment.memory_size {
+	for import_slot in import_slots {
+		if import_slot.memory_offset >= segment.memory_offset && import_slot.memory_offset - segment.memory_offset < segment.memory_size {
 			return segment.flags
 		}
 	}
@@ -332,7 +332,7 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 	counts := [?]Count {
 		{.Segments, len(parts.segments)},
 		{.Imports, len(parts.imports)},
-		{.Slots, len(parts.slots)},
+		{.Import_Slots, len(parts.import_slots)},
 		{.Exports, len(parts.exports)},
 		{.Records, len(parts.records)},
 		{.Enums, len(parts.enums)},
@@ -403,7 +403,7 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 	}
 	add(&layout, &cursor, .Segments, u64(len(parts.segments)) + 1, size_of(module.Segment))
 	add(&layout, &cursor, .Imports, u64(len(parts.imports)) + 1, size_of(module.Import))
-	add(&layout, &cursor, .Slots, u64(len(parts.slots)) + 1, size_of(module.Slot))
+	add(&layout, &cursor, .Import_Slots, u64(len(parts.import_slots)) + 1, size_of(module.Import_Slot))
 	add(&layout, &cursor, .Exports, u64(len(parts.exports)) + 1, size_of(module.Export))
 	add(&layout, &cursor, .Rebases, rebase_words, module.REBASE_WORD_SIZE)
 	add(&layout, &cursor, .Functions, u64(len(parts.exports)) + 1, size_of(module.Function))
@@ -662,13 +662,13 @@ exports_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
 	return {}
 }
 
-// relocations_check checks each slot, each rebase and the own-hash place:
+// relocations_check checks each import slot, each rebase and the own-hash place:
 // a loader writes each of them, so each is in writable data.
 @(private)
 relocations_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
-	for item, index in parts.slots {
+	for item, index in parts.import_slots {
 		if item.import_index == 0 || u64(item.import_index) > u64(len(parts.imports)) || item.export_index == 0 || item.memory_offset % module.REBASE_WORD_SIZE != 0 || !writable_range(parts.segments, item.memory_offset, module.REBASE_WORD_SIZE) {
-			return {refusal = .Slot_Not_Valid, table = .Slots, index = u64(index), value = item.memory_offset}
+			return {refusal = .Import_Slot_Not_Valid, table = .Import_Slots, index = u64(index), value = item.memory_offset}
 		}
 	}
 	for offset, index in parts.rebases {
@@ -873,7 +873,7 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 			memory_size   = item.memory_size,
 			flags         = item.flags,
 		}
-		segment.flags = segment_flags_after_the_relocations(segment, parts.rebases, parts.slots)
+		segment.flags = segment_flags_after_the_relocations(segment, parts.rebases, parts.import_slots)
 		store(file, place(directory, .Segments, index + 1), segment)
 		if len(data) > 0 {
 			intrinsics.mem_copy_non_overlapping(raw_data(file[data_offset:]), raw_data(data), len(data))
@@ -883,8 +883,8 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 	for hash, index in parts.imports {
 		store(file, place(directory, .Imports, index + 1), module.Import{hash = hash})
 	}
-	for slot, index in parts.slots {
-		store(file, place(directory, .Slots, index + 1), slot)
+	for import_slot, index in parts.import_slots {
+		store(file, place(directory, .Import_Slots, index + 1), import_slot)
 	}
 	_ = rebase_words_encode(parts.rebases, file[directory[module.Table_Kind.Rebases].offset:])
 

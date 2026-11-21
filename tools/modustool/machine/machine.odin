@@ -2630,7 +2630,7 @@ scenario := [?]Step {
 	// records of the kernel. The console combines them with generic
 	// commands that read the description of the records.
 	{kind = .Type, text = "clear()"},
-	{kind = .Type, text = "columns(manual.importers(\"calendar_fixed\"), module, name, replacement, slots)"},
+	{kind = .Type, text = "columns(manual.importers(\"calendar_fixed\"), module, name, replacement, import_slots)"},
 	{kind = .Wait, text = "[console] agenda "},
 	{kind = .Wait, text = "[console] imports "},
 	{kind = .Wait, text = "[console] 2 rows of Import"},

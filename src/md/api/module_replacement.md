@@ -6,7 +6,7 @@ The mechanism of a replacement (the table of the machine, the check of the loade
 
 ## The constraints
 
-- **The check of the loader proves the types, not the behaviour.** It compares the description of each export that a slot uses. A module with the same descriptions and hostile code passes it.
+- **The check of the loader proves the types, not the behaviour.** It compares the description of each export that an import slot uses. A module with the same descriptions and hostile code passes it.
 - **The role Replace is held by the console.** Whoever controls the console, or a fault of the console, chooses the code of every importer. Before this design, the root service accepted any pair of modules of the boot image that the console named.
 - **The root service imports nothing and starts with no loader for imports.** The check must be code that it compiles in, and must not need a service that it starts later.
 - **No new kernel operation, no new grant.** The decision is a policy of the root service, which already holds the table.
@@ -28,7 +28,7 @@ A replacement row (`docs/glossary/code.md`, "Replacement row") is a record of th
 ## The refused forms
 
 - **A flag "for tests" in the table or in the role.** A flag that a test sets is a flag that a hostile console sets: it proves nothing, and a test of the flag tests a path that a real machine does not take. The test machine takes the real path with the test key, as its boot takes the real check of the description with the test key.
-- **A signature over the new hash only** ("the principal vouches for this module"). It lets the console put that module in the place of any module with the same descriptions of the exports that a slot uses: a signed correction of `calendar` becomes a replacement of each other module whose exports match. The consent is for one pair and one scope, so the signature covers the pair and the scope.
+- **A signature over the new hash only** ("the principal vouches for this module"). It lets the console put that module in the place of any module with the same descriptions of the exports that an import slot uses: a signed correction of `calendar` becomes a replacement of each other module whose exports match. The consent is for one pair and one scope, so the signature covers the pair and the scope.
 - **The description check as the whole answer.** It proves that a call has the right types, and nothing of what the code does with the memory and the handles of the importer. It stays, as a second check that a signature cannot replace: a row that a principal signed by mistake for a module with another description still fails the load.
 - **Trust in the list because the boot image is signed.** It holds today, because the list is a resource of the boot image. It ties each row to a new system description, so a correction of one module needs a new system, and a row of the scope of a principal could never exist: a principal does not sign the system. The signature of a row is the same proof wherever the row comes from.
 - **The machine key of the machine passphrase as the key of principal 0.** It is a symmetric key, and the root service holds the key of the tag that it derives: a tag would prove nothing that the root service could not write itself. Principal 0 runs the services of the system, so a replacement for it needs the signing key of the system.

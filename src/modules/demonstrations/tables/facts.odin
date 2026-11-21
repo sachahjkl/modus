@@ -41,7 +41,7 @@ Call_Host_Load_Read_Failed :: distinct module.Load_Read_Fields
 Call_Host_Load_Cycle_Failed :: distinct module.Load_Cycle_Fields
 @(log_fact = "tables: the load of the call host: {module_name} imports {imported_name}, and its replacement fails the check: export {export}: {difference}, parameter {parameter}")
 Call_Host_Load_Check_Failed :: distinct module.Load_Check_Fields
-@(log_fact = "tables: the load of the call host: slot {slot} of {module_name} cannot be bound: export {export} of {imported_name}")
+@(log_fact = "tables: the load of the call host: import slot {import_slot} of {module_name} cannot be bound: export {export} of {imported_name}")
 Call_Host_Load_Bind_Failed :: distinct module.Load_Bind_Fields
 @(log_fact = "tables: the load of the call host: the kernel refused to map {module_name} ({module_hash}): status {status}")
 Call_Host_Load_Map_Failed :: distinct module.Load_Memory_Fields

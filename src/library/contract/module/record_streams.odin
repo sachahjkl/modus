@@ -199,9 +199,9 @@ record_stream_places_valid :: proc "contextless" (file: []u8) -> bool {
 			return false
 		}
 	}
-	for index in 1 ..< count(file, .Slots) {
-		slot, _ := record(file, .Slots, index, Slot)
-		if location_meets_a_place(places, slot.memory_offset) {
+	for index in 1 ..< count(file, .Import_Slots) {
+		import_slot, _ := record(file, .Import_Slots, index, Import_Slot)
+		if location_meets_a_place(places, import_slot.memory_offset) {
 			return false
 		}
 	}

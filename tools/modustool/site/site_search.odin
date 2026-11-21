@@ -171,7 +171,7 @@ site_search_match_names := [?]Site_Search_Match_Name {
 	{"system", "manual.exporters", 0},
 	{"system", "manual.described", 0},
 	{"system", "manual.handles", 0},
-	{"system", "manual.slots", 0},
+	{"system", "manual.import_slots", 0},
 	{"system", "manual.segments", 0},
 	{"system", "manual.running", 0},
 	{"system", "manual.replacements", 0},

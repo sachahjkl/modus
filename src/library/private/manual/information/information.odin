@@ -411,9 +411,9 @@ module_imports :: proc "contextless" (catalog: Catalog, found: Item, by_hash: bo
 			if has_replacement {
 				text_put(row.replacement[:], name_of_hash(catalog, replaced))
 			}
-			for slot_index in 1 ..< module.count(file, .Slots) {
-				slot, _ := module.record(file, .Slots, slot_index, module.Slot)
-				row.slots += i64(slot.import_index == index)
+			for import_slot_index in 1 ..< module.count(file, .Import_Slots) {
+				import_slot, _ := module.record(file, .Import_Slots, import_slot_index, module.Import_Slot)
+				row.import_slots += i64(import_slot.import_index == index)
 			}
 		}
 		count += 1
@@ -421,26 +421,26 @@ module_imports :: proc "contextless" (catalog: Catalog, found: Item, by_hash: bo
 	return count
 }
 
-// slots fills one row for each slot of a module, by name or by hash: the
-// export of an import that the slot receives. The name of the export comes
+// import_slots fills one row for each import slot of a module, by name or by hash: the
+// export of an import that the import slot receives. The name of the export comes
 // from the imported module, when the catalog has it.
-slots :: proc "contextless" (catalog: Catalog, name: string, rows: []Slot) -> (count: int, problem: Problem) {
+import_slots :: proc "contextless" (catalog: Catalog, name: string, rows: []Import_Slot) -> (count: int, problem: Problem) {
 	found: Item
 	found, problem = find(catalog, name)
 	if problem.kind != .None {
 		return 0, problem
 	}
 	file := found.file
-	for index in 1 ..< module.count(file, .Slots) {
-		slot, _ := module.record(file, .Slots, index, module.Slot)
+	for index in 1 ..< module.count(file, .Import_Slots) {
+		import_slot, _ := module.record(file, .Import_Slots, index, module.Import_Slot)
 		if count < len(rows) {
 			row := &rows[count]
-			row^ = {number = i64(index), import_index = i64(slot.import_index), export_index = i64(slot.export_index)}
+			row^ = {number = i64(index), import_index = i64(import_slot.import_index), export_index = i64(import_slot.export_index)}
 			text_put(row.module[:], found.name)
-			imported, _ := module.record(file, .Imports, slot.import_index, module.Import)
+			imported, _ := module.record(file, .Imports, import_slot.import_index, module.Import)
 			if target, known := find_hash(catalog, imported.hash); known && check(target.file).kind == .None {
 				text_put(row.target[:], target.name)
-				if function, described := module.function(target.file, slot.export_index); described {
+				if function, described := module.function(target.file, import_slot.export_index); described {
 					text_put(row.name[:], module.string_at(target.file, function.name_offset, function.name_count))
 				}
 			}

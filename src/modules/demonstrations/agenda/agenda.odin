@@ -26,7 +26,7 @@ foreign _ {
 
 // year_days gives the count of days of a year: the sum of the days of its months, from the module calendar.
 //
-// It makes 12 calls through the import slot, one for each month, so its answer is the answer of the module that the loader put in that slot: 365 for the year 2000 with calendar, 366 with calendar_fixed. It never fails.
+// It makes 12 calls through the import slot, one for each month, so its answer is the answer of the module that the loader put in that import slot: 365 for the year 2000 with calendar, 366 with calendar_fixed. It never fails.
 @(export, link_name = "year_days")
 year_days :: proc "c" (year: i64) -> i64 {
 	total: i64
@@ -47,7 +47,7 @@ month_days :: proc "c" (month, year: i64) -> i64 {
 
 // calls calls days_in_month a count of times and gives the sum of the results: a measure of a call through an import slot.
 //
-// The months and the years change with each call (the years 2000 to 2006), so the compiler cannot keep one answer. The process `imports` times it to compare a slot that holds calendar with a slot that holds its replacement. A count of 0 or less gives 0.
+// The months and the years change with each call (the years 2000 to 2006), so the compiler cannot keep one answer. The process `imports` times it to compare an import slot that holds calendar with an import slot that holds its replacement. A count of 0 or less gives 0.
 @(export, link_name = "calls")
 calls :: proc "c" (count: i64) -> i64 {
 	total: i64

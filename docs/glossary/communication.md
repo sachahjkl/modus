@@ -428,7 +428,7 @@ Do not use: ABI (for this), calling sequence.
 
 A direct call is a call of an export of a module that is in the address space of the caller.
 
-The arguments are where the call form puts them: up to 12 integers, 6 in registers and the others on the stack, and 8 floats; a record, a text or a table goes as the address of memory of the caller. A direct call costs what a call of a function costs: a call through a slot of an import took 3.5 ns. The callee runs with all the access of the caller, so a direct call is for a module that the caller trusts.
+The arguments are where the call form puts them: up to 12 integers, 6 in registers and the others on the stack, and 8 floats; a record, a text or a table goes as the address of memory of the caller. A direct call costs what a call of a function costs: a call through an import slot took 3.5 ns. The callee runs with all the access of the caller, so a direct call is for a module that the caller trusts.
 
 The design: `docs/MODULE_CONTRACT.md`, "4. The call form".
 
@@ -646,7 +646,7 @@ Do not use: pipe, stream buffer, channel.
 
 A compartment is the part of the command queue of an output ring that holds one record: the compartment word, then the record, rounded up to a multiple of 64 bytes.
 
-Both sides compute its size from the record description: a record of 72 bytes takes a compartment of 128 bytes, a log record of 256 bytes one of 320. The writer copies a whole compartment in, and the reader copies it out into private memory before it checks it (`output.record_of_compartment`). A compartment is not a place of the storage service ("Place") and not a slot of a module ("Slot").
+Both sides compute its size from the record description: a record of 72 bytes takes a compartment of 128 bytes, a log record of 256 bytes one of 320. The writer copies a whole compartment in, and the reader copies it out into private memory before it checks it (`output.record_of_compartment`). A compartment is not a place of the storage service ("Place") and not an import slot ("Import slot").
 
 The design: `src/md/features/module_outputs.md`, "The ring and its records".
 

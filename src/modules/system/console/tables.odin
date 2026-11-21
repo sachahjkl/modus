@@ -223,7 +223,7 @@ tables_start :: proc "contextless" () {
 	// fields; its conditions still read the whole record.
 	//
 	// ```
-	// > columns(manual.importers("calendar_fixed"), module, name, replacement, slots)
+	// > columns(manual.importers("calendar_fixed"), module, name, replacement, import_slots)
 	// > output_counter.counts |> columns(status) |> first(2)
 	// ```
 	//

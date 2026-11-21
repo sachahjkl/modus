@@ -523,7 +523,7 @@ module_compile :: proc(build: foundation.Module_Build) -> bool {
 // of the file of each import, then the debug object.
 //
 // It is the one step that reads the file of an import: for its hash, and
-// for the number of each export that a slot names. It runs no compiler.
+// for the number of each export that an import slot names. It runs no compiler.
 module_convert :: proc(build: foundation.Module_Build) -> bool {
 	description := describe_package(build.source) or_return
 	// The log facts of the sources that the compiler read and that the
@@ -546,15 +546,15 @@ module_convert :: proc(build: foundation.Module_Build) -> bool {
 	for name in build.imports {
 		append(&imports, Import_File{name = name, file = foundation.read_file(foundation.module_import_path(name)) or_return})
 	}
-	slot_symbols := make([dynamic]string, context.temp_allocator)
-	file := convert(build.name, elf, description, imports[:], &slot_symbols) or_return
+	import_slot_symbols := make([dynamic]string, context.temp_allocator)
+	file := convert(build.name, elf, description, imports[:], &import_slot_symbols) or_return
 	defer delete(file)
 	// The linked file holds the name of each imported export and no type:
 	// the declarations of the sources are compared with the descriptions
-	// here, where both are at hand, and each symbol that became a slot must
+	// here, where both are at hand, and each symbol that became an import slot must
 	// have one compared declaration (import_declarations.odin). The module
 	// file is written only after the check.
-	import_declarations_check(build, imports[:], slot_symbols[:]) or_return
+	import_declarations_check(build, imports[:], import_slot_symbols[:]) or_return
 	if build.library {
 		module_is_a_library_check(build.name, file) or_return
 	}
@@ -672,7 +672,7 @@ load_on_host :: proc(name: string, imports: []Host_Module) -> (loaded: Host_Modu
 		return fail(name, "rebase: %v", error)
 	}
 	if error: module.Load_Error; !module.bind(file, memory, bound[:], &error) {
-		return fail(name, "bind: %v of slot %d", error.stage, error.slot)
+		return fail(name, "bind: %v of import slot %d", error.stage, error.import_slot)
 	}
 	// Each loader writes the hash of the module at its own-hash place.
 	if !module.own_hash_write(file, memory, blake3.hash(file)) {

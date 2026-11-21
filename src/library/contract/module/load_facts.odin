@@ -57,7 +57,7 @@ Load_Cycle_Fields :: struct {
 	replacement_name: [40]u8,
 }
 
-// Check: an export that a slot uses differs in the module of the
+// Check: an export that an import slot uses differs in the module of the
 // replacement: the difference, and the parameter for a difference of one.
 Load_Check_Fields :: struct {
 	difference:    Difference,
@@ -67,9 +67,9 @@ Load_Check_Fields :: struct {
 	export:        [40]u8,
 }
 
-// Bind: a slot names no import or no export, or is not in writable data.
+// Bind: an import slot names no import or no export, or is not in writable data.
 Load_Bind_Fields :: struct {
-	slot:          u32,
+	import_slot:   u32,
 	module_name:   [40]u8,
 	imported_name: [40]u8,
 	export:        [40]u8,
@@ -139,7 +139,7 @@ load_check_fact_fields :: proc "contextless" (error: ^Load_Error) -> Load_Check_
 
 // load_bind_fact_fields gives the fields of a load error of the stage Bind.
 load_bind_fact_fields :: proc "contextless" (error: ^Load_Error) -> Load_Bind_Fields {
-	return {slot = error.slot, module_name = load_name_field(error.module.name), imported_name = load_name_field(error.imported.name), export = load_name_field(error.export)}
+	return {import_slot = error.import_slot, module_name = load_name_field(error.module.name), imported_name = load_name_field(error.imported.name), export = load_name_field(error.export)}
 }
 
 // load_memory_fact_fields gives the fields of a load error of the stage

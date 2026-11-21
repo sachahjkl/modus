@@ -44,7 +44,7 @@ Load_Cycle_Failed :: distinct module.Load_Cycle_Fields
 @(log_fact = "root: the replacement of the import {imported_name} of {module_name} differs in its export {export}: {difference}, parameter {parameter}")
 Load_Check_Failed :: distinct module.Load_Check_Fields
 
-@(log_fact = "root: the slot {slot} of {module_name} names no import or no export, or is not in writable data: the import {imported_name}, the export {export}")
+@(log_fact = "root: the import slot {import_slot} of {module_name} names no import or no export, or is not in writable data: the import {imported_name}, the export {export}")
 Load_Bind_Failed :: distinct module.Load_Bind_Fields
 
 @(log_fact = "root: the map of the memory of {module_name} ({module_hash}) failed: status {status}")
