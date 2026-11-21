@@ -456,7 +456,7 @@ Do not use: permission, authorization, consent.
 
 A start grant is one thing of the list of what the root service gives a process by its name: a service, a private store, a right of the machine.
 
-The root service takes the start grants of a process from its row of `process_roles` at its start, and keeps them in its process role. Each later rule reads them there: the sender of a root ring command, the grant of a connection, the debug access. The list and the number of each start grant are a contract (`src/library/contract/start_grant`). A start grant is not a recorded grant: `Inspect`, `Stop` and `Schedule` are rights of the one recorded grant `machine`.
+The root service takes the start grants of a process from its row of `start_grant_sets` at its start, and keeps them in its start grant set. Each later rule reads them there: the sender of a root ring command, the grant of a connection, the debug access. The list and the number of each start grant are a contract (`src/library/contract/start_grant`). A start grant is not a recorded grant: `Inspect`, `Stop` and `Schedule` are rights of the one recorded grant `machine`.
 
 Example: `debug("notes")` is refused: "the grant Store of the process refuses it".
 
@@ -476,23 +476,23 @@ The design: `docs/ARCHITECTURE.md`, "U2. Root service".
 
 Do not use: permission, access right, token.
 
-### Process role
+### Start grant set
 
-A process role is what the root service gives a process at its start: its start grants and the terms beside them, kept with the process while it runs.
+A start grant set is what the root service gives a process at its start: its start grants and the terms beside them, kept with the process while it runs.
 
-The root service reads it from the row of the process in the table `process_roles`: its start grants, the services that it can connect to, the blocks of its store, the size of its terminal. Each later rule reads it, never the name. A disk process has the row of its nickname in the disk grant table. A process role is not a role: it gives the grants of the roles that its process holds.
+The root service reads it from the row of the process in the table `start_grant_sets`: its start grants, the services that it can connect to, the blocks of its store, the size of its terminal. Each later rule reads it, never the name. A disk process has the row of its nickname in the disk grant table. A start grant set is not a role: it gives the grants of the roles that its process holds.
 
-Example: the role of `remote` holds Connect, Network, Acts_For_Principal and Remote_Clients, and the nine services that it connects to.
+Example: the start grant set of `remote` holds Connect, Network, Acts_For_Principal and Remote_Clients, and the nine services that it connects to.
 
 The design: `src/md/api/root_ring.md`.
 
-Do not use: permission set, role (alone, for this).
+Do not use: process role, permission set, role (alone, for this).
 
 ### Role
 
 A role is a place of the system that one process fills for the others, such as the display, the console, the storage or a device class, named by a member of the enum `Role`.
 
-The set of the roles is closed. The root service gives each role to a role holder, which the plan names, after a check against its role contract. A client gets a connection to the holder in its context, or with `connect(role.display)` when its process role holds that right; it never finds the holder by a name.
+The set of the roles is closed. The root service gives each role to a role holder, which the plan names, after a check against its role contract. A client gets a connection to the holder in its context, or with `connect(role.display)` when its start grant set holds that right; it never finds the holder by a name.
 
 The design: `src/md/features/roles_and_contracts.md`.
 
@@ -532,7 +532,7 @@ Do not use: subsystem, manager, privileged helper, broker.
 
 The root ring is the ring of a process to the root service: the process writes a command record on it, and the root service answers with a completion.
 
-A process receives a root ring at its start only when its process role holds a start grant that sends a command (Root_Ring, Connect, Principals, Debugger, Start_Policy); a disk process has none. The root service reads the kind of each record at one border, which refuses a word that names no command, then checks the sender with the table `ROOT_COMMAND_SENDERS`, then runs the command. The commands and their words are the contract `src/library/contract/root_ring`.
+A process receives a root ring at its start only when its start grant set holds a start grant that sends a command (Root_Ring, Connect, Principals, Debugger, Start_Policy); a disk process has none. The root service reads the kind of each record at one border, which refuses a word that names no command, then checks the sender with the table `ROOT_COMMAND_SENDERS`, then runs the command. The commands and their words are the contract `src/library/contract/root_ring`.
 
 Example: `start("clock")` in the console sends `Root_Command.Start` with the name `clock` on the root ring of the console.
 
@@ -574,7 +574,7 @@ Do not use: program table, origin page.
 
 A disk grant table is the table of the root service that binds each nickname of one principal to the hash of one module file, with the grants of that file.
 
-The root service keeps one disk grant table for each principal. `allow` and `disallow` change the grants of a row, and each start of a disk process reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. It persists under a key of its principal, with a keyed BLAKE2b tag; a table whose tag fails gives no grant. Principal 0 keeps its chosen start policy there. It is not the table of the roles of the boot image (`process_roles`).
+The root service keeps one disk grant table for each principal. `allow` and `disallow` change the grants of a row, and each start of a disk process reads it: a row with another hash refuses the start, and the grants of the row are the grants of the start. It persists under a key of its principal, with a keyed BLAKE2b tag; a table whose tag fails gives no grant. Principal 0 keeps its chosen start policy there. It is not the table `start_grant_sets` of the boot image.
 
 The design: `docs/MODULE_CONTRACT.md`, "The grants of a disk process".
 
@@ -634,7 +634,7 @@ Do not use: full access, admin mode, override, superuser.
 
 A wide scope is one member of the closed set of what a wide grant can give: the lines of an agent console, the screen, the input, the processes, the log, the stores.
 
-Each wide scope has a boundary that one mechanism enforces: the role of the agent console, the uses of a client key, the input face of the trusted display, the shares of the picked stores. The principal unticks a scope, bounds it in place, and sets it to ask each time. No wide scope changes a grant or answers a trusted surface, and none joins a grant request.
+Each wide scope has a boundary that one mechanism enforces: the start grant set of the agent console, the uses of a client key, the input face of the trusted display, the shares of the picked stores. The principal unticks a scope, bounds it in place, and sets it to ask each time. No wide scope changes a grant or answers a trusted surface, and none joins a grant request.
 
 The design: `src/md/features/wide_grants.md`, "The wide scopes".
 
@@ -642,9 +642,9 @@ Do not use: permission, entitlement, OAuth scope.
 
 ### Agent console
 
-An agent console is a console that the root service starts for a wide grant, whose lines an agent sends and whose role is the union of the wide scopes that the principal kept.
+An agent console is a console that the root service starts for a wide grant, whose lines an agent sends and whose start grant set is the union of the wide scopes that the principal kept.
 
-It runs in the session of the principal and reaches only what its scopes give: no command that changes a grant, no command of the principals. Each line is an act record before it runs. It stops at the end of its wide grant. It is not the console of the principal, whose role holds each grant of a console.
+It runs in the session of the principal and reaches only what its scopes give: no command that changes a grant, no command of the principals. Each line is an act record before it runs. It stops at the end of its wide grant. It is not the console of the principal, whose start grant set holds each grant of a console.
 
 The design: `src/md/features/wide_grants.md`, "The wide scopes".
 

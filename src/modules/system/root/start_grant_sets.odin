@@ -3,29 +3,29 @@ package root
 import "modus:support/disk_process"
 import terminal "modus:support/terminal"
 
-// The role of a process of the boot image: what this service gives it at
-// its start, by its name. role_of reads it one time, at the start; the
-// process keeps it in Started.role, and each rule after the start reads it
+// The start grant set of a process of the boot image: what this service gives it at
+// its start, by its name. start_grant_set_of reads it one time, at the start; the
+// process keeps it in Started.start_grant_set, and each rule after the start reads it
 // there and never by the name of the process. A disk process has a
-// nickname that it chose: its role comes from the disk grant table of its
+// nickname that it chose: its start grant set comes from the disk grant table of its
 // principal, never from this table (disk_processes.odin).
 //
-// The role of each process is one row of the table `process_roles`: its
-// start grants and the other terms of its role. The site reads the table
+// The start grant set of each process is one row of the table `start_grant_sets`: its
+// start grants and the other terms of its start grant set. The site reads the table
 // for its table "The grants of each process", and the tool stops each build
-// when a module of the boot image has no row (process_roles_check.odin).
-Process_Role :: struct {
+// when a module of the boot image has no row (start_grant_sets_check.odin).
+Start_Grant_Set :: struct {
 	grants:      bit_set[Grant],
-	using terms: Process_Role_Terms,
+	using terms: Start_Grant_Set_Terms,
 }
 
 // The services that a process with the grant Connect and not Root_Ring can
 // connect to: the list of its row, an empty text after the last one.
 CALLABLE_LIMIT :: 9
 
-// The parts of a role that are not start grants. Zero is the role of a
+// The parts of a start grant set that are not start grants. Zero is the start grant set of a
 // process that needs none of them.
-Process_Role_Terms :: struct {
+Start_Grant_Set_Terms :: struct {
 	callable:         [CALLABLE_LIMIT]string, // With the grant Connect: the services that it can connect to.
 	store_blocks:     u64, // With the grant Store: the blocks of its private store. 0: STORE_BLOCKS_DEFAULT.
 	log_gives:        bool, // The log with the right Give: it gives the log to the processes that it starts.
@@ -39,17 +39,17 @@ STORE_BLOCKS_DEFAULT :: 64
 TERMINAL_COLUMNS_DEFAULT :: 96
 TERMINAL_ROWS_DEFAULT :: 26
 
-// A row of the table: the whole role of one process, by its name.
-Process_Role_Row :: struct {
+// A row of the table: the whole start grant set of one process, by its name.
+Start_Grant_Set_Row :: struct {
 	name:   string,
 	grants: bit_set[Grant],
-	terms:  Process_Role_Terms,
+	terms:  Start_Grant_Set_Terms,
 }
 
-// The role of each module of the boot image, with the reason of each
+// The start grant set of each module of the boot image, with the reason of each
 // grant and each term. The table is whole: the tool refuses a build where a
 // module of the boot image has no row, or a row names no module of it, so
-// a new module never starts with a role that nobody wrote. The form of a
+// a new module never starts with a start grant set that nobody wrote. The form of a
 // row is the form that the site reads: a record literal with no type, its
 // name a string, its grants a set of members, its terms a record, and the
 // reason in the comment lines above it.
@@ -57,11 +57,11 @@ Process_Role_Row :: struct {
 // The rows come in three groups: the processes with grants; the parts of
 // the system that this service starts itself (the grant System_Part, and
 // the names of system_part_names), each with handles that no other grant
-// names, which a command Start does not start; and the processes whose role
+// names, which a command Start does not start; and the processes whose start grant set
 // holds no grant: the log and a window, or the handles of the process that
 // starts them.
 @(rodata)
-process_roles := [?]Process_Role_Row {
+start_grant_sets := [?]Start_Grant_Set_Row {
 	// The console is the shell of the machine, and its commands need
 	// each grant:
 	// - **Root_Ring**: `start`, `stop`, `grants`, `revoke`, `connect`
@@ -235,7 +235,7 @@ process_roles := [?]Process_Role_Row {
 	{name = "ranges", grants = {.Store}, terms = {store_blocks = 12000}},
 	// It makes errors in its store, loads modules and starts fault from
 	// the boot image, counts the locks, and asks for connections that this
-	// service refuses (its role names no service). One object is over the
+	// service refuses (its start grant set names no service). One object is over the
 	// limit of its store. It gives the log to its child, which measures a
 	// refused Log.
 	{name = "errors", grants = {.Store, .Image, .Inspect, .Connect, .Debug_Image}, terms = {store_blocks = 2, log_gives = true}},
@@ -444,10 +444,10 @@ process_roles := [?]Process_Role_Row {
 // The processes that this service starts itself, each in its own way and
 // with its own handles: a command Start does not start them, and a disk
 // process does not take one of their names. Each one but root has a row of
-// process_roles whose grants are System_Part, and Serve beside it for the
+// start_grant_sets whose grants are System_Part, and Serve beside it for the
 // compositor, whose exports serve the processes: the tool refuses another
 // set, and the grant System_Part on another row
-// (tools/modustool/build/process_roles_check.odin), because the debug access to
+// (tools/modustool/build/start_grant_sets_check.odin), because the debug access to
 // a process reads that grant. The names are strings that the tool reads.
 @(rodata)
 system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound"}
@@ -462,53 +462,53 @@ name_is_a_system_part :: proc "contextless" (name: string) -> bool {
 	return false
 }
 
-// role_of gives the role of a process of the boot image by its name: the
-// grants and the terms of its row. A name with no row has the zero role:
+// start_grant_set_of gives the start grant set of a process of the boot image by its name: the
+// grants and the terms of its row. A name with no row has the zero start grant set:
 // it names no module of the boot image, as the tool checks. Only a start
 // reads it.
-role_of :: proc "contextless" (name: string) -> (role: Process_Role) {
-	for &row in process_roles {
+start_grant_set_of :: proc "contextless" (name: string) -> (start_grant_set: Start_Grant_Set) {
+	for &row in start_grant_sets {
 		if row.name == name {
-			role.grants = row.grants
-			role.terms = row.terms
+			start_grant_set.grants = row.grants
+			start_grant_set.terms = row.terms
 			break
 		}
 	}
-	return role
+	return start_grant_set
 }
 
-// role_names_the_process says if the table of this service gives the name
+// start_grant_set_names_the_process says if the table of this service gives the name
 // a grant or a term: a disk process does not take such a nickname, as the
 // name would carry an authority that the principal did not give. A row
 // with no grant and no term carries none, so it reserves no nickname: a
 // nickname of a module of the boot image is refused for that module
 // (disk_processes.odin), and a nickname of a module that this image does
 // not hold is free.
-role_names_the_process :: proc "contextless" (name: string) -> bool {
-	for &row in process_roles {
+start_grant_set_names_the_process :: proc "contextless" (name: string) -> bool {
+	for &row in start_grant_sets {
 		if row.name == name {
-			return row.grants != {} || row.terms != (Process_Role_Terms{})
+			return row.grants != {} || row.terms != (Start_Grant_Set_Terms{})
 		}
 	}
 	return false
 }
 
-// role_store_blocks gives the blocks of the private store of a role.
-role_store_blocks :: proc "contextless" (role: ^Process_Role) -> u64 {
-	return role.store_blocks == 0 ? STORE_BLOCKS_DEFAULT : role.store_blocks
+// start_grant_set_store_blocks gives the blocks of the private store of a start grant set.
+start_grant_set_store_blocks :: proc "contextless" (start_grant_set: ^Start_Grant_Set) -> u64 {
+	return start_grant_set.store_blocks == 0 ? STORE_BLOCKS_DEFAULT : start_grant_set.store_blocks
 }
 
-// role_may_connect says if a process with a role can ask this service for a
+// start_grant_set_may_connect says if a process with a start grant set can ask this service for a
 // connection to the service with a name. A process with the grant
 // Root_Ring connects to each service.
-role_may_connect :: proc "contextless" (role: ^Process_Role, service: string) -> bool {
-	if .Root_Ring in role.grants {
+start_grant_set_may_connect :: proc "contextless" (start_grant_set: ^Start_Grant_Set, service: string) -> bool {
+	if .Root_Ring in start_grant_set.grants {
 		return true
 	}
-	if .Connect not_in role.grants {
+	if .Connect not_in start_grant_set.grants {
 		return false
 	}
-	for name in role.callable {
+	for name in start_grant_set.callable {
 		if name == "" {
 			return false
 		}
@@ -519,16 +519,16 @@ role_may_connect :: proc "contextless" (role: ^Process_Role, service: string) ->
 	return false
 }
 
-// role_terminal gives the size of the terminal of a role, and what it
+// start_grant_set_terminal gives the size of the terminal of a start grant set, and what it
 // shows.
-role_terminal :: proc "contextless" (role: ^Process_Role) -> (columns, rows: u64, measure: bool) {
-	columns = role.terminal_columns == 0 ? TERMINAL_COLUMNS_DEFAULT : role.terminal_columns
-	rows = role.terminal_rows == 0 ? TERMINAL_ROWS_DEFAULT : role.terminal_rows
-	return columns, rows, role.terminal_measure
+start_grant_set_terminal :: proc "contextless" (start_grant_set: ^Start_Grant_Set) -> (columns, rows: u64, measure: bool) {
+	columns = start_grant_set.terminal_columns == 0 ? TERMINAL_COLUMNS_DEFAULT : start_grant_set.terminal_columns
+	rows = start_grant_set.terminal_rows == 0 ? TERMINAL_ROWS_DEFAULT : start_grant_set.terminal_rows
+	return columns, rows, start_grant_set.terminal_measure
 }
 
 // on_demand says if the service with a name starts when a process asks for
 // a connection to it.
 on_demand :: proc "contextless" (name: string) -> bool {
-	return role_of(name).on_demand
+	return start_grant_set_of(name).on_demand
 }

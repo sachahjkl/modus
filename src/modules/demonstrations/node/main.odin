@@ -9,7 +9,7 @@
 // draws what each one holds.
 //
 // **Start**: `rings` starts it from the boot image and gives it its four
-// handles. Its row of `process_roles` has no grant: a start by the root
+// handles. Its row of `start_grant_sets` has no grant: a start by the root
 // service does not give it these handles, so it has no use there.
 //
 // **Its context**, as the package relay names the places:

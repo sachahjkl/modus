@@ -104,7 +104,7 @@ site_grants_of_the_repository :: proc(t: ^testing.T) {
 	for grant in recorded {
 		testing.expectf(t, names[grant.name] != "", "the grant %s has no name in root_grant_names", grant.name)
 	}
-	roles_text := read_text(t, foundation.ROOT_ROLES_FILE)
+	start_grant_sets_text := read_text(t, foundation.ROOT_START_GRANT_SETS_FILE)
 	start_grant_text := read_text(t, SITE_START_GRANT_FILE)
 	at_start, start_problem := foundation.enumeration_read(start_grant_text, SITE_START_GRANT_FILE, "Grant")
 	testing.expect_value(t, start_problem, "")
@@ -116,20 +116,20 @@ site_grants_of_the_repository :: proc(t: ^testing.T) {
 		testing.expectf(t, known && name == grant.name, "the start grant %s has the number %d, which grant_name names %q", grant.name, grant.number, name)
 	}
 	testing.expect_value(t, len(at_start), len(start_grant.Grant))
-	rows, rows_problem := foundation.role_table_read(roles_text, foundation.ROOT_ROLES_FILE, build.PROCESS_ROLES_TABLE)
+	rows, rows_problem := foundation.start_grant_set_table_read(start_grant_sets_text, foundation.ROOT_START_GRANT_SETS_FILE, build.START_GRANT_SETS_TABLE)
 	testing.expect_value(t, rows_problem, "")
-	console, named := site_role_row_of(rows, "console")
+	console, named := site_start_grant_set_row_of(rows, "console")
 	testing.expect(t, named && len(console.grants) > 1 && console.grants[0] == "Root_Ring", "a set is read as its members, with no period")
 	testing.expect_value(t, console.terms, "store_blocks = 3, log_gives = true")
-	inspect, inspect_named := site_role_row_of(rows, "inspect")
+	inspect, inspect_named := site_start_grant_set_row_of(rows, "inspect")
 	testing.expect(t, inspect_named && strings.contains(inspect.comment, "A developer tool"), "the comment lines above a row are its comment")
 	testing.expect_value(t, inspect.terms, "")
 	// A row with no grant is a row of the table, with no grant.
-	plasma, plasma_named := site_role_row_of(rows, "plasma")
+	plasma, plasma_named := site_start_grant_set_row_of(rows, "plasma")
 	testing.expect(t, plasma_named && len(plasma.grants) == 0)
-	_, system_parts, parts_problem := build.process_roles_read(roles_text)
+	_, system_parts, parts_problem := build.start_grant_sets_read(start_grant_sets_text)
 	testing.expect_value(t, parts_problem, "")
-	testing.expect_value(t, len(build.process_roles_problems(rows, system_parts, foundation.module_builds[:], foundation.ROOT_ROLES_FILE)), 0)
+	testing.expect_value(t, len(build.start_grant_sets_problems(rows, system_parts, foundation.module_builds[:], foundation.ROOT_START_GRANT_SETS_FILE)), 0)
 }
 
 // A set of grants is a list of values: each grant one link to its row in

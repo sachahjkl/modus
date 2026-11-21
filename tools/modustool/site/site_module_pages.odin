@@ -60,11 +60,11 @@ site_process_names_cell :: proc(site: ^Site, b: ^strings.Builder, names: []strin
 	strings.write_string(b, "</td>")
 }
 
-// site_role_row_of gives the row of the table of the roles of a process.
+// site_start_grant_set_row_of gives the row of the table of the start grant sets of a process.
 // The site reads the table only when each process has its row
-// (process_roles_problems), so found is false only for a module that is no
+// (start_grant_sets_problems), so found is false only for a module that is no
 // process of the boot image.
-site_role_row_of :: proc(rows: []foundation.Role_Row, name: string) -> (row: foundation.Role_Row, found: bool) {
+site_start_grant_set_row_of :: proc(rows: []foundation.Start_Grant_Set_Row, name: string) -> (row: foundation.Start_Grant_Set_Row, found: bool) {
 	for candidate in rows {
 		if candidate.name == name {
 			return candidate, true
@@ -251,25 +251,25 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 		sources := make([dynamic]string, context.temp_allocator)
 		append(&sources, SITE_MODULES_FILE, module_build.source)
 		if item.kind == "entry" {
-			role, has_role := site_role_row_of(reference.process_roles, module_build.name)
+			start_grant_set, has_start_grant_set := site_start_grant_set_row_of(reference.start_grant_sets, module_build.name)
 			budget := description.budget
 			strings.write_string(&b, "<h2 id=\"root\">What the root service gives it</h2>\n")
 			// The grants and the fields of the budget are lists of values: a
 			// grant leads to its row on the page of the grants.
 			budget_table := site_table_start(&b, "Grants and budget", {{"What", .Short}, {"Value", .List}, {"As the root service says", .Prose}})
-			// Only a process with a row of the table of the roles has a row on
+			// Only a process with a row of the table of the start grant sets has a row on
 			// the page of the grants: the root service and a disk process
 			// have none, so their cell names the grants with no link.
-			if has_role {
+			if has_start_grant_set {
 				fmt.sbprintf(&b, "<tr><td><a href=\"%s#processes-%s\">Grants</a></td><td>", site_page_link(site, item.page, site_page_file(SITE_GRANTS_FOLDER)), foundation.text_slug(module_build.name))
 			} else {
 				strings.write_string(&b, "<tr><td>Grants</td><td>")
 			}
-			site_grant_set_write(site, &b, item.page, role.grants, true)
+			site_grant_set_write(site, &b, item.page, start_grant_set.grants, true)
 			strings.write_string(&b, "</td>")
-			site_comment_cell(site, &b, item.page, has_role ? role.comment : "No row: the kernel starts the root service, and a disk process has the role of its row in the disk grant table of its principal.")
-			strings.write_string(&b, "</tr>\n<tr><td>Other terms of its role</td>")
-			site_role_terms_cell(&b, role.terms)
+			site_comment_cell(site, &b, item.page, has_start_grant_set ? start_grant_set.comment : "No row: the kernel starts the root service, and a disk process has the start grant set of its row in the disk grant table of its principal.")
+			strings.write_string(&b, "</tr>\n<tr><td>Other terms of its start grant set</td>")
+			site_start_grant_set_terms_cell(&b, start_grant_set.terms)
 			strings.write_string(&b, "<td></td></tr>\n<tr><td>Budget that it asks for</td><td>")
 			// The parts that the source states, and the counted parts that
 			// the source alone gives: the threads and the window. The pages
@@ -305,12 +305,12 @@ site_module_pages_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference_Ent
 			site_comment_cell(site, &b, item.page, budget.stated ? budget.comment : "No `MODULE_BUDGET` in its source: it asks for the least budget.")
 			strings.write_string(&b, "</tr>\n")
 			site_table_end(&b, budget_table)
-			fmt.sbprintf(&b, "<p class=\"source\">The role is read from <code>process_roles</code> in <a href=\"%s\"><code>%s</code></a>. The stated budget is read from the constant <code>MODULE_BUDGET</code> of the source of the module", site_repository_file(site, foundation.ROOT_ROLES_FILE), foundation.ROOT_ROLES_FILE)
+			fmt.sbprintf(&b, "<p class=\"source\">The start grant set is read from <code>start_grant_sets</code> in <a href=\"%s\"><code>%s</code></a>. The stated budget is read from the constant <code>MODULE_BUDGET</code> of the source of the module", site_repository_file(site, foundation.ROOT_START_GRANT_SETS_FILE), foundation.ROOT_START_GRANT_SETS_FILE)
 			if budget.stated {
 				fmt.sbprintf(&b, " (<a href=\"%s\">its line</a>)", site_line_address(site, budget.file, budget.line))
 			}
 			fmt.sbprintf(&b, "; the build adds the counted parts and writes the sum in the module (<a href=\"%s\"><code>tools/modustool/build/budget_count.odin</code></a>); the root service accepts it up to the largest budget of a process, and adds the limits of processor time and of log records (<a href=\"%s\"><code>%s</code></a>).</p>\n", site_repository_file(site, "tools/modustool/build/budget_count.odin"), site_repository_file(site, SITE_ROOT_BUDGETS_FILE), SITE_ROOT_BUDGETS_FILE)
-			append(&sources, foundation.ROOT_ROLES_FILE, SITE_ROOT_BUDGETS_FILE)
+			append(&sources, foundation.ROOT_START_GRANT_SETS_FILE, SITE_ROOT_BUDGETS_FILE)
 		}
 		about := description.about != "" ? site_source_comment_plain(site, description.about) : "no documentation"
 		if len(module_build.defines) > 0 {

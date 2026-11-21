@@ -14,7 +14,7 @@ import "modus:support/system"
 // targets, in order of value"): the decision of the dispatch of the root
 // service, which a hostile process feeds with each record of its root
 // ring, and the pure borders and refusal records behind it. Each case of
-// an input is one record with the role of its sender: the target gives it
+// an input is one record with the start grant set of its sender: the target gives it
 // to root_ring.dispatch_decide, to the border of each word of the commands
 // and to the refusal of a Replace, and checks each refusal, a model of the
 // table of the senders, and that nothing changed.
@@ -23,15 +23,15 @@ import "modus:support/system"
 // them.
 Fuzz_Root_Ring_Case :: struct {
 	record: ring.Record,
-	role:   u64, // Bit n: the start grant n. A bit past the grants names none.
-	added:  u64, // Grants added to the role: a command that runs still runs.
+	start_grant_set:   u64, // Bit n: the start grant n. A bit past the grants names none.
+	added:  u64, // Grants added to the start grant set: a command that runs still runs.
 	flags:  u64, // FUZZ_ROOT_RING_SERVICE_LISTED, FUZZ_ROOT_RING_NAME_IN_IMAGE.
 	status: u64, // The word of the status of a refused Replace; a word of no status gives no Replace.
 	entries: u64, // The entries of the boot image, for a refused Replace.
 }
 
 // The bits of Fuzz_Root_Ring_Case.flags: flags, not choices.
-FUZZ_ROOT_RING_SERVICE_LISTED :: 1 // The list of the role names the service of the record.
+FUZZ_ROOT_RING_SERVICE_LISTED :: 1 // The list of the start grant set names the service of the record.
 FUZZ_ROOT_RING_NAME_IN_IMAGE :: 2 // A module of the boot image has the name of the record.
 
 FUZZ_ROOT_RING_CASE_LIMIT :: 16
@@ -71,17 +71,17 @@ fuzz_root_ring_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	return FUZZ_PASSED
 }
 
-// fuzz_root_ring_role_of gives the start grants that the bits of a word
+// fuzz_root_ring_start_grant_set_of gives the start grants that the bits of a word
 // name. It is the choice of the harness, not a border of the system: a bit
 // that names no grant is dropped.
 @(private = "file")
-fuzz_root_ring_role_of :: proc(word: u64) -> (role: bit_set[start_grant.Grant]) {
+fuzz_root_ring_start_grant_set_of :: proc(word: u64) -> (start_grant_set: bit_set[start_grant.Grant]) {
 	for grant in start_grant.Grant {
 		if word >> u64(grant) & 1 != 0 {
-			role += {grant}
+			start_grant_set += {grant}
 		}
 	}
-	return role
+	return start_grant_set
 }
 
 // fuzz_root_ring_sender_model says who sends a command, written by hand
@@ -96,7 +96,7 @@ fuzz_root_ring_role_of :: proc(word: u64) -> (role: bit_set[start_grant.Grant]) 
 // - the debugger service, with Debugger, alone sends Debug and Debug_Store
 //   (docs/TOOLS.md, "The debugger");
 // - Connect comes from Root_Ring, or from Connect to a service of the list
-//   of its role; Disconnect from each ring, for a connection that it holds;
+//   of its start grant set; Disconnect from each ring, for a connection that it holds;
 // - the start policy, with Start_Policy, sends Start and Stop as the
 //   console does, and alone sends Machine_Usable
 //   (src/md/features/start_policy.md);
@@ -104,27 +104,27 @@ fuzz_root_ring_role_of :: proc(word: u64) -> (role: bit_set[start_grant.Grant]) 
 // The switch is whole: a new command does not compile until its sender is
 // written here too.
 @(private = "file")
-fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, role: bit_set[start_grant.Grant], listed: bool) -> bool {
-	if role & {.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy} == {} {
+fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, start_grant_set: bit_set[start_grant.Grant], listed: bool) -> bool {
+	if start_grant_set & {.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy} == {} {
 		return false
 	}
 	switch command {
 	case .None:
 		return false
 	case .Principal_Record, .Principal_Unlock, .Machine_Key, .Principal_Change_End:
-		return .Principals in role
+		return .Principals in start_grant_set
 	case .Debug, .Debug_Store:
-		return .Debugger in role
+		return .Debugger in start_grant_set
 	case .Connect:
-		return .Root_Ring in role || .Connect in role && listed
+		return .Root_Ring in start_grant_set || .Connect in start_grant_set && listed
 	case .Disconnect:
 		return true
 	case .Machine_Usable:
-		return .Start_Policy in role
+		return .Start_Policy in start_grant_set
 	case .Start, .Stop, .Wire:
-		return .Root_Ring in role || .Start_Policy in role
+		return .Root_Ring in start_grant_set || .Start_Policy in start_grant_set
 	case .Grants, .Revoke, .Replace, .Connect_History, .Principal_Create, .Principal_Lock, .Principals, .Palette_Provide, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Passphrase, .Disk_Grant_Persistence, .Machine_Seal, .Principal_Change, .Remote_Client, .Start_Policy_Choice:
-		return .Root_Ring in role
+		return .Root_Ring in start_grant_set
 	}
 	return false
 }
@@ -132,11 +132,11 @@ fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, role: bit_s
 @(private = "file")
 fuzz_root_ring_case_check :: proc(case_of: Fuzz_Root_Ring_Case) -> Fuzz_Verdict {
 	record := case_of.record
-	role := fuzz_root_ring_role_of(case_of.role)
+	start_grant_set := fuzz_root_ring_start_grant_set_of(case_of.start_grant_set)
 	listed := case_of.flags & FUZZ_ROOT_RING_SERVICE_LISTED != 0
-	decision := root_ring.dispatch_decide(record.kind, role, listed)
-	if again := root_ring.dispatch_decide(record.kind, role, listed); again != decision {
-		return fuzz_broken(.Contract, "two decisions of the kind %d with one role differ", record.kind)
+	decision := root_ring.dispatch_decide(record.kind, start_grant_set, listed)
+	if again := root_ring.dispatch_decide(record.kind, start_grant_set, listed); again != decision {
+		return fuzz_broken(.Contract, "two decisions of the kind %d with one start grant set differ", record.kind)
 	}
 	// The border.
 	command, known := root_ring.command_of_word(record.kind)
@@ -154,12 +154,12 @@ fuzz_root_ring_case_check :: proc(case_of: Fuzz_Root_Ring_Case) -> Fuzz_Verdict 
 		return fuzz_broken(.Contract, "the word %d names %v, and the decision is %v", record.kind, command, decision)
 	}
 	// The sender, against the model of the table.
-	allowed := fuzz_root_ring_sender_model(command, role, listed)
+	allowed := fuzz_root_ring_sender_model(command, start_grant_set, listed)
 	switch decision.step {
 	case .Border:
 	case .Sender:
 		if allowed {
-			return fuzz_broken(.Model, "the model sends %v from %v, and the dispatch refuses it", command, role)
+			return fuzz_broken(.Model, "the model sends %v from %v, and the dispatch refuses it", command, start_grant_set)
 		}
 		refusal := errors.completion_record(decision.refusal)
 		unit := command == .Connect ? errors.Unit.Connection : errors.Unit.Root_Commands
@@ -171,18 +171,18 @@ fuzz_root_ring_case_check :: proc(case_of: Fuzz_Root_Ring_Case) -> Fuzz_Verdict 
 		}
 	case .Command:
 		if !allowed {
-			return fuzz_broken(.Model, "the model refuses %v from %v, and the dispatch runs it", command, role)
+			return fuzz_broken(.Model, "the model refuses %v from %v, and the dispatch runs it", command, start_grant_set)
 		}
-		if role & root_ring.ROOT_RING_GRANTS == {} {
-			return fuzz_broken(.Contract, "a role with no root ring runs %v", command)
+		if start_grant_set & root_ring.ROOT_RING_GRANTS == {} {
+			return fuzz_broken(.Contract, "a start grant set with no root ring runs %v", command)
 		}
 		if decision.status != .Ok || decision.refusal != ([7]u64{}) {
 			return fuzz_broken(.Contract, "the command %v runs with %v and a record", command, decision.status)
 		}
 		// More grants never refuse a command that runs.
-		wider := root_ring.dispatch_decide(record.kind, role + fuzz_root_ring_role_of(case_of.added), listed)
+		wider := root_ring.dispatch_decide(record.kind, start_grant_set + fuzz_root_ring_start_grant_set_of(case_of.added), listed)
 		if wider.step != .Command {
-			return fuzz_broken(.Contract, "%v runs from %v and not from more grants", command, role)
+			return fuzz_broken(.Contract, "%v runs from %v and not from more grants", command, start_grant_set)
 		}
 	}
 	// A command whose values hold a hash or a key where a name would be
@@ -308,22 +308,22 @@ fuzz_root_ring_replace_check :: proc(case_of: Fuzz_Root_Ring_Case) -> Fuzz_Verdi
 fuzz_root_ring_seeds :: proc(seeds: ^[dynamic][]u8) {
 	edges := [?]u64{0, 1, u64(max(root_ring.Remote_Client_Action)), u64(max(root_ring.Remote_Client_Action)) + 1, 1 << 62, 1 << 62 + 1, max(u64)}
 	cases := make([dynamic]Fuzz_Root_Ring_Case, context.temp_allocator)
-	roles := make([dynamic]u64, context.temp_allocator)
-	append(&roles, 0, max(u64))
+	start_grant_sets := make([dynamic]u64, context.temp_allocator)
+	append(&start_grant_sets, 0, max(u64))
 	for grant in root_ring.ROOT_RING_GRANTS {
-		append(&roles, u64(1) << u64(grant))
+		append(&start_grant_sets, u64(1) << u64(grant))
 	}
 	for command in root_ring.Root_Command {
-		for role, index in roles {
+		for start_grant_set, index in start_grant_sets {
 			edge := edges[index % len(edges)]
-			append(&cases, Fuzz_Root_Ring_Case{record = {kind = u32(command), values = {0, 0, 0, 0, edge, edge, edge}}, role = role, added = max(u64), flags = u64(index) & 3, status = u64(index), entries = edge})
+			append(&cases, Fuzz_Root_Ring_Case{record = {kind = u32(command), values = {0, 0, 0, 0, edge, edge, edge}}, start_grant_set = start_grant_set, added = max(u64), flags = u64(index) & 3, status = u64(index), entries = edge})
 		}
 	}
 	for kind in ([?]u32{u32(max(root_ring.Root_Command)) + 1, 1 << 16, max(u32)}) {
-		append(&cases, Fuzz_Root_Ring_Case{record = {kind = kind, values = {max(u64), max(u64), max(u64), max(u64), max(u64), max(u64), max(u64)}}, role = max(u64)})
+		append(&cases, Fuzz_Root_Ring_Case{record = {kind = kind, values = {max(u64), max(u64), max(u64), max(u64), max(u64), max(u64), max(u64)}}, start_grant_set = max(u64)})
 	}
 	for status in op.Status {
-		append(&cases, Fuzz_Root_Ring_Case{record = {kind = u32(root_ring.Root_Command.Replace), values = {4 = 13}}, role = u64(1) << u64(start_grant.Grant.Root_Ring), status = u64(status), entries = 12})
+		append(&cases, Fuzz_Root_Ring_Case{record = {kind = u32(root_ring.Root_Command.Replace), values = {4 = 13}}, start_grant_set = u64(1) << u64(start_grant.Grant.Root_Ring), status = u64(status), entries = 12})
 	}
 	for &item in cases {
 		append(seeds, slice.clone(mem.ptr_to_bytes(&item)))

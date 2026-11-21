@@ -2159,7 +2159,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 			thread.run_time += 1
 			intrinsics.atomic_add(&processes[thread.process].run_time, 1)
 			if strategy_tick(cpu, thread, budget_charge(cpu)) {
-				cpu.slice_left = 0 // The strategy ends the turn.
+				cpu.slice_left = 0 // The strategy ends the stint.
 			}
 			if budget_spent(intrinsics.atomic_load(&thread.budget)) {
 				cpu.slice_left = 0 // The budget has no time left in this period.
@@ -2195,9 +2195,9 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		// that runs here (kick). Interrupts are off in the kernel, so this
 		// interrupt arrives either when the processor returns to a process
 		// (from_process) or while it waits idle with no thread: then no
-		// turn is to end, and the processor picks a thread anyway. A flag
+		// stint is to end, and the processor picks a thread anyway. A flag
 		// for a thread that left its processor before the interrupt ends
-		// the turn of the next thread (one more pass through schedule).
+		// the stint of the next thread (one more pass through schedule).
 		if intrinsics.atomic_exchange(&cpu.preempt, false) && from_process {
 			cpu.slice_left = 0
 			cpu.preemptions += 1

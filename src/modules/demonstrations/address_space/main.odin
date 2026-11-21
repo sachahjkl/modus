@@ -1417,7 +1417,7 @@ page_tables_return :: proc "contextless" () {
 		rounds_wrong: u64
 		// The rounds go on after the count until the other thread ran
 		// beside one of them: the case is the two threads at the same
-		// time, and a processor can give the other thread no turn during
+		// time, and a processor can give the other thread no stint during
 		// a thousand rounds. The bound only ends a hang.
 		rounds_deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 		for round := u64(0); round < NEIGHBOUR_ROUNDS || (intrinsics.atomic_load(&neighbour.touches) == touches_before && system.time() < rounds_deadline); round += 1 {

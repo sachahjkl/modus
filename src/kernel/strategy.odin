@@ -33,7 +33,7 @@ import op "modus:contract/operation"
 Ready_Kind :: enum u8 {
 	New, // A new thread, or a thread whose strategy fields are zero.
 	Woken, // A thread that waited.
-	Back, // The thread that ran: its turn ended and it is still ready.
+	Back, // The thread that ran: its stint ended and it is still ready.
 }
 
 // A switch below names each member of the enumeration, with no default
@@ -93,15 +93,15 @@ pick_allowed :: #force_inline proc "contextless" (thread: ^Thread, home: u32, ta
 }
 
 // queue_strategy_tick: the tick on the processor that runs the thread:
-// cycles is the time since the last charge. true: the turn ends.
-queue_strategy_tick :: #force_inline proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64) -> (turn_ends: bool) {
+// cycles is the time since the last charge. true: the stint ends.
+queue_strategy_tick :: #force_inline proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64) -> (stint_ends: bool) {
 	switch queue.strategy {
 	case .None, .Round_Robin:
-		turn_ends = round_robin_tick(queue, cpu, thread, cycles)
+		stint_ends = round_robin_tick(queue, cpu, thread, cycles)
 	case .Fair:
-		turn_ends = fair_tick(queue, cpu, thread, cycles)
+		stint_ends = fair_tick(queue, cpu, thread, cycles)
 	case .Eevdf:
-		turn_ends = eevdf_tick(queue, cpu, thread, cycles)
+		stint_ends = eevdf_tick(queue, cpu, thread, cycles)
 	}
 	return
 }
@@ -122,15 +122,15 @@ queue_strategy_stopping :: #force_inline proc "contextless" (queue: ^Run_Queue, 
 
 // queue_strategy_wake_preempts: a thread woke in the queue (it is in the
 // list now) while `running` runs on the processor of the queue. true: the
-// turn of running ends.
-queue_strategy_wake_preempts :: #force_inline proc "contextless" (queue: ^Run_Queue, home: u32, running: ^Thread, woken: ^Thread) -> (turn_ends: bool) {
+// stint of running ends.
+queue_strategy_wake_preempts :: #force_inline proc "contextless" (queue: ^Run_Queue, home: u32, running: ^Thread, woken: ^Thread) -> (stint_ends: bool) {
 	switch queue.strategy {
 	case .None, .Round_Robin:
-		turn_ends = round_robin_wake_preempts(queue, home, running, woken)
+		stint_ends = round_robin_wake_preempts(queue, home, running, woken)
 	case .Fair:
-		turn_ends = fair_wake_preempts(queue, home, running, woken)
+		stint_ends = fair_wake_preempts(queue, home, running, woken)
 	case .Eevdf:
-		turn_ends = eevdf_wake_preempts(queue, home, running, woken)
+		stint_ends = eevdf_wake_preempts(queue, home, running, woken)
 	}
 	return
 }
@@ -160,10 +160,10 @@ strategy_changes: u64
 
 // The lengths of the strategies, in cycles of the cycle counter: the
 // kernel measured its frequency before (timer_calibrate).
-fair_latency, fair_least_turn, fair_wake, fair_credit, tick_cycles: u64
+fair_latency, fair_least_stint, fair_wake, fair_credit, tick_cycles: u64
 
 FAIR_LATENCY :: 6000 // Microseconds: the time in which each thread of a queue runs one time.
-FAIR_LEAST_TURN :: 750 // Microseconds: the shortest turn.
+FAIR_LEAST_STINT :: 750 // Microseconds: the shortest stint.
 FAIR_WAKE :: 1000 // Microseconds: a woken thread preempts if its virtual time is less by more than this.
 FAIR_CREDIT :: 3000 // Microseconds: a woken thread is at most this much under the queue clock.
 
@@ -171,7 +171,7 @@ FAIR_CREDIT :: 3000 // Microseconds: a woken thread is at most this much under t
 // first thread.
 strategy_start :: proc "contextless" () {
 	fair_latency = microseconds_to_cycles(FAIR_LATENCY)
-	fair_least_turn = microseconds_to_cycles(FAIR_LEAST_TURN)
+	fair_least_stint = microseconds_to_cycles(FAIR_LEAST_STINT)
 	fair_wake = microseconds_to_cycles(FAIR_WAKE)
 	fair_credit = microseconds_to_cycles(FAIR_CREDIT)
 	tick_cycles = cycle_frequency / TICKS_PER_SECOND
@@ -273,7 +273,7 @@ strategy_clear :: proc "contextless" (thread: ^Thread) {
 // wrote the new weight.
 //
 // A write that lowers a weight or changes a request calls nothing here:
-// the fields stay, and the next charge, the next turn and the next bound
+// the fields stay, and the next charge, the next stint and the next bound
 // use the new values (docs/SCHEDULING.md, "The schedule of a live
 // thread").
 strategy_weight_raised :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread) {
@@ -284,7 +284,7 @@ strategy_weight_raised :: proc "contextless" (queue: ^Run_Queue, home: u32, thre
 }
 
 // strategy_leaves_list keeps the position of a thread that leaves the list
-// of its queue with no turn: a stop of Thread_Control holds it. The thread
+// of its queue with no stint: a stop of Thread_Control holds it. The thread
 // leaves as a thread that starts to wait, with no time to charge, and the
 // Resume places it as a woken thread: a thread that owes time still owes
 // it after a Stop and a Resume. The caller holds the run lock of the
@@ -315,9 +315,9 @@ strategy_leaves_list :: proc "contextless" (queue: ^Run_Queue, home: u32, thread
 
 // strategy_tick charges the time of the thread that runs on this processor
 // to its strategy, under the run lock of the processor: the home of a
-// thread that runs is its processor. true: the turn ends.
+// thread that runs is its processor. true: the stint ends.
 //
-// The time slice (TIME_SLICE ticks) is the longest turn under each
+// The time slice (TIME_SLICE ticks) is the longest stint under each
 // strategy: at its end the processor passes through schedule_pick, where
 // it takes a thread from a queue with more load. Without it, a thread
 // alone in its queue under EEVDF keeps its processor while threads wait in
@@ -401,15 +401,15 @@ clock_advance :: #force_inline proc "contextless" (queue: ^Run_Queue, virtual: u
 	}
 }
 
-// The fair strategy: the idea of CFS. The least virtual time runs. A turn
-// is the target latency divided by weight, at least the least turn. A
+// The fair strategy: the idea of CFS. The least virtual time runs. A stint
+// is the target latency divided by weight, at least the least stint. A
 // woken thread is at most the credit under the queue clock, and preempts
 // when its virtual time is less by more than the wake granularity.
 
 // A thread that is placed (new, or placed again after a change of
 // strategy: the two cases are one, so each thread of a change starts equal)
-// starts one least turn, weighted, after the queue clock: a process that
-// creates threads all the time does not get a turn before each other thread.
+// starts one least stint, weighted, after the queue clock: a process that
+// creates threads all the time does not get a stint before each other thread.
 //
 // A thread that waits keeps its position relative to the queue clock
 // (`lag`, written by fair_stopping), not its virtual time: the clock can
@@ -421,7 +421,7 @@ clock_advance :: #force_inline proc "contextless" (queue: ^Run_Queue, virtual: u
 fair_ready :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^Thread, kind: Ready_Kind) {
 	switch {
 	case !thread.placed || kind == .New:
-		thread.virtual = queue.virtual + weighted(fair_least_turn, thread.weight)
+		thread.virtual = queue.virtual + weighted(fair_least_stint, thread.weight)
 		thread.placed = true
 	case kind == .Woken:
 		thread.virtual = queue.virtual + u64(thread.lag)
@@ -454,8 +454,8 @@ fair_tick :: proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Th
 		return false
 	}
 	// The weights are at most 2^10 each, 2^18 for the 256 threads.
-	turn := max(fair_least_turn, fair_latency * u64(thread.weight) / u64(thread.weight + queue.weight))
-	return cycles_now() - cpu.turn_start >= turn
+	stint := max(fair_least_stint, fair_latency * u64(thread.weight) / u64(thread.weight + queue.weight))
+	return cycles_now() - cpu.stint_start >= stint
 }
 
 // A thread that waits keeps its distance to the queue clock, at most the
@@ -593,7 +593,7 @@ eevdf_pick :: proc "contextless" (queue: ^Run_Queue, home: u32, taker: u32) -> ^
 	return best != nil ? best : least
 }
 
-// A thread that used its request gets a new deadline; its turn ends if
+// A thread that used its request gets a new deadline; its stint ends if
 // another thread waits in the queue.
 eevdf_tick :: proc "contextless" (queue: ^Run_Queue, cpu: ^Processor, thread: ^Thread, cycles: u64) -> bool {
 	charge(thread, cycles)

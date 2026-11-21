@@ -7,7 +7,7 @@ The model is the one that Erlang found: an actor is isolated, a crashed actor st
 ## The constraints
 
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "9. A storage engine with one private store per process": each change is one commit, on the disk when the call returns. The state that must outlive a process is in its store already.
-- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "2. Sandbox by default", and "20. No ambient access: the other holes to close": a restart gives no new access. A process that starts again gets the grants of its role, and a client gets no new grant to reach it.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "2. Sandbox by default", and "20. No ambient access: the other holes to close": a restart gives no new access. A process that starts again gets the grants of its start grant set, and a client gets no new grant to reach it.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "4. Base interface: non-blocking command buffers", and "6. One communication mechanism between processes": no new kernel operation for a call, and no second way to signal a stop.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "16. Removed concepts": no signals, no init system with units. A start is asked for by a process.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "22. General mechanisms, and a plain expression for each frequent task": one mechanism for a restart, whoever the starter is.
@@ -51,7 +51,7 @@ A starter learns of the stop of a child by the handle of the child, with the rig
 
 **One for one is the rule.** A stopped holder starts again alone. Its clients keep their connections (below), so no client stops with it.
 
-**One for all comes from the context of a process.** A connection that a client gets after its start can be given to a new holder. A ring in a context slot of a process that the client cannot receive again is different: the input ring in the context of the compositor, the block ring in the context of the storage service. When the provider of such a ring stops, the dependent cannot go on, so the starter stops the dependent and starts both again, the provider first. This set is the **restart group** of the provider. The root service derives it from the role table (`process_roles`), the data that already says which context needs which service ([start_policy.md](start_policy.md), "What the root service keeps in code"). No list declares it.
+**One for all comes from the context of a process.** A connection that a client gets after its start can be given to a new holder. A ring in a context slot of a process that the client cannot receive again is different: the input ring in the context of the compositor, the block ring in the context of the storage service. When the provider of such a ring stops, the dependent cannot go on, so the starter stops the dependent and starts both again, the provider first. This set is the **restart group** of the provider. The root service derives it from the role table (`start_grant_sets`), the data that already says which context needs which service ([start_policy.md](start_policy.md), "What the root service keeps in code"). No list declares it.
 
 The way to make a group smaller is to move a ring out of the context and into a connection that a new holder takes. Property 23 does this for each role: a client gets the connection to a role in a context slot or with `connect`, and either survives a restart of the holder under the rules below.
 

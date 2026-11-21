@@ -237,10 +237,10 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	// The slots of a device service are the layout of package pci and of
 	// the ring of its contract: each handle takes its own slot, so a new
 	// handle of the layout cannot take the slot of another in silence.
-	role := role_of(kind.name)
+	start_grant_set := start_grant_set_of(kind.name)
 	context_grants: system.Context_Grants
 	values: system.Context_Values
-	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role))
+	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set))
 	system.grant_put(&context_grants, pci.GRANT_MACHINE, {machine, {.Physical}})
 
 	// Behind a conventional bridge, the registers of each other device
@@ -371,7 +371,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	if behind_conventional_bridge {
 		driver.bridge_group = group
 	}
-	driver.role = role
+	driver.start_grant_set = start_grant_set
 	driver.granted = {.Log}
 	copy(driver.name[:len(driver.name) - 1], kind.name)
 	if place.bus == 0 {

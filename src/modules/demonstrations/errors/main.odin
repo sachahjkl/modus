@@ -636,7 +636,7 @@ tally_load :: proc "contextless" () -> bool {
 	return true
 }
 
-requests: ring.Ring // To the root service: Connect only (the grant Connect), and its role in the root service names no service.
+requests: ring.Ring // To the root service: Connect only (the grant Connect), and its start grant set in the root service names no service.
 has_requests: bool
 request_tag: u32
 

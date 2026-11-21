@@ -118,7 +118,7 @@ The report of a process (`monitor.processes()`, `Process_Report`) adds the work 
 
 - **See what services do for a process.** `work("console")`.
 - **See which client a service works for.** `work_of("storage")`: one row for each connection of the service, with the client, its pages and its time.
-- **Give a client more room in a service.** The amount in its role, or in the call `connect("storage", pages = 4096)`, between the least and the largest amount of the contract.
+- **Give a client more room in a service.** The amount in its start grant set, or in the call `connect("storage", pages = 4096)`, between the least and the largest amount of the contract.
 
 ## Open questions
 

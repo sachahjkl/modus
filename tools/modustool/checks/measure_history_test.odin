@@ -10,7 +10,7 @@ measure_history_series_read_the_lines_of_the_record :: proc(t: ^testing.T) {
 	lines := [len(measure_history_series)]string {
 		"[locks] locks: kernel entries in one second, each locker on its own objects: 1 locker 7616000, 2 lockers 13041706, 4 lockers 25399040",
 		"[clock] clock: the time page: 1106119202 reads in one second, 0 kernel entries for one million reads",
-		"[scheduler] scheduler: EEVDF: two threads that wake each other, a spinner on each processor: 200581 wakes in one second (80106 turns ended on the processor of the waker, 85 by an interrupt, 430 moves)",
+		"[scheduler] scheduler: EEVDF: two threads that wake each other, a spinner on each processor: 200581 wakes in one second (80106 stints ended on the processor of the waker, 85 by an interrupt, 430 moves)",
 		"[vector_glyphs] vector_glyphs: one glyph from its outline, in fixed point, with the stripes (the least of batches): scale 1 3887 ns, scale 2 8568 ns, scale 3 16922 ns; from the glyph cache: 201 ns; Spleen 8x16: 22 ns",
 		"[compositor] " + COMPOSITOR_FULL_FRAME + "with 17 windows in 2272 us",
 		"[disk] disk: read, 1 block in each request, 32 in flight: 429355 blocks in one second, kernel entries for 100 requests: 10 of this process, 18 of the block service, 0 errors",

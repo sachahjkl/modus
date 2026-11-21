@@ -17,7 +17,7 @@
 // that it needs; this process shows that strength.
 //
 // **Start**: `start("randomness")` in the console, or the bar of the
-// desktop. Its row of `process_roles` has no grant: the root service writes the
+// desktop. Its row of `start_grant_sets` has no grant: the root service writes the
 // facts of the seed into its context because of its name, and these are
 // facts, not the seed.
 //

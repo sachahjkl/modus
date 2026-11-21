@@ -240,7 +240,7 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 		expect(t, render(t, file, "Start_Refused_Budget_Too_Small", {{"pages", min(count, largest_size)}, {"processes", count}, {"threads", count}, {"refused_process", process}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": its budget of ", sentence.Size{min(count, largest_size), .Pages}, ", ", count, " processes and ", count, " threads is too small for its load: the module asks for too little"))
 		// A slot is the word of the starter: a negative slot writes its
 		// bits, as u64(slot) did.
-		expect(t, render(t, file, "Start_Refused_Context_Handle", {{"slot", count}, {"refused_process", process}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": two grants of its role take the handle ", count, " of its context, and a handle would be lost"))
+		expect(t, render(t, file, "Start_Refused_Context_Handle", {{"slot", count}, {"refused_process", process}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": two grants of its start grant set take the handle ", count, " of its context, and a handle would be lost"))
 		expect(t, render(t, file, "Start_Refused_Context_Value", {{"value_place", count}, {"refused_process", process}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": two parts of its start write the value ", count, " of its context, and a value would be lost"))
 		for mapping in MAPPINGS {
 			expect(t, render(t, file, "Mapping_Dropped", {{"capacity", count}, {"mapping", mapping}}), line_of_before("root: no room for ", mapping, " in the mappings of a start, which holds ", count, ": the process starts without it"))

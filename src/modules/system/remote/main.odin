@@ -60,7 +60,7 @@
 // - **Remote_Clients**: the client table, read-only: the key of each
 //   client that a principal allowed, and that principal.
 // - **Connect**: a ring to the root service for `Connect` and `Disconnect`,
-//   to the services of its role (`process_roles`): compositor, date, debugger, inspect,
+//   to the services of its start grant set (`start_grant_sets`): compositor, date, debugger, inspect,
 //   log, manual, monitor, settings and storage, each for one row of the
 //   client table. A call to another service fails with the refusal of the
 //   root service.
@@ -273,7 +273,7 @@ Service_Connection :: struct {
 	count:         u64, // The calls through this connection.
 }
 
-// The 9 services of the row of "remote" in process_roles in the root service, for each of
+// The 9 services of the row of "remote" in start_grant_sets in the root service, for each of
 // the CAPACITY connections, each of which can have a key of another row.
 SERVICE_CONNECTION_CAPACITY :: 24
 

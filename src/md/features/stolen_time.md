@@ -38,7 +38,7 @@ The record, the constants, the decision from `CPUID` and the arithmetic are the 
 
 ## What does not change
 
-- **The length of a turn and of a period.** A turn ends by the cycle counter since the pick, and a period by the cycle counter since its start. Both are time of the machine, not time of a thread: a turn is a bound of latency for the other threads, and a period is the time against which a limit holds. A turn in which the host took the processor away is shorter for the thread, and it is right for the other threads.
+- **The length of a stint and of a period.** A stint ends by the cycle counter since the pick, and a period by the cycle counter since its start. Both are time of the machine, not time of a thread: a stint is a bound of latency for the other threads, and a period is the time against which a limit holds. A stint in which the host took the processor away is shorter for the thread, and it is right for the other threads.
 - **The run time in ticks.** `Thread_Report.run_time` and `Process_Report.run_time` count the ticks in which a thread ran. A processor that the host does not run gets no tick, so this count already holds no stolen time; it holds the share that the host gives each processor, which is what the check of the share policy still meets (`ROADMAP.md`).
 
 ## The deadline of a limit

@@ -2,7 +2,7 @@
 // its name, and the name of each one.
 //
 // The root service decides the start grants of a process
-// (`process_roles` in `src/modules/system/root/roles.odin`). The list is a contract because
+// (`start_grant_sets` in `src/modules/system/root/start_grant_sets.odin`). The list is a contract because
 // a second party reads it: the root service puts the number of a start
 // grant in an error record when that grant refuses the debug access to a
 // process (errors.Unit.Debug_Access), and the reader of the record writes
@@ -14,8 +14,8 @@
 // letters: `Store`, `System_Part`. The site, the guides and the log write
 // it so. A name in lower case (`store`, `machine`) is another thing: a
 // recorded grant (`system.Root_Grant`), which `grants` shows and `revoke`
-// takes in the console. A start grant says what the role of a process
-// gives; a recorded grant says which handles the root service gave and can
+// takes in the console. A start grant says what a process receives at its
+// start; a recorded grant says which handles the root service gave and can
 // end. Several start grants are one recorded grant (`Inspect`, `Stop`,
 // `Schedule`, `Events` and `Counters` are rights of the one handle
 // `machine`), and a
@@ -47,7 +47,7 @@ Grant :: enum i64 {
 	Replace            = 12, // Change the replacement table of the machine (Root_Command.Replace).
 	Network            = 13, // An endpoint in the network service, with the grant of endpoint_of: datagrams, or segments of TCP.
 	Network_Device     = 14, // The frame service of the network device, with the right Read, and its frame ring, and a control ring from the root service.
-	Connect            = 15, // A ring to the root service that serves Connect and Disconnect only, to the services of its role (process_roles in src/modules/system/root/roles.odin).
+	Connect            = 15, // A ring to the root service that serves Connect and Disconnect only, to the services of its start grant set (start_grant_sets in src/modules/system/root/start_grant_sets.odin).
 	Schedule           = 16, // The machine, with the right Schedule: change the scheduling strategy of the machine.
 	Settings           = 17, // The settings page with Write (modus:contract/settings): the one writer of the settings of the machine.
 	Clock              = 18, // The date page with Write and the two ports of the real-time clock (modus:contract/date): the one writer of the date.

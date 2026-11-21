@@ -76,7 +76,7 @@ OPERATION_FUZZING_NAME :: "operation_fuzzing"
 // list of such a name, and the tool refuses a wiring row whose writer row
 // names one. One table names them for the three.
 Root_Procedure :: enum u8 {
-	None              = 0, // The name starts with the grants of its role, and takes a list.
+	None              = 0, // The name starts with the grants of its start grant set, and takes a list.
 	Input             = 1,
 	Compositor        = 2,
 	Settings          = 3,

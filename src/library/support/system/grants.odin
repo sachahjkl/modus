@@ -18,7 +18,7 @@ import "modus:contract/start_grant"
 // one device service, the TPM or an endpoint of the network, and a device
 // service or the replacement table. Each
 // starter of the root service writes each handle and each value through
-// one procedure that refuses a place that is taken already, so a role that
+// one procedure that refuses a place that is taken already, so a start grant set that
 // holds two roles of one slot does not start, and loses no handle and no
 // value in silence (src/md/api/root_ring.md).
 // The package of each reader names its slots after this table: an alias,
@@ -41,7 +41,7 @@ GRANT_TERMINAL_PROCESS :: 1 // A terminal: the process that writes, with Read.
 // process: **Inspect** to read the reports of the processes and of the
 // kernel, **Stop** to stop the machine, **Schedule** to change the
 // scheduling strategy.
-GRANT_MACHINE :: 2 // The machine, with the rights of the role: Inspect, or Inspect and Stop.
+GRANT_MACHINE :: 2 // The machine, with the rights of the start grant set: Inspect, or Inspect and Stop.
 // The handle 3: the memory of the boot image, with **Read**, for a process
 // with the grant Image: it lists the modules, loads them, and reads the
 // descriptions of their exports. Its size is the value 0.
@@ -153,10 +153,10 @@ GRANT_VALUE_TERMINAL_MEASURE :: 6
 GRANT_VALUE_SEAL_ALLOWED :: 13
 
 // The context slot of each handle that the root service gives at a start
-// (root_ring.Role_Handle). The table is whole: a new handle does not
+// (root_ring.Start_Grant_Set_Handle). The table is whole: a new handle does not
 // compile until its row names its slot.
 @(rodata)
-ROLE_HANDLE_SLOTS := [root_ring.Role_Handle]int {
+START_GRANT_SET_HANDLE_SLOTS := [root_ring.Start_Grant_Set_Handle]int {
 	.Display         = GRANT_DISPLAY,
 	.Root_Ring       = GRANT_ROOT,
 	.Machine         = GRANT_MACHINE,
@@ -184,14 +184,14 @@ ROLE_HANDLE_SLOTS := [root_ring.Role_Handle]int {
 	.Log             = op.CONTEXT_LOG,
 }
 
-// role_slot_taken_twice says if two handles of a role take one context
-// slot, and the first such slot: a start of that role is refused. It reads
+// start_grant_set_slot_taken_twice says if two handles of a start grant set take one context
+// slot, and the first such slot: a start of that start grant set is refused. It reads
 // the same mapping that a start writes by.
-role_slot_taken_twice :: proc "contextless" (role: bit_set[start_grant.Grant]) -> (slot: int, twice: bool) {
+start_grant_set_slot_taken_twice :: proc "contextless" (start_grant_set: bit_set[start_grant.Grant]) -> (slot: int, twice: bool) {
 	trial: Context_Grants
-	for handle in root_ring.role_handles(role) {
-		if !grant_put(&trial, ROLE_HANDLE_SLOTS[handle], {handle = 1}) {
-			return ROLE_HANDLE_SLOTS[handle], true
+	for handle in root_ring.start_grant_set_handles(start_grant_set) {
+		if !grant_put(&trial, START_GRANT_SET_HANDLE_SLOTS[handle], {handle = 1}) {
+			return START_GRANT_SET_HANDLE_SLOTS[handle], true
 		}
 	}
 	return 0, false
@@ -412,14 +412,14 @@ replacements_write :: proc "contextless" (table: ^Replacement_Table, from, to: [
 // revocation ends each handle and each mapping that came from it.
 //
 // A recorded grant is not a start grant (modus:contract/start_grant). A start
-// grant says what the role of a process gives, and its name has capital
+// grant says what the start grant set of a process gives, and its name has capital
 // letters (`Inspect`). A recorded grant says which handle the root service
 // gave, and its name is in lower case (`machine`): the console types it.
 // Several start grants are one recorded grant: `Inspect`, `Stop`,
 // `Schedule` and `Events` are rights of the one handle `machine`.
 Root_Grant :: enum u32 {
 	Log         = 0, // Write on the log.
-	Machine     = 1, // The machine, with the rights of the role.
+	Machine     = 1, // The machine, with the rights of the start grant set.
 	Image       = 2, // Read the boot image.
 	Log_Records = 3, // Read the records of the log.
 	Store       = 4, // A private store in the storage service.

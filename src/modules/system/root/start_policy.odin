@@ -303,7 +303,7 @@ start_policy_running :: proc "contextless" () -> ^Started {
 	for &item in started {
 		// A failed start policy whose stop this service asked can still run
 		// past the bound of the stage Stopping: it is not the one that runs.
-		if item.process != 0 && .Start_Policy in item.role.grants && !item.stop_asked_by_root_service {
+		if item.process != 0 && .Start_Policy in item.start_grant_set.grants && !item.stop_asked_by_root_service {
 			if state, _, _ := system.process_state(item.process); state != .Stopped {
 				return &item
 			}
@@ -408,7 +408,7 @@ start_policy_step :: proc "contextless" () {
 	case .Stopping:
 		left := 0
 		for &item in started {
-			if item.process != 0 && (item.asked_by_start_policy || .Start_Policy in item.role.grants) {
+			if item.process != 0 && (item.asked_by_start_policy || .Start_Policy in item.start_grant_set.grants) {
 				left += 1
 			}
 		}
@@ -462,7 +462,7 @@ start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) ->
 
 // start_policy_start runs a Start from the start policy that runs. A part
 // of the system starts by its own procedure, which only this service holds
-// the handles of; each other name starts with the grants of its role, and
+// the handles of; each other name starts with the grants of its start grant set, and
 // with the wiring list of the wiring rows of its start list
 // (src/md/features/module_outputs.md, "The wiring rows of a start list").
 // The completion has a handle of the process with the rights Read and
@@ -561,7 +561,7 @@ start_policy_facts :: proc "contextless" (sender: ^Started, name: string) -> sta
 	return {
 		sender_runs               = sender == start_policy_process,
 		name_runs                 = find_running(name) != nil,
-		name_is_a_start_policy    = .Start_Policy in role_of(name).grants,
+		name_is_a_start_policy    = .Start_Policy in start_grant_set_of(name).grants,
 		name_is_of_a_test_machine = start_list.root_procedure_of(name) == .Shortage || start_list.root_procedure_of(name) == .Operation_Fuzzing,
 		name_in_image             = len(system.image_find(image, name)) != 0,
 	}

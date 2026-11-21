@@ -168,7 +168,7 @@ start_policy_choice_end :: proc "contextless" () {
 // so a name that a table of this service gives a grant, or that a module of
 // the boot image has, would take them.
 nickname_reserved_for_a_start_policy :: proc "contextless" (nickname: string) -> bool {
-	return name_is_a_system_part(nickname) || role_names_the_process(nickname) || len(system.image_find(image, nickname)) != 0
+	return name_is_a_system_part(nickname) || start_grant_set_names_the_process(nickname) || len(system.image_find(image, nickname)) != 0
 }
 
 // start_policy_chosen_nickname_text gives the nickname of the chosen start
@@ -252,7 +252,7 @@ start_policy_chosen_load_ended :: proc "contextless" (status: system.Status) {
 // start_policy_chosen_run starts the chosen start policy from the bytes of
 // its file, which this service checked. It receives what the start policy
 // of the boot image receives, with no list: its root ring, the log, the
-// date page, its fresh bytes page and the machine parts page. Its role is
+// date page, its fresh bytes page and the machine parts page. Its start grant set is
 // the grant Start_Policy and nothing else, whatever its row: no store, no
 // window, no right of the machine. Its budget comes from the one budget of
 // the disk processes, as each module of a disk. It is measured into PCR 12
@@ -280,7 +280,7 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 	copy(slot.name[:len(slot.name) - 1], name)
 	slot.principal = principals.MACHINE
 	slot.from_disk = true
-	slot.role = {grants = {.Start_Policy}}
+	slot.start_grant_set = {grants = {.Start_Policy}}
 	slot.reserved = true
 	context_grants: system.Context_Grants
 	values: system.Context_Values

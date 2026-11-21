@@ -253,7 +253,7 @@ A test reads the semantic tree. Today a step waits for an element line, a log fa
 - **The relations and the names are words and ranges of one frame.** They name nothing across frames; the reader resolves them in the copy of one serial.
 - **The pushes cost two records for each element.** The measure is the window `interface_elements` (68 records today) and the size of each window memory, from the build; the publication costs nothing while no holder runs.
 - **The integer of a value is not always the number that the principal reads.** The value text is what the reader says; the integer serves a reader that compares or a switch that moves by a step.
-- **The terms.** An element role is not a role of property 23. The glossary defines "element role" for the one and keeps "role" for the other, as it keeps "process role" apart.
+- **The terms.** An element role is not a role of property 23. The glossary defines "element role" for the one and keeps "role" for the other, as it keeps "start grant set" apart.
 
 ## The frequent tasks
 

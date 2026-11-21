@@ -36,7 +36,7 @@ A wide scope is a member of the enum `Wide_Scope` of the contract, with a bounda
 
 | Scope | What the agent can do | What enforces the boundary | Its place bound |
 |---|---|---|---|
-| `Console_Lines` | Run lines of Lex in an agent console: a console that the root service starts for the grant, in the session of the principal, which reaches only what the other kept scopes give | The role of the agent console: its start grants are the union of the kept scopes, never the role of the console of the principal | None: the other scopes bound what the lines reach |
+| `Console_Lines` | Run lines of Lex in an agent console: a console that the root service starts for the grant, in the session of the principal, which reaches only what the other kept scopes give | The start grant set of the agent console: its start grants are the union of the kept scopes, never the start grant set of the console of the principal | None: the other scopes bound what the lines reach |
 | `Screen_View` | See the screen, as a viewer with `View` | The use `View` of the row, and the session in front ([remote_display.md](remote_display.md), "The authority") | None |
 | `Input` | Send keys and the pointer, as a viewer with `Input`; needs `Screen_View` | The input face of the trusted display, which drops each record for a window outside the bound | The windows of chosen processes; or every window, which includes the palette and the window of each console |
 | `Processes` | Start and stop the processes of the session | The root commands `Start` and `Stop` in the sender table of the agent console, for the processes of its own session | The names or nicknames chosen; or each one |
@@ -148,7 +148,7 @@ A press on revoke, `agent_disallow(key)`, the end of the time bound, the lock of
 ## The order of the work
 
 1. **The scopes `Screen_View` and `Input` with the mark and the screen.** The wide grant on the row of a client key, the screen of the contract, the proof in `unlock`, the time bounds, the place bound of `Input` by window, the mark with its revoke, the suspension at a second connection, and the act records of the trusted display and of the root service. It needs the first layer of the powerbox and the collector as the reader of the act records.
-2. **`Console_Lines`, `Processes` and `Log_Read`**: the agent console with its role from the kept scopes, the act records of the console, and the rule that an `Apply` that adds a grant needs the proof while a grant holds.
+2. **`Console_Lines`, `Processes` and `Log_Read`**: the agent console with its start grant set from the kept scopes, the act records of the console, and the rule that an `Apply` that adds a grant needs the proof while a grant holds.
 3. **`Stores`**, with the picker of the powerbox and the shares.
 4. **"Asks each time"**, through the grant dialog of the powerbox.
 5. **A wide grant to the hash of a module**, for an agent that runs on modus.

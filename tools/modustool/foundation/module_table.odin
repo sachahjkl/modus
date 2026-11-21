@@ -16,7 +16,7 @@ Module_Build :: struct {
 	imports: []string,
 	kernel:  bool,
 	// A module with an entry function, which the root service
-	// starts. The roles of the root service name each such module of the
+	// starts. The start grant sets of the root service name each such module of the
 	// boot image, the site shows it as a module with an entry, and a host test checks that
 	// its source has the entry. A module of any group can be one: a module
 	// group says what a module is for, not whether it starts.

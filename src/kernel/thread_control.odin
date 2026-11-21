@@ -518,7 +518,7 @@ thread_schedule_read :: proc "contextless" (thread: ^Thread) -> (schedule: op.Th
 //
 // All of it is one section of the run lock of the home of the thread
 // (run_lock reads the home again after the take): a pick, a move, a wake,
-// a tick, the end of a turn, a stop and the conversion of the queue to
+// a tick, the end of a stint, a stop and the conversion of the queue to
 // another strategy each take that lock, so each one sees the old schedule
 // whole or the new one whole (docs/ARCHITECTURE.md, "Locks of the kernel").
 // No weight is ever above its limit: both are written in this section.
@@ -610,20 +610,20 @@ thread_placement_read :: proc "contextless" (thread: ^Thread) -> (placement: op.
 //   its meaning in each queue of the same strategy;
 // - a thread on a processor keeps its home: only its processor takes it
 //   out of there. It moves when it leaves that processor (schedule), at
-//   the end of its turn at the latest.
+//   the end of its stint at the latest.
 //
-// The write ends the turn of no other thread, and sends no interrupt to a
+// The write ends the stint of no other thread, and sends no interrupt to a
 // processor that runs a thread: the thread that runs there when an
 // interrupt arrives can be a thread of another process, which would pay
 // for it. It wakes only an idle processor, for a thread that it left in a
 // list (below). When the calling
-// thread wrote its own set and its processor is not in it, its own turn
+// thread wrote its own set and its processor is not in it, its own stint
 // ends at the end of this kernel entry (is_caller).
 //
 // A write that gives a processor to a thread that stays in the list of its
 // home makes the processors look at that list (kick): an idle processor
 // that the set has now takes the thread. Without it that processor stays
-// idle until another wake, because the end of a turn wakes no processor.
+// idle until another wake, because the end of a stint wakes no processor.
 // Only the holder of the machine widens a set, so no process commands
 // these wakes.
 //

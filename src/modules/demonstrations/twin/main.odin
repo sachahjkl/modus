@@ -9,7 +9,7 @@
 // counts of the kernel while its twins run.
 //
 // **Start**: only `frames` starts it, from the boot image. Its row of
-// `process_roles` has no grant. It has no window and writes nothing on the
+// `start_grant_sets` has no grant. It has no window and writes nothing on the
 // log.
 package twin
 

@@ -17,7 +17,7 @@
 // Machine_Usable and Wire, and the machine parts page, read-only. It asks
 // for the wiring that the root service refuses to a start policy from the
 // disk (wiring_refusals.odin). It has no row in
-// `process_roles`.
+// `start_grant_sets`.
 //
 // **What a reader sees.** No window. The log has "disk_start_policy: ok",
 // the handles of its context, the refusal of a start of the start policy

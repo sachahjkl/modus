@@ -36,7 +36,7 @@ import "modus:support/system"
 #assert(principals.VALUE_SEAL_ALLOWED == system.GRANT_VALUE_SEAL_ALLOWED)
 
 // grant_slot_refused writes the line of a start that a taken slot stopped:
-// two roles of the process have one slot, and the process does not start
+// two grants of the start grant set of the process have one slot, and the process does not start
 // with one of the two handles lost. A slot is an int that the starter
 // named, which can be negative: the line writes its word.
 grant_slot_refused :: proc "contextless" (name: string, slot: int) {

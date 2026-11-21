@@ -44,7 +44,7 @@ The planned domains get a delegated service from their first line:
 - **The powerbox** is a service of its own, `powerbox`, with one grant: a share of an object of a store of the principal of its caller, with Read or with Read and Write, given to the process that asked, after a pick on a trusted surface of the display. It reads no object.
 - **The mapping of a language pack** stays a mapping of a resource of the image by its hash, which the core makes at the start of a process; the choice of the pack is a setting of `settings`.
 
-The core keeps the rest: about 6 300 lines today (`main.odin` without the fixed starters, `start.odin`, `roles.odin`, `root_ring.odin`, `start_policy.odin`, `budgets.odin`, `trust.odin`, `replacement.odin`, `fresh_bytes.odin`, the pages, the debug access, and their log facts). The fixed starters leave it as role grants, and the roles of the plan come in.
+The core keeps the rest: about 6 300 lines today (`main.odin` without the fixed starters, `start.odin`, `start_grant_sets.odin`, `root_ring.odin`, `start_policy.odin`, `budgets.odin`, `trust.odin`, `replacement.odin`, `fresh_bytes.odin`, the pages, the debug access, and their log facts). The fixed starters leave it as role grants, and the roles of the plan come in.
 
 ## The refused forms
 

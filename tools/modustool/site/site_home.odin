@@ -69,7 +69,7 @@ site_boot_stage_texts := [?]Site_Boot_Stage_Text {
 	},
 	{
 		stage = "kernel: root service",
-		does = "The kernel builds the root service from the module `root` of the boot image and gives it every handle that exists at the start. The root service is the first process: it starts each other process with the grants of its role.",
+		does = "The kernel builds the root service from the module `root` of the boot image and gives it every handle that exists at the start. The root service is the first process: it starts each other process with the grants of its start grant set.",
 		runs = "The kernel, then the root service.",
 		guide = "docs/ARCHITECTURE.md",
 		heading = "U2. Root service",

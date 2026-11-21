@@ -14,7 +14,7 @@ Today the root service gives each role to a module by its name: it starts `compo
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "11. Reproducible system": an identity is a hash.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "17. Trusted boot: UEFI program, Secure Boot, TPM": the display, the input and the console are the trusted path, and a choice of principal 0 that changes the start is measured.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "22. General mechanisms, and a plain expression for each frequent task": one mechanism for every role, and no copy tool.
-- [../api/root_ring.md](../api/root_ring.md): trust already comes from the process role and never from the name.
+- [../api/root_ring.md](../api/root_ring.md): trust already comes from the start grant set and never from the name.
 
 ## The chosen form
 
@@ -36,8 +36,8 @@ The check runs when the root service reads the plan, before any start: a plan th
 
 A client of a role reaches the holder in one of two ways:
 
-- **In its context, at its start.** Its process role names the roles that it needs: a window for each process with a surface, a terminal, a private store. The root service puts a connection to the holder of each in a context slot, as it does today for the window ring and the store.
-- **With `connect(role.display)`, while it runs.** The argument is a member of `Role`, never a text. The root service refuses it with `No_Grant` when the process role of the caller does not hold the right to connect to that role, before it says whether a holder exists.
+- **In its context, at its start.** Its start grant set names the roles that it needs: a window for each process with a surface, a terminal, a private store. The root service puts a connection to the holder of each in a context slot, as it does today for the window ring and the store.
+- **With `connect(role.display)`, while it runs.** The argument is a member of `Role`, never a text. The root service refuses it with `No_Grant` when the start grant set of the caller does not hold the right to connect to that role, before it says whether a holder exists.
 
 The root service makes the rings and the region of the connection, gives one end to each side, and then leaves the data path. It never forwards a record. The connection carries the hash of the contract that the client was built against, so the holder serves each client in the form of its version.
 
@@ -62,7 +62,7 @@ A client holds a connection to the holder of a contract, and nothing else. So a 
 
 ### Events without a bus
 
-A role contract declares its record outputs: the windows that open and close for the display, the stops of the processes for the start policy, the changes of a setting. A process that needs one receives a wiring from the root service, by its process role or by the plan, as each record output is wired ([module_outputs.md](module_outputs.md)). Each subscriber has its own typed ring with no loss. A revocation ends one subscriber. No record goes to a process that has no wiring, and no process sees the records of another subscriber.
+A role contract declares its record outputs: the windows that open and close for the display, the stops of the processes for the start policy, the changes of a setting. A process that needs one receives a wiring from the root service, by its start grant set or by the plan, as each record output is wired ([module_outputs.md](module_outputs.md)). Each subscriber has its own typed ring with no loss. A revocation ends one subscriber. No record goes to a process that has no wiring, and no process sees the records of another subscriber.
 
 ### Conformance
 
@@ -72,7 +72,7 @@ The tests of one holder stay: a test of the bar of our compositor waits for the 
 
 ### Trust comes from the role
 
-A right of a process comes from its process role, which names the roles that it holds and the grants that each needs: the holder of `Display` gets the framebuffer and the input ring, the holder of `Console` gets the grant `Palette`. No rule reads the name of a module. The root service already applies this to the senders of the root ring ([../api/root_ring.md](../api/root_ring.md)); this design applies it to the roles.
+A right of a process comes from its start grant set, which names the roles that it holds and the grants that each needs: the holder of `Display` gets the framebuffer and the input ring, the holder of `Console` gets the grant `Palette`. No rule reads the name of a module. The root service already applies this to the senders of the root ring ([../api/root_ring.md](../api/root_ring.md)); this design applies it to the roles.
 
 ## What a client can depend on
 
@@ -105,7 +105,7 @@ A role has one holder in one scope. The scope of a terminal is one client, so ea
 ## The refused forms
 
 - **A bus, in the manner of D-Bus.** D-Bus gives every process a global namespace of text names, lets a process find each service by its name, routes every call through a broker that sees the traffic, and broadcasts signals to each listener. Each of these is a hole of property 20: a global name, ambient discovery, a deputy that sees all, and an event that reaches a process that nobody wired. What modus takes from D-Bus: the idea that a service is reached by what it does and not by where it runs. What it refuses: the names, the discovery, the broker and the broadcast.
-- **A registry of services by text name.** It is a global name that each process can ask for: the discovery that property 2 forbids, and a text that the root service parses. The role name is a member of an enum, and the process role is the right.
+- **A registry of services by text name.** It is a global name that each process can ask for: the discovery that property 2 forbids, and a text that the root service parses. The role name is a member of an enum, and the start grant set is the right.
 - **Broadcast signals.** A broadcast reaches each process that listens, with no grant, and drops a record for a slow listener or holds the writer for all. A record output gives each subscriber its own ring, with no loss.
 - **A contract named by a text, such as an interface name with a version in text.** Two contracts with one name and two meanings meet at run time. The hash of the description is the identity, and the check compares descriptions.
 - **The check of the name of a module before a role is given.** A module name is a statement of its author; the descriptions and the conformance suite are facts.

@@ -17,7 +17,7 @@
 // exists.
 //
 // **Start**: `start("workers")` in the console, or the bar of the desktop.
-// Its row of `process_roles` has no grant; its budget has room for 9 threads.
+// Its row of `start_grant_sets` has no grant; its budget has room for 9 threads.
 //
 // **What a reader sees**: the picture in the tints of the four threads,
 // which zooms in at each new picture, the tiles of each thread and the

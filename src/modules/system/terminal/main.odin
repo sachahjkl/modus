@@ -4,7 +4,7 @@
 // The terminal starts no process. The root service starts a process and its
 // terminal, and gives the same terminal ring and text region to the two.
 // The terminal holds a surface, these two memory objects, and a handle that
-// reads the state of the process: it has nothing of the role of the process.
+// reads the state of the process: it has nothing of the start grant set of the process.
 // The name of the process, the size of the text and what the window shows
 // are values of its context.
 //
@@ -44,7 +44,7 @@
 //
 // **Start**: nothing starts it by name. The root service starts one
 // terminal with each process that has the grant **Terminal**, and refuses
-// `start("terminal")`. Its row of `process_roles` has the grant
+// `start("terminal")`. Its row of `start_grant_sets` has the grant
 // System_Part only: it receives only the handles above.
 //
 // **What a reader sees**: a window with the name of the process, its

@@ -42,7 +42,7 @@ the_queues_up_to_the_wait_of_the_root_service_pass :: proc(t: ^testing.T) {
 	testing.expect(t, !refused)
 }
 
-// The queues of a start: none for a role with no ring and no stream, one
+// The queues of a start: none for a start grant set with no ring and no stream, one
 // for each of the root ring, the control ring of the network device and
 // the wiring ring, and three together.
 @(test)

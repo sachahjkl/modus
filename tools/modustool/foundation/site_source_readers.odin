@@ -6,7 +6,7 @@
 //
 // The readers read the text of the files, not the compiled module: the
 // comments of a contract are its documentation, and the compiler drops them.
-// The reader of the table of the roles of the root service reads the tree
+// The reader of the table of the start grant sets of the root service reads the tree
 // of the parser of Odin, and the comments from the lines that the tree
 // names: its rows are literals that a reader of lines cannot tell apart
 // from other code.
@@ -34,11 +34,11 @@ Source_Constant :: struct {
 	line:    int,
 }
 
-// One row of the table of the roles of the root service (`process_roles`
-// of src/modules/system/root/roles.odin): a process, its start grants and the
-// other terms of its role. A page shows each grant as one value, never the
+// One row of the table of the start grant sets of the root service (`start_grant_sets`
+// of src/modules/system/root/start_grant_sets.odin): a process, its start grants and the
+// other terms of its start grant set. A page shows each grant as one value, never the
 // literal itself.
-Role_Row :: struct {
+Start_Grant_Set_Row :: struct {
 	name:    string,
 	grants:  []string, // The members of the set of start grants, with no period: "Inspect".
 	terms:   string, // The record of the other terms as the source writes it, on one line and with no braces; "" for none.
@@ -361,7 +361,7 @@ comment_above_declaration :: proc(content, prefix: string) -> string {
 	return ""
 }
 
-// role_table_read reads the table of the roles of the root service,
+// start_grant_set_table_read reads the table of the start grant sets of the root service,
 // with the parser of Odin: a reader of lines that met another form of the
 // same code would read it wrong and say nothing. The form:
 //   a declaration "<table> := <type> {...}" at the top of the file;
@@ -372,9 +372,9 @@ comment_above_declaration :: proc(content, prefix: string) -> string {
 //   the comment of a row is the comment lines above it, after the row
 //   before, and the comment of its own lines.
 // Any other form stops the command with the file and the line.
-role_table_read :: proc(content, file, table: string) -> (rows: []Role_Row, problem: string) {
+start_grant_set_table_read :: proc(content, file, table: string) -> (rows: []Start_Grant_Set_Row, problem: string) {
 	lines := lines_of_text(content)
-	list := make([dynamic]Role_Row, context.temp_allocator)
+	list := make([dynamic]Start_Grant_Set_Row, context.temp_allocator)
 	// The tree of the parser lives in an arena of its own: every text that
 	// the result keeps is a string of the temporary allocator.
 	arena: virtual.Arena
@@ -415,7 +415,7 @@ role_table_read :: proc(content, file, table: string) -> (rows: []Role_Row, prob
 		if !is_row || row_literal.type != nil {
 			return nil, wrong_row
 		}
-		row := Role_Row{line = element.pos.line}
+		row := Start_Grant_Set_Row{line = element.pos.line}
 		name_seen, grants_seen, terms_seen := false, false, false
 		for part in row_literal.elems {
 			field, is_field := part.derived.(^ast.Field_Value)
