@@ -952,6 +952,11 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 		} else {
 			return false
 		}
+	case .Process_Stop:
+		if v[2] == 0 || read_range(process, v[2], size_of(errors.Error_Record)) {
+			return false
+		}
+		record_set(record, .Bad_Address, .Bytes, 3, v[2], size_of(errors.Error_Record), 0)
 	case .Process_State:
 		if read_range(process, v[1], size_of(op.Stop_Report), true) {
 			return false
@@ -1462,9 +1467,27 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 			}
 			itself = &processes[slot.object] == process
 		}
-		if _, limit, known := op.stop_outcome_of_operation_word(v[1], itself); !known {
+		outcome, limit, known := op.stop_outcome_of_operation_word(v[1], itself)
+		if !known {
 			record_set(record, .Bad_Value, .None, 2, v[1], limit, 0)
 			return true
+		}
+		if !op.stop_error_address_allowed(itself, outcome, v[2]) {
+			record_set(record, .Bad_Value, .None, 3, v[2], 0, 0)
+			return true
+		}
+		if v[2] != 0 {
+			stop_error: errors.Error_Record
+			if read_user(process, v[2], &stop_error, size_of(stop_error)) {
+				if kind, kind_ok := errors.kind_of_word(stop_error.kind); !kind_ok || kind == .None {
+					record_set(record, .Bad_Value, .None, 3, u64(stop_error.kind), u64(max(errors.Kind)), 0)
+					return true
+				}
+				if _, unit_ok := errors.unit_of_word(stop_error.unit); !unit_ok {
+					record_set(record, .Bad_Value, .None, 3, u64(stop_error.unit), u64(max(errors.Unit)), 0)
+					return true
+				}
+			}
 		}
 	case .Machine_Stop:
 		// A code that the host cannot receive whole.

@@ -1,6 +1,7 @@
 package operation
 
 import "modus:contract/enum_word"
+import "modus:contract/errors"
 
 // What a process says about its work when it stops itself
 // (src/md/api/process_stop.md). The process passes it to `Process_Stop`
@@ -63,4 +64,61 @@ stop_outcome_of_operation_word :: proc "contextless" (word: u64, itself: bool) -
 		return .None, limit, false
 	}
 	return outcome, limit, true
+}
+
+// stop_outcome_takes_error reports whether a self-stop with outcome may attach
+// a typed errors.Error_Record (src/md/api/process_stop.md). Only Failed and
+// Refused may attach an error record; Done, Stopped_On_Request and None cannot.
+stop_outcome_takes_error :: proc "contextless" (outcome: Stop_Outcome) -> bool {
+	switch outcome {
+	case .Failed, .Refused:
+		return true
+	case .None, .Done, .Stopped_On_Request:
+		return false
+	}
+	return false
+}
+
+// stop_error_address_allowed checks the third argument of Process_Stop at the
+// kernel border: a non-zero error address is allowed only when a process stops
+// itself with Failed or Refused. Done, Stopped_On_Request, None, and any stop
+// by another holder must pass address 0.
+stop_error_address_allowed :: proc "contextless" (itself: bool, outcome: Stop_Outcome, error_address: u64) -> bool {
+	if error_address == 0 {
+		return true
+	}
+	if !itself {
+		return false
+	}
+	return stop_outcome_takes_error(outcome)
+}
+
+// stop_error_record_valid validates a copied errors.Error_Record attached to a
+// Failed or Refused self-stop: its kind must name a known member other than
+// None, and its unit must name a known errors.Unit member.
+stop_error_record_valid :: proc "contextless" (record: errors.Error_Record) -> bool {
+	kind, kind_ok := errors.kind_of_word(record.kind)
+	if !kind_ok || kind == .None {
+		return false
+	}
+	if _, unit_ok := errors.unit_of_word(record.unit); !unit_ok {
+		return false
+	}
+	return true
+}
+
+// stop_error_of_operation is the combined pure border for the optional error
+// record of Process_Stop. On refusal, accepted is always zero and ok is false.
+// When error_address is 0 and allowed, accepted is always zero and ok is true.
+stop_error_of_operation :: proc "contextless" (itself: bool, outcome: Stop_Outcome, error_address: u64, record: errors.Error_Record) -> (accepted: errors.Error_Record, ok: bool) {
+	if !stop_error_address_allowed(itself, outcome, error_address) {
+		return {}, false
+	}
+	if error_address == 0 {
+		return {}, true
+	}
+	if !stop_error_record_valid(record) {
+		return {}, false
+	}
+	return record, true
 }

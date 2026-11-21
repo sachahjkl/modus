@@ -2,6 +2,7 @@
 package operation
 
 import "core:testing"
+import "modus:contract/errors"
 
 // A cause word that names no member is refused: one past the last member,
 // the largest word of 32 bits, a word past 32 bits whose low bits name a
@@ -229,4 +230,136 @@ each_possible_triple_reads_back :: proc(t: ^testing.T) {
 		testing.expect_value(t, read, outcome)
 		testing.expect_value(t, limit, u64(max(Stop_Outcome)))
 	}
+}
+
+// Only Failed and Refused self-stops may attach an error record; Done,
+// Stopped_On_Request, None, and every holder stop refuse any non-zero error
+// address at edges (1, page-aligned, max(u32), 1 << 32, max(u64)).
+@(test)
+a_disallowed_stop_error_address_is_refused :: proc(t: ^testing.T) {
+	addresses := [?]u64{1, 0x1000, u64(max(u32)), u64(1) << 32, max(u64)}
+	valid_record := errors.error_make(.Bad_Value, .Bytes, 1, 7, 4)
+
+	// Any holder stop with a non-zero error address is refused across all outcomes.
+	for outcome in Stop_Outcome {
+		testing.expect(t, stop_error_address_allowed(false, outcome, 0))
+		accepted, ok0 := stop_error_of_operation(false, outcome, 0, valid_record)
+		testing.expect(t, ok0)
+		testing.expect_value(t, accepted, errors.Error_Record{})
+
+		for address in addresses {
+			testing.expectf(t, !stop_error_address_allowed(false, outcome, address), "holder stop must refuse error address %x with outcome %v", address, outcome)
+			got, ok := stop_error_of_operation(false, outcome, address, valid_record)
+			testing.expectf(t, !ok, "holder stop_error_of_operation must refuse address %x with outcome %v", address, outcome)
+			testing.expect_value(t, got, errors.Error_Record{})
+		}
+	}
+
+	// Self-stops with None, Done, or Stopped_On_Request must refuse every non-zero address.
+	disallowed_self := [?]Stop_Outcome{.None, .Done, .Stopped_On_Request}
+	for outcome in disallowed_self {
+		testing.expect(t, !stop_outcome_takes_error(outcome))
+		testing.expect(t, stop_error_address_allowed(true, outcome, 0))
+		accepted, ok0 := stop_error_of_operation(true, outcome, 0, valid_record)
+		testing.expect(t, ok0)
+		testing.expect_value(t, accepted, errors.Error_Record{})
+
+		for address in addresses {
+			testing.expectf(t, !stop_error_address_allowed(true, outcome, address), "self-stop %v must refuse error address %x", outcome, address)
+			got, ok := stop_error_of_operation(true, outcome, address, valid_record)
+			testing.expectf(t, !ok, "self-stop %v must refuse record at address %x", outcome, address)
+			testing.expect_value(t, got, errors.Error_Record{})
+		}
+	}
+}
+
+// A non-zero error record attached to Failed or Refused must carry a known
+// non-None errors.Kind and a known errors.Unit; zero, negative, out-of-range,
+// and extreme values are refused with zero accepted record.
+@(test)
+an_invalid_stop_error_record_is_refused :: proc(t: ^testing.T) {
+	bad_kinds := [?]i64{
+		i64(errors.Kind.None),
+		-1,
+		min(i64),
+		i64(max(errors.Kind)) + 1,
+		i64(max(u32)) + 1 + i64(errors.Kind.Bad_Value),
+		max(i64),
+	}
+	bad_units := [?]i64{
+		-1,
+		min(i64),
+		i64(max(errors.Unit)) + 1,
+		i64(max(u32)) + 1 + i64(errors.Unit.Bytes),
+		max(i64),
+	}
+	allowed_outcomes := [?]Stop_Outcome{.Failed, .Refused}
+
+	for bad_kind in bad_kinds {
+		rec := errors.Error_Record{kind = bad_kind, unit = i64(errors.Unit.None)}
+		testing.expectf(t, !stop_error_record_valid(rec), "bad kind %d must be refused", bad_kind)
+		for outcome in allowed_outcomes {
+			got, ok := stop_error_of_operation(true, outcome, 0x4000, rec)
+			testing.expectf(t, !ok, "outcome %v must refuse bad kind %d", outcome, bad_kind)
+			testing.expect_value(t, got, errors.Error_Record{})
+		}
+	}
+
+	for bad_unit in bad_units {
+		rec := errors.Error_Record{kind = i64(errors.Kind.Bad_Value), unit = bad_unit}
+		testing.expectf(t, !stop_error_record_valid(rec), "bad unit %d must be refused", bad_unit)
+		for outcome in allowed_outcomes {
+			got, ok := stop_error_of_operation(true, outcome, 0x4000, rec)
+			testing.expectf(t, !ok, "outcome %v must refuse bad unit %d", outcome, bad_unit)
+			testing.expect_value(t, got, errors.Error_Record{})
+		}
+	}
+}
+
+// Accepted cases for Failed and Refused self-stops: address 0 yields a zero
+// record, and any valid non-None Kind with any valid Unit round-trips intact.
+@(test)
+a_valid_failed_or_refused_stop_error_record_is_accepted :: proc(t: ^testing.T) {
+	allowed_outcomes := [?]Stop_Outcome{.Failed, .Refused}
+	for outcome in allowed_outcomes {
+		testing.expect(t, stop_outcome_takes_error(outcome))
+		testing.expect(t, stop_error_address_allowed(true, outcome, 0))
+		testing.expect(t, stop_error_address_allowed(true, outcome, 0x1000))
+
+		// Address 0 produces zero record even if a non-zero scratch value is passed.
+		zeroed, ok_zero := stop_error_of_operation(true, outcome, 0, errors.error_make(.Bad_Value, .Bytes))
+		testing.expect(t, ok_zero)
+		testing.expect_value(t, zeroed, errors.Error_Record{})
+
+		for kind in errors.Kind {
+			if kind == .None {
+				continue
+			}
+			rec := errors.error_make(kind, .Pages, 2, 99, 64, 12)
+			rec.operation = 5
+			testing.expect(t, stop_error_record_valid(rec))
+			accepted, ok := stop_error_of_operation(true, outcome, 0x8000, rec)
+			testing.expect(t, ok)
+			testing.expect_value(t, accepted, rec)
+		}
+
+		for unit in errors.Unit {
+			rec := errors.error_make(.Refused, unit, 0, -1, 0, 3)
+			testing.expect(t, stop_error_record_valid(rec))
+			accepted, ok := stop_error_of_operation(true, outcome, 0x8000, rec)
+			testing.expect(t, ok)
+			testing.expect_value(t, accepted, rec)
+		}
+	}
+
+	// Verify Process_Stop form and Stop_Report / Process_Report layouts.
+	testing.expect_value(t, OPERATIONS[.Process_Stop].parameters[2].name, "error")
+	testing.expect_value(t, OPERATIONS[.Process_Stop].parameters[2].form, Form.Address)
+	stop_report: Stop_Report
+	testing.expect_value(t, size_of(stop_report.error), size_of(errors.Error_Record))
+	process_report: Process_Report
+	testing.expect_value(t, size_of(process_report.handle_count), size_of(u64))
+	testing.expect_value(t, size_of(process_report.handles_peak), size_of(u64))
+	testing.expect_value(t, size_of(process_report.mapping_count), size_of(u64))
+	testing.expect_value(t, size_of(process_report.mappings_peak), size_of(u64))
 }

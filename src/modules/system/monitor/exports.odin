@@ -28,20 +28,24 @@ Process :: struct {
 	state:    [8]u8, // created, ready, waiting or stopped.
 	cause:    [40]u8, // The stop cause of a stopped process, as op.STOP_CAUSE_TEXTS words it; empty while it runs.
 	outcome:  [24]u8, // The stop outcome of a process that stopped itself, as op.STOP_OUTCOME_TEXTS words it; empty for each other process.
-	resident: value_kinds.Size_In_Pages, // The mapped pages that have a page frame.
-	mapped:   value_kinds.Size_In_Pages, // The mapped pages.
-	handles:  i64,
-	threads:  i64,
-	time:     value_kinds.Time_In_Milliseconds, // Processor time.
-	entries:  i64, // Kernel entries.
-	started:  value_kinds.Time_In_Microseconds, // The time of the start, after the start of the machine.
+	resident:      value_kinds.Size_In_Pages, // The mapped pages that have a page frame.
+	mapped:        value_kinds.Size_In_Pages, // The mapped pages.
+	handles:       i64, // Handles currently held by the process.
+	handles_peak:  i64, // Largest count of handles held at once since start.
+	mappings:      i64, // Mappings currently held by the process.
+	mappings_peak: i64, // Largest count of mappings held at once since start.
+	threads:       i64,
+	time:          value_kinds.Time_In_Milliseconds, // Processor time.
+	entries:       i64, // Kernel entries.
+	started:       value_kinds.Time_In_Microseconds, // The time of the start, after the start of the machine.
 	// A disk process: the BLAKE3 hash of its module file, in hexadecimal,
 	// as the root service checked it. Empty: the root service did not start
 	// this process from a disk.
-	hash:    [64]u8,
+	hash:          [64]u8,
 }
 // The field holds the 64 digits that hash_write gives, with no zero byte
 // after them: a Text field ends at its end too.
+#assert(size_of(Process) == 256)
 #assert(size_of(Process) - offset_of(Process, hash) == disk_process.HASH_DIGITS)
 
 // The name of one count: a row of the table of counts_named().
@@ -131,14 +135,17 @@ processes :: proc "c" (result: ^[]Process, error: ^errors.Error_Record) -> i64 {
 		if total < len(result^) {
 			row := &result[total]
 			row^ = {
-				slot     = i64(slot),
-				resident = value_kinds.Size_In_Pages(process.present_pages),
-				mapped   = value_kinds.Size_In_Pages(process.mapped_pages),
-				handles  = i64(process.handle_count),
-				threads  = i64(process.thread_count),
-				time     = value_kinds.Time_In_Milliseconds(process.run_time),
-				entries  = i64(process.entries),
-				started  = value_kinds.Time_In_Microseconds(process.start_time),
+				slot          = i64(slot),
+				resident      = value_kinds.Size_In_Pages(process.present_pages),
+				mapped        = value_kinds.Size_In_Pages(process.mapped_pages),
+				handles       = i64(process.handle_count),
+				handles_peak  = i64(process.handles_peak),
+				mappings      = i64(process.mapping_count),
+				mappings_peak = i64(process.mappings_peak),
+				threads       = i64(process.thread_count),
+				time          = value_kinds.Time_In_Milliseconds(process.run_time),
+				entries       = i64(process.entries),
+				started       = value_kinds.Time_In_Microseconds(process.start_time),
 			}
 			// A disk process: the nickname and the hash that the root
 			// service checked, matched as the window matches them, by the

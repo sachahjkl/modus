@@ -372,9 +372,13 @@ Process :: struct {
 	new_thread_weight_limit: u32,
 	run_time:     u64,
 	start_time:   u64, // Microseconds since the machine started.
-	entries:      u64,
-	mapped_pages: u64,
-	handles:      [HANDLE_CAPACITY]Handle_Slot,
+	entries:       u64,
+	mapped_pages:  u64,
+	handles_held:  u32, // Handles currently in `handles`. Process lock.
+	handles_peak:  u32, // Largest `handles_held` reached by this process. Process lock.
+	mappings_held: u32, // Mappings currently in `mappings`. Process lock.
+	mappings_peak: u32, // Largest `mappings_held` reached by this process. Process lock.
+	handles:       [HANDLE_CAPACITY]Handle_Slot,
 	mappings:     [MAPPING_CAPACITY]Mapping,
 	modules:      [op.PROCESS_MODULE_CAPACITY]op.Module_Record, // What the loaders asserted (Process_Module).
 	stop:         op.Stop_Report, // A process that stopped on a fault: where.
@@ -906,6 +910,10 @@ handle_insert :: proc "contextless" (process: ^Process, slot: Handle_Slot) -> op
 		case .None:
 			// A free slot is not a handle: no caller inserts one.
 		}
+		process.handles_held += 1
+		if process.handles_held > process.handles_peak {
+			process.handles_peak = process.handles_held
+		}
 		return op.Handle(u32(index + 1) | u32(generation) << 16)
 	}
 	return 0
@@ -915,8 +923,9 @@ handle_insert :: proc "contextless" (process: ^Process, slot: Handle_Slot) -> op
 // that no process saw: the origin tree refused it during a revocation. The
 // tree refuses only a path with no control lock, so the handle is never of
 // a kind that handle_needs_control names.
-handle_insert_undo :: proc "contextless" (process: ^Process, handle: op.Handle) {
+handle_insert_undo :: proc "contextless" (process: ^Process, handle: op.Handle, previous_peak: u32) {
 	slot := &process.handles[u32(handle) & 0xFFFF]
+	was_held := slot.kind != .None
 	switch slot.kind {
 	case .Memory:
 		intrinsics.atomic_sub(&regions[slot.object].references, 1)
@@ -938,6 +947,10 @@ handle_insert_undo :: proc "contextless" (process: ^Process, handle: op.Handle) 
 		// handle_insert never makes a free slot.
 	}
 	slot^ = {generation = slot.generation}
+	if was_held && process.handles_held > 0 {
+		process.handles_held -= 1
+	}
+	process.handles_peak = previous_peak
 }
 
 // handle_needs_control says if a handle of this kind changes data of the
@@ -1007,6 +1020,7 @@ handle_find :: proc "contextless" (process: ^Process, handle: u64, kind: Object_
 // lock; for a kind of handle_needs_control, and for a machine handle with
 // the right Events, also the control lock.
 handle_close :: proc "contextless" (process: ^Process, slot: ^Handle_Slot) {
+	was_held := slot.kind != .None
 	origin_detach(holding_of_handle(process, slot))
 	switch slot.kind {
 	case .Memory:
@@ -1051,6 +1065,9 @@ handle_close :: proc "contextless" (process: ^Process, slot: ^Handle_Slot) {
 		// handle_find gives no free slot: nothing to release.
 	}
 	slot^ = {generation = slot.generation + 1, ended = u8(errors.End.Closed)}
+	if was_held && process.handles_held > 0 {
+		process.handles_held -= 1
+	}
 }
 
 // map_region puts pages of a region in the address space of a process. origin is
@@ -1231,6 +1248,10 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 		intrinsics.atomic_add(&region.recorded_mappings, 1)
 	}
 	process.mapped_pages += count
+	process.mappings_held += 1
+	if process.mappings_held > process.mappings_peak {
+		process.mappings_peak = process.mappings_held
+	}
 	return address, .Ok
 }
 
@@ -1371,6 +1392,9 @@ unmap :: proc "contextless" (process: ^Process, mapping: ^Mapping) {
 		lock_free(lock, .Region)
 	}
 	process.mapped_pages -= mapping.page_count
+	if mapping.page_count != 0 && process.mappings_held > 0 {
+		process.mappings_held -= 1
+	}
 	// A mapping of the registers of a device keeps the domain of that device
 	// as a handle does: the last one of the two ends it.
 	iommu_mapping_ended(process, mapping)
@@ -1879,11 +1903,11 @@ process_state :: proc "contextless" (index: u32) -> op.Process_State {
 // of these processors to leave its thread, or this call if none runs one,
 // cleans the process up. The caller holds the control lock. The first stop
 // keeps its cause and its outcome: a later stop or fault changes neither.
-process_stop :: proc "contextless" (index: u32, cause: op.Stop_Cause, outcome: op.Stop_Outcome) {
-	// Every path of the kernel names its cause, and only a stop of the
-	// process itself carries an outcome: another pair would give readers a
-	// triple that their border refuses.
-	if cause == .None || (cause == .Itself) != (outcome != .None) {
+process_stop :: proc "contextless" (index: u32, cause: op.Stop_Cause, outcome: op.Stop_Outcome, stop_error: errors.Error_Record = {}) {
+	// Every path of the kernel names its cause, only a stop of the process
+	// itself carries an outcome, and only a Failed or Refused self-stop may
+	// carry an error record.
+	if cause == .None || (cause == .Itself) != (outcome != .None) || (stop_error != {} && !(cause == .Itself && op.stop_outcome_takes_error(outcome))) {
 		stop_cause_missing(index)
 	}
 	process := &processes[index]
@@ -1904,6 +1928,9 @@ process_stop :: proc "contextless" (index: u32, cause: op.Stop_Cause, outcome: o
 	process.state = .Stopped
 	process.cause = cause
 	process.outcome = outcome
+	if stop_error != {} {
+		process.stop.error = stop_error
+	}
 	// The debugging of a process ends with the process: its debug handler
 	// is free for another process, and no ring takes a record of a process
 	// that stops.

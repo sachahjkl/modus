@@ -26,7 +26,7 @@ import "modus:contract/ring"
 STREAM_END_CAPACITY :: 16
 
 // One end that the process holds. Free when command is None.
-@(private = "file")
+@(private = "package")
 Stream_End :: struct {
 	command:            output.Wiring_Command,
 	tag:                u32, // The number of the wiring.
@@ -82,7 +82,7 @@ refused_full_mark :: proc "contextless" (index: u32, full: bool) {
 	}
 }
 
-@(private = "file")
+@(private = "package")
 stream_ends: [STREAM_END_CAPACITY]Stream_End
 
 // The tags of the ends that this process closed and whose word Closed did
@@ -90,17 +90,25 @@ stream_ends: [STREAM_END_CAPACITY]Stream_End
 // word, and the table holds one for each end of the table; a word that
 // finds no room past it is dropped, and the root service then frees the
 // count of that end at the stop of a side or at a revocation.
-@(private = "file")
+@(private = "package")
 closed_tags: [STREAM_END_CAPACITY]u32
-@(private = "file")
+@(private = "package")
 closed_tag_count: int
 
 // The wiring ring of the process: the handle 16 of its context, or the ring
 // that the root service gave an asker with its list page.
-@(private = "file")
+@(private = "package")
 wiring_ring: ring.Ring
 @(private = "file")
 wiring_ring_memory: Handle
+
+when ODIN_OS != .Freestanding {
+	// Host tests enable this seam to drive the output_write loop against
+	// host-allocated rings without calling kernel map/unmap/close or reading
+	// the thread record.
+	@(private = "package")
+	stream_ends_host_seam_active: bool
+}
 
 // The compartments in the private memory of the process: the writer builds
 // each one in its buffer before its push, and the reader copies each one
@@ -133,6 +141,11 @@ wiring_ring_open :: proc "contextless" () -> bool {
 wiring_ring_ready :: proc "contextless" () -> bool {
 	if wiring_ring.head != nil {
 		return true
+	}
+	when ODIN_OS != .Freestanding {
+		if stream_ends_host_seam_active {
+			return false
+		}
 	}
 	memory := context_record().handles[op.CONTEXT_WIRING_RING]
 	if memory == 0 {
@@ -338,6 +351,12 @@ handle_through :: proc "contextless" (handle: op.Handle, needed: Rights) -> bool
 // stream_end_close unmaps and closes what an end holds, and frees it.
 @(private = "file")
 stream_end_close :: proc "contextless" (end: ^Stream_End) {
+	when ODIN_OS != .Freestanding {
+		if stream_ends_host_seam_active {
+			end^ = {}
+			return
+		}
+	}
 	if end.ring_address != nil {
 		memory_unmap(end.ring_address)
 	}
@@ -810,7 +829,14 @@ output_write_bytes :: proc "contextless" (state: ^Output_State, bytes: []u8, wai
 		// writer is waited on with the read that its decision loaded, so a
 		// reader that reads, or reads all and waits, between the decision
 		// and the wait ends the wait at once.
-		waiting := wait_begin()
+		waiting: Wait
+		when ODIN_OS != .Freestanding {
+			if !stream_ends_host_seam_active {
+				waiting = wait_begin()
+			}
+		} else {
+			waiting = wait_begin()
+		}
 		held_by_choice, held_always, broken := false, false, false
 		for &end in stream_ends {
 			if end.command != .Writer_End || end.index != index || !end.opened {
