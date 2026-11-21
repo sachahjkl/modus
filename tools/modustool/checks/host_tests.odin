@@ -340,4 +340,5 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/lz4",
 	foundation.SOURCE_FOLDER_CONTRACT + "/xor_filter",
 	foundation.SOURCE_FOLDER_CONTRACT + "/store_search",
+	foundation.SOURCE_FOLDER_CONTRACT + "/interface_messages",
 }
