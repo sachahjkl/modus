@@ -251,9 +251,9 @@ recorded_thread_enter_input_point :: proc "contextless" (gate: ^Shared_Writer_Ga
 			}
 			entry.at_input_point = true
 			gate.threads_at_input_point += 1
-			if all_recorded_threads_at_input_point(gate) {
-				clear_waiting_writers(gate)
-			}
+			// Keep waiting writers and the one-stint wait timer armed until a
+			// waiting writer actually runs (shared_writer_begin_run), so rapid
+			// enter/leave cycles cannot reset the timer and starve writers.
 			return true
 		}
 	}
@@ -301,16 +301,8 @@ shared_writer_may_run :: proc "contextless" (gate: ^Shared_Writer_Gate, process_
 			continue
 		}
 		if all_recorded_threads_at_input_point(gate) {
-			if entry.waiting {
-				entry.waiting = false
-				if gate.waiting_writer_count > 0 {
-					gate.waiting_writer_count -= 1
-				}
-				if gate.waiting_writer_count == 0 {
-					gate.wait_timer_armed = false
-					gate.wait_started_tick = 0
-				}
-			}
+			// Wait state clears only when shared_writer_begin_run actually
+			// dispatches this writer, not on a schedule probe.
 			return true, .Run_At_Input_Point
 		}
 		if !entry.waiting {
@@ -340,6 +332,16 @@ shared_writer_begin_run :: proc "contextless" (gate: ^Shared_Writer_Gate, proces
 		if entry.process_slot == process_slot && entry.process_serial == process_serial {
 			if entry.active_cpus == max(u32) || gate.active_writer_cpus == max(u32) {
 				return false
+			}
+			if entry.waiting {
+				entry.waiting = false
+				if gate.waiting_writer_count > 0 {
+					gate.waiting_writer_count -= 1
+				}
+				if gate.waiting_writer_count == 0 {
+					gate.wait_timer_armed = false
+					gate.wait_started_tick = 0
+				}
 			}
 			entry.active_cpus += 1
 			gate.active_writer_cpus += 1

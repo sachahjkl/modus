@@ -65,6 +65,7 @@ fuzz_address_parameters := [?]Fuzz_Address_Parameter {
 	{operation = .Process_Start, parameter = 2},
 	{operation = .Process_Start, parameter = 3},
 	{operation = .Process_State, parameter = 1},
+	{operation = .Process_Stop, parameter = 2},
 	{operation = .Inspect, parameter = 3},
 	{operation = .Thread_Create, parameter = 1, code = true},
 	{operation = .Thread_Create, parameter = 2},

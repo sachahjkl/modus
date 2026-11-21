@@ -104,13 +104,26 @@ shared_writer_requires_all_recorded_threads_at_input_point :: proc(t: ^testing.T
 	testing.expect(t, !may_run)
 	testing.expect_value(t, decision, Writer_Schedule_Decision.Wait_Input_Point)
 
-	// Thread 102 enters input point -> all at input point, timer disarms, writer runs!
+	// Thread 102 enters input point -> all at input point, writer may run,
+	// and timer stays armed until shared_writer_begin_run actually dispatches it!
 	testing.expect(t, recorded_thread_enter_input_point(&gate, 102))
-	testing.expect(t, !gate.wait_timer_armed)
-	testing.expect_value(t, gate.waiting_writer_count, u32(0))
+	testing.expect(t, gate.wait_timer_armed)
+	testing.expect_value(t, gate.waiting_writer_count, u32(1))
 	may_run, decision = shared_writer_may_run(&gate, 7, 20, 140)
 	testing.expect(t, may_run)
 	testing.expect_value(t, decision, Writer_Schedule_Decision.Run_At_Input_Point)
+
+	// Rapid enter/leave before writer runs must NOT reset wait_started_tick.
+	testing.expect_value(t, recorded_thread_leave_input_point(&gate, 102), Leave_Input_Point_Result.Left)
+	testing.expect(t, gate.wait_timer_armed)
+	testing.expect_value(t, gate.wait_started_tick, u64(100))
+	testing.expect(t, recorded_thread_enter_input_point(&gate, 102))
+
+	// Once the waiting writer begins running, the wait timer disarms cleanly.
+	testing.expect(t, shared_writer_begin_run(&gate, 7, 20))
+	testing.expect(t, !gate.wait_timer_armed)
+	testing.expect_value(t, gate.waiting_writer_count, u32(0))
+	testing.expect(t, shared_writer_end_run(&gate, 7, 20))
 }
 
 // Strict one-stint bound: before stint_bound_ticks (bound - 1) and on clock

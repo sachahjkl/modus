@@ -179,28 +179,35 @@ watch_back_plan_validates_watchpoints_and_finds_last_prior_write :: proc(t: ^tes
 	testing.expect_value(t, found_plan.single_steps_after_point, u64(7))
 	testing.expect_value(t, found_plan.hit.instruction_address, u64(0x40_0030))
 
-	// Step 3: if no hit matched in [20, 25), passing empty/non-matching slice
-	// steps back automatically to [10, 20), then [0, 10), then Not_Found!
-	empty_hits := [?]Watch_Hit{{position = {22, 1}, write_address = 0x9000, write_length = 8}}
-	scan2 := watch_back_plan(&ring, 0x2000, 8, {25, 9}, empty_hits[:])
+	// Step 3: if no hit matched in [20, 25), passing a truly empty slice
+	// with has_observed_hits = true steps back to [10, 20), then [0, 10), then Not_Found!
+	scan2 := watch_back_plan(&ring, 0x2000, 8, {25, 9}, []Watch_Hit{}, has_observed_hits = true)
 	testing.expect_value(t, scan2.status, Watch_Back_Status.Scan_Window)
 	testing.expect_value(t, scan2.checkpoint.id, u64(2))
 	testing.expect_value(t, scan2.range_start, Replay_Position{10, 0})
 	testing.expect_value(t, scan2.range_end, Replay_Position{20, 0})
 
-	scan3 := watch_back_plan(&ring, 0x2000, 8, {20, 0}, empty_hits[:])
+	scan3 := watch_back_plan(&ring, 0x2000, 8, {20, 0}, []Watch_Hit{}, has_observed_hits = true)
 	testing.expect_value(t, scan3.status, Watch_Back_Status.Scan_Window)
 	testing.expect_value(t, scan3.checkpoint.id, u64(1))
 	testing.expect_value(t, scan3.range_start, Replay_Position{0, 0})
 	testing.expect_value(t, scan3.range_end, Replay_Position{10, 0})
 
-	exhausted := watch_back_plan(&ring, 0x2000, 8, {10, 0}, empty_hits[:])
+	exhausted := watch_back_plan(&ring, 0x2000, 8, {10, 0}, []Watch_Hit{}, has_observed_hits = true)
 	testing.expect_value(t, exhausted.status, Watch_Back_Status.Not_Found)
 
 	// Evict checkpoint 1 (0, 0) so oldest retained is (10, 0): scanning past
 	// (10, 0) must distinguish No_Prior_Checkpoint from Not_Found!
 	testing.expect(t, checkpoint_ring_push(&ring, Replay_Checkpoint{id = 4, position = {30, 0}, history_byte_offset = 3000}))
 	testing.expect(t, checkpoint_ring_push(&ring, Replay_Checkpoint{id = 5, position = {40, 0}, history_byte_offset = 4000}))
-	no_prior := watch_back_plan(&ring, 0x2000, 8, {20, 0}, empty_hits[:])
+	no_prior := watch_back_plan(&ring, 0x2000, 8, {20, 0}, []Watch_Hit{}, has_observed_hits = true)
 	testing.expect_value(t, no_prior.status, Watch_Back_Status.No_Prior_Checkpoint)
+
+	// Corrupt head/count on Checkpoint_Ring is refused without out-of-bounds access.
+	corrupt := ring
+	corrupt.head = corrupt.capacity
+	_, corrupt_ok := checkpoint_ring_get(&corrupt, 0)
+	testing.expect(t, !corrupt_ok)
+	testing.expect(t, !checkpoint_ring_push(&corrupt, Replay_Checkpoint{id = 6, position = {50, 0}, history_byte_offset = 5000}))
+	testing.expect_value(t, watch_back_plan(&corrupt, 0x2000, 8, {40, 0}).status, Watch_Back_Status.Invalid_Request)
 }

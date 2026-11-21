@@ -146,10 +146,13 @@ checkpoint_ring_get :: proc "contextless" (checkpoints: ^Checkpoint_Ring, chrono
 	if checkpoints == nil || checkpoints.capacity == 0 || checkpoints.capacity > CHECKPOINT_RING_CAPACITY {
 		return {}, false
 	}
+	if checkpoints.head >= checkpoints.capacity || checkpoints.count > checkpoints.capacity {
+		return {}, false
+	}
 	if chronological_index >= checkpoints.count {
 		return {}, false
 	}
-	slot := (checkpoints.head + chronological_index) % checkpoints.capacity
+	slot := u32((u64(checkpoints.head) + u64(chronological_index)) % u64(checkpoints.capacity))
 	return checkpoints.entries[slot], true
 }
 
@@ -159,6 +162,9 @@ checkpoint_ring_get :: proc "contextless" (checkpoints: ^Checkpoint_Ring, chrono
 // is untouched.
 checkpoint_ring_push :: proc "contextless" (checkpoints: ^Checkpoint_Ring, checkpoint: Replay_Checkpoint) -> bool {
 	if checkpoints == nil || checkpoints.capacity == 0 || checkpoints.capacity > CHECKPOINT_RING_CAPACITY {
+		return false
+	}
+	if checkpoints.head >= checkpoints.capacity || checkpoints.count > checkpoints.capacity {
 		return false
 	}
 	if checkpoint.id == 0 || checkpoint.id <= checkpoints.last_id {
@@ -180,13 +186,13 @@ checkpoint_ring_push :: proc "contextless" (checkpoints: ^Checkpoint_Ring, check
 		}
 	}
 	if checkpoints.count < checkpoints.capacity {
-		slot := (checkpoints.head + checkpoints.count) % checkpoints.capacity
+		slot := u32((u64(checkpoints.head) + u64(checkpoints.count)) % u64(checkpoints.capacity))
 		checkpoints.entries[slot] = checkpoint
 		checkpoints.count += 1
 	} else {
 		// Evict oldest slot at head and advance head.
 		checkpoints.entries[checkpoints.head] = checkpoint
-		checkpoints.head = (checkpoints.head + 1) % checkpoints.capacity
+		checkpoints.head = u32((u64(checkpoints.head) + 1) % u64(checkpoints.capacity))
 	}
 	checkpoints.last_id = checkpoint.id
 	return true
@@ -315,7 +321,7 @@ watch_range_valid :: proc "contextless" (address: u64, length: u32) -> bool {
 // [b_start, b_start + b_len) share at least one byte without overflow.
 @(private = "file")
 ranges_overlap :: proc "contextless" (a_start: u64, a_len: u32, b_start: u64, b_len: u32) -> bool {
-	if a_len == 0 || b_len == 0 {
+	if a_len == 0 || b_len == 0 || a_start >= op.USER_END || b_start >= op.USER_END {
 		return false
 	}
 	if u64(a_len) > op.USER_END - a_start || u64(b_len) > op.USER_END - b_start {
@@ -345,8 +351,12 @@ watch_back_plan :: proc "contextless" (
 	watch_length: u32,
 	search_end: Replay_Position,
 	observed_hits: []Watch_Hit = nil,
+	has_observed_hits: bool = false,
 ) -> Watch_Back_Plan {
 	if checkpoints == nil || checkpoints.capacity == 0 || checkpoints.capacity > CHECKPOINT_RING_CAPACITY {
+		return {status = .Invalid_Request}
+	}
+	if checkpoints.head >= checkpoints.capacity || checkpoints.count > checkpoints.capacity {
 		return {status = .Invalid_Request}
 	}
 	if !watch_range_valid(watch_address, watch_length) {
@@ -365,7 +375,7 @@ watch_back_plan :: proc "contextless" (
 		}
 	}
 
-	if observed_hits == nil {
+	if !has_observed_hits && observed_hits == nil {
 		points, steps := forward_range_steps(chosen.position, search_end)
 		return Watch_Back_Plan {
 			status                   = .Scan_Window,
