@@ -73,11 +73,11 @@ build_compliant_display_module :: proc(t: ^testing.T, include_extra_export: bool
 @(test)
 border_conversions_refuse_unknown_and_zero_words :: proc(t: ^testing.T) {
 	// Zero, one past the last enum value, and max(u64) are refused.
-	for bad_role in ([?]u64{0, u64(Role.Recipes) + 1, u64(Role.Recipes) + 100, 0xFFFF_FFFF, max(u64)}) {
+	for bad_role in ([?]u64{0, u64(Role.Powerbox) + 1, u64(Role.Powerbox) + 100, 0xFFFF_FFFF, max(u64)}) {
 		role, ok := role_from_word(bad_role)
 		testing.expectf(t, !ok && role == .None, "word %d must be refused", bad_role)
 	}
-	// Every valid member from 1 to Recipes round-trips through its explicit value.
+	// Every valid member from 1 to Powerbox round-trips through its explicit value.
 	for member in Role {
 		if member == .None {
 			continue
@@ -145,7 +145,7 @@ role_properties_enforce_scopes_trusted_path_and_multiplicity :: proc(t: ^testing
 			testing.expect(t, disk_holder_allowed_for_principal(role, 1))
 		}
 	}
-	testing.expect_value(t, trusted_count, 4)
+	testing.expect_value(t, trusted_count, 5)
 	testing.expect_value(t, multi_holder_count, 1)
 
 	// Specific scope checks.
@@ -423,4 +423,34 @@ display_contract_accepts_compliant_module_and_refuses_bad_ring_faces :: proc(t: 
 	result := module_fills_contract(good_module, {contract_hashes = two_hashes[:], ring_faces = display_ring_faces()}, contract)
 	testing.expect_value(t, result.refusal, Contract_Check_Refusal.None)
 	testing.expect_value(t, result.expected_hash, expected_hash)
+}
+
+@(test)
+powerbox_contract_is_deterministic_and_verifies_compliant_module :: proc(t: ^testing.T) {
+	contract := powerbox_contract()
+	first := powerbox_contract_hash()
+	second := powerbox_contract_hash()
+	testing.expect(t, first != (Contract_Hash{}), "powerbox contract hash must not be zero")
+	testing.expect_value(t, first, second)
+	testing.expect(t, first != display_contract_hash(), "powerbox contract hash must differ from display")
+
+	field := [1]module_file_writer.Field_Description{{name = "value", offset = 0, type = .Integer, detail = 8}}
+	records := [2]module_file_writer.Record_Description {
+		{name = "Powerbox_Status", size = 8, fields = field[:]},
+		{name = "Error_Record", size = 8, fields = field[:]},
+	}
+	exports := [2]module_file_writer.Export_Part {
+		{name = "pending_count", code_offset = 0, result = .Integer, error_record = 2},
+		{name = "status", code_offset = 0, result = .Record, result_detail = 1, error_record = 2},
+	}
+	good_mod := build_test_module(t, exports[:], records[:])
+	hashes := [1]Contract_Hash{first}
+	decl := Module_Role_Declaration{contract_hashes = hashes[:], ring_faces = powerbox_ring_faces()}
+	res := module_fills_contract(good_mod, decl, contract)
+	testing.expect_value(t, res.refusal, Contract_Check_Refusal.None)
+	testing.expect_value(t, res.expected_hash, first)
+
+	// Missing one ring face is refused.
+	incomplete := Module_Role_Declaration{contract_hashes = hashes[:], ring_faces = powerbox_ring_faces()[:1]}
+	testing.expect_value(t, module_fills_contract(good_mod, incomplete, contract).refusal, Contract_Check_Refusal.Missing_Ring_Face)
 }

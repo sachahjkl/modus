@@ -52,6 +52,7 @@ Role :: enum u64 {
 	Plans          = 16,
 	Projects       = 17,
 	Recipes        = 18,
+	Powerbox       = 19,
 }
 
 // The scope within which a role has its holder (or holders, for Assistive).
@@ -216,7 +217,8 @@ face_kind_from_word :: proc "contextless" (word: u64) -> (kind: Face_Kind, ok: b
 
 // role_properties returns the scope, trust class, multiplicity rule, and
 // canonical name for a Role. Only Assistive permits multiple holders in one
-// scope; only Display, Input, Console, and Assistive are in the trusted path.
+// scope; only Display, Input, Console, Assistive, and Powerbox are in the
+// trusted path.
 role_properties :: proc "contextless" (role: Role) -> Role_Properties {
 	switch role {
 	case .None:
@@ -257,6 +259,8 @@ role_properties :: proc "contextless" (role: Role) -> Role_Properties {
 		return {scope = .Machine, trust_path = .Ordinary, allows_multiple_holders = false, name = "projects"}
 	case .Recipes:
 		return {scope = .Machine, trust_path = .Ordinary, allows_multiple_holders = false, name = "recipes"}
+	case .Powerbox:
+		return {scope = .Machine, trust_path = .Trusted_Path, allows_multiple_holders = false, name = "powerbox"}
 	}
 	return {}
 }
