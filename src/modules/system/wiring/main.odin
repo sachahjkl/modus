@@ -838,6 +838,9 @@ handle_commit_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respons
 			response_staging.asker_wiring_count += 1
 		}
 	}
+	if state.processes[child_idx].ends_given > 0 {
+		_ = wiring_ring_hold(child_idx)
+	}
 	region_write_response()
 	asker_active := u64(state.processes[asker_idx].wirings_asked)
 	prepared_batch = {}
@@ -942,6 +945,22 @@ stops_drain :: proc "contextless" () {
 }
 
 @(private = "file")
+asker_wirings_snapshot :: proc "contextless" (had: ^[wiring_core.PROCESS_CAPACITY]bool) {
+	for i in 0 ..< wiring_core.PROCESS_CAPACITY {
+		had[i] = state.processes[i].active && state.processes[i].wirings_asked > 0
+	}
+}
+
+@(private = "file")
+asker_wirings_notify_emptied :: proc "contextless" (had: ^[wiring_core.PROCESS_CAPACITY]bool) {
+	for i in 0 ..< wiring_core.PROCESS_CAPACITY {
+		if had[i] && state.processes[i].active && state.processes[i].wirings_asked == 0 {
+			_ = system.send(&core_ring.completions, ws.asker_wirings_empty_to_record(state.processes[i].id))
+		}
+	}
+}
+
+@(private = "file")
 process_completions_drain :: proc "contextless" () {
 	for proc_idx in 0 ..< wiring_core.PROCESS_CAPACITY {
 		ph := &process_handles[proc_idx]
@@ -956,13 +975,19 @@ process_completions_drain :: proc "contextless" () {
 			case .Write_End_Word:
 				end_words_write_and_wake(act.wiring_slot, act.end_word)
 			case .End_Wiring:
+				if act.end_word == .Refused {
+					system.log(.Info, "wiring: ", system.Module_Name{process_module_name(proc_idx)}, " refused its end of the wiring ", u64(act.wiring_number))
+				}
 				end_words_write_and_wake(act.wiring_slot, act.end_word)
 				wiring_slot_handles_close(act.wiring_slot)
 			case .Unknown_Word:
 				ph.unknown_wiring_words += 1
+				if ph.unknown_wiring_words == 1 {
+					system.log(.Info, "wiring: ", system.Module_Name{process_module_name(proc_idx)}, " wrote a word of its wiring ring that names no wiring of it: it is dropped, and each later one is counted until its stop")
+				}
 			case .Dropped_Word:
 				if act.first_drop {
-					system.log(.Warning, "wiring: dropped unexpected completion for wiring ", u64(act.wiring_number))
+					system.log(.Info, "wiring: ", system.Module_Name{process_module_name(proc_idx)}, " wrote a word of its wiring ring for the wiring ", u64(act.wiring_number), " after its answer: dropped")
 				}
 			}
 		}
@@ -1060,10 +1085,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// stops_drain so a short-lived child that exits immediately after start
 		// commits its wiring batch before its stop notice unregisters it.
 		core_commands_serve()
+		had_wirings: [wiring_core.PROCESS_CAPACITY]bool
+		asker_wirings_snapshot(&had_wirings)
 		stops_drain()
 		process_completions_drain()
 		wiring_rings_let_go()
 		stall_rings_check()
+		asker_wirings_notify_emptied(&had_wirings)
 
 		system.wait_records(&wait, &stops_ring.commands)
 		system.wait_records(&wait, &core_ring.commands)

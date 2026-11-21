@@ -809,6 +809,17 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 		return
 	}
 	for record in system.receive(&wiring_ring.completions) {
+		if record.tag == 0 {
+			if emptied_id, is_empty := ws.asker_wirings_empty_from_record(record); is_empty {
+				for &item in started {
+					if item.process != 0 && item.process_slot == emptied_id.slot && item.process_serial == emptied_id.serial {
+						item.granted -= {.Wirings}
+						break
+					}
+				}
+			}
+			continue
+		}
 		if wiring_request.stage == .Idle || record.tag != wiring_request.service_tag {
 			// Asynchronous Register_Process / Grant_Asker_Budget / Abort completion.
 			continue

@@ -177,8 +177,9 @@ Response_Status :: enum u32 {
 	Bad_State   = 4, // Invalid state (self-wire, input already taken, no list page, unknown batch).
 	No_Slot     = 5, // Capacity limit reached (asker, machine, process ends, list askers, full ring).
 	No_Budget   = 6, // Child wiring budget exhausted or absent.
-	No_Memory   = 7, // Kernel refused memory allocation.
-	Refused     = 8, // Delivery or other operation failed.
+	No_Memory           = 7, // Kernel refused memory allocation.
+	Refused             = 8, // Delivery or other operation failed.
+	Asker_Wirings_Empty = 9, // Unsolicited tag-0 notice: an asker's active wirings dropped to 0.
 }
 
 // response_status_to_op_status maps a service Response_Status to the
@@ -201,7 +202,7 @@ response_status_to_op_status :: proc "contextless" (status: Response_Status) -> 
 		return .No_Budget
 	case .No_Memory:
 		return .No_Memory
-	case .Refused:
+	case .Refused, .Asker_Wirings_Empty:
 		return .Bad_State
 	}
 	return .Bad_State
@@ -494,6 +495,9 @@ response_from_record :: proc "contextless" (record: ring.Record, command: Comman
 	if !status_known {
 		return {}, false
 	}
+	if status == .Asker_Wirings_Empty {
+		return {}, false
+	}
 	resp.status = status
 	resp.tag = record.tag
 	if status != .Ok {
@@ -542,6 +546,33 @@ response_from_record :: proc "contextless" (record: ring.Record, command: Comman
 		resp.query_values = {v[0], v[1], v[2]}
 	}
 	return resp, true
+}
+
+// asker_wirings_empty_to_record encodes an unsolicited tag-0 completion on
+// SERVICE_RING telling the root core that asker `id` now holds zero active
+// wirings and should have the recorded grant `.Wirings` cleared.
+asker_wirings_empty_to_record :: proc "contextless" (id: Process_Identity) -> ring.Record {
+	return {
+		kind   = u32(Response_Status.Asker_Wirings_Empty),
+		tag    = 0,
+		values = {id.slot, id.serial, 0, 0, 0, 0, 0},
+	}
+}
+
+// asker_wirings_empty_from_record is the strict border for tag-0
+// Asker_Wirings_Empty notices on SERVICE_RING.
+asker_wirings_empty_from_record :: proc "contextless" (record: ring.Record) -> (id: Process_Identity, ok: bool) {
+	if record.tag != 0 || record.kind != u32(Response_Status.Asker_Wirings_Empty) {
+		return {}, false
+	}
+	if !trailing_zeros(record.values, 2) {
+		return {}, false
+	}
+	id = {slot = record.values[0], serial = record.values[1]}
+	if !process_identity_valid(id) {
+		return {}, false
+	}
+	return id, true
 }
 
 // Kind of a notice emitted on the core's `stops` record output.
