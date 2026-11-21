@@ -39,6 +39,11 @@ LIST_PAGE_ASKERS_MOST :: 4
 // its stop.
 GENERIC_TYPES_OF_A_PROCESS_MOST :: 4
 
+// Monotonic stall bound (milliseconds) before an Always_Holds_Writer wiring
+// whose ring stays full without reader progress is revoked (matches
+// system.TEST_HANG_BOUND_MILLISECONDS; verified by #assert in wiring/main.odin).
+STALL_HANG_BOUND_MS :: u64(60_000)
+
 // Sentinel process index representing the child of a Start wiring list
 // before Process_Start assigns its process slot and serial.
 CHILD_PROCESS_INDEX :: -2
@@ -79,6 +84,7 @@ Wiring_Entry :: struct {
 	reader_index:        int, // Process index of reader (asker for Asker), or DETACHED_PROCESS_INDEX.
 	writer_stream_index: u32, // Record output index (0 for log).
 	reader_stream_index: u32, // Record input index (0 for asker).
+	pace:                output.Wiring_Pace,
 	writer_is_log:       bool,
 	reader_is_asker:     bool,
 	writer_counted:      bool,
@@ -90,6 +96,11 @@ Wiring_Entry :: struct {
 	asked_counted:       bool,
 	end_written:         bool,
 	dropped_told:        bool,
+	// Stall-deadline tracking for Always_Holds_Writer wirings whose ring
+	// stays full with no reader progress.
+	stall_active:        bool,
+	stalled_since_ms:    u64,
+	stalled_read_cursor: u32,
 }
 
 // Whole pure state of the delegated wiring service.
@@ -894,6 +905,7 @@ wiring_slot_allocate :: proc "contextless" (s: ^State, asker_index: int, plan: ^
 		reader_index        = plan.reader_index,
 		writer_stream_index = plan.row.writer_index,
 		reader_stream_index = plan.row.reader_index,
+		pace                = plan.row.pace,
 		writer_is_log       = plan.row.writer_stream == .Log,
 		reader_is_asker     = plan.row.reader_end == .Asker,
 	}
@@ -1190,6 +1202,105 @@ process_stop_apply :: proc "contextless" (s: ^State, notice: ws.Process_Stop_Not
 	}
 	s.processes[idx] = {}
 	return action_count, idx, true
+}
+
+// wiring_stall_observe updates the monotonic stall tracker for one wiring.
+// Only active Always_Holds_Writer wirings participate; Never_Holds_Writer
+// and Writer_Chooses wirings are never tracked or revoked here.
+//
+// When the ring is observed full, stalled_since_ms is latched at now_ms with
+// the observed read cursor. The instant read_cursor advances or the ring is
+// no longer full, stall tracking resets to 0.
+wiring_stall_observe :: proc "contextless" (s: ^State, wiring_slot: int, ring_full: bool, read_cursor: u32, now_ms: u64) {
+	if wiring_slot < 0 || wiring_slot >= WIRINGS_OF_THE_MACHINE_MOST {
+		return
+	}
+	kept := &s.wirings[wiring_slot]
+	if !kept.active || kept.pace != .Always_Holds_Writer {
+		kept.stall_active = false
+		kept.stalled_since_ms = 0
+		kept.stalled_read_cursor = 0
+		return
+	}
+	if !ring_full {
+		kept.stall_active = false
+		kept.stalled_since_ms = 0
+		kept.stalled_read_cursor = read_cursor
+		return
+	}
+	if !kept.stall_active {
+		kept.stall_active = true
+		kept.stalled_since_ms = now_ms
+		kept.stalled_read_cursor = read_cursor
+		return
+	}
+	if read_cursor != kept.stalled_read_cursor {
+		// Reader made progress: clear the stall deadline immediately.
+		kept.stall_active = false
+		kept.stalled_since_ms = 0
+		kept.stalled_read_cursor = read_cursor
+	}
+}
+
+// wiring_stall_expire revokes every active Always_Holds_Writer wiring whose
+// ring stayed full without reader progress for at least STALL_HANG_BOUND_MS,
+// recording each revocation into actions. Healthy sibling wirings and
+// non-Always_Holds_Writer wirings remain untouched. Never mutates a wiring
+// unless its Stop_Action fits in actions.
+wiring_stall_expire :: proc "contextless" (s: ^State, now_ms: u64, actions: []Stop_Action) -> (count: int) {
+	if len(actions) == 0 {
+		return 0
+	}
+	for idx in 0 ..< WIRINGS_OF_THE_MACHINE_MOST {
+		if count >= len(actions) {
+			break
+		}
+		kept := &s.wirings[idx]
+		if !kept.active || kept.pace != .Always_Holds_Writer || !kept.stall_active {
+			continue
+		}
+		if now_ms < kept.stalled_since_ms || now_ms - kept.stalled_since_ms < STALL_HANG_BOUND_MS {
+			continue
+		}
+		number := kept.number
+		asker_idx := kept.asker_index
+		end_word, asker_empty := wiring_end_slot(s, idx, .Revoked)
+		actions[count] = {
+			kind          = .End_Wiring,
+			wiring_slot   = idx,
+			wiring_number = number,
+			end_word      = end_word,
+			asker_index   = asker_idx,
+			asker_empty   = asker_empty,
+		}
+		count += 1
+	}
+	return count
+}
+
+// wiring_stall_next_deadline computes the next wake deadline (milliseconds)
+// for the wiring service loop when any active Always_Holds_Writer wiring is
+// watched. Returns has_watched = false when no Always_Holds_Writer wiring is
+// active so the loop can sleep indefinitely.
+wiring_stall_next_deadline :: proc "contextless" (s: ^State, now_ms: u64, poll_interval_ms: u64) -> (deadline_ms: u64, has_watched: bool) {
+	best := max(u64)
+	for &kept in s.wirings {
+		if !kept.active || kept.pace != .Always_Holds_Writer {
+			continue
+		}
+		has_watched = true
+		poll_at := now_ms > max(u64) - poll_interval_ms ? max(u64) : now_ms + poll_interval_ms
+		candidate := poll_at
+		if kept.stall_active {
+			expire_at := kept.stalled_since_ms > max(u64) - STALL_HANG_BOUND_MS ? max(u64) : kept.stalled_since_ms + STALL_HANG_BOUND_MS
+			candidate = min(candidate, expire_at)
+		}
+		best = min(best, candidate)
+	}
+	if !has_watched {
+		return 0, false
+	}
+	return best, true
 }
 
 // registered_process_count returns the count of active processes in State.

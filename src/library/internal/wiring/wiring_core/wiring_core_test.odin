@@ -138,7 +138,7 @@ pack_image :: proc(mods: ..[]u8) -> (image: []u8, offsets: []u64, sizes: []u64) 
 }
 
 @(private = "file")
-make_wire_row :: proc(w_end: output.Wiring_End, w_h, w_idx: u32, r_end: output.Wiring_End, r_h, r_idx: u32) -> output.Wiring {
+make_wire_row :: proc(w_end: output.Wiring_End, w_h, w_idx: u32, r_end: output.Wiring_End, r_h, r_idx: u32, pace: output.Wiring_Pace = .Writer_Chooses) -> output.Wiring {
 	return {
 		writer_end    = u32(w_end),
 		writer_handle = w_h,
@@ -147,6 +147,7 @@ make_wire_row :: proc(w_end: output.Wiring_End, w_h, w_idx: u32, r_end: output.W
 		reader_end    = u32(r_end),
 		reader_handle = r_h,
 		reader_index  = r_idx,
+		pace          = u32(pace),
 	}
 }
 
@@ -568,4 +569,186 @@ generic_chain_resolves_and_unfixed_generic_output_is_refused :: proc(t: ^testing
 	testing.expect_value(t, st, ws.Response_Status.Ok)
 	testing.expect(t, work.plans[0].deferred && work.plans[0].resolved)
 	testing.expect(t, work.plans[1].fixes && work.plans[1].keeps_type)
+}
+
+// Stall revocation edges: invalid slots, inactive slots, zero timestamp,
+// clock below latch time, u64 max overflow safety, and bounded actions slice.
+@(test)
+stall_revocation_edges_and_bounds :: proc(t: ^testing.T) {
+	mod_src := build_test_module({{"Event", "v", 8, true}}, {{"events", 1, .One}}, nil)
+	mod_dst := build_test_module({{"Event", "v", 8, true}}, nil, {{"events", 1, .Many}})
+	image, offs, szs := pack_image(mod_src, mod_dst)
+
+	s: State
+	state_init(&s)
+
+	// Out-of-bounds and inactive slots are safe no-ops.
+	wiring_stall_observe(&s, -1, true, 0, 100)
+	wiring_stall_observe(&s, WIRINGS_OF_THE_MACHINE_MOST, true, 0, 100)
+	wiring_stall_observe(&s, max(int), true, 0, 100)
+	wiring_stall_observe(&s, 0, true, 0, 100)
+	actions: [WIRINGS_OF_THE_MACHINE_MOST]Stop_Action
+	testing.expect_value(t, wiring_stall_expire(&s, STALL_HANG_BOUND_MS, actions[:]), 0)
+	_, watched_empty := wiring_stall_next_deadline(&s, 0, 1_000)
+	testing.expect(t, !watched_empty)
+
+	asker := ws.Process_Identity{1, 10}
+	src := ws.Process_Identity{2, 20}
+	r1 := ws.Process_Identity{3, 30}
+	r2 := ws.Process_Identity{4, 40}
+	_, _ = process_register(&s, asker, 0, 0, {.Can_Wire})
+	_, _ = process_register(&s, src, offs[0], szs[0], {.Has_Wiring_Ring})
+	_, _ = process_register(&s, r1, offs[1], szs[1], {.Has_Wiring_Ring})
+	_, _ = process_register(&s, r2, offs[1], szs[1], {.Has_Wiring_Ring})
+
+	lent1 := [2]ws.Resolved_Lent_End{
+		{process_slot = src.slot, process_serial = src.serial, started_by_asker = 1, present = 1},
+		{process_slot = r1.slot, process_serial = r1.serial, started_by_asker = 1, present = 1},
+	}
+	lent2 := [2]ws.Resolved_Lent_End{
+		{process_slot = src.slot, process_serial = src.serial, started_by_asker = 1, present = 1},
+		{process_slot = r2.slot, process_serial = r2.serial, started_by_asker = 1, present = 1},
+	}
+	st1, _, slot1, num1 := wire_once(&s, image, asker, make_wire_row(.Started, 1, 1, .Started, 2, 1, .Always_Holds_Writer), lent1[:])
+	testing.expect_value(t, st1, ws.Response_Status.Ok)
+	st2, _, slot2, num2 := wire_once(&s, image, asker, make_wire_row(.Started, 1, 1, .Started, 2, 1, .Always_Holds_Writer), lent2[:])
+	testing.expect_value(t, st2, ws.Response_Status.Ok)
+
+	// Latching at timestamp 0 must be distinct from unstalled.
+	wiring_stall_observe(&s, slot1, true, 0, 0)
+	testing.expect(t, s.wirings[slot1].stall_active)
+	testing.expect_value(t, s.wirings[slot1].stalled_since_ms, u64(0))
+	// 1 ms before bound: must NOT expire.
+	testing.expect_value(t, wiring_stall_expire(&s, STALL_HANG_BOUND_MS - 1, actions[:]), 0)
+	testing.expect(t, s.wirings[slot1].active)
+
+	// Unstall slot1 while testing slot2 at max(u64) - 5 for overflow safety.
+	wiring_stall_observe(&s, slot1, false, 0, 0)
+	wiring_stall_observe(&s, slot2, true, 42, max(u64) - 5)
+	testing.expect_value(t, wiring_stall_expire(&s, max(u64) - 10, actions[:]), 0) // Clock < stalled_since_ms: no underflow.
+	testing.expect_value(t, wiring_stall_expire(&s, max(u64), actions[:]), 0) // Elapsed 5 < bound: no overflow.
+	dl_max, watched_max := wiring_stall_next_deadline(&s, max(u64) - 2, 1_000)
+	testing.expect(t, watched_max)
+	testing.expect_value(t, dl_max, max(u64)) // Clamped to max(u64) with no wraparound.
+
+	// Latch both slot1 and slot2 at 0 so both expire at STALL_HANG_BOUND_MS.
+	wiring_stall_observe(&s, slot1, true, 0, 0)
+	wiring_stall_observe(&s, slot2, false, 42, 0)
+	wiring_stall_observe(&s, slot2, true, 42, 0)
+
+	// Empty actions buffer must NOT mutate or drop any wiring.
+	testing.expect_value(t, wiring_stall_expire(&s, STALL_HANG_BOUND_MS, nil), 0)
+	testing.expect_value(t, s.wirings_running, 2)
+
+	// Buffer of length 1 revokes only 1 and leaves the 2nd active for the next pass.
+	single: [1]Stop_Action
+	testing.expect_value(t, wiring_stall_expire(&s, STALL_HANG_BOUND_MS, single[:]), 1)
+	testing.expect_value(t, single[0].kind, Stop_Action_Kind.End_Wiring)
+	testing.expect_value(t, single[0].wiring_number, num1)
+	testing.expect_value(t, single[0].end_word, output.End_Word.Revoked)
+	testing.expect(t, !single[0].asker_empty)
+	testing.expect_value(t, s.wirings_running, 1)
+
+	// Second pass revokes the remaining stalled wiring and marks asker_empty.
+	testing.expect_value(t, wiring_stall_expire(&s, STALL_HANG_BOUND_MS, single[:]), 1)
+	testing.expect_value(t, single[0].wiring_number, num2)
+	testing.expect_value(t, single[0].end_word, output.End_Word.Revoked)
+	testing.expect(t, single[0].asker_empty)
+	testing.expect_value(t, s.wirings_running, 0)
+}
+
+// Reader progress resets stalled_since_ms to 0 immediately (including u32
+// cursor wraparound), Never_Holds_Writer and Writer_Chooses are never
+// revoked, and revoking a stalled wiring leaves all healthy siblings intact.
+@(test)
+stall_revocation_preserves_healthy_siblings_and_non_holding_paces :: proc(t: ^testing.T) {
+	mod_src := build_test_module({{"Log", "x", 8, true}}, {{"out", 1, .One}}, nil)
+	mod_dst := build_test_module({{"Log", "x", 8, true}}, nil, {{"in", 1, .Many}})
+	image, offs, szs := pack_image(mod_src, mod_dst)
+
+	s: State
+	state_init(&s)
+	asker := ws.Process_Identity{1, 10}
+	src := ws.Process_Identity{2, 20}
+	r_stalled := ws.Process_Identity{3, 30}
+	r_healthy := ws.Process_Identity{4, 40}
+	r_never := ws.Process_Identity{5, 50}
+	r_choice := ws.Process_Identity{6, 60}
+	asker_idx, _ := process_register(&s, asker, 0, 0, {.Can_Wire})
+	src_idx, _ := process_register(&s, src, offs[0], szs[0], {.Has_Wiring_Ring})
+	_, _ = process_register(&s, r_stalled, offs[1], szs[1], {.Has_Wiring_Ring})
+	_, _ = process_register(&s, r_healthy, offs[1], szs[1], {.Has_Wiring_Ring})
+	_, _ = process_register(&s, r_never, offs[1], szs[1], {.Has_Wiring_Ring})
+	_, _ = process_register(&s, r_choice, offs[1], szs[1], {.Has_Wiring_Ring})
+
+	make_lent :: proc(a, b: ws.Process_Identity) -> [2]ws.Resolved_Lent_End {
+		return {
+			{process_slot = a.slot, process_serial = a.serial, started_by_asker = 1, present = 1},
+			{process_slot = b.slot, process_serial = b.serial, started_by_asker = 1, present = 1},
+		}
+	}
+	l_stalled := make_lent(src, r_stalled)
+	l_healthy := make_lent(src, r_healthy)
+	l_never := make_lent(src, r_never)
+	l_choice := make_lent(src, r_choice)
+
+	st_s, _, slot_stalled, num_stalled := wire_once(&s, image, asker, make_wire_row(.Started, 1, 1, .Started, 2, 1, .Always_Holds_Writer), l_stalled[:])
+	st_h, _, slot_healthy, _ := wire_once(&s, image, asker, make_wire_row(.Started, 1, 1, .Started, 2, 1, .Always_Holds_Writer), l_healthy[:])
+	st_n, _, slot_never, _ := wire_once(&s, image, asker, make_wire_row(.Started, 1, 1, .Started, 2, 1, .Never_Holds_Writer), l_never[:])
+	st_c, _, slot_choice, _ := wire_once(&s, image, asker, make_wire_row(.Started, 1, 1, .Started, 2, 1, .Writer_Chooses), l_choice[:])
+	testing.expect_value(t, st_s, ws.Response_Status.Ok)
+	testing.expect_value(t, st_h, ws.Response_Status.Ok)
+	testing.expect_value(t, st_n, ws.Response_Status.Ok)
+	testing.expect_value(t, st_c, ws.Response_Status.Ok)
+	testing.expect_value(t, s.wirings_running, 4)
+
+	// All four observed full at t = 1 000 ms.
+	wiring_stall_observe(&s, slot_stalled, true, 100, 1_000)
+	wiring_stall_observe(&s, slot_healthy, true, max(u32), 1_000)
+	wiring_stall_observe(&s, slot_never, true, 0, 1_000)
+	wiring_stall_observe(&s, slot_choice, true, 0, 1_000)
+
+	// Non-Always_Holds_Writer paces never latch stalled_since_ms.
+	testing.expect(t, !s.wirings[slot_never].stall_active && s.wirings[slot_never].stalled_since_ms == 0)
+	testing.expect(t, !s.wirings[slot_choice].stall_active && s.wirings[slot_choice].stalled_since_ms == 0)
+	testing.expect(t, s.wirings[slot_stalled].stall_active && s.wirings[slot_stalled].stalled_since_ms == 1_000)
+	testing.expect(t, s.wirings[slot_healthy].stall_active && s.wirings[slot_healthy].stalled_since_ms == 1_000)
+
+	// At t = 59 500 ms: healthy reader advances across u32 wraparound (max(u32) -> 0).
+	// Stalled reader makes no progress.
+	wiring_stall_observe(&s, slot_stalled, true, 100, 59_500)
+	wiring_stall_observe(&s, slot_healthy, true, 0, 59_500)
+	testing.expect_value(t, s.wirings[slot_stalled].stalled_since_ms, u64(1_000))
+	testing.expect(t, !s.wirings[slot_healthy].stall_active)
+	testing.expect_value(t, s.wirings[slot_healthy].stalled_since_ms, u64(0))
+
+	// Next deadline at t = 60 600 ms must clamp to 61 000 ms (400 ms remaining < 1 000 ms poll).
+	dl, watched := wiring_stall_next_deadline(&s, 60_600, 1_000)
+	testing.expect(t, watched)
+	testing.expect_value(t, dl, u64(1_000 + STALL_HANG_BOUND_MS))
+
+	// At t = 61 000 ms (exact bound): ONLY slot_stalled is revoked!
+	actions: [WIRINGS_OF_THE_MACHINE_MOST]Stop_Action
+	revoked := wiring_stall_expire(&s, 1_000 + STALL_HANG_BOUND_MS, actions[:])
+	testing.expect_value(t, revoked, 1)
+	testing.expect_value(t, actions[0].kind, Stop_Action_Kind.End_Wiring)
+	testing.expect_value(t, actions[0].wiring_slot, slot_stalled)
+	testing.expect_value(t, actions[0].wiring_number, num_stalled)
+	testing.expect_value(t, actions[0].end_word, output.End_Word.Revoked)
+	testing.expect(t, !actions[0].asker_empty)
+
+	// Counters updated cleanly; healthy, Never_Holds_Writer, and Writer_Chooses siblings intact.
+	testing.expect_value(t, s.wirings_running, 3)
+	testing.expect_value(t, s.processes[asker_idx].wirings_asked, 3)
+	testing.expect_value(t, s.processes[src_idx].ends_given, 3)
+	testing.expect(t, !s.wirings[slot_stalled].active)
+	testing.expect(t, s.wirings[slot_healthy].active)
+	testing.expect(t, s.wirings[slot_never].active)
+	testing.expect(t, s.wirings[slot_choice].active)
+
+	// Even 10x past the hang bound, Never_Holds_Writer and Writer_Chooses are NEVER revoked.
+	wiring_stall_observe(&s, slot_never, true, 0, 10 * STALL_HANG_BOUND_MS)
+	wiring_stall_observe(&s, slot_choice, true, 0, 10 * STALL_HANG_BOUND_MS)
+	testing.expect_value(t, wiring_stall_expire(&s, 20 * STALL_HANG_BOUND_MS, actions[:]), 0)
+	testing.expect(t, s.wirings[slot_never].active && s.wirings[slot_choice].active)
 }
