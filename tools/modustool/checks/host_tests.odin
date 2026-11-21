@@ -312,6 +312,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/datagram",
 	foundation.SOURCE_FOLDER_CONTRACT + "/byte_order",
 	foundation.SOURCE_FOLDER_CONTRACT + "/timed_stream",
+	foundation.SOURCE_FOLDER_CONTRACT + "/sound_mixer",
 	foundation.SOURCE_FOLDER_CONTRACT + "/output",
 	foundation.SOURCE_FOLDER_CONTRACT + "/wiring_service",
 	foundation.SOURCE_FOLDER_INTERNAL + "/wiring/wiring_core",
