@@ -29,6 +29,20 @@ An export takes a value of a closed set as an enum. Its module file names the me
 - **The time zone is no argument of `set`.** A zone is a number of minutes, not a member of a closed set: `settings.set_time_zone("+08:00")` sets it and `settings.time_zone()` gives its text.
 - **What went:** `Entry_Kind.Setting` and its fields `setting` and `setting_value` (reserved bytes now, version 7 of the palette table), `Candidate_Kind.Setting`, the built-in command `setting(name, value)`, `settings.get`, the copy of `settings.descriptions` in the console, and `settings_in_use` in the compositor. `settings.descriptions` stays for the window of `settings` only.
 
+## The display text of a member
+
+A member has two things, kept apart: its **name**, which is code, and its **display text**, which is for the principal.
+
+- **The name** is what a line types and what a module compiles: `.fourteen_eighths`. It never changes with the language of the principal, so a line, a declaration and a test mean the same thing on every machine.
+- **The display text** is what the palette and the completion show: "1.75". A module gives it for a member whose name is not the word that a principal reads; a member with no display text shows its name (`spleen`, `french`).
+- **The texts are a table of the module file, apart from the enum.** Each row is a member and a language, and holds one text. A module of the system gives the texts of one language, English, today. A translation is then one more set of rows for another language, which a module or a later text module gives, with no change of the code, of the names or of the format. The reader picks the row of the language of the principal, else English, else the name.
+- **The completion shows both.** It lists `.fourteen_eighths   1.75`, and inserts the name: what a line holds is never a display text.
+
+Refused:
+- **A member named by its display text** (`.1_75`, `.scale_1_75`). The name then carries a text for the principal, and a translation would change the code.
+- **The display text in the enum, beside the member in the source of Odin.** The text then lives in the code, and a translation edits each module.
+- **A display text that a line can type.** Two names for one member, and a line that means another thing in another language.
+
 ## The refused forms
 
 - **Text for a closed set.** The console cannot offer the values and finds a wrong one after the call; the export parses a word that the border already knew.

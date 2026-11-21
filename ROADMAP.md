@@ -8,6 +8,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
+- **The display text of a member, apart from its name.** The palette and the completion show "1.75" for the scale `.fourteen_eighths`, from a table of texts of the module file by member and language, and a line still types the name, so a translation never changes the code. [Design](src/md/features/enum_parameters.md)
 - **Trees with a hash, and the garbage collector of `module_files`.** A tree that no longer changes has a tree hash, so an output or a source is named as a module is, and the store `module_files` of the machine keeps only what a kept plan, the signed system or a disk grant reaches. [Design](src/md/features/declarations.md)
 - **Declarations in the console.** Lex, the language of the console, takes anonymous functions and a reference by hash, and a sandboxed evaluation process reads a declaration `.lex` lazily, with no effect. A principal then describes a system or a project, with its console, as one value. [Design](src/md/features/declarations.md)
 - **The services `plans` and `recipes`.** A principal applies a plan in one atomic step with `plans.apply` after it sees the difference of its grants, and goes back with `plans.rollback()`. A recipe names how each output is made, and `recipes.build` takes its realisation from the cache or builds it in a sandbox. [Design](src/md/features/recipes.md)
@@ -157,6 +158,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **WebAssembly modules.** A module in WebAssembly, named by its hash, runs on any machine of the system, confined to its process with only the imports that it was given. [Design](src/md/features/desktop_to_browser.md)
 - **The browser wren whole in a Linux guest.** A principal runs wren, with no port, in a Linux guest that shows it in a window of the system. [Design](src/md/features/desktop_to_browser.md)
 - **An SSH client.** A principal opens a session on a remote host from a terminal of the system, with a key that the principal holds, and the host key checked against the hosts that the principal knows. The cryptography that it needs (x25519, ed25519, ChaCha20-Poly1305, AES, SHA-2) and TCP are in the system already; the terminal reads the escape sequences of the remote host.
+- **The interface in the language of the principal.** Each text that a principal reads in a window, the palette, the console or a guide comes from a table of texts by language, apart from the code, so a principal chooses French or another language and a translation is data, not a change of a module. The display text of a member is its first user. [Design](src/md/features/enum_parameters.md)
 
 ## Maybe
 
