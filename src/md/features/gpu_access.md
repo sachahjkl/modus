@@ -1,6 +1,6 @@
 # The access to a GPU for acceleration
 
-Processes of the system draw in 2D through the draw table, and WebGPU is the later interface of the GPU: [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One 2D interface: the draw table". When a GPU exists, the drawing module draws the draw table through WebGPU ([../api/draw_table.md](../api/draw_table.md), "The execution"). This file records how WebGPU reaches a real GPU, and which forms were refused. The access to a GPU for acceleration is the aim of the work on guests; compatibility with another system is not ([foreign_systems.md](foreign_systems.md)). Among the forms, the most performant and the most modular one is chosen. Nothing of it is built.
+Processes of the system draw in 2D through the draw table, and WebGPU is the later interface of the GPU: [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "18. One 2D interface: the draw table". When a GPU exists, the drawing module draws the draw table through WebGPU ([../api/draw_table.md](../api/draw_table.md), "The execution"). This file records how WebGPU reaches a real GPU, and which forms were refused. The access to a GPU for acceleration is the aim of the work on guests; compatibility with another system is not ([foreign_systems.md](foreign_systems.md)). Among the forms, the most performant and the most modular one is chosen. The first layer (VirtIO-GPU 2D scanout and Venus framing, the WebGPU subset contract, and the `gpu_device` service) is built; see "State".
 
 The terms are in [`docs/glossary/access.md`](../../../docs/glossary/access.md), "Driver domain".
 
@@ -82,3 +82,17 @@ The test of the serialization under QEMU on the development host is an opt-in te
 - Whether a software Vulkan driver on the test host is enough for the serialization. If not, the test of the virtual GPU is opt-in.
 - The size of an encoder for only the commands that the back end uses.
 - Which machine and which GPU: the system must boot on it directly, the GPU must be alone in its IOMMU group, and it must reset.
+
+## State
+
+Built:
+
+- `src/library/modus/contract/virtio_gpu`: the VirtIO-GPU 1.2 control queue header, closed enumerations (`Command_Type`, `Pixel_Format`, `Capset_Id`, `Blob_Memory`, `Header_Flags`, `Blob_Flags`), 2D scanout lifecycle encoders and decoders (`Get_Display_Info`, `Resource_Create_2D`, `Resource_Attach_Backing`, `Set_Scanout`, `Transfer_To_Host_2D`, `Resource_Flush`, `Resource_Unref`), and Venus transport framing (`Get_Capset_Info`, `Ctx_Create`, `Ctx_Destroy`, `Resource_Create_Blob`, `Submit_3D`) with border validation and host tests.
+- `src/library/modus/contract/webgpu_subset`: the minimal WebGPU subset contract with closed enumerations, precompiled SPIR-V binary validation (`spirv_header_validate`, `spirv_bytes_validate`) with no runtime WGSL compiler, and fixed-size binary command stream encoding and border validation (`Gpu_Command_Stream`, `stream_validate`) with host tests.
+- `src/modules/system/gpu_device`: the freestanding VirtIO-GPU PCI device service (`0x1AF4:0x1050`) that initializes the control queue, queries display geometry, probes Venus capability sets, binds client 2D scanout framebuffers, and flushes damaged rectangles.
+
+Left:
+
+- Wiring `gpu_device` to the compositor as an alternative scanout back end beside standard VGA, and the QEMU virtio-gpu machine test.
+- The Venus Vulkan command encoder and the WebGPU subset back end that translates `Gpu_Command_Stream` into `Submit_3D` payloads.
+- The draw-table GPU back end in the drawing module and the Linux driver domain transport on real hardware.

@@ -1,0 +1,503 @@
+// The GPU device service: the device service of one VirtIO-GPU 1.2 PCI device
+// (vendor 0x1AF4, device 0x1050). It verifies the PCI identity, negotiates
+// VirtIO-GPU features, drives the control queue for 2D scanout setup and
+// rectangle presentation (Get_Display_Info, Resource_Create_2D,
+// Resource_Attach_Backing, Set_Scanout, Transfer_To_Host_2D, Resource_Flush,
+// Resource_Unref), and probes host Venus capability sets for Vulkan forwarding
+// (src/md/features/gpu_access.md).
+//
+// It holds only its one PCI device (registers, interrupt, queue memory,
+// configuration copy, machine physical handle) and its client ring. No driver
+// code lives in the kernel.
+package gpu_device_service
+
+import "base:intrinsics"
+import "modus:contract/byte_order"
+import "modus:contract/errors"
+import "modus:contract/ring"
+import "modus:contract/value_kinds"
+import "modus:contract/virtio_gpu"
+import "modus:pci"
+import "modus:system"
+import "modus:virtio"
+
+// The working memory: the IOMMU domain tables paid at the first
+// Memory_Physical call, the queue and control message mappings, and the page
+// tables of the client framebuffer region.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 190, processes = 1, threads = 1}
+
+// Memory layout inside pci.GRANT_QUEUES (pci.QUEUE_PAGES == 8):
+// pages 0..2 hold the control virtqueue, page 3 holds the outbound command
+// buffer, and page 4 holds the inbound response buffer.
+PAGE_CONTROL_QUEUE :: 0
+PAGE_REQUEST_BUFFER :: PAGE_CONTROL_QUEUE + virtio.QUEUE_PAGES
+PAGE_RESPONSE_BUFFER :: PAGE_REQUEST_BUFFER + 1
+#assert(PAGE_RESPONSE_BUFFER < pci.QUEUE_PAGES)
+
+CONTROL_BUFFER_BYTES :: system.PAGE_SIZE
+MAX_CAPSETS_PROBED :: u32(16)
+DEVICE_ANSWER_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
+
+// VirtIO-GPU feature mask requested during negotiation: Virgl 3D, blob
+// resources, and context init (for Venus capset contexts).
+WANTED_FEATURES :: u32((1 << virtio_gpu.FEATURE_VIRGL) | (1 << virtio_gpu.FEATURE_RESOURCE_BLOB) | (1 << virtio_gpu.FEATURE_CONTEXT_INIT))
+
+device: virtio.Device
+control_queue: virtio.Queue
+request_buffer: [^]u8
+request_physical: u64
+response_buffer: [^]u8
+response_physical: u64
+
+machine: system.Handle
+clients: ring.Ring
+ring_memory: system.Handle
+
+// Negotiated features and device configuration metadata.
+has_virgl: bool
+has_resource_blob: bool
+has_context_init: bool
+num_scanouts: u32
+num_capsets: u32
+
+// Active scanout geometry discovered via Get_Display_Info.
+active_scanout_id: u32
+display_width: u32
+display_height: u32
+
+// Venus capability metadata discovered via Get_Capset_Info.
+venus_available: bool
+venus_max_version: u32
+venus_max_size: u32
+
+// Currently attached 2D scanout framebuffer.
+framebuffer_memory: system.Handle
+framebuffer_physical: u64
+framebuffer_size: u64
+framebuffer_width: u32
+framebuffer_height: u32
+framebuffer_resource_id: u32
+next_resource_id: u32 = 1
+
+fail :: proc "contextless" (text: string) -> ! {
+	system.log_fact(.Error, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
+	system.stop(.Failed)
+}
+
+// control_exchange submits request_bytes from request_buffer on control_queue
+// and waits for the device response in response_buffer up to the hang bound.
+// The response is copied once out of DMA memory before validation.
+control_exchange :: proc "contextless" (name: string, request_bytes: u32, expected_response_bytes: u32) -> (response: [virtio_gpu.RESP_DISPLAY_INFO_SIZE]u8, received: u32, ok: bool) {
+	if request_bytes == 0 || request_bytes > CONTROL_BUFFER_BYTES || expected_response_bytes == 0 || expected_response_bytes > len(response) {
+		return {}, 0, false
+	}
+	control_queue.descriptors[0] = {
+		address = request_physical,
+		length  = request_bytes,
+		flags   = virtio.DESCRIPTOR_NEXT,
+		next    = 1,
+	}
+	control_queue.descriptors[1] = {
+		address = response_physical,
+		length  = expected_response_bytes,
+		flags   = virtio.DESCRIPTOR_DEVICE_WRITES,
+	}
+	virtio.give(&control_queue, 0)
+	virtio.notify(&control_queue)
+
+	deadline := system.time() + DEVICE_ANSWER_BOUND_MILLISECONDS
+	for {
+		wait := system.wait_begin()
+		if used, got := virtio.used(&control_queue); got {
+			if used.id != 0 {
+				fail("the device answered a control request that was not given")
+			}
+			received = min(used.length, expected_response_bytes)
+			if received > 0 {
+				intrinsics.mem_copy_non_overlapping(&response[0], response_buffer, int(received))
+			}
+			return response, received, true
+		}
+		if virtio.status_read(&device) & virtio.STATUS_NEEDS_RESET != 0 {
+			fail("the device needs a reset")
+		}
+		if system.time() >= deadline {
+			system.log_fact(.Error, Device_Silent{bound = DEVICE_ANSWER_BOUND_MILLISECONDS, request = request_field(name)})
+			return {}, 0, false
+		}
+		system.wait_end(&wait, deadline)
+	}
+}
+
+// control_nodata runs one control queue command expecting Response_Ok_Nodata.
+control_nodata :: proc "contextless" (name: string, request_bytes: int) -> (header: virtio_gpu.Ctrl_Header, ok: bool) {
+	response, received, answered := control_exchange(name, u32(request_bytes), virtio_gpu.CTRL_HEADER_SIZE)
+	if !answered {
+		return {}, false
+	}
+	decoded, problem := virtio_gpu.nodata_response_decode(response[:received])
+	if problem != .None {
+		if problem == .Device_Error_Response {
+			system.log_fact(.Error, Request_Refused{response_word = u64(decoded.command_type), request = request_field(name)})
+		}
+		return decoded, false
+	}
+	return decoded, true
+}
+
+// query_display_info executes Get_Display_Info and selects the first enabled scanout.
+query_display_info :: proc "contextless" () {
+	written, enc_problem := virtio_gpu.get_display_info_encode(request_buffer[:CONTROL_BUFFER_BYTES])
+	if enc_problem != .None {
+		fail("failed to encode Get_Display_Info")
+	}
+	response, received, answered := control_exchange("GET_DISPLAY_INFO", u32(written), virtio_gpu.RESP_DISPLAY_INFO_SIZE)
+	if !answered {
+		fail("the device did not answer GET_DISPLAY_INFO")
+	}
+	info, dec_problem := virtio_gpu.display_info_response_decode(response[:received])
+	if dec_problem != .None {
+		if dec_problem == .Device_Error_Response {
+			system.log_fact(.Error, Request_Refused{response_word = u64(info.header.command_type), request = request_field("GET_DISPLAY_INFO")})
+		}
+		fail("the device returned an invalid display info response")
+	}
+	limit := min(num_scanouts, u32(virtio_gpu.MAX_SCANOUTS))
+	for scanout in u32(0) ..< limit {
+		entry := info.displays[scanout]
+		if entry.enabled != 0 && entry.rect.width > 0 && entry.rect.height > 0 {
+			active_scanout_id = scanout
+			display_width = entry.rect.width
+			display_height = entry.rect.height
+			return
+		}
+	}
+	active_scanout_id = 0
+	display_width = info.displays[0].rect.width
+	display_height = info.displays[0].rect.height
+}
+
+// probe_venus_capsets iterates reported capability sets looking for Capset_Id.Venus.
+probe_venus_capsets :: proc "contextless" () {
+	if !has_virgl || !has_context_init || num_capsets == 0 {
+		return
+	}
+	limit := min(num_capsets, MAX_CAPSETS_PROBED)
+	for capset_index in u32(0) ..< limit {
+		written, enc_problem := virtio_gpu.get_capset_info_encode(capset_index, request_buffer[:CONTROL_BUFFER_BYTES])
+		if enc_problem != .None {
+			continue
+		}
+		response, received, answered := control_exchange("GET_CAPSET_INFO", u32(written), virtio_gpu.RESP_CAPSET_INFO_SIZE)
+		if !answered {
+			fail("the device did not answer GET_CAPSET_INFO")
+		}
+		capset, dec_problem := virtio_gpu.capset_info_response_decode(response[:received])
+		if dec_problem != .None {
+			continue
+		}
+		if capset.capset_id == .Venus {
+			venus_available = true
+			venus_max_version = capset.capset_max_version
+			venus_max_size = capset.capset_max_size
+			system.log_fact(.Info, Venus_Probed{max_version = u64(venus_max_version), max_size = u64(venus_max_size)})
+			return
+		}
+	}
+}
+
+// start_device negotiates VirtIO-GPU features, initializes controlq, queries
+// display geometry, and probes Venus capability sets.
+start_device :: proc "contextless" (queues: system.Handle) {
+	offered, start_error := virtio.start(&device, WANTED_FEATURES)
+	switch start_error {
+	case .None:
+	case .No_Version_1:
+		fail("the device has no virtio 1 interface")
+	case .Features_Refused:
+		fail("the device refused the features")
+	case .Reset_Not_Done:
+		fail("the device did not finish its reset")
+	}
+	has_virgl = offered & (1 << virtio_gpu.FEATURE_VIRGL) != 0
+	has_resource_blob = offered & (1 << virtio_gpu.FEATURE_RESOURCE_BLOB) != 0
+	has_context_init = offered & (1 << virtio_gpu.FEATURE_CONTEXT_INIT) != 0
+
+	if device.device_config_length < virtio_gpu.CONFIG_TOTAL_SIZE {
+		fail("the device configuration is too short")
+	}
+	num_scanouts = virtio.load_32(device.device_config + virtio_gpu.CONFIG_OFFSET_NUM_SCANOUTS)
+	num_capsets = virtio.load_32(device.device_config + virtio_gpu.CONFIG_OFFSET_NUM_CAPSETS)
+	if num_scanouts == 0 {
+		fail("the device reports zero scanouts")
+	}
+
+	if queue_pages, queue_status := system.memory_size(queues); queue_status != .Ok || queue_pages < pci.QUEUE_PAGES {
+		fail("the memory of the queue is too small")
+	}
+	address, map_status := system.memory_map(queues, {.Write})
+	physical, physical_status := system.memory_physical(machine, queues)
+	if map_status != .Ok || physical_status != .Ok {
+		system.log_fact(.Error, Queue_Not_Mapped{map_status = map_status, address_status = physical_status})
+		fail("no physical address for the queue")
+	}
+	base := uintptr(address)
+	queue_error: virtio.Queue_Error
+	control_queue, queue_error = virtio.queue_start(&device, virtio_gpu.CONTROL_QUEUE_INDEX, base + PAGE_CONTROL_QUEUE * system.PAGE_SIZE, physical + PAGE_CONTROL_QUEUE * system.PAGE_SIZE, 2, 0)
+	switch queue_error {
+	case .None:
+	case .Too_Small:
+		fail("the control queue of the device is too small")
+	case .No_Vector:
+		fail("the device has no message interrupt for its control queue")
+	case .Bad_Notify:
+		fail("the notify register of the control queue is outside the device registers")
+	}
+	request_buffer = ([^]u8)(base + PAGE_REQUEST_BUFFER * system.PAGE_SIZE)
+	request_physical = physical + PAGE_REQUEST_BUFFER * system.PAGE_SIZE
+	response_buffer = ([^]u8)(base + PAGE_RESPONSE_BUFFER * system.PAGE_SIZE)
+	response_physical = physical + PAGE_RESPONSE_BUFFER * system.PAGE_SIZE
+
+	virtio.ready(&device)
+	query_display_info()
+	probe_venus_capsets()
+	system.log_fact(.Info, Device_Ready{
+		scanout    = u64(active_scanout_id),
+		width      = u64(display_width),
+		height     = u64(display_height),
+		queue_size = u64(control_queue.size),
+		capsets    = u64(num_capsets),
+	})
+}
+
+// attach_framebuffer binds a client memory object as a 2D scanout resource
+// via Resource_Create_2D -> Resource_Attach_Backing -> Set_Scanout.
+attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virtio_gpu.Service_Status, values: [7]u64) {
+	ATTACH :: u32(virtio_gpu.Service_Command.Attach_Framebuffer)
+	handle := system.Handle(command.values[0])
+	if refusal_values, refused := system.region_refusal(handle, ring_memory, ATTACH); refused {
+		return .No_Framebuffer, refusal_values
+	}
+	if command.values[1] > u64(virtio_gpu.MAX_RESOURCE_DIMENSION) || command.values[2] > u64(virtio_gpu.MAX_RESOURCE_DIMENSION) {
+		return .Bad_Command, errors.ring_fail(ATTACH, .Too_Long, .None, 2, i64(min(max(command.values[1], command.values[2]), 1 << 62)), virtio_gpu.MAX_RESOURCE_DIMENSION)
+	}
+	width := u32(command.values[1])
+	height := u32(command.values[2])
+	if dim_problem := virtio_gpu.dimensions_validate(width, height); dim_problem != .None {
+		return .Bad_Command, errors.ring_fail(ATTACH, .Bad_Value, .None, 2, i64(width), i64(height))
+	}
+	if command.values[3] > u64(max(u32)) {
+		return .Bad_Command, errors.ring_fail(ATTACH, .Bad_Value, .None, 4)
+	}
+	format, format_ok := virtio_gpu.pixel_format_of_word(u32(command.values[3]))
+	if !format_ok {
+		return .Bad_Command, errors.ring_fail(ATTACH, .Bad_Value, .None, 4, i64(command.values[3]))
+	}
+	physical, phys_status := system.memory_physical(machine, handle)
+	if phys_status != .Ok {
+		return .No_Framebuffer, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(phys_status))
+	}
+	pages, size_status := system.memory_size(handle)
+	if size_status != .Ok {
+		return .No_Framebuffer, errors.ring_fail(ATTACH, .Refused, .None, 1, i64(handle), 0, i64(size_status))
+	}
+	region_bytes := pages * system.PAGE_SIZE
+	required_bytes := u64(width) * u64(height) * 4
+	if region_bytes < required_bytes {
+		return .Out_Of_Range, errors.ring_fail(ATTACH, .Too_Small, .Bytes, 1, i64(region_bytes), i64(required_bytes))
+	}
+
+	// Release any previous 2D resource before creating the replacement scanout.
+	if framebuffer_resource_id != 0 {
+		if unref_written, unref_prob := virtio_gpu.resource_unref_encode(framebuffer_resource_id, request_buffer[:CONTROL_BUFFER_BYTES]); unref_prob == .None {
+			_, _ = control_nodata("RESOURCE_UNREF", unref_written)
+		}
+		if framebuffer_memory != 0 {
+			system.close(framebuffer_memory)
+		}
+		framebuffer_memory = 0
+		framebuffer_resource_id = 0
+	}
+
+	resource_id := next_resource_id
+	next_resource_id += 1
+	if next_resource_id == 0 {
+		next_resource_id = 1
+	}
+
+	// 1. Resource_Create_2D
+	create_bytes, create_prob := virtio_gpu.resource_create_2d_encode(resource_id, format, width, height, request_buffer[:CONTROL_BUFFER_BYTES])
+	if create_prob != .None {
+		return .Bad_Command, errors.ring_fail(ATTACH, .Bad_Value, .None, 0, i64(create_prob))
+	}
+	if _, ok := control_nodata("RESOURCE_CREATE_2D", create_bytes); !ok {
+		return .Device_Error, errors.ring_fail(ATTACH, .Device, .None, 0)
+	}
+
+	// 2. Resource_Attach_Backing
+	backing := [1]virtio_gpu.Mem_Entry{{address = physical, length = u32(required_bytes)}}
+	attach_bytes, attach_prob := virtio_gpu.resource_attach_backing_encode(resource_id, backing[:], request_buffer[:CONTROL_BUFFER_BYTES])
+	if attach_prob != .None {
+		return .Bad_Command, errors.ring_fail(ATTACH, .Bad_Value, .None, 0, i64(attach_prob))
+	}
+	if _, ok := control_nodata("RESOURCE_ATTACH_BACKING", attach_bytes); !ok {
+		if unref_written, unref_prob := virtio_gpu.resource_unref_encode(resource_id, request_buffer[:CONTROL_BUFFER_BYTES]); unref_prob == .None {
+			_, _ = control_nodata("RESOURCE_UNREF", unref_written)
+		}
+		return .Device_Error, errors.ring_fail(ATTACH, .Device, .None, 0)
+	}
+
+	// 3. Set_Scanout
+	full_rect := virtio_gpu.Rect{x = 0, y = 0, width = width, height = height}
+	scanout_bytes, scanout_prob := virtio_gpu.set_scanout_encode(active_scanout_id, resource_id, full_rect, width, height, request_buffer[:CONTROL_BUFFER_BYTES])
+	if scanout_prob != .None {
+		return .Bad_Command, errors.ring_fail(ATTACH, .Bad_Value, .None, 0, i64(scanout_prob))
+	}
+	if _, ok := control_nodata("SET_SCANOUT", scanout_bytes); !ok {
+		if unref_written, unref_prob := virtio_gpu.resource_unref_encode(resource_id, request_buffer[:CONTROL_BUFFER_BYTES]); unref_prob == .None {
+			_, _ = control_nodata("RESOURCE_UNREF", unref_written)
+		}
+		return .Device_Error, errors.ring_fail(ATTACH, .Device, .None, 0)
+	}
+
+	framebuffer_memory = handle
+	framebuffer_physical = physical
+	framebuffer_size = region_bytes
+	framebuffer_width = width
+	framebuffer_height = height
+	framebuffer_resource_id = resource_id
+	system.log_fact(.Info, Scanout_Bound{
+		scanout     = u64(active_scanout_id),
+		resource_id = u64(resource_id),
+		width       = u64(width),
+		height      = u64(height),
+	})
+	return .Ok, {0 = u64(resource_id), 1 = u64(active_scanout_id)}
+}
+
+// present_rect transfers a damaged rectangle to the host and flushes the scanout.
+present_rect :: proc "contextless" (command: ring.Record) -> (status: virtio_gpu.Service_Status, values: [7]u64) {
+	PRESENT :: u32(virtio_gpu.Service_Command.Present_Rect)
+	if framebuffer_resource_id == 0 {
+		return .No_Framebuffer, errors.ring_fail(PRESENT, .Absent, .Region)
+	}
+	if command.values[0] > u64(max(u32)) || command.values[1] > u64(max(u32)) || command.values[2] > u64(max(u32)) || command.values[3] > u64(max(u32)) {
+		return .Out_Of_Range, errors.ring_fail(PRESENT, .Out_Of_Range, .None, 1)
+	}
+	rect := virtio_gpu.Rect{
+		x      = u32(command.values[0]),
+		y      = u32(command.values[1]),
+		width  = u32(command.values[2]),
+		height = u32(command.values[3]),
+	}
+	if rect_prob := virtio_gpu.rect_fits_in_bounds(rect, framebuffer_width, framebuffer_height); rect_prob != .None {
+		return .Out_Of_Range, errors.ring_fail(PRESENT, .Out_Of_Range, .None, 1, i64(rect_prob))
+	}
+
+	byte_offset := (u64(rect.y) * u64(framebuffer_width) + u64(rect.x)) * 4
+	transfer_bytes, xfer_prob := virtio_gpu.transfer_to_host_2d_encode(framebuffer_resource_id, rect, byte_offset, framebuffer_width, framebuffer_height, request_buffer[:CONTROL_BUFFER_BYTES])
+	if xfer_prob != .None {
+		return .Bad_Command, errors.ring_fail(PRESENT, .Bad_Value, .None, 0, i64(xfer_prob))
+	}
+	if _, ok := control_nodata("TRANSFER_TO_HOST_2D", transfer_bytes); !ok {
+		return .Device_Error, errors.ring_fail(PRESENT, .Device, .None, 0)
+	}
+
+	flush_bytes, flush_prob := virtio_gpu.resource_flush_encode(framebuffer_resource_id, rect, framebuffer_width, framebuffer_height, request_buffer[:CONTROL_BUFFER_BYTES])
+	if flush_prob != .None {
+		return .Bad_Command, errors.ring_fail(PRESENT, .Bad_Value, .None, 0, i64(flush_prob))
+	}
+	if _, ok := control_nodata("RESOURCE_FLUSH", flush_bytes); !ok {
+		return .Device_Error, errors.ring_fail(PRESENT, .Device, .None, 0)
+	}
+	return .Ok, {}
+}
+
+// entry verifies PCI identity (vendor 0x1AF4, device 0x1050), starts the
+// VirtIO-GPU control queue, discovers display geometry and Venus capability
+// sets, and serves the GPU client ring.
+@(export, link_name = "entry")
+entry :: proc "c" (ctx: ^system.Context) -> ! {
+	machine = ctx.handles[pci.GRANT_MACHINE]
+	ring_memory = ctx.handles[virtio_gpu.SERVICE_RING]
+	ring_status: system.Status
+	if clients, ring_status = system.ring_open(ring_memory); ring_status != .Ok {
+		fail("no gpu device ring")
+	}
+	configuration_address, configuration_status := system.memory_map(ctx.handles[pci.GRANT_CONFIGURATION], {})
+	if configuration_status != .Ok {
+		fail("no configuration of the device")
+	}
+	configuration := ([^]u8)(configuration_address)[:pci.CONFIGURATION_SIZE]
+	vendor_id := byte_order.read_u16_little_endian(configuration, 0)
+	device_id := byte_order.read_u16_little_endian(configuration, 2)
+	if vendor_id != virtio_gpu.PCI_VENDOR_ID || device_id != virtio_gpu.PCI_DEVICE_ID {
+		fail("the pci device is not a virtio-gpu device")
+	}
+	found: bool
+	if device, found = virtio.find(ctx, configuration); !found {
+		fail("the device has no virtio registers in the memory that it received")
+	}
+	start_device(ctx.handles[pci.GRANT_QUEUES])
+
+	for {
+		wait := system.wait_begin()
+		if virtio.status_read(&device) & virtio.STATUS_NEEDS_RESET != 0 {
+			fail("the device needs a reset")
+		}
+		answered := false
+		for ring.count(&clients.completions) < ring.capacity(&clients.completions) {
+			command := system.receive(&clients.commands) or_break
+			kind, kind_ok := virtio_gpu.service_command_of_ring_word(command.kind)
+			result := virtio_gpu.Service_Status.Ok
+			values: [7]u64
+			if !kind_ok {
+				result = .Bad_Command
+				values = errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind))
+			} else {
+				switch kind {
+				case .None:
+					result = .Bad_Command
+					values = errors.ring_fail(command.kind, .Unsupported, .None, 0, i64(command.kind))
+				case .Display_Info:
+					values = {
+						0 = u64(display_width),
+						1 = u64(display_height),
+						2 = u64(active_scanout_id),
+						3 = u64(venus_available),
+						4 = u64(num_capsets),
+						5 = u64(has_resource_blob),
+					}
+				case .Attach_Framebuffer:
+					result, values = attach_framebuffer(command)
+				case .Present_Rect:
+					result, values = present_rect(command)
+				case .Probe_Venus:
+					values = {
+						0 = u64(venus_available),
+						1 = u64(venus_max_version),
+						2 = u64(venus_max_size),
+						3 = u64(num_capsets),
+						4 = u64(has_resource_blob),
+						5 = u64(has_context_init),
+					}
+				}
+			}
+			ring.push(&clients.completions, ring.Record{kind = u32(result), tag = command.tag, values = values})
+			answered = true
+		}
+		if answered {
+			system.wake_reader(&clients.completions)
+		}
+		if ring.count(&clients.completions) < ring.capacity(&clients.completions) {
+			system.wait_records(&wait, &clients.commands)
+		} else {
+			system.wait_room(&wait, &clients.completions)
+		}
+		system.wait_end(&wait)
+	}
+}
+
+#assert(virtio_gpu.PCI_VENDOR_ID == pci.VENDOR_VIRTIO)
+#assert(virtio_gpu.PCI_DEVICE_ID == pci.DEVICE_VIRTIO_GPU)
+#assert(virtio_gpu.RESP_DISPLAY_INFO_SIZE <= CONTROL_BUFFER_BYTES)
