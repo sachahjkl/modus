@@ -603,6 +603,88 @@ parameters_at :: proc "contextless" (text: string, place: int, tokens: []Token) 
 	return count
 }
 
+// in_comment says if a byte place of a line is in a comment: after its
+// first '/', up to the end of its line. A place at the '/' itself is before
+// the comment: a name that ends there is a name. The place is read with the
+// scanner, so "//" in a text is no comment, as for the colors and the
+// parser.
+in_comment :: proc "contextless" (text: string, place: int) -> bool {
+	position := 0
+	for position <= len(text) {
+		token := token_next(text, position)
+		// The spaces and the comments between two tokens.
+		for gap := position; gap < token.start; {
+			if comment_starts(text, gap) {
+				end := comment_end(text, gap)
+				if place > gap && place <= end {
+					return true
+				}
+				gap = end
+			} else {
+				gap += 1
+			}
+		}
+		if token.kind == .None || token.start >= place {
+			return false
+		}
+		position = token.end
+	}
+	return false
+}
+
+// The groups that the completion follows inside each other, at most.
+GROUP_DEPTH_MOST :: 16
+
+// What opens a group.
+Group_Opener :: enum u8 {
+	Parenthesis = 0, // '(': a call, or an expression or the parameters of a function.
+	Brace       = 1, // '{': a record literal.
+	Bracket     = 2, // '[': a list.
+}
+
+// One group open at a place of a line.
+Open_Group :: struct {
+	opener: Group_Opener,
+	start:  int, // The byte of its '(', '{' or '['.
+	commas: int, // The ',' of the group before the place.
+}
+
+// groups_at gives the groups open at a byte place of a line, read with the
+// scanner: a byte of a text or of a comment opens nothing. found is false
+// past GROUP_DEPTH_MOST groups.
+groups_at :: proc "contextless" (text: string, place: int, groups: ^[GROUP_DEPTH_MOST]Open_Group) -> (depth: int, found: bool) {
+	too_deep := 0
+	limit := clamp(place, 0, len(text))
+	for token := token_next(text, 0); token.kind != .None && token.start < limit; token = token_next(text, token.end) {
+		switch {
+		case opens(text, token):
+			if depth == GROUP_DEPTH_MOST {
+				too_deep += 1
+				break
+			}
+			opener := Group_Opener.Parenthesis
+			if text[token.start] == '{' {
+				opener = .Brace
+			} else if text[token.start] == '[' {
+				opener = .Bracket
+			}
+			groups[depth] = {opener = opener, start = token.start}
+			depth += 1
+		case closes(text, token):
+			if too_deep > 0 {
+				too_deep -= 1
+			} else if depth > 0 {
+				depth -= 1
+			}
+		case token.kind == .Operator && text[token.start] == ',':
+			if too_deep == 0 && depth > 0 {
+				groups[depth - 1].commas += 1
+			}
+		}
+	}
+	return depth, too_deep == 0
+}
+
 // name_runs writes the runs of one name of a line. assigned: the name is
 // the first of the line and '=' follows it: it names a variable.
 name_runs :: proc "contextless" (text: string, token: Token, being_typed, assigned: bool, lookup: Name_Lookup, runs: []terminal.Code_Run, count: int) -> int {

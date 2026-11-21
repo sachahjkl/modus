@@ -404,52 +404,12 @@ names_of_a_call :: proc "contextless" (table: ^Candidate_Table, place: line_edit
 	return false
 }
 
-// The groups that the completion follows inside each other, at most.
-GROUP_DEPTH_MOST :: 16
-
-// One group open at the caret: a call or a record literal.
-Open_Group :: struct {
-	brace:  bool, // A record literal; else parentheses.
-	start:  int, // The byte of its '(' or '{'.
-	commas: int, // The ',' of the group before the caret.
-}
-
-// groups_at gives the groups open at a byte place, outside the quotes.
-// found is false past GROUP_DEPTH_MOST groups.
-groups_at :: proc "contextless" (text: string, place: int, groups: ^[GROUP_DEPTH_MOST]Open_Group) -> (depth: int, found: bool) {
-	quoted := false
-	too_deep := 0
-	for index in 0 ..< clamp(place, 0, len(text)) {
-		character := text[index]
-		if character == '"' {
-			quoted = !quoted
-			continue
-		}
-		if quoted {
-			continue
-		}
-		switch character {
-		case '(', '{':
-			if depth == GROUP_DEPTH_MOST {
-				too_deep += 1
-			} else {
-				groups[depth] = {brace = character == '{', start = index}
-				depth += 1
-			}
-		case ')', '}':
-			if too_deep > 0 {
-				too_deep -= 1
-			} else if depth > 0 {
-				depth -= 1
-			}
-		case ',':
-			if too_deep == 0 && depth > 0 {
-				groups[depth - 1].commas += 1
-			}
-		}
-	}
-	return depth, too_deep == 0
-}
+// The groups open at the caret come from the scanner of the line
+// (console_language.groups_at), so a '(' in a text or in a comment opens
+// nothing.
+GROUP_DEPTH_MOST :: console_language.GROUP_DEPTH_MOST
+Open_Group :: console_language.Open_Group
+groups_at :: console_language.groups_at
 
 // name_before gives the name that ends before a byte place, after its
 // spaces: the name of a call before its '('.
@@ -483,7 +443,7 @@ names_of_a_record_literal :: proc "contextless" (table: ^Candidate_Table, place:
 	}
 	groups: [GROUP_DEPTH_MOST]Open_Group
 	depth, found := groups_at(text, place.word_start, &groups)
-	if !found || depth < 2 || !groups[depth - 1].brace || groups[depth - 2].brace {
+	if !found || depth < 2 || groups[depth - 1].opener != .Brace || groups[depth - 2].opener != .Parenthesis {
 		return false
 	}
 	literal, call := groups[depth - 1], groups[depth - 2]
@@ -532,7 +492,7 @@ parameter_names_add :: proc "contextless" (table: ^Candidate_Table, place: line_
 	}
 	groups: [GROUP_DEPTH_MOST]Open_Group
 	depth, found := groups_at(text, place.word_start, &groups)
-	if !found || depth == 0 || groups[depth - 1].brace {
+	if !found || depth == 0 || groups[depth - 1].opener != .Parenthesis {
 		return
 	}
 	name, _ := name_before(text, groups[depth - 1].start)
@@ -751,7 +711,7 @@ members_of_an_argument :: proc "contextless" (table: ^Candidate_Table, text: str
 	}
 	groups: [GROUP_DEPTH_MOST]Open_Group
 	depth, found := groups_at(text, argument_place, &groups)
-	if !found || depth == 0 || groups[depth - 1].brace {
+	if !found || depth == 0 || groups[depth - 1].opener != .Parenthesis {
 		return {}, false
 	}
 	name, name_start := name_before(text, groups[depth - 1].start)
@@ -807,6 +767,12 @@ members_of_an_argument :: proc "contextless" (table: ^Candidate_Table, text: str
 // a name that is already whole stays in the list.
 names_rank :: proc "contextless" (by_tab: bool) {
 	text := line_editor.line_text(&line)
+	// A comment is words for a reader: the completion offers nothing in
+	// it, so a key there stays a key of the comment, Enter too.
+	if console_language.in_comment(text, line.caret) {
+		completion_close()
+		return
+	}
 	place := line_editor.completion_context(text, line.caret, by_tab)
 	opens := by_tab || place.place == .Member || place.place == .Quoted || place.place == .Name && len(place.query) > 0
 	// A "." at an argument of an Enum parameter opens the list of its
@@ -1253,6 +1219,10 @@ hint_write :: proc "contextless" (long, short: ^system.Writer) -> (marked: [term
 		system.write_part(short, u64(completion.matched_count))
 		system.write_part(short, " lines. ^R ^S Enter Esc")
 	case .Closed:
+		// In a comment, the call before it is no call at the caret.
+		if console_language.in_comment(line_editor.line_text(&line), line.caret) {
+			return {}
+		}
 		name, argument, found := line_editor.call_at_caret(line_editor.line_text(&line), line.caret)
 		if !found {
 			return {}

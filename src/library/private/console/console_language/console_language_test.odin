@@ -540,3 +540,67 @@ comments_of_a_line :: proc(t: ^testing.T) {
 	count = line_runs(text, 0, NO_CARET, test_names, runs[:])
 	expect_runs(t, text, runs[:count], []Expected_Run{{"1", .Number}, {"/", .Operator}, {"/", .Operator}, {"2", .Number}})
 }
+
+// The places of the caret that the completion reads with the scanner: in a
+// comment it offers nothing, so a key there, Enter too, stays a key of the
+// comment. A '(' in a comment or in a text opens no group.
+@(test)
+the_completion_reads_comments_with_the_scanner :: proc(t: ^testing.T) {
+	// The comment of the fault of the machine test, and each place in it.
+	text := "(x) => x + 1 // a comment ends the line"
+	start := 13
+	testing.expect(t, comment_starts(text, start))
+	testing.expect(t, !in_comment(text, start), "the '/' itself: a name before it ends there")
+	testing.expect(t, in_comment(text, start + 1), "between the two '/'")
+	testing.expect(t, in_comment(text, start + 2), "right after \"//\"")
+	testing.expect(t, in_comment(text, start + 12), "in its middle")
+	testing.expect(t, in_comment(text, len(text)), "at its end, the end of the line: \"line\" typed there")
+	testing.expect(t, !in_comment(text, 8), "in the code before it")
+	// A name that ends at the "//" is code: the completion offers names
+	// for it as before.
+	testing.expect(t, !in_comment("are// c", 3))
+	testing.expect(t, in_comment("are// c", 4))
+	// "//" in a text is a part of the text: no comment, finished or not.
+	testing.expect(t, !in_comment("f(\"a // b\") + x", 7))
+	testing.expect(t, !in_comment("f(\"a // b\") + x", 15))
+	testing.expect(t, !in_comment("x = \"a // b", 11))
+	// "/ /" is two operators, and a line with no comment has none.
+	testing.expect(t, !in_comment("1 / / 2", 4))
+	testing.expect(t, !in_comment("", 0))
+	// A comment ends at the end of its line: a place on the next line is
+	// code. A line of the console holds no line end, so this place happens
+	// only in a text of more lines, as a declaration.
+	testing.expect(t, !in_comment("a // c\nb", 8))
+	testing.expect(t, in_comment("a // c\nb", 6))
+
+	// A '(' or a ',' in a comment or in a text opens no group and moves no
+	// argument: the groups at a place are those of the code.
+	groups: [GROUP_DEPTH_MOST]Open_Group
+	line := "f(1, g(2) // h(3, 4"
+	depth, found := groups_at(line, len(line), &groups)
+	testing.expect(t, found)
+	testing.expect_value(t, depth, 1)
+	testing.expect_value(t, groups[0].commas, 1)
+	testing.expect_value(t, groups[0].start, 1)
+	line = "f(\"(,(\", "
+	depth, found = groups_at(line, len(line), &groups)
+	testing.expect_value(t, depth, 1)
+	testing.expect_value(t, groups[0].commas, 1)
+	// The openers: a call, a record literal, a list.
+	line = "f({a = [1, "
+	depth, found = groups_at(line, len(line), &groups)
+	testing.expect_value(t, depth, 3)
+	testing.expect_value(t, groups[0].opener, Group_Opener.Parenthesis)
+	testing.expect_value(t, groups[1].opener, Group_Opener.Brace)
+	testing.expect_value(t, groups[2].opener, Group_Opener.Bracket)
+	testing.expect_value(t, groups[2].commas, 1)
+	// Past GROUP_DEPTH_MOST groups the place is not known.
+	deep: [64]u8
+	for &b in deep {
+		b = '('
+	}
+	_, found = groups_at(string(deep[:GROUP_DEPTH_MOST + 1]), GROUP_DEPTH_MOST + 1, &groups)
+	testing.expect(t, !found)
+	_, found = groups_at(string(deep[:GROUP_DEPTH_MOST]), GROUP_DEPTH_MOST, &groups)
+	testing.expect(t, found)
+}

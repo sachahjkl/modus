@@ -328,7 +328,7 @@ Subtle points:
 
 ### Comments
 
-A comment is `//` outside a text, to the end of its line. The scanner of `console_language` skips it as it skips a space, so it gives no token, the parser makes no node of it, and the nested form of `|>` never reads its bytes: a `|` or a `|>` in a comment is no operator. The colors draw it in the kind Words, the color of a comment. A line of the console can end with a comment, and a line with no token, only spaces and a comment, does nothing. `//` in a text is a part of the text, and `a / / b` is two divisions.
+A comment is `//` outside a text, to the end of its line. The scanner of `console_language` skips it as it skips a space, so it gives no token, the parser makes no node of it, and the nested form of `|>` never reads its bytes: a `|` or a `|>` in a comment is no operator. The colors draw it in the kind Words, the color of a comment. The completion reads the line with the same scanner: it offers nothing while the caret is in a comment, so a word typed there and Enter stay keys of the comment, and a `(` in a comment or in a text opens no group of the arguments. A line of the console can end with a comment, and a line with no token, only spaces and a comment, does nothing. `//` in a text is a part of the text, and `a / / b` is two divisions.
 
 Refused forms:
 

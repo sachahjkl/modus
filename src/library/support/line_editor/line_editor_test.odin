@@ -211,6 +211,12 @@ completion_places :: proc(t: ^testing.T) {
 
 	testing.expect_value(t, completion_context("revoke(\"monitor\", \"ma", 21).place, Completion_Place.None) // Only the first argument.
 	testing.expect_value(t, completion_context("x = \"hello wo", 13).place, Completion_Place.None)
+	// In a text, a name is no name: the one place is the first argument of
+	// a call, which the caller fills with the names that it takes there
+	// (the modules of load), or with none.
+	testing.expect_value(t, completion_context("f(1, \"a line", 12).place, Completion_Place.None)
+	testing.expect_value(t, completion_context("length(\"a line", 14).place, Completion_Place.Quoted)
+	testing.expect_value(t, completion_context("length(\"a line", 14).owner, "length")
 	testing.expect_value(t, completion_context("12ab", 4).place, Completion_Place.None)
 	testing.expect_value(t, completion_context("a + ", 4).place, Completion_Place.None)
 	testing.expect_value(t, completion_context("", 0).place, Completion_Place.None)

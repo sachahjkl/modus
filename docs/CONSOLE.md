@@ -748,7 +748,7 @@ A chosen name replaces the whole name at the caret, also its part after the care
 
 ## 2. What the console completes
 
-The console completes the name at the caret from what it knows at that moment: its command table, its variables, the modules of the boot image, and the processes that run. Which of these it offers depends on where the caret is.
+The console completes the name at the caret from what it knows at that moment: its command table, its variables, the modules of the boot image, and the processes that run. Which of these it offers depends on where the caret is. In a comment it offers nothing, and in a text only the names in quotes of the table below: a word typed there, and Enter, stay keys of the line.
 
 | Where the caret is | The names | From |
 |---|---|---|
