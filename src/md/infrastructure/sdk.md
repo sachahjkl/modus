@@ -39,36 +39,50 @@ The release command writes these files in `dist/` beside the release image, and 
 
 ### What it holds
 
-The SDK is a part of a built checkout, at the same paths:
+The SDK is a self-contained directory assembled from the public parts of a release, with no internal part, no kernel, and no checkout required:
 
 ```
-modus-sdk-<release number>/
-  sdk.manifest                       the SDK manifest
-  LICENSE                            the license of the repository
-  src/library/modus/                 the public library, whole: the contracts, the support packages, the copy of the cryptography with its licenses
-  src/runtime/                       the memory procedures in assembly, for a module and for a host program
-  build/modules/<module>             the module file of each module of the group `libraries`, at the path where the build writes it
-  build/contracts.description        the contract description
-  build/tool/modustool               the tool
+<sdk>/
+  SDK_MANIFEST.txt           the canonical SDK manifest, BLAKE3 root digest, and optional Ed25519 signature
+  LICENSE                    the license of the repository
+  library/modus/             the public library, whole: contracts, support packages, and cryptography with its manifests and licenses
+  runtime/                   the memory procedures in assembly, for a module and for a host program
+  modules/                   exported public module catalog (`catalog.txt`) and verified `.module` files of the release
+  examples/hello_odin/       minimal freestanding Odin outside module (`module.txt` and `main.odin`)
+  examples/hello_c/          minimal freestanding C outside module (`hello_c.c` and `module.manifest`)
 ```
 
-**Why the paths of a checkout.** The tool names each folder of the system by a path from the root of the system, and a build changes its working folder to that root ([third_party_module.md](third_party_module.md), "Where the tool finds the system"). With the same paths in the SDK, the build of an outside module reads the same relative paths in both: one build path, with no second set of path constants. A path that one set misses would read nothing, with no error.
+**Why a self-contained layout.** The SDK exposes only the public surface: `<sdk>/library/modus/` maps directly to `-collection:modus=<sdk>/library/modus`, `<sdk>/runtime/` supplies `memory.asm`, and `<sdk>/modules/` holds verified `.module` files and `catalog.txt`. Neither `internal` nor `modulus` exists anywhere in the tree, and both packaging and verification refuse any path segment named `internal` or `modulus`. During an SDK build of an Odin outside module, the tool points its public-library lookup root at `<sdk>/library/modus` so export description and type resolution read the SDK directly with no repository checkout.
 
-**What it does not hold.** No internal part, no kernel, no kernel part, no module of another group, no source of a module, no guide. An SDK has no folder `src/library/internal`, so the compiler refuses `internal:` in a module of a developer.
+**What it does not hold.** No internal part, no kernel, no kernel part, no source of a system module, no test module, no guide, and no symbolic links. An SDK has no folder for `internal:` or `modulus:`, so the compiler refuses those imports in any outside module.
 
 ### The SDK manifest
 
-`sdk.manifest` is lines of text. First, `key: value` lines, as the module build file has:
+`SDK_MANIFEST.txt` is plain text. First, `key: value` header lines in fixed order:
 
 ```
-release: 0.94.0
+sdk_format: 1
+release: 0.96.0
+target: x86_64-unknown-none-elf
+module_format: 7
 compiler: dev-2026-11a 81382db6047ac43a2d397046fa45f253aa628f7c
-module_format: 3
+root_digest: <64 lowercase hexadecimal BLAKE3 digits>
+public_key: <64 lowercase hexadecimal Ed25519 public key digits>
+signature: <128 lowercase hexadecimal Ed25519 signature digits>
 ```
 
-Then an empty line, then one line for each other file of the SDK: its BLAKE3 hash in 64 lowercase hexadecimal digits, two spaces, its path from the root of the SDK, in the order of the paths.
+The `public_key` and `signature` lines appear together when the SDK is signed and are absent when unsigned. Then an empty line, then one line for every other file in the SDK: its BLAKE3 hash in 64 lowercase hexadecimal digits, two spaces, and its relative path with `/` separators, sorted strictly in ascending byte order.
 
-The tool reads the manifest at the start of each command in an SDK, and refuses an SDK with a file that differs from its line, a missing file, or a file under `src/` or `build/` that no line names. A developer who changes a package of the public library then gets a sentence that names the file, not a module that the system never compiled. The release command writes the manifest from the files that it copies, and the archive holds the files in the order of the manifest, with a fixed time, owner and mode, so one release gives one archive, byte for byte. The tool writes the tar format itself; `zstd -19` compresses it.
+`root_digest` is the BLAKE3 hash of the canonical header fields (`sdk_format`, `release`, `target`, `module_format`, `compiler`) followed by every `<hash>  <path>` line. When signed, the Ed25519 signature (computed and verified through `modus:cryptography_primitives`) covers the domain-separated message `"modus sdk manifest 1\n"` followed by the 64 lowercase hexadecimal digits of `root_digest`.
+
+The verifier (`modustool sdk-verify`) parses the manifest strictly, recomputes `root_digest`, checks the Ed25519 signature (requiring a match against `--public-key` when supplied, and always checking embedded signatures for integrity), walks the entire SDK tree while refusing symbolic links and any path touching `internal` or `modulus`, refuses any missing or stray unlisted file, and checks every file's BLAKE3 hash against its manifest line.
+
+### Commands of the SDK
+
+- `modustool sdk-pack <output-dir> [--sign-key <path>] [--modules-dir <path>]`: assembles a deterministic SDK directory from the public library, runtime, public module catalog and built `.module` files, and minimal Odin and C examples, writes `SDK_MANIFEST.txt` (optionally Ed25519-signed), and runs `sdk-verify` on the result before returning.
+- `modustool sdk-verify <sdk-dir> [--public-key <path>]`: verifies an unpacked SDK directory with no repository checkout required.
+- `modustool sdk-convert <object.o> <module.manifest> <output.modus> [--sdk <sdk-dir>] [--import-dir <dir>]`: converts any freestanding x86-64 relocatable ELF object (`ET_REL`, from C, Rust, Zig, Odin, or assembly) paired with a language-neutral `module.manifest` ([language_neutral_abi.md](language_neutral_abi.md)) into a verified modus module file with no repository checkout required, resolving declared imports from `<sdk-dir>/modules/` or `--import-dir`.
+- `modustool module-build <folder> --system <sdk-dir>`: detects `SDK_MANIFEST.txt` in `<sdk-dir>` and builds either an Odin outside module (`module.txt`, passing only `-collection:modus=<sdk-dir>/library/modus`) or a language-neutral module (`module.manifest` + `.o` or `.c`) purely against the verified SDK.
 
 ### Where the tool finds the system
 
@@ -76,12 +90,12 @@ The folder of the system is, in this order:
 
 1. the argument `--system`;
 2. the environment variable `MODUS_SYSTEM`;
-3. the SDK that holds the binary that runs: the folder two levels above the file of the binary (`build/tool/modustool`), when that folder holds `sdk.manifest`. The binary reads its own path from `/proc/self/exe`;
+3. the SDK that holds the binary that runs: the folder two levels above the file of the binary (`build/tool/modustool`), when that folder holds `SDK_MANIFEST.txt`. The binary reads its own path from `/proc/self/exe`;
 4. the folder where the command runs.
 
 So a developer runs `<SDK>/build/tool/modustool module-build <the folder of the module>` from any folder, with no variable. A checkout keeps the command of the flake and `MODUS_SYSTEM`.
 
-In an SDK, the tool runs the commands that a developer of another project needs: `module-build`, `verify`, `binding`. Each other command stops with one sentence that it needs a checkout of the system. The binary of the SDK never compiles itself: it is built with `-define:TOOL_BUILDS_ITSELF=false`, as the binary of the check of the flake ([repository_layout.md](repository_layout.md), "The tool built once").
+In an SDK, the tool runs the commands that a developer of another project needs: `module-build`, `sdk-verify`, `sdk-convert`, `verify`, `binding`. Each other command stops with one sentence that it needs a checkout of the system. The binary of the SDK never compiles itself: it is built with `-define:TOOL_BUILDS_ITSELF=false`, as the binary of the check of the flake ([repository_layout.md](repository_layout.md), "The tool built once").
 
 ### The programs with no Nix
 
@@ -101,7 +115,7 @@ The archive leaves when the two reasons leave: the option for the debug informat
 
 ### A host program
 
-A host program of another project gives its compiler `-collection:modus=<SDK>/src/library/modus`, and assembles `<SDK>/src/runtime/memory_for_host_tests.asm` with `-i<SDK>/` for the include of `memory.asm`. The native viewer of the remote display does this from a checkout today; the SDK gives it the same folders with no checkout. It imports `modus:contract/remote_display`, `modus:quic`, `modus:random` and `modus:cryptography_primitives`.
+A host program of another project gives its compiler `-collection:modus=<SDK>/library/modus`, and assembles `<SDK>/runtime/memory_for_host_tests.asm` with `-i<SDK>/` for the include of `memory.asm`. The native viewer of the remote display does this from a checkout today; the SDK gives it the same packages with no checkout. It imports `modus:contract/remote_display`, `modus:quic`, `modus:random` and `modus:cryptography_primitives`.
 
 ### A Nix output, as a convenience
 
@@ -174,7 +188,8 @@ Where a library module exports such code, C calls it through its export, as the 
 
 ## Refused forms
 
-- **The SDK in a layout of its own** (`<SDK>/library/`, `<SDK>/modules/`). The tool would need a second set of folder constants for the SDK, and a path that one set misses reads nothing with no error ([third_party_module.md](third_party_module.md), "Where the tool finds the system").
+- **Allowing stray or unlisted files in an SDK directory.** A stray file inside `<sdk>/library/modus/` or `<sdk>/modules/` could silently change compilation or inject unverified code. The verifier walks the entire directory and refuses any unlisted file or symbolic link.
+- **Permitting `internal` or `modulus` paths in an SDK.** Both `sdk-pack` and `sdk-verify` refuse any path component named `internal` or `modulus`, and `sdk_build_outside_module` passes only `-collection:modus=<sdk>/library/modus`.
 - **The SDK as a Nix output only.** A developer with no Nix gets nothing. The output is a convenience beside the archive.
 - **A checkout as the SDK.** It holds the internal parts, the kernel and every module source, needs a build of the system before the first outside module, and gives the compiler `internal`.
 - **The name `modus-development-kit-<release number>`.** "SDK" is the word that a developer of another project looks for, and the short name is the name of the archive in each command that the developer types. The term is SDK, and its glossary entry says the complete words once.
@@ -203,4 +218,15 @@ A runner with no Nix verifies the files of a release, unpacks the SDK and the co
 
 ## State
 
-Designed, not built. Each part is an entry of [`ROADMAP.md`](../../../ROADMAP.md): the two source libraries, the SDK with the compiler archive, and the C language binding. The Zig and the Rust targets, and the objects of another compiler in an outside module, are one entry of its section Maybe: without such objects, a header gives a C developer the records but no module of their own. Left with no entry: an SDK for another host than Linux on x86-64.
+Built:
+
+- The two source libraries (`modus:` and `internal:`) and the kernel source library (`modulus:`).
+- The SDK directory packager (`sdk_build`), strict verifier (`sdk_verify`), outside-module SDK builder (`sdk_build_outside_module`), and language-neutral `ET_REL` + `module.manifest` converter entry point (`sdk_convert_object_to_module`) in `tools/modustool/build/sdk.odin`, with deterministic `SDK_MANIFEST.txt` generation, BLAKE3 root digest, and Ed25519 signing and verification via `modus:cryptography_primitives`.
+- The CLI commands `modustool sdk-pack`, `modustool sdk-verify`, and `modustool sdk-convert`, plus SDK auto-detection in `modustool module-build --system <sdk-dir>`.
+- Standalone minimal examples (`hello_odin` and `hello_c`) bundled in the SDK and adversarial host tests in `tools/modustool/build/sdk_test.odin`.
+
+Left:
+
+- Packaging the compressed `.tar.zst` SDK archive and the static compiler archive (`modus-compiler-<release number>-x86_64-linux.tar.zst`) inside `modustool release image`, with the non-Nix release workflow job.
+- The contract description file and the C, Zig, and Rust language binding generators (`modustool binding`).
+- An SDK for another host than Linux on x86-64.

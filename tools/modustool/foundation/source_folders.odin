@@ -168,6 +168,21 @@ source_folder_is_of_the_tool :: proc(folder: string) -> bool {
 	return folder == TOOL_SOURCE_FOLDER || strings.has_prefix(folder, TOOL_SOURCE_FOLDER + "/")
 }
 
+// Thread-local override for the root of the public source library `modus:`.
+// Empty in normal checkout runs (resolving to SOURCE_FOLDER_PUBLIC); SDK builds
+// set it only on the current thread so concurrent callers never race.
+@(thread_local)
+source_library_public_folder: string
+
+// active_source_library_public_folder returns the active root folder of the
+// public source library `modus:` for the current thread.
+active_source_library_public_folder :: proc() -> string {
+	if source_library_public_folder != "" {
+		return source_library_public_folder
+	}
+	return SOURCE_FOLDER_PUBLIC
+}
+
 // source_library_package_folder gives the folder of the package that the
 // path of an import line names in one of the three source libraries of the
 // system: "modus:contract/ring" is src/library/modus/contract/ring,
@@ -177,7 +192,7 @@ source_folder_is_of_the_tool :: proc(folder: string) -> bool {
 // path are not found.
 source_library_package_folder :: proc(import_path: string, allocator := context.temp_allocator) -> (folder: string, found: bool) {
 	if len(import_path) > len(SOURCE_LIBRARY_IMPORT_START) && strings.has_prefix(import_path, SOURCE_LIBRARY_IMPORT_START) {
-		return strings.concatenate({SOURCE_FOLDER_PUBLIC, "/", import_path[len(SOURCE_LIBRARY_IMPORT_START):]}, allocator), true
+		return strings.concatenate({active_source_library_public_folder(), "/", import_path[len(SOURCE_LIBRARY_IMPORT_START):]}, allocator), true
 	}
 	if len(import_path) > len(INTERNAL_IMPORT_START) && strings.has_prefix(import_path, INTERNAL_IMPORT_START) {
 		return strings.concatenate({SOURCE_FOLDER_INTERNAL, "/", import_path[len(INTERNAL_IMPORT_START):]}, allocator), true

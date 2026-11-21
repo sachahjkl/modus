@@ -151,6 +151,38 @@ COMMANDS :: [?]foundation.Command {
 	// (docs/TOOLS.md, "A module from a source outside the repository").
 	// Writes a data disk whose store of the module files holds module files: a
 	// machine with that disk starts each one from its console, by its hash.
+	// Packs a self-contained, deterministic SDK directory containing the public
+	// `modus:` library, runtime assembly, public module catalog and verified
+	// `.module` files, minimal freestanding Odin and C examples, and a canonical
+	// `SDK_MANIFEST.txt` with BLAKE3 root digest and optional Ed25519 signature.
+	//
+	// - `output-dir`: target directory to write the unpacked SDK.
+	// - `--sign-key <path>` (optional): 32-byte Ed25519 private key seed (64 hex
+	//   digits or unpadded base64url) used to sign the manifest root digest.
+	// - `--modules-dir <path>` (optional): directory containing built `.module`
+	//   files; defaults to `build/modules` when present.
+	{name = "sdk-pack", about = "sdk-pack <output-dir> [--sign-key <path>] [--modules-dir <path>]: assemble a deterministic, self-contained SDK directory with public library, runtime, module catalog, examples, and signed or unsigned SDK_MANIFEST.txt", run = build.run_sdk_pack},
+	// Verifies an unpacked SDK directory against its `SDK_MANIFEST.txt`: checks
+	// every file's BLAKE3 hash, rejects missing or stray unlisted files, rejects
+	// symbolic links and any `internal` or `modulus` path, and verifies the
+	// Ed25519 signature when present or required by `--public-key`.
+	//
+	// - `sdk-dir`: directory of the unpacked SDK.
+	// - `--public-key <path>` (optional): 32-byte Ed25519 public key (64 hex
+	//   digits or unpadded base64url); requires a valid signature by this key.
+	{name = "sdk-verify", about = "sdk-verify <sdk-dir> [--public-key <path>]: verify every file hash, absence of stray or internal/modulus paths, and Ed25519 signature of an unpacked SDK directory", run = build.run_sdk_verify},
+	// Converts a freestanding x86-64 relocatable ELF object (`.o`, from C, Rust,
+	// Zig, Odin, or assembly) paired with a language-neutral `module.manifest`
+	// into a verified modus module file with no repository checkout.
+	//
+	// - `object.o`: freestanding System V AMD64 `ET_REL` relocatable object.
+	// - `module.manifest`: plain-text language-neutral module description.
+	// - `output.modus`: destination path for the validated modus module file.
+	// - `--sdk <sdk-dir>` (optional): verified SDK directory whose modules folder
+	//   resolves declared imports.
+	// - `--import-dir <dir>` (optional, repeatable): extra directory searched for
+	//   imported `.module` or `.modus` files.
+	{name = "sdk-convert", about = "sdk-convert <object.o> <module.manifest> <output.modus> [--sdk <sdk-dir>] [--import-dir <dir>]: convert a freestanding ET_REL object and language-neutral module.manifest into a validated modus module file", run = build.run_sdk_convert},
 	{name = "module-disk", about = "module-disk <disk file to write> <module file> [<module file> ...]: write a data disk whose store `module_files` holds each module file under the name of its file, with the debug object `<name>.debug` beside it under the hash of the module, and print the line of the console that starts each one", run = build.run_module_disk},
 	{name = "module-build", about = "module-build <folder of the module> [--system <folder of the system>] [--out <folder of the outputs>]: build one module from a folder outside the repository, with its module build file `" + build.MODULE_BUILD_FILE_NAME + "`: write <name>.module and <name>.debug, and print the hash of the module and the names of its exports", run = build.run_module_build},
 	// Builds one boot volume in this process: its boot image with the system
@@ -628,10 +660,10 @@ main :: proc() {
 		usage()
 		return
 	}
-	// The commands module-build and cache-serve can run outside the repository:
-	// module-build finds the system folder itself, and cache-serve operates on
-	// the store directory named by --dir.
-	if os.args[1] != "module-build" && os.args[1] != "cache-serve" && !os.exists(foundation.ROOT_MARK) {
+	// Commands that operate on external directories or unpacked SDKs can run
+	// outside a repository checkout.
+	outside_repo_ok := os.args[1] == "module-build" || os.args[1] == "cache-serve" || os.args[1] == "sdk-verify" || os.args[1] == "sdk-convert"
+	if !outside_repo_ok && !os.exists(foundation.ROOT_MARK) {
 		fmt.eprintln("modustool: start it from the root of the repository")
 		os.exit(foundation.EXIT_USAGE)
 	}
