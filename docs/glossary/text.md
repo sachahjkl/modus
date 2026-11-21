@@ -559,3 +559,123 @@ A page heading is the title of a page of a window, at the text size token `text_
 The design: `src/md/features/text_rendering.md`, "The text size tokens".
 
 Do not use: page title, masthead.
+
+### Language tag
+
+A language tag is the name of a language and of its conventions in the form of BCP 47: `fr`, `fr-CA`, `ar-EG-u-nu-latn`.
+
+The principal writes it as text, and one border reads it into a locale record: the console with `language("fr-CA")`, the export of `settings`, the tool. The border follows RFC 5646 and UTS #35 part 1, writes the canonical form, and refuses a private use subtag, the extension `t` and a keyword of `u` outside the closed set. No process reads the text of a tag that another wrote. A language tag is not a keyboard identifier and not a time zone.
+
+The design: `src/md/features/interface_language.md`, "1. The identity of a language".
+
+Do not use: language code, LANG, culture, locale string.
+
+### Locale
+
+A locale is the record of 48 bytes that holds a language tag in its typed form: a language, a script, a region, variants, and the keywords of the extension `u` as enums.
+
+`locale.Locale` crosses each border in place of the text of a tag. The keywords are the calendar, the numbering system, the first day of the week, the hour cycle, the measurement system, the collation and the region override; each is an enum with 0 for absent. All zeros is the root locale, `und`. The language list and a language pack hold locales. A locale is not the time zone: the setting `time_zone` holds the offset.
+
+The design: `src/md/features/interface_language.md`, "1. The identity of a language".
+
+Do not use: culture, regional settings, locale identifier (for the record).
+
+### Language list
+
+The language list is the setting that holds the languages that the principal reads, in its order: at most 8 locales.
+
+The process `settings` writes it on the settings page: its row "languages", or `settings.set_languages([language("fr"), language("en")])`. For each interface message, a reader takes the first language of the list, then its parents, that holds a valid translation; else the source language, English. An empty list is English. The keywords of its first locale, such as the hour cycle, apply to each text. It is not a list of the languages that the machine holds: those are its language packs.
+
+The design: `src/md/features/interface_language.md`, "1. The identity of a language".
+
+Do not use: preferred languages, LANG, LANGUAGE.
+
+### Interface message
+
+An interface message is a text of the interface with typed variables, written in Unicode MessageFormat 2.0, that a reader renders in its language.
+
+A package names each of its interface messages by a member of its enum `Interface_Message`; the variables are the fields of one record type, as for a log fact. Its source text is English, in `messages/en.mf2`, and the tool compiles it into the tables `Interface_Messages` and `Interface_Message_Parts` of the module file; no process parses it. A translation has its own selectors for plural and gender. It is not a message of TLS, of a signature or of an interrupt.
+
+The design: `src/md/features/interface_language.md`, "2. Interface messages".
+
+Do not use: message (alone, for this), string (for this), resource string, translation key, gettext.
+
+### Message resource
+
+A message resource is a file of the interface messages of one language for one package, in the format `.mf2` that the W3C Internationalization WG incubates.
+
+It starts with `@locale` and holds one `identifier = message` for each interface message, in the syntax of UTS #35 part 9. The source resource of a package is `messages/en.mf2`, beside its source; a translation is `messages/fr.mf2`. The tool reads it at the build only, in the form of the draft of 2026-10-07, which it pins. It is not a file that a process reads, and not a language pack, which holds the compiled form.
+
+The design: `src/md/features/interface_language.md`, "2. Interface messages".
+
+Do not use: catalog, .po file, .ftl file (for this), strings file.
+
+### Interface message key
+
+An interface message key is the number that names one interface message across modules and language packs: SipHash-2-4 of `<package>.<identifier>`.
+
+It uses the key of the fact keys, so the tool computes it from the source. A row of a language pack names its interface message by this key and by the source hash, the BLAKE3 of the compiled source. When the English changes, its source hash changes, and the old translation falls back alone. The key is a name, not the value of a member, so a new member moves no translation.
+
+The design: `src/md/features/interface_language.md`, "2. Interface messages".
+
+Do not use: message key, string id, message number, msgid.
+
+### Language pack
+
+A language pack is a data object that holds the translations of one language and its locale data, named by the hash of its bytes.
+
+The tool builds it from the message resources of a language and from a pinned CLDR. A pack of the boot image is in the signed system description; a pack from the cache is named in the plan of a principal. `language_pack.validate` checks it whole before the machine takes it. The root service maps the packs of the session read-only at the range `Language_Packs` of each process at its start; a new pack reaches a process at its next start. It holds no code, and a translation changes no module hash.
+
+The design: `src/md/features/interface_language.md`, "3. Language packs".
+
+Do not use: translation file, language bundle, locale package, language module.
+
+### Locale data
+
+Locale data is the tables of CLDR for one locale that a reader needs to write a text: plural rules, numbers, dates, units, lists and the names of languages.
+
+The tool reads them from the XML of a pinned release of CLDR, a recipe input, and writes typed tables in a language pack. A plural rule becomes conditions on integers. No process reads XML or JSON. The locale data of one locale is about 25 to 40 KiB, an estimate to measure; its source in CLDR 49 is 338 KiB of JSON for `fr`.
+
+The design: `src/md/features/interface_language.md`, "4. Locale data".
+
+Do not use: CLDR data (for the compiled tables), ICU data, locale database.
+
+### Plural category
+
+A plural category is one of the six forms that CLDR gives a number in a language for the words around it: `zero`, `one`, `two`, `few`, `many`, `other`.
+
+The plural rules of the locale give the category of a number from its operands: the value and the digits that the render writes. English puts 1 in `one`; French puts 0 and 1 in `one`; Arabic uses all six. An interface message selects a variant by the category, so a count reads "1 block" and "2 blocks". An ordinal has its own rules ("1st", "2nd").
+
+The design: `src/md/features/interface_language.md`, "2. Interface messages".
+
+Do not use: plural form (for this), quantity.
+
+### Grapheme cluster
+
+A grapheme cluster is the text that a reader sees as one character: one or more code points, found by the rules of UAX #29.
+
+é written as `e` then U+0301 is two code points and one grapheme cluster; a flag of two regional indicators is one too. The line editor moves, deletes and selects by grapheme cluster, and a line break falls between two of them. The cell of a text grid holds a code point, so a cluster of several code points needs the shaping of its script.
+
+The design: `src/md/features/interface_language.md`, "5. Text processing".
+
+Do not use: character (for this), letter, glyph (for this).
+
+### Collation
+
+A collation is the order of texts that a reader of one language expects, from the Unicode Collation Algorithm, the root order of CLDR and the tailoring of a locale.
+
+`sort(name, language = language())` sorts by the collation of the first language of the principal; `sort(name)` keeps the order of code points, the same on every machine. Swedish puts ä after z, and `fr-CA` compares accents from the end. A comparison at the primary strength ignores case and accents: `matches(name, "ete", language())`. A collation is not a comparison of bytes.
+
+The design: `src/md/features/interface_language.md`, "5. Text processing".
+
+Do not use: locale order, natural sort, strcoll.
+
+### Input method
+
+An input method is a process with a grant that turns keys into text through a composition and a candidate window, for a script with more characters than keys.
+
+When a text field in focus asks for it, the compositor sends the keys to the input method in place of the window. The input method sends back a composition, a commit and the place of its candidate window, its own surface at the caret. The window receives text events, not keys. A field of a passphrase asks for none. A layout of the keyboard is not an input method: it maps one key to one character.
+
+The design: `src/md/features/interface_language.md`, "7. Input".
+
+Do not use: IME (alone), input editor, input source.
