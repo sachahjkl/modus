@@ -1,5 +1,5 @@
 // Delegated collector and wide-grant audit service
-// (src/md/features/module_outputs.md, src/md/features/wide_grants.md).
+// (src/md/features/module_outputs.md; src/md/features/wide_grants.md).
 //
 // Maintains the per-principal append-only BLAKE3 hash-chained act record store
 // and enforces wide-grant proofs, window bounds, monotonic expiry, instant

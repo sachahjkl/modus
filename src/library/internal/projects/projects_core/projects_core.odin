@@ -1,5 +1,5 @@
 // Pure state machine for the delegated projects service
-// (src/md/features/declarations.md, "Where the pins live", "The console of a project").
+// (src/md/features/declarations.md, "The console of a project").
 //
 // Provides zero-allocation project input inspection, deterministic pins.lex
 // updates through the unified source resolver contract, and ephemeral child

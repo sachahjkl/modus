@@ -77,11 +77,14 @@ status :: proc "c" (out: ^Plans_Status, error: ^errors.Error_Record) -> i64 {
 
 // current_generation returns the active applied plan generation of principal.
 @(export)
-current_generation :: proc "c" (principal: u64, error: ^errors.Error_Record) -> i64 {
+current_generation :: proc "c" (principal: i64, error: ^errors.Error_Record) -> i64 {
+	if principal < 0 {
+		return errors.fail(error, -1, .Bad_Value, .None, 1, 0, max(i64), principal)
+	}
 	if !service_state.initialized {
 		return errors.fail(error, -1, .State, .Requests)
 	}
-	_, rec, found := plans_core.current_plan(&service_state, principal)
+	_, rec, found := plans_core.current_plan(&service_state, u64(principal))
 	if !found {
 		return 0
 	}

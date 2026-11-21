@@ -1,5 +1,5 @@
 // Pure collector and wide-grant manager engine
-// (src/md/features/module_outputs.md, src/md/features/wide_grants.md).
+// (src/md/features/module_outputs.md; src/md/features/wide_grants.md).
 //
 // Provides:
 // - Act_Collector: bounded, append-only, domain-separated BLAKE3 hash-chained

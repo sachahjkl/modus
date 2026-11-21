@@ -1,5 +1,5 @@
 // Wide-authority grant and hash-chained act record contract
-// (src/md/features/wide_grants.md, src/md/features/module_outputs.md).
+// (src/md/features/wide_grants.md; src/md/features/module_outputs.md).
 //
 // Defines the closed enums, fixed-layout grant terms, proof binding records,
 // domain-separated BLAKE3 hash-chained act records, strict border validators,
