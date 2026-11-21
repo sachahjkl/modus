@@ -147,7 +147,7 @@ Plan_Work :: struct {
 
 // Callback queried by plan_resolve to inspect a running process's wiring
 // ring available command room without coupling wiring_core to kernel calls.
-Ring_Room_Proc :: proc "contextless" (data: rawptr, proc_index: int) -> (available: u32, has_ring: bool)
+Ring_Room_Proc :: proc "contextless" (data: rawptr, proc_index: int) -> (available: u32, capacity: u32, has_ring: bool)
 
 // Action returned when applying a completion record from a process's wiring ring.
 Completion_Effect :: enum u8 {
@@ -779,12 +779,12 @@ check_limits :: proc "contextless" (s: ^State, work: ^Plan_Work, ring_room: Ring
 				continue
 			}
 			if ring_room != nil {
-				available, has_ring := ring_room(ring_room_data, proc_idx)
+				available, capacity, has_ring := ring_room(ring_room_data, proc_idx)
 				if !has_ring {
 					return .Bad_State, make_error(op_code, .Absent, .Wirings, 0, 0, 0, i64(number))
 				}
 				if available < needed {
-					return .No_Slot, make_error(op_code, .Busy, .Wirings, 0, i64(needed), i64(available), i64(number))
+					return .No_Slot, make_error(op_code, .Busy, .Wirings, 0, i64(needed), i64(capacity), i64(number))
 				}
 			}
 		}

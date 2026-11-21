@@ -209,20 +209,21 @@ wiring_rings_let_go :: proc "contextless" () {
 }
 
 @(private = "file")
-ring_room_callback :: proc "contextless" (data: rawptr, proc_idx: int) -> (available: u32, has_ring: bool) {
+ring_room_callback :: proc "contextless" (data: rawptr, proc_idx: int) -> (available: u32, capacity: u32, has_ring: bool) {
 	_ = data
 	if proc_idx < 0 || proc_idx >= wiring_core.PROCESS_CAPACITY {
-		return 0, false
+		return 0, 0, false
 	}
 	ph := &process_handles[proc_idx]
 	if ph.wiring_memory == 0 {
-		return 0, false
+		return 0, 0, false
 	}
 	if wiring_ring_hold(proc_idx) != .Ok {
-		return 0, false
+		return 0, 0, false
 	}
 	commands := &ph.wiring_ring.commands
-	return ring.capacity(commands) - ring.count(commands), true
+	cap := ring.capacity(commands)
+	return cap - ring.count(commands), cap, true
 }
 
 @(private = "file")
