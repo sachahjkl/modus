@@ -37,6 +37,7 @@ SDK_TARGET_TRIPLE :: "x86_64-unknown-none-elf"
 SDK_SIGNATURE_CONTEXT :: "modus sdk manifest 1\n"
 
 SDK_LIBRARY_SUBDIRECTORY :: "library/modus"
+SDK_INCLUDE_SUBDIRECTORY :: "include/modus"
 SDK_RUNTIME_SUBDIRECTORY :: "runtime"
 SDK_MODULES_SUBDIRECTORY :: "modules"
 SDK_EXAMPLES_SUBDIRECTORY :: "examples"
@@ -759,6 +760,11 @@ sdk_build :: proc(output_dir: string, options := Sdk_Build_Options{}) -> (manife
 		return {}, mod_problem
 	}
 
+	// Generate deterministic C11 contract headers under <output_dir>/include/modus/.
+	if header_problem := c_headers_generate(foundation.join(output_dir, "/", SDK_INCLUDE_SUBDIRECTORY)); header_problem != "" {
+		return {}, header_problem
+	}
+
 	// Bundle minimal freestanding Odin and C examples.
 	if example_problem := sdk_write_examples(output_dir); example_problem != "" {
 		return {}, example_problem
@@ -1030,7 +1036,8 @@ sdk_build_outside_module :: proc(sdk_dir, source_dir, output_path: string, optio
 	// Path A: Language-neutral ET_REL object + module.manifest.
 	lang_manifest_path := foundation.join(abs_source, "/", SDK_LANGUAGE_NEUTRAL_MANIFEST_NAME)
 	if os.is_file(lang_manifest_path) {
-		return sdk_build_outside_language_neutral(abs_source, lang_manifest_path, output_path, import_dirs[:])
+		include_dir := foundation.join(abs_sdk, "/", SDK_INCLUDE_SUBDIRECTORY)
+		return sdk_build_outside_language_neutral(abs_source, lang_manifest_path, output_path, import_dirs[:], include_dir)
 	}
 
 	// Path B: Freestanding Odin outside module (module.txt + .odin sources).
@@ -1043,7 +1050,7 @@ sdk_build_outside_module :: proc(sdk_dir, source_dir, output_path: string, optio
 }
 
 @(private = "file")
-sdk_build_outside_language_neutral :: proc(abs_source, manifest_path, output_path: string, import_dirs: []string) -> string {
+sdk_build_outside_language_neutral :: proc(abs_source, manifest_path, output_path: string, import_dirs: []string, include_dir := "") -> string {
 	object_files, obj_ok := foundation.files_with_suffix(abs_source, ".o")
 	if !obj_ok {
 		return fmt.tprintf("cannot list object files in `%s`", abs_source)
@@ -1073,6 +1080,9 @@ sdk_build_outside_language_neutral :: proc(abs_source, manifest_path, output_pat
 			cmd := make([dynamic]string, context.temp_allocator)
 			append(&cmd, "clang")
 			append(&cmd, ..c_compile_flags[:])
+			if include_dir != "" && os.is_dir(include_dir) {
+				append(&cmd, "-I", include_dir)
+			}
 			append(&cmd, "-fno-plt", "-c", "-o", obj_out, c_file)
 			state, _, stderr_bytes, err := os.process_exec({command = cmd[:]}, context.temp_allocator)
 			if err != nil || !state.exited || !state.success {
