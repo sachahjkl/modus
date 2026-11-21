@@ -4,8 +4,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-- **The clipboard, the search and any object in the editor `edit`.** A principal copies and pastes the text of the editor, finds a text with Ctrl+F, and edits a text of any store with `edit(store, name)`. Copying more than one line needs a clipboard that carries line ends. [Design](src/md/features/editor.md)
-
 ## Next
 
 - **Trees with a hash, and the garbage collector of `module_files`.** A tree that no longer changes has a tree hash, so an output or a source is named as a module is, and the store `module_files` of the machine keeps only what a kept plan, the signed system or a disk grant reaches. [Design](src/md/features/declarations.md)

@@ -34,7 +34,7 @@ copy_send :: proc "contextless" (window: ^Window, text: []u8, error: ^errors.Err
 		return .Ring_Full, .Ok
 	}
 	title := string(window.title[:window.title_count])
-	problem = clipboard_text_problem(text, CLIPBOARD_TEXT_LIMIT)
+	problem = clipboard_text_problem(text, CLIPBOARD_TEXT_LIMIT, .Multi_Line)
 	if problem != .None {
 		system.log(.Warning, "display: ", title, ": the copy is refused: ", CLIPBOARD_PROBLEM_SENTENCES[problem])
 		copy_decline(window)
@@ -99,8 +99,8 @@ copy_decline :: proc "contextless" (window: ^Window) -> bool {
 // process then faults. No kernel operation copies bytes out of a memory
 // object with a refusal in place of a fault (src/md/features/clipboard.md,
 // "Subtle points"; ROADMAP.md).
-paste_read :: proc "contextless" (window: ^Window, event: Event, room: []u8) -> (count: int, problem: Clipboard_Problem) {
-	count, problem = paste_copy(window, event, room)
+paste_read :: proc "contextless" (window: ^Window, event: Event, room: []u8, form: Clipboard_Text_Form = .Single_Line) -> (count: int, problem: Clipboard_Problem) {
+	count, problem = paste_copy(window, event, room, form)
 	paste_answer(window, event)
 	title := string(window.title[:window.title_count])
 	if problem == .None {
@@ -152,7 +152,7 @@ paste_answer :: proc "contextless" (window: ^Window, event: Event) {
 
 // paste_copy does the checks and the copy of paste_read, with no answer.
 @(private = "file")
-paste_copy :: proc "contextless" (window: ^Window, event: Event, room: []u8) -> (count: int, problem: Clipboard_Problem) {
+paste_copy :: proc "contextless" (window: ^Window, event: Event, room: []u8, form: Clipboard_Text_Form) -> (count: int, problem: Clipboard_Problem) {
 	kind, rights, through := system.handle_state(event.paste_handle, window.ring_memory)
 	facts := Paste_Facts{event = event, is_memory = kind == .Memory, readable = .Read in rights, through = through, room = len(room)}
 	if facts.is_memory {
@@ -169,7 +169,7 @@ paste_copy :: proc "contextless" (window: ^Window, event: Event, room: []u8) -> 
 	}
 	intrinsics.mem_copy_non_overlapping(raw_data(room), address, event.byte_count)
 	system.memory_unmap(address)
-	refused := clipboard_text_problem(room[:event.byte_count], len(room))
+	refused := clipboard_text_problem(room[:event.byte_count], len(room), form)
 	if refused != .None {
 		return 0, refused
 	}

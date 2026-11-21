@@ -312,17 +312,18 @@ surface_resize_refuses_before_any_kernel_operation :: proc(t: ^testing.T) {
 
 // The border of a text of the clipboard, refusals first: no byte, one byte
 // past the limit, one byte past the room of a field, a byte that starts no
-// sequence, a cut sequence, a surrogate, and each control character that a
-// paste could carry into a line (Enter, Tab, Escape, the deletion and a C1
-// character). Then the texts that hold: one byte, the limit, and a text of
-// several bytes for each character.
+// sequence, a cut sequence, a surrogate, CR, NUL, Escape, DEL, C1 controls
+// are refused in both forms. LF and Tab are refused in Single_Line (so a
+// paste never runs a line of the console) and taken in Multi_Line. Then
+// the texts that hold: one byte, the limit, multi-line UTF-8 with LF, Tab,
+// and multi-byte characters.
 @(test)
 clipboard_text_problem_refuses_each_text_that_is_not_text :: proc(t: ^testing.T) {
 	limit_and_one: [CLIPBOARD_TEXT_LIMIT + 1]u8
 	for &value in limit_and_one {
 		value = 'a'
 	}
-	refused := [?]struct {
+	refused_always := [?]struct {
 		text:    []u8,
 		room:    int,
 		problem: Clipboard_Problem,
@@ -335,26 +336,59 @@ clipboard_text_problem_refuses_each_text_that_is_not_text :: proc(t: ^testing.T)
 		{{0xC3}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
 		{{0xED, 0xA0, 0x80}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
 		{{'l', 's', '\r'}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
-		{{'l', 's', '\n'}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
-		{{'\t'}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{'a', '\r', '\n', 'b'}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0x01}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0x08}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0x0B}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0x0C}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
 		{{0x1B, '['}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
 		{{0x7F}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0xC2, 0x80}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
 		{{0xC2, 0x85}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{0xC2, 0x9F}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
 		{{0}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{'a', '\n', 0, 'b'}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
+		{{'a', '\n', 0xFF}, CLIPBOARD_TEXT_LIMIT, .Not_Text},
 	}
-	for each, index in refused {
-		problem := clipboard_text_problem(each.text, each.room)
-		testing.expectf(t, problem == each.problem, "case %d gives %v, not %v", index, problem, each.problem)
+	for form in Clipboard_Text_Form {
+		for each, index in refused_always {
+			problem := clipboard_text_problem(each.text, each.room, form)
+			testing.expectf(t, problem == each.problem, "form %v case %d gives %v, not %v", form, index, problem, each.problem)
+		}
 	}
-	testing.expect_value(t, clipboard_text_problem(limit_and_one[:1], 1), Clipboard_Problem.None)
-	testing.expect_value(t, clipboard_text_problem(limit_and_one[:CLIPBOARD_TEXT_LIMIT], CLIPBOARD_TEXT_LIMIT), Clipboard_Problem.None)
+	// LF and Tab are refused in Single_Line, accepted in Multi_Line.
+	multiline_cases := [?][]u8{
+		{'\n'},
+		{'\t'},
+		{'l', 's', '\n'},
+		{'a', '\n', '\t', 'b'},
+		{'f', 'i', 'r', 's', 't', '\n', 0xC3, 0xA9, 't', 0xC3, 0xA9, '\n', 0xE2, 0x82, 0xAC},
+	}
+	for text, index in multiline_cases {
+		testing.expectf(t, clipboard_text_problem(text, CLIPBOARD_TEXT_LIMIT, .Single_Line) == .Not_Text, "Single_Line case %d accepted multiline text", index)
+		testing.expectf(t, !clipboard_text_valid(text, .Single_Line), "clipboard_text_valid Single_Line case %d accepted multiline text", index)
+		testing.expectf(t, clipboard_text_problem(text, CLIPBOARD_TEXT_LIMIT, .Multi_Line) == .None, "Multi_Line case %d refused multiline text", index)
+		testing.expectf(t, clipboard_text_valid(text, .Multi_Line), "clipboard_text_valid Multi_Line case %d refused multiline text", index)
+	}
+	testing.expect_value(t, clipboard_text_problem(limit_and_one[:1], 1, .Single_Line), Clipboard_Problem.None)
+	testing.expect_value(t, clipboard_text_problem(limit_and_one[:1], 1, .Multi_Line), Clipboard_Problem.None)
+	testing.expect_value(t, clipboard_text_problem(limit_and_one[:CLIPBOARD_TEXT_LIMIT], CLIPBOARD_TEXT_LIMIT, .Single_Line), Clipboard_Problem.None)
+	testing.expect_value(t, clipboard_text_problem(limit_and_one[:CLIPBOARD_TEXT_LIMIT], CLIPBOARD_TEXT_LIMIT, .Multi_Line), Clipboard_Problem.None)
+	// Multi-line text at exact size bound and one past bound.
+	multiline_bound := limit_and_one
+	multiline_bound[0] = '\n'
+	multiline_bound[CLIPBOARD_TEXT_LIMIT - 1] = '\n'
+	testing.expect_value(t, clipboard_text_problem(multiline_bound[:CLIPBOARD_TEXT_LIMIT], CLIPBOARD_TEXT_LIMIT, .Multi_Line), Clipboard_Problem.None)
+	testing.expect_value(t, clipboard_text_problem(multiline_bound[:CLIPBOARD_TEXT_LIMIT + 1], CLIPBOARD_TEXT_LIMIT + 1, .Multi_Line), Clipboard_Problem.Too_Large)
 	euro := [?]u8{0xE2, 0x82, 0xAC, 'h', 0xC3, 0xA9}
-	testing.expect_value(t, clipboard_text_problem(euro[:], len(euro)), Clipboard_Problem.None)
+	testing.expect_value(t, clipboard_text_problem(euro[:], len(euro), .Single_Line), Clipboard_Problem.None)
+	testing.expect_value(t, clipboard_text_problem(euro[:], len(euro), .Multi_Line), Clipboard_Problem.None)
 }
 
 // Each character that a reader does not see, or that changes the order of
 // a text, is refused: each range at its first and its last code point, and
-// each single one. The code points just outside each range are taken.
+// each single one, in both Single_Line and Multi_Line forms. The code
+// points just outside each range are taken.
 @(test)
 clipboard_text_problem_refuses_each_hidden_character :: proc(t: ^testing.T) {
 	hidden := [?]rune{0x200B, 0x200F, 0x202A, 0x202E, 0x2066, 0x2069, 0x2028, 0x2029, 0xFEFF}
@@ -362,16 +396,24 @@ clipboard_text_problem_refuses_each_hidden_character :: proc(t: ^testing.T) {
 		text: [8]u8
 		text[0] = 'a'
 		length := 1 + text_encoding.character_encode(character, text[1:])
-		problem := clipboard_text_problem(text[:length], CLIPBOARD_TEXT_LIMIT)
-		testing.expectf(t, problem == .Hidden_Character, "U+%X gives %v", character, problem)
+		for form in Clipboard_Text_Form {
+			problem := clipboard_text_problem(text[:length], CLIPBOARD_TEXT_LIMIT, form)
+			testing.expectf(t, problem == .Hidden_Character, "form %v U+%X gives %v", form, character, problem)
+		}
+		multiline: [10]u8
+		multiline[0], multiline[1] = 'a', '\n'
+		multiline_length := 2 + text_encoding.character_encode(character, multiline[2:])
+		testing.expectf(t, clipboard_text_problem(multiline[:multiline_length], CLIPBOARD_TEXT_LIMIT, .Multi_Line) == .Hidden_Character, "Multi_Line after LF U+%X not refused", character)
 		testing.expectf(t, text_encoding.character_hidden(character), "U+%X is not hidden", character)
 	}
 	shown := [?]rune{0x200A, 0x2010, 0x2027, 0x202F, 0x2065, 0x206A, 0xFEFE, 0xFF00}
 	for character in shown {
 		text: [8]u8
 		length := text_encoding.character_encode(character, text[:])
-		problem := clipboard_text_problem(text[:length], CLIPBOARD_TEXT_LIMIT)
-		testing.expectf(t, problem == .None, "U+%X gives %v", character, problem)
+		for form in Clipboard_Text_Form {
+			problem := clipboard_text_problem(text[:length], CLIPBOARD_TEXT_LIMIT, form)
+			testing.expectf(t, problem == .None, "form %v U+%X gives %v", form, character, problem)
+		}
 	}
 }
 
@@ -414,7 +456,17 @@ event_of_record_refuses_a_paste_out_of_its_range :: proc(t: ^testing.T) {
 	asked.values[0] = 1
 	event, ok = event_of_record(asked)
 	testing.expect(t, ok)
-	testing.expect_value(t, event, Event{kind = .Copy_Asked, clipboard_serial = 1})
+	testing.expect_value(t, event, Event{kind = .Copy_Asked, clipboard_serial = 1, copy_action = .Copy})
+	asked.values[1] = u64(Copy_Action.Cut)
+	event, ok = event_of_record(asked)
+	testing.expect(t, ok)
+	testing.expect_value(t, event, Event{kind = .Copy_Asked, clipboard_serial = 1, copy_action = .Cut})
+	for bad_action in ([?]u64{u64(max(Copy_Action)) + 1, max(u64)}) {
+		asked.values[1] = bad_action
+		event, ok = event_of_record(asked)
+		testing.expectf(t, !ok, "Copy_Asked with action %d is taken", bad_action)
+		testing.expect_value(t, event, Event{})
+	}
 }
 
 // The facts of a paste that holds: 5 bytes of text in one page that the

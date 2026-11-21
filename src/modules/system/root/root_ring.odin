@@ -21,6 +21,7 @@ package root
 //    record of its refusal: this dispatch, from the name and the word of
 //    the record, or the procedure of the command.
 
+import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
@@ -191,6 +192,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		answer.status = start_policy_choice_command(item, record, &answer.values)
 	case .Wire:
 		answer.status = wire(item, record, &answer.values)
+	case .Start_Edit:
+		answer.status = start_edit_command(item, record, name, &answer.values)
 	}
 	return answer
 }
@@ -314,6 +317,142 @@ root_connect :: proc "contextless" (item: ^Started, record: ring.Record, name: s
 	return status
 }
 
+// edit_store_limit gives the block limit to use when opening a store for
+// `edit(store, name)`: the limit of the matching start grant set when the
+// store belongs to a known module, HISTORY_STORE_LIMIT for a history
+// store, or edit's own store block limit for any other store name.
+edit_store_limit :: proc "contextless" (store_name: string) -> u64 {
+	// Strip optional ".principal.<number>" suffix to match the module row.
+	base := store_name
+	marker := ".principal."
+	for index := 0; index + len(marker) < len(store_name); index += 1 {
+		if store_name[index:index + len(marker)] == marker {
+			base = store_name[:index]
+			break
+		}
+	}
+	suffix := ".history"
+	if len(base) > len(suffix) && base[len(base) - len(suffix):] == suffix {
+		return HISTORY_STORE_LIMIT
+	}
+	row := start_grant_set_of(base)
+	if .Store in row.grants {
+		return start_grant_set_store_blocks(&row)
+	}
+	edit_row := start_grant_set_of("edit")
+	return start_grant_set_store_blocks(&edit_row)
+}
+
+// start_edit_command runs Start_Edit: starts `edit` connected to a store
+// of the principal of the caller, editing the named object path.
+start_edit_command :: proc "contextless" (item: ^Started, record: ring.Record, store_name: string, values: ^[7]u64) -> system.Status {
+	command := u32(root_ring.Root_Command.Start_Edit)
+	path_handle := system.Handle(record.values[4])
+	path_count := record.values[5]
+	kind, rights, through := system.handle_state(path_handle, item.requests_memory)
+	defer if through {
+		system.close(path_handle)
+	}
+	// The caller must act for its principal to reach another store.
+	if .Acts_For_Principal not_in item.start_grant_set.grants || .Acts_For_Principal in item.revoked {
+		values^ = errors.ring_fail(command, .No_Grant, .Acts_For_Principal, 1)
+		return .No_Right
+	}
+	if record.values[6] != 0 {
+		values^ = root_ring.word_refusal(.Start_Edit, 3, record.values[6], 0)
+		return .Bad_Operation
+	}
+	store_refusal, store_offset := root_ring.edit_store_validate(store_name)
+	switch store_refusal {
+	case .None:
+	case .Empty:
+		values^ = errors.ring_fail(command, .Empty, .Bytes, 1, 0, root_ring.EDIT_TARGET_STORE_LIMIT)
+		return .Bad_Operation
+	case .Too_Long:
+		values^ = errors.ring_fail(command, .Too_Long, .Bytes, 1, i64(len(store_name)), root_ring.EDIT_TARGET_STORE_LIMIT)
+		return .Bad_Operation
+	case .Bad_Byte:
+		values^ = errors.ring_fail(command, .Bad_Byte, .Bytes, 1, i64(store_offset), 0, i64(store_name[store_offset]))
+		return .Bad_Operation
+	}
+	// Principal isolation: a caller for principal N opens stores of principal N only.
+	if principals.store_name_principal(store_name) != item.principal {
+		values^ = errors.ring_fail(command, .No_Grant, .Acts_For_Principal, 1)
+		return .No_Right
+	}
+	if !through || kind != .Memory || .Read not_in rights {
+		values^ = errors.ring_fail(command, .Bad_Value, .Objects, 2)
+		return .Bad_Handle
+	}
+	if path_count == 0 {
+		values^ = errors.ring_fail(command, .Empty, .Bytes, 2, 0, root_ring.EDIT_TARGET_PATH_LIMIT)
+		return .Bad_Operation
+	}
+	if path_count > root_ring.EDIT_TARGET_PATH_LIMIT {
+		values^ = errors.ring_fail(command, .Too_Long, .Bytes, 2, i64(min(path_count, u64(max(i64)))), root_ring.EDIT_TARGET_PATH_LIMIT)
+		return .Bad_Operation
+	}
+	pages, size_status := system.memory_size(path_handle)
+	if size_status != .Ok || pages * system.PAGE_SIZE < path_count {
+		values^ = errors.ring_fail(command, .Too_Long, .Bytes, 2, i64(path_count))
+		return .Bad_Operation
+	}
+	mapped, map_status := system.memory_map(path_handle, {})
+	if map_status != .Ok {
+		values^ = errors.ring_fail(command, .Refused, .None, 0, 0, 0, i64(map_status))
+		return map_status
+	}
+	path_bytes: [root_ring.EDIT_TARGET_PATH_LIMIT]u8
+	intrinsics.mem_copy_non_overlapping(&path_bytes[0], mapped, int(path_count))
+	system.memory_unmap(mapped)
+	path := string(path_bytes[:int(path_count)])
+	path_refusal, path_offset := root_ring.edit_path_validate(path)
+	switch path_refusal {
+	case .None:
+	case .Empty:
+		values^ = errors.ring_fail(command, .Empty, .Bytes, 2, 0, root_ring.EDIT_TARGET_PATH_LIMIT)
+		return .Bad_Operation
+	case .Too_Long:
+		values^ = errors.ring_fail(command, .Too_Long, .Bytes, 2, i64(len(path)), root_ring.EDIT_TARGET_PATH_LIMIT)
+		return .Bad_Operation
+	case .Too_Deep:
+		values^ = errors.ring_fail(command, .Too_Long, .Objects, 2, i64(path_offset))
+		return .Bad_Operation
+	case .Bad_Segment:
+		found := path_offset < len(path) ? i64(path[path_offset]) : 0
+		values^ = errors.ring_fail(command, .Bad_Byte, .Bytes, 2, i64(path_offset), 0, found)
+		return .Bad_Operation
+	}
+	target_page, page_status := system.memory_create(1)
+	if page_status != .Ok {
+		values^ = errors.ring_fail(command, .Refused, .None, 0, 0, 0, i64(page_status))
+		return page_status
+	}
+	defer system.close(target_page)
+	target_address, target_map_status := system.memory_map(target_page)
+	if target_map_status != .Ok {
+		values^ = errors.ring_fail(command, .Refused, .None, 0, 0, 0, i64(target_map_status))
+		return target_map_status
+	}
+	target := (^root_ring.Edit_Target)(target_address)
+	target^ = {}
+	target.store_length = u32(len(store_name))
+	target.path_length = u32(len(path))
+	copy(target.store[:], store_name)
+	copy(target.path[:], path)
+	system.memory_unmap(target_address)
+	refusal: [7]u64
+	start_status := start("edit", item.principal, item, nil, nil, &refusal, store_override = store_name, store_limit_override = edit_store_limit(store_name), edit_target_page = target_page)
+	if start_status != .Ok {
+		if refusal != ([7]u64{}) {
+			values^ = refusal
+		} else {
+			values^ = errors.ring_fail(command, .Refused, .None, 0, 0, 0, i64(start_status))
+		}
+	}
+	return start_status
+}
+
 // root_command_refusal gives the error record of a command of the root
 // ring that this service refused, in the values of its completion. As the
 // kernel does (src/kernel/diagnose.odin), it reads the state again after
@@ -326,7 +465,7 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 	// starts it: a Start of its name is refused as one.
 	of_the_system := name_is_a_system_part(name) || .Start_Policy in start_grant_set_of(name).grants
 	switch command {
-	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client, .Machine_Usable, .Start_Policy_Choice, .Wire:
+	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client, .Machine_Usable, .Start_Policy_Choice, .Wire, .Start_Edit:
 		// No cause that the state shows: the record Refused, with the status.
 	case .Connect_History, .Palette_Provide:
 		// A grant of the start grant set that the command needs, and that the process

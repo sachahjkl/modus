@@ -171,3 +171,19 @@ Walk_Refused :: struct {
 	action:       [8]u8,
 	walk_problem: [48]u8,
 }
+
+// The target page passed to edit(store, name) is not valid.
+@(log_fact = "edit: the target object is not valid: the editor starts empty and keeps nothing")
+Target_Invalid :: struct {}
+
+// A selection was cut to the clipboard.
+@(log_fact = "edit: cut {length} to the clipboard")
+Selection_Cut :: struct {
+	length: value_kinds.Size_In_Bytes,
+}
+
+// A text was pasted from the clipboard.
+@(log_fact = "edit: pasted {length} from the clipboard")
+Text_Pasted :: struct {
+	length: value_kinds.Size_In_Bytes,
+}
