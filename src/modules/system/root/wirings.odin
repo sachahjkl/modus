@@ -72,9 +72,10 @@ Wiring_Request :: struct {
 	start_name:       system.Name,
 	start_principal:  u64,
 	start_answer:     root_ring.Start_Answer,
-	for_start_policy: bool,
-	counted_restart:  ^start_policy_rules.Name_Count,
-	deadline:         u64,
+	for_start_policy:   bool,
+	counted_restart:    ^start_policy_rules.Name_Count,
+	start_reply_handle: u64,
+	deadline:           u64,
 }
 
 // State of the delegated `wiring` service process.
@@ -324,14 +325,23 @@ wiring_asker_budget_ensure :: proc "contextless" (asker: ^Started, command: root
 // `stops` output ring for `wiring` and releases the core's wiring handles
 // for `item`.
 wiring_emit_stop_notice :: proc "contextless" (item: ^Started, stop: Process_Stop) {
-	if wiring_request.stage != .Idle && (wiring_request.asker == item || wiring_request.target == item || wiring_request.child == item) {
-		if wiring_request.stage == .Start_Prepare || wiring_request.stage == .Start_Commit {
-			if wiring_request.batch_id != 0 && wiring_ring.head != nil {
+	if wiring_request.stage != .Idle {
+		if wiring_request.asker == item {
+			if wiring_request.stage == .Start_Prepare && wiring_request.batch_id != 0 && wiring_ring.head != nil {
 				abort_cmd := ws.Command{kind = .Abort_Start_Wiring, batch_id = wiring_request.batch_id}
 				_ = system.send(&wiring_ring.commands, ws.command_to_record(abort_cmd))
 			}
+			wiring_request = {}
+		} else {
+			// A child that already started and exited quickly before Start_Commit
+			// returns must NOT drop the asker's Start reply; clear only the pointer.
+			if wiring_request.child == item {
+				wiring_request.child = nil
+			}
+			if wiring_request.target == item {
+				wiring_request.target = nil
+			}
 		}
-		wiring_request = {}
 	}
 	if wiring_stops_ring.head != nil && item != wiring_process && item.process_slot != 0 && item.process_serial != 0 {
 		notice: ws.Process_Stop_Notice
@@ -895,6 +905,18 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 			if !started_place.wiring_registered {
 				wiring_register_process(started_place)
 			}
+			// Give the asker its child process handle immediately before the child
+			// can finish and be reaped while Commit_Start_Wiring is in flight.
+			reply_handle: u64
+			if wiring_request.for_start_policy {
+				if wiring_request.counted_restart != nil {
+					wiring_request.counted_restart.starts += 1
+				}
+				started_place.asked_by_start_policy = true
+				reply_handle, _ = start_process_handle_give(wiring_request.asker, started_place)
+			} else if wiring_request.start_answer == .Process_Handle {
+				reply_handle, _ = start_process_handle_give(wiring_request.asker, started_place)
+			}
 			stag := next_service_tag()
 			commit_cmd := ws.Command{
 				kind     = .Commit_Start_Wiring,
@@ -911,6 +933,7 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 			wiring_request.service_tag = stag
 			wiring_request.batch_id = resp.batch_id
 			wiring_request.child = started_place
+			wiring_request.start_reply_handle = reply_handle
 			wiring_request.deadline = system.time() + WIRING_REQUEST_BOUND_MILLISECONDS
 		case .Start_Commit:
 			intrinsics.mem_copy_non_overlapping(&core_prepared_resp, &wiring_region[ws.REGION_RESPONSE_OFFSET], size_of(ws.Prepared_Start_Ends))
@@ -918,21 +941,11 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 				wiring_request.asker.granted += {.Wirings}
 			}
 			reply_values: [7]u64
-			if wiring_request.for_start_policy {
-				if wiring_request.counted_restart != nil {
-					wiring_request.counted_restart.starts += 1
-				}
-				if wiring_request.child != nil {
-					wiring_request.child.asked_by_start_policy = true
-					reply_values[0], _ = start_process_handle_give(wiring_request.asker, wiring_request.child)
-				}
-			} else {
+			reply_values[0] = wiring_request.start_reply_handle
+			if !wiring_request.for_start_policy {
 				asker_count := min(core_prepared_resp.asker_wiring_count, output.WIRING_ASKER_ROWS_OF_A_START)
 				for idx in 0 ..< asker_count {
 					reply_values[1 + idx] = u64(core_prepared_resp.asker_numbers[idx])
-				}
-				if wiring_request.start_answer == .Process_Handle && wiring_request.child != nil {
-					reply_values[0], _ = start_process_handle_give(wiring_request.asker, wiring_request.child)
 				}
 			}
 			wiring_request_reply(.Ok, reply_values)

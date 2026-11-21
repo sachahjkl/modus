@@ -979,9 +979,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	for {
 		wait := system.wait_begin()
+		// Serve core commands (Register_Process, Commit_Start_Wiring) before
+		// stops_drain so a short-lived child that exits immediately after start
+		// commits its wiring batch before its stop notice unregisters it.
+		core_commands_serve()
 		stops_drain()
 		process_completions_drain()
-		core_commands_serve()
 		wiring_rings_let_go()
 
 		system.wait_records(&wait, &stops_ring.commands)
