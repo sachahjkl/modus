@@ -29,10 +29,13 @@ Hash :: [HASH_SIZE]u8
 // The domain flags of a compression (the BLAKE3 specification, section 2.1).
 @(private)
 Flag :: enum u32 {
-	Chunk_Start = 0, // The first block of a chunk.
-	Chunk_End   = 1, // The last block of a chunk.
-	Parent      = 2, // A parent node of the tree.
-	Root        = 3, // The root: its output is the hash.
+	Chunk_Start         = 0, // The first block of a chunk.
+	Chunk_End           = 1, // The last block of a chunk.
+	Parent              = 2, // A parent node of the tree.
+	Root                = 3, // The root: its output is the hash.
+	Keyed_Hash          = 4, // Keyed hash mode.
+	Derive_Key_Context  = 5, // First pass of derive_key: hashes the context string.
+	Derive_Key_Material = 6, // Second pass of derive_key: hashes the material under the context key.
 }
 
 // The flags of one compression.
@@ -56,11 +59,32 @@ hash :: proc "contextless" (input: []u8) -> Hash {
 	return hash_in_form(input, ODIN_ARCH == .amd64)
 }
 
+// derive_key gives the domain-separated BLAKE3 hash of input under
+// context_string (BLAKE3 specification, section 2.2). Because
+// Derive_Key_Material sets a distinct domain flag in every compression,
+// its output cannot collide with plain hash(bytes) for any input.
+derive_key :: proc "contextless" (context_string: string, input: []u8) -> Hash {
+	context_key := root_words_with_key(transmute([]u8)context_string, INITIAL_VALUE, {.Derive_Key_Context})
+	return words_to_hash(root_words_with_key(input, context_key, {.Derive_Key_Material}))
+}
+
+// words_to_hash encodes 8 little-endian state words as a 32-byte Hash.
+@(private)
+words_to_hash :: proc "contextless" (words: [8]u32) -> (result: Hash) {
+	for word, i in words {
+		result[i * 4 + 0] = u8(word)
+		result[i * 4 + 1] = u8(word >> 8)
+		result[i * 4 + 2] = u8(word >> 16)
+		result[i * 4 + 3] = u8(word >> 24)
+	}
+	return
+}
+
 // hash_in_form gives the hash with the chunks of each subtree of four chunks
 // compressed side by side, or with the scalar form only: the host tests
 // compare the two.
 @(private)
-hash_in_form :: proc "contextless" (input: []u8, side_by_side: bool) -> (result: Hash) {
+hash_in_form :: proc "contextless" (input: []u8, side_by_side: bool) -> Hash {
 	words: [8]u32
 	if len(input) <= CHUNK_SIZE {
 		words = chunk_value(input, 0, {.Root})
@@ -69,13 +93,61 @@ hash_in_form :: proc "contextless" (input: []u8, side_by_side: bool) -> (result:
 		block := parent_block(subtree_value(input[:left], 0, side_by_side), subtree_value(input[left:], u64(left / CHUNK_SIZE), side_by_side))
 		words = first_half(compress(INITIAL_VALUE, block, 0, BLOCK_SIZE, {.Parent, .Root}))
 	}
-	for word, i in words {
-		result[i * 4 + 0] = u8(word)
-		result[i * 4 + 1] = u8(word >> 8)
-		result[i * 4 + 2] = u8(word >> 16)
-		result[i * 4 + 3] = u8(word >> 24)
+	return words_to_hash(words)
+}
+
+// root_words_with_key hashes input with an explicit chaining key and domain flags.
+@(private)
+root_words_with_key :: proc "contextless" (input: []u8, key: [8]u32, domain_flags: Flags) -> [8]u32 {
+	if len(input) <= CHUNK_SIZE {
+		return chunk_value_with_key(input, 0, key, domain_flags, {.Root})
 	}
-	return
+	left := left_size(len(input))
+	block := parent_block(
+		subtree_value_with_key(input[:left], 0, key, domain_flags),
+		subtree_value_with_key(input[left:], u64(left / CHUNK_SIZE), key, domain_flags),
+	)
+	return first_half(compress(key, block, 0, BLOCK_SIZE, domain_flags + {.Parent, .Root}))
+}
+
+// subtree_value_with_key gives the non-root chaining value under an explicit key and domain flags.
+@(private)
+subtree_value_with_key :: proc "contextless" (input: []u8, chunk_counter: u64, key: [8]u32, domain_flags: Flags) -> [8]u32 {
+	if len(input) <= CHUNK_SIZE {
+		return chunk_value_with_key(input, chunk_counter, key, domain_flags, {})
+	}
+	left := left_size(len(input))
+	block := parent_block(
+		subtree_value_with_key(input[:left], chunk_counter, key, domain_flags),
+		subtree_value_with_key(input[left:], chunk_counter + u64(left / CHUNK_SIZE), key, domain_flags),
+	)
+	return first_half(compress(key, block, 0, BLOCK_SIZE, domain_flags + {.Parent}))
+}
+
+// chunk_value_with_key gives the chaining value of one chunk under an explicit key and domain flags.
+@(private)
+chunk_value_with_key :: proc "contextless" (chunk: []u8, chunk_counter: u64, key: [8]u32, domain_flags: Flags, last_flags: Flags) -> [8]u32 {
+	value := key
+	rest := chunk
+	flags := domain_flags + {.Chunk_Start}
+	for {
+		size := min(len(rest), BLOCK_SIZE)
+		bytes: [BLOCK_SIZE]u8
+		intrinsics.mem_copy_non_overlapping(&bytes, raw_data(rest), size)
+		block: [16]u32
+		for i in 0 ..< 16 {
+			block[i] = u32(bytes[i * 4]) | u32(bytes[i * 4 + 1]) << 8 | u32(bytes[i * 4 + 2]) << 16 | u32(bytes[i * 4 + 3]) << 24
+		}
+		rest = rest[size:]
+		if len(rest) == 0 {
+			flags += {.Chunk_End} + last_flags
+		}
+		value = first_half(compress(value, block, chunk_counter, u32(size), flags))
+		if len(rest) == 0 {
+			return value
+		}
+		flags = domain_flags
+	}
 }
 
 // A chaining value: the 8 words that a part of the tree gives to its
