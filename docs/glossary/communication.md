@@ -208,7 +208,7 @@ Its text is the form of ISO 8601: `+08:00`, `-03:30`. It goes from `-12:00` to `
 
 The design: `src/md/features/time_zone.md`.
 
-Do not use: timezone (one word), TZ, locale, UTC offset (for the setting).
+Do not use: timezone (one word), TZ, locale (for this), UTC offset (for the setting).
 
 ### Back pressure
 
