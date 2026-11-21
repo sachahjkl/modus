@@ -88,7 +88,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		// The start policy starts the parts of the system too, and gets a
 		// handle of each process (start_policy.odin). A process that a
 		// process starts belongs to the session of the process that asks.
-		answer.status = start_command(item, record, name, &answer.values, &answer.written)
+		answer.status = start_command(item, record, name, &answer.values, &answer.written, &answer.held)
 	case .Stop:
 		answer.status = .Bad_Handle
 		for &other in started {
@@ -132,7 +132,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 			answer.status = .Ok
 		}
 	case .Revoke:
-		answer.status = revoke(name, record.values[4], &answer.values)
+		answer.status, answer.held = revoke(item, record.tag, name, record.values[4], &answer.values)
 	case .Replace:
 		answer.status = replace(item, name, record.values[4], &answer.values)
 	case .Connect_History:
@@ -190,7 +190,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 	case .Start_Policy_Choice:
 		answer.status = start_policy_choice_command(item, record, &answer.values)
 	case .Wire:
-		answer.status = wire(item, record, &answer.values)
+		answer.status, answer.held = wire_begin(item, record, &answer.values)
 	}
 	return answer
 }
@@ -200,7 +200,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 // starts the parts of the system too, and gets a handle of each process
 // (start_policy.odin), with the wiring list of the wiring rows of its
 // start list.
-start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: string, values: ^[7]u64, written: ^bool) -> system.Status {
+start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: string, values: ^[7]u64, written: ^bool, held: ^bool) -> system.Status {
 	command := root_ring.Root_Command.Start
 	list, list_ok := root_ring.start_wiring_list_of_word(record.values[4])
 	answer, answer_ok := root_ring.start_answer_of_word(record.values[5])
@@ -221,7 +221,7 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 		return .Bad_Operation
 	}
 	if .Start_Policy in item.start_grant_set.grants {
-		return start_policy_start(item, name, list, values, written)
+		return start_policy_start(item, record.tag, name, list, values, written, held)
 	}
 	// A process that a process starts belongs to the session of the
 	// process that asks, and the asker of its start is that process.
@@ -242,39 +242,9 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 		return status
 	case .In_The_List_Page:
 	}
-	work := &wire_work
-	work^ = {asker = item, command = command, form = .Start}
-	if status := wiring_list_take(work); status != .Ok {
-		values^ = work.refusal
-		written^ = true
-		return status
-	}
-	status := start(name, item.principal, item, work, &started_place)
-	if status != .Ok {
-		// A refusal of the list has its record; another refusal of the
-		// start has the record of the dispatch.
-		if work.refusal != ([7]u64{}) {
-			values^ = work.refusal
-			written^ = true
-		}
-		return status
-	}
-	// The number of each row whose reader is the sender, in the order of
-	// the rows: its end comes in the wiring ring of the sender with this
-	// tag. A row that ended keeps its place, with 0.
-	asker_place := 1
-	for number in 1 ..= work.list.row_count {
-		plan := &work.plans[number - 1]
-		if plan.row.reader_end != .Asker {
-			continue
-		}
-		values[asker_place] = plan.kept != nil ? u64(plan.number) : 0
-		asker_place += 1
-	}
-	if answer == .Process_Handle && started_place != nil {
-		values[0], _ = start_process_handle_give(item, started_place)
-	}
-	return .Ok
+	status, is_held := start_with_wiring_begin(item, record.tag, name, item.principal, answer, false, nil, values, written)
+	held^ = is_held
+	return status
 }
 
 // start_process_handle_give gives the asker of a start the handle of the

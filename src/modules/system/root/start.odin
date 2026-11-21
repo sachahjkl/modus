@@ -8,7 +8,6 @@ import info "modus:contract/boot_info"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
-import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
 import "modus:contract/settings"
@@ -56,8 +55,8 @@ Start_Work :: struct {
 	// The wiring of the child before its first instruction, and what the
 	// start gives back: its wiring ring and a handle of its budget.
 	wiring:         system.Start_Wiring,
-	// The wiring list of the Start, or nil (wirings.odin).
-	wiring_work:    ^Wiring_Work,
+	// Pre-allocated child ends from the delegated wiring service, or nil.
+	premade_wiring: ^Premade_Start_Wiring,
 	// Where a refusal that names its cause writes its error record, or nil:
 	// the completion of the command that asked for the start. A start that
 	// this one starts first writes there too.
@@ -66,27 +65,23 @@ Start_Work :: struct {
 
 // start starts a process of the boot image that shows a surface or has a
 // terminal, in the session of a principal (principals.odin). asker is the
-// process that asked for the start with Start, or nil; wiring_work its
-// wiring list, which a refusal of the start ends whole; place, when not
-// nil, receives the place of the process; refusal, when not nil, receives
-// the error record of a refusal that names its cause, which the state
-// after the start no longer shows.
-start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, asker: ^Started = nil, wiring_work: ^Wiring_Work = nil, place: ^^Started = nil, refusal: ^[7]u64 = nil) -> system.Status {
+// process that asked for the start with Start, or nil; premade_wiring
+// holds child ends prepared by the delegated wiring service; place, when
+// not nil, receives the place of the process; refusal, when not nil,
+// receives the error record of a refusal that names its cause, which the
+// state after the start no longer shows.
+start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, asker: ^Started = nil, premade_wiring: ^Premade_Start_Wiring = nil, place: ^^Started = nil, refusal: ^[7]u64 = nil) -> system.Status {
 	work := Start_Work {
-		name        = name,
-		principal   = principal,
-		wiring_work = wiring_work,
-		refusal     = refusal,
+		name           = name,
+		principal      = principal,
+		premade_wiring = premade_wiring,
+		refusal        = refusal,
 	}
 	defer start_handles_close(&work)
-	// The handles of the start, its rows included, are free before any is
-	// made: the table of prepared modules gives back its parts used least
-	// recently (own_tables.odin).
-	rows := 0
-	if wiring_work != nil {
-		rows = int(wiring_work.list.row_count)
-	}
-	handles_room_make(start_handles_needed(rows))
+	// The handles of the start are free before any is made: the table of
+	// prepared modules gives back its parts used least recently
+	// (own_tables.odin).
+	handles_room_make(start_handles_needed())
 	if status := start_prepare(&work); status != .Ok {
 		// A device service that start_prepare started before its refusal
 		// stops: else its device stays held until the machine restarts.
@@ -99,31 +94,13 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 	}
 	work.slot.asker = asker
 	status := start_context_build(&work)
-	// The wiring of this start lives in this frame: the work of the list
-	// names it only while the start runs.
-	defer if wiring_work != nil {
-		wiring_work.start_wiring = nil
-	}
-	if status == .Ok && wiring_work != nil {
-		// The list is resolved against the file and the place of the
-		// child before the child exists. Its rings and its pages are made
-		// in process_start, after the load of the modules of the child
-		// (wiring_child_ends_make): the loader prepares each module with
-		// none of them in the handle table of this service.
-		wiring_work.child = work.slot
-		wiring_work.child_file = work.file
-		wiring_work.start_wiring = &work.wiring
-		status = wiring_list_resolve(wiring_work)
-		if status == .Ok {
-			work.wiring.ends_make = wiring_child_ends_make
-			work.wiring.ends_data = wiring_work
-		}
+	if status == .Ok && premade_wiring != nil {
+		work.wiring.ends = premade_wiring.ends
+		work.wiring.log_ring = premade_wiring.log_ring
+		work.wiring.log_end_words = premade_wiring.log_end_words
 	}
 	if status == .Ok {
 		status = start_process_load(&work)
-		if status != .Ok && wiring_work != nil {
-			wiring_list_unmake(wiring_work)
-		}
 	}
 	if status != .Ok {
 		start_abandon(&work)
@@ -133,40 +110,22 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 	if place != nil {
 		place^ = work.slot
 	}
-	status = start_finish(&work)
-	if wiring_work != nil {
-		// The other ends go out only after the whole start: a refused start
-		// delivers nothing, and the child that stops held its own ends
-		// only. The list is whole or refused.
-		if status == .Ok {
-			wiring_list_deliver(wiring_work)
-		} else {
-			wiring_list_unmake(wiring_work)
-		}
-	}
-	return status
+	return start_finish(&work)
 }
 
-// start_wiring_keep keeps what the start of a process gave this service:
-// its module file, the budget handle of a process that can send Wire, and
-// the handle of its wiring ring.
+// start_wiring_keep keeps what the start of a process gave the core: its
+// canonical (slot, serial), its module slice in the boot image, its budget
+// handle if it can ask for wirings, and its wiring ring handle for the
+// delegated wiring service.
 start_wiring_keep :: proc "contextless" (work: ^Start_Work) {
 	slot := work.slot
-	slot.file = work.file
+	slot.process_slot, slot.process_serial, _ = system.process_place(slot.process)
+	slot.module_offset = work.entry.offset
+	slot.module_size = work.entry.size
 	slot.budget = work.wiring.budget
 	slot.wiring_memory = work.wiring.wiring_memory
-	// The ring is mapped only for a child that took ends in its start: their
-	// answers come there. A child with no end costs this service no
-	// mapping until a Wire gives it one (wiring_ring_hold).
-	if slot.wiring_memory != 0 && len(work.wiring.ends) != 0 {
-		mapped, status := system.ring_open(slot.wiring_memory)
-		if status == .Ok {
-			slot.wiring = mapped
-		} else {
-			// The answers of the ends of the start are then not read; a
-			// later Wire maps the ring again (wiring_ring_hold).
-			system.log(.Warning, "root: cannot map the wiring ring of ", system.Module_Name{work.name}, ": status ", status)
-		}
+	if wiring_process != nil {
+		wiring_register_process(slot)
 	}
 }
 
@@ -254,25 +213,12 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	return status
 }
 
-// wiring_child_ends_make makes the rings and the pages of the wiring list
-// of a start, and gives the ends of the child: process_start calls it
-// after the load of the modules of the child. A refusal keeps its error
-// record in the list; start then ends what it made (wiring_list_unmake).
-wiring_child_ends_make :: proc "contextless" (data: rawptr) -> (ends: []output.Given_End, status: system.Status) {
-	wiring_work := (^Wiring_Work)(data)
-	wiring_list_make(wiring_work) or_return
-	return wiring_child_ends(wiring_work), .Ok
-}
-
 // start_refusal_keep writes the error record of a refusal that names its
 // cause where the asker of the start reads it: the completion of its
-// command, and the record of its wiring list.
+// command.
 start_refusal_keep :: proc "contextless" (work: ^Start_Work, record: [7]u64) {
 	if work.refusal != nil {
 		work.refusal^ = record
-	}
-	if work.wiring_work != nil {
-		work.wiring_work.refusal = record
 	}
 }
 
@@ -635,12 +581,6 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 			}
 		}
 		return .Ok
-	}
-	// The wiring list refused in process_start, with the record of its
-	// cause, which goes to the asker: the budget that refused is the
-	// budget of the asker, not of the child, and no line names the child.
-	if work.wiring_work != nil && work.wiring_work.refusal != ([7]u64{}) {
-		return status
 	}
 	// A budget of no page: the start failed before process_start.
 	if status == .No_Budget && process_budget.pages != 0 {

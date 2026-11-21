@@ -184,6 +184,7 @@ module_builds := [?]Module_Build {
 	{name = "frame", source = SYSTEM_MODULE_SOURCES + "frame", entry = true, image = true},
 	{name = "iommu_device", source = TEST_MODULE_SOURCES + "iommu_device", entry = true, image = true},
 	{name = "tpm", source = SYSTEM_MODULE_SOURCES + "tpm", entry = true, image = true},
+	{name = "wiring", source = SYSTEM_MODULE_SOURCES + "wiring", entry = true, image = true},
 	{name = "entropy", source = SYSTEM_MODULE_SOURCES + "entropy", entry = true, image = true},
 	{name = "sound", source = SYSTEM_MODULE_SOURCES + "sound", entry = true, image = true},
 	{name = "tone", source = DEMONSTRATION_MODULE_SOURCES + "tone", entry = true, image = true},

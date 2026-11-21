@@ -470,7 +470,7 @@ start_policy_usable :: proc "contextless" (sender: ^Started, values: ^[7]u64) ->
 // lends it as the reader of a later wiring row.
 // written: the procedure wrote the error record of its refusal, and the
 // dispatch must not write over it.
-start_policy_start :: proc "contextless" (sender: ^Started, name: string, list: root_ring.Start_Wiring_List, values: ^[7]u64, written: ^bool) -> system.Status {
+start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: string, list: root_ring.Start_Wiring_List, values: ^[7]u64, written: ^bool, held: ^bool) -> system.Status {
 	// The checks before any start (start_policy_rules.start_step, with its
 	// host tests): a list for a part of the system, whose procedure takes
 	// none; a start policy, a name that runs, and a process of a test
@@ -508,23 +508,14 @@ start_policy_start :: proc "contextless" (sender: ^Started, name: string, list: 
 	case .Unlock:
 		status = unlock_start(.Unlock, "")
 	case .None:
-		// One path with a list and without: the asker is the start policy,
-		// and a refusal that names its cause has its record. A list is
-		// whole or refused, as the list of each asker: its take closes each
-		// lent number.
-		work: ^Wiring_Work
 		if listed {
-			work = &wire_work
-			work^ = {asker = sender, command = .Start, form = .Start}
-			status = wiring_list_take(work)
+			is_held: bool
+			status, is_held = start_with_wiring_begin(sender, tag, name, principals.MACHINE, .Process_Handle, true, step.counted, values, written)
+			held^ = is_held
+			return status
 		}
-		if status == .Ok {
-			// start refuses a part of the system with Bad_Operation.
-			status = start(name, principals.MACHINE, sender, work, &started_place, &refusal)
-		}
-		if work != nil && work.refusal != ([7]u64{}) {
-			refusal = work.refusal
-		}
+		// start refuses a part of the system with Bad_Operation.
+		status = start(name, principals.MACHINE, sender, nil, &started_place, &refusal)
 		if status != .Ok && refusal != ([7]u64{}) {
 			values^ = refusal
 			written^ = true
