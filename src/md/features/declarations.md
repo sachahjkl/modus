@@ -383,7 +383,8 @@ The identity of a source is the hash of a tree in a store. `here()` gives the tr
 Git is an import format and an export format, never a dependency:
 
 - A git repository enters through the fetcher, as a hash given in advance: the commit gives a tree, and the recipe of the fetch holds the hash of its modus tree ([recipes.md](recipes.md), "The fetcher").
-- Two machines exchange sources as they exchange modules: a sync of stores by hash, with the protocol of the cache. A tree is an object, as a module is.
+- Two machines exchange sources as they exchange modules: a store exchange by hash, with the protocol of the cache. A tree is an object, as a module is.
+- Two machines that change one source give two versions with a common version. A three-way merge by the merge export of the module of the store joins them, and a conflict stays in the data as a conflict value, which the principal resolves once ([several_machines.md](several_machines.md), "The exchange of a store between machines").
 
 ### The console of a project
 
@@ -517,7 +518,6 @@ From each root it follows the imports of each module, the debug object of each m
 
 ## Open questions
 
-- **The merge of two versions of a store.** Two machines that change one source give two trees; how a principal merges them, and in which process.
 - **The form of the acceptance of a difference** at a console that a remote client drives: the same key, or a second proof of the principal.
 - **The forced values of a declaration reference across lines.** The console evaluates a reference again on each line that needs it. An evaluation process that stays between the lines keeps the forced thunks, and holds their memory with no line that runs.
 - **Where the default of a field is written.** A field of a contract record has no mark of a default today, so a record literal must give each field. The mark goes in the record description, or in the function of the catalog declaration that takes the record. The frequent tasks need it: `{ mode = .Verify }` takes the sources and the signers of the plan of the principal.
