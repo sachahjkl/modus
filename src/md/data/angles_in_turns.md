@@ -1,6 +1,6 @@
 # Angles in turns
 
-Each angle of the system is in turns: 1 is a whole circle, 0.25 a right angle. The type or the name of a value says so: `angle_turns`, `phase_turns`, `hue_256ths_of_a_turn`. The trigonometric routines of the system, `modus:support/trigonometry`, take turns. The glossary term is "Turn" ([`docs/glossary/code.md`](../../docs/glossary/code.md), "Turn").
+Each angle of the system is in turns: 1 is a whole circle, 0.25 a right angle. The type or the name of a value says so: `angle_turns`, `phase_turns`, `hue_256ths_of_a_turn`. The trigonometric routines of the system, `modus:support/trigonometry`, take turns. The glossary term is "Turn" ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Turn").
 
 ## Why turns
 

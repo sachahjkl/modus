@@ -4,7 +4,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-- **The display text of a member, apart from its name.** The palette and the completion show "1.75" for the scale `.fourteen_eighths`, from a table of texts of the module file by member and language, and a line still types the name, so a translation never changes the code. [Design](src/md/features/enum_parameters.md)
 - **The clipboard, the search and any object in the editor `edit`.** A principal copies and pastes the text of the editor, finds a text with Ctrl+F, and edits a text of any store with `edit(store, name)`. Copying more than one line needs a clipboard that carries line ends. [Design](src/md/features/editor.md)
 
 ## Next
@@ -215,7 +214,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **A step back in the debugger.** The debugger replays a history from checkpoints, steps back one instruction or one line, and finds the last write of a variable, from the console and from its window. [Design](src/md/features/record_and_replay.md)
 - **The replay of a failed part of the full check.** A machine test records the processes that its start list marks, and `modustool replay <part> <process>` replays the failure of a part on the host, so a fault that came once under a loaded host is read to its cause. [Design](src/md/features/record_and_replay.md)
 - **Interrupts placed by the branch count.** An interrupt becomes an input point, placed by the count of the retired conditional branches, so a recorded thread that runs long with no kernel entry keeps its history and several threads switch at any instruction. [Design](src/md/features/record_and_replay.md)
-- **The interface in the language of the principal.** Each text that a principal reads in a window, the palette, the console or a guide comes from a table of texts by language, apart from the code, so a principal chooses French or another language and a translation is data, not a change of a module. The display text of a member is its first user. [Design](src/md/features/enum_parameters.md)
 - **A restart window for a start row.** A row starts again at most a count of times in a window of seconds, so a holder with a rare fault keeps its role for a run of months, and a holder that stops in a loop ends with one line. [Design](src/md/features/supervision.md)
 - **The escalation of a needed holder after the machine is usable.** A needed holder past its restart bound stops the start policy, and the rescue start policy gives a principal the console, as before the machine was usable. [Design](src/md/features/supervision.md)
 - **The restart group and the ranks of the start.** The root service starts a holder again with the processes that hold one of its rings in their context, and the tool refuses a role table where a holder depends on a holder of a later rank. [Design](src/md/features/supervision.md)
