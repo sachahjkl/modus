@@ -769,3 +769,352 @@ part_cache_check :: proc(flake_check_attribute: string) -> bool {
 	}
 	return passed
 }
+
+// Per-part test binary dependency manifest: maps each machine test part to
+// its minimal scenario source files (relative to the repository root) and
+// its claimed output log names so no two parts conflict on an output and
+// each part binary rebuilds only when its own scenario or the shared engine
+// changes (src/md/infrastructure/full_check.md, "The derivations of the check").
+Part_Binary_Plan :: struct {
+	part:    string,
+	sources: []string,
+	outputs: []string,
+}
+
+// Minimal scenario source files and claimed output log patterns for each of
+// the test parts, in the order of test_parts.
+part_binary_plans := [?]Part_Binary_Plan {
+	{
+		part    = "main",
+		sources = {"tools/modustool/machine/machine.odin"},
+		outputs = {"test_output.txt"},
+	},
+	{
+		part    = "tcp",
+		sources = {"tools/modustool/machine/tcp_scenario.odin", "tools/modustool/machine/peer_tcp.odin"},
+		outputs = {"test_output_tcp.txt"},
+	},
+	{
+		part    = "random",
+		sources = {"tools/modustool/machine/random_scenario.odin"},
+		outputs = {"test_output_random.txt"},
+	},
+	{
+		part    = "quic",
+		sources = {"tools/modustool/machine/quic_scenario.odin", "tools/modustool/machine/peer_quic.odin"},
+		outputs = {"test_output_quic.txt"},
+	},
+	{
+		part    = "remote_display",
+		sources = {"tools/modustool/machine/remote_display_scenario.odin", "tools/modustool/machine/peer_remote_display.odin", "tools/modustool/machine/remote_display_run.odin"},
+		outputs = {"test_output_remote_display.txt"},
+	},
+	{
+		part    = "network",
+		sources = {"tools/modustool/machine/machine.odin", "tools/modustool/machine/silent_disk.odin"},
+		outputs = {"test_output_network.txt", "test_output_no_network_device.txt"},
+	},
+	{
+		part    = "principals",
+		sources = {"tools/modustool/machine/principals_scenario.odin", "tools/modustool/machine/tpm_key_scenario.odin"},
+		outputs = {"test_output_principals_%d.txt", "test_output_tpm_key_%d.txt", "test_output_tpm_lockout_%d.txt"},
+	},
+	{
+		part    = "disk_processes",
+		sources = {"tools/modustool/machine/disk_processes.odin"},
+		outputs = {"test_output_disk_processes_%d.txt"},
+	},
+	{
+		part    = "missing_devices",
+		sources = {"tools/modustool/machine/missing_devices_scenario.odin"},
+		outputs = {"test_output_missing_devices_%d.txt"},
+	},
+	{
+		part    = "trusted_boot",
+		sources = {"tools/modustool/machine/trusted_boot_scenario.odin"},
+		outputs = {
+			"test_output_changed_module.txt",
+			"test_output_wrong_signature.txt",
+			"test_output_changed_kernel.txt",
+			"test_output_without_description.txt",
+			"test_output_stated_hash.txt",
+			"test_output_kernel_memory_raised.txt",
+			"test_output_measured.txt",
+			"test_output_other_system.txt",
+			"test_output_secure_boot.txt",
+			"test_output_secure_boot_changed.txt",
+			"test_output_secure_boot_unsigned.txt",
+			"test_output_floor_%d.txt",
+			"test_output_release_image.txt",
+		},
+	},
+	{
+		part    = "hierarchy",
+		sources = {"tools/modustool/machine/hierarchy_scenario.odin"},
+		outputs = {"test_output_hierarchy_%d.txt"},
+	},
+	{
+		part    = "power",
+		sources = {"tools/modustool/machine/power_loss.odin", "tools/modustool/machine/dropped_write.odin", "tools/modustool/machine/silent_disk.odin"},
+		outputs = {"test_output_power_loss_%d.txt", "test_output_dropped_write_%d.txt", "test_output_silent_disk.txt"},
+	},
+	{
+		part    = "persist",
+		sources = {"tools/modustool/machine/machine.odin"},
+		outputs = {"test_output_persist_%d.txt"},
+	},
+	{
+		part    = "extended_state",
+		sources = {"tools/modustool/machine/extended_state_scenario.odin"},
+		outputs = {"test_output_extended_state.txt"},
+	},
+	{
+		part    = "return_fault",
+		sources = {"tools/modustool/machine/return_fault_scenario.odin"},
+		outputs = {"test_output_return_fault.txt", "test_output_return_fault_without_check.txt", "test_output_non_maskable_interrupt.txt"},
+	},
+	{
+		part    = "kernel_events",
+		sources = {"tools/modustool/machine/kernel_events_scenario.odin"},
+		outputs = {"test_output_kernel_events.txt"},
+	},
+	{
+		part    = "self_tests",
+		sources = {"tools/modustool/machine/machine.odin"},
+		outputs = {"test_output_self_test_%d.txt"},
+	},
+	{
+		part    = "debugger",
+		sources = {"tools/modustool/machine/debugger_scenario.odin"},
+		outputs = {"test_output_debugger.txt", "test_output_debugger_commands.txt"},
+	},
+	{
+		part    = "ranges",
+		sources = {"tools/modustool/machine/ranges_scenario.odin"},
+		outputs = {"test_output_ranges_%d.txt"},
+	},
+	{
+		part    = "quic-real",
+		sources = {"tools/modustool/machine/quic_real.odin"},
+		outputs = {"test_output_quic_real.txt"},
+	},
+	{
+		part    = "outside_module",
+		sources = {"tools/modustool/build/outside_module.odin"},
+		outputs = {},
+	},
+	{
+		part    = "host_modules",
+		sources = {"tools/modustool/build/modules.odin", "tools/modustool/build/describe.odin", "tools/modustool/build/facts.odin"},
+		outputs = {},
+	},
+	{
+		part    = "iommu_amd",
+		sources = {"tools/modustool/machine/iommu_scenario.odin"},
+		outputs = {"test_output_iommu_amd.txt"},
+	},
+	{
+		part    = "iommu",
+		sources = {"tools/modustool/machine/iommu_scenario.odin"},
+		outputs = {"test_output_iommu.txt"},
+	},
+	{
+		part    = "fault_ring",
+		sources = {"tools/modustool/machine/fault_ring_scenario.odin"},
+		outputs = {"test_output_fault_ring.txt"},
+	},
+	{
+		part    = "sound",
+		sources = {"tools/modustool/machine/sound_scenario.odin"},
+		outputs = {"test_output_sound.txt"},
+	},
+	{
+		part    = "crypto",
+		sources = {"tools/modustool/machine/cryptography_scenario.odin"},
+		outputs = {"test_output_cryptography.txt"},
+	},
+	{
+		part    = "guest",
+		sources = {"tools/modustool/machine/guest_scenario.odin"},
+		outputs = {"test_output_guest.txt"},
+	},
+	{
+		part    = "no_pit",
+		sources = {"tools/modustool/machine/no_pit_scenario.odin"},
+		outputs = {"test_output_no_pit.txt"},
+	},
+	{
+		part    = "fails",
+		sources = {"tools/modustool/machine/machine.odin"},
+		outputs = {"test_output_fails.txt"},
+	},
+	{
+		part    = "start_policy",
+		sources = {"tools/modustool/machine/start_policy_scenario.odin", "tools/modustool/machine/start_policy_from_disk_scenario.odin"},
+		outputs = {
+			"test_output_start_policy_key.txt",
+			"test_output_start_policy_missing_console.txt",
+			"test_output_start_policy_entry.txt",
+			"test_output_start_policy_boot_next.txt",
+			"test_output_start_policy_wrong_word.txt",
+			"test_output_start_policy_from_disk_%d.txt",
+		},
+	},
+	{
+		part    = "shortage",
+		sources = {"tools/modustool/machine/machine.odin"},
+		outputs = {"test_output_shortage.txt"},
+	},
+	{
+		part    = "operation_sequences",
+		sources = {"tools/modustool/machine/operation_sequences.odin", "tools/modustool/machine/operation_corpus.odin", "tools/modustool/machine/operation_fuzzing.odin"},
+		outputs = {"test_output_operation_sequences.txt", "test_output_operation_replay.txt"},
+	},
+}
+#assert(len(part_binary_plans) == len(test_parts))
+
+// part_binary_plan_find returns the dependency manifest entry for part_name.
+part_binary_plan_find :: proc(part_name: string) -> (plan: Part_Binary_Plan, found: bool) {
+	for entry in part_binary_plans {
+		if entry.part == part_name {
+			return entry, true
+		}
+	}
+	return {}, false
+}
+
+// part_scenario_sources gives the minimal scenario source files of a test
+// part, or false when part_name names no part in part_binary_plans.
+part_scenario_sources :: proc(part_name: string) -> (sources: []string, found: bool) {
+	plan, ok := part_binary_plan_find(part_name)
+	if !ok {
+		return nil, false
+	}
+	return plan.sources, true
+}
+
+@(private = "file")
+plan_source_path_valid :: proc(path: string) -> bool {
+	if path == "" || strings.has_prefix(path, "/") || !strings.has_prefix(path, foundation.TOOL_SOURCE_FOLDER + "/") {
+		return false
+	}
+	if !strings.has_suffix(path, ".odin") || strings.has_suffix(path, "_test.odin") {
+		return false
+	}
+	for segment in strings.split(path, "/", context.temp_allocator) {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+@(private = "file")
+plan_output_name_valid :: proc(name: string) -> bool {
+	if name == "" || strings.contains_any(name, "/\\") || name == "." || name == ".." {
+		return false
+	}
+	return true
+}
+
+// part_binary_plan_problems validates a per-part binary manifest against the
+// table of test parts and the filesystem. It refuses missing parts, duplicate
+// or unknown parts, empty or invalid source lists, missing source files on
+// disk, machine parts without claimed outputs, invalid output names, and any
+// output name claimed by more than one part.
+part_binary_plan_problems :: proc(plans: []Part_Binary_Plan, parts: []Test_Part, file_exists: proc(path: string) -> bool = os.exists) -> []string {
+	problems := make([dynamic]string, context.temp_allocator)
+	part_by_name := make(map[string]Test_Part, allocator = context.temp_allocator)
+	for part in parts {
+		part_by_name[part.name] = part
+	}
+	seen_parts := make(map[string]int, allocator = context.temp_allocator)
+	output_owner := make(map[string]string, allocator = context.temp_allocator)
+
+	for plan in plans {
+		part, known := part_by_name[plan.part]
+		if !known {
+			append(&problems, fmt.tprintf("the binary plan names %s, which is no test part", plan.part))
+			continue
+		}
+		seen_parts[plan.part] = seen_parts[plan.part] + 1
+		if seen_parts[plan.part] > 1 {
+			append(&problems, fmt.tprintf("the binary plan lists the test part %s %d times", plan.part, seen_parts[plan.part]))
+			continue
+		}
+		if len(plan.sources) == 0 {
+			append(&problems, fmt.tprintf("the test part %s has no scenario source file", plan.part))
+		}
+		seen_sources := make(map[string]bool, allocator = context.temp_allocator)
+		for src in plan.sources {
+			if !plan_source_path_valid(src) {
+				append(&problems, fmt.tprintf("the test part %s has invalid scenario source %q", plan.part, src))
+				continue
+			}
+			if seen_sources[src] {
+				append(&problems, fmt.tprintf("the test part %s lists scenario source %s twice", plan.part, src))
+				continue
+			}
+			seen_sources[src] = true
+			if file_exists != nil && !file_exists(src) {
+				append(&problems, fmt.tprintf("the scenario source %s of the test part %s does not exist", src, plan.part))
+			}
+		}
+		if !part.starts_no_machine && len(plan.outputs) == 0 {
+			append(&problems, fmt.tprintf("the machine test part %s claims no output log", plan.part))
+		}
+		seen_outputs := make(map[string]bool, allocator = context.temp_allocator)
+		for out in plan.outputs {
+			if !plan_output_name_valid(out) {
+				append(&problems, fmt.tprintf("the test part %s claims invalid output %q", plan.part, out))
+				continue
+			}
+			if seen_outputs[out] {
+				append(&problems, fmt.tprintf("the test part %s claims output %s twice", plan.part, out))
+				continue
+			}
+			seen_outputs[out] = true
+			if owner, taken := output_owner[out]; taken {
+				append(&problems, fmt.tprintf("the test parts %s and %s both claim output %s", owner, plan.part, out))
+				continue
+			}
+			output_owner[out] = plan.part
+		}
+	}
+	for part in parts {
+		if seen_parts[part.name] == 0 {
+			append(&problems, fmt.tprintf("the binary plan has no entry for the test part %s", part.name))
+		}
+	}
+	return problems[:]
+}
+
+// part_binary_plans_json serializes the per-part binary manifest as a JSON
+// object keyed by part name so Nix derivations can evaluate per-part inputs.
+part_binary_plans_json :: proc(plans: []Part_Binary_Plan) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_byte(&b, '{')
+	for plan, place in plans {
+		if place > 0 {
+			strings.write_byte(&b, ',')
+		}
+		foundation.json_string_write(&b, plan.part)
+		strings.write_string(&b, ":{\"sources\":[")
+		for src, s_idx in plan.sources {
+			if s_idx > 0 {
+				strings.write_byte(&b, ',')
+			}
+			foundation.json_string_write(&b, src)
+		}
+		strings.write_string(&b, "],\"outputs\":[")
+		for out, o_idx in plan.outputs {
+			if o_idx > 0 {
+				strings.write_byte(&b, ',')
+			}
+			foundation.json_string_write(&b, out)
+		}
+		strings.write_string(&b, "]}")
+	}
+	strings.write_string(&b, "}\n")
+	return strings.to_string(b)
+}

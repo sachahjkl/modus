@@ -491,3 +491,103 @@ each_part_declares_the_build_files_that_its_procedures_read :: proc(t: ^testing.
 		testing.expectf(t, reads_a_dropped_kind, "%s, in the list of the readers of dropped files, reads none", reader)
 	}
 }
+
+// part_scenario_sources refuses empty, unknown, and wrong-case names, and
+// resolves every part of test_parts to at least one scenario source file.
+@(test)
+part_scenario_sources_covers_every_part_and_refuses_unknowns :: proc(t: ^testing.T) {
+	for bad in ([]string{"", "unknown", "Main", "TCP", "main "}) {
+		sources, found := part_scenario_sources(bad)
+		testing.expectf(t, !found && sources == nil, "%q names no test part", bad)
+	}
+	for part in test_parts {
+		sources, found := part_scenario_sources(part.name)
+		testing.expectf(t, found && len(sources) > 0, "part %s has scenario sources", part.name)
+	}
+}
+
+// part_binary_plan_problems refuses missing parts, duplicate parts, unknown
+// parts, empty/invalid/duplicate/missing source files, machine parts with no
+// output, invalid or duplicate outputs, and conflicting outputs across parts.
+@(test)
+part_binary_plan_problems_refuses_every_fault :: proc(t: ^testing.T) {
+	all_exist :: proc(_: string) -> bool { return true }
+	none_exist :: proc(_: string) -> bool { return false }
+
+	parts := []Test_Part{
+		{name = "alpha"},
+		{name = "beta"},
+		{name = "host_only", starts_no_machine = true},
+	}
+	valid := []Part_Binary_Plan{
+		{part = "alpha", sources = {"tools/modustool/machine/tcp_scenario.odin"}, outputs = {"out_alpha.txt"}},
+		{part = "beta", sources = {"tools/modustool/machine/quic_scenario.odin"}, outputs = {"out_beta.txt"}},
+		{part = "host_only", sources = {"tools/modustool/build/modules.odin"}, outputs = {}},
+	}
+	testing.expect_value(t, len(part_binary_plan_problems(valid, parts, all_exist)), 0)
+
+	// Missing parts (0 plans, or subset).
+	testing.expect_value(t, len(part_binary_plan_problems(nil, parts, all_exist)), 3)
+	testing.expect_value(t, len(part_binary_plan_problems(valid[:2], parts, all_exist)), 1)
+
+	// Duplicate part and unknown part.
+	dup_part := []Part_Binary_Plan{valid[0], valid[0], valid[1], valid[2]}
+	testing.expect(t, len(part_binary_plan_problems(dup_part, parts, all_exist)) > 0, "duplicate part refused")
+	unknown_part := []Part_Binary_Plan{valid[0], valid[1], valid[2], {part = "gamma", sources = {"tools/modustool/machine/x.odin"}, outputs = {"g.txt"}}}
+	testing.expect(t, len(part_binary_plan_problems(unknown_part, parts, all_exist)) > 0, "unknown part refused")
+
+	// Empty sources, invalid source paths, duplicate source, missing file on disk.
+	empty_src := []Part_Binary_Plan{{part = "alpha", sources = {}, outputs = {"out_alpha.txt"}}, valid[1], valid[2]}
+	testing.expect(t, len(part_binary_plan_problems(empty_src, parts, all_exist)) > 0, "empty sources refused")
+	for bad_src in ([]string{"", "/abs/path.odin", "tools/modustool/../x.odin", "tools/modustool/machine/tcp_scenario_test.odin", "src/kernel/main.odin", "tools/modustool/machine/readme.md"}) {
+		bad := []Part_Binary_Plan{{part = "alpha", sources = {bad_src}, outputs = {"out_alpha.txt"}}, valid[1], valid[2]}
+		testing.expectf(t, len(part_binary_plan_problems(bad, parts, all_exist)) > 0, "bad source %q refused", bad_src)
+	}
+	dup_src := []Part_Binary_Plan{{part = "alpha", sources = {"tools/modustool/machine/tcp_scenario.odin", "tools/modustool/machine/tcp_scenario.odin"}, outputs = {"out_alpha.txt"}}, valid[1], valid[2]}
+	testing.expect(t, len(part_binary_plan_problems(dup_src, parts, all_exist)) > 0, "duplicate source refused")
+	testing.expect(t, len(part_binary_plan_problems(valid, parts, none_exist)) == 3, "missing files on disk refused")
+
+	// Machine part with no output, invalid output name, duplicate output, and conflict between two parts.
+	no_out := []Part_Binary_Plan{{part = "alpha", sources = {"tools/modustool/machine/tcp_scenario.odin"}, outputs = {}}, valid[1], valid[2]}
+	testing.expect(t, len(part_binary_plan_problems(no_out, parts, all_exist)) > 0, "machine part with no output refused")
+	for bad_out in ([]string{"", "..", ".", "sub/out.txt"}) {
+		bad := []Part_Binary_Plan{{part = "alpha", sources = {"tools/modustool/machine/tcp_scenario.odin"}, outputs = {bad_out}}, valid[1], valid[2]}
+		testing.expectf(t, len(part_binary_plan_problems(bad, parts, all_exist)) > 0, "bad output %q refused", bad_out)
+	}
+	dup_out := []Part_Binary_Plan{{part = "alpha", sources = {"tools/modustool/machine/tcp_scenario.odin"}, outputs = {"a.txt", "a.txt"}}, valid[1], valid[2]}
+	testing.expect(t, len(part_binary_plan_problems(dup_out, parts, all_exist)) > 0, "duplicate output in one part refused")
+	conflict := []Part_Binary_Plan{
+		{part = "alpha", sources = {"tools/modustool/machine/tcp_scenario.odin"}, outputs = {"shared.txt"}},
+		{part = "beta", sources = {"tools/modustool/machine/quic_scenario.odin"}, outputs = {"shared.txt"}},
+		valid[2],
+	}
+	conflict_problems := part_binary_plan_problems(conflict, parts, all_exist)
+	testing.expect_value(t, len(conflict_problems), 1)
+	if len(conflict_problems) == 1 {
+		testing.expect(t, strings.contains(conflict_problems[0], "alpha") && strings.contains(conflict_problems[0], "beta") && strings.contains(conflict_problems[0], "shared.txt"), "conflict names both parts and output")
+	}
+}
+
+// The real manifest covers all 33 test parts, every declared scenario file
+// exists on disk, no two parts claim a conflicting output, and its JSON
+// representation parses cleanly.
+@(test)
+part_binary_plans_match_table_and_disk :: proc(t: ^testing.T) {
+	testing.expect_value(t, len(part_binary_plans), len(test_parts))
+	problems := part_binary_plan_problems(part_binary_plans[:], test_parts[:])
+	for problem in problems {
+		testing.expectf(t, false, "%s", problem)
+	}
+	text := part_binary_plans_json(part_binary_plans[:])
+	parsed, parse_err := json.parse_string(text, allocator = context.temp_allocator)
+	testing.expect_value(t, parse_err, json.Error.None)
+	obj, is_obj := parsed.(json.Object)
+	testing.expect(t, is_obj, "manifest JSON is an object")
+	if is_obj {
+		testing.expect_value(t, len(obj), len(test_parts))
+		for part in test_parts {
+			_, present := obj[part.name]
+			testing.expectf(t, present, "manifest JSON includes part %s", part.name)
+		}
+	}
+}

@@ -161,7 +161,24 @@ The format puts no limit of look on what a process draws. Each bound of a kind (
 
 A grid as text runs needs one `Text` record for each run of one color in each row, and a `Rectangle` for each run of reverse or filled cells. A plain terminal is one run for each row: about 32 records. The worst case is one run for each cell: 3 328 runs and up to 3 328 rectangles, past the 512 records of a usual window memory.
 
-The measure: the terminal at 104 by 32 cells, in the frame of a plain text, of colored code, and of one color for each cell, in both forms, through the drawing module. It gives the records, the bytes of the two tables, and the time of the build, of the difference and of the draw. The rule: the grid stays its own kind if the form in runs costs more than 1 ms more for one frame in the worst case, or needs more than 4 096 records. Else the kind goes, and the terminal draws runs. Until the measure, the grid stays: it works today.
+The measure: the terminal at 104 by 32 cells, in the frame of a plain text, of colored code, and of one color for each cell (foreground only and filled), plus a full 1 920 by 1 080 terminal (240 by 67 cells), in both forms, through `interface` (`src/library/modus/interface/text_grid_measure_test.odin`, `-o:speed -microarch:x86-64 -define:MEASURE=true`, pixel-for-pixel equal in whole canvas, four damage quadrants, and incremental single-cell damage). It gives the records, the bytes of the two tables, and the least time of build, difference, and draw across 100 rounds (40 rounds for 1 920 by 1 080):
+
+| Frame | Form | Records (bytes) | Text table | Build | Diff (1 cell) | Draw whole | Draw 4 quads |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 104 × 32 plain text | `Text_Grid` | 1 (48 B) | 53 248 B | 2.3 us | 5.7 us | 182.0 us | 189.8 us |
+| 104 × 32 plain text | Runs | 32 (1 536 B) | 3 072 B | 20.4 us | 2.1 us | 174.9 us | 192.6 us |
+| 104 × 32 colored code | `Text_Grid` | 1 (48 B) | 53 248 B | 2.5 us | 5.5 us | 194.0 us | 195.9 us |
+| 104 × 32 colored code | Runs | 492 (23 616 B) | 2 929 B | 41.6 us | 22.7 us | 189.1 us | 219.0 us |
+| 104 × 32 one color per cell | `Text_Grid` | 1 (48 B) | 53 248 B | 3.0 us | 6.4 us | 243.3 us | 246.1 us |
+| 104 × 32 one color per cell | Runs | 3 328 (159 744 B) | 3 328 B | 139.3 us | 140.1 us | 288.1 us | 446.6 us |
+| 104 × 32 one color and fill per cell | `Text_Grid` | 1 (48 B) | 53 248 B | 4.4 us | 7.4 us | 379.8 us | 382.9 us |
+| 104 × 32 one color and fill per cell | Runs | 6 656 (319 488 B) | 3 328 B | 175.9 us | 200.0 us | 471.4 us | 789.7 us |
+| 1 920 × 1 080 full terminal (240 × 67) | `Text_Grid` | 1 (48 B) | 257 280 B | 29.3 us | 37.9 us | 1 377.1 us | 1 531.5 us |
+| 1 920 × 1 080 full terminal (240 × 67) | Runs | 2 524 (121 152 B) | 15 348 B | 202.4 us | 113.0 us | 1 238.0 us | 1 600.9 us |
+
+The rule: the grid stays its own kind if the form in runs costs more than 1 ms more for one frame in the worst case, or needs more than 4 096 records. Else the kind goes, and the terminal draws runs.
+
+**Decision: `Text_Grid` stays its own kind.** In the 104 × 32 worst case (one color and fill per cell), text runs require 6 656 records (319 488 B of records plus 3 328 B of text, 6× the 53 296 B of `Text_Grid`), past the 4 096-record limit, and cost 770.9 us more across build, difference, and 4-quadrant draw (1 165.6 us against 394.7 us). In the 1 920 × 1 080 realistic terminal, runs already require 2 524 records (past the 512 records of a usual window table) and up to 32 160 records in the worst case, while `Text_Grid` stays at 1 record with faster build (29.3 us against 202.4 us) and single-cell difference (37.9 us against 113.0 us).
 
 ### The version rule
 

@@ -37,6 +37,13 @@ import "modus:system"
 // and list pages are paid from each asker's child wiring budget.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32, processes = 1, threads = 1}
 
+// Stall bound in wiring_core must stay identical to the system hang bound.
+#assert(wiring_core.STALL_HANG_BOUND_MS == system.TEST_HANG_BOUND_MILLISECONDS)
+
+// Poll cadence (milliseconds) while at least one Always_Holds_Writer wiring
+// is active, so full rings are observed without waking when none exist.
+STALL_POLL_INTERVAL_MS :: u64(1_000)
+
 // Fixed words in one wait of the main loop: the event word, SERVICE_RING,
 // and SERVICE_STOPS_RING.
 WIRING_WAIT_FIXED_WORDS :: 1 + 2 + 2
@@ -81,6 +88,8 @@ region: []u8
 state: wiring_core.State
 process_handles: [wiring_core.PROCESS_CAPACITY]Process_Handles
 wiring_end_memory: [wiring_core.WIRINGS_OF_THE_MACHINE_MOST]system.Handle
+wiring_ring_memory: [wiring_core.WIRINGS_OF_THE_MACHINE_MOST]system.Handle
+wiring_ring_capacity: [wiring_core.WIRINGS_OF_THE_MACHINE_MOST]u32
 
 // Private copies of shared region payloads so no byte is read twice from
 // shared memory, plus scratch buffers for description files and plans.
@@ -119,14 +128,26 @@ close_handle :: proc "contextless" (handle: ^system.Handle) {
 }
 
 @(private = "file")
-close_row_objects :: proc "contextless" (obj: ^Row_Objects, keep_end := false) {
-	close_handle(&obj.ring_memory)
+close_row_objects :: proc "contextless" (obj: ^Row_Objects, keep_end := false, keep_ring := false) {
+	if !keep_ring {
+		close_handle(&obj.ring_memory)
+	}
 	close_handle(&obj.terms_memory)
 	close_handle(&obj.description_memory)
 	close_handle(&obj.condition_memory)
 	if !keep_end {
 		close_handle(&obj.end_memory)
 	}
+}
+
+@(private = "file")
+wiring_slot_handles_close :: proc "contextless" (slot: int) {
+	if slot < 0 || slot >= wiring_core.WIRINGS_OF_THE_MACHINE_MOST {
+		return
+	}
+	close_handle(&wiring_end_memory[slot])
+	close_handle(&wiring_ring_memory[slot])
+	wiring_ring_capacity[slot] = 0
 }
 
 @(private = "file")
@@ -393,9 +414,11 @@ abort_prepared_batch :: proc "contextless" () {
 		if plan.allocated_slot >= 0 {
 			_, _ = wiring_core.wiring_end_slot(&state, plan.allocated_slot, .None)
 			wiring_end_memory[plan.allocated_slot] = 0
+			wiring_ring_memory[plan.allocated_slot] = 0
+			wiring_ring_capacity[plan.allocated_slot] = 0
 			plan.allocated_slot = -1
 		}
-		close_row_objects(obj, keep_end = false)
+		close_row_objects(obj, keep_end = false, keep_ring = false)
 	}
 	prepared_batch = {}
 }
@@ -565,15 +588,20 @@ handle_wire :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 		return {status = .No_Slot, tag = cmd.tag, error_record = rec}
 	}
 	wiring_end_memory[slot] = obj.end_memory
+	keep_ring := plan.row.pace == .Always_Holds_Writer
+	if keep_ring {
+		wiring_ring_memory[slot] = obj.ring_memory
+		wiring_ring_capacity[slot] = plan.row.capacity
+	}
 	deliv_status := wiring_end_give(plan.writer_index, given_end_of_row(plan, &obj, true))
 	if deliv_status == .Ok {
 		deliv_status = wiring_end_give(plan.reader_index, given_end_of_row(plan, &obj, false))
 	}
-	close_row_objects(&obj, keep_end = true)
+	close_row_objects(&obj, keep_end = true, keep_ring = keep_ring)
 	if deliv_status != .Ok {
 		end_word, _ := wiring_core.wiring_end_slot(&state, slot, .Refused)
 		end_words_write_and_wake(slot, end_word)
-		close_handle(&wiring_end_memory[slot])
+		wiring_slot_handles_close(slot)
 		rec := errors.error_make(.Refused, .Wirings, 0, 0, 0, i64(deliv_status))
 		rec.operation = i64(op_code)
 		return {status = .Refused, tag = cmd.tag, error_record = rec}
@@ -744,11 +772,16 @@ handle_commit_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respons
 		if deliv_status == .Ok && plan.reader_index != child_idx {
 			deliv_status = wiring_end_give(plan.reader_index, given_end_of_row(plan, obj, false))
 		}
-		close_row_objects(obj, keep_end = true)
+		keep_ring := plan.row.pace == .Always_Holds_Writer
+		if keep_ring {
+			wiring_ring_memory[slot] = obj.ring_memory
+			wiring_ring_capacity[slot] = plan.row.capacity
+		}
+		close_row_objects(obj, keep_end = true, keep_ring = keep_ring)
 		if deliv_status != .Ok {
 			end_word, _ := wiring_core.wiring_end_slot(&state, slot, .Refused)
 			end_words_write_and_wake(slot, end_word)
-			close_handle(&wiring_end_memory[slot])
+			wiring_slot_handles_close(slot)
 			if plan.row.reader_end == .Asker && response_staging.asker_wiring_count < output.WIRING_ASKER_ROWS_OF_A_START {
 				response_staging.asker_numbers[response_staging.asker_wiring_count] = 0
 				response_staging.asker_wiring_count += 1
@@ -783,7 +816,7 @@ handle_unwire :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 		return {status = st, tag = cmd.tag, error_record = ref}
 	}
 	end_words_write_and_wake(slot, end_word)
-	close_handle(&wiring_end_memory[slot])
+	wiring_slot_handles_close(slot)
 	return {status = .Ok, tag = cmd.tag, ended_count = 1}
 }
 
@@ -797,7 +830,7 @@ handle_revoke_asker :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 	for idx in 0 ..< count {
 		act := actions[idx]
 		end_words_write_and_wake(act.wiring_slot, act.end_word)
-		close_handle(&wiring_end_memory[act.wiring_slot])
+		wiring_slot_handles_close(act.wiring_slot)
 	}
 	return {status = .Ok, tag = cmd.tag, ended_count = u64(count)}
 }
@@ -848,7 +881,7 @@ stops_drain :: proc "contextless" () {
 			case .Detach:
 			case .End_Wiring:
 				end_words_write_and_wake(act.wiring_slot, act.end_word, act.stop_cause, act.stop_outcome)
-				close_handle(&wiring_end_memory[act.wiring_slot])
+				wiring_slot_handles_close(act.wiring_slot)
 			}
 		}
 		ph := &process_handles[proc_idx]
@@ -880,7 +913,7 @@ process_completions_drain :: proc "contextless" () {
 				end_words_write_and_wake(act.wiring_slot, act.end_word)
 			case .End_Wiring:
 				end_words_write_and_wake(act.wiring_slot, act.end_word)
-				close_handle(&wiring_end_memory[act.wiring_slot])
+				wiring_slot_handles_close(act.wiring_slot)
 			case .Unknown_Word:
 				ph.unknown_wiring_words += 1
 			case .Dropped_Word:
@@ -986,6 +1019,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		stops_drain()
 		process_completions_drain()
 		wiring_rings_let_go()
+		stall_rings_check()
 
 		system.wait_records(&wait, &stops_ring.commands)
 		system.wait_records(&wait, &core_ring.commands)
@@ -1000,6 +1034,48 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				waited_rings += 1
 			}
 		}
-		system.wait_end(&wait)
+		deadline := system.WAIT_FOREVER
+		if next_deadline, watched := wiring_core.wiring_stall_next_deadline(&state, system.time(), STALL_POLL_INTERVAL_MS); watched {
+			deadline = next_deadline
+		}
+		system.wait_end(&wait, deadline)
+	}
+}
+
+// stall_rings_check observes every delivered Always_Holds_Writer wiring's
+// ring head read-only and revokes any wiring whose ring stayed full without
+// reader progress for at least STALL_HANG_BOUND_MS, unblocking its writer
+// immediately while leaving healthy sibling wirings intact.
+@(private = "file")
+stall_rings_check :: proc "contextless" () {
+	now_ms := system.time()
+	for slot in 0 ..< wiring_core.WIRINGS_OF_THE_MACHINE_MOST {
+		kept := &state.wirings[slot]
+		if !kept.active || !kept.asked_counted || kept.pace != .Always_Holds_Writer {
+			continue
+		}
+		ring_mem := wiring_ring_memory[slot]
+		capacity := wiring_ring_capacity[slot]
+		if ring_mem == 0 || capacity == 0 {
+			continue
+		}
+		address, status := system.memory_map(ring_mem, {})
+		if status != .Ok {
+			continue
+		}
+		head := (^ring.Head)(address)
+		write := intrinsics.atomic_load_explicit(&head.commands.write, .Acquire)
+		read := intrinsics.atomic_load_explicit(&head.commands.read, .Acquire)
+		system.memory_unmap(address)
+		ring_full := (write - read) >= capacity
+		wiring_core.wiring_stall_observe(&state, slot, ring_full, read, now_ms)
+	}
+	actions: [wiring_core.WIRINGS_OF_THE_MACHINE_MOST]wiring_core.Stop_Action
+	revoked := wiring_core.wiring_stall_expire(&state, now_ms, actions[:])
+	for i in 0 ..< revoked {
+		act := actions[i]
+		end_words_write_and_wake(act.wiring_slot, act.end_word)
+		wiring_slot_handles_close(act.wiring_slot)
+		system.log(.Warning, "wiring: revoked stalled Always_Holds_Writer wiring ", u64(act.wiring_number))
 	}
 }
