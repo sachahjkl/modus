@@ -154,6 +154,11 @@ Gpu_Refusal :: enum u8 {
 	Spirv_Bad_Instruction_Word_Count,
 	Spirv_Truncated_Instruction,
 	Spirv_Unaligned_Byte_Length,
+	Backing_Buffer_Too_Small,
+	Backing_Texture_Too_Small,
+	Shader_Mode_Invalid,
+	Index_Value_Out_Of_Bounds,
+	Vertex_Stride_Too_Small,
 }
 
 // Validated metadata extracted from a precompiled SPIR-V binary module.

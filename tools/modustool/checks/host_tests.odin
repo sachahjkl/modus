@@ -356,4 +356,5 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_INTERNAL + "/disk_processes/disk_processes_core",
 	foundation.SOURCE_FOLDER_INTERNAL + "/devices/devices_core",
 	foundation.SOURCE_FOLDER_INTERNAL + "/settings/appearance_rule",
+	foundation.SOURCE_FOLDER_CONTRACT + "/venus_vulkan",
 }
