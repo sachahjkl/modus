@@ -88,11 +88,12 @@ The test of the serialization under QEMU on the development host is an opt-in te
 Built:
 
 - `src/library/modus/contract/virtio_gpu`: the VirtIO-GPU 1.2 control queue header, closed enumerations (`Command_Type`, `Pixel_Format`, `Capset_Id`, `Blob_Memory`, `Header_Flags`, `Blob_Flags`), 2D scanout lifecycle encoders and decoders (`Get_Display_Info`, `Resource_Create_2D`, `Resource_Attach_Backing`, `Set_Scanout`, `Transfer_To_Host_2D`, `Resource_Flush`, `Resource_Unref`), and Venus transport framing (`Get_Capset_Info`, `Ctx_Create`, `Ctx_Destroy`, `Resource_Create_Blob`, `Submit_3D`) with border validation and host tests.
-- `src/library/modus/contract/webgpu_subset`: the minimal WebGPU subset contract with closed enumerations, precompiled SPIR-V binary validation (`spirv_header_validate`, `spirv_bytes_validate`) with no runtime WGSL compiler, and fixed-size binary command stream encoding and border validation (`Gpu_Command_Stream`, `stream_validate`) with host tests.
+- `src/library/modus/contract/venus_vulkan`: the freestanding Venus Vulkan wire protocol encoder, decoder, `Venus_Ring_Header` shared-memory blob ring border validation, and `webgpu_stream_to_venus` / `webgpu_stream_to_submit_3d` translators lowering validated `webgpu_subset` streams into `virtio_gpu.Submit_3D` command payloads, with adversarial host tests.
+- `src/library/modus/contract/webgpu_subset`: the minimal WebGPU subset contract with closed enumerations, precompiled SPIR-V binary validation (`spirv_header_validate`, `spirv_bytes_validate`) with no runtime WGSL compiler, binary command stream encoding and border validation (`Gpu_Command_Stream`, `stream_validate`), the Draw Table v20 to WebGPU subset translator (`draw_table_translate_to_webgpu`), and the processor 3D and 2D rasterizer back end (`software_3d_execute` with `Solid_Color_2D` and `Vertex_Color_3D`, 4x4 MVP transforms, 24-bit depth testing, scissor clipping, and linear-light alpha blending), with adversarial and end-to-end host tests.
 - `src/modules/system/gpu_device`: the freestanding VirtIO-GPU PCI device service (`0x1AF4:0x1050`) that initializes the control queue, queries display geometry, probes Venus capability sets, binds client 2D scanout framebuffers, and flushes damaged rectangles.
 
 Left:
 
 - Wiring `gpu_device` to the compositor as an alternative scanout back end beside standard VGA, and the QEMU virtio-gpu machine test.
-- The Venus Vulkan command encoder and the WebGPU subset back end that translates `Gpu_Command_Stream` into `Submit_3D` payloads.
-- The draw-table GPU back end in the drawing module and the Linux driver domain transport on real hardware.
+- Wiring `draw_table_translate_to_webgpu` and `webgpu_stream_to_venus` into the drawing module and `gpu_device` live `Submit_3D` submission.
+- The Linux driver domain transport over a shared-memory ring on real hardware.
