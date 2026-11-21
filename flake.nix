@@ -445,8 +445,9 @@
     # `modustool screenshots` reads: logs/ and screenshots/. The tool refuses
     # a join that lacks a part, or where two parts wrote one file.
     # partOutputs and partDerivations are read by `modustool screenshots` (the
-    # parts that Nix takes from the store) and `modustool part_cache` (the
-    # proof that a change of a document runs no part again).
+    # parts that Nix takes from the store), `modustool part_cache` (the
+    # proof that a change of a document runs no part again) and `modustool
+    # failed_parts` (the parts that failed, after a build with --keep-going).
     bootTest = pkgs.stdenvNoCC.mkDerivation {
       name = "kernel-boot-test";
       dontUnpack = true;
@@ -460,6 +461,9 @@
         partOutputs = lib.mapAttrs (_: partCheck: partCheck.outPath) testParts;
         partDerivations = lib.mapAttrs (_: partCheck: partCheck.drvPath) testParts;
         systemBuildDerivation = systemBuild.drvPath;
+        # `modustool failed_parts` lists the host checks beside the parts.
+        hostChecksOutput = hostChecks.outPath;
+        hostChecksDerivation = hostChecks.drvPath;
       };
     };
   in {

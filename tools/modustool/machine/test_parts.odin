@@ -49,6 +49,7 @@ Test_Part_Run :: struct {
 	screen_text_kept:   string, // The text that the last step Screen_Text read: a later machine of the part types it.
 	screen_text_before: string, // The text that the step Screen_Text before the last one read.
 	times:              Test_Times,
+	step_range:         Step_Range, // `test <part> steps ...`: the machine and the steps that run (step_range.odin).
 	started:            bool, // A worker took the part: after a failure, the parts that no worker took did not start.
 	passed:             bool,
 	duration:           time.Duration, // A measure: from the start of its first machine to the end of its last one.
@@ -194,14 +195,32 @@ test_arguments_problem :: proc(args: []string) -> string {
 	if found && (len(args) == 1 || (len(args) == 3 && args[1] == TEST_FROM_WORD && args[2] != "")) {
 		return ""
 	}
+	if found && len(args) >= 2 && args[1] == TEST_STEPS_WORD {
+		_, problem := step_range_parse(args[2:], context.temp_allocator)
+		if problem != "" {
+			return fmt.tprintf("test %s %s: %s; the form: `test <part> %s <first> %s <last> [%s <machine>] [%s <first> %s <last>]...`", args[0], TEST_STEPS_WORD, problem, TEST_STEPS_WORD, TEST_TO_WORD, TEST_OF_WORD, TEST_WITH_WORD, TEST_TO_WORD)
+		}
+		return ""
+	}
 	given := strings.join(args, " ", context.temp_allocator)
-	return fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test; `test <part> %s <folder>`: one part on the test inputs of a folder, with no build", given, test_part_names(), TEST_FROM_WORD)
+	return fmt.tprintf("test does not know the part `%s`; the parts: %s; with no argument, the whole test; `test <part> %s <folder>`: one part on the test inputs of a folder, with no build; `test <part> %s <first> %s <last>`: some steps of one machine of a part", given, test_part_names(), TEST_FROM_WORD, TEST_STEPS_WORD, TEST_TO_WORD)
+}
+
+// test_arguments_give_step_range says if arguments that
+// test_arguments_problem accepted name a step range, and gives it, in the
+// memory of the caller.
+test_arguments_give_step_range :: proc(args: []string, allocator := context.allocator) -> (range: Step_Range, given: bool) {
+	if len(args) < 2 || args[1] != TEST_STEPS_WORD {
+		return {}, false
+	}
+	range, _ = step_range_parse(args[2:], allocator)
+	return range, true
 }
 
 // test_arguments_give_inputs says if arguments that test_arguments_problem
 // accepted name a folder of test inputs, and gives it.
 test_arguments_give_inputs :: proc(args: []string) -> (folder: string, given: bool) {
-	if len(args) == 3 {
+	if len(args) == 3 && args[1] == TEST_FROM_WORD {
 		return args[2], true
 	}
 	return "", false
@@ -414,7 +433,7 @@ Test_Parts_Pool :: struct {
 // starts; the parts that run end. It prints the time of each part as a
 // measure. start prepares a part before its first machine: its new data
 // disk. The caller frees the runs, which have the order of the parts.
-test_parts_run :: proc(parts: []Test_Part, at_once: int, start: proc(part: ^Test_Part_Run) -> bool = test_part_run_start) -> (runs: []Test_Part_Run, passed: bool) {
+test_parts_run :: proc(parts: []Test_Part, at_once: int, start: proc(part: ^Test_Part_Run) -> bool = test_part_run_start, step_range: Step_Range = {}) -> (runs: []Test_Part_Run, passed: bool) {
 	pool := Test_Parts_Pool {
 		parts = parts,
 		runs  = make([]Test_Part_Run, len(parts)),
@@ -422,6 +441,7 @@ test_parts_run :: proc(parts: []Test_Part, at_once: int, start: proc(part: ^Test
 	}
 	for part, place in parts {
 		pool.runs[place] = test_part_run_make(part.name)
+		pool.runs[place].step_range = step_range
 	}
 	if at_once <= 1 {
 		test_parts_worker(&pool)
@@ -460,6 +480,14 @@ test_parts_worker :: proc(pool: ^Test_Parts_Pool) {
 		part_run.started = true
 		started := time.tick_now()
 		part_run.passed = pool.start(part_run) && part.run(part_run)
+		if part_run.step_range.given {
+			// The part ended after its range, with a failure that stops
+			// its procedure: the range says if it passed.
+			part_run.passed = part_run.step_range.ran && part_run.step_range.passed
+			if !part_run.step_range.ran {
+				fmt.eprintfln("modustool: test failed: the part %s started no machine whose log is %s", part.name, part_run.step_range.machine)
+			}
+		}
 		part_run.duration = time.tick_since(started)
 		free_all(context.temp_allocator)
 		fmt.printfln("modustool: measure: the part %s %s, %d machines, %.1f s", part.name, part_run.passed ? "passed" : "failed", len(part_run.times.machines), time.duration_seconds(part_run.duration))

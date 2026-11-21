@@ -847,6 +847,9 @@ command_volumes := [?]Volumes_Of_Part {
 	{part = MEASURE_SHORTAGE_COMMAND, procedures = {"shortage_tests_run"}, volumes = {BOOT_VOLUME_SHORTAGE}},
 	{part = "screenshots", procedures = {"measure_runs_of_the_record", "measure_process_run"}, volumes = {BOOT_VOLUME_MEASURE}},
 	{part = "film", procedures = {"run_film"}, volumes = {BOOT_VOLUME}},
+	// No machine: the build of the main volume gives the module files whose
+	// fact templates the check of the fact waits reads.
+	{part = "fact_waits", procedures = {"run_fact_waits"}, volumes = {BOOT_VOLUME}},
 	{part = OPERATION_REPLAY_COMMAND, procedures = {"operation_sequences_replay"}, volumes = {BOOT_VOLUME_OPERATION_SEQUENCES}},
 	{part = OPERATION_FUZZING_COMMAND, procedures = {"operation_fuzzing_run"}, volumes = {BOOT_VOLUME_OPERATION_FUZZING}},
 	{part = OPERATION_REGRESSION_COMMAND, procedures = {"operation_regression_add"}, volumes = {BOOT_VOLUME_OPERATION_SEQUENCES}},

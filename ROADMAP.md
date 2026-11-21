@@ -9,9 +9,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **One test part from a range of its steps.** `modustool test main from 1270 to 1280` boots the image of the part and runs only those steps, so a developer who fixes a scenario waits about a minute, not a whole full check.
-- **A check of the waits of the scenarios before any machine runs.** Each wait of a scenario that reads a log fact names a fact that a module declares, with the sentence that it renders, so a fact whose sentence changed fails at the host check and not after a run of the machine.
-- **A full check that names every failed part.** The check of the flake goes on past the first failed part and lists each failed part with its first failed step, so one run of about fifteen minutes shows each fault of a batch, not one.
 - **Trees with a hash, and the garbage collector of `module_files`.** A tree that no longer changes has a tree hash, so an output or a source is named as a module is, and the store `module_files` of the machine keeps only what a kept plan, the signed system or a disk grant reaches. [Design](src/md/features/declarations.md)
 - **Declarations in the console.** Lex, the language of the console, takes anonymous functions and a reference by hash, and a sandboxed evaluation process reads a declaration `.lex` lazily, with no effect. A principal then describes a system or a project, with its console, as one value. [Design](src/md/features/declarations.md)
 - **The services `plans` and `recipes`.** A principal applies a plan in one atomic step with `plans.apply` after it sees the difference of its grants, and goes back with `plans.rollback()`. A recipe names how each output is made, and `recipes.build` takes its realisation from the cache or builds it in a sandbox. [Design](src/md/features/recipes.md)

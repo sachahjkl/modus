@@ -36,6 +36,8 @@ The machine test is a list of parts. A part is one or more machines that share a
 
 **A part on a given build.** `modustool test <part> from <folder>` runs one part on the test inputs of a folder and builds nothing: the command of a part derivation. It links each boot volume and boot image of the folder into `build/`, copies every other file, and notes the volumes of the part as ready, so a machine starts only from a volume that the folder holds. A volume of the part that the folder lacks is refused before the first machine. At its end it writes the count of its checks in `build/checks_passed.txt`, which `test_join` adds up.
 
+**Some steps of a part.** `modustool test <part> steps <first> to <last>` runs the boot steps, the setup steps and a range of one machine of the part, then ends the part ([scenario_fault_loop.md](scenario_fault_loop.md), "A step range"). The range lives in the run of the part (`Test_Part_Run.step_range`), so the machines before the named one run whole and none after it starts.
+
 **The ports of the loopback.** What is guaranteed, and what is not:
 
 - The UDP port of the peer for the machine is never free: the peer binds it, connects it to its own port, and QEMU gets a copy of that socket at its start (`-netdev dgram,local.type=fd`). The copy is open in the tool only from the command of QEMU to its start; a host process that another thread starts in that time inherits it, holds the port of that machine until it ends, and never reads it.
@@ -86,6 +88,6 @@ The pool is the path of `modustool test` on a host. The full check does not use 
 
 ## State
 
-Built: the table, the derived refusal, volumes and guide check, the run of a part, the files beside the log, the shared boot volume, the names of the pictures, the ports, the pool with its bound by processors and by memory, the share of the host in the line of a failed wait, the run state of QEMU in the processors report, the times of each part, a part on a given build, and a derivation of the flake for each part.
+Built: the table, the derived refusal, volumes and guide check, the run of a part, the files beside the log, the shared boot volume, the names of the pictures, the ports, the pool with its bound by processors and by memory, the share of the host in the line of a failed wait, the run state of QEMU in the processors report, the times of each part, a part on a given build, a step range of one machine of a part, and a derivation of the flake for each part.
 
 Left: a way for `nix flake check` to take the bound by memory, which today only `modustool test` and `screenshots` apply; the main scenario in named sections, so that its sections run as parts at once; the host test folders of `modustool check` through the process pool of the build; a binary of the tool for each part, so that a change of the scenario of one part runs that part only ([full_check.md](full_check.md), "State").
