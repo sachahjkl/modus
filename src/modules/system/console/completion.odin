@@ -293,7 +293,7 @@ command_kind :: proc "contextless" (item: ^Command) -> line_editor.Candidate_Kin
 // The first thread calls it, with the edit line that it owns.
 names_of_a_call :: proc "contextless" (table: ^Candidate_Table, place: line_editor.Completion_Context, text: string, caret: int) -> bool {
 	table.count, table.dropped = 0, 0
-	name, argument, found := line_editor.call_at_caret(text, caret)
+	name, parameter, found := console_language.call_parameter_at_caret(text, caret)
 	if !found {
 		return false
 	}
@@ -301,11 +301,8 @@ names_of_a_call :: proc "contextless" (table: ^Candidate_Table, place: line_edit
 	if item == nil || item.run == nil {
 		return false
 	}
-	// With "|>" before the call, the value on the left is its first
-	// argument, so the argument at the caret is the next parameter.
 	call_start := int(uintptr(raw_data(name)) - uintptr(raw_data(text)))
 	piped := console_language.pipe_before(text, call_start)
-	parameter := argument + (piped ? 1 : 0)
 	// Each name after the first of a list of field names is the same
 	// parameter.
 	if item.parameter_count > 0 && parameter >= item.parameter_count && item.parameter_forms[item.parameter_count - 1] == .Field_Names {
@@ -1226,17 +1223,16 @@ hint_write :: proc "contextless" (long, short: ^system.Writer) -> (marked: [term
 		system.write_part(short, u64(completion.matched_count))
 		system.write_part(short, " lines. ^R ^S Enter Esc")
 	case .Closed:
-		// In a comment, the call before it is no call at the caret.
-		if console_language.in_comment(line_editor.line_text(&line), line.caret) {
-			return {}
-		}
-		name, argument, found := line_editor.call_at_caret(line_editor.line_text(&line), line.caret)
+		name, parameter, found := console_language.call_parameter_at_caret(line_editor.line_text(&line), line.caret)
 		if !found {
 			return {}
 		}
 		for &item in commands[:command_count] {
 			if item.name == name && item.record == 0 {
-				start, end := signature_write(long, &item, argument, true)
+				if item.parameter_count > 0 && parameter >= item.parameter_count && item.parameter_forms[item.parameter_count - 1] == .Field_Names {
+					parameter = item.parameter_count - 1
+				}
+				start, end := signature_write(long, &item, parameter, true)
 				marked[.Long] = {start, end}
 				return marked
 			}

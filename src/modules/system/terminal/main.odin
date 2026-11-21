@@ -1738,6 +1738,8 @@ fallback_cells_tell :: proc "contextless" () {
 			// Drawn band by band, before the process had its glyph memory
 			// (display.cell_fallback_of reserves it): told at a later
 			// frame, when the glyph is in the private glyph cache.
+		case .Busy:
+			// Refused because another thread held the private glyph cache.
 		case .Missing:
 			if !missing_cell_told && found.font == .None {
 				missing_cell_told = true

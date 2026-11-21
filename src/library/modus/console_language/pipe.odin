@@ -139,6 +139,66 @@ pipe_before :: proc "contextless" (text: string, place: int) -> bool {
 	return last.kind == .Pipe
 }
 
+// call_has_placeholder says if the call whose '(' is at open_place holds a
+// top-level placeholder "_" inside its parentheses.
+@(private)
+call_has_placeholder :: proc "contextless" (text: string, open_place: int) -> bool {
+	depth := 0
+	for token := token_next(text, open_place + 1); token.kind != .None; token = token_next(text, token.end) {
+		switch {
+		case opens(text, token):
+			depth += 1
+		case closes(text, token):
+			if depth == 0 {
+				return false
+			}
+			depth -= 1
+		case depth == 0 && word_is(text, token, "_"):
+			return true
+		}
+	}
+	return false
+}
+
+// call_parameter_at_caret gives the name of the call open at caret_asked
+// and the parameter index (from 0) that takes the argument at the caret.
+// For a call on the right of "|>" that has no top-level "_", the value on
+// the left takes parameter 0, so the argument at the caret takes parameter
+// commas + 1. found is false in a comment, outside any call, inside a '('
+// that no name precedes, or deeper than GROUP_DEPTH_MOST.
+call_parameter_at_caret :: proc "contextless" (text: string, caret_asked: int) -> (name: string, parameter: int, found: bool) {
+	caret := clamp(caret_asked, 0, len(text))
+	if in_comment(text, caret) {
+		return "", 0, false
+	}
+	groups: [GROUP_DEPTH_MOST]Open_Group
+	depth, ok := groups_at(text, caret, &groups)
+	if !ok || depth == 0 {
+		return "", 0, false
+	}
+	call_depth := depth - 1
+	for call_depth >= 0 && groups[call_depth].opener != .Parenthesis {
+		call_depth -= 1
+	}
+	if call_depth < 0 {
+		return "", 0, false
+	}
+	call := groups[call_depth]
+	previous, before_name: Token
+	for token := token_next(text, 0); token.kind != .None && token.end <= call.start; token = token_next(text, token.end) {
+		before_name = previous
+		previous = token
+	}
+	if previous.kind != .Name {
+		return "", 0, false
+	}
+	parameter = call.commas
+	if before_name.kind == .Pipe && !call_has_placeholder(text, call.start) {
+		parameter += 1
+	}
+	return text[previous.start:previous.end], parameter, true
+}
+
 // word_is says if a token is a name with exactly the bytes of a word.
 word_is :: proc "contextless" (text: string, token: Token, word: string) -> bool {
 	return token.kind == .Name && text[token.start:token.end] == word

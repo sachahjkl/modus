@@ -266,6 +266,7 @@ Glyph_Source :: enum u8 {
 	Private_Cache, // The words of the private glyph cache of this process.
 	Not_Kept, // Drawn into the render memory of this copy and not kept: the glyphs of the frame in progress fill the cache. The words are valid until the next draw.
 	Banded, // Not kept, no entry and no words: the caller draws it band by band (glyph_bands). A glyph larger than the largest block of the cache, and each glyph before the copy has its glyph memory (memory_give).
+	Busy, // Another thread is drawing into the private glyph cache: nothing is drawn and the cache is untouched.
 }
 
 // One font file of the outlines, opened.
@@ -384,8 +385,13 @@ face_opened :: proc "contextless" (face: Face) -> bool {
 
 // frame_begin starts a frame of the process: the order of use of the
 // private glyph cache counts in frames, and a glyph of the frame in
-// progress is never evicted.
+// progress is never evicted. Refuses without modifying the cache when
+// another thread is drawing.
 frame_begin :: proc "contextless" () {
+	if !drawer_enter() {
+		return
+	}
+	defer drawer_leave()
 	state.frame += 1
 	cache_state.frame_full = false
 }

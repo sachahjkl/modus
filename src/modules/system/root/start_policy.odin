@@ -394,7 +394,7 @@ root_stop_ask :: proc "contextless" (item: ^Started) {
 	if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
 		unlock_stop_ask()
 	}
-	system.process_stop(item.process)
+	started_process_stop(item)
 }
 
 // start_policy_step runs after each reap: it starts the rescue when the

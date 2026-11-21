@@ -68,6 +68,14 @@ image_handle: rawptr
 stop_record: ^info.Boot_Info
 stop_step := bootscreen.Step.Firmware
 
+// The bound of the firmware watchdog while leaving the firmware services:
+// if ExitBootServices hangs inside the firmware, the watchdog restarts the
+// machine after 30 seconds instead of freezing it. On successful return
+// from ExitBootServices, UEFI disables the watchdog automatically. Codes
+// 0x0000 to 0xFFFF are reserved for the firmware by the UEFI specification.
+EXIT_BOOT_SERVICES_WATCHDOG_SECONDS :: uint(30)
+EXIT_BOOT_SERVICES_WATCHDOG_CODE :: u64(0x10000)
+
 // Set before the first call of ExitBootServices. After a call that fails,
 // the specification allows only the services of the memory: GetMemoryMap,
 // to read the map again, and the allocation of pages. So no line goes
@@ -176,6 +184,13 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	rescue_entry_write()
 	print("boot program: ok\r\n")
 	stop_step = .Kernel
+	// Arm the firmware watchdog with a short bound before reading the final
+	// memory map and calling ExitBootServices. Calling SetWatchdogTimer here
+	// keeps the memory map key valid and stays within the boot services
+	// allowed before ExitBootServices. A failure before the first
+	// ExitBootServices disarms it in boot_stop; a successful ExitBootServices
+	// disables it by the UEFI specification.
+	_ = services.set_watchdog_timer(EXIT_BOOT_SERVICES_WATCHDOG_SECONDS, EXIT_BOOT_SERVICES_WATCHDOG_CODE, 0, nil)
 	for attempt in 0 ..< 2 {
 		list, key := read_memory_map(&firmware_map, ranges)
 		boot.memory_range_count = u64(list.count)

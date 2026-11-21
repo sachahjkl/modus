@@ -1,5 +1,6 @@
 package root
 
+import "internal:root/device_stop"
 import "modus:contract/block"
 import "modus:bochs_display"
 import "modus:contract/bridge_requester"
@@ -311,6 +312,11 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	control := pci.read_16(place, table + 2)
 	pci.write_16(place, table + 2, control &~ (1 << 14) | 1 << 15) // Enabled, not masked.
 	pci.write_16(place, pci.OFFSET_COMMAND, command | pci.COMMAND_MEMORY | pci.COMMAND_BUS_MASTER | pci.COMMAND_NO_LINE_INTERRUPT)
+	bus_master_armed := true
+	defer if bus_master_armed {
+		current := pci.read_16(place, pci.OFFSET_COMMAND)
+		pci.write_16(place, pci.OFFSET_COMMAND, current &~ pci.COMMAND_BUS_MASTER)
+	}
 
 	// The memory of each BAR, except the BARs of the table of the
 	// interrupts: the device service does not change its interrupt.
@@ -358,7 +364,6 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		}
 	}
 	if status != .Ok {
-		pci.write_16(place, pci.OFFSET_COMMAND, command &~ pci.COMMAND_BUS_MASTER)
 		system.close(driver.queues)
 		if ring_memory != 0 {
 			system.close(ring_memory)
@@ -366,7 +371,9 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		driver^ = {}
 		return nil, 0, status
 	}
+	bus_master_armed = false
 	driver.is_driver = true
+	driver.bus_master_active = true
 	driver.device = place
 	if behind_conventional_bridge {
 		driver.bridge_group = group
@@ -450,11 +457,39 @@ display_open :: proc "contextless" (framebuffer_address, width, height, pixels_p
 	return pages_memory, registers
 }
 
-// driver_end takes the device back from a block service that stopped: the
-// device does not use memory after this, and the memory of its queue can
-// return to the budget.
-driver_end :: proc "contextless" (driver: ^Started) {
+// driver_bus_master_disable clears PCI Bus Master on the device of driver,
+// stopping DMA immediately.
+driver_bus_master_disable :: proc "contextless" (driver: ^Started) {
 	command := pci.read_16(driver.device, pci.OFFSET_COMMAND)
 	pci.write_16(driver.device, pci.OFFSET_COMMAND, command &~ pci.COMMAND_BUS_MASTER)
-	system.close(driver.queues)
+}
+
+// started_process_stop stops a started process. When the process is a
+// device service, PCI Bus Master is turned off before Process_Stop so the
+// device makes no memory access between the stop and the reap, also on a
+// machine with no IOMMU.
+started_process_stop :: proc "contextless" (item: ^Started) {
+	if item == nil {
+		return
+	}
+	actions := device_stop.stop_decide(item.process != 0, item.is_driver, &item.bus_master_active)
+	if actions.disable_bus_master_before_stop {
+		driver_bus_master_disable(item)
+	}
+	if actions.stop_process {
+		system.process_stop(item.process)
+	}
+}
+
+// driver_end takes the device back from a device service that stopped: turns
+// PCI Bus Master off if the service stopped on its own, then closes the
+// memory of its queue so it returns to the budget.
+driver_end :: proc "contextless" (driver: ^Started) {
+	actions := device_stop.reap_decide(driver.is_driver, &driver.bus_master_active)
+	if actions.disable_bus_master {
+		driver_bus_master_disable(driver)
+	}
+	if actions.close_queues {
+		system.close(driver.queues)
+	}
 }

@@ -1,6 +1,7 @@
 #+build !freestanding
 package text_rendering
 
+import "base:intrinsics"
 import "core:fmt"
 import "base:runtime"
 import "core:mem"
@@ -560,7 +561,7 @@ a_frame_larger_than_the_cache :: proc(t: ^testing.T) {
 			kept += 1
 		case .Not_Kept:
 			not_kept += 1
-		case .Missing, .Banded:
+		case .Missing, .Banded, .Busy:
 			testing.expectf(t, false, "size %v: %v", BASE + index, source)
 		}
 	}
@@ -1163,4 +1164,88 @@ a_face_is_opened_with_its_first_font :: proc(t: ^testing.T) {
 	for face in Face {
 		testing.expectf(t, face_opened(face) == (face != .None), "the four fonts: %v opened %v", face, face_opened(face))
 	}
+}
+
+// One drawer at a time in the private glyph cache: when another thread
+// already holds the single-drawer guard, glyph, frame_begin and memory_give
+// refuse cleanly without modifying the cache lists, the frame counter or the
+// glyph memory pointer, and concurrent_draw_report reports the refusal once.
+// After the first drawer leaves, normal drawing continues with the cache
+// intact.
+@(test)
+a_second_drawer_is_refused_without_touching_the_cache :: proc(t: ^testing.T) {
+	test_state_take()
+	fonts := repository_fonts()
+	_, words := outlines_open(t, fonts[:])
+	defer delete(words)
+
+	// Before any refusal, nothing is reported.
+	before_count, before_report := concurrent_draw_report()
+	testing.expect_value(t, before_count, u64(0))
+	testing.expect(t, !before_report)
+
+	// Seed the cache with glyphs so its lists, index and free runs are live.
+	frame_begin()
+	entry_a, words_a, source_a := glyph(.Interface, 'A', TEXT_SIZE_OF_SCALE_ONE, 0)
+	testing.expect_value(t, source_a, Glyph_Source.Private_Cache)
+	_, _, source_b := glyph(.Cells, 'B', TEXT_SIZE_OF_SCALE_ONE, 0)
+	testing.expect_value(t, source_b, Glyph_Source.Private_Cache)
+
+	frame_before := state.frame
+	memory_before := cache_state.memory
+	counts_before := counts()
+	snapshot := new(Private_Cache)
+	defer free(snapshot)
+	snapshot^ = test_cache()^
+
+	// Simulate an active first drawer holding the guard.
+	intrinsics.atomic_store_explicit(&cache_state.drawer_active, 1, .Release)
+
+	// Re-entrant lookup of an already cached glyph is refused.
+	refused_entry, refused_words, refused_source := glyph(.Interface, 'A', TEXT_SIZE_OF_SCALE_ONE, 0)
+	testing.expect_value(t, refused_source, Glyph_Source.Busy)
+	testing.expect_value(t, refused_entry, Glyph_Entry{})
+	testing.expect(t, refused_words == nil)
+
+	// Re-entrant draw of an uncached glyph is refused.
+	refused_new, refused_new_words, refused_new_source := glyph(.Interface, 'Z', TEXT_SIZE_OF_SCALE_ONE, 0)
+	testing.expect_value(t, refused_new_source, Glyph_Source.Busy)
+	testing.expect_value(t, refused_new, Glyph_Entry{})
+	testing.expect(t, refused_new_words == nil)
+
+	// Concurrent frame_begin and memory_give are refused without side effects.
+	frame_begin()
+	memory_give(nil)
+
+	testing.expect_value(t, state.frame, frame_before)
+	testing.expect(t, cache_state.memory == memory_before)
+	testing.expect(t, mem.compare(mem.ptr_to_bytes(snapshot), mem.ptr_to_bytes(test_cache())) == 0)
+
+	// Only concurrent_refused changed; all other cache counts stayed unchanged.
+	after_refusals := counts()
+	testing.expect_value(t, after_refusals.concurrent_refused, u64(4))
+	testing.expect_value(t, after_refusals.drawn, counts_before.drawn)
+	testing.expect_value(t, after_refusals.refused, counts_before.refused)
+	testing.expect_value(t, after_refusals.evicted, counts_before.evicted)
+	testing.expect_value(t, after_refusals.not_kept, counts_before.not_kept)
+	testing.expect_value(t, after_refusals.banded, counts_before.banded)
+
+	// concurrent_draw_report reports once, then never again.
+	report_count, reported := concurrent_draw_report()
+	testing.expect_value(t, report_count, u64(4))
+	testing.expect(t, reported)
+	second_count, second_reported := concurrent_draw_report()
+	testing.expect_value(t, second_count, u64(4))
+	testing.expect(t, !second_reported)
+
+	// Release the simulated first drawer: cached glyphs and new draws work again.
+	intrinsics.atomic_store_explicit(&cache_state.drawer_active, 0, .Release)
+	again_entry, again_words, again_source := glyph(.Interface, 'A', TEXT_SIZE_OF_SCALE_ONE, 0)
+	testing.expect_value(t, again_source, Glyph_Source.Private_Cache)
+	testing.expect_value(t, again_entry, entry_a)
+	testing.expect(t, again_words == words_a)
+	_, _, new_source := glyph(.Interface, 'Z', TEXT_SIZE_OF_SCALE_ONE, 0)
+	testing.expect_value(t, new_source, Glyph_Source.Private_Cache)
+	frame_begin()
+	testing.expect_value(t, state.frame, frame_before + 1)
 }

@@ -181,7 +181,7 @@ fallback_lines_tell :: proc "contextless" () {
 			switch source {
 			case .Private_Cache, .Not_Kept:
 				drawn += entry.row_count > 0 ? 1 : 0
-			case .Missing, .Banded:
+			case .Missing, .Banded, .Busy:
 				// The memory is given above, and a Greek letter at a line
 				// of 16 pixels is far below the largest block: Banded is a
 				// glyph that this window does not draw from its cache.

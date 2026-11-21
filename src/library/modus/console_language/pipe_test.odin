@@ -386,3 +386,96 @@ pipe_pieces_of_functions_and_lists :: proc(t: ^testing.T) {
 		testing.expectf(t, form.refusal == item.refusal, "%q: %v, not %v", item.text, form.refusal, item.refusal)
 	}
 }
+
+// The hint line parameter index at the caret: a call on the right of "|>"
+// receives the value on the left as parameter 0, so arguments inside its
+// parentheses start at parameter 1 unless a top-level "_" takes the piped
+// value. Refused and non-call edges come first.
+@(test)
+call_parameter_at_caret_after_pipe :: proc(t: ^testing.T) {
+	// Edges and non-calls: empty line, caret bounds, closed calls, comments,
+	// unnamed parentheses, bare braces, and depth past GROUP_DEPTH_MOST.
+	not_found_cases := [?]struct {
+		text:  string,
+		caret: int,
+	} {
+		{"", 0},
+		{"", -1},
+		{"", 1},
+		{"f(1)", 0},
+		{"f(1)", -5},
+		{"f(1)", 4},
+		{"f(1)", 99},
+		{"a |> f()", 8},
+		{"a |> f", 6},
+		{"x = 1 + (2", 10},
+		{"a |> (1 + 2", 11},
+		{"{a = 1, ", 8},
+		{"a |> f(1, // comment", 20},
+	}
+	for item in not_found_cases {
+		name, parameter, found := call_parameter_at_caret(item.text, item.caret)
+		testing.expectf(t, !found && name == "" && parameter == 0, "%q at %d: found %v (%q, %d)", item.text, item.caret, found, name, parameter)
+	}
+
+	// Nesting deeper than GROUP_DEPTH_MOST is refused.
+	deep: [GROUP_DEPTH_MOST + 4]u8
+	deep[0] = 'f'
+	for index in 1 ..< len(deep) {
+		deep[index] = '('
+	}
+	_, _, deep_found := call_parameter_at_caret(string(deep[:]), len(deep))
+	testing.expect(t, !deep_found)
+
+	// Found cases: non-pipe calls, single pipes, chained pipes, nested calls,
+	// strings containing commas or "|>", record/list literals, and "_".
+	Found_Case :: struct {
+		text:      string,
+		caret:     int,
+		name:      string,
+		parameter: int,
+	}
+	cases := [?]Found_Case {
+		// Non-pipe calls.
+		{"f()", 2, "f", 0},
+		{"f(", 2, "f", 0},
+		{"f(x, ", 5, "f", 1},
+		{"f(x, y, )", 8, "f", 2},
+		{"storage.write(", 14, "storage.write", 0},
+		{"write(\"a, b\", ", 14, "write", 1},
+		{"\"|>\" f(", 7, "f", 0},
+		{"a | f(", 6, "f", 0},
+		// Single pipe: parameter 0 comes from the left of "|>".
+		{"a |> f()", 7, "f", 1},
+		{"a |> f(", 7, "f", 1},
+		{"a|>f(", 5, "f", 1},
+		{"a |> f(b, )", 10, "f", 2},
+		{"a |> f(b, ", 10, "f", 2},
+		{"a |> f(b, c)", 8, "f", 1},
+		{"a |> f(b, c)", 11, "f", 2},
+		{"a |> storage.write(", 19, "storage.write", 1},
+		{"a |> f(\"x, y\", ", 15, "f", 2},
+		// Chained pipes.
+		{"a |> f() |> g()", 14, "g", 1},
+		{"a |> f() |> g(x, )", 17, "g", 2},
+		{"a |> f() |> g(x, ", 17, "g", 2},
+		{"a |> f(1) |> g(2, 3, ", 21, "g", 3},
+		// Nested call inside a piped call is not itself piped.
+		{"a |> f(g())", 9, "g", 0},
+		{"a |> f(g(x, ))", 12, "g", 1},
+		{"a |> f(g(1, 2), )", 16, "f", 2},
+		// Record and list literals inside a piped call keep the enclosing call's parameter.
+		{"a |> f({k = 1, ", 15, "f", 1},
+		{"a |> f(b, [1, ", 14, "f", 2},
+		// Placeholder "_" claims the piped value explicitly, so no extra shift applies.
+		{"a |> f(_, )", 10, "f", 1},
+		{"a |> f(b, _, )", 13, "f", 2},
+		{"a |> f(, _)", 7, "f", 0},
+		// Placeholder inside a nested call does not cancel the outer pipe shift.
+		{"a |> f(g(_), )", 13, "f", 2},
+	}
+	for item in cases {
+		name, parameter, found := call_parameter_at_caret(item.text, item.caret)
+		testing.expectf(t, found && name == item.name && parameter == item.parameter, "%q at %d: got (%q, %d, %v), want (%q, %d, true)", item.text, item.caret, name, parameter, found, item.name, item.parameter)
+	}
+}
