@@ -1788,6 +1788,24 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: the line nests deeper than the stack of the evaluator holds: 524288 bytes"},
 	{kind = .Type, text = "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1"},
 	{kind = .Wait, text = "[console] 100"},
+	// The picture of the colors of Lex: from a clean view, one short line
+	// for each form, each after the result of the one before. A record
+	// literal, `with` and `let`; a function given to map over a list; "|>"
+	// with `_`; a named argument; a comment; a refusal at its place.
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "let s = r with {width = 2} in area(s)"},
+	{kind = .Wait, text = "[console] 8"},
+	{kind = .Type, text = "map([1, 2, 3], (x) => x * x)"},
+	{kind = .Wait, text = "[console] [1, 4, 9]"},
+	{kind = .Type, text = "1 |> grow(r, _)"},
+	{kind = .Wait, text = "[console]   height  6"},
+	{kind = .Type, text = "area(rectangle = r)"},
+	{kind = .Wait, text = "[console] 120"},
+	{kind = .Type, text = "6 * 7 // the answer"},
+	{kind = .Wait, text = "[console] 42"},
+	{kind = .Type, text = "area(r with {widht = 3})"},
+	{kind = .Wait, text = "[console] error: Rectangle has no field widht"},
+	{kind = .Shot, text = "console_lex"},
 	{kind = .Type, text = "b = buffer(1)"},
 	{kind = .Type, text = "fill(b, 3)"},
 	{kind = .Wait, text = "[console] 4096"},
