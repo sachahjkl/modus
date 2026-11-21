@@ -72,4 +72,10 @@ All three packages are clean Odin implementations of published formats and algor
 
 ## State
 
-Built: `src/library/modus/contract/lz4`, `src/library/modus/contract/xor_filter`, and `src/library/modus/contract/store_search`, each with freestanding verification, adversarial host tests, fuzz/reference checks, and opt-in `-define:MEASURE=true` host benchmarks (numbers updated after measurement). Left: wiring `lz4` into remote display, storage pages, and log streams; wiring `xor_filter` into the object cache protocol and `module_gc`; and wiring `store_search` into the storage service and console.
+Built: `src/library/modus/contract/lz4`, `src/library/modus/contract/xor_filter`, and `src/library/modus/contract/store_search`, each with freestanding verification, adversarial host tests, fuzz/reference checks, and opt-in `-define:MEASURE=true` host benchmarks (`-o:speed -microarch:x86-64`):
+
+- **`lz4` (64 KiB blocks):** repetitive text (`18.29x` ratio) **5 818 MiB/s** compress / **12 175 MiB/s** decompress; structured binary (`4.79x` ratio) **1 872 MiB/s** compress / **3 242 MiB/s** decompress; incompressible **18 166 MiB/s** compress / **62 767 MiB/s** decompress.
+- **`xor_filter` (0% false negatives):** 100 000 keys in **9.50 bits/key** (`118 784` bytes), build **2.55 ms**, lookup **3.37 ns** hit / **2.51 ns** miss, false positive rate **0.406%**.
+- **`store_search` (200 synthetic files, 561 KiB):** indexed in **1.49 ms**; rare needle **2.87 µs** vs **296.12 µs** brute force (**103.2x**); multi-word **1.45 µs** vs **275.68 µs** (**189.5x**); absent symbol **0.01 µs** vs **353.71 µs** (**41 225x**).
+
+Left: wiring `lz4` into remote display, storage pages, and log streams; wiring `xor_filter` into the object cache protocol and `module_gc`; and wiring `store_search` into the storage service and console.

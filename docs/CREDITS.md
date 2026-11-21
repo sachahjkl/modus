@@ -52,6 +52,9 @@ Algorithms and specifications implemented from scratch in `src/` without copying
 | Swiss tables (16-tag SIMD open addressing) | Matt Kulukundis (Google Abseil), Facebook Folly F14 authors | Abseil SwissTable, Folly F14 | Apache-2.0 | `src/library/modus/hash_table/hash_table.odin` | — |
 | rapidhash V3 fast short-key hash | Nicolas De Carli, Wang Yi (wyhash) | rapidhash | MIT | `src/library/modus/fast_hash/fast_hash.odin` | — |
 | Vector fuzzy matching and frecency | Dmitriy Kovalenko (fff / frizbee), Junegunn Choi (fzf), Mozilla Places authors | fff, frizbee, fzf | MIT | `src/library/modus/line_editor/fuzzy_match_vectors.odin` | https://github.com/sponsors/junegunn |
+| LZ4 raw block codec | Yann Collet | lz4 | BSD-2-Clause | `src/library/modus/contract/lz4/lz4.odin` | — |
+| Binary Fuse8 compact presence filter | Thomas Mueller Graf, Daniel Lemire | Binary Fuse Filters (ACM JEA 2022) | Apache-2.0 | `src/library/modus/contract/xor_filter/xor_filter.odin` | https://github.com/sponsors/lemire |
+| Commit-driven bigram store search index | Dmitriy Kovalenko (`fff` bigram prefilter) | fff | MIT | `src/library/modus/contract/store_search/store_search.odin` | — |
 
 ## Inspirations
 
