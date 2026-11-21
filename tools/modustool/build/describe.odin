@@ -407,7 +407,7 @@ integer_unit_of_parameter :: proc(state: ^Describe_State, type: ^ast.Expr) -> (i
 // as the shape errors.Error_Record_Fact_Fields names Kind_Word.
 @(private = "file")
 contract_type_name :: proc(state: ^Describe_State, type: ^ast.Expr, package_name: string, prefix := "") -> string {
-	contract_folder := strings.concatenate({foundation.SOURCE_FOLDER_CONTRACT, "/", package_name}, context.temp_allocator)
+	contract_folder := strings.concatenate({foundation.active_source_library_public_folder(), "/", foundation.LIBRARY_PART_CONTRACT, "/", package_name}, context.temp_allocator)
 	if identifier, is_identifier := type.derived.(^ast.Ident); is_identifier && strings.has_suffix(prefix, ".") {
 		if folder, imported := state.imports[prefix[:len(prefix) - 1]]; imported && folder == contract_folder {
 			return identifier.name

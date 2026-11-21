@@ -354,6 +354,32 @@ run_module_build :: proc(args: []string) -> int {
 		return foundation.EXIT_FAILURE
 	}
 	if system_argument != "" {
+		if os.is_file(foundation.join(strings.trim_right(system_argument, "/"), "/", SDK_MANIFEST_FILE_NAME)) {
+			module_name := ""
+			if manifest_bytes, err := os.read_entire_file(foundation.join(folder, "/", SDK_LANGUAGE_NEUTRAL_MANIFEST_NAME), context.temp_allocator); err == nil {
+				if parsed_manifest, man_problem := manifest_parse(string(manifest_bytes)); man_problem == "" {
+					module_name = parsed_manifest.name
+				}
+			} else if build_bytes, build_err := os.read_entire_file(foundation.join(folder, "/", MODULE_BUILD_FILE_NAME), context.temp_allocator); build_err == nil {
+				if parsed_build, build_problem := module_build_file_parse(string(build_bytes)); build_problem == "" {
+					module_name = parsed_build.name
+				}
+			}
+			if module_name == "" {
+				module_name = "module"
+			}
+			output_file := foundation.join(out, "/", module_name, ".module")
+			if problem := sdk_build_outside_module(system_argument, folder, output_file); problem != "" {
+				fmt.eprintfln("modustool: module-build: %s", problem)
+				return foundation.EXIT_FAILURE
+			}
+			written, read_ok := foundation.read_file(output_file)
+			if !read_ok {
+				return foundation.EXIT_FAILURE
+			}
+			fmt.printfln("modustool: the module %s: %s, %d bytes, hash %s", module_name, output_file, len(written), hash_as_hexadecimal(blake3.hash(written)))
+			return 0
+		}
 		if move_error := os.set_working_directory(system_argument); move_error != nil {
 			fmt.eprintfln("modustool: module-build: cannot enter the folder of the system %s: %v", system_argument, move_error)
 			return foundation.EXIT_USAGE

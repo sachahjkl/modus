@@ -1133,6 +1133,31 @@ modustool: the module c_compiler compiles in the C files of chibicc, and the var
 
 **A new patch.** Make the change in a checkout of the work at the pinned commit, write it with `git diff` as a file of `src/outside/<work>/patches/` with a name after the last one, add the file to git, and build: Nix applies it, and a patch that does not apply stops the shell with the line of the patch.
 
+## The SDK
+
+The SDK (`glossary/communication.md`, "SDK") packages the public surface of modus into a self-contained directory so a developer can build an outside module in Odin or in any compiled language with no repository checkout and no Nix. The design is `src/md/infrastructure/sdk.md` and `src/md/infrastructure/language_neutral_abi.md`; the code is `tools/modustool/build/sdk.odin`.
+
+**What an SDK directory holds.**
+
+- `<sdk>/SDK_MANIFEST.txt`: canonical manifest with `sdk_format`, `release`, `target`, `module_format`, `compiler`, BLAKE3 `root_digest`, optional Ed25519 `public_key` and `signature`, and sorted `<blake3>  <relative-path>` lines for every other file in the directory.
+- `<sdk>/library/modus/`: clean copy of `src/library/modus/` only. No file from `src/library/internal/` or `src/modulus/` is included, and both packaging and verification refuse any path segment named `internal` or `modulus`.
+- `<sdk>/runtime/`: freestanding memory assembly routines copied from `src/runtime/`.
+- `<sdk>/modules/`: `catalog.txt` listing the public system and library modules of the release and verified `.module` files for declaring imports without a checkout.
+- `<sdk>/examples/hello_odin/` and `<sdk>/examples/hello_c/`: minimal freestanding Odin and C outside module examples.
+
+**The commands.**
+
+```
+modustool sdk-pack <output-dir> [--sign-key <path>] [--modules-dir <path>]
+modustool sdk-verify <sdk-dir> [--public-key <path>]
+modustool sdk-convert <object.o> <module.manifest> <output.modus> [--sdk <sdk-dir>] [--import-dir <dir>]
+```
+
+- `sdk-pack` assembles the SDK directory deterministically, signs `root_digest` with Ed25519 via `modus:cryptography_primitives` when `--sign-key` is supplied (accepting 64 hexadecimal digits or unpadded base64url), and runs `sdk-verify` before returning.
+- `sdk-verify` runs outside a repository checkout, parses `SDK_MANIFEST.txt` strictly, checks `root_digest` and the Ed25519 signature (pinning `--public-key` when supplied), walks the directory while refusing symbolic links, stray files, missing files, and any `internal` or `modulus` path, and checks every file's BLAKE3 hash.
+- `sdk-convert` runs outside a repository checkout and converts any freestanding System V AMD64 relocatable ELF object (`ET_REL`) paired with a language-neutral `module.manifest` into a verified modus module file validated by `module.validate`, resolving imports from `<sdk-dir>/modules/` or `--import-dir`.
+- `modustool module-build <folder> --system <sdk-dir>` detects `SDK_MANIFEST.txt` in `<sdk-dir>`, verifies the SDK, and builds either an Odin outside module (`module.txt`, passing only `-collection:modus=<sdk-dir>/library/modus`) or a language-neutral module (`module.manifest` with `.o` or `.c`) against the SDK.
+
 ## The commands of the tool
 
 All the automation of the project is one program of the host, `tools/modustool`. It is one command over packages, one for each concern: `foundation`, `resources`, `build`, `checks`, `fuzz`, `similarity`, `machine` and `site`, in the order of their imports. A package imports another one as `"modustool:<package>"`, with the flag `-collection:modustool=tools/modustool`, never by a relative path. The layout is in "The packages of the tool", below; the design is in `src/md/infrastructure/repository_layout.md`. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c modustool <command>`; `modustool help` prints the list with one line for each.
@@ -1141,8 +1166,11 @@ All the automation of the project is one program of the host, `tools/modustool`.
 |---|---|
 | `build [whole] [host_processes]` | Builds the modules, the boot images and the boot programs: the usual one, and one for each volume that a test or a measure needs (a start that fails, a shortage of frames, a measure run, the volumes of the trusted boot that the boot program must refuse, the volumes of Secure Boot, one for each self test of the kernel). It keeps each module and each boot volume when its inputs are the same, and only converts a module when the file of an import changed; `build whole` keeps nothing ("The incremental build") |
 | `module <name> ...` | Builds one module of the table, and its debug object; with `compile` or `convert` as its last argument, runs one of the two steps alone. The parallel build runs it for each step; run it by hand to see the errors of one module alone |
-| `module-build <folder> [--system <folder>] [--out <folder>]` | Builds one outside module from a folder of another project, with its module build file `module.txt`: writes `<name>.module` and `<name>.debug`, and prints the hash of the module and the names of its exports ("A module from a source outside the repository") |
+| `module-build <folder> [--system <folder>] [--out <folder>]` | Builds one outside module from a folder of another project, with its module build file `module.txt` (or against an unpacked SDK directory holding `SDK_MANIFEST.txt`): writes `<name>.module` and `<name>.debug`, and prints the hash of the module and the names of its exports ("A module from a source outside the repository") |
 | `module-disk <disk file> <module file> ...` | Writes a data disk whose store `module_files` holds each module file under the name of its file, and prints the line of the console that starts each one ("A module from a source outside the repository") |
+| `sdk-pack <output-dir> [--sign-key <path>] [--modules-dir <path>]` | Packs a deterministic, self-contained SDK directory with public library, runtime, public module catalog and `.module` files, examples, and canonical `SDK_MANIFEST.txt` with BLAKE3 root digest and optional Ed25519 signature ("The SDK") |
+| `sdk-verify <sdk-dir> [--public-key <path>]` | Verifies every file BLAKE3 hash, absence of stray, missing, symlink, or `internal`/`modulus` paths, and Ed25519 signature of an unpacked SDK directory ("The SDK") |
+| `sdk-convert <object.o> <module.manifest> <output.modus> [--sdk <sdk-dir>] [--import-dir <dir>]` | Converts a freestanding `ET_REL` object (`.o`) paired with a language-neutral `module.manifest` into a verified modus module file with no repository checkout ("The SDK") |
 | `volume <name>` | Builds one boot volume: its boot image with the system description, its boot program, and the volume file. The build runs it for each volume that it must build; run it by hand, after a build, to see the errors of one volume alone |
 | `run [without_checks]`, `run --remote-display <viewer key>` | Builds the modules and the main boot volume, then starts the machine under QEMU in a window, with the log of the kernel on the terminal. The data disk stays from run to run. It starts the peer that takes the calls of `modustool call`, draws the key of its client for this run, and prints it with the line to type in a console of the machine: `remote_allow("<key>")`. With `--remote-display`, the machine has no window and a new data disk: the tool starts `remote_display`, prints the port of the UDP relay of the peer to its port 7101 and the line of its key, allows the viewer key for the view and the input, waits until a viewer came and went, then stops the machine ("A machine for a viewer on the host" in `src/md/features/remote_display.md`) |
 | `call <key> "<call>"` | Calls an export of a service of the machine that `run` started, through the process `remote` over QUIC, and prints the typed result. The call acts for the principal that allowed the key of the client of the peer; with no such principal it fails: "remote refused the key of this client in the handshake (access_denied)" |
