@@ -116,7 +116,7 @@ The least is the cost when the host did not stop the processor during the frame.
 - **A rate over one second.** A count of 21 frames needs no duration, and runs the same work on a slow host. The frames in one second are computed from the median.
 - **Large pages for the canvases.** The surfaces of today have 4 KiB pages ("Large pages for large buffers" below). The measure takes the pages of today; a measure with both forms is a later step.
 
-**The hazards.** A measure is valid when the load of the host is under 8 ([`docs/SIMD.md`](../../../docs/SIMD.md), "6. How to measure on the machine"). The measure record says the host of the run. A change of the host is not a change of the system.
+**The hazards.** A measure is valid when the load of the host is under 8 ([`docs/SIMD.md`](../../../docs/SIMD.md), "7. How to measure on the machine"). The measure record says the host of the run. A change of the host is not a change of the system.
 
 ## The reference screen
 
@@ -199,7 +199,7 @@ The reasons:
 The hot paths of these phases have a vector form after the rules of [`docs/SIMD.md`](../../../docs/SIMD.md), "1. The rule of the same bytes" and "2. One form: SSE2": the vector form gives the bytes of the scalar form, a host test compares the two, and a measure decides each form. `docs/SIMD.md` holds this design; no file of `src/md` repeats it.
 
 - **The rasterizer**: the coverage of a path of the draw table, and the triangles of the processor back end of the WebGPU subset with its shaders.
-- **The compositor**: the row of colors of a gradient across, which is scalar today ([`docs/SIMD.md`](../../../docs/SIMD.md), "7. Limits"), and the translucent records over the windows.
+- **The compositor**: the row of colors of a gradient across, which is scalar today ([`docs/SIMD.md`](../../../docs/SIMD.md), "8. Limits"), and the translucent records over the windows.
 - **The blend** in linear light of a translucent rectangle, of an antialiased edge and of a picture with alpha, as the blend of a glyph has today.
 - **The picture decoders**: the filters of PNG, the inverse transform and the color conversion of JPEG.
 

@@ -40,7 +40,7 @@ Each other byte that starts a sequence is an invalid sequence: an overlong form 
 **The procedures.**
 
 - `character_decode` reads one character, each byte once. A byte that starts no well-formed sequence is an invalid sequence of one byte; a control character keeps the length of its sequence.
-- `text_valid` and `invalid_sequence_find` are the check at a border: the first gives a verdict, the second the place of the first invalid sequence.
+- `text_valid` and `invalid_sequence_find` are the check at a border: the first gives a verdict, the second the place of the first invalid sequence. `text_valid` checks sixteen bytes at a time ([utf8_validation.md](utf8_validation.md)).
 - `invalid_sequences_replace` writes `?` in place of each byte of each invalid sequence. The length stays, so each offset into the text stays.
 - `complete_characters` is the one way to cut a text: a writer with room for `n` bytes keeps `complete_characters(text[:n])` bytes. It moved here from the cut mark, which uses it.
 - `character_count` counts the cells of a text: one for each character, one for each invalid sequence.

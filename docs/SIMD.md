@@ -4,7 +4,7 @@ This document says which procedures of the system compute with vectors, in which
 
 **The idea in plain words.** A processor has registers that hold several numbers side by side, and instructions that compute on all of them at once. A procedure that works on many pixels or many words can use them: it does the work of four values with one instruction. That is its **vector form**. The same procedure written with one value for each instruction is its **scalar form**. In this system a procedure that has a vector form also keeps its scalar form, and the two must give the same bytes for every input: the vector form is only faster, never different. Host tests compare the two, so a fault of the vector form shows as a wrong byte, not as a wrong picture.
 
-**What has a vector form today.** Four procedures, all with the 128-bit registers of SSE2:
+**What has a vector form today.** Five procedures, all with the 128-bit registers of SSE2:
 
 | Procedure | Scalar form | Vector form | Values for each step |
 |---|---|---|---|
@@ -12,12 +12,13 @@ This document says which procedures of the system compute with vectors, in which
 | The blend of colors with straight alpha: the colors of the draw records and the pictures with alpha | `blend_straight_alpha_row_scalar` (`src/library/support/graphics/blend.odin`) | `blend_straight_alpha_row_sse2` (`src/library/support/graphics/blend_vectors_amd64.odin`) | 4 pixels |
 | The blend of a picture with premultiplied alpha | `blend_premultiplied_alpha_row_scalar` (`src/library/support/graphics/blend.odin`) | `blend_premultiplied_alpha_row_sse2` (`src/library/support/graphics/blend_vectors_amd64.odin`) | 4 pixels |
 | The BLAKE3 hash of a subtree of four chunks | `chunk_value`, four times (`src/library/contract/blake3/blake3.odin`) | `four_chunk_values_side_by_side` (`src/library/contract/blake3/chunks_side_by_side_amd64.odin`) | 4 chunks |
+| The check of a text: UTF-8 with no control character | `text_valid_byte_by_byte` (`src/library/contract/text_encoding/text_encoding.odin`) | `text_valid_sixteen_bytes_at_a_time` (`src/library/contract/text_encoding/text_valid_sixteen_bytes_at_a_time.odin`) | 16 bytes |
 
 **What this document is not.** It is not the rule on the vector registers of the kernel. The kernel has no vector instruction at all, and it saves the registers of each thread: `docs/ARCHITECTURE.md`, "The extended state of the processor". It is not the design of the blend in linear light either: `docs/FONTS.md`, "The blend in linear light".
 
 **For whom.** A reader who writes or changes a vector form, and a reader who measures one.
 
-**The map of this document.** Section 1: the rule of the same bytes. Section 2: why one form, SSE2. Sections 3 to 5: the blend of a glyph, the compositor, BLAKE3. Section 6: how to measure on the machine. Section 7: limits.
+**The map of this document.** Section 1: the rule of the same bytes. Section 2: why one form, SSE2. Sections 3 to 6: the blend of a glyph, the compositor, BLAKE3, the check of a text. Section 7: how to measure on the machine. Section 8: limits.
 
 ## 1. The rule of the same bytes
 
@@ -47,7 +48,7 @@ blend_premultiplied_alpha_row :: #force_inline proc "contextless" (to: [^]Color,
 - the edge values often: 0, 1, 254 and 255 in each byte, whole words of 0, of all ones and of full coverage;
 - guard words before and after each row: a form that writes outside its columns changes them.
 
-When a test fails, it gives the first wrong pixel, the value of each form, and the count of pixels changed outside the drawn columns. The tests of the blends are in `src/library/support/graphics/blend_vectors_test_amd64.odin` (`coverage_forms_give_the_bytes_of_the_scalar_form`, `coverage_forms_meet_each_channel_value`, `premultiplied_forms_give_the_bytes_of_the_scalar_form`, `premultiplied_forms_meet_each_channel_value`, `straight_alpha_forms_give_the_bytes_of_the_scalar_form`, `straight_alpha_forms_meet_each_channel_value`, `coverage_forms_with_alpha_give_the_bytes_of_the_scalar_form`). The tests of the hash are in `src/library/contract/blake3/chunks_side_by_side_test_amd64.odin` (`sse2_form_gives_the_hash_of_the_scalar_form`, `subtrees_side_by_side_at_each_counter`). `modustool check` runs them.
+When a test fails, it gives the first wrong pixel, the value of each form, and the count of pixels changed outside the drawn columns. The tests of the blends are in `src/library/support/graphics/blend_vectors_test_amd64.odin` (`coverage_forms_give_the_bytes_of_the_scalar_form`, `coverage_forms_meet_each_channel_value`, `premultiplied_forms_give_the_bytes_of_the_scalar_form`, `premultiplied_forms_meet_each_channel_value`, `straight_alpha_forms_give_the_bytes_of_the_scalar_form`, `straight_alpha_forms_meet_each_channel_value`, `coverage_forms_with_alpha_give_the_bytes_of_the_scalar_form`). The tests of the hash are in `src/library/contract/blake3/chunks_side_by_side_test_amd64.odin` (`sse2_form_gives_the_hash_of_the_scalar_form`, `subtrees_side_by_side_at_each_counter`). The tests of the check of a text are in `src/library/contract/text_encoding/text_valid_sixteen_bytes_at_a_time_test.odin` (section 6). `modustool check` runs them.
 
 ## 2. One form: SSE2
 
@@ -185,7 +186,31 @@ The compositor draws each frame of the screen. This table says, for each kind of
 
 The rotations by 16, 12, 8 and 7 bits are written as two shifts and an or (`rotate_lanes_right`); the compiler can write the rotation by 16 as shuffles of 16-bit lanes. The object code is not read yet.
 
-## 6. How to measure on the machine
+## 6. The check of a text (`src/library/contract/text_encoding`)
+
+**Where the check runs.** Each border that takes a text from another party calls `text_valid`: the palette table, a store name, a history file, a paste, a display text. The rule is UTF-8 with no control character (`src/md/data/text_encoding.md`).
+
+**The form** is the algorithm of John Keiser and Daniel Lemire, "Validating UTF-8 In Less Than One Instruction Per Byte" (2021), with comparisons in place of its three lookups in tables of 16 bytes: SSE2 has no such lookup. The design and the measure that chose it: `src/md/data/utf8_validation.md`.
+
+- `text_valid_sixteen_bytes_at_a_time`: a group of 16 bytes and the group before it. A group of ASCII checks only its controls. Another group checks the count of continuations after each lead, the leads that start nothing, the bounds of the second byte after E0, ED, F0 and F4, and the controls.
+- The last bytes, fewer than 16, are copied into a group of spaces and checked as a group: no load reads past the slice.
+- The form stops at the first group with an error.
+
+**Three differences from the other vector forms.**
+
+- The source has no `_amd64` suffix and `text_valid` calls it on each target: it uses only operations that each vector unit has (compares, saturating subtraction, shuffles by constant places, the mask of bit 7).
+- The last bytes go through the vector form, in a group of spaces, not through the scalar form.
+- The kernel compiles the package in and calls none of it: it replaces invalid sequences with `invalid_sequences_replace`, which is scalar. The build refuses a vector instruction in the kernel.
+
+**The host tests** (`text_valid_sixteen_bytes_at_a_time_test.odin`): each length around a group (0, 1, 15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64) with a control at the end; each valid and refused sequence at each place of texts of each length up to 50, so each sequence crosses each boundary of a group at each of its bytes; a sequence cut by the end of the slice; and 400 000 random texts of 0 to 300 bytes (random bytes, edge bytes, valid texts with one byte changed, inserted or removed) against the scalar form, with a fixed seed that the failure prints. The fuzz target `text_encoding` compares the two forms too.
+
+**The measure on the host**, with the target of a module. The test prints the time of each form, and fails only when the forms give different answers:
+
+```
+nix develop -c odin test src/library/contract/text_encoding -o:speed -microarch:x86-64 -vet -collection:modus=src/library -define:ODIN_TEST_NAMES=text_encoding.text_valid_speed_of_each_form
+```
+
+## 7. How to measure on the machine
 
 A measure is a line that a process of the system writes on the log. Each command runs the main machine test; each line is in `build/test_output.txt`. A measure is valid when `uptime` shows a load under 8. No test fails on a time: a measure is printed, never asserted (`docs/TOOLS.md`, "The bounds of the tests").
 
@@ -211,7 +236,7 @@ nix develop -c odin test src/library/contract/blake3 -o:speed -vet -collection:m
 
 `graphics.text_speed_of_each_blend` gives the time of one glyph with the blend table, with the SSE2 form alone and with the scalar form alone, in the same way.
 
-## 7. Limits
+## 8. Limits
 
 - The row of colors of a gradient across or at an angle (a division and a mix for each pixel) and the outline renderer (`src/library/support/vector_font`, at build time) stay scalar.
 - The object code of the SSE2 forms is not read yet: the measures say if the compiler lowered the 16-bit products to `pmullw` and `pmulhuw`.
