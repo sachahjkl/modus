@@ -171,7 +171,7 @@ end_words_write_and_wake :: proc "contextless" (wiring_slot: int, end_word: outp
 }
 
 @(private = "file")
-wiring_ring_hold :: proc "contextless" (proc_idx: int) -> system.Status {
+wiring_ring_hold :: proc "contextless" (proc_idx: int, drop_stale: bool = true) -> system.Status {
 	if proc_idx < 0 || proc_idx >= wiring_core.PROCESS_CAPACITY {
 		return .Bad_Handle
 	}
@@ -187,9 +187,11 @@ wiring_ring_hold :: proc "contextless" (proc_idx: int) -> system.Status {
 		return status
 	}
 	ph.wiring_ring = opened
-	for _ in 0 ..< ring.capacity(&ph.wiring_ring.completions) {
-		if _, received := system.receive(&ph.wiring_ring.completions); !received {
-			break
+	if drop_stale {
+		for _ in 0 ..< ring.capacity(&ph.wiring_ring.completions) {
+			if _, received := system.receive(&ph.wiring_ring.completions); !received {
+				break
+			}
 		}
 	}
 	return .Ok
@@ -838,8 +840,9 @@ handle_commit_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respons
 			response_staging.asker_wiring_count += 1
 		}
 	}
-	if state.processes[child_idx].ends_given > 0 {
-		_ = wiring_ring_hold(child_idx)
+	if state.processes[child_idx].ends_given - state.processes[child_idx].log_ends_given > 0 {
+		// Keep completions the child may already have written for its start ends.
+		_ = wiring_ring_hold(child_idx, drop_stale = false)
 	}
 	region_write_response()
 	asker_active := u64(state.processes[asker_idx].wirings_asked)
