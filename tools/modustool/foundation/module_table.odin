@@ -270,6 +270,9 @@ module_builds := [?]Module_Build {
 	// A start policy in the store `module_files` only: principal 0 chooses
 	// it, and the next start runs it (src/md/features/start_policy.md).
 	{name = DISK_START_POLICY_MODULE, source = TEST_MODULE_SOURCES + DISK_START_POLICY_MODULE, entry = true, image = true, disk = true},
+	// The conformance suite for any holder of Role.Display
+	// (src/md/features/roles_and_contracts.md).
+	{name = "display_conformance", source = TEST_MODULE_SOURCES + "display_conformance"},
 }
 
 // The counted kernel and its setting. Each other kernel gets the setting
