@@ -52,24 +52,40 @@
 // It has no USB.
 package input
 
+import "base:intrinsics"
 import "modus:display"
 import "modus:key_path"
+import "modus:pci"
+import "modus:virtio"
 import "internal:input/keyboard_layout"
 import "internal:input/ps2_controller"
+import "internal:input/tablet"
 import "modus:contract/fixed_addresses"
 import "modus:contract/ring"
 import "modus:contract/settings"
+import "modus:contract/virtio_input"
 import "modus:system"
 
 // The working memory: the rest of the pages that the root service gave it
 // by its name, once the tool counts its module and its thread.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 181, processes = 1, threads = 1}
 
-// The context of this service.
+// The context of this service. Slots 4..13 carry an optional virtio-tablet-pci
+// device (pci.GRANT_CONFIGURATION at 4, pci.GRANT_BAR + 0..5 at 5..10).
 GRANT_RING :: 0
 GRANT_PORTS :: 1
 GRANT_KEYBOARD_INTERRUPT :: 2
 GRANT_MOUSE_INTERRUPT :: 3
+GRANT_TABLET_INTERRUPT :: 11
+GRANT_TABLET_QUEUES :: 12
+GRANT_TABLET_MACHINE :: 13
+
+// Virtio tablet event buffers in page virtio.QUEUE_PAGES of the queue memory.
+TABLET_BUFFER_PAGE :: virtio.QUEUE_PAGES
+TABLET_EVENT_BUFFER_COUNT :: 64
+TABLET_COORDINATE_EXTENT :: u32(virtio_input.ABSOLUTE_AXIS_DEFAULT_MAXIMUM) + 1
+#assert(TABLET_BUFFER_PAGE < pci.QUEUE_PAGES)
+#assert(TABLET_EVENT_BUFFER_COUNT * virtio_input.EVENT_SIZE <= system.PAGE_SIZE)
 
 PORT_DATA :: 0x60
 PORT_STATUS :: 0x64 // Its bits are in src/library/internal/input/ps2_controller.
@@ -125,6 +141,15 @@ keyboard_bytes_dropped_at_start: u64
 // The packets of the mouse that found the input ring full: they go to the
 // ring, in order, before any newer record.
 pointer_backlog: key_path.Pointer_Backlog
+// The optional virtio-tablet-pci device state, active when granted in ctx.
+tablet_active: bool
+tablet_device: virtio.Device
+tablet_queue: virtio.Queue
+tablet_buffers: [^]virtio_input.Raw_Event
+tablet_buffers_physical: u64
+tablet_buffer_count: u32
+tablet_state: tablet.Tablet_State
+tablet_backlog: tablet.Tablet_Backlog
 // The records that this service lost. The back pressure of entry keeps
 // both at 0: a number above 0 is a fault of this process.
 key_records_refused: u64
@@ -267,6 +292,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	} else {
 		system.log_fact(.Info, Ready_Mouse_With_Wheel{})
 	}
+	tablet_device_open(ctx)
 
 	held_before := false // The turn before left a byte in the controller.
 	for {
@@ -275,6 +301,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		held := false
 		for {
 			pointer_backlog_send()
+			tablet_backlog_send()
+			tablet_poll()
 			state := system.port_read_8(PORT_STATUS)
 			if state & ps2_controller.STATUS_OUTPUT_FULL == 0 {
 				break
@@ -305,7 +333,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.log_fact(.Info, Input_Ring_Room_Again{})
 			}
 		}
-		if held || pointer_backlog.count > 0 {
+		if tablet_active && virtio.used_ready(&tablet_queue) && tablet_backlog.count < tablet.TABLET_BACKLOG_CAPACITY {
+			continue
+		}
+		if held || pointer_backlog.count > 0 || tablet_backlog.count > 0 {
 			// The compositor wakes this thread when half of the ring is
 			// free, or before it waits itself. If the ring already has
 			// room, the wait ends at once.
@@ -421,5 +452,157 @@ mouse_byte :: proc "contextless" (value: u8) {
 		// is free: this is a fault of this process, and it is in the log.
 		pointer_records_refused += 1
 		system.log_fact(.Info, Pointer_Records_Lost{pointer_records = pointer_records_refused})
+	}
+}
+
+// tablet_axis_range_read queries Config_Select.Abs_Info for one absolute axis
+// from the virtio-input configuration space, falling back to the standard
+// QEMU range [0..32767] if the device reports no valid range.
+tablet_axis_range_read :: proc "contextless" (axis: virtio_input.Abs_Axis) -> virtio_input.Axis_Range {
+	fallback := virtio_input.Axis_Range{virtio_input.ABSOLUTE_AXIS_DEFAULT_MINIMUM, virtio_input.ABSOLUTE_AXIS_DEFAULT_MAXIMUM}
+	if tablet_device.device_config == 0 || tablet_device.device_config_length < virtio_input.CONFIG_TOTAL_SIZE {
+		return fallback
+	}
+	base := tablet_device.device_config
+	intrinsics.volatile_store((^u8)(base + virtio_input.CONFIG_OFFSET_SELECT), u8(virtio_input.Config_Select.Abs_Info))
+	intrinsics.volatile_store((^u8)(base + virtio_input.CONFIG_OFFSET_SUBSEL), u8(axis))
+	size := virtio.load_8(base + virtio_input.CONFIG_OFFSET_SIZE)
+	result := fallback
+	if int(size) >= virtio_input.ABS_INFO_SIZE {
+		raw: [virtio_input.ABS_INFO_SIZE]u8
+		for index in 0 ..< virtio_input.ABS_INFO_SIZE {
+			raw[index] = virtio.load_8(base + virtio_input.CONFIG_OFFSET_DATA + uintptr(index))
+		}
+		if info, ok := virtio_input.abs_info_from_bytes(raw[:]); ok {
+			candidate := virtio_input.Axis_Range{minimum = info.minimum, maximum = info.maximum}
+			if virtio_input.axis_range_valid(candidate) {
+				result = candidate
+			}
+		}
+	}
+	intrinsics.volatile_store((^u8)(base + virtio_input.CONFIG_OFFSET_SELECT), u8(virtio_input.Config_Select.Unset))
+	return result
+}
+
+// tablet_device_open initializes an optional virtio-tablet-pci device when
+// the root service granted its configuration, BARs, queue memory, and
+// machine handle. If absent or unusable, PS/2 remains active without error.
+tablet_device_open :: proc "contextless" (ctx: ^system.Context) {
+	config_handle := ctx.handles[pci.GRANT_CONFIGURATION]
+	queues_handle := ctx.handles[GRANT_TABLET_QUEUES]
+	machine_handle := ctx.handles[GRANT_TABLET_MACHINE]
+	if config_handle == 0 || queues_handle == 0 || machine_handle == 0 {
+		return
+	}
+	config_address, config_status := system.memory_map(config_handle, {})
+	if config_status != .Ok {
+		return
+	}
+	device, found := virtio.find(ctx, ([^]u8)(config_address)[:pci.CONFIGURATION_SIZE])
+	if !found {
+		return
+	}
+	if _, start_error := virtio.start(&device, 0); start_error != .None {
+		return
+	}
+	queue_pages, pages_status := system.memory_size(queues_handle)
+	if pages_status != .Ok || queue_pages < pci.QUEUE_PAGES {
+		return
+	}
+	queue_address, map_status := system.memory_map(queues_handle, {.Write})
+	queue_physical, phys_status := system.memory_physical(machine_handle, queues_handle)
+	if map_status != .Ok || phys_status != .Ok {
+		return
+	}
+	queue, queue_error := virtio.queue_start(&device, virtio_input.EVENT_QUEUE_INDEX, uintptr(queue_address), queue_physical, 1, 0)
+	if queue_error != .None {
+		return
+	}
+	tablet_device = device
+	tablet_queue = queue
+	x_range := tablet_axis_range_read(.X)
+	y_range := tablet_axis_range_read(.Y)
+	state, init_problem := tablet.tablet_state_init(x_range, y_range, TABLET_COORDINATE_EXTENT, TABLET_COORDINATE_EXTENT)
+	if init_problem != .None {
+		return
+	}
+	tablet_state = state
+	tablet_buffers = ([^]virtio_input.Raw_Event)(uintptr(queue_address) + TABLET_BUFFER_PAGE * system.PAGE_SIZE)
+	tablet_buffers_physical = queue_physical + TABLET_BUFFER_PAGE * system.PAGE_SIZE
+	tablet_buffer_count = min(tablet_queue.size, TABLET_EVENT_BUFFER_COUNT)
+	for slot in u32(0) ..< tablet_buffer_count {
+		tablet_queue.descriptors[slot] = {
+			address = tablet_buffers_physical + u64(slot) * virtio_input.EVENT_SIZE,
+			length  = virtio_input.EVENT_SIZE,
+			flags   = virtio.DESCRIPTOR_DEVICE_WRITES,
+		}
+		virtio.give(&tablet_queue, u16(slot))
+	}
+	virtio.ready(&tablet_device)
+	virtio.notify(&tablet_queue)
+	tablet_active = true
+	system.log_fact(.Info, Tablet_Ready{queue_size = u64(tablet_queue.size)})
+}
+
+tablet_record :: proc "contextless" (event: tablet.Tablet_Event) -> ring.Record {
+	// Linux evdev REL_WHEEL is positive away from the user; display wheel is
+	// WHEEL_TOWARD_THE_END toward the user.
+	wheel := -i64(event.wheel) * display.WHEEL_TOWARD_THE_END
+	return {
+		kind = u32(display.Input.Pointer_Absolute),
+		values = {
+			0 = u64(event.x),
+			1 = u64(event.y),
+			2 = u64(event.buttons & (display.BUTTON_LEFT | display.BUTTON_RIGHT)),
+			3 = u64(wheel),
+			4 = u64(TABLET_COORDINATE_EXTENT),
+			5 = u64(TABLET_COORDINATE_EXTENT),
+		},
+	}
+}
+
+tablet_backlog_send :: proc "contextless" () {
+	for {
+		waiting := tablet.tablet_backlog_first(&tablet_backlog) or_break
+		if !system.send(&output.commands, tablet_record(waiting)) {
+			break
+		}
+		tablet.tablet_backlog_remove_first(&tablet_backlog)
+	}
+}
+
+tablet_poll :: proc "contextless" () {
+	if !tablet_active {
+		return
+	}
+	reposted := false
+	for tablet_backlog.count < tablet.TABLET_BACKLOG_CAPACITY {
+		used := virtio.used(&tablet_queue) or_break
+		slot := used.id
+		if slot < tablet_buffer_count {
+			raw := tablet_buffers[slot]
+			// Re-post the buffer immediately so the device never starves.
+			tablet_queue.descriptors[slot] = {
+				address = tablet_buffers_physical + u64(slot) * virtio_input.EVENT_SIZE,
+				length  = virtio_input.EVENT_SIZE,
+				flags   = virtio.DESCRIPTOR_DEVICE_WRITES,
+			}
+			virtio.give(&tablet_queue, u16(slot))
+			reposted = true
+			if used.length >= virtio_input.EVENT_SIZE {
+				if event, ready, _ := tablet.tablet_state_feed(&tablet_state, raw); ready {
+					if tablet_backlog.count == 0 && system.send(&output.commands, tablet_record(event)) {
+						continue
+					}
+					if !tablet.tablet_backlog_add(&tablet_backlog, event) {
+						pointer_records_refused += 1
+						system.log_fact(.Info, Pointer_Records_Lost{pointer_records = pointer_records_refused})
+					}
+				}
+			}
+		}
+	}
+	if reposted {
+		virtio.notify(&tablet_queue)
 	}
 }

@@ -20,13 +20,14 @@ package root
 //
 // Each row holds the uses of its key (remote.Client_Uses): Calls for
 // `remote`, View and Input for `remote_display`, which reads the same table
-// (src/md/features/remote_display.md). Each key of Calls is also a client
-// key of the disk grant table of its principal (persisted_grant_table.odin),
-// so the grant lasts across a restart where that table lasts; View and
-// Input last until the machine stops. The client table is the form of the keys
-// while the machine runs: after the read of a table, each of its keys gets
-// a row again, with a new serial. A key that another principal allowed too
-// is contested: it acts for neither until one of them revokes it.
+// (src/md/features/remote_display.md). Each client key and its uses
+// (Calls, View, Input) are kept in the disk grant table of its principal
+// (persisted_grant_table.odin), so allowed viewers and remote clients hold
+// their grants again across a restart where that table lasts. The client
+// table is the form of the keys while the machine runs: after the read of a
+// table, each of its keys gets a row again with its persisted uses and a
+// new serial. A key that another principal allowed too is contested: it
+// acts for neither until one of them revokes it.
 
 import "modus:contract/errors"
 import "modus:contract/isolated"
@@ -142,10 +143,10 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		index := int(place - remote.CLIENT_CAPACITY)
 		if index < table.client_key_count {
 			contested := table.client_keys[index]
-			holder := remote.client_find(&client_table.clients, contested)
+			holder := remote.client_find(&client_table.clients, contested.key)
 			if holder >= 0 && client_table.clients[holder].principal != principal {
-				key := transmute([4]u64)contested
-				values^ = {key[0], key[1], key[2], key[3], principal, remote.client_uses_word({.Calls}), u64(root_ring.Remote_Client_State.Contested)}
+				key := transmute([4]u64)contested.key
+				values^ = {key[0], key[1], key[2], key[3], principal, remote.client_uses_word(contested.uses), u64(root_ring.Remote_Client_State.Contested)}
 			}
 		}
 		return .Ok
@@ -185,25 +186,23 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			if asked <= held {
 				return .Ok
 			}
-			if .Calls in asked && .Calls not_in held {
-				if persisted_table_refusal(principal) {
-					values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
-					return .Bad_State
-				}
-				_ = disk_process.table_client_key_add(table, key)
-				persisted_table_changed(principal)
+			if persisted_table_refusal(principal) {
+				values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
+				return .Bad_State
 			}
+			combined := held + asked
+			_ = disk_process.table_client_key_add(table, key, combined)
+			persisted_table_changed(principal)
 			changed := client_table.clients[place]
-			changed.uses = remote.client_uses_word(held + asked)
+			changed.uses = remote.client_uses_word(combined)
 			client_row_write(place, changed)
-			system.log_fact(.Info, Client_Key_Uses_Added{principal = principal, client_key = text_field(key_head_text(&head, key), 24), uses = text_field(client_uses_text(held + asked), 24)})
+			system.log_fact(.Info, Client_Key_Uses_Added{principal = principal, client_key = text_field(key_head_text(&head, key), 24), uses = text_field(client_uses_text(combined), 24)})
 			return .Ok
 		}
-		// A key of Calls goes into the disk grant table of the principal: a
-		// change that the table refuses now would be lost at its read, or
-		// would not reach the disk. View and Input last until the machine
-		// stops, so a key of the view alone changes no table.
-		if .Calls in asked && persisted_table_refusal(principal) {
+		// Every allowed client key and its uses (Calls, View, Input) go into
+		// the disk grant table of the principal: a change that the table
+		// refuses now would be lost at its read, or would not reach the disk.
+		if persisted_table_refusal(principal) {
 			values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 			return .Bad_State
 		}
@@ -232,14 +231,15 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 			}
 			client_serial_last += 1
 			client_row_write(free, {key = key, principal = principal, serial = client_serial_last, session_locked = locked, uses = remote.client_uses_word(asked), not_in_front = client_not_in_front(principal)})
+			// It fits: the count of the keys of the table is under the
+			// bound of one principal, the key is not zero bytes, and asked
+			// passed client_uses_of_word.
+			_ = disk_process.table_client_key_add(table, key, asked)
 			if .Calls not_in asked {
 				system.log_fact(.Info, Client_Key_Allowed_For_Display{principal = principal, client_key = text_field(key_head_text(&head, key), 24), uses = text_field(client_uses_text(asked), 24)})
-				return .Ok
+			} else {
+				client_key_allowed_log(principal, key)
 			}
-			// It fits: the count of the keys of the table is under the
-			// bound of one principal, and the key is not zero bytes.
-			_ = disk_process.table_client_key_add(table, key)
-			client_key_allowed_log(principal, key)
 			persisted_table_changed(principal)
 			return .Ok
 		}
@@ -266,9 +266,9 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		values^ = {}
 		values[0] = count
 		system.log_fact(.Info, Client_Key_Revoked{principal = principal, connections_ended = count, client_key = text_field(key_head_text(&head, key), 24), uses = text_field(client_uses_text(revoked_uses), 24)})
-		// Only a key of Calls is in the disk grant table; a key of the view
-		// alone has no write to make.
-		if disk_process.table_client_key_remove(table, key) == .None || .Calls in revoked_uses {
+		// Every allowed key and its uses live in the disk grant table:
+		// revocation clears the row and writes the table.
+		if disk_process.table_client_key_remove(table, key) == .None || revoked_uses != {} {
 			values[1] = persisted_table_revocation(principal, key) ? root_ring.REMOTE_CLIENT_KEY_CAN_COME_BACK : 0
 		}
 		// The key has no row now: a principal whose disk grant table holds
@@ -347,16 +347,36 @@ client_keys_restore :: proc "contextless" () {
 	for principal in 0 ..< u64(principals.PRINCIPAL_CAPACITY) {
 		table := &disk_grant_tables[principal]
 		for index in 0 ..< clamp(table.client_key_count, 0, disk_process.CLIENT_KEY_CAPACITY) {
-			key := table.client_keys[index]
+			entry := table.client_keys[index]
+			key := entry.key
+			uses_word := remote.client_uses_word(entry.uses)
 			action, place := remote.client_restore_decision(&client_table.clients, key, principal)
 			switch action {
-			case .Holds, .Contested:
+			case .Holds:
+				if client_table.clients[place].uses != uses_word {
+					changed := client_table.clients[place]
+					held, _ := remote.client_uses_of_word(changed.uses)
+					if !(held <= entry.uses) {
+						client_serial_last += 1
+						changed.serial = client_serial_last
+						changed.uses = uses_word
+						client_row_write(place, changed)
+						_ = client_connections_end(place)
+					} else {
+						changed.uses = uses_word
+						client_row_write(place, changed)
+					}
+				}
+			case .Contested:
 			case .Take_Row:
 				locked: u64 = principal_records[principal].state == .Locked ? 1 : 0
 				client_serial_last += 1
-				// The disk keeps the uses of Calls only.
-				client_row_write(place, {key = key, principal = principal, serial = client_serial_last, session_locked = locked, uses = remote.client_uses_word({.Calls}), not_in_front = client_not_in_front(principal)})
-				system.log_fact(.Info, Client_Key_Restored{principal = principal, client_key = text_field(key_head_text(&head, key), 24)})
+				client_row_write(place, {key = key, principal = principal, serial = client_serial_last, session_locked = locked, uses = uses_word, not_in_front = client_not_in_front(principal)})
+				if .Calls in entry.uses {
+					system.log_fact(.Info, Client_Key_Restored{principal = principal, client_key = text_field(key_head_text(&head, key), 24)})
+				} else {
+					system.log_fact(.Info, Client_Key_Restored_For_Display{principal = principal, client_key = text_field(key_head_text(&head, key), 24), uses = text_field(client_uses_text(entry.uses), 24)})
+				}
 			case .Contest:
 				changed := client_table.clients[place]
 				client_serial_last += 1
@@ -404,11 +424,6 @@ client_keys_after_read :: proc "contextless" (principal: u64) {
 	head: [16]u8
 	for row, place in client_table.clients {
 		if row.serial == 0 || row.principal != principal || disk_process.table_client_key_find(table, row.key) >= 0 {
-			continue
-		}
-		// A key of the view alone was never in a disk grant table: the read
-		// does not replace it.
-		if uses, known := remote.client_uses_of_word(row.uses); known && .Calls not_in uses {
 			continue
 		}
 		client_row_write(place, {})

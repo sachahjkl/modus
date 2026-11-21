@@ -442,7 +442,7 @@ start_policy_choice_command :: proc "contextless" (caller: ^Started, record: rin
 	case .Full:
 		values^ = errors.ring_fail(kind, .Full, .Grants, 0, 0, disk_process.ROW_CAPACITY)
 		return .No_Slot
-	case .Absent, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Start_Policy_Row:
+	case .Absent, .Not_Held, .Same_File, .Zero_Hash, .Zero_Key, .Bad_Uses, .Start_Policy_Row:
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
 		return .Bad_State
 	}

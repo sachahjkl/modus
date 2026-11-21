@@ -130,16 +130,23 @@ Grant_Row :: struct {
 	persistence:     Persistence,
 }
 
+// One persisted client key of `remote` and `remote_display`, with its uses.
+Client_Key_Row :: struct {
+	key:  [CLIENT_KEY_SIZE]u8,
+	uses: remote.Client_Uses,
+}
+
 // The disk grant table of one principal. The zero table is empty, and its
 // global setting is to persist.
 Grant_Table :: struct {
 	rows:              [ROW_CAPACITY]Grant_Row,
 	count:             int,
 	forget_by_default: bool, // The global setting: false, each row persists unless its exception says Forget.
-	// The client keys of `remote` that the principal allowed, in the order
-	// of the allows. Never 32 zero bytes, and never one key two times. They
-	// follow the global setting: no key has an exception of its own.
-	client_keys:       [CLIENT_KEY_CAPACITY][CLIENT_KEY_SIZE]u8,
+	// The client keys of `remote` and `remote_display` that the principal
+	// allowed, in the order of the allows, each with its set of uses. Never
+	// 32 zero bytes, never one key two times, never an invalid set of uses.
+	// They follow the global setting: no key has an exception of its own.
+	client_keys:       [CLIENT_KEY_CAPACITY]Client_Key_Row,
 	client_key_count:  int,
 }
 
@@ -168,6 +175,7 @@ Table_Problem :: enum u8 {
 	Same_File, // The nickname names this file already.
 	Zero_Hash, // The hash is 32 zero bytes.
 	Zero_Key, // The client key is 32 zero bytes.
+	Bad_Uses, // The client key uses are empty, unknown, or Input without View.
 	Start_Policy_Row, // The row holds the grant Start_Policy, which takes no other grant.
 	Holds_Store, // The row holds the grant store: a start policy holds the grant Start_Policy and nothing else.
 }
@@ -353,37 +361,43 @@ table_persistence_set :: proc "contextless" (table: ^Grant_Table, nickname: stri
 	return .None
 }
 
-// table_client_key_find gives the place of a client key of `remote` in the
-// table, or -1.
+// table_client_key_find gives the place of a client key in the table, or -1.
 table_client_key_find :: proc "contextless" (table: ^Grant_Table, key: [CLIENT_KEY_SIZE]u8) -> int {
 	for place in 0 ..< clamp(table.client_key_count, 0, CLIENT_KEY_CAPACITY) {
-		if table.client_keys[place] == key {
+		if table.client_keys[place].key == key {
 			return place
 		}
 	}
 	return -1
 }
 
-// table_client_key_add records a client key of `remote` that the principal
-// allowed. A key that the table holds already is no change.
-table_client_key_add :: proc "contextless" (table: ^Grant_Table, key: [CLIENT_KEY_SIZE]u8) -> Table_Problem {
+// table_client_key_add records a client key and its uses that the principal
+// allowed. If the table already holds the key, the new uses are merged into
+// its row. Invalid uses (empty, unknown bits, or Input without View) are
+// refused without changing the table.
+table_client_key_add :: proc "contextless" (table: ^Grant_Table, key: [CLIENT_KEY_SIZE]u8, uses: remote.Client_Uses = {.Calls}) -> Table_Problem {
 	if key == {} {
 		return .Zero_Key
 	}
-	if table_client_key_find(table, key) >= 0 {
+	valid_uses, uses_ok := remote.client_uses_of_word(remote.client_uses_word(uses))
+	if !uses_ok {
+		return .Bad_Uses
+	}
+	if place := table_client_key_find(table, key); place >= 0 {
+		table.client_keys[place].uses += valid_uses
 		return .None
 	}
 	if table.client_key_count >= CLIENT_KEY_CAPACITY {
 		return .Full
 	}
-	table.client_keys[table.client_key_count] = key
+	table.client_keys[table.client_key_count] = {key = key, uses = valid_uses}
 	table.client_key_count += 1
 	return .None
 }
 
-// table_client_key_remove takes a client key of `remote` out of the table.
+// table_client_key_remove takes a client key and its uses out of the table.
 // The keys after it move one place down, so the keys keep the order of the
-// allows.
+// allows, and the vacated slot is zeroed whole.
 table_client_key_remove :: proc "contextless" (table: ^Grant_Table, key: [CLIENT_KEY_SIZE]u8) -> Table_Problem {
 	place := table_client_key_find(table, key)
 	if place < 0 {
@@ -502,14 +516,14 @@ row_persists :: proc "contextless" (table: ^Grant_Table, row: ^Grant_Row) -> boo
 // The persisted table: the object that the root service keeps in a store
 // of the principal. Each number is little-endian.
 TABLE_MAGIC :: "DISKGRNT" // The first 8 bytes.
-TABLE_FORMAT :: u32(2) // A table of another format number is refused.
+TABLE_FORMAT :: u32(3) // A table of another format number is refused.
 KEY_SIZE :: 32 // The bytes of the key of the tag.
 TAG_SIZE :: 32 // The bytes of the tag: keyed BLAKE2b with an output of 32 bytes.
 TABLE_OFFSET_MAGIC :: 0 // 8 bytes.
 TABLE_OFFSET_FORMAT :: 8 // u32.
 TABLE_OFFSET_COUNT :: 12 // u8: the rows that follow, ROW_CAPACITY at most.
 TABLE_OFFSET_SETTING :: 13 // u8: 1 when the global setting is to forget, else 0.
-TABLE_OFFSET_CLIENT_KEY_COUNT :: 14 // u8: the client keys of remote after the rows, CLIENT_KEY_CAPACITY at most.
+TABLE_OFFSET_CLIENT_KEY_COUNT :: 14 // u8: the client key rows after the disk grant rows, CLIENT_KEY_CAPACITY at most.
 TABLE_HEADER_SIZE :: 16 // One zero byte after the count of the client keys.
 // A row: the length of the nickname (u8), the nickname with zero bytes
 // after it (NAME_LIMIT bytes), the hash, the grants (u8), the persistence
@@ -520,19 +534,26 @@ ROW_OFFSET_HASH :: ROW_OFFSET_NICKNAME + NAME_LIMIT // 24.
 ROW_OFFSET_GRANTS :: ROW_OFFSET_HASH + HASH_SIZE // 56.
 ROW_OFFSET_PERSISTENCE :: ROW_OFFSET_GRANTS + 1 // 57.
 ROW_SIZE :: 60
-// The client keys of remote follow the rows: CLIENT_KEY_SIZE bytes each.
+// Each persisted client key row: 32 bytes of Ed25519 public key followed by
+// an 8-byte little-endian Client_Uses word (Calls, View, Input).
+CLIENT_KEY_ROW_OFFSET_KEY :: 0
+CLIENT_KEY_ROW_OFFSET_USES :: CLIENT_KEY_SIZE // 32.
+CLIENT_KEY_ROW_SIZE :: CLIENT_KEY_SIZE + 8 // 40.
+#assert(CLIENT_KEY_ROW_SIZE == 40)
+// The client key rows follow the disk grant rows: CLIENT_KEY_ROW_SIZE bytes each.
 TABLE_OFFSET_CLIENT_KEYS :: TABLE_HEADER_SIZE + ROW_CAPACITY * ROW_SIZE // 976.
 // The tag covers each byte before it. The rows after the count of the rows,
-// and the keys after the count of the keys, are zero bytes: the table
+// and the key rows after the count of the keys, are zero bytes: the table
 // always has this size.
-TABLE_OFFSET_TAG :: TABLE_OFFSET_CLIENT_KEYS + CLIENT_KEY_CAPACITY * CLIENT_KEY_SIZE // 1104.
-TABLE_SIZE :: TABLE_OFFSET_TAG + TAG_SIZE // 1136.
-#assert(TABLE_SIZE == 1136)
-// The bytes of a table of the format 1, which had no client keys. This
-// system does not read it; the size only names it in the log, so that no
-// one restores a version that cannot verify.
+TABLE_OFFSET_TAG :: TABLE_OFFSET_CLIENT_KEYS + CLIENT_KEY_CAPACITY * CLIENT_KEY_ROW_SIZE // 1136.
+TABLE_SIZE :: TABLE_OFFSET_TAG + TAG_SIZE // 1168.
+#assert(TABLE_SIZE == 1168)
+// The bytes of tables of format 1 (no client keys) and format 2 (client keys
+// without uses). This system does not read them; the sizes name them as an
+// older format in the log.
 OLDER_FORMAT_TABLE_SIZE :: 1008
-#assert(OLDER_FORMAT_TABLE_SIZE != TABLE_SIZE)
+OLDER_FORMAT_2_TABLE_SIZE :: 1136
+#assert(OLDER_FORMAT_TABLE_SIZE != TABLE_SIZE && OLDER_FORMAT_2_TABLE_SIZE != TABLE_SIZE)
 #assert(ROW_OFFSET_PERSISTENCE + 1 <= ROW_SIZE)
 
 // Why `table_decode` refused a table. The sentence of each one is in
@@ -560,7 +581,7 @@ Table_File_Problem :: enum u8 {
 @(rodata)
 table_problem_sentences := [Table_File_Problem]string {
 	.None             = "",
-	.Wrong_Size       = "the table does not have 1136 bytes",
+	.Wrong_Size       = "the table does not have 1168 bytes",
 	.Older_Format     = "the table has 1008 bytes: it has the format 1 of an older system, which this system does not read; no version of it can be restored to verify",
 	.Not_Authentic    = "its tag does not verify under the key of the principal: another key wrote it, or a byte changed",
 	.Wrong_Magic      = "the table does not start with DISKGRNT",
@@ -572,7 +593,7 @@ table_problem_sentences := [Table_File_Problem]string {
 	.Two_Start_Policies = "two rows hold the grant start_policy",
 	.Start_Policy_Of_A_Named_Principal = "the table of a named principal holds the grant start_policy, which only principal 0 gives",
 	.Bytes_After_Rows = "the table has bytes that are not zero after its last row",
-	.Bad_Client_Keys  = "the client keys of remote in the table are more than 4, or one is zero bytes, or one comes two times, or a byte after the last key is not zero",
+	.Bad_Client_Keys  = "the client keys of remote in the table are more than 4, or one is zero bytes, or one comes two times, or its uses are refused, or a byte after the last key is not zero",
 }
 
 // table_principal_problem checks a table that its tag verified against its
@@ -642,7 +663,9 @@ table_encode :: proc "contextless" (table: ^Grant_Table, key: ^[KEY_SIZE]u8, out
 	out^[TABLE_OFFSET_COUNT] = u8(count)
 	client_key_count := table_persisted_client_keys(table)
 	for place in 0 ..< client_key_count {
-		copy(out^[TABLE_OFFSET_CLIENT_KEYS + place * CLIENT_KEY_SIZE:][:CLIENT_KEY_SIZE], table.client_keys[place][:])
+		row_place := out^[TABLE_OFFSET_CLIENT_KEYS + place * CLIENT_KEY_ROW_SIZE:][:CLIENT_KEY_ROW_SIZE]
+		copy(row_place[CLIENT_KEY_ROW_OFFSET_KEY:][:CLIENT_KEY_SIZE], table.client_keys[place].key[:])
+		byte_order.write_u64_little_endian(row_place[CLIENT_KEY_ROW_OFFSET_USES:], 0, remote.client_uses_word(table.client_keys[place].uses))
 	}
 	out^[TABLE_OFFSET_CLIENT_KEY_COUNT] = u8(client_key_count)
 	tag := table_tag(key, out)
@@ -654,7 +677,7 @@ table_encode :: proc "contextless" (table: ^Grant_Table, key: ^[KEY_SIZE]u8, out
 // is checked first, so no field of a table that the key did not write is
 // read.
 table_decode :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8) -> (table: Grant_Table, problem: Table_File_Problem) {
-	if len(bytes) == OLDER_FORMAT_TABLE_SIZE {
+	if len(bytes) == OLDER_FORMAT_TABLE_SIZE || len(bytes) == OLDER_FORMAT_2_TABLE_SIZE {
 		return {}, .Older_Format
 	}
 	if len(bytes) != TABLE_SIZE {
@@ -739,15 +762,18 @@ table_decode :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8) -> (table: 
 		return {}, .Bad_Client_Keys
 	}
 	for place in 0 ..< client_key_count {
+		row_place := kept[TABLE_OFFSET_CLIENT_KEYS + place * CLIENT_KEY_ROW_SIZE:][:CLIENT_KEY_ROW_SIZE]
 		client_key: [CLIENT_KEY_SIZE]u8
-		copy(client_key[:], kept[TABLE_OFFSET_CLIENT_KEYS + place * CLIENT_KEY_SIZE:][:CLIENT_KEY_SIZE])
-		if client_key == ([CLIENT_KEY_SIZE]u8{}) || table_client_key_find(&table, client_key) >= 0 {
+		copy(client_key[:], row_place[CLIENT_KEY_ROW_OFFSET_KEY:][:CLIENT_KEY_SIZE])
+		uses_word := byte_order.read_u64_little_endian(row_place[CLIENT_KEY_ROW_OFFSET_USES:], 0)
+		uses, uses_ok := remote.client_uses_of_word(uses_word)
+		if client_key == ([CLIENT_KEY_SIZE]u8{}) || !uses_ok || table_client_key_find(&table, client_key) >= 0 {
 			return {}, .Bad_Client_Keys
 		}
-		table.client_keys[place] = client_key
+		table.client_keys[place] = {key = client_key, uses = uses}
 		table.client_key_count = place + 1
 	}
-	for after in kept[TABLE_OFFSET_CLIENT_KEYS + client_key_count * CLIENT_KEY_SIZE:TABLE_OFFSET_TAG] {
+	for after in kept[TABLE_OFFSET_CLIENT_KEYS + client_key_count * CLIENT_KEY_ROW_SIZE:TABLE_OFFSET_TAG] {
 		if after != 0 {
 			return {}, .Bad_Client_Keys
 		}

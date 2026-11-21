@@ -341,4 +341,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/xor_filter",
 	foundation.SOURCE_FOLDER_CONTRACT + "/store_search",
 	foundation.SOURCE_FOLDER_CONTRACT + "/interface_messages",
+	foundation.SOURCE_FOLDER_CONTRACT + "/virtio_input",
+	foundation.SOURCE_FOLDER_INTERNAL + "/input/tablet",
+	foundation.SOURCE_FOLDER_CONTRACT + "/remote_display",
 }

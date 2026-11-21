@@ -108,6 +108,7 @@ import "modus:contract/ring"
 import "modus:key_path"
 import "modus:system"
 import "modus:contract/pointer_pictures"
+import "modus:contract/virtio_input"
 import process_page "modus:contract/disk_process_page"
 import "modus:contract/value_kinds"
 import "base:intrinsics"
@@ -829,7 +830,40 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// The input service is a process: a count of notches far
 				// past a hand is cut, as the window layer cuts it.
 				wheel := int(clamp(i64(record.values[3]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
+				before_x, before_y := pointer_x, pointer_y
 				pointer_moved(int(i64(record.values[0])), int(i64(record.values[1])), u32(record.values[2]), wheel)
+				if pointer_x != before_x || pointer_y != before_y {
+					capture_note_machine_pointer_move()
+				}
+				pointer_moves += 1
+			case .Pointer_Absolute:
+				x_word, y_word := record.values[0], record.values[1]
+				width_word, height_word := record.values[4], record.values[5]
+				if width_word == 0 || height_word == 0 || width_word > u64(max(i32)) || height_word > u64(max(i32)) || x_word >= width_word || y_word >= height_word {
+					continue
+				}
+				target_x, target_y: u32
+				if width_word > 1 {
+					scaled_x, x_problem := virtio_input.scale_axis_coordinate(i32(x_word), {0, i32(width_word - 1)}, u32(desktop_width))
+					if x_problem != .None {
+						continue
+					}
+					target_x = scaled_x
+				}
+				if height_word > 1 {
+					scaled_y, y_problem := virtio_input.scale_axis_coordinate(i32(y_word), {0, i32(height_word - 1)}, u32(desktop_height))
+					if y_problem != .None {
+						continue
+					}
+					target_y = scaled_y
+				}
+				wheel := int(clamp(i64(record.values[3]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
+				buttons_masked := u32(record.values[2] & u64(display.BUTTON_LEFT | display.BUTTON_RIGHT))
+				before_x, before_y := pointer_x, pointer_y
+				pointer_moved(int(target_x) - pointer_x, int(target_y) - pointer_y, buttons_masked, wheel)
+				if pointer_x != before_x || pointer_y != before_y {
+					capture_note_machine_pointer_move()
+				}
 				pointer_moves += 1
 			}
 		}

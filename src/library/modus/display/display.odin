@@ -139,10 +139,12 @@ Command :: enum u32 {
 	// input; values[2..]: the first 8 bytes of the key of each viewer.
 	Capture_Viewers  = 16,
 	// A key of a viewer, in the form of the input record Key: code,
-	// character, 1 when pressed, modifiers.
+	// character, 1 when pressed, modifiers; values[4] viewer slot,
+	// values[5] viewer input serial, values[6] viewer generation.
 	Remote_Key       = 17,
 	// The pointer of a viewer at a place of the screen: x, y, buttons,
-	// wheel notches (signed).
+	// wheel notches (signed); values[4] viewer slot, values[5] viewer
+	// input serial, values[6] viewer generation.
 	Remote_Pointer   = 18,
 	// The surface of the window at a new scale, after the compositor
 	// released the old one (src/md/features/window_resize.md, "The
@@ -177,14 +179,27 @@ CAPTURE_HEADER_PAGES :: 1
 // serial of the record, the rectangles that changed since the record
 // before, and the pointer. The process copies it before it checks it.
 Capture_Picture_Header :: struct {
-	serial:     u64,
-	count:      u64, // The rectangles, at most CAPTURE_RECTANGLE_CAPACITY.
-	rectangles: [CAPTURE_RECTANGLE_CAPACITY][4]u32, // left, top, right, bottom; right and bottom are not in the rectangle.
+	serial:                        u64,
+	count:                         u64, // The rectangles, at most CAPTURE_RECTANGLE_CAPACITY.
+	rectangles:                    [CAPTURE_RECTANGLE_CAPACITY][4]u32, // left, top, right, bottom; right and bottom are not in the rectangle.
 	// The place of the pointer, and the rectangle that its picture covers on
 	// the screen: four zeros when the pointer is not drawn.
-	pointer_x, pointer_y:     u32,
-	pointer_left, pointer_top: u32,
+	pointer_x, pointer_y:          u32,
+	pointer_left, pointer_top:     u32,
 	pointer_right, pointer_bottom: u32,
+	// The pointer shape, form, size in pixels, hot spot, and a per-viewer
+	// bitmask (bit n set when the pointer moved without a Remote_Pointer of
+	// viewer slot n since the picture before).
+	pointer_shape:                 u32,
+	pointer_form:                  u32,
+	pointer_size:                  u32,
+	pointer_hot_spot_x:            u32,
+	pointer_hot_spot_y:            u32,
+	pointer_warped_mask:           u32,
+	// For each viewer slot: the generation and monotonic count of applied
+	// Remote_Key and Remote_Pointer records included in this captured frame.
+	viewer_input_generation:       [CAPTURE_VIEWER_CAPACITY]u64,
+	viewer_input_echo:             [CAPTURE_VIEWER_CAPACITY]u64,
 }
 
 Capture_Header :: struct {
@@ -429,9 +444,10 @@ Control :: enum u32 {
 
 // The ring from the input service to the compositor.
 Input :: enum u32 {
-	None    = 0, // Not a command.
-	Key     = 1, // values: code, character (a code point, or 0), 1 when pressed, modifiers, then at INPUT_KEY_READ_AT the time of the system, in nanoseconds, when the input service read the key
-	Pointer = 2, // values: x motion, y motion (signed), buttons, wheel notches (signed)
+	None             = 0, // Not a command.
+	Key              = 1, // values: code, character (a code point, or 0), 1 when pressed, modifiers, then at INPUT_KEY_READ_AT the time of the system, in nanoseconds, when the input service read the key
+	Pointer          = 2, // values: x motion, y motion (signed), buttons, wheel notches (signed)
+	Pointer_Absolute = 3, // values: x in [0..width-1], y in [0..height-1], buttons, wheel notches (signed), width (> 0), height (> 0)
 }
 
 // The places of the values of the measure of a key to the screen, in the

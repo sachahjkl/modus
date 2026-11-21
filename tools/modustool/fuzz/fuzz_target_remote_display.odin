@@ -86,7 +86,7 @@ fuzz_remote_display_viewer_check :: proc(header: protocol.Record_Header, body: [
 	}
 	same := false
 	switch record.kind {
-	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place:
+	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place, .Pointer_Shape, .Pointer_Picture, .Pointer_Warp:
 		return fuzz_broken(.Contract, "viewer_record_check takes the kind %v", record.kind)
 	case .Session_Start:
 		same = fuzz_remote_display_rewrite(record.kind, record.session_start, body) && record.session_start.version == protocol.PROTOCOL_VERSION
@@ -161,6 +161,21 @@ fuzz_remote_display_service_check :: proc(header: protocol.Record_Header, body: 
 		if record.pointer_place.x >= screen.width || record.pointer_place.y >= screen.height {
 			return fuzz_broken(.Contract, "service_record_check takes a pointer outside the screen")
 		}
+	case .Pointer_Shape:
+		shape := record.pointer_shape
+		if shape.size < protocol.POINTER_SIZE_MINIMUM || shape.size > protocol.POINTER_SIZE_MAXIMUM || shape.hot_spot_x >= shape.size || shape.hot_spot_y >= shape.size || shape.reserved != 0 || !fuzz_remote_display_rewrite(record.kind, shape, body) {
+			return fuzz_broken(.Round_Trip, "service_record_check takes a bad Pointer_Shape: %v", shape)
+		}
+	case .Pointer_Picture:
+		pic := record.pointer_picture
+		if pic.size < protocol.POINTER_SIZE_MINIMUM || pic.size > protocol.POINTER_SIZE_MAXIMUM || pic.hot_spot_x >= pic.size || pic.hot_spot_y >= pic.size || pic.reserved != 0 || len(record.pointer_pixels) != int(pic.size * pic.size * 4) {
+			return fuzz_broken(.Contract, "service_record_check takes a bad Pointer_Picture: %v", pic)
+		}
+	case .Pointer_Warp:
+		warp := record.pointer_warp
+		if warp.x >= screen.width || warp.y >= screen.height || !fuzz_remote_display_rewrite(record.kind, warp, body) {
+			return fuzz_broken(.Round_Trip, "service_record_check takes a bad Pointer_Warp: %v", warp)
+		}
 	}
 	return FUZZ_PASSED
 }
@@ -185,7 +200,11 @@ fuzz_remote_display_seeds :: proc(seeds: ^[dynamic][]u8) {
 	add(&seed, bytes, true)
 	bytes, _ = protocol.record_write(out[:], .Screen_Size, protocol.Screen_Size_Body{1280, 800})
 	add(&seed, bytes, false)
-	bytes, _ = protocol.record_write(out[:], .Viewer_Frame_Start, protocol.Viewer_Frame_Start_Body{serial = 1, screen_piece_count = 1, bytes = 4096})
+	bytes, _ = protocol.record_write(out[:], .Pointer_Shape, protocol.Pointer_Shape_Body{shape = 1, form = 0, size = 24, hot_spot_x = 11, hot_spot_y = 11})
+	add(&seed, bytes, false)
+	bytes, _ = protocol.record_write(out[:], .Pointer_Warp, protocol.Pointer_Warp_Body{x = 100, y = 200, input_echo_count = 1})
+	add(&seed, bytes, false)
+	bytes, _ = protocol.record_write(out[:], .Viewer_Frame_Start, protocol.Viewer_Frame_Start_Body{serial = 1, screen_piece_count = 1, bytes = 4096, input_echo_count = 1})
 	add(&seed, bytes, false)
 	pixels: [16 * 8]u32
 	for &pixel, index in pixels {

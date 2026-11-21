@@ -149,7 +149,7 @@ TABLE_CALL_FAILURES := [?]string{"no connection to the storage service", "the ca
 // The sentences of disk_process.table_problem_sentences that a Text field
 // holds; the three longer ones have a fact type each.
 @(private = "file")
-TABLE_PROBLEMS_IN_A_FIELD := [?]string{"the table does not have 1136 bytes", "its tag does not verify under the key of the principal: another key wrote it, or a byte changed", "the table does not start with DISKGRNT", "the table has another format number", "the table counts more than 16 rows", "the global setting of the table is not 0 or 1, or its header has a byte that is not zero", "two rows have one nickname", "two rows hold the grant start_policy", "the table of a named principal holds the grant start_policy, which only principal 0 gives", "the table has bytes that are not zero after its last row"}
+TABLE_PROBLEMS_IN_A_FIELD := [?]string{"the table does not have 1168 bytes", "its tag does not verify under the key of the principal: another key wrote it, or a byte changed", "the table does not start with DISKGRNT", "the table has another format number", "the table counts more than 16 rows", "the global setting of the table is not 0 or 1, or its header has a byte that is not zero", "two rows have one nickname", "two rows hold the grant start_policy", "the table of a named principal holds the grant start_policy, which only principal 0 gives", "the table has bytes that are not zero after its last row"}
 @(private = "file")
 TABLE_PROBLEM_OLDER_FORMAT :: "the table has 1008 bytes: it has the format 1 of an older system, which this system does not read; no version of it can be restored to verify"
 @(private = "file")
@@ -361,7 +361,8 @@ the_disk_grant_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^t
 		}
 		for uses in CLIENT_USES {
 			expect(t, render(t, file, "Client_Key_Uses_Added", {{"principal", principal}, {"client_key", key_head}, {"uses", uses}}), line_of_before("root: principal ", principal, " gave the client key ", key_head, " more uses: ", uses))
-			expect(t, render(t, file, "Client_Key_Allowed_For_Display", {{"principal", principal}, {"client_key", key_head}, {"uses", uses}}), line_of_before("root: principal ", principal, " allowed the client key ", key_head, " for the remote display: ", uses, "; the uses of the remote display last until the machine stops"))
+			expect(t, render(t, file, "Client_Key_Allowed_For_Display", {{"principal", principal}, {"client_key", key_head}, {"uses", uses}}), line_of_before("root: principal ", principal, " allowed the client key ", key_head, " for the remote display: ", uses))
+			expect(t, render(t, file, "Client_Key_Restored_For_Display", {{"principal", principal}, {"client_key", key_head}, {"uses", uses}}), line_of_before("root: the client key ", key_head, " of the remote display holds again for principal ", principal, ", from its disk grant table: ", uses))
 			expect(t, render(t, file, "Client_Key_Revoked", {{"principal", principal}, {"connections_ended", other}, {"client_key", key_head}, {"uses", uses}}), line_of_before("root: principal ", principal, " revoked the client key ", key_head, " (", uses, "): connections to services ended: ", other))
 		}
 		expect(t, render(t, file, "Client_Key_Revoked_Contested", {{"principal", principal}, {"client_key", key_head}}), line_of_before("root: principal ", principal, " revoked the client key ", key_head, " of remote, which was contested: connections to services ended: 0"))

@@ -62,8 +62,12 @@ desktop_scale_take :: proc "contextless" (choice: settings.Choice, read_ok: bool
 	changed = taken != scale || desktop_width == 0
 	scale = taken
 	desktop_width, desktop_height = logical_pixel_of(screen.width), logical_pixel_of(screen.height)
+	before_x, before_y := pointer_x, pointer_y
 	pointer_x = clamp(pointer_x, 0, desktop_width - 1)
 	pointer_y = clamp(pointer_y, 0, desktop_height - 1)
+	if pointer_x != before_x || pointer_y != before_y {
+		capture_note_machine_pointer_move()
+	}
 	return changed
 }
 
