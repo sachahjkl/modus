@@ -1,6 +1,6 @@
 # The demonstration of each property
 
-This document gives, for each of the 22 properties of `PROPERTIES.md`, what the machine test shows, the picture, and what no test shows. A row changes when the system changes what the test shows.
+This document gives, for each of the 23 properties of `PROPERTIES.md`, what the machine test shows, the picture, and what no test shows. A row changes when the system changes what the test shows.
 
 A property is a promise of the system. A promise counts only when a test makes the machine keep it: the machine test (`modustool test`) starts real machines under QEMU, runs processes, and waits for the lines that prove each case. This table is the source of the page "Status" of the site: each row gives the promise, what the tests show of it, the pictures that the tests take, and what is not shown yet. `docs/TOOLS.md`, "The parts of the machine test", names the machines.
 
@@ -36,12 +36,13 @@ A property is a promise of the system. A promise counts only when a test makes t
 | 20 | No ambient access | Shown in part | A grant names one remote of the network. `revoke("remote", "acts_for_principal")` cuts the calls that act for the principal. A thread can only lower its weight. A budget record without the right Read says nothing of the budget. **The control of a thread** needs a thread handle with Inspect, and Write to change it: with Read and Control only, `Stop`, `Read_Registers` and `Write_Registers` give `No_Right`; 32 calls on a thread of another process are refused. **The kernel events**: a process reads the event table only with the machine handle and the right Events; after `revoke`, 0 records come and `Events_Set` gives Bad_Handle (`test kernel_events`). **Inspect** hides the bytes of a process: a frame of a stop report is given only when a module record holds its address, and `Inspect_Kind.Pages` answers for the process that asks only | `revocation`, `network`, `rights`, `kernel_events`, `inspect` | **`remote` does not know who its client is**: the host proves no key over QUIC, so whoever sends and receives the datagrams of the gateway 10.0.2.2 calls as the principal (`docs/QUIC.md`, "Who may call"). No debugger: no grant reads the memory of another process |
 | 21 | Principals | Shown in part | Layer 1: a caller acts for the principal of its session or not (`CALLER_ACTS_FOR_PRINCIPAL`), a grant of the root service that the console revokes. Layer 2: principal 0 is the machine, with the measure of the system. Layer 3: `principal_create("alice")` in the console, the passphrase typed two times in the window of `unlock` (dots); `notes` from the menu runs in the session of principal 1 and has a store of its own (`notes.principal.1`), apart from the store of `notes` of principal 0; the grants name the principal; the console acts for principal 0 only, and the storage service refuses it the store of principal 1 (`open_store` gives No_Grant, `stores()` does not list it); `lock()` stops the processes of the session; a wrong passphrase opens nothing; the right one starts the session again, and the note is there after a restart of the machine (`test principals`) | `principals_unlock`, `revocation` | No seal by the TPM: the passphrase alone protects the keys, against tries on a copy of the disk. The stores of a principal are not encrypted. No recovery of a lost passphrase. Several principals, identity across machines: not built |
 | 22 | General mechanisms, and a plain expression for each frequent task | Not shown | No test runs a frequent task of a design: the examples of the property (`facts(storage.Bad_Block)`, the filter of `server.requests` by its status, the copy of a record output to each reader) are designed, not built |  | The expression of each frequent task that the designs of the log facts and of the record outputs list; no check of the tool finds an incantation, only a review |
+| 23 | A role is a contract; its implementation is replaceable | Not shown | No role has a role contract yet: the root service gives each role to a module by its name, and the clients use the protocol of the holder of today |  | A second holder of one role that passes the conformance suite of its contract, and a machine test whose clients run the same with either holder (`src/md/features/roles_and_contracts.md`) |
 
 ## Counts
 
 - Shown: 11 properties (1, 2, 4, 6, 7, 9, 10, 11, 12, 15, 19).
 - Shown in part: 9 properties (3, 5, 8, 13, 14, 16, 17, 20, 21).
-- Not shown: 2 properties (18, 22).
+- Not shown: 3 properties (18, 22, 23).
 
 ## What removes each "in part" and each "not shown"
 
@@ -55,3 +56,4 @@ A property is a promise of the system. A promise counts only when a test makes t
 8. Properties 3, 8, 16 are absences. A test shows them only by a refusal of the nearest wrong use; each row names the one that exists.
 9. Property 1: a check that compares the count of `op.Operation` with the number written in `PROPERTIES.md`.
 10. Property 22: the log facts and the record outputs, built, with a machine test that runs the expression of each frequent task that their designs list.
+11. Property 23: the role contract of the display, a second holder that passes its conformance suite, and the machine test that runs its clients with each holder (`ROADMAP.md`).

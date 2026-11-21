@@ -57,6 +57,7 @@ The plan is the typed record that an evaluation gives and the root service appli
 - the rows of a start list, in the format of `start_list` ([start_policy.md](start_policy.md)), and the hash of a start policy;
 - the wirings of the record outputs, in the format of the wiring list of `Start` ([module_outputs.md](module_outputs.md));
 - the rows of the disk grant table: a nickname, a hash and its grants;
+- the holder of each role, by its hash, or a chain of an interposed holder and the holder below it ([roles_and_contracts.md](roles_and_contracts.md), "The plan says who holds each role");
 - the settings, each a member of `Setting` with its value;
 - the substitution policy, `Substitution` ([recipes.md](recipes.md), "The substitution policy");
 - the pins of each declaration input, with its publisher;
@@ -421,6 +422,8 @@ Three services give the commands of the declarations. A command of a service is 
 - **`recipes`**: `build`, `provenance` ([recipes.md](recipes.md)). It asks the root service to realise a recipe, and applies the substitution policy.
 
 The evaluation process is no service. Each of the three starts one when it reads Lex, and the evaluation process holds no right.
+
+Each of the three is a role, with its role contract and its conformance suite: `plans.apply` names the role `Plans`, and the console reaches its holder by the role, never by the name of a module ([roles_and_contracts.md](roles_and_contracts.md)).
 
 Each service acts for the principal of the caller, as the remote display does ([remote_display.md](remote_display.md)). The root service decides each command, with the grants of that principal.
 

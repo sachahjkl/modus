@@ -80,6 +80,26 @@ The design: `src/md/infrastructure/sdk.md`, "The contract description".
 
 Do not use: interface definition, IDL, schema.
 
+### Role contract
+
+A role contract is a file of the module format with no code that describes a role: its exports, its record types, its record outputs and its record inputs, named by the hash of the file.
+
+A module lists the hashes of the role contracts that it fills. The root service gives it the role only when its descriptions pass the check of a replacement against the contract. A new version of a contract is a new hash; a holder can fill two. A client is built against one hash and asks for it when it connects. It is not the contract description, which describes the contract packages for other languages.
+
+The design: `src/md/features/roles_and_contracts.md`.
+
+Do not use: interface definition, protocol (for this), service type.
+
+### Conformance suite
+
+A conformance suite is the set of host cases and machine cases that each holder of a role must pass, written against the role contract and never against one holder.
+
+The tool runs the suite of a role against each module that a default role table or a plan of the tests names, so a role that is replaceable is a test that can fail. The suite checks the facts and the records of the contract only. A test of the look or the lines of one holder is a test of that holder, not of the role.
+
+The design: `src/md/features/roles_and_contracts.md`, "Conformance".
+
+Do not use: compliance test, certification, test kit.
+
 ### Language binding
 
 A language binding is the set of files that let a program of another language read and write the records of the contracts and call the exports of the library modules.
