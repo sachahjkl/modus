@@ -732,7 +732,7 @@ site_addresses_of_every_page :: proc(t: ^testing.T) {
 			testing.expect(t, strings.contains(guide, "<link rel=\"next\" href=\"../../../docs/guides/B/\">"))
 			testing.expect(t, strings.contains(guide, "<a class=\"term\" href=\"../../../docs/reference/glossary/code/#term-module\">module</a>"))
 			testing.expect(t, strings.contains(guide, "<a class=\"bar-home\" href=\"../../../\">"))
-			testing.expect(t, strings.contains(guide, "href=\"../../../docs/reference/licenses/\">Licenses</a>"))
+			testing.expect(t, strings.contains(guide, "href=\"../../../docs/reference/licenses/\">Credits and licences</a>"))
 			testing.expect(t, strings.contains(written[TEST_GUIDE_B], "<link rel=\"prev\" href=\"../../../docs/guides/A/\">"))
 			testing.expect(t, strings.contains(written[SITE_PAGE], "<a class=\"bar-home\" href=\"./\">"))
 			testing.expect(t, !strings.contains(guide, "index.html\""))

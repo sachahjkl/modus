@@ -1,10 +1,10 @@
-// The check of the reuse list of the properties (docs/TOOLS.md, "The reuse
-// list"; src/md/infrastructure/reuse_list.md).
+// The check of docs/CREDITS.md (docs/TOOLS.md, "The reuse list";
+// src/md/infrastructure/credits_and_licences.md).
 //
-// The list is written by hand, so that it says what was decided. The tool
-// derives the same works from the records that the build and the site
-// already read, and refuses each difference: a list that nothing compares
-// with the code becomes false in silence.
+// The document is written by hand, so that it says what was decided. The tool
+// verifies all three tables (Reused code, Reimplemented algorithms, and
+// Inspirations), checks that every path exists in the repository, and compares
+// Reused code with the records that the build and the site already read.
 package checks
 
 import "core:fmt"
@@ -14,10 +14,19 @@ import "modustool:foundation"
 import "modustool:resources"
 import "modustool:build"
 
-REUSE_LIST_DOCUMENT :: PROPERTIES_FILE
-REUSE_LIST_HEADING :: "## Reuse list"
-REUSE_LIST_HEADER_ROW :: "| Work | Place | License | License file |"
-REUSE_LIST_COLUMN_COUNT :: 4
+CREDITS_FILE :: "docs/CREDITS.md"
+REUSE_LIST_DOCUMENT :: CREDITS_FILE
+REUSE_LIST_HEADING :: "## Reused code"
+REUSE_LIST_HEADER_ROW :: "| Work | Place | Upstream | Authors | License | License file | Funding |"
+REUSE_LIST_COLUMN_COUNT :: 7
+
+CREDITS_ALGORITHMS_HEADING :: "## Reimplemented algorithms"
+CREDITS_ALGORITHMS_HEADER_ROW :: "| Algorithm | Authors | Upstream | Reference license | Place | Funding |"
+CREDITS_ALGORITHMS_COLUMN_COUNT :: 6
+
+CREDITS_INSPIRATIONS_HEADING :: "## Inspirations"
+CREDITS_INSPIRATIONS_HEADER_ROW :: "| System or idea | Authors | Took and left | Link | Funding |"
+CREDITS_INSPIRATIONS_COLUMN_COUNT :: 5
 // The runtime of the compiler: the compiler puts it in each module and in
 // the boot program with no import, so no scan of the imports finds it.
 REUSE_COMPILER_RUNTIME :: "base:runtime"
@@ -39,13 +48,44 @@ Reused_Work :: struct {
 	license_file: string, // The license file that the record names; "" when it names none.
 }
 
-// One row of the table of the list.
+// One row of the Reused code table.
 Reuse_Row :: struct {
 	line:         int, // In the document, from 1.
 	work:         string,
 	place:        string,
+	upstream:     string,
+	authors:      string,
 	license:      string,
 	license_file: string,
+	funding:      string,
+}
+
+// One row of the Reimplemented algorithms table.
+Algorithm_Row :: struct {
+	line:              int,
+	algorithm:         string,
+	authors:           string,
+	upstream:          string,
+	reference_license: string,
+	place:             string,
+	funding:           string,
+}
+
+// One row of the Inspirations table.
+Inspiration_Row :: struct {
+	line:          int,
+	system:        string,
+	authors:       string,
+	took_and_left: string,
+	link:          string,
+	funding:       string,
+}
+
+// All three tables parsed from docs/CREDITS.md.
+Credits_Document :: struct {
+	reused:       []Reuse_Row,
+	algorithms:   []Algorithm_Row,
+	inspirations: []Inspiration_Row,
 }
 
 // reuse_license_is_spdx_expression tells whether a cell is an SPDX
@@ -83,77 +123,218 @@ reuse_code_span :: proc(cell: string) -> (text: string, found: bool) {
 	return cell[1:len(cell) - 1], true
 }
 
-// reuse_list_rows_parse reads the table of the section "Reuse list": the
-// lines that start with "|" between its heading and the next heading of
-// level 2. The first two are the header and its separator.
-reuse_list_rows_parse :: proc(document: string, problems: ^[dynamic]string) -> []Reuse_Row {
-	rows := make([dynamic]Reuse_Row, context.temp_allocator)
-	in_section := false
-	found_section := false
+Credits_Section :: enum {
+	None,
+	Reused_Code,
+	Reimplemented_Algorithms,
+	Inspirations,
+}
+
+// credits_table_cells splits one Markdown table row into trimmed cells.
+credits_table_cells :: proc(line: string) -> []string {
+	trimmed := strings.trim_space(line)
+	if strings.has_prefix(trimmed, "|") {
+		trimmed = trimmed[1:]
+	}
+	if strings.has_suffix(trimmed, "|") {
+		trimmed = trimmed[:len(trimmed) - 1]
+	}
+	raw := strings.split(trimmed, "|", context.temp_allocator)
+	for &cell in raw {
+		cell = strings.trim_space(cell)
+	}
+	return raw
+}
+
+// credits_parse reads all three tables of docs/CREDITS.md: Reused code,
+// Reimplemented algorithms, and Inspirations.
+credits_parse :: proc(document: string, problems: ^[dynamic]string) -> Credits_Document {
+	reused := make([dynamic]Reuse_Row, context.temp_allocator)
+	algorithms := make([dynamic]Algorithm_Row, context.temp_allocator)
+	inspirations := make([dynamic]Inspiration_Row, context.temp_allocator)
+
+	section: Credits_Section = .None
+	found_reused := false
+	found_algorithms := false
+	found_inspirations := false
 	table_line := 0
+
 	for line, index in foundation.lines_of_text(document) {
 		number := index + 1
 		if strings.has_prefix(line, "## ") {
-			in_section = line == REUSE_LIST_HEADING
-			found_section ||= in_section
+			table_line = 0
+			switch line {
+			case REUSE_LIST_HEADING:
+				section = .Reused_Code
+				found_reused = true
+			case CREDITS_ALGORITHMS_HEADING:
+				section = .Reimplemented_Algorithms
+				found_algorithms = true
+			case CREDITS_INSPIRATIONS_HEADING:
+				section = .Inspirations
+				found_inspirations = true
+			case:
+				section = .None
+			}
 			continue
 		}
-		if !in_section || !strings.has_prefix(line, "|") {
+		if section == .None || !strings.has_prefix(line, "|") {
 			continue
 		}
 		table_line += 1
-		switch table_line {
-		case 1:
-			if line != REUSE_LIST_HEADER_ROW {
-				append(problems, fmt.tprintf("%s:%d: the header of the reuse list must be %q", REUSE_LIST_DOCUMENT, number, REUSE_LIST_HEADER_ROW))
+		switch section {
+		case .None:
+			continue
+		case .Reused_Code:
+			if table_line == 1 {
+				if line != REUSE_LIST_HEADER_ROW {
+					append(problems, fmt.tprintf("%s:%d: the header of %s must be %q", REUSE_LIST_DOCUMENT, number, REUSE_LIST_HEADING, REUSE_LIST_HEADER_ROW))
+				}
+				continue
 			}
-			continue
-		case 2:
-			continue
-		}
-		inner := strings.trim_suffix(strings.trim_prefix(strings.trim_space(line), "| "), " |")
-		cells := strings.split(inner, " | ", context.temp_allocator)
-		if len(cells) != REUSE_LIST_COLUMN_COUNT {
-			append(problems, fmt.tprintf("%s:%d: a row of the reuse list has %d cells, not %d", REUSE_LIST_DOCUMENT, number, len(cells), REUSE_LIST_COLUMN_COUNT))
-			continue
-		}
-		row := Reuse_Row {
-			line    = number,
-			work    = strings.trim_space(cells[0]),
-			license = strings.trim_space(cells[2]),
-		}
-		place, place_found := reuse_code_span(strings.trim_space(cells[1]))
-		license_file, file_found := reuse_code_span(strings.trim_space(cells[3]))
-		row.place = place
-		row.license_file = license_file
-		switch {
-		case row.work == "":
-			append(problems, fmt.tprintf("%s:%d: a row of the reuse list names no work", REUSE_LIST_DOCUMENT, number))
-		case !place_found:
-			append(problems, fmt.tprintf("%s:%d: the place of a row of the reuse list is one code span: a path of the repository or an import path", REUSE_LIST_DOCUMENT, number))
-		case !file_found:
-			append(problems, fmt.tprintf("%s:%d: the license file of a row of the reuse list is one code span: a path of the repository", REUSE_LIST_DOCUMENT, number))
-		case !reuse_license_is_spdx_expression(row.license):
-			append(problems, fmt.tprintf("%s:%d: the license %q is not an SPDX identifier, or identifiers joined by OR and AND (%s for a work with no license)", REUSE_LIST_DOCUMENT, number, row.license, build.REUSE_LICENSE_NONE))
-		case:
-			append(&rows, row)
+			if table_line == 2 {
+				continue
+			}
+			cells := credits_table_cells(line)
+			if len(cells) != REUSE_LIST_COLUMN_COUNT {
+				append(problems, fmt.tprintf("%s:%d: a row of Reused code has %d cells, not %d", REUSE_LIST_DOCUMENT, number, len(cells), REUSE_LIST_COLUMN_COUNT))
+				continue
+			}
+			place, place_found := reuse_code_span(cells[1])
+			license_file, file_found := reuse_code_span(cells[5])
+			row := Reuse_Row {
+				line         = number,
+				work         = cells[0],
+				place        = place,
+				upstream     = cells[2],
+				authors      = cells[3],
+				license      = cells[4],
+				license_file = license_file,
+				funding      = cells[6],
+			}
+			switch {
+			case row.work == "":
+				append(problems, fmt.tprintf("%s:%d: a row of Reused code names no work", REUSE_LIST_DOCUMENT, number))
+			case !place_found:
+				append(problems, fmt.tprintf("%s:%d: the place of a row of Reused code is one code span: a path of the repository or an import path", REUSE_LIST_DOCUMENT, number))
+			case row.upstream == "":
+				append(problems, fmt.tprintf("%s:%d: a row of Reused code has an empty Upstream cell", REUSE_LIST_DOCUMENT, number))
+			case row.authors == "":
+				append(problems, fmt.tprintf("%s:%d: a row of Reused code has an empty Authors cell", REUSE_LIST_DOCUMENT, number))
+			case !reuse_license_is_spdx_expression(row.license):
+				append(problems, fmt.tprintf("%s:%d: the license %q is not an SPDX identifier, or identifiers joined by OR and AND (%s for a work with no license)", REUSE_LIST_DOCUMENT, number, row.license, build.REUSE_LICENSE_NONE))
+			case !file_found:
+				append(problems, fmt.tprintf("%s:%d: the license file of a row of Reused code is one code span: a path of the repository", REUSE_LIST_DOCUMENT, number))
+			case row.funding == "":
+				append(problems, fmt.tprintf("%s:%d: a row of Reused code has an empty Funding cell (use — when none is known)", REUSE_LIST_DOCUMENT, number))
+			case:
+				append(&reused, row)
+			}
+
+		case .Reimplemented_Algorithms:
+			if table_line == 1 {
+				if line != CREDITS_ALGORITHMS_HEADER_ROW {
+					append(problems, fmt.tprintf("%s:%d: the header of %s must be %q", REUSE_LIST_DOCUMENT, number, CREDITS_ALGORITHMS_HEADING, CREDITS_ALGORITHMS_HEADER_ROW))
+				}
+				continue
+			}
+			if table_line == 2 {
+				continue
+			}
+			cells := credits_table_cells(line)
+			if len(cells) != CREDITS_ALGORITHMS_COLUMN_COUNT {
+				append(problems, fmt.tprintf("%s:%d: a row of Reimplemented algorithms has %d cells, not %d", REUSE_LIST_DOCUMENT, number, len(cells), CREDITS_ALGORITHMS_COLUMN_COUNT))
+				continue
+			}
+			place, place_found := reuse_code_span(cells[4])
+			row := Algorithm_Row {
+				line              = number,
+				algorithm         = cells[0],
+				authors           = cells[1],
+				upstream          = cells[2],
+				reference_license = cells[3],
+				place             = place,
+				funding           = cells[5],
+			}
+			switch {
+			case row.algorithm == "":
+				append(problems, fmt.tprintf("%s:%d: a row of Reimplemented algorithms has an empty Algorithm cell", REUSE_LIST_DOCUMENT, number))
+			case row.authors == "":
+				append(problems, fmt.tprintf("%s:%d: a row of Reimplemented algorithms has an empty Authors cell", REUSE_LIST_DOCUMENT, number))
+			case row.upstream == "":
+				append(problems, fmt.tprintf("%s:%d: a row of Reimplemented algorithms has an empty Upstream cell", REUSE_LIST_DOCUMENT, number))
+			case row.reference_license == "":
+				append(problems, fmt.tprintf("%s:%d: a row of Reimplemented algorithms has an empty Reference license cell", REUSE_LIST_DOCUMENT, number))
+			case !place_found:
+				append(problems, fmt.tprintf("%s:%d: the place of a row of Reimplemented algorithms is one code span: a path in src/", REUSE_LIST_DOCUMENT, number))
+			case row.funding == "":
+				append(problems, fmt.tprintf("%s:%d: a row of Reimplemented algorithms has an empty Funding cell (use — when none is known)", REUSE_LIST_DOCUMENT, number))
+			case:
+				append(&algorithms, row)
+			}
+
+		case .Inspirations:
+			if table_line == 1 {
+				if line != CREDITS_INSPIRATIONS_HEADER_ROW {
+					append(problems, fmt.tprintf("%s:%d: the header of %s must be %q", REUSE_LIST_DOCUMENT, number, CREDITS_INSPIRATIONS_HEADING, CREDITS_INSPIRATIONS_HEADER_ROW))
+				}
+				continue
+			}
+			if table_line == 2 {
+				continue
+			}
+			cells := credits_table_cells(line)
+			if len(cells) != CREDITS_INSPIRATIONS_COLUMN_COUNT {
+				append(problems, fmt.tprintf("%s:%d: a row of Inspirations has %d cells, not %d", REUSE_LIST_DOCUMENT, number, len(cells), CREDITS_INSPIRATIONS_COLUMN_COUNT))
+				continue
+			}
+			row := Inspiration_Row {
+				line          = number,
+				system        = cells[0],
+				authors       = cells[1],
+				took_and_left = cells[2],
+				link          = cells[3],
+				funding       = cells[4],
+			}
+			switch {
+			case row.system == "":
+				append(problems, fmt.tprintf("%s:%d: a row of Inspirations has an empty System or idea cell", REUSE_LIST_DOCUMENT, number))
+			case row.authors == "":
+				append(problems, fmt.tprintf("%s:%d: a row of Inspirations has an empty Authors cell", REUSE_LIST_DOCUMENT, number))
+			case row.took_and_left == "":
+				append(problems, fmt.tprintf("%s:%d: a row of Inspirations has an empty Took and left cell", REUSE_LIST_DOCUMENT, number))
+			case row.link == "":
+				append(problems, fmt.tprintf("%s:%d: a row of Inspirations has an empty Link cell", REUSE_LIST_DOCUMENT, number))
+			case row.funding == "":
+				append(problems, fmt.tprintf("%s:%d: a row of Inspirations has an empty Funding cell (use — when none is known)", REUSE_LIST_DOCUMENT, number))
+			case:
+				append(&inspirations, row)
+			}
 		}
 	}
-	if !found_section {
+	if !found_reused {
 		append(problems, fmt.tprintf("%s: no section %q", REUSE_LIST_DOCUMENT, REUSE_LIST_HEADING))
 	}
-	return rows[:]
+	if !found_algorithms {
+		append(problems, fmt.tprintf("%s: no section %q", REUSE_LIST_DOCUMENT, CREDITS_ALGORITHMS_HEADING))
+	}
+	if !found_inspirations {
+		append(problems, fmt.tprintf("%s: no section %q", REUSE_LIST_DOCUMENT, CREDITS_INSPIRATIONS_HEADING))
+	}
+	return Credits_Document{reused = reused[:], algorithms = algorithms[:], inspirations = inspirations[:]}
 }
 
-// reuse_list_problems compares the list of a document with the works that
-// the repository records. file_exists answers for a path of the repository.
+// reuse_list_problems checks all three tables of docs/CREDITS.md against
+// the works that the repository records and file_exists.
 reuse_list_problems :: proc(document: string, works: []Reused_Work, file_exists: proc(path: string) -> bool) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
-	rows := reuse_list_rows_parse(document, &problems)
+	credits := credits_parse(document, &problems)
+
+	// 1. Reused code.
 	row_of_place := make(map[string]int, context.temp_allocator)
-	for row, row_index in rows {
+	for row, row_index in credits.reused {
 		if earlier, seen := row_of_place[row.place]; seen {
-			append(&problems, fmt.tprintf("%s:%d: the reuse list names `%s` a second time (line %d)", REUSE_LIST_DOCUMENT, row.line, row.place, rows[earlier].line))
+			append(&problems, fmt.tprintf("%s:%d: Reused code names `%s` a second time (line %d)", REUSE_LIST_DOCUMENT, row.line, row.place, credits.reused[earlier].line))
 			continue
 		}
 		row_of_place[row.place] = row_index
@@ -165,15 +346,18 @@ reuse_list_problems :: proc(document: string, works: []Reused_Work, file_exists:
 			}
 		}
 		if work_index < 0 {
-			append(&problems, fmt.tprintf("%s:%d: the reuse list names `%s`, which the system does not ship and the repository does not hold: remove the row, or correct its place", REUSE_LIST_DOCUMENT, row.line, row.place))
+			append(&problems, fmt.tprintf("%s:%d: Reused code names `%s`, which the system does not ship and the repository does not hold: remove the row, or correct its place", REUSE_LIST_DOCUMENT, row.line, row.place))
 		} else {
 			work := works[work_index]
 			if work.license != "" && row.license != work.license {
-				append(&problems, fmt.tprintf("%s:%d: the reuse list gives `%s` the license %s; its record says %s", REUSE_LIST_DOCUMENT, row.line, row.place, row.license, work.license))
+				append(&problems, fmt.tprintf("%s:%d: Reused code gives `%s` the license %s; its record says %s", REUSE_LIST_DOCUMENT, row.line, row.place, row.license, work.license))
 			}
 			if work.license_file != "" && row.license_file != work.license_file {
-				append(&problems, fmt.tprintf("%s:%d: the reuse list gives `%s` the license file `%s`; its record names `%s`", REUSE_LIST_DOCUMENT, row.line, row.place, row.license_file, work.license_file))
+				append(&problems, fmt.tprintf("%s:%d: Reused code gives `%s` the license file `%s`; its record names `%s`", REUSE_LIST_DOCUMENT, row.line, row.place, row.license_file, work.license_file))
 			}
+		}
+		if !strings.contains_rune(row.place, ':') && !file_exists(row.place) {
+			append(&problems, fmt.tprintf("%s:%d: the place `%s` of Reused code does not exist", REUSE_LIST_DOCUMENT, row.line, row.place))
 		}
 		if !file_exists(row.license_file) {
 			append(&problems, fmt.tprintf("%s:%d: the license file `%s` of `%s` does not exist", REUSE_LIST_DOCUMENT, row.line, row.license_file, row.place))
@@ -181,9 +365,33 @@ reuse_list_problems :: proc(document: string, works: []Reused_Work, file_exists:
 	}
 	for work in works {
 		if _, named := row_of_place[work.place]; !named {
-			append(&problems, fmt.tprintf("%s: %s (`%s`) is shipped or copied by the system, and the reuse list has no row for it", REUSE_LIST_DOCUMENT, work.what, work.place))
+			append(&problems, fmt.tprintf("%s: %s (`%s`) is shipped or copied by the system, and Reused code has no row for it", REUSE_LIST_DOCUMENT, work.what, work.place))
 		}
 	}
+
+	// 2. Reimplemented algorithms.
+	algo_seen := make(map[string]int, context.temp_allocator)
+	for row in credits.algorithms {
+		if earlier, seen := algo_seen[row.algorithm]; seen {
+			append(&problems, fmt.tprintf("%s:%d: Reimplemented algorithms names %q a second time (line %d)", REUSE_LIST_DOCUMENT, row.line, row.algorithm, earlier))
+		} else {
+			algo_seen[row.algorithm] = row.line
+		}
+		if !file_exists(row.place) {
+			append(&problems, fmt.tprintf("%s:%d: the place `%s` of Reimplemented algorithms does not exist", REUSE_LIST_DOCUMENT, row.line, row.place))
+		}
+	}
+
+	// 3. Inspirations.
+	insp_seen := make(map[string]int, context.temp_allocator)
+	for row in credits.inspirations {
+		if earlier, seen := insp_seen[row.system]; seen {
+			append(&problems, fmt.tprintf("%s:%d: Inspirations names %q a second time (line %d)", REUSE_LIST_DOCUMENT, row.line, row.system, earlier))
+		} else {
+			insp_seen[row.system] = row.line
+		}
+	}
+
 	return problems[:]
 }
 

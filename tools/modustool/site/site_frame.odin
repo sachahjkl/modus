@@ -582,6 +582,12 @@ site_build :: proc(address: string, commands: []foundation.Command) -> bool {
 		if working {
 			continue
 		}
+		if path == checks.CREDITS_FILE {
+			page := site_page_file(SITE_LICENSES_FOLDER)
+			site.documents[path] = page
+			site.documents[name] = page
+			continue
+		}
 		page := site_page_file(strings.concatenate({SITE_GUIDE_FOLDER, "/", name[:len(name) - len(".md")]}, context.temp_allocator))
 		site.documents[path] = page
 		site.documents[name] = page
@@ -1122,7 +1128,7 @@ site_page_html :: proc(site: ^Site, page: Site_Page) -> string {
 		}
 		write(&b, ".</p>\n")
 	}
-	fmt.sbprintf(&b, "<p><a href=\"%s\">The repository</a> - <a href=\"%s\">Licenses</a></p>\n</div>\n</footer>\n</body>\n</html>\n", checks.REPOSITORY_ADDRESS, site_page_link(site, page.path, site_page_file(SITE_LICENSES_FOLDER)))
+	fmt.sbprintf(&b, "<p><a href=\"%s\">The repository</a> - <a href=\"%s\">Credits and licences</a></p>\n</div>\n</footer>\n</body>\n</html>\n", checks.REPOSITORY_ADDRESS, site_page_link(site, page.path, site_page_file(SITE_LICENSES_FOLDER)))
 	return strings.to_string(b)
 }
 

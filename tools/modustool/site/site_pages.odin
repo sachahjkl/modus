@@ -329,7 +329,7 @@ site_guides_add :: proc(site: ^Site) -> bool {
 	}
 	others := make([dynamic]string, context.temp_allocator)
 	for path in site.documents {
-		if !strings.has_prefix(path, "docs/") || build.glossary_is_file(path) {
+		if !strings.has_prefix(path, "docs/") || build.glossary_is_file(path) || path == checks.CREDITS_FILE {
 			continue
 		}
 		listed := false
@@ -532,18 +532,24 @@ site_reference_add :: proc(site: ^Site) -> bool {
 		append(&entries, Site_Reference_Entry{path = path, title = "Measured numbers", what = "Each number that the machine tests print, with its log and its conditions.", source = checks.MEASURE_RECORD_FILE, count = len(site.measured), kind = .Number})
 	}
 
-	// The licenses.
+	// Credits and licences.
 	{
 		path := site_page_file(SITE_LICENSES_FOLDER)
 		b := strings.builder_make(context.temp_allocator)
-		strings.write_string(&b, "<h1>Licenses</h1>\n<p>The license of the system, and of each part that it holds or uses. A cell with no source in the repository says \"" + SITE_NOT_RECORDED + "\".</p>\n<p>Two tables. <strong>What the system holds</strong>: the code of the system and each part of another author that goes into it, as the fonts, the pointer themes and the cryptography; the last column says whether the part is in the boot image. <strong>What builds and tests it</strong>: the compiler, the tools of the development shell and the firmware of the test machine, which are not in the system. Each cell is read from a file of the repository: its license, its author or origin, and its version or the pinned source.</p>\n<h2 id=\"system\">What the system holds</h2>\n")
+		strings.write_string(&b, "<h1>Credits and licences</h1>\n<p>One checked source of truth for every work of others that the system ships, reimplements, or draws ideas from, with its licence and upstream funding link. A cell with no source in the repository says \"" + SITE_NOT_RECORDED + "\".</p>\n")
+		if credits_text, ok := foundation.read_text_file_quiet(checks.CREDITS_FILE); ok {
+			problems := make([dynamic]string, context.temp_allocator)
+			credits := checks.credits_parse(credits_text, &problems)
+			site_credits_tables(site, &b, credits)
+		}
+		strings.write_string(&b, "<h2 id=\"system\">What the system holds</h2>\n")
 		system_ids, build_ids := site_license_row_ids(site.licenses)
 		site_license_table(site, &b, "What the system holds", site.licenses.system_rows, system_ids)
 		strings.write_string(&b, "<h2 id=\"build\">Used to build and test, not a part of the system</h2>\n")
 		site_license_table(site, &b, "What builds and tests it", site.licenses.build_rows, build_ids)
-		site_source_line(site, &b, resources.REPOSITORY_LICENSE_FILE, checks.FONT_FOLDER, resources.SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, checks.ODIN_LICENSE_FILE, checks.FIAT_LICENSE_FILE, foundation.CRYPTOGRAPHY_MANIFEST, resources.HALL_OF_FAME_CREDITS_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
-		site_page_add(site, Site_Page{path = path, title = "Licenses", description = site_description_cut(fmt.tprintf("The license of %s and of each part that it holds or uses: %d rows, and %d tools that build and test it.", SITE_SYSTEM_NAME, len(site.licenses.system_rows), len(site.licenses.build_rows))), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(resources.REPOSITORY_LICENSE_FILE, SITE_FLAKE_FILE), layout = .Documentation})
-		append(&entries, Site_Reference_Entry{path = path, title = "Licenses", what = "The license, the author, the version and the place of each part of the system and of each tool of its build.", source = SITE_FLAKE_FILE, count = len(site.licenses.system_rows) + len(site.licenses.build_rows), kind = .Grant})
+		site_source_line(site, &b, checks.CREDITS_FILE, resources.REPOSITORY_LICENSE_FILE, checks.FONT_FOLDER, resources.SPLEEN_LICENSE_FILE, SITE_POSY_MANIFEST, SITE_SYSTEM_POINTER_MANIFEST, checks.ODIN_LICENSE_FILE, checks.FIAT_LICENSE_FILE, foundation.CRYPTOGRAPHY_MANIFEST, resources.HALL_OF_FAME_CREDITS_FILE, SITE_FLAKE_FILE, SITE_FLAKE_LOCK_FILE)
+		site_page_add(site, Site_Page{path = path, title = "Credits and licences", description = site_description_cut(fmt.tprintf("Credits, licences, reimplemented algorithms, inspirations and upstream funding links for %s.", SITE_SYSTEM_NAME)), section = .Reference, crumbs = site_crumbs(.Reference), body = strings.to_string(b), sources = site_sources(checks.CREDITS_FILE, resources.REPOSITORY_LICENSE_FILE, SITE_FLAKE_FILE), layout = .Documentation})
+		append(&entries, Site_Reference_Entry{path = path, title = "Credits and licences", what = "Reused code, reimplemented algorithms, design inspirations, licences and upstream funding links.", source = checks.CREDITS_FILE, count = len(site.licenses.system_rows) + len(site.licenses.build_rows), kind = .Grant})
 	}
 
 	// The tables generated from the code, and the pages of the modules.
@@ -740,6 +746,78 @@ site_license_table :: proc(site: ^Site, b: ^strings.Builder, name: string, rows:
 		strings.write_string(b, "</tr>\n")
 	}
 	site_table_end(b, licenses_table)
+}
+
+site_credits_place_cell :: proc(site: ^Site, b: ^strings.Builder, place: string) {
+	if !strings.contains_rune(place, ':') {
+		strings.write_string(b, "<td class=\"code name\"><a href=\"")
+		foundation.html_escape(b, site_repository_file(site, place))
+		strings.write_string(b, "\"><code>")
+		foundation.html_escape(b, place)
+		strings.write_string(b, "</code></a></td>")
+	} else {
+		strings.write_string(b, "<td class=\"code name\"><code>")
+		foundation.html_escape(b, place)
+		strings.write_string(b, "</code></td>")
+	}
+}
+
+site_credits_link_cell :: proc(b: ^strings.Builder, value: string) {
+	if strings.has_prefix(value, "https://") || strings.has_prefix(value, "http://") {
+		strings.write_string(b, "<td><a href=\"")
+		foundation.html_escape(b, value)
+		strings.write_string(b, "\">")
+		foundation.html_escape(b, value)
+		strings.write_string(b, "</a></td>")
+	} else {
+		site_cell(b, value)
+	}
+}
+
+// site_credits_tables writes the three tables of docs/CREDITS.md onto the
+// "Credits and licences" page.
+site_credits_tables :: proc(site: ^Site, b: ^strings.Builder, credits: checks.Credits_Document) {
+	strings.write_string(b, "<h2 id=\"reused-code\">Reused code</h2>\n")
+	reused_table := site_table_start(b, "Reused code", {{"Work", .Prose}, {"Place", .Name}, {"Upstream", .Short}, {"Authors", .Prose}, {"License", .Short}, {"License file", .Name}, {"Funding", .Short}}, {.None, .File, .None, .None, .None, .File, .None})
+	for row in credits.reused {
+		strings.write_string(b, "<tr>")
+		site_cell(b, row.work)
+		site_credits_place_cell(site, b, row.place)
+		site_cell(b, row.upstream)
+		site_cell(b, row.authors)
+		site_cell(b, row.license, "code")
+		site_credits_place_cell(site, b, row.license_file)
+		site_credits_link_cell(b, row.funding)
+		strings.write_string(b, "</tr>\n")
+	}
+	site_table_end(b, reused_table)
+
+	strings.write_string(b, "<h2 id=\"reimplemented-algorithms\">Reimplemented algorithms</h2>\n")
+	algo_table := site_table_start(b, "Reimplemented algorithms", {{"Algorithm", .Prose}, {"Authors", .Prose}, {"Upstream", .Short}, {"Reference license", .Short}, {"Place", .Name}, {"Funding", .Short}}, {.None, .None, .None, .None, .File, .None})
+	for row in credits.algorithms {
+		strings.write_string(b, "<tr>")
+		site_cell(b, row.algorithm)
+		site_cell(b, row.authors)
+		site_cell(b, row.upstream)
+		site_cell(b, row.reference_license, "code")
+		site_credits_place_cell(site, b, row.place)
+		site_credits_link_cell(b, row.funding)
+		strings.write_string(b, "</tr>\n")
+	}
+	site_table_end(b, algo_table)
+
+	strings.write_string(b, "<h2 id=\"inspirations\">Inspirations</h2>\n")
+	insp_table := site_table_start(b, "Inspirations", {{"System or idea", .Short}, {"Authors", .Prose}, {"Took and left", .Prose}, {"Link", .Short}, {"Funding", .Short}}, {.None, .None, .None, .None, .None})
+	for row in credits.inspirations {
+		strings.write_string(b, "<tr>")
+		site_cell(b, row.system)
+		site_cell(b, row.authors)
+		site_cell(b, row.took_and_left)
+		site_credits_link_cell(b, row.link)
+		site_credits_link_cell(b, row.funding)
+		strings.write_string(b, "</tr>\n")
+	}
+	site_table_end(b, insp_table)
 }
 
 site_releases_add :: proc(site: ^Site) {
