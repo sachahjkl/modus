@@ -1,0 +1,3 @@
+type: Added
+
+**The display text of a member, apart from its name**: a module file (version 7) holds a table of display texts by member and language, which a module declares in its source apart from the enum. The palette shows "settings.set scale to 1.75" and the button "1.75" for the scale `.fourteen_eighths`, the completion lists `.fourteen_eighths   1.75`, and a line still types the name. The settings give texts for the scale, the subpixel order (`RGB`, `BGR`), the pointer theme and the keyboard layout (`US`). A row that names no member, a text past 24 bytes and two texts for one member and one language are refused.

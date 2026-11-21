@@ -279,6 +279,53 @@ exports_with_no_description_are_refused :: proc(t: ^testing.T) {
 	delete(file)
 }
 
+// A display text names an enum of the parts and a member of it, a language,
+// and a text in its bound, after the text before it: each edge is refused
+// with the problem of the reader, and the written file is read back last.
+@(test)
+member_texts_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
+	storage: Test_Storage
+	members := [2]Member_Description{{"slow", 0}, {"fast", 1}}
+	enums := [1]Enum_Description{{"Mode", 4, true, members[:]}}
+	expect_text_problem :: proc(t: ^testing.T, storage: ^Test_Storage, enums: []Enum_Description, texts: []Member_Text_Description, index: u64, problem: module.Member_Text_Problem, loc := #caller_location) {
+		parts := test_parts(storage)
+		parts.enums = enums
+		parts.member_texts = texts
+		expect_refusal(t, parts, .Member_Text_Not_Valid, .Member_Texts, index, loc)
+		_, needed := file_size_needed(parts)
+		testing.expect_value(t, needed.value, u64(problem), loc)
+	}
+	english := module.Language.English
+	past_bound := strings.repeat("a", module.MEMBER_TEXT_CAPACITY + 1, context.temp_allocator)
+	expect_text_problem(t, &storage, enums[:], {{0, 0, english, "Slow"}}, 0, .No_Enum)
+	expect_text_problem(t, &storage, enums[:], {{2, 0, english, "Slow"}}, 0, .No_Enum)
+	expect_text_problem(t, &storage, enums[:], {{max(u32), 0, english, "Slow"}}, 0, .No_Enum)
+	expect_text_problem(t, &storage, nil, {{1, 0, english, "Slow"}}, 0, .No_Enum)
+	expect_text_problem(t, &storage, enums[:], {{1, 2, english, "Fast"}}, 0, .No_Member)
+	expect_text_problem(t, &storage, enums[:], {{1, max(u32), english, "Fast"}}, 0, .No_Member)
+	expect_text_problem(t, &storage, enums[:], {{1, 0, transmute(module.Language)u8(0), "Slow"}}, 0, .Bad_Language)
+	expect_text_problem(t, &storage, enums[:], {{1, 0, transmute(module.Language)(u8(max(module.Language)) + 1), "Slow"}}, 0, .Bad_Language)
+	for text in ([]string{"", past_bound, "Slow\n", "Sl\xffow"}) {
+		expect_text_problem(t, &storage, enums[:], {{1, 0, english, text}}, 0, .Bad_Text)
+	}
+	expect_text_problem(t, &storage, enums[:], {{1, 0, english, "Slow"}, {1, 0, english, "Fast"}}, 1, .Twice)
+	expect_text_problem(t, &storage, enums[:], {{1, 1, english, "Fast"}, {1, 0, english, "Slow"}}, 1, .Out_Of_Order)
+	// The success comes last: a text of the largest length, then the
+	// file read back. A member with no text shows its name.
+	parts := test_parts(&storage)
+	parts.enums = enums[:]
+	longest := strings.repeat("b", module.MEMBER_TEXT_CAPACITY, context.temp_allocator)
+	texts := []Member_Text_Description{{1, 1, english, longest}}
+	parts.member_texts = texts
+	file := write_to_memory(t, parts)
+	defer delete(file)
+	row, problem := module.member_texts_check(file)
+	testing.expect(t, row == 0 && problem == .None)
+	described, _ := module.enum_type(file, 1)
+	testing.expect_value(t, module.member_display_text(file, 1, described, 1, .English), longest)
+	testing.expect_value(t, module.member_display_text(file, 1, described, 0, .English), "slow")
+}
+
 // An Enum parameter names an enum of the parts and a getter among the
 // exports, an optional bit is on an Enum parameter, an Enum result names an
 // enum, and a member has a name of a member: each edge is refused, and the

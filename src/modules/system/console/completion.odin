@@ -69,6 +69,12 @@ Completion :: struct {
 	hint_count:      int,
 	hint_long_count: int,
 	hint_marked:     [terminal.Hint_Form][2]int,
+	// The enum of the members of an Enum argument that the list holds: the
+	// file and the index of the enum, for the display text at the right of
+	// each member. members_file nil: the members are those of a status
+	// field, whose number is the word of their contract enum.
+	members_file:    []u8,
+	members_enum:    u32,
 	// The description of the table of a stage `facts(...)`, whose fields
 	// the list offers in a condition after it.
 	description:     [DESCRIPTION_SIZE]u8,
@@ -745,6 +751,9 @@ members_of_an_argument :: proc "contextless" (table: ^Candidate_Table, text: str
 		return {}, false
 	}
 	table.count, table.dropped = 0, 0
+	if table == &completion.names {
+		completion.members_file, completion.members_enum = item.file, enum_index
+	}
 	used := 0
 	for number in 0 ..< described.member_count {
 		member, _ := module.enum_member(item.file, described, number)
@@ -787,7 +796,8 @@ names_rank :: proc "contextless" (by_tab: bool) {
 		completion.processes_kept = false
 	}
 	// The members of the enum of an argument: after its ".", or at its
-	// start with Tab.
+	// start with Tab. Another list holds no member of an Enum argument.
+	completion.members_file, completion.members_enum = nil, 0
 	if member_place, is_member := members_of_an_argument(&completion.names, text, line.caret, by_tab); is_member {
 		place = member_place
 		// At the start of an argument: the names of the parameters too,
@@ -1073,6 +1083,22 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 	case .Field:
 		system.write_part(writer, "field")
 	case .Member:
+		// A member of an Enum argument: its display text, which the
+		// principal reads, while the list inserts the name; a member with
+		// no text, the name of its enum.
+		if completion.members_file != nil {
+			described, problem := module.enum_type(completion.members_file, completion.members_enum)
+			if problem != .None {
+				return
+			}
+			if text, found := module.member_text(completion.members_file, completion.members_enum, u32(candidate.number), PRINCIPAL_LANGUAGE); found {
+				system.write_part(writer, text)
+			} else {
+				system.write_part(writer, "member of ")
+				system.write_part(writer, module.enum_name(completion.members_file, described))
+			}
+			return
+		}
 		if which, named := value_kinds.contract_enum_of_word(u8(candidate.number)); named {
 			system.write_part(writer, "member of ")
 			system.write_part(writer, value_kinds.CONTRACT_ENUM_TYPES[which].name)

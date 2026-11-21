@@ -2,8 +2,10 @@ package build
 
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "core:reflect"
+import "core:slice"
 import "core:fmt"
 import "core:odin/ast"
 import "core:odin/parser"
@@ -124,6 +126,13 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 	if !enum_getters_resolve(list[:], description.enums) {
 		return {}, false
 	}
+	// The display texts after each export: a table names an enum that an
+	// export of any file takes or gives.
+	texts := make([dynamic]Member_Text_Description, context.temp_allocator)
+	for file in files {
+		member_texts_read(file, &state, &texts) or_return
+	}
+	description.member_texts = member_texts_order(folder, texts[:]) or_return
 	description.about = about_of(documentation_text_of_markdown(description.text), "")
 	if description.about == "" {
 		fmt.eprintfln("modustool: describe %s: no file has a comment before `package`: this comment is the documentation of the module", folder)
@@ -766,7 +775,7 @@ struct_record_named :: proc(state: ^Describe_State, key, record_name: string, re
 // describe_source adds the descriptions of the exports of one source file.
 // package_text receives the documentation text of the package, if the file
 // has one. records receives the records that the exports use.
-describe_source :: proc(path, source: string, list: ^[dynamic]Export_Description, package_text: ^string = nil, records: ^[]Record_Description = nil, enums: ^[]Enum_Description = nil) -> bool {
+describe_source :: proc(path, source: string, list: ^[dynamic]Export_Description, package_text: ^string = nil, records: ^[]Record_Description = nil, enums: ^[]Enum_Description = nil, member_texts: ^[]Member_Text_Description = nil) -> bool {
 	context.allocator = context.temp_allocator
 	state: Describe_State
 	state.records = make([dynamic]Record_Description, context.temp_allocator)
@@ -777,13 +786,147 @@ describe_source :: proc(path, source: string, list: ^[dynamic]Export_Description
 	}
 	describe_file(file, list, &state) or_return
 	enum_getters_resolve(list[:], state.enum_descriptions[:]) or_return
+	texts := make([dynamic]Member_Text_Description, context.temp_allocator)
+	member_texts_read(file, &state, &texts) or_return
+	ordered := member_texts_order(path, texts[:]) or_return
 	if records != nil {
 		records^ = state.records[:]
 	}
 	if enums != nil {
 		enums^ = state.enum_descriptions[:]
 	}
+	if member_texts != nil {
+		member_texts^ = ordered
+	}
 	return true
+}
+
+// member_texts_read adds the display texts of the declared tables of a
+// file (src/md/features/enum_parameters.md, "The display text of a
+// member"): each declaration with the attribute `member_texts`, whose value
+// names the language, and whose value is an enumerated array of texts of an
+// enum that an export takes or gives:
+//
+//	@(rodata, member_texts = "english")
+//	scale_texts := #partial [scale_factor.Scale]string{.Ten_Eighths = "1.25"}
+//
+// The compiler checks each member of the table; the tool checks the
+// language, the enum, and each text against the rules of the reader.
+member_texts_read :: proc(file: ^ast.File, state: ^Describe_State, texts: ^[dynamic]Member_Text_Description) -> bool {
+	context.allocator = context.temp_allocator
+	path := file.fullpath
+	for statement in file.decls {
+		declaration, is_value := statement.derived.(^ast.Value_Decl)
+		if !is_value {
+			continue
+		}
+		language_text, has_texts := "", false
+		for attribute in declaration.attributes {
+			for element in attribute.elems {
+				item, is_field := element.derived.(^ast.Field_Value)
+				if !is_field {
+					continue
+				}
+				field, is_name := item.field.derived.(^ast.Ident)
+				if !is_name || field.name != foundation.MEMBER_TEXTS_ATTRIBUTE_NAME {
+					continue
+				}
+				literal, is_literal := item.value.derived.(^ast.Basic_Lit)
+				if !is_literal || literal.tok.kind != .String {
+					return describe_fail(path, declaration, "the attribute %s takes a text: the name of a language, \"english\"", foundation.MEMBER_TEXTS_ATTRIBUTE_NAME)
+				}
+				language_text, has_texts = strings.trim(literal.tok.text, "\"`"), true
+			}
+		}
+		if !has_texts {
+			continue
+		}
+		language, language_known := module.language_of_name(language_text)
+		if !language_known {
+			return describe_fail(path, declaration, "the attribute %s names the language \"%s\", which the format does not have: %v", foundation.MEMBER_TEXTS_ATTRIBUTE_NAME, language_text, module.LANGUAGE_NAMES)
+		}
+		literal: ^ast.Comp_Lit
+		if len(declaration.names) == 1 && len(declaration.values) == 1 {
+			literal, _ = declaration.values[0].derived.(^ast.Comp_Lit)
+		}
+		type: ^ast.Expr = declaration.type
+		if type == nil && literal != nil {
+			type = literal.type
+		}
+		array: ^ast.Array_Type
+		if type != nil {
+			array, _ = type.derived.(^ast.Array_Type)
+		}
+		element: ^ast.Ident
+		if array != nil {
+			element, _ = array.elem.derived.(^ast.Ident)
+		}
+		if literal == nil || array == nil || array.len == nil || element == nil || element.name != "string" {
+			return describe_fail(path, declaration, "a table of display texts is one variable of an enumerated array of texts: name := #partial [Enum]string{{.Member = \"text\"}}")
+		}
+		key, enum_name := struct_name(state, array.len)
+		enum_number := 0
+		for item, index in state.enum_keys {
+			if key != "" && item == key {
+				enum_number = index + 1
+			}
+		}
+		if enum_number == 0 {
+			return describe_fail(path, declaration, "the display texts of %s: the enum is the type of no Enum parameter or result of an export of the module, so no reader shows them", enum_name)
+		}
+		described := state.enum_descriptions[enum_number - 1]
+		for item in literal.elems {
+			selector: ^ast.Implicit_Selector_Expr
+			text_literal: ^ast.Basic_Lit
+			if pair, is_pair := item.derived.(^ast.Field_Value); is_pair {
+				selector, _ = pair.field.derived.(^ast.Implicit_Selector_Expr)
+				text_literal, _ = pair.value.derived.(^ast.Basic_Lit)
+			}
+			if selector == nil || text_literal == nil || text_literal.tok.kind != .String || len(text_literal.tok.text) < 2 {
+				return describe_fail(path, item, "the display texts of %s: each row is .Member = \"text\", with a text literal", enum_name)
+			}
+			raw := text_literal.tok.text
+			text := raw[1:len(raw) - 1]
+			if strings.contains_rune(text, '\\') && raw[0] == '"' {
+				return describe_fail(path, item, "the display texts of %s: the text of .%s has an escape: write the characters themselves", enum_name, selector.field.name)
+			}
+			member_name := strings.to_lower(selector.field.name, context.temp_allocator)
+			member_number := -1
+			for member, number in described.members {
+				if member.name == member_name {
+					member_number = number
+				}
+			}
+			if member_number < 0 {
+				return describe_fail(path, item, "the display texts of %s: %s is no member of the enum", enum_name, selector.field.name)
+			}
+			if len(text) == 0 || len(text) > module.MEMBER_TEXT_CAPACITY || !text_encoding.text_valid(transmute([]u8)text) {
+				return describe_fail(path, item, "the display text of %s.%s is \"%s\": a display text is 1 to %d bytes of UTF-8 with no control character", enum_name, selector.field.name, text, module.MEMBER_TEXT_CAPACITY)
+			}
+			append(texts, Member_Text_Description{enum_number = u32(enum_number), member_number = u32(member_number), language = language, text = text})
+		}
+	}
+	return true
+}
+
+// member_texts_order sorts the display texts in the order of the format:
+// the enum, the member, the language. Two texts for one member and one
+// language, from two tables of one enum and one language, are refused.
+member_texts_order :: proc(place: string, texts: []Member_Text_Description) -> (ordered: []Member_Text_Description, ok: bool) {
+	key :: proc(item: Member_Text_Description) -> [3]u64 {
+		return {u64(item.enum_number), u64(item.member_number), u64(u8(item.language))}
+	}
+	slice.sort_by(texts, proc(a, b: Member_Text_Description) -> bool {
+		first, second := key(a), key(b)
+		return first[0] < second[0] || first[0] == second[0] && (first[1] < second[1] || first[1] == second[1] && first[2] < second[2])
+	})
+	for index in 1 ..< max(len(texts), 1) {
+		if key(texts[index]) == key(texts[index - 1]) {
+			fmt.eprintfln("modustool: describe %s: two tables of display texts give the member %d of the enum %d in the language %v: one text for each member and language", place, texts[index].member_number, texts[index].enum_number, texts[index].language)
+			return nil, false
+		}
+	}
+	return texts, true
 }
 
 // describe_file adds the descriptions of the exports of one parsed file.

@@ -71,8 +71,17 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 				_, _ = module.record(file, kind, index, module.Enum_Type)
 			case .Members:
 				_, _ = module.record(file, kind, index, module.Member)
+			case .Member_Texts:
+				if _, _, problem := module.member_text_row(file, index); problem > max(module.Member_Text_Problem) {
+					return fuzz_broken(.Contract, "member_text_row gives a value out of its enumeration: %d", u8(problem))
+				}
 			}
 		}
+	}
+	// The check of the texts gives a row of the table, or 0 with None.
+	text_row, text_problem := module.member_texts_check(file)
+	if text_problem > max(module.Member_Text_Problem) || (text_problem == .None) != (text_row == 0) || text_row >= max(module.count(file, .Member_Texts), 1) {
+		return fuzz_broken(.Contract, "member_texts_check gives the row %d and the problem %d", text_row, u8(text_problem))
 	}
 	// The readers of the enums: an enum that enum_type accepts has a size
 	// of the contract and members whose names and values keep each rule,
@@ -279,6 +288,8 @@ fuzz_module_record_type :: proc(kind: module.Table_Kind) -> (type: typeid, size:
 		return module.Enum_Type, size_of(module.Enum_Type)
 	case .Members:
 		return module.Member, size_of(module.Member)
+	case .Member_Texts:
+		return module.Member_Text, size_of(module.Member_Text)
 	}
 	return nil, 0
 }

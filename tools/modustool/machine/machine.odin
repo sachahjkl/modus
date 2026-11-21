@@ -1448,7 +1448,10 @@ scenario := [?]Step {
 	// before the list of ":font", which keeps the same row and writes no
 	// second line. The row line is found from the open, in either order.
 	{kind = .Wait, text = "compositor: the palette shows the setting font as one row of 2 values", any_order = true},
-	{kind = .Wait, text = " for \":font\": font (setting)"},
+	// The entries of the scale say their display text, "1.75", which
+	// ":font" does not match: the picture shows the row of the font alone.
+	// An entry that names the member, fourteen_eighths, fails the step.
+	{kind = .Wait, text = " for \":font\": font (setting)", fails_on = "settings.set scale to fourteen_eighths"},
 	{kind = .Key, text = "right"},
 	{kind = .Wait, text = "compositor: the palette chooses the value spleen of font"},
 	{kind = .Key, text = "ret"},
@@ -1470,6 +1473,15 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the settings changed: font vector", any_order = true},
 	{kind = .Wait, text = "compositor: the palette did: settings.set font to vector"},
 	{kind = .Wait, text = "console: the palette marks .vector for settings.set font", any_order = true},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// The display text of a member: the scale has 7 members, so each one
+	// is an entry, which says its display text and runs the line with its
+	// name. The search finds the entry by its text.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = ":1.75"},
+	{kind = .Wait, text = " for \":1.75\": settings.set scale to 1.75 (setting)", fails_on = "fourteen_eighths (setting)"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	// Go to: the window of settings names what the row of the grid fit

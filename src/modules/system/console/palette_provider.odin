@@ -412,6 +412,11 @@ palette_marks_log :: proc "contextless" () {
 	palette_marks_moved_count = 0
 }
 
+// The language of the display texts that the palette and the completion
+// show: English, until the interface follows the language of the principal
+// (ROADMAP.md, "The interface in the language of the principal").
+PRINCIPAL_LANGUAGE :: module.Language.English
+
 // palette_line_name_valid says if the name of a command is names of Lex
 // joined by '.': the service, then the export. The line of a row starts
 // with it, so it must add nothing to that line.
@@ -477,6 +482,10 @@ palette_enum_rows_write :: proc "contextless" (start: int, refresh: ^Palette_Get
 				}
 				member, _ := module.enum_member(item.file, described, member_number)
 				member_name := module.string_at(item.file, member.name_offset, member.name_count)
+				// The principal reads the display text; the line types the
+				// name (src/md/features/enum_parameters.md, "The display
+				// text of a member").
+				display_text := module.member_display_text(item.file, enum_index, described, member_number, PRINCIPAL_LANGUAGE)
 				entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Provider_Setting), result = u8(palette_value_kind_of(item.result))}
 				if in_use_known && member.value == in_use {
 					entry.flags += {.In_Use}
@@ -486,7 +495,7 @@ palette_enum_rows_write :: proc "contextless" (start: int, refresh: ^Palette_Get
 				system.write_part(&name, " ")
 				system.write_part(&name, parameter_name)
 				system.write_part(&name, " to ")
-				system.write_part(&name, member_name)
+				system.write_part(&name, display_text)
 				// The help of the entry is the line that the console runs.
 				about := system.Writer{buffer = entry.about[:]}
 				system.write_part(&about, item.name)
@@ -498,7 +507,7 @@ palette_enum_rows_write :: proc "contextless" (start: int, refresh: ^Palette_Get
 				row := system.Writer{buffer = entry.setting_name[:]}
 				system.write_part(&row, parameter_name)
 				value_name := system.Writer{buffer = entry.value_name[:]}
-				system.write_part(&value_name, member_name)
+				system.write_part(&value_name, display_text)
 				if name.dropped != 0 || about.dropped != 0 || row.dropped != 0 || value_name.dropped != 0 {
 					continue
 				}

@@ -20,6 +20,7 @@ Problem_Kind :: enum u32 {
 	Refused   = 11, // The kernel refused a report: `value` is the status. The machine handle needs the right Inspect.
 	Direction = 12, // A direction of a parameter is not Read, Change or Append, or a parameter that is not a Table or Bytes has one.
 	Enum      = 13, // An Enum parameter or result breaks a rule of module.function_enums_check: `value` is the module.Enum_Problem.
+	Member_Text = 14, // A row of the table Member_Texts breaks a rule of module.member_texts_check: `value` is the module.Member_Text_Problem.
 }
 
 // The name of each problem kind in a row (`Module.problem`).
@@ -39,6 +40,7 @@ problem_names := [Problem_Kind]string {
 	.Refused   = "refused",
 	.Direction = "direction",
 	.Enum      = "enum",
+	.Member_Text = "member text",
 }
 
 // The name of each table in a row (`Module.place`): "header" for the header
@@ -63,6 +65,7 @@ table_names := [module.Table_Kind]string {
 	.Record_Inputs  = "Record_Inputs",
 	.Enums          = "Enums",
 	.Members        = "Members",
+	.Member_Texts   = "Member_Texts",
 }
 
 // An error value with its detail. kind None: no problem.
@@ -126,6 +129,7 @@ problem_texts := [Problem_Kind]string {
 	.Refused   = "the kernel refused the report",
 	.Direction = "a parameter has a direction that its type does not take",
 	.Enum      = "an enum of the export, its members or its getter break a rule",
+	.Member_Text = "a display text names no member, breaks its bound, or is given twice for one language",
 }
 
 // place gives the byte of the file where a field of record `index` of a
@@ -212,6 +216,12 @@ check :: proc "contextless" (file: []u8) -> Problem {
 		if problem := function_check(file, index, function); problem.kind != .None {
 			return problem
 		}
+	}
+	// The palette and the completion show a display text: a row that
+	// names no member, a text past its bound or two texts for one member
+	// and one language are faults of the file.
+	if row, problem := module.member_texts_check(file); problem != .None {
+		return {kind = .Member_Text, table = .Member_Texts, index = row, offset = place(file, .Member_Texts, row, 0), value = u64(problem)}
 	}
 	documentation, _ := module.record(file, .Documentation, 1, module.Documentation)
 	for pair, number in ([2][2]u32{{documentation.about_offset, documentation.about_count}, {documentation.text_offset, documentation.text_count}}) {

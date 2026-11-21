@@ -421,8 +421,9 @@ an_integer_unit_is_checked :: proc(t: ^testing.T) {
 // Each text of an entry for a reader is UTF-8: a help sentence, a
 // signature and a parameter name with "é" pass, and with a broken
 // sequence, an overlong form or a control character are refused. A name,
-// an act name, a setting name and a value name are identifiers: ASCII, so
-// "café" is refused there. A result run and a Text argument are UTF-8.
+// an act name and a setting name are identifiers: ASCII, so "café" is
+// refused there. A value name and the name of a setting entry are display
+// texts: UTF-8. A result run and a Text argument are UTF-8.
 @(test)
 the_texts_of_an_entry_are_utf_8 :: proc(t: ^testing.T) {
 	entry: Entry
@@ -444,17 +445,32 @@ the_texts_of_an_entry_are_utf_8 :: proc(t: ^testing.T) {
 	testing.expect_value(t, entry_problem(&act), Problem.None)
 	act.act_name_length = u8(copy(act.act_name[:], "a b")) // An identifier has no space.
 	testing.expect_value(t, entry_problem(&act), Problem.Bad_Byte)
+	// A value name and the name of a setting entry are display texts: a
+	// broken text is refused there, and a text of a translation passes. The
+	// name of the setting row stays an identifier.
 	row := entry
 	row.kind = u8(Entry_Kind.Provider_Setting)
 	row.setting_name_length = u8(copy(row.setting_name[:], "subpixel order"))
-	row.value_name_length = u8(copy(row.value_name[:], "rgb"))
-	testing.expect_value(t, entry_problem(&row), Problem.None)
-	row.value_name_length = u8(copy(row.value_name[:], "café"))
-	testing.expect_value(t, entry_problem(&row), Problem.Bad_Byte)
+	broken := [?]string{"caf\xc3", "caf\xc3(", "\xc0\xaf", "\xed\xa0\x80", "a\xc2\x85", "a\x1b[2J"}
+	for name in broken {
+		bad_value := row
+		bad_value.value_name_length = u8(copy(bad_value.value_name[:], name))
+		testing.expectf(t, entry_problem(&bad_value) == .Bad_Byte, "the value name %q must be refused", name)
+		bad_name := row
+		bad_name.value_name_length = u8(copy(bad_name.value_name[:], "rgb"))
+		bad_name.name_length = u8(copy(bad_name.name[:], name))
+		bad_name.signature_length = u8(copy(bad_name.signature[:], name))
+		testing.expectf(t, entry_problem(&bad_name) == .Bad_Byte, "the name %q of a setting entry must be refused", name)
+	}
 	row.value_name_length = u8(copy(row.value_name[:], "rgb"))
 	row.setting_name_length = u8(copy(row.setting_name[:], "café"))
 	testing.expect_value(t, entry_problem(&row), Problem.Bad_Byte)
-	broken := [?]string{"caf\xc3", "caf\xc3(", "\xc0\xaf", "\xed\xa0\x80", "a\xc2\x85", "a\x1b[2J"}
+	row.setting_name_length = u8(copy(row.setting_name[:], "subpixel order"))
+	testing.expect_value(t, entry_problem(&row), Problem.None)
+	row.value_name_length = u8(copy(row.value_name[:], "café"))
+	row.name_length = u8(copy(row.name[:], "set order to café"))
+	row.signature_length = u8(copy(row.signature[:], "set order to café"))
+	testing.expect_value(t, entry_problem(&row), Problem.None)
 	for name in broken {
 		bad := entry
 		bad.name_length = u8(copy(bad.name[:], name))

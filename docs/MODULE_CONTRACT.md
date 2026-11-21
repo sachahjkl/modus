@@ -1,6 +1,6 @@
 # Module contract
 
-`src/library/contract/module/format.odin` is version 6 of the format at the level of bytes.
+`src/library/contract/module/format.odin` is version 7 of the format at the level of bytes.
 
 This document gives the contract between modules: the module format, the loader, the call form, the type description, and the context.
 `glossary/README.md` defines the terms. `PROPERTIES.md` gives the rules; (P10) points to a property.
@@ -155,10 +155,11 @@ The loader reads none of these tables: they are for a caller that must know the 
 | Fields | One field of a record: its name, its offset, its type (Integer, Handle, Text or Bytes), signed or unsigned, the integer unit of an Integer (section 5, "The unit of an Integer field"), its detail (the size of an integer, a text or bytes, the rights of a handle), and its field kind with the contract enum of a status (section 5, "The kind of a field") |
 | Enums | One enum that an export takes or gives: the name of its type, the range of its members, its size and its sign (section 5, "Enum parameters"). The file has the table when an export has an Enum |
 | Members | One member of an enum: its name and its value |
+| Member_Texts | The display text of one member in one language, in the order of the enum, the member and the language (section 5, "The display text of a member"). The file has the table when a module gives a text |
 | Strings | The bytes of all names, help lines and documentation texts |
 | Documentation | Record 1: the documentation of the module, one line and a text |
 
-```byte-layout module.Function module.Record module.Field module.Documentation module.Enum_Type module.Member
+```byte-layout module.Function module.Record module.Field module.Documentation module.Enum_Type module.Member module.Member_Text
 module.Function, 168 bytes: one record of the table Functions
 offset  size  field                  type
      0     4  name_offset            u32
@@ -222,6 +223,15 @@ offset  size  field        type
      0     4  name_offset  u32
      4     4  name_count   u32
      8     8  value        i64
+
+module.Member_Text, 24 bytes: one record of the table Member_Texts
+offset  size  field          type
+     0     4  enum_index     u32
+     4     4  member_number  u32
+     8     4  text_offset    u32
+    12     4  text_count     u32
+    16     1  language       u8
+    17     7  reserved       [7]u8
 ```
 
 A type is one byte, the value of a member of `module.Type`: Integer, Text, Record, Handle, Table, and Bytes (a parameter only). The fields `result`, `parameters` and `type` hold the byte, not the enum: a reader takes each byte through `module.type_of_word` (or `function_result_type`, `function_parameter_type`, `field_type`), which refuses a byte that names no type, and never casts it. The detail of a parameter says what its type needs: the index of a record description, the rights of a handle, or the unit of an Integer (section 5, "The unit of an Integer parameter"). Section 5 gives the types.
@@ -1397,6 +1407,27 @@ An export takes a value of a closed set as an enum, and its module file names th
 - **The border in the export**: an argument comes in a register that the caller wrote, so it can hold a value that names no member. `enum_word.member_of_argument` gives the member, `given` false for the absent word, or a refusal that the export answers with an error record.
 - **The readers**: the console types a member `.french` by its parameter (`CONSOLE.md`, "Values and their kinds"); `modustool call` takes `settings.set(keyboard_layout = .french)`, with the named arguments and the members of a line, and prints a result `.french`; the manual, the site and the signature that the console prints name an Enum parameter by the name of its enum.
 - **Not built**: an import declaration of an export with an Enum parameter, and an enum of a module as the field kind of a record.
+
+#### The display text of a member
+
+A member has a name, which a line types and a module compiles, and a display text, which a principal reads: `.fourteen_eighths` shows "1.75". The palette and the completion show the text; a line types the name only. A translation adds rows of another language, with no change of the code, of the names or of the format.
+
+- **In the file**: the table `Member_Texts` holds one `module.Member_Text` for each text: the index of the enum, the number of the member in its enum from 0, the language, and 1 to 24 bytes of UTF-8 with no control character in the string table (`module.MEMBER_TEXT_CAPACITY`). The rows are in the order of the enum, the member and the language. The file has the table when a module gives a text.
+- **The language** is a byte of `module.Language`: `English` (1) is its one member. The byte 0 names no language.
+- **The reader**: `module.member_display_text` gives the text of the language of the principal, else the English text, else the name. The language of the principal is English until the interface follows it.
+- **The checks**: `module.member_texts_check` refuses a row that names no valid enum (`No_Enum`) or no member of it (`No_Member`), a text that is empty, past its bound, outside the string table or no text (`Bad_Text`), a language byte that names no language (`Bad_Language`), a reserved byte that is not 0 (`Bad_Reserved`), and a row that is not after the row before it (`Twice`, `Out_Of_Order`). `information.check` gives the problem kind `Member_Text`; the writer of module files refuses such parts with `Member_Text_Not_Valid`. The check of a replacement does not compare the texts: a text is not a part of the contract of a call.
+- **In the source**: a variable of an enumerated array of texts, with the attribute `member_texts` whose value names the language, apart from the enum. The compiler checks each member; the build reads the table from the source. The enum must be the type of an Enum parameter or result of an export of the module, and each text a literal with no escape:
+
+  ```odin
+  @(rodata, member_texts = "english")
+  scale_texts := [scale_factor.Scale]string {
+  	.Ten_Eighths = "1.25",
+  	// ...
+  	.Sixteen_Eighths = "2",
+  }
+  ```
+
+  A table that gives some members only is `#partial`. A member with no text shows its name.
 
 ### The unit of an Integer parameter
 

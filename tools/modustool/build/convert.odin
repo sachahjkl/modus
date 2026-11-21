@@ -50,6 +50,7 @@ Record_Description :: module_file_writer.Record_Description
 Field_Description :: module_file_writer.Field_Description
 Enum_Description :: module_file_writer.Enum_Description
 Member_Description :: module_file_writer.Member_Description
+Member_Text_Description :: module_file_writer.Member_Text_Description
 
 // The description of a module: what its source says to a reader, and its exports.
 Module_Description :: struct {
@@ -59,6 +60,7 @@ Module_Description :: struct {
 	exports:  []Export_Description,
 	records:  []Record_Description, // The records that the exports, the log facts and the record streams use. Record n + 1 of the module is records[n].
 	enums:    []Enum_Description, // The enums that the exports take and give. Enum n + 1 of the module is enums[n].
+	member_texts: []Member_Text_Description, // The display texts of the members, in the order of the enum, the member and the language: the table Member_Texts.
 	budget:   Budget_Description, // The budget that the module asks for: the table Budget.
 	facts:    []Fact_Description, // The log facts that the module writes, sorted by key (facts_merge): the table Facts.
 	record_outputs: []Record_Stream_Description, // The record outputs that the module declares, sorted by name (record_streams_merge): the table Record_Outputs.
@@ -355,6 +357,7 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		rebases            = rebases[:],
 		records            = description.records,
 		enums              = description.enums,
+		member_texts       = description.member_texts,
 		facts              = fact_parts,
 		has_own_hash_place = has_place,
 		own_hash_place     = own_hash_place,
@@ -430,6 +433,10 @@ module_file_refusal_text :: proc(parts: module_file_writer.Module_Parts, refusal
 	case .Enums, .Members:
 		if refusal.index < u64(len(parts.enums)) {
 			part = fmt.tprintf(" (enum %s)", parts.enums[refusal.index].name)
+		}
+	case .Member_Texts:
+		if refusal.index < u64(len(parts.member_texts)) {
+			part = fmt.tprintf(" (display text \"%s\")", parts.member_texts[refusal.index].text)
 		}
 	case .None, .Segments, .Imports, .Slots, .Rebases, .Strings, .Documentation, .Budget, .Facts, .Own_Hash:
 	}

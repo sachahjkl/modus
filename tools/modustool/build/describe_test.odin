@@ -451,6 +451,61 @@ describe_rejects_what_has_no_description :: proc(t: ^testing.T) {
 	}
 }
 
+// A table of display texts: each rule of the reader refuses its edges, with
+// a line that names the table: the language, the form of the table, its
+// enum, each row and each text, and two tables of one enum and one
+// language. Then the texts of two tables come in the order of the format.
+@(test)
+describe_refuses_a_table_of_display_texts_that_breaks_a_rule :: proc(t: ^testing.T) {
+	Case :: struct {
+		about:  string,
+		source: string,
+	}
+	HEAD :: "package p\nMode :: enum u32 {Slow = 0, Fast = 1}\nOther :: enum u32 {Low = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"
+	// One byte past the bound, and the bound: 25 and 24 bytes.
+	LONG :: "aaaaaaaaaaaaaaaaaaaaaaaaa"
+	LONGEST :: "bbbbbbbbbbbbbbbbbbbbbbbb"
+	#assert(len(LONG) == module.MEMBER_TEXT_CAPACITY + 1 && len(LONGEST) == module.MEMBER_TEXT_CAPACITY)
+	cases := [?]Case {
+		{"a language that the format does not have", HEAD + "@(rodata, member_texts = \"french\")\nt := #partial [Mode]string{.Slow = \"lent\"}\n"},
+		{"a language in another case", HEAD + "@(rodata, member_texts = \"English\")\nt := #partial [Mode]string{.Slow = \"slow\"}\n"},
+		{"a language that is no text", HEAD + "@(rodata, member_texts = 1)\nt := #partial [Mode]string{.Slow = \"slow\"}\n"},
+		{"a table that is a slice", HEAD + "@(rodata, member_texts = \"english\")\nt := []string{\"slow\"}\n"},
+		{"a table of numbers", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]i64{.Slow = 1}\n"},
+		{"a table with no value", HEAD + "@(rodata, member_texts = \"english\")\nt: [Mode]string\n"},
+		{"a table of an enum of no export", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Other]string{.Low = \"low\"}\n"},
+		{"a table of a type that is no enum", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [4]string{0 = \"low\"}\n"},
+		{"a row that is no member", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{.Medium = \"medium\"}\n"},
+		{"a row with no member name", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{\"slow\"}\n"},
+		{"a row of a name, not a text", HEAD + "S :: \"slow\"\n@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{.Slow = S}\n"},
+		{"an empty text", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{.Slow = \"\"}\n"},
+		{"a text past its bound", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{.Slow = \"" + LONG + "\"}\n"},
+		{"a text with an escape", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{.Slow = \"sl\\tow\"}\n"},
+		{"a text with a control character", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{.Slow = `sl\x01ow`}\n"},
+		{"two tables of one enum and one language", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{.Slow = \"slow\"}\n@(rodata, member_texts = \"english\")\nu := #partial [Mode]string{.Slow = \"sluggish\"}\n"},
+	}
+	for item in cases {
+		list := make([dynamic]Export_Description, context.temp_allocator)
+		testing.expectf(t, !describe_source("case.odin", item.source, &list), "%s", item.about)
+	}
+	// The success comes last: two tables, one of a text of the largest
+	// length, read in the order of the enum, the member and the language.
+	longest := LONGEST
+	source := "package p\nMode :: enum u32 {Slow = 0, Fast = 1}\nLevel :: enum u8 {Low = 1, High = 2}\n// f sets x.\n@(export)\nf :: proc \"c\" (level: Level, mode: Mode) -> i64 {return 0}\n" +
+		"@(rodata, member_texts = \"english\")\nlevels := #partial [Level]string{.High = \"high!\", .Low = \"" + LONGEST + "\"}\n" +
+		"@(rodata, member_texts = \"english\")\nmodes := [Mode]string{.Fast = \"Fast 2x\", .Slow = \"Slow\"}\n"
+	list := make([dynamic]Export_Description, context.temp_allocator)
+	texts: []Member_Text_Description
+	if !testing.expect(t, describe_source("case.odin", source, &list, nil, nil, nil, &texts)) || !testing.expect_value(t, len(texts), 4) {
+		return
+	}
+	english := module.Language.English
+	testing.expect_value(t, texts[0], Member_Text_Description{1, 0, english, longest})
+	testing.expect_value(t, texts[1], Member_Text_Description{1, 1, english, "high!"})
+	testing.expect_value(t, texts[2], Member_Text_Description{2, 0, english, "Slow"})
+	testing.expect_value(t, texts[3], Member_Text_Description{2, 1, english, "Fast 2x"})
+}
+
 // The enum of an export, its getter and its optional parameters: each rule
 // of the reader refuses its edges, with a line that names the export. A
 // getter that the attribute names and that is no export, or that gives

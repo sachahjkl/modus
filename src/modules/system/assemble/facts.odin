@@ -58,6 +58,7 @@ WRITER_REFUSAL_NAMES := [module_file_writer.Refusal]string {
 	.Record_Stream_Place_Not_Writable  = "Record_Stream_Place_Not_Writable",
 	.Record_Streams_Not_Valid     = "Record_Streams_Not_Valid",
 	.Enum_Not_Valid               = "Enum_Not_Valid",
+	.Member_Text_Not_Valid        = "Member_Text_Not_Valid",
 }
 
 // A module file written whole.

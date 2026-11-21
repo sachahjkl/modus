@@ -50,7 +50,7 @@ table_count :: proc "contextless" (count: int, problem: information.Problem, err
 		return errors.fail(error, -1, .Absent, .Modules, 1)
 	case .Refused:
 		return errors.fail(error, -3, .Refused, .None, 0, 0, 0, i64(problem.value))
-	case .Header, .Table, .Segment, .Entry, .Export, .Text, .Function, .Record, .Slot, .Direction, .Enum:
+	case .Header, .Table, .Segment, .Entry, .Export, .Text, .Function, .Record, .Slot, .Direction, .Enum, .Member_Text:
 		// Each of these is a fault of the module file.
 	}
 	return errors.fail(error, -2, .Malformed, .None, 1, i64(problem.kind), 0, i64(problem.offset))

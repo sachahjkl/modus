@@ -38,10 +38,37 @@ A member has two things, kept apart: its **name**, which is code, and its **disp
 - **The texts are a table of the module file, apart from the enum.** Each row is a member and a language, and holds one text. A module of the system gives the texts of one language, English, today. A translation is then one more set of rows for another language, which a module or a later text module gives, with no change of the code, of the names or of the format. The reader picks the row of the language of the principal, else English, else the name.
 - **The completion shows both.** It lists `.fourteen_eighths   1.75`, and inserts the name: what a line holds is never a display text.
 
+The built form:
+
+- **The table `Member_Texts`** (table 18, format version 7) holds one `module.Member_Text` of 24 bytes for each row: the index of the enum in `Enums`, the number of the member in that enum from 0, the language, and the text in the string table. The rows are in the order of the enum, then the member, then the language, so two rows for one member and one language are two equal keys, and a reader finds a row by a binary search. The file has the table when a module gives a text.
+- **The language is a closed set**, `module.Language`, a byte with one member today: `English = 1`. A translation adds a member and rows; the format and each reader stay. The byte 0 names no language, so a row of zeros is refused.
+- **A display text** is 1 to `module.MEMBER_TEXT_CAPACITY` (24) bytes of UTF-8 with no control character (`text_encoding.text_valid`): the bytes of one button of a row of the palette. 24 bytes hold "1.375" and the longest word of a translation of the settings.
+- **The check**, `module.member_texts_check`, refuses a row that names no enum (`No_Enum`) or no member of its enum (`No_Member`), a text that is empty, past its bound, outside the string table or not a text (`Bad_Text`), a language byte that names no member (`Bad_Language`), a reserved byte that is not 0 (`Bad_Reserved`), and a row that is not after the row before it (`Twice` for an equal key, `Out_Of_Order` for a smaller one). The writer of module files refuses the same parts with `Member_Text_Not_Valid`, and the check of the manual gives the problem kind `Member_Text`. The check of a replacement does not compare the texts: a text is not a part of the contract of a call.
+- **The source: a declared table, apart from the enum.** A module declares an enumerated array of texts with the attribute `member_texts`, whose value is the language:
+
+  ```odin
+  @(rodata, member_texts = "english")
+  scale_texts := #partial [scale_factor.Scale]string {
+  	.Ten_Eighths = "1.25",
+  	.Eleven_Eighths = "1.375",
+  }
+  ```
+
+  The compiler checks each member and the type, so a renamed member breaks the build of the table and not a reader at run time. The describe step reads the table from the syntax tree: the enum must be the type of an Enum parameter or result of an export of the module, each text a string literal with no escape. A table for another language is one more declaration with another value of the attribute. The variable is data in the read-only segment; no code reads it.
+- **The settings** give texts for the scale (`1.25` to `2`), the subpixel order (`RGB`, `BGR`), the pointer theme (`owner`, `system`) and the keyboard layout (`US`): the members whose name is not the word that a principal reads.
+- **The readers.** `module.member_display_text` gives the text of a member in a language, else its English text, else its name. The language of the principal is English until the interface in the language of the principal exists: each reader passes `module.Language.English` through one constant (`PRINCIPAL_LANGUAGE` of the console).
+  - **The palette**: the button of a member and the name of its entry, "settings.set scale to 1.75", say the display text; the line of the entry, `settings.set(scale = .fourteen_eighths)`, says the name. The compositor takes a value name and the name of a `Provider_Setting` entry as a text of UTF-8 with no control character, no more as ASCII only, so a translated text passes.
+  - **The completion** lists the name, with the display text at the right of its row, and inserts the name. A member with no display text has the name of its enum at the right: "member of Font".
+  - **The candidates of a form field** stay the names: the field holds what a line types.
+- **No line types a display text.** The evaluator of Lex and the call of the tool read a member by its name only; "1.75" is a number, and `.1_75` is no name of a member.
+
 Refused:
 - **A member named by its display text** (`.1_75`, `.scale_1_75`). The name then carries a text for the principal, and a translation would change the code.
 - **The display text in the enum, beside the member in the source of Odin.** The text then lives in the code, and a translation edits each module.
 - **A display text that a line can type.** Two names for one member, and a line that means another thing in another language.
+- **The texts in an attribute of the setter or of the getter** (`member_texts = "scale.ten_eighths = 1.25, ..."`). The compiler checks no member of a text in a string, and the texts of an enum that two exports share would be given twice.
+- **The texts as fields of `Member`.** One language only, and a translation would change the record of each member, so the format.
+- **A row for each member, with an empty text for no text.** Most members need no text; an absent row says it with no byte.
 
 ## The refused forms
 
@@ -72,14 +99,16 @@ Refused:
   - **Refused: the getters on the first thread.** A slow service held the keys for 1 s for each row, and a direct getter that loops froze them for good.
   - **Refused: to clear the marks at each open.** The marks of the last refresh stay until the getters answer, so a mark does not blink at each open; a getter that gives no member removes its mark.
 - **A name in a line of the palette is a name of Lex.** The line of a row is built from the name of the export, of its service and of its parameter, which another party wrote in its module file: `h.f(a = .x)`. The console makes no command of an export whose name or a name of a parameter is no name of Lex (`lex_parser.name_valid`), so a parameter named `a=shutdown(),b` cannot put a call of its own in that line. A member name is checked by `module.enum_type`.
-- **The flag of the compiler.** `log_fact`, `enum_getters` and `optional_parameters` are custom attributes that the compiler ignores with one flag (`foundation.CUSTOM_ATTRIBUTES_FLAG`); the tool reads them from the syntax tree.
+- **The flag of the compiler.** `log_fact`, `enum_getters`, `optional_parameters` and `member_texts` are custom attributes that the compiler ignores with one flag (`foundation.CUSTOM_ATTRIBUTES_FLAG`); the tool reads them from the syntax tree.
 
 ## State
 
-Built: the type Enum and the tables of the format, their checks (`module.enum_type`, `module.function_enums_check`, the manual's check of a file, the writer of module files, the check of a replacement), the describe step with the two attributes, the border `enum_word.member_of_argument`, the console (the member of Lex, its check, the optional parameters, the completion, the drawer), the call of the tool (`modustool call` with named arguments and members), the palette rows with their getters, and `settings.set` with its seven getters, `set_time_zone` and `time_zone`.
+Built: the type Enum and the tables of the format, their checks (`module.enum_type`, `module.function_enums_check`, the manual's check of a file, the writer of module files, the check of a replacement), the describe step with the two attributes, the border `enum_word.member_of_argument`, the console (the member of Lex, its check, the optional parameters, the completion, the drawer), the call of the tool (`modustool call` with named arguments and members), the palette rows with their getters, and `settings.set` with its seven getters, `set_time_zone` and `time_zone`. The display text of a member: the table `Member_Texts` and the language (format version 7), its check in the format, the writer and the manual, the declared tables of the source and their attribute `member_texts`, the texts of the settings, the palette rows and the completion that show them, and the rule of the compositor that takes a display text in a value name.
 
 Left:
 
 - An import declaration of an export with an Enum parameter: the tool reads no enum in a `foreign` declaration yet, so an importer cannot declare one.
 - A record field of an enum of a module stays a plain Integer: the field kind Status names contract enums only.
 - The manual shows an Enum parameter by the name of its enum; a page that lists its members waits for a need.
+- The language of the principal: each reader passes English. The interface in the language of the principal chooses the language, and adds a member to `module.Language` and the rows of its texts.
+- The candidates of an Enum field of a form of the palette are the names, with no display text: a candidate holds a name only.

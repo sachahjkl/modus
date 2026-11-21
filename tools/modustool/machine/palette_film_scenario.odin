@@ -188,7 +188,8 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Film_Type, text = ":font"},
-	{kind = .Wait, text = " for \":font\": font (setting)"},
+	// The entries of the scale say "1.75", which ":font" does not match.
+	{kind = .Wait, text = " for \":font\": font (setting)", fails_on = "settings.set scale to fourteen_eighths"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE},
 	{kind = .Key, text = "right"},
 	{kind = .Wait, text = "compositor: the palette chooses the value spleen of font"},

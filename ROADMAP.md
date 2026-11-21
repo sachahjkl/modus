@@ -8,7 +8,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **The display text of a member, apart from its name.** The palette and the completion show "1.75" for the scale `.fourteen_eighths`, from a table of texts of the module file by member and language, and a line still types the name, so a translation never changes the code. [Design](src/md/features/enum_parameters.md)
 - **Trees with a hash, and the garbage collector of `module_files`.** A tree that no longer changes has a tree hash, so an output or a source is named as a module is, and the store `module_files` of the machine keeps only what a kept plan, the signed system or a disk grant reaches. [Design](src/md/features/declarations.md)
 - **Declarations in the console.** Lex, the language of the console, takes anonymous functions and a reference by hash, and a sandboxed evaluation process reads a declaration `.lex` lazily, with no effect. A principal then describes a system or a project, with its console, as one value. [Design](src/md/features/declarations.md)
 - **The services `plans` and `recipes`.** A principal applies a plan in one atomic step with `plans.apply` after it sees the difference of its grants, and goes back with `plans.rollback()`. A recipe names how each output is made, and `recipes.build` takes its realisation from the cache or builds it in a sandbox. [Design](src/md/features/recipes.md)
