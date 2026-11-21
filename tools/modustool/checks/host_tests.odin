@@ -349,4 +349,5 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/machine_mesh",
 	foundation.SOURCE_FOLDER_CONTRACT + "/data_evolution",
 	foundation.SOURCE_FOLDER_CONTRACT + "/agent_bridge",
+	foundation.SOURCE_FOLDER_CONTRACT + "/software_machine",
 }
