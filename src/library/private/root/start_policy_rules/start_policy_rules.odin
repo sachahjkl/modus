@@ -22,7 +22,7 @@ Stage :: enum u8 {
 Start_Facts :: struct {
 	sender_runs:               bool, // The sender is the start policy that the root service waits for.
 	name_runs:                 bool, // A process of the name runs.
-	name_is_a_start_policy:    bool, // The role of the name holds Start_Policy: only the root service starts it.
+	name_is_a_start_policy:    bool, // The start grant set of the name holds Start_Policy: only the root service starts it.
 	name_is_of_a_test_machine: bool, // shortage or operation_fuzzing, which take the machine.
 	name_in_image:             bool, // The boot image holds a module of the name.
 }

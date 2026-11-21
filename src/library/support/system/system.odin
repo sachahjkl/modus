@@ -1140,7 +1140,7 @@ thread_placement_read :: proc "contextless" (thread: Handle, number: u64, error:
 // for the limit, the limit for the set), so read the placement first to
 // change one of them. A set with no processor of the machine is refused.
 // A thread that runs on a processor that left its set leaves it at the
-// end of its turn at the latest.
+// end of its stint at the latest.
 //
 // ```odin
 // status := system.thread_placement_write(worker.handle, 0, {processors = 0b0011})

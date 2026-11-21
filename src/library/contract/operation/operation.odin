@@ -1327,12 +1327,12 @@ Operation :: enum u32 {
 // machine; `System_Report.strategy` and `Processor_Report.strategy` show it.
 // A change gives each thread the zero values of the new strategy: each
 // thread starts equal (docs/SCHEDULING.md, "The change at run time").
-// Each strategy ends a turn after the time slice of 10 ticks at most.
+// Each strategy ends a stint after the time slice of 10 ticks at most.
 Strategy :: enum u32 {
 	None        = 0, // No strategy: only in a report of a kernel that has none.
 	Round_Robin = 1, // A queue in order, a time slice of 10 ms, no wake preemption. The reference: it reads no weight and no request.
 	// Virtual time and weights: the least virtual time runs (the idea of CFS). A target latency of 6 ms divided by
-	// weight, a least turn of 0.75 ms, a sleeper credit of 3 ms, and wake preemption with a granularity of 1 ms.
+	// weight, a least stint of 0.75 ms, a sleeper credit of 3 ms, and wake preemption with a granularity of 1 ms.
 	Fair        = 2,
 	// Earliest eligible virtual deadline first: weights for the share, the request for the delay. A thread is
 	// eligible when it is owed time (its lag is not negative); of those, the earliest virtual deadline runs.
@@ -1395,7 +1395,7 @@ REQUEST_LIMIT :: 100_000
 // limit](term:new-thread-weight-limit)).
 //
 // Example: `{weight = 256, request = 500}` gives the thread a quarter of the
-// share of a thread of the full weight, and asks for turns of 500
+// share of a thread of the full weight, and asks for stints of 500
 // microseconds under EEVDF.
 Thread_Schedule :: struct {
 	weight:       u32, // From 1 to the weight limit of the thread. The share of the thread under the strategies that use weights. 0 in a write: the weight that the thread has, or the limit in a write through the machine handle.
@@ -1543,7 +1543,7 @@ PLACEMENT_PROCESSOR_CAPACITY :: 64
 // limit that the holder of **Schedule** wrote stays.
 //
 // A thread whose processor left its set leaves that processor at the end
-// of its turn at the latest: the write sends no interrupt.
+// of its stint at the latest: the write sends no interrupt.
 //
 // Example: `{processors = 0b0100}` keeps a thread on the processor 2.
 Thread_Placement :: struct {
@@ -2197,7 +2197,7 @@ Thread_Control_Command :: enum u64 {
 	Read_Placement       = 12,
 	// Reads a Thread_Placement at the address: only the processors of the
 	// set run the thread from now on, also when it runs now: it then
-	// leaves a processor that is not in the set at the end of its turn at
+	// leaves a processor that is not in the set at the end of its stint at
 	// the latest. Through 0 or a thread handle (with Control) the write
 	// only narrows: Bad_Operation for a set with a processor that the set
 	// of the thread does not have, and nothing changes; 0 keeps the set.
@@ -3249,7 +3249,7 @@ Processor_Report :: struct {
 	strategy:    Strategy, // The strategy of the run queue of the processor.
 	queued:      u32, // The threads in the run queue now.
 	picks:       u64, // Threads that a pick gave to the processor.
-	preemptions: u64, // Turns that a wake preemption ended.
+	preemptions: u64, // Stints that a wake preemption ended.
 	moves:       u64, // Threads that the processor took from the queue of another processor.
 	pick_cycles: u64, // Cycles of the cycle counter in all the picks.
 	interrupt_preemptions: u64, // Wake preemptions by an interrupt from another processor.

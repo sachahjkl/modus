@@ -67,11 +67,11 @@ tpm_service_start :: proc "contextless" () {
 		measure_memory, measure_ring, status = system.ring_create()
 	}
 	process: system.Handle
-	role := role_of("tpm")
+	start_grant_set := start_grant_set_of("tpm")
 	if status == .Ok {
 		context_grants: system.Context_Grants
 		values: system.Context_Values
-		system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(role))
+		system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set))
 		system.grant_put(&context_grants, tpm_service.SERVICE_RING, {ring_memory, {.Read, .Write}})
 		system.grant_put(&context_grants, tpm_service.SERVICE_REGION, {region_memory, {.Read, .Write}})
 		system.grant_put(&context_grants, tpm_service.SERVICE_REGISTERS, {registers, {.Read, .Write}})
@@ -97,7 +97,7 @@ tpm_service_start :: proc "contextless" () {
 	}
 	slot^ = {}
 	slot.process = process
-	slot.role = role
+	slot.start_grant_set = start_grant_set
 	slot.granted = {.Log}
 	copy(slot.name[:len(slot.name) - 1], "tpm")
 	tpm_ring, tpm_region, tpm_process = ring_memory, region_memory, slot

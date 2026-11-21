@@ -1,7 +1,7 @@
 package root
 
-// The start of a process of the boot image by its name: the role that the
-// tables of this service give the name, the services that the role needs,
+// The start of a process of the boot image by its name: the start grant set that the
+// tables of this service give the name, the services that the start grant set needs,
 // and one context whose handles each take their own slot.
 
 import info "modus:contract/boot_info"
@@ -23,7 +23,7 @@ import terminal "modus:support/terminal"
 // The mappings of a start: the storage file, the date page, the fresh
 // bytes page, the settings page, the file of a service, the debug image,
 // the disk process page and the font outlines: 8 places for the union, and
-// the largest role uses 7.
+// the largest start grant set uses 7.
 START_MAPPING_LIMIT :: 8
 
 // The work of one start: what the steps of start() build, and the handles
@@ -32,7 +32,7 @@ START_MAPPING_LIMIT :: 8
 Start_Work :: struct {
 	name:           string,
 	principal:      u64,
-	role:           Process_Role,
+	start_grant_set:           Start_Grant_Set,
 	file:           []u8,
 	entry:          ^info.Image_Entry,
 	slot:           ^Started, // The place of the process in the table. nil until start_place_take.
@@ -171,7 +171,7 @@ start_wiring_keep :: proc "contextless" (work: ^Start_Work) {
 }
 
 // start_prepare finds the file of the process, refuses a name that start()
-// does not start, reads the role, and starts the services that the role
+// does not start, reads the start grant set, and starts the services that the start grant set
 // needs first: the network service, the storage service, and the device
 // service of a client of a disk or of the network device.
 start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
@@ -192,17 +192,17 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	if name == "unlock" && (unlock_run.stage != .Starting || find("unlock") != nil) {
 		return .Bad_State
 	}
-	work.role = role_of(name)
-	grants := work.role.grants
+	work.start_grant_set = start_grant_set_of(name)
+	grants := work.start_grant_set.grants
 	// The start policy starts from start_policy_launch only: a second
 	// holder of its root ring would start and stop the processes of the
 	// machine.
 	if .Start_Policy in grants && !start_policy_starting {
 		return .Bad_Operation
 	}
-	// A role whose handles meet in one context slot does not start, before
+	// A start grant set whose handles meet in one context slot does not start, before
 	// any service starts for it.
-	if slot, twice := system.role_slot_taken_twice(grants); twice {
+	if slot, twice := system.start_grant_set_slot_taken_twice(grants); twice {
 		grant_slot_refused(name, slot)
 		return .Bad_State
 	}
@@ -279,7 +279,7 @@ start_refusal_keep :: proc "contextless" (work: ^Start_Work, record: [7]u64) {
 // start_place_take takes a free place of the table of the processes, and
 // writes there what the steps that follow read: the name, which the
 // connection to the storage service names, the principal, which the name of
-// its store carries, and the role, which the grant of each connection
+// its store carries, and the start grant set, which the grant of each connection
 // reads.
 start_place_take :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	for &item in started {
@@ -299,7 +299,7 @@ start_place_take :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	slot.reserved = true
 	copy(slot.name[:len(slot.name) - 1], work.name)
 	slot.principal = work.principal
-	slot.role = work.role
+	slot.start_grant_set = work.start_grant_set
 	return .Ok
 }
 
@@ -330,15 +330,15 @@ start_handles_close :: proc "contextless" (work: ^Start_Work) {
 	}
 }
 
-// start_grant_put writes one handle of the role into the context of the
-// process, at the context slot of system.ROLE_HANDLE_SLOTS. A handle that
-// root_ring.role_handles does not give the role is refused as a taken
+// start_grant_put writes one handle of the start grant set into the context of the
+// process, at the context slot of system.START_GRANT_SET_HANDLE_SLOTS. A handle that
+// root_ring.start_grant_set_handles does not give the start grant set is refused as a taken
 // slot, so the start follows the one mapping that the tests read. The
 // first refused slot is kept: the start then fails before the process
 // runs (start_process_load).
-start_grant_put :: proc "contextless" (work: ^Start_Work, handle: root_ring.Role_Handle, grant: system.Grant) {
-	slot := system.ROLE_HANDLE_SLOTS[handle]
-	if handle not_in root_ring.role_handles(work.role.grants) {
+start_grant_put :: proc "contextless" (work: ^Start_Work, handle: root_ring.Start_Grant_Set_Handle, grant: system.Grant) {
+	slot := system.START_GRANT_SET_HANDLE_SLOTS[handle]
+	if handle not_in root_ring.start_grant_set_handles(work.start_grant_set.grants) {
 		system.context_refusal_note(&work.grants.refusal, slot)
 		return
 	}
@@ -357,7 +357,7 @@ start_mapping_add :: proc "contextless" (work: ^Start_Work, what: string, mappin
 	work.mapping_count += 1
 }
 
-// start_context_build builds the context of the process from its role:
+// start_context_build builds the context of the process from its start grant set:
 // each step writes the handles, the values and the mappings of one part.
 start_context_build :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	if work.device_ring != 0 {
@@ -370,15 +370,15 @@ start_context_build :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		start_grant_put(work, .Device_Service, {work.driver.process, {.Read}})
 	}
 	start_values_of_the_name(work)
-	if .Tpm in work.role.grants {
+	if .Tpm in work.start_grant_set.grants {
 		tpm_grants_give(work)
 		system.value_put(&work.values, system.GRANT_VALUE_SEAL_ALLOWED, u64(tpm_seal_allowed()))
 	}
-	start_grant_put(work, .Log, log_grant(work.role))
+	start_grant_put(work, .Log, log_grant(work.start_grant_set))
 	start_store_give(work) or_return
 	start_view_give(work) or_return
 	start_rings_give(work) or_return
-	start_handles_of_the_role_give(work)
+	start_handles_of_the_start_grant_set_give(work)
 	start_pages_give(work)
 	start_service_give(work) or_return
 	return work.mappings_full ? .No_Slot : .Ok
@@ -408,7 +408,7 @@ start_values_of_the_name :: proc "contextless" (work: ^Start_Work) {
 // right Read, and its file. A process that acts for its principal connects
 // to the storage service itself.
 start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
-	grants := work.role.grants
+	grants := work.start_grant_set.grants
 	if .Store not_in grants || .Acts_For_Principal in grants {
 		return .Ok
 	}
@@ -443,9 +443,9 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 // screen says this once; each refusal here adds no line.
 start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Status) {
 	if screen_absent {
-		return .Terminal in work.role.grants ? .Bad_State : .Ok
+		return .Terminal in work.start_grant_set.grants ? .Bad_State : .Ok
 	}
-	if .Terminal in work.role.grants {
+	if .Terminal in work.start_grant_set.grants {
 		for &item in started {
 			if place_is_free(&item) && &item != work.slot {
 				work.view = &item
@@ -462,27 +462,27 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Sta
 		start_grant_put(work, .Terminal_Text, {work.shared[1], {.Read, .Write}})
 		return .Ok
 	}
-	// The start policy has no window (root_ring.role_handles), and neither
+	// The start policy has no window (root_ring.start_grant_set_handles), and neither
 	// has the run of `unlock` before it, as no compositor runs yet.
-	if .Start_Policy in work.role.grants || unlock_without_window(work.name) {
+	if .Start_Policy in work.start_grant_set.grants || unlock_without_window(work.name) {
 		return .Ok
 	}
 	work.shared[0] = system.memory_create(ring.PAGE_COUNT) or_return
 	work.slot.client = system.give(compositor, work.shared[0], {.Read, .Write}) or_return
 	// The capture face and the input face ride this ring: the compositor
 	// takes them only from the client whose record says so.
-	capture: u64 = .Screen_Capture in work.role.grants ? display.CLIENT_CAPTURE : 0
+	capture: u64 = .Screen_Capture in work.start_grant_set.grants ? display.CLIENT_CAPTURE : 0
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(work.slot.client), display.CLIENT_ADD_CAPTURE = capture}})
 	start_grant_put(work, .Display, {work.shared[0], {.Read, .Write}})
 	return .Ok
 }
 
-// start_rings_give makes the rings of the role: the root ring of a sender
+// start_rings_give makes the rings of the start grant set: the root ring of a sender
 // of root commands, the control ring of the network service, and the
 // endpoint of a process with the grant Network.
 start_rings_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Status) {
 	slot := work.slot
-	grants := work.role.grants
+	grants := work.start_grant_set.grants
 	if root_ring.root_ring_given(grants) {
 		slot.requests_memory, slot.requests = system.ring_create() or_return
 		start_grant_put(work, .Root_Ring, {slot.requests_memory, {.Read, .Write}})
@@ -499,12 +499,12 @@ start_rings_give :: proc "contextless" (work: ^Start_Work) -> (status: system.St
 	return .Ok
 }
 
-// start_handles_of_the_role_give gives the handles that a start grant names:
+// start_handles_of_the_start_grant_set_give gives the handles that a start grant names:
 // the one machine handle with a part of its rights, the records of the
 // log, the boot image, the replacement table, the client table, the
 // settings page, and the date page with the ports of the clock.
-start_handles_of_the_role_give :: proc "contextless" (work: ^Start_Work) {
-	grants := work.role.grants
+start_handles_of_the_start_grant_set_give :: proc "contextless" (work: ^Start_Work) {
+	grants := work.start_grant_set.grants
 	if .Inspect in grants {
 		work.machine_rights += {.Inspect}
 	}
@@ -551,11 +551,11 @@ start_handles_of_the_role_give :: proc "contextless" (work: ^Start_Work) {
 }
 
 // start_pages_give maps the pages that each process reads, and those of its
-// role: the date page and its fresh bytes page, the debug image, the disk
+// start grant set: the date page and its fresh bytes page, the debug image, the disk
 // process page, and for a process with a surface the settings page and the
 // font outlines, read-only.
 start_pages_give :: proc "contextless" (work: ^Start_Work) {
-	grants := work.role.grants
+	grants := work.start_grant_set.grants
 	date_page_give(work.mappings[:], &work.mapping_count, &work.values)
 	fresh_bytes_page_give(work.slot, work.mappings[:], &work.mapping_count, &work.values)
 	// Each process: whether the machine runs for a measure. The boot image
@@ -584,7 +584,7 @@ start_pages_give :: proc "contextless" (work: ^Start_Work) {
 // to read the descriptions of its exports.
 start_service_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Status) {
 	entry := work.entry
-	if .Serve not_in work.role.grants || entry.offset % system.PAGE_SIZE != 0 || work.mappings_full {
+	if .Serve not_in work.start_grant_set.grants || entry.offset % system.PAGE_SIZE != 0 || work.mappings_full {
 		return .Ok
 	}
 	if work.mapping_count >= len(work.mappings) {
@@ -622,12 +622,12 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	// other process with a root ring (Connect, Principals, Debugger) holds
 	// no handle of this service for its budget: the handle table of this
 	// service holds one handle for each process that it keeps one for.
-	work.wiring.keep_budget = root_ring.sender_allowed(.Wire, work.role.grants)
+	work.wiring.keep_budget = root_ring.sender_allowed(.Wire, work.start_grant_set.grants)
 	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, random.values_with_seed(&process_generator, work.values.values), process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring)
 	if status == .Ok {
 		// A process with a window of its own: the compositor ties the time
 		// to the ring of the window that Client_Add gave.
-		if .Terminal not_in work.role.grants && work.slot.client != 0 {
+		if .Terminal not_in work.start_grant_set.grants && work.slot.client != 0 {
 			if !system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Started), values = {0 = u64(work.slot.client), 1 = started_at}}) {
 				// A measure, not a part of the start: the window runs, and
 				// has no line of its start.
@@ -663,7 +663,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 // start_finish records what the process received, and starts its terminal.
 start_finish :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	slot := work.slot
-	grants := work.role.grants
+	grants := work.start_grant_set.grants
 	slot.driver = work.driver
 	slot.hash = work.entry.hash
 	slot.granted += {.Log}

@@ -263,8 +263,8 @@ FONT_OUTPUT :: SOURCE_FOLDER_SUPPORT + "/graphics/font.odin"
 // The sizes 12x24, 16x32 and 32x64 of Spleen, which only the boot display draws.
 BOOT_DISPLAY_FONT_OUTPUT :: SOURCE_FOLDER_SUPPORT + "/bootscreen/spleen_sizes.odin"
 
-// The table of the roles of the root service (process_roles_check.odin).
-ROOT_ROLES_FILE :: SYSTEM_MODULE_SOURCES + "root/roles.odin"
+// The table of the start grant sets of the root service (start_grant_sets_check.odin).
+ROOT_START_GRANT_SETS_FILE :: SYSTEM_MODULE_SOURCES + "root/start_grant_sets.odin"
 
 SYSTEM_GRANTS_FILE :: SYSTEM_LIBRARY_FOLDER + "/grants.odin"
 

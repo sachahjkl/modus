@@ -7,7 +7,7 @@
 // checks the answers against the forms of the kernel operations.
 //
 // **Start**: only `operation_fuzzing` starts it, from the boot image of the
-// operation sequences. Its row of `process_roles` has no grant. It writes
+// operation sequences. Its row of `start_grant_sets` has no grant. It writes
 // nothing on the log, unless a step writes there.
 package operation_sequence_runner
 

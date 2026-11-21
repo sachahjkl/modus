@@ -152,7 +152,7 @@ Processor :: struct {
 	// kernel entry reads already. The control path writes it (atomic).
 	observed_kinds: u32,
 	table:         u64, // The page table that the processor uses. Only this processor writes it; others read it (unmap).
-	slice_left:    u64, // Ticks left of the time slice, the longest turn under each strategy; 0: the turn ends (strategy.odin).
+	slice_left:    u64, // Ticks left of the time slice, the longest stint under each strategy; 0: the stint ends (strategy.odin).
 	charged_from:  u64, // The cycle counter when the kernel last counted the time of the current thread (limit.odin).
 	// The steal counter of the record below when the kernel last counted
 	// the time of the current thread, in nanoseconds (stolen_time.odin).
@@ -164,10 +164,10 @@ Processor :: struct {
 	// processor writes it (atomic); a processor that started too late never
 	// sees it, and is reset before its record is freed.
 	start_accepted: bool,
-	turn_start:    u64, // The cycle counter when the processor picked its current thread.
+	stint_start:   u64, // The cycle counter when the processor picked its current thread.
 	// The scheduler (strategy.odin): counts of this processor only.
 	picks:         u64, // Threads that a pick gave to this processor.
-	preemptions:   u64, // Turns that a wake preemption ended.
+	preemptions:   u64, // Stints that a wake preemption ended.
 	moves:         u64, // Threads that this processor took from the queue of another processor.
 	pick_cycles:   u64, // The cycles of all the picks.
 	// Another processor sets it: a thread that woke preempts the thread

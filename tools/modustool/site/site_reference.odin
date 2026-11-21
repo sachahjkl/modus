@@ -64,7 +64,7 @@ Site_Reference :: struct {
 	start_grants:     []foundation.Enumeration_Member, // Grant of src/library/contract/start_grant: what a process receives at its start.
 	root_grants:      []foundation.Enumeration_Member, // Root_Grant of src/library/support/system: what the root service records and can revoke.
 	root_grant_names: map[string]string,
-	process_roles:    []foundation.Role_Row, // process_roles of the root service: the whole role of each process.
+	start_grant_sets:    []foundation.Start_Grant_Set_Row, // start_grant_sets of the root service: the whole start grant set of each process.
 	fixed_ranges:     []foundation.Enumeration_Member,
 	console_commands: []foundation.Console_Command_Entry,
 	modules:          []Site_Module,
@@ -139,7 +139,7 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	errors_text := foundation.read_text_file(SITE_ERRORS_FILE) or_return
 	fixed_text := foundation.read_text_file(SITE_FIXED_ADDRESSES_FILE) or_return
 	grants_text := foundation.read_text_file(foundation.SYSTEM_GRANTS_FILE) or_return
-	roles_text := foundation.read_text_file(foundation.ROOT_ROLES_FILE) or_return
+	start_grant_sets_text := foundation.read_text_file(foundation.ROOT_START_GRANT_SETS_FILE) or_return
 	start_grant_text := foundation.read_text_file(SITE_START_GRANT_FILE) or_return
 	problem: string
 
@@ -170,13 +170,13 @@ site_reference_read :: proc(site: ^Site) -> bool {
 	reference.root_grant_names, problem = foundation.names_table_read(grants_text, foundation.SYSTEM_GRANTS_FILE, "root_grant_names")
 	note(&problems, problem)
 	system_parts: []string
-	reference.process_roles, system_parts, problem = build.process_roles_read(roles_text)
+	reference.start_grant_sets, system_parts, problem = build.start_grant_sets_read(start_grant_sets_text)
 	note(&problems, problem)
 	// A page shows each grant of a row as a link to its row, and a page of
-	// each process its role: a grant of no member, or a process with no
+	// each process its start grant set: a grant of no member, or a process with no
 	// row, stops the command, as it stops the build.
 	if problem == "" {
-		for item in build.process_roles_problems(reference.process_roles, system_parts, foundation.module_builds[:], foundation.ROOT_ROLES_FILE) {
+		for item in build.start_grant_sets_problems(reference.start_grant_sets, system_parts, foundation.module_builds[:], foundation.ROOT_START_GRANT_SETS_FILE) {
 			note(&problems, item)
 		}
 	}
@@ -557,10 +557,10 @@ site_text_cell :: proc(b: ^strings.Builder, text: string, class: string = "") {
 	strings.write_string(b, "</td>")
 }
 
-// site_role_terms_cell writes the other terms of a role as the source
+// site_start_grant_set_terms_cell writes the other terms of a start grant set as the source
 // writes them, as code, or "none". The code breaks at its spaces, so a
 // long list of services goes on more lines and is never cut.
-site_role_terms_cell :: proc(b: ^strings.Builder, terms: string) {
+site_start_grant_set_terms_cell :: proc(b: ^strings.Builder, terms: string) {
 	if terms == "" {
 		strings.write_string(b, "<td>none</td>")
 		return
@@ -739,7 +739,7 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 	// The grants.
 	{
 		b := strings.builder_make(context.temp_allocator)
-		strings.write_string(&b, "<h1>Grants of the root service</h1>\n<p>The root service starts the processes and gives each one only the handles of its role.</p>\n<h2 id=\"at-start\">What a process receives at its start</h2>\n")
+		strings.write_string(&b, "<h1>Grants of the root service</h1>\n<p>The root service starts the processes and gives each one only the handles of its start grant set.</p>\n<h2 id=\"at-start\">What a process receives at its start</h2>\n")
 		site_about_paragraph(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.start_grants_about, SITE_START_GRANT_FILE, "Grant")
 		site_enumeration_table(site, &b, site_page_file(SITE_GRANTS_FOLDER), reference.start_grants, SITE_START_GRANT_FILE, "start-grant", "What a process receives at its start", {"Place", "Grant", "What the root service gives"}, .Grant)
 		site_source_line(site, &b, SITE_START_GRANT_FILE)
@@ -755,12 +755,12 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 		}
 		site_table_end(&b, grants_table)
 		site_source_line(site, &b, foundation.SYSTEM_GRANTS_FILE)
-		strings.write_string(&b, "<h2 id=\"processes\">The grants of each process</h2>\n<p>One row for each process of the boot image: its start grants, each a link to its row in the first table of this page, and the other terms of its role. A build stops when a process has no row.</p>\n")
+		strings.write_string(&b, "<h2 id=\"processes\">The grants of each process</h2>\n<p>One row for each process of the boot image: its start grants, each a link to its row in the first table of this page, and the other terms of its start grant set. A build stops when a process has no row.</p>\n")
 		// The processes and the grants are lists of names: they break
 		// between the names, so the column of the reasons keeps its room.
 		// The terms are code that breaks at its spaces.
 		processes_table := site_table_start(&b, "Grants of each process", {{"Process", .List}, {"Grants", .List}, {"Other terms", .Prose}, {"Why, as the root service says", .Prose}}, {.Module, .Grant, .None, .None})
-		for item in reference.process_roles {
+		for item in reference.start_grant_sets {
 			// Each row is a link target, named by its process.
 			fmt.sbprintf(&b, "<tr id=\"processes-%s\" data-outline=\"", foundation.text_slug(item.name))
 			foundation.html_escape(&b, item.name)
@@ -769,13 +769,13 @@ site_generated_tables_add :: proc(site: ^Site, entries: ^[dynamic]Site_Reference
 			strings.write_string(&b, "<td>")
 			site_grant_set_write(site, &b, site_page_file(SITE_GRANTS_FOLDER), item.grants, false)
 			strings.write_string(&b, "</td>")
-			site_role_terms_cell(&b, item.terms)
+			site_start_grant_set_terms_cell(&b, item.terms)
 			site_comment_cell(site, &b, site_page_file(SITE_GRANTS_FOLDER), item.comment)
 			strings.write_string(&b, "</tr>\n")
 		}
 		site_table_end(&b, processes_table)
-		site_source_line(site, &b, foundation.ROOT_ROLES_FILE)
-		add(site, entries, site_page_file(SITE_GRANTS_FOLDER), "Grants of the root service", fmt.tprintf("The %d grants that the root service of %s gives at the start of a process, the %d that it records, and the role of each process.", len(reference.start_grants), len(reference.root_grants), SITE_SYSTEM_NAME), "What the root service gives each process at its start, and what it records and can revoke.", foundation.ROOT_ROLES_FILE, len(reference.start_grants) + len(reference.root_grants), .Grant, &b, foundation.ROOT_ROLES_FILE, SITE_START_GRANT_FILE, foundation.SYSTEM_GRANTS_FILE)
+		site_source_line(site, &b, foundation.ROOT_START_GRANT_SETS_FILE)
+		add(site, entries, site_page_file(SITE_GRANTS_FOLDER), "Grants of the root service", fmt.tprintf("The %d grants that the root service of %s gives at the start of a process, the %d that it records, and the start grant set of each process.", len(reference.start_grants), len(reference.root_grants), SITE_SYSTEM_NAME), "What the root service gives each process at its start, and what it records and can revoke.", foundation.ROOT_START_GRANT_SETS_FILE, len(reference.start_grants) + len(reference.root_grants), .Grant, &b, foundation.ROOT_START_GRANT_SETS_FILE, SITE_START_GRANT_FILE, foundation.SYSTEM_GRANTS_FILE)
 	}
 
 	// The fixed ranges.

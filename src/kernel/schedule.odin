@@ -249,10 +249,10 @@ queue_pushes :: proc "contextless" () -> (sum: u32) {
 // kick makes a processor look at the queues: the home of a thread that
 // became ready if it is idle, else another idle processor, which takes the
 // thread. With no idle processor, a thread that preempts (the strategy of
-// its home said so, under its run lock) ends the turn of the thread that
+// its home said so, under its run lock) ends the stint of the thread that
 // runs on its home: on this processor at once, on another one by `preempt`
 // and an interrupt (the case VECTOR_WAKE of kernel_interrupt). The thread
-// that runs there can have changed since the decision: then the turn of
+// that runs there can have changed since the decision: then the stint of
 // another thread ends, which costs one pass through schedule.
 //
 // `thread` is the thread that became ready. An idle processor that is not
@@ -334,7 +334,7 @@ thread_ready_held :: proc "contextless" (thread: ^Thread) -> (queued: bool, pree
 		// through schedule are paid by the thread that runs there. A
 		// thread of the same process preempts with no limit: its process
 		// pays. With no preemption the woken thread waits at most for a
-		// tick, where its strategy ends the turn when it says so.
+		// tick, where its strategy ends the stint when it says so.
 		other := threads[running].process != thread.process
 		now := intrinsics.atomic_load(&time_milliseconds) + 1
 		if !other || home.preempted_at != now {
@@ -389,7 +389,7 @@ thread_queue :: proc "contextless" (thread: ^Thread) {
 // now: from the busiest other queue when its load is above the threads
 // that wait in the own queue, else from the own queue. So the threads that
 // are ready move to the processors that have less, and each one gets its
-// turn on all the processors, as with one queue. 0: none.
+// stint on all the processors, as with one queue. 0: none.
 //
 // A queue can hold only threads that this processor cannot take: threads
 // whose budget has no time in this period, or threads whose placement does
@@ -521,7 +521,7 @@ schedule :: proc "contextless" () -> ! {
 		}
 		ended := intrinsics.atomic_load(&thread.stop_requested)
 		// The strategy sees the thread while it is still the current
-		// thread of its home: the last part of its turn, and its lag.
+		// thread of its home: the last part of its stint, and its lag.
 		queue := &run_queues[home]
 		if !thread.placed {
 			queue_strategy_ready(queue, home, thread, .New)
@@ -591,7 +591,7 @@ schedule :: proc "contextless" () -> ! {
 		if index := schedule_pick(cpu); index != 0 {
 			thread := &threads[index]
 			cpu.charged_from = cycles_now()
-			cpu.turn_start = cpu.charged_from
+			cpu.stint_start = cpu.charged_from
 			stolen_time_run_start(cpu)
 			cpu.slice_left = TIME_SLICE
 			// The registers of this processor hold the thread that it left,
@@ -628,7 +628,7 @@ schedule :: proc "contextless" () -> ! {
 		// an interrupt. The flag is set before the last look at the queues.
 		// A queue can keep threads whose budget has no time in this period:
 		// the start of the next period wakes the idle processors (kick_all).
-		cpu.preempt_from = 0 // No next thread: the preemption that ended the last turn is not counted.
+		cpu.preempt_from = 0 // No next thread: the preemption that ended the last stint is not counted.
 		intrinsics.atomic_store(&cpu.idle, true)
 		if queue_pushes() != pushes {
 			intrinsics.atomic_store(&cpu.idle, false)

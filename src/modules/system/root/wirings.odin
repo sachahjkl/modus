@@ -478,7 +478,7 @@ end_allowed :: proc "contextless" (work: ^Wiring_Work, end: output.Wiring_End, p
 	asker := work.asker
 	facts := output.End_Facts {
 		started_by_asker         = process.asker == asker,
-		asker_is_start_policy    = .Start_Policy in asker.role.grants,
+		asker_is_start_policy    = .Start_Policy in asker.start_grant_set.grants,
 		started_by_start_policy  = process.asked_by_start_policy,
 		asker_acts_for_principal = .Acts_For_Principal in grants_held(asker),
 		process_is_a_service     = process.service.head != nil,
@@ -502,7 +502,7 @@ wiring_row_resolve :: proc "contextless" (work: ^Wiring_Work, number: u32, first
 	found := i64(number)
 	// A start policy reads no stream and wires no process that runs: the
 	// root service holds it, whatever list the start policy writes.
-	if .Start_Policy in work.asker.role.grants {
+	if .Start_Policy in work.asker.start_grant_set.grants {
 		if field, allowed := output.start_policy_row_allowed(work.form, row.writer_end, row.reader_end); !allowed {
 			return wiring_refuse(work, .No_Right, .No_Grant, .Wirings, i64(field), 0, 0, found)
 		}

@@ -134,7 +134,7 @@ Do not use: per-CPU data.
 
 A switch of threads is the moment when a processor leaves one thread and takes another one, or the same one again, from a run queue (`schedule`).
 
-A processor leaves a thread when the thread waits, when its turn ends, at a preemption or at a stop. The kernel saves the extended state of the thread that it leaves and restores the extended state of the thread that it takes there, and nowhere else: a kernel entry saves no vector register, because the kernel has no vector code. A kernel event `Switch` records each switch for a process with the right Events.
+A processor leaves a thread when the thread waits, when its stint ends, at a preemption or at a stop. The kernel saves the extended state of the thread that it leaves and restores the extended state of the thread that it takes there, and nowhere else: a kernel entry saves no vector register, because the kernel has no vector code. A kernel event `Switch` records each switch for a process with the right Events.
 
 The design: `docs/ARCHITECTURE.md`, "The extended state of the processor".
 
@@ -714,21 +714,21 @@ The design: `docs/SCHEDULING.md`, "2. What this system takes".
 
 Do not use: scheduler class, policy, scheduling algorithm, governor.
 
-### Turn
+### Stint
 
-A turn is the time that a thread runs on a processor from its pick to the moment when it leaves: it waits, its budget has no time, or its strategy ends the turn.
+A stint is the time that a thread runs on a processor from its pick to the moment when it leaves: it waits, its budget has no time, or its strategy ends the stint.
 
-A turn is not a state of a thread: a wake preemption ends a turn, and the thread stays ready.
+A stint is not a state of a thread: a wake preemption ends a stint, and the thread stays ready.
 
-Do not use: quantum, timeslice (for this).
+Do not use: quantum, timeslice (for this), turn (for this; a turn is a unit of angle).
 
 ### Time slice
 
-The time slice is the longest turn under each strategy: 10 ticks.
+The time slice is the longest stint under each strategy: 10 ticks.
 
-At the end of a time slice the processor passes through the balance between the processors. So each processor that has a thread looks at the other queues at least each 10 ms. Under round robin each turn has this length.
+At the end of a time slice the processor passes through the balance between the processors. So each processor that has a thread looks at the other queues at least each 10 ms. Under round robin each stint has this length.
 
-The design: `docs/SCHEDULING.md`, "The time slice is the longest turn".
+The design: `docs/SCHEDULING.md`, "The time slice is the longest stint".
 
 Do not use: quantum.
 
@@ -778,9 +778,9 @@ Do not use: runnable (for this).
 
 ### Request
 
-A request is the processor time that a thread asks for at each turn under EEVDF, in microseconds: 1 to 100 000, and 0 is 3000.
+A request is the processor time that a thread asks for at each stint under EEVDF, in microseconds: 1 to 100 000, and 0 is 3000.
 
-The request sets the virtual deadline, not the share: a short request makes the thread run sooner and more often, for shorter turns. Its cost, more switches, is in the time of the thread, which its budget pays. A write of the thread schedule changes it while the thread lives: a process only lowers it, and the holder of the right **Schedule** on the machine also raises it.
+The request sets the virtual deadline, not the share: a short request makes the thread run sooner and more often, for shorter stints. Its cost, more switches, is in the time of the thread, which its budget pays. A write of the thread schedule changes it while the thread lives: a process only lowers it, and the holder of the right **Schedule** on the machine also raises it.
 
 The design: `docs/SCHEDULING.md`, "Weights and requests: a field at thread creation".
 
@@ -876,9 +876,9 @@ Do not use: deadline (alone: the deadline of a wait).
 
 ### Wake preemption
 
-A wake preemption is the end of the turn of the thread that runs on a processor because a thread that woke must run first, by the rule of the strategy.
+A wake preemption is the end of the stint of the thread that runs on a processor because a thread that woke must run first, by the rule of the strategy.
 
-When the processor of the woken thread is the waker's own, the waker ends the turn itself. On another processor, the waker sets a flag of that processor and sends it an interrupt. A thread of another process preempts one processor at most once in each millisecond: without this limit, a process with threads that wake each other makes other processes pay for the interrupts. Round robin has no wake preemption.
+When the processor of the woken thread is the waker's own, the waker ends the stint itself. On another processor, the waker sets a flag of that processor and sends it an interrupt. A thread of another process preempts one processor at most once in each millisecond: without this limit, a process with threads that wake each other makes other processes pay for the interrupts. Round robin has no wake preemption.
 
 The design: `docs/SCHEDULING.md`, "Wake preemption, also on another processor".
 
@@ -1240,7 +1240,7 @@ Do not use: shadow page, page snapshot.
 
 A shared writer of a recorded process is a process that maps with Write a memory object that the recorded process also maps with Write.
 
-The other side of a ring, of a call region or of a surface is one. A shared writer runs only while each thread of the recorded process is at an input point; the kernel writes the ranges that it changed into the input history before the kernel entry returns. A shared writer waits at most one turn: past it, the input history ends and the writer runs. Its placement and its share never change.
+The other side of a ring, of a call region or of a surface is one. A shared writer runs only while each thread of the recorded process is at an input point; the kernel writes the ranges that it changed into the input history before the kernel entry returns. A shared writer waits at most one stint: past it, the input history ends and the writer runs. Its placement and its share never change.
 
 The design: `src/md/features/record_and_replay.md`.
 

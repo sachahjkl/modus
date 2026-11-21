@@ -5,19 +5,19 @@ import "core:slice"
 import "modus:contract/start_grant"
 import "modustool:foundation"
 
-// The check of the table of the roles of the root service
-// (docs/TOOLS.md, "The table of the roles of the root service"): each module with an
+// The check of the table of the start grant sets of the root service
+// (docs/TOOLS.md, "The table of the start grant sets of the root service"): each module with an
 // entry in the boot image has one row, and each row names a module of the boot image
 // with start grants that the contract has. The root service gives a name
-// with no row the zero role; the table is whole only when the tool keeps
+// with no row the zero start grant set; the table is whole only when the tool keeps
 // it whole, so the check runs before each build, and the site reads the
 // same rows.
 
-// The table in ROOT_ROLES_FILE. The root service (ROOT_SERVICE_MODULE)
+// The table in ROOT_START_GRANT_SETS_FILE. The root service (ROOT_SERVICE_MODULE)
 // has no row: the kernel starts it.
-PROCESS_ROLES_TABLE :: "process_roles"
+START_GRANT_SETS_TABLE :: "start_grant_sets"
 
-// The list of the parts of the system in ROOT_ROLES_FILE: the processes
+// The list of the parts of the system in ROOT_START_GRANT_SETS_FILE: the processes
 // that the root service starts itself, with handles that no grant names.
 SYSTEM_PART_NAMES_LIST :: "system_part_names"
 
@@ -25,7 +25,7 @@ SYSTEM_PART_NAMES_LIST :: "system_part_names"
 // exports serve the processes, and its starter gives it a service ring.
 SYSTEM_PART_THAT_SERVES :: "compositor"
 
-// process_roles_problems gives each fault of the rows against the modules
+// start_grant_sets_problems gives each fault of the rows against the modules
 // of a build and the parts of the system: a module with an entry in the
 // boot image and no row, a row of no module of the boot image, a module
 // with two rows, a
@@ -34,12 +34,12 @@ SYSTEM_PART_THAT_SERVES :: "compositor"
 // System_Part alone (with Serve for the compositor) with no term. The debug
 // access to a process refuses a part of the system by that grant, and its
 // starter gives no handle of another grant.
-process_roles_problems :: proc(rows: []foundation.Role_Row, system_parts: []string, builds: []foundation.Module_Build, file: string) -> []string {
+start_grant_sets_problems :: proc(rows: []foundation.Start_Grant_Set_Row, system_parts: []string, builds: []foundation.Module_Build, file: string) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
 	named := make(map[string]bool, context.temp_allocator)
 	for row in rows {
 		if named[row.name] {
-			append(&problems, fmt.tprintf("%s, line %d: the process %s has a second row in %s", file, row.line, row.name, PROCESS_ROLES_TABLE))
+			append(&problems, fmt.tprintf("%s, line %d: the process %s has a second row in %s", file, row.line, row.name, START_GRANT_SETS_TABLE))
 		}
 		named[row.name] = true
 		in_image := false
@@ -78,12 +78,12 @@ process_roles_problems :: proc(rows: []foundation.Role_Row, system_parts: []stri
 			continue
 		}
 		if !named[build.name] {
-			append(&problems, fmt.tprintf("%s: the process %s of the boot image has no row in %s: write its role, with no grant when it needs none", file, build.name, PROCESS_ROLES_TABLE))
+			append(&problems, fmt.tprintf("%s: the process %s of the boot image has no row in %s: write its start grant set, with no grant when it needs none", file, build.name, START_GRANT_SETS_TABLE))
 		}
 	}
 	for part in system_parts {
 		if part != ROOT_SERVICE_MODULE && !named[part] {
-			append(&problems, fmt.tprintf("%s: %s names %s, which has no row in %s", file, SYSTEM_PART_NAMES_LIST, part, PROCESS_ROLES_TABLE))
+			append(&problems, fmt.tprintf("%s: %s names %s, which has no row in %s", file, SYSTEM_PART_NAMES_LIST, part, START_GRANT_SETS_TABLE))
 		}
 	}
 	return problems[:]
@@ -92,7 +92,7 @@ process_roles_problems :: proc(rows: []foundation.Role_Row, system_parts: []stri
 // system_part_grants_hold says if the row of a part of the system has the
 // grants of its starter: System_Part, with Serve for the compositor, and no
 // term.
-system_part_grants_hold :: proc(row: foundation.Role_Row) -> bool {
+system_part_grants_hold :: proc(row: foundation.Start_Grant_Set_Row) -> bool {
 	expected := make([dynamic]string, context.temp_allocator)
 	append(&expected, start_grant.GRANT_NAMES[.System_Part])
 	if row.name == SYSTEM_PART_THAT_SERVES {
@@ -109,32 +109,32 @@ system_part_grants_hold :: proc(row: foundation.Role_Row) -> bool {
 	return true
 }
 
-// process_roles_read reads the rows and the list of the parts of the
+// start_grant_sets_read reads the rows and the list of the parts of the
 // system from the source of the root service.
-process_roles_read :: proc(text: string) -> (rows: []foundation.Role_Row, system_parts: []string, problem: string) {
-	rows, problem = foundation.role_table_read(text, foundation.ROOT_ROLES_FILE, PROCESS_ROLES_TABLE)
+start_grant_sets_read :: proc(text: string) -> (rows: []foundation.Start_Grant_Set_Row, system_parts: []string, problem: string) {
+	rows, problem = foundation.start_grant_set_table_read(text, foundation.ROOT_START_GRANT_SETS_FILE, START_GRANT_SETS_TABLE)
 	if problem != "" {
 		return nil, nil, problem
 	}
-	system_parts, problem = foundation.string_list_read(text, foundation.ROOT_ROLES_FILE, SYSTEM_PART_NAMES_LIST)
+	system_parts, problem = foundation.string_list_read(text, foundation.ROOT_START_GRANT_SETS_FILE, SYSTEM_PART_NAMES_LIST)
 	return rows, system_parts, problem
 }
 
-// process_roles_hold reads the table and checks it against module_builds.
+// start_grant_sets_hold reads the table and checks it against module_builds.
 // It prints each fault, and gives false when there is one: the build then
 // stops before the first compiler starts.
-process_roles_hold :: proc() -> bool {
-	text, read := foundation.read_text_file_quiet(foundation.ROOT_ROLES_FILE)
+start_grant_sets_hold :: proc() -> bool {
+	text, read := foundation.read_text_file_quiet(foundation.ROOT_START_GRANT_SETS_FILE)
 	if !read {
-		fmt.eprintfln("modustool: cannot read %s", foundation.ROOT_ROLES_FILE)
+		fmt.eprintfln("modustool: cannot read %s", foundation.ROOT_START_GRANT_SETS_FILE)
 		return false
 	}
-	rows, system_parts, problem := process_roles_read(text)
+	rows, system_parts, problem := start_grant_sets_read(text)
 	if problem != "" {
 		fmt.eprintfln("modustool: %s", problem)
 		return false
 	}
-	problems := process_roles_problems(rows, system_parts, foundation.module_builds[:], foundation.ROOT_ROLES_FILE)
+	problems := start_grant_sets_problems(rows, system_parts, foundation.module_builds[:], foundation.ROOT_START_GRANT_SETS_FILE)
 	for item in problems {
 		fmt.eprintfln("modustool: %s", item)
 	}

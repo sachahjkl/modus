@@ -63,7 +63,7 @@
 // of the screen. The root service also maps its own file (for its exports),
 // two [pointer themes](term:pointer-theme), the
 // [settings page](term:settings-page), the font outlines and the
-// [date page](term:date-page). Its row of `process_roles` has the grants
+// [date page](term:date-page). Its row of `start_grant_sets` has the grants
 // Serve and System_Part: the root service gives these handles by name.
 //
 // **Its exports**: `pointer` and `windows`, to a caller that

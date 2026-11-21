@@ -96,7 +96,7 @@ The group of a module is the folder of its source, and the tool reads it from th
 
 The design: `src/md/infrastructure/repository_layout.md`.
 
-Do not use: role (the term is program role, the grants of a program), category, kind of module.
+Do not use: role (a role is a contract, and the grants of a program are its start grant set), category, kind of module.
 
 ### Test module
 

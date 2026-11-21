@@ -660,7 +660,7 @@ Do not use: semantics node, accessible object, provider.
 
 An element role is what an element is for a reader, a member of `Element_Role`: a role of WAI-ARIA 1.2 that is not abstract, as `button`, `textbox`, `listbox` or `scrollbar`.
 
-The set is the set of the standard, never one of the system. The roles map to each platform interface through the Core Accessibility API Mappings, so a reader of another system understands them. The role says which actions an element can declare. An element role is not a role of the root service, and not a process role.
+The set is the set of the standard, never one of the system. The roles map to each platform interface through the Core Accessibility API Mappings, so a reader of another system understands them. The role says which actions an element can declare. An element role is not a role of the root service, and not a start grant set.
 
 The design: `src/md/features/accessibility.md`, "1. The semantic tree".
 

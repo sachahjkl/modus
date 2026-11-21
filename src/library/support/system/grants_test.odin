@@ -208,14 +208,14 @@ range_mapped_put_refuses_a_range_twice :: proc(t: ^testing.T) {
 	testing.expect(t, !all.refusal.refused)
 }
 
-// A role whose handles meet in one context slot is found before its start.
-// The roles that would meet are tried first, each with the slot that it
-// shares; then the roles whose grants never meet, last: Terminal with Store,
-// the roles of the console and of remote, and no grant.
+// A start grant set whose handles meet in one context slot is found before its start.
+// The start grant sets that would meet are tried first, each with the slot that it
+// shares; then the start grant sets whose grants never meet, last: Terminal with Store,
+// the start grant sets of the console and of remote, and no grant.
 @(test)
-a_role_whose_handles_meet_is_refused :: proc(t: ^testing.T) {
+a_start_grant_set_whose_handles_meet_is_refused :: proc(t: ^testing.T) {
 	meeting := [?]struct {
-		role: bit_set[start_grant.Grant],
+		start_grant_set: bit_set[start_grant.Grant],
 		slot: int,
 	} {
 		{{.Clock, .Store}, GRANT_STORAGE_RING},
@@ -229,8 +229,8 @@ a_role_whose_handles_meet_is_refused :: proc(t: ^testing.T) {
 		{{.Replacements, .Network_Device}, GRANT_DEVICE_SERVICE},
 	}
 	for case_of in meeting {
-		slot, twice := role_slot_taken_twice(case_of.role)
-		testing.expectf(t, twice, "the role %v starts with two handles in one slot", case_of.role)
+		slot, twice := start_grant_set_slot_taken_twice(case_of.start_grant_set)
+		testing.expectf(t, twice, "the start grant set %v starts with two handles in one slot", case_of.start_grant_set)
 		testing.expect_value(t, slot, case_of.slot)
 	}
 	apart := [?]bit_set[start_grant.Grant] {
@@ -240,8 +240,8 @@ a_role_whose_handles_meet_is_refused :: proc(t: ^testing.T) {
 		{.Data_Disk, .Scratch_Disk, .Network_Device},
 		{},
 	}
-	for role in apart {
-		_, twice := role_slot_taken_twice(role)
-		testing.expectf(t, !twice, "the role %v has two handles in one slot", role)
+	for start_grant_set in apart {
+		_, twice := start_grant_set_slot_taken_twice(start_grant_set)
+		testing.expectf(t, !twice, "the start grant set %v has two handles in one slot", start_grant_set)
 	}
 }

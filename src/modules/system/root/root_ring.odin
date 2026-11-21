@@ -12,8 +12,8 @@ package root
 // 1. The border: command_of_word reads the kind. A word that names no
 //    command, and None, get `Unsupported`, and nothing runs.
 // 2. The sender: the table root_ring.ROOT_COMMAND_SENDERS, with the start
-//    grants that the process received at its start (Started.role), and for
-//    a Connect the services of its role. A refusal gets `No_Grant`, before
+//    grants that the process received at its start (Started.start_grant_set), and for
+//    a Connect the services of its start grant set. A refusal gets `No_Grant`, before
 //    any other check, so a process learns nothing of a command that it
 //    cannot send.
 // 3. The command: one case of a whole switch. The table
@@ -57,13 +57,13 @@ root_ring_serve :: proc "contextless" (item: ^Started) {
 }
 
 // root_command_answer runs the three steps of one record: the border and
-// the sender, which root_ring.dispatch_decide decides from the role that
+// the sender, which root_ring.dispatch_decide decides from the start grant set that
 // the process received at its start and never from its name (a disk
 // process has the nickname that it chose), then the command.
 root_command_answer :: proc "contextless" (item: ^Started, record: ring.Record) -> (answer: Command_Answer) {
 	name_bytes := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
 	name := system.name_of(name_bytes[:])
-	decision := root_ring.dispatch_decide(record.kind, item.role.grants, role_may_connect(&item.role, name))
+	decision := root_ring.dispatch_decide(record.kind, item.start_grant_set.grants, start_grant_set_may_connect(&item.start_grant_set, name))
 	switch decision.step {
 	case .Border, .Sender:
 		return {status = decision.status, values = decision.refusal}
@@ -94,7 +94,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		for &other in started {
 			// The compositor is not a process that the console stops, and
 			// the start policy stops only a process that it asked for.
-			if .Start_Policy in item.role.grants && !other.asked_by_start_policy {
+			if .Start_Policy in item.start_grant_set.grants && !other.asked_by_start_policy {
 				continue
 			}
 			if other.process != 0 && other.process != compositor && !other.is_terminal && system.name_of(other.name[:]) == name {
@@ -105,7 +105,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		}
 		// A start policy learns nothing of a process that it did not ask
 		// for: each refusal is the one record Absent.
-		if answer.status != .Ok && .Start_Policy in item.role.grants {
+		if answer.status != .Ok && .Start_Policy in item.start_grant_set.grants {
 			answer.values = start_policy_rules.stop_record()
 			answer.written = true
 		}
@@ -137,7 +137,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		answer.status = replace(item, name, record.values[4], &answer.values)
 	case .Connect_History:
 		answer.status = .No_Right
-		if .History_Store in item.role.grants && .History not_in item.revoked && name == "storage" {
+		if .History_Store in item.start_grant_set.grants && .History not_in item.revoked && name == "storage" {
 			answer.status = connect(item, "storage", &answer.values, history = true)
 		}
 	case .Principal_Create:
@@ -220,7 +220,7 @@ start_command :: proc "contextless" (item: ^Started, record: ring.Record, name: 
 		written^ = true
 		return .Bad_Operation
 	}
-	if .Start_Policy in item.role.grants {
+	if .Start_Policy in item.start_grant_set.grants {
 		return start_policy_start(item, name, list, values, written)
 	}
 	// A process that a process starts belongs to the session of the
@@ -298,7 +298,7 @@ start_process_handle_give :: proc "contextless" (asker: ^Started, process: ^Star
 // of its refusal, and a connection that fails after it gets the record of
 // root_command_refusal.
 root_connect :: proc "contextless" (item: ^Started, record: ring.Record, name: string, values: ^[7]u64) -> (status: system.Status) {
-	if .Remote_Clients in item.role.grants || record.values[4] != 0 {
+	if .Remote_Clients in item.start_grant_set.grants || record.values[4] != 0 {
 		client: Client_Grant
 		client, status = client_grant_of(item, record.values[4], record.values[5], values)
 		if status != .Ok {
@@ -324,12 +324,12 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 	kind := u32(command)
 	// The start policy is no part of the system, and only this service
 	// starts it: a Start of its name is refused as one.
-	of_the_system := name_is_a_system_part(name) || .Start_Policy in role_of(name).grants
+	of_the_system := name_is_a_system_part(name) || .Start_Policy in start_grant_set_of(name).grants
 	switch command {
 	case .None, .Principal_Unlock, .Debug, .Start_From_Disk, .Disk_Grant, .Nickname_Move, .Machine_Key, .Disk_Grant_Persistence, .Debug_Store, .Principal_Change, .Principal_Change_End, .Remote_Client, .Machine_Usable, .Start_Policy_Choice, .Wire:
 		// No cause that the state shows: the record Refused, with the status.
 	case .Connect_History, .Palette_Provide:
-		// A grant of the role that the command needs, and that the process
+		// A grant of the start grant set that the command needs, and that the process
 		// lacks or lost by a revocation.
 		if status == .No_Right {
 			return root_ring.sender_refusal(command)

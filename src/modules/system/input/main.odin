@@ -42,7 +42,7 @@
 // **How it starts.** The root service starts it at each boot, before the
 // compositor, with a context of its own: handle 0 is the input ring, which
 // it shares with the compositor; handles 1 to 3 are the ports and the two
-// interrupts. Its row of `process_roles` has the grant System_Part only:
+// interrupts. Its row of `start_grant_sets` has the grant System_Part only:
 // no connection, and no service, so it cannot reach another process. The
 // root service names these slots INPUT_GRANT_ too.
 //

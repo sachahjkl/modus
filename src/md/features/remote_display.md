@@ -16,7 +16,7 @@ A principal sees and drives the desktop of a machine from another machine. The m
 
 ### The service
 
-The remote display service, `remote_display`, is a process of the boot image, outside the kernel. Its role holds:
+The remote display service, `remote_display`, is a process of the boot image, outside the kernel. Its start grant set holds:
 
 - an endpoint of the network: a listen grant of UDP on its own port, `remote_display.LISTEN_PORT`, for the address of the host only, as `remote` has;
 - the client table, with the right Read, by the start grant `Remote_Clients`, as `remote` reads it. It has no grant `Connect`: it calls no service;

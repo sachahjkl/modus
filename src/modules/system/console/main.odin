@@ -87,7 +87,7 @@
 // isolated call when the input presses Escape. A slow command never
 // freezes the edit line.
 //
-// **Its grants** (the root service, `process_roles`), each for one group of
+// **Its grants** (the root service, `start_grant_sets`), each for one group of
 // commands:
 //
 // - **Root_Ring**: start and stop processes, and connect to every service.
@@ -583,7 +583,7 @@ edit_show :: proc "contextless" () {
 }
 
 // The columns of the window of the console: the root service gives its
-// terminal 96 columns (src/modules/system/root, role_terminal). The terminal draws no
+// terminal 96 columns (src/modules/system/root, start_grant_set_terminal). The terminal draws no
 // byte past its last column, so the console starts a new row there: a long
 // value goes on under its own start, and no byte of it is lost.
 WINDOW_COLUMNS :: 96

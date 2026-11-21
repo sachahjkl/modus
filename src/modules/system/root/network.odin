@@ -127,7 +127,7 @@ endpoint_open :: proc "contextless" (slot: ^Started, name: string) -> (ring_memo
 		given[1], status = system.give(service.network_memory, region_memory, {.Read, .Write, .Give})
 	}
 	grant := endpoint_of(name)
-	grant.inspect = .Inspect in slot.role.grants
+	grant.inspect = .Inspect in slot.start_grant_set.grants
 	packed := system.name_pack(name)
 	if status == .Ok && !system.send(&service.network.commands, ring.Record{kind = u32(datagram.Control.Endpoint_Add), values = {0 = u64(given[0]), 1 = u64(given[1]), 2 = datagram.grant_pack(grant), 3 = packed[0], 4 = packed[1], 5 = packed[2], 6 = packed[3]}}) {
 		status = .No_Slot

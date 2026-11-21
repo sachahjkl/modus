@@ -200,7 +200,7 @@ row_persistence_log :: proc "contextless" (principal: u64, nickname, persistence
 // service: the store of its nickname when its start gave it the grant
 // store, and the grant was not revoked; else none.
 disk_store_limit :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
-	if .Store not_in caller.role.grants || .Store in caller.revoked || system.name_of(service.name[:]) != "storage" {
+	if .Store not_in caller.start_grant_set.grants || .Store in caller.revoked || system.name_of(service.name[:]) != "storage" {
 		return 0
 	}
 	// The budget that a module asks for has no part for a store yet: the
@@ -259,7 +259,7 @@ disk_name_refusal :: proc "contextless" (name: string, values: ^[7]u64) -> (refu
 		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
 		return true
 	}
-	if name_is_a_system_part(name) || role_names_the_process(name) {
+	if name_is_a_system_part(name) || start_grant_set_names_the_process(name) {
 		system.log_fact(.Warning, Disk_Load_Refused_Name_In_Grant_Table{refused_process = module_name_field(name)})
 		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
 		return true
@@ -656,7 +656,7 @@ disk_load_start :: proc "contextless" () {
 
 // disk_process_run starts a disk process from the bytes of its file, which
 // this service checked. The process receives what each process receives
-// and nothing of a role: the log with the right Write, a window, the date
+// and nothing of a start grant set: the log with the right Write, a window, the date
 // page, the settings page and the font outlines, read-only. It has no row
 // in the tables by name of this service, and the budget of a process that
 // no table names. Its grants are the grants of its nickname in the disk
@@ -696,11 +696,11 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	copy(slot.name[:len(slot.name) - 1], name)
 	slot.principal = principal
 	slot.from_disk = true
-	// Its role is the grants of its row, and never a row of the tables of
+	// Its start grant set is the grants of its row, and never a row of the tables of
 	// this service: it has no root ring, so it sends no root command
 	// (root_ring.ROOT_RING_GRANTS).
 	if .Store in disk_grants {
-		slot.role = {grants = {.Store}}
+		slot.start_grant_set = {grants = {.Store}}
 	}
 	context_grants: system.Context_Grants
 	values: system.Context_Values

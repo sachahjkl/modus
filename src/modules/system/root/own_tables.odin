@@ -22,7 +22,7 @@ own_mappings_report: op.Process_Mapping_Report
 own_slot: u64
 
 // The handles that one start takes in this service while it runs, past
-// the parts of its modules: the handles of the role that the start closes
+// the parts of its modules: the handles of the start grant set that the start closes
 // at its end (8: the ring of a device, the ring and the region of a store,
 // the ring and the region of an endpoint, the clock ports, two shared
 // objects), the process, its budget and the copy kept for a sender of Wire,

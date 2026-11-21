@@ -297,7 +297,7 @@ So a process that the console starts belongs to principal 0, and a process that 
 | 48 to 62 (`CALLER_PRINCIPAL_MASK`) | The number of the principal of the session of the caller |
 | 63 (`CALLER_ACTS_FOR_PRINCIPAL`) | The caller acts for that principal |
 
-A caller acts for the principal when its role has the grant `acts_for_principal` (the console, `remote`) and the grant was not revoked. It acts for the principal of its own session only, but for `remote`, whose connections act for the principal of a client key ("The client keys of remote"). So the console, started at boot, acts for principal 0, never for principal 1: "root: connected console to the service storage, acting for principal 0". A console that the desktop starts during the session of alice belongs to that session: it acts for principal 1, never for principal 0.
+A caller acts for the principal when its start grant set has the grant `acts_for_principal` (the console, `remote`) and the grant was not revoked. It acts for the principal of its own session only, but for `remote`, whose connections act for the principal of a client key ("The client keys of remote"). So the console, started at boot, acts for principal 0, never for principal 1: "root: connected console to the service storage, acting for principal 0". A console that the desktop starts during the session of alice belongs to that session: it acts for principal 1, never for principal 0.
 
 **The grant records name the principal.** `grants("notes")` in the console gives the grants of a process, then "notes runs for principal 1 "alice"". `revoke` works on a process of a session as on any other process.
 

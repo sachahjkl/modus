@@ -5,10 +5,10 @@
 // `ROOT_RING_GRANTS` receives a root ring at the handle
 // `system.GRANT_ROOT`. It writes `Root_Command` records on it; the root
 // service reads each word of a record at one border of this package, which
-// refuses a word that names no member, then checks the role of the sender
+// refuses a word that names no member, then checks the start grant set of the sender
 // with `sender_allowed`, then runs the command and sends a completion.
 //
-// The role of the sender is the set of start grants that the root service
+// The start grant set of the sender is the set of start grants that the root service
 // gave the process at its start. The name of the process is not read: a
 // disk process has a nickname that it chose, and the nickname gives it no
 // command (docs/MODULE_CONTRACT.md, "A module from a disk").
@@ -29,7 +29,7 @@ import "modus:contract/start_grant"
 // (errors.completion_record): the argument 1 is the name.
 //
 // A process with a root ring (`system.GRANT_ROOT`) writes these commands;
-// the root service checks the role of the process for each one
+// the root service checks the start grant set of the process for each one
 // (ROOT_COMMAND_SENDERS).
 //
 // ```odin
@@ -94,7 +94,7 @@ Root_Command :: enum u32 {
 	// replacement table of the machine: values[4] is the number, from 1, of
 	// the entry of the boot image of the module that replaces it. 0 removes
 	// the replacement. The root service refuses it to a process that does
-	// not have the role, and refuses a chain: a module that replaces is not
+	// not have the grant Replace, and refuses a chain: a module that replaces is not
 	// replaced. The completion has Bad_State for a chain, No_Slot for a
 	// full table.
 	Replace    = 7,
@@ -106,7 +106,7 @@ Root_Command :: enum u32 {
 	// small limit of blocks and no grant to act for the principal, so it
 	// reaches that store and no other one. The completion is the completion
 	// of Connect. The root service refuses it to a process that does not
-	// have the role, and after a revocation of the grant History.
+	// have the grant History_Store, and after a revocation of the grant History.
 	Connect_History = 8,
 	// The commands of the principals (docs/PRINCIPALS.md). The root service
 	// takes Principal_Create, Principal_Lock, Principals and
@@ -534,13 +534,13 @@ command_refusal :: proc "contextless" (word: u32) -> [7]u64 {
 }
 
 // Who can send a command of the root ring, by the start grants of the
-// sender. The rule reads the role of the sender only, never its name.
+// sender. The rule reads the start grant set of the sender only, never its name.
 Root_Command_Sender :: enum u8 {
 	Nobody, // No process: None, which command_of_word refuses first.
 	Root_Ring, // A process with the start grant Root_Ring, as the console.
 	// A process with the start grant Root_Ring, or with Connect to a
 	// service of its list: the root service checks the list, which is a
-	// part of the role of the process.
+	// part of the start grant set of the process.
 	Root_Ring_Or_Connect,
 	Each_Ring, // Each process that has a root ring: the end of a connection that it holds.
 	// The process with the start grant Principals only: a process with
@@ -601,16 +601,16 @@ ROOT_RING_GRANTS :: bit_set[start_grant.Grant]{.Root_Ring, .Connect, .Principals
 
 // root_ring_given says if a process with these start grants receives a
 // root ring at its start.
-root_ring_given :: proc "contextless" (role: bit_set[start_grant.Grant]) -> bool {
-	return role & ROOT_RING_GRANTS != {}
+root_ring_given :: proc "contextless" (start_grant_set: bit_set[start_grant.Grant]) -> bool {
+	return start_grant_set & ROOT_RING_GRANTS != {}
 }
 
 // The handles that the root service gives a process that it starts from
 // the boot image, at its start, by its start grants. Each one has one context slot
-// (system.ROLE_HANDLE_SLOTS); several start grants can give one handle (the
-// machine, the root ring). A start writes a handle only when role_handles
+// (system.START_GRANT_SET_HANDLE_SLOTS); several start grants can give one handle (the
+// machine, the root ring). A start writes a handle only when start_grant_set_handles
 // gives it, so this mapping is the one that the start follows.
-Role_Handle :: enum u8 {
+Start_Grant_Set_Handle :: enum u8 {
 	Display, // A process with no grant Terminal: the ring to the compositor.
 	Root_Ring, // A start grant of ROOT_RING_GRANTS.
 	Machine, // Inspect, Stop, Schedule, Events or Counters: one handle with those rights.
@@ -638,56 +638,56 @@ Role_Handle :: enum u8 {
 	Log, // Each process: the log.
 }
 
-// role_handles gives the handles that a start gives a role.
-role_handles :: proc "contextless" (role: bit_set[start_grant.Grant]) -> (handles: bit_set[Role_Handle]) {
+// start_grant_set_handles gives the handles that a start gives a start grant set.
+start_grant_set_handles :: proc "contextless" (start_grant_set: bit_set[start_grant.Grant]) -> (handles: bit_set[Start_Grant_Set_Handle]) {
 	handles += {.Log}
 	// The start policy has no window: it starts before the compositor, and
 	// it shows nothing.
-	if .Terminal in role {
+	if .Terminal in start_grant_set {
 		handles += {.Terminal_Ring, .Terminal_Text}
-	} else if .Start_Policy not_in role {
+	} else if .Start_Policy not_in start_grant_set {
 		handles += {.Display}
 	}
-	if root_ring_given(role) {
+	if root_ring_given(start_grant_set) {
 		handles += {.Root_Ring}
 	}
-	if role & {.Inspect, .Stop, .Schedule, .Events, .Counters} != {} {
+	if start_grant_set & {.Inspect, .Stop, .Schedule, .Events, .Counters} != {} {
 		handles += {.Machine}
 	}
-	if .Image in role {
+	if .Image in start_grant_set {
 		handles += {.Image}
 	}
-	if .Log_Records in role {
+	if .Log_Records in start_grant_set {
 		handles += {.Log_Records}
 	}
-	if .Serve in role {
+	if .Serve in start_grant_set {
 		handles += {.Service_Ring}
 	}
-	if role & {.Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device} != {} {
+	if start_grant_set & {.Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device} != {} {
 		handles += {.Device_Ring, .Device_Service}
 	}
-	if .Network_Device in role {
+	if .Network_Device in start_grant_set {
 		handles += {.Network_Control}
 	}
-	if .Clock in role {
+	if .Clock in start_grant_set {
 		handles += {.Date_Page, .Date_Ports}
 	}
-	if .Store in role && .Acts_For_Principal not_in role {
+	if .Store in start_grant_set && .Acts_For_Principal not_in start_grant_set {
 		handles += {.Storage_Ring, .Storage_Region, .Storage_Service}
 	}
-	if .Replacements in role {
+	if .Replacements in start_grant_set {
 		handles += {.Replacements}
 	}
-	if .Network in role {
+	if .Network in start_grant_set {
 		handles += {.Datagram_Ring, .Datagram_Region}
 	}
-	if .Settings in role {
+	if .Settings in start_grant_set {
 		handles += {.Settings_Page}
 	}
-	if .Tpm in role {
+	if .Tpm in start_grant_set {
 		handles += {.Tpm_Ring, .Tpm_Service, .Tpm_Region}
 	}
-	if .Remote_Clients in role {
+	if .Remote_Clients in start_grant_set {
 		handles += {.Client_Table}
 	}
 	return handles
@@ -697,27 +697,27 @@ role_handles :: proc "contextless" (role: bit_set[start_grant.Grant]) -> (handle
 // command. A refused command gets `No_Grant` (sender_refusal) and runs
 // nothing. For Connect with the grant Connect and not Root_Ring, the root
 // service then checks the list of the services of the process.
-sender_allowed :: proc "contextless" (command: Root_Command, role: bit_set[start_grant.Grant]) -> bool {
-	if !root_ring_given(role) {
+sender_allowed :: proc "contextless" (command: Root_Command, start_grant_set: bit_set[start_grant.Grant]) -> bool {
+	if !root_ring_given(start_grant_set) {
 		return false
 	}
 	switch ROOT_COMMAND_SENDERS[command] {
 	case .Nobody:
 		return false
 	case .Root_Ring:
-		return .Root_Ring in role
+		return .Root_Ring in start_grant_set
 	case .Root_Ring_Or_Connect:
-		return .Root_Ring in role || .Connect in role
+		return .Root_Ring in start_grant_set || .Connect in start_grant_set
 	case .Each_Ring:
 		return true
 	case .Principals:
-		return .Principals in role
+		return .Principals in start_grant_set
 	case .Debugger:
-		return .Debugger in role
+		return .Debugger in start_grant_set
 	case .Root_Ring_Or_Start_Policy:
-		return .Root_Ring in role || .Start_Policy in role
+		return .Root_Ring in start_grant_set || .Start_Policy in start_grant_set
 	case .Start_Policy:
-		return .Start_Policy in role
+		return .Start_Policy in start_grant_set
 	}
 	return false
 }
@@ -791,17 +791,17 @@ Dispatch_Decision :: struct {
 // dispatch_decide is the decision of the dispatch of the root service for
 // one record: the border of its kind, then the table of the senders with
 // the start grants of the sender. service_listed says that the list of
-// the role of the sender names the service of values[0..4]: a Connect with
+// the start grant set of the sender names the service of values[0..4]: a Connect with
 // the grant Connect and not Root_Ring needs it. The decision reads the
-// role and never the name, and reads and changes no state: the root
+// start grant set and never the name, and reads and changes no state: the root
 // service runs the command only when the step is Command.
-dispatch_decide :: proc "contextless" (kind: u32, role: bit_set[start_grant.Grant], service_listed: bool) -> Dispatch_Decision {
+dispatch_decide :: proc "contextless" (kind: u32, start_grant_set: bit_set[start_grant.Grant], service_listed: bool) -> Dispatch_Decision {
 	command, known := command_of_word(kind)
 	if !known {
 		return {step = .Border, command = .None, status = .Bad_Operation, refusal = command_refusal(kind)}
 	}
-	allowed := sender_allowed(command, role)
-	if command == .Connect && .Root_Ring not_in role && !service_listed {
+	allowed := sender_allowed(command, start_grant_set)
+	if command == .Connect && .Root_Ring not_in start_grant_set && !service_listed {
 		allowed = false
 	}
 	if !allowed {

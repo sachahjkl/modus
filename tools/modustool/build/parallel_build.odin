@@ -138,8 +138,8 @@ build_modules_in_parallel :: proc() -> bool {
 		return false
 	}
 	// Each module with an entry in the boot image has its row in the table of the
-	// roles of the root service (process_roles_check.odin).
-	process_roles_hold() or_return
+	// start grant sets of the root service (start_grant_sets_check.odin).
+	start_grant_sets_hold() or_return
 	levels := module_levels() or_return
 	modules_started := time.tick_now()
 	// Before the first compiler starts: the hash of each source.

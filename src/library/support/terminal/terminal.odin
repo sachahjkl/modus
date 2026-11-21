@@ -29,7 +29,7 @@
 // The root service makes the terminal ring and the text region, and starts
 // the two processes. The terminal starts no process and holds three things:
 // a surface, the two memory objects, and a handle that reads the state of
-// the process. The process holds what its role gives, and no surface.
+// the process. The process holds what its start grant set gives, and no surface.
 //
 // The ring keeps at most RING_CAPACITY records that the terminal did not
 // read, of RUN_LIMIT bytes at most: the process never writes over text

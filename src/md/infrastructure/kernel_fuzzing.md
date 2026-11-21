@@ -84,7 +84,7 @@ A machine test of another volume whose log holds the boot line of the counted ke
 
 ### The processes in the machine
 
-**`operation_fuzzing`** is the process that runs the sequences. Its row of the table of the roles names no start grant, and the log with Give, which it gives to each runner. The root service starts it itself, with the machine handle with the right Physical only, the boot image and the log: no other right of the machine is given, and a command Start gives it nothing. The release refuses each image that holds the module, and refuses a boot image of the build that holds it, so the row grants nothing in a system that ships. A disk process never gets a role. At its start, the process:
+**`operation_fuzzing`** is the process that runs the sequences. Its row of the table of the start grant sets names no start grant, and the log with Give, which it gives to each runner. The root service starts it itself, with the machine handle with the right Physical only, the boot image and the log: no other right of the machine is given, and a command Start gives it nothing. The release refuses each image that holds the module, and refuses a boot image of the build that holds it, so the row grants nothing in a system that ships. A disk process never gets that row. At its start, the process:
 
 1. creates a contiguous memory object, the mailbox;
 2. gets its physical address with `Memory_Physical`;

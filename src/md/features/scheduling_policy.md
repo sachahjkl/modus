@@ -39,8 +39,8 @@ The home of a thread is in its set, or the thread is on the processor of its hom
 
 ### The refused forms
 
-- **An interrupt to the other processor at a write.** An interrupt ends the turn of the thread that runs there when it arrives, and that can be a thread of another process. The wake preemption has a rate limit for this; a placement write would be a second way with no limit. A holder that must know when the thread left reads the thread report.
-- **A new argument of the creation of a thread.** A process that wants a narrow new thread writes its placement after the creation. The thread can run one turn on the wider set first. The set is the process's own choice, so nothing depends on that turn.
+- **An interrupt to the other processor at a write.** An interrupt ends the stint of the thread that runs there when it arrives, and that can be a thread of another process. The wake preemption has a rate limit for this; a placement write would be a second way with no limit. A holder that must know when the thread left reads the thread report.
+- **A new argument of the creation of a thread.** A process that wants a narrow new thread writes its placement after the creation. The thread can run one stint on the wider set first. The set is the process's own choice, so nothing depends on that stint.
 - **A silent change of a set that is partly outside the limit to another set.** A write through the machine handle keeps the part inside the limit. An empty part is refused: a silent change hides a mistake of the holder.
 - **The topology of the processor in the kernel.** The kernel does not know which processors are siblings of one core. The holder can find them itself: it places its own thread on each processor in turn and reads the processor identification there. The topology stays in the policy.
 

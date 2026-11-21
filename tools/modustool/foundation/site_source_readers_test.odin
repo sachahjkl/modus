@@ -3,45 +3,45 @@ package foundation
 import "core:strings"
 import "core:testing"
 
-// The reader of the table of the roles reads the tree of the parser: each
+// The reader of the table of the start grant sets reads the tree of the parser: each
 // form that a page cannot show as values stops it, with the line. The
 // forms that it accepts come last: a row on several lines, a comment above
 // a row and after it, a row with no grant and no terms.
 @(test)
-role_table_refuses_another_form :: proc(t: ^testing.T) {
+start_grant_set_table_refuses_another_form :: proc(t: ^testing.T) {
 	head :: "package root\n\nGrant :: enum {A, B}\nRow :: struct {name: string, grants: bit_set[Grant], terms: struct {a: int}}\n\n"
 	forms := [?]string {
 		// A row from a constant: the page cannot name its parts.
-		head + "ROW :: Row{name = \"one\"}\nprocess_roles := [?]Row {\n\tROW,\n}\n",
+		head + "ROW :: Row{name = \"one\"}\nstart_grant_sets := [?]Row {\n\tROW,\n}\n",
 		// A row with its type.
-		head + "process_roles := [?]Row {\n\tRow{name = \"one\"},\n}\n",
+		head + "start_grant_sets := [?]Row {\n\tRow{name = \"one\"},\n}\n",
 		// A row with no name, and a row with an empty name.
-		head + "process_roles := [?]Row {\n\t{grants = {.A}},\n}\n",
-		head + "process_roles := [?]Row {\n\t{name = \"\"},\n}\n",
+		head + "start_grant_sets := [?]Row {\n\t{grants = {.A}},\n}\n",
+		head + "start_grant_sets := [?]Row {\n\t{name = \"\"},\n}\n",
 		// A set of grants from a constant, with its type, or a union.
-		head + "SET :: bit_set[Grant]{.A}\nprocess_roles := [?]Row {\n\t{name = \"one\", grants = SET},\n}\n",
-		head + "process_roles := [?]Row {\n\t{name = \"one\", grants = bit_set[Grant]{.A}},\n}\n",
-		head + "process_roles := [?]Row {\n\t{name = \"one\", grants = {.A} + {.B}},\n}\n",
+		head + "SET :: bit_set[Grant]{.A}\nstart_grant_sets := [?]Row {\n\t{name = \"one\", grants = SET},\n}\n",
+		head + "start_grant_sets := [?]Row {\n\t{name = \"one\", grants = bit_set[Grant]{.A}},\n}\n",
+		head + "start_grant_sets := [?]Row {\n\t{name = \"one\", grants = {.A} + {.B}},\n}\n",
 		// A field that a row does not have, and a field written twice.
-		head + "process_roles := [?]Row {\n\t{name = \"one\", budget = 3},\n}\n",
-		head + "process_roles := [?]Row {\n\t{name = \"one\", name = \"two\"},\n}\n",
+		head + "start_grant_sets := [?]Row {\n\t{name = \"one\", budget = 3},\n}\n",
+		head + "start_grant_sets := [?]Row {\n\t{name = \"one\", name = \"two\"},\n}\n",
 		// A value in place of a field.
-		head + "process_roles := [?]Row {\n\t{\"one\"},\n}\n",
+		head + "start_grant_sets := [?]Row {\n\t{\"one\"},\n}\n",
 		// A comment inside the terms.
-		head + "process_roles := [?]Row {\n\t{name = \"one\", terms = {\n\t\ta = 1, // The reason.\n\t}},\n}\n",
+		head + "start_grant_sets := [?]Row {\n\t{name = \"one\", terms = {\n\t\ta = 1, // The reason.\n\t}},\n}\n",
 		// A table with no row.
-		head + "process_roles := [?]Row {\n}\n",
+		head + "start_grant_sets := [?]Row {\n}\n",
 	}
 	for form, index in forms {
-		_, refused := role_table_read(form, "file.odin", "process_roles")
+		_, refused := start_grant_set_table_read(form, "file.odin", "start_grant_sets")
 		testing.expectf(t, strings.has_prefix(refused, "file.odin, line "), "form %d: the reader accepts it, or gives no line: %q", index, refused)
 	}
-	_, absent := role_table_read(head, "file.odin", "process_roles")
+	_, absent := start_grant_set_table_read(head, "file.odin", "start_grant_sets")
 	testing.expect(t, strings.contains(absent, "no table"), absent)
-	_, broken := role_table_read(head + "process_roles := [?]Row {\n", "file.odin", "process_roles")
+	_, broken := start_grant_set_table_read(head + "start_grant_sets := [?]Row {\n", "file.odin", "start_grant_sets")
 	testing.expect(t, strings.contains(broken, "the parser of Odin refuses the file"), broken)
-	good := head + "process_roles := [?]Row {\n\t// The first line,\n\t// and the second.\n\t{name = \"one\", grants = {\n\t\t.A,\n\t\t.B,\n\t}, terms = {a = 1}}, // Its own.\n\t{name = \"two\"},\n}\n"
-	rows, problem := role_table_read(good, "file.odin", "process_roles")
+	good := head + "start_grant_sets := [?]Row {\n\t// The first line,\n\t// and the second.\n\t{name = \"one\", grants = {\n\t\t.A,\n\t\t.B,\n\t}, terms = {a = 1}}, // Its own.\n\t{name = \"two\"},\n}\n"
+	rows, problem := start_grant_set_table_read(good, "file.odin", "start_grant_sets")
 	testing.expect_value(t, problem, "")
 	testing.expect_value(t, len(rows), 2)
 	if len(rows) == 2 {
@@ -92,7 +92,7 @@ source_readers_refuse_a_damaged_file :: proc(t: ^testing.T) {
 		testing.expectf(t, strings.has_prefix(tail_problem, "file.odin, line 1:"), "the line %q gave %q", text, tail_problem)
 	}
 	// The row on line 3 has no name: the reader names its line.
-	_, no_name := role_table_read("package root\nprocess_roles := [?]Row {\n\t{grants = {}},\n}\n", "file.odin", "process_roles")
+	_, no_name := start_grant_set_table_read("package root\nstart_grant_sets := [?]Row {\n\t{grants = {}},\n}\n", "file.odin", "start_grant_sets")
 	testing.expect(t, strings.has_prefix(no_name, "file.odin, line 3:"), no_name)
 }
 

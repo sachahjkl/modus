@@ -495,7 +495,7 @@ remote_clients_front_follow :: proc "contextless" () {
 // writes its own error record in values.
 client_grant_of :: proc "contextless" (caller: ^Started, row_number: u64, serial: u64, values: ^[7]u64) -> (client: Client_Grant, status: system.Status) {
 	kind := u32(root_ring.Root_Command.Connect)
-	if .Remote_Clients not_in caller.role.grants || row_number == 0 {
+	if .Remote_Clients not_in caller.start_grant_set.grants || row_number == 0 {
 		// Only the process of the client table connects for a row, and it
 		// connects for a row only: a call from another machine acts for a
 		// principal that allowed its client, and never for the session of
@@ -551,6 +551,6 @@ connection_principal :: proc "contextless" (connection: ^Connection) -> u64 {
 // for it while the caller holds the grant to act for a principal. No store:
 // the process of the client table has none.
 client_connection_grant :: proc "contextless" (caller: ^Started, client: Client_Grant) -> u64 {
-	acts := .Acts_For_Principal in caller.role.grants && .Acts_For_Principal not_in caller.revoked
+	acts := .Acts_For_Principal in caller.start_grant_set.grants && .Acts_For_Principal not_in caller.revoked
 	return isolated.caller_grant_make(0, client.principal, acts)
 }

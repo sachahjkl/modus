@@ -25,7 +25,7 @@
 // - a revocation of a handle that the process does not have: `Bad_Handle`.
 //
 // **Start**: `start("origin")` in the console, or the bar of the desktop.
-// Its row of `process_roles` has no grant: everything that it uses, it makes. Its
+// Its row of `start_grant_sets` has no grant: everything that it uses, it makes. Its
 // budget has room for two processes: itself and the process "held", which
 // never runs and only receives.
 //
