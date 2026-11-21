@@ -76,7 +76,11 @@ Each such refusal names the last step before the range that gives the missing va
 
 **The form.** The build of the check of the flake passes `--keep-going` to Nix: Nix builds every derivation whose inputs it built, past the first failed one. `modustool screenshots` passes it, and the workflows pass it to `nix flake check`. When the build fails, the tool lists the failed parts: `modustool failed_parts`, which `screenshots` calls after a failed build.
 
-**The list.** For the host checks and each part derivation whose output is not in the store, the tool reads its build log from Nix (`nix log <derivation>`) and writes it whole to `build/failed_parts/<part>.log`. The line of the part gives the first line of the log that says that a step failed, with the log of its machine, and the path of the whole log. A part with no log did not run: a derivation that it needs failed (the whole build, the test inputs). The list ends with the count of the failed parts, the count of the parts that did not run, and the count of those that passed.
+**One evaluation.** `screenshots` evaluates the check of the flake once, before the build: the derivation of the whole check, and the derivation and the output of the host checks and of each part. It builds that derivation path (`nix build <check>.drv^out`), and the list reads the same derivations. What changed: the list evaluated the flake again after the build. The work tree of the check had changed meanwhile (another agent wrote in it), so the second evaluation named other derivations, which nothing built: the list called every part "did not run", the parts that passed too, and found no log.
+
+**The list.** For the host checks and each part derivation whose output is not in the store, the tool reads its build log from Nix (`nix log <derivation>`) and writes it whole to `build/failed_parts/<part>.log`. The line of the part gives the first line of the log that says that a step failed, with the log of its machine, and the path of the whole log. A log with no such line (the host checks that stop at a compile error) gives the last line of the tool that says that something failed. A part with no log did not run: a derivation that it needs failed (the binary of the tool, the test inputs), or the build stopped first. No part depends on the host checks: a failed host check stops no part. The list ends with the count of the failed parts, the count of the parts that did not run, and the count of those that passed. When no derivation passed and none failed, a last line says that the evaluation is not the check that the build built, or that the build stopped before any part.
+
+**The command alone.** `modustool failed_parts`, after a `nix flake check --keep-going` by hand, has no evaluation of the build: it evaluates the work tree as it is. On a tree that changed since the check, its last line says that nothing of that evaluation was built.
 
 **A failed part stays a failure.** A part derivation still fails when its part fails: Nix keeps no output of it, so the next build runs it again.
 
@@ -84,6 +88,7 @@ Each such refusal names the last step before the range that gives the missing va
 
 - **A part derivation that passes with a mark of failure in its output.** Nix would keep the failure in the store and run the part no more until its inputs change, so a failure from a starved host would stay; and the build of the derivations would pass.
 - **The list in `test_join`.** The join runs only when each part passed.
+- **An evaluation after the build.** It reads the work tree again, which can change while the check runs; the list must name the derivations that the build built.
 - **The log of a failed part in the output of the check.** A failed derivation has no output; its build log is the one record of its run.
 
 ## Subtle points

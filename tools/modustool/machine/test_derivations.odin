@@ -616,22 +616,21 @@ text_map_of_json :: proc(text: string) -> (texts: map[string]string, ok: bool) {
 	return texts, true
 }
 
-// test_parts_in_store_count counts the part derivations of the check of the
-// flake whose output is in the store of this host already, and those that
-// the build of the check runs. The evaluation builds the test inputs first.
-// A measure: a failure gives no count, and fails no command.
-test_parts_in_store_count :: proc(flake_check_attribute: string) -> (in_store, to_run: int, ok: bool) {
-	output := host_command_output({"nix", "eval", "--json", foundation.join(flake_check_attribute, ".partOutputs")}) or_return
-	paths := text_map_of_json(output) or_return
-	for _, path in paths {
-		state, _, _, exec_error := os.process_exec({command = {"nix", "path-info", path}}, context.temp_allocator)
-		if exec_error == nil && state.exited && state.success {
+// test_parts_in_store_count counts the part derivations of an evaluation of
+// the check of the flake whose output is in the store of this host already,
+// and those that the build of the check runs. A measure.
+test_parts_in_store_count :: proc(evaluation: Flake_Check_Evaluation) -> (in_store, to_run: int) {
+	for member in evaluation.members {
+		if member.name == FAILED_PARTS_HOST_CHECKS {
+			continue
+		}
+		if store_reader.output_valid(member.output) {
 			in_store += 1
 		} else {
 			to_run += 1
 		}
 	}
-	return in_store, to_run, true
+	return in_store, to_run
 }
 
 // The changes of the proof of the cache: a line more in an intent file, and
