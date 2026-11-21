@@ -309,6 +309,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_PRIVATE + "/sound/sound_device",
 	foundation.SOURCE_FOLDER_KERNEL + "/acpi_processors",
 	foundation.SOURCE_FOLDER_CONTRACT + "/role_contract",
+	foundation.SOURCE_FOLDER_CONTRACT + "/supervision",
 	foundation.SOURCE_FOLDER_PRIVATE + "/root/role_policy",
 	foundation.TEST_MODULE_SOURCES + "display_conformance",
 	foundation.SOURCE_FOLDER_CONTRACT + "/powerbox",
