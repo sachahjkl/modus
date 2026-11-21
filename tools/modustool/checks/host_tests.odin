@@ -344,4 +344,5 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/virtio_input",
 	foundation.SOURCE_FOLDER_INTERNAL + "/input/tablet",
 	foundation.SOURCE_FOLDER_CONTRACT + "/remote_display",
+	foundation.SOURCE_FOLDER_CONTRACT + "/data_evolution",
 }
