@@ -13,7 +13,7 @@ Service_Ready :: struct {
 
 @(log_fact = "powerbox: {failure}")
 Service_Failed :: struct {
-	failure: [FAILURE_FIELD_BYTES]u8,
+	failure: [96]u8,
 }
 
 #assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
