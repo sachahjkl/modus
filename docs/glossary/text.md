@@ -170,6 +170,18 @@ The design: `docs/FONTS.md`, "7. The setting".
 
 Do not use: preference, option, configuration.
 
+### Language tag
+
+A language tag is the name of a language in the form of BCP 47 (RFC 5646): a language, with its script and its region when they matter.
+
+A language tag names the language of a display text in a module file. The languages are an open set, so a tag is a text that keeps a syntax, not an enum. A file stores each tag in its canonical case, and a reader compares tags with no regard to case. A reader that has no text for a tag tries a shorter tag, then `en`.
+
+Example: `en`, `fr-CA`, `zh-Hant-TW`, `sr-Latn`.
+
+The design: `src/md/features/enum_parameters.md`, "The display text of a member".
+
+Do not use: locale, language code, language enum.
+
 ### Dead key
 
 A dead key is a key of a layout of the keyboard that gives no character itself, and puts its accent on the character of the next key.

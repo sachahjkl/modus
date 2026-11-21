@@ -697,6 +697,10 @@ evaluation_of_members :: proc(t: ^testing.T) {
 		{"set(.french, .french)", .Member_Unknown, 14, "french", .None, .None},
 		{"set(layout = .French)", .Member_Unknown, 14, "French", .None, .None},
 		{"set(layout = .french_)", .Member_Unknown, 14, "french_", .None, .None},
+		// A display text is no name of a member: "US" shows for
+		// .united_states, and a line cannot type it.
+		{"set(layout = .US)", .Member_Unknown, 14, "US", .None, .None},
+		{"set(layout = .us)", .Member_Unknown, 14, "us", .None, .None},
 		{"pair(.french, g())", .Member_No_Type, 6, "", .None, .Integer},
 		{"any(.french)", .Member_No_Type, 5, "", .None, .None},
 		{"f(.french)", .Member_No_Type, 3, "", .None, .None},

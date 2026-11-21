@@ -298,6 +298,8 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"module", "Enum_Type", type_info_of(module.Enum_Type)},
 		{"module", "Member", type_info_of(module.Member)},
 		{"module", "Enum_Problem", type_info_of(module.Enum_Problem)},
+		{"module", "Member_Text", type_info_of(module.Member_Text)},
+		{"module", "Member_Text_Problem", type_info_of(module.Member_Text_Problem)},
 		{"module", "Fact_Render_Refusal", type_info_of(module.Fact_Render_Refusal)},
 		{"module", "Error", type_info_of(module.Error)},
 		{"module", "Bound_Import", type_info_of(module.Bound_Import)},

@@ -364,7 +364,7 @@ clipboard_text_problem_refuses_each_hidden_character :: proc(t: ^testing.T) {
 		length := 1 + text_encoding.character_encode(character, text[1:])
 		problem := clipboard_text_problem(text[:length], CLIPBOARD_TEXT_LIMIT)
 		testing.expectf(t, problem == .Hidden_Character, "U+%X gives %v", character, problem)
-		testing.expectf(t, character_hidden(character), "U+%X is not hidden", character)
+		testing.expectf(t, text_encoding.character_hidden(character), "U+%X is not hidden", character)
 	}
 	shown := [?]rune{0x200A, 0x2010, 0x2027, 0x202F, 0x2065, 0x206A, 0xFEFE, 0xFF00}
 	for character in shown {

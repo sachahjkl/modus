@@ -1,4 +1,4 @@
-// The module format, version 6 (docs/MODULE_CONTRACT.md, sections 1 and 2).
+// The module format, version 7 (docs/MODULE_CONTRACT.md, sections 1 and 2).
 //
 // A module is one file:
 //
@@ -41,7 +41,7 @@ import "modus:contract/enum_word"
 import "modus:contract/value_kinds"
 
 MAGIC :: u64(0x0000_454C_5544_4F4D) // The bytes "MODULE", then two zero bytes.
-VERSION :: 6 // The version of the format that this code reads and writes. A file of another version is refused. 6: the enum parameters, the tables Enums and Members.
+VERSION :: 7 // The version of the format that this code reads and writes. A file of another version is refused. 7: the display texts of the members, the table Member_Texts.
 PAGE_SIZE :: 4096 // The alignment of each segment in the file and in memory: one page of the processor.
 HASH_SIZE :: 32 // The bytes of a BLAKE3 hash: the name of a module.
 
@@ -60,7 +60,7 @@ Machine :: enum u32 {
 // the file when one field is not one that it takes (`validate`).
 //
 // Example: the header of a module with an entry starts with the bytes "MODULE", the
-// version 6, the machine `X86_64`, and `entry_export` the index of its
+// version 7, the machine `X86_64`, and `entry_export` the index of its
 // export `main`.
 Header :: struct {
 	magic:           u64, // `MAGIC`.
@@ -95,6 +95,7 @@ Table_Kind :: enum u32 {
 	Record_Inputs  = 15, // `Record_Input` records: the record inputs that the module declares, sorted by name.
 	Enums          = 16, // `Enum_Type` records: the descriptions of the enums that the exports take and give.
 	Members        = 17, // `Member` records: the members of those enums.
+	Member_Texts   = 18, // `Member_Text` records: the display text of a member in a language, in the order of the enum, the member and the language.
 }
 // The tables that this version of the format knows.
 TABLE_COUNT :: len(Table_Kind)

@@ -424,6 +424,18 @@ The design: `docs/MODULE_CONTRACT.md`, "Enum parameters".
 
 Do not use: enumerator, enum case, enum variant.
 
+### Display text
+
+A display text is the text that a principal reads for a member, for one language tag, which a module file holds apart from the name of the member.
+
+The palette shows it on a button and in the name of an entry, and the completion beside the name of the member. A line never types it: the line types the name, so a line means one thing in each language. A member with no display text shows its name. A translation adds rows of another language to the table `Member_Texts`, with no change of the code or of the names.
+
+Example: the scale `.fourteen_eighths` has the English display text "1.75".
+
+The design: `docs/MODULE_CONTRACT.md`, "The display text of a member".
+
+Do not use: member label, member caption, member alias.
+
 ### Getter
 
 A getter is the export that an Enum parameter names in its module file to give the member in use: it takes no parameter, gives no error record, and gives the same enum.

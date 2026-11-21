@@ -147,7 +147,7 @@ Entry :: struct {
 	reserved:         [2]u8, // 0.
 	parameter_name_lengths: [PARAMETER_CAPACITY]u8, // The bytes of each parameter name in use. 0: the parameter has no name.
 	reserved_more:    [2]u8, // 0.
-	name:             [NAME_CAPACITY]u8, // The name, identifiers joined by spaces: ASCII 32 to 126 (text_encoding.identifier_words_valid).
+	name:             [NAME_CAPACITY]u8, // The name, identifiers joined by spaces: ASCII 32 to 126 (text_encoding.identifier_words_valid); on a Provider_Setting entry, a display text, as its value name (text_encoding.display_text_valid).
 	signature:        [SIGNATURE_CAPACITY]u8, // "revoke(name: Text, grant: Text) -> Integer": UTF-8.
 	about:            [ABOUT_CAPACITY]u8, // What the entry does, in one sentence: UTF-8.
 	parameter_names:  [PARAMETER_CAPACITY][PARAMETER_NAME_CAPACITY]u8, // The name of each parameter: UTF-8.
@@ -157,7 +157,7 @@ Entry :: struct {
 	reserved_end:        u8, // 0.
 	act_name:         [ACT_NAME_CAPACITY]u8, // "settings.set:font", "strategy": an identifier, ASCII 33 to 126 (text_encoding.identifier_valid).
 	setting_name:     [SETTING_NAME_CAPACITY]u8, // "font", "strategy": identifiers joined by spaces, ASCII 32 to 126.
-	value_name:       [VALUE_NAME_CAPACITY]u8, // "spleen", "eevdf": an identifier, ASCII 33 to 126.
+	value_name:       [VALUE_NAME_CAPACITY]u8, // "spleen", "1.75", "eevdf": the display text of a button (text_encoding.display_text_valid).
 	parameter_units:  [PARAMETER_CAPACITY]value_kinds.Integer_Unit, // What the Integer of each parameter counts. {}: a plain number, and each parameter that is no Integer.
 }
 #assert(size_of(Entry) == 536)
@@ -355,11 +355,15 @@ entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 	if int(entry.act_name_length) > ACT_NAME_CAPACITY || int(entry.setting_name_length) > SETTING_NAME_CAPACITY || int(entry.value_name_length) > VALUE_NAME_CAPACITY {
 		return .Bad_Length
 	}
-	// The act name, the name of a setting row and the name of a value are
-	// identifiers of the system: ASCII, one form for each name. Each can be
-	// absent (length 0); the rules of their presence are below.
+	// The act name and the name of a setting row are identifiers of the
+	// system: ASCII, one form for each name. The name of a value is the
+	// display text of a button, which a principal reads and which a
+	// translation can write in any script: a display text, UTF-8 with no
+	// control character, no character that a reader does not see or that
+	// changes the order of the text, and one character that is not a space.
+	// Each can be absent (length 0); the rules of their presence are below.
 	act_name_valid := entry.act_name_length == 0 || text_encoding.identifier_valid(entry.act_name[:entry.act_name_length])
-	value_name_valid := entry.value_name_length == 0 || text_encoding.identifier_valid(entry.value_name[:entry.value_name_length])
+	value_name_valid := entry.value_name_length == 0 || text_encoding.display_text_valid(entry.value_name[:entry.value_name_length])
 	if !act_name_valid || !value_name_valid || !text_encoding.identifier_words_valid(entry.setting_name[:entry.setting_name_length]) {
 		return .Bad_Byte
 	}
@@ -396,9 +400,13 @@ entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 		}
 	}
 	// The name is a command, an export, or words of identifiers ("set font
-	// to spleen"): ASCII. The signature and the help sentence are text for
-	// a reader: UTF-8.
-	if !text_encoding.identifier_words_valid(entry.name[:entry.name_length]) || !text_encoding.text_valid(entry.signature[:entry.signature_length]) || !text_encoding.text_valid(entry.about[:entry.about_length]) {
+	// to spleen"): ASCII. The name of a Provider_Setting entry ends with the
+	// display text of its value ("settings.set scale to 1.75"): a display
+	// text, as that text. The signature and the help sentence are text for a reader:
+	// UTF-8.
+	name_bytes := entry.name[:entry.name_length]
+	name_valid := setting_kind ? text_encoding.display_text_valid(name_bytes) : text_encoding.identifier_words_valid(name_bytes)
+	if !name_valid || !text_encoding.text_valid(entry.signature[:entry.signature_length]) || !text_encoding.text_valid(entry.about[:entry.about_length]) {
 		return .Bad_Byte
 	}
 	if entry.signature_length < entry.name_length || string(entry.signature[:entry.name_length]) != string(entry.name[:entry.name_length]) {

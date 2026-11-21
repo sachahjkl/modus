@@ -38,6 +38,7 @@ expected_fields :: proc() -> []Expected_Field {
 	record_input: module.Record_Input
 	enum_type: module.Enum_Type
 	member: module.Member
+	member_text: module.Member_Text
 	compartment_word: output.Compartment_Word
 	end_words: output.End_Words
 	list_head: output.Wiring_List_Head
@@ -155,6 +156,12 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Member", "name_offset", offset_of(module.Member, name_offset), size_of(member.name_offset)},
 		{"module.Member", "name_count", offset_of(module.Member, name_count), size_of(member.name_count)},
 		{"module.Member", "value", offset_of(module.Member, value), size_of(member.value)},
+		{"module.Member_Text", "enum_index", offset_of(module.Member_Text, enum_index), size_of(member_text.enum_index)},
+		{"module.Member_Text", "member_number", offset_of(module.Member_Text, member_number), size_of(member_text.member_number)},
+		{"module.Member_Text", "text_offset", offset_of(module.Member_Text, text_offset), size_of(member_text.text_offset)},
+		{"module.Member_Text", "text_count", offset_of(module.Member_Text, text_count), size_of(member_text.text_count)},
+		{"module.Member_Text", "tag_offset", offset_of(module.Member_Text, tag_offset), size_of(member_text.tag_offset)},
+		{"module.Member_Text", "tag_count", offset_of(module.Member_Text, tag_count), size_of(member_text.tag_count)},
 		{"output.Compartment_Word", "kind", offset_of(output.Compartment_Word, kind), size_of(compartment_word.kind)},
 		{"output.Compartment_Word", "serial", offset_of(output.Compartment_Word, serial), size_of(compartment_word.serial)},
 		{"output.End_Words", "end", offset_of(output.End_Words, end), size_of(end_words.end)},

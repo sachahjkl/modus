@@ -22,7 +22,9 @@
 package module_file_writer
 
 import "base:intrinsics"
+import "modus:contract/language_tag"
 import module "modus:contract/module"
+import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 
 // The name of the export that a loader starts: the header names it in
@@ -91,6 +93,16 @@ Member_Description :: struct {
 	value: i64,
 }
 
+// The display text of a member in a language: what module.Member_Text
+// holds. The parts give them in the order of the enum, the member and the
+// bytes of the tag (module.member_text_order).
+Member_Text_Description :: struct {
+	enum_number:   u32, // The enum, from 1, in Module_Parts.enums.
+	member_number: u32, // The member in its enum, from 0.
+	tag:           string, // A language tag of BCP 47 in its canonical case: "en", "fr-CA" (language_tag.canonical_check).
+	text:          string, // 1 to module.MEMBER_TEXT_CAPACITY bytes of a display text (text_encoding.display_text_valid).
+}
+
 // The description of a record: what module.Record and its fields hold.
 Record_Description :: struct {
 	name:   string,
@@ -156,6 +168,7 @@ Module_Parts :: struct {
 	rebases:            []u64, // The memory offsets that a loader rebases: in order, each one time, each in writable data.
 	records:            []Record_Description,
 	enums:              []Enum_Description, // The file has the tables Enums and Members when there is one.
+	member_texts:       []Member_Text_Description, // The file has the table Member_Texts when there is one.
 	facts:              []Fact_Part,
 	has_own_hash_place: bool, // The module has an own-hash place: a module that writes a fact must have one.
 	own_hash_place:     u64, // module.HASH_SIZE bytes in a segment with Write and no Execute.
@@ -204,6 +217,11 @@ Refusal :: enum u32 {
 	// value: the module.Enum_Problem: No_Enum for a number of an enum that names nothing, No_Getter for a getter
 	// past the exports, Bad_Optional for an optional bit.
 	Enum_Not_Valid                = 25,
+	// A display text names no enum of the parts or no member of its enum, has a tag that is not well-formed
+	// or not in its canonical case, has a text that is empty, past module.MEMBER_TEXT_CAPACITY or no display
+	// text, is not after the text before it, or module.member_texts_check refuses the written file. index: the text, from 0; value: the
+	// module.Member_Text_Problem.
+	Member_Text_Not_Valid         = 26,
 }
 
 // The refusal of the writer, and where it is.
@@ -336,6 +354,7 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 		{.Exports, len(parts.exports)},
 		{.Records, len(parts.records)},
 		{.Enums, len(parts.enums)},
+		{.Member_Texts, len(parts.member_texts)},
 		{.Facts, len(parts.facts)},
 	}
 	for item in counts {
@@ -357,7 +376,7 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 		return {}, refusal
 	}
 	Check :: proc "contextless" (checked: Module_Parts) -> Refusal_Record
-	checks := [?]Check{names_check, exports_check, relocations_check, facts_check, record_streams_check}
+	checks := [?]Check{names_check, exports_check, relocations_check, facts_check, record_streams_check, member_texts_check}
 	for check in checks {
 		refusal = check(parts)
 		if refusal.refusal != .None {
@@ -424,6 +443,9 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 	if len(parts.enums) > 0 {
 		add(&layout, &cursor, .Enums, u64(len(parts.enums)) + 1, size_of(module.Enum_Type))
 		add(&layout, &cursor, .Members, member_count, size_of(module.Member))
+	}
+	if len(parts.member_texts) > 0 {
+		add(&layout, &cursor, .Member_Texts, u64(len(parts.member_texts)) + 1, size_of(module.Member_Text))
 	}
 	add(&layout, &cursor, .Strings, string_bytes, 1)
 	add(&layout, &cursor, .Documentation, 2, size_of(module.Documentation))
@@ -662,6 +684,40 @@ exports_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
 	return {}
 }
 
+// member_texts_check checks each display text of the parts, as
+// module.member_texts_check checks a row: its enum and its member are in
+// the parts, its tag is well-formed and in its canonical case, its text
+// keeps the bound and is a display text, and it comes after the text
+// before it in the order of the enum, the member and the tag.
+@(private)
+member_texts_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
+	for item, index in parts.member_texts {
+		problem := module.Member_Text_Problem.None
+		switch {
+		case item.enum_number == 0 || u64(item.enum_number) > u64(len(parts.enums)):
+			problem = .No_Enum
+		case u64(item.member_number) >= u64(len(parts.enums[item.enum_number - 1].members)):
+			problem = .No_Member
+		case language_tag.canonical_check(item.tag) != .None:
+			problem = .Bad_Tag
+		case len(item.text) == 0 || len(item.text) > module.MEMBER_TEXT_CAPACITY || !text_encoding.display_text_valid(transmute([]u8)item.text):
+			problem = .Bad_Text
+		case index > 0:
+			before := parts.member_texts[index - 1]
+			switch module.member_text_order(item.enum_number, item.member_number, item.tag, before.enum_number, before.member_number, before.tag) {
+			case 0:
+				problem = .Twice
+			case -1:
+				problem = .Out_Of_Order
+			}
+		}
+		if problem != .None {
+			return {refusal = .Member_Text_Not_Valid, table = .Member_Texts, index = u64(index), value = u64(problem)}
+		}
+	}
+	return {}
+}
+
 // relocations_check checks each slot, each rebase and the own-hash place:
 // a loader writes each of them, so each is in writable data.
 @(private)
@@ -758,6 +814,10 @@ string_bytes_needed :: proc "contextless" (parts: Module_Parts) -> u64 {
 		for member in item.members {
 			total = sum_or_most(total, u64(len(member.name)))
 		}
+	}
+	for item in parts.member_texts {
+		total = sum_or_most(total, u64(len(item.text)))
+		total = sum_or_most(total, u64(len(item.tag)))
 	}
 	return total
 }
@@ -1019,6 +1079,19 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 			member_number += 1
 		}
 	}
+	// The display texts, in the order of the parts, which the checks of
+	// the parts made the order of the format.
+	for item, index in parts.member_texts {
+		row := module.Member_Text {
+			enum_index    = item.enum_number,
+			member_number = item.member_number,
+			text_count    = u32(len(item.text)),
+			tag_count     = u32(len(item.tag)),
+		}
+		row.text_offset = string_append(&strings, item.text)
+		row.tag_offset = string_append(&strings, item.tag)
+		store(file, place(directory, .Member_Texts, index + 1), row)
+	}
 	if parts.has_own_hash_place {
 		store(file, place(directory, .Own_Hash, 1), module.Own_Hash_Place{memory_offset = parts.own_hash_place})
 	}
@@ -1076,6 +1149,11 @@ written_file_check :: proc "contextless" (parts: Module_Parts, file: []u8) -> Re
 		if _, problem := module.function_enums_check(file, function); problem != .None {
 			return {refusal = .Enum_Not_Valid, table = .Functions, index = u64(index), value = u64(problem)}
 		}
+	}
+	// The display texts: the readers take a text through this check, so
+	// the writer writes none that they refuse.
+	if row, problem := module.member_texts_check(file); problem != .None {
+		return {refusal = .Member_Text_Not_Valid, table = .Member_Texts, index = u64(row) - 1, value = u64(problem)}
 	}
 	// The reader of the root service checks the record streams of a file
 	// with this procedure: the writer writes none that it refuses.
