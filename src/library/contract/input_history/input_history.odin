@@ -245,6 +245,7 @@ page_delta_encode :: proc "contextless" (virtual_address: u64, before: ^[HISTORY
 		return cursor, true, true
 	}
 	index = 0
+	actual_ranges: u32
 	for index < int(HISTORY_PAGE_SIZE) {
 		if before[index] == after[index] {
 			index += 1
@@ -255,11 +256,22 @@ page_delta_encode :: proc "contextless" (virtual_address: u64, before: ^[HISTORY
 			index += 1
 		}
 		length := index - start
+		if cursor + size_of(Page_Delta_Range) + length > len(destination) {
+			return 0, true, false
+		}
 		entry := Page_Delta_Range{offset = u16(start), length = u16(length)}
 		copy_into_bytes(destination[cursor:], &entry)
 		cursor += size_of(Page_Delta_Range)
 		copy(destination[cursor:cursor + length], after[start:index])
 		cursor += length
+		actual_ranges += 1
+	}
+	if actual_ranges != range_count {
+		header.range_count = actual_ranges
+		copy_into_bytes(destination, &header)
+		if actual_ranges == 0 {
+			return 0, false, true
+		}
 	}
 	return cursor, true, true
 }
@@ -346,7 +358,7 @@ payload_valid :: proc "contextless" (kind: History_Record_Kind, payload: []u8) -
 		if entry.copied_bytes_count == 0 && entry.copied_user_address != 0 {
 			return false
 		}
-		if entry.copied_bytes_count > 0 && (entry.copied_user_address >= op.USER_END || u64(entry.copied_bytes_count) > op.USER_END - entry.copied_user_address) {
+		if entry.copied_bytes_count > 0 && (entry.copied_user_address == 0 || entry.copied_user_address >= op.USER_END || u64(entry.copied_bytes_count) > op.USER_END - entry.copied_user_address) {
 			return false
 		}
 		return true
@@ -491,7 +503,7 @@ history_writer_append_kernel_completion :: proc "contextless" (writer: ^History_
 	if entry.copied_bytes_count == 0 && entry.copied_user_address != 0 {
 		return false
 	}
-	if entry.copied_bytes_count > 0 && (entry.copied_user_address >= op.USER_END || u64(entry.copied_bytes_count) > op.USER_END - entry.copied_user_address) {
+	if entry.copied_bytes_count > 0 && (entry.copied_user_address == 0 || entry.copied_user_address >= op.USER_END || u64(entry.copied_bytes_count) > op.USER_END - entry.copied_user_address) {
 		return false
 	}
 	payload_bytes := u64(size_of(Kernel_Completion_Payload)) + u64(len(copied_bytes))
@@ -601,15 +613,16 @@ history_reader_open :: proc "contextless" (buffer: []u8) -> (reader: History_Rea
 	if header.capacity_bytes > available || header.written_bytes > header.capacity_bytes || header.read_bytes > header.written_bytes {
 		return {}, false
 	}
-	if header.end_reason != 0 {
-		if _, reason_ok := history_end_reason_of_word(u64(header.end_reason)); !reason_ok {
-			return {}, false
-		}
+	end_reason, reason_ok := history_end_reason_of_word(u64(header.end_reason))
+	if !reason_ok {
+		return {}, false
 	}
-	if header.divergence_kind != 0 {
-		if _, div_ok := divergence_kind_of_word(u64(header.divergence_kind)); !div_ok {
-			return {}, false
-		}
+	div_kind, div_ok := divergence_kind_of_word(u64(header.divergence_kind))
+	if !div_ok {
+		return {}, false
+	}
+	if (end_reason == .Divergence) != (div_kind != .None) {
+		return {}, false
 	}
 	for reserved_byte in header.reserved {
 		if reserved_byte != 0 {
@@ -617,6 +630,60 @@ history_reader_open :: proc "contextless" (buffer: []u8) -> (reader: History_Rea
 		}
 	}
 	return History_Reader{buffer = buffer, header = header, read_offset = 0}, true
+}
+
+// history_reader_peek_into copies the next record header and aligned payload
+// ONCE out of reader.buffer into caller-supplied private scratch memory, then
+// validates padding and payload strictly on that private copy. This eliminates
+// double-fetch TOCTOU when reader.buffer is shared with a user process.
+history_reader_peek_into :: proc "contextless" (reader: ^History_Reader, scratch: []u8) -> (record_header: History_Record_Header, kind: History_Record_Kind, payload: []u8, stride: u64, has_more: bool, ok: bool) {
+	if reader == nil {
+		return {}, .None, nil, 0, false, false
+	}
+	if reader.read_offset == reader.header.written_bytes {
+		return {}, .None, nil, 0, false, true
+	}
+	remaining := reader.header.written_bytes - reader.read_offset
+	if remaining < size_of(History_Record_Header) {
+		return {}, .None, nil, 0, false, false
+	}
+	base := size_of(History_Header) + int(reader.read_offset)
+	record_header = copy_from_bytes(reader.buffer[base:], History_Record_Header)
+	parsed_kind, kind_ok := history_record_kind_of_word(u64(record_header.kind))
+	if !kind_ok || parsed_kind == .None {
+		return {}, .None, nil, 0, false, false
+	}
+	if record_header.payload_bytes > MAX_RECORD_PAYLOAD_BYTES {
+		return {}, .None, nil, 0, false, false
+	}
+	padded_payload := align_up_record(u64(record_header.payload_bytes))
+	total := u64(size_of(History_Record_Header)) + padded_payload
+	if total > remaining || padded_payload > u64(len(scratch)) {
+		return {}, .None, nil, 0, false, false
+	}
+	payload_start := base + size_of(History_Record_Header)
+	copy(scratch[:int(padded_payload)], reader.buffer[payload_start:payload_start + int(padded_payload)])
+	for pad := int(record_header.payload_bytes); pad < int(padded_payload); pad += 1 {
+		if scratch[pad] != 0 {
+			return {}, .None, nil, 0, false, false
+		}
+	}
+	payload = scratch[:int(record_header.payload_bytes)]
+	if !payload_valid(parsed_kind, payload) {
+		return {}, .None, nil, 0, false, false
+	}
+	return record_header, parsed_kind, payload, total, true, true
+}
+
+// history_reader_next_into reads and validates the next record into private
+// scratch memory, advancing read_offset only when completely valid.
+history_reader_next_into :: proc "contextless" (reader: ^History_Reader, scratch: []u8) -> (record_header: History_Record_Header, kind: History_Record_Kind, payload: []u8, has_more: bool, ok: bool) {
+	stride: u64
+	record_header, kind, payload, stride, has_more, ok = history_reader_peek_into(reader, scratch)
+	if ok && has_more {
+		reader.read_offset += stride
+	}
+	return record_header, kind, payload, has_more, ok
 }
 
 // history_reader_peek inspects the next record without advancing read_offset.

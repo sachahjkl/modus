@@ -296,6 +296,9 @@ protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Ran
 		if mapping.address >= op.THREAD_AREA_BASE {
 			return mappings, .Bad_Address // The thread areas and the time page keep their protection.
 		}
+		if record_replay_mapping_has_point_copies(index_of_process(process), mapping) {
+			return mappings, .Bad_State // Point-copied shared pages keep their read-only protection while recorded/replayed.
+		}
 		// More than the handle permitted when the process mapped the object.
 		if .Write in flags && mapping.limit_bits & PAGE_WRITE == 0 || .Execute in flags && mapping.limit_bits & PAGE_NO_EXECUTE != 0 {
 			return mappings, .Bad_Operation

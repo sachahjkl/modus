@@ -615,9 +615,9 @@ schedule :: proc "contextless" () -> ! {
 				thread_counters_load()
 			}
 			// One byte of the hot line: a normal thread pays this test only.
-			if thread.record_mode != .None {
+			if mode := intrinsics.atomic_load(&thread.record_mode); mode != .None {
 				record_traps_load(cpu)
-				if thread.record_mode == .Recording {
+				if mode == .Recording {
 					record_replay_stint_start(thread.process)
 				}
 			}
@@ -699,6 +699,9 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 		cpu.record_serial = thread.serial
 		model_specific_register_write(MSR_KERNEL_GS_BASE, thread.record)
 	}
+	if thread.record_wait_pending {
+		record_wait_wake_completion(cpu, thread)
+	}
 	if wants_traps := intrinsics.atomic_load(&thread.record_mode) != .None; cpu.record_traps_loaded != wants_traps {
 		if wants_traps {
 			record_traps_load(cpu)
@@ -708,7 +711,7 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 	}
 	if thread.in_enter {
 		thread.in_enter = false
-		thread.frame.rax = intrinsics.atomic_load(&thread.record_mode) != .None ? record_replay_entry_return_time(thread.process) : intrinsics.atomic_load(&time_milliseconds)
+		thread.frame.rax = intrinsics.atomic_load(&thread.record_mode) != .None ? record_replay_entry_return_time(thread) : intrinsics.atomic_load(&time_milliseconds)
 	}
 	resume(&thread.frame)
 }

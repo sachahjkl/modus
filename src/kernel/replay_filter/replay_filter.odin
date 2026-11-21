@@ -62,10 +62,12 @@ Cpuid_Registers :: struct {
 }
 
 // Whether a kernel operation runs locally on the replayed process's address
-// space/threads or is answered purely from the recorded input history.
+// space/threads, is answered purely from the recorded input history, or is
+// refused in single-thread record/replay mode.
 Replay_Operation_Policy :: enum u8 {
 	Synthetic  = 0, // Never run for real in replay mode; answer strictly from history.
 	Real_Local = 1, // Run locally on the replayed process when operating on itself.
+	Refused    = 2, // Refused in single-thread record/replay mode (Thread_Create, Guest_Run).
 }
 
 // decode_trapped_instruction checks the bytes at RIP for rdtsc (0F 31),
@@ -130,14 +132,86 @@ cr4_with_timestamp_disable :: proc "contextless" (current: u64, enable: bool) ->
 }
 
 // replay_operation_policy decides whether a kernel operation builds local
-// address-space/thread state in replay mode or is answered synthetically from
-// the input history without executing side effects.
+// address-space/thread state in replay mode, is answered synthetically from
+// the input history without executing side effects, or is refused in
+// single-thread record/replay mode.
 replay_operation_policy :: proc "contextless" (operation: op.Operation) -> Replay_Operation_Policy {
 	switch operation {
-	case .Memory_Create, .Memory_Map, .Memory_Unmap, .Memory_Commit, .Memory_Protect, .Thread_Create, .Thread_Stop, .Process_Stop:
+	case .Memory_Create, .Memory_Map, .Memory_Unmap, .Memory_Commit, .Memory_Protect, .Handle_Close, .Thread_Stop, .Process_Stop:
 		return .Real_Local
-	case .None, .Log, .Memory_Size, .Process_Create, .Process_Start, .Process_State, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Fault_Handler_Set, .Fault_Answer, .Events_Set, .Thread_Control, .Guest_Run, .Log_Read:
+	case .Thread_Create, .Guest_Run:
+		return .Refused
+	case .None, .Log, .Memory_Size, .Process_Create, .Process_Start, .Process_State, .Handle_Give, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Fault_Handler_Set, .Fault_Answer, .Events_Set, .Thread_Control, .Log_Read:
 		return .Synthetic
 	}
 	return .Synthetic
+}
+
+// Capacity of the replay handle translation table: matches the handle table
+// size of a process.
+REPLAY_HANDLE_MAP_CAPACITY :: op.HANDLE_TABLE_CAPACITY
+
+// One recorded-to-real handle translation entry for objects created locally
+// during replay (such as Memory_Create).
+Replay_Handle_Entry :: struct {
+	recorded: u64, // Handle value returned during recording (0 means free slot).
+	real:     u64, // Actual handle allocated in the replay process.
+}
+
+// Fixed-capacity flat map from recorded handles to real replay handles so
+// Memory_Map, Memory_Commit, and Handle_Close never leak slots or suffer
+// handle generation drift.
+Replay_Handle_Map :: struct {
+	entries: [REPLAY_HANDLE_MAP_CAPACITY]Replay_Handle_Entry,
+}
+
+// replay_handle_map_insert binds a non-zero recorded handle to a non-zero real
+// handle. Refuses zero handles, duplicate recorded handles, or a full map.
+replay_handle_map_insert :: proc "contextless" (table: ^Replay_Handle_Map, recorded: u64, real: u64) -> bool {
+	if table == nil || recorded == 0 || real == 0 {
+		return false
+	}
+	free_slot := -1
+	for entry, index in table.entries {
+		if entry.recorded == recorded {
+			return false
+		}
+		if entry.recorded == 0 && free_slot < 0 {
+			free_slot = index
+		}
+	}
+	if free_slot < 0 {
+		return false
+	}
+	table.entries[free_slot] = {recorded = recorded, real = real}
+	return true
+}
+
+// replay_handle_map_lookup returns the real handle bound to recorded, if any.
+replay_handle_map_lookup :: proc "contextless" (table: ^Replay_Handle_Map, recorded: u64) -> (real: u64, found: bool) {
+	if table == nil || recorded == 0 {
+		return 0, false
+	}
+	for entry in table.entries {
+		if entry.recorded == recorded {
+			return entry.real, true
+		}
+	}
+	return 0, false
+}
+
+// replay_handle_map_remove deletes and returns the real handle bound to
+// recorded, freeing the slot for reuse.
+replay_handle_map_remove :: proc "contextless" (table: ^Replay_Handle_Map, recorded: u64) -> (real: u64, found: bool) {
+	if table == nil || recorded == 0 {
+		return 0, false
+	}
+	for &entry in table.entries {
+		if entry.recorded == recorded {
+			real = entry.real
+			entry = {}
+			return real, true
+		}
+	}
+	return 0, false
 }

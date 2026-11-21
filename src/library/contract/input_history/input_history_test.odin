@@ -94,6 +94,10 @@ reader_refuses_corrupt_headers :: proc(t: ^testing.T) {
 		proc(h: ^History_Header) { h.read_bytes = 1 }, // read_bytes > written_bytes (0)
 		proc(h: ^History_Header) { h.end_reason = u32(max(History_End_Reason)) + 1 },
 		proc(h: ^History_Header) { h.divergence_kind = u32(max(Divergence_Kind)) + 1 },
+		// Inconsistent end_reason vs divergence_kind pairs must be refused.
+		proc(h: ^History_Header) { h.end_reason = u32(History_End_Reason.Divergence); h.divergence_kind = u32(Divergence_Kind.None) },
+		proc(h: ^History_Header) { h.end_reason = u32(History_End_Reason.Normal_Stop); h.divergence_kind = u32(Divergence_Kind.Kind_Mismatch) },
+		proc(h: ^History_Header) { h.end_reason = u32(History_End_Reason.None); h.divergence_kind = u32(Divergence_Kind.Missing_Record) },
 		proc(h: ^History_Header) { h.reserved[0] = 1 },
 		proc(h: ^History_Header) { h.reserved[len(h.reserved) - 1] = 0x80 },
 	}
@@ -556,4 +560,58 @@ multi_event_history_round_trip :: proc(t: ^testing.T) {
 	// Clean EOF.
 	_, _, _, m7, ok7 := history_reader_next(&reader)
 	testing.expect(t, ok7 && !m7)
+}
+
+// Kernel_Completion refuses copied_bytes_count > 0 with copied_user_address == 0,
+// and history_reader_next_into snapshots each record into private scratch memory.
+@(test)
+single_fetch_snapshot_reader_and_null_copy_address_refusal :: proc(t: ^testing.T) {
+	buf: [4096]u8
+	writer, ok := history_writer_init(buf[:], {}, 2_000_000_000, 0, 7)
+	testing.expect(t, ok)
+
+	// Writer refuses non-zero copied bytes targeting virtual address 0.
+	bytes := [?]u8{1, 2, 3, 4}
+	bad_kc := Kernel_Completion_Payload {
+		command_kind        = u32(op.Operation.Process_State),
+		completion_status   = u32(op.Status.Ok),
+		copied_bytes_count  = 4,
+		copied_user_address = 0,
+	}
+	testing.expect(t, !history_writer_append_kernel_completion(&writer, 0x40_1000, 0x7FFF_E000, bad_kc, bytes[:]))
+	testing.expect_value(t, writer.write_offset, u64(0))
+
+	// payload_valid also refuses a crafted payload with copied_bytes_count > 0 and address 0.
+	crafted: [size_of(Kernel_Completion_Payload) + 4]u8
+	(^Kernel_Completion_Payload)(raw_data(crafted[:]))^ = bad_kc
+	testing.expect(t, !payload_valid(.Kernel_Completion, crafted[:]))
+
+	// Valid record read via history_reader_next_into into private scratch.
+	good_kc := bad_kc
+	good_kc.copied_user_address = 0x10_0000
+	testing.expect(t, history_writer_append_kernel_completion(&writer, 0x40_1000, 0x7FFF_E000, good_kc, bytes[:]))
+
+	reader, open_ok := history_reader_open(buf[:])
+	testing.expect(t, open_ok)
+
+	// Scratch too small is refused without advancing read_offset.
+	tiny_scratch: [16]u8
+	_, _, _, has_more, read_ok := history_reader_next_into(&reader, tiny_scratch[:])
+	testing.expect(t, !read_ok && !has_more)
+	testing.expect_value(t, reader.read_offset, u64(0))
+
+	// Adequate scratch copies payload out so mutating buf afterwards does not alter the copy.
+	scratch: [512]u8
+	_, kind, payload, has_more2, read_ok2 := history_reader_next_into(&reader, scratch[:])
+	testing.expect(t, read_ok2 && has_more2)
+	testing.expect_value(t, kind, History_Record_Kind.Kernel_Completion)
+	// Wipe source buffer after snapshot: payload must still parse cleanly!
+	for &b in buf[size_of(History_Header):] {
+		b = 0xFF
+	}
+	parsed, copied, parsed_ok := kernel_completion_from_payload(payload)
+	testing.expect(t, parsed_ok)
+	testing.expect_value(t, parsed.copied_user_address, u64(0x10_0000))
+	testing.expect_value(t, len(copied), 4)
+	testing.expect_value(t, copied[3], u8(4))
 }

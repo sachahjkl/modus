@@ -71,22 +71,61 @@ control_and_msr_bit_helpers :: proc(t: ^testing.T) {
 }
 
 // Every kernel operation has an explicit replay policy; side-effecting handle
-// and device operations are always Synthetic.
+// and device operations are Synthetic, and Thread_Create/Guest_Run are Refused.
 @(test)
 replay_operation_policy_covers_every_operation :: proc(t: ^testing.T) {
 	real_count := 0
+	refused_count := 0
 	synthetic_count := 0
 	for operation in op.Operation {
 		policy := replay_operation_policy(operation)
 		switch operation {
-		case .Memory_Create, .Memory_Map, .Memory_Unmap, .Memory_Commit, .Memory_Protect, .Thread_Create, .Thread_Stop, .Process_Stop:
+		case .Memory_Create, .Memory_Map, .Memory_Unmap, .Memory_Commit, .Memory_Protect, .Handle_Close, .Thread_Stop, .Process_Stop:
 			testing.expect_value(t, policy, Replay_Operation_Policy.Real_Local)
 			real_count += 1
-		case .None, .Log, .Memory_Size, .Process_Create, .Process_Start, .Process_State, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Fault_Handler_Set, .Fault_Answer, .Events_Set, .Thread_Control, .Guest_Run, .Log_Read:
+		case .Thread_Create, .Guest_Run:
+			testing.expect_value(t, policy, Replay_Operation_Policy.Refused)
+			refused_count += 1
+		case .None, .Log, .Memory_Size, .Process_Create, .Process_Start, .Process_State, .Handle_Give, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Fault_Handler_Set, .Fault_Answer, .Events_Set, .Thread_Control, .Log_Read:
 			testing.expect_value(t, policy, Replay_Operation_Policy.Synthetic)
 			synthetic_count += 1
 		}
 	}
 	testing.expect_value(t, real_count, 8)
-	testing.expect_value(t, synthetic_count, len(op.Operation) - 8)
+	testing.expect_value(t, refused_count, 2)
+	testing.expect_value(t, synthetic_count, len(op.Operation) - 10)
+}
+
+// Replay handle translation table refuses zero handles, duplicates, and
+// overflow, and reuses freed slots cleanly on remove.
+@(test)
+replay_handle_map_edges :: proc(t: ^testing.T) {
+	table: Replay_Handle_Map
+	testing.expect(t, !replay_handle_map_insert(&table, 0, 5))
+	testing.expect(t, !replay_handle_map_insert(&table, 5, 0))
+	_, found := replay_handle_map_lookup(&table, 0)
+	testing.expect(t, !found)
+	_, found = replay_handle_map_remove(&table, 0)
+	testing.expect(t, !found)
+
+	for i in u64(1) ..= REPLAY_HANDLE_MAP_CAPACITY {
+		testing.expect(t, replay_handle_map_insert(&table, i, i + 1000))
+	}
+	// Duplicate and past-capacity inserts are refused.
+	testing.expect(t, !replay_handle_map_insert(&table, 1, 9999))
+	testing.expect(t, !replay_handle_map_insert(&table, REPLAY_HANDLE_MAP_CAPACITY + 1, 9999))
+
+	// Lookup and remove reuse the slot cleanly.
+	real, ok := replay_handle_map_lookup(&table, 42)
+	testing.expect(t, ok)
+	testing.expect_value(t, real, u64(1042))
+	removed, rem_ok := replay_handle_map_remove(&table, 42)
+	testing.expect(t, rem_ok)
+	testing.expect_value(t, removed, u64(1042))
+	_, still_there := replay_handle_map_lookup(&table, 42)
+	testing.expect(t, !still_there)
+	testing.expect(t, replay_handle_map_insert(&table, 999, 5555))
+	real2, ok2 := replay_handle_map_lookup(&table, 999)
+	testing.expect(t, ok2)
+	testing.expect_value(t, real2, u64(5555))
 }

@@ -715,6 +715,13 @@ handle_argument_explain :: proc "contextless" (record: ^errors.Error_Record, pro
 		}
 		return false
 	}
+	// Record_Start and Replay_Start pass the history memory handle in v[1]
+	// (parameter `number`, whose generic form is Value).
+	if operation == .Thread_Control && n == 1 {
+		if command, command_known := enum_word.member_of_word(op.Thread_Control_Command, v[2]); command_known && (command == .Record_Start || command == .Replay_Start) {
+			return handle_explain(record, process, 2, v[1], .Memory, {.Read, .Write})
+		}
+	}
 	// A handle that the operation does not read with these values names no
 	// fault: the budget of a decommit, the thread of a command out of range.
 	parameter := op.OPERATIONS[operation].parameters[n]

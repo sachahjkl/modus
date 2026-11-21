@@ -21,7 +21,7 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 	intrinsics.atomic_add(&processes[thread.process].entries, 1)
 	thread.in_enter = true
 	wait_begin(thread)
-	commands_ran := false
+	pure_wait := ring.empty(&thread.ring.commands)
 	for _ in 0 ..< ring.CAPACITY {
 		if ring.empty(&thread.ring.commands) {
 			break
@@ -40,7 +40,6 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		if !ok {
 			break
 		}
-		commands_ran = true
 		completion := ring.Record{tag = command.tag}
 		// The event point of an operation (events.odin): with no rule of
 		// this kind, one branch on a word of this processor; with a rule for
@@ -57,11 +56,9 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			// leaves it (schedule), so the record names it.
 			event_record(cpu, .Operation, thread.process, thread.number, u64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS), cycles_now() - started, u64(status))
 		}
-		// The operation can end the thread: then it does nothing more.
+		// The operation can end the thread: self-stopping commands already
+		// recorded their completion before process_stop ended the history.
 		if intrinsics.atomic_load(&thread.stop_requested) {
-			if intrinsics.atomic_load(&thread.record_mode) == .Recording {
-				record_kernel_completion(cpu, thread, command, status, completion.values)
-			}
 			return
 		}
 		completion.kind = u32(status)
@@ -79,11 +76,17 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		// the process's alone.
 		_ = ring.push(&thread.ring.completions, completion)
 	}
-	if !commands_ran && intrinsics.atomic_load(&thread.record_mode) == .Recording {
-		record_kernel_completion(cpu, thread, ring.Record{values = {0 = thread.frame.rdi}}, .Ok, {})
-	}
 	// A word that changed before the wait: the thread reads it again.
 	wait_end(thread, thread.frame.rdi)
+	if pure_wait && intrinsics.atomic_load(&thread.record_mode) == .Recording {
+		if intrinsics.atomic_load(&thread.state) == .Waiting {
+			// Defer recording until the thread wakes in run() so the history
+			// captures post-wake milliseconds and post-wake point copies.
+			thread.record_wait_pending = true
+		} else {
+			record_kernel_completion(cpu, thread, ring.Record{values = {0 = thread.frame.rdi}}, .Ok, {})
+		}
+	}
 }
 
 // The result of a kernel operation inside the kernel: each status of the
@@ -171,6 +174,10 @@ command_run :: proc "contextless" (index: u32, command: ring.Record, results: ^[
 	// A guest runs with no lock held: the operation takes its own locks
 	// (guest.odin).
 	if command.kind == u32(op.Operation.Guest_Run) {
+		if intrinsics.atomic_load(&threads[index].record_mode) != .None {
+			cpu.operation.running = false
+			return .Bad_State
+		}
 		guest_outcome := guest_run(index, command.values, results)
 		cpu.operation.running = false
 		stop_wait(cpu)
@@ -519,6 +526,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Thread_Create:
+		if intrinsics.atomic_load(&threads[index].record_mode) != .None {
+			return .Bad_State
+		}
 		require_control() or_return
 		budget := handle_find(process, v[0], .Budget, {.Spend}) or_return
 		// A weight above the full weight would raise the share: a process
@@ -549,6 +559,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 	case .Thread_Stop:
 		require_control() or_return
 		if v[0] == 0 {
+			if intrinsics.atomic_load(&threads[index].record_mode) == .Recording {
+				record_self_stop_completion_locked(processor_self(), &threads[index], command)
+			}
 			thread_stop(index)
 			return .Ok
 		}
@@ -583,6 +596,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		outcome, _, outcome_known := op.stop_outcome_of_operation_word(v[1], cause == .Itself)
 		if !outcome_known {
 			return .Bad_Operation
+		}
+		if to == process && intrinsics.atomic_load(&threads[index].record_mode) == .Recording {
+			record_self_stop_completion_locked(processor_self(), &threads[index], command)
 		}
 		process_stop(index_of_process(to), cause, outcome)
 		return .Ok

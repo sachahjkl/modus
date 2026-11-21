@@ -10,28 +10,36 @@ import "kernel:replay_filter"
 // Process input record and replay in the kernel
 // (src/md/features/record_and_replay.md).
 //
-// A recorded or replayed process runs on one processor with CR4.TSD and CPUID
-// faulting enabled whenever its thread is on a processor. Normal threads pay
-// one test of a byte in the hot cache line of Thread at each switch and zero
-// MSR or CR4 writes.
+// A recorded or replayed process runs single-threaded on one pinned processor
+// with CR4.TSD and CPUID faulting enabled whenever its thread runs. Normal
+// threads pay one test of a byte in the hot cache line of Thread at each
+// switch and zero MSR or CR4 writes.
 //
 // Read-only shared pages (such as the time page and read-only pages written by
 // another process) are backed by private point copies paid by the budget of
 // the history memory object. At each input point while recording, the kernel
-// diffs each point copy against its source page and writes any changed byte
-// ranges into the input history. On replay, those deltas apply to the replay
-// process's own private point copies, never touching the live shared pages.
+// snapshots each live shared page once into per-processor scratch memory,
+// diffs it against the point copy, writes changed byte ranges into the input
+// history, and updates the point copy from the snapshot. On replay, each
+// record is copied once into private per-processor scratch memory before
+// validation, and Page_Delta records apply strictly to tracked point copies.
 
 POINT_COPY_CAPACITY :: 32
 RECORD_COPY_SCRATCH_BYTES :: 8192
+REPLAY_RECORD_SCRATCH_BYTES :: size_of(input_history.Kernel_Completion_Payload) + RECORD_COPY_SCRATCH_BYTES
+
+#assert(REPLAY_RECORD_SCRATCH_BYTES >= input_history.PAGE_DELTA_MAX_BYTES)
+#assert(REPLAY_RECORD_SCRATCH_BYTES >= size_of(input_history.Cycle_Counter_Payload))
+#assert(REPLAY_RECORD_SCRATCH_BYTES >= size_of(input_history.Cpuid_Payload))
+#assert(REPLAY_RECORD_SCRATCH_BYTES >= size_of(input_history.History_End_Payload))
 
 // One private page frame backing a read-only shared page of a recorded or
-// replayed process. Paid by Process_Record_State.history_budget.
+// replayed process. Paid by the current budget of Process_Record_State.history_region.
 Point_Copy :: struct {
 	virtual_address: u64, // Page-aligned user virtual address in the target process.
 	source_region:   u32, // Original memory object (e.g. time_region).
 	source_page:     u64, // Page index inside source_region.
-	original_bits:   u64, // Original page table entry permission bits.
+	original_bits:   u64, // Page table permission bits when the point copy was installed.
 	copy_frame:      u64, // Physical frame of the private copy.
 	active:          bool,
 }
@@ -39,25 +47,25 @@ Point_Copy :: struct {
 // Per-process record/replay state, indexed by process slot. Kept out of
 // Process so unrecorded processes pay no cache footprint.
 Process_Record_State :: struct {
-	mode:               input_history.Record_Mode,
-	recorder_process:   u32, // Process slot of the recorder or replayer.
-	recorder_serial:    u32, // Serial of the recorder or replayer.
-	history_region:     u32, // Contiguous memory object of the input history (kernel holds one reference).
-	history_budget:     u32, // Budget that paid for the history region and pays for point copies.
-	history_buffer:     []u8, // Direct-mapped bytes of history_region.
-	writer:             input_history.History_Writer,
-	reader:             input_history.History_Reader,
-	point_copies:       [POINT_COPY_CAPACITY]Point_Copy,
-	point_copy_count:   u32,
-	stint_start_point:  u64, // Point count when the current stint started (for the one-stint bound).
-	replay_return_time: u64, // Return value in rax for the current kernel entry.
-	pinned_processor:   u32, // Single processor index assigned to this process.
+	mode:              input_history.Record_Mode,
+	recorder_process:  u32, // Process slot of the recorder or replayer.
+	recorder_serial:   u32, // Serial of the recorder or replayer.
+	history_region:    u32, // Contiguous memory object of the input history (kernel holds one reference).
+	history_buffer:    []u8, // Direct-mapped bytes of history_region.
+	writer:            input_history.History_Writer,
+	reader:            input_history.History_Reader,
+	point_copies:      [POINT_COPY_CAPACITY]Point_Copy,
+	point_copy_count:  u32,
+	handle_map:        replay_filter.Replay_Handle_Map, // Replay translation from recorded handle -> real handle.
+	stint_start_point: u64, // Point count when the current stint started (atomic).
+	pinned_processor:  u32, // Single processor index assigned to this process.
 }
 
 process_records: [PROCESS_CAPACITY]Process_Record_State
-// Read-only zero page in BSS used for encoding initial point copy deltas
-// without placing a 4 KiB array on the kernel stack.
-record_zero_page: [PAGE_SIZE]u8
+// Read-only zero page used to encode initial point copy deltas without placing
+// a 4 KiB array on the kernel stack.
+@(rodata)
+RECORD_ZERO_PAGE: [PAGE_SIZE]u8
 // Count of processes currently in Recording or Replaying mode.
 record_replay_active_count: u32
 
@@ -183,9 +191,26 @@ region_mapped_by_other :: proc "contextless" (target_index: u32, region_index: u
 	return false
 }
 
+// process_own_region_references counts how many handles and mappings in
+// process refer to region_index. Caller holds process's process lock.
+@(private = "file")
+process_own_region_references :: proc "contextless" (process: ^Process, region_index: u32) -> (count: u32) {
+	for slot in process.handles {
+		if slot.kind == .Memory && slot.object == region_index {
+			count += 1
+		}
+	}
+	for mapping in process.mappings {
+		if mapping.page_count != 0 && mapping.region == region_index {
+			count += 1
+		}
+	}
+	return count
+}
+
 // process_disqualified_for_recording checks the exclusions: device memory,
 // ports, interrupts, IOMMU-declared memory, guests, or writable shared
-// mappings. Caller holds Control and target's process lock.
+// memory objects. Caller holds Control and target's process lock.
 @(private = "file")
 process_disqualified_for_recording :: proc "contextless" (target_index: u32) -> bool {
 	target := &processes[target_index]
@@ -204,6 +229,9 @@ process_disqualified_for_recording :: proc "contextless" (target_index: u32) -> 
 			if intrinsics.atomic_load(&region.declared) != 0 {
 				return true
 			}
+			if .Write in slot.rights && region_mapped_by_other(target_index, slot.object) {
+				return true
+			}
 		}
 	}
 	for mapping in target.mappings {
@@ -217,7 +245,6 @@ process_disqualified_for_recording :: proc "contextless" (target_index: u32) -> 
 		if intrinsics.atomic_load(&region.declared) != 0 {
 			return true
 		}
-		// Refuse a writable mapping shared with another live process.
 		if mapping.bits & PAGE_WRITE != 0 && region_mapped_by_other(target_index, mapping.region) {
 			return true
 		}
@@ -226,22 +253,25 @@ process_disqualified_for_recording :: proc "contextless" (target_index: u32) -> 
 }
 
 // history_region_in_use says whether any active record/replay session already
-// owns this memory object. Caller holds Control.
+// owns this memory object.
 @(private = "file")
 history_region_in_use :: proc "contextless" (region_index: u32) -> bool {
 	for &rec in process_records[1:] {
-		if rec.mode != .None && rec.history_region == region_index {
+		if intrinsics.atomic_load(&rec.mode) != .None && rec.history_region == region_index {
 			return true
 		}
 	}
 	return false
 }
 
-// point_copy_frame_allocate takes one physical page frame paid by budget.
+// point_copy_frame_allocate takes one physical page frame paid by the current
+// budget of history_region. Always reads regions[history_region].budget under
+// frame_lock so budget_release reparenting is always respected.
 @(private = "file")
-point_copy_frame_allocate :: proc "contextless" (budget: u32) -> (frame: u64, ok: bool) {
+point_copy_frame_allocate :: proc "contextless" (history_region: u32) -> (frame: u64, ok: bool) {
 	lock_take(&frame_lock, .Frame)
-	if !budgets[budget].live || budgets[budget].amounts.pages == 0 {
+	budget := regions[history_region].budget
+	if budget == 0 || !budgets[budget].live || budgets[budget].amounts.pages == 0 {
 		lock_free(&frame_lock, .Frame)
 		return 0, false
 	}
@@ -257,15 +287,16 @@ point_copy_frame_allocate :: proc "contextless" (budget: u32) -> (frame: u64, ok
 }
 
 // point_copy_frame_free returns one point-copy physical frame and refunds its
-// page to budget.
+// page to the current budget of history_region under frame_lock.
 @(private = "file")
-point_copy_frame_free :: proc "contextless" (budget: u32, frame: u64) {
+point_copy_frame_free :: proc "contextless" (history_region: u32, frame: u64) {
 	if frame == 0 {
 		return
 	}
 	lock_take(&frame_lock, .Frame)
 	frames_free_held(frame, 1)
-	if budgets[budget].live {
+	budget := regions[history_region].budget
+	if budget != 0 && budgets[budget].live {
 		budgets[budget].amounts.pages += 1
 	}
 	lock_free(&frame_lock, .Frame)
@@ -274,46 +305,56 @@ point_copy_frame_free :: proc "contextless" (budget: u32, frame: u64) {
 // point_copies_setup allocates private point copies for every read-only page
 // of target that has an external writer (time_region or another live process
 // mapping the region with Write). Replaces target's PTEs with the private
-// copies. Caller holds Control and target's process lock.
+// copies. Refuses uncommitted or No_Access shared pages so no protected page
+// is exposed. Caller holds Control and target's process lock.
 @(private = "file")
 point_copies_setup :: proc "contextless" (target_index: u32, rec: ^Process_Record_State, copy_initial: bool) -> Operation_Outcome {
 	target := &processes[target_index]
 	for &mapping in target.mappings {
-		if mapping.page_count == 0 || mapping.bits & PAGE_PRESENT == 0 || mapping.bits & PAGE_WRITE != 0 || mapping.large {
+		if mapping.page_count == 0 || mapping.bits & PAGE_WRITE != 0 {
 			continue
 		}
 		has_writer := mapping.region == time_region || region_mapped_writable_by_other(target_index, mapping.region)
 		if !has_writer {
 			continue
 		}
+		// Refuse large, No_Access, or uncommitted shared read-only mappings so
+		// point copies never expose protected or uncommitted pages.
+		region := &regions[mapping.region]
+		if mapping.large || mapping.bits & PAGE_PRESENT == 0 || region.uncommitted {
+			point_copies_teardown(target_index, rec)
+			return .Bad_State
+		}
 		for page in u64(0) ..< mapping.page_count {
 			if rec.point_copy_count >= POINT_COPY_CAPACITY {
 				point_copies_teardown(target_index, rec)
 				return .No_Slot
+			}
+			source_page := mapping.first + page
+			state := region_page_state(region, source_page)
+			bits := page_bits(&mapping, state)
+			if bits == 0 || !page_committed(region, state) {
+				point_copies_teardown(target_index, rec)
+				return .Bad_State
 			}
 			vaddr := mapping.address + page * PAGE_SIZE
 			entry := page_entry(target.table, vaddr)
 			if entry == nil {
 				continue
 			}
-			copy_frame, allocated := point_copy_frame_allocate(rec.history_budget)
+			copy_frame, allocated := point_copy_frame_allocate(rec.history_region)
 			if !allocated {
 				point_copies_teardown(target_index, rec)
 				return .No_Budget
 			}
-			source_page := mapping.first + page
 			if copy_initial {
-				source_frame := region_frame(&regions[mapping.region], source_page, false)
+				source_frame := region_frame(region, source_page, false)
 				if source_frame != 0 {
-					direct(copy_frame, [PAGE_SIZE]u8)^ = direct(source_frame, [PAGE_SIZE]u8)^
+					intrinsics.mem_copy_non_overlapping(direct(copy_frame, u8), direct(source_frame, u8), PAGE_SIZE)
 				}
 			}
-			original_bits := page_bits(&mapping, region_page_state(&regions[mapping.region], source_page))
-			if original_bits == 0 {
-				original_bits = mapping.bits
-			}
 			was_present := entry^ & PAGE_PRESENT != 0
-			entry^ = copy_frame | original_bits
+			entry^ = copy_frame | bits
 			if !was_present {
 				mapping.present_page_count += 1
 			}
@@ -321,7 +362,7 @@ point_copies_setup :: proc "contextless" (target_index: u32, rec: ^Process_Recor
 				virtual_address = vaddr,
 				source_region   = mapping.region,
 				source_page     = source_page,
-				original_bits   = original_bits,
+				original_bits   = bits,
 				copy_frame      = copy_frame,
 				active          = true,
 			}
@@ -331,8 +372,9 @@ point_copies_setup :: proc "contextless" (target_index: u32, rec: ^Process_Recor
 	return .Ok
 }
 
-// point_copies_teardown restores original PTEs (if target still has its page
-// table) and frees every point copy frame back to rec.history_budget.
+// point_copies_teardown restores original PTEs (respecting current protection
+// and present state so mapping.present_page_count stays exact) and frees every
+// point copy frame back to the current budget of rec.history_region.
 // Caller holds target's process lock.
 @(private = "file")
 point_copies_teardown :: proc "contextless" (target_index: u32, rec: ^Process_Record_State) {
@@ -349,15 +391,15 @@ point_copies_teardown :: proc "contextless" (target_index: u32, rec: ^Process_Re
 		}
 		if target.table != 0 {
 			if mapping := mapping_at(target, pc.virtual_address); mapping != nil && mapping.region == pc.source_region {
-				if entry := page_entry(target.table, pc.virtual_address); entry != nil {
-					source_frame := region_frame(&regions[pc.source_region], pc.source_page, false)
-					if source_frame != 0 {
-						entry^ = source_frame | pc.original_bits
+				if entry := page_entry(target.table, pc.virtual_address); entry != nil && entry^ & PAGE_PRESENT != 0 {
+					region := &regions[pc.source_region]
+					source_frame := region_frame(region, pc.source_page, false)
+					current_bits := page_bits(mapping, region_page_state(region, pc.source_page))
+					if source_frame != 0 && current_bits != 0 {
+						entry^ = source_frame | current_bits
 					} else {
-						if entry^ & PAGE_PRESENT != 0 {
-							mapping.present_page_count -= 1
-						}
 						entry^ = 0
+						mapping.present_page_count -= 1
 					}
 					if self.table == target.table {
 						page_flush(pc.virtual_address)
@@ -376,44 +418,96 @@ point_copies_teardown :: proc "contextless" (target_index: u32, rec: ^Process_Re
 		if !pc.active {
 			continue
 		}
-		point_copy_frame_free(rec.history_budget, pc.copy_frame)
+		point_copy_frame_free(rec.history_region, pc.copy_frame)
 		pc^ = {}
 	}
 	rec.point_copy_count = 0
 }
 
-// record_replay_on_unmap releases any point copies inside an unmapped virtual
-// address range after unmap cleared and synchronized the PTEs. Caller holds
-// process's process lock.
-record_replay_on_unmap :: proc "contextless" (process_index: u32, address: u64, page_count: u64) {
+// record_replay_mapping_has_point_copies says whether mapping contains any
+// active point copies (used by Memory_Protect to refuse changing protection on
+// point-copied shared pages). Caller holds process's process lock.
+record_replay_mapping_has_point_copies :: proc "contextless" (process_index: u32, mapping: ^Mapping) -> bool {
 	rec := &process_records[process_index]
 	if rec.mode == .None || rec.point_copy_count == 0 {
+		return false
+	}
+	end := mapping.address + mapping.page_count * PAGE_SIZE
+	for index in u32(0) ..< rec.point_copy_count {
+		pc := &rec.point_copies[index]
+		if pc.active && pc.virtual_address >= mapping.address && pc.virtual_address < end {
+			return true
+		}
+	}
+	return false
+}
+
+// record_replay_on_unmap releases any point copies inside an unmapped virtual
+// address range after unmap cleared and synchronized the PTEs, and decrements
+// Region.recorded_mappings. Caller holds process's process lock.
+record_replay_on_unmap :: proc "contextless" (process_index: u32, region_index: u32, address: u64, page_count: u64) {
+	rec := &process_records[process_index]
+	if rec.mode == .None {
+		return
+	}
+	intrinsics.atomic_sub(&regions[region_index].recorded_mappings, 1)
+	if rec.point_copy_count == 0 {
 		return
 	}
 	end := address + page_count * PAGE_SIZE
 	for index in u32(0) ..< rec.point_copy_count {
 		pc := &rec.point_copies[index]
 		if pc.active && pc.virtual_address >= address && pc.virtual_address < end {
-			point_copy_frame_free(rec.history_budget, pc.copy_frame)
+			point_copy_frame_free(rec.history_region, pc.copy_frame)
 			pc^ = {}
 		}
 	}
 }
 
-// record_replay_map_conflict checks whether a new writable mapping conflicts
-// with an active recorded process. Called from map_region under process lock.
+// record_replay_map_conflict enforces mapping isolation while any process is
+// recorded or replayed:
+// - A recorded or replayed process cannot map an active history buffer, device
+//   memory, IOMMU-declared memory, or any region shared with another process.
+// - Another process cannot gain a writable mapping to a region currently
+//   mapped by a recorded or replayed process.
+// Called from map_region under process's process lock.
 record_replay_map_conflict :: proc "contextless" (process_index: u32, region_index: u32, flags: op.Map_Flags) -> bool {
-	if intrinsics.atomic_load(&record_replay_active_count) == 0 || .Write not_in flags {
+	if intrinsics.atomic_load(&record_replay_active_count) == 0 {
 		return false
 	}
-	// If the mapping process itself is being recorded, refuse a writable region
-	// that has more than one reference outside this process.
-	if process_records[process_index].mode == .Recording {
-		if intrinsics.atomic_load(&regions[region_index].references) > 1 {
+	if intrinsics.atomic_load(&process_records[process_index].mode) != .None {
+		region := &regions[region_index]
+		if history_region_in_use(region_index) || (region.device && region_index != time_region) || intrinsics.atomic_load(&region.declared) != 0 {
 			return true
 		}
+		own_refs := process_own_region_references(&processes[process_index], region_index)
+		if intrinsics.atomic_load(&region.references) > own_refs {
+			return true
+		}
+		return false
+	}
+	if .Write in flags && intrinsics.atomic_load(&regions[region_index].recorded_mappings) != 0 {
+		return true
 	}
 	return false
+}
+
+// record_replay_mark_mappings adjusts Region.recorded_mappings for all active
+// mappings of target_index when entering or leaving record/replay mode.
+// Caller holds target_index's process lock.
+@(private = "file")
+record_replay_mark_mappings :: proc "contextless" (target_index: u32, add: bool) {
+	target := &processes[target_index]
+	for mapping in target.mappings {
+		if mapping.page_count == 0 {
+			continue
+		}
+		if add {
+			intrinsics.atomic_add(&regions[mapping.region].recorded_mappings, 1)
+		} else {
+			intrinsics.atomic_sub(&regions[mapping.region].recorded_mappings, 1)
+		}
+	}
 }
 
 // main_module_hash_of gives the BLAKE3 hash of the main module of process,
@@ -433,6 +527,20 @@ main_module_hash_of :: proc "contextless" (process: ^Process) -> [32]u8 {
 	return {}
 }
 
+// choose_pinned_processor picks one processor index inside caller_limit.
+@(private = "file")
+choose_pinned_processor :: proc "contextless" (caller_index: u32) -> (cpu_index: u32, ok: bool) {
+	allowed := intrinsics.atomic_load(&threads[caller_index].processors_limit) & machine_processors()
+	if allowed == 0 {
+		return 0, false
+	}
+	self_index := processor_self().index
+	if allowed & (u64(1) << self_index) != 0 {
+		return self_index, true
+	}
+	return u32(intrinsics.count_trailing_zeros(allowed)), true
+}
+
 // record_replay_control handles Record_Start, Record_End, and Replay_Start
 // commands of Thread_Control. Caller holds caller_process's process lock.
 record_replay_control :: proc "contextless" (caller_index: u32, caller_process: ^Process, command: op.Thread_Control_Command, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
@@ -446,7 +554,6 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 	if target_index == caller_process_index {
 		return .Bad_State
 	}
-	// Record_Start and Replay_Start require CPUID faulting on every processor.
 	if (command == .Record_Start || command == .Replay_Start) && !intrinsics.atomic_load(&cpuid_faulting_supported) {
 		return .Bad_Operation
 	}
@@ -475,6 +582,10 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		if history_region_in_use(region_index) {
 			return .Bad_State
 		}
+		pinned_cpu, pinned_ok := choose_pinned_processor(caller_index)
+		if !pinned_ok {
+			return .Bad_State
+		}
 		history_buffer := ([^]u8)(direct(region.physical, u8))[:region.page_count * PAGE_SIZE]
 		writer, writer_ok := input_history.history_writer_init(
 			history_buffer,
@@ -486,17 +597,19 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		if !writer_ok {
 			return .Bad_Operation
 		}
+		// Hold a kernel reference on history_region before allocating point
+		// copies so regions[history_region] stays valid across rollback or teardown.
+		intrinsics.atomic_add(&region.references, 1)
 		intrinsics.mem_zero(rec, size_of(Process_Record_State))
-		rec.mode = .Recording
 		rec.recorder_process = caller_process_index
 		rec.recorder_serial = caller_process.serial
 		rec.history_region = region_index
-		rec.history_budget = region.budget
 		rec.history_buffer = history_buffer
 		rec.writer = writer
-		rec.pinned_processor = processor_self().index
+		rec.pinned_processor = pinned_cpu
 		if setup_status := point_copies_setup(target_index, rec, copy_initial = true); setup_status != .Ok {
 			intrinsics.mem_zero(rec, size_of(Process_Record_State))
+			region_release(region_index)
 			return setup_status
 		}
 		// Record initial non-zero point copy contents into the history so replay
@@ -508,14 +621,16 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 				continue
 			}
 			after_page := direct(pc.copy_frame, [PAGE_SIZE]u8)
-			written, changed, ok := input_history.page_delta_encode(pc.virtual_address, &record_zero_page, after_page, cpu.page_delta_scratch[:])
+			written, changed, ok := input_history.page_delta_encode(pc.virtual_address, &RECORD_ZERO_PAGE, after_page, cpu.page_delta_scratch[:])
 			if !ok || (changed && !input_history.history_writer_append(&rec.writer, .Page_Delta, 0, 0, cpu.page_delta_scratch[:written])) {
 				point_copies_teardown(target_index, rec)
 				intrinsics.mem_zero(rec, size_of(Process_Record_State))
+				region_release(region_index)
 				return .Bad_Operation
 			}
 		}
-		intrinsics.atomic_add(&region.references, 1)
+		record_replay_mark_mappings(target_index, true)
+		intrinsics.atomic_store(&rec.mode, input_history.Record_Mode.Recording)
 		intrinsics.atomic_add(&record_replay_active_count, 1)
 		return .Ok
 
@@ -542,29 +657,42 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		if history_region_in_use(region_index) {
 			return .Bad_State
 		}
+		pinned_cpu, pinned_ok := choose_pinned_processor(caller_index)
+		if !pinned_ok {
+			return .Bad_State
+		}
 		history_buffer := ([^]u8)(direct(region.physical, u8))[:region.page_count * PAGE_SIZE]
 		reader, reader_ok := input_history.history_reader_open(history_buffer)
 		if !reader_ok {
 			return .Bad_Operation
 		}
-		// Refuse replay on a machine missing extended state components recorded in the history.
 		if reader.header.xcr0_components & ~transmute(u64)extended_state_components != 0 {
 			return .Bad_Operation
 		}
+		intrinsics.atomic_add(&region.references, 1)
 		intrinsics.mem_zero(rec, size_of(Process_Record_State))
-		rec.mode = .Replaying
 		rec.recorder_process = caller_process_index
 		rec.recorder_serial = caller_process.serial
 		rec.history_region = region_index
-		rec.history_budget = region.budget
 		rec.history_buffer = history_buffer
 		rec.reader = reader
-		rec.pinned_processor = processor_self().index
+		rec.pinned_processor = pinned_cpu
 		if setup_status := point_copies_setup(target_index, rec, copy_initial = false); setup_status != .Ok {
 			intrinsics.mem_zero(rec, size_of(Process_Record_State))
+			region_release(region_index)
 			return setup_status
 		}
-		intrinsics.atomic_add(&region.references, 1)
+		// Apply initial Page_Delta records before the first instruction so the
+		// time page (cycle_frequency, cycle_start) and shared read-only pages
+		// hold their recorded initial bytes at entry.
+		if !replay_apply_pending_page_deltas_locked(processor_self(), target_index) {
+			point_copies_teardown(target_index, rec)
+			intrinsics.mem_zero(rec, size_of(Process_Record_State))
+			region_release(region_index)
+			return .Bad_Operation
+		}
+		record_replay_mark_mappings(target_index, true)
+		intrinsics.atomic_store(&rec.mode, input_history.Record_Mode.Replaying)
 		intrinsics.atomic_add(&record_replay_active_count, 1)
 		return .Ok
 
@@ -574,28 +702,43 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 	return .Bad_Operation
 }
 
-// record_replay_thread_init attaches a newly created thread to its process's
-// record or replay mode and narrows its processor placement to the single
-// pinned processor. Caller holds Control and process lock.
+// record_replay_thread_create_refused checks single-thread and placement-limit
+// invariants before thread_create allocates resources. Caller holds Control
+// and process_index's process lock.
+record_replay_thread_create_refused :: proc "contextless" (process_index: u32, placement_limit: u64) -> bool {
+	rec := &process_records[process_index]
+	if rec.mode == .None {
+		return false
+	}
+	// Single-thread mode: only the first thread (Process_Start) is allowed.
+	if processes[process_index].thread_count != 0 {
+		return true
+	}
+	pinned_mask := u64(1) << rec.pinned_processor
+	return pinned_mask & placement_limit == 0
+}
+
+// record_replay_thread_init attaches a newly created first thread to its
+// process's record or replay mode and narrows its processor placement to the
+// intersection of its pinned processor and its creator's placement limit.
+// Caller holds Control and process lock.
 record_replay_thread_init :: proc "contextless" (process_index: u32, thread: ^Thread) {
 	rec := &process_records[process_index]
 	if rec.mode == .None {
 		return
 	}
 	intrinsics.atomic_store(&thread.record_mode, rec.mode)
-	pinned_mask := u64(1) << rec.pinned_processor
+	pinned_mask := (u64(1) << rec.pinned_processor) & thread.processors_limit
 	every_processor := machine_processors()
-	if pinned_mask & every_processor == 0 {
-		pinned_mask = u64(1)
-	}
 	intrinsics.atomic_store(&thread.processors, pinned_mask)
 	intrinsics.atomic_store(&thread.processors_limit, pinned_mask)
 	intrinsics.atomic_store(&thread.placement_restricted, pinned_mask != every_processor)
 }
 
 // record_replay_end_locked ends recording or replay of target_index, writes
-// the end record or header summary, clears thread record modes, restores point
-// copies, and releases the history region reference.
+// the end record or header summary, clears thread record modes, synchronizes
+// processors so CR4.TSD and CPUID faulting are unloaded everywhere, restores
+// point copies, and releases the history region reference.
 // Caller holds Control lock and target_index's process lock.
 record_replay_end_locked :: proc "contextless" (target_index: u32, reason: input_history.History_End_Reason, div_kind: input_history.Divergence_Kind = .None, div_point: u64 = 0, div_expected: u64 = 0, div_actual: u64 = 0) {
 	rec := &process_records[target_index]
@@ -615,7 +758,20 @@ record_replay_end_locked :: proc "contextless" (target_index: u32, reason: input
 	for &thread in threads[1:] {
 		if thread.process == target_index {
 			intrinsics.atomic_store(&thread.record_mode, input_history.Record_Mode.None)
+			thread.record_wait_pending = false
 		}
+	}
+	// Clear recorded_mappings before tearing down mode so other processes are
+	// unblocked cleanly.
+	record_replay_mark_mappings(target_index, false)
+	intrinsics.atomic_store(&rec.mode, input_history.Record_Mode.None)
+	// Synchronize every other processor so CR4.TSD and CPUID faulting are
+	// unloaded via sync_acknowledge even when point_copy_count == 0.
+	intrinsics.atomic_thread_fence(.Seq_Cst)
+	processor_sync(all_other_processors())
+	self := processor_self()
+	if self.record_traps_loaded && (self.current == 0 || intrinsics.atomic_load(&threads[self.current].record_mode) == .None) {
+		record_traps_unload(self)
 	}
 	point_copies_teardown(target_index, rec)
 	history_region := rec.history_region
@@ -645,7 +801,7 @@ record_right_closed :: proc "contextless" (holder: ^Process, closed: ^Handle_Slo
 	target_index := closed.object
 	holder_index := index_of_process(holder)
 	rec := &process_records[target_index]
-	if rec.mode == .None || rec.recorder_process != holder_index || rec.recorder_serial != holder.serial {
+	if intrinsics.atomic_load(&rec.mode) == .None || rec.recorder_process != holder_index || rec.recorder_serial != holder.serial {
 		return
 	}
 	for &slot in holder.handles {
@@ -666,7 +822,7 @@ record_replay_recorder_stopped :: proc "contextless" (recorder_index: u32, recor
 	}
 	for target_index in u32(1) ..< PROCESS_CAPACITY {
 		rec := &process_records[target_index]
-		if rec.mode != .None && rec.recorder_process == recorder_index && rec.recorder_serial == recorder_serial {
+		if intrinsics.atomic_load(&rec.mode) != .None && rec.recorder_process == recorder_index && rec.recorder_serial == recorder_serial {
 			taken := process_lock(target_index)
 			record_replay_end_locked(target_index, .Recorder_Stopped)
 			process_unlock(target_index, taken)
@@ -687,35 +843,38 @@ record_replay_on_revocation :: proc "contextless" (process_index: u32) {
 // thread begins a scheduler stint.
 record_replay_stint_start :: proc "contextless" (process_index: u32) {
 	rec := &process_records[process_index]
-	if rec.mode == .Recording {
-		rec.stint_start_point = rec.writer.point_count
+	if intrinsics.atomic_load(&rec.mode) == .Recording {
+		intrinsics.atomic_store(&rec.stint_start_point, intrinsics.atomic_load(&rec.writer.point_count))
 	}
 }
 
 // record_replay_stint_bound_check enforces the one-stint bound: if a recorded
 // thread ran an entire time slice without reaching any input point, end the
 // input history immediately so no peer or sibling waits indefinitely.
-// Caller holds no locks (called from VECTOR_TIMER).
+// Caller holds no locks (called from VECTOR_TIMER only when strategy_tick ended
+// a full stint).
 record_replay_stint_bound_check :: proc "contextless" (thread: ^Thread) {
 	process_index := thread.process
-	if process_records[process_index].mode != .Recording {
+	rec := &process_records[process_index]
+	if intrinsics.atomic_load(&rec.mode) != .Recording {
 		return
 	}
-	if process_records[process_index].writer.point_count != process_records[process_index].stint_start_point {
+	if intrinsics.atomic_load(&rec.writer.point_count) != intrinsics.atomic_load(&rec.stint_start_point) {
 		return
 	}
 	control_take()
 	taken := process_lock(process_index)
-	if process_records[process_index].mode == .Recording && process_records[process_index].writer.point_count == process_records[process_index].stint_start_point {
+	if rec.mode == .Recording && rec.writer.point_count == intrinsics.atomic_load(&rec.stint_start_point) {
 		record_replay_end_locked(process_index, .Stint_Bound_Reached)
 	}
 	process_unlock(process_index, taken)
 	control_free()
 }
 
-// record_refresh_point_copies_locked compares each active point copy against
-// its live shared page, appends a Page_Delta record when bytes changed, and
-// refreshes the point copy. Returns false if the history buffer is full.
+// record_refresh_point_copies_locked snapshots each live shared page ONCE into
+// per-processor scratch memory, compares against the point copy, appends a
+// Page_Delta when bytes changed, and updates the point copy from that exact
+// snapshot. Returns false if the history buffer is full.
 // Caller holds process_index's process lock.
 @(private = "file")
 record_refresh_point_copies_locked :: proc "contextless" (cpu: ^Processor, process_index: u32, thread: ^Thread) -> bool {
@@ -729,9 +888,10 @@ record_refresh_point_copies_locked :: proc "contextless" (cpu: ^Processor, proce
 		if source_frame == 0 {
 			continue
 		}
+		// Single snapshot of the live shared page eliminates two-pass TOCTOU.
+		intrinsics.mem_copy_non_overlapping(&cpu.page_snapshot_scratch[0], direct(source_frame, u8), PAGE_SIZE)
 		before_page := direct(pc.copy_frame, [PAGE_SIZE]u8)
-		after_page := direct(source_frame, [PAGE_SIZE]u8)
-		written, changed, ok := input_history.page_delta_encode(pc.virtual_address, before_page, after_page, cpu.page_delta_scratch[:])
+		written, changed, ok := input_history.page_delta_encode(pc.virtual_address, before_page, &cpu.page_snapshot_scratch, cpu.page_delta_scratch[:])
 		if !ok {
 			return false
 		}
@@ -741,21 +901,20 @@ record_refresh_point_copies_locked :: proc "contextless" (cpu: ^Processor, proce
 		if !input_history.history_writer_append(&rec.writer, .Page_Delta, thread.frame.rip, thread.frame.rsp, cpu.page_delta_scratch[:written]) {
 			return false
 		}
-		before_page^ = after_page^
+		intrinsics.mem_copy_non_overlapping(direct(pc.copy_frame, u8), &cpu.page_snapshot_scratch[0], PAGE_SIZE)
 	}
 	return true
 }
 
-// replay_apply_pending_page_deltas_locked consumes every leading Page_Delta
-// record from rec.reader and applies it to the matching private point copy (or
-// mapped page) of process_index. Returns false if a Page_Delta is malformed or
-// targets an unmapped page. Caller holds process_index's process lock.
+// replay_apply_pending_page_deltas_locked snapshots each leading Page_Delta
+// record ONCE into private per-processor scratch memory and applies it
+// strictly to a tracked point copy of process_index. Never writes to arbitrary
+// non-point-copied pages. Caller holds process_index's process lock.
 @(private = "file")
-replay_apply_pending_page_deltas_locked :: proc "contextless" (process_index: u32) -> bool {
+replay_apply_pending_page_deltas_locked :: proc "contextless" (cpu: ^Processor, process_index: u32) -> bool {
 	rec := &process_records[process_index]
-	process := &processes[process_index]
 	for {
-		_, kind, payload, stride, has_more, ok := input_history.history_reader_peek(&rec.reader)
+		_, kind, payload, stride, has_more, ok := input_history.history_reader_peek_into(&rec.reader, cpu.replay_record_scratch[:])
 		if !ok {
 			return false
 		}
@@ -766,20 +925,12 @@ replay_apply_pending_page_deltas_locked :: proc "contextless" (process_index: u3
 		if !delta_ok {
 			return false
 		}
-		// Find the physical frame to patch: prefer private point copy, else
-		// mapped writable page of the replay process.
 		target_frame: u64
 		for index in u32(0) ..< rec.point_copy_count {
 			pc := &rec.point_copies[index]
 			if pc.active && pc.virtual_address == delta_header.virtual_address {
 				target_frame = pc.copy_frame
 				break
-			}
-		}
-		if target_frame == 0 {
-			if mapping := mapping_at(process, delta_header.virtual_address); mapping != nil && mapping.region != time_region && !regions[mapping.region].device {
-				page := (delta_header.virtual_address - mapping.address) / PAGE_SIZE
-				target_frame = region_frame(&regions[mapping.region], mapping.first + page, true)
 			}
 		}
 		if target_frame == 0 {
@@ -816,10 +967,30 @@ record_end_on_buffer_full :: proc "contextless" (process_index: u32) {
 	control_free()
 }
 
-// record_replay_handle_gp handles #GP from a recorded or replayed user thread.
-// When the faulting instruction is rdtsc (0F 31), rdtscp (0F 01 F9), or cpuid
-// (0F A2), it emulates the instruction, records or replays its result, advances
-// RIP, and returns true so the fault is never delivered to a user handler.
+// read_instruction_bytes_locked reads up to 3 bytes at rip safely through the
+// direct map without faulting. Caller holds process's process lock.
+@(private = "file")
+read_instruction_bytes_locked :: proc "contextless" (process: ^Process, rip: u64, out: ^[3]u8) -> int {
+	count := 0
+	for offset in u64(0) ..< 3 {
+		if rip > USER_END - 1 - offset {
+			break
+		}
+		pb := process_byte_read(process, rip + offset)
+		if !pb.readable {
+			break
+		}
+		out[offset] = pb.value
+		count += 1
+	}
+	return count
+}
+
+// record_replay_handle_gp handles #GP from a recorded or replayed user thread
+// (or a thread whose recording just ended while traps were still loaded on
+// this processor). When the faulting instruction is rdtsc (0F 31), rdtscp
+// (0F 01 F9), or cpuid (0F A2), it emulates, records, or replays it and
+// advances RIP, returning true so no #GP is delivered to a user fault handler.
 // Caller holds NO locks.
 record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> bool {
 	if thread.frame.error != 0 {
@@ -830,25 +1001,21 @@ record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread)
 	taken := process_lock(process_index)
 	rec := &process_records[process_index]
 	mode := rec.mode
+	instruction_bytes: [3]u8
+	byte_count := read_instruction_bytes_locked(process, thread.frame.rip, &instruction_bytes)
+	decoded := replay_filter.decode_trapped_instruction(instruction_bytes[:byte_count])
 	if mode == .None {
 		process_unlock(process_index, taken)
+		if cpu.record_traps_loaded {
+			record_traps_unload(cpu)
+			if decoded.kind != .None {
+				// Recording ended concurrently before the IPI arrived; retry
+				// the instruction with hardware traps now disabled.
+				return true
+			}
+		}
 		return false
 	}
-	// Read up to 3 instruction bytes safely through the direct map.
-	instruction_bytes: [3]u8
-	byte_count := 0
-	for offset in u64(0) ..< 3 {
-		if thread.frame.rip > USER_END - 1 - offset {
-			break
-		}
-		pb := process_byte_read(process, thread.frame.rip + offset)
-		if !pb.readable {
-			break
-		}
-		instruction_bytes[offset] = pb.value
-		byte_count += 1
-	}
-	decoded := replay_filter.decode_trapped_instruction(instruction_bytes[:byte_count])
 	if decoded.kind == .None {
 		process_unlock(process_index, taken)
 		return false
@@ -914,10 +1081,11 @@ record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread)
 		return true
 	}
 
-	// Replaying mode.
-	if !replay_apply_pending_page_deltas_locked(process_index) {
+	// Replaying mode: snapshot record once into private scratch before checking.
+	if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
+		offset := rec.reader.read_offset
 		process_unlock(process_index, taken)
-		replay_stop_on_divergence(process_index, .Missing_Record, rec.reader.read_offset, 0, 0)
+		replay_stop_on_divergence(process_index, .Missing_Record, offset, 0, 0)
 		return true
 	}
 	actual := input_history.Replay_Actual_Event {
@@ -937,7 +1105,7 @@ record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread)
 		actual.cpuid_leaf = u32(thread.frame.rax)
 		actual.cpuid_subleaf = u32(thread.frame.rcx)
 	}
-	rec_header, rec_kind, rec_payload, has_more, read_ok := input_history.history_reader_next(&rec.reader)
+	rec_header, rec_kind, rec_payload, has_more, read_ok := input_history.history_reader_next_into(&rec.reader, cpu.replay_record_scratch[:])
 	check := input_history.replay_step_check(actual, read_ok && has_more, rec_header, rec_kind, rec_payload)
 	if check.divergence != .None {
 		point := rec_header.point_number
@@ -948,18 +1116,36 @@ record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread)
 	switch decoded.kind {
 	case .None:
 	case .Rdtsc:
-		payload, _ := input_history.cycle_counter_from_payload(rec_payload)
+		payload, ok := input_history.cycle_counter_from_payload(rec_payload)
+		if !ok {
+			point := rec_header.point_number
+			process_unlock(process_index, taken)
+			replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
+			return true
+		}
 		thread.frame.rax = u64(u32(payload.cycles))
 		thread.frame.rdx = u64(u32(payload.cycles >> 32))
 		thread.frame.rip += u64(decoded.length)
 	case .Rdtscp:
-		payload, _ := input_history.cycle_counter_from_payload(rec_payload)
+		payload, ok := input_history.cycle_counter_from_payload(rec_payload)
+		if !ok {
+			point := rec_header.point_number
+			process_unlock(process_index, taken)
+			replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
+			return true
+		}
 		thread.frame.rax = u64(u32(payload.cycles))
 		thread.frame.rdx = u64(u32(payload.cycles >> 32))
 		thread.frame.rcx = u64(payload.processor_auxiliary)
 		thread.frame.rip += u64(decoded.length)
 	case .Cpuid:
-		payload, _ := input_history.cpuid_from_payload(rec_payload)
+		payload, ok := input_history.cpuid_from_payload(rec_payload)
+		if !ok {
+			point := rec_header.point_number
+			process_unlock(process_index, taken)
+			replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
+			return true
+		}
 		thread.frame.rax = u64(payload.eax)
 		thread.frame.rbx = u64(payload.ebx)
 		thread.frame.rcx = u64(payload.ecx)
@@ -1006,9 +1192,37 @@ record_command_output_range :: proc "contextless" (command: ring.Record, status:
 	return 0, 0
 }
 
+// record_self_stop_completion_locked records the final Process_Stop or
+// Thread_Stop command BEFORE process_stop ends the input history, so replay
+// observes the exact stopping command followed by History_End(.Normal_Stop).
+// Caller holds Control and thread.process's process lock.
+record_self_stop_completion_locked :: proc "contextless" (cpu: ^Processor, thread: ^Thread, command: ring.Record) {
+	process_index := thread.process
+	rec := &process_records[process_index]
+	if rec.mode != .Recording {
+		return
+	}
+	return_time := intrinsics.atomic_load(&time_milliseconds)
+	thread.replay_return_time = return_time
+	if !record_refresh_point_copies_locked(cpu, process_index, thread) {
+		record_replay_end_locked(process_index, .Buffer_Full)
+		return
+	}
+	entry := input_history.Kernel_Completion_Payload {
+		command_kind             = command.kind,
+		command_tag              = command.tag,
+		command_values           = command.values,
+		completion_status        = u32(op.Status.Ok),
+		return_time_milliseconds = return_time,
+	}
+	if !input_history.history_writer_append_kernel_completion(&rec.writer, thread.frame.rip, thread.frame.rsp, entry, nil) {
+		record_replay_end_locked(process_index, .Buffer_Full)
+	}
+}
+
 // record_kernel_completion records one executed kernel command (or a
 // zero-command wait entry) and refreshes point copies. Called from enter()
-// with NO locks held.
+// or run() with NO locks held.
 record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread, command: ring.Record, status: op.Status, completion_values: [7]u64) {
 	process_index := thread.process
 	process := &processes[process_index]
@@ -1019,14 +1233,14 @@ record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread
 		process_unlock(process_index, taken)
 		return
 	}
-	rec.replay_return_time = return_time
+	thread.replay_return_time = return_time
 	buffer_ok := record_refresh_point_copies_locked(cpu, process_index, thread)
 	copied_slice: []u8
 	copied_address: u64
 	if buffer_ok {
 		out_address, out_size := record_command_output_range(command, status, completion_values)
 		if out_size > 0 {
-			if out_size > RECORD_COPY_SCRATCH_BYTES || !user_range(process, out_address, out_size, false) {
+			if out_address == 0 || out_size > RECORD_COPY_SCRATCH_BYTES || !user_range(process, out_address, out_size, false) {
 				buffer_ok = false
 			} else {
 				user_copy(&cpu.record_copy_scratch[0], rawptr(uintptr(out_address)), out_size)
@@ -1054,21 +1268,32 @@ record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread
 	}
 }
 
+// record_wait_wake_completion records a deferred pure-wait entry right when
+// the recorded thread wakes up in run(), capturing the post-wake millisecond
+// timestamp and post-wake point copy deltas. Caller holds NO locks.
+record_wait_wake_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread) {
+	thread.record_wait_pending = false
+	if intrinsics.atomic_load(&thread.record_mode) != .Recording {
+		return
+	}
+	record_kernel_completion(cpu, thread, ring.Record{values = {0 = thread.frame.rdi}}, .Ok, {})
+}
+
 // record_replay_entry_return_time gives the recorded return time for rax in
-// run() so recorded and replayed threads see the exact millisecond value
-// written into the input history.
-record_replay_entry_return_time :: proc "contextless" (process_index: u32) -> u64 {
-	rec := &process_records[process_index]
-	if rec.mode == .None {
+// run() from per-thread state so recorded and replayed threads see the exact
+// millisecond value written into the input history without data races.
+record_replay_entry_return_time :: proc "contextless" (thread: ^Thread) -> u64 {
+	if intrinsics.atomic_load(&thread.record_mode) == .None {
 		return intrinsics.atomic_load(&time_milliseconds)
 	}
-	return rec.replay_return_time
+	return thread.replay_return_time
 }
 
 // replay_enter handles a kernel entry of a replayed thread: validates each
-// command against the recorded input history, executes only local
-// address-space/thread commands for real (never side-effecting handle ops),
-// replays recorded completions and copied bytes, and applies page deltas.
+// command against a single-fetch private snapshot of the next recorded record,
+// executes only local address-space/handle/stop operations for real with
+// recorded->real handle translation, replays recorded completions and copied
+// bytes, and applies Page_Delta records strictly to tracked point copies.
 replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 	thread := &threads[index]
 	process_index := thread.process
@@ -1085,9 +1310,10 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			process_unlock(process_index, taken)
 			return
 		}
-		if !replay_apply_pending_page_deltas_locked(process_index) {
+		if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
+			offset := rec.reader.read_offset
 			process_unlock(process_index, taken)
-			replay_stop_on_divergence(process_index, .Missing_Record, rec.reader.read_offset, 0, 0)
+			replay_stop_on_divergence(process_index, .Missing_Record, offset, 0, 0)
 			return
 		}
 		actual := input_history.Replay_Actual_Event {
@@ -1098,7 +1324,7 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			command_tag         = 0,
 			command_values      = {0 = thread.frame.rdi},
 		}
-		rec_header, rec_kind, rec_payload, has_more, read_ok := input_history.history_reader_next(&rec.reader)
+		rec_header, rec_kind, rec_payload, has_more, read_ok := input_history.history_reader_next_into(&rec.reader, cpu.replay_record_scratch[:])
 		check := input_history.replay_step_check(actual, read_ok && has_more, rec_header, rec_kind, rec_payload)
 		if check.divergence != .None {
 			point := rec_header.point_number
@@ -1106,11 +1332,21 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			replay_stop_on_divergence(process_index, check.divergence, point, check.expected, check.actual)
 			return
 		}
-		kc, _, _ := input_history.kernel_completion_from_payload(rec_payload)
-		rec.replay_return_time = kc.return_time_milliseconds
-		_ = replay_apply_pending_page_deltas_locked(process_index)
+		kc, _, kc_ok := input_history.kernel_completion_from_payload(rec_payload)
+		if !kc_ok {
+			point := rec_header.point_number
+			process_unlock(process_index, taken)
+			replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
+			return
+		}
+		thread.replay_return_time = kc.return_time_milliseconds
+		if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
+			offset := rec.reader.read_offset
+			process_unlock(process_index, taken)
+			replay_stop_on_divergence(process_index, .Missing_Record, offset, 0, 0)
+			return
+		}
 		process_unlock(process_index, taken)
-		// Do not sleep in replay mode: return immediately with recorded time.
 		return
 	}
 
@@ -1132,9 +1368,10 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			process_unlock(process_index, taken)
 			return
 		}
-		if !replay_apply_pending_page_deltas_locked(process_index) {
+		if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
+			offset := rec.reader.read_offset
 			process_unlock(process_index, taken)
-			replay_stop_on_divergence(process_index, .Missing_Record, rec.reader.read_offset, 0, 0)
+			replay_stop_on_divergence(process_index, .Missing_Record, offset, 0, 0)
 			return
 		}
 		actual := input_history.Replay_Actual_Event {
@@ -1145,7 +1382,7 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			command_tag         = command.tag,
 			command_values      = command.values,
 		}
-		rec_header, rec_kind, rec_payload, has_more, read_ok := input_history.history_reader_next(&rec.reader)
+		rec_header, rec_kind, rec_payload, has_more, read_ok := input_history.history_reader_next_into(&rec.reader, cpu.replay_record_scratch[:])
 		check := input_history.replay_step_check(actual, read_ok && has_more, rec_header, rec_kind, rec_payload)
 		if check.divergence != .None {
 			point := rec_header.point_number
@@ -1153,9 +1390,16 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			replay_stop_on_divergence(process_index, check.divergence, point, check.expected, check.actual)
 			return
 		}
-		kc, copied_bytes, _ := input_history.kernel_completion_from_payload(rec_payload)
-		rec.replay_return_time = kc.return_time_milliseconds
-		// Copy recorded output bytes into user memory when present.
+		kc, copied_bytes, kc_ok := input_history.kernel_completion_from_payload(rec_payload)
+		if !kc_ok {
+			point := rec_header.point_number
+			process_unlock(process_index, taken)
+			replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
+			return
+		}
+		thread.replay_return_time = kc.return_time_milliseconds
+
+		// Copy recorded output bytes into user memory while holding process lock.
 		copy_failed := false
 		if len(copied_bytes) > 0 && kc.copied_user_address != 0 {
 			if user_range(process, kc.copied_user_address, u64(len(copied_bytes)), true) {
@@ -1164,47 +1408,84 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 				copy_failed = true
 			}
 		}
+
+		// Translate recorded local handles while holding process lock.
+		operation, op_known := enum_word.member_of_word(op.Operation, u64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS))
+		recorded_status, status_known := enum_word.member_of_word(op.Status, u64(kc.completion_status))
+		exec_command := command
+		run_local := false
+		refused_op := false
+		record_new_handle := false
+		if !copy_failed && op_known && status_known && recorded_status == .Ok {
+			switch replay_filter.replay_operation_policy(operation) {
+			case .Refused:
+				refused_op = true
+			case .Synthetic:
+			case .Real_Local:
+				switch operation {
+				case .Memory_Create:
+					run_local = true
+					record_new_handle = true
+				case .Memory_Map:
+					if exec_command.values[1] == 0 {
+						if real_mem, mapped := replay_filter.replay_handle_map_lookup(&rec.handle_map, exec_command.values[0]); mapped {
+							exec_command.values[0] = real_mem
+						}
+						if exec_command.values[2] == 0 {
+							exec_command.values[2] = kc.completion_values[0]
+						}
+						run_local = true
+					}
+				case .Memory_Commit:
+					if real_mem, mapped := replay_filter.replay_handle_map_lookup(&rec.handle_map, exec_command.values[0]); mapped {
+						exec_command.values[0] = real_mem
+					}
+					run_local = true
+				case .Memory_Unmap, .Process_Stop, .Thread_Stop:
+					if exec_command.values[0] == 0 {
+						run_local = true
+					}
+				case .Memory_Protect:
+					run_local = true
+				case .Handle_Close:
+					if real_handle, removed := replay_filter.replay_handle_map_remove(&rec.handle_map, exec_command.values[0]); removed {
+						exec_command.values[0] = real_handle
+						run_local = true
+					}
+				case .None, .Log, .Memory_Size, .Process_Create, .Process_Start, .Process_State, .Handle_Give, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_Create, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Fault_Handler_Set, .Fault_Answer, .Events_Set, .Thread_Control, .Guest_Run, .Log_Read:
+				}
+			}
+		}
 		process_unlock(process_index, taken)
+
 		if copy_failed {
 			replay_stop_on_divergence(process_index, .Unexpected_Arguments, rec_header.point_number, kc.copied_user_address, 0)
 			return
 		}
-
-		// Run only local address-space and thread operations for real when the
-		// recorded operation succeeded; never execute side-effecting handle ops.
-		operation, op_known := enum_word.member_of_word(op.Operation, u64(command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS))
-		recorded_status, status_known := enum_word.member_of_word(op.Status, u64(kc.completion_status))
-		if op_known && status_known && recorded_status == .Ok && replay_filter.replay_operation_policy(operation) == .Real_Local {
-			run_local := true
-			exec_command := command
-			switch operation {
-			case .Memory_Map:
-				if exec_command.values[1] != 0 {
-					run_local = false
-				} else if exec_command.values[2] == 0 {
-					// Map at the exact virtual address chosen during recording.
-					exec_command.values[2] = kc.completion_values[0]
-				}
-			case .Memory_Unmap, .Process_Stop:
-				if exec_command.values[0] != 0 {
-					run_local = false
-				}
-			case .Thread_Stop:
-				if exec_command.values[0] != 0 {
-					run_local = false
-				}
-			case .Memory_Create, .Memory_Commit, .Memory_Protect, .Thread_Create:
-			case .None, .Log, .Memory_Size, .Process_Create, .Process_Start, .Process_State, .Handle_Give, .Handle_Close, .Interrupt_Read, .Device_Create, .Inspect, .Machine_Stop, .Thread_State, .Word_Wait, .Word_Wake, .Budget_Create, .Budget_Read, .Handle_State, .Handle_Revoke, .Memory_Physical, .Process_Module, .Strategy_Set, .Fault_Handler_Set, .Fault_Answer, .Events_Set, .Thread_Control, .Guest_Run, .Log_Read:
-				run_local = false
+		if refused_op {
+			replay_stop_on_divergence(process_index, .Unexpected_Operation, rec_header.point_number, u64(operation), u64(op.Status.Bad_State))
+			return
+		}
+		if run_local {
+			real_results: [7]u64
+			real_status := command_run(index, exec_command, &real_results)
+			if intrinsics.atomic_load(&thread.stop_requested) {
+				return
 			}
-			if run_local {
-				real_results: [7]u64
-				real_status := command_run(index, exec_command, &real_results)
-				if intrinsics.atomic_load(&thread.stop_requested) {
-					return
-				}
-				if real_status != recorded_status {
-					replay_stop_on_divergence(process_index, .Unexpected_Operation, rec_header.point_number, u64(recorded_status), u64(real_status))
+			if real_status != recorded_status {
+				replay_stop_on_divergence(process_index, .Unexpected_Operation, rec_header.point_number, u64(recorded_status), u64(real_status))
+				return
+			}
+			if operation == .Memory_Map && real_results[0] != kc.completion_values[0] {
+				replay_stop_on_divergence(process_index, .Unexpected_Arguments, rec_header.point_number, kc.completion_values[0], real_results[0])
+				return
+			}
+			if record_new_handle {
+				map_taken := process_lock(process_index)
+				inserted := process_records[process_index].mode == .Replaying && replay_filter.replay_handle_map_insert(&process_records[process_index].handle_map, kc.completion_values[0], real_results[0])
+				process_unlock(process_index, map_taken)
+				if !inserted {
+					replay_stop_on_divergence(process_index, .Unexpected_Operation, rec_header.point_number, kc.completion_values[0], real_results[0])
 					return
 				}
 			}
@@ -1217,10 +1498,18 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		}
 		_ = ring.push(&thread.ring.completions, completion)
 	}
+
 	// Apply any trailing Page_Delta records before returning to user mode.
 	taken := process_lock(process_index)
+	trailing_ok := true
+	trailing_offset := u64(0)
 	if process_records[process_index].mode == .Replaying {
-		_ = replay_apply_pending_page_deltas_locked(process_index)
+		trailing_ok = replay_apply_pending_page_deltas_locked(cpu, process_index)
+		trailing_offset = process_records[process_index].reader.read_offset
 	}
 	process_unlock(process_index, taken)
+	if !trailing_ok {
+		replay_stop_on_divergence(process_index, .Missing_Record, trailing_offset, 0, 0)
+		return
+	}
 }

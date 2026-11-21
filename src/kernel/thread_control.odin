@@ -638,6 +638,9 @@ thread_placement_read :: proc "contextless" (thread: ^Thread) -> (placement: op.
 // home and the take of the locks: then the locks are freed and the choice
 // starts again.
 thread_placement_write :: proc "contextless" (thread: ^Thread, written: op.Thread_Placement, by_machine: bool, is_caller: bool) -> (status: Operation_Outcome, refusal: op.Thread_Write_Refusal, most: u64) {
+	if intrinsics.atomic_load(&thread.record_mode) != .None {
+		return .Bad_State, .None, 0
+	}
 	every_processor := machine_processors()
 	held := op.Thread_Placement {
 		processors       = intrinsics.atomic_load(&thread.processors),

@@ -248,10 +248,13 @@ Processor :: struct {
 	// writes: copied from the caller once, checked here, then copied to the
 	// thread, so the caller cannot change it between the check and the use.
 	extended_state_written: Extended_State_Area,
-	// Scratch buffers for encoding page deltas and capturing kernel-to-user
-	// output bytes during process recording (record_replay.odin).
+	// Scratch buffers for encoding page deltas, snapshotting live shared pages,
+	// snapshotting replay history records once, and capturing kernel-to-user
+	// output bytes during process recording/replay (record_replay.odin).
+	page_snapshot_scratch:  [PAGE_SIZE]u8,
 	page_delta_scratch:     [input_history.PAGE_DELTA_MAX_BYTES]u8,
 	record_copy_scratch:    [RECORD_COPY_SCRATCH_BYTES]u8,
+	replay_record_scratch:  [REPLAY_RECORD_SCRATCH_BYTES]u8,
 	segments:      [7]u64,
 	task_state:    Task_State,
 }
@@ -309,9 +312,13 @@ sync_acknowledge :: proc "contextless" (cpu: ^Processor) {
 	// answers here. That process can end meanwhile and free its tables: so
 	// the processor keeps a table only if it is the one of its thread, and
 	// run loads that one before the return.
+	current := intrinsics.atomic_load(&cpu.current)
 	current_table: u64
-	if current := intrinsics.atomic_load(&cpu.current); current != 0 {
+	if current != 0 {
 		current_table = processes[threads[current].process].table
+	}
+	if cpu.record_traps_loaded && (current == 0 || intrinsics.atomic_load(&threads[current].record_mode) == .None) {
+		record_traps_unload(cpu)
 	}
 	if current_table == 0 || intrinsics.atomic_load(&cpu.table) != current_table {
 		intrinsics.atomic_store(&cpu.table, kernel_table)
