@@ -43,8 +43,8 @@
 package lex_parser
 
 import module "modus:contract/module"
-import "modus:private/console/console_condition"
-import "modus:private/console/console_language"
+import "modus:support/console_condition"
+import "modus:support/console_language"
 import "modus:support/line_editor"
 
 // The bytes of the longest text: the longest line that the console runs.
@@ -52,6 +52,10 @@ import "modus:support/line_editor"
 // nesting takes one byte at least, so this bound is also the bound of the
 // depth of the parser.
 TEXT_BYTES_MOST :: line_editor.LINE_CAPACITY
+
+// The bytes and nesting depth of a multi-line declaration file (.lex).
+DECLARATION_TEXT_BYTES_MOST :: 64 * 1024
+DECLARATION_PARSE_DEPTH_LIMIT :: 256
 
 // The nodes of the longest text: each node but the one refusal reads one
 // byte or more of its own, so a text of TEXT_BYTES_MOST bytes fills the
@@ -113,33 +117,49 @@ Node_Kind :: enum u8 {
 	Function       = 16, // "(…) => …": the bytes are "=>", `integer` the offset of its '(', the children its parameters, then its body.
 	Parameter      = 17, // A parameter of a function: the bytes are its name.
 	List_Literal   = 18, // "[ … ]": the bytes are "[", the children its items.
+	Hash           = 19, // A BLAKE3 hash literal: "blake3:" and 64 lowercase hexadecimal digits.
+	Boolean        = 20, // `true` (integer = 1) or `false` (integer = 0).
+	If             = 21, // `if cond then a else b`: children are cond, then branch, else branch.
+	Field_Select   = 22, // Postfix `.field` on an expression: bytes are the field name, child is the base expression.
 }
 
 // The operators of a Binary node.
 Operator :: enum u8 {
-	None      = 0, // Each node but a Binary.
-	Add       = 1, // "+": two Integers, or two Texts that it joins.
-	Subtract  = 2, // "-"
-	Multiply  = 3, // "*"
-	Divide    = 4, // "/"
-	Remainder = 5, // "%"
-	With      = 6, // `with`: a record, with the fields of the record on its right.
+	None             = 0, // Each node but a Binary.
+	Add              = 1, // "+": two Integers, or two Texts that it joins.
+	Subtract         = 2, // "-"
+	Multiply         = 3, // "*"
+	Divide           = 4, // "/"
+	Remainder        = 5, // "%"
+	With             = 6, // `with`: a record, with the fields of the record on its right.
+	Equal            = 7, // "="
+	Not_Equal        = 8, // "!="
+	Less             = 9, // "<"
+	Less_Or_Equal    = 10, // "<="
+	Greater          = 11, // ">"
+	Greater_Or_Equal = 12, // ">="
 }
 
 @(rodata)
 OPERATOR_TEXTS := [Operator]string {
-	.None      = "",
-	.Add       = "+",
-	.Subtract  = "-",
-	.Multiply  = "*",
-	.Divide    = "/",
-	.Remainder = "%",
-	.With      = "with",
+	.None             = "",
+	.Add              = "+",
+	.Subtract         = "-",
+	.Multiply         = "*",
+	.Divide           = "/",
+	.Remainder        = "%",
+	.With             = "with",
+	.Equal            = "=",
+	.Not_Equal        = "!=",
+	.Less             = "<",
+	.Less_Or_Equal    = "<=",
+	.Greater          = ">",
+	.Greater_Or_Equal = ">=",
 }
 
 // The words of Lex: no name has one of them.
 @(rodata)
-WORDS_OF_LEX := [?]string{"_", "let", "in", "with"}
+WORDS_OF_LEX := [?]string{"_", "let", "in", "with", "if", "then", "else", "true", "false"}
 
 // name_valid says if a text is one name of Lex, with no '.': a letter or
 // '_', then letters, digits and '_', and no word of Lex. The console builds
@@ -203,6 +223,10 @@ Refusal :: enum u8 {
 	Parameter_Twice           = 25, // A parameter named twice in one function: the place is the second.
 	Too_Many_Parameters       = 26, // A parameter after ARGUMENT_CAPACITY parameters: a call takes no more arguments.
 	List_Close_Missing        = 27, // An item of a list, then neither "," nor "]".
+	Hash_Not_Valid            = 28, // A `blake3:` literal that does not have exactly 64 lowercase hexadecimal digits.
+	If_Then_Missing           = 29, // `if <condition>` with no `then` after it.
+	If_Else_Missing           = 30, // `if <condition> then <value>` with no `else` after it.
+	Nesting_Too_Deep          = 31, // An expression nested deeper than the parser bound.
 }
 
 // Where a node is in its text: its first byte.
@@ -237,56 +261,90 @@ Node :: struct {
 }
 
 // The tree of one text, in the memory of the caller. Each string is a part
-// of the text, so the text must live as long as the tree.
+// of the text, so the text must live as long as the tree. When external_nodes
+// is non-empty (declaration parsing), nodes are stored there instead of the
+// inline console buffer.
 Syntax_Tree :: struct {
-	text:          string,
-	nodes:         [NODE_CAPACITY]Node,
-	node_count:    int,
-	root:          Node_Index, // The expression of the line, or the refusal that holds it.
-	assigned_name: string, // The variable that the line names before "=", or "".
-	refusal:       Refusal_Record, // The refusal where the parse stopped, or None.
+	text:           string,
+	nodes:          [NODE_CAPACITY]Node,
+	external_nodes: []Node,
+	node_count:     int,
+	root:           Node_Index, // The expression of the line, or the refusal that holds it.
+	assigned_name:  string, // The variable that the line names before "=", or "".
+	refusal:        Refusal_Record, // The refusal where the parse stopped, or None.
 }
 
 // The state of one parse.
 @(private)
 Parser :: struct {
-	tree:       ^Syntax_Tree,
-	lookup:     Form_Lookup,
-	position:   int,
-	counted:    int, // The places before this byte are counted in line and line_start.
-	line:       u32,
-	line_start: int,
-	function:   Node_Index, // The function whose parameters or body the parser reads, or NO_NODE.
+	tree:            ^Syntax_Tree,
+	lookup:          Form_Lookup,
+	position:        int,
+	counted:         int, // The places before this byte are counted in line and line_start.
+	line:            u32,
+	line_start:      int,
+	function:        Node_Index, // The function whose parameters or body the parser reads, or NO_NODE.
+	multiline:       bool,
+	trailing_commas: bool,
+	depth:           int,
+	depth_limit:     int, // 0: no separate depth bound (bounded by TEXT_BYTES_MOST).
 }
 
-// parse reads a text into tree. The tree is whole when tree.refusal.refusal
-// is None; else the parse stopped at the refusal, which is a node in its
-// place, and each node before it is in the tree.
+// tree_nodes gives the active node buffer of tree: external_nodes when
+// provided, else the inline console buffer.
+tree_nodes :: proc "contextless" (tree: ^Syntax_Tree) -> []Node {
+	return len(tree.external_nodes) > 0 ? tree.external_nodes : tree.nodes[:]
+}
+
+// parse reads a console line into tree. The tree is whole when
+// tree.refusal.refusal is None; else the parse stopped at the refusal, which
+// is a node in its place, and each node before it is in the tree.
 parse :: proc "contextless" (text: string, lookup: Form_Lookup, tree: ^Syntax_Tree) {
+	tree.external_nodes = nil
+	parse_with_limits(text, lookup, tree, TEXT_BYTES_MOST, false, false, true, 0)
+}
+
+// parse_declaration reads a multi-line .lex declaration file into tree,
+// storing its nodes in external_nodes (or tree.nodes when nil). Tabs, line
+// ends, multi-line comments and trailing commas are accepted, top-level
+// console variable assignments are not, and recursion depth is bounded by
+// depth_limit.
+parse_declaration :: proc "contextless" (text: string, external_nodes: []Node, tree: ^Syntax_Tree, text_bytes_most: int = DECLARATION_TEXT_BYTES_MOST, depth_limit: int = DECLARATION_PARSE_DEPTH_LIMIT) {
+	tree.external_nodes = external_nodes
+	parse_with_limits(text, {}, tree, text_bytes_most, true, true, false, depth_limit)
+}
+
+@(private)
+parse_with_limits :: proc "contextless" (text: string, lookup: Form_Lookup, tree: ^Syntax_Tree, text_bytes_most: int, multiline, trailing_commas, allow_assignment: bool, depth_limit: int) {
 	tree.text, tree.node_count, tree.root, tree.assigned_name = text, 0, NO_NODE, ""
 	tree.refusal = {}
 	parser := Parser {
-		tree     = tree,
-		lookup   = lookup,
-		line     = 1,
-		function = NO_NODE,
+		tree            = tree,
+		lookup          = lookup,
+		line            = 1,
+		function        = NO_NODE,
+		multiline       = multiline,
+		trailing_commas = trailing_commas,
+		depth_limit     = depth_limit,
 	}
-	if len(text) > TEXT_BYTES_MOST {
-		tree.root = refuse(&parser, .Text_Too_Long, TEXT_BYTES_MOST, len(text), NO_NODE, u64(len(text)))
+	if len(text) > text_bytes_most {
+		tree.root = refuse(&parser, .Text_Too_Long, text_bytes_most, len(text), NO_NODE, u64(len(text)))
 		return
 	}
 	// An assignment starts with a name and a single "=". A word of Lex is
-	// no name of a variable.
-	name := read_name(&parser)
-	name_start := parser.position - len(name)
-	if len(name) > 0 && equal_accept(&parser) {
-		if word_of_lex(name) {
-			tree.root = refuse(&parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE)
-			return
+	// no name of a variable. Only console lines accept assignments.
+	if allow_assignment {
+		name := read_name(&parser)
+		name_start := parser.position - len(name)
+		if len(name) > 0 && equal_accept(&parser) {
+			if word_of_lex(name) {
+				tree.root = refuse(&parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE)
+				return
+			}
+			tree.assigned_name = name
+		} else {
+			parser.position = 0
 		}
-		tree.assigned_name = name
-	} else {
-		parser.position = 0
 	}
 	expression := expression_read(&parser)
 	if refused(&parser) {
@@ -303,10 +361,11 @@ parse :: proc "contextless" (text: string, lookup: Form_Lookup, tree: ^Syntax_Tr
 // node_at gives a node of a tree, or nil for NO_NODE and for an index past
 // the nodes of the tree.
 node_at :: proc "contextless" (tree: ^Syntax_Tree, index: Node_Index) -> ^Node {
-	if index < 0 || int(index) >= tree.node_count {
+	nodes := tree_nodes(tree)
+	if index < 0 || int(index) >= tree.node_count || int(index) >= len(nodes) {
 		return nil
 	}
-	return &tree.nodes[int(index)]
+	return &nodes[int(index)]
 }
 
 // node_text gives the bytes of a node itself: the digits, the text with its
@@ -384,12 +443,13 @@ refusal_keep :: proc "contextless" (parser: ^Parser, refusal: Refusal, offset: i
 @(private)
 node_add :: proc "contextless" (parser: ^Parser, kind: Node_Kind, start, end: int) -> Node_Index {
 	tree := parser.tree
-	if tree.node_count >= NODE_CAPACITY {
+	nodes := tree_nodes(tree)
+	if tree.node_count >= len(nodes) {
 		refusal_keep(parser, .Nodes_Full, start)
 		return NO_NODE
 	}
 	index := Node_Index(tree.node_count)
-	tree.nodes[tree.node_count] = {
+	nodes[tree.node_count] = {
 		kind         = kind,
 		place        = place_at(parser, start),
 		end          = u32(end),
@@ -439,7 +499,7 @@ refuse :: proc "contextless" (parser: ^Parser, refusal: Refusal, start, end: int
 
 @(private)
 skip_spaces :: proc "contextless" (parser: ^Parser) {
-	parser.position = console_language.space_end(parser.tree.text, parser.position)
+	parser.position = console_language.space_end(parser.tree.text, parser.position, parser.multiline)
 }
 
 // peek gives the byte after the spaces, or 0 at the end of the text.
@@ -483,7 +543,7 @@ equal_accept :: proc "contextless" (parser: ^Parser) -> bool {
 // after it.
 @(private)
 word_ahead :: proc "contextless" (parser: ^Parser, word: string) -> (end: int, found: bool) {
-	token := console_language.token_next(parser.tree.text, parser.position)
+	token := console_language.token_next(parser.tree.text, parser.position, parser.multiline)
 	if console_language.word_is(parser.tree.text, token, word) {
 		return token.end, true
 	}
@@ -495,20 +555,76 @@ word_ahead :: proc "contextless" (parser: ^Parser, word: string) -> (end: int, f
 @(private)
 named_ahead :: proc "contextless" (parser: ^Parser) -> bool {
 	text := parser.tree.text
-	name := console_language.token_next(text, parser.position)
+	name := console_language.token_next(text, parser.position, parser.multiline)
 	if name.kind != .Name {
 		return false
 	}
-	equal := console_language.token_next(text, name.end)
+	equal := console_language.token_next(text, name.end, parser.multiline)
 	return equal.kind == .Operator && text[equal.start] == '=' && !(equal.end < len(text) && text[equal.end] == '=')
 }
 
 // ---- The grammar.
 
-// expression_read reads `with`, whose priority is the lowest: below "+" and
-// "-".
+// expression_read reads a comparison over `with` expressions:
+//   expression = with_expr [ ("=" | "!=" | "<" | "<=" | ">" | ">=") with_expr ]
+// "==" and "=>" are never comparison operators.
 @(private)
 expression_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
+	if parser.depth_limit > 0 && parser.depth >= parser.depth_limit {
+		skip_spaces(parser)
+		return refuse(parser, .Nesting_Too_Deep, parser.position, parser.position, NO_NODE)
+	}
+	parser.depth += 1
+	defer parser.depth -= 1
+	left := with_read(parser)
+	if refused(parser) {
+		return left
+	}
+	text := parser.tree.text
+	character := peek(parser)
+	op_start := parser.position
+	operator := Operator.None
+	op_len := 0
+	second := op_start + 1 < len(text) ? text[op_start + 1] : 0
+	switch character {
+	case '=':
+		if second != '=' && second != '>' {
+			operator, op_len = .Equal, 1
+		}
+	case '!':
+		if second == '=' {
+			operator, op_len = .Not_Equal, 2
+		}
+	case '<':
+		if second == '=' {
+			operator, op_len = .Less_Or_Equal, 2
+		} else {
+			operator, op_len = .Less, 1
+		}
+	case '>':
+		if second == '=' {
+			operator, op_len = .Greater_Or_Equal, 2
+		} else {
+			operator, op_len = .Greater, 1
+		}
+	}
+	if operator == .None {
+		return left
+	}
+	binary := node_add(parser, .Binary, op_start, op_start + op_len)
+	parser.position = op_start + op_len
+	if binary == NO_NODE {
+		return left
+	}
+	node_at(parser.tree, binary).operator = operator
+	child_append(parser.tree, binary, left)
+	child_append(parser.tree, binary, with_read(parser))
+	return binary
+}
+
+// with_read reads `with`, whose priority is below "+" and "-".
+@(private)
+with_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	left := sum_read(parser)
 	for !refused(parser) {
 		end, found := word_ahead(parser, "with")
@@ -584,9 +700,17 @@ binary_read :: proc "contextless" (parser: ^Parser, operator: Operator, left: No
 
 @(private)
 factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
+	if parser.depth_limit > 0 && parser.depth >= parser.depth_limit {
+		skip_spaces(parser)
+		return refuse(parser, .Nesting_Too_Deep, parser.position, parser.position, NO_NODE)
+	}
+	parser.depth += 1
+	defer parser.depth -= 1
 	text := parser.tree.text
 	character := peek(parser)
 	start := parser.position
+	node := NO_NODE
+	allows_postfix := false
 	switch {
 	case character == '-':
 		negate := node_add(parser, .Negate, start, start + 1)
@@ -597,7 +721,7 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		child_append(parser.tree, negate, factor_read(parser))
 		return negate
 	case character == '(':
-		if close, arrow_end, found := console_language.function_head(text, start); found {
+		if close, arrow_end, found := console_language.function_head(text, start, parser.multiline); found {
 			return function_read(parser, start, close, arrow_end)
 		}
 		parser.position += 1
@@ -608,7 +732,7 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		if !accept(parser, ')') {
 			return refuse(parser, .Close_Parenthesis_Missing, parser.position, parser.position, inner)
 		}
-		return inner
+		node, allows_postfix = inner, true
 	case console_language.digit(character):
 		end := console_language.number_end(text, start)
 		parser.position = end
@@ -617,8 +741,8 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 			return refuse(parser, .Number_Too_Large, start, end, NO_NODE)
 		}
 		integer := node_add(parser, .Integer, start, end)
-		if node := node_at(parser.tree, integer); node != nil {
-			node.integer = value
+		if int_node := node_at(parser.tree, integer); int_node != nil {
+			int_node.integer = value
 		}
 		return integer
 	case character == '"':
@@ -630,35 +754,126 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		return node_add(parser, .Text, start, end)
 	case character == '{':
 		parser.position += 1
-		return literal_read(parser, start)
+		node, allows_postfix = literal_read(parser, start), true
 	case character == '[':
 		parser.position += 1
 		return list_read(parser, start)
 	case character == '.':
 		// A member names no variable: its enum comes from the parameter
 		// that receives it, as the type of a record literal does.
-		token := console_language.token_next(text, start)
+		token := console_language.token_next(text, start, parser.multiline)
 		if token.kind != .Member {
 			return refuse(parser, .Unexpected, start, len(text), NO_NODE)
 		}
 		parser.position = token.end
 		return node_add(parser, .Member, start, token.end)
+	case console_language.hash_starts(text, start):
+		end := console_language.hash_end(text, start)
+		parser.position = end
+		if _, valid := console_language.hash_value(text, start, end); !valid {
+			return refuse(parser, .Hash_Not_Valid, start, end, NO_NODE)
+		}
+		return node_add(parser, .Hash, start, end)
 	case console_language.name_first(character):
 		name := read_name(parser)
 		if name == "let" {
 			return let_read(parser, start)
 		}
+		if name == "if" {
+			return if_read(parser, start)
+		}
+		if name == "true" || name == "false" {
+			boolean := node_add(parser, .Boolean, start, start + len(name))
+			if bool_node := node_at(parser.tree, boolean); bool_node != nil {
+				bool_node.integer = name == "true" ? 1 : 0
+			}
+			return boolean
+		}
 		if word_of_lex(name) {
 			return refuse(parser, .Word_As_Name, start, start + len(name), NO_NODE)
 		}
 		if accept(parser, '(') {
-			return call_read(parser, name, start)
+			node, allows_postfix = call_read(parser, name, start), true
+		} else if peek(parser) == '{' {
+			// Call on a record literal: `plan { ... }` is `plan({ ... })`.
+			brace_start := parser.position
+			parser.position += 1
+			call := node_add(parser, .Call, start, start + len(name))
+			if call != NO_NODE {
+				child_append(parser.tree, call, literal_read(parser, brace_start))
+			}
+			node, allows_postfix = call, true
+		} else {
+			return node_add(parser, .Name, start, start + len(name))
 		}
-		return node_add(parser, .Name, start, start + len(name))
 	case character == 0:
 		return refuse(parser, .Line_Ends_Too_Soon, start, start, NO_NODE)
+	case:
+		return refuse(parser, .Unexpected, start, len(text), NO_NODE)
 	}
-	return refuse(parser, .Unexpected, start, len(text), NO_NODE)
+	if !allows_postfix || refused(parser) {
+		return node
+	}
+	return postfix_read(parser, node)
+}
+
+// postfix_read reads `.field` selections chained after a parenthesized
+// expression, a record literal or a call: `({a = 1}).a`, `import("x.lex").y.z`.
+@(private)
+postfix_read :: proc "contextless" (parser: ^Parser, base: Node_Index) -> Node_Index {
+	text := parser.tree.text
+	current := base
+	for !refused(parser) && peek(parser) == '.' {
+		dot_start := parser.position
+		token := console_language.token_next(text, dot_start, parser.multiline)
+		if token.kind != .Member {
+			break
+		}
+		parser.position = token.end
+		selected := node_add(parser, .Field_Select, token.start + 1, token.end)
+		if selected == NO_NODE {
+			return current
+		}
+		child_append(parser.tree, selected, current)
+		current = selected
+	}
+	return current
+}
+
+// if_read reads `if <condition> then <then_expr> else <else_expr>`.
+@(private)
+if_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
+	node := node_add(parser, .If, start, start + len("if"))
+	if node == NO_NODE {
+		return NO_NODE
+	}
+	condition := expression_read(parser)
+	child_append(parser.tree, node, condition)
+	if refused(parser) {
+		return node
+	}
+	then_end, has_then := word_ahead(parser, "then")
+	if !has_then {
+		skip_spaces(parser)
+		child_append(parser.tree, node, refuse(parser, .If_Then_Missing, parser.position, parser.position, NO_NODE))
+		return node
+	}
+	parser.position = then_end
+	then_branch := expression_read(parser)
+	child_append(parser.tree, node, then_branch)
+	if refused(parser) {
+		return node
+	}
+	else_end, has_else := word_ahead(parser, "else")
+	if !has_else {
+		skip_spaces(parser)
+		child_append(parser.tree, node, refuse(parser, .If_Else_Missing, parser.position, parser.position, NO_NODE))
+		return node
+	}
+	parser.position = else_end
+	else_branch := expression_read(parser)
+	child_append(parser.tree, node, else_branch)
+	return node
 }
 
 // call_read reads the arguments of a call, after its "(". The form of each
@@ -763,7 +978,7 @@ literal_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 	for {
 		skip_spaces(parser)
 		field_start := parser.position
-		if console_language.token_next(text, field_start).kind != .Name {
+		if console_language.token_next(text, field_start, parser.multiline).kind != .Name {
 			child_append(parser.tree, literal, refuse(parser, .Literal_Name_Missing, field_start, field_start, NO_NODE))
 			return literal
 		}
@@ -790,6 +1005,9 @@ literal_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 			child_append(parser.tree, literal, refuse(parser, .Literal_Close_Missing, parser.position, parser.position, NO_NODE))
 			return literal
 		}
+		if parser.trailing_commas && accept(parser, '}') {
+			return literal
+		}
 	}
 }
 
@@ -806,7 +1024,7 @@ let_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 	for {
 		skip_spaces(parser)
 		name_start := parser.position
-		if console_language.token_next(text, name_start).kind != .Name {
+		if console_language.token_next(text, name_start, parser.multiline).kind != .Name {
 			child_append(parser.tree, let, refuse(parser, .Let_Name_Missing, name_start, name_start, NO_NODE))
 			return let
 		}
@@ -830,6 +1048,17 @@ let_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 			return let
 		}
 		if accept(parser, ',') {
+			if parser.trailing_commas {
+				if in_end, has_in := word_ahead(parser, "in"); has_in {
+					parser.position = in_end
+					child_append(parser.tree, let, expression_read(parser))
+					for child := node_at(parser.tree, let).first_child; child != NO_NODE; child = next_of(parser.tree, child) {
+						child_node := node_at(parser.tree, child)
+						names_bind(parser.tree, let, .Let_Binding, child_node.kind == .Let_Binding ? child_node.first_child : child)
+					}
+					return let
+				}
+			}
 			continue
 		}
 		end, found := word_ahead(parser, "in")
@@ -875,7 +1104,7 @@ function_read :: proc "contextless" (parser: ^Parser, open, close, arrow_end: in
 				child_append(tree, function, refuse(parser, .Too_Many_Parameters, name_start, name_start, NO_NODE))
 				return function
 			}
-			token := console_language.token_next(text, name_start)
+			token := console_language.token_next(text, name_start, parser.multiline)
 			if token.kind != .Name {
 				child_append(tree, function, refuse(parser, .Parameter_Name_Missing, name_start, name_start, NO_NODE))
 				return function
@@ -939,13 +1168,17 @@ list_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 			child_append(parser.tree, list, refuse(parser, .List_Close_Missing, parser.position, parser.position, NO_NODE))
 			return list
 		}
+		if parser.trailing_commas && accept(parser, ']') {
+			return list
+		}
 	}
 }
 
-// names_bind gives each Name of a subtree that nothing inner bound the
-// child of owner of the kind binding_kind with its name, before its first
-// '.': a Let_Binding of a let, a Parameter of a function. A Call is bound
-// by its whole name, with no '.'.
+// names_bind gives each Name or Call of a subtree that nothing inner bound
+// the child of owner of the kind binding_kind with its name before its first
+// '.': a Let_Binding of a let, a Parameter of a function. A Call `gt.fn(...)`
+// binds to `gt` when `gt` is in scope, so record fields holding functions
+// can be called directly.
 @(private)
 names_bind :: proc "contextless" (tree: ^Syntax_Tree, owner: Node_Index, binding_kind: Node_Kind, index: Node_Index) {
 	node := node_at(tree, index)
@@ -957,7 +1190,7 @@ names_bind :: proc "contextless" (tree: ^Syntax_Tree, owner: Node_Index, binding
 		head := name
 		for character, place in name {
 			if character == '.' {
-				head = node.kind == .Name ? name[:place] : ""
+				head = name[:place]
 				break
 			}
 		}

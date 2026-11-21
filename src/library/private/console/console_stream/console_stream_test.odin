@@ -3,7 +3,7 @@ package console_stream
 
 import module "modus:contract/module"
 import "modus:contract/output"
-import "modus:private/console/console_condition"
+import "modus:support/console_condition"
 import "modus:support/sentence"
 import "core:testing"
 

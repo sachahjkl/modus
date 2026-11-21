@@ -13,7 +13,7 @@ package console_condition
 
 import module "modus:contract/module"
 import "modus:contract/value_kinds"
-import "modus:private/console/console_language"
+import "modus:support/console_language"
 import "modus:support/line_editor"
 import "modus:support/sentence"
 

@@ -2,11 +2,11 @@ package console
 
 import module "modus:contract/module"
 import "modus:contract/value_kinds"
-import "modus:private/console/console_condition"
+import "modus:support/console_condition"
 import "modus:private/console/console_results"
 import "modus:private/console/console_stream"
-import "modus:private/console/lex_evaluator"
-import "modus:private/console/lex_parser"
+import "modus:support/lex_evaluator"
+import "modus:support/lex_parser"
 import "modus:support/sentence"
 
 // Tables: a value that holds records of one record description, one after
