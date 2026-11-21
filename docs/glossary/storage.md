@@ -455,3 +455,92 @@ A tree that does not change after its commit has one tree hash, so it is named b
 The design: `src/md/features/recipes.md`, "Trees".
 
 Do not use: Merkle root, tree checksum, commit hash.
+
+### Stored type
+
+A stored type is a record type whose records a module keeps in its store.
+
+The module names it in its module file, with the objects that hold it. Its description has no Handle field and holds the members of each enum field. From 1.0, a change of it needs a migration; before 1.0, a change breaks the old data. A document has no stored type. It is designed for after 1.0, not built.
+
+The design: `src/md/features/data_evolution.md`.
+
+Do not use: schema, persisted struct, file format.
+
+### Typed object
+
+A typed object is an object that holds tables of records of stored types, each with its canonical description.
+
+The process that owns the store reads it through one border, which checks each description and each record, and refuses a description that the module does not know. The module never writes over an object that it refused. The console shows a typed object by the descriptions in it. It is designed for after 1.0, not built.
+
+The design: `src/md/features/data_evolution.md`.
+
+Do not use: record file, container, typed file.
+
+### Description hash
+
+The description hash is the BLAKE3 hash of the canonical description of a stored type.
+
+It names the form of the records of a table. The reader computes it from the description in the typed object, and the tool computes it at the build. Two descriptions that differ in one field, unit, kind or member have two hashes. It is not a version number: it gives no order. It is designed for after 1.0, not built.
+
+The design: `src/md/features/data_evolution.md`.
+
+Do not use: schema version, format number, fingerprint.
+
+### Migration
+
+A migration is the procedure that takes the records of a typed object from one description to another.
+
+A forward migration runs in the process that owns the store, at the first start of the new module and at a read that meets an older description. A backward migration runs in the newer module, in a migration start before a rollback. A migration is derived from the two descriptions, or declared by the author, and commits one object. The system has none before 1.0. It is designed for after 1.0, not built.
+
+The design: `src/md/features/data_evolution.md`.
+
+Do not use: upgrade script, conversion, schema change.
+
+### Shipped description
+
+A shipped description is the canonical description of a stored type that a release shipped.
+
+From the release 1.0.0, the release command writes each one beside `src/library/contract/release/release.odin`. The check of the stored types needs a migration from each shipped description of a type to its new description, and back. It refuses a migration from a description that no release shipped. It is designed for after 1.0, not built.
+
+The design: `src/md/features/data_evolution.md`.
+
+Do not use: frozen schema, baseline.
+### Store exchange
+
+A store exchange keeps one store of a principal on two machines or more: each machine writes its own copy, and the machines send each other the versions that the other lacks, then merge.
+
+Each machine has the whole store and keeps the rule of no save action with no link. The versions become a graph, in which a merge has two parents. Only a store that the plan of the principal names is exchanged, with the paired machines that the plan names. The trees and the objects cross by hash, with the protocol of the cache. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "The exchange of a store between machines".
+
+Do not use: sync, replication, mirror.
+
+### Common version
+
+The common version of a store and a paired machine is the newest version of the store that both machines hold: the base of their next merge.
+
+The retention rule never thins it, so its blocks stay while the paired machine stays. Each exchange moves it forward. The removal of the paired machine ends it. It is not the current version. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "The exchange of a store between machines".
+
+Do not use: merge base, ancestor, last sync.
+
+### Merge export
+
+A merge export is the export `merge(base, ours, theirs)` of the module that owns a store: it merges three versions of one object of its format, or says that it cannot.
+
+The store exchange calls it for each object that both machines changed, in a process of the session of the principal that holds a connection to that store only. A text merges by lines, a table by the key of its rows, and a CRDT document by its own merge. An object whose module has no merge export becomes a conflict value. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "The exchange of a store between machines".
+
+Do not use: merge driver, resolver, conflict handler.
+
+### Conflict value
+
+A conflict value is an object that holds a conflict as data: the hashes of the base and of the two sides that a merge could not join.
+
+The merge commits it, so the store exchange never stops on a conflict and both machines keep working. The principal resolves it once, in the module of the store or in a view of the two sides, and the resolution is a version that crosses as any change. A reader of a store refuses or shows a conflict value; it never reads it as the content. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "The exchange of a store between machines".
+
+Do not use: conflict file, conflict marker, sync conflict.

@@ -1,4 +1,4 @@
-// The module format, version 6 (docs/MODULE_CONTRACT.md, sections 1 and 2).
+// The module format, version 7 (docs/MODULE_CONTRACT.md, sections 1 and 2).
 //
 // A module is one file:
 //
@@ -18,7 +18,7 @@
 // `manual` and the site read the descriptions of the exports. The parts:
 //
 // - `Header`, `Table_Kind`, `Table_Entry`: the frame of a file.
-// - `Segment`, `Import`, `Slot`, `Export`, the rebase table: what a loader
+// - `Segment`, `Import`, `Import_Slot`, `Export`, the rebase table: what a loader
 //   reads (`load.odin`: `validate`, `rebase`, `bind`).
 // - `Function`, `Type`, `Direction`, `Record`, `Field`, `Table_Place`: the
 //   call form of an export (docs/MODULE_CONTRACT.md, section 4).
@@ -41,7 +41,7 @@ import "modus:contract/enum_word"
 import "modus:contract/value_kinds"
 
 MAGIC :: u64(0x0000_454C_5544_4F4D) // The bytes "MODULE", then two zero bytes.
-VERSION :: 6 // The version of the format that this code reads and writes. A file of another version is refused. 6: the enum parameters, the tables Enums and Members.
+VERSION :: 7 // The version of the format that this code reads and writes. A file of another version is refused. 7: the display texts of the members, the table Member_Texts.
 PAGE_SIZE :: 4096 // The alignment of each segment in the file and in memory: one page of the processor.
 HASH_SIZE :: 32 // The bytes of a BLAKE3 hash: the name of a module.
 
@@ -60,7 +60,7 @@ Machine :: enum u32 {
 // the file when one field is not one that it takes (`validate`).
 //
 // Example: the header of a module with an entry starts with the bytes "MODULE", the
-// version 6, the machine `X86_64`, and `entry_export` the index of its
+// version 7, the machine `X86_64`, and `entry_export` the index of its
 // export `main`.
 Header :: struct {
 	magic:           u64, // `MAGIC`.
@@ -80,7 +80,7 @@ Table_Kind :: enum u32 {
 	None          = 0, // The entry 0 of the directory: no table.
 	Segments      = 1, // `Segment` records: the bytes to map.
 	Imports       = 2, // `Import` records: the modules that this one calls.
-	Slots         = 3, // `Slot` records: the places that receive the address of an imported export.
+	Import_Slots  = 3, // `Import_Slot` records: the places that receive the address of an imported export.
 	Exports       = 4, // `Export` records: the entry points that other modules call.
 	Rebases       = 5, // The rebase table: words, not records.
 	Functions     = 6, // `Function` records: the call form of each export.
@@ -95,6 +95,7 @@ Table_Kind :: enum u32 {
 	Record_Inputs  = 15, // `Record_Input` records: the record inputs that the module declares, sorted by name.
 	Enums          = 16, // `Enum_Type` records: the descriptions of the enums that the exports take and give.
 	Members        = 17, // `Member` records: the members of those enums.
+	Member_Texts   = 18, // `Member_Text` records: the display text of a member in a language, in the order of the enum, the member and the language.
 }
 // The tables that this version of the format knows.
 TABLE_COUNT :: len(Table_Kind)
@@ -115,7 +116,7 @@ Segment_Flag :: enum u32 {
 	Read                 = 0, // The module reads the bytes.
 	Write                = 1, // The module writes the bytes: its data.
 	Execute              = 2, // The bytes are instructions.
-	Read_Only_After_Load = 3, // The loader writes it (rebases, slots), then removes Write.
+	Read_Only_After_Load = 3, // The loader writes it (rebases, import slots), then removes Write.
 }
 // The flags of one `Segment`.
 Segment_Flags :: bit_set[Segment_Flag;u32]
@@ -151,12 +152,12 @@ Import :: struct {
 // The loader writes there the address of the export `export_index` of the
 // module `import_index`, then maps the segment without `Write` when it is
 // `Read_Only_After_Load`.
-Slot :: struct {
+Import_Slot :: struct {
 	memory_offset: u64, // The place of the 8 bytes, from the base of the module.
 	import_index:  u32, // An index in the import table, from 1.
 	export_index:  u32, // An index in the export table of that module, from 1.
 }
-#assert(size_of(Slot) == 16)
+#assert(size_of(Import_Slot) == 16)
 
 // One export: a procedure of the module that another module or the loader
 // calls. Its index is its number in the module: an import slot and an error

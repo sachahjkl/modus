@@ -45,7 +45,7 @@ WRITER_REFUSAL_NAMES := [module_file_writer.Refusal]string {
 	.Segment_Data_Past_Size       = "Segment_Data_Past_Size",
 	.Segment_Overlap              = "Segment_Overlap",
 	.Segment_Written_And_Executed = "Segment_Written_And_Executed",
-	.Slot_Not_Valid               = "Slot_Not_Valid",
+	.Import_Slot_Not_Valid               = "Import_Slot_Not_Valid",
 	.Rebase_Not_Valid             = "Rebase_Not_Valid",
 	.Record_Not_Valid             = "Record_Not_Valid",
 	.Fact_Not_Valid               = "Fact_Not_Valid",
@@ -58,6 +58,7 @@ WRITER_REFUSAL_NAMES := [module_file_writer.Refusal]string {
 	.Record_Stream_Place_Not_Writable  = "Record_Stream_Place_Not_Writable",
 	.Record_Streams_Not_Valid     = "Record_Streams_Not_Valid",
 	.Enum_Not_Valid               = "Enum_Not_Valid",
+	.Member_Text_Not_Valid        = "Member_Text_Not_Valid",
 }
 
 // A module file written whole.

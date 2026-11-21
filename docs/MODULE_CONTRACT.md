@@ -1,6 +1,6 @@
 # Module contract
 
-`src/library/contract/module/format.odin` is version 6 of the format at the level of bytes.
+`src/library/contract/module/format.odin` is version 7 of the format at the level of bytes.
 
 This document gives the contract between modules: the module format, the loader, the call form, the type description, and the context.
 `glossary/README.md` defines the terms. `PROPERTIES.md` gives the rules; (P10) points to a property.
@@ -16,7 +16,7 @@ The facts come from two research notes, with sources:
 
 **For whom.** A reader who writes a module, a reader who calls modules from a process or from the console, and a reader who changes the loader or the tool that writes the tables.
 
-**Read before.** `PROPERTIES.md`, properties 10, 11, 12 and 19. The terms module, export, import, slot, loader, replacement, direct call, isolated call, call host, record description, table, error record and debug object are in `glossary/code.md` and `glossary/communication.md`.
+**Read before.** `PROPERTIES.md`, properties 10, 11, 12 and 19. The terms module, export, import, import slot, loader, replacement, direct call, isolated call, call host, record description, table, error record and debug object are in `glossary/code.md` and `glossary/communication.md`.
 
 **The map of this document.**
 
@@ -64,7 +64,7 @@ A module is one file that holds its code and everything needed to use it: what i
 +--------------------+
 | table directory    |  one entry per table: offset, count, record size
 +--------------------+
-| flat tables        |  segments, imports, slots, exports, rebases,
+| flat tables        |  segments, imports, import slots, exports, rebases,
 |                    |  functions, strings, documentation, records, fields,
 |                    |  budget, facts, own hash, record outputs,
 |                    |  record inputs
@@ -107,13 +107,13 @@ offset  size  field        type
 
 | Table | One record describes |
 |---|---|
-| Segments | A range of the file, its place and size in memory, and its flags: Read, Write, Execute, and Read only after the load (the loader writes its rebases and slots, then removes Write) |
+| Segments | A range of the file, its place and size in memory, and its flags: Read, Write, Execute, and Read only after the load (the loader writes its rebases and import slots, then removes Write) |
 | Imports | One imported module: the BLAKE3 hash of its file |
-| Slots | One import slot: 8 bytes of memory that receive the address of an export, named by the import index and the export index in that module |
+| Import_Slots | One import slot: 8 bytes of memory that receive the address of an export, named by the import index and the export index in that module |
 | Exports | One exported function: the offset of its code and the index of its function description |
 | Rebases | The locations in data that hold an address inside the module, as 64-bit words in the RELR form (section 2) |
 
-```byte-layout module.Segment module.Import module.Slot module.Export module.Rebases
+```byte-layout module.Segment module.Import module.Import_Slot module.Export module.Rebases
 module.Segment, 40 bytes: one record of the table Segments
 offset  size  field          type
      0     8  file_offset    u64
@@ -127,7 +127,7 @@ module.Import, 32 bytes: one record of the table Imports
 offset  size  field  type
      0    32  hash   [HASH_SIZE]u8
 
-module.Slot, 16 bytes: one record of the table Slots
+module.Import_Slot, 16 bytes: one record of the table Import_Slots
 offset  size  field          type
      0     8  memory_offset  u64
      8     4  import_index   u32
@@ -155,10 +155,11 @@ The loader reads none of these tables: they are for a caller that must know the 
 | Fields | One field of a record: its name, its offset, its type (Integer, Handle, Text or Bytes), signed or unsigned, the integer unit of an Integer (section 5, "The unit of an Integer field"), its detail (the size of an integer, a text or bytes, the rights of a handle), and its field kind with the contract enum of a status (section 5, "The kind of a field") |
 | Enums | One enum that an export takes or gives: the name of its type, the range of its members, its size and its sign (section 5, "Enum parameters"). The file has the table when an export has an Enum |
 | Members | One member of an enum: its name and its value |
+| Member_Texts | The display text of one member for one language tag, in the order of the enum, the member and the tag (section 5, "The display text of a member"). The file has the table when a module gives a text |
 | Strings | The bytes of all names, help lines and documentation texts |
 | Documentation | Record 1: the documentation of the module, one line and a text |
 
-```byte-layout module.Function module.Record module.Field module.Documentation module.Enum_Type module.Member
+```byte-layout module.Function module.Record module.Field module.Documentation module.Enum_Type module.Member module.Member_Text
 module.Function, 168 bytes: one record of the table Functions
 offset  size  field                  type
      0     4  name_offset            u32
@@ -222,6 +223,15 @@ offset  size  field        type
      0     4  name_offset  u32
      4     4  name_count   u32
      8     8  value        i64
+
+module.Member_Text, 24 bytes: one record of the table Member_Texts
+offset  size  field          type
+     0     4  enum_index     u32
+     4     4  member_number  u32
+     8     4  text_offset    u32
+    12     4  text_count     u32
+    16     4  tag_offset     u32
+    20     4  tag_count      u32
 ```
 
 A type is one byte, the value of a member of `module.Type`: Integer, Text, Record, Handle, Table, and Bytes (a parameter only). The fields `result`, `parameters` and `type` hold the byte, not the enum: a reader takes each byte through `module.type_of_word` (or `function_result_type`, `function_parameter_type`, `field_type`), which refuses a byte that names no type, and never casts it. The detail of a parameter says what its type needs: the index of a record description, the rights of a handle, or the unit of an Integer (section 5, "The unit of an Integer parameter"). Section 5 gives the types.
@@ -440,7 +450,7 @@ offset  size  field         type
     40     8  place         u64
 ```
 
-- **The place of a row** is the memory offset of the package variable of the declaration, in a segment that the loader writes: each loader writes the index of the row there, a u32, the first field of `system.Record_Output` and `system.Record_Input` (`module.record_stream_indexes_write`), as it writes the hash at the own-hash place. The library reads the index in the variable, so a call names its stream by the address of the variable. The tool finds the variable by its symbol in the linked file; 0 says that the link kept no variable, as no code uses it. `validate` refuses a place that is not 0 and not 4 aligned bytes in a segment that the loader writes and that keeps Write after the load, or that meets the own-hash place, a rebase location, an import slot or the place of another row (`Bad_Record_Stream_Place`). Before it reads a row, it refuses a table `Record_Outputs` or `Record_Inputs` with more than `module.RECORD_STREAM_INDEX_MOST` (64) rows (`Too_Many_Record_Streams`): the check of the places costs the rows times the segments, and each location of a rebase or a slot one search among the sorted places, and `validate` runs in the kernel for the root service. The build refuses a module that declares more, with its sentence. The format took the version 5 for the place.
+- **The place of a row** is the memory offset of the package variable of the declaration, in a segment that the loader writes: each loader writes the index of the row there, a u32, the first field of `system.Record_Output` and `system.Record_Input` (`module.record_stream_indexes_write`), as it writes the hash at the own-hash place. The library reads the index in the variable, so a call names its stream by the address of the variable. The tool finds the variable by its symbol in the linked file; 0 says that the link kept no variable, as no code uses it. `validate` refuses a place that is not 0 and not 4 aligned bytes in a segment that the loader writes and that keeps Write after the load, or that meets the own-hash place, a rebase location, an import slot or the place of another row (`Bad_Record_Stream_Place`). Before it reads a row, it refuses a table `Record_Outputs` or `Record_Inputs` with more than `module.RECORD_STREAM_INDEX_MOST` (64) rows (`Too_Many_Record_Streams`): the check of the places costs the rows times the segments, and each location of a rebase or an import slot one search among the sorted places, and `validate` runs in the kernel for the root service. The build refuses a module that declares more, with its sentence. The format took the version 5 for the place.
 
 - **The record of a row** is a record description of the table `Records`, as the record of an export or of a log fact is: a record that an export takes and a record output writes has one row. A record of a record stream goes into memory that another process reads, so it has no Handle field, and each of its bytes is a byte of one field (`module.record_stream_type`).
 - **The checks of a reader**: `module.record_output` and `module.record_input` refuse a row index of 0 or past `module.RECORD_STREAM_INDEX_MOST` (64: the rows of each table at most), a reserved byte that is not 0, a name that is not a name of the source or is outside the string table, a help or a text outside it, a record or terms that `record_stream_type` refuses, a pairing or a count that names no member, `Paired` on a typed record output, and `Many_Types` on a typed record input. `module.record_streams_check` checks a whole file: each row, the names of each table sorted with no name two times, no name in both tables, and a generic record output only beside one generic record input. The build writes the rows sorted by name, and checks each file that it writes with it.
@@ -526,10 +536,10 @@ What the build checks: `TOOLS.md`, "The record outputs and the record inputs of 
 
 One package writes the bytes of a module file: the contract package `modus:contract/module_file_writer` (`glossary/code.md`, "Module file writer"). The modus tool calls it for each module of the build, and a program of modus that writes a module calls the same code.
 
-- **The input** is one record, `Module_Parts`: the segments with their bytes and their access, the exports with their descriptions, the import hashes, the slots, the rebases, the records and their fields, the log facts, the own-hash place, the documentation of the module, the budget request, and the record outputs and the record inputs (`Record_Output_Part`, `Record_Input_Part`), each with the place of its variable. A part `n` of a list is the record `n + 1` of its table.
+- **The input** is one record, `Module_Parts`: the segments with their bytes and their access, the exports with their descriptions, the import hashes, the import slots, the rebases, the records and their fields, the log facts, the own-hash place, the documentation of the module, the budget request, and the record outputs and the record inputs (`Record_Output_Part`, `Record_Input_Part`), each with the place of its variable. A part `n` of a list is the record `n + 1` of its table.
 - **The memory.** `file_size_needed(parts)` gives the bytes of the file. `write(parts, output)` writes into the memory of the caller, and allocates nothing. Memory that is too small gives `Output_Too_Small` with the size that the file needs, and no byte changes.
-- **What it computes.** The header with the entry (the export `entry`) and the memory size, the directory, each table on 8 bytes, the string table, the rebase table in its bitmap form, and the data of each segment on its own pages with its zero bytes at the end not stored. A segment that is read-only after the load and that no rebase and no slot writes becomes a constant segment: a part of the shared code of section 2.
-- **The refusals.** A refusal is a `Refusal_Record`: a member of `Refusal`, the table of the part, the index of the part in its list, and a value. The writer refuses a table past its bound (`Table_Past_Bound`: more than 2³² − 1 records with record 0, or a string table of more bytes), a name that is not 1 to 255 ASCII letters, digits and `_` with no digit first (`Not_A_Name`), two exports with one name, a Record or Table parameter or result or an error record that names no record (`Export_Without_Description`), a call form past 12 arguments, an export outside a segment with Execute, segments off pages, past 64 bits, longer than their memory, out of order or on one page (`Segment_Overlap`), a segment with Execute that the loader writes, a slot, a rebase or an own-hash place outside writable data, rebases out of order or twice, a fact with the key 0, a key out of order, no record or no template, more than `module.RECORD_STREAM_INDEX_MOST` record outputs or record inputs (`Record_Streams_Past_Bound`), a record stream whose name is not a name (`Not_A_Name`) or whose record or terms name no record (`Record_Stream_Without_Description`), and the place of a record stream that is not 0 and not 4 aligned bytes in a segment with Write, no Execute and not `Read_Only_After_Load` (`Record_Stream_Place_Not_Writable`).
+- **What it computes.** The header with the entry (the export `entry`) and the memory size, the directory, each table on 8 bytes, the string table, the rebase table in its bitmap form, and the data of each segment on its own pages with its zero bytes at the end not stored. A segment that is read-only after the load and that no rebase and no import slot writes becomes a constant segment: a part of the shared code of section 2.
+- **The refusals.** A refusal is a `Refusal_Record`: a member of `Refusal`, the table of the part, the index of the part in its list, and a value. The writer refuses a table past its bound (`Table_Past_Bound`: more than 2³² − 1 records with record 0, or a string table of more bytes), a name that is not 1 to 255 ASCII letters, digits and `_` with no digit first (`Not_A_Name`), two exports with one name, a Record or Table parameter or result or an error record that names no record (`Export_Without_Description`), a call form past 12 arguments, an export outside a segment with Execute, segments off pages, past 64 bits, longer than their memory, out of order or on one page (`Segment_Overlap`), a segment with Execute that the loader writes, an import slot, a rebase or an own-hash place outside writable data, rebases out of order or twice, a fact with the key 0, a key out of order, no record or no template, more than `module.RECORD_STREAM_INDEX_MOST` record outputs or record inputs (`Record_Streams_Past_Bound`), a record stream whose name is not a name (`Not_A_Name`) or whose record or terms name no record (`Record_Stream_Without_Description`), and the place of a record stream that is not 0 and not 4 aligned bytes in a segment with Write, no Execute and not `Read_Only_After_Load` (`Record_Stream_Place_Not_Writable`).
 - **The last check.** The written file passes `module.validate`, `module.function`, `module.record_type` and `module.fact` read each description, and `module.record_streams_check` takes the record streams: the order of their names, no name in both tables, a generic record output beside one generic record input. A file that a reader refuses gives `Record_Not_Valid`, `Fact_Not_Valid`, `Record_Streams_Not_Valid` (the row and the `module.Record_Stream_Fault`) or `Written_File_Not_Valid` (a place of a record stream that meets another write of a loader gives `module.Error.Bad_Record_Stream_Place`), and its bytes are set to zero. The file has the version 5 of the format (`module.VERSION`).
 
 The tool keeps what reads its input: the linked ELF file, the Odin sources and the DWARF of the debug object. It reads the record streams from the sources and the place of each variable from the symbols of the linked file (`record_stream_place_of_elf` in `convert.odin`), and passes both to the writer, so a program of modus that writes a module writes its streams through the same code. The design: `src/md/features/first_compiler.md`, "1. The module file writer".
@@ -636,15 +646,15 @@ The loader does five steps:
 1. Place the module and each of its imports in the address range of the process: the module of a process at `PROCESS_BASE`, each import after it. The design is a random base; today the base is fixed ("Addresses", below).
 2. Get each imported module from the load source by its hash, and check the hash and the tables of the file. Load it if it is not in the module space of the process yet.
 3. Rebase: add the base address to each location of the rebase table.
-4. Bind: for each slot, write the address of the export `(import, export index)`, and write the hash of the module file at its own-hash place (`module.own_hash_write`), when the file has one. The kernel writes it for the root service, which it loads itself.
+4. Bind: for each import slot, write the address of the export `(import, export index)`, and write the hash of the module file at its own-hash place (`module.own_hash_write`), when the file has one. The kernel writes it for the root service, which it loads itself.
 5. Map the segments with their protection: a segment with the flag Read only after the load loses Write after steps 3 and 4. The starter then starts the process at the entry export (`Header.entry_export`) with `Process_Start`.
 
 Status of the loader in user space (`src/library/support/system/load.odin`):
 
 - **The load source**: the loader finds a module only in its load source: the files that the process was granted, each named by its hash, and the replacements that the starter of the process gives. The loader checks the hash and the tables of each file before it uses it. It has no search path and no ambient store (P20). The root service and the console give the boot image. The first module of a process can come from another place: the root service reads the file of a disk process from the storage service, and checks its hash against the hash of the command ("A module from a disk", below). An import of a disk process that the boot image does not hold comes from the same store: the root service finds the file by the hash of its bytes, and gives it beside the boot image (`system.Source_File` in `Load_Source.files`). The loader looks at the boot image first, and checks the hash and the tables of a file beside it as of a file of the image. A call host receives a list of files from the console, on one page in the form of the boot image: the module, its imports, and the modules of the replacements.
 - **The module space**: the modules that a loader put in one process. Each module is in it one time: two modules that import a third one call the same copy. A module that another module of the space uses stays when the caller unloads it; a module with no use leaves, and its imports lose one use.
-- **Refusals**: a missing import, an import cycle, a bad file, a replacement that fails its check, a slot that cannot be bound, no room, a kernel operation that fails. On a failure, the space is as it was before the load, and the caller has a load error (below).
-- **Shared code**: a prepared module has two parts. The code is the segments with no Write: the loader never writes them (a rebase and a slot are in a segment with Write, and the loader checks it), so their pages are the same at each base and with each binding, and the table keys them by the hash of the module only. Two processes that import one module at two places map one copy of its code. The fixed part is the segments that are read-only after the load: the loader writes their rebases and their slots, so the table keys them by the hash, the base, and the hash and the base of the module of each import. A writable segment, with its slots, is bound in the copy of each process. The tool gives a segment of the range that the linker makes read-only after the load, and that holds no rebase and no slot, the flags of a constant segment: no loader writes it, so it is a part of the code, shared at each base (`segment_flags_after_the_relocations` in `src/library/contract/module_file_writer`). The linker always makes that range, for a table of its own that the tool does not copy; in a module with no table of addresses and no import it is such a segment, of one page with no byte.
+- **Refusals**: a missing import, an import cycle, a bad file, a replacement that fails its check, an import slot that cannot be bound, no room, a kernel operation that fails. On a failure, the space is as it was before the load, and the caller has a load error (below).
+- **Shared code**: a prepared module has two parts. The code is the segments with no Write: the loader never writes them (a rebase and an import slot are in a segment with Write, and the loader checks it), so their pages are the same at each base and with each binding, and the table keys them by the hash of the module only. Two processes that import one module at two places map one copy of its code. The fixed part is the segments that are read-only after the load: the loader writes their rebases and their import slots, so the table keys them by the hash, the base, and the hash and the base of the module of each import. A writable segment, with its import slots, is bound in the copy of each process. The tool gives a segment of the range that the linker makes read-only after the load, and that holds no rebase and no import slot, the flags of a constant segment: no loader writes it, so it is a part of the code, shared at each base (`segment_flags_after_the_relocations` in `src/library/contract/module_file_writer`). The linker always makes that range, for a table of its own that the tool does not copy; in a module with no table of addresses and no import it is such a segment, of one page with no byte.
 - **Addresses**: the module of a process is at `PROCESS_BASE`, and its imports follow it, with one page with no memory between two modules. The addresses are fixed: the random base of the design is not done.
 - **Module records**: after it mapped a module, the loader writes its module record in the kernel (operation `Process_Module`): its addresses, its hash, and the hash that a replacement put it in place of. The kernel does not read the module: the record is what the loader asserts. It names the module of the address of a fault with it, and `Inspect` gives the records of a process. The kernel adds the module writer of the record ("The writer of a module record", below).
 
@@ -678,12 +688,12 @@ No exception and no global error state: an error is a value that the call gives 
 
 | Field | What it holds |
 |---|---|
-| `stage` | The stage that failed: Find (no file of the load source has the hash), Read (the file does not have its hash, or its tables are not valid), Cycle, Check (a replacement), Bind (a slot), Map (a kernel operation), Room, Unmap (the removal of a module) |
+| `stage` | The stage that failed: Find (no file of the load source has the hash), Read (the file does not have its hash, or its tables are not valid), Cycle, Check (a replacement), Bind (an import slot), Map (a kernel operation), Room, Unmap (the removal of a module) |
 | `status`, `file_error` | Map and Unmap: the status of the kernel. Read: what is not valid in the file (`module.Error`), or None when the hash differs |
 | `module` | The hash and the name of the module that was being loaded: the importer, when the stage concerns one of its imports |
 | `imported` | The hash and the name of the import concerned, as the file of `module` names it |
 | `replaced`, `replacement` | A replacement on the path of the load: where a module imported `replaced`, the loader gave `replacement`. It says who decided: the party that gave the replacements, for the console the replacement table of the machine |
-| `export`, `slot` | Check and Bind: the name of the export, in the module that the import names, and the number of the slot |
+| `export`, `import_slot` | Check and Bind: the name of the export, in the module that the import names, and the number of the import slot |
 | `difference`, `parameter`, `expected`, `found` | Check: what differs (no export with the name, the count of parameters, the type or the detail of parameter n, the type or the detail of the result), and the two sides: a type, its detail (the rights of a Handle, or a count) and the name of a Record |
 
 A name is 32 bytes, from the load source: the loader reads it in the entries of the boot image. A hash that the load source does not name has no name; the text then shows the hash.
@@ -884,10 +894,10 @@ Not built: the key of the TPM. The size of a store from the budget that the modu
 
 ## 3. Static is dynamic
 
-A module can link a library into its own file (static) or find it at load (dynamic). Here the two are one mechanism: each call to another module goes through a slot, and the only difference is when the slot is filled. Static linking is not built: no tool merges modules today, and every import is bound at load.
+A module can link a library into its own file (static) or find it at load (dynamic). Here the two are one mechanism: each call to another module goes through an import slot, and the only difference is when the import slot is filled. Static linking is not built: no tool merges modules today, and every import is bound at load.
 
-- **One call sequence**: A call to another module is always an indirect call through a slot: `call *slot(%rip)`. This is the sequence of `-fno-plt` in ELF and of the import table in PE. [Load §2, §5]
-- **Merge**: A build tool can merge a module and some of its imports into one new module. It rewrites each call through a slot into a direct call, and removes the slot. Linkers already do this rewrite (`GOTPCRELX` relaxation). [Load §5]
+- **One call sequence**: A call to another module is always an indirect call through an import slot: `call *slot(%rip)`. This is the sequence of `-fno-plt` in ELF and of the import table in PE. [Load §2, §5]
+- **Merge**: A build tool can merge a module and some of its imports into one new module. It rewrites each call through an import slot into a direct call, and removes the import slot. Linkers already do this rewrite (`GOTPCRELX` relaxation). [Load §5]
 - **Result**: The compiler output is the same in both cases. "Static" is "merged before load". "Dynamic" is "bound at load". The choice is made after compilation, per import.
 - **Provenance**: A merged module keeps a table of the hashes of the modules that it contains. [Blow §3] The system can still answer "which processes contain this module".
 - **Cost**: A merged module has a new hash. Two modules that merge the same module do not share its pages.
@@ -1156,8 +1166,8 @@ A module names each import by its hash. The party that starts a process can give
 
 - **Use**: B has a security fault. B2 has the correction. Each process that imports B receives B2, with no new build of the process.
 - **Who decides**: the party that starts the process, with a grant. The root service holds the table of the machine. A process cannot refuse a replacement and cannot ask for one: the table is not ambient (P20).
-- **The loader checks, it does not trust**: for each slot of A in B, the loader finds in B2 the export with the same name. The description of that export must be equal in B and in B2: the same parameters, the same result, the same records and the same rights of each handle. If one differs, the load fails. A replacement cannot change a signature.
-- **Bind by name, one time**: the slot of A holds an export index of B. The loader translates it to the index in B2 at load. The call stays one indirect call through a slot.
+- **The loader checks, it does not trust**: for each import slot of A in B, the loader finds in B2 the export with the same name. The description of that export must be equal in B and in B2: the same parameters, the same result, the same records and the same rights of each handle. If one differs, the load fails. A replacement cannot change a signature.
+- **Bind by name, one time**: the import slot of A holds an export index of B. The loader translates it to the index in B2 at load. The call stays one indirect call through an import slot.
 - **What the check cannot prove**: that B2 behaves as B. A replacement row signed by the key of a principal carries this assertion (P9): the root service writes a replacement in the table of the machine only for such a row (section "Who may replace a module").
 - **Visible**: the identity of a process that runs is the hash of its module and the replacements that the loader applied. `processes()` and the manual show them. A report of a fault names B2, not B.
 - **Cost**: "the exact versions that were built together" is then true only for a process with no replacement. This is the purpose: the principal that signs the system, not the author of A, has the last word on the code that runs.
@@ -1167,7 +1177,7 @@ A module names each import by its hash. The party that starts a process can give
 - **The table**: one page that the root service writes (`system.Replacement_Table`, 32 records of 64 bytes, `module.Replacement`). A count of versions lets a reader copy the records while the root service writes. The root service gives the records to the loader of each process that it starts. The console and the manual receive the page with the right Read (`GRANT_REPLACEMENTS`): the console reads it before each `load` and each `isolate`, and gives the records to a call host with its files.
 - **Who changes it**: a process with the role Replace (the console) asks the root service with `Root_Command.Replace`: the name of B, and the number of the entry of B2 in the boot image (two names of 32 bytes do not fit in the 56 bytes of values of a ring record). The console has `replace("calendar", "calendar_fixed")`, `replace("calendar", "")` to remove it, and `replacements()` to list the table. The root service adds a record only for a pair that a signed replacement row names (section "Who may replace a module"); a removal needs no row.
 - **One step**: the loader applies one record to one import. The root service refuses a chain: a module that replaces is not replaced, and a replaced module does not replace.
-- **The check** (`module.bind`, `module.functions_compare`): for each slot whose import was replaced, the loader reads the name of the export in the file of B, finds the export with that name in B2, and compares the two descriptions: the count and the type of each parameter, the rights of each Handle, the description of each Record (`module.records_equal`), the result. The names of the parameters and the help are for a reader: they can differ. The loader checks only the exports that a slot of A uses. A missing name or another description refuses the load: the load error has the export, the two modules and the first difference (section "The error of a load"). The slot receives the address of the export of B2: the call is the same indirect call.
+- **The check** (`module.bind`, `module.functions_compare`): for each import slot whose import was replaced, the loader reads the name of the export in the file of B, finds the export with that name in B2, and compares the two descriptions: the count and the type of each parameter, the rights of each Handle, the description of each Record (`module.records_equal`), the result. The names of the parameters and the help are for a reader: they can differ. The loader checks only the exports that an import slot of A uses. A missing name or another description refuses the load: the load error has the export, the two modules and the first difference (section "The error of a load"). The import slot receives the address of the export of B2: the call is the same indirect call.
 - **The replacement is in place of an import only**: `load("calendar")` loads calendar. The table applies to each import of a load, at each level.
 - **A table that changes applies to the loads that follow.** A process that runs keeps the modules that it has. The root service does not start a process again.
 - **Visible**: the module records of the kernel (operation `Process_Module`). `processes()` in the console shows the modules of each process that has more than its module, with "in place of" for each replacement. The manual shows the imports of a module, and the replacement of the machine for each one. When a thread faults, the kernel writes the hash of the module of the instruction, its offset, and the hash that the module replaces: "in module 5d8ff6e736fda684 at offset 00000000000019c0, which replaces b1f1b875df9992f8".
@@ -1175,7 +1185,7 @@ A module names each import by its hash. The party that starts a process can give
 - **What the rows do not say** (not built): whether the code of a module is shared code (`glossary/code.md`) of a prepared module or a copy of the process. A module record holds no memory object, and the table of prepared modules is in the process that starts processes. A row would need the mappings of the process (`Inspect_Kind.Process_Mappings`) and an identity of each memory object that two reports can compare.
 - **A view in the window of the manual** (designed, not built): the key `o` shows the table of all the modules (`overview()`); a second view would draw the rows of `edges()` for one process with `src/library/support/interface`: one column for each depth, a rectangle for each module in the color of its kind, a line from the importer to the module that it imports, with a line at an angle only where a column is skipped, and the name of the module that a replacement changed beside the line. The rows are the facts; the window adds no fact.
 - **Where the identity is kept**: the kernel keeps it, as it keeps the name of a process: the fault report and `Inspect` are in the kernel, and the loader of a process is in the process that started it, or in the process itself. A cycle of imports is possible with a replacement, and the loader refuses it.
-- **Measured** (process `imports`, QEMU with KVM, in the machine test, the least of 5 runs): a call through an import slot, 1 000 000 calls: 3.5 ns to calendar, 2.7 ns to calendar_fixed in its place (the two are the same instruction; the bodies of the two exports differ). The bind of agenda: 372 ns with a direct import, 891 ns with the check of the replacement (one slot). The load of agenda and its import: 117 us and 154 us, with the hash of each file. Over five runs, the bind took 216 to 377 ns and 857 to 904 ns.
+- **Measured** (process `imports`, QEMU with KVM, in the machine test, the least of 5 runs): a call through an import slot, 1 000 000 calls: 3.5 ns to calendar, 2.7 ns to calendar_fixed in its place (the two are the same instruction; the bodies of the two exports differ). The bind of agenda: 372 ns with a direct import, 891 ns with the check of the replacement (one import slot). The load of agenda and its import: 117 us and 154 us, with the hash of each file. Over five runs, the bind took 216 to 377 ns and 857 to 904 ns.
 
 #### Who may replace a module
 
@@ -1225,7 +1235,7 @@ A library module (`glossary/desktop.md`) is a module that holds code that many m
 - The caller supplies each table and each buffer. The module allocates nothing, and keeps no address of the caller after a call.
 - The module can keep a cache of a fixed size in its own writable data. The loader gives each process its own copy of each writable segment (rule 3 of "Closed rules"), so the cache is data of one process with no new mechanism. The drawing module keeps the text settings of the process and the blend tables there: 29 KiB.
 - A module has no code that runs at its load. It fills its cache at its first call, from the context of the process at `CONTEXT_ADDRESS`.
-- **No segment that the loader writes and that is read-only after the load.** A library module has no table of addresses (a table of texts, a table of procedures) and no import: no rebase and no slot outside its writable data. Reason: the segments with no Write are shared code at each address; a segment that is read-only after the load holds addresses that the loader wrote for one base, so a starter keeps one prepared module of it for each address (`glossary/code.md`, "Prepared module"). A library module is at another address in each importer, after the module of the process. With such a segment, 40 importers take 40 places of the table of prepared modules of the root service, which has 64, and the next process does not start. The modus tool refuses the conversion of a library module with such a segment (the field `library` of the module table). The range that the linker makes read-only after the load is not such a segment when the loader writes nowhere in it: the tool gives it the flags of a constant segment (section 2, "Shared code"), and it is a part of the shared code.
+- **No segment that the loader writes and that is read-only after the load.** A library module has no table of addresses (a table of texts, a table of procedures) and no import: no rebase and no import slot outside its writable data. Reason: the segments with no Write are shared code at each address; a segment that is read-only after the load holds addresses that the loader wrote for one base, so a starter keeps one prepared module of it for each address (`glossary/code.md`, "Prepared module"). A library module is at another address in each importer, after the module of the process. With such a segment, 40 importers take 40 places of the table of prepared modules of the root service, which has 64, and the next process does not start. The modus tool refuses the conversion of a library module with such a segment (the field `library` of the module table). The range that the linker makes read-only after the load is not such a segment when the loader writes nowhere in it: the tool gives it the flags of a constant segment (section 2, "Shared code"), and it is a part of the shared code.
 - **A cache with no lock has a rule for its callers.** A module that writes its cache with no guard states how many threads of a process can call it at a time. The drawing module: one thread of a process at a time calls `execute_draw_table_in_rectangles_19`; a process that breaks the rule can draw a wrong text or fault, inside its own address space only (`INTERFACE.md`, section 7).
 
 **What changes for a module that imports it.**
@@ -1246,7 +1256,7 @@ A source names an export of an import in a `foreign` block. The compiler trusts 
 - **What it compares** with the description of the export of that name: the count of the parameters, the type of each, the direction of each Table and Bytes, the rights of each Handle, the unit of each Integer (section 5, "The unit of an Integer parameter"), the layout of each record (its size; the offset, the type, the size, the sign and the unit of each field), the result, and the error record. The names of the parameters, of the records and of the fields are for a reader: they can differ.
 - **The calling convention**: an export is called with the convention "c". A declaration of an import with another convention written (`proc "odin"`), or with none in a block whose attribute `default_calling_convention` is not "c", is refused: it passes one more argument than its parameters say.
 - **What it leaves**: a `foreign` procedure that no import exports is a procedure of an assembly file of the module.
-- **Each call has one compared declaration.** The converter gives the check the symbol of each slot of the importer: each import that the code calls. Each such symbol must have a declaration that the check compared. A symbol with none stops the build and is named: "the import seal is called, and the tool found no declaration of it to compare". This covers each declaration that the tool does not find: a `foreign` block in the body of a procedure, and a `link_name` or a `link_prefix` that is a constant and not a text. Two declarations of one symbol pass, because each is compared with the same description: a module and a package that it compiles can both declare an export. So a declaration of an import is in a `foreign` block at the level of the file, or of a `when` there, with its name or its `link_name` as a text.
+- **Each call has one compared declaration.** The converter gives the check the symbol of each import slot of the importer: each import that the code calls. Each such symbol must have a declaration that the check compared. A symbol with none stops the build and is named: "the import seal is called, and the tool found no declaration of it to compare". This covers each declaration that the tool does not find: a `foreign` block in the body of a procedure, and a `link_name` or a `link_prefix` that is a constant and not a text. Two declarations of one symbol pass, because each is compared with the same description: a module and a package that it compiles can both declare an export. So a declaration of an import is in a `foreign` block at the level of the file, or of a `when` there, with its name or its `link_name` as a text.
 - **A type alias is not read.** A parameter whose type is a name for a type of the contract (`^Drawn` for `^system.Table_To_Append(Record)`) is refused, and the sentence says what to write: "The tool does not read a type alias: write the type itself in the declaration". To follow an alias the tool needs the constants of each package, which is the work of the compiler; the declaration is also where a reader finds the call form.
 - **A failure** stops the build with the file, the line and the first difference: "the declaration of execute_draw_table_in_rectangles_19 does not agree with the export of drawing: it has 5 parameters, the export has 6".
 - **A second reader**: the host test `each_declaration_of_the_repository_agrees_with_its_export` makes the same comparison against the descriptions that the tool reads from the source of each import, with no build.
@@ -1397,6 +1407,29 @@ An export takes a value of a closed set as an enum, and its module file names th
 - **The border in the export**: an argument comes in a register that the caller wrote, so it can hold a value that names no member. `enum_word.member_of_argument` gives the member, `given` false for the absent word, or a refusal that the export answers with an error record.
 - **The readers**: the console types a member `.french` by its parameter (`CONSOLE.md`, "Values and their kinds"); `modustool call` takes `settings.set(keyboard_layout = .french)`, with the named arguments and the members of a line, and prints a result `.french`; the manual, the site and the signature that the console prints name an Enum parameter by the name of its enum.
 - **Not built**: an import declaration of an export with an Enum parameter, and an enum of a module as the field kind of a record.
+
+#### The display text of a member
+
+A member has a name, which a line types and a module compiles, and a display text, which a principal reads: `.fourteen_eighths` shows "1.75". The palette and the completion show the text; a line types the name only. A translation adds rows of another language tag, with no change of the code, of the names or of the format.
+
+- **In the file**: the table `Member_Texts` holds one `module.Member_Text` for each text: the index of the enum, the number of the member in its enum from 0, a language tag and 1 to 24 bytes of a display text in the string table (`module.MEMBER_TEXT_CAPACITY`): UTF-8 with no control character, no character that a reader does not see or that changes the order of the text, and one character at least that is not a space (`text_encoding.display_text_valid`). A letter of another script that looks like a Latin one is taken: a translation needs each script. The rows are in the order of the enum, the member and the bytes of the tag. The file has the table when a module gives a text.
+- **The language** is a language tag of BCP 47 (RFC 5646): `en`, `fr-CA`, `zh-Hant-TW`. The languages are an open set, so a tag is a text that keeps a syntax, not an enum. A row holds a well-formed tag (section 2.1) of at most 35 bytes, in its canonical case (section 2.1.1); the grandfathered tags of the registry are refused. The package `src/library/contract/language_tag` checks a tag, gives its canonical case and its shorter tags.
+- **The reader**: `module.member_display_text` takes the tags of the principal in their order. It tries each tag, then each shorter tag as the Lookup of RFC 4647 does (`zh-Hant-TW`, `zh-Hant`, `zh`), then the next tag, then `en`, else the name. A tag is compared with no regard to case. The tags of the principal are the fallback `["en"]` until the interface follows the language of the principal.
+- **The checks**: `module.member_texts_check` refuses a row that names no valid enum (`No_Enum`) or no member of it (`No_Member`), a text that is empty, past its bound, outside the string table or no display text (`Bad_Text`), a tag that is outside the string table, not well-formed or not in its canonical case (`Bad_Tag`), and a row that is not after the row before it (`Twice`, `Out_Of_Order`). `information.check` gives the problem kind `Member_Text`; the writer of module files refuses such parts with `Member_Text_Not_Valid`. The check of a replacement does not compare the texts: a text is not a part of the contract of a call.
+- **In the source**: a variable of an enumerated array of texts, with the attribute `member_texts` whose value is the language tag of its texts, apart from the enum. The compiler checks each member; the build reads the table from the source and writes the tag in its canonical case. The enum must be the type of an Enum parameter or result of an export of the module, the tag well-formed, and each text a literal with no escape:
+
+  ```odin
+  @(rodata, member_texts = "en")
+  scale_texts := [scale_factor.Scale]string {
+  	.Ten_Eighths = "1.25",
+  	// ...
+  	.Sixteen_Eighths = "2",
+  }
+  ```
+
+  A table that gives some members only is `#partial`. A member with no text shows its name.
+
+- **The rows of the palette fit**: the build refuses a module whose row of buttons would not fit a palette entry, as the service of the module names it: the act name `settings.set:font` (32 bytes), the name of the row (24), the name of an entry `settings.set scale to 1.75` (64), its line (128) and its button, the display text or the name (24). The console makes no entry that does not fit, so a button would be missing with no sign.
 
 ### The unit of an Integer parameter
 
@@ -1568,7 +1601,7 @@ The project writes no compiler and no linker. It writes two things: one converte
 
 1. A compiler produces a normal ELF object file, position-independent.
 2. The existing linker (`lld`) links one module into one ELF file.
-3. A tool of the project converts that ELF file into a module: it writes the flat tables, converts relocations to rebases and slots, and computes the hash.
+3. A tool of the project converts that ELF file into a module: it writes the flat tables, converts relocations to rebases and import slots, and computes the hash.
 4. The description tables come from the source: from the Odin source for Odin (implemented: `tools/modustool/build/describe.odin` reads the syntax tree), from a small description file for another language (designed, not built: every module of the system is written in Odin).
 5. Every module, the kernel and the boot program link `src/runtime/memory.asm`: `copy_bytes_without_overlap`, `copy_bytes_with_overlap` and `fill_bytes_with_value`. The compiler calls them by the names of the C library (`memcpy`, `memmove`, `memset`): the file gives these names as aliases, in a part of its own, and the code of the system uses the long names. The modus tool builds without `-no-crt`, so the Odin runtime does not give its own functions under these names (loops of one byte, two with no optimization). A module in another language links the same file.
 
@@ -2023,7 +2056,7 @@ Then `columns(where(stack(0), procedure = "entry"), module, procedure, file, lin
 
 These rules close the open questions of the contract:
 
-1. **No intermediate form of code.** A module holds machine code only. Merge rewrites a call through a slot into a direct call, and no more. To inline across two bodies of code, compile their sources into one module. The contract depends on no compiler.
+1. **No intermediate form of code.** A module holds machine code only. Merge rewrites a call through an import slot into a direct call, and no more. To inline across two bodies of code, compile their sources into one module. The contract depends on no compiler.
 2. **Exports are functions only.**
 3. **Module state: private data, no hidden start code.** A module can have global data. Each process gets its own copy, taken from the file. No code runs before the entry: the format has no constructors and no static initializers. A module that needs setup exports a function for it, and the caller calls it.
 4. **Debug information**: a separate debug object of sorted tables that the tool writes from the DWARF of the compiler; it names its module by hash (section "Debug information").

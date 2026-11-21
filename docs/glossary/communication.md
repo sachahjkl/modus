@@ -208,7 +208,7 @@ Its text is the form of ISO 8601: `+08:00`, `-03:30`. It goes from `-12:00` to `
 
 The design: `src/md/features/time_zone.md`.
 
-Do not use: timezone (one word), TZ, locale, UTC offset (for the setting).
+Do not use: timezone (one word), TZ, locale (for this), UTC offset (for the setting).
 
 ### Back pressure
 
@@ -428,7 +428,7 @@ Do not use: ABI (for this), calling sequence.
 
 A direct call is a call of an export of a module that is in the address space of the caller.
 
-The arguments are where the call form puts them: up to 12 integers, 6 in registers and the others on the stack, and 8 floats; a record, a text or a table goes as the address of memory of the caller. A direct call costs what a call of a function costs: a call through a slot of an import took 3.5 ns. The callee runs with all the access of the caller, so a direct call is for a module that the caller trusts.
+The arguments are where the call form puts them: up to 12 integers, 6 in registers and the others on the stack, and 8 floats; a record, a text or a table goes as the address of memory of the caller. A direct call costs what a call of a function costs: a call through an import slot took 3.5 ns. The callee runs with all the access of the caller, so a direct call is for a module that the caller trusts.
 
 The design: `docs/MODULE_CONTRACT.md`, "4. The call form".
 
@@ -495,6 +495,36 @@ A service ring is the ring between the root service and a service that serves it
 One command record names one connection that starts or ends, with the grant of the caller. A service has no other way to receive a caller: it cannot be reached by a name.
 
 Do not use: control channel, accept queue.
+
+### Connection page
+
+A connection page is one page for each connection that the root service writes alone, and that the client and the holder map with the right Read only.
+
+It holds the holder serial (the process serial of the holder that serves the connection), the `Connection_State` (`Held`, `Holder_Stopped`, `Ended`), and the stop cause and the stop outcome of the last holder that stopped. A client waits on it beside its call ring. When a holder starts again, the connection keeps its call ring and its call region, and only the page changes. It is paid by the work budget of the connection. Designed, not built.
+
+The design: `src/md/features/supervision.md`, "What a client sees when the holder of its role stops".
+
+Do not use: heartbeat, status channel, reconnect event.
+
+### Call in doubt
+
+A call in doubt is a call that a holder took from its call ring and did not answer before it stopped: it ran, or it did not.
+
+The library of the client knows it: the holder serial changed, the command was read, and no completion came. At the new holder serial, the library writes it again once, if its export is idempotent or carries a request serial. A call of an export that is neither, and a call whose replay met a second stop, goes to its caller with the status `Holder_Stopped`.
+
+The design: `src/md/features/supervision.md`, "The calls in flight".
+
+Do not use: pending call, lost call, retry.
+
+### Request serial
+
+A request serial is the number that the library of a client gives each call of an export that is not idempotent, one more on each connection.
+
+The holder writes the serial and the completion record of the call in the same commit as its effect. A replayed call whose serial is at or below the kept serial gets the kept completion and does not run again. A holder keeps 8 answers for each connection, and the library holds a ninth such call until a place is free. The answer of such a call is in the values of its completion, never in the call region.
+
+The design: `src/md/features/supervision.md`, "The rule that makes a replay safe".
+
+Do not use: idempotency key, sequence number, nonce.
 
 ### Argument record
 
@@ -646,7 +676,7 @@ Do not use: pipe, stream buffer, channel.
 
 A compartment is the part of the command queue of an output ring that holds one record: the compartment word, then the record, rounded up to a multiple of 64 bytes.
 
-Both sides compute its size from the record description: a record of 72 bytes takes a compartment of 128 bytes, a log record of 256 bytes one of 320. The writer copies a whole compartment in, and the reader copies it out into private memory before it checks it (`output.record_of_compartment`). A compartment is not a place of the storage service ("Place") and not a slot of a module ("Slot").
+Both sides compute its size from the record description: a record of 72 bytes takes a compartment of 128 bytes, a log record of 256 bytes one of 320. The writer copies a whole compartment in, and the reader copies it out into private memory before it checks it (`output.record_of_compartment`). A compartment is not a place of the storage service ("Place") and not an import slot ("Import slot").
 
 The design: `src/md/features/module_outputs.md`, "The ring and its records".
 

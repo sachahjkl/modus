@@ -1,6 +1,7 @@
 package fuzz
 
 import "base:intrinsics"
+import "modus:contract/language_tag"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modustool:foundation"
@@ -43,8 +44,8 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 				_, _ = module.record(file, kind, index, module.Segment)
 			case .Imports:
 				_, _ = module.record(file, kind, index, module.Import)
-			case .Slots:
-				_, _ = module.record(file, kind, index, module.Slot)
+			case .Import_Slots:
+				_, _ = module.record(file, kind, index, module.Import_Slot)
 			case .Exports:
 				_, _ = module.record(file, kind, index, module.Export)
 			case .Rebases:
@@ -71,7 +72,42 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 				_, _ = module.record(file, kind, index, module.Enum_Type)
 			case .Members:
 				_, _ = module.record(file, kind, index, module.Member)
+			case .Member_Texts:
+				if _, _, _, problem := module.member_text_row(file, index); problem > max(module.Member_Text_Problem) {
+					return fuzz_broken(.Contract, "member_text_row gives a value out of its enumeration: %d", u8(problem))
+				}
 			}
+		}
+	}
+	// The check of the texts gives a row of the table, or 0 with None.
+	text_row, text_problem := module.member_texts_check(file)
+	if text_problem > max(module.Member_Text_Problem) || (text_problem == .None) != (text_row == 0) || text_row >= max(module.count(file, .Member_Texts), 1) {
+		return fuzz_broken(.Contract, "member_texts_check gives the row %d and the problem %d", text_row, u8(text_problem))
+	}
+	// A text that the reader finds is the text of a row that keeps each
+	// rule, with that enum, that member and that tag: a search in a table
+	// out of order can miss a row, and never gives the text of another
+	// key. The tag of each row is asked for, as the file holds it.
+	text_rows := min(module.count(file, .Member_Texts), FUZZ_MODULE_INDEX_LIMIT)
+	for index in u32(1) ..< text_rows {
+		row, _ := module.record(file, .Member_Texts, index, module.Member_Text)
+		tag := module.string_at(file, row.tag_offset, row.tag_count)
+		text, found := module.member_text_of_tag(file, row.enum_index, row.member_number, tag)
+		if !found {
+			continue
+		}
+		matched := false
+		for other in u32(1) ..< text_rows {
+			other_row, other_tag, other_text, problem := module.member_text_row(file, other)
+			if problem == .None && other_row.enum_index == row.enum_index && other_row.member_number == row.member_number && language_tag.equal(other_tag, tag) && other_text == text {
+				matched = true
+				break
+			}
+		}
+		// A table past the rows that this target reads has rows that it
+		// cannot compare.
+		if !matched && module.count(file, .Member_Texts) <= FUZZ_MODULE_INDEX_LIMIT {
+			return fuzz_broken(.Contract, "member_text_of_tag gives \"%s\" for the enum %d, the member %d, the tag %q, and no row with that key has that text", text, row.enum_index, row.member_number, tag)
 		}
 	}
 	// The readers of the enums: an enum that enum_type accepts has a size
@@ -251,8 +287,8 @@ fuzz_module_record_type :: proc(kind: module.Table_Kind) -> (type: typeid, size:
 		return module.Segment, size_of(module.Segment)
 	case .Imports:
 		return module.Import, size_of(module.Import)
-	case .Slots:
-		return module.Slot, size_of(module.Slot)
+	case .Import_Slots:
+		return module.Import_Slot, size_of(module.Import_Slot)
 	case .Exports:
 		return module.Export, size_of(module.Export)
 	case .Rebases:
@@ -279,6 +315,8 @@ fuzz_module_record_type :: proc(kind: module.Table_Kind) -> (type: typeid, size:
 		return module.Enum_Type, size_of(module.Enum_Type)
 	case .Members:
 		return module.Member, size_of(module.Member)
+	case .Member_Texts:
+		return module.Member_Text, size_of(module.Member_Text)
 	}
 	return nil, 0
 }
@@ -342,7 +380,7 @@ fuzz_module_append :: proc(writer: ^Fuzz_Module_Writer, value: ^$T) -> int {
 // fuzz_module_build builds a module from choices by the rules of the
 // format: one to three segments (code, data, read-only data), exports with
 // their functions and names, one record with its fields, imports with
-// their slots, rebase words, a documentation and a budget. With
+// their import slots, rebase words, a documentation and a budget. With
 // allow_break, a rare choice writes one field of one table to a boundary
 // value: broke says so.
 fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.temp_allocator) -> (file: []u8, broke: bool) {
@@ -412,9 +450,9 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 	append(&records, record)
 
 	imports := make([dynamic]module.Import, context.temp_allocator)
-	slots := make([dynamic]module.Slot, context.temp_allocator)
+	import_slots := make([dynamic]module.Import_Slot, context.temp_allocator)
 	append(&imports, module.Import{})
-	append(&slots, module.Slot{})
+	append(&import_slots, module.Import_Slot{})
 	rebases := make([dynamic]u64, context.temp_allocator)
 	if data_segment >= 0 {
 		data := segments[data_segment]
@@ -425,7 +463,7 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 			// The imported module is the module itself in the target: its
 			// export 1, when it has one.
 			if export_count > 0 {
-				append(&slots, module.Slot{memory_offset = data.memory_offset + 8 * u64(index), import_index = u32(len(imports) - 1), export_index = 1})
+				append(&import_slots, module.Import_Slot{memory_offset = data.memory_offset + 8 * u64(index), import_index = u32(len(imports) - 1), export_index = 1})
 			}
 		}
 		for index in 0 ..< rebase_count {
@@ -483,8 +521,8 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 	// place of a row meets none of them, as validate requires. The data
 	// segment is never Read_Only_After_Load, so a place there keeps Write.
 	taken := make([dynamic][2]u64, context.temp_allocator)
-	for slot in slots[1:] {
-		append(&taken, [2]u64{slot.memory_offset, module.REBASE_WORD_SIZE})
+	for import_slot in import_slots[1:] {
+		append(&taken, [2]u64{import_slot.memory_offset, module.REBASE_WORD_SIZE})
 	}
 	for location in rebases {
 		append(&taken, [2]u64{location, module.REBASE_WORD_SIZE})
@@ -581,7 +619,7 @@ fuzz_module_build :: proc(input: []u8, allow_break: bool, allocator := context.t
 	directory_at := fuzz_module_append(&writer, &directory)
 	fuzz_module_table_write(&writer, &directory, .Segments, segments[:])
 	fuzz_module_table_write(&writer, &directory, .Imports, imports[:])
-	fuzz_module_table_write(&writer, &directory, .Slots, slots[:])
+	fuzz_module_table_write(&writer, &directory, .Import_Slots, import_slots[:])
 	fuzz_module_table_write(&writer, &directory, .Exports, exports[:])
 	if len(rebases) > 0 {
 		fuzz_module_table_write(&writer, &directory, .Rebases, rebases[:])

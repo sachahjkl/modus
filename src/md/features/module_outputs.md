@@ -739,7 +739,7 @@ Each step is a commit on `master` that leaves a working system, with its tests.
 
 ## Subtle points
 
-- **The part of the command queue that holds one record is a compartment.** "Place" is a term of the storage service, and "slot" the 8 bytes of a module that hold the address of an import: the compartment word would read as the word of either.
+- **The part of the command queue that holds one record is a compartment.** "Place" is a term of the storage service, and "import slot" the 8 bytes of a module that hold the address of an import: the compartment word would read as the word of either.
 - **The calls of the library run in one thread of a process at a time.** The table of the ends and the wiring ring are state of the whole process. A process that writes and reads from several threads holds its own lock around each call.
 - **One writing thread for each record output.** Each queue has one writer. A process that writes one record output from several threads holds its own lock around the write; `system.log` already serializes its writes to `log`.
 - **A record that the reader refuses is lost to the reader.** It is not lost in silence: the writer reads its serial and its field in a completion.

@@ -329,3 +329,11 @@ Palette_Result_Given :: struct {
 	result_lines: u64,
 	result_kind: [16]u8,
 }
+
+// A line took more stack of the evaluator than each line before it in this
+// run: the margin under the evaluation stack bound, in the build that runs.
+@(log_fact = "console: the deepest line so far took {stack_bytes} bytes of the stack of the evaluator, of {bound_bytes} (a measure)")
+Evaluator_Stack_Deepest :: struct {
+	stack_bytes: u64,
+	bound_bytes: u64,
+}

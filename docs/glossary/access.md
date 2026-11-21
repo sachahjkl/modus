@@ -410,6 +410,36 @@ A thread of a budget that used its part of the period does not run until the nex
 
 Do not use: window, slice.
 
+### Work budget
+
+A work budget is the budget that the root service takes from the budget of a client at each `Connect`, and gives to the service with the right Spend.
+
+The service pays from it the memory of its work for that client: the call ring, the call region, the connection page, and the tables of the connection. Its work thread runs on it, so the kernel counts that time in the client. A spent work budget gives the client `No_Budget` of the unit `Work_Budget`, and changes nothing in the service. At the end of the connection, what it holds goes back to the client. Designed, not built.
+
+The design: `src/md/features/work_accounting.md`.
+
+Do not use: client quota, resource container, donated budget.
+
+### Work thread
+
+A work thread is the thread of a service that runs the calls of one connection, created with the work budget of that connection.
+
+Its time counts in the work budget and in each budget above it, so the limit of the client holds for its own threads and for its work in the service together. A client that spends its time delays only its own calls. A work thread never changes the state that all clients share: it prepares a change and gives it to the shared step. Designed, not built.
+
+The design: `src/md/features/work_accounting.md`, "The work thread".
+
+Do not use: worker, handler thread, borrowed thread.
+
+### Shared step
+
+A shared step is the bounded part of a call that changes the state of all clients, which the thread of the service runs, never a work thread.
+
+A commit of the storage service and a frame of the compositor are shared steps. The service measures the time of each one and adds it to the step debt of its connection, and takes the next step from the connection with the least step debt. So a client that asks for large steps waits behind the clients that ask for small ones, and no work thread holds a lock while its budget runs out.
+
+The design: `src/md/features/work_accounting.md`, "The shared step".
+
+Do not use: critical section, server work, commit queue.
+
 ### Grant
 
 A grant is the act that gives a handle to a process, and the record of that act.
@@ -450,13 +480,53 @@ Do not use: permission, access right, token.
 
 A process role is what the root service gives a process at its start: its start grants and the terms beside them, kept with the process while it runs.
 
-At its start, the root service reads the role of a process of the boot image from its row in the table `process_roles`: its start grants, the services that it can connect to, the blocks of its private store, the size of its terminal. Each rule after the start reads that role, never the name. A disk process has the role of the row of its nickname in the disk grant table.
+The root service reads it from the row of the process in the table `process_roles`: its start grants, the services that it can connect to, the blocks of its store, the size of its terminal. Each later rule reads it, never the name. A disk process has the row of its nickname in the disk grant table. A process role is not a role: it gives the grants of the roles that its process holds.
 
 Example: the role of `remote` holds Connect, Network, Acts_For_Principal and Remote_Clients, and the nine services that it connects to.
 
 The design: `src/md/api/root_ring.md`.
 
-Do not use: permission set.
+Do not use: permission set, role (alone, for this).
+
+### Role
+
+A role is a place of the system that one process fills for the others, such as the display, the console, the storage or a device class, named by a member of the enum `Role`.
+
+The set of the roles is closed. The root service gives each role to a role holder, which the plan names, after a check against its role contract. A client gets a connection to the holder in its context, or with `connect(role.display)` when its process role holds that right; it never finds the holder by a name.
+
+The design: `src/md/features/roles_and_contracts.md`.
+
+Do not use: service name, interface, well-known name, bus name.
+
+### Role holder
+
+A role holder is the process to which the root service gave a role, for one scope: the machine, a session, one client or one device.
+
+The plan names the module of each holder, and the signed image names a default one. The root service checks the module against the role contract before it gives the role, and gives the grants that the role needs. A holder of the display, the input or the console from the disk needs a choice of principal 0, measured into PCR 12. Example: the compositor holds `Display` for the machine.
+
+The design: `src/md/features/roles_and_contracts.md`.
+
+Do not use: provider (for this), implementation, daemon, server.
+
+### Interposed holder
+
+An interposed holder is a role holder that stands between the clients of a role and the holder below it, and fills the same role contract.
+
+A client sees no difference, because it holds a connection to the contract only. The holder forwards each call and record, and adds one function: a filter, an audit, a nesting, a view from another machine. Each handle that crosses it comes from it, so its revocation ends all of them. A holder that adds no function is refused. Each one adds a hop, which is measured.
+
+The design: `src/md/features/roles_and_contracts.md`, "Composition by interposition".
+
+Do not use: proxy, middleware, wrapper, membrane (for this).
+
+### Delegated service
+
+A delegated service is a process to which the root service gives one attenuated class of its own authority, such as the wiring of record outputs or the disk grant tables.
+
+The root service keeps a small core: the making of a process, the origin of each handle, the roles, the start. Each other domain goes to a delegated service, which holds a role and a narrow grant, and which the core checks at its border as any process. It acts only for the principal of its caller. A revocation by the core ends each handle that it gave.
+
+The design: `src/md/api/root_service_split.md`.
+
+Do not use: subsystem, manager, privileged helper, broker.
 
 ### Root ring
 
@@ -509,6 +579,86 @@ The root service keeps one disk grant table for each principal. `allow` and `dis
 The design: `docs/MODULE_CONTRACT.md`, "The grants of a disk process".
 
 Do not use: permission table, access list, manifest.
+
+### Powerbox
+
+The powerbox is the path by which a running process asks for a grant, the principal answers on the trusted display, and the root service gives reduced, revocable handles.
+
+A process with a window writes a grant request on its grant request ring. The root service checks it at one border, merges the requests of one process into one grant dialog, and gives the dialog to the trusted display. It makes a handle for each item that the principal kept, with the rights kept, and records it as a requested grant. The asker never draws the dialog and never sees the candidates of a picker.
+
+The design: `src/md/features/powerbox.md`.
+
+Do not use: permission prompt, consent dialog, UAC.
+
+### Grant request
+
+A grant request is the typed record in which a process asks the powerbox for 1 to 16 grant items at once.
+
+The process writes the items in its grant request region and sends `Ask` on its grant request ring. The border refuses a kind, a rights word or a reason that names no member, an object that the kind does not take, and a scope of wide authority. The answer is one record that gives, item by item, the outcome, the rights given and the handles. A grant request holds no text that the principal reads.
+
+The design: `src/md/features/powerbox.md`, "The grant request".
+
+Do not use: permission request, intent, scope string.
+
+### Grant item
+
+A grant item is one line of a grant request: the kind of one object, the object or a choice of the principal, the rights asked, and an optional reason.
+
+The kinds at first are a network endpoint, a store that the principal picks, and a service connection. The reason is a member of `Grant_Reason`, which the trusted display shows as a claim of the process. Two items with the same kind, object and rights are merged into one row of the grant dialog. An item can name a requested grant that the process holds, to ask for more rights on its object.
+
+The design: `src/md/features/powerbox.md`, "The grant request".
+
+Do not use: scope, permission.
+
+### Requested grant
+
+A requested grant is a grant that the root service made from a grant item that the principal kept, recorded by the process and a number.
+
+It lasts for the run of its process, or, for a disk process, always for the hash of its module, in the disk grant table of the principal. `grants("name")` lists the requested grants of a process under the recorded grant `requested`, and `revoke("name", "requested", number)` ends one through `Handle_Revoke`. A requested grant is not a start grant: no role holds it.
+
+The design: `src/md/features/powerbox.md`, "The grant".
+
+Do not use: runtime permission, granted scope.
+
+### Wide grant
+
+A wide grant is a grant of wide authority to one agent: a set of wide scopes with their bounds in time and in place, given after a proof of the principal.
+
+Its holder is a client key of `remote`, later the hash of a module. The trusted display shows the screen of a wide grant, never the ordinary grant dialog, and the passphrase of the principal, typed with the keys of the machine, gives it. While it holds, the mark of wide authority shows in the trusted display; each act under it is an act record. It is never written on the disk.
+
+The design: `src/md/features/wide_grants.md`.
+
+Do not use: full access, admin mode, override, superuser.
+
+### Wide scope
+
+A wide scope is one member of the closed set of what a wide grant can give: the lines of an agent console, the screen, the input, the processes, the log, the stores.
+
+Each wide scope has a boundary that one mechanism enforces: the role of the agent console, the uses of a client key, the input face of the trusted display, the shares of the picked stores. The principal unticks a scope, bounds it in place, and sets it to ask each time. No wide scope changes a grant or answers a trusted surface, and none joins a grant request.
+
+The design: `src/md/features/wide_grants.md`, "The wide scopes".
+
+Do not use: permission, entitlement, OAuth scope.
+
+### Agent console
+
+An agent console is a console that the root service starts for a wide grant, whose lines an agent sends and whose role is the union of the wide scopes that the principal kept.
+
+It runs in the session of the principal and reaches only what its scopes give: no command that changes a grant, no command of the principals. Each line is an act record before it runs. It stops at the end of its wide grant. It is not the console of the principal, whose role holds each grant of a console.
+
+The design: `src/md/features/wide_grants.md`, "The wide scopes".
+
+Do not use: agent shell, bot session.
+
+### Act record
+
+An act record is the record of one act done under a wide grant, written on a record output before the act runs.
+
+The root service, the agent console, `remote` and the trusted display each write the acts that they do for the agent, and the collector keeps them in a space that the agent cannot read or erase. A writer that finds its ring full refuses the act, so no act runs without its record. The principal reads them with `acts(key)`. An act record is not a log fact, which the log can lose.
+
+The design: `src/md/features/wide_grants.md`, "The record of each act".
+
+Do not use: audit log, activity log.
 
 ### Guest
 
@@ -743,6 +893,66 @@ A row holds a set of uses (`remote.Client_Uses`), carried as a word that one bor
 The design: `src/md/features/remote_display.md`, "The authority".
 
 Do not use: scope, permission, role.
+
+### Machine identity key
+
+The machine identity key is the Ed25519 key pair of principal 0 whose public key names the machine to other machines.
+
+Its seed is keyed BLAKE2b of the machine key, so the TPM roots it where the machine key is sealed by the TPM, and the recovery key of the machine key opens it too. The root service holds the secret key and signs only the CertificateVerify of a handshake for `remote`, which presents the key as its server key. It is not the machine key, a client key, or the attestation key of the TPM. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "The identity of a machine".
+
+Do not use: host key, node key, device key, machine certificate.
+
+### Pairing
+
+Pairing is the explicit act by which a principal makes two machines know each other's machine identity key, with the uses that each gives the other.
+
+The principal shows a pairing code on one machine with `machine_pair()` and gives it to the other with `machine_join`. Each machine then writes the row of the other in its client table, for that principal, after the principal accepts it there. No machine finds another in any other way: no broadcast, no directory. A pairing gives no grant on the other machine; the plan of the principal on each machine does. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "Pairing, and no discovery".
+
+Do not use: discovery, enrolment, bonding, trust on first use.
+
+### Pairing code
+
+A pairing code is a secret of one use, with an address, that one machine shows in the window of `unlock` and that the principal gives to the other machine.
+
+It holds 50 bits as ten groups of base32, and a QR code holds the same with the whole identity key. The two machines run a PAKE over the TLS exporter of their connection with it, so both prove the same code and bind it to both identity keys. One wrong code ends the pairing on both sides, and a code ends 10 minutes after it was shown. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "Pairing, and no discovery".
+
+Do not use: invitation, token, PIN.
+
+### Paired machine
+
+A paired machine is another machine whose machine identity key a principal allowed on this machine by a pairing, as a row of the client table with its uses.
+
+`remote` accepts it in the handshake, and each connection that the root service makes for its row acts for the principal of the row, as for a client key. It is an object cache of this machine, the holder of a remote role, or a machine with which a store is exchanged, each only when the plan of the principal says so. `remote_disallow` ends it on this machine; `machine_remove` ends it on every machine of the principal. Designed, not built.
+
+The design: `src/md/features/several_machines.md`.
+
+Do not use: peer (for this), node, device, remote host, cluster member.
+
+### Machine list
+
+The machine list is the record that the signing key of a principal signs: the identity key of each of its machines with its uses, and a number that only grows.
+
+Each machine of the list keeps the newest list that it has seen and refuses a lower number, and its root service derives from it a row of the client table for each other machine. So a pairing with one machine of the list reaches all of them, and a lost machine is removed by a new list signed on any other. It has the form of a release pointer. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "A principal across machines".
+
+Do not use: device list, roster, keyring.
+
+### Remote role
+
+A remote role is a role whose holder runs on a paired machine, and which `remote` fills on this machine as an interposed holder.
+
+`remote` carries each call and each record of the contract over QUIC to `remote` on the paired machine, which gets a connection to the real holder for the row of this machine. Only a contract of calls and records crosses: a face that lends memory or carries a handle does not. A call whose answer did not come gets `Unknown_Outcome`; a call while the link is down gets `Unreachable`. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "A role held on another machine".
+
+Do not use: proxy, stub, remote service (for this), mount.
 
 ### Input
 

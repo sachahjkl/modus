@@ -50,7 +50,7 @@ table_count :: proc "contextless" (count: int, problem: information.Problem, err
 		return errors.fail(error, -1, .Absent, .Modules, 1)
 	case .Refused:
 		return errors.fail(error, -3, .Refused, .None, 0, 0, 0, i64(problem.value))
-	case .Header, .Table, .Segment, .Entry, .Export, .Text, .Function, .Record, .Slot, .Direction, .Enum:
+	case .Header, .Table, .Segment, .Entry, .Export, .Text, .Function, .Record, .Import_Slot, .Direction, .Enum, .Member_Text:
 		// Each of these is a fault of the module file.
 	}
 	return errors.fail(error, -2, .Malformed, .None, 1, i64(problem.kind), 0, i64(problem.offset))
@@ -81,7 +81,7 @@ exports :: proc "c" (name: ^string, result: ^[]information.Export, error: ^error
 	return table_count(count, problem, error)
 }
 
-// imports gives one row for each import of a module, by name or by hash: the hash and the name of the imported module, its slots, and the module that the replacement table of the machine gives in its place.
+// imports gives one row for each import of a module, by name or by hash: the hash and the name of the imported module, its import slots, and the module that the replacement table of the machine gives in its place.
 //
 // The module "" gives the imports of each module. The rows are records [`Import`](information.Import); a
 // replacement is explained in [the replacement of an import](docs/MODULE_CONTRACT.md#replacement-of-an-import).
@@ -153,17 +153,17 @@ handles :: proc "c" (right: ^string, result: ^[]information.Export, error: ^erro
 	return errors.fail(error, -1, .Absent, .None, 1)
 }
 
-// slots gives one row for each slot of a module, by name or by hash: the import and the export that the loader writes in it.
+// import_slots gives one row for each import slot of a module, by name or by hash: the import and the export that the loader writes in it.
 //
-// The rows are records [`Slot`](information.Slot).
+// The rows are records [`Import_Slot`](information.Import_Slot).
 //
 // **Result**: the count of rows, or a negative number with an error record:
 //
 // - `Absent` (-1): no module has this name;
 // - `Malformed` (-2): the module breaks a rule of the format.
-@(export, link_name = "slots")
-slots :: proc "c" (name: ^string, result: ^[]information.Slot, error: ^errors.Error_Record) -> i64 {
-	count, problem := information.slots(catalog(), name^, result^)
+@(export, link_name = "import_slots")
+import_slots :: proc "c" (name: ^string, result: ^[]information.Import_Slot, error: ^errors.Error_Record) -> i64 {
+	count, problem := information.import_slots(catalog(), name^, result^)
 	return table_count(count, problem, error)
 }
 
@@ -389,9 +389,9 @@ information_page :: proc "contextless" (hash: [32]u8) {
 		replacement := system.name_of(item.replacement[:])
 		module_name := system.name_of(item.module[:])
 		if replacement != "" {
-			put_built(2, graphics.colors.process, module_name, ", import ", u64(item.number), ", slots ", u64(item.slots), ", through the replacement of ", system.name_of(item.name[:]))
+			put_built(2, graphics.colors.process, module_name, ", import ", u64(item.number), ", import slots ", u64(item.import_slots), ", through the replacement of ", system.name_of(item.name[:]))
 		} else {
-			put_built(2, graphics.colors.process, module_name, ", import ", u64(item.number), ", slots ", u64(item.slots))
+			put_built(2, graphics.colors.process, module_name, ", import ", u64(item.number), ", import slots ", u64(item.import_slots))
 		}
 	}
 	put("", 0, 0)

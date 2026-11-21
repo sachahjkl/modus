@@ -22,6 +22,7 @@ import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:private/console/console_language"
 import "modus:private/console/console_stream"
+import "modus:private/console/lex_evaluator"
 import "modus:support/display"
 import "modus:support/line_editor"
 import "modus:support/system"
@@ -69,6 +70,12 @@ Completion :: struct {
 	hint_count:      int,
 	hint_long_count: int,
 	hint_marked:     [terminal.Hint_Form][2]int,
+	// The enum of the members of an Enum argument that the list holds: the
+	// file and the index of the enum, for the display text at the right of
+	// each member. members_file nil: the members are those of a status
+	// field, whose number is the word of their contract enum.
+	members_file:    []u8,
+	members_enum:    u32,
 	// The description of the table of a stage `facts(...)`, whose fields
 	// the list offers in a condition after it.
 	description:     [DESCRIPTION_SIZE]u8,
@@ -397,52 +404,12 @@ names_of_a_call :: proc "contextless" (table: ^Candidate_Table, place: line_edit
 	return false
 }
 
-// The groups that the completion follows inside each other, at most.
-GROUP_DEPTH_MOST :: 16
-
-// One group open at the caret: a call or a record literal.
-Open_Group :: struct {
-	brace:  bool, // A record literal; else parentheses.
-	start:  int, // The byte of its '(' or '{'.
-	commas: int, // The ',' of the group before the caret.
-}
-
-// groups_at gives the groups open at a byte place, outside the quotes.
-// found is false past GROUP_DEPTH_MOST groups.
-groups_at :: proc "contextless" (text: string, place: int, groups: ^[GROUP_DEPTH_MOST]Open_Group) -> (depth: int, found: bool) {
-	quoted := false
-	too_deep := 0
-	for index in 0 ..< clamp(place, 0, len(text)) {
-		character := text[index]
-		if character == '"' {
-			quoted = !quoted
-			continue
-		}
-		if quoted {
-			continue
-		}
-		switch character {
-		case '(', '{':
-			if depth == GROUP_DEPTH_MOST {
-				too_deep += 1
-			} else {
-				groups[depth] = {brace = character == '{', start = index}
-				depth += 1
-			}
-		case ')', '}':
-			if too_deep > 0 {
-				too_deep -= 1
-			} else if depth > 0 {
-				depth -= 1
-			}
-		case ',':
-			if too_deep == 0 && depth > 0 {
-				groups[depth - 1].commas += 1
-			}
-		}
-	}
-	return depth, too_deep == 0
-}
+// The groups open at the caret come from the scanner of the line
+// (console_language.groups_at), so a '(' in a text or in a comment opens
+// nothing.
+GROUP_DEPTH_MOST :: console_language.GROUP_DEPTH_MOST
+Open_Group :: console_language.Open_Group
+groups_at :: console_language.groups_at
 
 // name_before gives the name that ends before a byte place, after its
 // spaces: the name of a call before its '('.
@@ -476,7 +443,7 @@ names_of_a_record_literal :: proc "contextless" (table: ^Candidate_Table, place:
 	}
 	groups: [GROUP_DEPTH_MOST]Open_Group
 	depth, found := groups_at(text, place.word_start, &groups)
-	if !found || depth < 2 || !groups[depth - 1].brace || groups[depth - 2].brace {
+	if !found || depth < 2 || groups[depth - 1].opener != .Brace || groups[depth - 2].opener != .Parenthesis {
 		return false
 	}
 	literal, call := groups[depth - 1], groups[depth - 2]
@@ -525,7 +492,7 @@ parameter_names_add :: proc "contextless" (table: ^Candidate_Table, place: line_
 	}
 	groups: [GROUP_DEPTH_MOST]Open_Group
 	depth, found := groups_at(text, place.word_start, &groups)
-	if !found || depth == 0 || groups[depth - 1].brace {
+	if !found || depth == 0 || groups[depth - 1].opener != .Parenthesis {
 		return
 	}
 	name, _ := name_before(text, groups[depth - 1].start)
@@ -537,6 +504,29 @@ parameter_names_add :: proc "contextless" (table: ^Candidate_Table, place: line_
 		if item.parameter_forms[index] == .Expression {
 			candidate_add(table, parameter_name, .Field, index)
 		}
+	}
+}
+
+// The parameters of the functions around the caret, copied out of the line,
+// which changes under the list: 16 at most, of 32 bytes at most.
+BINDING_CAPACITY :: 16
+BINDING_NAME_SIZE :: 32
+binding_names: [BINDING_CAPACITY][BINDING_NAME_SIZE]u8
+
+// bindings_add adds the parameters of each function whose body holds the
+// word at the caret to a table of candidates.
+bindings_add :: proc "contextless" (table: ^Candidate_Table, place: line_editor.Completion_Context, text: string) {
+	if place.place != .Name {
+		return
+	}
+	tokens: [BINDING_CAPACITY]console_language.Token
+	count := console_language.parameters_at(text, place.word_start, tokens[:])
+	for token, index in tokens[:count] {
+		if token.end - token.start > BINDING_NAME_SIZE {
+			continue
+		}
+		size := copy(binding_names[index][:], text[token.start:token.end])
+		candidate_add(table, string(binding_names[index][:size]), .Binding, index)
 	}
 }
 
@@ -589,6 +579,9 @@ names_collect :: proc "contextless" (table: ^Candidate_Table, place: line_editor
 		for &item, index in commands[:command_count] {
 			candidate_add(table, item.name, command_kind(&item), index)
 		}
+		// The name of the evaluation, which no command of the table has: its
+		// number is past them.
+		candidate_add(table, lex_evaluator.MAP_NAME, .Command, command_count)
 		for &sandbox, index in sandboxes {
 			if sandbox.service && !sandbox.quiet {
 				candidate_add(table, sandbox.name, .Service, index)
@@ -718,7 +711,7 @@ members_of_an_argument :: proc "contextless" (table: ^Candidate_Table, text: str
 	}
 	groups: [GROUP_DEPTH_MOST]Open_Group
 	depth, found := groups_at(text, argument_place, &groups)
-	if !found || depth == 0 || groups[depth - 1].brace {
+	if !found || depth == 0 || groups[depth - 1].opener != .Parenthesis {
 		return {}, false
 	}
 	name, name_start := name_before(text, groups[depth - 1].start)
@@ -745,6 +738,9 @@ members_of_an_argument :: proc "contextless" (table: ^Candidate_Table, text: str
 		return {}, false
 	}
 	table.count, table.dropped = 0, 0
+	if table == &completion.names {
+		completion.members_file, completion.members_enum = item.file, enum_index
+	}
 	used := 0
 	for number in 0 ..< described.member_count {
 		member, _ := module.enum_member(item.file, described, number)
@@ -771,6 +767,12 @@ members_of_an_argument :: proc "contextless" (table: ^Candidate_Table, text: str
 // a name that is already whole stays in the list.
 names_rank :: proc "contextless" (by_tab: bool) {
 	text := line_editor.line_text(&line)
+	// A comment is words for a reader: the completion offers nothing in
+	// it, so a key there stays a key of the comment, Enter too.
+	if console_language.in_comment(text, line.caret) {
+		completion_close()
+		return
+	}
 	place := line_editor.completion_context(text, line.caret, by_tab)
 	opens := by_tab || place.place == .Member || place.place == .Quoted || place.place == .Name && len(place.query) > 0
 	// A "." at an argument of an Enum parameter opens the list of its
@@ -787,7 +789,8 @@ names_rank :: proc "contextless" (by_tab: bool) {
 		completion.processes_kept = false
 	}
 	// The members of the enum of an argument: after its ".", or at its
-	// start with Tab.
+	// start with Tab. Another list holds no member of an Enum argument.
+	completion.members_file, completion.members_enum = nil, 0
 	if member_place, is_member := members_of_an_argument(&completion.names, text, line.caret, by_tab); is_member {
 		place = member_place
 		// At the start of an argument: the names of the parameters too,
@@ -798,6 +801,8 @@ names_rank :: proc "contextless" (by_tab: bool) {
 		// At the start of an argument of a call whose parameters have
 		// names: those names too, for a named argument.
 		parameter_names_add(&completion.names, place, text)
+		// In the body of a function: its parameters.
+		bindings_add(&completion.names, place, text)
 		// A name with a dot whose owner is no service: the whole name is
 		// the query, against all the names.
 		if place.place == .Member && completion.names.count == 0 {
@@ -841,8 +846,10 @@ pipe_completion_filter :: proc "contextless" (table: ^Candidate_Table, text: str
 		takes := false
 		switch item.kind {
 		case .Command, .Export, .Record:
-			takes = int(item.number) < command_count && pipe_stage_takes(&commands[item.number], left, knowledge)
-		case .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member, .Stream:
+			// map takes a list first, which no knowledge before the run
+			// refuses.
+			takes = int(item.number) < command_count && pipe_stage_takes(&commands[item.number], left, knowledge) || item.name == lex_evaluator.MAP_NAME
+		case .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member, .Stream, .Binding:
 			// No call: "|>" refuses it.
 		}
 		if takes {
@@ -1030,6 +1037,10 @@ owner_name :: proc "contextless" (item: ^Command) -> string {
 candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_editor.Candidate) {
 	switch candidate.kind {
 	case .Command, .Export, .Record:
+		if candidate.name == lex_evaluator.MAP_NAME && int(candidate.number) >= command_count {
+			system.write_part(writer, "name of Lex (list, function) -> list")
+			return
+		}
 		if int(candidate.number) >= command_count {
 			return
 		}
@@ -1039,7 +1050,7 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 			system.write_part(writer, "command ")
 		case .Record:
 			system.write_part(writer, "record ")
-		case .Export, .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member, .Stream:
+		case .Export, .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member, .Stream, .Binding:
 			system.write_part(writer, "export of ")
 			system.write_part(writer, owner_name(item))
 			system.write_part(writer, " ")
@@ -1073,12 +1084,30 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 	case .Field:
 		system.write_part(writer, "field")
 	case .Member:
+		// A member of an Enum argument: its display text, which the
+		// principal reads, while the list inserts the name; a member with
+		// no text, the name of its enum.
+		if completion.members_file != nil {
+			described, problem := module.enum_type(completion.members_file, completion.members_enum)
+			if problem != .None {
+				return
+			}
+			if text, found := module.member_text(completion.members_file, completion.members_enum, u32(candidate.number), principal_language_tags_fallback[:]); found {
+				system.write_part(writer, text)
+			} else {
+				system.write_part(writer, "member of ")
+				system.write_part(writer, module.enum_name(completion.members_file, described))
+			}
+			return
+		}
 		if which, named := value_kinds.contract_enum_of_word(u8(candidate.number)); named {
 			system.write_part(writer, "member of ")
 			system.write_part(writer, value_kinds.CONTRACT_ENUM_TYPES[which].name)
 		}
 	case .Stream:
 		system.write_part(writer, "record stream: a typed name")
+	case .Binding:
+		system.write_part(writer, "parameter of a function of the line")
 	}
 }
 
@@ -1128,6 +1157,7 @@ list_icon_of_candidate := [line_editor.Candidate_Kind]terminal.List_Icon {
 	.Field        = .None,
 	.Member       = .None,
 	.Stream       = .Variable, // A value of the line, as a variable is.
+	.Binding      = .Variable, // A value of the line, as a variable is.
 }
 
 list_send :: proc "contextless" () {
@@ -1189,6 +1219,10 @@ hint_write :: proc "contextless" (long, short: ^system.Writer) -> (marked: [term
 		system.write_part(short, u64(completion.matched_count))
 		system.write_part(short, " lines. ^R ^S Enter Esc")
 	case .Closed:
+		// In a comment, the call before it is no call at the caret.
+		if console_language.in_comment(line_editor.line_text(&line), line.caret) {
+			return {}
+		}
 		name, argument, found := line_editor.call_at_caret(line_editor.line_text(&line), line.caret)
 		if !found {
 			return {}

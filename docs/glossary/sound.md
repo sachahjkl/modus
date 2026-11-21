@@ -79,3 +79,13 @@ The device plays nothing in the gap. The sound service counts it, and moves its 
 The design: `src/md/features/timed_stream.md`, "An underrun".
 
 Do not use: xrun, glitch, dropout.
+
+### Utterance
+
+An utterance is one record that asks the holder of the role `speech` to say a text: the text, its locale record, a priority (`Queue` or `Interrupt`) and a serial.
+
+A screen reader writes utterances as a record output, and the speech holder turns them into frames of a timed stream. The conformance suite of the assistive role reads the utterances of a reader in place of sound. The queue of the utterances that wait has a stated capacity: a polite utterance that finds it full replaces the oldest polite one, and the count is said after. Designed, not built.
+
+The design: `src/md/features/accessibility.md`, "5. Speech".
+
+Do not use: speech request, TTS job, phrase.

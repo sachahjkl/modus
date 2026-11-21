@@ -25,7 +25,7 @@ expected_fields :: proc() -> []Expected_Field {
 	entry: module.Table_Entry
 	segment: module.Segment
 	import_record: module.Import
-	slot: module.Slot
+	slot: module.Import_Slot
 	export_record: module.Export
 	function: module.Function
 	record: module.Record
@@ -38,6 +38,7 @@ expected_fields :: proc() -> []Expected_Field {
 	record_input: module.Record_Input
 	enum_type: module.Enum_Type
 	member: module.Member
+	member_text: module.Member_Text
 	compartment_word: output.Compartment_Word
 	end_words: output.End_Words
 	list_head: output.Wiring_List_Head
@@ -70,9 +71,9 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Segment", "flags", offset_of(module.Segment, flags), size_of(segment.flags)},
 		{"module.Segment", "reserved", offset_of(module.Segment, reserved), size_of(segment.reserved)},
 		{"module.Import", "hash", offset_of(module.Import, hash), size_of(import_record.hash)},
-		{"module.Slot", "memory_offset", offset_of(module.Slot, memory_offset), size_of(slot.memory_offset)},
-		{"module.Slot", "import_index", offset_of(module.Slot, import_index), size_of(slot.import_index)},
-		{"module.Slot", "export_index", offset_of(module.Slot, export_index), size_of(slot.export_index)},
+		{"module.Import_Slot", "memory_offset", offset_of(module.Import_Slot, memory_offset), size_of(slot.memory_offset)},
+		{"module.Import_Slot", "import_index", offset_of(module.Import_Slot, import_index), size_of(slot.import_index)},
+		{"module.Import_Slot", "export_index", offset_of(module.Import_Slot, export_index), size_of(slot.export_index)},
 		{"module.Export", "code_offset", offset_of(module.Export, code_offset), size_of(export_record.code_offset)},
 		{"module.Export", "function", offset_of(module.Export, function), size_of(export_record.function)},
 		{"module.Export", "reserved", offset_of(module.Export, reserved), size_of(export_record.reserved)},
@@ -155,6 +156,12 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Member", "name_offset", offset_of(module.Member, name_offset), size_of(member.name_offset)},
 		{"module.Member", "name_count", offset_of(module.Member, name_count), size_of(member.name_count)},
 		{"module.Member", "value", offset_of(module.Member, value), size_of(member.value)},
+		{"module.Member_Text", "enum_index", offset_of(module.Member_Text, enum_index), size_of(member_text.enum_index)},
+		{"module.Member_Text", "member_number", offset_of(module.Member_Text, member_number), size_of(member_text.member_number)},
+		{"module.Member_Text", "text_offset", offset_of(module.Member_Text, text_offset), size_of(member_text.text_offset)},
+		{"module.Member_Text", "text_count", offset_of(module.Member_Text, text_count), size_of(member_text.text_count)},
+		{"module.Member_Text", "tag_offset", offset_of(module.Member_Text, tag_offset), size_of(member_text.tag_offset)},
+		{"module.Member_Text", "tag_count", offset_of(module.Member_Text, tag_count), size_of(member_text.tag_count)},
 		{"output.Compartment_Word", "kind", offset_of(output.Compartment_Word, kind), size_of(compartment_word.kind)},
 		{"output.Compartment_Word", "serial", offset_of(output.Compartment_Word, serial), size_of(compartment_word.serial)},
 		{"output.End_Words", "end", offset_of(output.End_Words, end), size_of(end_words.end)},
@@ -446,12 +453,12 @@ byte_layout_guides_hold_the_text_of_the_code :: proc(t: ^testing.T) {
 	testing.expectf(t, contract_fences > 0, "%s has fences %s", SITE_MODULE_CONTRACT_DOCUMENT, BYTE_LAYOUT_FENCE_LANGUAGE)
 
 	// A wrong body is written again; a key that is not a layout is a fault.
-	wrong := "Before.\n\n```byte-layout module.Slot\nan old text\n```\n\nAfter.\n"
+	wrong := "Before.\n\n```byte-layout module.Import_Slot\nan old text\n```\n\nAfter.\n"
 	rewritten, fences, problems := byte_layout_document_rewrite(wrong, "test.md", layouts)
 	testing.expect_value(t, fences, 1)
 	testing.expect_value(t, len(problems), 0)
-	slot := []Byte_Layout{layouts["module.Slot"]}
-	testing.expect_value(t, rewritten, strings.concatenate({"Before.\n\n```byte-layout module.Slot\n", byte_layouts_text(slot), "```\n\nAfter.\n"}, context.temp_allocator))
+	import_slot_layout := []Byte_Layout{layouts["module.Import_Slot"]}
+	testing.expect_value(t, rewritten, strings.concatenate({"Before.\n\n```byte-layout module.Import_Slot\n", byte_layouts_text(import_slot_layout), "```\n\nAfter.\n"}, context.temp_allocator))
 	_, _, unknown := byte_layout_document_rewrite("```byte-layout module.Nothing\n```\n", "test.md", layouts)
 	testing.expect_value(t, len(unknown), 1)
 }
@@ -466,17 +473,17 @@ byte_layout_fence_on_a_page :: proc(t: ^testing.T) {
 	site.byte_layouts, ok = byte_layouts_read()
 	testing.expect(t, ok, "the byte layouts are read")
 	site.byte_layout_problems = make([dynamic]string, context.temp_allocator)
-	slot := []Byte_Layout{site.byte_layouts["module.Slot"]}
-	markdown := strings.concatenate({"```byte-layout module.Slot\n", byte_layouts_text(slot), "```\n"}, context.temp_allocator)
+	import_slot_layout := []Byte_Layout{site.byte_layouts["module.Import_Slot"]}
+	markdown := strings.concatenate({"```byte-layout module.Import_Slot\n", byte_layouts_text(import_slot_layout), "```\n"}, context.temp_allocator)
 	renderer := site_renderer_make(&site, "docs/guides/TEST/index.html", "docs/TEST.md")
 	site_render_markdown(&renderer, markdown)
 	html := strings.to_string(renderer.builder)
 	testing.expectf(t, len(site.byte_layout_problems) == 0, "no fault: %v", site.byte_layout_problems)
 	expect := [?]string {
-		"<figure class=\"byte-layout\" id=\"byte-layout-module-slot\">",
+		"<figure class=\"byte-layout\" id=\"byte-layout-module-import-slot\">",
 		fmt.tprintf("<div class=\"byte-cell byte-column-1 byte-span-%d byte-row-1 byte-rows-1\" title=\"memory_offset: u64, offset 0, 8 bytes", BYTE_LAYOUT_ROW_BYTES),
-		fmt.tprintf("<div class=\"byte-cell byte-column-%d byte-span-4 byte-row-2 byte-rows-1\" title=\"import_index: u32, offset %d, 4 bytes", offset_of(module.Slot, import_index) % BYTE_LAYOUT_ROW_BYTES + 1, offset_of(module.Slot, import_index)),
-		fmt.tprintf("<div class=\"byte-cell byte-column-%d byte-span-4 byte-row-2 byte-rows-1\" title=\"export_index: u32, offset %d, 4 bytes", offset_of(module.Slot, export_index) % BYTE_LAYOUT_ROW_BYTES + 1, offset_of(module.Slot, export_index)),
+		fmt.tprintf("<div class=\"byte-cell byte-column-%d byte-span-4 byte-row-2 byte-rows-1\" title=\"import_index: u32, offset %d, 4 bytes", offset_of(module.Import_Slot, import_index) % BYTE_LAYOUT_ROW_BYTES + 1, offset_of(module.Import_Slot, import_index)),
+		fmt.tprintf("<div class=\"byte-cell byte-column-%d byte-span-4 byte-row-2 byte-rows-1\" title=\"export_index: u32, offset %d, 4 bytes", offset_of(module.Import_Slot, export_index) % BYTE_LAYOUT_ROW_BYTES + 1, offset_of(module.Import_Slot, export_index)),
 		"<code>memory_<wbr>offset</code>",
 		"<span class=\"byte-offset byte-row-2\">8</span>",
 		"<span class=\"byte-ruler byte-column-8\">7</span>",
@@ -490,10 +497,10 @@ byte_layout_fence_on_a_page :: proc(t: ^testing.T) {
 	// The heading pass records no fault; the second pass records each one.
 	site.document_headings_pending = true
 	wrong_renderer := site_renderer_make(&site, "docs/guides/TEST/index.html", "docs/TEST.md")
-	site_render_markdown(&wrong_renderer, "```byte-layout module.Slot\nan old text\n```\n")
+	site_render_markdown(&wrong_renderer, "```byte-layout module.Import_Slot\nan old text\n```\n")
 	testing.expect_value(t, len(site.byte_layout_problems), 0)
 	site.document_headings_pending = false
-	site_render_markdown(&wrong_renderer, "```byte-layout module.Slot\nan old text\n```\n\n```byte-layout module.Nothing\n```\n")
+	site_render_markdown(&wrong_renderer, "```byte-layout module.Import_Slot\nan old text\n```\n\n```byte-layout module.Nothing\n```\n")
 	testing.expect_value(t, len(site.byte_layout_problems), 2)
 
 	// The rules of the rows reach the largest layout, and no further.

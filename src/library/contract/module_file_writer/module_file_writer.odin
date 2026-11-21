@@ -22,7 +22,9 @@
 package module_file_writer
 
 import "base:intrinsics"
+import "modus:contract/language_tag"
 import module "modus:contract/module"
+import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 
 // The name of the export that a loader starts: the header names it in
@@ -48,7 +50,7 @@ Segment_Part :: struct {
 	memory_offset: u64, // From the base of the module: a multiple of module.PAGE_SIZE.
 	memory_size:   u64, // A multiple of module.PAGE_SIZE.
 	// The access before the relocations. The writer removes Write and
-	// Read_Only_After_Load from a segment that no rebase and no slot writes
+	// Read_Only_After_Load from a segment that no rebase and no import slot writes
 	// (segment_flags_after_the_relocations).
 	flags:         module.Segment_Flags,
 	data:          []u8, // The bytes from memory_offset: at most memory_size. The zero bytes at its end are not stored.
@@ -89,6 +91,16 @@ Enum_Description :: struct {
 Member_Description :: struct {
 	name:  string, // A name that module.enum_member_name_valid takes.
 	value: i64,
+}
+
+// The display text of a member in a language: what module.Member_Text
+// holds. The parts give them in the order of the enum, the member and the
+// bytes of the tag (module.member_text_order).
+Member_Text_Description :: struct {
+	enum_number:   u32, // The enum, from 1, in Module_Parts.enums.
+	member_number: u32, // The member in its enum, from 0.
+	tag:           string, // A language tag of BCP 47 in its canonical case: "en", "fr-CA" (language_tag.canonical_check).
+	text:          string, // 1 to module.MEMBER_TEXT_CAPACITY bytes of a display text (text_encoding.display_text_valid).
 }
 
 // The description of a record: what module.Record and its fields hold.
@@ -152,10 +164,11 @@ Module_Parts :: struct {
 	segments:           []Segment_Part, // In the order of their memory offsets, no two on one page.
 	exports:            []Export_Part,
 	imports:            [][module.HASH_SIZE]u8, // The hash of the file of each imported module.
-	slots:              []module.Slot, // Each in writable data, its import an index of imports from 1.
+	import_slots:       []module.Import_Slot, // Each in writable data, its import an index of imports from 1.
 	rebases:            []u64, // The memory offsets that a loader rebases: in order, each one time, each in writable data.
 	records:            []Record_Description,
 	enums:              []Enum_Description, // The file has the tables Enums and Members when there is one.
+	member_texts:       []Member_Text_Description, // The file has the table Member_Texts when there is one.
 	facts:              []Fact_Part,
 	has_own_hash_place: bool, // The module has an own-hash place: a module that writes a fact must have one.
 	own_hash_place:     u64, // module.HASH_SIZE bytes in a segment with Write and no Execute.
@@ -183,7 +196,7 @@ Refusal :: enum u32 {
 	Segment_Data_Past_Size        = 10, // A segment has more bytes of data than its memory size.
 	Segment_Overlap               = 11, // A segment starts before the end of the segment before it.
 	Segment_Written_And_Executed  = 12, // A segment has Execute with Write or with Read_Only_After_Load.
-	Slot_Not_Valid                = 13, // A slot names no import or no export, or its 8 bytes are not in writable data.
+	Import_Slot_Not_Valid         = 13, // An import slot names no import or no export, or its 8 bytes are not in writable data.
 	Rebase_Not_Valid              = 14, // A rebase is not after the one before it, not on 8 bytes, or not in writable data. value: the offset.
 	Record_Not_Valid              = 15, // A record description is refused by module.record_type.
 	Fact_Not_Valid                = 16, // A fact has the key 0, a key not after the one before it, no record, or no template.
@@ -204,6 +217,11 @@ Refusal :: enum u32 {
 	// value: the module.Enum_Problem: No_Enum for a number of an enum that names nothing, No_Getter for a getter
 	// past the exports, Bad_Optional for an optional bit.
 	Enum_Not_Valid                = 25,
+	// A display text names no enum of the parts or no member of its enum, has a tag that is not well-formed
+	// or not in its canonical case, has a text that is empty, past module.MEMBER_TEXT_CAPACITY or no display
+	// text, is not after the text before it, or module.member_texts_check refuses the written file. index: the text, from 0; value: the
+	// module.Member_Text_Problem.
+	Member_Text_Not_Valid         = 26,
 }
 
 // The refusal of the writer, and where it is.
@@ -293,18 +311,18 @@ is_name :: proc "contextless" (text: string) -> bool {
 }
 
 // segment_flags_after_the_relocations gives the flags of a segment once
-// each rebase and each slot of the module is known. A segment that is
-// read-only after the load and that holds no rebase and no slot is a
+// each rebase and each import slot of the module is known. A segment that is
+// read-only after the load and that holds no rebase and no import slot is a
 // segment that no loader writes: it loses Write and Read_Only_After_Load,
 // and is a constant segment. Each other segment keeps its flags.
 //
 // Why it is sound: a loader writes a segment in two ways only, a rebase
-// and a slot, and both lists are complete here. The pages of such a
+// and an import slot, and both lists are complete here. The pages of such a
 // segment are then the same at each base and with each binding, which is
 // what makes a segment a part of the shared code of a module. Its
 // protection in a process does not change: a segment that is read-only
 // after the load was never writable there.
-segment_flags_after_the_relocations :: proc "contextless" (segment: module.Segment, rebases: []u64, slots: []module.Slot) -> module.Segment_Flags {
+segment_flags_after_the_relocations :: proc "contextless" (segment: module.Segment, rebases: []u64, import_slots: []module.Import_Slot) -> module.Segment_Flags {
 	if .Read_Only_After_Load not_in segment.flags {
 		return segment.flags
 	}
@@ -313,8 +331,8 @@ segment_flags_after_the_relocations :: proc "contextless" (segment: module.Segme
 			return segment.flags
 		}
 	}
-	for slot in slots {
-		if slot.memory_offset >= segment.memory_offset && slot.memory_offset - segment.memory_offset < segment.memory_size {
+	for import_slot in import_slots {
+		if import_slot.memory_offset >= segment.memory_offset && import_slot.memory_offset - segment.memory_offset < segment.memory_size {
 			return segment.flags
 		}
 	}
@@ -332,10 +350,11 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 	counts := [?]Count {
 		{.Segments, len(parts.segments)},
 		{.Imports, len(parts.imports)},
-		{.Slots, len(parts.slots)},
+		{.Import_Slots, len(parts.import_slots)},
 		{.Exports, len(parts.exports)},
 		{.Records, len(parts.records)},
 		{.Enums, len(parts.enums)},
+		{.Member_Texts, len(parts.member_texts)},
 		{.Facts, len(parts.facts)},
 	}
 	for item in counts {
@@ -357,7 +376,7 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 		return {}, refusal
 	}
 	Check :: proc "contextless" (checked: Module_Parts) -> Refusal_Record
-	checks := [?]Check{names_check, exports_check, relocations_check, facts_check, record_streams_check}
+	checks := [?]Check{names_check, exports_check, relocations_check, facts_check, record_streams_check, member_texts_check}
 	for check in checks {
 		refusal = check(parts)
 		if refusal.refusal != .None {
@@ -403,7 +422,7 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 	}
 	add(&layout, &cursor, .Segments, u64(len(parts.segments)) + 1, size_of(module.Segment))
 	add(&layout, &cursor, .Imports, u64(len(parts.imports)) + 1, size_of(module.Import))
-	add(&layout, &cursor, .Slots, u64(len(parts.slots)) + 1, size_of(module.Slot))
+	add(&layout, &cursor, .Import_Slots, u64(len(parts.import_slots)) + 1, size_of(module.Import_Slot))
 	add(&layout, &cursor, .Exports, u64(len(parts.exports)) + 1, size_of(module.Export))
 	add(&layout, &cursor, .Rebases, rebase_words, module.REBASE_WORD_SIZE)
 	add(&layout, &cursor, .Functions, u64(len(parts.exports)) + 1, size_of(module.Function))
@@ -424,6 +443,9 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 	if len(parts.enums) > 0 {
 		add(&layout, &cursor, .Enums, u64(len(parts.enums)) + 1, size_of(module.Enum_Type))
 		add(&layout, &cursor, .Members, member_count, size_of(module.Member))
+	}
+	if len(parts.member_texts) > 0 {
+		add(&layout, &cursor, .Member_Texts, u64(len(parts.member_texts)) + 1, size_of(module.Member_Text))
 	}
 	add(&layout, &cursor, .Strings, string_bytes, 1)
 	add(&layout, &cursor, .Documentation, 2, size_of(module.Documentation))
@@ -662,13 +684,47 @@ exports_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
 	return {}
 }
 
-// relocations_check checks each slot, each rebase and the own-hash place:
+// member_texts_check checks each display text of the parts, as
+// module.member_texts_check checks a row: its enum and its member are in
+// the parts, its tag is well-formed and in its canonical case, its text
+// keeps the bound and is a display text, and it comes after the text
+// before it in the order of the enum, the member and the tag.
+@(private)
+member_texts_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
+	for item, index in parts.member_texts {
+		problem := module.Member_Text_Problem.None
+		switch {
+		case item.enum_number == 0 || u64(item.enum_number) > u64(len(parts.enums)):
+			problem = .No_Enum
+		case u64(item.member_number) >= u64(len(parts.enums[item.enum_number - 1].members)):
+			problem = .No_Member
+		case language_tag.canonical_check(item.tag) != .None:
+			problem = .Bad_Tag
+		case len(item.text) == 0 || len(item.text) > module.MEMBER_TEXT_CAPACITY || !text_encoding.display_text_valid(transmute([]u8)item.text):
+			problem = .Bad_Text
+		case index > 0:
+			before := parts.member_texts[index - 1]
+			switch module.member_text_order(item.enum_number, item.member_number, item.tag, before.enum_number, before.member_number, before.tag) {
+			case 0:
+				problem = .Twice
+			case -1:
+				problem = .Out_Of_Order
+			}
+		}
+		if problem != .None {
+			return {refusal = .Member_Text_Not_Valid, table = .Member_Texts, index = u64(index), value = u64(problem)}
+		}
+	}
+	return {}
+}
+
+// relocations_check checks each import slot, each rebase and the own-hash place:
 // a loader writes each of them, so each is in writable data.
 @(private)
 relocations_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
-	for item, index in parts.slots {
+	for item, index in parts.import_slots {
 		if item.import_index == 0 || u64(item.import_index) > u64(len(parts.imports)) || item.export_index == 0 || item.memory_offset % module.REBASE_WORD_SIZE != 0 || !writable_range(parts.segments, item.memory_offset, module.REBASE_WORD_SIZE) {
-			return {refusal = .Slot_Not_Valid, table = .Slots, index = u64(index), value = item.memory_offset}
+			return {refusal = .Import_Slot_Not_Valid, table = .Import_Slots, index = u64(index), value = item.memory_offset}
 		}
 	}
 	for offset, index in parts.rebases {
@@ -758,6 +814,10 @@ string_bytes_needed :: proc "contextless" (parts: Module_Parts) -> u64 {
 		for member in item.members {
 			total = sum_or_most(total, u64(len(member.name)))
 		}
+	}
+	for item in parts.member_texts {
+		total = sum_or_most(total, u64(len(item.text)))
+		total = sum_or_most(total, u64(len(item.tag)))
 	}
 	return total
 }
@@ -873,7 +933,7 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 			memory_size   = item.memory_size,
 			flags         = item.flags,
 		}
-		segment.flags = segment_flags_after_the_relocations(segment, parts.rebases, parts.slots)
+		segment.flags = segment_flags_after_the_relocations(segment, parts.rebases, parts.import_slots)
 		store(file, place(directory, .Segments, index + 1), segment)
 		if len(data) > 0 {
 			intrinsics.mem_copy_non_overlapping(raw_data(file[data_offset:]), raw_data(data), len(data))
@@ -883,8 +943,8 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 	for hash, index in parts.imports {
 		store(file, place(directory, .Imports, index + 1), module.Import{hash = hash})
 	}
-	for slot, index in parts.slots {
-		store(file, place(directory, .Slots, index + 1), slot)
+	for import_slot, index in parts.import_slots {
+		store(file, place(directory, .Import_Slots, index + 1), import_slot)
 	}
 	_ = rebase_words_encode(parts.rebases, file[directory[module.Table_Kind.Rebases].offset:])
 
@@ -1019,6 +1079,19 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 			member_number += 1
 		}
 	}
+	// The display texts, in the order of the parts, which the checks of
+	// the parts made the order of the format.
+	for item, index in parts.member_texts {
+		row := module.Member_Text {
+			enum_index    = item.enum_number,
+			member_number = item.member_number,
+			text_count    = u32(len(item.text)),
+			tag_count     = u32(len(item.tag)),
+		}
+		row.text_offset = string_append(&strings, item.text)
+		row.tag_offset = string_append(&strings, item.tag)
+		store(file, place(directory, .Member_Texts, index + 1), row)
+	}
 	if parts.has_own_hash_place {
 		store(file, place(directory, .Own_Hash, 1), module.Own_Hash_Place{memory_offset = parts.own_hash_place})
 	}
@@ -1076,6 +1149,11 @@ written_file_check :: proc "contextless" (parts: Module_Parts, file: []u8) -> Re
 		if _, problem := module.function_enums_check(file, function); problem != .None {
 			return {refusal = .Enum_Not_Valid, table = .Functions, index = u64(index), value = u64(problem)}
 		}
+	}
+	// The display texts: the readers take a text through this check, so
+	// the writer writes none that they refuse.
+	if row, problem := module.member_texts_check(file); problem != .None {
+		return {refusal = .Member_Text_Not_Valid, table = .Member_Texts, index = u64(row) - 1, value = u64(problem)}
 	}
 	// The reader of the root service checks the record streams of a file
 	// with this procedure: the writer writes none that it refuses.

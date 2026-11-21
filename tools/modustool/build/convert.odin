@@ -50,6 +50,7 @@ Record_Description :: module_file_writer.Record_Description
 Field_Description :: module_file_writer.Field_Description
 Enum_Description :: module_file_writer.Enum_Description
 Member_Description :: module_file_writer.Member_Description
+Member_Text_Description :: module_file_writer.Member_Text_Description
 
 // The description of a module: what its source says to a reader, and its exports.
 Module_Description :: struct {
@@ -59,6 +60,7 @@ Module_Description :: struct {
 	exports:  []Export_Description,
 	records:  []Record_Description, // The records that the exports, the log facts and the record streams use. Record n + 1 of the module is records[n].
 	enums:    []Enum_Description, // The enums that the exports take and give. Enum n + 1 of the module is enums[n].
+	member_texts: []Member_Text_Description, // The display texts of the members, in the order of the enum, the member and the language: the table Member_Texts.
 	budget:   Budget_Description, // The budget that the module asks for: the table Budget.
 	facts:    []Fact_Description, // The log facts that the module writes, sorted by key (facts_merge): the table Facts.
 	record_outputs: []Record_Stream_Description, // The record outputs that the module declares, sorted by name (record_streams_merge): the table Record_Outputs.
@@ -98,10 +100,10 @@ Budget_Description :: struct {
 //   imports: the modules that the undefined symbols of the object come from.
 // The module binds each import by (import index, export index). The names
 // are used here only, at build time.
-//   slot_symbols: not nil: it receives the name of the symbol of each slot,
-//            one for each slot, for the check of the declarations of the
+//   import_slot_symbols: not nil: it receives the name of the symbol of each import slot,
+//            one for each import slot, for the check of the declarations of the
 //            importer (import_declarations.odin).
-convert :: proc(name: string, elf: []u8, description: Module_Description, imports: []Import_File, slot_symbols: ^[dynamic]string = nil) -> (result: []u8, ok: bool) {
+convert :: proc(name: string, elf: []u8, description: Module_Description, imports: []Import_File, import_slot_symbols: ^[dynamic]string = nil) -> (result: []u8, ok: bool) {
 	exports := description.exports
 	fail :: proc(name: string, format: string, args: ..any) -> ([]u8, bool) {
 		fmt.eprintf("modustool: convert %s: ", name)
@@ -275,9 +277,9 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		append(&import_hashes, blake3.hash(item.file))
 	}
 
-	// Relocations: each one becomes a rebase or a slot.
+	// Relocations: each one becomes a rebase or an import slot.
 	rebases := make([dynamic]u64, context.temp_allocator)
-	slot_records := make([dynamic]module.Slot, context.temp_allocator)
+	import_slot_records := make([dynamic]module.Import_Slot, context.temp_allocator)
 	for section in sections {
 		if section.type != ELF_SECTION_RELA || section.flags & ELF_SECTION_FLAG_ALLOCATED == 0 {
 			continue
@@ -293,25 +295,25 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 				value = u64(relocation.addend)
 			case ELF_RELOCATION_64, ELF_RELOCATION_GLOBAL_DATA, ELF_RELOCATION_JUMP_SLOT:
 				if symbol.section_index == 0 {
-					slot := module.Slot{memory_offset = relocation.offset}
+					import_slot := module.Import_Slot{memory_offset = relocation.offset}
 					find: for item, import_index in imports {
 						for export_index in 1 ..< module.count(item.file, .Exports) {
 							if module_export_name(item.file, export_index) == symbol_name {
-								slot.import_index = u32(import_index + 1)
-								slot.export_index = export_index
+								import_slot.import_index = u32(import_index + 1)
+								import_slot.export_index = export_index
 								break find
 							}
 						}
 					}
-					if slot.import_index == 0 {
+					if import_slot.import_index == 0 {
 						return fail(name, "%s is not defined, and no import exports it", symbol_name)
 					}
 					if !write_word(images[:], relocation.offset, 0) {
-						return fail(name, "the slot of %s is not in writable data", symbol_name)
+						return fail(name, "the import slot of %s is not in writable data", symbol_name)
 					}
-					append(&slot_records, slot)
-					if slot_symbols != nil {
-						append(slot_symbols, symbol_name)
+					append(&import_slot_records, import_slot)
+					if import_slot_symbols != nil {
+						append(import_slot_symbols, symbol_name)
 					}
 					continue
 				}
@@ -351,10 +353,11 @@ convert :: proc(name: string, elf: []u8, description: Module_Description, import
 		segments           = segment_parts,
 		exports            = export_parts[:],
 		imports            = import_hashes[:],
-		slots              = slot_records[:],
+		import_slots       = import_slot_records[:],
 		rebases            = rebases[:],
 		records            = description.records,
 		enums              = description.enums,
+		member_texts       = description.member_texts,
 		facts              = fact_parts,
 		has_own_hash_place = has_place,
 		own_hash_place     = own_hash_place,
@@ -431,7 +434,11 @@ module_file_refusal_text :: proc(parts: module_file_writer.Module_Parts, refusal
 		if refusal.index < u64(len(parts.enums)) {
 			part = fmt.tprintf(" (enum %s)", parts.enums[refusal.index].name)
 		}
-	case .None, .Segments, .Imports, .Slots, .Rebases, .Strings, .Documentation, .Budget, .Facts, .Own_Hash:
+	case .Member_Texts:
+		if refusal.index < u64(len(parts.member_texts)) {
+			part = fmt.tprintf(" (display text \"%s\")", parts.member_texts[refusal.index].text)
+		}
+	case .None, .Segments, .Imports, .Import_Slots, .Rebases, .Strings, .Documentation, .Budget, .Facts, .Own_Hash:
 	}
 	return fmt.tprintf("the module file writer refuses the module: %v in the table %v, part %d%s, value %d (src/library/contract/module_file_writer)", refusal.refusal, refusal.table, refusal.index, part, refusal.value)
 }

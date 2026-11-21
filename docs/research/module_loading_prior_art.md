@@ -174,7 +174,7 @@ All facts in this section are from https://learn.microsoft.com/en-us/windows/win
 - The psABI defines `R_X86_64_GOTPCRELX` and `R_X86_64_REX_GOTPCRELX` for `call *name@GOTPCREL(%rip)`, `jmp *`, `mov` and binary ops. https://raw.githubusercontent.com/hjl-tools/x86-psABI/master/object-files.tex
 - The linker can turn a GOT-indirect call into a direct call when the target is in the same output. https://maskray.me/blog/2021-08-29-all-about-global-offset-table
 - The relaxed form is `addr32 call foo` or `call foo; nop`, which keeps 6 bytes. UNVERIFIED.
-- So one compiler output serves both cases. The compiler always emits "call through import slot". The merge step rewrites it to a direct call and deletes the slot.
+- So one compiler output serves both cases. The compiler always emits "call through import slot". The merge step rewrites it to a direct call and deletes the import slot.
 - This rewrite runs at merge time on a private copy. It is not a text relocation.
 
 **Text relocations**
@@ -270,7 +270,7 @@ Source: https://genode.org/documentation/genode-foundations/23.05/under_the_hood
 2. **Forbid interposition by construction.** ELF pays up to 30% for it and PE never had it. If replacement is needed, make it an explicit import substitution in the start context.
 3. **Import by index, with the hash as the validity check.** PE ordinals and hints fail because the DLL can change. A content hash makes a stored export index permanently correct, so no name lookup is needed at load time.
 4. **Never store addresses in the module file.** Prelink, prebinding and PE bound imports all died from ASLR, code signing, or file mutation. Cache the resolution (which module, which export), as stable linking does.
-5. **Use one call sequence: call through an import slot.** Emit `call *slot(%rip)` for every cross-module call. The merge step rewrites it to a direct call, as GOTPCRELX relaxation does. The loader then writes data slots only.
+5. **Use one call sequence: call through an import slot.** Emit `call *slot(%rip)` for every cross-module call. The merge step rewrites it to a direct call, as GOTPCRELX relaxation does. The loader then writes only import slots, which are data.
 6. **No load-time writes to code pages.** Text stays shared and W^X holds. Android rejects text relocations; follow that rule from day one.
 7. **Keep only two fixup kinds: rebase and bind.** Mach-O chained fixups show this is enough. Rebase adds the module base. Bind writes an import address.
 8. **Encode rebases compactly.** RELR uses under 3% of the RELA size with a 12-line decoder and fits a fixed-record table. Chained fixups are denser still and enable lazy per-page fixing, but they put metadata inside data pages and break the "valid when all zero" rule.

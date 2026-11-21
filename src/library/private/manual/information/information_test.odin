@@ -12,7 +12,7 @@ import "core:testing"
 
 // A module file that the test writes: two segments, a record, three
 // exports (an entry, one with a Record of a handle, one with a Table
-// result), and with `imported` one import with one slot.
+// result), and with `imported` one import with one import slot.
 @(private = "file")
 Builder :: struct {
 	bytes:   [dynamic]u8,
@@ -56,7 +56,7 @@ module_file :: proc(about: string, imported: [32]u8, has_import: bool) -> []u8 {
 	documentation := [2]module.Documentation{}
 	documentation[1].about_offset, documentation[1].about_count = text(&builder, about)
 	imports := [2]module.Import{1 = {hash = imported}}
-	slots := [2]module.Slot{1 = {memory_offset = 4096, import_index = 1, export_index = 2}}
+	import_slots := [2]module.Import_Slot{1 = {memory_offset = 4096, import_index = 1, export_index = 2}}
 
 	Directory :: [module.TABLE_COUNT]module.Table_Entry
 	directory: Directory
@@ -73,7 +73,7 @@ module_file :: proc(about: string, imported: [32]u8, has_import: bool) -> []u8 {
 	add(&builder, &directory, .Documentation, documentation[:])
 	if has_import {
 		add(&builder, &directory, .Imports, imports[:])
-		add(&builder, &directory, .Slots, slots[:])
+		add(&builder, &directory, .Import_Slots, import_slots[:])
 	}
 	add(&builder, &directory, .Strings, builder.strings[:])
 	head := module.Header {
@@ -158,17 +158,17 @@ rows_of_a_catalog :: proc(t: ^testing.T) {
 	testing.expect_value(t, importers(catalog, blake3.hash(library), import_rows[:]), 1)
 	testing.expect_value(t, field(import_rows[0].module[:]), "user")
 	testing.expect_value(t, field(import_rows[0].name[:]), "library")
-	testing.expect_value(t, import_rows[0].slots, 1)
+	testing.expect_value(t, import_rows[0].import_slots, 1)
 	testing.expect_value(t, importers(catalog, blake3.hash(user), import_rows[:]), 0)
 	// A module by its hash: 64 digits.
 	count, problem = imports(catalog, string(rows[1].hash[:]), import_rows[:])
 	testing.expect(t, count == 1 && problem.kind == .None)
 
-	slot_rows: [2]Slot
-	count, _ = slots(catalog, "user", slot_rows[:])
+	import_slot_rows: [2]Import_Slot
+	count, _ = import_slots(catalog, "user", import_slot_rows[:])
 	testing.expect_value(t, count, 1)
-	testing.expect_value(t, field(slot_rows[0].target[:]), "library")
-	testing.expect_value(t, field(slot_rows[0].name[:]), "fill")
+	testing.expect_value(t, field(import_slot_rows[0].target[:]), "library")
+	testing.expect_value(t, field(import_slot_rows[0].name[:]), "fill")
 	segment_rows: [4]Segment
 	count, _ = segments(catalog, "user", segment_rows[:])
 	testing.expect_value(t, count, 2)
@@ -349,14 +349,14 @@ random_damage :: proc(t: ^testing.T) {
 		module_rows: [4]Module
 		export_rows: [8]Export
 		import_rows: [4]Import
-		slot_rows: [4]Slot
+		import_slot_rows: [4]Import_Slot
 		segment_rows: [4]Segment
 		modules(catalog, module_rows[:])
 		exports(catalog, "user", export_rows[:])
 		exports(catalog, "", export_rows[:])
 		imports(catalog, "", import_rows[:])
 		importers(catalog, blake3.hash(library), import_rows[:])
-		slots(catalog, "user", slot_rows[:])
+		import_slots(catalog, "user", import_slot_rows[:])
 		segments(catalog, "user", segment_rows[:])
 		described(catalog, "byte", export_rows[:])
 		handles(catalog, .Read, export_rows[:])

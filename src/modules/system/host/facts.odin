@@ -46,8 +46,8 @@ Load_Cycle_Failed :: distinct module.Load_Cycle_Fields
 @(log_fact = "host: cannot load the module: {module_name} imports {imported_name}, and the export {export} of its replacement fails the check: {difference}, parameter {parameter}")
 Load_Check_Failed :: distinct module.Load_Check_Fields
 
-// A slot of a module cannot be bound.
-@(log_fact = "host: cannot load the module: slot {slot} of {module_name} cannot be bound: export {export} of {imported_name}")
+// An import slot of a module cannot be bound.
+@(log_fact = "host: cannot load the module: import slot {import_slot} of {module_name} cannot be bound: export {export} of {imported_name}")
 Load_Bind_Failed :: distinct module.Load_Bind_Fields
 
 // The kernel refused to map the memory of a module.

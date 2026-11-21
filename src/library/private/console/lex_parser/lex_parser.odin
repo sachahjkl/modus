@@ -10,6 +10,8 @@
 //   factor     = "-" factor | integer | "text" | name | "." name | name "(" arguments ")" | "(" expression ")"
 //              | "{" [ name "=" expression { "," name "=" expression } ] "}"
 //              | "let" name "=" expression { "," name "=" expression } "in" expression
+//              | "(" [ name { "," name } ] ")" "=>" expression
+//              | "[" [ expression { "," expression } ] "]"
 //   arguments  = argument { "," argument }
 //   argument   = [ name "=" ] expression | condition | fact name | field names
 //   condition  = name ("=" | "!=" | "<" | "<=" | ">" | ">=") expression
@@ -17,7 +19,12 @@
 //
 // `_`, `let`, `in` and `with` are words of Lex, never names. After a whole
 // `let`, each name that its values and its body read is bound to its
-// binding: a Name node keeps the Let_Binding in `binding`.
+// binding: a Name node keeps the Let_Binding in `binding`. After a whole
+// function, each name of its body is bound to its Parameter in the same
+// way, and a call whose name a let or a parameter binds keeps it too. A
+// '(' starts a function when its group closes and "=>" follows
+// (console_language.function_head); each node keeps the innermost
+// function that holds it in `function`.
 //
 // The parser reads no "|>": the console gives it the nested form of the
 // line, with calls in calls (console_language, pipe.odin). The form of
@@ -103,6 +110,9 @@ Node_Kind :: enum u8 {
 	Let            = 13, // "let … in …": the bytes are "let", the children its bindings, then its body.
 	Let_Binding    = 14, // A binding of a let: the bytes are its name, the child its value.
 	Member         = 15, // A member of an enum, `.french`: the bytes are the '.' and the name. The parameter that receives it gives its enum.
+	Function       = 16, // "(…) => …": the bytes are "=>", `integer` the offset of its '(', the children its parameters, then its body.
+	Parameter      = 17, // A parameter of a function: the bytes are its name.
+	List_Literal   = 18, // "[ … ]": the bytes are "[", the children its items.
 }
 
 // The operators of a Binary node.
@@ -189,6 +199,10 @@ Refusal :: enum u8 {
 	Let_In_Missing            = 21, // A binding, then neither "," nor "in".
 	Let_Name_Twice            = 22, // A name bound twice in one let: the place is the second.
 	Word_As_Name              = 23, // "_", "let", "in" or "with" where a name is read: the bytes are the word.
+	Parameter_Name_Missing    = 24, // In the parentheses of a function, no name where a parameter starts, or a name with a '.': "(1) =>", "(x,) =>", "(a.b) =>".
+	Parameter_Twice           = 25, // A parameter named twice in one function: the place is the second.
+	Too_Many_Parameters       = 26, // A parameter after ARGUMENT_CAPACITY parameters: a call takes no more arguments.
+	List_Close_Missing        = 27, // An item of a list, then neither "," nor "]".
 }
 
 // Where a node is in its text: its first byte.
@@ -212,13 +226,14 @@ Node :: struct {
 	refusal:           Refusal, // Refused: why. Fact_Name and Condition: their refusal, or None.
 	place:             Place, // The first byte of the node.
 	end:               u32, // The byte after the bytes of the node itself (its children have their own).
-	integer:           i64, // Integer: its value.
+	integer:           i64, // Integer: its value. Function: the offset of its '('.
 	first_child:       Node_Index, // The first argument, the left operand, the factor of Negate, the value of a condition, the part before a refusal.
 	next_sibling:      Node_Index, // The next argument of a call, or the right operand after the left one.
 	condition_head:    console_condition.Head, // Condition: the field, the operator and the place of the value, as head_read gives them.
 	condition_refusal: console_condition.Refusal, // Condition: the refusal of head_read; the parse stops at it.
 	member_alone:      bool, // Condition: the first token of the value is followed by "," or ")": a name of a member of a status is the whole value.
-	binding:           Node_Index, // Name: the Let_Binding whose name it reads, before its first '.'; or NO_NODE: a name of the host.
+	binding:           Node_Index, // Name: the Let_Binding or the Parameter whose name it reads, before its first '.'. Call: the one whose name it calls. Or NO_NODE: a name of the host.
+	function:          Node_Index, // The innermost Function whose parameters or body hold this node, or NO_NODE: the top of the text.
 }
 
 // The tree of one text, in the memory of the caller. Each string is a part
@@ -241,6 +256,7 @@ Parser :: struct {
 	counted:    int, // The places before this byte are counted in line and line_start.
 	line:       u32,
 	line_start: int,
+	function:   Node_Index, // The function whose parameters or body the parser reads, or NO_NODE.
 }
 
 // parse reads a text into tree. The tree is whole when tree.refusal.refusal
@@ -250,9 +266,10 @@ parse :: proc "contextless" (text: string, lookup: Form_Lookup, tree: ^Syntax_Tr
 	tree.text, tree.node_count, tree.root, tree.assigned_name = text, 0, NO_NODE, ""
 	tree.refusal = {}
 	parser := Parser {
-		tree   = tree,
-		lookup = lookup,
-		line   = 1,
+		tree     = tree,
+		lookup   = lookup,
+		line     = 1,
+		function = NO_NODE,
 	}
 	if len(text) > TEXT_BYTES_MOST {
 		tree.root = refuse(&parser, .Text_Too_Long, TEXT_BYTES_MOST, len(text), NO_NODE, u64(len(text)))
@@ -379,6 +396,7 @@ node_add :: proc "contextless" (parser: ^Parser, kind: Node_Kind, start, end: in
 		first_child  = NO_NODE,
 		next_sibling = NO_NODE,
 		binding      = NO_NODE,
+		function     = parser.function,
 	}
 	tree.node_count += 1
 	return index
@@ -450,11 +468,11 @@ read_name :: proc "contextless" (parser: ^Parser) -> string {
 }
 
 // equal_accept takes a single "=": the "=" of an assignment, a named
-// argument, a field or a binding, never the first byte of "==".
+// argument, a field or a binding, never the first byte of "==" or "=>".
 @(private)
 equal_accept :: proc "contextless" (parser: ^Parser) -> bool {
 	text := parser.tree.text
-	if peek(parser) != '=' || parser.position + 1 < len(text) && text[parser.position + 1] == '=' {
+	if peek(parser) != '=' || parser.position + 1 < len(text) && (text[parser.position + 1] == '=' || text[parser.position + 1] == '>') {
 		return false
 	}
 	parser.position += 1
@@ -579,6 +597,9 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 		child_append(parser.tree, negate, factor_read(parser))
 		return negate
 	case character == '(':
+		if close, arrow_end, found := console_language.function_head(text, start); found {
+			return function_read(parser, start, close, arrow_end)
+		}
 		parser.position += 1
 		inner := expression_read(parser)
 		if refused(parser) {
@@ -610,6 +631,9 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	case character == '{':
 		parser.position += 1
 		return literal_read(parser, start)
+	case character == '[':
+		parser.position += 1
+		return list_read(parser, start)
 	case character == '.':
 		// A member names no variable: its enum comes from the parameter
 		// that receives it, as the type of a record literal does.
@@ -816,36 +840,133 @@ let_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
 		parser.position = end
 		child_append(parser.tree, let, expression_read(parser))
 		// After the whole let: a value can name a later binding, and an
-		// inner let has bound its own names already.
+		// inner let or function has bound its own names already.
 		for child := node_at(parser.tree, let).first_child; child != NO_NODE; child = next_of(parser.tree, child) {
 			child_node := node_at(parser.tree, child)
-			names_bind(parser.tree, let, child_node.kind == .Let_Binding ? child_node.first_child : child)
+			names_bind(parser.tree, let, .Let_Binding, child_node.kind == .Let_Binding ? child_node.first_child : child)
 		}
 		return let
 	}
 }
 
-// names_bind gives each Name of a subtree that no inner let bound the
-// binding of let with its name, before its first '.'.
+// function_read reads a function, whose '(' is at open, its ')' at close
+// and the byte after its "=>" at arrow_end (console_language.function_head):
+// its parameters, each name once, then its body. Then it binds the names
+// of its body to its parameters.
 @(private)
-names_bind :: proc "contextless" (tree: ^Syntax_Tree, let: Node_Index, index: Node_Index) {
+function_read :: proc "contextless" (parser: ^Parser, open, close, arrow_end: int) -> Node_Index {
+	tree := parser.tree
+	text := tree.text
+	function := node_add(parser, .Function, arrow_end - len("=>"), arrow_end)
+	if function == NO_NODE {
+		return NO_NODE
+	}
+	node_at(tree, function).integer = i64(open)
+	outer := parser.function
+	parser.function = function
+	defer parser.function = outer
+	parser.position = open + 1
+	if !accept(parser, ')') {
+		count := 0
+		for {
+			skip_spaces(parser)
+			name_start := parser.position
+			if count == ARGUMENT_CAPACITY {
+				child_append(tree, function, refuse(parser, .Too_Many_Parameters, name_start, name_start, NO_NODE))
+				return function
+			}
+			token := console_language.token_next(text, name_start)
+			if token.kind != .Name {
+				child_append(tree, function, refuse(parser, .Parameter_Name_Missing, name_start, name_start, NO_NODE))
+				return function
+			}
+			name := read_name(parser)
+			if word_of_lex(name) {
+				child_append(tree, function, refuse(parser, .Word_As_Name, name_start, name_start + len(name), NO_NODE))
+				return function
+			}
+			// A name with a '.' reads a field: no parameter has one.
+			for character in name {
+				if character == '.' {
+					child_append(tree, function, refuse(parser, .Parameter_Name_Missing, name_start, name_start + len(name), NO_NODE))
+					return function
+				}
+			}
+			if child_named(tree, function, .Parameter, name) != NO_NODE {
+				child_append(tree, function, refuse(parser, .Parameter_Twice, name_start, name_start + len(name), NO_NODE))
+				return function
+			}
+			child_append(tree, function, node_add(parser, .Parameter, name_start, name_start + len(name)))
+			if refused(parser) {
+				return function
+			}
+			count += 1
+			if accept(parser, ')') {
+				break
+			}
+			if !accept(parser, ',') {
+				child_append(tree, function, refuse(parser, .Comma_Or_Close_Missing, parser.position, parser.position, NO_NODE))
+				return function
+			}
+		}
+	}
+	// The ')' of the parameters is the one that function_head found.
+	if parser.position != close + 1 {
+		child_append(tree, function, refuse(parser, .Unexpected, parser.position, len(text), NO_NODE))
+		return function
+	}
+	parser.position = arrow_end
+	body := expression_read(parser)
+	child_append(tree, function, body)
+	names_bind(tree, function, .Parameter, body)
+	return function
+}
+
+// list_read reads a list, after its "[": its items separated by ",", then
+// "]". A fault is a child in its place, after the items before it.
+@(private)
+list_read :: proc "contextless" (parser: ^Parser, start: int) -> Node_Index {
+	list := node_add(parser, .List_Literal, start, start + 1)
+	if list == NO_NODE || accept(parser, ']') {
+		return list
+	}
+	for {
+		child_append(parser.tree, list, expression_read(parser))
+		if refused(parser) || accept(parser, ']') {
+			return list
+		}
+		if !accept(parser, ',') {
+			child_append(parser.tree, list, refuse(parser, .List_Close_Missing, parser.position, parser.position, NO_NODE))
+			return list
+		}
+	}
+}
+
+// names_bind gives each Name of a subtree that nothing inner bound the
+// child of owner of the kind binding_kind with its name, before its first
+// '.': a Let_Binding of a let, a Parameter of a function. A Call is bound
+// by its whole name, with no '.'.
+@(private)
+names_bind :: proc "contextless" (tree: ^Syntax_Tree, owner: Node_Index, binding_kind: Node_Kind, index: Node_Index) {
 	node := node_at(tree, index)
 	if node == nil {
 		return
 	}
-	if node.kind == .Name && node.binding == NO_NODE {
+	if (node.kind == .Name || node.kind == .Call) && node.binding == NO_NODE {
 		name := node_text(tree, index)
 		head := name
 		for character, place in name {
 			if character == '.' {
-				head = name[:place]
+				head = node.kind == .Name ? name[:place] : ""
 				break
 			}
 		}
-		node.binding = child_named(tree, let, .Let_Binding, head)
+		if head != "" {
+			node.binding = child_named(tree, owner, binding_kind, head)
+		}
 	}
 	for child := node.first_child; child != NO_NODE; child = next_of(tree, child) {
-		names_bind(tree, let, child)
+		names_bind(tree, owner, binding_kind, child)
 	}
 }
 

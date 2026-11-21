@@ -1181,7 +1181,7 @@ demonstration_hash_head :: proc(named: module.Named) -> string {
 // A load error of each stage, made as the loader makes it, gives the fact
 // of its stage through the procedure of its shape, in each of the three
 // demonstrations: the longest name, a short one and no name, each member of
-// the enum of a stage, and the parameter and the slot at their edges.
+// the enum of a stage, and the parameter and the import slot at their edges.
 @(test)
 the_load_errors_of_the_demonstrations_write_each_stage :: proc(t: ^testing.T) {
 	Load_Fact_Module :: struct {
@@ -1235,10 +1235,10 @@ the_load_errors_of_the_demonstrations_write_each_stage :: proc(t: ^testing.T) {
 			}
 
 			error.stage = .Bind
-			for slot in edges {
-				error.slot = slot
+			for import_slot in edges {
+				error.import_slot = import_slot
 				bind := module.load_bind_fact_fields(&error)
-				facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, "Bind"), bind), line_of_before(item.head, "slot ", u64(slot), " of ", own, " cannot be bound: export ", own, " of ", agenda))
+				facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, "Bind"), bind), line_of_before(item.head, "import slot ", u64(import_slot), " of ", own, " cannot be bound: export ", own, " of ", agenda))
 			}
 
 			// Map and Unmap: each status by its name, and a word that names

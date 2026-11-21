@@ -208,7 +208,7 @@ Step :: struct {
 	// is a named constant whose comment gives that reason: modustool check
 	// refuses a number here.
 	seconds:    int,
-	fails_on:   string, // For Wait: a text that ends the wait as a failure when the machine prints it first: the step names its two outcomes.
+	fails_on:   string, // For Wait: a text that ends the wait as a failure when the machine prints it first, or on the line of the text: the step names its two outcomes.
 	names:      string, // For Trace: the names of the functions of the first frames, separated by spaces.
 	expected:   string, // For Call: a part of what the tool prints.
 	outcome:    Call_Outcome, // For Call: Result, Failed or Refused.
@@ -1448,28 +1448,43 @@ scenario := [?]Step {
 	// before the list of ":font", which keeps the same row and writes no
 	// second line. The row line is found from the open, in either order.
 	{kind = .Wait, text = "compositor: the palette shows the setting font as one row of 2 values", any_order = true},
-	{kind = .Wait, text = " for \":font\": font (setting)"},
+	// The entries of the scale say their display text, "1.75", which
+	// ":font" does not match: the picture shows the row of the font alone.
+	// An entry that names the member, fourteen_eighths, fails the step.
+	{kind = .Wait, text = " for \":font\": font (setting)", fails_on = "settings.set scale to fourteen_eighths"},
 	{kind = .Key, text = "right"},
 	{kind = .Wait, text = "compositor: the palette chooses the value spleen of font"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette sets font to spleen, by a key"},
 	{kind = .Wait, text = "compositor: the palette sends settings.set font to spleen to the console", any_order = true},
 	{kind = .Wait, text = "console: the palette runs settings.set(font = .spleen)"},
+	// The getter of the row said the new member, and the table marks it:
+	// the picture shows the mark on spleen. The console logs the mark
+	// after the line that it runs, and the compositor its line "did" in an
+	// order that the system does not fix: the mark is found from the line
+	// that runs, before the wait for "did" moves the place of the log.
+	{kind = .Wait, text = "console: the palette marks .spleen for settings.set font", any_order = true},
 	{kind = .Wait, text = "settings: font spleen, ", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen", any_order = true},
 	{kind = .Wait, text = "compositor: the palette did: settings.set font to spleen"},
-	// The getter of the row said the new member, and the table marks it:
-	// the picture shows the mark on spleen.
-	{kind = .Wait, text = "console: the palette marks .spleen for settings.set font", any_order = true},
 	{kind = .Shot, text = "palette_setting_row"},
 	{kind = .Key, text = "left"},
 	{kind = .Wait, text = "compositor: the palette chooses the value vector of font"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "console: the palette runs settings.set(font = .vector)"},
+	{kind = .Wait, text = "console: the palette marks .vector for settings.set font", any_order = true},
 	{kind = .Wait, text = "settings: font vector, ", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font vector", any_order = true},
 	{kind = .Wait, text = "compositor: the palette did: settings.set font to vector"},
-	{kind = .Wait, text = "console: the palette marks .vector for settings.set font", any_order = true},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
+	// The display text of a member: the scale has 7 members, so each one
+	// is an entry, which says its display text and runs the line with its
+	// name. The search finds the entry by its text.
+	{kind = .Key, text = "meta_l"},
+	{kind = .Wait, text = "compositor: the palette is open"},
+	{kind = .Keys, text = ":1.75"},
+	{kind = .Wait, text = " for \":1.75\": settings.set scale to 1.75 (setting)", fails_on = "fourteen_eighths (setting)"},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	// Go to: the window of settings names what the row of the grid fit
@@ -1754,6 +1769,58 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: Rectangle has no field widht; its fields are x, y, width, height"},
 	{kind = .Type, text = "area({x = 1, y = 2, width = 3})"},
 	{kind = .Wait, text = "[console] error: Rectangle needs the field height, which has no default"},
+	// The functions of Lex (docs/CONSOLE.md, "Functions and lists"): map on
+	// a list, a function that a let binds, a literal made in a body and
+	// typed by area after the call, the drawing of a function. A function
+	// is refused at the border of an export and by a variable. A recursion
+	// stops at the stack bound of the evaluator, and the deepest line of
+	// 200 bytes of today runs inside it on the thread of the lines.
+	{kind = .Type, text = "map([1, 2, 3], (x) => x * 2)"},
+	{kind = .Wait, text = "[console] [2, 4, 6]"},
+	{kind = .Type, text = "let double = (x) => x * 2 in area({x = 0, y = 0, width = double(3), height = 4})"},
+	{kind = .Wait, text = "[console] 24"},
+	{kind = .Type, text = "[1, 2] |> map((w) => area({x = 0, y = 0, width = w, height = 5}))"},
+	{kind = .Wait, text = "[console] [5, 10]"},
+	{kind = .Type, text = "(x) => x + 1 // a comment ends the line"},
+	{kind = .Wait, text = "[console] (x) => x + 1"},
+	// A line of only a comment does nothing: the next line gives its value
+	// with no error before it.
+	{kind = .Type, text = "// a line of only a comment"},
+	{kind = .Type, text = "6 * 7"},
+	{kind = .Wait, text = "[console] 42", fails_on = "[console] error:"},
+	{kind = .Type, text = "area((x) => x)"},
+	{kind = .Wait, text = "[console] error: area: argument 1 is a function: a function and a list stay in their line, and no command takes one"},
+	{kind = .Type, text = "f = (x) => x"},
+	{kind = .Wait, text = "[console] error: a variable keeps no function"},
+	// The deepest line of calls of a command: 31 calls of hash inside each
+	// other and length in 197 bytes, a call of the host at the deepest
+	// place. It is the deepest line of the run so far, so its measure of
+	// the stack of the evaluator goes to the log before its result.
+	{kind = .Type, text = "length(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(hash(\"\"))))))))))))))))))))))))))))))))"},
+	{kind = .Wait, text = "console: the deepest line so far took"},
+	{kind = .Wait, text = "[console] 64"},
+	{kind = .Type, text = "let f = (n) => f(n) in f(1)"},
+	{kind = .Wait, text = "[console] error: the line nests deeper than the stack of the evaluator holds: 524288 bytes"},
+	{kind = .Type, text = "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1"},
+	{kind = .Wait, text = "[console] 100"},
+	// The picture of the colors of Lex: from a clean view, one short line
+	// for each form, each after the result of the one before. A record
+	// literal, `with` and `let`; a function given to map over a list; "|>"
+	// with `_`; a named argument; a comment; a refusal at its place.
+	{kind = .Type, text = "clear()"},
+	{kind = .Type, text = "let s = r with {width = 2} in area(s)"},
+	{kind = .Wait, text = "[console] 8"},
+	{kind = .Type, text = "map([1, 2, 3], (x) => x * x)"},
+	{kind = .Wait, text = "[console] [1, 4, 9]"},
+	{kind = .Type, text = "1 |> grow(r, _)"},
+	{kind = .Wait, text = "[console]   height  6"},
+	{kind = .Type, text = "area(rectangle = r)"},
+	{kind = .Wait, text = "[console] 120"},
+	{kind = .Type, text = "6 * 7 // the answer"},
+	{kind = .Wait, text = "[console] 42"},
+	{kind = .Type, text = "area(r with {widht = 3})"},
+	{kind = .Wait, text = "[console] error: Rectangle has no field widht"},
+	{kind = .Shot, text = "console_lex"},
 	{kind = .Type, text = "b = buffer(1)"},
 	{kind = .Type, text = "fill(b, 3)"},
 	{kind = .Wait, text = "[console] 4096"},
@@ -2630,7 +2697,7 @@ scenario := [?]Step {
 	// records of the kernel. The console combines them with generic
 	// commands that read the description of the records.
 	{kind = .Type, text = "clear()"},
-	{kind = .Type, text = "columns(manual.importers(\"calendar_fixed\"), module, name, replacement, slots)"},
+	{kind = .Type, text = "columns(manual.importers(\"calendar_fixed\"), module, name, replacement, import_slots)"},
 	{kind = .Wait, text = "[console] agenda "},
 	{kind = .Wait, text = "[console] imports "},
 	{kind = .Wait, text = "[console] 2 rows of Import"},
@@ -4707,9 +4774,10 @@ log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := f
 }
 
 // log_wait_or_failure waits until the log, after the last Wait, has text or
-// failure. It gives the line of failure when failure came first, and
-// text_found when text came first. It does not move the place of the log:
-// the Wait that follows finds text there at once.
+// failure. It gives the line of failure when failure came first or is on
+// the line of text (wait_or_failure_decide), and text_found when text came
+// on a line with no failure. It does not move the place of the log: the
+// Wait that follows finds text there at once.
 log_wait_or_failure :: proc(machine: ^Machine, text, failure: string, limit: time.Duration) -> (failure_line: string, text_found: bool) {
 	wait_started := time.tick_now()
 	defer test_times_wait_note(machine, wait_started)
@@ -4721,21 +4789,73 @@ log_wait_or_failure :: proc(machine: ^Machine, text, failure: string, limit: tim
 			return line, false
 		}
 		if len(log) > machine.seen {
-			rest := log[machine.seen:]
-			text_at := strings.index(rest, text)
-			failure_at := strings.index(rest, failure)
-			if failure_at >= 0 && (text_at < 0 || failure_at < text_at) {
-				line := rest[failure_at:]
-				end := strings.index_byte(line, '\n')
-				return strings.trim_right(end < 0 ? line : line[:end], "\r"), false
-			}
-			if text_at >= 0 {
+			outcome, line := wait_or_failure_decide(log[machine.seen:], text, failure, true)
+			switch outcome {
+			case .Waiting:
+			case .Text_Found:
 				return "", true
+			case .Failure_Found:
+				return line, false
 			}
 		}
 		log_change_wait(machine)
 	}
+	// At the bound, a last line that never ended is read as it is.
+	log := log_read(machine)
+	if len(log) > machine.seen {
+		outcome, line := wait_or_failure_decide(log[machine.seen:], text, failure, false)
+		switch outcome {
+		case .Waiting:
+		case .Text_Found:
+			return "", true
+		case .Failure_Found:
+			return line, false
+		}
+	}
 	return "", false
+}
+
+// What a Wait with a failure text found in the log.
+Wait_Outcome :: enum u8 {
+	Waiting       = 0, // Neither text yet, or the line of the text has not ended.
+	Text_Found    = 1, // The text, on a line that does not have the failure text.
+	Failure_Found = 2, // The failure text first, or on the line of the text.
+}
+
+// wait_or_failure_decide reads the log after the last Wait for a Wait with
+// a failure text. The failure text fails the step when it comes before the
+// text, or when it is on the line where the text is: a process that writes
+// a list on one line, as the palette does, writes the item that the step
+// refuses on the line that it waits for. whole_lines: the line of the text
+// counts only once it ended, since its rest can still come; false at the
+// bound, where the last line is read as it is. failure_line is the line
+// with the failure text.
+wait_or_failure_decide :: proc(rest, text, failure: string, whole_lines: bool) -> (outcome: Wait_Outcome, failure_line: string) {
+	line_of :: proc(rest: string, at: int) -> (line: string, ended: bool) {
+		start := strings.last_index_byte(rest[:at], '\n') + 1
+		end := strings.index_byte(rest[at:], '\n')
+		if end < 0 {
+			return strings.trim_right(rest[start:], "\r"), false
+		}
+		return strings.trim_right(rest[start:at + end], "\r"), true
+	}
+	text_at := strings.index(rest, text)
+	failure_at := failure == "" ? -1 : strings.index(rest, failure)
+	if failure_at >= 0 && (text_at < 0 || failure_at < text_at) {
+		line, _ := line_of(rest, failure_at)
+		return .Failure_Found, line[strings.index(line, failure):]
+	}
+	if text_at < 0 {
+		return .Waiting, ""
+	}
+	line, ended := line_of(rest, text_at)
+	if failure != "" && strings.contains(line, failure) {
+		return .Failure_Found, line
+	}
+	if whole_lines && !ended {
+		return .Waiting, ""
+	}
+	return .Text_Found, ""
 }
 
 // log_last_line gives the last line of the log of the machine that has a
@@ -5270,7 +5390,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			if step.fails_on != "" {
 				failure_line, text_found := log_wait_or_failure(machine, step.text, step.fails_on, limit)
 				if failure_line != "" {
-					fmt.eprintfln("modustool: test failed: step %d: the machine printed \"%s\" before \"%s\"", index + 1, failure_line, step.text)
+					fmt.eprintfln("modustool: test failed: step %d: the machine printed \"%s\" before \"%s\" or on its line", index + 1, failure_line, step.text)
 					return false
 				}
 				if !text_found {

@@ -636,6 +636,96 @@ The design: `docs/INTERFACE.md`, "4. Input and focus".
 
 Do not use: UI context, retained state.
 
+### Semantic tree
+
+The semantic tree of a frame is the tree of its element pushes: what each element of a window is, its state and its name, for a reader that does not see the pixels.
+
+It comes from the draw table that draws the frame, so the drawing and the tree cannot drift: a push inside an open push is its child, in the order of the table. A text outside each push is a text of the window. The window lends its tables read-only to the holders of the assistive role, and never publishes a list of changes: the reader compares two trees by element word. Designed, not built.
+
+The design: `src/md/features/accessibility.md`, "1. The semantic tree".
+
+Do not use: accessibility tree, AX tree, semantics tree, DOM.
+
+### Element push
+
+An element push is a draw record of the kind `Element_Push` that draws nothing and says what the records after it, until its element pop, are: an element role, its states, an accessible name and its details.
+
+The interface package writes the push and the pop in the call that draws the element. Each record under a push carries the element word of the innermost push, or 0, and the border of the order refuses another word. The details (a value and its range, a text, a relation, the declared actions) are entries of 16 bytes in the byte table.
+
+The design: `src/md/features/accessibility.md`, "1. The semantic tree".
+
+Do not use: semantics node, accessible object, provider.
+
+### Element role
+
+An element role is what an element is for a reader, a member of `Element_Role`: a role of WAI-ARIA 1.2 that is not abstract, as `button`, `textbox`, `listbox` or `scrollbar`.
+
+The set is the set of the standard, never one of the system. The roles map to each platform interface through the Core Accessibility API Mappings, so a reader of another system understands them. The role says which actions an element can declare. An element role is not a role of the root service, and not a process role.
+
+The design: `src/md/features/accessibility.md`, "1. The semantic tree".
+
+Do not use: role (alone), control type, widget type.
+
+### Element state
+
+An element state is a fact of an element push that changes while the element lives: a member of the bit set `Element_State`, the toggle, or the expanded state.
+
+The states are the boolean states of WAI-ARIA 1.2 (`busy`, `disabled`, `invalid`, `selected`, ...), and `focusable`, `focused` and `protected` from the platform interfaces. `toggle` is `aria-checked` or `aria-pressed`, as the role says. A field with `protected` publishes no value, no caret and no length.
+
+The design: `src/md/features/accessibility.md`, "1. The semantic tree".
+
+Do not use: accessible state, flags.
+
+### Accessible name
+
+The accessible name of an element is the text that names it to a reader: the name range of its push, or the text runs under it when its role takes its name from its content.
+
+The rule is the Accessible Name and Description Computation 1.2. A button needs no name of its own: its label is its name. A text input takes its name from its label, never from its placeholder. The design proposes that the element name of a machine test becomes the accessible name, once the probe of the tests exists.
+
+The design: `src/md/features/accessibility.md`, "1. The semantic tree".
+
+Do not use: label (for this), alt text, aria-label.
+
+### Live region
+
+A live region is an element push whose text changes are said to the principal when they happen, at a politeness: polite after the speech in progress, assertive at once.
+
+The roles `alert`, `log`, `status` and `timer` are live regions by their role. The reader compares the text under the push in two trees and says the change. A process that wants to tell a fact puts its text in a live region; no call announces a text that no element shows.
+
+The design: `src/md/features/accessibility.md`, "1. The semantic tree".
+
+Do not use: notification (a notification is a later element of the desktop), toast, announcement.
+
+### Declared action
+
+A declared action is an act of the closed set `Element_Action` that an element says it takes, such as `Press`, `Increment` or `Insert_Text`, and the one way for a holder of the assistive role to act on it.
+
+The window layer refuses an action that the element did not declare in its last frame. It runs a declared action through the code of a key: `Press` is Enter, `Increment` is Up. So an action and a key never do two things. `Insert_Text` goes through the path of a paste. A holder sends no key and no press.
+
+The design: `src/md/features/accessibility.md`, "2. The assistive role".
+
+Do not use: synthetic input, accessibility action, pattern.
+
+### Assistive role
+
+The assistive role is the role that a screen reader, a magnifier or a switch input fills: it reads the semantic trees of the windows through the compositor and acts through declared actions.
+
+The root service gives it after a check against the contract and its conformance suite. Its holder gets a read-only handle of the frame tables of each window, the list of the windows, the focus, and the assistive keys; never a pixel and never another key. The bar shows a mark while a holder reads. Designed, not built.
+
+The design: `src/md/features/accessibility.md`, "2. The assistive role".
+
+Do not use: accessibility bus, accessibility client, AT.
+
+### Assistive key
+
+The assistive key is the key that the setting `assistive_key` names, Insert or Caps Lock, whose combinations the compositor gives to the holder of the assistive role and to no window.
+
+A screen reader uses it for its own commands. The compositor keeps it as it keeps the key super. The switch keys of the setting `switch_keys` follow the same path. The holder receives no other key: the change of the value of a field in the semantic tree gives the echo of a typed character.
+
+The design: `src/md/features/accessibility.md`, "2. The assistive role".
+
+Do not use: screen reader key, modifier grab.
+
 ### Damage by difference
 
 Damage by difference is the damage rectangles that the interface package finds by a comparison of the draw table of this frame with the draw table of the frame before.
@@ -892,15 +982,53 @@ Do not use: undo stack, undo history, undo log.
 
 ### Picker
 
-The picker is the surface of the document service where the principal chooses a document; its result is a grant to the process that asked.
+The picker is the part of a grant dialog where the principal chooses the object of a grant item; its result is a grant to the process that asked.
 
-The picker makes the choice of the principal the grant: a process cannot list documents, and gets a handle to the one document that the principal chose. The document service records each grant, so that the principal can list and revoke it. The document service and its picker are not built.
+The picker makes the choice of the principal the grant: the trusted display draws the candidates that the service of the objects gives through the root service, a store of the storage service first, a document of the document service later. The process that asks never sees the list, and gets a handle to the one object chosen. The picker is not a file dialog that a process draws. It is not built.
 
-The picker is not a file dialog that a process draws: it is the surface of another process, so the process that asks sees only the result.
+The design: `src/md/features/powerbox.md`, "The choice of the object".
 
-The design: `docs/ARCHITECTURE.md`, "U6. Document service".
+Do not use: file dialog, file chooser.
 
-Do not use: file dialog, powerbox.
+### Trusted display
+
+The trusted display is the role of the one process that draws each surface on which the principal answers the system: the grant dialog, the picker, the screen of a wide grant, the confirmation of the palette and the marks.
+
+The root service gives the role by the start grant `Trusted_Display`, today to the compositor. A replacement that holds the role fills the same contract and gets the same trust; a process without it that draws a dialog draws a window. The contract fixes the content, the act, the focus and the marks; the holder chooses the look. A contract test checks any holder.
+
+The design: `src/md/features/powerbox.md`, "The trusted display".
+
+Do not use: secure desktop, system UI server, shell.
+
+### Grant dialog
+
+A grant dialog is the one screen of the trusted display that lists each pending grant item of one process, grouped by kind, for the principal to keep or refuse.
+
+Each request of a process joins its pending grant dialog, up to 16 rows, so many requests give one screen. Each row has a tick; the principal allows the ticked rows, refuses all, or refuses and asks never to be asked again. An answer counts only after an arm time of 500 ms, with the focus moved to allow. The difference of a plan shows on the same contract, whole, with no tick.
+
+The design: `src/md/features/powerbox.md`, "The pending dialog: one screen for many requests".
+
+Do not use: permission prompt, consent screen, popup.
+
+### Screen of a wide grant
+
+The screen of a wide grant is the screen of the trusted display that states in plain words what a wide grant lets an agent see and do, and where the principal tunes it.
+
+It names the agent by its key or its module, and lists each wide scope with its place bound, its mode (asks each time, or at any time) and the time bound. The principal unticks, picks and bounds, then proves its passphrase in the window of `unlock`, with the keys of the machine only. It is never the grant dialog, and no input of the remote display answers it.
+
+The design: `src/md/features/wide_grants.md`, "The screen of a wide grant".
+
+Do not use: consent screen, warning dialog.
+
+### Mark of wide authority
+
+The mark of wide authority is the mark that the trusted display shows, on a place that no process covers, while a wide grant holds.
+
+It shows the word "agent", the hash prefix of the key and the time left, from the records of the root service, so no process can hide it. One press shows the scopes, the bounds and the count of acts, with revoke, which ends the wide grant at once. It is not the mark of a viewer, which says only that the screen is seen.
+
+The design: `src/md/features/wide_grants.md`, "The mark".
+
+Do not use: indicator light, recording dot.
 
 ### Quality profile
 
@@ -1000,7 +1128,7 @@ A measure over the declarations of the system and the lines of the console tests
 
 The design: `src/md/features/declarations.md`, "The evaluation budget".
 
-Do not use: fuel, timeout, recursion limit.
+Do not use: fuel, timeout, recursion limit, stack bound (for this).
 
 ### Evaluation mode
 
@@ -1064,10 +1192,40 @@ Do not use: keyword argument, flag, option.
 
 ### Anonymous function
 
-An anonymous function is a function value of Lex written as `(name) => expression`.
+An anonymous function is a function value of Lex written as `(name, …) => expression`.
 
-It can be a field, an argument and a result. `map(list, function)` and the declarations use it: `map(names, (name) => odin.module(name))`. `where` takes a condition and never an anonymous function, because the root service turns a condition into wiring terms and runs no Lex.
+It can be a binding, an argument and a result: `map([1, 2], (x) => x * 2)`. Its body reads the bindings around it by reference, never as a copy, and runs only in a call, after the arguments, from the left. No export and no command takes one, and no variable keeps one: it reads the values of its line. `where` takes a condition and never a function, because the root service runs no Lex.
 
-The design: `src/md/features/declarations.md`, "`where` keeps the form of a condition".
+The design: `src/md/features/declarations.md`, "The functions of layer 4 as built".
 
 Do not use: lambda, closure, callback.
+
+### List
+
+A list is a value of Lex that holds values in order, written `[a, b, …]`.
+
+`map(list, function)` gives the list of the results of a function on each item. An item keeps its kind, and a record literal or a member in it waits for the parameter that types it. The console draws a list of integers, texts, members and functions on one line, `[2, 4, 6]`. No export takes one and no variable keeps one: the items live in the evaluation of their line. It is not a table, whose rows have one record description.
+
+The design: `src/md/features/declarations.md`, "The functions of layer 4 as built".
+
+Do not use: array, vector, sequence.
+
+### Comment of Lex
+
+A comment of Lex is `//` outside a text and the rest of its line: words for a reader, which the evaluation never reads.
+
+The scanner skips it as a space: it gives no token and no node, and the console draws it in the color of a comment. A line of the console can end with one; a line of only a comment does nothing. `//` inside a text is a part of the text. Lex has no block comment. Example: `area(r) // the area of r`. It is not a comment of a source of Odin, which the compiler reads.
+
+The design: `src/md/features/declarations.md`, "Comments".
+
+Do not use: remark, annotation, block comment.
+
+### Evaluation stack bound
+
+The evaluation stack bound is the bytes of stack that one evaluation of Lex can take, 512 KiB, measured from its first force.
+
+The evaluator recurses one level for each force inside a force: from 1 KiB for an operator to 5 KiB for a call. A recursion of a function, which Lex cannot end yet, stops past the bound with an error, at about 90 calls, before the stack of the thread ends. The console runs its lines on a thread of 640 KiB of stack. It is measured in bytes, not in levels. It is not the evaluation budget, which counts steps.
+
+The design: `src/md/features/declarations.md`, "The functions of layer 4 as built".
+
+Do not use: recursion depth, stack depth.

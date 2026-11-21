@@ -38,15 +38,16 @@ SITE_SUBSCRIBE_MENU_OPEN :: "<details class=\"subscribe-menu\">\n<summary class=
 // window the panel keeps inside it, and a line that is wider breaks onto a
 // second line: it is never cut. The panel is under the bar, which is over
 // the page. The chevron is two lines at an angle: it points down when the
-// menu is closed and up when it is open, at once, with no transition. The
+// menu is closed and up when it is open, at once, with no transition. Its
+// rotations are in turns, as each angle of the system. The
 // states of the button and of the lines are in site_controls.odin.
 SITE_SUBSCRIBE_MENU_RULES :: `
 .subscribe-menu { position: relative; display: inline-block; margin: 0 0 16px; }
 .subscribe-button { list-style: none; display: inline-block; padding: 0 8px; line-height: 24px; white-space: nowrap; background: var(--track); cursor: pointer; }
 .subscribe-button::-webkit-details-marker { display: none; }
-.subscribe-button::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; vertical-align: 4px; transform: rotate(45deg); }
+.subscribe-button::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; vertical-align: 4px; transform: rotate(0.125turn); }
 .subscribe-menu[open] > .subscribe-button { background: var(--control-active); color: var(--control-active-text); }
-.subscribe-menu[open] > .subscribe-button::after { vertical-align: 0; transform: rotate(-135deg); }
+.subscribe-menu[open] > .subscribe-button::after { vertical-align: 0; transform: rotate(-0.375turn); }
 .subscribe-panel { position: absolute; left: 0; top: calc(100% + 4px); z-index: 20; width: max-content; max-width: calc(100vw - 56px); padding: 4px; background: var(--card-bottom); border: 1px solid var(--line); }
 .subscribe-panel a { display: block; padding: 4px 8px; line-height: 24px; text-decoration: none; overflow-wrap: anywhere; }
 .subscribe-arrow { margin-left: 8px; }

@@ -90,10 +90,11 @@ draw_square :: proc "c" (parameter: rawptr) -> ! {
 	worker := (^Worker)(parameter)
 	center := centers[worker.number]
 	tint := tints[worker.number]
-	// A triangle wave moves the constant: no table and no library.
+	// A triangle wave moves the constant: no table and no library. Its
+	// phase is in turns: the part of a period.
 	wave :: proc "contextless" (step: u64, period: u64) -> f32 {
-		phase := f32(step % period) / f32(period)
-		return phase < 0.5 ? 4 * phase - 1 : 3 - 4 * phase
+		phase_turns := f32(step % period) / f32(period)
+		return phase_turns < 0.5 ? 4 * phase_turns - 1 : 3 - 4 * phase_turns
 	}
 	for {
 		now := system.time()

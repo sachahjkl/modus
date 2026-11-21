@@ -2,7 +2,7 @@
 
 A principal describes a system, a session or a project, with the console of that project, as one lazy value of Lex, the language of the console, in the manner of Nix. The evaluation of that value has no effect: it gives a typed record, the plan. An explicit command applies the plan, and the root service writes it as one applied plan, which a rollback can select again. The root service and the services never read the text of a declaration.
 
-The terms Plan, Applied plan, Declaration, Catalog declaration, Declaration input, Pin, Source module, Release pointer, Project, Plans service, Projects service, Recipes service and Declaration reference are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); Lex, Console of a project, Evaluation budget, Evaluation mode, Thunk, Record literal, Named argument and Anonymous function are in [`docs/glossary/desktop.md`](../../../docs/glossary/desktop.md). The recipes that a plan names, the cache and the substitution policy are in [recipes.md](recipes.md).
+The terms Plan, Applied plan, Declaration, Catalog declaration, Declaration input, Pin, Source module, Release pointer, Project, Plans service, Projects service, Recipes service and Declaration reference are in [`docs/glossary/code.md`](../../../docs/glossary/code.md); Lex, Console of a project, Evaluation budget, Evaluation stack bound, List, Comment of Lex, Evaluation mode, Thunk, Record literal, Named argument and Anonymous function are in [`docs/glossary/desktop.md`](../../../docs/glossary/desktop.md). The recipes that a plan names, the cache and the substitution policy are in [recipes.md](recipes.md).
 
 ## Purpose
 
@@ -57,6 +57,7 @@ The plan is the typed record that an evaluation gives and the root service appli
 - the rows of a start list, in the format of `start_list` ([start_policy.md](start_policy.md)), and the hash of a start policy;
 - the wirings of the record outputs, in the format of the wiring list of `Start` ([module_outputs.md](module_outputs.md));
 - the rows of the disk grant table: a nickname, a hash and its grants;
+- the holder of each role, by its hash, or a chain of an interposed holder and the holder below it ([roles_and_contracts.md](roles_and_contracts.md), "The plan says who holds each role");
 - the settings, each a member of `Setting` with its value;
 - the substitution policy, `Substitution` ([recipes.md](recipes.md), "The substitution policy");
 - the pins of each declaration input, with its publisher;
@@ -69,7 +70,7 @@ A plan names each object by its hash, so it is complete in itself: the root serv
 `plan { … }` is the only form of Lex that describes an effect, and it has no effect by itself: it is a value. An explicit command of the service `plans` applies it ("The services of the declarations"):
 
 1. `plans.apply(p)` forces the plan in an evaluation process, and the service `plans` asks the root service for the difference between the plan and the current applied plan of the principal: the grants that it adds and removes, the wirings, the rows of the start list, the start policy. The root service computes it from its own copy of the current applied plan, not from the evaluation, so neither the evaluation nor `plans` can hide a grant. `plans.difference(p)` gives that difference and applies nothing.
-2. The console draws the difference as tables, and the principal accepts it with a key, as it accepts the grants of a role today. A difference with no new grant is still shown.
+2. The root service gives the difference to the trusted display, which shows it on the trusted path as one screen, grouped by kind, and the principal accepts it whole with the act of a grant dialog ([powerbox.md](powerbox.md), "The relation to the other paths"). While a wide grant holds in the session, a difference that adds a grant needs the proof of the principal ([wide_grants.md](wide_grants.md), "Acts that still ask"). A difference with no new grant is still shown. What changed: the console drew the difference and took the key, and a console that the principal does not watch, or that an agent drives, could then accept it.
 3. The service `plans` sends the root ring command `Apply` with the hash of the plan and the hash of the current applied plan that the difference read. The root service refuses the command when the current applied plan changed since: the principal accepted another difference.
 4. The root service checks the plan at its border, checks that the store `module_files` holds each hash that the plan names and each import of each module, writes the plan as applied plan N + 1 in the store `applied_plans` of the principal, then writes the hash of applied plan N + 1 in the row "current plan" of the disk grant table of the principal. That last write is the commit: before it, applied plan N is current; after it, N + 1 is.
 
@@ -277,6 +278,64 @@ Subtle points:
 - **A literal bound by a `let` is typed at each receiver.** `let s = {…} in area(s) + area(s)` forces the values of `s` once and types them twice, each in the memory of the line.
 - **The words of Lex change the meaning of three names.** A command, a variable or a field named `let`, `in` or `with` can no longer be written. No command and no field of the system has such a name.
 
+### The functions of layer 4 as built
+
+Layer 4 adds the anonymous function, its call, the list literal and `map`. The grammar:
+
+```
+factor     = ... | "(" [ name { "," name } ] ")" "=>" expression
+           | "[" [ expression { "," expression } ] "]"
+```
+
+**A function or an expression in parentheses.** A `(` starts a function when its group closes and `=>` follows the `)`. One scanner says it, `function_head` of `console_language`, for the parser, the nested form of `|>` and the colors. The body is an expression: `(x) => x + 1 with r` holds all of it, and a `,` or the `)` around the function ends it. The parser refuses, each at its place: a parameter that is no name (`Parameter_Name_Missing`), a word of Lex as a parameter (`Word_As_Name`), a parameter twice (`Parameter_Twice`), more than 12 parameters (`Too_Many_Parameters`), and a list with no `]` (`List_Close_Missing`). After the whole function, the parser binds each name of its body to its parameter, as it binds the names of a `let`; an inner function or `let` hides an outer name. A call `f(…)` whose name a `let` or a parameter binds is the call of that value, never a command of the host.
+
+**A function is a value with its place of birth.** The value of `(x) => …` is its node and the call of a function in which it was written: no call at the top of the line. It copies no forced value. A name of its body that an outer `let` or an outer parameter binds reads the thunk of that binding, in that call. So `let n = g() in map(l, (x) => x + n)` runs `g()` once, before `map`, in mode `console`, and a function that reads a binding of its line keeps reading the binding, never a copy.
+
+**A call of a function.** The call checks the names of its named arguments and forces its arguments from the left, as the call of an export does, then makes a function call: the function, the call where the function was written, and one thunk for each node of the body that two readers can force: each parameter, and the value of each binding and of each field of a literal. Each other node of a body has one reader in one call, and is computed each time a call forces it. A count of arguments other than the count of the parameters is refused with `Function_Arguments`, named arguments with the names of the parameters. A call of a name whose value is no function is refused with `Not_A_Function`. A call whose text stops in its arguments has no count: the arguments before the fault run, then the refusal of the text comes at its place, as for a command of the host.
+
+**A record literal and a member keep their place too.** A literal written in a body is untyped until its receiver types it, maybe after its call returned: its value names its call, and the receiver forces its fields in that call. A member needs no call: its node holds its name.
+
+**Recursion.** `let f = (n) => f(n - 1) in f(3)` reads `f` in its own body: the value of `f` is forced before the call, so no cycle. Lex has no condition yet, so such a recursion never ends: the evaluation budget ends it, or the evaluation stack bound below.
+
+**The evaluation stack bound.** The evaluator recurses on the stack of its thread, one level for each force inside a force, and a body nested in a recursion reaches any depth before 2^20 steps. So each force measures the bytes of stack that the evaluation took, from the address of a local at its first force, and the evaluation stops with `Stack_Exceeded` past `EVALUATION_STACK_BYTES`, 512 KiB. It is a measure in bytes, not a count of levels: built with `-o:speed`, a level of an operator takes about 1 KiB and a level of a call about 5 KiB. The deepest lines of 200 bytes of today take from 196 KiB (`1+1+…+1`) to 340 KiB (`f(f(…))`), so they pass the bound, and a recursion stops at about 90 calls. The thread of the console that runs the lines had 64 KiB of stack, under what these lines take; it now has the bound and 128 KiB for the host and the command that a call runs at the deepest place, 640 KiB, which its stated budget counts as working memory. A host test builds with larger frames than a module, so its evaluations give a larger bound; the machine test runs the deepest line of calls of a command (31 calls of `hash`), the deepest line of operators and a recursion in the console itself. The console logs the stack of the deepest line of its run as the measure fact `Evaluator_Stack_Deepest`, so the build that runs shows its margin under the bound; a line that the bound stopped measures the bound, and logs nothing.
+
+**The memory of the calls.** The function calls, their thunks and the items of the lists are in fixed arrays of the evaluation, for one line: 256 calls, 512 thunks of calls, 256 items. A call is kept until the line ends, because a function or a literal that it made can outlive it. Past one array, the evaluation stops with `Calls_Full` or `Lists_Full`.
+
+**A list is typed by its use.** `[a, b]` forces its items from the left and gives a List; its items keep their kinds, and an untyped item (a literal, a member) waits for its receiver, as a literal does. `map(list, function)` is a name of the evaluation, not a command of the host: it forces the list, then the function, then calls the function on each item from the first, and gives the list of the results. `map` checks that its first argument is a List (`Not_A_List`) and that its second one is a function of one parameter. A list at the end of a line with an untyped item is refused as that item. An item with no value, a Stream and a Record_Input are refused at the item with `List_Item_Kind`: the last two live in the wiring of their line, and none has an item to draw.
+
+**A function never crosses a border.** No export and no command of the console takes or gives a function or a list: an argument of either kind is refused before the call runs, with `Value_At_Border`. A function is code of Lex, and a list holds values of the evaluation; the receiver of either would have to run Lex or read the memory of the evaluation, against property 19. No variable keeps a function or a list: a function reads the thunks of its line by reference, and the thunks and the items end with the line. A function that lasts is a field of a declaration, an object with a hash (property 11, property 22), not a variable of one console.
+
+**The order of the effects in mode `console`.** A call of a function forces its arguments from the left, then its body. A body runs only when a call forces it: a function that no call reaches runs no effect, though the line is forced whole, because its value is the function, not its result. `map` runs its calls in the order of the items.
+
+**What the console shows.** A function is drawn as its text, `(x) => x * 2`. A list of integers, texts, members and functions is drawn on one line, `[2, 4, 6]`; a list of records or tables draws each item in turn. `=>`, `[` and `]` have the color of an operator, a parameter the color of a variable where it is bound and where it is read, and `map` the color of a command. The completion offers the parameters of the functions whose body holds the caret, and `map`.
+
+Refused forms:
+
+- **A function as a copy of the forced values that it reads.** It forces a binding that the body may never read, and its effect then runs in mode `declaration` too early. A reference to the thunk forces it when the body reads it.
+- **One thunk for each node of each call.** A body of 200 nodes in a recursion of 50 calls takes 10 000 thunks. The nodes that two readers force are few.
+- **The arguments of a function as thunks.** An argument forced when the body reads it runs its effect in the order of the body, not of the line. The call of an export forces its arguments from the left, and the call of a function does the same.
+- **A bound of the depth in levels.** A level costs from 1 KiB to 5 KiB of stack; a count of levels either refuses a line of `-` that works today or lets a recursion of calls overflow.
+- **The thread of 64 KiB, with a bound under it.** The deepest lines of today would then be refused: built with `-o:speed` for the host, they take more than 64 KiB.
+- **A list as a module type.** No export takes a list today; a table is the list of records that crosses a border.
+- **`map` as a command of the console.** A command of the host would have to call back into the evaluator to run a function, a second path of the call.
+
+Subtle points:
+
+- **A `(` reads ahead.** The parser reads the group of a `(` to its `)` before it knows if it is a function, so a line of 200 bytes reads at most 200 times 200 bytes.
+- **The colors read the whole line for each name**, to know the parameters of the functions around it, as they read the bindings of a `let`.
+- **`map` comes before a command of that name.** The evaluator finds the name of the evaluation first, so an export named `map` of a loaded module cannot be called by that name; a service keeps its dotted name, `service.map`. A name of the evaluation is a word that a module does not take for an export it wants called alone.
+- **`where` inside a function body** still reads a condition: the form of an argument comes from the name of the command, before the parser knows that a `let` binds that name.
+
+### Comments
+
+A comment is `//` outside a text, to the end of its line. The scanner of `console_language` skips it as it skips a space, so it gives no token, the parser makes no node of it, and the nested form of `|>` never reads its bytes: a `|` or a `|>` in a comment is no operator. The colors draw it in the kind Words, the color of a comment. The completion reads the line with the same scanner: it offers nothing while the caret is in a comment, so a word typed there and Enter stay keys of the comment, and a `(` in a comment or in a text opens no group of the arguments. A line of the console can end with a comment, and a line with no token, only spaces and a comment, does nothing. `//` in a text is a part of the text, and `a / / b` is two divisions.
+
+Refused forms:
+
+- **A block comment, `/* … */`.** It nests badly: a `*/` inside it ends it early, and a nesting rule is a second grammar of comments. One comment for each line is enough for a line of the console and for a declaration.
+
+A later option: a doc comment, `///` on the line above a field, kept in the tree with that field, so that the site and the completion show what a field of a declaration is for. It waits for the declarations of layer 6, which have fields to describe.
+
 ### `where` keeps the form of a condition
 
 `where(t, status >= 500)` takes a condition: a field, an operator and a value ([`docs/CONSOLE.md`](../../../docs/CONSOLE.md), "Conditions"). It does not take an anonymous function.
@@ -383,7 +442,8 @@ The identity of a source is the hash of a tree in a store. `here()` gives the tr
 Git is an import format and an export format, never a dependency:
 
 - A git repository enters through the fetcher, as a hash given in advance: the commit gives a tree, and the recipe of the fetch holds the hash of its modus tree ([recipes.md](recipes.md), "The fetcher").
-- Two machines exchange sources as they exchange modules: a sync of stores by hash, with the protocol of the cache. A tree is an object, as a module is.
+- Two machines exchange sources as they exchange modules: a store exchange by hash, with the protocol of the cache. A tree is an object, as a module is.
+- Two machines that change one source give two versions with a common version. A three-way merge by the merge export of the module of the store joins them, and a conflict stays in the data as a conflict value, which the principal resolves once ([several_machines.md](several_machines.md), "The exchange of a store between machines").
 
 ### The console of a project
 
@@ -421,6 +481,8 @@ Three services give the commands of the declarations. A command of a service is 
 - **`recipes`**: `build`, `provenance` ([recipes.md](recipes.md)). It asks the root service to realise a recipe, and applies the substitution policy.
 
 The evaluation process is no service. Each of the three starts one when it reads Lex, and the evaluation process holds no right.
+
+Each of the three is a role, with its role contract and its conformance suite: `plans.apply` names the role `Plans`, and the console reaches its holder by the role, never by the name of a module ([roles_and_contracts.md](roles_and_contracts.md)).
 
 Each service acts for the principal of the caller, as the remote display does ([remote_display.md](remote_display.md)). The root service decides each command, with the grants of that principal.
 
@@ -517,8 +579,6 @@ From each root it follows the imports of each module, the debug object of each m
 
 ## Open questions
 
-- **The merge of two versions of a store.** Two machines that change one source give two trees; how a principal merges them, and in which process.
-- **The form of the acceptance of a difference** at a console that a remote client drives: the same key, or a second proof of the principal.
 - **The forced values of a declaration reference across lines.** The console evaluates a reference again on each line that needs it. An evaluation process that stays between the lines keeps the forced thunks, and holds their memory with no line that runs.
 - **Where the default of a field is written.** A field of a contract record has no mark of a default today, so a record literal must give each field. The mark goes in the record description, or in the function of the catalog declaration that takes the record. The frequent tasks need it: `{ mode = .Verify }` takes the sources and the signers of the plan of the principal.
 - **The bounds of a list at the console.** A call takes 12 arguments at most. A record literal is bounded by its record, 64 fields at most, and by the text of a line; a list has no bound of its own yet.
@@ -530,7 +590,7 @@ Each layer adds one capability to a system that works, and each is a tested comm
 1. **The parser in one library package.** The parser leaves the console for one library package, with no change of behaviour: the same trees and the same refusals. The package is a private part of the console until the evaluation process is its second owner ("The parser package").
 2. **The shared lazy evaluator in mode `console`.** It replaces the eager evaluator of the console: each line is forced whole, and the effects run in the order of their data. The mode is a parameter, and mode `declaration` already refuses an effect at its border ("The evaluator package").
 3. **The record literal, named arguments, `let`, `with`, and the placeholder `_` of `|>`** ("The forms of layer 3 as built").
-4. **Functions `(x) => …`**, used by `map`.
+4. **Functions `(x) => …`, the list literal and `map`** ("The functions of layer 4 as built").
 5. **Mode `declaration` and the evaluation process.**
 6. **`module(...)`, `recipe` and `plan`**, and the evaluation budget measured.
 7. **The service `plans`**: `plans.apply`, `plans.difference` and `plans.rollback`, with the root ring commands `Apply` and `Rollback`.
@@ -539,6 +599,6 @@ Each layer adds one capability to a system that works, and each is a tested comm
 
 ## State
 
-Built: layers 1 to 3 of the build order. The parser of Lex is the private part `lex_parser` of the console, with host tests of each form of the console and each refusal with its place. The evaluator is the private part `lex_evaluator`: thunks forced at most once, the order of the effects, the budget, the refusal of an effect in mode `declaration`, the record literal typed by its receiver, named arguments, `let`, `with` and the cycle, with host tests over a fake host. The console is its host in mode `console`. The placeholder `_` is a part of the nested form of `|>`.
+Built: layers 1 to 4 of the build order. The parser of Lex is the private part `lex_parser` of the console, with host tests of each form of the console and each refusal with its place. The evaluator is the private part `lex_evaluator`: thunks forced at most once, the order of the effects, the budget, the stack bound, the refusal of an effect in mode `declaration`, the record literal typed by its receiver, named arguments, `let`, `with`, the cycle, functions with their calls, the list literal and `map`, with host tests over a fake host. The scanner skips a comment `//`. The console is its host in mode `console`. The placeholder `_` and the body of a function are parts of the nested form of `|>`.
 
-Left: layers 4 to 9, with the three services of the declarations and `pins.lex`, the budget measured, the default of a field, and the move of the parser and the evaluator to `src/library/support` with the evaluation process.
+Left: layers 5 to 9, with the three services of the declarations and `pins.lex`, the budget measured, the default of a field, and the move of the parser and the evaluator to `src/library/support` with the evaluation process.

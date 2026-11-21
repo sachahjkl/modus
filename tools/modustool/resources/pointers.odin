@@ -841,11 +841,12 @@ outline_statement_parse :: proc(path: string, line_number: int, words: []Word, e
 	return ""
 }
 
-// outline_circle gives a circle as eight quadratic curves of 45 degrees,
-// each with its control point on the tangents at its ends: the distance of
-// the curve from the circle is at most 0.3 % of the radius, under 1/30 of a
-// pixel for the circles of a pointer. The two constants are cos 45 and
-// tan 22.5 in parts of 10 000.
+// outline_circle gives a circle as eight quadratic curves of an eighth of a
+// turn, each with its control point on the tangents at its ends: the
+// distance of the curve from the circle is at most 0.3 % of the radius,
+// under 1/30 of a pixel for the circles of a pointer. The two constants
+// are the cosine of an eighth of a turn and the tangent of a sixteenth of
+// a turn, in parts of 10 000.
 @(private = "file")
 outline_circle :: proc(center_x, center_y, radius: i64, line: int) -> Outline_Contour {
 	diagonal := vector_font.divide_rounded(radius * 7071, 10_000)

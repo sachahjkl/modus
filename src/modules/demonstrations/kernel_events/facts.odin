@@ -50,7 +50,7 @@ Child_Load_Read_Failed :: distinct module.Load_Read_Fields
 Child_Load_Cycle_Failed :: distinct module.Load_Cycle_Fields
 @(log_fact = "kernel_events: the load of the child: {module_name} imports {imported_name}, and its replacement fails the check: export {export}: {difference}, parameter {parameter}")
 Child_Load_Check_Failed :: distinct module.Load_Check_Fields
-@(log_fact = "kernel_events: the load of the child: slot {slot} of {module_name} cannot be bound: export {export} of {imported_name}")
+@(log_fact = "kernel_events: the load of the child: import slot {import_slot} of {module_name} cannot be bound: export {export} of {imported_name}")
 Child_Load_Bind_Failed :: distinct module.Load_Bind_Fields
 @(log_fact = "kernel_events: the load of the child: the kernel refused to map {module_name} ({module_hash}): status {status}")
 Child_Load_Map_Failed :: distinct module.Load_Memory_Fields

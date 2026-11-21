@@ -20,7 +20,7 @@ INPUT_PLACE :: u64(PAGE_SIZE + 128)
 @(private = "file")
 Loader_Writes :: struct {
 	rebases:    []u64,
-	slots:      []Slot, // From index 1: the entry 0 is added.
+	import_slots: []Import_Slot, // From index 1: the entry 0 is added.
 	hash_place: u64, // 0: no table Own_Hash.
 	data_flags: Segment_Flags, // {}: Read and Write.
 	extra_rows: [2]int, // Rows added after the record outputs and after the record input, each with extra_place.
@@ -76,11 +76,11 @@ places_file :: proc(output_places: [2]u64, input_place: u64, writes: Loader_Writ
 	if len(writes.rebases) != 0 {
 		add(&file, &directory, .Rebases, bytes_of(writes.rebases), u32(len(writes.rebases)), REBASE_WORD_SIZE)
 	}
-	if len(writes.slots) != 0 {
-		slots := make([dynamic]Slot, context.temp_allocator)
-		append(&slots, Slot{})
-		append(&slots, ..writes.slots)
-		add(&file, &directory, .Slots, bytes_of(slots[:]), u32(len(slots)), size_of(Slot))
+	if len(writes.import_slots) != 0 {
+		import_slots := make([dynamic]Import_Slot, context.temp_allocator)
+		append(&import_slots, Import_Slot{})
+		append(&import_slots, ..writes.import_slots)
+		add(&file, &directory, .Import_Slots, bytes_of(import_slots[:]), u32(len(import_slots)), size_of(Import_Slot))
 	}
 	if writes.hash_place != 0 {
 		hash_places := [2]Own_Hash_Place{{}, {memory_offset = writes.hash_place}}
@@ -147,7 +147,7 @@ a_record_stream_place_that_another_write_meets_is_refused :: proc(t: ^testing.T)
 		// Bit 63, the last of a bitmap, names the 63rd word from the
 		// cursor: the place of the second record output.
 		{rebases = {SECOND_OUTPUT_PLACE - REBASE_WORD_SIZE - REBASE_WORD_SIZE * (REBASE_BITMAP_LOCATIONS - 1), 1 << 63 | 1}},
-		{slots = {{memory_offset = FIRST_OUTPUT_PLACE - REBASE_WORD_SIZE + 1, import_index = 1, export_index = 1}}},
+		{import_slots = {{memory_offset = FIRST_OUTPUT_PLACE - REBASE_WORD_SIZE + 1, import_index = 1, export_index = 1}}},
 		{data_flags = {.Read, .Write, .Read_Only_After_Load}},
 	}
 	for writes in refused {
@@ -163,7 +163,7 @@ a_record_stream_place_that_another_write_meets_is_refused :: proc(t: ^testing.T)
 		// The neighbours of the two walks above: the word before the place.
 		{rebases = {INPUT_PLACE - 2 * REBASE_WORD_SIZE - REBASE_WORD_SIZE * REBASE_BITMAP_LOCATIONS, 1, 1 << 1 | 1}},
 		{rebases = {SECOND_OUTPUT_PLACE - REBASE_WORD_SIZE - REBASE_WORD_SIZE * (REBASE_BITMAP_LOCATIONS - 1), 1 << 62 | 1}},
-		{slots = {{memory_offset = FIRST_OUTPUT_PLACE + RECORD_STREAM_PLACE_SIZE, import_index = 1, export_index = 1}}},
+		{import_slots = {{memory_offset = FIRST_OUTPUT_PLACE + RECORD_STREAM_PLACE_SIZE, import_index = 1, export_index = 1}}},
 	}
 	for writes in taken {
 		file := places_file(places, INPUT_PLACE, writes)

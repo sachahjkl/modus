@@ -138,6 +138,56 @@ text_valid :: proc "contextless" (bytes: []u8) -> bool {
 	return !found
 }
 
+// character_hidden says if a character is one that a reader does not see,
+// or one that changes the order in which a text shows: the spaces and the
+// joiners of no width, the marks and the embeddings of direction, the
+// isolates, the separators of lines and of paragraphs, and the mark of the
+// byte order. A text with one of them can show as another text.
+character_hidden :: proc "contextless" (character: rune) -> bool {
+	switch character {
+	case 0x200B ..= 0x200F, 0x202A ..= 0x202E, 0x2066 ..= 0x2069, 0x2028, 0x2029, 0xFEFF:
+		return true
+	}
+	return false
+}
+
+// character_space says if a character is a space of Unicode that a reader
+// sees as an empty place: the space, the space of no break, the spaces of
+// U+2000 to U+200A, the narrow space of no break, the mathematical space,
+// the ideographic space and the space mark of Ogham.
+character_space :: proc "contextless" (character: rune) -> bool {
+	switch character {
+	case 0x20, 0xA0, 0x1680, 0x2000 ..= 0x200A, 0x202F, 0x205F, 0x3000:
+		return true
+	}
+	return false
+}
+
+// display_text_valid says if a text is one that a principal reads as
+// itself: UTF-8 with no control character, no hidden character, and at
+// least one character that is not a space. A display text of a member and
+// the button that shows it keep this rule
+// (src/md/features/enum_parameters.md, "The display text of a member").
+// A character of another script that looks like a Latin one is taken: a
+// translation needs each script.
+display_text_valid :: proc "contextless" (bytes: []u8) -> bool {
+	if !text_valid(bytes) {
+		return false
+	}
+	seen := false
+	for place := 0; place < len(bytes); {
+		character, length, _ := character_decode(bytes, place)
+		if length == 0 || character_hidden(character) {
+			return false
+		}
+		if !character_space(character) {
+			seen = true
+		}
+		place += length
+	}
+	return seen
+}
+
 // invalid_sequences_replace writes "?" in place of each byte of each invalid sequence of a
 // text, so that it becomes valid with the same length: a writer that must
 // keep each offset (the value runs of a line of the log) cleans a text so.

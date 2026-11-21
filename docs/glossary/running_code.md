@@ -100,6 +100,26 @@ A machine has several processors. The kernel keeps one processor record and one 
 
 Do not use: core, CPU, hart.
 
+### Browser machine
+
+A browser machine is a machine that a page of a web browser gives: the kernel built for WebAssembly, its processors as workers on one shared memory, and its devices played by the code of the page.
+
+A reader tries the system in a page, with nothing to install. The boot image is the image of the release, with the same hashes; only the kernel and the boot differ. The processes run their x86-64 code on the software processor, and the device services drive device models of the page. A browser machine has no IOMMU, no TPM and no Secure Boot. It is not a whole PC emulated in a page.
+
+The design: `src/md/features/browser_machine.md`.
+
+Do not use: web VM, wasm port, Linux in the browser (for this).
+
+### Software processor
+
+The software processor is the part of the kernel of a browser machine that runs the x86-64 code of the processes: it decodes their instructions, runs them, compiles the hot blocks to WebAssembly, and translates each address through the page tables of the kernel.
+
+It is the processor and the MMU of a browser machine. Its walk reads the tables that the kernel writes, in the format of x86-64, and gives the same page faults as the hardware. A thread stays its frame, so the scheduler, the debugger and the fault ring do not change. It adds no kernel operation.
+
+The design: `src/md/features/browser_machine.md`, "The software MMU".
+
+Do not use: CPU emulator, kwemu, interpreter (for this), JIT (for this).
+
 ### Processor record
 
 The processor record is the record that the kernel keeps for one processor: its kernel stack, its current thread, its page table, its frame cache, its counts and its observed kinds.
@@ -241,6 +261,36 @@ The machine parts page is one page that the root service writes once, before the
 Each part is a member of the closed enum `Machine_Part`: a screen with its size, the data disk, the disk of the measures, the network device, the sound device, the entropy device and the TPM. A part that the root service did not check is absent, never present by default. The input service, not the page, reads an absent PS/2 controller. A start row names the parts that it needs from the same enum.
 
 Do not use: hardware list, device tree, inventory.
+
+### Supervision
+
+Supervision is the rule that the starter of a process starts it again when it stops, and that the process takes its state back from its private store.
+
+The starter is the process that asked for the start: the core of the root service, the start policy, or any process that started a child. So the tree of supervision is the tree of the starts, and no second tree is declared. One for one is the rule; a restart group starts together. Designed, not built.
+
+The design: `src/md/features/supervision.md`.
+
+Do not use: supervisor, watchdog, process manager, respawn.
+
+### Restart group
+
+A restart group is a holder and the processes that hold one of its rings in their context, which its starter starts again together.
+
+A ring in a context slot cannot be given to a process again with no new start, so its holder and its clients stop and start as one: the holder first. The root service derives the group from the role table, and no list declares it. A connection that a client gets after its start is no reason for a group. Example: today the block service and the storage service, whose context holds the block ring.
+
+The design: `src/md/features/supervision.md`, "The restart strategies".
+
+Do not use: one for all, linked set, dependency group.
+
+### Restart bound
+
+The restart bound of a start row is the most restarts in its restart window; past it the row starts no more, and its starter escalates.
+
+The count is the field of restarts of the row, at most 16. The restart window is in seconds of the clock of the system, and its zero value is the whole run of the machine, so no clock decides the restarts of a row that names no window. A stop with the stop outcome `Done` or `Refused` starts no restart and does not count. A needed row past its bound stops the start policy, and the rescue starts.
+
+The design: `src/md/features/supervision.md`, "The restart bound".
+
+Do not use: restart intensity, start limit, burst.
 
 ### Card
 
@@ -1072,7 +1122,7 @@ Do not use: argv, argc, environment (for this), arguments.
 
 A context slot is one place of the context, a handle or a value, with the role that the starter and its process agree on.
 
-The context slots of a process that the root service starts are one table: the `GRANT_` constants of `src/library/support/system/grants.odin`. The root service writes each handle with `system.grant_put`, which refuses a context slot that holds a handle already, so a process never starts with a handle lost. A context slot is not a slot of a module, which holds the address of an export.
+The context slots of a process that the root service starts are one table: the `GRANT_` constants of `src/library/support/system/grants.odin`. The root service writes each handle with `system.grant_put`, which refuses a context slot that holds a handle already, so a process never starts with a handle lost. A context slot is not an import slot, which holds the address of an export.
 
 Example: the handle 7 is the call ring of the private store; the text region of a terminal is the handle 4.
 
@@ -1127,3 +1177,93 @@ The mapped ranges are the fixed ranges that the starter of a process mapped for 
 A process reads nothing at a range whose bit is clear (`fixed_addresses.ranges_mapped`).
 
 Do not use: mapping flags, present mask.
+
+### Process input
+
+A process input is a value that a process reads and that neither its own code nor its earlier process inputs fix.
+
+Examples: a completion of the kernel ring, a byte that another process wrote in a ring, the value of the cycle counter, the answer of `cpuid`, the order in which its threads run. Property 24 says that each one passes through a channel that the kernel can record. It is not the input of the desktop, the keys and the pointer, which reach a process as ring records: one channel among the others.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: nondeterminism, external event, side input.
+
+### Input point
+
+An input point is a place in the run of a thread where a process input can enter: a kernel entry, a fault, or an interrupt.
+
+While a process is recorded, nothing that it can read changes between two input points, except by its own threads. A kernel entry and a fault are at an instruction that the code fixes. An interrupt comes at any instruction, so the branch count places it; that is a later layer. Each input point has a number in the input history, and a replay reaches the same points in the same order.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: sync point, safe point.
+
+### Input history
+
+The input history of a process is each process input of that process, at its input point, in their order, which the kernel writes while the process is recorded.
+
+It is a ring of entries of 64 bytes in a memory object of the recorder. It holds the context, the module by its hash, the commands and the answers of each kernel entry, the bytes that the kernel wrote, the changed ranges of shared pages, the trapped values of the cycle counter and of `cpuid`, and each switch. It is as secret as the process. A replay reads it.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: trace (of a run), recording (a film), tape, replay log.
+
+### Recorded process
+
+A recorded process is a process whose kernel writes its input history while it runs.
+
+A holder of the process handle with the right `Debug` starts the record with `Record_Start`: the debugger service, or the creator of the process. While it is recorded, its threads run one at a time, its reads of the cycle counter and its `cpuid` fault, and its shared writers wait for its input points. A process that holds a device, the root service and a process that runs a guest cannot be recorded.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: traced process, tracee.
+
+### Point copy
+
+A point copy is a page that the kernel maps into a recorded process in place of a page that another party writes and that the process maps without Write, and that the kernel refreshes at each input point.
+
+The time page, the date page, the settings page and the fresh bytes page of a recorded process are point copies. At each input point the kernel compares the shared page with the copy, writes each changed range into the input history, and copies it. The writer of the page is never held. The budget of the recorder pays the page.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: shadow page, page snapshot.
+
+### Shared writer
+
+A shared writer of a recorded process is a process that maps with Write a memory object that the recorded process also maps with Write.
+
+The other side of a ring, of a call region or of a surface is one. A shared writer runs only while each thread of the recorded process is at an input point; the kernel writes the ranges that it changed into the input history before the kernel entry returns. A shared writer waits at most one turn: past it, the input history ends and the writer runs. Its placement and its share never change.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: co-writer.
+
+### Replay
+
+A replay is a run of a module, in a new process that the replayer made, whose process inputs come from an input history and from no other process.
+
+The kernel runs for real only the commands that build its address space and its threads, and answers each other command from the history. A replay holds no connection and no ring to another process, so it changes nothing outside itself. The debugger steps back by a replay from a checkpoint. A replay is a process for the debugger: breakpoints and watches work.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: playback, rerun.
+
+### Divergence
+
+A divergence is a replay that reaches an input point in another state than its input history.
+
+The kernel compares the commands that a thread writes at each kernel entry, and the instruction address and the stack pointer at each input point. A difference stops the replay with the number of the point and the two values. Its usual causes: an instruction that no fault catches, such as `rdrand` in code that does not ask `cpuid`, a history of another build, or a fault of the kernel.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: desync, mismatch.
+
+### Branch count
+
+The branch count of a thread is the count of the conditional branches that its user code retired, from a counter of the processor, which places an interrupt in an input history.
+
+With the instruction address and the registers, it names one instruction of the run, also inside a loop. A replay programs the counter to stop the thread a few branches before the count, then runs to the instruction with a breakpoint. It needs exact counters: QEMU with TCG has none. It is a later layer of the record; the first layer has no interrupt as an input point.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: ticks (of rr), instruction count.

@@ -239,6 +239,16 @@ The design: `docs/QUIC.md`, "7. `remote` over QUIC (built)".
 
 Do not use: build machine (for this), remote (for this).
 
+### Link relay
+
+A link relay is a server outside the system that carries the frames of the network device of a browser machine between the page and a network.
+
+A page cannot send a frame on a link, so the device model of the network sends each frame in a datagram of WebTransport to the relay, which routes it. The TCP and the QUIC of the system then reach the network end to end, and the page holds no network stack. A relay accepts the origins that it names, with a bound for each machine. It is not a proxy of streams.
+
+The design: `src/md/features/browser_machine.md`, "The devices of the page".
+
+Do not use: Wisp proxy, Ethernet tunnel.
+
 ### Remote service
 
 The remote service is the process `remote`: a QUIC server that takes each call of the host on a call stream, makes it as an isolated call of an export of a service, and writes the call answer on the same stream.

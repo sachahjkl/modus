@@ -6,7 +6,7 @@ import "core:strings"
 import "core:testing"
 
 // The parts of the tests: a code segment, a constant segment that the
-// loader never writes, a segment that the loader writes once (one slot and
+// loader never writes, a segment that the loader writes once (one import slot and
 // one rebase), and the data with the own-hash place.
 @(private = "file")
 CODE_OFFSET :: 0
@@ -40,7 +40,7 @@ Test_Storage :: struct {
 	records:          [2]Record_Description,
 	facts:            [1]Fact_Part,
 	imports:          [1][module.HASH_SIZE]u8,
-	slots:            [1]module.Slot,
+	import_slots:     [1]module.Import_Slot,
 	rebases:          [1]u64,
 }
 
@@ -80,13 +80,13 @@ test_parts :: proc(storage: ^Test_Storage) -> Module_Parts {
 	for &item in storage.imports[0] {
 		item = 0x5A
 	}
-	storage.slots = {{memory_offset = AFTER_LOAD_OFFSET, import_index = 1, export_index = 1}}
+	storage.import_slots = {{memory_offset = AFTER_LOAD_OFFSET, import_index = 1, export_index = 1}}
 	storage.rebases = {AFTER_LOAD_OFFSET + 8}
 	return {
 		segments = storage.segments[:],
 		exports = storage.exports[:],
 		imports = storage.imports[:],
-		slots = storage.slots[:],
+		import_slots = storage.import_slots[:],
 		rebases = storage.rebases[:],
 		records = storage.records[:],
 		facts = storage.facts[:],
@@ -279,6 +279,59 @@ exports_with_no_description_are_refused :: proc(t: ^testing.T) {
 	delete(file)
 }
 
+// A display text names an enum of the parts and a member of it, a
+// well-formed tag in its canonical case, and a text in its bound, after the
+// text before it: each edge is refused with the problem of the reader, and
+// the written file is read back last.
+@(test)
+member_texts_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
+	storage: Test_Storage
+	members := [2]Member_Description{{"slow", 0}, {"fast", 1}}
+	enums := [1]Enum_Description{{"Mode", 4, true, members[:]}}
+	expect_text_problem :: proc(t: ^testing.T, storage: ^Test_Storage, enums: []Enum_Description, texts: []Member_Text_Description, index: u64, problem: module.Member_Text_Problem, loc := #caller_location) {
+		parts := test_parts(storage)
+		parts.enums = enums
+		parts.member_texts = texts
+		expect_refusal(t, parts, .Member_Text_Not_Valid, .Member_Texts, index, loc)
+		_, needed := file_size_needed(parts)
+		testing.expect_value(t, needed.value, u64(problem), loc)
+	}
+	past_bound := strings.repeat("a", module.MEMBER_TEXT_CAPACITY + 1, context.temp_allocator)
+	expect_text_problem(t, &storage, enums[:], {{0, 0, "en", "Slow"}}, 0, .No_Enum)
+	expect_text_problem(t, &storage, enums[:], {{2, 0, "en", "Slow"}}, 0, .No_Enum)
+	expect_text_problem(t, &storage, enums[:], {{max(u32), 0, "en", "Slow"}}, 0, .No_Enum)
+	expect_text_problem(t, &storage, nil, {{1, 0, "en", "Slow"}}, 0, .No_Enum)
+	expect_text_problem(t, &storage, enums[:], {{1, 2, "en", "Fast"}}, 0, .No_Member)
+	expect_text_problem(t, &storage, enums[:], {{1, max(u32), "en", "Fast"}}, 0, .No_Member)
+	// A tag: empty, not well-formed, past its bound, and in another case
+	// than its canonical one, which the writer never changes.
+	for tag in ([]string{"", "-fr", "fr-", "fr--CA", "x-", "en-abcdefghi", "\xc3\xa9n", "en-aaaaaaaa-bbbbbbbb-cccccccc-dddddd", "EN", "fr-ca", "zh-hant-tw"}) {
+		expect_text_problem(t, &storage, enums[:], {{1, 0, tag, "Slow"}}, 0, .Bad_Tag)
+	}
+	for text in ([]string{"", past_bound, "Slow\n", "Sl\xffow", "Sl\u200bow", "\u202eSlow", "Slow\ufeff", " ", "\u3000"}) {
+		expect_text_problem(t, &storage, enums[:], {{1, 0, "en", text}}, 0, .Bad_Text)
+	}
+	expect_text_problem(t, &storage, enums[:], {{1, 0, "en", "Slow"}, {1, 0, "en", "Fast"}}, 1, .Twice)
+	expect_text_problem(t, &storage, enums[:], {{1, 0, "fr", "Lent"}, {1, 0, "en", "Slow"}}, 1, .Out_Of_Order)
+	expect_text_problem(t, &storage, enums[:], {{1, 1, "en", "Fast"}, {1, 0, "en", "Slow"}}, 1, .Out_Of_Order)
+	// The success comes last: a text of the largest length, two tags of
+	// one member, a tag at its bound, then the file read back. A member
+	// with no text shows its name.
+	parts := test_parts(&storage)
+	parts.enums = enums[:]
+	longest := strings.repeat("b", module.MEMBER_TEXT_CAPACITY, context.temp_allocator)
+	texts := []Member_Text_Description{{1, 1, "en", longest}, {1, 1, "en-aaaaaaa-bbbbbbbb-cccccccc-dddddd", "Fast"}, {1, 1, "fr-CA", "Vite"}}
+	parts.member_texts = texts
+	file := write_to_memory(t, parts)
+	defer delete(file)
+	row, problem := module.member_texts_check(file)
+	testing.expect(t, row == 0 && problem == .None)
+	described, _ := module.enum_type(file, 1)
+	testing.expect_value(t, module.member_display_text(file, 1, described, 1, nil), longest)
+	testing.expect_value(t, module.member_display_text(file, 1, described, 1, {"fr-CA"}), "Vite")
+	testing.expect_value(t, module.member_display_text(file, 1, described, 0, {"fr-CA"}), "slow")
+}
+
 // An Enum parameter names an enum of the parts and a getter among the
 // exports, an optional bit is on an Enum parameter, an Enum result names an
 // enum, and a member has a name of a member: each edge is refused, and the
@@ -425,27 +478,27 @@ relocations_outside_writable_data_are_refused :: proc(t: ^testing.T) {
 	storage: Test_Storage
 	parts := test_parts(&storage)
 
-	// A slot that names no import, one past the imports, no export.
-	storage.slots[0].import_index = 0
-	expect_refusal(t, parts, .Slot_Not_Valid, .Slots, 0)
-	storage.slots[0].import_index = u32(len(storage.imports)) + 1
-	expect_refusal(t, parts, .Slot_Not_Valid, .Slots, 0)
+	// An import slot that names no import, one past the imports, no export.
+	storage.import_slots[0].import_index = 0
+	expect_refusal(t, parts, .Import_Slot_Not_Valid, .Import_Slots, 0)
+	storage.import_slots[0].import_index = u32(len(storage.imports)) + 1
+	expect_refusal(t, parts, .Import_Slot_Not_Valid, .Import_Slots, 0)
 	parts = test_parts(&storage)
-	storage.slots[0].export_index = 0
-	expect_refusal(t, parts, .Slot_Not_Valid, .Slots, 0)
+	storage.import_slots[0].export_index = 0
+	expect_refusal(t, parts, .Import_Slot_Not_Valid, .Import_Slots, 0)
 
-	// A slot in the code, off 8 bytes, and across the end of its segment;
+	// An import slot in the code, off 8 bytes, and across the end of its segment;
 	// its last 8 bytes are taken.
 	parts = test_parts(&storage)
-	storage.slots[0].memory_offset = CODE_OFFSET
-	expect_refusal(t, parts, .Slot_Not_Valid, .Slots, 0)
-	storage.slots[0].memory_offset = AFTER_LOAD_OFFSET + 4
-	expect_refusal(t, parts, .Slot_Not_Valid, .Slots, 0)
-	storage.slots[0].memory_offset = MEMORY_SIZE - 4
-	expect_refusal(t, parts, .Slot_Not_Valid, .Slots, 0)
-	storage.slots[0].memory_offset = MEMORY_SIZE
-	expect_refusal(t, parts, .Slot_Not_Valid, .Slots, 0)
-	storage.slots[0].memory_offset = MEMORY_SIZE - 8
+	storage.import_slots[0].memory_offset = CODE_OFFSET
+	expect_refusal(t, parts, .Import_Slot_Not_Valid, .Import_Slots, 0)
+	storage.import_slots[0].memory_offset = AFTER_LOAD_OFFSET + 4
+	expect_refusal(t, parts, .Import_Slot_Not_Valid, .Import_Slots, 0)
+	storage.import_slots[0].memory_offset = MEMORY_SIZE - 4
+	expect_refusal(t, parts, .Import_Slot_Not_Valid, .Import_Slots, 0)
+	storage.import_slots[0].memory_offset = MEMORY_SIZE
+	expect_refusal(t, parts, .Import_Slot_Not_Valid, .Import_Slots, 0)
+	storage.import_slots[0].memory_offset = MEMORY_SIZE - 8
 	file := write_to_memory(t, parts)
 	delete(file)
 
@@ -525,8 +578,8 @@ tables_past_their_bound_are_refused :: proc(t: ^testing.T) {
 	one := Export_Part{name = ENTRY_EXPORT_NAME}
 	exports := ([^]Export_Part)(&one)[:int(TABLE_RECORDS_MOST)]
 	expect_refusal(t, {exports = exports}, .Table_Past_Bound, .Exports, 0)
-	slot: module.Slot
-	expect_refusal(t, {slots = ([^]module.Slot)(&slot)[:int(TABLE_RECORDS_MOST)]}, .Table_Past_Bound, .Slots, 0)
+	import_slot: module.Import_Slot
+	expect_refusal(t, {import_slots = ([^]module.Import_Slot)(&import_slot)[:int(TABLE_RECORDS_MOST)]}, .Table_Past_Bound, .Import_Slots, 0)
 
 	// The string table: its zero byte and a text of the rest of the bound,
 	// then one byte more. The writer reads the length of a text, and no
@@ -669,8 +722,8 @@ rebases_round_trip :: proc(t: ^testing.T) {
 }
 
 // A segment that is read-only after the load and that no loader writes (no
-// rebase and no slot in its pages) becomes a constant segment; with a
-// rebase or with a slot it keeps its flags. A location at the first byte
+// rebase and no import slot in its pages) becomes a constant segment; with a
+// rebase or with an import slot it keeps its flags. A location at the first byte
 // after the segment is not in it, and a segment of another kind never
 // changes.
 @(test)
@@ -678,18 +731,18 @@ a_segment_that_no_loader_writes_is_only_read :: proc(t: ^testing.T) {
 	after_load := module.Segment_Flags{.Read, .Write, .Read_Only_After_Load}
 	segment := module.Segment{memory_offset = 2 * module.PAGE_SIZE, memory_size = module.PAGE_SIZE, flags = after_load}
 	outside := [?]u64{0, 2 * module.PAGE_SIZE - 8, 3 * module.PAGE_SIZE}
-	slots_outside := [?]module.Slot{{memory_offset = 3 * module.PAGE_SIZE, import_index = 1, export_index = 1}}
-	// No rebase and no slot at all, then some in the other segments only.
+	import_slots_outside := [?]module.Import_Slot{{memory_offset = 3 * module.PAGE_SIZE, import_index = 1, export_index = 1}}
+	// No rebase and no import slot at all, then some in the other segments only.
 	testing.expect_value(t, segment_flags_after_the_relocations(segment, nil, nil), module.Segment_Flags{.Read})
-	testing.expect_value(t, segment_flags_after_the_relocations(segment, outside[:], slots_outside[:]), module.Segment_Flags{.Read})
+	testing.expect_value(t, segment_flags_after_the_relocations(segment, outside[:], import_slots_outside[:]), module.Segment_Flags{.Read})
 	// A rebase at its first word, and at its last word.
 	first := [?]u64{2 * module.PAGE_SIZE}
 	last := [?]u64{3 * module.PAGE_SIZE - 8}
 	testing.expect_value(t, segment_flags_after_the_relocations(segment, first[:], nil), after_load)
 	testing.expect_value(t, segment_flags_after_the_relocations(segment, last[:], nil), after_load)
-	// A slot.
-	slots_inside := [?]module.Slot{{memory_offset = 2 * module.PAGE_SIZE + 16, import_index = 1, export_index = 1}}
-	testing.expect_value(t, segment_flags_after_the_relocations(segment, outside[:], slots_inside[:]), after_load)
+	// An import slot.
+	import_slots_inside := [?]module.Import_Slot{{memory_offset = 2 * module.PAGE_SIZE + 16, import_index = 1, export_index = 1}}
+	testing.expect_value(t, segment_flags_after_the_relocations(segment, outside[:], import_slots_inside[:]), after_load)
 	// The data and the code of a module keep their flags with no rebase.
 	data := module.Segment{memory_offset = 2 * module.PAGE_SIZE, memory_size = module.PAGE_SIZE, flags = {.Read, .Write}}
 	code := module.Segment{memory_size = module.PAGE_SIZE, flags = {.Read, .Execute}}
@@ -710,7 +763,7 @@ a_written_module_is_valid :: proc(t: ^testing.T) {
 	testing.expect_value(t, head.entry_export, 1)
 	testing.expect_value(t, head.memory_size, MEMORY_SIZE)
 
-	// The segments: the constant one lost Write, the one with the slot and
+	// The segments: the constant one lost Write, the one with the import slot and
 	// the rebase kept it, and the zero bytes at the end are not stored.
 	expected_flags := [?]module.Segment_Flags{{.Read, .Execute}, {.Read}, {.Read, .Write, .Read_Only_After_Load}, {.Read, .Write}}
 	expected_sizes := [?]u64{2, 3, 0, 0}
@@ -723,11 +776,11 @@ a_written_module_is_valid :: proc(t: ^testing.T) {
 	code_segment, _ := module.record(file, .Segments, 1, module.Segment)
 	testing.expect_value(t, file[code_segment.file_offset + 1], storage.code[1])
 
-	// The import, the slot and the rebase.
+	// The import, the import slot and the rebase.
 	imported, _ := module.record(file, .Imports, 1, module.Import)
 	testing.expect_value(t, imported.hash, storage.imports[0])
-	slot, _ := module.record(file, .Slots, 1, module.Slot)
-	testing.expect_value(t, slot, storage.slots[0])
+	import_slot, _ := module.record(file, .Import_Slots, 1, module.Import_Slot)
+	testing.expect_value(t, import_slot, storage.import_slots[0])
 	memory := make([]u8, MEMORY_SIZE)
 	defer delete(memory)
 	testing.expect_value(t, module.rebase(file, memory, module.PAGE_SIZE), module.Error.None)

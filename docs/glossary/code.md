@@ -14,7 +14,7 @@ Do not use: unit, library, executable, binary, package, DLL, shared object. "Ker
 
 An export is a function that a module makes callable from outside the module, with a description of its parameters and its result.
 
-An export is the only thing that a module offers: a reader reaches data through a function. Its record in the Functions table of the module metadata gives its name, its code, its parameters, its result and its error record, so a caller needs no other knowledge. One export serves a direct call through a slot, an isolated call through a call ring, and a command of the console. Example: `sample.sum_values(readings: Table(Reading, Read)) -> Integer`. An export is not a symbol of an object file: no search by name happens at run time.
+An export is the only thing that a module offers: a reader reaches data through a function. Its record in the Functions table of the module metadata gives its name, its code, its parameters, its result and its error record, so a caller needs nothing else. One export serves a direct call through an import slot, an isolated call through a call ring, and a command of the console. Example: `sample.sum_values(readings: Table(Reading, Read)) -> Integer`. An export is not a symbol of an object file: no search by name happens at run time.
 
 The design: `docs/MODULE_CONTRACT.md`, "4. The call form".
 
@@ -80,6 +80,26 @@ The design: `src/md/infrastructure/sdk.md`, "The contract description".
 
 Do not use: interface definition, IDL, schema.
 
+### Role contract
+
+A role contract is a file of the module format with no code that describes a role: its exports, its record types, its record outputs and its record inputs, named by the hash of the file.
+
+A module lists the hashes of the role contracts that it fills. The root service gives it the role only when its descriptions pass the check of a replacement against the contract. A new version of a contract is a new hash; a holder can fill two. A client is built against one hash and asks for it when it connects. It is not the contract description, which describes the contract packages for other languages.
+
+The design: `src/md/features/roles_and_contracts.md`.
+
+Do not use: interface definition, protocol (for this), service type.
+
+### Conformance suite
+
+A conformance suite is the set of host cases and machine cases that each holder of a role must pass, written against the role contract and never against one holder.
+
+The tool runs the suite of a role against each module that a default role table or a plan of the tests names, so a role that is replaceable is a test that can fail. The suite checks the facts and the records of the contract only. A test of the look or the lines of one holder is a test of that holder, not of the role.
+
+The design: `src/md/features/roles_and_contracts.md`, "Conformance".
+
+Do not use: compliance test, certification, test kit.
+
 ### Language binding
 
 A language binding is the set of files that let a program of another language read and write the records of the contracts and call the exports of the library modules.
@@ -134,7 +154,7 @@ Do not use: override list, LD_PRELOAD, redirection table.
 
 The loader is the code in user space that builds a process or a module space from a module and its imports (`src/library/support/system/load.odin`).
 
-The kernel loads no module: it maps memory objects and records what the loader asserts. The loader finds each module by hash in its load source, maps its segments, rebases them, binds each slot, and writes a module record. On a failure the module space stays as it was, and the caller receives a load error. The loader runs in the process that starts another process, such as the root service, or in a process that loads a module for itself. It has no search path.
+The kernel loads no module: it maps memory objects and records what the loader asserts. The loader finds each module by hash in its load source, maps its segments, rebases them, binds each import slot, and writes a module record. On a failure the module space stays as it was, and the caller receives a load error. The loader runs in the process that starts another process, such as the root service, or in a process that loads a module for itself. It has no search path.
 
 The design: `docs/MODULE_CONTRACT.md`, "2. Loading", and `docs/ARCHITECTURE.md`, "U3. Module store and loader".
 
@@ -154,7 +174,7 @@ Do not use: shared library, image cache, page cache.
 
 Shared code is the pages of a prepared module that each process of the module maps without Write: its code, its constants and its data that is read-only after the rebase.
 
-Shared code is why one module in many processes costs its pages once. Each process still has its own copy of each writable segment, made from the bytes of the file. Shared code needs code that the loader never writes: a call to another module goes through a slot in data, so the code pages stay identical to the file.
+Shared code is why one module in many processes costs its pages once. Each process still has its own copy of each writable segment, made from the bytes of the file. Shared code needs code that the loader never writes: a call to another module goes through an import slot in data, so the code pages stay identical to the file.
 
 A merge of two modules into one makes a new hash, and two processes that merge the same module do not share its pages.
 
@@ -162,15 +182,15 @@ The design: `docs/MODULE_CONTRACT.md`, "2. Loading".
 
 Do not use: text segment, shared object.
 
-### Slot
+### Import slot
 
-A slot is 8 bytes of data of a module that the loader writes with the address of one export of an import.
+An import slot is 8 bytes of data of a module that the loader writes with the address of one export of an import.
 
-A call to another module is one indirect call through a slot: `call *slot(%rip)`. So the code never changes with the place of the other module, and code pages stay shared. After the bind the loader makes the slots read-only. A slot is bound once, at load, with no lazy binding: a missing export fails the load, never a later call. Measured: a call through a slot costs about 3.5 ns in the process `imports`.
+A call to another module is one indirect call through an import slot: `call *slot(%rip)`. So the code never changes with the place of the other module, and code pages stay shared. After the bind the loader makes the import slots read-only. An import slot is bound once, at load, with no lazy binding: a missing export fails the load, never a later call. Measured: a call through an import slot costs about 3.5 ns in the process `imports`.
 
 The design: `docs/MODULE_CONTRACT.md`, "3. Static is dynamic".
 
-Do not use: GOT entry, import address, stub.
+Do not use: GOT entry, import address, stub, slot (alone).
 
 ### Load source
 
@@ -310,7 +330,7 @@ Do not use: error code, errno value, exception type.
 
 A frame pointer is the register `rbp` of a function: the address of its frame on the stack, where the frame pointer and the return address of its caller are.
 
-Every module keeps frame pointers, so that the kernel, a debugger or a profiler walks the stack with no unwind tables and runs no code of the process. The modus tool compiles each module through LLVM with `--frame-pointer=all`. The cost, measured: the code of `console` is 0.45 % larger, and a call through a slot is about 0.4 ns slower.
+Every module keeps frame pointers, so that the kernel, a debugger or a profiler walks the stack with no unwind tables and runs no code of the process. The modus tool compiles each module through LLVM with `--frame-pointer=all`. The cost, measured: the code of `console` is 0.45 % larger, and a call through an import slot is about 0.4 ns slower.
 
 The rule: `docs/MODULE_CONTRACT.md`, "Closed rules".
 
@@ -404,6 +424,18 @@ The design: `docs/MODULE_CONTRACT.md`, "Enum parameters".
 
 Do not use: enumerator, enum case, enum variant.
 
+### Display text
+
+A display text is the text that a principal reads for a member, for one language tag, which a module file holds apart from the name of the member.
+
+The palette shows it on a button and in the name of an entry, and the completion beside the name of the member. A line never types it: the line types the name, so a line means one thing in each language. A member with no display text shows its name. A translation adds rows of another language to the table `Member_Texts`, with no change of the code or of the names.
+
+Example: the scale `.fourteen_eighths` has the English display text "1.75".
+
+The design: `docs/MODULE_CONTRACT.md`, "The display text of a member".
+
+Do not use: member label, member caption, member alias.
+
 ### Getter
 
 A getter is the export that an Enum parameter names in its module file to give the member in use: it takes no parameter, gives no error record, and gives the same enum.
@@ -492,7 +524,7 @@ Do not use: initrd, ramdisk.
 
 Position-independent code runs correctly at any address with no change to its bytes.
 
-All code of the system is position-independent: a module reaches its own data relative to the instruction, and another module through a slot. The loader writes only data (the rebases and the slots), never code. So code pages stay shared and never writable.
+All code of the system is position-independent: a module reaches its own data relative to the instruction, and another module through an import slot. The loader writes only data (the rebases and the import slots), never code. So code pages stay shared and never writable.
 
 The rule: `docs/PROPERTIES.md`, "10. One code module".
 
@@ -610,7 +642,7 @@ Do not use: symbol server, debug archive.
 
 ### Module file writer
 
-The module file writer is the contract package that writes a valid module file from its parts: the segments, the exports, the imports, the slots, the rebases, the records, the log facts and the budget.
+The module file writer is the contract package that writes a valid module file from its parts: the segments, the exports, the imports, the import slots, the rebases, the records, the log facts and the budget.
 
 Its package is `modus:contract/module_file_writer`. The tool and each program of modus that writes a module compile it in, so the format has one writer. It writes into memory that the caller gives, with no allocator and no kernel operation, and refuses a part that a loader or a reader would refuse. The tool fills its parts from the linked file of `lld`; an assembler fills them from its labels. It is not the module writer of a module record.
 
@@ -877,3 +909,13 @@ The tool of release N − 1 builds the source of release N, which gives N₁; N�
 The design: `src/md/features/bootstrap.md`.
 
 Do not use: stage comparison, triple test.
+
+### Turn
+
+A turn is the unit of each angle in the system: 1 is a whole circle, 0.25 a right angle.
+
+An angle in code is a value in turns, and its type or its name says so: `angle_turns`, `phase_turns`. The trigonometric routines of the system, `modus:support/trigonometry`, take turns. A quarter, a half and an eighth of a turn are exact in binary, and the code holds no π. A derivative of a function of an angle in turns gains a factor of 2π: code that takes a formula of calculus from a book must add it. It is not the turn of a thread on a processor.
+
+The design: `src/md/data/angles_in_turns.md`.
+
+Do not use: radian, degree (for an angle in code).

@@ -33,6 +33,7 @@ BYTE_LAYOUT_FORMAT_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/format.o
 BYTE_LAYOUT_FACTS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/facts.odin"
 BYTE_LAYOUT_RECORD_STREAMS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/record_streams.odin"
 BYTE_LAYOUT_ENUMS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/enums.odin"
+BYTE_LAYOUT_MEMBER_TEXTS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/member_texts.odin"
 BYTE_LAYOUT_OUTPUT_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/output/output.odin"
 BYTE_LAYOUT_WIRING_LIST_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/output/wiring_list.odin"
 BYTE_LAYOUT_DRAW_RECORD_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/draw_record/draw_record.odin"
@@ -102,7 +103,7 @@ byte_layout_table_sources :: proc() -> [module.Table_Kind]Byte_Layout_Source {
 		.None          = {what = "the entry 0 of the table directory names no table"},
 		.Segments      = {key = "module.Segment", file = file, declaration = "Segment", info = type_info_of(module.Segment), what = "one record of the table Segments"},
 		.Imports       = {key = "module.Import", file = file, declaration = "Import", info = type_info_of(module.Import), what = "one record of the table Imports"},
-		.Slots         = {key = "module.Slot", file = file, declaration = "Slot", info = type_info_of(module.Slot), what = "one record of the table Slots"},
+		.Import_Slots  = {key = "module.Import_Slot", file = file, declaration = "Import_Slot", info = type_info_of(module.Import_Slot), what = "one record of the table Import_Slots"},
 		.Exports       = {key = "module.Export", file = file, declaration = "Export", info = type_info_of(module.Export), what = "one record of the table Exports"},
 		.Rebases       = {key = "module.Rebases", file = file, declaration = "REBASE_WORD_SIZE", info = type_info_of(u64), word_size = module.REBASE_WORD_SIZE, what = "one word of the table Rebases"},
 		.Functions     = {key = "module.Function", file = file, declaration = "Function", info = type_info_of(module.Function), what = "one record of the table Functions"},
@@ -117,6 +118,7 @@ byte_layout_table_sources :: proc() -> [module.Table_Kind]Byte_Layout_Source {
 		.Record_Inputs  = {key = "module.Record_Input", file = BYTE_LAYOUT_RECORD_STREAMS_FILE, declaration = "Record_Input", info = type_info_of(module.Record_Input), what = "one record of the table Record_Inputs"},
 		.Enums          = {key = "module.Enum_Type", file = BYTE_LAYOUT_ENUMS_FILE, declaration = "Enum_Type", info = type_info_of(module.Enum_Type), what = "one record of the table Enums"},
 		.Members        = {key = "module.Member", file = BYTE_LAYOUT_ENUMS_FILE, declaration = "Member", info = type_info_of(module.Member), what = "one record of the table Members"},
+		.Member_Texts   = {key = "module.Member_Text", file = BYTE_LAYOUT_MEMBER_TEXTS_FILE, declaration = "Member_Text", info = type_info_of(module.Member_Text), what = "one record of the table Member_Texts"},
 	}
 }
 

@@ -33,7 +33,7 @@ import "modustool:foundation"
 // of an assembly file of the module: it is not compared.
 //
 // The check is closed from the side of the linked file: each symbol that
-// became a slot of the importer has a compared declaration
+// became an import slot of the importer has a compared declaration
 // (declared_symbols_problem). So a declaration that this file does not
 // find stops the build, and does not pass unread.
 
@@ -93,7 +93,7 @@ attribute_text :: proc(attributes: []^ast.Attribute, name: string) -> (text: str
 // foreign_declarations_collect adds each procedure of each `foreign` block
 // of a list of statements, also those of a block inside a `when`: a
 // module can declare an import for one build setting only. A block in
-// the body of a procedure is not read: the check of the slots
+// the body of a procedure is not read: the check of the import slots
 // (declared_symbols_problem) then finds a symbol with no declaration.
 foreign_declarations_collect :: proc(statements: []^ast.Stmt, list: ^[dynamic]Foreign_Declaration) {
 	for statement in statements {
@@ -135,7 +135,7 @@ foreign_declarations_collect :: proc(statements: []^ast.Stmt, list: ^[dynamic]Fo
 				// text of the link_prefix of the block. A name that is not a
 				// text in the source (a constant) is not known here: the
 				// declaration then matches no export, and the check of the
-				// slots names the symbol that has no declaration.
+				// import slots names the symbol that has no declaration.
 				link_name := identifier.name
 				if prefix, has_prefix, prefix_is_text := attribute_text(node.attributes[:], "link_prefix"); has_prefix {
 					link_name = prefix_is_text ? strings.concatenate({prefix, identifier.name}, context.temp_allocator) : ""
@@ -516,7 +516,7 @@ Importable_Export :: struct {
 // one source with the export of that name, if one of `exports` has it. It
 // prints each difference, and gives the count of the declarations that it
 // compared. compared_names receives the symbol of each compared
-// declaration, for the check of the slots (declared_symbols_problem).
+// declaration, for the check of the import slots (declared_symbols_problem).
 import_declarations_of_file_agree :: proc(importer: string, path: string, exports: []Importable_Export, compared_names: ^[dynamic]string = nil) -> (compared: int, ok: bool) {
 	state: Describe_State
 	target := package_state_of_file(path, &state) or_return
@@ -582,9 +582,9 @@ source_of_the_repository :: proc(path: string) -> (relative: string, ok: bool) {
 	return "", false
 }
 
-// declared_symbols_problem says which symbol that became a slot of the
+// declared_symbols_problem says which symbol that became an import slot of the
 // importer has no compared declaration. "": each has one or more.
-// slot_symbols can name a symbol several times (one slot for each place
+// import_slot_symbols can name a symbol several times (one import slot for each place
 // that holds its address); compared_names has one name for each compared
 // declaration.
 //
@@ -592,14 +592,14 @@ source_of_the_repository :: proc(path: string) -> (relative: string, ok: bool) {
 // that the tool did not find (a `foreign` block in the body of a
 // procedure, a link_name or a link_prefix that is a constant and not a
 // text) is not compared, and the comparison of the others says nothing of
-// it. The call is still in the code, so its symbol is a slot: a slot with
+// it. The call is still in the code, so its symbol is an import slot: an import slot with
 // no compared declaration stops the build. Two declarations of one symbol
 // are allowed: each one is compared with the same description, so each is
 // the call form of the export. A module and a package that it compiles
 // can both declare an export, one of them in a `when` that this build
 // leaves out.
-declared_symbols_problem :: proc(slot_symbols: []string, compared_names: []string) -> string {
-	for symbol in slot_symbols {
+declared_symbols_problem :: proc(import_slot_symbols: []string, compared_names: []string) -> string {
+	for symbol in import_slot_symbols {
 		if !slice.contains(compared_names, symbol) {
 			return fmt.tprintf("the import %s is called, and the tool found no declaration of it to compare: declare it in a `foreign` block at the level of the file (or of a `when` there), with its name or with link_name as a text", symbol)
 		}
@@ -610,11 +610,11 @@ declared_symbols_problem :: proc(slot_symbols: []string, compared_names: []strin
 // import_declarations_check is the check of the conversion of a module:
 // each `foreign` declaration of the sources that the compiler read for
 // this module agrees with the description of the export that it names, in
-// the module file of an import, and each symbol that became a slot of the
-// module (slot_symbols, from convert) has such a declaration. A
+// the module file of an import, and each symbol that became an import slot of the
+// module (import_slot_symbols, from convert) has such a declaration. A
 // source is parsed only when it has the word `foreign` and the name of an
 // export of an import.
-import_declarations_check :: proc(build: foundation.Module_Build, imports: []Import_File, slot_symbols: []string) -> bool {
+import_declarations_check :: proc(build: foundation.Module_Build, imports: []Import_File, import_slot_symbols: []string) -> bool {
 	if len(imports) == 0 {
 		return true
 	}
@@ -657,7 +657,7 @@ import_declarations_check :: proc(build: foundation.Module_Build, imports: []Imp
 		agree &&= file_agrees
 	}
 	// Each call of an import went through a declaration that was compared.
-	if problem := declared_symbols_problem(slot_symbols, compared_names[:]); problem != "" {
+	if problem := declared_symbols_problem(import_slot_symbols, compared_names[:]); problem != "" {
 		fmt.eprintfln("modustool: convert %s: %s", build.name, problem)
 		return false
 	}
@@ -666,8 +666,8 @@ import_declarations_check :: proc(build: foundation.Module_Build, imports: []Imp
 
 // module_is_a_library_check refuses a library module with a segment that
 // the loader writes and that is read-only after the load: a segment that
-// holds a rebase (a table of addresses: of texts, of procedures) or a slot
-// (an import). The loader writes it for one base, so a starter keeps one
+// holds a rebase (a table of addresses: of texts, of procedures) or an
+// import slot. The loader writes it for one base, so a starter keeps one
 // prepared part of it for each address where an importer has the module:
 // with many importers, its table of prepared modules fills, and the next
 // process does not start (src/library/support/system, load.odin).
@@ -676,12 +676,12 @@ import_declarations_check :: proc(build: foundation.Module_Build, imports: []Imp
 // not such a segment: the module file writer gives it the flags of a
 // constant segment (module_file_writer.segment_flags_after_the_relocations),
 // so the flag that this check
-// reads is set only where a rebase or a slot is.
+// reads is set only where a rebase or an import slot is.
 module_is_a_library_check :: proc(name: string, file: []u8) -> bool {
 	for index in 1 ..< module.count(file, .Segments) {
 		segment, _ := module.record(file, .Segments, index, module.Segment)
 		if .Read_Only_After_Load in segment.flags {
-			fmt.eprintfln("modustool: convert %s: a library module has a segment that the loader writes and that is read-only after the load (%d bytes at offset %x): it holds a rebase (a table of addresses: of texts, of procedures) or a slot (an import). Remove the table or the import: each importer would need its own prepared part of the module", name, segment.memory_size, segment.memory_offset)
+			fmt.eprintfln("modustool: convert %s: a library module has a segment that the loader writes and that is read-only after the load (%d bytes at offset %x): it holds a rebase (a table of addresses: of texts, of procedures) or an import slot. Remove the table or the import: each importer would need its own prepared part of the module", name, segment.memory_size, segment.memory_offset)
 			return false
 		}
 	}

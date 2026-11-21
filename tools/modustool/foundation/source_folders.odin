@@ -120,13 +120,17 @@ LOG_FACT_ATTRIBUTE_NAME :: "log_fact"
 // the attribute of a fact type.
 ENUM_GETTERS_ATTRIBUTE_NAME :: "enum_getters"
 OPTIONAL_PARAMETERS_ATTRIBUTE_NAME :: "optional_parameters"
+// The name of the attribute of a declared table of display texts of the
+// members of an enum, whose value is the language of the texts
+// (src/md/features/enum_parameters.md, "The display text of a member").
+MEMBER_TEXTS_ATTRIBUTE_NAME :: "member_texts"
 // The flag of the compiler that accepts the attributes that the tool reads.
 // Each command of the tool that compiles a package of src/ gives it, with
 // the flag of the library: the compile of a module, of the kernel and of
 // the boot program, each host test, and each compile and check of this
 // tool, which compiles packages of src/ in. flake.nix gives the same flag
 // when it builds this tool.
-CUSTOM_ATTRIBUTES_FLAG :: "-custom-attribute:" + LOG_FACT_ATTRIBUTE_NAME + "," + ENUM_GETTERS_ATTRIBUTE_NAME + "," + OPTIONAL_PARAMETERS_ATTRIBUTE_NAME
+CUSTOM_ATTRIBUTES_FLAG :: "-custom-attribute:" + LOG_FACT_ATTRIBUTE_NAME + "," + ENUM_GETTERS_ATTRIBUTE_NAME + "," + OPTIONAL_PARAMETERS_ATTRIBUTE_NAME + "," + MEMBER_TEXTS_ATTRIBUTE_NAME
 
 // The second source library: the kernel parts, the pure packages in the
 // folders under src/kernel that the kernel alone compiles in

@@ -223,7 +223,7 @@ Clipboard_Problem :: enum {
 	Empty, // No byte.
 	Too_Large, // Past CLIPBOARD_TEXT_LIMIT, or past the room of the field that pastes.
 	Not_Text, // A byte that starts no well-formed sequence of UTF-8, or a control character.
-	Hidden_Character, // A character that a reader does not see, or that changes the order of the text (character_hidden).
+	Hidden_Character, // A character that a reader does not see, or that changes the order of the text (text_encoding.character_hidden).
 	Unknown_Kind, // A kind that this process does not read.
 	Not_Given, // The handle of a paste is not memory with Read that the compositor gave through the ring.
 	Too_Small, // The memory of a paste does not hold its count of bytes.
@@ -265,26 +265,14 @@ clipboard_text_problem :: proc "contextless" (text: []u8, room: int) -> Clipboar
 		if length == 0 {
 			break
 		}
-		if character_hidden(character) {
+		// A pasted text with a hidden character could show as another text,
+		// in a line of the console that the principal then runs.
+		if text_encoding.character_hidden(character) {
 			return .Hidden_Character
 		}
 		place += length
 	}
 	return .None
-}
-
-// character_hidden says if a character is one that a reader does not see,
-// or one that changes the order in which a text shows: the spaces and the
-// joiners of no width, the marks and the embeddings of direction, the
-// isolates, the separators of lines and of paragraphs, and the mark of the
-// byte order. A pasted text with one of them could show as another text,
-// in a line of the console that the principal then runs.
-character_hidden :: proc "contextless" (character: rune) -> bool {
-	switch character {
-	case 0x200B ..= 0x200F, 0x202A ..= 0x202E, 0x2066 ..= 0x2069, 0x2028, 0x2029, 0xFEFF:
-		return true
-	}
-	return false
 }
 
 ACT_NAME_SET_CAPACITY :: 6 // The act names of one window: the values of one record after its count.

@@ -17,7 +17,7 @@ valid_texts_pass :: proc(t: ^testing.T) {
 		" ",
 		"~",
 		"café",
-		" ", // C2 A0: the first code point after the controls of C1.
+		"\u00a0", // C2 A0: the first code point after the controls of C1.
 		"߿",
 		"ࠀ",
 		"퟿", // ED 9F BF: the last code point before the surrogates.
@@ -174,4 +174,29 @@ encode_is_the_reverse_of_decode :: proc(t: ^testing.T) {
 		testing.expectf(t, character_encode(refused, buffer[:]) == 0, "the code point %x must be refused", refused)
 	}
 	testing.expect_value(t, character_encode(0x20AC, buffer[:2]), 0)
+}
+
+// A display text is refused when a reader would read another text: each
+// hidden character at the first and the last code point of each range, in
+// the middle and alone; a text of spaces only, of each kind of space; the
+// empty text; a broken sequence. The code points just outside each range,
+// another script that looks like Latin, and a space between words pass.
+@(test)
+a_display_text_with_a_hidden_character_or_no_visible_one_is_refused :: proc(t: ^testing.T) {
+	hidden := [?]rune{0x200B, 0x200F, 0x202A, 0x202E, 0x2066, 0x2069, 0x2028, 0x2029, 0xFEFF}
+	for character in hidden {
+		text: [16]u8
+		text[0] = '1'
+		length := 1 + character_encode(character, text[1:])
+		text[length] = '5'
+		testing.expectf(t, !display_text_valid(text[:length + 1]), "U+%X in the middle is taken", character)
+		testing.expectf(t, !display_text_valid(text[1:length]), "U+%X alone is taken", character)
+		testing.expectf(t, character_hidden(character), "U+%X is not hidden", character)
+	}
+	for refused in ([]string{"", " ", "   ", "\u00a0", "\u2000\u200a", "\u3000", "\u202f \u205f", "\u1680", "1.\xff", "1\n5"}) {
+		testing.expectf(t, !display_text_valid(transmute([]u8)refused), "%q is taken", refused)
+	}
+	for taken in ([]string{"1.75", "RGB", "a b", " US ", "А", "été", "\u200a1", "‐", "‧", "\u202f1", "⁥", "⁪", "﻾", "＀"}) {
+		testing.expectf(t, display_text_valid(transmute([]u8)taken), "%q is refused", taken)
+	}
 }

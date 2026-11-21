@@ -376,7 +376,7 @@ The terms are in `glossary/storage.md`.
 Designed, not built. A process must reach a document of the principal only when the principal chooses it, never by a path (P2, P8).
 
 - Owns the objects that belong to the principal and not to one process.
-- Shows the picker that lets the principal choose a document. Returns a handle to the process that asked (P2, P8).
+- Gives the candidates of the picker of the powerbox, which the trusted display draws, so the principal chooses a document. The process that asked receives a handle (P2, P8; `src/md/features/powerbox.md`).
 - Records each grant, so that the principal can list and revoke them.
 - **Today**: the export `share` of the storage service gives a tree of one store to another process, read-only or not, and `unshare` revokes it (`STORAGE.md`, "4.3 Read only, and revocation"). No picker exists.
 
@@ -1645,22 +1645,26 @@ The boot display shows each stage of this flow on a line of time; a failed check
 
 ### A process opens a document
 
-Designed, not built ("U6. Document service"). The flow shows why a picker gives a handle and not a path.
+Designed, not built ("U6. Document service"; `src/md/features/powerbox.md`). The flow shows why a picker gives a handle and not a path.
 
 ```mermaid
 sequenceDiagram
   participant P as Process
+  participant R as Root service
   participant D as Document service
+  participant T as Trusted display
   participant U as Principal
-  participant S as Storage service
-  P->>D: ring: "I want a document of type X"
-  D->>U: show the picker
-  U->>D: choose one document
-  D->>S: ring: "make a handle for this object, read only"
-  S->>D: handle
-  D->>P: completion, with the handle
-  P->>S: ring: read commands on the handle
-  S->>P: data in shared memory
+  P->>R: grant request ring: "a document to read"
+  R->>D: ring: "the candidates of this principal"
+  D->>R: the candidates
+  R->>T: show the grant dialog and the picker
+  U->>T: choose one document
+  T->>R: the answer, with the choice
+  R->>D: ring: "make a handle for this object, read only"
+  D->>R: handle
+  R->>P: completion, with the handle
+  P->>D: ring: read commands on the handle
+  D->>P: data in shared memory
 ```
 
 The process never sees a path or a list of other documents.
