@@ -19,6 +19,43 @@ import "modus:support/kind_icons"
 
 // background draws the background of the rules on an area: one color and
 // the grid of points.
+// One run of matched characters of a name: its bytes, from the first byte
+// of its first character to the end of its last one. A run with no byte
+// ends the list.
+Match_Run :: struct {
+	start, end: int,
+}
+MATCH_RUN_CAPACITY :: 64 // The runs of 128 places at most: a matched place and a place that is not, in turn.
+
+// matched_runs gives the runs of the matched characters of a name: bit n of
+// places is the character that starts at the byte n. A run counts
+// characters, not bytes: a matched é of two bytes is under both, and two
+// matched characters side by side are one run whatever their bytes. A bit
+// inside a character, or past the 128 bytes that places names, is no
+// match.
+matched_runs :: proc "contextless" (name: string, places: u128) -> (runs: [MATCH_RUN_CAPACITY]Match_Run) {
+	count := 0
+	in_run := false
+	for place := 0; place < len(name) && place < 128; {
+		_, length, _ := text_encoding.character_decode(transmute([]u8)name, place)
+		if length == 0 {
+			break
+		}
+		switch {
+		case places & (u128(1) << uint(place)) == 0:
+			in_run = false
+		case in_run:
+			runs[count - 1].end = place + length
+		case count < MATCH_RUN_CAPACITY:
+			runs[count] = {place, place + length}
+			count += 1
+			in_run = true
+		}
+		place += length
+	}
+	return
+}
+
 background :: proc "contextless" (frame: ^Frame, area: Area) {
 	draw_rectangle(frame.table, area.x, area.y, area.width, area.height, graphics.colors.background)
 	draw_point_grid(frame.table, area.x, area.y, area.width, area.height)
@@ -513,7 +550,7 @@ List_Row_Kind :: enum u8 {
 List_Row :: struct {
 	kind:           List_Row_Kind, // An entry or the heading of a group.
 	name:           string, // The name, in the interface font.
-	matched_places: u128, // Bit n: the byte n of the name matched the search. A line of 2 pixels is under each such character.
+	matched_places: u128, // Bit n: the character that starts at the byte n of the name matched the search. A line of 2 pixels is under each such character.
 	icon:           ^kind_icons.Cells, // The icon of the kind of the entry, before the name: its form says what the entry is. nil: no icon.
 	icon_color:     graphics.Color, // The color of the icon on a row that is not chosen: the color of the kind, or of one fact of the entry.
 	right_text:     string, // A dim text at the right of the row: what the entry is, in words.
@@ -633,20 +670,12 @@ list_of_rows :: proc "contextless" (frame: ^Frame, area: Area, rows: []List_Row,
 		}
 		// One line under each run of matched characters, measured in the
 		// font of the name: at most one measure for each end of a run.
-		places := row.matched_places
-		at := 0
-		for places != 0 && at < min(len(name), 128) {
-			if places & (u128(1) << uint(at)) == 0 {
-				at += 1
-				continue
+		for run in matched_runs(name, row.matched_places) {
+			if run.end <= run.start {
+				break
 			}
-			run_start := at
-			for at < min(len(name), 128) && places & (u128(1) << uint(at)) != 0 {
-				places &~= u128(1) << uint(at)
-				at += 1
-			}
-			start_x := text_measured_width(table, name_font, name[:run_start])
-			end_x := text_measured_width(table, name_font, name[:at])
+			start_x := text_measured_width(table, name_font, name[:run.start])
+			end_x := text_measured_width(table, name_font, name[:run.end])
 			draw_rectangle(table, name_x + start_x, y + 20, end_x - start_x, 2, chosen ? graphics.COLOR_WHITE : graphics.colors.kernel)
 		}
 	}

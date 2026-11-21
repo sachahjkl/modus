@@ -102,7 +102,7 @@ bar: interface.Action_Bar_State
 // a member"). The palette shows them on the buttons of the rows of `set`,
 // and the completion beside each name; a line still types the name. No code
 // reads these tables: the build writes them into the module file.
-@(rodata, member_texts = "english")
+@(rodata, member_texts = "en")
 scale_texts := [scale_factor.Scale]string {
 	.Ten_Eighths      = "1.25",
 	.Eleven_Eighths   = "1.375",
@@ -112,17 +112,17 @@ scale_texts := [scale_factor.Scale]string {
 	.Fifteen_Eighths  = "1.875",
 	.Sixteen_Eighths  = "2",
 }
-@(rodata, member_texts = "english")
+@(rodata, member_texts = "en")
 subpixel_order_texts := #partial [settings.Subpixel_Order]string {
 	.Red_Green_Blue = "RGB",
 	.Blue_Green_Red = "BGR",
 }
-@(rodata, member_texts = "english")
+@(rodata, member_texts = "en")
 pointer_theme_texts := [settings.Pointer_Theme]string {
 	.Of_The_Owner  = "owner",
 	.Of_The_System = "system",
 }
-@(rodata, member_texts = "english")
+@(rodata, member_texts = "en")
 keyboard_layout_texts := #partial [settings.Keyboard_Layout]string {
 	.United_States = "US",
 }

@@ -1,6 +1,7 @@
 package fuzz
 
 import "base:intrinsics"
+import "modus:contract/language_tag"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modustool:foundation"
@@ -72,7 +73,7 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 			case .Members:
 				_, _ = module.record(file, kind, index, module.Member)
 			case .Member_Texts:
-				if _, _, problem := module.member_text_row(file, index); problem > max(module.Member_Text_Problem) {
+				if _, _, _, problem := module.member_text_row(file, index); problem > max(module.Member_Text_Problem) {
 					return fuzz_broken(.Contract, "member_text_row gives a value out of its enumeration: %d", u8(problem))
 				}
 			}
@@ -82,6 +83,32 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 	text_row, text_problem := module.member_texts_check(file)
 	if text_problem > max(module.Member_Text_Problem) || (text_problem == .None) != (text_row == 0) || text_row >= max(module.count(file, .Member_Texts), 1) {
 		return fuzz_broken(.Contract, "member_texts_check gives the row %d and the problem %d", text_row, u8(text_problem))
+	}
+	// A text that the reader finds is the text of a row that keeps each
+	// rule, with that enum, that member and that tag: a search in a table
+	// out of order can miss a row, and never gives the text of another
+	// key. The tag of each row is asked for, as the file holds it.
+	text_rows := min(module.count(file, .Member_Texts), FUZZ_MODULE_INDEX_LIMIT)
+	for index in u32(1) ..< text_rows {
+		row, _ := module.record(file, .Member_Texts, index, module.Member_Text)
+		tag := module.string_at(file, row.tag_offset, row.tag_count)
+		text, found := module.member_text_of_tag(file, row.enum_index, row.member_number, tag)
+		if !found {
+			continue
+		}
+		matched := false
+		for other in u32(1) ..< text_rows {
+			other_row, other_tag, other_text, problem := module.member_text_row(file, other)
+			if problem == .None && other_row.enum_index == row.enum_index && other_row.member_number == row.member_number && language_tag.equal(other_tag, tag) && other_text == text {
+				matched = true
+				break
+			}
+		}
+		// A table past the rows that this target reads has rows that it
+		// cannot compare.
+		if !matched && module.count(file, .Member_Texts) <= FUZZ_MODULE_INDEX_LIMIT {
+			return fuzz_broken(.Contract, "member_text_of_tag gives \"%s\" for the enum %d, the member %d, the tag %q, and no row with that key has that text", text, row.enum_index, row.member_number, tag)
+		}
 	}
 	// The readers of the enums: an enum that enum_type accepts has a size
 	// of the contract and members whose names and values keep each rule,

@@ -22,7 +22,7 @@
 package module_file_writer
 
 import "base:intrinsics"
-import "modus:contract/enum_word"
+import "modus:contract/language_tag"
 import module "modus:contract/module"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
@@ -95,12 +95,12 @@ Member_Description :: struct {
 
 // The display text of a member in a language: what module.Member_Text
 // holds. The parts give them in the order of the enum, the member and the
-// language.
+// bytes of the tag (module.member_text_order).
 Member_Text_Description :: struct {
 	enum_number:   u32, // The enum, from 1, in Module_Parts.enums.
 	member_number: u32, // The member in its enum, from 0.
-	language:      module.Language,
-	text:          string, // 1 to module.MEMBER_TEXT_CAPACITY bytes of UTF-8 with no control character.
+	tag:           string, // A language tag of BCP 47 in its canonical case: "en", "fr-CA" (language_tag.canonical_check).
+	text:          string, // 1 to module.MEMBER_TEXT_CAPACITY bytes of a display text (text_encoding.display_text_valid).
 }
 
 // The description of a record: what module.Record and its fields hold.
@@ -217,9 +217,9 @@ Refusal :: enum u32 {
 	// value: the module.Enum_Problem: No_Enum for a number of an enum that names nothing, No_Getter for a getter
 	// past the exports, Bad_Optional for an optional bit.
 	Enum_Not_Valid                = 25,
-	// A display text names no enum of the parts or no member of its enum, has a text that is empty, past
-	// module.MEMBER_TEXT_CAPACITY or not UTF-8 with no control character, is not after the text before it, or
-	// module.member_texts_check refuses the written file. index: the text, from 0; value: the
+	// A display text names no enum of the parts or no member of its enum, has a tag that is not well-formed
+	// or not in its canonical case, has a text that is empty, past module.MEMBER_TEXT_CAPACITY or no display
+	// text, is not after the text before it, or module.member_texts_check refuses the written file. index: the text, from 0; value: the
 	// module.Member_Text_Problem.
 	Member_Text_Not_Valid         = 26,
 }
@@ -686,30 +686,28 @@ exports_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
 
 // member_texts_check checks each display text of the parts, as
 // module.member_texts_check checks a row: its enum and its member are in
-// the parts, its language is a Language, its text keeps the bound and is a
-// text, and it comes after the text before it in the order of the enum,
-// the member and the language.
+// the parts, its tag is well-formed and in its canonical case, its text
+// keeps the bound and is a display text, and it comes after the text
+// before it in the order of the enum, the member and the tag.
 @(private)
 member_texts_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
 	for item, index in parts.member_texts {
 		problem := module.Member_Text_Problem.None
-		_, language_known := enum_word.member_of_word(module.Language, u64(u8(item.language)))
 		switch {
 		case item.enum_number == 0 || u64(item.enum_number) > u64(len(parts.enums)):
 			problem = .No_Enum
 		case u64(item.member_number) >= u64(len(parts.enums[item.enum_number - 1].members)):
 			problem = .No_Member
-		case !language_known:
-			problem = .Bad_Language
-		case len(item.text) == 0 || len(item.text) > module.MEMBER_TEXT_CAPACITY || !text_encoding.text_valid(transmute([]u8)item.text):
+		case language_tag.canonical_check(item.tag) != .None:
+			problem = .Bad_Tag
+		case len(item.text) == 0 || len(item.text) > module.MEMBER_TEXT_CAPACITY || !text_encoding.display_text_valid(transmute([]u8)item.text):
 			problem = .Bad_Text
 		case index > 0:
 			before := parts.member_texts[index - 1]
-			key := [3]u64{u64(item.enum_number), u64(item.member_number), u64(u8(item.language))}
-			before_key := [3]u64{u64(before.enum_number), u64(before.member_number), u64(u8(before.language))}
-			if key == before_key {
+			switch module.member_text_order(item.enum_number, item.member_number, item.tag, before.enum_number, before.member_number, before.tag) {
+			case 0:
 				problem = .Twice
-			} else if key[0] < before_key[0] || key[0] == before_key[0] && (key[1] < before_key[1] || key[1] == before_key[1] && key[2] < before_key[2]) {
+			case -1:
 				problem = .Out_Of_Order
 			}
 		}
@@ -819,6 +817,7 @@ string_bytes_needed :: proc "contextless" (parts: Module_Parts) -> u64 {
 	}
 	for item in parts.member_texts {
 		total = sum_or_most(total, u64(len(item.text)))
+		total = sum_or_most(total, u64(len(item.tag)))
 	}
 	return total
 }
@@ -1087,9 +1086,10 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 			enum_index    = item.enum_number,
 			member_number = item.member_number,
 			text_count    = u32(len(item.text)),
-			language      = u8(item.language),
+			tag_count     = u32(len(item.tag)),
 		}
 		row.text_offset = string_append(&strings, item.text)
+		row.tag_offset = string_append(&strings, item.tag)
 		store(file, place(directory, .Member_Texts, index + 1), row)
 	}
 	if parts.has_own_hash_place {

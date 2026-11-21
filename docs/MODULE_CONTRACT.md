@@ -155,7 +155,7 @@ The loader reads none of these tables: they are for a caller that must know the 
 | Fields | One field of a record: its name, its offset, its type (Integer, Handle, Text or Bytes), signed or unsigned, the integer unit of an Integer (section 5, "The unit of an Integer field"), its detail (the size of an integer, a text or bytes, the rights of a handle), and its field kind with the contract enum of a status (section 5, "The kind of a field") |
 | Enums | One enum that an export takes or gives: the name of its type, the range of its members, its size and its sign (section 5, "Enum parameters"). The file has the table when an export has an Enum |
 | Members | One member of an enum: its name and its value |
-| Member_Texts | The display text of one member in one language, in the order of the enum, the member and the language (section 5, "The display text of a member"). The file has the table when a module gives a text |
+| Member_Texts | The display text of one member for one language tag, in the order of the enum, the member and the tag (section 5, "The display text of a member"). The file has the table when a module gives a text |
 | Strings | The bytes of all names, help lines and documentation texts |
 | Documentation | Record 1: the documentation of the module, one line and a text |
 
@@ -230,8 +230,8 @@ offset  size  field          type
      4     4  member_number  u32
      8     4  text_offset    u32
     12     4  text_count     u32
-    16     1  language       u8
-    17     7  reserved       [7]u8
+    16     4  tag_offset     u32
+    20     4  tag_count      u32
 ```
 
 A type is one byte, the value of a member of `module.Type`: Integer, Text, Record, Handle, Table, and Bytes (a parameter only). The fields `result`, `parameters` and `type` hold the byte, not the enum: a reader takes each byte through `module.type_of_word` (or `function_result_type`, `function_parameter_type`, `field_type`), which refuses a byte that names no type, and never casts it. The detail of a parameter says what its type needs: the index of a record description, the rights of a handle, or the unit of an Integer (section 5, "The unit of an Integer parameter"). Section 5 gives the types.
@@ -1410,16 +1410,16 @@ An export takes a value of a closed set as an enum, and its module file names th
 
 #### The display text of a member
 
-A member has a name, which a line types and a module compiles, and a display text, which a principal reads: `.fourteen_eighths` shows "1.75". The palette and the completion show the text; a line types the name only. A translation adds rows of another language, with no change of the code, of the names or of the format.
+A member has a name, which a line types and a module compiles, and a display text, which a principal reads: `.fourteen_eighths` shows "1.75". The palette and the completion show the text; a line types the name only. A translation adds rows of another language tag, with no change of the code, of the names or of the format.
 
-- **In the file**: the table `Member_Texts` holds one `module.Member_Text` for each text: the index of the enum, the number of the member in its enum from 0, the language, and 1 to 24 bytes of UTF-8 with no control character in the string table (`module.MEMBER_TEXT_CAPACITY`). The rows are in the order of the enum, the member and the language. The file has the table when a module gives a text.
-- **The language** is a byte of `module.Language`: `English` (1) is its one member. The byte 0 names no language.
-- **The reader**: `module.member_display_text` gives the text of the language of the principal, else the English text, else the name. The language of the principal is English until the interface follows it.
-- **The checks**: `module.member_texts_check` refuses a row that names no valid enum (`No_Enum`) or no member of it (`No_Member`), a text that is empty, past its bound, outside the string table or no text (`Bad_Text`), a language byte that names no language (`Bad_Language`), a reserved byte that is not 0 (`Bad_Reserved`), and a row that is not after the row before it (`Twice`, `Out_Of_Order`). `information.check` gives the problem kind `Member_Text`; the writer of module files refuses such parts with `Member_Text_Not_Valid`. The check of a replacement does not compare the texts: a text is not a part of the contract of a call.
-- **In the source**: a variable of an enumerated array of texts, with the attribute `member_texts` whose value names the language, apart from the enum. The compiler checks each member; the build reads the table from the source. The enum must be the type of an Enum parameter or result of an export of the module, and each text a literal with no escape:
+- **In the file**: the table `Member_Texts` holds one `module.Member_Text` for each text: the index of the enum, the number of the member in its enum from 0, a language tag and 1 to 24 bytes of a display text in the string table (`module.MEMBER_TEXT_CAPACITY`): UTF-8 with no control character, no character that a reader does not see or that changes the order of the text, and one character at least that is not a space (`text_encoding.display_text_valid`). A letter of another script that looks like a Latin one is taken: a translation needs each script. The rows are in the order of the enum, the member and the bytes of the tag. The file has the table when a module gives a text.
+- **The language** is a language tag of BCP 47 (RFC 5646): `en`, `fr-CA`, `zh-Hant-TW`. The languages are an open set, so a tag is a text that keeps a syntax, not an enum. A row holds a well-formed tag (section 2.1) of at most 35 bytes, in its canonical case (section 2.1.1); the grandfathered tags of the registry are refused. The package `src/library/contract/language_tag` checks a tag, gives its canonical case and its shorter tags.
+- **The reader**: `module.member_display_text` takes the tags of the principal in their order. It tries each tag, then each shorter tag as the Lookup of RFC 4647 does (`zh-Hant-TW`, `zh-Hant`, `zh`), then the next tag, then `en`, else the name. A tag is compared with no regard to case. The tags of the principal are the fallback `["en"]` until the interface follows the language of the principal.
+- **The checks**: `module.member_texts_check` refuses a row that names no valid enum (`No_Enum`) or no member of it (`No_Member`), a text that is empty, past its bound, outside the string table or no display text (`Bad_Text`), a tag that is outside the string table, not well-formed or not in its canonical case (`Bad_Tag`), and a row that is not after the row before it (`Twice`, `Out_Of_Order`). `information.check` gives the problem kind `Member_Text`; the writer of module files refuses such parts with `Member_Text_Not_Valid`. The check of a replacement does not compare the texts: a text is not a part of the contract of a call.
+- **In the source**: a variable of an enumerated array of texts, with the attribute `member_texts` whose value is the language tag of its texts, apart from the enum. The compiler checks each member; the build reads the table from the source and writes the tag in its canonical case. The enum must be the type of an Enum parameter or result of an export of the module, the tag well-formed, and each text a literal with no escape:
 
   ```odin
-  @(rodata, member_texts = "english")
+  @(rodata, member_texts = "en")
   scale_texts := [scale_factor.Scale]string {
   	.Ten_Eighths = "1.25",
   	// ...
@@ -1428,6 +1428,8 @@ A member has a name, which a line types and a module compiles, and a display tex
   ```
 
   A table that gives some members only is `#partial`. A member with no text shows its name.
+
+- **The rows of the palette fit**: the build refuses a module whose row of buttons would not fit a palette entry, as the service of the module names it: the act name `settings.set:font` (32 bytes), the name of the row (24), the name of an entry `settings.set scale to 1.75` (64), its line (128) and its button, the display text or the name (24). The console makes no entry that does not fit, so a button would be missing with no sign.
 
 ### The unit of an Integer parameter
 

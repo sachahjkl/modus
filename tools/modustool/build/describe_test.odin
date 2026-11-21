@@ -467,43 +467,95 @@ describe_refuses_a_table_of_display_texts_that_breaks_a_rule :: proc(t: ^testing
 	LONGEST :: "bbbbbbbbbbbbbbbbbbbbbbbb"
 	#assert(len(LONG) == module.MEMBER_TEXT_CAPACITY + 1 && len(LONGEST) == module.MEMBER_TEXT_CAPACITY)
 	cases := [?]Case {
-		{"a language that the format does not have", HEAD + "@(rodata, member_texts = \"french\")\nt := #partial [Mode]string{.Slow = \"lent\"}\n"},
-		{"a language in another case", HEAD + "@(rodata, member_texts = \"English\")\nt := #partial [Mode]string{.Slow = \"slow\"}\n"},
-		{"a language that is no text", HEAD + "@(rodata, member_texts = 1)\nt := #partial [Mode]string{.Slow = \"slow\"}\n"},
-		{"a table that is a slice", HEAD + "@(rodata, member_texts = \"english\")\nt := []string{\"slow\"}\n"},
-		{"a table of numbers", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]i64{.Slow = 1}\n"},
-		{"a table with no value", HEAD + "@(rodata, member_texts = \"english\")\nt: [Mode]string\n"},
-		{"a table of an enum of no export", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Other]string{.Low = \"low\"}\n"},
-		{"a table of a type that is no enum", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [4]string{0 = \"low\"}\n"},
-		{"a row that is no member", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{.Medium = \"medium\"}\n"},
-		{"a row with no member name", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{\"slow\"}\n"},
-		{"a row of a name, not a text", HEAD + "S :: \"slow\"\n@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{.Slow = S}\n"},
-		{"an empty text", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{.Slow = \"\"}\n"},
-		{"a text past its bound", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{.Slow = \"" + LONG + "\"}\n"},
-		{"a text with an escape", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{.Slow = \"sl\\tow\"}\n"},
-		{"a text with a control character", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{.Slow = `sl\x01ow`}\n"},
-		{"two tables of one enum and one language", HEAD + "@(rodata, member_texts = \"english\")\nt := #partial [Mode]string{.Slow = \"slow\"}\n@(rodata, member_texts = \"english\")\nu := #partial [Mode]string{.Slow = \"sluggish\"}\n"},
+		{"an empty tag", HEAD + "@(rodata, member_texts = \"\")\nt := #partial [Mode]string{.Slow = \"slow\"}\n"},
+		{"a tag that starts with -", HEAD + "@(rodata, member_texts = \"-fr\")\nt := #partial [Mode]string{.Slow = \"lent\"}\n"},
+		{"a tag with an empty subtag", HEAD + "@(rodata, member_texts = \"fr--CA\")\nt := #partial [Mode]string{.Slow = \"lent\"}\n"},
+		{"a tag with _", HEAD + "@(rodata, member_texts = \"fr_CA\")\nt := #partial [Mode]string{.Slow = \"lent\"}\n"},
+		{"a tag with a private use and nothing after it", HEAD + "@(rodata, member_texts = \"en-x\")\nt := #partial [Mode]string{.Slow = \"slow\"}\n"},
+		{"a tag that is no text", HEAD + "@(rodata, member_texts = 1)\nt := #partial [Mode]string{.Slow = \"slow\"}\n"},
+		{"a table that is a slice", HEAD + "@(rodata, member_texts = \"en\")\nt := []string{\"slow\"}\n"},
+		{"a table of numbers", HEAD + "@(rodata, member_texts = \"en\")\nt := #partial [Mode]i64{.Slow = 1}\n"},
+		{"a table with no value", HEAD + "@(rodata, member_texts = \"en\")\nt: [Mode]string\n"},
+		{"a table of an enum of no export", HEAD + "@(rodata, member_texts = \"en\")\nt := #partial [Other]string{.Low = \"low\"}\n"},
+		{"a table of a type that is no enum", HEAD + "@(rodata, member_texts = \"en\")\nt := #partial [4]string{0 = \"low\"}\n"},
+		{"a row that is no member", HEAD + "@(rodata, member_texts = \"en\")\nt := #partial [Mode]string{.Medium = \"medium\"}\n"},
+		{"a row with no member name", HEAD + "@(rodata, member_texts = \"en\")\nt := #partial [Mode]string{\"slow\"}\n"},
+		{"a row of a name, not a text", HEAD + "S :: \"slow\"\n@(rodata, member_texts = \"en\")\nt := #partial [Mode]string{.Slow = S}\n"},
+		{"an empty text", HEAD + "@(rodata, member_texts = \"en\")\nt := #partial [Mode]string{.Slow = \"\"}\n"},
+		{"a text past its bound", HEAD + "@(rodata, member_texts = \"en\")\nt := #partial [Mode]string{.Slow = \"" + LONG + "\"}\n"},
+		{"a text with an escape", HEAD + "@(rodata, member_texts = \"en\")\nt := #partial [Mode]string{.Slow = \"sl\\tow\"}\n"},
+		{"a text with a control character", HEAD + "@(rodata, member_texts = \"en\")\nt := #partial [Mode]string{.Slow = `sl\x01ow`}\n"},
+		{"a text with a space of no width", HEAD + "@(rodata, member_texts = \"en\")\nt := #partial [Mode]string{.Slow = \"sl\u200bow\"}\n"},
+		{"a text with a mark of direction", HEAD + "@(rodata, member_texts = \"en\")\nt := #partial [Mode]string{.Slow = \"\u202ewols\"}\n"},
+		{"a text of spaces only", HEAD + "@(rodata, member_texts = \"en\")\nt := #partial [Mode]string{.Slow = \"   \"}\n"},
+		{"two tables of one enum and one tag", HEAD + "@(rodata, member_texts = \"en\")\nt := #partial [Mode]string{.Slow = \"slow\"}\n@(rodata, member_texts = \"en\")\nu := #partial [Mode]string{.Slow = \"sluggish\"}\n"},
+		{"two tables of one enum and one tag in two cases", HEAD + "@(rodata, member_texts = \"fr-CA\")\nt := #partial [Mode]string{.Slow = \"lent\"}\n@(rodata, member_texts = \"FR-ca\")\nu := #partial [Mode]string{.Slow = \"lente\"}\n"},
 	}
 	for item in cases {
 		list := make([dynamic]Export_Description, context.temp_allocator)
 		testing.expectf(t, !describe_source("case.odin", item.source, &list), "%s", item.about)
 	}
-	// The success comes last: two tables, one of a text of the largest
-	// length, read in the order of the enum, the member and the language.
+	// The success comes last: three tables, one of a text of the largest
+	// length, one with its tag in another case, read in the order of the
+	// enum, the member and the canonical tag.
 	longest := LONGEST
 	source := "package p\nMode :: enum u32 {Slow = 0, Fast = 1}\nLevel :: enum u8 {Low = 1, High = 2}\n// f sets x.\n@(export)\nf :: proc \"c\" (level: Level, mode: Mode) -> i64 {return 0}\n" +
-		"@(rodata, member_texts = \"english\")\nlevels := #partial [Level]string{.High = \"high!\", .Low = \"" + LONGEST + "\"}\n" +
-		"@(rodata, member_texts = \"english\")\nmodes := [Mode]string{.Fast = \"Fast 2x\", .Slow = \"Slow\"}\n"
+		"@(rodata, member_texts = \"en\")\nlevels := #partial [Level]string{.High = \"high!\", .Low = \"" + LONGEST + "\"}\n" +
+		"@(rodata, member_texts = \"FR-ca\")\nmodes_fr := #partial [Mode]string{.Slow = \"Lent\"}\n" +
+		"@(rodata, member_texts = \"en\")\nmodes := [Mode]string{.Fast = \"Fast 2x\", .Slow = \"Slow\"}\n"
 	list := make([dynamic]Export_Description, context.temp_allocator)
 	texts: []Member_Text_Description
-	if !testing.expect(t, describe_source("case.odin", source, &list, nil, nil, nil, &texts)) || !testing.expect_value(t, len(texts), 4) {
+	if !testing.expect(t, describe_source("case.odin", source, &list, nil, nil, nil, &texts)) || !testing.expect_value(t, len(texts), 5) {
 		return
 	}
-	english := module.Language.English
-	testing.expect_value(t, texts[0], Member_Text_Description{1, 0, english, longest})
-	testing.expect_value(t, texts[1], Member_Text_Description{1, 1, english, "high!"})
-	testing.expect_value(t, texts[2], Member_Text_Description{2, 0, english, "Slow"})
-	testing.expect_value(t, texts[3], Member_Text_Description{2, 1, english, "Fast 2x"})
+	testing.expect_value(t, texts[0], Member_Text_Description{1, 0, "en", longest})
+	testing.expect_value(t, texts[1], Member_Text_Description{1, 1, "en", "high!"})
+	testing.expect_value(t, texts[2], Member_Text_Description{2, 0, "en", "Slow"})
+	testing.expect_value(t, texts[3], Member_Text_Description{2, 0, "fr-CA", "Lent"})
+	testing.expect_value(t, texts[4], Member_Text_Description{2, 1, "en", "Fast 2x"})
+}
+
+// Each row of buttons of the palette fits the fields of an entry, or the
+// build refuses the module: an act name, a name of a row and a button one
+// byte past their bound. An export that gives no row is not checked. Then
+// a member whose name is past the bound of a button and whose display text
+// fits, and the act name at its bound, pass.
+@(test)
+describe_refuses_a_palette_row_that_does_not_fit :: proc(t: ^testing.T) {
+	Case :: struct {
+		about:       string,
+		module_name: string,
+		source:      string,
+	}
+	// 25 bytes: one past a button and a name of a row.
+	PAST :: "abcdefghijklmnopqrstuvwxy"
+	cases := [?]Case {
+		{"an act name of 33 bytes", "a_module_name_of_26_bytes_", "package p\nMode :: enum u32 {Slow = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a name of a row of 25 bytes", "m", "package p\nMode :: enum u32 {Slow = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (" + PAST + ": Mode) -> i64 {return 0}\n"},
+		{"a button of 25 bytes", "m", "package p\nMode :: enum u32 {" + PAST + " = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+	}
+	for item in cases {
+		list := make([dynamic]Export_Description, context.temp_allocator)
+		enums: []Enum_Description
+		texts: []Member_Text_Description
+		if !testing.expectf(t, describe_source("case.odin", item.source, &list, nil, nil, &enums, &texts), "%s: the source is refused", item.about) {
+			continue
+		}
+		testing.expectf(t, !palette_rows_fit(item.module_name, list[:], enums, texts), "%s", item.about)
+	}
+	// The successes: an export with a required Integer beside its enum gives
+	// no row; a member past the bound of a button with a display text that
+	// fits; an act name of 32 bytes.
+	no_row := "package p\nMode :: enum u32 {" + PAST + " = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (count: i64, mode: Mode) -> i64 {return 0}\n"
+	with_text := "package p\nMode :: enum u32 {" + PAST + " = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n@(rodata, member_texts = \"en\")\nt := [Mode]string{." + PAST + " = \"short\"}\n"
+	taken := [?][2]string{{"m", no_row}, {"m", with_text}, {"a_module_name_of_25_bytes", "package p\nMode :: enum u32 {Slow = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"}}
+	for item in taken {
+		list := make([dynamic]Export_Description, context.temp_allocator)
+		enums: []Enum_Description
+		texts: []Member_Text_Description
+		testing.expect(t, describe_source("case.odin", item[1], &list, nil, nil, &enums, &texts))
+		testing.expectf(t, palette_rows_fit(item[0], list[:], enums, texts), "%q is refused", item[1])
+	}
 }
 
 // The enum of an export, its getter and its optional parameters: each rule

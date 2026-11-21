@@ -452,6 +452,21 @@ the_texts_of_an_entry_are_utf_8 :: proc(t: ^testing.T) {
 	row.kind = u8(Entry_Kind.Provider_Setting)
 	row.setting_name_length = u8(copy(row.setting_name[:], "subpixel order"))
 	broken := [?]string{"caf\xc3", "caf\xc3(", "\xc0\xaf", "\xed\xa0\x80", "a\xc2\x85", "a\x1b[2J"}
+	// A display text is refused too when a reader would read another text:
+	// a hidden character, a mark of direction, spaces only.
+	not_shown := [?]string{"r\u200bgb", "\u202ergb", "rgb\u2069", "\ufeffrgb", "rgb\u2028", " ", "\u00a0\u3000"}
+	for name in not_shown {
+		bad_value := row
+		bad_value.name_length = u8(copy(bad_value.name[:], "set order to rgb"))
+		bad_value.signature_length = u8(copy(bad_value.signature[:], "set order to rgb"))
+		bad_value.value_name_length = u8(copy(bad_value.value_name[:], name))
+		testing.expectf(t, entry_problem(&bad_value) == .Bad_Byte, "the value name %q must be refused", name)
+		bad_name := row
+		bad_name.value_name_length = u8(copy(bad_name.value_name[:], "rgb"))
+		bad_name.name_length = u8(copy(bad_name.name[:], name))
+		bad_name.signature_length = u8(copy(bad_name.signature[:], name))
+		testing.expectf(t, entry_problem(&bad_name) == .Bad_Byte, "the name %q of a setting entry must be refused", name)
+	}
 	for name in broken {
 		bad_value := row
 		bad_value.value_name_length = u8(copy(bad_value.value_name[:], name))
@@ -470,6 +485,10 @@ the_texts_of_an_entry_are_utf_8 :: proc(t: ^testing.T) {
 	row.value_name_length = u8(copy(row.value_name[:], "café"))
 	row.name_length = u8(copy(row.name[:], "set order to café"))
 	row.signature_length = u8(copy(row.signature[:], "set order to café"))
+	testing.expect_value(t, entry_problem(&row), Problem.None)
+	// A letter of another script that looks like a Latin one passes: a
+	// translation needs each script.
+	row.value_name_length = u8(copy(row.value_name[:], "РGB"))
 	testing.expect_value(t, entry_problem(&row), Problem.None)
 	for name in broken {
 		bad := entry

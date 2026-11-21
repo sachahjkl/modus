@@ -1091,7 +1091,7 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 			if problem != .None {
 				return
 			}
-			if text, found := module.member_text(completion.members_file, completion.members_enum, u32(candidate.number), PRINCIPAL_LANGUAGE); found {
+			if text, found := module.member_text(completion.members_file, completion.members_enum, u32(candidate.number), principal_language_tags_fallback[:]); found {
 				system.write_part(writer, text)
 			} else {
 				system.write_part(writer, "member of ")

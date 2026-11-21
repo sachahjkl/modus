@@ -2,6 +2,8 @@ package build
 
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/language_tag"
+import "modus:contract/palette_table"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "core:reflect"
@@ -133,6 +135,7 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 		member_texts_read(file, &state, &texts) or_return
 	}
 	description.member_texts = member_texts_order(folder, texts[:]) or_return
+	palette_rows_fit(folder[strings.last_index_byte(folder, '/') + 1:], list[:], description.enums, description.member_texts) or_return
 	description.about = about_of(documentation_text_of_markdown(description.text), "")
 	if description.about == "" {
 		fmt.eprintfln("modustool: describe %s: no file has a comment before `package`: this comment is the documentation of the module", folder)
@@ -804,14 +807,15 @@ describe_source :: proc(path, source: string, list: ^[dynamic]Export_Description
 // member_texts_read adds the display texts of the declared tables of a
 // file (src/md/features/enum_parameters.md, "The display text of a
 // member"): each declaration with the attribute `member_texts`, whose value
-// names the language, and whose value is an enumerated array of texts of an
-// enum that an export takes or gives:
+// is the language tag of BCP 47 of its texts, and whose value is an
+// enumerated array of texts of an enum that an export takes or gives:
 //
-//	@(rodata, member_texts = "english")
+//	@(rodata, member_texts = "en")
 //	scale_texts := #partial [scale_factor.Scale]string{.Ten_Eighths = "1.25"}
 //
-// The compiler checks each member of the table; the tool checks the
-// language, the enum, and each text against the rules of the reader.
+// The compiler checks each member of the table; the tool checks the tag
+// (language_tag.problem) and keeps its canonical case, the enum, and each
+// text against the rules of the reader.
 member_texts_read :: proc(file: ^ast.File, state: ^Describe_State, texts: ^[dynamic]Member_Text_Description) -> bool {
 	context.allocator = context.temp_allocator
 	path := file.fullpath
@@ -820,7 +824,7 @@ member_texts_read :: proc(file: ^ast.File, state: ^Describe_State, texts: ^[dyna
 		if !is_value {
 			continue
 		}
-		language_text, has_texts := "", false
+		tag_text, has_texts := "", false
 		for attribute in declaration.attributes {
 			for element in attribute.elems {
 				item, is_field := element.derived.(^ast.Field_Value)
@@ -833,18 +837,21 @@ member_texts_read :: proc(file: ^ast.File, state: ^Describe_State, texts: ^[dyna
 				}
 				literal, is_literal := item.value.derived.(^ast.Basic_Lit)
 				if !is_literal || literal.tok.kind != .String {
-					return describe_fail(path, declaration, "the attribute %s takes a text: the name of a language, \"english\"", foundation.MEMBER_TEXTS_ATTRIBUTE_NAME)
+					return describe_fail(path, declaration, "the attribute %s takes a text: the language tag of BCP 47 of the texts, \"en\"", foundation.MEMBER_TEXTS_ATTRIBUTE_NAME)
 				}
-				language_text, has_texts = strings.trim(literal.tok.text, "\"`"), true
+				tag_text, has_texts = strings.trim(literal.tok.text, "\"`"), true
 			}
 		}
 		if !has_texts {
 			continue
 		}
-		language, language_known := module.language_of_name(language_text)
-		if !language_known {
-			return describe_fail(path, declaration, "the attribute %s names the language \"%s\", which the format does not have: %v", foundation.MEMBER_TEXTS_ATTRIBUTE_NAME, language_text, module.LANGUAGE_NAMES)
+		// The file stores each tag in its canonical case, so a source can
+		// write "EN" or "fr-ca": two tags of one language are one key.
+		if problem := language_tag.problem(tag_text); problem != .None {
+			return describe_fail(path, declaration, "the attribute %s names \"%s\", which is no well-formed language tag of BCP 47 (RFC 5646, section 2.1): %v", foundation.MEMBER_TEXTS_ATTRIBUTE_NAME, tag_text, problem)
 		}
+		tag_buffer := make([]u8, language_tag.TAG_CAPACITY)
+		tag, _ := language_tag.canonical(tag_text, tag_buffer)
 		literal: ^ast.Comp_Lit
 		if len(declaration.names) == 1 && len(declaration.values) == 1 {
 			literal, _ = declaration.values[0].derived.(^ast.Comp_Lit)
@@ -900,29 +907,92 @@ member_texts_read :: proc(file: ^ast.File, state: ^Describe_State, texts: ^[dyna
 			if member_number < 0 {
 				return describe_fail(path, item, "the display texts of %s: %s is no member of the enum", enum_name, selector.field.name)
 			}
-			if len(text) == 0 || len(text) > module.MEMBER_TEXT_CAPACITY || !text_encoding.text_valid(transmute([]u8)text) {
-				return describe_fail(path, item, "the display text of %s.%s is \"%s\": a display text is 1 to %d bytes of UTF-8 with no control character", enum_name, selector.field.name, text, module.MEMBER_TEXT_CAPACITY)
+			if len(text) == 0 || len(text) > module.MEMBER_TEXT_CAPACITY || !text_encoding.display_text_valid(transmute([]u8)text) {
+				return describe_fail(path, item, "the display text of %s.%s is \"%s\": a display text is 1 to %d bytes of UTF-8 with no control character, no character that a reader does not see or that changes the order of the text, and one character at least that is not a space", enum_name, selector.field.name, text, module.MEMBER_TEXT_CAPACITY)
 			}
-			append(texts, Member_Text_Description{enum_number = u32(enum_number), member_number = u32(member_number), language = language, text = text})
+			append(texts, Member_Text_Description{enum_number = u32(enum_number), member_number = u32(member_number), tag = tag, text = text})
+		}
+	}
+	return true
+}
+
+// palette_rows_fit checks that each row of buttons of the palette that an
+// export gives fits the fields of a palette entry
+// (src/md/features/enum_parameters.md, "The display text of a member"):
+// the console makes no entry of a member whose entry does not fit, so a
+// button would be missing with no sign. A row is an export of one Enum
+// parameter, or whose parameters are each an optional Enum, as the console
+// takes it (palette_row_takes). module_name is the name of a service
+// before the export, the longest form of the command.
+palette_rows_fit :: proc(module_name: string, exports: []Export_Description, enums: []Enum_Description, texts: []Member_Text_Description) -> bool {
+	for item in exports {
+		if len(item.parameters) == 0 {
+			continue
+		}
+		row := len(item.parameters) == 1 && item.parameters[0] == .Enum
+		if !row {
+			row = true
+			for type, index in item.parameters {
+				if type != .Enum || item.optional_parameters >> u16(index) & 1 == 0 {
+					row = false
+				}
+			}
+		}
+		if !row {
+			continue
+		}
+		command := strings.concatenate({module_name, ".", item.name}, context.temp_allocator)
+		for parameter, index in item.names {
+			if index >= len(item.details) {
+				continue
+			}
+			enum_number, _ := module.enum_detail_of(item.details[index])
+			if enum_number == 0 || int(enum_number) > len(enums) {
+				continue
+			}
+			Part :: struct {
+				what, text: string,
+				capacity:   int,
+			}
+			parts := make([dynamic]Part, context.temp_allocator)
+			append(&parts, Part{"the act name", strings.concatenate({command, ":", parameter}, context.temp_allocator), palette_table.ACT_NAME_CAPACITY})
+			append(&parts, Part{"the name of the row", parameter, palette_table.SETTING_NAME_CAPACITY})
+			for member, member_number in enums[enum_number - 1].members {
+				shown := member.name
+				for text in texts {
+					if text.enum_number == enum_number && int(text.member_number) == member_number && text.tag == module.FALLBACK_TAG {
+						shown = text.text
+					}
+				}
+				append(&parts, Part{"the name of an entry", strings.concatenate({command, " ", parameter, " to ", shown}, context.temp_allocator), palette_table.NAME_CAPACITY})
+				append(&parts, Part{"the line of an entry", strings.concatenate({command, "(", parameter, " = .", member.name, ")"}, context.temp_allocator), palette_table.ABOUT_CAPACITY})
+				append(&parts, Part{"a button", shown, palette_table.VALUE_NAME_CAPACITY})
+			}
+			for part in parts {
+				if len(part.text) > part.capacity {
+					fmt.eprintfln("modustool: describe %s(%d): %s: %s of the palette, \"%s\", has %d bytes, and the palette holds %d: the button would be missing. Shorten the name of the export, of the parameter or of the member, or its display text", item.file, item.line, item.name, part.what, part.text, len(part.text), part.capacity)
+					return false
+				}
+			}
 		}
 	}
 	return true
 }
 
 // member_texts_order sorts the display texts in the order of the format:
-// the enum, the member, the language. Two texts for one member and one
-// language, from two tables of one enum and one language, are refused.
+// the enum, the member, the bytes of the canonical tag
+// (module.member_text_order). Two texts for one member and one tag, from
+// two tables of one enum and one tag, are refused.
 member_texts_order :: proc(place: string, texts: []Member_Text_Description) -> (ordered: []Member_Text_Description, ok: bool) {
-	key :: proc(item: Member_Text_Description) -> [3]u64 {
-		return {u64(item.enum_number), u64(item.member_number), u64(u8(item.language))}
+	order :: proc(a, b: Member_Text_Description) -> int {
+		return module.member_text_order(a.enum_number, a.member_number, a.tag, b.enum_number, b.member_number, b.tag)
 	}
 	slice.sort_by(texts, proc(a, b: Member_Text_Description) -> bool {
-		first, second := key(a), key(b)
-		return first[0] < second[0] || first[0] == second[0] && (first[1] < second[1] || first[1] == second[1] && first[2] < second[2])
+		return order(a, b) < 0
 	})
 	for index in 1 ..< max(len(texts), 1) {
-		if key(texts[index]) == key(texts[index - 1]) {
-			fmt.eprintfln("modustool: describe %s: two tables of display texts give the member %d of the enum %d in the language %v: one text for each member and language", place, texts[index].member_number, texts[index].enum_number, texts[index].language)
+		if order(texts[index], texts[index - 1]) == 0 {
+			fmt.eprintfln("modustool: describe %s: two tables of display texts give the member %d of the enum %d for the tag %s: one text for each member and tag", place, texts[index].member_number, texts[index].enum_number, texts[index].tag)
 			return nil, false
 		}
 	}

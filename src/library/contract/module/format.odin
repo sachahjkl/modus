@@ -1,4 +1,4 @@
-// The module format, version 6 (docs/MODULE_CONTRACT.md, sections 1 and 2).
+// The module format, version 7 (docs/MODULE_CONTRACT.md, sections 1 and 2).
 //
 // A module is one file:
 //
@@ -60,7 +60,7 @@ Machine :: enum u32 {
 // the file when one field is not one that it takes (`validate`).
 //
 // Example: the header of a module with an entry starts with the bytes "MODULE", the
-// version 6, the machine `X86_64`, and `entry_export` the index of its
+// version 7, the machine `X86_64`, and `entry_export` the index of its
 // export `main`.
 Header :: struct {
 	magic:           u64, // `MAGIC`.

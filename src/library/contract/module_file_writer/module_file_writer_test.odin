@@ -279,9 +279,10 @@ exports_with_no_description_are_refused :: proc(t: ^testing.T) {
 	delete(file)
 }
 
-// A display text names an enum of the parts and a member of it, a language,
-// and a text in its bound, after the text before it: each edge is refused
-// with the problem of the reader, and the written file is read back last.
+// A display text names an enum of the parts and a member of it, a
+// well-formed tag in its canonical case, and a text in its bound, after the
+// text before it: each edge is refused with the problem of the reader, and
+// the written file is read back last.
 @(test)
 member_texts_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
 	storage: Test_Storage
@@ -295,35 +296,40 @@ member_texts_that_a_reader_refuses_are_refused :: proc(t: ^testing.T) {
 		_, needed := file_size_needed(parts)
 		testing.expect_value(t, needed.value, u64(problem), loc)
 	}
-	english := module.Language.English
 	past_bound := strings.repeat("a", module.MEMBER_TEXT_CAPACITY + 1, context.temp_allocator)
-	expect_text_problem(t, &storage, enums[:], {{0, 0, english, "Slow"}}, 0, .No_Enum)
-	expect_text_problem(t, &storage, enums[:], {{2, 0, english, "Slow"}}, 0, .No_Enum)
-	expect_text_problem(t, &storage, enums[:], {{max(u32), 0, english, "Slow"}}, 0, .No_Enum)
-	expect_text_problem(t, &storage, nil, {{1, 0, english, "Slow"}}, 0, .No_Enum)
-	expect_text_problem(t, &storage, enums[:], {{1, 2, english, "Fast"}}, 0, .No_Member)
-	expect_text_problem(t, &storage, enums[:], {{1, max(u32), english, "Fast"}}, 0, .No_Member)
-	expect_text_problem(t, &storage, enums[:], {{1, 0, transmute(module.Language)u8(0), "Slow"}}, 0, .Bad_Language)
-	expect_text_problem(t, &storage, enums[:], {{1, 0, transmute(module.Language)(u8(max(module.Language)) + 1), "Slow"}}, 0, .Bad_Language)
-	for text in ([]string{"", past_bound, "Slow\n", "Sl\xffow"}) {
-		expect_text_problem(t, &storage, enums[:], {{1, 0, english, text}}, 0, .Bad_Text)
+	expect_text_problem(t, &storage, enums[:], {{0, 0, "en", "Slow"}}, 0, .No_Enum)
+	expect_text_problem(t, &storage, enums[:], {{2, 0, "en", "Slow"}}, 0, .No_Enum)
+	expect_text_problem(t, &storage, enums[:], {{max(u32), 0, "en", "Slow"}}, 0, .No_Enum)
+	expect_text_problem(t, &storage, nil, {{1, 0, "en", "Slow"}}, 0, .No_Enum)
+	expect_text_problem(t, &storage, enums[:], {{1, 2, "en", "Fast"}}, 0, .No_Member)
+	expect_text_problem(t, &storage, enums[:], {{1, max(u32), "en", "Fast"}}, 0, .No_Member)
+	// A tag: empty, not well-formed, past its bound, and in another case
+	// than its canonical one, which the writer never changes.
+	for tag in ([]string{"", "-fr", "fr-", "fr--CA", "x-", "en-abcdefghi", "\xc3\xa9n", "en-aaaaaaaa-bbbbbbbb-cccccccc-dddddd", "EN", "fr-ca", "zh-hant-tw"}) {
+		expect_text_problem(t, &storage, enums[:], {{1, 0, tag, "Slow"}}, 0, .Bad_Tag)
 	}
-	expect_text_problem(t, &storage, enums[:], {{1, 0, english, "Slow"}, {1, 0, english, "Fast"}}, 1, .Twice)
-	expect_text_problem(t, &storage, enums[:], {{1, 1, english, "Fast"}, {1, 0, english, "Slow"}}, 1, .Out_Of_Order)
-	// The success comes last: a text of the largest length, then the
-	// file read back. A member with no text shows its name.
+	for text in ([]string{"", past_bound, "Slow\n", "Sl\xffow", "Sl\u200bow", "\u202eSlow", "Slow\ufeff", " ", "\u3000"}) {
+		expect_text_problem(t, &storage, enums[:], {{1, 0, "en", text}}, 0, .Bad_Text)
+	}
+	expect_text_problem(t, &storage, enums[:], {{1, 0, "en", "Slow"}, {1, 0, "en", "Fast"}}, 1, .Twice)
+	expect_text_problem(t, &storage, enums[:], {{1, 0, "fr", "Lent"}, {1, 0, "en", "Slow"}}, 1, .Out_Of_Order)
+	expect_text_problem(t, &storage, enums[:], {{1, 1, "en", "Fast"}, {1, 0, "en", "Slow"}}, 1, .Out_Of_Order)
+	// The success comes last: a text of the largest length, two tags of
+	// one member, a tag at its bound, then the file read back. A member
+	// with no text shows its name.
 	parts := test_parts(&storage)
 	parts.enums = enums[:]
 	longest := strings.repeat("b", module.MEMBER_TEXT_CAPACITY, context.temp_allocator)
-	texts := []Member_Text_Description{{1, 1, english, longest}}
+	texts := []Member_Text_Description{{1, 1, "en", longest}, {1, 1, "en-aaaaaaa-bbbbbbbb-cccccccc-dddddd", "Fast"}, {1, 1, "fr-CA", "Vite"}}
 	parts.member_texts = texts
 	file := write_to_memory(t, parts)
 	defer delete(file)
 	row, problem := module.member_texts_check(file)
 	testing.expect(t, row == 0 && problem == .None)
 	described, _ := module.enum_type(file, 1)
-	testing.expect_value(t, module.member_display_text(file, 1, described, 1, .English), longest)
-	testing.expect_value(t, module.member_display_text(file, 1, described, 0, .English), "slow")
+	testing.expect_value(t, module.member_display_text(file, 1, described, 1, nil), longest)
+	testing.expect_value(t, module.member_display_text(file, 1, described, 1, {"fr-CA"}), "Vite")
+	testing.expect_value(t, module.member_display_text(file, 1, described, 0, {"fr-CA"}), "slow")
 }
 
 // An Enum parameter names an enum of the parts and a getter among the

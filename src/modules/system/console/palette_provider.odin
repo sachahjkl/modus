@@ -412,10 +412,13 @@ palette_marks_log :: proc "contextless" () {
 	palette_marks_moved_count = 0
 }
 
-// The language of the display texts that the palette and the completion
-// show: English, until the interface follows the language of the principal
-// (ROADMAP.md, "The interface in the language of the principal").
-PRINCIPAL_LANGUAGE :: module.Language.English
+// The language tags of the principal, in the order of the preference, for
+// the display texts that the palette and the completion show. A fallback:
+// `en` alone, until the interface follows the language of the principal
+// (ROADMAP.md, "The interface in the language of the principal"), which
+// gives the tags of the principal in its place.
+@(rodata)
+principal_language_tags_fallback := [1]string{"en"}
 
 // palette_line_name_valid says if the name of a command is names of Lex
 // joined by '.': the service, then the export. The line of a row starts
@@ -485,7 +488,7 @@ palette_enum_rows_write :: proc "contextless" (start: int, refresh: ^Palette_Get
 				// The principal reads the display text; the line types the
 				// name (src/md/features/enum_parameters.md, "The display
 				// text of a member").
-				display_text := module.member_display_text(item.file, enum_index, described, member_number, PRINCIPAL_LANGUAGE)
+				display_text := module.member_display_text(item.file, enum_index, described, member_number, principal_language_tags_fallback[:])
 				entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Provider_Setting), result = u8(palette_value_kind_of(item.result))}
 				if in_use_known && member.value == in_use {
 					entry.flags += {.In_Use}

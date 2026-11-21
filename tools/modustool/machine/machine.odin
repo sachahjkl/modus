@@ -208,7 +208,7 @@ Step :: struct {
 	// is a named constant whose comment gives that reason: modustool check
 	// refuses a number here.
 	seconds:    int,
-	fails_on:   string, // For Wait: a text that ends the wait as a failure when the machine prints it first: the step names its two outcomes.
+	fails_on:   string, // For Wait: a text that ends the wait as a failure when the machine prints it first, or on the line of the text: the step names its two outcomes.
 	names:      string, // For Trace: the names of the functions of the first frames, separated by spaces.
 	expected:   string, // For Call: a part of what the tool prints.
 	outcome:    Call_Outcome, // For Call: Result, Failed or Refused.
@@ -1458,21 +1458,24 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the palette sets font to spleen, by a key"},
 	{kind = .Wait, text = "compositor: the palette sends settings.set font to spleen to the console", any_order = true},
 	{kind = .Wait, text = "console: the palette runs settings.set(font = .spleen)"},
+	// The getter of the row said the new member, and the table marks it:
+	// the picture shows the mark on spleen. The console logs the mark
+	// after the line that it runs, and the compositor its line "did" in an
+	// order that the system does not fix: the mark is found from the line
+	// that runs, before the wait for "did" moves the place of the log.
+	{kind = .Wait, text = "console: the palette marks .spleen for settings.set font", any_order = true},
 	{kind = .Wait, text = "settings: font spleen, ", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen", any_order = true},
 	{kind = .Wait, text = "compositor: the palette did: settings.set font to spleen"},
-	// The getter of the row said the new member, and the table marks it:
-	// the picture shows the mark on spleen.
-	{kind = .Wait, text = "console: the palette marks .spleen for settings.set font", any_order = true},
 	{kind = .Shot, text = "palette_setting_row"},
 	{kind = .Key, text = "left"},
 	{kind = .Wait, text = "compositor: the palette chooses the value vector of font"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "console: the palette runs settings.set(font = .vector)"},
+	{kind = .Wait, text = "console: the palette marks .vector for settings.set font", any_order = true},
 	{kind = .Wait, text = "settings: font vector, ", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font vector", any_order = true},
 	{kind = .Wait, text = "compositor: the palette did: settings.set font to vector"},
-	{kind = .Wait, text = "console: the palette marks .vector for settings.set font", any_order = true},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
 	// The display text of a member: the scale has 7 members, so each one
@@ -4719,9 +4722,10 @@ log_wait :: proc(machine: ^Machine, text: string, any_order := false, limit := f
 }
 
 // log_wait_or_failure waits until the log, after the last Wait, has text or
-// failure. It gives the line of failure when failure came first, and
-// text_found when text came first. It does not move the place of the log:
-// the Wait that follows finds text there at once.
+// failure. It gives the line of failure when failure came first or is on
+// the line of text (wait_or_failure_decide), and text_found when text came
+// on a line with no failure. It does not move the place of the log: the
+// Wait that follows finds text there at once.
 log_wait_or_failure :: proc(machine: ^Machine, text, failure: string, limit: time.Duration) -> (failure_line: string, text_found: bool) {
 	wait_started := time.tick_now()
 	defer test_times_wait_note(machine, wait_started)
@@ -4733,21 +4737,73 @@ log_wait_or_failure :: proc(machine: ^Machine, text, failure: string, limit: tim
 			return line, false
 		}
 		if len(log) > machine.seen {
-			rest := log[machine.seen:]
-			text_at := strings.index(rest, text)
-			failure_at := strings.index(rest, failure)
-			if failure_at >= 0 && (text_at < 0 || failure_at < text_at) {
-				line := rest[failure_at:]
-				end := strings.index_byte(line, '\n')
-				return strings.trim_right(end < 0 ? line : line[:end], "\r"), false
-			}
-			if text_at >= 0 {
+			outcome, line := wait_or_failure_decide(log[machine.seen:], text, failure, true)
+			switch outcome {
+			case .Waiting:
+			case .Text_Found:
 				return "", true
+			case .Failure_Found:
+				return line, false
 			}
 		}
 		log_change_wait(machine)
 	}
+	// At the bound, a last line that never ended is read as it is.
+	log := log_read(machine)
+	if len(log) > machine.seen {
+		outcome, line := wait_or_failure_decide(log[machine.seen:], text, failure, false)
+		switch outcome {
+		case .Waiting:
+		case .Text_Found:
+			return "", true
+		case .Failure_Found:
+			return line, false
+		}
+	}
 	return "", false
+}
+
+// What a Wait with a failure text found in the log.
+Wait_Outcome :: enum u8 {
+	Waiting       = 0, // Neither text yet, or the line of the text has not ended.
+	Text_Found    = 1, // The text, on a line that does not have the failure text.
+	Failure_Found = 2, // The failure text first, or on the line of the text.
+}
+
+// wait_or_failure_decide reads the log after the last Wait for a Wait with
+// a failure text. The failure text fails the step when it comes before the
+// text, or when it is on the line where the text is: a process that writes
+// a list on one line, as the palette does, writes the item that the step
+// refuses on the line that it waits for. whole_lines: the line of the text
+// counts only once it ended, since its rest can still come; false at the
+// bound, where the last line is read as it is. failure_line is the line
+// with the failure text.
+wait_or_failure_decide :: proc(rest, text, failure: string, whole_lines: bool) -> (outcome: Wait_Outcome, failure_line: string) {
+	line_of :: proc(rest: string, at: int) -> (line: string, ended: bool) {
+		start := strings.last_index_byte(rest[:at], '\n') + 1
+		end := strings.index_byte(rest[at:], '\n')
+		if end < 0 {
+			return strings.trim_right(rest[start:], "\r"), false
+		}
+		return strings.trim_right(rest[start:at + end], "\r"), true
+	}
+	text_at := strings.index(rest, text)
+	failure_at := failure == "" ? -1 : strings.index(rest, failure)
+	if failure_at >= 0 && (text_at < 0 || failure_at < text_at) {
+		line, _ := line_of(rest, failure_at)
+		return .Failure_Found, line[strings.index(line, failure):]
+	}
+	if text_at < 0 {
+		return .Waiting, ""
+	}
+	line, ended := line_of(rest, text_at)
+	if failure != "" && strings.contains(line, failure) {
+		return .Failure_Found, line
+	}
+	if whole_lines && !ended {
+		return .Waiting, ""
+	}
+	return .Text_Found, ""
 }
 
 // log_last_line gives the last line of the log of the machine that has a
@@ -5282,7 +5338,7 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			if step.fails_on != "" {
 				failure_line, text_found := log_wait_or_failure(machine, step.text, step.fails_on, limit)
 				if failure_line != "" {
-					fmt.eprintfln("modustool: test failed: step %d: the machine printed \"%s\" before \"%s\"", index + 1, failure_line, step.text)
+					fmt.eprintfln("modustool: test failed: step %d: the machine printed \"%s\" before \"%s\" or on its line", index + 1, failure_line, step.text)
 					return false
 				}
 				if !text_found {

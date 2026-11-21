@@ -406,7 +406,7 @@ Do not use: enumerator, enum case, enum variant.
 
 ### Display text
 
-A display text is the text that a principal reads for a member, in one language, which a module file holds apart from the name of the member.
+A display text is the text that a principal reads for a member, for one language tag, which a module file holds apart from the name of the member.
 
 The palette shows it on a button and in the name of an entry, and the completion beside the name of the member. A line never types it: the line types the name, so a line means one thing in each language. A member with no display text shows its name. A translation adds rows of another language to the table `Member_Texts`, with no change of the code or of the names.
 
