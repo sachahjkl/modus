@@ -134,7 +134,7 @@ open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) 
 		return {}, false
 	}
 	status: system.Status
-	if client.calls, status = system.ring_open(client.ring_memory); status != .Ok {
+	if client.calls, status = system.ring_open(client.ring_memory, receive_handles = true); status != .Ok {
 		return {}, false
 	}
 	address, map_status := system.memory_map(client.region_memory)
@@ -550,7 +550,7 @@ open_handles :: proc "contextless" (ring_memory, region_memory: system.Handle, s
 		return {}, false
 	}
 	status: system.Status
-	if client.calls, status = system.ring_open(ring_memory); status != .Ok {
+	if client.calls, status = system.ring_open(ring_memory, receive_handles = true); status != .Ok {
 		return {}, false
 	}
 	address, map_status := system.memory_map(region_memory)

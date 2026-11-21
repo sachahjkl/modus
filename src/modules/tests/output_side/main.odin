@@ -113,7 +113,7 @@ probe_write :: proc "contextless" (command: ring.Record) {
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	opened, status := system.ring_open(ctx.handles[op.CONTEXT_WIRING_RING])
+	opened, status := system.ring_open(ctx.handles[op.CONTEXT_WIRING_RING], receive_handles = true)
 	if status != .Ok {
 		wrong("no wiring ring; the status", u64(status))
 	}

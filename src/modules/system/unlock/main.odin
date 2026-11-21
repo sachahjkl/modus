@@ -2611,7 +2611,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Info, No_Random_Seed{})
 	}
 	status: system.Status
-	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT]); status != .Ok {
+	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true); status != .Ok {
 		system.log_fact(.Info, No_Root_Ring{})
 		system.stop(.Refused)
 	}

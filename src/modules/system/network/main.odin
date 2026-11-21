@@ -1263,7 +1263,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if kind, rights, _ := system.handle_state(frame_service); kind != .Process || .Read not_in rights {
 		fail("no handle of the frame service with the right Read: a wait for the device would have no end")
 	}
-	if control, status = system.ring_open(control_memory); status != .Ok {
+	if control, status = system.ring_open(control_memory, receive_handles = true); status != .Ok {
 		fail("no control ring")
 	}
 	// The frame region: the device reads and writes it, so it is contiguous.

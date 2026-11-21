@@ -505,8 +505,8 @@ diagnose :: proc "contextless" (process_index: u32, command: ring.Record, status
 		// No record explains a success, nor a lack of frames.
 	case .Bad_Handle, .No_Right:
 		explained = handles_explain(&record, process, operation, v)
-		if !explained && operation == .Handle_Give && v[0] != 0 {
-			record_set(&record, .No_Target, .None, 1, v[0], 0, 0) // A memory object that no one other process maps or holds.
+		if !explained && status == .Bad_Handle && operation == .Handle_Give && v[0] != 0 {
+			record_set(&record, .No_Target, .None, 1, v[0], 0, 0) // A memory object that no one other process maps with Receive_Handles.
 			explained = true
 		}
 		if !explained && status == .No_Right {
@@ -1372,8 +1372,8 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 			record_set(record, .Too_Small, .Records, 2, 0, 1, 0)
 		case v[1] > op.RANGE_TABLE_CAPACITY:
 			record_set(record, .Too_Long, .Records, 2, v[1], op.RANGE_TABLE_CAPACITY, 0)
-		case v[2] & ~op.MAP_FLAGS_KNOWN != 0:
-			record_set(record, .Bad_Flags, .None, 3, v[2], op.MAP_FLAGS_KNOWN, 0)
+		case v[2] & ~op.PROTECT_FLAGS_KNOWN != 0:
+			record_set(record, .Bad_Flags, .None, 3, v[2], op.PROTECT_FLAGS_KNOWN, 0)
 		case:
 			// The entries that the call changes, as the kernel counts them:
 			// one for each large page, the present pages of a whole mapping.

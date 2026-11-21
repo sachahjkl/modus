@@ -11,10 +11,11 @@
 // line goes from one process to the other: an entry is a record, a choice
 // is a number, and a result is runs of text with what each run is.
 //
-// **The memory object**: `TABLE_PAGES` pages. A `Header` at byte 0, the
-// result area at `RESULT_OFFSET`, the candidate area at
-// `CANDIDATES_OFFSET`, then `ENTRY_CAPACITY` records `Entry` at
-// `ENTRIES_OFFSET`.
+// **The memory object**: at least `MIN_TABLE_PAGES` pages, sized by the
+// provider for its actual entry count (`table_pages_for`). A `Header` at
+// byte 0 (with `entry_count` and `byte_length`), the result area at
+// `RESULT_OFFSET`, the candidate area at `CANDIDATES_OFFSET`, then
+// `Header.entry_count` records `Entry` at `ENTRIES_OFFSET`.
 //
 // **The reader trusts nothing.** The provider is another process: the
 // reader copies the table (`snapshot_take`), then checks each count, each
@@ -37,9 +38,9 @@ import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 
 MAGIC :: 0x544C4150 // "PALT", little-endian.
-VERSION :: 7 // A new field or a new meaning of a field is a new version. 7: no Setting entry; a row of buttons comes from an enum parameter of an export.
+VERSION :: 8 // A new field or a new meaning of a field is a new version. 8: Header.byte_length and dynamically sized entry region with no fixed entry cap.
 
-ENTRY_CAPACITY :: 256 // The entries of a table: the commands of a console at most.
+INITIAL_ENTRY_CAPACITY :: 256 // Initial allocation hint for a new table; not a protocol limit.
 NAME_CAPACITY :: 64 // The bytes of the name of an entry.
 SIGNATURE_CAPACITY :: 128 // The bytes of the signature of an entry: its name, its parameters, its result.
 ABOUT_CAPACITY :: 128 // The bytes of the help sentence of an entry.
@@ -167,7 +168,8 @@ Header :: struct {
 	magic:        u32, // MAGIC.
 	version:      u32, // VERSION.
 	change_count: u32, // The provider adds 1 before a change and 1 after it: odd while it writes. It is the generation of the table.
-	entry_count:  u32, // The entries in use: 0 to ENTRY_CAPACITY.
+	entry_count:  u32, // The entries in use.
+	byte_length:  u64, // Total valid byte length: ENTRIES_OFFSET + u64(entry_count) * size_of(Entry).
 }
 
 RESULT_OFFSET :: 64 // The first byte of the result area.
@@ -195,9 +197,37 @@ Candidate_Kind :: enum u64 {
 // candidates are the only values that the parameter takes, and not
 // suggestions. The panel then shows a few of them as a row of buttons.
 CANDIDATES_CLOSED :: 1
-TABLE_BYTES :: ENTRIES_OFFSET + ENTRY_CAPACITY * size_of(Entry)
-TABLE_PAGES :: (TABLE_BYTES + 4095) / 4096
+MIN_TABLE_BYTES :: ENTRIES_OFFSET
+MIN_TABLE_PAGES :: (MIN_TABLE_BYTES + 4095) / 4096
 #assert(size_of(Header) <= RESULT_OFFSET)
+
+// table_bytes_for gives the exact byte length of a table with entry_count
+// entries, or ok false on overflow.
+table_bytes_for :: proc "contextless" (entry_count: u64) -> (bytes: u64, ok: bool) {
+	if entry_count > (max(u64) - ENTRIES_OFFSET) / size_of(Entry) {
+		return 0, false
+	}
+	return ENTRIES_OFFSET + entry_count * size_of(Entry), true
+}
+
+// table_pages_for gives the page count (4096-byte pages) required for a table
+// holding entry_count entries, or ok false on overflow.
+table_pages_for :: proc "contextless" (entry_count: u64) -> (pages: u64, ok: bool) {
+	bytes := table_bytes_for(entry_count) or_return
+	if bytes > max(u64) - 4095 {
+		return 0, false
+	}
+	return (bytes + 4095) / 4096, true
+}
+
+// table_entry_capacity gives how many entries fit in a memory region of
+// byte_length bytes.
+table_entry_capacity :: proc "contextless" (byte_length: u64) -> u64 {
+	if byte_length < ENTRIES_OFFSET {
+		return 0
+	}
+	return (byte_length - ENTRIES_OFFSET) / size_of(Entry)
+}
 
 // The ring between the two processes. A command goes from the panel to the
 // provider; a completion comes back with the tag of its command.
@@ -248,6 +278,7 @@ Outcome :: enum u64 {
 	Edit_Opened      = 5, // The edit line of the provider holds the entry.
 	Candidates_Ready = 6, // The candidate area holds the candidates. values[1]: a Candidate_Kind. values[2]: their count. values[3]: CANDIDATES_CLOSED when they are the only values of the parameter, else 0.
 	Manual_Opened    = 7, // The window of the manual shows the page.
+	Table_Replaced   = 8, // The provider moved its entry table into a larger memory object: values[1] is the read-only memory handle given through the palette ring, values[2] is its byte capacity.
 }
 
 // command_of_ring_word is the border of the kind of a record that the
@@ -304,42 +335,45 @@ name_hash :: proc "contextless" (name: string) -> u64 {
 	return hash
 }
 
-// A copy of a table that passed each check.
+// A copy of a table that passed each check. entries is a caller-supplied
+// backing slice sized for at least entry_count entries.
 Snapshot :: struct {
 	generation:  u32, // The change_count of the copy: even.
 	entry_count: int, // The entries in use.
-	entries:     [ENTRY_CAPACITY]Entry, // The entries.
+	entries:     []Entry, // Caller-supplied backing buffer for the entries.
 }
 
 // Why a table is refused.
 Problem :: enum u8 {
 	None             = 0, // The table is good.
-	Too_Small        = 1, // The memory is smaller than a table.
+	Too_Small        = 1, // The memory is smaller than the header or truncated before byte_length.
 	Never_Stable     = 2, // The change count stayed odd, or changed during each copy.
 	Bad_Magic        = 3,
 	Bad_Version      = 4,
-	Too_Many_Entries = 5,
+	Too_Many_Entries = 5, // More entries than the caller's Snapshot.entries slice holds.
 	Bad_Kind         = 6, // An entry: a kind, a flag, a kind of a parameter or of the result out of its range, an integer unit out of the contract or on a parameter that is no Integer, or a reserved byte that is not 0.
 	Bad_Length       = 7, // An entry: a length or a count past its field, or an empty name.
 	Bad_Byte         = 8, // An entry: a text with an invalid sequence of UTF-8 (a broken sequence or a control character), or a name, an act name, a setting name or a value name outside ASCII.
 	Bad_Signature    = 9, // An entry: the signature does not start with the name.
 	Bad_Setting      = 10, // A Provider_Setting entry that has parameters; the flag In_Use on an entry that is no Provider_Setting; the name of a setting on another kind, or with no name of a value.
+	Bad_Byte_Length  = 11, // Header.byte_length does not match ENTRIES_OFFSET + entry_count * size_of(Entry) or overflows.
 }
 
 // The name of each problem, as a log writes it.
 @(rodata)
 problem_names := [Problem]string {
 	.None             = "no problem",
-	.Too_Small        = "the memory is smaller than a table",
+	.Too_Small        = "the memory is smaller than the table",
 	.Never_Stable     = "the change count never stayed even",
 	.Bad_Magic        = "a wrong magic number",
 	.Bad_Version      = "a version that the reader does not know",
-	.Too_Many_Entries = "more entries than a table holds",
+	.Too_Many_Entries = "more entries than the snapshot buffer holds",
 	.Bad_Kind         = "a kind or a flag out of its range",
 	.Bad_Length       = "a length past its field, or an empty name",
 	.Bad_Byte         = "a text that is not UTF-8 or has a control character, or a name that is not ASCII",
 	.Bad_Signature    = "a signature that does not start with the name",
 	.Bad_Setting      = "a setting or a value that the machine does not have",
+	.Bad_Byte_Length  = "a header byte length that does not match the entry count",
 }
 
 // The bits of the flags that the contract knows: each other bit of a table is refused.
@@ -415,6 +449,43 @@ entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 	return .None
 }
 
+// header_read copies and validates the Header of a table without copying
+// entries, so a reader knows how large a Snapshot.entries slice to size.
+header_read :: proc "contextless" (memory: []u8) -> (out: Header, problem: Problem) {
+	if len(memory) < MIN_TABLE_BYTES {
+		return {}, .Too_Small
+	}
+	header := (^Header)(raw_data(memory))
+	for _ in 0 ..< SNAPSHOT_TRIES {
+		before := intrinsics.atomic_load_explicit(&header.change_count, .Acquire)
+		if before & 1 != 0 {
+			continue
+		}
+		magic := intrinsics.volatile_load(&header.magic)
+		version := intrinsics.volatile_load(&header.version)
+		count := intrinsics.volatile_load(&header.entry_count)
+		byte_length := intrinsics.volatile_load(&header.byte_length)
+		if intrinsics.atomic_load_explicit(&header.change_count, .Acquire) != before {
+			continue
+		}
+		if magic != MAGIC {
+			return {}, .Bad_Magic
+		}
+		if version != VERSION {
+			return {}, .Bad_Version
+		}
+		expected_bytes, fits := table_bytes_for(u64(count))
+		if !fits || byte_length != expected_bytes {
+			return {}, .Bad_Byte_Length
+		}
+		if byte_length > u64(len(memory)) {
+			return {}, .Too_Small
+		}
+		return {magic = magic, version = version, change_count = before, entry_count = count, byte_length = byte_length}, .None
+	}
+	return {}, .Never_Stable
+}
+
 // snapshot_take copies a table and checks the copy. memory is the mapping
 // of the reader. The copy is whole only when the change count is even and
 // the same before and after it; the reader tries SNAPSHOT_TRIES times. On a
@@ -422,7 +493,7 @@ entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 snapshot_take :: proc "contextless" (memory: []u8, snapshot: ^Snapshot) -> (problem: Problem, index: int) {
 	snapshot.entry_count = 0
 	snapshot.generation = 0
-	if len(memory) < TABLE_BYTES {
+	if len(memory) < MIN_TABLE_BYTES {
 		return .Too_Small, 0
 	}
 	header := (^Header)(raw_data(memory))
@@ -433,18 +504,30 @@ snapshot_take :: proc "contextless" (memory: []u8, snapshot: ^Snapshot) -> (prob
 		if before & 1 != 0 {
 			continue
 		}
-		// The count is read once: the copy uses this value and no later one.
+		// Header fields are read once: the copy uses these values and no later ones.
+		magic := intrinsics.volatile_load(&header.magic)
+		version := intrinsics.volatile_load(&header.version)
 		count = intrinsics.volatile_load(&header.entry_count)
-		if intrinsics.volatile_load(&header.magic) != MAGIC {
+		byte_length := intrinsics.volatile_load(&header.byte_length)
+		if magic != MAGIC {
 			return .Bad_Magic, 0
 		}
-		if intrinsics.volatile_load(&header.version) != VERSION {
+		if version != VERSION {
 			return .Bad_Version, 0
 		}
-		if count > ENTRY_CAPACITY {
+		expected_bytes, fits := table_bytes_for(u64(count))
+		if !fits || byte_length != expected_bytes {
+			return .Bad_Byte_Length, 0
+		}
+		if byte_length > u64(len(memory)) {
+			return .Too_Small, 0
+		}
+		if u64(len(snapshot.entries)) < u64(count) {
 			return .Too_Many_Entries, 0
 		}
-		intrinsics.mem_copy_non_overlapping(&snapshot.entries[0], &memory[ENTRIES_OFFSET], int(count) * size_of(Entry))
+		if count > 0 {
+			intrinsics.mem_copy_non_overlapping(&snapshot.entries[0], &memory[ENTRIES_OFFSET], int(count) * size_of(Entry))
+		}
 		if intrinsics.atomic_load_explicit(&header.change_count, .Acquire) == before {
 			snapshot.generation = before
 			copied = true
@@ -472,7 +555,7 @@ snapshot_take :: proc "contextless" (memory: []u8, snapshot: ^Snapshot) -> (prob
 // RESULT_LINE_CAPACITY lines. length is the count that the provider gave.
 // It gives the count of the bytes of the copy, or ok false.
 result_copy :: proc "contextless" (memory: []u8, length: u64, result: ^[RESULT_CAPACITY]u8) -> (count: int, ok: bool) {
-	if len(memory) < TABLE_BYTES || length > RESULT_CAPACITY {
+	if len(memory) < MIN_TABLE_BYTES || length > RESULT_CAPACITY {
 		return 0, false
 	}
 	count = int(length)
@@ -569,7 +652,7 @@ result_line_end :: proc "contextless" (result: ^Result_Writer) {
 // CANDIDATE_NAME_CAPACITY, each name valid UTF-8. count is the count that the
 // provider gave. On a problem the copy has no candidate.
 candidates_copy :: proc "contextless" (memory: []u8, count: u64, candidates: ^[CANDIDATE_CAPACITY]Candidate) -> (copied: int, ok: bool) {
-	if len(memory) < TABLE_BYTES || count > CANDIDATE_CAPACITY {
+	if len(memory) < MIN_TABLE_BYTES || count > CANDIDATE_CAPACITY {
 		return 0, false
 	}
 	copied = int(count)

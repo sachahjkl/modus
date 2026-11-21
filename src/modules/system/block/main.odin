@@ -394,7 +394,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	interrupt = ctx.handles[pci.GRANT_INTERRUPT]
 	ring_memory = ctx.handles[block.SERVICE_RING]
 	status: system.Status
-	if clients, status = system.ring_open(ring_memory); status != .Ok {
+	if clients, status = system.ring_open(ring_memory, receive_handles = true); status != .Ok {
 		fail("no block ring")
 	}
 	configuration_address, configuration_status := system.memory_map(ctx.handles[pci.GRANT_CONFIGURATION], {})

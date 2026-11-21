@@ -1023,7 +1023,7 @@ connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> 
 			}
 			copy(connection.name[:len(connection.name) - 1], name)
 			ring_status: system.Status
-			connection.calls, ring_status = system.ring_open(connection.ring_memory)
+			connection.calls, ring_status = system.ring_open(connection.ring_memory, receive_handles = true)
 			address, map_status := system.memory_map(connection.region_memory)
 			region_pages, size_status := system.memory_size(connection.region_memory)
 			if ring_status != .Ok || map_status != .Ok || size_status != .Ok {
@@ -1250,7 +1250,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("no datagram region")
 	}
 	region = ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]
-	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT]); status != .Ok {
+	if requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true); status != .Ok {
 		fail("no ring to the root service")
 	}
 	// The client table, read-only: the root service writes it, and this

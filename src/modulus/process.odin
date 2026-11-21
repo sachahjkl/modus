@@ -143,8 +143,9 @@ Mapping :: struct {
 	// The protection that the handle permitted when the process mapped the
 	// object: Memory_Protect can give back what `bits` lost, never more.
 	limit_bits: u64,
-	large:      bool, // Each 2 MiB of the mapping is one large page (an object made Large_Pages).
-	protected:  bool, // Memory_Protect changed the protection of pages of the mapping.
+	large:           bool, // Each 2 MiB of the mapping is one large page (an object made Large_Pages).
+	protected:       bool, // Memory_Protect changed the protection of pages of the mapping.
+	receive_handles: bool, // Memory_Map passed Map_Flag.Receive_Handles: this process agrees to receive handles through this memory.
 }
 
 // page_bits gives the bits of a page table entry for a page of a mapping
@@ -1224,7 +1225,7 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	// Under the process lock of the process: each caller of map_region holds
 	// it (Memory_Map through target_lock in enter.odin, process_create and
 	// thread_create in this file, the start of the root service in main.odin).
-	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index, present_page_count = present_page_count, limit_bits = limit_bits, large = large}
+	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index, present_page_count = present_page_count, limit_bits = limit_bits, large = large, receive_handles = .Receive_Handles in flags}
 	intrinsics.atomic_add(&region.references, 1)
 	if process_records[index_of_process(process)].mode != .None {
 		intrinsics.atomic_add(&region.recorded_mappings, 1)
@@ -1485,24 +1486,18 @@ present_pages :: proc "contextless" (process: ^Process) -> (count: u64) {
 	return count
 }
 
-// holds_region says if a process has a handle to a memory object.
-holds_region :: proc "contextless" (process: ^Process, region: u32) -> bool {
-	for &slot in process.handles {
-		if slot.kind == .Memory && slot.object == region {
-			return true
-		}
-	}
-	return false
-}
-
-// maps_region says if a process has a mapping of a memory object.
-maps_region :: proc "contextless" (process: ^Process, region: u32) -> bool {
+// maps_region_consent says if a process maps a memory object, and whether at
+// least one mapping of it agreed to receive handles (Map_Flag.Receive_Handles).
+maps_region_consent :: proc "contextless" (process: ^Process, region: u32) -> (maps: bool, accepts_handles: bool) {
 	for mapping in process.mappings {
 		if mapping.page_count != 0 && mapping.region == region {
-			return true
+			maps = true
+			if mapping.receive_handles {
+				return true, true
+			}
 		}
 	}
-	return false
+	return maps, false
 }
 
 // time_page_create makes the time page. The kernel keeps one reference:

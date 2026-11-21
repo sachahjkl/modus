@@ -339,9 +339,10 @@ Operation :: enum u32 {
 	//   `USER_END` and over no other mapping. 0: the kernel chooses the lowest free place from
 	//   `CHOSEN_BASE`, with a page with no mapping before and after it, on 2 MiB for an object of
 	//   `Large_Pages` that is mapped by whole large pages.
-	// - `flags`: a `Map_Flags`: `Write`, `Execute` (never both: no page is writable and executable), or
-	//   `No_Access`: the pages fault until `Memory_Protect` gives them access. No flag: read only. The
-	//   kernel refuses any other bit.
+	// - `flags`: a `Map_Flags`: `Write`, `Execute` (never both: no page is writable and executable),
+	//   `No_Access` (the pages fault until `Memory_Protect` gives them access), or `Receive_Handles`
+	//   (this process agrees to receive handles through this memory object from `Handle_Give`). No flag:
+	//   read only. The kernel refuses any other bit.
 	// - `first`: the first page of the object.
 	// - `pages`: the count of pages, or 0 for each page from `first` to the end of the object.
 	//
@@ -521,9 +522,10 @@ Operation :: enum u32 {
 	// - `target`: where the copy goes:
 	//   - 0: this process, with no right needed;
 	//   - a process handle with **Control**: that process;
-	//   - a memory handle: the other process that maps this memory, the other side of a ring. If no other
-	//     process maps it, the one other process that holds a handle to it. The kernel keeps, with the
-	//     copy, the memory object that it came through: `Handle_State` proves it to the receiver.
+	//   - a memory handle: the one other process that maps this memory with `Map_Flag.Receive_Handles`.
+	//     A process that holds or maps this memory without `Receive_Handles` never receives handles
+	//     through it. The kernel keeps, with the copy, the memory object that it came through:
+	//     `Handle_State` proves it to the receiver.
 	// - `handle`: the handle to give, with **Give** when the target is another process.
 	// - `rights`: the rights of the copy are the rights of `handle` that are also in `rights`. A process
 	//   handle that goes to the process that it names also loses **Control** and **Give**: a process never
@@ -535,8 +537,9 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Handle`: `handle` or `target` names nothing; `target` is a handle of another kind; or it is a
-	//   memory object that no other process maps or holds, or that two other processes hold.
-	// - `No_Right`: `handle` has not **Give**, or the process handle `target` has not **Control**.
+	//   memory object that no other process maps, or that two other processes map with `Receive_Handles`.
+	// - `No_Right`: `handle` has not **Give**, the process handle `target` has not **Control**, or `target`
+	//   is a memory object that another process maps without `Receive_Handles`.
 	// - `Bad_State`: the target process is stopped; or `handle` names a memory object with a protection of
 	//   its own on a part (`Memory_Protect`), and the target is another process.
 	// - `No_Slot`: the handle table of the target process is full.
@@ -1012,9 +1015,10 @@ Operation :: enum u32 {
 	//
 	// - `ranges`, `count`: a table of `count` records `Address_Range`, from 1 to `RANGE_TABLE_CAPACITY`.
 	//   Each range is inside one mapping of this process, below `THREAD_AREA_BASE`.
-	// - `flags`: a `Map_Flags`. A protection can only take away what the mapping was made with: `Write`
-	//   needs a mapping made with `Write`, `Execute` one made with `Execute`. `No_Access` takes no other
-	//   flag, and `Write` with `Execute` is refused.
+	// - `flags`: a `Map_Flags` within `PROTECT_FLAGS_KNOWN` (`Receive_Handles` is refused). A protection
+	//   can only take away what the mapping was made with: `Write` needs a mapping made with `Write`,
+	//   `Execute` one made with `Execute`. `No_Access` takes no other flag, and `Write` with `Execute`
+	//   is refused.
 	//
 	// A range that is a part of a mapping, not its whole, takes away from the protection of the mapping now:
 	// it cannot get more. It needs an object with a frame list that only this process names, with one
@@ -2998,15 +3002,17 @@ COMMIT_FLAGS_KNOWN :: u64(1) << u64(Commit_Flag.Decommit)
 // A flag of `Memory_Map` and of `Memory_Protect`: the access that a mapping
 // gives. No flag is read only. A page is never writable and executable.
 Map_Flag :: enum u64 {
-	Write   = 0, // The pages can be written. Needs **Write** on the memory handle.
-	Execute = 1, // The pages can be executed. Needs **Execute** on the memory handle. Never with `Write`.
-	No_Access = 2, // Memory_Map: a mapping whose pages fault until Memory_Protect gives them access. Memory_Protect: no access.
+	Write           = 0, // The pages can be written. Needs **Write** on the memory handle.
+	Execute         = 1, // The pages can be executed. Needs **Execute** on the memory handle. Never with `Write`.
+	No_Access       = 2, // Memory_Map: a mapping whose pages fault until Memory_Protect gives them access. Memory_Protect: no access.
+	Receive_Handles = 3, // Memory_Map: this process agrees to receive handles through this memory object (`Handle_Give`). Refused by `Memory_Protect`.
 }
 // The flags of one `Memory_Map` or `Memory_Protect`. Example: `{.Write}`.
 Map_Flags :: bit_set[Map_Flag;u64]
-// The flags that `Memory_Map` and `Memory_Protect` know, as the word of
-// their argument.
-MAP_FLAGS_KNOWN :: u64(1) << u64(Map_Flag.Write) | u64(1) << u64(Map_Flag.Execute) | u64(1) << u64(Map_Flag.No_Access)
+// The flags that `Memory_Map` knows, as the word of its argument.
+MAP_FLAGS_KNOWN :: u64(1) << u64(Map_Flag.Write) | u64(1) << u64(Map_Flag.Execute) | u64(1) << u64(Map_Flag.No_Access) | u64(1) << u64(Map_Flag.Receive_Handles)
+// The flags that `Memory_Protect` knows, as the word of its argument: protection bits only.
+PROTECT_FLAGS_KNOWN :: u64(1) << u64(Map_Flag.Write) | u64(1) << u64(Map_Flag.Execute) | u64(1) << u64(Map_Flag.No_Access)
 
 // The largest code of `Machine_Stop`: the host receives one byte.
 MACHINE_STOP_CODE_MOST :: 255

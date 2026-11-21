@@ -1216,7 +1216,7 @@ service_reach :: proc "contextless" (ctx: ^system.Context) -> (problem: string) 
 		return "this process has no ring to the root service"
 	}
 	status: system.Status
-	requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT])
+	requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true)
 	if status != .Ok {
 		return "the ring to the root service does not open"
 	}

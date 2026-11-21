@@ -414,7 +414,7 @@ no_field_case :: proc "contextless" () {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	requests_memory = ctx.handles[system.GRANT_ROOT]
-	opened, ring_status := system.ring_open(requests_memory)
+	opened, ring_status := system.ring_open(requests_memory, receive_handles = true)
 	if ring_status != .Ok {
 		wrong("no root ring; the status", u64(ring_status))
 	}

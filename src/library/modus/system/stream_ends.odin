@@ -117,9 +117,15 @@ wiring_ring_take :: proc "contextless" (memory: Handle) -> Status {
 	if wiring_ring.head != nil {
 		return .Bad_State
 	}
-	wiring_ring = ring_open(memory) or_return
+	wiring_ring = ring_open(memory, receive_handles = true) or_return
 	wiring_ring_memory = memory
 	return .Ok
+}
+
+// wiring_ring_open maps the wiring ring of the context with Receive_Handles
+// so the wiring service can deliver stream ends before the first write or read.
+wiring_ring_open :: proc "contextless" () -> bool {
+	return wiring_ring_ready()
 }
 
 // wiring_ring_ready opens the wiring ring of the context at the first call.
@@ -132,7 +138,7 @@ wiring_ring_ready :: proc "contextless" () -> bool {
 	if memory == 0 {
 		return false
 	}
-	opened, status := ring_open(memory)
+	opened, status := ring_open(memory, receive_handles = true)
 	if status != .Ok {
 		return false
 	}

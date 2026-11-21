@@ -77,7 +77,7 @@ history_store_open :: proc "contextless" () -> (opened: bool) {
 	}
 	client.file = file
 	ring_status, region_status, size_status: system.Status
-	client.calls, ring_status = system.ring_open(client.ring_memory)
+	client.calls, ring_status = system.ring_open(client.ring_memory, receive_handles = true)
 	address: rawptr
 	address, region_status = system.memory_map(client.region_memory)
 	region_pages: u64

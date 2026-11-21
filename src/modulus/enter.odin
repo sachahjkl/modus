@@ -632,6 +632,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			require_control() or_return
 		}
 		to: ^Process
+		to_region: u32
 		through: u64
 		if v[0] == 0 {
 			to = process
@@ -644,31 +645,30 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				}
 				to = &processes[to_slot.object]
 			case .Memory:
-				find: for &other, other_index in processes[1:] {
+				found_without_consent := false
+				for &other, other_index in processes[1:] {
+					if &other == process {
+						continue
+					}
 					other_taken := process_lock(u32(other_index + 1))
-					maps := &other != process && other.state != .None && other.state != .Stopped && maps_region(&other, to_slot.object)
+					maps, accepts: bool
+					if other.state != .None && other.state != .Stopped {
+						maps, accepts = maps_region_consent(&other, to_slot.object)
+					}
 					process_unlock(u32(other_index + 1), other_taken)
-					if maps {
-						to = &other
-						break find
-					}
-				}
-				if to == nil {
-					// No other process maps the memory yet: the one other
-					// process that holds a handle to it. Two holders: no target.
-					for &other, other_index in processes[1:] {
-						other_taken := process_lock(u32(other_index + 1))
-						holds := &other != process && other.state != .None && other.state != .Stopped && holds_region(&other, to_slot.object)
-						process_unlock(u32(other_index + 1), other_taken)
-						if !holds {
-							continue
-						}
+					if accepts {
 						if to != nil {
-							return .Bad_Handle
+							return .Bad_Handle // Two processes agree to receive handles through one memory object.
 						}
 						to = &other
+					} else if maps {
+						found_without_consent = true
 					}
 				}
+				if to == nil && found_without_consent {
+					return .No_Right
+				}
+				to_region = to_slot.object
 				through = regions[to_slot.object].serial
 			case .Interrupt, .Ports, .Machine, .Thread, .Budget, .Log, .None:
 				// A target of another kind names no process: Bad_Handle below.
@@ -681,6 +681,14 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		defer process_unlock(index_of_process(to), to_taken)
 		if to.state == .None || to.state == .Stopped {
 			return .Bad_State
+		}
+		// Re-verify receiver consent under the receiver's lock so an unmap
+		// between discovery and insertion never delivers an unsolicited handle.
+		if to_region != 0 {
+			_, still_accepts := maps_region_consent(to, to_region)
+			if !still_accepts {
+				return .No_Right
+			}
 		}
 		// An object with marks of protection of a part is not given: the marks
 		// would reach the mapping of the other process.
@@ -1158,7 +1166,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		return .Ok
 
 	case .Memory_Protect:
-		if v[1] == 0 || v[1] > op.RANGE_TABLE_CAPACITY || v[2] & ~op.MAP_FLAGS_KNOWN != 0 {
+		if v[1] == 0 || v[1] > op.RANGE_TABLE_CAPACITY || v[2] & ~op.PROTECT_FLAGS_KNOWN != 0 {
 			return .Bad_Operation
 		}
 		flags := transmute(op.Map_Flags)v[2]

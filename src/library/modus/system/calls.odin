@@ -351,7 +351,7 @@ service_connection :: proc "contextless" (requests: ^ring.Ring, tag: u32, name: 
 			defer if status != .Ok {
 				call_connection_end(&connection)
 			}
-			connection.calls = ring_open(connection.ring_memory) or_return
+			connection.calls = ring_open(connection.ring_memory, receive_handles = true) or_return
 			region_pages := memory_size(connection.region_memory) or_return
 			address := memory_map(connection.region_memory) or_return
 			connection.region = ([^]u8)(address)[:region_pages * PAGE_SIZE]

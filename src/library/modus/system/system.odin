@@ -879,12 +879,12 @@ close :: proc "contextless" (handle: Handle) {
 // ```odin
 // memory, calls := system.ring_create(64) or_return
 // ```
-ring_create :: proc "contextless" (capacity: u32 = ring.CAPACITY) -> (memory: Handle, mapped: ring.Ring, status: Status) {
+ring_create :: proc "contextless" (capacity: u32 = ring.CAPACITY, receive_handles := false) -> (memory: Handle, mapped: ring.Ring, status: Status) {
 	if capacity < ring.CAPACITY || capacity > ring.CAPACITY_LIMIT || capacity & (capacity - 1) != 0 {
 		return 0, {}, .Bad_Operation
 	}
 	memory = memory_create(ring.pages(capacity)) or_return
-	mapped, status = ring_open(memory)
+	mapped, status = ring_open(memory, receive_handles = receive_handles)
 	if status != .Ok {
 		close(memory)
 		memory = 0
@@ -894,12 +894,14 @@ ring_create :: proc "contextless" (capacity: u32 = ring.CAPACITY) -> (memory: Ha
 
 // ring_open maps the memory of a ring in this process. The capacity of the
 // ring comes from the size of the memory, that the kernel gives.
+// receive_handles: pass Map_Flag.Receive_Handles so the peer can transfer
+// handles through this ring with Handle_Give (false by default).
 // error: the record of a refusal, if the caller gives one. The argument 1
 // is the memory. Each cause has its own answer: the status and the record
 // of the kernel for a handle that it refuses (Memory_Size, Memory_Map), and
 // Bad_Operation with the record of ring_pages_refusal for a size that is no
 // ring.
-ring_open :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = nil) -> (mapped: ring.Ring, status: Status) {
+ring_open :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = nil, receive_handles := false) -> (mapped: ring.Ring, status: Status) {
 	page_count := memory_size(memory, error) or_return
 	if refusal, refused := ring_pages_refusal(page_count); refused {
 		if error != nil {
@@ -907,7 +909,11 @@ ring_open :: proc "contextless" (memory: Handle, error: ^errors.Error_Record = n
 		}
 		return {}, .Bad_Operation
 	}
-	address := memory_map(memory, error = error) or_return
+	flags := op.Map_Flags{.Write}
+	if receive_handles {
+		flags += {.Receive_Handles}
+	}
+	address := memory_map(memory, flags, error = error) or_return
 	opened, ok := ring.open(address, page_count)
 	if !ok {
 		// ring_pages_refusal took this count, and ring.open reads no byte of

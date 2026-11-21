@@ -58,8 +58,59 @@ palette_element_places_drawn, palette_element_places_written: interface.Element_
 //
 // The two lists take turns. The thread writes only the list that the loop
 // does not read: it starts a list only after the loop adopted the one
-// before, so the loop never reads a list that changes.
+// before, so the loop never reads a list that changes. Each list's backing
+// memory is sized on demand off the main thread for any entry count.
+Palette_List_Memory :: struct {
+	handle:            system.Handle,
+	memory:            []u8,
+	provider_capacity: int,
+	total_capacity:    int,
+}
 palette_lists: [2]palette.List
+palette_list_memories: [2]Palette_List_Memory
+
+// palette_list_ensure grows the backing memory of palette_lists[slot] off the
+// main thread whenever provider or total entries exceed its current capacity.
+palette_list_ensure :: proc "contextless" (slot: u32, provider_needed, total_needed: int) -> bool {
+	mem := &palette_list_memories[slot]
+	if mem.provider_capacity >= provider_needed && mem.total_capacity >= total_needed && len(mem.memory) > 0 {
+		return true
+	}
+	provider_cap := max(provider_needed, palette_table.INITIAL_ENTRY_CAPACITY)
+	if mem.provider_capacity > 0 && provider_cap > mem.provider_capacity {
+		provider_cap = max(provider_cap, mem.provider_capacity * 2)
+	}
+	total_cap := max(total_needed, provider_cap + len(bar.names) + 2 * CLIENT_CAPACITY)
+	if mem.total_capacity > 0 && total_cap > mem.total_capacity {
+		total_cap = max(total_cap, mem.total_capacity * 2)
+	}
+	bytes, ok := palette.list_memory_bytes(provider_cap, total_cap)
+	if !ok {
+		return false
+	}
+	pages := (bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	new_handle, create_status := system.memory_create(pages)
+	if create_status != .Ok {
+		return false
+	}
+	address, map_status := system.memory_map(new_handle, {.Write})
+	if map_status != .Ok {
+		system.close(new_handle)
+		return false
+	}
+	new_memory := ([^]u8)(address)[:pages * system.PAGE_SIZE]
+	if !palette.list_bind_memory(&palette_lists[slot], new_memory, provider_cap, total_cap) {
+		system.memory_unmap(address)
+		system.close(new_handle)
+		return false
+	}
+	if mem.memory != nil {
+		system.memory_unmap(raw_data(mem.memory))
+		system.close(mem.handle)
+	}
+	mem^ = {handle = new_handle, memory = new_memory, provider_capacity = provider_cap, total_capacity = total_cap}
+	return true
+}
 
 Ranking_Window :: struct {
 	title:  system.Name,
@@ -180,8 +231,23 @@ palette_ranking_thread :: proc "c" (parameter: rawptr) -> ! {
 		target := 1 - intrinsics.atomic_load_explicit(&ranking.published_list, .Relaxed)
 		list := &palette_lists[target]
 		start := system.nanoseconds()
+		local_needed := len(bar.names) + 2 * window_count
 		system.lock(&ranking.table_lock)
+		provider_needed := 0
+		if ranking.table != nil {
+			if header, header_problem := palette_table.header_read(ranking.table); header_problem == .None {
+				provider_needed = int(header.entry_count)
+			}
+		}
+		_ = palette_list_ensure(target, provider_needed, provider_needed + local_needed)
 		problem, problem_index := palette.list_collect(list, {recents = recents[:recent_count], frecency = &palette_ranking_frecency}, bar.names[:], windows[:window_count], ranking.table)
+		if problem == .Too_Many_Entries && ranking.table != nil {
+			if header, header_problem := palette_table.header_read(ranking.table); header_problem == .None {
+				if palette_list_ensure(target, int(header.entry_count), int(header.entry_count) + local_needed) {
+					problem, problem_index = palette.list_collect(list, {recents = recents[:recent_count], frecency = &palette_ranking_frecency}, bar.names[:], windows[:window_count], ranking.table)
+				}
+			}
+		}
 		system.unlock(&ranking.table_lock)
 		palette.list_rank(list, string(query[:query_length]))
 		list.sequence = sequence
@@ -349,13 +415,15 @@ palette_provider_add :: proc "contextless" (ring_handle, table_handle: system.Ha
 	if palette_provider_ring.head != nil {
 		palette_provider_remove()
 	}
-	opened, status := system.ring_open(ring_handle)
+	opened, status := system.ring_open(ring_handle, receive_handles = true)
 	address: rawptr
+	table_pages: u64
 	if status == .Ok {
-		table_pages, table_status := system.memory_size(table_handle)
+		table_status: system.Status
+		table_pages, table_status = system.memory_size(table_handle)
 		if table_status != .Ok {
 			status = table_status
-		} else if table_pages < palette_table.TABLE_PAGES {
+		} else if table_pages < palette_table.MIN_TABLE_PAGES {
 			status = .Bad_Handle
 		}
 	}
@@ -374,10 +442,54 @@ palette_provider_add :: proc "contextless" (ring_handle, table_handle: system.Ha
 	palette_provider_ring = opened
 	palette_provider_ring_handle, palette_provider_table_handle = ring_handle, table_handle
 	system.lock(&palette_ranking.table_lock)
-	palette_ranking.table = ([^]u8)(address)[:palette_table.TABLE_BYTES]
+	palette_ranking.table = ([^]u8)(address)[:table_pages * system.PAGE_SIZE]
 	system.unlock(&palette_ranking.table_lock)
-	palette_generation_seen = intrinsics.volatile_load(&(^palette_table.Header)(address).change_count)
+	palette_generation_seen = intrinsics.atomic_load_explicit(&(^palette_table.Header)(address).change_count, .Acquire)
 	system.log_fact(.Info, Palette_Provider_Present{})
+	palette_entries_refresh()
+}
+
+// palette_provider_table_replace adopts a larger read-only entry table that
+// the provider sent through palette_provider_ring. Malformed or truncated
+// tables are refused with the current table left untouched.
+palette_provider_table_replace :: proc "contextless" (record: ring.Record) {
+	new_handle := system.Handle(record.values[1])
+	kind, rights, through := system.handle_state(new_handle, palette_provider_ring_handle)
+	if !through {
+		return
+	}
+	if kind != .Memory || .Read not_in rights {
+		system.close(new_handle)
+		return
+	}
+	pages, size_status := system.memory_size(new_handle)
+	if size_status != .Ok || pages < palette_table.MIN_TABLE_PAGES {
+		system.close(new_handle)
+		return
+	}
+	address, map_status := system.memory_map(new_handle, {})
+	if map_status != .Ok {
+		system.close(new_handle)
+		return
+	}
+	new_table := ([^]u8)(address)[:pages * system.PAGE_SIZE]
+	header, header_problem := palette_table.header_read(new_table)
+	if header_problem != .None {
+		system.memory_unmap(address)
+		system.close(new_handle)
+		system.log_fact(.Warning, Provider_Table_Refused{entry_index = 0, table_problem = value_kinds.text_field(palette_table.problem_names[header_problem], TABLE_PROBLEM_FIELD_BYTES)})
+		return
+	}
+	system.lock(&palette_ranking.table_lock)
+	old_address := raw_data(palette_ranking.table)
+	palette_ranking.table = new_table
+	system.unlock(&palette_ranking.table_lock)
+	if old_address != nil {
+		system.memory_unmap(old_address)
+	}
+	system.close(palette_provider_table_handle)
+	palette_provider_table_handle = new_handle
+	palette_generation_seen = header.change_count
 	palette_entries_refresh()
 }
 
@@ -533,6 +645,10 @@ palette_kind_words := [palette_table.Value_Kind]string {
 // waits for is dropped.
 palette_answer :: proc "contextless" (record: ring.Record) {
 	outcome := record.values[0]
+	if outcome == u64(palette_table.Outcome.Table_Replaced) {
+		palette_provider_table_replace(record)
+		return
+	}
 	if record.tag != 0 && record.tag == palette_candidates_awaited {
 		palette_candidates_awaited = 0
 		// An answer that gives no candidate ends the wait of Tab too.
@@ -600,7 +716,7 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 		system.log_fact(.Info, Palette_Shows_Error{})
 	case .Refused:
 		system.log_fact(.Info, Palette_Shows_Refusal{})
-	case .None, .Shown_In_Console, .Edit_Opened, .Candidates_Ready, .Manual_Opened:
+	case .None, .Shown_In_Console, .Edit_Opened, .Candidates_Ready, .Manual_Opened, .Table_Replaced:
 		system.log_fact(.Info, Palette_Shows_No_Result{})
 	}
 	palette_refresh()

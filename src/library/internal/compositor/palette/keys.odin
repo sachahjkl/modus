@@ -381,7 +381,7 @@ result_set :: proc "contextless" (panel: ^Panel, outcome: u64, kind: u64, memory
 			panel.state = .Result
 			return
 		}
-	case .None, .Candidates_Ready:
+	case .None, .Candidates_Ready, .Table_Replaced:
 	}
 	result_sentence(panel, "the provider gave an answer that the panel refuses")
 }

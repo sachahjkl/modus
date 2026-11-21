@@ -920,7 +920,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	debug_names = system.debug_names_of(ctx)
 	requests_memory = ctx.handles[system.GRANT_ROOT]
-	requests, _ = system.ring_open(requests_memory)
+	requests, _ = system.ring_open(requests_memory, receive_handles = true)
 	opened: bool
 	service, opened = system.service_open(ctx)
 	if !opened {

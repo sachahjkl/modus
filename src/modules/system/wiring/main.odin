@@ -310,6 +310,12 @@ wiring_end_give :: proc "contextless" (proc_idx: int, end: output.Given_End) -> 
 			continue
 		}
 		h, g_status := system.give(ph.wiring_memory, source, rights[idx])
+		// A process that just started may not have mapped its wiring ring with
+		// Receive_Handles yet (Bad_Handle); retry briefly, never retrying No_Right.
+		for retry := 0; g_status == .Bad_Handle && retry < 50; retry += 1 {
+			system.sleep(system.time() + 1)
+			h, g_status = system.give(ph.wiring_memory, source, rights[idx])
+		}
 		if g_status != .Ok {
 			status = g_status
 			break
@@ -892,7 +898,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	image_size := ctx.values[ws.VALUE_IMAGE_SIZE]
 
 	status: system.Status
-	core_ring, status = system.ring_open(core_ring_memory)
+	core_ring, status = system.ring_open(core_ring_memory, receive_handles = true)
 	if status != .Ok {
 		fail("no service ring")
 	}

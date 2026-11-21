@@ -191,7 +191,7 @@ value_buttons_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel
 row_area :: proc "contextless" (panel: ^Panel, panel_x, panel_y, row: int) -> interface.Area {
 	// The first row as panel_draw clamps it, so the drawing and the
 	// pointer read one place.
-	first := clamp(panel.first_row, 0, max(panel.list.row_count - 1, 0))
+	first := list_first_row(panel)
 	return {panel_x + BORDER, panel_y + LIST_TOP + (row - first) * ROW_HEIGHT, rows_right(panel_x, panel.list.row_count) - panel_x - BORDER, ROW_HEIGHT}
 }
 
@@ -203,7 +203,11 @@ value_at :: proc "contextless" (panel: ^Panel, table: ^interface.Draw_Table, pan
 	if !row_is_entry(panel, row) {
 		return NO_ROW, NO_ROW
 	}
-	entry := &panel.list.entries[panel.list.rows[row].entry]
+	entry_index := int(panel.list.rows[row].entry)
+	if entry_index >= panel.list.entry_count {
+		return NO_ROW, NO_ROW
+	}
+	entry := &panel.list.entries[entry_index]
 	if !entry_is_setting_row(entry) {
 		return NO_ROW, NO_ROW
 	}

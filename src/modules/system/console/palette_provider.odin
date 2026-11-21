@@ -54,14 +54,83 @@ palette_provided: u32
 // first thread answers with 1 in palette_stopped.
 palette_stop_request, palette_stopped: u32
 // The entries as the console wrote them last, and their count: a choice is
-// checked against this copy, never against the shared memory. The lock is
-// held for one copy in memory.
-palette_entries: [palette_table.ENTRY_CAPACITY]palette_table.Entry
+// checked against this copy, never against the shared memory. Both buffers
+// grow on demand via system.memory_create so there is no fixed entry cap.
+palette_entries_handle, palette_next_handle: system.Handle
+palette_entries: []palette_table.Entry
+palette_next_entries: []palette_table.Entry
 palette_entry_count: int
 palette_table_lock: system.Lock
 palette_send_lock: system.Lock // The ring has two writers: the two threads.
 palette_tag: u32 // Not 0: the line that runs is a choice of the palette with this tag.
 line_value: Value // The value of the line that ran last, for the answer to the palette.
+
+// palette_next_append appends one entry to palette_next_entries, growing its
+// backing memory object if needed. Returns false only if the kernel refuses
+// memory allocation.
+palette_next_append :: proc "contextless" (count: ^int, entry: palette_table.Entry) -> bool {
+	if count^ >= len(palette_next_entries) {
+		new_cap := max(len(palette_next_entries) * 2, palette_table.INITIAL_ENTRY_CAPACITY)
+		if new_cap <= count^ {
+			new_cap = count^ + palette_table.INITIAL_ENTRY_CAPACITY
+		}
+		pages := (u64(new_cap) * size_of(palette_table.Entry) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+		new_handle, create_status := system.memory_create(pages)
+		if create_status != .Ok {
+			return false
+		}
+		address, map_status := system.memory_map(new_handle, {.Write})
+		if map_status != .Ok {
+			system.close(new_handle)
+			return false
+		}
+		capacity := int(pages * system.PAGE_SIZE / size_of(palette_table.Entry))
+		new_slice := ([^]palette_table.Entry)(address)[:capacity]
+		if count^ > 0 {
+			copy(new_slice[:count^], palette_next_entries[:count^])
+		}
+		if palette_next_handle != 0 {
+			system.memory_unmap(raw_data(palette_next_entries))
+			system.close(palette_next_handle)
+		}
+		palette_next_handle = new_handle
+		palette_next_entries = new_slice
+	}
+	palette_next_entries[count^] = entry
+	count^ += 1
+	return true
+}
+
+// palette_kept_ensure guarantees palette_entries can hold at least needed
+// entries (called under palette_table_lock).
+palette_kept_ensure :: proc "contextless" (needed: int) -> bool {
+	if needed <= len(palette_entries) {
+		return true
+	}
+	new_cap := max(len(palette_entries) * 2, needed, palette_table.INITIAL_ENTRY_CAPACITY)
+	pages := (u64(new_cap) * size_of(palette_table.Entry) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	new_handle, create_status := system.memory_create(pages)
+	if create_status != .Ok {
+		return false
+	}
+	address, map_status := system.memory_map(new_handle, {.Write})
+	if map_status != .Ok {
+		system.close(new_handle)
+		return false
+	}
+	capacity := int(pages * system.PAGE_SIZE / size_of(palette_table.Entry))
+	new_slice := ([^]palette_table.Entry)(address)[:capacity]
+	if palette_entry_count > 0 {
+		copy(new_slice[:palette_entry_count], palette_entries[:palette_entry_count])
+	}
+	if palette_entries_handle != 0 {
+		system.memory_unmap(raw_data(palette_entries))
+		system.close(palette_entries_handle)
+	}
+	palette_entries_handle = new_handle
+	palette_entries = new_slice
+	return true
+}
 
 // palette_provider_start asks the root service for the entry table and the
 // ring, and writes the first table. The first thread calls it once, before
@@ -78,7 +147,7 @@ palette_provider_start :: proc "contextless" () {
 	palette_table_handle, palette_ring_handle = system.Handle(completion.values[0]), system.Handle(completion.values[1])
 	table_kind, _, _ := system.handle_state(palette_table_handle)
 	table_pages, table_status := system.memory_size(palette_table_handle)
-	if table_kind != .Memory || table_status != .Ok || table_pages < palette_table.TABLE_PAGES {
+	if table_kind != .Memory || table_status != .Ok || table_pages < palette_table.MIN_TABLE_PAGES {
 		system.log_fact(.Info, Provider_Without_Table{})
 		return
 	}
@@ -95,10 +164,12 @@ palette_provider_start :: proc "contextless" () {
 	}
 	palette_commands_add()
 	palette_ring = opened
-	palette_memory = ([^]u8)(address)[:palette_table.TABLE_BYTES]
+	palette_memory = ([^]u8)(address)[:table_pages * system.PAGE_SIZE]
 	header := (^palette_table.Header)(address)
 	header.magic = palette_table.MAGIC
 	header.version = palette_table.VERSION
+	header.entry_count = 0
+	header.byte_length = palette_table.MIN_TABLE_BYTES
 	intrinsics.atomic_store(&palette_provided, 1)
 	palette_table_write()
 }
@@ -480,9 +551,6 @@ palette_enum_rows_write :: proc "contextless" (start: int, refresh: ^Palette_Get
 				}
 			}
 			for member_number in 0 ..< described.member_count {
-				if count == palette_table.ENTRY_CAPACITY {
-					return count
-				}
 				member, _ := module.enum_member(item.file, described, member_number)
 				member_name := module.string_at(item.file, member.name_offset, member.name_count)
 				// The principal reads the display text; the line types the
@@ -520,18 +588,14 @@ palette_enum_rows_write :: proc "contextless" (start: int, refresh: ^Palette_Get
 				entry.act_name_length = u8(copy(entry.act_name[:], act))
 				entry.setting_name_length = u8(row.count)
 				entry.value_name_length = u8(value_name.count)
-				palette_next_entries[count] = entry
-				count += 1
+				if !palette_next_append(&count, entry) {
+					return count
+				}
 			}
 		}
 	}
 	return count
 }
-
-// The entries that the next table holds: made here, then compared with
-// the entries of the table before, so that a line that changes no command
-// changes no table. Only the thread that writes the table uses it.
-palette_next_entries: [palette_table.ENTRY_CAPACITY]palette_table.Entry
 
 PALETTE_STRATEGY_VALUE_CAPACITY :: 16 // The bytes of the name of a strategy as a value of the command `strategy`.
 // The act name of the entries of the strategies, and the name of their
@@ -596,12 +660,10 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 	}
 	count := 0
 	for number in 0 ..< command_count {
-		if count == palette_table.ENTRY_CAPACITY {
-			break
-		}
 		if entry, ok := palette_entry_make(number); ok {
-			palette_next_entries[count] = entry
-			count += 1
+			if !palette_next_append(&count, entry) {
+				break
+			}
 		}
 	}
 	// One row of buttons for each Enum parameter of an export whose call
@@ -614,7 +676,7 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 	// system report, and marks the entry of the strategy in use.
 	strategy_in_use := palette_strategy_in_use()
 	for strategy in op.Strategy {
-		if strategy == .None || count == palette_table.ENTRY_CAPACITY {
+		if strategy == .None {
 			continue
 		}
 		value_buffer: [PALETTE_STRATEGY_VALUE_CAPACITY]u8
@@ -647,29 +709,93 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 		entry.act_name_length = u8(act.count)
 		entry.setting_name_length = u8(row.count)
 		entry.value_name_length = u8(value_name.count)
-		palette_next_entries[count] = entry
-		count += 1
+		if !palette_next_append(&count, entry) {
+			break
+		}
 	}
-	header := (^palette_table.Header)(raw_data(palette_memory))
+	expected_bytes, bytes_ok := palette_table.table_bytes_for(u64(count))
+	if !bytes_ok {
+		return
+	}
 	size := count * size_of(palette_table.Entry)
 	system.lock(&palette_table_lock)
 	defer system.unlock(&palette_table_lock)
+	header := (^palette_table.Header)(raw_data(palette_memory))
 	written_before := header.change_count != 0
-	next_bytes := ([^]u8)(&palette_next_entries[0])[:size]
-	kept_bytes := ([^]u8)(&palette_entries[0])[:size]
-	if written_before && count == palette_entry_count && string(next_bytes) == string(kept_bytes) {
+	next_bytes := size > 0 ? ([^]u8)(&palette_next_entries[0])[:size] : nil
+	if written_before && count == palette_entry_count {
+		kept_same := size == 0 || (len(palette_entries) >= count && string(next_bytes) == string(([^]u8)(&palette_entries[0])[:size]))
+		if kept_same {
+			return
+		}
+	}
+	if !palette_kept_ensure(count) {
 		return
 	}
-	copy(kept_bytes, next_bytes)
+	kept_bytes := size > 0 ? ([^]u8)(&palette_entries[0])[:size] : nil
+	if size > 0 {
+		copy(kept_bytes, next_bytes)
+	}
 	palette_entry_count = count
 	// The grant can end while a line runs: the table is used only while
 	// the console is the provider.
 	if !palette_active() {
 		return
 	}
+	// If the current shared table cannot hold all entries, allocate a new
+	// memory object sized for count and give a read-only handle to the
+	// compositor through the palette ring.
+	if expected_bytes > u64(len(palette_memory)) {
+		needed_pages, pages_ok := palette_table.table_pages_for(u64(count))
+		if !pages_ok {
+			return
+		}
+		old_pages := u64(len(palette_memory)) / system.PAGE_SIZE
+		new_pages := max(needed_pages, old_pages * 2)
+		new_handle, create_status := system.memory_create(new_pages)
+		if create_status != .Ok {
+			return
+		}
+		new_addr, map_status := system.memory_map(new_handle, {.Write})
+		if map_status != .Ok {
+			system.close(new_handle)
+			return
+		}
+		new_memory := ([^]u8)(new_addr)[:new_pages * system.PAGE_SIZE]
+		copy(new_memory[:palette_table.ENTRIES_OFFSET], palette_memory[:palette_table.ENTRIES_OFFSET])
+		if size > 0 {
+			copy(new_memory[palette_table.ENTRIES_OFFSET:], kept_bytes)
+		}
+		generation := header.change_count + 2
+		new_header := (^palette_table.Header)(new_addr)
+		new_header^ = {magic = palette_table.MAGIC, version = palette_table.VERSION, change_count = generation, entry_count = u32(count), byte_length = expected_bytes}
+		given, give_status := system.give(palette_ring_handle, new_handle, {.Read})
+		if give_status != .Ok {
+			system.memory_unmap(new_addr)
+			system.close(new_handle)
+			return
+		}
+		system.lock(&palette_send_lock)
+		sent := system.send(&palette_ring.completions, ring.Record{values = {0 = u64(palette_table.Outcome.Table_Replaced), 1 = u64(given), 2 = u64(len(new_memory))}})
+		system.unlock(&palette_send_lock)
+		if !sent {
+			system.memory_unmap(new_addr)
+			system.close(new_handle)
+			return
+		}
+		system.memory_unmap(raw_data(palette_memory))
+		system.close(palette_table_handle)
+		palette_table_handle = new_handle
+		palette_memory = new_memory
+		system.log_fact(.Info, Palette_Table_Written{entries = u64(count), table_generation = u64(generation)})
+		return
+	}
 	intrinsics.atomic_add(&header.change_count, 1)
-	copy(palette_memory[palette_table.ENTRIES_OFFSET:], kept_bytes)
+	if size > 0 {
+		copy(palette_memory[palette_table.ENTRIES_OFFSET:], kept_bytes)
+	}
 	header.entry_count = u32(count)
+	header.byte_length = expected_bytes
 	generation := intrinsics.atomic_add(&header.change_count, 1) + 1
 	system.word_wake(&header.change_count, 64)
 	system.log_fact(.Info, Palette_Table_Written{entries = u64(count), table_generation = u64(generation)})
@@ -797,7 +923,7 @@ palette_manual: bool // The line that runs shows a page of the manual.
 palette_entry_named :: proc "contextless" (record: ring.Record) -> (entry: palette_table.Entry, ok: bool) {
 	index, hash := record.values[1], record.values[2]
 	system.lock(&palette_table_lock)
-	if index < u64(palette_entry_count) {
+	if index < u64(palette_entry_count) && index < u64(len(palette_entries)) {
 		entry = palette_entries[index]
 		ok = true
 	}

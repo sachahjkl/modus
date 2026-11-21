@@ -1312,7 +1312,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	tally_load()
 	if ctx.handles[system.GRANT_ROOT] != 0 {
 		status: system.Status
-		requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT])
+		requests, status = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true)
 		has_requests = status == .Ok
 	}
 

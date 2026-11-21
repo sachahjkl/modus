@@ -286,7 +286,7 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 	values: system.Context_Values
 	system.grant_put(&context_grants, op.CONTEXT_LOG, {system.context_record().handles[op.CONTEXT_LOG], {.Write}})
 	status: system.Status
-	slot.requests_memory, slot.requests, status = system.ring_create()
+	slot.requests_memory, slot.requests, status = system.ring_create(receive_handles = true)
 	if status != .Ok {
 		slot^ = {}
 		return status

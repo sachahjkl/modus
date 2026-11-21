@@ -339,7 +339,7 @@ check :: proc "contextless" (ctx: ^system.Context) -> string {
 	if ctx.handles[system.GRANT_ROOT] == 0 {
 		return "this process has no ring to the root service"
 	}
-	requests, opened := system.ring_open(ctx.handles[system.GRANT_ROOT])
+	requests, opened := system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true)
 	if opened != .Ok {
 		return "the ring to the root service does not open"
 	}

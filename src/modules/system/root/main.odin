@@ -1578,6 +1578,26 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 	return .Ok, false
 }
 
+// give_through_service_ring gives a handle to a service through a ring that
+// the service opens with Receive_Handles at its start. If the service just
+// started and has not mapped its ring yet (Bad_Handle), waits briefly until
+// it maps the ring or stops. Never retries No_Right (mapped without consent).
+give_through_service_ring :: proc "contextless" (target_process, ring_memory, handle: system.Handle, rights: system.Rights) -> (given: system.Handle, status: system.Status) {
+	for attempt := 0; attempt < 2000; attempt += 1 {
+		given, status = system.give(ring_memory, handle, rights)
+		if status != .Bad_Handle {
+			return given, status
+		}
+		if target_process != 0 {
+			if state, _, _ := system.process_state(target_process); state == .Stopped || state == .None {
+				return 0, .Bad_State
+			}
+		}
+		system.sleep(system.time() + 1)
+	}
+	return 0, status
+}
+
 // The palette provider (docs/CONSOLE.md, "8. The palette provider"): the one
 // process that gives the palette of the desktop entries of its own. This
 // service keeps a handle of the entry table and of the ring, so that a
@@ -1599,7 +1619,11 @@ palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> sys
 		return .Bad_State
 	}
 	status: system.Status
-	palette_table_memory, status = system.memory_create(palette_table.TABLE_PAGES)
+	initial_pages, pages_ok := palette_table.table_pages_for(palette_table.INITIAL_ENTRY_CAPACITY)
+	if !pages_ok {
+		return .Bad_Operation
+	}
+	palette_table_memory, status = system.memory_create(initial_pages)
 	if status != .Ok {
 		return status
 	}
@@ -1828,10 +1852,10 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	region_memory, status = system.memory_create(isolated.REGION_PAGES)
 	in_service_ring, in_service_region: system.Handle
 	if status == .Ok {
-		in_service_ring, status = system.give(service.service_memory, ring_memory, {.Read, .Write})
+		in_service_ring, status = give_through_service_ring(service.process, service.service_memory, ring_memory, {.Read, .Write})
 	}
 	if status == .Ok {
-		in_service_region, status = system.give(service.service_memory, region_memory, {.Read, .Write})
+		in_service_region, status = give_through_service_ring(service.process, service.service_memory, region_memory, {.Read, .Write})
 	}
 	if status != .Ok {
 		system.close(ring_memory)

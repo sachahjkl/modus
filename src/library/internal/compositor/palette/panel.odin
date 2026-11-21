@@ -77,7 +77,7 @@ row_at :: proc "contextless" (panel: ^Panel, panel_x, panel_y, x, y: int) -> int
 	if part_at(panel_x, panel_y, x, y) != .List || x < panel_x + BORDER || x >= rows_right(panel_x, panel.list.row_count) {
 		return NO_ROW
 	}
-	row := panel.first_row + (y - panel_y - LIST_TOP) / ROW_HEIGHT
+	row := list_first_row(panel) + (y - panel_y - LIST_TOP) / ROW_HEIGHT
 	return row < panel.list.row_count ? row : NO_ROW
 }
 
@@ -602,7 +602,7 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 		rows: [LIST_ROWS]interface.List_Row
 		setting_rows: [LIST_ROWS]int // The shown rows that are setting rows, as indexes in `rows`.
 		setting_row_count := 0
-		first := clamp(panel.first_row, 0, max(list.row_count - 1, 0))
+		first := list_first_row(panel)
 		shown_count := clamp(list.row_count - first, 0, LIST_ROWS)
 		chosen_shown := NO_ROW
 		for index in 0 ..< shown_count {
@@ -615,7 +615,10 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 			case .Heading_Modules:
 				rows[index] = {kind = .Heading, name = HEADING_MODULES}
 			case .Entry:
-				entry := &list.entries[min(int(row.entry), ENTRY_CAPACITY - 1)]
+				if int(row.entry) >= list.entry_count {
+					continue
+				}
+				entry := &list.entries[row.entry]
 				in_use := entry.kind == .Setting && setting_in_use(panel, entry)
 				icon, icon_color := entry_icon(entry, in_use)
 				rows[index] = {kind = .Entry, name = entry_name(entry), matched_places = transmute(u128)row.places, icon = icon, icon_color = icon_color, right_text = entry_words(entry)}
@@ -677,7 +680,11 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 		}
 		interface.list_of_rows(frame, list_area, rows[:shown_count], options)
 		for shown in setting_rows[:setting_row_count] {
-			entry := &list.entries[min(int(list.rows[first + shown].entry), ENTRY_CAPACITY - 1)]
+			row_entry := list.rows[first + shown].entry
+			if int(row_entry) >= list.entry_count {
+				continue
+			}
+			entry := &list.entries[row_entry]
 			// The area of the row as list_of_rows drew it: the rows less the
 			// scroll bar of a list that does not show each row.
 			area := interface.Area{list_area.x, list_area.y + shown * ROW_HEIGHT, rows_right(x, list.row_count) - list_area.x, ROW_HEIGHT}

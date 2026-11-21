@@ -69,8 +69,6 @@ Entry_Mark :: enum u8 {
 }
 
 NAME_CAPACITY :: 64 // The bytes of the name of an entry. A longer name is not listed: a name is whole or absent.
-ENTRY_CAPACITY :: 512 // The entries of a list: the modules, the windows with their closes, and the entries of a provider.
-ROW_CAPACITY :: 128 // The rows of the list: the entries that match and the headings of the groups.
 RECENT_CAPACITY :: 16 // The chosen entries that the panel remembers, the newest first.
 RECENT_ROWS :: 5 // The rows of the group "recent" when no letter is typed.
 LIST_ROWS :: 12 // The rows that the panel shows at once.
@@ -79,8 +77,6 @@ TYPED_CAPACITY :: line_editor.QUERY_LIMIT // The bytes of the typed part: a long
 NO_ROW :: -1 // No row: an empty list has no choice, and a pointer over no row is on no row.
 
 #assert(TYPED_CAPACITY <= line_editor.LINE_CAPACITY)
-#assert(ROW_CAPACITY >= line_editor.RANKED_CAPACITY)
-#assert(ENTRY_CAPACITY >= palette_table.ENTRY_CAPACITY + 128)
 #assert(NAME_CAPACITY == palette_table.NAME_CAPACITY)
 #assert(palette_table.ACT_NAME_CAPACITY == display.ACT_NAME_CAPACITY)
 #assert(palette_table.SETTING_NAME_CAPACITY <= NAME_CAPACITY)
@@ -163,7 +159,7 @@ Row_Kind :: enum u8 {
 // One row of the list, in the order of the screen.
 Row :: struct {
 	kind:   Row_Kind, // An entry or a heading.
-	entry:  u16, // An entry row: its index in the entries.
+	entry:  u32, // An entry row: its index in the entries.
 	places: line_editor.Match_Places, // An entry row: the bytes of its name that the typed part matched.
 }
 
@@ -182,11 +178,12 @@ Provider_State :: enum u8 {
 }
 
 // The entries of each source and their list for one typed part. The owner
-// of a panel makes it, on any thread, and gives it to the panel.
+// of a panel sizes its slices via list_bind_memory (on any thread) and gives
+// the panel the pointer. There is no fixed entry cap.
 List :: struct {
-	entries:       [ENTRY_CAPACITY]Entry, // The entries of each source.
+	entries:       []Entry, // The entries of each source; entry_count in use.
 	entry_count:   int, // The entries in use.
-	rows:          [ROW_CAPACITY]Row, // The list for the typed part, the best match first.
+	rows:          []Row, // The list for the typed part, the best match first; row_count in use.
 	row_count:     int, // The rows in use.
 	matched_count: int, // The entries that match the typed part, shown or not.
 	provider:      Provider_State, // What the list has of a provider.
@@ -199,10 +196,84 @@ List :: struct {
 	// change of its choice and no new frame.
 	content:       u64,
 	snapshot:      palette_table.Snapshot, // The checked copy of the table of the provider.
-	// The memory of one ranking. It is here and not on a stack: a thread
-	// with a small stack runs the ranking.
-	candidates:    [ENTRY_CAPACITY]line_editor.Candidate,
-	ranked:        [line_editor.RANKED_CAPACITY]line_editor.Ranked,
+	// The scratch memory of one ranking, sized for len(entries).
+	candidates:    []line_editor.Candidate,
+	ranked:        []line_editor.Ranked,
+}
+
+@(private)
+align_up_u64 :: proc "contextless" (value, alignment: u64) -> (aligned: u64, ok: bool) {
+	if value > max(u64) - (alignment - 1) {
+		return 0, false
+	}
+	return (value + alignment - 1) & ~(alignment - 1), true
+}
+
+// list_row_capacity_for gives the row slice capacity needed for entry_capacity
+// entries, including up to RECENT_ROWS recent entries and the three group
+// headings.
+list_row_capacity_for :: proc "contextless" (entry_capacity: int) -> int {
+	return max(entry_capacity, 0) + RECENT_ROWS + 3
+}
+
+// list_memory_bytes gives the byte length of one contiguous buffer holding
+// every backing slice of a List for provider_capacity provider entries and
+// total_capacity total entries (local + provider), or ok false on overflow.
+list_memory_bytes :: proc "contextless" (provider_capacity, total_capacity: int) -> (bytes: u64, ok: bool) {
+	if provider_capacity < 0 || total_capacity < 0 {
+		return 0, false
+	}
+	add_array :: proc "contextless" (offset: u64, count: u64, elem_size, elem_align: u64) -> (next: u64, ok: bool) {
+		aligned := align_up_u64(offset, elem_align) or_return
+		if count > 0 && elem_size > (max(u64) - aligned) / count {
+			return 0, false
+		}
+		return aligned + count * elem_size, true
+	}
+	row_cap := u64(list_row_capacity_for(total_capacity))
+	// Reserve 16 bytes of leading alignment slack so even a 1-byte-aligned
+	// host slice can satisfy 16-byte alignment for Row (u128 Match_Places).
+	offset: u64 = 16
+	offset = add_array(offset, u64(provider_capacity), size_of(palette_table.Entry), align_of(palette_table.Entry)) or_return
+	offset = add_array(offset, u64(total_capacity), size_of(Entry), align_of(Entry)) or_return
+	offset = add_array(offset, row_cap, size_of(Row), align_of(Row)) or_return
+	offset = add_array(offset, u64(total_capacity), size_of(line_editor.Candidate), align_of(line_editor.Candidate)) or_return
+	offset = add_array(offset, u64(total_capacity), size_of(line_editor.Ranked), align_of(line_editor.Ranked)) or_return
+	return offset, true
+}
+
+// list_bind_memory binds all backing slices of list to memory sized by
+// list_memory_bytes(provider_capacity, total_capacity). Returns false if
+// memory is too small or counts are negative, leaving list unchanged.
+list_bind_memory :: proc "contextless" (list: ^List, memory: []u8, provider_capacity, total_capacity: int) -> bool {
+	needed, ok := list_memory_bytes(provider_capacity, total_capacity)
+	if !ok || u64(len(memory)) < needed {
+		return false
+	}
+	base := u64(uintptr(raw_data(memory)))
+	end := base + u64(len(memory))
+	cursor := base
+	carve :: proc "contextless" (cursor: ^u64, end: u64, count: int, $T: typeid) -> (res: []T, ok: bool) {
+		aligned := align_up_u64(cursor^, align_of(T)) or_return
+		size := u64(count) * size_of(T)
+		if aligned > end || size > end - aligned {
+			return nil, false
+		}
+		cursor^ = aligned + size
+		return count > 0 ? ([^]T)(uintptr(aligned))[:count] : nil, true
+	}
+	row_cap := list_row_capacity_for(total_capacity)
+	snap := carve(&cursor, end, provider_capacity, palette_table.Entry) or_return
+	ents := carve(&cursor, end, total_capacity, Entry) or_return
+	rws := carve(&cursor, end, row_cap, Row) or_return
+	cands := carve(&cursor, end, total_capacity, line_editor.Candidate) or_return
+	rnkd := carve(&cursor, end, total_capacity, line_editor.Ranked) or_return
+	list.snapshot.entries = snap
+	list.entries = ents
+	list.rows = rws
+	list.candidates = cands
+	list.ranked = rnkd
+	return true
 }
 
 // What a provider gave for the chosen entry, as the panel shows it: a
@@ -265,7 +336,7 @@ typed_text :: proc "contextless" (panel: ^Panel) -> string {
 @(private)
 entry_add :: proc "contextless" (list: ^List, uses: Uses, added: Entry, name_start, name_end: string) {
 	length := len(name_start) + len(name_end)
-	if length == 0 || length > NAME_CAPACITY || list.entry_count >= ENTRY_CAPACITY {
+	if length == 0 || length > NAME_CAPACITY || list.entry_count >= len(list.entries) {
 		return
 	}
 	entry := &list.entries[list.entry_count]
@@ -595,7 +666,7 @@ kind_tie_order :: proc "contextless" (kind: Entry_Kind) -> u32 {
 // line_editor.FRECENCY_BONUS_LIMIT points.
 tie_order :: proc "contextless" (entry: ^Entry, index: int) -> u32 {
 	recent := entry.recent != 0 ? u32(entry.recent) - 1 : RECENT_CAPACITY
-	return recent << 24 | kind_tie_order(entry.kind) << 16 | u32(index) & 0xFFFF
+	return recent << 27 | kind_tie_order(entry.kind) << 24 | (u32(index) & 0x00FF_FFFF)
 }
 
 // A first character of the typed part that restricts the kinds of the
@@ -717,6 +788,60 @@ list_content :: proc "contextless" (list: ^List) -> u64 {
 	return hash
 }
 
+// ranked_item_before orders two matched candidates identically to
+// line_editor.rank_candidates, breaking final ties by candidate index so
+// heapsort is deterministic.
+@(private)
+ranked_item_before :: proc "contextless" (candidates: []line_editor.Candidate, a, b: line_editor.Ranked) -> bool {
+	ca := &candidates[a.candidate]
+	cb := &candidates[b.candidate]
+	if line_editor.ranked_before(a, ca.name, ca.tie_order, b, cb.name, cb.tie_order) {
+		return true
+	}
+	if line_editor.ranked_before(b, cb.name, cb.tie_order, a, ca.name, ca.tie_order) {
+		return false
+	}
+	return a.candidate < b.candidate
+}
+
+// ranked_sort sorts items in ascending order of ranked_item_before using
+// in-place heapsort (O(n log n) worst case, zero recursion, zero allocation).
+@(private)
+ranked_sort :: proc "contextless" (candidates: []line_editor.Candidate, items: []line_editor.Ranked) {
+	n := len(items)
+	if n < 2 {
+		return
+	}
+	sift_down :: proc "contextless" (candidates: []line_editor.Candidate, items: []line_editor.Ranked, start, end: int) {
+		root := start
+		for {
+			child := root * 2 + 1
+			if child >= end {
+				break
+			}
+			worst := root
+			if ranked_item_before(candidates, items[worst], items[child]) {
+				worst = child
+			}
+			if child + 1 < end && ranked_item_before(candidates, items[worst], items[child + 1]) {
+				worst = child + 1
+			}
+			if worst == root {
+				break
+			}
+			items[root], items[worst] = items[worst], items[root]
+			root = worst
+		}
+	}
+	for start := n / 2 - 1; start >= 0; start -= 1 {
+		sift_down(candidates, items, start, n)
+	}
+	for end := n - 1; end > 0; end -= 1 {
+		items[0], items[end] = items[end], items[0]
+		sift_down(candidates, items, 0, end)
+	}
+}
+
 // rows_rank makes the rows of list_rank.
 @(private)
 rows_rank :: proc "contextless" (list: ^List, query: string) {
@@ -735,7 +860,7 @@ rows_rank :: proc "contextless" (list: ^List, query: string) {
 					row_add(list, {kind = .Heading_Recent})
 					heading_shown = true
 				}
-				row_add(list, {kind = .Entry, entry = u16(index)})
+				row_add(list, {kind = .Entry, entry = u32(index)})
 			}
 		}
 		for kind in ([2]Entry_Kind{.Window, .Module}) {
@@ -748,7 +873,7 @@ rows_rank :: proc "contextless" (list: ^List, query: string) {
 					row_add(list, {kind = kind == .Window ? Row_Kind.Heading_Windows : Row_Kind.Heading_Modules})
 					heading_shown = true
 				}
-				row_add(list, {kind = .Entry, entry = u16(index)})
+				row_add(list, {kind = .Entry, entry = u32(index)})
 				list.matched_count += 1
 			}
 		}
@@ -756,21 +881,40 @@ rows_rank :: proc "contextless" (list: ^List, query: string) {
 	}
 	admitted := 0
 	for &entry, index in list.entries[:list.entry_count] {
+		if admitted >= len(list.candidates) {
+			break
+		}
 		if prefix_admits(prefix, entry.kind) {
 			list.candidates[admitted] = {name = entry_name(&entry), tie_order = tie_order(&entry, index), number = u32(index), bonus = entry.bonus}
 			admitted += 1
 		}
 	}
-	kept, matched := line_editor.rank_candidates(rest, list.candidates[:admitted], list.ranked[:])
+	// Match all admitted entries using the portable SIMD fuzzy matcher + frecency,
+	// then sort all matches in place in O(M log M) with zero allocation.
+	matched := 0
+	kept := 0
+	for &candidate, index in list.candidates[:admitted] {
+		score, places, ok := line_editor.fuzzy_match(rest, candidate.name)
+		if !ok {
+			continue
+		}
+		matched += 1
+		score += int(min(candidate.bonus, line_editor.FRECENCY_BONUS_LIMIT))
+		if kept < len(list.ranked) {
+			list.ranked[kept] = {candidate = index, score = score, places = places}
+			kept += 1
+		}
+	}
+	ranked_sort(list.candidates[:admitted], list.ranked[:kept])
 	list.matched_count = matched
 	for ranked in list.ranked[:kept] {
-		row_add(list, {kind = .Entry, entry = u16(list.candidates[ranked.candidate].number), places = ranked.places})
+		row_add(list, {kind = .Entry, entry = list.candidates[ranked.candidate].number, places = ranked.places})
 	}
 }
 
 @(private)
 row_add :: proc "contextless" (list: ^List, row: Row) {
-	if list.row_count < ROW_CAPACITY {
+	if list.row_count < len(list.rows) {
 		list.rows[list.row_count] = row
 		list.row_count += 1
 	}
@@ -849,6 +993,15 @@ choice_set :: proc "contextless" (panel: ^Panel, row: int) -> bool {
 	return true
 }
 
+// list_first_row gives the clamped first visible row of the virtualized
+// viewport window: 0 ..= max(row_count - LIST_ROWS, 0).
+list_first_row :: proc "contextless" (panel: ^Panel) -> int {
+	if panel.list == nil {
+		return 0
+	}
+	return clamp(panel.first_row, 0, max(panel.list.row_count - LIST_ROWS, 0))
+}
+
 // view_follow_choice moves the rows that the panel shows so that they hold
 // the chosen row, and the heading right over it when the choice is the
 // first row shown: a group keeps its name on the screen.
@@ -866,7 +1019,7 @@ view_follow_choice :: proc "contextless" (panel: ^Panel) {
 	if panel.first_row == panel.choice && panel.choice > 0 && panel.list.rows[panel.choice - 1].kind != .Entry {
 		panel.first_row = panel.choice - 1
 	}
-	panel.first_row = clamp(panel.first_row, 0, max(panel.list.row_count - 1, 0))
+	panel.first_row = list_first_row(panel)
 }
 
 // recent_age gives the age of a choice among the remembered ones: 1 is the

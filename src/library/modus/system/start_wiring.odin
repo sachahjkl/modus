@@ -96,34 +96,46 @@ start_wiring_give :: proc "contextless" (process: Handle, budget: Handle, record
 		return status
 	}
 	defer ring_close(&mapped)
-	for end in wiring.ends {
-		given := end
-		// The handles go through the memory of the wiring ring: the child
-		// proves with Handle_State that each one came through it.
-		given.ring, status = give(memory, end.ring, {.Read, .Write})
-		if status == .Ok && end.terms != 0 {
-			given.terms, status = give(memory, end.terms, {.Read})
-		}
-		if status == .Ok && end.description != 0 {
-			given.description, status = give(memory, end.description, {.Read})
-		}
-		// The condition of a writer end, with Read only: only the root
-		// service writes it.
-		if status == .Ok && end.condition != 0 {
-			given.condition, status = give(memory, end.condition, {.Read})
-		}
-		// The end page with Read only: only the root service writes the end.
-		if status == .Ok {
-			given.end_words, status = give(memory, end.end_words, {.Read})
-		}
+	if len(wiring.ends) > 0 {
+		// Temporarily map the wiring ring in the Created child with
+		// Receive_Handles so Handle_Give delivers each initial end handle
+		// through it before Process_Start, then unmap before the child runs.
+		child_ring_address: rawptr
+		child_ring_address, status = memory_map(memory, {.Receive_Handles}, process)
 		if status != .Ok {
 			close(memory)
 			return status
 		}
-		// The capacity holds each end, and no one reads the ring yet.
-		if !ring.push(&mapped.commands, output.given_end_record(given)) {
-			close(memory)
-			return .Bad_Operation
+		defer memory_unmap(child_ring_address, process)
+		for end in wiring.ends {
+			given := end
+			// The handles go through the memory of the wiring ring: the child
+			// proves with Handle_State that each one came through it.
+			given.ring, status = give(memory, end.ring, {.Read, .Write})
+			if status == .Ok && end.terms != 0 {
+				given.terms, status = give(memory, end.terms, {.Read})
+			}
+			if status == .Ok && end.description != 0 {
+				given.description, status = give(memory, end.description, {.Read})
+			}
+			// The condition of a writer end, with Read only: only the root
+			// service writes it.
+			if status == .Ok && end.condition != 0 {
+				given.condition, status = give(memory, end.condition, {.Read})
+			}
+			// The end page with Read only: only the root service writes the end.
+			if status == .Ok {
+				given.end_words, status = give(memory, end.end_words, {.Read})
+			}
+			if status != .Ok {
+				close(memory)
+				return status
+			}
+			// The capacity holds each end, and no one reads the ring yet.
+			if !ring.push(&mapped.commands, output.given_end_record(given)) {
+				close(memory)
+				return .Bad_Operation
+			}
 		}
 	}
 	wiring.wiring_memory = memory
