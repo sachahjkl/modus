@@ -4,7 +4,7 @@ This document says which procedures of the system compute with vectors, in which
 
 **The idea in plain words.** A processor has registers that hold several numbers side by side, and instructions that compute on all of them at once. A procedure that works on many pixels or many words can use them: it does the work of four values with one instruction. That is its **vector form**. The same procedure written with one value for each instruction is its **scalar form**. In this system a procedure that has a vector form also keeps its scalar form, and the two must give the same bytes for every input: the vector form is only faster, never different. Host tests compare the two, so a fault of the vector form shows as a wrong byte, not as a wrong picture.
 
-**What has a vector form today.** Four procedures, all with the 128-bit registers of SSE2:
+**What has a vector form today.** Five procedures, all with the 128-bit registers of SSE2:
 
 | Procedure | Scalar form | Vector form | Values for each step |
 |---|---|---|---|
@@ -12,12 +12,13 @@ This document says which procedures of the system compute with vectors, in which
 | The blend of colors with straight alpha: the colors of the draw records and the pictures with alpha | `blend_straight_alpha_row_scalar` (`src/library/support/graphics/blend.odin`) | `blend_straight_alpha_row_sse2` (`src/library/support/graphics/blend_vectors_amd64.odin`) | 4 pixels |
 | The blend of a picture with premultiplied alpha | `blend_premultiplied_alpha_row_scalar` (`src/library/support/graphics/blend.odin`) | `blend_premultiplied_alpha_row_sse2` (`src/library/support/graphics/blend_vectors_amd64.odin`) | 4 pixels |
 | The BLAKE3 hash of a subtree of four chunks | `chunk_value`, four times (`src/library/contract/blake3/blake3.odin`) | `four_chunk_values_side_by_side` (`src/library/contract/blake3/chunks_side_by_side_amd64.odin`) | 4 chunks |
+| The 16-tag group match of a Swiss table | `group_match_tag_scalar`, `group_match_empty_scalar`, `group_match_free_scalar` (`src/library/support/hash_table/group_match.odin`) | `group_match_tag_sse2`, `group_match_empty_sse2`, `group_match_free_sse2` (`src/library/support/hash_table/group_match_amd64.odin`) | 16 control bytes |
 
 **What this document is not.** It is not the rule on the vector registers of the kernel. The kernel has no vector instruction at all, and it saves the registers of each thread: `docs/ARCHITECTURE.md`, "The extended state of the processor". It is not the design of the blend in linear light either: `docs/FONTS.md`, "The blend in linear light".
 
 **For whom.** A reader who writes or changes a vector form, and a reader who measures one.
 
-**The map of this document.** Section 1: the rule of the same bytes. Section 2: why one form, SSE2. Sections 3 to 5: the blend of a glyph, the compositor, BLAKE3. Section 6: how to measure on the machine. Section 7: limits.
+**The map of this document.** Section 1: the rule of the same bytes. Section 2: why one form, SSE2. Sections 3 to 5: the blend of a glyph, the compositor, BLAKE3. Section 6: how to measure on the machine. Section 7: limits. Section 8: the 16-tag group match.
 
 ## 1. The rule of the same bytes
 
@@ -47,7 +48,7 @@ blend_premultiplied_alpha_row :: #force_inline proc "contextless" (to: [^]Color,
 - the edge values often: 0, 1, 254 and 255 in each byte, whole words of 0, of all ones and of full coverage;
 - guard words before and after each row: a form that writes outside its columns changes them.
 
-When a test fails, it gives the first wrong pixel, the value of each form, and the count of pixels changed outside the drawn columns. The tests of the blends are in `src/library/support/graphics/blend_vectors_test_amd64.odin` (`coverage_forms_give_the_bytes_of_the_scalar_form`, `coverage_forms_meet_each_channel_value`, `premultiplied_forms_give_the_bytes_of_the_scalar_form`, `premultiplied_forms_meet_each_channel_value`, `straight_alpha_forms_give_the_bytes_of_the_scalar_form`, `straight_alpha_forms_meet_each_channel_value`, `coverage_forms_with_alpha_give_the_bytes_of_the_scalar_form`). The tests of the hash are in `src/library/contract/blake3/chunks_side_by_side_test_amd64.odin` (`sse2_form_gives_the_hash_of_the_scalar_form`, `subtrees_side_by_side_at_each_counter`). `modustool check` runs them.
+When a test fails, it gives the first wrong pixel, the value of each form, and the count of pixels changed outside the drawn columns. The tests of the blends are in `src/library/support/graphics/blend_vectors_test_amd64.odin` (`coverage_forms_give_the_bytes_of_the_scalar_form`, `coverage_forms_meet_each_channel_value`, `premultiplied_forms_give_the_bytes_of_the_scalar_form`, `premultiplied_forms_meet_each_channel_value`, `straight_alpha_forms_give_the_bytes_of_the_scalar_form`, `straight_alpha_forms_meet_each_channel_value`, `coverage_forms_with_alpha_give_the_bytes_of_the_scalar_form`). The tests of the hash are in `src/library/contract/blake3/chunks_side_by_side_test_amd64.odin` (`sse2_form_gives_the_hash_of_the_scalar_form`, `subtrees_side_by_side_at_each_counter`). The test of the 16-tag group match is in `src/library/support/hash_table/hash_table_test.odin` (`group_forms_give_the_mask_of_the_scalar_form`). `modustool check` runs them.
 
 ## 2. One form: SSE2
 
@@ -217,3 +218,40 @@ nix develop -c odin test src/library/contract/blake3 -o:speed -vet -collection:m
 - The object code of the SSE2 forms is not read yet: the measures say if the compiler lowered the 16-bit products to `pmullw` and `pmulhuw`.
 - The cryptography of the system has no vector form: it keeps the portable implementations of its origin (`docs/CRYPTOGRAPHY.md`).
 - No vector form uses a usable instruction set above SSE2. The package `src/library/support/instruction_sets` has two users, the test modules `extended_state` and `return_fault`.
+
+## 8. The 16-tag group match
+
+**What it is.** A Swiss table (`src/library/support/hash_table`; intent in `src/md/data/swiss_table.md`) groups 16 slots together with 16 consecutive 1-byte control tags (`Empty = 0x00`, `Deleted = 0x01`, or full `0x80 | (hash & 0x7F)`). Each probe step tests all 16 control bytes of a group at once and returns a 16-bit mask where bit `i` marks lane `i`.
+
+**The SSE2 form** (`src/library/support/hash_table/group_match_amd64.odin`) loads 16 control bytes as `#simd[16]u8` and uses `base:intrinsics` only:
+
+| Operation | Intrinsics | Lowered SSE2 instructions |
+|---|---|---|
+| `group_match_tag_sse2(controls, tag)` | `unaligned_load`, `simd_lanes_eq`, `simd_extract_msbs` | `movdqu`, `pcmpeqb`, `pmovmskb` |
+| `group_match_empty_sse2(controls)` | `unaligned_load`, `simd_lanes_eq` against `0x00`, `simd_extract_msbs` | `movdqu`, `pxor`, `pcmpeqb`, `pmovmskb` |
+| `group_match_free_sse2(controls)` | `unaligned_load`, `~simd_extract_msbs` (bit 7 clear) | `movdqu`, `pmovmskb`, `not` |
+
+The public procedures (`group_match_tag`, `group_match_empty`, `group_match_free` in `group_match.odin`) pick the SSE2 form on amd64 and the scalar loops on other targets. The host test `group_forms_give_the_mask_of_the_scalar_form` compares all three SSE2 procedures against their scalar forms for every byte value `0..255` in each of the 16 lanes and for uniform edge groups (`0x00`, `0x01`, `0x7F`, `0x80`, `0xFF`).
+
+**How to measure on the host.** Both timing tests are opt-in (`-define:MEASURE=true`) and require `-o:speed -microarch:x86-64`:
+
+```
+nix develop -c odin test src/library/support/hash_table -o:speed -microarch:x86-64 -vet -collection:modus=src/library -define:MEASURE=true -define:ODIN_TEST_NAMES=hash_table.lookup_cost_against_the_chained_table
+nix develop -c odin test src/library/support/fast_hash -o:speed -microarch:x86-64 -vet -collection:modus=src/library -define:MEASURE=true -define:ODIN_TEST_NAMES=fast_hash.hash_cost_of_short_keys
+```
+
+**Measured on the host** (`-o:speed -microarch:x86-64`, host load 3.71, least of 15 rounds for `hash_table`, least of 20 batches of 100 000 for `fast_hash`):
+
+| Table size (entries) | Random hit | Random miss | Glyph hit | Glyph miss |
+|---|---|---|---|---|
+| 16 | 1.46 ns (687 million/s) | 1.29 ns (776 million/s) | 1.36 ns (736 million/s) | 1.17 ns (855 million/s) |
+| 1 000 | 2.21 ns (452 million/s) | 1.82 ns (549 million/s) | 1.91 ns (524 million/s) | 2.10 ns (476 million/s) |
+| 4 096 | 2.06 ns (485 million/s) | 1.70 ns (589 million/s) | 2.07 ns (482 million/s) | 1.28 ns (780 million/s) |
+| 100 000 | 4.11 ns (243 million/s) | 5.88 ns (170 million/s) | 3.43 ns (292 million/s) | 1.89 ns (530 million/s) |
+
+| Key length (`fast_hash`, rapidhash V3) | Time for one hash | Rate |
+|---|---|---|
+| 8 bytes | 2.68 ns | 373 million/s |
+| 16 bytes | 2.68 ns | 373 million/s |
+| 32 bytes | 3.71 ns | 270 million/s |
+| 64 bytes | 6.19 ns | 162 million/s |
