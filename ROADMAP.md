@@ -36,6 +36,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The guide of Lex, rich and whole.** A principal and a developer learn Lex from one guide of the site: each form of the grammar with its examples, the two evaluation modes, the pipe and its placeholder, records, `let` and `with`, the plans, the projects and their console, the errors and how to read them, with diagrams of the evaluation and a page of frequent tasks.
 - **A palette with any count of entries.** A provider gives its entries in a memory sized by their count, so the palette lists every command, setting and window of a machine, however many, and draws only the rows on the screen. [Design](src/md/features/palette.md)
 - **The uses of a viewer key across a restart.** The disk grant table keeps the uses View and Input of a key with the key, so a viewer allowed for the view sees the screen again after a restart, as a client of `remote` calls again; today they last until the machine stops. [Design](src/md/features/remote_display.md)
+- **The semantic tree in the draw table.** Each element of the interface package says in the draw table that draws it what it is, its state and its name, in the roles of WAI-ARIA, so the drawing and the description cannot drift. A machine test then waits for "the button spleen is pressed" in place of pixels or a line written for the test, and each window of each test is checked for a focusable element with no name or a press with no key. [Design](src/md/features/accessibility.md)
 
 ## Later
 
@@ -177,6 +178,15 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **Language packs and fonts from the cache.** A machine fetches the language packs and the fonts that the plan of a principal names, by hash, so it holds only the languages and the scripts of its principals. [Design](src/md/features/interface_language.md)
 - **Text from right to left.** The text rendering module orders a line by UAX #9 and the interface package mirrors the layout, so a principal reads and writes Arabic and Hebrew. [Design](src/md/features/interface_language.md)
 - **An input method for Chinese, Japanese and Korean.** A process with a grant turns keys into text with a candidate window at the caret, so a principal writes Chinese, Japanese and Korean. [Design](src/md/features/interface_language.md)
+- **The assistive role.** A screen reader, a magnifier or a switch input reads the semantic tree of each window through the compositor, moves the focus and acts on an element only by an action that the element declares, with a mark in the bar while it reads. Any module that passes the conformance suite can fill it. [Design](src/md/features/accessibility.md)
+- **Every act of the desktop with the keyboard.** A principal moves and resizes a window, opens the menus of the bar and reaches each element with keys only, and sees the focus by an outline whose contrast a test computes. [Design](src/md/features/accessibility.md)
+- **A high contrast and reduced motion.** A principal sets `settings.set(contrast = .high)` for text at 7 to 1 with no decoration, in the dark or the light appearance, and `settings.set(motion = .reduced)` for a desktop where nothing moves that a key did not ask for. [Design](src/md/features/accessibility.md)
+- **Speech.** A process says a text through the role `speech`, in the language of its locale, with a voice of eSpeak NG or another holder, mixed with the sound of the other processes. [Design](src/md/features/accessibility.md)
+- **A screen reader of the system.** A principal who does not see the screen hears each window, the palette and the prompt of `unlock`, and turns speech on before any unlock with Super, Alt and S. [Design](src/md/features/accessibility.md)
+- **A magnifier.** A principal enlarges the part of the screen that holds the focus or the caret, past the largest scale factor, and the magnified part follows the focus. [Design](src/md/features/accessibility.md)
+- **The semantic tree to a remote viewer.** The native viewer of the remote display gives the trees of the machine to the screen reader of the machine where it runs, so a principal who does not see hears a remote desktop with its own reader. [Design](src/md/features/accessibility.md)
+- **Braille displays.** A principal reads and types on a refreshable braille display through a device class and the tables of a braille translator. [Design](src/md/features/accessibility.md)
+- **Larger text with no larger windows.** A principal raises the text sizes alone, and each window lays out its larger texts from their size, so text twice the default size needs no magnifier. [Design](src/md/features/accessibility.md)
 
 ## Maybe
 
