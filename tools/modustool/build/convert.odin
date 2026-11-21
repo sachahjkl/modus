@@ -438,7 +438,7 @@ module_file_refusal_text :: proc(parts: module_file_writer.Module_Parts, refusal
 		if refusal.index < u64(len(parts.member_texts)) {
 			part = fmt.tprintf(" (display text \"%s\")", parts.member_texts[refusal.index].text)
 		}
-	case .None, .Segments, .Imports, .Slots, .Rebases, .Strings, .Documentation, .Budget, .Facts, .Own_Hash:
+	case .None, .Segments, .Imports, .Import_Slots, .Rebases, .Strings, .Documentation, .Budget, .Facts, .Own_Hash:
 	}
 	return fmt.tprintf("the module file writer refuses the module: %v in the table %v, part %d%s, value %d (src/library/contract/module_file_writer)", refusal.refusal, refusal.table, refusal.index, part, refusal.value)
 }
