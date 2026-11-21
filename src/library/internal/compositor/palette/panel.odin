@@ -6,6 +6,7 @@ import "modus:contract/value_kinds"
 import "modus:graphics"
 import "modus:interface"
 import "modus:kind_icons"
+import "modus:line_editor"
 
 // The geometry of the panel (docs/DESIGN.md, "Palette"). From the top: the
 // input band, the list, a gap, the detail line, the footer, a margin.
@@ -565,7 +566,8 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 	if with_form {
 		form_band_draw(frame, &panel.form, x, y)
 	} else {
-		interface.text_input_line(frame, {x, y, PANEL_WIDTH, INPUT_BAND_HEIGHT}, typed_text(panel), panel.line.caret, INPUT_SIZE, PLACEHOLDER)
+		sel_start, sel_end, _ := line_editor.line_selection_range(&panel.line)
+		interface.text_input_line(frame, {x, y, PANEL_WIDTH, INPUT_BAND_HEIGHT}, typed_text(panel), panel.line.caret, INPUT_SIZE, PLACEHOLDER, selection_start = sel_start, selection_end = sel_end)
 		// At the right of the band: the word of the prefix, what the list
 		// is restricted to, and the mode of the chosen entry.
 		band_chosen: ^Entry
@@ -788,6 +790,8 @@ Band_Layout :: struct {
 	classes:      [BAND_CAPACITY]Band_Class, // What each character is.
 	count:        int, // The characters in use.
 	caret:        int, // The character that the caret is before.
+	sel_start:    int, // Start of selection in the active field, as an index in characters.
+	sel_end:      int, // End of selection in the active field, as an index in characters.
 	field_starts: [FIELD_CAPACITY]int, // The first character of each field: of its name, or of its value when it has no name.
 	value_starts: [FIELD_CAPACITY]int, // The first character of the value of each field.
 	value_counts: [FIELD_CAPACITY]int, // The characters of the value of each field.
@@ -810,7 +814,7 @@ band_put :: proc "contextless" (band: ^Band_Layout, text: string, class: Band_Cl
 // of its fields, and the part that the band shows.
 @(private)
 form_band_layout :: proc "contextless" (form: ^Form, band: ^Band_Layout) {
-	band.count, band.caret = 0, 0
+	band.count, band.caret, band.sel_start, band.sel_end = 0, 0, 0, 0
 	band_put(band, entry_name(&form.entry), .Name)
 	band_put(band, "(", .Quiet)
 	for field in 0 ..< min(form.field_count, FIELD_CAPACITY) {
@@ -825,6 +829,11 @@ form_band_layout :: proc "contextless" (form: ^Form, band: ^Band_Layout) {
 		band.value_starts[field] = band.count
 		if field == form.current {
 			band.caret = band.count + clamp(form.fields[field].caret, 0, form.fields[field].count)
+			s0, s1, has_sel := line_editor.line_selection_range(&form.fields[field])
+			if has_sel {
+				band.sel_start = band.count + s0
+				band.sel_end = band.count + s1
+			}
 		}
 		band_put(band, field_text(form, field), .Value)
 		band.value_counts[field] = band.count - band.value_starts[field]
@@ -969,6 +978,13 @@ form_band_draw :: proc "contextless" (frame: ^interface.Frame, form: ^Form, x, y
 	interface.draw_rectangle(table, x, y + INPUT_BAND_HEIGHT - 2, PANEL_WIDTH, 2, graphics.colors.title)
 	text_x := x + interface.TEXT_INPUT_LINE_MARGIN
 	text_y := y + (INPUT_BAND_HEIGHT - text_height) / 2
+	if band.sel_end > band.sel_start {
+		sel_first := clamp(band.sel_start, first, last)
+		sel_last := clamp(band.sel_end, sel_first, last)
+		if sel_last > sel_first {
+			interface.draw_rectangle(table, text_x + (sel_first - first) * BAND_CELL_WIDTH, text_y, (sel_last - sel_first) * BAND_CELL_WIDTH, text_height, graphics.colors.chosen)
+		}
+	}
 	interface.draw_rectangle(table, text_x + (caret - first) * BAND_CELL_WIDTH, text_y, BAND_CARET_WIDTH, text_height, graphics.colors.title)
 	font := interface.Font{size = INPUT_SIZE}
 	// One text record for each run of one class.

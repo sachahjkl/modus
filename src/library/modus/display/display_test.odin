@@ -73,7 +73,7 @@ event_of_record_refuses_a_kind_that_names_no_event :: proc(t: ^testing.T) {
 // which reads them itself: a window refuses them, whatever their values.
 @(test)
 event_of_record_refuses_the_records_of_the_capture_face :: proc(t: ^testing.T) {
-	for kind in ([2]Event_Kind{.Capture_Size, .Capture_Frame}) {
+	for kind in ([3]Event_Kind{.Capture_Size, .Capture_Frame, .Capture_Disconnect}) {
 		for value in ([3]u64{0, 1, max(u64)}) {
 			record := ring.Record{kind = u32(kind)}
 			for &word in record.values {

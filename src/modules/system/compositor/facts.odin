@@ -969,6 +969,13 @@ Palette_Open_Measured :: struct {
 	same_lists:        u64,
 }
 
+// The principal requested disconnecting a remote display viewer from the bar
+// viewer list popover.
+@(log_fact = "compositor: the principal asked to disconnect viewer {viewer_key_head} from the bar")
+Viewer_Disconnect_Requested :: struct {
+	viewer_key_head: [24]u8,
+}
+
 // The quality profile that the compositor chose, and why.
 @(log_fact = "compositor: the quality profile is {profile}: {profile_reason}")
 Quality_Profile_Chosen :: struct {

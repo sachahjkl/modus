@@ -71,11 +71,18 @@ test_plans_apply_requires_trusted_consent_on_added_grants :: proc(t: ^testing.T)
 	p1 := pr.Plan_Spec{principal = 0, entry_count = 1}
 	p1.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "calc", make_hash(1), 0)
 
-	diff1, dref1 := compute_difference(state, &p1)
+	// Nil out_diff is refused cleanly with no state change.
+	testing.expect_value(t, compute_difference(state, &p1, nil), pr.Plan_Refusal.Buffer_Too_Small)
+	_, nil_diff_ref := apply_plan(state, &p1, {}, nil, nil, 1000, nil)
+	testing.expect_value(t, nil_diff_ref, pr.Plan_Refusal.Buffer_Too_Small)
+
+	diff1: pr.Plan_Difference
+	dref1 := compute_difference(state, &p1, &diff1)
 	testing.expect_value(t, dref1, pr.Plan_Refusal.None)
 	testing.expect(t, !diff1.any_grant_added, "zero-grant module adds no grant")
 
-	rec1, _, aref1 := apply_plan(state, &p1, {}, nil, nil, 1000)
+	scratch_diff: pr.Plan_Difference
+	rec1, aref1 := apply_plan(state, &p1, {}, nil, nil, 1000, &scratch_diff)
 	testing.expect_value(t, aref1, pr.Plan_Refusal.None)
 	testing.expect_value(t, rec1.generation, u64(1))
 
@@ -83,35 +90,36 @@ test_plans_apply_requires_trusted_consent_on_added_grants :: proc(t: ^testing.T)
 	p2 := pr.Plan_Spec{principal = 0, entry_count = 1}
 	p2.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "calc", make_hash(1), store_bit)
 
-	diff2, dref2 := compute_difference(state, &p2)
+	diff2: pr.Plan_Difference
+	dref2 := compute_difference(state, &p2, &diff2)
 	testing.expect_value(t, dref2, pr.Plan_Refusal.None)
 	testing.expect(t, diff2.any_grant_added, "adding Store grant requires consent")
 
-	_, _, ref_no_consent := apply_plan(state, &p2, rec1.plan_hash, nil, nil, 2000)
+	_, ref_no_consent := apply_plan(state, &p2, rec1.plan_hash, nil, nil, 2000, &scratch_diff)
 	testing.expect_value(t, ref_no_consent, pr.Plan_Refusal.Consent_Required)
 
 	// Declined consent refused.
 	dlg_decl, ans_decl := make_plan_consent(&diff2, 0, false)
-	_, _, ref_decl := apply_plan(state, &p2, rec1.plan_hash, &dlg_decl, &ans_decl, 2000)
+	_, ref_decl := apply_plan(state, &p2, rec1.plan_hash, &dlg_decl, &ans_decl, 2000, &scratch_diff)
 	testing.expect_value(t, ref_decl, pr.Plan_Refusal.Untrusted_Consent)
 
 	// Wrong display slot refused.
 	dlg_slot, ans_slot := make_plan_consent(&diff2, 0, true, TRUSTED_DISPLAY_SLOT + 1)
-	_, _, ref_slot := apply_plan(state, &p2, rec1.plan_hash, &dlg_slot, &ans_slot, 2000)
+	_, ref_slot := apply_plan(state, &p2, rec1.plan_hash, &dlg_slot, &ans_slot, 2000, &scratch_diff)
 	testing.expect_value(t, ref_slot, pr.Plan_Refusal.Untrusted_Consent)
 
 	// Remote display input refused.
 	dlg_rem, ans_rem := make_plan_consent(&diff2, 0, true, TRUSTED_DISPLAY_SLOT, .Remote_Display)
-	_, _, ref_rem := apply_plan(state, &p2, rec1.plan_hash, &dlg_rem, &ans_rem, 2000)
+	_, ref_rem := apply_plan(state, &p2, rec1.plan_hash, &dlg_rem, &ans_rem, 2000, &scratch_diff)
 	testing.expect_value(t, ref_rem, pr.Plan_Refusal.Untrusted_Consent)
 
 	// Stale expected_current_hash refused even with valid consent.
 	dlg_ok, ans_ok := make_plan_consent(&diff2, 0, true)
-	_, _, ref_stale := apply_plan(state, &p2, make_hash(200), &dlg_ok, &ans_ok, 2000)
+	_, ref_stale := apply_plan(state, &p2, make_hash(200), &dlg_ok, &ans_ok, 2000, &scratch_diff)
 	testing.expect_value(t, ref_stale, pr.Plan_Refusal.Stale_Current_Plan)
 
 	// Valid trusted Show_Plan_Difference acceptance commits generation 2 atomically.
-	rec2, _, aref2 := apply_plan(state, &p2, rec1.plan_hash, &dlg_ok, &ans_ok, 2000)
+	rec2, aref2 := apply_plan(state, &p2, rec1.plan_hash, &dlg_ok, &ans_ok, 2000, &scratch_diff)
 	testing.expect_value(t, aref2, pr.Plan_Refusal.None)
 	testing.expect_value(t, rec2.generation, u64(2))
 	testing.expect_value(t, rec2.previous_plan_hash, rec1.plan_hash)
@@ -119,7 +127,7 @@ test_plans_apply_requires_trusted_consent_on_added_grants :: proc(t: ^testing.T)
 	// Consent for p2 cannot be replayed for p3 (different plan hash).
 	p3 := pr.Plan_Spec{principal = 0, entry_count = 1}
 	p3.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "calc", make_hash(1), store_bit | net_bit)
-	_, _, ref_replay := apply_plan(state, &p3, rec2.plan_hash, &dlg_ok, &ans_ok, 3000)
+	_, ref_replay := apply_plan(state, &p3, rec2.plan_hash, &dlg_ok, &ans_ok, 3000, &scratch_diff)
 	testing.expect_value(t, ref_replay, pr.Plan_Refusal.Untrusted_Consent)
 }
 
@@ -134,9 +142,10 @@ test_plans_rollback_and_monotonic_generation_history :: proc(t: ^testing.T) {
 	testing.expect_value(t, empty_ref, pr.Plan_Refusal.Empty_History)
 
 	// Apply gen 1, gen 2, gen 3 (all zero-grant modules to test history & rollback directly).
+	scratch_diff: pr.Plan_Difference
 	p1 := pr.Plan_Spec{principal = 0, entry_count = 1}
 	p1.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "a", make_hash(1), 0)
-	r1, _, err1 := apply_plan(state, &p1, {}, nil, nil, 100)
+	r1, err1 := apply_plan(state, &p1, {}, nil, nil, 100, &scratch_diff)
 	testing.expect_value(t, err1, pr.Plan_Refusal.None)
 
 	// Rollback from gen 1 refused (no previous generation).
@@ -145,12 +154,12 @@ test_plans_rollback_and_monotonic_generation_history :: proc(t: ^testing.T) {
 
 	p2 := pr.Plan_Spec{principal = 0, entry_count = 1}
 	p2.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "a", make_hash(2), 0)
-	r2, _, err2 := apply_plan(state, &p2, r1.plan_hash, nil, nil, 200)
+	r2, err2 := apply_plan(state, &p2, r1.plan_hash, nil, nil, 200, &scratch_diff)
 	testing.expect_value(t, err2, pr.Plan_Refusal.None)
 
 	p3 := pr.Plan_Spec{principal = 0, entry_count = 1}
 	p3.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "a", make_hash(3), 0)
-	r3, _, err3 := apply_plan(state, &p3, r2.plan_hash, nil, nil, 300)
+	r3, err3 := apply_plan(state, &p3, r2.plan_hash, nil, nil, 300, &scratch_diff)
 	testing.expect_value(t, err3, pr.Plan_Refusal.None)
 	testing.expect_value(t, r3.generation, u64(3))
 
@@ -175,7 +184,7 @@ test_plans_rollback_and_monotonic_generation_history :: proc(t: ^testing.T) {
 	// Next apply after rollback writes generation 4 (never overwrites 2 or 3).
 	p4 := pr.Plan_Spec{principal = 0, entry_count = 1}
 	p4.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "a", make_hash(4), 0)
-	r4, _, err4 := apply_plan(state, &p4, r1.plan_hash, nil, nil, 400)
+	r4, err4 := apply_plan(state, &p4, r1.plan_hash, nil, nil, 400, &scratch_diff)
 	testing.expect_value(t, err4, pr.Plan_Refusal.None)
 	testing.expect_value(t, r4.generation, u64(4))
 	testing.expect_value(t, r4.previous_plan_hash, r1.plan_hash)

@@ -1,6 +1,7 @@
 package palette
 
 import "modus:contract/palette_table"
+import "modus:display"
 import "modus:line_editor"
 
 // What each key does in each state of the panel. Two pure procedures hold
@@ -26,10 +27,18 @@ Key :: enum u8 {
 	Backspace = 12,
 	Delete    = 13,
 	Character = 14, // A printable character.
-	Tab       = 15, // In a form: the next field, or the chosen candidate.
-	Shift_Tab = 16, // In a form: the field before.
+	Tab           = 15, // In a form: the next field, or the chosen candidate.
+	Shift_Tab     = 16, // In a form: the field before.
 	Control_Enter = 17, // In a form: run with the fields as they are. In the search: open the entry in the window of its provider.
 	Shift_Enter   = 18, // In the search: go to the window that names the act name of the chosen entry.
+	Select_Left   = 19, // Shift+Left: extend or shrink selection one character left.
+	Select_Right  = 20, // Shift+Right: extend or shrink selection one character right.
+	Select_Home   = 21, // Shift+Home: extend selection to start of field.
+	Select_End    = 22, // Shift+End: extend selection to end of field.
+	Select_All    = 23, // Ctrl+A: select all text in the active input.
+	Copy          = 24, // Ctrl+C: copy active selection to the clipboard.
+	Cut           = 25, // Ctrl+X: copy active selection to the clipboard and delete it.
+	Paste         = 26, // Ctrl+V: insert clipboard text at caret, replacing active selection.
 }
 
 // What a key asks of the panel.
@@ -56,6 +65,9 @@ Action :: enum u8 {
 	Go_To              = 19, // Raise the window that names the act name of the chosen entry, and give the focus to its element.
 	Value_Previous     = 20, // On a setting row: choose the value before, from the first to the last.
 	Value_Next         = 21, // On a setting row: choose the next value, from the last to the first.
+	Copy               = 22, // Copy the active selection of the search or form input to the clipboard.
+	Cut                = 23, // Cut the active selection of the search or form input to the clipboard.
+	Paste              = 24, // Paste clipboard text into the search or form input.
 }
 
 // key_action says what a key asks in a state.
@@ -95,8 +107,14 @@ key_action :: proc "contextless" (state: State, key: Key) -> Action {
 			return .Choose_Page_Before
 		case .Page_Down:
 			return .Choose_Page_After
-		case .Left, .Right, .Home, .End, .Backspace, .Delete, .Character:
+		case .Left, .Right, .Home, .End, .Backspace, .Delete, .Character, .Select_Left, .Select_Right, .Select_Home, .Select_End, .Select_All:
 			return .Edit
+		case .Copy:
+			return .Copy
+		case .Cut:
+			return .Cut
+		case .Paste:
+			return .Paste
 		case .Control_Enter:
 			return .Open_In_Console
 		case .Shift_Enter:
@@ -110,7 +128,7 @@ key_action :: proc "contextless" (state: State, key: Key) -> Action {
 			return .Close
 		case .Enter:
 			return .Confirm
-		case .Escape, .Up, .Down, .Page_Up, .Page_Down, .Left, .Right, .Home, .End, .Backspace, .Delete, .Character, .Tab, .Shift_Tab, .Control_Enter, .Shift_Enter, .Other:
+		case .Escape, .Up, .Down, .Page_Up, .Page_Down, .Left, .Right, .Home, .End, .Backspace, .Delete, .Character, .Tab, .Shift_Tab, .Control_Enter, .Shift_Enter, .Select_Left, .Select_Right, .Select_Home, .Select_End, .Select_All, .Copy, .Cut, .Paste, .Other:
 			return .Back
 		}
 	case .Arguments:
@@ -131,8 +149,14 @@ key_action :: proc "contextless" (state: State, key: Key) -> Action {
 			return .Candidate_Previous
 		case .Down:
 			return .Candidate_Next
-		case .Left, .Right, .Home, .End, .Backspace, .Delete, .Character:
+		case .Left, .Right, .Home, .End, .Backspace, .Delete, .Character, .Select_Left, .Select_Right, .Select_Home, .Select_End, .Select_All:
 			return .Field_Edit
+		case .Copy:
+			return .Copy
+		case .Cut:
+			return .Cut
+		case .Paste:
+			return .Paste
 		case .Page_Up, .Page_Down, .Shift_Enter, .Other:
 			return .None
 		}
@@ -262,14 +286,14 @@ state_after :: proc "contextless" (state: State, action: Action, chosen: Chosen)
 		// The owner goes only when a window names the act name of the
 		// entry; else it keeps the search and says why.
 		return state == .Search && chosen != .Nothing ? State.Closed : state
-	case .None, .Edit, .Choose_Previous, .Choose_Next, .Choose_Page_Before, .Choose_Page_After, .Field_Edit, .Field_Next, .Field_Previous, .Candidate_Previous, .Candidate_Next, .Value_Previous, .Value_Next:
+	case .None, .Edit, .Choose_Previous, .Choose_Next, .Choose_Page_Before, .Choose_Page_After, .Field_Edit, .Field_Next, .Field_Previous, .Candidate_Previous, .Candidate_Next, .Value_Previous, .Value_Next, .Copy, .Cut, .Paste:
 		return state
 	}
 	return state
 }
 
 // typed_edit gives one key of the action Edit to the typed part. drawn:
-// the panel shows something new (the text or the place of the caret).
+// the panel shows something new (the text, selection, or caret place).
 // text_changed: the typed part changed, and the owner makes the list
 // again for it (list_build, or a list of its own thread). A character past
 // TYPED_CAPACITY is refused: a longer part matches no name.
@@ -281,7 +305,7 @@ state_after :: proc "contextless" (state: State, action: Action, chosen: Chosen)
 typed_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune) -> (drawn: bool, text_changed: bool) {
 	edit_key := line_editor.Edit_Key.None
 	switch key {
-	case .Other, .Super, .Escape, .Enter, .Up, .Down, .Page_Up, .Page_Down, .Tab, .Shift_Tab, .Control_Enter, .Shift_Enter:
+	case .Other, .Super, .Escape, .Enter, .Up, .Down, .Page_Up, .Page_Down, .Tab, .Shift_Tab, .Control_Enter, .Shift_Enter, .Copy, .Cut, .Paste:
 		// No edit of the typed part: the line editor refuses Edit_Key.None.
 	case .Left:
 		edit_key = .Left
@@ -295,8 +319,19 @@ typed_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune) -> (
 		edit_key = .Backspace
 	case .Delete:
 		edit_key = .Delete
+	case .Select_Left:
+		edit_key = .Select_Left
+	case .Select_Right:
+		edit_key = .Select_Right
+	case .Select_Home:
+		edit_key = .Select_Home
+	case .Select_End:
+		edit_key = .Select_End
+	case .Select_All:
+		edit_key = .Select_All
 	case .Character:
-		if panel.line.count + line_editor.character_length(character) > TYPED_CAPACITY {
+		sel_start, sel_end, _ := line_editor.line_selection_range(&panel.line)
+		if panel.line.count - (sel_end - sel_start) + line_editor.character_length(character) > TYPED_CAPACITY {
 			return false, false
 		}
 		edit_key = .Character
@@ -310,6 +345,81 @@ typed_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune) -> (
 		panel.typed_since_list = true
 	}
 	return true, text_changed
+}
+
+// panel_copy copies the active selection from the search input or current form
+// field into out. Returns (0, false) when no selection is active, the panel is
+// not in an editable state, or out is too small.
+panel_copy :: proc "contextless" (panel: ^Panel, out: []u8) -> (copied: int, ok: bool) {
+	switch panel.state {
+	case .Search:
+		return line_editor.line_copy(&panel.line, out)
+	case .Arguments:
+		if !panel.form.active || panel.form.current < 0 || panel.form.current >= panel.form.field_count {
+			return 0, false
+		}
+		return line_editor.line_copy(&panel.form.fields[panel.form.current], out)
+	case .Closed, .Confirm, .Running, .Result:
+		return 0, false
+	}
+	return 0, false
+}
+
+// panel_cut copies the active selection into out and deletes it from the active
+// search input or form field. On an empty selection or too-small out, returns
+// (0, false, false) and changes nothing.
+panel_cut :: proc "contextless" (panel: ^Panel, out: []u8) -> (copied: int, text_changed: bool, ok: bool) {
+	switch panel.state {
+	case .Search:
+		copied, ok = line_editor.line_cut(&panel.line, out)
+		if !ok {
+			return 0, false, false
+		}
+		panel.choice_undrawn = false
+		panel.typed_since_list = true
+		return copied, true, true
+	case .Arguments:
+		if !panel.form.active || panel.form.current < 0 || panel.form.current >= panel.form.field_count {
+			return 0, false, false
+		}
+		copied, ok = line_editor.line_cut(&panel.form.fields[panel.form.current], out)
+		if !ok {
+			return 0, false, false
+		}
+		panel.form.message_length = 0
+		form_candidates_filter(&panel.form)
+		return copied, true, true
+	case .Closed, .Confirm, .Running, .Result:
+		return 0, false, false
+	}
+	return 0, false, false
+}
+
+// panel_paste inserts single-line clipboard text into the active search input
+// or form field, replacing any active selection. Refuses empty text, control or
+// invisible characters, invalid UTF-8, field-type violations, and overflow
+// whole without modifying the input.
+panel_paste :: proc "contextless" (panel: ^Panel, text: string) -> (drawn: bool, text_changed: bool, ok: bool) {
+	if display.clipboard_text_problem(transmute([]u8)text, display.CLIPBOARD_TEXT_LIMIT, .Single_Line) != .None {
+		return false, false, false
+	}
+	switch panel.state {
+	case .Search:
+		if !line_editor.line_paste(&panel.line, text, TYPED_CAPACITY) {
+			return false, false, false
+		}
+		panel.choice_undrawn = false
+		panel.typed_since_list = true
+		return true, true, true
+	case .Arguments:
+		if !panel.form.active || panel.form.current < 0 || panel.form.current >= panel.form.field_count {
+			return false, false, false
+		}
+		return form_field_paste(panel, text)
+	case .Closed, .Confirm, .Running, .Result:
+		return false, false, false
+	}
+	return false, false, false
 }
 
 // panel_open opens a closed panel: an empty typed part, and the list that

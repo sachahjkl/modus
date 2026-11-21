@@ -76,6 +76,14 @@ Viewer_Key_Proved_Without_Input :: struct {
 	peer:            [32]u8,
 }
 
+// The principal disconnected a viewer from the bar popover.
+@(log_fact = "remote_display: the principal disconnected viewer key {viewer_key_head} of principal {principal} from the bar: the connection from {peer} ends with the code Revoked")
+Viewer_Disconnected_From_Bar :: struct {
+	principal:       u64,
+	viewer_key_head: [24]u8,
+	peer:            [32]u8,
+}
+
 // The grant of the key of a viewer ended: its connection ends.
 @(log_fact = "remote_display: the grant of the viewer key {viewer_key_head} of principal {principal} ended (a revocation, a lock of its session, or another session in front): the connection from {peer} ends with the code Revoked")
 Viewer_Key_Grant_Ended :: struct {

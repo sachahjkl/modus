@@ -2812,7 +2812,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if !outcome.taken {
 					key_run(&window, press)
 				}
-			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Surface_Answer:
+			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Surface_Answer:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 			if mode == .Done {

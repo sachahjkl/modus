@@ -1,5 +1,6 @@
 package compositor
 
+import "base:intrinsics"
 import clipboard_rules "internal:compositor/clipboard"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
@@ -66,6 +67,54 @@ clipboard_key :: proc "contextless" (character: rune, modifiers: u32, pressed: b
 		}
 	}
 	return true
+}
+
+// clipboard_store_local stores text copied by a compositor-owned surface (the
+// palette) into the clipboard slot using compositor memory, with owner = -1 so
+// no client closing removes it. Returns false when text is refused or memory
+// creation/mapping fails, leaving any existing clipboard slot unchanged.
+clipboard_store_local :: proc "contextless" (text: []u8, source: string) -> bool {
+	clipboard_lend_end()
+	if display.clipboard_text_problem(text, display.CLIPBOARD_TEXT_LIMIT, .Single_Line) != .None {
+		return false
+	}
+	pages := (u64(len(text)) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	memory, status := system.memory_create(pages)
+	if status != .Ok {
+		return false
+	}
+	address, map_status := system.memory_map(memory, {.Write})
+	if map_status != .Ok {
+		system.close(memory)
+		return false
+	}
+	intrinsics.mem_copy_non_overlapping(address, raw_data(text), len(text))
+	system.memory_unmap(address)
+	if clipboard_content.memory != 0 {
+		system.close(clipboard_content.memory)
+	}
+	owner_title: system.Name
+	copy(owner_title[:len(owner_title) - 1], source)
+	clipboard_content = {memory = memory, kind = .Text, count = len(text), owner = -1, owner_title = owner_title}
+	system.log_fact(.Info, Text_Copied{length = value_kinds.Size_In_Bytes(len(text)), window = window_field(owner_title[:])})
+	return true
+}
+
+// clipboard_read_local copies the current clipboard text into out for a
+// compositor-owned paste target (the palette). Returns (0, false) when the
+// clipboard is empty, not text, larger than out, or cannot be mapped.
+clipboard_read_local :: proc "contextless" (out: []u8) -> (count: int, ok: bool) {
+	clipboard_lend_end()
+	if clipboard_content.memory == 0 || clipboard_content.kind != .Text || clipboard_content.count <= 0 || clipboard_content.count > len(out) || clipboard_content.count > display.CLIPBOARD_TEXT_LIMIT {
+		return 0, false
+	}
+	address, map_status := system.memory_map(clipboard_content.memory, {})
+	if map_status != .Ok {
+		return 0, false
+	}
+	intrinsics.mem_copy_non_overlapping(raw_data(out), address, clipboard_content.count)
+	system.memory_unmap(address)
+	return clipboard_content.count, true
 }
 
 // clipboard_lend_end revokes the lend of a paste, if one waits: each

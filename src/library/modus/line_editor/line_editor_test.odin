@@ -163,6 +163,160 @@ replace_a_part_of_a_line :: proc(t: ^testing.T) {
 	testing.expect_value(t, line_text(&line), "a?b")
 }
 
+@(test)
+selection_bounds_and_reversed_anchor :: proc(t: ^testing.T) {
+	// Empty line: all selection and clipboard ops are clean no-ops/refusals.
+	empty: Line
+	out: [LINE_CAPACITY]u8
+	testing.expect(t, !line_key(&empty, .Select_Left))
+	testing.expect(t, !line_key(&empty, .Select_Right))
+	testing.expect(t, !line_key(&empty, .Select_Home))
+	testing.expect(t, !line_key(&empty, .Select_End))
+	testing.expect(t, !line_key(&empty, .Select_All))
+	n, ok := line_copy(&empty, out[:])
+	testing.expect(t, !ok && n == 0, "copy on empty line refused")
+	n, ok = line_cut(&empty, out[:])
+	testing.expect(t, !ok && n == 0, "cut on empty line refused")
+
+	// Forward and reversed selection across ASCII and multi-byte UTF-8.
+	line: Line
+	line_set(&line, "aébc")
+	// Caret at end (5). Select_Right / Select_End at end are no-ops.
+	testing.expect(t, !line_key(&line, .Select_Right))
+	testing.expect(t, !line_key(&line, .Select_End))
+	// Reversed selection (anchor = 5, caret = 1 covering "ébc").
+	testing.expect(t, line_key(&line, .Select_Left))
+	testing.expect(t, line_key(&line, .Select_Left))
+	testing.expect(t, line_key(&line, .Select_Left))
+	start, end, active := line_selection_range(&line)
+	testing.expect(t, active && start == 1 && end == 5)
+	testing.expect(t, line.selection_anchor == 5 && line.caret == 1, "anchor > caret for reversed selection")
+	selected, sel_ok := line_selected_text(&line)
+	testing.expect(t, sel_ok && selected == "ébc")
+
+	// Shrinking back to anchor clears selection cleanly.
+	testing.expect(t, line_key(&line, .Select_Right))
+	testing.expect(t, line_key(&line, .Select_Right))
+	testing.expect(t, line_key(&line, .Select_Right))
+	_, _, active = line_selection_range(&line)
+	testing.expect(t, !active, "selection clears when caret returns to anchor")
+
+	// Select_Home from end selects whole line; Left collapses to start (0).
+	testing.expect(t, line_key(&line, .Select_Home))
+	selected, sel_ok = line_selected_text(&line)
+	testing.expect(t, sel_ok && selected == "aébc")
+	testing.expect(t, line_key(&line, .Left))
+	_, _, active = line_selection_range(&line)
+	testing.expect(t, !active && line.caret == 0, "Left collapses selection to start")
+
+	// Select_End from 0 selects whole line; Right collapses to end (5).
+	testing.expect(t, line_key(&line, .Select_End))
+	selected, sel_ok = line_selected_text(&line)
+	testing.expect(t, sel_ok && selected == "aébc")
+	testing.expect(t, line_key(&line, .Right))
+	_, _, active = line_selection_range(&line)
+	testing.expect(t, !active && line.caret == 5, "Right collapses selection to end")
+
+	// Select_All selects whole line; repeating Select_All reports no change.
+	testing.expect(t, line_key(&line, .Select_All))
+	testing.expect(t, !line_key(&line, .Select_All))
+	selected, sel_ok = line_selected_text(&line)
+	testing.expect(t, sel_ok && selected == "aébc")
+
+	// Corrupt anchor/caret (negative, out of bounds, mid-UTF-8 byte) is repaired.
+	line.has_selection = true
+	line.selection_anchor = -50
+	line.caret = 2 // inside 2-byte 'é' (bytes 1..3)
+	start, end, active = line_selection_range(&line)
+	testing.expect(t, active && start == 0 && end == 1)
+	line.has_selection = true
+	line.selection_anchor = 9999
+	line.caret = 9999
+	_, _, active = line_selection_range(&line)
+	testing.expect(t, !active, "equal clamped endpoints clear selection")
+}
+
+@(test)
+cut_copy_paste_and_capacity_refusal :: proc(t: ^testing.T) {
+	line: Line
+	line_set(&line, "hello world")
+	buf: [LINE_CAPACITY]u8
+
+	// Empty selection: copy and cut refused with line unchanged.
+	copied, ok := line_copy(&line, buf[:])
+	testing.expect(t, !ok && copied == 0)
+	copied, ok = line_cut(&line, buf[:])
+	testing.expect(t, !ok && copied == 0)
+	testing.expect_value(t, line_text(&line), "hello world")
+
+	// Select "world" (bytes 6..11).
+	for _ in 0 ..< 5 {
+		testing.expect(t, line_key(&line, .Select_Left))
+	}
+	// Too-small output buffer refused for both copy and cut; line unchanged.
+	tiny: [4]u8
+	copied, ok = line_copy(&line, tiny[:])
+	testing.expect(t, !ok && copied == 0)
+	copied, ok = line_cut(&line, tiny[:])
+	testing.expect(t, !ok && copied == 0)
+	testing.expect_value(t, line_text(&line), "hello world")
+
+	// Copy succeeds and keeps line intact.
+	copied, ok = line_copy(&line, buf[:])
+	testing.expect(t, ok && copied == 5 && string(buf[:copied]) == "world")
+	testing.expect_value(t, line_text(&line), "hello world")
+
+	// Cut copies and deletes selection, placing caret at start of cut.
+	copied, ok = line_cut(&line, buf[:])
+	testing.expect(t, ok && copied == 5 && string(buf[:copied]) == "world")
+	testing.expect_value(t, line_text(&line), "hello ")
+	testing.expect_value(t, line.caret, 6)
+
+	// Paste inserts at caret.
+	testing.expect(t, line_paste(&line, "modus"))
+	testing.expect_value(t, line_text(&line), "hello modus")
+	testing.expect_value(t, line.caret, 11)
+
+	// Paste replaces active selection (even reversed).
+	testing.expect(t, line_key(&line, .Select_Left))
+	testing.expect(t, line_key(&line, .Select_Left))
+	testing.expect(t, line_key(&line, .Select_Left))
+	testing.expect(t, line_key(&line, .Select_Left))
+	testing.expect(t, line_key(&line, .Select_Left))
+	testing.expect(t, line_paste(&line, "OS"))
+	testing.expect_value(t, line_text(&line), "hello OS")
+	testing.expect_value(t, line.caret, 8)
+
+	// Invalid pastes (empty, control char, invalid UTF-8) refused with line unchanged.
+	testing.expect(t, !line_paste(&line, ""))
+	testing.expect(t, !line_paste(&line, "a\nb"))
+	testing.expect(t, !line_paste(&line, "a\x00b"))
+	testing.expect(t, !line_paste(&line, "a\xC3"))
+	testing.expect_value(t, line_text(&line), "hello OS")
+
+	// Capacity boundary: refuse whole on overflow (no truncation), accept exact fit.
+	testing.expect(t, !line_paste(&line, "123", 10), "8 + 3 > 10 must be refused whole")
+	testing.expect_value(t, line_text(&line), "hello OS")
+	testing.expect(t, line_paste(&line, "12", 10), "8 + 2 == 10 fits")
+	testing.expect_value(t, line_text(&line), "hello OS12")
+
+	// Replacing a selection at full LINE_CAPACITY succeeds when net size <= LINE_CAPACITY.
+	full: [LINE_CAPACITY]u8
+	for &b in full {
+		b = 'a'
+	}
+	line_set(&line, string(full[:]))
+	testing.expect_value(t, line.count, LINE_CAPACITY)
+	testing.expect(t, !line_paste(&line, "x"), "inserting into full line refused")
+	testing.expect(t, line_key(&line, .Select_Left))
+	testing.expect(t, line_key(&line, .Select_Left))
+	testing.expect(t, !line_paste(&line, "xyz"), "replacing 2 bytes with 3 at full capacity refused")
+	testing.expect(t, line_paste(&line, "xy"), "replacing 2 bytes with 2 at full capacity succeeds")
+	testing.expect_value(t, line.count, LINE_CAPACITY)
+	testing.expect_value(t, line.bytes[LINE_CAPACITY - 2], 'x')
+	testing.expect_value(t, line.bytes[LINE_CAPACITY - 1], 'y')
+}
+
 // ---- The place of the caret.
 
 @(test)

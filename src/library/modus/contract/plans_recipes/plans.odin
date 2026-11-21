@@ -636,34 +636,45 @@ plan_hash :: proc "contextless" (plan: ^Plan_Spec) -> (digest: blake3.Hash, refu
 }
 
 @(private = "file")
-append_diff_item :: proc "contextless" (diff: ^Plan_Difference, item: Plan_Diff_Item) {
-	if diff.change_count < MAX_PLAN_DIFF_CHANGES {
-		diff.changes[diff.change_count] = item
-		diff.change_count += 1
-	}
+reserve_diff_item :: proc "contextless" (diff: ^Plan_Difference) -> ^Plan_Diff_Item {
 	diff.has_changes = true
+	if diff.change_count >= MAX_PLAN_DIFF_CHANGES {
+		return nil
+	}
+	slot := &diff.changes[diff.change_count]
+	diff.change_count += 1
+	slot^ = {}
+	return slot
 }
 
 // plan_diff_compute computes the complete grant, role, module, and store
-// difference between current (nil when no plan is applied yet) and proposed.
-// Sets any_grant_added whenever any start grant, store right, or role
-// authority is newly granted or widened.
-plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Spec) -> (diff: Plan_Difference, refusal: Plan_Refusal) {
+// difference between current (nil when no plan is applied yet) and proposed,
+// writing the result in place into caller-supplied out_diff so the large
+// Plan_Difference record is never copied by value. Sets any_grant_added
+// whenever any start grant, store right, or role authority is newly granted
+// or widened.
+plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Spec, out_diff: ^Plan_Difference) -> Plan_Refusal {
+	if out_diff == nil {
+		return .Buffer_Too_Small
+	}
+	out_diff^ = {}
 	if current != nil {
 		current_hash, current_refusal := plan_hash(current)
 		if current_refusal != .None {
-			return {}, current_refusal
+			return current_refusal
 		}
-		diff.current_plan_hash = current_hash
+		out_diff.current_plan_hash = current_hash
 	}
 	proposed_hash, proposed_refusal := plan_hash(proposed)
 	if proposed_refusal != .None {
-		return {}, proposed_refusal
+		out_diff^ = {}
+		return proposed_refusal
 	}
 	if current != nil && current.principal != proposed.principal {
-		return {}, .Principal_Mismatch
+		out_diff^ = {}
+		return .Principal_Mismatch
 	}
-	diff.proposed_plan_hash = proposed_hash
+	out_diff.proposed_plan_hash = proposed_hash
 
 	// Pass 1: find removed and changed entries from current.
 	if current != nil {
@@ -684,31 +695,28 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 
 			if matched == nil {
 				removed_bits := cur_entry.start_grants_mask
-				diff.removed_grants_count += popcount_u64(removed_bits)
+				out_diff.removed_grants_count += popcount_u64(removed_bits)
 				switch cur_kind {
 				case .None:
 				case .Role_Holder:
-					diff.removed_roles += 1
-					diff.removed_grants_count += 1
+					out_diff.removed_roles += 1
+					out_diff.removed_grants_count += 1
 				case .Start_Module, .Disk_Module:
-					diff.removed_modules += 1
+					out_diff.removed_modules += 1
 				case .Store_Grant:
-					diff.removed_stores += 1
-					diff.removed_grants_count += 1
+					out_diff.removed_stores += 1
+					out_diff.removed_grants_count += 1
 				}
-				append_diff_item(
-					&diff,
-					{
-						change              = .Removed,
-						entry_kind          = cur_kind,
-						role                = cur_role,
-						name_bytes          = cur_entry.name_bytes,
-						name_length         = cur_entry.name_length,
-						old_module_hash     = cur_entry.module_hash,
-						removed_grants_mask = removed_bits,
-						old_store_rights    = cur_rights,
-					},
-				)
+				if item := reserve_diff_item(out_diff); item != nil {
+					item.change = .Removed
+					item.entry_kind = cur_kind
+					item.role = cur_role
+					item.name_bytes = cur_entry.name_bytes
+					item.name_length = cur_entry.name_length
+					item.old_module_hash = cur_entry.module_hash
+					item.removed_grants_mask = removed_bits
+					item.old_store_rights = cur_rights
+				}
 				continue
 			}
 
@@ -722,53 +730,50 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 
 			added_bits := matched.start_grants_mask & ~cur_entry.start_grants_mask
 			removed_bits := cur_entry.start_grants_mask & ~matched.start_grants_mask
-			diff.added_grants_count += popcount_u64(added_bits)
-			diff.removed_grants_count += popcount_u64(removed_bits)
+			out_diff.added_grants_count += popcount_u64(added_bits)
+			out_diff.removed_grants_count += popcount_u64(removed_bits)
 			if added_bits != 0 {
-				diff.any_grant_added = true
+				out_diff.any_grant_added = true
 			}
 
 			switch cur_kind {
 			case .None:
 			case .Role_Holder:
-				diff.changed_roles += 1
+				out_diff.changed_roles += 1
 				if module_changed {
-					diff.added_grants_count += 1
-					diff.any_grant_added = true
+					out_diff.added_grants_count += 1
+					out_diff.any_grant_added = true
 				}
 			case .Start_Module, .Disk_Module:
-				diff.changed_modules += 1
+				out_diff.changed_modules += 1
 				// Granting existing start grants to a different module binary
 				// introduces authority for the new module.
 				if module_changed && matched.start_grants_mask != 0 {
-					diff.any_grant_added = true
+					out_diff.any_grant_added = true
 				}
 			case .Store_Grant:
-				diff.changed_stores += 1
+				out_diff.changed_stores += 1
 				if cur_rights == .Read_Only && prop_rights == .Read_Write {
-					diff.added_grants_count += 1
-					diff.any_grant_added = true
+					out_diff.added_grants_count += 1
+					out_diff.any_grant_added = true
 				} else if cur_rights == .Read_Write && prop_rights == .Read_Only {
-					diff.removed_grants_count += 1
+					out_diff.removed_grants_count += 1
 				}
 			}
 
-			append_diff_item(
-				&diff,
-				{
-					change              = .Changed,
-					entry_kind          = cur_kind,
-					role                = cur_role,
-					name_bytes          = cur_entry.name_bytes,
-					name_length         = cur_entry.name_length,
-					old_module_hash     = cur_entry.module_hash,
-					new_module_hash     = matched.module_hash,
-					added_grants_mask   = added_bits,
-					removed_grants_mask = removed_bits,
-					old_store_rights    = cur_rights,
-					new_store_rights    = prop_rights,
-				},
-			)
+			if item := reserve_diff_item(out_diff); item != nil {
+				item.change = .Changed
+				item.entry_kind = cur_kind
+				item.role = cur_role
+				item.name_bytes = cur_entry.name_bytes
+				item.name_length = cur_entry.name_length
+				item.old_module_hash = cur_entry.module_hash
+				item.new_module_hash = matched.module_hash
+				item.added_grants_mask = added_bits
+				item.removed_grants_mask = removed_bits
+				item.old_store_rights = cur_rights
+				item.new_store_rights = prop_rights
+			}
 		}
 	}
 
@@ -792,41 +797,38 @@ plan_diff_compute :: proc "contextless" (current: ^Plan_Spec, proposed: ^Plan_Sp
 		prop_role, _ := role_contract.role_from_word(prop_entry.role_word)
 		prop_rights, _ := plan_store_rights_of_word(prop_entry.store_rights_word)
 		added_bits := prop_entry.start_grants_mask
-		diff.added_grants_count += popcount_u64(added_bits)
+		out_diff.added_grants_count += popcount_u64(added_bits)
 		if added_bits != 0 {
-			diff.any_grant_added = true
+			out_diff.any_grant_added = true
 		}
 
 		switch prop_kind {
 		case .None:
 		case .Role_Holder:
-			diff.added_roles += 1
-			diff.added_grants_count += 1
-			diff.any_grant_added = true
+			out_diff.added_roles += 1
+			out_diff.added_grants_count += 1
+			out_diff.any_grant_added = true
 		case .Start_Module, .Disk_Module:
-			diff.added_modules += 1
+			out_diff.added_modules += 1
 		case .Store_Grant:
-			diff.added_stores += 1
-			diff.added_grants_count += 1
-			diff.any_grant_added = true
+			out_diff.added_stores += 1
+			out_diff.added_grants_count += 1
+			out_diff.any_grant_added = true
 		}
 
-		append_diff_item(
-			&diff,
-			{
-				change            = .Added,
-				entry_kind        = prop_kind,
-				role              = prop_role,
-				name_bytes        = prop_entry.name_bytes,
-				name_length       = prop_entry.name_length,
-				new_module_hash   = prop_entry.module_hash,
-				added_grants_mask = added_bits,
-				new_store_rights  = prop_rights,
-			},
-		)
+		if item := reserve_diff_item(out_diff); item != nil {
+			item.change = .Added
+			item.entry_kind = prop_kind
+			item.role = prop_role
+			item.name_bytes = prop_entry.name_bytes
+			item.name_length = prop_entry.name_length
+			item.new_module_hash = prop_entry.module_hash
+			item.added_grants_mask = added_bits
+			item.new_store_rights = prop_rights
+		}
 	}
 
-	return diff, .None
+	return .None
 }
 
 // plan_difference_to_powerbox_batch constructs a validated powerbox

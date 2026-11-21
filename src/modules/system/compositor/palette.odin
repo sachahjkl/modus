@@ -925,17 +925,41 @@ palette_key :: proc "contextless" (code: u32, character: rune, pressed: bool, mo
 		return palette_is_open() || code == display.KEY_SUPER
 	}
 	key := palette_key_of(code, character)
-	// Shift with Tab and Control with Enter are keys of their own.
-	if key == .Tab && modifiers & display.MODIFIER_SHIFT != 0 {
-		key = .Shift_Tab
+	shift := modifiers & display.MODIFIER_SHIFT != 0
+	control := modifiers & display.MODIFIER_CONTROL != 0
+	// Shift with Tab, arrows, Home/End and Control with Enter/A/C/X/V are keys of their own.
+	if shift && !control {
+		switch key {
+		case .Tab:
+			key = .Shift_Tab
+		case .Enter:
+			key = .Shift_Enter
+		case .Left:
+			key = .Select_Left
+		case .Right:
+			key = .Select_Right
+		case .Home:
+			key = .Select_Home
+		case .End:
+			key = .Select_End
+		case .Other, .Super, .Escape, .Up, .Down, .Page_Up, .Page_Down, .Backspace, .Delete, .Character, .Shift_Tab, .Control_Enter, .Shift_Enter, .Select_Left, .Select_Right, .Select_Home, .Select_End, .Select_All, .Copy, .Cut, .Paste:
+		}
 	}
-	if key == .Enter && modifiers & display.MODIFIER_CONTROL != 0 {
-		key = .Control_Enter
-	} else if key == .Enter && modifiers & display.MODIFIER_SHIFT != 0 {
-		key = .Shift_Enter
-	}
-	if key == .Character && modifiers & display.MODIFIER_CONTROL != 0 {
-		key = .Other // Control with a key types no character.
+	if control {
+		switch {
+		case key == .Enter:
+			key = .Control_Enter
+		case character == 'a' || character == 'A':
+			key = .Select_All
+		case character == 'c' || character == 'C':
+			key = .Copy
+		case character == 'x' || character == 'X':
+			key = .Cut
+		case character == 'v' || character == 'V':
+			key = .Paste
+		case key == .Character:
+			key = .Other // Other Control chords type no character.
+		}
 	}
 	was_open := palette_is_open()
 	// On a setting row, and in a field with a row of buttons, Left and
@@ -972,6 +996,7 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 	case .None:
 		// A key that the panel does not use: it goes to no process.
 	case .Open:
+		capture_popover_close()
 		if menu_open != .None {
 			menu_open = .None
 			menu_line = -1
@@ -1003,6 +1028,38 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 		}
 		if drawn {
 			palette_refresh()
+		}
+	case .Copy:
+		buffer: [line_editor.LINE_CAPACITY]u8
+		if copied, ok := palette.panel_copy(panel, buffer[:]); ok {
+			_ = clipboard_store_local(buffer[:copied], "palette")
+		}
+	case .Cut:
+		buffer: [line_editor.LINE_CAPACITY]u8
+		if copied, ok := palette.panel_copy(panel, buffer[:]); ok {
+			if clipboard_store_local(buffer[:copied], "palette") {
+				if _, text_changed, cut_ok := palette.panel_cut(panel, buffer[:]); cut_ok {
+					if text_changed && panel.state == .Search {
+						palette_enter_waits = false
+						palette_go_to_waits = false
+						palette_entries_refresh()
+					}
+					palette_refresh()
+				}
+			}
+		}
+	case .Paste:
+		buffer: [display.CLIPBOARD_TEXT_LIMIT]u8
+		if count, ok := clipboard_read_local(buffer[:]); ok {
+			drawn, text_changed, _ := palette.panel_paste(panel, string(buffer[:count]))
+			if text_changed && panel.state == .Search {
+				palette_enter_waits = false
+				palette_go_to_waits = false
+				palette_entries_refresh()
+			}
+			if drawn {
+				palette_refresh()
+			}
 		}
 	case .Choose_Previous, .Choose_Next, .Choose_Page_Before, .Choose_Page_After:
 		// The case above holds the four members that move the choice.

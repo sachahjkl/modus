@@ -256,7 +256,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					graphics.line(paper(), last_x, last_y - PALETTE_HEIGHT, event.x, y - PALETTE_HEIGHT, erase ? 12 : 3, erase ? COLOR_PAPER : color)
 				}
 				last_x, last_y, drawing = event.x, y, true
-			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Surface_Answer:
+			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Surface_Answer:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

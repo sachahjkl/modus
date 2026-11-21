@@ -110,28 +110,34 @@ current_plan :: proc "contextless" (state: ^Plans_State, principal: u64) -> (pla
 	return &entry.plans[idx], entry.history[idx], true
 }
 
-// compute_difference validates proposed and computes its Plan_Difference
-// against the service's authoritative current applied plan for
-// proposed.principal. Applies nothing.
-compute_difference :: proc "contextless" (state: ^Plans_State, proposed: ^pr.Plan_Spec) -> (diff: pr.Plan_Difference, refusal: pr.Plan_Refusal) {
-	if proposed == nil {
+// compute_difference validates proposed and writes its Plan_Difference into
+// caller-supplied out_diff against the service's authoritative current applied
+// plan for proposed.principal. Applies nothing.
+compute_difference :: proc "contextless" (state: ^Plans_State, proposed: ^pr.Plan_Spec, out_diff: ^pr.Plan_Difference) -> pr.Plan_Refusal {
+	if out_diff == nil {
 		state.counters.total_refusals += 1
-		return {}, .Empty_Plan
+		return .Buffer_Too_Small
+	}
+	if proposed == nil {
+		out_diff^ = {}
+		state.counters.total_refusals += 1
+		return .Empty_Plan
 	}
 	cur_plan, _, _ := current_plan(state, proposed.principal)
-	diff, refusal = pr.plan_diff_compute(cur_plan, proposed)
+	refusal := pr.plan_diff_compute(cur_plan, proposed, out_diff)
 	if refusal != .None {
 		state.counters.total_refusals += 1
-		return {}, refusal
+		return refusal
 	}
 	state.counters.total_diffs += 1
-	return diff, .None
+	return .None
 }
 
-// apply_plan validates proposed, verifies that the current applied plan hash
-// still matches expected_current_hash, enforces trusted Show_Plan_Difference
-// consent whenever any grant is added or widened, and atomically records the
-// new generation into applied_plans. On any refusal, zero state changes occur.
+// apply_plan validates proposed, writes its Plan_Difference into caller-supplied
+// out_diff, verifies that the current applied plan hash still matches
+// expected_current_hash, enforces trusted Show_Plan_Difference consent whenever
+// any grant is added or widened, and atomically records the new generation into
+// applied_plans. On any refusal, zero state changes occur.
 apply_plan :: proc "contextless" (
 	state: ^Plans_State,
 	proposed: ^pr.Plan_Spec,
@@ -139,52 +145,58 @@ apply_plan :: proc "contextless" (
 	consent_dialog: ^powerbox.Dialog_Record,
 	consent_answer: ^powerbox.Grant_Answer,
 	now_ms: u64,
-) -> (record: pr.Applied_Plan_Record, diff: pr.Plan_Difference, refusal: pr.Plan_Refusal) {
-	if proposed == nil {
+	out_diff: ^pr.Plan_Difference,
+) -> (record: pr.Applied_Plan_Record, refusal: pr.Plan_Refusal) {
+	if out_diff == nil {
 		state.counters.total_refusals += 1
-		return {}, {}, .Empty_Plan
+		return {}, .Buffer_Too_Small
+	}
+	if proposed == nil {
+		out_diff^ = {}
+		state.counters.total_refusals += 1
+		return {}, .Empty_Plan
 	}
 
 	cur_plan, _, _ := current_plan(state, proposed.principal)
-	diff, refusal = pr.plan_diff_compute(cur_plan, proposed)
+	refusal = pr.plan_diff_compute(cur_plan, proposed, out_diff)
 	if refusal != .None {
 		state.counters.total_refusals += 1
-		return {}, {}, refusal
+		return {}, refusal
 	}
 
 	// Refuse stale apply when the principal's current plan changed since the
 	// difference was reviewed.
-	if expected_current_hash != diff.current_plan_hash {
+	if expected_current_hash != out_diff.current_plan_hash {
 		state.counters.total_refusals += 1
-		return {}, diff, .Stale_Current_Plan
+		return {}, .Stale_Current_Plan
 	}
 
 	// Require verified trusted Display Show_Plan_Difference consent whenever
 	// any grant is added or widened.
-	if diff.any_grant_added {
+	if out_diff.any_grant_added {
 		if consent_dialog == nil || consent_answer == nil {
 			state.counters.total_refusals += 1
-			return {}, diff, .Consent_Required
+			return {}, .Consent_Required
 		}
 		if consent_dialog.action_word != u64(powerbox.Dialog_Action.Show_Plan_Difference) {
 			state.counters.total_refusals += 1
-			return {}, diff, .Untrusted_Consent
+			return {}, .Untrusted_Consent
 		}
 		if consent_dialog.session_principal != proposed.principal {
 			state.counters.total_refusals += 1
-			return {}, diff, .Untrusted_Consent
+			return {}, .Untrusted_Consent
 		}
-		if consent_dialog.item_count != 1 || consent_dialog.items[0].plan_hash != diff.proposed_plan_hash {
+		if consent_dialog.item_count != 1 || consent_dialog.items[0].plan_hash != out_diff.proposed_plan_hash {
 			state.counters.total_refusals += 1
-			return {}, diff, .Untrusted_Consent
+			return {}, .Untrusted_Consent
 		}
 		if pb_refusal, _ := powerbox.answer_record_validate(consent_dialog, consent_answer, state.trusted_display_slot); pb_refusal != .None {
 			state.counters.total_refusals += 1
-			return {}, diff, .Untrusted_Consent
+			return {}, .Untrusted_Consent
 		}
 		if !consent_answer.whole_plan_accepted {
 			state.counters.total_refusals += 1
-			return {}, diff, .Untrusted_Consent
+			return {}, .Untrusted_Consent
 		}
 	}
 
@@ -192,13 +204,13 @@ apply_plan :: proc "contextless" (
 	entry := find_or_create_principal(state, proposed.principal)
 	if entry == nil || entry.history_count >= MAX_HISTORY_PER_PRINCIPAL {
 		state.counters.total_refusals += 1
-		return {}, diff, .History_Full
+		return {}, .History_Full
 	}
 
 	next_generation := entry.highest_generation + 1
 	new_record := pr.Applied_Plan_Record {
-		plan_hash          = diff.proposed_plan_hash,
-		previous_plan_hash = diff.current_plan_hash,
+		plan_hash          = out_diff.proposed_plan_hash,
+		previous_plan_hash = out_diff.current_plan_hash,
 		generation         = next_generation,
 		timestamp_ms       = now_ms,
 		principal          = proposed.principal,
@@ -213,7 +225,7 @@ apply_plan :: proc "contextless" (
 	entry.highest_generation = next_generation
 	entry.current_generation = next_generation
 	state.counters.total_applies += 1
-	return new_record, diff, .None
+	return new_record, .None
 }
 
 // rollback moves current_generation of principal to the immediately preceding

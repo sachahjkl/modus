@@ -35,6 +35,7 @@ REMOTE_KEY_CODE_LIMIT :: display.KEY_EXTENDED | 0xFF
 // The header of a picture holds each rectangle of a damage set: a set
 // never has more than the header can name.
 #assert(interface.DAMAGE_CAPACITY <= display.CAPTURE_RECTANGLE_CAPACITY)
+#assert(bar.VIEWER_CAPACITY == display.CAPTURE_VIEWER_CAPACITY)
 
 Capture_Face :: struct {
 	client:       int, // The client that holds the face, or -1.
@@ -65,6 +66,10 @@ Capture_Face :: struct {
 }
 
 capture := Capture_Face{client = -1, held = -1, last_written = 1}
+capture_viewer_popover := bar.Viewer_Popover{hovered_index = -1}
+// Rendered place of the viewer mark in the bar, updated when capture_mark_records draws it.
+capture_mark_x, capture_mark_y, capture_mark_width, capture_mark_height: int
+capture_mark_drawn: bool
 
 // capture_is_open says if a client holds the capture face.
 capture_is_open :: proc "contextless" () -> bool {
@@ -150,6 +155,11 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		capture.viewer_input = record.values[1] & (1 << display.CAPTURE_VIEWER_CAPACITY - 1)
 		for &key, place in capture.viewer_keys {
 			key = place < capture.viewer_count ? record.values[2 + place] : 0
+		}
+		was_open := capture_viewer_popover.open
+		old_count := capture_viewer_popover.count
+		if bar.viewer_popover_sync(&capture_viewer_popover, true, capture.viewer_count, capture.viewer_keys[:], capture.viewer_input) && (was_open || capture_viewer_popover.open) {
+			damage_capture_popover(max(old_count, capture_viewer_popover.count))
 		}
 		damage_add(0, 0, desktop_width, BAR_HEIGHT)
 	case .Remote_Key:
@@ -261,7 +271,14 @@ capture_end :: proc "contextless" (why: string) {
 		system.close(capture.memory)
 	}
 	system.log_fact(.Info, Capture_Face_Ended{pictures = capture.records, viewer_keys = capture.remote_keys, viewer_pointer_records = capture.remote_pointers, refused = capture.refused, capture_end = value_kinds.text_field(why, CAPTURE_END_FIELD_BYTES)})
+	was_open := capture_viewer_popover.open
+	old_count := capture_viewer_popover.count
+	_ = bar.viewer_popover_sync(&capture_viewer_popover, false, 0, nil, 0)
+	capture_mark_drawn = false
 	capture = {client = -1, held = -1, last_written = 1}
+	if was_open {
+		damage_capture_popover(old_count)
+	}
 	damage_add(0, 0, desktop_width, BAR_HEIGHT)
 }
 
@@ -371,6 +388,7 @@ capture_after_draw :: proc "contextless" (areas: []Rectangle) {
 // alone; no text is cut.
 capture_mark_records :: proc "contextless" (table: ^interface.Draw_Table, right: int) {
 	if capture.client < 0 {
+		capture_mark_drawn = false
 		return
 	}
 	room := capture_mark_room(right)
@@ -396,13 +414,22 @@ capture_mark_records :: proc "contextless" (table: ^interface.Draw_Table, right:
 			continue
 		}
 		x := right - 16 - width
+		capture_mark_x, capture_mark_y, capture_mark_width, capture_mark_height = x, bar.BUTTON_Y, width, bar.BUTTON_HEIGHT
+		capture_mark_drawn = true
+		if capture_viewer_popover.open {
+			interface.draw_rectangle(table, x, bar.BUTTON_Y, width, bar.BUTTON_HEIGHT, graphics.colors.chosen)
+		}
 		interface.draw_outline(table, x, bar.BUTTON_Y, width, bar.BUTTON_HEIGHT, 2, graphics.colors.warning)
-		interface.draw_text(table, x + bar.PADDING, bar.BUTTON_Y + (bar.BUTTON_HEIGHT - graphics.CELL_HEIGHT) / 2, text, graphics.colors.text, interface.FONT_INTERFACE)
+		interface.draw_text(table, x + bar.PADDING, bar.BUTTON_Y + (bar.BUTTON_HEIGHT - graphics.CELL_HEIGHT) / 2, text, capture_viewer_popover.open ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 		return
 	}
 	// The square alone: screen_build gives it the room of the hint of the
 	// palette when it has no other, so the mark is always drawn.
-	interface.draw_rectangle(table, right - 16 - CAPTURE_MARK_SQUARE, bar.BUTTON_Y + (bar.BUTTON_HEIGHT - CAPTURE_MARK_SQUARE) / 2, CAPTURE_MARK_SQUARE, CAPTURE_MARK_SQUARE, graphics.colors.warning)
+	x := right - 16 - CAPTURE_MARK_SQUARE
+	y := bar.BUTTON_Y + (bar.BUTTON_HEIGHT - CAPTURE_MARK_SQUARE) / 2
+	capture_mark_x, capture_mark_y, capture_mark_width, capture_mark_height = x, y, CAPTURE_MARK_SQUARE, CAPTURE_MARK_SQUARE
+	capture_mark_drawn = true
+	interface.draw_rectangle(table, x, y, CAPTURE_MARK_SQUARE, CAPTURE_MARK_SQUARE, graphics.colors.warning)
 }
 
 // The mark of a viewer with no text.
@@ -413,4 +440,126 @@ CAPTURE_MARK_SQUARE :: 16
 capture_mark_room :: proc "contextless" (right: int) -> int {
 	windows_x, _, windows_width, _ := bar.windows_button(bar_layout)
 	return right - 16 - (windows_x + windows_width + 16)
+}
+
+// capture_mark_contains reports whether (x, y) lies inside the visible viewer
+// mark while at least one viewer is connected.
+capture_mark_contains :: proc "contextless" (x, y: int) -> bool {
+	if !capture_is_open() || !capture_mark_drawn || !bar.viewer_popover_has_viewers(&capture_viewer_popover) {
+		return false
+	}
+	return x >= capture_mark_x && x < capture_mark_x + capture_mark_width && y >= capture_mark_y && y < capture_mark_y + capture_mark_height
+}
+
+// damage_capture_popover marks the bar mark and viewer list popover card dirty.
+damage_capture_popover :: proc "contextless" (count: int) {
+	damage_add(0, 0, desktop_width, BAR_HEIGHT)
+	x, y, width, height := bar.viewer_popover_rect(capture_mark_x, capture_mark_width, desktop_width, max(count, 1))
+	damage_add(x, y, width, height)
+}
+
+// capture_popover_close closes the viewer popover if open and damages its area.
+capture_popover_close :: proc "contextless" () {
+	if !capture_viewer_popover.open {
+		return
+	}
+	old_count := capture_viewer_popover.count
+	_ = bar.viewer_popover_escape(&capture_viewer_popover)
+	damage_capture_popover(old_count)
+}
+
+// capture_popover_escape closes the viewer popover on local Escape. Returns
+// true when Escape was consumed by closing an open popover.
+capture_popover_escape :: proc "contextless" () -> bool {
+	if !capture_viewer_popover.open {
+		return false
+	}
+	old_count := capture_viewer_popover.count
+	if bar.viewer_popover_escape(&capture_viewer_popover).kind == .Closed {
+		damage_capture_popover(old_count)
+		return true
+	}
+	return false
+}
+
+// capture_popover_pointer_move updates hover state on the open viewer popover.
+capture_popover_pointer_move :: proc "contextless" (x, y: int) {
+	if bar.viewer_popover_pointer_move(&capture_viewer_popover, capture_mark_x, capture_mark_width, desktop_width, x, y) {
+		damage_capture_popover(capture_viewer_popover.count)
+	}
+}
+
+// capture_popover_press handles a left-button press for the bar viewer mark
+// and the viewer list popover. Returns true when the press was consumed.
+capture_popover_press :: proc "contextless" (x, y: int) -> bool {
+	if capture_viewer_popover.open {
+		old_count := capture_viewer_popover.count
+		if capture_mark_contains(x, y) {
+			_ = bar.viewer_popover_mark_click(&capture_viewer_popover)
+			damage_capture_popover(old_count)
+			return true
+		}
+		action := bar.viewer_popover_click(&capture_viewer_popover, capture_mark_x, capture_mark_width, desktop_width, x, y)
+		switch action.kind {
+		case .None:
+			return true
+		case .Opened:
+			damage_capture_popover(capture_viewer_popover.count)
+			return true
+		case .Closed:
+			damage_capture_popover(old_count)
+			return true
+		case .Disconnect:
+			damage_capture_popover(old_count)
+			if capture.client >= 0 && action.key_head != 0 {
+				send(&clients[capture.client], .Capture_Disconnect, {0 = action.key_head})
+				head_text: [8]u8
+				head_writer := system.Writer{buffer = head_text[:]}
+				head := transmute([8]u8)action.key_head
+				system.write_hex(&head_writer, u64(head[0]) << 24 | u64(head[1]) << 16 | u64(head[2]) << 8 | u64(head[3]), 8)
+				system.log_fact(.Info, Viewer_Disconnect_Requested{viewer_key_head = value_kinds.text_field(system.written(&head_writer), 24)})
+			}
+			return true
+		}
+	}
+	if capture_mark_contains(x, y) {
+		if menu_open != .None {
+			menu_open = .None
+			menu_line = -1
+			damage_menu()
+		}
+		if bar.viewer_popover_mark_click(&capture_viewer_popover).kind == .Opened {
+			damage_capture_popover(capture_viewer_popover.count)
+		}
+		return true
+	}
+	return false
+}
+
+// capture_popover_records appends the viewer list card below the bar mark when
+// the popover is open.
+capture_popover_records :: proc "contextless" (frame: ^interface.Frame) {
+	if !capture_viewer_popover.open || capture_viewer_popover.count <= 0 {
+		return
+	}
+	table := frame.table
+	pop_x, pop_y, pop_w, pop_h := bar.viewer_popover_rect(capture_mark_x, capture_mark_width, desktop_width, capture_viewer_popover.count)
+	count: interface.Text_Builder
+	interface.card(frame, {pop_x, pop_y, pop_w, pop_h}, "VIEWERS", "remote display", graphics.colors.warning, interface.number_text(&count, u64(capture_viewer_popover.count)))
+	for index in 0 ..< capture_viewer_popover.count {
+		row_x, row_y, _, _, row_ok := bar.viewer_popover_row_rect(capture_mark_x, capture_mark_width, desktop_width, capture_viewer_popover.count, index)
+		btn_x, btn_y, btn_w, btn_h, btn_ok := bar.viewer_popover_disconnect_rect(capture_mark_x, capture_mark_width, desktop_width, capture_viewer_popover.count, index)
+		if !row_ok || !btn_ok {
+			continue
+		}
+		viewer := capture_viewer_popover.viewers[index]
+		label_buf: [bar.VIEWER_LABEL_CAPACITY]u8
+		label := bar.viewer_key_label(viewer.key_head, viewer.has_input, label_buf[:])
+		interface.draw_text(table, row_x + bar.PADDING, row_y + 4, label, graphics.colors.text, interface.FONT_INTERFACE)
+		hovered := capture_viewer_popover.hovered_index == index
+		fill := hovered ? graphics.colors.stop_process_pointer_over : graphics.colors.stop_process
+		interface.draw_rectangle(table, btn_x, btn_y, btn_w, btn_h, fill)
+		btn_text_w := interface.text_measured_width(table, interface.FONT_INTERFACE, bar.VIEWER_DISCONNECT_LABEL)
+		interface.draw_text(table, btn_x + max((btn_w - btn_text_w) / 2, 0), btn_y + (btn_h - graphics.CELL_HEIGHT) / 2, bar.VIEWER_DISCONNECT_LABEL, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+	}
 }

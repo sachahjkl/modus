@@ -191,6 +191,12 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 		}
 		return .Arrow
 	}
+	if capture_viewer_popover.open && capture_viewer_popover.hovered_index >= 0 {
+		return .Pointing_Hand
+	}
+	if capture_mark_contains(pointer_x, pointer_y) {
+		return .Pointing_Hand
+	}
 	if menu_open != .None && menu_line >= 0 {
 		return .Pointing_Hand
 	}
