@@ -1,0 +1,219 @@
+# Several machines
+
+A principal uses more than one machine: a desktop, a laptop, a machine at home with the large disks. This file records how modus works across them: how a machine proves who it is, how a principal pairs two machines by an explicit act, how a principal lives on several machines, how a role of one machine serves the processes of another, how two machines exchange the versions of one store and merge them, and which objects cross and which never leave a machine. It is layer 5 of [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "21. Principals: who acts, without users".
+
+The terms Machine identity key, Pairing, Pairing code, Paired machine, Machine list, Remote role, Store exchange, Common version, Merge export and Conflict value are in [`docs/glossary/access.md`](../../../docs/glossary/access.md) and [`docs/glossary/storage.md`](../../../docs/glossary/storage.md). Client key, Client table and Use of a client key are in [`docs/glossary/access.md`](../../../docs/glossary/access.md); Object cache and Realisation in [`docs/glossary/code.md`](../../../docs/glossary/code.md).
+
+## Purpose
+
+Today a machine of modus is alone. A client of `remote` or a viewer of `remote_display` proves its key, and a principal allows that key for its uses ([remote_client_keys.md](remote_client_keys.md), [remote_display.md](remote_display.md)). The other direction has no identity: `remote` makes a new key at each start, and a client pins it from the log. Two machines of one principal do not know each other, cannot give each other a role, and cannot keep one store on both. The design must give each of these with no ambient access, no discovery, and no server of authority.
+
+## Constraints
+
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "2. Sandbox by default", and "20. No ambient access: the other holes to close": no process reaches another machine because it runs. Line 3: a network grant names the hosts. Line 11: no global name. Line 13: each grant is recorded, visible, and can be revoked.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "9. A storage engine with one private store per process": each change is a version, and no save action exists. Two machines that change one store must keep that rule on each machine.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "11. Reproducible system": an object is its hash, so its bytes can come from any source.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "17. Trusted boot: UEFI program, Secure Boot, TPM": the TPM seals a key to the measure of the system, and use 3 of the TPM is a proof of the system to a remote party.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "19. A command is a function: no text between processes": the protocols between machines carry records.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "21. Principals: who acts, without users": the identity across machines is a public key; layer 5 says that the key of the principal signs the key of each machine, and that a signed grant that left a machine needs a short lifetime or a revocation list.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "22. General mechanisms, and a plain expression for each frequent task": a paired machine is a client key with uses, not a second mechanism beside the client table.
+- **Property 23, in progress in another branch**: a role is a typed contract that the root service gives to a role holder, and a client gets a connection to the holder, never finds one. An interposed holder fills the same contract between a client and the holder. A role held on another machine is such an interposed holder.
+- **The design of supervision, in progress in another branch**: what the root service does when a holder fails. A link that breaks is a failure of a holder, seen from its clients.
+
+## The chosen form
+
+### The identity of a machine
+
+**The machine identity key** is an Ed25519 key pair of principal 0. Its public key names the machine to other machines, and nothing else does: no host name, no address, no serial number.
+
+- **Its seed comes from the machine key.** The seed is keyed BLAKE2b of the machine key over the fixed text `modus machine identity key`, as the key of the tag of the disk grant table is ([`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "Principal 0 and its machine passphrase"). So the identity key has the three forms of the machine key with no new record: sealed by the TPM to PCR 7 and PCR 11 (`MACHINET`), sealed by the TPM with the machine passphrase (`MACHINEP`), or under the machine passphrase alone (`MACHINEK`). It has the same recovery key. A machine with no machine key draws an identity key at each start, as `remote` draws its key today, and the key lasts until the machine stops.
+- **Where the TPM exists, the TPM roots it.** The TPM releases the machine key only to the system whose measure it holds, so another system on the machine, and a copy of the disk on another machine, cannot prove the identity. The attestation key of the TPM, when it is built, stays in the TPM and signs a quote of PCR 7, PCR 11 and PCR 12 whose qualifying data holds the hash of the public identity key and a nonce of the asker. So a paired machine can ask which system holds the identity, with no second key to trust.
+- **The root service holds the secret key; `remote` never does.** `unlock` gives the root service the seed with the key of the tag, at the open of the machine key. `remote` reads hostile bytes from the network, so it never holds the long-term key: it sends the root service the transcript hash of a handshake, and the root service signs the content of a TLS 1.3 CertificateVerify over it (the 64 spaces, the context text of the server or of the client, the zero byte, the hash). The root service refuses each other content, so a fault of `remote` can make the identity key sign a handshake, and never a grant, a release pointer or a record of the machine list. This is the factotum of Plan 9: the network code asks an agent with no network to sign.
+- **`remote` presents the identity key.** The server key of `remote` and of `remote_display` becomes the identity key in place of a key for each start. So a client pins one key for the life of the machine key, and a pin no longer breaks at each start of the service.
+
+**How it compares with the keys of today.**
+
+| Key | Who holds it | What it proves | Its life |
+|---|---|---|---|
+| The server key of `remote` today | `remote` | This start of `remote` | One start |
+| A client key | A client: the tool, a viewer | The client that a principal allowed for its uses | Until a revocation |
+| A viewer key | A client key with the use View | The same, for the screen | Until the machine stops |
+| The machine identity key | The root service, from the machine key | This machine, on this system where the TPM seals it | The life of the machine key |
+
+A client key stays the key of a client that is not a machine of modus: the tool, the viewer, an agent. A paired machine is a client key too, with its own uses, so one table and one revocation serve both.
+
+### A principal across machines
+
+A principal is one signing key across its machines: its identity across machines is its public key (property 21). On each machine, the principal has its own session, its own stores, its own disk grant table and its own grants. A pairing never gives a process of one machine a grant on another machine; it gives a row of the client table, which the principal sees and revokes.
+
+- **The keys travel once, at a join.** When a principal joins a machine that does not know it, the machine that knows it sends its two secret keys inside the pairing connection, after the code verified. `unlock` on the new machine asks for the passphrase two times and seals the keys in the form `PRINCIPT` with the TPM of that machine, with a recovery key of its own. The keys are never on a network in clear, and never in a store that crosses a machine.
+- **The machine list.** The principal signs, with its signing key, one record for its machines: the identity key of each machine and its uses, and a number that only grows. Each machine of the list keeps the newest list that it has seen, and refuses a list with a lower number. So pairing with one machine of the list makes the new machine known to all of them at their next contact, and the removal of a lost machine is a new list with no row for it, signed on any machine of the list. This is the form of a release pointer ([declarations.md](declarations.md), "Declaration inputs, pins and release pointers"), with the principal as its publisher.
+- **The rows of each machine.** The root service of each machine derives, from the newest machine list of a principal, one row of the client table for each other machine of the list, with the uses of the list, for that principal. The rows last as the disk grant table of the principal lasts. A row with no list behind it is a pairing of principal 0, which has no signing key: the two machines then know each other only by the rows that the pairing wrote.
+- **The grants on each machine are per machine.** The plan of the principal on each machine says which roles another machine holds for it and which stores it exchanges. A plan can name a paired machine only by its identity key, through the machine list.
+
+**What a stolen machine gives.** The thief holds a copy of the signing key, sealed by the TPM of that machine with the passphrase. Without the passphrase, the count of the TPM limits the tries. With it, the thief can sign a machine list. So the removal of a stolen machine is a new list with a higher number, and the principal must also change the signing key when the passphrase is known to be lost: a new identity, whose new list each machine takes only from a machine that is still in the old list.
+
+### A role held on another machine
+
+A **remote role** is a role whose holder runs on a paired machine: the storage at home while the display is here, a sound device, the builders of recipes.
+
+- **The form is interposition.** On the machine of the clients, `remote` is the role holder for the clients of that role, by the plan of the principal: `plan { roles = { storage = machine(home).storage } }`. It fills the role contract, and it carries each call and each record of the contract over QUIC to `remote` on the paired machine. There, `remote` asks its root service for a connection to the real holder, for the row of the paired machine, as it asks today for a connection to a service for a client key. So a client sees a connection to the contract and nothing else, and the holder at home sees a client that acts for the principal of the row.
+- **Only a contract of calls and records crosses.** A face of a contract that lends memory or carries a handle (a surface, a window ring, a mapped object) cannot cross a machine: a handle names an object of one kernel. A role with such a face is not a remote role. The display of another machine is the remote display, which copies pixels and has its own protocol.
+- **The latency is stated in the contract.** A local call costs microseconds; a call to a machine of the local network costs about a millisecond, and across the Internet tens to hundreds of milliseconds. A role contract states, for each export, whether a remote holder is acceptable.
+- **The storage at home holds only while the link holds.** A process sends each change when it occurs (property 9). With the storage at home, each change crosses the link, and with no link each change fails with `Unreachable`: the document stays whole at home, but the change is not kept. So the storage at home fits a machine with no disk of its own on a network that holds. A principal who works on both machines with no link exchanges the store instead ("The exchange of a store between machines").
+- **A call has an outcome, a refusal, or no known outcome.** A call whose answer did not come before the link broke can have run: `remote` answers it with the status `Unknown_Outcome`, never with a refusal. The link sends a call again only when the contract marks its export as idempotent. A client never waits past the bound of the call.
+- **A record output across a link has a stated capacity.** The writer at home never waits for a link. Past the capacity of its side, `remote` counts the records that it drops and sends one gap record with the count when the link comes back. No record is dropped in silence.
+- **What a client sees when the link breaks.** Each call in flight ends with `Unknown_Outcome`, each new call with `Unreachable`, at once, while `remote` tries the link again with a growing interval. The role stays given: the root service does not take it back. A link back is a record of the role, so a client that waits for it gets a wake, not a poll. Whether the root service then gives the role to another holder of the plan is a decision of supervision.
+- **The revocation crosses the link.** A revocation of the row of the paired machine, a lock of the session of its principal and a new machine list without it each end the connections that the root service made for the row, as for a client key, and `remote` ends the QUIC connection with the code `Revoked`.
+
+### The exchange of a store between machines
+
+A **store exchange** keeps one store of a principal on two machines or more. Each machine has the whole store and writes it at once, also with no link: property 9 holds on each machine. When the machines meet, each sends the versions that the other lacks, and each machine merges.
+
+**The versions become a graph.** Today the versions of a store are a line of generations. With two writers, a version has one parent or two. The exchange needs three things of the storage service:
+
+- a version of a whole store with a tree hash, so two machines compare a store by one hash and exchange only the trees that differ, by hash, with the protocol of the cache;
+- the parents of each version, so a merge has two parents;
+- the **common version** of each paired machine: the newest version that both machines hold. The retention rule never thins it, because it is the base of the next merge.
+
+**The forms compared.**
+
+| Form | What it gives | What it costs | Decision |
+|---|---|---|---|
+| CRDTs (Automerge, Yjs) | Two replicas converge with no conflict and no server; good for live edits of one document | The format of the data must be a CRDT, so the system cannot apply it to any store; the history and the tombstones grow; a merge that converges can give a state that no one wrote (two edits of one field: the last writer wins) | Allowed inside a module, behind the merge export; not the mechanism of the system |
+| The operational transform | Live edits of text, as Google Docs | A server that orders the operations, a transform function for each pair of operations, and a link at each edit; the proofs of its properties failed for years | Refused: two machines of modus change a store with no link |
+| A three-way merge by type, with a resolution that the principal makes | The base is the common version; an object that changed on one side is taken; an object that changed on two sides goes to the merge of its type | A merge for each type; a conflict needs the principal | Chosen as the merge |
+| The model of Jujutsu: a conflict is kept in the data | A merge never stops: a conflict is a value with its base and its sides, which a later change resolves, once, on any machine | A reader of the object must know the conflict value | Chosen as the form of a conflict |
+
+**The chosen form: a three-way merge by type, with the conflict kept in the data.**
+
+1. For each object of the store, the merge compares the object in the common version and in the two new versions, by hash. An object that only one side changed takes that side. An object that both sides changed to the same hash is equal.
+2. An object that both sides changed goes to the **merge export** of the module that owns the store: `merge(base, ours, theirs) -> Merge_Result`, an export that its module describes (property 19). The module of a store knows its format: a text merges by lines, a table by the key of its rows, a CRDT document by its own merge, which never conflicts.
+3. A store whose module has no merge export, and a merge that cannot decide, give a **conflict value**: the object holds the hashes of the base and of the two sides, and the merge commits it. The exchange never stops on a conflict, and both machines keep working.
+4. The principal resolves a conflict once, in the module that owns the store or in a generic view that shows the two sides. The resolution is a change like any other: it is a version, and it crosses to the other machines with the next exchange.
+
+**The merge runs where the store is.** Each machine merges with the module of the store, in a process of the session of the principal, started by the storage service for the merge, with a connection to that store only. The merge is in no service with a wider grant.
+
+**The answer to the open question of [declarations.md](declarations.md).** "Two machines that change one source give two trees": the source of a project is a store, so its two trees are two versions with a common version, and the same merge applies. A text object of a source merges by lines; `pins.lex` merges as a record by its fields, and a conflict of one pin is a conflict value that `projects.update` resolves. Git is not involved: it stays an import and an export format.
+
+**Which stores are exchanged.** Only a store that the plan of the principal names, with the machines that hold it: `plan { exchange = [ store("notes", machines = [machine(laptop)]) ] }`. A store is never exchanged by default.
+
+### Objects by hash between machines
+
+The cache protocol of [recipes.md](recipes.md), "The object cache and its protocol", is the base: `Object`, `References`, `Realisation`, `Release_Pointer`, `Has`. A paired machine is an object cache of the other, with its identity key in place of the key of a cache endpoint. The exchange of a store adds one request, `Versions(store, since)`, which gives the hashes of the versions after a common version; each tree and object then crosses by `Object`, which checks itself.
+
+**What is shared**, and only for the principal of the row:
+
+- the objects of `module_files` that a plan of that principal reaches: modules, debug objects, trees, realisations, release pointers. `Has` answers only for the objects that the principal of the connection reaches, so a machine does not tell one principal what another holds;
+- the versions of the stores that the plan of that principal exchanges with that machine;
+- the newest machine list of the principal.
+
+**What never leaves a machine:**
+
+- the records of the keys: the machine key, the file of a named principal, the recovery copies, and each store of `unlock`. Each is sealed to one TPM and one system, so a copy elsewhere is useless and only gives an attacker a target. A secret key of a principal crosses once, inside a join, and is sealed again on arrival;
+- the disk grant table and the client table: a grant is a fact of one machine, signed with the key of the tag of that machine;
+- the applied plans and the row "current plan": the system that a machine runs is a fact of that machine. The declaration that gave it is a tree, which can cross;
+- the log, the fault records, the measures and the TPM floors;
+- each store that holds a secret, whose versions a process with the grant `Versions_Erase` ends;
+- each handle, each memory object, and the state of each process.
+
+### Pairing, and no discovery
+
+A machine finds another only when the principal pairs them by an explicit act. The pairing gives each machine the identity key of the other, the uses, and an address to try.
+
+1. On the first machine, in a console that acts for the principal, `machine_pair()` asks the root service for a pairing, and `unlock` shows the **pairing code** in its window, a trusted surface: an address of the machine, and a secret of one use of 50 bits as ten groups of base32. A QR code in the same window holds the same code and the whole identity key, for a device with a camera.
+2. On the second machine, `machine_join("<code>")` makes `remote` connect to the address. Neither key is pinned yet: the handshake proves each identity key, and the pairing code then runs a PAKE over the TLS exporter of the connection, so both sides prove the same code and bind it to both identity keys. A relay on the path that does not know the code learns nothing and cannot pass the check.
+3. Each window then shows the head of the identity key of the other machine and the uses, and the principal accepts on each machine with a key. Each root service writes the row of the other machine in the client table and in the disk grant table of the principal.
+4. One wrong code ends the pairing on both sides, and the code is spent. The code ends 10 minutes after it was shown.
+
+**The address.** The pairing code holds an address, and each connection after it tells the paired machine the addresses of the machine. When an address changes, the next contact from the other machine carries the new one; when both changed, the principal gives an address with `machine_address(key, "…")`. An address is never a grant: the handshake decides, by the identity key.
+
+**The listen grant.** Today the listen grant of `remote` admits only the host at the gateway. A machine that pairs gets a listen grant that admits each address, and the handshake with the client table decides. The Retry and the budgets of work of QUIC ([`docs/QUIC.md`](../../../docs/QUIC.md), "6. QUIC on the network (the fourth layer, built, with Retry and the budgets of work)") bound what an unknown address costs.
+
+**mDNS broadcast is refused as a source of authority.** Any host of the local network can answer an mDNS question with any name and any address, so a name that a broadcast gives proves nothing. A name of the network that every process can resolve is a global name (property 20, line 11). A machine that announces itself tells each network where it is, which is a fact that the principal did not grant. A grant must come from the principal, as a record that the principal sees; a packet from the network is no such record. An address hint that the handshake checks is an open question, not a part of this design.
+
+## The prior art
+
+| Work | What modus takes | What modus refuses |
+|---|---|---|
+| Plan 9: 9P, per-process namespaces, cpu servers, factotum | A resource of another machine has the same interface as a local one: a remote role fills the same contract. A process sees what its starter gave it, as a namespace of Plan 9 is per process. The secret key in an agent with no network that signs for the network code (factotum). The cpu server as a later remote role of a builder | Files and text as the one interface (properties 3 and 19). A mount by a path. A process that changes its own view of the world: here the plan and the starter decide |
+| Syncthing | A device is the hash of its key. Both sides add each other before any exchange. The exchange of content by hash in blocks | A conflict as a file beside the original, with a name that the principal must find. The broadcast of the local discovery, and the global discovery servers, which know where each device is |
+| Tailscale and WireGuard | A peer is its public key and nothing else, and the key decides what the peer reaches (the routing by key of WireGuard). The address learned from the last authenticated packet | The coordination server of Tailscale as the authority of the keys, and the login through an identity provider. A tunnel of layer 3, which gives a whole network and each port of the other machine in place of one role |
+| Fuchsia Overnet | A typed protocol carried between devices by a part that looks local to both ends | A mesh that routes between nodes, so a node reaches the nodes behind another. Any handle passed across devices: a handle names an object of one kernel, and its revocation is no longer local. mDNS as the way to find a device |
+
+## The frequent tasks
+
+| Task | Expression |
+|---|---|
+| Pair this machine with another | `machine_pair()` here, then `machine_join("<code>")` there |
+| See the paired machines of this principal | `machines()` |
+| Remove a lost machine from every machine | `machine_remove("<key>")` |
+| Hold a role on another machine | `plan { roles = { storage = machine(home).storage } }` |
+| Keep a store on two machines | `plan { exchange = [ store("notes", machines = [machine(laptop)]) ] }` |
+| See the conflicts of a store | `storage.conflicts("notes")` |
+| Fetch the objects of a plan from a paired machine | the substitution policy names it as a source, by its identity key |
+
+`machines()` is the client table and the machine list of the principal in one table: an alias, no mechanism ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "22. General mechanisms, and a plain expression for each frequent task"). `machine_remove` signs a new machine list and revokes the row; `remote_disallow` revokes the row on this machine only.
+
+## The refused forms
+
+- **A second table of machines beside the client table.** Two tables for "a key from outside acts for a principal here", with two revocations that drift.
+- **The long-term key in `remote`.** `remote` parses hostile bytes; a fault there then gives the identity of the machine for ever.
+- **The TPM signs each handshake.** Few TPMs sign with Ed25519, the transport speaks Ed25519 only, and each handshake then waits for the TPM service. The TPM roots the identity through the seal and the quote.
+- **A key of the machine apart from the machine key.** A new record, a new seal and a new recovery key, for the same life and the same root.
+- **A separate key of the principal on each machine, under a root key.** Two levels of keys, and the root key still needs a machine and a recovery key. It stays an open question, with its strength against a stolen machine.
+- **A certificate authority, X.509 certificates, or a name that a server gives.** A server of authority over every machine of every principal.
+- **Discovery by mDNS, by a broadcast, or by a directory server.** See "Pairing, and no discovery".
+- **A pairing by a long code typed by hand.** A whole key in base32 is 52 characters; a short code with a PAKE gives the same proof.
+- **A role that crosses with a handle or shared memory.** A handle names an object of one kernel.
+- **The storage at home as the one way to keep a store on two machines.** Each change then waits for the link, and no change is kept without it.
+- **A call sent again by the link with no mark of the contract.** A call that ran once then runs twice.
+- **CRDTs as the mechanism of the system.** They fix the format of each store; a module that wants one keeps it behind its merge export.
+- **The operational transform.** It needs a server and a live link at each change.
+- **A merge that stops on a conflict until the principal answers.** Both machines then stop the exchange of the whole store for one object.
+- **A conflict as a second object with a derived name.** The principal must find it by its name, and a process that reads the store does not know it.
+- **The last writer wins.** A change is lost in silence (property 9 promises that a document is never lost).
+- **Each store exchanged by default.** A store of secrets then leaves the machine.
+- **A tunnel that gives the whole network of another machine.** Ambient access to each of its ports.
+
+## Subtle points and hazards
+
+- **The identity key has the life of the machine key.** Today each update of the system asks for the recovery key one time. The identity does not change, because the recovery key opens the same machine key. A machine with no machine key changes its identity at each start, and a pairing with it lasts until it stops.
+- **A machine passphrase delays the identity.** Until the passphrase is typed, the machine has no identity key, and `remote` accepts no paired machine.
+- **The signer checks the form, not the intent.** The root service signs any CertificateVerify content that `remote` gives. A fault of `remote` can prove the identity in a handshake that it chooses while the machine runs; it cannot take the key away.
+- **The machine list is a monotonic record, not a log.** A machine that never meets the others keeps an old list, and trusts a removed machine until its next contact with a machine of the newer list. A short life of each row bounds this; its length is an open question.
+- **A restore of the disk can bring back an older machine list**, as it brings back an older disk grant table. A counter of the TPM that only grows ends both ([processes_from_a_disk.md](processes_from_a_disk.md)).
+- **The merge needs object identifiers.** Today an object has a name in its store. A rename on one side and a change on the other are then a removal and a new object. Property 9 asks for identifiers; the exchange depends on them.
+- **The common version pins old blocks.** A paired machine that never comes back keeps the common version from thinning. The removal of the machine from the list ends that pin.
+- **A conflict value is a new kind of object.** Each reader of a store must refuse it or show it, never read its bytes as the content. The border of the storage service gives the kind.
+- **The merge export runs foreign code on two foreign versions.** It runs in a process with a connection to that store only, and its result is checked as any write.
+- **`Has` and `Versions` leak.** A question tells the other machine what this machine wants. A machine asks only paired machines.
+- **A call with no known outcome is not a failure.** A client that treats `Unknown_Outcome` as a refusal and asks again runs the call two times.
+
+## The order of the work
+
+Each step adds one capability to a system that works.
+
+1. **The identity key from the machine key**, signed by the root service for `remote`, and the server key of `remote` and of `remote_display` as that key. The tool pins one key for the life of the machine key.
+2. **Pairing of principal 0 by a code**: the PAKE, the window of `unlock`, the row of a paired machine in the client table, and the listen grant of each address. Two test machines on one network of the tool pair, then one refuses a wrong code.
+3. **Objects by hash between paired machines**: the cache protocol over `remote`, with a paired machine as a source of the substitution policy.
+4. **A principal joins a second machine**: its keys sealed there, and the machine list.
+5. **A remote role** of a contract of calls and records, with `Unknown_Outcome`, `Unreachable` and the gap record.
+6. **Versions as a graph, with a tree hash for each version of a store**, after the object identifiers.
+7. **The store exchange and the merge**, with the merge export and the conflict value.
+8. **The quote of the TPM** over the identity key, after the attestation key.
+
+## Open questions
+
+- **A key of the principal on each machine, or one signing key copied to each machine.** The chosen form copies the signing key, sealed by each TPM. A key for each machine, signed by a root key that stays on one machine or offline, ends a stolen machine with no change of identity, at the cost of two levels of keys. Which one, before step 4.
+- **Pairing with a machine with no TPM, or with Secure Boot off.** The copy of the signing key there is under the passphrase alone, and a copy of its disk allows an attack away from any TPM. The proposal: refuse the join of a named principal on such a machine, and allow the pairing of principal 0 only.
+- **The PAKE**: CPace over Ristretto255 (an IRTF draft) or SPAKE2 (RFC 9382). Each needs the group Ristretto255, which the cryptography of Odin has and the copy of the system does not have yet.
+- **A machine behind a NAT on the Internet.** A relay that carries encrypted datagrams and sees nothing, in the manner of the relays of Tailscale, or the principal gives a reachable address. A relay is a server that knows when two machines speak.
+- **An address hint on the local network** that the handshake checks, with no name and no authority. It tells the network that the machine is there.
+- **The life of a row of the machine list**, and whether a machine that does not meet the others for that time loses its rows.
+- **A fallback holder of a remote role** when the link breaks: a second holder in the plan, or nothing. It belongs to supervision.
+- **Sharing between two principals**: a grant that the signing key of one principal signs for the public key of another, with a short life or a revocation list. This file covers one principal on several machines.
+
+## State
+
+Designed, not built.

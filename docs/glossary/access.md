@@ -744,6 +744,66 @@ The design: `src/md/features/remote_display.md`, "The authority".
 
 Do not use: scope, permission, role.
 
+### Machine identity key
+
+The machine identity key is the Ed25519 key pair of principal 0 whose public key names the machine to other machines.
+
+Its seed is keyed BLAKE2b of the machine key, so the TPM roots it where the machine key is sealed by the TPM, and the recovery key of the machine key opens it too. The root service holds the secret key and signs only the CertificateVerify of a handshake for `remote`, which presents the key as its server key. It is not the machine key, a client key, or the attestation key of the TPM. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "The identity of a machine".
+
+Do not use: host key, node key, device key, machine certificate.
+
+### Pairing
+
+Pairing is the explicit act by which a principal makes two machines know each other's machine identity key, with the uses that each gives the other.
+
+The principal shows a pairing code on one machine with `machine_pair()` and gives it to the other with `machine_join`. Each machine then writes the row of the other in its client table, for that principal, after the principal accepts it there. No machine finds another in any other way: no broadcast, no directory. A pairing gives no grant on the other machine; the plan of the principal on each machine does. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "Pairing, and no discovery".
+
+Do not use: discovery, enrolment, bonding, trust on first use.
+
+### Pairing code
+
+A pairing code is a secret of one use, with an address, that one machine shows in the window of `unlock` and that the principal gives to the other machine.
+
+It holds 50 bits as ten groups of base32, and a QR code holds the same with the whole identity key. The two machines run a PAKE over the TLS exporter of their connection with it, so both prove the same code and bind it to both identity keys. One wrong code ends the pairing on both sides, and a code ends 10 minutes after it was shown. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "Pairing, and no discovery".
+
+Do not use: invitation, token, PIN.
+
+### Paired machine
+
+A paired machine is another machine whose machine identity key a principal allowed on this machine by a pairing, as a row of the client table with its uses.
+
+`remote` accepts it in the handshake, and each connection that the root service makes for its row acts for the principal of the row, as for a client key. It is an object cache of this machine, the holder of a remote role, or a machine with which a store is exchanged, each only when the plan of the principal says so. `remote_disallow` ends it on this machine; `machine_remove` ends it on every machine of the principal. Designed, not built.
+
+The design: `src/md/features/several_machines.md`.
+
+Do not use: peer (for this), node, device, remote host, cluster member.
+
+### Machine list
+
+The machine list is the record that the signing key of a principal signs: the identity key of each of its machines with its uses, and a number that only grows.
+
+Each machine of the list keeps the newest list that it has seen and refuses a lower number, and its root service derives from it a row of the client table for each other machine. So a pairing with one machine of the list reaches all of them, and a lost machine is removed by a new list signed on any other. It has the form of a release pointer. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "A principal across machines".
+
+Do not use: device list, roster, keyring.
+
+### Remote role
+
+A remote role is a role whose holder runs on a paired machine, and which `remote` fills on this machine as an interposed holder.
+
+`remote` carries each call and each record of the contract over QUIC to `remote` on the paired machine, which gets a connection to the real holder for the row of this machine. Only a contract of calls and records crosses: a face that lends memory or carries a handle does not. A call whose answer did not come gets `Unknown_Outcome`; a call while the link is down gets `Unreachable`. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "A role held on another machine".
+
+Do not use: proxy, stub, remote service (for this), mount.
+
 ### Input
 
 Input is the keys and the pointer, as the system receives them.
