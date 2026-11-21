@@ -4,6 +4,7 @@ package console_language
 import "core:fmt"
 import "core:testing"
 import "core:time"
+import "modus:contract/blake3"
 import terminal "modus:support/terminal"
 
 // The names of a console of the tests.
@@ -603,4 +604,108 @@ the_completion_reads_comments_with_the_scanner :: proc(t: ^testing.T) {
 	testing.expect(t, !found)
 	_, found = groups_at(string(deep[:GROUP_DEPTH_MOST]), GROUP_DEPTH_MOST, &groups)
 	testing.expect(t, found)
+}
+
+// Hash literals: exact 64 lowercase hexadecimal digits after "blake3:".
+// Refusals first: empty, 1 byte, 63 bytes, 65 bytes, uppercase hex, non-hex,
+// wrong prefix; then round-trip of valid hashes and bare "blake3" as Name.
+@(test)
+hash_literals_and_refusals :: proc(t: ^testing.T) {
+	refused := [?]string {
+		"blake3:",
+		"blake3:0",
+		"blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde", // 63 hex chars
+		"blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0", // 65 hex chars
+		"blake3:0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef", // uppercase A-F
+		"blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg", // invalid 'g'
+		"blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde_", // underscore
+		"blake3:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+		"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"",
+	}
+	for item in refused {
+		_, ok := hash_value(item, 0, len(item))
+		testing.expectf(t, !ok, "%q must be refused as a hash literal", item)
+	}
+
+	// Tokenization keeps malformed blake3:... as a single Hash token so the
+	// parser refuses the whole token at its place.
+	short_tok := token_next("module(blake3:abcd)", 7)
+	testing.expect(t, short_tok.kind == .Hash && short_tok.start == 7 && short_tok.end == 18)
+	empty_tok := token_next("blake3:)", 0)
+	testing.expect(t, empty_tok.kind == .Hash && empty_tok.start == 0 && empty_tok.end == 7)
+	// Bare "blake3" with no ':' stays a Name.
+	name_tok := token_next("blake3 + 1", 0)
+	testing.expect(t, name_tok.kind == .Name && name_tok.start == 0 && name_tok.end == 6)
+
+	// Valid 64-hex lowercase literal decodes and formats identically.
+	valid := "blake3:0123456789abcdef00112233445566778899aabbccddeeffdeadbeefcafebabe"
+	tok := token_next(valid, 0)
+	testing.expect(t, tok.kind == .Hash && tok.start == 0 && tok.end == HASH_LITERAL_BYTES)
+	decoded, ok := hash_value(valid, tok.start, tok.end)
+	testing.expect(t, ok)
+	testing.expect_value(t, decoded[0], u8(0x01))
+	testing.expect_value(t, decoded[1], u8(0x23))
+	testing.expect_value(t, decoded[7], u8(0xef))
+	testing.expect_value(t, decoded[28], u8(0xca))
+	testing.expect_value(t, decoded[31], u8(0xbe))
+	formatted_buf: [HASH_LITERAL_BYTES]u8
+	testing.expect_value(t, hash_format(decoded, &formatted_buf), valid)
+
+	// Zero hash and all-ff hash edges.
+	zeros_buf: [HASH_LITERAL_BYTES]u8
+	zeros_text := hash_format(blake3.Hash{}, &zeros_buf)
+	zeros_out, zeros_ok := hash_value(zeros_text, 0, len(zeros_text))
+	testing.expect(t, zeros_ok && zeros_out == blake3.Hash{})
+	ones: blake3.Hash
+	for &b in ones {
+		b = 0xff
+	}
+	ones_buf: [HASH_LITERAL_BYTES]u8
+	ones_text := hash_format(ones, &ones_buf)
+	ones_out, ones_ok := hash_value(ones_text, 0, len(ones_text))
+	testing.expect(t, ones_ok && ones_out == ones)
+
+	// Colors: valid hash is Number (literal), malformed finished hash is Unknown.
+	runs: [16]terminal.Code_Run
+	count := line_runs(valid, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, valid, runs[:count], []Expected_Run{{valid, .Number}})
+	bad := "blake3:abcd"
+	count = line_runs(bad, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, bad, runs[:count], []Expected_Run{{bad, .Unknown}})
+	count = line_runs(bad, 0, len(bad), test_names, runs[:])
+	expect_runs(t, bad, runs[:count], []Expected_Run{{bad, .Number}})
+}
+
+// Multi-line Lex scanning: tabs, CR/LF, comments across lines, multi-line
+// function heads, and multi-line pipes. Single-line mode remains unchanged.
+@(test)
+multiline_scanning_and_pipes :: proc(t: ^testing.T) {
+	source := "// header comment\n\t{\n\t\ta = 1, // inline comment\r\n\t\tb = 2,\n\t}\n"
+	tok := token_next(source, 0, true)
+	testing.expect(t, tok.kind == .Operator && source[tok.start:tok.end] == "{")
+	tok = token_next(source, tok.end, true)
+	testing.expect(t, tok.kind == .Name && source[tok.start:tok.end] == "a")
+	tok = token_next(source, tok.end, true)
+	testing.expect(t, tok.kind == .Operator && source[tok.start:tok.end] == "=")
+	tok = token_next(source, tok.end, true)
+	testing.expect(t, tok.kind == .Number && source[tok.start:tok.end] == "1")
+	tok = token_next(source, tok.end, true)
+	testing.expect(t, tok.kind == .Operator && source[tok.start:tok.end] == ",")
+	tok = token_next(source, tok.end, true)
+	testing.expect(t, tok.kind == .Name && source[tok.start:tok.end] == "b")
+
+	// Multi-line function head.
+	fn_text := "(\n  a,\n  b\n)\n=>\n  a + b"
+	close, arrow_end, found := function_head(fn_text, 0, true)
+	testing.expect(t, found && fn_text[close] == ')' && arrow_end > close)
+
+	// Multi-line pipe.
+	memory: [256]u8
+	stages: [PIPE_STAGE_CAPACITY]Pipe_Stage
+	piped := "[\n  1,\n  2,\n]\n|> map((x) => x * 2)"
+	form := pipe_nested_form(piped, 0, memory[:], stages[:], true)
+	testing.expect_value(t, form.refusal, Pipe_Refusal.None)
+	testing.expect_value(t, form.stage_count, 1)
+	testing.expect_value(t, form.nested, "map([\n  1,\n  2,\n], (x) => x * 2)")
 }

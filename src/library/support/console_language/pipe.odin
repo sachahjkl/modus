@@ -102,6 +102,7 @@ Placeholder :: struct {
 // The state of one writing of a nested form.
 Pipe_Writer :: struct {
 	text:              string,
+	multiline:         bool,
 	memory:            []u8,
 	count:             int,
 	stages:            []Pipe_Stage,
@@ -168,13 +169,13 @@ single_equal :: proc "contextless" (text: string, token: Token) -> bool {
 // no "|>" is its own nested form, and nothing is written. A fault of the
 // form gives a refusal and no nested form; the stages before the fault
 // stay written.
-pipe_nested_form :: proc "contextless" (text: string, first: int, memory: []u8, stages: []Pipe_Stage) -> (form: Pipe_Form) {
+pipe_nested_form :: proc "contextless" (text: string, first: int, memory: []u8, stages: []Pipe_Stage, multiline := false) -> (form: Pipe_Form) {
 	start := clamp(first, 0, len(text))
 	form.nested = text
 	has_pipe := false
 	depth := 0
 	unmatched_close := -1
-	for token := token_next(text, start); token.kind != .None; token = token_next(text, token.end) {
+	for token := token_next(text, start, multiline); token.kind != .None; token = token_next(text, token.end, multiline) {
 		switch token.kind {
 		case .Pipe:
 			has_pipe = true
@@ -195,13 +196,13 @@ pipe_nested_form :: proc "contextless" (text: string, first: int, memory: []u8, 
 					unmatched_close = token.start
 				}
 			}
-		case .None, .Name, .Number, .Text, .Text_Unfinished, .Arrow, .Member, .Function_Arrow:
+		case .None, .Name, .Number, .Text, .Text_Unfinished, .Arrow, .Member, .Function_Arrow, .Hash:
 		}
 	}
 	// The placeholders, before any form is written: a '_' out of its place
 	// fails the line before any call, also with no "|>".
 	placeholders: [PIPE_STAGE_CAPACITY]Placeholder
-	placeholder_count, placeholder_refusal := placeholders_find(text, start, placeholders[:])
+	placeholder_count, placeholder_refusal := placeholders_find(text, start, placeholders[:], multiline)
 	if placeholder_refusal.refusal != .None {
 		placeholder_refusal.nested = ""
 		return placeholder_refusal
@@ -216,6 +217,7 @@ pipe_nested_form :: proc "contextless" (text: string, first: int, memory: []u8, 
 	}
 	pipe_writer := Pipe_Writer {
 		text              = text,
+		multiline         = multiline,
 		memory            = memory,
 		stages            = stages,
 		placeholders      = placeholders[:],
@@ -265,11 +267,11 @@ Group :: struct {
 // each group that is open, and gives each '_' to the innermost group that
 // holds it. It gives the '_' accepted, or the first refusal.
 @(private)
-placeholders_find :: proc "contextless" (text: string, start: int, into: []Placeholder) -> (count: int, form: Pipe_Form) {
+placeholders_find :: proc "contextless" (text: string, start: int, into: []Placeholder, multiline := false) -> (count: int, form: Pipe_Form) {
 	groups: [PLACEHOLDER_GROUP_CAPACITY]Group
 	depth := 0
 	before, two_before: Token // The two tokens before this one.
-	for token := token_next(text, start); token.kind != .None; token = token_next(text, token.end) {
+	for token := token_next(text, start, multiline); token.kind != .None; token = token_next(text, token.end, multiline) {
 		defer {
 			two_before, before = before, token
 		}
@@ -431,11 +433,16 @@ pipe_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, bytes: string) {
 }
 
 // pipe_trim gives text[start:end] without its spaces at both ends.
-pipe_trim :: proc "contextless" (text: string, start, end: int) -> (first, last: int) {
-	first = min(space_end(text, start), end)
+pipe_trim :: proc "contextless" (text: string, start, end: int, multiline := false) -> (first, last: int) {
+	first = min(space_end(text, start, multiline), end)
 	last = end
-	for last > first && text[last - 1] == ' ' {
-		last -= 1
+	for last > first {
+		c := text[last - 1]
+		if c == ' ' || (multiline && (c == '\t' || c == '\r' || c == '\n')) {
+			last -= 1
+		} else {
+			break
+		}
 	}
 	return first, last
 }
@@ -443,9 +450,9 @@ pipe_trim :: proc "contextless" (text: string, start, end: int) -> (first, last:
 // pipe_group_close gives the ')' or the '}' of the group that opens just
 // before from, before limit. closed is false when the group does not close
 // before limit: it then runs to limit.
-pipe_group_close :: proc "contextless" (text: string, from, limit: int) -> (close: int, closed: bool) {
+pipe_group_close :: proc "contextless" (text: string, from, limit: int, multiline := false) -> (close: int, closed: bool) {
 	depth := 1
-	for token := token_next(text, from); token.kind != .None && token.start < limit; token = token_next(text, token.end) {
+	for token := token_next(text, from, multiline); token.kind != .None && token.start < limit; token = token_next(text, token.end, multiline) {
 		if opens(text, token) {
 			depth += 1
 		} else if closes(text, token) {
@@ -460,9 +467,9 @@ pipe_group_close :: proc "contextless" (text: string, from, limit: int) -> (clos
 
 // pipe_next_operator gives the first "|>" outside parentheses and braces in
 // text[from:end], or end.
-pipe_next_operator :: proc "contextless" (text: string, from, end: int) -> int {
+pipe_next_operator :: proc "contextless" (text: string, from, end: int, multiline := false) -> int {
 	depth := 0
-	for token := token_next(text, from); token.kind != .None && token.start < end; token = token_next(text, token.end) {
+	for token := token_next(text, from, multiline); token.kind != .None && token.start < end; token = token_next(text, token.end, multiline) {
 		switch {
 		case token.kind == .Pipe:
 			if depth == 0 {
@@ -486,12 +493,12 @@ piece_comma :: proc "contextless" (text: string, token: Token, depth, lets: int)
 
 // pipe_argument_count gives the count of the arguments in text[start:end]:
 // the ',' that end a piece, and one more; 0 when the bytes are spaces.
-pipe_argument_count :: proc "contextless" (text: string, start, end: int) -> int {
+pipe_argument_count :: proc "contextless" (text: string, start, end: int, multiline := false) -> int {
 	commas := 0
 	depth := 0
 	lets := 0
 	written := false
-	for token := token_next(text, start); token.kind != .None && token.start < end; token = token_next(text, token.end) {
+	for token := token_next(text, start, multiline); token.kind != .None && token.start < end; token = token_next(text, token.end, multiline) {
 		written = true
 		switch {
 		case opens(text, token):
@@ -516,26 +523,32 @@ pipe_segment_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end:
 		return
 	}
 	text := pipe_writer.text
+	multiline := pipe_writer.multiline
 	// A `let` holds its own segments: the value of each binding, and the
 	// body, which runs to the end of the segment.
-	if first := token_next(text, start); first.start < end && word_is(text, first, "let") {
+	if first := token_next(text, start, multiline); first.start < end && word_is(text, first, "let") {
 		pipe_let_write(pipe_writer, start, end)
 		return
 	}
+	// An `if ... then ... else ...` holds three segments.
+	if first := token_next(text, start, multiline); first.start < end && word_is(text, first, "if") {
+		pipe_if_write(pipe_writer, start, end)
+		return
+	}
 	// A function holds its body: the head as it is, then the body nested.
-	if first := token_next(text, start); first.start < end {
-		if _, arrow_end, found := function_head(text, first.start); found && arrow_end <= end {
+	if first := token_next(text, start, multiline); first.start < end {
+		if _, arrow_end, found := function_head(text, first.start, multiline); found && arrow_end <= end {
 			pipe_write(pipe_writer, text[start:arrow_end])
 			pipe_segment_write(pipe_writer, arrow_end, end)
 			return
 		}
 	}
-	first_operator := pipe_next_operator(text, start, end)
+	first_operator := pipe_next_operator(text, start, end, multiline)
 	if first_operator == end {
 		pipe_group_copy(pipe_writer, start, end)
 		return
 	}
-	left_start, left_end := pipe_trim(text, start, first_operator)
+	left_start, left_end := pipe_trim(text, start, first_operator, multiline)
 	if left_start == left_end {
 		pipe_refuse(pipe_writer, .No_Left_Value, first_operator, first_operator + 2)
 		return
@@ -546,7 +559,7 @@ pipe_segment_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end:
 	operator := first_operator
 	for operator < end {
 		part_start := operator + 2
-		part_end := pipe_next_operator(text, part_start, end)
+		part_end := pipe_next_operator(text, part_start, end, multiline)
 		if pipe_writer.stage_count == len(pipe_writer.stages) {
 			pipe_refuse(pipe_writer, .Too_Many_Stages, operator, operator + 2)
 			return
@@ -560,7 +573,7 @@ pipe_segment_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end:
 			return
 		}
 		if pipe_writer.stage_count == first_stage {
-			pipe_left_read(text, &stage, left_start, left_end)
+			pipe_left_read(text, &stage, left_start, left_end, multiline)
 		} else {
 			stage.left, stage.stage_before = .Stage, pipe_writer.stage_count - 1
 		}
@@ -599,18 +612,64 @@ pipe_segment_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end:
 	}
 }
 
+// pipe_if_write writes a segment that starts with `if`: condition, then
+// branch, and else branch each nested independently.
+@(private)
+pipe_if_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: int) {
+	text := pipe_writer.text
+	multiline := pipe_writer.multiline
+	if_word := token_next(text, start, multiline)
+	pipe_write(pipe_writer, text[start:if_word.end])
+	depth := 0
+	nested_ifs := 0
+	then_tok, else_tok: Token
+	for token := token_next(text, if_word.end, multiline); token.kind != .None && token.start < end; token = token_next(text, token.end, multiline) {
+		switch {
+		case opens(text, token):
+			depth += 1
+		case closes(text, token):
+			depth -= 1
+		case depth == 0 && word_is(text, token, "if"):
+			nested_ifs += 1
+		case depth == 0 && word_is(text, token, "then"):
+			if nested_ifs == 0 && then_tok.kind == .None {
+				then_tok = token
+			}
+		case depth == 0 && word_is(text, token, "else"):
+			if nested_ifs > 0 {
+				nested_ifs -= 1
+			} else if then_tok.kind != .None && else_tok.kind == .None {
+				else_tok = token
+				break
+			}
+		}
+	}
+	if then_tok.kind == .None || else_tok.kind == .None {
+		pipe_group_copy(pipe_writer, if_word.end, end)
+		return
+	}
+	_, cond_end := pipe_trim(text, if_word.end, then_tok.start, multiline)
+	pipe_segment_write(pipe_writer, if_word.end, cond_end)
+	pipe_write(pipe_writer, text[cond_end:then_tok.end])
+	_, then_end := pipe_trim(text, then_tok.end, else_tok.start, multiline)
+	pipe_segment_write(pipe_writer, then_tok.end, then_end)
+	pipe_write(pipe_writer, text[then_end:else_tok.end])
+	pipe_segment_write(pipe_writer, else_tok.end, end)
+}
+
 // pipe_let_write writes a segment that starts with `let`: each binding
 // `name = value` with its value nested, then `in` and the body nested. With
 // no `in`, the rest is copied: the parser says that it is missing.
 @(private)
 pipe_let_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: int) {
 	text := pipe_writer.text
-	let_word := token_next(text, start)
+	multiline := pipe_writer.multiline
+	let_word := token_next(text, start, multiline)
 	pipe_write(pipe_writer, text[start:let_word.end])
 	piece_start := let_word.end
 	depth := 0
 	lets := 0
-	for token := token_next(text, let_word.end); token.kind != .None && token.start < end && pipe_writer.refusal == .None; token = token_next(text, token.end) {
+	for token := token_next(text, let_word.end, multiline); token.kind != .None && token.start < end && pipe_writer.refusal == .None; token = token_next(text, token.end, multiline) {
 		switch {
 		case opens(text, token):
 			depth += 1
@@ -624,7 +683,7 @@ pipe_let_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: int
 				continue
 			}
 			// The spaces before `in` stay: a nested value ends with its ')'.
-			_, value_end := pipe_trim(text, piece_start, token.start)
+			_, value_end := pipe_trim(text, piece_start, token.start, multiline)
 			pipe_named_piece_write(pipe_writer, piece_start, value_end)
 			pipe_write(pipe_writer, text[value_end:token.end])
 			pipe_segment_write(pipe_writer, token.end, end)
@@ -643,18 +702,19 @@ pipe_let_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: int
 // segment. It gives false, with the fault, when they are no call.
 pipe_stage_read :: proc "contextless" (pipe_writer: ^Pipe_Writer, stage: ^Pipe_Stage, part_start, part_end: int) -> bool {
 	text := pipe_writer.text
-	name := token_next(text, part_start)
+	multiline := pipe_writer.multiline
+	name := token_next(text, part_start, multiline)
 	if name.kind == .None || name.start >= part_end {
 		if part_end >= len(text) {
 			pipe_refuse(pipe_writer, .Line_End, stage.operator_start, stage.operator_start + 2)
 		} else {
 			// Another "|>", or the ')' or the ',' that ends the segment.
-			next := token_next(text, part_end)
+			next := token_next(text, part_end, multiline)
 			pipe_refuse(pipe_writer, .Not_A_Call, next.start, next.end)
 		}
 		return false
 	}
-	_, trimmed_end := pipe_trim(text, part_start, part_end)
+	_, trimmed_end := pipe_trim(text, part_start, part_end, multiline)
 	if name.kind != .Name {
 		pipe_refuse(pipe_writer, .Not_A_Call, name.start, trimmed_end)
 		return false
@@ -667,16 +727,16 @@ pipe_stage_read :: proc "contextless" (pipe_writer: ^Pipe_Writer, stage: ^Pipe_S
 			stage.placeholder_start, stage.placeholder_argument, stage.placeholder_named = placeholder.start, placeholder.argument, placeholder.named
 		}
 	}
-	after := token_next(text, name.end)
+	after := token_next(text, name.end, multiline)
 	if after.kind == .Operator && text[after.start] == '(' && after.start < part_end {
-		close, closed := pipe_group_close(text, after.end, part_end)
+		close, closed := pipe_group_close(text, after.end, part_end, multiline)
 		stage.arguments_start, stage.arguments_end = after.end, close
-		stage.argument_count = pipe_argument_count(text, after.end, close)
+		stage.argument_count = pipe_argument_count(text, after.end, close, multiline)
 		stage.closed = closed
 		if !closed {
 			return true
 		}
-		after = token_next(text, close + 1)
+		after = token_next(text, close + 1, multiline)
 	}
 	if after.kind != .None && after.start < part_end {
 		pipe_refuse(pipe_writer, .Not_A_Call, name.start, trimmed_end)
@@ -688,9 +748,9 @@ pipe_stage_read :: proc "contextless" (pipe_writer: ^Pipe_Writer, stage: ^Pipe_S
 // pipe_left_read says what the value text[start:end] on the left of the
 // first stage of a segment is, when one literal, one name or one call is
 // all of it.
-pipe_left_read :: proc "contextless" (text: string, stage: ^Pipe_Stage, start, end: int) {
+pipe_left_read :: proc "contextless" (text: string, stage: ^Pipe_Stage, start, end: int, multiline := false) {
 	stage.left = .Other
-	first := token_next(text, start)
+	first := token_next(text, start, multiline)
 	if first.end == end {
 		switch first.kind {
 		case .Number:
@@ -701,18 +761,18 @@ pipe_left_read :: proc "contextless" (text: string, stage: ^Pipe_Stage, start, e
 			stage.left = .Text
 		case .Name:
 			stage.left, stage.left_start, stage.left_end = .Name, first.start, first.end
-		case .None, .Text_Unfinished, .Operator, .Arrow, .Unknown, .Pipe, .Member, .Function_Arrow:
+		case .None, .Text_Unfinished, .Operator, .Arrow, .Unknown, .Pipe, .Member, .Function_Arrow, .Hash:
 		}
 		return
 	}
 	if first.kind != .Name {
 		return
 	}
-	open := token_next(text, first.end)
+	open := token_next(text, first.end, multiline)
 	if open.kind != .Operator || text[open.start] != '(' {
 		return
 	}
-	close, closed := pipe_group_close(text, open.end, end)
+	close, closed := pipe_group_close(text, open.end, end, multiline)
 	if closed && close + 1 == end {
 		stage.left, stage.left_start, stage.left_end = .Call, first.start, first.end
 	}
@@ -722,13 +782,14 @@ pipe_left_read :: proc "contextless" (text: string, stage: ^Pipe_Stage, start, e
 // group of parentheses or braces, whose pieces can hold "|>".
 pipe_group_copy :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: int) {
 	text := pipe_writer.text
+	multiline := pipe_writer.multiline
 	copied := start
-	for token := token_next(text, start); token.kind != .None && token.start < end && pipe_writer.refusal == .None; token = token_next(text, token.end) {
+	for token := token_next(text, start, multiline); token.kind != .None && token.start < end && pipe_writer.refusal == .None; token = token_next(text, token.end, multiline) {
 		if !opens(text, token) {
 			continue
 		}
 		pipe_write(pipe_writer, text[copied:token.end])
-		close, closed := pipe_group_close(text, token.end, end)
+		close, closed := pipe_group_close(text, token.end, end, multiline)
 		pipe_pieces_write(pipe_writer, token.end, close)
 		if !closed {
 			return
@@ -745,10 +806,11 @@ pipe_group_copy :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: in
 // a named argument, a field of a literal or a binding.
 pipe_pieces_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: int) {
 	text := pipe_writer.text
+	multiline := pipe_writer.multiline
 	piece_start := start
 	depth := 0
 	lets := 0
-	for token := token_next(text, start); token.kind != .None && token.start < end && pipe_writer.refusal == .None; token = token_next(text, token.end) {
+	for token := token_next(text, start, multiline); token.kind != .None && token.start < end && pipe_writer.refusal == .None; token = token_next(text, token.end, multiline) {
 		switch {
 		case opens(text, token):
 			depth += 1
@@ -772,8 +834,9 @@ pipe_pieces_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: 
 @(private)
 pipe_named_piece_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end: int) {
 	text := pipe_writer.text
-	name := token_next(text, start)
-	equal := token_next(text, name.end)
+	multiline := pipe_writer.multiline
+	name := token_next(text, start, multiline)
+	equal := token_next(text, name.end, multiline)
 	if name.kind == .Name && name.end <= end && equal.start < end && single_equal(text, equal) {
 		pipe_write(pipe_writer, text[start:equal.end])
 		pipe_segment_write(pipe_writer, equal.end, end)

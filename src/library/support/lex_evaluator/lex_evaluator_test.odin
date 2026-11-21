@@ -7,9 +7,8 @@ import "core:sys/posix"
 import "core:testing"
 import module "modus:contract/module"
 import "modus:contract/module_file_writer"
-import "modus:private/console/console_language"
-import "modus:private/console/console_results"
-import "modus:private/console/lex_parser"
+import "modus:support/console_language"
+import "modus:support/lex_parser"
 
 // The fake host of the tests. Each call is an effect: the host writes its
 // name in the log, in the order of the runs, and gives the number of the
@@ -172,15 +171,31 @@ fake_record_memory :: proc "contextless" (data: rawptr, size: int) -> (bytes: []
 // and its two record values.
 @(private = "file")
 fake_records_make :: proc(fake: ^Fake) {
-	rectangle := [4]console_results.Column{console_results.integer_column("x"), console_results.integer_column("y"), console_results.integer_column("width"), console_results.integer_column("height")}
-	fake.rectangle_file, _, _ = console_results.description_write(fake.rectangle_description[:], "Rectangle", rectangle[:])
-	labelled := [2]console_results.Column{console_results.text_column("name", 4), {name = "count", type = .Integer, detail = 1}}
-	fake.labelled_file, _, _ = console_results.description_write(fake.labelled_description[:], "Labelled", labelled[:])
-	for value, index in ([4]i64{1, 2, 30, 4}) {
-		module.field_integer_set(fake.rect[:], console_results.column_field(rectangle[index]), value)
+	rectangle_fields := [4]module_file_writer.Field_Description {
+		{name = "x", offset = 0, type = .Integer, detail = 8},
+		{name = "y", offset = 8, type = .Integer, detail = 8},
+		{name = "width", offset = 16, type = .Integer, detail = 8},
+		{name = "height", offset = 24, type = .Integer, detail = 8},
 	}
-	copy(fake.labelled[labelled[0].offset:], "ab")
-	module.field_integer_set(fake.labelled[:], console_results.column_field(labelled[1]), 5)
+	rectangle_records := [1]module_file_writer.Record_Description{{name = "Rectangle", size = 32, fields = rectangle_fields[:]}}
+	rect_size, rect_refusal := module_file_writer.write({records = rectangle_records[:]}, fake.rectangle_description[:])
+	assert(rect_refusal.refusal == .None)
+	fake.rectangle_file = fake.rectangle_description[:rect_size]
+
+	labelled_fields := [2]module_file_writer.Field_Description {
+		{name = "name", offset = 0, type = .Text, detail = 4},
+		{name = "count", offset = 4, type = .Integer, detail = 1},
+	}
+	labelled_records := [1]module_file_writer.Record_Description{{name = "Labelled", size = 8, fields = labelled_fields[:]}}
+	labelled_size, labelled_refusal := module_file_writer.write({records = labelled_records[:]}, fake.labelled_description[:])
+	assert(labelled_refusal.refusal == .None)
+	fake.labelled_file = fake.labelled_description[:labelled_size]
+
+	for value, index in ([4]i64{1, 2, 30, 4}) {
+		module.field_integer_set(fake.rect[:], {offset = u32(index * 8), type = u8(module.Type.Integer), detail = 8}, value)
+	}
+	copy(fake.labelled[0:], "ab")
+	module.field_integer_set(fake.labelled[:], {offset = 4, type = u8(module.Type.Integer), detail = 1}, 5)
 }
 
 // The condition of the fake forces its value, as the console does for a

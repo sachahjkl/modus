@@ -4,10 +4,10 @@ import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
-import "modus:private/console/console_language"
+import "modus:support/console_language"
 import "modus:private/console/console_results"
-import "modus:private/console/lex_evaluator"
-import "modus:private/console/lex_parser"
+import "modus:support/lex_evaluator"
+import "modus:support/lex_parser"
 import "modus:contract/root_ring"
 import "modus:support/system"
 import terminal "modus:support/terminal"
@@ -252,7 +252,18 @@ value_parts_draw :: proc "contextless" (sink: ^console_results.Sink, value: Valu
 		console_results.draw_bytes(sink, value.record, RESULT_BYTE_LIMIT, u64(value.integer))
 	case .Enum:
 		console_results.draw_member(sink, value.file, value.detail, value.integer)
-	case .None, .Stream, .Record_Input, .Record_Literal, .Member:
+	case .Boolean:
+		sink.continuation = 0
+		sink.write(sink, value.integer != 0 ? "true" : "false", .Number)
+		sink.end_line(sink)
+	case .Hash:
+		if hash, ok := lex_evaluator.hash_of(&line_evaluation, value); ok {
+			buf: [console_language.HASH_LITERAL_BYTES]u8
+			sink.continuation = 0
+			sink.write(sink, console_language.hash_format(hash, &buf), .Version)
+			sink.end_line(sink)
+		}
+	case .None, .Stream, .Record_Input, .Record_Literal, .Member, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		// run_line draws a Stream one row at a time, with no lock held
 		// while it waits (stream_draw).
 	}
@@ -285,12 +296,12 @@ list_inline :: proc "contextless" (value: Value, depth: int) -> bool {
 	}
 	for item in lex_evaluator.list_items_of(&line_evaluation, value) {
 		switch item.kind {
-		case .Integer, .Text, .Enum, .Function:
+		case .Integer, .Text, .Enum, .Function, .Boolean, .Hash:
 		case .List:
 			if !list_inline(item, depth + 1) {
 				return false
 			}
-		case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member:
+		case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 			return false
 		}
 	}
@@ -323,9 +334,16 @@ list_inline_write :: proc "contextless" (sink: ^console_results.Sink, value: Val
 			}
 		case .Function:
 			sink.write(sink, function_text(item), .Plain)
+		case .Boolean:
+			sink.write(sink, item.integer != 0 ? "true" : "false", .Number)
+		case .Hash:
+			if hash, ok := lex_evaluator.hash_of(&line_evaluation, item); ok {
+				hbuf: [console_language.HASH_LITERAL_BYTES]u8
+				sink.write(sink, console_language.hash_format(hash, &hbuf), .Version)
+			}
 		case .List:
 			list_inline_write(sink, item, depth + 1)
-		case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member:
+		case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		}
 	}
 	sink.write(sink, "]", .Plain)

@@ -11,6 +11,7 @@
 // language does not take is one token of the kind Unknown.
 package console_language
 
+import "modus:contract/blake3"
 import terminal "modus:support/terminal"
 
 // The kinds of tokens. The parser reads the operators one byte at a time;
@@ -29,7 +30,12 @@ Token_Kind :: enum u8 {
 	Pipe            = 8, // '|>': the value on its left is the first argument of the call on its right.
 	Member          = 9, // A '.', then a name: a member of an enum, `.french`, which the parameter that receives it names.
 	Function_Arrow  = 10, // '=>': between the parameters of a function and its body.
+	Hash            = 11, // A BLAKE3 hash literal: "blake3:" followed by 64 lowercase hexadecimal digits.
 }
+
+HASH_PREFIX :: "blake3:"
+HASH_HEX_BYTES :: blake3.HASH_SIZE * 2
+HASH_LITERAL_BYTES :: len(HASH_PREFIX) + HASH_HEX_BYTES
 
 // A token: its kind and its bytes, text[start:end].
 Token :: struct {
@@ -67,10 +73,14 @@ operator_byte :: proc "contextless" (character: u8) -> bool {
 // space_end gives the first byte at or after position that is not a space
 // and not in a comment: "//" outside a text, to the end of its line. So a
 // comment gives no token, and the parser and the nested form never see one.
-space_end :: proc "contextless" (text: string, position: int) -> int {
+// With multiline true (a declaration file), tabs, carriage returns and line
+// feeds are spaces too.
+space_end :: proc "contextless" (text: string, position: int, multiline := false) -> int {
 	place := clamp(position, 0, len(text))
 	for place < len(text) {
-		if text[place] == ' ' {
+		character := text[place]
+		is_space := character == ' ' || (multiline && (character == '\t' || character == '\r' || character == '\n'))
+		if is_space {
 			place += 1
 		} else if comment_starts(text, place) {
 			place = comment_end(text, place)
@@ -79,6 +89,68 @@ space_end :: proc "contextless" (text: string, position: int) -> int {
 		}
 	}
 	return place
+}
+
+// hash_starts says if a hash literal starts at place: "blake3:".
+hash_starts :: proc "contextless" (text: string, place: int) -> bool {
+	return place >= 0 && place + len(HASH_PREFIX) <= len(text) && text[place:place + len(HASH_PREFIX)] == HASH_PREFIX
+}
+
+// hash_end gives the end of a hash token that starts at start: "blake3:"
+// and all contiguous word characters after it, so an invalid length or
+// character stays inside one token that the parser refuses whole.
+hash_end :: proc "contextless" (text: string, start: int) -> int {
+	if !hash_starts(text, start) {
+		return clamp(start, 0, len(text))
+	}
+	place := start + len(HASH_PREFIX)
+	for place < len(text) && (name_first(text[place]) || digit(text[place])) {
+		place += 1
+	}
+	return place
+}
+
+// hex_nibble decodes one lowercase hexadecimal digit. Uppercase digits and
+// every other byte are refused.
+@(private)
+hex_nibble :: proc "contextless" (character: u8) -> (value: u8, ok: bool) {
+	switch character {
+	case '0' ..= '9':
+		return character - '0', true
+	case 'a' ..= 'f':
+		return character - 'a' + 10, true
+	}
+	return 0, false
+}
+
+// hash_value decodes a hash literal text[start:end]: "blake3:" followed by
+// exactly 64 lowercase hexadecimal digits. ok is false for any other length,
+// prefix, uppercase digit or non-hexadecimal byte.
+hash_value :: proc "contextless" (text: string, start, end: int) -> (hash: blake3.Hash, ok: bool) {
+	first := clamp(start, 0, len(text))
+	last := clamp(end, first, len(text))
+	if last - first != HASH_LITERAL_BYTES || text[first:first + len(HASH_PREFIX)] != HASH_PREFIX {
+		return {}, false
+	}
+	digits := text[first + len(HASH_PREFIX):last]
+	for index in 0 ..< blake3.HASH_SIZE {
+		high := hex_nibble(digits[index * 2]) or_return
+		low := hex_nibble(digits[index * 2 + 1]) or_return
+		hash[index] = (high << 4) | low
+	}
+	return hash, true
+}
+
+// hash_format writes a hash as its canonical Lex literal: "blake3:" and 64
+// lowercase hexadecimal digits.
+hash_format :: proc "contextless" (hash: blake3.Hash, buffer: ^[HASH_LITERAL_BYTES]u8) -> string {
+	hex := "0123456789abcdef"
+	copy(buffer[:len(HASH_PREFIX)], HASH_PREFIX)
+	for value, index in hash {
+		buffer[len(HASH_PREFIX) + index * 2] = hex[value >> 4]
+		buffer[len(HASH_PREFIX) + index * 2 + 1] = hex[value & 0x0f]
+	}
+	return string(buffer[:])
 }
 
 // comment_starts says if a comment starts at a byte: "//". A '/' with a
@@ -135,13 +207,15 @@ text_end :: proc "contextless" (text: string, start: int) -> (end: int, finished
 
 // token_next gives the token at or after position, after its spaces. At
 // the end of the text: the kind None, with start and end at the end.
-token_next :: proc "contextless" (text: string, position: int) -> Token {
-	start := space_end(text, position)
+token_next :: proc "contextless" (text: string, position: int, multiline := false) -> Token {
+	start := space_end(text, position, multiline)
 	if start >= len(text) {
 		return {kind = .None, start = len(text), end = len(text)}
 	}
 	character := text[start]
 	switch {
+	case hash_starts(text, start):
+		return {kind = .Hash, start = start, end = hash_end(text, start)}
 	case name_first(character):
 		return {kind = .Name, start = start, end = name_end(text, start)}
 	case digit(character):
@@ -338,11 +412,18 @@ line_runs :: proc "contextless" (text: string, first: int, caret: int, lookup: N
 		case .None:
 		case .Name:
 			being_typed := caret != NO_CARET && (token.end == caret || token.end == len(text))
-			// The words of Lex have the color of an operator, and the names
-			// of the bindings of a let the color of a variable.
+			// The words of Lex have the color of an operator, booleans the
+			// color of a literal, and the names of the bindings of a let the
+			// color of a variable.
 			if word_of_lex(text, token) {
 				if !being_typed {
 					count = run_add(runs, count, token.start, token.end, .Operator)
+				}
+				break
+			}
+			if boolean_of_lex(text, token) {
+				if !being_typed {
+					count = run_add(runs, count, token.start, token.end, .Number)
 				}
 				break
 			}
@@ -369,6 +450,10 @@ line_runs :: proc "contextless" (text: string, first: int, caret: int, lookup: N
 			count = name_runs(text, token, being_typed, assigned, lookup, runs, count)
 		case .Number:
 			count = run_add(runs, count, token.start, token.end, .Number)
+		case .Hash:
+			being_typed := caret != NO_CARET && (token.end == caret || token.end == len(text))
+			_, valid := hash_value(text, token.start, token.end)
+			count = run_add(runs, count, token.start, token.end, valid || being_typed ? .Number : .Unknown)
 		case .Text:
 			count = run_add(runs, count, token.start, token.end, .Text)
 		case .Text_Unfinished:
@@ -406,10 +491,15 @@ comment_runs :: proc "contextless" (text: string, from, to: int, runs: []termina
 	return written
 }
 
-// word_of_lex says if a token is a word of Lex: `let`, `in`, `with`, or the
-// placeholder `_`.
+// word_of_lex says if a token is a word of Lex: `let`, `in`, `with`,
+// `if`, `then`, `else`, or the placeholder `_`.
 word_of_lex :: proc "contextless" (text: string, token: Token) -> bool {
-	return word_is(text, token, "let") || word_is(text, token, "in") || word_is(text, token, "with") || word_is(text, token, "_")
+	return word_is(text, token, "let") || word_is(text, token, "in") || word_is(text, token, "with") || word_is(text, token, "_") || word_is(text, token, "if") || word_is(text, token, "then") || word_is(text, token, "else")
+}
+
+// boolean_of_lex says if a token is a boolean literal of Lex: `true` or `false`.
+boolean_of_lex :: proc "contextless" (text: string, token: Token) -> bool {
+	return word_is(text, token, "true") || word_is(text, token, "false")
 }
 
 // bound_by_let says if a name, before its first '.', is the name of a
@@ -460,19 +550,19 @@ bound_by_let :: proc "contextless" (text: string, token: Token) -> bool {
 // closes, and "=>" follows its ')'. It gives the ')' and the byte after the
 // "=>". The parameters are not checked: the parser refuses a parameter
 // that is no name at its place.
-function_head :: proc "contextless" (text: string, open: int) -> (close: int, arrow_end: int, found: bool) {
-	first := token_next(text, open)
+function_head :: proc "contextless" (text: string, open: int, multiline := false) -> (close: int, arrow_end: int, found: bool) {
+	first := token_next(text, open, multiline)
 	if first.start != open || !(first.kind == .Operator && text[first.start] == '(') {
 		return 0, 0, false
 	}
 	depth := 0
-	for token := first; token.kind != .None; token = token_next(text, token.end) {
+	for token := first; token.kind != .None; token = token_next(text, token.end, multiline) {
 		if opens(text, token) {
 			depth += 1
 		} else if closes(text, token) {
 			depth -= 1
 			if depth == 0 {
-				arrow := token_next(text, token.end)
+				arrow := token_next(text, token.end, multiline)
 				if arrow.kind != .Function_Arrow {
 					return 0, 0, false
 				}
@@ -486,10 +576,10 @@ function_head :: proc "contextless" (text: string, open: int) -> (close: int, ar
 // function_body_end gives the end of the body of a function that starts at
 // body_start, after its "=>": the ',' or the close of the group that holds
 // the function, the `in` of a let around it, or the end of the line.
-function_body_end :: proc "contextless" (text: string, body_start: int) -> int {
+function_body_end :: proc "contextless" (text: string, body_start: int, multiline := false) -> int {
 	depth := 0
 	lets := 0
-	for token := token_next(text, body_start); token.kind != .None; token = token_next(text, token.end) {
+	for token := token_next(text, body_start, multiline); token.kind != .None; token = token_next(text, token.end, multiline) {
 		switch {
 		case opens(text, token):
 			depth += 1
@@ -806,7 +896,7 @@ signature_runs :: proc "contextless" (text: string, first: int, runs: []terminal
 			case .Type:
 				kind = .Type
 			}
-		case .Number:
+		case .Number, .Hash:
 			kind = .Number
 			if place == .Words {
 				kind = .Words

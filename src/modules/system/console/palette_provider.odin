@@ -9,7 +9,7 @@ import "modus:contract/ring"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:private/console/console_results"
-import "modus:private/console/lex_parser"
+import "modus:support/lex_parser"
 import "modus:support/line_editor"
 import "modus:support/system"
 import "base:intrinsics"
@@ -224,7 +224,7 @@ palette_value_kind_of :: proc "contextless" (kind: Kind) -> (value_kind: palette
 		value_kind = .Bytes
 	case .Enum:
 		value_kind = .Enum
-	case .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List:
+	case .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		value_kind = .None
 	}
 	return value_kind
@@ -1294,7 +1294,7 @@ palette_line_ended :: proc "contextless" () {
 			console_results.draw_record(&sink, value.file, value.detail, value.record)
 		case .Enum:
 			console_results.draw_member(&sink, value.file, value.detail, value.integer)
-		case .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List:
+		case .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 			// The panel has no drawer for these: the console window shows them.
 			writer.fits = false
 		}

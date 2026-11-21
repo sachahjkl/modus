@@ -2,19 +2,19 @@ package console
 
 import "modus:contract/errors"
 import module "modus:contract/module"
-import "modus:private/console/console_condition"
-import "modus:private/console/console_language"
+import "modus:support/console_condition"
+import "modus:support/console_language"
 import "modus:private/console/console_stream"
-import "modus:private/console/lex_evaluator"
-import "modus:private/console/lex_parser"
+import "modus:support/lex_evaluator"
+import "modus:support/lex_parser"
 import "modus:support/sentence"
 import "modus:support/system"
 
 // The console as the evaluation host of Lex in mode `console`.
 //
-// The parser of Lex (src/library/private/console/lex_parser) gives the
+// The parser of Lex (src/library/support/lex_parser) gives the
 // syntax tree of a line, and the evaluator
-// (src/library/private/console/lex_evaluator) forces it whole, from the
+// (src/library/support/lex_evaluator) forces it whole, from the
 // left: the calls before a fault run, then the line fails. This file gives
 // the evaluator the names, the commands and the runs of the calls, and
 // writes the sentence of each refusal. The form of each parameter of a
@@ -28,7 +28,7 @@ import "modus:support/system"
 // The pipe operator has the lowest priority: `a |> f(b)` is `f(a, b)`, and
 // `a |> f` is `f(a)`. The parser reads no "|>": before any call,
 // pipe_nested_line writes the line with calls in calls
-// (src/library/private/console/console_language/pipe.odin), so a line with
+// (src/library/support/console_language/pipe.odin), so a line with
 // "|>" checks and runs as that line.
 //
 // A value is an Integer, a Text, a Record, a Handle, a Table or Bytes. An
@@ -110,7 +110,7 @@ type_of_kind :: proc "contextless" (kind: Kind) -> (type: module.Type) {
 		type = .Bytes
 	case .Enum:
 		type = .Enum
-	case .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List:
+	case .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		// No type of the module contract: no export takes one, and
 		// type_text names it itself.
 		type = .None
@@ -142,6 +142,15 @@ kind_names := [Kind]string {
 	.Member         = "a member",
 	.Function       = "a function",
 	.List           = "a list",
+	.Hash           = "Hash",
+	.Boolean        = "Boolean",
+	.Record_With    = "a record",
+	.Module_Ref     = "a module reference",
+	.Recipe_Ref     = "a recipe",
+	.Follow_Ref     = "a release pointer",
+	.Store_Ref      = "a store grant",
+	.Plan_Value     = "a plan",
+	.Project_Value  = "a project",
 }
 
 // type_text gives the name of a type: "Integer", the name of a record or of
@@ -369,7 +378,7 @@ assign :: proc "contextless" (name: string, value: Value) {
 	slot.name_count = copy(slot.name[:], name)
 	slot.value = value
 	switch value.kind {
-	case .None, .Integer, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .List:
+	case .None, .Integer, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		// The value holds no memory of the line: the slot keeps it as it is.
 		// A Bytes value and a Stream were refused above; the evaluator
 		// refuses a literal and a member that nothing typed. An Enum names
@@ -524,7 +533,13 @@ evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Rec
 	case .Lists_Full:
 		fail("the lists of the line hold more than ", i64(lex_evaluator.LIST_ITEM_CAPACITY), " items in all")
 	case .Not_A_List:
-		fail("map: argument 1 is ", kind_names[record.left_kind], ", not a list")
+		fail(record.command, ": argument 1 is ", kind_names[record.left_kind], ", not a list")
+	case .Condition_Not_Boolean:
+		fail("a condition needs a Boolean value, not ", kind_names[record.left_kind])
+	case .Depth_Exceeded:
+		fail("the line nests deeper than the evaluator allows: ", record.right, " levels")
+	case .With_Pairs_Full, .Imports_Full:
+		fail("the evaluation ran out of room for declarations")
 	}
 }
 
@@ -641,6 +656,14 @@ text_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Record) {
 		fail("a function takes ", i64(lex_parser.ARGUMENT_CAPACITY), " parameters at most")
 	case .List_Close_Missing:
 		fail("\",\" or \"]\" is missing")
+	case .Hash_Not_Valid:
+		fail("a hash literal is \"blake3:\" followed by 64 lowercase hexadecimal digits")
+	case .If_Then_Missing:
+		fail("\"then\" is missing after the condition of if")
+	case .If_Else_Missing:
+		fail("\"else\" is missing in if")
+	case .Nesting_Too_Deep:
+		fail("the expression nests too deeply")
 	case .Unexpected, .None, .Fact_Name_Missing, .Condition_Head_Refused:
 		// A Fact_Name or a Condition node holds the last two, and the
 		// console reads them itself.
@@ -970,7 +993,8 @@ pipe_nested_line :: proc "contextless" (text: string) -> string {
 // command of the table.
 stage_of_the_evaluation :: proc "contextless" (text: string, stage: console_language.Pipe_Stage) -> bool {
 	token := console_language.Token{kind = .Name, start = stage.name_start, end = stage.name_end}
-	return text[stage.name_start:stage.name_end] == lex_evaluator.MAP_NAME || console_language.bound_by_let(text, token) || console_language.bound_by_function(text, token)
+	name := text[stage.name_start:stage.name_end]
+	return name == lex_evaluator.MAP_NAME || name == lex_evaluator.FILTER_NAME || console_language.bound_by_let(text, token) || console_language.bound_by_function(text, token)
 }
 
 // pipe_stage_names_check checks, before any call, the argument of a stage
@@ -1095,7 +1119,7 @@ literal_of :: proc "contextless" (text: string, place: int) -> (type: module.Typ
 		return .Integer, value, true
 	case .Text:
 		return .Text, 0, !negative
-	case .None, .Name, .Text_Unfinished, .Operator, .Arrow, .Unknown, .Pipe, .Member, .Function_Arrow:
+	case .None, .Name, .Text_Unfinished, .Operator, .Arrow, .Unknown, .Pipe, .Member, .Function_Arrow, .Hash:
 		// A variable, a call, an expression: its kind comes when it runs.
 	}
 	return .None, 0, false
@@ -1238,7 +1262,7 @@ result_knowledge :: proc "contextless" (found: ^Command) -> (value: Value, knowl
 	case .Handle, .Bytes:
 		// The rights of a Handle come with the value.
 		knowledge = .Kind
-	case .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List:
+	case .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 		// A command of the console makes a Stream, and the record of the
 		// record output comes with the value when the line runs.
 		knowledge = .Kind

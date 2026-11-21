@@ -4,8 +4,8 @@ package lex_parser
 import "core:fmt"
 import "core:strings"
 import "core:testing"
-import "modus:private/console/console_condition"
-import "modus:private/console/console_language"
+import "modus:support/console_condition"
+import "modus:support/console_language"
 
 // The forms of the commands of the tests: `where` takes a condition after
 // its table, `facts` a fact name and `columns` field names, as in the
@@ -65,8 +65,15 @@ node_form_write :: proc(builder: ^strings.Builder, tree: ^Syntax_Tree, index: No
 		return
 	}
 	switch node.kind {
-	case .Integer, .Text, .Member, .Parameter:
+	case .Integer, .Text, .Member, .Parameter, .Hash, .Boolean:
 		strings.write_string(builder, node_text(tree, index))
+	case .If:
+		strings.write_string(builder, "if(")
+		children_write(builder, tree, node.first_child, "; ")
+		strings.write_string(builder, ")")
+	case .Field_Select:
+		node_form_write(builder, tree, node.first_child)
+		fmt.sbprintf(builder, ".%s", node_text(tree, index))
 	case .Name:
 		// A name that a let or a function binds is marked with '@'.
 		if node.binding != NO_NODE {
@@ -954,4 +961,126 @@ parse_function_edges :: proc(t: ^testing.T) {
 		count += 1
 	}
 	testing.expect_value(t, count, items)
+}
+
+// Hash literals, call on a record literal, conditionals, comparisons, and
+// postfix field selection: refusals first, then valid trees.
+@(test)
+parse_layer5_forms_and_refusals :: proc(t: ^testing.T) {
+	VALID_HASH :: "blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	Refusal_Case :: struct {
+		text:    string,
+		refusal: Refusal,
+		column:  u32,
+	}
+	refusals := [?]Refusal_Case {
+		// Malformed hash literals: empty, short, 63 hex, 65 hex, uppercase, non-hex.
+		{"blake3:", .Hash_Not_Valid, 1},
+		{"blake3:0", .Hash_Not_Valid, 1},
+		{"blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde", .Hash_Not_Valid, 1},
+		{"blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0", .Hash_Not_Valid, 1},
+		{"blake3:0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef", .Hash_Not_Valid, 1},
+		{"module(blake3:zzzz)", .Hash_Not_Valid, 8},
+		// Conditionals missing `then`, `else`, or branch expressions.
+		{"if true", .If_Then_Missing, 8},
+		{"if true 1 else 2", .If_Then_Missing, 9},
+		{"if true then 1", .If_Else_Missing, 15},
+		{"if true then 1 2", .If_Else_Missing, 16},
+		{"if true then 1 else", .Line_Ends_Too_Soon, 20},
+		// New Lex words refused as names.
+		{"then", .Word_As_Name, 1},
+		{"else", .Word_As_Name, 1},
+		{"if = 1", .Word_As_Name, 1},
+		{"{then = 1}", .Word_As_Name, 2},
+		{"let else = 1 in 2", .Word_As_Name, 5},
+		{"(true) => 1", .Word_As_Name, 2},
+	}
+	for item in refusals {
+		tree := parse_of(item.text)
+		testing.expectf(t, tree.refusal.refusal == item.refusal && tree.refusal.place.column == item.column, "%q: %v at col %d, not %v at col %d", item.text, tree.refusal.refusal, tree.refusal.place.column, item.refusal, item.column)
+	}
+
+	Form_Case :: struct {
+		text: string,
+		form: string,
+	}
+	forms := [?]Form_Case {
+		{VALID_HASH, VALID_HASH},
+		{"module(" + VALID_HASH + ")", "module(" + VALID_HASH + ")"},
+		{"declaration(" + VALID_HASH + ")", "declaration(" + VALID_HASH + ")"},
+		{"plan { a = 1 }", "plan(#{a = 1})"},
+		{"project { inputs = { m = catalog } }", "project(#{inputs = #{m = catalog}})"},
+		{"let f = (r) => r.a in f { a = 42 }", "let(f = fn(r => @r.a); @f(#{a = 42}))"},
+		{"let gt = { app = (x) => x } in gt.app(1)", "let(gt = #{app = fn(x => @x)}; @gt.app(1))"},
+		{"if true then 1 else 2", "if(true; 1; 2)"},
+		{"if x <= 10 then x + 1 else x - 1", "if((x <= 10); (x + 1); (x - 1))"},
+		{"if a = b then 1 else 0", "if((a = b); 1; 0)"},
+		{"if a != b then 1 else 0", "if((a != b); 1; 0)"},
+		{"({good = 42, bad = 1 / 0}).good", "#{good = 42, bad = (1 / 0)}.good"},
+		{"(r with {a = 1}).a", "(r with #{a = 1}).a"},
+		{"import(\"pins.lex\").gt.tree", "import(\"pins.lex\").gt.tree"},
+	}
+	for item in forms {
+		tree := parse_of(item.text)
+		form := tree_form(tree, tree.root)
+		testing.expectf(t, tree.refusal.refusal == .None && form == item.form, "%q: %v %q, not %q", item.text, tree.refusal.refusal, form, item.form)
+	}
+}
+
+// Multi-line .lex declaration parsing: external node storage, newlines, tabs,
+// comments, trailing commas, depth bound, and size bound.
+@(test)
+parse_multiline_declarations_and_bounds :: proc(t: ^testing.T) {
+	nodes := make([]Node, 1024, context.temp_allocator)
+	tree: Syntax_Tree
+
+	source := `// A multi-line project declaration.
+let
+	h = blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef,
+	double = (x) =>
+		x * 2,
+in
+project {
+	// Inputs with trailing comma.
+	inputs = {
+		modus = catalog,
+		wren  = declaration(h),
+	},
+	outputs = {
+		nums = [
+			1,
+			2,
+			double(3),
+		],
+	},
+}
+`
+	parse_declaration(source, nodes, &tree)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.None)
+	testing.expect(t, tree.node_count > 10)
+	// Line numbers are tracked across newlines.
+	root := node_at(&tree, tree.root)
+	testing.expect(t, root != nil && root.kind == .Let && root.place.line == 2)
+
+	// Top-level console assignment is refused in declaration mode (parsed as equality expression or unexpected).
+	// Wait: "a = 1" is a comparison expression in declaration mode, not an assignment!
+	parse_declaration("a = 1", nodes, &tree)
+	testing.expect_value(t, tree.assigned_name, "")
+	testing.expect_value(t, node_at(&tree, tree.root).kind, Node_Kind.Binary)
+	testing.expect_value(t, node_at(&tree, tree.root).operator, Operator.Equal)
+
+	// Depth bound prevents stack overflow on hostile deeply nested input.
+	deep := strings.concatenate({strings.repeat("(", 300, context.temp_allocator), "1", strings.repeat(")", 300, context.temp_allocator)}, context.temp_allocator)
+	parse_declaration(deep, nodes, &tree, DECLARATION_TEXT_BYTES_MOST, 64)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.Nesting_Too_Deep)
+
+	// Node buffer exhaustion stops cleanly with Nodes_Full.
+	tiny_nodes: [4]Node
+	parse_declaration("{ a = 1, b = 2, c = 3 }", tiny_nodes[:], &tree)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.Nodes_Full)
+
+	// Text past bound stops cleanly with Text_Too_Long.
+	parse_declaration("1 + 2 + 3", nodes, &tree, text_bytes_most = 4)
+	testing.expect_value(t, tree.refusal.refusal, Refusal.Text_Too_Long)
 }

@@ -208,6 +208,9 @@ module_builds := [?]Module_Build {
 	// The C compiler: chibicc, ported. The console calls it in a call
 	// host, and gives its text to assemble (src/md/features/c_compiler.md).
 	{name = "c_compiler", source = SYSTEM_MODULE_SOURCES + "c_compiler", image = true, c_source = CHIBICC},
+	// The sandboxed declaration evaluator: evaluates .lex files lazily with
+	// zero grants in a call host (src/md/features/declarations.md).
+	{name = "declaration_eval", source = SYSTEM_MODULE_SOURCES + "declaration_eval", image = true},
 	{name = "probe", source = TEST_MODULE_SOURCES + "probe", image = true},
 	{name = "math", source = LIBRARY_MODULE_SOURCES + "math", image = true},
 	{name = "cryptography", source = LIBRARY_MODULE_SOURCES + "cryptography", image = true},

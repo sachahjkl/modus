@@ -5,7 +5,7 @@ import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:private/console/console_results"
-import "modus:private/console/lex_parser"
+import "modus:support/lex_parser"
 import "modus:support/system"
 import terminal "modus:support/terminal"
 
