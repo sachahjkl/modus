@@ -53,6 +53,7 @@ import "modustool:similarity"
 import "modustool:machine"
 import "modustool:site"
 import "modustool:cache_server"
+import "modustool:agent_bridge"
 
 // The three source libraries of the system (docs/glossary/communication.md,
 // "Source library"):
@@ -659,6 +660,21 @@ COMMANDS :: [?]foundation.Command {
 	// - `--authorized-key <path>` (optional, repeatable): a 64-hex-digit Ed25519
 	//   public key file allowed to upload objects and signed realisations.
 	{name = "cache-serve", about = "cache-serve --dir <path> [--listen <host:port>] [--signer-key <path>] [--authorized-key <path>]: serve a content-addressed object cache of blobs, canonical trees and signed realisations", run = cache_server.run_cache_serve},
+	// Serves the typed host agent bridge over line-delimited JSON-RPC 2.0 on
+	// standard input and output, enforcing client-key permissions, remote key
+	// uses, active wide-grant window scopes, append-only BLAKE3 act recording,
+	// and explicit principal approval for grant-adding plans.
+	//
+	// - `--remote-key <64-hex>`: public key of `remote` pinned by the transport.
+	// - `--client-key <64-hex>`: client public key authorized by the principal.
+	// - `--socket <path>` (optional): path to the call socket of the peer.
+	// - `--principal <id>` (optional): principal identifier; defaults to `0`.
+	// - `--permissions <csv>` (optional): comma-separated subset of
+	//   `eval_lex,read_screen,send_input,read_log_facts`.
+	// - `--wide-grant-serial <u64>`, `--wide-grant-windows <id,...>`,
+	//   `--wide-grant-duration-ms <u64>` (optional): active wide-grant window
+	//   scope required for synthetic input.
+	{name = "agent-bridge", about = "agent-bridge --remote-key <64-hex> --client-key <64-hex> [--socket <path>] [--principal <id>] [--permissions <csv>] [--wide-grant-serial <u64> --wide-grant-windows <id,...> [--wide-grant-duration-ms <u64>]]: serve the typed host agent bridge over stdio JSON-RPC 2.0", run = agent_bridge.run_agent_bridge},
 }
 
 main :: proc() {
@@ -675,7 +691,7 @@ main :: proc() {
 	}
 	// Commands that operate on external directories or unpacked SDKs can run
 	// outside a repository checkout.
-	outside_repo_ok := os.args[1] == "module-build" || os.args[1] == "cache-serve" || os.args[1] == "sdk-verify" || os.args[1] == "sdk-convert"
+	outside_repo_ok := os.args[1] == "module-build" || os.args[1] == "cache-serve" || os.args[1] == "sdk-verify" || os.args[1] == "sdk-convert" || os.args[1] == "agent-bridge"
 	if !outside_repo_ok && !os.exists(foundation.ROOT_MARK) {
 		fmt.eprintln("modustool: start it from the root of the repository")
 		os.exit(foundation.EXIT_USAGE)
