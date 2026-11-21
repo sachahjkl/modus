@@ -21,7 +21,7 @@ import "modustool:foundation"
 // scenario_check_before_start refuses a scenario that cannot pass, before
 // its machine starts, with one line for each fault: a call of `remote`
 // with no key, and each step Fact that the fact tables refuse.
-scenario_check_before_start :: proc(steps: []Step) -> bool {
+scenario_check_before_start :: proc(steps: []Step, places: []int = nil) -> bool {
 	if problem := remote_key_problem(steps); problem != "" {
 		fmt.eprintfln("modustool: test failed: the scenario is refused before its machine starts: %s", problem)
 		return false
@@ -39,7 +39,7 @@ scenario_check_before_start :: proc(steps: []Step) -> bool {
 		fmt.eprintfln("modustool: test failed: the steps Fact of the scenario cannot be checked: %s", catalog_problem)
 		return false
 	}
-	problems := scenario_fact_problems(&catalog, steps)
+	problems := scenario_fact_problems(&catalog, steps, places)
 	for problem in problems {
 		fmt.eprintfln("modustool: test failed: the scenario is refused before its machine starts: %s", problem)
 	}
@@ -48,12 +48,15 @@ scenario_check_before_start :: proc(steps: []Step) -> bool {
 
 // scenario_fact_problems gives one line for each step Fact of a scenario
 // that the fact tables of a catalog refuse, with its number and its cause.
-scenario_fact_problems :: proc(catalog: ^build.Fact_Catalog, steps: []Step) -> []string {
+// places, when it is not nil, gives the place of each step in its scenario:
+// the steps of a step range.
+scenario_fact_problems :: proc(catalog: ^build.Fact_Catalog, steps: []Step, places: []int = nil) -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
-	for step, index in steps {
+	for step, position in steps {
 		if step.kind != .Fact {
 			continue
 		}
+		index := step_place(places, position)
 		_, fault, _, problem := build.fact_step_check(catalog, step.fact, step.process, step.condition)
 		if fault != .None {
 			append(&problems, fmt.tprintf("step %d (Fact %s of %s): %s", index + 1, step.fact, step.process, problem))

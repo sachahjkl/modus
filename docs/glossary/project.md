@@ -906,6 +906,26 @@ The design: `src/md/infrastructure/machine_test_parts.md`; `docs/TOOLS.md`, "The
 
 Do not use: test suite, test group, shard.
 
+### Step range
+
+A step range is the steps from one number to another of the scenario of one machine of a test part, which `modustool test <part> steps <first> to <last>` runs after the boot steps and the setup steps that the developer names.
+
+It is for the work on one scenario: a fix of one step waits for the boot and the setup, not for the whole part. The developer names the setup with `with <first> to <last>`, because the tool cannot read from the steps which window or connection a range needs. A step range proves its steps, never the part, and the check of the flake never runs one.
+
+The design: `src/md/infrastructure/scenario_fault_loop.md`, "A step range"; `docs/TOOLS.md`, "A step range".
+
+Do not use: partial run, slice of a test, resume.
+
+### Fact wait
+
+A fact wait is the text of a step of a scenario that waits for the sentence of a log fact: after the head of a process, it starts with the fact prefix of a fact template of the build, the name of a module and ": ".
+
+Before any machine starts, the tool holds each fact wait against the fact templates of the build and the text lines of the system: it must be the start of a sentence that one of them renders. A fact whose sentence changed then fails in the host checks, not at the hang bound of a machine. It is not a step `Fact`, which waits for a fact by its type and its fields.
+
+The design: `src/md/infrastructure/scenario_fault_loop.md`, "The check of the fact waits"; `docs/TOOLS.md`, "The check of the fact waits".
+
+Do not use: log wait (for this), sentence wait.
+
 ### Test inputs
 
 The test inputs are the files of a whole build that the machine test reads, in one folder that Nix names by the hash of its bytes.
