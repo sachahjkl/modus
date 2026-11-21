@@ -1,9 +1,9 @@
 package machine
 
-import "core:math"
 import "core:testing"
 import "modus:contract/byte_order"
 import "modus:contract/timed_stream"
+import "modus:support/trigonometry"
 
 // A wave file as QEMU writes it at a stop that is not clean: the sizes of
 // the header are 0. `tone_first` is the first frame of a cosine of
@@ -22,8 +22,8 @@ wave_make :: proc(frames: int, tone_first: int, hertz: f64, channels: u16 = time
 	copy(file[36:], "data")
 	if tone_first >= 0 {
 		for index in tone_first ..< frames {
-			phase := 2 * math.PI * hertz * f64(index - tone_first) / timed_stream.FRAME_RATE
-			sample := u16(i16(math.cos(phase) * 16384))
+			phase_turns := hertz * f64(index - tone_first) / timed_stream.FRAME_RATE
+			sample := u16(i16(trigonometry.cosine(phase_turns) * 16384))
 			byte_order.write_u16_little_endian(file, WAVE_HEADER_BYTES + index * timed_stream.FRAME_BYTES, sample)
 			byte_order.write_u16_little_endian(file, WAVE_HEADER_BYTES + index * timed_stream.FRAME_BYTES + 2, sample)
 		}

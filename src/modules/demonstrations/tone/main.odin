@@ -38,6 +38,7 @@ import "modus:contract/ring"
 import "modus:contract/timed_stream"
 import "modus:contract/value_kinds"
 import "modus:support/system"
+import "modus:support/trigonometry"
 
 // The sample region: 500 ms of frames, and the rest of its last page.
 TONE_FRAMES :: timed_stream.FRAME_RATE / 2
@@ -73,24 +74,13 @@ fail :: proc "contextless" () -> ! {
 	system.stop(.Failed)
 }
 
-// cosine gives the cosine of a small angle by its series: the step of the
-// tone, 0.058 radians, needs eight terms for the precision of a double.
-// The module has no library of mathematics.
-cosine :: proc "contextless" (angle: f64) -> (sum: f64) {
-	term := 1.0
-	for order in 0 ..< 8 {
-		sum += term
-		n := f64(2 * order)
-		term *= -angle * angle / ((n + 1) * (n + 2))
-	}
-	return sum
-}
-
 // tone_write writes the frames of the tone: the same sample in both
 // channels, a cosine, so the first frame is the loudest and not silence.
-// The recurrence of two terms gives each next value with one product.
+// The angle of one frame is in turns: the count of periods of the tone in
+// one frame. The recurrence of two terms gives each next value with one
+// product.
 tone_write :: proc "contextless" (region: [^]u32) {
-	step := cosine(2 * 3.141592653589793 * TONE_HERTZ / f64(timed_stream.FRAME_RATE))
+	step := trigonometry.cosine(f64(TONE_HERTZ) / f64(timed_stream.FRAME_RATE))
 	before, now := step, 1.0 // The cosine of -step and of 0.
 	for index in 0 ..< TONE_FRAMES {
 		sample := u32(u16(i16(now * TONE_AMPLITUDE)))

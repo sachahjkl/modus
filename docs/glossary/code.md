@@ -877,3 +877,13 @@ The tool of release N − 1 builds the source of release N, which gives N₁; N�
 The design: `src/md/features/bootstrap.md`.
 
 Do not use: stage comparison, triple test.
+
+### Turn
+
+A turn is the unit of each angle in the system: 1 is a whole circle, 0.25 a right angle.
+
+An angle in code is a value in turns, and its type or its name says so: `angle_turns`, `phase_turns`. The trigonometric routines of the system, `modus:support/trigonometry`, take turns. A quarter, a half and an eighth of a turn are exact in binary, and the code holds no π. A derivative of a function of an angle in turns gains a factor of 2π: code that takes a formula of calculus from a book must add it. It is not the turn of a thread on a processor.
+
+The design: `src/md/data/angles_in_turns.md`.
+
+Do not use: radian, degree (for an angle in code).

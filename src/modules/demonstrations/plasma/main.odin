@@ -10,16 +10,17 @@
 // The log has "plasma: ok" after the first picture. Its row of
 // `process_roles` has no grant: a window is all that it needs.
 //
-// **How it computes**: a table of the sine in 256 steps, from the
-// approximation of Bhaskara in integers, and a palette of 256 colors from
+// **How it computes**: a table of the sine in 256 steps of a turn, from
+// `trigonometry.sine` once at the start, and a palette of 256 colors from
 // three sines a third of a turn apart. Each pixel is the sum of four sines
-// of its place and of the frame number.
+// of its place and of the frame number, in integers.
 package plasma
 
 import "modus:support/display"
 import "modus:support/graphics"
 import "modus:support/interface"
 import "modus:support/system"
+import "modus:support/trigonometry"
 
 WIDTH :: 320
 HEIGHT :: 200
@@ -30,7 +31,7 @@ HEIGHT :: 200
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1923, window_width = WIDTH, window_height = HEIGHT}
 FRAME_INTERVAL :: 33
 
-sine: [256]i32 // One period, from -127 to 127.
+sine: [256]i32 // One period, from -127 to 127: the index is the angle in 256ths of a turn.
 palette: [256]graphics.Color
 // The window is one picture of this process, shown with the interface
 // package (a Picture record): the animation draws into it.
@@ -54,10 +55,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(.Failed)
 	}
-	// Bhaskara's approximation of the sine, in integers.
+	// The first half turn, rounded to the nearest whole number; the second
+	// half is its negative, so the table is exactly antisymmetric.
 	for i in 0 ..< 128 {
-		product := i32(i * (128 - i))
-		value := 127 * 16 * product / (5 * 128 * 128 - 4 * product)
+		value := i32(trigonometry.sine(f64(i) / 256) * 127 + 0.5)
 		sine[i] = value
 		sine[i + 128] = -value
 	}
