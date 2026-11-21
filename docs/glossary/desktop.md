@@ -636,6 +636,96 @@ The design: `docs/INTERFACE.md`, "4. Input and focus".
 
 Do not use: UI context, retained state.
 
+### Semantic tree
+
+The semantic tree of a frame is the tree of its element pushes: what each element of a window is, its state and its name, for a reader that does not see the pixels.
+
+It comes from the draw table that draws the frame, so the drawing and the tree cannot drift: a push inside an open push is its child, in the order of the table. A text outside each push is a text of the window. The window lends its tables read-only to the holders of the assistive role, and never publishes a list of changes: the reader compares two trees by element word. Designed, not built.
+
+The design: `src/md/features/accessibility.md`, "1. The semantic tree".
+
+Do not use: accessibility tree, AX tree, semantics tree, DOM.
+
+### Element push
+
+An element push is a draw record of the kind `Element_Push` that draws nothing and says what the records after it, until its element pop, are: an element role, its states, an accessible name and its details.
+
+The interface package writes the push and the pop in the call that draws the element. Each record under a push carries the element word of the innermost push, or 0, and the border of the order refuses another word. The details (a value and its range, a text, a relation, the declared actions) are entries of 16 bytes in the byte table.
+
+The design: `src/md/features/accessibility.md`, "1. The semantic tree".
+
+Do not use: semantics node, accessible object, provider.
+
+### Element role
+
+An element role is what an element is for a reader, a member of `Element_Role`: a role of WAI-ARIA 1.2 that is not abstract, as `button`, `textbox`, `listbox` or `scrollbar`.
+
+The set is the set of the standard, never one of the system. The roles map to each platform interface through the Core Accessibility API Mappings, so a reader of another system understands them. The role says which actions an element can declare. An element role is not a role of the root service, and not a process role.
+
+The design: `src/md/features/accessibility.md`, "1. The semantic tree".
+
+Do not use: role (alone), control type, widget type.
+
+### Element state
+
+An element state is a fact of an element push that changes while the element lives: a member of the bit set `Element_State`, the toggle, or the expanded state.
+
+The states are the boolean states of WAI-ARIA 1.2 (`busy`, `disabled`, `invalid`, `selected`, ...), and `focusable`, `focused` and `protected` from the platform interfaces. `toggle` is `aria-checked` or `aria-pressed`, as the role says. A field with `protected` publishes no value, no caret and no length.
+
+The design: `src/md/features/accessibility.md`, "1. The semantic tree".
+
+Do not use: accessible state, flags.
+
+### Accessible name
+
+The accessible name of an element is the text that names it to a reader: the name range of its push, or the text runs under it when its role takes its name from its content.
+
+The rule is the Accessible Name and Description Computation 1.2. A button needs no name of its own: its label is its name. A text input takes its name from its label, never from its placeholder. The design proposes that the element name of a machine test becomes the accessible name, once the probe of the tests exists.
+
+The design: `src/md/features/accessibility.md`, "1. The semantic tree".
+
+Do not use: label (for this), alt text, aria-label.
+
+### Live region
+
+A live region is an element push whose text changes are said to the principal when they happen, at a politeness: polite after the speech in progress, assertive at once.
+
+The roles `alert`, `log`, `status` and `timer` are live regions by their role. The reader compares the text under the push in two trees and says the change. A process that wants to tell a fact puts its text in a live region; no call announces a text that no element shows.
+
+The design: `src/md/features/accessibility.md`, "1. The semantic tree".
+
+Do not use: notification (a notification is a later element of the desktop), toast, announcement.
+
+### Declared action
+
+A declared action is an act of the closed set `Element_Action` that an element says it takes, such as `Press`, `Increment` or `Insert_Text`, and the one way for a holder of the assistive role to act on it.
+
+The window layer refuses an action that the element did not declare in its last frame. It runs a declared action through the code of a key: `Press` is Enter, `Increment` is Up. So an action and a key never do two things. `Insert_Text` goes through the path of a paste. A holder sends no key and no press.
+
+The design: `src/md/features/accessibility.md`, "2. The assistive role".
+
+Do not use: synthetic input, accessibility action, pattern.
+
+### Assistive role
+
+The assistive role is the role that a screen reader, a magnifier or a switch input fills: it reads the semantic trees of the windows through the compositor and acts through declared actions.
+
+The root service gives it after a check against the contract and its conformance suite. Its holder gets a read-only handle of the frame tables of each window, the list of the windows, the focus, and the assistive keys; never a pixel and never another key. The bar shows a mark while a holder reads. Designed, not built.
+
+The design: `src/md/features/accessibility.md`, "2. The assistive role".
+
+Do not use: accessibility bus, accessibility client, AT.
+
+### Assistive key
+
+The assistive key is the key that the setting `assistive_key` names, Insert or Caps Lock, whose combinations the compositor gives to the holder of the assistive role and to no window.
+
+A screen reader uses it for its own commands. The compositor keeps it as it keeps the key super. The switch keys of the setting `switch_keys` follow the same path. The holder receives no other key: the change of the value of a field in the semantic tree gives the echo of a typed character.
+
+The design: `src/md/features/accessibility.md`, "2. The assistive role".
+
+Do not use: screen reader key, modifier grab.
+
 ### Damage by difference
 
 Damage by difference is the damage rectangles that the interface package finds by a comparison of the draw table of this frame with the draw table of the frame before.
