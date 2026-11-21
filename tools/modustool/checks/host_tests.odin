@@ -359,4 +359,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_INTERNAL + "/settings/appearance_rule",
 	foundation.SOURCE_FOLDER_CONTRACT + "/venus_vulkan",
 	foundation.SOURCE_FOLDER_INTERNAL + "/root/device_stop",
+	foundation.SOURCE_FOLDER_PUBLIC + "/quic_server",
+	foundation.SOURCE_FOLDER_INTERNAL + "/terminal/grid_resize",
+	foundation.SOURCE_FOLDER_CONTRACT + "/memory_screen",
 }

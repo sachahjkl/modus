@@ -99,6 +99,29 @@ input_of_record_refuses_a_kind_that_names_no_input :: proc(t: ^testing.T) {
 	given, ok = input_of_record(list_record)
 	testing.expect(t, ok)
 	testing.expect_value(t, given, Input_Record{kind = .List_First, list_first = 3})
+
+	// Resized border: refuses 0, past COLUMNS_LIMIT, past ROWS_LIMIT, and max(u64).
+	bad_resizes := [?][2]u64{
+		{0, 0},
+		{0, 10},
+		{10, 0},
+		{COLUMNS_LIMIT + 1, 10},
+		{10, ROWS_LIMIT + 1},
+		{max(u64), max(u64)},
+	}
+	for pair in bad_resizes {
+		resized_record := ring.Record{kind = u32(Input.Resized), values = {0 = pair[0], 1 = pair[1]}}
+		given, ok = input_of_record(resized_record)
+		testing.expectf(t, !ok && given == Input_Record{}, "Resized %dx%d must be refused", pair[0], pair[1])
+	}
+	resized_ok := ring.Record{kind = u32(Input.Resized), values = {0 = 1, 1 = 1}}
+	given, ok = input_of_record(resized_ok)
+	testing.expect(t, ok)
+	testing.expect_value(t, given, Input_Record{kind = .Resized, columns = 1, rows = 1})
+	resized_max := ring.Record{kind = u32(Input.Resized), values = {0 = COLUMNS_LIMIT, 1 = ROWS_LIMIT}}
+	given, ok = input_of_record(resized_max)
+	testing.expect(t, ok)
+	testing.expect_value(t, given, Input_Record{kind = .Resized, columns = COLUMNS_LIMIT, rows = ROWS_LIMIT})
 }
 
 // The key serial of an Edit record is kept only up to the newest serial

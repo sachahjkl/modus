@@ -50,13 +50,12 @@
 // main.odin: the endpoint, the server and the loop. draw.odin: the window.
 package quic_echo
 
-import "modus:contract/datagram"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:display"
-import "modus:network"
 import "modus:quic"
+import "modus:quic_server"
 import "modus:random"
 import "modus:system"
 
@@ -99,27 +98,8 @@ TABLE_PAGES :: (CONNECTION_BYTES + STREAM_BYTES + ECHO_BYTES + system.PAGE_SIZE 
 APPLICATION_PROTOCOL :: "kernel-remote"
 IDLE_TIMEOUT_MILLISECONDS :: 30_000
 
-// The datagram region: 256 places of 2048 bytes.
-PLACE_SIZE :: 2048
-PLACE_COUNT :: datagram.REGION_PAGES * system.PAGE_SIZE / PLACE_SIZE
 RECEIVE_PLACES :: 96 // Places 0 to 95: datagrams that arrive. The others: datagrams to send.
-SEND_TAG :: 1000 // Tags from 1000: a Send of place tag - 1000.
-CALL_TAG :: 100_000 // Info and Release.
-// The tag of a Validate: its top bit, the low 27 bits of the generation of
-// the record, and the place of the record in the low 4 bits. A result that
-// comes after its record ended and the place was taken again names the old
-// generation, and confirms nothing: 2^27 records would have to be taken
-// in one round of the ring for it to match.
-VALIDATE_TAG :: u32(1) << 31
-VALIDATE_PLACE_BITS :: 4
-VALIDATE_GENERATION_MASK :: (u64(1) << (31 - VALIDATE_PLACE_BITS)) - 1
-#assert(CAPACITY <= 1 << VALIDATE_PLACE_BITS)
-// Commands that the ring did not take: a Send or a Receive names one place,
-// and a place is in one command at most; a Release follows a Send or a
-// datagram that arrived, and the releases of one pass are at most the
-// datagrams of the pass and the records that ended.
-// A Validate follows a datagram that arrived, as a Release does.
-HELD_CAPACITY :: PLACE_COUNT + 2 * RECEIVE_PLACES + CAPACITY
+#assert(CAPACITY <= quic_server.MAX_CAPACITY)
 
 LOG_LIMIT :: 50 // Lines of connections in one second at most: a client that opens many must not fill the log limit of the process.
 
@@ -149,8 +129,6 @@ echo_buffers: [][ECHO_BUFFER_SIZE]u8
 public_key: [32]u8
 weak_seed: bool // The seed is weaker than "processor": no key, no endpoint.
 listen_port: u16
-local_address: u32 // The address of this machine: the source of each datagram, in its UDP checksum.
-datagrams_malformed: u64 // Datagrams with no whole UDP header: the network service never gives one.
 
 // The echo of one stream: the bytes read and not yet written back.
 Stream_Echo :: struct {
@@ -169,21 +147,10 @@ Echo :: struct {
 }
 echoes: [CAPACITY]Echo
 
-endpoint: ring.Ring
-region: []u8
-free_places: [PLACE_COUNT - RECEIVE_PLACES]u32
-free_count: int
-held_commands: [HELD_CAPACITY]ring.Record
-held_command_count: int
-log_second: u64
-log_count: u64
+quic_endpoint: quic_server.Endpoint
+log_budget := quic_server.Log_Budget{limit = LOG_LIMIT}
 counters_logged: quic.Server_Counters
-// The Sends that the network service refused (a remote no longer admitted,
-// the limit of 3 times for a remote that is not validated), and the status
-// of the last one: they are on the log with the counts.
-sends_refused: u64
 sends_refused_logged: u64
-send_refusal_last: u32 // The status word of the last refused Send, as the network service wrote it.
 counters_second: u64
 
 fail :: proc "contextless" (text: string) -> ! {
@@ -191,120 +158,18 @@ fail :: proc "contextless" (text: string) -> ! {
 	system.stop(.Failed)
 }
 
+held_overflow_fail :: proc "contextless" () {
+	fail("the held commands passed their bound")
+}
+
 now_microseconds :: proc "contextless" () -> u64 {
 	return system.nanoseconds() / 1000
-}
-
-place_bytes :: proc "contextless" (place: u32) -> []u8 {
-	return region[int(place) * PLACE_SIZE:][:PLACE_SIZE]
-}
-
-// command_push_or_hold puts a command in the ring. A full ring keeps it for
-// the next pass: no place and no admitted remote leaks.
-command_push_or_hold :: proc "contextless" (record: ring.Record) {
-	if held_command_count == 0 && ring.push(&endpoint.commands, record) {
-		return
-	}
-	if held_command_count == HELD_CAPACITY {
-		fail("the held commands passed their bound")
-	}
-	held_commands[held_command_count] = record
-	held_command_count += 1
-}
-
-held_commands_push :: proc "contextless" () {
-	done := 0
-	for done < held_command_count && ring.push(&endpoint.commands, held_commands[done]) {
-		done += 1
-	}
-	copy(held_commands[:], held_commands[done:held_command_count])
-	held_command_count -= done
-}
-
-post :: proc "contextless" (place: u32) {
-	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Receive), tag = place, values = {0 = u64(place) * PLACE_SIZE, 1 = PLACE_SIZE}})
-}
-
-// data_bytes gives the place of the data of a datagram to send: after the
-// place of its UDP header. QUIC writes its packets there.
-data_bytes :: proc "contextless" (place: u32) -> []u8 {
-	return place_bytes(place)[network.UDP_HEADER:]
-}
-
-// send sends length bytes of data that are at data_bytes(place). This
-// process writes the UDP header and a real checksum: the network service
-// computes none, and a remote can refuse a datagram with no checksum.
-send :: proc "contextless" (place: u32, length: int, remote: quic.Remote) {
-	whole := network.udp_header_write(place_bytes(place), local_address, remote.address, listen_port, remote.port, length)
-	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Send), tag = SEND_TAG + place, values = {0 = u64(place) * PLACE_SIZE, 1 = u64(whole), 2 = u64(remote.address)}})
-}
-
-// validate tells the network service that the remote of the record at
-// place proved its address: it lifts the limit of 3 times the bytes that
-// came from it. It goes before the Sends of the record, which the ring
-// keeps in order. Its completion goes to the server
-// (server_validation_confirmed) when the record of its tag is still the
-// record of the place (validation_completed).
-validate :: proc "contextless" (remote: quic.Remote, place: int) {
-	tag := VALIDATE_TAG | u32(records[place].generation & VALIDATE_GENERATION_MASK) << VALIDATE_PLACE_BITS | u32(place)
-	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Validate), tag = tag, values = {0 = u64(remote.address), 1 = u64(remote.port)}})
-}
-
-// validation_completed gives the result of a Validate to the server, for
-// the record that its tag names, if that record still holds the place.
-validation_completed :: proc "contextless" (completion: ring.Record) {
-	place := int(completion.tag & ((1 << VALIDATE_PLACE_BITS) - 1))
-	generation_bits := u64(completion.tag & ~VALIDATE_TAG) >> VALIDATE_PLACE_BITS
-	if place >= CAPACITY || !records[place].in_use || records[place].generation & VALIDATE_GENERATION_MASK != generation_bits {
-		return
-	}
-	quic.server_validation_confirmed(&server, place, records[place].generation, datagram.Status(completion.kind) == .Ok && completion.values[0] == 1)
-}
-
-// release asks the network service to forget a remote: after the Sends to
-// it, which the ring keeps in order.
-release :: proc "contextless" (remote: quic.Remote) {
-	command_push_or_hold(ring.Record{kind = u32(datagram.Command.Release), tag = CALL_TAG, values = {0 = u64(remote.address), 1 = u64(remote.port)}})
-}
-
-place_take :: proc "contextless" () -> (place: u32, ok: bool) {
-	if free_count == 0 {
-		return 0, false
-	}
-	free_count -= 1
-	return free_places[free_count], true
-}
-
-address_text :: proc "contextless" (buffer: []u8, remote: quic.Remote) -> string {
-	writer := system.Writer{buffer = buffer}
-	network.address_write(&writer, remote.address)
-	system.write_bytes(&writer, transmute([]u8)string(" port "))
-	system.write_unsigned(&writer, u64(remote.port))
-	return system.written(&writer)
-}
-
-hex_text :: proc "contextless" (buffer: []u8, bytes: []u8) -> string {
-	digits := "0123456789abcdef"
-	count := 0
-	for byte in bytes {
-		if count + 2 > len(buffer) {
-			break
-		}
-		buffer[count], buffer[count + 1] = digits[byte >> 4], digits[byte & 0x0F]
-		count += 2
-	}
-	return string(buffer[:count])
 }
 
 // log_allowed says if one more line of a connection goes on the log in this
 // second.
 log_allowed :: proc "contextless" () -> bool {
-	second := system.time() / 1000
-	if second != log_second {
-		log_second, log_count = second, 0
-	}
-	log_count += 1
-	return log_count <= LOG_LIMIT
+	return quic_server.log_allowed(&log_budget, system.time())
 }
 
 end_reason :: proc "contextless" (connection: ^quic.Connection) -> string {
@@ -390,7 +255,7 @@ echo_work :: proc "contextless" () {
 				// alert is 0x100 plus the alert.
 				reason: [quic.CLOSE_REASON_KEPT]u8
 				reason_text := printable_text(reason[:], connection.close_reason_of_peer[:connection.close_reason_of_peer_length])
-				peer := value_kinds.text_field(address_text(text[:], record.remote), 27)
+				peer := value_kinds.text_field(quic_server.address_text(text[:], record.remote), 27)
 				cause := value_kinds.text_field(end_reason(connection), 23)
 				client_reason := value_kinds.text_field(reason_text, 54)
 				code := value_kinds.Hexadecimal_Sixteen_Digits(connection.close_error_code)
@@ -457,89 +322,14 @@ counters_log :: proc "contextless" () {
 	// window, not on the log.
 	counters.datagrams = counters_logged.datagrams
 	counters.authenticity_checks = counters_logged.authenticity_checks
-	if counters == counters_logged && sends_refused == sends_refused_logged {
+	if counters == counters_logged && quic_endpoint.sends_refused == sends_refused_logged {
 		return
 	}
 	counters_second = second
 	counters_logged = server.counters
-	sends_refused_logged = sends_refused
+	sends_refused_logged = quic_endpoint.sends_refused
 	system.log_fact(.Info, Server_Counts{accepted = counters.accepted, ended = counters.ended, retries = counters.retries, tokens_refused = counters.tokens_refused + counters.tokens_expired, not_authentic = counters.not_authentic, too_small = counters.too_small, refused_by_limit = counters.refused_remote_limit + counters.refused_handshake_limit, refused_full = counters.refused_full})
-	system.log_fact(.Info, Server_Budget_Counts{over_budget = counters.over_budget, over_address_budget = counters.over_address_budget, address_table_full = counters.address_table_full, tokens_used_again = counters.tokens_used_again, version_negotiations = counters.version_negotiations, sends_refused = sends_refused, last_send_status = u64(send_refusal_last)})
-}
-
-// exchange gives the server the datagrams that arrived, runs its timers,
-// writes back the streams, and sends what the connections have.
-exchange :: proc "contextless" (arrived: []ring.Record) -> (deadline: u64) {
-	now := now_microseconds()
-	// The datagrams of known connections first: a flood of new identifiers
-	// never makes them wait behind its cryptography. The order is decided
-	// once for the batch, so each datagram is given once.
-	//
-	// A place holds a whole UDP datagram. The UDP checksum is not checked
-	// (the rule Do_Not_Verify): QUIC authenticates each packet, so a
-	// datagram that the wire damaged fails there, and a second pass over
-	// the bytes adds nothing.
-	batch: [RECEIVE_PLACES]quic.Server_Datagram
-	batch_count := 0
-	for record in arrived {
-		data, whole := network.udp_data_read(place_bytes(record.tag)[:min(record.values[1], PLACE_SIZE)], u32(record.values[2]), local_address, .Do_Not_Verify)
-		if !whole {
-			datagrams_malformed += 1
-			continue
-		}
-		batch[batch_count] = {data, quic.Remote{u32(record.values[2]), u16(record.values[3])}}
-		batch_count += 1
-	}
-	order: [RECEIVE_PLACES]int
-	count := quic.server_batch_order(&server, batch[:batch_count], order[:])
-	for index in order[:count] {
-		bytes, remote := batch[index].bytes, batch[index].remote
-		answer_place, has_place := place_take()
-		answer: []u8
-		if has_place {
-			answer = data_bytes(answer_place)
-		}
-		outcome := quic.server_datagram_receive(&server, bytes, remote, answer, now)
-		if outcome.answer_length > 0 {
-			send(answer_place, outcome.answer_length, remote)
-		} else if has_place {
-			free_places[free_count] = answer_place
-			free_count += 1
-		}
-		if outcome.validate_remote && outcome.record >= 0 {
-			validate(remote, outcome.record)
-		}
-		if outcome.release_remote {
-			release(remote)
-		}
-	}
-	quic.server_time_passes(&server, now)
-	for round in 0 ..< 4 {
-		echo_work()
-		sent := 0
-		for free_count > 0 {
-			place, _ := place_take()
-			length, remote := quic.server_datagram_send(&server, data_bytes(place), now)
-			if length == 0 {
-				free_places[free_count] = place
-				free_count += 1
-				break
-			}
-			send(place, length, remote)
-			sent += 1
-		}
-		if sent == 0 {
-			break
-		}
-		_ = round
-	}
-	ended: [CAPACITY]quic.Remote
-	ended_count := quic.server_sweep(&server, ended[:])
-	for remote in ended[:ended_count] {
-		release(remote)
-	}
-	counters_log()
-	return quic.server_deadline(&server)
+	system.log_fact(.Info, Server_Budget_Counts{over_budget = counters.over_budget, over_address_budget = counters.over_address_budget, address_table_full = counters.address_table_full, tokens_used_again = counters.tokens_used_again, version_negotiations = counters.version_negotiations, sends_refused = quic_endpoint.sends_refused, last_send_status = u64(quic_endpoint.send_refusal_last)})
 }
 
 // key_make makes the Ed25519 key of this server from the generator of the
@@ -606,34 +396,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 	}
 	text: [64]u8
-	system.log_fact(.Info, Public_Key_Made{public_key = value_kinds.text_field(hex_text(text[:], public_key[:]), PUBLIC_KEY_FIELD_BYTES)})
-	status: system.Status
-	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
+	system.log_fact(.Info, Public_Key_Made{public_key = value_kinds.text_field(quic_server.hex_text(text[:], public_key[:]), PUBLIC_KEY_FIELD_BYTES)})
+	switch quic_server.endpoint_open(&quic_endpoint, ctx, RECEIVE_PLACES, CAPACITY) {
+	case .None:
+	case .No_Ring:
 		fail("no endpoint: the process has no grant of the network")
-	}
-	address, map_status := system.memory_map(ctx.handles[datagram.GRANT_REGION], {.Write})
-	if map_status != .Ok {
+	case .No_Region:
 		fail("no datagram region")
-	}
-	region = ([^]u8)(address)[:datagram.REGION_PAGES * system.PAGE_SIZE]
-	system.send(&endpoint.commands, ring.Record{kind = u32(datagram.Command.Info), tag = CALL_TAG})
-	info: ring.Record
-	for {
-		record, has := system.receive(&endpoint.completions)
-		if has {
-			info = record
-			break
-		}
-		wait: system.Wait
-		system.wait_records(&wait, &endpoint.completions)
-		system.wait_end(&wait, system.time() + 2000)
-	}
-	grant, grant_known := datagram.grant_unpack(info.values[6])
-	if !grant_known || grant.tcp || !grant.listen {
+	case .Info_Timeout, .Bad_Grant, .Bad_Config:
 		fail("the grant is not a listen grant of UDP")
 	}
-	listen_port = grant.port
-	local_address = u32(info.values[0])
+	quic_endpoint.on_held_overflow = held_overflow_fail
+	listen_port = quic_endpoint.listen_port
 	// The connections and their echo: one mapping of this process.
 	memory, memory_status := system.memory_create(TABLE_PAGES)
 	table, table_status := system.memory_map(memory, {.Write})
@@ -650,14 +424,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The server keeps its own copy of the key. A plain store of zeros to a
 	// record that is not read again can be removed by the compiler.
 	quic.secret_erase(&configuration.tls.server_private_key, size_of(configuration.tls.server_private_key))
-	for place in 0 ..< RECEIVE_PLACES {
-		post(u32(place))
-	}
-	for place in RECEIVE_PLACES ..< PLACE_COUNT {
-		free_places[free_count] = u32(place)
-		free_count += 1
-	}
-	system.wake_reader(&endpoint.commands)
+	quic_server.endpoint_post_receives(&quic_endpoint)
+	quic_server.endpoint_wake(&quic_endpoint)
 	system.log_fact(.Info, Listening{listen_port = u64(listen_port), capacity = u64(CAPACITY), connection_size = value_kinds.Size_In_Kibibytes(size_of(quic.Connection) / 1024), streams = u64(STREAMS_PER_CONNECTION), stream_size = value_kinds.Size_In_Kibibytes(size_of(quic.Stream) / 1024)})
 
 	arrived: [RECEIVE_PLACES]ring.Record
@@ -665,35 +433,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	changed := true
 	for {
 		wait := system.wait_begin()
-		held_commands_push()
-		count := 0
-		for record in system.receive(&endpoint.completions) {
-			switch {
-			case record.tag < RECEIVE_PLACES:
-				if datagram.Status(record.kind) == .Ok {
-					arrived[count] = record
-					count += 1
-				} else {
-					post(record.tag)
-				}
-			case record.tag & VALIDATE_TAG != 0:
-				validation_completed(record)
-			case record.tag >= SEND_TAG && record.tag < SEND_TAG + PLACE_COUNT:
-				free_places[free_count] = record.tag - SEND_TAG
-				free_count += 1
-				if datagram.Status(record.kind) != .Ok {
-					sends_refused += 1
-					send_refusal_last = record.kind
-				}
-			}
-		}
-		deadline := exchange(arrived[:count])
-		// The places that the server read are free again: each record copied
-		// its datagram.
-		for record in arrived[:count] {
-			post(record.tag)
-		}
-		system.wake_reader(&endpoint.commands)
+		count := quic_server.completions_drain(&quic_endpoint, &server, records[:], arrived[:])
+		deadline := quic_server.exchange(&quic_endpoint, &server, records[:], arrived[:count], now_microseconds(), echo_work)
+		counters_log()
+		quic_server.endpoint_wake(&quic_endpoint)
 		if count > 0 {
 			changed = true
 		}
@@ -714,10 +457,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				picture_waits = true
 			}
 		}
-		if !ring.empty(&endpoint.completions) {
+		if !ring.empty(&quic_endpoint.datagrams.completions) {
 			continue
 		}
-		system.wait_records(&wait, &endpoint.completions)
+		system.wait_records(&wait, &quic_endpoint.datagrams.completions)
 		display.wait_events(&wait, &window)
 		limit := changed && !picture_waits ? last_draw + 100 : now + 1000
 		if deadline != max(u64) {

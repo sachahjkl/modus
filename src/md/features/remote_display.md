@@ -208,12 +208,12 @@ The token is the one exception to "a client is a public key" ([remote_client_key
 
 ## State
 
-The first layer and protocol version 2 are built on the side of the system: the service `remote_display`, the capture face and the input face of the compositor (including pointer shape metadata, machine-initiated pointer warp masks, and per-viewer input echo counters keyed by generation), the protocol v2 contract (`Pointer_Shape`, `Pointer_Picture`, `Pointer_Warp`, `Viewer_Frame_Start.input_echo_count`, `Input_Echo_Tracker`) and the screen piece coder in `modus:contract/remote_display` with their host tests and the fuzz target `remote_display_records`, the uses of a client key persisted in disk grant table format 3 (`Calls`, `View`, `Input`) across restarts, `remote_display_allow`, the mark in the bar, and the interactive viewer list popover opened from the bar mark with per-viewer disconnect (`Capture_Disconnect`). The peer of the tool speaks protocol version 2 and verifies monotonic input echo counts on frames and warps.
+The first layer and protocol version 2 are built on the side of the system: the shared QUIC server support package (`src/library/modus/quic_server`, used by `remote`, `remote_display`, and `quic_echo`), the service `remote_display`, the capture face and the input face of the compositor (including pointer shape metadata, machine-initiated pointer warp masks, and per-viewer input echo counters keyed by generation), the protocol v2 contract (`Pointer_Shape`, `Pointer_Picture`, `Pointer_Warp`, `Viewer_Frame_Start.input_echo_count`, `Input_Echo_Tracker`) and the screen piece coder in `modus:contract/remote_display` with their host tests and the fuzz target `remote_display_records`, the headless virtual framebuffer contract and backing state model (`src/library/modus/contract/memory_screen`) with its host tests, the uses of a client key persisted in disk grant table format 3 (`Calls`, `View`, `Input`) across restarts, `remote_display_allow`, the mark in the bar, and the interactive viewer list popover opened from the bar mark with per-viewer disconnect (`Capture_Disconnect`). The peer of the tool speaks protocol version 2 and verifies monotonic input echo counts on frames and warps.
 
 Left of the first layer: the native viewer, a program of its own that uses `gui_toolkit`; the session in front of layer 4. The layers, in their order:
 
 1. The viewer, a program of its own that uses `gui_toolkit`, and the rest of the first layer above.
-2. The screen of memory, with its size from the start row and from a viewer.
+2. Compositor wiring for the screen of memory (`src/library/modus/contract/memory_screen` is built), with its size from the start row and from a viewer.
 3. The interface for agents.
 4. A gateway to a browser by WebTransport, with the display token.
 5. A gateway to a browser by WebSocket, with the same token.
