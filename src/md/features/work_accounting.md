@@ -9,7 +9,7 @@ A shared service does work for many clients: the storage service commits, the co
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "1. Small kernel with a small, counted interface", and "5. Kernel off the data path": a call between two processes needs no kernel entry, and the kernel does not learn where a call starts and ends.
 - **The budget model of the kernel.** `Memory_Create`, `Thread_Create` and `Process_Create` take a budget handle with the right Spend. `Budget_Create` moves pages, process slots, thread slots and log records to a new budget. The time of a thread counts in its budget and in each budget above it, and the limit of each holds in each period of 100 ms. When the last handle of a budget closes, what it holds goes back to the budget that it came from (`Budget_Amounts` in `src/library/contract/operation/operation.odin`).
 - **A service never stops or stalls for one client.** A refusal of one client is an error record for that client; the other clients see nothing ([supervision.md](supervision.md), "The subtle points").
-- **Property 23, roles as contracts** (designed in another branch): each shared service is the holder of a role, and a role contract is the place to say what a client pays.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "23. A role is a contract; its implementation is replaceable": each shared service is the holder of a role, and a role contract is the place to say what a client pays.
 
 ## Where a client can exhaust a shared service today
 
@@ -50,7 +50,7 @@ The root service gives the work budget to the service in the record `Connect`, b
 
 ### The work thread
 
-The service creates one work thread for each connection, with `Thread_Create` on the work budget. The work thread runs the calls of that connection, in their order. Its stack and its thread area are pages of the work budget.
+The service creates one work thread for each connection, with `Thread_Create` on the work budget, so the thread is created on the budget of the client. The work thread runs the calls of that connection, in their order. Its stack and its thread area are pages of the work budget. It costs one thread slot of the client and 19 pages of its budget, so a client with eight connections pays eight: the cost is the client's, and it pays it at the `Connect`, never at a call.
 
 - **Time.** The kernel counts each run of the work thread in the work budget, in the budget of the client and in each budget above. A client that spends its time spends the time of its own calls. Its work thread waits for the next period, and every other work thread and the thread of the service run.
 - **Memory.** The work thread makes the working state of the connection with the work budget: its places, its pending blocks, its arenas ([memory_without_a_bound.md](memory_without_a_bound.md)). A table of the service for all connections, such as the 512 places, becomes a table for each connection, sized by the work budget of that connection.
@@ -104,6 +104,7 @@ The report of a process (`monitor.processes()`, `Process_Report`) adds the work 
 - **One fixed table for all connections, with a bound for each connection.** It fixes the share of each client at the build of the service, and the sum of the bounds is the size of the table: a client that needs more cannot pay for more.
 - **The root service pays for the connections, as today.** A client then reaches the budget of the root service through the count of its connections, the process that holds every grant.
 - **A work thread that runs the shared step under a lock.** The stall of every client for the next period of one client, which is the fault that this design removes.
+- **A pool of work threads.** A thread counts its time in the budget that it was created on, and the kernel cannot move a thread from one budget to another at each call. A pool then needs a `Thread_Create` on the budget of the client for each call, a cost on the path of each call, or a thread that serves several clients and charges none of them.
 
 ## The subtle points
 
@@ -124,7 +125,6 @@ The report of a process (`monitor.processes()`, `Process_Report`) adds the work 
 
 - **The time of a device.** A commit spends the time of the disk, which no budget counts. A client that asks for many reads delays the reads of the others through the queue of the device. A count of the blocks of each connection, as a second order beside the step debt, is the first candidate.
 - **The amount of a work budget.** A base in the role contract, and a part that the client asks for. The size of each base comes from a measure of each service under the test of its role.
-- **The thread slots.** One work thread for each connection costs one thread slot of the client and 19 pages of its budget. A client with eight connections pays eight. A pool of work threads, each created on the budget of one client for one call, is the other form: it has no cost at rest and a cost of `Thread_Create` for each call.
 
 ## State
 

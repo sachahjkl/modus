@@ -11,8 +11,8 @@ The model is the one that Erlang found: an actor is isolated, a crashed actor st
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "4. Base interface: non-blocking command buffers", and "6. One communication mechanism between processes": no new kernel operation for a call, and no second way to signal a stop.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "16. Removed concepts": no signals, no init system with units. A start is asked for by a process.
 - [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "22. General mechanisms, and a plain expression for each frequent task": one mechanism for a restart, whoever the starter is.
-- **Property 23, roles as contracts** (designed in another branch): a client holds a connection to a role, which the root service gives, and never discovers a holder. A restart changes the holder of a role and nothing that the client names.
-- **The split of the root service into a core and delegated services** (designed in another branch): the part of the system that nothing can restart must be small.
+- [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "23. A role is a contract; its implementation is replaceable", and [roles_and_contracts.md](roles_and_contracts.md): a client holds a connection to a role, which the root service gives, and never discovers a holder. A restart changes the holder of a role and nothing that the client names.
+- [../api/root_service_split.md](../api/root_service_split.md): the part of the system that nothing can restart must be small.
 - **A test checks a condition, never a speed** ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The bounds of the tests"). A restart rule that a test checks must give the same result on a slow and on a fast machine.
 
 ## The chosen form
@@ -62,7 +62,7 @@ The way to make a group smaller is to move a ring out of the context and into a 
 A start row keeps its count of restarts, at most 16. It gains one field: the **restart window**, in seconds of the clock of the system. The rule: past the count of restarts inside one window, the row starts no more, and the starter escalates (below).
 
 - **The zero value is the whole run.** A row with no window counts its restarts for the whole run of the machine, which is the rule of today. So no clock decides the restarts of a row that names no window.
-- **This changes a rule of [start_policy.md](start_policy.md).** That file refuses a period of time for the count, "so no clock decides it". The reason holds for a row that does not ask for a window. A machine that runs for months needs the window for a holder that the design wants to start again: with no window, a rare fault once a week spends the count, and the role then stays stopped. When the window is built, [start_policy.md](start_policy.md) changes in the same commit.
+- **Only a row that names a window uses the clock.** [start_policy.md](start_policy.md) refuses a period of time as the only bound, "so no clock decides it", and that reason holds for each row that names no window. A machine that runs for months needs the window for a holder that the design wants to start again: with no window, a rare fault once a week spends the count, and the role then stays stopped. Example: `restarts = 5` and `restart_window = 60` give at most 5 restarts in each minute, as the restart intensity of Erlang.
 - **A test checks the order, never the time.** A machine case gives a row a count of 2 and a window of the whole run, stops the holder three times, and checks the escalation after the third stop. A window shorter than the whole run is tested on the host, with the clock as an argument of the pure rule.
 - **The bound of a start policy from the disk** stays in the root service, as today: 16 restarts of a name, with the same window field in the command `Start`.
 

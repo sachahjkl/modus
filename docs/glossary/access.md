@@ -502,7 +502,7 @@ Do not use: service name, interface, well-known name, bus name.
 
 A role holder is the process to which the root service gave a role, for one scope: the machine, a session, one client or one device.
 
-The plan names the module of each holder, and the signed image names a default one. The root service checks the module against the role contract before it gives the role, and gives the grants that the role needs. A holder of the display, the input or the console from the disk needs a choice of principal 0, measured into PCR 12. Example: the compositor holds `Display` for the machine.
+A role has one holder in each scope; the assistive role is the one exception, with several holders at once. The plan names the module of each holder, and the signed image names a default one. The root service checks the module against the role contract before it gives the role, and gives the grants that the role needs. A holder of the display, the input, the console or the assistive role from the disk needs a choice of principal 0, measured into PCR 12. Example: the compositor holds `Display` for the machine.
 
 The design: `src/md/features/roles_and_contracts.md`.
 
@@ -918,7 +918,7 @@ Do not use: discovery, enrolment, bonding, trust on first use.
 
 A pairing code is a secret of one use, with an address, that one machine shows in the window of `unlock` and that the principal gives to the other machine.
 
-It holds 50 bits as ten groups of base32, and a QR code holds the same with the whole identity key. The two machines run a PAKE over the TLS exporter of their connection with it, so both prove the same code and bind it to both identity keys. One wrong code ends the pairing on both sides, and a code ends 10 minutes after it was shown. Designed, not built.
+It holds 50 bits as ten groups of base32, and a QR code holds the same with the whole identity key. The two machines run the PAKE CPace over Ristretto255 over the TLS exporter of their connection with it, so both prove the same code and bind it to both identity keys. One wrong code ends the pairing on both sides, and a code ends 10 minutes after it was shown. Designed, not built.
 
 The design: `src/md/features/several_machines.md`, "Pairing, and no discovery".
 
@@ -936,13 +936,33 @@ Do not use: peer (for this), node, device, remote host, cluster member.
 
 ### Machine list
 
-The machine list is the record that the signing key of a principal signs: the identity key of each of its machines with its uses, and a number that only grows.
+The machine list is the record that the principal root key of a principal signs: for each of its machines, the identity key of the machine, the public signing key of the principal there and its uses, and a number that only grows.
 
-Each machine of the list keeps the newest list that it has seen and refuses a lower number, and its root service derives from it a row of the client table for each other machine. So a pairing with one machine of the list reaches all of them, and a lost machine is removed by a new list signed on any other. It has the form of a release pointer. Designed, not built.
+Each machine of the list keeps the newest list that it has seen and refuses a lower number, and its root service derives from it a row of the client table for each other machine. So a join on one machine of the list reaches all of them, and a lost machine is removed by a new list that the root key signs on any other. It has the form of a release pointer. Designed, not built.
 
 The design: `src/md/features/several_machines.md`, "A principal across machines".
 
 Do not use: device list, roster, keyring.
+
+### Principal root key
+
+The principal root key is the Ed25519 key pair whose public key is the identity of a principal across its machines, and whose secret key stays on no machine.
+
+It signs the machine list: the keys that the principal has on each machine, which each machine makes and seals with its own TPM. The principal brings it to a machine for a join or a removal, from a removable disk or a recovery text, and takes it away after the act. So the theft of one machine never gives it, and a stolen machine is removed with no change of the identity. It is not the signing key of the system, and not a key of a machine. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "A principal across machines".
+
+Do not use: master key, primary key, account key.
+
+### Signed grant
+
+A signed grant is a record that the signing key of one principal signs for the principal root key of another principal: one object or one role of a machine of the giver, an end time, and a grant serial.
+
+The machine that serves it checks the signature against the machine list of the giver, the key of the receiver against the machine list of the receiver, the end time and the revocation list of the giver, then makes a connection for the receiver. A grant has a short life of at most one day, or names a revocation list. The receiver cannot give it on. Designed, not built.
+
+The design: `src/md/features/several_machines.md`, "Sharing between two principals".
+
+Do not use: token, capability token, invitation, certificate.
 
 ### Remote role
 

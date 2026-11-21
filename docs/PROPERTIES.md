@@ -1,6 +1,6 @@
 # Kernel properties
 
-This document gives the 24 properties on which `modus` is built: the rules that every part of the system obeys, what each rule forbids, and what it costs. They are the fundamental concepts of the system: a design that breaks one is wrong until the property itself changes.
+This document gives the 25 properties on which `modus` is built: the rules that every part of the system obeys, what each rule forbids, and what it costs. They are the fundamental concepts of the system: a design that breaks one is wrong until the property itself changes.
 
 ## How to read this document
 
@@ -13,8 +13,8 @@ This document gives the 24 properties on which `modus` is built: the rules that 
 | Section | What it says |
 |---|---|
 | "Objective", "Assumptions" | What the system aims at, and the three rules of every decision |
-| "Summary" | The 24 properties in one table, with their status |
-| "1. Small kernel with a small, counted interface" to "24. Every input of a process passes through a channel that can be recorded" | One section for each property |
+| "Summary" | The 25 properties in one table, with their status |
+| "1. Small kernel with a small, counted interface" to "25. Take the gold, leave the debt" | One section for each property |
 | "Tensions between properties" | Where two properties pull against each other, and the answer |
 | "Reuse list", "Open decisions", "First milestone" | What the system takes from others, what is still open, and the first end-to-end system |
 
@@ -89,6 +89,7 @@ Three rules apply to every decision:
 | 22 | General mechanisms, and a plain expression for each frequent task | Decided |
 | 23 | A role is a contract; its implementation is replaceable | Decided (designed, not built) |
 | 24 | Every input of a process passes through a channel that can be recorded | Decided (mechanism designed, not built) |
+| 25 | Take the gold, leave the debt | Decided |
 
 ## 1. Small kernel with a small, counted interface
 
@@ -261,7 +262,7 @@ Status: Decided. The detail below is proposed.
 
 **In short.** A module is named by the hash of its bytes, and a system is a list of such hashes. Two machines with the same list run the same code.
 
-- **Rule**: The identity of a module is the hash of its content. A module refers to another module by hash, never by path or by name.
+- **Rule**: The identity of a module is the hash of its content. A module refers to another module by hash, never by path or by name. A running service is reached by a local name of the start grant set of the caller, which the plan binds to a module hash; the name is never global.
 - **Rule**: A system is a list of hashes. Two machines with the same list run the same code.
 - **Rule**: When a process compiles code at run time (a compiler of WebAssembly, of a script), that code is not a module and has no hash. It is confined to the process that wrote it, in its own memory, and is never shared with another process or kept as a module. The compiler is a module, named by its hash, so the hash of the compiler names what the process can run. A page of such code is never writable and executable at once.
 - **Rule**: An upgrade writes a new list. A rollback selects an old list. Both are atomic. A rollback below the security version of the version floor of the TPM is refused: the publisher raises the security version only for a flaw that the old list would bring back (property 17).
@@ -566,19 +567,21 @@ Status: Decided. The mechanism is designed, not built.
 
 **In short.** The display, the console, the storage and each other role of the system is a typed contract. The root service gives each role to a process, and every other process depends on the contract, never on the module that fills it. A principal can put another module in the place of a role, or a module between a role and its clients.
 
-- **Rule**: The roles of the system are a closed set: the display and the input, the console, the terminal, the start policy, the storage, the network, each device class, the remote display, and the services `plans`, `projects` and `recipes`. A role name is a member of an enum, never a text.
+- **Rule**: The roles of the system are a closed list: the display and the input, the console, the assistive role and the speech, the terminal, the start policy, the storage, the network, each device class, the remote display, and the services `plans`, `projects` and `recipes`. A role name is a member of an enum, never a text.
+- **Rule**: A service that is not a role is reached as a declared dependency: the start grant set of the caller lists it under a local name, the plan binds that name to a module hash, and the root service refuses each name that the list does not hold. Such a service becomes a role when a second module must fill its place.
+- **Rule**: One holder per scope. A scope is the machine, a session, one client or one device, and a role has one holder in each of its scopes. The one exception is the assistive role: it takes several holders at once, each with its own ring, so a magnifier and a screen reader run together.
 - **Rule**: A role contract is a description in the module format: exports, record types, record outputs and record inputs. Its identity is the hash of that description, and it has a version. A module declares the role contracts that it fills.
 - **Rule**: The root service gives a role to a process, the role holder. Before it gives the role, it compares the descriptions of the module with the role contract, by the rule of the check of a replacement. A module that does not fill the contract does not get the role.
-- **Rule**: A process gets a connection to the holder of a role, and never finds one. It gets the connection in a context slot at its start, or with `connect(role.display)` when its process role holds that right. The root service makes the connection, then leaves the data path.
+- **Rule**: A process gets a connection to the holder of a role, and never finds one. It gets the connection in a context slot at its start, or with `connect(role.display)` when its start grant set holds that right. The root service makes the connection, then leaves the data path.
 - **Rule**: The plan says which module holds each role: `plan { roles = { display = catalog.compositor } }`. A change of a holder shows its difference, and takes effect only when the principal accepts it. The signed boot image gives the default holder of each role, so the system starts before any plan exists. No process looks up a role by a name at run time.
 - **Rule**: A process that fills a role contract can stand between a holder and its clients: a filter, an auditor, a nested compositor, the remote display. A client sees no difference, because it holds a connection to the contract only.
 - **Rule**: An event of a role is a record output of its contract. Each subscriber has its own typed ring, with no loss, which a revocation ends. The system has no broadcast, and no broker that sees the traffic.
 - **Rule**: Each role contract has a conformance suite. A holder must pass it, so a role that is replaceable is a checked fact.
 - **Rule**: The trust of a process comes from the role that the root service gave it, never from the name of its module.
 - **Forbids**: a message bus with a global namespace of text names; a registry of services by text name; the discovery of a service at run time; broadcast signals; a broker that sees the traffic between two processes; a client that names the module of a holder, compiles in a private part of it, or waits for a fact that only one holder writes; a trust that the name of a module gives.
-- **Cost**: Each role needs a contract with a version and a conformance suite. A contract that is too narrow makes a holder add a side path; a contract that is too wide makes each holder large. An interposed holder adds one hop to each call and each record, which is a cost to measure. A holder of a role in the trusted path (the display, the input, the console) sees the keys and draws the trusted surfaces: a module from the disk gets such a role only by a choice of principal 0, measured as the choice of a start policy is.
+- **Cost**: Each role needs a contract with a version and a conformance suite. A contract that is too narrow makes a holder add a side path; a contract that is too wide makes each holder large. An interposed holder adds one hop to each call and each record, which is a cost to measure. A holder of a role in the trusted path (the display, the input, the console, the assistive role) sees the keys, draws the trusted surfaces or reads each window: a module from the disk gets such a role only by a choice of principal 0, measured into PCR 12 as the choice of a start policy is. The rescue start policy takes the holders of the signed image.
 - **Reuse**: The interfaces of Wayland, as typed contracts with a version that a compositor fills. The protocols of Fuchsia FIDL and its capability routing, as a contract named by its type and given by a parent. The membranes of the capability systems (Mark S. Miller, "Robust Composition", 2006), as the form of an interposed holder. The portals of xdg-desktop-portal, as a role that a desktop fills with its own module. D-Bus, as the form that this property refuses (`src/md/features/roles_and_contracts.md`).
-- **Open**: the description of a face that is a ring and not a call: the window ring of the display, the terminal ring and the class rings of the devices carry handles, which a description of the module format cannot carry today. Whether each service that a process connects to is a role. The holder of a role in the trusted path that a principal chooses from the disk.
+- **Open**: the description of a face that is a ring and not a call: the window ring of the display, the terminal ring and the class rings of the devices carry handles, which a description of the module format cannot carry today.
 - **State**: designed, not built (`src/md/features/roles_and_contracts.md`). The root service gives each role to a module by its name, and many clients depend on the private protocol of the holder of today; the work that removes each dependency is in `ROADMAP.md`. The root service itself is split by this property into a core and delegated services (`src/md/api/root_service_split.md`).
 
 ## 24. Every input of a process passes through a channel that can be recorded
@@ -615,8 +618,27 @@ Status: Decided. The mechanism is designed, not built (`src/md/features/record_a
 - **Cost**: While a process is recorded, it runs one thread at a time, each read of the cycle counter is a fault, and a shared writer waits while the recorded process is between two input points. In the first layer a recorded thread that runs one turn with no kernel entry while a writer waits ends the history. The cost of each part is a measure to take (`src/md/features/record_and_replay.md`, "The size and the cost").
 - **Cost**: A process with many shared writers, such as the compositor, slows each of them while it is recorded.
 - **Reuse**: rr (Mozilla), whose design this follows most: one thread at a time, the trap of `rdtsc`, the CPUID faulting, the count of retired conditional branches that places an interrupt, a replay from checkpoints for a step back. QEMU record and replay, which records a whole machine at its devices. The deterministic simulation of FoundationDB and TigerBeetle, which send each source of change through one interface. Windows Time Travel Debugging and Pernosco, for the questions that a history answers in a debugger.
-- **Open**: an interrupt at any instruction, placed by a count of retired conditional branches: it needs exact counters, which a machine with no counters and QEMU with TCG do not have (the second layer). The record of a service that maps memory that a device writes. The cycle counter as a grant for each process, which this mechanism makes cheap (property 20, line 17).
+- **Open**: an interrupt at any instruction, placed by a count of retired conditional branches: it needs exact counters, which a machine with no counters and QEMU with TCG do not have (the second layer). The record of a service that maps memory that a device writes. The cycle counter is trapped for a recorded process only; whether a precise clock becomes a grant for every process (property 20, line 17) is decided later, with a measure of the cost of the trap.
 - **State**: not built. Today no process can be recorded, and two channels escape: a process reads the cycle counter and runs `cpuid` with no fault. The audit of each channel: `src/md/features/record_and_replay.md`, "The audit of the process inputs".
+
+## 25. Take the gold, leave the debt
+
+Status: Decided.
+
+**In short.** Decades of open source and research produced algorithms, data structures and ideas of great value, buried under legacy: compatibility, text between processes, ambient rights, frozen interfaces. modus keeps the substance, leaves the debt, and wires each idea onto foundations that multiply its value.
+
+- **Rule**: Take what is proven: a published algorithm, a data structure with a proof or a measure, a standard of the world (Unicode, BCP 47, WAI-ARIA), the lesson of a system that worked.
+- **Rule**: Leave what is accidental: the compatibility layer, the text format between two processes, the ambient right, the interface frozen by its first users. An idea comes in without the debt that its first home put on it.
+- **Rule**: Multiply, do not transplant. An idea goes where the foundations of the system give it more than its first home did. A search index of a store needs no file watcher, because a store changes by commit and an unchanged subtree has the same hash. The accessibility tree cannot diverge from the picture, because the draw table that draws the frame gives it.
+- **Rule**: Cite and verify. Each reuse names its source: the reuse list for code, the field **Reuse** of a property and the intent file for an algorithm or an idea. A reimplemented algorithm keeps a reference version, passes a fuzz test against it, and has a measure.
+- **Rule**: Do not rewrite on principle. When a rewrite adds nothing, reuse the code as it is, as the copy of the cryptography of Odin and HarfBuzz are. Rewrite when the foundations of the system do better, as a SIMD validation of UTF-8 in portable Odin does: one source for each processor, in the language of the system, with no build of a foreign library.
+- **Rule**: Each reuse names its first user. An algorithm with no user in the system waits, however good it is.
+- **Rule**: No syncretism. An idea that contradicts a property stays out, however brilliant. Example: the bus of D-Bus is refused, because a global name in text contradicts properties 2 and 20 (`src/md/features/roles_and_contracts.md`, "The refused forms").
+- **Forbids**: a rewrite whose only reason is that the code came from outside; a port that brings its compatibility layer with it; a reuse with no named source, no licence or no first user; an idea taken with the part of it that breaks another property.
+- **Cost**: Each reuse needs a reading of its source, a reference, a fuzz test and a measure, and each rewrite needs its reference kept beside it. A rewritten algorithm is code that the project maintains.
+- **Reuse**: The algorithms of the roadmap name their papers and their authors: the UTF-8 validation of Keiser and Lemire, the Swiss tables of Abseil, the matcher of fff, the xor filters of Graf and Lemire. The standards that the system takes whole: Unicode, BCP 47, CLDR, WAI-ARIA. The systems whose lessons the properties already name: seL4, Zircon, Nix, io_uring, Erlang/OTP, Plan 9.
+- **Open**: the form of the page "Credits and licences": one source for the code that the system reuses, the algorithms that it reimplements with their authors, and its inspirations, each with the way to fund its authors, checked by the tool.
+- **State**: the reuse list of this document and the field **Reuse** of each property exist, and `modustool check` compares the reuse list with the repository (`TOOLS.md`, "The reuse list"). The page "Credits and licences" is planned (`ROADMAP.md`).
 
 ## Tensions between properties
 
@@ -627,13 +649,15 @@ Status: Decided. The mechanism is designed, not built (`src/md/features/record_a
 - **Small interface (1) against typed resources (3)**: Types multiply operations. The ring of property 4 solves this: the kernel has few entry operations, and the typed commands are records in a ring.
 - **Named forms (22) against a small, counted interface (1) and permanent descriptions (19)**: Each named form of a frequent task is one more name to learn and to keep, and a name in the description of an export is a permanent contract. The answer: a named form lives in a library or in the console, never as a kernel operation, and it adds no mechanism. A named form whose task is no longer frequent is removed, as each name of the system is (no backward compatibility).
 - **New storage engine (9) against reliability**: The engine is small and each commit is tested against a stop of the machine. SQLite is not used.
-- **Role names (23) against no global name (2, 20 line 11)**: A role name is a name that every process knows. The answer: the set is closed and typed, and a role name opens nothing by itself. A process reaches a holder only through a connection in its context, or with the right of its process role; a name with no right gives a refusal that says nothing of the holder.
-- **Replaceable holders (23) against the trusted path (17, 20 line 8)**: The holder of the display draws the trusted surfaces and receives every key, so a hostile holder can draw a false dialog. The answer: a role in the trusted path takes the holder of the signed image, or a holder that principal 0 chose, measured into PCR 12 before it runs. No other principal chooses it.
+- **Role names (23) against no global name (2, 20 line 11)**: A role name is a name that every process knows. The answer: the set is closed and typed, and a role name opens nothing by itself. A process reaches a holder only through a connection in its context, or with the right of its start grant set; a name with no right gives a refusal that says nothing of the holder. The local name of a service that is not a role is the same case: it opens nothing unless the start grant set of the caller declares it, and the plan binds it to a module hash.
+- **Replaceable holders (23) against the trusted path (17, 20 line 8)**: The holder of the display draws the trusted surfaces and receives every key, so a hostile holder can draw a false dialog. The answer: a role in the trusted path (the display, the input, the console, the assistive role) takes the holder of the signed image, or a holder that principal 0 chose, measured into PCR 12 before it runs. No other principal chooses it.
 - **Interposed holders (23) against one mechanism and no copy tool (22)**: A holder that only passes each call to the next holder adds a hop and no function, as `tee` adds no function to a record output. The answer: an interposed holder must add a function (a filter, an audit, a nesting, a view from another machine); one that adds none is refused.
 - **Replaceable holders (23) against speed**: An interposed holder adds one hop to each call and each record. The answer: the root service connects a client to the holder directly when no holder stands between them, and the cost of each hop is measured, never assumed.
 - **Inputs that can be recorded (24) against a small kernel (1) and the kernel off the data path (5)**: The kernel must see each process input, so it gets a record mode and a replay mode, and while it records it copies the pages that another party writes. The answer: no new operation; the work is at the five places where an input already reaches a process; the kernel touches shared data only while a principal records, and a process that nobody records pays one test at each switch.
 - **Inputs that can be recorded (24) against drivers outside the kernel (7)**: A device writes and answers at any instruction, so a device service cannot be recorded. The answer is the first exception of property 24: the device service is the edge, and the class ring above it is recorded. A service that maps memory that a device writes (the storage service, the network service) is in the exception too, until its record has a design.
-- **Inputs that can be recorded (24) against no ambient access (20, lines 16 and 17)**: A shared writer waits while the recorded process is between two input points, so a recording takes processor time from a process that the recorder holds no handle to. The answer: the wait of a writer has a bound of one turn, after which the history ends and the writer runs; the recording never changes the placement or the share of a writer. Line 17 says that a precise clock is a grant, and today the cycle counter is open to every process: property 24 does not cause that hole, it shows it. The flag of the kernel that traps the cycle counter for a recorded process is the mechanism that can close it; the choice is open.
+- **Inputs that can be recorded (24) against no ambient access (20, lines 16 and 17)**: A shared writer waits while the recorded process is between two input points, so a recording takes processor time from a process that the recorder holds no handle to. The answer: the wait of a writer has a bound of one turn, after which the history ends and the writer runs; the recording never changes the placement or the share of a writer. Line 17 says that a precise clock is a grant, and today the cycle counter is open to every process: property 24 does not cause that hole, it shows it. The flag of the kernel that traps the cycle counter for a recorded process is the mechanism that can close it; that choice comes after a measure of the cost of the trap.
+- **Reuse as it is (25) against the drawing written from nothing (18)**: Property 25 reuses code when a rewrite adds nothing; property 18 writes the drawing and the WebGPU subset from nothing, with no port of a 2D library. The answer: the draw table is a case where the foundations of the system do better, because a drawing that reads values and refuses a hostile record within stated bounds is the sandbox of property 2, and a ported library brings its own interface. A part that draws no pixel, such as the shaping of HarfBuzz, is reused as it is.
+- **Proven ideas (25) against no foreign interface (Objective, rule 3)**: A proven system carries its interface with its ideas. The answer: property 25 takes the algorithm, the structure or the lesson, never the interface; a foreign interface runs only inside a guest.
 - **Inputs that can be recorded (24) against one wait (4)**: A full input history holds the recorded thread until the recorder reads, so the thread waits where it asked for no wait. The answer: it is a hold of the thread by its recorder, as a stop of a debugger is, and not a blocking operation of the interface; no history drops a process input.
 
 ## Reuse list
@@ -667,6 +691,10 @@ The table does not name the tools of the host that build and test the system (th
 | The portrait of Michael Paulson | `resources/hall_of_fame/theprimeagen.png` | CC-BY-4.0 | `resources/hall_of_fame/CREDITS.md` |
 | The portrait of Linus Torvalds | `resources/hall_of_fame/linus_torvalds.png` | CC-BY-SA-4.0 | `resources/hall_of_fame/CREDITS.md` |
 | The portrait of John Carmack | `resources/hall_of_fame/john_carmack.png` | CC0-1.0 | `resources/hall_of_fame/CREDITS.md` |
+
+The works that a design decided to ship, and that the repository does not hold yet, get their row in the commit that adds them, because the check refuses a row that names nothing:
+
+- eSpeak NG 1.52.0, the speech synthesiser, as the outside source `src/outside/espeak_ng` of the module of the role `speech`: GPL-3.0-or-later, with its license file `src/outside/espeak_ng/LICENSE`. The boot image ships its source beside the module, as that license requires (`src/md/features/accessibility.md`, "5. Speech").
 
 ## Open decisions
 

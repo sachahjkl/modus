@@ -179,7 +179,7 @@ Refused:
 
 ### The relation to the other paths
 
-- **The start grants of a role.** The role of a process of the boot image is fixed by the image; the powerbox adds to it, never replaces it. An item for an object that the role gives already is answered `Held`.
+- **The start grant set.** The start grant set of a process of the boot image is fixed by the image and the plan; the powerbox adds to it for this run, never replaces it. An item for an object that the start grant set gives already is answered `Held`.
 - **`allow` in the console.** The principal gives a grant ahead of any request, to a nickname. The requested rows kept "always" are rows of the same disk grant table, so `grants` shows both and `disallow` ends both. One table, two front ends.
 - **`connect` in the console.** It connects the console by the role of the console. It is not a request: the console holds that authority already.
 - **`plans.apply`.** The difference of a plan is already one screen of many grants. The same contract shows it, with the record `Show_Plan_Difference`, so the principal accepts a difference on the trusted path and not in the console. It has no tick and no length: a plan is applied whole, because `Apply` names the hash of the plan and a ticked part is another plan with another hash. Its act is the act of a grant dialog; while a wide grant holds in the session, a difference that adds a grant needs the proof of the principal ([wide_grants.md](wide_grants.md), "Acts that still ask"). This answers the open question of [declarations.md](declarations.md) on the acceptance at a console that a remote client drives: input from the remote display never answers the trusted display.
@@ -193,7 +193,8 @@ Refused:
 - **A dialog that the asker draws, or a library dialog in the asker.** The asker can then draw what it likes.
 - **The picker with any authority outside the root service and the source of the candidates.** See "The choice of the object".
 - **A dim of the screen as the sign of a true dialog.** See "What the dialog shows".
-- **"Always" for a process of the boot image.** Its authority is its row of `process_roles`, which a signed image fixes; a second place then holds a part of a role.
+- **"Always" for a process of the boot image.** It gets its grants from the plan. Its authority is its row of `process_roles`, which a signed image fixes, and the plan that the principal accepts; a third place then holds a part of its start grant set. A principal who wants a demonstration of the image to keep a store gives it in the plan.
+- **"Always" as a row of the disk grant table by the hash of a boot module.** It is the same third place, under another key.
 - **"Always" bound to the nickname.** A new file under the nickname then gets what another file asked for.
 - **A trusted path bound to the compositor module.** A replacement compositor then copies the code or loses the trust. The role and its contract are the trust.
 - **A request from a process with no window.** No principal can relate it to something seen.
@@ -232,6 +233,7 @@ Each attack, and the answer to it.
   7. The cost of the flood falls on the process: each request is one record that it writes and one answer that it waits for. The root service does a fixed work for each record, and the trusted display receives one record for each dialog, never one for each request.
   8. `grants("name")` then gives, for example: 50 000 requests, 3 dialogs shown, 0 items granted, 48 items refused by the principal, and the rest answered with no dialog by their cause. The line of the stop of the process names the same counts.
 - **A request from a process that a remote viewer drives.** The dialog shows on the screen of the machine. The input face of the remote display never answers the trusted display, so a viewer, a human or an agent, cannot accept for the principal at the machine. A viewer with `View` sees the dialog, as each pixel; seeing it gives no act.
+- **A principal at a remote viewer.** In the first layer a principal away from the machine answers no request: its requests wait for it at the machine. A later layer lets it answer through a viewer whose key holds `Input`, with the proof of the principal for each answer: the viewer sends the answer record with a signature of the principal over the serial and the record hash, and the root service checks the signature before it takes the answer. The input of the viewer alone still never answers.
 - **A request while the session is locked.** The processes of a locked session do not run, so they ask nothing. A request in flight at the lock is withdrawn with `Ended`. A process of principal 0 can ask while a named principal is locked: principal 0 is then the session in front.
 - **A request for a right that the principal does not hold.** The kinds name only objects that a principal grants: a reserved endpoint, a service outside the table and a scope of wide authority are refused at the border; the candidates of a store are the stores of the principal of the asker only, from the rule of the storage service ([`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "6. The store of a principal").
 - **Escalation by chained requests.** Each item asks for one object; more rights on a held object is an item with a former grant, which the dialog shows as "more rights on" that object. A granted handle never carries the right to ask: an item never names a handle, and the asker asks for itself only. A process holds at most 32 requested grants; past that the root service answers `Full`. A child that the asker starts with a held handle asks through its own window, and its dialog names the asker as the process that started it.
@@ -248,13 +250,12 @@ Each layer works alone and adds one capability. The order starts with the object
 6. **The difference of a plan on the trusted path**, when the service `plans` exists ([declarations.md](declarations.md), "The build order").
 7. **The console asks before a call**, with the kind of the object of a Handle parameter in the description.
 8. **The later kinds**: an object of the document service, an endpoint by name, the device classes.
+9. **The answer of a principal at a remote viewer**, through a viewer whose key holds `Input`, with the proof of the principal for each answer.
 
 The wide grants come after the first layer, with their own order ([wide_grants.md](wide_grants.md), "The order of the work").
 
 ## Open questions
 
-- **"Always" for a module of the boot image.** Refused here; a principal can want a demonstration of the image to keep a store. The other form is a row of the disk grant table by the hash of the boot module.
-- **A principal at a viewer.** No viewer answers the trusted display, so a principal away from the machine answers no request. A viewer whose key holds `Input`, with the proof of the principal for each answer, is the nearest form.
 - **The values of the bounds** (250 ms, 500 ms, 60 s, 3 dialogs, 16 rows, 8 kept rows): set by this design; a measure with a person at the machine can move them.
 - **The table of requestable services**: which services give a connection that shows the caller its own data only.
 

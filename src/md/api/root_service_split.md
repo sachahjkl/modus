@@ -66,16 +66,16 @@ The core keeps the rest: about 6 300 lines today (`main.odin` without the fixed 
 
 ## The order of the split
 
-Each step moves one domain, leaves a system that works, and is one roadmap entry. The first steps give the most resilience for the least work.
+Each step moves one domain, leaves a system that works, and is one roadmap entry. The first steps give the most resilience for the least work. The split starts with the wiring: it is the largest hostile input of the core, in one domain with few ties to the others, so it proves the form of a delegated service at the least risk.
 
-1. **The record output `stops` and the command `Start_From_Bytes` of the core.** The two faces that the delegated services need, with their host tests. Nothing moves yet.
+1. **The record output `stops` and the command `Start_From_Bytes` of the core.** The two faces that the delegated services need, with their host tests. The wiring service is their first user: `stops` tells it of the end of each writer and each reader. Nothing moves yet.
 2. **The wiring service.** The largest hostile input that any process reaches (a list page, lent handles), in one file with its own contract. A fault in a wiring list then stops `wiring`, not the root.
 3. **The disk processes service.** The core no longer reads a module file from the disk, nor waits for the storage service at a load; it checks the hash of the bytes itself.
 4. **The principals service.** The keys of the principals, the disk grant tables and the client keys leave the core, and the core is the client of no storage service.
 5. **The devices service.** The configuration space and the device grants leave the core; the order of the start changes, so it comes after the steps that do not.
 6. **The settings page to `settings`.** One writer of the appearance in force; small, and at any time.
 
-The fixed starters of the display, the input and the terminal become role grants in the steps of the display in `ROADMAP.md`, before this order.
+The fixed starters of the display, the input and the terminal become role grants in the steps of the display in `ROADMAP.md`. Those steps change the core and move no domain, so they do not wait for this order, and this order does not wait for them.
 
 ## State
 

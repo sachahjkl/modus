@@ -85,11 +85,14 @@ The act that gives a wide grant is the passphrase of the principal, typed in the
 - After the tuning, the root service fixes the terms: it keeps the hash of the record of the screen, and starts `unlock` in a mode that proves the passphrase and opens no session, as the proof before a change of the passphrase does ([`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "A change of the passphrase"). For principal 0, the proof is the machine passphrase.
 - The trusted display gives that window the keys of the input service only: the input face of the remote display never reaches it, as it never reaches a trusted surface. The root service marks the window so in the record `Client_Add` of `unlock`.
 - The root service makes the grant only when `unlock` says that the passphrase opened the keys, for the terms whose hash the screen showed. A change of the terms after the proof is refused.
-- **A principal with no passphrase gives no wide grant.** Principal 0 with no machine passphrase, or with only the machine key that the TPM releases with no typing, is refused with one line that says to set a machine passphrase.
+- **A principal with no passphrase gives no wide grant at the keyboard.** Principal 0 with no machine passphrase, or with only the machine key that the TPM releases with no typing, is refused with one line that says to set a machine passphrase.
+- **A machine with no person**, such as a test machine, proves the principal with a signature in place of the passphrase: a signing key of the principal, kept on the host and never on the machine, signs the hash of the terms. The root service checks the signature with the public key of the principal before it makes the grant, as for the passphrase, and a change of the terms after the signature is refused. The signature reaches the root service through `remote`, never through the input of the remote display. The key on the host is the principal for this act: whoever holds it gives the grant.
 
 **Why the passphrase.** A wide grant hands over the authority of the principal; the act must prove the principal, not only a person at the keyboard. A hold of a key or a typed word proves a press, and an agent that holds `Input` from an earlier grant, or a person who passes by the machine, can give it. The passphrase exists already, is typed in one window only, and is never a text of the console. The cost: a wrong passphrase counts in the TPM, as each wrong passphrase does ([`docs/PRINCIPALS.md`](../../../docs/PRINCIPALS.md), "The keys sealed by the TPM").
 
-Refused: **a hold of a key for some seconds**: it proves no principal, and a stuck key gives it; **typing a word that the screen shows**: an agent with `Screen_View` reads it, and only the rule of the local keys stops it; **a second device**: the system has no pairing of a device yet.
+Refused: **a hold of a key for some seconds**: it proves no principal, and a stuck key gives it; **typing a word that the screen shows**: an agent with `Screen_View` reads it, and only the rule of the local keys stops it; **a second device**: the system has no pairing of a device yet; **a wide grant with no proof on a machine with no person**: the agent then gives itself the authority of the principal.
+
+**A wide grant ends at each restart, for now.** The grant is never on the disk, so each run needs a fresh proof, and a stolen agent key gets no grant after a restart. An agent that works each night from a schedule needs a grant that a restart keeps, which needs a key that the TPM releases with no person. That form is reopened when a scheduled agent exists.
 
 ### Acts that still ask
 
@@ -114,7 +117,7 @@ Each act under the grant is an act record, written before the act runs, on a rec
 | `remote` | Each call outside the agent console |
 | The trusted display | Each change of the window that receives the input of the agent, with the count of the keys and of the presses since the last change; the open and the close of the view |
 
-The reader of each act record output is the collector ([module_outputs.md](module_outputs.md), the roadmap entry "The collector and the audit"), wired by the root service at the grant, into a space of the principal that the agent cannot read or erase.
+The reader of each act record output is the collector ([module_outputs.md](module_outputs.md), the roadmap entry "The collector and the audit"), wired by the root service at the grant, into a space of the principal that the agent cannot read or erase. The collector is the first reader of the act records, and it is built before the first layer of this file: no wide grant exists before its act records have a reader.
 
 **No act without its record.** A writer that finds the ring full does not wait and does not drop the record: it refuses the act. The agent console answers its line `Busy`; the root service refuses the command `Busy`; the trusted display drops the input of the agent, and counts it. The principal reads the acts with the console, as each record output: `acts(key)`.
 
@@ -154,12 +157,6 @@ A press on revoke, `agent_disallow(key)`, the end of the time bound, the lock of
 5. **A wide grant to the hash of a module**, for an agent that runs on modus.
 
 Why this order: the roadmap entry of the agent needs the screen and the input first; the scopes that reach the console and the stores add authority, so they come after the mark, the proof and the act records that bound them.
-
-## Open questions
-
-- **Which reader of the act records comes first.** The design takes the collector; its entry is in `## Later` of `ROADMAP.md`, and it must come before the first layer here.
-- **A wide grant across a restart.** Refused here, so each run needs a fresh proof. An agent that works each night from a schedule needs a grant that a restart keeps, which needs a key that the TPM releases without a person.
-- **A principal with no passphrase.** Refused here. A machine of a test, or a machine with no person, needs another proof: a key of the principal on the host that signs the terms.
 
 ## State
 

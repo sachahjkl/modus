@@ -105,6 +105,10 @@ The roles of the elements of the interface package:
 
 **The role.** `assistive` is a role of property 23: a typed contract that the root service gives to a holder after its check against the descriptions, with a conformance suite. A screen reader, a magnifier and a switch input each fill it. The holder reads the trees through the assistive face of the display role (the compositor), never through a connection to a window.
 
+**Several holders at once.** A principal with low vision uses a magnifier and a screen reader together. So `assistive` is the one role that takes several holders in one scope, each with its own ring of the assistive face and its own wiring of the record outputs ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "23. A role is a contract; its implementation is replaceable"). The compositor serves each holder apart: no holder sees the ring, the actions or the keys of another. The assistive key and the switch keys go to the holder that the setting `assistive_key_holder` names; with one holder, to that holder. The bar shows one mark for each holder.
+
+**Who chooses a holder.** `assistive` is in the trusted path: it reads each window and acts on it. So only principal 0 chooses a holder from the disk, in its plan, and the root service measures the hash of each such holder into PCR 12 before it runs, as for the display, the input and the console ([roles_and_contracts.md](roles_and_contracts.md), "The plan says who holds each role"). A named principal chooses among the holders that the image or principal 0 gives; it does not bring its own from the disk. The rescue start policy takes the holders of the signed image only.
+
 **The assistive face of the display role.** The compositor gives a holder:
 
 - the list of the windows (the title, the nickname of the process, the place, the order, the focus) as records, with an event for each change: a window added, gone, brought to the front, given the focus;
@@ -127,7 +131,7 @@ The roles of the elements of the interface package:
 
 **The visible mark.** While a holder reads the trees, the bar shows a mark at the left of the key of the palette, the mark of a viewer of [remote_display.md](remote_display.md): its form, its color `warning`, the word `assistive` and the nickname of the holder. Reading every window is a capture of the screen in text (row 6). The mark is a `status` of the tree of the compositor: a reader says it when it appears.
 
-**Before any unlock.** The start list of principal 0 starts the holder when the setting `screen_reader` is on, before `unlock`, with the speech service. One key combination always goes to the system (row 8): Super with Alt and S starts or stops the screen reader of the image, as in GNOME. So a principal who does not see the screen turns on speech on a machine where it is off.
+**Before any unlock.** The start list of principal 0 starts the holder when the setting `screen_reader` is on, before `unlock`, with the speech service. One key combination always goes to the system (row 8): Super+Alt+S starts or stops the screen reader of the image, as in GNOME. The compositor keeps it as it keeps the key super, so no window receives it. So a principal who does not see the screen turns on speech on a machine where it is off.
 
 **The conformance suite.** A holder is a client of the assistive face, so the suite drives it with a fake face: scripted windows, trees and events.
 
@@ -180,13 +184,15 @@ Each is a value of the settings page, written by the process `settings` and read
 
 A host test simulates the three dichromacies (the method of Viénot, Brettel and Mollon, 1999) on each pair of tokens that a rule says must be told apart, and requires a difference of lightness where no word says the fact.
 
+**Forced colors.** A principal can choose the colors of the desktop, as the forced colors of Windows. This is one more axis of the color tokens, beside `appearance` and `contrast`: the setting `forced_colors` holds a value for each token, which the principal chooses, and each drawer reads the token through the axes in force as it does today ([appearance.md](appearance.md)). The tokens stay the one source of each color, so no window remaps pixels. The contrast rules of the host tests do not apply to a set that the principal chose; the settings window shows the contrast of each pair beside the choice. A picture keeps its colors, as in each appearance.
+
 ### 5. Speech
 
 A screen reader needs a speech synthesiser. Speech is a role of its own, `speech`, apart from `assistive`: a principal chooses a voice more often than a screen reader, and a reader, a notification and a later reader of documents all speak.
 
 - **The contract.** The record input of `speech` takes utterances: a text, a locale record of the interface in the language of the principal, a priority (`Queue` or `Interrupt`) and a serial. Its record output says when an utterance starts and ends, so a reader moves the caret during "read all". The holder writes the frames into a timed stream of the sound service ([timed_stream.md](timed_stream.md)): it resamples to the one format of the stream. An `Interrupt` stops the next records; the records that the device already holds play, so a cut is heard within the latency of the stream, 30 to 40 ms.
 - **The queue.** The utterances that wait have a stated capacity. A polite utterance that finds the queue full replaces the oldest polite one, and the count of the replaced ones is said after ("3 more changes"). No queue drops a record in silence.
-- **The sound of the other processes.** The sound service plays one process at a time today. The voice must never be refused, so speech waits for the mixing of several processes ("Sound of several processes at once" of `ROADMAP.md`). Until then a machine with a screen reader gives the stream to speech, and another process that plays is refused with its error record.
+- **The sound of the other processes.** The sound service plays one process at a time today. The voice must never be refused, and the sound of another process must not be refused for it. So speech, and the screen reader with it, waits for the mixing of several processes ("Sound of several processes at once" of `ROADMAP.md`).
 
 **The options for the first holder:**
 
@@ -197,7 +203,7 @@ A screen reader needs a speech synthesiser. Speech is a role of its own, `speech
 | A neural voice from the object cache (the voices of Piper) | piper1-gpl is GPL-3.0-or-later and uses eSpeak NG for its phonemes; each voice has its own licence | Each voice one language | A runtime of the model on the processor, a voice fetched by hash, which a machine before the network and before any unlock does not have |
 | A synthesiser written for the system | Of the system | One at a time | Years of work for each language |
 
-**The decision proposed:** eSpeak NG as the first holder of `speech`, because only it gives a voice in the languages of the world, small, on the processor and before the network. A neural voice is a later holder of the same role, which a principal chooses. The licence is the decision of the owner (open question 1): the boot image would then ship a GPL-3.0 work, with its source, in the reuse list.
+**The decision:** eSpeak NG is the first holder of `speech`, because only it gives a voice in the languages of the world, small, on the processor and before the network. A neural voice is a later holder of the same role, which a principal chooses. The boot image ships eSpeak NG with its source, as GPL-3.0-or-later requires, and the reuse list names it with its licence ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "Reuse list"). CMU Flite is refused as the first voice: with it, most principals of the world get no voice in their language.
 
 ### 6. The tests
 
@@ -207,7 +213,7 @@ A test reads the semantic tree. Today a step waits for an element line, a log fa
 - **The step `Element`** waits for a node of a window by its name, with a condition in the form of `where` on one of its fields: `{kind = .Element, window = "settings", element = "spleen", condition = "toggle = True"}`. The tool reads it as a step `Fact` reads its fact (`console_condition`), and checks it against the fields before the machine starts.
 - **The step `Act`** asks the probe for a declared action through `remote`, so a scenario tests the path of an assistive holder, beside the presses of the virtual mouse that test the path of the pointer.
 - **The checks of each tree.** The probe writes a fact for each node that breaks a rule, and the tool fails the test part on one: a focusable node with no name; a node that takes a press and declares no key; a window whose order of Tab passes 64; a relation that names no node; a protected field with a value. Each window of each machine test is then checked, with no line of a scenario for it.
-- **The element name becomes the accessible name.** Two names for one element is a second mechanism beside a general one ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "22. General mechanisms, and a plain expression for each frequent task"). When the probe and the step `Element` exist, the step `Click_Element` reads the box of the node from the probe, the element lines of the window layer leave, and a row named by its place ("frame 0") is the row of that place in the list that names it. This changes [../infrastructure/test_pointer.md](../infrastructure/test_pointer.md) in that step (open question 5).
+- **The element name becomes the accessible name.** Two names for one element is a second mechanism beside a general one ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "22. General mechanisms, and a plain expression for each frequent task"). When the probe and the step `Element` exist, the step `Click_Element` reads the box of the node from the probe, the element lines of the window layer leave, and a row named by its place ("frame 0") is the row of that place in the list that names it. This changes [../infrastructure/test_pointer.md](../infrastructure/test_pointer.md) in that step.
 
 ### 7. The prior art
 
@@ -239,6 +245,11 @@ A test reads the semantic tree. Today a step waits for an element line, a log fa
 - **A high contrast as a third appearance.** Contrast and appearance are two choices: a principal wants a light high contrast or a dark one.
 - **Text sizes alone before the layout from the content.** Each window of fixed sizes would cut or wrap its texts past its edges.
 - **One holder that is the screen reader and the voice.** A principal could not change the voice without changing the reader, and a notification could not speak with no reader.
+- **One holder of `assistive` at a time.** A principal who needs a magnifier and a screen reader together then gets only one of them.
+- **A holder of `assistive` from the disk chosen by a named principal.** The holder reads each window and acts on it, before and after each unlock. A choice that principal 0 does not make and the TPM does not measure opens the trusted path to any module.
+- **The sound of the other processes refused while a screen reader runs.** A principal who needs speech then loses each other sound of the machine. Speech waits for the mixing.
+- **CMU Flite as the first voice.** It speaks English and a few voices of India only.
+- **A remap of the pixels for forced colors.** It changes the colors of pictures too, and breaks the contrast that each token keeps. Forced colors are an axis of the tokens.
 
 ## The subtle points
 
@@ -253,7 +264,7 @@ A test reads the semantic tree. Today a step waits for an element line, a log fa
 - **The relations and the names are words and ranges of one frame.** They name nothing across frames; the reader resolves them in the copy of one serial.
 - **The pushes cost two records for each element.** The measure is the window `interface_elements` (68 records today) and the size of each window memory, from the build; the publication costs nothing while no holder runs.
 - **The integer of a value is not always the number that the principal reads.** The value text is what the reader says; the integer serves a reader that compares or a switch that moves by a step.
-- **The terms.** An element role is not a role of property 23. The glossary defines "element role" for the one and keeps "role" for the other, as it keeps "process role" apart.
+- **The terms.** An element role is not a role of property 23. The glossary defines "element role" for the one and keeps "role" for the other, as it keeps "start grant set" apart.
 
 ## The frequent tasks
 
@@ -280,16 +291,6 @@ Each layer works alone, on a system that works.
 8. **The tree to a remote viewer.** The remote display sends the trees to the native viewer, which gives them to the screen reader of its own machine through its platform interface.
 9. **Braille.** A device class for a braille display, and the tables of a braille translator.
 10. **The text sizes alone.** After the layout from the size of the content.
-
-## Open questions
-
-1. **The licence of the voice.** eSpeak NG is GPL-3.0-or-later. Does the boot image ship it, with its source, or does the first voice come from CMU Flite, with a permissive licence and English only?
-2. **Several holders at once.** A principal with low vision uses a magnifier and a screen reader together. Property 23 gives a role to a holder; does `assistive` take several, each with its own ring?
-3. **Who chooses the holder.** `assistive` is in the trusted path: it reads each window and acts on it. Property 23 lets only principal 0 choose such a holder from the disk. Can a named principal choose its own screen reader for its session?
-4. **The key combination** that starts the screen reader before any unlock: Super with Alt and S, as in GNOME, or another?
-5. **The element name of the tests becomes the accessible name**, and the element lines of the window layer leave when the probe exists. Is that the decision?
-6. **Speech before the mixing of sound.** Does a machine with a screen reader refuse the sound of the other processes until the mixing exists, or does the screen reader wait for the mixing?
-7. **The colors that the principal chooses**, as the forced colors of Windows: one more axis of the tokens, or never?
 
 ## State
 
