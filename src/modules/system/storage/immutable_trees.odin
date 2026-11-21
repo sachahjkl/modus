@@ -11,7 +11,7 @@ import tree "modus:private/storage/storage_tree"
 import "modus:support/system"
 
 // Immutable content-addressed trees and mark-and-sweep garbage collection for
-// the storage service (src/md/features/declarations.md,
+// the storage service (src/md/features/declarations.md;
 // src/md/features/recipes.md).
 
 GC_CANDIDATE_CAPACITY :: 4096 // Maximum content-addressed objects scanned in one GC pass.

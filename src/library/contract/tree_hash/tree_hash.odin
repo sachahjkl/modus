@@ -1,5 +1,5 @@
 // The canonical binary encoding and domain-separated hash of an immutable tree
-// node (src/md/features/declarations.md, src/md/features/recipes.md).
+// node (src/md/features/declarations.md; src/md/features/recipes.md).
 //
 // An immutable tree is a sorted list of entries, each naming either an Object
 // or another Tree by its 32-byte BLAKE3 hash. Every logical tree has one

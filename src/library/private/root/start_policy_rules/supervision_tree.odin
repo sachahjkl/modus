@@ -1,6 +1,6 @@
 // BEAM-style supervision tree, restart groups, optional sliding restart window,
 // and bounded escalation for the root service and start policies
-// (src/md/features/supervision.md, src/md/features/start_policy.md).
+// (src/md/features/supervision.md; src/md/features/start_policy.md).
 //
 // Pure freestanding state machine: monotonic clock timestamps are passed as
 // arguments, window_milliseconds == 0 counts over whole uptime without ever

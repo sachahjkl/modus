@@ -1,5 +1,5 @@
 // Immutable content-addressed tree operations over the storage service's B+
-// trees and object store (src/md/features/declarations.md,
+// trees and object store (src/md/features/declarations.md;
 // src/md/features/recipes.md).
 //
 // Pure, zero-allocation private part of the storage service:

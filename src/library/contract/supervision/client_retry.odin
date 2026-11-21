@@ -1,6 +1,5 @@
 // Pure client call-retry state machine for surviving role connections
-// (src/md/features/supervision.md, "The replay" and "The rule that makes a
-// replay safe").
+// (src/md/features/supervision.md, "The rule that makes a replay safe").
 //
 // Given a call's Call_Replay_Rule and Connection_Snapshot observations from
 // Connection_Page:
