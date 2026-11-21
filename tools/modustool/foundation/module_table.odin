@@ -276,6 +276,9 @@ module_builds := [?]Module_Build {
 	// The delegated powerbox service implementing Role.Powerbox
 	// (src/md/features/powerbox.md).
 	{name = "powerbox", source = SYSTEM_MODULE_SOURCES + "powerbox", entry = true},
+	// The probe module for client-funded work budgets and per-connection work
+	// threads (src/md/features/work_accounting.md).
+	{name = "work_accounting_probe", source = TEST_MODULE_SOURCES + "work_accounting_probe", image = true},
 }
 
 // The counted kernel and its setting. Each other kernel gets the setting
