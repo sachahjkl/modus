@@ -974,9 +974,9 @@ the_load_error_facts_of_the_root_service_write_the_fields_of_each_stage :: proc(
 	for word in 0 ..= u64(max(module.Difference)) + 1 {
 		expect(t, render(t, file, "Load_Check_Failed", {{"difference", word}, {"parameter", u64(max(u32))}, {"module_name", name}, {"imported_name", imported}, {"export", export}}), line_of_before("root: the replacement of the import ", imported, " of ", name, " differs in its export ", export, ": ", words_of(.Load_Difference, word), ", parameter ", u64(max(u32))))
 	}
-	slots := [3]u64{0, 1, u64(max(u32))}
-	for slot in slots {
-		expect(t, render(t, file, "Load_Bind_Failed", {{"slot", slot}, {"module_name", name}, {"imported_name", imported}, {"export", export}}), line_of_before("root: the slot ", slot, " of ", name, " names no import or no export, or is not in writable data: the import ", imported, ", the export ", export))
+	import_slots := [3]u64{0, 1, u64(max(u32))}
+	for import_slot in import_slots {
+		expect(t, render(t, file, "Load_Bind_Failed", {{"import_slot", import_slot}, {"module_name", name}, {"imported_name", imported}, {"export", export}}), line_of_before("root: the import slot ", import_slot, " of ", name, " names no import or no export, or is not in writable data: the import ", imported, ", the export ", export))
 	}
 	statuses := [3]u64{u64(min(op.Status)), u64(max(op.Status)), u64(max(op.Status)) + 1}
 	for word in statuses {

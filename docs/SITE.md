@@ -1601,7 +1601,7 @@ A byte layout (`glossary/project.md`) draws one record of a format as the header
 
 ### The table of sources
 
-`byte_layout_sources` names each layout that a guide can show, by a key: `module.Header`, `module.Table_Entry`, then the record of each table kind of the module format (`byte_layout_table_sources`: `module.Segment`, `module.Import`, `module.Slot`, `module.Export`, `module.Rebases`, `module.Function`, `module.Documentation`, `module.Record`, `module.Field`, `module.Budget_Request`, `module.Fact`, `module.Own_Hash_Place`). The records of the tables Facts and Own_Hash are in `src/library/contract/module/facts.odin`, the others in `format.odin`. A table kind with no record of a fixed size states why: the table Strings is bytes. The rebase table is words: its layout is one word of `REBASE_WORD_SIZE` bytes, with the comment of that constant.
+`byte_layout_sources` names each layout that a guide can show, by a key: `module.Header`, `module.Table_Entry`, then the record of each table kind of the module format (`byte_layout_table_sources`: `module.Segment`, `module.Import`, `module.Import_Slot`, `module.Export`, `module.Rebases`, `module.Function`, `module.Documentation`, `module.Record`, `module.Field`, `module.Budget_Request`, `module.Fact`, `module.Own_Hash_Place`). The records of the tables Facts and Own_Hash are in `src/library/contract/module/facts.odin`, the others in `format.odin`. A table kind with no record of a fixed size states why: the table Strings is bytes. The rebase table is words: its layout is one word of `REBASE_WORD_SIZE` bytes, with the comment of that constant.
 
 The facts of a layout:
 
@@ -1612,10 +1612,10 @@ The facts of a layout:
 
 ### The fence of a guide
 
-A guide marks the place of layouts with a fenced block. Its opening line is three backticks, the language `byte-layout`, then the keys of the layouts: `byte-layout module.Segment module.Import`. The body of a fence with the key `module.Slot`:
+A guide marks the place of layouts with a fenced block. Its opening line is three backticks, the language `byte-layout`, then the keys of the layouts: `byte-layout module.Segment module.Import`. The body of a fence with the key `module.Import_Slot`:
 
 ```
-module.Slot, 16 bytes: one record of the table Slots
+module.Import_Slot, 16 bytes: one record of the table Import_Slots
 offset  size  field          type
      0     8  memory_offset  u64
      8     4  import_index   u32

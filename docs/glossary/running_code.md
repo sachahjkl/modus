@@ -1122,7 +1122,7 @@ Do not use: argv, argc, environment (for this), arguments.
 
 A context slot is one place of the context, a handle or a value, with the role that the starter and its process agree on.
 
-The context slots of a process that the root service starts are one table: the `GRANT_` constants of `src/library/support/system/grants.odin`. The root service writes each handle with `system.grant_put`, which refuses a context slot that holds a handle already, so a process never starts with a handle lost. A context slot is not a slot of a module, which holds the address of an export.
+The context slots of a process that the root service starts are one table: the `GRANT_` constants of `src/library/support/system/grants.odin`. The root service writes each handle with `system.grant_put`, which refuses a context slot that holds a handle already, so a process never starts with a handle lost. A context slot is not an import slot, which holds the address of an export.
 
 Example: the handle 7 is the call ring of the private store; the text region of a terminal is the handle 4.
 

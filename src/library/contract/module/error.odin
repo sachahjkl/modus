@@ -13,8 +13,8 @@ Load_Stage :: enum u32 {
 	Find  = 1, // Find the file of a module: the load source has no file with its hash.
 	Read  = 2, // Read the file: it does not have the hash that names it, or its tables are not valid (`file_error`).
 	Cycle = 3, // A module imports itself through its imports. Only a replacement can make a cycle: an import names a hash.
-	Check = 4, // Check a replacement: an export that a slot uses is missing in the module of the replacement, or its description differs (`difference`).
-	Bind  = 5, // Bind a slot: the slot names no import or no export, or it is not in writable data.
+	Check = 4, // Check a replacement: an export that an import slot uses is missing in the module of the replacement, or its description differs (`difference`).
+	Bind  = 5, // Bind an import slot: the import slot names no import or no export, or it is not in writable data.
 	Map   = 6, // Map the memory of a module: a kernel operation failed (`status`).
 	Room  = 7, // The module space, the imports of one module, or the table of prepared modules of the loader have no room for one more.
 	Unmap = 8, // Remove a module: a kernel operation failed (`status`).
@@ -75,7 +75,7 @@ Load_Error :: struct {
 	replaced:    Named,
 	replacement: Named,
 	export:      [NAME_SIZE]u8, // Check, Bind: the name of the export, in the module that the import names.
-	slot:        u32, // Bind: the number of the slot.
+	import_slot: u32, // Bind: the number of the import slot.
 	parameter:   u32, // Parameter_Type, Parameter_Detail: the number of the parameter, from 1.
 	expected:    Described, // Check: in the module that the import names.
 	found:       Described, // Check: in the module of the replacement.

@@ -452,23 +452,23 @@ caller_of_the_test :: proc "c" () -> i64 {
 	}
 }
 
-// Each symbol that became a slot of the importer has a compared
+// Each symbol that became an import slot of the importer has a compared
 // declaration. A symbol with none is a call through a declaration that the
 // tool did not find (the three forms of the test above): the build stops
 // and names it. Two declarations of one symbol pass: each was compared.
 @(test)
-each_slot_has_one_compared_declaration :: proc(t: ^testing.T) {
-	// A symbol has one slot for each place that holds its address.
-	slots := [?]string{"seal", "open", "seal", "sum_values"}
-	testing.expect_value(t, declared_symbols_problem(slots[:], {"open", "sum_values", "seal"}), "")
+each_import_slot_has_one_compared_declaration :: proc(t: ^testing.T) {
+	// A symbol has one import slot for each place that holds its address.
+	import_slots := [?]string{"seal", "open", "seal", "sum_values"}
+	testing.expect_value(t, declared_symbols_problem(import_slots[:], {"open", "sum_values", "seal"}), "")
 	testing.expect_value(t, declared_symbols_problem(nil, nil), "")
-	// A declaration of an export that the module never calls has no slot:
+	// A declaration of an export that the module never calls has no import slot:
 	// it was compared, and it is no problem.
-	testing.expect_value(t, declared_symbols_problem(slots[:], {"open", "sum_values", "seal", "never_called"}), "")
-	missing := declared_symbols_problem(slots[:], {"seal", "sum_values"})
+	testing.expect_value(t, declared_symbols_problem(import_slots[:], {"open", "sum_values", "seal", "never_called"}), "")
+	missing := declared_symbols_problem(import_slots[:], {"seal", "sum_values"})
 	testing.expect(t, strings.has_prefix(missing, "the import open is called, and the tool found no declaration of it to compare"), missing)
-	testing.expect_value(t, declared_symbols_problem(slots[:], {"seal", "open", "sum_values", "sum_values"}), "")
-	none := declared_symbols_problem(slots[:], nil)
+	testing.expect_value(t, declared_symbols_problem(import_slots[:], {"seal", "open", "sum_values", "sum_values"}), "")
+	none := declared_symbols_problem(import_slots[:], nil)
 	testing.expect(t, strings.has_prefix(none, "the import seal is called"), none)
 }
 

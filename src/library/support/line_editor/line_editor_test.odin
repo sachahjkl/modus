@@ -252,7 +252,7 @@ system_names := [?]string {
 	"storage.write", "storage.read", "storage.size", "storage.remove", "storage.objects", "storage.stores",
 	"storage.versions", "storage.version", "storage.restore", "storage.clone", "storage.compare",
 	"manual.modules", "manual.exports", "manual.imports", "manual.importers", "manual.exporters",
-	"manual.described", "manual.handles", "manual.slots", "manual.segments", "manual.running",
+	"manual.described", "manual.handles", "manual.import_slots", "manual.segments", "manual.running",
 	"manual.replacements", "manual.problem", "manual.overview", "manual.show", "manual.about", "manual.signature",
 	"compositor.pointer", "compositor.windows", "settings.set", "settings.font", "date.now",
 }

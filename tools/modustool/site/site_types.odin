@@ -277,7 +277,7 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"module", "Segment_Flags", type_info_of(module.Segment_Flags)},
 		{"module", "Segment", type_info_of(module.Segment)},
 		{"module", "Import", type_info_of(module.Import)},
-		{"module", "Slot", type_info_of(module.Slot)},
+		{"module", "Import_Slot", type_info_of(module.Import_Slot)},
 		{"module", "Export", type_info_of(module.Export)},
 		{"module", "Type", type_info_of(module.Type)},
 		{"module", "Direction", type_info_of(module.Direction)},

@@ -136,7 +136,7 @@ The output stage is not isolated. PE and COFF structures are the working data of
 | Module part | Present code | Change |
 |---|---|---|
 | (a) Segments table | `lnk_build_win32_header` writes the PE section table from `LNK_SectionArray` | Write a new header and directory from the same array. Merge sections into three segments by protection. About 200 lines |
-| (b) Slots bound by (module hash, export index) | `lnk_load_inputs` (1548-1615) reads short imports: DLL name, function name, ordinal. `pe_make_import_dll_obj_static` writes the PE import table and one 8-byte slot per import | Keep the slot symbols (`__imp_<name>`). Replace the PE descriptors with two tables: imports (hash) and slots (import index, export index). About 300 lines |
+| (b) Import slots bound by (module hash, export index) | `lnk_load_inputs` (1548-1615) reads short imports: DLL name, function name, ordinal. `pe_make_import_dll_obj_static` writes the PE import table and one 8-byte slot per import | Keep the slot symbols (`__imp_<name>`). Replace the PE descriptors with two tables: imports (hash) and import slots (import index, export index). About 300 lines |
 | (c) Rebase table | `lnk_gather_base_reloc_pages_task` (5489) collects each `ADDR64` location. `lnk_serialize_base_reloc_pages_task` (5590) writes PE blocks | Keep the gather. Replace the serializer with a RELR encoder. About 100 lines |
 | (d) Export table | `lnk_resolved_exports_from_config` (2361), `pe_finalize_export_list`, `pe_make_edata_obj` | Write records (code offset, function description index) in place of the PE export directory. About 150 lines |
 | Directory patch | `lnk.c:6340-6560` | Remove the PE directories. Keep the relocation patch |
@@ -144,7 +144,7 @@ The output stage is not isolated. PE and COFF structures are the working data of
 
 - Estimate for a writer inside the linker: 800 to 1 500 new lines, plus edits in `lnk_build_image`, `lnk_link_image` and `lnk_run_linker`.
 - The cost is the fork. `src/linker` received 30 commits between 2026-10-27 and 2026-11-02 (GitHub API, `commits?path=src/linker`). A fork of `lnk.c` must follow that rate.
-- The module merge of `MODULE_CONTRACT.md` section 3 has no base here. The linker has no relaxation pass that rewrites a call through a slot into a direct call.
+- The module merge of `MODULE_CONTRACT.md` section 3 has no base here. The linker has no relaxation pass that rewrites a call through an import slot into a direct call.
 
 ### An alternative with no change to the linker
 
@@ -154,7 +154,7 @@ A PE image already holds the four parts:
 |---|---|
 | Segments | Section table |
 | Import of a module by hash | One import descriptor. Its DLL name is the hash as text |
-| Slot (import, export index) | One import address table entry, imported by ordinal |
+| Import slot (import, export index) | One import address table entry, imported by ordinal |
 | Rebases | `.reloc` entries of kind `DIR64` |
 | Exports | Export directory, by ordinal |
 
@@ -197,7 +197,7 @@ From `coff_pick_reloc_value_x64` (`src/coff/coff.c:219`):
 
 ### Is this sufficient for the module design
 
-- Yes for the loader rules. Slots and `DIR64` rebases map to "bind" and "rebase", and both are in data.
+- Yes for the loader rules. Import slots and `DIR64` rebases map to "bind" and "rebase", and both are in data.
 - The converter or the linker must reject a module with a base relocation inside an execute segment. This check enforces "code pages are never written".
 - The linker has no interposition, no lazy binding by default, and no symbol search at load. This matches section 2 of the contract.
 - Form 2 adds a thunk and one more jump. The project must make every compiler emit form 1. In C this is `__declspec(dllimport)`. For Odin the method is UNVERIFIED.

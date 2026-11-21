@@ -103,7 +103,7 @@ byte_layout_table_sources :: proc() -> [module.Table_Kind]Byte_Layout_Source {
 		.None          = {what = "the entry 0 of the table directory names no table"},
 		.Segments      = {key = "module.Segment", file = file, declaration = "Segment", info = type_info_of(module.Segment), what = "one record of the table Segments"},
 		.Imports       = {key = "module.Import", file = file, declaration = "Import", info = type_info_of(module.Import), what = "one record of the table Imports"},
-		.Slots         = {key = "module.Slot", file = file, declaration = "Slot", info = type_info_of(module.Slot), what = "one record of the table Slots"},
+		.Import_Slots  = {key = "module.Import_Slot", file = file, declaration = "Import_Slot", info = type_info_of(module.Import_Slot), what = "one record of the table Import_Slots"},
 		.Exports       = {key = "module.Export", file = file, declaration = "Export", info = type_info_of(module.Export), what = "one record of the table Exports"},
 		.Rebases       = {key = "module.Rebases", file = file, declaration = "REBASE_WORD_SIZE", info = type_info_of(u64), word_size = module.REBASE_WORD_SIZE, what = "one word of the table Rebases"},
 		.Functions     = {key = "module.Function", file = file, declaration = "Function", info = type_info_of(module.Function), what = "one record of the table Functions"},

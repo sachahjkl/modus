@@ -18,7 +18,7 @@ Error :: enum u32 {
 	// inside the file, or is executable and written by the loader.
 	Bad_Segment     = 7,
 	Bad_Rebase      = 8, // A location of the rebase table is not in a segment that the loader can write.
-	Bad_Slot        = 9, // No check gives it today: `bind` reports a slot that is not valid at the stage Bind.
+	Bad_Import_Slot        = 9, // No check gives it today: `bind` reports an import slot that is not valid at the stage Bind.
 	Bad_Import      = 10, // No check gives it today.
 	Bad_Export      = 11, // `entry_export` is not an index of the export table.
 	Bad_Own_Hash_Place = 12, // The own-hash place is not `HASH_SIZE` bytes inside one segment that the loader can write.
@@ -87,7 +87,7 @@ record :: proc "contextless" (file: []u8, kind: Table_Kind, index: u32, $T: type
 // validate checks all that a loader relies on before it maps a module:
 // the header, the range of each table, and the range of each segment.
 //
-// It does not check the slots, the imports or the descriptions: `bind` and
+// It does not check the import slots, the imports or the descriptions: `bind` and
 // the readers of descriptions check what they read. A file from a store or
 // from another process is hostile input: call it first.
 //
@@ -268,7 +268,7 @@ export_address :: proc "contextless" (file: []u8, base: uintptr, export_index: u
 
 // An import as a loader resolved it: the module that is loaded for it, and
 // where. When a replacement applies, `named` is the file of the module that
-// the import names: a slot names an export by its index in that file.
+// the import names: an import slot names an export by its index in that file.
 Bound_Import :: struct {
 	file:  []u8, // The file of the module that is loaded for the import.
 	base:  uintptr, // Its address in the process that runs it.
@@ -279,7 +279,7 @@ Bound_Import :: struct {
 // the module `to` (docs/MODULE_CONTRACT.md, "Replacement of an import").
 //
 // The party that starts a process gives the replacements; the loader checks
-// that each export that a slot uses has the same description in `to`
+// that each export that an import slot uses has the same description in `to`
 // (`functions_compare`). 64 bytes. See [replacement](term:replacement).
 Replacement :: struct {
 	from: [HASH_SIZE]u8, // The hash that an import names.
@@ -287,14 +287,14 @@ Replacement :: struct {
 }
 #assert(size_of(Replacement) == 64)
 
-// bind writes, in each slot, the address of its export. imports gives each
+// bind writes, in each import slot, the address of its export. imports gives each
 // import, in the order of the import table: its index 0 is import 1.
 // A replaced import binds by name, one time: the loader finds in the
-// replacement the export with the name of the export of the slot, and the
-// two descriptions must be equal. If not, or if a slot is not valid, bind
-// fills the stage, the export, the slot and the difference of error, and
+// replacement the export with the name of the export of the import slot, and the
+// two descriptions must be equal. If not, or if an import slot is not valid, bind
+// fills the stage, the export, the import slot and the difference of error, and
 // the module must not run. The loader fills the modules of the record.
-// It checks each slot, and writes the slots from offset first to offset end
+// It checks each import slot, and writes the import slots from offset first to offset end
 // only: a loader that writes one segment at a time binds each one alone.
 bind :: proc "contextless" (file: []u8, memory: []u8, imports: []Bound_Import, error: ^Load_Error, first: u64 = 0, end: u64 = max(u64)) -> bool {
 	count_of_imports := count(file, .Imports)
@@ -302,21 +302,21 @@ bind :: proc "contextless" (file: []u8, memory: []u8, imports: []Bound_Import, e
 		error.stage = .Bind
 		return false
 	}
-	for index in 1 ..< count(file, .Slots) {
-		slot, _ := record(file, .Slots, index, Slot)
-		error.slot = index
-		if slot.import_index == 0 || slot.import_index >= count_of_imports || !writable(file, slot.memory_offset) {
+	for index in 1 ..< count(file, .Import_Slots) {
+		import_slot, _ := record(file, .Import_Slots, index, Import_Slot)
+		error.import_slot = index
+		if import_slot.import_index == 0 || import_slot.import_index >= count_of_imports || !writable(file, import_slot.memory_offset) {
 			error.stage = .Bind
 			return false
 		}
-		item := imports[slot.import_index - 1]
+		item := imports[import_slot.import_index - 1]
 		named_file := item.named != nil ? item.named : item.file
-		if named, has_function := function(named_file, slot.export_index); has_function {
+		if named, has_function := function(named_file, import_slot.export_index); has_function {
 			name_set(&error.export, string_at(named_file, named.name_offset, named.name_count))
 		} else {
 			error.export = {}
 		}
-		export_index := slot.export_index
+		export_index := import_slot.export_index
 		if item.named != nil {
 			export_index = export_find(item.file, name_get(&error.export))
 			if error.export == {} {
@@ -327,7 +327,7 @@ bind :: proc "contextless" (file: []u8, memory: []u8, imports: []Bound_Import, e
 				error.stage, error.difference = .Check, .Missing_Export
 				return false
 			}
-			error.difference, error.parameter, error.expected, error.found = functions_compare(item.named, slot.export_index, item.file, export_index)
+			error.difference, error.parameter, error.expected, error.found = functions_compare(item.named, import_slot.export_index, item.file, export_index)
 			if error.difference != .None {
 				error.stage = .Check
 				return false
@@ -338,11 +338,11 @@ bind :: proc "contextless" (file: []u8, memory: []u8, imports: []Bound_Import, e
 			error.stage = .Bind
 			return false
 		}
-		if slot.memory_offset >= first && slot.memory_offset < end {
-			intrinsics.unaligned_store((^u64)(raw_data(memory[slot.memory_offset:])), u64(address))
+		if import_slot.memory_offset >= first && import_slot.memory_offset < end {
+			intrinsics.unaligned_store((^u64)(raw_data(memory[import_slot.memory_offset:])), u64(address))
 		}
 	}
-	error.slot, error.export = 0, {}
+	error.import_slot, error.export = 0, {}
 	return true
 }
 

@@ -952,11 +952,11 @@ the_facts_of_a_load_error_write_the_fields_of_each_stage :: proc(t: ^testing.T) 
 					facts_expect_line(t, load_fields_render(t, file, "Load_Check_Failed", check), fmt.tprintf("%s%s imports imported, and the export %s of its replacement fails the check: %s, parameter %d", HEAD, name, name, difference, number))
 				}
 			}
-			// Bind: the edges of the slot.
+			// Bind: the edges of the import slot.
 			for number in numbers {
-				error.slot = number
+				error.import_slot = number
 				bind := module.load_bind_fact_fields(&error)
-				facts_expect_line(t, load_fields_render(t, file, "Load_Bind_Failed", bind), fmt.tprintf("%sslot %d of %s cannot be bound: export %s of imported", HEAD, number, name, name))
+				facts_expect_line(t, load_fields_render(t, file, "Load_Bind_Failed", bind), fmt.tprintf("%simport slot %d of %s cannot be bound: export %s of imported", HEAD, number, name, name))
 			}
 			// Map and Unmap: each status of the kernel, and a word past them.
 			for word in status_words() {

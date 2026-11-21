@@ -18,7 +18,7 @@ FUZZ_MODULE_PLACES_INPUT_SIZE :: 40
 // Each module that the generator builds by the rules from the inputs of
 // the seed passes validate, keeps the rules of its record streams, and
 // gives no finding to its readers: no place of a record stream meets a
-// slot, a rebase location or the own-hash place.
+// import slot, a rebase location or the own-hash place.
 @(test)
 the_generator_builds_places_that_validate_takes :: proc(t: ^testing.T) {
 	random := Fuzz_Random{state = FUZZ_MODULE_PLACES_SEED}

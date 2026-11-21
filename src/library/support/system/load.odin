@@ -100,11 +100,11 @@ PREPARED_CAPACITY :: 64 // Two parts for each module: the code, and the fixed pa
 
 // The parts of a module for a loader (Module_Part).
 //   Code:  the segments with no Write: the code and the constants. The
-//          loader never writes them (a rebase or a slot is in a segment
+//          loader never writes them (a rebase or an import slot is in a segment
 //          with Write), so their pages are the same at each base, with
 //          each binding: one copy for all the processes of the table.
 //   Fixed: the segments that are read-only after the load: the loader
-//          writes their rebases and their slots, so their pages are for
+//          writes their rebases and their import slots, so their pages are for
 //          one base and one binding.
 //   All:   each segment: the copy of a module that has no table.
 Module_Part :: enum u8 {
@@ -124,7 +124,7 @@ Prepared :: struct {
 	hash:    [32]u8, // The hash of the module file.
 	part:    Module_Part, // Which segments the memory object holds.
 	base:    u64, // Fixed: the address of the module in each process that maps it.
-	binding: [32]u8, // Fixed: what its slots hold (binding_of): zero for a module with no import.
+	binding: [32]u8, // Fixed: what its import slots hold (binding_of): zero for a module with no import.
 	first:   u64, // The offset in the module of the first page of the memory object.
 	memory:  Handle, // 0: the place is free.
 	pages:   u64, // The pages of the memory object.
@@ -175,7 +175,7 @@ Placed :: struct {
 	hash:          [32]u8, // The module that is loaded.
 	replaces:      [32]u8, // Zero, or the hash of the import that a replacement changed to this module.
 	file:          []u8, // The file of the module, in the load source.
-	original:      []u8, // The file of the module that this one replaces: the names of the exports that a slot uses.
+	original:      []u8, // The file of the module that this one replaces: the names of the exports that an import slot uses.
 	base:          u64, // The address of the module in the process.
 	users:         u32, // The modules that import it, and each load of it by the caller. 0: the place is free.
 	loading:       bool, // Its imports are not all loaded: a module that imports it now makes a cycle.
@@ -331,7 +331,7 @@ import_problems :: proc "contextless" (source: Load_Source, importer: [32]u8, fi
 			table_append(details, problem)
 			continue
 		}
-		// The names of the exports that the slots use are in the module that
+		// The names of the exports that the import slots use are in the module that
 		// the import names: the load reads it too.
 		if replaces != {} {
 			if _, original_stage, original_error := source_file(source, replaces); original_stage != .None {
@@ -453,7 +453,7 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 		}
 	}
 	if replaces != {} {
-		// The names of the exports that the slots use are in the module of the import.
+		// The names of the exports that the import slots use are in the module of the import.
 		if original, stage, error.file_error = source_file(space.source, replaces); stage != .None {
 			return fail(space, error, stage, importer, named, hash)
 		}
@@ -489,7 +489,7 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 		used := &space.modules[at]
 		imports[number] = {file = used.file, base = uintptr(used.base)}
 		if used.hash != record.hash {
-			// A replacement: the slots name exports of the module of the import.
+			// A replacement: the import slots name exports of the module of the import.
 			imports[number].named = used.replaces == record.hash ? used.original : nil
 			if imports[number].named == nil {
 				if imports[number].named, stage, error.file_error = source_file(space.source, record.hash); stage != .None {
@@ -537,12 +537,12 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 		place_unmap(space, item)
 		switch error.stage {
 		case .Check, .Bind:
-			// The import of the slot, and its replacement if the loader applied one.
+			// The import of the import slot, and its replacement if the loader applied one.
 			error.module = named_of(space.source, item.hash)
-			slot, _ := module.record(item.file, .Slots, error.slot, module.Slot)
-			if record, has_import := module.record(item.file, .Imports, slot.import_index, module.Import); has_import && slot.import_index != 0 {
+			import_slot, _ := module.record(item.file, .Import_Slots, error.import_slot, module.Import_Slot)
+			if record, has_import := module.record(item.file, .Imports, import_slot.import_index, module.Import); has_import && import_slot.import_index != 0 {
 				error.imported = named_of(space.source, record.hash)
-				if used := &space.modules[item.import_places[slot.import_index - 1]]; used.hash != record.hash {
+				if used := &space.modules[item.import_places[import_slot.import_index - 1]]; used.hash != record.hash {
 					error.replaced = error.imported
 					error.replacement = named_of(space.source, used.hash)
 				}
@@ -569,7 +569,7 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 	return true
 }
 
-// binding_of gives what the slots of a module hold, as one hash: the hash
+// binding_of gives what the import slots of a module hold, as one hash: the hash
 // and the base of the module of each import. Two processes with the same
 // module at the same base and the same binding can map the same pages.
 @(private)
@@ -682,7 +682,7 @@ module_prepare :: proc "contextless" (file: []u8, hash: [32]u8, part: Module_Par
 			intrinsics.mem_copy_non_overlapping(&view[segment.memory_offset], &file[segment.file_offset], int(segment.file_size))
 		}
 	}
-	// The part Code has no rebase and no slot: the file checks it (rebase
+	// The part Code has no rebase and no import slot: the file checks it (rebase
 	// and bind refuse a location in a segment with no Write).
 	ok := part == .Code || code_ready(file, hash, view, base, imports, error, first, end)
 	memory_unmap(address)
@@ -697,7 +697,7 @@ module_prepare :: proc "contextless" (file: []u8, hash: [32]u8, part: Module_Par
 // to offset end, and writes the hash of the module at its own-hash place
 // when the place is there: a log fact of the module names its module by it
 // (src/md/features/log_facts.md, "The record"). A failure fills the stage
-// of error: Read for a rebase and for the place, Check or Bind for a slot.
+// of error: Read for a rebase and for the place, Check or Bind for an import slot.
 @(private)
 code_ready :: proc "contextless" (file: []u8, hash: [32]u8, view: []u8, base: u64, imports: []module.Bound_Import, error: ^module.Load_Error, first, end: u64) -> bool {
 	if rebased := module.rebase_range(file, view, uintptr(base), first, end); rebased != .None {
@@ -734,7 +734,7 @@ prepared_sweep :: proc "contextless" (table: ^Prepared_Modules) {
 // prepared_find gives one part of the prepared module of a file from a
 // table, and prepares it if the table does not have it. The part Code is
 // for each base and each binding; the part Fixed is for one base and one
-// binding of its slots. The caller checked the hash of the file. A part
+// binding of its import slots. The caller checked the hash of the file. A part
 // with no segment has no memory object. A table with no free place closes
 // its part used least recently, but never keep, the part that the caller
 // still holds.
@@ -1049,7 +1049,7 @@ file_error_names := [module.Error]string {
 	.Bad_Table       = "a table is outside the file",
 	.Bad_Segment     = "a segment is not valid",
 	.Bad_Rebase      = "a rebase is not in writable data",
-	.Bad_Slot        = "a slot is not valid",
+	.Bad_Import_Slot = "an import slot is not valid",
 	.Bad_Import      = "an import is not valid",
 	.Bad_Export      = "an export is not valid",
 	.Bad_Own_Hash_Place = "its own-hash place is not in writable data",
@@ -1191,8 +1191,8 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 		write_part(writer, "\n")
 		return // The first line names the replacement.
 	case .Bind:
-		write_part(writer, "slot ")
-		write_part(writer, u64(error.slot))
+		write_part(writer, "import slot ")
+		write_part(writer, u64(error.import_slot))
 		write_part(writer, " of ")
 		name(writer, &error.module)
 		write_part(writer, " cannot be bound")

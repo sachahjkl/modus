@@ -95,7 +95,7 @@ What `chibicc` writes for a C source, and what the assembler did not take:
 |---|---|
 | `.file`, `.loc`, `.globl`, `.local`, `.text`, `.data`, `.bss`, `.type`, `.size`, `.align`, `.comm`, `.byte`, `.zero` | The patch writes the directives of modus, or nothing |
 | `movsxd (%rax), %rax`, `movsxd %eax, %rax`: the load of an `int` and the sign of a result | Added to the assembler (`REX.W 63 /r`), with its host tests |
-| `.quad label`, `mov x@GOTPCREL(%rip), %rax`, a section of thread-local data | Refused by the compiler: an address in data needs a rebase, a symbol of another module a slot, and the module format has no thread-local data |
+| `.quad label`, `mov x@GOTPCREL(%rip), %rax`, a section of thread-local data | Refused by the compiler: an address in data needs a rebase, a symbol of another module an import slot, and the module format has no thread-local data |
 | `movsbl`, `movswl`, `movzbl`, `movzwl`, `sete` and the other `set`, `imul`, `idiv`, `cqo`, `and`, `or`, `xor`, `not`, `neg`, `shl`, `sar`, `shr`, `test`, `rep stosb`, the registers of 8 and 16 bits, `call *%r10`, `movss`, `movsd` and the SSE forms, an index register | Not added: the assembler refuses each with its line and its column |
 
 So the C subset that passes today is a function of `int` and `long` parameters and locals, with constants, `+`, `-`, an assignment, `return`, and `if`, `while` and `for` on a value with no comparison. A declaration with an initializer (`int x = a;`) is refused: `chibicc` clears the variable with `rep stosb` first. Each instruction past the subset is a change of the assembler with its encodings and its host tests, which the next C programs bring.
@@ -119,4 +119,4 @@ So the C subset that passes today is a function of `int` and `long` parameters a
 
 ## State
 
-Built: the module `c_compiler` with its export `compile`, the four patches, the thin libc, the table of the include files, the instruction `movsxd` of the assembler with its host tests, and the step of the main machine test that compiles `add`, assembles it, isolates it and gives 5. Left: the export `build` with the store "out", the instructions of the gaps above, a call of another function (`call *%r10`), the extension instructions and with them the other integer types, the calls of an import through a slot, the floating point, and the next ported C program.
+Built: the module `c_compiler` with its export `compile`, the four patches, the thin libc, the table of the include files, the instruction `movsxd` of the assembler with its host tests, and the step of the main machine test that compiles `add`, assembles it, isolates it and gives 5. Left: the export `build` with the store "out", the instructions of the gaps above, a call of another function (`call *%r10`), the extension instructions and with them the other integer types, the calls of an import through an import slot, the floating point, and the next ported C program.

@@ -44,15 +44,15 @@ Import :: struct {
 	number:      i64, // The index of the import in that module, from 1.
 	hash:        [64]u8, // The hash of the imported module, as the file names it, in hexadecimal.
 	name:        [32]u8, // The name of the imported module in the catalog. Empty: the catalog has no module with this hash.
-	slots:       i64, // The slots of the module that use this import: one for each export that it calls.
+	import_slots: i64, // The import slots of the module that use this import: one for each export that it calls.
 	replacement: [32]u8, // The module that a loader gives in place of the import on this machine (the replacement table). Empty: none.
 }
 
-// One row for each slot of a module: slots(). A slot receives the address
+// One row for each import slot of a module: import_slots(). An import slot receives the address
 // of one export of one import when the loader binds the module.
-Slot :: struct {
-	module:       [32]u8, // The module of the slot.
-	number:       i64, // The index of the slot, from 1.
+Import_Slot :: struct {
+	module:       [32]u8, // The module of the import slot.
+	number:       i64, // The index of the import slot, from 1.
 	import_index: i64, // The import, from 1.
 	export_index: i64, // The export of that import, from 1.
 	target:       [32]u8, // The name of the imported module in the catalog, or empty.
