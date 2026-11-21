@@ -1,5 +1,5 @@
 // Browser machine configuration border (src/md/features/browser_machine.md,
-// "Several processors as workers" and "The devices of the page").
+// "Several processors as workers").
 //
 // Validates browser-supplied machine parameters before booting the kernel:
 //   - automatic single-worker fallback when `cross_origin_isolated` is false;
