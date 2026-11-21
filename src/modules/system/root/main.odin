@@ -313,43 +313,28 @@ Started :: struct {
 	// rule of an end Started of a wiring (wirings.odin). nil: this service
 	// started it by itself, or the asker stopped.
 	asker:           ^Started,
-	// The module file of the process, in the boot image: the record
-	// descriptions of its record outputs and record inputs. Empty for a
-	// process that this service did not start with start(): no wiring
-	// names it.
-	file:            []u8,
+	// Canonical kernel identity cached at start for Process_Stop_Notice
+	// and delegated services (src/md/api/root_service_split.md).
+	process_slot:    u64,
+	process_serial:  u64,
+	// Slice of the module file of the process in the boot image, for the
+	// delegated wiring service's read-only boot image view.
+	module_offset:   u64,
+	module_size:     u64,
 	// A handle of the budget of the process with Read and Spend, for a
-	// process that can send Wire, the one kind of asker: the wirings that
-	// the process asks for are paid from it. Closed at the stop of the
-	// process (src/md/features/module_outputs.md, "The budget").
+	// process that can send Wire, so the core can carve its Spend-only
+	// child wiring budget (`wiring_budget`). Closed at stop.
 	budget:          system.Handle,
-	// The wiring ring of a process that declares a record output or a
-	// record input, or of an asker that asked for its list page, mapped in
-	// this service, which writes its commands.
-	wiring:          ring.Ring,
+	wiring_budget:   system.Handle,
+	// The wiring ring of a process that declares record streams or asked
+	// for a list page: handed to the delegated `wiring` service, never
+	// mapped in the root core.
 	wiring_memory:   system.Handle,
-	// The words of its wiring ring that named no wiring of the process:
-	// one line at the first, and the count at its stop.
-	unknown_wiring_words: u64,
-	// The list page of an asker, as this service holds it: the asker
-	// writes its wiring lists there, and this service copies them from
-	// this handle, which a revocation by the asker does not reach.
+	// Read-only handle to an asker's list page so the core can prove and
+	// close lent handles on the asker's root ring.
 	list_memory:     system.Handle,
-	// The wiring pages of the wirings that the process asked for.
-	wiring_pages:    ^Wiring_Page,
-	// The wirings that the process asked for and that run, and the ends
-	// that it holds: each is bounded (wirings.odin).
-	wirings_asked:   int,
-	ends_given:      int,
-	// Of ends_given, the end of the record output log, which is in the
-	// context and never in the wiring ring: it keeps no mapping of the
-	// wiring ring in this service.
-	log_ends_given:  int,
-	// The types that wirings fixed for its generic record inputs of the
-	// counts One and Many: each lasts until the stop of the process
-	// (wirings.odin).
-	generic_types:      [GENERIC_TYPES_OF_A_PROCESS_MOST]Generic_Type,
-	generic_type_count: int,
+	// Whether the delegated wiring service currently holds this process.
+	wiring_registered: bool,
 }
 
 // place_is_free says if a place of the table of the processes holds no
@@ -509,12 +494,15 @@ part_place_take :: proc "contextless" () -> ^Started {
 // and the hash of its file.
 part_place_fill :: proc "contextless" (slot: ^Started, name: string, process: system.Handle) {
 	slot.process = process
+	slot.process_slot, slot.process_serial, _ = system.process_place(process)
 	slot.start_grant_set = start_grant_set_of(name)
 	slot.granted = {.Log}
 	copy(slot.name[:len(slot.name) - 1], name)
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == name {
 			slot.hash = item.hash
+			slot.module_offset = item.offset
+			slot.module_size = item.size
 		}
 	}
 }
@@ -1011,8 +999,15 @@ compositor_start :: proc "contextless" () -> system.Status {
 		return status
 	}
 	served.process = compositor
+	served.process_slot, served.process_serial, _ = system.process_place(compositor)
 	served.start_grant_set = start_grant_set
 	copy(served.name[:len(served.name) - 1], "compositor")
+	for &item in system.image_entries(image) {
+		if system.name_of(item.name[:]) == "compositor" {
+			served.module_offset = item.offset
+			served.module_size = item.size
+		}
+	}
 	started_log("compositor", principals.MACHINE, false)
 	return .Ok
 }
@@ -1056,17 +1051,7 @@ root_loop_pass :: proc "contextless" () {
 		if item.process != 0 && item.requests.head != nil {
 			root_ring_serve(&item)
 		}
-		// The answers of the process to the ends of its wirings: Taken,
-		// Closed or a refusal. They are in the wait below, so an answer
-		// starts a pass and never waits for another event.
-		if item.process != 0 && item.wiring.head != nil {
-			wiring_completions_read(&item)
-		}
 	}
-	// A wiring ring whose process holds no end is unmapped: this service
-	// holds one mapping for each process with an end, and the wait below
-	// skips a ring that no answer can come in.
-	wiring_rings_let_go()
 	// Before reap: an entropy service that answered and stopped still has
 	// its answers in the ring.
 	entropy_answers(&wait)
@@ -1080,13 +1065,11 @@ root_loop_pass :: proc "contextless" () {
 	disk_load_step(&wait)
 	persisted_tables_step(&wait)
 	network_answers(&wait)
+	wiring_request_step(&wait)
 	system.wait_records(&wait, &control.completions)
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {
 			system.wait_records(&wait, &item.requests.commands)
-		}
-		if item.process != 0 && item.wiring.head != nil {
-			system.wait_records(&wait, &item.wiring.completions)
 		}
 	}
 	// The appearance in force at an edge of the rule of the day
@@ -1098,9 +1081,10 @@ root_loop_pass :: proc "contextless" () {
 	// A load from the disk and a call for the disk grant table have a
 	// deadline: the wait ends there, with or without an answer of the
 	// storage service. The next read of the fresh bytes has one too, a
-	// read of the entropy device in flight (entropy.odin), and the hang
-	// bound of a start policy that runs.
-	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), appearance_deadline, fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake()))
+	// read of the entropy device in flight (entropy.odin), the hang
+	// bound of a start policy that runs, and any in-flight request to
+	// the delegated wiring service.
+	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), appearance_deadline, fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline()))
 }
 
 // control_ring_serve answers the control ring of the compositor: a start
@@ -1417,14 +1401,14 @@ debug_end :: proc "contextless" (target: ^Started) -> (count: u64) {
 // from it, and the kernel ends what came from it in that process
 // (Handle_Revoke). What the process gave to other processes ends too.
 // values is the completion of Root_Command.Revoke.
-revoke :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> system.Status {
-	status := revoke_grant(name, grant, values)
-	if status == .Ok {
+revoke :: proc "contextless" (caller: ^Started, tag: u32, name: string, grant: u64, values: ^[7]u64) -> (status: system.Status, held: bool) {
+	status, held = revoke_grant(caller, tag, name, grant, values)
+	if status == .Ok && !held {
 		if item := find(name); item != nil {
 			debug_check_again(item)
 		}
 	}
-	return status
+	return status, held
 }
 
 // debug_check_again ends each debugging that runs for a caller and that
@@ -1449,17 +1433,17 @@ debug_check_again :: proc "contextless" (caller: ^Started) {
 
 // revoke_grant is revoke, before the check of the debuggings of the
 // process.
-revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -> system.Status {
+revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, grant: u64, values: ^[7]u64) -> (status: system.Status, held: bool) {
 	item := find(name)
 	if item == nil {
-		return .Bad_Handle
+		return .Bad_Handle, false
 	}
 	which, known := enum_word.member_of_word(system.Root_Grant, grant)
 	if !known {
-		return .Bad_Operation
+		return .Bad_Operation, false
 	}
 	if which not_in item.granted {
-		return .Bad_State
+		return .Bad_State, false
 	}
 	handle: system.Handle
 	switch which {
@@ -1476,7 +1460,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 			// it stay.
 			kept := grant_for(item, connection.service) &~ (isolated.CALLER_AMOUNT_MASK | isolated.CALLER_ERASES_VERSIONS)
 			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = kept}}) {
-				return .No_Slot
+				return .No_Slot, false
 			}
 			count += 1
 		}
@@ -1484,7 +1468,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.revoked += {which}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Connections{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), connections = count})
-		return .Ok
+		return .Ok, false
 	case .Acts_For_Principal:
 		// The grant is data of each service that the process is connected
 		// to: the root service tells each one that the grant of the
@@ -1499,7 +1483,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		// shrink between the check and the sends.
 		if service := grant_room_short(item); service != nil {
 			system.log_fact(.Warning, Acts_For_Principal_Revocation_Refused{holder = module_name_field(name), service = module_name_field(system.name_of(service.name[:]))})
-			return .No_Slot
+			return .No_Slot, false
 		}
 		item.granted -= {which}
 		item.revoked += {which}
@@ -1514,7 +1498,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Connections{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), connections = count})
-		return .Ok
+		return .Ok, false
 	case .History:
 		// The store of the history is data of the storage service, as the
 		// private store: the storage service ends the grant of the
@@ -1527,13 +1511,13 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 				continue
 			}
 			if !system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = isolated.caller_grant_make(0, item.principal, false)}}) {
-				return .No_Slot
+				return .No_Slot, false
 			}
 			count += 1
 		}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Connections{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), connections = count})
-		return .Ok
+		return .Ok, false
 	case .Network:
 		// The endpoint is data of the network service, as a store is data of
 		// the storage service: the network service ends the grant.
@@ -1542,7 +1526,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.revoked += {which}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Endpoints{holder = module_name_field(name), endpoints = count})
-		return .Ok
+		return .Ok, false
 	case .Debug:
 		// One handle for each process that the command Debug named for
 		// this caller: each one ends in the debugger service, and the
@@ -1558,7 +1542,7 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.revoked += {which}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Holdings{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), holdings = count})
-		return .Ok
+		return .Ok, false
 	case .Palette:
 		// The table and the ring end in the process, and the compositor
 		// unmaps its side: the palette keeps the modules and the windows.
@@ -1567,16 +1551,13 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 		item.revoked += {which}
 		values[0] = count
 		system.log_fact(.Info, Grant_Revoked_Holdings{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), holdings = count})
-		return .Ok
+		return .Ok, false
 	case .Wirings:
 		// Each wiring that the process asked for ends with the end word
-		// Revoked; the process can ask for new ones, as a revocation ends
-		// what was given and not the right to ask.
-		count := wirings_revoke(item)
-		item.granted -= {which}
-		values[0] = count
-		system.log(.Info, "root: revoked the grant wirings of ", system.Module_Name{name}, ", wirings ended: ", count)
-		return .Ok
+		// Revoked in the delegated wiring service; the process can ask for
+		// new ones, as a revocation ends what was given and not the right
+		// to ask.
+		return wirings_revoke_begin(caller, item, tag, values)
 	case .Log:
 		handle = system.context_record().handles[op.CONTEXT_LOG]
 	case .Machine:
@@ -1586,12 +1567,15 @@ revoke_grant :: proc "contextless" (name: string, grant: u64, values: ^[7]u64) -
 	case .Log_Records:
 		handle = system.context_record().handles[op.ROOT_LOG_RECORDS]
 	}
-	count := system.handle_revoke(handle, item.process) or_return
+	count, revoke_status := system.handle_revoke(handle, item.process)
+	if revoke_status != .Ok {
+		return revoke_status, false
+	}
 	item.granted -= {which}
 	item.revoked += {which}
 	values[0] = count
 	system.log_fact(.Info, Grant_Revoked_Holdings{holder = module_name_field(name), grant = text_field(system.root_grant_names[which], 24), holdings = count})
-	return .Ok
+	return .Ok, false
 }
 
 // The palette provider (docs/CONSOLE.md, "8. The palette provider"): the one
@@ -1967,11 +1951,11 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	if item.debugger != nil {
 		debug_end(item)
 	}
-	// Each wiring that names the process ends, with the end word of its
-	// part, before its handle closes: the other side reads the end, with
-	// the stop that the kernel recorded for a writer, as the reap read it
-	// for the fact of the stop.
-	wirings_at_stop(item, stop.state, stop.cause, stop.outcome)
+	// Emit Process_Stop_Notice on the core's `stops` output so the
+	// delegated wiring service ends each wiring of this process and frees
+	// its slots, then release core wiring handles.
+	wiring_service_end(item)
+	wiring_emit_stop_notice(item, stop)
 	for &other in started {
 		if other.process != 0 && (other.debugger == item || other.debug_for == item) {
 			debug_end(&other)

@@ -79,4 +79,11 @@ The fixed starters of the display, the input and the terminal become role grants
 
 ## State
 
-Designed, not built. The root service holds every domain of this file.
+Built:
+
+- The contract package `src/library/contract/wiring_service/` (`Command`, `Response`, `Process_Stop_Notice`, `Attenuated_Grant_Kind`, and shared-region request/response records with strict borders and host tests).
+- The pure wiring state machine `src/library/private/wiring/wiring_core/` (record-type equality, generic stream resolution, duplicate and cycle detection, capacity bounds, unwire/revocation, and stop cleanup with host tests).
+- The delegated `wiring` service (`src/modules/system/wiring/`, 948 lines), registered with `{.System_Part}` in `start_grant_sets.odin` and holding only its attenuated grants (core ring, `stops` ring, read-only boot image, shared transfer region, per-asker `Spend`-only child wiring budgets, and per-process `Give`-only process tokens plus wiring rings).
+- The root service core bridge (`src/modules/system/root/wirings.odin` reduced from 1 577 to 952 lines; `src/modules/system/root/` reduced from 14 780 to 14 031 lines, net -749 lines): starts `wiring` on demand, emits `Process_Stop_Notice` records on `stops` at reap and release, supplies attenuated grants, and drives wiring requests asynchronously from `root_loop_pass`.
+
+Left: the `Start_From_Bytes` face and the remaining domains (`disk_processes`, `principals`, `devices`, `settings`).
