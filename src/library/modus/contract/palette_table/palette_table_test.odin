@@ -1,7 +1,9 @@
 #+build !freestanding
 package palette_table
 
+import "base:intrinsics"
 import "core:testing"
+import "core:thread"
 import "modus:contract/value_kinds"
 
 @(private = "file")
@@ -567,4 +569,53 @@ the_texts_of_an_entry_are_utf_8 :: proc(t: ^testing.T) {
 	}
 	_, argument, ok = argument_unpack(argument_pack(0, .Text, 0, string(long[:])))
 	testing.expect(t, ok && argument.length == ARGUMENT_TEXT_CAPACITY - 1)
+}
+
+// A concurrent writer changing entry_count and byte_length under the seqlock
+// protocol must never cause snapshot_take to return a false hard error
+// (Bad_Byte_Length, Bad_Magic, Bad_Version, Too_Small, Too_Many_Entries):
+// torn header reads must retry and return either None or Never_Stable.
+@(test)
+concurrent_seqlock_writer_never_causes_torn_read_refusal :: proc(t: ^testing.T) {
+	MAX_ENTRIES :: 8
+	memory := table_of_test(MAX_ENTRIES)
+	defer delete(memory)
+
+	Shared :: struct {
+		memory: []u8,
+		stop:   u32,
+	}
+	shared := Shared{memory = memory}
+
+	writer := thread.create_and_start_with_poly_data(&shared, proc(s: ^Shared) {
+		header := (^Header)(raw_data(s.memory))
+		bytes_small, _ := table_bytes_for(2)
+		bytes_large, _ := table_bytes_for(MAX_ENTRIES)
+		toggle := false
+		for intrinsics.atomic_load_explicit(&s.stop, .Relaxed) == 0 {
+			toggle = !toggle
+			count: u32 = toggle ? 2 : MAX_ENTRIES
+			byte_len := toggle ? bytes_small : bytes_large
+			intrinsics.atomic_add(&header.change_count, 1)
+			intrinsics.volatile_store(&header.entry_count, count)
+			intrinsics.volatile_store(&header.byte_length, byte_len)
+			intrinsics.atomic_add(&header.change_count, 1)
+		}
+	})
+	defer {
+		intrinsics.atomic_store_explicit(&shared.stop, 1, .Relaxed)
+		thread.join(writer)
+		thread.destroy(writer)
+	}
+
+	entries_buf: [MAX_ENTRIES]Entry
+	snapshot := Snapshot{entries = entries_buf[:]}
+	for _ in 0 ..< 20_000 {
+		problem, _ := snapshot_take(memory, &snapshot)
+		testing.expectf(t, problem == .None || problem == .Never_Stable, "torn read caused false hard error: %v", problem)
+		if problem == .None {
+			testing.expect(t, snapshot.entry_count == 2 || snapshot.entry_count == MAX_ENTRIES)
+			testing.expect(t, snapshot.generation & 1 == 0)
+		}
+	}
 }

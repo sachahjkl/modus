@@ -48,6 +48,7 @@ Process_Handles :: struct {
 	process_token:        system.Handle, // Give-only process handle token.
 	wiring_memory:        system.Handle, // Process wiring ring memory (Read, Write).
 	wiring_ring:          ring.Ring, // Mapped only while the process holds ends.
+	wiring_ring_ready:    bool, // True once Handle_Give succeeded on wiring_memory.
 	asker_budget:         system.Handle, // Child wiring budget (Spend only).
 	list_memory:          system.Handle, // Asker's list page, paid from asker_budget.
 	unknown_wiring_words: u64,
@@ -279,13 +280,40 @@ given_end_of_row :: proc "contextless" (plan: ^wiring_core.Row_Plan, obj: ^Row_O
 	}
 }
 
+// Startup grace bound (milliseconds) for a newly started process to map its
+// wiring ring with Receive_Handles before its first end arrives (TCG safe).
+DELIVER_STARTUP_GRACE_MS :: 500
+
+// process_stop_pending peeks unread stop notices on stops_ring without
+// mutating state, so wiring_end_give fails fast if the target stopped.
+@(private = "file")
+process_stop_pending :: proc "contextless" (id: ws.Process_Identity) -> bool {
+	q := &stops_ring.commands
+	if q.counters == nil || q.records == nil {
+		return false
+	}
+	r := intrinsics.atomic_load_explicit(&q.counters.read, .Acquire)
+	w := intrinsics.atomic_load_explicit(&q.counters.write, .Acquire)
+	count := w - r
+	if count > ring.capacity(q) {
+		return false
+	}
+	for offset in u32(0) ..< count {
+		rec := q.records[(r + offset) & q.mask]
+		if notice, ok := ws.stop_notice_from_record(rec); ok && notice.process_slot == id.slot && notice.process_serial == id.serial {
+			return true
+		}
+	}
+	return false
+}
+
 // wiring_end_give gives one end to a running process through its wiring
 // ring. Because `wiring` holds no Control right on any process, on partial
 // failure it calls handle_revoke(source, 0) on objects it created to clean
 // up any half-delivered handles.
 @(private = "file")
 wiring_end_give :: proc "contextless" (proc_idx: int, end: output.Given_End) -> system.Status {
-	if proc_idx < 0 || proc_idx >= wiring_core.PROCESS_CAPACITY {
+	if proc_idx < 0 || proc_idx >= wiring_core.PROCESS_CAPACITY || !state.processes[proc_idx].active {
 		return .Bad_Handle
 	}
 	ph := &process_handles[proc_idx]
@@ -305,21 +333,39 @@ wiring_end_give :: proc "contextless" (proc_idx: int, end: output.Given_End) -> 
 	results := [5]^op.Handle{&given.ring, &given.end_words, &given.terms, &given.description, &given.condition}
 	status := system.Status.Ok
 	gifts := 0
+	target_id := state.processes[proc_idx].id
 	for source, idx in sources {
 		if source == 0 {
 			continue
 		}
 		h, g_status := system.give(ph.wiring_memory, source, rights[idx])
-		// A process that just started may not have mapped its wiring ring with
-		// Receive_Handles yet (Bad_Handle); retry briefly, never retrying No_Right.
-		for retry := 0; g_status == .Bad_Handle && retry < 50; retry += 1 {
-			system.sleep(system.time() + 1)
-			h, g_status = system.give(ph.wiring_memory, source, rights[idx])
+		// A freshly started process may not have mapped its wiring ring with
+		// Receive_Handles yet (Bad_Handle): retry with bounded exponential
+		// backoff up to DELIVER_STARTUP_GRACE_MS, stopping immediately if a
+		// stop notice is pending, and never retrying No_Right or once ready.
+		if g_status == .Bad_Handle && !ph.wiring_ring_ready {
+			deadline := system.time() + DELIVER_STARTUP_GRACE_MS
+			backoff: u64 = 1
+			for g_status == .Bad_Handle {
+				if process_stop_pending(target_id) {
+					g_status = .Bad_State
+					break
+				}
+				now := system.time()
+				if now >= deadline {
+					break
+				}
+				wake_at := min(now + backoff, deadline)
+				system.sleep(wake_at)
+				backoff = min(backoff * 2, 10)
+				h, g_status = system.give(ph.wiring_memory, source, rights[idx])
+			}
 		}
 		if g_status != .Ok {
 			status = g_status
 			break
 		}
+		ph.wiring_ring_ready = true
 		results[idx]^ = op.Handle(h)
 		gifts = idx + 1
 	}
@@ -393,6 +439,7 @@ handle_register_process :: proc "contextless" (cmd: ws.Command) -> ws.Response {
 		}
 		close_handle(&ph.wiring_memory)
 		ph.wiring_memory = system.Handle(cmd.wiring_ring_handle)
+		ph.wiring_ring_ready = false
 	}
 	return {status = .Ok, tag = cmd.tag}
 }
@@ -809,6 +856,7 @@ stops_drain :: proc "contextless" () {
 			system.ring_close(&ph.wiring_ring)
 		}
 		close_handle(&ph.wiring_memory)
+		ph.wiring_ring_ready = false
 		close_handle(&ph.list_memory)
 		close_handle(&ph.asker_budget)
 		close_handle(&ph.process_token)

@@ -685,9 +685,9 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// Re-verify receiver consent under the receiver's lock so an unmap
 		// between discovery and insertion never delivers an unsolicited handle.
 		if to_region != 0 {
-			_, still_accepts := maps_region_consent(to, to_region)
+			still_maps, still_accepts := maps_region_consent(to, to_region)
 			if !still_accepts {
-				return .No_Right
+				return still_maps ? .No_Right : .Bad_Handle
 			}
 		}
 		// An object with marks of protection of a part is not given: the marks

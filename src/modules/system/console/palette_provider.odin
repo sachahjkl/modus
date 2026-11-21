@@ -732,11 +732,6 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 	if !palette_kept_ensure(count) {
 		return
 	}
-	kept_bytes := size > 0 ? ([^]u8)(&palette_entries[0])[:size] : nil
-	if size > 0 {
-		copy(kept_bytes, next_bytes)
-	}
-	palette_entry_count = count
 	// The grant can end while a line runs: the table is used only while
 	// the console is the provider.
 	if !palette_active() {
@@ -744,14 +739,19 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 	}
 	// If the current shared table cannot hold all entries, allocate a new
 	// memory object sized for count and give a read-only handle to the
-	// compositor through the palette ring.
+	// compositor through the palette ring. Do not update palette_entries or
+	// palette_entry_count until the replacement succeeds so a failed grow
+	// retries cleanly on the next write.
 	if expected_bytes > u64(len(palette_memory)) {
 		needed_pages, pages_ok := palette_table.table_pages_for(u64(count))
 		if !pages_ok {
 			return
 		}
 		old_pages := u64(len(palette_memory)) / system.PAGE_SIZE
-		new_pages := max(needed_pages, old_pages * 2)
+		new_pages := needed_pages
+		if old_pages <= max(u64) / 2 {
+			new_pages = max(needed_pages, old_pages * 2)
+		}
 		new_handle, create_status := system.memory_create(new_pages)
 		if create_status != .Ok {
 			return
@@ -764,7 +764,7 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 		new_memory := ([^]u8)(new_addr)[:new_pages * system.PAGE_SIZE]
 		copy(new_memory[:palette_table.ENTRIES_OFFSET], palette_memory[:palette_table.ENTRIES_OFFSET])
 		if size > 0 {
-			copy(new_memory[palette_table.ENTRIES_OFFSET:], kept_bytes)
+			copy(new_memory[palette_table.ENTRIES_OFFSET:], next_bytes)
 		}
 		generation := header.change_count + 2
 		new_header := (^palette_table.Header)(new_addr)
@@ -779,10 +779,17 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 		sent := system.send(&palette_ring.completions, ring.Record{values = {0 = u64(palette_table.Outcome.Table_Replaced), 1 = u64(given), 2 = u64(len(new_memory))}})
 		system.unlock(&palette_send_lock)
 		if !sent {
+			// Revoke the handle already transferred into the compositor so
+			// neither the handle slot nor the memory object leaks.
+			_, _ = system.handle_revoke(new_handle)
 			system.memory_unmap(new_addr)
 			system.close(new_handle)
 			return
 		}
+		if size > 0 {
+			copy(([^]u8)(&palette_entries[0])[:size], next_bytes)
+		}
+		palette_entry_count = count
 		system.memory_unmap(raw_data(palette_memory))
 		system.close(palette_table_handle)
 		palette_table_handle = new_handle
@@ -790,9 +797,13 @@ palette_table_write :: proc "contextless" (call_getters := false) {
 		system.log_fact(.Info, Palette_Table_Written{entries = u64(count), table_generation = u64(generation)})
 		return
 	}
+	if size > 0 {
+		copy(([^]u8)(&palette_entries[0])[:size], next_bytes)
+	}
+	palette_entry_count = count
 	intrinsics.atomic_add(&header.change_count, 1)
 	if size > 0 {
-		copy(palette_memory[palette_table.ENTRIES_OFFSET:], kept_bytes)
+		copy(palette_memory[palette_table.ENTRIES_OFFSET:], next_bytes)
 	}
 	header.entry_count = u32(count)
 	header.byte_length = expected_bytes

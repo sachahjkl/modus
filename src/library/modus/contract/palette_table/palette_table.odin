@@ -509,21 +509,28 @@ snapshot_take :: proc "contextless" (memory: []u8, snapshot: ^Snapshot) -> (prob
 		version := intrinsics.volatile_load(&header.version)
 		count = intrinsics.volatile_load(&header.entry_count)
 		byte_length := intrinsics.volatile_load(&header.byte_length)
+		// Only report a header validation error if change_count stayed equal
+		// to before; a torn read during a concurrent write must retry.
+		header_problem := Problem.None
 		if magic != MAGIC {
-			return .Bad_Magic, 0
+			header_problem = .Bad_Magic
+		} else if version != VERSION {
+			header_problem = .Bad_Version
+		} else {
+			expected_bytes, fits := table_bytes_for(u64(count))
+			if !fits || byte_length != expected_bytes {
+				header_problem = .Bad_Byte_Length
+			} else if byte_length > u64(len(memory)) {
+				header_problem = .Too_Small
+			} else if u64(len(snapshot.entries)) < u64(count) {
+				header_problem = .Too_Many_Entries
+			}
 		}
-		if version != VERSION {
-			return .Bad_Version, 0
-		}
-		expected_bytes, fits := table_bytes_for(u64(count))
-		if !fits || byte_length != expected_bytes {
-			return .Bad_Byte_Length, 0
-		}
-		if byte_length > u64(len(memory)) {
-			return .Too_Small, 0
-		}
-		if u64(len(snapshot.entries)) < u64(count) {
-			return .Too_Many_Entries, 0
+		if header_problem != .None {
+			if intrinsics.atomic_load_explicit(&header.change_count, .Acquire) != before {
+				continue
+			}
+			return header_problem, 0
 		}
 		if count > 0 {
 			intrinsics.mem_copy_non_overlapping(&snapshot.entries[0], &memory[ENTRIES_OFFSET], int(count) * size_of(Entry))

@@ -121,10 +121,10 @@ endpoint_open :: proc "contextless" (slot: ^Started, name: string) -> (ring_memo
 	region_memory, status = system.memory_create(datagram.REGION_PAGES, 0, region_flags)
 	given: [2]system.Handle
 	if status == .Ok {
-		given[0], status = give_through_service_ring(service.process, service.network_memory, ring_memory, {.Read, .Write})
+		given[0], status = give_through_service_ring(service.process, service.network_memory, ring_memory, {.Read, .Write}, &service.network_ring_ready)
 	}
 	if status == .Ok {
-		given[1], status = give_through_service_ring(service.process, service.network_memory, region_memory, {.Read, .Write, .Give})
+		given[1], status = give_through_service_ring(service.process, service.network_memory, region_memory, {.Read, .Write, .Give}, &service.network_ring_ready)
 	}
 	grant := endpoint_of(name)
 	grant.inspect = .Inspect in slot.start_grant_set.grants

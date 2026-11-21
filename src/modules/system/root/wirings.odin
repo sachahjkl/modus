@@ -242,13 +242,13 @@ wiring_register_process :: proc "contextless" (item: ^Started) {
 	if wiring_process == nil || item == nil || item == wiring_process || item.process == 0 || item.process_slot == 0 || item.process_serial == 0 {
 		return
 	}
-	token, status := give_through_service_ring(wiring_process.process, wiring_ring_memory, item.process, {.Give})
+	token, status := give_through_service_ring(wiring_process.process, wiring_ring_memory, item.process, {.Give}, &wiring_process.service_ring_ready)
 	if status != .Ok {
 		return
 	}
 	ring_given: system.Handle
 	if item.wiring_memory != 0 {
-		ring_given, status = give_through_service_ring(wiring_process.process, wiring_ring_memory, item.wiring_memory, {.Read, .Write})
+		ring_given, status = give_through_service_ring(wiring_process.process, wiring_ring_memory, item.wiring_memory, {.Read, .Write}, &wiring_process.service_ring_ready)
 		if status != .Ok {
 			return
 		}
@@ -299,7 +299,7 @@ wiring_asker_budget_ensure :: proc "contextless" (asker: ^Started, command: root
 		values^ = errors.completion_values(err)
 		return status
 	}
-	given, give_status := give_through_service_ring(wiring_process.process, wiring_ring_memory, child, {.Spend})
+	given, give_status := give_through_service_ring(wiring_process.process, wiring_ring_memory, child, {.Spend}, &wiring_process.service_ring_ready)
 	if give_status != .Ok {
 		system.close(child)
 		values^ = errors.ring_fail(u32(command), .Refused, .Wirings, 0, 0, 0, i64(give_status))
