@@ -50,6 +50,7 @@
 package operation
 
 import info "modus:contract/boot_info"
+import "modus:contract/errors"
 import "modus:contract/value_kinds"
 
 // The bytes of one page: the unit of each mapping, of each memory object and
@@ -454,7 +455,7 @@ Operation :: enum u32 {
 	//   area or its page tables.
 	// - `No_Slot`: the thread table of the kernel is full, or the process has `THREAD_CAPACITY` threads.
 	// - `No_Memory`: no free run of page frames for the thread area.
-	Process_Stop   = 8, // (process, outcome: Stop_Outcome).
+	Process_Stop   = 8, // (process, outcome: Stop_Outcome, error: Error_Record).
 	// Stops a process: this one or another one. Each of its threads ends, and the operation returns when no
 	// thread of the process runs an instruction any more. The process is `Stopped` with its stop cause and its
 	// stop outcome, which `Process_State` gives. Its handles, its mappings and its memory end when its last
@@ -471,15 +472,19 @@ Operation :: enum u32 {
 	//   ends with its process: the operation does not return.
 	// - `outcome`: for a stop of this process, the word of a `Stop_Outcome` other than `None`: `Done`,
 	//   `Failed`, `Refused` or `Stopped_On_Request`. For a stop of another process, 0.
+	// - `error`: 0, or the address of a readable `errors.Error_Record` in the caller. A non-zero address is
+	//   allowed only when the target is this process and `outcome` is `Failed` or `Refused`, and the copied
+	//   record must have a known non-zero `kind` and a known `unit`. For `Done`, `Stopped_On_Request`, and any
+	//   holder stop, `error` must be 0.
 	//
 	// **Results**: none.
 	//
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
-	// - `Bad_Operation`: `outcome` names no outcome other than `None` for a stop of this process, or it is not 0
-	//   for a stop of another process. The error record gives the word, and the largest word that the target
-	//   takes. Nothing changes: the target runs on.
+	// - `Bad_Address`: `error` is non-zero and names bytes that the caller cannot read.
+	// - `Bad_Operation`: `outcome` names no valid outcome for the target, `error` is non-zero when disallowed,
+	//   or the copied error record has an invalid kind or unit. Nothing changes: the target runs on.
 	Process_State  = 9, // (process, report: Stop_Report) -> state: Process_State, cause: Stop_Cause, outcome: Stop_Outcome, entries, slot, serial.
 	// Gives the state of a process, its stop cause and its stop outcome, its count of kernel entries, and its
 	// place in the reports of `Inspect`. With an address, the kernel also writes there where the process
@@ -1768,6 +1773,9 @@ Stop_Report :: struct {
 	// values that the kernel took out (see Inspect_Kind.Stop).
 	process_serial: u64,
 	hidden_value_count: u64,
+	// Optional typed error record attached to a Failed or Refused self-stop
+	// through Process_Stop; zero for every other stop.
+	error: errors.Error_Record,
 }
 
 // The frames of one stack trace in a `Stop_Report`. A deeper stack is cut
@@ -3643,23 +3651,26 @@ Boot_Report :: struct {
 // developer tools list the processes with it. A slot with no process gives
 // zeros.
 Process_Report :: struct {
-	state:        Process_State, // `None` for a slot with no process.
+	state:          Process_State, // `None` for a slot with no process.
 	// The word of its `Stop_Cause`: 0 while the process runs. A record of the kernel holds the word, which a
 	// reader takes through `stop_cause_of_word`.
-	stop_cause:   u32,
+	stop_cause:     u32,
 	// The word of its `Stop_Outcome`: 0 while the process runs, and for each cause but `Itself`. A reader
 	// takes it through `stop_outcome_of_word`.
-	stop_outcome: u32,
-	name:         [PROCESS_NAME_BYTES_MOST + 1]u8, // The name that `Process_Create` gave; zero bytes after it.
-	mapped_pages: u64, // The pages of all its mappings.
-	handle_count: u64, // The handles in its handle table.
-	run_time:     u64, // Milliseconds of processor time.
-	entries:      u64, // Its kernel entries since its start.
-	thread_count: u64, // Its threads that did not end.
-	start_time:   u64, // Microseconds since the machine started.
-	budget:       Budget_Amounts, // What the budget that pays for the process still holds.
-	present_pages: u64, // The mapped pages that have a page frame.
+	stop_outcome:   u32,
+	name:           [PROCESS_NAME_BYTES_MOST + 1]u8, // The name that `Process_Create` gave; zero bytes after it.
+	mapped_pages:   u64, // The pages of all its mappings.
+	handle_count:   u64, // The handles currently in its handle table.
+	run_time:       u64, // Milliseconds of processor time.
+	entries:        u64, // Its kernel entries since its start.
+	thread_count:   u64, // Its threads that did not end.
+	start_time:     u64, // Microseconds since the machine started.
+	budget:         Budget_Amounts, // What the budget that pays for the process still holds.
+	present_pages:  u64, // The mapped pages that have a page frame.
 	process_serial: u64, // A number that changes for each new process in the slot: two reports with the same serial are of one process.
+	handles_peak:   u64, // Largest count of handles held at once since this process was created.
+	mapping_count:  u64, // Mappings currently in its mapping table.
+	mappings_peak:  u64, // Largest count of mappings held at once since this process was created.
 }
 
 // The context: the one record that a process receives when it starts, in

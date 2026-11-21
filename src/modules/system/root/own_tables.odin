@@ -13,10 +13,6 @@ package root
 import op "modus:contract/operation"
 import "modus:system"
 
-// The report of the mappings of this service: 8 KiB, so not on the stack.
-// Read only for a line.
-own_mappings_report: op.Process_Mapping_Report
-
 // The process slot of this service, found once by its name; 0 until then.
 own_slot: u64
 
@@ -94,14 +90,17 @@ handles_room_make :: proc "contextless" (needed: int) -> (closed: int) {
 }
 
 // own_tables gives the mappings and the handles that this service holds
-// now, from the reports of the kernel. ok is false when the kernel gives
-// none: the line then says nothing of them.
+// now, from one Process_Report of the kernel. ok is false when the kernel
+// gives none: the line then says nothing of them.
 own_tables :: proc "contextless" () -> (mappings, handles: u64, ok: bool) {
-	handles = own_handle_count() or_return
-	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process_Mappings), own_slot, u64(uintptr(&own_mappings_report)), size_of(own_mappings_report)); status != .Ok {
+	if !own_slot_find() {
 		return 0, 0, false
 	}
-	return own_mappings_report.count, handles, true
+	report: op.Process_Report
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), own_slot, u64(uintptr(&report)), size_of(report)); status != .Ok {
+		return 0, 0, false
+	}
+	return report.mapping_count, report.handle_count, true
 }
 
 // The start of the line of own_tables_measure: the measure record reads it

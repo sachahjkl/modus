@@ -319,14 +319,14 @@ sleep :: proc "contextless" (deadline: u64) -> u64 {
 // Example: `system.stop(.Done)` at the end of the work; `system.stop(.Failed)`
 // after a check of a test that failed, with its line on the log before;
 // `system.stop(.Refused)` for a context or an argument that it refuses.
-stop :: proc "contextless" (outcome: op.Stop_Outcome) -> ! {
+stop :: proc "contextless" (outcome: op.Stop_Outcome, error: ^errors.Error_Record = nil) -> ! {
 	kernel := kernel_ring()
 	for round := 0; ; round += 1 {
 		switch stop_step(&kernel, round) {
 		case .Enter_For_Held_Commands:
 			enter(0)
 		case .Send_Stop:
-			if _, status := call(.Process_Stop, 0, u64(outcome)); status == .Ok {
+			if _, status := call(.Process_Stop, 0, u64(outcome), u64(uintptr(error))); status == .Ok {
 				// The kernel ends this thread when it leaves its processor.
 				for {}
 			}

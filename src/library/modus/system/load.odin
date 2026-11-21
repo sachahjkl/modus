@@ -1299,7 +1299,7 @@ process_state :: proc "contextless" (process: Handle) -> (state: op.Process_Stat
 //
 // Example: `system.process_stop(child)`, then `system.close(child)`.
 process_stop :: proc "contextless" (process: Handle) -> Status {
-	_, status := call(.Process_Stop, u64(process), 0)
+	_, status := call(.Process_Stop, u64(process), 0, 0)
 	return status
 }
 

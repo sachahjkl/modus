@@ -2525,11 +2525,23 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 			reason := system.Writer{buffer = buffer[:]}
 			stop_reason_write(&reason, cause, outcome, report.vector)
 			result := fail("the process ", sandbox.name, " stopped: ", system.written(&reason))
-			// Only these three causes have a stop report: its stack trace.
+			// Fault causes have a stack trace; a Failed or Refused self-stop
+			// may carry a typed error record in the stop report.
 			switch cause {
 			case .Fault, .Not_Committed, .Cannot_Return:
 				fault_print(&report)
-			case .None, .Itself, .Holder, .Last_Thread_Ended, .Handles_Closed, .Fault_Unanswered:
+			case .Itself:
+				if op.stop_outcome_takes_error(outcome) && report.error.kind != 0 {
+					argument := ""
+					if report.error.argument >= 1 && report.error.argument <= i64(item.parameter_count) {
+						argument = item.parameter_names[report.error.argument - 1]
+					}
+					text_buffer: [240]u8
+					text_out := system.Writer{buffer = text_buffer[:]}
+					system.error_text(&text_out, &report.error, item.name, argument)
+					fail_note(system.written(&text_out))
+				}
+			case .None, .Holder, .Last_Thread_Ended, .Handles_Closed, .Fault_Unanswered:
 			}
 			return result
 		}

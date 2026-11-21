@@ -1,6 +1,7 @@
 package kernel
 
 import "modus:contract/enum_word"
+import "modus:contract/errors"
 import "modus:contract/ring"
 import "base:intrinsics"
 import op "modus:contract/operation"
@@ -597,10 +598,28 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		if !outcome_known {
 			return .Bad_Operation
 		}
+		// An optional error record is allowed only for a Failed or Refused
+		// self-stop; Done, Stopped_On_Request and holder stops must pass 0.
+		if !op.stop_error_address_allowed(cause == .Itself, outcome, v[2]) {
+			return .Bad_Operation
+		}
+		stop_error: errors.Error_Record
+		if v[2] != 0 {
+			if !user_range(process, v[2], size_of(errors.Error_Record), false) {
+				return .Bad_Address
+			}
+			copied: errors.Error_Record
+			user_copy(&copied, rawptr(uintptr(v[2])), size_of(errors.Error_Record))
+			accepted, error_ok := op.stop_error_of_operation(cause == .Itself, outcome, v[2], copied)
+			if !error_ok {
+				return .Bad_Operation
+			}
+			stop_error = accepted
+		}
 		if to == process && intrinsics.atomic_load(&threads[index].record_mode) == .Recording {
 			record_self_stop_completion_locked(processor_self(), &threads[index], command)
 		}
-		process_stop(index_of_process(to), cause, outcome)
+		process_stop(index_of_process(to), cause, outcome, stop_error)
 		return .Ok
 
 	case .Process_State:
@@ -705,12 +724,13 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			copy.rights -= {.Control, .Give}
 		}
 		copy.through = through
+		previous_peak := to.handles_peak
 		handle := handle_insert(to, copy)
 		if handle == 0 {
 			return .No_Slot
 		}
 		if !origin_attach(holding_of_handle(to, &to.handles[u32(handle) & 0xFFFF]), holding_of_handle(process, given)) {
-			handle_insert_undo(to, handle)
+			handle_insert_undo(to, handle, previous_peak)
 			return .Needs_Control
 		}
 		results[0] = u64(handle)
@@ -980,23 +1000,22 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					report = {state = .None, process_serial = u64(about.serial)}
 				} else {
 					report = {
-						state        = process_state(u32(v[2])),
-						thread_count = u64(about.thread_count),
-						stop_cause   = u32(about.cause),
-						stop_outcome = u32(about.outcome),
-						name         = about.name,
-						mapped_pages = about.mapped_pages,
-						present_pages = about.table == 0 ? 0 : present_pages(about),
+						state          = process_state(u32(v[2])),
+						thread_count   = u64(about.thread_count),
+						stop_cause     = u32(about.cause),
+						stop_outcome   = u32(about.outcome),
+						name           = about.name,
+						mapped_pages   = about.mapped_pages,
+						handle_count   = u64(about.handles_held),
+						handles_peak   = u64(about.handles_peak),
+						mapping_count  = u64(about.mappings_held),
+						mappings_peak  = u64(about.mappings_peak),
+						present_pages  = about.table == 0 ? 0 : present_pages(about),
 						process_serial = u64(about.serial),
-						run_time     = about.run_time,
-						start_time   = about.start_time,
-						entries      = about.entries,
-						budget       = budgets[about.budget].amounts,
-					}
-					for slot in about.handles {
-						if slot.kind != .None {
-							report.handle_count += 1
-						}
+						run_time       = about.run_time,
+						start_time     = about.start_time,
+						entries        = about.entries,
+						budget         = budgets[about.budget].amounts,
 					}
 				}
 			}
