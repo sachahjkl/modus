@@ -786,13 +786,19 @@ run_test_join :: proc(args: []string) -> int {
 }
 
 // run_failed_parts is the command `failed_parts` (failed_parts.odin): the
-// list after a `nix flake check --keep-going` by hand.
+// list after a `nix flake check --keep-going` by hand. It evaluates the
+// work tree as it is now: a tree that changed after the check names other
+// derivations, and the list then says that none of them was built.
 run_failed_parts :: proc(args: []string) -> int {
 	if len(args) != 0 {
 		fmt.eprintln("modustool: failed_parts takes no argument")
 		return foundation.EXIT_USAGE
 	}
-	return machine.failed_parts_report(FLAKE_CHECK_ATTRIBUTE) ? 0 : foundation.EXIT_FAILURE
+	evaluation, evaluated := machine.flake_check_evaluate(FLAKE_CHECK_ATTRIBUTE)
+	if !evaluated {
+		return foundation.EXIT_FAILURE
+	}
+	return machine.failed_parts_report(evaluation) ? 0 : foundation.EXIT_FAILURE
 }
 
 // run_fact_waits is the command `fact_waits` (scenario_waits_check.odin):
@@ -857,11 +863,15 @@ run_screenshots :: proc(args: []string) -> int {
 	// How many test parts Nix takes from the store, and how many run: a
 	// measure. The evaluation builds the test inputs of the tree first.
 	fmt.println("modustool: the evaluation of the check of the flake builds its test inputs first: a whole build when the tree changed")
-	if in_store, to_run, counted := machine.test_parts_in_store_count(FLAKE_CHECK_ATTRIBUTE); counted {
-		fmt.printfln("modustool: measure: the test parts of the check of the flake: %d taken from the store, %d run", in_store, to_run)
-	} else {
-		fmt.println("modustool: measure: the test parts of the check of the flake: no count, the evaluation failed")
+	// One evaluation: the build builds its derivation path, and the list of
+	// the failed parts reads its derivations. A second evaluation would read
+	// the work tree again, which can change while the check runs.
+	evaluation, evaluated := machine.flake_check_evaluate(FLAKE_CHECK_ATTRIBUTE)
+	if !evaluated {
+		return foundation.EXIT_FAILURE
 	}
+	in_store, to_run := machine.test_parts_in_store_count(evaluation)
+	fmt.printfln("modustool: measure: the test parts of the check of the flake: %d taken from the store, %d run", in_store, to_run)
 	// Each machine has its processors and its memory, and a part runs its
 	// machines one after the other: Nix runs at most as many part
 	// derivations at once as the pool of `modustool test` would run parts,
@@ -871,8 +881,8 @@ run_screenshots :: proc(args: []string) -> int {
 	// The check of the flake runs the host checks, each test part and the
 	// second build in the sandbox; it fails when one of them fails. Nix
 	// goes on past a failed part, so one run lists every failed part.
-	if !foundation.run({"nix", "build", FLAKE_CHECK_ATTRIBUTE, "--out-link", FLAKE_CHECK_LINK, "--print-build-logs", "--keep-going", "--max-jobs", fmt.tprintf("%d", most_jobs)}) {
-		_ = machine.failed_parts_report(FLAKE_CHECK_ATTRIBUTE)
+	if !foundation.run({"nix", "build", foundation.join(evaluation.check_derivation, "^out"), "--out-link", FLAKE_CHECK_LINK, "--print-build-logs", "--keep-going", "--max-jobs", fmt.tprintf("%d", most_jobs)}) {
+		_ = machine.failed_parts_report(evaluation)
 		return foundation.EXIT_FAILURE
 	}
 	if !flake_check_outputs_take() {
