@@ -50,9 +50,13 @@ Capture_Face :: struct {
 	last_written: int,
 	serial:       u64,
 	// The viewers that the service named, for the mark of the bar.
-	viewer_count: int,
-	viewer_input: u64, // Bit n: viewer n has the input.
-	viewer_keys:  [display.CAPTURE_VIEWER_CAPACITY]u64,
+	viewer_count:            int,
+	viewer_input:            u64, // Bit n: viewer n has the input.
+	viewer_keys:             [display.CAPTURE_VIEWER_CAPACITY]u64,
+	// Protocol v2 per-viewer warp notifications and input echo counts.
+	pointer_warped_mask:     u32,
+	viewer_input_generation: [display.CAPTURE_VIEWER_CAPACITY]u64,
+	viewer_input_echo:       [display.CAPTURE_VIEWER_CAPACITY]u64,
 	// The counts of the log.
 	records:          u64, // The records Capture_Frame.
 	refused:          u64, // Commands of the two faces that this service refused.
@@ -65,6 +69,31 @@ capture := Capture_Face{client = -1, held = -1, last_written = 1}
 // capture_is_open says if a client holds the capture face.
 capture_is_open :: proc "contextless" () -> bool {
 	return capture.client >= 0
+}
+
+// capture_note_machine_pointer_move marks that the machine moved the
+// pointer without a Remote_Pointer record from any viewer, so connected
+// viewers receive a Pointer_Warp record.
+capture_note_machine_pointer_move :: proc "contextless" () {
+	if capture.client >= 0 {
+		capture.pointer_warped_mask |= (u32(1) << display.CAPTURE_VIEWER_CAPACITY) - 1
+	}
+}
+
+// capture_record_viewer_input updates the monotonic echo counter of a
+// viewer slot once its Remote_Key or Remote_Pointer record is applied.
+@(private = "file")
+capture_record_viewer_input :: proc "contextless" (record: ring.Record) -> (viewer_slot: u64) {
+	viewer_slot = record.values[4]
+	input_serial := record.values[5]
+	generation := record.values[6]
+	if viewer_slot < display.CAPTURE_VIEWER_CAPACITY && generation != 0 {
+		if capture.viewer_input_generation[viewer_slot] != generation || input_serial >= capture.viewer_input_echo[viewer_slot] {
+			capture.viewer_input_generation[viewer_slot] = generation
+			capture.viewer_input_echo[viewer_slot] = input_serial
+		}
+	}
+	return viewer_slot
 }
 
 // capture_refuse counts a refused command of the two faces; the first one
@@ -133,6 +162,7 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 		if capture.remote_keys == 1 {
 			system.log_fact(.Info, First_Viewer_Key{})
 		}
+		_ = capture_record_viewer_input(record)
 		character := display.key_character_of(character_word)
 		// The path of a key of the input service: the palette, the
 		// clipboard, then the window in front, never the bar.
@@ -150,10 +180,19 @@ capture_command :: proc "contextless" (index: int, command: display.Command, rec
 			return
 		}
 		capture.remote_pointers += 1
+		viewer_slot := capture_record_viewer_input(record)
 		wheel := int(clamp(i64(record.values[3]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
+		before_x, before_y := pointer_x, pointer_y
 		// A viewer sees the pixels of the screen: its place goes to the
 		// logical pixel of the desktop that holds it.
 		pointer_moved(logical_pixel_of(int(x)) - pointer_x, logical_pixel_of(int(y)) - pointer_y, u32(buttons), wheel)
+		if pointer_x != before_x || pointer_y != before_y {
+			// Other viewers saw a move they did not initiate; the sender
+			// knows its own move.
+			all_viewers := (u32(1) << display.CAPTURE_VIEWER_CAPACITY) - 1
+			sender_bit := viewer_slot < display.CAPTURE_VIEWER_CAPACITY ? (u32(1) << u32(viewer_slot)) : 0
+			capture.pointer_warped_mask |= all_viewers &~ sender_bit
+		}
 	}
 }
 
@@ -303,6 +342,21 @@ capture_after_draw :: proc "contextless" (areas: []Rectangle) {
 			header.pointer_left, header.pointer_top, header.pointer_right, header.pointer_bottom = u32(left), u32(top), u32(right), u32(bottom)
 		}
 	}
+	header.pointer_shape = u32(pointer_shape)
+	header.pointer_form = u32(pointer_form)
+	if pointer_theme != nil && pointer_chosen.picture.width >= 24 && pointer_chosen.picture.width <= 48 {
+		header.pointer_size = pointer_chosen.picture.width
+		header.pointer_hot_spot_x = min(pointer_chosen.picture.hot_spot_x, header.pointer_size - 1)
+		header.pointer_hot_spot_y = min(pointer_chosen.picture.hot_spot_y, header.pointer_size - 1)
+	} else {
+		header.pointer_size = 24
+		header.pointer_hot_spot_x = 0
+		header.pointer_hot_spot_y = 0
+	}
+	header.pointer_warped_mask = capture.pointer_warped_mask
+	capture.pointer_warped_mask = 0
+	header.viewer_input_generation = capture.viewer_input_generation
+	header.viewer_input_echo = capture.viewer_input_echo
 	send(&clients[capture.client], .Capture_Frame, {0 = u64(written), 1 = header.count, 2 = header.serial})
 	capture.changed = {}
 	capture.held = written

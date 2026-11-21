@@ -331,4 +331,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_INTERNAL + "/powerbox/powerbox_core",
 	foundation.SOURCE_FOLDER_CONTRACT + "/work_budget",
 	foundation.TEST_MODULE_SOURCES + "work_accounting_probe",
+	foundation.SOURCE_FOLDER_CONTRACT + "/virtio_input",
+	foundation.SOURCE_FOLDER_INTERNAL + "/input/tablet",
+	foundation.SOURCE_FOLDER_CONTRACT + "/remote_display",
 }

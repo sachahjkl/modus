@@ -27,6 +27,7 @@ package remote_display
 
 import "base:intrinsics"
 import "modus:contract/enum_word"
+import "modus:contract/pointer_pictures"
 
 // The UDP port of the listen grant of the service, on the address of the
 // machine. The listen grant admits the address of the host only, as the one
@@ -91,25 +92,32 @@ display_error_name :: proc "contextless" (code: u64) -> string {
 // The kind of a record. The values from 1 go from the service to the
 // viewer; the values from 16 go from the viewer to the service.
 Record_Kind :: enum u32 {
-	None          = 0, // Not a record: refused.
-	Screen_Size   = 1, // The first record of the service: Screen_Size_Body.
+	None                 = 0, // Not a record: refused.
+	Screen_Size          = 1, // The first record of the service: Screen_Size_Body.
 	Viewer_Frame_Start   = 2, // Viewer_Frame_Start_Body, then its screen pieces.
-	Screen_Piece          = 3, // A Screen_Piece_Header, then its coded pixels.
+	Screen_Piece         = 3, // A Screen_Piece_Header, then its coded pixels.
 	Viewer_Frame_End     = 4, // Viewer_Frame_End_Body.
-	Pointer_Place = 5, // Pointer_Place_Body.
+	Pointer_Place        = 5, // Pointer_Place_Body.
+	Pointer_Shape        = 6, // Pointer_Shape_Body: pointer shape, form, size, and hot spot.
+	Pointer_Picture      = 7, // Pointer_Picture_Header, then size * size * 4 RGBA pixels.
+	Pointer_Warp         = 8, // Pointer_Warp_Body: machine-initiated pointer move and input echo count.
 	Viewer_Frame_Taken   = 16, // Viewer_Frame_Taken_Body.
-	Screen_Piece_Request  = 17, // Screen_Piece_Request_Body.
-	Key           = 18, // Key_Body.
-	Pointer       = 19, // Pointer_Body.
+	Screen_Piece_Request = 17, // Screen_Piece_Request_Body.
+	Key                  = 18, // Key_Body.
+	Pointer              = 19, // Pointer_Body.
 	// Session_Start_Body: the first record of the viewer, which opens the
 	// stream. The service writes nothing before it, and refuses it a
 	// second time.
-	Session_Start = 20,
+	Session_Start        = 20,
 }
 
 // The version of the protocol that Session_Start names. A viewer of
 // another version is refused.
-PROTOCOL_VERSION :: 1
+PROTOCOL_VERSION :: 2
+
+// The allowed pixel side of a pointer picture in protocol version 2.
+POINTER_SIZE_MINIMUM :: 24
+POINTER_SIZE_MAXIMUM :: 48
 
 Session_Start_Body :: struct {
 	version:  u32, // PROTOCOL_VERSION.
@@ -136,14 +144,18 @@ Screen_Size_Body :: struct {
 }
 
 Viewer_Frame_Start_Body :: struct {
-	serial:     u64, // One more for each viewer frame of the session, from 1.
+	serial:             u64, // One more for each viewer frame of the session, from 1.
 	screen_piece_count: u32, // The Screen_Piece records before Viewer_Frame_End.
-	_:          u32,
+	reserved:           u32, // 0.
 	// The most bytes of those Screen_Piece records, their headers included: each
 	// pixel at its worst code. The service codes each screen piece as it goes, so
 	// it knows the bound before the bytes; a viewer can hold the viewer frame.
-	bytes:      u64,
+	bytes:              u64,
+	// Monotonic count of input records of this viewer already applied by the
+	// compositor before copying the pixels of this viewer frame.
+	input_echo_count:   u64,
 }
+#assert(size_of(Viewer_Frame_Start_Body) == 32)
 
 // The head of the body of a Screen_Piece: the coded pixels follow it.
 Screen_Piece_Header :: struct {
@@ -165,6 +177,40 @@ Pointer_Place_Body :: struct {
 	x, y:                     u32,
 	left, top, right, bottom: u32,
 }
+
+// The shape, theme form, pixel side, and hot spot of the pointer so a
+// viewer draws its own host cursor with zero wait.
+Pointer_Shape_Body :: struct {
+	shape:      u32, // pointer_pictures.Pointer_Shape.
+	form:       u32, // pointer_pictures.Pointer_Form.
+	size:       u32, // Side in pixels, in [POINTER_SIZE_MINIMUM..POINTER_SIZE_MAXIMUM].
+	hot_spot_x: u32, // < size.
+	hot_spot_y: u32, // < size.
+	reserved:   u32, // 0.
+}
+#assert(size_of(Pointer_Shape_Body) == 24)
+
+// The head of the body of a Pointer_Picture: size * size * 4 bytes of
+// premultiplied pixels follow this header.
+Pointer_Picture_Header :: struct {
+	shape:      u32, // pointer_pictures.Pointer_Shape.
+	form:       u32, // pointer_pictures.Pointer_Form.
+	size:       u32, // Side in pixels, in [POINTER_SIZE_MINIMUM..POINTER_SIZE_MAXIMUM].
+	hot_spot_x: u32, // < size.
+	hot_spot_y: u32, // < size.
+	reserved:   u32, // 0.
+}
+#assert(size_of(Pointer_Picture_Header) == 24)
+
+// A machine-initiated cursor move (not caused by this viewer's own
+// Pointer records), with the exact screen coordinates and the count of
+// viewer input records applied before this warp.
+Pointer_Warp_Body :: struct {
+	x:                u32,
+	y:                u32,
+	input_echo_count: u64,
+}
+#assert(size_of(Pointer_Warp_Body) == 16)
 
 Viewer_Frame_Taken_Body :: struct {
 	serial: u64,
@@ -215,17 +261,20 @@ WHEEL_NOTCHES_LIMIT :: 64
 // table is sparse.
 @(rodata)
 BODY_SIZES := #sparse[Record_Kind]u32 {
-	.None          = 0,
-	.Screen_Size   = size_of(Screen_Size_Body),
+	.None                 = 0,
+	.Screen_Size          = size_of(Screen_Size_Body),
 	.Viewer_Frame_Start   = size_of(Viewer_Frame_Start_Body),
-	.Screen_Piece          = size_of(Screen_Piece_Header),
+	.Screen_Piece         = size_of(Screen_Piece_Header),
 	.Viewer_Frame_End     = size_of(Viewer_Frame_End_Body),
-	.Pointer_Place = size_of(Pointer_Place_Body),
+	.Pointer_Place        = size_of(Pointer_Place_Body),
+	.Pointer_Shape        = size_of(Pointer_Shape_Body),
+	.Pointer_Picture      = size_of(Pointer_Picture_Header),
+	.Pointer_Warp         = size_of(Pointer_Warp_Body),
 	.Viewer_Frame_Taken   = size_of(Viewer_Frame_Taken_Body),
-	.Screen_Piece_Request  = size_of(Screen_Piece_Request_Body),
-	.Key           = size_of(Key_Body),
-	.Pointer       = size_of(Pointer_Body),
-	.Session_Start = size_of(Session_Start_Body),
+	.Screen_Piece_Request = size_of(Screen_Piece_Request_Body),
+	.Key                  = size_of(Key_Body),
+	.Pointer              = size_of(Pointer_Body),
+	.Session_Start        = size_of(Session_Start_Body),
 }
 
 // The bound of the length of a record of each direction. A record of the
@@ -233,7 +282,10 @@ BODY_SIZES := #sparse[Record_Kind]u32 {
 // sends.
 VIEWER_BODY_LIMIT :: 16
 SCREEN_PIECE_BODY_LIMIT :: size_of(Screen_Piece_Header) + CODED_SCREEN_PIECE_LIMIT
+POINTER_PICTURE_MIN_BODY :: size_of(Pointer_Picture_Header) + POINTER_SIZE_MINIMUM * POINTER_SIZE_MINIMUM * 4
+POINTER_PICTURE_BODY_LIMIT :: size_of(Pointer_Picture_Header) + POINTER_SIZE_MAXIMUM * POINTER_SIZE_MAXIMUM * 4
 SERVICE_BODY_LIMIT :: SCREEN_PIECE_BODY_LIMIT
+#assert(POINTER_PICTURE_BODY_LIMIT <= SERVICE_BODY_LIMIT)
 // The bytes of the screen pieces of one viewer frame at most: each pixel of the largest
 // screen in its worst code, and the headers of the most screen pieces.
 VIEWER_FRAME_BYTES_LIMIT :: SCREEN_WIDTH_LIMIT * SCREEN_HEIGHT_LIMIT * CODED_PIXEL_LIMIT + VIEWER_FRAME_PIECE_LIMIT * (RECORD_HEADER_SIZE + size_of(Screen_Piece_Header))
@@ -322,6 +374,15 @@ record_length_problem :: proc "contextless" (header: Record_Header, direction: D
 		}
 		return .None
 	}
+	if kind == .Pointer_Picture {
+		if header.length > POINTER_PICTURE_BODY_LIMIT {
+			return .Past_Bound
+		}
+		if header.length < POINTER_PICTURE_MIN_BODY {
+			return .Wrong_Length
+		}
+		return .None
+	}
 	if header.length != BODY_SIZES[kind] {
 		return .Wrong_Length
 	}
@@ -331,7 +392,7 @@ record_length_problem :: proc "contextless" (header: Record_Header, direction: D
 // kind_direction gives the direction of a kind.
 kind_direction :: proc "contextless" (kind: Record_Kind) -> Direction {
 	switch kind {
-	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place:
+	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place, .Pointer_Shape, .Pointer_Picture, .Pointer_Warp:
 		return .To_Viewer
 	case .Viewer_Frame_Taken, .Screen_Piece_Request, .Key, .Pointer, .Session_Start:
 		return .To_Service
@@ -362,7 +423,7 @@ viewer_record_check :: proc "contextless" (header: Record_Header, body: []u8, sc
 	}
 	record.kind = header.kind
 	switch header.kind {
-	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place:
+	case .None, .Screen_Size, .Viewer_Frame_Start, .Screen_Piece, .Viewer_Frame_End, .Pointer_Place, .Pointer_Shape, .Pointer_Picture, .Pointer_Warp:
 		// record_length_problem took only a kind of this direction.
 		return {}, .Wrong_Direction
 	case .Session_Start:
@@ -403,13 +464,37 @@ viewer_record_check :: proc "contextless" (header: Record_Header, body: []u8, sc
 
 // A record of the service that its border took.
 Service_Record :: struct {
-	kind:          Record_Kind,
-	screen_size:   Screen_Size_Body,
+	kind:                 Record_Kind,
+	screen_size:          Screen_Size_Body,
 	viewer_frame_start:   Viewer_Frame_Start_Body,
-	screen_piece:          Screen_Piece_Header,
-	coded:         []u8, // A Screen_Piece: its coded pixels, in the body that the caller gave.
+	screen_piece:         Screen_Piece_Header,
+	coded:                []u8, // A Screen_Piece: its coded pixels, in the body that the caller gave.
 	viewer_frame_end:     Viewer_Frame_End_Body,
-	pointer_place: Pointer_Place_Body,
+	pointer_place:        Pointer_Place_Body,
+	pointer_shape:        Pointer_Shape_Body,
+	pointer_picture:      Pointer_Picture_Header,
+	pointer_shape_member: pointer_pictures.Pointer_Shape,
+	pointer_form_member:  pointer_pictures.Pointer_Form,
+	pointer_pixels:       []u8, // A Pointer_Picture: its size * size * 4 pixel bytes, in the body that the caller gave.
+	pointer_warp:         Pointer_Warp_Body,
+}
+
+// pointer_shape_fields_check validates the closed shape and form members,
+// the theme size range, the hot spot bounds, and the reserved word.
+@(private)
+pointer_shape_fields_check :: proc "contextless" (shape_word, form_word, size, hot_spot_x, hot_spot_y, reserved: u32) -> (shape: pointer_pictures.Pointer_Shape, form: pointer_pictures.Pointer_Form, ok: bool) {
+	shape_member, shape_ok := enum_word.member_of_word(pointer_pictures.Pointer_Shape, u64(shape_word))
+	form_member, form_ok := enum_word.member_of_word(pointer_pictures.Pointer_Form, u64(form_word))
+	if !shape_ok || !form_ok || reserved != 0 {
+		return {}, {}, false
+	}
+	if size < POINTER_SIZE_MINIMUM || size > POINTER_SIZE_MAXIMUM {
+		return {}, {}, false
+	}
+	if hot_spot_x >= size || hot_spot_y >= size {
+		return {}, {}, false
+	}
+	return shape_member, form_member, true
 }
 
 // service_record_check is the border of a whole record from the service.
@@ -436,7 +521,7 @@ service_record_check :: proc "contextless" (header: Record_Header, body: []u8, s
 	case .Viewer_Frame_Start:
 		start := body_read(body, Viewer_Frame_Start_Body)
 		switch {
-		case start.serial == 0:
+		case start.serial == 0 || start.reserved != 0:
 			return {}, .Bad_Field
 		case start.screen_piece_count > VIEWER_FRAME_PIECE_LIMIT || start.bytes > VIEWER_FRAME_BYTES_LIMIT:
 			return {}, .Past_Bound
@@ -476,8 +561,54 @@ service_record_check :: proc "contextless" (header: Record_Header, body: []u8, s
 			return {}, .Bad_Field
 		}
 		record.pointer_place = place
+	case .Pointer_Shape:
+		shape_body := body_read(body, Pointer_Shape_Body)
+		shape_member, form_member, fields_ok := pointer_shape_fields_check(shape_body.shape, shape_body.form, shape_body.size, shape_body.hot_spot_x, shape_body.hot_spot_y, shape_body.reserved)
+		if !fields_ok {
+			return {}, .Bad_Field
+		}
+		record.pointer_shape = shape_body
+		record.pointer_shape_member = shape_member
+		record.pointer_form_member = form_member
+	case .Pointer_Picture:
+		pic := body_read(body, Pointer_Picture_Header)
+		shape_member, form_member, fields_ok := pointer_shape_fields_check(pic.shape, pic.form, pic.size, pic.hot_spot_x, pic.hot_spot_y, pic.reserved)
+		if !fields_ok {
+			return {}, .Bad_Field
+		}
+		expected_bytes := size_of(Pointer_Picture_Header) + u64(pic.size) * u64(pic.size) * 4
+		if u64(len(body)) != expected_bytes {
+			return {}, .Wrong_Length
+		}
+		record.pointer_picture = pic
+		record.pointer_shape_member = shape_member
+		record.pointer_form_member = form_member
+		record.pointer_pixels = body[size_of(Pointer_Picture_Header):]
+	case .Pointer_Warp:
+		warp := body_read(body, Pointer_Warp_Body)
+		if warp.x >= screen.width || warp.y >= screen.height {
+			return {}, .Outside_Screen
+		}
+		record.pointer_warp = warp
 	}
 	return record, .None
+}
+
+// Input_Echo_Tracker enforces monotonic viewer input echo counts across
+// frames and warps, and ensures the service never echoes more inputs than
+// the viewer sent.
+Input_Echo_Tracker :: struct {
+	last_echo_count: u64,
+}
+
+// input_echo_check refuses a count that goes backward or exceeds sent_count,
+// leaving tracker unchanged on refusal.
+input_echo_check :: proc "contextless" (tracker: ^Input_Echo_Tracker, echo_count: u64, sent_count: u64) -> Record_Problem {
+	if echo_count < tracker.last_echo_count || echo_count > sent_count {
+		return .Bad_Field
+	}
+	tracker.last_echo_count = echo_count
+	return .None
 }
 
 // body_read copies a body out of bytes, with no alignment. The border
@@ -517,6 +648,36 @@ screen_piece_record_write :: proc "contextless" (out: []u8, pixels: []u32, strid
 	intrinsics.mem_copy_non_overlapping(raw_data(out), &header, RECORD_HEADER_SIZE)
 	intrinsics.mem_copy_non_overlapping(raw_data(out[RECORD_HEADER_SIZE:]), &screen_piece, size_of(Screen_Piece_Header))
 	return out[:head + coded], true
+}
+
+// pointer_picture_record_write writes a whole Pointer_Picture record into
+// out: Record_Header, Pointer_Picture_Header, and size * size * 4 pixel bytes.
+pointer_picture_record_write :: proc "contextless" (out: []u8, shape: pointer_pictures.Pointer_Shape, form: pointer_pictures.Pointer_Form, size, hot_spot_x, hot_spot_y: u32, pixels: []u32) -> (bytes: []u8, ok: bool) {
+	if size < POINTER_SIZE_MINIMUM || size > POINTER_SIZE_MAXIMUM || hot_spot_x >= size || hot_spot_y >= size {
+		return nil, false
+	}
+	pixel_count := int(size * size)
+	if len(pixels) != pixel_count {
+		return nil, false
+	}
+	pixel_bytes := pixel_count * 4
+	body_length := size_of(Pointer_Picture_Header) + pixel_bytes
+	total := RECORD_HEADER_SIZE + body_length
+	if len(out) < total {
+		return nil, false
+	}
+	header := Record_Header{kind = .Pointer_Picture, length = u32(body_length)}
+	pic := Pointer_Picture_Header{
+		shape      = u32(shape),
+		form       = u32(form),
+		size       = size,
+		hot_spot_x = hot_spot_x,
+		hot_spot_y = hot_spot_y,
+	}
+	intrinsics.mem_copy_non_overlapping(raw_data(out), &header, RECORD_HEADER_SIZE)
+	intrinsics.mem_copy_non_overlapping(raw_data(out[RECORD_HEADER_SIZE:]), &pic, size_of(Pointer_Picture_Header))
+	intrinsics.mem_copy_non_overlapping(raw_data(out[RECORD_HEADER_SIZE + size_of(Pointer_Picture_Header):]), raw_data(pixels), pixel_bytes)
+	return out[:total], true
 }
 
 // The screen pieces of a rectangle: a rectangle of the damage goes as screen pieces of

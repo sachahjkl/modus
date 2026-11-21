@@ -2,6 +2,7 @@ package fuzz
 
 import "core:fmt"
 import "core:slice"
+import "modus:contract/remote"
 import "modus:disk_process"
 
 // The fuzz target of the disk grant table (src/md/infrastructure/fuzzing.md,
@@ -125,8 +126,9 @@ fuzz_grant_table_rules :: proc(table: ^disk_process.Grant_Table) -> Fuzz_Verdict
 		}
 	}
 	for item, index in table.client_keys[:table.client_key_count] {
-		if item == ([disk_process.CLIENT_KEY_SIZE]u8{}) || disk_process.table_client_key_find(table, item) != index {
-			return fuzz_broken(.Contract, "the client key %d is zero or comes two times", index)
+		_, uses_ok := remote.client_uses_of_word(remote.client_uses_word(item.uses))
+		if item.key == ([disk_process.CLIENT_KEY_SIZE]u8{}) || !uses_ok || disk_process.table_client_key_find(table, item.key) != index {
+			return fuzz_broken(.Contract, "the client key %d is zero, has bad uses, or comes two times", index)
 		}
 	}
 	return FUZZ_PASSED
@@ -148,7 +150,7 @@ fuzz_disk_grant_table_seeds :: proc(seeds: ^[dynamic][]u8) {
 	_ = disk_process.table_persistence_set(&several, "process_1", .Forget)
 	client_key: [disk_process.CLIENT_KEY_SIZE]u8
 	client_key[5] = 9
-	_ = disk_process.table_client_key_add(&several, client_key)
+	_ = disk_process.table_client_key_add(&several, client_key, {.Calls, .View, .Input})
 	append(&tables, several)
 	forgetting := several
 	forgetting.forget_by_default = true
@@ -159,9 +161,10 @@ fuzz_disk_grant_table_seeds :: proc(seeds: ^[dynamic][]u8) {
 		hash[0], hash[31] = u8(index), 0xFF
 		_ = disk_process.table_allow(&full, fmt.tprintf("a-very-long-nickname-%02d", index), hash, .Store)
 	}
+	uses_samples := [4]remote.Client_Uses{{.Calls}, {.View}, {.View, .Input}, {.Calls, .View, .Input}}
 	for index in 0 ..< disk_process.CLIENT_KEY_CAPACITY {
 		client_key[0] = u8(index + 1)
-		_ = disk_process.table_client_key_add(&full, client_key)
+		_ = disk_process.table_client_key_add(&full, client_key, uses_samples[index % len(uses_samples)])
 	}
 	append(&tables, full)
 	for &table in tables {

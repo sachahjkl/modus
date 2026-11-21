@@ -35,7 +35,7 @@ scenario_remote_display := [?]Step {
 	{kind = .Remote_Display_Case, text = "unknown key"},
 	{kind = .Wait, text = "remote_display: refused the viewer key ", any_order = true},
 	{kind = .Type, text = "remote_display_allow(\"{viewer key}\", \"view\")"},
-	{kind = .Wait, text = " for the remote display: view; the uses of the remote display last until the machine stops"},
+	{kind = .Wait, text = " for the remote display: view"},
 	{kind = .Remote_Display_Case, text = "before session start"},
 	{kind = .Wait, text = ": a record before Session_Start: the connection ends with the code Bad_Record", any_order = true},
 	{kind = .Remote_Display_Case, text = "second session start"},
@@ -87,7 +87,7 @@ scenario_remote_display := [?]Step {
 	// The session in front: a key of principal 0 sees nothing while the
 	// session of alice is in front.
 	{kind = .Type, text = "remote_display_allow(\"{viewer key}\", \"view\")"},
-	{kind = .Wait, text = " for the remote display: view; the uses of the remote display last until the machine stops"},
+	{kind = .Wait, text = " for the remote display: view"},
 	{kind = .Remote_Display_Case, text = "view"},
 	{kind = .Type, text = "principal_create(\"alice\")"},
 	{kind = .Wait, text = "root: started unlock"},

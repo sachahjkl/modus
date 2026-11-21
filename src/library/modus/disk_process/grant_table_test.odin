@@ -2,6 +2,8 @@
 package disk_process
 
 import "core:testing"
+import "modus:contract/byte_order"
+import "modus:contract/remote"
 import "modus:contract/root_ring"
 import "modus:contract/start_grant"
 
@@ -279,8 +281,10 @@ hostile_tables :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem, Table_File_Problem.Not_Authentic)
 	_, problem = table_decode(good[:TABLE_SIZE - 1], &key)
 	testing.expect_value(t, problem, Table_File_Problem.Wrong_Size)
-	// A table of the format 1 is named so, and a restore cannot help it.
+	// A table of format 1 or format 2 is named Older_Format, and a restore cannot help it.
 	_, problem = table_decode(good[:OLDER_FORMAT_TABLE_SIZE], &key)
+	testing.expect_value(t, problem, Table_File_Problem.Older_Format)
+	_, problem = table_decode(good[:OLDER_FORMAT_2_TABLE_SIZE], &key)
 	testing.expect_value(t, problem, Table_File_Problem.Older_Format)
 	testing.expect(t, table_problem_is_format(.Older_Format) && table_problem_is_format(.Wrong_Format))
 	testing.expect(t, !table_problem_is_format(.Not_Authentic) && !table_problem_is_format(.Wrong_Size))
@@ -357,38 +361,52 @@ the_client_keys_of_a_table :: proc(t: ^testing.T) {
 	testing.expect_value(t, table_client_key_find(&table, hash_of(11)), -1)
 	testing.expect_value(t, table_client_key_find(&table, hash_of(1)), 0)
 	testing.expect_value(t, table_client_key_find(&table, hash_of(21)), 1)
-	testing.expect(t, table.client_keys[CLIENT_KEY_CAPACITY - 1] == ([CLIENT_KEY_SIZE]u8{}))
+	testing.expect(t, table.client_keys[CLIENT_KEY_CAPACITY - 1] == (Client_Key_Row{}))
 	// The place that the removal freed takes a key again.
 	testing.expect_value(t, table_client_key_add(&table, hash_of(200)), Table_Problem.None)
 	testing.expect_value(t, table_client_key_find(&table, hash_of(200)), CLIENT_KEY_CAPACITY - 1)
 }
 
-// The client keys go through the persisted form with the rows, under the
-// same tag, and come back in their order. The global setting to forget
-// writes none, as it writes no row that has no exception.
+// The client keys and their uses (Calls, View, Input) go through the
+// persisted form with the rows under the same tag, come back in order,
+// refuse unknown/invalid use bits on decode, and clear on revocation.
 @(test)
 client_keys_through_the_persisted_form :: proc(t: ^testing.T) {
 	table: Grant_Table
 	key := key_of(7)
 	testing.expect_value(t, table_allow(&table, "visitor", hash_of(1), .Store), Table_Problem.None)
-	testing.expect_value(t, table_client_key_add(&table, hash_of(40)), Table_Problem.None)
-	testing.expect_value(t, table_client_key_add(&table, hash_of(80)), Table_Problem.None)
+	// Invalid uses are refused at add time without changing the table.
+	testing.expect_value(t, table_client_key_add(&table, hash_of(40), {}), Table_Problem.Bad_Uses)
+	testing.expect_value(t, table_client_key_add(&table, hash_of(40), {.Input}), Table_Problem.Bad_Uses)
+	testing.expect_value(t, table_client_key_add(&table, hash_of(40), {.Calls, .Input}), Table_Problem.Bad_Uses)
+	testing.expect_value(t, table.client_key_count, 0)
+
+	testing.expect_value(t, table_client_key_add(&table, hash_of(40), {.View}), Table_Problem.None)
+	testing.expect_value(t, table_client_key_add(&table, hash_of(80), {.View, .Input}), Table_Problem.None)
+	testing.expect_value(t, table_client_key_add(&table, hash_of(120), {.Calls, .View, .Input}), Table_Problem.None)
+	// Growing uses on an existing key merges uses without adding a duplicate row.
+	testing.expect_value(t, table_client_key_add(&table, hash_of(40), {.Calls}), Table_Problem.None)
+	testing.expect_value(t, table.client_key_count, 3)
+
 	bytes: [TABLE_SIZE]u8
 	table_encode(&table, &key, &bytes)
-	testing.expect_value(t, int(bytes[TABLE_OFFSET_CLIENT_KEY_COUNT]), 2)
+	testing.expect_value(t, int(bytes[TABLE_OFFSET_CLIENT_KEY_COUNT]), 3)
 	read, problem := table_decode(bytes[:], &key)
 	testing.expect_value(t, problem, Table_File_Problem.None)
 	testing.expect_value(t, read.count, 1)
-	testing.expect_value(t, read.client_key_count, 2)
-	testing.expect(t, read.client_keys[0] == hash_of(40) && read.client_keys[1] == hash_of(80))
-	// A key of the table is under the tag: one bit of it changed is
-	// refused.
+	testing.expect_value(t, read.client_key_count, 3)
+	testing.expect(t, read.client_keys[0] == Client_Key_Row{key = hash_of(40), uses = {.Calls, .View}})
+	testing.expect(t, read.client_keys[1] == Client_Key_Row{key = hash_of(80), uses = {.View, .Input}})
+	testing.expect(t, read.client_keys[2] == Client_Key_Row{key = hash_of(120), uses = {.Calls, .View, .Input}})
+
+	// A key or its uses word is under the tag: one bit changed is refused.
 	changed := bytes
-	changed[TABLE_OFFSET_CLIENT_KEYS + CLIENT_KEY_SIZE] ~= 1
+	changed[TABLE_OFFSET_CLIENT_KEYS + CLIENT_KEY_ROW_SIZE + CLIENT_KEY_ROW_OFFSET_USES] ~= 1
 	_, problem = table_decode(changed[:], &key)
 	testing.expect_value(t, problem, Table_File_Problem.Not_Authentic)
-	// A key of zero bytes, and one key two times, that the key of the tag
-	// signed: refused.
+
+	// Hostile signed tables: zero key, duplicate key, and invalid uses words
+	// (0, unknown bits, Input without View, max(u64)) are all refused.
 	zero := bytes
 	for &byte in zero[TABLE_OFFSET_CLIENT_KEYS:][:CLIENT_KEY_SIZE] {
 		byte = 0
@@ -397,14 +415,44 @@ client_keys_through_the_persisted_form :: proc(t: ^testing.T) {
 	copy(zero[TABLE_OFFSET_TAG:], tag[:])
 	_, problem = table_decode(zero[:], &key)
 	testing.expect_value(t, problem, Table_File_Problem.Bad_Client_Keys)
+
 	twice := bytes
-	copy(twice[TABLE_OFFSET_CLIENT_KEYS + CLIENT_KEY_SIZE:][:CLIENT_KEY_SIZE], bytes[TABLE_OFFSET_CLIENT_KEYS:][:CLIENT_KEY_SIZE])
+	copy(twice[TABLE_OFFSET_CLIENT_KEYS + CLIENT_KEY_ROW_SIZE:][:CLIENT_KEY_ROW_SIZE], bytes[TABLE_OFFSET_CLIENT_KEYS:][:CLIENT_KEY_ROW_SIZE])
 	tag = table_tag(&key, &twice)
 	copy(twice[TABLE_OFFSET_TAG:], tag[:])
 	_, problem = table_decode(twice[:], &key)
 	testing.expect_value(t, problem, Table_File_Problem.Bad_Client_Keys)
+
+	bad_uses_words := [?]u64{
+		0,
+		remote.client_uses_word({.Input}),
+		remote.client_uses_word({.Calls, .Input}),
+		u64(1) << 3,
+		u64(1) << 63,
+		max(u64),
+	}
+	for word in bad_uses_words {
+		hostile := bytes
+		byte_order.write_u64_little_endian(hostile[TABLE_OFFSET_CLIENT_KEYS + CLIENT_KEY_ROW_OFFSET_USES:], 0, word)
+		hostile_tag := table_tag(&key, &hostile)
+		copy(hostile[TABLE_OFFSET_TAG:], hostile_tag[:])
+		decoded_bad, bad_problem := table_decode(hostile[:], &key)
+		testing.expectf(t, bad_problem == .Bad_Client_Keys && decoded_bad == (Grant_Table{}), "uses word 0x%x gave %v", word, bad_problem)
+	}
+
+	// Revocation removes the key and clears its persisted uses on disk.
+	testing.expect_value(t, table_client_key_remove(&table, hash_of(80)), Table_Problem.None)
+	table_encode(&table, &key, &bytes)
+	read, problem = table_decode(bytes[:], &key)
+	testing.expect_value(t, problem, Table_File_Problem.None)
+	testing.expect_value(t, read.client_key_count, 2)
+	testing.expect_value(t, table_client_key_find(&read, hash_of(80)), -1)
+	testing.expect(t, read.client_keys[0] == Client_Key_Row{key = hash_of(40), uses = {.Calls, .View}})
+	testing.expect(t, read.client_keys[1] == Client_Key_Row{key = hash_of(120), uses = {.Calls, .View, .Input}})
+	testing.expect(t, read.client_keys[2] == (Client_Key_Row{}))
+
 	// The global setting to forget: no key on the disk, and the table in
-	// memory keeps its keys.
+	// memory keeps its keys and uses.
 	table.forget_by_default = true
 	testing.expect_value(t, table_persisted_client_keys(&table), 0)
 	table_encode(&table, &key, &bytes)
