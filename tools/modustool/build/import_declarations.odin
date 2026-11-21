@@ -427,6 +427,7 @@ call_forms_difference :: proc(declared, described: Call_Form) -> string {
 		.Handle  = "Handle",
 		.Table   = "Table",
 		.Bytes   = "Bytes",
+		.Enum    = "Enum",
 	}
 	direction_names := [module.Direction]string {
 		.Read   = "Read",

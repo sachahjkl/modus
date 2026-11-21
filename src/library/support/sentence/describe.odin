@@ -89,6 +89,14 @@ write_type :: proc "contextless" (writer: ^Writer, file: []u8, type: module.Type
 			write_rights(writer, rights, ", ")
 			write_part(writer, ")")
 		}
+	case .Enum:
+		// The name of the enum: a reader finds its members with it.
+		enum_index, _ := module.enum_detail_of(detail)
+		if described, problem := module.enum_type(file, enum_index); problem == .None {
+			write_part(writer, module.enum_name(file, described))
+		} else {
+			write_part(writer, "Enum")
+		}
 	}
 }
 
@@ -135,7 +143,7 @@ write_parameter_type :: proc "contextless" (writer: ^Writer, file: []u8, type: m
 		write_part(writer, "Bytes(")
 		write_part(writer, name)
 		write_part(writer, ")")
-	case .None, .Integer, .Text, .Record, .Handle:
+	case .None, .Integer, .Text, .Record, .Handle, .Enum:
 		write_type(writer, file, type, detail)
 	}
 }

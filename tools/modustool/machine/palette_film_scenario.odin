@@ -41,7 +41,8 @@ scenario_palette_film := [?]Step {
 	// its left part, the settings at the bottom: their sample of the text
 	// of the system stays in sight under the open panel. The service of
 	// the settings runs with their window: the palette sets a setting
-	// through it.
+	// through it, once the console is connected to it, which gives the
+	// rows of the enum parameters of its export set.
 	{kind = .Launch, text = "monitor"},
 	{kind = .Wait, text = "compositor: surface monitor"},
 	{kind = .Move, text = "monitor", to_x = 568, to_y = 40},
@@ -50,6 +51,11 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
 	{kind = .Wait, text = "settings: ok, "},
 	{kind = .Move, text = "settings", to_x = 448, to_y = 216},
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "connect(\"settings\")"},
+	{kind = .Wait, text = "[console]   call       service"},
+	{kind = .Type, text = "clear()"},
+	{kind = .Front, text = "settings"},
 	// The pointer leaves the place of the panel: a press on the background,
 	// in the corner of the screen, which no window covers.
 	{kind = .Click, x = SCREEN_CORNER_X, y = SCREEN_CORNER_Y},
@@ -188,18 +194,21 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "compositor: the palette chooses the value spleen of font"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "compositor: the palette sends set font to spleen to the console", any_order = true},
-	{kind = .Wait, text = "console: the palette runs setting(\"font\", \"spleen\")"},
+	{kind = .Wait, text = "compositor: the palette sends settings.set font to spleen to the console", any_order = true},
+	{kind = .Wait, text = "console: the palette runs settings.set(font = .spleen)"},
 	{kind = .Wait, text = "compositor: the settings changed: font spleen", any_order = true},
-	{kind = .Wait, text = "compositor: the palette did: set font to spleen"},
+	{kind = .Wait, text = "compositor: the palette did: settings.set font to spleen"},
+	// The getter of the row said the new member: the table marks it.
+	{kind = .Wait, text = "console: the palette marks .spleen for settings.set font", any_order = true},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
 	{kind = .Key, text = "left"},
 	{kind = .Wait, text = "compositor: the palette chooses the value vector of font"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "console: the palette runs setting(\"font\", \"vector\")"},
+	{kind = .Wait, text = "console: the palette runs settings.set(font = .vector)"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector", any_order = true},
-	{kind = .Wait, text = "compositor: the palette did: set font to vector"},
+	{kind = .Wait, text = "compositor: the palette did: settings.set font to vector"},
+	{kind = .Wait, text = "console: the palette marks .vector for settings.set font", any_order = true},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK},
 	{kind = .Key, text = "esc"},
 	{kind = .Wait, text = "compositor: the palette is closed by the key escape"},
@@ -264,10 +273,10 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_BEAT},
 	{kind = .Film_Type, text = ":grid"},
-	{kind = .Wait, text = " for \":grid\": grid fit (setting)"},
+	{kind = .Wait, text = " for \":grid\": grid_fit (setting)"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
 	{kind = .Key, text = "shift-ret"},
-	{kind = .Wait, text = "compositor: the palette goes to grid fit in the window settings, now in front", any_order = true},
+	{kind = .Wait, text = "compositor: the palette goes to grid_fit in the window settings, now in front", any_order = true},
 	{kind = .Wait, text = "interface: settings: the focus is on the element of settings.set:grid_fit", any_order = true},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ},
 

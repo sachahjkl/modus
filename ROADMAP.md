@@ -4,7 +4,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Now
 
-- **Enum parameters: one description for the completion, the check and the palette.** An export takes a value of a closed set as an enum, whose members its module file names: the console completes them, refuses a wrong one at its place before the call, and the palette shows one row of buttons for each export of one enum parameter, with the value in use when the export names its getter. `settings.set(keyboard_layout = .french)` is the first user, and the setting entries of the palette, its copy of the settings in the console and in the compositor go. [Design](src/md/features/enum_parameters.md)
 - **The clipboard, the search and any object in the editor `edit`.** A principal copies and pastes the text of the editor, finds a text with Ctrl+F, and edits a text of any store with `edit(store, name)`. Copying more than one line needs a clipboard that carries line ends. [Design](src/md/features/editor.md)
 
 ## Next

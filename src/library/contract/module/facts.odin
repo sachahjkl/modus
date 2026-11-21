@@ -614,7 +614,7 @@ fact_value_write :: proc "contextless" (sentence: []u8, written: ^int, values: [
 		// another party can still hold one, which means nothing here.
 		sentence_byte(sentence, written, '?')
 		return .None
-	case .None, .Record, .Table:
+	case .None, .Record, .Table, .Enum:
 		// A record holds no field of these types.
 	}
 	return .None

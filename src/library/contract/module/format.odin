@@ -1,4 +1,4 @@
-// The module format, version 5 (docs/MODULE_CONTRACT.md, sections 1 and 2).
+// The module format, version 6 (docs/MODULE_CONTRACT.md, sections 1 and 2).
 //
 // A module is one file:
 //
@@ -29,6 +29,8 @@
 //   writes, and the place where a loader writes the hash of the module.
 // - `Record_Output`, `Record_Input` (`record_streams.odin`): the record
 //   outputs and the record inputs that the module declares.
+// - `Enum_Type`, `Member` (`enums.odin`): the enums that the exports take
+//   and give, by the names and the values of their members.
 // - `Load_Error`, `Load_Stage`, `Difference` (`error.odin`) and `Error`
 //   (`load.odin`): why a load failed.
 //
@@ -39,7 +41,7 @@ import "modus:contract/enum_word"
 import "modus:contract/value_kinds"
 
 MAGIC :: u64(0x0000_454C_5544_4F4D) // The bytes "MODULE", then two zero bytes.
-VERSION :: 5 // The version of the format that this code reads and writes. A file of another version is refused. 5: the place of the variable of each record output and record input.
+VERSION :: 6 // The version of the format that this code reads and writes. A file of another version is refused. 6: the enum parameters, the tables Enums and Members.
 PAGE_SIZE :: 4096 // The alignment of each segment in the file and in memory: one page of the processor.
 HASH_SIZE :: 32 // The bytes of a BLAKE3 hash: the name of a module.
 
@@ -58,7 +60,7 @@ Machine :: enum u32 {
 // the file when one field is not one that it takes (`validate`).
 //
 // Example: the header of a module with an entry starts with the bytes "MODULE", the
-// version 5, the machine `X86_64`, and `entry_export` the index of its
+// version 6, the machine `X86_64`, and `entry_export` the index of its
 // export `main`.
 Header :: struct {
 	magic:           u64, // `MAGIC`.
@@ -91,6 +93,8 @@ Table_Kind :: enum u32 {
 	Own_Hash      = 13, // One `Own_Hash_Place` record, at index 1: where a loader writes the hash of the module.
 	Record_Outputs = 14, // `Record_Output` records: the record outputs that the module declares, sorted by name.
 	Record_Inputs  = 15, // `Record_Input` records: the record inputs that the module declares, sorted by name.
+	Enums          = 16, // `Enum_Type` records: the descriptions of the enums that the exports take and give.
+	Members        = 17, // `Member` records: the members of those enums.
 }
 // The tables that this version of the format knows.
 TABLE_COUNT :: len(Table_Kind)
@@ -208,6 +212,14 @@ Type :: enum u8 {
 	// count and the capacity are in bytes. The detail is 0.
 	// A field of a record: detail bytes in the record, of the field kind
 	// Hash only (Field.kind): a reader has no form for other bytes.
+	Enum    = 7, // One member of a closed set, as its value, in a register (enums.odin).
+	// A parameter: the detail names the description of the enum in the
+	// table Enums and the export that gives the value in use
+	// (enum_detail_of). An optional parameter that a call leaves out gets
+	// the absent word (enum_absent_word). A result: the detail is the
+	// index of the description of the enum, and the callee gives the value
+	// in the low bytes of its integer result. A field of a record is never
+	// an Enum.
 }
 
 // type_of_word is the border of the byte of a Type in a module file
@@ -288,14 +300,16 @@ Function :: struct {
 	// The direction of each Table or Bytes parameter, 0 (Read) for each other
 	// parameter.
 	parameter_directions:  [PARAMETER_CAPACITY]Direction,
-	reserved:              [2]u8, // 0.
+	// Bit n: a call may leave out the parameter n, an Enum. The other
+	// bits are 0 (function_enums_check).
+	optional_parameters:   u16,
 	text_offset:           u32, // The documentation text of the export, in the string table.
 	text_count:            u32, // The bytes of the documentation text.
 	// What the type of each parameter needs: Type says what it is. An
 	// Integer: what it counts, 0 for a plain number
 	// (value_kinds.integer_unit_detail).
 	parameter_details:     [PARAMETER_CAPACITY]u32,
-	result_detail:         u32, // A Record or Table result: the index of the description of the record.
+	result_detail:         u32, // A Record or Table result: the index of the description of the record. An Enum result: the index of the description of the enum.
 	// Not 0: the export gives an error record (src/library/contract/errors), and this is
 	// the index of its description in the record table. The caller gives one
 	// more argument after all the others, after the buffer of a result too:

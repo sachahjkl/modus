@@ -295,6 +295,9 @@ site_contract_type_rows :: proc() -> []Site_Type_Row {
 		{"module", "Record_Output", type_info_of(module.Record_Output)},
 		{"module", "Record_Input", type_info_of(module.Record_Input)},
 		{"module", "Record_Stream_Fault", type_info_of(module.Record_Stream_Fault)},
+		{"module", "Enum_Type", type_info_of(module.Enum_Type)},
+		{"module", "Member", type_info_of(module.Member)},
+		{"module", "Enum_Problem", type_info_of(module.Enum_Problem)},
 		{"module", "Fact_Render_Refusal", type_info_of(module.Fact_Render_Refusal)},
 		{"module", "Error", type_info_of(module.Error)},
 		{"module", "Bound_Import", type_info_of(module.Bound_Import)},
@@ -857,7 +860,7 @@ site_record_field_type_text :: proc(field: build.Field_Description, size: int) -
 		return fmt.tprintf("%s%d", field.unsigned ? "u" : "i", size * 8)
 	case .Text:
 		return fmt.tprintf("Text(%d)", field.detail)
-	case .None, .Record, .Handle, .Table, .Bytes:
+	case .None, .Record, .Handle, .Table, .Bytes, .Enum:
 	}
 	return fmt.tprintf("%v", field.type)
 }

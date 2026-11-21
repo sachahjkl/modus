@@ -46,18 +46,11 @@ value_name :: proc "contextless" (list: ^List, entry: ^Entry, value: int) -> str
 	return string(given.value_name[:min(int(given.value_name_length), palette_table.VALUE_NAME_CAPACITY)])
 }
 
-// value_in_use says if the machine uses one value of a setting row now: a
-// setting of the machine from the values that the owner of the panel gave;
-// a value that only the provider knows from its flag In_Use.
+// value_in_use says if the machine uses one value of a setting row now:
+// the flag In_Use that the provider wrote on the entry of that value.
 value_in_use :: proc "contextless" (panel: ^Panel, entry: ^Entry, value: int) -> bool {
 	given := value_given(panel.list, entry, value)
-	if given == nil {
-		return false
-	}
-	if given.kind == u8(palette_table.Entry_Kind.Provider_Setting) {
-		return .In_Use in given.flags
-	}
-	return given.kind == u8(palette_table.Entry_Kind.Setting) && setting_value_in_use(&panel.settings_in_use, given.setting, given.setting_value)
+	return given != nil && given.kind == u8(palette_table.Entry_Kind.Provider_Setting) && .In_Use in given.flags
 }
 
 // value_chosen gives the value that Enter sets on a setting row: the value

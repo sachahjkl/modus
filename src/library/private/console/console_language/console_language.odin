@@ -27,6 +27,7 @@ Token_Kind :: enum u8 {
 	Arrow           = 6, // '->'.
 	Unknown         = 7, // One byte of no other token. A '|' with no '>' after it is one.
 	Pipe            = 8, // '|>': the value on its left is the first argument of the call on its right.
+	Member          = 9, // A '.', then a name: a member of an enum, `.french`, which the parameter that receives it names.
 }
 
 // A token: its kind and its bytes, text[start:end].
@@ -127,6 +128,13 @@ token_next :: proc "contextless" (text: string, position: int) -> Token {
 		return {kind = .Arrow, start = start, end = start + 2}
 	case character == '|' && start + 1 < len(text) && text[start + 1] == '>':
 		return {kind = .Pipe, start = start, end = start + 2}
+	case character == '.' && start + 1 < len(text) && name_first(text[start + 1]):
+		// The name of a member holds no '.': `.a.b` is a member and a '.'.
+		end := start + 1
+		for end < len(text) && (name_first(text[end]) || digit(text[end])) {
+			end += 1
+		}
+		return {kind = .Member, start = start, end = end}
 	case operator_byte(character):
 		return {kind = .Operator, start = start, end = start + 1}
 	}
@@ -341,6 +349,10 @@ line_runs :: proc "contextless" (text: string, first: int, caret: int, lookup: N
 			count = run_add(runs, count, token.start, token.end, .Arrow)
 		case .Unknown:
 			count = run_add(runs, count, token.start, token.end, .Unknown)
+		case .Member:
+			// A name of a description, as a member of a status in a
+			// condition: the console checks it when the line runs.
+			count = run_add(runs, count, token.start, token.end, .Parameter)
 		}
 		first_token = false
 	}
@@ -561,6 +573,8 @@ signature_runs :: proc "contextless" (text: string, first: int, runs: []terminal
 					kind = .Words
 				}
 			}
+		case .Member:
+			kind = .Parameter
 		case .Unknown, .Pipe:
 			if place == .Words {
 				kind = .Words

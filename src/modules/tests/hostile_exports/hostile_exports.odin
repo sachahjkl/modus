@@ -13,12 +13,16 @@
 //   later read through it faults in the process of the module, not in the
 //   caller;
 // - append_past_capacity: a write past the capacity of a table reaches the
-//   caller only in a direct call, where the two share one address space.
+//   caller only in a direct call, where the two share one address space;
+// - mode_set and its getter mode: the palette of the console must never
+//   call a getter of a module in its own process, where a direct call has
+//   no bound. mode logs a fact, so a test sees each call of it.
 //
 // The lesson: an isolated call protects the caller; a direct call trusts
 // the module.
 package hostile_exports
 
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:support/system"
@@ -146,5 +150,45 @@ append_past_capacity :: proc "c" (readings: ^system.Table_To_Append(Reading)) ->
 	}
 	readings.count = readings.capacity + 4
 	return 4
+}
+
+// A mode of this module: the enum of mode_set, whose members the module
+// file names.
+Mode :: enum u32 {
+	Slow = 0,
+	Fast = 1,
+}
+
+// The getter mode ran: a test that loaded this module in the console fails
+// on this fact while the palette refreshes its marks.
+@(log_fact = "hostile_exports: the getter mode ran")
+Getter_Ran :: struct {}
+
+// mode_set takes a mode, and changes nothing: the palette shows a row of buttons for it.
+//
+// - **mode**: `.slow` or `.fast`.
+//
+// The result is the value of the mode: 0 or 1, or -1 with an error record:
+//
+// - `Bad_Value`: the word names no mode; the record holds it.
+@(export, link_name = "mode_set", enum_getters = "mode = mode")
+mode_set :: proc "c" (mode: Mode, error: ^errors.Error_Record) -> i64 {
+	// The caller wrote the register: a word that names no member is
+	// refused, never read as a mode.
+	member, given, ok := enum_word.member_of_argument(mode)
+	if !ok || !given {
+		return errors.fail(error, ERROR, .Bad_Value, .None, 1, i64(transmute(u32)mode))
+	}
+	return i64(member)
+}
+
+// mode gives the mode `.slow`, and logs that it ran.
+//
+// A console that loaded this module in its own process must never call it from the palette: a getter that loops
+// there would hold the console for good.
+@(export, link_name = "mode")
+mode_get :: proc "c" () -> Mode {
+	system.log_fact(.Info, Getter_Ran{})
+	return .Slow
 }
 

@@ -36,6 +36,8 @@ expected_fields :: proc() -> []Expected_Field {
 	own_hash_place: module.Own_Hash_Place
 	record_output: module.Record_Output
 	record_input: module.Record_Input
+	enum_type: module.Enum_Type
+	member: module.Member
 	compartment_word: output.Compartment_Word
 	end_words: output.End_Words
 	list_head: output.Wiring_List_Head
@@ -85,7 +87,7 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Function", "parameters", offset_of(module.Function, parameters), size_of(function.parameters)},
 		{"module.Function", "parameter_name_counts", offset_of(module.Function, parameter_name_counts), size_of(function.parameter_name_counts)},
 		{"module.Function", "parameter_directions", offset_of(module.Function, parameter_directions), size_of(function.parameter_directions)},
-		{"module.Function", "reserved", offset_of(module.Function, reserved), size_of(function.reserved)},
+		{"module.Function", "optional_parameters", offset_of(module.Function, optional_parameters), size_of(function.optional_parameters)},
 		{"module.Function", "text_offset", offset_of(module.Function, text_offset), size_of(function.text_offset)},
 		{"module.Function", "text_count", offset_of(module.Function, text_count), size_of(function.text_count)},
 		{"module.Function", "parameter_details", offset_of(module.Function, parameter_details), size_of(function.parameter_details)},
@@ -143,6 +145,16 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Record_Input", "wirings", offset_of(module.Record_Input, wirings), size_of(record_input.wirings)},
 		{"module.Record_Input", "reserved", offset_of(module.Record_Input, reserved), size_of(record_input.reserved)},
 		{"module.Record_Input", "place", offset_of(module.Record_Input, place), size_of(record_input.place)},
+		{"module.Enum_Type", "name_offset", offset_of(module.Enum_Type, name_offset), size_of(enum_type.name_offset)},
+		{"module.Enum_Type", "name_count", offset_of(module.Enum_Type, name_count), size_of(enum_type.name_count)},
+		{"module.Enum_Type", "first_member", offset_of(module.Enum_Type, first_member), size_of(enum_type.first_member)},
+		{"module.Enum_Type", "member_count", offset_of(module.Enum_Type, member_count), size_of(enum_type.member_count)},
+		{"module.Enum_Type", "size", offset_of(module.Enum_Type, size), size_of(enum_type.size)},
+		{"module.Enum_Type", "unsigned", offset_of(module.Enum_Type, unsigned), size_of(enum_type.unsigned)},
+		{"module.Enum_Type", "reserved", offset_of(module.Enum_Type, reserved), size_of(enum_type.reserved)},
+		{"module.Member", "name_offset", offset_of(module.Member, name_offset), size_of(member.name_offset)},
+		{"module.Member", "name_count", offset_of(module.Member, name_count), size_of(member.name_count)},
+		{"module.Member", "value", offset_of(module.Member, value), size_of(member.value)},
 		{"output.Compartment_Word", "kind", offset_of(output.Compartment_Word, kind), size_of(compartment_word.kind)},
 		{"output.Compartment_Word", "serial", offset_of(output.Compartment_Word, serial), size_of(compartment_word.serial)},
 		{"output.End_Words", "end", offset_of(output.End_Words, end), size_of(end_words.end)},

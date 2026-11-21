@@ -53,7 +53,7 @@ host_test_command :: proc(folder, temporary_folder: string) -> []string {
 	if temporary_folder != "" {
 		append(&command, "env", foundation.join("TMPDIR=", temporary_folder))
 	}
-	append(&command, "odin", "test", folder, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.LOG_FACT_ATTRIBUTE_FLAG)
+	append(&command, "odin", "test", folder, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG)
 	if foundation.source_folder_takes_kernel_library(folder) {
 		append(&command, foundation.KERNEL_LIBRARY_FLAG)
 	}

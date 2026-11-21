@@ -19,6 +19,7 @@ Problem_Kind :: enum u32 {
 	Slot      = 10, // A slot names no import.
 	Refused   = 11, // The kernel refused a report: `value` is the status. The machine handle needs the right Inspect.
 	Direction = 12, // A direction of a parameter is not Read, Change or Append, or a parameter that is not a Table or Bytes has one.
+	Enum      = 13, // An Enum parameter or result breaks a rule of module.function_enums_check: `value` is the module.Enum_Problem.
 }
 
 // The name of each problem kind in a row (`Module.problem`).
@@ -37,6 +38,7 @@ problem_names := [Problem_Kind]string {
 	.Slot      = "slot",
 	.Refused   = "refused",
 	.Direction = "direction",
+	.Enum      = "enum",
 }
 
 // The name of each table in a row (`Module.place`): "header" for the header
@@ -59,6 +61,8 @@ table_names := [module.Table_Kind]string {
 	.Own_Hash      = "Own_Hash",
 	.Record_Outputs = "Record_Outputs",
 	.Record_Inputs  = "Record_Inputs",
+	.Enums          = "Enums",
+	.Members        = "Members",
 }
 
 // An error value with its detail. kind None: no problem.
@@ -121,6 +125,7 @@ problem_texts := [Problem_Kind]string {
 	.Slot      = "the slot names no import",
 	.Refused   = "the kernel refused the report",
 	.Direction = "a parameter has a direction that its type does not take",
+	.Enum      = "an enum of the export, its members or its getter break a rule",
 }
 
 // place gives the byte of the file where a field of record `index` of a
@@ -292,6 +297,19 @@ function_check :: proc "contextless" (file: []u8, index: u32, function: module.F
 		if _, valid := module.record_type(file, function.error_record); !valid || function.result == u8(module.Type.Record) {
 			return {kind = .Function, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, error_record)), value = u64(function.error_record), limit = u64(max(module.count(file, .Records), 1))}
 		}
+	}
+	// A reader names the members of an enum and calls its getter, so an
+	// enum that breaks a rule, and a getter of another form, are faults
+	// of the file.
+	if parameter, problem := module.function_enums_check(file, function); problem != .None {
+		offset := at + u64(offset_of(module.Function, result_detail))
+		switch {
+		case parameter >= 0:
+			offset = at + u64(offset_of(module.Function, parameter_details)) + 4 * u64(parameter)
+		case problem == .Bad_Optional:
+			offset = at + u64(offset_of(module.Function, optional_parameters))
+		}
+		return {kind = .Enum, table = .Functions, index = index, offset = offset, value = u64(problem)}
 	}
 	return {}
 }

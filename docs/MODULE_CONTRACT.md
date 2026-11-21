@@ -1,6 +1,6 @@
 # Module contract
 
-`src/library/contract/module/format.odin` is version 5 of the format at the level of bytes.
+`src/library/contract/module/format.odin` is version 6 of the format at the level of bytes.
 
 This document gives the contract between modules: the module format, the loader, the call form, the type description, and the context.
 `glossary/README.md` defines the terms. `PROPERTIES.md` gives the rules; (P10) points to a property.
@@ -150,13 +150,15 @@ The loader reads none of these tables: they are for a caller that must know the 
 
 | Table | One record describes |
 |---|---|
-| Functions | One export (`module.Function`, 168 bytes): its name, one line of help, its documentation text, the name, the type, the detail and the direction of each of its parameters (12 at most), the type and the detail of its result, and the description of its error record (0: it gives none) |
+| Functions | One export (`module.Function`, 168 bytes): its name, one line of help, its documentation text, the name, the type, the detail and the direction of each of its parameters (12 at most), the parameters that a call may leave out, the type and the detail of its result, and the description of its error record (0: it gives none) |
 | Records | One record that an export receives or gives: its name, its size (256 bytes at most) and the range of its fields |
 | Fields | One field of a record: its name, its offset, its type (Integer, Handle, Text or Bytes), signed or unsigned, the integer unit of an Integer (section 5, "The unit of an Integer field"), its detail (the size of an integer, a text or bytes, the rights of a handle), and its field kind with the contract enum of a status (section 5, "The kind of a field") |
+| Enums | One enum that an export takes or gives: the name of its type, the range of its members, its size and its sign (section 5, "Enum parameters"). The file has the table when an export has an Enum |
+| Members | One member of an enum: its name and its value |
 | Strings | The bytes of all names, help lines and documentation texts |
 | Documentation | Record 1: the documentation of the module, one line and a text |
 
-```byte-layout module.Function module.Record module.Field module.Documentation
+```byte-layout module.Function module.Record module.Field module.Documentation module.Enum_Type module.Member
 module.Function, 168 bytes: one record of the table Functions
 offset  size  field                  type
      0     4  name_offset            u32
@@ -169,7 +171,7 @@ offset  size  field                  type
     66    12  parameters             [PARAMETER_CAPACITY]u8
     78    12  parameter_name_counts  [PARAMETER_CAPACITY]u8
     90    12  parameter_directions   [PARAMETER_CAPACITY]Direction
-   102     2  reserved               [2]u8
+   102     2  optional_parameters    u16
    104     4  text_offset            u32
    108     4  text_count             u32
    112    48  parameter_details      [PARAMETER_CAPACITY]u32
@@ -204,6 +206,22 @@ offset  size  field         type
      4     4  about_count   u32
      8     4  text_offset   u32
     12     4  text_count    u32
+
+module.Enum_Type, 24 bytes: one record of the table Enums
+offset  size  field         type
+     0     4  name_offset   u32
+     4     4  name_count    u32
+     8     4  first_member  u32
+    12     4  member_count  u32
+    16     1  size          u8
+    17     1  unsigned      bool
+    18     6  reserved      [6]u8
+
+module.Member, 16 bytes: one record of the table Members
+offset  size  field        type
+     0     4  name_offset  u32
+     4     4  name_count   u32
+     8     8  value        i64
 ```
 
 A type is one byte, the value of a member of `module.Type`: Integer, Text, Record, Handle, Table, and Bytes (a parameter only). The fields `result`, `parameters` and `type` hold the byte, not the enum: a reader takes each byte through `module.type_of_word` (or `function_result_type`, `function_parameter_type`, `field_type`), which refuses a byte that names no type, and never casts it. The detail of a parameter says what its type needs: the index of a record description, the rights of a handle, or the unit of an Integer (section 5, "The unit of an Integer parameter"). Section 5 gives the types.
@@ -422,7 +440,7 @@ offset  size  field         type
     40     8  place         u64
 ```
 
-- **The place of a row** is the memory offset of the package variable of the declaration, in a segment that the loader writes: each loader writes the index of the row there, a u32, the first field of `system.Record_Output` and `system.Record_Input` (`module.record_stream_indexes_write`), as it writes the hash at the own-hash place. The library reads the index in the variable, so a call names its stream by the address of the variable. The tool finds the variable by its symbol in the linked file; 0 says that the link kept no variable, as no code uses it. `validate` refuses a place that is not 0 and not 4 aligned bytes in a segment that the loader writes and that keeps Write after the load, or that meets the own-hash place, a rebase location, an import slot or the place of another row (`Bad_Record_Stream_Place`). Before it reads a row, it refuses a table `Record_Outputs` or `Record_Inputs` with more than `module.RECORD_STREAM_INDEX_MOST` (64) rows (`Too_Many_Record_Streams`): the check of the places costs the rows times the segments, and each location of a rebase or a slot one search among the sorted places, and `validate` runs in the kernel for the root service. The build refuses a module that declares more, with its sentence. The format is version 5 since the place.
+- **The place of a row** is the memory offset of the package variable of the declaration, in a segment that the loader writes: each loader writes the index of the row there, a u32, the first field of `system.Record_Output` and `system.Record_Input` (`module.record_stream_indexes_write`), as it writes the hash at the own-hash place. The library reads the index in the variable, so a call names its stream by the address of the variable. The tool finds the variable by its symbol in the linked file; 0 says that the link kept no variable, as no code uses it. `validate` refuses a place that is not 0 and not 4 aligned bytes in a segment that the loader writes and that keeps Write after the load, or that meets the own-hash place, a rebase location, an import slot or the place of another row (`Bad_Record_Stream_Place`). Before it reads a row, it refuses a table `Record_Outputs` or `Record_Inputs` with more than `module.RECORD_STREAM_INDEX_MOST` (64) rows (`Too_Many_Record_Streams`): the check of the places costs the rows times the segments, and each location of a rebase or a slot one search among the sorted places, and `validate` runs in the kernel for the root service. The build refuses a module that declares more, with its sentence. The format took the version 5 for the place.
 
 - **The record of a row** is a record description of the table `Records`, as the record of an export or of a log fact is: a record that an export takes and a record output writes has one row. A record of a record stream goes into memory that another process reads, so it has no Handle field, and each of its bytes is a byte of one field (`module.record_stream_type`).
 - **The checks of a reader**: `module.record_output` and `module.record_input` refuse a row index of 0 or past `module.RECORD_STREAM_INDEX_MOST` (64: the rows of each table at most), a reserved byte that is not 0, a name that is not a name of the source or is outside the string table, a help or a text outside it, a record or terms that `record_stream_type` refuses, a pairing or a count that names no member, `Paired` on a typed record output, and `Many_Types` on a typed record input. `module.record_streams_check` checks a whole file: each row, the names of each table sorted with no name two times, no name in both tables, and a generic record output only beside one generic record input. The build writes the rows sorted by name, and checks each file that it writes with it.
@@ -1288,7 +1306,7 @@ Excluded: types whose size depends on the machine or the compiler (`long`, `size
 
 ### The types that a description knows
 
-The description of an export names each parameter and the result with one member of `module.Type` (`src/library/contract/module/format.odin`). The value 0, `None`, means "no parameter" or "no result". Six types exist:
+The description of an export names each parameter and the result with one member of `module.Type` (`src/library/contract/module/format.odin`). The value 0, `None`, means "no parameter" or "no result". Seven types exist:
 
 | Type | What it is | As a parameter | As a result | As a field of a record |
 |---|---|---|---|---|
@@ -1298,6 +1316,7 @@ The description of an export names each parameter and the result with one member
 | `Handle` | A handle that the caller lends for the time of the call, with the rights that the callee needs | The handle, in a register | Not allowed | The handle, in 4 bytes |
 | `Table` | Records of one description that follow each other, with a direction | The address of a table place `{address, count, capacity}` | One more argument, the address of a buffer record `{address, capacity in records}`; the integer result is the count of records of the full table | Not allowed |
 | `Bytes` | Bytes with no description, with a direction | The address of a table place, with the count and the capacity in bytes | Not allowed | A hash, in a field of 1 to 32 bytes of the kind `Hash`, or the values of a log fact, in a field of 144 bytes of the kind `Fact_Values` ("The kind of a field") |
+| `Enum` | One member of an enum that the tables `Enums` and `Members` describe ("Enum parameters") | The value of the member, in a register; the callee reads the low bytes of the size of the enum | The value, in the low bytes of the result register | Not allowed: a field of a contract enum is an `Integer` of the kind `Status` |
 
 - **A direction** (`module.Direction`) says what the callee does with the memory of a Table or Bytes parameter: `Read` (it reads and writes nothing), `Change` (it reads and writes the records that exist), `Append` (it writes after the records that exist). `Read` is the value 0: the direction with the least power is the default (section 4, "Tables and bytes as parameters").
 - **A count larger than the capacity** means "the answer did not fit" for a Text result and for a Table result. The caller owns all the memory, and the callee allocates no larger buffer.
@@ -1327,6 +1346,7 @@ The description of an export names each parameter and the result with one member
 | A parameter `system.Lent({.Read, .Write})` | `Handle`, with the rights that the callee needs |
 | A parameter `^system.Table_To_Read(Name)`, `_To_Change`, `_To_Append` | `Table`, with the direction of its name |
 | A parameter `^system.Bytes_To_Read`, `_To_Change`, `_To_Append` | `Bytes`, with the direction of its name |
+| A parameter or a result of an enum of the package or of an imported package, with a backing type of 1, 2, 4 or 8 bytes | `Enum`, with its enum in the tables `Enums` and `Members` ("Enum parameters") |
 | A field `i64`, `u64`, `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, or an enum with such a backing type | An `Integer` field of that size |
 | A field `system.Lent({...})` | A `Handle` field |
 | A field `[N]u8` | A `Text` field of N bytes |
@@ -1354,7 +1374,29 @@ grow :: proc "c" (rectangle: ^Rectangle, by: i64, result: ^Rectangle)
 fill :: proc "c" (memory: system.Lent({.Read, .Write}), value: i64) -> i64
 ```
 
-**What is not built.** Floating-point values, an unsigned Integer parameter, enumerations as their own type, flags as their own type, variants and optional values have no member of `module.Type`. An enumeration or a set of flags crosses the boundary as an `Integer`. A struct of a record has the layout of the C language: no `#packed`, no `#align`, no `using`.
+**What is not built.** Floating-point values, an unsigned Integer parameter, flags as their own type, variants and optional values other than an optional Enum have no member of `module.Type`. A set of flags crosses the boundary as an `Integer`, and an enum of a module in a field of a record is an `Integer` field. A struct of a record has the layout of the C language: no `#packed`, no `#align`, no `using`.
+
+### Enum parameters
+
+An export takes a value of a closed set as an enum, and its module file names the members: the console completes them and refuses a wrong one before the call, and the palette shows one row of buttons for them (`CONSOLE.md`, "8. The palette provider"). The design is `src/md/features/enum_parameters.md`.
+
+- **In the file**: the type `Enum` of a parameter or of a result. The table `Enums` holds one `module.Enum_Type` for each enum: the name of its type in the source, its first member and its count of members, from 1 to 64, its size (1, 2, 4 or 8 bytes) and its sign. The table `Members` holds the members of each enum, one after the other: a name in lower case of at most 31 bytes, a letter then letters, digits and `_`, and a value that fits the size and the sign. The detail of an Enum parameter holds the index of its enum in its low 16 bits and the index of its getter export in its high 16 bits, 0 for none (`module.enum_detail_of`); the detail of an Enum result is the index of its enum.
+- **An optional parameter**: bit n of `Function.optional_parameters` says that a call may leave out the parameter n, an Enum. A caller that leaves it out gives the absent word: each bit of the size of the enum set, which the caller writes as -1 in the register. No member has that value.
+- **A getter**: an export with no parameter and no error record, whose result is an equal enum. The palette calls the getter of a parameter for the member in use, in a service or an isolated process only, never in the process of the console. The console also takes no export whose name or a name of a parameter is no name of Lex (`CONSOLE.md`, "8. The palette provider").
+- **The checks**: `module.enum_type` refuses a size that is not 1, 2, 4 or 8, a reserved byte that is not 0, no member or more than 64, members outside the table, a name that is not a name of a member or that two members have, a value that the size and the sign do not hold, the absent word, and a value that two members have. `module.function_enums_check` refuses an Enum parameter of no valid enum, a getter that names no export, takes a parameter, gives an error record or gives no Enum or another enum, an optional bit on a parameter that is no Enum or past the parameters, and an Enum result whose detail holds a getter. `information.check` gives the problem kind `Enum`; the writer of module files refuses such parts with `Enum_Not_Valid`. The check of a replacement compares two enums by their name, size, sign, and the name and the value of each member, and the optional bit of each parameter (`Difference.Parameter_Detail`); the getter is an index of its own file and is not compared.
+- **In the source**: the type of a parameter or of a result is the enum, `settings.Keyboard_Layout`. Each value of a member is an integer literal, or the value of the member before plus one; the tool evaluates no other expression. A member `United_States` is named `united_states`. Two attributes of the export name the getter of each parameter and the parameters that a call may leave out; the build gives them to the compiler as custom attributes (`foundation.CUSTOM_ATTRIBUTES_FLAG`):
+
+  ```odin
+  @(export, link_name = "set", enum_getters = "font = font, scale = scale", optional_parameters = "font, scale")
+  set :: proc "c" (font: settings.Font, scale: scale_factor.Scale, error: ^errors.Error_Record) -> i64
+
+  @(export, link_name = "font")
+  font_get :: proc "c" () -> settings.Font
+  ```
+
+- **The border in the export**: an argument comes in a register that the caller wrote, so it can hold a value that names no member. `enum_word.member_of_argument` gives the member, `given` false for the absent word, or a refusal that the export answers with an error record.
+- **The readers**: the console types a member `.french` by its parameter (`CONSOLE.md`, "Values and their kinds"); `modustool call` takes `settings.set(keyboard_layout = .french)`, with the named arguments and the members of a line, and prints a result `.french`; the manual, the site and the signature that the console prints name an Enum parameter by the name of its enum.
+- **Not built**: an import declaration of an export with an Enum parameter, and an enum of a module as the field kind of a record.
 
 ### The unit of an Integer parameter
 
@@ -1683,7 +1725,7 @@ The kinds, the meaning of `limit` and `found` for each kind, and the units are i
 - **When**: the export writes the record when it fails, and only then. It fails when its integer result is negative. An export with a Record result has no integer result and no error record.
 - **Documentation**: the text of the export names its error kinds: `manual` shows them.
 - **Replacement**: the check of a replacement compares the error records of the two descriptions (`Difference.Error_Record`).
-- **Each export that fails gives it.** An export with an Integer result and a path where it fails has the error record, and writes it on that path: a service, a library module and a test module alike. A bare negative number, as -1 or a negated status of the kernel, is not an answer of a failure. `modustool check` refuses an export that gives one with no record ([`docs/TOOLS.md`](TOOLS.md), "The rules that a check holds"). A negative result that is an answer stays: `number("-5")` gives -5 with no record. A name or a number that names nothing is a failure too, not an empty answer: `manual.about("nothing")` and `settings.get("colour")` give the error record `Absent`, not an empty text or 0, so a caller tells a module with no documentation from a module that does not exist. The client library `src/library/support/storage` gives the records of the storage service to its process. The design: `src/md/api/export_error_records.md`.
+- **Each export that fails gives it.** An export with an Integer result and a path where it fails has the error record, and writes it on that path: a service, a library module and a test module alike. A bare negative number, as -1 or a negated status of the kernel, is not an answer of a failure. `modustool check` refuses an export that gives one with no record ([`docs/TOOLS.md`](TOOLS.md), "The rules that a check holds"). A negative result that is an answer stays: `number("-5")` gives -5 with no record. A name or a number that names nothing is a failure too, not an empty answer: `manual.about("nothing")` gives the error record `Absent`, not an empty text or 0, so a caller tells a module with no documentation from a module that does not exist. The client library `src/library/support/storage` gives the records of the storage service to its process. The design: `src/md/api/export_error_records.md`.
 - **A kernel refusal inside an export** (the map of a lent handle in `sample.fill`): the export gives the record of the kernel, with `argument` set to its own parameter that holds the handle (0 when the kernel names another argument), and `operation` 0. "fill: the argument memory, handle 0x30004, has the rights Read; the call needs Read Write".
 
 **The loader.** `module.Load_Error` stays. It is the same form of answer: a record of values and fixed texts that the caller owns, with no pointer, zero for no error. It is larger (392 bytes): it names modules by hash and by name, and the caller of a call host does not have these names. To fit 56 bytes it loses the names. `system.load_error_text` makes its sentences.

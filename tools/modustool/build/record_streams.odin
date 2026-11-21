@@ -398,7 +398,7 @@ record_stream_record_problem :: proc(record: Record_Description) -> string {
 		case .Integer, .Text, .Bytes:
 		case .Handle:
 			return fmt.tprintf("the field %s is a Handle: a handle number in memory that another process reads names nothing there; a handle crosses a border through Handle_Give only", item.name)
-		case .None, .Record, .Table:
+		case .None, .Record, .Table, .Enum:
 			return fmt.tprintf("the field %s has a type that a record does not hold", item.name)
 		}
 	}

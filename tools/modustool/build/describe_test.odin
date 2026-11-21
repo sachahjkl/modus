@@ -450,3 +450,62 @@ describe_rejects_what_has_no_description :: proc(t: ^testing.T) {
 		testing.expectf(t, !describe_source("case.odin", item.source, &list), "%s", item.about)
 	}
 }
+
+// The enum of an export, its getter and its optional parameters: each rule
+// of the reader refuses its edges, with a line that names the export. A
+// getter that the attribute names and that is no export, or that gives
+// another type, is refused as each enum that the format cannot hold.
+@(test)
+describe_refuses_an_enum_parameter_that_breaks_a_rule :: proc(t: ^testing.T) {
+	Case :: struct {
+		about:  string,
+		source: string,
+	}
+	HEAD :: "package p\nMode :: enum u32 {Slow = 0, Fast = 1}\nOther :: enum u32 {Slow = 0, Fast = 1}\n"
+	cases := [?]Case {
+		{"an enum with no backing type", "package p\nMode :: enum {Slow, Fast}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"an enum with no member", "package p\nMode :: enum u32 {}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a member whose value is an expression", "package p\nBASE :: 4\nMode :: enum u32 {Slow = BASE, Fast}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a member whose value is the absent word", "package p\nMode :: enum u8 {Slow = 0, Fast = 255}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a member past its backing type", "package p\nMode :: enum u8 {Slow = 0, Fast = 256}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"two members of one value", "package p\nMode :: enum u32 {Slow = 1, Fast = 1}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"two members of one name in lower case", "package p\nMode :: enum u32 {Slow = 0, SLOW = 1}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a member with a name of 32 bytes", "package p\nMode :: enum u32 {Abcdefghijklmnopqrstuvwxyzabcdef = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a member that starts with _", "package p\nMode :: enum u32 {_Slow = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a signed member whose value is the absent word", "package p\nMode :: enum i16 {Slow = -2, Fast}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a getter that is no export", HEAD + "// f sets x.\n@(export, enum_getters = \"mode = g\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a getter that gives another enum", HEAD + "// g gives x.\n@(export)\ng :: proc \"c\" () -> Other {return .Slow}\n// f sets x.\n@(export, enum_getters = \"mode = g\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a getter that gives an Integer", HEAD + "// g gives x.\n@(export)\ng :: proc \"c\" () -> i64 {return 0}\n// f sets x.\n@(export, enum_getters = \"mode = g\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a getter that takes a parameter", HEAD + "// g gives x.\n@(export)\ng :: proc \"c\" (x: i64) -> Mode {return .Slow}\n// f sets x.\n@(export, enum_getters = \"mode = g\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a getter of no parameter", HEAD + "// g gives x.\n@(export)\ng :: proc \"c\" () -> Mode {return .Slow}\n// f sets x.\n@(export, enum_getters = \"speed = g\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a getter of a parameter that is no enum", HEAD + "// g gives x.\n@(export)\ng :: proc \"c\" () -> Mode {return .Slow}\n// f sets x.\n@(export, enum_getters = \"x = g\")\nf :: proc \"c\" (mode: Mode, x: i64) -> i64 {return 0}\n"},
+		{"a parameter given two getters", HEAD + "// g gives x.\n@(export)\ng :: proc \"c\" () -> Mode {return .Slow}\n// f sets x.\n@(export, enum_getters = \"mode = g, mode = g\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a pair with no =", HEAD + "// f sets x.\n@(export, enum_getters = \"mode\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a getter that is no text", HEAD + "// f sets x.\n@(export, enum_getters = 4)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"an optional parameter that is no enum", HEAD + "// f sets x.\n@(export, optional_parameters = \"x\")\nf :: proc \"c\" (mode: Mode, x: i64) -> i64 {return 0}\n"},
+		{"an optional parameter that does not exist", HEAD + "// f sets x.\n@(export, optional_parameters = \"speed\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"an optional parameter named twice", HEAD + "// f sets x.\n@(export, optional_parameters = \"mode, mode\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"the attributes on no export", HEAD + "// f sets x.\n@(optional_parameters = \"mode\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"an enum result with an error record", "package p\nimport \"modus:contract/errors\"\nMode :: enum u32 {Slow = 0}\n// g gives x.\n@(export)\ng :: proc \"c\" (error: ^errors.Error_Record) -> Mode {return .Slow}\n"},
+	}
+	for item in cases {
+		list := make([dynamic]Export_Description, context.temp_allocator)
+		testing.expectf(t, !describe_source("case.odin", item.source, &list), "%s", item.about)
+	}
+	// The success comes last: the members in lower case with their values,
+	// the next value after a value, the getter in the detail, the optional
+	// bit, and an enum of a getter that is one description with the enum of
+	// its parameter.
+	source := "package p\nMode :: enum i16 {Slow = -3, Fast, Very_Fast = 7}\n// mode gives x.\n@(export, link_name = \"mode\")\nmode_get :: proc \"c\" () -> Mode {return .Slow}\n// f sets x.\n@(export, enum_getters = \"mode = mode\", optional_parameters = \"mode\")\nf :: proc \"c\" (count: i64, mode: Mode) -> i64 {return 0}\n"
+	list := make([dynamic]Export_Description, context.temp_allocator)
+	enums: []Enum_Description
+	if !testing.expect(t, describe_source("case.odin", source, &list, nil, nil, &enums)) || !testing.expect_value(t, len(list), 2) || !testing.expect_value(t, len(enums), 1) {
+		return
+	}
+	testing.expect(t, enums[0].name == "Mode" && enums[0].size == 2 && !enums[0].unsigned && len(enums[0].members) == 3)
+	testing.expect(t, enums[0].members[0] == {"slow", -3} && enums[0].members[1] == {"fast", -2} && enums[0].members[2] == {"very_fast", 7})
+	testing.expect(t, list[0].result == .Enum && list[0].result_detail == 1)
+	setter := list[1]
+	enum_index, getter := module.enum_detail_of(setter.details[1])
+	testing.expect(t, setter.parameters[1] == .Enum && enum_index == 1 && getter == 1 && setter.optional_parameters == 0b10)
+}

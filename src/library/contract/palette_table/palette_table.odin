@@ -33,12 +33,11 @@ package palette_table
 
 import "base:intrinsics"
 import "modus:contract/enum_word"
-import "modus:contract/settings"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 
 MAGIC :: 0x544C4150 // "PALT", little-endian.
-VERSION :: 6 // A new field or a new meaning of a field is a new version. 6: each text for a reader is UTF-8, each name ASCII.
+VERSION :: 7 // A new field or a new meaning of a field is a new version. 7: no Setting entry; a row of buttons comes from an enum parameter of an export.
 
 ENTRY_CAPACITY :: 256 // The entries of a table: the commands of a console at most.
 NAME_CAPACITY :: 64 // The bytes of the name of an entry.
@@ -53,20 +52,20 @@ ARGUMENT_TEXT_CAPACITY :: 48 // The bytes of a Text argument that the panel send
 CANDIDATE_CAPACITY :: 96 // The candidates of one parameter: the modules of a boot image fit.
 CANDIDATE_NAME_CAPACITY :: 31 // The bytes of the name of a candidate.
 ACT_NAME_CAPACITY :: 32 // The bytes of the act name of an entry: what it acts on, as an element of a window names it ("settings.set:font").
-SETTING_NAME_CAPACITY :: 24 // The bytes of the name of the setting of a Setting or Provider_Setting entry: the name of its setting row.
-VALUE_NAME_CAPACITY :: 24 // The bytes of the name of the value of a Setting or Provider_Setting entry: one button of its setting row.
+SETTING_NAME_CAPACITY :: 24 // The bytes of the name of the row of a Provider_Setting entry: the name of its setting row.
+VALUE_NAME_CAPACITY :: 24 // The bytes of the name of the value of a Provider_Setting entry: one button of its setting row.
 SNAPSHOT_TRIES :: 4 // The times that a reader copies a table that changes while it reads.
 
 // What an entry is.
 Entry_Kind :: enum u8 {
 	Command = 0, // A command of the provider itself.
 	Export  = 1, // An export of a module or of a service, which the provider calls.
-	Setting = 2, // One value of one setting of the machine (modus:contract/settings): the provider sets it.
-	// One value of a state of the machine that is no setting of
-	// modus:contract/settings, and that the provider sets: one scheduling
-	// strategy. The panel shows it as it shows a Setting entry. No page
-	// holds the value in use: the provider says it with the flag In_Use.
-	Provider_Setting = 3,
+	// One value that the provider sets, one button of a setting row: one
+	// member of an enum parameter of an export (src/md/features/
+	// enum_parameters.md), or one scheduling strategy. The provider says
+	// the value in use with the flag In_Use: it called the getter of the
+	// parameter, or read the strategy.
+	Provider_Setting = 2,
 }
 
 // entry_kind_of_word is the border of the kind of an entry (Entry.kind):
@@ -94,6 +93,7 @@ Value_Kind :: enum u8 {
 	Handle  = 4,
 	Table   = 5,
 	Bytes   = 6,
+	Enum    = 7, // A member of an enum: a field of the form takes it from the candidates of its parameter, and the panel sends its name as a Text.
 }
 
 // value_kind_of_word is the border of the kind of a value in a word of a
@@ -131,7 +131,7 @@ parameter_kind_of :: proc "contextless" (entry: ^Entry, index: int) -> (kind: Va
 // in the words that an element of a window uses for the same thing: the
 // panel offers to go to a window that names it. The name of a setting and
 // the name of a value say which setting row an entry joins, and which
-// button it is there: the entries of one setting follow each other in the
+// button it is there: the entries of one row follow each other in the
 // table, and differ only in their value. The provider writes the three, so
 // the panel never parses the name of an entry.
 Entry :: struct {
@@ -142,10 +142,9 @@ Entry :: struct {
 	name_length:      u8, // The bytes of `name` in use: 1 to NAME_CAPACITY.
 	signature_length: u8, // The bytes of `signature` in use. It starts with the name.
 	about_length:     u8, // The bytes of `about` in use.
-	setting:          u8, // A Setting entry: the number of the setting (settings.Setting). Else 0.
+	reserved_first:   u8, // 0.
 	parameters:       [PARAMETER_CAPACITY]u8, // The kind of each parameter: the word of a Value_Kind, read through parameter_kind_of.
-	setting_value:    u8, // A Setting entry: the word of the value on the settings page (settings.word_of_value): 10 and 11 for the scale. Else 0.
-	reserved:         u8, // 0.
+	reserved:         [2]u8, // 0.
 	parameter_name_lengths: [PARAMETER_CAPACITY]u8, // The bytes of each parameter name in use. 0: the parameter has no name.
 	reserved_more:    [2]u8, // 0.
 	name:             [NAME_CAPACITY]u8, // The name, identifiers joined by spaces: ASCII 32 to 126 (text_encoding.identifier_words_valid).
@@ -153,7 +152,7 @@ Entry :: struct {
 	about:            [ABOUT_CAPACITY]u8, // What the entry does, in one sentence: UTF-8.
 	parameter_names:  [PARAMETER_CAPACITY][PARAMETER_NAME_CAPACITY]u8, // The name of each parameter: UTF-8.
 	act_name_length:     u8, // The bytes of `act_name` in use. 0: no element of a window acts on what the entry does.
-	setting_name_length: u8, // The bytes of `setting_name` in use. 0: the entry joins no setting row. Only on a Setting or Provider_Setting entry.
+	setting_name_length: u8, // The bytes of `setting_name` in use. 0: the entry joins no setting row. Only on a Provider_Setting entry.
 	value_name_length:   u8, // The bytes of `value_name` in use. Only on an entry with a setting name, and then at least 1.
 	reserved_end:        u8, // 0.
 	act_name:         [ACT_NAME_CAPACITY]u8, // "settings.set:font", "strategy": an identifier, ASCII 33 to 126 (text_encoding.identifier_valid).
@@ -189,7 +188,7 @@ Candidate_Kind :: enum u64 {
 	Module  = 2, // The modules of the boot image.
 	Grant   = 3, // The grants that the root service can revoke.
 	Strategy = 4, // The scheduling strategies of the kernel, as the command `strategy` takes them.
-	Setting  = 5, // The names of the settings of the machine, as the command `setting` takes them.
+	Member   = 5, // The members of the enum of the parameter, as its module file names them, with no ".".
 }
 
 // The bit of values[3] of the answer Candidates_Ready that says that the
@@ -324,7 +323,7 @@ Problem :: enum u8 {
 	Bad_Length       = 7, // An entry: a length or a count past its field, or an empty name.
 	Bad_Byte         = 8, // An entry: a text with an invalid sequence of UTF-8 (a broken sequence or a control character), or a name, an act name, a setting name or a value name outside ASCII.
 	Bad_Signature    = 9, // An entry: the signature does not start with the name.
-	Bad_Setting      = 10, // A Setting entry that names no setting or no value of it, or that has parameters; or another entry that names a setting; a Provider_Setting entry that has parameters; the flag In_Use on an entry that is no Provider_Setting; the name of a setting on another kind, or with no name of a value.
+	Bad_Setting      = 10, // A Provider_Setting entry that has parameters; the flag In_Use on an entry that is no Provider_Setting; the name of a setting on another kind, or with no name of a value.
 }
 
 // The name of each problem, as a log writes it.
@@ -350,7 +349,7 @@ ENTRY_FLAGS_KNOWN :: u8(1 << u8(Entry_Flag.Destroys)) | u8(1 << u8(Entry_Flag.In
 entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 	entry_kind, entry_kind_ok := entry_kind_of_word(u64(entry.kind))
 	_, result_ok := result_kind_of(entry)
-	if !entry_kind_ok || (transmute(u8)entry.flags) &~ ENTRY_FLAGS_KNOWN != 0 || !result_ok || entry.reserved != 0 || entry.reserved_more != {} || entry.reserved_end != 0 {
+	if !entry_kind_ok || (transmute(u8)entry.flags) &~ ENTRY_FLAGS_KNOWN != 0 || !result_ok || entry.reserved_first != 0 || entry.reserved != {} || entry.reserved_more != {} || entry.reserved_end != 0 {
 		return .Bad_Kind
 	}
 	if int(entry.act_name_length) > ACT_NAME_CAPACITY || int(entry.setting_name_length) > SETTING_NAME_CAPACITY || int(entry.value_name_length) > VALUE_NAME_CAPACITY {
@@ -364,18 +363,10 @@ entry_problem :: proc "contextless" (entry: ^Entry) -> Problem {
 	if !act_name_valid || !value_name_valid || !text_encoding.identifier_words_valid(entry.setting_name[:entry.setting_name_length]) {
 		return .Bad_Byte
 	}
-	// A setting row is made of Setting and Provider_Setting entries only,
-	// and each of its buttons has a name.
-	setting_kind := entry_kind == .Setting || entry_kind == .Provider_Setting
+	// A setting row is made of Provider_Setting entries only, and each of
+	// its buttons has a name.
+	setting_kind := entry_kind == .Provider_Setting
 	if entry.setting_name_length != 0 && (!setting_kind || entry.value_name_length == 0) || entry.setting_name_length == 0 && entry.value_name_length != 0 {
-		return .Bad_Setting
-	}
-	if entry_kind == .Setting {
-		setting, setting_ok := enum_word.member_of_word(settings.Setting, u64(entry.setting))
-		if entry.parameter_count != 0 || !setting_ok || !settings.value_valid(setting, u32(entry.setting_value)) {
-			return .Bad_Setting
-		}
-	} else if entry.setting != 0 || entry.setting_value != 0 {
 		return .Bad_Setting
 	}
 	if entry_kind == .Provider_Setting && entry.parameter_count != 0 || entry_kind != .Provider_Setting && .In_Use in entry.flags {
@@ -659,7 +650,9 @@ argument_unpack :: proc "contextless" (values: [7]u64) -> (parameter: int, argum
 			}
 		}
 		return parameter, argument, true
-	case .None, .Record, .Handle, .Table, .Bytes:
+	case .None, .Record, .Handle, .Table, .Bytes, .Enum:
+		// A member goes as the Text of its name: the provider writes the
+		// "." and checks the name against the enum when the line runs.
 	}
 	return 0, {}, false
 }

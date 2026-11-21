@@ -4,7 +4,6 @@ import process_page "modus:contract/disk_process_page"
 import "modus:contract/errors"
 import "modus:contract/palette_table"
 import "modus:contract/ring"
-import "modus:contract/settings"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:private/compositor/bar"
@@ -517,6 +516,7 @@ palette_kind_words := [palette_table.Value_Kind]string {
 	.Handle  = "a Handle",
 	.Table   = "a Table",
 	.Bytes   = "Bytes",
+	.Enum    = "a member",
 }
 
 // palette_answer takes one answer of the provider. Each value is the
@@ -1178,18 +1178,6 @@ palette_pointer :: proc "contextless" (moved, pressed, released: bool, wheel: in
 palette_refresh :: proc "contextless" () {
 	if !palette_is_open() {
 		return
-	}
-	// The value in use of each setting: the color of the icon of a Setting entry.
-	if display.settings_page != nil {
-		in_use, _ := settings.read(display.settings_page)
-		values := settings.values_of(in_use)
-		// The entries name a value by its word on the page, which the
-		// border of the table of a provider checks. The array has one place
-		// for each setting, so no setting writes past it. The read gives
-		// members only, whose words are at most 16.
-		for setting in settings.Setting {
-			palette_panel.settings_in_use[setting] = u8(values[setting])
-		}
 	}
 	// The band offers go to when a window in front of the others names
 	// what the chosen entry acts on.

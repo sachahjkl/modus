@@ -305,8 +305,8 @@ entry_about :: proc "contextless" (builder: ^interface.Text_Builder, list: ^List
 }
 
 // setting_in_use says if a Setting entry is the value that the machine
-// uses now: for a setting of the machine, from the values that the owner of
-// the panel gave; for a value that only the provider knows, from its mark.
+// uses now, from the mark that the flag In_Use of the provider gave: the
+// provider called the getter of the parameter, or read the strategy.
 setting_in_use :: proc "contextless" (panel: ^Panel, entry: ^Entry) -> bool {
 	if entry.mark == .In_Use {
 		return true
@@ -318,13 +318,8 @@ setting_in_use :: proc "contextless" (panel: ^Panel, entry: ^Entry) -> bool {
 				return true
 			}
 		}
-		return false
 	}
-	given := given_of(panel.list, entry)
-	if given == nil || given.kind != u8(palette_table.Entry_Kind.Setting) {
-		return false
-	}
-	return setting_value_in_use(&panel.settings_in_use, given.setting, given.setting_value)
+	return false
 }
 
 // signature_fit gives the parameters and the result of a command for a
@@ -425,9 +420,9 @@ candidate_icon :: proc "contextless" (kind: palette_table.Candidate_Kind) -> (ic
 		return kind_icons.cells_of_value_kind(.Module), graphics.value_kind_color(value_kinds.Value_Kind.Module, graphics.appearance)
 	case .Grant:
 		return kind_icons.cells_of_value_kind(.Grant), graphics.value_kind_color(value_kinds.Value_Kind.Grant, graphics.appearance)
-	case .Strategy, .Setting:
-		// A strategy is a value of a state that the provider sets, as a
-		// setting is: the icon and the color of a setting row.
+	case .Strategy, .Member:
+		// A strategy and a member of an enum are values that the provider
+		// sets: the icon and the color of a setting row.
 		return kind_icons.cells_of_desktop_kind(.Setting), graphics.colors.text
 	}
 	return nil, 0
@@ -1061,8 +1056,8 @@ form_list_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x,
 		words = "grant"
 	case .Strategy:
 		words = "strategy"
-	case .Setting:
-		words = "setting"
+	case .Member:
+		words = "member"
 	}
 	if buttons := form_buttons_layout(table, form, x, y); buttons.count > 0 {
 		// A few closed values: a row of buttons in place of the list, in

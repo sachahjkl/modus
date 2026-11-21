@@ -30,9 +30,9 @@ Difference :: enum u32 {
 	Missing_Export  = 1, // The module of the replacement has no export with the name.
 	Parameter_Count = 2, // expected.detail and found.detail are the counts.
 	Parameter_Type  = 3, // Parameter `parameter` has another type.
-	Parameter_Detail = 4, // Parameter `parameter`: a Handle with other rights, another Record, or an Integer in another unit.
+	Parameter_Detail = 4, // Parameter `parameter`: a Handle with other rights, another Record, an Integer in another unit, another Enum, or an Enum that one side may leave out and the other needs.
 	Result_Type     = 5, // The result has another type.
-	Result_Detail   = 6, // A Record or Table result with another record.
+	Result_Detail   = 6, // A Record or Table result with another record, or an Enum result with another enum.
 	Error_Record    = 7, // One gives an error record and the other does not, or the two records differ.
 	Parameter_Direction = 8, // Parameter `parameter`: a Table or Bytes with another direction.
 }
@@ -45,7 +45,7 @@ Described :: struct {
 	direction: Direction, // A Table or Bytes parameter: its direction.
 	_:         [2]u8,
 	detail: u32, // The detail of the type: the rights of a Handle, the index of a record, or a count of parameters.
-	record: [NAME_SIZE]u8, // A Record or a Table: the name of its record; zero bytes after it.
+	record: [NAME_SIZE]u8, // A Record or a Table: the name of its record; an Enum: the name of its enum; zero bytes after it.
 }
 
 // A module, as the load source names it.
@@ -120,6 +120,12 @@ functions_compare :: proc "contextless" (file: []u8, index: u32, other_file: []u
 				name_set(&value.record, string_at(file, described.name_offset, described.name_count))
 			}
 		}
+		if type == u8(Type.Enum) {
+			enum_index, _ := enum_detail_of(detail)
+			if described, problem := enum_type(file, enum_index); problem == .None {
+				name_set(&value.record, enum_name(file, described))
+			}
+		}
 		return value
 	}
 	if a.parameter_count != b.parameter_count || a.parameter_count > PARAMETER_CAPACITY {
@@ -131,7 +137,9 @@ functions_compare :: proc "contextless" (file: []u8, index: u32, other_file: []u
 		if expected.type != found.type {
 			return .Parameter_Type, number + 1, expected, found
 		}
-		if !details_equal(file, other_file, expected, found) {
+		// A parameter that one side may leave out and the other needs is
+		// another call form: a caller of the first gives the absent word.
+		if !details_equal(file, other_file, expected, found) || parameter_optional(a, int(number)) != parameter_optional(b, int(number)) {
 			return .Parameter_Detail, number + 1, expected, found
 		}
 		expected.direction, found.direction = a.parameter_directions[number], b.parameter_directions[number]
@@ -154,11 +162,18 @@ functions_compare :: proc "contextless" (file: []u8, index: u32, other_file: []u
 }
 
 // details_equal: two Records or two Tables with equal record descriptions,
-// or two equal details.
+// two Enums with equal enum descriptions, or two equal details. The getter
+// of an Enum parameter is an index in its own file, and says nothing of
+// the call: it is not compared.
 @(private)
 details_equal :: proc "contextless" (file, other_file: []u8, expected, found: Described) -> bool {
 	if expected.type == u8(Type.Record) || expected.type == u8(Type.Table) {
 		return records_equal(file, expected.detail, other_file, found.detail)
+	}
+	if expected.type == u8(Type.Enum) {
+		expected_enum, _ := enum_detail_of(expected.detail)
+		found_enum, _ := enum_detail_of(found.detail)
+		return enums_equal(file, expected_enum, other_file, found_enum)
 	}
 	return expected.detail == found.detail
 }

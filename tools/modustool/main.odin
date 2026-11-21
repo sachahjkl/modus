@@ -1038,7 +1038,7 @@ run_check :: proc(args: []string) -> int {
 	}
 	// The full check proves the build: it keeps no output of an earlier build.
 	build.build_whole = true
-	if !foundation.run({"odin", "check", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.LOG_FACT_ATTRIBUTE_FLAG}) {
+	if !foundation.run({"odin", "check", foundation.TOOL_SOURCE_FOLDER, "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.TOOL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG}) {
 		return foundation.EXIT_FAILURE
 	}
 	// The kernel and the contract packages import no support package. The

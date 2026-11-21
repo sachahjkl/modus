@@ -64,7 +64,7 @@ field_description_size_of :: proc(item: Field_Description) -> u32 {
 		return 4
 	case .Text, .Bytes:
 		return item.detail
-	case .None, .Record, .Table:
+	case .None, .Record, .Table, .Enum:
 	}
 	return 0
 }

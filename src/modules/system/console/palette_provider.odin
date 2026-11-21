@@ -1,13 +1,15 @@
 package console
 
 import "modus:contract/enum_word"
+import "modus:contract/isolated"
+import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/palette_table"
 import "modus:contract/ring"
-import "modus:contract/settings"
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:private/console/console_results"
+import "modus:private/console/lex_parser"
 import "modus:support/line_editor"
 import "modus:support/system"
 import "base:intrinsics"
@@ -117,6 +119,12 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 	if item.record != 0 || item.parameter_count > palette_table.PARAMETER_CAPACITY || len(item.name) == 0 || len(item.name) > palette_table.NAME_CAPACITY || !text_encoding.identifier_valid(transmute([]u8)item.name) {
 		return {}, false
 	}
+	// A command whose call is a choice of members has its rows of buttons
+	// (palette_enum_rows_write), and no entry beside them: one act is shown
+	// once.
+	if palette_row_takes(item) {
+		return {}, false
+	}
 	for &later in commands[number + 1:command_count] {
 		if later.name == item.name {
 			return {}, false
@@ -146,7 +154,7 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 	// starts a process with no wiring list.
 	entry.parameter_count = u8(given_count)
 	for kind, index in item.parameters[:entry.parameter_count] {
-		entry.parameters[index] = u8(kind)
+		entry.parameters[index] = u8(palette_value_kind_of(kind))
 		// What the number counts, where the command or the description of
 		// the export states it: the panel shows the unit after the number
 		// of the field.
@@ -161,7 +169,7 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 			entry.parameter_name_lengths[index] = u8(copy(entry.parameter_names[index][:], name))
 		}
 	}
-	entry.result = u8(item.result)
+	entry.result = u8(palette_value_kind_of(item.result))
 	entry.name_length = u8(copy(entry.name[:], item.name))
 	// The signature, whole; one that does not fit shows no parameter.
 	buffer: [512]u8
@@ -194,7 +202,319 @@ palette_entry_make :: proc "contextless" (number: int) -> (entry: palette_table.
 
 // An entry never holds more parameters than a call of the console takes.
 #assert(palette_table.PARAMETER_CAPACITY <= ARGUMENT_CAPACITY)
-#assert(u8(Kind.Bytes) == u8(palette_table.Value_Kind.Bytes))
+
+// palette_value_kind_of gives the kind of a value of the palette table of a
+// kind of the console: the kinds of the console only (a Stream, a record
+// input, a literal, a member not typed yet) are no value of the table.
+palette_value_kind_of :: proc "contextless" (kind: Kind) -> (value_kind: palette_table.Value_Kind) {
+	switch kind {
+	case .None:
+		value_kind = .None
+	case .Integer:
+		value_kind = .Integer
+	case .Text:
+		value_kind = .Text
+	case .Record:
+		value_kind = .Record
+	case .Handle:
+		value_kind = .Handle
+	case .Table:
+		value_kind = .Table
+	case .Bytes:
+		value_kind = .Bytes
+	case .Enum:
+		value_kind = .Enum
+	case .Stream, .Record_Input, .Record_Literal, .Member:
+		value_kind = .None
+	}
+	return value_kind
+}
+
+// The member in use of one row of buttons, by the act name of the row: what
+// its getter gave when the panel opened last. The table written after a
+// line keeps these marks, and calls no getter.
+Palette_Row_In_Use :: struct {
+	act:        [palette_table.ACT_NAME_CAPACITY]u8,
+	act_length: int,
+	value:      i64,
+}
+PALETTE_ROW_CAPACITY :: 32 // The rows whose member in use the provider keeps; a row past them has no mark.
+palette_rows_in_use: [PALETTE_ROW_CAPACITY]Palette_Row_In_Use
+palette_rows_in_use_count: int
+
+// palette_row_takes says if a command gives one row of buttons for each of
+// its Enum parameters (src/md/features/enum_parameters.md): an export of
+// one parameter, an Enum, whose call is one choice; or an export whose
+// parameters are each an optional Enum, whose call with one argument is one
+// choice. An export with other parameters is a call with arguments: it
+// opens as a form or in the console.
+palette_row_takes :: proc "contextless" (item: ^Command) -> bool {
+	if item.run != nil || item.record != 0 || item.parameter_count == 0 || item.parameter_count > ARGUMENT_CAPACITY {
+		return false
+	}
+	if item.parameter_count == 1 && item.parameters[0] == .Enum {
+		return true
+	}
+	for kind, index in item.parameters[:item.parameter_count] {
+		if kind != .Enum || !module.parameter_optional(item.function, index) {
+			return false
+		}
+	}
+	return true
+}
+
+// PALETTE_GETTERS_LIMIT bounds one refresh of the marks, all getters
+// together: a service that is slow, or many rows, cannot hold the thread
+// of the lines past it.
+PALETTE_GETTERS_LIMIT :: 1000 // Milliseconds.
+
+// One refresh of the marks: its end, and the sandboxes and services that
+// missed a getter in it, which it asks nothing more.
+Palette_Getters :: struct {
+	limit:          u64,
+	missed:         bit_set[0 ..< SANDBOX_CAPACITY],
+	sent:           u64, // The getters sent to a service or an isolated process.
+	in_the_console: u64, // The getters of modules in the process of the console: not called.
+}
+
+// palette_getter_value calls the getter of an Enum parameter of a command:
+// the export getter of its module, with no argument, in an isolated
+// process or a service, within the bound of the refresh. It gives the
+// value of its member, or ok false: the getter is no command now, its
+// module is in the process of the console, the process that serves it
+// does not run or missed a getter before in this refresh, or it gave no
+// answer before the end of the refresh.
+//
+// A module that the console loaded in its own process is never called: a
+// direct call has no bound, and a getter that loops would hold the console
+// for good. Only the thread of the lines calls it, when no line runs: it
+// owns the rings of the sandboxes and of the services.
+palette_getter_value :: proc "contextless" (refresh: ^Palette_Getters, item: ^Command, getter: u32, enum_type: module.Enum_Type) -> (value: i64, ok: bool) {
+	found: ^Command
+	for &command in commands[:command_count] {
+		if command.run == nil && command.record == 0 && command.export == getter && raw_data(command.file) == raw_data(item.file) {
+			found = &command
+		}
+	}
+	if found != nil && found.address != 0 {
+		refresh.in_the_console += 1
+		return 0, false
+	}
+	if found == nil || found.sandbox == 0 || int(found.sandbox) > SANDBOX_CAPACITY {
+		return 0, false
+	}
+	place := int(found.sandbox - 1)
+	sandbox := &sandboxes[place]
+	if sandbox.process == 0 || place in refresh.missed || system.time() >= refresh.limit {
+		return 0, false
+	}
+	// Each way out below that gives no member is a miss of the service.
+	missed := true
+	defer if missed {
+		refresh.missed += {place}
+	}
+	offset, size, _, _, encoded := isolated.encode(found.file, found.function, nil, sandbox.region)
+	if !encoded {
+		return 0, false
+	}
+	sandbox.calls += 1
+	if !system.send(&sandbox.ring.commands, ring.Record{kind = getter, tag = sandbox.calls, values = {0 = offset, 1 = size}}) {
+		return 0, false
+	}
+	refresh.sent += 1
+	for {
+		wait := system.wait_begin()
+		for _ in 0 ..< ring.CAPACITY {
+			completion, has_completion := system.receive(&sandbox.ring.completions)
+			if !has_completion {
+				break
+			}
+			if completion.tag != sandbox.calls {
+				continue
+			}
+			// The process writes the word: a word that names no status is
+			// refused, never read as a status.
+			call_status, call_status_ok := enum_word.member_of_word(isolated.Status, u64(completion.kind))
+			if !call_status_ok || call_status != .Ok {
+				return 0, false
+			}
+			missed = false
+			return module.enum_value_of_register(enum_type, i64(completion.values[0])), true
+		}
+		if state, _, _ := system.process_state(sandbox.process); state == .Stopped {
+			return 0, false
+		}
+		system.wait_records(&wait, &sandbox.ring.completions)
+		if system.wait_end(&wait, refresh.limit) >= refresh.limit {
+			return 0, false
+		}
+	}
+}
+
+// palette_row_in_use gives the member in use of the row of an act name:
+// from its getter in a refresh, which it keeps, or else the value that the
+// getter gave last. A getter that gives no member removes the value that
+// the row kept, so the row shows no old mark. moved: a getter gave another
+// member than the row kept, or the row kept none.
+palette_row_in_use :: proc "contextless" (act: string, item: ^Command, getter: u32, enum_type: module.Enum_Type, refresh: ^Palette_Getters) -> (value: i64, known: bool, moved: bool) {
+	kept_place := -1
+	for &row, place in palette_rows_in_use[:palette_rows_in_use_count] {
+		if string(row.act[:row.act_length]) == act {
+			kept_place = place
+		}
+	}
+	if refresh == nil {
+		if kept_place < 0 {
+			return 0, false, false
+		}
+		return palette_rows_in_use[kept_place].value, true, false
+	}
+	if getter != 0 {
+		value, known = palette_getter_value(refresh, item, getter, enum_type)
+	}
+	if !known {
+		if kept_place >= 0 {
+			palette_rows_in_use_count -= 1
+			palette_rows_in_use[kept_place] = palette_rows_in_use[palette_rows_in_use_count]
+		}
+		return 0, false, false
+	}
+	kept: ^Palette_Row_In_Use
+	if kept_place >= 0 {
+		kept = &palette_rows_in_use[kept_place]
+	}
+	moved = kept == nil || kept.value != value
+	if kept == nil && palette_rows_in_use_count < PALETTE_ROW_CAPACITY {
+		kept = &palette_rows_in_use[palette_rows_in_use_count]
+		palette_rows_in_use_count += 1
+		kept.act_length = copy(kept.act[:], act)
+	}
+	if kept != nil {
+		kept.value = value
+	}
+	return value, true, moved
+}
+
+// A mark that a refresh moved: the console logs it once the table that
+// holds it is written. The names point into the command table, which no
+// refresh changes.
+Palette_Moved_Mark :: struct {
+	member, command, parameter: string,
+}
+palette_marks_moved: [PALETTE_ROW_CAPACITY]Palette_Moved_Mark
+palette_marks_moved_count: int
+
+// palette_marks_log logs each mark that the table written last moved.
+palette_marks_log :: proc "contextless" () {
+	for mark in palette_marks_moved[:palette_marks_moved_count] {
+		system.log_fact(.Info, Palette_Mark_Moved{member = value_kinds.text_field(mark.member, MARK_MEMBER_FIELD_BYTES), command = value_kinds.text_field(mark.command, MARK_COMMAND_FIELD_BYTES), parameter = value_kinds.text_field(mark.parameter, MARK_PARAMETER_FIELD_BYTES)})
+	}
+	palette_marks_moved_count = 0
+}
+
+// palette_line_name_valid says if the name of a command is names of Lex
+// joined by '.': the service, then the export. The line of a row starts
+// with it, so it must add nothing to that line.
+palette_line_name_valid :: proc "contextless" (name: string) -> bool {
+	start := 0
+	for index in 0 ..= len(name) {
+		if index == len(name) || name[index] == '.' {
+			if !lex_parser.name_valid(name[start:index]) {
+				return false
+			}
+			start = index + 1
+		}
+	}
+	return true
+}
+
+// palette_enum_rows_write adds the rows of buttons of the Enum parameters
+// of the commands after count entries, and gives the new count: one entry
+// for each member, whose line is the call with that member. The entries of
+// one parameter follow each other, with one row name and one act name, so
+// the panel joins them into one row. The member in use has the flag
+// In_Use.
+palette_enum_rows_write :: proc "contextless" (start: int, refresh: ^Palette_Getters) -> (count: int) {
+	count = start
+	commands_loop: for number in 0 ..< command_count {
+		item := &commands[number]
+		if !palette_row_takes(item) || len(item.name) > palette_table.NAME_CAPACITY || !palette_line_name_valid(item.name) {
+			continue
+		}
+		for &later in commands[number + 1:command_count] {
+			if later.name == item.name {
+				continue commands_loop
+			}
+		}
+		for parameter in 0 ..< item.parameter_count {
+			enum_index, getter := module.enum_detail_of(item.function.parameter_details[parameter])
+			described, problem := module.enum_type(item.file, enum_index)
+			parameter_name := item.parameter_names[parameter]
+			if problem != .None || !lex_parser.name_valid(parameter_name) {
+				continue
+			}
+			act_buffer: [palette_table.ACT_NAME_CAPACITY]u8
+			act_writer := system.Writer{buffer = act_buffer[:]}
+			system.write_part(&act_writer, item.name)
+			system.write_part(&act_writer, ":")
+			system.write_part(&act_writer, parameter_name)
+			if act_writer.dropped != 0 {
+				continue
+			}
+			act := string(act_buffer[:act_writer.count])
+			in_use, in_use_known, moved := palette_row_in_use(act, item, getter, described, refresh)
+			// A row whose name the table cannot hold has no entry: its mark
+			// is not logged either.
+			if moved && palette_marks_moved_count < PALETTE_ROW_CAPACITY && len(parameter_name) <= palette_table.SETTING_NAME_CAPACITY {
+				if member_name, named := module.enum_name_of_value(item.file, described, in_use); named {
+					palette_marks_moved[palette_marks_moved_count] = {member = member_name, command = item.name, parameter = parameter_name}
+					palette_marks_moved_count += 1
+				}
+			}
+			for member_number in 0 ..< described.member_count {
+				if count == palette_table.ENTRY_CAPACITY {
+					return count
+				}
+				member, _ := module.enum_member(item.file, described, member_number)
+				member_name := module.string_at(item.file, member.name_offset, member.name_count)
+				entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Provider_Setting), result = u8(palette_value_kind_of(item.result))}
+				if in_use_known && member.value == in_use {
+					entry.flags += {.In_Use}
+				}
+				name := system.Writer{buffer = entry.name[:]}
+				system.write_part(&name, item.name)
+				system.write_part(&name, " ")
+				system.write_part(&name, parameter_name)
+				system.write_part(&name, " to ")
+				system.write_part(&name, member_name)
+				// The help of the entry is the line that the console runs.
+				about := system.Writer{buffer = entry.about[:]}
+				system.write_part(&about, item.name)
+				system.write_part(&about, "(")
+				system.write_part(&about, parameter_name)
+				system.write_part(&about, " = .")
+				system.write_part(&about, member_name)
+				system.write_part(&about, ")")
+				row := system.Writer{buffer = entry.setting_name[:]}
+				system.write_part(&row, parameter_name)
+				value_name := system.Writer{buffer = entry.value_name[:]}
+				system.write_part(&value_name, member_name)
+				if name.dropped != 0 || about.dropped != 0 || row.dropped != 0 || value_name.dropped != 0 {
+					continue
+				}
+				entry.name_length = u8(name.count)
+				entry.signature_length = u8(copy(entry.signature[:], entry.name[:name.count]))
+				entry.about_length = u8(about.count)
+				entry.act_name_length = u8(copy(entry.act_name[:], act))
+				entry.setting_name_length = u8(row.count)
+				entry.value_name_length = u8(value_name.count)
+				palette_next_entries[count] = entry
+				count += 1
+			}
+		}
+	}
+	return count
+}
 
 // The entries that the next table holds: made here, then compared with
 // the entries of the table before, so that a line that changes no command
@@ -244,13 +564,23 @@ palette_strategy_in_use :: proc "contextless" () -> op.Strategy {
 // palette_table_write writes the entry table from the command table of
 // now and the scheduling strategy of now, when it differs from the table
 // before. The writer adds 1 to the change count before the change and 1
-// after it, and wakes the reader. One thread writes at a time: the first
-// thread at the start, and when the panel opens while no line runs
-// (Refresh); the thread that runs the lines after each line, before the
-// first thread learns that the line ended.
-palette_table_write :: proc "contextless" () {
+// after it, and wakes the reader. One thread writes: the first thread at
+// the start, before the thread of the lines runs; then only the thread of
+// the lines, after each line and for each refresh. call_getters: call the
+// getter of each row of buttons for its member in use, all within
+// PALETTE_GETTERS_LIMIT; else each row keeps the mark of the last call.
+palette_table_write :: proc "contextless" (call_getters := false) {
 	if !palette_active() {
 		return
+	}
+	refresh := Palette_Getters{limit = system.time() + PALETTE_GETTERS_LIMIT}
+	// After the table is written and its lock let go: a test that reads
+	// the fact then finds the mark in the table.
+	defer {
+		palette_marks_log()
+		if call_getters {
+			system.log_fact(.Info, Palette_Marks_Refreshed{sent = refresh.sent, in_the_console = refresh.in_the_console})
+		}
 	}
 	count := 0
 	for number in 0 ..< command_count {
@@ -262,54 +592,10 @@ palette_table_write :: proc "contextless" () {
 			count += 1
 		}
 	}
-	// One entry for each value of each setting of the machine: "set font
-	// to spleen". Its help is the line that the console runs for it.
-	for setting in settings.Setting {
-		description := settings.descriptions[setting]
-		for value in 0 ..< description.value_count {
-			if count == palette_table.ENTRY_CAPACITY {
-				break
-			}
-			// A value that the border of the setting refuses has no entry:
-			// the scales past the window bound.
-			word := settings.word_of_value(setting, int(value))
-			if !settings.value_valid(setting, word) {
-				continue
-			}
-			// The entry names the value by its word on the settings page:
-			// the unit that the border of the table checks, and that the
-			// compositor compares with the value in use.
-			entry := palette_table.Entry{kind = u8(palette_table.Entry_Kind.Setting), setting = u8(setting), setting_value = u8(word), result = u8(palette_table.Value_Kind.Integer)}
-			name := system.Writer{buffer = entry.name[:]}
-			system.write_part(&name, "set ")
-			system.write_part(&name, description.title)
-			system.write_part(&name, " to ")
-			system.write_part(&name, description.value_names[value])
-			about := system.Writer{buffer = entry.about[:]}
-			palette_setting_line(&about, description.name, description.value_names[value])
-			// The form of the entry in the panel: the values of one
-			// setting are one row, and the window of `settings` names its
-			// buttons with the same act name.
-			act := system.Writer{buffer = entry.act_name[:]}
-			system.write_part(&act, "settings.set:")
-			system.write_part(&act, description.name)
-			row := system.Writer{buffer = entry.setting_name[:]}
-			system.write_part(&row, description.title)
-			value_name := system.Writer{buffer = entry.value_name[:]}
-			system.write_part(&value_name, description.value_names[value])
-			if name.dropped != 0 || about.dropped != 0 || act.dropped != 0 || row.dropped != 0 || value_name.dropped != 0 {
-				continue
-			}
-			entry.name_length = u8(name.count)
-			entry.signature_length = u8(copy(entry.signature[:], entry.name[:name.count]))
-			entry.about_length = u8(about.count)
-			entry.act_name_length = u8(act.count)
-			entry.setting_name_length = u8(row.count)
-			entry.value_name_length = u8(value_name.count)
-			palette_next_entries[count] = entry
-			count += 1
-		}
-	}
+	// One row of buttons for each Enum parameter of an export whose call
+	// with one member is one choice: "settings.set font to spleen". Its
+	// help is the line that the console runs for it.
+	count = palette_enum_rows_write(count, call_getters ? &refresh : nil)
 	// One entry for each scheduling strategy: "set strategy to eevdf". Its
 	// help is the line that the console runs for it. The strategy is a
 	// state of the kernel that no page holds: the console reads it in the
@@ -383,7 +669,7 @@ palette_answer :: proc "contextless" (tag: u32, outcome: palette_table.Outcome, 
 		return
 	}
 	system.lock(&palette_send_lock)
-	system.send(&palette_ring.completions, ring.Record{tag = tag, values = {0 = u64(outcome), 1 = u64(kind), 2 = u64(length)}})
+	system.send(&palette_ring.completions, ring.Record{tag = tag, values = {0 = u64(outcome), 1 = u64(palette_value_kind_of(kind)), 2 = u64(length)}})
 	system.unlock(&palette_send_lock)
 }
 
@@ -467,10 +753,13 @@ palette_turn :: proc "contextless" () {
 			palette_candidates_give(record)
 			continue
 		case .Refresh:
-			// The panel opened: the strategy can have changed with no
-			// line of the console. No line runs now, so this thread is
-			// the one writer of the table.
-			palette_table_write()
+			// The panel opened: the strategy and the member in use of each
+			// row can have changed with no line of the console. The thread
+			// of the lines calls the getters, which wait for other
+			// processes: this thread holds the keys and never waits for
+			// one. The panel shows the table of now, and the marks of the
+			// getters when they answer.
+			palette_refresh_ask()
 			continue
 		case .Manual:
 			palette_manual_page(record)
@@ -487,15 +776,6 @@ palette_arguments_given: bit_set[0 ..< palette_table.PARAMETER_CAPACITY]
 palette_arguments_tag: u32 // The tag of the choice that the values are for.
 palette_arguments_bad: u32 // The tag of a choice with a value that failed its check.
 palette_manual: bool // The line that runs shows a page of the manual.
-
-// palette_setting_line writes the line that sets a setting.
-palette_setting_line :: proc "contextless" (writer: ^system.Writer, name: string, value: string) {
-	system.write_part(writer, "setting(\"")
-	system.write_part(writer, name)
-	system.write_part(writer, "\", \"")
-	system.write_part(writer, value)
-	system.write_part(writer, "\")")
-}
 
 // palette_entry_named gives the copy of the entry that a record of the
 // compositor names, when the index is inside the table of the console and
@@ -549,9 +829,9 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 	}
 	name := string(entry.name[:entry.name_length])
 	palette_manual = false
-	if entry.kind == u8(palette_table.Entry_Kind.Setting) || entry.kind == u8(palette_table.Entry_Kind.Provider_Setting) {
-		// The line of a setting, and of a scheduling strategy, is the
-		// help of its entry, which the console wrote itself.
+	if entry.kind == u8(palette_table.Entry_Kind.Provider_Setting) {
+		// The line of a member of a row, and of a scheduling strategy, is
+		// the help of its entry, which the console wrote itself.
 		palette_line_run(record.tag, string(entry.about[:entry.about_length]))
 		return
 	}
@@ -582,6 +862,7 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 		// compositor already refuses, or a quote) is refused in words,
 		// never changed in silence.
 		outside_line := false
+		no_member_name := false
 		for index in 0 ..< count {
 			if !fits || index not_in palette_arguments_given {
 				fits = false
@@ -592,6 +873,16 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 			switch {
 			case found.parameters[index] == .Integer && argument.kind == .Integer:
 				system.write_part(&writer, argument.integer)
+			case found.parameters[index] == .Enum && argument.kind == .Text:
+				// A member: its name after a ".". A text that is no name
+				// of a member is refused in words; the line checks the
+				// name against the enum when it runs.
+				member_name := string(argument.text[:argument.length])
+				if !module.enum_member_name_valid(member_name) {
+					no_member_name = true
+				}
+				system.write_part(&writer, ".")
+				system.write_part(&writer, member_name)
 			case found.parameters[index] == .Text && argument.kind == .Text:
 				argument_text := argument.text[:argument.length]
 				if !text_encoding.text_valid(argument_text) {
@@ -613,6 +904,10 @@ palette_choice :: proc "contextless" (record: ring.Record) {
 		system.write_part(&writer, ")")
 		if fits && outside_line {
 			palette_refuse(record.tag, "a line of the console holds no quote and no invalid sequence of UTF-8 in a text")
+			return
+		}
+		if fits && no_member_name {
+			palette_refuse(record.tag, "a member is a name in lower case: a letter, then letters, digits and _")
 			return
 		}
 		if !fits || writer.dropped != 0 {
@@ -691,21 +986,21 @@ palette_candidate_kind :: proc "contextless" (command_name: string, parameter: u
 		if parameter == 0 {
 			return .Strategy
 		}
-	case "setting":
-		if parameter == 0 {
-			return .Setting
-		}
+	}
+	// An Enum parameter of an export: the members of its enum.
+	if found := palette_command_named(command_name); found != nil && parameter < u64(found.parameter_count) && found.parameters[parameter] == .Enum {
+		return .Member
 	}
 	return .None
 }
 
 // palette_candidates_closed says if the candidates of a kind are the only
-// values that a parameter takes: the strategies of the kernel and the names
-// of the settings are; the processes that run, the modules and the grants
-// are suggestions, since a line can name another one.
+// values that a parameter takes: the strategies of the kernel and the
+// members of an enum are; the processes that run, the modules and the
+// grants are suggestions, since a line can name another one.
 palette_candidates_closed :: proc "contextless" (kind: palette_table.Candidate_Kind) -> bool {
 	switch kind {
-	case .Strategy, .Setting:
+	case .Strategy, .Member:
 		return true
 	case .None, .Process, .Module, .Grant:
 	}
@@ -740,9 +1035,17 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 			value_buffer: [PALETTE_STRATEGY_VALUE_CAPACITY]u8
 			add(&candidates, &count, palette_strategy_value(&value_buffer, strategy))
 		}
-	case .Setting:
-		for description in settings.descriptions {
-			add(&candidates, &count, description.name)
+	case .Member:
+		// The members of the enum of the parameter, as its module file
+		// names them; a line writes each one after a ".".
+		if found := palette_command_named(string(entry.name[:entry.name_length])); found != nil && record.values[3] < u64(found.parameter_count) {
+			enum_index, _ := module.enum_detail_of(found.function.parameter_details[record.values[3]])
+			if described, problem := module.enum_type(found.file, enum_index); problem == .None {
+				for number in 0 ..< described.member_count {
+					member, _ := module.enum_member(found.file, described, number)
+					add(&candidates, &count, module.string_at(found.file, member.name_offset, member.name_count))
+				}
+			}
 		}
 	case .Grant:
 		for grant in system.Root_Grant {
@@ -799,21 +1102,6 @@ palette_candidates_give :: proc "contextless" (record: ring.Record) {
 // palette_commands_add adds the two commands that the palette runs under
 // a short name: each one is an export of a service.
 palette_commands_add :: proc "contextless" () {
-	// Sets one setting of the machine: the export `set` of the service
-	// `settings`, under a short name.
-	//
-	// - `name`: the name of a setting: `font`, `subpixel_order`,
-	//   `pointer_theme`, `grid_fit`.
-	// - `value`: the name of one of its values.
-	//
-	// The command connects to `settings` when the console has no
-	// connection to it yet. The palette of the desktop runs it for an
-	// entry such as "set font to spleen".
-	//
-	// Errors: those of `connect("settings")`, and those of the export.
-	command("setting", {.Text, .Text}, .Integer, "set a setting of the machine: settings.set()", proc "contextless" (arguments: []Value) -> Value {
-		return bound_call("settings", "set", arguments)
-	})
 	// Shows the page of a module in the window of the manual: the export
 	// `show` of the service `manual`, under a short name. It gives the
 	// count of the exports of the module.
@@ -862,7 +1150,6 @@ palette_commands_add :: proc "contextless" () {
 		{"replace", {"module", "by"}},
 		{"debug", {"process", ""}},
 		{"describe", {"name", ""}},
-		{"setting", {"name", "value"}},
 		{"manual_page", {"name", ""}},
 		{"strategy", {"name", ""}},
 		{"buffer", {"count", ""}},
@@ -993,7 +1280,9 @@ palette_line_ended :: proc "contextless" () {
 			}
 		case .Record:
 			console_results.draw_record(&sink, value.file, value.detail, value.record)
-		case .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal:
+		case .Enum:
+			console_results.draw_member(&sink, value.file, value.detail, value.integer)
+		case .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member:
 			// The panel has no drawer for these: the console window shows them.
 			writer.fits = false
 		}

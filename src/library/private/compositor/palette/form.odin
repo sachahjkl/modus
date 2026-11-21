@@ -41,16 +41,18 @@ Form :: struct {
 }
 
 // form_can_open says if the panel has a field for each parameter of an
-// entry: an Integer and a Text can be typed. An entry with a parameter of
-// another kind (a Table, a Record, a Handle, Bytes, any value) opens in
-// the window of the provider, where a line can compose such a value.
+// entry: an Integer and a Text can be typed, and a member of an enum is
+// typed as its name, which the candidates of the field offer. An entry with
+// a parameter of another kind (a Table, a Record, a Handle, Bytes, any
+// value) opens in the window of the provider, where a line can compose
+// such a value.
 form_can_open :: proc "contextless" (given: ^palette_table.Entry) -> bool {
 	if given == nil || given.parameter_count == 0 {
 		return false
 	}
 	for index in 0 ..< min(int(given.parameter_count), FIELD_CAPACITY) {
 		kind, kind_ok := palette_table.parameter_kind_of(given, index)
-		if !kind_ok || kind != .Integer && kind != .Text {
+		if !kind_ok || kind != .Integer && kind != .Text && kind != .Enum {
 			return false
 		}
 	}

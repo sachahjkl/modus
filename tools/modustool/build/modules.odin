@@ -207,7 +207,7 @@ module_compile_command :: proc(build: foundation.Module_Build) -> []string {
 		foundation.SOURCE_LIBRARY_FLAG,
 		// The attribute of a fact type, which the compiler ignores
 		// (src/md/features/log_facts.md).
-		foundation.LOG_FACT_ATTRIBUTE_FLAG,
+		foundation.CUSTOM_ATTRIBUTES_FLAG,
 		foundation.join("-out:", llvm_ir_folder),
 	)
 	// The line program of DWARF, for the line table of the debug object.
@@ -705,6 +705,7 @@ test_descriptions :: proc() -> bool {
 		.Handle  = "Handle",
 		.Table   = "Table",
 		.Bytes   = "Bytes",
+		.Enum    = "Enum",
 	}
 	for build in foundation.module_builds {
 		file := foundation.read_file(foundation.module_path(build.name)) or_return

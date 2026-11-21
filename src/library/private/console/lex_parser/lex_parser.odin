@@ -7,7 +7,7 @@
 //   expression = sum { "with" sum }
 //   sum        = term { ("+" | "-") term }
 //   term       = factor { ("*" | "/" | "%") factor }
-//   factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" expression ")"
+//   factor     = "-" factor | integer | "text" | name | "." name | name "(" arguments ")" | "(" expression ")"
 //              | "{" [ name "=" expression { "," name "=" expression } ] "}"
 //              | "let" name "=" expression { "," name "=" expression } "in" expression
 //   arguments  = argument { "," argument }
@@ -102,6 +102,7 @@ Node_Kind :: enum u8 {
 	Named_Argument = 12, // An argument `name = value`: the bytes are the name, the child the value.
 	Let            = 13, // "let … in …": the bytes are "let", the children its bindings, then its body.
 	Let_Binding    = 14, // A binding of a let: the bytes are its name, the child its value.
+	Member         = 15, // A member of an enum, `.french`: the bytes are the '.' and the name. The parameter that receives it gives its enum.
 }
 
 // The operators of a Binary node.
@@ -129,6 +130,25 @@ OPERATOR_TEXTS := [Operator]string {
 // The words of Lex: no name has one of them.
 @(rodata)
 WORDS_OF_LEX := [?]string{"_", "let", "in", "with"}
+
+// name_valid says if a text is one name of Lex, with no '.': a letter or
+// '_', then letters, digits and '_', and no word of Lex. The console builds
+// a line from the name of an export and of its parameters, which another
+// party wrote in its module file: a name that is no name of Lex could add a
+// call of its own to that line.
+name_valid :: proc "contextless" (name: string) -> bool {
+	if len(name) == 0 || word_of_lex(name) {
+		return false
+	}
+	for index in 0 ..< len(name) {
+		character := name[index]
+		letter := character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character == '_'
+		if !letter && !(index > 0 && character >= '0' && character <= '9') {
+			return false
+		}
+	}
+	return true
+}
 
 // word_of_lex says if a name is a word of Lex: `_` is the placeholder of
 // `|>`, and `let`, `in` and `with` are words of its forms.
@@ -590,6 +610,15 @@ factor_read :: proc "contextless" (parser: ^Parser) -> Node_Index {
 	case character == '{':
 		parser.position += 1
 		return literal_read(parser, start)
+	case character == '.':
+		// A member names no variable: its enum comes from the parameter
+		// that receives it, as the type of a record literal does.
+		token := console_language.token_next(text, start)
+		if token.kind != .Member {
+			return refuse(parser, .Unexpected, start, len(text), NO_NODE)
+		}
+		parser.position = token.end
+		return node_add(parser, .Member, start, token.end)
 	case console_language.name_first(character):
 		name := read_name(parser)
 		if name == "let" {

@@ -146,7 +146,7 @@ field_at_the_right :: proc "contextless" (item: module.Field) -> bool {
 		return kind == .Plain || kind == .Hexadecimal || kind == .Hexadecimal_Sixteen_Digits || kind == .Hundredths || kind == .Nanoseconds_As_Microseconds || kind == .Tenths || kind == .Hexadecimal_No_Leading_Zero || kind == .Time_Of_Day
 	case .Handle:
 		return true
-	case .None, .Text, .Record, .Table, .Bytes:
+	case .None, .Text, .Record, .Table, .Bytes, .Enum:
 	}
 	return false
 }
@@ -196,7 +196,7 @@ cell_of :: proc "contextless" (row: []u8, item: module.Field, buffer: []u8) -> C
 		return {text = text, number = type == .Integer, part = value_kind_part(value_kind)}
 	}
 	switch type {
-	case .None, .Record, .Table:
+	case .None, .Record, .Table, .Enum:
 		// A record holds no such field (module.field_size): an empty cell.
 	case .Bytes:
 		// A Bytes field is a hash or the values of a log fact
@@ -331,6 +331,23 @@ draw_integer :: proc "contextless" (sink: ^Sink, value: i64) {
 	buffer: [24]u8
 	sink.continuation = 0
 	sink.write(sink, sentence.format(buffer[:], value), .Number)
+	sink.end_line(sink)
+}
+
+// draw_member draws an Enum value: its member, as a line names it,
+// `.french`, in the color of a status. A value that names no member of the
+// enum is drawn as its number, never as the name of another member.
+draw_member :: proc "contextless" (sink: ^Sink, file: []u8, enum_index: u32, value: i64) {
+	sink.continuation = 0
+	described, problem := module.enum_type(file, enum_index)
+	name, named := module.enum_name_of_value(file, described, value)
+	if problem != .None || !named {
+		buffer: [24]u8
+		sink.write(sink, sentence.format(buffer[:], value), .Number)
+	} else {
+		sink.write(sink, ".", .Status)
+		sink.write(sink, name, .Status)
+	}
 	sink.end_line(sink)
 }
 
@@ -518,7 +535,7 @@ field_width :: proc "contextless" (item: module.Field) -> int {
 	}
 	size := module.field_size(item)
 	switch type {
-	case .None, .Record, .Table:
+	case .None, .Record, .Table, .Enum:
 		return 0
 	case .Bytes:
 		return 2 * int(size)

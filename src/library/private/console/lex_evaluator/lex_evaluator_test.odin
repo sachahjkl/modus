@@ -4,6 +4,7 @@ package lex_evaluator
 import "core:strings"
 import "core:testing"
 import module "modus:contract/module"
+import "modus:contract/module_file_writer"
 import "modus:private/console/console_language"
 import "modus:private/console/console_results"
 import "modus:private/console/lex_parser"
@@ -29,14 +30,29 @@ Fake :: struct {
 	join:                  [256]u8,
 	join_count:            int,
 	last_text:             string, // The Text that a call took last as its last argument.
-	rectangle_description: [512]u8,
+	rectangle_description: [1024]u8,
 	rectangle_file:        []u8, // Rectangle: x, y, width, height, Integers of 8 bytes.
-	labelled_description:  [512]u8,
+	labelled_description:  [1024]u8,
 	labelled_file:         []u8, // Labelled: name, a Text of 4 bytes, and count, an Integer of 1 byte.
 	rect:                  [32]u8, // A Rectangle 1, 2, 30, 4.
 	labelled:              [8]u8, // A Labelled "ab", 5.
 	memory:                [512]u8, // The records that literals make.
 	memory_used:           int,
+	enum_memory:           [4096]u8,
+	enum_file:             []u8, // A module file with two enums: 1 Keyboard_Layout {united_states, french}, 2 Font {vector, spleen}.
+}
+
+// fake_enums_make writes the module file of the two enums of the fake. The
+// command `set(layout: Keyboard_Layout, font: Font)` takes both, each
+// optional; it gives layout * 10 + font, with 9 for a setting left out.
+@(private = "file")
+fake_enums_make :: proc(fake: ^Fake) {
+	layout := [2]module_file_writer.Member_Description{{"united_states", 0}, {"french", 1}}
+	font := [2]module_file_writer.Member_Description{{"vector", 0}, {"spleen", 1}}
+	enums := [2]module_file_writer.Enum_Description{{"Keyboard_Layout", 4, true, layout[:]}, {"Font", 4, true, font[:]}}
+	size, refusal := module_file_writer.write({enums = enums[:]}, fake.enum_memory[:])
+	assert(refusal.refusal == .None)
+	fake.enum_file = fake.enum_memory[:size]
 }
 
 @(private = "file")
@@ -85,6 +101,10 @@ fake_command_find :: proc "contextless" (data: rawptr, name: string) -> (signatu
 	case "any":
 		signature.parameter_count = 1
 		signature.kinds[0] = .None
+	case "set":
+		signature.parameter_count = 2
+		signature.names[0], signature.kinds[0], signature.files[0], signature.details[0], signature.optional[0] = "layout", .Enum, fake.enum_file, 1, true
+		signature.names[1], signature.kinds[1], signature.files[1], signature.details[1], signature.optional[1] = "font", .Enum, fake.enum_file, 2, true
 	}
 	signature.has_effect = name != "pure"
 	return signature, true
@@ -112,6 +132,22 @@ fake_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []Va
 		return count, true
 	case "pair":
 		return {kind = .Integer, integer = arguments[0].integer * 10 + arguments[1].integer}, true
+	case "set":
+		// Each value is an Enum of the enum of its parameter, or no value.
+		given :: proc "contextless" (value: Value, enum_index: u32) -> i64 {
+			if value.kind != .Enum || value.detail != enum_index {
+				return 9
+			}
+			return value.integer
+		}
+		layout, font := Value{}, Value{}
+		if len(arguments) > 0 {
+			layout = arguments[0]
+		}
+		if len(arguments) > 1 {
+			font = arguments[1]
+		}
+		return {kind = .Integer, integer = given(layout, 1) * 10 + given(font, 2)}, true
 	}
 	return {kind = .Integer, integer = i64(fake.log_count)}, true
 }
@@ -203,6 +239,7 @@ Run :: struct {
 run_of :: proc(text: string, mode := Evaluation_Mode.Console, budget: u32 = EVALUATION_BUDGET_STEPS) -> ^Run {
 	run := new(Run, context.temp_allocator)
 	fake_records_make(&run.fake)
+	fake_enums_make(&run.fake)
 	lex_parser.parse(text, {form_of = test_form_of}, &run.tree)
 	host := Evaluation_Host {
 		data            = &run.fake,
@@ -613,6 +650,73 @@ evaluation_refusals_of_the_forms :: proc(t: ^testing.T) {
 	run = run_of("pair(_, 1)")
 	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Text)
 	testing.expect_value(t, run.evaluation.refusal.text_refusal, lex_parser.Refusal.Word_As_Name)
+}
+
+// A member is refused at its place before any argument of the call runs: a
+// name that its enum does not have, a member of another enum, a parameter
+// that is no Enum, a member that nothing types, a member in an operation,
+// a parameter named twice. The successes come last: a member by its name or
+// by its place, and an optional parameter left out.
+@(test)
+evaluation_of_members :: proc(t: ^testing.T) {
+	Case :: struct {
+		text:       string,
+		refusal:    Refusal,
+		column:     u32,
+		field:      string,
+		left_kind:  Kind,
+		right_kind: Kind,
+	}
+	cases := [?]Case {
+		{"set(layout = .germany)", .Member_Unknown, 14, "germany", .None, .None},
+		{"set(font = g(), layout = .germany)", .Member_Unknown, 26, "germany", .None, .None},
+		{"set(layout = .spleen)", .Member_Unknown, 14, "spleen", .None, .None},
+		{"set(.french, .french)", .Member_Unknown, 14, "french", .None, .None},
+		{"set(layout = .French)", .Member_Unknown, 14, "French", .None, .None},
+		{"set(layout = .french_)", .Member_Unknown, 14, "french_", .None, .None},
+		{"pair(.french, g())", .Member_No_Type, 6, "", .None, .Integer},
+		{"any(.french)", .Member_No_Type, 5, "", .None, .None},
+		{"f(.french)", .Member_No_Type, 3, "", .None, .None},
+		{".french", .Member_No_Type, 1, "", .None, .None},
+		{"v = .french", .Member_No_Type, 5, "", .None, .None},
+		{".french + 1", .Operator_Kinds, 9, "", .Member, .Integer},
+		{"set(layout = .french, layout = .french)", .Text, 23, "", .None, .None},
+		{"set(.french, layout = .french)", .Argument_Twice, 14, "layout", .None, .None},
+		{"set(layout = .)", .Text, 14, "", .None, .None},
+	}
+	for item in cases {
+		run := run_of(item.text)
+		record := run.evaluation.refusal
+		testing.expectf(t, !run.ok && record.refusal == item.refusal && record.place.column == item.column && record.field == item.field, "%q: %v at column %d, field %q; not %v at column %d, field %q", item.text, record.refusal, record.place.column, record.field, item.refusal, item.column, item.field)
+		if item.left_kind != .None || item.right_kind != .None {
+			testing.expectf(t, record.left_kind == item.left_kind && record.right_kind == item.right_kind, "%q: the kinds %v and %v, not %v and %v", item.text, record.left_kind, record.right_kind, item.left_kind, item.right_kind)
+		}
+		// No argument runs before the check of a member, and no call.
+		if item.refusal == .Member_Unknown || item.refusal == .Member_No_Type && item.text != ".french + 1" {
+			expect_log(t, run, {}, item.text)
+		}
+	}
+	run := run_of("set(layout = .germany)")
+	testing.expect(t, run.evaluation.refusal.detail == 1 && raw_data(run.evaluation.refusal.file) == raw_data(run.fake.enum_file) && run.evaluation.refusal.command == "set" && run.evaluation.refusal.parameter == 1)
+
+	Value_Case :: struct {
+		text:    string,
+		integer: i64,
+	}
+	values := [?]Value_Case {
+		{"set(layout = .french)", 19},
+		{"set(font = .spleen)", 91},
+		{"set(font = .vector, layout = .united_states)", 0},
+		{"set(.french)", 19},
+		{"set(.united_states, .spleen)", 1},
+		{"set()", 99},
+		{"set(.french, font = .spleen)", 11},
+		{"let l = .french in set(layout = l)", 19},
+	}
+	for item in values {
+		value_run := run_of(item.text)
+		testing.expectf(t, value_run.ok && value_run.value.integer == item.integer, "%q: %v %d, not %d (%v)", item.text, value_run.ok, value_run.value.integer, item.integer, value_run.evaluation.refusal.refusal)
+	}
 }
 
 // The order of the effects with the forms of records: the bindings of a

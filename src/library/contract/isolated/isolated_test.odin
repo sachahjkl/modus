@@ -445,6 +445,22 @@ error_record_place :: proc(t: ^testing.T) {
 	testing.expect(t, !encoded)
 }
 
+// The completion of a call carries the result register of an Integer, an
+// Enum, a Text and a Table result, and 0 for each other result and for a
+// byte that names no type. An Enum result once gave 0: a getter that gave
+// .spleen read as .vector at the caller.
+@(test)
+the_completion_carries_an_enum_result :: proc(t: ^testing.T) {
+	register := u64(0xFFFF_FFFF_0000_0001)
+	for word in ([]u8{0, u8(module.Type.Record), u8(module.Type.Handle), u8(module.Type.Bytes), 200, 255}) {
+		testing.expectf(t, completion_value(module.Function{result = word}, register) == 0, "the result byte %d gives 0", word)
+	}
+	for type in ([]module.Type{.Integer, .Enum, .Text, .Table}) {
+		testing.expectf(t, completion_value(module.Function{result = u8(type)}, register) == register, "the result %v keeps the register", type)
+	}
+	testing.expect_value(t, completion_value(module.Function{result = u8(module.Type.Enum)}, 1), 1)
+}
+
 // The grant of a connection: the amount, the principal and the flag each
 // keep their own bits, and a number out of the field cannot reach the flag.
 @(test)

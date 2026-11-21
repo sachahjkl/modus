@@ -356,8 +356,20 @@ site_type_text :: proc(description: build.Module_Description, type: module.Type,
 		return parameter ? fmt.tprintf("Table(%s, %s)", record_name, direction_name) : fmt.tprintf("Table(%s)", record_name)
 	case .Bytes:
 		return parameter ? fmt.tprintf("Bytes(%s)", direction_name) : "Bytes"
+	case .Enum:
+		return site_enum_name(description, detail)
 	}
 	return "?"
+}
+
+// site_enum_name gives the name of the enum of an Enum parameter or result,
+// as the console prints it: the detail names it (module.enum_detail_of).
+site_enum_name :: proc(description: build.Module_Description, detail: u32) -> string {
+	enum_index, _ := module.enum_detail_of(detail)
+	if enum_index >= 1 && int(enum_index) <= len(description.enums) {
+		return description.enums[enum_index - 1].name
+	}
+	return "Enum"
 }
 
 // site_export_signature gives an export as the console prints it:
@@ -428,6 +440,9 @@ site_type_html :: proc(site: ^Site, module_name: string, description: build.Modu
 		if parameter {
 			fmt.sbprintf(&b, "(%v)", direction)
 		}
+	case .Enum:
+		// The name of the enum: the page of the export lists its members.
+		foundation.html_escape(&b, site_enum_name(description, detail))
 	}
 	return strings.to_string(b)
 }

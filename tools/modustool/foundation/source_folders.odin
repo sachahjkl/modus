@@ -114,13 +114,19 @@ SOURCE_LIBRARY_FLAG :: "-collection:" + SOURCE_LIBRARY_NAME + "=" + SOURCE_FOLDE
 // and ignores it with the flag below; the tool reads it from the syntax
 // tree.
 LOG_FACT_ATTRIBUTE_NAME :: "log_fact"
-// The flag of the compiler that accepts the attribute of a fact type. Each
-// command of the tool that compiles a package of src/ gives it, with the
-// flag of the library: the compile of a module, of the kernel and of the
-// boot program, each host test, and each compile and check of this tool,
-// which compiles packages of src/ in. flake.nix gives the same flag when it
-// builds this tool.
-LOG_FACT_ATTRIBUTE_FLAG :: "-custom-attribute:" + LOG_FACT_ATTRIBUTE_NAME
+// The names of the two attributes of an export that describe its Enum
+// parameters (src/md/features/enum_parameters.md): the getter of each one,
+// and the ones that a call may leave out. The tool reads them as it reads
+// the attribute of a fact type.
+ENUM_GETTERS_ATTRIBUTE_NAME :: "enum_getters"
+OPTIONAL_PARAMETERS_ATTRIBUTE_NAME :: "optional_parameters"
+// The flag of the compiler that accepts the attributes that the tool reads.
+// Each command of the tool that compiles a package of src/ gives it, with
+// the flag of the library: the compile of a module, of the kernel and of
+// the boot program, each host test, and each compile and check of this
+// tool, which compiles packages of src/ in. flake.nix gives the same flag
+// when it builds this tool.
+CUSTOM_ATTRIBUTES_FLAG :: "-custom-attribute:" + LOG_FACT_ATTRIBUTE_NAME + "," + ENUM_GETTERS_ATTRIBUTE_NAME + "," + OPTIONAL_PARAMETERS_ATTRIBUTE_NAME
 
 // The second source library: the kernel parts, the pure packages in the
 // folders under src/kernel that the kernel alone compiles in

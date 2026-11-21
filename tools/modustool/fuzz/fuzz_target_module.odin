@@ -67,7 +67,39 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 				_, _ = module.record(file, kind, index, module.Record_Output)
 			case .Record_Inputs:
 				_, _ = module.record(file, kind, index, module.Record_Input)
+			case .Enums:
+				_, _ = module.record(file, kind, index, module.Enum_Type)
+			case .Members:
+				_, _ = module.record(file, kind, index, module.Member)
 			}
+		}
+	}
+	// The readers of the enums: an enum that enum_type accepts has a size
+	// of the contract and members whose names and values keep each rule,
+	// and the check of a function gives a problem of its enumeration.
+	enums := min(module.count(file, .Enums), FUZZ_MODULE_INDEX_LIMIT)
+	for index in 0 ..= enums {
+		described, problem := module.enum_type(file, index)
+		if problem > max(module.Enum_Problem) {
+			return fuzz_broken(.Contract, "enum_type gives a value out of its enumeration: %d", u8(problem))
+		}
+		if problem != .None {
+			continue
+		}
+		for number in 0 ..< described.member_count {
+			member, _ := module.enum_member(file, described, number)
+			if !module.enum_member_name_valid(module.string_at(file, member.name_offset, member.name_count)) || !module.enum_value_fits(described.size, described.unsigned, member.value) || member.value == module.enum_absent_word(described) {
+				return fuzz_broken(.Contract, "enum_type accepts the enum %d with a member that breaks a rule: member %d", index, number)
+			}
+		}
+	}
+	for index in 1 ..= min(module.count(file, .Exports), FUZZ_MODULE_INDEX_LIMIT) {
+		function, described := module.function(file, index)
+		if !described {
+			continue
+		}
+		if _, problem := module.function_enums_check(file, function); problem > max(module.Enum_Problem) {
+			return fuzz_broken(.Contract, "function_enums_check gives a value out of its enumeration: %d", u8(problem))
 		}
 	}
 	// The readers of the record streams: a row that they accept names a
@@ -243,6 +275,10 @@ fuzz_module_record_type :: proc(kind: module.Table_Kind) -> (type: typeid, size:
 		return module.Record_Output, size_of(module.Record_Output)
 	case .Record_Inputs:
 		return module.Record_Input, size_of(module.Record_Input)
+	case .Enums:
+		return module.Enum_Type, size_of(module.Enum_Type)
+	case .Members:
+		return module.Member, size_of(module.Member)
 	}
 	return nil, 0
 }
