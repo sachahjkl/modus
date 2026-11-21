@@ -102,7 +102,7 @@ Do not use: TTY, shell.
 
 ### Lex
 
-Lex is the one language of the system that a principal writes: the line of the console and the text of a declaration.
+Lex is the language and runtime of modus: the one language that a principal writes for the line of the console and the text of a declaration.
 
 One grammar, one parser library and one lazy evaluator read it, in two evaluation modes: `console` in the console, `declaration` in the evaluation process. A line means the same in both; mode `declaration` refuses the effects. A declaration is a text entry with the extension `.lex`. Lex is not the Unix lexer generator `lex`, and not a shell language: no process receives its text.
 

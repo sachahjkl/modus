@@ -5,6 +5,8 @@
 A fast, modular operating system, sandboxed by default.
 Processes call each other's functions with typed values, never with text to parse, and a console calls the same functions by name. Every change that a process makes is kept at once, with its earlier versions, so no process has a save action. It starts to a desktop with a console, developer tools and demonstration modules.
 
+The project has three names: **`modus`** is the operating system (the kernel, the system services, the desktop, the modules and the tools), **`modulus`** is its kernel, and **`lex`** is its language and runtime.
+
 ## What makes it different
 
 Each claim names the module that shows it, and its picture below.

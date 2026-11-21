@@ -95,7 +95,7 @@ Three rules apply to every decision:
 
 Status: Decided.
 
-**In short.** The kernel does only what a process cannot do safely for itself, and the list of things that a process can ask it is short and counted. Each operation added to it is a cost that must be justified.
+**In short.** The kernel, `modulus`, does only what a process cannot do safely for itself, and the list of things that a process can ask it is short and counted. Each operation added to it is a cost that must be justified.
 
 - **Rule**: The kernel does four things: it isolates address spaces, it schedules processors, it owns the table of handles, and it grants access to memory and devices. All other work runs in user space. [Blow §2]
 - **Rule**: The kernel interface has a budget. The proposal is a hard limit on the number of kernel operations, written in this document, and changed only by a change of this document.
