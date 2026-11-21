@@ -324,6 +324,9 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// The delegated powerbox service: its service ring, trusted display
 	// ring and transfer region. It holds no root ring and no ambient authority.
 	{name = "powerbox", grants = {.System_Part}},
+	// The delegated collector service: its service ring and transfer region
+	// for hash-chained act records and wide-grant enforcement.
+	{name = "collector", grants = {.System_Part}},
 	// Only the image of the test of a shortage of frames holds it: its
 	// start list asks for it, and shortage_start gives it the machine with Inspect and
 	// Stop; a command Start of another sender gives it no grant.
@@ -458,7 +461,7 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 // (tools/modustool/build/start_grant_sets_check.odin), because the debug access to
 // a process reads that grant. The names are strings that the tool reads.
 @(rodata)
-system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "wiring", "powerbox"}
+system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "wiring", "powerbox", "collector"}
 
 // name_is_a_system_part says if a name is one of system_part_names.
 name_is_a_system_part :: proc "contextless" (name: string) -> bool {
