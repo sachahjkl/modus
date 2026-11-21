@@ -180,8 +180,12 @@ test_plan_hash_order_independent_and_diff_grants :: proc(t: ^testing.T) {
 	testing.expect_value(t, ref_rev, Plan_Refusal.None)
 	testing.expect_value(t, hash_a, hash_rev)
 
+	// Nil output buffer is refused cleanly.
+	testing.expect_value(t, plan_diff_compute(&plan_a, &plan_a_rev, nil), Plan_Refusal.Buffer_Too_Small)
+
 	// Diff against identical plan has no changes and no added grants.
-	diff_same, ref_same := plan_diff_compute(&plan_a, &plan_a_rev)
+	diff_same: Plan_Difference
+	ref_same := plan_diff_compute(&plan_a, &plan_a_rev, &diff_same)
 	testing.expect_value(t, ref_same, Plan_Refusal.None)
 	testing.expect(t, !diff_same.has_changes, "identical plans have no diff")
 	testing.expect(t, !diff_same.any_grant_added, "identical plans add no grant")
@@ -189,7 +193,8 @@ test_plan_hash_order_independent_and_diff_grants :: proc(t: ^testing.T) {
 	// Narrowing rights (removing Store grant from editor) adds no grant.
 	plan_narrow := plan_a
 	plan_narrow.entries[0].start_grants_mask = 0
-	diff_narrow, ref_narrow := plan_diff_compute(&plan_a, &plan_narrow)
+	diff_narrow: Plan_Difference
+	ref_narrow := plan_diff_compute(&plan_a, &plan_narrow, &diff_narrow)
 	testing.expect_value(t, ref_narrow, Plan_Refusal.None)
 	testing.expect(t, diff_narrow.has_changes, "removing grant is a change")
 	testing.expect(t, !diff_narrow.any_grant_added, "removing grant adds no grant")
@@ -198,7 +203,8 @@ test_plan_hash_order_independent_and_diff_grants :: proc(t: ^testing.T) {
 	// Adding Network grant to editor sets any_grant_added.
 	plan_wide := plan_a
 	plan_wide.entries[0].start_grants_mask = store_grant_bit | net_grant_bit
-	diff_wide, ref_wide := plan_diff_compute(&plan_a, &plan_wide)
+	diff_wide: Plan_Difference
+	ref_wide := plan_diff_compute(&plan_a, &plan_wide, &diff_wide)
 	testing.expect_value(t, ref_wide, Plan_Refusal.None)
 	testing.expect(t, diff_wide.any_grant_added, "adding Network grant must set any_grant_added")
 	testing.expect_value(t, diff_wide.added_grants_count, u32(1))
@@ -206,13 +212,15 @@ test_plan_hash_order_independent_and_diff_grants :: proc(t: ^testing.T) {
 	// Widening store rights Read_Only -> Read_Write sets any_grant_added.
 	plan_rw := plan_a
 	plan_rw.entries[1].store_rights_word = u64(Plan_Store_Rights.Read_Write)
-	diff_rw, ref_rw := plan_diff_compute(&plan_a, &plan_rw)
+	diff_rw: Plan_Difference
+	ref_rw := plan_diff_compute(&plan_a, &plan_rw, &diff_rw)
 	testing.expect_value(t, ref_rw, Plan_Refusal.None)
 	testing.expect(t, diff_rw.any_grant_added, "widening store rights must set any_grant_added")
 	testing.expect_value(t, diff_rw.changed_stores, u32(1))
 
 	// Narrowing store rights Read_Write -> Read_Only does NOT set any_grant_added.
-	diff_ro, ref_ro := plan_diff_compute(&plan_rw, &plan_a)
+	diff_ro: Plan_Difference
+	ref_ro := plan_diff_compute(&plan_rw, &plan_a, &diff_ro)
 	testing.expect_value(t, ref_ro, Plan_Refusal.None)
 	testing.expect(t, diff_ro.has_changes, "narrowing store rights is a change")
 	testing.expect(t, !diff_ro.any_grant_added, "narrowing store rights adds no grant")

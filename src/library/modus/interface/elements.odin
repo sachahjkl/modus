@@ -825,7 +825,7 @@ TEXT_INPUT_LINE_MARGIN :: 16 // From the left and the right of the field to its 
 // longer than the field shows the part that holds the caret. It takes no
 // input: the caller edits the line (src/library/modus/line_editor). A
 // size that no record holds draws nothing and sets `refused`.
-text_input_line :: proc "contextless" (frame: ^Frame, area: Area, text: string, caret: int, size: u16, placeholder := "", element: Element_Identity = 0, name := "", protected := false) {
+text_input_line :: proc "contextless" (frame: ^Frame, area: Area, text: string, caret: int, size: u16, placeholder := "", element: Element_Identity = 0, name := "", protected := false, selection_start := 0, selection_end := 0) {
 	table := frame.table
 	font := Font{size = size}
 	if !font_size_valid(font) {
@@ -874,7 +874,18 @@ text_input_line :: proc "contextless" (frame: ^Frame, area: Area, text: string, 
 		}
 		return place
 	}
-	shown := text[byte_of_character(bytes, first):byte_of_character(bytes, min(first + fit, character_total))]
+	shown_end := min(first + fit, character_total)
+	shown := text[byte_of_character(bytes, first):byte_of_character(bytes, shown_end)]
+	// Selection highlight behind the caret and text when an active range overlaps the visible slice.
+	sel_a := clamp(min(selection_start, selection_end), 0, len(text))
+	sel_b := clamp(max(selection_start, selection_end), sel_a, len(text))
+	if sel_b > sel_a {
+		sel_first := clamp(text_encoding.character_count(bytes[:sel_a]), first, shown_end)
+		sel_last := clamp(text_encoding.character_count(bytes[:sel_b]), sel_first, shown_end)
+		if sel_last > sel_first {
+			draw_rectangle(table, text_x + (sel_first - first) * cell_width, text_y, (sel_last - sel_first) * cell_width, text_height, graphics.colors.chosen, u32(el))
+		}
+	}
 	// The caret first: a glyph beside it draws over its edge, not under it.
 	draw_rectangle(table, text_x + (caret_place - first) * cell_width, text_y, caret_width, text_height, graphics.colors.title, u32(el))
 	draw_text(table, text_x, text_y, shown, graphics.colors.text_strong, font, u32(el))

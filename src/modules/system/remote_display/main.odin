@@ -497,6 +497,31 @@ viewers_tell :: proc "contextless" () {
 	compositor_send(record)
 }
 
+// viewer_disconnect_by_key_head ends the bound viewer whose 8-byte key prefix
+// matches key_head, triggered when the principal clicks disconnect in the
+// compositor's bar viewer list popover.
+viewer_disconnect_by_key_head :: proc "contextless" (key_head: u64) {
+	if key_head == 0 {
+		return
+	}
+	for &viewer, place in viewers {
+		if !viewer.bound {
+			continue
+		}
+		head := viewer.key
+		viewer_head := transmute(u64)[8]u8{head[0], head[1], head[2], head[3], head[4], head[5], head[6], head[7]}
+		if viewer_head != key_head {
+			continue
+		}
+		viewer_close(&quic_connections[place], &viewer, .Revoked)
+		if log_allowed() {
+			system.log_fact(.Info, Viewer_Disconnected_From_Bar{principal = viewer.principal, viewer_key_head = key_head_field(viewer.key), peer = peer_field(records[place].remote)})
+		}
+		viewers_tell()
+		return
+	}
+}
+
 // viewer_grant_check ends the connection of a viewer whose grant ended, in
 // the middle of a viewer frame too, and follows a change of its input.
 viewer_grant_check :: proc "contextless" (connection: ^quic.Connection, viewer: ^Viewer, peer: quic.Remote) {
@@ -1001,6 +1026,8 @@ capture_events :: proc "contextless" () {
 				continue
 			}
 			held_picture = int(record.values[0])
+		case .Capture_Disconnect:
+			viewer_disconnect_by_key_head(record.values[0])
 		}
 	}
 	system.wake_writer(&window.completions)

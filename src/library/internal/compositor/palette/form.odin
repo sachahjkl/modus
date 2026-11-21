@@ -146,7 +146,7 @@ form_field_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune)
 	integer := field_is_integer(form, form.current)
 	edit_key := line_editor.Edit_Key.None
 	switch key {
-	case .Other, .Super, .Escape, .Enter, .Up, .Down, .Page_Up, .Page_Down, .Tab, .Shift_Tab, .Control_Enter, .Shift_Enter:
+	case .Other, .Super, .Escape, .Enter, .Up, .Down, .Page_Up, .Page_Down, .Tab, .Shift_Tab, .Control_Enter, .Shift_Enter, .Copy, .Cut, .Paste:
 		// No edit of the field: the line editor refuses Edit_Key.None.
 	case .Left:
 		edit_key = .Left
@@ -156,6 +156,16 @@ form_field_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune)
 		edit_key = .Home
 	case .End:
 		edit_key = .End
+	case .Select_Left:
+		edit_key = .Select_Left
+	case .Select_Right:
+		edit_key = .Select_Right
+	case .Select_Home:
+		edit_key = .Select_Home
+	case .Select_End:
+		edit_key = .Select_End
+	case .Select_All:
+		edit_key = .Select_All
 	case .Backspace:
 		if field.count == 0 && form.current == 0 {
 			return false, true
@@ -165,14 +175,16 @@ form_field_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune)
 		edit_key = .Delete
 	case .Character:
 		edit_key = .Character
+		sel_start, sel_end, _ := line_editor.line_selection_range(field)
+		net_count := field.count - (sel_end - sel_start)
 		if integer {
 			digit := character >= '0' && character <= '9'
-			sign := character == '-' && field.caret == 0 && (field.count == 0 || field.bytes[0] != '-')
+			sign := character == '-' && sel_start == 0 && (sel_end == field.count || field.bytes[sel_end] != '-')
 			if !digit && !sign {
 				message_set(form, form.current, "an Integer takes digits, and one - at its start")
 				return true, false
 			}
-			if field.count >= INTEGER_FIELD_CAPACITY {
+			if net_count + 1 > INTEGER_FIELD_CAPACITY {
 				message_set(form, form.current, "an Integer has 19 digits at most")
 				return true, false
 			}
@@ -181,7 +193,7 @@ form_field_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune)
 				message_set(form, form.current, "a text holds no quote")
 				return true, false
 			}
-			if field.count + line_editor.character_length(character) > palette_table.ARGUMENT_TEXT_CAPACITY {
+			if net_count + line_editor.character_length(character) > palette_table.ARGUMENT_TEXT_CAPACITY {
 				message_set(form, form.current, "a text of the palette has 48 bytes at most; the console takes a longer one")
 				return true, false
 			}
@@ -196,6 +208,54 @@ form_field_edit :: proc "contextless" (panel: ^Panel, key: Key, character: rune)
 		form_candidates_filter(form)
 	}
 	return true, false
+}
+
+// form_field_paste validates and pastes text into the current form field,
+// replacing any active selection. Refuses invalid characters or overflow whole
+// and records a detail-line message explaining the refusal.
+@(private)
+form_field_paste :: proc "contextless" (panel: ^Panel, text: string) -> (drawn: bool, text_changed: bool, ok: bool) {
+	form := &panel.form
+	if form.current < 0 || form.current >= form.field_count {
+		return false, false, false
+	}
+	field := &form.fields[form.current]
+	sel_start, sel_end, _ := line_editor.line_selection_range(field)
+	net_count := field.count - (sel_end - sel_start)
+	limit := palette_table.ARGUMENT_TEXT_CAPACITY
+	if field_is_integer(form, form.current) {
+		limit = INTEGER_FIELD_CAPACITY
+		for index in 0 ..< len(text) {
+			ch := text[index]
+			digit := ch >= '0' && ch <= '9'
+			sign := ch == '-' && index == 0 && sel_start == 0 && (sel_end == field.count || field.bytes[sel_end] != '-')
+			if !digit && !sign {
+				message_set(form, form.current, "an Integer takes digits, and one - at its start")
+				return true, false, false
+			}
+		}
+		if net_count + len(text) > INTEGER_FIELD_CAPACITY {
+			message_set(form, form.current, "an Integer has 19 digits at most")
+			return true, false, false
+		}
+	} else {
+		for index in 0 ..< len(text) {
+			if text[index] == '"' {
+				message_set(form, form.current, "a text holds no quote")
+				return true, false, false
+			}
+		}
+		if net_count + len(text) > palette_table.ARGUMENT_TEXT_CAPACITY {
+			message_set(form, form.current, "a text of the palette has 48 bytes at most; the console takes a longer one")
+			return true, false, false
+		}
+	}
+	form.message_length = 0
+	if !line_editor.line_paste(field, text, limit) {
+		return false, false, false
+	}
+	form_candidates_filter(form)
+	return true, true, true
 }
 
 // form_field_move moves the caret to the next field (step 1) or to the
@@ -322,6 +382,7 @@ form_caret_put :: proc "contextless" (panel: ^Panel, field: int, caret: int) -> 
 	}
 	form.message_length = 0
 	form.fields[field].caret = clamp(caret, 0, form.fields[field].count)
+	line_editor.line_selection_clear(&form.fields[field])
 	return field_changed
 }
 

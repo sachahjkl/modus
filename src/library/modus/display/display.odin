@@ -413,7 +413,11 @@ Event_Kind :: enum u32 {
 	// Surface_Resize
 	// (Surface_Answer_Kind). next_event takes it into the rescale of the
 	// window first. values: the word of the answer, the surface serial.
-	Surface_Answer   = 10,
+	Surface_Answer     = 10,
+	// The capture face: the principal clicked disconnect for one viewer in
+	// the bar viewer list popover. values[0]: the first 8 bytes of that
+	// viewer's public key (matching Capture_Viewers). A window refuses it.
+	Capture_Disconnect = 11,
 }
 
 // The ring between the root service and the compositor.
@@ -1191,7 +1195,7 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 			return {}, false
 		}
 		event.paste_handle, event.clipboard_kind, event.byte_count, event.clipboard_serial = system.Handle(handle), kind, int(count), serial
-	case .Capture_Size, .Capture_Frame:
+	case .Capture_Size, .Capture_Frame, .Capture_Disconnect:
 		// The records of the capture face: the service of the remote
 		// display reads them itself, and a window takes none.
 		return {}, false

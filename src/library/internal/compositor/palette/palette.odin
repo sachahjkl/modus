@@ -632,7 +632,7 @@ action_runs :: proc "contextless" (action: Action) -> bool {
 	switch action {
 	case .Run, .Confirm, .Submit, .Submit_All, .Open_In_Console, .Go_To:
 		return true
-	case .None, .Open, .Close, .Edit, .Choose_Previous, .Choose_Next, .Choose_Page_Before, .Choose_Page_After, .Back, .Field_Edit, .Field_Next, .Field_Previous, .Candidate_Previous, .Candidate_Next, .Value_Previous, .Value_Next:
+	case .None, .Open, .Close, .Edit, .Choose_Previous, .Choose_Next, .Choose_Page_Before, .Choose_Page_After, .Back, .Field_Edit, .Field_Next, .Field_Previous, .Candidate_Previous, .Candidate_Next, .Value_Previous, .Value_Next, .Copy, .Cut, .Paste:
 	}
 	return false
 }

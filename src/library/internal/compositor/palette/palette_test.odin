@@ -112,10 +112,18 @@ each_key_in_each_state :: proc(t: ^testing.T) {
 		.Backspace = .Edit,
 		.Delete    = .Edit,
 		.Character = .Edit,
-		.Tab       = .None,
-		.Shift_Tab = .None,
+		.Tab           = .None,
+		.Shift_Tab     = .None,
 		.Control_Enter = .Open_In_Console,
 		.Shift_Enter   = .Go_To,
+		.Select_Left   = .Edit,
+		.Select_Right  = .Edit,
+		.Select_Home   = .Edit,
+		.Select_End    = .Edit,
+		.Select_All    = .Edit,
+		.Copy          = .Copy,
+		.Cut           = .Cut,
+		.Paste         = .Paste,
 	}
 	for key in Key {
 		testing.expectf(t, key_action(.Search, key) == search[key], "Search, %v: %v", key, key_action(.Search, key))
@@ -2584,4 +2592,115 @@ malformed_header_and_truncated_region_refused :: proc(t: ^testing.T) {
 	problem, _ = palette_table.snapshot_take(valid, &snap)
 	testing.expect_value(t, problem, palette_table.Problem.Bad_Version)
 	testing.expect_value(t, entries_buf[0], saved_first)
+}
+
+// Palette selection, copy, cut, and paste in Search and Arguments states,
+// including empty selection refusal, reversed anchor, replacement, invalid
+// characters, and capacity limits.
+@(test)
+palette_selection_cut_copy_paste :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	panel_of_test(panel)
+	panel_open(panel)
+
+	buf: [line_editor.LINE_CAPACITY]u8
+	// Closed/empty selection: copy & cut refused cleanly.
+	copied, ok := panel_copy(panel, buf[:])
+	testing.expect(t, !ok && copied == 0)
+	cut_copied, text_changed, cut_ok := panel_cut(panel, buf[:])
+	testing.expect(t, !cut_ok && !text_changed && cut_copied == 0)
+
+	// Type "console", select "sole" via Shift+Left (reversed anchor).
+	type_text(panel, "console")
+	for _ in 0 ..< 4 {
+		drawn, changed := typed_edit(panel, .Select_Left, 0)
+		testing.expect(t, drawn && !changed, "selection move redraws without re-ranking")
+	}
+	copied, ok = panel_copy(panel, buf[:])
+	testing.expect(t, ok && copied == 4 && string(buf[:copied]) == "sole")
+	testing.expect_value(t, typed_text(panel), "console")
+
+	// Cut deletes selection and marks text_changed.
+	copied, text_changed, cut_ok = panel_cut(panel, buf[:])
+	testing.expect(t, cut_ok && text_changed && copied == 4 && string(buf[:copied]) == "sole")
+	testing.expect_value(t, typed_text(panel), "con")
+
+	// Paste inserts at caret.
+	drawn, changed, paste_ok := panel_paste(panel, "fig")
+	testing.expect(t, drawn && changed && paste_ok)
+	testing.expect_value(t, typed_text(panel), "config")
+
+	// Select all (Ctrl+A) and paste replaces whole search text.
+	drawn, changed = typed_edit(panel, .Select_All, 0)
+	testing.expect(t, drawn && !changed)
+	drawn, changed, paste_ok = panel_paste(panel, "monitor")
+	testing.expect(t, drawn && changed && paste_ok)
+	testing.expect_value(t, typed_text(panel), "monitor")
+
+	// Control characters and invisible direction marks refused without altering text.
+	drawn, changed, paste_ok = panel_paste(panel, "bad\nline")
+	testing.expect(t, !drawn && !changed && !paste_ok)
+	drawn, changed, paste_ok = panel_paste(panel, "bad\u202Etext")
+	testing.expect(t, !drawn && !changed && !paste_ok)
+	testing.expect_value(t, typed_text(panel), "monitor")
+
+	// Overflow past TYPED_CAPACITY refused whole (no truncation).
+	too_long: [TYPED_CAPACITY]u8
+	for &b in too_long {
+		b = 'x'
+	}
+	drawn, changed, paste_ok = panel_paste(panel, string(too_long[:]))
+	testing.expect(t, !drawn && !changed && !paste_ok)
+	testing.expect_value(t, typed_text(panel), "monitor")
+
+	// Select all and paste exact TYPED_CAPACITY fits!
+	_, _ = typed_edit(panel, .Select_All, 0)
+	drawn, changed, paste_ok = panel_paste(panel, string(too_long[:]))
+	testing.expect(t, drawn && changed && paste_ok)
+	testing.expect_value(t, len(typed_text(panel)), TYPED_CAPACITY)
+
+	// Form field paste: Integer field refuses non-digits and accepts valid integer;
+	// Text field refuses quotes and overflow past ARGUMENT_TEXT_CAPACITY.
+	panel.state = .Arguments
+	panel.form.active = true
+	panel.form.field_count = 2
+	panel.form.current = 0
+	panel.form.given.parameter_count = 2
+	panel.form.given.parameters[0] = u8(palette_table.Value_Kind.Integer)
+	panel.form.given.parameters[1] = u8(palette_table.Value_Kind.Text)
+	line_editor.line_clear(&panel.form.fields[0])
+	line_editor.line_clear(&panel.form.fields[1])
+
+	// Refused non-digit paste into Integer field sets message and leaves field empty.
+	drawn, changed, paste_ok = panel_paste(panel, "12a")
+	testing.expect(t, drawn && !changed && !paste_ok)
+	testing.expect(t, form_message(&panel.form) != "")
+	testing.expect_value(t, field_text(&panel.form, 0), "")
+
+	// Valid negative integer paste accepted, then Ctrl+A + cut moves it out cleanly.
+	drawn, changed, paste_ok = panel_paste(panel, "-42")
+	testing.expect(t, drawn && changed && paste_ok)
+	testing.expect_value(t, field_text(&panel.form, 0), "-42")
+	f_drawn, f_leave := form_field_edit(panel, .Select_All, 0)
+	testing.expect(t, f_drawn && !f_leave)
+	copied, text_changed, cut_ok = panel_cut(panel, buf[:])
+	testing.expect(t, cut_ok && text_changed && copied == 3 && string(buf[:copied]) == "-42")
+	testing.expect_value(t, field_text(&panel.form, 0), "")
+
+	// Text field refuses quote and > ARGUMENT_TEXT_CAPACITY.
+	panel.form.current = 1
+	drawn, changed, paste_ok = panel_paste(panel, "a\"b")
+	testing.expect(t, drawn && !changed && !paste_ok)
+	testing.expect_value(t, field_text(&panel.form, 1), "")
+	long_arg: [palette_table.ARGUMENT_TEXT_CAPACITY + 1]u8
+	for &b in long_arg {
+		b = 'z'
+	}
+	drawn, changed, paste_ok = panel_paste(panel, string(long_arg[:]))
+	testing.expect(t, drawn && !changed && !paste_ok)
+	testing.expect_value(t, field_text(&panel.form, 1), "")
+	drawn, changed, paste_ok = panel_paste(panel, string(long_arg[:palette_table.ARGUMENT_TEXT_CAPACITY]))
+	testing.expect(t, drawn && changed && paste_ok)
+	testing.expect_value(t, len(field_text(&panel.form, 1)), palette_table.ARGUMENT_TEXT_CAPACITY)
 }

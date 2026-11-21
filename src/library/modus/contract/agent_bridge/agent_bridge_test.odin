@@ -513,7 +513,8 @@ test_authorization_enforces_permissions_wide_grants_and_principal_approval :: pr
 		prop_entry, _ := plans_recipes.plan_entry_make_module(.Start_Module, "edit", make_hash("mod-edit-v1"), added_mask)
 		prop_plan.entries[0] = prop_entry
 
-		diff, diff_refusal := plans_recipes.plan_diff_compute(&cur_plan, &prop_plan)
+		diff: plans_recipes.Plan_Difference
+		diff_refusal := plans_recipes.plan_diff_compute(&cur_plan, &prop_plan, &diff)
 		testing.expect_value(t, diff_refusal, plans_recipes.Plan_Refusal.None)
 		testing.expect(t, diff.any_grant_added)
 
@@ -551,7 +552,8 @@ test_authorization_enforces_permissions_wide_grants_and_principal_approval :: pr
 		prop_entry, _ := plans_recipes.plan_entry_make_module(.Start_Module, "edit", make_hash("mod-edit-v2"), 0)
 		prop_plan.entries[0] = prop_entry
 
-		diff, diff_refusal := plans_recipes.plan_diff_compute(&cur_plan, &prop_plan)
+		diff: plans_recipes.Plan_Difference
+		diff_refusal := plans_recipes.plan_diff_compute(&cur_plan, &prop_plan, &diff)
 		testing.expect_value(t, diff_refusal, plans_recipes.Plan_Refusal.None)
 		testing.expect(t, !diff.any_grant_added)
 

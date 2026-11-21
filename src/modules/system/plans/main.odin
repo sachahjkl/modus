@@ -131,7 +131,7 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 			return
 		}
 		intrinsics.mem_copy_non_overlapping(&copied_plan, rawptr(&service_region_base[plan_offset]), size_of(pr.Plan_Spec))
-		diff, refusal := plans_core.compute_difference(&service_state, &copied_plan)
+		refusal := plans_core.compute_difference(&service_state, &copied_plan, &staged_diff)
 		if refusal != .None {
 			system.log_fact(.Warning, Plan_Command_Refused{principal = copied_plan.principal, refusal_code = u64(refusal)})
 			ring.push(
@@ -144,7 +144,6 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 			)
 			return
 		}
-		staged_diff = diff
 		intrinsics.mem_copy_non_overlapping(rawptr(&service_region_base[diff_offset]), &staged_diff, size_of(pr.Plan_Difference))
 		ring.push(
 			&service_ring.completions,
@@ -205,7 +204,7 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 			answer_ptr = &copied_answer
 		}
 
-		record, _, refusal := plans_core.apply_plan(&service_state, &copied_plan, expected_hash, dialog_ptr, answer_ptr, now_ms)
+		record, refusal := plans_core.apply_plan(&service_state, &copied_plan, expected_hash, dialog_ptr, answer_ptr, now_ms, &staged_diff)
 		if refusal != .None {
 			system.log_fact(.Warning, Plan_Command_Refused{principal = copied_plan.principal, refusal_code = u64(refusal)})
 			ring.push(

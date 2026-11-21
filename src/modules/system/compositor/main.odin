@@ -818,6 +818,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				key_records += 1
 				character := display.key_character_of(record.values[1])
 				switch {
+				case record.values[2] != 0 && u32(record.values[0]) == display.KEY_ESCAPE && capture_popover_escape():
+					// Local Escape closed the bar viewer list popover.
 				case palette_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
 					// The palette took the key.
 				case clipboard_key(character, u32(record.values[3]), record.values[2] != 0):
@@ -1305,6 +1307,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	// starts the process. Any press closes the menu.
 	// The menu of the windows: its button opens it, and a press on a line
 	// brings the window to the front.
+	capture_popover_pointer_move(pointer_x, pointer_y)
 	if menu_open != .None {
 		over := menu_open == .Start ? bar.line_at(bar_layout, pointer_x, pointer_y) : bar.windows_line_at(bar_layout, order_count, pointer_x, pointer_y)
 		if over != menu_line {
@@ -1313,6 +1316,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		}
 	}
 	if pressed {
+		if capture_popover_press(pointer_x, pointer_y) {
+			return
+		}
 		was_open := menu_open
 		if menu_open != .None {
 			if menu_open == .Start && menu_line >= 0 {
@@ -2041,6 +2047,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 			interface.draw_text(table, line_x + bar.PADDING, line_y + 4, name, index == menu_line ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 		}
 	}
+	capture_popover_records(&card_frame)
 	screen_part_end(bar_first, bar_mark_pixels[:], {}, false, true)
 	if table.full {
 		system.log_fact(.Warning, Screen_Draw_Table_Full{})
