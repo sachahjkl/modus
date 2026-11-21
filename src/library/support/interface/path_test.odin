@@ -236,7 +236,8 @@ a_path_in_parts_is_the_path_drawn_whole :: proc(t: ^testing.T) {
 @(private = "file")
 circle_points :: proc(center_x, center_y, radius: i32) -> [18]Path_Point {
 	// The cosine and the sine of each eighth of a turn, and of the control
-	// point between two of them (radius / cos 22.5 degrees), in 1/65536.
+	// point between two of them (the radius divided by the cosine of a
+	// sixteenth of a turn), in 1/65536.
 	ON :: [8][2]i64{{65536, 0}, {46341, 46341}, {0, 65536}, {-46341, 46341}, {-65536, 0}, {-46341, -46341}, {0, -65536}, {46341, -46341}}
 	CONTROL :: [8][2]i64{{65536, 27146}, {27146, 65536}, {-27146, 65536}, {-65536, 27146}, {-65536, -27146}, {-27146, -65536}, {27146, -65536}, {65536, -27146}}
 	on, control := ON, CONTROL

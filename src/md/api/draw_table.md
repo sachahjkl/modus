@@ -203,7 +203,7 @@ Each line is an estimate to measure, not a claim:
 | The folded gap as three records | Two records more for each gap to compare, to copy and to read; the same pixels to draw | `inspect`: the frame of its band of folded gaps |
 | A dense pattern (cell = step) | One fill, as a solid rectangle of the same box | A host test: the pattern of cell and step 1 against a solid rectangle, over 1920 by 1080 |
 | The worst pattern (a cell of 1 each 2 pixels) | One call of a fill for each cell: a quarter of the pixels of the box, about 518 000 calls for 1920 by 1080 | The same host test, with a cell of 1 and a step of 2 |
-| A general gradient | One multiply and add for each pixel; an axis keeps the form of today | A host test: a gradient at 45 degrees over 512 by 512 |
+| A general gradient | One multiply and add for each pixel; an axis keeps the form of today | A host test: a gradient at an eighth of a turn over 512 by 512 |
 | The clip stack | One intersection for each push and each damage rectangle, and one load of a byte for each record at the border of the order of a call | The host test `interface.clip_measure` (`MODUS_MEASURE_CLIPS=1`): 256 rectangles under 16 nested clips against the same rectangles with no clip, whole and in four damage rectangles, and the border of the order over 4 096 records |
 
 The text, the pictures and the opaque rectangles on whole pixels cost what they cost today.

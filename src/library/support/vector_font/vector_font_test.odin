@@ -77,8 +77,8 @@ polygon_add :: proc(target: ^Accumulation, points: [][2]i32) -> (area: i64) {
 }
 
 // The sum of the coverage of a closed outline is its area: exact for edges
-// that the cuts do not round (along the axes, at 45 degrees), within the
-// rounding of the cut points for any other edge.
+// that the cuts do not round (along the axes, at an eighth of a turn),
+// within the rounding of the cut points for any other edge.
 @(test)
 coverage_is_the_area :: proc(t: ^testing.T) {
 	cells: [(32 + 1) * 32]i32
@@ -86,8 +86,8 @@ coverage_is_the_area :: proc(t: ^testing.T) {
 	testing.expect(t, ok)
 	shapes := [][][2]i32 {
 		{{300, 300}, {5000, 300}, {5000, 4000}, {300, 4000}}, // A rectangle at subunits that are not on a pixel.
-		{{256, 256}, {2560, 256}, {256, 2560}}, // A triangle at 45 degrees.
-		{{1000, 1000}, {3000, 3000}, {1000, 5000}}, // Two edges at 45 degrees, from a point inside a pixel.
+		{{256, 256}, {2560, 256}, {256, 2560}}, // A triangle with an edge at an eighth of a turn.
+		{{1000, 1000}, {3000, 3000}, {1000, 5000}}, // Two edges at an eighth of a turn, from a point inside a pixel.
 		{{0, 0}, {8192, 0}, {8192, 8192}, {0, 8192}}, // The whole accumulation.
 	}
 	for shape in shapes {

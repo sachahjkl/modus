@@ -272,15 +272,17 @@ shade :: proc "contextless" (color: Color, percent: u32) -> Color {
 }
 
 // hue_color gives one color of the circle of colors, of middle strength.
-// The site colors the tile of a module with the first byte of its hash:
-// a module that changes takes a new color.
-hue_color :: proc "contextless" (hue: u8) -> Color {
+// The hue is an angle on that circle, in 256ths of a turn: 0 is red, a
+// third of a turn green, two thirds blue. The site colors the tile of a
+// module with the first byte of its hash: a module that changes takes a
+// new color.
+hue_color :: proc "contextless" (hue_256ths_of_a_turn: u8) -> Color {
 	LOW :: 64
 	HIGH :: 208
-	part := u32(hue) * 6 % 256
+	part := u32(hue_256ths_of_a_turn) * 6 % 256
 	rise := LOW + (HIGH - LOW) * part / 255
 	fall := HIGH - (HIGH - LOW) * part / 255
-	switch u32(hue) * 6 / 256 {
+	switch u32(hue_256ths_of_a_turn) * 6 / 256 {
 	case 0:
 		return rgb(HIGH, rise, LOW)
 	case 1:

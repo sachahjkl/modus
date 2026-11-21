@@ -114,7 +114,11 @@ site_subscribe_menu_rules :: proc(t: ^testing.T) {
 	// A line that is wider than the panel breaks; nothing cuts it.
 	testing.expect(t, !strings.contains(SITE_SUBSCRIBE_MENU_RULES, "overflow: hidden") && !strings.contains(SITE_SUBSCRIBE_MENU_RULES, "text-overflow") && !strings.contains(SITE_SUBSCRIBE_MENU_RULES, "nowrap; text-decoration"))
 	testing.expect(t, !strings.contains(SITE_SUBSCRIBE_MENU_RULES, "transition") && !strings.contains(SITE_SUBSCRIBE_MENU_RULES, "border-radius"))
-	testing.expect(t, strings.contains(style, ".subscribe-menu[open] > .subscribe-button::after { vertical-align: 0; transform: rotate(-135deg); }"))
+	testing.expect(t, strings.contains(style, ".subscribe-menu[open] > .subscribe-button::after { vertical-align: 0; transform: rotate(-0.375turn); }"))
+	// Each angle of the style sheet is in turns: no degree, radian or grad.
+	for unit in ([]string{"deg)", "rad)"}) {
+		testing.expectf(t, !strings.contains(style, unit), "the style sheet has an angle with the unit %q", unit)
+	}
 	rules := site_control_rules()
 	testing.expect(t, strings.contains(rules, ".subscribe-button:hover, .subscribe-button:focus-visible {"))
 	testing.expect(t, strings.contains(rules, ".subscribe-panel a:hover, .subscribe-panel a:focus-visible {"))

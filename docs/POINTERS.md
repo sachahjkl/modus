@@ -228,7 +228,7 @@ shape text                          text xterm
 shape wait                          wait watch sizes 32
 ```
 
-**An example with an outline**, the arrow of `resources/pointers/system.manifest`. The contour is the whole arrow; the tool draws the edge of 1 pixel inside it. The head is large: the left side is upright on the integer 1 for 18 pixels, the right side goes at 45 degrees to the wing at 14,14, and the bottom of the wing is level on the integer 14; the notch is level with the wing, so the head reads as one triangle. The tail is short and slim: a parallelogram along the axis of the arrow, 2 down for 1 across, so that its sides step regularly, with 1.6 pixels of fill and 4.5 pixels long; its end is square to the axis. The point is the corner 1,1, and the hot spot is the pixel 1,1:
+**An example with an outline**, the arrow of `resources/pointers/system.manifest`. The contour is the whole arrow; the tool draws the edge of 1 pixel inside it. The head is large: the left side is upright on the integer 1 for 18 pixels, the right side goes at an eighth of a turn to the wing at 14,14, and the bottom of the wing is level on the integer 14; the notch is level with the wing, so the head reads as one triangle. The tail is short and slim: a parallelogram along the axis of the arrow, 2 down for 1 across, so that its sides step regularly, with 1.6 pixels of fill and 4.5 pixels long; its end is square to the axis. The point is the corner 1,1, and the hot spot is the pixel 1,1:
 
 ```
 shape arrow hot 1 1

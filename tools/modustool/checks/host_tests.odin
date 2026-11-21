@@ -265,6 +265,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_SUPPORT + "/web",
 	foundation.SOURCE_FOLDER_SUPPORT + "/cryptography/chacha20",
 	foundation.SOURCE_FOLDER_SUPPORT + "/random",
+	foundation.SOURCE_FOLDER_SUPPORT + "/trigonometry",
 	foundation.SOURCE_FOLDER_CONTRACT + "/entropy_service",
 	foundation.SOURCE_FOLDER_CONTRACT + "/fixed_addresses",
 	foundation.SOURCE_FOLDER_CONTRACT + "/settings",
