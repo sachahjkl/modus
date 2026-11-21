@@ -55,13 +55,17 @@ term       = factor { ("*" | "/" | "%") factor }
 factor     = "-" factor | integer | "text" | name | name "(" arguments ")" | "(" pipeline ")"
            | "{" [ name "=" pipeline { "," name "=" pipeline } ] "}"
            | "let" name "=" pipeline { "," name "=" pipeline } "in" pipeline
+           | "(" [ name { "," name } ] ")" "=>" pipeline
+           | "[" [ pipeline { "," pipeline } ] "]"
 arguments  = argument { "," argument }
 argument   = [ name "=" ] pipeline
+comment    = "//" { a byte that is no line end }      (between two tokens: no token)
 ```
 
 - **A name** starts with a letter or `_`, and goes on with letters, digits, `_` and `.`: `monitor.count` and `r.value` are one name each. `let`, `in`, `with` and `_` alone are words of Lex, never names: a variable, a field, a binding or a named argument with one of them is refused.
 - **An integer** is decimal digits. It has 64 bits with a sign. A number that is larger than 9223372036854775807 is an error of the line. A result of `+`, `-`, `*` or `/` that does not fit is an error of the line too: no result wraps. The checks are `number_value`, `integer_add`, `integer_subtract`, `integer_multiply`, `integer_negate` and `integer_divide` of `src/library/private/console/console_language`. The least integer has no literal: write `-9223372036854775807 - 1`.
 - **A text** is the bytes between two quotes. A text has no escape, so it cannot hold a quote.
+- **A comment** is `//` outside a text, to the end of the line: `area(r) // the area of r`. It adds nothing to the line, and a line of only a comment does nothing. `//` inside a text is a part of the text, and `a / / b` is two divisions, an error. Lex has no block comment.
 - **The operators**: `+`, `-`, `*`, `/` and `%` on two integers, with the usual order; `-` before an integer; `+` on two texts joins them; `+` on two tables of equal record descriptions gives the rows of the left one, then the rows of the right one, and refuses two tables of different records. A division by zero is an error. So is the one division whose result does not fit: the least integer `/` `-1`. Its remainder fits: the least integer `%` `-1` is 0. The pipe operator `|>` has the lowest priority ("The pipe operator", below).
 
 Examples:
@@ -89,8 +93,10 @@ Each value has one kind. The kinds are those of the module contract (`MODULE_CON
 | `Bytes` | Bytes with no description | Rows of 16 bytes: the place of the row, the bytes in hexadecimal, their characters; then the count |
 | `Stream` | A record output of a process, by its typed name: `output_counter.counts` | A line of the names of the fields, then a line for each record as it comes, until the end of the record stream or Escape ("Streams") |
 | `Enum` | One member of an enum that a module file describes: its value, with the enum | The member as a line names it, in the color of a status: `.french` |
+| `Function` | A function of Lex, `(x) => x * 2`, with the bindings that its body reads | Its text: `(x) => x * 2` |
+| `List` | Values in order, `[1, 2, 3]` | `[2, 4, 6]` on one line when its items are integers, texts, members, functions or such lists; else each item in turn |
 
-`Stream` is a kind of the console only: no export takes or gives one, and no variable keeps one.
+`Stream`, `Function` and `List` are kinds of the console only: no export takes or gives one, and no variable keeps one ("Functions and lists").
 
 **A member** of an enum is a name after a dot: `.french`. It has no enum of its own: the parameter that receives it, an Enum parameter of an export, gives it one, as a Record parameter types a record literal ("Records"). A line names a member, never its number: the console writes the value that the module file gives to that member. A name that the enum does not have, and a member where the parameter is no Enum, are refused at the place of the member, before any argument of the call runs. A member that nothing receives, as the value of a line or of a variable, is refused. An export that gives an Enum, a getter as `settings.font()`, gives a value of the kind `Enum`, which a variable keeps and an Enum parameter of the same enum takes:
 
@@ -149,6 +155,7 @@ The bounds:
 - A table of 32 KiB of rows at most (`TABLE_KEPT`).
 - No `Bytes` value: "error: a variable keeps no Bytes value".
 - No `Stream`: a Stream is a wiring, and a variable outlives its line ("Streams").
+- No `Function` and no `List`: they read the values of their line, which end with the line ("Functions and lists").
 - An expression with no value (a call of a command with no result) cannot be kept: "error: the expression has no value".
 
 `variables()` gives them as a table: the name, the type and the value as a text. A variable lives in the memory of the console: it does not survive a stop of the console.
@@ -174,6 +181,35 @@ A record is a group of named fields, as a module describes it. The command with 
 > let s = {x = 0, y = 0, width = 6, height = 7} in area(s) + area(s)
 84
 ```
+
+### Functions and lists
+
+**A function** is `(name, …) => expression`: its parameters, at most 12, then its body. A `(` starts a function when `=>` follows its `)`; else it holds an expression. The body runs to the `,` or the `)` around the function. A `let` names a function, and a call by that name runs its body with the arguments in the place of the parameters:
+
+```
+> let double = (x) => x * 2 in area({x = 0, y = 0, width = double(3), height = 4})
+24
+> (x) => x + 1
+(x) => x + 1
+```
+
+- **The arguments** are forced from the left, then the body runs, as for an export. A call gives each parameter once, by its place or by its name: another count is refused before any argument runs.
+- **A function reads the bindings around it**, where it is written, and never a copy: `let n = g() in map(l, (x) => x + n)` runs `g()` once. An inner parameter or binding hides an outer one.
+- **A function with no call runs nothing**: its body runs only in a call.
+- **A recursion** through a `let`, `let f = (n) => f(n - 1) in f(3)`, never ends, because Lex has no condition yet: the line stops when the evaluator has taken 512 KiB of stack, at about 90 calls, or at the evaluation budget.
+
+**A list** is `[a, b, …]`: its items in order, of any kinds. **`map(list, function)`** calls the function on each item from the first, and gives the list of the results. `map` is a name of Lex, not a command: it takes a list and a function of one parameter, and it comes before an export named `map` of a loaded module. A list holds no Stream, no Record_Input and no item with no value. A literal or a member in a list stays untyped until a parameter receives it, as a literal does ("Records").
+
+```
+> map([1, 2, 3], (x) => x * 2)
+[2, 4, 6]
+> [1, 2] |> map((w) => area({x = 0, y = 0, width = w, height = 5}))
+[5, 10]
+```
+
+**The border.** No export and no command of the console takes a function or a list: such an argument is refused before the call runs. No variable keeps one. A function is code of Lex, and its body reads the values of its line, which end with the line.
+
+**The bounds of a line**: 256 calls of functions, 512 values of their bodies, 256 items in all its lists.
 
 ### Tables as values
 
@@ -371,6 +407,7 @@ They are `where(processes(), name = "server")`, `columns(where(processes(), name
 - **On the right**: the name of a command, alone or with its arguments. The call takes one argument more than the arguments in its parentheses, at most 12 in all.
 - **The placeholder `_`** puts the value on the left in another place: `3 |> grow(r, _)` is `grow(r, 3)`, and `x |> f(by = _)` is `f(by = x)`. The `_` is a whole argument of the call on the right, at most one in that call, and in no call nested in it; a `_` with no `|>` before its call is refused. The value on the left runs where the call reads it: in `g() |> f(h(), _)`, `h()` runs before `g()`.
 - **In a named argument, a field and a `let`**: `f(n = x |> g)` is `f(n = g(x))`, `{a = x |> g}` is `{a = g(x)}`, and `let a = x |> g in a |> h` is `let a = g(x) in h(a)`.
+- **In a function and a list**: the body of a function holds its own `|>`, `map(l, (x) => x |> g)` is `map(l, (x) => g(x))`, and so does each item of a list, `[a |> f, b]` is `[f(a), b]`. `l |> map((x) => x * 2)` is `map(l, (x) => x * 2)`. A `_` in the body of a function on the right of `|>` is refused.
 
 **Sugar only.** The operator adds no meaning and no kind. Before any call, the console writes the line with calls in calls (`pipe_nested_form`, `src/library/private/console/console_language/pipe.odin`), and its parser reads that line, which has no `|>`. So a line with `|>` checks and runs as the same line with calls in calls, with the same errors.
 
@@ -421,6 +458,15 @@ A line that fails has one result: its error. The first error ends the line: the 
 | `with` on another value than a record | `error: "with" composes a record with a record literal or a record, not Integer with a record literal` |
 | A binding of a `let` that needs its own value | `error: the binding a needs its own value: a let cannot read a binding in its own value` |
 | A word of Lex as a name | `error: with is a word of Lex, not a name` |
+| A parameter of a function named twice | `error: the parameter x is named twice in one function` |
+| A call of a function with another count of arguments | `error: f: the call gives 2 arguments, and the function takes 1 argument` |
+| `map` with another count of arguments | `error: map takes 2 arguments, a list and a function; the call gives 1 argument` |
+| An item of a list with no value, or a Stream | `error: a list holds no Stream: a Stream lives in the wiring of its line` |
+| A call of a name whose value is no function | `error: f is Integer, not a function: a call of a binding needs a function` |
+| A function or a list given to a command | `error: area: argument 1 is a function: a function and a list stay in their line, and no command takes one` |
+| A function or a list kept by a variable | `error: a variable keeps no function: a function reads the values of its line, which end with the line` |
+| `map` on another value than a list | `error: map: argument 1 is Integer, not a list` |
+| A recursion, or a line nested deeper than the stack of the evaluator | `error: the line nests deeper than the stack of the evaluator holds: 524288 bytes; it stopped at column 16` |
 | A `_` that is no whole argument of the call on the right of `\|>` | `error: \|>: _ is a whole argument of f, not a part of an expression` |
 | Two `_` in one call | `error: \|>: f has two _; the value on the left takes one place` |
 | A `_` in a call nested in the call on the right | `error: \|>: _ names an argument of f, not of g inside it` |
@@ -717,6 +763,7 @@ The console completes the name at the caret from what it knows at that moment: i
 | After the operator of a condition on a status field | The members of its enum: `Info`, `Debug`, `Warning`, `Error` | The names of the contract enums |
 | A field inside the braces of a record literal, an argument of an export | The fields of the record of its parameter, by its place or by the name before `= {` | The description of the export |
 | The start of an argument of a call | The names of its parameters, for a named argument, with the other names | The description of an export, or the fields of a command that makes a record |
+| A name in the body of a function | The parameters of each function whose body holds the caret, with the other names; `map` is among the names everywhere | The line |
 | After a `.` that starts an argument of an Enum parameter, by its place or after its name and `=` (`settings.set(font = .sp`) | The members of its enum | The module file of the export (`MODULE_CONTRACT.md`, "Enum parameters") |
 | With Tab, at the start of an argument of an Enum parameter | The members with their dot, `.vector`, and the names of the parameters | The module file of the export |
 
@@ -830,10 +877,10 @@ The edit line, the line that the console writes back when Enter is pressed, and 
 | Module | A module or a service, before the dot of its export | none: the text color | | | |
 | Type | `Integer`, `Text`, `Table`, `Bytes`, `Handle`, a record, and what the parentheses of a type hold | Type | `0x9E8FCB` | 6.58 | 5.60 |
 | Parameter | The name of a parameter, before its `:`; a field of a condition and a member after its operator (`level = Warning`); a field of a record literal and a named argument, before its `=` | none | | | |
-| Variable | A variable, also before `=` and before `.field`; a binding of a `let`, where it is bound and where it is read | none | | | |
+| Variable | A variable, also before `=` and before `.field`; a binding of a `let` and a parameter of a function, where it is bound and where it is read | none | | | |
 | Number, Text, Text_Unfinished | A number; a text in quotes; a text with no end quote yet | Literal | `0x38C0B0` | 8.47 | 7.22 |
-| Operator, Arrow | `+ - * / % = ( ) , : . { } < > !`, `\|>`, `->`, and the words `let`, `in`, `with` and `_` | Punctuation | `0xB0B8C1` | 9.51 | 8.10 |
-| Words | The words of a row that are not code: "export of", "command", "3 lines ago" | Comment | `0x9CA6B2` | 7.73 | 6.58 |
+| Operator, Arrow | `+ - * / % = ( ) , : . { } [ ] < > !`, `\|>`, `->`, `=>`, and the words `let`, `in`, `with` and `_` | Punctuation | `0xB0B8C1` | 9.51 | 8.10 |
+| Words | The words of a row that are not code: "export of", "command", "3 lines ago"; a comment of a line, `// …` | Comment | `0x9CA6B2` | 7.73 | 6.58 |
 | Unknown | A name that is no command, module or variable; a byte that Lex does not take | Comment | `0x9CA6B2` | 7.73 | 6.58 |
 
 A part with no class has the color of the text around it: the tone of the line, or the text color `0xDCE4EC` in a row of the list (14.84 and 12.64). A host test computes each contrast on the background and on both colors of the card; the bound is 4.5 (`src/library/support/terminal/code_runs_test.odin`).

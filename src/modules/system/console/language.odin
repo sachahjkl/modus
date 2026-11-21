@@ -110,7 +110,7 @@ type_of_kind :: proc "contextless" (kind: Kind) -> (type: module.Type) {
 		type = .Bytes
 	case .Enum:
 		type = .Enum
-	case .Stream, .Record_Input, .Record_Literal, .Member:
+	case .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List:
 		// No type of the module contract: no export takes one, and
 		// type_text names it itself.
 		type = .None
@@ -140,13 +140,15 @@ kind_names := [Kind]string {
 	.Record_Literal = "a record literal",
 	.Enum           = "Enum",
 	.Member         = "a member",
+	.Function       = "a function",
+	.List           = "a list",
 }
 
 // type_text gives the name of a type: "Integer", the name of a record or of
 // an enum, "Handle(Read)", or "Stream(Counted)". The text lasts for one
 // line.
 type_text :: proc "contextless" (file: []u8, kind: Kind, detail: u32) -> string {
-	if kind == .None || kind == .Record_Literal || kind == .Member {
+	if kind == .None || kind == .Record_Literal || kind == .Member || kind == .Function || kind == .List {
 		return kind_names[kind]
 	}
 	if kind == .Stream || kind == .Record_Input {
@@ -287,7 +289,8 @@ run_line :: proc "contextless" (text: string) {
 	name: string
 	assigned := false
 	value: Value
-	if !failed {
+	// A line of spaces and a comment has no token: it does nothing.
+	if !failed && console_language.token_next(nested, 0).kind != .None {
 		lex_parser.parse(nested, {form_of = parameter_form_of}, &line_tree)
 		name = line_tree.assigned_name
 		assigned = len(name) > 0
@@ -333,6 +336,14 @@ assign :: proc "contextless" (name: string, value: Value) {
 		fail("a variable keeps no Record_Input: a typed name lives in its line, where wire(from, to) names it")
 		return
 	}
+	if value.kind == .Function {
+		fail("a variable keeps no function: a function reads the values of its line, which end with the line")
+		return
+	}
+	if value.kind == .List {
+		fail("a variable keeps no list: its items are values of its line, which end with the line")
+		return
+	}
 	if len(name) > VARIABLE_NAME_SIZE || len(value.text) > VARIABLE_TEXT_SIZE {
 		fail("the name or the text is too long")
 		return
@@ -358,7 +369,7 @@ assign :: proc "contextless" (name: string, value: Value) {
 	slot.name_count = copy(slot.name[:], name)
 	slot.value = value
 	switch value.kind {
-	case .None, .Integer, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member:
+	case .None, .Integer, .Handle, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .List:
 		// The value holds no memory of the line: the slot keeps it as it is.
 		// A Bytes value and a Stream were refused above; the evaluator
 		// refuses a literal and a member that nothing typed. An Enum names
@@ -383,12 +394,21 @@ assign :: proc "contextless" (name: string, value: Value) {
 	}
 }
 
+// The most bytes of stack that the evaluation of a line took in this run:
+// a line that takes more logs the new measure.
+deepest_line_stack: uint
+
 // line_evaluate forces the tree of the line whole, in mode `console`, then
 // writes the sentence of the refusal of the evaluator, if any. A refusal of
 // the host has written its own.
 line_evaluate :: proc "contextless" () -> Value {
 	lex_evaluator.evaluation_start(&line_evaluation, &line_tree, .Console, console_host())
 	value, ok := lex_evaluator.line_force(&line_evaluation)
+	// A line that the bound stopped measures the bound, not the line.
+	if line_evaluation.refusal.refusal != .Stack_Exceeded && line_evaluation.stack_deepest > deepest_line_stack {
+		deepest_line_stack = line_evaluation.stack_deepest
+		system.log_fact(.Info, Evaluator_Stack_Deepest{stack_bytes = u64(deepest_line_stack), bound_bytes = u64(line_evaluation.stack_bytes)})
+	}
 	if !ok {
 		evaluation_refusal_fail(line_evaluation.refusal)
 		return {}
@@ -470,7 +490,48 @@ evaluation_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Rec
 	case .Member_Unknown:
 		described, _ := module.enum_type(record.file, record.detail)
 		fail(record.command, ": ", module.enum_name(record.file, described), " has no member .", record.field, "; its members are ", enum_members_text(record.file, record.detail))
+	case .Not_A_Function:
+		if record.parameter == 2 {
+			fail("map: argument 2 is ", kind_names[record.left_kind], ", not a function")
+		} else {
+			fail(record.command, " is ", kind_names[record.left_kind], ", not a function: a call of a binding needs a function")
+		}
+	case .Function_Arguments:
+		switch {
+		case record.parameter == 2:
+			fail("map calls its function with 1 argument, and this function takes ", arguments_text(record.right))
+		case record.command == lex_evaluator.MAP_NAME:
+			fail("map takes 2 arguments, a list and a function; the call gives ", arguments_text(record.left))
+		case:
+			fail(record.command, ": the call gives ", arguments_text(record.left), ", and the function takes ", arguments_text(record.right))
+		}
+	case .List_Item_Kind:
+		if record.left_kind == .None {
+			fail("an item of a list has no value: the expression gives none")
+		} else {
+			fail("a list holds no ", kind_names[record.left_kind], ": a ", kind_names[record.left_kind], " lives in the wiring of its line")
+		}
+	case .Value_At_Border:
+		fail(record.command, ": argument ", i64(record.parameter), " is ", kind_names[record.left_kind], ": a function and a list stay in their line, and no command takes one")
+	case .Stack_Exceeded:
+		already := failed
+		fail("the line nests deeper than the stack of the evaluator holds: ", record.right, " bytes; it stopped at column ", i64(record.place.column))
+		if !already {
+			failure_record_set(errors.error_make(.Over_Limit, .None, 0, record.left, record.right), "the stack of the evaluation", nil)
+		}
+	case .Calls_Full:
+		fail("the line makes more calls of functions than the evaluator holds: ", i64(lex_evaluator.CALL_CAPACITY), " calls and ", i64(lex_evaluator.CALL_THUNK_CAPACITY), " values of their bodies")
+	case .Lists_Full:
+		fail("the lists of the line hold more than ", i64(lex_evaluator.LIST_ITEM_CAPACITY), " items in all")
+	case .Not_A_List:
+		fail("map: argument 1 is ", kind_names[record.left_kind], ", not a list")
 	}
+}
+
+// arguments_text gives a count of arguments with its noun: "1 argument",
+// "2 arguments". The text lasts for one line.
+arguments_text :: proc "contextless" (count: i64) -> string {
+	return scratch_text(count, count == 1 ? " argument" : " arguments")
 }
 
 // enum_members_text gives the members of an enum as a line names them:
@@ -572,6 +633,14 @@ text_refusal_fail :: proc "contextless" (record: lex_evaluator.Refusal_Record) {
 		} else {
 			fail(word, " is a word of Lex, not a name")
 		}
+	case .Parameter_Name_Missing:
+		fail("a function takes names in its parentheses: (x, y) => x + y")
+	case .Parameter_Twice:
+		fail("the parameter ", lex_parser.node_text(&line_tree, record.node), " is named twice in one function")
+	case .Too_Many_Parameters:
+		fail("a function takes ", i64(lex_parser.ARGUMENT_CAPACITY), " parameters at most")
+	case .List_Close_Missing:
+		fail("\",\" or \"]\" is missing")
 	case .Unexpected, .None, .Fact_Name_Missing, .Condition_Head_Refused:
 		// A Fact_Name or a Condition node holds the last two, and the
 		// console reads them itself.
@@ -840,15 +909,20 @@ pipe_nested_line :: proc "contextless" (text: string) -> string {
 	}
 	stages := line_stages[:form.stage_count]
 	// The names first, from the last stage: the nested form looks up its
-	// outer call before it reads the arguments of that call.
+	// outer call before it reads the arguments of that call. map and a
+	// function that the line binds are no commands: the evaluator counts
+	// their arguments when the call starts, before any of them runs.
 	for index := len(stages) - 1; index >= 0; index -= 1 {
 		name := text[stages[index].name_start:stages[index].name_end]
-		if command_find(name) == nil {
+		if !stage_of_the_evaluation(text, stages[index]) && command_find(name) == nil {
 			fail("no command has the name ", name, "; try help()")
 			return text
 		}
 	}
 	for stage, index in stages {
+		if stage_of_the_evaluation(text, stage) {
+			continue
+		}
 		name := text[stage.name_start:stage.name_end]
 		found := command_find(name)
 		if found.parameter_count == 0 {
@@ -889,6 +963,14 @@ pipe_nested_line :: proc "contextless" (text: string) -> string {
 		}
 	}
 	return form.nested
+}
+
+// stage_of_the_evaluation says if the call of a stage is map or a function
+// that a let or a function of the line binds: the evaluator runs it, not a
+// command of the table.
+stage_of_the_evaluation :: proc "contextless" (text: string, stage: console_language.Pipe_Stage) -> bool {
+	token := console_language.Token{kind = .Name, start = stage.name_start, end = stage.name_end}
+	return text[stage.name_start:stage.name_end] == lex_evaluator.MAP_NAME || console_language.bound_by_let(text, token) || console_language.bound_by_function(text, token)
 }
 
 // pipe_stage_names_check checks, before any call, the argument of a stage
@@ -1013,7 +1095,7 @@ literal_of :: proc "contextless" (text: string, place: int) -> (type: module.Typ
 		return .Integer, value, true
 	case .Text:
 		return .Text, 0, !negative
-	case .None, .Name, .Text_Unfinished, .Operator, .Arrow, .Unknown, .Pipe, .Member:
+	case .None, .Name, .Text_Unfinished, .Operator, .Arrow, .Unknown, .Pipe, .Member, .Function_Arrow:
 		// A variable, a call, an expression: its kind comes when it runs.
 	}
 	return .None, 0, false
@@ -1156,7 +1238,7 @@ result_knowledge :: proc "contextless" (found: ^Command) -> (value: Value, knowl
 	case .Handle, .Bytes:
 		// The rights of a Handle come with the value.
 		knowledge = .Kind
-	case .Stream, .Record_Input, .Record_Literal, .Member:
+	case .Stream, .Record_Input, .Record_Literal, .Member, .Function, .List:
 		// A command of the console makes a Stream, and the record of the
 		// record output comes with the value when the line runs.
 		knowledge = .Kind

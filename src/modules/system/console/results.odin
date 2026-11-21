@@ -4,7 +4,10 @@ import "modus:contract/errors"
 import module "modus:contract/module"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
+import "modus:private/console/console_language"
 import "modus:private/console/console_results"
+import "modus:private/console/lex_evaluator"
+import "modus:private/console/lex_parser"
 import "modus:contract/root_ring"
 import "modus:support/system"
 import terminal "modus:support/terminal"
@@ -210,27 +213,122 @@ value_draw :: proc "contextless" (value: Value) {
 	system.lock(&output_lock)
 	defer system.unlock(&output_lock)
 	sink := result_sink()
+	value_parts_draw(&sink, value, 0)
+	output_continuation = 0
+}
+
+// value_parts_draw draws one value into a sink: the value of the line, or
+// an item of a list of it. The caller holds output_lock.
+value_parts_draw :: proc "contextless" (sink: ^console_results.Sink, value: Value, depth: int) {
 	switch value.kind {
+	case .Function:
+		sink.continuation = 0
+		sink.write(sink, function_text(value), .Plain)
+		sink.end_line(sink)
+	case .List:
+		// A list of values of one line each is one line; a list of records
+		// or tables draws each item in turn.
+		if list_inline(value, 0) {
+			sink.continuation = 0
+			list_inline_write(sink, value, 0)
+			sink.end_line(sink)
+		} else if depth <= lex_evaluator.LIST_ITEM_CAPACITY {
+			for item in lex_evaluator.list_items_of(&line_evaluation, value) {
+				value_parts_draw(sink, item, depth + 1)
+			}
+		}
 	case .Integer:
-		console_results.draw_integer(&sink, value.integer)
+		console_results.draw_integer(sink, value.integer)
 	case .Text:
-		console_results.draw_text(&sink, value.text)
+		console_results.draw_text(sink, value.text)
 	case .Record:
-		console_results.draw_record(&sink, value.file, value.detail, value.record)
+		console_results.draw_record(sink, value.file, value.detail, value.record)
 	case .Table:
-		console_results.draw_table(&sink, value.file, value.detail, value.record, RESULT_ROW_LIMIT, RESULT_ROW_HINT)
+		console_results.draw_table(sink, value.file, value.detail, value.record, RESULT_ROW_LIMIT, RESULT_ROW_HINT)
 	case .Handle:
 		kind, rights, _ := system.handle_state(system.Handle(value.integer))
-		console_results.draw_handle(&sink, u64(value.integer), kind, rights)
+		console_results.draw_handle(sink, u64(value.integer), kind, rights)
 	case .Bytes:
-		console_results.draw_bytes(&sink, value.record, RESULT_BYTE_LIMIT, u64(value.integer))
+		console_results.draw_bytes(sink, value.record, RESULT_BYTE_LIMIT, u64(value.integer))
 	case .Enum:
-		console_results.draw_member(&sink, value.file, value.detail, value.integer)
+		console_results.draw_member(sink, value.file, value.detail, value.integer)
 	case .None, .Stream, .Record_Input, .Record_Literal, .Member:
 		// run_line draws a Stream one row at a time, with no lock held
 		// while it waits (stream_draw).
 	}
-	output_continuation = 0
+}
+
+// function_text gives the text of a function of the line: its parameters,
+// "=>" and its body, as the nested form of the line has them.
+function_text :: proc "contextless" (value: Value) -> string {
+	node := lex_parser.node_at(&line_tree, lex_parser.Node_Index(value.integer))
+	if node == nil || node.kind != .Function {
+		return "a function"
+	}
+	text := line_tree.text
+	open := clamp(int(node.integer), 0, len(text))
+	arrow_end := clamp(int(node.end), open, len(text))
+	// The end of the last token of the body: no space and no comment after it.
+	body_end := console_language.function_body_end(text, arrow_end)
+	end := arrow_end
+	for token := console_language.token_next(text, arrow_end); token.kind != .None && token.start < body_end; token = console_language.token_next(text, token.end) {
+		end = token.end
+	}
+	return text[open:end]
+}
+
+// list_inline says if a list draws on one line: each item is an Integer, a
+// Text, a member, a function, or such a list.
+list_inline :: proc "contextless" (value: Value, depth: int) -> bool {
+	if depth > lex_evaluator.LIST_ITEM_CAPACITY {
+		return false
+	}
+	for item in lex_evaluator.list_items_of(&line_evaluation, value) {
+		switch item.kind {
+		case .Integer, .Text, .Enum, .Function:
+		case .List:
+			if !list_inline(item, depth + 1) {
+				return false
+			}
+		case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member:
+			return false
+		}
+	}
+	return true
+}
+
+// list_inline_write writes a list that list_inline accepts: "[2, 4, 6]".
+list_inline_write :: proc "contextless" (sink: ^console_results.Sink, value: Value, depth: int) {
+	sink.write(sink, "[", .Plain)
+	for item, number in lex_evaluator.list_items_of(&line_evaluation, value) {
+		if number > 0 {
+			sink.write(sink, ", ", .Plain)
+		}
+		buffer: [24]u8
+		switch item.kind {
+		case .Integer:
+			sink.write(sink, system.format(buffer[:], item.integer), .Number)
+		case .Text:
+			sink.write(sink, "\"", .Plain)
+			sink.write(sink, item.text, .Plain)
+			sink.write(sink, "\"", .Plain)
+		case .Enum:
+			described, problem := module.enum_type(item.file, item.detail)
+			name, named := module.enum_name_of_value(item.file, described, item.integer)
+			if problem != .None || !named {
+				sink.write(sink, system.format(buffer[:], item.integer), .Number)
+			} else {
+				sink.write(sink, ".", .Plain)
+				sink.write(sink, name, .Type)
+			}
+		case .Function:
+			sink.write(sink, function_text(item), .Plain)
+		case .List:
+			list_inline_write(sink, item, depth + 1)
+		case .None, .Record, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Member:
+		}
+	}
+	sink.write(sink, "]", .Plain)
 }
 
 // ---- A table that a command of the console makes.

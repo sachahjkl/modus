@@ -7,6 +7,7 @@ package console
 // roles of its names; the terminal maps each kind to a color.
 
 import "modus:private/console/console_language"
+import "modus:private/console/lex_evaluator"
 import "modus:support/line_editor"
 import "modus:support/system"
 import terminal "modus:support/terminal"
@@ -18,6 +19,9 @@ import terminal "modus:support/terminal"
 console_name_role :: proc "contextless" (data: rawptr, name: string) -> console_language.Name_Role {
 	if name == "" {
 		return .Unknown
+	}
+	if name == lex_evaluator.MAP_NAME {
+		return .Function
 	}
 	for &item in commands[:command_count] {
 		if item.name == name {
@@ -144,7 +148,7 @@ row_runs :: proc "contextless" (row: string, name_length: int, kind: line_editor
 		name_kind = .Type
 	case .Field, .Member:
 		name_kind = .Parameter
-	case .Stream:
+	case .Stream, .Binding:
 		name_kind = .Variable
 	}
 	if name_kind != .None {

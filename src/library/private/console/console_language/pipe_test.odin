@@ -342,3 +342,47 @@ pipe_pieces_of_the_forms_of_records :: proc(t: ^testing.T) {
 	form = nested_of("x} |> f", memory[:], stages[:])
 	testing.expect_value(t, form.refusal, Pipe_Refusal.Unmatched_Close)
 }
+
+// The nested form of a function and a list: the body of a function is a
+// segment of its own, after its head; the items of a list are pieces. A
+// '_' in the body of a function on the right of "|>" is refused.
+@(test)
+pipe_pieces_of_functions_and_lists :: proc(t: ^testing.T) {
+	memory: [256]u8
+	stages: [PIPE_STAGE_CAPACITY]Pipe_Stage
+	cases := [?][2]string {
+		{"map(l, (x) => x |> g)", "map(l, (x) => g(x))"},
+		{"l |> map((x) => x * 2)", "map(l, (x) => x * 2)"},
+		{"(x) => x |> g", "(x) => g(x)"},
+		{"() => 1 |> g", "() => g(1)"},
+		{"[a |> f, b]", "[f(a), b]"},
+		{"x |> f([1, 2], 3)", "f(x, [1, 2], 3)"},
+		{"let f = (x) => x |> g in f(1)", "let f = (x) => g(x) in f(1)"},
+		{"[1, 2] |> map((x) => x) |> map((y) => y |> g)", "map(map([1, 2], (x) => x), (y) => g(y))"},
+		{"x |> f((y) => y, _)", "f((y) => y, x)"},
+		// A comment is no part of the nested form, and its bytes hide no
+		// "|>" and no '|'.
+		{"x |> f // a note", "f(x)"},
+		{"x |> f(1) // a | b |> c", "f(x, 1)"},
+	}
+	for item in cases {
+		form := nested_of(item[0], memory[:], stages[:])
+		testing.expectf(t, form.refusal == .None && form.nested == item[1], "%q: %v %q, not %q", item[0], form.refusal, form.nested, item[1])
+	}
+	form := nested_of("x |> f([1, 2], 3)", memory[:], stages[:])
+	testing.expect_value(t, stages[0].argument_count, 2)
+	refusals := [?]struct {
+		text:    string,
+		refusal: Pipe_Refusal,
+	} {
+		{"x |> map((y) => _)", .Placeholder_Not_Whole},
+		{"x |> map((y) => f(_))", .Placeholder_Nested},
+		{"x |> f([_])", .Placeholder_Not_Whole},
+		{"x] |> f", .Unmatched_Close},
+		{"(_) => 1", .Placeholder_Without_Pipe},
+	}
+	for item in refusals {
+		form = nested_of(item.text, memory[:], stages[:])
+		testing.expectf(t, form.refusal == item.refusal, "%q: %v, not %v", item.text, form.refusal, item.refusal)
+	}
+}

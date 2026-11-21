@@ -1128,7 +1128,7 @@ A measure over the declarations of the system and the lines of the console tests
 
 The design: `src/md/features/declarations.md`, "The evaluation budget".
 
-Do not use: fuel, timeout, recursion limit.
+Do not use: fuel, timeout, recursion limit, stack bound (for this).
 
 ### Evaluation mode
 
@@ -1192,10 +1192,40 @@ Do not use: keyword argument, flag, option.
 
 ### Anonymous function
 
-An anonymous function is a function value of Lex written as `(name) => expression`.
+An anonymous function is a function value of Lex written as `(name, …) => expression`.
 
-It can be a field, an argument and a result. `map(list, function)` and the declarations use it: `map(names, (name) => odin.module(name))`. `where` takes a condition and never an anonymous function, because the root service turns a condition into wiring terms and runs no Lex.
+It can be a binding, an argument and a result: `map([1, 2], (x) => x * 2)`. Its body reads the bindings around it by reference, never as a copy, and runs only in a call, after the arguments, from the left. No export and no command takes one, and no variable keeps one: it reads the values of its line. `where` takes a condition and never a function, because the root service runs no Lex.
 
-The design: `src/md/features/declarations.md`, "`where` keeps the form of a condition".
+The design: `src/md/features/declarations.md`, "The functions of layer 4 as built".
 
 Do not use: lambda, closure, callback.
+
+### List
+
+A list is a value of Lex that holds values in order, written `[a, b, …]`.
+
+`map(list, function)` gives the list of the results of a function on each item. An item keeps its kind, and a record literal or a member in it waits for the parameter that types it. The console draws a list of integers, texts, members and functions on one line, `[2, 4, 6]`. No export takes one and no variable keeps one: the items live in the evaluation of their line. It is not a table, whose rows have one record description.
+
+The design: `src/md/features/declarations.md`, "The functions of layer 4 as built".
+
+Do not use: array, vector, sequence.
+
+### Comment of Lex
+
+A comment of Lex is `//` outside a text and the rest of its line: words for a reader, which the evaluation never reads.
+
+The scanner skips it as a space: it gives no token and no node, and the console draws it in the color of a comment. A line of the console can end with one; a line of only a comment does nothing. `//` inside a text is a part of the text. Lex has no block comment. Example: `area(r) // the area of r`. It is not a comment of a source of Odin, which the compiler reads.
+
+The design: `src/md/features/declarations.md`, "Comments".
+
+Do not use: remark, annotation, block comment.
+
+### Evaluation stack bound
+
+The evaluation stack bound is the bytes of stack that one evaluation of Lex can take, 512 KiB, measured from its first force.
+
+The evaluator recurses one level for each force inside a force: from 1 KiB for an operator to 5 KiB for a call. A recursion of a function, which Lex cannot end yet, stops past the bound with an error, at about 90 calls, before the stack of the thread ends. The console runs its lines on a thread of 640 KiB of stack. It is measured in bytes, not in levels. It is not the evaluation budget, which counts steps.
+
+The design: `src/md/features/declarations.md`, "The functions of layer 4 as built".
+
+Do not use: recursion depth, stack depth.
