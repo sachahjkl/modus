@@ -120,6 +120,8 @@ pipe_nested_forms :: proc(t: ^testing.T) {
 	stages: [PIPE_STAGE_CAPACITY]Pipe_Stage
 	cases := [?][2]string {
 		{"processes() |> where(\"name\", \"server\")", "where(processes(), \"name\", \"server\")"},
+		{"log.follow |> where(level = Warning)", "where(log.follow, level = Warning)"},
+		{"log.follow |> where(process = \"storage\") |> where(level = Warning)", "where(where(log.follow, process = \"storage\"), level = Warning)"},
 		{"processes() |> where(\"name\", \"server\") |> columns(\"name slot\")", "columns(where(processes(), \"name\", \"server\"), \"name slot\")"},
 		{"x |> h |> g(1) |> f", "f(g(h(x), 1))"},
 		{"x |> f", "f(x)"},

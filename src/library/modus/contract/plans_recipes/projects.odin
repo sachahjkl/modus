@@ -18,7 +18,12 @@ MAX_UPSTREAM_REF_BYTES :: 128
 MAX_SOURCE_ADDRESS_BYTES :: 256
 MAX_CONSOLE_MODULES :: 16
 MAX_CONSOLE_STORES :: 8
+MAX_PROJECT_CONSOLE_DEPTH :: 4
 MAX_PINS_LEX_BYTES :: 16384
+MAX_CONSOLE_CANONICAL_BYTES :: 4096
+
+// Domain separation string for canonical project-console grant digests.
+PROJECT_CONSOLE_HASH_DOMAIN :: "modus project console v1"
 
 // Exact byte length of a Lex BLAKE3 hash literal: "blake3:" + 64 lowercase hex digits.
 BLAKE3_LITERAL_PREFIX :: "blake3:"
@@ -28,6 +33,7 @@ BLAKE3_LITERAL_LENGTH :: len(BLAKE3_LITERAL_PREFIX) + BLAKE3_HEX_LENGTH
 // Context slots for the delegated projects service.
 PROJECTS_SERVICE_RING_SLOT :: 10
 PROJECTS_SERVICE_REGION_SLOT :: 11
+PROJECTS_CONTEXT_VALUE_DISPLAY_SLOT :: 0
 
 #assert(BLAKE3_LITERAL_LENGTH == 71)
 
@@ -79,9 +85,17 @@ Project_Refusal :: enum u8 {
 	Bad_Store_Rights      = 24,
 	Undeclared_Store      = 25,
 	Store_Rights_Exceeded = 26,
-	Pin_Not_Found         = 27,
-	Console_Limit_Reached = 28,
-	Unknown_Console       = 29,
+	Pin_Not_Found          = 27,
+	Console_Limit_Reached  = 28,
+	Unknown_Console        = 29,
+	Empty_Console          = 30,
+	Unknown_Project        = 31,
+	Nesting_Depth_Exceeded = 32,
+	No_Active_Console      = 33,
+	Consent_Required       = 34,
+	Untrusted_Consent      = 35,
+	Child_Console_Active   = 36,
+	Project_Limit_Reached  = 37,
 }
 
 // Closed set of commands accepted on the projects service ring.
@@ -147,15 +161,45 @@ Project_Console_Store :: struct {
 }
 
 // Declarative specification for projects.enter(project): connects modules by
-// hash and grants only stores already declared and held by the caller, leaving
-// nothing installed when exit() closes the child console.
+// hash and grants only stores the project explicitly names, leaving nothing
+// installed globally and never modifying the principal's applied plan.
 Project_Console_Spec :: struct {
 	project_tree_hash: blake3.Hash,
 	principal:         u64,
+	parent_console_id: u64,
 	module_count:      u32,
 	modules:           [MAX_CONSOLE_MODULES]Project_Console_Module,
 	store_count:       u32,
 	stores:            [MAX_CONSOLE_STORES]Project_Console_Store,
+}
+
+// Itemized grants added beyond the caller's current console session when
+// entering a project console. Any non-empty diff requires verified consent.
+Project_Console_Grant_Diff :: struct {
+	spec_hash:          blake3.Hash,
+	added_module_count: u32,
+	added_modules:      [MAX_CONSOLE_MODULES]Project_Console_Module,
+	added_store_count:  u32,
+	added_stores:       [MAX_CONSOLE_STORES]Project_Console_Store,
+	needs_consent:      bool,
+}
+
+// Evaluated project declaration carrying its console field (or output builders
+// and source store when the project omits the console field).
+Project_Declaration :: struct {
+	name_bytes:           [MAX_ENTRY_NAME_BYTES]u8,
+	name_length:          u8,
+	project_tree_hash:    blake3.Hash,
+	has_console_field:    bool,
+	console_module_count: u32,
+	console_modules:      [MAX_CONSOLE_MODULES]Project_Console_Module,
+	console_store_count:  u32,
+	console_stores:       [MAX_CONSOLE_STORES]Project_Console_Store,
+	builder_module_count: u32,
+	builder_modules:      [MAX_CONSOLE_MODULES]Project_Console_Module,
+	has_source_store:     bool,
+	source_store_bytes:   [MAX_ENTRY_NAME_BYTES]u8,
+	source_store_length:  u8,
 }
 
 // Single borders converting transport words into closed enum members.
@@ -912,14 +956,12 @@ project_console_store_make :: proc "contextless" (name: string, rights: Plan_Sto
 	return store, .None
 }
 
-// project_console_spec_validate validates a Project_Console_Spec for
-// projects.enter(project) against the caller's held stores. Refuses zero
-// project tree hash, duplicate or invalid modules/stores, any store not
-// declared in caller_stores, and any store whose requested rights exceed what
-// the caller holds.
-project_console_spec_validate :: proc "contextless" (
+// project_console_spec_validate_structure validates the standalone structural
+// invariants of a Project_Console_Spec: non-zero project tree hash, non-empty
+// console specification, bounded counts, valid non-duplicate module names and
+// hashes, and valid non-duplicate store names and rights words.
+project_console_spec_validate_structure :: proc "contextless" (
 	spec: ^Project_Console_Spec,
-	caller_stores: []Project_Console_Store,
 ) -> (refusal: Project_Refusal, bad_index: u32) {
 	if spec == nil || hash_is_zero(spec.project_tree_hash) {
 		return .Zero_Hash, 0
@@ -929,6 +971,9 @@ project_console_spec_validate :: proc "contextless" (
 	}
 	if spec.store_count > MAX_CONSOLE_STORES {
 		return .Too_Many_Stores, 0
+	}
+	if spec.module_count == 0 && spec.store_count == 0 {
+		return .Empty_Console, 0
 	}
 
 	for index in u32(0) ..< spec.module_count {
@@ -957,8 +1002,7 @@ project_console_spec_validate :: proc "contextless" (
 		if !entry_name_valid(req_store.name_bytes[:], req_store.name_length) {
 			return .Invalid_Store_Name, index
 		}
-		req_rights, rights_ok := plan_store_rights_of_word(req_store.rights_word)
-		if !rights_ok {
+		if _, rights_ok := plan_store_rights_of_word(req_store.rights_word); !rights_ok {
 			return .Bad_Store_Rights, index
 		}
 		for earlier in u32(0) ..< index {
@@ -967,6 +1011,26 @@ project_console_spec_validate :: proc "contextless" (
 				return .Duplicate_Store, index
 			}
 		}
+	}
+	return .None, 0
+}
+
+// project_console_spec_validate validates a Project_Console_Spec for
+// projects.enter(project) against the caller's held stores. Refuses zero
+// project tree hash, empty console specs, duplicate or invalid modules/stores,
+// any store not declared in caller_stores, and any store whose requested
+// rights exceed what the caller holds.
+project_console_spec_validate :: proc "contextless" (
+	spec: ^Project_Console_Spec,
+	caller_stores: []Project_Console_Store,
+) -> (refusal: Project_Refusal, bad_index: u32) {
+	if struct_ref, struct_bad := project_console_spec_validate_structure(spec); struct_ref != .None {
+		return struct_ref, struct_bad
+	}
+
+	for index in u32(0) ..< spec.store_count {
+		req_store := &spec.stores[index]
+		req_rights, _ := plan_store_rights_of_word(req_store.rights_word)
 
 		// Verify caller holds the declared store with covering rights.
 		matched_store := false
@@ -993,4 +1057,190 @@ project_console_spec_validate :: proc "contextless" (
 		}
 	}
 	return .None, 0
+}
+
+// project_console_spec_hash computes the order-independent canonical BLAKE3
+// digest of a validated Project_Console_Spec so trusted Display consent binds
+// to the exact modules and store grants of the child console.
+project_console_spec_hash :: proc "contextless" (spec: ^Project_Console_Spec) -> (digest: blake3.Hash, refusal: Project_Refusal) {
+	if struct_ref, _ := project_console_spec_validate_structure(spec); struct_ref != .None {
+		return {}, struct_ref
+	}
+
+	mod_order: [MAX_CONSOLE_MODULES]u32
+	for i in u32(0) ..< spec.module_count {
+		mod_order[i] = i
+	}
+	for i in u32(1) ..< spec.module_count {
+		key := mod_order[i]
+		key_name := spec.modules[key].name_bytes[:spec.modules[key].name_length]
+		j := int(i) - 1
+		for j >= 0 {
+			cur := &spec.modules[mod_order[j]]
+			if compare_bytes(cur.name_bytes[:cur.name_length], key_name) <= 0 {
+				break
+			}
+			mod_order[j + 1] = mod_order[j]
+			j -= 1
+		}
+		mod_order[j + 1] = key
+	}
+
+	store_order: [MAX_CONSOLE_STORES]u32
+	for i in u32(0) ..< spec.store_count {
+		store_order[i] = i
+	}
+	for i in u32(1) ..< spec.store_count {
+		key := store_order[i]
+		key_name := spec.stores[key].name_bytes[:spec.stores[key].name_length]
+		j := int(i) - 1
+		for j >= 0 {
+			cur := &spec.stores[store_order[j]]
+			if compare_bytes(cur.name_bytes[:cur.name_length], key_name) <= 0 {
+				break
+			}
+			store_order[j + 1] = store_order[j]
+			j -= 1
+		}
+		store_order[j + 1] = key
+	}
+
+	buf: [MAX_CONSOLE_CANONICAL_BYTES]u8
+	enc := Canonical_Encoder{buffer = buf[:]}
+	encoder_raw_bytes(&enc, spec.project_tree_hash[:])
+	encoder_u64(&enc, spec.principal)
+	encoder_u32(&enc, spec.module_count)
+	for pos in u32(0) ..< spec.module_count {
+		mod := &spec.modules[mod_order[pos]]
+		encoder_bytes(&enc, mod.name_bytes[:mod.name_length])
+		encoder_raw_bytes(&enc, mod.module_hash[:])
+	}
+	encoder_u32(&enc, spec.store_count)
+	for pos in u32(0) ..< spec.store_count {
+		st := &spec.stores[store_order[pos]]
+		encoder_bytes(&enc, st.name_bytes[:st.name_length])
+		encoder_u64(&enc, st.rights_word)
+	}
+	if enc.overflow {
+		return {}, .Buffer_Too_Small
+	}
+	return blake3.derive_key(PROJECT_CONSOLE_HASH_DOMAIN, buf[:enc.position]), .None
+}
+
+// project_console_grant_diff computes which module connections and store
+// grants requested by spec lie outside the caller's current console session.
+// Any added module or uncovered/widened store sets needs_consent = true.
+project_console_grant_diff :: proc "contextless" (
+	spec: ^Project_Console_Spec,
+	session_stores: []Project_Console_Store,
+	session_modules: []Project_Console_Module,
+) -> (diff: Project_Console_Grant_Diff, refusal: Project_Refusal) {
+	spec_hash, hash_ref := project_console_spec_hash(spec)
+	if hash_ref != .None {
+		return {}, hash_ref
+	}
+	diff.spec_hash = spec_hash
+
+	for index in u32(0) ..< spec.module_count {
+		req_mod := spec.modules[index]
+		covered := false
+		for &held_mod in session_modules {
+			if int(held_mod.name_length) > MAX_ENTRY_NAME_BYTES {
+				continue
+			}
+			if bytes_equal(held_mod.name_bytes[:held_mod.name_length], req_mod.name_bytes[:req_mod.name_length]) &&
+			   held_mod.module_hash == req_mod.module_hash {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			diff.added_modules[diff.added_module_count] = req_mod
+			diff.added_module_count += 1
+		}
+	}
+
+	for index in u32(0) ..< spec.store_count {
+		req_store := spec.stores[index]
+		req_rights, _ := plan_store_rights_of_word(req_store.rights_word)
+		covered := false
+		for &held_store in session_stores {
+			if int(held_store.name_length) > MAX_ENTRY_NAME_BYTES {
+				continue
+			}
+			if !bytes_equal(held_store.name_bytes[:held_store.name_length], req_store.name_bytes[:req_store.name_length]) {
+				continue
+			}
+			held_rights, held_ok := plan_store_rights_of_word(held_store.rights_word)
+			if held_ok && store_rights_cover(held_rights, req_rights) {
+				covered = true
+			}
+			break
+		}
+		if !covered {
+			diff.added_stores[diff.added_store_count] = req_store
+			diff.added_store_count += 1
+		}
+	}
+
+	diff.needs_consent = diff.added_module_count > 0 || diff.added_store_count > 0
+	return diff, .None
+}
+
+// project_console_spec_from_declaration constructs an isolated
+// Project_Console_Spec from a Project_Declaration's console field (or from its
+// output builders and source store with Read_Write when no console field is
+// declared). Refuses unknown projects and empty console fields cleanly.
+project_console_spec_from_declaration :: proc "contextless" (
+	decl: ^Project_Declaration,
+	principal: u64,
+	parent_console_id: u64 = 0,
+) -> (spec: Project_Console_Spec, refusal: Project_Refusal) {
+	if decl == nil || hash_is_zero(decl.project_tree_hash) {
+		return {}, .Unknown_Project
+	}
+	spec.project_tree_hash = decl.project_tree_hash
+	spec.principal = principal
+	spec.parent_console_id = parent_console_id
+
+	if decl.has_console_field {
+		if decl.console_module_count > MAX_CONSOLE_MODULES {
+			return {}, .Too_Many_Modules
+		}
+		if decl.console_store_count > MAX_CONSOLE_STORES {
+			return {}, .Too_Many_Stores
+		}
+		spec.module_count = decl.console_module_count
+		for i in u32(0) ..< decl.console_module_count {
+			spec.modules[i] = decl.console_modules[i]
+		}
+		spec.store_count = decl.console_store_count
+		for i in u32(0) ..< decl.console_store_count {
+			spec.stores[i] = decl.console_stores[i]
+		}
+	} else {
+		if decl.builder_module_count > MAX_CONSOLE_MODULES {
+			return {}, .Too_Many_Modules
+		}
+		spec.module_count = decl.builder_module_count
+		for i in u32(0) ..< decl.builder_module_count {
+			spec.modules[i] = decl.builder_modules[i]
+		}
+		if decl.has_source_store {
+			if !entry_name_valid(decl.source_store_bytes[:], decl.source_store_length) {
+				return {}, .Invalid_Store_Name
+			}
+			spec.stores[0] = {
+				name_bytes  = decl.source_store_bytes,
+				name_length = decl.source_store_length,
+				rights_word = u64(Plan_Store_Rights.Read_Write),
+			}
+			spec.store_count = 1
+		}
+	}
+
+	if struct_ref, _ := project_console_spec_validate_structure(&spec); struct_ref != .None {
+		return {}, struct_ref
+	}
+	return spec, .None
 }

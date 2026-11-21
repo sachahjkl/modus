@@ -4,6 +4,7 @@ import "modus:contract/blake3"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/root_ring"
 import "modus:console_condition"
@@ -86,6 +87,8 @@ Line_Stream :: struct {
 	process:         system.Handle, // The handle or the number of the owner: the console keeps it, the line does not.
 	end:             output.Wiring_End,
 	is_input:        bool, // A record input: only wire takes it.
+	is_log:          bool, // Implicit process record output log: wired only in start(module, wire(module.log, ...)).
+	is_log_follow:   bool, // Live kernel log follow stream: protected by the self-feedback loop breaker.
 	index:           u32, // The record output or the record input, from 1, in the module file of the owner.
 	file:            []u8,
 	detail:          u32, // The record description, in file: the whole record.
@@ -112,6 +115,68 @@ line_stream_count: int
 // Wire and of each Start with a list in it
 // (src/md/features/module_outputs.md, "The wiring and its rights").
 list_page: []u8
+
+// Canonical description file for the implicit record output log, built once.
+log_output_desc_buffer: [output.DESCRIPTION_FILE_BYTES_MOST]u8
+log_output_desc_size: int
+
+// Cached process slot of this console for self-feedback exclusion on log.follow.
+own_process_slot_cached: i64
+own_process_slot_known: bool
+
+// log_output_description_file returns the canonical module description file
+// for output.Log_Output_Record, initializing it once in BSS.
+log_output_description_file :: proc "contextless" () -> []u8 {
+	if log_output_desc_size == 0 {
+		if size, ok := output.log_output_file_write(log_output_desc_buffer[:]); ok {
+			log_output_desc_size = size
+		}
+	}
+	return log_output_desc_buffer[:log_output_desc_size]
+}
+
+// console_own_process_slot resolves this console's kernel process slot via
+// Inspect so log.follow excludes records emitted by this console itself.
+console_own_process_slot :: proc "contextless" () -> i64 {
+	if own_process_slot_known {
+		return own_process_slot_cached
+	}
+	own_process_slot_known = true
+	if machine == 0 {
+		return 0
+	}
+	report: op.System_Report
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status != .Ok {
+		return 0
+	}
+	for slot in u64(1) ..< report.process_slots {
+		process: op.Process_Report
+		if _, p_status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), slot, u64(uintptr(&process)), size_of(process)); p_status != .Ok {
+			continue
+		}
+		if process.state != .None && system.name_of(process.name[:]) == "console" {
+			own_process_slot_cached = i64(slot)
+			return own_process_slot_cached
+		}
+	}
+	return 0
+}
+
+// follow_row_slot_and_process extracts the slot and process fields from a raw
+// log.Follow_Row record buffer for self-feedback filtering.
+@(private = "file")
+follow_row_slot_and_process :: proc "contextless" (record: []u8) -> (slot: i64, process_name: string) {
+	if len(record) != console_stream.FOLLOW_ROW_SIZE {
+		return 0, ""
+	}
+	wire: console_stream.Follow_Row_Wire
+	intrinsics.mem_copy_non_overlapping(&wire, raw_data(record), size_of(wire))
+	name_len := 0
+	for name_len < len(wire.process) && wire.process[name_len] != 0 {
+		name_len += 1
+	}
+	return wire.slot, string(record[offset_of(console_stream.Follow_Row_Wire, process):][:name_len])
+}
 
 // image_module_file gives the module file of a name in the boot image,
 // after it checked its hash and its form, as connect does.
@@ -224,6 +289,13 @@ stream_owner_named :: proc "contextless" (name: string) -> bool {
 stream_name_known :: proc "contextless" (name: string) -> (file: []u8, detail: u32, kind: Kind, known: bool) {
 	owner_name, stream_name := console_stream.typed_name_split(name) or_return
 	owner := stream_owner_find(owner_name, false) or_return
+	if console_stream.is_log_output_name(owner_name, stream_name) {
+		desc := log_output_description_file()
+		if len(desc) > 0 {
+			return desc, output.DESCRIPTION_RECORD_INDEX, .Stream, true
+		}
+		return nil, 0, .None, false
+	}
 	_, output_record, output_found := console_stream.record_output_find(owner.file, stream_name)
 	switch output_found {
 	case .Found:
@@ -283,30 +355,42 @@ stream_value_of_name :: proc "contextless" (name: string) -> (value: Value, name
 		return {}, false
 	}
 	is_input := false
-	index, record, how := console_stream.record_output_find(owner.file, stream_name)
-	if how == .Absent {
-		index, record, how = console_stream.record_input_find(owner.file, stream_name)
-		is_input = true
-	}
-	// The record that the line reads: of the declaration, or for a generic
-	// record output the record that a list of this console fixed.
+	is_log := console_stream.is_log_output_name(owner_name, stream_name)
+	index := u32(0)
+	record := u32(0)
 	file := owner.file
-	switch how {
-	case .Found:
-	case .Absent:
-		return stream_names_fail(owner_name, stream_name, owner.file), true
-	case .Generic:
-		switch {
-		case is_input:
-			// wire takes it; the root service checks the record of each
-			// wiring, as the first one fixes it.
-		case owner.generic_file != nil:
-			file, record = owner.generic_file, owner.generic_detail
-		case:
-			return fail(name, " is generic: it writes the record that the first wiring of the generic record input of ", owner_name, " fixed, and no list of a start of ", owner_name, " by this console fixed one"), true
+	if is_log {
+		file = log_output_description_file()
+		record = output.DESCRIPTION_RECORD_INDEX
+		if len(file) == 0 {
+			return fail("the record output log has no valid description"), true
 		}
-	case .Damaged:
-		return fail("the module file of ", owner_name, " has a row of its record streams that the module contract refuses"), true
+	} else {
+		how: console_stream.Output_Find
+		index, record, how = console_stream.record_output_find(owner.file, stream_name)
+		if how == .Absent {
+			index, record, how = console_stream.record_input_find(owner.file, stream_name)
+			is_input = true
+		}
+		// The record that the line reads: of the declaration, or for a generic
+		// record output the record that a list of this console fixed.
+		switch how {
+		case .Found:
+		case .Absent:
+			return stream_names_fail(owner_name, stream_name, owner.file), true
+		case .Generic:
+			switch {
+			case is_input:
+				// wire takes it; the root service checks the record of each
+				// wiring, as the first one fixes it.
+			case owner.generic_file != nil:
+				file, record = owner.generic_file, owner.generic_detail
+			case:
+				return fail(name, " is generic: it writes the record that the first wiring of the generic record input of ", owner_name, " fixed, and no list of a start of ", owner_name, " by this console fixed one"), true
+			}
+		case .Damaged:
+			return fail("the module file of ", owner_name, " has a row of its record streams that the module contract refuses"), true
+		}
 	}
 	if line_stream_count >= LINE_STREAM_CAPACITY {
 		return fail("a line names at most ", u64(LINE_STREAM_CAPACITY), " record streams"), true
@@ -322,15 +406,17 @@ stream_value_of_name :: proc "contextless" (name: string) -> (value: Value, name
 		size = int(described.size)
 	}
 	line_streams[line_stream_count] = {
-		owner       = owner.name,
-		stream_name = stream_name,
-		process     = owner.process,
-		end         = owner.end,
-		is_input    = is_input,
-		index       = index,
-		file        = file,
-		detail      = record,
-		size        = size,
+		owner         = owner.name,
+		stream_name   = stream_name,
+		process       = owner.process,
+		end           = owner.end,
+		is_input      = is_input,
+		is_log        = is_log,
+		is_log_follow = !is_input && !is_log && console_stream.is_log_follow_name(owner.name, stream_name),
+		index         = index,
+		file          = file,
+		detail        = record,
+		size          = size,
 	}
 	line_stream_count += 1
 	kind := is_input ? Kind.Record_Input : Kind.Stream
@@ -386,6 +472,9 @@ stream_where :: proc "contextless" (value: Value, condition: ^Condition) -> Valu
 	stream := line_stream_of(value)
 	if stream == nil || stream.is_input {
 		return fail("where: the record stream is not one of this line")
+	}
+	if stream.is_log {
+		return fail("where: the record output log takes no condition")
 	}
 	if stream.number != 0 {
 		return fail("where: the record stream is read already")
@@ -594,6 +683,10 @@ stream_wire :: proc "contextless" (stream: ^Line_Stream) -> bool {
 	if stream.number != 0 {
 		return true
 	}
+	if stream.is_log {
+		fail("read: the record output log is wired only in start(module, wire(module.log, ...))")
+		return false
+	}
 	if stream.closed {
 		fail("the record stream ", stream.owner, ".", stream.stream_name, " ended already")
 		return false
@@ -601,6 +694,26 @@ stream_wire :: proc "contextless" (stream: ^Line_Stream) -> bool {
 	if stream.end == .Child {
 		not_running_fail("read", stream.owner)
 		return false
+	}
+	// Self-feedback loop breaker: when following log.follow with no user
+	// wiring condition, push slot != own_process_slot into the wiring itself.
+	if stream.is_log_follow && stream.condition_count == 0 {
+		if own_slot := console_own_process_slot(); own_slot > 0 {
+			if described, rec_ok := module.record_type(stream.file, stream.detail); rec_ok {
+				if self_terms, terms_ok := output.condition_terms_of_field(stream.file, described, "slot", .Not_Equal, own_slot, "", false); terms_ok {
+					terms_bytes := transmute([size_of(output.Condition_Terms)]u8)self_terms
+					if resolved, _, resolved_ok := output.writer_condition_of_terms(terms_bytes[:], stream.file, described); resolved_ok {
+						resolved_bytes := transmute([size_of(output.Writer_Condition)]u8)resolved
+						if checked, checked_ok := output.writer_condition_check(resolved_bytes[:], u32(stream.size)); checked_ok {
+							stream.conditions[0] = {field = "slot", comparison = .Not_Equal, compared = own_slot}
+							stream.terms[0] = self_terms
+							stream.checks[0] = checked
+							stream.condition_count = 1
+						}
+					}
+				}
+			}
+		}
 	}
 	if !list_page_ready() {
 		return false
@@ -764,6 +877,7 @@ stream_collect :: proc "contextless" (command: string, value: Value, wanted: int
 	if !stream_wire(stream) {
 		return {}
 	}
+	breaker := console_stream.follow_loop_breaker_make(stream.is_log_follow ? console_own_process_slot() : 0)
 	intrinsics.atomic_store(&work.call_stoppable, 1)
 	defer intrinsics.atomic_store(&work.call_stoppable, 0)
 	record: [module.RECORD_SIZE_LIMIT]u8
@@ -796,9 +910,17 @@ stream_collect :: proc "contextless" (command: string, value: Value, wanted: int
 				stream_writer_lied(command, stream, item)
 				return {}
 			}
-			if item.kind == .Record && stream_passes(stream, record[:stream.size]) {
-				stream_row_write(stream, record[:stream.size], table_memory[start + kept * row_size:][:row_size])
-				kept += 1
+			if item.kind == .Record {
+				if stream.is_log_follow {
+					row_slot, row_proc := follow_row_slot_and_process(record[:stream.size])
+					if console_stream.follow_filter_record(&breaker, record[:stream.size], row_slot, row_proc) != .Pass {
+						continue
+					}
+				}
+				if stream_passes(stream, record[:stream.size]) {
+					stream_row_write(stream, record[:stream.size], table_memory[start + kept * row_size:][:row_size])
+					kept += 1
+				}
 			}
 		case .Ended:
 			break read
@@ -872,7 +994,7 @@ stream_counts :: proc "contextless" (arguments: []Value) -> Value {
 
 // stream_note_draw draws one note of a Stream: its joined record, a gap,
 // its end, Escape. A joined record of 0 draws nothing.
-stream_note_draw :: proc "contextless" (note: console_stream.Note) {
+stream_note_draw :: proc "contextless" (note: console_stream.Note, breaker: ^console_stream.Follow_Loop_Breaker = nil) {
 	buffer: [160]u8
 	writer := sentence.Writer {
 		buffer = buffer[:],
@@ -882,6 +1004,13 @@ stream_note_draw :: proc "contextless" (note: console_stream.Note) {
 	}
 	system.lock(&output_lock)
 	defer system.unlock(&output_lock)
+	guard: console_stream.Follow_Render_Guard
+	if breaker != nil {
+		guard = console_stream.follow_render_begin(breaker, &output_logged)
+	}
+	defer if breaker != nil {
+		console_stream.follow_render_end(breaker, guard, &output_logged)
+	}
 	sink := result_sink()
 	console_results.draw_note(&sink, sentence.written(&writer))
 	output_continuation = 0
@@ -891,7 +1020,8 @@ stream_note_draw :: proc "contextless" (note: console_stream.Note) {
 // columns, then each record that passes its conditions as it comes, until
 // the end of the stream or Escape. The output lock is held for one line at
 // a time, never while the read waits: the thread of the keys draws its
-// line meanwhile.
+// line meanwhile. When drawing log.follow, Follow_Loop_Breaker suppresses
+// echoing drawn lines into the kernel log and drops self-emitted records.
 stream_draw :: proc "contextless" (value: Value) {
 	stream := line_stream_of(value)
 	if stream == nil {
@@ -910,9 +1040,18 @@ stream_draw :: proc "contextless" (value: Value) {
 	if !stream_wire(stream) {
 		return
 	}
+	breaker := console_stream.follow_loop_breaker_make(stream.is_log_follow ? console_own_process_slot() : 0)
+	active_breaker: ^console_stream.Follow_Loop_Breaker = stream.is_log_follow ? &breaker : nil
 	{
 		system.lock(&output_lock)
 		defer system.unlock(&output_lock)
+		guard: console_stream.Follow_Render_Guard
+		if active_breaker != nil {
+			guard = console_stream.follow_render_begin(active_breaker, &output_logged)
+		}
+		defer if active_breaker != nil {
+			console_stream.follow_render_end(active_breaker, guard, &output_logged)
+		}
 		sink := result_sink()
 		console_results.draw_stream_head(&sink, &columns, value.file)
 		output_continuation = 0
@@ -926,7 +1065,7 @@ stream_draw :: proc "contextless" (value: Value) {
 	read: for {
 		item, status, escaped := stream_read_next(stream, record[:stream.size])
 		if escaped {
-			stream_note_draw({kind = .Escape, count = drawn})
+			stream_note_draw({kind = .Escape, count = drawn}, active_breaker)
 			break read
 		}
 		switch status {
@@ -937,30 +1076,43 @@ stream_draw :: proc "contextless" (value: Value) {
 					stream_writer_lied("the draw", stream, item)
 					break read
 				}
+				if active_breaker != nil {
+					row_slot, row_proc := follow_row_slot_and_process(record[:stream.size])
+					if console_stream.follow_filter_record(active_breaker, record[:stream.size], row_slot, row_proc) != .Pass {
+						continue
+					}
+				}
 				if stream_passes(stream, record[:stream.size]) {
 					stream_row_write(stream, record[:stream.size], row[:row_size])
 					system.lock(&output_lock)
+					guard: console_stream.Follow_Render_Guard
+					if active_breaker != nil {
+						guard = console_stream.follow_render_begin(active_breaker, &output_logged)
+					}
 					sink := result_sink()
 					console_results.draw_stream_row(&sink, &columns, row[:row_size])
 					output_continuation = 0
+					if active_breaker != nil {
+						console_stream.follow_render_end(active_breaker, guard, &output_logged)
+					}
 					system.unlock(&output_lock)
 					drawn += 1
 				}
 			case .Joined:
-				stream_note_draw({kind = .Joined, count = u64(item.serial)})
+				stream_note_draw({kind = .Joined, count = u64(item.serial)}, active_breaker)
 			case .Gap:
-				stream_note_draw({kind = .Gap, count = u64(item.gap_count)})
+				stream_note_draw({kind = .Gap, count = u64(item.gap_count)}, active_breaker)
 			case .End:
 				// An end comes with the status Ended.
 			}
 		case .Ended:
 			switch {
 			case item.end_word != .None:
-				stream_note_draw({kind = .Ended_By, end_word = item.end_word})
+				stream_note_draw({kind = .Ended_By, end_word = item.end_word}, active_breaker)
 			case item.error.kind == 0:
-				stream_note_draw({kind = .Clean_End, count = u64(item.serial)})
+				stream_note_draw({kind = .Clean_End, count = u64(item.serial)}, active_breaker)
 			case:
-				stream_note_draw({kind = .Error_End, count = u64(item.serial)})
+				stream_note_draw({kind = .Error_End, count = u64(item.serial)}, active_breaker)
 			}
 			break read
 		case .Bad_Record:
@@ -1056,6 +1208,9 @@ wire :: proc "contextless" (arguments: []Value) -> Value {
 	if from.projection_file != nil {
 		return fail("wire: a wiring carries a record output whole, not the fields that columns chose")
 	}
+	if from.is_log && from.condition_count > 0 {
+		return fail("wire: the record output log takes no condition")
+	}
 	if from.condition_count > 1 {
 		return fail("wire: a wiring takes one condition; the record stream ", from.owner, ".", from.stream_name, " has ", u64(from.condition_count))
 	}
@@ -1114,20 +1269,28 @@ start_rows: [output.WIRING_LIST_ROW_LIMIT]Start_Row
 
 // start_end_of resolves one end of a row: the child, a started process, a
 // connected service. The index is the record output or the record input of
-// the name in the module file of the end.
+// the name in the module file of the end; for the child's implicit log output,
+// is_log is true and index is 0.
 @(private = "file")
-start_end_of :: proc "contextless" (number: int, module_name: string, child_file: []u8, owner_name, stream_name: string, is_child, is_input: bool) -> (owner: Stream_Owner, index: u32, ok: bool) {
+start_end_of :: proc "contextless" (number: int, module_name: string, child_file: []u8, owner_name, stream_name: string, is_child, is_input: bool) -> (owner: Stream_Owner, index: u32, is_log: bool, ok: bool) {
+	if !is_input && stream_name == console_stream.LOG_STREAM_NAME {
+		if !is_child {
+			fail("start: the row ", u64(number), " names ", owner_name, ".log, and only the log of the module that starts can be wired")
+			return {}, 0, false, false
+		}
+		return {name = module_name, end = .Child}, 0, true, true
+	}
 	file := child_file
 	if !is_child {
 		found: bool
 		owner, found = stream_owner_find(owner_name, true)
 		if !found {
 			fail("start: the row ", u64(number), " names ", owner_name, ", which is no process that this console started or connected and no module")
-			return {}, 0, false
+			return {}, 0, false, false
 		}
 		if owner.end == .Child {
 			not_running_fail("start", owner_name)
-			return {}, 0, false
+			return {}, 0, false, false
 		}
 		file = owner.file
 	} else {
@@ -1143,16 +1306,23 @@ start_end_of :: proc "contextless" (number: int, module_name: string, child_file
 	// record.
 	if how != .Found && how != .Generic {
 		stream_names_fail(owner_name, stream_name, file)
-		return {}, 0, false
+		return {}, 0, false, false
 	}
-	return owner, index, true
+	return owner, index, false, true
 }
 
 // start_row_type gives the record that the writer of a row writes: the
-// record of its record output, or for a generic one the record that a list
-// of this console fixed for its owner. nil: none is known.
+// record of its record output, Log_Output_Record for log, or for a generic
+// one the record that a list of this console fixed for its owner.
 @(private = "file")
-start_row_type :: proc "contextless" (owner: Stream_Owner, index: u32, child_file: []u8, is_child: bool) -> (file: []u8, detail: u32) {
+start_row_type :: proc "contextless" (owner: Stream_Owner, index: u32, child_file: []u8, is_child: bool, is_log: bool) -> (file: []u8, detail: u32) {
+	if is_log {
+		desc := log_output_description_file()
+		if len(desc) > 0 {
+			return desc, output.DESCRIPTION_RECORD_INDEX
+		}
+		return nil, 0
+	}
 	file = is_child ? child_file : owner.file
 	value, _, _, ok := module.record_output(file, index)
 	if !ok {
@@ -1211,26 +1381,30 @@ start_with_list :: proc "contextless" (name: string, list: Value) -> Value {
 		}
 		planned := &start_rows[index]
 		planned^ = {}
-		writer_owner, writer_index, writer_ok := start_end_of(index + 1, child_name, child_file, writer, module.field_text(row, items[WIRING_COLUMN_OUTPUT]), writer_is_child, false)
+		writer_owner, writer_index, writer_is_log, writer_ok := start_end_of(index + 1, child_name, child_file, writer, module.field_text(row, items[WIRING_COLUMN_OUTPUT]), writer_is_child, false)
 		if !writer_ok {
 			return {}
 		}
-		reader_owner, reader_index, reader_ok := start_end_of(index + 1, child_name, child_file, reader, module.field_text(row, items[WIRING_COLUMN_INPUT]), reader_is_child, true)
+		reader_owner, reader_index, _, reader_ok := start_end_of(index + 1, child_name, child_file, reader, module.field_text(row, items[WIRING_COLUMN_INPUT]), reader_is_child, true)
 		if !reader_ok {
 			return {}
 		}
 		planned.writer_owner, planned.reader_owner = writer_owner, reader_owner
-		planned.row = {writer_end = u32(writer_owner.end), writer_stream = u32(output.Writer_Stream.Record_Output), writer_index = writer_index, reader_end = u32(reader_owner.end), reader_index = reader_index}
+		writer_stream := writer_is_log ? output.Writer_Stream.Log : output.Writer_Stream.Record_Output
+		planned.row = {writer_end = u32(writer_owner.end), writer_stream = u32(writer_stream), writer_index = writer_index, reader_end = u32(reader_owner.end), reader_index = reader_index}
 		// The first row to the generic record input of the module, of the
 		// counts One or Many, fixes its record, as the root service does:
 		// its generic record output then reads as that record.
 		if reader_is_child && fixed_file == nil {
 			if input, wirings, _, _, input_ok := module.record_input(child_file, reader_index); input_ok && input.record == 0 && wirings != .Many_Types {
-				fixed_file, fixed_detail = start_row_type(writer_owner, writer_index, child_file, writer_is_child)
+				fixed_file, fixed_detail = start_row_type(writer_owner, writer_index, child_file, writer_is_child, writer_is_log)
 			}
 		}
 		handle_count += int(writer_owner.end == .Started) + int(reader_owner.end == .Started)
 		if field := module.field_integer(row, items[WIRING_COLUMN_FIELD]); field != 0 {
+			if writer_is_log {
+				return fail("start: the row ", u64(index + 1), " puts a condition on log, which takes no condition")
+			}
 			planned.has_terms = true
 			planned.terms = {field = u32(field), comparison = u32(module.field_integer(row, items[WIRING_COLUMN_COMPARISON])), value_kind = u32(module.field_integer(row, items[WIRING_COLUMN_VALUE_KIND])), integer = module.field_integer(row, items[WIRING_COLUMN_INTEGER])}
 			text := module.field_text(row, items[WIRING_COLUMN_TEXT])

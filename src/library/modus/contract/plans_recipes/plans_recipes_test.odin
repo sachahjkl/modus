@@ -579,3 +579,108 @@ test_source_resolver_and_project_console_contracts :: proc(t: ^testing.T) {
 	ref, _ = project_console_spec_validate(&spec, caller_stores[:])
 	testing.expect_value(t, ref, Project_Refusal.Undeclared_Store)
 }
+
+@(test)
+test_project_console_spec_edges_hash_and_grant_diff :: proc(t: ^testing.T) {
+	// Nil and zero project tree hash refused.
+	ref, _ := project_console_spec_validate_structure(nil)
+	testing.expect_value(t, ref, Project_Refusal.Zero_Hash)
+
+	empty_console := Project_Console_Spec{project_tree_hash = make_hash(60), principal = 1}
+	ref, _ = project_console_spec_validate_structure(&empty_console)
+	testing.expect_value(t, ref, Project_Refusal.Empty_Console)
+
+	// Bounds: module_count and store_count past max refused.
+	too_many_mods := empty_console
+	too_many_mods.module_count = MAX_CONSOLE_MODULES + 1
+	ref, _ = project_console_spec_validate_structure(&too_many_mods)
+	testing.expect_value(t, ref, Project_Refusal.Too_Many_Modules)
+
+	too_many_stores := empty_console
+	too_many_stores.store_count = MAX_CONSOLE_STORES + 1
+	ref, _ = project_console_spec_validate_structure(&too_many_stores)
+	testing.expect_value(t, ref, Project_Refusal.Too_Many_Stores)
+
+	// Duplicate module names refused.
+	dup_mods := Project_Console_Spec{project_tree_hash = make_hash(61), principal = 1, module_count = 2}
+	dup_mods.modules[0], _ = project_console_module_make("odin", make_hash(62))
+	dup_mods.modules[1], _ = project_console_module_make("odin", make_hash(63))
+	bad_idx: u32
+	ref, bad_idx = project_console_spec_validate_structure(&dup_mods)
+	testing.expect_value(t, ref, Project_Refusal.Duplicate_Module)
+	testing.expect_value(t, bad_idx, u32(1))
+
+	// Duplicate store names refused.
+	dup_stores := Project_Console_Spec{project_tree_hash = make_hash(61), principal = 1, store_count = 2}
+	dup_stores.stores[0], _ = project_console_store_make("kernel", .Read_Only)
+	dup_stores.stores[1], _ = project_console_store_make("kernel", .Read_Write)
+	ref, bad_idx = project_console_spec_validate_structure(&dup_stores)
+	testing.expect_value(t, ref, Project_Refusal.Duplicate_Store)
+	testing.expect_value(t, bad_idx, u32(1))
+
+	// Unknown store rights words (0, 3, max(u64)) refused.
+	for bad_word in ([?]u64{0, 3, max(u64)}) {
+		bad_rights := Project_Console_Spec{project_tree_hash = make_hash(61), principal = 1, store_count = 1}
+		bad_rights.stores[0], _ = project_console_store_make("kernel", .Read_Only)
+		bad_rights.stores[0].rights_word = bad_word
+		ref, _ = project_console_spec_validate_structure(&bad_rights)
+		testing.expect_value(t, ref, Project_Refusal.Bad_Store_Rights)
+	}
+
+	// Canonical hash is order-independent over modules and stores.
+	spec_a := Project_Console_Spec{project_tree_hash = make_hash(64), principal = 2, module_count = 2, store_count = 2}
+	spec_a.modules[0], _ = project_console_module_make("odin", make_hash(65))
+	spec_a.modules[1], _ = project_console_module_make("nasm", make_hash(66))
+	spec_a.stores[0], _ = project_console_store_make("kernel", .Read_Write)
+	spec_a.stores[1], _ = project_console_store_make("docs", .Read_Only)
+
+	spec_b := Project_Console_Spec{project_tree_hash = make_hash(64), principal = 2, module_count = 2, store_count = 2}
+	spec_b.modules[0] = spec_a.modules[1]
+	spec_b.modules[1] = spec_a.modules[0]
+	spec_b.stores[0] = spec_a.stores[1]
+	spec_b.stores[1] = spec_a.stores[0]
+
+	hash_a, href_a := project_console_spec_hash(&spec_a)
+	hash_b, href_b := project_console_spec_hash(&spec_b)
+	testing.expect_value(t, href_a, Project_Refusal.None)
+	testing.expect_value(t, href_b, Project_Refusal.None)
+	testing.expect_value(t, hash_a, hash_b)
+
+	// Grant diff: covered session needs no consent; missing module or widened store requires consent.
+	session_mods := [2]Project_Console_Module{spec_a.modules[0], spec_a.modules[1]}
+	session_stores := [2]Project_Console_Store{spec_a.stores[0], spec_a.stores[1]}
+	diff_cov, dref := project_console_grant_diff(&spec_a, session_stores[:], session_mods[:])
+	testing.expect_value(t, dref, Project_Refusal.None)
+	testing.expect(t, !diff_cov.needs_consent, "already covered grants need no consent")
+	testing.expect_value(t, diff_cov.added_module_count, u32(0))
+	testing.expect_value(t, diff_cov.added_store_count, u32(0))
+
+	// Missing second module and read-only store instead of read-write triggers consent.
+	partial_mods := [1]Project_Console_Module{spec_a.modules[0]}
+	partial_store, _ := project_console_store_make("kernel", .Read_Only)
+	partial_stores := [1]Project_Console_Store{partial_store}
+	diff_add, dref_add := project_console_grant_diff(&spec_a, partial_stores[:], partial_mods[:])
+	testing.expect_value(t, dref_add, Project_Refusal.None)
+	testing.expect(t, diff_add.needs_consent, "extra module and widened/missing stores must require consent")
+	testing.expect_value(t, diff_add.added_module_count, u32(1))
+	testing.expect_value(t, diff_add.added_store_count, u32(2))
+
+	// Declaration derivation: nil/zero refused as Unknown_Project; explicit empty console refused as Empty_Console.
+	_, decl_ref := project_console_spec_from_declaration(nil, 0)
+	testing.expect_value(t, decl_ref, Project_Refusal.Unknown_Project)
+
+	empty_decl := Project_Declaration{project_tree_hash = make_hash(67), has_console_field = true}
+	_, decl_ref = project_console_spec_from_declaration(&empty_decl, 0)
+	testing.expect_value(t, decl_ref, Project_Refusal.Empty_Console)
+
+	// Omitting console field falls back to output builders + source store (Read_Write).
+	fallback_decl := Project_Declaration{project_tree_hash = make_hash(68), has_console_field = false, builder_module_count = 1, has_source_store = true}
+	fallback_decl.builder_modules[0], _ = project_console_module_make("odin", make_hash(69))
+	copy(fallback_decl.source_store_bytes[:], "kernel")
+	fallback_decl.source_store_length = u8(len("kernel"))
+	fb_spec, fb_ref := project_console_spec_from_declaration(&fallback_decl, 3)
+	testing.expect_value(t, fb_ref, Project_Refusal.None)
+	testing.expect_value(t, fb_spec.module_count, u32(1))
+	testing.expect_value(t, fb_spec.store_count, u32(1))
+	testing.expect_value(t, fb_spec.stores[0].rights_word, u64(Plan_Store_Rights.Read_Write))
+}
