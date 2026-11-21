@@ -284,6 +284,9 @@ module_builds := [?]Module_Build {
 	// The probe module for client-funded work budgets and per-connection work
 	// threads (src/md/features/work_accounting.md).
 	{name = "work_accounting_probe", source = TEST_MODULE_SOURCES + "work_accounting_probe", image = true},
+	// The delegated collector and wide-grant audit service
+	// (src/md/features/module_outputs.md, src/md/features/wide_grants.md).
+	{name = "collector", source = SYSTEM_MODULE_SOURCES + "collector", entry = true, image = true},
 }
 
 // The counted kernel and its setting. Each other kernel gets the setting
