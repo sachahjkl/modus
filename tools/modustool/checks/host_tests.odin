@@ -201,6 +201,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.TOOL_SOURCE_FOLDER + "/fuzz",
 	foundation.TOOL_SOURCE_FOLDER + "/resources",
 	foundation.TOOL_SOURCE_FOLDER + "/similarity",
+	foundation.TOOL_SOURCE_FOLDER + "/cache_server",
 	foundation.TOOL_SOURCE_FOLDER + "/foundation",
 	foundation.SOURCE_FOLDER_RUNTIME,
 	foundation.SOURCE_FOLDER_CONTRACT + "/blake3",
@@ -306,6 +307,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/byte_order",
 	foundation.SOURCE_FOLDER_CONTRACT + "/timed_stream",
 	foundation.SOURCE_FOLDER_CONTRACT + "/output",
+	foundation.SOURCE_FOLDER_CONTRACT + "/object_cache",
 	foundation.SOURCE_FOLDER_PRIVATE + "/sound/sound_device",
 	foundation.SOURCE_FOLDER_KERNEL + "/acpi_processors",
 }
