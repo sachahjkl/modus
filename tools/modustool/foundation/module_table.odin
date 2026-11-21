@@ -273,6 +273,9 @@ module_builds := [?]Module_Build {
 	// The conformance suite for any holder of Role.Display
 	// (src/md/features/roles_and_contracts.md).
 	{name = "display_conformance", source = TEST_MODULE_SOURCES + "display_conformance"},
+	// The probe module for client-funded work budgets and per-connection work
+	// threads (src/md/features/work_accounting.md).
+	{name = "work_accounting_probe", source = TEST_MODULE_SOURCES + "work_accounting_probe", image = true},
 }
 
 // The counted kernel and its setting. Each other kernel gets the setting

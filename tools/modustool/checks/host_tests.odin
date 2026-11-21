@@ -311,4 +311,6 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/role_contract",
 	foundation.SOURCE_FOLDER_PRIVATE + "/root/role_policy",
 	foundation.TEST_MODULE_SOURCES + "display_conformance",
+	foundation.SOURCE_FOLDER_CONTRACT + "/work_budget",
+	foundation.TEST_MODULE_SOURCES + "work_accounting_probe",
 }
