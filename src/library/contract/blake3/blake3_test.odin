@@ -63,5 +63,39 @@ official_vectors :: proc(t: ^testing.T) {
 		result := hash(input[:vector.size])
 		text := string(hex.encode(result[:], context.temp_allocator))
 		testing.expectf(t, text == vector.hash, "size %d: got %s, want %s", vector.size, text, vector.hash)
+		// Verify that root_words_with_key with INITIAL_VALUE and no domain
+		// flags reproduces every official plain BLAKE3 vector.
+		keyed_plain := words_to_hash(root_words_with_key(input[:vector.size], INITIAL_VALUE, {}))
+		testing.expect_value(t, keyed_plain, result)
 	}
+}
+
+@(test)
+derive_key_domain_separation :: proc(t: ^testing.T) {
+	sizes := [?]int{0, 1, 63, 64, 65, 1024, 1025, 4096, 8193}
+	input := make([]u8, 8193)
+	defer delete(input)
+	for &b, i in input {
+		b = u8(i % 251)
+	}
+	for size in sizes {
+		slice := input[:size]
+		plain := hash(slice)
+		derived_a := derive_key("modus tree v1", slice)
+		derived_b := derive_key("modus object v1", slice)
+		derived_a_again := derive_key("modus tree v1", slice)
+		testing.expectf(t, derived_a != plain, "size %d: derive_key collided with plain hash", size)
+		testing.expectf(t, derived_a != derived_b, "size %d: distinct contexts collided", size)
+		testing.expect_value(t, derived_a, derived_a_again)
+	}
+	// Multi-chunk context string (> 1024 bytes) works and differs from short context.
+	long_context := make([]u8, 2049)
+	defer delete(long_context)
+	for &b, i in long_context {
+		b = u8('a' + (i % 26))
+	}
+	long_derived := derive_key(string(long_context), input[:128])
+	short_derived := derive_key("modus tree v1", input[:128])
+	testing.expect(t, long_derived != short_derived)
+	testing.expect(t, long_derived != hash(input[:128]))
 }
