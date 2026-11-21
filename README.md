@@ -214,6 +214,7 @@ The guides below give the details. `docs/DEMONSTRATIONS.md` says what the test s
 | `docs/DEMONSTRATIONS.md` | For each of the 25 properties: what the machine test shows, the picture, and what no test shows yet |
 | `docs/PRINCIPALS.md` | The principals: the machine, a named principal, its unlock and its lock, the session of each process, the store of a principal, and what is not built |
 | `docs/CONSOLE.md` | The line of the console: the caret, the completion list, the history and its search, the colors of the code |
+| `docs/LEX.md` | Lex, the language and runtime of modus: the grammar, values, pipes, declarations, plans, projects, record stream short forms, evaluation diagrams, and errors |
 | `docs/CRYPTOGRAPHY.md` | The cryptography of QUIC and TLS 1.3: which proven code the system takes, and how it checks it |
 | `docs/STORAGE.md` | The stored data: objects, trees and stores; what a process reaches, the format on the disk, and the steps that are not built |
 | `docs/FONTS.md` | The text of the system: the vector font, the grid fit, the subpixel bands and the cache of the glyphs |

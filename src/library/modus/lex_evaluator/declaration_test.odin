@@ -183,6 +183,7 @@ declaration_refuses_effects_and_hostile_imports :: proc(t: ^testing.T) {
 		"plans.apply({ a = 1 })",
 		"recipes.build(1)",
 		"projects.update(1)",
+		"collector.verify(\"server.log\")",
 		"exit()",
 	}
 	for src in effects {
