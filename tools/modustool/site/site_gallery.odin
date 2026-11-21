@@ -123,6 +123,7 @@ site_gallery_rows := [?]Site_Gallery_Row {
 	{file = "console.png", group = .Console, guide = "docs/CONSOLE.md", caption = "The console at the start of the machine, with the window of life that one of its lines started."},
 	{file = "console_completion.png", group = .Console, home = true, guide = "docs/CONSOLE.md", caption = "The completion list of the console: mcnt matches monitor.count by a fuzzy match, with the matched letters lit and each signature."},
 	{file = "console_history_search.png", group = .Console, guide = "docs/CONSOLE.md", caption = "The history search of the console: Control-R and a part of a line."},
+	{file = "console_lex.png", group = .Console, guide = "docs/CONSOLE.md", caption = "Lex in the console: let, a record literal and with, a function given to map, |> with _, a named argument, a comment, and a refusal in red."},
 	{file = "console_value_kinds.png", group = .Console, guide = "docs/CONSOLE.md", caption = "The console: a record with a handle, then a table of numbers, a size in pages and two times, each in the color of its kind, each unit in the head."},
 	{file = "tools.png", group = .Console, guide = "docs/CONSOLE.md", caption = "Lines of the console: commands compose, an error says what to do, and the signature of the command shows under the line."},
 	{file = "running.png", group = .Console, guide = "docs/CONSOLE.md", caption = "A line runs in the second thread of the console: the console keeps the keys, and Escape stops the call."},
