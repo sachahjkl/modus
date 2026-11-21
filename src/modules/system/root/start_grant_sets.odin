@@ -338,6 +338,13 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// The delegated projects service: its service ring and transfer region for
 	// pins.lex inspection, source updates, and ephemeral project consoles.
 	{name = "projects", grants = {.System_Part}},
+	// The delegated disk_processes service: read-only module_files catalog,
+	// iterative import validation, debug-object lookups, and Start_From_Bytes
+	// preparation. Holds no root ring and no machine authority.
+	{name = "disk_processes", grants = {.System_Part}},
+	// The delegated devices service: PCI identity table matching and
+	// attenuated per-device grant minting. Holds no root ring.
+	{name = "devices", grants = {.System_Part}},
 	// Only the image of the test of a shortage of frames holds it: its
 	// start list asks for it, and shortage_start gives it the machine with Inspect and
 	// Stop; a command Start of another sender gives it no grant.
@@ -472,7 +479,7 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 // (tools/modustool/build/start_grant_sets_check.odin), because the debug access to
 // a process reads that grant. The names are strings that the tool reads.
 @(rodata)
-system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "gpu_device", "wiring", "powerbox", "collector", "plans", "recipes", "projects"}
+system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "gpu_device", "wiring", "powerbox", "collector", "plans", "recipes", "projects", "disk_processes", "devices"}
 
 // name_is_a_system_part says if a name is one of system_part_names.
 name_is_a_system_part :: proc "contextless" (name: string) -> bool {

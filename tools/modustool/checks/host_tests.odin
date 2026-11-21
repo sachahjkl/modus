@@ -352,4 +352,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/software_machine",
 	foundation.SOURCE_FOLDER_CONTRACT + "/virtio_gpu",
 	foundation.SOURCE_FOLDER_CONTRACT + "/webgpu_subset",
+	foundation.SOURCE_FOLDER_CONTRACT + "/root_delegation",
+	foundation.SOURCE_FOLDER_INTERNAL + "/disk_processes/disk_processes_core",
+	foundation.SOURCE_FOLDER_INTERNAL + "/devices/devices_core",
+	foundation.SOURCE_FOLDER_INTERNAL + "/settings/appearance_rule",
 }

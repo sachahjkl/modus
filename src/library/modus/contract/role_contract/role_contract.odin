@@ -53,6 +53,10 @@ Role :: enum u64 {
 	Projects       = 17,
 	Recipes        = 18,
 	Powerbox       = 19,
+	Disk_Processes = 20,
+	Principals     = 21,
+	Devices        = 22,
+	Settings       = 23,
 }
 
 // The scope within which a role has its holder (or holders, for Assistive).
@@ -261,6 +265,14 @@ role_properties :: proc "contextless" (role: Role) -> Role_Properties {
 		return {scope = .Machine, trust_path = .Ordinary, allows_multiple_holders = false, name = "recipes"}
 	case .Powerbox:
 		return {scope = .Machine, trust_path = .Trusted_Path, allows_multiple_holders = false, name = "powerbox"}
+	case .Disk_Processes:
+		return {scope = .Machine, trust_path = .Ordinary, allows_multiple_holders = false, name = "disk_processes"}
+	case .Principals:
+		return {scope = .Machine, trust_path = .Ordinary, allows_multiple_holders = false, name = "principals"}
+	case .Devices:
+		return {scope = .Machine, trust_path = .Ordinary, allows_multiple_holders = false, name = "devices"}
+	case .Settings:
+		return {scope = .Machine, trust_path = .Ordinary, allows_multiple_holders = false, name = "settings"}
 	}
 	return {}
 }

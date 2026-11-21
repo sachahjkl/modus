@@ -59,6 +59,7 @@
 // 1794791040 s since 1970".
 package settings_process
 
+import "internal:settings/appearance_rule"
 import "modus:contract/date"
 import "modus:contract/errors"
 import "modus:contract/isolated"
@@ -187,7 +188,13 @@ keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -
 // zone that the date page does not have yet.
 in_force_now :: proc "contextless" (choice: settings.Choice) -> (settings.Appearance_In_Force, appearance.Moment) {
 	moment := appearance.moment_of(date_page, system.time())
-	return appearance.in_force_of(choice.appearance, moment), moment
+	hour, minute, second: i32
+	time_known := false
+	if moment.known {
+		hour, minute, second, time_known = appearance_rule.hms_of_second_of_day(appearance.local_second_of_day(moment))
+	}
+	in_force, _ := appearance_rule.appearance_for_time(choice.appearance, hour, minute, second, time_known)
+	return in_force, moment
 }
 
 // page_write writes the values and their appearance in force on the page in
