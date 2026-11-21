@@ -1158,6 +1158,19 @@ modustool sdk-convert <object.o> <module.manifest> <output.modus> [--sdk <sdk-di
 - `sdk-convert` runs outside a repository checkout and converts any freestanding System V AMD64 relocatable ELF object (`ET_REL`) paired with a language-neutral `module.manifest` into a verified modus module file validated by `module.validate`, resolving imports from `<sdk-dir>/modules/` or `--import-dir`.
 - `modustool module-build <folder> --system <sdk-dir>` detects `SDK_MANIFEST.txt` in `<sdk-dir>`, verifies the SDK, and builds either an Odin outside module (`module.txt`, passing only `-collection:modus=<sdk-dir>/library/modus`) or a language-neutral module (`module.manifest` with `.o` or `.c`) against the SDK.
 
+## The self-hosting check
+
+`modustool self-host` verifies that `modustool` builds itself to identical bytes in two isolated staging directories. The design is in `src/md/features/bootstrap.md`; the code is `tools/modustool/build/bootstrap.odin`.
+
+```
+modustool self-host [--staging-dir <folder>] [--verify-chains]
+```
+
+1. The running tool clears `<staging>/stage1` and `<staging>/stage2` (default root: `build/self_host`), unsets `NIX_LDFLAGS`, sets `SOURCE_DATE_EPOCH=0`, and compiles `tools/modustool` into `stage1/modustool` with deterministic flags (`-define:TOOL_BUILDS_ITSELF=false`, `-source-code-locations:filename`, `-use-single-module`, `-extra-linker-flags:-Wl,--build-id=none`).
+2. The tool runs `stage1/modustool self-host --emit-binary <staging>/stage2/modustool`, so the Stage 1 binary compiles Stage 2 with the same flags.
+3. The tool computes the BLAKE3 hash of both binaries and verifies `blake3(stage1) == blake3(stage2)`. When the two binaries differ, the command fails and prints the exact byte offset of the first divergence.
+4. When `--verify-chains` is passed, the command also verifies the stage-by-stage `plans_recipes.Recipe_Spec` and `guest_builder.Guest_Build_Spec` DAGs for the `chibicc` self-host chain, the `hex0` to `odin` live-bootstrap guest chain, and the SQLite, Lua, and zstd freestanding C-world validation recipes.
+
 ## The commands of the tool
 
 All the automation of the project is one program of the host, `tools/modustool`. It is one command over packages, one for each concern: `foundation`, `resources`, `build`, `checks`, `fuzz`, `similarity`, `machine` and `site`, in the order of their imports. A package imports another one as `"modustool:<package>"`, with the flag `-collection:modustool=tools/modustool`, never by a relative path. The layout is in "The packages of the tool", below; the design is in `src/md/infrastructure/repository_layout.md`. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c modustool <command>`; `modustool help` prints the list with one line for each.
@@ -1188,6 +1201,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `fuzz list`, `fuzz <target> [executions [host_processes [seed]]]`, `fuzz all [executions]`, `fuzz show <target> <file>`, `fuzz minimize <target> <file>`, `fuzz regression <target> <file>`, `fuzz corpus <target>` | Fuzzes the readers of the system on the host: the module file, the debug object, the storage format, QUIC and TLS, TCP and HTTP, the remote protocol and the call region, the records of a ring, the disk grant table, the system description and the boot image, the fonts, the pointer theme and the tables of the firmware. It builds the instrumented child, runs a fuzz target, and minimizes each fuzz finding ("The fuzzing") |
 | `fuzz operations <executions> [seed]`, `fuzz regression operations <finding>`, `fuzz replay operations <file>` | Fuzzes the kernel operations on machines of the counted kernel: operation sequences that the counters of the kernel guide, a new machine after each fault, each fault of the kernel kept one time for its signature and minimized by machine lives and by steps, and the reach inputs of the corpus at the end of the run; a fixed finding into the corpus with the answers of the kernel that ships; or one sequence again on the kernel that ships ("The fuzzing of the kernel operations", "The corpus of the kernel operations", "The operation sequences") |
 | `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`). Each of its builds is a whole build |
+| `self-host [--staging-dir <folder>] [--emit-binary <path>] [--verify-chains]` | Builds `stage1/modustool`, invokes it to build `stage2/modustool` with identical deterministic flags, and verifies `blake3(stage1) == blake3(stage2)` or reports the first diverging byte offset ("The self-hosting check") |
 | `module-hashes write <file>`, `module-hashes compare <file>` | Records the hash of each module of the build in a file, or compares the build with such a record and fails when a module has another hash ("The hashes of the modules of two builds") |
 | `site` | Writes the site in `build/site/` |
 | `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |

@@ -397,6 +397,19 @@ COMMANDS :: [?]foundation.Command {
 	// - `all count [host_processes]`: every module and the boot program, one row
 	//   each.
 	{name = "repeat", about = "repeat <module> <count>: build one module again and again, with no machine, and count the distinct modules, LLVM IR files and objects; `repeat all <count> [host_processes]`: every module and the boot program, one row each", run = build.run_repeat},
+	// Proves two-stage self-hosting fixed-point determinism of modustool:
+	// builds `tools/modustool` into `stage1/modustool`, invokes that binary to
+	// build `stage2/modustool` with identical deterministic flags, compares
+	// their BLAKE3 hashes, and reports the first diverging byte offset if they
+	// differ (docs/TOOLS.md, "The self-hosting check").
+	//
+	// - `--staging-dir <folder>` (optional): isolated staging directory root;
+	//   defaults to `build/self_host`.
+	// - `--emit-binary <path>` (optional): compile `tools/modustool` once with
+	//   deterministic self-host flags into `<path>` (invoked by stage1).
+	// - `--verify-chains` (optional): also verify the C compiler self-host,
+	//   live-bootstrap seed, and SQLite/Lua/zstd C-world recipe chains.
+	{name = "self-host", about = "self-host [--staging-dir <folder>] [--emit-binary <path>] [--verify-chains]: build stage1/modustool, invoke stage1 to build stage2/modustool with deterministic flags, and prove blake3(stage1) == blake3(stage2)", run = build.run_self_host},
 	// Copies a file of `core:crypto` of the Odin compiler into the repository
 	// with the package name of the copy and the listed changes of its imports,
 	// and prints its line of the manifest of the origin.
