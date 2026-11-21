@@ -573,7 +573,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]
 	clients_memory = ctx.handles[timed_stream.SERVICE_RING]
 	status: system.Status
-	if clients, status = system.ring_open(clients_memory); status != .Ok {
+	if clients, status = system.ring_open(clients_memory, receive_handles = true); status != .Ok {
 		fail("no stream ring")
 	}
 	// The table of the pending records has one place for each place of

@@ -1,14 +1,18 @@
 #+build !freestanding
 package palette_table
 
+import "base:intrinsics"
 import "core:testing"
+import "core:thread"
 import "modus:contract/value_kinds"
 
 @(private = "file")
 table_of_test :: proc(count: int) -> []u8 {
-	memory := make([]u8, TABLE_BYTES)
+	bytes, ok := table_bytes_for(u64(count))
+	assert(ok)
+	memory := make([]u8, int(bytes))
 	header := (^Header)(raw_data(memory))
-	header^ = {magic = MAGIC, version = VERSION, change_count = 2, entry_count = u32(count)}
+	header^ = {magic = MAGIC, version = VERSION, change_count = 2, entry_count = u32(count), byte_length = bytes}
 	for index in 0 ..< count {
 		entry := (^Entry)(&memory[ENTRIES_OFFSET + index * size_of(Entry)])
 		entry.name_length = u8(copy(entry.name[:], "time"))
@@ -19,55 +23,87 @@ table_of_test :: proc(count: int) -> []u8 {
 	return memory
 }
 
-// A good table gives its entries and its generation; a full table too.
+// A good table of any count (0, 1, 3, 500, 5000) gives its entries and its
+// generation; header_read matches.
 @(test)
 a_good_table_is_copied :: proc(t: ^testing.T) {
-	snapshot := new(Snapshot)
-	defer free(snapshot)
-	for count in ([]int{0, 3, ENTRY_CAPACITY}) {
+	entries := make([]Entry, 5000)
+	defer delete(entries)
+	snapshot := Snapshot{entries = entries}
+	for count in ([]int{0, 1, 3, 500, 5000}) {
 		memory := table_of_test(count)
 		defer delete(memory)
-		problem, _ := snapshot_take(memory, snapshot)
+		header, header_problem := header_read(memory)
+		testing.expect_value(t, header_problem, Problem.None)
+		testing.expect_value(t, int(header.entry_count), count)
+		expected_bytes, _ := table_bytes_for(u64(count))
+		testing.expect_value(t, header.byte_length, expected_bytes)
+		problem, _ := snapshot_take(memory, &snapshot)
 		testing.expect_value(t, problem, Problem.None)
 		testing.expect_value(t, snapshot.entry_count, count)
 		testing.expect_value(t, snapshot.generation, 2)
 	}
-	result, result_ok := result_kind_of(&snapshot.entries[ENTRY_CAPACITY - 1])
+	result, result_ok := result_kind_of(&snapshot.entries[4999])
 	testing.expect(t, result_ok)
 	testing.expect_value(t, result, Value_Kind.Integer)
 }
 
 // The copy is checked, not the memory: a problem names its entry, and the
-// snapshot then has no entry.
+// snapshot then has no entry. Malformed byte_length, overflow, truncated
+// memory, and undersized snapshot buffers are refused before copying.
 @(test)
 a_bad_entry_is_named :: proc(t: ^testing.T) {
-	snapshot := new(Snapshot)
-	defer free(snapshot)
+	entries := make([]Entry, 8)
+	defer delete(entries)
+	snapshot := Snapshot{entries = entries}
 	memory := table_of_test(5)
 	defer delete(memory)
 	entry := (^Entry)(&memory[ENTRIES_OFFSET + 4 * size_of(Entry)])
 	entry.reserved = 1
 	// A stable generation that is not 0: a refusal must not give it.
 	(^Header)(raw_data(memory)).change_count = 4
-	problem, index := snapshot_take(memory, snapshot)
+	problem, index := snapshot_take(memory, &snapshot)
 	testing.expect_value(t, problem, Problem.Bad_Kind)
 	testing.expect_value(t, index, 4)
 	testing.expect_value(t, snapshot.entry_count, 0)
 	testing.expect_value(t, snapshot.generation, 0)
 	entry.reserved = 0
 	entry.signature_length = 2 // Shorter than the name.
-	problem, index = snapshot_take(memory, snapshot)
+	problem, index = snapshot_take(memory, &snapshot)
 	testing.expect_value(t, problem, Problem.Bad_Signature)
-	// A count past the capacity is refused before any entry is read.
-	(^Header)(raw_data(memory)).entry_count = ENTRY_CAPACITY + 1
-	problem, _ = snapshot_take(memory, snapshot)
+	entry.signature_length = u8(len("time() -> Integer"))
+	// A header whose byte_length does not match entry_count is refused.
+	(^Header)(raw_data(memory)).byte_length -= 1
+	problem, _ = snapshot_take(memory, &snapshot)
+	testing.expect_value(t, problem, Problem.Bad_Byte_Length)
+	_, header_problem := header_read(memory)
+	testing.expect_value(t, header_problem, Problem.Bad_Byte_Length)
+	(^Header)(raw_data(memory)).byte_length = max(u64)
+	problem, _ = snapshot_take(memory, &snapshot)
+	testing.expect_value(t, problem, Problem.Bad_Byte_Length)
+	expected_5, _ := table_bytes_for(5)
+	(^Header)(raw_data(memory)).byte_length = expected_5
+	// Truncated memory (1 byte short of byte_length) is refused.
+	problem, _ = snapshot_take(memory[:len(memory) - 1], &snapshot)
+	testing.expect_value(t, problem, Problem.Too_Small)
+	_, header_problem = header_read(memory[:len(memory) - 1])
+	testing.expect_value(t, header_problem, Problem.Too_Small)
+	// Below MIN_TABLE_BYTES is refused.
+	problem, _ = snapshot_take(memory[:MIN_TABLE_BYTES - 1], &snapshot)
+	testing.expect_value(t, problem, Problem.Too_Small)
+	// A snapshot buffer smaller than entry_count is refused with Too_Many_Entries.
+	small_snapshot := Snapshot{entries = entries[:4]}
+	problem, _ = snapshot_take(memory, &small_snapshot)
 	testing.expect_value(t, problem, Problem.Too_Many_Entries)
 	// A table that its writer changes with no end is no table.
 	(^Header)(raw_data(memory)).change_count = 9
-	problem, _ = snapshot_take(memory, snapshot)
+	problem, _ = snapshot_take(memory, &snapshot)
 	testing.expect_value(t, problem, Problem.Never_Stable)
-	problem, _ = snapshot_take(memory[:TABLE_BYTES - 1], snapshot)
-	testing.expect_value(t, problem, Problem.Too_Small)
+	// Overflow in table_bytes_for / table_pages_for.
+	_, overflow_ok := table_bytes_for(max(u64))
+	testing.expect(t, !overflow_ok)
+	_, pages_overflow_ok := table_pages_for(max(u64))
+	testing.expect(t, !pages_overflow_ok)
 }
 
 // A byte of the kind of the result or of a parameter that names no kind is
@@ -155,7 +191,7 @@ the_runs_of_a_result :: proc(t: ^testing.T) {
 	result_run(&tall, .Plain, "x")
 	testing.expect(t, !tall.fits)
 	// The copy of an area: a length past the area is refused.
-	memory := make([]u8, TABLE_BYTES)
+	memory := make([]u8, MIN_TABLE_BYTES)
 	defer delete(memory)
 	copied: [RESULT_CAPACITY]u8
 	memory[RESULT_OFFSET] = u8(Run_Part.Number)
@@ -266,7 +302,7 @@ a_parameter_name_is_checked :: proc(t: ^testing.T) {
 // one is checked after its copy.
 @(test)
 candidates_and_arguments_are_checked :: proc(t: ^testing.T) {
-	memory := make([]u8, TABLE_BYTES)
+	memory := make([]u8, MIN_TABLE_BYTES)
 	defer delete(memory)
 	copied := new([CANDIDATE_CAPACITY]Candidate)
 	defer free(copied)
@@ -533,4 +569,53 @@ the_texts_of_an_entry_are_utf_8 :: proc(t: ^testing.T) {
 	}
 	_, argument, ok = argument_unpack(argument_pack(0, .Text, 0, string(long[:])))
 	testing.expect(t, ok && argument.length == ARGUMENT_TEXT_CAPACITY - 1)
+}
+
+// A concurrent writer changing entry_count and byte_length under the seqlock
+// protocol must never cause snapshot_take to return a false hard error
+// (Bad_Byte_Length, Bad_Magic, Bad_Version, Too_Small, Too_Many_Entries):
+// torn header reads must retry and return either None or Never_Stable.
+@(test)
+concurrent_seqlock_writer_never_causes_torn_read_refusal :: proc(t: ^testing.T) {
+	MAX_ENTRIES :: 8
+	memory := table_of_test(MAX_ENTRIES)
+	defer delete(memory)
+
+	Shared :: struct {
+		memory: []u8,
+		stop:   u32,
+	}
+	shared := Shared{memory = memory}
+
+	writer := thread.create_and_start_with_poly_data(&shared, proc(s: ^Shared) {
+		header := (^Header)(raw_data(s.memory))
+		bytes_small, _ := table_bytes_for(2)
+		bytes_large, _ := table_bytes_for(MAX_ENTRIES)
+		toggle := false
+		for intrinsics.atomic_load_explicit(&s.stop, .Relaxed) == 0 {
+			toggle = !toggle
+			count: u32 = toggle ? 2 : MAX_ENTRIES
+			byte_len := toggle ? bytes_small : bytes_large
+			intrinsics.atomic_add(&header.change_count, 1)
+			intrinsics.volatile_store(&header.entry_count, count)
+			intrinsics.volatile_store(&header.byte_length, byte_len)
+			intrinsics.atomic_add(&header.change_count, 1)
+		}
+	})
+	defer {
+		intrinsics.atomic_store_explicit(&shared.stop, 1, .Relaxed)
+		thread.join(writer)
+		thread.destroy(writer)
+	}
+
+	entries_buf: [MAX_ENTRIES]Entry
+	snapshot := Snapshot{entries = entries_buf[:]}
+	for _ in 0 ..< 20_000 {
+		problem, _ := snapshot_take(memory, &snapshot)
+		testing.expectf(t, problem == .None || problem == .Never_Stable, "torn read caused false hard error: %v", problem)
+		if problem == .None {
+			testing.expect(t, snapshot.entry_count == 2 || snapshot.entry_count == MAX_ENTRIES)
+			testing.expect(t, snapshot.generation & 1 == 0)
+		}
+	}
 }

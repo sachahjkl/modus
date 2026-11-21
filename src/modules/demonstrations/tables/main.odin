@@ -712,7 +712,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	// The service: the root service starts sample as a process.
 	if ring_handle := ctx.handles[system.GRANT_ROOT]; ring_handle != 0 {
-		if requests, status = system.ring_open(ring_handle); status == .Ok {
+		if requests, status = system.ring_open(ring_handle, receive_handles = true); status == .Ok {
 			if service, status = system.service_connection(&requests, 1, "sample"); status == .Ok {
 				ways_ready[.Service] = true
 			}

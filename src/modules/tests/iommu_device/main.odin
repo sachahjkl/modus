@@ -176,7 +176,7 @@ page_holds :: proc "contextless" (bytes: [^]u8, value: u8) -> bool {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine := ctx.handles[pci.GRANT_MACHINE]
-	clients, ring_status := system.ring_open(ctx.handles[block.SERVICE_RING])
+	clients, ring_status := system.ring_open(ctx.handles[block.SERVICE_RING], receive_handles = true)
 	if ring_status != .Ok {
 		fail("no block ring")
 	}

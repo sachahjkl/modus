@@ -73,7 +73,7 @@ service_open :: proc "contextless" (ctx: ^Context) -> (service: Service, ok: boo
 	if memory == 0 {
 		return {}, false
 	}
-	names, status := ring_open(memory)
+	names, status := ring_open(memory, receive_handles = true)
 	if status != .Ok {
 		return {}, false
 	}
@@ -183,7 +183,7 @@ connection_make :: proc "contextless" (ring_memory, region_memory: Handle, calle
 	if size_status != .Ok {
 		return {}, false
 	}
-	calls, ring_status := ring_open(ring_memory)
+	calls, ring_status := ring_open(ring_memory, receive_handles = true)
 	if ring_status != .Ok {
 		return {}, false
 	}
@@ -236,7 +236,7 @@ connection_add :: proc "contextless" (service: ^Service, ring_memory, region_mem
 		if size_status != .Ok {
 			return false
 		}
-		calls, ring_status := ring_open(ring_memory)
+		calls, ring_status := ring_open(ring_memory, receive_handles = true)
 		if ring_status != .Ok {
 			return false
 		}

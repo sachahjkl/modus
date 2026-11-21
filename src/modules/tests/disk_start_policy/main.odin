@@ -51,7 +51,7 @@ next_tag: u32 = 1
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Running{})
 	ring_status: system.Status
-	requests, ring_status = system.ring_open(ctx.handles[system.GRANT_ROOT])
+	requests, ring_status = system.ring_open(ctx.handles[system.GRANT_ROOT], receive_handles = true)
 	if ring_status != .Ok {
 		system.log_fact(.Info, Root_Ring_Refused{status = ring_status})
 		system.stop(.Failed)

@@ -31,10 +31,21 @@ fuzz_palette_memory: []u8
 @(private = "file")
 fuzz_palette_snapshot: ^palette_table.Snapshot
 
+@(private = "file")
+fuzz_palette_entries: []palette_table.Entry
+
 fuzz_palette_table_start :: proc() -> bool {
-	fuzz_palette_memory = make([]u8, palette_table.TABLE_BYTES)
+	bytes, ok := palette_table.table_bytes_for(palette_table.INITIAL_ENTRY_CAPACITY)
+	if !ok {
+		return false
+	}
+	fuzz_palette_memory = make([]u8, int(bytes))
+	fuzz_palette_entries = make([]palette_table.Entry, palette_table.INITIAL_ENTRY_CAPACITY)
 	fuzz_palette_snapshot = new(palette_table.Snapshot)
-	return fuzz_palette_memory != nil && fuzz_palette_snapshot != nil
+	if fuzz_palette_snapshot != nil {
+		fuzz_palette_snapshot.entries = fuzz_palette_entries
+	}
+	return fuzz_palette_memory != nil && fuzz_palette_entries != nil && fuzz_palette_snapshot != nil
 }
 
 // fuzz_palette_place writes bytes at a place of the memory of the table,
@@ -282,7 +293,8 @@ fuzz_palette_entry_of :: proc(kind: palette_table.Entry_Kind, name: string, abou
 
 fuzz_palette_table_seeds :: proc(seeds: ^[dynamic][]u8) {
 	// A table of one entry of each kind.
-	header := palette_table.Header{magic = palette_table.MAGIC, version = palette_table.VERSION, change_count = 4, entry_count = len(palette_table.Entry_Kind)}
+	seed_bytes, _ := palette_table.table_bytes_for(u64(len(palette_table.Entry_Kind)))
+	header := palette_table.Header{magic = palette_table.MAGIC, version = palette_table.VERSION, change_count = 4, entry_count = len(palette_table.Entry_Kind), byte_length = seed_bytes}
 	table := make([dynamic]u8)
 	append(&table, u8(Fuzz_Palette_Part.Entries))
 	append(&table, ..mem.ptr_to_bytes(&header))
@@ -291,12 +303,14 @@ fuzz_palette_table_seeds :: proc(seeds: ^[dynamic][]u8) {
 		append(&table, ..mem.ptr_to_bytes(&entry))
 	}
 	append(seeds, table[:])
-	// The same table in a change, and with one entry past the capacity.
-	for change in ([2]palette_table.Header{{change_count = 5}, {entry_count = palette_table.ENTRY_CAPACITY + 1}}) {
+	// The same table in a change, and with one entry past the buffer capacity.
+	over_bytes, _ := palette_table.table_bytes_for(palette_table.INITIAL_ENTRY_CAPACITY + 1)
+	for change in ([2]palette_table.Header{{change_count = 5}, {entry_count = palette_table.INITIAL_ENTRY_CAPACITY + 1, byte_length = over_bytes}}) {
 		changed := slice.clone(table[:])
 		other := header
 		other.change_count = change.change_count != 0 ? change.change_count : header.change_count
 		other.entry_count = change.entry_count != 0 ? change.entry_count : header.entry_count
+		other.byte_length = change.byte_length != 0 ? change.byte_length : header.byte_length
 		copy(changed[1:], mem.ptr_to_bytes(&other))
 		append(seeds, changed)
 	}
@@ -350,7 +364,7 @@ fuzz_palette_table_regions :: proc(input: []u8, regions: ^[dynamic]Fuzz_Region) 
 	case .Entries:
 		if len(input) >= 1 + size_of(palette_table.Header) {
 			append(regions, Fuzz_Region{offset = 1, type = palette_table.Header, count = 1})
-			count := min((len(input) - 1 - size_of(palette_table.Header)) / size_of(palette_table.Entry), palette_table.ENTRY_CAPACITY)
+			count := min((len(input) - 1 - size_of(palette_table.Header)) / size_of(palette_table.Entry), palette_table.INITIAL_ENTRY_CAPACITY)
 			if count > 0 {
 				append(regions, Fuzz_Region{offset = 1 + size_of(palette_table.Header), type = palette_table.Entry, count = count})
 			}

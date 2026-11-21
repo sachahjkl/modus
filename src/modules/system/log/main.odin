@@ -695,6 +695,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	}
 	service, _ = system.service_open(ctx)
+	system.wiring_ring_open()
 	logged := false
 	picture_owed := true // The window does not show each record that was taken.
 	for {

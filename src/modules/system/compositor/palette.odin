@@ -58,8 +58,74 @@ palette_element_places_drawn, palette_element_places_written: interface.Element_
 //
 // The two lists take turns. The thread writes only the list that the loop
 // does not read: it starts a list only after the loop adopted the one
-// before, so the loop never reads a list that changes.
+// before, so the loop never reads a list that changes. Each list's backing
+// memory is sized on demand off the main thread for any entry count.
+Palette_List_Memory :: struct {
+	handle:            system.Handle,
+	memory:            []u8,
+	provider_capacity: int,
+	total_capacity:    int,
+}
 palette_lists: [2]palette.List
+palette_list_memories: [2]Palette_List_Memory
+
+// palette_list_ensure grows the backing memory of palette_lists[slot] off the
+// main thread whenever provider or total entries exceed its current capacity.
+palette_list_ensure :: proc "contextless" (slot: u32, provider_needed, total_needed: int) -> bool {
+	mem := &palette_list_memories[slot]
+	if mem.provider_capacity >= provider_needed && mem.total_capacity >= total_needed && len(mem.memory) > 0 {
+		return true
+	}
+	provider_cap := max(provider_needed, palette_table.INITIAL_ENTRY_CAPACITY)
+	if mem.provider_capacity > 0 && provider_cap > mem.provider_capacity && mem.provider_capacity <= max(int) / 2 {
+		provider_cap = max(provider_cap, mem.provider_capacity * 2)
+	}
+	base_local := len(bar.names) + 2 * CLIENT_CAPACITY
+	if provider_cap > max(int) - base_local {
+		return false
+	}
+	total_cap := max(total_needed, provider_cap + base_local)
+	if mem.total_capacity > 0 && total_cap > mem.total_capacity && mem.total_capacity <= max(int) / 2 {
+		total_cap = max(total_cap, mem.total_capacity * 2)
+	}
+	bytes, ok := palette.list_memory_bytes(provider_cap, total_cap)
+	if !ok || bytes > max(u64) - (system.PAGE_SIZE - 1) {
+		return false
+	}
+	pages := (bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	if pages > max(u64) / system.PAGE_SIZE {
+		return false
+	}
+	new_handle, create_status := system.memory_create(pages)
+	if create_status != .Ok {
+		return false
+	}
+	address, map_status := system.memory_map(new_handle, {.Write})
+	if map_status != .Ok {
+		system.close(new_handle)
+		return false
+	}
+	new_memory := ([^]u8)(address)[:pages * system.PAGE_SIZE]
+	if !palette.list_bind_memory(&palette_lists[slot], new_memory, provider_cap, total_cap) {
+		system.memory_unmap(address)
+		system.close(new_handle)
+		return false
+	}
+	if mem.memory != nil {
+		system.memory_unmap(raw_data(mem.memory))
+		system.close(mem.handle)
+	}
+	mem^ = {handle = new_handle, memory = new_memory, provider_capacity = provider_cap, total_capacity = total_cap}
+	return true
+}
+
+Table_Slot :: struct {
+	handle:     system.Handle,
+	table:      []u8,
+	generation: u32,
+}
+
+TABLE_QUEUE_CAPACITY :: 8
 
 Ranking_Window :: struct {
 	title:  system.Name,
@@ -70,7 +136,10 @@ Ranking_Window :: struct {
 }
 
 Ranking :: struct {
-	lock:           system.Lock, // Over the request, for one copy in memory.
+	// Held only for O(1) copies of small structs and queue pointers: never
+	// held across memory_create, memory_map, memory_unmap, header_read, or
+	// list_collect, so the compositor main thread never blocks on ranking work.
+	lock:           system.Lock,
 	query:          [palette.TYPED_CAPACITY]u8, // The typed part of the request.
 	query_length:   int,
 	windows:        [CLIENT_CAPACITY]Ranking_Window, // The windows, the front one first.
@@ -83,14 +152,28 @@ Ranking :: struct {
 	published_list: u32, // The index of the newest whole list.
 	adopted:        u32, // The value of `published` that the loop adopted. The thread waits on this word.
 	longest:        u64, // The longest making of a list since the last close of the panel, in nanoseconds.
-	// The mapping of the table of the provider, or nil. The lock is held
-	// by the thread for one copy of the table, and by the loop to end the
-	// mapping: the thread never reads a table that is gone.
-	table_lock:     system.Lock,
-	table:          []u8,
+	// Provider table lifecycle shared via O(1) handoff under `lock`:
+	// - main thread queues incoming Table_Replaced handles into pending_tables
+	//   and retires replaced/removed mappings into retire_tables;
+	// - ranking thread validates/maps pending_tables off the main thread,
+	//   publishes the newest valid table in ready_table, and unmaps/closes
+	//   retire_tables only after both threads stopped reading them.
+	provider_ring_handle: system.Handle,
+	active_table_handle:  system.Handle,
+	active_table:         []u8,
+	pending_tables:       [TABLE_QUEUE_CAPACITY]system.Handle,
+	pending_table_count:  int,
+	ready_table:          Table_Slot,
+	ready_table_present:  bool,
+	retire_tables:        [TABLE_QUEUE_CAPACITY]Table_Slot,
+	retire_table_count:   int,
 }
 
 palette_ranking: Ranking
+// The main thread's read-only view of the active provider table: updated only
+// on the main thread so palette_wait, palette_turn, and palette_answer read it
+// with no lock and zero contention.
+palette_main_table: []u8
 // The copy of the frecency of a request, for the ranking thread only: a
 // global, because the stack of that thread is small.
 palette_ranking_frecency: line_editor.Frecency
@@ -155,12 +238,15 @@ palette_ranking_thread :: proc "c" (parameter: rawptr) -> ! {
 			}
 			system.word_wait(&ranking.adopted, adopted)
 		}
-		// The request, copied under its lock: the list answers this one.
+		// The request and any pending/retired table handoffs, copied under
+		// ranking.lock (O(1)): no syscall or O(N) work runs under any lock.
 		query: [palette.TYPED_CAPACITY]u8
 		titles: [CLIENT_CAPACITY]system.Name
 		prefixes: [CLIENT_CAPACITY][process_page.HASH_PREFIX_DIGITS]u8
 		windows: [CLIENT_CAPACITY]palette.Window
 		recents: [palette.RECENT_CAPACITY]palette.Recent
+		pending: [TABLE_QUEUE_CAPACITY]system.Handle
+		retired: [TABLE_QUEUE_CAPACITY]Table_Slot
 		system.lock(&ranking.lock)
 		sequence := intrinsics.atomic_load_explicit(&ranking.requested, .Relaxed)
 		query_length := copy(query[:], ranking.query[:clamp(ranking.query_length, 0, len(ranking.query))])
@@ -175,14 +261,116 @@ palette_ranking_thread :: proc "c" (parameter: rawptr) -> ! {
 		}
 		recent_count := copy(recents[:], ranking.recents[:clamp(ranking.recent_count, 0, len(ranking.recents))])
 		palette_ranking_frecency = ranking.frecency
+		retired_count := copy(retired[:], ranking.retire_tables[:ranking.retire_table_count])
+		ranking.retire_table_count = 0
+		pending_count := copy(pending[:], ranking.pending_tables[:ranking.pending_table_count])
+		ranking.pending_table_count = 0
+		ring_handle := ranking.provider_ring_handle
+		active_handle := ranking.active_table_handle
+		current_table := ranking.active_table
 		system.unlock(&ranking.lock)
+
+		// Unmap and close tables that the main thread retired (neither thread
+		// reads them anymore).
+		for slot in retired[:retired_count] {
+			if slot.table != nil {
+				system.memory_unmap(raw_data(slot.table))
+			}
+			if slot.handle != 0 {
+				system.close(slot.handle)
+			}
+		}
+
+		// Validate and map any pending Table_Replaced handles off the main thread.
+		validated: Table_Slot
+		has_validated := false
+		if ring_handle != 0 {
+			for new_handle in pending[:pending_count] {
+				if new_handle == 0 || new_handle == active_handle || new_handle == ring_handle || (has_validated && new_handle == validated.handle) {
+					continue
+				}
+				kind, rights, through := system.handle_state(new_handle, ring_handle)
+				if !through {
+					continue
+				}
+				if kind != .Memory || .Read not_in rights {
+					system.close(new_handle)
+					continue
+				}
+				pages, size_status := system.memory_size(new_handle)
+				if size_status != .Ok || pages < palette_table.MIN_TABLE_PAGES {
+					system.close(new_handle)
+					continue
+				}
+				address, map_status := system.memory_map(new_handle, {})
+				if map_status != .Ok {
+					system.close(new_handle)
+					continue
+				}
+				new_table := ([^]u8)(address)[:pages * system.PAGE_SIZE]
+				header, header_problem := palette_table.header_read(new_table)
+				if header_problem != .None {
+					system.memory_unmap(address)
+					system.close(new_handle)
+					system.log_fact(.Warning, Provider_Table_Refused{entry_index = 0, table_problem = value_kinds.text_field(palette_table.problem_names[header_problem], TABLE_PROBLEM_FIELD_BYTES)})
+					continue
+				}
+				if has_validated {
+					system.memory_unmap(raw_data(validated.table))
+					system.close(validated.handle)
+				}
+				validated = {handle = new_handle, table = new_table, generation = header.change_count}
+				has_validated = true
+			}
+		}
+		if has_validated {
+			superseded: Table_Slot
+			drop_validated := false
+			system.lock(&ranking.lock)
+			if ranking.provider_ring_handle == ring_handle && ring_handle != 0 {
+				if ranking.ready_table_present {
+					superseded = ranking.ready_table
+				}
+				ranking.ready_table = validated
+				ranking.ready_table_present = true
+				ranking.active_table = validated.table
+				ranking.active_table_handle = validated.handle
+				current_table = validated.table
+			} else {
+				drop_validated = true
+			}
+			system.unlock(&ranking.lock)
+			if superseded.table != nil {
+				system.memory_unmap(raw_data(superseded.table))
+			}
+			if superseded.handle != 0 {
+				system.close(superseded.handle)
+			}
+			if drop_validated {
+				system.memory_unmap(raw_data(validated.table))
+				system.close(validated.handle)
+			}
+		}
 
 		target := 1 - intrinsics.atomic_load_explicit(&ranking.published_list, .Relaxed)
 		list := &palette_lists[target]
 		start := system.nanoseconds()
-		system.lock(&ranking.table_lock)
-		problem, problem_index := palette.list_collect(list, {recents = recents[:recent_count], frecency = &palette_ranking_frecency}, bar.names[:], windows[:window_count], ranking.table)
-		system.unlock(&ranking.table_lock)
+		local_needed := len(bar.names) + 2 * window_count
+		provider_needed := 0
+		if current_table != nil {
+			if header, header_problem := palette_table.header_read(current_table); header_problem == .None {
+				provider_needed = int(header.entry_count)
+			}
+		}
+		_ = palette_list_ensure(target, provider_needed, provider_needed + local_needed)
+		problem, problem_index := palette.list_collect(list, {recents = recents[:recent_count], frecency = &palette_ranking_frecency}, bar.names[:], windows[:window_count], current_table)
+		if problem == .Too_Many_Entries && current_table != nil {
+			if header, header_problem := palette_table.header_read(current_table); header_problem == .None {
+				if palette_list_ensure(target, int(header.entry_count), int(header.entry_count) + local_needed) {
+					problem, problem_index = palette.list_collect(list, {recents = recents[:recent_count], frecency = &palette_ranking_frecency}, bar.names[:], windows[:window_count], current_table)
+				}
+			}
+		}
 		palette.list_rank(list, string(query[:query_length]))
 		list.sequence = sequence
 		spent := system.nanoseconds() - start
@@ -253,8 +441,10 @@ palette_wait :: proc "contextless" (wait: ^system.Wait) {
 	system.wait_word(wait, &palette_ranking.published, palette_published_seen)
 	if palette_provider_ring.head != nil {
 		system.wait_records(wait, &palette_provider_ring.completions)
-		header := (^palette_table.Header)(raw_data(palette_ranking.table))
-		system.wait_word(wait, &header.change_count, palette_generation_seen)
+		if palette_main_table != nil {
+			header := (^palette_table.Header)(raw_data(palette_main_table))
+			system.wait_word(wait, &header.change_count, palette_generation_seen)
+		}
 	}
 }
 
@@ -268,10 +458,32 @@ palette_turn :: proc "contextless" () {
 		palette_refresh()
 	}
 	if palette_provider_ring.head != nil {
-		header := (^palette_table.Header)(raw_data(palette_ranking.table))
-		if generation := intrinsics.atomic_load_explicit(&header.change_count, .Acquire); generation != palette_generation_seen {
-			palette_generation_seen = generation
-			palette_entries_refresh()
+		// Adopt any replacement table validated off-thread by the ranking
+		// thread in O(1), retiring the previous table for off-thread unmap.
+		system.lock(&palette_ranking.lock)
+		if palette_ranking.ready_table_present {
+			ready := palette_ranking.ready_table
+			palette_ranking.ready_table = {}
+			palette_ranking.ready_table_present = false
+			if (palette_main_table != nil || palette_provider_table_handle != 0) && palette_ranking.retire_table_count < len(palette_ranking.retire_tables) {
+				palette_ranking.retire_tables[palette_ranking.retire_table_count] = {handle = palette_provider_table_handle, table = palette_main_table}
+				palette_ranking.retire_table_count += 1
+				intrinsics.atomic_add(&palette_ranking.requested, 1)
+			}
+			palette_provider_table_handle = ready.handle
+			palette_main_table = ready.table
+			palette_generation_seen = ready.generation
+			system.unlock(&palette_ranking.lock)
+			system.word_wake(&palette_ranking.requested)
+		} else {
+			system.unlock(&palette_ranking.lock)
+		}
+		if palette_main_table != nil {
+			header := (^palette_table.Header)(raw_data(palette_main_table))
+			if generation := intrinsics.atomic_load_explicit(&header.change_count, .Acquire); generation != palette_generation_seen {
+				palette_generation_seen = generation
+				palette_entries_refresh()
+			}
 		}
 		for record in system.receive(&palette_provider_ring.completions) {
 			palette_answer(record)
@@ -349,13 +561,15 @@ palette_provider_add :: proc "contextless" (ring_handle, table_handle: system.Ha
 	if palette_provider_ring.head != nil {
 		palette_provider_remove()
 	}
-	opened, status := system.ring_open(ring_handle)
+	opened, status := system.ring_open(ring_handle, receive_handles = true)
 	address: rawptr
+	table_pages: u64
 	if status == .Ok {
-		table_pages, table_status := system.memory_size(table_handle)
+		table_status: system.Status
+		table_pages, table_status = system.memory_size(table_handle)
 		if table_status != .Ok {
 			status = table_status
-		} else if table_pages < palette_table.TABLE_PAGES {
+		} else if table_pages < palette_table.MIN_TABLE_PAGES {
 			status = .Bad_Handle
 		}
 	}
@@ -373,12 +587,52 @@ palette_provider_add :: proc "contextless" (ring_handle, table_handle: system.Ha
 	}
 	palette_provider_ring = opened
 	palette_provider_ring_handle, palette_provider_table_handle = ring_handle, table_handle
-	system.lock(&palette_ranking.table_lock)
-	palette_ranking.table = ([^]u8)(address)[:palette_table.TABLE_BYTES]
-	system.unlock(&palette_ranking.table_lock)
-	palette_generation_seen = intrinsics.volatile_load(&(^palette_table.Header)(address).change_count)
+	palette_main_table = ([^]u8)(address)[:table_pages * system.PAGE_SIZE]
+	system.lock(&palette_ranking.lock)
+	palette_ranking.provider_ring_handle = ring_handle
+	palette_ranking.active_table_handle = table_handle
+	palette_ranking.active_table = palette_main_table
+	palette_ranking.pending_table_count = 0
+	palette_ranking.ready_table = {}
+	palette_ranking.ready_table_present = false
+	system.unlock(&palette_ranking.lock)
+	palette_generation_seen = intrinsics.atomic_load_explicit(&(^palette_table.Header)(address).change_count, .Acquire)
 	system.log_fact(.Info, Palette_Provider_Present{})
 	palette_entries_refresh()
+}
+
+// palette_provider_table_replace queues a replacement table handle from
+// Table_Replaced for off-thread validation and mapping by palette_ranking_thread.
+// Replayed live handles and out-of-range words are rejected immediately without
+// closing any handle or blocking the compositor main thread.
+palette_provider_table_replace :: proc "contextless" (record: ring.Record) {
+	raw_handle := record.values[1]
+	if raw_handle == 0 || raw_handle > u64(max(u32)) {
+		return
+	}
+	new_handle := system.Handle(raw_handle)
+	if new_handle == palette_provider_table_handle || new_handle == palette_provider_ring_handle {
+		return
+	}
+	system.lock(&palette_ranking.lock)
+	duplicate := new_handle == palette_ranking.active_table_handle || new_handle == palette_ranking.provider_ring_handle || (palette_ranking.ready_table_present && new_handle == palette_ranking.ready_table.handle)
+	for index in 0 ..< palette_ranking.pending_table_count {
+		if palette_ranking.pending_tables[index] == new_handle {
+			duplicate = true
+			break
+		}
+	}
+	queued := false
+	if !duplicate && palette_ranking.pending_table_count < len(palette_ranking.pending_tables) {
+		palette_ranking.pending_tables[palette_ranking.pending_table_count] = new_handle
+		palette_ranking.pending_table_count += 1
+		intrinsics.atomic_add(&palette_ranking.requested, 1)
+		queued = true
+	}
+	system.unlock(&palette_ranking.lock)
+	if queued {
+		system.word_wake(&palette_ranking.requested)
+	}
 }
 
 // palette_provider_remove ends the palette provider: the process stopped,
@@ -388,15 +642,28 @@ palette_provider_remove :: proc "contextless" () {
 	if palette_provider_ring.head == nil {
 		return
 	}
-	system.lock(&palette_ranking.table_lock)
-	address := raw_data(palette_ranking.table)
-	palette_ranking.table = nil
-	system.unlock(&palette_ranking.table_lock)
-	system.memory_unmap(address)
+	system.lock(&palette_ranking.lock)
+	if (palette_main_table != nil || palette_provider_table_handle != 0) && palette_ranking.retire_table_count < len(palette_ranking.retire_tables) {
+		palette_ranking.retire_tables[palette_ranking.retire_table_count] = {handle = palette_provider_table_handle, table = palette_main_table}
+		palette_ranking.retire_table_count += 1
+	}
+	if palette_ranking.ready_table_present && palette_ranking.retire_table_count < len(palette_ranking.retire_tables) {
+		palette_ranking.retire_tables[palette_ranking.retire_table_count] = palette_ranking.ready_table
+		palette_ranking.retire_table_count += 1
+	}
+	palette_ranking.ready_table = {}
+	palette_ranking.ready_table_present = false
+	palette_ranking.active_table = nil
+	palette_ranking.active_table_handle = 0
+	palette_ranking.provider_ring_handle = 0
+	palette_ranking.pending_table_count = 0
+	system.unlock(&palette_ranking.lock)
+	palette_main_table = nil
+	palette_provider_table_handle = 0
 	system.ring_close(&palette_provider_ring)
 	palette_provider_ring = {}
 	system.close(palette_provider_ring_handle)
-	system.close(palette_provider_table_handle)
+	palette_provider_ring_handle = 0
 	palette_answer_awaited = 0
 	system.log_fact(.Info, Palette_Provider_Absent{})
 	palette_candidates_awaited = 0
@@ -533,6 +800,10 @@ palette_kind_words := [palette_table.Value_Kind]string {
 // waits for is dropped.
 palette_answer :: proc "contextless" (record: ring.Record) {
 	outcome := record.values[0]
+	if outcome == u64(palette_table.Outcome.Table_Replaced) {
+		palette_provider_table_replace(record)
+		return
+	}
 	if record.tag != 0 && record.tag == palette_candidates_awaited {
 		palette_candidates_awaited = 0
 		// An answer that gives no candidate ends the wait of Tab too.
@@ -543,7 +814,7 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 		}
 		if outcome == u64(palette_table.Outcome.Candidates_Ready) && palette_panel.state == .Arguments {
 			form := &palette_panel.form
-			palette.form_candidates_set(form, palette_ranking.table, record.values[2], record.values[1], record.values[3])
+			palette.form_candidates_set(form, palette_main_table, record.values[2], record.values[1], record.values[3])
 			system.log_fact(.Info, Palette_Candidates_Ready{candidates = u64(form.candidate_count), field = u64(form.current), buttons_words = value_kinds.text_field(palette.field_control(form, form.current) == .Buttons ? BUTTONS_WORDS : "", BUTTONS_WORDS_FIELD_BYTES)})
 			// Tab that came before the candidates acts now, on them.
 			if palette_tab_waits {
@@ -574,7 +845,7 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 	if palette_panel.state != .Running {
 		return
 	}
-	palette.result_set(&palette_panel, outcome, record.values[1], palette_ranking.table, record.values[2])
+	palette.result_set(&palette_panel, outcome, record.values[1], palette_main_table, record.values[2])
 	palette.form_close(&palette_panel)
 	if palette_sent_setting && palette_panel.state == .Result && palette_panel.result.outcome == .Shown_In_Panel {
 		// A setting: the desktop shows the change, and the panel shows
@@ -600,7 +871,7 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 		system.log_fact(.Info, Palette_Shows_Error{})
 	case .Refused:
 		system.log_fact(.Info, Palette_Shows_Refusal{})
-	case .None, .Shown_In_Console, .Edit_Opened, .Candidates_Ready, .Manual_Opened:
+	case .None, .Shown_In_Console, .Edit_Opened, .Candidates_Ready, .Manual_Opened, .Table_Replaced:
 		system.log_fact(.Info, Palette_Shows_No_Result{})
 	}
 	palette_refresh()

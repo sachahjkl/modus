@@ -479,6 +479,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	start_time = system.time()
 	service, _ = system.service_open(ctx)
+	system.wiring_ring_open()
 	status: system.Status
 	if endpoint, status = system.ring_open(ctx.handles[datagram.GRANT_RING]); status != .Ok {
 		fail("no endpoint: the process has no grant of the network")

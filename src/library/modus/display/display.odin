@@ -663,7 +663,7 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	text_settings_open(ctx)
 	interface_font_load(ctx)
 	status: system.Status
-	if window.ring, status = system.ring_open(window.ring_memory, error); status != .Ok {
+	if window.ring, status = system.ring_open(window.ring_memory, error, receive_handles = true); status != .Ok {
 		return {}, false
 	}
 	// The size is logical; the surface is in pixels of the screen, at the

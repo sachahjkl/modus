@@ -46,7 +46,7 @@ list_page: []u8
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_status: system.Status
 	requests_memory = ctx.handles[system.GRANT_ROOT]
-	requests, ring_status = system.ring_open(requests_memory)
+	requests, ring_status = system.ring_open(requests_memory, receive_handles = true)
 	if ring_status != .Ok {
 		system.log_fact(.Error, Root_Ring_Refused{status = ring_status})
 		system.stop(.Failed)

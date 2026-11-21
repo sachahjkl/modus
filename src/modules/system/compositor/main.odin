@@ -1086,7 +1086,7 @@ client_add :: proc "contextless" (record: ring.Record) {
 		if client.ring_memory != 0 {
 			continue
 		}
-		opened, status := system.ring_open(memory)
+		opened, status := system.ring_open(memory, receive_handles = true)
 		if status != .Ok {
 			break
 		}

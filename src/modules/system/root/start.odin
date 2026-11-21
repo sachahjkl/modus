@@ -439,7 +439,8 @@ start_rings_give :: proc "contextless" (work: ^Start_Work) -> (status: system.St
 	slot := work.slot
 	grants := work.start_grant_set.grants
 	if root_ring.root_ring_given(grants) {
-		slot.requests_memory, slot.requests = system.ring_create() or_return
+		accepts_handles := root_ring.sender_allowed(.Wire, grants) || root_ring.sender_allowed(.Start_Edit, grants)
+		slot.requests_memory, slot.requests = system.ring_create(receive_handles = accepts_handles) or_return
 		start_grant_put(work, .Root_Ring, {slot.requests_memory, {.Read, .Write}})
 	}
 	if .Network_Device in grants {

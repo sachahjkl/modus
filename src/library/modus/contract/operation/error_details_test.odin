@@ -154,7 +154,7 @@ the_bounds_of_the_table_are_the_named_constants :: proc(t: ^testing.T) {
 	testing.expect_value(t, OPERATIONS[.Process_Create].parameters[2].limit, u64(PROCESS_NAME_BYTES_MOST))
 	testing.expect_value(t, OPERATIONS[.Memory_Create].parameters[2].limit, MEMORY_FLAGS_KNOWN)
 	testing.expect_value(t, OPERATIONS[.Memory_Map].parameters[3].limit, MAP_FLAGS_KNOWN)
-	testing.expect_value(t, OPERATIONS[.Memory_Protect].parameters[2].limit, MAP_FLAGS_KNOWN)
+	testing.expect_value(t, OPERATIONS[.Memory_Protect].parameters[2].limit, PROTECT_FLAGS_KNOWN)
 	testing.expect_value(t, OPERATIONS[.Memory_Commit].parameters[4].limit, COMMIT_FLAGS_KNOWN)
 	testing.expect_value(t, OPERATIONS[.Fault_Handler_Set].parameters[1].limit, u64(max(Fault_Handler_Action)))
 	memory_flags: Memory_Flags
@@ -257,6 +257,42 @@ the_arguments_that_the_operation_reads :: proc(t: ^testing.T) {
 	// A parameter that the operation does not have.
 	testing.expect(t, !argument_is_read(.Memory_Size, 1, values))
 	testing.expect(t, !argument_is_read(.Memory_Size, len(values), values))
+}
+
+// Map_Flag.Receive_Handles is accepted by Memory_Map and refused by
+// Memory_Protect; unknown bits past the known flags and max(u64) are
+// refused by both.
+@(test)
+receive_handles_flag_for_map_and_protect :: proc(t: ^testing.T) {
+	receive := transmute(u64)Map_Flags{.Receive_Handles}
+	write_receive := transmute(u64)Map_Flags{.Write, .Receive_Handles}
+	unknown_bit := u64(1) << (u64(max(Map_Flag)) + 1)
+	// Edges refused by Memory_Protect: Receive_Handles alone, with Write, unknown bit, max(u64).
+	for bad in ([4]u64{receive, write_receive, unknown_bit, max(u64)}) {
+		values := [7]u64{0, 1, bad, 0, 0, 0, 0}
+		problem, limit := argument_value_problem(.Memory_Protect, 2, values)
+		testing.expect_value(t, problem, errors.Kind.Bad_Flags)
+		testing.expect_value(t, limit, PROTECT_FLAGS_KNOWN)
+	}
+	// Edges refused by Memory_Map: unknown bit, max(u64).
+	for bad in ([2]u64{unknown_bit, max(u64)}) {
+		values := [7]u64{0, 0, 0, bad, 0, 0, 0}
+		problem, limit := argument_value_problem(.Memory_Map, 3, values)
+		testing.expect_value(t, problem, errors.Kind.Bad_Flags)
+		testing.expect_value(t, limit, MAP_FLAGS_KNOWN)
+	}
+	// Accepted by Memory_Map: 0, Receive_Handles, Write|Receive_Handles.
+	for good in ([3]u64{0, receive, write_receive}) {
+		values := [7]u64{0, 0, 0, good, 0, 0, 0}
+		problem, _ := argument_value_problem(.Memory_Map, 3, values)
+		testing.expect_value(t, problem, errors.Kind.None)
+	}
+	// Accepted by Memory_Protect: 0, Write, Execute, No_Access.
+	for good in ([4]u64{0, transmute(u64)Map_Flags{.Write}, transmute(u64)Map_Flags{.Execute}, transmute(u64)Map_Flags{.No_Access}}) {
+		values := [7]u64{0, 1, good, 0, 0, 0, 0}
+		problem, _ := argument_value_problem(.Memory_Protect, 2, values)
+		testing.expect_value(t, problem, errors.Kind.None)
+	}
 }
 
 // A handle, an address and a value outside the command are never refused

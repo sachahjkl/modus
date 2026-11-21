@@ -252,8 +252,9 @@ Started :: struct {
 	client:          system.Handle, // The ring of the process, as the compositor names it.
 	requests:        ring.Ring, // The ring from the process to this service, if it has one.
 	requests_memory: system.Handle,
-	service:         ring.Ring, // The service ring of the process, if it is a service.
-	service_memory:  system.Handle,
+	service:            ring.Ring, // The service ring of the process, if it is a service.
+	service_memory:     system.Handle,
+	service_ring_ready: bool, // True once Handle_Give succeeded on service_memory (no startup retry after).
 	hash:            [32]u8, // The hash of the file of the process.
 	name:            system.Name,
 	// The start grant set that this service gave the process when it started it: each
@@ -270,8 +271,9 @@ Started :: struct {
 	device:          pci.Place,
 	bridge_group:    Bridge_Group, // A device behind a conventional bridge: the buses behind it, whose devices this service holds too (devices.odin). Zero: none.
 	queues:          system.Handle, // A block service: the memory of the queue of its device.
-	network:         ring.Ring, // The network service: the control ring from this service.
-	network_memory:  system.Handle,
+	network:            ring.Ring, // The network service: the control ring from this service.
+	network_memory:     system.Handle,
+	network_ring_ready: bool, // True once Handle_Give succeeded on network_memory.
 	endpoint:        system.Handle, // A process with an endpoint: its datagram ring, as the network service names it.
 	network_service: ^Started,
 	// The principal whose session the process belongs to (docs/PRINCIPALS.md):
@@ -1578,6 +1580,44 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 	return .Ok, false
 }
 
+// Tight startup grace bound (milliseconds) for a freshly started service to
+// complete its first ring_open(..., receive_handles = true). Once ready^ is
+// true, no retry runs so a live service that unmaps its ring cannot stall root.
+SERVICE_RING_STARTUP_GRACE_MS :: 200
+
+// give_through_service_ring gives a handle to a service through a ring that
+// the service opens with Receive_Handles at its start. Retries Bad_Handle
+// only while !ready^ (freshly started) within SERVICE_RING_STARTUP_GRACE_MS,
+// failing immediately if the service stops or refuses consent (No_Right).
+give_through_service_ring :: proc "contextless" (target_process, ring_memory, handle: system.Handle, rights: system.Rights, ready: ^bool) -> (given: system.Handle, status: system.Status) {
+	given, status = system.give(ring_memory, handle, rights)
+	if status == .Ok {
+		ready^ = true
+		return given, .Ok
+	}
+	if status != .Bad_Handle || ready^ {
+		return 0, status
+	}
+	deadline := system.time() + SERVICE_RING_STARTUP_GRACE_MS
+	for system.time() < deadline {
+		if target_process != 0 {
+			if state, _, _ := system.process_state(target_process); state == .Stopped || state == .None {
+				return 0, .Bad_State
+			}
+		}
+		system.sleep(system.time() + 1)
+		given, status = system.give(ring_memory, handle, rights)
+		if status == .Ok {
+			ready^ = true
+			return given, .Ok
+		}
+		if status != .Bad_Handle {
+			return 0, status
+		}
+	}
+	return 0, status
+}
+
 // The palette provider (docs/CONSOLE.md, "8. The palette provider"): the one
 // process that gives the palette of the desktop entries of its own. This
 // service keeps a handle of the entry table and of the ring, so that a
@@ -1599,7 +1639,11 @@ palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> sys
 		return .Bad_State
 	}
 	status: system.Status
-	palette_table_memory, status = system.memory_create(palette_table.TABLE_PAGES)
+	initial_pages, pages_ok := palette_table.table_pages_for(palette_table.INITIAL_ENTRY_CAPACITY)
+	if !pages_ok {
+		return .Bad_Operation
+	}
+	palette_table_memory, status = system.memory_create(initial_pages)
 	if status != .Ok {
 		return status
 	}
@@ -1828,10 +1872,10 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	region_memory, status = system.memory_create(isolated.REGION_PAGES)
 	in_service_ring, in_service_region: system.Handle
 	if status == .Ok {
-		in_service_ring, status = system.give(service.service_memory, ring_memory, {.Read, .Write})
+		in_service_ring, status = give_through_service_ring(service.process, service.service_memory, ring_memory, {.Read, .Write}, &service.service_ring_ready)
 	}
 	if status == .Ok {
-		in_service_region, status = system.give(service.service_memory, region_memory, {.Read, .Write})
+		in_service_region, status = give_through_service_ring(service.process, service.service_memory, region_memory, {.Read, .Write}, &service.service_ring_ready)
 	}
 	if status != .Ok {
 		system.close(ring_memory)

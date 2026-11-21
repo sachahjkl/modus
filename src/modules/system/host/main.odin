@@ -66,7 +66,7 @@ space: system.Module_Space // The module and its imports, in this process.
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	ring_memory := ctx.handles[isolated.GRANT_RING]
 	region_memory := ctx.handles[isolated.GRANT_REGION]
-	queue, ring_status := system.ring_open(ring_memory)
+	queue, ring_status := system.ring_open(ring_memory, receive_handles = true)
 	bytes, region_status := system.memory_map(region_memory)
 	if ring_status != .Ok {
 		system.log_fact(.Info, No_Call_Ring_Or_Region{})

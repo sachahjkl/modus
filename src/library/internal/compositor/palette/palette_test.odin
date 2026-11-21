@@ -19,21 +19,34 @@ MODULE_NAMES := [?]string{"boot", "pages", "log", "console", "monitor", "plasma"
 // A panel and its list, in one allocation: the panel is its first field.
 @(private = "file")
 Panel_Memory :: struct {
-	panel: Panel,
-	list:  List,
+	panel:   Panel,
+	list:    List,
+	storage: []u8,
 }
 
 @(private = "file")
-panel_make :: proc() -> ^Panel {
+panel_make_sized :: proc(provider_capacity, total_capacity: int) -> ^Panel {
 	memory := new(Panel_Memory)
+	bytes, ok := list_memory_bytes(provider_capacity, total_capacity)
+	assert(ok)
+	memory.storage = make([]u8, int(bytes))
+	bound := list_bind_memory(&memory.list, memory.storage, provider_capacity, total_capacity)
+	assert(bound)
 	memory.panel.list = &memory.list
 	memory.panel.pressed_row = NO_ROW
 	return &memory.panel
 }
 
 @(private = "file")
+panel_make :: proc() -> ^Panel {
+	return panel_make_sized(palette_table.INITIAL_ENTRY_CAPACITY, palette_table.INITIAL_ENTRY_CAPACITY + 128)
+}
+
+@(private = "file")
 panel_free :: proc(panel: ^Panel) {
-	free((^Panel_Memory)(panel))
+	memory := (^Panel_Memory)(panel)
+	delete(memory.storage)
+	free(memory)
 }
 
 // A panel with the modules above and the windows console (in front) and
@@ -984,9 +997,11 @@ GIVEN := [?]Given {
 
 @(private = "file")
 table_make :: proc(given: []Given) -> []u8 {
-	memory := make([]u8, palette_table.TABLE_BYTES)
+	bytes, ok := palette_table.table_bytes_for(u64(len(given)))
+	assert(ok)
+	memory := make([]u8, int(bytes))
 	header := (^palette_table.Header)(raw_data(memory))
-	header^ = {magic = palette_table.MAGIC, version = palette_table.VERSION, change_count = 6, entry_count = u32(len(given))}
+	header^ = {magic = palette_table.MAGIC, version = palette_table.VERSION, change_count = 6, entry_count = u32(len(given)), byte_length = bytes}
 	for item, index in given {
 		entry := (^palette_table.Entry)(&memory[palette_table.ENTRIES_OFFSET + index * size_of(palette_table.Entry)])
 		entry.kind = u8(palette_table.Entry_Kind.Command)
@@ -1093,7 +1108,11 @@ a_hostile_table_gives_no_entry :: proc(t: ^testing.T) {
 	damages := [?]Damage {
 		{.Bad_Magic, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {header.magic = 1}},
 		{.Bad_Version, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {header.version = 99}},
-		{.Too_Many_Entries, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {header.entry_count = 4096}},
+		{.Bad_Byte_Length, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {header.entry_count = 4096}},
+		{.Too_Small, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {
+			header.entry_count = 4096
+			header.byte_length, _ = palette_table.table_bytes_for(4096)
+		}},
 		{.Never_Stable, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {header.change_count = 7}},
 		{.Bad_Length, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.name_length = 0}},
 		{.Bad_Length, proc(memory: []u8, entry: ^palette_table.Entry, header: ^palette_table.Header) {entry.name_length = 200}},
@@ -2360,4 +2379,209 @@ rectangle_of_record :: proc(record: interface.Draw_Record) -> (place: interface.
 		return {}, 0, false
 	}
 	return interface.record_rectangle(record), draw_record.channels_of(fields.color), true
+}
+
+// Helper: build a provider table with `count` distinct Command entries named
+// "cmd_0000" .. "cmd_{count-1}" in a region sized exactly for `count`.
+@(private = "file")
+table_make_numbered :: proc(count: int) -> []u8 {
+	bytes, ok := palette_table.table_bytes_for(u64(count))
+	assert(ok)
+	memory := make([]u8, int(bytes))
+	header := (^palette_table.Header)(raw_data(memory))
+	header^ = {magic = palette_table.MAGIC, version = palette_table.VERSION, change_count = 2, entry_count = u32(count), byte_length = bytes}
+	for index in 0 ..< count {
+		entry := (^palette_table.Entry)(&memory[palette_table.ENTRIES_OFFSET + index * size_of(palette_table.Entry)])
+		entry.kind = u8(palette_table.Entry_Kind.Command)
+		entry.result = u8(palette_table.Value_Kind.Integer)
+		name_buf: [16]u8
+		name_buf[0], name_buf[1], name_buf[2], name_buf[3] = 'c', 'm', 'd', '_'
+		v := index
+		name_buf[7] = u8('0' + v % 10); v /= 10
+		name_buf[6] = u8('0' + v % 10); v /= 10
+		name_buf[5] = u8('0' + v % 10); v /= 10
+		name_buf[4] = u8('0' + v % 10)
+		name := string(name_buf[:8])
+		entry.name_length = u8(copy(entry.name[:], name))
+		sig_buf: [24]u8
+		copy(sig_buf[:8], name)
+		sig_buf[8], sig_buf[9] = '(', ')'
+		entry.signature_length = u8(copy(entry.signature[:], string(sig_buf[:10])))
+		entry.about_length = u8(copy(entry.about[:], "numbered command"))
+	}
+	return memory
+}
+
+// Any count of entries (0, 1, 500, 5000): all entries are collected and ranked
+// with SIMD fuzzy matching + frecency, and panel_draw emits O(LIST_ROWS) draw
+// records regardless of total entry count.
+@(test)
+any_count_of_entries_0_1_500_5000 :: proc(t: ^testing.T) {
+	screen := screen_make()
+	defer screen_free(screen)
+	draw_records_by_count: [4]int
+	counts := [4]int{0, 1, 500, 5000}
+	for count, case_index in counts {
+		panel := panel_make_sized(max(count, 1), max(count, 1) + 16)
+		defer panel_free(panel)
+		table := table_make_numbered(count)
+		defer delete(table)
+		problem, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table)
+		testing.expect_value(t, problem, palette_table.Problem.None)
+		testing.expect_value(t, panel.list.provider, Provider_State.Ready)
+		testing.expect_value(t, panel.list.entry_count, count)
+		// Type ">cmd_" so every provider command matches and enters the ranked list.
+		panel_open(panel)
+		type_text(panel, ">cmd_")
+		testing.expect_value(t, panel.list.matched_count, count)
+		testing.expect_value(t, panel.list.row_count, count)
+		panel_build(screen, panel)
+		draw_records_by_count[case_index] = screen.table.record_count
+		if count == 5000 {
+			// Verify the last entry (index 4999, well past old 256/512/4096 limits)
+			// is found at rank 0 by fuzzy matching.
+			line_editor.line_clear(&panel.line)
+			type_text(panel, "cmd_4999")
+			testing.expect_value(t, panel.list.row_count, 1)
+			testing.expect_value(t, entry_name(chosen_entry(panel)), "cmd_4999")
+			// Verify frecency boosts a frequently-used deep entry to rank 0.
+			recent_note(panel, chosen_entry(panel))
+			recent_note(panel, chosen_entry(panel))
+			problem2, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table)
+			testing.expect_value(t, problem2, palette_table.Problem.None)
+			line_editor.line_clear(&panel.line)
+			type_text(panel, ">cmd_")
+			testing.expect_value(t, panel.list.row_count, 5000)
+			testing.expect_value(t, entry_name(chosen_entry(panel)), "cmd_4999")
+		}
+	}
+	// Virtualization bound: 5,000 entries must emit the exact same O(LIST_ROWS)
+	// draw record count as 500 entries (bounded well below 300 records).
+	testing.expect(t, draw_records_by_count[2] > 0 && draw_records_by_count[3] > 0)
+	testing.expect(t, draw_records_by_count[3] <= draw_records_by_count[2] + 8)
+	testing.expect(t, draw_records_by_count[3] < 300)
+}
+
+// Virtualized viewport scrolling across 5,000 entries: top, negative, middle,
+// bottom, and past-end offsets clamp cleanly, draw only the visible window,
+// and agree with pointer hit testing (row_at).
+@(test)
+virtual_viewport_scroll_offsets :: proc(t: ^testing.T) {
+	COUNT :: 5000
+	panel := panel_make_sized(COUNT, COUNT + 16)
+	defer panel_free(panel)
+	table := table_make_numbered(COUNT)
+	defer delete(table)
+	problem, _ := list_collect(panel.list, panel_uses(panel), nil, nil, table)
+	testing.expect_value(t, problem, palette_table.Problem.None)
+	panel_open(panel)
+	type_text(panel, ">cmd_")
+	testing.expect_value(t, panel.list.row_count, COUNT)
+
+	screen := screen_make()
+	defer screen_free(screen)
+	px, py := panel_place(1920)
+	Check :: struct {
+		requested_first: int,
+		expected_first:  int,
+		expected_name:   string,
+	}
+	checks := [?]Check {
+		{-10, 0, "cmd_0000"},
+		{0, 0, "cmd_0000"},
+		{2500, 2500, "cmd_2500"},
+		{COUNT - LIST_ROWS, COUNT - LIST_ROWS, "cmd_4988"},
+		{COUNT - 1, COUNT - LIST_ROWS, "cmd_4988"},
+		{COUNT, COUNT - LIST_ROWS, "cmd_4988"},
+		{999_999, COUNT - LIST_ROWS, "cmd_4988"},
+	}
+	for c in checks {
+		panel.first_row = c.requested_first
+		testing.expect_value(t, list_first_row(panel), c.expected_first)
+		// Hit test on the first visible row and last visible row of the viewport.
+		testing.expect_value(t, row_at(panel, px, py, px + 32, py + LIST_TOP + 4), c.expected_first)
+		testing.expect_value(t, row_at(panel, px, py, px + 32, py + LIST_TOP + (LIST_ROWS - 1) * ROW_HEIGHT + 4), c.expected_first + LIST_ROWS - 1)
+		panel_build(screen, panel)
+		// Confirm the expected first visible row's name appears in the draw
+		// table and an entry outside the viewport does not.
+		found_first := false
+		found_outside := false
+		outside_name := c.expected_first == 0 ? "cmd_4999" : "cmd_0000"
+		for record in screen.table.records[:screen.table.record_count] {
+			if shown, _, is_text := interface.text_of_record(&screen.table, record); is_text {
+				if shown == c.expected_name {
+					found_first = true
+				}
+				if shown == outside_name {
+					found_outside = true
+				}
+			}
+		}
+		testing.expectf(t, found_first, "offset %d: expected visible row %s", c.requested_first, c.expected_name)
+		testing.expectf(t, !found_outside, "offset %d: off-screen row %s must not be drawn", c.requested_first, outside_name)
+	}
+}
+
+// Malformed provider headers, truncated regions, and undersized list bindings
+// are refused cleanly with nothing changed.
+@(test)
+malformed_header_and_truncated_region_refused :: proc(t: ^testing.T) {
+	// list_bind_memory edge refusals leave List unchanged.
+	sentinel_list := List{entry_count = 7, row_count = 3}
+	tiny: [16]u8
+	testing.expect(t, !list_bind_memory(&sentinel_list, tiny[:], -1, 10))
+	testing.expect(t, !list_bind_memory(&sentinel_list, tiny[:], 10, -1))
+	testing.expect(t, !list_bind_memory(&sentinel_list, tiny[:], 10, 10))
+	testing.expect_value(t, sentinel_list.entry_count, 7)
+	testing.expect_value(t, sentinel_list.row_count, 3)
+
+	// Valid snapshot first; then a malformed header or truncated region must
+	// be refused before touching snapshot.entries bytes.
+	valid := table_make_numbered(4)
+	defer delete(valid)
+	entries_buf := make([]palette_table.Entry, 4)
+	defer delete(entries_buf)
+	snap := palette_table.Snapshot{entries = entries_buf}
+	problem, _ := palette_table.snapshot_take(valid, &snap)
+	testing.expect_value(t, problem, palette_table.Problem.None)
+	saved_first := entries_buf[0]
+
+	// Truncated by 1 byte -> Too_Small, entries_buf untouched.
+	problem, _ = palette_table.snapshot_take(valid[:len(valid) - 1], &snap)
+	testing.expect_value(t, problem, palette_table.Problem.Too_Small)
+	testing.expect_value(t, snap.entry_count, 0)
+	testing.expect_value(t, snap.generation, 0)
+	testing.expect_value(t, entries_buf[0], saved_first)
+
+	// Truncated below MIN_TABLE_BYTES -> Too_Small, entries_buf untouched.
+	problem, _ = palette_table.snapshot_take(valid[:palette_table.MIN_TABLE_BYTES - 1], &snap)
+	testing.expect_value(t, problem, palette_table.Problem.Too_Small)
+	testing.expect_value(t, entries_buf[0], saved_first)
+
+	// Empty slice -> Too_Small, entries_buf untouched.
+	problem, _ = palette_table.snapshot_take(nil, &snap)
+	testing.expect_value(t, problem, palette_table.Problem.Too_Small)
+	testing.expect_value(t, entries_buf[0], saved_first)
+
+	// Mismatched byte_length (0, +1, max(u64)) -> Bad_Byte_Length, entries_buf untouched.
+	header := (^palette_table.Header)(raw_data(valid))
+	orig_len := header.byte_length
+	for bad_len in ([3]u64{0, orig_len + 1, max(u64)}) {
+		header.byte_length = bad_len
+		problem, _ = palette_table.snapshot_take(valid, &snap)
+		testing.expect_value(t, problem, palette_table.Problem.Bad_Byte_Length)
+		testing.expect_value(t, entries_buf[0], saved_first)
+	}
+	header.byte_length = orig_len
+
+	// Corrupt magic / version -> refused, entries_buf untouched.
+	header.magic = 0
+	problem, _ = palette_table.snapshot_take(valid, &snap)
+	testing.expect_value(t, problem, palette_table.Problem.Bad_Magic)
+	testing.expect_value(t, entries_buf[0], saved_first)
+	header.magic = palette_table.MAGIC
+	header.version = palette_table.VERSION + 1
+	problem, _ = palette_table.snapshot_take(valid, &snap)
+	testing.expect_value(t, problem, palette_table.Problem.Bad_Version)
+	testing.expect_value(t, entries_buf[0], saved_first)
 }

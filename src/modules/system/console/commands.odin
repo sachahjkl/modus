@@ -234,7 +234,7 @@ commands_start :: proc "contextless" () {
 	}
 	debug_names = system.debug_names_of(ctx)
 	requests_memory = ctx.handles[system.GRANT_ROOT]
-	requests, _ = system.ring_open(requests_memory)
+	requests, _ = system.ring_open(requests_memory, receive_handles = true)
 	if address, status := system.memory_map(ctx.handles[system.GRANT_REPLACEMENTS], {}); status == .Ok {
 		replacement_table = (^system.Replacement_Table)(address)
 	}
@@ -1747,7 +1747,7 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 	sandbox.ring_memory = system.Handle(completion.values[1])
 	sandbox.region_memory = system.Handle(completion.values[2])
 	hash := transmute([32]u8)[4]u64{completion.values[3], completion.values[4], completion.values[5], completion.values[6]}
-	calls, ring_status := system.ring_open(sandbox.ring_memory)
+	calls, ring_status := system.ring_open(sandbox.ring_memory, receive_handles = true)
 	bytes, region_status := system.memory_map(sandbox.region_memory)
 	sandbox.ring = calls
 	// A refused handle has no pages: the region is empty.
