@@ -120,6 +120,7 @@ package console
 
 import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
+import "modus:private/console/lex_evaluator"
 import "modus:support/display"
 import "modus:support/key_path"
 import "modus:support/line_editor"
@@ -128,8 +129,18 @@ import "modus:support/system"
 import terminal "modus:support/terminal"
 import "base:intrinsics"
 
-// Itself and four sandboxes, each a call host with its thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7583, processes = 5, threads = 6}
+// Itself and four sandboxes, each a call host with its thread. The working
+// memory holds 7583 pages, and the 144 pages of the stack of the second
+// thread past the stack of a thread that names no size.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 7727, processes = 5, threads = 6}
+
+// The stack of the second thread, which runs the lines: the bytes that the
+// evaluator may take, and 128 KiB for the host and the command that a call
+// runs at the deepest place of a line.
+LINE_THREAD_STACK_PAGES :: 160
+
+#assert(LINE_THREAD_STACK_PAGES * system.PAGE_SIZE == lex_evaluator.EVALUATION_STACK_BYTES + 128 * 1024)
+#assert(LINE_THREAD_STACK_PAGES - system.THREAD_STACK_PAGES == 144)
 
 LINE_CAPACITY :: line_editor.LINE_CAPACITY
 PROMPT :: "> "
@@ -238,7 +249,7 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 	}
 	commands_start()
 	palette_provider_start() // palette_provider.odin
-	if _, status := system.thread_start(run_lines, nil); status != .Ok {
+	if _, status := system.thread_start(run_lines, nil, LINE_THREAD_STACK_PAGES); status != .Ok {
 		system.log_fact(.Info, Thread_Not_Started{})
 		system.stop(.Failed)
 	}

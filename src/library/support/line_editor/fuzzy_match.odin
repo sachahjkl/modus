@@ -167,6 +167,7 @@ Candidate_Kind :: enum u8 {
 	Field        = 9, // A field of the record of a table, in a condition.
 	Member       = 10, // A member of a contract enum, after the operator of a condition on a status.
 	Stream       = 11, // A record output of a process, after the name of the process and its dot: a value, not a call.
+	Binding      = 12, // A name that the line binds where the caret is: a parameter of a function around it.
 }
 
 // A name that can complete what the input typed. The caller fills a

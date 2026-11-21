@@ -1,6 +1,7 @@
 #+build !freestanding
 package lex_evaluator
 
+import "core:fmt"
 import "core:strings"
 import "core:testing"
 import module "modus:contract/module"
@@ -113,7 +114,10 @@ fake_command_find :: proc "contextless" (data: rawptr, name: string) -> (signatu
 @(private = "file")
 fake_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []Value) -> (value: Value, ok: bool) {
 	fake := (^Fake)(data)
-	fake.log[fake.log_count] = name
+	// A line of many calls counts each one; the log keeps the first.
+	if fake.log_count < len(fake.log) {
+		fake.log[fake.log_count] = name
+	}
 	fake.log_count += 1
 	if len(arguments) > 0 && arguments[len(arguments) - 1].kind == .Text {
 		fake.last_text = arguments[len(arguments) - 1].text
@@ -235,8 +239,14 @@ Run :: struct {
 	ok:         bool,
 }
 
+// The stack bound of the evaluations of the tests: a host test builds with
+// no optimisation, whose frames are three to five times those of a module,
+// and the thread of a test has the stack of the host.
 @(private = "file")
-run_of :: proc(text: string, mode := Evaluation_Mode.Console, budget: u32 = EVALUATION_BUDGET_STEPS) -> ^Run {
+TEST_STACK_BYTES :: 4 * 1024 * 1024
+
+@(private = "file")
+run_of :: proc(text: string, mode := Evaluation_Mode.Console, budget: u32 = EVALUATION_BUDGET_STEPS, stack_bytes: uint = TEST_STACK_BYTES) -> ^Run {
 	run := new(Run, context.temp_allocator)
 	fake_records_make(&run.fake)
 	fake_enums_make(&run.fake)
@@ -251,14 +261,14 @@ run_of :: proc(text: string, mode := Evaluation_Mode.Console, budget: u32 = EVAL
 		values_add      = fake_values_add,
 		record_memory   = fake_record_memory,
 	}
-	evaluation_start(&run.evaluation, &run.tree, mode, host, budget)
+	evaluation_start(&run.evaluation, &run.tree, mode, host, budget, stack_bytes)
 	run.value, run.ok = line_force(&run.evaluation)
 	return run
 }
 
 @(private = "file")
 log_of :: proc(run: ^Run) -> []string {
-	return run.fake.log[:run.fake.log_count]
+	return run.fake.log[:min(run.fake.log_count, len(run.fake.log))]
 }
 
 @(private = "file")
@@ -298,6 +308,7 @@ evaluation_budget_at_its_bound :: proc(t: ^testing.T) {
 	// The densest line of the console stays far below the constant.
 	densest := strings.concatenate({strings.repeat("1+", 99, context.temp_allocator), "1"}, context.temp_allocator)
 	run = run_of(densest)
+	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.None)
 	testing.expect(t, run.ok)
 	testing.expect_value(t, run.value.integer, i64(100))
 	testing.expect_value(t, run.evaluation.steps, u32(199))
@@ -828,4 +839,277 @@ evaluation_values_of_the_forms :: proc(t: ^testing.T) {
 	// A text of a literal is written whole, with zero bytes after it.
 	run = run_of("label({name = \"ab\", count = 1}) + 0")
 	testing.expect(t, run.ok)
+}
+
+// items_of gives the Integers of a List value, or nil for another value.
+@(private = "file")
+items_of :: proc(run: ^Run, value: Value) -> []i64 {
+	if value.kind != .List {
+		return nil
+	}
+	items := make([dynamic]i64, context.temp_allocator)
+	for item in list_items_of(&run.evaluation, value) {
+		append(&items, item.integer)
+	}
+	return items[:]
+}
+
+// Each refusal of the functions and the lists, at its place, with its
+// record, and the effects that ran before it: the count of the arguments
+// before any argument runs, a value that is no function, a function or a
+// list at the border of the host, a literal that nothing types, the bounds.
+@(test)
+evaluation_refusals_of_functions :: proc(t: ^testing.T) {
+	Case :: struct {
+		text:      string,
+		refusal:   Refusal,
+		column:    u32,
+		left_kind: Kind,
+		effects:   []string,
+	}
+	cases := [?]Case {
+		// A wrong count of arguments, before any argument runs.
+		{"let f = (x) => x in f(1, 2)", .Function_Arguments, 21, .None, nil},
+		{"let f = (x, y) => x in f(g())", .Function_Arguments, 24, .None, nil},
+		{"let f = () => 1 in f(g())", .Function_Arguments, 20, .None, nil},
+		{"let f = (x) => x in f()", .Function_Arguments, 21, .None, nil},
+		{"map([1])", .Function_Arguments, 1, .None, nil},
+		{"map([g()], (x, y) => x)", .Function_Arguments, 1, .None, {"g"}},
+		{"map([g()], () => 1)", .Function_Arguments, 1, .None, {"g"}},
+		// Named arguments of a function: an unknown name, a missing one.
+		{"let f = (a, b) => a in f(c = g(), a = 1)", .Argument_Unknown, 26, .None, nil},
+		{"let f = (a, b) => a in f(b = g())", .Argument_Missing, 24, .None, nil},
+		// A call of a value that is no function.
+		{"let f = 1 in f(2)", .Not_A_Function, 14, .Integer, nil},
+		{"let f = g() in f(2)", .Not_A_Function, 16, .Integer, {"g"}},
+		{"let f = {a = 1} in f(2)", .Not_A_Function, 20, .Record_Literal, nil},
+		{"let a = (f) => f(1) in a(2)", .Not_A_Function, 16, .Integer, nil},
+		{"let a = (f) => f(1) in a([1])", .Not_A_Function, 16, .List, nil},
+		{"map([1], g())", .Not_A_Function, 1, .Integer, {"g"}},
+		{"map(g(), (x) => x)", .Not_A_List, 1, .Integer, {"g"}},
+		{"map((x) => x, [1])", .Not_A_List, 1, .Function, nil},
+		// A function or a list given to a command of the host: refused
+		// after the arguments before it ran, before the call runs.
+		{"pair((x) => x, 1)", .Value_At_Border, 10, .Function, nil},
+		{"pair(g(), [h()])", .Value_At_Border, 11, .List, {"g", "h"}},
+		{"any([])", .Value_At_Border, 5, .List, nil},
+		{"any(map([1], (x) => x))", .Value_At_Border, 5, .List, nil},
+		{"let f = (x) => x in any(f)", .Value_At_Border, 25, .Function, nil},
+		{"let f = (x) => pair(x, 1) in f((y) => y)", .Value_At_Border, 21, .Function, nil},
+		// A field of a function or of a list, `with`, an operator.
+		{"let f = (x) => x in f.a", .Field_Unknown, 21, .Function, nil},
+		{"let l = [1] in l.a", .Field_Unknown, 16, .List, nil},
+		{"rect with (x) => x", .With_Kinds, 6, .Record, nil},
+		{"[1] + [2]", .Operator_Kinds, 5, .List, nil},
+		{"-((x) => x)", .Negate_Kind, 1, .Function, nil},
+		// A literal or a member that nothing types, as the value of the
+		// line, also as an item of a list, also made in a call.
+		{"[{a = 1}]", .Literal_No_Type, 2, .None, nil},
+		{"[1, [.french]]", .Member_No_Type, 6, .None, nil},
+		{"map([1], (x) => {a = x})", .Literal_No_Type, 17, .None, nil},
+		// The refusals of the text in a function stop the line where the
+		// function is reached, though its body never runs.
+		{"(x, x) => 1", .Text, 5, .None, nil},
+		{"let f = (in) => 1 in 2", .Text, 10, .None, nil},
+		{"pair(g(), (x) => 1 +", .Text, 21, .None, {"g"}},
+	}
+	for item in cases {
+		run := run_of(item.text)
+		record := run.evaluation.refusal
+		testing.expectf(t, !run.ok && record.refusal == item.refusal && record.place.column == item.column, "%q: %v at column %d; not %v at column %d", item.text, record.refusal, record.place.column, item.refusal, item.column)
+		if item.left_kind != .None {
+			testing.expectf(t, record.left_kind == item.left_kind, "%q: the kind %v, not %v", item.text, record.left_kind, item.left_kind)
+		}
+		expect_log(t, run, item.effects, item.text)
+	}
+
+	// The values of the records.
+	run := run_of("let f = (x) => x in f(1, 2)")
+	testing.expect_value(t, run.evaluation.refusal.command, "f")
+	testing.expect_value(t, run.evaluation.refusal.left, i64(2))
+	testing.expect_value(t, run.evaluation.refusal.right, i64(1))
+	run = run_of("map([1], (x, y) => x)")
+	testing.expect_value(t, run.evaluation.refusal.parameter, 2)
+	testing.expect_value(t, run.evaluation.refusal.right, i64(2))
+	run = run_of("pair(1, (x) => x)")
+	testing.expect_value(t, run.evaluation.refusal.command, "pair")
+	testing.expect_value(t, run.evaluation.refusal.parameter, 2)
+	run = run_of("map([1], 2)")
+	testing.expect_value(t, run.evaluation.refusal.parameter, 2)
+	run = run_of("(x, x) => 1")
+	testing.expect_value(t, run.evaluation.refusal.text_refusal, lex_parser.Refusal.Parameter_Twice)
+	run = run_of("let f = (in) => 1 in 2")
+	testing.expect_value(t, run.evaluation.refusal.text_refusal, lex_parser.Refusal.Word_As_Name)
+
+	// The bounds of a recursion, which Lex cannot end yet: the budget, the
+	// stack, the calls. The stack and the calls of a host test are larger
+	// than those of the console, whose machine test runs the same line.
+	recursion := "let f = (n) => f(n) in f(1)"
+	run = run_of(recursion, budget = 40)
+	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Budget_Exceeded)
+	testing.expect_value(t, run.evaluation.steps, u32(40))
+	run = run_of(recursion, stack_bytes = 64 * 1024)
+	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Stack_Exceeded)
+	testing.expect(t, run.evaluation.refusal.left > 64 * 1024)
+	testing.expect_value(t, run.evaluation.refusal.right, i64(64 * 1024))
+	run = run_of(recursion, stack_bytes = 7 * 1024 * 1024)
+	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Calls_Full)
+	testing.expect_value(t, run.evaluation.call_count, CALL_CAPACITY)
+	// The effects of a recursion ran before its bound, once for each call.
+	run = run_of("let f = (n) => f(g()) in f(1)", budget = 30)
+	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Budget_Exceeded)
+	testing.expect(t, run.fake.log_count > 2)
+
+	// The items of all the lists of a line: 50, then 50 for each map;
+	// the fifth map passes 256 before it calls the function.
+	items := strings.repeat("1,", 49, context.temp_allocator)
+	lists := strings.concatenate({"let f = (x) => x, l = [", items, "1] in map(map(map(map(map(l, f), f), f), f), f)"}, context.temp_allocator)
+	testing.expect(t, len(lists) <= lex_parser.TEXT_BYTES_MOST)
+	run = run_of(lists)
+	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Lists_Full)
+	testing.expect_value(t, run.evaluation.refusal.place.column, u32(strings.index(lists, "map(") + 1))
+	testing.expect_value(t, run.evaluation.call_count, 200)
+}
+
+// The order of the effects with functions, in mode console: the arguments
+// of a call from the left, then the body; the items of map from the first;
+// a binding that a body reads, once; a function that no call reaches, no
+// effect. In mode declaration a function reads a binding by reference: a
+// binding that the body does not read is never forced.
+@(test)
+evaluation_order_of_functions :: proc(t: ^testing.T) {
+	Case :: struct {
+		text:    string,
+		effects: []string,
+		integer: i64,
+	}
+	cases := [?]Case {
+		{"let f = (x) => pair(x, h()) in f(g())", {"g", "h", "pair"}, 12},
+		{"let f = (a, b) => pair(b, a) in f(g(), h())", {"g", "h", "pair"}, 21},
+		{"let f = (a, b) => pair(a, b) in f(b = g(), a = h())", {"g", "h", "pair"}, 21},
+		{"let n = g(), f = (x) => n in pair(f(1), f(2))", {"g", "pair"}, 11},
+		{"let f = (x) => g() in 1", {}, 1},
+		{"let f = (x) => let y = pair(x, x) in y + y in f(1) + f(2)", {"pair", "pair"}, 66},
+	}
+	for item in cases {
+		run := run_of(item.text)
+		testing.expectf(t, run.ok && run.value.integer == item.integer, "%q: %v %d, not %d (%v)", item.text, run.ok, run.value.integer, item.integer, run.evaluation.refusal.refusal)
+		expect_log(t, run, item.effects, item.text)
+	}
+
+	// map calls its function on each item from the first.
+	run := run_of("map([g(), h()], (x) => pair(x, x))")
+	testing.expect(t, run.ok)
+	expect_log(t, run, {"g", "h", "pair", "pair"}, "map with effects")
+	testing.expect_value(t, len(items_of(run, run.value)), 2)
+	if values := items_of(run, run.value); len(values) == 2 {
+		testing.expect_value(t, values[0], i64(11))
+		testing.expect_value(t, values[1], i64(22))
+	}
+	run = run_of("let n = g() in map([1, 2], (x) => n + x)")
+	expect_log(t, run, {"g"}, "a binding that a body reads")
+	if values := items_of(run, run.value); testing.expect_value(t, len(values), 2) {
+		testing.expect_value(t, values[0], i64(2))
+		testing.expect_value(t, values[1], i64(3))
+	}
+
+	// Mode declaration: the binding that the body does not read is never
+	// forced, and its effect is never refused; the one that it reads is.
+	run = run_of("let n = g(), f = (x) => 1 in f(1)", .Declaration)
+	testing.expect(t, run.ok)
+	testing.expect_value(t, run.value.integer, i64(1))
+	run = run_of("let n = g(), f = (x) => n in f(1)", .Declaration)
+	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Effect_Refused)
+	testing.expect_value(t, run.evaluation.refusal.command, "g")
+	run = run_of("map([1, 2], (x) => x * 2)", .Declaration)
+	testing.expect(t, run.ok)
+	run = run_of("map([1], (x) => g())", .Declaration)
+	testing.expect_value(t, run.evaluation.refusal.refusal, Refusal.Effect_Refused)
+	expect_log(t, run, {}, "an effect in a body, mode declaration")
+}
+
+// The values of functions and lists, last: the edges of the parameters,
+// a literal made in a call and typed after it, a function that a call
+// gives, a function as an argument, map on map.
+@(test)
+evaluation_values_of_functions :: proc(t: ^testing.T) {
+	Case :: struct {
+		text:    string,
+		integer: i64,
+	}
+	cases := [?]Case {
+		{"let f = () => 7 in f()", 7},
+		{"let f = (a, b, c, d, e, o, p, q, i, j, k, l) => a + l in f(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)", 13},
+		{"let f = (x) => x * 2 in f(21)", 42},
+		{"let f = (a, b) => a * 10 + b in f(b = 2, a = 1)", 12},
+		{"let mk = (w) => {x = 0, y = 0, width = w, height = 2} in area(mk(5))", 10},
+		{"let mk = (w) => {x = 0, y = 0, width = w, height = 2} in area(mk(5)) + area(mk(7))", 24},
+		{"let grow = (r) => r with {width = 10} in area(grow(rect))", 40},
+		{"let add = (a) => (b) => a + b, inc = add(1) in inc(2) + inc(5)", 9},
+		{"let twice = (f, x) => f(f(x)) in twice((y) => y * 3, 2)", 18},
+		{"let x = 1 in let f = (x) => x in f(5) + x", 6},
+		{"let f = (x) => (x) => x in let g = f(1) in g(2)", 2},
+		{"let f = (r) => area(r) in f({x = 0, y = 0, width = 3, height = 3})", 9},
+		{"let f = (x) => x in set(f(.french))", 19},
+	}
+	for item in cases {
+		run := run_of(item.text)
+		testing.expectf(t, run.ok && run.value.kind == .Integer && run.value.integer == item.integer, "%q: %v %v %d, not %d (%v at column %d)", item.text, run.ok, run.value.kind, run.value.integer, item.integer, run.evaluation.refusal.refusal, run.evaluation.refusal.place.column)
+	}
+
+	// A function is a value: the value of a line, with its node.
+	run := run_of("(x) => x * 2")
+	testing.expect(t, run.ok)
+	testing.expect_value(t, run.value.kind, Kind.Function)
+	testing.expect_value(t, lex_parser.Node_Index(run.value.integer), run.tree.root)
+	testing.expect_value(t, run.value.call, NO_CALL)
+	// The deepest nesting of functions that a line holds.
+	run = run_of(strings.concatenate({strings.repeat("()=>", (lex_parser.TEXT_BYTES_MOST - 1) / 4, context.temp_allocator), "1"}, context.temp_allocator))
+	testing.expect(t, run.ok)
+	testing.expect_value(t, run.value.kind, Kind.Function)
+
+	// Lists: none, the items in order, map on map, a list of functions.
+	run = run_of("[]")
+	testing.expect(t, run.ok)
+	testing.expect_value(t, run.value.kind, Kind.List)
+	testing.expect_value(t, run.value.detail, u32(0))
+	run = run_of("map(map([1, 2], (x) => x + 1), (y) => y * 10)")
+	if values := items_of(run, run.value); testing.expect_value(t, len(values), 2) {
+		testing.expect_value(t, values[0], i64(20))
+		testing.expect_value(t, values[1], i64(30))
+	}
+	run = run_of("map([], (x) => g())")
+	testing.expect(t, run.ok)
+	testing.expect_value(t, run.value.detail, u32(0))
+	expect_log(t, run, {}, "map on no item")
+	run = run_of("[[1, 2], [3]]")
+	testing.expect(t, run.ok)
+	if outer := list_items_of(&run.evaluation, run.value); testing.expect_value(t, len(outer), 2) {
+		testing.expect_value(t, len(items_of(run, outer[0])), 2)
+		testing.expect_value(t, items_of(run, outer[1])[0], i64(3))
+	}
+	run = run_of("map([1, 2], (x) => (y) => x + y)")
+	testing.expect(t, run.ok)
+	if functions := list_items_of(&run.evaluation, run.value); testing.expect_value(t, len(functions), 2) {
+		testing.expect_value(t, functions[0].kind, Kind.Function)
+		testing.expect(t, functions[0].call != functions[1].call)
+	}
+}
+
+// The bytes of stack of the deepest lines of today, and of one level of a
+// recursion, in this build: a measure, which no test reads.
+@(test)
+evaluation_stack_measure :: proc(t: ^testing.T) {
+	lines := [?]string {
+		strings.concatenate({strings.repeat("1+", 99, context.temp_allocator), "1"}, context.temp_allocator),
+		strings.concatenate({strings.repeat("-", 199, context.temp_allocator), "1"}, context.temp_allocator),
+		strings.concatenate({strings.repeat("f(", 66, context.temp_allocator), strings.repeat(")", 66, context.temp_allocator)}, context.temp_allocator),
+	}
+	for line in lines {
+		run := run_of(line)
+		testing.expectf(t, run.ok, "%s…: %v", line[:12], run.evaluation.refusal.refusal)
+		fmt.printfln("lex_evaluator: measure: %d bytes of stack for %d steps of %s…", run.evaluation.stack_deepest, run.evaluation.steps, line[:12])
+	}
+	run := run_of("let f = (n) => f(n) in f(1)", budget = 1000, stack_bytes = 7 * 1024 * 1024)
+	fmt.printfln("lex_evaluator: measure: %d bytes of stack for %d calls of a recursion", run.evaluation.stack_deepest, run.evaluation.call_count)
 }

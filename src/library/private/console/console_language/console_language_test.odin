@@ -391,3 +391,76 @@ line_runs_of_the_forms_of_records :: proc(t: ^testing.T) {
 	testing.expect(t, !bound_by_let("let a = f(1, b = 2) in b", token_next("let a = f(1, b = 2) in b", 23)))
 	testing.expect(t, bound_by_let("let a = 1, b = 2 in b", token_next("let a = 1, b = 2 in b", 20)))
 }
+
+// The scanner of a function and a list: "=>" is one token, apart from "="
+// and ">"; a '(' starts a function only when "=>" follows its group.
+@(test)
+scanner_of_functions :: proc(t: ^testing.T) {
+	token := token_next("x => 1", 1)
+	testing.expect(t, token.kind == .Function_Arrow && token.start == 2 && token.end == 4)
+	token = token_next(">=", 0)
+	testing.expect(t, token.kind == .Operator && token.end == 1)
+	token = token_next("==>", 0)
+	testing.expect(t, token.kind == .Operator && token.end == 1)
+	token = token_next("[", 0)
+	testing.expect(t, token.kind == .Operator && token.end == 1)
+	Head :: struct {
+		text:      string,
+		found:     bool,
+		close:     int,
+		arrow_end: int,
+	}
+	heads := [?]Head {
+		{"(x) => x", true, 2, 6},
+		{"() => 1", true, 1, 5},
+		{"(a, b)=>a", true, 5, 8},
+		{"((x) => x)", false, 0, 0},
+		{"(x)", false, 0, 0},
+		{"(x) + 1", false, 0, 0},
+		{"(x", false, 0, 0},
+		{"(f(1), [2]) => 3", true, 10, 14},
+		{"x => 1", false, 0, 0},
+		{"", false, 0, 0},
+	}
+	for item in heads {
+		close, arrow_end, found := function_head(item.text, 0)
+		testing.expectf(t, found == item.found && close == item.close && arrow_end == item.arrow_end, "%q: %v %d %d, not %v %d %d", item.text, found, close, arrow_end, item.found, item.close, item.arrow_end)
+	}
+	// The body ends at the ',' or the close around the function, or at the
+	// `in` of a let around it; a let inside the body keeps its own `in`.
+	testing.expect_value(t, function_body_end("f((x) => x + 1, 2)", 8), 14)
+	testing.expect_value(t, function_body_end("[(x) => x]", 7), 9)
+	testing.expect_value(t, function_body_end("let f = (x) => x in f(1)", 14), 17)
+	testing.expect_value(t, function_body_end("(x) => let y = x in y", 6), 21)
+	testing.expect_value(t, function_body_end("(x) => g(x, 1)", 6), 14)
+}
+
+// The colors of a function and a list: "=>", "[" and "]" are operators, a
+// parameter is a variable where it is bound and where its body reads it,
+// and the same name outside the body is not one.
+@(test)
+line_runs_of_functions :: proc(t: ^testing.T) {
+	runs: [32]terminal.Code_Run
+	text := "(p, q) => p + q "
+	count := line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"(", .Operator}, {"p", .Variable}, {",", .Operator}, {"q", .Variable}, {")", .Operator}, {"=>", .Operator}, {"p", .Variable}, {"+", .Operator}, {"q", .Variable}})
+	expect_cover(t, text, runs[:count])
+	text = "length([1], (p) => p, p) "
+	count = line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"length", .Function}, {"(", .Operator}, {"[", .Operator}, {"1", .Number}, {"]", .Operator}, {",", .Operator}, {"(", .Operator}, {"p", .Variable}, {")", .Operator}, {"=>", .Operator}, {"p", .Variable}, {",", .Operator}, {"p", .Unknown}, {")", .Operator}})
+	// A parameter read with a field, and an inner function that hides
+	// nothing of the outer one.
+	text = "(p) => (s) => p.a + s "
+	count = line_runs(text, 0, NO_CARET, test_names, runs[:])
+	expect_runs(t, text, runs[:count], []Expected_Run{{"(", .Operator}, {"p", .Variable}, {")", .Operator}, {"=>", .Operator}, {"(", .Operator}, {"s", .Variable}, {")", .Operator}, {"=>", .Operator}, {"p.a", .Variable}, {"+", .Operator}, {"s", .Variable}})
+	// The parameters that a name at a place can read: the outer ones
+	// first, none outside the body.
+	tokens: [4]Token
+	line := "(a) => (b) => a + b"
+	testing.expect_value(t, parameters_at(line, 18, tokens[:]), 2)
+	testing.expect_value(t, line[tokens[0].start:tokens[0].end], "a")
+	testing.expect_value(t, line[tokens[1].start:tokens[1].end], "b")
+	testing.expect_value(t, parameters_at(line, 7, tokens[:]), 1)
+	testing.expect_value(t, parameters_at("f((a) => a, 1)", 12, tokens[:]), 0)
+	testing.expect_value(t, parameters_at("(a, b, c, d, e) => a", 19, tokens[:2]), 2)
+}

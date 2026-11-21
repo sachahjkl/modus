@@ -143,16 +143,16 @@ word_is :: proc "contextless" (text: string, token: Token, word: string) -> bool
 	return token.kind == .Name && text[token.start:token.end] == word
 }
 
-// opens and closes say if a token opens or closes a group: parentheses and
-// the braces of a record literal.
+// opens and closes say if a token opens or closes a group: parentheses, the
+// braces of a record literal and the brackets of a list.
 @(private)
 opens :: proc "contextless" (text: string, token: Token) -> bool {
-	return token.kind == .Operator && (text[token.start] == '(' || text[token.start] == '{')
+	return token.kind == .Operator && (text[token.start] == '(' || text[token.start] == '{' || text[token.start] == '[')
 }
 
 @(private)
 closes :: proc "contextless" (text: string, token: Token) -> bool {
-	return token.kind == .Operator && (text[token.start] == ')' || text[token.start] == '}')
+	return token.kind == .Operator && (text[token.start] == ')' || text[token.start] == '}' || text[token.start] == ']')
 }
 
 // single_equal says if a token is "=" with no "=" after it: the "=" of a
@@ -195,7 +195,7 @@ pipe_nested_form :: proc "contextless" (text: string, first: int, memory: []u8, 
 					unmatched_close = token.start
 				}
 			}
-		case .None, .Name, .Number, .Text, .Text_Unfinished, .Arrow, .Member:
+		case .None, .Name, .Number, .Text, .Text_Unfinished, .Arrow, .Member, .Function_Arrow:
 		}
 	}
 	// The placeholders, before any form is written: a '_' out of its place
@@ -522,6 +522,14 @@ pipe_segment_write :: proc "contextless" (pipe_writer: ^Pipe_Writer, start, end:
 		pipe_let_write(pipe_writer, start, end)
 		return
 	}
+	// A function holds its body: the head as it is, then the body nested.
+	if first := token_next(text, start); first.start < end {
+		if _, arrow_end, found := function_head(text, first.start); found && arrow_end <= end {
+			pipe_write(pipe_writer, text[start:arrow_end])
+			pipe_segment_write(pipe_writer, arrow_end, end)
+			return
+		}
+	}
 	first_operator := pipe_next_operator(text, start, end)
 	if first_operator == end {
 		pipe_group_copy(pipe_writer, start, end)
@@ -693,7 +701,7 @@ pipe_left_read :: proc "contextless" (text: string, stage: ^Pipe_Stage, start, e
 			stage.left = .Text
 		case .Name:
 			stage.left, stage.left_start, stage.left_end = .Name, first.start, first.end
-		case .None, .Text_Unfinished, .Operator, .Arrow, .Unknown, .Pipe, .Member:
+		case .None, .Text_Unfinished, .Operator, .Arrow, .Unknown, .Pipe, .Member, .Function_Arrow:
 		}
 		return
 	}

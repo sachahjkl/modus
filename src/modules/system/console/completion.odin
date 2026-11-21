@@ -22,6 +22,7 @@ import "modus:contract/text_encoding"
 import "modus:contract/value_kinds"
 import "modus:private/console/console_language"
 import "modus:private/console/console_stream"
+import "modus:private/console/lex_evaluator"
 import "modus:support/display"
 import "modus:support/line_editor"
 import "modus:support/system"
@@ -540,6 +541,29 @@ parameter_names_add :: proc "contextless" (table: ^Candidate_Table, place: line_
 	}
 }
 
+// The parameters of the functions around the caret, copied out of the line,
+// which changes under the list: 16 at most, of 32 bytes at most.
+BINDING_CAPACITY :: 16
+BINDING_NAME_SIZE :: 32
+binding_names: [BINDING_CAPACITY][BINDING_NAME_SIZE]u8
+
+// bindings_add adds the parameters of each function whose body holds the
+// word at the caret to a table of candidates.
+bindings_add :: proc "contextless" (table: ^Candidate_Table, place: line_editor.Completion_Context, text: string) {
+	if place.place != .Name {
+		return
+	}
+	tokens: [BINDING_CAPACITY]console_language.Token
+	count := console_language.parameters_at(text, place.word_start, tokens[:])
+	for token, index in tokens[:count] {
+		if token.end - token.start > BINDING_NAME_SIZE {
+			continue
+		}
+		size := copy(binding_names[index][:], text[token.start:token.end])
+		candidate_add(table, string(binding_names[index][:size]), .Binding, index)
+	}
+}
+
 // completion_token_before gives the token that ends at or before a byte
 // place: the last token of text[:place].
 completion_token_before :: proc "contextless" (text: string, place: int) -> console_language.Token {
@@ -589,6 +613,9 @@ names_collect :: proc "contextless" (table: ^Candidate_Table, place: line_editor
 		for &item, index in commands[:command_count] {
 			candidate_add(table, item.name, command_kind(&item), index)
 		}
+		// The name of the evaluation, which no command of the table has: its
+		// number is past them.
+		candidate_add(table, lex_evaluator.MAP_NAME, .Command, command_count)
 		for &sandbox, index in sandboxes {
 			if sandbox.service && !sandbox.quiet {
 				candidate_add(table, sandbox.name, .Service, index)
@@ -798,6 +825,8 @@ names_rank :: proc "contextless" (by_tab: bool) {
 		// At the start of an argument of a call whose parameters have
 		// names: those names too, for a named argument.
 		parameter_names_add(&completion.names, place, text)
+		// In the body of a function: its parameters.
+		bindings_add(&completion.names, place, text)
 		// A name with a dot whose owner is no service: the whole name is
 		// the query, against all the names.
 		if place.place == .Member && completion.names.count == 0 {
@@ -841,8 +870,10 @@ pipe_completion_filter :: proc "contextless" (table: ^Candidate_Table, text: str
 		takes := false
 		switch item.kind {
 		case .Command, .Export, .Record:
-			takes = int(item.number) < command_count && pipe_stage_takes(&commands[item.number], left, knowledge)
-		case .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member, .Stream:
+			// map takes a list first, which no knowledge before the run
+			// refuses.
+			takes = int(item.number) < command_count && pipe_stage_takes(&commands[item.number], left, knowledge) || item.name == lex_evaluator.MAP_NAME
+		case .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member, .Stream, .Binding:
 			// No call: "|>" refuses it.
 		}
 		if takes {
@@ -1030,6 +1061,10 @@ owner_name :: proc "contextless" (item: ^Command) -> string {
 candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_editor.Candidate) {
 	switch candidate.kind {
 	case .Command, .Export, .Record:
+		if candidate.name == lex_evaluator.MAP_NAME && int(candidate.number) >= command_count {
+			system.write_part(writer, "name of Lex (list, function) -> list")
+			return
+		}
 		if int(candidate.number) >= command_count {
 			return
 		}
@@ -1039,7 +1074,7 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 			system.write_part(writer, "command ")
 		case .Record:
 			system.write_part(writer, "record ")
-		case .Export, .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member, .Stream:
+		case .Export, .Service, .Module, .Process, .Variable, .History_Line, .Fact_Type, .Field, .Member, .Stream, .Binding:
 			system.write_part(writer, "export of ")
 			system.write_part(writer, owner_name(item))
 			system.write_part(writer, " ")
@@ -1079,6 +1114,8 @@ candidate_about :: proc "contextless" (writer: ^system.Writer, candidate: line_e
 		}
 	case .Stream:
 		system.write_part(writer, "record stream: a typed name")
+	case .Binding:
+		system.write_part(writer, "parameter of a function of the line")
 	}
 }
 
@@ -1128,6 +1165,7 @@ list_icon_of_candidate := [line_editor.Candidate_Kind]terminal.List_Icon {
 	.Field        = .None,
 	.Member       = .None,
 	.Stream       = .Variable, // A value of the line, as a variable is.
+	.Binding      = .Variable, // A value of the line, as a variable is.
 }
 
 list_send :: proc "contextless" () {

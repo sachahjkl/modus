@@ -1754,6 +1754,28 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: Rectangle has no field widht; its fields are x, y, width, height"},
 	{kind = .Type, text = "area({x = 1, y = 2, width = 3})"},
 	{kind = .Wait, text = "[console] error: Rectangle needs the field height, which has no default"},
+	// The functions of Lex (docs/CONSOLE.md, "Functions and lists"): map on
+	// a list, a function that a let binds, a literal made in a body and
+	// typed by area after the call, the drawing of a function. A function
+	// is refused at the border of an export and by a variable. A recursion
+	// stops at the stack bound of the evaluator, and the deepest line of
+	// 200 bytes of today runs inside it on the thread of the lines.
+	{kind = .Type, text = "map([1, 2, 3], (x) => x * 2)"},
+	{kind = .Wait, text = "[console] [2, 4, 6]"},
+	{kind = .Type, text = "let double = (x) => x * 2 in area({x = 0, y = 0, width = double(3), height = 4})"},
+	{kind = .Wait, text = "[console] 24"},
+	{kind = .Type, text = "[1, 2] |> map((w) => area({x = 0, y = 0, width = w, height = 5}))"},
+	{kind = .Wait, text = "[console] [5, 10]"},
+	{kind = .Type, text = "(x) => x + 1"},
+	{kind = .Wait, text = "[console] (x) => x + 1"},
+	{kind = .Type, text = "area((x) => x)"},
+	{kind = .Wait, text = "[console] error: area: argument 1 is a function: a function and a list stay in their line, and no command takes one"},
+	{kind = .Type, text = "f = (x) => x"},
+	{kind = .Wait, text = "[console] error: a variable keeps no function"},
+	{kind = .Type, text = "let f = (n) => f(n) in f(1)"},
+	{kind = .Wait, text = "[console] error: the line nests deeper than the stack of the evaluator holds: 524288 bytes"},
+	{kind = .Type, text = "1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1+1"},
+	{kind = .Wait, text = "[console] 100"},
 	{kind = .Type, text = "b = buffer(1)"},
 	{kind = .Type, text = "fill(b, 3)"},
 	{kind = .Wait, text = "[console] 4096"},
