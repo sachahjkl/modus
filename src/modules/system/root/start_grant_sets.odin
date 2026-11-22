@@ -391,7 +391,9 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	{name = "extended_state"},
 	// The process that the test of the debugger debugs.
 	{name = "debug_target"},
-	{name = "replay_probe"},
+	// The test of the record and the replay of a process with a shared
+	// writer: it starts its readers from the boot image.
+	{name = "replay_probe", grants = {.Image}},
 	// A guest in its own memory.
 	{name = "guest_demo"},
 	// A child of `frames`: its starter gives it its handles.

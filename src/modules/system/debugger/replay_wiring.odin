@@ -62,6 +62,23 @@ record_state_names := [Record_State]string {
 	.Replayed  = "replayed",
 }
 
+// The words of the replay_status column differed for each divergence kind.
+@(rodata)
+divergence_kind_names := [input_history.Divergence_Kind]string {
+	.None                   = "",
+	.Unexpected_Operation   = "operation",
+	.Unexpected_Instruction = "instruction",
+	.Missing_Record         = "record",
+	.Kind_Mismatch          = "kind",
+	.Unexpected_Arguments   = "arguments",
+	.Unexpected_End         = "end",
+}
+
+// One record of the history, private to the service: the scan of a
+// divergence copies each record once before the border reads it, because
+// the kernel writes the history while the service can read it.
+divergence_record_scratch: [input_history.MAX_RECORD_PAYLOAD_BYTES]u8
+
 @(rodata)
 history_end_names := [input_history.History_End_Reason]string {
 	.None                = "",
@@ -213,6 +230,16 @@ record_row_fill :: proc "contextless" (row: ^Record_Row) -> bool {
 	row^ = {points = i64(header.point_count), bytes = i64(header.written_bytes), capacity = i64(header.capacity_bytes), checkpoints = i64(record_session.checkpoints.count)}
 	if end == .Divergence {
 		row.divergence = i64(min(header.divergence_point, u64(max(i64))))
+		// The first divergence in full. A history whose records before that
+		// point fail the border shows the point from its header only.
+		if report, found, report_ok := input_history.divergence_report_of_history(record_session.bytes, divergence_record_scratch[:]); report_ok && found {
+			system.format(row.differed[:], divergence_kind_names[report.kind])
+			hex_column(row.expected[:], report.expected)
+			hex_column(row.actual[:], report.actual)
+			if report.recorded_kind != .None {
+				hex_column(row.recorded_at[:], report.recorded_instruction_address)
+			}
+		}
 	}
 	system.format(row.state[:], record_state_names[record_session.state])
 	system.format(row.end[:], history_end_names[end])

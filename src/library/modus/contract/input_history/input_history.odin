@@ -31,6 +31,7 @@ History_Record_Kind :: enum u32 {
 	Processor_Identification = 3,
 	Page_Delta               = 4,
 	History_End              = 5,
+	Shared_Mapping           = 6,
 }
 
 // Why an input history ended. Zero means the history has not ended.
@@ -59,6 +60,15 @@ Divergence_Kind :: enum u32 {
 	Missing_Record         = 3,
 	Kind_Mismatch          = 4,
 	Unexpected_Arguments   = 5,
+	Unexpected_End         = 6, // The replayed process stopped where the history does not end, or with another end.
+}
+
+// What the recorded process could do with the pages of a shared mapping.
+// Zero names no access: a record of a mapping always has one.
+Shared_Mapping_Access :: enum u32 {
+	None       = 0,
+	Read       = 1, // A page that another process writes, mapped without Write: a point copy in the record.
+	Read_Write = 2, // A page that the recorded process and a shared writer both write.
 }
 
 // history_record_kind_of_word is the one border for History_Record_Kind.
@@ -74,6 +84,11 @@ history_end_reason_of_word :: proc "contextless" (word: u64) -> (reason: History
 // record_mode_of_word is the one border for Record_Mode.
 record_mode_of_word :: proc "contextless" (word: u64) -> (mode: Record_Mode, ok: bool) {
 	return enum_word.member_of_word(Record_Mode, word)
+}
+
+// shared_mapping_access_of_word is the one border for Shared_Mapping_Access.
+shared_mapping_access_of_word :: proc "contextless" (word: u64) -> (access: Shared_Mapping_Access, ok: bool) {
+	return enum_word.member_of_word(Shared_Mapping_Access, word)
 }
 
 // divergence_kind_of_word is the one border for Divergence_Kind.
@@ -172,6 +187,49 @@ History_End_Payload :: struct {
 	actual_value:    u64, // Actual value when reason == Divergence; else 0.
 }
 #assert(size_of(History_End_Payload) == 24)
+
+// The most pages of one shared mapping: the kernel keeps one baseline frame
+// for each shared page and one frame for each point copy, so a mapping with
+// more pages cannot be recorded.
+SHARED_MAPPING_PAGE_LIMIT :: u64(64)
+
+// Payload of History_Record_Kind.Shared_Mapping. The head of a history holds
+// one for each mapping of the recorded process whose pages another process
+// writes, before the Page_Delta records of its first bytes. A replay holds no
+// peer, so the kernel maps private pages of the replayer at that place
+// before the first instruction, and each Page_Delta of the history writes
+// them.
+Shared_Mapping_Payload :: struct {
+	virtual_address: u64, // Page-aligned user virtual address of the first page.
+	page_count:      u64, // Pages of the mapping: 1 ..= SHARED_MAPPING_PAGE_LIMIT.
+	access:          u32, // Shared_Mapping_Access word (never None).
+	reserved:        u32, // 0; non-zero refused at the border.
+}
+#assert(size_of(Shared_Mapping_Payload) == 24)
+
+// shared_mapping_validate is the border of a Shared_Mapping payload: its
+// exact size, a page-aligned range below USER_END, a page count in its
+// bound, a known access that is not None, and a zero reserved word.
+shared_mapping_validate :: proc "contextless" (payload: []u8) -> (entry: Shared_Mapping_Payload, access: Shared_Mapping_Access, ok: bool) {
+	if len(payload) != size_of(Shared_Mapping_Payload) {
+		return {}, .None, false
+	}
+	entry = copy_from_bytes(payload, Shared_Mapping_Payload)
+	access, ok = shared_mapping_access_of_word(u64(entry.access))
+	if !ok || access == .None || entry.reserved != 0 {
+		return {}, .None, false
+	}
+	if entry.page_count == 0 || entry.page_count > SHARED_MAPPING_PAGE_LIMIT {
+		return {}, .None, false
+	}
+	if entry.virtual_address == 0 || entry.virtual_address % HISTORY_PAGE_SIZE != 0 || entry.virtual_address >= op.USER_END {
+		return {}, .None, false
+	}
+	if entry.page_count * HISTORY_PAGE_SIZE > op.USER_END - entry.virtual_address {
+		return {}, .None, false
+	}
+	return entry, access, true
+}
 
 // align_up_record rounds a byte count up to RECORD_ALIGNMENT.
 align_up_record :: #force_inline proc "contextless" (bytes: u64) -> u64 {
@@ -378,6 +436,9 @@ payload_valid :: proc "contextless" (kind: History_Record_Kind, payload: []u8) -
 		return len(payload) == size_of(Cpuid_Payload)
 	case .Page_Delta:
 		_, ok := page_delta_validate(payload)
+		return ok
+	case .Shared_Mapping:
+		_, _, ok := shared_mapping_validate(payload)
 		return ok
 	case .History_End:
 		if len(payload) != size_of(History_End_Payload) {
@@ -596,6 +657,24 @@ History_Reader :: struct {
 	buffer:      []u8,
 	header:      History_Header,
 	read_offset: u64,
+	// The input point of the last record that the reader passed; 0 before
+	// the first. A record whose point does not grow past it is refused: a
+	// reader that took it could apply an input twice or out of order.
+	last_point:  u64,
+}
+
+// history_reader_next_point gives the input point that the next record must
+// have at least: the point of a divergence found where the next record is
+// damaged or missing.
+history_reader_next_point :: proc "contextless" (reader: ^History_Reader) -> u64 {
+	return reader.last_point + 1
+}
+
+// history_reader_advance passes the record that a peek gave: its stride,
+// and its input point.
+history_reader_advance :: proc "contextless" (reader: ^History_Reader, record_header: History_Record_Header, stride: u64) {
+	reader.read_offset += stride
+	reader.last_point = record_header.point_number
 }
 
 // history_reader_open validates the History_Header at the border before
@@ -653,7 +732,7 @@ history_reader_peek_into :: proc "contextless" (reader: ^History_Reader, scratch
 	if !kind_ok || parsed_kind == .None {
 		return {}, .None, nil, 0, false, false
 	}
-	if record_header.payload_bytes > MAX_RECORD_PAYLOAD_BYTES {
+	if record_header.point_number <= reader.last_point || record_header.payload_bytes > MAX_RECORD_PAYLOAD_BYTES {
 		return {}, .None, nil, 0, false, false
 	}
 	padded_payload := align_up_record(u64(record_header.payload_bytes))
@@ -681,7 +760,7 @@ history_reader_next_into :: proc "contextless" (reader: ^History_Reader, scratch
 	stride: u64
 	record_header, kind, payload, stride, has_more, ok = history_reader_peek_into(reader, scratch)
 	if ok && has_more {
-		reader.read_offset += stride
+		history_reader_advance(reader, record_header, stride)
 	}
 	return record_header, kind, payload, has_more, ok
 }
@@ -707,7 +786,7 @@ history_reader_peek :: proc "contextless" (reader: ^History_Reader) -> (record_h
 	if !kind_ok || parsed_kind == .None {
 		return {}, .None, nil, 0, false, false
 	}
-	if record_header.payload_bytes > MAX_RECORD_PAYLOAD_BYTES {
+	if record_header.point_number <= reader.last_point || record_header.payload_bytes > MAX_RECORD_PAYLOAD_BYTES {
 		return {}, .None, nil, 0, false, false
 	}
 	padded_payload := align_up_record(u64(record_header.payload_bytes))
@@ -735,7 +814,7 @@ history_reader_next :: proc "contextless" (reader: ^History_Reader) -> (record_h
 	stride: u64
 	record_header, kind, payload, stride, has_more, ok = history_reader_peek(reader)
 	if ok && has_more {
-		reader.read_offset += stride
+		history_reader_advance(reader, record_header, stride)
 	}
 	return record_header, kind, payload, has_more, ok
 }
@@ -860,6 +939,161 @@ replay_step_check :: proc "contextless" (actual: Replay_Actual_Event, has_record
 		if _, ok := page_delta_validate(recorded_payload); !ok {
 			return {.Missing_Record, u64(actual.kind), 0}
 		}
+	case .Shared_Mapping:
+		// A shared mapping belongs to the head of a history: no event of a
+		// replayed thread is one.
+		return {.Kind_Mismatch, u64(recorded_kind), u64(actual.kind)}
 	}
 	return {.None, 0, 0}
+}
+
+// replay_end_check compares the stop of a replayed process by its own
+// instructions (a stop of itself, its last thread, a fault) with the next
+// record of the history, after the record of its last kernel entry. The
+// record stopped there too only when that next record is a History_End
+// with Normal_Stop. Unexpected_End gives the recorded kind and the kind
+// History_End when the history goes on, and the recorded and Normal_Stop
+// reasons when the history ended for another reason.
+replay_end_check :: proc "contextless" (has_recorded: bool, recorded_kind: History_Record_Kind, recorded_payload: []u8) -> Replay_Check_Result {
+	if !has_recorded || recorded_kind == .None {
+		return {.Unexpected_End, 0, u64(History_Record_Kind.History_End)}
+	}
+	if recorded_kind != .History_End {
+		return {.Unexpected_End, u64(recorded_kind), u64(History_Record_Kind.History_End)}
+	}
+	_, reason, _, ok := history_end_from_payload(recorded_payload)
+	if !ok {
+		return {.Unexpected_End, 0, u64(History_Record_Kind.History_End)}
+	}
+	if reason != .Normal_Stop {
+		return {.Unexpected_End, u64(reason), u64(History_End_Reason.Normal_Stop)}
+	}
+	return {.None, 0, 0}
+}
+
+// The most stand-in mappings of one replay: one for each shared mapping of
+// the record.
+STAND_IN_MAPPING_CAPACITY :: 32
+// The most pages of all the stand-in mappings of one replay: the point copies
+// and the shared pages that the kernel keeps for one record.
+STAND_IN_PAGE_LIMIT :: u64(96)
+
+// One range of private pages that a replay maps where the record had a
+// shared mapping.
+Stand_In_Mapping :: struct {
+	virtual_address: u64,
+	page_count:      u64,
+	access:          Shared_Mapping_Access,
+	place:           u32, // What backs the pages, for the owner of the set: the memory object in the kernel.
+}
+
+// The stand-in mappings of one replay. They never overlap, so a page names at
+// most one of them.
+Stand_In_Mapping_Set :: struct {
+	mappings:   [STAND_IN_MAPPING_CAPACITY]Stand_In_Mapping,
+	count:      int,
+	page_count: u64,
+}
+
+// stand_in_mapping_set_admits says whether entry fits the set: a range that
+// meets no range of the set, a free place, and pages in the bound. It
+// changes nothing.
+stand_in_mapping_set_admits :: proc "contextless" (set: ^Stand_In_Mapping_Set, entry: Shared_Mapping_Payload) -> bool {
+	if set == nil || set.count >= STAND_IN_MAPPING_CAPACITY || entry.page_count == 0 || entry.page_count > SHARED_MAPPING_PAGE_LIMIT {
+		return false
+	}
+	if entry.page_count > STAND_IN_PAGE_LIMIT - set.page_count {
+		return false
+	}
+	if entry.virtual_address >= op.USER_END || entry.page_count * HISTORY_PAGE_SIZE > op.USER_END - entry.virtual_address {
+		return false
+	}
+	end := entry.virtual_address + entry.page_count * HISTORY_PAGE_SIZE
+	for mapping in set.mappings[:set.count] {
+		mapping_end := mapping.virtual_address + mapping.page_count * HISTORY_PAGE_SIZE
+		if entry.virtual_address < mapping_end && mapping.virtual_address < end {
+			return false
+		}
+	}
+	return true
+}
+
+// stand_in_mapping_set_add adds a validated shared mapping with the place
+// that backs it. Refused: a range that meets one of the set, a full set,
+// pages past STAND_IN_PAGE_LIMIT, an access None. On a refusal the set is
+// unchanged.
+stand_in_mapping_set_add :: proc "contextless" (set: ^Stand_In_Mapping_Set, entry: Shared_Mapping_Payload, access: Shared_Mapping_Access, place: u32) -> bool {
+	if access == .None || !stand_in_mapping_set_admits(set, entry) {
+		return false
+	}
+	set.mappings[set.count] = {virtual_address = entry.virtual_address, page_count = entry.page_count, access = access, place = place}
+	set.count += 1
+	set.page_count += entry.page_count
+	return true
+}
+
+// stand_in_mapping_set_find gives the stand-in mapping that holds the page at
+// virtual_address, and the index of the page inside it.
+stand_in_mapping_set_find :: proc "contextless" (set: ^Stand_In_Mapping_Set, virtual_address: u64) -> (mapping: Stand_In_Mapping, page: u64, ok: bool) {
+	if set == nil {
+		return {}, 0, false
+	}
+	for candidate in set.mappings[:set.count] {
+		if virtual_address >= candidate.virtual_address && virtual_address - candidate.virtual_address < candidate.page_count * HISTORY_PAGE_SIZE {
+			return candidate, (virtual_address - candidate.virtual_address) / HISTORY_PAGE_SIZE, true
+		}
+	}
+	return {}, 0, false
+}
+
+// The first divergence of a replay, as a reader shows it: what differed,
+// where, the two values, and the record that the history held there.
+Divergence_Report :: struct {
+	kind:                         Divergence_Kind,
+	point:                        u64, // The input point of the divergence.
+	expected:                     u64, // The value of the history.
+	actual:                       u64, // The value of the replay.
+	recorded_kind:                History_Record_Kind, // The record at that point; None when the history has no record there.
+	recorded_instruction_address: u64, // Its instruction address, or 0.
+	recorded_stack_pointer:       u64, // Its stack pointer, or 0.
+}
+
+// divergence_report_of_history reads the header of a history through its
+// border, and, when a replay ended it with a divergence, finds the record
+// at the point of the divergence. found is false when the history did not
+// end with a divergence. ok is false when the header or a record before
+// that point fails the border: a report from a damaged history could name
+// a record that is not the one the replay read. scratch holds one record:
+// at least MAX_RECORD_PAYLOAD_BYTES bytes.
+divergence_report_of_history :: proc "contextless" (buffer: []u8, scratch: []u8) -> (report: Divergence_Report, found: bool, ok: bool) {
+	reader, opened := history_reader_open(buffer)
+	if !opened {
+		return {}, false, false
+	}
+	end_reason, _ := history_end_reason_of_word(u64(reader.header.end_reason))
+	if end_reason != .Divergence {
+		return {}, false, true
+	}
+	kind, _ := divergence_kind_of_word(u64(reader.header.divergence_kind))
+	report = {
+		kind     = kind,
+		point    = reader.header.divergence_point,
+		expected = reader.header.divergence_expected,
+		actual   = reader.header.divergence_actual,
+	}
+	for {
+		record_header, record_kind, _, has_more, read_ok := history_reader_next_into(&reader, scratch)
+		if !read_ok {
+			return {}, false, false
+		}
+		if !has_more || record_header.point_number > report.point {
+			return report, true, true
+		}
+		if record_header.point_number == report.point {
+			report.recorded_kind = record_kind
+			report.recorded_instruction_address = record_header.instruction_address
+			report.recorded_stack_pointer = record_header.stack_pointer
+			return report, true, true
+		}
+	}
 }

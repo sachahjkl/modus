@@ -89,6 +89,10 @@ Process_Record_State :: struct {
 	generation:         u64, // Names this record for the writer threads that the gate counted.
 	shared_pages:       [SHARED_PAGE_CAPACITY]Shared_Page,
 	shared_page_count:  u32,
+	// The replay: the private pages that it maps where the record had a
+	// shared mapping (replay_stand_in_mapping_add_locked). Each place is a
+	// memory object of the replay, paid by the budget of the history.
+	stand_ins:          input_history.Stand_In_Mapping_Set,
 	has_shared_writers: bool, // The gate is in use: the writers know this record (atomic).
 	writers_held:       bool, // The writers wait for the recorded thread: the pick passes over them (atomic).
 	writers_held_since: u64, // Milliseconds since boot when the recorded thread last left its input point (atomic).
@@ -770,10 +774,11 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		// starter of the replay wrote its own, which goes first, so that no
 		// byte of it stays where the record had a zero.
 		replay_context_page_clear_locked(target_index)
-		// Apply initial Page_Delta records before the first instruction so the
-		// time page (cycle_frequency, cycle_start), the context and the shared
-		// pages hold their recorded initial bytes at entry.
-		if !replay_apply_pending_page_deltas_locked(processor_self(), target_index) {
+		// The head of the history before the first instruction: the private
+		// pages where the record had shared mappings, then the first bytes of
+		// the time page (cycle_frequency, cycle_start), of the context and of
+		// the shared pages.
+		if !replay_head_apply_locked(processor_self(), target_index) {
 			point_copies_teardown(target_index, rec)
 			intrinsics.mem_zero(rec, size_of(Process_Record_State))
 			region_release(region_index)
@@ -799,17 +804,37 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 record_start_setup :: proc "contextless" (cpu: ^Processor, target_index: u32, rec: ^Process_Record_State) -> Operation_Outcome {
 	point_copies_setup(target_index, rec, copy_initial = true) or_return
 	// The first bytes of each point copy, so that the replay starts with the
-	// same read-only shared pages.
-	for index in u32(0) ..< rec.point_copy_count {
-		pc := &rec.point_copies[index]
-		if !pc.active {
-			continue
+	// same read-only shared pages. Each run of point copies of one memory
+	// object at following addresses is one shared mapping: the replay maps
+	// private pages there before it writes their first bytes.
+	index := u32(0)
+	for index < rec.point_copy_count {
+		first := &rec.point_copies[index]
+		run := u32(1)
+		if first.active && point_copy_needs_stand_in(first) {
+			for index + run < rec.point_copy_count && u64(run) < input_history.SHARED_MAPPING_PAGE_LIMIT {
+				next := &rec.point_copies[index + run]
+				if !next.active || !point_copy_needs_stand_in(next) || next.source_region != first.source_region || next.virtual_address != first.virtual_address + u64(run) * PAGE_SIZE {
+					break
+				}
+				run += 1
+			}
+			if !record_shared_mapping_locked(rec, first.virtual_address, u64(run), .Read) {
+				return .Bad_Operation
+			}
 		}
-		after_page := direct(pc.copy_frame, [PAGE_SIZE]u8)
-		written, changed, ok := input_history.page_delta_encode(pc.virtual_address, &RECORD_ZERO_PAGE, after_page, cpu.page_delta_scratch[:])
-		if !ok || (changed && !input_history.history_writer_append(&rec.writer, .Page_Delta, 0, 0, cpu.page_delta_scratch[:written])) {
-			return .Bad_Operation
+		for page in index ..< index + run {
+			pc := &rec.point_copies[page]
+			if !pc.active {
+				continue
+			}
+			after_page := direct(pc.copy_frame, [PAGE_SIZE]u8)
+			written, changed, ok := input_history.page_delta_encode(pc.virtual_address, &RECORD_ZERO_PAGE, after_page, cpu.page_delta_scratch[:])
+			if !ok || (changed && !input_history.history_writer_append(&rec.writer, .Page_Delta, 0, 0, cpu.page_delta_scratch[:written])) {
+				return .Bad_Operation
+			}
 		}
+		index += run
 	}
 	// The context is an input that the starter wrote before the first
 	// instruction: the replay writes it back at the same place.
@@ -817,6 +842,30 @@ record_start_setup :: proc "contextless" (cpu: ^Processor, target_index: u32, re
 		return .Bad_Operation
 	}
 	return shared_writers_setup(cpu, target_index, rec)
+}
+
+// point_copy_needs_stand_in says whether a replay must map a private page
+// where this point copy is. The kernel maps the time page in every process,
+// and the starter of a replay maps its context page, so a replay has those
+// pages already; each other page came from a process that the replay does
+// not hold.
+@(private = "file")
+point_copy_needs_stand_in :: proc "contextless" (pc: ^Point_Copy) -> bool {
+	return pc.source_region != time_region && pc.virtual_address != op.CONTEXT_ADDRESS
+}
+
+// record_shared_mapping_locked writes the Shared_Mapping record of a range
+// of the recorded process whose pages another process writes. false: the
+// history is full, or the range fails the border of the contract. Caller
+// holds the process lock of the recorded process.
+@(private = "file")
+record_shared_mapping_locked :: proc "contextless" (rec: ^Process_Record_State, virtual_address: u64, page_count: u64, access: input_history.Shared_Mapping_Access) -> bool {
+	entry := input_history.Shared_Mapping_Payload {
+		virtual_address = virtual_address,
+		page_count      = page_count,
+		access          = u32(access),
+	}
+	return input_history.history_writer_append(&rec.writer, .Shared_Mapping, 0, 0, ([^]u8)(&entry)[:size_of(entry)])
 }
 
 // record_replay_thread_create_refused checks single-thread and placement-limit
@@ -894,6 +943,7 @@ record_replay_end_locked :: proc "contextless" (target_index: u32, reason: input
 	if rec.mode == .None {
 		return
 	}
+	reason, div_kind, div_point, div_expected, div_actual := reason, div_kind, div_point, div_expected, div_actual
 	mode := rec.mode
 	if mode == .Recording {
 		if !rec.writer.ended {
@@ -902,6 +952,9 @@ record_replay_end_locked :: proc "contextless" (target_index: u32, reason: input
 			}
 		}
 	} else {
+		if reason == .Normal_Stop {
+			reason, div_kind, div_point, div_expected, div_actual = replay_end_check_locked(target_index)
+		}
 		_ = input_history.history_header_record_end(rec.history_buffer, reason, div_kind, div_point, div_expected, div_actual)
 	}
 	for &thread in threads[1:] {
@@ -948,6 +1001,34 @@ record_replay_end_locked :: proc "contextless" (target_index: u32, reason: input
 	case .Normal_Stop, .Recorder_Stopped, .None:
 	}
 	region_release(history_region)
+}
+
+// replay_end_check_locked decides how a replay ends when its process stops.
+// A stop by its own instructions (a stop of itself, of its last thread, a
+// fault) must be where the record stopped: the next record of the history,
+// after the deltas that the writers wrote at the last entry, is the end
+// with Normal_Stop, else the replay diverged there (Unexpected_End). A stop
+// by another process (its holder, the replayer, the close of its last
+// handle) says nothing of the replay: it ends with Normal_Stop. Caller
+// holds Control and target_index's process lock.
+@(private = "file")
+replay_end_check_locked :: proc "contextless" (target_index: u32) -> (reason: input_history.History_End_Reason, div_kind: input_history.Divergence_Kind, div_point: u64, div_expected: u64, div_actual: u64) {
+	switch processes[target_index].cause {
+	case .Holder, .Handles_Closed, .None:
+		return .Normal_Stop, .None, 0, 0, 0
+	case .Itself, .Last_Thread_Ended, .Fault, .Not_Committed, .Cannot_Return, .Fault_Unanswered:
+	}
+	rec := &process_records[target_index]
+	cpu := processor_self()
+	if !replay_apply_pending_page_deltas_locked(cpu, target_index) {
+		return .Divergence, .Missing_Record, input_history.history_reader_next_point(&rec.reader), 0, 0
+	}
+	record_header, kind, payload, has_more, read_ok := input_history.history_reader_next_into(&rec.reader, cpu.replay_record_scratch[:])
+	check := input_history.replay_end_check(read_ok && has_more, kind, payload)
+	if check.divergence == .None {
+		return .Normal_Stop, .None, 0, 0, 0
+	}
+	return .Divergence, check.divergence, replay_record_point(&rec.reader, record_header, read_ok && has_more), check.expected, check.actual
 }
 
 // record_right_closed ends recording or replay when a recorder closes or loses
@@ -1066,47 +1147,155 @@ record_refresh_point_copies_locked :: proc "contextless" (cpu: ^Processor, proce
 }
 
 // replay_apply_pending_page_deltas_locked snapshots each leading Page_Delta
-// record ONCE into private per-processor scratch memory and applies it to a
-// tracked point copy of process_index, or else to a page that the process
-// maps with Write (replay_shared_page_frame_locked): a shared page or the
-// context page of the record. Never writes to a page that the process cannot
-// write itself. Caller holds process_index's process lock.
+// record ONCE into private per-processor scratch memory and applies it
+// (replay_page_delta_apply_locked). false: a damaged record, or a delta
+// with no page to write; the divergence is at the next point of the reader.
+// Caller holds process_index's process lock.
 @(private = "file")
 replay_apply_pending_page_deltas_locked :: proc "contextless" (cpu: ^Processor, process_index: u32) -> bool {
 	rec := &process_records[process_index]
 	for {
-		_, kind, payload, stride, has_more, ok := input_history.history_reader_peek_into(&rec.reader, cpu.replay_record_scratch[:])
+		record_header, kind, payload, stride, has_more, ok := input_history.history_reader_peek_into(&rec.reader, cpu.replay_record_scratch[:])
 		if !ok {
 			return false
 		}
 		if !has_more || kind != .Page_Delta {
 			return true
 		}
-		delta_header, delta_ok := input_history.page_delta_validate(payload)
-		if !delta_ok {
+		if !replay_page_delta_apply_locked(process_index, payload) {
 			return false
 		}
-		target_frame: u64
-		for index in u32(0) ..< rec.point_copy_count {
-			pc := &rec.point_copies[index]
-			if pc.active && pc.virtual_address == delta_header.virtual_address {
-				target_frame = pc.copy_frame
-				break
+		input_history.history_reader_advance(&rec.reader, record_header, stride)
+	}
+}
+
+// replay_page_delta_apply_locked writes one Page_Delta into the page of the
+// replay at its address: a point copy, else a stand-in page that the replay
+// mapped for a shared mapping of the record, else a page that the process
+// maps with Write (replay_shared_page_frame_locked), such as its context
+// page. Never another page. Caller holds process_index's process lock.
+@(private = "file")
+replay_page_delta_apply_locked :: proc "contextless" (process_index: u32, payload: []u8) -> bool {
+	rec := &process_records[process_index]
+	delta_header, delta_ok := input_history.page_delta_validate(payload)
+	if !delta_ok {
+		return false
+	}
+	target_frame: u64
+	for index in u32(0) ..< rec.point_copy_count {
+		pc := &rec.point_copies[index]
+		if pc.active && pc.virtual_address == delta_header.virtual_address {
+			target_frame = pc.copy_frame
+			break
+		}
+	}
+	if target_frame == 0 {
+		if stand_in, _, found := input_history.stand_in_mapping_set_find(&rec.stand_ins, delta_header.virtual_address); found {
+			// The stand-in mapping stays while the replay runs: an unmap by the
+			// replay itself leaves its memory object to the mapping only, and
+			// a later delta there finds no mapping and is a divergence.
+			if mapping := mapping_at(&processes[process_index], delta_header.virtual_address); mapping != nil && mapping.region == stand_in.place && !mapping.large {
+				target_frame = region_frame(&regions[stand_in.place], mapping.first + (delta_header.virtual_address - mapping.address) / PAGE_SIZE, true)
 			}
 		}
-		if target_frame == 0 {
-			// The page of a shared writer: in the replay it is a page that
-			// the process maps with Write, and no peer writes it.
-			target_frame = replay_shared_page_frame_locked(process_index, delta_header.virtual_address)
-		}
-		if target_frame == 0 {
-			return false
-		}
-		if !input_history.page_delta_apply(payload, direct(target_frame, [PAGE_SIZE]u8)) {
-			return false
-		}
-		rec.reader.read_offset += stride
 	}
+	if target_frame == 0 {
+		// The page of a shared writer that the starter of the replay mapped
+		// itself: in the replay it is a page that the process maps with
+		// Write, and no peer writes it.
+		target_frame = replay_shared_page_frame_locked(process_index, delta_header.virtual_address)
+	}
+	if target_frame == 0 {
+		return false
+	}
+	return input_history.page_delta_apply(payload, direct(target_frame, [PAGE_SIZE]u8))
+}
+
+// replay_head_apply_locked reads the head of the history before the first
+// instruction of a replay: each Shared_Mapping maps private pages at its
+// place (replay_stand_in_mapping_add_locked), and each Page_Delta writes the
+// first bytes of a page. It stops at the first record of another kind.
+// false: a damaged record, a mapping that the replay cannot make, or a
+// delta with no page. The stand-in mappings that it made stay in the process,
+// which the replayer stops: a process that Replay_Start refused never
+// runs. Caller holds Control and process_index's process lock.
+@(private = "file")
+replay_head_apply_locked :: proc "contextless" (cpu: ^Processor, process_index: u32) -> bool {
+	rec := &process_records[process_index]
+	for {
+		record_header, kind, payload, stride, has_more, ok := input_history.history_reader_peek_into(&rec.reader, cpu.replay_record_scratch[:])
+		if !ok {
+			return false
+		}
+		if !has_more {
+			return true
+		}
+		if kind == .Shared_Mapping {
+			entry, access, valid := input_history.shared_mapping_validate(payload)
+			if !valid || !replay_stand_in_mapping_add_locked(process_index, entry, access) {
+				return false
+			}
+		} else if kind == .Page_Delta {
+			if !replay_page_delta_apply_locked(process_index, payload) {
+				return false
+			}
+		} else {
+			return true
+		}
+		input_history.history_reader_advance(&rec.reader, record_header, stride)
+	}
+}
+
+// replay_stand_in_mapping_add_locked maps a new memory object of the replay
+// at the place of a shared mapping of the record, with the access that the
+// recorded process had: no peer writes it, and the deltas of the history
+// write what the peer wrote. The budget of the history pays it, as it pays
+// the point copies: the replayer pays its replay. A range that the replay
+// maps already, whole, inside one mapping (its context page, a page that
+// its starter mapped) takes the deltas there, and needs no stand-in. Caller
+// holds Control and process_index's process lock.
+@(private = "file")
+replay_stand_in_mapping_add_locked :: proc "contextless" (process_index: u32, entry: input_history.Shared_Mapping_Payload, access: input_history.Shared_Mapping_Access) -> bool {
+	rec := &process_records[process_index]
+	process := &processes[process_index]
+	end := entry.virtual_address + entry.page_count * PAGE_SIZE
+	if existing := mapping_at(process, entry.virtual_address); existing != nil {
+		return end <= existing.address + existing.page_count * PAGE_SIZE
+	}
+	if !input_history.stand_in_mapping_set_admits(&rec.stand_ins, entry) {
+		return false
+	}
+	region, created := region_create(regions[rec.history_region].budget, entry.page_count)
+	if created != .Ok {
+		return false
+	}
+	flags: op.Map_Flags
+	switch access {
+	case .None:
+		regions[region].references = 1
+		region_release(region)
+		return false
+	case .Read:
+	case .Read_Write:
+		flags = {.Write}
+	}
+	if _, mapped := map_region(process, region, entry.virtual_address, flags, 0, 0); mapped != .Ok {
+		regions[region].references = 1
+		region_release(region)
+		return false
+	}
+	return input_history.stand_in_mapping_set_add(&rec.stand_ins, entry, access, region)
+}
+
+// replay_record_point gives the input point of a divergence found at a
+// record that a replay read: the point of that record, or, when the history
+// had no valid record there, the point that the next record must have.
+@(private = "file")
+replay_record_point :: proc "contextless" (reader: ^input_history.History_Reader, record_header: input_history.History_Record_Header, read: bool) -> u64 {
+	if read {
+		return record_header.point_number
+	}
+	return input_history.history_reader_next_point(reader)
 }
 
 // replay_stop_on_divergence records a divergence in the history header, tears
@@ -1249,9 +1438,9 @@ record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread)
 
 	// Replaying mode: snapshot record once into private scratch before checking.
 	if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
-		offset := rec.reader.read_offset
+		point := input_history.history_reader_next_point(&rec.reader)
 		process_unlock(process_index, taken)
-		replay_stop_on_divergence(process_index, .Missing_Record, offset, 0, 0)
+		replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
 		return true
 	}
 	actual := input_history.Replay_Actual_Event {
@@ -1274,7 +1463,7 @@ record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread)
 	rec_header, rec_kind, rec_payload, has_more, read_ok := input_history.history_reader_next_into(&rec.reader, cpu.replay_record_scratch[:])
 	check := input_history.replay_step_check(actual, read_ok && has_more, rec_header, rec_kind, rec_payload)
 	if check.divergence != .None {
-		point := rec_header.point_number
+		point := replay_record_point(&rec.reader, rec_header, read_ok && has_more)
 		process_unlock(process_index, taken)
 		replay_stop_on_divergence(process_index, check.divergence, point, check.expected, check.actual)
 		return true
@@ -1551,6 +1740,14 @@ shared_writers_setup :: proc "contextless" (cpu: ^Processor, target_index: u32, 
 			return .Bad_State
 		}
 		shared_writers_add_of_region(target_index, rec, mapping.region) or_return
+		if mapping.page_count > u64(SHARED_PAGE_CAPACITY - rec.shared_page_count) {
+			return .No_Slot
+		}
+		// The replay holds no writer: it maps private pages here, and each
+		// Page_Delta of the history writes them.
+		if !record_shared_mapping_locked(rec, mapping.address, mapping.page_count, .Read_Write) {
+			return .Bad_Operation
+		}
 		for page in u64(0) ..< mapping.page_count {
 			if rec.shared_page_count >= SHARED_PAGE_CAPACITY {
 				return .No_Slot
@@ -2049,9 +2246,9 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			return
 		}
 		if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
-			offset := rec.reader.read_offset
+			point := input_history.history_reader_next_point(&rec.reader)
 			process_unlock(process_index, taken)
-			replay_stop_on_divergence(process_index, .Missing_Record, offset, 0, 0)
+			replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
 			return
 		}
 		actual := input_history.Replay_Actual_Event {
@@ -2065,7 +2262,7 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		rec_header, rec_kind, rec_payload, has_more, read_ok := input_history.history_reader_next_into(&rec.reader, cpu.replay_record_scratch[:])
 		check := input_history.replay_step_check(actual, read_ok && has_more, rec_header, rec_kind, rec_payload)
 		if check.divergence != .None {
-			point := rec_header.point_number
+			point := replay_record_point(&rec.reader, rec_header, read_ok && has_more)
 			process_unlock(process_index, taken)
 			replay_stop_on_divergence(process_index, check.divergence, point, check.expected, check.actual)
 			return
@@ -2079,9 +2276,9 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		}
 		thread.replay_return_time = kc.return_time_milliseconds
 		if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
-			offset := rec.reader.read_offset
+			point := input_history.history_reader_next_point(&rec.reader)
 			process_unlock(process_index, taken)
-			replay_stop_on_divergence(process_index, .Missing_Record, offset, 0, 0)
+			replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
 			return
 		}
 		process_unlock(process_index, taken)
@@ -2107,9 +2304,9 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 			return
 		}
 		if !replay_apply_pending_page_deltas_locked(cpu, process_index) {
-			offset := rec.reader.read_offset
+			point := input_history.history_reader_next_point(&rec.reader)
 			process_unlock(process_index, taken)
-			replay_stop_on_divergence(process_index, .Missing_Record, offset, 0, 0)
+			replay_stop_on_divergence(process_index, .Missing_Record, point, 0, 0)
 			return
 		}
 		actual := input_history.Replay_Actual_Event {
@@ -2123,7 +2320,7 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		rec_header, rec_kind, rec_payload, has_more, read_ok := input_history.history_reader_next_into(&rec.reader, cpu.replay_record_scratch[:])
 		check := input_history.replay_step_check(actual, read_ok && has_more, rec_header, rec_kind, rec_payload)
 		if check.divergence != .None {
-			point := rec_header.point_number
+			point := replay_record_point(&rec.reader, rec_header, read_ok && has_more)
 			process_unlock(process_index, taken)
 			replay_stop_on_divergence(process_index, check.divergence, point, check.expected, check.actual)
 			return
@@ -2240,14 +2437,14 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 	// Apply any trailing Page_Delta records before returning to user mode.
 	taken := process_lock(process_index)
 	trailing_ok := true
-	trailing_offset := u64(0)
+	trailing_point := u64(0)
 	if process_records[process_index].mode == .Replaying {
 		trailing_ok = replay_apply_pending_page_deltas_locked(cpu, process_index)
-		trailing_offset = process_records[process_index].reader.read_offset
+		trailing_point = input_history.history_reader_next_point(&process_records[process_index].reader)
 	}
 	process_unlock(process_index, taken)
 	if !trailing_ok {
-		replay_stop_on_divergence(process_index, .Missing_Record, trailing_offset, 0, 0)
+		replay_stop_on_divergence(process_index, .Missing_Record, trailing_point, 0, 0)
 		return
 	}
 }
