@@ -10,11 +10,16 @@
 //   fill rule, strict '<' 24-bit depth testing, scissor clipping, and
 //   linear-light gamma-2 alpha blending.
 //
+// Triangles have a scalar form and an SSE2 vector form of four pixels side by
+// side, which give the same bytes; on amd64 the vector form runs
+// (docs/SIMD.md, "1. The rule of the same bytes").
+//
 // All backing buffers, textures, pipeline shader bindings, and indexed vertex
 // lookups are validated before any pixel or buffer byte is modified.
 // This file allocates no memory and calls no kernel operation.
 package webgpu_subset
 
+import "base:intrinsics"
 import "modus:contract/byte_order"
 import "modus:contract/enum_word"
 
@@ -500,19 +505,60 @@ ceil_to_i32 :: proc "contextless" (value: f32) -> i32 {
 	return i
 }
 
+// The two forms of the triangle rasterizer. The vector form gives the bytes
+// of the scalar form for every triangle:
+// (docs/SIMD.md, "1. The rule of the same bytes").
+// The host tests run each stream in each form and compare the color bytes,
+// the depth values and the counts.
+@(private)
+Rasterizer_Form :: enum u8 {
+	Scalar,
+	Vector,
+}
+
+// SSE2 is in every x86-64 processor (docs/SIMD.md, "2. One form: SSE2"), so
+// the form is chosen at compile time, with no test of the processor.
+@(private)
+RASTERIZER_FORM_OF_TARGET :: Rasterizer_Form.Vector when ODIN_ARCH == .amd64 else Rasterizer_Form.Scalar
+
+// Where the fragments of one draw go.
 @(private = "file")
-rasterize_triangle :: proc "contextless" (
-	v0_in, v1_in, v2_in: Screen_Vertex,
-	color_bytes: []u8,
+Fragment_Target :: struct {
+	color_bytes:  []u8,
 	depth_values: []u32,
-	has_depth: bool,
-	format: Texture_Format,
-	pipeline: Pipeline_Desc,
-	pass_width: u32,
+	has_depth:    bool,
+	format:       Texture_Format,
+	pipeline:     Pipeline_Desc,
+	pass_width:   u32,
+}
+
+// The values of a triangle that stay the same across its pixels, and the
+// pixels that it can cover inside the scissor rectangle.
+@(private = "file")
+Triangle_Setup :: struct {
+	v0:           Screen_Vertex,
+	v1:           Screen_Vertex,
+	v2:           Screen_Vertex,
+	inverse_area: f32,
+	top_left_0:   bool,
+	top_left_1:   bool,
+	top_left_2:   bool,
+	min_x:        i32,
+	max_x:        i32,
+	min_y:        i32,
+	max_y:        i32,
+}
+
+// triangle_setup orders the vertices for a positive area and clips the box of
+// the triangle to the scissor rectangle. It refuses an invalid vertex, a
+// degenerate triangle and a triangle with no pixel inside the scissor.
+@(private = "file")
+triangle_setup :: proc "contextless" (
+	v0_in, v1_in, v2_in: Screen_Vertex,
 	scissor_x0, scissor_y0, scissor_x1, scissor_y1: i32,
-) -> (rasterized: bool, pixels_shaded: u64) {
+) -> (setup: Triangle_Setup, ok: bool) {
 	if !v0_in.valid || !v1_in.valid || !v2_in.valid {
-		return false, 0
+		return {}, false
 	}
 	v0 := v0_in
 	v1 := v1_in
@@ -520,11 +566,10 @@ rasterize_triangle :: proc "contextless" (
 
 	area := edge_function(v0.x, v0.y, v1.x, v1.y, v2.x, v2.y)
 	if !f32_is_finite(area) {
-		return false, 0
+		return {}, false
 	}
 	if area > -1e-6 && area < 1e-6 {
-		// Degenerate zero-area triangle.
-		return false, 0
+		return {}, false
 	}
 	if area < 0.0 {
 		v1, v2 = v2, v1
@@ -537,61 +582,236 @@ rasterize_triangle :: proc "contextless" (
 	max_yf := max(v0.y, max(v1.y, v2.y))
 
 	if max_xf <= f32(scissor_x0) || min_xf >= f32(scissor_x1) || max_yf <= f32(scissor_y0) || min_yf >= f32(scissor_y1) {
-		return false, 0
+		return {}, false
 	}
 
-	min_x := max(scissor_x0, floor_to_i32(min_xf))
-	max_x := min(scissor_x1, ceil_to_i32(max_xf))
-	min_y := max(scissor_y0, floor_to_i32(min_yf))
-	max_y := min(scissor_y1, ceil_to_i32(max_yf))
-	if min_x >= max_x || min_y >= max_y {
-		return false, 0
+	setup.min_x = max(scissor_x0, floor_to_i32(min_xf))
+	setup.max_x = min(scissor_x1, ceil_to_i32(max_xf))
+	setup.min_y = max(scissor_y0, floor_to_i32(min_yf))
+	setup.max_y = min(scissor_y1, ceil_to_i32(max_yf))
+	if setup.min_x >= setup.max_x || setup.min_y >= setup.max_y {
+		return {}, false
 	}
 
-	tl0 := is_top_left_edge(v1.x, v1.y, v2.x, v2.y)
-	tl1 := is_top_left_edge(v2.x, v2.y, v0.x, v0.y)
-	tl2 := is_top_left_edge(v0.x, v0.y, v1.x, v1.y)
-	inv_area := 1.0 / area
+	setup.v0 = v0
+	setup.v1 = v1
+	setup.v2 = v2
+	setup.top_left_0 = is_top_left_edge(v1.x, v1.y, v2.x, v2.y)
+	setup.top_left_1 = is_top_left_edge(v2.x, v2.y, v0.x, v0.y)
+	setup.top_left_2 = is_top_left_edge(v0.x, v0.y, v1.x, v1.y)
+	setup.inverse_area = 1.0 / area
+	return setup, true
+}
 
-	for py := min_y; py < max_y; py += 1 {
+// shade_triangle_pixel is the scalar form for one pixel: the reference of the
+// vector form, and the code of the last columns of a row that do not fill a
+// group of four.
+@(private = "file")
+shade_triangle_pixel :: proc "contextless" (setup: ^Triangle_Setup, target: ^Fragment_Target, px: i32, cy: f32, row_base: int) -> bool {
+	v0 := setup.v0
+	v1 := setup.v1
+	v2 := setup.v2
+	cx := f32(px) + 0.5
+	w0 := edge_function(v1.x, v1.y, v2.x, v2.y, cx, cy)
+	if w0 < 0.0 || (w0 == 0.0 && !setup.top_left_0) {
+		return false
+	}
+	w1 := edge_function(v2.x, v2.y, v0.x, v0.y, cx, cy)
+	if w1 < 0.0 || (w1 == 0.0 && !setup.top_left_1) {
+		return false
+	}
+	w2 := edge_function(v0.x, v0.y, v1.x, v1.y, cx, cy)
+	if w2 < 0.0 || (w2 == 0.0 && !setup.top_left_2) {
+		return false
+	}
+
+	b0 := w0 * setup.inverse_area
+	b1 := w1 * setup.inverse_area
+	b2 := w2 * setup.inverse_area
+
+	z := b0 * v0.z + b1 * v1.z + b2 * v2.z
+	interp_inv_w := b0 * v0.inv_w + b1 * v1.inv_w + b2 * v2.inv_w
+	if interp_inv_w <= 1e-12 {
+		return false
+	}
+	w_corr := 1.0 / interp_inv_w
+	src_r := (b0 * v0.r + b1 * v1.r + b2 * v2.r) * w_corr
+	src_g := (b0 * v0.g + b1 * v1.g + b2 * v2.g) * w_corr
+	src_b := (b0 * v0.b + b1 * v1.b + b2 * v2.b) * w_corr
+	src_a := (b0 * v0.a + b1 * v1.a + b2 * v2.a) * w_corr
+
+	return write_fragment_pixel(target.color_bytes, target.depth_values, target.has_depth, target.format, target.pipeline, row_base + int(px), z, src_r, src_g, src_b, src_a)
+}
+
+// rasterize_triangle_scalar is the reference form: one pixel at a time.
+@(private = "file")
+rasterize_triangle_scalar :: proc "contextless" (setup: ^Triangle_Setup, target: ^Fragment_Target) -> (pixels_shaded: u64) {
+	for py := setup.min_y; py < setup.max_y; py += 1 {
 		cy := f32(py) + 0.5
-		row_base := int(py) * int(pass_width)
-		for px := min_x; px < max_x; px += 1 {
-			cx := f32(px) + 0.5
-			w0 := edge_function(v1.x, v1.y, v2.x, v2.y, cx, cy)
-			if w0 < 0.0 || (w0 == 0.0 && !tl0) {
-				continue
-			}
-			w1 := edge_function(v2.x, v2.y, v0.x, v0.y, cx, cy)
-			if w1 < 0.0 || (w1 == 0.0 && !tl1) {
-				continue
-			}
-			w2 := edge_function(v0.x, v0.y, v1.x, v1.y, cx, cy)
-			if w2 < 0.0 || (w2 == 0.0 && !tl2) {
-				continue
-			}
-
-			b0 := w0 * inv_area
-			b1 := w1 * inv_area
-			b2 := w2 * inv_area
-
-			z := b0 * v0.z + b1 * v1.z + b2 * v2.z
-			interp_inv_w := b0 * v0.inv_w + b1 * v1.inv_w + b2 * v2.inv_w
-			if interp_inv_w <= 1e-12 {
-				continue
-			}
-			w_corr := 1.0 / interp_inv_w
-			src_r := (b0 * v0.r + b1 * v1.r + b2 * v2.r) * w_corr
-			src_g := (b0 * v0.g + b1 * v1.g + b2 * v2.g) * w_corr
-			src_b := (b0 * v0.b + b1 * v1.b + b2 * v2.b) * w_corr
-			src_a := (b0 * v0.a + b1 * v1.a + b2 * v2.a) * w_corr
-
-			if write_fragment_pixel(color_bytes, depth_values, has_depth, format, pipeline, row_base + int(px), z, src_r, src_g, src_b, src_a) {
+		row_base := int(py) * int(target.pass_width)
+		for px := setup.min_x; px < setup.max_x; px += 1 {
+			if shade_triangle_pixel(setup, target, px, cy, row_base) {
 				pixels_shaded += 1
 			}
 		}
 	}
-	return true, pixels_shaded
+	return pixels_shaded
+}
+
+// One lane for each of four adjacent pixels of a row: 128 bits, one SSE2
+// register.
+@(private = "file")
+Four_Floats :: #simd[4]f32
+@(private = "file")
+Four_Integers :: #simd[4]i32
+// All bits set in a lane that is refused, all clear in a lane that is kept.
+@(private = "file")
+Four_Masks :: #simd[4]u32
+
+@(private = "file")
+four_of :: #force_inline proc "contextless" (value: f32) -> Four_Floats {
+	return Four_Floats{value, value, value, value}
+}
+
+// edge_refusal is the test of the scalar form for one edge, written as the
+// refusal and not as its negation: a NaN fails both comparisons, so the
+// scalar form keeps such a pixel, and this form must keep it too.
+@(private = "file")
+edge_refusal :: #force_inline proc "contextless" (edge_values: Four_Floats, top_left: bool) -> Four_Masks {
+	negative := intrinsics.simd_lanes_lt(edge_values, four_of(0.0))
+	if top_left {
+		return negative
+	}
+	return intrinsics.simd_bit_or(negative, intrinsics.simd_lanes_eq(edge_values, four_of(0.0)))
+}
+
+// rasterize_triangle_simd is the vector form: the edge values, the coverage
+// test and the interpolation of four adjacent pixels in the lanes of one
+// register. Each lane does the operations of shade_triangle_pixel in the same
+// order, with no fused multiply-add, so each lane holds the bits of the
+// scalar form. The depth test and the blend stay one pixel at a time, in lane
+// order, with write_fragment_pixel. The columns after the last group of four
+// go through shade_triangle_pixel.
+@(private = "file")
+rasterize_triangle_simd :: proc "contextless" (setup: ^Triangle_Setup, target: ^Fragment_Target) -> (pixels_shaded: u64) {
+	v0 := setup.v0
+	v1 := setup.v1
+	v2 := setup.v2
+
+	// The terms of edge_function that depend on the edge only.
+	edge_0_dx := v2.x - v1.x
+	edge_0_dy := four_of(v2.y - v1.y)
+	edge_1_dx := v0.x - v2.x
+	edge_1_dy := four_of(v0.y - v2.y)
+	edge_2_dx := v1.x - v0.x
+	edge_2_dy := four_of(v1.y - v0.y)
+	edge_0_ax := four_of(v1.x)
+	edge_1_ax := four_of(v2.x)
+	edge_2_ax := four_of(v0.x)
+
+	inverse_area := four_of(setup.inverse_area)
+	v0_z, v1_z, v2_z := four_of(v0.z), four_of(v1.z), four_of(v2.z)
+	v0_inv_w, v1_inv_w, v2_inv_w := four_of(v0.inv_w), four_of(v1.inv_w), four_of(v2.inv_w)
+	v0_r, v1_r, v2_r := four_of(v0.r), four_of(v1.r), four_of(v2.r)
+	v0_g, v1_g, v2_g := four_of(v0.g), four_of(v1.g), four_of(v2.g)
+	v0_b, v1_b, v2_b := four_of(v0.b), four_of(v1.b), four_of(v2.b)
+	v0_a, v1_a, v2_a := four_of(v0.a), four_of(v1.a), four_of(v2.a)
+	lane_steps := Four_Integers{0, 1, 2, 3}
+
+	for py := setup.min_y; py < setup.max_y; py += 1 {
+		cy := f32(py) + 0.5
+		row_base := int(py) * int(target.pass_width)
+		// The products of edge_function that depend on the row only.
+		row_0 := four_of(edge_0_dx * (cy - v1.y))
+		row_1 := four_of(edge_1_dx * (cy - v2.y))
+		row_2 := four_of(edge_2_dx * (cy - v0.y))
+
+		px := setup.min_x
+		for ; setup.max_x - px >= 4; px += 4 {
+			cx := cast(Four_Floats)(Four_Integers{px, px, px, px} + lane_steps) + four_of(0.5)
+			w0 := row_0 - edge_0_dy * (cx - edge_0_ax)
+			w1 := row_1 - edge_1_dy * (cx - edge_1_ax)
+			w2 := row_2 - edge_2_dy * (cx - edge_2_ax)
+			refused := intrinsics.simd_bit_or(
+				intrinsics.simd_bit_or(edge_refusal(w0, setup.top_left_0), edge_refusal(w1, setup.top_left_1)),
+				edge_refusal(w2, setup.top_left_2),
+			)
+			if intrinsics.simd_reduce_and(refused) != 0 {
+				continue
+			}
+
+			b0 := w0 * inverse_area
+			b1 := w1 * inverse_area
+			b2 := w2 * inverse_area
+			z := b0 * v0_z + b1 * v1_z + b2 * v2_z
+			interp_inv_w := b0 * v0_inv_w + b1 * v1_inv_w + b2 * v2_inv_w
+			refused = intrinsics.simd_bit_or(refused, intrinsics.simd_lanes_le(interp_inv_w, four_of(1e-12)))
+			if intrinsics.simd_reduce_and(refused) != 0 {
+				continue
+			}
+			// A refused lane divides 1 by 1: its value is never read, and no
+			// lane divides by zero.
+			w_corr := four_of(1.0) / intrinsics.simd_select(refused, four_of(1.0), interp_inv_w)
+			src_r := (b0 * v0_r + b1 * v1_r + b2 * v2_r) * w_corr
+			src_g := (b0 * v0_g + b1 * v1_g + b2 * v2_g) * w_corr
+			src_b := (b0 * v0_b + b1 * v1_b + b2 * v2_b) * w_corr
+			src_a := (b0 * v0_a + b1 * v1_a + b2 * v2_a) * w_corr
+
+			refused_lanes := transmute([4]u32)refused
+			z_lanes := transmute([4]f32)z
+			r_lanes := transmute([4]f32)src_r
+			g_lanes := transmute([4]f32)src_g
+			b_lanes := transmute([4]f32)src_b
+			a_lanes := transmute([4]f32)src_a
+			for lane in 0 ..< 4 {
+				if refused_lanes[lane] != 0 {
+					continue
+				}
+				if write_fragment_pixel(target.color_bytes, target.depth_values, target.has_depth, target.format, target.pipeline, row_base + int(px) + lane, z_lanes[lane], r_lanes[lane], g_lanes[lane], b_lanes[lane], a_lanes[lane]) {
+					pixels_shaded += 1
+				}
+			}
+		}
+		for ; px < setup.max_x; px += 1 {
+			if shade_triangle_pixel(setup, target, px, cy, row_base) {
+				pixels_shaded += 1
+			}
+		}
+	}
+	return pixels_shaded
+}
+
+@(private = "file")
+rasterize_triangle :: proc "contextless" (
+	form: Rasterizer_Form,
+	v0, v1, v2: Screen_Vertex,
+	color_bytes: []u8,
+	depth_values: []u32,
+	has_depth: bool,
+	format: Texture_Format,
+	pipeline: Pipeline_Desc,
+	pass_width: u32,
+	scissor_x0, scissor_y0, scissor_x1, scissor_y1: i32,
+) -> (rasterized: bool, pixels_shaded: u64) {
+	setup, ok := triangle_setup(v0, v1, v2, scissor_x0, scissor_y0, scissor_x1, scissor_y1)
+	if !ok {
+		return false, 0
+	}
+	target := Fragment_Target{
+		color_bytes  = color_bytes,
+		depth_values = depth_values,
+		has_depth    = has_depth,
+		format       = format,
+		pipeline     = pipeline,
+		pass_width   = pass_width,
+	}
+	switch form {
+	case .Scalar:
+		return true, rasterize_triangle_scalar(&setup, &target)
+	case .Vector:
+		return true, rasterize_triangle_simd(&setup, &target)
+	}
+	return false, 0
 }
 
 @(private = "file")
@@ -792,6 +1012,13 @@ software_device_and_indices_validate :: proc "contextless" (stream: Gpu_Command_
 // textures, invalid shader modes, or out-of-bounds vertex indices without
 // modifying any pixel or buffer byte.
 software_3d_execute :: proc "contextless" (stream: Gpu_Command_Stream, device: Software_Device) -> (summary: Software_Execution_Summary, refusal: Gpu_Refusal) {
+	return software_3d_execute_in_form(stream, device, RASTERIZER_FORM_OF_TARGET)
+}
+
+// software_3d_execute_in_form lets the host tests run one stream in each form
+// of the triangle rasterizer.
+@(private)
+software_3d_execute_in_form :: proc "contextless" (stream: Gpu_Command_Stream, device: Software_Device, form: Rasterizer_Form) -> (summary: Software_Execution_Summary, refusal: Gpu_Refusal) {
 	stream_summary, val_refusal := stream_validate(stream, device.resources)
 	if val_refusal != .None {
 		return {}, val_refusal
@@ -976,7 +1203,7 @@ software_3d_execute :: proc "contextless" (stream: Gpu_Command_Stream, device: S
 					sv0 := shade_vertex(shader, v_slice, int(first_vertex + base + 0) * stride, active_mvp, pass_width, pass_height)
 					sv1 := shade_vertex(shader, v_slice, int(first_vertex + base + 1) * stride, active_mvp, pass_width, pass_height)
 					sv2 := shade_vertex(shader, v_slice, int(first_vertex + base + 2) * stride, active_mvp, pass_width, pass_height)
-					drawn, shaded := rasterize_triangle(sv0, sv1, sv2, color_bytes, depth_values, has_depth, pass_format, pipe, pass_width, scissor_x0, scissor_y0, scissor_x1, scissor_y1)
+					drawn, shaded := rasterize_triangle(form, sv0, sv1, sv2, color_bytes, depth_values, has_depth, pass_format, pipe, pass_width, scissor_x0, scissor_y0, scissor_x1, scissor_y1)
 					if drawn {
 						summary.triangles_rasterized += 1
 						summary.pixels_shaded += shaded
@@ -987,7 +1214,7 @@ software_3d_execute :: proc "contextless" (stream: Gpu_Command_Stream, device: S
 					sv0 := shade_vertex(shader, v_slice, int(first_vertex + base + 0) * stride, active_mvp, pass_width, pass_height)
 					sv1 := shade_vertex(shader, v_slice, int(first_vertex + base + 1) * stride, active_mvp, pass_width, pass_height)
 					sv2 := shade_vertex(shader, v_slice, int(first_vertex + base + 2) * stride, active_mvp, pass_width, pass_height)
-					drawn, shaded := rasterize_triangle(sv0, sv1, sv2, color_bytes, depth_values, has_depth, pass_format, pipe, pass_width, scissor_x0, scissor_y0, scissor_x1, scissor_y1)
+					drawn, shaded := rasterize_triangle(form, sv0, sv1, sv2, color_bytes, depth_values, has_depth, pass_format, pipe, pass_width, scissor_x0, scissor_y0, scissor_x1, scissor_y1)
 					if drawn {
 						summary.triangles_rasterized += 1
 						summary.pixels_shaded += shaded
@@ -1027,7 +1254,7 @@ software_3d_execute :: proc "contextless" (stream: Gpu_Command_Stream, device: S
 					sv0 := shade_vertex(shader, v_slice, i0 * stride, active_mvp, pass_width, pass_height)
 					sv1 := shade_vertex(shader, v_slice, i1 * stride, active_mvp, pass_width, pass_height)
 					sv2 := shade_vertex(shader, v_slice, i2 * stride, active_mvp, pass_width, pass_height)
-					drawn, shaded := rasterize_triangle(sv0, sv1, sv2, color_bytes, depth_values, has_depth, pass_format, pipe, pass_width, scissor_x0, scissor_y0, scissor_x1, scissor_y1)
+					drawn, shaded := rasterize_triangle(form, sv0, sv1, sv2, color_bytes, depth_values, has_depth, pass_format, pipe, pass_width, scissor_x0, scissor_y0, scissor_x1, scissor_y1)
 					if drawn {
 						summary.triangles_rasterized += 1
 						summary.pixels_shaded += shaded
@@ -1041,7 +1268,7 @@ software_3d_execute :: proc "contextless" (stream: Gpu_Command_Stream, device: S
 					sv0 := shade_vertex(shader, v_slice, i0 * stride, active_mvp, pass_width, pass_height)
 					sv1 := shade_vertex(shader, v_slice, i1 * stride, active_mvp, pass_width, pass_height)
 					sv2 := shade_vertex(shader, v_slice, i2 * stride, active_mvp, pass_width, pass_height)
-					drawn, shaded := rasterize_triangle(sv0, sv1, sv2, color_bytes, depth_values, has_depth, pass_format, pipe, pass_width, scissor_x0, scissor_y0, scissor_x1, scissor_y1)
+					drawn, shaded := rasterize_triangle(form, sv0, sv1, sv2, color_bytes, depth_values, has_depth, pass_format, pipe, pass_width, scissor_x0, scissor_y0, scissor_x1, scissor_y1)
 					if drawn {
 						summary.triangles_rasterized += 1
 						summary.pixels_shaded += shaded
