@@ -1,5 +1,7 @@
 package kernel
 
+import "base:intrinsics"
+
 // The instructions of the processor that the kernel executes on its own
 // paths, as instruction templates (`asm` procedures of Odin): the compiler
 // puts the instructions in place at each call, in the registers that the
@@ -249,6 +251,17 @@ copy_bytes_upward_with_process_access :: asm(destination: u64, source: u64, coun
 	rep
 	movsb
 	clac
+}
+
+// cycles_now is rdtsc: the cycle counter of the processor.
+cycles_now :: #force_inline proc "contextless" () -> u64 {
+	return u64(intrinsics.read_cycle_counter())
+}
+
+// processor_identification_read is cpuid: the leaf in eax, the subleaf in
+// ecx, the answer in eax, ebx, ecx and edx.
+processor_identification_read :: #force_inline proc "contextless" (leaf, subleaf: u32) -> (eax, ebx, ecx, edx: u32) {
+	return intrinsics.x86_cpuid(leaf, subleaf)
 }
 
 // user_copy is the one place where the kernel uses the memory of a process

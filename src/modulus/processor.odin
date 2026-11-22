@@ -59,23 +59,6 @@ MSR_GS_BASE :: 0xC000_0101
 MSR_KERNEL_GS_BASE :: 0xC000_0102 // In the kernel: the gs register of the process.
 TIME_SLICE :: 10 // Ticks that a process runs before another ready process gets the processor.
 
-foreign _ {
-	// sti, hlt, cli: wait for one interrupt. It stays in processor.asm: the
-	// compiler takes hlt as the end of the flow of a template.
-	idle_wait :: proc "c" () ---
-	// sti, nop, cli: take the interrupts that wait, with no wait. The
-	// drain of the serial port in the idle loop opens it after each byte,
-	// so an interrupt waits one port write at most
-	// (src/md/features/log_side_channels.md).
-	interrupt_window :: proc "c" () ---
-	// The load of the segment table also loads cs with a far return: it
-	// uses its own return address.
-	gdt_load :: proc "c" (descriptor: rawptr) ---
-	kernel_enter :: proc "c" () ---
-	resume :: proc "c" (frame: ^Frame) -> ! ---
-	interrupt_stubs: [STUB_COUNT]u64
-}
-
 Task_State :: struct #packed {
 	reserved_0:  u32,
 	stack_0:     u64, // The stack of an interrupt that comes from a process.
@@ -126,7 +109,7 @@ Frame_Cache :: struct #align (64) {
 // earlier entry.
 Processor :: struct {
 	// These three fields are read through the gs register: the first two
-	// by processor.asm, self by processor_self (instructions.odin).
+	// by processor.asm, self by processor_self (instructions_amd64.odin).
 	stack_top:     u64, // The top of the kernel stack (paging.odin).
 	user_stack:    u64,
 	self:          ^Processor,
@@ -270,7 +253,7 @@ Processor :: struct {
 }
 
 #assert(offset_of(Processor, user_stack) == 8)
-#assert(offset_of(Processor, self) == 16) // processor_self in instructions.odin
+#assert(offset_of(Processor, self) == 16) // processor_self in instructions_amd64.odin and instructions_wasm64p32.odin
 #assert(offset_of(Processor, observed_kinds) < 64) // The first line of the record.
 
 processors: [PROCESSOR_CAPACITY]^Processor
@@ -485,14 +468,14 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	// processor".
 	control_register_0_write(CR0_OF_THE_KERNEL)
 	cr4 := control_register_4_read() & CR4_KEPT
-	_, _, _, basic_features := intrinsics.x86_cpuid(1, 0)
+	_, _, _, basic_features := processor_identification_read(1, 0)
 	if basic_features & (1 << 7) != 0 {
 		cr4 |= CR4_MACHINE_CHECK
 	}
 	// The kernel does not execute the memory of processes, and uses it only
 	// in user_copy, when the processor can refuse the rest (SMEP, SMAP).
-	if highest, _, _, _ := intrinsics.x86_cpuid(0, 0); highest >= 7 {
-		_, features, more_features, _ := intrinsics.x86_cpuid(7, 0)
+	if highest, _, _, _ := processor_identification_read(0, 0); highest >= 7 {
+		_, features, more_features, _ := processor_identification_read(7, 0)
 		if features & (1 << 7) != 0 {
 			cr4 |= CR4_NO_EXECUTE_PROCESS
 			kernel_no_execute = true

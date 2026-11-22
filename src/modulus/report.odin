@@ -33,10 +33,6 @@ stage_cycles: [Stage]u64 // The cycle counter at the end of each stage.
 cycle_frequency: u64
 boot_record: info.Boot_Info
 
-cycles_now :: #force_inline proc "contextless" () -> u64 {
-	return u64(intrinsics.read_cycle_counter())
-}
-
 // milliseconds_now gives the milliseconds since the time 0, from the cycle
 // counter. The seconds and the rest are divided apart: no product overflows.
 milliseconds_now :: proc "contextless" () -> u64 {

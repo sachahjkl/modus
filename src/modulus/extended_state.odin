@@ -77,17 +77,6 @@ EXTENDED_STATE_LAYOUTS := [Extended_State_Form]op.Extended_State_Layout {
 	.Xsave    = .With_Header,
 }
 
-foreign _ {
-	// The save of a thread that a processor leaves, and the restore of a
-	// thread that a processor takes; also the proofs at boot.
-	extended_state_save :: proc "c" (area: ^Extended_State_Area, form: Extended_State_Form) ---
-	extended_state_restore :: proc "c" (area: ^Extended_State_Area, form: Extended_State_Form) ---
-	// The restore, then a read of the x87 control word, MXCSR, the low 8
-	// bytes of xmm0 and, with with_avx, bytes 16 to 23 of ymm0, in that
-	// order, at read: one routine, so no compiled code runs between.
-	extended_state_restore_and_read :: proc "c" (area: ^Extended_State_Area, read: ^[4]u64, with_avx: bool, form: Extended_State_Form) ---
-}
-
 // What the first processor chose. Read-only after its setup.
 extended_state_form: Extended_State_Form
 extended_state_components: Extended_State_Components
@@ -103,24 +92,24 @@ extended_state_layout: [8][2]u32
 // What the processor that runs it can save.
 extended_state_supported :: proc "contextless" () -> (with_xsave: bool, components: Extended_State_Components) {
 	components = LEGACY_COMPONENTS
-	highest, _, _, _ := intrinsics.x86_cpuid(0, 0)
-	_, _, features, _ := intrinsics.x86_cpuid(1, 0)
+	highest, _, _, _ := processor_identification_read(0, 0)
+	_, _, features, _ := processor_identification_read(1, 0)
 	XSAVE :: 1 << 26
 	AVX :: 1 << 28
 	if highest < 0xD || features & XSAVE == 0 {
 		return false, components
 	}
-	optimized, _, _, _ := intrinsics.x86_cpuid(0xD, 1)
+	optimized, _, _, _ := processor_identification_read(0xD, 1)
 	if optimized & 1 == 0 {
 		return false, components // No xsaveopt.
 	}
-	low, _, _, high := intrinsics.x86_cpuid(0xD, 0)
+	low, _, _, high := processor_identification_read(0xD, 0)
 	processor_components := transmute(Extended_State_Components)(u64(low) | u64(high) << 32)
 	if features & AVX != 0 && .Avx in processor_components {
 		components += {.Avx}
 		AVX_512_FOUNDATION :: 1 << 16
 		if highest >= 7 {
-			_, extended, _, _ := intrinsics.x86_cpuid(7, 0)
+			_, extended, _, _ := processor_identification_read(7, 0)
 			if extended & AVX_512_FOUNDATION != 0 && AVX_512_COMPONENTS <= processor_components {
 				components += AVX_512_COMPONENTS
 			}
@@ -133,7 +122,7 @@ extended_state_supported :: proc "contextless" () -> (with_xsave: bool, componen
 // component above SSE that the processor that runs it reports.
 extended_state_layout_read :: proc "contextless" (components: Extended_State_Components) -> (layout: [8][2]u32) {
 	for component in components - LEGACY_COMPONENTS {
-		size, offset, _, _ := intrinsics.x86_cpuid(0xD, u32(component))
+		size, offset, _, _ := processor_identification_read(0xD, u32(component))
 		layout[int(component)] = {offset, size}
 	}
 	return
@@ -157,7 +146,7 @@ extended_state_first_setup :: proc "contextless" () {
 	for candidate in candidates {
 		extended_control_register_write(0, transmute(u64)candidate)
 		// EBX: the size that the components enabled in XCR0 now need.
-		_, size, _, _ := intrinsics.x86_cpuid(0xD, 0)
+		_, size, _, _ := processor_identification_read(0xD, 0)
 		if size <= EXTENDED_STATE_CAPACITY {
 			extended_state_components = candidate
 			extended_state_size = u64(size)
@@ -191,7 +180,7 @@ extended_state_other_setup :: proc "contextless" (cpu: ^Processor) -> bool {
 	}
 	control_register_4_write(cr4 | CR4_OSXSAVE)
 	extended_control_register_write(0, transmute(u64)extended_state_components)
-	_, size, _, _ := intrinsics.x86_cpuid(0xD, 0)
+	_, size, _, _ := processor_identification_read(0xD, 0)
 	return u64(size) == extended_state_size && extended_state_mxcsr_mask_measure(&cpu.extended_state_written) == extended_state_mxcsr_mask
 }
 

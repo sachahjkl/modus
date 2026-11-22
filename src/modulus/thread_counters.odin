@@ -38,22 +38,22 @@ counter_trial_register: u32
 // processor_identification reads the CPUID values that the counter plan
 // needs: each leaf only when the highest leaf of its range reaches it.
 processor_identification :: proc "contextless" () -> (identification: processor_counters.Identification) {
-	highest, vendor_b, vendor_c, vendor_d := intrinsics.x86_cpuid(0, 0)
+	highest, vendor_b, vendor_c, vendor_d := processor_identification_read(0, 0)
 	identification.highest_leaf = highest
 	identification.vendor_b, identification.vendor_c, identification.vendor_d = vendor_b, vendor_c, vendor_d
 	if highest >= 1 {
-		identification.signature, _, _, _ = intrinsics.x86_cpuid(1, 0)
+		identification.signature, _, _, _ = processor_identification_read(1, 0)
 	}
 	if highest >= processor_counters.INTEL_MONITORING_LEAF {
-		identification.intel_monitoring_a, identification.intel_monitoring_b, _, _ = intrinsics.x86_cpuid(processor_counters.INTEL_MONITORING_LEAF, 0)
+		identification.intel_monitoring_a, identification.intel_monitoring_b, _, _ = processor_identification_read(processor_counters.INTEL_MONITORING_LEAF, 0)
 	}
-	extended, _, _, _ := intrinsics.x86_cpuid(0x8000_0000, 0)
+	extended, _, _, _ := processor_identification_read(0x8000_0000, 0)
 	identification.highest_extended_leaf = extended
 	if extended >= 0x8000_0001 {
-		_, _, identification.extended_features_c, _ = intrinsics.x86_cpuid(0x8000_0001, 0)
+		_, _, identification.extended_features_c, _ = processor_identification_read(0x8000_0001, 0)
 	}
 	if extended >= processor_counters.AMD_MONITORING_LEAF {
-		identification.amd_monitoring_a, identification.amd_monitoring_b, _, _ = intrinsics.x86_cpuid(processor_counters.AMD_MONITORING_LEAF, 0)
+		identification.amd_monitoring_a, identification.amd_monitoring_b, _, _ = processor_identification_read(processor_counters.AMD_MONITORING_LEAF, 0)
 	}
 	return identification
 }
@@ -128,7 +128,7 @@ thread_counters_trial :: proc "contextless" () -> (absence: processor_counters.A
 // thread_counters_log writes one line at boot: the counter plan and the
 // trial of the first processor, or why the machine has none.
 thread_counters_log :: proc "contextless" () {
-	_, _, features, _ := intrinsics.x86_cpuid(1, 0)
+	_, _, features, _ := processor_identification_read(1, 0)
 	guest := features & (1 << 31) != 0 // A hypervisor runs this machine.
 	where_text := guest ? string(" (a guest of a hypervisor)") : string("")
 	switch counter_plan.vendor {

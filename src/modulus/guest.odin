@@ -202,13 +202,6 @@ Guest_General_Registers :: struct {
 #assert(offset_of(Guest_General_Registers, r15) == 104)
 #assert(size_of(Extended_State_Area) <= PAGE_SIZE)
 
-foreign _ {
-	// The entry of a guest processor, with interrupts on and held by clgi,
-	// until its exit. It saves and loads the state that the exit does not
-	// restore (processor.asm).
-	guest_enter :: proc "c" (control_block: u64, general: ^Guest_General_Registers, host_area: u64) ---
-}
-
 // One exit of a guest processor, as the control block gives it.
 Guest_Exit :: struct {
 	code:          u64,
@@ -220,12 +213,12 @@ Guest_Exit :: struct {
 // guest_support_read says what the processor that runs it can do for a
 // guest.
 guest_support_read :: proc "contextless" () -> (support: Guest_Support) {
-	highest, _, _, _ := intrinsics.x86_cpuid(0x8000_0000, 0)
+	highest, _, _, _ := processor_identification_read(0x8000_0000, 0)
 	if highest < 0x8000_000A {
 		support.refusal = "the processor has no SVM"
 		return
 	}
-	_, _, extended_features, _ := intrinsics.x86_cpuid(0x8000_0001, 0)
+	_, _, extended_features, _ := processor_identification_read(0x8000_0001, 0)
 	if extended_features & (1 << 2) == 0 {
 		support.refusal = "the processor has no SVM"
 		return
@@ -235,7 +228,7 @@ guest_support_read :: proc "contextless" () -> (support: Guest_Support) {
 		support.refusal = "the firmware turned SVM off"
 		return
 	}
-	_, identifiers, _, features := intrinsics.x86_cpuid(0x8000_000A, 0)
+	_, identifiers, _, features := processor_identification_read(0x8000_000A, 0)
 	NESTED_PAGING :: 1 << 0
 	NEXT_INSTRUCTION :: 1 << 3
 	FLUSH_BY_IDENTIFIER :: 1 << 6

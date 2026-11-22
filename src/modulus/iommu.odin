@@ -933,7 +933,7 @@ iommu_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		}
 		unit.register_base = base
 		unit.register_size = register_size
-		unit.registers = info.DIRECT_MAP_BASE + uintptr(base)
+		unit.registers = info.DIRECT_MAP_POINTER_BASE + uintptr(base)
 		checked: bool
 		switch iommu_vendor {
 		case .Intel:

@@ -72,6 +72,28 @@ The kernel keeps its code above the arch layer. Each part below has a file `*_am
 
 The kernel reads and writes process memory (the kernel ring of a thread, a table that a command names) by its virtual address. On a browser machine that access walks the page table of the process in software, with the checks of the hardware: present, user, write. A page that the walk does not find gives the same fault as on hardware.
 
+### The arch layer as it is
+
+`odin check` and `odin build` of `src/modulus` pass for `freestanding_wasm64p32` and for `freestanding_amd64_sysv`, from the same source. The build for WebAssembly links with no `env` import: its only imports are the procedures of the page in the module `modus_page`.
+
+- **One name, two files.** Each procedure of the border has the same name and signature on both targets, so no file above the border changes:
+  - `instructions_amd64.odin` holds the instruction templates, `cpuid` (`processor_identification_read`) and `rdtsc` (`cycles_now`). `instructions_wasm64p32.odin` holds the register file of the processor of the instance: the control, debug and model-specific registers. A write of `cr3` and `invlpg` reach the translation cache of the software processor.
+  - `processor_assembly_amd64.odin` declares each name of `processor.asm`. `processor_loop_wasm64p32.odin` defines the same names: `resume`, `stack_switch`, the idle wait, the extended state in the software processor, the register trials and the labels.
+  - `processors_start_amd64.odin` holds the start code of the other processors and its reset and start messages. `processors_start_wasm64p32.odin` starts no worker yet.
+- **The direct map.** `boot_info.DIRECT_MAP_POINTER_BASE` is the pointer of the kernel to physical address 0: the direct map on x86-64, and 0 on WebAssembly. `DIRECT_MAP_BASE` and `KERNEL_BASE` stay the addresses of the page tables of x86-64, with no type, so a kernel with 32-bit pointers still writes the same tables.
+- **The answer of `cpuid`.** It names x87, SSE, SSE2, `syscall`, no-execute and long mode, and nothing else. So the kernel takes, with no code of its own, the paths of a machine with no APIC in x2APIC mode, no `xsave`, no SVM, no processor counters and no hypervisor. A `Guest_Run` gives `Unsupported`: `guest_enter` stops the instance, and no path reaches it.
+- **The exit of the software processor.** The kernel part `software_exit`, with host tests, gives the event that a processor of x86-64 gives for each outcome of the software processor. A `syscall` is the kernel entry, an exception keeps its vector, its error code and the address of a page fault, and the end of a slice is the tick of the timer. `hlt` of a process is a protection fault. The export `modus_processor_loop_run` builds the frame from that exit and calls `kernel_interrupt`, as the stubs of `processor.asm` do.
+- **One instance for each worker.** The linear memory is shared, so a global of Odin is in the memory of every worker. The register file and the software processor are thread-locals. The word that the idle wait waits on is in the shared memory, one for each processor.
+- **The idle wait.** A build with the feature `atomics` waits with `memory.atomic.wait32` on the word of its processor, bounded by one tick. A build with no atomics has one processor and calls the import `page_idle_wait`, which suspends the worker.
+
+These parts are not done yet, and each one stops the instance or stays inactive in place of a wrong result:
+
+- **`user_copy`** takes two pointers. A pointer of 32 bits cannot hold the address of a process, so on WebAssembly `user_copy` stops the instance (`unreachable`). The copy needs a form that takes the address of the process as a `u64` and walks its page table in the software processor.
+- **The interrupt controller and the timer.** `apic.odin` still reads its registers through the direct map. On a browser machine, it needs the deadline word and the word of pending vectors ("The timer and the cycle counter").
+- **The shared memory.** The build links its own memory. A build for several workers needs `--import-memory` and `--shared-memory` at the link.
+- **The exports of the demonstration.** The package `software_machine` exports the procedures `modus_vm_*` of its demonstration page, so the kernel for WebAssembly exports them too until they move to a package of their own.
+- **The counted kernel** (`KERNEL_EDGE_COUNTERS`) is a build for x86-64 only. The build for WebAssembly refuses it with an `#assert`.
+
 ### The processor loop
 
 On hardware, `schedule` and `run` never return: `resume` ends in `iretq`, and `schedule_on_a_fresh_stack` switches to the top of the kernel stack. WebAssembly has no instruction that drops the frames of the stack. So each worker runs one loop, an export of the kernel:

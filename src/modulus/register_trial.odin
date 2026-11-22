@@ -15,16 +15,6 @@ package kernel
 // address it stops the machine, as before: no other fault of the kernel is
 // hidden.
 
-foreign _ {
-	model_specific_register_trial_read :: proc "c" (index: u32, value: ^u64) -> bool ---
-	model_specific_register_trial_write :: proc "c" (index: u32, value: u64) -> bool ---
-	// The one instruction of each trial, and the label where a refusal goes
-	// on.
-	model_specific_register_trial_read_instruction: u8
-	model_specific_register_trial_write_instruction: u8
-	model_specific_register_trial_refused: u8
-}
-
 // register_trial_refusal_address gives where the kernel goes on after a
 // protection fault at this instruction address: the refusal label when the
 // address is the instruction of a register trial, else 0.

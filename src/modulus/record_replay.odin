@@ -1442,7 +1442,7 @@ record_replay_handle_gp :: proc "contextless" (cpu: ^Processor, thread: ^Thread)
 		case .Cpuid:
 			leaf := u32(thread.frame.rax)
 			subleaf := u32(thread.frame.rcx)
-			a, b, c, d := intrinsics.x86_cpuid(leaf, subleaf)
+			a, b, c, d := processor_identification_read(leaf, subleaf)
 			filtered := replay_filter.filter_cpuid_result(leaf, subleaf, {a, b, c, d})
 			thread.frame.rax = u64(filtered.eax)
 			thread.frame.rbx = u64(filtered.ebx)
