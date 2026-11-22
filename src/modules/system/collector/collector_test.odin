@@ -293,7 +293,7 @@ a_record_is_kept_before_it_is_forwarded :: proc(t: ^testing.T) {
 	space := open_space(t, service, "shop", "orders", terms_of(.Audit, wide_grants.SPACE_RECORDS_MOST, .Forward))
 	held := wide_grants.space_of(&service.store, u32(space))
 
-	for value in u8(0) ..< wide_grants.FORWARD_QUEUE_CAPACITY {
+	for value in u8(0) ..< wide_grants.FORWARD_QUEUE_PER_SPACE_LIMIT {
 		testing.expect_value(t, append_value(service, &console, space, value, &error), i64(value))
 		// The newest record in the queue is one that the space holds.
 		testing.expect_value(t, held.next_serial, u64(value) + 1)
@@ -301,15 +301,15 @@ a_record_is_kept_before_it_is_forwarded :: proc(t: ^testing.T) {
 	error = {}
 	expect_refusal(t, append_value(service, &console, space, 99, &error), ERROR_FULL, error, .Full, .Records)
 	testing.expect_value(t, error.found, i64(wide_grants.Space_Refusal.Forward_Full))
-	testing.expect_value(t, held.count, u32(wide_grants.FORWARD_QUEUE_CAPACITY))
+	testing.expect_value(t, held.count, u32(wide_grants.FORWARD_QUEUE_PER_SPACE_LIMIT))
 	testing.expect_value(t, held.forwarded, u64(0))
 
 	heads: [wide_grants.SPACE_RECORDS_MOST]wide_grants.Kept_Record_Head
 	bytes: [wide_grants.SPACE_RECORDS_MOST * 8]u8
-	testing.expect_value(t, read_all(service, &console, space, heads[:], bytes[:], &error), i64(wide_grants.FORWARD_QUEUE_CAPACITY))
+	testing.expect_value(t, read_all(service, &console, space, heads[:], bytes[:], &error), i64(wide_grants.FORWARD_QUEUE_PER_SPACE_LIMIT))
 
 	// Each queued record is a kept one, in order, with the same bytes.
-	for expected in u64(0) ..< wide_grants.FORWARD_QUEUE_CAPACITY {
+	for expected in u64(0) ..< wide_grants.FORWARD_QUEUE_PER_SPACE_LIMIT {
 		item, refusal := wide_grants.forward_peek(&service.store)
 		testing.expect_value(t, refusal, wide_grants.Space_Refusal.None)
 		testing.expect_value(t, item.serial, expected)
@@ -317,8 +317,8 @@ a_record_is_kept_before_it_is_forwarded :: proc(t: ^testing.T) {
 		testing.expect_value(t, item.bytes[0], bytes[expected * 8])
 		testing.expect_value(t, wide_grants.forward_done(&service.store), wide_grants.Space_Refusal.None)
 	}
-	testing.expect_value(t, held.forwarded, u64(wide_grants.FORWARD_QUEUE_CAPACITY))
-	testing.expect_value(t, held.count, u32(wide_grants.FORWARD_QUEUE_CAPACITY))
+	testing.expect_value(t, held.forwarded, u64(wide_grants.FORWARD_QUEUE_PER_SPACE_LIMIT))
+	testing.expect_value(t, held.count, u32(wide_grants.FORWARD_QUEUE_PER_SPACE_LIMIT))
 
 	// A full audit space that forwards refuses the record, and the queue
 	// stays empty.

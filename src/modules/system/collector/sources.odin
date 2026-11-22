@@ -194,15 +194,17 @@ sources_pass :: proc "contextless" () -> (pending: bool) {
 	port := forward_port()
 	wide_grants.forward_pass(&space_service.store, &source_links, port)
 	wide_grants.links_settle(&space_service.store, &source_links, port)
-	pairs_orphaned_close(source_tags[:count])
+	pairs_orphaned_close()
 	for &link in source_links.links {
 		pending ||= link.active && (link.pending || link.state == .Ended)
 	}
 	return pending
 }
 
-// The pairs that forward holds, as output_pairs lists them.
+// The pairs that forward holds, as output_pairs lists them, and the rings
+// of sources read after them.
 pair_tags: [wide_grants.SOURCE_LINKS_MOST]u32
+pair_source_tags: [wide_grants.SOURCE_LINKS_MOST]u32
 
 // pairs_orphaned_close closes each end of forward whose pair has no source
 // that this collector keeps: no link and no ring of sources of that
@@ -210,24 +212,22 @@ pair_tags: [wide_grants.SOURCE_LINKS_MOST]u32
 // or a link whose space does not forward. Such an end would else hold a
 // place of the ends of the process for ever, and its reader would wait
 // for records that never come. A source that waits for its space
-// (Space_Held) keeps its ring, so its pair stays. source_tags are the
-// rings of sources that this pass read.
+// (Space_Held) keeps its ring, so its pair stays.
+//
+// The pairs are listed first, then the rings of sources: the library takes
+// the ends of the wiring ring in their order, and the root service gives
+// the end of a source before the end of its pair, so a pair in the first
+// list has its source ring in the second one, unless that ring ended. A
+// list of sources from before the pairs could miss a source and its pair
+// that came between the two, and close a pair that is new.
 @(private = "file")
-pairs_orphaned_close :: proc "contextless" (source_tags: []u32) {
+pairs_orphaned_close :: proc "contextless" () {
 	count := system.output_pairs(&forward, pair_tags[:])
-	pairs: for pair in pair_tags[:count] {
-		if link := wide_grants.link_of(&source_links, pair); link != nil {
-			if link.pair == .None {
-				_ = system.output_pair_close(&forward, pair)
-			}
-			continue
+	source_count := system.input_tags(&sources, pair_source_tags[:])
+	for pair in pair_tags[:count] {
+		if wide_grants.pair_orphaned(&source_links, pair, pair_source_tags[:source_count]) {
+			_ = system.output_pair_close(&forward, pair)
 		}
-		for tag in source_tags {
-			if tag == pair {
-				continue pairs
-			}
-		}
-		_ = system.output_pair_close(&forward, pair)
 	}
 }
 

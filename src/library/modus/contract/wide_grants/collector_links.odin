@@ -288,6 +288,24 @@ forward_pass :: proc "contextless" (store: ^Space_Store, links: ^Source_Links, p
 	return .Moved
 }
 
+// pair_orphaned says if the end of the pair tag has no source that the
+// collector keeps: a link whose space does not forward, or no link and no
+// ring of sources of that wiring (a source that it refused or closed, or
+// that ended and settled). source_tags must be read after the list of the
+// pairs (pairs_orphaned_close in the collector): a source and its pair
+// that came between two older lists are then in both.
+pair_orphaned :: proc "contextless" (links: ^Source_Links, pair: u32, source_tags: []u32) -> bool {
+	if link := link_of(links, pair); link != nil {
+		return link.pair == .None
+	}
+	for tag in source_tags {
+		if tag == pair {
+			return false
+		}
+	}
+	return true
+}
+
 // links_settle frees each link whose source ended, whose pending record
 // is settled, and whose records the queue gave: it ends the ring of its
 // pair first, with the error record of the end of its source.

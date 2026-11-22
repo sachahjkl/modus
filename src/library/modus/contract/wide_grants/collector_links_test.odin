@@ -292,7 +292,9 @@ a_pair_that_ends_drops_its_queue_and_the_space_keeps_each_record :: proc(t: ^tes
 	link_fixture_start(fixture)
 	link, _ := link_open(&fixture.links, &fixture.store, 3, bytes_of("shop"), bytes_of("orders"), link_terms(.Audit, 64, .Forward), LINK_RECORD_SIZE)
 	consumer := Consumer_Ring{store = &fixture.store, space = link.space, pair = 3, capacity = 2}
-	for serial in u64(0) ..< 6 {
+	// The part of the queue of one space: 4 records, 2 of which the
+	// consumer takes.
+	for serial in u64(0) ..< FORWARD_QUEUE_PER_SPACE_LIMIT {
 		record := link_record_of(serial)
 		{step, refusal := link_keep(&fixture.store, link, record[:], serial); expect_step(t, step, refusal, .Kept)}
 	}
@@ -303,14 +305,14 @@ a_pair_that_ends_drops_its_queue_and_the_space_keeps_each_record :: proc(t: ^tes
 	testing.expect_value(t, forward_pass(&fixture.store, &fixture.links, consumer_port(&consumer)), Forward_Step.Empty)
 	testing.expect_value(t, link.pair, Pair_State.Gone)
 	space := space_of(&fixture.store, link.space)
-	testing.expect_value(t, space.unforwarded, u64(4))
+	testing.expect_value(t, space.unforwarded, u64(FORWARD_QUEUE_PER_SPACE_LIMIT - 2))
 	testing.expect_value(t, space.forwarded, u64(2))
-	testing.expect_value(t, space.count, u32(6))
-	later := link_record_of(6)
-	{step, refusal := link_keep(&fixture.store, link, later[:], 6); expect_step(t, step, refusal, .Kept)}
+	testing.expect_value(t, space.count, u32(FORWARD_QUEUE_PER_SPACE_LIMIT))
+	later := link_record_of(FORWARD_QUEUE_PER_SPACE_LIMIT)
+	{step, refusal := link_keep(&fixture.store, link, later[:], FORWARD_QUEUE_PER_SPACE_LIMIT); expect_step(t, step, refusal, .Kept)}
 	testing.expect_value(t, forward_pass(&fixture.store, &fixture.links, consumer_port(&consumer)), Forward_Step.Empty)
-	testing.expect_value(t, space.unforwarded, u64(5))
-	testing.expect_value(t, space.count, u32(7))
+	testing.expect_value(t, space.unforwarded, u64(FORWARD_QUEUE_PER_SPACE_LIMIT - 1))
+	testing.expect_value(t, space.count, u32(FORWARD_QUEUE_PER_SPACE_LIMIT + 1))
 	// The end of a source whose pair is Gone ends no ring.
 	link_close(link, errors.error_make(.Bad_Value, .Records))
 	links_settle(&fixture.store, &fixture.links, consumer_port(&consumer))
@@ -444,4 +446,76 @@ a_pair_of_a_space_that_does_not_forward_ends_with_its_source :: proc(t: ^testing
 	testing.expect_value(t, consumer.finished, 1)
 	testing.expect_value(t, consumer.end_error, end)
 	testing.expect(t, link_of(&fixture.links, 4) == nil)
+}
+
+// A source that forwards and whose pair never comes fills its own part of
+// the forward queue only: past FORWARD_QUEUE_PER_SPACE_LIMIT its record
+// stays pending (Forward_Full), its link stays open and its ring holds its
+// writer. A second source with a live pair still forwards every record,
+// in order, through the queue that the first one cannot fill.
+@(test)
+a_space_whose_pair_never_comes_fills_its_own_part_of_the_queue :: proc(t: ^testing.T) {
+	fixture := new(Link_Fixture)
+	defer free(fixture)
+	link_fixture_start(fixture)
+	lonely, _ := link_open(&fixture.links, &fixture.store, 1, bytes_of("shop"), bytes_of("orders"), link_terms(.Audit, 32, .Forward), LINK_RECORD_SIZE)
+	live, _ := link_open(&fixture.links, &fixture.store, 2, bytes_of("bank"), bytes_of("payments"), link_terms(.Audit, 32, .Forward), LINK_RECORD_SIZE)
+	missing := Consumer_Ring{store = &fixture.store, space = lonely.space, pair = 1, capacity = 64, missing = true}
+	reader := Consumer_Ring{store = &fixture.store, space = live.space, pair = 2, capacity = 64}
+	pairs := Two_Pairs{&missing, &reader}
+	port := Forward_Port{user = &pairs, write = two_pairs_write, finish = two_pairs_finish}
+	kept := 0
+	for serial in u64(0) ..< 17 {
+		record := link_record_of(serial)
+		step, refusal := link_keep(&fixture.store, lonely, record[:], serial)
+		forward_pass(&fixture.store, &fixture.links, port)
+		if step == .Held {
+			testing.expect_value(t, refusal, Space_Refusal.Forward_Full)
+			break
+		}
+		kept += 1
+	}
+	testing.expect_value(t, kept, FORWARD_QUEUE_PER_SPACE_LIMIT)
+	testing.expect(t, lonely.pending && lonely.state == .Open)
+	testing.expect_value(t, forward_count_of(&fixture.store, lonely.space), u32(FORWARD_QUEUE_PER_SPACE_LIMIT))
+	{step, _ := link_retry(&fixture.store, lonely); testing.expect_value(t, step, Link_Step.Held)}
+
+	for serial in u64(0) ..< 20 {
+		record := link_record_of(100 + serial)
+		{step, refusal := link_keep(&fixture.store, live, record[:], serial); expect_step(t, step, refusal, .Kept)}
+		forward_pass(&fixture.store, &fixture.links, port)
+	}
+	testing.expect_value(t, reader.taken_count, 20)
+	for serial in 0 ..< 20 {
+		testing.expect_value(t, reader.taken[serial], link_record_of(u64(100 + serial)))
+	}
+	testing.expect_value(t, reader.unkept_sent, 0)
+	testing.expect_value(t, forward_count_of(&fixture.store, live.space), u32(0))
+	testing.expect_value(t, fixture.store.forward_count, u32(FORWARD_QUEUE_PER_SPACE_LIMIT))
+	testing.expect_value(t, missing.taken_count, 0)
+}
+
+// The end of a pair and its source: a source and its pair that came after
+// an older list of the sources (empty here) look orphaned against that
+// list, and the collector would close a new pair. Against the list read
+// after the pairs, which holds the new source, the pair stays. A pair with
+// no source in that list, and a pair of a link whose space does not
+// forward, are orphaned; a pair of a link that forwards stays, even when
+// its source ring ended.
+@(test)
+a_pair_that_comes_with_its_source_is_not_closed :: proc(t: ^testing.T) {
+	fixture := new(Link_Fixture)
+	defer free(fixture)
+	link_fixture_start(fixture)
+	stale: []u32
+	fresh := [1]u32{9}
+	testing.expect(t, pair_orphaned(&fixture.links, 9, stale))
+	testing.expect(t, !pair_orphaned(&fixture.links, 9, fresh[:]))
+	testing.expect(t, pair_orphaned(&fixture.links, 8, fresh[:]))
+	testing.expect(t, pair_orphaned(&fixture.links, 0, fresh[:]))
+	keeps, _ := link_open(&fixture.links, &fixture.store, 4, bytes_of("server"), bytes_of("log"), link_terms(.Keep, 4, .Keeps), LINK_RECORD_SIZE)
+	testing.expect(t, pair_orphaned(&fixture.links, keeps.tag, fresh[:]))
+	forwards, _ := link_open(&fixture.links, &fixture.store, 5, bytes_of("shop"), bytes_of("orders"), link_terms(.Audit, 4, .Forward), LINK_RECORD_SIZE)
+	link_end(forwards, {})
+	testing.expect(t, !pair_orphaned(&fixture.links, forwards.tag, stale))
 }

@@ -36,8 +36,16 @@ SPACE_ROOM_RECORDS :: 256
 // description allows.
 SPACE_RECORD_BYTES_MOST :: 256
 
-// The records that wait to be forwarded at most, across the spaces.
-FORWARD_QUEUE_CAPACITY :: 16
+// The records of one space that wait to be forwarded at most. A space
+// whose pair does not take its records fills its own part of the queue
+// only, so it never holds the forward of another space.
+FORWARD_QUEUE_PER_SPACE_LIMIT :: 4
+
+// The records that wait to be forwarded at most, across the spaces: the
+// part of each source that the collector reads at once.
+FORWARD_QUEUE_CAPACITY :: 64
+#assert(FORWARD_QUEUE_PER_SPACE_LIMIT * SOURCE_LINKS_MOST <= FORWARD_QUEUE_CAPACITY)
+#assert(FORWARD_QUEUE_PER_SPACE_LIMIT * SPACE_CAPACITY <= FORWARD_QUEUE_CAPACITY)
 
 // The bytes of the name of a source process and of a record output.
 SPACE_NAME_BYTES :: 32
@@ -353,7 +361,7 @@ record_append :: proc "contextless" (store: ^Space_Store, space_number: u32, rec
 		}
 	}
 	forwards := space.forwarding == .Forward
-	if forwards && store.forward_count >= FORWARD_QUEUE_CAPACITY {
+	if forwards && (store.forward_count >= FORWARD_QUEUE_CAPACITY || forward_count_of(store, space_number) >= FORWARD_QUEUE_PER_SPACE_LIMIT) {
 		space.refused_full += 1
 		return 0, .Forward_Full
 	}
@@ -449,6 +457,17 @@ forward_remove_at :: proc "contextless" (store: ^Space_Store, offset: u32, remov
 	store.forward[(store.forward_first + store.forward_count - 1) % FORWARD_QUEUE_CAPACITY] = {}
 	store.forward_count -= 1
 	return .None
+}
+
+// forward_count_of gives the records of a space that the forward queue
+// holds.
+forward_count_of :: proc "contextless" (store: ^Space_Store, space_number: u32) -> (count: u32) {
+	for offset in 0 ..< store.forward_count {
+		if store.forward[(store.forward_first + offset) % FORWARD_QUEUE_CAPACITY].space == space_number {
+			count += 1
+		}
+	}
+	return count
 }
 
 // forward_waits_for says if the forward queue holds a record of a space.
