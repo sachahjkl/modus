@@ -1210,6 +1210,15 @@ step_two_byte_opcode :: proc "contextless" (
 				return o_write
 			}
 		} else {
+			// The processor writes the destination back with its own value
+			// when the compare fails (Intel SDM, CMPXCHG), so a destination
+			// that the user cannot write faults in both cases.
+			if !modrm.is_register {
+				o_write := write_rm_operand(cpu, physical_memory, cursor.start_rip, cursor.current_rip, modrm, op_width, prefixes.has_rex, current_val)
+				if o_write != .Running {
+					return o_write
+				}
+			}
 			write_register(cpu, u8(General_Register.Rax), op_width, prefixes.has_rex, current_val)
 		}
 		cpu.rip = cursor.current_rip
@@ -1478,7 +1487,26 @@ step_two_byte_opcode :: proc "contextless" (
 // processor_step fetches and executes one x86-64 user-mode instruction (or one
 // iteration of a `rep` string instruction) strictly through the Software MMU.
 processor_step :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8) -> Step_Outcome {
+	// A fault on x86-64 is precise, but a read-modify-write form computes its
+	// flags, and some forms write a register, before the memory write that
+	// can fault. The state before the instruction comes back here, in one
+	// place for every form, so no new form can forget it.
 	cpu.rflags |= RFLAGS_RESERVED_ONE
+	registers_before := cpu.registers
+	rflags_before := cpu.rflags
+	outcome := instruction_execute(cpu, physical_memory)
+	switch outcome {
+	case .Page_Fault, .General_Protection, .Invalid_Opcode, .Divide_Error:
+		cpu.registers = registers_before
+		cpu.rflags = rflags_before
+	case .Running, .Syscall, .Breakpoint, .Step_Budget_Exhausted, .Halted:
+	}
+	return outcome
+}
+
+// instruction_execute decodes and executes one instruction for processor_step.
+@(private = "file")
+instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8) -> Step_Outcome {
 	cpu.fault_address = 0
 	cpu.fault_error_code = 0
 	cpu.outcome = .Running

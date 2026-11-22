@@ -407,6 +407,26 @@ fuzz_target_table := [?]Fuzz_Target {
 		execute = fuzz_operation_sequence_generated_execute,
 		start = fuzz_operation_sequence_start,
 	},
+	{
+		name = "html_css",
+		kind = .Raw,
+		about = "contract/html_css: any page gives a tree, a style sheet and a layout in their bounds with acyclic links, the same each time, and draw records that the border of the drawing takes",
+		packages = {foundation.SOURCE_FOLDER_CONTRACT + "/html_css"},
+		input_limit = FUZZ_HTML_CSS_INPUT_LIMIT,
+		execute = fuzz_html_css_execute,
+		seeds = fuzz_html_css_seeds,
+		words = fuzz_html_css_words,
+	},
+	{
+		name = "software_machine",
+		kind = .Raw,
+		about = "contract/software_machine: any code ends each step with a clean outcome; a fault changes no register and no byte, and a page fault agrees with the walk; no step writes a page that the user cannot write",
+		packages = {foundation.SOURCE_FOLDER_CONTRACT + "/software_machine"},
+		input_limit = FUZZ_MACHINE_INPUT_LIMIT,
+		execute = fuzz_software_machine_execute,
+		seeds = fuzz_software_machine_seeds,
+		words = fuzz_software_machine_words,
+	},
 }
 
 fuzz_targets :: proc() -> []Fuzz_Target {
