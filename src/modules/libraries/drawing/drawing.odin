@@ -41,6 +41,13 @@
 // the text that each export already takes. The terminal draws its grid
 // through the module (src/md/api/text_grid.md).
 //
+// **The GPU back end.** A caller with a virtual GPU calls
+// draw_table_to_venus_20 in place of the draw into pixels: the module
+// writes the Venus stream of the frame into the bytes of the caller, and
+// draws no pixel. A caller with no GPU keeps
+// execute_draw_table_in_rectangles_20, which does not change
+// (src/md/features/gpu_access.md, "The draw table on the virtual GPU").
+//
 // **The version in the names.** The 19 in the name of each export is the
 // version of the [draw record](term:draw-record). A draw record of another
 // version has exports with other names, so a module that reads the records
@@ -52,6 +59,9 @@ import "modus:contract/draw_record"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/scale_factor"
+import "modus:contract/value_kinds"
+import "modus:contract/venus_vulkan"
+import "modus:contract/webgpu_subset"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
@@ -134,6 +144,12 @@ ARGUMENT_PIXELS :: 4
 ARGUMENT_CANVAS :: 5
 @(private)
 ARGUMENT_RECTANGLES :: 6
+@(private)
+ARGUMENT_SCRATCH :: 3
+@(private)
+ARGUMENT_VENUS :: 4
+@(private)
+ARGUMENT_TARGET :: 5
 
 // The text of the process that runs this copy of the module: what the
 // module loads one time, at the first draw. It is data of the module, and
@@ -333,4 +349,184 @@ execute_draw_table_in_rectangles_20 :: proc "c" (now: ^system.Table_To_Read(draw
 		interface.execute_in_rectangle(&table, target, rectangle)
 	}
 	return 0
+}
+
+// The target of a frame on the virtual GPU: the surface, the format of its
+// image, what the frame starts from, and the ids of the Vulkan objects that
+// the caller created with venus_vulkan.encode_draw_table_venus_objects. Each
+// object is the id of its base plus its number in the WebGPU subset: the
+// image, the render pass, the framebuffer and the pipeline are number 1,
+// the vertex, the index and the readback buffers 1, 2 and 3.
+Venus_Target :: struct {
+	width:               i64, // Pixels of a line of the surface.
+	height:              i64, // Lines.
+	format:              i64, // The VkFormat of the image: 37 (R8G8B8A8_UNORM), 43 (R8G8B8A8_SRGB) or 44 (B8G8R8A8_UNORM).
+	start:               i64, // 0: the frame starts from clear_color; 1: from the last frame.
+	clear_color:         i64, // 0xAARRGGBB with straight alpha.
+	command_buffer:      i64, // The object id of the command buffer, recorded and submitted once for each frame.
+	queue:               i64,
+	fence:               i64, // 0: no fence.
+	pipeline_layout:     i64,
+	render_pass_base:    i64,
+	framebuffer_base:    i64,
+	buffer_base:         i64,
+	image_base:          i64,
+	pipeline_base:       i64,
+	vertex_buffer_bytes: value_kinds.Size_In_Bytes, // The size of the vertex buffer of the GPU.
+	index_buffer_bytes:  value_kinds.Size_In_Bytes, // The size of the index buffer of the GPU.
+}
+
+// What a frame on the virtual GPU starts from.
+@(private)
+Venus_Frame_Start :: enum i64 {
+	Clear = 0,
+	Keep  = 1,
+}
+
+// The formats of the image of a target, by their VkFormat words.
+@(private)
+Venus_Target_Format :: enum i64 {
+	R8G8B8A8_Unorm = 37,
+	R8G8B8A8_Srgb  = 43,
+	B8G8R8A8_Unorm = 44,
+}
+
+// venus_target_of is the one border of the words of a Venus_Target: each
+// word becomes its member, its size or its object id, and ok is false with
+// the first refused word.
+@(private)
+venus_target_of :: proc "contextless" (shape: Venus_Target) -> (target: venus_vulkan.Draw_Table_Venus_Target, refused_word: i64, ok: bool) {
+	if shape.width <= 0 || shape.width > i64(max(u32)) {
+		return {}, shape.width, false
+	}
+	if shape.height <= 0 || shape.height > i64(max(u32)) {
+		return {}, shape.height, false
+	}
+	if shape.format < 0 {
+		return {}, shape.format, false
+	}
+	format_member, format_ok := enum_word.member_of_word(Venus_Target_Format, u64(shape.format))
+	if !format_ok {
+		return {}, shape.format, false
+	}
+	if shape.start < 0 {
+		return {}, shape.start, false
+	}
+	start, start_ok := enum_word.member_of_word(Venus_Frame_Start, u64(shape.start))
+	if !start_ok {
+		return {}, shape.start, false
+	}
+	if shape.clear_color < 0 || shape.clear_color > i64(max(u32)) {
+		return {}, shape.clear_color, false
+	}
+	if shape.vertex_buffer_bytes <= 0 {
+		return {}, i64(shape.vertex_buffer_bytes), false
+	}
+	if shape.index_buffer_bytes <= 0 {
+		return {}, i64(shape.index_buffer_bytes), false
+	}
+	switch format_member {
+	case .R8G8B8A8_Unorm:
+		target.format = .R8G8B8A8_Unorm
+	case .R8G8B8A8_Srgb:
+		target.format = .R8G8B8A8_Srgb
+	case .B8G8R8A8_Unorm:
+		target.format = .B8G8R8A8_Unorm
+	}
+	switch start {
+	case .Clear:
+		target.load_op = .Clear
+	case .Keep:
+		target.load_op = .Load
+	}
+	target.surface_width = u32(shape.width)
+	target.surface_height = u32(shape.height)
+	target.clear_color = clear_color_of_draw_color(u32(shape.clear_color))
+	target.vertex_buffer_bytes = u64(shape.vertex_buffer_bytes)
+	target.index_buffer_bytes = u64(shape.index_buffer_bytes)
+	// An object id is any 64-bit word that the driver side chose: the bits
+	// of the word are the id.
+	target.objects = {
+		command_buffer   = venus_vulkan.Object_Id(u64(shape.command_buffer)),
+		queue            = venus_vulkan.Object_Id(u64(shape.queue)),
+		fence            = venus_vulkan.Object_Id(u64(shape.fence)),
+		pipeline_layout  = venus_vulkan.Object_Id(u64(shape.pipeline_layout)),
+		render_pass_base = venus_vulkan.Object_Id(u64(shape.render_pass_base)),
+		framebuffer_base = venus_vulkan.Object_Id(u64(shape.framebuffer_base)),
+		buffer_base      = venus_vulkan.Object_Id(u64(shape.buffer_base)),
+		image_base       = venus_vulkan.Object_Id(u64(shape.image_base)),
+		pipeline_base    = venus_vulkan.Object_Id(u64(shape.pipeline_base)),
+	}
+	return target, 0, true
+}
+
+// clear_color_of_draw_color gives the clear color of a render pass in the
+// linear light of the vertices of the WebGPU subset: each channel squared,
+// the alpha straight.
+@(private)
+clear_color_of_draw_color :: proc "contextless" (color: u32) -> webgpu_subset.Clear_Color {
+	red := f32((color >> 16) & 0xFF) / 255
+	green := f32((color >> 8) & 0xFF) / 255
+	blue := f32(color & 0xFF) / 255
+	alpha := f32(color >> 24) / 255
+	return {
+		r_bits = transmute(u32)(red * red),
+		g_bits = transmute(u32)(green * green),
+		b_bits = transmute(u32)(blue * blue),
+		a_bits = transmute(u32)alpha,
+	}
+}
+
+// draw_table_to_venus_20 writes the Venus stream that draws a draw table on the virtual GPU, and returns its count of bytes. The stream records one command buffer: the upload of the vertices and the indices, the barrier of the image to COLOR_ATTACHMENT_OPTIMAL, the render pass with a scissor for each clip and the draws, the barrier to TRANSFER_SRC_OPTIMAL, the copy of the image into the readback buffer and the barrier to the host; then it submits the command buffer. The caller sends the stream with Venus_Submit of the GPU device service. The scratch holds the WebGPU commands, the vertices and the indices of the translation: 64 KiB is enough for a frame that one packet carries. The module draws no pixel; a caller with no virtual GPU calls execute_draw_table_in_rectangles_20, which this export does not change. A refused call writes no byte of venus. It fails with -1 and the error record: Bad_Value of the target, with the word that names nothing; Bad_Value of the records, with the problem of the translation, for a table that the border of the draw table refuses; Too_Small of the scratch, or of the buffers of the target, that do not hold the frame; Too_Long of the records, for a frame whose stream does not fit in one packet of 65536 bytes; Too_Small of venus that does not hold the stream; Too_Long of a table over 2^40 records or bytes.
+@(export, link_name = "draw_table_to_venus_20")
+draw_table_to_venus_20 :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_Record), now_text: ^system.Bytes_To_Read, scratch: ^system.Bytes_To_Change, venus: ^system.Bytes_To_Change, target: ^Venus_Target, error: ^errors.Error_Record) -> i64 {
+	// One copy of the target and of each count: a value that is checked is
+	// the value that is used.
+	shape := intrinsics.volatile_load(target)
+	scratch_bytes := intrinsics.volatile_load(&scratch.count)
+	scratch_address := intrinsics.volatile_load(&scratch.bytes)
+	venus_bytes := intrinsics.volatile_load(&venus.count)
+	venus_address := intrinsics.volatile_load(&venus.bytes)
+	if scratch_bytes > TABLE_LIMIT {
+		return errors.fail(error, -1, .Too_Long, .Bytes, ARGUMENT_SCRATCH, i64(min(scratch_bytes, u64(max(i64)))), i64(TABLE_LIMIT))
+	}
+	if venus_bytes > TABLE_LIMIT {
+		return errors.fail(error, -1, .Too_Long, .Bytes, ARGUMENT_VENUS, i64(min(venus_bytes, u64(max(i64)))), i64(TABLE_LIMIT))
+	}
+	gpu_target, refused_word, target_ok := venus_target_of(shape)
+	if !target_ok {
+		return errors.fail(error, -1, .Bad_Value, .None, ARGUMENT_TARGET, refused_word)
+	}
+	table, table_ok := draw_table_of(now, now_text, ARGUMENT_NOW, ARGUMENT_NOW_TEXT, error)
+	if !table_ok {
+		return -1
+	}
+	scratch_slice := ([^]u8)(scratch_address)[:scratch_bytes]
+	venus_slice := ([^]u8)(venus_address)[:venus_bytes]
+	result, draw_problem, problem := venus_vulkan.draw_table_to_venus(table.records[:table.record_count], table.text[:table.text_count], gpu_target, scratch_slice, venus_slice)
+	if problem == .None {
+		return i64(result.written)
+	}
+	if problem == .Draw_Table_Refused {
+		switch draw_problem {
+		case .Command_Buffer_Overflow, .Vertex_Buffer_Overflow, .Index_Buffer_Overflow:
+			return errors.fail(error, -1, .Too_Small, .Bytes, ARGUMENT_SCRATCH, i64(scratch_bytes))
+		case .None, .Zero_Surface_Dimensions, .Surface_Dimension_Too_Large, .Zero_Object_Id, .Unknown_Load_Op, .Damage_Rect_Out_Of_Bounds,
+		     .Unbalanced_Clips_Or_Elements, .Invalid_Draw_Record, .Byte_Table_Out_Of_Bounds, .Invalid_Path_Points:
+			return errors.fail(error, -1, .Bad_Value, .Records, ARGUMENT_NOW, i64(draw_problem))
+		}
+	}
+	if problem == .Gpu_Buffer_Too_Small {
+		return errors.fail(error, -1, .Too_Small, .Bytes, ARGUMENT_TARGET, i64(min(shape.vertex_buffer_bytes, shape.index_buffer_bytes)))
+	}
+	if problem == .Stream_Too_Large {
+		return errors.fail(error, -1, .Too_Long, .Records, ARGUMENT_NOW, i64(table.record_count))
+	}
+	if problem == .Buffer_Too_Short {
+		return errors.fail(error, -1, .Too_Small, .Bytes, ARGUMENT_VENUS, i64(venus_bytes))
+	}
+	// Each other refusal is an object id of the target that names nothing:
+	// 0, or a base whose object passes the largest id. The value is the
+	// problem of the translator.
+	return errors.fail(error, -1, .Bad_Value, .None, ARGUMENT_TARGET, i64(problem))
 }
