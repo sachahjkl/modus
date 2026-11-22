@@ -332,3 +332,37 @@ magnifier_export :: proc "c" (zoom_eighths: i64, error: ^errors.Error_Record) ->
 	}
 	return 1
 }
+
+// powerbox_ask opens an unforgeable trusted-display grant request dialog for a
+// process requesting a network endpoint or store and returns the request ID, or
+// a negative number with an error record.
+//
+// **Grant**: the caller must **act for the principal**.
+@(export, link_name = "powerbox_ask")
+powerbox_ask_export :: proc "c" (process_name: ^string, resource: ^string, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	id := powerbox_prompt_open(.Network_Endpoint, process_name^, resource^)
+	if id == 0 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
+	}
+	return i64(id)
+}
+
+// wide_grant_indicator shows (active != 0) or clears (active == 0) the
+// unforgeable wide-grant indicator badge in the top bar and returns 1, or a
+// negative number with an error record.
+//
+// **Grant**: the caller must **act for the principal**.
+@(export, link_name = "wide_grant_indicator")
+wide_grant_indicator_export :: proc "c" (active: i64, grant_id: i64, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if grant_id < 0 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Out_Of_Range, .Counts, 2, grant_id)
+	}
+	wide_grant_mark_set(active != 0, u64(grant_id))
+	return 1
+}

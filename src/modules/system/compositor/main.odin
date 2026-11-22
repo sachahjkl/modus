@@ -820,6 +820,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				key_records += 1
 				character := display.key_character_of(record.values[1])
 				switch {
+				case powerbox_and_wide_grant_key(u32(record.values[0]), record.values[2] != 0, u32(record.values[3])):
+					// Trusted powerbox modal or Ctrl+Shift+Escape wide-grant revocation took the key.
 				case record.values[2] != 0 && u32(record.values[0]) == display.KEY_ESCAPE && capture_popover_escape():
 					// Local Escape closed the bar viewer list popover.
 				case palette_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
@@ -2068,6 +2070,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	}
 	capture_popover_records(&card_frame)
 	desktop_notifications_records(table)
+	powerbox_dialog_records(table)
 	screen_part_end(bar_first, bar_mark_pixels[:], {}, false, true)
 	if table.full {
 		system.log_fact(.Warning, Screen_Draw_Table_Full{})
