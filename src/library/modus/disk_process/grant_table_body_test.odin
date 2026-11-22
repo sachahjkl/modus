@@ -138,6 +138,23 @@ table_body_and_tag_give_the_table_of_the_disk :: proc(t: ^testing.T) {
 	other := body_key(8)
 	_, other_problem := table_decode(tagged[:], &other)
 	testing.expect_value(t, other_problem, Table_File_Problem.Not_Authentic)
+	// The decode keeps its one verified copy: a change of the source after
+	// the check does not reach it, and a source that does not verify gives
+	// zero bytes.
+	source := tagged
+	kept: [TABLE_SIZE]u8
+	_, kept_problem := table_decode_kept(source[:], &key, &kept)
+	testing.expect_value(t, kept_problem, Table_File_Problem.None)
+	testing.expect_value(t, kept, tagged)
+	source[TABLE_HEADER_SIZE + ROW_OFFSET_HASH] ~= 0xFF
+	source[TABLE_OFFSET_COUNT] = ROW_CAPACITY
+	testing.expect_value(t, kept, tagged)
+	kept_again, again_problem := table_body_decode(&kept)
+	testing.expect_value(t, again_problem, Table_File_Problem.None)
+	testing.expect_value(t, kept_again, from_disk)
+	_, forged_problem := table_decode_kept(source[:], &key, &kept)
+	testing.expect_value(t, forged_problem, Table_File_Problem.Not_Authentic)
+	testing.expect_value(t, kept, [TABLE_SIZE]u8{})
 	// The encode with a key is the body and the tag.
 	encoded: [TABLE_SIZE]u8
 	table := from_disk

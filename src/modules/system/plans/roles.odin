@@ -47,24 +47,62 @@ roles_command :: proc "contextless" (step: rd.Plan_Roles_Step) -> (completion: r
 	}
 }
 
-// roles_port_bind asks the core for the roles page, maps it, and gives the
-// state the port with the serial of the set in force. With no page, the
-// port has no procedure: a plan of principal 0 that names a role is
-// refused, and a plan with no role commits.
-roles_port_bind :: proc "contextless" (state: ^plans_core.Plans_State) -> bool {
+// roles_page_read asks the core for the roles page, and gives the serial
+// and the generation of the set in force. The page is mapped once: each
+// later answer gives a new handle of the same page, which is closed here.
+@(private = "file")
+roles_page_read :: proc "contextless" () -> (serial, generation: u64, ok: bool) {
 	completion, answered := roles_command(.Page)
 	if !answered || completion.kind != u32(system.Status.Ok) {
-		return false
+		return 0, 0, false
 	}
 	memory := system.Handle(completion.values[0])
+	if roles_page != nil {
+		system.close(memory)
+		return completion.values[1], completion.values[2], true
+	}
 	address, status := system.memory_map(memory, {.Write})
 	if status != .Ok {
 		system.close(memory)
-		return false
+		return 0, 0, false
 	}
 	roles_page = (^rd.Plan_Roles_Set)(address)
-	plans_core.roles_port_bind(state, {replace = roles_replace, serial = completion.values[1]})
+	return completion.values[1], completion.values[2], true
+}
+
+// roles_read is the read of the port: the step Page.
+@(private = "file")
+roles_read :: proc "contextless" (user: rawptr) -> (serial, generation: u64, ok: bool) {
+	return roles_page_read()
+}
+
+// roles_port_bind asks the core for the roles page, maps it, and gives the
+// state the port with the serial and the generation of the set in force,
+// then reconciles the core with the current generation of the store: a
+// service that stopped after the core took a set and before the store
+// committed it left them apart. With no page, the port has no procedure: a
+// plan of principal 0 that names a role is refused, and a plan with no role
+// commits.
+roles_port_bind :: proc "contextless" (state: ^plans_core.Plans_State) -> bool {
+	serial, generation, read := roles_page_read()
+	if !read {
+		return false
+	}
+	plans_core.roles_port_bind(state, {replace = roles_replace, read = roles_read, serial = serial, generation = generation})
+	if refusal := plans_core.roles_reconcile(state); refusal != .None {
+		system.log_fact(.Warning, Plan_Roles_Unreconciled{generation = generation, refusal_code = u64(refusal)})
+	}
 	return true
+}
+
+// roles_compensation_tell writes the line of a compensation of the core that
+// failed, once: the next set reconciles first.
+roles_compensation_tell :: proc "contextless" (state: ^plans_core.Plans_State) {
+	if !state.roles_compensation_failed {
+		return
+	}
+	state.roles_compensation_failed = false
+	system.log_fact(.Warning, Plan_Roles_Unreconciled{generation = state.roles.generation, refusal_code = u64(state.roles_refusal)})
 }
 
 // roles_replace writes a set in the roles page and asks the core to take it.

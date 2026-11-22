@@ -480,6 +480,11 @@ Principals_Service_Started :: struct {
 @(log_fact = "root: the delegated principals service stopped")
 Principals_Service_Stopped :: struct {}
 
+// The principals service gave no answer to the call of a disk grant table
+// in time: the core stops it, and starts it again within its bound.
+@(log_fact = "root: the principals service gave no answer to the call of a disk grant table in time: it is stopped, and it starts again with no key until the next unlock")
+Principals_Service_Silent :: struct {}
+
 // The principals service did not start within its bound: the core keeps
 // its state with no mirror.
 @(log_fact = "root: the principals service did not start in {start_limit} starts: the root service keeps the principals, their disk grant tables and the client keys with no mirror")

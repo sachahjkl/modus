@@ -255,7 +255,7 @@ principal_record :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> 
 // (principal_key_take). A refusal writes its own error record in
 // completion: the values of the command hold a key where a name would be,
 // so the record of `refusal` is never built from them.
-principal_unlock :: proc "contextless" (values: [7]u64, completion: ^[7]u64) -> system.Status {
+principal_unlock :: proc "contextless" (values: ^[7]u64, completion: ^[7]u64) -> system.Status {
 	kind := u32(root_ring.Root_Command.Principal_Unlock)
 	number := values[4]
 	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY || principal_records[number].state == .Absent {

@@ -16,6 +16,15 @@ Service_Ready :: struct {
 	roles:   u64,
 }
 
+// The root service and the store of this service may name two generations:
+// a reconciliation or a compensation failed. The next set of roles reads
+// the root service first.
+@(log_fact = "plans: the root service may hold the roles of generation {generation} and not those of the store: refusal {refusal_code}; the next set reconciles first")
+Plan_Roles_Unreconciled :: struct {
+	generation:   u64,
+	refusal_code: u64,
+}
+
 // The root service refused the roles of a plan of principal 0: nothing was
 // committed.
 @(log_fact = "plans: the root service refused the roles of generation {generation} with refusal {refusal_code}")

@@ -688,20 +688,30 @@ table_body_encode :: proc "contextless" (table: ^Grant_Table, out: ^[TABLE_SIZE]
 // is checked first, so no field of a table that the key did not write is
 // read.
 table_decode :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8) -> (table: Grant_Table, problem: Table_File_Problem) {
+	kept: [TABLE_SIZE]u8
+	return table_decode_kept(bytes, key, &kept)
+}
+
+// table_decode_kept is table_decode that gives its one copy of the bytes
+// in kept, the bytes that it verified and decoded. A caller that passes the
+// table on passes kept, never the bytes of the store again: the store can
+// change them after the check. kept is zero bytes unless the tag verified.
+table_decode_kept :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8, kept: ^[TABLE_SIZE]u8) -> (table: Grant_Table, problem: Table_File_Problem) {
+	kept^ = {}
 	if len(bytes) == OLDER_FORMAT_TABLE_SIZE || len(bytes) == OLDER_FORMAT_2_TABLE_SIZE {
 		return {}, .Older_Format
 	}
 	if len(bytes) != TABLE_SIZE {
 		return {}, .Wrong_Size
 	}
-	kept: [TABLE_SIZE]u8
 	copy(kept[:], bytes)
 	stored: [TAG_SIZE]u8
 	copy(stored[:], kept[TABLE_OFFSET_TAG:][:TAG_SIZE])
-	if !tags_equal(table_tag(key, &kept), stored) {
+	if !tags_equal(table_tag(key, kept), stored) {
+		kept^ = {}
 		return {}, .Not_Authentic
 	}
-	return table_body_decode(&kept)
+	return table_body_decode(kept)
 }
 
 // table_body_decode reads the fields of a persisted table, before its tag,

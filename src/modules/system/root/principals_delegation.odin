@@ -65,6 +65,9 @@ principals_starts: int
 // its bound.
 principals_service_wanted: bool
 principals_absent_told: bool
+// The core stopped the service and waits for its reap: no command goes to
+// it meanwhile.
+principals_stopping: bool
 principals_next_tag: u32 = 1
 principals_mirror: Principals_Mirror
 // The generation of the rows of each principal: each set of rows has a new
@@ -179,6 +182,12 @@ principals_service_end :: proc "contextless" (item: ^Started) {
 		principals_region = nil
 	}
 	if principals_ring.head != nil {
+		// A Table_Key that the service did not read keeps its key in a slot
+		// of the command ring: each slot is erased before the ring closes.
+		commands := &principals_ring.commands
+		for index in u64(0) ..= u64(commands.mask) {
+			intrinsics.mem_zero_volatile(&commands.records[index].values, size_of(commands.records[index].values))
+		}
 		system.ring_close(&principals_ring)
 	}
 	for handle in ([2]system.Handle{principals_ring_memory, principals_region_memory}) {
@@ -189,8 +198,25 @@ principals_service_end :: proc "contextless" (item: ^Started) {
 	principals_ring_memory, principals_region_memory = 0, 0
 	principals_place_tags = {}
 	principals_process = nil
+	principals_stopping = false
 	system.log_fact(.Warning, Principals_Service_Stopped{})
 	persisted_tables_service_ended()
+}
+
+// principals_service_silent_stop stops a principals service that gave no
+// answer to the call of a table in time: the place of the call would stay
+// taken for ever. The reap frees each place, and the next pass starts the
+// service again within its bound. The stopped service holds no key.
+principals_service_silent_stop :: proc "contextless" () {
+	if principals_process == nil || principals_stopping {
+		return
+	}
+	principals_stopping = true
+	system.log_fact(.Warning, Principals_Service_Silent{})
+	for &table in persisted_tables {
+		table.key_held = false
+	}
+	started_process_stop(principals_process)
 }
 
 // principals_rows_changed says that the disk grant table of a principal
@@ -277,7 +303,7 @@ principals_free_places :: proc "contextless" () -> (count: int) {
 // place stays taken until the answer. ok is false when the service does not
 // run, no place is free, or the ring took no record.
 principals_place_send :: proc "contextless" (command: rd.Principals_Ring_Command, input: rawptr, size: int, values: ^[7]u64, offset_index: int, principal: u64 = 0) -> (tag: u32, ok: bool) {
-	if principals_process == nil || principals_ring.head == nil || raw_data(principals_region) == nil {
+	if principals_process == nil || principals_stopping || principals_ring.head == nil || raw_data(principals_region) == nil {
 		return 0, false
 	}
 	for &place_tag, place in principals_place_tags {
@@ -295,7 +321,11 @@ principals_place_send :: proc "contextless" (command: rd.Principals_Ring_Command
 			values[offset_index] = offset
 		}
 		tag = principals_tag_next()
-		if !system.send(&principals_ring.commands, ring.Record{kind = u32(command), tag = tag, values = values^}) {
+		record := ring.Record{kind = u32(command), tag = tag, values = values^}
+		sent := system.send(&principals_ring.commands, record)
+		// A Table_Key carries a key: the copy of this frame is erased.
+		intrinsics.mem_zero_volatile(&record, size_of(record))
+		if !sent {
 			return 0, false
 		}
 		place_tag = tag
@@ -323,9 +353,8 @@ principals_command_send :: proc "contextless" (command: rd.Principals_Ring_Comma
 principals_table_key_send :: proc "contextless" (principal: u64, key: ^[32]u8) -> bool {
 	values: [7]u64
 	defer key_erase((cast(^[size_of(values)]u8)&values)[:])
-	words := (cast(^[4]u64)key)^
+	words := cast(^[4]u64)key
 	values = {0 = words[0], 1 = words[1], 2 = words[2], 3 = words[3], 4 = principal}
-	words = {}
 	_, sent := principals_place_send(.Table_Key, nil, 0, &values, -1, principal)
 	return sent
 }

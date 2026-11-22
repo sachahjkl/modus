@@ -1032,4 +1032,5 @@ the_devices_and_principals_bridge_facts_of_the_root_service_write_their_lines ::
 	}
 	expect(t, render(t, file, "Devices_Service_Stopped", {}), "root: the delegated devices service stopped")
 	expect(t, render(t, file, "Principals_Service_Stopped", {}), "root: the delegated principals service stopped")
+	expect(t, render(t, file, "Principals_Service_Silent", {}), "root: the principals service gave no answer to the call of a disk grant table in time: it is stopped, and it starts again with no key until the next unlock")
 }

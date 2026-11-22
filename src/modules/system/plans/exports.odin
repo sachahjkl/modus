@@ -222,6 +222,7 @@ apply_poll :: proc "c" (ticket: i64, result: ^[]pr.Plan_Generation_Row, error: ^
 		return errors.fail(error, ERROR_PLAN, .Bad_Value, .Requests, 1, ticket, max(i64), i64(pr.Plan_Refusal.No_Pending_Apply))
 	}
 	record, finished, refusal := plans_core.apply_poll(&service_state, &service_display, principal, u64(ticket), system.time(), &export_difference)
+	roles_compensation_tell(&service_state)
 	if refusal != .None {
 		system.log_fact(.Warning, Plan_Command_Refused{principal = principal, refusal_code = u64(refusal)})
 		return plan_refusal_fail(error, ERROR_PLAN, refusal)
@@ -255,6 +256,7 @@ rollback :: proc "c" (error: ^errors.Error_Record) -> i64 {
 		return failure
 	}
 	selected, refusal := plans_core.rollback(&service_state, principal)
+	roles_compensation_tell(&service_state)
 	if refusal != .None {
 		system.log_fact(.Warning, Plan_Command_Refused{principal = principal, refusal_code = u64(refusal)})
 		return plan_refusal_fail(error, ERROR_HISTORY, refusal)

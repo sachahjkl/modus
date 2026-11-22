@@ -48,12 +48,17 @@ Command_Answer :: struct {
 // root_ring_serve answers each command that a process wrote on its root
 // ring since the last pass.
 root_ring_serve :: proc "contextless" (item: ^Started) {
-	for record in system.receive(&item.requests.commands) {
-		answer := root_command_answer(item, record)
+	for {
+		record := system.receive(&item.requests.commands) or_break
+		answer := root_command_answer(item, &record)
+		tag := record.tag
+		// Machine_Key and Principal_Unlock carry a key in their values: no
+		// copy of a record stays in this frame.
+		intrinsics.mem_zero_volatile(&record, size_of(record))
 		if answer.held {
 			continue
 		}
-		system.send(&item.requests.completions, ring.Record{kind = u32(answer.status), tag = record.tag, values = answer.values})
+		system.send(&item.requests.completions, ring.Record{kind = u32(answer.status), tag = tag, values = answer.values})
 	}
 }
 
@@ -61,8 +66,13 @@ root_ring_serve :: proc "contextless" (item: ^Started) {
 // the sender, which root_ring.dispatch_decide decides from the start grant set that
 // the process received at its start and never from its name (a disk
 // process has the nickname that it chose), then the command.
-root_command_answer :: proc "contextless" (item: ^Started, record: ring.Record) -> (answer: Command_Answer) {
-	name_bytes := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
+root_command_answer :: proc "contextless" (item: ^Started, record: ^ring.Record) -> (answer: Command_Answer) {
+	// The values of a key are no name: they are not unpacked, so no copy of
+	// the key stays in the name bytes of this frame.
+	name_bytes: system.Name
+	if record.kind != u32(root_ring.Root_Command.Machine_Key) && record.kind != u32(root_ring.Root_Command.Principal_Unlock) {
+		name_bytes = system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
+	}
 	raw_name := system.name_of(name_bytes[:])
 	name := raw_name
 	if record.kind == u32(root_ring.Root_Command.Connect) || record.kind == u32(root_ring.Root_Command.Disconnect) {
@@ -88,7 +98,14 @@ root_command_answer :: proc "contextless" (item: ^Started, record: ring.Record) 
 
 // root_command_run runs one command that its sender can send. name is the
 // name of values[0..4], for the commands that carry one.
-root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_Command, record: ring.Record, name: string) -> (answer: Command_Answer) {
+root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_Command, record_place: ^ring.Record, name: string) -> (answer: Command_Answer) {
+	// A copy for the commands that read the record by value. A key command
+	// reads the record of the caller through the pointer, never this copy.
+	record: ring.Record
+	if command != .Machine_Key && command != .Principal_Unlock {
+		record = record_place^
+	}
+	defer intrinsics.mem_zero_volatile(&record, size_of(record))
 	answer.status = .Bad_Operation
 	switch command {
 	case .None:
@@ -158,7 +175,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 	case .Principal_Record:
 		answer.status = principal_record(record.values, &answer.values)
 	case .Principal_Unlock:
-		answer.status = principal_unlock(record.values, &answer.values)
+		answer.status = principal_unlock(&record_place.values, &answer.values)
 		key_ring_erase(&item.requests.commands)
 	case .Debug:
 		answer.status = debug(item, name, record.values[4], record.values[5] != 0, &answer.values)
@@ -176,7 +193,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 	case .Machine_Key:
 		// Its values hold a key where a name would be: the record of a
 		// refusal names the status only.
-		answer.status = machine_key_take(record.values)
+		answer.status = machine_key_take(&record_place.values)
 		key_ring_erase(&item.requests.commands)
 		if answer.status != .Ok {
 			answer.values = errors.ring_fail(u32(command), .Refused, .None, 0, 0, 0, i64(answer.status))
