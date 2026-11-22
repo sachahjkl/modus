@@ -343,6 +343,31 @@ heading_height :: proc "contextless" (table: ^Draw_Table, text: string, room: in
 	return text_wrapped_line_count(table, FONT_HEADING, text, room) * line_height(FONT_HEADING)
 }
 
+// The width of the outline of the element with the focus, in logical
+// pixels (src/md/features/accessibility.md, "3. Keyboard access to
+// everything"): 2 pixels, the least perimeter that WCAG 2.2, success
+// criterion 2.4.13, asks.
+FOCUS_RING_WIDTH :: 2
+
+// focus_ring_area gives the box of the outline of the focus of an element:
+// its area grown by FOCUS_RING_WIDTH on each side. The outline lies outside
+// the area, so no fill of the element covers it. An area of a negative
+// size counts as empty.
+focus_ring_area :: proc "contextless" (area: Area) -> Area {
+	return {area.x - FOCUS_RING_WIDTH, area.y - FOCUS_RING_WIDTH, max(area.width, 0) + 2 * FOCUS_RING_WIDTH, max(area.height, 0) + 2 * FOCUS_RING_WIDTH}
+}
+
+// draw_focus_ring draws the outline of the focus around an area, in the
+// strong text: the one color that keeps 3 to 1 against each surface of
+// each appearance (graphics, appearance_test.odin). The element draws it
+// after its own records, so its fill never covers it; a layout keeps a gap
+// of FOCUS_RING_WIDTH at least between two elements that take the focus,
+// so no neighbour covers it either.
+draw_focus_ring :: proc "contextless" (table: ^Draw_Table, area: Area, element: u32 = 0) {
+	ring := focus_ring_area(area)
+	draw_outline(table, ring.x, ring.y, ring.width, ring.height, FOCUS_RING_WIDTH, graphics.colors.text_strong, element)
+}
+
 // button draws a button with a label: the track, blue when it has the focus
 // or the pointer is over it. Enter or Space with the focus, or a press and a
 // release of the pointer on it, activate it. Its label is its element name
@@ -372,14 +397,11 @@ button :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Identi
 	defer draw_element_pop(frame.table)
 	draw_rectangle(frame.table, area.x, area.y, area.width, area.height, color, u32(element))
 	draw_text(frame.table, area.x + 8, area.y + (area.height - LINE) / 2, shown, color == graphics.colors.track ? graphics.colors.text : graphics.COLOR_WHITE, FONT_INTERFACE, u32(element))
-	// The focus has its own mark, a white frame of 2 pixels inside the
-	// button: a button that is open, or the value in use, is blue already,
-	// and the blue of the focus alone does not show where the focus is.
+	// The focus has its own mark, the outline outside the button: a button
+	// that is open, or the value in use, is blue already, and the blue of
+	// the focus alone does not show where the focus is.
 	if result.focused {
-		draw_rectangle(frame.table, area.x, area.y, area.width, 2, graphics.COLOR_WHITE, u32(element))
-		draw_rectangle(frame.table, area.x, area.y + area.height - 2, area.width, 2, graphics.COLOR_WHITE, u32(element))
-		draw_rectangle(frame.table, area.x, area.y, 2, area.height, graphics.COLOR_WHITE, u32(element))
-		draw_rectangle(frame.table, area.x + area.width - 2, area.y, 2, area.height, graphics.COLOR_WHITE, u32(element))
+		draw_focus_ring(frame.table, area, u32(element))
 	}
 	return result
 }
@@ -415,6 +437,11 @@ list_with_choice :: proc "contextless" (frame: ^Frame, area: Area, element: Elem
 		name    = options.name != "" ? options.name : "list",
 	})
 	defer draw_element_pop(frame.table)
+	// The outline of the focus lies outside the area: it is drawn after the
+	// clip of the lines closes, so the clip does not cut it.
+	defer if result.focused {
+		draw_focus_ring(frame.table, area, u32(element))
+	}
 	draw_clip_push(frame.table, area.x, area.y, area.width, area.height)
 	defer draw_clip_pop(frame.table)
 	rows := max(area.height / TABLE_LINE, 1)
@@ -608,6 +635,9 @@ text_input :: proc "contextless" (frame: ^Frame, area: Area, element: Element_Id
 	}
 	if count^ == 0 && placeholder != "" {
 		draw_text(table, after + 8, y, text_fit(table, FONT_INTERFACE, placeholder, area.x + area.width - 8 - (after + 8)), graphics.colors.dim, FONT_INTERFACE, u32(element))
+	}
+	if result.focused {
+		draw_focus_ring(table, area, u32(element))
 	}
 	return result
 }

@@ -165,14 +165,19 @@ the_state_after_each_action :: proc(t: ^testing.T) {
 	}
 }
 
-// The entries of the two sources: the windows, the modules, the closes;
-// the mark of each one says one fact.
+// The entries of the two sources: the windows, the modules, the move of
+// the window in front, the closes; the mark of each one says one fact.
 @(test)
 entries_of_the_two_sources :: proc(t: ^testing.T) {
 	panel := panel_make()
 	defer panel_free(panel)
 	panel_of_test(panel)
-	testing.expect_value(t, panel.list.entry_count, 2 + len(MODULE_NAMES) + 2)
+	testing.expect_value(t, panel.list.entry_count, 2 + len(MODULE_NAMES) + 1 + 2)
+	move := &panel.list.entries[2 + len(MODULE_NAMES)]
+	testing.expect_value(t, move.kind, Entry_Kind.Move_Window)
+	testing.expect_value(t, entry_name(move), MOVE_WINDOW_NAME)
+	testing.expect_value(t, move.number, 3)
+	testing.expect(t, !entry_destroys(move))
 	testing.expect_value(t, entry_name(&panel.list.entries[0]), "console")
 	testing.expect_value(t, panel.list.entries[0].kind, Entry_Kind.Window)
 	testing.expect_value(t, panel.list.entries[0].mark, Entry_Mark.Has_Focus)
@@ -192,6 +197,51 @@ entries_of_the_two_sources :: proc(t: ^testing.T) {
 	testing.expect_value(t, last.number, 7)
 	testing.expect(t, entry_destroys(last))
 	testing.expect_value(t, window_title_of(last), "plasma")
+}
+
+// The move and the resize by keys are entries of the window in front only:
+// no window, windows with no focus, and a fixed window give no resize.
+@(test)
+the_window_in_front_moves_and_resizes_by_keys :: proc(t: ^testing.T) {
+	panel := panel_make()
+	defer panel_free(panel)
+	count_of :: proc(panel: ^Panel, kind: Entry_Kind) -> (count: int, number: u32) {
+		for &entry in panel.list.entries[:panel.list.entry_count] {
+			if entry.kind == kind {
+				count += 1
+				number = entry.number
+			}
+		}
+		return
+	}
+	// No window: no act on a window.
+	entries_collect(panel, MODULE_NAMES[:], nil)
+	moves, number := count_of(panel, .Move_Window)
+	resizes, _ := count_of(panel, .Resize_Window)
+	testing.expect(t, moves == 0 && resizes == 0)
+	// Windows, none with the focus, resizable or not: no act either.
+	entries_collect(panel, MODULE_NAMES[:], {{title = "console", number = 3, resizable = true}, {title = "plasma", number = 7}})
+	moves, _ = count_of(panel, .Move_Window)
+	resizes, _ = count_of(panel, .Resize_Window)
+	testing.expect(t, moves == 0 && resizes == 0)
+	// A fixed window in front moves and does not resize.
+	entries_collect(panel, MODULE_NAMES[:], {{title = "plasma", number = 7, focus = true}, {title = "console", number = 3, resizable = true}})
+	moves, number = count_of(panel, .Move_Window)
+	resizes, _ = count_of(panel, .Resize_Window)
+	testing.expect(t, moves == 1 && number == 7 && resizes == 0)
+	// A resizable window in front: one move and one resize, of that window.
+	entries_collect(panel, MODULE_NAMES[:], {{title = "console", number = 3, focus = true, resizable = true}, {title = "plasma", number = 7}})
+	moves, number = count_of(panel, .Move_Window)
+	testing.expect(t, moves == 1 && number == 3)
+	resizes, number = count_of(panel, .Resize_Window)
+	testing.expect(t, resizes == 1 && number == 3)
+	testing.expect_value(t, panel.list.entry_count, 2 + len(MODULE_NAMES) + FRONT_WINDOW_ENTRY_COUNT + 2)
+	// The two lead a typed match of their names, and say what they are.
+	panel.state = .Search
+	type_text(panel, "resize window")
+	testing.expect_value(t, panel.list.entries[panel.list.rows[0].entry].kind, Entry_Kind.Resize_Window)
+	testing.expect_value(t, kind_words(.Move_Window), "move by keys")
+	testing.expect_value(t, kind_words(.Resize_Window), "resize by keys")
 }
 
 // A name is whole or absent: a name longer than its room is not listed,
@@ -899,7 +949,7 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	// counts the entries in a plain word.
 	testing.expect(t, has_text(&screen.table, "close a window"))
 	testing.expect(t, has_text(&screen.table, "enter: close   esc: close"))
-	testing.expect(t, has_text(&screen.table, "1 of 14"))
+	testing.expect(t, has_text(&screen.table, "1 of 15"))
 	testing.expect(t, has_text(&screen.table, "entries"))
 	testing.expect(t, has_text(&screen.table, NOTE_NO_PROVIDER))
 	testing.expect(t, has_text(&screen.table, "Stops the process plasma: its window closes. Asks for a second Enter."))
@@ -918,7 +968,7 @@ the_chosen_row_and_the_question :: proc(t: ^testing.T) {
 	type_text(panel, "xyz")
 	panel_build(screen, panel)
 	testing.expect(t, has_text(&screen.table, "nothing has \"xyz\" in its name"))
-	testing.expect(t, has_text(&screen.table, "0 of 14"))
+	testing.expect(t, has_text(&screen.table, "0 of 15"))
 	// The first open: the placeholder, and the headings of the groups.
 	line_editor.line_clear(&panel.line)
 	list_build(panel)
@@ -1055,7 +1105,7 @@ the_entries_of_a_provider :: proc(t: ^testing.T) {
 	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)
 	testing.expect_value(t, panel.list.provider, Provider_State.Ready)
 	testing.expect_value(t, panel.list.snapshot.generation, 6)
-	testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 1 + len(GIVEN))
+	testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 1 + 1 + len(GIVEN))
 	// With no typed part the commands do not show.
 	for row in panel.list.rows[:panel.list.row_count] {
 		testing.expect(t, row.kind != .Entry || !entry_of_provider(&panel.list.entries[row.entry]))
@@ -1149,7 +1199,7 @@ a_hostile_table_gives_no_entry :: proc(t: ^testing.T) {
 		problem := collect_with_table(panel, table)
 		testing.expectf(t, problem == damage.problem, "damage %d: %v, not %v", number, problem, damage.problem)
 		testing.expect_value(t, panel.list.provider, Provider_State.Refused)
-		testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 1)
+		testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 1 + 1)
 		testing.expect_value(t, panel.list.snapshot.entry_count, 0)
 	}
 	// A memory smaller than a table is no table.
@@ -1484,7 +1534,7 @@ the_prefixes :: proc(t: ^testing.T) {
 		typed: string,
 		kinds: bit_set[Entry_Kind],
 	}
-	cases := [?]Case{{">", {.Command}}, {"@", {.Window, .Close_Window}}, {":", {.Setting}}, {"?", {.Module}}, {">re", {.Command}}, {"?pla", {.Module}}}
+	cases := [?]Case{{">", {.Command}}, {"@", {.Window, .Close_Window, .Move_Window}}, {":", {.Setting}}, {"?", {.Module}}, {">re", {.Command}}, {"?pla", {.Module}}}
 	for item in cases {
 		line_editor.line_clear(&panel.line)
 		type_text(panel, item.typed)
@@ -2048,9 +2098,9 @@ the_values_of_one_setting_are_one_row :: proc(t: ^testing.T) {
 		row_texts_set(&entries[6 + index], "shade", "shade", value)
 	}
 	testing.expect_value(t, collect_with_table(panel, table), palette_table.Problem.None)
-	// One window, its close, the modules, the command, two rows, and the
-	// seven shades one by one.
-	testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 1 + 1 + 2 + 7)
+	// One window, its move, its close, the modules, the command, two rows,
+	// and the seven shades one by one.
+	testing.expect_value(t, panel.list.entry_count, 1 + len(MODULE_NAMES) + 1 + 1 + 1 + 2 + 7)
 	panel.state = .Search
 	type_text(panel, ":font")
 	testing.expect_value(t, row_text(panel, 0), "font (setting)")

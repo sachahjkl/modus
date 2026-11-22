@@ -475,6 +475,9 @@ KEY_BACKSPACE :: 0x0E // Backspace.
 KEY_ENTER :: 0x1C // Enter.
 KEY_TAB :: 0x0F // Tab.
 KEY_F3 :: 0x3D // F3.
+KEY_F7 :: 0x41 // F7: with Control and Shift, the compositor moves the window in front by keys.
+KEY_F8 :: 0x42 // F8: with Control and Shift, the compositor resizes the window in front by keys.
+KEY_F10 :: 0x44 // F10: with Control and Shift, the bar of the desktop takes the focus of the keys.
 KEY_DELETE :: KEY_EXTENDED | 0x53
 KEY_UP :: KEY_EXTENDED | 0x48
 KEY_DOWN :: KEY_EXTENDED | 0x50

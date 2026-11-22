@@ -216,6 +216,10 @@ kind_words :: proc "contextless" (kind: Entry_Kind) -> string {
 		return "module"
 	case .Close_Window:
 		return "close a window"
+	case .Move_Window:
+		return "move by keys"
+	case .Resize_Window:
+		return "resize by keys"
 	case .Command:
 		return "command"
 	case .Export:
@@ -249,6 +253,8 @@ entry_hint :: proc "contextless" (entry: ^Entry, form: bool, manual: bool) -> st
 		return "enter: start"
 	case .Close_Window:
 		return "enter: close"
+	case .Move_Window, .Resize_Window:
+		return "enter: then the arrows"
 	case .Command, .Export:
 		if .Needs_Arguments not_in entry.flags {
 			return "enter: run"
@@ -298,6 +304,10 @@ entry_about :: proc "contextless" (builder: ^interface.Text_Builder, list: ^List
 		interface.text_put(builder, "Stops the process ")
 		interface.text_put(builder, window_title_of(entry))
 		interface.text_put(builder, ": its window closes. Asks for a second Enter.")
+	case .Move_Window:
+		interface.text_put(builder, "The arrows move the window in front by 16 pixels, with Shift by 1. Enter keeps the place, Escape gives the old one back. Control+Shift+F7 does the same.")
+	case .Resize_Window:
+		interface.text_put(builder, "The arrows resize the window in front by 16 pixels, with Shift by 1. Enter asks its process for the size, Escape keeps the old one. Control+Shift+F8 does the same.")
 	case .Command, .Export, .Setting:
 		if given := given_of(list, entry); given != nil {
 			interface.text_put(builder, string(given.about[:given.about_length]))
@@ -385,7 +395,9 @@ entry_icon :: proc "contextless" (entry: ^Entry, in_use: bool) -> (icon: ^kind_i
 	}
 	quiet := .Needs_Arguments in entry.flags
 	switch entry.kind {
-	case .Window:
+	case .Window, .Move_Window, .Resize_Window:
+		// The move and the resize are acts on the window in front: the
+		// icon of a window, in the color of the focus.
 		icon = kind_icons.cells_of_desktop_kind(.Window)
 		color = graphics.colors.title
 		quiet = entry.mark != .Has_Focus

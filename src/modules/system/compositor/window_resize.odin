@@ -49,6 +49,7 @@ resizable_take :: proc "contextless" (client: ^Client, record: ring.Record) {
 		return
 	}
 	client.resizable, client.size_limits = true, limits
+	palette_entries_refresh() // The palette offers the resize of the window in front by keys.
 	system.log_fact(.Info, Window_Resizable{least_width = u64(limits.least_width), least_height = u64(limits.least_height), largest_width = u64(limits.largest_width), largest_height = u64(limits.largest_height), window = window_field(client.title[:])})
 }
 
@@ -220,6 +221,11 @@ surface_release_take :: proc "contextless" (index: int, record: ring.Record) {
 	if bar.drag_ended_by_release(resizing, index) {
 		resize_outline_damage()
 		resizing = -1
+	}
+	// A resize by keys ends the same way: the size that it shows has no
+	// surface to replace.
+	if keyboard_window_mode == .Resize {
+		keyboard_window_gone(index) // keyboard_desktop.odin
 	}
 	damage_window(client)
 	surface_screen_damage(client)

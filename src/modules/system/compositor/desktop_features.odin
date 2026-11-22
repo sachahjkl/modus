@@ -333,6 +333,9 @@ taskbar_hover_slot := -1
 // The first column that no plate reaches, in the last frame: the left of
 // the tray. A press and a move read the plates that the eye sees.
 taskbar_plates_right: int
+// The plates that the last frame drew: the keys walk the plates that the
+// eye sees.
+taskbar_plate_count: int
 // The card of the preview in the last frame; a width of 0: none.
 taskbar_preview_area: interface.Area
 // The group of the plate under the pointer in this frame: the plates find
@@ -470,7 +473,7 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 	taskbar_preview_area = {}
 	taskbar_preview_group = {}
 	if !desktop_features_ready {
-		taskbar_plates_right = 0
+		taskbar_plates_right, taskbar_plate_count = 0, 0
 		return
 	}
 	bar_top := desktop_bar_y()
@@ -577,6 +580,7 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 		}
 		slot += 1
 	}
+	taskbar_plate_count = slot
 }
 
 // desktop_taskbar_press restores or raises the group of a plate of the bar.
@@ -584,8 +588,14 @@ desktop_taskbar_press :: proc "contextless" (click_x, click_y: int) -> bool {
 	if !desktop_features_ready {
 		return false
 	}
-	wanted := bar.plate_at(bar_layout, taskbar_plates_right, click_x, click_y)
-	if wanted < 0 {
+	return desktop_taskbar_slot_activate(bar.plate_at(bar_layout, taskbar_plates_right, click_x, click_y))
+}
+
+// desktop_taskbar_slot_activate restores and raises the first window of
+// the group of a plate slot: from a press, or from Enter on the plate that
+// has the focus of the keys. false: no group has that slot.
+desktop_taskbar_slot_activate :: proc "contextless" (wanted: int) -> bool {
+	if !desktop_features_ready || wanted < 0 {
 		return false
 	}
 	slot := 0

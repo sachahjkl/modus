@@ -865,9 +865,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				case powerbox_and_wide_grant_key(u32(record.values[0]), record.values[2] != 0, u32(record.values[3])):
 					// Trusted powerbox modal or Ctrl+Shift+Escape wide-grant revocation took the key.
 				case desktop_context_menu_key(u32(record.values[0]), character, record.values[2] != 0):
-					// Trusted powerbox modal or Ctrl+Shift+Escape wide-grant revocation took the key.
+					// The context menu of the desktop took the key.
 				case record.values[2] != 0 && u32(record.values[0]) == display.KEY_ESCAPE && capture_popover_escape():
 					// Local Escape closed the bar viewer list popover.
+				case keyboard_desktop_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
+					// A move or a resize of the window in front by keys, or the bar with the keys (keyboard_desktop.odin).
 				case palette_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
 					// The palette took the key.
 				case clipboard_key(character, u32(record.values[3]), record.values[2] != 0):
@@ -1174,6 +1176,7 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 			resize_outline_damage()
 			resizing = -1
 		}
+		keyboard_window_gone(index) // keyboard_desktop.odin
 		damage_window(&client)
 		damage_focus()
 		if client.pictures != nil {
@@ -1387,45 +1390,20 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		}
 	}
 	if pressed {
+		keyboard_pointer_pressed() // keyboard_desktop.odin
 		if capture_popover_press(pointer_x, pointer_y) {
 			return
 		}
 		was_open := menu_open
 		if menu_open != .None {
-			if menu_open == .Start && menu_line >= 0 {
-				packed := system.name_pack(bar.names[menu_line])
-				system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
-			}
-			if index := window_of_line(menu_line); menu_open == .Windows && menu_line >= 0 && index >= 0 {
-				if clients[index].minimized {
-					clients[index].minimized = false
-					damage_whole_screen()
-				}
-				for position in 0 ..< order_count {
-					if order[position] == index {
-						raise(position)
-						break
-					}
-				}
-				system.log_fact(.Info, Window_In_Front{window = window_field(clients[index].title[:])})
-			}
-			chosen_action := menu_open == .Start ? menu_action : bar.Start_Action.None
-			menu_open = .None
-			menu_line = -1
-			menu_action = .None
-			damage_menu()
-			start_action_do(chosen_action) // start_menu.odin
+			menu_choice_do() // start_menu.odin
 		}
 		under := bar.button_at(bar_layout, pointer_x, pointer_y)
 		if under == .Start && was_open != .Start {
-			menu_open = .Start
-			system.log_fact(.Info, Start_Menu_Open{})
-			damage_menu()
+			menu_show(.Start)
 		}
 		if under == .Windows && was_open != .Windows {
-			menu_open = .Windows
-			windows_log()
-			damage_menu()
+			menu_show(.Windows)
 		}
 		if was_open == .None && bar.inside_bar(bar_layout, pointer_y) && desktop_taskbar_press(pointer_x, pointer_y) {
 			return
@@ -2121,6 +2099,10 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		interface.draw_outline(table, outline.left, outline.top, outline.right - outline.left, outline.bottom - outline.top, RESIZE_OUTLINE_THICKNESS, graphics.colors.title)
 		screen_part_end(first, nil, screen_rectangle_of(outline.left, outline.top, outline.right - outline.left, outline.bottom - outline.top), true, true)
 	}
+	keyboard_first := table.record_count
+	if keyboard_box, keyboard_drawn := keyboard_window_records(table); keyboard_drawn { // keyboard_desktop.odin
+		screen_part_end(keyboard_first, nil, keyboard_box, true, true)
+	}
 
 	// The bar: the heron button, the button of the windows, the plates of
 	// the windows, the tray, then the date and the time of day (the time
@@ -2169,6 +2151,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		tray_right = capture_mark_x - TRAY_BADGE_GAP
 	}
 	desktop_taskbar_and_tray_records(table, tray_right) // desktop_features.odin
+	bar_focus_records(table) // keyboard_desktop.odin: after each item of the bar, so none covers the outline.
 
 	// The menus of the bar, as cards in the look of the start menu.
 	card_frame := interface.Frame{table = table}
