@@ -56,12 +56,14 @@ Pin_Payload_Size_Wrong :: struct {
 	payload_bytes: u64,
 }
 
-// The pin of the record of the machine key could not be read.
-@(log_fact = "unlock: the pin of the record of the machine key was not read: the record is taken as on a machine with no TPM")
+// The pin of the record of the machine key could not be read, on a
+// machine where the root service gave the TPM.
+@(log_fact = "unlock: the pin of the record of the machine key was not read: the record is refused, and no record is written, as an unread pin must not let a swapped record pass")
 Machine_Pin_Not_Read :: struct {}
 
-// The pin of the file of a named principal could not be read.
-@(log_fact = "unlock: the pin of the file of principal {principal} was not read: the file is taken as on a machine with no TPM")
+// The pin of the file of a named principal could not be read, on a
+// machine where the root service gave the TPM.
+@(log_fact = "unlock: the pin of the file of principal {principal} was not read: the file is refused, and no file is written, as an unread pin must not let an older file pass")
 Principal_Pin_Not_Read :: struct {
 	principal: u64,
 }
@@ -77,6 +79,10 @@ Pin_Announce_Not_Written :: struct {}
 // The pin after a write was not written in the TPM.
 @(log_fact = "unlock: the TPM service did not write the pin after the write: the next start takes the record or the file that the pin announced, and pins it")
 Pin_Settle_Not_Written :: struct {}
+
+// A creation of a principal while a pin names the file of a removed one.
+@(log_fact = "unlock: a pin of the TPM names the file of a principal that the disk no longer holds: no new principal takes its place, until a clear of the TPM")
+Principal_Creation_Refused_By_Pin :: struct {}
 
 // The TPM pins the record of the machine key.
 @(log_fact = "unlock: the TPM pins the record of the machine key, at the epoch {epoch}")

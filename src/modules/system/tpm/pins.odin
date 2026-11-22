@@ -113,20 +113,28 @@ pin_write :: proc "contextless" (values: [7]u64) -> Outcome {
 	if !read_ok {
 		return read_failed
 	}
-	refusal := tpm_service.pin_write_refusal(request, state, stored[:stored_count], proposed[:size])
+	// The whole check of the change comes before any command that changes
+	// the TPM: an index of an older policy is removed only for a pin that
+	// the stored one allows.
+	step, refusal := tpm2.pin_write_plan(request, state, stored[:stored_count], proposed[:size])
 	if refusal != .None {
 		system.log_fact(.Warning, Pin_Write_Refused{index = value_kinds.Hexadecimal_Sixteen_Digits(index), pin_refusal = pin_refusal_field(refusal)})
 		return {status = .Bad_Command, values = {0 = u64(refusal)}}
 	}
-	switch tpm2.pin_step_of(state) {
+	removed := false
+	switch step {
 	case .Remove_Then_Define_Then_Write:
 		if failed, ok := pin_index_command(tpm2.nv_undefine_command(command_bytes[:], index), tpm2.COMMAND_NV_UNDEFINE_SPACE); !ok {
 			return failed
 		}
+		removed = true
 		system.log_fact(.Info, Pin_Index_Removed{index = value_kinds.Hexadecimal_Sixteen_Digits(index), state = u64(state)})
 		fallthrough
 	case .Define_Then_Write:
 		if failed, ok := pin_index_command(tpm2.pin_define_command(command_bytes[:], index, &policy, size), tpm2.COMMAND_NV_DEFINE_SPACE); !ok {
+			if removed {
+				system.log_fact(.Warning, Pin_Lost_After_Removal{index = value_kinds.Hexadecimal_Sixteen_Digits(index)})
+			}
 			return failed
 		}
 	case .Write:
@@ -134,9 +142,15 @@ pin_write :: proc "contextless" (values: [7]u64) -> Outcome {
 	session, session_failed, session_ok := policy_session(.Policy, false)
 	defer flush(session)
 	if !session_ok {
+		if removed {
+			system.log_fact(.Warning, Pin_Lost_After_Removal{index = value_kinds.Hexadecimal_Sixteen_Digits(index)})
+		}
 		return session_failed
 	}
 	if failed, ok := pin_index_command(tpm2.pin_write_command(command_bytes[:], index, session, proposed[:size]), tpm2.COMMAND_NV_WRITE); !ok {
+		if removed {
+			system.log_fact(.Warning, Pin_Lost_After_Removal{index = value_kinds.Hexadecimal_Sixteen_Digits(index)})
+		}
 		return failed
 	}
 	system.log_fact(.Info, Pin_Written{index = value_kinds.Hexadecimal_Sixteen_Digits(index), payload_bytes = u64(size)})

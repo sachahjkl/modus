@@ -10,6 +10,7 @@
 // payload is the one of modus:contract/tpm_attestation.
 package tpm2
 
+import "modus:contract/tpm_attestation"
 import "modus:contract/tpm_service"
 
 COMMAND_NV_WRITE :: u32(0x0000_0137)
@@ -105,16 +106,26 @@ pin_read_command :: proc "contextless" (buffer: []u8, index: u32, size: int) -> 
 }
 
 // pin_read_answer reads the answer of TPM2_NV_Read of a pin: exactly the
-// bytes asked, copied to out.
+// bytes asked, copied to out. The answer has the tag of the sessions; the
+// size of its parameters must fit the bytes after it, and the parameters
+// must be exactly one sized buffer of the size asked: a buffer that
+// reaches into the session area, or a byte left after it, is malformed.
 pin_read_answer :: proc "contextless" (answer: []u8, size: int, out: []u8) -> (count: int, code: u32, problem: Answer_Problem) {
 	reader: Answer_Reader
 	reader, code, problem = answer_begin(answer)
 	if problem != .None {
 		return 0, code, problem
 	}
-	parameters_begin(&reader)
+	if size <= 0 || size > len(out) || answer[0] != u8(TAG_SESSIONS >> 8) || answer[1] != u8(TAG_SESSIONS & 0xFF) {
+		return 0, code, .Malformed
+	}
+	parameters_size := int(take_u32(&reader))
+	if reader.failed || parameters_size != 2 + size || parameters_size > len(answer) - reader.place {
+		return 0, code, .Malformed
+	}
+	parameters_end := reader.place + parameters_size
 	_, data := take_sized(&reader)
-	if reader.failed || len(data) != size || size > len(out) {
+	if reader.failed || reader.place != parameters_end || len(data) != size {
 		return 0, code, .Malformed
 	}
 	copy(out[:size], data)
@@ -159,6 +170,19 @@ Pin_Step :: enum u8 {
 	Write, // The index is a pin with the policy of now: write it.
 	Define_Then_Write, // No index: define it, then write it.
 	Remove_Then_Define_Then_Write, // An index that is not a pin of now: remove it, define it, then write it.
+}
+
+// pin_write_plan decides a Pin_Write from the state of the index and its
+// stored payload: first the refusal of the change (tpm_service.pin_write_refusal),
+// then the step. A refused change has no step: the service then sends no
+// command, so an index of an older policy is never removed for a pin that
+// goes back.
+pin_write_plan :: proc "contextless" (request: tpm_service.Pin_Request, state: tpm_service.Pin_State, stored: []u8, proposed: []u8) -> (step: Pin_Step, refusal: tpm_attestation.Pin_Refusal) {
+	refusal = tpm_service.pin_write_refusal(request, state, stored, proposed)
+	if refusal != .None {
+		return .Write, refusal
+	}
+	return pin_step_of(state), .None
 }
 
 // pin_step_of gives the step of a write of a pin in a given state.

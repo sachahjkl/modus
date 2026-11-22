@@ -161,9 +161,9 @@ A copy of the disk keeps an older file of a named principal, and the older passp
 
 **The check** comes after `unlock` gives the record to the root service, which gives the number of the principal, and before any passphrase is asked. A file that the pin does not name is refused: `unlock` writes "the file of principal 1 is not the file that the TPM pins", with the rule that failed, and no window of the principal opens in this run. The root service keeps the record, so the principal stays locked; the machine key opens as before. A change of the passphrase or of the recovery key on such a file is refused the same way.
 
-**A removed file.** The store gives no file and a pin names one: `unlock` writes the same line with "the pinned record is absent", and runs as with no named principal. Nothing could open anyway; the line names the cause.
+**A removed file.** The store gives no file and a pin names one: `unlock` writes the same line with "the pinned record is absent". The removed file is never taken as the absence of a principal: no window of a principal opens, and `principal_create` is refused while the pin exists ("a pin of the TPM names the file of a principal that the disk no longer holds"), as a new principal would move the pin of the removed one to a file of whoever created it. Only a clear of the TPM ends it. The service also refuses each pin that starts the slot again at the generation 1 or at any generation not above the pinned one.
 
-**The creation** writes the file before the root service gives its number, so the pin comes after the record: a stop between the write and the pin leaves a file with no pin, which the next start pins. When a pin of that number exists already, from a principal whose file was removed, the new pin takes the next generation.
+**The creation** writes the file before the root service gives its number, so the pin comes after the record: a stop between the write and the pin leaves a file with no pin, which the next start pins. A pin of that number that appears between the check at the start of the creation and the pin is not moved: the new file stays unpinned, and the next start refuses it.
 
 ## Refused forms
 

@@ -8,6 +8,7 @@
 // check the exact rule that unlock and the service run.
 package tpm_service
 
+import "modus:contract/enum_word"
 import "modus:contract/tpm_attestation"
 
 // What a pin pins. Its word crosses the ring, so each value is explicit.
@@ -50,6 +51,14 @@ pin_payload_size :: proc "contextless" (kind: Pin_Kind) -> int {
 // the index of the machine key (modus:tpm2, pin_index_of).
 PIN_PRINCIPAL_LIMIT :: 64
 
+// The payload of each kind fits the place of the pin in the region, and
+// that place is in the page of the region, after the authorization value.
+#assert(tpm_attestation.MACHINE_KEY_PIN_RECORD_SIZE <= PIN_LIMIT)
+#assert(tpm_attestation.PRINCIPAL_FILE_PIN_RECORD_SIZE <= PIN_LIMIT)
+#assert(REGION_PIN >= REGION_AUTHORIZATION + AUTHORIZATION_SIZE)
+#assert(REGION_PIN + PIN_LIMIT <= REGION_SIZE)
+#assert(REGION_SIZE == 4096)
+
 // A request of Pin_Read or Pin_Write, past the border.
 Pin_Request :: struct {
 	kind:      Pin_Kind,
@@ -58,21 +67,11 @@ Pin_Request :: struct {
 }
 
 pin_kind_of_word :: proc "contextless" (word: u64) -> (kind: Pin_Kind, ok: bool) {
-	for member in Pin_Kind {
-		if u64(member) == word {
-			return member, true
-		}
-	}
-	return {}, false
+	return enum_word.member_of_word(Pin_Kind, word)
 }
 
 pin_state_of_word :: proc "contextless" (word: u64) -> (state: Pin_State, ok: bool) {
-	for member in Pin_State {
-		if u64(member) == word {
-			return member, true
-		}
-	}
-	return {}, false
+	return enum_word.member_of_word(Pin_State, word)
 }
 
 // pin_request_of_values is the border of Pin_Read and Pin_Write: a kind

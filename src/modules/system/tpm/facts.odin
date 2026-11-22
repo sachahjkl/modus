@@ -129,6 +129,14 @@ Pin_Index_Removed :: struct {
 	state: u64,
 }
 
+// The service removed an index of an older policy, and its definition or
+// its write failed after: no pin is in the TPM until the next write, and
+// the next start of unlock pins the record that it finds.
+@(log_fact = "tpm: removed the index {index} of a pin, and its definition or its write failed: no pin holds until the next write, and the next start pins the record that it finds")
+Pin_Lost_After_Removal :: struct {
+	index: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
 // A new payload of a pin was refused: nothing is written.
 @(log_fact = "tpm: refused the new pin at the index {index}: {pin_refusal}; nothing is written")
 Pin_Write_Refused :: struct {

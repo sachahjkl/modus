@@ -2,6 +2,7 @@
 package tpm2
 
 import info "modus:contract/boot_info"
+import "modus:contract/tpm_attestation"
 import "modus:contract/tpm_service"
 import "core:testing"
 
@@ -254,4 +255,71 @@ a_hostile_answer_of_a_pin_read_gives_nothing :: proc(t: ^testing.T) {
 	count, _, problem = pin_read_answer(pin_read_answer_write(buffer[:], data[:]), PIN_SIZE, out[:])
 	testing.expect(t, problem == .None && count == PIN_SIZE)
 	testing.expect(t, string(out[:PIN_SIZE]) == string(data[:]))
+}
+
+// The bounds of the parameters of an answer of TPM2_NV_Read: a size of the
+// parameters past the answer, a sized buffer that reaches into the session
+// area, a byte after the buffer in the parameters, and the tag of no
+// session each give nothing.
+@(test)
+the_parameters_of_a_pin_read_are_bounded :: proc(t: ^testing.T) {
+	buffer: [256]u8
+	out: [tpm_service.PIN_LIMIT]u8
+	data: [PIN_SIZE]u8
+	whole := pin_read_answer_write(buffer[:], data[:])
+	Change :: struct {
+		place: int,
+		value: u8,
+	}
+	// The size of the parameters is at bytes 10 to 13; the size of the
+	// buffer at 14 and 15.
+	changes := [?]Change {
+		{13, u8(2 + PIN_SIZE + 6)}, // Past the answer.
+		{13, u8(2 + PIN_SIZE + 1)}, // One byte of the session area in the parameters.
+		{13, u8(2 + PIN_SIZE - 1)}, // The buffer reaches past the parameters.
+		{10, 0xFF}, // The largest size.
+		{15, u8(PIN_SIZE + 3)}, // The buffer reaches into the session area.
+		{15, u8(PIN_SIZE - 1)}, // A byte left in the parameters.
+		{1, 0x01}, // The tag of no session.
+	}
+	for change in changes {
+		changed: [256]u8
+		copy(changed[:], whole)
+		changed[change.place] = change.value
+		count, _, problem := pin_read_answer(changed[:len(whole)], PIN_SIZE, out[:])
+		testing.expectf(t, problem == .Malformed && count == 0, "the change %v was taken", change)
+	}
+	// A size of 0 asked, and one past the buffer of the caller.
+	count, _, problem := pin_read_answer(whole, 0, out[:])
+	testing.expect(t, problem == .Malformed && count == 0)
+	count, _, problem = pin_read_answer(whole, PIN_SIZE, out[:0])
+	testing.expect(t, problem == .Malformed && count == 0)
+	// The accepted case comes last.
+	count, _, problem = pin_read_answer(whole, PIN_SIZE, out[:])
+	testing.expect(t, problem == .None && count == PIN_SIZE)
+}
+
+// The plan of a write refuses a pin that goes back before any step: an
+// index of an older policy is never removed for it.
+@(test)
+a_pin_that_goes_back_has_no_step :: proc(t: ^testing.T) {
+	digest: tpm_attestation.Digest
+	digest[0] = 1
+	stored: [tpm_attestation.MACHINE_KEY_PIN_RECORD_SIZE]u8
+	_, _ = tpm_attestation.machine_key_pin_encode({form = .MachineT, epoch = 9, record_digest = digest}, stored[:])
+	older: [tpm_attestation.MACHINE_KEY_PIN_RECORD_SIZE]u8
+	_, _ = tpm_attestation.machine_key_pin_encode({form = .MachineT, epoch = 8, record_digest = digest}, older[:])
+	forward: [tpm_attestation.MACHINE_KEY_PIN_RECORD_SIZE]u8
+	_, _ = tpm_attestation.machine_key_pin_encode({form = .MachineT, epoch = 10, record_digest = digest}, forward[:])
+	request := tpm_service.Pin_Request{kind = .Machine_Key, bytes = len(stored)}
+	for state in ([?]tpm_service.Pin_State{.Held, .Held_Other_Policy}) {
+		_, refusal := pin_write_plan(request, state, stored[:], older[:])
+		testing.expectf(t, refusal == .Epoch_Rollback, "an older pin over %v gave %v", state, refusal)
+	}
+	// The accepted cases come last: the index of an older policy is removed
+	// only for a pin that goes forward.
+	step, refusal := pin_write_plan(request, .Held_Other_Policy, stored[:], forward[:])
+	testing.expect(t, refusal == .None && step == .Remove_Then_Define_Then_Write)
+	step, refusal = pin_write_plan(request, .Held, stored[:], forward[:])
+	testing.expect(t, refusal == .None && step == .Write)
 }

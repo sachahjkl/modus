@@ -774,6 +774,10 @@ tpm_open :: proc "contextless" (ctx: ^system.Context) {
 		return
 	}
 	tpm_process = ctx.handles[tpm_service.GRANT_SERVICE]
+	// The root service gave the TPM: from here on, a record or a file is
+	// checked against its pin, and no failure of the service makes that
+	// check pass (pins.odin).
+	tpm_granted = true
 	if !tpm_service_runs() {
 		system.log_fact(.Info, Tpm_Service_Stopped_At_Start{})
 		return
@@ -2607,7 +2611,7 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 		system.stop(.Failed)
 	}
 	if !present {
-		principal_file_removed_check()
+		_ = principal_file_removed_check()
 		return false
 	}
 	problem: principals.File_Problem
@@ -2815,6 +2819,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		name, name_length = principals.name_unpack({ctx.values[principals.VALUE_NAME], ctx.values[principals.VALUE_NAME + 1], ctx.values[principals.VALUE_NAME + 2]})
 		if principals.name_problem(the_name()) != .None {
 			system.log_fact(.Info, New_Principal_Name_Refused{})
+			system.stop(.Refused)
+		}
+		if !principal_creation_allowed() {
 			system.stop(.Refused)
 		}
 		mode = .Create_First

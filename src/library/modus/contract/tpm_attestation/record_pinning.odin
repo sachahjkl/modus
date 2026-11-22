@@ -97,6 +97,7 @@ Pin_Refusal :: enum u8 {
 	Epoch_Exhausted      = 23, // The epoch is the largest of its type: no pin can follow it.
 	Generation_Exhausted = 24, // The generation is the largest of its type.
 	Record_Absent        = 25, // The pin names a record or a file that the disk does not hold.
+	Announce_Pending     = 26, // The pin announces a record already: it is settled first.
 }
 
 // The words of each refusal, for a line of the log.
@@ -128,6 +129,13 @@ pin_refusal_words := [Pin_Refusal]string {
 	.Epoch_Exhausted      = "the epoch is exhausted",
 	.Generation_Exhausted = "the generation is exhausted",
 	.Record_Absent        = "the pinned record is absent",
+	.Announce_Pending     = "the pin announces a record already",
+}
+
+// pin_refusal_of_word is the border of the word of a refusal that crosses
+// the ring of the TPM service.
+pin_refusal_of_word :: proc "contextless" (word: u64) -> (refusal: Pin_Refusal, ok: bool) {
+	return enum_word.member_of_word(Pin_Refusal, word)
 }
 
 // Which digest of a pin a record or a file has.
@@ -311,6 +319,9 @@ machine_key_pin_advance :: proc "contextless" (current: Machine_Key_Pin, propose
 	if current.form == .None {
 		return .None
 	}
+	if pin_announce_pending(current.next_digest, proposed.next_digest) {
+		return .Announce_Pending
+	}
 	if proposed.form != current.form {
 		if machine_key_form_uses_tpm(current.form) && !machine_key_form_uses_tpm(proposed.form) {
 			return .Form_Downgrade
@@ -345,6 +356,17 @@ machine_key_record_matches_pin :: proc "contextless" (pin: Machine_Key_Pin, reco
 		return .Current, .Form_Mismatch
 	}
 	return digest_match(machine_key_record_digest(record), pin.record_digest, pin.next_digest)
+}
+
+// pin_announce_pending says if a change announces a record over a pin that
+// announces one already. Such a pin names two records, A current and B
+// announced; a new announce of C would drop B, and a stop before the write
+// of C would leave B on the disk, refused. So a pin is settled before it
+// announces again.
+@(private = "file")
+pin_announce_pending :: proc "contextless" (current_next: Digest, proposed_next: Digest) -> bool {
+	current_next, proposed_next := current_next, proposed_next
+	return !is_all_zero(current_next[:]) && !is_all_zero(proposed_next[:])
 }
 
 // digest_match says which digest of a pin a digest of the disk is.
@@ -485,6 +507,9 @@ principal_file_pin_advance :: proc "contextless" (current: Principal_File_Pin, p
 	}
 	if current.generation == 0 {
 		return .None
+	}
+	if pin_announce_pending(current.next_digest, proposed.next_digest) {
+		return .Announce_Pending
 	}
 	if proposed.principal != current.principal {
 		return .Principal_Mismatch

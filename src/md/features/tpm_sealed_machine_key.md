@@ -101,7 +101,9 @@ The first 8 bytes of the record choose its form, and the disk alone cannot say w
 2. The store writes the record.
 3. The pin names what the store kept, with nothing announced.
 
-A stop between two steps leaves a record that the pin names, the old one or the announced one, and the next start settles the pin. A pin that refuses the new record, or a TPM that does not take the announce, writes nothing.
+A stop between two steps leaves a record that the pin names, the old one or the announced one. The next start that finds either settles the pin on it at once, when a seal is allowed: from then on the other record is refused, so a writer of the disk cannot bring back the record of before the crash at a later start. A pin that refuses the new record, or a TPM that does not take the announce, writes nothing.
+
+**No announce over an announce.** A pin that names two records, after a settle that failed, never announces a third: a stop before the write of the third would leave the announced record on the disk, refused. `unlock` settles the pin on the record of the store first, and refuses the write when the pin stays unsettled; the service refuses such a pin too (`Announce_Pending`).
 
 **The first pin.** A machine with no pin takes the record that it finds and pins it at once: the first start with this version, or the start after a clear of the TPM. A writer of the disk before that start is not seen.
 
@@ -109,7 +111,9 @@ A stop between two steps leaves a record that the pin names, the old one or the 
 
 **An update of the system.** A new system has another PCR 11, so the policy of the index is not the policy of now: the state `Held_Other_Policy`. The payload is still read and checked: only a writer of the TPM wrote it. At its next write, the service removes the index and defines it again with the policy of now; the rules of the epoch run against the payload of before. A stop between the removal and the write leaves no pin: the next start pins the record that it finds, as a first pin does.
 
-**A machine with no TPM service** reads and writes no pin: it works as before.
+**A pin that cannot be read refuses.** When the root service gave the TPM and the read of the pin fails (the service stopped, a fault of the interface, an answer of the wrong state or size), `unlock` refuses the record and writes none: a fault of the TPM service must not let a swapped record pass. A machine to which the root service gives no TPM reads and writes no pin: it works as before.
+
+**The order of a write in the service.** The service reads the index and checks the whole change against the stored pin before any command that changes the TPM (`tpm2.pin_write_plan`): an index of an older policy is removed only for a pin that goes forward. When the definition or the write fails after a removal, the service writes a warning: no pin holds until the next write.
 
 **What the pin does not protect against.** The owner hierarchy has no authorization value. Code with the TPM (another system on the machine, or this system after a flaw) removes the index with `TPM2_NV_UndefineSpace`, or puts an index of another shape there, which pins nothing (`Foreign`); the next start then takes the record that it finds. So the pin stops a writer of the disk, not code with the TPM: that needs the authorization value of the owner hierarchy (`ROADMAP.md`, "The TPM floors kept against code with the TPM"). A payload that does not decode refuses each record, the record of the owner too: only a clear of the TPM in the menu of the firmware ends it, and the recovery key then opens the key.
 
