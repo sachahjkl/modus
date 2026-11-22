@@ -284,18 +284,19 @@ values_differ_compares_the_values_only :: proc(t: ^testing.T) {
 	testing.expect(t, values_differ(first, changed))
 }
 
-// The root service changes the appearance in force alone: the values and
-// the change count stay, and a reader sees the new word.
+// Updating only the appearance in force through the single writer preserves
+// all setting values while advancing change_count so waiters cannot miss
+// the transition.
 @(test)
-the_appearance_in_force_alone :: proc(t: ^testing.T) {
+the_appearance_in_force_update_advances_change_count :: proc(t: ^testing.T) {
 	page: Page
 	write(&page, choice_default(), 0, .Dark)
 	before, before_ok := read(&page)
-	appearance_in_force_write(&page, .Light)
+	write(&page, before, before.zone_offset_minutes, .Light)
 	after, after_ok := read(&page)
 	testing.expect(t, before_ok && after_ok)
 	testing.expect_value(t, after.appearance_in_force, Appearance_In_Force.Light)
-	testing.expect_value(t, after.change_count, before.change_count)
+	testing.expect_value(t, after.change_count, before.change_count + 2)
 	testing.expect_value(t, values_of(after), values_of(before))
 }
 

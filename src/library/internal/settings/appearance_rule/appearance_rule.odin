@@ -16,16 +16,20 @@ import "modus:contract/settings"
 SECONDS_PER_DAY :: 86_400
 LIGHT_START_SECOND :: 7 * 3_600
 DARK_START_SECOND :: 19 * 3_600
+MIN_ZONE_OFFSET_SECONDS :: i64(settings.ZONE_OFFSET_MINUTES_LEAST) * 60
+MAX_ZONE_OFFSET_SECONDS :: i64(settings.ZONE_OFFSET_MINUTES_MOST) * 60
 
 #assert(0 < LIGHT_START_SECOND && LIGHT_START_SECOND < DARK_START_SECOND && DARK_START_SECOND < SECONDS_PER_DAY)
+#assert(MIN_ZONE_OFFSET_SECONDS < 0 && MAX_ZONE_OFFSET_SECONDS > 0)
 
-// Why appearance_for_time or next_transition_seconds refused its input.
+// Why appearance_for_time, next_transition_seconds, or next_edge_milliseconds refused its input.
 Appearance_Time_Refusal :: enum u8 {
 	None                       = 0,
 	Unknown_Appearance_Setting = 1,
 	Invalid_Hour               = 2,
 	Invalid_Minute             = 3,
 	Invalid_Second             = 4,
+	Invalid_Zone_Offset        = 5,
 }
 
 // validate_hms checks that (hour, minute, second) is a valid 24-hour wall
@@ -111,4 +115,76 @@ next_transition_seconds :: proc "contextless" (hour, minute, second: i32) -> (wa
 	case:
 		return SECONDS_PER_DAY - sec + LIGHT_START_SECOND, .None
 	}
+}
+
+@(private = "file")
+floor_modulo :: proc "contextless" (number, divisor: i64) -> i64 {
+	rest := number % divisor
+	return rest < 0 ? rest + divisor : rest
+}
+
+// local_hms_of_utc converts a UTC millisecond timestamp and validated zone
+// offset in seconds into local (hour, minute, second) and subsecond
+// milliseconds in [0, 1000) without signed overflow across the full i64 range.
+local_hms_of_utc :: proc "contextless" (
+	utc_milliseconds: i64,
+	zone_offset_seconds: i64,
+) -> (
+	hour: i32,
+	minute: i32,
+	second: i32,
+	subsecond_milliseconds: i64,
+	refusal: Appearance_Time_Refusal,
+) {
+	if zone_offset_seconds < MIN_ZONE_OFFSET_SECONDS || zone_offset_seconds > MAX_ZONE_OFFSET_SECONDS {
+		return 0, 0, 0, 0, .Invalid_Zone_Offset
+	}
+	utc_seconds := utc_milliseconds / 1000
+	subsecond := utc_milliseconds % 1000
+	if subsecond < 0 {
+		subsecond += 1000
+		utc_seconds -= 1
+	}
+	second_of_day := floor_modulo(utc_seconds + zone_offset_seconds, SECONDS_PER_DAY)
+	h, m, s, _ := hms_of_second_of_day(second_of_day)
+	return h, m, s, subsecond, .None
+}
+
+// next_edge_milliseconds returns the delay in milliseconds from
+// utc_milliseconds until the next 07:00:00 or 19:00:00 local-time transition.
+// Explicit Dark and Light settings and unknown times have no edge (has_edge
+// false, wait_milliseconds 0). Unknown setting words and out-of-range zone
+// offsets are refused.
+next_edge_milliseconds :: proc "contextless" (
+	setting: settings.Appearance,
+	utc_milliseconds: i64,
+	zone_offset_seconds: i64,
+	time_known: bool,
+) -> (
+	wait_milliseconds: u64,
+	has_edge: bool,
+	refusal: Appearance_Time_Refusal,
+) {
+	validated, ok := enum_word.member_of_word(settings.Appearance, u64(setting))
+	if !ok {
+		return 0, false, .Unknown_Appearance_Setting
+	}
+	if !time_known {
+		return 0, false, .None
+	}
+	hour, minute, second, subsecond, time_refusal := local_hms_of_utc(utc_milliseconds, zone_offset_seconds)
+	if time_refusal != .None {
+		return 0, false, time_refusal
+	}
+	switch validated {
+	case .Dark, .Light:
+		return 0, false, .None
+	case .Auto:
+		wait_seconds, next_refusal := next_transition_seconds(hour, minute, second)
+		if next_refusal != .None {
+			return 0, false, next_refusal
+		}
+		return u64(wait_seconds) * 1000 - u64(subsecond), true, .None
+	}
+	return 0, false, .Unknown_Appearance_Setting
 }

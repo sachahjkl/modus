@@ -22,6 +22,28 @@ DISK_ROWS_CAPACITY :: STORE_ROWS_LIMIT + CLIENT_KEY_ROWS_LIMIT
 // module_files store ceiling.
 STORE_BLOCKS_LIMIT :: 4096
 
+// Context handle slots used by the delegated principals service.
+PRINCIPALS_RING_SLOT :: 10
+PRINCIPALS_REGION_SLOT :: 11
+
+// Commands accepted on the delegated principals service ring.
+// Zero means unset and is refused at the border.
+Principals_Ring_Command :: enum u32 {
+	None                 = 0,
+	Register_Principal   = 1,
+	Session_Transition   = 2,
+	Replace_Disk_Rows    = 3,
+	Client_Key_Command   = 4,
+	Start_Policy_Command = 5,
+}
+
+// Completion statuses returned on the delegated principals service ring.
+Principals_Ring_Status :: enum u32 {
+	Ok          = 0,
+	Refused     = 1,
+	Bad_Command = 2,
+}
+
 // Closed set of row classes that principals may push to the root core via
 // Disk_Rows_Set. Zero means unset and is refused at the border.
 Disk_Row_Class :: enum u32 {
@@ -79,6 +101,22 @@ Disk_Rows_Set_Validation :: struct {
 	store_row_count:        u32,
 	start_policy_row_count: u32,
 	client_key_row_count:   u32,
+}
+
+// principals_ring_command_from_word converts a ring command word into a
+// Principals_Ring_Command, refusing zero and every unknown word.
+principals_ring_command_from_word :: proc "contextless" (word: u32) -> (command: Principals_Ring_Command, ok: bool) {
+	member := enum_word.member_of_word(Principals_Ring_Command, u64(word)) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
+}
+
+// principals_ring_status_from_word converts a completion status word into a
+// Principals_Ring_Status, refusing every unknown word.
+principals_ring_status_from_word :: proc "contextless" (word: u32) -> (status: Principals_Ring_Status, ok: bool) {
+	return enum_word.member_of_word(Principals_Ring_Status, u64(word))
 }
 
 // disk_row_class_from_word converts a transport word into a Disk_Row_Class,

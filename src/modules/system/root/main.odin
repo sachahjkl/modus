@@ -695,7 +695,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The settings page and the font outlines, before the first window.
 	text_settings_create()
 	date_page_create()
-	appearance_open() // appearance_edge.odin
 	disk_process_page_create()
 	fresh_bytes_create() // fresh_bytes.odin
 	replacement_table_create()
@@ -854,7 +853,7 @@ input_start :: proc "contextless" () -> system.Status {
 	input_values: system.Context_Values
 	settings_mapping := [1]system.Mapping{{memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}}
 	input_mappings: []system.Mapping
-	if settings_page != nil {
+	if settings_memory != 0 {
 		input_mappings = settings_mapping[:]
 		system.range_mapped_put(&input_values, .Settings_Page)
 	}
@@ -1075,10 +1074,6 @@ root_loop_pass :: proc "contextless" () {
 			system.wait_records(&wait, &item.requests.commands)
 		}
 	}
-	// The appearance in force at an edge of the rule of the day
-	// (appearance_edge.odin): one more deadline, and the change count of
-	// the date page.
-	appearance_step(&wait)
 	// The count of wait_words.odin keeps each list in the wait.
 	root_wait_full_tell(&wait)
 	// A load from the disk and a call for the disk grant table have a
@@ -1087,7 +1082,7 @@ root_loop_pass :: proc "contextless" () {
 	// read of the entropy device in flight (entropy.odin), the hang
 	// bound of a start policy that runs, and any in-flight request to
 	// the delegated wiring service.
-	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), appearance_deadline, fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline()))
+	system.wait_end(&wait, min(disk_load_deadline(), persisted_tables_deadline(), fresh_bytes_deadline, entropy_read_deadline_time(), start_policy_wake(), wiring_request_deadline()))
 }
 
 // control_ring_serve answers the control ring of the compositor: a start

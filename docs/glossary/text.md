@@ -226,7 +226,7 @@ Do not use: theme (for this: a pointer theme is a set of pointer pictures), dark
 
 The appearance in force is the appearance, dark or light, that each process draws now.
 
-It is one word of the settings page. With the setting `dark` or `light` it is that value; with `auto` it is the value of the rule of the day at this moment, which `src/library/modus/appearance` computes from the date page. The process `settings` writes it with each change of the values, and the root service writes it at 07:00 and 19:00 of the local time. A process reads it at each frame through `src/library/modus/display`, which gives it to `graphics.appearance_use`; the compositor sends `Settings_Changed` to each window when it changes, so each window draws once.
+It is one word of the settings page. With `dark` or `light` it is that value; with `auto` it is the rule of the day (`src/library/internal/settings/appearance_rule`) over the date page. The process `settings` is its sole writer: on value changes, date-page changes, and at 07:00 and 19:00 local time. A process reads it at each frame through `src/library/modus/display`, which gives it to `graphics.appearance_use`; the compositor sends `Settings_Changed` to each window when it changes, so each window draws once.
 
 The design: `src/md/features/appearance.md`.
 

@@ -360,6 +360,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/root_delegation",
 	foundation.SOURCE_FOLDER_INTERNAL + "/disk_processes/disk_processes_core",
 	foundation.SOURCE_FOLDER_INTERNAL + "/devices/devices_core",
+	foundation.SOURCE_FOLDER_INTERNAL + "/principals/principals_core",
+	foundation.SOURCE_FOLDER_INTERNAL + "/settings/appearance",
 	foundation.SOURCE_FOLDER_INTERNAL + "/settings/appearance_rule",
 	foundation.SOURCE_FOLDER_CONTRACT + "/venus_vulkan",
 	foundation.SOURCE_FOLDER_INTERNAL + "/root/device_stop",

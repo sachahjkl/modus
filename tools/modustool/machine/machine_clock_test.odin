@@ -1,7 +1,7 @@
 package machine
 
 import "modus:contract/settings"
-import "modus:appearance"
+import "internal:settings/appearance"
 import "core:testing"
 
 // The clock of a test machine is 01:00 UTC of the day of the host, whatever

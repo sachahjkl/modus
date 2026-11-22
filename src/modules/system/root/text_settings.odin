@@ -19,7 +19,6 @@ import "modus:system"
 // compositor sees the change and each window draws again.
 
 settings_memory: system.Handle
-settings_page: ^settings.Page
 // The font outlines of the boot image: page_count 0 when the image has
 // none, or none that font_outlines.validate accepts.
 font_outlines_mapping: system.Mapping
@@ -28,10 +27,12 @@ font_outlines_mapping: system.Mapping
 settings_boot_pass: bool
 
 // text_settings_create makes the settings page and finds the font
-// outlines. They are given only when their hash is right
-// (resource_mapping) and their format is valid: a resource shorter than
-// its header, or whose header states another size than the resource, is
-// not given, so a process that reads the size in the header reads only
+// outlines. It writes the initial defaults before any process starts and
+// immediately unmaps its writable mapping so `settings` is the sole writer
+// of the settings page. Font outlines are given only when their hash is
+// right (resource_mapping) and their format is valid: a resource shorter
+// than its header, or whose header states another size than the resource,
+// is not given, so a process that reads the size in the header reads only
 // mapped bytes. With no outlines, each process draws with Spleen 8x16, and
 // the log says why.
 text_settings_create :: proc "contextless" () {
@@ -44,11 +45,12 @@ text_settings_create :: proc "contextless" () {
 	if status != .Ok {
 		fail("cannot create the settings page", status)
 	}
-	settings_page = (^settings.Page)(address)
 	// The defaults before any process maps the page: the word 0 names no
 	// scale, so an all-zero page would be refused by each reader until the
-	// boot pass of `settings` writes it.
-	settings.page_defaults_write(settings_page)
+	// boot pass of `settings` writes it. Unmap right away so this service
+	// never writes the page again.
+	settings.page_defaults_write((^settings.Page)(address))
+	system.memory_unmap(address)
 	if mapping, _, given := resource_mapping(font_outlines.RESOURCE_NAME, font_outlines.ADDRESS, "each process with a surface"); given {
 		entry := system.image_resource_find(image, font_outlines.RESOURCE_NAME)
 		if _, problem := font_outlines.validate(image[entry.offset:][:entry.size]); problem.kind == .None {
@@ -69,7 +71,7 @@ text_settings_create :: proc "contextless" () {
 // process `settings` included. Its pages come from the boot image, whose
 // one handle (of this service) has no right Write.
 text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^system.Context_Values) {
-	if settings_page == nil {
+	if settings_memory == 0 {
 		return
 	}
 	// The page and the outlines.

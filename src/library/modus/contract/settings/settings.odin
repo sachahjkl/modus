@@ -24,18 +24,16 @@
 // `settings` writes the page, so a field of the page can only change a
 // look: no process reads an address or a size from it.
 //
-// A change: the writer makes change_count odd, writes the values and the
-// appearance in force, makes it even again, and wakes the threads that
-// wait on it (the compositor, the root service). The compositor then sends
-// the display event Settings_Changed to each window, and each process draws
-// again. A reader copies the values while change_count stays even and the
-// same (read).
+// A change: the sole writer (`settings`) makes change_count odd, writes the
+// values, the time zone, and the appearance in force, makes it even again,
+// and wakes the threads that wait on it (the compositor and `date`). The
+// compositor then sends the display event Settings_Changed to each window,
+// and each process draws again. A reader copies the values while
+// change_count stays even and the same (read).
 //
-// The appearance in force (src/md/features/appearance.md) has a second
-// writer: with the setting `auto`, the root service writes the one word
-// appearance_in_force at each edge of the rule of the day, with one atomic
-// store outside the change count (appearance_in_force_write), and wakes the
-// same waiters. A reader loads that word inside its loop of reads.
+// With the setting `auto`, `settings` wakes at each 07:00 or 19:00 local
+// edge and on each change of the date page, and updates appearance_in_force
+// through the same single-writer write().
 //
 // The time zone (src/md/features/time_zone.md) is one more choice of the
 // page, zone_offset_minutes, outside the enumeration Setting: a zone is a
@@ -289,7 +287,7 @@ appearance_in_force_names := [Appearance_In_Force]string {
 // change_count stays even and the same.
 Page :: struct {
 	change_count:        u32, // Even when the page is stable. Each change adds 2.
-	appearance_in_force: u32, // The word of an Appearance_In_Force. The process `settings` and the root service write it.
+	appearance_in_force: u32, // The word of an Appearance_In_Force. Written only by `settings`.
 	values:              [SETTING_CAPACITY]u32, // By Setting. A reader takes them through choice_of_values, which refuses a word that names no value.
 	zone_offset_minutes: i32, // The time zone. A reader keeps it through zone_offset_minutes_valid.
 }
@@ -565,14 +563,6 @@ write :: proc "contextless" (page: ^Page, choice: Choice, zone_offset_minutes: i
 	intrinsics.atomic_store_explicit(&page.zone_offset_minutes, zone_offset_minutes_valid(zone_offset_minutes), .Relaxed)
 	intrinsics.atomic_store_explicit(&page.appearance_in_force, u32(appearance_in_force), .Relaxed)
 	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
-}
-
-// appearance_in_force_write changes the appearance in force alone, with one
-// store and no change of the count: the write of the root service at an
-// edge of the rule of the day. A reader copies the old or the new word. The
-// caller wakes the waiters of change_count after.
-appearance_in_force_write :: proc "contextless" (page: ^Page, appearance_in_force: Appearance_In_Force) {
-	intrinsics.atomic_store_explicit(&page.appearance_in_force, u32(appearance_in_force), .Release)
 }
 
 // Kept_Settings: the record of the private store of `settings`, 56 bytes,
