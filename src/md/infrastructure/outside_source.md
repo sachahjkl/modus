@@ -20,7 +20,7 @@ The terms Outside source and Thin libc are in [`docs/glossary/communication.md`]
 
 | Place | What it holds |
 |---|---|
-| `src/outside/<work>/` | The files of the system for the work: `LICENSE` (the license of the work, copied), `patches/` (the changes of the work, in the order of their names), `system/` (the C files of the system that the work needs: its entry and its tables), `libc/` (the thin libc and its headers) |
+| `src/outside/<work>/` | The files of the system for the work: `LICENSE` (the license of the work, copied), `patches/` (the changes of the work, in the order of their names), `system/` (the C files of the system that the work needs: its entry and its tables), `libc/` (the thin libc and its headers), `self_host/` (the units that the work compiles in when it builds itself, and the module does not: for `chibicc`, the C of `memcpy` and its kin, and the jump of `exit` in assembly) |
 | The flake | The source at its commit (`fetchFromGitHub` with its hash), patched, with the files of `src/outside/<work>/` copied in, as one folder of the store; an environment variable names it in each shell and in the check |
 | `src/modules/<group>/<module>/` | The Odin package of the module: its exports, its budget, the memory that it lends to the C part |
 
@@ -51,7 +51,7 @@ Why each flag:
 - **No unwind table.** No part of the system reads one; the Odin object has none either.
 - **`-ffile-prefix-map`.** `__FILE__` in a macro of the work is `<work>/<name>.c`, not a path of the store.
 
-The memory procedures `memcpy`, `memmove` and `memset` come from `src/runtime/memory.asm`, as for each module: the thin libc does not write them again.
+The memory procedures `memcpy`, `memmove` and `memset` come from `src/runtime/memory.asm`, as for each module: the thin libc does not write them again. The tool compiles the C files at the top of the folder only, so the C files of `self_host/` never enter the module.
 
 ### The border between Odin and C
 

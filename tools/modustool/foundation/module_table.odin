@@ -54,7 +54,7 @@ Module_Build :: struct {
 // folder of the store only through the variable.
 Outside_Source :: struct {
 	work:     string, // The name of the work: the folder of its C files in a message and in `__FILE__`.
-	folder:   string, // The folder of the repository: LICENSE, patches, system, libc.
+	folder:   string, // The folder of the repository: LICENSE, patches, system, libc, self_host.
 	variable: string, // The environment variable that names the folder of the store.
 }
 

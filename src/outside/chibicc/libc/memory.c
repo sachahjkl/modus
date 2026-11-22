@@ -16,7 +16,7 @@
 static Memory_Provider *memory_provider;
 static void *memory_provider_context;
 
-void *thin_libc_exit_buffer[5];
+void *thin_libc_exit_buffer[THIN_LIBC_JUMP_BUFFER_WORDS];
 bool thin_libc_exit_ready;
 int thin_libc_exit_status;
 
@@ -27,10 +27,10 @@ void thin_libc_memory_set(Memory_Provider *provider, void *provider_context) {
 
 _Noreturn void exit(int status) {
   if (!thin_libc_exit_ready)
-    __builtin_trap();
+    thin_libc_trap();
   thin_libc_exit_ready = false;
   thin_libc_exit_status = status;
-  __builtin_longjmp(thin_libc_exit_buffer, 1);
+  thin_libc_jump(thin_libc_exit_buffer);
 }
 
 _Noreturn void assertion_failed(const char *condition, const char *file, int line) {

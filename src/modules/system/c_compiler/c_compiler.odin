@@ -65,12 +65,21 @@ Compile_Call :: struct {
 	memory_provider_context: rawptr,
 	diagnostic:              [^]u8,
 	diagnostic_capacity:     u64,
+	// A unit of a program of several sources. `compile` gives one source,
+	// so it leaves them zero: the source is "source.c", and each function
+	// of it that is not static is an export.
+	source_name:             cstring,
+	program_files:           rawptr, // The record Readable_File of thin_libc.h, for each other file of the program.
+	program_file_count:      u64,
+	export_names:            [^]cstring, // nil: each function that is not static is an export.
+	export_name_count:       u64,
 	// Given back.
 	text:                    [^]u8,
 	text_size:               u64,
 	error_offset:            i64, // The byte of the source that the diagnostic names; -1: none.
 	diagnostic_size:         u64,
 }
+#assert(size_of(Compile_Call) == 15 * 8)
 
 // What the C entry gives. The values are those of compile.c.
 Compile_Result :: enum i32 {

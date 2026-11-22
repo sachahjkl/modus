@@ -418,6 +418,13 @@ COMMANDS :: [?]foundation.Command {
 	// - `--verify-chains` (optional): also verify the C compiler self-host,
 	//   live-bootstrap seed, and SQLite/Lua/zstd C-world recipe chains.
 	{name = "self-host", about = "self-host [--staging-dir <folder>] [--emit-binary <path>] [--verify-chains]: build stage1/modustool, invoke stage1 to build stage2/modustool with deterministic flags, and prove blake3(stage1) == blake3(stage2)", run = build.run_self_host},
+	// Proves that the C compiler builds itself: chibicc built by clang
+	// compiles the sources of chibicc, the assembler of modus makes stage 1
+	// of the texts, stage 1 compiles the same sources on the host, and the
+	// module of stage 2 has the hash of stage 1 (docs/TOOLS.md, "The
+	// self-hosting of the C compiler"). It needs the variable CHIBICC_SOURCE
+	// of the shell of the flake, and writes into build/c_self_host.
+	{name = "c-self-host", about = "c-self-host: build chibicc with clang, then with itself twice through the assembler of modus, and prove blake3(stage 1) == blake3(stage 2)", run = build.run_c_self_host},
 	// Copies a file of `core:crypto` of the Odin compiler into the repository
 	// with the package name of the copy and the listed changes of its imports,
 	// and prints its line of the manifest of the origin.

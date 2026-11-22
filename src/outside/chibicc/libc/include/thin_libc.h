@@ -32,11 +32,24 @@ void thin_libc_diagnostic_set(char *bytes, size_t capacity);
 size_t thin_libc_diagnostic_size(void);
 size_t thin_libc_diagnostic_dropped(void);
 
-// The end of a work. The entry sets the buffer with __builtin_setjmp, then
-// sets `thin_libc_exit_ready`; `exit` jumps back there. With no entry
+// The end of a work. The entry sets the buffer with thin_libc_jump_set,
+// then sets `thin_libc_exit_ready`; `exit` jumps back there with
+// thin_libc_jump, and thin_libc_jump_set then gives 1. With no entry
 // ready, `exit` stops the process on a trap: it never returns into code
 // that did not expect it.
-extern void *thin_libc_exit_buffer[5];
+#define THIN_LIBC_JUMP_BUFFER_WORDS 8
+extern void *thin_libc_exit_buffer[THIN_LIBC_JUMP_BUFFER_WORDS];
+#ifdef __chibicc__
+// chibicc has no built-in of a jump: two procedures of assembly keep and
+// restore the registers that a call keeps (self_host/jump.s).
+int thin_libc_jump_set(void **buffer);
+_Noreturn void thin_libc_jump(void **buffer);
+#define thin_libc_trap() asm("ud2")
+#else
+#define thin_libc_jump_set(buffer) __builtin_setjmp(buffer)
+#define thin_libc_jump(buffer) __builtin_longjmp(buffer, 1)
+#define thin_libc_trap() __builtin_trap()
+#endif
 extern bool thin_libc_exit_ready;
 extern int thin_libc_exit_status;
 

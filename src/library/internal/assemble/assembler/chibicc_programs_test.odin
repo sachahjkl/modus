@@ -40,7 +40,9 @@ import "core:testing"
 //     return mix6(sc[0], uc[0], ss[0], us[0], sc[1] + ss[1], uc[1] + us[1]);
 //   }
 @(private = "file")
-CHIBICC_SUITE :: `section data
+CHIBICC_SUITE :: `unit
+section data
+  align 1
 .L..15:
   byte 115
   byte 109
@@ -49,6 +51,7 @@ CHIBICC_SUITE :: `section data
   byte 108
   byte 0
 section data
+  align 1
 .L..14:
   byte 115
   byte 109
@@ -57,6 +60,7 @@ section data
   byte 108
   byte 0
 section data
+  align 1
 .L..13:
   byte 109
   byte 105
@@ -64,6 +68,7 @@ section data
   byte 54
   byte 0
 section data
+  align 1
 .L..12:
   byte 109
   byte 105
@@ -71,6 +76,7 @@ section data
   byte 54
   byte 0
 section data
+  align 1
 .L..11:
   byte 98
   byte 105
@@ -78,6 +84,7 @@ section data
   byte 115
   byte 0
 section data
+  align 1
 .L..10:
   byte 98
   byte 105
@@ -85,6 +92,7 @@ section data
   byte 115
   byte 0
 section data
+  align 1
 .L..9:
   byte 100
   byte 105
@@ -93,6 +101,7 @@ section data
   byte 52
   byte 0
 section data
+  align 1
 .L..8:
   byte 100
   byte 105
@@ -101,6 +110,7 @@ section data
   byte 52
   byte 0
 section data
+  align 1
 .L..7:
   byte 115
   byte 100
@@ -108,6 +118,7 @@ section data
   byte 118
   byte 0
 section data
+  align 1
 .L..6:
   byte 115
   byte 100
@@ -115,18 +126,21 @@ section data
   byte 118
   byte 0
 section data
+  align 1
 .L..5:
   byte 102
   byte 105
   byte 98
   byte 0
 section data
+  align 1
 .L..4:
   byte 102
   byte 105
   byte 98
   byte 0
 section data
+  align 1
 .L..1:
   byte 102
   byte 97
@@ -134,6 +148,7 @@ section data
   byte 116
   byte 0
 section data
+  align 1
 .L..0:
   byte 102
   byte 97
@@ -141,6 +156,7 @@ section data
   byte 116
   byte 0
 section code
+  global small
 export small(x: Integer) -> Integer
 small:
   push %rbp
@@ -485,6 +501,7 @@ mix6:
   pop %rbp
   ret
 section code
+  global bits
 export bits(a: Integer, b: Integer) -> Integer
 bits:
   push %rbp
@@ -704,6 +721,7 @@ bits:
   pop %rbp
   ret
 section code
+  global div64
 export div64(a: Integer, b: Integer) -> Integer
 div64:
   push %rbp
@@ -781,6 +799,7 @@ div64:
   pop %rbp
   ret
 section code
+  global sdiv
 export sdiv(a: Integer, b: Integer) -> Integer
 sdiv:
   push %rbp
@@ -820,6 +839,7 @@ sdiv:
   pop %rbp
   ret
 section code
+  global fib
 export fib(n: Integer) -> Integer
 fib:
   push %rbp
@@ -880,6 +900,7 @@ fib:
   pop %rbp
   ret
 section code
+  global fact
 export fact(n: Integer) -> Integer
 fact:
   push %rbp
@@ -953,8 +974,8 @@ fact:
 
 @(test)
 chibicc_suite_assembles_validates_and_runs :: proc(t: ^testing.T) {
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	parts, refusal := assemble(CHIBICC_SUITE, workspace)
 	if !testing.expectf(t, refusal.refusal == .None, "refused with %v at line %d, column %d", refusal.refusal, refusal.place.line, refusal.place.column) {
 		return
@@ -1075,8 +1096,8 @@ shorts_table:
 
 @(test)
 indexed_and_indirect_program_validates_and_runs :: proc(t: ^testing.T) {
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	parts, refusal := assemble(INDEXED_PROGRAM, workspace)
 	if !testing.expectf(t, refusal.refusal == .None, "refused with %v at line %d, column %d", refusal.refusal, refusal.place.line, refusal.place.column) {
 		return
@@ -1139,7 +1160,9 @@ indexed_and_indirect_program_validates_and_runs :: proc(t: ^testing.T) {
 //   int exchange(int value) { int slot = 5; int old = __builtin_atomic_exchange(&slot, value); return old * 100 + slot; }
 //   int swap_if(int expected, int desired) { int slot = 7; int ok = __builtin_compare_and_swap(&slot, &expected, desired); return ok * 1000 + slot * 10 + expected; }
 @(private = "file")
-REBASED_FLOATING_ATOMIC_PROGRAM :: `section data
+REBASED_FLOATING_ATOMIC_PROGRAM :: `unit
+section data
+  align 1
 .L..29:
   byte 115
   byte 119
@@ -1150,6 +1173,7 @@ REBASED_FLOATING_ATOMIC_PROGRAM :: `section data
   byte 102
   byte 0
 section data
+  align 1
 .L..28:
   byte 115
   byte 119
@@ -1160,6 +1184,7 @@ section data
   byte 102
   byte 0
 section data
+  align 1
 .L..27:
   byte 101
   byte 120
@@ -1171,6 +1196,7 @@ section data
   byte 101
   byte 0
 section data
+  align 1
 .L..26:
   byte 101
   byte 120
@@ -1182,6 +1208,7 @@ section data
   byte 101
   byte 0
 section data
+  align 1
 .L..25:
   byte 119
   byte 105
@@ -1190,6 +1217,7 @@ section data
   byte 110
   byte 0
 section data
+  align 1
 .L..24:
   byte 119
   byte 105
@@ -1198,6 +1226,7 @@ section data
   byte 110
   byte 0
 section data
+  align 1
 .L..23:
   byte 99
   byte 111
@@ -1208,6 +1237,7 @@ section data
   byte 101
   byte 0
 section data
+  align 1
 .L..22:
   byte 99
   byte 111
@@ -1218,6 +1248,7 @@ section data
   byte 101
   byte 0
 section data
+  align 1
 .L..21:
   byte 115
   byte 99
@@ -1226,6 +1257,7 @@ section data
   byte 101
   byte 0
 section data
+  align 1
 .L..20:
   byte 115
   byte 99
@@ -1234,6 +1266,7 @@ section data
   byte 101
   byte 0
 section data
+  align 1
 .L..19:
   byte 97
   byte 118
@@ -1244,6 +1277,7 @@ section data
   byte 101
   byte 0
 section data
+  align 1
 .L..18:
   byte 97
   byte 118
@@ -1254,6 +1288,7 @@ section data
   byte 101
   byte 0
 section data
+  align 1
 .L..17:
   byte 109
   byte 105
@@ -1269,6 +1304,7 @@ section data
   byte 101
   byte 0
 section data
+  align 1
 .L..16:
   byte 109
   byte 105
@@ -1284,6 +1320,7 @@ section data
   byte 101
   byte 0
 section data
+  align 1
 .L..15:
   byte 110
   byte 97
@@ -1296,6 +1333,7 @@ section data
   byte 101
   byte 0
 section data
+  align 1
 .L..14:
   byte 110
   byte 97
@@ -1308,6 +1346,7 @@ section data
   byte 101
   byte 0
 section data
+  align 1
 .L..13:
   byte 97
   byte 112
@@ -1316,6 +1355,7 @@ section data
   byte 121
   byte 0
 section data
+  align 1
 .L..12:
   byte 97
   byte 112
@@ -1324,10 +1364,11 @@ section data
   byte 121
   byte 0
 section data
-  zero 4
+  align 8
 middle:
   quad numbers+8
 section data
+  align 16
 numbers:
   byte 10
   byte 0
@@ -1346,90 +1387,103 @@ numbers:
   byte 0
   byte 0
 section data
+  align 1
 .L..11:
   byte 109
   byte 117
   byte 108
   byte 0
 section data
+  align 1
 .L..10:
   byte 115
   byte 117
   byte 98
   byte 0
 section data
+  align 1
 .L..9:
   byte 97
   byte 100
   byte 100
   byte 0
 section data
+  align 1
 .L..8:
   byte 109
   byte 117
   byte 108
   byte 0
 section data
+  align 1
 .L..7:
   byte 115
   byte 117
   byte 98
   byte 0
 section data
+  align 1
 .L..6:
   byte 97
   byte 100
   byte 100
   byte 0
 section data
-  zero 8
+  align 16
 names:
   quad .L..9+0
   quad .L..10+0
   quad .L..11+0
 section data
-  zero 8
+  align 16
 operations:
   quad add+0
   quad sub+0
   quad mul+0
 section data
+  align 1
 .L..5:
   byte 109
   byte 117
   byte 108
   byte 0
 section data
+  align 1
 .L..4:
   byte 109
   byte 117
   byte 108
   byte 0
 section data
+  align 1
 .L..3:
   byte 115
   byte 117
   byte 98
   byte 0
 section data
+  align 1
 .L..2:
   byte 115
   byte 117
   byte 98
   byte 0
 section data
+  align 1
 .L..1:
   byte 97
   byte 100
   byte 100
   byte 0
 section data
+  align 1
 .L..0:
   byte 97
   byte 100
   byte 100
   byte 0
 section code
+  global swap_if
 export swap_if(expected: Integer, desired: Integer) -> Integer
 swap_if:
   push %rbp
@@ -1498,6 +1552,7 @@ swap_if:
   pop %rbp
   ret
 section code
+  global exchange
 export exchange(value: Integer) -> Integer
 exchange:
   push %rbp
@@ -1546,6 +1601,7 @@ exchange:
   pop %rbp
   ret
 section code
+  global widen
 export widen(a: Integer) -> Integer
 widen:
   push %rbp
@@ -1612,6 +1668,7 @@ widen:
   pop %rbp
   ret
 section code
+  global compare
 export compare(a: Integer, b: Integer) -> Integer
 compare:
   push %rbp
@@ -1701,6 +1758,7 @@ compare:
   pop %rbp
   ret
 section code
+  global scale
 export scale(a: Integer) -> Integer
 scale:
   push %rbp
@@ -1756,6 +1814,7 @@ scale:
   pop %rbp
   ret
 section code
+  global average
 export average(a: Integer, b: Integer) -> Integer
 average:
   push %rbp
@@ -1827,6 +1886,7 @@ average:
   pop %rbp
   ret
 section code
+  global middle_value
 export middle_value(step: Integer) -> Integer
 middle_value:
   push %rbp
@@ -1858,6 +1918,7 @@ middle_value:
   pop %rbp
   ret
 section code
+  global name_byte
 export name_byte(index: Integer, at: Integer) -> Integer
 name_byte:
   push %rbp
@@ -1894,6 +1955,7 @@ name_byte:
   pop %rbp
   ret
 section code
+  global apply
 export apply(index: Integer, a: Integer, b: Integer) -> Integer
 apply:
   push %rbp
@@ -1996,8 +2058,8 @@ add:
 
 @(test)
 rebased_floating_and_atomic_program_validates_and_runs :: proc(t: ^testing.T) {
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	parts, refusal := assemble(REBASED_FLOATING_ATOMIC_PROGRAM, workspace)
 	if !testing.expectf(t, refusal.refusal == .None, "refused with %v at line %d, column %d", refusal.refusal, refusal.place.line, refusal.place.column) {
 		return
@@ -2137,7 +2199,9 @@ rebased_floating_and_atomic_program_validates_and_runs :: proc(t: ^testing.T) {
 //     float half = 0.5f;
 //     return (long)(value * pi * half * 1000.0 + table[0] * 4);
 //   }
-FLOATING_CONSTANT_PROGRAM :: `section data
+FLOATING_CONSTANT_PROGRAM :: `unit
+section data
+  align 1
 .L..28:
   byte 115
   byte 99
@@ -2147,6 +2211,7 @@ FLOATING_CONSTANT_PROGRAM :: `section data
   byte 100
   byte 0
 section data
+  align 1
 .L..27:
   byte 115
   byte 99
@@ -2156,7 +2221,8 @@ section data
   byte 100
   byte 0
 section data
-  zero 2
+  align 16
+  global table
 table:
   byte 0
   byte 0
@@ -2183,6 +2249,7 @@ table:
   byte 4
   byte -64
 section data
+  align 1
 .L..21:
   byte 102
   byte 108
@@ -2200,6 +2267,7 @@ section data
   byte 116
   byte 0
 section data
+  align 1
 .L..20:
   byte 102
   byte 108
@@ -2217,7 +2285,7 @@ section data
   byte 116
   byte 0
 section data
-  zero 10
+  align 16
 .L..5:
   byte 100
   byte 111
@@ -2236,6 +2304,7 @@ section data
   byte 116
   byte 0
 section data
+  align 16
 .L..4:
   byte 100
   byte 111
@@ -2254,6 +2323,7 @@ section data
   byte 116
   byte 0
 section data
+  align 1
 .L..3:
   byte 102
   byte 108
@@ -2270,6 +2340,7 @@ section data
   byte 102
   byte 0
 section data
+  align 1
 .L..2:
   byte 102
   byte 108
@@ -2286,6 +2357,7 @@ section data
   byte 102
   byte 0
 section data
+  align 1
 .L..1:
   byte 100
   byte 111
@@ -2303,6 +2375,7 @@ section data
   byte 102
   byte 0
 section data
+  align 1
 .L..0:
   byte 100
   byte 111
@@ -2320,6 +2393,7 @@ section data
   byte 102
   byte 0
 section code
+  global scaled
 export scaled(value: Integer) -> Integer
 scaled:
   push %rbp
@@ -2402,6 +2476,7 @@ scaled:
   pop %rbp
   ret
 section code
+  global float_constant
 export float_constant(which: Integer) -> Integer
 float_constant:
   push %rbp
@@ -2481,6 +2556,7 @@ float_constant:
   pop %rbp
   ret
 section code
+  global double_constant
 export double_constant(which: Integer) -> Integer
 double_constant:
   push %rbp
@@ -2731,8 +2807,8 @@ double_bits_of:
 
 @(test)
 floating_constant_program_validates_and_runs :: proc(t: ^testing.T) {
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	parts, refusal := assemble(FLOATING_CONSTANT_PROGRAM, workspace)
 	if !testing.expectf(t, refusal.refusal == .None, "refused with %v at line %d, column %d", refusal.refusal, refusal.place.line, refusal.place.column) {
 		return

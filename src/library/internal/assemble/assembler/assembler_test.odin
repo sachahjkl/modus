@@ -9,12 +9,29 @@ import "core:mem/virtual"
 import "core:strings"
 import "core:testing"
 
+// test_workspace_new gives a workspace over a Workspace_Memory of the heap,
+// with the bounds of the module `assemble`.
+@(private)
+test_workspace_new :: proc() -> ^Workspace {
+	workspace := new(Workspace)
+	workspace^ = workspace_of_memory(new(Workspace_Memory))
+	return workspace
+}
+
+// test_workspace_free frees a workspace of test_workspace_new: the code is
+// the first field of its memory.
+@(private)
+test_workspace_free :: proc(workspace: ^Workspace) {
+	free(raw_data(workspace.code))
+	free(workspace)
+}
+
 // expect_code assembles a text and compares the bytes of its code with the
 // bytes of the Intel manual.
 @(private)
 expect_code :: proc(t: ^testing.T, text: string, expected: []u8, loc := #caller_location) {
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	_, refusal := assemble(text, workspace)
 	if !testing.expectf(t, refusal.refusal == .None, "%q: refused with %v at line %d, column %d", text, refusal.refusal, refusal.place.line, refusal.place.column, loc = loc) {
 		return
@@ -27,8 +44,8 @@ expect_code :: proc(t: ^testing.T, text: string, expected: []u8, loc := #caller_
 // refusal, its place, and that no part is given.
 @(private)
 expect_refusal :: proc(t: ^testing.T, text: string, refusal: Refusal, line: u32, column: u32, loc := #caller_location) -> Refusal_Record {
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	parts, record := assemble(text, workspace)
 	testing.expectf(t, record.refusal == refusal, "%q: the refusal is %v, not %v", text, record.refusal, refusal, loc = loc)
 	testing.expectf(t, record.place.line == line && record.place.column == column, "%q: the place is line %d, column %d, not line %d, column %d", text, record.place.line, record.place.column, line, column, loc = loc)
@@ -219,8 +236,8 @@ add:
 	}
 	expect_code(t, text, expected[:])
 
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	parts, refusal := assemble(text, workspace)
 	testing.expect_value(t, refusal.refusal, Refusal.None)
 	if !testing.expect_value(t, len(parts.exports), 1) {
@@ -268,8 +285,8 @@ jumps_and_labels_have_the_bytes_of_the_manual :: proc(t: ^testing.T) {
 
 @(test)
 data_bytes_and_zero_bytes :: proc(t: ^testing.T) {
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	parts, refusal := assemble("ret; section data; byte 1, 0x41, -1, 255, -128; zero 3; byte 2", workspace)
 	testing.expect_value(t, refusal.refusal, Refusal.None)
 	testing.expect_value(t, len(parts.segments), 2)
@@ -307,8 +324,8 @@ texts_past_their_bounds_are_refused :: proc(t: ^testing.T) {
 
 	// The code: 131 072 bytes, then one more.
 	code_at_bound := strings.repeat("ret\n", CODE_BYTES_MOST, context.temp_allocator)
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	_, refusal := assemble(code_at_bound, workspace)
 	testing.expect_value(t, refusal.refusal, Refusal.None)
 	record = expect_refusal(t, strings.concatenate({code_at_bound, "ret"}, context.temp_allocator), .Section_Past_Capacity, CODE_BYTES_MOST + 1, 1)
@@ -469,13 +486,13 @@ a_distance_past_2_gibibytes_is_refused :: proc(t: ^testing.T) {
 
 	// A jump: no text holds 2 GiB of code, so the label is moved after the
 	// statements are read, then the references are written.
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	jump_text := "jmp far; far: ret"
 	for move in ([]i128{i128(max(i32)), i128(max(i32)) + 1}) {
-		intrinsics.mem_zero(workspace, size_of(Workspace))
+		workspace_reset(workspace)
 		testing.expect_value(t, statements_read(jump_text, workspace).refusal, Refusal.None)
-		far := label_find(workspace, "far")
+		far := label_find(workspace, "far", 0)
 		jump_end := workspace.labels[far].offset
 		workspace.labels[far].offset = u64(i128(jump_end) + move)
 		resolved := references_resolve(workspace)
@@ -534,8 +551,8 @@ tables_past_their_capacity_are_refused :: proc(t: ^testing.T) {
 
 	// 4096 references, then 4097.
 	references_at_bound := strings.concatenate({"x: jmp x\n", strings.repeat("jmp x\n", REFERENCE_CAPACITY - 1, context.temp_allocator)}, context.temp_allocator)
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	_, refusal := assemble(references_at_bound, workspace)
 	testing.expect_value(t, refusal.refusal, Refusal.None)
 	expect_refusal(t, strings.concatenate({references_at_bound, "jmp x"}, context.temp_allocator), .References_Full, REFERENCE_CAPACITY + 1, 5)
@@ -608,8 +625,8 @@ message: byte 0x68, 0x69
 
 @(test)
 a_whole_program_is_a_valid_module_that_runs :: proc(t: ^testing.T) {
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	parts, refusal := assemble(PROGRAM, workspace)
 	if !testing.expectf(t, refusal.refusal == .None, "refused with %v at line %d, column %d", refusal.refusal, refusal.place.line, refusal.place.column) {
 		return
@@ -709,8 +726,8 @@ numeric_local_labels_name_the_next_and_the_last_definition :: proc(t: ^testing.T
 @(test)
 numeric_local_label_loop_runs :: proc(t: ^testing.T) {
 	text := "export count(n: Integer) -> Integer\ncount:\n\txor %eax, %eax\n1:\tcmp $0, %rdi\n\tje 2f\n\tadd $3, %rax\n\tdec %rdi\n\tjmp 1b\n2:\tret"
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	parts, refusal := assemble(text, workspace)
 	if !testing.expectf(t, refusal.refusal == .None, "refused with %v at line %d, column %d", refusal.refusal, refusal.place.line, refusal.place.column) {
 		return
@@ -732,8 +749,8 @@ numeric_local_label_loop_runs :: proc(t: ^testing.T) {
 
 @(test)
 quad_writes_numbers_and_rebased_addresses :: proc(t: ^testing.T) {
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	// The code has 1 byte, so the data starts on the next page: 0x1000.
 	text := "f: ret\nsection data\nt: quad 1, -1, 0xFFFFFFFFFFFFFFFF, -0x8000000000000000\nquad f, t + 8, t-8, f+0, 1f\n1: quad t + 0x7FFFFFFFFFFFEFFF\nzero 3"
 	parts, refusal := assemble(text, workspace)
@@ -821,12 +838,182 @@ quad_refuses_past_its_rebase_capacity :: proc(t: ^testing.T) {
 		strings.write_string(&builder, "quad f\n")
 	}
 	// The last quad that fits gives a module; one more is refused.
-	workspace := new(Workspace)
-	defer free(workspace)
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
 	parts, refusal := assemble(strings.to_string(builder), workspace)
 	testing.expect_value(t, refusal.refusal, Refusal.None)
 	testing.expect_value(t, len(parts.rebases), REBASE_CAPACITY)
 	strings.write_string(&builder, "quad 0, f")
 	record := expect_refusal(t, strings.to_string(builder), .Rebases_Full, REBASE_CAPACITY + 3, 9)
 	testing.expect_value(t, record.value, REBASE_CAPACITY)
+}
+
+
+// Two units of one text: a name that a unit does not make global stays in
+// it, and a global name joins the units.
+@(test)
+units_join_through_global_labels :: proc(t: ^testing.T) {
+	// Each unit has its own helper; second calls first, which unit 1 makes
+	// global. call helper of unit 1 goes 1 byte on; call first goes back 19.
+	text := "unit\nglobal first\nfirst: call helper\nret\nhelper: mov $1, %rax\nret\nunit\nglobal second\nsecond: call first\nret\nhelper: ret"
+	expect_code(t, text, {0xE8, 0x01, 0x00, 0x00, 0x00, 0xC3, 0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00, 0xC3, 0xE8, 0xED, 0xFF, 0xFF, 0xFF, 0xC3, 0xC3})
+	// One name in two units, global in neither: two labels.
+	expect_code(t, "unit\nf: ret\nunit\nf: ret", {0xC3, 0xC3})
+	// A label of the data that another unit reaches through %rip: the data
+	// is on the page after the code, and lea is 7 bytes.
+	expect_code(t, "unit\nsection data\nglobal value\nvalue: byte 7\nunit\nlea value(%rip), %rax\nret", {0x48, 0x8D, 0x05, 0xF9, 0x0F, 0x00, 0x00, 0xC3})
+	// A global name before its unit defines it, and a second global of it in
+	// the same unit.
+	expect_code(t, "unit\ncall g\nret\nunit\nglobal g\nglobal g\ng: ret", {0xE8, 0x01, 0x00, 0x00, 0x00, 0xC3, 0xC3})
+	// A unit starts in the section code.
+	expect_code(t, "section data\nunit\nret", {0xC3})
+
+	// An export of a unit names its own label, or a global label of another.
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
+	parts, refusal := assemble("unit\nexport f() -> Integer\nunit\nnop_place: ret\nglobal f\nf: mov $2, %rax\nret", workspace)
+	if testing.expect_value(t, refusal.refusal, Refusal.None) {
+		testing.expect_value(t, len(parts.exports), 1)
+		testing.expect_value(t, parts.exports[0].code_offset, u64(1))
+	}
+}
+
+@(test)
+units_that_break_a_rule_are_refused :: proc(t: ^testing.T) {
+	// A label that its unit does not make global is not seen by another.
+	expect_refusal(t, "unit\nf: ret\nunit\ncall f", .Label_Not_Defined, 4, 6)
+	expect_refusal(t, "unit\nexport f()\nunit\nf: ret", .Label_Not_Defined, 2, 8)
+	expect_refusal(t, "unit\nsection data\nvalue: byte 1\nunit\nlea value(%rip), %rax\nret", .Label_Not_Defined, 5, 5)
+	// Two units make one name global: the value is the line of the first.
+	record := expect_refusal(t, "unit\nglobal f\nf: ret\nunit\nglobal f\nf: ret", .Global_Twice, 5, 8)
+	testing.expect_value(t, record.value, u64(2))
+	// A global name that no unit defines.
+	expect_refusal(t, "global f\nret", .Label_Not_Defined, 1, 8)
+	expect_refusal(t, "unit\nglobal f\nret\nunit\ncall f", .Label_Not_Defined, 2, 8)
+	// The two units define it, and one makes it global: the other keeps its
+	// own, and that one is defined twice in its unit when it defines it again.
+	expect_refusal(t, "unit\nglobal f\nf: ret\nf: ret", .Label_Defined_Twice, 4, 1)
+	// The form of the directives.
+	expect_refusal(t, "global\nret", .Label_Not_Valid, 1, 7)
+	expect_refusal(t, "global 1\nret", .Label_Not_Valid, 1, 8)
+	expect_refusal(t, "global 1f\nret", .Label_Not_Valid, 1, 8)
+	expect_refusal(t, "global 9abc\nret", .Label_Not_Valid, 1, 8)
+	expect_refusal(t, "global f g\nf: ret", .Directive_Not_Valid, 1, 10)
+	expect_refusal(t, "global f, g\nf: ret", .Directive_Not_Valid, 1, 9)
+	expect_refusal(t, "unit 1\nret", .Directive_Not_Valid, 1, 6)
+	expect_refusal(t, "unit code\nret", .Directive_Not_Valid, 1, 6)
+}
+
+@(test)
+align_pads_the_code_with_nop_and_the_data_with_zero :: proc(t: ^testing.T) {
+	expect_code(t, "align 8\nret", {0xC3})
+	expect_code(t, "ret\nalign 1\nret", {0xC3, 0xC3})
+	expect_code(t, "ret\nalign 4\nret", {0xC3, 0x90, 0x90, 0x90, 0xC3})
+	expect_code(t, "ret\nalign 4\nalign 4\nret", {0xC3, 0x90, 0x90, 0x90, 0xC3})
+
+	workspace := test_workspace_new()
+	defer test_workspace_free(workspace)
+	// An earlier text leaves bytes in the buffer of the data: the padding of
+	// the next text is zero all the same.
+	_, refusal := assemble("ret\nsection data\nbyte 9, 9, 9, 9, 9, 9, 9, 9, 9, 9", workspace)
+	testing.expect_value(t, refusal.refusal, Refusal.None)
+	parts: writer.Module_Parts
+	parts, refusal = assemble("ret\nsection data\nbyte 1\nalign 8\nbyte 2\nalign 4096\nlast: byte 3", workspace)
+	if testing.expect_value(t, refusal.refusal, Refusal.None) {
+		expected := [10]u8{1, 0, 0, 0, 0, 0, 0, 0, 2, 0}
+		data := parts.segments[1].data
+		testing.expect_value(t, len(data), module.PAGE_SIZE + 1)
+		testing.expect_value(t, string(data[:10]), string(expected[:]))
+		for byte_value in data[10:module.PAGE_SIZE] {
+			if byte_value != 0 {
+				testing.expect(t, false, "the padding of align is zero")
+				break
+			}
+		}
+		testing.expect_value(t, data[module.PAGE_SIZE], u8(3))
+	}
+	// The bound of the extent is a multiple of each alignment.
+	parts, refusal = assemble("ret\nsection data\nbyte 1\nzero 1099511627774\nalign 4096", workspace)
+	if testing.expect_value(t, refusal.refusal, Refusal.None) {
+		testing.expect_value(t, parts.segments[1].memory_size, SECTION_EXTENT_MOST)
+	}
+}
+
+@(test)
+align_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
+	record := expect_refusal(t, "align 0\nret", .Alignment_Not_Valid, 1, 7)
+	testing.expect_value(t, record.value, u64(0))
+	record = expect_refusal(t, "align 3\nret", .Alignment_Not_Valid, 1, 7)
+	testing.expect_value(t, record.value, u64(3))
+	record = expect_refusal(t, "align 4097\nret", .Alignment_Not_Valid, 1, 7)
+	testing.expect_value(t, record.value, u64(4097))
+	record = expect_refusal(t, "align 8192\nret", .Alignment_Not_Valid, 1, 7)
+	testing.expect_value(t, record.value, u64(8192))
+	record = expect_refusal(t, "align 0x10000000000000000\nret", .Alignment_Not_Valid, 1, 7)
+	testing.expect_value(t, record.value, max(u64))
+	expect_refusal(t, "align\nret", .Number_Not_Valid, 1, 6)
+	expect_refusal(t, "align -8\nret", .Number_Not_Valid, 1, 7)
+	expect_refusal(t, "align 8a\nret", .Number_Not_Valid, 1, 7)
+	expect_refusal(t, "align 8 8\nret", .Directive_Not_Valid, 1, 9)
+}
+
+@(test)
+ud2_has_the_bytes_of_the_manual :: proc(t: ^testing.T) {
+	expect_code(t, "ud2", {0x0F, 0x0B})
+	record := expect_refusal(t, "ud2 %rax", .Operand_Count_Wrong, 1, 1)
+	testing.expect_value(t, record.value, u64(1))
+	expect_refusal(t, "ret\nsection data\nud2", .Instruction_In_Data, 3, 1)
+}
+
+// A workspace of the memory of the caller: its slices are the bounds.
+@(test)
+a_workspace_of_the_caller_bounds_the_text :: proc(t: ^testing.T) {
+	code: [16]u8
+	data: [8]u8
+	labels: [3]Label
+	// 17 slots are cut to 16, which hold 4 labels: the 3 labels bound them.
+	slots: [17]Label_Slot
+	references: [2]Reference
+	data_references: [2]Data_Reference
+	rebases: [1]u64
+	workspace := workspace_make(code[:], data[:], labels[:], slots[:], references[:], data_references[:], rebases[:])
+	testing.expect_value(t, len(workspace.label_slots), 16)
+	testing.expect_value(t, len(workspace.labels), 3)
+	testing.expect_value(t, len(workspace.data_references), 1)
+
+	_, refusal := assemble("a: b: c: ret", &workspace)
+	testing.expect_value(t, refusal.refusal, Refusal.None)
+	_, refusal = assemble("a: b: c: d: ret", &workspace)
+	testing.expect_value(t, refusal.refusal, Refusal.Labels_Full)
+	testing.expect_value(t, refusal.value, u64(3))
+	testing.expect_value(t, refusal.place.column, u32(10))
+	_, refusal = assemble("a: jmp a; jmp a; jmp a", &workspace)
+	testing.expect_value(t, refusal.refusal, Refusal.References_Full)
+	testing.expect_value(t, refusal.value, u64(2))
+	_, refusal = assemble(strings.repeat("ret\n", 17, context.temp_allocator), &workspace)
+	testing.expect_value(t, refusal.refusal, Refusal.Section_Past_Capacity)
+	testing.expect_value(t, refusal.value, u64(17))
+	// The nop bytes of align count against the buffer of the code: 15
+	// bytes and 1 of padding fill it, and the next byte passes it.
+	_, refusal = assemble(strings.concatenate({strings.repeat("ret\n", 15, context.temp_allocator), "align 4\nret"}, context.temp_allocator), &workspace)
+	testing.expect_value(t, refusal.refusal, Refusal.Section_Past_Capacity)
+	testing.expect_value(t, refusal.value, u64(17))
+	// 13 bytes and 3 of padding pass a buffer of 14 bytes.
+	small := workspace_make(code[:14], data[:], labels[:], slots[:], references[:], data_references[:], rebases[:])
+	_, refusal = assemble(strings.concatenate({strings.repeat("ret\n", 13, context.temp_allocator), "align 4"}, context.temp_allocator), &small)
+	testing.expect_value(t, refusal.refusal, Refusal.Section_Past_Capacity)
+	testing.expect_value(t, refusal.value, u64(16))
+	testing.expect_value(t, refusal.place.line, u32(14))
+	testing.expect_value(t, refusal.place.column, u32(7))
+	_, refusal = assemble("f: ret; section data; quad f; quad f", &workspace)
+	testing.expect_value(t, refusal.refusal, Refusal.Rebases_Full)
+	testing.expect_value(t, refusal.value, u64(1))
+
+	// No slot: no label.
+	empty := workspace_make(code[:], data[:], labels[:], nil, references[:], data_references[:], rebases[:])
+	_, refusal = assemble("f: ret", &empty)
+	testing.expect_value(t, refusal.refusal, Refusal.Labels_Full)
+	testing.expect_value(t, refusal.value, u64(0))
+	_, refusal = assemble("ret", &empty)
+	testing.expect_value(t, refusal.refusal, Refusal.None)
 }

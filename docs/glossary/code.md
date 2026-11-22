@@ -654,7 +654,7 @@ Do not use: module writer (for this), linker, emitter.
 
 The assembler is the module `assemble`, which reads a text of x86-64 assembly and writes a module file into a memory object that its caller lends.
 
-It takes AT&T syntax plus modus directives (`section`, typed `export`, `byte`, `quad`, `zero`). A `quad` of a label writes a rebased address. Its package `internal:assemble/assembler` drives the module file writer and refuses invalid text whole with line and column. It is the first program of modus that writes a program, not the host assembler of the build.
+It takes AT&T syntax plus modus directives (`section`, typed `export`, `byte`, `quad`, `zero`, `align`, `unit`, `global`). A `quad` of a label writes a rebased address. Its package `internal:assemble/assembler` drives the module file writer and refuses invalid text whole with line and column. It is the first program of modus that writes a program, not the host assembler of the build.
 
 The design: `src/md/features/assembler.md`; the guide: `docs/MODULE_CONTRACT.md`, "The assembler".
 
@@ -670,6 +670,26 @@ The design: `src/md/features/assembler.md`, "The syntax: AT&T".
 
 Do not use: temporary label, anonymous label, local symbol.
 
+### Assembly unit
+
+An assembly unit is the part of a text of the assembler that a `unit` directive starts, up to the next one: the text of one C source of a program.
+
+A label belongs to the unit that names it, so two units can each define `helper` or `.L..0`, as two C sources can each have a `static` function of one name. A program of several sources is one text: each output of the C compiler starts with `unit`, and the units follow each other. A unit starts in the section code. It is not a module: the units of a text are one module.
+
+The design: `src/md/features/assembler.md`, "The units of a program".
+
+Do not use: object file, compilation unit (for this), section.
+
+### Global label
+
+A global label is a label that a `global` directive of its assembly unit names, which each other unit of the text reaches by its name.
+
+A unit that names a label that it does not define takes the place of the global label of that name, once the text is read. The C compiler writes `global` for each function and each variable that is not `static`: C calls that external linkage. Two units that make one name global are refused. It is not an export: an export is what the callers of the module reach, and a global label what the other units of its text reach.
+
+The design: `src/md/features/assembler.md`, "The units of a program".
+
+Do not use: global symbol, extern, public label.
+
 ### Module from memory
 
 A module from memory is a module whose file the console copies from a memory object and runs in a call host, with no file of the boot image.
@@ -684,7 +704,7 @@ Do not use: dynamic module, loaded file.
 
 The C compiler is the module `c_compiler`, which reads a C source and writes a text of assembly that the assembler takes, into a memory object that its caller lends.
 
-It is `chibicc`, ported: its source is an outside source with four patches. Its export is `compile(source, output)`. Each function of the source that is not `static` becomes an export of the text, with its `int` and `long` types as Integers. A call host compiles one source. It is the stage after the assembler in the native tier of the bootstrap. It is not the compiler of the host that builds the system.
+It is `chibicc`, ported: its source is an outside source with six patches. Its export is `compile(source, output)`. Each function of the source that is not `static` becomes an export of the text, with its `int` and `long` types as Integers. It compiles itself (`modustool c-self-host`). A call host compiles one source. It is the stage after the assembler in the native tier of the bootstrap. It is not the compiler of the host that builds the system.
 
 The design: `src/md/features/c_compiler.md`; the guide: `docs/MODULE_CONTRACT.md`, "The C compiler".
 
@@ -934,7 +954,7 @@ Do not use: seed (for this), bootstrap binary, trusted compiler.
 
 Self-hosting is the check that a program builds its own source to the same bytes as the release before it built that source.
 
-The tool of release N − 1 builds the source of release N, which gives N₁; N₁ builds the same source, which gives N₂. The check is the equality of their hashes. It proves that the steps of the program are a function of its source, not of the program that ran them. It does not prove the compiler: the bootstrap from the seed does.
+The tool of release N − 1 builds the source of release N, which gives N₁; N₁ builds the same source, which gives N₂. The check is the equality of their hashes. It proves that the steps of the program are a function of its source, not of the program that ran them. It does not prove the compiler: the bootstrap from the seed does. The C compiler has its own check: `chibicc` built by clang builds stage 1, stage 1 builds stage 2, and the two modules have one hash.
 
 The design: `src/md/features/bootstrap.md`.
 

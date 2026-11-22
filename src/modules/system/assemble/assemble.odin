@@ -38,7 +38,9 @@ ARGUMENT_SOURCE :: 1
 ARGUMENT_FILE :: 2
 
 source_copy: [SOURCE_BYTES_MOST]u8
-workspace: assembler.Workspace
+// The tables of the assembler, with the bounds of the package: the module
+// keeps them in its data, which the budget of the call host pays.
+workspace_memory: assembler.Workspace_Memory
 
 // The value of the Memory_Map command that holds the memory handle, from 1:
 // the argument that an error record of the kernel names for it.
@@ -73,8 +75,9 @@ file_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Reco
 // assemble writes the module file of an assembly text into a memory object, and gives the bytes of the file.
 //
 // `source` is the text: statements separated by a new line or by `;`, in the syntax of AT&T, with the directives
-// `section code`, `section data`, `export name(a: Integer, b: Text) -> Integer`, `byte`, `quad` and `zero`; a `quad`
-// of a label is its address, which the module rebases at its load. `file` is a memory object that the caller lends to
+// `section code`, `section data`, `export name(a: Integer, b: Text) -> Integer`, `byte`, `quad`, `zero`, `align`,
+// `unit` and `global`; a `quad` of a label is its address, which the module rebases at its load, and `unit` starts
+// the next unit of a program, whose labels other units reach only through `global`. `file` is a memory object that the caller lends to
 // write; the file starts at its first byte. A text that the assembler does not take whole fails with -1 and the error
 // record `Bad_Byte`: the value is the offset of the first byte of the statement or the operand that it refuses, and
 // found is that byte; the log has the line, the column and the reason. A memory object smaller than the file fails
@@ -93,6 +96,7 @@ assemble :: proc "c" (source: ^system.Bytes_To_Read, file: system.Lent({.Read, .
 	intrinsics.mem_copy_non_overlapping(&source_copy[0], source.bytes, int(count))
 	text := string(source_copy[:count])
 
+	workspace := assembler.workspace_of_memory(&workspace_memory)
 	parts, refusal := assembler.assemble(text, &workspace)
 	if refusal.refusal != .None {
 		system.log_fact(.Info, Source_Refused{line = refusal.place.line, column = refusal.place.column, value = refusal.value, refusal = u32(refusal.refusal), refusal_sentence = value_kinds.text_field(assembler.refusal_sentence(refusal.refusal), REFUSAL_SENTENCE_FIELD_BYTES)})
