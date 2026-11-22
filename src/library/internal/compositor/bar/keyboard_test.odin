@@ -116,30 +116,45 @@ a_resize_by_keys_keeps_the_limits_and_the_screen :: proc(t: ^testing.T) {
 @(test)
 the_keys_walk_the_items_of_the_bar :: proc(t: ^testing.T) {
 	// The edges: no plate and no mark, one plate, the largest counts.
-	testing.expect_value(t, bar_item_count(0, false), 2)
-	testing.expect_value(t, bar_item_count(-5, false), 2)
-	testing.expect_value(t, bar_item_count(3, true), 6)
+	testing.expect_value(t, bar_item_count(0, false), 2 + TRAY_ITEM_COUNT)
+	testing.expect_value(t, bar_item_count(-5, false), 2 + TRAY_ITEM_COUNT)
+	testing.expect_value(t, bar_item_count(3, true), 6 + TRAY_ITEM_COUNT)
 	testing.expect_value(t, bar_item_step({}, 0, false, true), Bar_Item{kind = .Start})
 	testing.expect_value(t, bar_item_step({}, 0, false, false), Bar_Item{kind = .Start})
 	// Around the ends.
-	testing.expect_value(t, bar_item_step({kind = .Start}, 0, false, false), Bar_Item{kind = .Windows})
-	testing.expect_value(t, bar_item_step({kind = .Windows}, 0, false, true), Bar_Item{kind = .Start})
+	testing.expect_value(t, bar_item_step({kind = .Start}, 0, false, false), Bar_Item{kind = .Clock})
+	testing.expect_value(t, bar_item_step({kind = .Windows}, 0, false, true), Bar_Item{kind = .Control_Center})
+	testing.expect_value(t, bar_item_step({kind = .Clock}, 0, false, true), Bar_Item{kind = .Start})
 	testing.expect_value(t, bar_item_step({kind = .Windows}, 2, false, true), Bar_Item{kind = .Plate, plate = 0})
 	testing.expect_value(t, bar_item_step({kind = .Plate, plate = 1}, 2, true, true), Bar_Item{kind = .Viewer_Mark})
-	testing.expect_value(t, bar_item_step({kind = .Viewer_Mark}, 2, true, true), Bar_Item{kind = .Start})
-	testing.expect_value(t, bar_item_step({kind = .Start}, 2, true, false), Bar_Item{kind = .Viewer_Mark})
+	testing.expect_value(t, bar_item_step({kind = .Viewer_Mark}, 2, true, true), Bar_Item{kind = .Control_Center})
+	testing.expect_value(t, bar_item_step({kind = .Control_Center}, 2, true, true), Bar_Item{kind = .Notifications})
+	testing.expect_value(t, bar_item_step({kind = .Notifications}, 2, true, true), Bar_Item{kind = .Clock})
+	testing.expect_value(t, bar_item_step({kind = .Control_Center}, 2, true, false), Bar_Item{kind = .Viewer_Mark})
+	testing.expect_value(t, bar_item_step({kind = .Control_Center}, 2, false, false), Bar_Item{kind = .Plate, plate = 1})
+	testing.expect_value(t, bar_item_step({kind = .Start}, 2, true, false), Bar_Item{kind = .Clock})
+	// Each tray item opens its widget, and each widget has its item.
+	for kind in Bar_Item_Kind {
+		widget := bar_item_tray_widget(kind)
+		tray := kind == .Control_Center || kind == .Notifications || kind == .Clock
+		testing.expectf(t, (widget != .None) == tray, "%v opens %v", kind, widget)
+		if tray {
+			testing.expect_value(t, bar_item_of_tray_widget(widget), kind)
+		}
+	}
+	testing.expect_value(t, bar_item_of_tray_widget(.None), Bar_Item_Kind.None)
 	// An item that left the bar: a plate past the count, a negative plate,
 	// a mark that went.
 	testing.expect_value(t, bar_item_place({kind = .Plate, plate = 2}, 2, false), -1)
 	testing.expect_value(t, bar_item_place({kind = .Plate, plate = -1}, 2, false), -1)
 	testing.expect_value(t, bar_item_place({kind = .Viewer_Mark}, 2, false), -1)
 	testing.expect_value(t, bar_item_place({}, 2, true), -1)
-	testing.expect_value(t, bar_item_step({kind = .Plate, plate = 7}, 2, false, false), Bar_Item{kind = .Plate, plate = 1})
+	testing.expect_value(t, bar_item_step({kind = .Plate, plate = 7}, 2, false, false), Bar_Item{kind = .Clock})
 	testing.expect_value(t, bar_item_step({kind = .Plate, plate = 7}, 2, false, true), Bar_Item{kind = .Start})
-	testing.expect_value(t, bar_item_step({kind = .Viewer_Mark}, 0, false, false), Bar_Item{kind = .Windows})
+	testing.expect_value(t, bar_item_step({kind = .Viewer_Mark}, 0, false, false), Bar_Item{kind = .Clock})
 	// A place outside the order is no item.
 	testing.expect_value(t, bar_item_at(-1, 2, true), Bar_Item{})
-	testing.expect_value(t, bar_item_at(5, 2, true), Bar_Item{})
+	testing.expect_value(t, bar_item_at(5 + TRAY_ITEM_COUNT, 2, true), Bar_Item{})
 	testing.expect_value(t, bar_item_at(max(int), 2, true), Bar_Item{})
 	// Right then Left gives each item back.
 	for place in 0 ..< bar_item_count(4, true) {

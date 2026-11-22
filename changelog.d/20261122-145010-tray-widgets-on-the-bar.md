@@ -1,0 +1,3 @@
+type: Added
+
+**Tray widgets on the bar**: a button of the control center and a bell left of the clock, and the clock itself, open a card from the bar. The control center moves the bar and turns the magnifier on or off with a press on a tile, says the appearance and the display in force, and starts `settings`, `monitor`, `browser` and `edit`. The bell lists the last 6 notifications with `Clear all`, and a coral square on it says that the list is not empty. The clock opens the month of today, with the time zone and the time since the boot. One card shows at a time, Escape or a press outside closes it, the keys of the bar reach each part, and `compositor.tray_widget_open(widget)` opens one from the console.

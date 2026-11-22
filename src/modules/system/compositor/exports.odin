@@ -34,7 +34,7 @@ Pointer :: struct {
 	keys:    i64, // The key records that the input service sent since the start: each press and each release is one. The palette takes some of them, and a record goes to no window when none is open.
 	keys_waiting: i64, // The key records that wait in the compositor for a window whose ring is full.
 	keys_refused: i64, // The key records that the compositor lost since the start: the ring of the window and the queue of the compositor for it were full. 0 on a system that works.
-	menu:    [16]u8, // The menu of the bar that is open: "start", "windows", or empty.
+	menu:    [16]u8, // The menu or the card of the bar that is open: "start", "windows", "control_center", "notifications", "calendar", or empty.
 	palette:  i64, // The state of the palette: 0 closed; 1 the search; 2 it asks for a second Enter; 3 it waits for its provider; 4 it shows a result; 5 it has the form of a command. Not 0: it takes the keys.
 	shape:    [32]u8, // The name of the pointer shape on the screen: "arrow", "move", "text", ... (docs/POINTERS.md).
 	form:     [8]u8, // The pointer form on the screen: "dark" or "light", from the appearance in force (docs/POINTERS.md).
@@ -145,7 +145,8 @@ acts_for_principal :: proc "contextless" () -> bool {
 //   start, because the ring of a window and the queue of the compositor
 //   for it were both full. It is 0 on a system that works; the log has a
 //   line for each loss period.
-// - `menu`: `start`, `windows`, or empty.
+// - `menu`: the menu or the card of the bar that is open: `start`,
+//   `windows`, `control_center`, `notifications`, `calendar`, or empty.
 // - `palette`: the state of the palette: 0 while it is closed; 1 while it
 //   is open and the input searches; 2 while it asks for a second Enter; 3
 //   while it waits for what its provider gives; 4 while it shows a result;
@@ -175,7 +176,8 @@ pointer :: proc "c" (result: ^[]Pointer, error: ^errors.Error_Record) -> i64 {
 		copy(result[0].form[:len(result[0].form) - 1], pointer_form_name(pointer_form))
 		switch menu_open {
 		case .None:
-			// No menu: the field stays empty.
+			// No menu: the card of a tray widget, or empty.
+			copy(result[0].menu[:len(result[0].menu) - 1], tray_widget_name(tray_state.open))
 		case .Start:
 			copy(result[0].menu[:], "start")
 		case .Windows:
@@ -471,6 +473,31 @@ bar_position_export :: proc "c" (pos_word: i64, error: ^errors.Error_Record) -> 
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Counts, 1, pos_word)
 	}
 	desktop_bar_position_set(pos)
+	return 1
+}
+
+// tray_widget_open opens the card of a tray widget, as a press on its part of the bar does, or closes the card that is open: 0 closes, 1 the control center, 2 the notification center, 3 the calendar. Opening a card closes the start menu, the menu of the windows, the list of the viewers and the context menu of the desktop. The result is 1, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Bad_Value (-1, a word that names no tray widget).
+//
+// The field `menu` of `pointer()` names the open card: `control_center`,
+// `notifications` or `calendar` (src/md/features/tray_widgets.md).
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// connect("compositor")
+// compositor.tray_widget_open(3)
+// ```
+@(export, link_name = "tray_widget_open")
+tray_widget_open_export :: proc "c" (widget_word: i64, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	widget, known := bar.tray_widget_of_word(u64(widget_word))
+	if widget_word < 0 || !known {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 1, widget_word, i64(max(bar.Tray_Widget)))
+	}
+	tray_widget_show(widget) // tray_widgets.odin
 	return 1
 }
 

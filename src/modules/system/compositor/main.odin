@@ -180,9 +180,7 @@ PLACE_STEP_X :: 40
 PLACE_STEP_Y :: 32
 CLIENT_CAPACITY :: 32 // The root service starts 32 processes at most.
 DAMAGE_CAPACITY :: 8
-CLOCK_WIDTH :: 19 * 8 // "2026-11-11 16:30:05", or the time since boot "00:00:00" when the system has no date.
-CLOCK_MARGIN :: 16 // Between the clock and the right edge of the screen.
-TRAY_CLOCK_GAP :: 12 // Between the tray and the clock: the hairline of the clock is in its middle.
+CLOCK_WIDTH :: bar.CLOCK_WIDTH // "2026-11-11 16:30:05", or the time since boot "00:00:00" when the system has no date.
 
 Client :: struct {
 	ring_memory: system.Handle, // 0: the slot is free.
@@ -579,7 +577,7 @@ next_second_of_bar :: proc "contextless" (now: u64) -> u64 {
 }
 
 damage_clock :: proc "contextless" () {
-	damage_add(desktop_width - CLOCK_WIDTH - 16, desktop_bar_y() + 8, CLOCK_WIDTH, graphics.CELL_HEIGHT)
+	damage_add(bar.clock_x(desktop_width), desktop_bar_y() + bar.CLOCK_TEXT_Y, CLOCK_WIDTH, graphics.CELL_HEIGHT)
 }
 
 // damage_bar records each row of the bar, at its edge now.
@@ -868,6 +866,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					// The context menu of the desktop took the key.
 				case record.values[2] != 0 && u32(record.values[0]) == display.KEY_ESCAPE && capture_popover_escape():
 					// Local Escape closed the bar viewer list popover.
+				case record.values[2] != 0 && u32(record.values[0]) == display.KEY_ESCAPE && tray_widget_escape():
+					// Escape closed the card of a tray widget (tray_widgets.odin).
 				case keyboard_desktop_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
 					// A move or a resize of the window in front by keys, or the bar with the keys (keyboard_desktop.odin).
 				case palette_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
@@ -1063,6 +1063,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if second_of_bar(now) != shown_second {
 			shown_second = second_of_bar(now)
 			damage_clock()
+			tray_widgets_second() // tray_widgets.odin: the foot of the calendar.
 		}
 		if damage_count > 0 && now >= next_frame {
 			draw(now)
@@ -1375,6 +1376,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	// brings the window to the front.
 	desktop_magnifier_track(i32(pointer_x), i32(pointer_y))
 	capture_popover_pointer_move(pointer_x, pointer_y)
+	tray_widgets_pointer_move(pointer_x, pointer_y) // tray_widgets.odin
 	desktop_taskbar_pointer_move(pointer_x, pointer_y)
 	if hovered := bar.button_at(bar_layout, pointer_x, pointer_y); hovered != bar_button_hovered {
 		bar_button_hovered = hovered
@@ -1404,6 +1406,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	if pressed {
 		keyboard_pointer_pressed() // keyboard_desktop.odin
 		if capture_popover_press(pointer_x, pointer_y) {
+			return
+		}
+		if tray_widgets_press(pointer_x, pointer_y) { // tray_widgets.odin
 			return
 		}
 		was_open := menu_open
@@ -2129,15 +2134,16 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	screen_picture_append(bar.MARK_X, bar.mark_y(bar_layout), bar_mark_pictures[look], bar_mark_pixels[look][:], BAR_MARK_GENERATION + u32(look))
 	windows_button_records(table) // start_menu.odin
 	seconds := now / 1000
-	clock_x := width - CLOCK_WIDTH - CLOCK_MARGIN
+	clock_x := bar.clock_x(width)
 	x := clock_x
+	clock_text, clock_separator := tray_clock_plate_records(table) // tray_widgets.odin: the clock opens the calendar.
 	if milliseconds, known := date.milliseconds_now(date_page, now); known {
 		// The local time: the date of UTC and the time zone of the date
 		// page (src/md/features/time_zone.md).
 		zone := date.zone_offset_seconds_read(date_page)
 		date_text: [24]u8
 		shown := calendar.iso_text(date_text[:], milliseconds / 1000 + zone)
-		interface.draw_text(table, x, bar_top + 8, shown, graphics.colors.text)
+		interface.draw_text(table, x, bar_top + bar.CLOCK_TEXT_Y, shown, clock_text)
 		if zone != bar_zone_logged {
 			bar_zone_logged = zone
 			zone_buffer: [settings.ZONE_TEXT_SIZE]u8
@@ -2145,20 +2151,22 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		}
 	} else {
 		x += CLOCK_WIDTH - 8 * 8
-		x = interface.draw_unsigned(table, x, bar_top + 8, seconds / 3600, graphics.colors.text, 2)
-		x = interface.draw_text(table, x, bar_top + 8, ":", graphics.colors.dim)
-		x = interface.draw_unsigned(table, x, bar_top + 8, seconds / 60 % 60, graphics.colors.text, 2)
-		x = interface.draw_text(table, x, bar_top + 8, ":", graphics.colors.dim)
-		interface.draw_unsigned(table, x, bar_top + 8, seconds % 60, graphics.colors.text, 2)
+		x = interface.draw_unsigned(table, x, bar_top + bar.CLOCK_TEXT_Y, seconds / 3600, clock_text, 2)
+		x = interface.draw_text(table, x, bar_top + bar.CLOCK_TEXT_Y, ":", clock_separator)
+		x = interface.draw_unsigned(table, x, bar_top + bar.CLOCK_TEXT_Y, seconds / 60 % 60, clock_text, 2)
+		x = interface.draw_text(table, x, bar_top + bar.CLOCK_TEXT_Y, ":", clock_separator)
+		interface.draw_unsigned(table, x, bar_top + bar.CLOCK_TEXT_Y, seconds % 60, clock_text, 2)
 	}
 
 	// The tray, from the clock to the left: the hairline of the clock, the
-	// mark of a viewer of the remote display (capture.odin), the mark of
-	// each assistive holder (assistive.odin), which are never left out, then
-	// the pills of the tray. The plates of the windows take the room that is
-	// left.
-	tray_right := clock_x - TRAY_CLOCK_GAP
-	interface.draw_rectangle(table, tray_right + TRAY_CLOCK_GAP / 2, bar_top + 6, 1, BAR_HEIGHT - 12, graphics.colors.track)
+	// buttons of the notifications and of the control center, which keep
+	// their places (tray_widgets.odin), the mark of a viewer of the remote
+	// display (capture.odin), the mark of each assistive holder
+	// (assistive.odin), which are never left out, then the pills of the
+	// tray. The plates of the windows take the room that is left.
+	interface.draw_rectangle(table, bar.tray_right(width) + bar.TRAY_CLOCK_GAP / 2, bar_top + 6, 1, BAR_HEIGHT - 12, graphics.colors.track)
+	tray_buttons_records(table)
+	tray_right := bar.tray_buttons_left(width) - TRAY_BADGE_GAP
 	capture_mark_records(table, tray_right + 16)
 	if capture_is_open() && capture_mark_drawn {
 		tray_right = capture_mark_x - TRAY_BADGE_GAP
@@ -2179,6 +2187,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	}
 	capture_popover_records(&card_frame)
 	desktop_notifications_records(table)
+	tray_card_records(table) // tray_widgets.odin: over the banners, which it lists.
 	powerbox_dialog_records(table)
 	desktop_taskbar_preview_records(table) // desktop_features.odin
 	desktop_context_menu_records(table)

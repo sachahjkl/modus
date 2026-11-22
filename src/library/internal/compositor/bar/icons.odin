@@ -26,6 +26,10 @@ Icon :: enum u8 {
 	Magnifier, // A lens and its handle.
 	Bar_Edge, // A screen with its bar.
 	Windows_List, // Three lines of a list.
+	Switches, // Two switches, one off and one on: the control center.
+	Bell, // A bell: the notifications.
+	Globe, // A globe with its equator and its meridian: a browser.
+	Contrast, // A square half filled: the appearance.
 }
 
 // icon_of gives the icon of the window or the module of a name: its icon
@@ -49,6 +53,8 @@ icon_of :: proc "contextless" (name: string) -> Icon {
 		return .Sound
 	case "remote_display", "network":
 		return .Network
+	case "browser":
+		return .Globe
 	}
 	return .Window
 }
@@ -151,5 +157,23 @@ icon_records :: proc "contextless" (table: ^interface.Draw_Table, x, y: int, ico
 		part(table, x, y, 7, 8, 7, 1, color)
 		part(table, x, y, 2, 12, 3, 3, accent)
 		part(table, x, y, 7, 13, 7, 1, color)
+	case .Switches:
+		interface.draw_outline(table, x + 1, y + 2, 14, 5, 1, color)
+		part(table, x, y, 3, 3, 4, 3, color)
+		interface.draw_outline(table, x + 1, y + 9, 14, 5, 1, color)
+		part(table, x, y, 9, 10, 4, 3, accent)
+	case .Bell:
+		part(table, x, y, 7, 1, 2, 2, color)
+		part(table, x, y, 5, 3, 6, 2, color)
+		part(table, x, y, 4, 5, 8, 6, color)
+		part(table, x, y, 2, 11, 12, 2, color)
+		part(table, x, y, 7, 14, 2, 2, accent)
+	case .Globe:
+		interface.draw_outline(table, x + 2, y + 2, 12, 12, 1, color)
+		part(table, x, y, 3, 7, 10, 2, accent)
+		part(table, x, y, 7, 3, 2, 10, accent)
+	case .Contrast:
+		interface.draw_outline(table, x + 2, y + 2, 12, 12, 1, color)
+		part(table, x, y, 3, 3, 5, 10, accent)
 	}
 }
