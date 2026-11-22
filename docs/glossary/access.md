@@ -968,7 +968,7 @@ Do not use: token, capability token, invitation, certificate.
 
 A remote role is a role whose holder runs on a paired machine, and which `remote` fills on this machine as an interposed holder.
 
-`remote` carries each call and each record of the contract over QUIC to `remote` on the paired machine, which gets a connection to the real holder for the row of this machine. Only a contract of calls and records crosses: a face that lends memory or carries a handle does not. A call whose answer did not come gets `Unknown_Outcome`; a call while the link is down gets `Unreachable`. The frames of a call and the proxy of the calls in flight are built (`modus:contract/machine_wire`); the connection to the real holder is not.
+`remote` carries each call and record of the contract over QUIC to `remote` on the paired machine, which connects to the real holder for this machine's row. Only calls and records cross: a face that lends memory or carries a handle does not. A call with no answer gets `Unknown_Outcome`; a call while the link is down gets `Unreachable`. The call frames and proxy are built (`modus:contract/machine_wire`); connecting to the real holder is not.
 
 The design: `src/md/features/several_machines.md`, "A role held on another machine".
 

@@ -98,7 +98,7 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 	// The structs of all the files first: an export of one file can use a
 	// struct of another file.
 	for path in foundation.files_with_suffix(folder, ".odin") or_return {
-		if strings.has_suffix(path, "_test.odin") {
+		if strings.has_suffix(path, "_test.odin") || strings.has_suffix(path, "_wasm64p32.odin") {
 			continue
 		}
 		source := foundation.read_file(path) or_return
@@ -260,7 +260,7 @@ imported_structs :: proc(name: string, state: ^Describe_State) -> bool {
 	}
 	state.read[name] = true
 	for path in foundation.files_with_suffix(folder, ".odin") or_return {
-		if strings.has_suffix(path, "_test.odin") {
+		if strings.has_suffix(path, "_test.odin") || strings.has_suffix(path, "_wasm64p32.odin") {
 			continue
 		}
 		source := foundation.read_file(path) or_return

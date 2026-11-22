@@ -1214,7 +1214,7 @@ Do not use: site, domain, origin (alone, for this).
 
 An origin worker is the part of the browser that holds the state of one document origin and parses its pages, behind a border of messages of fixed size.
 
-The window sends it an `Origin_Request` as bytes; the worker decodes and checks it, refuses a request that names the state of another document origin, and answers with an origin render tree or a reply. Each document origin has its own storage, cookies, values of form fields and key of its style sheet, and each render wipes the workspace of the document first. It is the boundary of the process of each origin, built before that process: it is not a process yet, and it holds no grant. Example: a page of `modus://welcome` that asks for the storage of `modus://forms` gets the status `Refused_Other_Origin` and no byte.
+The window sends an `Origin_Request` as bytes; the worker checks it, refuses requests for another document origin, and answers with an origin render tree or reply. Each origin holds its own storage, cookies, form values, and stylesheet key, and each render clears the document workspace first. It defines the per-origin process boundary before that process exists, holding no grant. Example: `modus://welcome` asking for `modus://forms` storage gets `Refused_Other_Origin` and zero bytes.
 
 The design: `src/md/features/desktop_to_browser.md`, "The origin worker".
 
