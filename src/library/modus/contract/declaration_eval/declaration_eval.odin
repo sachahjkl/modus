@@ -608,6 +608,13 @@ output_validate :: proc "contextless" (bytes: []u8) -> (header: Output_Header, r
 	return header, .None
 }
 
+// output_skip_value reads one whole value at depth past reader, with the
+// checks of output_validate, so a reader of a record skips a field that it
+// does not use and still refuses a damaged one.
+output_skip_value :: proc "contextless" (reader: ^Output_Reader, depth: int) -> Output_Refusal {
+	return output_validate_value(reader, depth)
+}
+
 @(private)
 output_validate_value :: proc "contextless" (reader: ^Output_Reader, depth: int) -> Output_Refusal {
 	if depth >= OUTPUT_DEPTH_LIMIT {

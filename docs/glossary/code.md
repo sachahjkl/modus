@@ -850,6 +850,16 @@ The design: `src/md/features/recipes.md`.
 
 Do not use: build daemon, build server, toolchain.
 
+### Inputs tree builder
+
+The inputs tree builder is the one builder that runs no module: its output is one tree whose entries are the inputs of its recipe, each under its name.
+
+Its builder hash is a BLAKE3 key of a fixed context, not the hash of a module. The recipes service builds it itself, as its output depends on the input table only: no code of a caller runs, so it needs no sandbox. It takes no argument and gives a Tree only. It joins the outputs of several recipes into one tree. It is not a fetcher: it reads no network and copies no byte of its inputs.
+
+The design: `src/md/features/recipes.md`, "The inputs tree builder".
+
+Do not use: symlink join, union builder.
+
 ### Guest builder
 
 The guest builder is the builder that runs an existing tool of Linux in a guest, with its inputs as a read-only disk and its output as a blank disk.

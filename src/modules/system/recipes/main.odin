@@ -10,7 +10,6 @@ import "base:intrinsics"
 import "internal:recipes/recipes_core"
 import "modus:contract/blake3"
 import "modus:contract/errors"
-import "modus:contract/object_cache"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
@@ -151,8 +150,7 @@ handle_command :: proc "contextless" (command: ring.Record) {
 			return
 		}
 		intrinsics.mem_copy_non_overlapping(&copied_spec, rawptr(&service_region_base[spec_offset]), size_of(pr.Recipe_Spec))
-		policy := object_cache.Substitution_Policy{mode = .Prefer_Cache}
-		staged_result = recipes_core.build_recipe(&service_state, &copied_spec, mode, policy, nil, nil, nil, nil, nil)
+		staged_result = recipes_core.build_with_inputs_tree(&service_state, &copied_spec, mode)
 		intrinsics.mem_copy_non_overlapping(rawptr(&service_region_base[result_offset]), &staged_result, size_of(pr.Recipe_Build_Result))
 		if staged_result.refusal == .Verify_Disagreement {
 			system.log_fact(.Warning, Realisation_Disagreement{disagreements = service_state.counters.verify_disagreements})

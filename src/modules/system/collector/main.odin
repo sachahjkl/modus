@@ -59,9 +59,10 @@ fail :: proc "contextless" (text: string) -> ! {
 	system.stop(.Failed)
 }
 
-// record_count returns the number of hash-chained act records stored in the collector.
+// act_record_count returns the number of hash-chained act records of wide
+// grants stored in the collector.
 @(export)
-record_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
+act_record_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
 	if !manager_state.initialized {
 		return errors.fail(error, -1, .State, .Records)
 	}
@@ -417,6 +418,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !collector_core.manager_init(&manager_state, principal_id) {
 		fail("cannot initialize collector state")
 	}
+	wide_grants.space_store_init(&space_store, principal_id)
 
 	system.log_fact(.Info, Service_Ready{principal_id = principal_id, act_capacity = u64(manager_state.collector.capacity)})
 

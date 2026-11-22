@@ -117,7 +117,7 @@ state_init :: proc "contextless" (state: ^Projects_State, trusted_display_slot: 
 	state.next_console_id = 1
 }
 
-@(private = "file")
+@(private)
 bytes_equal :: proc "contextless" (first, second: []u8) -> bool {
 	if len(first) != len(second) {
 		return false

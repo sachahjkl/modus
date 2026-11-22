@@ -99,9 +99,11 @@ output_tree_map :: proc "contextless" (memory: system.Handle, error: ^errors.Err
 	return ([^]u8)(address)[:pages * system.PAGE_SIZE], true
 }
 
-// write_report records the final state of sandbox_runner into report.
+// write_report records the final state of sandbox_runner into report, and
+// counts the build in the counts that status gives.
 @(private = "file")
 write_report :: proc "contextless" (report: ^Guest_Build_Report, state: contract.Guest_Build_State, refusal: contract.Guest_Builder_Refusal) {
+	builds_count(state, refusal)
 	report^ = {
 		state              = i64(state),
 		refusal            = i64(refusal),

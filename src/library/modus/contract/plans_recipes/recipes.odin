@@ -66,6 +66,10 @@ Recipe_Refusal :: enum u8 {
 	Verify_Disagreement   = 18,
 	Sandbox_Violation     = 19,
 	Store_Full            = 20,
+	Bad_Head_Value        = 21,
+	Unknown_Recipe        = 22,
+	Recipe_Limit_Reached  = 23,
+	Builder_Needs_Sandbox = 24,
 }
 
 // Closed set of commands accepted on the recipes service ring.
