@@ -1,3 +1,0 @@
-type: Added
-
-**The measures of the log facts.** In a measure run, `log_reader` prints the time of `system.log` and of `system.log_fact` for the same line, of the operation `Log` for each form, and of the render of a fact for 30 rows of the window of the log. After the main machine, the tool prints the log records up to the start of the desktop, the bytes of the module files of the root service and of the compositor, and the records that the lines would take in a record of 128 bytes; the measure record keeps the first two. `modustool measure-compare <record> <record>` prints each measure of two measure records and the ratio of each number. No test asserts these numbers.

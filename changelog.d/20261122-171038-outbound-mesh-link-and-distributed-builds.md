@@ -1,3 +1,0 @@
-type: Added
-
-**The outbound link and the distributed builder**: `remote` opens a QUIC link to a paired machine that pins its identity key, and sends it requests for objects, role calls, store offers and the steps of a pairing, each of which ends Answered, Refused, Unknown_Outcome or Unreachable; on that link, a graph of up to 32 recipes is built across paired builders and caches, each realisation checked by its signer and each output byte by its hash, a lost builder replaced by the next one or by this machine, and the mode Verify refuses two output hashes with Determinism_Mismatch. Checked by host tests only.

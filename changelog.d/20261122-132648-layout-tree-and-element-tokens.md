@@ -1,3 +1,0 @@
-type: Added
-
-**The layout tree of `modus:layout`**: a window can describe its elements as layout boxes with sizes in pixels, a measured text, a percent of an ancestor or the sum of the children, and one solver gives each box its rectangle in whole logical pixels, with the room shared by strictness, alignment, clipping and scrolling; the package also keeps the state of each box across frames, gives the input of a box in one frame, and gives the colors and the spacing of an element by its role from the one table of the color tokens, which host tests check for contrast in the dark, light and high contrast appearances.

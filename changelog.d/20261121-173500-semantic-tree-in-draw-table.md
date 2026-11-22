@@ -1,3 +1,0 @@
-type: Added
-
-**Semantic tree records in the draw table.** Version 20 of the draw record adds `Element_Push` and `Element_Pop` with the WAI-ARIA 1.2 element roles, states, live modes, and 16-byte detail records validated by the unified clip-and-element order border (`damage_of_draw_table_20` and `execute_draw_table_in_rectangles_20`). The `accessibility` contract package reconstructs, audits, and diffs flat semantic trees directly from a draw table, and the interface widgets (`button`, `text_input`, `text_input_line`, `list_with_choice`, `list_of_rows`, `scroll_bar`, `action_bar`, `card`, `draw_heading`, `bar_with_value`, and `case_lines`) emit semantic elements in the same draw table that draws their pixels.

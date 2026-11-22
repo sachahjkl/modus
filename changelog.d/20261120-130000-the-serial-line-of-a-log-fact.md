@@ -1,3 +1,0 @@
-type: Changed
-
-**A shorter serial line for a log fact.** The serial port writes a fact as `#<module tag>:<key tag> <values>`: the first 4 bytes of the module hash, the first 3 bytes of the fact key, and each value byte that is not zero as two hexadecimal digits, with each run of zero bytes as one letter from `g` (1 byte) to `z` (20 bytes). On the facts of the logs of one full check, the lines take 79 713 bytes in place of 155 820, and on the machines `quic`, `tcp` and `remote_display` they take 0.94 to 0.98 times the bytes of the same lines as text, in place of 1.9 times. The build refuses two module files with one module tag and two fact types of one module with one key tag.

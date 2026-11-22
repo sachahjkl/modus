@@ -1,3 +1,0 @@
-type: Fixed
-
-**Characters of two columns and lines that always run**: the terminal gives a CJK ideograph, a kana, a syllable of Hangul or a fullwidth form two cells, wraps it whole at the right edge, and never leaves half of it on the screen; the console cuts its output at the same columns. A key typed ahead, Enter or Escape, is no longer dropped by the console when the call of the running line ends at the moment the console takes the key, a line no longer waits for the save of the line history of the line before, and the input service no longer turns without a wait when a key with an accent finds one place in its ring.

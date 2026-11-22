@@ -1,3 +1,0 @@
-type: Added
-
-**Browser machine WebAssembly runtime exports and runner page**: the software machine exposes a freestanding, zero-allocation C-ABI WebAssembly export surface (`modus_vm_init`, `modus_vm_load_bytes`, `modus_vm_step_budget`, `modus_vm_framebuffer_ptr`, `modus_vm_framebuffer_bytes`, `modus_vm_push_key`, `modus_vm_push_pointer`, `modus_vm_pop_serial`, and `modus_vm_state_word`) that builds cleanly for `freestanding_wasm32`, `freestanding_wasm64p32`, and `freestanding_amd64_sysv`, paired with a self-contained browser runner asset (`browser_machine.html`) supporting single-processor execution without cross-origin isolation and an optional bring-your-own link relay URL field.

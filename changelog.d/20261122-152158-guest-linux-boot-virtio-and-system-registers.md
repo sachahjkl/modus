@@ -1,3 +1,0 @@
-type: Added
-
-**A Linux machine for the guest builder.** `Guest_Registers` carries the 64-bit system state of a guest processor (`star`, `lstar`, `sfmask`, `fs_base`, `gs_base`, `kernel_gs_base`; 240 bytes), and `Guest_Run` refuses an address that is not canonical there. The new process-side machine of `modus:contract/guest_os` loads a bzImage or a vmlinux by the 64-bit boot protocol of Linux and gives it a serial port, a timer, a read-only virtio disk of inputs, a writable virtio disk of outputs and a virtio console, with no network. The `build` export of `guest_builder` runs it and reports the BLAKE3 hash of the output disk. Checked by host tests only.

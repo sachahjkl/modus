@@ -1,3 +1,0 @@
-type: Added
-
-**The kinds of a log fact for every line**: a fact type can have no field, and its sentence is its template; a fact type can be a distinct type of a shared record, as `errors.Error_Record_Fact_Fields`, the seven values of an error record with the kind and the unit by their names. A field writes 16 hexadecimal digits (`Hexadecimal_Sixteen_Digits`), the head of a hash (`Hash_Head`, `1a2b3c4d…`), hundredths (`1.05`), nanoseconds as microseconds (`812.4 us`), and a status of `operation.Status`, `errors.Kind` or `errors.Unit` by the name of its member, also in a word type of 8 bytes (`operation.Status_Word`). A template has up to 512 bytes, and each reader of a log file in the tool reads the sentences of the facts.

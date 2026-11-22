@@ -1,3 +1,0 @@
-type: Added
-
-**Record literals, named arguments, `let`, `with` and the placeholder `_` in the console**: a line writes a record by its fields, `area({x = 0, y = 0, width = 11, height = 3})`, typed by the parameter that receives it; gives a parameter by its name, `grow(r, by = 2)`; changes some fields of a record, `r with {width = 10}`; names values for one expression, `let s = {…} in area(s) + area(s)`; and puts the value on the left of `|>` in another place, `3 |> grow(r, _)`. An unknown field, a missing field, an unknown or missing parameter and a `_` out of its place are refused with the name and the place. `let`, `in`, `with` and `_` are no longer names.

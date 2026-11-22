@@ -1,3 +1,0 @@
-type: Changed
-
-**Every line of the demonstrations from address_space to heron is a log fact**, but the sentences of the error records that the process `errors` shows: a line with no value, an address, a time with one decimal and the head of a hash are facts now. Some sentences changed: a refusal of `disk`, `fetch` and `address_space` writes its error record as fields (`kind Out_Of_Range, unit Blocks, operation 3, ...`), a status that a failure wrote as its number writes the name of its member, the times in tenths of a nanosecond and the rates of `fetch` have two decimals, the instruction sets of `extended_state` are three lines, and its parts of a save are one line each.

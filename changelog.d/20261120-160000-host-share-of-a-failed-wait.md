@@ -1,3 +1,0 @@
-type: Added
-
-**A failed wait says what the host gave the machine, and the parts at once fit in the memory of the host**: the line of a step of a machine test that ends at its bound gives the processor time that the host gave the machine over the wait, the time that its threads waited for a processor and the memory stall of the host, and ends with "the host starved the machine", "the machine was idle" or "the machine had the processor"; the processors report gives the run state of QEMU. `modustool test` and `modustool screenshots` run at most as many parts at once as the available memory of the host holds, less 4 GiB, at 1 GiB for each part, besides the bound by processors, so the host no longer swaps the memory of a machine.

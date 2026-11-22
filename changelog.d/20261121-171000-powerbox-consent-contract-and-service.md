@@ -1,3 +1,0 @@
-type: Added
-
-**Powerbox Layer 1 consent contract, policy engine, and service**: added the `powerbox` contract package with closed enums, 16-item grouped consent batches, sealed trusted display dialogs, and strict border validators; added `Role.Powerbox` and `powerbox_contract()` to `role_contract`; added the pure `powerbox_core` policy state machine enforcing window ownership, 3-dialog per-session queue caps, 250 ms anti-clickjacking arm delay, 500 ms rate limiting, 60 s expiry, hash-bound `Always` grants for disk modules only, isolated store pickers, and whole-or-nothing plan difference dialogs; and added the freestanding `powerbox` service module.

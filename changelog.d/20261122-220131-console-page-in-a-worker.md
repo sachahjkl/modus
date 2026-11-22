@@ -1,3 +1,0 @@
-type: Added
-
-**The console page runs its machine in a worker, with the trust of its image, and reads an HTTPS object cache.** `browser_machine_console.html` starts the machine in the worker of the browser machine, so the page keeps its scroll and its keys while the kernel runs, and it gives the root service the hash of the description of `console.image` from `console.image.trust`. With `?cache=<address>`, the host fetches blobs and realisations by hash from that object cache over HTTPS with no relay, and the system checks each byte by its BLAKE3 hash and each realisation by its Ed25519 signer; the device through which a process asks for an object comes later.

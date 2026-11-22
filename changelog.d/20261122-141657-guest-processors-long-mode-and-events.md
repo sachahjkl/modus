@@ -1,3 +1,0 @@
-type: Added
-
-**Guest processors, long mode and injected events.** `Guest_Run` takes the index of one of four guest processors of a guest, so that several threads run one guest at once. Its record carries `cr0`, `cr3`, `cr4` and `efer`, a load of real, protected or long mode, and an event that the kernel delivers at the entry. `Memory_Map` maps guest memory at the guest physical address 0 (`At_Address_Zero`), and guest memory made with `Write`, `Execute` and `No_Access` switches between `Write` and `Execute` with `Memory_Protect` and the process handle. The count of kernel operations does not change.

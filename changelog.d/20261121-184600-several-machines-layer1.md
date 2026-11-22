@@ -1,3 +1,0 @@
-type: Added
-
-**Machine mesh contract, CPaceRistretto255 PAKE, signed cross-principal grants, and store delta sync.** Added the freestanding contract package `modus:contract/machine_mesh` with monotonic offline-root-signed machine lists (per-machine keys, instant revocation without changing principal identity, and default non-TPM join refusal with opt-in warning), off-by-default keyed BLAKE3 local address hints, signed cross-principal grants bounded by a one-day lifetime or monotonic revocation lists, CPace PAKE over RFC 9496 Ristretto255 with mutual key confirmation, and the store delta sync wire protocol with three-way fast-forward and conflict-fork reconciliation.

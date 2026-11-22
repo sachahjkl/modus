@@ -1,3 +1,0 @@
-type: Security
-
-**An agent can no longer approve its own calls through the agent bridge.** `eval_lex` runs a line at once only when it is exactly one call of an export on a short read-only list; each other call, `plans.apply` and `plans.rollback` among them, waits for the principal, and a line with a comment, a second line, a pipe or a nested call is refused. The bridge no longer reads `sensitive_action` or `plan_diff` from a request, and `read_screen` no longer writes to the `output_path` of the agent: a snapshot goes to a file only in the folder that the operator gives with `modustool agent-bridge --snapshot-dir`, under a name of the bridge.

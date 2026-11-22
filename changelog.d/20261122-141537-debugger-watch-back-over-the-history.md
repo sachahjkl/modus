@@ -1,3 +1,0 @@
-type: Added
-
-**The debugger finds the last input that wrote some bytes.** `watch_back(address, size)` in the console, and `debugger.watch_back(address, size, before_point)`, read the input history of the caller and give the input point whose point copy, shared page or kernel copy last wrote a byte of the range, with the values written, the instruction of the thread there, and the checkpoint before it with the input points of a replay to that write. A damaged history is refused as a whole, and a range with no such write is the error `Absent`, `Recorded_Writes`. A write by an instruction of the process itself is not an input, so it is not in the history.

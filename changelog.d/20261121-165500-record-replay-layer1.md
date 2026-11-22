@@ -1,3 +1,0 @@
-type: Added
-
-**Kernel record and replay of one thread (layer 1).** Added the `input_history` contract package, the pure kernel part `replay_filter`, three `Thread_Control` commands (`Record_Start`, `Record_End`, `Replay_Start`) requiring the `Debug` right with no new kernel operation, kernel trapping and emulation of `rdtsc`/`rdtscp`/`cpuid` via `CR4.TSD` and CPUID faulting, point copies for read-only shared pages, single-processor pinning, one-stint bound and immediate revocation end, the `replay_probe` test module, and a tool rule check refusing `rdrand` and `rdseed` outside `random.entropy_gather`.

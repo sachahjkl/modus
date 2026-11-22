@@ -1,3 +1,0 @@
-type: Added
-
-**Stall-deadline revocation for full holding rings.** The `wiring` service now tracks monotonic stall deadlines (`wiring_stall_observe`, `wiring_stall_expire`) for active `Always_Holds_Writer` wirings whose output ring stays full without reader `read`-cursor progress, resetting the deadline immediately when the reader advances. Once a ring remains full for `STALL_HANG_BOUND_MS` (60 000 ms), `wiring` revokes only that stalled wiring, writes `End_Word.Revoked` and wakes its end word so the blocked writer unblocks immediately, and leaves healthy sibling wirings and `Never_Holds_Writer` wirings intact.

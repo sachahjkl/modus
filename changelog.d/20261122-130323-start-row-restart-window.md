@@ -1,3 +1,0 @@
-type: Added
-
-**A restart window for a start row.** A start row can name a restart window in seconds: its count of restarts then holds inside each window, so a holder with a rare fault keeps its role for a run of months, and a holder that stops in a loop ends with one line. A row with no window keeps its count for the whole run and reads no clock. A needed row past its bound after the machine is usable now stops the default start policy with `Failed`, with one line that names the row, its count and its window. The start list is now the version 3, and its border refuses a window on a row with no restart.

@@ -1,3 +1,0 @@
-type: Added
-
-**SQLite, Lua and zstd as modules over the thin libc**: the real SQLite 3.54.1, Lua 5.4.7 and zstd 1.5.7, fetched at the hashes of their recipes, now build into modules with no import and no instruction that reaches the host (1 067 905, 233 497 and 602 137 bytes), and a host test runs SQL with a rollback and `PRAGMA integrity_check`, Lua scripts with coroutines, metamethods and `pcall`, and zstd frames that the zstd of the host reads. The thin libc gains `exp`, `log`, `log2`, `log10`, `pow` and the circular functions, each within one unit in the last place of the C library of the host (two for `tan`).

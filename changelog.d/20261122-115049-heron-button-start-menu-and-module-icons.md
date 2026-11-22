@@ -1,3 +1,0 @@
-type: Changed
-
-**The heron button, a start menu in two panes and module icons**: the bar starts with a heron button that opens the start menu, then a button with the icon of a list that opens the menu of the windows, then the window plates; the labels `start` and `windows` and the hint `palette: super` are gone. The start menu has the pinned modules and two quick actions (the bar to the other edge, the magnifier) in its left pane and every other module in its right pane. A module icon of 16 by 16 pixels marks each title bar, each window plate, each line of the menus and the pills of the tray. The log line of the interface font of the bar now gives the widest name only.

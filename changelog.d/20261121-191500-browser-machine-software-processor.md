@@ -1,3 +1,0 @@
-type: Added
-
-**Browser machine software MMU and x86-64 user-mode processor.** Added the freestanding contract package `modus:contract/software_machine` with a 4-level x86-64 software MMU matching the page-table format of `modulus` (including 2 MiB large pages, canonical checks, W^X/NX enforcement, atomic page-straddling memory accesses, and a software TLB), a user-mode x86-64 interpreter with `gs:` base support, `syscall` trapping, strict step budgets, and core SSE2 operations, and the browser machine configuration border supporting single-worker fallback without cross-origin isolation and optional bring-your-own link relay URLs.

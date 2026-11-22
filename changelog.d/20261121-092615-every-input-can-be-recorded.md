@@ -1,3 +1,0 @@
-type: Changed
-
-**Every input of a process passes through a channel that can be recorded.** Property 24 is a rule of the system: a process learns nothing from outside its own code except through a channel that the kernel can record, so a replay can run one process again alone with the same inputs. The design names the four exceptions (a process that holds a device, the root service, a process that runs a guest, and the few instructions that no fault catches), and the cycle counter and cpuid, which a process reads with no fault today, become channels that the kernel traps while a process is recorded.

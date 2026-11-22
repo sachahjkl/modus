@@ -1,3 +1,0 @@
-type: Added
-
-**A binary of the tool for each machine test part.** In the check of the flake, each test part runs a binary of the tool that holds the core of the tool and the scenario files of that part alone, which `tools/modustool/machine/test_part_files.json` names. A change of the scenario of one test part then runs that part again and takes every other part from the store, so a developer who works on one scenario waits for one part. A binary of one part refuses `test` of another part and the whole test, and `modustool part_cache` now also proves that a line more in the scenario of the part `debugger` changes the derivation of that part only.

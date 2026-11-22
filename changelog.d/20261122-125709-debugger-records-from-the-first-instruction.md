@@ -1,3 +1,0 @@
-type: Added
-
-**The debugger records a process from its first instruction, with its shared writers.** `record("clock")` starts a module held before its first instruction through the new root command `Debug_Start`, records it, then lets it run. Memory that the process and another process both map with Write is now recorded: the kernel lets that writer run only while the recorded thread is at an input point, at most one stint at a time, and writes what it changed into the history. `replay_start()` runs the module again from the history with the context of the record, and `replay_status()` shows the replay and the input point of a divergence, also after the debugging ended.

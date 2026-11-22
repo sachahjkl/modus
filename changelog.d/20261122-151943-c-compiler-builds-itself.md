@@ -1,3 +1,0 @@
-type: Added
-
-**chibicc builds itself to the same bytes.** `modustool c-self-host` compiles the 14 C sources of the C compiler with `chibicc` built by clang, makes a module of their texts with the assembler of modus, runs that module on the host to compile the same sources again, and checks that the two modules have one BLAKE3 hash (354 972 bytes, one run). The assembler takes a program of several sources as one text, with the new directives `unit`, `global` and `align`, and the instruction `ud2`; the output of `compile` now starts with `unit`, gives `global` lines, and treats a `long double` as a `double`.
