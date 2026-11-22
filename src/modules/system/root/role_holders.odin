@@ -8,6 +8,8 @@ package root
 
 import "modus:contract/role_contract"
 import rd "modus:contract/root_delegation"
+import "modus:contract/supervision"
+import "modus:contract/work_budget"
 
 // Default boot-image holders for every closed system role.
 @(rodata)
@@ -40,6 +42,29 @@ DEFAULT_ROLE_HOLDERS := [role_contract.Role]string {
 
 // Active role holder overrides installed from a principal's plan (empty = use default).
 role_holder_overrides: [role_contract.Role]string
+
+// Live supervision generation per role for reconnecting Connection_Page holders.
+role_service_generations: [role_contract.Role]u64
+
+// role_supervision_advance bumps the generation of role when its holder restarts
+// and updates an optional connection page in place.
+role_supervision_advance :: proc "contextless" (role: role_contract.Role, page: ^supervision.Connection_Page) -> u64 {
+	if role == .None {
+		return 0
+	}
+	role_service_generations[role] += 1
+	gen := role_service_generations[role]
+	if page != nil {
+		_ = supervision.connection_page_complete_reconnect(page, gen)
+	}
+	return gen
+}
+
+// role_connection_work_budget_check checks a requested per-connection work
+// budget against the contract requirements before carving pages from the caller.
+role_connection_work_budget_check :: proc "contextless" (requirements: work_budget.Work_Budget_Requirements, offered_pages, offered_time, offered_threads: u64) -> bool {
+	return work_budget.work_budget_check(requirements, offered_pages, offered_time, offered_threads, true) == .None
+}
 
 // role_holder_name returns the active module name holding role.
 role_holder_name :: proc "contextless" (role: role_contract.Role) -> string {

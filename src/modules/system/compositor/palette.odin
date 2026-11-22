@@ -193,6 +193,7 @@ palette_adoptions, palette_adoptions_same: u64
 // input: the ranking thread copies it and checks the copy.
 palette_provider_ring: ring.Ring
 palette_provider_ring_handle, palette_provider_table_handle: system.Handle
+palette_provider_window_name: system.Name
 palette_generation_seen: u32 // The change count of the table that the loop saw last.
 palette_tags: u32 // The tag of the last choice sent.
 palette_candidates_awaited: u32 // Not 0: the tag of the request for the candidates of the current field of the form.
@@ -840,7 +841,8 @@ palette_answer :: proc "contextless" (record: ring.Record) {
 		} else {
 			system.log_fact(.Info, Palette_Result_In_Console{})
 		}
-		palette_window_to_front("console")
+		provider := system.name_of(palette_provider_window_name[:])
+		palette_window_to_front(provider != "" ? provider : "console")
 	}
 	if palette_panel.state != .Running {
 		return

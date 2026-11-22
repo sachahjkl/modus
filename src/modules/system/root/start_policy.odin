@@ -237,7 +237,7 @@ start_policy_after_the_choice :: proc "contextless" (chosen: ^disk_process.Grant
 // before it starts. found is false when the boot image has no such module.
 start_policy_image_hash :: proc "contextless" () -> (hash: [32]u8, found: bool) {
 	for &item in system.image_entries(image) {
-		if system.name_of(item.name[:]) == START_POLICY_NAME {
+		if is_role_holder(system.name_of(item.name[:]), .Start_Policy) {
 			return item.hash, true
 		}
 	}
@@ -250,7 +250,8 @@ start_policy_image_hash :: proc "contextless" () -> (hash: [32]u8, found: bool) 
 start_policy_launch :: proc "contextless" (list: Start_Policy_List) {
 	start_policy_list = list
 	start_policy_process = nil
-	if len(system.image_find(image, START_POLICY_NAME)) == 0 {
+	policy_name := role_holder_name(.Start_Policy)
+	if len(system.image_find(image, policy_name)) == 0 {
 		if list == .Default {
 			system.log_fact(.Warning, Start_Policy_Absent{})
 			start_policy_launch(.Rescue)
@@ -263,7 +264,7 @@ start_policy_launch :: proc "contextless" (list: Start_Policy_List) {
 	// policy that ran, the rescue too.
 	module_hash, list_hash: [32]u8
 	for &item in system.image_entries(image) {
-		if system.name_of(item.name[:]) == START_POLICY_NAME {
+		if is_role_holder(system.name_of(item.name[:]), .Start_Policy) {
 			module_hash = item.hash
 		}
 	}
@@ -275,7 +276,7 @@ start_policy_launch :: proc "contextless" (list: Start_Policy_List) {
 	_ = start_policy_measure(module_hash, list_hash, START_POLICY_LIST_WORDS[list])
 	start_policy_from_disk = false
 	start_policy_starting = true
-	status := start(START_POLICY_NAME, principals.MACHINE)
+	status := start(role_holder_name(.Start_Policy), principals.MACHINE)
 	start_policy_starting = false
 	if status == .Ok {
 		start_policy_process = start_policy_running()

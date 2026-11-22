@@ -40,14 +40,57 @@ QUIC_ECHO_PORT :: 4433 // The UDP port of quic_echo: the port of the examples of
 //           module file from the web server that QEMU gives that address.
 //   quic_echo  a datagram endpoint with a listen grant: the UDP port 4433,
 //           and the remotes that send a datagram of 1200 bytes to it.
+PLAN_ENDPOINT_CAPACITY :: 32
+
+Plan_Endpoint_Rule :: struct {
+	active: bool,
+	name:   system.Name,
+	grant:  datagram.Grant,
+}
+
+plan_endpoints: [PLAN_ENDPOINT_CAPACITY]Plan_Endpoint_Rule
+
+// plan_endpoint_set binds an endpoint grant from the active plan for a module name.
+plan_endpoint_set :: proc "contextless" (name: string, grant: datagram.Grant) -> bool {
+	if len(name) == 0 || len(name) >= len(system.Name{}) {
+		return false
+	}
+	free_idx := -1
+	for &rule, i in plan_endpoints {
+		if !rule.active {
+			if free_idx < 0 {
+				free_idx = i
+			}
+			continue
+		}
+		if system.name_of(rule.name[:]) == name {
+			rule.grant = grant
+			return true
+		}
+	}
+	if free_idx < 0 {
+		return false
+	}
+	rule := &plan_endpoints[free_idx]
+	rule^ = {active = true, grant = grant}
+	copy(rule.name[:len(rule.name) - 1], name)
+	return true
+}
+
 endpoint_of :: proc "contextless" (name: string) -> datagram.Grant {
+	for &rule in plan_endpoints {
+		if rule.active && system.name_of(rule.name[:]) == name {
+			return rule.grant
+		}
+	}
+	if is_role_holder(name, .Remote_Display) {
+		return {address = remote.HOST_ADDRESS, port = remote_display.LISTEN_PORT, listen = true}
+	}
 	switch name {
 	case "net":
 		return {address = 0x0A000202, port = 7}
 	case "remote":
 		return {address = remote.HOST_ADDRESS, port = remote.LISTEN_PORT, listen = true}
-	case "remote_display":
-		return {address = remote.HOST_ADDRESS, port = remote_display.LISTEN_PORT, listen = true}
 	case "server":
 		return {port = 80, tcp = true, listen = true}
 	case "fetch", "module_files":
