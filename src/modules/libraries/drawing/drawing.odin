@@ -504,10 +504,10 @@ draw_table_to_venus_20 :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_
 	scratch_slice := ([^]u8)(scratch_address)[:scratch_bytes]
 	venus_slice := ([^]u8)(venus_address)[:venus_bytes]
 	result, draw_problem, problem := venus_vulkan.draw_table_to_venus(table.records[:table.record_count], table.text[:table.text_count], gpu_target, scratch_slice, venus_slice)
-	if problem == .None {
+	switch problem {
+	case .None:
 		return i64(result.written)
-	}
-	if problem == .Draw_Table_Refused {
+	case .Draw_Table_Refused:
 		switch draw_problem {
 		case .Command_Buffer_Overflow, .Vertex_Buffer_Overflow, .Index_Buffer_Overflow:
 			return errors.fail(error, -1, .Too_Small, .Bytes, ARGUMENT_SCRATCH, i64(scratch_bytes))
@@ -515,18 +515,29 @@ draw_table_to_venus_20 :: proc "c" (now: ^system.Table_To_Read(draw_record.Draw_
 		     .Unbalanced_Clips_Or_Elements, .Invalid_Draw_Record, .Byte_Table_Out_Of_Bounds, .Invalid_Path_Points:
 			return errors.fail(error, -1, .Bad_Value, .Records, ARGUMENT_NOW, i64(draw_problem))
 		}
-	}
-	if problem == .Gpu_Buffer_Too_Small {
+	case .Gpu_Buffer_Too_Small:
 		return errors.fail(error, -1, .Too_Small, .Bytes, ARGUMENT_TARGET, i64(min(shape.vertex_buffer_bytes, shape.index_buffer_bytes)))
-	}
-	if problem == .Stream_Too_Large {
+	case .Stream_Too_Large:
 		return errors.fail(error, -1, .Too_Long, .Records, ARGUMENT_NOW, i64(table.record_count))
-	}
-	if problem == .Buffer_Too_Short {
+	case .Buffer_Too_Short:
 		return errors.fail(error, -1, .Too_Small, .Bytes, ARGUMENT_VENUS, i64(venus_bytes))
+	case .Zero_Object_Id, .Object_Id_Overflow, .Object_Id_Mismatch:
+		// An object id of the target that names nothing: 0, or a base whose
+		// object passes the largest id. The value is the problem of the
+		// translator.
+		return errors.fail(error, -1, .Bad_Value, .None, ARGUMENT_TARGET, i64(problem))
+	case .Stream_Empty, .Stream_Truncated, .Misaligned_Length, .Unknown_Command_Type, .Unknown_Command_Flags,
+	     .Unexpected_Command_Type, .Structure_Type_Mismatch, .Next_Chain_Refused, .Pointer_Invalid, .Array_Size_Mismatch,
+	     .Count_Out_Of_Range, .Unknown_Enum_Word, .Unknown_Flag_Bits, .Unknown_Union_Tag, .Unknown_Result,
+	     .String_Too_Long, .String_Unterminated, .Zero_Extent, .Dimension_Too_Large, .Invalid_Slot, .Capset_Too_Short,
+	     .Capset_Wire_Format_Unsupported, .Capset_Boolean_Invalid, .Ring_Memory_Misaligned, .Ring_Memory_Too_Small,
+	     .Ring_Buffer_Size_Invalid, .Ring_Full, .Ring_Fatal, .Ring_Head_Invalid, .Ring_Tail_Invalid, .Ring_Status_Invalid,
+	     .Webgpu_Stream_Invalid, .Virtio_Frame_Invalid, .Missing_Flag_Bits, .Shader_Code_Invalid, .Layout_Transition_Invalid,
+	     .Reply_Not_Requested, .Reply_Stream_Full, .Reply_Already_Read, .String_Not_Text, .Client_Command_Refused,
+	     .Client_Reply_Refused:
+		// A fault of the translator itself on a table that it accepted: the
+		// value is its problem.
+		return errors.fail(error, -1, .Bad_Value, .None, ARGUMENT_TARGET, i64(problem))
 	}
-	// Each other refusal is an object id of the target that names nothing:
-	// 0, or a base whose object passes the largest id. The value is the
-	// problem of the translator.
 	return errors.fail(error, -1, .Bad_Value, .None, ARGUMENT_TARGET, i64(problem))
 }

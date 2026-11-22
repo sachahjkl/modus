@@ -1199,3 +1199,54 @@ stream_validate :: proc "contextless" (source: []u8) -> (command_count: int, pro
 	}
 	return command_count, .None
 }
+
+// command_type_client_allowed says if a client stream may hold a command of
+// this type. The commands of the ring and of the reply stream name the
+// shared memory of the context: a client that sends them can point the
+// renderer at the ring or the replies of the service, so only the service
+// sends them.
+command_type_client_allowed :: proc "contextless" (command_type: Command_Type) -> bool {
+	switch command_type {
+	case .Create_Instance, .Enumerate_Physical_Devices, .Get_Physical_Device_Properties, .Create_Device,
+	     .Queue_Submit, .Queue_Wait_Idle, .Allocate_Memory, .Bind_Buffer_Memory, .Bind_Image_Memory,
+	     .Create_Buffer, .Create_Image, .Create_Image_View, .Create_Shader_Module, .Create_Graphics_Pipelines,
+	     .Create_Pipeline_Layout, .Create_Framebuffer, .Create_Render_Pass, .Create_Command_Pool,
+	     .Allocate_Command_Buffers, .Begin_Command_Buffer, .End_Command_Buffer, .Cmd_Bind_Pipeline,
+	     .Cmd_Set_Viewport, .Cmd_Set_Scissor, .Cmd_Bind_Descriptor_Sets, .Cmd_Bind_Index_Buffer,
+	     .Cmd_Bind_Vertex_Buffers, .Cmd_Draw, .Cmd_Draw_Indexed, .Cmd_Copy_Buffer, .Cmd_Copy_Buffer_To_Image,
+	     .Cmd_Copy_Image_To_Buffer, .Cmd_Update_Buffer, .Cmd_Clear_Color_Image, .Cmd_Pipeline_Barrier,
+	     .Cmd_Push_Constants, .Cmd_Begin_Render_Pass, .Cmd_End_Render_Pass, .Get_Device_Queue_2:
+		return true
+	case .Set_Reply_Command_Stream, .Seek_Reply_Command_Stream, .Create_Ring, .Destroy_Ring, .Notify_Ring:
+		return false
+	}
+	return false
+}
+
+// stream_validate_client is stream_validate for a stream of a client, at
+// the border of the GPU device service: it refuses too each command that
+// only the service sends, and each command with the flag Generate_Reply,
+// whose reply would land in the reply stream of the service.
+stream_validate_client :: proc "contextless" (source: []u8) -> (command_count: int, problem: Venus_Problem) {
+	if len(source) == 0 {
+		return 0, .Stream_Empty
+	}
+	if len(source) % 4 != 0 {
+		return 0, .Misaligned_Length
+	}
+	decoder := decoder_init(source)
+	for decoder.cursor < len(source) {
+		command, command_problem := command_decode_next(&decoder)
+		if command_problem != .None {
+			return command_count, command_problem
+		}
+		if !command_type_client_allowed(command.command_type) {
+			return command_count, .Client_Command_Refused
+		}
+		if .Generate_Reply in command.flags {
+			return command_count, .Client_Reply_Refused
+		}
+		command_count += 1
+	}
+	return command_count, .None
+}

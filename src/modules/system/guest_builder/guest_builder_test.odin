@@ -99,13 +99,14 @@ build_exit_dispatch :: proc(t: ^testing.T) {
 	testing.expect_value(t, action, Build_Exit_Action.End)
 	testing.expect_value(t, runner.state, contract.Guest_Build_State.Failed)
 
-	// The bound of the exits.
+	// The bound of the exits counts the exits of the guest: cpuid here.
 	test_runner(runner, output[:], 2)
 	guest_os.linux_machine_start(linux, {}, input[:], output[:])
-	testing.expect_value(t, build_exit_handle(runner, linux, &registers, {kind = .Interrupted}, &reported), Build_Exit_Action.Run_Again)
-	testing.expect_value(t, build_exit_handle(runner, linux, &registers, {kind = .Interrupted}, &reported), Build_Exit_Action.Run_Again)
-	testing.expect_value(t, build_exit_handle(runner, linux, &registers, {kind = .Interrupted}, &reported), Build_Exit_Action.End)
+	testing.expect_value(t, build_exit_handle(runner, linux, &registers, {kind = .Cpuid, next = 0x1006}, &reported), Build_Exit_Action.Run_Again)
+	testing.expect_value(t, build_exit_handle(runner, linux, &registers, {kind = .Cpuid, next = 0x1007}, &reported), Build_Exit_Action.Run_Again)
+	testing.expect_value(t, build_exit_handle(runner, linux, &registers, {kind = .Cpuid, next = 0x1008}, &reported), Build_Exit_Action.End)
 	testing.expect_value(t, runner.state, contract.Guest_Build_State.Timed_Out)
+	testing.expect_value(t, runner.guest_exits_handled, u64(2))
 
 	// The successful case last: the exit status 0 ends the run cleanly.
 	test_runner(runner, output[:])
@@ -113,6 +114,64 @@ build_exit_dispatch :: proc(t: ^testing.T) {
 	action = build_exit_handle(runner, linux, &registers, {kind = .Port_Write, a = u64(contract.Guest_Io_Port.Build_Exit_Status), b = 4, c = 0, next = 0x1008}, &reported)
 	testing.expect_value(t, action, Build_Exit_Action.End)
 	testing.expect(t, runner.guest_exited && runner.guest_exit_code == 0 && runner.state == .Running)
+}
+
+// The exits Interrupted come from the timer of the host: many of them, more
+// than any bound of the spec, neither end the build nor change its count of
+// exits. Two runs with a different count of host interrupts report the same
+// count of exits.
+@(test)
+build_exit_host_interrupts_not_counted :: proc(t: ^testing.T) {
+	runner := new(contract.Guest_Sandbox_Runner)
+	defer free(runner)
+	linux := new(guest_os.Linux_Machine)
+	defer free(linux)
+	output: [4096]u8
+	input: [1024]u8
+
+	exits_of_run :: proc(t: ^testing.T, runner: ^contract.Guest_Sandbox_Runner, linux: ^guest_os.Linux_Machine, input, output: []u8, interrupts: int) -> u64 {
+		reported := u64(0)
+		registers := op.Guest_Registers{rip = 0x1000}
+		test_runner(runner, output, 4)
+		guest_os.linux_machine_start(linux, {}, input, output)
+		testing.expect_value(t, build_exit_handle(runner, linux, &registers, {kind = .Cpuid, next = 0x1002}, &reported), Build_Exit_Action.Run_Again)
+		for _ in 0 ..< interrupts {
+			if build_exit_handle(runner, linux, &registers, {kind = .Interrupted}, &reported) != .Run_Again {
+				testing.fail_now(t, "an exit Interrupted ended the build")
+			}
+		}
+		action := build_exit_handle(runner, linux, &registers, {kind = .Port_Write, a = u64(contract.Guest_Io_Port.Build_Exit_Status), b = 4, c = 0, next = 0x1004}, &reported)
+		testing.expect_value(t, action, Build_Exit_Action.End)
+		testing.expect(t, runner.guest_exited && runner.guest_exit_code == 0 && runner.state == .Running)
+		return runner.guest_exits_handled
+	}
+
+	quiet := exits_of_run(t, runner, linux, input[:], output[:], 0)
+	busy := exits_of_run(t, runner, linux, input[:], output[:], 1001)
+	busier := exits_of_run(t, runner, linux, input[:], output[:], 5000)
+	testing.expect_value(t, quiet, u64(2))
+	testing.expect_value(t, busy, quiet)
+	testing.expect_value(t, busier, quiet)
+	tree: [64]u8
+	_, _, refusal := contract.runner_finish(runner, &unpack_workspace, tree[:])
+	testing.expect(t, refusal != .Nonzero_Guest_Exit)
+}
+
+// A kernel count past the memory of the guest is refused before the
+// rounding to a page, so no count wraps the size of the copy to 0.
+@(test)
+kernel_staging_refuses_counts_past_memory :: proc(t: ^testing.T) {
+	memory := u64(64 * 1024 * 1024)
+	for count in ([?]u64{0, max(u64), max(u64) - 10, max(u64) - 4095, memory, memory - 1, memory + 1}) {
+		staging, fits := kernel_staging_bytes(count, memory)
+		testing.expectf(t, !fits && staging == 0, "the count %v is refused", count)
+	}
+	_, empty_fits := kernel_staging_bytes(1, 0)
+	testing.expect(t, !empty_fits)
+	staging, fits := kernel_staging_bytes(1, memory)
+	testing.expect(t, fits && staging == 4096)
+	staging, fits = kernel_staging_bytes(memory - 4096, memory)
+	testing.expect(t, fits && staging == memory - 4096)
 }
 
 // Inside the memory of the guest, a fault asks for a switch of its region:

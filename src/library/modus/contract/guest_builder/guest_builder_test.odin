@@ -672,12 +672,18 @@ guest_exit_bound_transitions_to_timed_out :: proc(t: ^testing.T) {
 	testing.expect_value(t, runner_start(runner), Guest_Builder_Refusal.None)
 
 	regs := op.Guest_Registers{rip = 0x1000}
-	testing.expect(t, runner_handle_exit(runner, &regs, .Interrupted, 0, 0, 0, 0x1000))
-	testing.expect(t, runner_handle_exit(runner, &regs, .Interrupted, 0, 0, 0, 0x1000))
-	testing.expect(t, runner_handle_exit(runner, &regs, .Interrupted, 0, 0, 0, 0x1000))
-	// Fourth exit hits the bound of 3 and stops with Timed_Out.
-	testing.expect(t, !runner_handle_exit(runner, &regs, .Interrupted, 0, 0, 0, 0x1000))
+	testing.expect(t, runner_handle_exit(runner, &regs, .Cpuid, 0, 0, 0, 0x1002))
+	// Exits Interrupted come from the host timer: past the bound, uncounted.
+	for _ in 0 ..< 1001 {
+		testing.expect(t, runner_handle_exit(runner, &regs, .Interrupted, 0, 0, 0, 0x1002))
+	}
+	testing.expect_value(t, runner.guest_exits_handled, u64(1))
+	testing.expect(t, runner_handle_exit(runner, &regs, .Cpuid, 0, 0, 0, 0x1004))
+	testing.expect(t, runner_handle_exit(runner, &regs, .Cpuid, 0, 0, 0, 0x1006))
+	// Fourth exit of the guest hits the bound of 3 and stops with Timed_Out.
+	testing.expect(t, !runner_handle_exit(runner, &regs, .Cpuid, 0, 0, 0, 0x1008))
 	testing.expect_value(t, runner.state, Guest_Build_State.Timed_Out)
+	testing.expect_value(t, runner.guest_exits_handled, u64(3))
 
 	workspace := new(Disk_Unpack_Workspace, context.temp_allocator)
 	tree_out: [4096]u8

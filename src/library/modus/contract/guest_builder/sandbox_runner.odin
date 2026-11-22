@@ -360,10 +360,17 @@ runner_report_violation :: proc "contextless" (runner: ^Guest_Sandbox_Runner, ki
 }
 
 // runner_exit_counted counts one Guest_Run exit against the bound of the
-// spec, and gives false, with the state Timed_Out, past it.
-runner_exit_counted :: proc "contextless" (runner: ^Guest_Sandbox_Runner) -> bool {
+// spec, and gives false, with the state Timed_Out, past it. An exit
+// Interrupted comes from the timer of the host, not from the guest: its
+// count depends on the speed of the machine, so it is never counted, never
+// ends the run, and never reaches the report. Only the exits that the guest
+// causes are counted, so two builds of one spec count the same exits.
+runner_exit_counted :: proc "contextless" (runner: ^Guest_Sandbox_Runner, exit_kind: op.Guest_Exit_Kind) -> bool {
 	if runner == nil || runner.state != .Running {
 		return false
+	}
+	if exit_kind == .Interrupted {
+		return true
 	}
 	limit := runner.spec.max_guest_exits
 	if limit == 0 {
@@ -389,7 +396,7 @@ runner_handle_exit :: proc "contextless" (
 	c: u64,
 	next_rip: u64,
 ) -> (keep_running: bool) {
-	if registers == nil || !runner_exit_counted(runner) {
+	if registers == nil || !runner_exit_counted(runner, exit_kind) {
 		return false
 	}
 	return runner_answer_exit(runner, registers, exit_kind, a, b, c, next_rip)

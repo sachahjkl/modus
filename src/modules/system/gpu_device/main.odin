@@ -95,7 +95,6 @@ venus_support: virtio_gpu.Venus_Support
 venus_capset: venus_vulkan.Venus_Capset
 venus_context_id: u32
 venus_ring_resource_id: u32
-venus_ring_mapped: bool
 venus_ring_cache: virtio_gpu.Map_Cache
 
 // Currently attached 2D scanout framebuffer.
@@ -150,8 +149,12 @@ control_exchange :: proc "contextless" (name: string, request_bytes: u32, expect
 			fail("the device needs a reset")
 		}
 		if system.time() >= deadline {
+			// The descriptors stay with the device: a later request on them
+			// can receive the answer of this one, or let the device write
+			// the response buffer while the service reads it. The service
+			// stops, and the device is no longer used.
 			system.log_fact(.Error, Device_Silent{bound = DEVICE_ANSWER_BOUND_MILLISECONDS, request = request_field(name)})
-			return {}, 0, false
+			fail("the device did not answer a control request")
 		}
 		system.wait_end(&wait, deadline)
 	}
@@ -305,7 +308,6 @@ venus_context_start :: proc "contextless" () {
 		context_id       = u64(venus_context_id),
 		vk_xml_version   = u64(venus_capset.vk_xml_version),
 		ring_resource_id = u64(venus_ring_resource_id),
-		ring_mapped      = u64(venus_ring_mapped),
 		ring_cache       = u64(venus_ring_cache),
 	})
 }
@@ -349,7 +351,6 @@ venus_ring_start :: proc "contextless" () {
 	if info_problem != .None {
 		return
 	}
-	venus_ring_mapped = true
 	venus_ring_cache = map_info.cache
 }
 
@@ -366,14 +367,16 @@ venus_submit :: proc "contextless" (command: ring.Record) -> (status: virtio_gpu
 			system.close(handle)
 		}
 	}
+	// A handle that did not come through the ring is one of the service:
+	// its kind and its rights say nothing of the client.
 	needed := system.Rights{.Read}
 	switch {
+	case !through:
+		return .Bad_Command, errors.ring_fail(SUBMIT, .Absent, .Region, 1)
 	case kind != .Memory:
 		return .Bad_Command, errors.ring_fail(SUBMIT, .Handle_Kind, .None, 1, i64(handle), i64(op.Object_Kind.Memory), i64(kind))
 	case !(needed <= rights):
 		return .Bad_Command, errors.ring_fail(SUBMIT, .Handle_Rights, .None, 1, i64(handle), i64(transmute(u32)needed), i64(transmute(u32)rights))
-	case !through:
-		return .Bad_Command, errors.ring_fail(SUBMIT, .Absent, .Region, 1)
 	}
 	if venus_context_id == 0 {
 		return .Unsupported, errors.ring_fail(SUBMIT, .Unsupported, .None, 0)
@@ -399,7 +402,9 @@ venus_submit :: proc "contextless" (command: ring.Record) -> (status: virtio_gpu
 	intrinsics.mem_copy_non_overlapping(raw_data(payload), rawptr(uintptr(address) + uintptr(offset)), int(length))
 	system.memory_unmap(address)
 
-	if _, stream_problem := venus_vulkan.stream_validate(payload); stream_problem != .None {
+	// A client sends rendering and resource commands only: the ring and the
+	// reply stream of the context belong to this service.
+	if _, stream_problem := venus_vulkan.stream_validate_client(payload); stream_problem != .None {
 		return .Bad_Command, errors.ring_fail(SUBMIT, .Bad_Value, .None, 1, i64(stream_problem))
 	}
 	header_written, header_problem := virtio_gpu.submit_3d_header_encode(venus_context_id, int(length), request_buffer[:REQUEST_BUFFER_BYTES])
@@ -479,20 +484,44 @@ start_device :: proc "contextless" (queues: system.Handle) {
 	})
 }
 
+// resource_release removes a 2D resource from the device. The device holds
+// the memory of the resource as its backing until it takes the unref, so
+// the memory is closed only after: a device that refuses the unref keeps
+// that memory, and the service stops rather than close it under the device.
+resource_release :: proc "contextless" (resource_id: u32) {
+	unref_written, unref_problem := virtio_gpu.resource_unref_encode(resource_id, request_buffer[:REQUEST_BUFFER_BYTES])
+	if unref_problem != .None {
+		fail("RESOURCE_UNREF was not encoded")
+	}
+	if _, ok := control_nodata("RESOURCE_UNREF", unref_written); !ok {
+		fail("the device refused RESOURCE_UNREF")
+	}
+}
+
 // attach_framebuffer binds a client memory object as a 2D scanout resource
 // via Resource_Create_2D -> Resource_Attach_Backing -> Set_Scanout.
 attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virtio_gpu.Service_Status, values: [7]u64) {
 	ATTACH :: u32(virtio_gpu.Service_Command.Attach_Framebuffer)
 	handle := system.Handle(command.values[0])
 	kind, rights, through := system.handle_state(handle, ring_memory)
+	// A handle that came through the ring belongs to the service now: each
+	// refusal closes it, and only the bound scanout keeps it.
+	kept := false
+	defer {
+		if through && !kept {
+			system.close(handle)
+		}
+	}
+	// A handle that did not come through the ring is one of the service:
+	// its kind and its rights say nothing of the client.
 	needed := system.Rights{.Read}
 	switch {
+	case !through:
+		return .No_Framebuffer, errors.ring_fail(ATTACH, .Absent, .Region, 1)
 	case kind != .Memory:
 		return .No_Framebuffer, errors.ring_fail(ATTACH, .Handle_Kind, .None, 1, i64(handle), i64(op.Object_Kind.Memory), i64(kind))
 	case !(needed <= rights):
 		return .No_Framebuffer, errors.ring_fail(ATTACH, .Handle_Rights, .None, 1, i64(handle), i64(transmute(u32)needed), i64(transmute(u32)rights))
-	case !through:
-		return .No_Framebuffer, errors.ring_fail(ATTACH, .Absent, .Region, 1)
 	}
 	if command.values[1] > u64(virtio_gpu.MAX_RESOURCE_DIMENSION) || command.values[2] > u64(virtio_gpu.MAX_RESOURCE_DIMENSION) {
 		return .Bad_Command, errors.ring_fail(ATTACH, .Too_Long, .None, 2, i64(min(max(command.values[1], command.values[2]), 1 << 62)), virtio_gpu.MAX_RESOURCE_DIMENSION)
@@ -523,18 +552,8 @@ attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virt
 		return .Out_Of_Range, errors.ring_fail(ATTACH, .Too_Small, .Bytes, 1, i64(region_bytes), i64(required_bytes))
 	}
 
-	// Release any previous 2D resource before creating the replacement scanout.
-	if framebuffer_resource_id != 0 {
-		if unref_written, unref_prob := virtio_gpu.resource_unref_encode(framebuffer_resource_id, request_buffer[:REQUEST_BUFFER_BYTES]); unref_prob == .None {
-			_, _ = control_nodata("RESOURCE_UNREF", unref_written)
-		}
-		if framebuffer_memory != 0 {
-			system.close(framebuffer_memory)
-		}
-		framebuffer_memory = 0
-		framebuffer_resource_id = 0
-	}
-
+	// The previous scanout stays on the screen and keeps its memory until
+	// the new one is bound: a refusal below leaves it as it was.
 	resource_id := next_resource_id
 	next_resource_id += 1
 	if next_resource_id == 0 {
@@ -557,9 +576,7 @@ attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virt
 		return .Bad_Command, errors.ring_fail(ATTACH, .Bad_Value, .None, 0, i64(attach_prob))
 	}
 	if _, ok := control_nodata("RESOURCE_ATTACH_BACKING", attach_bytes); !ok {
-		if unref_written, unref_prob := virtio_gpu.resource_unref_encode(resource_id, request_buffer[:REQUEST_BUFFER_BYTES]); unref_prob == .None {
-			_, _ = control_nodata("RESOURCE_UNREF", unref_written)
-		}
+		resource_release(resource_id)
 		return .Device_Error, errors.ring_fail(ATTACH, .Device, .None, 0)
 	}
 
@@ -567,15 +584,23 @@ attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virt
 	full_rect := virtio_gpu.Rect{x = 0, y = 0, width = width, height = height}
 	scanout_bytes, scanout_prob := virtio_gpu.set_scanout_encode(active_scanout_id, resource_id, full_rect, width, height, request_buffer[:REQUEST_BUFFER_BYTES])
 	if scanout_prob != .None {
+		resource_release(resource_id)
 		return .Bad_Command, errors.ring_fail(ATTACH, .Bad_Value, .None, 0, i64(scanout_prob))
 	}
 	if _, ok := control_nodata("SET_SCANOUT", scanout_bytes); !ok {
-		if unref_written, unref_prob := virtio_gpu.resource_unref_encode(resource_id, request_buffer[:REQUEST_BUFFER_BYTES]); unref_prob == .None {
-			_, _ = control_nodata("RESOURCE_UNREF", unref_written)
-		}
+		resource_release(resource_id)
 		return .Device_Error, errors.ring_fail(ATTACH, .Device, .None, 0)
 	}
 
+	// The new scanout is on the screen: the old resource leaves the device
+	// before its memory is closed.
+	if framebuffer_resource_id != 0 {
+		resource_release(framebuffer_resource_id)
+	}
+	if framebuffer_memory != 0 {
+		system.close(framebuffer_memory)
+	}
+	kept = true
 	framebuffer_memory = handle
 	framebuffer_physical = physical
 	framebuffer_size = region_bytes

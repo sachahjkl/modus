@@ -6,12 +6,9 @@
 //   - Memory_Copy_Range: zero-map kernel memory-object copy-out validator.
 //   - Endpoint_Rx_Table: per-endpoint isolated receive queue with enqueue,
 //     dequeue, and owner-bound registration/unregistration.
-//   - Tpm_Lockout_State & direction-separated session parameter framing.
 package serial_ring
 
 import "base:intrinsics"
-import "modus:contract/blake3"
-import "modus:contract/byte_order"
 
 SERIAL_RING_CAPACITY :: 4096
 
@@ -175,62 +172,4 @@ endpoint_rx_dequeue :: proc "contextless" (tbl: ^Endpoint_Rx_Table, owner_id: u6
 		}
 	}
 	return false
-}
-
-Tpm_Lockout_State :: enum u8 {
-	Ready         = 1,
-	Warning_Count = 2,
-	Locked_Out    = 3,
-}
-
-Session_Direction :: enum u8 {
-	Command  = 1,
-	Response = 2,
-}
-
-tpm_lockout_classify :: proc "contextless" (counter, max_tries: u32) -> Tpm_Lockout_State {
-	if max_tries == 0 || counter >= max_tries {
-		return .Locked_Out
-	}
-	if counter > 0 {
-		return .Warning_Count
-	}
-	return .Ready
-}
-
-// session_xor_mask applies a direction-separated keystream (distinct context
-// and swapped nonces between Command and Response, clearing all stack key
-// material before return). Real TPM 2.0 wire sessions replace the KDF with
-// TPM2 KDFa/AES-CFB per TPM 2.0 Part 1.
-session_xor_mask :: proc "contextless" (dir: Session_Direction, session_key, nonce_caller, nonce_tpm: [32]u8, payload: []u8) {
-	sk := session_key
-	nc := nonce_caller
-	nt := nonce_tpm
-	in_buf: [104]u8
-	copy(in_buf[0:32], sk[:])
-	if dir == .Command {
-		copy(in_buf[32:64], nc[:])
-		copy(in_buf[64:96], nt[:])
-	} else {
-		copy(in_buf[32:64], nt[:])
-		copy(in_buf[64:96], nc[:])
-	}
-	ctx := dir == .Command ? "modus session param cmd v2" : "modus session param rsp v2"
-	off := 0
-	ctr := u64(0)
-	for off < len(payload) {
-		byte_order.write_u64_little_endian(in_buf[:], 96, ctr)
-		ks := blake3.derive_key(ctx, in_buf[:])
-		chunk := min(32, len(payload) - off)
-		for i in 0 ..< chunk {
-			payload[off + i] ~= ks[i]
-		}
-		for i in 0 ..< len(ks) {
-			intrinsics.volatile_store(&ks[i], u8(0))
-		}
-		off += chunk
-		ctr += 1
-	}
-	for i in 0 ..< len(sk) { intrinsics.volatile_store(&sk[i], u8(0)) }
-	for i in 0 ..< len(in_buf) { intrinsics.volatile_store(&in_buf[i], u8(0)) }
 }

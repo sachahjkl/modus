@@ -56,6 +56,10 @@ The GPU device service probes the features `VIRGL`, `RESOURCE_BLOB` and `CONTEXT
 
 A client sends a Venus stream with `Venus_Submit`: a memory object, an offset and a length. The service copies the stream out of the client memory, decodes it whole with the decoder of `venus_vulkan`, and sends the copy in one `SUBMIT_3D`. The device then receives the bytes that the service checked, and a client that changes its memory after the check changes nothing. The decoder protects the service and the host from a malformed stream; it is not the trust boundary of the content, which stays the renderer ("The chosen form").
 
+The ring and the reply stream of the context belong to the service. A client stream holds rendering and resource commands only: `stream_validate_client` refuses the whole stream when it holds `vkCreateRingMESA`, `vkDestroyRingMESA`, `vkNotifyRingMESA`, `vkSetReplyCommandStreamMESA` or `vkSeekReplyCommandStreamMESA`, or a command with the reply flag. A client that sent them could point the renderer at the ring of the service, or make it write a reply over the replies of the service. So a client encodes its commands with no reply flag; the encoders that ask a reply by default take `{}` as their flags.
+
+A control request that the device does not answer within the hang bound stops the service: its descriptors stay with the device, so a later request on them could read the answer of this one. A 2D scanout is replaced in the order that keeps the screen: the new resource is created, given its memory and set on the scanout, then the old resource gets `RESOURCE_UNREF`, and only after the device took it does the service close the old memory. A device that refuses the unref keeps the memory as its backing, and the service stops rather than close that memory under the device.
+
 The service maps the blob in the host-visible region of the device, but no process maps that region yet: it needs the device mapping of the kernel with the cache type that `RESOURCE_MAP_BLOB` gives (step 2 of "The order"). Until then the service reports the cache type, the commands go through `SUBMIT_3D`, and no reply is read.
 
 ### The Vulkan objects
