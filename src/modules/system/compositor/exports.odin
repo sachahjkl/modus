@@ -403,3 +403,38 @@ open_context_menu_export :: proc "c" (x: i64, y: i64, error: ^errors.Error_Recor
 	desktop_context_menu_open(int(x), int(y))
 	return 1
 }
+
+// powerbox_pick_store opens the unforgeable trusted-display Store Picker dialog
+// for a requesting process (which never sees the store list) and returns the
+// request ID, or a negative number with an error record.
+//
+// **Grant**: the caller must **act for the principal**.
+@(export, link_name = "powerbox_pick_store")
+powerbox_pick_store_export :: proc "c" (process_name: ^string, mode: ^string, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	id := powerbox_prompt_open(.Store_Share, process_name^, mode^)
+	if id == 0 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
+	}
+	return i64(id)
+}
+
+// bar_position moves the desktop taskbar between Top (1), Bottom (2), Left (3),
+// and Right (4) and returns 1, or a negative number with an error record.
+//
+// **Grant**: the caller must **act for the principal**.
+@(export, link_name = "bar_position")
+bar_position_export :: proc "c" (pos_word: i64, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	pos, ok := desktop_shell.bar_position_of_word(u64(pos_word))
+	if pos_word <= 0 || !ok {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Counts, 1, pos_word)
+	}
+	desktop_bar_position = pos
+	damage_whole_screen()
+	return 1
+}

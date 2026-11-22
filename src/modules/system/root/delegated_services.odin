@@ -39,8 +39,19 @@ Delegated_Service_Slot :: struct {
 	stop_count:  u64,
 }
 
+STOP_NOTICE_RING_CAPACITY :: 32
+
+Delegated_Stop_Notice :: struct {
+	sequence: u64,
+	role:     role_contract.Role,
+	time_ms:  u64,
+	decision: console_prompt.Restart_Decision,
+}
+
 delegated_services: [Delegated_Kind]Delegated_Service_Slot
 delegated_services_ready: bool
+delegated_stop_notices: [STOP_NOTICE_RING_CAPACITY]Delegated_Stop_Notice
+delegated_stop_sequence: u64
 
 delegated_services_init :: proc "contextless" () {
 	if delegated_services_ready {
@@ -77,7 +88,15 @@ delegated_service_on_stop :: proc "contextless" (module_name: string, now_ms: u6
 		if is_role_holder(module_name, role) {
 			slot := &delegated_services[kind]
 			slot.stop_count += 1
-			return true, console_prompt.supervision_on_row_stop(&slot.supervision, now_ms, machine_usable)
+			dec := console_prompt.supervision_on_row_stop(&slot.supervision, now_ms, machine_usable)
+			delegated_stop_sequence += 1
+			delegated_stop_notices[delegated_stop_sequence % STOP_NOTICE_RING_CAPACITY] = {
+				sequence = delegated_stop_sequence,
+				role     = role,
+				time_ms  = now_ms,
+				decision = dec,
+			}
+			return true, dec
 		}
 	}
 	return false, .Leave_Stopped
