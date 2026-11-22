@@ -822,9 +822,10 @@ semantic_tree_audit_nodes :: proc "contextless" (tree: ^Semantic_Tree, findings:
 	return min(total, len(findings)), total
 }
 
-// semantic_tree_audit extracts the semantic tree from a draw table and audits
-// both structural integrity and accessibility invariants in one call.
-semantic_tree_audit :: proc "contextless" (records: []draw_record.Draw_Record, byte_table: []u8, tree: ^Semantic_Tree, findings: []Audit_Finding) -> (written: int, total: int) {
+// semantic_tree_audit_into extracts the semantic tree from a draw table and
+// audits both structural integrity and accessibility invariants into caller-
+// provided storage.
+semantic_tree_audit_into :: proc "contextless" (records: []draw_record.Draw_Record, byte_table: []u8, tree: ^Semantic_Tree, findings: []Audit_Finding) -> (written: int, total: int) {
 	refusal, problem_index := semantic_tree_extract(records, byte_table, tree)
 	if refusal != .None {
 		audit_finding_emit(findings, &total, {
