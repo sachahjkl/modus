@@ -920,8 +920,18 @@ Do not use: log file, bucket, partition.
 
 An audit space is a collector space that keeps each record and removes none: append-only, in the store of the collector of the principal of the starter.
 
-A full audit space holds its writer, which waits, in place of a loss. Each segment starts with the BLAKE3 hash of the segment before it, so a removal or a change shows when `collector.verify` walks the chain. The source of the space can neither read it nor erase it, and cannot end its wiring; only the principal ends the space whole. It proves each record that its source wrote or received through the collector, not that its source wrote a record for each act.
+A full audit space holds its writer, which waits, in place of a loss. Each audit segment holds the BLAKE3 hash of the audit segment before it, so a removal or a change shows when `collector.verify` walks the chain. The source of the space can neither read it nor erase it, and cannot end its wiring; only the principal ends the space whole. It proves each record that its source wrote or received through the collector, not that its source wrote a record for each act.
 
 The design: `src/md/features/module_outputs.md`, "The audit".
 
 Do not use: audit log, journal (for this), trail.
+
+### Audit segment
+
+An audit segment is one object of the private store of the collector that holds 16 records of one audit space, in the order of their serials.
+
+The collector writes the open audit segment again with each new record, before it keeps or forwards that record; an audit segment of 16 records is closed and never written again. Each one holds the hash of the audit segment before it and its own hash, so a start of the collector refuses a changed, moved or missing one with `Store_Damaged`. It is not a TCP segment.
+
+The design: `src/md/features/module_outputs.md`, "The audit segments in the store".
+
+Do not use: segment (alone, for this), chunk, page (for this), log file.

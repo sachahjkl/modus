@@ -5,10 +5,27 @@ package collector_service
 
 FAILURE_FIELD_BYTES :: 96
 
-@(log_fact = "collector: ready for principal {principal_id}, act capacity {act_capacity}")
+@(log_fact = "collector: ready for principal {principal_id}, act capacity {act_capacity}, store {store}")
 Service_Ready :: struct {
 	principal_id: u64,
 	act_capacity: u64,
+	store:        u64,
+}
+
+// The audit spaces that a start read back from the private store, each
+// segment checked.
+@(log_fact = "collector: read {spaces} audit spaces with {records} records from its store")
+Spaces_Loaded :: struct {
+	spaces:  u64,
+	records: u64,
+}
+
+// A start found a damaged object of its audit spaces: each step of a space
+// is refused until the store is repaired, so no part of an audit is served
+// as the whole. Space 0 is the index of the spaces.
+@(log_fact = "collector: the audit spaces in its store are damaged at space {space}")
+Spaces_Store_Damaged :: struct {
+	space: u64,
 }
 
 @(log_fact = "collector: {failure}")

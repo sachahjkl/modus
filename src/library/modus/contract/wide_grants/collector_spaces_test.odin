@@ -2,6 +2,16 @@
 package wide_grants
 
 import "core:testing"
+import pr "modus:contract/plans_recipes"
+
+// memory_store_bind empties store for principal over a new private store in
+// memory, which the caller frees.
+@(private = "file")
+memory_store_bind :: proc(store: ^Space_Store, principal: u64) -> ^pr.Memory_Private_Store {
+	memory := new(pr.Memory_Private_Store)
+	space_store_init(store, principal, pr.memory_private_store_port(memory))
+	return memory
+}
 
 @(private = "file")
 audit_terms :: proc(bound: i64, record_size: i64 = 8, forwarding := Space_Forwarding.Keeps) -> Space_Terms {
@@ -35,7 +45,8 @@ principal_reader :: proc(principal: u64, name: string) -> (reader: Space_Reader)
 space_open_refuses_each_bad_term :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
-	space_store_init(store, 0)
+	memory := memory_store_bind(store, 0)
+	defer free(memory)
 
 	long_name: [SPACE_NAME_BYTES]u8
 	for &value in long_name {
@@ -77,7 +88,8 @@ space_open_refuses_each_bad_term :: proc(t: ^testing.T) {
 space_open_keeps_one_space_for_one_pair_and_bounds_the_room :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
-	space_store_init(store, 0)
+	memory := memory_store_bind(store, 0)
+	defer free(memory)
 
 	first, refusal := space_open(store, text("server"), text("orders"), audit_terms(4))
 	testing.expect_value(t, refusal, Space_Refusal.None)
@@ -115,7 +127,8 @@ space_open_keeps_one_space_for_one_pair_and_bounds_the_room :: proc(t: ^testing.
 space_open_refuses_past_its_places :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
-	space_store_init(store, 0)
+	memory := memory_store_bind(store, 0)
+	defer free(memory)
 	name: [2]u8 = {'s', 'a'}
 	for index in 0 ..< SPACE_CAPACITY {
 		name[1] = 'a' + u8(index)
@@ -131,7 +144,8 @@ space_open_refuses_past_its_places :: proc(t: ^testing.T) {
 record_append_refuses_unknown_spaces_and_wrong_sizes :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
-	space_store_init(store, 0)
+	memory := memory_store_bind(store, 0)
+	defer free(memory)
 	space, _ := space_open(store, text("server"), text("orders"), audit_terms(4))
 	record := record_of(1)
 	for number in ([?]u32{0, 2, SPACE_CAPACITY, SPACE_CAPACITY + 1, max(u32)}) {
@@ -152,7 +166,8 @@ record_append_refuses_unknown_spaces_and_wrong_sizes :: proc(t: ^testing.T) {
 a_full_audit_space_refuses_and_changes_nothing :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
-	space_store_init(store, 0)
+	memory := memory_store_bind(store, 0)
+	defer free(memory)
 	space, _ := space_open(store, text("server"), text("orders"), audit_terms(2))
 	for value in u8(0) ..< 2 {
 		record := record_of(value)
@@ -179,7 +194,8 @@ a_full_audit_space_refuses_and_changes_nothing :: proc(t: ^testing.T) {
 a_full_keep_space_thins_its_oldest_record_and_counts_it :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
-	space_store_init(store, 0)
+	memory := memory_store_bind(store, 0)
+	defer free(memory)
 	space, _ := space_open(store, text("server"), text("orders"), keep_terms(2))
 	for value in u8(0) ..< 5 {
 		record := record_of(value)
@@ -207,7 +223,8 @@ a_full_keep_space_thins_its_oldest_record_and_counts_it :: proc(t: ^testing.T) {
 a_forwarded_record_is_kept_first_and_a_full_queue_holds_the_writer :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
-	space_store_init(store, 0)
+	memory := memory_store_bind(store, 0)
+	defer free(memory)
 	space, _ := space_open(store, text("shop"), text("orders"), keep_terms(SPACE_RECORDS_MOST, 8, .Forward))
 	_, refusal := forward_peek(store)
 	testing.expect_value(t, refusal, Space_Refusal.Forward_Empty)
@@ -247,7 +264,8 @@ a_forwarded_record_is_kept_first_and_a_full_queue_holds_the_writer :: proc(t: ^t
 a_space_that_keeps_only_forwards_nothing :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
-	space_store_init(store, 0)
+	memory := memory_store_bind(store, 0)
+	defer free(memory)
 	space, _ := space_open(store, text("server"), text("log"), audit_terms(4))
 	record := record_of(1)
 	_, refusal := record_append(store, space, record[:], 1)
@@ -260,7 +278,8 @@ a_space_that_keeps_only_forwards_nothing :: proc(t: ^testing.T) {
 records_read_serves_the_principal_and_never_the_source :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
-	space_store_init(store, 3)
+	memory := memory_store_bind(store, 3)
+	defer free(memory)
 	space, _ := space_open(store, text("server"), text("orders"), audit_terms(4))
 	for value in u8(0) ..< 3 {
 		record := record_of(value)
@@ -324,7 +343,8 @@ records_read_serves_the_principal_and_never_the_source :: proc(t: ^testing.T) {
 space_verify_finds_a_changed_record_and_a_changed_last_link :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
-	space_store_init(store, 0)
+	memory := memory_store_bind(store, 0)
+	defer free(memory)
 	space, _ := space_open(store, text("server"), text("orders"), audit_terms(8))
 	for value in u8(0) ..< 4 {
 		record := record_of(value)
@@ -378,7 +398,8 @@ space_forwarding_border_refuses_unknown_words :: proc(t: ^testing.T) {
 space_rows_give_the_counts_of_each_space :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
-	space_store_init(store, 0)
+	memory := memory_store_bind(store, 0)
+	defer free(memory)
 	space, _ := space_open(store, text("server"), text("orders"), keep_terms(1))
 	for value in u8(0) ..< 3 {
 		record := record_of(value)
@@ -397,7 +418,8 @@ space_rows_give_the_counts_of_each_space :: proc(t: ^testing.T) {
 records_read_refuses_each_limit_out_of_its_bound :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
-	space_store_init(store, 0)
+	memory := memory_store_bind(store, 0)
+	defer free(memory)
 	space, _ := space_open(store, text("server"), text("orders"), audit_terms(8))
 	for value in u8(0) ..< 5 {
 		record := record_of(value)
@@ -430,7 +452,8 @@ records_read_refuses_each_limit_out_of_its_bound :: proc(t: ^testing.T) {
 space_rows_and_space_stats_hide_a_space_from_its_source :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
-	space_store_init(store, 2)
+	memory := memory_store_bind(store, 2)
+	defer free(memory)
 	server_space, _ := space_open(store, text("server"), text("orders"), audit_terms(4))
 	shop_space, _ := space_open(store, text("shop"), text("orders"), audit_terms(4))
 	record := record_of(7)
@@ -483,7 +506,8 @@ space_rows_and_space_stats_hide_a_space_from_its_source :: proc(t: ^testing.T) {
 space_open_allowed_refuses_the_source_and_a_stranger :: proc(t: ^testing.T) {
 	store := new(Space_Store)
 	defer free(store)
-	space_store_init(store, 5)
+	memory := memory_store_bind(store, 5)
+	defer free(memory)
 	source := principal_reader(5, "server")
 	testing.expect_value(t, space_open_allowed(store, text("server"), &source), Space_Refusal.Own_Space)
 	testing.expect_value(t, space_open_allowed(store, text("shop"), &source), Space_Refusal.None)

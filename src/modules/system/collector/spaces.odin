@@ -8,6 +8,12 @@
 // each caller, so a source cannot read, list or set the terms of its own
 // audit. No export removes a record or ends a space.
 //
+// The audit spaces live in the private store of the collector, as segments
+// chained by their hash (modus:contract/wide_grants, collector_segments.odin):
+// a record of an audit space is in the store before the call returns its
+// serial and before the forward queue takes it, and a start of the
+// collector reads each space back and checks each segment.
+//
 // Each export reads the connection of its call, then hands it to a
 // procedure that takes the state of the spaces and the connection as
 // arguments: the host tests drive those procedures with the connections of
@@ -25,6 +31,7 @@ ERROR_NO_CALLER :: i64(-1) // No_Grant, Connection: the call came through no con
 ERROR_NOT_PRINCIPAL :: i64(-2) // No_Grant, Acts_For_Principal: the caller does not act for the principal of the collector, or is the source of the space.
 ERROR_SPACE :: i64(-3) // The space refuses the step: the value found is the Space_Refusal.
 ERROR_FULL :: i64(-4) // Full, Records: the space or the forward queue is full; the writer sends the record again.
+ERROR_STORE :: i64(-5) // Device or Damaged, Store: the private store refused a read or a write, or holds a damaged space.
 
 // The spaces of this collector, and the places where a call is copied
 // once out of the call region.
@@ -78,6 +85,10 @@ space_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, refusal: 
 		return errors.fail(error, ERROR_NOT_PRINCIPAL, .No_Grant, .Acts_For_Principal, argument, 0, 0, found)
 	case .Chain_Broken:
 		return errors.fail(error, ERROR_SPACE, .Damaged, .Records, argument, 0, 0, found)
+	case .Store_Failed:
+		return errors.fail(error, ERROR_STORE, .Device, .Store, argument, 0, 0, found)
+	case .Store_Damaged:
+		return errors.fail(error, ERROR_STORE, .Damaged, .Store, argument, 0, 0, found)
 	case .None, .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Bad_Name, .Bad_Record_Size, .Wrong_Size:
 		return errors.fail(error, ERROR_SPACE, .Bad_Value, .None, argument, 0, 0, found)
 	}
@@ -183,9 +194,12 @@ record_append_for :: proc "contextless" (service: ^Space_Service, connection: ^s
 // and keeps nothing: its writer waits and sends it again, so no record is
 // lost.
 //
+// A record of an audit space is written into its segment in the private
+// store first: a refused write keeps nothing and forwards nothing.
+//
 // The result is the serial of the record in its space, or a negative number
-// with an error record: ERROR_NO_CALLER, ERROR_NOT_PRINCIPAL, ERROR_FULL, or
-// ERROR_SPACE with the refusal as the value found.
+// with an error record: ERROR_NO_CALLER, ERROR_NOT_PRINCIPAL, ERROR_FULL,
+// ERROR_STORE, or ERROR_SPACE with the refusal as the value found.
 @(export, link_name = "record_append")
 record_append :: proc "c" (space: i64, record: ^system.Bytes_To_Read, error: ^errors.Error_Record) -> i64 {
 	result := record_append_for(&space_service, system.service_caller(), space, record, system.time(), error)
@@ -316,6 +330,7 @@ space_verify_for :: proc "contextless" (service: ^Space_Service, connection: ^sy
 		return space_refusal_fail(error, .Unknown_Space, 1)
 	}
 	refusal, failing_serial := wide_grants.space_verify(&service.store, u32(space))
+	// A link that breaks is the one refusal with a serial as its value.
 	if refusal == .Chain_Broken {
 		return errors.fail(error, ERROR_SPACE, .Damaged, .Records, 1, i64(min(failing_serial, u64(max(i64)))), 0, i64(refusal))
 	}
@@ -325,30 +340,47 @@ space_verify_for :: proc "contextless" (service: ^Space_Service, connection: ^sy
 	return 0
 }
 
-// space_verify walks the chain of an audit space.
+// space_verify walks the chain of an audit space in memory, then reads each
+// of its segments back from the private store and compares it.
 //
 // The result is 0, or a negative number with an error record:
-// ERROR_NO_CALLER, ERROR_NOT_PRINCIPAL, or ERROR_SPACE with Chain_Broken as
-// the value found and the serial of the first broken link as the value.
+// ERROR_NO_CALLER, ERROR_NOT_PRINCIPAL, ERROR_STORE, or ERROR_SPACE with
+// Chain_Broken as the value found and the serial of the first broken link,
+// or the first serial of the first segment that does not match, as the
+// value.
 @(export, link_name = "space_verify")
 space_verify :: proc "c" (space: i64, error: ^errors.Error_Record) -> i64 {
 	return space_verify_for(&space_service, system.service_caller(), space, error)
 }
 
+source_count_for :: proc "contextless" (service: ^Space_Service, connection: ^system.Connection, error: ^errors.Error_Record) -> i64 {
+	if _, failure, ok := principal_reader_of(service.store.principal, connection, error); !ok {
+		return failure
+	}
+	if ready := wide_grants.space_store_ready(&service.store); ready != .None {
+		return space_refusal_fail(error, ready, 0)
+	}
+	return i64(wide_grants.source_count(&service.store))
+}
+
 // source_count gives the sources that have a space.
 @(export, link_name = "source_count")
 source_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
-	if _, failure, ok := principal_reader_of(space_service.store.principal, system.service_caller(), error); !ok {
+	return source_count_for(&space_service, system.service_caller(), error)
+}
+
+record_count_for :: proc "contextless" (service: ^Space_Service, connection: ^system.Connection, error: ^errors.Error_Record) -> i64 {
+	if _, failure, ok := principal_reader_of(service.store.principal, connection, error); !ok {
 		return failure
 	}
-	return i64(wide_grants.source_count(&space_service.store))
+	if ready := wide_grants.space_store_ready(&service.store); ready != .None {
+		return space_refusal_fail(error, ready, 0)
+	}
+	return i64(min(wide_grants.kept_record_count(&service.store), u64(max(i64))))
 }
 
 // record_count gives the records that the spaces keep now.
 @(export, link_name = "record_count")
 record_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
-	if _, failure, ok := principal_reader_of(space_service.store.principal, system.service_caller(), error); !ok {
-		return failure
-	}
-	return i64(min(wide_grants.kept_record_count(&space_service.store), u64(max(i64))))
+	return record_count_for(&space_service, system.service_caller(), error)
 }

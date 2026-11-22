@@ -6,6 +6,7 @@ import "core:testing"
 import "internal:collector/collector_core"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import pr "modus:contract/plans_recipes"
 import "modus:contract/wide_grants"
 import "modus:system"
 
@@ -27,11 +28,31 @@ connection_of :: proc(principal: u64, acts_for_principal: bool, name: string) ->
 	return connection
 }
 
+// A service and the private store in memory under it. A restart is a new
+// service over the same memory.
 @(private = "file")
-service_make :: proc() -> ^Space_Service {
-	service := new(Space_Service)
-	wide_grants.space_store_init(&service.store, PRINCIPAL)
-	return service
+Service_Fixture :: struct {
+	memory:  pr.Memory_Private_Store,
+	service: Space_Service,
+}
+
+@(private = "file")
+fixture_make :: proc() -> ^Service_Fixture {
+	fixture := new(Service_Fixture)
+	fixture.memory.writes_allowed = -1
+	fixture_restart(fixture)
+	return fixture
+}
+
+// fixture_restart starts the service again over the same store, with the
+// bound of its writes as it was.
+@(private = "file")
+fixture_restart :: proc(fixture: ^Service_Fixture) {
+	writes_allowed := fixture.memory.writes_allowed
+	port := pr.memory_private_store_port(&fixture.memory)
+	fixture.memory.writes_allowed = writes_allowed
+	fixture.service = {}
+	wide_grants.space_store_init(&fixture.service.store, PRINCIPAL, port)
 }
 
 @(private = "file")
@@ -77,8 +98,9 @@ read_all :: proc(service: ^Space_Service, connection: ^system.Connection, space:
 // open and write nothing: No_Grant with its unit, and nothing changes.
 @(test)
 a_wrong_principal_reads_and_lists_nothing :: proc(t: ^testing.T) {
-	service := service_make()
-	defer free(service)
+	fixture := fixture_make()
+	defer free(fixture)
+	service := &fixture.service
 	space := open_space(t, service, "server", "orders", terms_of(.Audit, 4))
 	console := connection_of(PRINCIPAL, true, "console")
 	error: errors.Error_Record
@@ -131,8 +153,9 @@ a_wrong_principal_reads_and_lists_nothing :: proc(t: ^testing.T) {
 // keeps each record through each try.
 @(test)
 a_source_never_reads_or_erases_its_own_audit :: proc(t: ^testing.T) {
-	service := service_make()
-	defer free(service)
+	fixture := fixture_make()
+	defer free(fixture)
+	service := &fixture.service
 	space := open_space(t, service, "server", "orders", terms_of(.Audit, 4))
 	other := open_space(t, service, "shop", "orders", terms_of(.Audit, 4))
 	console := connection_of(PRINCIPAL, true, "console")
@@ -184,8 +207,9 @@ a_source_never_reads_or_erases_its_own_audit :: proc(t: ^testing.T) {
 // exist is refused; a changed record breaks the chain.
 @(test)
 an_audit_space_holds_its_bound_and_refuses_each_bad_record :: proc(t: ^testing.T) {
-	service := service_make()
-	defer free(service)
+	fixture := fixture_make()
+	defer free(fixture)
+	service := &fixture.service
 	console := connection_of(PRINCIPAL, true, "console")
 	error: errors.Error_Record
 
@@ -261,8 +285,9 @@ an_audit_space_holds_its_bound_and_refuses_each_bad_record :: proc(t: ^testing.T
 // and a record that the space refuses never reaches the queue.
 @(test)
 a_record_is_kept_before_it_is_forwarded :: proc(t: ^testing.T) {
-	service := service_make()
-	defer free(service)
+	fixture := fixture_make()
+	defer free(fixture)
+	service := &fixture.service
 	console := connection_of(PRINCIPAL, true, "console")
 	error: errors.Error_Record
 	space := open_space(t, service, "shop", "orders", terms_of(.Audit, wide_grants.SPACE_RECORDS_MOST, .Forward))
@@ -401,4 +426,139 @@ act_records_are_refused_when_malformed_and_read_by_the_principal_only :: proc(t:
 	testing.expect_value(t, act_records_read_for(manager, PRINCIPAL, &console, 0, 0, max(i64), &small, staging[:], &error), i64(6))
 	testing.expect_value(t, small.count, u64(2))
 	testing.expect_value(t, place[1].sequence_number, u64(1))
+}
+
+// The records of an audit space that the collector kept, across several
+// segments, are each there after a start of the collector over the same
+// store, with their serials and their chain; the next record takes the next
+// serial; the source and a stranger still read nothing of the space.
+@(test)
+an_audit_space_survives_a_restart_of_the_collector :: proc(t: ^testing.T) {
+	fixture := fixture_make()
+	defer free(fixture)
+	service := &fixture.service
+	console := connection_of(PRINCIPAL, true, "console")
+	error: errors.Error_Record
+	space := open_space(t, service, "server", "orders", terms_of(.Audit, wide_grants.SPACE_RECORDS_MOST))
+	kept := u8(wide_grants.SPACE_SEGMENT_RECORDS * 2 + 3)
+	for value in u8(0) ..< kept {
+		testing.expect_value(t, append_value(service, &console, space, value, &error), i64(value))
+	}
+	last_hash := wide_grants.space_of(&service.store, u32(space)).last_hash
+
+	fixture_restart(fixture)
+	heads: [wide_grants.SPACE_RECORDS_MOST]wide_grants.Kept_Record_Head
+	bytes: [wide_grants.SPACE_RECORDS_MOST * 8]u8
+	testing.expect_value(t, read_all(service, &console, space, heads[:], bytes[:], &error), i64(kept))
+	for value in u8(0) ..< kept {
+		testing.expect_value(t, heads[value].serial, i64(value))
+		testing.expect_value(t, heads[value].time_ms, i64(100 + int(value)))
+		testing.expect_value(t, bytes[int(value) * 8], value)
+	}
+	testing.expect(t, wide_grants.space_of(&service.store, u32(space)).last_hash == last_hash, "the last link changed at the restart")
+	testing.expect_value(t, space_verify_for(service, &console, space, &error), i64(0))
+	testing.expect_value(t, record_count_for(service, &console, &error), i64(kept))
+	testing.expect_value(t, source_count_for(service, &console, &error), i64(1))
+	testing.expect_value(t, append_value(service, &console, space, kept, &error), i64(kept))
+
+	source := connection_of(PRINCIPAL, true, "server")
+	stranger := connection_of(PRINCIPAL + 1, true, "console")
+	for caller in ([?]^system.Connection{&source, &stranger}) {
+		other_heads: [4]wide_grants.Kept_Record_Head
+		other_bytes: [32]u8
+		error = {}
+		expect_refusal(t, read_all(service, caller, space, other_heads[:], other_bytes[:], &error), ERROR_NOT_PRINCIPAL, error, .No_Grant, .Acts_For_Principal)
+		testing.expect(t, other_heads == {} && other_bytes == {}, "a refused caller read the audit after the restart")
+		row: wide_grants.Space_Row
+		error = {}
+		expect_refusal(t, space_stats_for(service, caller, space, &row, &error), ERROR_NOT_PRINCIPAL, error, .No_Grant, .Acts_For_Principal)
+		testing.expect(t, row == {}, "a refused caller read the state of the audit after the restart")
+	}
+}
+
+// One changed bit in a stored segment refuses each export of the spaces
+// after a start, with Damaged of the unit Store, and serves no record.
+@(test)
+a_damaged_segment_refuses_each_export_after_a_restart :: proc(t: ^testing.T) {
+	fixture := fixture_make()
+	defer free(fixture)
+	service := &fixture.service
+	console := connection_of(PRINCIPAL, true, "console")
+	error: errors.Error_Record
+	space := open_space(t, service, "server", "orders", terms_of(.Audit, wide_grants.SPACE_RECORDS_MOST))
+	for value in u8(0) ..< wide_grants.SPACE_SEGMENT_RECORDS + 1 {
+		testing.expect_value(t, append_value(service, &console, space, value, &error), i64(value))
+	}
+	name_place: [wide_grants.SEGMENT_OBJECT_NAME_BYTES]u8
+	places := [?]int{wide_grants.SEGMENT_SPACE_AT, wide_grants.SEGMENT_FIRST_SERIAL_AT, wide_grants.SEGMENT_PREVIOUS_HASH_AT, wide_grants.SEGMENT_HEAD_BYTES + wide_grants.SEGMENT_RECORD_HEAD_BYTES}
+	for segment in u32(0) ..< 2 {
+		object := pr.memory_private_store_find(&fixture.memory, wide_grants.segment_object_name(&name_place, u32(space), segment))
+		testing.expect(t, object != nil, "a segment is missing")
+		for place in places {
+			object.bytes[place] ~= 0x10
+			fixture_restart(fixture)
+			heads: [4]wide_grants.Kept_Record_Head
+			bytes: [32]u8
+			error = {}
+			expect_refusal(t, read_all(service, &console, space, heads[:], bytes[:], &error), ERROR_STORE, error, .Damaged, .Store)
+			testing.expect_value(t, error.found, i64(wide_grants.Space_Refusal.Store_Damaged))
+			testing.expect(t, heads == {} && bytes == {}, "a damaged store served a record")
+			error = {}
+			expect_refusal(t, append_value(service, &console, space, 1, &error), ERROR_STORE, error, .Damaged, .Store)
+			error = {}
+			expect_refusal(t, space_verify_for(service, &console, space, &error), ERROR_STORE, error, .Damaged, .Store)
+			error = {}
+			expect_refusal(t, record_count_for(service, &console, &error), ERROR_STORE, error, .Damaged, .Store)
+			rows: [wide_grants.SPACE_CAPACITY]wide_grants.Space_Row
+			row_slice := rows[:]
+			error = {}
+			expect_refusal(t, spaces_for(service, &console, &row_slice, &error), ERROR_STORE, error, .Damaged, .Store)
+			source_text, output_text, terms := "shop", "log", terms_of(.Audit, 4)
+			error = {}
+			expect_refusal(t, space_open_for(service, &console, &source_text, &output_text, &terms, &error), ERROR_STORE, error, .Damaged, .Store)
+			object.bytes[place] ~= 0x10
+		}
+	}
+	fixture_restart(fixture)
+	testing.expect_value(t, space_verify_for(service, &console, space, &error), i64(0))
+}
+
+// A write that the store refuses returns Device of the unit Store: the
+// space keeps nothing, the forward queue takes nothing, and the writer
+// sends the record again with the same serial. A collector with no store
+// keeps no audit space.
+@(test)
+a_refused_store_write_keeps_and_forwards_nothing :: proc(t: ^testing.T) {
+	fixture := fixture_make()
+	defer free(fixture)
+	service := &fixture.service
+	console := connection_of(PRINCIPAL, true, "console")
+	error: errors.Error_Record
+	space := open_space(t, service, "shop", "orders", terms_of(.Audit, wide_grants.SPACE_RECORDS_MOST, .Forward))
+	testing.expect_value(t, append_value(service, &console, space, 0, &error), i64(0))
+	testing.expect_value(t, wide_grants.forward_done(&service.store), wide_grants.Space_Refusal.None)
+	held := wide_grants.space_of(&service.store, u32(space))
+	snapshot := held^
+
+	fixture.memory.writes_allowed = fixture.memory.writes
+	error = {}
+	expect_refusal(t, append_value(service, &console, space, 1, &error), ERROR_STORE, error, .Device, .Store)
+	testing.expect_value(t, error.found, i64(wide_grants.Space_Refusal.Store_Failed))
+	testing.expect(t, held^ == snapshot, "a refused write changed the space")
+	_, refusal := wide_grants.forward_peek(&service.store)
+	testing.expect_value(t, refusal, wide_grants.Space_Refusal.Forward_Empty)
+
+	fixture.memory.writes_allowed = -1
+	testing.expect_value(t, append_value(service, &console, space, 1, &error), i64(1))
+	item, queued := wide_grants.forward_peek(&service.store)
+	testing.expect_value(t, queued, wide_grants.Space_Refusal.None)
+	testing.expect_value(t, item.serial, u64(1))
+
+	no_store := new(Space_Service)
+	defer free(no_store)
+	wide_grants.space_store_init(&no_store.store, PRINCIPAL, {})
+	source_text, output_text, terms := "server", "orders", terms_of(.Audit, 4)
+	error = {}
+	expect_refusal(t, space_open_for(no_store, &console, &source_text, &output_text, &terms, &error), ERROR_STORE, error, .Device, .Store)
+	testing.expect_value(t, wide_grants.space_count(&no_store.store), 0)
 }

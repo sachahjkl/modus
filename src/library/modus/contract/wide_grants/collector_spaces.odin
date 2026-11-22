@@ -11,13 +11,15 @@
 // never forwards a record that it did not keep, and never drops one in
 // silence.
 //
-// The store is pure: its caller gives each time and each identity, and the
-// store calls no kernel operation and allocates no memory.
+// The store calls no kernel operation and allocates no memory: its caller
+// gives each time and each identity, and the port of its private store, the
+// one way to the store of the collector (collector_segments.odin).
 package wide_grants
 
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/enum_word"
+import pr "modus:contract/plans_recipes"
 import "modus:contract/value_kinds"
 
 // The spaces that one collector holds at once.
@@ -69,6 +71,8 @@ Space_Refusal :: enum u8 {
 	Chain_Broken        = 14,
 	Forward_Empty       = 15,
 	Bad_Limit           = 16,
+	Store_Failed        = 17, // The private store refused a read or a write: nothing changed.
+	Store_Damaged       = 18, // An object of the private store does not decode, or breaks its chain.
 }
 
 // The terms of a space, as space_open takes them: the kind (Keep or Audit),
@@ -121,24 +125,25 @@ Space_Reader :: struct {
 
 // One space.
 Collector_Space :: struct {
-	active:       bool,
-	kind:         Collector_Space_Kind,
-	forwarding:   Space_Forwarding,
-	bound:        u32,
-	record_size:  u32,
-	source:       [SPACE_NAME_BYTES]u8,
-	output:       [SPACE_NAME_BYTES]u8,
-	first:        u32, // The place of the oldest record in the ring of the space.
-	count:        u32,
-	next_serial:  u64,
-	removed:      u64,
-	refused_full: u64,
-	forwarded:    u64,
-	last_hash:    blake3.Hash,
-	serials:      [SPACE_RECORDS_MOST]u64,
-	times:        [SPACE_RECORDS_MOST]u64,
-	hashes:       [SPACE_RECORDS_MOST]blake3.Hash,
-	bytes:        [SPACE_RECORDS_MOST * SPACE_RECORD_BYTES_MOST]u8,
+	active:         bool,
+	kind:           Collector_Space_Kind,
+	forwarding:     Space_Forwarding,
+	bound:          u32,
+	record_size:    u32,
+	source:         [SPACE_NAME_BYTES]u8,
+	output:         [SPACE_NAME_BYTES]u8,
+	first:          u32, // The place of the oldest record in the ring of the space.
+	count:          u32,
+	next_serial:    u64,
+	removed:        u64,
+	refused_full:   u64,
+	forwarded:      u64,
+	last_hash:      blake3.Hash,
+	segment_hashes: [SPACE_SEGMENTS_MOST]blake3.Hash, // The hash of each audit segment in the private store.
+	serials:        [SPACE_RECORDS_MOST]u64,
+	times:          [SPACE_RECORDS_MOST]u64,
+	hashes:         [SPACE_RECORDS_MOST]blake3.Hash,
+	bytes:          [SPACE_RECORDS_MOST * SPACE_RECORD_BYTES_MOST]u8,
 }
 
 // One record that waits to be forwarded: a copy, so a space Keep that
@@ -150,13 +155,19 @@ Forward_Item :: struct {
 	bytes:  [SPACE_RECORD_BYTES_MOST]u8,
 }
 
-// The spaces of one collector, for its principal.
+// The spaces of one collector, for its principal, and the port of the
+// private store that keeps its audit spaces.
 Space_Store :: struct {
 	principal:     u64,
+	store_port:    pr.Private_Store_Port,
+	load_state:    Space_Load_State,
+	damaged_space: u32, // The space whose objects were damaged at the read, from 1; 0 for the index.
 	spaces:        [SPACE_CAPACITY]Collector_Space,
 	forward_first: u32,
 	forward_count: u32,
 	forward:       [FORWARD_QUEUE_CAPACITY]Forward_Item,
+	segment_bytes: [SEGMENT_BYTES_MOST]u8,
+	index_bytes:   [SPACE_INDEX_BYTES_MOST]u8,
 }
 
 // space_forwarding_of_word is the border of the forwarding word of terms.
@@ -168,10 +179,12 @@ space_forwarding_of_word :: proc "contextless" (word: u64) -> (forwarding: Space
 	return member, true
 }
 
-// space_store_init empties store for principal.
-space_store_init :: proc "contextless" (store: ^Space_Store, principal: u64) {
+// space_store_init empties store for principal, over the private store of
+// store_port. The audit spaces come back from that store at the first step.
+space_store_init :: proc "contextless" (store: ^Space_Store, principal: u64, store_port: pr.Private_Store_Port) {
 	store^ = {}
 	store.principal = principal
+	store.store_port = store_port
 }
 
 @(private = "file")
@@ -217,6 +230,9 @@ space_room_left :: proc "contextless" (store: ^Space_Store) -> u32 {
 // the same record size and the same terms gives that space; a pair whose
 // record size changed gets a new space, and the old one stays.
 space_open :: proc "contextless" (store: ^Space_Store, source, output: []u8, terms: Space_Terms) -> (space_number: u32, refusal: Space_Refusal) {
+	if ready := space_store_ready(store); ready != .None {
+		return 0, ready
+	}
 	if !name_valid(source) || !name_valid(output) {
 		return 0, .Bad_Name
 	}
@@ -271,6 +287,14 @@ space_open :: proc "contextless" (store: ^Space_Store, source, output: []u8, ter
 	space.record_size = record_size
 	copy(space.source[:], source)
 	copy(space.output[:], output)
+	if kind == .Audit {
+		// The index names the space before its first record, so a stop after
+		// a record never leaves a segment that no index names.
+		if persisted := space_index_persist(store); persisted != .None {
+			space^ = {}
+			return 0, persisted
+		}
+	}
 	return u32(free + 1), .None
 }
 
@@ -302,8 +326,13 @@ space_record_hash :: proc "contextless" (previous: blake3.Hash, serial, time_ms:
 // record_append keeps record in its space at time_ms, then queues it for the
 // forward when the space forwards. It gives the serial of the record. Each
 // check comes before the first change: a refused record leaves the space and
-// the queue as they were, and its writer sends it again.
+// the queue as they were, and its writer sends it again. An audit space
+// writes the record into its segment in the private store first: a refused
+// write keeps nothing and forwards nothing.
 record_append :: proc "contextless" (store: ^Space_Store, space_number: u32, record: []u8, time_ms: u64) -> (serial: u64, refusal: Space_Refusal) {
+	if ready := space_store_ready(store); ready != .None {
+		return 0, ready
+	}
 	space := space_of(store, space_number)
 	if space == nil {
 		return 0, .Unknown_Space
@@ -326,6 +355,15 @@ record_append :: proc "contextless" (store: ^Space_Store, space_number: u32, rec
 		space.refused_full += 1
 		return 0, .Forward_Full
 	}
+	segment_hash: blake3.Hash
+	if space.kind == .Audit {
+		link := space_record_hash(space.last_hash, space.next_serial, time_ms, record)
+		persisted: Space_Refusal
+		segment_hash, persisted = segment_persist(store, space_number, space, record, time_ms, link)
+		if persisted != .None {
+			return 0, persisted
+		}
+	}
 	if space.count >= space.bound {
 		// A space Keep thins its oldest record, and counts it.
 		space.first = (space.first + 1) % space.bound
@@ -341,6 +379,7 @@ record_append :: proc "contextless" (store: ^Space_Store, space_number: u32, rec
 	if space.kind == .Audit {
 		space.last_hash = space_record_hash(space.last_hash, serial, time_ms, record)
 		space.hashes[place] = space.last_hash
+		space.segment_hashes[serial / SPACE_SEGMENT_RECORDS] = segment_hash
 	}
 	space.count += 1
 	space.next_serial += 1
@@ -407,6 +446,9 @@ records_read :: proc "contextless" (
 	heads: []Kept_Record_Head,
 	bytes: []u8,
 ) -> (count: int, refusal: Space_Refusal) {
+	if ready := space_store_ready(store); ready != .None {
+		return 0, ready
+	}
 	space := space_of(store, space_number)
 	if space == nil {
 		return 0, .Unknown_Space
@@ -445,9 +487,14 @@ records_read :: proc "contextless" (
 }
 
 // space_verify walks the chain of an audit space from its first record and
-// compares each link and the last hash. It gives the serial of the first
-// record whose link breaks.
+// compares each link and the last hash, then reads each segment of the space
+// back from the private store and compares it. It gives the serial of the
+// first record whose link breaks, or the first serial of the first segment
+// that does not match.
 space_verify :: proc "contextless" (store: ^Space_Store, space_number: u32) -> (refusal: Space_Refusal, failing_serial: u64) {
+	if ready := space_store_ready(store); ready != .None {
+		return ready, 0
+	}
 	space := space_of(store, space_number)
 	if space == nil {
 		return .Unknown_Space, 0
@@ -467,7 +514,7 @@ space_verify :: proc "contextless" (store: ^Space_Store, space_number: u32) -> (
 	if link != space.last_hash {
 		return .Chain_Broken, space.next_serial
 	}
-	return .None, 0
+	return space_segments_verify(store, space_number, space)
 }
 
 // space_rows writes the row of each space that reader may read into rows,
@@ -477,6 +524,9 @@ space_verify :: proc "contextless" (store: ^Space_Store, space_number: u32) -> (
 space_rows :: proc "contextless" (store: ^Space_Store, reader: ^Space_Reader, rows: []Space_Row) -> (count: int, refusal: Space_Refusal) {
 	if reader == nil || !reader.acts_for_principal || reader.principal != store.principal {
 		return 0, .Not_Principal
+	}
+	if ready := space_store_ready(store); ready != .None {
+		return 0, ready
 	}
 	for &space, index in store.spaces {
 		if !space.active || space_read_allowed(store, &space, reader) != .None {
@@ -492,6 +542,9 @@ space_rows :: proc "contextless" (store: ^Space_Store, reader: ^Space_Reader, ro
 
 // space_stats gives the row of one space, under the rule of records_read.
 space_stats :: proc "contextless" (store: ^Space_Store, space_number: u32, reader: ^Space_Reader) -> (row: Space_Row, refusal: Space_Refusal) {
+	if ready := space_store_ready(store); ready != .None {
+		return {}, ready
+	}
 	space := space_of(store, space_number)
 	if space == nil {
 		return {}, .Unknown_Space
