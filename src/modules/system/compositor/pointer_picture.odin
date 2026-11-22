@@ -18,6 +18,7 @@ import "modus:contract/settings"
 import "modus:contract/value_kinds"
 import "internal:compositor/bar"
 import "modus:graphics"
+import "modus:interface"
 import "internal:compositor/palette"
 import "modus:system"
 
@@ -200,10 +201,13 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 	if menu_open != .None && menu_line >= 0 {
 		return .Pointing_Hand
 	}
+	if interface.context_menu_row_at(&desktop_context_menu, pointer_x, pointer_y) >= 0 {
+		return .Pointing_Hand
+	}
 	if bar.button_at(bar_layout, pointer_x, pointer_y) != .None {
 		return .Pointing_Hand
 	}
-	if pointer_y < BAR_HEIGHT {
+	if bar.inside_bar(bar_layout, pointer_y) {
 		return .Arrow
 	}
 	// An edge of a resizable window: a press there drags it.

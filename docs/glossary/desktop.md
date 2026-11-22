@@ -232,9 +232,9 @@ Do not use: recording light, share indicator.
 
 ### Bar
 
-The bar is the line at the top of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the palette, and the clock.
+The bar is the line at the top or at the bottom of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the palette, and the clock.
 
-The bar is the fixed place of the desktop where the input starts a process or finds a window. A press on a button opens its menu under it. `src/library/internal/compositor/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the processes, `bar.names`: the compositor draws from it, and the modus tool presses the same places in the machine tests. The bar is not a task bar and not a dock: it holds two menus and no state of a process.
+The bar is the fixed place of the desktop where the input starts a process or finds a window. A press on a button opens its menu next to the bar, away from the bar edge. `src/library/internal/compositor/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the processes, `bar.names`: the compositor draws from it, and the modus tool presses the same places in the machine tests. The bar is not a task bar and not a dock: it holds two menus and no state of a process.
 
 The design: `docs/DESIGN.md`, "Background and bar".
 
@@ -242,13 +242,23 @@ Do not use: task bar, panel, dock.
 
 ### Bar layout
 
-The bar layout is the widths of the texts of the bar, measured in the font that draws them, from which come the place of each button and of each line of a menu.
+The bar layout is the widths of the texts of the bar, measured in the font that draws them, with the bar edge and the height of the screen, from which come the place of each button and of each line of a menu.
 
-The names of the bar are in the interface font, which has proportional widths. With places from a fixed width, a press can land beside the entry that the eye sees. So the compositor measures `bar.Layout` at its start and when the font changes, and writes it on the log. The modus tool measures the same layout from the same font file, so it presses the right places. The bar layout is not a set of constants: it depends on the font in use.
+The names of the bar are in the interface font, which has proportional widths. With places from a fixed width, a press can land beside the entry that the eye sees. So the compositor measures `bar.Layout` at its start and when the font changes, and writes it on the log. The modus tool measures the same layout from the same font file, so it presses the right places. The bar layout is not a set of constants: it depends on the font in use and on the bar edge. Its zero value is a bar at the top.
 
 The design: `docs/FONTS.md`, "12.8 The parts, each one working".
 
 Do not use: bar geometry, bar metrics.
+
+### Bar edge
+
+The bar edge is the edge of the screen that holds the bar: the top or the bottom.
+
+The principal chooses it with the export `bar_position` of the compositor or with the context menu of the desktop. The whole bar moves, and each menu and popover of the bar opens away from the edge: down from a bar at the top, up from a bar at the bottom. The setting `desktop_shell.Bar_Position` also names the left and the right; the compositor draws no vertical bar yet and keeps the bar at the top for them. The bar edge is a field of the bar layout (`bar.Edge`), not an offset that each drawer adds.
+
+The design: `src/md/features/bar_edge.md`.
+
+Do not use: bar side, dock position.
 
 ### Start menu
 

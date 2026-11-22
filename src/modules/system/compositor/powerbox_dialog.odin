@@ -15,9 +15,16 @@ import "modus:graphics"
 import "modus:interface"
 
 POWERBOX_DIALOG_WIDTH :: 440
-POWERBOX_DIALOG_HEIGHT :: 156
+POWERBOX_DIALOG_HEIGHT :: 160
 POWERBOX_TEXT_LIMIT :: 96
 POWERBOX_PICKER_SLOTS :: 4
+POWERBOX_TITLE_HEIGHT :: 30 // The title plate, inside the two lines of the frame.
+POWERBOX_MARGIN :: 16 // From the frame to the texts, the list and the buttons.
+POWERBOX_PICKER_LINE :: 24
+POWERBOX_PICKER_ROOM :: POWERBOX_PICKER_SLOTS * POWERBOX_PICKER_LINE + 12 // The list and the room around it.
+POWERBOX_BUTTON_HEIGHT :: 26
+POWERBOX_BUTTON_PADDING :: 12 // On each side of the text of a button.
+POWERBOX_BUTTON_GAP :: 8 // Between two buttons, and between the act and its key in one button.
 
 Powerbox_Prompt_State :: struct {
 	open:            bool,
@@ -95,7 +102,7 @@ wide_grant_mark_set :: proc "contextless" (active: bool, grant_id: u64) {
 	} else {
 		wide_grant_display.authorities = {}
 	}
-	damage_add(0, 0, desktop_width, BAR_HEIGHT)
+	damage_bar()
 }
 
 powerbox_and_wide_grant_key :: proc "contextless" (code: u32, pressed: bool, modifiers: u32) -> bool {
@@ -136,40 +143,89 @@ powerbox_dialog_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	if wide_grant_display.active {
 		badge_w := 104
 		badge_x := max(0, desktop_width / 2 - badge_w / 2)
-		interface.draw_rectangle(table, badge_x, 3, badge_w, BAR_HEIGHT - 6, graphics.colors.stop_process)
-		interface.draw_text(table, badge_x + 8, 7, "AGENT GRANT", graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+		interface.draw_rectangle(table, badge_x, desktop_bar_y() + 3, badge_w, BAR_HEIGHT - 6, graphics.colors.stop_process)
+		interface.draw_text(table, badge_x + 8, desktop_bar_y() + 7, "AGENT GRANT", graphics.COLOR_WHITE, interface.FONT_INTERFACE)
 	}
 	if !powerbox_prompt.open {
 		return
 	}
 	is_picker := powerbox_prompt.kind == .Store_Share
-	dlg_h := is_picker ? POWERBOX_DIALOG_HEIGHT + 72 : POWERBOX_DIALOG_HEIGHT
-	x := max(0, (desktop_width - POWERBOX_DIALOG_WIDTH) / 2)
-	y := max(BAR_HEIGHT + 16, (desktop_height - dlg_h) / 2)
-	interface.draw_rectangle(table, x, y, POWERBOX_DIALOG_WIDTH, dlg_h, graphics.colors.card_bottom)
-	interface.draw_outline(table, x, y, POWERBOX_DIALOG_WIDTH, dlg_h, 2, graphics.colors.title)
-	interface.draw_rectangle(table, x + 2, y + 2, POWERBOX_DIALOG_WIDTH - 4, 24, graphics.colors.title)
-	header := is_picker ? "TRUSTED STORE PICKER" : "TRUSTED GRANT REQUEST"
-	interface.draw_text(table, x + 10, y + 6, header, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+	width := POWERBOX_DIALOG_WIDTH
+	height := is_picker ? POWERBOX_DIALOG_HEIGHT + POWERBOX_PICKER_ROOM : POWERBOX_DIALOG_HEIGHT
+	// In the middle of the desktop, and never on the bar at either edge.
+	x := max(0, (desktop_width - width) / 2)
+	y := max(desktop_work_top() + 16, min((desktop_height - height) / 2, desktop_work_bottom() - height - 16))
 
+	// The frame of a window of the Kernel theme: a sharp shadow, a dark
+	// outer line, a line of the blue of the title inside it, the cards
+	// gradient, and the title plate in the gradient of a focused window
+	// with its line of light.
+	interface.draw_rectangle(table, x + 4, y + 4, width, height, graphics.shade(graphics.colors.background, 55))
+	interface.draw_vertical_gradient(table, x, y, width, height, graphics.colors.card_top, graphics.colors.card_bottom)
+	interface.draw_outline(table, x, y, width, height, 1, graphics.shade(graphics.colors.background, 50))
+	interface.draw_outline(table, x + 1, y + 1, width - 2, height - 2, 1, graphics.colors.title)
+	interface.draw_horizontal_gradient(table, x + 2, y + 2, width - 4, 1, graphics.shade(graphics.colors.title, 125), graphics.shade(graphics.colors.title_end, 125))
+	interface.draw_horizontal_gradient(table, x + 2, y + 3, width - 4, POWERBOX_TITLE_HEIGHT - 1, graphics.colors.title, graphics.colors.title_end)
+	interface.draw_rectangle(table, x + 2, y + 2 + POWERBOX_TITLE_HEIGHT, width - 4, 1, graphics.shade(graphics.colors.background, 50))
+	header := is_picker ? "TRUSTED STORE PICKER" : "TRUSTED GRANT REQUEST"
+	interface.draw_text(table, x + POWERBOX_MARGIN - 4, y + 2 + (POWERBOX_TITLE_HEIGHT - graphics.CELL_HEIGHT) / 2, header, graphics.COLOR_WHITE, interface.FONT_INTERFACE_BOLD)
+
+	// The asker and what it asks for.
+	text_room := width - 2 * POWERBOX_MARGIN
+	body_y := y + 2 + POWERBOX_TITLE_HEIGHT + 1 + 12
 	proc_str := string(powerbox_prompt.process_name[:powerbox_prompt.process_len])
 	res_str := string(powerbox_prompt.resource_text[:powerbox_prompt.resource_len])
-	proc_fit := interface.text_fit(table, interface.FONT_INTERFACE, proc_str, POWERBOX_DIALOG_WIDTH - 24)
-	res_fit := interface.text_fit(table, interface.FONT_INTERFACE, res_str, POWERBOX_DIALOG_WIDTH - 24)
-	interface.draw_text(table, x + 12, y + 38, proc_fit, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
-	interface.draw_text(table, x + 12, y + 60, res_fit, graphics.colors.dim, interface.FONT_INTERFACE)
+	interface.draw_text(table, x + POWERBOX_MARGIN, body_y, interface.text_fit(table, interface.FONT_INTERFACE, proc_str, text_room), graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+	interface.draw_text(table, x + POWERBOX_MARGIN, body_y + 22, interface.text_fit(table, interface.FONT_INTERFACE, res_str, text_room), graphics.colors.dim, interface.FONT_INTERFACE)
 
+	button_y := y + height - POWERBOX_MARGIN - POWERBOX_BUTTON_HEIGHT
 	if is_picker {
+		// The stores, in a recessed list with a hairline border; the chosen
+		// store is a plate in the gradient of the chosen blue.
+		list_x, list_y := x + POWERBOX_MARGIN, body_y + 48
+		list_width, list_height := text_room, POWERBOX_PICKER_SLOTS * POWERBOX_PICKER_LINE + 2
+		interface.draw_rectangle(table, list_x, list_y, list_width, list_height, graphics.shade(graphics.colors.card_bottom, 80))
+		interface.draw_outline(table, list_x, list_y, list_width, list_height, 1, graphics.colors.track)
 		for i in 0 ..< powerbox_prompt.picker_count {
-			ry := y + 86 + i * 24
+			ry := list_y + 1 + i * POWERBOX_PICKER_LINE
 			sel := i == powerbox_prompt.picker_selected
 			if sel {
-				interface.draw_rectangle(table, x + 12, ry, POWERBOX_DIALOG_WIDTH - 24, 22, graphics.colors.chosen)
+				interface.draw_vertical_gradient(table, list_x + 1, ry, list_width - 2, POWERBOX_PICKER_LINE, graphics.colors.chosen, graphics.shade(graphics.colors.chosen, 86))
+				interface.draw_rectangle(table, list_x + 2, ry, list_width - 4, 1, graphics.shade(graphics.colors.chosen, 140))
 			}
-			interface.draw_text(table, x + 20, ry + 3, powerbox_prompt.picker_stores[i], sel ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
+			interface.draw_text(table, list_x + 12, ry + 4, powerbox_prompt.picker_stores[i], sel ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 		}
-		interface.draw_text(table, x + 12, y + dlg_h - 26, "Up/Down: Choose   Enter: Share   Escape: Refuse", graphics.colors.text, interface.FONT_INTERFACE)
-	} else {
-		interface.draw_text(table, x + 12, y + dlg_h - 28, "Enter: Allow   Escape: Refuse", graphics.colors.text, interface.FONT_INTERFACE)
+		interface.draw_text(table, x + POWERBOX_MARGIN, button_y + (POWERBOX_BUTTON_HEIGHT - graphics.CELL_HEIGHT) / 2, "Up/Down: choose", graphics.colors.dim, interface.FONT_INTERFACE)
 	}
+	// The two acts at the right, the refusal last: each button says its key.
+	right := x + width - POWERBOX_MARGIN
+	right = powerbox_button_records(table, right, button_y, "Refuse", "Esc", false)
+	_ = powerbox_button_records(table, right - POWERBOX_BUTTON_GAP, button_y, is_picker ? "Share" : "Allow", "Enter", true)
+}
+
+// powerbox_button_records draws a button of the dialog that ends at right:
+// its act, then its key in a dim text. The act that grants is a plate of
+// the chosen blue with a line of light; the refusal is a plate of the track
+// with a hairline border. It gives the x of its left edge.
+@(private = "file")
+powerbox_button_records :: proc "contextless" (table: ^interface.Draw_Table, right, y: int, act, key: string, grants: bool) -> int {
+	act_width := interface.text_measured_width(table, interface.FONT_INTERFACE, act)
+	key_width := interface.text_measured_width(table, interface.FONT_INTERFACE, key)
+	width := act_width + POWERBOX_BUTTON_GAP + key_width + 2 * POWERBOX_BUTTON_PADDING
+	left := right - width
+	if grants {
+		interface.draw_vertical_gradient(table, left, y, width, POWERBOX_BUTTON_HEIGHT, graphics.colors.chosen, graphics.shade(graphics.colors.chosen, 86))
+		interface.draw_outline(table, left, y, width, POWERBOX_BUTTON_HEIGHT, 1, graphics.shade(graphics.colors.chosen, 70))
+		interface.draw_rectangle(table, left + 1, y + 1, width - 2, 1, graphics.shade(graphics.colors.chosen, 140))
+	} else {
+		interface.draw_vertical_gradient(table, left, y, width, POWERBOX_BUTTON_HEIGHT, graphics.colors.track, graphics.shade(graphics.colors.track, 88))
+		interface.draw_outline(table, left, y, width, POWERBOX_BUTTON_HEIGHT, 1, graphics.shade(graphics.colors.track, 150))
+		interface.draw_rectangle(table, left + 1, y + 1, width - 2, 1, graphics.shade(graphics.colors.track, 130))
+	}
+	text_y := y + (POWERBOX_BUTTON_HEIGHT - graphics.CELL_HEIGHT) / 2
+	key_x := interface.draw_text(table, left + POWERBOX_BUTTON_PADDING, text_y, act, graphics.COLOR_WHITE, interface.FONT_INTERFACE) + POWERBOX_BUTTON_GAP
+	// The key in the text color on the track: the dim color has the
+	// contrast of a large text only there.
+	interface.draw_text(table, key_x, text_y, key, grants ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
+	return left
 }
