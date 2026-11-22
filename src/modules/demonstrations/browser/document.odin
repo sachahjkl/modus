@@ -5,20 +5,29 @@ import "modus:contract/html_css"
 import "modus:graphics"
 import "modus:interface"
 
-// The document of the page that the window shows: html_css parses it,
-// resolves its styles, lays out its boxes and paints them as draw records
-// (src/md/features/desktop_to_browser.md, "E. A light browser"). The
-// records are in the places of the document; each frame copies the ones
-// that the view shows into the draw table of the window, moved by the
-// scroll. Each table is a global: the tree, the style sheet and the boxes
-// are far larger than a stack frame should hold.
+// The workspace of the document of the page that the window shows: the
+// origin worker parses it with html_css, resolves its styles, lays out its
+// boxes and paints them as draw records (src/md/features/
+// desktop_to_browser.md, "E. A light browser"). The records are in the
+// places of the document; each frame copies the ones that the view shows
+// into the draw table of the window, moved by the scroll. Each table is a
+// global: the tree, the style sheet and the boxes are far larger than a
+// stack frame should hold.
 
 document_tree: html_css.Dom_Tree
 sheet: html_css.Css_Stylesheet
 document_layout: html_css.Layout_Tree
 
-// A box paints at most a rectangle and a text.
-DOCUMENT_RECORD_CAPACITY :: 2 * html_css.MAX_DOM_NODES
+// The key of the style sheet in the workspace: the origin that parsed it,
+// and the hash of its style text. The origin worker reuses the sheet only
+// for that origin and that text.
+sheet_valid: bool
+sheet_origin: html_css.Document_Origin
+sheet_source_hash: u64
+
+// A box paints at most a rectangle, the four sides of its border, and a
+// text.
+DOCUMENT_RECORD_CAPACITY :: 4 * html_css.MAX_DOM_NODES
 document_records: [DOCUMENT_RECORD_CAPACITY]draw_record.Draw_Record
 document_record_count: int
 document_text: [html_css.MAX_TEXT_POOL]u8
@@ -67,12 +76,28 @@ Form_Field :: struct {
 form_fields: [FORM_FIELD_CAPACITY]Form_Field
 form_field_count: int
 
-// document_parse parses a document under an origin, and reads its style
-// sheets, its targets and its form fields.
-document_parse :: proc "contextless" (origin: html_css.Document_Origin, source: []u8) {
-	html_css.parse_html(&document_tree, origin, source)
-	sheet = {}
-	html_css.parse_document_styles(&document_tree, &sheet)
+// document_workspace_clear wipes the workspace of the document: the
+// records, their text, the targets and the fields of the page before.
+// The style sheet keeps its key, which names its origin.
+document_workspace_clear :: proc "contextless" () {
+	document_tree = {}
+	document_layout = {}
+	document_records = {}
+	document_record_count = 0
+	document_text = {}
+	document_text_count = 0
+	node_targets = {}
+	node_forms = {}
+	form_fields = {}
+	form_field_count = 0
+	document_height = 0
+	document_background = 0
+	laid_out_width = -1
+}
+
+// document_targets_read reads the targets and the form fields of the
+// parsed document.
+document_targets_read :: proc "contextless" () {
 	// The nodes are in pre-order: a parent comes before each child, so one
 	// pass gives each node the target and the form of its parent.
 	for index in 0 ..< int(document_tree.node_count) {
@@ -85,20 +110,14 @@ document_parse :: proc "contextless" (origin: html_css.Document_Origin, source: 
 			form = node_forms[parent]
 		}
 		if node.kind == .Element {
-			switch node.tag {
-			case .Form:
+			if node.tag == .Form {
 				form = u16(index)
-			case .A:
+			} else if node.tag == .A {
 				if _, has_href := html_css.dom_node_attr(&document_tree, u16(index), "href"); has_href {
 					target = {kind = .Link, node = u16(index)}
 				}
-			case .Button:
-				if form != html_css.NO_NODE {
-					target = {kind = .Submit, node = form}
-				}
-			case .Unknown, .Html, .Head, .Body, .Title, .Meta, .Link, .Style, .Script, .Div, .Span, .P,
-			     .H1, .H2, .H3, .H4, .H5, .H6, .Ul, .Ol, .Li, .Header, .Footer, .Main, .Nav, .Section,
-			     .Article, .Input, .Label, .Br, .Hr, .Img, .Pre, .Code, .Strong, .Em:
+			} else if node.tag == .Button && form != html_css.NO_NODE {
+				target = {kind = .Submit, node = form}
 			}
 		}
 		node_targets[index] = target

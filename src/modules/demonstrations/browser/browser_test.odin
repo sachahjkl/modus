@@ -2,13 +2,30 @@
 package browser
 
 import "core:strings"
+import "core:sync"
 import "core:testing"
 import "modus:contract/html_css"
+
+// The tests share the globals of the module: the workspace of the
+// document, the states of the origins, the head of an answer. One test at
+// a time holds them, as the test runner runs the tests on several threads.
+@(private)
+browser_globals_lock: sync.Mutex
+
+@(deferred_none = globals_release)
+globals_hold :: proc() {
+	sync.mutex_lock(&browser_globals_lock)
+}
+
+globals_release :: proc() {
+	sync.mutex_unlock(&browser_globals_lock)
+}
 
 // The parser of the address field refuses each address that it cannot
 // read, with its problem, and gives nothing of it.
 @(test)
 address_parse_refuses_each_broken_address :: proc(t: ^testing.T) {
+	globals_hold()
 	long_host := strings.repeat("a", HOST_CAPACITY + 1, context.temp_allocator)
 	long_path := strings.concatenate({"modus://guide/", strings.repeat("p", PATH_CAPACITY, context.temp_allocator)}, context.temp_allocator)
 	long_query := strings.concatenate({"modus://guide?", strings.repeat("q", QUERY_CAPACITY + 1, context.temp_allocator)}, context.temp_allocator)
@@ -51,6 +68,7 @@ address_parse_refuses_each_broken_address :: proc(t: ^testing.T) {
 // 65535, the longest path and query, the case of a scheme and a host.
 @(test)
 address_parse_takes_the_edges :: proc(t: ^testing.T) {
+	globals_hold()
 	host := strings.repeat("h", HOST_CAPACITY, context.temp_allocator)
 	address, problem := address_parse(strings.concatenate({"https://", host}, context.temp_allocator))
 	testing.expect_value(t, problem, Address_Problem.None)
@@ -82,6 +100,7 @@ address_parse_takes_the_edges :: proc(t: ^testing.T) {
 // its scheme, and a resolve keeps a reference in the origin of its base.
 @(test)
 address_write_and_resolve :: proc(t: ^testing.T) {
+	globals_hold()
 	buffer: [256]u8
 	base, _ := address_parse("http://example.org:8080/a/b?x=1")
 	writer := Source_Writer{bytes = buffer[:]}
@@ -108,6 +127,7 @@ address_write_and_resolve :: proc(t: ^testing.T) {
 // full; at the bound exactly it is not full.
 @(test)
 source_writer_bound :: proc(t: ^testing.T) {
+	globals_hold()
 	buffer: [4]u8
 	writer := Source_Writer{bytes = buffer[:]}
 	put(&writer, "abcd")
@@ -125,6 +145,7 @@ source_writer_bound :: proc(t: ^testing.T) {
 // A text of the reader never becomes markup.
 @(test)
 escape_refuses_markup :: proc(t: ^testing.T) {
+	globals_hold()
 	buffer: [128]u8
 	writer := Source_Writer{bytes = buffer[:]}
 	put_escaped(&writer, "<script>a&b\"c'd</script>")
@@ -136,6 +157,7 @@ escape_refuses_markup :: proc(t: ^testing.T) {
 // buffer.
 @(test)
 query_value_decodes_and_refuses :: proc(t: ^testing.T) {
+	globals_hold()
 	buffer: [16]u8
 	value, found := query_value("name=a+b%41%2b&query=x", "name", buffer[:])
 	testing.expect(t, found)
@@ -171,60 +193,67 @@ query_value_decodes_and_refuses :: proc(t: ^testing.T) {
 // refused, and learn nothing.
 @(test)
 origin_state_is_refused_to_each_other_origin :: proc(t: ^testing.T) {
-	origin_slots = {}
+	globals_hold()
+	origin_states = {}
 	forms, _ := address_parse("modus://forms")
 	owner := origin_of(&forms)
-	origin_state_write(&owner, "kept")
+	testing.expect_value(t, origin_storage_write(&owner, QUERY_STORAGE_KEY, "kept"), Origin_Reply_Status.Done)
+	buffer: [ORIGIN_VALUE_CAPACITY]u8
 	others := [?]string{"modus://welcome", "https://forms", "modus://forms:1", "modus://form"}
 	for text in others {
 		address, _ := address_parse(text)
 		reader := origin_of(&address)
-		value, read := origin_state_read(&reader, &owner)
-		testing.expectf(t, read == .Refused_Other_Origin && value == "", "%s read the state of modus://forms", text)
+		value, status := origin_storage_read(&reader, &owner, QUERY_STORAGE_KEY, buffer[:])
+		testing.expectf(t, status == .Refused_Other_Origin && value == "", "%s read the state of modus://forms", text)
 	}
 	other_principal := owner
 	other_principal.principal_id += 1
-	value, read := origin_state_read(&other_principal, &owner)
-	testing.expect(t, read == .Refused_Other_Origin && value == "")
-	value, read = origin_state_read(&owner, &owner)
-	testing.expect_value(t, read, Origin_Read.Given)
+	value, status := origin_storage_read(&other_principal, &owner, QUERY_STORAGE_KEY, buffer[:])
+	testing.expect(t, status == .Refused_Other_Origin && value == "")
+	value, status = origin_storage_read(&owner, &owner, QUERY_STORAGE_KEY, buffer[:])
+	testing.expect_value(t, status, Origin_Reply_Status.Done)
 	testing.expect_value(t, value, "kept")
 	// The reader of an origin with no state is told so only for its own.
 	guide, _ := address_parse("modus://guide")
 	guide_origin := origin_of(&guide)
-	_, read = origin_state_read(&guide_origin, &guide_origin)
-	testing.expect_value(t, read, Origin_Read.Nothing_Kept)
+	_, status = origin_storage_read(&guide_origin, &guide_origin, QUERY_STORAGE_KEY, buffer[:])
+	testing.expect_value(t, status, Origin_Reply_Status.Nothing_Kept)
+	// A read creates no state.
+	testing.expect(t, origin_state_find(&guide_origin, false) == nil, "a read made a state")
 }
 
-// A full table of states gives the slot written least to a new origin.
+// A full table of states gives the state used least to a new origin,
+// wiped: the evicted origin, back later, finds nothing.
 @(test)
 origin_state_table_full :: proc(t: ^testing.T) {
-	origin_slots = {}
-	hosts := [ORIGIN_SLOT_CAPACITY + 1]string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}
-	origins: [ORIGIN_SLOT_CAPACITY + 1]html_css.Document_Origin
+	globals_hold()
+	origin_states = {}
+	hosts := [ORIGIN_STATE_CAPACITY + 1]string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}
+	origins: [ORIGIN_STATE_CAPACITY + 1]html_css.Document_Origin
 	for host, index in hosts {
 		address, _ := address_parse(strings.concatenate({"modus://", host}, context.temp_allocator))
 		origins[index] = origin_of(&address)
 	}
-	for index in 0 ..< ORIGIN_SLOT_CAPACITY {
-		origin_state_write(&origins[index], hosts[index])
-		// Each origin but the first is written twice: the first is written least.
+	for index in 0 ..< ORIGIN_STATE_CAPACITY {
+		origin_storage_write(&origins[index], "k", hosts[index])
+		// Each origin but the first is used twice: the first is used least.
 		if index > 0 {
-			origin_state_write(&origins[index], hosts[index])
+			origin_storage_write(&origins[index], "k", hosts[index])
 		}
 	}
-	origin_state_write(&origins[ORIGIN_SLOT_CAPACITY], "new")
-	_, read := origin_state_read(&origins[0], &origins[0])
-	testing.expect_value(t, read, Origin_Read.Nothing_Kept)
-	value, new_read := origin_state_read(&origins[ORIGIN_SLOT_CAPACITY], &origins[ORIGIN_SLOT_CAPACITY])
-	testing.expect_value(t, new_read, Origin_Read.Given)
+	origin_storage_write(&origins[ORIGIN_STATE_CAPACITY], "k", "new")
+	buffer: [ORIGIN_VALUE_CAPACITY]u8
+	_, status := origin_storage_read(&origins[0], &origins[0], "k", buffer[:])
+	testing.expect_value(t, status, Origin_Reply_Status.Nothing_Kept)
+	value, new_status := origin_storage_read(&origins[ORIGIN_STATE_CAPACITY], &origins[ORIGIN_STATE_CAPACITY], "k", buffer[:])
+	testing.expect_value(t, new_status, Origin_Reply_Status.Done)
 	testing.expect_value(t, value, "new")
-	value, read = origin_state_read(&origins[1], &origins[1])
+	value, status = origin_storage_read(&origins[1], &origins[1], "k", buffer[:])
 	testing.expect_value(t, value, "b")
 	// A value longer than a slot keeps the bytes that fit.
 	long := strings.repeat("v", ORIGIN_VALUE_CAPACITY + 5, context.temp_allocator)
-	origin_state_write(&origins[1], long)
-	value, _ = origin_state_read(&origins[1], &origins[1])
+	origin_storage_write(&origins[1], "k", long)
+	value, _ = origin_storage_read(&origins[1], &origins[1], "k", buffer[:])
 	testing.expect_value(t, len(value), ORIGIN_VALUE_CAPACITY)
 }
 
@@ -232,7 +261,8 @@ origin_state_table_full :: proc(t: ^testing.T) {
 // another origin is refused in the page.
 @(test)
 pages_escape_and_refuse :: proc(t: ^testing.T) {
-	origin_slots = {}
+	globals_hold()
+	origin_states = {}
 	buffer: [PAGE_SOURCE_CAPACITY]u8
 	address, _ := address_parse("modus://forms/result?name=%3Cb%3E&query=%3Cscript%3E")
 	writer := Source_Writer{bytes = buffer[:]}
@@ -246,9 +276,18 @@ pages_escape_and_refuse :: proc(t: ^testing.T) {
 	testing.expect_value(t, page_write(&writer, &peek), Page_Kind.Cross_Origin_Read)
 	testing.expect(t, strings.contains(writer_text(&writer), "Refused"))
 	testing.expect(t, !strings.contains(writer_text(&writer), "WRONG"))
-	network, _ := address_parse("https://example.org")
+	network, _ := address_parse("https://example.org/a?b=1#top")
 	writer = {bytes = buffer[:]}
 	testing.expect_value(t, page_write(&writer, &network), Page_Kind.No_Network)
+	// The page shows the request that the worker of the origin wrote,
+	// escaped, with no fragment.
+	testing.expect(t, strings.contains(writer_text(&writer), "GET /a?b=1 HTTP/1.1"))
+	testing.expect(t, strings.contains(writer_text(&writer), "Host: example.org"))
+	testing.expect(t, !strings.contains(writer_text(&writer), "#top"))
+	refused, _ := address_parse("http://example.org/a b")
+	writer = {bytes = buffer[:]}
+	testing.expect_value(t, page_write(&writer, &refused), Page_Kind.No_Network)
+	testing.expect(t, strings.contains(writer_text(&writer), FETCH_PROBLEM_SENTENCES[.Request_Refused]))
 	missing, _ := address_parse("modus://nothing")
 	writer = {bytes = buffer[:]}
 	testing.expect_value(t, page_write(&writer, &missing), Page_Kind.Not_Found)
@@ -264,6 +303,7 @@ pages_escape_and_refuse :: proc(t: ^testing.T) {
 // when none is, and one line for a text that fits.
 @(test)
 wrap_line_edges :: proc(t: ^testing.T) {
+	globals_hold()
 	line, rest := wrap_line("abcd", 4, true)
 	testing.expect_value(t, line, "abcd")
 	testing.expect_value(t, rest, "")
@@ -285,7 +325,8 @@ wrap_line_edges :: proc(t: ^testing.T) {
 // fields with their boxes.
 @(test)
 built_in_pages_lay_out_with_their_targets :: proc(t: ^testing.T) {
-	origin_slots = {}
+	globals_hold()
+	origin_states = {}
 	for page in Built_In_Page {
 		address, _ := address_parse(strings.concatenate({"modus://", BUILT_IN_HOSTS[page]}, context.temp_allocator))
 		current = address
@@ -293,7 +334,9 @@ built_in_pages_lay_out_with_their_targets :: proc(t: ^testing.T) {
 		page_write(&writer, &current)
 		document_build(writer_text(&writer))
 		document_lay_out(800, 600)
-		testing.expectf(t, !document_tree.truncated, "%v: the document is cut", page)
+		testing.expectf(t, current_render.status == .Done, "%v: the worker refused the render", page)
+		testing.expectf(t, !current_render.truncated && !document_tree.truncated, "%v: the document is cut", page)
+		testing.expectf(t, current_render.node_count == document_tree.node_count, "%v: the render tree counts other nodes", page)
 		testing.expectf(t, document_record_count > 0 && document_height > 0, "%v: nothing is painted", page)
 		links := 0
 		for index in 0 ..< int(document_layout.box_count) {

@@ -1194,7 +1194,7 @@ Do not use: widget, view, frame (for this), panel.
 
 A document box is one box of the layout of a document of HTML and CSS: the place and the size that `html_css.compute_layout` gives to one node of the document from its computed style.
 
-The contract package `html_css` lays out at most 512 document boxes in block, inline and flex flow, in a `Layout_Tree` in the memory of the caller, then `emit_draw_records` paints each one as a rectangle or a text of the draw table. The browser keeps the document boxes in the places of the document and moves them by its scroll. A document box is not a layout box: a layout box places a part of a window, and a document box places a part of a page inside it.
+The contract package `html_css` lays out at most 512 document boxes in block, inline, flex and table flow, in a `Layout_Tree` in the memory of the caller, then `emit_draw_records` paints each one as a rectangle or a text of the draw table. The browser keeps the document boxes in the places of the document and moves them by its scroll. A document box is not a layout box: a layout box places a part of a window, and a document box places a part of a page inside it.
 
 The design: `src/md/features/desktop_to_browser.md`, "E. A light browser".
 
@@ -1209,6 +1209,26 @@ A document origin is the principal, the scheme, the host and the port of the add
 The design: `src/md/features/desktop_to_browser.md`, "E. A light browser".
 
 Do not use: site, domain, origin (alone, for this).
+
+### Origin worker
+
+An origin worker is the part of the browser that holds the state of one document origin and parses its pages, behind a border of messages of fixed size.
+
+The window sends it an `Origin_Request` as bytes; the worker decodes and checks it, refuses a request that names the state of another document origin, and answers with an origin render tree or a reply. Each document origin has its own storage, cookies, values of form fields and key of its style sheet, and each render wipes the workspace of the document first. It is the boundary of the process of each origin, built before that process: it is not a process yet, and it holds no grant. Example: a page of `modus://welcome` that asks for the storage of `modus://forms` gets the status `Refused_Other_Origin` and no byte.
+
+The design: `src/md/features/desktop_to_browser.md`, "The origin worker".
+
+Do not use: renderer, content process, tab process.
+
+### Origin render tree
+
+An origin render tree is the answer of an origin worker to a render: the status, the document origin, the counts of the nodes, the style rules, the document boxes and the draw records of the document, its height, its title, and whether it is cut.
+
+It is a record of fixed size with no pointer, which crosses the border of the worker as its bytes; the decoder refuses a count past the pools of the document and a flag that is not 0 or 1. The draw records themselves stay in the buffers of the document that the window reads. It is not a tree of nodes: the tree of the document stays in the worker.
+
+The design: `src/md/features/desktop_to_browser.md`, "The origin worker".
+
+Do not use: render object, frame tree, layer tree.
 
 ### Box input
 

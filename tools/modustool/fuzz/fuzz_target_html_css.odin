@@ -150,7 +150,7 @@ fuzz_dom_problem :: proc(tree: ^html_css.Dom_Tree) -> string {
 		if node.depth != min(parent.depth + 1, html_css.MAX_DOM_DEPTH) {
 			return fuzz_text("the node %d is at the depth %d under a parent at %d", index, node.depth, parent.depth)
 		}
-		if parent.kind == .Element && html_css.is_raw_text_tag(parent.tag) && node.kind != .Text {
+		if parent.kind == .Element && html_css.is_text_only_tag(parent.tag) && node.kind != .Text {
 			return fuzz_text("the node %d, a %v, is in a %v", index, node.kind, parent.tag)
 		}
 	}
@@ -218,17 +218,60 @@ fuzz_stylesheet_problem :: proc(sheet: ^html_css.Css_Stylesheet) -> string {
 		if rule.selector_count < 1 || int(rule.selector_count) > html_css.MAX_SELECTORS_PER_RULE {
 			return fuzz_text("the rule %d has %d selectors", index, rule.selector_count)
 		}
-		for selector in rule.selectors[:rule.selector_count] {
-			if !selector.valid || int(selector.class_len) > html_css.MAX_SELECTOR_NAME_LEN || int(selector.id_len) > html_css.MAX_SELECTOR_NAME_LEN {
-				return fuzz_text("the rule %d has a selector that is not valid: %v", index, selector)
-			}
-			if selector.has_tag && (selector.tag == .Unknown || selector.tag > max(html_css.Html_Tag)) {
-				return fuzz_text("the rule %d has a selector of the tag %d", index, u8(selector.tag))
+		for &selector in rule.selectors[:rule.selector_count] {
+			if problem := fuzz_selector_problem(sheet, &selector); problem != "" {
+				return fuzz_text("the rule %d: %s", index, problem)
 			}
 		}
 		if problem := fuzz_declarations_problem(&rule.decls); problem != "" {
 			return fuzz_text("the rule %d: %s", index, problem)
 		}
+	}
+	return ""
+}
+
+// fuzz_selector_problem checks one selector: its compounds in their
+// bounds, each name in the name pool of the sheet, each combinator a
+// member, and a specificity that is the sum of its parts.
+@(private = "file")
+fuzz_selector_problem :: proc(sheet: ^html_css.Css_Stylesheet, selector: ^html_css.Css_Selector) -> string {
+	if !selector.valid || selector.compound_count < 1 || int(selector.compound_count) > html_css.MAX_COMPOUNDS_PER_SELECTOR {
+		return fuzz_text("a selector that is not valid, of %d compounds", selector.compound_count)
+	}
+	if int(sheet.name_count) > html_css.CSS_NAME_POOL_CAPACITY {
+		return fuzz_text("%d bytes of names, past %d", sheet.name_count, html_css.CSS_NAME_POOL_CAPACITY)
+	}
+	name_fits :: proc(sheet: ^html_css.Css_Stylesheet, name: html_css.Css_Name) -> bool {
+		return name.count >= 1 && int(name.count) <= html_css.MAX_SELECTOR_NAME_LEN && int(name.offset) + int(name.count) <= int(sheet.name_count)
+	}
+	ids, classes, tags: u32
+	for &compound, place in selector.compounds[:selector.compound_count] {
+		if int(compound.class_count) > html_css.MAX_CLASSES_PER_COMPOUND {
+			return fuzz_text("a compound of %d classes", compound.class_count)
+		}
+		if compound.has_tag && (compound.tag == .Unknown || compound.tag > max(html_css.Html_Tag)) {
+			return fuzz_text("a compound of the tag %d", u8(compound.tag))
+		}
+		for class_name in compound.classes[:compound.class_count] {
+			if !name_fits(sheet, class_name) {
+				return fuzz_text("a class name past the pool: %v", class_name)
+			}
+		}
+		if compound.has_id && !name_fits(sheet, compound.id) {
+			return fuzz_text("an id past the pool: %v", compound.id)
+		}
+		if place > 0 {
+			combinator := selector.combinators[place - 1]
+			if combinator < min(html_css.Css_Combinator) || combinator > max(html_css.Css_Combinator) {
+				return fuzz_text("the combinator %d", u8(combinator))
+			}
+		}
+		ids += compound.has_id ? 1 : 0
+		classes += u32(compound.class_count)
+		tags += compound.has_tag ? 1 : 0
+	}
+	if selector.specificity != ids << 16 | classes << 8 | tags {
+		return fuzz_text("the specificity %x of (%d, %d, %d)", selector.specificity, ids, classes, tags)
 	}
 	return ""
 }
@@ -251,6 +294,12 @@ fuzz_declarations_problem :: proc(declared: ^html_css.Css_Declarations) -> strin
 		return fuzz_text("a margin out of its range")
 	case declared.has_font_size && (declared.font_size < 4 || declared.font_size > 128):
 		return fuzz_text("the font size %d", declared.font_size)
+	case declared.has_text_align && (declared.text_align < min(html_css.Text_Align) || declared.text_align > max(html_css.Text_Align)):
+		return fuzz_text("the text alignment %d", u8(declared.text_align))
+	case declared.has_border_style && (declared.border_style < min(html_css.Border_Style) || declared.border_style > max(html_css.Border_Style)):
+		return fuzz_text("the border style %d", u8(declared.border_style))
+	case declared.has_border_width && (!in_range(declared.border_width[.Top], 0) || !in_range(declared.border_width[.Right], 0) || !in_range(declared.border_width[.Bottom], 0) || !in_range(declared.border_width[.Left], 0)):
+		return fuzz_text("a border width out of its range: %v", declared.border_width)
 	}
 	return ""
 }
@@ -388,6 +437,10 @@ fuzz_html_css_seeds :: proc(seeds: ^[dynamic][]u8) {
 	add(seeds, "<custom-tag data-x=1>text</CUSTOM-TAG></unknown><//><  /x><a<b>c")
 	add(seeds, "<style>* {display:none} h1{font-size:999px;margin:-70000px 1 2 3 4} div{width:+65537px;height:-1px;padding:-3px} .a.b#c{color:#12345678} #{} .{} {}{}</style><h1 class=a>t</h1>")
 	add(seeds, "<div style=\"display:flex;gap:65536px;width:65536;margin-left:-65536px\"><span>a</span><span>b</span><div style=\"display:flex;flex-direction:column\">c</div></div>")
+	add(seeds, "<table style=\"width:300px;border:1px solid\"><caption>c</caption><thead><tr><th>h<th>i</thead><tr><td>a<td>b</tr>stray<tr><td colspan=2>c<table><td>in</table></table>")
+	add(seeds, "<b><i>text</b>more</i><a href=x>1<div>2</a>3</div><p><b><b><b><b>x</p>y<dl><dt>t<dd>d</dl><ul><li>1<li>2</ul>")
+	add(seeds, "<style>section > .x p, div .y > #z { text-align: center; border: thick dashed red; border-width: 1px 2px 3px 4px } td { padding: 2px 4px 6px } .t { display: table } .r { display: table-row } .c { display: table-cell }</style><section><div class=x><p id=z>t</p></div></section><div class=t><div class=r><div class=c>1</div><div class=c>2</div></div></div>")
+	add(seeds, "<title>a &amp; b</title><textarea>\n&lt;x</textarea><pre>\nline</pre><![CDATA[c]]><?pi?></ x><!DOCTYPE html><!--a--!>&#128;&#x1F600;&#65&ampx")
 	// The limits: the depth, the count of nodes, the attributes and the
 	// text pool.
 	deep := make([dynamic]u8, context.temp_allocator)
@@ -425,7 +478,7 @@ fuzz_html_css_seeds :: proc(seeds: ^[dynamic][]u8) {
 
 // Words of the grammar that the constants of the package do not give.
 fuzz_html_css_words :: proc(words: ^[dynamic][]u8) {
-	for word in ([?]string{"<!--", "-->", "</", "/>", "<script>", "</script>", "<style>", "</style>", "&#x", "&amp;", "style=\"", "class=", "id=", "display:flex", "flex-direction:column", "margin:", "padding:", "width:", "px", "rgb(", "#fff", "{", "}", "/*", "*/"}) {
+	for word in ([?]string{"<!--", "-->", "</", "/>", "<script>", "</script>", "<style>", "</style>", "&#x", "&amp;", "style=\"", "class=", "id=", "display:flex", "flex-direction:column", "margin:", "padding:", "width:", "px", "rgb(", "#fff", "{", "}", "/*", "*/", "<table>", "<tr>", "<td>", "</table>", "<b>", "</b>", "<i>", "</i>", "<a>", "</a>", " > ", "text-align:center", "border:1px solid", "display:table"}) {
 		append(words, slice.clone(transmute([]u8)word))
 	}
 }

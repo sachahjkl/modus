@@ -4,16 +4,17 @@ import "modus:contract/html_css"
 import "modus:graphics"
 import "modus:system"
 
-// The addresses, the pages built into the browser and the state that each
-// origin keeps. Nothing here reads the network: each page is HTML and CSS
-// that this file writes into a buffer of the module, and the window parses
-// it as it would parse the bytes of an answer.
+// The addresses and the pages built into the browser. Nothing here reads
+// the network: each page is HTML and CSS that this file writes into a
+// buffer of the module, and the origin worker parses it as it parses the
+// bytes of an answer. The state of each origin is in origin_worker.odin.
 
 // The bytes of an address as the address field holds it.
 ADDRESS_CAPACITY :: 160
 HOST_CAPACITY :: 64
 PATH_CAPACITY :: 64
 QUERY_CAPACITY :: 128
+FRAGMENT_CAPACITY :: 64
 
 // The bytes of the HTML of one page, before the style sheet of the
 // appearance; the document is the style sheet and the page.
@@ -21,16 +22,20 @@ PAGE_SOURCE_CAPACITY :: 16384
 DOCUMENT_SOURCE_CAPACITY :: 20480
 
 // An address, cut into the parts that the browser reads. The path starts
-// with '/', or is empty; the query has no '?'.
+// with '/', or is empty; the query has no '?'; the fragment has no '#' and
+// never leaves the browser. The origin of an address is its scheme, its
+// host and its port only.
 Address :: struct {
-	scheme:      html_css.Document_Scheme,
-	port:        u16,
-	host:        [HOST_CAPACITY]u8,
-	host_count:  int,
-	path:        [PATH_CAPACITY]u8,
-	path_count:  int,
-	query:       [QUERY_CAPACITY]u8,
-	query_count: int,
+	scheme:         html_css.Document_Scheme,
+	port:           u16,
+	host:           [HOST_CAPACITY]u8,
+	host_count:     int,
+	path:           [PATH_CAPACITY]u8,
+	path_count:     int,
+	query:          [QUERY_CAPACITY]u8,
+	query_count:    int,
+	fragment:       [FRAGMENT_CAPACITY]u8,
+	fragment_count: int,
 }
 
 // Why an address is refused. The window shows the sentence of the member.
@@ -45,6 +50,7 @@ Address_Problem :: enum u8 {
 	Port_Refused,
 	Path_Too_Long,
 	Query_Too_Long,
+	Fragment_Too_Long,
 }
 
 @(rodata)
@@ -59,6 +65,7 @@ ADDRESS_PROBLEM_SENTENCES := [Address_Problem]string {
 	.Port_Refused      = "the port of the address is not a number from 1 to 65535",
 	.Path_Too_Long     = "the path of the address is longer than 64 bytes",
 	.Query_Too_Long    = "the query of the address is longer than 128 bytes",
+	.Fragment_Too_Long = "the fragment of the address is longer than 64 bytes",
 }
 
 @(rodata)
@@ -176,6 +183,18 @@ address_parse :: proc "contextless" (text: string) -> (address: Address, problem
 		address.scheme = has_dot ? .Https : .Modus
 	}
 	address.port = SCHEME_PORTS[address.scheme]
+	// The fragment is cut first: a '?' or a '/' in it is part of it.
+	for index in 0 ..< len(rest) {
+		if rest[index] == '#' {
+			fragment := rest[index + 1:]
+			if len(fragment) > FRAGMENT_CAPACITY {
+				return {}, .Fragment_Too_Long
+			}
+			address.fragment_count = copy(address.fragment[:], fragment)
+			rest = rest[:index]
+			break
+		}
+	}
 	// The host ends at the first '/', '?' or ':'.
 	host_end := 0
 	for host_end < len(rest) && rest[host_end] != '/' && rest[host_end] != '?' && rest[host_end] != ':' {
@@ -250,6 +269,10 @@ address_query :: proc "contextless" (address: ^Address) -> string {
 	return string(address.query[:address.query_count])
 }
 
+address_fragment :: proc "contextless" (address: ^Address) -> string {
+	return string(address.fragment[:address.fragment_count])
+}
+
 // origin_write writes the origin of an address: its scheme, its host and
 // its port when the port is not the one of the scheme.
 origin_write :: proc "contextless" (writer: ^Source_Writer, address: ^Address) {
@@ -270,6 +293,10 @@ address_write :: proc "contextless" (writer: ^Source_Writer, address: ^Address) 
 		put(writer, "?")
 		put(writer, address_query(address))
 	}
+	if address.fragment_count > 0 {
+		put(writer, "#")
+		put(writer, address_fragment(address))
+	}
 }
 
 // The principal of the session of this window. The window acts for one
@@ -287,18 +314,34 @@ origin_of :: proc "contextless" (address: ^Address) -> (origin: html_css.Documen
 	return
 }
 
-// address_resolve writes the address of a link or a form action, read
-// against the address of the page that holds it: an address with a
-// scheme stands alone, and each other text is a path in the origin of the
-// page.
+// address_resolve writes the address of a link, a form action or a
+// redirect, read against the address of the page that holds it: an
+// address with a scheme stands alone, "//host/path" keeps the scheme of
+// the page only, "#name" keeps its path and its query, and each other text
+// is a path in the origin of the page.
 address_resolve :: proc "contextless" (writer: ^Source_Writer, base: ^Address, reference: string) {
 	if _, absolute := text_contains(reference, "://"); absolute {
+		put(writer, reference)
+		return
+	}
+	if len(reference) >= 2 && reference[0] == '/' && reference[1] == '/' {
+		put(writer, SCHEME_NAMES[base.scheme])
+		put(writer, ":")
 		put(writer, reference)
 		return
 	}
 	origin_write(writer, base)
 	if len(reference) == 0 {
 		put(writer, address_path(base))
+		return
+	}
+	if reference[0] == '#' {
+		put(writer, address_path(base))
+		if base.query_count > 0 {
+			put(writer, "?")
+			put(writer, address_query(base))
+		}
+		put(writer, reference)
 		return
 	}
 	if reference[0] != '/' && reference[0] != '?' {
@@ -354,75 +397,9 @@ writer_text :: proc "contextless" (writer: ^Source_Writer) -> string {
 	return string(writer.bytes[:writer.count])
 }
 
-// The state that each origin keeps: the last query that a form of the
-// origin sent. A read names the origin of the reader, and the store gives
-// the value only to a reader of the same origin.
-ORIGIN_SLOT_CAPACITY :: 8
-ORIGIN_VALUE_CAPACITY :: 64
-
-Origin_Slot :: struct {
-	used:        bool,
-	origin:      html_css.Document_Origin,
-	value:       [ORIGIN_VALUE_CAPACITY]u8,
-	value_count: int,
-	writes:      u64,
-}
-
-// What a read of the state of an origin gave.
-Origin_Read :: enum u8 {
-	Given, // The reader is of the origin of the state.
-	Nothing_Kept, // The origin keeps no state yet.
-	Refused_Other_Origin, // The reader is of another origin: it learns nothing, not even whether a state exists.
-}
-
-origin_slots: [ORIGIN_SLOT_CAPACITY]Origin_Slot
-
-// origin_state_write keeps a value for the origin of the writer. A full
-// table gives the slot written least to the new origin.
-origin_state_write :: proc "contextless" (writer: ^html_css.Document_Origin, value: string) {
-	slot: ^Origin_Slot
-	for &candidate in origin_slots {
-		if candidate.used && html_css.origins_equal(&candidate.origin, writer) {
-			slot = &candidate
-			break
-		}
-	}
-	if slot == nil {
-		for &candidate in origin_slots {
-			if !candidate.used {
-				slot = &candidate
-				break
-			}
-		}
-	}
-	if slot == nil {
-		slot = &origin_slots[0]
-		for &candidate in origin_slots {
-			if candidate.writes < slot.writes {
-				slot = &candidate
-			}
-		}
-		slot^ = {}
-	}
-	slot.used = true
-	slot.origin = writer^
-	slot.value_count = copy(slot.value[:], value)
-	slot.writes += 1
-}
-
-// origin_state_read gives the value that the origin owner keeps, to a
-// reader of that same origin only.
-origin_state_read :: proc "contextless" (reader, owner: ^html_css.Document_Origin) -> (value: string, read: Origin_Read) {
-	if !html_css.origins_equal(reader, owner) {
-		return "", .Refused_Other_Origin
-	}
-	for &slot in origin_slots {
-		if slot.used && html_css.origins_equal(&slot.origin, owner) {
-			return string(slot.value[:slot.value_count]), .Given
-		}
-	}
-	return "", .Nothing_Kept
-}
+// The key under which the forms origin keeps the last query that a form
+// of it sent.
+QUERY_STORAGE_KEY :: "query"
 
 // query_value finds the value of a name in a query, decoded: '+' is a
 // space, and %XX is the byte XX. A broken escape is kept as its bytes.
@@ -656,7 +633,7 @@ BUILT_IN_SOURCES := [Built_In_Page]string {
 </div>
 <h2>The addresses</h2>
 <p>A text with no scheme and no dot is a page of the browser: <a href="modus://guide">guide</a> is modus://guide. A text with a dot is an address of HTTPS.</p>
-<p class="dim">This window has no grant of the network. A page of HTTP or HTTPS needs the process of its origin, which the browser does not start yet.</p>
+<p class="dim">This window has no grant of the network. For a page of HTTP or HTTPS, the worker of its origin writes the request, and shows it.</p>
 </body>`,
 	.Forms      = `<title>Forms</title>
 <body>
@@ -681,19 +658,13 @@ built_in_of :: proc "contextless" (host: string) -> (page: Built_In_Page, found:
 }
 
 // page_write writes the HTML of the page of an address. Only the scheme
-// modus has pages here: an address of HTTP or HTTPS gets a page that says
-// why it does not load, under its own origin.
+// modus has pages here: an address of HTTP or HTTPS gets the request that
+// the worker of its origin builds, and a page that says why it does not
+// load, under its own origin.
 page_write :: proc "contextless" (writer: ^Source_Writer, address: ^Address) -> Page_Kind {
 	switch address.scheme {
 	case .Http, .Https:
-		put(writer, "<title>No network</title><body>")
-		put(writer, NAVIGATION)
-		put(writer, `<h1>No network in this window</h1><div class="box"><p class="refused">The browser loads no page of `)
-		origin_buffer: [ADDRESS_CAPACITY]u8
-		origin := Source_Writer{bytes = origin_buffer[:]}
-		origin_write(&origin, address)
-		put_escaped(writer, writer_text(&origin))
-		put(writer, `.</p><p>The window has no grant of the network. Each origin gets its own process, with the network grant of that origin only; the browser does not start it yet.</p></div></body>`)
+		offline_write(writer, address)
 		return .No_Network
 	case .Modus:
 	}
@@ -720,21 +691,69 @@ page_write :: proc "contextless" (writer: ^Source_Writer, address: ^Address) -> 
 		// The forms page shows the state of its own origin: the read is
 		// given, as the page and the state share one origin.
 		own := origin_of(address)
-		value, read := origin_state_read(&own, &own)
+		buffer: [ORIGIN_VALUE_CAPACITY]u8
+		value, status := origin_storage_read(&own, &own, QUERY_STORAGE_KEY, buffer[:])
 		put(writer, `<h2>The state of this origin</h2><div class="box">`)
-		switch read {
-		case .Given:
+		switch status {
+		case .Done:
 			put(writer, `<p class="ok">The last query of this origin: `)
 			put_escaped(writer, value)
 			put(writer, `</p>`)
 		case .Nothing_Kept:
 			put(writer, `<p class="dim">This origin keeps no query yet.</p>`)
-		case .Refused_Other_Origin:
+		case .Refused_Other_Origin, .Refused_Malformed:
 			put(writer, `<p class="refused">Refused: another origin.</p>`)
 		}
 		put(writer, `</div></body>`)
 	}
 	return .Built_In
+}
+
+// offline_write writes the page of an address of HTTP or HTTPS: the
+// request that the worker of its origin builds, with the cookies of that
+// origin only, and why the window does not send it.
+offline_write :: proc "contextless" (writer: ^Source_Writer, address: ^Address) {
+	origin_buffer: [ADDRESS_CAPACITY]u8
+	origin_text := Source_Writer{bytes = origin_buffer[:]}
+	origin_write(&origin_text, address)
+	own := origin_of(address)
+	cookies := origin_request_make(.Cookie_Header, &own, &own)
+	cookie_reply := origin_ask(&cookies)
+	request: [REQUEST_CAPACITY]u8
+	request_count, problem := fetch_request_write(address, string(cookie_reply.value[:cookie_reply.value_count]), request[:])
+	put(writer, "<title>No network</title><body>")
+	put(writer, NAVIGATION)
+	put(writer, `<h1>No network in this window</h1><div class="box"><p class="refused">The browser loads no page of `)
+	put_escaped(writer, writer_text(&origin_text))
+	put(writer, `: the window has no grant of the network.</p>`)
+	if problem != .None {
+		put(writer, `<p class="refused">The request is refused: `)
+		put(writer, FETCH_PROBLEM_SENTENCES[problem])
+		put(writer, `.</p></div></body>`)
+		return
+	}
+	put(writer, `<p>The worker of this origin wrote its request, `)
+	put_number(writer, u64(request_count))
+	put(writer, ` bytes of HTTP/1.1`)
+	if address.scheme == .Https {
+		put(writer, `, for TLS 1.3 over TCP`)
+	}
+	put(writer, `:</p><pre class="code">`)
+	// The request line and the headers, one line each.
+	text := string(request[:request_count])
+	for len(text) > 0 {
+		end := 0
+		for end < len(text) && text[end] != '\r' {
+			end += 1
+		}
+		if end > 0 {
+			put(writer, `<p>`)
+			put_escaped(writer, text[:end])
+			put(writer, `</p>`)
+		}
+		text = text[min(end + 2, len(text)):]
+	}
+	put(writer, `</pre><p>The process of each origin holds the network grant of that origin only; the window starts none yet.</p></div></body>`)
 }
 
 // form_result_write writes the answer to a form: each value of the query,
@@ -745,7 +764,7 @@ form_result_write :: proc "contextless" (writer: ^Source_Writer, address: ^Addre
 	query, has_query := query_value(address_query(address), "query", query_buffer[:])
 	own := origin_of(address)
 	if has_query {
-		origin_state_write(&own, query)
+		origin_storage_write(&own, QUERY_STORAGE_KEY, query)
 	}
 	put(writer, "<title>The form was sent</title><body>")
 	put(writer, NAVIGATION)
@@ -762,14 +781,15 @@ peek_write :: proc "contextless" (writer: ^Source_Writer, address: ^Address) {
 	reader := origin_of(address)
 	forms_address, _ := address_parse("modus://forms")
 	owner := origin_of(&forms_address)
-	_, read := origin_state_read(&reader, &owner)
+	buffer: [ORIGIN_VALUE_CAPACITY]u8
+	_, status := origin_storage_read(&reader, &owner, QUERY_STORAGE_KEY, buffer[:])
 	put(writer, "<title>A read of another origin</title><body>")
 	put(writer, NAVIGATION)
 	put(writer, `<h1>A read of another origin</h1><div class="box">`)
-	switch read {
+	switch status {
 	case .Refused_Other_Origin:
 		put(writer, `<p class="refused">Refused: this page is of modus://welcome, and the state is of modus://forms.</p><p>The page learns nothing of that state, not even whether it exists.</p>`)
-	case .Given, .Nothing_Kept:
+	case .Done, .Nothing_Kept, .Refused_Malformed:
 		put(writer, `<p class="refused">WRONG: the read was not refused.</p>`)
 	}
 	put(writer, `</div></body>`)

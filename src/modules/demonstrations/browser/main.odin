@@ -7,15 +7,16 @@
 // its style sheets, resolves the cascade, lays out block, inline and flex
 // boxes, and paints them as draw records. The window copies the records
 // that its view shows into its own draw table. Each page is parsed under
-// its document origin, and the state of one origin is refused to a page of
-// another.
+// its document origin by the origin worker of that origin, and the state
+// of one origin is refused to a page of another.
 //
 // **Start**: `start("browser")` in the console.
 //
 // **Grants**: none. The window is its one handle: the pages that it shows
 // are built into it (modus://welcome, modus://properties, modus://guide,
-// modus://forms). An address of HTTP or HTTPS gets a page that says that
-// this window has no grant of the network.
+// modus://forms). An address of HTTP or HTTPS gets a page that shows the
+// request that the worker of its origin writes, and says that this window
+// has no grant of the network.
 //
 // **What a reader sees.** A window that the principal resizes, laid out by
 // the layout tree of modus:layout (src/md/features/box_layout.md). The top
@@ -114,6 +115,8 @@ history_place: int // The entry of the page shown.
 // The page shown: its address, what it is, and the buffers of its source.
 current: Address
 current_kind: Page_Kind
+// What the origin worker gave for the page shown.
+current_render: Origin_Render_Tree
 // The page alone, kept so that a change of the appearance composes the
 // document again with the other style sheet.
 page_source: [PAGE_SOURCE_CAPACITY]u8
@@ -206,8 +209,8 @@ status_set :: proc "contextless" (failed: bool, parts: ..string) {
 }
 
 // document_build composes the style sheet of the appearance and the page,
-// parses them under the origin of the address, and lays the document out
-// at the width of the view.
+// and sends them to the worker of the origin of the address, which parses
+// them and lays the document out at the width of the view.
 document_build :: proc "contextless" (page: string) {
 	loaded_appearance = graphics.appearance
 	writer := Source_Writer{bytes = document_source[:]}
@@ -216,8 +219,16 @@ document_build :: proc "contextless" (page: string) {
 	put(&writer, "</style></head>")
 	put(&writer, page)
 	document_source_count = writer.count
-	document_parse(origin_of(&current), document_source[:document_source_count])
-	document_lay_out(view_width, view_height)
+	origin := origin_of(&current)
+	current_render = origin_render_ask(&origin, document_source[:document_source_count], view_width)
+}
+
+// page_forms_keep asks the origin of the page shown to keep the values of
+// its fields, or to give them back, under the path of the page.
+page_forms_keep :: proc "contextless" (kind: Origin_Request_Kind) {
+	own := origin_of(&current)
+	request := origin_request_make(kind, &own, &own, address_path(&current))
+	origin_ask(&request)
 }
 
 // page_load loads the page of an address. A history push makes it the
@@ -230,11 +241,19 @@ page_load :: proc "contextless" (text: string, history_push: bool) -> bool {
 		system.log_fact(.Info, Address_Refused{}, ADDRESS_PROBLEM_SENTENCES[problem], text)
 		return false
 	}
+	// The values typed in the page shown stay with its origin.
+	if history_count > 0 {
+		page_forms_keep(.Forms_Save)
+	}
 	current = address
 	page_writer := Source_Writer{bytes = page_source[:]}
 	current_kind = page_write(&page_writer, &current)
 	page_source_count = page_writer.count
 	document_build(writer_text(&page_writer))
+	// Back, forward and reload give a page the values that it had.
+	if !history_push {
+		page_forms_keep(.Forms_Restore)
+	}
 	canonical: [ADDRESS_CAPACITY + 8]u8
 	canonical_writer := Source_Writer{bytes = canonical[:]}
 	address_write(&canonical_writer, &current)
@@ -260,7 +279,7 @@ page_load :: proc "contextless" (text: string, history_push: bool) -> bool {
 	if page_writer.full {
 		status_set(true, "the page is longer than the buffer of the window: its end is cut")
 	}
-	system.log_fact(.Info, Page_Loaded{nodes = u64(document_tree.node_count), rules = u64(sheet.rule_count), boxes = u64(document_layout.box_count), records = u64(document_record_count), bytes = u64(document_source_count), kind = value_kinds.text_field(PAGE_KIND_WORDS[current_kind], PAGE_KIND_FIELD_BYTES)}, canonical_text)
+	system.log_fact(.Info, Page_Loaded{nodes = u64(current_render.node_count), rules = u64(current_render.rule_count), boxes = u64(current_render.box_count), records = u64(current_render.record_count), bytes = u64(document_source_count), kind = value_kinds.text_field(PAGE_KIND_WORDS[current_kind], PAGE_KIND_FIELD_BYTES)}, canonical_text)
 	return true
 }
 
@@ -418,7 +437,9 @@ draw :: proc "contextless" (window: ^display.Window) -> (act: Act) {
 	box_layout.states_frame_begin(&box_states, {pointer_x = i32(clamp(input.pointer_x, int(min(i32)), int(max(i32)))), pointer_y = i32(clamp(input.pointer_y, int(min(i32)), int(max(i32)))), pointer_present = input.pointer_known, primary_down = input.button_held, primary_pressed = input.pressed, primary_released = input.released, primary_press_count = input.pressed ? 1 : 0})
 	// The appearance changed: the page takes the style sheet of the new one.
 	if graphics.appearance != loaded_appearance {
+		page_forms_keep(.Forms_Save)
 		document_build(string(page_source[:page_source_count]))
+		page_forms_keep(.Forms_Restore)
 	}
 	origin_buffer: [HOST_CAPACITY + 32]u8
 	origin_writer := Source_Writer{bytes = origin_buffer[:]}
