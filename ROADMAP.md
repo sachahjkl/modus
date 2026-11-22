@@ -25,6 +25,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **An initial archive in the spec of a guest build.** The spec of a build names an initial archive by its hash, which the guest builder places beside the kernel, so a build runs the `init` of its recipe with a kernel of Nixpkgs that carries none. [Design](src/md/features/foreign_systems.md)
 - **Builds across paired machines, on the machine.** The root service connects `recipes` to the outbound links of `remote` and gives `remote` the listen grant of each address, so `recipes.build` gives the recipes of a graph to the builders and the caches that a principal paired, and a machine test runs it on two machines. [Design](src/md/features/recipes.md)
 
 - **The elements and the other windows on the layout tree.** The elements of the interface package and the windows other than `monitor` and `settings` take their rectangles from `modus:layout`, so a text that grows, a scale factor or a resize moves each element with no place computed by hand. [Design](src/md/features/box_layout.md)

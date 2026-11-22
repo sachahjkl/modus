@@ -552,6 +552,11 @@
           # publisher in secrets/production.yaml (secrets/README.md).
           packages = buildTools ++ [modustool pkgs.ffmpeg pkgs.sops] ++ preCommitCheck.enabledPackages;
           inherit (preCommitCheck) shellHook;
+          # A real kernel of Linux of 64 bits, the bzImage of Nixpkgs: the
+          # host test of the boot protocol in modus:contract/guest_os loads
+          # it when this variable names it. Only this shell carries it: no
+          # check, no system image and no release depends on it.
+          MODUS_LINUX_KERNEL_IMAGE = "${pkgs.linux}/bzImage";
         }
         // firmware
         // ownerPointerTheme

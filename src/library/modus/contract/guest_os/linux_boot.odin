@@ -40,6 +40,7 @@ SETUP_LOADER_TYPE :: 0x210
 SETUP_LOAD_FLAGS :: 0x211
 SETUP_RAMDISK_ADDRESS :: 0x218
 SETUP_RAMDISK_SIZE :: 0x21C
+SETUP_INITIAL_ARCHIVE_ADDRESS_MOST :: 0x22C // The highest byte that the initial archive may hold.
 SETUP_COMMAND_LINE_ADDRESS :: 0x228
 SETUP_KERNEL_ALIGNMENT :: 0x230
 SETUP_RELOCATABLE :: 0x234
@@ -50,6 +51,8 @@ SETUP_INITIAL_SIZE :: 0x260
 SETUP_HEADER_END_LEAST :: 0x264 // Through the initial size, which the protocol 2.10 added.
 SETUP_HEADER_END_MOST :: u64(0x290) // Below the memory map of the zero page at 0x2D0: a header never writes over it.
 ZERO_PAGE_BYTES :: 4096
+ZERO_PAGE_EXTENDED_RAMDISK_ADDRESS :: 0x0C0
+ZERO_PAGE_EXTENDED_RAMDISK_SIZE :: 0x0C4
 ZERO_PAGE_EXTENDED_COMMAND_LINE :: 0x0C8
 ZERO_PAGE_MEMORY_MAP_COUNT :: 0x1E8
 ZERO_PAGE_MEMORY_MAP :: 0x2D0
@@ -57,6 +60,8 @@ ZERO_PAGE_MEMORY_MAP_ENTRIES_MOST :: 128
 LINUX_PROTOCOL_LEAST :: u16(0x020C) // 2.12: the extended load flags that say the kernel has a 64-bit entry.
 LINUX_LOADED_HIGH :: u8(0x01)
 LINUX_EXTENDED_KERNEL_64 :: u16(0x0001)
+LINUX_EXTENDED_INITIAL_ARCHIVE_ABOVE_4G :: u16(0x0002) // The initial archive may lie anywhere: the kernel reads the extended fields.
+LINUX_INITIAL_ARCHIVE_ALIGNMENT :: u64(4096)
 LINUX_LOADER_UNDEFINED :: u8(0xFF)
 LINUX_ENTRY_64_OFFSET :: u64(0x200) // startup_64 is 0x200 past the start of the protected-mode kernel.
 
@@ -78,6 +83,7 @@ Linux_Boot_Refusal :: enum u8 {
 	Memory_Too_Small      = 9, // The kernel, its working space or the memory map does not fit the memory.
 	Command_Line_Too_Long = 10, // Past the size that the kernel reads, or past LINUX_COMMAND_LINE_BYTES_MOST.
 	Command_Line_Not_Text = 11, // Not valid text, or a byte 0 or a control byte inside.
+	Initial_Archive_Too_Large = 12, // The initial archive does not fit between the kernel and its highest address.
 }
 
 Linux_Elf_Segment :: struct {
@@ -97,6 +103,7 @@ Linux_Image :: struct {
 	load_end:             u64, // The end of the memory that the kernel uses while it starts.
 	entry_address:        u64,
 	command_line_bytes_most: u64,
+	initial_archive_address_most: u64, // The highest byte that an initial archive may hold.
 	segments:             [LINUX_ELF_SEGMENTS_MOST]Linux_Elf_Segment,
 	segment_count:        int,
 }
@@ -173,6 +180,10 @@ linux_image_parse :: proc "contextless" (image: []u8, memory_bytes: u64) -> (par
 		return {}, .Entry_Outside
 	}
 	parsed.command_line_bytes_most = min(u64(byte_order.read_u32_little_endian(image, SETUP_COMMAND_LINE_SIZE)), LINUX_COMMAND_LINE_BYTES_MOST - 1)
+	parsed.initial_archive_address_most = u64(byte_order.read_u32_little_endian(image, SETUP_INITIAL_ARCHIVE_ADDRESS_MOST))
+	if byte_order.read_u16_little_endian(image, SETUP_EXTENDED_LOAD_FLAGS) & LINUX_EXTENDED_INITIAL_ARCHIVE_ABOVE_4G != 0 {
+		parsed.initial_archive_address_most = max(u64)
+	}
 	return parsed, .None
 }
 
@@ -253,6 +264,9 @@ linux_elf_parse :: proc "contextless" (image: []u8, memory_bytes: u64) -> (parse
 	parsed.load_end = highest
 	parsed.entry_address = entry
 	parsed.command_line_bytes_most = LINUX_COMMAND_LINE_BYTES_MOST - 1
+	// A vmlinux starts at startup_64 and reads the extended fields of the
+	// zero page: the initial archive may lie anywhere.
+	parsed.initial_archive_address_most = max(u64)
 	return parsed, .None
 }
 
@@ -321,10 +335,16 @@ linux_page_tables_write :: proc "contextless" (memory: Guest_Memory, base: u64) 
 }
 
 // The parts of the command line that the machine of a build needs: the
-// serial console, no firmware tables, and the three virtio devices with
-// their windows and their lines (CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES).
-// After `--`, the words go to init as its arguments.
-LINUX_COMMAND_LINE_START :: "console=ttyS0 earlyprintk=serial,ttyS0 acpi=off pci=off noapic panic=-1 tsc=reliable no_timer_check"
+// serial console from the first message, no firmware tables (acpi=off), no
+// PCI bus, no I/O APIC (noapic) and no local APIC (nolapic: cpuid offers
+// none, and the word keeps Linux from a probe of its registers), no random
+// place of the kernel (nokaslr: the place then depends on no entropy and
+// stays inside the memory that the parse checked), the time stamp counter
+// as the clock with no check against the timer, and the three virtio
+// devices with their windows and their lines
+// (CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES). After `--`, the words go to init
+// as its arguments.
+LINUX_COMMAND_LINE_START :: "console=ttyS0 earlyprintk=serial,ttyS0,115200 acpi=off pci=off noapic nolapic nokaslr panic=-1 tsc=reliable no_timer_check"
 
 // linux_command_line_write writes the command line: the fixed start, one
 // virtio_mmio.device for each device, then `--` and the command of the
@@ -395,6 +415,30 @@ text_write_decimal :: proc "contextless" (writer: ^Text_Writer, value: u64) {
 	text_write(writer, string(digits[20 - count:]))
 }
 
+// linux_initial_archive_place gives the guest physical address of an
+// initial archive of initial_archive_bytes bytes: the highest page-aligned
+// place whose end is at most the ceiling and past no byte that the header
+// allows, and whose start is at or above the end of the kernel and its
+// working space. Linux takes an initial archive anywhere in its memory; the
+// top keeps it away from the kernel, which decompresses itself upward.
+linux_initial_archive_place :: proc "contextless" (parsed: Linux_Image, initial_archive_bytes: u64, ceiling: u64) -> (address: u64, refusal: Linux_Boot_Refusal) {
+	if initial_archive_bytes == 0 {
+		return 0, .None
+	}
+	end := ceiling
+	if parsed.initial_archive_address_most < max(u64) {
+		end = min(end, parsed.initial_archive_address_most + 1)
+	}
+	if initial_archive_bytes > end {
+		return 0, .Initial_Archive_Too_Large
+	}
+	address = (end - initial_archive_bytes) &~ (LINUX_INITIAL_ARCHIVE_ALIGNMENT - 1)
+	if address < parsed.load_end || address < LINUX_LOW_MEMORY_END {
+		return 0, .Initial_Archive_Too_Large
+	}
+	return address, .None
+}
+
 // linux_zero_page_write writes the zero page: the setup header of a
 // bzImage (or the fields that a vmlinux needs), the loader, the command
 // line and the memory map.
@@ -434,11 +478,20 @@ linux_zero_page_write :: proc "contextless" (page: []u8, image: []u8, parsed: Li
 // run: long mode, the kernel entry in rip, the zero page in rsi, and the
 // selectors of the protocol. The structures below 64 KiB stay in the
 // memory map as memory: Linux reserves its first 64 KiB, and copies the
-// zero page and the command line before it gives a page.
-linux_boot_prepare :: proc "contextless" (memory: Guest_Memory, image: []u8, parsed: Linux_Image, devices: []Machine_Device_Place, command: []u8) -> (registers: op.Guest_Registers, refusal: Linux_Boot_Refusal) {
+// zero page and the command line before it gives a page. An initial
+// archive (an archive of cpio, possibly compressed, which Linux unpacks as
+// its first tree of files) goes below initial_archive_ceiling, which keeps
+// it out of memory that the caller still uses (the copy of the image); nil
+// gives none.
+linux_boot_prepare :: proc "contextless" (memory: Guest_Memory, image: []u8, parsed: Linux_Image, devices: []Machine_Device_Place, command: []u8, initial_archive: []u8, initial_archive_ceiling: u64) -> (registers: op.Guest_Registers, refusal: Linux_Boot_Refusal) {
 	memory_bytes := u64(len(memory.bytes))
 	if memory_bytes < LINUX_MEMORY_BYTES_LEAST || parsed.load_end > memory_bytes {
 		return {}, .Memory_Too_Small
+	}
+	// Each check before a byte of the guest changes.
+	initial_archive_address, initial_archive_refusal := linux_initial_archive_place(parsed, u64(len(initial_archive)), min(initial_archive_ceiling, memory_bytes))
+	if initial_archive_refusal != .None {
+		return {}, initial_archive_refusal
 	}
 	if load_refusal := linux_image_load(memory, image, parsed); load_refusal != .None {
 		return {}, load_refusal
@@ -466,6 +519,15 @@ linux_boot_prepare :: proc "contextless" (memory: Guest_Memory, image: []u8, par
 	page, _ := guest_memory_range(memory, LINUX_ZERO_PAGE_ADDRESS, ZERO_PAGE_BYTES)
 	if zero_refusal := linux_zero_page_write(page, image, parsed, LINUX_COMMAND_LINE_ADDRESS, memory_map[:map_count]); zero_refusal != .None {
 		return {}, zero_refusal
+	}
+	// The initial archive last: the header of the image is in the zero page now.
+	if len(initial_archive) > 0 {
+		target, _ := guest_memory_range(memory, initial_archive_address, u64(len(initial_archive)))
+		copy(target, initial_archive)
+		byte_order.write_u32_little_endian(page, SETUP_RAMDISK_ADDRESS, u32(initial_archive_address))
+		byte_order.write_u32_little_endian(page, SETUP_RAMDISK_SIZE, u32(len(initial_archive)))
+		byte_order.write_u32_little_endian(page, ZERO_PAGE_EXTENDED_RAMDISK_ADDRESS, u32(initial_archive_address >> 32))
+		byte_order.write_u32_little_endian(page, ZERO_PAGE_EXTENDED_RAMDISK_SIZE, u32(u64(len(initial_archive)) >> 32))
 	}
 	registers = {
 		rip           = parsed.entry_address,

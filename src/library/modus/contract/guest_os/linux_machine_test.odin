@@ -30,6 +30,28 @@ device_access_decode_forms :: proc(t: ^testing.T) {
 		{{0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0xD0}, {direction = .Read, size = 4, register = .Rax, destination_size = 4, length = 7}},
 		{{0x8B, 0x87, 0x00, 0x01, 0x00, 0x00}, {direction = .Read, size = 4, register = .Rax, destination_size = 4, length = 6}},
 		{{0x65, 0x67, 0x45, 0x8B, 0x3F}, {direction = .Read, size = 4, register = .R15, destination_size = 4, length = 5}},
+		// The forms that the accessors of Linux take in drivers/virtio/virtio_mmio.c,
+		// with the bases and the indexes of REX.B and REX.X.
+		{{0x8B, 0x43, 0x70}, {direction = .Read, size = 4, register = .Rax, destination_size = 4, length = 3}}, // readl(base + 0x70)
+		{{0x89, 0x50, 0x70}, {direction = .Write, size = 4, register = .Rdx, length = 3}}, // writel(edx, base + 0x70)
+		{{0x41, 0x8B, 0x84, 0x24, 0x00, 0x01, 0x00, 0x00}, {direction = .Read, size = 4, register = .Rax, destination_size = 4, length = 8}}, // mov eax, [r12 + 0x100]
+		{{0x42, 0x8B, 0x04, 0x0B}, {direction = .Read, size = 4, register = .Rax, destination_size = 4, length = 4}}, // mov eax, [rbx + r9]
+		{{0x47, 0x89, 0x54, 0x3D, 0x08}, {direction = .Write, size = 4, register = .R10, length = 5}}, // mov [r13 + r15 + 8], r10d
+		{{0x45, 0x8B, 0x45, 0x00}, {direction = .Read, size = 4, register = .R8, destination_size = 4, length = 4}}, // mov r8d, [r13 + 0]: r13 needs a displacement.
+		{{0x8B, 0x0D, 0xF8, 0xFF, 0xFF, 0xFF}, {direction = .Read, size = 4, register = .Rcx, destination_size = 4, length = 6}}, // mov ecx, [rip - 8]
+		{{0x66, 0x89, 0x43, 0x0E}, {direction = .Write, size = 2, register = .Rax, length = 4}}, // writew
+		{{0x66, 0x8B, 0x43, 0x0E}, {direction = .Read, size = 2, register = .Rax, destination_size = 2, length = 4}}, // readw
+		{{0x88, 0x53, 0x01}, {direction = .Write, size = 1, register = .Rdx, length = 3}}, // writeb(dl)
+		{{0x40, 0x8A, 0x73, 0x01}, {direction = .Read, size = 1, register = .Rsi, destination_size = 1, length = 4}}, // readb into sil
+		{{0x44, 0x8A, 0x43, 0x02}, {direction = .Read, size = 1, register = .R8, destination_size = 1, length = 4}}, // readb into r8b
+		{{0x0F, 0xB6, 0x43, 0x04}, {direction = .Read, size = 1, register = .Rax, destination_size = 4, length = 4}}, // movzx eax, byte [rbx + 4]
+		{{0x44, 0x0F, 0xB7, 0x4B, 0x06}, {direction = .Read, size = 2, register = .R9, destination_size = 4, length = 5}}, // movzx r9d, word [rbx + 6]
+		{{0x48, 0x0F, 0xBE, 0x43, 0x01}, {direction = .Read, size = 1, register = .Rax, destination_size = 8, sign_extend = true, length = 5}}, // movsx rax, byte [rbx + 1]
+		{{0x0F, 0xBF, 0x03}, {direction = .Read, size = 2, register = .Rax, destination_size = 4, sign_extend = true, length = 3}}, // movsx eax, word [rbx]
+		{{0x66, 0x0F, 0xBE, 0x03}, {direction = .Read, size = 1, register = .Rax, destination_size = 2, sign_extend = true, length = 4}}, // movsx ax, byte [rbx]
+		{{0xC7, 0x43, 0x70, 0x00, 0x00, 0x00, 0x00}, {direction = .Write, size = 4, immediate = true, immediate_value = 0, length = 7}}, // mov dword [rbx + 0x70], 0
+		{{0xC7, 0x04, 0x25, 0x70, 0x00, 0x00, 0xD0, 0x0F, 0x00, 0x00, 0x00}, {direction = .Write, size = 4, immediate = true, immediate_value = 0xF, length = 11}}, // mov dword [0xD0000070], 15
+		{{0xC6, 0x84, 0x24, 0x00, 0x01, 0x00, 0x00, 0xFF}, {direction = .Write, size = 1, immediate = true, immediate_value = 0xFF, length = 8}}, // mov byte [rsp + 0x100], 0xFF
 	}
 	for entry in cases {
 		access, refusal := device_access_decode(entry.bytes, true)
@@ -58,6 +80,9 @@ device_access_decode_refusals :: proc(t: ^testing.T) {
 		{{0x48, 0x8B, 0x07}, false, .Unknown_Opcode}, // dec eax in 32-bit code.
 		{{0x67, 0x8B, 0x07}, false, .Unknown_Opcode},
 		{{0xF3, 0xA5}, true, .Unknown_Opcode}, // rep movsd.
+		{{0x0F, 0xBC, 0x03}, true, .Unknown_Opcode}, // bsf: next to movsx, not a move.
+		{{0x0F, 0xBE, 0xC0}, true, .Register_Operand}, // movsx eax, al.
+		{{0xF0, 0x89, 0x03}, true, .Unknown_Opcode}, // A lock prefix: no mov takes it.
 	}
 	for entry in refusals {
 		_, refusal := device_access_decode(entry.bytes, entry.long_mode)
@@ -93,6 +118,22 @@ device_access_register_rules :: proc(t: ^testing.T) {
 	testing.expect_value(t, value, u64(0xCC))
 	value = device_access_value({r8 = max(u64)}, {direction = .Write, size = 2, register = .R8})
 	testing.expect_value(t, value, u64(0xFFFF))
+	// movsx: the sign fills the register to its size; a write of 4 bytes
+	// clears the high half, a write of 2 bytes keeps it.
+	signed := op.Guest_Registers{rax = 0x1111_2222_3333_4444}
+	device_access_complete(&signed, {direction = .Read, size = 1, register = .Rax, destination_size = 8, sign_extend = true, length = 5}, 0x80)
+	testing.expect_value(t, signed.rax, u64(0xFFFF_FFFF_FFFF_FF80))
+	device_access_complete(&signed, {direction = .Read, size = 1, register = .Rax, destination_size = 4, sign_extend = true, length = 3}, 0xFFFF_FF7F)
+	testing.expect_value(t, signed.rax, u64(0x7F))
+	signed.rax = 0x1111_2222_3333_4444
+	device_access_complete(&signed, {direction = .Read, size = 2, register = .Rax, destination_size = 4, sign_extend = true, length = 3}, 0x8001)
+	testing.expect_value(t, signed.rax, u64(0xFFFF_8001))
+	signed.rax = 0x1111_2222_3333_4444
+	device_access_complete(&signed, {direction = .Read, size = 1, register = .Rax, destination_size = 2, sign_extend = true, length = 4}, 0xFE)
+	testing.expect_value(t, signed.rax, u64(0x1111_2222_3333_FFFE))
+	testing.expect_value(t, sign_extended(0x8000_0000, 4), u64(0xFFFF_FFFF_8000_0000))
+	testing.expect_value(t, sign_extended(max(u64), 8), max(u64))
+	testing.expect_value(t, sign_extended(0x17F, 1), u64(0x7F))
 }
 
 // The model-specific registers: each value that the processor refuses
@@ -129,8 +170,15 @@ machine_model_specific_registers :: proc(t: ^testing.T) {
 		{0xC000_0080, u64(op.GUEST_EFER_SECURE_VIRTUAL_MACHINE)},
 		{0xC000_0080, 1 << 2},
 		{0x0000_001B, 0xFEE0_0900},
-		{0x0000_0010, 0},
-		{0x0000_0277, 0},
+		{0x0000_0010, 0}, // The counter of the virtual clock never moves back.
+		{0x0000_0277, 0x0007_0406_0007_0402}, // A reserved memory type: 2.
+		{0x0000_0277, 0x0307_0406_0007_0406}, // A reserved memory type: 3.
+		{0x0000_0277, 0x0807_0406_0007_0406}, // A bit past the type.
+		{0x0000_00FE, 0}, // MTRRCAP: read only.
+		{0x0000_01A0, 1},
+		{0x0000_02FF, 0x800}, // The ranges stay off.
+		{0x0000_0048, 0}, // SPEC_CTRL: cpuid does not offer it.
+		{0x0000_010A, 0}, // ARCH_CAPABILITIES: cpuid does not offer it.
 		{0xFFFF_FFFF, 0},
 	}
 	for entry in refused {
@@ -176,10 +224,15 @@ machine_model_specific_registers :: proc(t: ^testing.T) {
 	odd := long
 	testing.expect_value(t, linux_machine_handle_exit(machine, &odd, {kind = .Other, code = u64(Other_Exit_Code.Model_Specific_Register), information = 2}), Machine_Step.Failed)
 	testing.expect_value(t, machine.failure, Machine_Failure.Unknown_Exit)
-	// A read of the local APIC faults too: cpuid does not offer it.
+	// A read of the local APIC faults too: cpuid does not offer it. So do
+	// the reads of the registers of speculation that cpuid does not offer:
+	// Linux reads them only with the check of a fault.
+	for register in ([?]u32{0x1B, 0x48, 0x10A, 0xC000_0103, 0x8B}) {
+		registers := long
+		msr_exit(machine, &registers, register, false, 0)
+		testing.expectf(t, registers.inject_vector == VECTOR_GENERAL_PROTECTION && registers.rip == long.rip, "a read of msr %x faults", register)
+	}
 	registers := long
-	msr_exit(machine, &registers, 0x1B, false, 0)
-	testing.expect_value(t, registers.inject_vector, VECTOR_GENERAL_PROTECTION)
 	// The successful cases last.
 	registers = long
 	accepted := [?]struct {
@@ -216,6 +269,105 @@ machine_model_specific_registers :: proc(t: ^testing.T) {
 	testing.expect(t, registers.rax == 0x8100_0000 && registers.rdx == 0xFFFF_FFFF)
 	msr_exit(machine, &registers, 0xC000_0080, false, 0)
 	testing.expect_value(t, registers.rax & u64(op.GUEST_EFER_SECURE_VIRTUAL_MACHINE), u64(0))
+}
+
+// The registers that an early boot of Linux can read on a processor of 64
+// bits answer with no fault and no stop: the page attribute table at its
+// reset value, the ranges of memory types off, no feature to turn off, and
+// the time stamp counter of the virtual clock.
+@(test)
+machine_early_boot_model_specific_registers :: proc(t: ^testing.T) {
+	machine := new(Linux_Machine)
+	defer free(machine)
+	linux_machine_start(machine, {}, nil, nil)
+	read :: proc(machine: ^Linux_Machine, register: u32) -> (value: u64, registers: op.Guest_Registers, step: Machine_Step) {
+		registers = {rip = 0x10_0000, rcx = u64(register), rax = max(u64), rdx = max(u64)}
+		step = linux_machine_handle_exit(machine, &registers, {kind = .Other, code = u64(Other_Exit_Code.Model_Specific_Register), information = 0})
+		return registers.rdx << 32 | registers.rax, registers, step
+	}
+	write :: proc(machine: ^Linux_Machine, register: u32, value: u64) -> op.Guest_Registers {
+		registers := op.Guest_Registers{rip = 0x10_0000, rcx = u64(register), rax = value & 0xFFFF_FFFF, rdx = value >> 32}
+		linux_machine_handle_exit(machine, &registers, {kind = .Other, code = u64(Other_Exit_Code.Model_Specific_Register), information = 1})
+		return registers
+	}
+	expected := [?]struct {
+		register: u32,
+		value:    u64,
+	} {
+		{0x0000_0277, PAGE_ATTRIBUTE_TABLE_RESET},
+		{0x0000_00FE, 0},
+		{0x0000_01A0, 0},
+		{0x0000_02FF, 0},
+	}
+	for entry in expected {
+		value, registers, step := read(machine, entry.register)
+		testing.expect_value(t, step, Machine_Step.Continue)
+		testing.expectf(t, registers.inject_kind == 0 && value == entry.value && registers.rip == 0x10_0002, "msr %x reads %x", entry.register, value)
+	}
+	testing.expect_value(t, machine.failure, Machine_Failure.None)
+	// The counter of the virtual clock, as rdtsc gives it: each exit moves
+	// the clock, so two reads never give one value.
+	first, _, _ := read(machine, 0x10)
+	second, _, _ := read(machine, 0x10)
+	testing.expect_value(t, first, machine.clock * LINUX_TIME_STAMP_COUNTS_PER_TICK - LINUX_TICKS_PER_EXIT * LINUX_TIME_STAMP_COUNTS_PER_TICK)
+	testing.expect(t, second > first)
+	// The writes that change nothing are accepted; the table of Linux (write
+	// back, write combining, uncached-minus, uncached, write back, write
+	// protected, uncached-minus, write through) lands and reads back.
+	LINUX_PAGE_ATTRIBUTE_TABLE :: u64(0x0407_0506_0007_0106)
+	for entry in ([?]struct {
+			register: u32,
+			value:    u64,
+		}{{0x01A0, 0}, {0x02FF, 0}, {0x0277, LINUX_PAGE_ATTRIBUTE_TABLE}}) {
+		registers := write(machine, entry.register, entry.value)
+		testing.expectf(t, registers.inject_kind == 0 && registers.rip == 0x10_0002, "a write of %x to msr %x is accepted", entry.value, entry.register)
+	}
+	value, _, _ := read(machine, 0x277)
+	testing.expect_value(t, value, LINUX_PAGE_ATTRIBUTE_TABLE)
+	testing.expect_value(t, machine.faults_injected, u64(0))
+	// Each byte of the table names a type: the edges of the check.
+	testing.expect(t, page_attribute_table_valid(0) && page_attribute_table_valid(0x0707_0707_0707_0707))
+	testing.expect(t, !page_attribute_table_valid(0x02) && !page_attribute_table_valid(0x0300) && !page_attribute_table_valid(0x08 << 56) && !page_attribute_table_valid(max(u64)))
+}
+
+// wbinvd and wbnoinvd complete with no work; an exit of that code on
+// another instruction stops the guest.
+@(test)
+machine_cache_write_back :: proc(t: ^testing.T) {
+	machine := new(Linux_Machine)
+	defer free(machine)
+	bytes := make([]u8, 0x2000)
+	defer delete(bytes)
+	linux_machine_start(machine, {bytes}, nil, nil)
+	// Paging off: the linear address is the physical address.
+	unpaged := op.Guest_Registers{cr0 = op.GUEST_CONTROL_0_PROTECTION}
+	exit := Machine_Exit{kind = .Other, code = u64(Other_Exit_Code.Write_Back_Invalidate)}
+	cases := [?]struct {
+		bytes: []u8,
+		step:  Machine_Step,
+		next:  u64,
+	} {
+		{{0x0F, 0x08}, .Failed, 0}, // invd: not answered.
+		{{0x66, 0x0F, 0x09}, .Failed, 0}, // A prefix that the machine does not know.
+		{{0x0F}, .Failed, 0}, // Cut at the end of the memory.
+		{{0x0F, 0x09}, .Continue, 2},
+		{{0xF3, 0x0F, 0x09}, .Continue, 3},
+	}
+	for entry in cases {
+		machine.failure = .None
+		registers := unpaged
+		registers.rip = u64(len(bytes) - len(entry.bytes))
+		copy(bytes[registers.rip:], entry.bytes)
+		step := linux_machine_handle_exit(machine, &registers, exit)
+		testing.expectf(t, step == entry.step, "% x gives %v", entry.bytes, step)
+		if entry.step == .Continue {
+			testing.expect_value(t, registers.rip, u64(len(bytes)))
+			testing.expect_value(t, machine.failure, Machine_Failure.None)
+		} else {
+			testing.expect_value(t, registers.rip, u64(len(bytes) - len(entry.bytes)))
+			testing.expect_value(t, machine.failure, Machine_Failure.Undecoded_Instruction)
+		}
+	}
 }
 
 // cpuid offers long mode, SYSCALL and NX, and no local APIC and no XSAVE.

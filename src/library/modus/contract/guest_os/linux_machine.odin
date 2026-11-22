@@ -77,6 +77,7 @@ Other_Exit_Code :: enum u64 {
 	Time_Stamp_Counter      = 0x6E, // rdtsc, which the kernel intercepts.
 	Time_Stamp_Counter_And_Processor = 0x87, // rdtscp, which the kernel intercepts.
 	Read_Processor_Register = 0x8E, // rdpru, which the kernel intercepts.
+	Write_Back_Invalidate   = 0x89, // wbinvd or wbnoinvd, which the kernel intercepts.
 }
 // The access bits of a nested page fault.
 FAULT_ACCESS_WRITE :: u64(1) << 1
@@ -84,7 +85,12 @@ FAULT_ACCESS_EXECUTE :: u64(1) << 4
 
 // The model-specific registers that the machine answers.
 Model_Specific_Register :: enum u32 {
+	Time_Stamp_Counter       = 0x0000_0010,
 	Apic_Base                = 0x0000_001B,
+	Memory_Type_Range_Capabilities = 0x0000_00FE, // MTRRCAP: no range.
+	Miscellaneous_Enable     = 0x0000_01A0,
+	Page_Attribute_Table     = 0x0000_0277,
+	Memory_Type_Range_Default = 0x0000_02FF, // MTRRdefType: the ranges stay off.
 	Sysenter_Code_Selector   = 0x0000_0174,
 	Sysenter_Stack           = 0x0000_0175,
 	Sysenter_Entry           = 0x0000_0176,
@@ -102,6 +108,9 @@ FLAGS_INTERRUPT :: u64(1) << 9
 VECTOR_GENERAL_PROTECTION :: u8(13)
 VECTOR_DEBUG :: u8(1)
 VECTOR_ALIGNMENT_CHECK :: u8(17)
+// The page attribute table at the reset of a processor: write-back,
+// write-through, uncached-minus and uncached, twice.
+PAGE_ATTRIBUTE_TABLE_RESET :: u64(0x0007_0406_0007_0406)
 // The bits of EFER that the guest writes: SCE, LME and NXE. LMA follows the
 // processor; SVME stays the kernel's and the guest never sees it.
 GUEST_WRITABLE_EFER :: op.GUEST_EFER_SYSTEM_CALL | op.GUEST_EFER_LONG_MODE_ENABLE | op.GUEST_EFER_NO_EXECUTE
@@ -115,6 +124,7 @@ Linux_Machine :: struct {
 	clock:                            u64, // In ticks of the timer.
 	compatibility_system_call_target: u64,
 	sysenter:                         [3]u64,
+	page_attribute_table:             u64, // Kept for the guest: the nested page table, not this value, gives the memory type.
 	switch_address:                   u64, // The guest physical address of the last Switch_Write or Switch_Execute.
 	failure:                          Machine_Failure,
 	faults_injected:                  u64, // The general protection faults of refused model-specific registers.
@@ -124,7 +134,7 @@ Linux_Machine :: struct {
 // linux_machine_start makes the machine of a build on the memory of the
 // guest and its two disks.
 linux_machine_start :: proc "contextless" (machine: ^Linux_Machine, memory: Guest_Memory, input_disk: []u8, output_disk: []u8) {
-	machine^ = {memory = memory}
+	machine^ = {memory = memory, page_attribute_table = PAGE_ATTRIBUTE_TABLE_RESET}
 	machine.devices[.Console] = virtio_console_device()
 	machine.devices[.Input_Disk] = virtio_block_device(input_disk, true, "modus-inputs")
 	machine.devices[.Output_Disk] = virtio_block_device(output_disk, false, "modus-outputs")
@@ -453,8 +463,46 @@ machine_other :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Gue
 		machine_exception(registers, VECTOR_DEBUG, false)
 	case .Alignment_Check:
 		machine_exception(registers, VECTOR_ALIGNMENT_CHECK, true)
+	case .Write_Back_Invalidate:
+		return machine_cache_write_back(machine, registers, exit)
 	}
 	return .Continue
+}
+
+// machine_cache_write_back answers wbinvd and wbnoinvd: the memory of the
+// guest is a memory object of the process, which no cache of the guest
+// holds back, so the instruction has nothing to do and completes. The
+// exit gives no length, so the machine reads the instruction, and refuses
+// each other form (a prefix that it does not know).
+@(private = "file")
+machine_cache_write_back :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Guest_Registers, exit: Machine_Exit) -> Machine_Step {
+	bytes: [3]u8
+	count := guest_instruction_fetch(machine.memory, registers^, registers.rip, bytes[:])
+	length := u64(0)
+	if count >= 2 && bytes[0] == 0x0F && bytes[1] == 0x09 {
+		length = 2 // wbinvd
+	} else if count >= 3 && bytes[0] == 0xF3 && bytes[1] == 0x0F && bytes[2] == 0x09 {
+		length = 3 // wbnoinvd
+	} else {
+		machine.failure = .Undecoded_Instruction
+		return .Failed
+	}
+	registers.rip = machine_next_instruction(exit, registers.rip, length)
+	return .Continue
+}
+
+// page_attribute_table_valid says if each of the eight entries of a page
+// attribute table names a memory type: 0, 1, 4, 5, 6 or 7. The types 2 and
+// 3 and the bits past 3 of an entry are reserved, and the processor
+// refuses them.
+page_attribute_table_valid :: proc "contextless" (value: u64) -> bool {
+	for entry in 0 ..< u64(8) {
+		kind := value >> (entry * 8) & 0xFF
+		if kind > 7 || kind == 2 || kind == 3 {
+			return false
+		}
+	}
+	return true
 }
 
 // machine_time_stamp_counter answers rdtsc and rdtscp from the virtual
@@ -497,6 +545,24 @@ machine_model_specific :: proc "contextless" (machine: ^Linux_Machine, registers
 		switch register {
 		case .Apic_Base:
 			refused = true
+		case .Time_Stamp_Counter:
+			// The counter of the virtual clock, as rdtsc gives it. A write
+			// would move the clock of the guest backward: refused.
+			refused = write
+			result = machine.clock * LINUX_TIME_STAMP_COUNTS_PER_TICK
+		case .Memory_Type_Range_Capabilities:
+			refused = write // A register that the processor only reads.
+		case .Miscellaneous_Enable, .Memory_Type_Range_Default:
+			// Both read 0: no feature to turn off, and the ranges off. A
+			// write that keeps 0 changes nothing; each other write would
+			// turn on what the machine does not have.
+			refused = write && value != 0
+		case .Page_Attribute_Table:
+			refused = write && !page_attribute_table_valid(value)
+			if write && !refused {
+				machine.page_attribute_table = value
+			}
+			result = machine.page_attribute_table
 		case .Extended_Features:
 			if write {
 				// The processor refuses a change of LME while paging is on.

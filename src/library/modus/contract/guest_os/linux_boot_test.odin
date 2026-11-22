@@ -128,7 +128,7 @@ bz_image_boot_prepare :: proc(t: ^testing.T) {
 	parsed, _ := linux_image_parse(image[:], TEST_MEMORY_BYTES)
 	places := linux_machine_places()
 	command := "make -C /inputs/src install DESTDIR=/outputs"
-	registers, refusal := linux_boot_prepare(memory, image[:], parsed, places[:], transmute([]u8)command)
+	registers, refusal := linux_boot_prepare(memory, image[:], parsed, places[:], transmute([]u8)command, nil, TEST_MEMORY_BYTES)
 	testing.expect_value(t, refusal, Linux_Boot_Refusal.None)
 	_, record_refusal := op.guest_registers_check(registers)
 	testing.expect_value(t, record_refusal, op.Guest_Registers_Refusal.None)
@@ -211,7 +211,7 @@ command_line_refusals :: proc(t: ^testing.T) {
 	bytes := make([]u8, TEST_MEMORY_BYTES)
 	defer delete(bytes)
 	parsed, _ := linux_image_parse(image[:], TEST_MEMORY_BYTES)
-	_, prepare_refusal := linux_boot_prepare({bytes}, image[:], parsed, places[:], nil)
+	_, prepare_refusal := linux_boot_prepare({bytes}, image[:], parsed, places[:], nil, nil, TEST_MEMORY_BYTES)
 	testing.expect_value(t, prepare_refusal, Linux_Boot_Refusal.Command_Line_Too_Long)
 }
 
@@ -304,7 +304,7 @@ elf_refusals_and_load :: proc(t: ^testing.T) {
 		value = 0xEE
 	}
 	places := linux_machine_places()
-	registers, prepare_refusal := linux_boot_prepare({bytes}, image[:], parsed, places[:], nil)
+	registers, prepare_refusal := linux_boot_prepare({bytes}, image[:], parsed, places[:], nil, nil, TEST_MEMORY_BYTES)
 	testing.expect_value(t, prepare_refusal, Linux_Boot_Refusal.None)
 	testing.expect_value(t, registers.rip, u64(0x100_0000))
 	testing.expect(t, bytes[0x100_0000] == image[0x1000] && bytes[0x100_0FFF] == image[0x1FFF])
@@ -313,5 +313,85 @@ elf_refusals_and_load :: proc(t: ^testing.T) {
 	testing.expect_value(t, bytes[0x120_3FFF], u8(0))
 	page := bytes[LINUX_ZERO_PAGE_ADDRESS:][:ZERO_PAGE_BYTES]
 	testing.expect_value(t, byte_order.read_u16_little_endian(page, SETUP_BOOT_FLAG), u16(0xAA55))
+	testing.expect_value(t, byte_order.read_u32_little_endian(page, SETUP_HEADER_MAGIC), LINUX_BOOT_HEADER_MAGIC)
+}
+
+
+// The place of an initial archive: the top of the memory under the ceiling and the
+// highest address of the header, page-aligned, above the kernel; nothing
+// changes in the memory when it does not fit.
+@(test)
+initial_archive_place_and_refusals :: proc(t: ^testing.T) {
+	image: [TEST_BZ_IMAGE_BYTES]u8
+	test_bz_image(image[:])
+	byte_order.write_u32_little_endian(image[:], SETUP_INITIAL_ARCHIVE_ADDRESS_MOST, 0x37FF_FFFF)
+	parsed, _ := linux_image_parse(image[:], TEST_MEMORY_BYTES)
+	testing.expect_value(t, parsed.initial_archive_address_most, u64(0x37FF_FFFF))
+	// The kernel and its working space end at 0x110_0000.
+	room := u64(TEST_MEMORY_BYTES) - parsed.load_end
+	refusals := [?]struct {
+		bytes:   u64,
+		ceiling: u64,
+	} {
+		{room + 1, TEST_MEMORY_BYTES}, // One byte past the room.
+		{max(u64), TEST_MEMORY_BYTES},
+		{1, parsed.load_end}, // No room under the ceiling.
+		{1, 0},
+		{0x1000, parsed.load_end + 0xFFF}, // The page-aligned place falls inside the kernel.
+	}
+	for entry in refusals {
+		_, refusal := linux_initial_archive_place(parsed, entry.bytes, entry.ceiling)
+		testing.expectf(t, refusal == .Initial_Archive_Too_Large, "%x bytes under %x give %v", entry.bytes, entry.ceiling, refusal)
+	}
+	// The highest address of the header bounds the place, not only the
+	// ceiling.
+	low := parsed
+	low.initial_archive_address_most = parsed.load_end + 0x1FFF
+	address, refusal := linux_initial_archive_place(low, 0x2000, TEST_MEMORY_BYTES)
+	testing.expect(t, refusal == .None && address == parsed.load_end)
+	_, refusal = linux_initial_archive_place(low, 0x2001, TEST_MEMORY_BYTES)
+	testing.expect_value(t, refusal, Linux_Boot_Refusal.Initial_Archive_Too_Large)
+	// The flag of an initial archive above 4 GiB lifts the bound of the header.
+	above := image
+	byte_order.write_u16_little_endian(above[:], SETUP_EXTENDED_LOAD_FLAGS, LINUX_EXTENDED_KERNEL_64 | LINUX_EXTENDED_INITIAL_ARCHIVE_ABOVE_4G)
+	byte_order.write_u32_little_endian(above[:], SETUP_INITIAL_ARCHIVE_ADDRESS_MOST, 0)
+	parsed_above, _ := linux_image_parse(above[:], TEST_MEMORY_BYTES)
+	testing.expect_value(t, parsed_above.initial_archive_address_most, max(u64))
+	// A header that allows no initial archive: refused, and the memory is unchanged.
+	none := image
+	byte_order.write_u32_little_endian(none[:], SETUP_INITIAL_ARCHIVE_ADDRESS_MOST, 0)
+	parsed_none, _ := linux_image_parse(none[:], TEST_MEMORY_BYTES)
+	bytes := make([]u8, TEST_MEMORY_BYTES)
+	defer delete(bytes)
+	places := linux_machine_places()
+	initial_archive := [?]u8{'0', '7', '0', '7', '0', '1'}
+	_, prepare_refusal := linux_boot_prepare({bytes}, none[:], parsed_none, places[:], nil, initial_archive[:], TEST_MEMORY_BYTES)
+	testing.expect_value(t, prepare_refusal, Linux_Boot_Refusal.Initial_Archive_Too_Large)
+	for value in bytes {
+		if value != 0 {
+			testing.fail_now(t, "a refused initial archive changed the memory")
+		}
+	}
+	// The successful case last: an initial archive of 5000 bytes under a ceiling of
+	// 60 MiB, its fields in the zero page.
+	ceiling := u64(60 * 1024 * 1024)
+	archive := make([]u8, 5000)
+	defer delete(archive)
+	for &value, index in archive {
+		value = u8(index * 13 + 1)
+	}
+	registers: op.Guest_Registers
+	registers, prepare_refusal = linux_boot_prepare({bytes}, image[:], parsed, places[:], nil, archive, ceiling)
+	testing.expect_value(t, prepare_refusal, Linux_Boot_Refusal.None)
+	testing.expect_value(t, registers.rsi, LINUX_ZERO_PAGE_ADDRESS)
+	want := (ceiling - 5000) &~ 0xFFF
+	page := bytes[LINUX_ZERO_PAGE_ADDRESS:][:ZERO_PAGE_BYTES]
+	testing.expect_value(t, u64(byte_order.read_u32_little_endian(page, SETUP_RAMDISK_ADDRESS)), want)
+	testing.expect_value(t, byte_order.read_u32_little_endian(page, SETUP_RAMDISK_SIZE), u32(5000))
+	testing.expect_value(t, byte_order.read_u32_little_endian(page, ZERO_PAGE_EXTENDED_RAMDISK_ADDRESS), u32(0))
+	testing.expect_value(t, byte_order.read_u32_little_endian(page, ZERO_PAGE_EXTENDED_RAMDISK_SIZE), u32(0))
+	testing.expect(t, string(bytes[want:][:5000]) == string(archive))
+	testing.expect_value(t, bytes[want + 5000], u8(0))
+	// The header of the image is still in the zero page.
 	testing.expect_value(t, byte_order.read_u32_little_endian(page, SETUP_HEADER_MAGIC), LINUX_BOOT_HEADER_MAGIC)
 }
