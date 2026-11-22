@@ -259,7 +259,7 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 		return .Bad_Operation, false
 	}
 	hash = file
-	if disk_load.step != .Idle {
+	if disk_load_running() {
 		system.log_fact(.Warning, Disk_Load_Refused_Load_Busy{refused_process = module_name_field(name)})
 		values^ = errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
 		return .Bad_State, false

@@ -192,7 +192,7 @@ start_policy_chosen_load_begin :: proc "contextless" (row: ^disk_process.Grant_R
 		start_policy_launch(.Rescue)
 		return
 	}
-	if disk_load.step != .Idle {
+	if disk_load_running() {
 		system.log_fact(.Warning, Chosen_Start_Policy_Load_Busy{nickname = module_name_field(nickname)})
 		start_policy_launch(.Rescue)
 		return

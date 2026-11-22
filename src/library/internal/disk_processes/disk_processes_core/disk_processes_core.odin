@@ -24,6 +24,7 @@ import "modus:disk_process"
 #assert(disk_process.FILE_BYTES_LIMIT == rd.MODULE_BYTES_LIMIT)
 #assert(disk_process.SCAN_WANTED_CAPACITY == rd.LOAD_IMPORT_CAPACITY)
 #assert(disk_process.NAME_LIMIT <= rd.LOAD_FILE_NAME_CAPACITY)
+#assert(disk_process.SCAN_READ_LIMIT == rd.LOAD_CANDIDATE_LOAN_LIMIT)
 
 // One page of the list of the root tree: its rows, and the bytes of their
 // names.

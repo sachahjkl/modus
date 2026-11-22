@@ -38,6 +38,11 @@ LOAD_IMPORT_CAPACITY :: 8
 // The most bytes of the name of an entry of the store module_files.
 LOAD_FILE_NAME_CAPACITY :: 64
 
+// The most loans of an entry of the scan in one load: each entry one
+// time, and two reads more for each wanted hash, as the scan reads
+// (disk_process.SCAN_READ_LIMIT).
+LOAD_CANDIDATE_LOAN_LIMIT :: 64 + 2 * LOAD_IMPORT_CAPACITY
+
 // The most replacements of the machine: the capacity of the replacement
 // table.
 LOAD_REPLACEMENT_CAPACITY :: 32
@@ -61,7 +66,7 @@ Disk_Load_Command :: enum u32 {
 	// The core took the last event: the load goes on.
 	Continue    = 3,
 	// The core ended the load: the service gives back what it holds for it
-	// and sends no event.
+	// (the lent memory and the storage connection), then sends Cancelled.
 	Cancel      = 4,
 }
 
@@ -86,6 +91,9 @@ Disk_Load_Event :: enum u32 {
 	Refused           = 7,
 	// The service refused a command of the core.
 	Command_Refused   = 8,
+	// The answer to Cancel: the service holds no memory of the load any
+	// more, and the core can end each loan with no fault in the service.
+	Cancelled         = 9,
 }
 
 // The file that a Memory_Wanted names.
@@ -291,10 +299,13 @@ name_length_valid :: proc "contextless" (bytes: ^[LOAD_FILE_NAME_CAPACITY]u8, le
 // event_report_check reads one event of the service at the border of the
 // core, after the copy of its report: the event must be one that the step
 // takes, and each field that it reads must be in its bounds. kept_count is
-// the count of the files that the core keeps for the imports.
-event_report_check :: proc "contextless" (step: Disk_Load_Step, event: Disk_Load_Event, report: ^Event_Report, kept_count: int) -> bool {
+// the count of the files that the core keeps for the imports;
+// candidate_loans is the count of the loans of entries of the scan that
+// the load made. Cancelled is never an event of a load that runs: the core
+// reads it apart, with the tag of a load that it ended.
+event_report_check :: proc "contextless" (step: Disk_Load_Step, event: Disk_Load_Event, report: ^Event_Report, kept_count: int, candidate_loans: int) -> bool {
 	switch event {
-	case .None:
+	case .None, .Cancelled:
 		return false
 	case .Memory_Wanted:
 		place, known := enum_word.member_of_word(File_Place, u64(report.place))
@@ -307,7 +318,7 @@ event_report_check :: proc "contextless" (step: Disk_Load_Step, event: Disk_Load
 		case .Module:
 			return step == .Module_Asked
 		case .Candidate:
-			return step == .Scan && kept_count < LOAD_IMPORT_CAPACITY && name_length_valid(&report.file_name, report.file_name_length, 1)
+			return step == .Scan && kept_count < LOAD_IMPORT_CAPACITY && candidate_loans < LOAD_CANDIDATE_LOAN_LIMIT && name_length_valid(&report.file_name, report.file_name_length, 1)
 		}
 		return false
 	case .Module_Filled:
@@ -322,7 +333,12 @@ event_report_check :: proc "contextless" (step: Disk_Load_Step, event: Disk_Load
 		return step == .Module_Checked || step == .Scan
 	case .Refused:
 		refusal, known := enum_word.member_of_word(Disk_Load_Refusal, u64(report.refusal))
+		// Each name is bounded for each cause: a length past its field is
+		// refused before any line reads it.
 		if !known || !refusal_allowed_at(step, refusal) || report.entries_left_out > 1 || report.damaged > 1 {
+			return false
+		}
+		if !name_length_valid(&report.file_name, report.file_name_length, 0) || !name_length_valid(&report.importer_name, report.importer_name_length, 0) {
 			return false
 		}
 		#partial switch refusal {

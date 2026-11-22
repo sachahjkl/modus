@@ -116,6 +116,7 @@ each_event_is_taken_at_its_step_only :: proc(t: ^testing.T) {
 		.Ready             = {.Module_Checked, .Scan},
 		.Refused           = {}, // Checked with its refusal below.
 		.Command_Refused   = {.Module_Asked, .Module_Lent, .Module_Checked, .Scan, .Candidate_Lent},
+		.Cancelled         = {},
 	}
 	for event in Disk_Load_Event {
 		if event == .Memory_Wanted || event == .Refused {
@@ -124,15 +125,15 @@ each_event_is_taken_at_its_step_only :: proc(t: ^testing.T) {
 		for step in Disk_Load_Step {
 			report := Event_Report{import_count = 1, file_name_length = 1}
 			report.file_name[0] = 'f'
-			testing.expectf(t, event_report_check(step, event, &report, 0) == (step in takes[event]), "the event %v at the step %v", event, step)
+			testing.expectf(t, event_report_check(step, event, &report, 0, 0) == (step in takes[event]), "the event %v at the step %v", event, step)
 		}
 	}
 	for step in Disk_Load_Step {
 		module_report := Event_Report{place = u32(File_Place.Module), byte_count = 1}
-		testing.expect_value(t, event_report_check(step, .Memory_Wanted, &module_report, 0), step == .Module_Asked)
+		testing.expect_value(t, event_report_check(step, .Memory_Wanted, &module_report, 0, 0), step == .Module_Asked)
 		candidate_report := Event_Report{place = u32(File_Place.Candidate), byte_count = 1, file_name_length = 1}
 		candidate_report.file_name[0] = 'f'
-		testing.expect_value(t, event_report_check(step, .Memory_Wanted, &candidate_report, 0), step == .Scan)
+		testing.expect_value(t, event_report_check(step, .Memory_Wanted, &candidate_report, 0, 0), step == .Scan)
 	}
 }
 
@@ -143,23 +144,29 @@ each_event_is_taken_at_its_step_only :: proc(t: ^testing.T) {
 a_memory_wanted_refuses_each_size_and_place_out_of_its_bounds :: proc(t: ^testing.T) {
 	for place in ([?]u32{u32(File_Place.None), u32(max(File_Place)) + 1, max(u32)}) {
 		report := Event_Report{place = place, byte_count = 1}
-		testing.expectf(t, !event_report_check(.Module_Asked, .Memory_Wanted, &report, 0), "the place %d is taken", place)
+		testing.expectf(t, !event_report_check(.Module_Asked, .Memory_Wanted, &report, 0, 0), "the place %d is taken", place)
 	}
 	for size in ([?]u64{0, MODULE_BYTES_LIMIT + 1, max(u64)}) {
 		report := Event_Report{place = u32(File_Place.Module), byte_count = size}
-		testing.expectf(t, !event_report_check(.Module_Asked, .Memory_Wanted, &report, 0), "%d bytes are taken", size)
+		testing.expectf(t, !event_report_check(.Module_Asked, .Memory_Wanted, &report, 0, 0), "%d bytes are taken", size)
 	}
 	candidate := Event_Report{place = u32(File_Place.Candidate), byte_count = 1, file_name_length = 1}
 	candidate.file_name[0] = 'f'
 	unnamed := candidate
 	unnamed.file_name_length = 0
-	testing.expect(t, !event_report_check(.Scan, .Memory_Wanted, &unnamed, 0))
-	testing.expect(t, !event_report_check(.Scan, .Memory_Wanted, &candidate, LOAD_IMPORT_CAPACITY))
-	testing.expect(t, !event_report_check(.Scan, .Memory_Wanted, &candidate, max(int)))
-	testing.expect(t, event_report_check(.Scan, .Memory_Wanted, &candidate, LOAD_IMPORT_CAPACITY - 1))
+	testing.expect(t, !event_report_check(.Scan, .Memory_Wanted, &unnamed, 0, 0))
+	testing.expect(t, !event_report_check(.Scan, .Memory_Wanted, &candidate, LOAD_IMPORT_CAPACITY, 0))
+	testing.expect(t, !event_report_check(.Scan, .Memory_Wanted, &candidate, max(int), 0))
+	testing.expect(t, event_report_check(.Scan, .Memory_Wanted, &candidate, LOAD_IMPORT_CAPACITY - 1, 0))
+	// The loans of the scan are bounded: the last one is taken, one more is
+	// refused, whatever the kept files.
+	testing.expect(t, event_report_check(.Scan, .Memory_Wanted, &candidate, 0, LOAD_CANDIDATE_LOAN_LIMIT - 1))
+	for loans in ([?]int{LOAD_CANDIDATE_LOAN_LIMIT, LOAD_CANDIDATE_LOAN_LIMIT + 1, max(int)}) {
+		testing.expectf(t, !event_report_check(.Scan, .Memory_Wanted, &candidate, 0, loans), "the loan %d is taken", loans)
+	}
 	for size in ([?]u64{1, MODULE_BYTES_LIMIT}) {
 		report := Event_Report{place = u32(File_Place.Module), byte_count = size}
-		testing.expectf(t, event_report_check(.Module_Asked, .Memory_Wanted, &report, 0), "%d bytes are refused", size)
+		testing.expectf(t, event_report_check(.Module_Asked, .Memory_Wanted, &report, 0, 0), "%d bytes are refused", size)
 	}
 }
 
@@ -170,35 +177,35 @@ a_memory_wanted_refuses_each_size_and_place_out_of_its_bounds :: proc(t: ^testin
 the_events_of_the_scan_refuse_each_count_and_name_out_of_its_bounds :: proc(t: ^testing.T) {
 	for count in ([?]u64{0, LOAD_IMPORT_CAPACITY + 1, max(u64)}) {
 		report := Event_Report{import_count = count}
-		testing.expectf(t, !event_report_check(.Module_Checked, .Scan_Started, &report, 0), "%d imports are taken", count)
+		testing.expectf(t, !event_report_check(.Module_Checked, .Scan_Started, &report, 0, 0), "%d imports are taken", count)
 	}
 	for count in ([?]u64{1, LOAD_IMPORT_CAPACITY}) {
 		report := Event_Report{import_count = count}
-		testing.expect(t, event_report_check(.Module_Checked, .Scan_Started, &report, 0))
+		testing.expect(t, event_report_check(.Module_Checked, .Scan_Started, &report, 0, 0))
 	}
 
 	found := Event_Report{file_name_length = 1}
 	found.file_name[0] = 'f'
-	testing.expect(t, event_report_check(.Candidate_Lent, .Import_Found, &found, 0))
-	testing.expect(t, !event_report_check(.Candidate_Lent, .Import_Found, &found, LOAD_IMPORT_CAPACITY))
+	testing.expect(t, event_report_check(.Candidate_Lent, .Import_Found, &found, 0, 0))
+	testing.expect(t, !event_report_check(.Candidate_Lent, .Import_Found, &found, LOAD_IMPORT_CAPACITY, 0))
 
 	no_name := found
 	no_name.file_name_length = 0
-	testing.expect(t, !event_report_check(.Candidate_Lent, .Import_Found, &no_name, 0))
+	testing.expect(t, !event_report_check(.Candidate_Lent, .Import_Found, &no_name, 0, 0))
 	for length in ([?]u32{LOAD_FILE_NAME_CAPACITY + 1, max(u32)}) {
 		long := found
 		long.file_name_length = length
-		testing.expectf(t, !event_report_check(.Candidate_Lent, .Import_Found, &long, 0), "a file name of %d bytes is taken", length)
+		testing.expectf(t, !event_report_check(.Candidate_Lent, .Import_Found, &long, 0, 0), "a file name of %d bytes is taken", length)
 		long_importer := found
 		long_importer.importer_name_length = length
-		testing.expectf(t, !event_report_check(.Candidate_Lent, .Import_Found, &long_importer, 0), "an importer name of %d bytes is taken", length)
+		testing.expectf(t, !event_report_check(.Candidate_Lent, .Import_Found, &long_importer, 0, 0), "an importer name of %d bytes is taken", length)
 	}
 	trailing := found
 	trailing.file_name[LOAD_FILE_NAME_CAPACITY - 1] = 'x'
-	testing.expect(t, !event_report_check(.Candidate_Lent, .Import_Found, &trailing, 0))
+	testing.expect(t, !event_report_check(.Candidate_Lent, .Import_Found, &trailing, 0, 0))
 	trailing_importer := found
 	trailing_importer.importer_name[0] = 'x'
-	testing.expect(t, !event_report_check(.Candidate_Lent, .Import_Found, &trailing_importer, 0))
+	testing.expect(t, !event_report_check(.Candidate_Lent, .Import_Found, &trailing_importer, 0, 0))
 
 	whole := found
 	whole.file_name_length = LOAD_FILE_NAME_CAPACITY
@@ -207,7 +214,7 @@ the_events_of_the_scan_refuse_each_count_and_name_out_of_its_bounds :: proc(t: ^
 		whole.file_name[index] = 'f'
 		whole.importer_name[index] = 'i'
 	}
-	testing.expect(t, event_report_check(.Candidate_Lent, .Import_Found, &whole, LOAD_IMPORT_CAPACITY - 1))
+	testing.expect(t, event_report_check(.Candidate_Lent, .Import_Found, &whole, LOAD_IMPORT_CAPACITY - 1, 0))
 }
 
 // A refusal that names no member, the member None, a flag past 1, a
@@ -218,40 +225,40 @@ a_refused_event_names_a_refusal_of_its_step :: proc(t: ^testing.T) {
 	for word in ([?]u32{u32(Disk_Load_Refusal.None), u32(max(Disk_Load_Refusal)) + 1, max(u32)}) {
 		report := Event_Report{refusal = word}
 		for step in Disk_Load_Step {
-			testing.expectf(t, !event_report_check(step, .Refused, &report, 0), "the refusal word %d is taken at %v", word, step)
+			testing.expectf(t, !event_report_check(step, .Refused, &report, 0, 0), "the refusal word %d is taken at %v", word, step)
 		}
 	}
 	module_report := Event_Report{refusal = u32(Disk_Load_Refusal.Object_Empty)}
-	testing.expect(t, event_report_check(.Module_Asked, .Refused, &module_report, 0))
+	testing.expect(t, event_report_check(.Module_Asked, .Refused, &module_report, 0, 0))
 	for step in ([?]Disk_Load_Step{.Idle, .Module_Lent, .Module_Checked, .Scan, .Candidate_Lent}) {
-		testing.expectf(t, !event_report_check(step, .Refused, &module_report, 0), "Object_Empty is taken at %v", step)
+		testing.expectf(t, !event_report_check(step, .Refused, &module_report, 0, 0), "Object_Empty is taken at %v", step)
 	}
 	bounds := Event_Report{refusal = u32(Disk_Load_Refusal.Import_Bounds)}
 	for step in Disk_Load_Step {
-		testing.expect_value(t, event_report_check(step, .Refused, &bounds, 0), step == .Module_Checked || step == .Scan)
+		testing.expect_value(t, event_report_check(step, .Refused, &bounds, 0, 0), step == .Module_Checked || step == .Scan)
 	}
 	flagged := module_report
 	flagged.damaged = 2
-	testing.expect(t, !event_report_check(.Module_Asked, .Refused, &flagged, 0))
+	testing.expect(t, !event_report_check(.Module_Asked, .Refused, &flagged, 0, 0))
 	flagged = module_report
 	flagged.entries_left_out = max(u32)
-	testing.expect(t, !event_report_check(.Module_Asked, .Refused, &flagged, 0))
+	testing.expect(t, !event_report_check(.Module_Asked, .Refused, &flagged, 0, 0))
 
 	missing := Event_Report{refusal = u32(Disk_Load_Refusal.Import_Missing)}
-	testing.expect(t, !event_report_check(.Scan, .Refused, &missing, 0))
+	testing.expect(t, !event_report_check(.Scan, .Refused, &missing, 0, 0))
 	missing.hash = hash_of_tag(9)
-	testing.expect(t, event_report_check(.Scan, .Refused, &missing, 0))
-	testing.expect(t, !event_report_check(.Candidate_Lent, .Refused, &missing, 0))
+	testing.expect(t, event_report_check(.Scan, .Refused, &missing, 0, 0))
+	testing.expect(t, !event_report_check(.Candidate_Lent, .Refused, &missing, 0, 0))
 
 	bytes := Event_Report{refusal = u32(Disk_Load_Refusal.Import_No_Byte_At)}
-	testing.expect(t, !event_report_check(.Candidate_Lent, .Refused, &bytes, 0))
+	testing.expect(t, !event_report_check(.Candidate_Lent, .Refused, &bytes, 0, 0))
 	bytes.file_name_length = 1
 	bytes.file_name[0] = 'f'
-	testing.expect(t, event_report_check(.Candidate_Lent, .Refused, &bytes, 0))
+	testing.expect(t, event_report_check(.Candidate_Lent, .Refused, &bytes, 0, 0))
 
 	storage := Event_Report{refusal = u32(Disk_Load_Refusal.Storage_Stopped)}
 	for step in Disk_Load_Step {
-		testing.expect_value(t, event_report_check(step, .Refused, &storage, 0), step != .Idle)
+		testing.expect_value(t, event_report_check(step, .Refused, &storage, 0, 0), step != .Idle)
 	}
 }
 
@@ -323,4 +330,51 @@ a_start_from_bytes_names_the_load_of_the_core :: proc(t: ^testing.T) {
 	testing.expect_value(t, check(&request, kept[:]), Start_From_Bytes_Refusal.None)
 	request = valid(nil)
 	testing.expect_value(t, check(&request, nil), Start_From_Bytes_Refusal.None)
+}
+
+// A step where each refusal can come, for the test of its names.
+@(private = "file")
+step_of_refusal :: proc(refusal: Disk_Load_Refusal) -> Disk_Load_Step {
+	switch refusal {
+	case .None, .Not_Mapped, .No_Object, .Object_Empty, .Object_Too_Large, .Call_Not_Taken, .Storage_Stopped, .Read_Refused, .Answer_Not_Allowed:
+		return .Module_Asked
+	case .No_Byte_At, .Too_Many_Bytes:
+		return .Module_Lent
+	case .Import_Bounds, .Import_Entry_Name_Outside, .Import_Entry_Kind_Unknown, .Import_Missing:
+		return .Scan
+	case .Import_No_Byte_At, .Import_Too_Many_Bytes:
+		return .Candidate_Lent
+	}
+	return .Idle
+}
+
+// For each refusal, at the step where it can come, a file name or an
+// importer name past its field is refused, and so is a byte after a name:
+// the core never reads a name that its field does not hold. The same
+// report with names at their edges is taken.
+@(test)
+each_refusal_bounds_both_of_its_names :: proc(t: ^testing.T) {
+	for refusal in Disk_Load_Refusal {
+		if refusal == .None {
+			continue
+		}
+		step := step_of_refusal(refusal)
+		valid := Event_Report{refusal = u32(refusal), hash = hash_of_tag(4), file_name_length = 1, importer_name_length = LOAD_FILE_NAME_CAPACITY}
+		valid.file_name[0] = 'f'
+		for index in 0 ..< LOAD_FILE_NAME_CAPACITY {
+			valid.importer_name[index] = 'i'
+		}
+		testing.expectf(t, event_report_check(step, .Refused, &valid, 0, 0), "the refusal %v with valid names is refused", refusal)
+		for length in ([?]u32{LOAD_FILE_NAME_CAPACITY + 1, max(u32)}) {
+			long_file := valid
+			long_file.file_name_length = length
+			testing.expectf(t, !event_report_check(step, .Refused, &long_file, 0, 0), "the refusal %v takes a file name of %d bytes", refusal, length)
+			long_importer := valid
+			long_importer.importer_name_length = length
+			testing.expectf(t, !event_report_check(step, .Refused, &long_importer, 0, 0), "the refusal %v takes an importer name of %d bytes", refusal, length)
+		}
+		trailing := valid
+		trailing.file_name[LOAD_FILE_NAME_CAPACITY - 1] = 'x'
+		testing.expectf(t, !event_report_check(step, .Refused, &trailing, 0, 0), "the refusal %v takes a byte after the file name", refusal)
+	}
 }

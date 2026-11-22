@@ -316,8 +316,13 @@ handle_command :: proc "contextless" (command: ring.Record) {
 	case .Continue:
 		perform(dpc.continue_given(&machine))
 	case .Cancel:
+		// The lent memory and the storage connection are given back first:
+		// the core ends their loans only after Cancelled, so no write of
+		// this service meets a revoked page.
 		dpc.cancel(&machine)
 		load_release()
+		machine.report = {}
+		event_send(.Cancelled, command.tag)
 	}
 }
 

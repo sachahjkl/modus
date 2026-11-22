@@ -373,6 +373,18 @@ Disk_Processes_Service_Started :: struct {
 @(log_fact = "root: the disk processes service stopped")
 Disk_Processes_Service_Stopped :: struct {}
 
+// The service sent an event that no load takes, or took no Cancel: it is
+// stopped, and the next load starts a fresh one.
+@(log_fact = "root: the disk processes service broke its contract: it is stopped, and the next load starts it again")
+Disk_Processes_Service_Faulted :: struct {}
+
+// The service did not answer Cancel with Cancelled within its bound: it is
+// stopped, and the loans of the ended load end with it.
+@(log_fact = "root: the disk processes service did not give back the memory of an ended load in {bound}: it is stopped")
+Disk_Processes_Cancel_Late :: struct {
+	bound: value_kinds.Time_In_Milliseconds,
+}
+
 // The wiring service ended the wirings of a process whose grant wirings
 // was revoked.
 @(log_fact = "root: revoked the grant wirings of {target}, wirings ended: {ended}")

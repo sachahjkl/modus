@@ -36,10 +36,16 @@ import "modus:system"
 #assert(rd.LOAD_REPLACEMENT_CAPACITY == system.REPLACEMENT_CAPACITY)
 #assert(rd.MODULE_BYTES_LIMIT == disk_process.FILE_BYTES_LIMIT)
 #assert(rd.NICKNAME_CAPACITY == disk_process.NAME_LIMIT)
+#assert(rd.LOAD_CANDIDATE_LOAN_LIMIT == disk_process.SCAN_READ_LIMIT)
 
-// The starts of the service, at most: past them a load from the disk is
-// refused until the machine starts again.
+// The starts of the service in a row, at most: past them a load from the
+// disk is refused until the machine starts again. A load that reaches
+// Ready sets the count back to zero, so stops far apart never use it up.
 DISK_PROCESSES_RESTART_LIMIT :: 3
+
+// The time that the service has to answer Cancel with Cancelled. Past it
+// the service is stopped: the core then ends each loan with no wait.
+DISK_LOAD_CANCEL_BOUND_MILLISECONDS :: 2000
 
 // The service, its ring and its transfer region. nil: it does not run.
 disk_processes_process: ^Started
@@ -49,6 +55,12 @@ disk_processes_region_memory: system.Handle
 disk_processes_region: []u8
 disk_processes_starts: int
 disk_processes_next_tag: u32 = 1
+// The core asked the kernel to stop the service: it takes no more command,
+// and its reap comes.
+disk_processes_stopping: bool
+// The events with no load that the core takes before it stops the service:
+// one event can cross Cancel on the ring.
+disk_processes_stray_allowance: int
 
 // One file of a load, in memory that this service made and lends to the
 // service until it says the file is whole.
@@ -78,6 +90,11 @@ Disk_Load :: struct {
 	kept_hashes:      [rd.LOAD_IMPORT_CAPACITY]blake3.Hash, // The hash that this service computed on each, after its loan.
 	files:            [rd.LOAD_IMPORT_CAPACITY]system.Source_File,
 	kept_count:       int,
+	candidate_loans:  int, // The loans of entries of the scan: bounded by rd.LOAD_CANDIDATE_LOAN_LIMIT.
+	// The handles of this service that the service holds copies of: the
+	// storage service, the call ring and the call region of the
+	// connection. Their copies are revoked at the end of the load.
+	storage_handles:  [3]system.Handle,
 	// The load of the start policy that principal 0 chose: no process
 	// asked for it, and its end starts it, or the rescue
 	// (start_policy_choice.odin).
@@ -85,6 +102,22 @@ Disk_Load :: struct {
 }
 
 disk_load: Disk_Load
+
+// What an ended load still lends to the service: the file that it was
+// writing, and the storage connection. The core ends these loans when the
+// service answers Cancel with Cancelled, after it unmapped them, so an
+// honest service never meets a revoked page; past the bound it stops the
+// service.
+Disk_Load_Return :: struct {
+	pending:         bool,
+	service_tag:     u32,
+	files:           [2]Lent_File,
+	storage_handles: [3]system.Handle,
+	deadline:        u64,
+	stray_events:    int, // The events of that load that crossed Cancel: one at most.
+}
+
+disk_load_return: Disk_Load_Return
 
 // The private copies of what crosses the border: the request that this
 // service writes, and the report of each event, copied before its check.
@@ -110,6 +143,11 @@ Disk_Load_Begin_Failure :: enum u8 {
 // ring, its transfer region and the boot image that reads only. It gives
 // false past DISK_PROCESSES_RESTART_LIMIT starts, or when the start fails.
 disk_processes_service_start :: proc "contextless" () -> bool {
+	// A service that the core stops takes no load until its reap: the
+	// next load starts a fresh one.
+	if disk_processes_stopping {
+		return false
+	}
 	if disk_processes_process != nil {
 		return true
 	}
@@ -180,10 +218,12 @@ disk_processes_service_end :: proc "contextless" (item: ^Started) {
 	if item == nil || item != disk_processes_process {
 		return
 	}
+	disk_processes_stopping = true
 	if disk_load.step != .Idle {
 		system.log_fact(.Warning, Disk_Load_Refused_Service_Stopped{refused_process = disk_load_name_field()})
 		disk_load_end(.Bad_State, disk_load_refused_values())
 	}
+	disk_load_return_end()
 	if raw_data(disk_processes_region) != nil {
 		system.memory_unmap(raw_data(disk_processes_region))
 	}
@@ -199,7 +239,70 @@ disk_processes_service_end :: proc "contextless" (item: ^Started) {
 	disk_processes_ring = {}
 	disk_processes_ring_memory, disk_processes_region_memory = 0, 0
 	disk_processes_process = nil
+	disk_processes_stopping = false
+	disk_processes_stray_allowance = 0
 	system.log_fact(.Warning, Disk_Processes_Service_Stopped{})
+}
+
+// disk_processes_service_alive says if the service runs and takes
+// commands.
+disk_processes_service_alive :: proc "contextless" () -> bool {
+	return disk_processes_process != nil && !disk_processes_stopping && disk_processes_ring.head != nil
+}
+
+// disk_processes_service_stop stops a service that broke its contract, so
+// the next load starts a fresh one. Each loan that it holds ends now: the
+// faults of a service that stops harm only itself.
+disk_processes_service_stop :: proc "contextless" () {
+	if disk_processes_process == nil || disk_processes_stopping {
+		return
+	}
+	disk_processes_stopping = true
+	started_process_stop(disk_processes_process)
+	disk_load_return_end()
+}
+
+// disk_processes_fault stops the service for an event that no load takes.
+@(private = "file")
+disk_processes_fault :: proc "contextless" () {
+	system.log_fact(.Warning, Disk_Processes_Service_Faulted{})
+	disk_processes_service_stop()
+}
+
+// disk_load_running says if a load runs, or if an ended load still waits
+// for the memory that it lent: a new load waits for both.
+disk_load_running :: proc "contextless" () -> bool {
+	return disk_load.step != .Idle || disk_load_return.pending
+}
+
+// storage_handles_release ends the copies of the handles of a storage
+// connection in the service, then closes the handles of this service.
+@(private = "file")
+storage_handles_release :: proc "contextless" (handles: ^[3]system.Handle) {
+	for &handle in handles {
+		if handle == 0 {
+			continue
+		}
+		if disk_processes_process != nil {
+			system.handle_revoke(handle, disk_processes_process.process)
+		}
+		system.close(handle)
+		handle = 0
+	}
+}
+
+// disk_load_return_end ends the loans of an ended load: after Cancelled,
+// after the stop of the service, or past the bound.
+disk_load_return_end :: proc "contextless" () {
+	returned := &disk_load_return
+	if !returned.pending {
+		return
+	}
+	for &file in returned.files {
+		lent_file_free(&file)
+	}
+	storage_handles_release(&returned.storage_handles)
+	returned^ = {}
 }
 
 // disk_load_begin starts a load: the service, the connection of the
@@ -219,15 +322,21 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 	if open_status != .Ok {
 		return .No_Connection, open_status
 	}
-	// The service receives the handles through its ring; this service
-	// keeps none of the memory of the connection.
-	defer system.close(ring_memory)
-	defer system.close(region_memory)
-	sources := [3]system.Handle{storage_service.process, ring_memory, region_memory}
+	// The service receives copies of the handles through its ring. This
+	// service keeps its own handles until the end of the load, to revoke
+	// the copies then: a service that keeps a handle past its load holds
+	// no page of this service. The handle of the storage service is a copy
+	// of its own, so its revocation does not reach the handles of its row.
+	storage_copy: system.Handle
+	storage_copy, status = system.give(0, storage_service.process, {.Read})
+	sources := [3]system.Handle{storage_copy, ring_memory, region_memory}
 	rights := [3]system.Rights{{.Read}, {.Read, .Write}, {.Read, .Write}}
 	given: [3]system.Handle
 	given_count := 0
 	for source, index in sources {
+		if status != .Ok {
+			break
+		}
 		given[index], status = give_through_service_ring(service_process.process, disk_processes_ring_memory, source, rights[index], &service_process.service_ring_ready)
 		if status != .Ok {
 			break
@@ -255,6 +364,11 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 		for source in sources[:given_count] {
 			system.handle_revoke(source, service_process.process)
 		}
+		for handle in sources {
+			if handle != 0 {
+				system.close(handle)
+			}
+		}
 		disconnect(connection)
 		return .Not_Given, status
 	}
@@ -272,6 +386,7 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 		connection       = connection,
 		deadline         = system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS,
 		for_start_policy = for_start_policy,
+		storage_handles  = sources,
 	}
 	return .None, .Ok
 }
@@ -364,10 +479,12 @@ disk_load_command :: proc "contextless" (command: rd.Disk_Load_Command, values: 
 }
 
 // disk_load_service_fault ends the load: the service gave an event that
-// its contract does not allow, or took no command.
+// its contract does not allow, or took no command. The service is stopped,
+// so the next load starts a fresh one and never trusts this one again.
 @(private = "file")
 disk_load_service_fault :: proc "contextless" () {
 	system.log_fact(.Warning, Disk_Load_Refused_Service_Answer_Not_Allowed{refused_process = disk_load_name_field()})
+	disk_processes_service_stop()
 	disk_load_end(.Bad_State, disk_load_refused_values())
 }
 
@@ -387,9 +504,29 @@ disk_load_continue :: proc "contextless" (step: rd.Disk_Load_Step) {
 // caller that sends the completion itself.
 disk_load_end :: proc "contextless" (status: system.Status, values: [7]u64) -> [7]u64 {
 	load := &disk_load
-	if disk_processes_ring.head != nil && load.service_tag != 0 {
-		disk_load_command(.Cancel)
+	// A service that runs gets Cancel, and keeps the file that it writes
+	// and the storage connection until it answers: their loans end at
+	// Cancelled (disk_load_return_end). A service that takes no Cancel is
+	// stopped. Each other file was taken back already.
+	if disk_processes_service_alive() && load.service_tag != 0 {
+		if disk_load_command(.Cancel) {
+			returned := &disk_load_return
+			returned^ = {pending = true, service_tag = load.service_tag, storage_handles = load.storage_handles, deadline = system.time() + DISK_LOAD_CANCEL_BOUND_MILLISECONDS}
+			load.storage_handles = {}
+			#partial switch load.step {
+			case .Module_Lent:
+				returned.files[0] = load.module
+				load.module = {}
+			case .Candidate_Lent:
+				returned.files[1] = load.candidate
+				load.candidate = {}
+			}
+		} else {
+			system.log_fact(.Warning, Disk_Processes_Service_Faulted{})
+			disk_processes_service_stop()
+		}
 	}
+	storage_handles_release(&load.storage_handles)
 	lent_file_free(&load.module)
 	lent_file_free(&load.candidate)
 	for &file in load.kept {
@@ -403,6 +540,7 @@ disk_load_end :: proc "contextless" (status: system.Status, values: [7]u64) -> [
 	}
 	for_start_policy := load.for_start_policy
 	load^ = {}
+	disk_processes_stray_allowance = 1
 	if for_start_policy {
 		start_policy_chosen_load_ended(status)
 	}
@@ -420,7 +558,11 @@ disk_load_forget :: proc "contextless" (item: ^Started) {
 // disk_load_deadline gives the time at which the loop of this service must
 // run again for the load, or no time when no load runs.
 disk_load_deadline :: proc "contextless" () -> u64 {
-	return disk_load.step == .Idle ? system.WAIT_FOREVER : disk_load.deadline
+	deadline := disk_load.step == .Idle ? system.WAIT_FOREVER : disk_load.deadline
+	if disk_load_return.pending {
+		deadline = min(deadline, disk_load_return.deadline)
+	}
+	return deadline
 }
 
 // disk_load_step reads the events of the service, if they came. It never
@@ -435,16 +577,42 @@ disk_load_step :: proc "contextless" (wait: ^system.Wait) {
 		return
 	}
 	for _ in 0 ..< ring.CAPACITY {
+		if disk_processes_stopping {
+			break
+		}
 		record, has := system.receive(&disk_processes_ring.completions)
 		if !has {
 			break
 		}
-		// An event of a load that ended is stale: the service sends it
-		// before it reads Cancel.
-		if load.step == .Idle || record.tag != load.service_tag {
-			continue
+		returned := &disk_load_return
+		switch {
+		case returned.pending && record.tag == returned.service_tag:
+			// One event of the ended load can cross Cancel on the ring;
+			// then Cancelled ends its loans.
+			event, known := rd.disk_load_event_of_word(record.kind)
+			if known && event == .Cancelled {
+				disk_load_return_end()
+			} else if returned.stray_events < 1 {
+				returned.stray_events += 1
+			} else {
+				disk_processes_fault()
+			}
+		case load.step != .Idle && record.tag == load.service_tag:
+			disk_load_event(record)
+		case disk_processes_stray_allowance > 0:
+			disk_processes_stray_allowance -= 1
+		case:
+			// A service that sends events that no load asked for would
+			// spin the loop of this service: it is stopped.
+			disk_processes_fault()
 		}
-		disk_load_event(record)
+	}
+	if disk_load_return.pending && system.time() >= disk_load_return.deadline {
+		system.log_fact(.Warning, Disk_Processes_Cancel_Late{bound = DISK_LOAD_CANCEL_BOUND_MILLISECONDS})
+		disk_processes_service_stop()
+	}
+	if disk_processes_stopping || disk_processes_ring.head == nil {
+		return
 	}
 	if load.step == .Idle {
 		system.wait_records(wait, &disk_processes_ring.completions)
@@ -477,12 +645,12 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 	event, known := rd.disk_load_event_of_word(record.kind)
 	intrinsics.mem_copy_non_overlapping(&disk_load_report, &disk_processes_region[rd.EVENT_REPORT_OFFSET], size_of(rd.Event_Report))
 	report := &disk_load_report
-	if !known || !rd.event_report_check(load.step, event, report, load.kept_count) {
+	if !known || !rd.event_report_check(load.step, event, report, load.kept_count, load.candidate_loans) {
 		disk_load_service_fault()
 		return
 	}
 	switch event {
-	case .None, .Command_Refused:
+	case .None, .Command_Refused, .Cancelled:
 		disk_load_service_fault()
 	case .Memory_Wanted:
 		place, _ := rd.file_place_of_word(report.place)
@@ -511,6 +679,7 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 			disk_load_end(status, disk_load_import_refused(status, .Refused))
 			return
 		}
+		load.candidate_loans += 1
 		if !disk_load_command(.Memory_Lent, {0 = u64(given)}) {
 			disk_load_service_fault()
 			return
@@ -576,6 +745,9 @@ disk_load_event :: proc "contextless" (record: ring.Record) {
 			disk_load_service_fault()
 			return
 		}
+		// A load that ends cleanly: the stops of the service before were not
+		// in a row.
+		disk_processes_starts = 0
 		disk_load_start()
 	case .Refused:
 		disk_load_refused(report)
@@ -589,7 +761,6 @@ disk_load_refused :: proc "contextless" (report: ^rd.Event_Report) {
 	kind := u32(root_ring.Root_Command.Start_From_Disk)
 	name := disk_load_name_field()
 	refusal, _ := rd.disk_load_refusal_of_word(report.refusal)
-	file_name := text_field(string(report.file_name[:report.file_name_length]), 24)
 	in_scan := disk_load.step == .Module_Checked || disk_load.step == .Scan || disk_load.step == .Candidate_Lent
 	switch refusal {
 	case .None:
@@ -635,9 +806,12 @@ disk_load_refused :: proc "contextless" (report: ^rd.Event_Report) {
 		system.log_fact(.Warning, Disk_Load_Refused_Import_Entry_Kind_Unknown{refused_process = name})
 		disk_load_end(.Bad_State, disk_load_import_refused(.Bad_State, .Refused))
 	case .Import_No_Byte_At:
+		// The border bounded the length of the name for each refusal.
+		file_name := text_field(string(report.file_name[:report.file_name_length]), 24)
 		system.log_fact(.Warning, Disk_Load_Refused_Import_No_Byte_At{received_bytes = report.received_bytes, object_bytes = report.byte_count, refused_process = name, file = file_name})
 		disk_load_end(.Bad_State, disk_load_import_refused(.Bad_State, .Refused))
 	case .Import_Too_Many_Bytes:
+		file_name := text_field(string(report.file_name[:report.file_name_length]), 24)
 		system.log_fact(.Warning, Disk_Load_Refused_Import_Too_Many_Bytes{given_bytes = report.received_bytes, left_bytes = report.left_bytes, refused_process = name, file = file_name})
 		disk_load_end(.Bad_State, disk_load_import_refused(.Bad_State, .Refused))
 	case .Import_Missing:

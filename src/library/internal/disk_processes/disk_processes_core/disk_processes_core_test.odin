@@ -181,6 +181,7 @@ run :: proc(machine: ^Machine, store: ^Store, request: ^rd.Load_Request, lend_sh
 	result.border_ok = true
 	step := rd.Disk_Load_Step.Module_Asked
 	candidate: []u8
+	candidate_loans := 0
 	action := load_begin(machine, request)
 	for _ in 0 ..< 100_000 {
 		switch action.kind {
@@ -194,11 +195,11 @@ run :: proc(machine: ^Machine, store: ^Store, request: ^rd.Load_Request, lend_sh
 		}
 		report := machine.report
 		append(&result.events, Seen{event = action.event, report = report})
-		if !rd.event_report_check(step, action.event, &report, len(result.kept_hashes)) {
+		if !rd.event_report_check(step, action.event, &report, len(result.kept_hashes), candidate_loans) {
 			result.border_ok = false
 		}
 		switch action.event {
-		case .None, .Ready, .Refused, .Command_Refused:
+		case .None, .Ready, .Refused, .Command_Refused, .Cancelled:
 			result.ended = true
 			return result
 		case .Memory_Wanted:
@@ -209,6 +210,7 @@ run :: proc(machine: ^Machine, store: ^Store, request: ^rd.Load_Request, lend_sh
 				step = .Module_Lent
 			} else {
 				candidate = lent
+				candidate_loans += 1
 				step = .Candidate_Lent
 			}
 			action = memory_lent(machine, lent)

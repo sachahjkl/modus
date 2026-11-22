@@ -992,6 +992,10 @@ the_table_wait_and_wiring_facts_of_the_root_service_write_the_lines_of_before ::
 	expect(t, render(t, file, "Own_Tables_Full_Unreported", {{"started_process", process}}), line_of_before("root: the start of ", sentence.Module_Name{process}, " found a table full; the kernel gives no report of the tables of this service"))
 	expect(t, render(t, file, "Wiring_Service_Stopped", {}), "root: delegated wiring service stopped")
 	expect(t, render(t, file, "Disk_Processes_Service_Stopped", {}), "root: the disk processes service stopped")
+	expect(t, render(t, file, "Disk_Processes_Service_Faulted", {}), "root: the disk processes service broke its contract: it is stopped, and the next load starts it again")
+	for bound in ([?]u64{0, 1, 2000}) {
+		expect(t, render(t, file, "Disk_Processes_Cancel_Late", {{"bound", bound}}), line_of_before("root: the disk processes service did not give back the memory of an ended load in ", bound, " ms: it is stopped"))
+	}
 	// The measure record finds the line by the start of its template.
 	measured := render(t, file, "Own_Tables_Measured", {{"handles", u64(1)}, {"prepared_parts", u64(0)}, {"mappings", u64(1)}, {"capacity", capacity}, {"stopped_process", "output_wiring"}})
 	testing.expectf(t, strings.has_prefix(measured, "root: the tables of this service after the stop of output_wiring: "), "the measure record does not find %q", measured)
