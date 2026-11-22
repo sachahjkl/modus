@@ -159,7 +159,7 @@ wiring_service_start :: proc "contextless" () -> bool {
 				system.close(h)
 			}
 		}
-		system.log(.Warning, "root: cannot start wiring service: status ", status)
+		system.log_fact(.Warning, Wiring_Service_Start_Failed{status_number = u64(status)})
 		return false
 	}
 	part_place_fill(slot, "wiring", process)
@@ -170,7 +170,7 @@ wiring_service_start :: proc "contextless" () -> bool {
 	wiring_region_memory = reg_mem
 	wiring_region = ([^]u8)(reg_addr)[:ws.SERVICE_REGION_SIZE]
 	wiring_starts += 1
-	system.log(.Info, "root: started delegated wiring service (start ", u64(wiring_starts), " of ", u64(WIRING_RESTART_LIMIT), ")")
+	system.log_fact(.Info, Wiring_Service_Started{starts = u64(wiring_starts), start_limit = u64(WIRING_RESTART_LIMIT)})
 
 	// Register every already-running process that participates in wirings.
 	for &item in started {
@@ -211,7 +211,7 @@ wiring_service_end :: proc "contextless" (item: ^Started) {
 	for &other in started {
 		other.wiring_registered = false
 	}
-	system.log(.Warning, "root: delegated wiring service stopped")
+	system.log_fact(.Warning, Wiring_Service_Stopped{})
 }
 
 // process_flags_of builds the attenuated Process_Flags describing a Started
@@ -964,7 +964,7 @@ wiring_request_step :: proc "contextless" (wait: ^system.Wait) {
 			target := wiring_request.target
 			if target != nil && target.process != 0 {
 				target.granted -= {.Wirings}
-				system.log(.Info, "root: revoked the grant wirings of ", system.Module_Name{system.name_of(target.name[:])}, ", wirings ended: ", resp.ended_count)
+				system.log_fact(.Info, Wirings_Revoked{ended = resp.ended_count, target = module_name_field(system.name_of(target.name[:]))})
 			}
 			wiring_request_reply(.Ok, {resp.ended_count, 0, 0, 0, 0, 0, 0})
 		}

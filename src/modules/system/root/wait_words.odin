@@ -23,9 +23,9 @@ import "modus:system"
 root_wait_full_told: bool
 
 // root_waited_queues gives the queues that the loop waits on now, with
-// those of a place whose start is not done, plus the delegated wiring
-// service ring when running. Per-process wiring rings are waited on by
-// the delegated wiring service, not the root core.
+// those of a place whose start is not done, plus the rings of the
+// delegated wiring and devices services when they run. Per-process wiring
+// rings are waited on by the delegated wiring service, not the root core.
 root_waited_queues :: proc "contextless" () -> (count: int) {
 	for &item in started {
 		if item.requests.head != nil {
@@ -36,6 +36,9 @@ root_waited_queues :: proc "contextless" () -> (count: int) {
 		}
 	}
 	if wiring_ring.head != nil {
+		count += 1
+	}
+	if devices_ring.head != nil {
 		count += 1
 	}
 	return count
@@ -60,6 +63,6 @@ waited_queues_refusal :: proc "contextless" (command: root_ring.Root_Command, ad
 root_wait_full_tell :: proc "contextless" (wait: ^system.Wait) {
 	if wait.full && !root_wait_full_told {
 		root_wait_full_told = true
-		system.log(.Error, "root: the wait of the loop holds more words than ", u64(op.WORD_WAIT_CAPACITY), ": each wait ends at once, and the queues past it are not waited on")
+		system.log_fact(.Error, Root_Wait_Full{word_capacity = u64(op.WORD_WAIT_CAPACITY)})
 	}
 }

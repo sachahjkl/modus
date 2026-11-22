@@ -722,6 +722,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		no_screen_at_the_start = true
 		screen_absence_note()
 	}
+	// The devices service classifies the bus before any device service
+	// starts (devices_delegation.odin).
+	bus_classify()
 	// The seed and the keys of the machine need these two before any start
 	// policy: they are no row of a start list. The loop mixes the bytes of
 	// the entropy device when they come (entropy.odin).
@@ -1091,6 +1094,7 @@ root_loop_pass :: proc "contextless" () {
 	persisted_tables_step(&wait)
 	network_answers(&wait)
 	wiring_request_step(&wait)
+	devices_answers(&wait)
 	system.wait_records(&wait, &control.completions)
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {
@@ -2066,6 +2070,7 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	// delegated wiring service ends each wiring of this process and frees
 	// its slots, then release core wiring handles.
 	wiring_service_end(item)
+	devices_service_end(item)
 	wiring_emit_stop_notice(item, stop)
 	for &other in started {
 		if other.process != 0 && (other.debugger == item || other.debug_for == item) {

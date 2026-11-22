@@ -274,7 +274,7 @@ start_policy_chosen_run :: proc "contextless" (name: string, file: []u8, hash: [
 	// the queues.
 	if record, refused := waited_queues_refusal(.Start_Policy_Choice, 1); refused {
 		words := errors.completion_record(record)
-		system.log(.Error, "root: cannot start the start policy ", system.Module_Name{name}, ": its root ring makes ", u64(words.value), " words of the wait of the loop of this service, past its ", u64(words.limit), "; the queues of the wait are full")
+		system.log_fact(.Error, Start_Policy_Wait_Full{words = u64(words.value), word_limit = u64(words.limit), refused_process = module_name_field(name)})
 		return .No_Slot
 	}
 	slot^ = {}

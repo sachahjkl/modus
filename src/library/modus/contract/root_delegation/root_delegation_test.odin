@@ -382,3 +382,93 @@ principals_ring_command_and_status_borders :: proc(t: ^testing.T) {
 		testing.expect_value(t, got, st)
 	}
 }
+
+// The ring of the devices service: zero, the word after the last command
+// and the largest word are refused; each command, Lookup_Identity
+// included, is taken last. The same for the statuses, where zero is Ok.
+@(test)
+devices_ring_words_refuse_unknown_commands_and_statuses :: proc(t: ^testing.T) {
+	for word in ([?]u32{0, u32(Devices_Ring_Command.Lookup_Identity) + 1, max(u32)}) {
+		_, ok := devices_ring_command_from_word(word)
+		testing.expectf(t, !ok, "the command word %d is taken", word)
+	}
+	for word in ([?]u32{u32(Devices_Ring_Status.Bad_Command) + 1, max(u32)}) {
+		_, ok := devices_ring_status_from_word(word)
+		testing.expectf(t, !ok, "the status word %d is taken", word)
+	}
+	for command in Devices_Ring_Command {
+		if command == .None {
+			continue
+		}
+		got, ok := devices_ring_command_from_word(u32(command))
+		testing.expect(t, ok)
+		testing.expect_value(t, got, command)
+	}
+	testing.expect_value(t, u32(Devices_Ring_Command.Lookup_Identity), u32(5))
+	for status in Devices_Ring_Status {
+		got, ok := devices_ring_status_from_word(u32(status))
+		testing.expect(t, ok)
+		testing.expect_value(t, got, status)
+	}
+}
+
+// The answer of a Lookup_Identity at the border of the core: a role of
+// zero, past the last member and of the largest word; a count of BARs of
+// 0, one past PCI_BAR_CAPACITY and the largest word; a flag of 2; and a
+// word after the flags that is not zero are each refused. The answer of
+// each default identity is read back whole last.
+@(test)
+device_identity_answers_refuse_out_of_range_words :: proc(t: ^testing.T) {
+	table := device_identity_table_default()
+	block, _ := device_identity_table_lookup(&table, PCI_VENDOR_VIRTIO, PCI_DEVICE_VIRTIO_BLOCK)
+	good := device_identity_answer_values(block)
+	bad_answers := [?]struct {
+		place: int,
+		word:  u64,
+	}{
+		{0, 0},
+		{0, u64(max(Device_Class_Role)) + 1},
+		{0, max(u64)},
+		{1, 0},
+		{1, PCI_BAR_CAPACITY + 1},
+		{1, max(u64)},
+		{2, 2},
+		{2, max(u64)},
+		{3, 2},
+		{4, 1},
+		{5, max(u64)},
+		{6, 1},
+	}
+	for bad in bad_answers {
+		values := good
+		values[bad.place] = bad.word
+		_, ok := device_identity_answer_of_values(values, PCI_VENDOR_VIRTIO, PCI_DEVICE_VIRTIO_BLOCK)
+		testing.expectf(t, !ok, "the word %d at %d is taken", bad.word, bad.place)
+	}
+	for index in 0 ..< int(table.count) {
+		entry := table.entries[index]
+		read, ok := device_identity_answer_of_values(device_identity_answer_values(entry), entry.pci_vendor_id, entry.pci_device_id)
+		testing.expect(t, ok)
+		testing.expect_value(t, read, entry)
+	}
+}
+
+// The bind places of the region: a negative place, the count and the
+// largest int are refused; the first and the last place are taken, apart,
+// with the specification after the discovered record and inside the
+// region.
+@(test)
+devices_bind_places_stay_inside_the_region :: proc(t: ^testing.T) {
+	for place in ([?]int{-1, DEVICES_BIND_PLACE_COUNT, max(int)}) {
+		_, _, ok := devices_bind_place_offsets(place)
+		testing.expectf(t, !ok, "the place %d is taken", place)
+	}
+	region_bytes := u64(DEVICES_REGION_PAGES * op.PAGE_SIZE)
+	first_discovered, first_spec, first_ok := devices_bind_place_offsets(0)
+	last_discovered, last_spec, last_ok := devices_bind_place_offsets(DEVICES_BIND_PLACE_COUNT - 1)
+	testing.expect(t, first_ok && last_ok)
+	testing.expect_value(t, first_discovered, u64(0))
+	testing.expect(t, first_spec >= first_discovered + size_of(Pci_Discovered_Device))
+	testing.expect(t, last_discovered >= first_spec + size_of(Device_Grant_Spec))
+	testing.expect(t, last_spec + size_of(Device_Grant_Spec) <= region_bytes)
+}

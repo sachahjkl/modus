@@ -52,7 +52,7 @@ UNLOCK_MODES := [?]string{"an unlock", "the creation of a principal", "the machi
 @(private = "file")
 CHANGE_ENDS := [?]string{"unlock stopped before the end: the old or the new secret opens", "the passphrase is changed", "the change is cancelled: nothing changed"}
 @(private = "file")
-FAILURE_CAUSES := [?]string{"the rescue start policy is absent from the boot image", "the rescue start policy did not start", "the rescue start policy stopped before the machine was usable", "the rescue start policy sent no Machine_Usable within the hang bound"}
+FAILURE_CAUSES := [?]string{"the rescue start policy is absent from the boot image", "the rescue start policy did not start", "the rescue start policy stopped before the machine was usable", "the rescue start policy stopped after the machine was usable", "the rescue start policy sent no Machine_Usable within the hang bound"}
 
 // The longest text of a list.
 @(private = "file")
@@ -70,7 +70,7 @@ longest :: proc(texts: []string) -> u32 {
 root_text_bytes_most :: proc() -> map[string]u32 {
 	most := make(map[string]u32, context.temp_allocator)
 	name_most := u32(value_kinds.MODULE_NAME_FIELD_BYTES - 1)
-	for name in ([?]string{"started_process", "stopped_process", "refused_process", "loaded_process", "window_process", "service", "caller", "holder", "debugger", "target", "importer", "receiver", "provider", "nickname", "stop_report_name", "replaced", "replacement", "checked_entry"}) {
+	for name in ([?]string{"started_process", "stopped_process", "refused_process", "loaded_process", "window_process", "service", "caller", "holder", "debugger", "target", "importer", "receiver", "provider", "nickname", "stop_report_name", "replaced", "replacement", "checked_entry", "held_process"}) {
 		most[name] = name_most
 	}
 	// A principal name has at most principals.NAME_LIMIT bytes, a store
@@ -652,7 +652,8 @@ the_start_policy_and_trust_facts_of_the_root_service_write_the_lines_of_before :
 				fields := []Fact_Test_Field{{"start_policy_hash", hash}, {"cause", u64(cause)}, {"outcome", u64(outcome)}}
 				expect(t, render(t, file, "Rescue_Stopped_Before_Usable", fields), line_of_before("root: the rescue start policy ", head, " stopped before the machine was usable: ", stop))
 				expect(t, render(t, file, "Start_Policy_Stopped_Before_Usable", fields), line_of_before("root: the start policy ", head, " stopped before the machine was usable: ", stop, "; the rescue start policy starts"))
-				expect(t, render(t, file, "Start_Policy_Stopped_After_Usable", fields), line_of_before("root: the start policy ", head, " stopped: ", stop, ", after the machine was usable: the processes that it asked for keep running"))
+				expect(t, render(t, file, "Start_Policy_Stopped_After_Usable", fields), line_of_before("root: the start policy ", head, " stopped: ", stop, ", after the machine was usable; the rescue start policy starts"))
+				expect(t, render(t, file, "Rescue_Stopped_After_Usable", fields), line_of_before("root: the rescue start policy ", head, " stopped: ", stop, ", after the machine was usable"))
 			}
 			continue
 		}
@@ -660,7 +661,8 @@ the_start_policy_and_trust_facts_of_the_root_service_write_the_lines_of_before :
 		fields := []Fact_Test_Field{{"start_policy_hash", hash}, {"cause", u64(cause)}}
 		expect(t, render(t, file, "Rescue_Stopped_Before_Usable_Without_Outcome", fields), line_of_before("root: the rescue start policy ", head, " stopped before the machine was usable: ", stop))
 		expect(t, render(t, file, "Start_Policy_Stopped_Before_Usable_Without_Outcome", fields), line_of_before("root: the start policy ", head, " stopped before the machine was usable: ", stop, "; the rescue start policy starts"))
-		expect(t, render(t, file, "Start_Policy_Stopped_After_Usable_Without_Outcome", fields), line_of_before("root: the start policy ", head, " stopped: ", stop, ", after the machine was usable: the processes that it asked for keep running"))
+		expect(t, render(t, file, "Start_Policy_Stopped_After_Usable_Without_Outcome", fields), line_of_before("root: the start policy ", head, " stopped: ", stop, ", after the machine was usable; the rescue start policy starts"))
+		expect(t, render(t, file, "Rescue_Stopped_After_Usable_Without_Outcome", fields), line_of_before("root: the rescue start policy ", head, " stopped: ", stop, ", after the machine was usable"))
 	}
 	bounds := [2]u64{0, u64(max(i64))}
 	for bound in bounds {
@@ -951,4 +953,36 @@ the_load_error_facts_of_the_root_service_write_the_fields_of_each_stage :: proc(
 	testing.expect(t, string(find.module_name[:len(name)]) == name && find.module_name[len(name)] == 0 && string(find.imported_name[:len(imported)]) == imported)
 	bind := module.load_bind_fact_fields(&error)
 	testing.expect(t, string(bind.export[:len(export)]) == export && bind.export[len(export)] == 0)
+}
+
+// The facts of the tables of this service, of the wait of its loop and of
+// the bridge to the delegated wiring service write the lines of before:
+// the counts 0, 1 and max(u64), a name of 31 bytes. The status of a start
+// of the wiring service stays its number, as the line wrote it.
+@(test)
+the_table_wait_and_wiring_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testing.T) {
+	file, ok := root_service_facts_file(t)
+	if !ok {
+		return
+	}
+	process := strings.repeat("p", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
+	capacity := u64(op.MAPPING_REPORT_CAPACITY)
+	counts := [3]u64{0, 1, max(u64)}
+	for count in counts {
+		other := max(u64) - count
+		expect(t, render(t, file, "Own_Tables_Measured", {{"handles", count}, {"prepared_parts", other}, {"mappings", count}, {"capacity", capacity}, {"stopped_process", process}}), line_of_before("root: the tables of this service after the stop of ", sentence.Module_Name{process}, ": ", count, " handles, ", other, " of them prepared parts, and ", count, " mappings, of ", capacity, " each"))
+		expect(t, render(t, file, "Own_Tables_Full", {{"mappings", count}, {"handles", other}, {"prepared_parts", count}, {"capacity", capacity}, {"started_process", process}}), line_of_before("root: the start of ", sentence.Module_Name{process}, " found a table full: this service holds ", count, " mappings and ", other, " handles, ", count, " of them prepared parts, of ", capacity, " each"))
+		expect(t, render(t, file, "Start_Policy_Wait_Full", {{"words", count}, {"word_limit", other}, {"refused_process", process}}), line_of_before("root: cannot start the start policy ", sentence.Module_Name{process}, ": its root ring makes ", count, " words of the wait of the loop of this service, past its ", other, "; the queues of the wait are full"))
+		expect(t, render(t, file, "Root_Wait_Full", {{"word_capacity", count}}), line_of_before("root: the wait of the loop holds more words than ", count, ": each wait ends at once, and the queues past it are not waited on"))
+		expect(t, render(t, file, "Wiring_Service_Started", {{"starts", count}, {"start_limit", other}}), line_of_before("root: started delegated wiring service (start ", count, " of ", other, ")"))
+		expect(t, render(t, file, "Wirings_Revoked", {{"ended", count}, {"target", process}}), line_of_before("root: revoked the grant wirings of ", sentence.Module_Name{process}, ", wirings ended: ", count))
+	}
+	for status in op.Status {
+		expect(t, render(t, file, "Wiring_Service_Start_Failed", {{"status_number", u64(status)}}), line_of_before("root: cannot start wiring service: status ", status))
+	}
+	expect(t, render(t, file, "Own_Tables_Full_Unreported", {{"started_process", process}}), line_of_before("root: the start of ", sentence.Module_Name{process}, " found a table full; the kernel gives no report of the tables of this service"))
+	expect(t, render(t, file, "Wiring_Service_Stopped", {}), "root: delegated wiring service stopped")
+	// The measure record finds the line by the start of its template.
+	measured := render(t, file, "Own_Tables_Measured", {{"handles", u64(1)}, {"prepared_parts", u64(0)}, {"mappings", u64(1)}, {"capacity", capacity}, {"stopped_process", "output_wiring"}})
+	testing.expectf(t, strings.has_prefix(measured, "root: the tables of this service after the stop of output_wiring: "), "the measure record does not find %q", measured)
 }

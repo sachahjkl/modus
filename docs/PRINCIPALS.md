@@ -545,7 +545,7 @@ root: the start policy 5f0c1a2b… (nickname "tiny") is measured into PCR 12: PC
 root: started the chosen start policy "tiny" from the disk, hash 5f0c…, with the grant Start_Policy only
 ```
 
-**When it fails.** A module file that is absent, has another hash or does not load, a measure that fails (a chosen start policy never runs unmeasured), or a start policy that stops or sends no `Machine_Usable` within the hang bound: the root service starts the rescue start policy of the boot image, with its line, and measures it too. The key R and the boot entry `modus (rescue)` start the rescue in place of the chosen one, with no change on the disk.
+**When it fails.** A module file that is absent, has another hash or does not load, a measure that fails (a chosen start policy never runs unmeasured), or a start policy that stops, before or after `Machine_Usable`, or sends no `Machine_Usable` within the hang bound: the root service starts the rescue start policy of the boot image, with its line, and measures it too. The key R and the boot entry `modus (rescue)` start the rescue in place of the chosen one, with no change on the disk.
 
 **The table of a named principal** never holds the grant `Start_Policy`: the root service refuses such a table at its read.
 

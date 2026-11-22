@@ -34,7 +34,7 @@ service_region_base: [^]u8
 service_region_bytes: u64
 
 copied_identity: rd.Device_Identity_Entry
-copied_discovered: dc.Pci_Discovered_Device
+copied_discovered: rd.Pci_Discovered_Device
 staged_grant_spec: rd.Device_Grant_Spec
 staged_binding: dc.Device_Binding
 
@@ -128,11 +128,11 @@ handle_command :: proc "contextless" (command: ring.Record) {
 		disc_offset := command.values[0]
 		service_slot := u32(command.values[1])
 		out_offset := command.values[2]
-		if !region_range_valid(disc_offset, size_of(dc.Pci_Discovered_Device)) || !region_range_valid(out_offset, size_of(rd.Device_Grant_Spec)) {
+		if !region_range_valid(disc_offset, size_of(rd.Pci_Discovered_Device)) || !region_range_valid(out_offset, size_of(rd.Device_Grant_Spec)) {
 			reply_bad_command(command, .Out_Of_Range, 1, i64(disc_offset), i64(service_region_bytes))
 			return
 		}
-		intrinsics.mem_copy_non_overlapping(&copied_discovered, rawptr(&service_region_base[disc_offset]), size_of(dc.Pci_Discovered_Device))
+		intrinsics.mem_copy_non_overlapping(&copied_discovered, rawptr(&service_region_base[disc_offset]), size_of(rd.Pci_Discovered_Device))
 		spec, bind_ref, grant_ref := dc.scan_and_bind(&service_state, &copied_discovered, service_slot)
 		if bind_ref != .None {
 			system.log_fact(.Warning, Command_Refused{command_kind = u64(command.kind), refusal_code = u64(bind_ref)})
@@ -183,6 +183,37 @@ handle_command :: proc "contextless" (command: ring.Record) {
 				kind   = u32(rd.Devices_Ring_Status.Ok),
 				tag    = command.tag,
 				values = {service_state.counters.active_bindings, 0, 0, 0, 0, 0, 0},
+			},
+		)
+
+	case .Lookup_Identity:
+		// A word past 16 bits names no PCI identifier, and a word after the
+		// two identifiers is no part of the command.
+		for word, index in command.values {
+			limit := index < 2 ? u64(max(u16)) : 0
+			if word > limit {
+				reply_bad_command(command, .Out_Of_Range, i64(index) + 1, i64(word), i64(limit))
+				return
+			}
+		}
+		entry, refusal := dc.lookup_identity(&service_state, u16(command.values[0]), u16(command.values[1]))
+		if refusal != .None {
+			ring.push(
+				&service_ring.completions,
+				ring.Record{
+					kind   = u32(rd.Devices_Ring_Status.Refused),
+					tag    = command.tag,
+					values = {u64(refusal), 0, 0, 0, 0, 0, 0},
+				},
+			)
+			return
+		}
+		ring.push(
+			&service_ring.completions,
+			ring.Record{
+				kind   = u32(rd.Devices_Ring_Status.Ok),
+				tag    = command.tag,
+				values = rd.device_identity_answer_values(entry),
 			},
 		)
 

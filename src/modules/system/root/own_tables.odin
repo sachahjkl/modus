@@ -103,8 +103,8 @@ own_tables :: proc "contextless" () -> (mappings, handles: u64, ok: bool) {
 	return report.mapping_count, report.handle_count, true
 }
 
-// The start of the line of own_tables_measure: the measure record reads it
-// (tools/modustool/checks/measure_record.odin).
+// The start of the template of Own_Tables_Measured: the measure record
+// reads it (tools/modustool/checks/measure_record.odin).
 OWN_TABLES_MEASURE_LINE :: "root: the tables of this service after the stop of "
 
 // own_tables_measure writes the tables of this service after the stop of
@@ -117,7 +117,7 @@ own_tables_measure :: proc "contextless" (name: string) {
 	if !ok {
 		return
 	}
-	system.log(.Info, OWN_TABLES_MEASURE_LINE, system.Module_Name{name}, ": ", handles, " handles, ", u64(system.prepared_held(&prepared)), " of them prepared parts, and ", mappings, " mappings, of ", u64(op.MAPPING_REPORT_CAPACITY), " each")
+	system.log_fact(.Info, Own_Tables_Measured{handles = handles, prepared_parts = u64(system.prepared_held(&prepared)), mappings = mappings, capacity = u64(op.MAPPING_REPORT_CAPACITY), stopped_process = module_name_field(name)})
 }
 
 // own_tables_log writes the line of the tables of this service after a
@@ -125,8 +125,8 @@ own_tables_measure :: proc "contextless" (name: string) {
 own_tables_log :: proc "contextless" (name: string) {
 	mappings, handles, ok := own_tables()
 	if !ok {
-		system.log(.Warning, "root: the start of ", system.Module_Name{name}, " found a table full; the kernel gives no report of the tables of this service")
+		system.log_fact(.Warning, Own_Tables_Full_Unreported{started_process = module_name_field(name)})
 		return
 	}
-	system.log(.Warning, "root: the start of ", system.Module_Name{name}, " found a table full: this service holds ", mappings, " mappings and ", handles, " handles, ", u64(system.prepared_held(&prepared)), " of them prepared parts, of ", u64(op.MAPPING_REPORT_CAPACITY), " each")
+	system.log_fact(.Warning, Own_Tables_Full{mappings = mappings, handles = handles, prepared_parts = u64(system.prepared_held(&prepared)), capacity = u64(op.MAPPING_REPORT_CAPACITY), started_process = module_name_field(name)})
 }
