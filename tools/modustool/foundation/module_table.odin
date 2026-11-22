@@ -218,6 +218,8 @@ module_builds := [?]Module_Build {
 	{name = "cryptography", source = LIBRARY_MODULE_SOURCES + "cryptography", image = true},
 	{name = "tls_tcp", source = LIBRARY_MODULE_SOURCES + "tls_tcp", image = true},
 	{name = "ssh_client", source = LIBRARY_MODULE_SOURCES + "ssh_client", image = true},
+	{name = "ghostty_vt", source = LIBRARY_MODULE_SOURCES + "ghostty_vt", image = true},
+	{name = "web_engine", source = LIBRARY_MODULE_SOURCES + "web_engine", image = true},
 	{name = "cryptography_vectors", source = DEMONSTRATION_MODULE_SOURCES + "cryptography_vectors", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "quic_echo", source = DEMONSTRATION_MODULE_SOURCES + "quic_echo", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "remote", source = SYSTEM_MODULE_SOURCES + "remote", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},

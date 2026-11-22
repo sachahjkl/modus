@@ -305,14 +305,43 @@ pre {
     }
   }
 
+  let audioCtx = null;
+  let opfsDiskReady = false;
+  const isolationMode = self.crossOriginIsolated ? "multi-worker-coi" : "single-thread-non-coi";
+
+  async function initOpfsDisk() {
+    if (!navigator.storage || typeof navigator.storage.getDirectory !== "function") {
+      opfsDiskReady = false;
+      return;
+    }
+    try {
+      const rootDir = await navigator.storage.getDirectory();
+      await rootDir.getFileHandle("modus-browser-disk.img", { create: true });
+      opfsDiskReady = true;
+    } catch (_) {
+      opfsDiskReady = false;
+    }
+  }
+
+  function unlockWebAudio() {
+    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtor) return;
+    if (!audioCtx) {
+      audioCtx = new AudioCtor({ sampleRate: 48000 });
+    } else if (audioCtx.state === "suspended") {
+      audioCtx.resume().catch(() => {});
+    }
+  }
+
   function refreshStateLabel() {
+    const caps = isolationMode + (opfsDiskReady ? " | opfs-disk" : "") + (audioCtx ? " | webaudio" : "");
     if (!wasmExports) {
-      setStatus("state: uninitialized");
+      setStatus("state: uninitialized (" + caps + ")");
       return;
     }
     const word = wasmExports.modus_vm_state_word() >>> 0;
     const name = RUN_STATE_NAMES[word] || ("state_" + word);
-    setStatus("state: " + name);
+    setStatus("state: " + name + " (" + caps + ")");
   }
 
   function loadGuestImage(guestOffset, bytes) {
@@ -343,6 +372,8 @@ pre {
   }
 
   async function loadAndStart() {
+    unlockWebAudio();
+    await initOpfsDisk();
     if (!connectOptionalRelay()) return;
     if (rafHandle !== 0) {
       window.cancelAnimationFrame(rafHandle);
