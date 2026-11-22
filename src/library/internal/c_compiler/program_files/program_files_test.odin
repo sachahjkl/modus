@@ -54,7 +54,14 @@ file_lists_that_break_their_form_are_refused :: proc(t: ^testing.T) {
 	// One more file than the bound, and than the room of the caller.
 	many := make([]File, FILES_MOST + 1, context.temp_allocator)
 	for index in 0 ..< len(many) {
-		many[index] = {name = strings.clone(strings.repeat("h", index + 1, context.temp_allocator), context.temp_allocator)}
+		buf: [16]u8
+		buf[0] = 'h'
+		buf[1] = u8('0' + (index / 100) % 10)
+		buf[2] = u8('0' + (index / 10) % 10)
+		buf[3] = u8('0' + index % 10)
+		buf[4] = '.'
+		buf[5] = 'h'
+		many[index] = {name = strings.clone(string(buf[:6]), context.temp_allocator)}
 	}
 	many_list := list_of(many)
 	files: [FILES_MOST]File
