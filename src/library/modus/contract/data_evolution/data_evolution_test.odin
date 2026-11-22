@@ -1187,3 +1187,376 @@ test_migration_end_to_end_forward_and_backward_roundtrip :: proc(t: ^testing.T) 
 	}
 }
 
+
+// The stored type of three releases of a settings row of a notes module.
+// Release 1: the first form. Release 2: title renamed to heading, revision
+// widened from u16 to u32, the field pinned added. Release 3: the member
+// outline added to mode, heading widened from Text(16) to Text(32).
+@(private = "file")
+Note_Releases :: struct {
+	v1, v2, v3: Stored_Type_Description,
+}
+
+@(private = "file")
+note_releases_build :: proc(t: ^testing.T, releases: ^Note_Releases) {
+	plain, _ := stored_enum_member_build("plain", 0)
+	rich, _ := stored_enum_member_build("rich", 1)
+	outline, _ := stored_enum_member_build("outline", 2)
+
+	testing.expect(t, stored_type_init(&releases.v1, "NoteSetting", 24))
+	testing.expect(t, stored_type_add_field(&releases.v1, "id", 0, 4, .Unsigned_Int))
+	testing.expect(t, stored_type_add_field(&releases.v1, "revision", 4, 2, .Unsigned_Int))
+	testing.expect(t, stored_type_add_enum_field(&releases.v1, "mode", 6, 1, {plain, rich}))
+	testing.expect(t, stored_type_add_field(&releases.v1, "title", 8, 16, .Text))
+
+	testing.expect(t, stored_type_init(&releases.v2, "NoteSetting", 32))
+	testing.expect(t, stored_type_add_field(&releases.v2, "id", 0, 4, .Unsigned_Int))
+	testing.expect(t, stored_type_add_field(&releases.v2, "revision", 4, 4, .Unsigned_Int))
+	testing.expect(t, stored_type_add_enum_field(&releases.v2, "mode", 8, 1, {plain, rich}))
+	testing.expect(t, stored_type_add_field(&releases.v2, "pinned", 9, 1, .Unsigned_Int))
+	testing.expect(t, stored_type_add_field(&releases.v2, "heading", 16, 16, .Text))
+
+	testing.expect(t, stored_type_init(&releases.v3, "NoteSetting", 48))
+	testing.expect(t, stored_type_add_field(&releases.v3, "id", 0, 4, .Unsigned_Int))
+	testing.expect(t, stored_type_add_field(&releases.v3, "revision", 4, 4, .Unsigned_Int))
+	testing.expect(t, stored_type_add_enum_field(&releases.v3, "mode", 8, 1, {plain, rich, outline}))
+	testing.expect(t, stored_type_add_field(&releases.v3, "pinned", 9, 1, .Unsigned_Int))
+	testing.expect(t, stored_type_add_field(&releases.v3, "heading", 16, 32, .Text))
+
+	testing.expect_value(t, description_validate(&releases.v1), Description_Error.None)
+	testing.expect_value(t, description_validate(&releases.v2), Description_Error.None)
+	testing.expect_value(t, description_validate(&releases.v3), Description_Error.None)
+}
+
+@(private = "file")
+note_v1_row :: proc(row: []u8, id: u32, revision: u16, mode: u8, title: string) {
+	for &byte_value in row {
+		byte_value = 0
+	}
+	write_unsigned_little_endian(row, 0, 4, u64(id))
+	write_unsigned_little_endian(row, 4, 2, u64(revision))
+	row[6] = mode
+	set_text_field(row, 8, 16, title)
+}
+
+// Encodes one table and checks that the encoder accepted it.
+@(private = "file")
+encode_one_table :: proc(t: ^testing.T, description: ^Stored_Type_Description, record_count: u32, records: []u8, out: []u8) -> int {
+	written, result := typed_object_encode({{description = description, record_count = record_count, records = records}}, out)
+	testing.expect_value(t, result.err, Object_Error.None)
+	return written
+}
+
+// Validates an object and checks that its one table has the description
+// hash of expected_description.
+@(private = "file")
+validate_as :: proc(t: ^testing.T, object: []u8, expected_description: ^Stored_Type_Description) -> (view: Typed_Object_View) {
+	result: Object_Validation_Result
+	view, result = typed_object_validate(object)
+	testing.expect_value(t, result.err, Object_Error.None)
+	expected_hash, hash_err := description_hash(expected_description)
+	testing.expect_value(t, hash_err, Description_Error.None)
+	known, _ := typed_object_check_expected_hashes(&view, {expected_hash})
+	testing.expect(t, known)
+	return view
+}
+
+@(test)
+test_three_release_upgrade_and_rollback_lifecycle :: proc(t: ^testing.T) {
+	releases: Note_Releases
+	note_releases_build(t, &releases)
+	v1_hash, _ := description_hash(&releases.v1)
+	v2_hash, _ := description_hash(&releases.v2)
+	v3_hash, _ := description_hash(&releases.v3)
+	testing.expect(t, v1_hash != v2_hash && v2_hash != v3_hash && v1_hash != v3_hash)
+
+	v1_to_v2 := []Table_Migration_Spec{{
+		old_description = &releases.v1,
+		new_description = &releases.v2,
+		declarations    = {field_renames = {{old_name = "title", new_name = "heading"}}},
+	}}
+	v2_to_v3 := []Table_Migration_Spec{{old_description = &releases.v2, new_description = &releases.v3}}
+	v3_back_to_v2 := []Table_Migration_Spec{{
+		old_description = &releases.v2,
+		new_description = &releases.v3,
+		declarations    = {enum_maps = {{field_name = "mode", source_value = 2, target_value = 1}}},
+	}}
+
+	// Release 1 writes three rows of edge values: the largest u16, a Text
+	// field full to its last byte, a two-byte UTF-8 letter, the largest u32.
+	v1_rows: [3 * 24]u8
+	note_v1_row(v1_rows[0:24], 1, max(u16), 1, "ABCDEFGHIJKLMNOP")
+	note_v1_row(v1_rows[24:48], 2, 0, 0, "é note")
+	note_v1_row(v1_rows[48:72], max(u32), 1, 0, "")
+	v1_object: [1024]u8
+	v1_length := encode_one_table(t, &releases.v1, 3, v1_rows[:], v1_object[:])
+	_ = validate_as(t, v1_object[:v1_length], &releases.v1)
+
+	// A reader of release 2 does not take the object of release 1 as its own.
+	v1_view, _ := typed_object_validate(v1_object[:v1_length])
+	as_v2, _ := typed_object_check_expected_hashes(&v1_view, {v2_hash})
+	testing.expect(t, !as_v2)
+
+	// Upgrade 1 -> 2: rename, widen, add. Nothing is lost.
+	v2_object: [1024]u8
+	upgrade_2 := migration_apply_object(v1_object[:v1_length], v1_to_v2, .Forward, v2_object[:])
+	testing.expect_value(t, upgrade_2.err, Migration_Apply_Error.None)
+	testing.expect_value(t, upgrade_2.losses.total_non_zero_values, u64(0))
+	v2_view := validate_as(t, v2_object[:upgrade_2.bytes_written], &releases.v2)
+	row, _ := typed_object_record_at(v2_object[:upgrade_2.bytes_written], &v2_view, 0, 0)
+	testing.expect_value(t, read_unsigned_little_endian(row, 4, 4), u64(max(u16)))
+	testing.expect_value(t, row[8], u8(1))
+	testing.expect_value(t, row[9], u8(0))
+	testing.expect_value(t, string(row[16:32]), "ABCDEFGHIJKLMNOP")
+
+	// Release 2 runs: it pins row 0 and gives row 1 a revision past u16.
+	v2_rows: [3 * 32]u8
+	v2_records, _ := typed_object_table_records(v2_object[:upgrade_2.bytes_written], &v2_view, 0)
+	copy(v2_rows[:], v2_records)
+	v2_rows[9] = 1
+	write_unsigned_little_endian(v2_rows[32:64], 4, 4, 70_000)
+	v2_length := encode_one_table(t, &releases.v2, 3, v2_rows[:], v2_object[:])
+
+	// Upgrade 2 -> 3: enum extension and Text widening.
+	v3_object: [1024]u8
+	upgrade_3 := migration_apply_object(v2_object[:v2_length], v2_to_v3, .Forward, v3_object[:])
+	testing.expect_value(t, upgrade_3.err, Migration_Apply_Error.None)
+	v3_view := validate_as(t, v3_object[:upgrade_3.bytes_written], &releases.v3)
+	row, _ = typed_object_record_at(v3_object[:upgrade_3.bytes_written], &v3_view, 0, 0)
+	testing.expect_value(t, string(row[16:32]), "ABCDEFGHIJKLMNOP")
+	testing.expect(t, buffer_all_equal(row[32:48], 0))
+
+	// Release 3 runs: row 2 takes the new member outline.
+	v3_rows: [3 * 48]u8
+	v3_records, _ := typed_object_table_records(v3_object[:upgrade_3.bytes_written], &v3_view, 0)
+	copy(v3_rows[:], v3_records)
+	v3_rows[96 + 8] = 2
+	v3_length := encode_one_table(t, &releases.v3, 3, v3_rows[:], v3_object[:])
+
+	// Rollback 3 -> 2 with no map of outline: refused before any change,
+	// never a default member.
+	target: [1024]u8 = 0xA5
+	no_map := migration_check_rollback(v3_object[:v3_length], v2_to_v3)
+	testing.expect_value(t, no_map.err, Migration_Apply_Error.Requires_Declared_Migration)
+	testing.expect_value(t, no_map.refusal_reason, Migration_Refusal_Reason.Enum_Member_Removed)
+	no_map_apply := migration_apply_object(v3_object[:v3_length], v2_to_v3, .Backward, target[:])
+	testing.expect_value(t, no_map_apply.err, Migration_Apply_Error.Requires_Declared_Migration)
+	testing.expect(t, buffer_all_equal(target[:], 0xA5))
+
+	// Rollback 3 -> 2 of a heading that release 2 cannot hold: no cut text.
+	long_rows := v3_rows
+	set_text_field(long_rows[0:48], 16, 32, "ABCDEFGHIJKLMNOPQ")
+	long_object: [1024]u8
+	long_length := encode_one_table(t, &releases.v3, 3, long_rows[:], long_object[:])
+	long_apply := migration_apply_object(long_object[:long_length], v3_back_to_v2, .Backward, target[:])
+	testing.expect_value(t, long_apply.err, Migration_Apply_Error.Value_Does_Not_Fit)
+	testing.expect_value(t, long_apply.record_index, u32(0))
+	testing.expect(t, buffer_all_equal(target[:], 0xA5))
+
+	// Rollback 3 -> 2 with the declared map: outline becomes rich.
+	back_to_2 := migration_apply_object(v3_object[:v3_length], v3_back_to_v2, .Backward, target[:])
+	testing.expect_value(t, back_to_2.err, Migration_Apply_Error.None)
+	testing.expect_value(t, back_to_2.losses.total_non_zero_values, u64(0))
+	back_2_view := validate_as(t, target[:back_to_2.bytes_written], &releases.v2)
+	row, _ = typed_object_record_at(target[:back_to_2.bytes_written], &back_2_view, 0, 2)
+	testing.expect_value(t, row[8], u8(1))
+	row, _ = typed_object_record_at(target[:back_to_2.bytes_written], &back_2_view, 0, 0)
+	testing.expect_value(t, row[9], u8(1))
+	rolled_v2_length := back_to_2.bytes_written
+	rolled_v2: [1024]u8
+	copy(rolled_v2[:], target[:rolled_v2_length])
+
+	// Rollback 2 -> 1: revision 70000 does not fit u16. The whole object is
+	// refused, before any change, with the record named.
+	target = 0xA5
+	too_wide := migration_check_rollback(rolled_v2[:rolled_v2_length], v1_to_v2)
+	testing.expect_value(t, too_wide.err, Migration_Apply_Error.Value_Does_Not_Fit)
+	testing.expect_value(t, too_wide.record_index, u32(1))
+	too_wide_apply := migration_apply_object(rolled_v2[:rolled_v2_length], v1_to_v2, .Backward, target[:])
+	testing.expect_value(t, too_wide_apply.err, Migration_Apply_Error.Value_Does_Not_Fit)
+	testing.expect(t, buffer_all_equal(target[:], 0xA5))
+
+	// The newer module brings the revision back into range; the rollback
+	// then states the one loss: pinned of row 0.
+	fixed_rows: [3 * 32]u8
+	fixed_records, _ := typed_object_table_records(rolled_v2[:rolled_v2_length], &back_2_view, 0)
+	copy(fixed_rows[:], fixed_records)
+	write_unsigned_little_endian(fixed_rows[32:64], 4, 4, 7)
+	fixed_object: [1024]u8
+	fixed_length := encode_one_table(t, &releases.v2, 3, fixed_rows[:], fixed_object[:])
+	loss_check := migration_check_rollback(fixed_object[:fixed_length], v1_to_v2)
+	testing.expect_value(t, loss_check.err, Migration_Apply_Error.None)
+	testing.expect_value(t, loss_check.losses.total_non_zero_values, u64(1))
+	testing.expect_value(t, loss_check.losses.affected_records, u64(1))
+	testing.expect_value(t, loss_check.losses.field_count, u32(1))
+	testing.expect_value(t, stated_loss_field_name(&loss_check.losses.fields[0]), "pinned")
+
+	back_to_1 := migration_apply_object(fixed_object[:fixed_length], v1_to_v2, .Backward, target[:])
+	testing.expect_value(t, back_to_1.err, Migration_Apply_Error.None)
+	_ = validate_as(t, target[:back_to_1.bytes_written], &releases.v1)
+
+	// The object of release 1 again: the same bytes as the first object but
+	// for the changes that the later releases made and the map declared.
+	expected_rows: [3 * 24]u8
+	note_v1_row(expected_rows[0:24], 1, max(u16), 1, "ABCDEFGHIJKLMNOP")
+	note_v1_row(expected_rows[24:48], 2, 7, 0, "é note")
+	note_v1_row(expected_rows[48:72], max(u32), 1, 1, "")
+	expected_object: [1024]u8
+	expected_length := encode_one_table(t, &releases.v1, 3, expected_rows[:], expected_object[:])
+	testing.expect_value(t, back_to_1.bytes_written, expected_length)
+	testing.expect(t, string(target[:back_to_1.bytes_written]) == string(expected_object[:expected_length]))
+
+	// A damaged description: a changed byte of the type name is a valid
+	// description of another hash; a changed field type is no description.
+	v2_check_view, _ := typed_object_validate(v2_object[:v2_length])
+	description_start := int(v2_check_view.tables[0].description_offset)
+	renamed := v2_object
+	renamed[description_start + 2] = 'M'
+	renamed_view, renamed_result := typed_object_validate(renamed[:v2_length])
+	testing.expect_value(t, renamed_result.err, Object_Error.None)
+	renamed_known, _ := typed_object_check_expected_hashes(&renamed_view, {v2_hash})
+	testing.expect(t, !renamed_known)
+	target = 0xA5
+	renamed_apply := migration_apply_object(renamed[:v2_length], v2_to_v3, .Forward, target[:])
+	testing.expect_value(t, renamed_apply.err, Migration_Apply_Error.Unknown_Description_Hash)
+	testing.expect_value(t, renamed_apply.mismatched_hash, renamed_view.tables[0].description_hash)
+	testing.expect(t, buffer_all_equal(target[:], 0xA5))
+
+	// The type byte of field 0: u16 name length, 11 name bytes, u32 record
+	// size, u16 field count, u16 field name length, 2 name bytes, u32
+	// offset, u32 size.
+	damaged := v2_object
+	damaged[description_start + 31] = 9
+	damaged_apply := migration_apply_object(damaged[:v2_length], v2_to_v3, .Forward, target[:])
+	testing.expect_value(t, damaged_apply.err, Migration_Apply_Error.Invalid_Source_Object)
+	testing.expect_value(t, damaged_apply.object_validation.err, Object_Error.Invalid_Description)
+	testing.expect_value(t, damaged_apply.object_validation.description_err, Description_Error.Invalid_Field_Type)
+	testing.expect(t, buffer_all_equal(target[:], 0xA5))
+}
+
+@(test)
+test_release_migration_edges_and_adversarial_objects :: proc(t: ^testing.T) {
+	releases: Note_Releases
+	note_releases_build(t, &releases)
+	v1_hash, _ := description_hash(&releases.v1)
+	v2_hash, _ := description_hash(&releases.v2)
+	v1_to_v2 := []Table_Migration_Spec{{
+		old_description = &releases.v1,
+		new_description = &releases.v2,
+		declarations    = {field_renames = {{old_name = "title", new_name = "heading"}}},
+	}}
+	v2_to_v3 := []Table_Migration_Spec{{old_description = &releases.v2, new_description = &releases.v3}}
+	v3_back_to_v2 := []Table_Migration_Spec{{
+		old_description = &releases.v2,
+		new_description = &releases.v3,
+		declarations    = {enum_maps = {{field_name = "mode", source_value = 2, target_value = 1}}},
+	}}
+
+	// Zero records: the whole cycle 1 -> 2 -> 3 -> 2 -> 1 gives the same bytes.
+	empty_v1: [512]u8
+	empty_length := encode_one_table(t, &releases.v1, 0, nil, empty_v1[:])
+	step_a, step_b, step_c, step_d: [512]u8
+	up_2 := migration_apply_object(empty_v1[:empty_length], v1_to_v2, .Forward, step_a[:])
+	testing.expect_value(t, up_2.err, Migration_Apply_Error.None)
+	up_3 := migration_apply_object(step_a[:up_2.bytes_written], v2_to_v3, .Forward, step_b[:])
+	testing.expect_value(t, up_3.err, Migration_Apply_Error.None)
+	// The rollback of an added member needs its map even with no record:
+	// the plan is refused, not the records.
+	step_c = 0xA5
+	no_map := migration_apply_object(step_b[:up_3.bytes_written], v2_to_v3, .Backward, step_c[:])
+	testing.expect_value(t, no_map.err, Migration_Apply_Error.Requires_Declared_Migration)
+	testing.expect(t, buffer_all_equal(step_c[:], 0xA5))
+	down_2 := migration_apply_object(step_b[:up_3.bytes_written], v3_back_to_v2, .Backward, step_c[:])
+	testing.expect_value(t, down_2.err, Migration_Apply_Error.None)
+	testing.expect(t, string(step_c[:down_2.bytes_written]) == string(step_a[:up_2.bytes_written]))
+	down_1 := migration_apply_object(step_c[:down_2.bytes_written], v1_to_v2, .Backward, step_d[:])
+	testing.expect_value(t, down_1.err, Migration_Apply_Error.None)
+	testing.expect(t, string(step_d[:down_1.bytes_written]) == string(empty_v1[:empty_length]))
+
+	// A count of records that the bytes do not hold: 1, and the largest u32.
+	empty_view, _ := typed_object_validate(empty_v1[:empty_length])
+	count_offset := int(empty_view.tables[0].records_offset) - 4
+	target: [512]u8 = 0xA5
+	for claimed_count in ([]u32{1, max(u32)}) {
+		lying := empty_v1
+		write_unsigned_little_endian(lying[:], u32(count_offset), 4, u64(claimed_count))
+		_, lying_result := typed_object_validate(lying[:empty_length])
+		testing.expect_value(t, lying_result.err, Object_Error.Truncated)
+		lying_apply := migration_apply_object(lying[:empty_length], v1_to_v2, .Forward, target[:])
+		testing.expect_value(t, lying_apply.err, Migration_Apply_Error.Invalid_Source_Object)
+		testing.expect(t, buffer_all_equal(target[:], 0xA5))
+	}
+
+	// Many records: 2048 rows of edge values forward and back, byte for byte.
+	ROW_COUNT :: 2048
+	many_rows := make([]u8, ROW_COUNT * 24)
+	defer delete(many_rows)
+	for index in 0 ..< ROW_COUNT {
+		revision := u16(index % 2 == 0 ? int(max(u16)) - index : index)
+		title := index % 3 == 0 ? "ABCDEFGHIJKLMNOP" : (index % 3 == 1 ? "é" : "")
+		note_v1_row(many_rows[index * 24:][:24], u32(index) * 0x0101_0101, revision, u8(index % 2), title)
+	}
+	many_v1 := make([]u8, 128 * 1024)
+	defer delete(many_v1)
+	many_v2 := make([]u8, 128 * 1024)
+	defer delete(many_v2)
+	many_back := make([]u8, 128 * 1024)
+	defer delete(many_back)
+	many_length := encode_one_table(t, &releases.v1, ROW_COUNT, many_rows, many_v1)
+	many_up := migration_apply_object(many_v1[:many_length], v1_to_v2, .Forward, many_v2)
+	testing.expect_value(t, many_up.err, Migration_Apply_Error.None)
+	many_down := migration_apply_object(many_v2[:many_up.bytes_written], v1_to_v2, .Backward, many_back)
+	testing.expect_value(t, many_down.err, Migration_Apply_Error.None)
+	testing.expect(t, string(many_back[:many_down.bytes_written]) == string(many_v1[:many_length]))
+
+	// A truncated object: each length shorter than the head is Truncated, and
+	// each shorter prefix of a whole object is refused with no output.
+	one_row: [24]u8
+	note_v1_row(one_row[:], 9, 9, 1, "nine")
+	one_object: [512]u8
+	one_length := encode_one_table(t, &releases.v1, 1, one_row[:], one_object[:])
+	for length in 0 ..< TYPED_OBJECT_HEADER_SIZE {
+		_, head_result := typed_object_validate(one_object[:length])
+		testing.expect_value(t, head_result.err, Object_Error.Truncated)
+	}
+	for length in 0 ..< one_length {
+		_, prefix_result := typed_object_validate(one_object[:length])
+		testing.expect(t, prefix_result.err != .None)
+		prefix_apply := migration_apply_object(one_object[:length], v1_to_v2, .Forward, target[:])
+		testing.expect_value(t, prefix_apply.err, Migration_Apply_Error.Invalid_Source_Object)
+		testing.expect(t, buffer_all_equal(target[:], 0xA5))
+	}
+	one_object[one_length] = 0
+	_, trailing_result := typed_object_validate(one_object[:one_length + 1])
+	testing.expect_value(t, trailing_result.err, Object_Error.Trailing_Bytes)
+
+	// A mismatched hash: the object of release 1 offered as release 2, and
+	// the other way, is refused with the hash that it has.
+	as_new := migration_apply_object(one_object[:one_length], v1_to_v2, .Backward, target[:])
+	testing.expect_value(t, as_new.err, Migration_Apply_Error.Unknown_Description_Hash)
+	testing.expect_value(t, as_new.mismatched_hash, v1_hash)
+	testing.expect(t, buffer_all_equal(target[:], 0xA5))
+	one_v2: [512]u8
+	one_up := migration_apply_object(one_object[:one_length], v1_to_v2, .Forward, one_v2[:])
+	testing.expect_value(t, one_up.err, Migration_Apply_Error.None)
+	as_old := migration_apply_object(one_v2[:one_up.bytes_written], v1_to_v2, .Forward, target[:])
+	testing.expect_value(t, as_old.err, Migration_Apply_Error.Unknown_Description_Hash)
+	testing.expect_value(t, as_old.mismatched_hash, v2_hash)
+	testing.expect(t, buffer_all_equal(target[:], 0xA5))
+
+	// The bound of the checked narrowing at the rollback 2 -> 1: the largest
+	// u16 passes, one past it refuses the whole object.
+	v2_rows: [2 * 32]u8
+	write_unsigned_little_endian(v2_rows[0:32], 4, 4, u64(max(u16)))
+	write_unsigned_little_endian(v2_rows[32:64], 4, 4, u64(max(u16)) + 1)
+	bound_object: [512]u8
+	bound_length := encode_one_table(t, &releases.v2, 1, v2_rows[0:32], bound_object[:])
+	at_bound := migration_apply_object(bound_object[:bound_length], v1_to_v2, .Backward, step_a[:])
+	testing.expect_value(t, at_bound.err, Migration_Apply_Error.None)
+	bound_length = encode_one_table(t, &releases.v2, 2, v2_rows[:], bound_object[:])
+	past_bound := migration_apply_object(bound_object[:bound_length], v1_to_v2, .Backward, target[:])
+	testing.expect_value(t, past_bound.err, Migration_Apply_Error.Value_Does_Not_Fit)
+	testing.expect_value(t, past_bound.record_index, u32(1))
+	testing.expect(t, buffer_all_equal(target[:], 0xA5))
+}
+
