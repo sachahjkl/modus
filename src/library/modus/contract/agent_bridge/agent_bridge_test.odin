@@ -4,10 +4,8 @@ package agent_bridge
 import "core:testing"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
-import "modus:contract/plans_recipes"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
-import "modus:contract/start_grant"
 import "modus:contract/wide_grants"
 
 @(private = "file")
@@ -451,50 +449,124 @@ test_typed_payload_codecs_refuse_boundary_violations :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_lex_sensitive_action_classification :: proc(t: ^testing.T) {
-	// Normal Lex calls
-	action, is_apply := lex_line_classify_sensitive_action(transmute([]u8)string("monitor.processes()"))
-	testing.expect_value(t, action, wide_grants.Sensitive_Action.Normal_Semantic_Read)
-	testing.expect(t, !is_apply)
-
-	// Quoted strings containing sensitive names are data, not calls
-	action, is_apply = lex_line_classify_sensitive_action(transmute([]u8)string(`monitor.counts_named([("plans.apply"), ("remote_allow")])`))
-	testing.expect_value(t, action, wide_grants.Sensitive_Action.Normal_Semantic_Read)
-	testing.expect(t, !is_apply)
-
-	// Commented plans.apply is not a call
-	action, is_apply = lex_line_classify_sensitive_action(transmute([]u8)string("monitor.processes() -- plans.apply(p)"))
-	testing.expect_value(t, action, wide_grants.Sensitive_Action.Normal_Semantic_Read)
-	testing.expect(t, !is_apply)
-
-	// Direct, piped, and spaced plans.apply are all caught
-	for line in ([]string{"plans.apply(p)", "plan |> plans.apply()", "plans . apply (my_plan)"}) {
-		a, ap := lex_line_classify_sensitive_action(transmute([]u8)line)
-		testing.expect_value(t, a, wide_grants.Sensitive_Action.Plans_Apply_Adding_Grant)
-		testing.expect(t, ap)
+test_lex_line_classification_is_a_strict_read_only_allowlist :: proc(t: ^testing.T) {
+	classify :: proc(line: string) -> Lex_Line_Class {
+		return lex_line_classify(transmute([]u8)line)
 	}
 
-	// Grant-changing, principal, and debug/replace calls are caught
-	for line in ([]string{`remote_allow("abcd")`, `allow("edit")`, `agent_allow(k, s)`}) {
-		a, _ := lex_line_classify_sensitive_action(transmute([]u8)line)
-		testing.expect_value(t, a, wide_grants.Sensitive_Action.Disk_Grant_Change)
-		testing.expect(t, wide_grants.act_requires_principal_proof(a))
+	// Comments, second lines, pipes, chains and nested calls are refused:
+	// a comment can no longer hide the call after it.
+	malformed := [?]string {
+		"# comment\nplans.apply(1)",
+		"-- comment\nstorage.write(\"a\", \"b\")",
+		"// comment\nsettings.appearance(1)",
+		"monitor.processes() // plans.apply(1)",
+		"monitor.processes() -- plans.apply(1)",
+		"monitor.processes() # plans.apply(1)",
+		"monitor.processes()\nplans.apply(1)",
+		"monitor.processes()\rplans.apply(1)",
+		"monitor.processes(); plans.apply(1)",
+		"monitor.processes() |> plans.apply()",
+		"monitor.processes()\x00",
+		"monitor.processes(plans.apply())",
+		"monitor.processes(x = plans.rollback())",
+		"monitor.count(lock)",
+		"monitor.count(n = lock)",
+		"monitor.processes() monitor.processes()",
+		"monitor.processes()()",
+		"monitor . processes()",
+		"monitor.processes.x()",
+		"monitor",
+		"lock",
+		"unlock()",
+		"",
+		"   ",
+		"monitor.processes(",
+		"monitor.processes(1,)",
+		"monitor.processes(,1)",
+		"monitor.counts(\"unclosed)",
+		"monitor.count(--1)",
+		"monitor.count(1abc)",
+		"monitor.count(== 1)",
+		"monitor.count(n == 1)",
+		"monitor.count([1, 2])",
+		"monitor.count({a = 1})",
+		"monitor.count((x) => x)",
+		"monitor.count(let a = 1 in a)",
+		"monitor.count(blake3:00)",
+		"monitor.count(blake3:" + "AA" + "00000000000000000000000000000000000000000000000000000000000000)",
+		"monitor.count(.a.b)",
 	}
-	for line in ([]string{"machine_passphrase()", "unlock()", "lock()"}) {
-		a, _ := lex_line_classify_sensitive_action(transmute([]u8)line)
-		testing.expect_value(t, a, wide_grants.Sensitive_Action.Principal_Management)
-		testing.expect(t, wide_grants.act_requires_principal_proof(a))
-	}
-	for line in ([]string{"replace(a, b)", "debugger.attach(1)"}) {
-		a, _ := lex_line_classify_sensitive_action(transmute([]u8)line)
-		testing.expect_value(t, a, wide_grants.Sensitive_Action.Module_Replace_Or_Debug)
-		testing.expect(t, wide_grants.act_requires_principal_proof(a))
+	for line in malformed {
+		testing.expectf(t, classify(line) == .Malformed, "line %q was not refused", line)
 	}
 
-	// Unclosed quote fails closed (.None requires principal proof)
-	unclosed_action, _ := lex_line_classify_sensitive_action(transmute([]u8)string(`monitor.counts("unclosed`))
-	testing.expect_value(t, unclosed_action, wide_grants.Sensitive_Action.None)
-	testing.expect(t, wide_grants.act_requires_principal_proof(unclosed_action))
+	// A text of Lex has no escape: the quote ends it, and the call after it
+	// is seen as a call.
+	testing.expect_value(t, classify(`monitor.counts("a\") plans.apply("b")`), Lex_Line_Class.Malformed)
+
+	// One call of an export outside the read-only list waits for the principal.
+	needs_approval := [?]string {
+		"plans.apply(1)",
+		"plans.apply()",
+		"plans.apply",
+		"plans.rollback()",
+		"plans.apply_poll(1)",
+		"storage.write(\"a\", \"b\")",
+		"settings.appearance(1)",
+		"settings.set(font = .spleen)",
+		"compositor.wide_grant_indicator(0, 0)",
+		"compositor.wide_grant_indicator(0)",
+		"compositor.notify(\"a\", \"b\")",
+		"compositor.revoke_grant(1)",
+		"debugger.attach(1)",
+		"debugger.memory(1, 0, 16)",
+		"debugger.registers(1)",
+		"collector.act_records_read(0, 0, 10)",
+		"recipes.build(1)",
+		"projects.load(\"a\")",
+		"unknown.export()",
+	}
+	for line in needs_approval {
+		testing.expectf(t, classify(line) == .Requires_Principal_Approval, "line %q was not held for approval", line)
+	}
+
+	// No export that changes a state is on the read-only list.
+	for entry in READ_ONLY_EXPORTS {
+		for word in ([?]string{"apply", "rollback", "write", "set", "attach", "detach", "indicator", "load", "update", "register", "revoke", "notify", "ask", "open", "hold", "release"}) {
+			testing.expectf(t, !contains_word(entry.export, word), "read-only export %s.%s names %s", entry.service, entry.export, word)
+		}
+		testing.expectf(t, entry.service != "storage" && entry.service != "settings" && entry.service != "debugger" && entry.service != "collector", "service %s is on the read-only list", entry.service)
+	}
+
+	// Read-only calls with literal arguments run, last.
+	read_only := [?]string {
+		"monitor.processes()",
+		"monitor.processes",
+		"  monitor.processes ( )  ",
+		"monitor.count(\"plans.apply(1) # -- //\")",
+		"monitor.counts_named(\"a\", -7, true, false, .Error)",
+		"log.records(level = .Warning, sequence >= 10, name != \"x\")",
+		"plans.difference(blake3:" + "00000000000000000000000000000000000000000000000000000000000000ff" + ")",
+		"compositor.windows()",
+		"plans.status()",
+	}
+	for line in read_only {
+		testing.expectf(t, classify(line) == .Read_Only, "read-only line %q was not accepted", line)
+	}
+}
+
+@(private = "file")
+contains_word :: proc(text: string, word: string) -> bool {
+	if len(word) > len(text) {
+		return false
+	}
+	for start in 0 ..= len(text) - len(word) {
+		if text[start:start + len(word)] == word {
+			return true
+		}
+	}
+	return false
 }
 
 @(test)
@@ -502,91 +574,47 @@ test_authorization_enforces_permissions_wide_grants_and_principal_approval :: pr
 	client_key := make_client_key(0x21)
 	policy := make_active_policy(client_key)
 
-	// 1. Grant-adding Plan_Difference ALWAYS stops with Awaiting_Principal_Approval!
-	{
-		cur_plan := plans_recipes.Plan_Spec{principal = 0, entry_count = 1}
-		cur_entry, _ := plans_recipes.plan_entry_make_module(.Start_Module, "edit", make_hash("mod-edit-v1"), 0)
-		cur_plan.entries[0] = cur_entry
-
-		prop_plan := plans_recipes.Plan_Spec{principal = 0, entry_count = 1}
-		added_mask := u64(1) << u64(start_grant.Grant.Connect)
-		prop_entry, _ := plans_recipes.plan_entry_make_module(.Start_Module, "edit", make_hash("mod-edit-v1"), added_mask)
-		prop_plan.entries[0] = prop_entry
-
-		diff: plans_recipes.Plan_Difference
-		diff_refusal := plans_recipes.plan_diff_compute(&cur_plan, &prop_plan, &diff)
-		testing.expect_value(t, diff_refusal, plans_recipes.Plan_Refusal.None)
-		testing.expect(t, diff.any_grant_added)
-
+// 1. plans.apply and plans.rollback ALWAYS stop with
+	// Awaiting_Principal_Approval: the request has no flag that can change it.
+	for line in ([?]string{"plans.apply(1)", "plans.apply()", "plans.rollback()", "plans.rollback(1)"}) {
 		req := Bridge_Authorization_Request {
-			command             = .Eval_Lex,
-			now_ms              = 2_000,
-			has_plan_difference = true,
-			plan_difference     = &diff,
-			lex_line            = transmute([]u8)string("plans.apply(prop_plan)"),
+			command  = .Eval_Lex,
+			now_ms   = 2_000,
+			lex_line = transmute([]u8)line,
 		}
 		dec := bridge_authorize_command(&policy, &req)
 		testing.expect_value(t, dec.status, Bridge_Status.Awaiting_Principal_Approval)
 		testing.expect_value(t, dec.refusal, Bridge_Refusal.Principal_Approval_Required)
 	}
 
-	// 2. Unverified plans.apply (no Plan_Difference supplied) fails closed with Awaiting_Principal_Approval!
+	// 2. A comment, a second line or a chain is refused, never run.
+	for line in ([?]string{"# comment\nplans.apply(1)", "-- comment\nstorage.write(\"a\", \"b\")", "// comment\nsettings.appearance(1)", "monitor.processes() |> plans.apply()"}) {
+		req := Bridge_Authorization_Request {
+			command  = .Eval_Lex,
+			now_ms   = 2_000,
+			lex_line = transmute([]u8)line,
+		}
+		dec := bridge_authorize_command(&policy, &req)
+		testing.expect_value(t, dec.status, Bridge_Status.Refused)
+		testing.expect_value(t, dec.refusal, Bridge_Refusal.Invalid_Text)
+	}
+
+	// 3. A call outside the read-only list waits; a read-only call runs.
 	{
 		req := Bridge_Authorization_Request {
 			command  = .Eval_Lex,
 			now_ms   = 2_000,
-			lex_line = transmute([]u8)string("plans.apply(next_plan)"),
+			lex_line = transmute([]u8)string("compositor.wide_grant_indicator(0, 0)"),
 		}
 		dec := bridge_authorize_command(&policy, &req)
 		testing.expect_value(t, dec.status, Bridge_Status.Awaiting_Principal_Approval)
-		testing.expect_value(t, dec.refusal, Bridge_Refusal.Principal_Approval_Required)
-	}
-
-	// 3. Verified grant-free plans.apply (Plan_Difference.any_grant_added == false) is permitted.
-	{
-		cur_plan := plans_recipes.Plan_Spec{principal = 0, entry_count = 1}
-		cur_entry, _ := plans_recipes.plan_entry_make_module(.Start_Module, "edit", make_hash("mod-edit-v1"), 0)
-		cur_plan.entries[0] = cur_entry
-
-		prop_plan := plans_recipes.Plan_Spec{principal = 0, entry_count = 1}
-		prop_entry, _ := plans_recipes.plan_entry_make_module(.Start_Module, "edit", make_hash("mod-edit-v2"), 0)
-		prop_plan.entries[0] = prop_entry
-
-		diff: plans_recipes.Plan_Difference
-		diff_refusal := plans_recipes.plan_diff_compute(&cur_plan, &prop_plan, &diff)
-		testing.expect_value(t, diff_refusal, plans_recipes.Plan_Refusal.None)
-		testing.expect(t, !diff.any_grant_added)
-
-		req := Bridge_Authorization_Request {
-			command             = .Eval_Lex,
-			now_ms              = 2_000,
-			has_plan_difference = true,
-			plan_difference     = &diff,
-			lex_line            = transmute([]u8)string("plans.apply(prop_plan)"),
-		}
-		dec := bridge_authorize_command(&policy, &req)
-		testing.expect_value(t, dec.status, Bridge_Status.Ok)
-		testing.expect_value(t, dec.refusal, Bridge_Refusal.None)
-	}
-
-	// 4. Explicit sensitive action or unknown sensitive action word stops with Awaiting_Principal_Approval.
-	{
-		req := Bridge_Authorization_Request {
-			command               = .Read_Screen,
-			now_ms                = 2_000,
-			sensitive_action_word = u64(wide_grants.Sensitive_Action.Passphrase_Or_Unlock_Dialog),
-		}
-		dec := bridge_authorize_command(&policy, &req)
-		testing.expect_value(t, dec.status, Bridge_Status.Awaiting_Principal_Approval)
-		testing.expect_value(t, dec.refusal, Bridge_Refusal.Principal_Approval_Required)
-
-		req.sensitive_action_word = 999
+		req.lex_line = transmute([]u8)string("monitor.processes()")
 		dec = bridge_authorize_command(&policy, &req)
-		testing.expect_value(t, dec.status, Bridge_Status.Awaiting_Principal_Approval)
-		testing.expect_value(t, dec.refusal, Bridge_Refusal.Sensitive_Action_Blocked)
+		testing.expect_value(t, dec.status, Bridge_Status.Ok)
+		testing.expect_value(t, dec.required_act_kind, wide_grants.Act_Kind.Action_Invoked)
 	}
 
-	// 5. Permission and remote key use checks for each capability.
+		// 5. Permission and remote key use checks for each capability.
 	{
 		read_only_policy := policy
 		read_only_policy.permissions_word = bridge_permissions_to_word({.Read_Log_Facts})

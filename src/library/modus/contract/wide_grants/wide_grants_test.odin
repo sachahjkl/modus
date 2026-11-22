@@ -289,65 +289,158 @@ test_terms_validation_refuses_every_invalid_edge :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_proof_validation_enforces_local_unlock_and_host_key_binding :: proc(t: ^testing.T) {
+test_proof_validation_refuses_every_forgery :: proc(t: ^testing.T) {
 	terms := make_valid_terms()
+	authority_key := test_hash("unlock-authority-key")
 	host_key := test_hash("host-principal-signing-key")
 	unlock_token := test_hash("local-unlock-session-token")
 
-	// Missing proof (zero kind)
+	// The all-zero authority key is refused when a proof is made and when it is checked.
+	{
+		_, zero_make := wide_grant_proof_make({}, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, 1, unlock_token, 1000)
+		testing.expect_value(t, zero_make, Wide_Grant_Refusal.Invalid_Proof)
+		good, _ := wide_grant_proof_make(authority_key, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, 1, unlock_token, 1000)
+		testing.expect_value(t, wide_grant_proof_validate({}, &terms, &good, host_key, 0), Wide_Grant_Refusal.Invalid_Proof)
+		// A proof tagged under the zero key by a forger who calls the keyed hash itself.
+		forged := good
+		forged_payload := forged
+		forged_payload.proof_tag = {}
+		_, forged_ok := wide_grant_proof_tag({}, &forged_payload)
+		testing.expect(t, !forged_ok, "the tag of the zero key is refused")
+		testing.expect(t, !authority_key_is_valid({}))
+	}
+
+	// Missing proof (zero kind or zero tag)
 	empty_proof := Wide_Grant_Proof{}
-	testing.expect_value(t, wide_grant_proof_validate(&terms, &empty_proof, host_key), Wide_Grant_Refusal.Missing_Proof)
+	testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &empty_proof, host_key, 0), Wide_Grant_Refusal.Missing_Proof)
 
 	// Passphrase proof valid path
-	pass_proof, pass_make := wide_grant_proof_make(&terms, .Passphrase_Verified, unlock_token, 1000)
+	pass_proof, pass_make := wide_grant_proof_make(authority_key, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, 7, unlock_token, 1000)
 	testing.expect_value(t, pass_make, Wide_Grant_Refusal.None)
-	testing.expect_value(t, wide_grant_proof_validate(&terms, &pass_proof, {}), Wide_Grant_Refusal.None)
 
-	// Passphrase proof refused if not locally verified or from remote display input
+	// A proof tagged under another key, or with the unkeyed hash, is refused.
+	{
+		other_key := test_hash("forger-key")
+		forged, _ := wide_grant_proof_make(other_key, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, 7, unlock_token, 1000)
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &forged, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+
+		unkeyed := pass_proof
+		unkeyed.proof_tag = blake3.derive_key("modus wide grant proof v1", unkeyed.terms_hash[:])
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &unkeyed, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+	}
+
+	// The origin is in the tag: a flipped origin is refused, and no proof
+	// kind is accepted from remote display input even with a right tag.
 	{
 		bad := pass_proof
-		bad.proof_verified_by_local_unlock = false
-		testing.expect_value(t, wide_grant_proof_validate(&terms, &bad, {}), Wide_Grant_Refusal.Invalid_Proof)
+		bad.origin_word = u64(Proof_Origin.Local_Host_Key)
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &bad, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
 
 		bad = pass_proof
-		bad.from_remote_display_input = true
-		testing.expect_value(t, wide_grant_proof_validate(&terms, &bad, {}), Wide_Grant_Refusal.Invalid_Proof)
+		bad.origin_word = u64(Proof_Origin.Remote_Display_Input)
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &bad, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+
+		// A remote origin with a right tag computed by the key holder is still refused.
+		bad.proof_tag, _ = wide_grant_proof_tag(authority_key, &bad)
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &bad, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+
+		bad = pass_proof
+		bad.origin_word = 0
+		bad.proof_tag, _ = wide_grant_proof_tag(authority_key, &bad)
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &bad, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+
+		bad = pass_proof
+		bad.origin_word = 99
+		bad.proof_tag, _ = wide_grant_proof_tag(authority_key, &bad)
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &bad, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+
+		_, remote_make := wide_grant_proof_make(authority_key, &terms, .Passphrase_Verified, .Remote_Display_Input, 8, unlock_token, 1000)
+		testing.expect_value(t, remote_make, Wide_Grant_Refusal.Invalid_Proof)
+		_, cross_make := wide_grant_proof_make(authority_key, &terms, .Host_Key_Signed, .Local_Unlock_Dialog, 8, host_key, 1000)
+		testing.expect_value(t, cross_make, Wide_Grant_Refusal.Invalid_Proof)
 	}
 
-	// Host key signed proof valid path
-	host_proof, host_make := wide_grant_proof_make(&terms, .Host_Key_Signed, host_key, 2000)
-	testing.expect_value(t, host_make, Wide_Grant_Refusal.None)
-	testing.expect_value(t, wide_grant_proof_validate(&terms, &host_proof, host_key), Wide_Grant_Refusal.None)
-
-	// Host key proof refused without registered host key, wrong key, remote display, tampered tag, or mutated terms
+	// The serial: zero, equal to the last accepted one, and older are refused.
 	{
-		testing.expect_value(t, wide_grant_proof_validate(&terms, &host_proof, {}), Wide_Grant_Refusal.Invalid_Proof)
-		testing.expect_value(t, wide_grant_proof_validate(&terms, &host_proof, test_hash("wrong-key")), Wide_Grant_Refusal.Invalid_Proof)
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &pass_proof, {}, 7), Wide_Grant_Refusal.Invalid_Proof)
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &pass_proof, {}, max(u64)), Wide_Grant_Refusal.Invalid_Proof)
+		_, zero_serial := wide_grant_proof_make(authority_key, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, 0, unlock_token, 1000)
+		testing.expect_value(t, zero_serial, Wide_Grant_Refusal.Missing_Proof)
 
-		bad := host_proof
-		bad.from_remote_display_input = true
-		testing.expect_value(t, wide_grant_proof_validate(&terms, &bad, host_key), Wide_Grant_Refusal.Invalid_Proof)
-
-		bad = host_proof
-		bad.proof_bytes[0] ~= 0x01
-		testing.expect_value(t, wide_grant_proof_validate(&terms, &bad, host_key), Wide_Grant_Refusal.Invalid_Proof)
-
-		bad = host_proof
-		bad.proof_bytes = {}
-		testing.expect_value(t, wide_grant_proof_validate(&terms, &bad, host_key), Wide_Grant_Refusal.Missing_Proof)
-
-		bad = host_proof
-		bad.terms_hash[0] ~= 0x80
-		testing.expect_value(t, wide_grant_proof_validate(&terms, &bad, host_key), Wide_Grant_Refusal.Invalid_Proof)
-
-		bad = host_proof
-		bad.principal_id = 99
-		testing.expect_value(t, wide_grant_proof_validate(&terms, &bad, host_key), Wide_Grant_Refusal.Invalid_Proof)
-
-		bad = host_proof
-		bad.proof_kind_word = 99
-		testing.expect_value(t, wide_grant_proof_validate(&terms, &bad, host_key), Wide_Grant_Refusal.Invalid_Proof)
+		bad := pass_proof
+		bad.proof_serial = 8
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &bad, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
 	}
+
+	// The windows: a proof of other terms is refused for these terms.
+	{
+		wider := terms
+		wider.target_window_count = 3
+		wider.target_window_ids[2] = 303
+		testing.expect_value(t, wide_grant_terms_seal(&wider), Wide_Grant_Refusal.None)
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &wider, &pass_proof, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+	}
+
+	// Each field of the proof is in the tag.
+	{
+		bad := pass_proof
+		bad.proof_tag[0] ~= 0x01
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &bad, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+
+		bad = pass_proof
+		bad.proof_tag = {}
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &bad, {}, 0), Wide_Grant_Refusal.Missing_Proof)
+
+		bad = pass_proof
+		bad.terms_hash[0] ~= 0x80
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &bad, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+
+		bad = pass_proof
+		bad.principal_id = 99
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &bad, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+
+		bad = pass_proof
+		bad.proof_kind_word = 99
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &bad, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+
+		bad = pass_proof
+		bad.proof_timestamp_ms += 1
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &bad, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+
+		bad = pass_proof
+		bad.verifier_key_or_token_hash[31] ~= 0x01
+		testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &bad, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+	}
+
+	// The accepted case comes last.
+	testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &pass_proof, {}, 6), Wide_Grant_Refusal.None)
+
+	// Host key signed proof
+	host_proof, host_make := wide_grant_proof_make(authority_key, &terms, .Host_Key_Signed, .Local_Host_Key, 9, host_key, 2000)
+	testing.expect_value(t, host_make, Wide_Grant_Refusal.None)
+	testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &host_proof, {}, 0), Wide_Grant_Refusal.Invalid_Proof)
+	testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &host_proof, test_hash("wrong-key"), 0), Wide_Grant_Refusal.Invalid_Proof)
+	testing.expect_value(t, wide_grant_proof_validate(authority_key, &terms, &host_proof, host_key, 0), Wide_Grant_Refusal.None)
+}
+
+@(test)
+test_authority_key_and_new_enums_at_the_border :: proc(t: ^testing.T) {
+	testing.expect(t, !authority_key_is_valid(authority_key_from_words({0, 0, 0, 0})))
+	key := authority_key_from_words({1, 0, 0, max(u64)})
+	testing.expect(t, authority_key_is_valid(key))
+	testing.expect_value(t, key[0], u8(1))
+	testing.expect_value(t, key[31], u8(0xFF))
+
+	for word in ([?]u64{0, 4, 99, max(u64)}) {
+		_, origin_ok := proof_origin_from_word(word)
+		testing.expectf(t, !origin_ok, "proof origin word %d accepted", word)
+		_, reason_ok := revocation_reason_from_word(word)
+		testing.expectf(t, !reason_ok, "revocation reason word %d accepted", word)
+	}
+	origin, origin_ok := proof_origin_from_word(1)
+	testing.expect(t, origin_ok && origin == .Local_Unlock_Dialog)
+	reason, reason_ok := revocation_reason_from_word(3)
+	testing.expect(t, reason_ok && reason == .Duplicate_Connection)
 }
 
 @(test)

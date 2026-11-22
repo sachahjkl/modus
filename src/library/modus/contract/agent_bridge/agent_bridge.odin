@@ -8,10 +8,12 @@
 // - Synthetic input (Send_Key, Send_Pointer) requires an active, non-expired
 //   wide_grants.Wide_Grant_Terms bound to the client key and covering the
 //   non-zero target window, plus an available collector hash chain.
-// - Any Plan_Difference with any_grant_added == true, any unverified
-//   plans.apply call, or any sensitive action gated by
-//   wide_grants.act_requires_principal_proof ALWAYS stops with
-//   Bridge_Status.Awaiting_Principal_Approval and never self-approves.
+// - An Eval_Lex line runs at once only when it is one call of an export on
+//   the read-only list (READ_ONLY_EXPORTS). Each other call, plans.apply and
+//   plans.rollback among them, stops with
+//   Bridge_Status.Awaiting_Principal_Approval. A line that is not one call
+//   (a comment, a second line, a pipe, a nested call) is refused. The bridge
+//   reads no flag of the caller to decide this.
 //
 // This is a contract package: it imports base and contract packages only,
 // calls no kernel operation, and allocates no memory.
@@ -20,7 +22,6 @@ package agent_bridge
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/enum_word"
-import "modus:contract/plans_recipes"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
 import "modus:contract/text_encoding"
@@ -111,11 +112,10 @@ Bridge_Refusal :: enum u32 {
 	Wide_Grant_Expired          = 12,
 	Window_Not_In_Scope         = 13,
 	Principal_Approval_Required = 14,
-	Sensitive_Action_Blocked    = 15,
-	Invalid_Field               = 16,
-	Payload_Too_Large           = 17,
-	Act_Log_Required            = 18,
-	Invalid_Text                = 19,
+	Invalid_Field               = 15,
+	Payload_Too_Large           = 16,
+	Act_Log_Required            = 17,
+	Invalid_Text                = 18,
 }
 
 // Closed set of picture encodings requested through Read_Screen.
@@ -202,16 +202,66 @@ Bridge_Client_Policy :: struct {
 }
 
 // Command context evaluated by bridge_authorize_command before any transport
-// call runs.
+// call runs. It holds no flag of the caller about the sensitivity of the
+// command: the bridge classifies each command itself.
 Bridge_Authorization_Request :: struct {
-	command:               Bridge_Command_Kind,
-	now_ms:                u64,
-	target_window_id:      u64,
-	sensitive_action_word: u64,
-	has_plan_difference:   bool,
-	plan_difference:       ^plans_recipes.Plan_Difference,
-	lex_line:              []u8,
-	pointer_has_click:     bool,
+	command:           Bridge_Command_Kind,
+	now_ms:            u64,
+	target_window_id:  u64,
+	lex_line:          []u8,
+	pointer_has_click: bool,
+}
+
+// Closed set of the classes of an Eval_Lex line (lex_line_classify).
+// Zero means unset and is refused.
+Lex_Line_Class :: enum u8 {
+	None                        = 0,
+	Malformed                   = 1, // Not exactly one call with literal arguments: refused.
+	Read_Only                   = 2, // One call of an export of READ_ONLY_EXPORTS: runs at once.
+	Requires_Principal_Approval = 3, // One call of any other export: waits for the principal.
+}
+
+// One export that reads and changes nothing, and gives no secret of the
+// principal, so that an agent can call it with no approval.
+Read_Only_Export :: struct {
+	service: string,
+	export:  string,
+}
+
+// The read-only list of Eval_Lex: each call outside it waits for the
+// principal. A new entry must read only: no export that writes, applies,
+// rolls back, attaches, sets, clears, asks a dialog or reads the act
+// records or the memory of another process.
+@(rodata)
+READ_ONLY_EXPORTS := [?]Read_Only_Export {
+	{"log", "records"},
+	{"log", "process_records"},
+	{"log", "value_runs"},
+	{"log", "process_value_runs"},
+	{"log", "fact_records"},
+	{"plans", "status"},
+	{"plans", "current_generation"},
+	{"plans", "diff_count"},
+	{"plans", "difference"},
+	{"plans", "generations"},
+	{"recipes", "status"},
+	{"recipes", "build_count"},
+	{"recipes", "cache_hits"},
+	{"recipes", "builds"},
+	{"recipes", "realisations"},
+	{"projects", "status"},
+	{"projects", "active_console_count"},
+	{"projects", "pin_count"},
+	{"projects", "pins"},
+	{"monitor", "processes"},
+	{"monitor", "counts"},
+	{"monitor", "count"},
+	{"monitor", "counts_named"},
+	{"monitor", "served"},
+	{"compositor", "pointer"},
+	{"compositor", "windows"},
+	{"compositor", "screen"},
+	{"compositor", "gpu_info"},
 }
 
 // Pure decision returned by bridge_authorize_command.
@@ -258,7 +308,6 @@ BRIDGE_REFUSAL_NAMES := [Bridge_Refusal]string {
 	.Wide_Grant_Expired          = "Wide_Grant_Expired",
 	.Window_Not_In_Scope         = "Window_Not_In_Scope",
 	.Principal_Approval_Required = "Principal_Approval_Required",
-	.Sensitive_Action_Blocked    = "Sensitive_Action_Blocked",
 	.Invalid_Field               = "Invalid_Field",
 	.Payload_Too_Large           = "Payload_Too_Large",
 	.Act_Log_Required            = "Act_Log_Required",
@@ -871,16 +920,37 @@ decode_read_log_facts_payload :: proc "contextless" (input: []u8) -> (payload: R
 	return candidate, .None
 }
 
-// Lex line scanner for sensitive and grant-escalating calls.
+// The strict parser of one Eval_Lex call. It accepts only the form
+//
+//     service.export
+//     service.export(argument, ...)
+//
+// where each argument is a literal, or a name, an operator and a literal:
+// an integer, true or false, a text, a hash blake3:<hex>, or a member .name.
+// Everything else is Malformed: a second line, a control byte, a comment, a
+// pipe, a nested call, a bare name (which can name a command), a list, a
+// record, a function, a let. A text of Lex has no escape: it ends at the
+// next quote, as the parser of Lex reads it.
 
 @(private = "file")
-is_lex_identifier_byte :: proc "contextless" (ch: u8) -> bool {
-	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_'
+Lex_Call_Parser :: struct {
+	line:     []u8,
+	position: int,
 }
 
 @(private = "file")
-is_lex_space :: proc "contextless" (ch: u8) -> bool {
-	return ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n'
+is_lex_name_start :: proc "contextless" (ch: u8) -> bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
+}
+
+@(private = "file")
+is_lex_name_byte :: proc "contextless" (ch: u8) -> bool {
+	return is_lex_name_start(ch) || (ch >= '0' && ch <= '9')
+}
+
+@(private = "file")
+is_lower_hex_digit :: proc "contextless" (ch: u8) -> bool {
+	return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')
 }
 
 @(private = "file")
@@ -897,104 +967,219 @@ bytes_equal_literal :: proc "contextless" (slice_bytes: []u8, literal: string) -
 	return true
 }
 
-// lex_line_classify_sensitive_action scans a Lex line outside string literals
-// and comments to detect plans.apply and sensitive grant/principal/replace
-// calls. Fails closed if a string literal is unclosed.
-lex_line_classify_sensitive_action :: proc "contextless" (line: []u8) -> (action: wide_grants.Sensitive_Action, is_plans_apply: bool) {
-	index := 0
-	for index < len(line) {
-		ch := line[index]
-		// Skip double-quoted string literals; unclosed string fails closed.
-		if ch == '"' {
-			index += 1
-			closed := false
-			for index < len(line) {
-				if line[index] == '\\' && index + 1 < len(line) {
-					index += 2
-					continue
-				}
-				if line[index] == '"' {
-					closed = true
-					index += 1
-					break
-				}
-				index += 1
-			}
-			if !closed {
-				return .None, false
-			}
-			continue
-		}
-		// Comments extend to end of line.
-		if ch == '#' || (ch == '-' && index + 1 < len(line) && line[index + 1] == '-') || (ch == '/' && index + 1 < len(line) && line[index + 1] == '/') {
-			break
-		}
-		if !is_lex_identifier_byte(ch) {
-			index += 1
-			continue
-		}
-		start := index
-		for index < len(line) && is_lex_identifier_byte(line[index]) {
-			index += 1
-		}
-		first_token := line[start:index]
+@(private = "file")
+parser_at_end :: proc "contextless" (parser: ^Lex_Call_Parser) -> bool {
+	return parser.position >= len(parser.line)
+}
 
-		// Peek past optional spaces for a dotted qualifier (for example
-		// `plans.apply` or `debugger.attach`).
-		probe := index
-		for probe < len(line) && is_lex_space(line[probe]) {
-			probe += 1
-		}
-		has_member := false
-		second_token: []u8
-		if probe < len(line) && line[probe] == '.' {
-			member_pos := probe + 1
-			for member_pos < len(line) && is_lex_space(line[member_pos]) {
-				member_pos += 1
-			}
-			member_start := member_pos
-			for member_pos < len(line) && is_lex_identifier_byte(line[member_pos]) {
-				member_pos += 1
-			}
-			if member_pos > member_start {
-				has_member = true
-				second_token = line[member_start:member_pos]
-				index = member_pos
-			}
-		}
+@(private = "file")
+parser_peek :: proc "contextless" (parser: ^Lex_Call_Parser, offset := 0) -> u8 {
+	at := parser.position + offset
+	if at >= len(parser.line) {
+		return 0
+	}
+	return parser.line[at]
+}
 
-		if has_member {
-			if bytes_equal_literal(first_token, "plans") && bytes_equal_literal(second_token, "apply") {
-				return .Plans_Apply_Adding_Grant, true
-			}
-			if bytes_equal_literal(first_token, "debugger") && bytes_equal_literal(second_token, "attach") {
-				return .Module_Replace_Or_Debug, false
-			}
-			continue
-		}
+@(private = "file")
+parser_skip_spaces :: proc "contextless" (parser: ^Lex_Call_Parser) {
+	for !parser_at_end(parser) && (parser.line[parser.position] == ' ' || parser.line[parser.position] == '\t') {
+		parser.position += 1
+	}
+}
 
-		if bytes_equal_literal(first_token, "allow") ||
-			bytes_equal_literal(first_token, "disallow") ||
-			bytes_equal_literal(first_token, "remote_allow") ||
-			bytes_equal_literal(first_token, "remote_disallow") ||
-			bytes_equal_literal(first_token, "remote_display_allow") ||
-			bytes_equal_literal(first_token, "remote_display_disallow") ||
-			bytes_equal_literal(first_token, "remote_token") ||
-			bytes_equal_literal(first_token, "agent_allow") ||
-			bytes_equal_literal(first_token, "agent_disallow") {
-			return .Disk_Grant_Change, false
+// parser_name reads one name with no dot: a letter or _, then letters,
+// digits and _.
+@(private = "file")
+parser_name :: proc "contextless" (parser: ^Lex_Call_Parser) -> (name: []u8, ok: bool) {
+	if !is_lex_name_start(parser_peek(parser)) {
+		return nil, false
+	}
+	start := parser.position
+	for !parser_at_end(parser) && is_lex_name_byte(parser.line[parser.position]) {
+		parser.position += 1
+	}
+	return parser.line[start:parser.position], true
+}
+
+// parser_literal reads one literal value.
+@(private = "file")
+parser_literal :: proc "contextless" (parser: ^Lex_Call_Parser) -> bool {
+	ch := parser_peek(parser)
+	switch {
+	case ch == '"':
+		parser.position += 1
+		for !parser_at_end(parser) && parser.line[parser.position] != '"' {
+			parser.position += 1
 		}
-		if bytes_equal_literal(first_token, "machine_passphrase") ||
-			bytes_equal_literal(first_token, "principal_create") ||
-			bytes_equal_literal(first_token, "lock") ||
-			bytes_equal_literal(first_token, "unlock") {
-			return .Principal_Management, false
+		if parser_at_end(parser) {
+			return false
 		}
-		if bytes_equal_literal(first_token, "replace") || bytes_equal_literal(first_token, "debug") {
-			return .Module_Replace_Or_Debug, false
+		parser.position += 1
+		return true
+	case ch == '-' || (ch >= '0' && ch <= '9'):
+		if ch == '-' {
+			parser.position += 1
+		}
+		digits := 0
+		for !parser_at_end(parser) && parser.line[parser.position] >= '0' && parser.line[parser.position] <= '9' {
+			parser.position += 1
+			digits += 1
+		}
+		// A digit run that goes on with a letter is no integer of Lex.
+		return digits > 0 && !is_lex_name_byte(parser_peek(parser))
+	case ch == '.':
+		parser.position += 1
+		_, member_ok := parser_name(parser)
+		return member_ok && parser_peek(parser) != '.'
+	case is_lex_name_start(ch):
+		word, _ := parser_name(parser)
+		if bytes_equal_literal(word, "true") || bytes_equal_literal(word, "false") {
+			return true
+		}
+		if bytes_equal_literal(word, "blake3") && parser_peek(parser) == ':' {
+			parser.position += 1
+			digits := 0
+			for !parser_at_end(parser) && is_lower_hex_digit(parser.line[parser.position]) {
+				parser.position += 1
+				digits += 1
+			}
+			return digits == 2 * blake3.HASH_SIZE && !is_lex_name_byte(parser_peek(parser))
+		}
+		// A bare name can name a command or an export: it is no literal.
+		return false
+	}
+	return false
+}
+
+// parser_comparison reads the operator of a named argument or of a condition.
+@(private = "file")
+parser_comparison :: proc "contextless" (parser: ^Lex_Call_Parser) -> bool {
+	first := parser_peek(parser)
+	second := parser_peek(parser, 1)
+	switch first {
+	case '=':
+		if second == '=' {
+			return false
+		}
+		parser.position += 1
+		return true
+	case '!':
+		if second != '=' {
+			return false
+		}
+		parser.position += 2
+		return true
+	case '<', '>':
+		parser.position += second == '=' ? 2 : 1
+		return true
+	}
+	return false
+}
+
+// parser_argument reads one argument: a literal, or a name, an operator and
+// a literal.
+@(private = "file")
+parser_argument :: proc "contextless" (parser: ^Lex_Call_Parser) -> bool {
+	ch := parser_peek(parser)
+	if is_lex_name_start(ch) {
+		saved := parser.position
+		word, _ := parser_name(parser)
+		is_literal_word := bytes_equal_literal(word, "true") || bytes_equal_literal(word, "false") || (bytes_equal_literal(word, "blake3") && parser_peek(parser) == ':')
+		if is_literal_word {
+			parser.position = saved
+			return parser_literal(parser)
+		}
+		parser_skip_spaces(parser)
+		if !parser_comparison(parser) {
+			return false
+		}
+		parser_skip_spaces(parser)
+		return parser_literal(parser)
+	}
+	return parser_literal(parser)
+}
+
+// lex_line_single_call parses line as exactly one call and gives the names of
+// its service and its export.
+lex_line_single_call :: proc "contextless" (line: []u8) -> (service: []u8, export: []u8, ok: bool) {
+	for value in line {
+		// A line end starts a second call, and a control byte hides text from
+		// the principal who reads the line: only the tab is kept.
+		if (value < 0x20 && value != '\t') || value == 0x7F {
+			return nil, nil, false
 		}
 	}
-	return .Normal_Semantic_Read, false
+	parser := Lex_Call_Parser{line = line}
+	parser_skip_spaces(&parser)
+	service = parser_name(&parser) or_return
+	if parser_peek(&parser) != '.' {
+		return nil, nil, false
+	}
+	parser.position += 1
+	export = parser_name(&parser) or_return
+	if parser_peek(&parser) == '.' {
+		return nil, nil, false
+	}
+	parser_skip_spaces(&parser)
+	if parser_at_end(&parser) {
+		return service, export, true
+	}
+	if parser_peek(&parser) != '(' {
+		return nil, nil, false
+	}
+	parser.position += 1
+	parser_skip_spaces(&parser)
+	if parser_peek(&parser) == ')' {
+		parser.position += 1
+	} else {
+		for {
+			parser_skip_spaces(&parser)
+			if !parser_argument(&parser) {
+				return nil, nil, false
+			}
+			parser_skip_spaces(&parser)
+			next := parser_peek(&parser)
+			if next == ',' {
+				parser.position += 1
+				continue
+			}
+			if next == ')' {
+				parser.position += 1
+				break
+			}
+			return nil, nil, false
+		}
+	}
+	parser_skip_spaces(&parser)
+	if !parser_at_end(&parser) {
+		return nil, nil, false
+	}
+	return service, export, true
+}
+
+// lex_export_is_read_only reports whether service.export is on READ_ONLY_EXPORTS.
+lex_export_is_read_only :: proc "contextless" (service: []u8, export: []u8) -> bool {
+	for entry in READ_ONLY_EXPORTS {
+		if bytes_equal_literal(service, entry.service) && bytes_equal_literal(export, entry.export) {
+			return true
+		}
+	}
+	return false
+}
+
+// lex_line_classify classifies an Eval_Lex line. It fails closed: a line
+// that is not one call is Malformed, and a call of an export outside the
+// read-only list requires the approval of the principal.
+lex_line_classify :: proc "contextless" (line: []u8) -> Lex_Line_Class {
+	service, export, ok := lex_line_single_call(line)
+	if !ok {
+		return .Malformed
+	}
+	if lex_export_is_read_only(service, export) {
+		return .Read_Only
+	}
+	return .Requires_Principal_Approval
 }
 
 // bridge_authorize_command evaluates every capability, scope, wide grant,
@@ -1045,26 +1230,7 @@ bridge_authorize_command :: proc "contextless" (
 		}
 	}
 
-	// Gate 2: Sensitive action proof gate (fails closed on unknown words).
-	if request.sensitive_action_word != 0 {
-		action, action_ok := wide_grants.sensitive_action_from_word(request.sensitive_action_word)
-		if !action_ok {
-			return {status = .Awaiting_Principal_Approval, refusal = .Sensitive_Action_Blocked}
-		}
-		if wide_grants.act_requires_principal_proof(action) {
-			return {status = .Awaiting_Principal_Approval, refusal = .Principal_Approval_Required}
-		}
-	}
-
-	// Gate 3: Plan_Difference invariant. Any plan difference that adds a grant
-	// ALWAYS stops with Awaiting_Principal_Approval and never self-approves.
-	if request.has_plan_difference {
-		if request.plan_difference == nil || request.plan_difference.any_grant_added {
-			return {status = .Awaiting_Principal_Approval, refusal = .Principal_Approval_Required}
-		}
-	}
-
-	// Gate 4: Command-specific structural and wide grant checks.
+	// Gate 2: Command-specific structural and wide grant checks.
 	switch request.command {
 	case .None:
 		return {status = .Refused, refusal = .Unknown_Command}
@@ -1072,15 +1238,14 @@ bridge_authorize_command :: proc "contextless" (
 		if text_refusal := validate_lex_line(request.lex_line); text_refusal != .None {
 			return {status = .Refused, refusal = text_refusal}
 		}
-		classified, is_plans_apply := lex_line_classify_sensitive_action(request.lex_line)
-		if is_plans_apply {
-			// plans.apply is permitted through the bridge ONLY when accompanied
-			// by a verified Plan_Difference with any_grant_added == false.
-			if !request.has_plan_difference || request.plan_difference == nil || request.plan_difference.any_grant_added {
-				return {status = .Awaiting_Principal_Approval, refusal = .Principal_Approval_Required}
-			}
-		} else if wide_grants.act_requires_principal_proof(classified) {
+		switch lex_line_classify(request.lex_line) {
+		case .None, .Malformed:
+			return {status = .Refused, refusal = .Invalid_Text}
+		case .Requires_Principal_Approval:
+			// plans.apply and plans.rollback are here: the bridge never
+			// approves a change of the plan, whatever the caller says of it.
 			return {status = .Awaiting_Principal_Approval, refusal = .Principal_Approval_Required}
+		case .Read_Only:
 		}
 		return {status = .Ok, refusal = .None, required_act_kind = .Action_Invoked}
 

@@ -243,7 +243,7 @@ test_eval_lex_structured_values_and_tables :: proc(t: ^testing.T) {
 
 	// Boolean value
 	state.next_lex_result = Lex_Eval_Result{value_kind = .Boolean, bool_value = true}
-	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":"req-bool","method":"eval_lex","params":{"line":"settings.dark()"}}`)
+	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":"req-bool","method":"eval_lex","params":{"line":"plans.status()"}}`)
 	root := parse_json_object(t, resp)
 	testing.expect_value(t, root["id"].(json.String), "req-bool")
 	res = expect_json_result(t, resp)
@@ -252,14 +252,14 @@ test_eval_lex_structured_values_and_tables :: proc(t: ^testing.T) {
 
 	// Text value with special characters requiring JSON escaping
 	state.next_lex_result = Lex_Eval_Result{value_kind = .Text, text_value = "line1\n\"quoted\"\\tail"}
-	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":3,"method":"eval_lex","params":{"line":"manual.page(\"lex\")"}}`)
+	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":3,"method":"eval_lex","params":{"line":"log.fact_records(\"lex\")"}}`)
 	res = expect_json_result(t, resp)
 	testing.expect_value(t, res["value_kind"].(json.String), "text")
 	testing.expect_value(t, res["value"].(json.String), "line1\n\"quoted\"\\tail")
 
 	// Enum member value
 	state.next_lex_result = Lex_Eval_Result{value_kind = .Enum_Member, text_value = ".french"}
-	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":4,"method":"eval_lex","params":{"line":"settings.keyboard_layout()"}}`)
+	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":4,"method":"eval_lex","params":{"line":"monitor.count(.french)"}}`)
 	res = expect_json_result(t, resp)
 	testing.expect_value(t, res["value_kind"].(json.String), "enum")
 	testing.expect_value(t, res["value"].(json.String), ".french")
@@ -330,7 +330,8 @@ test_read_screen_snapshot_and_bounds :: proc(t: ^testing.T) {
 	}
 	testing.expect_value(t, state.read_screen_calls, 0)
 
-	// Valid PNG snapshot with base64 + BLAKE3 + optional output_path write
+	// An agent-supplied output_path is never read: with no snapshot folder,
+	// no file is written, and the snapshot comes back in the response.
 	tmp_dir, tmp_err := os.make_directory_temp("", "agent_bridge_snap_*", context.temp_allocator)
 	testing.expect_value(t, tmp_err, nil)
 	defer _ = os.remove_all(tmp_dir)
@@ -348,17 +349,15 @@ test_read_screen_snapshot_and_bounds :: proc(t: ^testing.T) {
 	testing.expect_value(t, res["height"].(json.Integer), i64(720))
 	testing.expect_value(t, res["frame_serial"].(json.Integer), i64(99))
 	testing.expect_value(t, res["byte_count"].(json.Integer), i64(len(fake_png)))
-	testing.expect_value(t, res["saved_path"].(json.String), out_file)
+	_, has_saved_path := res["saved_path"]
+	testing.expect(t, !has_saved_path, "no file is written without a snapshot folder")
+	testing.expect(t, !os.exists(out_file), "the agent-supplied output_path was written")
 
 	expected_hex := string(hex.encode(expected_digest[:], context.temp_allocator))
 	testing.expect_value(t, res["blake3"].(json.String), expected_hex)
 	decoded_b64, b64_err := base64.decode(res["data_base64"].(json.String), allocator = context.temp_allocator)
 	testing.expect_value(t, b64_err, nil)
 	testing.expect_value(t, string(decoded_b64), string(fake_png))
-
-	written_file, read_err := os.read_entire_file(out_file, context.temp_allocator)
-	testing.expect_value(t, read_err, nil)
-	testing.expect_value(t, string(written_file), string(fake_png))
 
 	// raw_bgrx format accepted
 	state.next_screen_result.format = .Raw_Bgrx
@@ -567,6 +566,78 @@ test_unauthorized_permissions_and_remote_uses_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, state.eval_lex_calls, 0)
 }
 
+// The snapshot folder of the operator: each file has a name of the bridge,
+// inside that folder only; an agent path, a traversal, a symbolic link at
+// the name and a folder that became a link are refused.
+@(test)
+test_snapshot_folder_of_the_operator_is_the_only_place_of_a_file :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	state: Fake_Transport_State
+	clock := Fake_Clock{now_ms = 2_000}
+	bridge: Agent_Bridge
+	testing.expect(t, bridge_init(&bridge, make_full_policy(make_test_key(0x23)), make_fake_transport(&state)))
+	defer bridge_destroy(&bridge)
+	bridge.clock_ms_proc = fake_clock_now_ms
+	bridge.clock_user_data = &clock
+	state.next_screen_result = Screen_Snapshot_Result{format = .Raw_Bgrx, width = 1, height = 1, frame_serial = 1, bytes = []u8{1, 2, 3, 4}}
+
+	root, root_error := os.make_directory_temp("", "agent_bridge_folder_*", context.temp_allocator)
+	testing.expect_value(t, root_error, nil)
+	defer _ = os.remove_all(root)
+	snapshots := fmt.tprintf("%s/snapshots", root)
+	testing.expect_value(t, os.make_directory(snapshots), nil)
+	outside := fmt.tprintf("%s/outside", root)
+	testing.expect_value(t, os.make_directory(outside), nil)
+
+	// The folder check refuses an empty path, a missing folder, a file and a link.
+	_, problem := snapshot_directory_check("")
+	testing.expect(t, problem != "")
+	_, problem = snapshot_directory_check(fmt.tprintf("%s/missing", root))
+	testing.expect(t, problem != "")
+	plain_file := fmt.tprintf("%s/plain", root)
+	testing.expect_value(t, os.write_entire_file(plain_file, []u8{0}), nil)
+	_, problem = snapshot_directory_check(plain_file)
+	testing.expect(t, problem != "")
+	link_folder := fmt.tprintf("%s/link", root)
+	testing.expect_value(t, os.symlink(outside, link_folder), nil)
+	_, problem = snapshot_directory_check(link_folder)
+	testing.expect(t, problem != "", "a symbolic link to a folder was accepted")
+
+	checked, checked_problem := snapshot_directory_check(snapshots)
+	testing.expect_value(t, checked_problem, "")
+	defer delete(checked)
+	bridge.snapshot_directory = checked
+
+	// Each path that an agent names is ignored: the file has the name of the bridge.
+	agent_paths := [?]string{fmt.tprintf("%s/evil.bgrx", outside), "../outside/evil.bgrx", "/tmp/../etc/evil"}
+	for agent_path, index in agent_paths {
+		line := fmt.tprintf(`{{"jsonrpc":"2.0","id":%d,"method":"read_screen","params":{{"format":"raw_bgrx","output_path":%q}}}}`, index + 1, agent_path)
+		res := expect_json_result(t, bridge_handle_json_line(&bridge, line))
+		expected := fmt.tprintf("%s/snapshot_%d.bgrx", checked, index + 1)
+		testing.expect_value(t, res["saved_path"].(json.String), expected)
+		written, read_error := os.read_entire_file(expected, context.temp_allocator)
+		testing.expect_value(t, read_error, nil)
+		testing.expect_value(t, string(written), "\x01\x02\x03\x04")
+	}
+	outside_entries, list_error := os.read_directory_by_path(outside, -1, context.temp_allocator)
+	testing.expect_value(t, list_error, nil)
+	testing.expect_value(t, len(outside_entries), 0)
+
+	// A symbolic link planted at the next name is refused, never followed.
+	target := fmt.tprintf("%s/target", outside)
+	testing.expect_value(t, os.symlink(target, fmt.tprintf("%s/snapshot_4.bgrx", checked)), nil)
+	expect_json_error(t, bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":9,"method":"read_screen","params":{"format":"raw_bgrx"}}`), .Transport_Error, .Transport_Error, .None)
+	testing.expect(t, !os.exists(target), "the bridge followed a symbolic link")
+
+	// A folder that became a link after the check is refused.
+	testing.expect_value(t, os.remove_all(checked), nil)
+	testing.expect_value(t, os.symlink(outside, checked), nil)
+	expect_json_error(t, bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":10,"method":"read_screen","params":{"format":"raw_bgrx"}}`), .Transport_Error, .Transport_Error, .None)
+	outside_entries, list_error = os.read_directory_by_path(outside, -1, context.temp_allocator)
+	testing.expect_value(t, list_error, nil)
+	testing.expect_value(t, len(outside_entries), 0)
+}
+
 @(test)
 test_grant_adding_plans_apply_and_sensitive_actions_await_principal_approval :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
@@ -579,47 +650,67 @@ test_grant_adding_plans_apply_and_sensitive_actions_await_principal_approval :: 
 	bridge.clock_ms_proc = fake_clock_now_ms
 	bridge.clock_user_data = &clock
 
-	// Unverified plans.apply (no plan_diff) -> Awaiting_Principal_Approval
-	resp := bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":1,"method":"eval_lex","params":{"line":"plans.apply(next_plan)"}}`)
-	expect_json_error(t, resp, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Principal_Approval_Required)
-
-	// Grant-adding plans.apply (any_grant_added: true) -> Awaiting_Principal_Approval
-	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":2,"method":"eval_lex","params":{"line":"plans.apply(next_plan)","plan_diff":{"any_grant_added":true,"added_grants_count":1}}}`)
-	expect_json_error(t, resp, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Principal_Approval_Required)
-
-	// Contradictory plan_diff (any_grant_added: false, added_grants_count: 2) fails closed -> Awaiting_Principal_Approval
-	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":3,"method":"eval_lex","params":{"line":"plan |> plans.apply()","plan_diff":{"any_grant_added":false,"added_grants_count":2}}}`)
-	expect_json_error(t, resp, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Principal_Approval_Required)
-
-	// Sensitive Lex calls cannot self-approve
-	for line in ([]string{`remote_allow("abcd")`, `machine_passphrase()`, `debugger.attach(1)`}) {
-		req := fmt.tprintf(`{{"jsonrpc":"2.0","id":4,"method":"eval_lex","params":{{"line":%q}}}}`, line)
-		resp = bridge_handle_json_line(&bridge, req)
-		expect_json_error(t, resp, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Principal_Approval_Required)
+// plans.apply and plans.rollback wait for the principal whatever flags
+	// the request carries: the bridge reads none of them.
+	bypass_lines := [?]string{"plans.apply(1)", "plans.apply()", "plans.rollback()", "plans.rollback(1)"}
+	bypass_fields := [?]string {
+		``,
+		`,"plan_diff":{"any_grant_added":false,"added_grants_count":0}`,
+		`,"sensitive_action":false`,
+		`,"sensitive_action":"Normal_Semantic_Read"`,
+		`,"any_grant_added":false,"sensitive_action":false`,
+		`,"plan_diff":{"any_grant_added":false},"sensitive_action":"Normal_Window_Input"`,
+	}
+	for line in bypass_lines {
+		for fields in bypass_fields {
+			req := fmt.tprintf(`{{"jsonrpc":"2.0","id":1,"method":"eval_lex","params":{{"line":%q%s}}}}`, line, fields)
+			resp := bridge_handle_json_line(&bridge, req)
+			expect_json_error(t, resp, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Principal_Approval_Required)
+		}
 	}
 
-	// Explicit sensitive_action on read_screen / send_key stops with Awaiting_Principal_Approval
-	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":5,"method":"read_screen","params":{"format":"png","sensitive_action":"Passphrase_Or_Unlock_Dialog"}}`)
-	expect_json_error(t, resp, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Principal_Approval_Required)
+	// The same through a wire frame.
+	for line in bypass_lines {
+		frame := contract.Bridge_Command_Frame {
+			command         = .Eval_Lex,
+			request_id      = 7,
+			principal_id    = bridge.policy.principal_id,
+			client_key_hash = blake3.hash(bridge.policy.client_key_public[:]),
+			payload         = transmute([]u8)line,
+		}
+		frame_buffer: [contract.COMMAND_HEADER_SIZE + 64]u8
+		frame_size, encode_refusal := contract.encode_command_frame(&frame, frame_buffer[:])
+		testing.expect_value(t, encode_refusal, contract.Bridge_Refusal.None)
+		response_buffer: [contract.RESPONSE_HEADER_SIZE + 64]u8
+		_, status, refusal := bridge_handle_wire_frame(&bridge, frame_buffer[:frame_size], response_buffer[:])
+		testing.expect_value(t, status, contract.Bridge_Status.Awaiting_Principal_Approval)
+		testing.expect_value(t, refusal, contract.Bridge_Refusal.Principal_Approval_Required)
+	}
 
-	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":6,"method":"send_key","params":{"window_id":101,"code":30,"pressed":true,"sensitive_action":"Trusted_Display_Grant_Dialog"}}`)
-	expect_json_error(t, resp, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Principal_Approval_Required)
+	// A comment cannot hide a second line: each such line is refused.
+	for line in ([?]string{"# comment\nplans.apply(1)", "-- comment\nstorage.write(\"a\", \"b\")", "// comment\nsettings.appearance(1)", "monitor.processes() // plans.apply(1)", "plan |> plans.apply()"}) {
+		req := fmt.tprintf(`{{"jsonrpc":"2.0","id":2,"method":"eval_lex","params":{{"line":%q,"sensitive_action":false}}}}`, line)
+		resp := bridge_handle_json_line(&bridge, req)
+		expect_json_error(t, resp, .Refused, .Refused, .Invalid_Text)
+	}
 
-	// Unknown sensitive_action name fails closed with Sensitive_Action_Blocked
-	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":7,"method":"eval_lex","params":{"line":"monitor.processes()","sensitive_action":"Future_Unknown_Gate"}}`)
-	expect_json_error(t, resp, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Sensitive_Action_Blocked)
+	// Calls outside the read-only list cannot self-approve.
+	for line in ([?]string{`compositor.wide_grant_indicator(0, 0)`, `settings.appearance(1)`, `storage.write("a", "b")`, `debugger.attach(1)`, `remote.allow("abcd")`}) {
+		req := fmt.tprintf(`{{"jsonrpc":"2.0","id":4,"method":"eval_lex","params":{{"line":%q,"sensitive_action":"Normal_Semantic_Read"}}}}`, line)
+		resp := bridge_handle_json_line(&bridge, req)
+		expect_json_error(t, resp, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Principal_Approval_Required)
+	}
 
 	testing.expect_value(t, state.eval_lex_calls, 0)
 	testing.expect_value(t, state.read_screen_calls, 0)
 	testing.expect_value(t, state.send_key_calls, 0)
 
-	// Verified grant-free plans.apply (any_grant_added: false, added_grants_count: 0) succeeds
-	resp = bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":8,"method":"eval_lex","params":{"line":"plans.apply(safe_plan)","plan_diff":{"any_grant_added":false,"added_grants_count":0}}}`)
+	// A read-only call runs, whatever the request says of it.
+	resp := bridge_handle_json_line(&bridge, `{"jsonrpc":"2.0","id":8,"method":"eval_lex","params":{"line":"monitor.processes()","sensitive_action":"Passphrase_Or_Unlock_Dialog"}}`)
 	res := expect_json_result(t, resp)
 	testing.expect_value(t, res["status"].(json.String), "Ok")
 	testing.expect_value(t, state.eval_lex_calls, 1)
 }
-
 @(test)
 test_collector_full_fails_closed_and_detects_tampering :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
@@ -811,7 +902,7 @@ test_wire_command_modab1_roundtrips_and_adversarial_frames :: proc(t: ^testing.T
 		request_id      = 107,
 		principal_id    = 0,
 		client_key_hash = key_hash,
-		payload         = transmute([]u8)string("plans.apply(p)"),
+		payload         = transmute([]u8)string("plans.apply(1)"),
 	}
 	resp_json = bridge_handle_json_line(&bridge, wire_json_req(7, encode_cmd_hex(t, &apply_frame)))
 	expect_json_error(t, resp_json, .Awaiting_Principal_Approval, .Awaiting_Principal_Approval, .Principal_Approval_Required)
@@ -915,8 +1006,6 @@ test_malformed_json_and_invalid_jsonrpc_requests :: proc(t: ^testing.T) {
 		{`{"jsonrpc":"2.0","id":1,"method":"send_key","params":{"window_id":-1,"code":30,"pressed":true}}`, .Invalid_Params, .Invalid_Field},
 		{`{"jsonrpc":"2.0","id":1,"method":"send_pointer","params":{"window_id":101,"x":10}}`, .Invalid_Params, .Invalid_Field},
 		{`{"jsonrpc":"2.0","id":1,"method":"wire_command","params":{}}`, .Invalid_Params, .Bad_Header},
-		{`{"jsonrpc":"2.0","id":1,"method":"eval_lex","params":{"line":"a","plan_diff":"bad"}}`, .Invalid_Params, .Invalid_Field},
-		{`{"jsonrpc":"2.0","id":1,"method":"eval_lex","params":{"line":"a","plan_diff":{}}}`, .Invalid_Params, .Invalid_Field},
 	}
 
 	for item in cases {

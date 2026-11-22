@@ -76,7 +76,7 @@ act_record_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
 	if failure, ok := act_reader_check(error); !ok {
 		return failure
 	}
-	if !manager_state.initialized {
+	if !manager_state.collector.initialized {
 		return errors.fail(error, -1, .State, .Records)
 	}
 	return i64(manager_state.collector.count)
@@ -88,7 +88,7 @@ active_grant_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
 	if failure, ok := act_reader_check(error); !ok {
 		return failure
 	}
-	if !manager_state.initialized {
+	if !manager_state.collector.initialized {
 		return errors.fail(error, -1, .State, .Grants)
 	}
 	return i64(manager_state.counters.active_grants)
@@ -103,7 +103,7 @@ status :: proc "c" (out: ^Collector_Status, error: ^errors.Error_Record) -> i64 
 	if out == nil {
 		return errors.fail(error, -1, .Bad_Address, .None, 1)
 	}
-	if !manager_state.initialized {
+	if !manager_state.collector.initialized {
 		return errors.fail(error, -2, .State, .Records)
 	}
 	out^ = {
@@ -128,10 +128,10 @@ verify_chain :: proc "c" (out: ^Chain_Verification_Report, error: ^errors.Error_
 	if out == nil {
 		return errors.fail(error, -1, .Bad_Address, .None, 1)
 	}
-	if !manager_state.initialized {
+	if !manager_state.collector.initialized {
 		return errors.fail(error, -2, .State, .Records)
 	}
-	refusal, failing_index := collector_core.manager_verify_chain(&manager_state)
+	refusal, failing_index := collector_core.collector_verify(&manager_state.collector)
 	out^ = {
 		refusal_code  = i64(refusal),
 		failing_index = i64(failing_index),
@@ -162,7 +162,7 @@ act_records_read_for :: proc "contextless" (
 	if _, failure, ok := principal_reader_of(principal, connection, error); !ok {
 		return failure
 	}
-	if !manager.initialized {
+	if !manager.collector.initialized {
 		return errors.fail(error, ERROR_SPACE, .State, .Records)
 	}
 	if grant < 0 {
@@ -277,8 +277,19 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 		)
 	case .Revoke_Grant:
 		grant_serial := command.values[0]
-		reason_word := command.values[1]
-		refusal := collector_core.manager_revoke_grant(&manager_state, grant_serial, now_ms, reason_word)
+		reason, reason_ok := wide_grants.revocation_reason_from_word(command.values[1])
+		if !reason_ok {
+			ring.push(
+				&service_ring.completions,
+				ring.Record{
+					kind   = u32(wide_grants.Collector_Ring_Status.Bad_Command),
+					tag    = command.tag,
+					values = errors.ring_fail(command.kind, .Bad_Value, .None, 2, i64(command.values[1])),
+				},
+			)
+			return
+		}
+		refusal := collector_core.manager_revoke_grant(&manager_state, grant_serial, now_ms, reason)
 		status_code := refusal == .None ? u32(wide_grants.Collector_Ring_Status.Ok) : u32(wide_grants.Collector_Ring_Status.Refused)
 		ring.push(
 			&service_ring.completions,
@@ -303,14 +314,30 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 			return
 		}
 		intrinsics.mem_copy_non_overlapping(&copied_act_request, rawptr(&service_region_base[request_offset]), size_of(wide_grants.Authorize_Act_Request))
+		// An unknown word is refused here: it never becomes a known member.
 		act_kind, act_kind_ok := wide_grants.act_kind_from_word(copied_act_request.act_kind_word)
 		if !act_kind_ok {
-			act_kind = .None
+			ring.push(
+				&service_ring.completions,
+				ring.Record{
+					kind   = u32(wide_grants.Collector_Ring_Status.Bad_Command),
+					tag    = command.tag,
+					values = errors.ring_fail(command.kind, .Bad_Value, .None, 2, i64(copied_act_request.act_kind_word)),
+				},
+			)
+			return
 		}
 		sensitive_action, action_ok := wide_grants.sensitive_action_from_word(copied_act_request.sensitive_action_word)
 		if !action_ok {
-			// Unknown sensitive action fails closed as None (requires principal proof).
-			sensitive_action = .None
+			ring.push(
+				&service_ring.completions,
+				ring.Record{
+					kind   = u32(wide_grants.Collector_Ring_Status.Bad_Command),
+					tag    = command.tag,
+					values = errors.ring_fail(command.kind, .Bad_Value, .None, 4, i64(copied_act_request.sensitive_action_word)),
+				},
+			)
+			return
 		}
 		rec, refusal := collector_core.manager_authorize_and_record_act(
 			&manager_state,
@@ -373,7 +400,7 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 			},
 		)
 	case .Verify_Act_Chain:
-		refusal, failing_index := collector_core.manager_verify_chain(&manager_state)
+		refusal, failing_index := collector_core.collector_verify(&manager_state.collector)
 		status_code := refusal == .None ? u32(wide_grants.Collector_Ring_Status.Ok) : u32(wide_grants.Collector_Ring_Status.Refused)
 		if refusal != .None {
 			system.log_fact(.Error, Chain_Verification_Failed{failing_index = failing_index, refusal_code = u64(refusal)})
@@ -493,8 +520,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	principal_id := ctx.values[wide_grants.CONTEXT_VALUE_PRINCIPAL_SLOT]
-	if !collector_core.manager_init(&manager_state, principal_id) {
-		fail("cannot initialize collector state")
+	first_key_slot :: wide_grants.CONTEXT_VALUE_AUTHORITY_KEY_FIRST_SLOT
+	authority_key := wide_grants.authority_key_from_words(
+		{ctx.values[first_key_slot], ctx.values[first_key_slot + 1], ctx.values[first_key_slot + 2], ctx.values[first_key_slot + 3]},
+	)
+	if !collector_core.manager_init(&manager_state, principal_id, authority_key) {
+		// Without the key of the unlock authority, no proof can be checked: the
+		// act store still serves its reader, and each wide grant is refused.
+		if !collector_core.collector_init(&manager_state.collector) {
+			fail("cannot initialize collector state")
+		}
+		system.log_fact(.Warning, Wide_Grants_Refused_Without_Authority_Key{principal_id = principal_id})
 	}
 	// A process with no grant Store gets a port with no procedure: each step
 	// of the spaces is then refused, so no audit space lives in memory alone.

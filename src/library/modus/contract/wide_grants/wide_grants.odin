@@ -22,27 +22,35 @@ MAX_WIDE_GRANT_DURATION_MS :: u64(24 * 60 * 60 * 1000)
 // Default wide grant duration shown to the principal (1 hour in milliseconds).
 DEFAULT_WIDE_GRANT_DURATION_MS :: u64(60 * 60 * 1000)
 
-// Byte length of a proof token carried in a Wide_Grant_Proof record.
-PROOF_TOKEN_BYTES :: 64
-
 // Domain separation contexts for BLAKE3 derive_key so wide grant digests and
 // act record hashes cannot collide with module hashes or each other.
 TERMS_HASH_DOMAIN_CONTEXT :: "modus wide grant terms v1"
-PROOF_TAG_DOMAIN_CONTEXT :: "modus wide grant proof v1"
 ACT_RECORD_HASH_DOMAIN_CONTEXT :: "modus act record v1"
+
+// Domain separation prefix of the keyed proof payload, so that a tag under the
+// authority key cannot be reused as the tag of another kind of record.
+PROOF_TAG_DOMAIN_PREFIX :: "modus wide grant proof v2"
+
+// The key that only the unlock authority and the verifier hold: a keyed
+// BLAKE3 tag under it proves that the unlock authority issued the proof.
+Authority_Key :: blake3.Hash
 
 // Fixed stack buffer capacities for canonical encoding before BLAKE3 hashing.
 TERMS_ENCODE_BUFFER_CAPACITY :: 256
-PROOF_ENCODE_BUFFER_CAPACITY :: 128
+PROOF_ENCODE_BUFFER_CAPACITY :: 160
 ACT_RECORD_ENCODE_BUFFER_CAPACITY :: 128
 
 // Genesis previous_hash for sequence_number 0 at the start of an act chain.
 GENESIS_PREVIOUS_HASH :: blake3.Hash{}
 
 // Context handle slots and value slots for the freestanding collector service.
+// The authority key fills four value slots, from the first one, in little
+// endian order of its bytes.
 SERVICE_RING_SLOT :: 10
 SERVICE_REGION_SLOT :: 11
 CONTEXT_VALUE_PRINCIPAL_SLOT :: 0
+CONTEXT_VALUE_AUTHORITY_KEY_FIRST_SLOT :: 1
+CONTEXT_VALUE_AUTHORITY_KEY_SLOT_COUNT :: 4
 
 // Maximum commands drained from the collector service ring in a single pass.
 REQUESTS_PER_PASS :: 8
@@ -70,6 +78,25 @@ Proof_Kind :: enum u64 {
 	None                = 0,
 	Passphrase_Verified = 1,
 	Host_Key_Signed     = 2,
+}
+
+// Closed set of the places where a principal proof was given. The origin is
+// inside the authenticated payload: only the unlock authority states it.
+// Zero means unset and is refused at the border.
+Proof_Origin :: enum u64 {
+	None                 = 0,
+	Local_Unlock_Dialog  = 1,
+	Local_Host_Key       = 2,
+	Remote_Display_Input = 3,
+}
+
+// Closed set of the reasons of a revocation, recorded in the act chain.
+// Zero means unset and is refused at the border.
+Revocation_Reason :: enum u64 {
+	None                    = 0,
+	Principal_Revoked       = 1,
+	Replaced_By_Newer_Grant = 2,
+	Duplicate_Connection    = 3,
 }
 
 // Closed lifecycle state machine of a wide grant.
@@ -178,17 +205,19 @@ Wide_Grant_Terms :: struct {
 }
 
 // Principal proof record bound to a specific sealed Wide_Grant_Terms hash.
-// Neither passphrase verification nor host-key signing may arrive through
-// remote display input.
+// proof_tag is the keyed BLAKE3 tag, under the authority key, of every other
+// field: a caller without the key cannot forge it or change one field.
+// proof_serial is a counter of the unlock authority: the verifier refuses a
+// serial that is not past the last one it accepted, so a proof is used once.
 Wide_Grant_Proof :: struct {
-	proof_kind_word:                u64,
-	principal_id:                   u64,
-	terms_hash:                     blake3.Hash,
-	verifier_key_or_token_hash:     blake3.Hash,
-	proof_bytes:                    [PROOF_TOKEN_BYTES]u8,
-	proof_timestamp_ms:             u64,
-	proof_verified_by_local_unlock: bool,
-	from_remote_display_input:      bool,
+	proof_kind_word:            u64,
+	origin_word:                u64,
+	principal_id:               u64,
+	proof_serial:               u64,
+	proof_timestamp_ms:         u64,
+	terms_hash:                 blake3.Hash,
+	verifier_key_or_token_hash: blake3.Hash,
+	proof_tag:                  blake3.Hash,
 }
 
 // Fixed-layout hash-chained act record stored by the collector. Each record
@@ -266,6 +295,37 @@ proof_kind_from_word :: proc "contextless" (word: u64) -> (kind: Proof_Kind, ok:
 		return .None, false
 	}
 	return member, true
+}
+
+proof_origin_from_word :: proc "contextless" (word: u64) -> (origin: Proof_Origin, ok: bool) {
+	member := enum_word.member_of_word(Proof_Origin, word) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
+}
+
+revocation_reason_from_word :: proc "contextless" (word: u64) -> (reason: Revocation_Reason, ok: bool) {
+	member := enum_word.member_of_word(Revocation_Reason, word) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
+}
+
+// authority_key_from_words rebuilds the authority key from the four context
+// value words that carry it.
+authority_key_from_words :: proc "contextless" (words: [CONTEXT_VALUE_AUTHORITY_KEY_SLOT_COUNT]u64) -> (key: Authority_Key) {
+	for word, word_index in words {
+		byte_order.write_u64_little_endian(key[:], word_index * 8, word)
+	}
+	return key
+}
+
+// authority_key_is_valid refuses the all-zero key: a key that everybody
+// knows authenticates nothing.
+authority_key_is_valid :: proc "contextless" (key: Authority_Key) -> bool {
+	return key != (Authority_Key{})
 }
 
 wide_grant_state_from_word :: proc "contextless" (word: u64) -> (state: Wide_Grant_State, ok: bool) {
@@ -530,79 +590,130 @@ wide_grant_terms_contains_window :: proc "contextless" (terms: ^Wide_Grant_Terms
 	return false
 }
 
-// wide_grant_proof_tag computes the domain-separated BLAKE3 binding tag linking
-// a proof kind, principal id, terms hash, and verifier key or unlock token hash.
-wide_grant_proof_tag :: proc "contextless" (
-	kind: Proof_Kind,
-	principal_id: u64,
-	terms_hash: blake3.Hash,
-	verifier_key_or_token_hash: blake3.Hash,
-) -> blake3.Hash {
+// wide_grant_proof_tag computes the keyed BLAKE3 tag of every field of proof
+// except proof_tag, under authority_key. It refuses the all-zero key.
+wide_grant_proof_tag :: proc "contextless" (authority_key: Authority_Key, proof: ^Wide_Grant_Proof) -> (tag: blake3.Hash, ok: bool) {
+	if !authority_key_is_valid(authority_key) {
+		return {}, false
+	}
 	storage: [PROOF_ENCODE_BUFFER_CAPACITY]u8
 	encoder := Canonical_Encoder{storage = storage[:]}
-	terms_hash_copy := terms_hash
-	verifier_hash_copy := verifier_key_or_token_hash
-	encode_u64(&encoder, u64(kind))
-	encode_u64(&encoder, principal_id)
-	encode_bytes(&encoder, terms_hash_copy[:])
-	encode_bytes(&encoder, verifier_hash_copy[:])
-	return blake3.derive_key(PROOF_TAG_DOMAIN_CONTEXT, storage[:encoder.position])
+	encode_bytes(&encoder, transmute([]u8)string(PROOF_TAG_DOMAIN_PREFIX))
+	encode_u64(&encoder, proof.proof_kind_word)
+	encode_u64(&encoder, proof.origin_word)
+	encode_u64(&encoder, proof.principal_id)
+	encode_u64(&encoder, proof.proof_serial)
+	encode_u64(&encoder, proof.proof_timestamp_ms)
+	encode_bytes(&encoder, proof.terms_hash[:])
+	encode_bytes(&encoder, proof.verifier_key_or_token_hash[:])
+	if encoder.overflow {
+		return {}, false
+	}
+	return blake3.keyed_hash(authority_key, storage[:encoder.position]), true
 }
 
-// wide_grant_proof_make constructs a properly bound Wide_Grant_Proof for a
-// validated Wide_Grant_Terms record.
+// proof_origin_matches_kind reports whether a proof kind can be given at an
+// origin. No proof kind is accepted from remote display input: a remote
+// viewer must never approve its own reach.
+@(private = "file")
+proof_origin_matches_kind :: proc "contextless" (kind: Proof_Kind, origin: Proof_Origin) -> bool {
+	switch origin {
+	case .None, .Remote_Display_Input:
+		return false
+	case .Local_Unlock_Dialog:
+		return kind == .Passphrase_Verified
+	case .Local_Host_Key:
+		return kind == .Host_Key_Signed
+	}
+	return false
+}
+
+// wide_grant_proof_make is the step of the unlock authority: it builds the
+// proof of a validated Wide_Grant_Terms record and tags it under
+// authority_key. It refuses an origin that the kind cannot have.
 wide_grant_proof_make :: proc "contextless" (
+	authority_key: Authority_Key,
 	terms: ^Wide_Grant_Terms,
 	kind: Proof_Kind,
+	origin: Proof_Origin,
+	proof_serial: u64,
 	verifier_key_or_token_hash: blake3.Hash,
 	proof_timestamp_ms: u64,
 ) -> (proof: Wide_Grant_Proof, refusal: Wide_Grant_Refusal) {
+	if !authority_key_is_valid(authority_key) {
+		return {}, .Invalid_Proof
+	}
 	terms_refusal := wide_grant_terms_validate(terms)
 	if terms_refusal != .None {
 		return {}, terms_refusal
 	}
-	if kind == .None {
+	if kind == .None || verifier_key_or_token_hash == (blake3.Hash{}) || proof_serial == 0 {
 		return {}, .Missing_Proof
 	}
-	if verifier_key_or_token_hash == (blake3.Hash{}) {
-		return {}, .Missing_Proof
+	if !proof_origin_matches_kind(kind, origin) {
+		return {}, .Invalid_Proof
 	}
 	proof = Wide_Grant_Proof {
-		proof_kind_word                = u64(kind),
-		principal_id                   = terms.principal_id,
-		terms_hash                     = terms.terms_hash,
-		verifier_key_or_token_hash     = verifier_key_or_token_hash,
-		proof_timestamp_ms             = proof_timestamp_ms,
-		proof_verified_by_local_unlock = kind == .Passphrase_Verified,
-		from_remote_display_input      = false,
+		proof_kind_word            = u64(kind),
+		origin_word                = u64(origin),
+		principal_id               = terms.principal_id,
+		proof_serial               = proof_serial,
+		proof_timestamp_ms         = proof_timestamp_ms,
+		terms_hash                 = terms.terms_hash,
+		verifier_key_or_token_hash = verifier_key_or_token_hash,
 	}
-	tag := wide_grant_proof_tag(kind, terms.principal_id, terms.terms_hash, verifier_key_or_token_hash)
-	for index in 0 ..< blake3.HASH_SIZE {
-		proof.proof_bytes[index] = tag[index]
+	tag, tag_ok := wide_grant_proof_tag(authority_key, &proof)
+	if !tag_ok {
+		return {}, .Invalid_Proof
 	}
+	proof.proof_tag = tag
 	return proof, .None
 }
 
+// tags_equal compares two tags in a time that does not depend on where they
+// differ, so that the time of a refusal tells nothing of the right tag.
+@(private = "file")
+tags_equal :: proc "contextless" (left, right: blake3.Hash) -> bool {
+	difference: u8 = 0
+	for index in 0 ..< blake3.HASH_SIZE {
+		difference |= left[index] ~ right[index]
+	}
+	return difference == 0
+}
+
 // wide_grant_proof_validate verifies that proof authorizes the exact sealed
-// terms for the principal. Refuses missing proofs, remote display input,
-// mismatched terms hashes, unregistered host keys, and tampered proof tags.
+// terms for the principal. It refuses the all-zero authority key, a missing
+// proof, a tag that is not the keyed tag under authority_key, an origin that
+// is remote or does not match the kind, mismatched terms hashes, unregistered
+// host keys, and a proof serial that is not past last_accepted_proof_serial.
 wide_grant_proof_validate :: proc "contextless" (
+	authority_key: Authority_Key,
 	terms: ^Wide_Grant_Terms,
 	proof: ^Wide_Grant_Proof,
 	expected_host_key_hash: blake3.Hash,
+	last_accepted_proof_serial: u64,
 ) -> Wide_Grant_Refusal {
+	if !authority_key_is_valid(authority_key) {
+		return .Invalid_Proof
+	}
 	terms_refusal := wide_grant_terms_validate(terms)
 	if terms_refusal != .None {
 		return terms_refusal
 	}
-	if proof.proof_kind_word == 0 {
+	if proof.proof_kind_word == 0 || proof.proof_tag == (blake3.Hash{}) {
 		return .Missing_Proof
+	}
+	// The tag comes first: no field of an unauthenticated proof is read as a fact.
+	expected_tag, tag_ok := wide_grant_proof_tag(authority_key, proof)
+	if !tag_ok || !tags_equal(proof.proof_tag, expected_tag) {
+		return .Invalid_Proof
 	}
 	kind, kind_ok := proof_kind_from_word(proof.proof_kind_word)
 	if !kind_ok {
 		return .Invalid_Proof
 	}
-	if proof.from_remote_display_input {
+	origin, origin_ok := proof_origin_from_word(proof.origin_word)
+	if !origin_ok || !proof_origin_matches_kind(kind, origin) {
 		return .Invalid_Proof
 	}
 	if proof.principal_id != terms.principal_id {
@@ -614,36 +725,15 @@ wide_grant_proof_validate :: proc "contextless" (
 	if proof.verifier_key_or_token_hash == (blake3.Hash{}) {
 		return .Missing_Proof
 	}
-	has_nonzero_proof_byte := false
-	for value in proof.proof_bytes {
-		if value != 0 {
-			has_nonzero_proof_byte = true
-			break
-		}
+	if proof.proof_serial == 0 || proof.proof_serial <= last_accepted_proof_serial {
+		return .Invalid_Proof
 	}
-	if !has_nonzero_proof_byte {
-		return .Missing_Proof
-	}
-
 	switch kind {
 	case .None:
 		return .Missing_Proof
 	case .Passphrase_Verified:
-		if !proof.proof_verified_by_local_unlock {
-			return .Invalid_Proof
-		}
 	case .Host_Key_Signed:
-		if expected_host_key_hash == (blake3.Hash{}) {
-			return .Invalid_Proof
-		}
-		if proof.verifier_key_or_token_hash != expected_host_key_hash {
-			return .Invalid_Proof
-		}
-	}
-
-	expected_tag := wide_grant_proof_tag(kind, proof.principal_id, proof.terms_hash, proof.verifier_key_or_token_hash)
-	for index in 0 ..< blake3.HASH_SIZE {
-		if proof.proof_bytes[index] != expected_tag[index] {
+		if expected_host_key_hash == (blake3.Hash{}) || proof.verifier_key_or_token_hash != expected_host_key_hash {
 			return .Invalid_Proof
 		}
 	}

@@ -385,20 +385,40 @@ powerbox_ask_export :: proc "c" (process_name: ^string, resource: ^string, error
 	return i64(id)
 }
 
-// wide_grant_indicator shows (active != 0) or clears (active == 0) the
+// The one process that may clear the wide-grant indicator through this
+// export: the collector, which ends each wide grant.
+WIDE_GRANT_INDICATOR_CLEARER :: "collector"
+
+// wide_grant_indicator shows (active == 1) or clears (active == 0) the
 // unforgeable wide-grant indicator badge in the top bar and returns 1, or a
 // negative number with an error record.
 //
-// **Grant**: the caller must **act for the principal**.
+// A wide grant lets an agent see and drive the screen: the indicator is how
+// the principal knows. So a caller that can show the indicator cannot clear
+// it: only the collector clears it, and the one-press revocation key clears
+// it on the local keyboard. Any other caller, remote or local, gets
+// No_Grant with the unit Grants when it clears an indicator that shows.
+//
+// **Grant**: the caller must **act for the principal** to show the
+// indicator, and must be the collector to clear it.
 @(export, link_name = "wide_grant_indicator")
 wide_grant_indicator_export :: proc "c" (active: i64, grant_id: i64, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
+	if active != 0 && active != 1 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Counts, 1, active, 1)
+	}
 	if grant_id < 0 {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Out_Of_Range, .Counts, 2, grant_id)
 	}
-	wide_grant_mark_set(active != 0, u64(grant_id))
+	if active == 0 && wide_grant_display.active {
+		caller := system.service_caller()
+		if caller != nil && system.name_of(caller.caller[:]) != WIDE_GRANT_INDICATOR_CLEARER {
+			return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Grants)
+		}
+	}
+	wide_grant_mark_set(active == 1, u64(grant_id))
 	return 1
 }
 
