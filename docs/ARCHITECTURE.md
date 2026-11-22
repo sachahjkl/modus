@@ -1505,21 +1505,24 @@ A process runs another system on the processor, in a guest, with the virtualizat
 
 A guest is a process that `Process_Create` made and that no thread ran. Its page table is the nested page table of its guest processor: a guest physical address is an address of that process.
 
-- `Memory_Map` with the process handle puts a memory object at a guest physical address. The rules of a mapping hold: no page is writable and executable, and the address 0 is refused.
+- `Memory_Map` with the process handle puts a memory object at a guest physical address. The rules of a mapping hold: no page is writable and executable.
+- Two forms are for guest memory only, in a process that no thread ran. `At_Address_Zero` maps at the guest physical address 0. `Write` with `Execute` and `No_Access` makes a mapping that `Memory_Protect` with the process handle switches between `Write` and `Execute`, never both. `Process_Start` refuses a process with such a mapping.
 - `Memory_Unmap` and `Handle_Revoke` of the memory handle take the memory from the guest, as from any process.
 - A page on first use gets its frame when the guest touches it.
 - The guest is a line of each report of the processes: its name, its mapped pages, its stop.
 
-The first `Guest_Run` makes the process a guest. The budget of the process pays two pages: the control block of the guest processor and its extended state. The time page leaves the process, and the kernel half leaves its top table: the guest reaches only what its process mapped. After that, `Process_Start` of the process gives `Bad_State`.
+The first `Guest_Run` makes the process a guest. The first run of each guest processor takes two pages from the budget of the process: its control block and its extended state. The time page leaves the process, and the kernel half leaves its top table: the guest reaches only what its process mapped. After that, `Process_Start` of the process gives `Bad_State`.
 
 ### 2. The operation
 
-`Guest_Run(process, registers)` is the kernel operation 34. It runs the guest processor on the calling thread until an exit, and gives the exit in its completion record. The reason for one more operation: the instructions that enter a guest are privileged, and no other operation runs the code of another address space on the calling thread.
+`Guest_Run(process, registers, processor)` is the kernel operation 34. It runs one guest processor on the calling thread until an exit, and gives the exit in its completion record. The reason for one more operation: the instructions that enter a guest are privileged, and no other operation runs the code of another address space on the calling thread.
 
 - `process`: a process handle with **Control**.
-- `registers`: a `Guest_Registers` record in the memory of the caller: the general registers, `rip` and `rflags`. The kernel reads it before the entry and writes it after the exit. The process answers an exit with a change of the record: for a port read, the value in `rax` and the next instruction in `rip`.
-- The segments, the control registers and the extended state of the guest processor stay in the kernel between two runs. The first run starts in 16-bit real mode, each segment at base 0.
-- One thread runs a guest processor at a time: a second one gets `Bad_State`.
+- `registers`: a `Guest_Registers` record in the memory of the caller: the general registers, `rip`, `rflags`, `cr0`, `cr3`, `cr4` and `efer`. The kernel reads it before the entry and writes it after the exit. The process answers an exit with a change of the record: for a port read, the value in `rax` and the next instruction in `rip`; for a write of `EFER`, the value in `efer`.
+- `processor`: the index of the guest processor, from 0 to 3. Each one has its own state, paid at its first run.
+- The segments, the descriptor tables and the extended state of the guest processor stay in the kernel between two runs. A guest processor starts in 16-bit real mode, each segment at base 0.
+- The record holds two requests of one run, which the kernel clears when it serves them: `mode_load` loads the segments of real mode, protected mode or long mode; `inject_kind` and its fields give an event to deliver at the entry (an interrupt, the non-maskable interrupt, an exception or a software interrupt).
+- One thread runs a guest processor at a time: a second one gets `Bad_State`. Other threads run the other guest processors of the same guest at the same time.
 
 The thread is the guest processor while the operation runs. The budget of its process pays the processor time, as for each instruction of the thread. The scheduler sees one thread.
 

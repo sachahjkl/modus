@@ -339,11 +339,14 @@ Operation :: enum u32 {
 	// - `address`: the address of the first page: a multiple of 4096, at least 4096, with the mapping below
 	//   `USER_END` and over no other mapping. 0: the kernel chooses the lowest free place from
 	//   `CHOSEN_BASE`, with a page with no mapping before and after it, on 2 MiB for an object of
-	//   `Large_Pages` that is mapped by whole large pages.
-	// - `flags`: a `Map_Flags`: `Write`, `Execute` (never both: no page is writable and executable),
-	//   `No_Access` (the pages fault until `Memory_Protect` gives them access), or `Receive_Handles`
-	//   (this process agrees to receive handles through this memory object from `Handle_Give`). No flag:
-	//   read only. The kernel refuses any other bit.
+	//   `Large_Pages` that is mapped by whole large pages. With `At_Address_Zero`, the address is 0.
+	// - `flags`: a `Map_Flags`: `Write`, `Execute`, `No_Access` (the pages fault until `Memory_Protect`
+	//   gives them access), `Receive_Handles` (this process agrees to receive handles through this memory
+	//   object from `Handle_Give`), or `At_Address_Zero`. No flag: read only. The kernel refuses any other
+	//   bit. `Write` with `Execute` needs `No_Access`: no page is writable and executable, and
+	//   `Memory_Protect` then gives the pages `Write` or `Execute` in turn. `Write` with `Execute` and
+	//   `At_Address_Zero` are guest memory: only for another process that no thread ran
+	//   ([a guest](docs/ARCHITECTURE.md#a-guest)), which `Process_Start` then refuses.
 	// - `first`: the first page of the object.
 	// - `pages`: the count of pages, or 0 for each page from `first` to the end of the object.
 	//
@@ -355,11 +358,12 @@ Operation :: enum u32 {
 	// - `No_Right`: also, the process maps in itself at addresses that meet a module record of the
 	//   writer `Starter` (`Module_Writer`). The error kind is `Starter_Module`. The kernel checks it before
 	//   the other mappings. An address that the kernel chooses meets no such record.
-	// - `Bad_State`: the process is stopped; or a part of the object has a protection of its own
-	//   (`Memory_Protect`): such an object has one mapping only.
+	// - `Bad_State`: the process is stopped; a part of the object has a protection of its own
+	//   (`Memory_Protect`): such an object has one mapping only; or guest memory for this process, or for
+	//   a process that a thread ran.
 	// - `Bad_Address`: the pages are not inside the object; the address is not a multiple of 4096, is below
-	//   4096, ends above `USER_END`, or meets another mapping.
-	// - `Bad_Operation`: `Write` with `Execute`; or a flag that the kernel does not know, which it refuses
+	//   4096 with no `At_Address_Zero`, is not 0 with it, ends above `USER_END`, or meets another mapping.
+	// - `Bad_Operation`: `Write` with `Execute` and with no `No_Access`; or a flag that the kernel does not know, which it refuses
 	//   before it reads the handles; or, with the IOMMU in use, `memory` is device memory over the
 	//   registers of a device with a domain and `process` names another process: only the holder of the
 	//   registers maps them, so that its mappings keep the domain of the device.
@@ -449,7 +453,8 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
-	// - `Bad_State`: the process is not in the state `Created`.
+	// - `Bad_State`: the process is not in the state `Created`, is a guest (`Guest_Run`), or holds guest
+	//   memory: a mapping at the address 0, or one with `Write` and `Execute` (`Memory_Map`).
 	// - `Bad_Address`: `entry` or `stack` is out of its range.
 	// - `No_Budget`: the budget of the process has no thread slot left, or it cannot pay for the thread
 	//   area or its page tables.
@@ -1010,9 +1015,10 @@ Operation :: enum u32 {
 	// ```odin
 	// changed, status := system.memory_commit(memory, ranges[:])
 	// ```
-	Memory_Protect = 29, // (ranges: Address_Range, count, flags: Map_Flags) -> pages changed.
-	// Changes the protection of pages of mappings of this process: read only (no flag), `Write`, `Execute`,
-	// or `No_Access`. Each processor that runs a thread of the process forgets the old translations before
+	Memory_Protect = 29, // (ranges: Address_Range, count, flags: Map_Flags, process) -> pages changed.
+	// Changes the protection of pages of mappings of this process, or of a guest: read only (no flag),
+	// `Write`, `Execute`, or `No_Access`. Guest memory mapped with `Write` and `Execute` switches between
+	// the two, never both at once ([a guest](docs/ARCHITECTURE.md#a-guest)). Each processor that runs a thread of the process forgets the old translations before
 	// the operation returns (one shoot-down). A table is done whole or not at all
 	// ([protection and the shoot-down](docs/ARCHITECTURE.md#protection-and-the-shoot-down)).
 	//
@@ -1024,6 +1030,8 @@ Operation :: enum u32 {
 	//   can only take away what the mapping was made with: `Write` needs a mapping made with `Write`,
 	//   `Execute` one made with `Execute`. `No_Access` takes no other flag, and `Write` with `Execute`
 	//   is refused.
+	// - `process`: 0 for this process, or a process handle with **Control** of a process in the state
+	//   `Created` with no thread: a guest, or a process that will be one.
 	//
 	// A range that is a part of a mapping, not its whole, takes away from the protection of the mapping now:
 	// it cannot get more. It needs an object with a frame list that only this process names, with one
@@ -1041,7 +1049,8 @@ Operation :: enum u32 {
 	//   inside one mapping; the mapping is a thread area or the time page; a part of a mapping of a
 	//   contiguous object.
 	// - `Bad_State`: a part of a mapping of an object that another process names, or that has another
-	//   mapping.
+	//   mapping; `process` names a process that a thread ran.
+	// - `Bad_Handle`, `No_Right`: `process` is not 0 and not a process handle with **Control**.
 	//
 	// ```odin
 	// changed, status := system.memory_protect(ranges[:], {})
@@ -1242,14 +1251,19 @@ Operation :: enum u32 {
 	//   count.
 	// - `Bad_Address`: `size` is too small, or the process cannot read or write the memory; a `Read_Memory`
 	//   whose first byte the process of the thread cannot read, or whose range is not below `USER_END`.
-	Guest_Run = 34, // (process, registers: Guest_Registers) -> kind: Guest_Exit_Kind, a, b, c, next, exit code, exit information.
-	// Runs the guest processor of a process on the calling thread, until an exit that the kernel does not
+	Guest_Run = 34, // (process, registers: Guest_Registers, processor) -> kind: Guest_Exit_Kind, a, b, c, next, exit code, exit information.
+	// Runs one guest processor of a process on the calling thread, until an exit that the kernel does not
 	// handle itself, and gives that exit ([a guest](docs/ARCHITECTURE.md#a-guest)). The process is a guest:
 	// a process that `Process_Create` made and that no thread ran. Its addresses are the guest physical
 	// addresses: `Memory_Map` with its handle gives the guest memory. The first run makes the process a
-	// guest: its budget pays two pages, the time page leaves it, the `OWN_LOG_PAGES` pages of its own log
-	// ring return to its budget (a guest writes no log record), and `Process_Start` of it gives `Bad_State`
-	// after. The guest processor starts in 16-bit real mode, with each segment at base 0.
+	// guest: the time page leaves it, the `OWN_LOG_PAGES` pages of its own log ring return to its budget (a
+	// guest writes no log record), and `Process_Start` of it gives `Bad_State` after. The first run of each
+	// guest processor takes two pages from the budget of the process. A guest processor starts in 16-bit
+	// real mode, with each segment at base 0, unless the record asks for the load of another mode.
+	//
+	// A guest has up to `GUEST_PROCESSOR_CAPACITY` guest processors. One thread runs one guest processor at
+	// a time; several threads of the caller run several guest processors of one guest at once. The record
+	// can ask for one event to deliver at the entry (`Guest_Inject_Kind`).
 	//
 	// The kernel gives a page on first use of a mapping of the guest its frame when the guest touches it,
 	// and enters the guest again: that exit does not end the operation. The operation ends at each other
@@ -1262,6 +1276,7 @@ Operation :: enum u32 {
 	// - `registers`: the address of a `Guest_Registers` record that the process can read and write. The
 	//   kernel reads it before the entry, and writes the registers of the guest processor there after the
 	//   exit. The process answers an exit by a change of the record before the next run.
+	// - `processor`: the index of the guest processor, from 0 to `GUEST_PROCESSOR_CAPACITY - 1`.
 	//
 	// **Results**
 	//
@@ -1275,13 +1290,14 @@ Operation :: enum u32 {
 	// **Statuses**
 	//
 	// - `Bad_Operation`: the processors of the machine have no virtualization support that the kernel uses
-	//   (AMD SVM with nested paging), and the error kind is `Unsupported`; or `rflags` of the record has a
-	//   bit that no flags register has (`guest_registers_refusal`).
+	//   (AMD SVM with nested paging), and the error kind is `Unsupported`; the record has a field that its
+	//   rules refuse (`guest_registers_refusal`); or `processor` is past the last guest processor.
 	// - `Bad_Handle`, `No_Right`: `process` is not a process handle with **Control**.
-	// - `Bad_State`: the process is the caller, was started, stopped, or another thread runs its guest
+	// - `Bad_State`: the process is the caller, was started, stopped, or another thread runs this guest
 	//   processor now.
 	// - `Bad_Address`: the process cannot read and write the record.
-	// - `No_Budget`: at the first run, the budget of the process cannot pay its two pages.
+	// - `No_Budget`: at the first run of the guest processor, the budget of the process cannot pay its two
+	//   pages.
 	//
 	// ```odin
 	// exit, status := system.guest_run(guest, &registers)
@@ -1612,42 +1628,7 @@ thread_placement_after_write :: proc "contextless" (written, held: Thread_Placem
 	return {processors = processors, processors_limit = limit}, .None, 0
 }
 
-// The registers of a guest processor that `Guest_Run` takes and gives: the
-// general registers, the instruction address and the flags. The kernel keeps
-// the rest of the state of the guest processor (its segments, its control
-// registers, its extended state) between two runs. See [guest](term:guest)
-// and (docs/ARCHITECTURE.md, "A guest").
-//
-// A process answers an exit by a change of the record before the next run:
-// for `Port_Read`, the value in the low bytes of `rax` and the next
-// instruction in `rip`; for `Port_Write` and `Halt`, the next instruction in
-// `rip`. A record of zeros is a guest processor at the address 0 with no flag
-// set. 144 bytes.
-//
-// Example: a guest at 0x1000 in real mode is `{rip = 0x1000}`; after the exit
-// `Port_Write` of `out dx, al` with dx 0x80 and al 42, `rax & 0xFF` is 42.
-Guest_Registers :: struct {
-	rax, rbx, rcx, rdx: u64,
-	rsi, rdi, rbp, rsp: u64,
-	r8, r9, r10, r11:   u64,
-	r12, r13, r14, r15: u64,
-	rip:    u64, // In real mode, the offset in the code segment.
-	rflags: u64, // Only the bits of `GUEST_FLAGS_DEFINED`; the kernel sets bit 1, which is always 1.
-}
-#assert(size_of(Guest_Registers) == 144)
 
-// The bits of the flags register that a processor has: carry, parity,
-// adjust, zero, sign, trap, interrupt, direction, overflow, the I/O
-// privilege level, nested task, resume, virtual 8086, alignment check, the
-// two virtual interrupt flags and identification. The others are reserved:
-// bit 1 is always 1, and the processor faults on a reserved bit set.
-GUEST_FLAGS_DEFINED :: u64(0x003F_7FD7)
-
-// guest_registers_refusal says if `Guest_Run` refuses a registers record:
-// its flags have a bit outside `GUEST_FLAGS_DEFINED`.
-guest_registers_refusal :: proc "contextless" (registers: Guest_Registers) -> bool {
-	return registers.rflags &~ GUEST_FLAGS_DEFINED != 0
-}
 
 // What ended a run of a guest processor: the first result of `Guest_Run`.
 // The comment of each member says what the results `a`, `b` and `c` hold.
@@ -3038,14 +3019,15 @@ COMMIT_FLAGS_KNOWN :: u64(1) << u64(Commit_Flag.Decommit)
 // gives. No flag is read only. A page is never writable and executable.
 Map_Flag :: enum u64 {
 	Write           = 0, // The pages can be written. Needs **Write** on the memory handle.
-	Execute         = 1, // The pages can be executed. Needs **Execute** on the memory handle. Never with `Write`.
+	Execute         = 1, // The pages can be executed. Needs **Execute** on the memory handle. With `Write` in Memory_Map: guest memory, with `No_Access`.
 	No_Access       = 2, // Memory_Map: a mapping whose pages fault until Memory_Protect gives them access. Memory_Protect: no access.
 	Receive_Handles = 3, // Memory_Map: this process agrees to receive handles through this memory object (`Handle_Give`). Refused by `Memory_Protect`.
+	At_Address_Zero = 4, // Memory_Map: the mapping starts at the address 0, the guest physical address 0 of a guest. Refused by `Memory_Protect`.
 }
 // The flags of one `Memory_Map` or `Memory_Protect`. Example: `{.Write}`.
 Map_Flags :: bit_set[Map_Flag;u64]
 // The flags that `Memory_Map` knows, as the word of its argument.
-MAP_FLAGS_KNOWN :: u64(1) << u64(Map_Flag.Write) | u64(1) << u64(Map_Flag.Execute) | u64(1) << u64(Map_Flag.No_Access) | u64(1) << u64(Map_Flag.Receive_Handles)
+MAP_FLAGS_KNOWN :: u64(1) << u64(Map_Flag.Write) | u64(1) << u64(Map_Flag.Execute) | u64(1) << u64(Map_Flag.No_Access) | u64(1) << u64(Map_Flag.Receive_Handles) | u64(1) << u64(Map_Flag.At_Address_Zero)
 // The flags that `Memory_Protect` knows, as the word of its argument: protection bits only.
 PROTECT_FLAGS_KNOWN :: u64(1) << u64(Map_Flag.Write) | u64(1) << u64(Map_Flag.Execute) | u64(1) << u64(Map_Flag.No_Access)
 

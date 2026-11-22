@@ -664,7 +664,7 @@ Do not use: audit log, activity log.
 
 A guest is a machine that a process of the system runs on the processor, with the virtualization support of the processor, and with its own kernel and its own processes.
 
-A guest holds only what its process was granted. It is a process that `Process_Create` made and that no thread ran: its addresses are the guest physical addresses, and `Memory_Map` with its handle gives it memory. The process that holds it runs its guest processor with `Guest_Run`, and answers each guest exit. A foreign system (Linux) runs in a guest, and its concepts stay inside it. Built: the AMD form, one guest processor for each guest; the process `guest_demo` runs a guest of seven bytes.
+A guest holds only what its process was granted. It is a process that `Process_Create` made and that no thread ran: its addresses are the guest physical addresses, and `Memory_Map` with its handle gives it memory. The process that holds it runs its guest processor with `Guest_Run`, and answers each guest exit. A foreign system (Linux) runs in a guest, and its concepts stay inside it. Built: the AMD form, up to four guest processors for each guest; the process `guest_demo` runs a guest of seven bytes.
 
 The design: `docs/ARCHITECTURE.md`, "A guest", and `docs/PROPERTIES.md`, "Objective".
 
@@ -674,7 +674,7 @@ Do not use: virtual machine, VM, container.
 
 A guest processor is the processor of a guest, as the kernel keeps it between two runs: its registers, its segments, its control registers and its extended state.
 
-A thread runs it with `Guest_Run`: during the operation, the thread is the guest processor, and its budget pays the time. The general registers, `rip` and `rflags` go in and out in a `Guest_Registers` record of the caller; the kernel keeps the rest in the control block of the processor. One thread runs a guest processor at a time.
+A thread runs it with `Guest_Run`: during the operation, the thread is the guest processor, and its budget pays the time. The general registers, `rip`, `rflags` and the control registers go in and out in a `Guest_Registers` record of the caller; the kernel keeps the rest in the control block of the processor. One thread runs a guest processor at a time; a guest has up to four, which several threads run at once.
 
 The design: `docs/ARCHITECTURE.md`, "A guest".
 

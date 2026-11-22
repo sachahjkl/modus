@@ -1113,8 +1113,24 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	if count == 0 || first >= region.page_count || count > region.page_count - first {
 		return 0, .Bad_Address
 	}
+	// Guest memory: page 0, and memory that a guest writes and then
+	// executes. Only for a process that no thread ran, which Process_Start
+	// then refuses (process_holds_guest_memory): a thread there would run
+	// with no fault at the address 0, or on pages that switch between Write
+	// and Execute with no module named by their content.
+	at_zero := .At_Address_Zero in flags
+	writable_and_executable := .Write in flags && .Execute in flags
+	if writable_and_executable && .No_Access not_in flags {
+		return 0, .Bad_Operation // No page is writable and executable: it gets Write or Execute in turn.
+	}
+	if (at_zero || writable_and_executable) && (by_the_process || process.state != .Created || process.thread_count != 0) {
+		return 0, .Bad_State
+	}
+	if at_zero && address != 0 {
+		return 0, .Bad_Address
+	}
 	address := address
-	chosen := address == 0
+	chosen := address == 0 && !at_zero
 	if chosen {
 		// An object of large pages, mapped by whole large pages, gets an
 		// address on 2 MiB.
@@ -1128,7 +1144,7 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 		}
 	}
 	size := count * PAGE_SIZE
-	if address % PAGE_SIZE != 0 || address < PAGE_SIZE || address >= USER_END || size > USER_END - address {
+	if address % PAGE_SIZE != 0 || address < PAGE_SIZE && !at_zero || address >= USER_END || size > USER_END - address {
 		return 0, .Bad_Address
 	}
 	// Memory of the process where its starter recorded a module would run
@@ -1151,10 +1167,6 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	}
 	if mapping == nil {
 		return 0, .No_Slot
-	}
-	// No page is both writable and executable.
-	if .Write in flags && .Execute in flags {
-		return 0, .Bad_Operation
 	}
 	limit_bits := PAGE_PRESENT | PAGE_USER
 	if .Write in flags {

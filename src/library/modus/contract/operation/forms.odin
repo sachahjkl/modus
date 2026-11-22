@@ -77,7 +77,7 @@ OPERATIONS := [Operation]Operation_Form {
 	.Process_Module = {"Process_Module", {{"process", .Handle_Or_Zero, .Process, {.Control}, 0}, {"record", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
 	.Strategy_Set = {"Strategy_Set", {{"machine", .Handle, .Machine, {.Schedule}, 0}, {"strategy", .Choice, .None, {}, u64(max(Strategy))}, {}, {}, {}, {}, {}}},
 	.Memory_Commit = {"Memory_Commit", {{"memory", .Handle, .Memory, {.Write}, 0}, {"budget", .Handle, .Budget, {}, 0}, {"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, COMMIT_FLAGS_KNOWN}, {}, {}}},
-	.Memory_Protect = {"Memory_Protect", {{"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, PROTECT_FLAGS_KNOWN}, {}, {}, {}, {}}},
+	.Memory_Protect = {"Memory_Protect", {{"ranges", .Address, .None, {}, 0}, {"count", .Count, .None, {}, RANGE_TABLE_CAPACITY}, {"flags", .Flags, .None, {}, PROTECT_FLAGS_KNOWN}, {"process", .Handle_Or_Zero, .Process, {.Control}, 0}, {}, {}, {}}},
 	.Fault_Handler_Set = {"Fault_Handler_Set", {{"thread", .Handle_Or_Zero, .Thread, {.Control}, 0}, {"end", .Choice, .None, {}, u64(max(Fault_Handler_Action))}, {"kinds", .Flags, .None, {}, FAULT_KINDS_DELIVERED}, {"process", .Handle_Or_Zero, .Process, {.Debug}, 0}, {}, {}, {}}},
 	.Fault_Answer = {"Fault_Answer", {{"thread", .Value, .None, {}, 0}, {"serial", .Value, .None, {}, 0}, {"answer", .Choice, .None, {}, u64(max(Fault_Answer_Kind))}, {"process", .Handle_Or_Zero, .Process, {.Debug}, 0}, {}, {}, {}}},
 	.Events_Set = {"Events_Set", {{"machine", .Handle, .Machine, {.Events}, 0}, {"memory", .Handle_Or_Zero, .Memory, {.Write}, 0}, {"rules", .Address, .None, {}, 0}, {"count", .Count, .None, {}, EVENT_RULE_CAPACITY}, {"records", .Count, .None, {}, EVENT_RING_RECORDS_MOST}, {}, {}}},
@@ -86,7 +86,7 @@ OPERATIONS := [Operation]Operation_Form {
 	// and a command of the schedule also takes the machine handle
 	// (thread_control_machine_rights).
 	.Thread_Control = {"Thread_Control", {{"thread", .Handle_Or_Zero, .Thread, {}, 0}, {"number", .Value, .None, {}, 0}, {"command", .Choice, .None, {}, u64(max(Thread_Control_Command))}, {"address", .Address, .None, {}, 0}, {"size", .Count, .None, {}, 0}, {"source", .Address, .None, {}, 0}, {}}},
-	.Guest_Run = {"Guest_Run", {{"process", .Handle, .Process, {.Control}, 0}, {"registers", .Address, .None, {}, 0}, {}, {}, {}, {}, {}}},
+	.Guest_Run = {"Guest_Run", {{"process", .Handle, .Process, {.Control}, 0}, {"registers", .Address, .None, {}, 0}, {"processor", .Bounded, .None, {}, GUEST_PROCESSOR_CAPACITY - 1}, {}, {}, {}, {}}},
 	.Log_Read = {"Log_Read", {{"memory", .Handle, .Memory, {.Read}, 0}, {"process", .Value, .None, {}, 0}, {"serial", .Value, .None, {}, 0}, {"after", .Value, .None, {}, 0}, {"records", .Address, .None, {}, 0}, {"count", .Count, .None, {}, OWN_LOG_RECORD_CAPACITY}, {}}},
 }
 
