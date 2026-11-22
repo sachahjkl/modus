@@ -168,6 +168,8 @@ BAR_HEIGHT :: bar.HEIGHT
 TITLE_HEIGHT :: 24
 BORDER :: 2
 CLOSE_SIZE :: 24 // The close button: a square at the right end of the title bar.
+TITLE_ICON_X :: 8 // The icon of the module in the title bar, from the corner of the frame.
+TITLE_TEXT_X :: TITLE_ICON_X + bar.ICON_SIZE + 6 // The title, after the icon.
 // A new window: the first one at (PLACE_X, PLACE_Y), each next one lower
 // and to the right, by PLACE_STEP_X and PLACE_STEP_Y. Each is a sum of
 // spacing tokens, so the new windows line up with each other
@@ -179,9 +181,8 @@ PLACE_STEP_Y :: 32
 CLIENT_CAPACITY :: 32 // The root service starts 32 processes at most.
 DAMAGE_CAPACITY :: 8
 CLOCK_WIDTH :: 19 * 8 // "2026-11-11 16:30:05", or the time since boot "00:00:00" when the system has no date.
-// The hint of the palette in the bar, at the left of the time: "palette: super".
-PALETTE_HINT_NAME :: "palette: "
-PALETTE_HINT_KEY :: "super"
+CLOCK_MARGIN :: 16 // Between the clock and the right edge of the screen.
+TRAY_CLOCK_GAP :: 12 // Between the tray and the clock: the hairline of the clock is in its middle.
 
 Client :: struct {
 	ring_memory: system.Handle, // 0: the slot is free.
@@ -208,6 +209,7 @@ Client :: struct {
 	x, y:        int, // The corner of the frame of the window, in logical pixels of the desktop.
 	width, height: int, // The size of the window in logical pixels of the desktop: its surface is these pixels at the scale (scale.odin).
 	title:       system.Name,
+	icon:        bar.Icon, // The icon of the title: found once, when the window takes its title.
 	// A disk process: the root service gave its nickname and the first
 	// bytes of the hash of its file in Client_Add. The window has the
 	// nickname as its title, and the menu of the windows shows the hash
@@ -310,6 +312,10 @@ Menu :: enum {
 
 menu_open: Menu // The menu that is on the screen.
 menu_line := -1 // The line of the menu under the pointer.
+menu_action: bar.Start_Action // The quick action of the start menu under the pointer.
+// The button of the bar under the pointer at the last move: it is drawn
+// lit, and a change draws the buttons again.
+bar_button_hovered: bar.Bar_Button
 drag_x, drag_y: int
 // The drag of the edges of a window: the client, or -1. The compositor
 // draws the outline of the new frame until the release, then sends the
@@ -492,7 +498,7 @@ bar_layout_update :: proc "contextless" () {
 		return
 	}
 	if in_interface_font {
-		system.log_fact(.Info, Bar_In_Interface_Font{start_width = u64(layout.label_width), windows_width = u64(layout.windows_label_width), name_width = u64(layout.longest_name_width)})
+		system.log_fact(.Info, Bar_In_Interface_Font{name_width = u64(layout.longest_name_width)})
 	} else {
 		system.log_fact(.Info, Bar_In_Cell_Font{})
 	}
@@ -1235,6 +1241,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	// A disk process could title its window as a process of the system: its
 	// window has the nickname that the root service gave.
 	client.title = client.from_disk ? client.nickname : system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
+	client.icon = bar.icon_of(system.name_of(client.title[:]))
 	client.x = PLACE_X + placed % 8 * PLACE_STEP_X
 	client.y = PLACE_Y + placed % 8 * PLACE_STEP_Y
 	// A large window moves up and left until the screen shows all of it; a
@@ -1338,6 +1345,10 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	desktop_magnifier_track(i32(pointer_x), i32(pointer_y))
 	capture_popover_pointer_move(pointer_x, pointer_y)
 	desktop_taskbar_pointer_move(pointer_x, pointer_y)
+	if hovered := bar.button_at(bar_layout, pointer_x, pointer_y); hovered != bar_button_hovered {
+		bar_button_hovered = hovered
+		damage_menu()
+	}
 	if right_pressed && menu_open == .None && !bar.inside_bar(bar_layout, pointer_y) {
 		desktop_context_menu_open(pointer_x, pointer_y)
 		return
@@ -1350,8 +1361,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	}
 	if menu_open != .None {
 		over := menu_open == .Start ? bar.line_at(bar_layout, pointer_x, pointer_y) : bar.windows_line_at(bar_layout, order_count, pointer_x, pointer_y)
-		if over != menu_line {
-			menu_line = over
+		action := menu_open == .Start ? bar.action_at(bar_layout, pointer_x, pointer_y) : bar.Start_Action.None
+		if over != menu_line || action != menu_action {
+			menu_line, menu_action = over, action
 			damage_menu()
 		}
 	}
@@ -1378,9 +1390,12 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 				}
 				system.log_fact(.Info, Window_In_Front{window = window_field(clients[index].title[:])})
 			}
+			chosen_action := menu_open == .Start ? menu_action : bar.Start_Action.None
 			menu_open = .None
 			menu_line = -1
+			menu_action = .None
 			damage_menu()
+			start_action_do(chosen_action) // start_menu.odin
 		}
 		under := bar.button_at(bar_layout, pointer_x, pointer_y)
 		if under == .Start && was_open != .Start {
@@ -1665,10 +1680,13 @@ frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Clie
 	interface.draw_horizontal_gradient(table, bottom_part.left, bottom_part.top, bottom_part.right - bottom_part.left, bottom_part.bottom - bottom_part.top, start, end)
 	interface.draw_rectangle(table, left_part.left, left_part.top, left_part.right - left_part.left, left_part.bottom - left_part.top, start)
 	interface.draw_rectangle(table, right_part.left, right_part.top, right_part.right - right_part.left, right_part.bottom - right_part.top, end)
-	// The title: a name, cut in its font to the room before minimize/maximize/close.
-	title_room := max(24, outer_width - CLOSE_SIZE - 2 * 28 - 20)
+	// The icon of the module, then the title: a name, cut in its font to
+	// the room before minimize/maximize/close.
+	icon_color := focus ? graphics.COLOR_WHITE : graphics.colors.dim
+	bar.icon_records(table, x + TITLE_ICON_X, y + (TITLE_HEIGHT - bar.ICON_SIZE) / 2, client.icon, icon_color, focus ? graphics.shade(graphics.colors.title, 170) : graphics.colors.dim)
+	title_room := max(24, outer_width - CLOSE_SIZE - 2 * 28 - 20 - (TITLE_TEXT_X - 8))
 	title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(client.title[:]), title_room)
-	interface.draw_text(table, x + 8, y + 4, title, focus ? graphics.COLOR_WHITE : graphics.colors.dim, interface.FONT_INTERFACE)
+	interface.draw_text(table, x + TITLE_TEXT_X, y + 4, title, focus ? graphics.COLOR_WHITE : graphics.colors.dim, interface.FONT_INTERFACE)
 	base := graphics.Color(graphics.colors.stop_process_quiet)
 	cross_color := graphics.Color(graphics.colors.stop_process_quiet_mark)
 	if focus || pointer_over {
@@ -1841,8 +1859,10 @@ loop_copy :: proc "contextless" (to, from: [^]u8, count: int) {
 // its frame and its surface (a Picture record), then the bar and the menus.
 // The compositor builds it once for each frame and draws it in each damage
 // area. The palette has its own table; the pointer is drawn after both.
-screen_records: [512]interface.Draw_Record
-screen_text: [8192]u8
+// The start menu draws an icon of up to nine rectangles on each of its
+// lines, and each window an icon in its title bar.
+screen_records: [2048]interface.Draw_Record
+screen_text: [16384]u8
 screen_table := interface.Draw_Table{}
 
 // A part of the screen table: the records of one window, or of the bar and
@@ -1878,13 +1898,16 @@ screen_picture_memory: [1][]graphics.Color
 // is written one time, as the cause is in the compositor and each frame has it.
 screen_refusal_logged: bool
 
-// The heron of the bar (docs/DESIGN.md, "The mark"). Its gradients are
-// computed once, at the start, into this picture; each frame shows it with
-// a Picture record, a copy of 24 rows. Its generation never changes, so the
-// difference of two frames never finds it changed.
-BAR_MARK_GENERATION :: 1
-bar_mark_pixels: [bar.MARK_SIZE * bar.MARK_SIZE]graphics.Color
-bar_mark_picture: graphics.Canvas
+// The heron of the heron button (docs/DESIGN.md, "The mark"). A picture
+// has no transparency, so each look of the button has its own picture of
+// the heron on the plate of that look. Their gradients are computed once,
+// at the start, into these pictures; each frame shows one with a Picture
+// record, a copy of 24 rows. Each look has its own generation, which never
+// changes: the difference of two frames finds a change of the look, and
+// nothing else.
+BAR_MARK_GENERATION :: 1 // The generation of the look Rest; each next look adds one.
+bar_mark_pixels: [Start_Button_Look][bar.MARK_SIZE * bar.MARK_SIZE]graphics.Color
+bar_mark_pictures: [Start_Button_Look]graphics.Canvas
 
 // bar_background_records appends the surface of the bar, with its corner
 // at (x, y): its gradient and the line on the side of the windows. The
@@ -1904,23 +1927,26 @@ bar_background_records :: proc "contextless" (table: ^interface.Draw_Table, x, y
 	}
 }
 
-// bar_mark_build draws the heron of the bar into its picture. A picture has
-// no transparency, so the picture first gets the pixels of the bar under the
-// heron, from the same records and the same code that draw the bar: an empty
-// cell of the heron then shows exactly the bar around it. The drawing module
-// draws in the coordinates of the canvas, so the records of the bar start at
-// the corner of the screen as the picture sees it.
+// bar_mark_build draws the heron into the picture of each look of the
+// heron button. Each picture first gets the pixels of the plate under the
+// heron, from the same records and the same code that draw the plate: an
+// empty cell of the heron then shows exactly the plate around it. The
+// drawing module draws in the coordinates of the canvas, so the records of
+// the plate start at the corner of the screen as the picture sees it.
 bar_mark_build :: proc "contextless" () {
-	bar_mark_picture = {pixels = raw_data(bar_mark_pixels[:]), width = bar.MARK_SIZE, height = bar.MARK_SIZE, stride = bar.MARK_SIZE}
-	records: [4]interface.Draw_Record
-	table := interface.Draw_Table{records = records[:]}
-	bar_background_records(&table, -bar.MARK_X, -bar.MARK_Y, bar.MARK_X + bar.MARK_SIZE, .Top)
-	whole_picture := [1]interface.Rectangle{{0, 0, bar.MARK_SIZE, bar.MARK_SIZE}}
-	screen_draw_part(&table, 0, table.record_count, nil, bar_mark_picture, whole_picture[:])
-	// The mark of the bar is a small icon, one pixel for a cell: the cells
-	// variant. On the light bar it has the colors of the light background,
-	// as the mark of the bar of the light page of the site.
-	mark.mark_draw(bar_mark_picture, 0, 0, bar.MARK_CELL_SIZE, .Cells, graphics.appearance == .Light)
+	for look in Start_Button_Look {
+		picture := graphics.Canvas{pixels = raw_data(bar_mark_pixels[look][:]), width = bar.MARK_SIZE, height = bar.MARK_SIZE, stride = bar.MARK_SIZE}
+		bar_mark_pictures[look] = picture
+		records: [16]interface.Draw_Record
+		table := interface.Draw_Table{records = records[:]}
+		start_button_records(&table, bar.START_BUTTON_X - bar.MARK_X, bar.PLATE_Y - bar.MARK_Y, look)
+		whole_picture := [1]interface.Rectangle{{0, 0, bar.MARK_SIZE, bar.MARK_SIZE}}
+		screen_draw_part(&table, 0, table.record_count, nil, picture, whole_picture[:])
+		// The mark of the button is a small icon, one pixel for a cell: the
+		// cells variant. On the light plate it has the colors of the light
+		// background, as the mark of the bar of the light page of the site.
+		mark.mark_draw(picture, 0, 0, bar.MARK_CELL_SIZE, .Cells, graphics.appearance == .Light)
+	}
 }
 
 // background_build draws the background of the rules into its canvas: one
@@ -2076,36 +2102,21 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		screen_part_end(first, nil, screen_rectangle_of(outline.left, outline.top, outline.right - outline.left, outline.bottom - outline.top), true, true)
 	}
 
-	// The bar: the mark of the system, the two buttons, the date and the time
-	// of day (the time since boot when the system has no date).
+	// The bar: the heron button, the button of the windows, the plates of
+	// the windows, the tray, then the date and the time of day (the time
+	// since boot when the system has no date), at the right.
 	bar_first := table.record_count
 	width := desktop_width
 	bar_top := desktop_bar_y()
 	bar_background_records(table, 0, bar_top, width, bar_layout.edge)
-	screen_picture_append(bar.MARK_X, bar.mark_y(bar_layout), bar_mark_picture, bar_mark_pixels[:], BAR_MARK_GENERATION)
-	bar_button_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width, height: int, label: string, open: bool) {
-		interface.draw_rectangle(table, x, y, width, height, open ? graphics.colors.chosen : graphics.colors.track)
-		interface.draw_text(table, x + bar.PADDING, y + (height - graphics.CELL_HEIGHT) / 2, label, open ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
-	}
-	left, top, button_width, button_height := bar.button(bar_layout)
-	bar_button_records(table, left, top, button_width, button_height, bar.LABEL, menu_open == .Start)
-	left, top, button_width, button_height = bar.windows_button(bar_layout)
-	bar_button_records(table, left, top, button_width, button_height, bar.WINDOWS_LABEL, menu_open == .Windows)
-	// The hint of the palette: a name, in the interface font, measured in
-	// its two parts as they are drawn.
-	hint_width := interface.text_measured_width(table, interface.FONT_INTERFACE, PALETTE_HINT_NAME) + interface.text_measured_width(table, interface.FONT_INTERFACE, PALETTE_HINT_KEY)
-	hint_x := width - CLOCK_WIDTH - 32 - hint_width
-	// The mark of a viewer of the remote display, at the left of the hint
-	// (capture.odin). It is never left out: when the bar has no room for
-	// it there, it takes the room of the hint, which is not drawn.
-	if capture_is_open() && capture_mark_room(hint_x) < CAPTURE_MARK_SQUARE {
-		capture_mark_records(table, width - CLOCK_WIDTH - 16)
-	} else {
-		interface.draw_text(table, interface.draw_text(table, hint_x, bar_top + 8, PALETTE_HINT_NAME, graphics.colors.dim, interface.FONT_INTERFACE), bar_top + 8, PALETTE_HINT_KEY, graphics.colors.text, interface.FONT_INTERFACE)
-		capture_mark_records(table, hint_x)
-	}
+	look := start_button_look()
+	start_x, start_y, _, _ := bar.button(bar_layout)
+	start_button_records(table, start_x, start_y, look) // start_menu.odin
+	screen_picture_append(bar.MARK_X, bar.mark_y(bar_layout), bar_mark_pictures[look], bar_mark_pixels[look][:], BAR_MARK_GENERATION + u32(look))
+	windows_button_records(table) // start_menu.odin
 	seconds := now / 1000
-	x := width - CLOCK_WIDTH - 16
+	clock_x := width - CLOCK_WIDTH - CLOCK_MARGIN
+	x := clock_x
 	if milliseconds, known := date.milliseconds_now(date_page, now); known {
 		// The local time: the date of UTC and the time zone of the date
 		// page (src/md/features/time_zone.md).
@@ -2127,62 +2138,32 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		interface.draw_unsigned(table, x, bar_top + 8, seconds % 60, graphics.colors.text, 2)
 	}
 
-	// The menus of the bar, as cards of the package.
+	// The tray, from the clock to the left: the hairline of the clock, the
+	// mark of a viewer of the remote display (capture.odin), which is never
+	// left out, then the pills of the tray. The plates of the windows take
+	// the room that is left.
+	tray_right := clock_x - TRAY_CLOCK_GAP
+	interface.draw_rectangle(table, tray_right + TRAY_CLOCK_GAP / 2, bar_top + 6, 1, BAR_HEIGHT - 12, graphics.colors.track)
+	capture_mark_records(table, tray_right + 16)
+	if capture_is_open() && capture_mark_drawn {
+		tray_right = capture_mark_x - TRAY_BADGE_GAP
+	}
+	desktop_taskbar_and_tray_records(table, tray_right) // desktop_features.odin
+
+	// The menus of the bar, as cards in the look of the start menu.
 	card_frame := interface.Frame{table = table}
-	count: interface.Text_Builder
 	if menu_open == .Windows && order_count > 0 {
-		menu_left, menu_top, menu_width, menu_height := bar.windows_menu(bar_layout, order_count)
-		interface.card(&card_frame, {menu_left, menu_top, menu_width, menu_height}, "WINDOWS", "the client table", graphics.colors.kernel, interface.number_text(&count, u64(order_count)))
-		for line in 0 ..< order_count {
-			index := window_of_line(line)
-			if index < 0 {
-				break
-			}
-			line_x, line_y, line_width, line_height := bar.windows_line(bar_layout, line)
-			focus := index == order[order_count - 1]
-			if line == menu_line {
-				interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.colors.chosen)
-			}
-			if focus {
-				// The window that has the focus: a square, and its title in white.
-				interface.draw_rectangle(table, line_x + 8, line_y + 8, 8, 8, line == menu_line ? graphics.COLOR_WHITE : graphics.colors.title)
-			}
-			// A disk process keeps the room of its hash prefix at the end of
-			// the line: the nickname ends before it.
-			room := line_width - bar.WINDOWS_TITLE_X - bar.PADDING
-			if clients[index].from_disk {
-				room -= bar.WINDOWS_HASH_GAP + interface.text_measured_width(table, interface.FONT_CAPTION_CELLS, string(clients[index].hash_prefix[:]))
-			}
-			title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(clients[index].title[:]), room)
-			title_end := interface.draw_text(table, line_x + bar.WINDOWS_TITLE_X, line_y + 4, title, focus || line == menu_line ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
-			if clients[index].from_disk {
-				// A value, in the font of the cells at the caption size,
-				// faded, on the baseline of the nickname: the name is the
-				// nickname, and the prefix only tells two files apart. On the
-				// chosen row it is white, as each text of that row: the dim
-				// color has no contrast on the chosen blue.
-				prefix_top := interface.text_top_on_baseline(table, interface.FONT_INTERFACE, line_y + 4, interface.FONT_CAPTION_CELLS)
-				interface.draw_text(table, title_end + bar.WINDOWS_HASH_GAP, prefix_top, string(clients[index].hash_prefix[:]), line == menu_line ? graphics.COLOR_WHITE : graphics.colors.dim, interface.FONT_CAPTION_CELLS)
-			}
-		}
+		windows_menu_records(table) // start_menu.odin
 	}
 	if menu_open == .Start {
-		menu_left, menu_top, menu_width, menu_height := bar.menu(bar_layout)
-		interface.card(&card_frame, {menu_left, menu_top, menu_width, menu_height}, "PROCESSES", "bar.names", graphics.colors.kernel, interface.number_text(&count, len(bar.names)))
-		for name, index in bar.names {
-			line_x, line_y, line_width, line_height := bar.line(bar_layout, index)
-			if index == menu_line {
-				interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.colors.chosen)
-			}
-			interface.draw_text(table, line_x + bar.PADDING, line_y + 4, name, index == menu_line ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
-		}
+		start_menu_records(table) // start_menu.odin
 	}
 	capture_popover_records(&card_frame)
 	desktop_notifications_records(table)
 	powerbox_dialog_records(table)
-	desktop_taskbar_and_tray_records(table)
+	desktop_taskbar_preview_records(table) // desktop_features.odin
 	desktop_context_menu_records(table)
-	screen_part_end(bar_first, bar_mark_pixels[:], {}, false, true)
+	screen_part_end(bar_first, bar_mark_pixels[look][:], {}, false, true)
 	if table.full {
 		system.log_fact(.Warning, Screen_Draw_Table_Full{})
 	}

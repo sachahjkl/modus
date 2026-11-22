@@ -317,22 +317,30 @@ desktop_context_action :: proc "contextless" (act_id: u32) {
 	}
 }
 
-TASKBAR_PILL_START_X :: 224
-TASKBAR_PILL_WIDTH :: 136
-TASKBAR_PILL_GAP :: 4
-TRAY_BADGE_WIDTH :: 34
 TRAY_BADGE_GAP :: 4
 TASKBAR_PREVIEW_WIDTH :: 184
 TASKBAR_PREVIEW_TITLE :: 26 // The name of the group and the line under it.
 TASKBAR_PREVIEW_LINE :: 20 // One window of the group.
 TASKBAR_PREVIEW_FOOT :: 6
 TASKBAR_PREVIEW_GAP :: 2 // Between the bar and the card.
+TASKBAR_TRAY_GAP :: 8 // Between the last plate and the tray.
 
 // The slot of the plate under the pointer at the last move, or -1: a change
 // draws the plates and the preview again.
 taskbar_hover_slot := -1
+// The first column that no plate reaches, in the last frame: the left of
+// the tray. A press and a move read the plates that the eye sees.
+taskbar_plates_right: int
 // The card of the preview in the last frame; a width of 0: none.
 taskbar_preview_area: interface.Area
+// The group of the plate under the pointer in this frame: the plates find
+// it, and the preview is drawn over the menus after them. A count of 0: none.
+taskbar_preview_group: struct {
+	x:     int,
+	title: string, // The name as the plate shows it: cut to its room.
+	name:  string, // The name of the windows of the group.
+	count: int,
+}
 
 // taskbar_preview_height gives the height of the preview of a group of
 // count windows.
@@ -353,25 +361,30 @@ taskbar_preview_top :: proc "contextless" (height: int) -> int {
 	return y
 }
 
-// taskbar_preview_records draws the preview of a group of windows of one
-// name: a card in the gradient of the cards with a line of light under its
-// top border, the name, a line under it, then one line for each window with
-// its state. The window in front has the square of the focus, as in the
-// menu of the windows.
-taskbar_preview_records :: proc "contextless" (table: ^interface.Draw_Table, x: int, title, name: string, count: int) {
-	height := taskbar_preview_height(count)
-	left := clamp(x, 0, max(0, desktop_width - TASKBAR_PREVIEW_WIDTH))
+// desktop_taskbar_preview_records draws the preview of the group of the
+// plate under the pointer: a card in the gradient of the cards with a line
+// of light under its top border, the icon and the name, a line under them,
+// then one line for each window with its state. The window in front has
+// the bar of the focus, as in the menu of the windows.
+desktop_taskbar_preview_records :: proc "contextless" (table: ^interface.Draw_Table) {
+	group := taskbar_preview_group
+	if group.count == 0 {
+		return
+	}
+	height := taskbar_preview_height(group.count)
+	left := clamp(group.x, 0, max(0, desktop_width - TASKBAR_PREVIEW_WIDTH))
 	y := taskbar_preview_top(height)
 	taskbar_preview_area = {left, y, TASKBAR_PREVIEW_WIDTH, height}
 	interface.draw_vertical_gradient(table, left, y, TASKBAR_PREVIEW_WIDTH, height, graphics.colors.card_top, graphics.colors.card_bottom)
 	interface.draw_outline(table, left, y, TASKBAR_PREVIEW_WIDTH, height, 1, graphics.colors.title)
 	interface.draw_rectangle(table, left + 1, y + 1, TASKBAR_PREVIEW_WIDTH - 2, 1, graphics.shade(graphics.colors.card_top, 135))
-	interface.draw_text(table, left + 10, y + 5, title, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+	bar.icon_records(table, left + 8, y + 5, bar.icon_of(group.name), graphics.colors.text, graphics.colors.title)
+	interface.draw_text(table, left + 8 + bar.ICON_SIZE + 6, y + 5, group.title, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
 	interface.draw_rectangle(table, left + 1, y + TASKBAR_PREVIEW_TITLE - 1, TASKBAR_PREVIEW_WIDTH - 2, 1, graphics.colors.track)
 	row := 0
 	for position in 0 ..< order_count {
 		client := &clients[order[position]]
-		if !client.created || system.name_of(client.title[:]) != name {
+		if !client.created || system.name_of(client.title[:]) != group.name {
 			continue
 		}
 		line_y := y + TASKBAR_PREVIEW_TITLE + row * TASKBAR_PREVIEW_LINE
@@ -379,7 +392,7 @@ taskbar_preview_records :: proc "contextless" (table: ^interface.Draw_Table, x: 
 		state := client.minimized ? "minimized" : (in_front ? "active" : "open")
 		color := client.minimized ? graphics.colors.dim : (in_front ? graphics.colors.text_strong : graphics.colors.text)
 		if in_front {
-			interface.draw_rectangle(table, left + 10, line_y + 7, 6, 6, graphics.colors.title)
+			interface.draw_rectangle(table, left + 10, line_y + 3, 2, TASKBAR_PREVIEW_LINE - 6, graphics.colors.title)
 		}
 		interface.draw_text(table, left + 24, line_y + 2, state, color, interface.FONT_INTERFACE)
 		row += 1
@@ -393,11 +406,8 @@ taskbar_preview_records :: proc "contextless" (table: ^interface.Draw_Table, x: 
 // new one.
 desktop_taskbar_pointer_move :: proc "contextless" (x, y: int) {
 	slot := -1
-	if desktop_features_ready && menu_open == .None && bar.inside_bar(bar_layout, y) && x >= TASKBAR_PILL_START_X {
-		offset := x - TASKBAR_PILL_START_X
-		if offset % (TASKBAR_PILL_WIDTH + TASKBAR_PILL_GAP) < TASKBAR_PILL_WIDTH {
-			slot = offset / (TASKBAR_PILL_WIDTH + TASKBAR_PILL_GAP)
-		}
+	if desktop_features_ready && menu_open == .None {
+		slot = bar.plate_at(bar_layout, taskbar_plates_right, x, y)
 	}
 	if slot == taskbar_hover_slot {
 		return
@@ -409,141 +419,176 @@ desktop_taskbar_pointer_move :: proc "contextless" (x, y: int) {
 	}
 	if slot >= 0 {
 		height := taskbar_preview_height(order_count)
-		left := clamp(TASKBAR_PILL_START_X + slot * (TASKBAR_PILL_WIDTH + TASKBAR_PILL_GAP), 0, max(0, desktop_width - TASKBAR_PREVIEW_WIDTH))
+		plate_x, _, _, _ := bar.plate(bar_layout, slot)
+		left := clamp(plate_x, 0, max(0, desktop_width - TASKBAR_PREVIEW_WIDTH))
 		damage_add(left, taskbar_preview_top(height), TASKBAR_PREVIEW_WIDTH, height)
 	}
 }
 
-// desktop_taskbar_and_tray_records draws live taskbar window pills (highlighting
-// focused windows, dimming minimized ones, showing module window counts when
-// grouped) and system tray badges directly inside the top bar.
-desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_Table) {
+// taskbar_group_first reports whether the window at a position of the order
+// is the first of its name: the plate of a group stands for it.
+taskbar_group_first :: proc "contextless" (position: int) -> bool {
+	client := &clients[order[position]]
+	if !client.created {
+		return false
+	}
+	name := system.name_of(client.title[:])
+	for earlier in 0 ..< position {
+		if clients[order[earlier]].created && system.name_of(clients[order[earlier]].title[:]) == name {
+			return false
+		}
+	}
+	return true
+}
+
+// tray_icon_of gives the icon of a pill of the tray. ok is false for a pill
+// that shows its label only.
+tray_icon_of :: proc "contextless" (kind: desktop_shell.Tray_Icon_Kind) -> (icon: bar.Icon, ok: bool) {
+	switch kind {
+	case .Network:
+		return .Network, true
+	case .Sound:
+		return .Sound, true
+	case .Capture:
+		return .Capture, true
+	case .Wide_Grant:
+		return .Grant, true
+	case .Locale:
+		return .Window, false
+	}
+	return .Window, false
+}
+
+// desktop_taskbar_and_tray_records draws the pills of the tray from right
+// to the left, then the plates of the groups of windows from the divider
+// to the tray: one plate for each name, with its icon, its name, the count
+// of its windows when there are several, and the accent of the group of the
+// window in front.
+desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_Table, right: int) {
+	taskbar_preview_area = {}
+	taskbar_preview_group = {}
 	if !desktop_features_ready {
+		taskbar_plates_right = 0
 		return
 	}
-	// 1. Kernel-theme taskbar window plates after a crisp vertical hairline divider.
-	taskbar_preview_area = {}
 	bar_top := desktop_bar_y()
-	interface.draw_rectangle(table, TASKBAR_PILL_START_X - 10, bar_top + 6, 1, BAR_HEIGHT - 12, graphics.colors.track)
-	max_right := max(TASKBAR_PILL_START_X, desktop_width - CLOCK_WIDTH - 240)
-	px := TASKBAR_PILL_START_X
-	for position in 0 ..< order_count {
-		if px + TASKBAR_PILL_WIDTH > max_right {
-			break
-		}
-		idx := order[position]
-		client := &clients[idx]
-		if !client.created {
+	// 1. The tray: a pill keeps the room of one plate at least.
+	tray_x := right
+	for &entry in desktop_tray.entries {
+		if !entry.active {
 			continue
 		}
+		label := string(entry.label[:entry.len])
+		icon, has_icon := tray_icon_of(entry.kind)
+		content := label != "" ? interface.text_measured_width(table, interface.FONT_INTERFACE, label) : 0
+		if has_icon {
+			content += bar.ICON_SIZE + (label != "" ? 4 : 0)
+		}
+		pill_width := content + 2 * bar.PADDING
+		if tray_x - pill_width < bar.PLATES_X + bar.PLATE_WIDTH + TASKBAR_TRAY_GAP {
+			break
+		}
+		tray_x -= pill_width
+		pill_y := bar_top + bar.TRAY_Y
+		foreground := graphics.colors.text
+		if entry.alert {
+			interface.draw_vertical_gradient(table, tray_x, pill_y, pill_width, bar.TRAY_HEIGHT, graphics.shade(graphics.colors.stop_process, 115), graphics.shade(graphics.colors.stop_process, 85))
+			interface.draw_rectangle(table, tray_x, pill_y, pill_width, 1, graphics.shade(graphics.colors.stop_process, 140))
+			foreground = graphics.COLOR_WHITE
+		}
+		content_x := tray_x + bar.PADDING
+		if has_icon {
+			bar.icon_records(table, content_x, pill_y + (bar.TRAY_HEIGHT - bar.ICON_SIZE) / 2, icon, foreground, entry.alert ? graphics.COLOR_WHITE : graphics.colors.title)
+			content_x += bar.ICON_SIZE + 4
+		}
+		if label != "" {
+			interface.draw_text(table, content_x, pill_y + (bar.TRAY_HEIGHT - graphics.CELL_HEIGHT) / 2, label, foreground, interface.FONT_INTERFACE)
+		}
+		tray_x -= TRAY_BADGE_GAP
+	}
+	taskbar_plates_right = tray_x - TASKBAR_TRAY_GAP
+	// 2. The plates of the groups of windows.
+	slot := 0
+	for position in 0 ..< order_count {
+		if !taskbar_group_first(position) {
+			continue
+		}
+		x, y, width, height := bar.plate(bar_layout, slot)
+		if x + width > taskbar_plates_right {
+			break
+		}
+		client := &clients[order[position]]
 		name := system.name_of(client.title[:])
-		// Deduplicate by title so multiple windows of the same module group cleanly into one pill.
-		already := false
 		same_count := 0
 		any_focus := false
 		all_minimized := true
-		for p2 in 0 ..< order_count {
-			c2 := &clients[order[p2]]
-			if !c2.created || system.name_of(c2.title[:]) != name {
+		for other in position ..< order_count {
+			other_client := &clients[order[other]]
+			if !other_client.created || system.name_of(other_client.title[:]) != name {
 				continue
 			}
-			if p2 < position {
-				already = true
-				break
-			}
 			same_count += 1
-			if p2 == order_count - 1 && !c2.minimized {
+			if other == order_count - 1 && !other_client.minimized {
 				any_focus = true
 			}
-			if !c2.minimized {
+			if !other_client.minimized {
 				all_minimized = false
 			}
 		}
-		if already {
-			continue
-		}
-		by := desktop_bar_y()
-		hovered := inside(pointer_x, pointer_y, px, by, TASKBAR_PILL_WIDTH, BAR_HEIGHT) && menu_open == .None
-		pill_fg := any_focus ? graphics.COLOR_WHITE : (all_minimized ? graphics.colors.dim : graphics.colors.text)
+		hovered := slot == taskbar_hover_slot && menu_open == .None
+		foreground := any_focus ? graphics.COLOR_WHITE : (all_minimized ? graphics.colors.dim : graphics.colors.text)
 		if any_focus {
-			// Focused window plate: beveled steel gradient, 1px specular top highlight, crisp 2px bottom accent line.
-			interface.draw_vertical_gradient(table, px, by + 2, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 4, graphics.shade(graphics.colors.card_top, 135), graphics.shade(graphics.colors.card_bottom, 120))
-			interface.draw_outline(table, px, by + 2, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 4, 1, graphics.shade(graphics.colors.track, 130))
-			interface.draw_rectangle(table, px + 1, by + 3, TASKBAR_PILL_WIDTH - 2, 1, graphics.shade(graphics.colors.card_top, 155))
-			interface.draw_rectangle(table, px + 1, by + BAR_HEIGHT - 4, TASKBAR_PILL_WIDTH - 2, 2, graphics.colors.title)
+			// The group of the window in front: a raised steel plate, a line
+			// of light under its top edge, and an accent of 2 pixels at its foot.
+			interface.draw_vertical_gradient(table, x, y, width, height, graphics.shade(graphics.colors.card_top, 135), graphics.shade(graphics.colors.card_bottom, 120))
+			interface.draw_outline(table, x, y, width, height, 1, graphics.shade(graphics.colors.track, 130))
+			interface.draw_rectangle(table, x + 1, y + 1, width - 2, 1, graphics.shade(graphics.colors.card_top, 155))
+			interface.draw_rectangle(table, x + 1, y + height - 3, width - 2, 2, graphics.colors.title)
 		} else if !all_minimized || hovered {
-			// Open/hovered inactive plate: quiet recessed steel plate with hairline border.
-			top_c := hovered ? graphics.shade(graphics.colors.card_top, 120) : graphics.colors.card_top
-			bot_c := hovered ? graphics.shade(graphics.colors.card_bottom, 110) : graphics.colors.card_bottom
-			interface.draw_vertical_gradient(table, px, by + 2, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 4, top_c, bot_c)
-			interface.draw_outline(table, px, by + 2, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 4, 1, graphics.colors.track)
+			// An open group, or one under the pointer: a quiet plate.
+			top_color := hovered ? graphics.shade(graphics.colors.card_top, 120) : graphics.colors.card_top
+			bottom_color := hovered ? graphics.shade(graphics.colors.card_bottom, 110) : graphics.colors.card_bottom
+			interface.draw_vertical_gradient(table, x, y, width, height, top_color, bottom_color)
+			interface.draw_outline(table, x, y, width, height, 1, graphics.colors.track)
 		} else {
-			// Minimized window: quiet flat slot with subtle bottom tick.
-			interface.draw_rectangle(table, px + 10, by + BAR_HEIGHT - 4, TASKBAR_PILL_WIDTH - 20, 1, graphics.colors.dim)
+			// A group of minimized windows: no plate, a quiet line at its foot.
+			interface.draw_rectangle(table, x + 10, y + height - 2, width - 20, 1, graphics.colors.dim)
 		}
-		label_room := same_count > 1 ? TASKBAR_PILL_WIDTH - 28 : TASKBAR_PILL_WIDTH - 16
-		fit := interface.text_fit(table, interface.FONT_INTERFACE, name, label_room)
-		interface.draw_text(table, px + 10, by + 8, fit, pill_fg, interface.FONT_INTERFACE)
+		bar.icon_records(table, x + bar.PADDING, y + (height - bar.ICON_SIZE) / 2, client.icon, foreground, any_focus ? graphics.shade(graphics.colors.title, 160) : graphics.colors.title)
+		text_x := x + bar.PADDING + bar.ICON_SIZE + 6
+		count_room := same_count > 1 ? 16 : 0
+		fit := interface.text_fit(table, interface.FONT_INTERFACE, name, x + width - bar.PADDING - count_room - text_x)
+		interface.draw_text(table, text_x, y + (height - graphics.CELL_HEIGHT) / 2, fit, foreground, interface.FONT_INTERFACE)
 		if same_count > 1 {
-			// Stacked-window visual edge on right side + quiet numeric count.
-			interface.draw_rectangle(table, px + TASKBAR_PILL_WIDTH - 3, by + 5, 1, BAR_HEIGHT - 10, graphics.colors.dim)
+			// A stack of windows: an edge at the right of the plate, and the count.
+			interface.draw_rectangle(table, x + width - 3, y + 4, 1, height - 8, graphics.colors.dim)
 			digit := u8('0' + min(same_count, 9))
-			interface.draw_character(table, px + TASKBAR_PILL_WIDTH - 14, by + 8, digit, graphics.colors.dim)
+			interface.draw_character(table, x + width - 15, y + (height - graphics.CELL_HEIGHT) / 2, digit, graphics.colors.dim)
 		}
 		if hovered {
-			taskbar_preview_records(table, px, fit, name, same_count)
+			taskbar_preview_group = {x = x, title = fit, name = name, count = same_count}
 		}
-		px += TASKBAR_PILL_WIDTH + TASKBAR_PILL_GAP
-	}
-
-	// 2. System tray icon pills (to the left of the palette hint).
-	tray_x := desktop_width - CLOCK_WIDTH - 230
-	for &e in desktop_tray.entries {
-		if !e.active || tray_x < px + 12 {
-			continue
-		}
-		tray_x -= TRAY_BADGE_WIDTH + TRAY_BADGE_GAP
-		bg := e.alert ? graphics.colors.stop_process : graphics.colors.track
-		fg := e.alert ? graphics.COLOR_WHITE : graphics.colors.text
-		by := desktop_bar_y()
-		if e.alert {
-			interface.draw_vertical_gradient(table, tray_x, by + 4, TRAY_BADGE_WIDTH, BAR_HEIGHT - 8, graphics.shade(bg, 115), graphics.shade(bg, 85))
-		} else {
-			interface.draw_outline(table, tray_x, by + 4, TRAY_BADGE_WIDTH, BAR_HEIGHT - 8, 1, graphics.colors.track)
-		}
-		interface.draw_text(table, tray_x + 8, by + 8, string(e.label[:e.len]), fg, interface.FONT_INTERFACE)
+		slot += 1
 	}
 }
 
-// desktop_taskbar_press restores or raises a window group when clicking its pill in the bar.
+// desktop_taskbar_press restores or raises the group of a plate of the bar.
 desktop_taskbar_press :: proc "contextless" (click_x, click_y: int) -> bool {
-	if !desktop_features_ready || !bar.inside_bar(bar_layout, click_y) || click_x < TASKBAR_PILL_START_X {
+	if !desktop_features_ready {
 		return false
 	}
-	max_right := max(TASKBAR_PILL_START_X, desktop_width - CLOCK_WIDTH - 240)
-	px := TASKBAR_PILL_START_X
+	wanted := bar.plate_at(bar_layout, taskbar_plates_right, click_x, click_y)
+	if wanted < 0 {
+		return false
+	}
+	slot := 0
 	for position in 0 ..< order_count {
-		if px + TASKBAR_PILL_WIDTH > max_right {
-			break
-		}
-		idx := order[position]
-		client := &clients[idx]
-		if !client.created {
+		if !taskbar_group_first(position) {
 			continue
 		}
-		name := system.name_of(client.title[:])
-		already := false
-		for p2 in 0 ..< position {
-			if clients[order[p2]].created && system.name_of(clients[order[p2]].title[:]) == name {
-				already = true
-				break
-			}
-		}
-		if already {
-			continue
-		}
-		if click_x >= px && click_x < px + TASKBAR_PILL_WIDTH {
-			// Restore any minimized window of this group or raise it to the front.
+		if slot == wanted {
+			// Restore a minimized window of this group, and raise it to the front.
+			client := &clients[order[position]]
 			if client.minimized {
 				client.minimized = false
 			}
@@ -551,7 +596,7 @@ desktop_taskbar_press :: proc "contextless" (click_x, click_y: int) -> bool {
 			damage_whole_screen()
 			return true
 		}
-		px += TASKBAR_PILL_WIDTH + TASKBAR_PILL_GAP
+		slot += 1
 	}
 	return false
 }

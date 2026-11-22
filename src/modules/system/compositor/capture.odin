@@ -382,10 +382,10 @@ capture_after_draw :: proc "contextless" (areas: []Rectangle) {
 }
 
 // capture_mark_records appends the mark of a viewer to the bar while the
-// capture face is open, in the room between the menu of the windows and
-// the hint of the palette, which ends at right. The text that fits goes:
-// each key and its input, then the count of the viewers, then the mark
-// alone; no text is cut.
+// capture face is open, at the right of the tray, which ends 16 pixels
+// before right. The text that fits in the room after the first plate of the
+// windows goes: each key and its input, then the count of the viewers, then
+// the mark alone; no text is cut.
 capture_mark_records :: proc "contextless" (table: ^interface.Draw_Table, right: int) {
 	if capture.client < 0 {
 		capture_mark_drawn = false
@@ -414,20 +414,20 @@ capture_mark_records :: proc "contextless" (table: ^interface.Draw_Table, right:
 			continue
 		}
 		x := right - 16 - width
-		y := desktop_bar_y() + bar.BUTTON_Y
-		capture_mark_x, capture_mark_y, capture_mark_width, capture_mark_height = x, y, width, bar.BUTTON_HEIGHT
+		y := desktop_bar_y() + bar.TRAY_Y
+		capture_mark_x, capture_mark_y, capture_mark_width, capture_mark_height = x, y, width, bar.TRAY_HEIGHT
 		capture_mark_drawn = true
 		if capture_viewer_popover.open {
-			interface.draw_rectangle(table, x, y, width, bar.BUTTON_HEIGHT, graphics.colors.chosen)
+			interface.draw_rectangle(table, x, y, width, bar.TRAY_HEIGHT, graphics.colors.chosen)
 		}
-		interface.draw_outline(table, x, y, width, bar.BUTTON_HEIGHT, 2, graphics.colors.warning)
-		interface.draw_text(table, x + bar.PADDING, y + (bar.BUTTON_HEIGHT - graphics.CELL_HEIGHT) / 2, text, capture_viewer_popover.open ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
+		interface.draw_outline(table, x, y, width, bar.TRAY_HEIGHT, 2, graphics.colors.warning)
+		interface.draw_text(table, x + bar.PADDING, y + (bar.TRAY_HEIGHT - graphics.CELL_HEIGHT) / 2, text, capture_viewer_popover.open ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
 		return
 	}
-	// The square alone: screen_build gives it the room of the hint of the
-	// palette when it has no other, so the mark is always drawn.
+	// The square alone: it needs no room of its own, so the mark is always
+	// drawn.
 	x := right - 16 - CAPTURE_MARK_SQUARE
-	y := desktop_bar_y() + bar.BUTTON_Y + (bar.BUTTON_HEIGHT - CAPTURE_MARK_SQUARE) / 2
+	y := desktop_bar_y() + bar.TRAY_Y + (bar.TRAY_HEIGHT - CAPTURE_MARK_SQUARE) / 2
 	capture_mark_x, capture_mark_y, capture_mark_width, capture_mark_height = x, y, CAPTURE_MARK_SQUARE, CAPTURE_MARK_SQUARE
 	capture_mark_drawn = true
 	interface.draw_rectangle(table, x, y, CAPTURE_MARK_SQUARE, CAPTURE_MARK_SQUARE, graphics.colors.warning)
@@ -436,11 +436,11 @@ capture_mark_records :: proc "contextless" (table: ^interface.Draw_Table, right:
 // The mark of a viewer with no text.
 CAPTURE_MARK_SQUARE :: 16
 
-// capture_mark_room gives the room of the mark between the menu of the
-// windows and an element of the bar that starts at right.
+// capture_mark_room gives the room of the mark between the first plate of
+// the windows and an element of the bar that starts at right: the plates
+// give way to the mark.
 capture_mark_room :: proc "contextless" (right: int) -> int {
-	windows_x, _, windows_width, _ := bar.windows_button(bar_layout)
-	return right - 16 - (windows_x + windows_width + 16)
+	return right - 16 - (bar.PLATES_X + bar.PLATE_WIDTH + 16)
 }
 
 // capture_mark_contains reports whether (x, y) lies inside the visible viewer
@@ -536,6 +536,7 @@ capture_popover_press :: proc "contextless" (x, y: int) -> bool {
 		if menu_open != .None {
 			menu_open = .None
 			menu_line = -1
+			menu_action = .None
 			damage_menu()
 		}
 		if bar.viewer_popover_mark_click(&capture_viewer_popover).kind == .Opened {

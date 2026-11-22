@@ -1002,6 +1002,7 @@ palette_act :: proc "contextless" (action: palette.Action, key: palette.Key, cha
 		if menu_open != .None {
 			menu_open = .None
 			menu_line = -1
+			menu_action = .None
 			damage_menu()
 		}
 		palette.panel_open(panel)

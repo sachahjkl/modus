@@ -480,7 +480,7 @@ the_other_facts_of_the_compositor_write_the_lines_of_before :: proc(t: ^testing.
 		for capture_end in capture_ends {
 			facts_expect_line(t, render(t, file, "Capture_Face_Ended", {{"pictures", count}, {"viewer_keys", other}, {"viewer_pointer_records", count}, {"refused", other}, {"capture_end", capture_end}}), line_of_before("compositor: the capture face ended (", capture_end, ") after ", count, " pictures, ", other, " keys and ", count, " pointer records of viewers, ", other, " refused commands"))
 		}
-		facts_expect_line(t, render(t, file, "Bar_In_Interface_Font", {{"start_width", count}, {"windows_width", other}, {"name_width", count}}), line_of_before("compositor: the bar is in the interface font: start ", count, " pixels, windows ", other, ", the widest name ", count))
+		facts_expect_line(t, render(t, file, "Bar_In_Interface_Font", {{"name_width", count}}), line_of_before("compositor: the bar is in the interface font: the widest name ", count, " pixels"))
 		facts_expect_line(t, render(t, file, "Screen_Past_Budget", {{"width", count}, {"height", other}, {"needed_pages", count}, {"budget_pages", other}}), line_of_before("compositor: a screen of ", count, "x", other, " needs ", count, " pages, the budget holds ", other))
 		facts_expect_line(t, render(t, file, "Compositor_Ready", {{"width", count}, {"height", other}}), line_of_before("compositor: ok ", count, "x", other))
 		facts_expect_line(t, render(t, file, "Left_Button_Pressed", {{"x", count}, {"y", other}}), line_of_before("compositor: a press of the left button at ", count, ",", other))

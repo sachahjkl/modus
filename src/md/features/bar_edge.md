@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The principal chooses the edge of the screen that holds the bar of the desktop: the top, or the bottom (`desktop_shell.Bar_Position`, through the export `bar_position` of the compositor or the right-click menu of the desktop). The whole bar moves: its surface, the mark, the buttons `start` and `windows`, the hint of the palette, the clock, the mark of a viewer, the plates of the windows and the badges of the tray. Each menu and each popover that the bar opens opens away from the edge: down from a bar at the top, up from a bar at the bottom.
+The principal chooses the edge of the screen that holds the bar of the desktop: the top, or the bottom (`desktop_shell.Bar_Position`, through the export `bar_position` of the compositor or the right-click menu of the desktop). The whole bar moves: its surface, the heron button, the button of the windows, the window plates, the tray with the mark of a viewer, and the clock. The look of each part is in [desktop_shell_look.md](desktop_shell_look.md). Each menu and each popover that the bar opens opens away from the edge: down from a bar at the top, up from a bar at the bottom.
 
 ## Constraints
 
@@ -12,11 +12,11 @@ The principal chooses the edge of the screen that holds the bar of the desktop: 
 
 ## The chosen form
 
-**The edge is a field of the layout of the bar.** `bar.Layout` holds the measured widths of the texts, and also the edge (`bar.Edge`: `Top` or `Bottom`) and the logical height of the screen. The zero value of the layout is a bar at the top, so a reader that knows only the widths (the modus tool) gets the places of a bar at the top. Every place of the package (`button`, `menu`, `line`, `windows_menu`, `windows_line`, `mark_y`) comes from `top(layout)` and `menu_top(layout, height)`. The compositor sets the edge at one place (`bar_place_update`), when the setting or the size of the screen changes, and damages the old and the new places.
+**The edge is a field of the layout of the bar.** `bar.Layout` holds the measured width of the widest name of the start menu, and also the edge (`bar.Edge`: `Top` or `Bottom`) and the logical height of the screen. The zero value of the layout is a bar at the top, so a reader that knows only the widths (the modus tool) gets the places of a bar at the top. Every place of the package (`button`, `menu`, `line`, `action_line`, `windows_button`, `windows_menu`, `windows_line`, `plate`, `mark_y`) comes from `top(layout)` and `menu_top(layout, height)`. The compositor sets the edge at one place (`bar_layout_update`), when the setting or the size of the screen changes, and damages the old and the new places.
 
 **The setting and the place are two types.** `desktop_shell.Bar_Position` is the setting of the contract, with four members. `bar.Edge` is the place that the compositor draws, with two. A bar on the left or on the right is not drawn yet: the compositor draws it at the top.
 
-**A menu opens away from the edge.** `menu_top` gives `HEIGHT` under a bar at the top, and `top - height` over a bar at the bottom, never above the screen. The start menu keeps its order of names in both. The menu of the windows over a bar at the bottom puts its first line next to the bar and the next ones above it: a line then has its place with no count of the windows, as under a bar at the top, so `windows_line` and `windows_line_center` keep their arguments.
+**A menu opens away from the edge.** `menu_top` gives `HEIGHT` under a bar at the top, and `top - height` over a bar at the bottom, never above the screen. The start menu keeps its two panes and its order of names in both. The menu of the windows over a bar at the bottom puts its first line next to the bar and the next ones above it: a line then has its place with no count of the windows, as under a bar at the top, so `windows_line` and `windows_line_center` keep their arguments.
 
 **The viewer popover of the remote display is moved, not laid out again.** Its package gives its places under a bar at the top; the compositor moves the card up by one vertical shift when the bar is at the bottom, and moves the point of a press down by the same shift before the test.
 
