@@ -2406,48 +2406,78 @@ scenario := [?]Step {
 	// The grant palette was revoked before: the column has its width.
 	{kind = .Wait, text = "[console] console  store    lost"},
 	{kind = .Shot, text = "storage"},
-	// Versions: notes commits each key, and the storage service
-	// keeps the state before each commit. The scenario steps back through the
-	// versions of the note and restores one; nothing is lost.
+	// The notes: each note is one object of the store of notes, and a
+	// change is one commit when the keys pause or another note is shown: one
+	// version for a line typed, not one for each key. The scenario waits for
+	// the fact of each commit, never for a count of versions: a slow host
+	// can split a line in two commits.
 	{kind = .Launch, text = "notes"},
-	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
+	{kind = .Wait, text = "notes: a new store: no note", any_order = true},
 	{kind = .Wait, text = "compositor: surface notes"},
-	{kind = .Type, text = "versions"},
-	// The 13 lines of the console from the base each committed the history
-	// (the base and 14 at the last one); the 8 keys of the note are the
-	// commits 15 to 22.
-	{kind = .Wait, text = "notes: the note is \"versions\", generation {generation+22}, 7 versions; one commit of the note: "},
-	{kind = .Key, text = "up"},
-	{kind = .Wait, text = "notes: the version 7 of 8, generation {generation+21}, 20"}, // A version has the date of its commit.
-	{kind = .Wait, text = ": \"version\""},
-	{kind = .Key, text = "up"},
-	{kind = .Wait, text = "notes: the version 6 of 8, generation {generation+20}, "},
-	{kind = .Wait, text = ": \"versio\""},
+	{kind = .Wait, text = "notes: ok, the first picture is presented"},
+	{kind = .Keys, text = "versions"},
+	{kind = .Wait, text = "notes: the note is \"versions\", 8 bytes, generation "},
+	// Enter starts a second line: the title stays the first line. The
+	// commit of the whole text is the base of the generations: no other
+	// process commits until the restore below.
+	{kind = .Key, text = "ret"},
+	{kind = .Keys, text = "a second line"},
+	{kind = .Generation, text = "notes: the note is \"versions\", 22 bytes, generation "},
+	{kind = .Shot, text = "notes"},
+	// The pane of the versions: the newest first; Down shows the one
+	// before it, and Enter restores it in a new commit.
+	{kind = .Key, text = "ctrl-h"},
+	{kind = .Wait, text = "notes: the version 1 of "},
+	{kind = .Key, text = "down"},
+	{kind = .Wait, text = "notes: the version 2 of "},
+	{kind = .Wait, text = ": \"versions\""},
 	{kind = .Shot, text = "notes_versions"},
 	{kind = .Key, text = "ret"},
-	{kind = .Wait, text = "notes: restored the version of generation {generation+20}: \"versio\", in the commit of generation {generation+23} in "},
+	{kind = .Wait, text = "notes: restored the version of generation "},
+	{kind = .Wait, text = "\", in the commit of generation {generation+1}"},
 	// The exports of the versions, from the host: the remote service acts
 	// for the principal, so it names the store of notes.
 	// A place on the store of notes: the first place of the service, 1.
 	{kind = .Call, text = "storage.open_store(\"notes\")", expected = "1"},
-	{kind = .Call, text = "storage.versions(1, \"note\")", expected = "9 rows of Version"},
+	{kind = .Call, text = "storage.versions(1, \"note_000001\")", expected = " rows of Version"},
 	// The date of the machine, from the host, some minutes after its start:
 	// it advanced with the host.
 	{kind = .Call, text = "date.now()", expected = "Date{milliseconds = ", date_after = "milliseconds = "},
-	{kind = .Call, text = "storage.version(1, \"note\", {generation+18})", expected = "vers"},
-	{kind = .Call, text = "storage.compare(1, \"note\", {generation+17}, {generation+22})", expected = "1 rows of Byte_Range"},
+	{kind = .Call, text = "storage.version(1, \"note_000001\", {generation})", expected = "a second line"},
+	{kind = .Call, text = "storage.compare(1, \"note_000001\", {generation}, {generation+1})", expected = "1 rows of Byte_Range"},
 	// The generation 1 is the format of the disk: no object has it.
-	{kind = .Call, text = "storage.version(1, \"note\", 1)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 1 (-9)"},
-	{kind = .Call, text = "storage.restore(1, \"note\", {generation+22})", expected = "{generation+24}"},
-	{kind = .Call, text = "storage.clone(1, \"note\", \"copy\")", expected = "{generation+25}"},
+	{kind = .Call, text = "storage.version(1, \"note_000001\", 1)", outcome = .Failed, expected = "error: storage.version: the argument generation: the object has no version of the generation 1 (-9)"},
+	{kind = .Call, text = "storage.restore(1, \"note_000001\", {generation})", expected = "{generation+2}"},
+	{kind = .Call, text = "storage.clone(1, \"note_000001\", \"copy\")", expected = "{generation+3}"},
+	// A second note, and the first again.
+	{kind = .Key, text = "ctrl-n"},
+	{kind = .Wait, text = "notes: a new note; 2 notes"},
+	{kind = .Keys, text = "groceries"},
+	{kind = .Wait, text = "notes: the note is \"groceries\", 9 bytes, generation "},
+	{kind = .Key, text = "ctrl-pgup"},
+	{kind = .Wait, text = "notes: the note \"versions\" is shown"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "storage.stores()"},
 	// The answer of stores() has one line for each store: with the store
 	// of the line history, more than 256 bytes. The console prints a
 	// result whole, at any length.
 	{kind = .Wait, text = "[console] console.history: 1 objects, ", any_order = true},
-	{kind = .Wait, text = "[console] notes: 2 objects, 0 trees, 9 versions, "},
+	{kind = .Wait, text = "[console] notes: 3 objects, 0 trees, "},
 	{kind = .Shot, text = "storage_versions"},
+	// Alt+Tab: the window used before the console is notes; the release of
+	// Alt brings it to the front, and a second Alt+Tab the console again.
+	{kind = .Key, text = "alt-tab"},
+	{kind = .Wait, text = "compositor: the window switcher lists "},
+	{kind = .Wait, text = "compositor: the window switcher brought notes to the front"},
+	{kind = .Key, text = "alt-tab"},
+	{kind = .Wait, text = "compositor: the window switcher brought console to the front"},
+	// The plates of the bar keep the order of opening: the first is the
+	// console. A press on the plate of the window in front minimizes it, a
+	// second press restores it.
+	{kind = .Click, text = BAR_FIRST_PLATE},
+	{kind = .Wait, text = "compositor: the plate of console minimized it"},
+	{kind = .Click, text = BAR_FIRST_PLATE},
+	{kind = .Wait, text = "compositor: the plate of console restored it"},
 	// A result of 324 bytes on one line: before, the console cut it at 256
 	// bytes in the terminal and at 192 bytes in the log, with no sign.
 	{kind = .Type, text = "repeat(\"0123456789\", 30) + \"the end of a long result\""},

@@ -534,6 +534,7 @@ KEY_SUPER :: KEY_EXTENDED | 0x5B // The left key with the logo. The compositor k
 
 MODIFIER_SHIFT :: 1 // The bit of `Event.modifiers` set while a Shift key is down.
 MODIFIER_CONTROL :: 2 // The bit set while a Control key is down.
+MODIFIER_ALT :: 4 // The bit set while the left Alt key is down. The right Alt key is AltGr: it changes the character, and sets no bit.
 
 BUTTON_LEFT :: 1 // The bit of `Event.buttons` set while the left button is down.
 BUTTON_RIGHT :: 2 // The bit set while the right button is down.

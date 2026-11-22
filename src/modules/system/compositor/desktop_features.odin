@@ -36,6 +36,10 @@ Desktop_Context_Action :: enum u32 {
 	Snap_Left   = 8,
 	Snap_Right  = 9,
 	Maximize    = 10,
+	// The menu of a plate of the bar: the acts on its window.
+	Window_Front    = 11,
+	Window_Minimize = 12,
+	Window_Close    = 13,
 }
 
 desktop_workspaces: desktop_layout.Workspace_Manager
@@ -317,6 +321,24 @@ desktop_context_action :: proc "contextless" (act_id: u32) {
 			_ = desktop_snap_front_window(.Right_Half)
 		case .Maximize:
 			_ = desktop_snap_front_window(.Maximized)
+		case .Window_Front:
+			if index, window_there := taskbar_menu_window_take(); window_there {
+				clients[index].minimized = false
+				for position in 0 ..< order_count {
+					if order[position] == index {
+						raise(position)
+						break
+					}
+				}
+			}
+		case .Window_Minimize:
+			if index, window_there := taskbar_menu_window_take(); window_there {
+				window_minimize(index)
+			}
+		case .Window_Close:
+			if index, window_there := taskbar_menu_window_take(); window_there {
+				system.send(&control.completions, ring.Record{kind = u32(display.Control.Stop), values = {0 = u64(clients[index].ring_memory)}})
+			}
 		}
 		damage_whole_screen()
 	}
@@ -390,13 +412,13 @@ desktop_taskbar_preview_records :: proc "contextless" (table: ^interface.Draw_Ta
 	interface.draw_text(table, left + 8 + bar.ICON_SIZE + 6, y + 5, group.title, graphics.colors.text_strong, interface.FONT_INTERFACE)
 	interface.draw_rectangle(table, left + 1, y + TASKBAR_PREVIEW_TITLE - 1, TASKBAR_PREVIEW_WIDTH - 2, 1, graphics.colors.track)
 	row := 0
-	for position in 0 ..< order_count {
-		client := &clients[order[position]]
+	for position in 0 ..< opened_count {
+		client := &clients[opened[position]]
 		if !client.created || system.name_of(client.title[:]) != group.name {
 			continue
 		}
 		line_y := y + TASKBAR_PREVIEW_TITLE + row * TASKBAR_PREVIEW_LINE
-		in_front := position == order_count - 1 && !client.minimized
+		in_front := window_in_front(opened[position])
 		state := client.minimized ? "minimized" : (in_front ? (client.maximized ? "active, maximized" : "active") : (client.maximized ? "maximized" : "open"))
 		color := client.minimized ? graphics.colors.dim : (in_front ? graphics.colors.text_strong : graphics.colors.text)
 		if in_front {
@@ -433,20 +455,95 @@ desktop_taskbar_pointer_move :: proc "contextless" (x, y: int) {
 	}
 }
 
-// taskbar_group_first reports whether the window at a position of the order
-// is the first of its name: the plate of a group stands for it.
+// taskbar_group_first reports whether the window at a position of the
+// order of opening is the first of its name: the plate of a group stands
+// for it, at the place of the first window of the group that opened.
 taskbar_group_first :: proc "contextless" (position: int) -> bool {
-	client := &clients[order[position]]
+	client := &clients[opened[position]]
 	if !client.created {
 		return false
 	}
 	name := system.name_of(client.title[:])
 	for earlier in 0 ..< position {
-		if clients[order[earlier]].created && system.name_of(clients[order[earlier]].title[:]) == name {
+		if clients[opened[earlier]].created && system.name_of(clients[opened[earlier]].title[:]) == name {
 			return false
 		}
 	}
 	return true
+}
+
+// taskbar_group_last_used gives the position in order of the window of a
+// name used last: among the windows shown, or among the minimized ones;
+// -1 when the group has none of them.
+taskbar_group_last_used :: proc "contextless" (name: string, minimized: bool) -> int {
+	for position := order_count - 1; position >= 0; position -= 1 {
+		client := &clients[order[position]]
+		if client.created && client.minimized == minimized && system.name_of(client.title[:]) == name {
+			return position
+		}
+	}
+	return -1
+}
+
+// window_in_front reports whether a client is the window in front and is
+// shown: the one that receives the keys.
+window_in_front :: proc "contextless" (index: int) -> bool {
+	return order_count > 0 && order[order_count - 1] == index && !clients[index].minimized
+}
+
+// window_minimize minimizes a window and moves it to the back, so the
+// keys go to the window that is in front after it.
+window_minimize :: proc "contextless" (index: int) {
+	clients[index].minimized = true
+	for position in 0 ..< order_count {
+		if order[position] == index {
+			lower(position)
+			break
+		}
+	}
+	damage_whole_screen()
+}
+
+// The client of the window whose plate the right button pressed: the menu
+// of the plate acts on it. -1: none.
+taskbar_menu_window := -1
+
+// desktop_taskbar_menu_open opens the menu of the window acts at a press of
+// the right button on a plate: on the window of its group used last.
+desktop_taskbar_menu_open :: proc "contextless" (x, y: int) -> bool {
+	if !desktop_features_ready {
+		return false
+	}
+	position := taskbar_slot_first_position(bar.plate_at(bar_layout, taskbar_plates_right, x, y))
+	if position < 0 {
+		return false
+	}
+	name := system.name_of(clients[opened[position]].title[:])
+	last_used := taskbar_group_last_used(name, false)
+	if last_used < 0 {
+		last_used = taskbar_group_last_used(name, true)
+	}
+	if last_used < 0 {
+		return false
+	}
+	taskbar_menu_window = order[last_used]
+	client := &clients[taskbar_menu_window]
+	items := [3]interface.Context_Menu_Item {
+		{id = u32(Desktop_Context_Action.Window_Front), label = client.minimized ? "Restore" : "Bring to Front", disabled = window_in_front(taskbar_menu_window)},
+		{id = u32(Desktop_Context_Action.Window_Minimize), label = "Minimize", disabled = client.minimized},
+		{id = u32(Desktop_Context_Action.Window_Close), label = "Close"},
+	}
+	interface.context_menu_open(&desktop_context_menu, x, y, desktop_width, desktop_work_bottom(), items[:])
+	damage_whole_screen()
+	return true
+}
+
+// taskbar_menu_window_take gives the window of the menu of a plate, if it
+// is still there: a window can close while its menu is open.
+taskbar_menu_window_take :: proc "contextless" () -> (index: int, ok: bool) {
+	index = taskbar_menu_window
+	taskbar_menu_window = -1
+	return index, index >= 0 && index < len(clients) && clients[index].created
 }
 
 // tray_icon_of gives the icon of a pill of the tray. ok is false for a pill
@@ -515,9 +612,11 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 		tray_x -= TRAY_BADGE_GAP
 	}
 	taskbar_plates_right = tray_x - TASKBAR_TRAY_GAP
-	// 2. The plates of the groups of windows.
+	// 2. The plates of the groups of windows, in the order in which their
+	// first windows opened: the focus changes the look of a plate, never its
+	// place.
 	slot := 0
-	for position in 0 ..< order_count {
+	for position in 0 ..< opened_count {
 		if !taskbar_group_first(position) {
 			continue
 		}
@@ -525,18 +624,18 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 		if x + width > taskbar_plates_right {
 			break
 		}
-		client := &clients[order[position]]
+		client := &clients[opened[position]]
 		name := system.name_of(client.title[:])
 		same_count := 0
 		any_focus := false
 		all_minimized := true
-		for other in position ..< order_count {
-			other_client := &clients[order[other]]
+		for other in position ..< opened_count {
+			other_client := &clients[opened[other]]
 			if !other_client.created || system.name_of(other_client.title[:]) != name {
 				continue
 			}
 			same_count += 1
-			if other == order_count - 1 && !other_client.minimized {
+			if window_in_front(opened[other]) {
 				any_focus = true
 			}
 			if !other_client.minimized {
@@ -578,7 +677,9 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 			digit := u8('0' + min(same_count, 9))
 			interface.draw_character(table, x + width - 15, y + (height - graphics.CELL_HEIGHT) / 2, digit, graphics.colors.dim)
 		}
-		if hovered {
+		// The preview lists the windows of a group of several, under the
+		// pointer: a plate of one window says all that the preview would.
+		if hovered && same_count > 1 && !desktop_context_menu.open {
 			taskbar_preview_group = {x = x, title = fit, name = name, count = same_count}
 		}
 		slot += 1
@@ -586,7 +687,7 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 	taskbar_plate_count = slot
 }
 
-// desktop_taskbar_press restores or raises the group of a plate of the bar.
+// desktop_taskbar_press acts on the group of a plate of the bar.
 desktop_taskbar_press :: proc "contextless" (click_x, click_y: int) -> bool {
 	if !desktop_features_ready {
 		return false
@@ -594,31 +695,60 @@ desktop_taskbar_press :: proc "contextless" (click_x, click_y: int) -> bool {
 	return desktop_taskbar_slot_activate(bar.plate_at(bar_layout, taskbar_plates_right, click_x, click_y))
 }
 
-// desktop_taskbar_slot_activate restores and raises the first window of
-// the group of a plate slot: from a press, or from Enter on the plate that
-// has the focus of the keys. false: no group has that slot.
-desktop_taskbar_slot_activate :: proc "contextless" (wanted: int) -> bool {
-	if !desktop_features_ready || wanted < 0 {
-		return false
+// taskbar_slot_first_position gives the position in the order of opening
+// of the first window of the group of a plate slot, or -1.
+taskbar_slot_first_position :: proc "contextless" (wanted: int) -> int {
+	if wanted < 0 {
+		return -1
 	}
 	slot := 0
-	for position in 0 ..< order_count {
+	for position in 0 ..< opened_count {
 		if !taskbar_group_first(position) {
 			continue
 		}
 		if slot == wanted {
-			// Restore a minimized window of this group, and raise it to the front.
-			client := &clients[order[position]]
-			if client.minimized {
-				client.minimized = false
-			}
-			raise(position)
-			damage_whole_screen()
-			return true
+			return position
 		}
 		slot += 1
 	}
-	return false
+	return -1
+}
+
+// desktop_taskbar_slot_activate does the act of a press on a plate slot
+// (bar.plate_act): from the pointer, or from Enter on the plate that has
+// the focus of the keys. false: no group has that slot.
+desktop_taskbar_slot_activate :: proc "contextless" (wanted: int) -> bool {
+	if !desktop_features_ready {
+		return false
+	}
+	first := taskbar_slot_first_position(wanted)
+	if first < 0 {
+		return false
+	}
+	name := system.name_of(clients[opened[first]].title[:])
+	shown := taskbar_group_last_used(name, false)
+	in_front := shown >= 0 && shown == order_count - 1
+	switch bar.plate_act(in_front, shown >= 0) {
+	case .Minimize:
+		index := order[shown]
+		window_minimize(index)
+		system.log_fact(.Info, Plate_Minimized{window = window_field(clients[index].title[:])})
+	case .Raise:
+		index := order[shown]
+		raise(shown)
+		system.log_fact(.Info, Plate_Raised{window = window_field(clients[index].title[:])})
+	case .Restore:
+		position := taskbar_group_last_used(name, true)
+		if position < 0 {
+			return false
+		}
+		index := order[position]
+		clients[index].minimized = false
+		raise(position)
+		system.log_fact(.Info, Plate_Restored{window = window_field(clients[index].title[:])})
+	}
+	damage_whole_screen()
+	return true
 }
 
 desktop_context_menu_records :: proc "contextless" (table: ^interface.Draw_Table) {
@@ -794,6 +924,15 @@ window_held_by_input :: proc "contextless" (client: ^Client) -> bool {
 desktop_toggle_minimize :: proc "contextless" (client: ^Client) {
 	if client == nil {
 		return
+	}
+	if !client.minimized {
+		// A minimized window gives the keys to the window behind it.
+		for index in 0 ..< len(clients) {
+			if &clients[index] == client {
+				window_minimize(index)
+				return
+			}
+		}
 	}
 	client.minimized = !client.minimized
 	damage_whole_screen()

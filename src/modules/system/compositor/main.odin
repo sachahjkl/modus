@@ -305,6 +305,10 @@ background_appearance: graphics.Appearance // The appearance of the pixels of `b
 clients: [CLIENT_CAPACITY]Client
 order: [CLIENT_CAPACITY]int // The clients that have a surface, from back to front. The last one has focus.
 order_count: int
+// The same clients in the order in which their windows opened: the plates
+// of the bar keep it, so a change of the focus moves no plate.
+opened: [CLIENT_CAPACITY]int
+opened_count: int
 placed: int
 input: ring.Ring
 control: ring.Ring
@@ -880,6 +884,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					// Local Escape closed the bar viewer list popover.
 				case record.values[2] != 0 && u32(record.values[0]) == display.KEY_ESCAPE && tray_widget_escape():
 					// Escape closed the card of a tray widget (tray_widgets.odin).
+				case window_switcher_key(u32(record.values[0]), record.values[2] != 0, u32(record.values[3])):
+					// Alt+Tab and the keys while its card is open (window_switcher.odin).
 				case keyboard_desktop_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
 					// A move or a resize of the window in front by keys, or the bar with the keys (keyboard_desktop.odin).
 				case palette_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
@@ -1216,6 +1222,13 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 				break
 			}
 		}
+		for position in 0 ..< opened_count {
+			if opened[position] == index {
+				copy(opened[position:opened_count - 1], opened[position + 1:opened_count])
+				opened_count -= 1
+				break
+			}
+		}
 		// A new window can take this place of the table: a press on its
 		// title is no second press of the window that left.
 		if title_double_press.window == index {
@@ -1330,6 +1343,8 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	damage_focus()
 	order[order_count] = index
 	order_count += 1
+	opened[opened_count] = index
+	opened_count += 1
 	damage_window(client)
 	system.log_fact(.Info, Surface_Made{window = window_field(client.title[:]), width = u64(client.width), height = u64(client.height), x = u64(client.x), y = u64(client.y)})
 	// The take of the window, by the display contract: the window writes
@@ -1337,6 +1352,23 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	work_area_send(client)
 	palette_entries_refresh() // A window appeared.
 	windows_menu_rows_build() // start_menu.odin
+}
+
+// lower moves a window to the back: a minimized window gives the focus to
+// the window behind it.
+lower :: proc "contextless" (position: int) {
+	if position <= 0 || position >= order_count {
+		return
+	}
+	index := order[position]
+	if position == order_count - 1 {
+		pointer_leaves_front()
+		damage_focus()
+	}
+	copy(order[1:position + 1], order[0:position])
+	order[0] = index
+	damage_focus()
+	palette_entries_refresh() // Another window can be in front.
 }
 
 raise :: proc "contextless" (position: int) {
@@ -1447,6 +1479,11 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	}
 	if right_pressed && menu_open == .None && !bar.inside_bar(bar_layout, pointer_y) {
 		desktop_context_menu_open(pointer_x, pointer_y)
+		return
+	}
+	// The right button on a plate: the menu of the acts on its window
+	// (desktop_features.odin).
+	if right_pressed && menu_open == .None && bar.inside_bar(bar_layout, pointer_y) && desktop_taskbar_menu_open(pointer_x, pointer_y) {
 		return
 	}
 	// The context menu of the desktop takes the pointer while it is open: a
@@ -2277,6 +2314,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	powerbox_dialog_records(table)
 	desktop_taskbar_preview_records(table) // desktop_features.odin
 	desktop_context_menu_records(table)
+	window_switcher_records(table) // window_switcher.odin: over each other card, as it holds the keys.
 	screen_part_end(bar_first, bar_mark_pixels[look][:], {}, false, true)
 	if table.full {
 		system.log_fact(.Warning, Screen_Draw_Table_Full{})

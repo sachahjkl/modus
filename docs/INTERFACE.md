@@ -372,7 +372,7 @@ if result.ran {
 
 - **An item** (`Action_Bar_Item`): the faces of the keycaps of one combination (at most 3), the name of the action, and a priority. `action_bar_item(name, priority, faces..)` makes one: it copies the faces into the fixed array of the item, and drops a face past the third. A process writes its items in a procedure that returns them, and calls it where it draws the bar: a global array of items would need a call before the entry. A face is a key name (`Enter`, `Tab`, `Esc`, `Backspace`, `Delete`, `Space`, `Home`, `End`, `Up`, `Down`, `Left`, `Right`, `Page Up`, `Page Down`), a modifier before it (`Shift`, `Ctrl`), or one printable ASCII character. The name of the action is the element name of the item (section 4.3).
 - **A press gives the key.** `action_bar_key_of` derives the key of an item from its faces: the code, the character that the keyboard layout gives (`'\n'` for Enter, `'\t'` for Tab, 8 for Backspace), and the modifiers. A face of one character gives the character with the code 0: compare the character. A face that names no key (`1-6`) gives an item that takes no press. `Action_Bar_Result.run` holds the key that a press, or Enter in the list, ran. A process with `window_events` adds it to the input of its next frame (`input_key_add`) and builds that frame; a process that reads its keys runs it through its own procedure for a key.
-- **The overflow** (`Action_Bar_Options.overflow`). `More`, the default: one row; when the items do not fit, a button `more` ends the row and items leave it, the lowest priority first and, of two with one priority, the later one first. `Wrap`: two rows in the order of the items, then the list for the rest; the caller gives the bar two rows (`ACTION_BAR_WRAP_ROWS`) always. `notes` wraps.
+- **The overflow** (`Action_Bar_Options.overflow`). `More`, the default: one row; when the items do not fit, a button `more` ends the row and items leave it, the lowest priority first and, of two with one priority, the later one first. `Wrap`: two rows in the order of the items, then the list for the rest; the caller gives the bar two rows (`ACTION_BAR_WRAP_ROWS`) always. `persistence_check` wraps.
 - **The alignment** (`Action_Bar_Options.alignment`). `Right` puts the items against the right edge: a bar at the right of a text that changes keeps its items in place, so their element lines do not change at each frame (the terminal, `tally`, `rings`, `unlock`, `paint`).
 - **The list** opens upward over the content, its right edge on the right edge of the bar, never above `Action_Bar_Options.top`. The rows that the room does not hold are not shown: `Action_Bar_Result.list_rows_not_shown` counts them. While it is open: Up and Down choose a row, Enter runs it, Escape closes the list, another key closes it and stays for the process, a press on a row runs it, and a press outside it closes it and does nothing else.
 - **The state** (`Action_Bar_State`) is memory of the process, one for each bar: the list, its chosen row, the keys of its rows, the places of the last frame, the held press. The interface state does not hold it.
@@ -386,7 +386,8 @@ if result.ran {
 | `interface_elements` | Tab, Shift+Tab, Enter, Up, Down | All in one row |
 | The debugger window | 14 with a process attached; 2 with none | The list: detach has the lowest priority |
 | `manual` | 10 | The list: the keys that move the text, which the scroll bar moves too, go first |
-| `notes` | 5 | Wrap |
+| `notes` | 5 with the list of the notes; 4 with the versions; 2 for the question of a deletion | The list: the moves between the notes have the lowest priority |
+| `persistence_check` | 5 | Wrap |
 | The terminal | Page Up, Page Down | At the right of the line count |
 | `settings` | Tab, Shift+Tab, Enter | All in one row |
 | `unlock` | Enter, and Escape in the modes that clear | At the right of a fact of the mode |
@@ -441,7 +442,7 @@ The windows that follow the rule:
 - `server`: the target of a request in its column, on the lines that it needs; a target longer than its record ends with the cut mark.
 - `pages`: each column as wide as its longest text.
 - The boot display and the window of `boot`: a fact of the card of the machine on the lines that it needs (the name of the processor).
-- `notes`, `quic_echo`, `return_fault`, `fault_ring`, `extended_state`, `interface_font`.
+- `persistence_check`, `quic_echo`, `return_fault`, `fault_ring`, `extended_state`, `interface_font`.
 
 A window with its borders fits the window bound of 1024 by 768 pixels: at most 1000 pixels wide, and at most 708 high under the bar and its title. On the reference screen of 1920 by 1080, a window of the bound fits the logical screen at each scale up to 1.375 (`src/md/features/desktop_to_browser.md`, "The reference screen").
 
@@ -505,7 +506,7 @@ The module is the right form: the interface is shared code, as P10 and P11 say. 
 
 **The compositor.** Each surface is a memory object of another process, mapped at its own address: a picture memory of its own. The screen table is in parts: one for each window (its frame, then its surface), then one for the bar and its menus (with the heron). A Picture record of a part names memory 0 of the list of its part. A frame is one call of `draw_part_through_module` for each window whose outer rectangle meets a damage rectangle, from the back to the front, with the damage rectangles that it meets, then one for the bar and one for the palette when it is open. The compositor copies its background into each rectangle first, so the calls do not fill it; it draws the pointer after the last call, then copies each rectangle, with the debt of the hidden screen page, into the screen page that the display does not show, and flips (`src/md/infrastructure/whole_frame.md`, "The screen: two screen pages and a page flip"). The damage rectangles of the compositor never touch, so these phases give the pixels of one rectangle after the other. The canvas of each call is the whole frame, so the records stay in the coordinates of the screen. With 17 windows, a frame of 8 damage rectangles makes at most 18 calls, where one call for each rectangle made 144. The difference of the palette is `difference_through_module`. The design: `src/md/api/picture.md`, "The compositor: one call for each part".
 
-**Which modules import it.** 35 modules with the setting: `browser`, `budget`, `clock`, `compositor`, `crowd`, `cryptography_vectors`, `debugger_window`, `disk`, `extended_state`, `flow`, `frames`, `hall_of_fame`, `heron`, `inspect`, `life`, `limits`, `locks`, `manual`, `monitor`, `net`, `notes`, `origin`, `paint`, `plasma`, `processors`, `quic_echo`, `randomness`, `remote`, `rights`, `rings`, `scheduler`, `terminal`, `threads`, `unlock` and `workers`. `interface_through_module` imports it too, and calls the exports itself. The modules that keep the package compiled in, and why:
+**Which modules import it.** 36 modules with the setting: `browser`, `budget`, `clock`, `compositor`, `crowd`, `cryptography_vectors`, `debugger_window`, `disk`, `extended_state`, `flow`, `frames`, `hall_of_fame`, `heron`, `inspect`, `life`, `limits`, `locks`, `manual`, `monitor`, `net`, `notes`, `origin`, `paint`, `persistence_check`, `plasma`, `processors`, `quic_echo`, `randomness`, `remote`, `rights`, `rings`, `scheduler`, `terminal`, `threads`, `unlock` and `workers`. `interface_through_module` imports it too, and calls the exports itself. The modules that keep the package compiled in, and why:
 
 | Modules | Why |
 |---|---|
@@ -634,7 +635,7 @@ The package has 49 host tests (45 in `src/library/modus/interface/interface_test
 | tally | 15 | 0 | 36 864 | 49 152 |
 | flow | 13 | 0 | 28 672 | 40 960 |
 | budget | 12 | 0 | 28 672 | 40 960 |
-| notes | 12 | 0 | 53 248 | 65 536 |
+| persistence_check | 12 | 0 | 53 248 | 65 536 |
 | errors | 11 | 0 | 134 113 | 144 609 |
 | rights | 11 | 0 | 24 576 | 40 960 |
 | frames | 11 | 0 | 73 728 | 90 112 |
@@ -655,7 +656,7 @@ The package has 49 host tests (45 in `src/library/modus/interface/interface_test
 
 - `inspect`: a card cuts its caption to the room between its title and its count (host test `card_caption_stays_inside`), so the caption "Process_Report" of the narrow SLOTS card does not touch its right border. The columns "weight" and "req us" of the threads have room, so they do not read as one.
 - `scheduler`, `locks`, `manual`, `life`: no fault seen.
-- `limits`, `crowd`, `origin`, `rights`, `disk`, `notes`: no clipped text and no column out of place. `crowd`: its header "kernel entries, one million records" ends 8 pixels from the right edge of the window. `notes`: an empty band between its status line and its keys.
+- `limits`, `crowd`, `origin`, `rights`, `disk`, `persistence_check`: no clipped text and no column out of place. `crowd`: its header "kernel entries, one million records" ends 8 pixels from the right edge of the window. `persistence_check`: an empty band between its status line and its keys.
 
 ### The layers of the conversion
 
@@ -685,7 +686,7 @@ Each layer is a commit that passed the main scenario; the last one passed the fu
   - Each of these calls draws into a picture of the process, not into the surface. The threads write the pixels of the picture directly: that is the subject of these processes.
 - A frame of these windows copies the picture only when its generation changed. A picture can be copied while a thread writes it, as before when the threads wrote into the surface. The next generation copies it again.
 - `crowd`: the window ends 12 pixels after its widest header, the same margin as at the left, and the header stays in its column.
-- `notes`: its keys are an action bar that wraps on two rows at the bottom (section 4.4). The window is 324 pixels high.
+- `persistence_check`: its keys are an action bar that wraps on two rows at the bottom (section 4.4). The window is 324 pixels high.
 
 ### Not converted, and why
 

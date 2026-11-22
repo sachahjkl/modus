@@ -19,7 +19,8 @@
 //
 // - `Key`: the scan code (with `display.KEY_EXTENDED` after the prefix
 //   0xE0), the character in the layout of the settings as a code point, 1
-//   for a press or 0 for a release, and the modifiers (Shift, Control).
+//   for a press or 0 for a release, and the modifiers (Shift, Control, the
+//   left Alt).
 //   After a dead key of the layout of France, one press can give two
 //   records: the accent alone, then the character of the key.
 // - `Pointer`: the motion in x and in y, in pixels of the mouse (y grows
@@ -417,6 +418,8 @@ keyboard_byte :: proc "contextless" (value: u8) {
 		bit = display.MODIFIER_SHIFT
 	case SCAN_CONTROL, SCAN_CONTROL | display.KEY_EXTENDED:
 		bit = display.MODIFIER_CONTROL
+	case SCAN_ALT:
+		bit = display.MODIFIER_ALT
 	}
 	if bit != 0 {
 		if pressed {

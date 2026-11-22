@@ -7,8 +7,10 @@ import "core:os"
 import "modustool:build"
 
 // Persistence: three machines with one data disk. The first one starts
-// from a new disk: the scenario types a note in `notes` and counts 1000 (1000
-// commits), then stops the machine. The second one finds the note and the
+// from a new disk: the scenario starts the test process
+// `persistence_check` from the console, types a note in it and counts 1000
+// (1000 commits), then stops the machine. The console commits its line
+// history after each line, so a start from the console is a commit too. The second one finds the note and the
 // count; the scenario counts again, and the tool ends QEMU in the middle of
 // the commits, with no stop of the machine. The third one finds a store
 // that the checks accept, and a count of one commit: its three blocks agree.
@@ -19,15 +21,17 @@ scenario_persist_first := [?]Step {
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults", any_order = true},
 	{kind = .Wait, text = "root: settings stopped: itself, done"},
-	{kind = .Launch, text = "notes"},
-	{kind = .Wait, text = "root: started notes"},
-	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
-	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
+	{kind = .Type, text = "start(\"persistence_check\")"},
+	{kind = .Wait, text = "root: started persistence_check"},
+	{kind = .Wait, text = "persistence_check: a new store: no note, the count 0", any_order = true},
+	{kind = .Wait, text = "display: persistence_check" + WINDOW_TAKEN, any_order = true},
 	{kind = .Type, text = "kept across a restart"},
-	{kind = .Wait, text = "notes: the note is \"kept across a restart\", generation 22"},
+	// The format is the generation 1, the line of the start in the console
+	// history the generation 2, and each of the 21 keys one commit.
+	{kind = .Wait, text = "persistence_check: the note is \"kept across a restart\", generation 23"},
 	{kind = .Key, text = "tab"},
-	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
-	{kind = .Wait, text = "notes: the versions of the count: 1000 rows in "},
+	{kind = .Wait, text = "persistence_check: count 1000, stopped: 1000 commits in "},
+	{kind = .Wait, text = "persistence_check: the versions of the count: 1000 rows in "},
 	// A setting that the next machine finds (the boot pass of settings).
 	{kind = .Launch, text = "settings"},
 	{kind = .Wait, text = "display: settings" + WINDOW_TAKEN, any_order = true},
@@ -50,11 +54,12 @@ scenario_persist_first := [?]Step {
 scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	// 1 + 21 commits of the note, 1000 of the count, 1 of the settings, and
-	// 4 of the line history of the console: after connect, after set,
-	// after length, and before shutdown(). The stores of notes, settings
-	// and the history of the console; the history is one object.
-	{kind = .Wait, text = "storage: ok, generation 1027: 3 stores, 4 objects, ", any_order = true},
-	{kind = .Wait, text = "console: the line history: 4 lines kept from before the stop", any_order = true},
+	// 5 of the line history of the console: after the start of
+	// persistence_check, after connect, after set, after length, and before
+	// shutdown(). The stores of persistence_check, settings and the history
+	// of the console; the history is one object.
+	{kind = .Wait, text = "storage: ok, generation 1028: 3 stores, 4 objects, ", any_order = true},
+	{kind = .Wait, text = "console: the line history: 5 lines kept from before the stop", any_order = true},
 	// The setting of the machine before: the desktop draws in Spleen 8x16.
 	{kind = .Wait, text = "settings: the boot pass: the settings kept in the store: font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; in ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
@@ -63,11 +68,6 @@ scenario_persist_second := [?]Step {
 	// surface after the compositor told the windows: it reads the setting
 	// itself, and draws its interface text in Spleen cells.
 	{kind = .Wait, text = "terminal: console draws its interface text in the font of the cells", any_order = true},
-	{kind = .Launch, text = "notes"},
-	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count 1000, its 3 blocks agree", any_order = true},
-	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
-	{kind = .Wait, text = "notes: ok, the first picture is presented"},
-	{kind = .Shot, text = "notes"},
 	// The vector font again, for the machines after this one.
 	{kind = .Launch, text = "settings"},
 	{kind = .Wait, text = "display: settings" + WINDOW_TAKEN, any_order = true},
@@ -89,57 +89,69 @@ scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "console: the history search gave the line length(\"kept across a stop\")"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "[console] 18"},
+	// The test process after the line history: its start is a line of the
+	// history too.
+	{kind = .Type, text = "start(\"persistence_check\")"},
+	{kind = .Wait, text = "persistence_check: restored the note \"kept across a restart\" and the count 1000, its 3 blocks agree", any_order = true},
+	{kind = .Wait, text = "display: persistence_check" + WINDOW_TAKEN, any_order = true},
+	{kind = .Wait, text = "persistence_check: ok, the first picture is presented"},
+	{kind = .Shot, text = "persistence_check"},
+	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"settings\")"},
 	{kind = .Wait, text = "[console]   module     settings"},
 	{kind = .Wait, text = "[console]   commands   13"},
 	{kind = .Wait, text = "[console]   call       service"},
 	{kind = .Type, text = "settings.set(font = .vector)"},
 	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; kept in the store"},
-	{kind = .Front, text = "notes"},
+	{kind = .Front, text = "persistence_check"},
 	{kind = .Key, text = "tab"},
-	{kind = .Wait, text = "notes: count 1100"},
+	{kind = .Wait, text = "persistence_check: count 1100"},
 	{kind = .Quit}, // In the middle of the commits: the machine does not stop.
 }
 
 scenario_persist_crash := [?]Step {
 	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
-	{kind = .Launch, text = "notes"},
+	{kind = .Type, text = "start(\"persistence_check\")"},
 	{kind = .Wait, text = "storage: ok, generation ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
-	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count ", any_order = true},
+	{kind = .Wait, text = "persistence_check: restored the note \"kept across a restart\" and the count ", any_order = true},
 	{kind = .Wait, text = ", its 3 blocks agree, the last run stopped before its end", any_order = true},
-	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
-	{kind = .Wait, text = "notes: ok, the first picture is presented"},
-	{kind = .Shot, text = "notes_crash"},
+	{kind = .Wait, text = "display: persistence_check" + WINDOW_TAKEN, any_order = true},
+	{kind = .Wait, text = "persistence_check: ok, the first picture is presented"},
+	{kind = .Shot, text = "persistence_check_crash"},
 	{kind = .Quit},
 }
 
 // A block of data that changed on the disk outside the service: the tool
 // changes one byte of the note. Each valid root names the block, so no
 // root is better: the storage service serves, with one damaged object. The
-// count is whole. `notes` says that the note is damaged, and does not take
+// count is whole. `persistence_check` says that the note is damaged, and does not take
 // it for an empty note. A key writes a new note in place of it.
 scenario_persist_damaged := [?]Step {
 	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
-	{kind = .Launch, text = "notes"},
+	{kind = .Type, text = "start(\"persistence_check\")"},
 	{kind = .Wait, text = "storage: 1 blocks have a wrong check: 1 objects and 0 stores are damaged; the service serves the others", any_order = true},
 	{kind = .Wait, text = " blocks checked, 1 wrong, in ", any_order = true},
-	{kind = .Wait, text = "notes: WRONG: the storage service cannot give the note: the object is damaged; restored the count ", any_order = true},
-	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
-	{kind = .Wait, text = "notes: ok, the first picture is presented"},
-	{kind = .Shot, text = "notes_damaged"},
+	{kind = .Wait, text = "persistence_check: WRONG: the storage service cannot give the note: the object is damaged; restored the count ", any_order = true},
+	{kind = .Wait, text = "display: persistence_check" + WINDOW_TAKEN, any_order = true},
+	{kind = .Wait, text = "persistence_check: ok, the first picture is presented"},
+	{kind = .Shot, text = "persistence_check_damaged"},
 	{kind = .Type, text = "again"},
-	{kind = .Wait, text = "notes: the note is \"again\", generation "},
+	{kind = .Wait, text = "persistence_check: the note is \"again\", generation "},
 	{kind = .Quit},
 }
 
-// After the new note: no wrong block, and the note and the count.
+// After the new note: no wrong block, and the note and the count. The
+// line of the start is a commit of the console; one letter more makes the
+// last commit a commit of the note again, for the machine after this one.
 scenario_persist_replaced := [?]Step {
 	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
-	{kind = .Launch, text = "notes"},
+	{kind = .Type, text = "start(\"persistence_check\")"},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
-	{kind = .Wait, text = "notes: restored the note \"again\" and the count ", any_order = true},
-	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
+	{kind = .Wait, text = "persistence_check: restored the note \"again\" and the count ", any_order = true},
+	{kind = .Wait, text = "display: persistence_check" + WINDOW_TAKEN, any_order = true},
+	{kind = .Type, text = "s"},
+	{kind = .Wait, text = "persistence_check: the note is \"agains\", generation "},
 	{kind = .Quit},
 }
 
@@ -148,10 +160,10 @@ scenario_persist_replaced := [?]Step {
 // storage service uses it: the note is the note before its last letter.
 scenario_persist_older := [?]Step {
 	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
-	{kind = .Launch, text = "notes"},
+	{kind = .Type, text = "start(\"persistence_check\")"},
 	{kind = .Wait, text = "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
-	{kind = .Wait, text = "notes: restored the note \"agai\" and the count ", any_order = true},
+	{kind = .Wait, text = "persistence_check: restored the note \"again\" and the count ", any_order = true},
 	{kind = .Quit},
 }
 
@@ -159,10 +171,10 @@ scenario_persist_older := [?]Step {
 // after it. The disk holds no object: the storage service formats again.
 scenario_persist_first_cut := [?]Step {
 	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
-	{kind = .Launch, text = "notes"},
+	{kind = .Type, text = "start(\"persistence_check\")"},
 	{kind = .Wait, text = "storage: the first root of the disk has a wrong check and no commit followed it", any_order = true},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
-	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
+	{kind = .Wait, text = "persistence_check: a new store: no note, the count 0", any_order = true},
 	{kind = .Quit},
 }
 
@@ -172,12 +184,12 @@ scenario_persist_first_cut := [?]Step {
 // root before it: the count of the commit before.
 scenario_persist_cut := [?]Step {
 	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
-	{kind = .Launch, text = "notes"},
+	{kind = .Type, text = "start(\"persistence_check\")"},
 	{kind = .Wait, text = " has a wrong check: a write that a stop cut; the service uses the root before it", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
-	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count ", any_order = true},
+	{kind = .Wait, text = "persistence_check: restored the note \"kept across a restart\" and the count ", any_order = true},
 	{kind = .Wait, text = ", its 3 blocks agree, the last run stopped before its end", any_order = true},
-	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
+	{kind = .Wait, text = "display: persistence_check" + WINDOW_TAKEN, any_order = true},
 	{kind = .Quit},
 }
 
@@ -348,12 +360,12 @@ persistence_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_test(part, scenario_persist_crash[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 3), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
 	root_cut(TEST_PERSIST_DISK) or_return
 	machine_test(part, scenario_persist_cut[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 4), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
-	object_damage(TEST_PERSIST_DISK, "notes", "note") or_return
+	object_damage(TEST_PERSIST_DISK, "persistence_check", "note") or_return
 	machine_test(part, scenario_persist_damaged[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 5), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
 	machine_test(part, scenario_persist_replaced[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 6), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
 	// The last commit wrote the last letter of the note: only the newest
 	// root names the block of data that the tool changes now.
-	object_damage(TEST_PERSIST_DISK, "notes", "note") or_return
+	object_damage(TEST_PERSIST_DISK, "persistence_check", "note") or_return
 	machine_test(part, scenario_persist_older[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 7), exit_status = 0, data_disk = TEST_PERSIST_DISK}) or_return
 	first_root_cut(TEST_PERSIST_DISK) or_return
 	return machine_test(part, scenario_persist_first_cut[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PERSIST, 8), exit_status = 0, data_disk = TEST_PERSIST_DISK})

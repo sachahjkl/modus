@@ -3,6 +3,10 @@ package text_model
 
 import "core:testing"
 
+// The cells of a row in the tests of the wrap by character: the width of
+// the rows of the editor.
+COLUMNS :: 80
+
 // A text and its layout are large: each test takes them from the heap.
 @(private = "file")
 text_of :: proc(bytes: string) -> ^Text {
@@ -25,7 +29,7 @@ an_empty_text_refuses_each_removal_and_each_move_stays_at_zero :: proc(t: ^testi
 	defer free(text)
 	layout := new(Layout)
 	defer free(layout)
-	layout_compute(layout, text)
+	layout_compute(layout, text, COLUMNS, .Character)
 	testing.expect_value(t, layout.row_count, 1)
 	testing.expect_value(t, layout.line_count, 1)
 	testing.expect(t, !text_delete_before(text))
@@ -105,7 +109,7 @@ the_caret_at_zero_and_at_the_end :: proc(t: ^testing.T) {
 	defer free(text)
 	layout := new(Layout)
 	defer free(layout)
-	layout_compute(layout, text)
+	layout_compute(layout, text, COLUMNS, .Character)
 	// The end: Right and Delete do nothing, Backspace removes the last
 	// character whole.
 	testing.expect_value(t, text.caret, 6)
@@ -114,7 +118,7 @@ the_caret_at_zero_and_at_the_end :: proc(t: ^testing.T) {
 	testing.expect(t, !text_delete_after(text))
 	testing.expect(t, text_delete_before(text))
 	testing.expect_value(t, string_of(text), "héll")
-	layout_compute(layout, text)
+	layout_compute(layout, text, COLUMNS, .Character)
 	// Zero: Left and Backspace do nothing; Right steps over the two bytes
 	// of é.
 	caret_move(text, layout, .Text_Start, false, 1)
@@ -157,7 +161,7 @@ a_selection_across_lines_with_shift_then_a_typed_character_replaces_it :: proc(t
 	defer free(text)
 	layout := new(Layout)
 	defer free(layout)
-	layout_compute(layout, text)
+	layout_compute(layout, text, COLUMNS, .Character)
 	testing.expect_value(t, layout.line_count, 2)
 	testing.expect_value(t, text.caret, 22)
 	// Shift with Up: the anchor stays at the end, the caret goes to the
@@ -188,7 +192,7 @@ left_and_right_with_a_selection_and_no_shift_go_to_its_ends :: proc(t: ^testing.
 	defer free(text)
 	layout := new(Layout)
 	defer free(layout)
-	layout_compute(layout, text)
+	layout_compute(layout, text, COLUMNS, .Character)
 	selection_set(text, 4, 1)
 	caret_move(text, layout, .Right, false, 1)
 	testing.expect_value(t, text.caret, 4)
@@ -218,7 +222,7 @@ a_line_longer_than_the_window_goes_on_more_rows :: proc(t: ^testing.T) {
 		value = 'x'
 	}
 	testing.expect_value(t, text_insert(text, long[:]), Edit_Problem.None)
-	layout_compute(layout, text)
+	layout_compute(layout, text, COLUMNS, .Character)
 	testing.expect_value(t, layout.row_count, 3)
 	testing.expect_value(t, layout.line_count, 1)
 	testing.expect_value(t, layout.rows[1], Row{start = COLUMNS, line = 0})
@@ -246,7 +250,7 @@ a_line_longer_than_the_window_goes_on_more_rows :: proc(t: ^testing.T) {
 	defer free(full)
 	testing.expect_value(t, text_insert(full, long[:COLUMNS]), Edit_Problem.None)
 	testing.expect_value(t, text_insert_character(full, LINE_END), Edit_Problem.None)
-	layout_compute(layout, full)
+	layout_compute(layout, full, COLUMNS, .Character)
 	testing.expect_value(t, layout.row_count, 2)
 	testing.expect_value(t, row_of(layout, COLUMNS), 0)
 	testing.expect_value(t, column_of(layout, full, 0, COLUMNS), COLUMNS)
@@ -260,7 +264,7 @@ a_tab_goes_to_the_next_stop_and_never_past_the_row :: proc(t: ^testing.T) {
 	layout := new(Layout)
 	defer free(layout)
 	testing.expect_value(t, text_insert(text, transmute([]u8)string("a\tb")), Edit_Problem.None)
-	layout_compute(layout, text)
+	layout_compute(layout, text, COLUMNS, .Character)
 	testing.expect_value(t, column_of(layout, text, 0, 2), TAB_WIDTH)
 	// COLUMNS - 1 characters, then a tab: the tab takes the last cell, and
 	// the next character is on a new row.
@@ -271,7 +275,7 @@ a_tab_goes_to_the_next_stop_and_never_past_the_row :: proc(t: ^testing.T) {
 	}
 	text_insert_character(wide, TAB)
 	text_insert_character(wide, 'y')
-	layout_compute(layout, wide)
+	layout_compute(layout, wide, COLUMNS, .Character)
 	testing.expect_value(t, layout.row_count, 2)
 	testing.expect_value(t, int(layout.rows[1].start), COLUMNS)
 }
@@ -289,7 +293,7 @@ the_worst_text_for_the_rows_fits_their_capacity :: proc(t: ^testing.T) {
 		value = LINE_END
 	}
 	testing.expect_value(t, text_insert(text, ends), Edit_Problem.None)
-	layout_compute(layout, text)
+	layout_compute(layout, text, COLUMNS, .Character)
 	testing.expect_value(t, layout.row_count, ROW_CAPACITY)
 	testing.expect_value(t, layout.line_count, TEXT_CAPACITY + 1)
 	testing.expect_value(t, row_of(layout, TEXT_CAPACITY), ROW_CAPACITY - 1)
@@ -301,7 +305,7 @@ the_worst_text_for_the_rows_fits_their_capacity :: proc(t: ^testing.T) {
 		value = TAB
 	}
 	testing.expect_value(t, text_insert(tabs, ends), Edit_Problem.None)
-	layout_compute(layout, tabs)
+	layout_compute(layout, tabs, COLUMNS, .Character)
 	TABS_IN_A_ROW :: COLUMNS / TAB_WIDTH
 	testing.expect_value(t, layout.row_count, (TEXT_CAPACITY + TABS_IN_A_ROW - 1) / TABS_IN_A_ROW)
 	testing.expect_value(t, layout.line_count, 1)

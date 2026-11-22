@@ -190,7 +190,7 @@ key_of_input_record_refuses_what_is_not_a_press :: proc(t: ^testing.T) {
 		{kind = u32(display.Input.Key), values = {1 = 0xD800, 2 = 1}},
 		{kind = u32(display.Input.Key), values = {1 = 0xDFFF, 2 = 1}},
 		{kind = u32(display.Input.Key), values = {1 = max(u64), 2 = 1}},
-		{kind = u32(display.Input.Key), values = {1 = 'a', 2 = 1, 3 = 4}},
+		{kind = u32(display.Input.Key), values = {1 = 'a', 2 = 1, 3 = 8}},
 		{kind = u32(display.Input.Key), values = {1 = 'a', 2 = 1, 3 = max(u64)}},
 	}
 	for record in refused {

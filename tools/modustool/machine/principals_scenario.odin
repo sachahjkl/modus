@@ -12,7 +12,8 @@ import "modustool:build"
 // creates the principal "alice"; its passphrase is typed two times in the
 // window of `unlock`, and its session starts. `notes` started from the menu
 // runs in the session: its store is another store, new, and its note stays
-// there. The console connects to the storage service acting for principal
+// there. A note is a commit when the keys pause: each step that types a
+// note waits for the fact of that commit. The console connects to the storage service acting for principal
 // 0, not for principal 1: it was started outside the session. The lock
 // stops the processes of the session; a wrong passphrase opens nothing; the
 // right one starts the session again, and `notes` finds the note of alice.
@@ -35,11 +36,11 @@ scenario_principals_first := [?]Step {
 	// A note of principal 0: the console starts notes in its own session.
 	{kind = .Type, text = "start(\"notes\")"},
 	{kind = .Wait, text = "root: started notes"},
-	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
+	{kind = .Wait, text = "notes: a new store: no note", any_order = true},
 	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Front, text = "notes"},
 	{kind = .Type, text = "of the machine"},
-	{kind = .Wait, text = "notes: the note is \"of the machine\", generation "},
+	{kind = .Wait, text = "notes: the note is \"of the machine\", 15 bytes, generation "},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "grants(\"notes\")"},
 	{kind = .Wait, text = "[console] notes    log    held           0  machine"},
@@ -60,16 +61,12 @@ scenario_principals_first := [?]Step {
 	// notes from the menu: in the session, with a store of its own.
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "root: started notes, in the session of principal 1 \"alice\""},
-	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
+	{kind = .Wait, text = "notes: a new store: no note", any_order = true},
 	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Type, text = "of alice"},
-	// The generation of the last commit of the note: the current version.
-	{kind = .Generation, text = "notes: the note is \"of alice\", generation "},
-	// A count too: notes takes a store with a note and no count for a
-	// damaged one ("the 3 blocks of the count do not agree") at its next
-	// start, after the lock.
-	{kind = .Key, text = "tab"},
-	{kind = .Wait, text = "notes: count 1000, stopped: 1000 commits in "},
+	// The commit after the pause of the keys: the note is in the store
+	// before the lock stops the process.
+	{kind = .Generation, text = "notes: the note is \"of alice\", 9 bytes, generation "},
 	// The grant records name the principal.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "grants(\"notes\")"},
@@ -115,7 +112,7 @@ scenario_principals_first := [?]Step {
 	{kind = .Wait, text = "unlock: the passphrase of principal 1 \"alice\" opens its seal; the root service receives the key of its disk grant table only, and the secret keys are erased"},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it"},
 	{kind = .Launch, text = "notes"},
-	{kind = .Wait, text = "notes: restored the note \"of alice\" and the count 1000, its 3 blocks agree", any_order = true},
+	{kind = .Wait, text = "notes: restored 1 notes; the note shown is \"of alice\"", any_order = true},
 	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	// A revocation ends a grant of a process of the session.
 	{kind = .Front, text = "console"},
@@ -139,7 +136,7 @@ scenario_principals_second := [?]Step {
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it"},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "root: started notes, in the session of principal 1 \"alice\""},
-	{kind = .Wait, text = "notes: restored the note \"of alice\" and the count 1000, its 3 blocks agree", any_order = true},
+	{kind = .Wait, text = "notes: restored 1 notes; the note shown is \"of alice\"", any_order = true},
 	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "lock()"},

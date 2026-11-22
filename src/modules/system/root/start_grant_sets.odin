@@ -236,10 +236,14 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// act for its principal; it acts for nobody. A source reaches it only
 	// through a wiring, never through a grant.
 	{name = "collector", grants = {.Serve, .Store}, terms = {on_demand = true}},
-	// Its note, its count and their versions live in its private store:
-	// the versions of a run of 1000 commits of the count (4 blocks each),
-	// then thinning at the limit.
+	// The notes and their versions live in its private store: a version
+	// of a note of 32 KiB holds 8 blocks of data and their nodes, and the
+	// store keeps each version for 10 minutes before the thinning.
 	{name = "notes", grants = {.Store}, terms = {store_blocks = 4500}},
+	// The test of persistence: its note, its count and their versions live
+	// in its private store: the versions of a run of 1000 commits of the
+	// count (4 blocks each), then thinning at the limit.
+	{name = "persistence_check", grants = {.Store}, terms = {store_blocks = 4500}},
 	// The text that it edits and the versions of the text live in its
 	// private store: a commit of a text of 32 KiB holds 8 blocks of data
 	// and their nodes, and the store keeps each version for 10 minutes

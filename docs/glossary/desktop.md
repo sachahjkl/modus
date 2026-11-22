@@ -294,7 +294,7 @@ Do not use: start button, logo button.
 
 A window plate is the plate of the bar that stands for the windows of one name: its module icon, the name, and the count of the windows when there are several.
 
-The plates start after the divider that follows the button of the windows, one for each name, in the order of the client table. The plate of the window in front is raised, with an accent of 2 pixels at its foot. A press on a plate brings the first window of its name to the front and restores it when it is minimized. Under the pointer, a plate shows a preview card with the state of each of its windows. The plates stop before the tray: a plate that does not fit is not drawn.
+The plates follow the button of the windows, one for each name, in the order in which the windows opened: the focus never moves a plate. The plate of the window in front is raised. A press on it minimizes that window; a press on another plate brings its window to the front, or restores it. The right button opens the menu of the acts on its window. The plates stop before the tray.
 
 The design: `src/md/features/desktop_shell_look.md`.
 
@@ -344,11 +344,21 @@ Do not use: application menu, launcher.
 
 The menu of the windows is the menu of the bar with one line for each window: a press on a line brings the window to the front and gives it the focus.
 
-The menu lets the input reach a window that other windows cover. It lists the windows in the order of the client table of the compositor, and marks the window that has the focus. The line of a disk process has its nickname and the hash prefix of its file. The menu does not move a window. The menu of the windows is not a task switcher with pictures of the windows, and not a task bar.
+The menu lets the input reach a window that other windows cover. It lists the windows in the order of the client table of the compositor, and marks the window that has the focus. The line of a disk process has its nickname and the hash prefix of its file. The menu does not move a window. The menu of the windows is not the window switcher of the keys, and not a task bar.
 
 The design: `docs/DESIGN.md`, "Menus".
 
-Do not use: task bar, window list, switcher.
+Do not use: task bar, window list.
+
+### Window switcher
+
+The window switcher is the card of the compositor that Alt+Tab opens: one line for each window from the one in front, and the release of Alt brings the chosen window to the front.
+
+Its lines are in the order of use. Alt+Tab chooses the window used before the one in front; each Tab chooses the next, Shift+Tab the one before; Escape closes the card with no change. While the card is open, no key reaches a window. The input service gives the left Alt as the bit `MODIFIER_ALT`. The window switcher is not the menu of the windows, which a press opens.
+
+The design: `src/md/features/window_switcher.md`.
+
+Do not use: task switcher, Alt-Tab menu, window cycler.
 
 ### Palette
 
@@ -1034,7 +1044,7 @@ Do not use: visual line, soft-wrapped line, screen line.
 
 A gap buffer is a text in one array with a free part, the gap, at the place where the keys act.
 
-A typed key moves the gap to the caret and writes into it, so a run of keys at one place copies no byte of the rest of the text. The editor `edit` keeps its text of at most 32768 bytes in one, in the private part `internal:edit/text_model`. It is not a file and not a copy of the object in the store.
+A typed key moves the gap to the caret and writes into it, so a run of keys at one place copies no byte of the rest of the text. The editor `edit` and the notes `notes` keep their text of at most 32768 bytes in one, in the support package `modus:text_model`. It is not a file and not a copy of the object in the store.
 
 The design: `src/md/features/editor.md`, "The text model".
 
