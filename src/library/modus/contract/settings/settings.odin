@@ -35,6 +35,14 @@
 // edge and on each change of the date page, and updates appearance_in_force
 // through the same single-writer write().
 //
+// The language list (src/md/features/interface_language.md, "1. The
+// identity of a language") is one more choice of the page: the languages that the principal
+// reads, in its order, as at most LANGUAGE_LIST_CAPACITY records of
+// language_tag.Locale and their count. An empty list is the source
+// language of each text, English, so a page of zeros holds it. The page
+// and the kept record hold records, never the text of a tag: no reader
+// parses a tag that another wrote.
+//
 // The time zone (src/md/features/time_zone.md) is one more choice of the
 // page, zone_offset_minutes, outside the enumeration Setting: a zone is a
 // number of minutes, not one of a list of names. The process `settings`
@@ -51,6 +59,7 @@ package settings
 import "base:intrinsics"
 import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
+import "modus:contract/language_tag"
 import op "modus:contract/operation"
 import "modus:contract/scale_factor"
 
@@ -282,6 +291,115 @@ appearance_in_force_names := [Appearance_In_Force]string {
 	.Light = "light",
 }
 
+LANGUAGE_LIST_CAPACITY :: 8 // The languages of the list at most: each more is 48 more bytes of the page and of the kept record.
+
+// Language_List: the languages that the principal reads, the first first.
+// The records past the count are zero.
+Language_List :: struct {
+	locales: [LANGUAGE_LIST_CAPACITY]language_tag.Locale,
+	count:   u32,
+}
+
+// Why a language list is refused.
+Language_List_Problem :: enum u8 {
+	None              = 0, // The list holds count distinct languages.
+	Too_Many          = 1, // More than LANGUAGE_LIST_CAPACITY languages.
+	Bad_Locale        = 2, // A record that language_tag.locale_valid refuses: the locale problem says why.
+	No_Language       = 3, // A record of the root locale, `und`: it names no language to read.
+	Duplicate         = 4, // A language that the list holds before.
+	Record_Past_Count = 5, // A record past the count that is not zero.
+}
+
+// language_list_valid is the border of a list that another process wrote:
+// a page or a kept record. place is the record at fault, from 0, and
+// locale_problem says why a Bad_Locale record is refused.
+language_list_valid :: proc "contextless" (list: Language_List) -> (problem: Language_List_Problem, place: int, locale_problem: language_tag.Locale_Problem) {
+	if list.count > LANGUAGE_LIST_CAPACITY {
+		return .Too_Many, LANGUAGE_LIST_CAPACITY, .None
+	}
+	for index in 0 ..< int(list.count) {
+		locale := list.locales[index]
+		if found := language_tag.locale_valid(locale); found != .None {
+			return .Bad_Locale, index, found
+		}
+		if locale.language == {} {
+			return .No_Language, index, .None
+		}
+		for earlier in 0 ..< index {
+			if list.locales[earlier] == locale {
+				return .Duplicate, index, .None
+			}
+		}
+	}
+	for index in int(list.count) ..< LANGUAGE_LIST_CAPACITY {
+		if list.locales[index] != {} {
+			return .Record_Past_Count, index, .None
+		}
+	}
+	return .None, 0, .None
+}
+
+// language_list_of_locales makes the list of records in their order, or
+// a refusal with the empty list. No record is changed: a record that is not
+// canonical is refused, not made canonical.
+language_list_of_locales :: proc "contextless" (locales: []language_tag.Locale) -> (list: Language_List, problem: Language_List_Problem, place: int, locale_problem: language_tag.Locale_Problem) {
+	if len(locales) > LANGUAGE_LIST_CAPACITY {
+		return {}, .Too_Many, LANGUAGE_LIST_CAPACITY, .None
+	}
+	for locale, index in locales {
+		list.locales[index] = locale
+	}
+	list.count = u32(len(locales))
+	problem, place, locale_problem = language_list_valid(list)
+	if problem != .None {
+		return {}, problem, place, locale_problem
+	}
+	return list, .None, 0, .None
+}
+
+// language_list_add gives the list with one more language at its end, or
+// the problem that refuses it, with the list unchanged.
+language_list_add :: proc "contextless" (list: Language_List, locale: language_tag.Locale) -> (changed: Language_List, problem: Language_List_Problem) {
+	if list.count >= LANGUAGE_LIST_CAPACITY {
+		return list, .Too_Many
+	}
+	changed = list
+	changed.locales[changed.count] = locale
+	changed.count += 1
+	if problem, _, _ = language_list_valid(changed); problem != .None {
+		return list, problem
+	}
+	return changed, .None
+}
+
+// language_list_move_up gives the list with the language at place before
+// the one before it. The first language, and a place past the count, give
+// the list unchanged.
+language_list_move_up :: proc "contextless" (list: Language_List, place: int) -> Language_List {
+	changed := list
+	if place >= 1 && place < int(min(list.count, LANGUAGE_LIST_CAPACITY)) {
+		changed.locales[place - 1], changed.locales[place] = list.locales[place], list.locales[place - 1]
+	}
+	return changed
+}
+
+// language_list_remove gives the list with no language at place, the
+// languages after it one place up. A place past the count gives the list
+// unchanged.
+language_list_remove :: proc "contextless" (list: Language_List, place: int) -> Language_List {
+	count := int(min(list.count, LANGUAGE_LIST_CAPACITY))
+	if place < 0 || place >= count {
+		return list
+	}
+	changed := list
+	for index in place ..< count - 1 {
+		changed.locales[index] = list.locales[index + 1]
+	}
+	changed.locales[count - 1] = {}
+	changed.count = u32(count - 1)
+	return changed
+}
+
 // The settings page: what the process `settings` writes and each process
 // with a surface reads, at PAGE_ADDRESS. A reader copies it while
 // change_count stays even and the same.
@@ -290,6 +408,8 @@ Page :: struct {
 	appearance_in_force: u32, // The word of an Appearance_In_Force. Written only by `settings`.
 	values:              [SETTING_CAPACITY]u32, // By Setting. A reader takes them through choice_of_values, which refuses a word that names no value.
 	zone_offset_minutes: i32, // The time zone. A reader keeps it through zone_offset_minutes_valid.
+	language_count:      u32, // The languages of the list. A reader takes the list through language_list_valid.
+	languages:           [LANGUAGE_LIST_CAPACITY]language_tag.Locale, // The language list, then zeros.
 }
 #assert(size_of(Page) <= 4096)
 
@@ -307,6 +427,7 @@ Choice :: struct {
 	appearance_in_force: Appearance_In_Force, // The appearance that each process draws now.
 	zone_offset_minutes: i32, // The time zone that the principal chose, kept valid.
 	change_count:        u32, // The change count of the page at the copy.
+	languages:           Language_List, // The languages that the principal reads, which language_list_valid took.
 }
 
 // choice_default gives the choice of a principal who set nothing: the
@@ -483,14 +604,15 @@ values_of :: proc "contextless" (choice: Choice) -> (values: [Setting]u32) {
 }
 
 // values_differ tells whether two choices have different values, a
-// different time zone, or a different appearance in force. The count of
+// different time zone, a different language list, or a different
+// appearance in force. The count of
 // changes is not compared: the
 // process `settings` can change the count with no end and leave the values
 // as they were, and a reader that acts on each new count then does work for
 // nothing (the compositor tells every window, and a window ring that is
 // full loses the keys of the input).
 values_differ :: proc "contextless" (first, second: Choice) -> bool {
-	return values_of(first) != values_of(second) || first.zone_offset_minutes != second.zone_offset_minutes || first.appearance_in_force != second.appearance_in_force
+	return values_of(first) != values_of(second) || first.zone_offset_minutes != second.zone_offset_minutes || first.appearance_in_force != second.appearance_in_force || first.languages != second.languages
 }
 
 // READ_TRIES: the most reads of a page that changes, or that its writer
@@ -502,7 +624,9 @@ READ_TRIES :: 64
 // again while the page changes, at most READ_TRIES times. ok is false when
 // no copy was whole (a writer that stops in a change, or changes the page
 // with no end), and when a whole copy holds a word that names no value of
-// its setting, or no appearance in force: the page is refused, not read as
+// its setting, no appearance in force, or a language list that
+// language_list_valid refuses (a count past the capacity, a damaged
+// record): the page is refused, not read as
 // the defaults for that word. The choice is then the defaults with the
 // count that the read saw, so a broken writer changes the look of the other
 // processes and never stops them, and a reader that acts on the page (the
@@ -522,6 +646,11 @@ read :: proc "contextless" (page: ^Page) -> (choice: Choice, ok: bool) {
 		// One word, which the root service also stores alone: the copy is
 		// the old or the new appearance, never a mix.
 		in_force_word := intrinsics.atomic_load_explicit(&page.appearance_in_force, .Relaxed)
+		// The records can be torn by a change: the change count after the
+		// copy says so, and the copy is read again.
+		languages: Language_List
+		languages.count = intrinsics.atomic_load_explicit(&page.language_count, .Relaxed)
+		intrinsics.mem_copy_non_overlapping(&languages.locales, &page.languages, size_of(languages.locales))
 		intrinsics.atomic_thread_fence(.Acquire)
 		if intrinsics.atomic_load_explicit(&page.change_count, .Relaxed) != before {
 			continue
@@ -529,11 +658,13 @@ read :: proc "contextless" (page: ^Page) -> (choice: Choice, ok: bool) {
 		values_ok, in_force_ok: bool
 		choice, _, values_ok = choice_of_values(values)
 		choice.appearance_in_force, in_force_ok = enum_word.member_of_word(Appearance_In_Force, u64(in_force_word))
-		if !values_ok || !in_force_ok {
+		languages_problem, _, _ := language_list_valid(languages)
+		if !values_ok || !in_force_ok || languages_problem != .None {
 			return refused_read(before), false
 		}
 		choice.zone_offset_minutes = zone_offset_minutes_valid(zone_word)
 		choice.change_count = before
+		choice.languages = languages
 		return choice, true
 	}
 	return refused_read(before), false
@@ -552,9 +683,15 @@ refused_read :: proc "contextless" (change_count: u32) -> Choice {
 // force, in one change. The one writer of the values is the process
 // `settings`; it wakes the waiters after (it owns the kernel calls, this
 // package has none). The choice holds members only, so the page never holds
-// a word that names no value.
+// a word that names no value; a language list that language_list_valid
+// refuses is written as the empty list, so the page never holds a list
+// that its readers refuse.
 write :: proc "contextless" (page: ^Page, choice: Choice, zone_offset_minutes: i32, appearance_in_force: Appearance_In_Force) {
 	values := values_of(choice)
+	languages := choice.languages
+	if problem, _, _ := language_list_valid(languages); problem != .None {
+		languages = {}
+	}
 	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
 	intrinsics.atomic_thread_fence(.Release)
 	for setting in Setting {
@@ -562,16 +699,18 @@ write :: proc "contextless" (page: ^Page, choice: Choice, zone_offset_minutes: i
 	}
 	intrinsics.atomic_store_explicit(&page.zone_offset_minutes, zone_offset_minutes_valid(zone_offset_minutes), .Relaxed)
 	intrinsics.atomic_store_explicit(&page.appearance_in_force, u32(appearance_in_force), .Relaxed)
+	intrinsics.atomic_store_explicit(&page.language_count, languages.count, .Relaxed)
+	intrinsics.mem_copy_non_overlapping(&page.languages, &languages.locales, size_of(languages.locales))
 	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
 }
 
-// Kept_Settings: the record of the private store of `settings`, 56 bytes,
+// Kept_Settings: the record of the private store of `settings`, 440 bytes,
 // little-endian. A record with another magic or version is not used: the
-// defaults hold. Version 2 added the time zone. The boot pass of `settings`
-// writes the defaults in place of a record of another version, so they
-// hold once.
+// defaults hold. Version 2 added the time zone, version 3 the language
+// list. The boot pass of `settings` writes the defaults in place of a
+// record of another version, so they hold once.
 KEPT_MAGIC :: u64(0x53474E4954544553) // The bytes "SETTINGS".
-KEPT_VERSION :: 2
+KEPT_VERSION :: 3
 
 Kept_Settings :: struct {
 	magic:               u64,
@@ -579,9 +718,10 @@ Kept_Settings :: struct {
 	count:               u32, // The values that follow: the count of Setting when it was written.
 	values:              [SETTING_CAPACITY]u32,
 	zone_offset_minutes: i32, // The time zone.
-	zero:                u32, // 0: the record has no padding byte of unknown value.
+	language_count:      u32, // The languages of the list.
+	languages:           [LANGUAGE_LIST_CAPACITY]language_tag.Locale, // The language list, then zeros.
 }
-#assert(size_of(Kept_Settings) == 56)
+#assert(size_of(Kept_Settings) == 440)
 
 // kept_of makes the record of a choice.
 kept_of :: proc "contextless" (choice: Choice, zone_offset_minutes: i32) -> (kept: Kept_Settings) {
@@ -591,13 +731,18 @@ kept_of :: proc "contextless" (choice: Choice, zone_offset_minutes: i32) -> (kep
 		kept.values[setting] = values[setting]
 	}
 	kept.zone_offset_minutes = zone_offset_minutes_valid(zone_offset_minutes)
+	if problem, _, _ := language_list_valid(choice.languages); problem == .None {
+		kept.language_count = choice.languages.count
+		kept.languages = choice.languages.locales
+	}
 	return kept
 }
 
 // kept_read reads a record from its bytes: ok is false for bytes that are
 // not a record of this version, and for a record with a word that names no
-// value of its setting: such a record is refused whole, as a record of
-// another version is, and never read as the default of that one setting. A
+// value of its setting, or with a language list that language_list_valid
+// refuses: such a record is refused whole, as a record of another version
+// is, and never read as the default of that one setting. A
 // setting past the count of the record has its default, the word of its
 // first value: the record did not hold it. A record of the six settings
 // before the scale then reads with the scale 1.25, and keeps the other
@@ -620,8 +765,10 @@ kept_read :: proc "contextless" (bytes: []u8) -> (choice: Choice, zone_offset_mi
 	}
 	values_ok: bool
 	choice, _, values_ok = choice_of_values(values)
-	if !values_ok {
+	languages := Language_List{locales = kept.languages, count = kept.language_count}
+	if problem, _, _ := language_list_valid(languages); !values_ok || problem != .None {
 		return choice_default(), 0, false
 	}
+	choice.languages = languages
 	return choice, zone_offset_minutes_valid(kept.zone_offset_minutes), true
 }

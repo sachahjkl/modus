@@ -586,7 +586,7 @@ Do not use: language code, LANG, culture, locale string.
 
 A locale is the record of 48 bytes that holds a language tag in its typed form: a language, a script, a region, variants, and the keywords of the extension `u` as enums.
 
-`locale.Locale` crosses each border in place of the text of a tag. The keywords are the calendar, the numbering system, the first day of the week, the hour cycle, the measurement system, the collation and the region override; each is an enum with 0 for absent. All zeros is the root locale, `und`. The language list and a language pack hold locales. A locale is not the time zone: the setting `time_zone` holds the offset.
+`language_tag.Locale` crosses each border in place of the text of a tag. The keywords are the calendar, the numbering system, the first day of the week, the hour cycle, the measurement system, the collation and the region override; each is an enum with 0 for absent. All zeros is the root locale, `und`. The language list and a language pack hold locales. A locale is not the time zone: the setting `time_zone` holds the offset.
 
 The design: `src/md/features/interface_language.md`, "1. The identity of a language".
 

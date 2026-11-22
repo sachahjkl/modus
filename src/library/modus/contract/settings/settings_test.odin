@@ -2,6 +2,7 @@
 package settings
 
 import "core:testing"
+import "modus:contract/language_tag"
 import "modus:contract/scale_factor"
 
 // A writer that stops in a change (an odd count) does not stop a reader:
@@ -98,7 +99,7 @@ the_zone_on_the_page :: proc(t: ^testing.T) {
 the_kept_record :: proc(t: ^testing.T) {
 	written := Choice{font = .Spleen, appearance = .Light, scale = .Eleven_Eighths}
 	kept := kept_of(written, -210)
-	testing.expect_value(t, kept.zero, 0)
+	testing.expect_value(t, kept.language_count, 0)
 	testing.expect_value(t, kept.count, u32(len(Setting)))
 	bytes := ([^]u8)(&kept)[:size_of(kept)]
 	refused_words := [?]u32{len(Font), len(Font) + 1, 0x100, max(u32)}
@@ -400,4 +401,205 @@ the_arguments_of_set_refuse_a_value_past_the_enum :: proc(t: ^testing.T) {
 	changed, _, problem = choice_of_arguments(current, each)
 	testing.expect_value(t, problem, Set_Problem.None)
 	testing.expect(t, changed.font == .Spleen && changed.subpixel_order == .None && changed.scale == .Eleven_Eighths && changed.zone_offset_minutes == 60 && changed.change_count == 8)
+}
+
+// locale_of reads a tag that the test knows to be good.
+@(private = "file")
+locale_of :: proc(t: ^testing.T, text: string) -> language_tag.Locale {
+	locale, problem, _ := language_tag.tag_read(text)
+	testing.expectf(t, problem == .None, "the tag %q is refused: %v", text, problem)
+	return locale
+}
+
+// The tags of a full list: LANGUAGE_LIST_CAPACITY distinct languages.
+@(private = "file")
+FULL_TAGS :: [LANGUAGE_LIST_CAPACITY]string{"fr-CA", "fr", "en", "de", "es", "ja", "ar-EG-u-nu-latn", "zh-Hant-TW"}
+
+@(private = "file")
+full_locales :: proc(t: ^testing.T) -> (locales: [LANGUAGE_LIST_CAPACITY + 1]language_tag.Locale) {
+	for tag, index in FULL_TAGS {
+		locales[index] = locale_of(t, tag)
+	}
+	locales[LANGUAGE_LIST_CAPACITY] = locale_of(t, "it")
+	return locales
+}
+
+// The border of a list refuses each list that its readers cannot trust:
+// a count past the capacity (the bound plus one, the largest count), a
+// damaged record, the root locale, a language twice, a record past the
+// count that is not zero. Each refusal gives the empty list.
+@(test)
+a_language_list_out_of_its_border :: proc(t: ^testing.T) {
+	locales := full_locales(t)
+	list, problem, place, _ := language_list_of_locales(locales[:])
+	testing.expect_value(t, problem, Language_List_Problem.Too_Many)
+	testing.expect_value(t, place, LANGUAGE_LIST_CAPACITY)
+	testing.expect(t, list == Language_List{}, "a refused list is the empty list")
+	for count in ([?]u32{LANGUAGE_LIST_CAPACITY + 1, 0x100, max(u32)}) {
+		damaged := Language_List{count = count}
+		problem, _, _ = language_list_valid(damaged)
+		testing.expectf(t, problem == .Too_Many, "the count %d gives %v", count, problem)
+	}
+	// A damaged record at each place of a full list.
+	for at in 0 ..< LANGUAGE_LIST_CAPACITY {
+		damaged, _, _, _ := language_list_of_locales(locales[:LANGUAGE_LIST_CAPACITY])
+		damaged.locales[at].reserved = 1
+		locale_problem: language_tag.Locale_Problem
+		problem, place, locale_problem = language_list_valid(damaged)
+		testing.expectf(t, problem == .Bad_Locale && place == at && locale_problem == .Reserved_Not_Zero, "a damaged record at %d gives %v at %d", at, problem, place)
+		damaged.locales[at].reserved = 0
+		damaged.locales[at].language[0] = 'X'
+		problem, place, locale_problem = language_list_valid(damaged)
+		testing.expectf(t, problem == .Bad_Locale && place == at && locale_problem == .Bad_Language, "a capital in the language at %d gives %v", at, problem)
+	}
+	root := [2]language_tag.Locale{locale_of(t, "fr"), {}}
+	_, problem, place, _ = language_list_of_locales(root[:])
+	testing.expect(t, problem == .No_Language && place == 1, "the root locale is taken in a list")
+	twice := [3]language_tag.Locale{locale_of(t, "fr"), locale_of(t, "en"), locale_of(t, "FR")}
+	_, problem, place, _ = language_list_of_locales(twice[:])
+	testing.expect(t, problem == .Duplicate && place == 2, "a language twice is taken")
+	// The same language with another region is another language.
+	regions := [2]language_tag.Locale{locale_of(t, "fr"), locale_of(t, "fr-CA")}
+	_, problem, _, _ = language_list_of_locales(regions[:])
+	testing.expect_value(t, problem, Language_List_Problem.None)
+	past, _, _, _ := language_list_of_locales(locales[:2])
+	past.locales[LANGUAGE_LIST_CAPACITY - 1] = locale_of(t, "it")
+	problem, place, _ = language_list_valid(past)
+	testing.expect(t, problem == .Record_Past_Count && place == LANGUAGE_LIST_CAPACITY - 1, "a record past the count is taken")
+	past.locales[LANGUAGE_LIST_CAPACITY - 1] = {}
+	past.locales[2].reserved = 1
+	problem, place, _ = language_list_valid(past)
+	testing.expect(t, problem == .Record_Past_Count && place == 2, "a byte past the count is taken")
+}
+
+// The successes of the border: 0 languages, 1, and the capacity.
+@(test)
+a_language_list_of_0_1_and_8_languages :: proc(t: ^testing.T) {
+	locales := full_locales(t)
+	for count in ([?]int{0, 1, LANGUAGE_LIST_CAPACITY}) {
+		list, problem, _, _ := language_list_of_locales(locales[:count])
+		testing.expectf(t, problem == .None, "a list of %d languages gives %v", count, problem)
+		testing.expect_value(t, list.count, u32(count))
+		for index in 0 ..< count {
+			testing.expect(t, list.locales[index] == locales[index], "the list keeps the order")
+		}
+	}
+	empty: Language_List
+	problem, _, _ := language_list_valid(empty)
+	testing.expect_value(t, problem, Language_List_Problem.None)
+}
+
+// Add, move up and remove: each keeps a valid list, and each refusal or
+// place out of the list leaves it unchanged.
+@(test)
+a_language_list_changed_by_the_window :: proc(t: ^testing.T) {
+	list: Language_List
+	problem: Language_List_Problem
+	list, problem = language_list_add(list, locale_of(t, "en"))
+	testing.expect_value(t, problem, Language_List_Problem.None)
+	list, problem = language_list_add(list, locale_of(t, "fr"))
+	testing.expect_value(t, problem, Language_List_Problem.None)
+	same: Language_List
+	same, problem = language_list_add(list, locale_of(t, "fr"))
+	testing.expect(t, problem == .Duplicate && same == list, "a language twice is added")
+	same, problem = language_list_add(list, {})
+	testing.expect(t, problem == .No_Language && same == list, "the root locale is added")
+	damaged := locale_of(t, "de")
+	damaged.reserved = 1
+	same, problem = language_list_add(list, damaged)
+	testing.expect(t, problem == .Bad_Locale && same == list, "a damaged record is added")
+	for place in ([?]int{-1, 0, 2, 3, max(int)}) {
+		testing.expectf(t, language_list_move_up(list, place) == list, "a move up at %d changes the list", place)
+	}
+	for place in ([?]int{-1, 2, max(int)}) {
+		testing.expectf(t, language_list_remove(list, place) == list, "a remove at %d changes the list", place)
+	}
+	moved := language_list_move_up(list, 1)
+	testing.expect(t, moved.locales[0] == locale_of(t, "fr") && moved.locales[1] == locale_of(t, "en"), "fr moves before en")
+	removed := language_list_remove(moved, 0)
+	testing.expect_value(t, removed.count, 1)
+	testing.expect(t, removed.locales[0] == locale_of(t, "en") && removed.locales[1] == {}, "en moves up, and the place after it is zero")
+	problem, _, _ = language_list_valid(removed)
+	testing.expect_value(t, problem, Language_List_Problem.None)
+	locales := full_locales(t)
+	full, _, _, _ := language_list_of_locales(locales[:LANGUAGE_LIST_CAPACITY])
+	same, problem = language_list_add(full, locale_of(t, "it"))
+	testing.expect(t, problem == .Too_Many && same == full, "a ninth language is added")
+}
+
+// The language list on the page: written and read back; a torn or damaged
+// list refuses the page whole, with the defaults; a list that the writer
+// was given and the border refuses is written as the empty list; a change
+// of the list alone makes two choices differ.
+@(test)
+the_language_list_on_the_page :: proc(t: ^testing.T) {
+	page: Page
+	page_defaults_write(&page)
+	defaults, defaults_ok := read(&page)
+	testing.expect(t, defaults_ok)
+	testing.expect_value(t, defaults.languages.count, 0)
+	written := choice_default()
+	locales := full_locales(t)
+	written.languages, _, _, _ = language_list_of_locales(locales[:LANGUAGE_LIST_CAPACITY])
+	write(&page, written, 0, .Dark)
+	choice, ok := read(&page)
+	testing.expect(t, ok)
+	testing.expect(t, choice.languages == written.languages, "the page gives back the list")
+	testing.expect(t, values_differ(defaults, choice), "a change of the list alone")
+	for count in ([?]u32{LANGUAGE_LIST_CAPACITY + 1, max(u32)}) {
+		page.language_count = count
+		refused, refused_ok := read(&page)
+		testing.expectf(t, !refused_ok, "a page of %d languages is taken", count)
+		testing.expect(t, refused.languages == Language_List{} && values_of(refused) == values_of(choice_default()), "a refused page gives the defaults")
+	}
+	page.language_count = LANGUAGE_LIST_CAPACITY
+	page.languages[3].numbering_system = language_tag.Numbering_System(255)
+	_, ok = read(&page)
+	testing.expect(t, !ok, "a page with a damaged record is taken")
+	page.languages[3].numbering_system = .Absent
+	page.language_count = 2
+	_, ok = read(&page)
+	testing.expect(t, !ok, "a page with records past its count is taken")
+	broken := written
+	broken.languages.locales[0] = broken.languages.locales[1]
+	write(&page, broken, 0, .Dark)
+	choice, ok = read(&page)
+	testing.expect(t, ok, "the writer of a refused list writes a page that its readers refuse")
+	testing.expect_value(t, choice.languages.count, 0)
+}
+
+// The kept record of version 3 holds the list: it reads back; a damaged
+// list refuses the record whole; a record of version 2 is refused.
+@(test)
+the_language_list_in_the_kept_record :: proc(t: ^testing.T) {
+	written := Choice{font = .Spleen, scale = .Ten_Eighths}
+	locales := full_locales(t)
+	for count in ([?]int{0, 1, LANGUAGE_LIST_CAPACITY}) {
+		written.languages, _, _, _ = language_list_of_locales(locales[:count])
+		kept := kept_of(written, 60)
+		read_choice, zone, ok := kept_read(([^]u8)(&kept)[:size_of(kept)])
+		testing.expectf(t, ok, "a record of %d languages is refused", count)
+		testing.expect(t, read_choice.languages == written.languages, "the record gives back the list")
+		testing.expect_value(t, zone, 60)
+	}
+	kept := kept_of(written, 60)
+	bytes := ([^]u8)(&kept)[:size_of(kept)]
+	kept.language_count = LANGUAGE_LIST_CAPACITY + 1
+	refused, _, ok := kept_read(bytes)
+	testing.expect(t, !ok && refused.languages == Language_List{}, "a record of 9 languages is taken")
+	kept.language_count = LANGUAGE_LIST_CAPACITY
+	kept.languages[7].script = {'l', 'a', 't', 'n'}
+	_, _, ok = kept_read(bytes)
+	testing.expect(t, !ok, "a record with a damaged locale is taken")
+	kept.languages[7] = kept.languages[0]
+	_, _, ok = kept_read(bytes)
+	testing.expect(t, !ok, "a record with a language twice is taken")
+	kept.languages[7] = locales[7]
+	kept.version = 2
+	_, _, ok = kept_read(bytes)
+	testing.expect(t, !ok, "a record of version 2 is taken")
+	kept.version = KEPT_VERSION
+	read_choice, _, read_ok := kept_read(bytes)
+	testing.expect(t, read_ok)
+	testing.expect_value(t, read_choice.languages.count, LANGUAGE_LIST_CAPACITY)
 }

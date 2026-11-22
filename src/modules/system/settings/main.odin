@@ -1,11 +1,17 @@
 // The settings of the system (docs/FONTS.md, "The setting"): the font of
 // the system, the order of the color stripes of the screen, the pointer
 // theme, the grid fit of the vector font, the layout of the keyboard, the
-// appearance of the desktop and the time zone. The window shows each
-// setting as a row of buttons and the text of the system at its three
-// sizes; the export set() and a getter for each setting make the same
-// changes and give the same values from the console and from
-// `modustool call`.
+// appearance of the desktop, the time zone and the languages that the
+// principal reads. The window shows each setting as a row of buttons and
+// the text of the system at its three sizes; the export set() and a getter
+// for each setting make the same changes and give the same values from the
+// console and from `modustool call`.
+//
+// The language list (src/md/features/interface_language.md, "1. The
+// identity of a language") is the languages that the principal reads, the first first, as
+// records of language_tag.Locale: set_languages() takes a table of them,
+// and the row "languages" of the window adds a common language, moves the
+// chosen language up, or removes it. An empty list is English.
 //
 // The time zone (src/md/features/time_zone.md) is a fixed offset from UTC,
 // "+08:00". This process writes it on the settings page; the process `date`
@@ -45,8 +51,9 @@
 //   can write it.
 // - **Store**: its private store, which keeps the record of the settings
 //   across a stop of the machine.
-// - **Serve**: the exports `set`, `set_time_zone`, `repeat`, and a getter
-//   for each setting and for the time zone.
+// - **Serve**: the exports `set`, `set_time_zone`, `set_languages`,
+//   `repeat`, and a getter for each setting, for the time zone and for the
+//   languages.
 //
 // **What a reader sees**: a card with one row of buttons for each setting,
 // and a card with the text of the system at its three sizes. The log has
@@ -64,6 +71,7 @@ import "internal:settings/appearance_rule"
 import "modus:contract/date"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import "modus:contract/language_tag"
 import op "modus:contract/operation"
 import "modus:contract/scale_factor"
 import "modus:contract/settings"
@@ -76,9 +84,11 @@ import "modus:storage"
 import "modus:system"
 import "modus:text_rendering"
 
-// One row of 32 more than six settings: the row of the scale.
+// One row of 32 for each setting and for the time zone, and the three
+// rows of the languages.
 WIDTH :: 560
-HEIGHT :: 592
+HEIGHT :: 688
+LANGUAGE_ROWS :: 3 // The list, the buttons that change it, the languages to add.
 // The least budget of 2048 pages, in which it ran before it stated its
 // window, less that window at the scale 1 (648 pages): its module, its
 // stack, its tables and its glyph memory. The tool counts the window at
@@ -160,6 +170,7 @@ with_value :: proc "contextless" (choice: settings.Choice, setting: settings.Set
 	changed.appearance_in_force = choice.appearance_in_force
 	changed.zone_offset_minutes = choice.zone_offset_minutes
 	changed.change_count = choice.change_count
+	changed.languages = choice.languages
 	return changed, true, .None
 }
 
@@ -257,13 +268,14 @@ page_choice :: proc "contextless" () -> (choice: settings.Choice, ok: bool) {
 	return choice, ok
 }
 
-// change keeps the values and the zone, then writes them on the page and
-// wakes the compositor and the process `date`.
+// change keeps the values, the zone and the language list, then writes
+// them on the page and wakes the compositor and the process `date`.
 change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -> bool {
 	current, current_ok := page_choice()
 	zone := settings.zone_offset_minutes_valid(zone_offset_minutes)
 	values_same := current_ok && settings.values_of(current) == settings.values_of(choice)
-	if values_same && current.zone_offset_minutes == zone {
+	languages_same := current_ok && current.languages == choice.languages
+	if values_same && languages_same && current.zone_offset_minutes == zone {
 		return true
 	}
 	kept := keep(choice, zone)
@@ -274,8 +286,33 @@ change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32)
 		zone_buffer: [settings.ZONE_TEXT_SIZE]u8
 		system.log_fact(.Info, Zone_Changed{zone = value_kinds.text_field(settings.zone_text(zone_buffer[:], zone), ZONE_FIELD_BYTES), store = store_field(kept)})
 	}
+	if !languages_same {
+		languages_buffer: [LANGUAGES_FIELD_BYTES]u8
+		system.log_fact(.Info, Languages_Changed{languages = value_kinds.text_field(languages_text(choice.languages, languages_buffer[:LANGUAGES_FIELD_BYTES - 1]), LANGUAGES_FIELD_BYTES), store = store_field(kept)})
+	}
 	page_write(choice, zone)
 	return kept
+}
+
+// languages_text writes the canonical tags of a list in its order, joined
+// by ", ", or "none" for the empty list. A buffer too short for the list
+// holds the tags that fit whole.
+languages_text :: proc "contextless" (list: settings.Language_List, buffer: []u8) -> string {
+	if list.count == 0 {
+		return "none"
+	}
+	count := 0
+	for index in 0 ..< int(min(list.count, settings.LANGUAGE_LIST_CAPACITY)) {
+		tag_buffer: [language_tag.LOCALE_TEXT_CAPACITY]u8
+		tag, ok := language_tag.tag_write(list.locales[index], tag_buffer[:])
+		separator := index == 0 ? "" : ", "
+		if !ok || len(separator) + len(tag) > len(buffer) - count {
+			break
+		}
+		count += copy(buffer[count:], separator)
+		count += copy(buffer[count:], tag)
+	}
+	return string(buffer[:count])
 }
 
 @(private = "file")
@@ -467,6 +504,99 @@ time_zone_get :: proc "c" (result: ^[]u8) -> i64 {
 	return i64(len(zone_name))
 }
 
+// Language_Row: one language of the list, as the getter languages gives it.
+// The sizes of the text fields are numbers: the tool reads a Text field as
+// [N]u8 with a number N.
+Language_Row :: struct {
+	tag:      [128]u8, // The canonical tag: "fr-CA", "ar-EG-u-nu-latn".
+	language: [8]u8, // The language subtag: "fr".
+	script:   [4]u8, // The script subtag, "Latn", or "".
+	region:   [4]u8, // The region, "CA" or "419", or "".
+}
+#assert(size_of(Language_Row{}.tag) == language_tag.LOCALE_TEXT_CAPACITY && size_of(Language_Row{}.language) == language_tag.LANGUAGE_BYTES)
+#assert(size_of(Language_Row{}.script) == language_tag.SCRIPT_BYTES && size_of(Language_Row{}.region) == language_tag.REGION_BYTES)
+
+// set_languages sets the languages that the principal reads, the first first, and keeps them in the store: set_languages([language("fr-CA"), language("en")]).
+//
+// A text of the system is written in the first language of the list that has it, else in its source language,
+// English. An empty table sets the empty list: each text is in English. Each window draws again: the settings page
+// wakes the compositor. The order is the store first, then the page. A list equal to the list of the page changes
+// nothing and returns 1.
+//
+// - **languages**: a table of 0 to 8 records of `language_tag.Locale`, each a language in its canonical form;
+//   `language("fr-CA")` in the console reads a tag into its record.
+//
+// The caller must act for the principal (**Acts_For_Principal**). The result is 1, or a negative number with an
+// error record; on each refusal no language changes:
+//
+// - `No_Grant` (-1): the caller does not act for the principal.
+// - `Too_Long` (-3): more than 8 records; value: their count; limit: 8.
+// - `Out_Of_Range` (-3): the count of the table is past its capacity; value: the count; limit: the capacity.
+// - `Bad_Value` (-3): a record that names no locale in its canonical form, or the root locale `und`; value: the
+//   word of its `language_tag.Locale_Problem`, 0 for the root locale; found: the record, from 1.
+// - `Exists` (-3): a language that the table holds in an earlier record; found: the record, from 1.
+// - `Refused` (-4): the store did not keep the list. The page changed all the same, so the windows use the new list
+//   until the next start of the machine.
+//
+// Example: `settings.set_languages([language("fr"), language("en")])`, then `settings.languages()` gives fr, then en.
+@(export, link_name = "set_languages")
+set_languages :: proc "c" (languages: ^system.Table_To_Read(language_tag.Locale), error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if languages.count > settings.LANGUAGE_LIST_CAPACITY {
+		return errors.fail(error, ERROR_VALUE, .Too_Long, .Records, 1, i64(min(languages.count, u64(max(i64)))), settings.LANGUAGE_LIST_CAPACITY)
+	}
+	if languages.count > languages.capacity {
+		return errors.fail(error, ERROR_VALUE, .Out_Of_Range, .Records, 1, i64(languages.count), i64(min(languages.capacity, u64(max(i64)))))
+	}
+	// A copy: the caller can change its records during the call.
+	given: [settings.LANGUAGE_LIST_CAPACITY]language_tag.Locale
+	count := copy(given[:], system.table_records(languages))
+	list, problem, place, locale_problem := settings.language_list_of_locales(given[:count])
+	record := i64(place) + 1
+	switch problem {
+	case .None:
+	case .Too_Many:
+		return errors.fail(error, ERROR_VALUE, .Too_Long, .Records, 1, i64(count), settings.LANGUAGE_LIST_CAPACITY)
+	case .Bad_Locale:
+		return errors.fail(error, ERROR_VALUE, .Bad_Value, .Records, 1, i64(locale_problem), 0, record)
+	case .No_Language, .Record_Past_Count:
+		return errors.fail(error, ERROR_VALUE, .Bad_Value, .Records, 1, 0, 0, record)
+	case .Duplicate:
+		return errors.fail(error, ERROR_VALUE, .Exists, .Records, 1, 0, 0, record)
+	}
+	current, _ := settings.read(page)
+	current.languages = list
+	if !change(current, current.zone_offset_minutes) {
+		return errors.fail(error, ERROR_STORE, .Refused, .None, 1)
+	}
+	return 1
+}
+
+// languages gives the languages that the principal reads, the first first: the canonical tag of each, its language, its script and its region.
+//
+// An empty table: each text of the system is in English. The getter reads the settings page, which each process
+// can read too: so it needs no grant. A refused page gives the empty list. The result is the count of languages; a
+// table shorter than the list gets its first rows.
+//
+// Example: `settings.languages()` gives a row "fr-CA", "fr", "", "CA", then a row "en", "en", "", "".
+@(export, link_name = "languages")
+languages_get :: proc "c" (result: ^[]Language_Row) -> i64 {
+	current, _ := settings.read(page)
+	count := int(min(current.languages.count, settings.LANGUAGE_LIST_CAPACITY))
+	for index in 0 ..< min(count, len(result^)) {
+		locale := current.languages.locales[index]
+		row: Language_Row
+		_, _ = language_tag.tag_write(locale, row.tag[:])
+		row.language = locale.language
+		row.script = locale.script
+		row.region = locale.region
+		result[index] = row
+	}
+	return i64(count)
+}
+
 // repeat keeps count records in the store, one commit each, with the font and the subpixel order of each record from its number: the case of the loss of power of the machine test (a loss in the middle gives the record before or the record in flight, never a mix).
 //
 // It is a test export, not a setting that a reader changes. The machine test calls it, then cuts the power of the
@@ -509,7 +639,7 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> i64 {
 // the boot, with no window.
 boot_pass :: proc "contextless" () -> ! {
 	start := system.nanoseconds()
-	buffer: [64]u8
+	buffer: [size_of(settings.Kept_Settings) + 64]u8
 	choice := settings.choice_default()
 	zone_offset_minutes: i32
 	source := Boot_Pass_Source.Nothing_Kept
@@ -606,9 +736,98 @@ zone_row :: proc "contextless" (frame: ^interface.Frame, x, y: int, choice: sett
 	}
 }
 
+// The language of the list that the buttons "move up" and "remove" act on:
+// its place, from 0. A press on a language of the list chooses it.
+chosen_language: int
+
+// language_button draws one button of the rows of the languages, as wide
+// as its label, with an element named by the row and the label, and gives
+// whether it was pressed and where the next button starts.
+language_button :: proc "contextless" (frame: ^interface.Frame, left, y: int, row_name, label: string, in_use := false) -> (pressed: bool, next_left: int) {
+	width := interface.text_measured_width(frame.table, interface.FONT_INTERFACE, label) + 16
+	builder: interface.Text_Builder
+	interface.text_put(&builder, "languages ")
+	interface.text_put(&builder, row_name)
+	interface.text_put(&builder, label)
+	element := interface.identity(interface.text_of(&builder))
+	pressed = interface.button(frame, {left, y, width, 24}, element, label, in_use).activated
+	return pressed, left + width + 8
+}
+
+// languages_rows draws the three rows of the languages at (x, y): the list
+// in its order, each language a button that chooses it; the buttons that
+// move the chosen language up and remove it; the common languages that
+// the list does not hold, to add at its end. A button past the right edge
+// of the card is not drawn.
+languages_rows :: proc "contextless" (frame: ^interface.Frame, x, y, right: int, choice: settings.Choice) {
+	ROW :: 32
+	list := choice.languages
+	count := int(min(list.count, settings.LANGUAGE_LIST_CAPACITY))
+	chosen_language = clamp(chosen_language, 0, max(count - 1, 0))
+	interface.draw_text(frame.table, x, y + 4, "languages", graphics.colors.dim)
+	left := x + 144
+	if count == 0 {
+		interface.draw_text(frame.table, left, y + 4, "none: English", graphics.colors.text)
+	}
+	for index in 0 ..< count {
+		tag_buffer: [language_tag.LOCALE_TEXT_CAPACITY]u8
+		tag, tag_ok := language_tag.tag_write(list.locales[index], tag_buffer[:])
+		width := interface.text_measured_width(frame.table, interface.FONT_INTERFACE, tag) + 16
+		if !tag_ok || left + width > right {
+			break
+		}
+		pressed: bool
+		if pressed, left = language_button(frame, left, y, "list ", tag, index == chosen_language); pressed {
+			chosen_language = index
+		}
+	}
+	left = x + 144
+	if count > 0 {
+		pressed: bool
+		if pressed, left = language_button(frame, left, y + ROW, "", "move up"); pressed && chosen_language >= 1 {
+			changed := choice
+			changed.languages = settings.language_list_move_up(list, chosen_language)
+			if change(changed, choice.zone_offset_minutes) {
+				chosen_language -= 1
+			}
+		}
+		if pressed, left = language_button(frame, left, y + ROW, "", "remove"); pressed {
+			changed := choice
+			changed.languages = settings.language_list_remove(list, chosen_language)
+			change(changed, choice.zone_offset_minutes)
+		}
+	}
+	// The common languages of the first build. The languages whose pack the
+	// machine holds take their place when the packs come.
+	common := [?]string{"en", "fr", "fr-CA", "de", "es", "ja", "ar"}
+	interface.draw_text(frame.table, x + 144, y + 2 * ROW + 4, "add", graphics.colors.dim)
+	left = x + 144 + 40
+	for tag in common {
+		locale, problem, _ := language_tag.tag_read(tag)
+		if problem != .None {
+			continue
+		}
+		added, add_problem := settings.language_list_add(list, locale)
+		if add_problem != .None {
+			// The list holds it, or is full.
+			continue
+		}
+		width := interface.text_measured_width(frame.table, interface.FONT_INTERFACE, tag) + 16
+		if left + width > right {
+			break
+		}
+		pressed: bool
+		if pressed, left = language_button(frame, left, y + 2 * ROW, "add ", tag); pressed {
+			changed := choice
+			changed.languages = added
+			change(changed, choice.zone_offset_minutes)
+		}
+	}
+}
+
 // draw builds the window: a row of buttons for each setting and for the
-// time zone, then the text of the system at the text size tokens, then the
-// hash of the font of the cells.
+// time zone, the rows of the languages, then the text of the system at the
+// text size tokens, then the hash of the font of the cells.
 draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
 	// A refused page shows the defaults: a press writes a whole page again.
 	choice, _ := settings.read(page)
@@ -621,10 +840,10 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	interface.text_put_number(&count, u64(choice.change_count / 2))
 	// A row: a button of 24 pixels and a gap of 8. The card of the text
 	// under the rows needs 150 pixels of content, so that its line of facts
-	// is under the caption of its large number: 8 rows of 32, the settings
-	// and the time zone, leave it 168 in the window.
+	// is under the caption of its large number: 11 rows of 32, the
+	// settings, the time zone and the languages, leave it 168 in the window.
 	ROW :: 32
-	rows_height := (len(settings.Setting) + 1) * ROW
+	rows_height := (len(settings.Setting) + 1 + LANGUAGE_ROWS) * ROW
 	content := interface.card(&frame, {8, 8, WIDTH - 16, 40 + rows_height + 32}, "SETTINGS", has_store ? "kept in the store of settings" : "NOT kept: no store", graphics.colors.kernel, interface.text_of(&count))
 	for &description, setting in settings.descriptions {
 		y := content.y + int(setting) * ROW
@@ -662,6 +881,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 		}
 	}
 	zone_row(&frame, content.x, content.y + len(settings.Setting) * ROW, choice)
+	languages_rows(&frame, content.x, content.y + (len(settings.Setting) + 1) * ROW, content.x + content.width, choice)
 	interface.draw_text(frame.table, content.x, content.y + rows_height + 8, "the console: settings.set(font = .spleen)", graphics.colors.dim)
 
 	top := 8 + 40 + rows_height + 32 + 8
