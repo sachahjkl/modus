@@ -959,6 +959,9 @@ commands_start :: proc "contextless" () {
 	// It runs in the second thread, so the list on the screen stays. The
 	// bounds that it measures: (docs/CONSOLE.md, "4. The bounds, and the cost of one key").
 	command("measure_completion", {}, .Table, "measure one key of the completion list", measure_completion)
+	// Sets or reads the active CLDR interface locale of the console.
+	//
+	// - `tag`: `"en"`, `"fr"`, or `""` to read the active locale tag.
 	command("locale", {.Text}, .Text, "set or read the active CLDR locale (en or fr)", locale_command)
 	debugger_commands_start()
 	tables_start()

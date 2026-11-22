@@ -11,34 +11,34 @@ ERROR :: -1
 // instance for the requested (cols, rows, scrollback) grid, or an error record
 // when dimensions exceed the bounded contract limits.
 @(export, link_name = "vt_arena_bytes")
-vt_arena_bytes :: proc "c" (cols: u64, rows: u64, scrollback: u64, error: ^errors.Error_Record) -> i64 {
-	if cols == 0 || cols > u64(ghostty_vt.MAX_COLS) {
-		return errors.fail(error, ERROR, .Out_Of_Range, .Counts, 1, i64(cols), i64(ghostty_vt.MAX_COLS))
+vt_arena_bytes :: proc "c" (cols: i64, rows: i64, scrollback: i64, error: ^errors.Error_Record) -> i64 {
+	if cols <= 0 || cols > i64(ghostty_vt.MAX_COLS) {
+		return errors.fail(error, ERROR, .Out_Of_Range, .Counts, 1, cols, i64(ghostty_vt.MAX_COLS))
 	}
-	if rows == 0 || rows > u64(ghostty_vt.MAX_ROWS) {
-		return errors.fail(error, ERROR, .Out_Of_Range, .Counts, 2, i64(rows), i64(ghostty_vt.MAX_ROWS))
+	if rows <= 0 || rows > i64(ghostty_vt.MAX_ROWS) {
+		return errors.fail(error, ERROR, .Out_Of_Range, .Counts, 2, rows, i64(ghostty_vt.MAX_ROWS))
 	}
-	if scrollback > ghostty_vt.MAX_SCROLLBACK_BYTES {
-		return errors.fail(error, ERROR, .Out_Of_Range, .Bytes, 3, i64(scrollback), i64(ghostty_vt.MAX_SCROLLBACK_BYTES))
+	if scrollback < 0 || u64(scrollback) > ghostty_vt.MAX_SCROLLBACK_BYTES {
+		return errors.fail(error, ERROR, .Out_Of_Range, .Bytes, 3, scrollback, i64(ghostty_vt.MAX_SCROLLBACK_BYTES))
 	}
 	opts := ghostty_vt.Terminal_Options{
 		cols                 = u16(cols),
 		rows                 = u16(rows),
-		max_scrollback_bytes = scrollback,
+		max_scrollback_bytes = u64(scrollback),
 	}
 	if ghostty_vt.terminal_options_validate(opts) != .None {
 		return errors.fail(error, ERROR, .Bad_Value, .Counts, 1)
 	}
-	return i64(u64(cols) * u64(rows) * 16 + scrollback + 65536)
+	return i64(u64(cols) * u64(rows) * 16 + u64(scrollback) + 65536)
 }
 
 // vt_allocator_smoke exercises the freestanding C-ABI Ghostty_Allocator fixed
 // arena (alloc -> free) and returns the number of bytes allocated, proving zero
 // host dependencies inside the loaded library module.
 @(export, link_name = "vt_allocator_smoke")
-vt_allocator_smoke :: proc "c" (request_bytes: u64, error: ^errors.Error_Record) -> i64 {
-	if request_bytes == 0 || request_bytes > 4096 {
-		return errors.fail(error, ERROR, .Out_Of_Range, .Counts, 1, i64(request_bytes), 4096)
+vt_allocator_smoke :: proc "c" (request_bytes: i64, error: ^errors.Error_Record) -> i64 {
+	if request_bytes <= 0 || request_bytes > 4096 {
+		return errors.fail(error, ERROR, .Out_Of_Range, .Counts, 1, request_bytes, 4096)
 	}
 	backing: [8192]u8
 	arena: ghostty_vt.Fixed_Arena

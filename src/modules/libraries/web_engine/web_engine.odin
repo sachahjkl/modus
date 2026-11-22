@@ -33,8 +33,8 @@ http_request_build :: proc "c" (host: ^string, path: ^string, result: ^[]u8, err
 // html_layout_count parses an HTML document and lays out its CSS block/inline
 // boxes within viewport_width x viewport_height, returning the layout box count.
 @(export, link_name = "html_layout_count")
-html_layout_count :: proc "c" (html: ^string, viewport_width: u64, viewport_height: u64, error: ^errors.Error_Record) -> i64 {
-	if viewport_width == 0 || viewport_width > 8192 || viewport_height == 0 || viewport_height > 8192 {
+html_layout_count :: proc "c" (html: ^string, viewport_width: i64, viewport_height: i64, error: ^errors.Error_Record) -> i64 {
+	if viewport_width <= 0 || viewport_width > 8192 || viewport_height <= 0 || viewport_height > 8192 {
 		return errors.fail(error, ERROR, .Out_Of_Range, .Counts, 2)
 	}
 	html_css.parse_html(&engine_dom, {}, transmute([]u8)(html^))
