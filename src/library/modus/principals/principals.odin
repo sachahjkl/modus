@@ -66,7 +66,7 @@ PASSPHRASE_LIMIT :: 128 // The most bytes of a passphrase.
 // root service gives (the store: 3).
 VALUE_MODE :: 5 // What this start of `unlock` does: the word of an Unlock_Mode.
 VALUE_NAME :: 6 // 6, 7 and 8: the name, 24 bytes with zero bytes after it.
-VALUE_PRINCIPAL :: 9 // The number of the principal that asked for a change.
+VALUE_PRINCIPAL :: 14 // The number of the principal that asked for a change.
 // 1: the firmware verified the boot program (Secure Boot was on), so
 // `unlock` may seal the machine key by the TPM and seal it again after a
 // recovery. 0: it may only unseal: a seal with Secure Boot off would trust

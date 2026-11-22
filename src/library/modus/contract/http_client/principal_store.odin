@@ -184,6 +184,45 @@ slice_equal :: proc "contextless" (a, b: []u8) -> bool {
 }
 
 @(private = "file")
+host_is_ip_literal :: proc "contextless" (host: []u8) -> bool {
+	if len(host) == 0 {
+		return true
+	}
+	// IPv6 literal contains ':' or brackets.
+	for b in host {
+		if b == ':' || b == '[' || b == ']' {
+			return true
+		}
+	}
+	// IPv4 dotted-decimal literal: only digits and dots with 4 non-empty octets.
+	dots := 0
+	digits_in_label := 0
+	for b in host {
+		if b == '.' {
+			if digits_in_label == 0 {
+				return false
+			}
+			dots += 1
+			digits_in_label = 0
+		} else if b >= '0' && b <= '9' {
+			digits_in_label += 1
+		} else {
+			return false
+		}
+	}
+	return dots == 3 && digits_in_label > 0
+}
+
+@(private = "file")
+origin_valid :: proc "contextless" (origin: ^Origin_Key) -> bool {
+	if origin == nil || origin.host_len == 0 || int(origin.host_len) > MAX_ORIGIN_HOST_LEN {
+		return false
+	}
+	_, ok := origin_scheme_of_word(u8(origin.scheme))
+	return ok
+}
+
+@(private = "file")
 domain_matches :: proc "contextless" (request_host: []u8, cookie_domain: []u8, host_only: bool) -> bool {
 	if host_only {
 		return slice_equal(request_host, cookie_domain)
@@ -402,22 +441,28 @@ cookie_jar_set_from_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Ori
 			} else if ascii_equal_ci(aname, "httponly") {
 				entry.http_only = true
 			} else if ascii_equal_ci(aname, "domain") {
+				if host_is_ip_literal(origin.host[:origin.host_len]) {
+					return .Domain_Mismatch
+				}
 				dom := aval
 				if len(dom) > 0 && dom[0] == '.' {
 					dom = dom[1:]
 				}
-				if len(dom) == 0 || len(dom) > MAX_COOKIE_DOMAIN_LEN {
+				if len(dom) == 0 || len(dom) > MAX_COOKIE_DOMAIN_LEN || dom[0] == '.' || dom[len(dom) - 1] == '.' {
 					return .Domain_Mismatch
 				}
 				has_dot := false
 				norm_dom: [MAX_COOKIE_DOMAIN_LEN]u8
 				for i := 0; i < len(dom); i += 1 {
 					if dom[i] == '.' {
+						if i > 0 && dom[i - 1] == '.' {
+							return .Domain_Mismatch
+						}
 						has_dot = true
 					}
 					norm_dom[i] = ascii_lower(dom[i])
 				}
-				if !has_dot {
+				if !has_dot || host_is_ip_literal(norm_dom[:len(dom)]) {
 					return .Domain_Mismatch
 				}
 				if !domain_matches(origin.host[:origin.host_len], norm_dom[:len(dom)], false) {
@@ -452,7 +497,12 @@ cookie_jar_set_from_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Ori
 				if ma <= 0 {
 					delete_now = true
 				} else {
-					entry.expires_at_unix = now_unix + ma
+					delete_now = false
+					if now_unix > 0 && ma > max(i64) - now_unix {
+						entry.expires_at_unix = max(i64)
+					} else {
+						entry.expires_at_unix = now_unix + ma
+					}
 				}
 			} else if ascii_equal_ci(aname, "expires") {
 				if !has_max_age {
@@ -470,6 +520,9 @@ cookie_jar_set_from_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Ori
 		}
 	}
 
+	if entry.secure && origin.scheme != .Https {
+		return .Secure_Required
+	}
 	if entry.same_site == .None && !entry.secure {
 		return .Secure_Required
 	}
@@ -511,6 +564,9 @@ cookie_jar_set_from_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Ori
 		}
 	}
 
+	if match_idx >= 0 && partition.entries[match_idx].secure && origin.scheme != .Https {
+		return .Secure_Required
+	}
 	if delete_now {
 		if match_idx >= 0 {
 			partition.entries[match_idx] = {}
@@ -532,8 +588,7 @@ cookie_jar_set_from_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Ori
 // cookie_jar_format_header builds the Cookie request header strictly from origin.principal_id's partition.
 // Enforces Secure (never on HTTP), HttpOnly (never for script), SameSite, Domain, Path, and expiry.
 cookie_jar_format_header :: proc "contextless" (jar: ^Cookie_Jar, origin: ^Origin_Key, request_path: string, is_same_site: bool, is_top_level_nav: bool, for_script: bool, now_unix: i64, out: []u8) -> (written: int, refusal: Store_Refusal) {
-	_, s_ok := origin_scheme_of_word(u8(origin.scheme))
-	if !s_ok {
+	if !origin_valid(origin) {
 		return 0, .Invalid_Scheme
 	}
 	partition := find_or_create_cookie_partition(jar, origin.principal_id, false)
@@ -690,16 +745,12 @@ parse_cache_control :: proc "contextless" (header_value: string) -> Cache_Direct
 // response_cache_store stores a cacheable HTTP response strictly inside origin.principal_id's partition.
 // Honors Cache-Control: no-store (never stores and purges prior entry) and max-age.
 response_cache_store :: proc "contextless" (cache: ^Response_Cache, origin: ^Origin_Key, target: string, status_code: u16, cache_control: string, body: []u8, now_unix: i64) -> Store_Refusal {
-	_, s_ok := origin_scheme_of_word(u8(origin.scheme))
-	if !s_ok {
+	if !origin_valid(origin) {
 		return .Invalid_Scheme
 	}
 	tbytes := transmute([]u8)target
 	if len(tbytes) == 0 || len(tbytes) > MAX_CACHE_TARGET_LEN || tbytes[0] != '/' {
 		return .Invalid_Path
-	}
-	if len(body) > MAX_CACHED_BODY_SIZE {
-		return .Body_Too_Large
 	}
 
 	cc := parse_cache_control(cache_control)
@@ -716,6 +767,9 @@ response_cache_store :: proc "contextless" (cache: ^Response_Cache, origin: ^Ori
 			}
 		}
 		return .Not_Cacheable
+	}
+	if len(body) > MAX_CACHED_BODY_SIZE {
+		return .Body_Too_Large
 	}
 	if !is_cacheable_status(status_code) {
 		return .Not_Cacheable
@@ -782,6 +836,9 @@ response_cache_store :: proc "contextless" (cache: ^Response_Cache, origin: ^Ori
 
 // response_cache_lookup retrieves a fresh cached response strictly from origin.principal_id's partition.
 response_cache_lookup :: proc "contextless" (cache: ^Response_Cache, origin: ^Origin_Key, target: string, now_unix: i64, body_out: []u8) -> (status_code: u16, body_len: int, hit: bool) {
+	if !origin_valid(origin) {
+		return 0, 0, false
+	}
 	part := find_or_create_cache_partition(cache, origin.principal_id, false)
 	if part == nil {
 		return 0, 0, false

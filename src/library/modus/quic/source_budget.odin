@@ -45,6 +45,7 @@ Source_Budget_Result :: enum u8 {
 	Over_Handshake_Limit = 2, // The /24 range already holds its maximum concurrent handshakes.
 	Backwards_Time       = 3, // The timestamp moved backwards relative to the table clock; nothing changed.
 	Invalid_Limits       = 4, // The supplied limits are outside their valid bounds; nothing changed.
+	Table_Full           = 5, // All 64 slots hold active handshakes or non-full buckets; new prefix refused.
 }
 
 // source_range_prefix returns the IPv4 /24 prefix of an address.
@@ -62,8 +63,11 @@ source_budget_table_init :: proc "contextless" (table: ^Source_Budget_Table) {
 
 // source_budget_limits_valid reports whether limits hold valid non-negative
 // refill rate and positive burst and active-handshake bounds.
+// Largest burst whose token capacity cannot overflow u64 addition during refill.
+SOURCE_BUDGET_BURST_MOST :: int(max(u64) / (2 * WORK_UNIT))
+
 source_budget_limits_valid :: proc "contextless" (limits: Source_Budget_Limits) -> bool {
-	return limits.burst > 0 && limits.attempts_per_second >= 0 && limits.active_handshakes_limit > 0
+	return limits.burst > 0 && limits.burst <= SOURCE_BUDGET_BURST_MOST && limits.attempts_per_second >= 0 && limits.active_handshakes_limit > 0
 }
 
 // source_budget_find returns the index of prefix in table, or -1 if absent.
@@ -77,39 +81,24 @@ source_budget_find :: proc "contextless" (table: ^Source_Budget_Table, prefix: u
 	return -1
 }
 
-// source_budget_evict_slot selects a slot for a new /24 prefix: first an
-// empty slot, then the oldest full idle slot, then the oldest idle slot, then
-// the oldest slot overall.
+// source_budget_evict_slot selects an empty slot or the oldest full idle slot
+// (active_handshakes == 0 and refilled to burst). Never evicts an active or
+// non-full throttled bucket, returning -1 so a spoofing attacker cannot reset
+// throttled ranges or corrupt active-handshake counts.
 @(private)
 source_budget_evict_slot :: proc "contextless" (table: ^Source_Budget_Table, limits: Source_Budget_Limits, now: u64) -> int {
 	full_idle_slot := -1
-	idle_slot := -1
-	oldest_slot := 0
 	for &entry, index in table.entries {
 		if !entry.used {
 			return index
 		}
-		if entry.last_seen < table.entries[oldest_slot].last_seen {
-			oldest_slot = index
-		}
-		if entry.active_handshakes == 0 {
-			if idle_slot < 0 || entry.last_seen < table.entries[idle_slot].last_seen {
-				idle_slot = index
-			}
-			if work_bucket_is_full(&entry.bucket, limits.attempts_per_second, limits.burst, now) {
-				if full_idle_slot < 0 || entry.last_seen < table.entries[full_idle_slot].last_seen {
-					full_idle_slot = index
-				}
+		if entry.active_handshakes == 0 && work_bucket_is_full(&entry.bucket, limits.attempts_per_second, limits.burst, now) {
+			if full_idle_slot < 0 || entry.last_seen < table.entries[full_idle_slot].last_seen {
+				full_idle_slot = index
 			}
 		}
 	}
-	if full_idle_slot >= 0 {
-		return full_idle_slot
-	}
-	if idle_slot >= 0 {
-		return idle_slot
-	}
-	return oldest_slot
+	return full_idle_slot
 }
 
 // source_budget_take admits or refuses one new-connection Initial attempt from
@@ -153,6 +142,11 @@ source_budget_take :: proc "contextless" (
 		return .Over_Handshake_Limit
 	}
 	slot := source_budget_evict_slot(table, limits, now)
+	if slot < 0 {
+		table.has_time = true
+		table.last_time = now
+		return .Table_Full
+	}
 	if table.entries[slot].used {
 		table.evictions += 1
 	}

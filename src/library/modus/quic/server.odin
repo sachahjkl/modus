@@ -635,7 +635,7 @@ server_new_connection :: proc "contextless" (server: ^Server, datagram: []u8, he
 	}
 	switch source_budget_take(&server.source_budgets, remote.address, source_limits, now, server_source_range_handshakes(server, remote.address)) {
 	case .Admitted:
-	case .Over_Rate_Budget, .Backwards_Time, .Invalid_Limits:
+	case .Over_Rate_Budget, .Backwards_Time, .Invalid_Limits, .Table_Full:
 		server.counters.over_source_budget += 1
 		return -1, 0
 	case .Over_Handshake_Limit:

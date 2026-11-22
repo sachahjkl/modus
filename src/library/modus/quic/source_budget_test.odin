@@ -119,8 +119,21 @@ source_budget_full_table_evicts_oldest_cleanly :: proc(t: ^testing.T) {
 	now += 100
 	testing.expect_value(t, source_budget_take(&table, 0x0A00_0104, limits, now), Source_Budget_Result.Over_Rate_Budget)
 
-	// Insert 32 more distinct /24 ranges (96 total > 64 capacity): each must
-	// evict cleanly, keep 10.0.1.0/24 throttled, and admit each new range.
+	// While all 64 slots hold non-full buckets, a 65th /24 is refused with
+	// Table_Full instead of evicting throttled ranges.
+	now += 100
+	testing.expect_value(t, source_budget_take(&table, 0x0C00_0001, limits, now), Source_Budget_Result.Table_Full)
+	testing.expect_value(t, table.evictions, u64(0))
+
+	// Advance past refill (2 s > 2/1 s burst) so idle entries refill to full,
+	// while draining 10.0.1.0/24 so it stays throttled and un-evictable.
+	now += 2_000_000
+	testing.expect_value(t, source_budget_take(&table, 0x0A00_0101, limits, now), Source_Budget_Result.Admitted)
+	testing.expect_value(t, source_budget_take(&table, 0x0A00_0102, limits, now), Source_Budget_Result.Admitted)
+	testing.expect_value(t, source_budget_take(&table, 0x0A00_0103, limits, now), Source_Budget_Result.Over_Rate_Budget)
+
+	// Now insert 32 more distinct /24 ranges: each evicts a full idle slot
+	// cleanly while keeping 10.0.1.0/24 throttled.
 	for extra in 0 ..< 32 {
 		now += 100
 		address := u32(0x0C00_0001) + (u32(extra) << 8)
