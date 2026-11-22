@@ -1112,10 +1112,11 @@ stand_in_mapping_set_remove_range :: proc "contextless" (set: ^Stand_In_Mapping_
 // for a mapping that a recorded process makes, after its start, of memory
 // that another process holds. Refused: Execute (a stand-in mapping never
 // runs code, and a page that a peer writes must not either), No_Access (a
-// point copy needs a page that the process can read), and At_Address_Zero
-// (the memory of a guest, which a recorded process never holds).
+// point copy needs a page that the process can read), At_Address_Zero
+// (the memory of a guest, which a recorded process never holds), and
+// Write_Combining (the registers of a device, which a record never holds).
 shared_mapping_access_of_map_flags :: proc "contextless" (flags: op.Map_Flags) -> (access: Shared_Mapping_Access, ok: bool) {
-	if .Execute in flags || .No_Access in flags || .At_Address_Zero in flags {
+	if .Execute in flags || .No_Access in flags || .At_Address_Zero in flags || .Write_Combining in flags {
 		return .None, false
 	}
 	if .Write in flags {

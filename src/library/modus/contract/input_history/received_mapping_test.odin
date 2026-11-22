@@ -556,8 +556,9 @@ stand_in_mapping_set_remove_range_edges :: proc(t: ^testing.T) {
 }
 
 // The access of a received mapping: Write gives Read_Write, no Write gives
-// Read, Receive_Handles changes nothing, and Execute, No_Access and
-// At_Address_Zero are refused alone and with each other flag.
+// Read, Receive_Handles changes nothing, and Execute, No_Access,
+// At_Address_Zero and Write_Combining are refused alone and with each other
+// flag.
 @(test)
 shared_mapping_access_of_map_flags_refuses_each_other_flag :: proc(t: ^testing.T) {
 	access, ok := shared_mapping_access_of_map_flags({})
@@ -568,7 +569,7 @@ shared_mapping_access_of_map_flags_refuses_each_other_flag :: proc(t: ^testing.T
 	testing.expect(t, ok && access == .Read_Write)
 	access, ok = shared_mapping_access_of_map_flags({.Receive_Handles})
 	testing.expect(t, ok && access == .Read)
-	for refused in ([?]op.Map_Flag{.Execute, .No_Access, .At_Address_Zero}) {
+	for refused in ([?]op.Map_Flag{.Execute, .No_Access, .At_Address_Zero, .Write_Combining}) {
 		for other in ([?]op.Map_Flags{{}, {.Write}, {.Receive_Handles}, {.Write, .Receive_Handles}}) {
 			access, ok = shared_mapping_access_of_map_flags(other + {refused})
 			testing.expect(t, !ok)

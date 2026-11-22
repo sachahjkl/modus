@@ -131,7 +131,7 @@ Built: two pictures for every surface, the debt of each picture, `display.canvas
 Left:
 
 - No page flip on a display with no registers of Bochs: the virtual GPU and a real device. A real device also needs the wait for its vertical blank before the old page is written.
-- The memory type of the screen pages and of the framebuffer of the firmware: the kernel does not process the page attribute table, so the type is the type of the memory type ranges (MTRR) of the firmware, which is write-back on a firmware that leaves device memory so. The fix for the long term is an entry of the page attribute table set to write-combining on each processor at the start, which `Display_Memory` and the framebuffer of the firmware use.
+- The memory type of the screen pages and of the framebuffer of the firmware: their mappings select the entry 0 of the page attribute table, so the type is the type of the memory type ranges (MTRR) of the firmware, which is write-back on a firmware that leaves device memory so. The kernel now writes write-combining at the entry 1 of the table on each processor at its start, for device memory of the kind `Memory` ([gpu_access.md](../features/gpu_access.md), "Write-combining device memory"). The fix for the long term is that `Display_Memory` and the framebuffer of the firmware use that entry too.
 - The page tables of the two screen pages are paid by the budget of the compositor: its stated working memory is larger by 4 pages. Large pages for device memory would remove them.
 - No host test of the copy of the debt of a screen page in the compositor: the procedures of the debt have their tests in the window layer, and the copy writes the device memory.
 

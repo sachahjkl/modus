@@ -356,6 +356,25 @@ read_marked_pages :: proc "contextless" (process: ^Process, handle: u64) -> u64 
 	return intrinsics.atomic_load(&regions[slot.object].marked_pages)
 }
 
+// read_device_cache_conflict says if a map of a memory handle with flags
+// meets a live mapping of another cache type over its frames
+// (device_cache_type_claim). It reads the counts under the frame lock and
+// changes nothing.
+@(private = "file")
+read_device_cache_conflict :: proc "contextless" (process: ^Process, handle: u64, flags: op.Map_Flags) -> bool {
+	slot, found := read_handle_find(process, handle, .Memory)
+	if !found {
+		return false
+	}
+	region := &regions[slot.object]
+	if !region.cache_types_counted {
+		return false
+	}
+	lock_take(&frame_lock, .Frame)
+	defer lock_free(&frame_lock, .Frame)
+	return device_cache_type_conflict(slot.object, device_cache_type_of(region, flags))
+}
+
 // read_table_pages gives the pages of a table of ranges in memory of the
 // process (a Page_Range or an Address_Range: the offset of the count).
 @(private = "file")
@@ -1273,6 +1292,12 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 			record_set(record, .Object_Marked, .Pages, memory_argument + 1, v[memory_argument], 0, marked)
 			return true
 		}
+		// Device memory whose frames a live mapping of another cache type
+		// covers: the object is shared with that mapping.
+		if operation == .Memory_Map && read_device_cache_conflict(process, v[0], transmute(op.Map_Flags)v[3]) {
+			record_set(record, .Object_Shared, .None, 1, v[0], 0, 0)
+			return true
+		}
 		argument = operation == .Memory_Map ? 2 : 1
 	case .Memory_Unmap, .Process_Start, .Process_Module, .Guest_Run:
 		argument = 1
@@ -1374,7 +1399,10 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 		if v[3] & ~op.MAP_FLAGS_KNOWN != 0 {
 			record_set(record, .Bad_Flags, .None, 4, v[3], op.MAP_FLAGS_KNOWN, 0)
 		} else {
-			record_set(record, .Bad_Value, .None, 4, v[3], 0, 0) // Write and Execute with no No_Access: no page is both.
+			// Write and Execute with no No_Access (no page is both), or
+			// Write_Combining with Execute or on memory that is not the
+			// registers of a device: each is a value of the flags.
+			record_set(record, .Bad_Value, .None, 4, v[3], 0, 0)
 		}
 		return true
 	case .Memory_Commit:
@@ -1495,9 +1523,11 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 			case .Inject_Error_Code:
 				value = u64(registers.inject_error_code)
 			case .Reserved:
-				value = u64(registers.reserved[0]) | u64(registers.reserved[1]) << 8 | u64(registers.reserved[2]) << 16
+				value = u64(registers.reserved[0]) | u64(registers.reserved[1]) << 8
 			case .Interrupt_Shadow:
 				value = u64(registers.interrupt_shadow)
+			case .Event_Pending:
+				value = u64(registers.event_pending)
 			case .Inject_In_Interrupt_Shadow:
 				// The event that the shadow refuses: the kind, not the shadow,
 				// is what the process changes.

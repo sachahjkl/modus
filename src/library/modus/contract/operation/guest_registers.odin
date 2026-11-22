@@ -37,13 +37,21 @@ Guest_Mode_Load :: enum u8 {
 // interrupt of a device that the process models, or an exception of an
 // instruction that the process ran in place of the guest. The processor
 // delivers it through the interrupt table of the guest, with no check of the
-// interrupt flag: the process checks first that the guest accepts it (the
-// interrupt flag in `rflags` for an external interrupt). The kernel refuses
-// an external interrupt and the non-maskable interrupt while the record
-// says that the guest is in its interrupt shadow.
+// interrupt flag. The kernel delivers an external interrupt only when the
+// record says that the guest takes interrupts: the interrupt flag set in
+// `rflags` and `interrupt_shadow` 0. Else it opens the interrupt window of
+// the guest processor, enters with no event, and ends the run with the exit
+// `Interrupt_Window` when the guest takes interrupts: the request stays in
+// the record for the next run. The kernel refuses the non-maskable
+// interrupt while the record says that the guest is in its interrupt shadow.
+//
+// Example: a guest runs `cli` and later `sti`. A record with an
+// `External_Interrupt` of the vector 0x30 and the interrupt flag clear
+// runs the guest to the instruction after `sti`, then ends with
+// `Interrupt_Window`; the next run with the same record delivers 0x30.
 Guest_Inject_Kind :: enum u8 {
 	None                   = 0, // Nothing to deliver.
-	External_Interrupt     = 1, // An interrupt of a device, at any vector, with no error code.
+	External_Interrupt     = 1, // An interrupt of a device, at a vector from `GUEST_VECTOR_FIRST_EXTERNAL`, with no error code, when the guest takes interrupts.
 	Non_Maskable_Interrupt = 2, // The non-maskable interrupt: the vector 2.
 	Exception              = 3, // An exception of the vectors 0 to 31, with its error code for the vectors that have one.
 	Software_Interrupt     = 4, // `int n`: the guest returns to `rip`, the address after the instruction.
@@ -98,7 +106,8 @@ Guest_Registers :: struct {
 	code_selector:           u16, // The selector of the code segment of a mode load; after the exit, the selector of `cs` of the guest.
 	data_selector:           u16, // The selector of the data segments of a mode load; after the exit, the selector of `ds` of the guest.
 	interrupt_shadow:        u8, // 1: the guest is just after `sti` or `mov ss`, and takes no interrupt before the next instruction completes. 0 or 1.
-	reserved:                [3]u8, // 0.
+	event_pending:           u8, // Written by the kernel: 1 when the guest processor holds an event that an exit interrupted, which its next entry delivers before any request. Not read; 0 or 1.
+	reserved:                [2]u8, // 0.
 	star:                    u64, // STAR: bits 32 to 47 the selectors of `syscall`, 48 to 63 those of `sysret`. Any value.
 	lstar:                   u64, // LSTAR: the address that `syscall` enters in 64-bit mode. Canonical.
 	sfmask:                  u64, // SFMASK: the flags that `syscall` clears. Bits 32 to 63 are 0.
@@ -108,7 +117,8 @@ Guest_Registers :: struct {
 }
 #assert(size_of(Guest_Registers) == 240)
 #assert(offset_of(Guest_Registers, interrupt_shadow) == 188)
-#assert(offset_of(Guest_Registers, reserved) == 189)
+#assert(offset_of(Guest_Registers, event_pending) == 189)
+#assert(offset_of(Guest_Registers, reserved) == 190)
 #assert(offset_of(Guest_Registers, star) == 192)
 #assert(offset_of(Guest_Registers, kernel_gs_base) == 232)
 
@@ -155,6 +165,12 @@ GUEST_EXCEPTIONS_REFUSED :: u32(1 << 2 | 1 << 15 | 1 << 18 | 0b11_1111 << 22 | 1
 // #AC, #CP, #VC and #SX.
 GUEST_EXCEPTIONS_WITH_ERROR_CODE :: u32(1 << 8 | 1 << 10 | 1 << 11 | 1 << 12 | 1 << 13 | 1 << 14 | 1 << 17 | 1 << 21 | 1 << 29 | 1 << 30)
 GUEST_VECTOR_NON_MASKABLE_INTERRUPT :: 2
+// The first vector of an external interrupt: the vectors below are the
+// exceptions of the processor, and a guest would take an interrupt there for
+// an exception with no error code.
+GUEST_VECTOR_FIRST_EXTERNAL :: 32
+// The interrupt flag of `rflags` (IF): the guest takes interrupts.
+GUEST_FLAGS_INTERRUPT :: u64(1) << 9
 
 // Why `Guest_Run` refuses a registers record, with `Bad_Operation`: the
 // first field that the rules refuse, in the order of the checks.
@@ -176,7 +192,8 @@ Guest_Registers_Refusal :: enum u8 {
 	System_Call_Mask    = 14, // `sfmask` has a bit outside `GUEST_SYSTEM_CALL_MASK_DEFINED`.
 	Segment_Base        = 15, // `fs_base`, `gs_base` or `kernel_gs_base` is not canonical.
 	Interrupt_Shadow    = 16, // `interrupt_shadow` is not 0 or 1.
-	Inject_In_Interrupt_Shadow = 17, // An `External_Interrupt` or a `Non_Maskable_Interrupt` while `interrupt_shadow` is 1: it would come one instruction early.
+	Inject_In_Interrupt_Shadow = 17, // A `Non_Maskable_Interrupt` while `interrupt_shadow` is 1: it would come one instruction early.
+	Event_Pending              = 18, // `event_pending` is not 0 or 1.
 }
 
 // guest_address_canonical says if an address is canonical: each bit from
@@ -209,6 +226,14 @@ Guest_Requests :: struct {
 guest_registers_refusal :: proc "contextless" (registers: Guest_Registers) -> bool {
 	_, refusal := guest_registers_check(registers)
 	return refusal != .None
+}
+
+// guest_external_interrupt_taken says if a guest with the state of a
+// record takes an external interrupt now: its interrupt flag set, and out of
+// its interrupt shadow. Else `Guest_Run` opens the interrupt window, and
+// delivers no event.
+guest_external_interrupt_taken :: proc "contextless" (registers: Guest_Registers) -> bool {
+	return registers.rflags & GUEST_FLAGS_INTERRUPT != 0 && registers.interrupt_shadow == 0
 }
 
 // guest_registers_check checks a registers record, and gives its requests
@@ -288,10 +313,14 @@ guest_registers_check :: proc "contextless" (registers: Guest_Registers) -> (req
 		return {}, .Interrupt_Shadow
 	}
 	// The processor delivers an injected event with no check of the shadow:
-	// an interrupt of a device would come before the instruction that the
-	// shadow protects (the second half of `mov ss`; `sti; hlt`).
-	if registers.interrupt_shadow == 1 && (inject_kind == .External_Interrupt || inject_kind == .Non_Maskable_Interrupt) {
+	// the non-maskable interrupt would come before the instruction that the
+	// shadow protects (the second half of `mov ss`). An external interrupt
+	// in the shadow waits for the interrupt window instead.
+	if registers.interrupt_shadow == 1 && inject_kind == .Non_Maskable_Interrupt {
 		return {}, .Inject_In_Interrupt_Shadow
+	}
+	if registers.event_pending > 1 {
+		return {}, .Event_Pending
 	}
 	if registers.reserved != {} {
 		return {}, .Reserved
@@ -313,7 +342,14 @@ guest_event_refusal :: proc "contextless" (kind: Guest_Inject_Kind, vector: u8, 
 		if error_code_valid {
 			return .Inject_Error_Code
 		}
-	case .External_Interrupt, .Software_Interrupt:
+	case .External_Interrupt:
+		if vector < GUEST_VECTOR_FIRST_EXTERNAL {
+			return .Inject_Vector
+		}
+		if error_code_valid {
+			return .Inject_Error_Code
+		}
+	case .Software_Interrupt:
 		if error_code_valid {
 			return .Inject_Error_Code
 		}

@@ -6,6 +6,7 @@ import "modus:contract/ring"
 import "base:intrinsics"
 import op "modus:contract/operation"
 import "modulus:extended_switch"
+import "modulus:page_attributes"
 import "modulus:processor_counters"
 
 // The objects, the handle tables, the processes and their threads
@@ -50,7 +51,12 @@ Region :: struct {
 	budget:     u32, // The budget that paid. 0 for a device.
 	device:     bool, // The frames are not from the page frame table: a framebuffer, boot data, the registers of a device.
 	contiguous: bool,
-	uncached:   bool, // The registers of a device: a mapping uses no cache.
+	uncached:   bool, // The registers of a device: a mapping uses no cache, or write-combining when it asks.
+	// Made by Device_Create, or the framebuffer of the firmware: memory of a device whose mappings count
+	// their cache types (device_cache_type_claim). Other device memory (the time page, the log, the
+	// images of the boot) is normal memory that the kernel names, and never counts.
+	cache_types_counted: bool,
+	cache_mappings: page_attributes.Mapping_Cache_Counts, // With cache_types_counted: the live mappings of each cache type. Frame lock.
 	uncommitted: bool, // Made Uncommitted: a page is paid when it is committed (the bit SLOT_COMMITTED of its slot).
 	large_pages: bool, // Made Large_Pages: contiguous, aligned on 2 MiB, a whole number of large pages.
 	committed:  u64, // Uncommitted: the committed pages. Region lock and frame lock to change it.
@@ -788,6 +794,71 @@ region_device :: proc "contextless" (physical: u64, page_count: u64) -> u32 {
 	return index
 }
 
+// device_cache_type_claim counts one more mapping of a cache type over a
+// memory object of the memory of a device, or refuses it when a live
+// mapping of another type exists over this object or over another object
+// whose physical pages meet its pages (two Device_Create of one range).
+// The count is for each object, not for each page: a conflict over one
+// page of an object refuses each page of it. Two cache types over one frame
+// break the coherence of the caches. It reads each memory object under the
+// frame lock, which orders it with each other claim and release; only a map
+// of an object with cache_types_counted pays for the walk: device
+// registers, a screen, the framebuffer of the firmware, which their
+// services map at their start.
+device_cache_type_claim :: proc "contextless" (region_index: u32, type: page_attributes.Mapping_Cache_Type) -> bool {
+	lock_take(&frame_lock, .Frame)
+	defer lock_free(&frame_lock, .Frame)
+	if device_cache_type_conflict(region_index, type) {
+		return false
+	}
+	regions[region_index].cache_mappings[type] += 1
+	return true
+}
+
+// device_cache_type_conflict says if a live mapping of another cache type
+// covers a frame of a memory object of device memory. The caller holds the
+// frame lock.
+device_cache_type_conflict :: proc "contextless" (region_index: u32, type: page_attributes.Mapping_Cache_Type) -> bool {
+	region := &regions[region_index]
+	for &other in regions[1:] {
+		if other.page_count == 0 || !other.cache_types_counted {
+			continue
+		}
+		if page_attributes.ranges_overlap(region.physical, region.page_count, other.physical, other.page_count) && !page_attributes.cache_type_joins(other.cache_mappings, type) {
+			return true
+		}
+	}
+	return false
+}
+
+// device_cache_type_of gives the cache type of a new mapping of a memory
+// object of device memory: the registers of a device with no cache, or
+// write-combining when the map asks; other device memory (a screen, boot
+// data) with the entry 0.
+device_cache_type_of :: proc "contextless" (region: ^Region, flags: op.Map_Flags) -> page_attributes.Mapping_Cache_Type {
+	if !region.uncached {
+		return .Default
+	}
+	return .Write_Combining in flags ? .Write_Combining : .Uncacheable
+}
+
+// device_cache_type_release counts one mapping of a cache type less, at an
+// unmap or at a map that failed after its claim.
+device_cache_type_release :: proc "contextless" (region_index: u32, type: page_attributes.Mapping_Cache_Type) {
+	lock_take(&frame_lock, .Frame)
+	defer lock_free(&frame_lock, .Frame)
+	counts := &regions[region_index].cache_mappings
+	if counts[type] == 0 {
+		// A release with no claim: a count of another mapping would go.
+		when TEST_BUILD_CHECKS_LOCK_ORDER {
+			log("kernel: a cache type count of a memory object of a device would go below 0")
+			machine_stop(.Invariant_Broken)
+		}
+		return
+	}
+	counts[type] -= 1
+}
+
 // region_slot gives the place of the frame of one page in the frame list of
 // a memory object that is not contiguous.
 region_slot :: proc "contextless" (region: ^Region, page: u64) -> ^u64 {
@@ -1133,6 +1204,11 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	if writable_and_executable && .No_Access not_in flags {
 		return 0, .Bad_Operation // No page is writable and executable: it gets Write or Execute in turn.
 	}
+	// Write-combining only over the registers of a device, never executed
+	// (map_write_combining_refused).
+	if op.map_write_combining_refused(flags, region.uncached) {
+		return 0, .Bad_Operation
+	}
 	if (at_zero || writable_and_executable) && (by_the_process || process.state != .Created || process.thread_count != 0) {
 		return 0, .Bad_State
 	}
@@ -1186,7 +1262,7 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 		limit_bits |= PAGE_NO_EXECUTE
 	}
 	if region.uncached {
-		limit_bits |= PAGE_NO_CACHE
+		limit_bits |= .Write_Combining in flags ? PAGE_WRITE_COMBINING : PAGE_NO_CACHE
 	}
 	// No_Access: the mapping has its addresses and no access until
 	// Memory_Protect gives it some.
@@ -1194,6 +1270,21 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	// Large pages: an object made Large_Pages, and a mapping whose address,
 	// first page and size are whole large pages.
 	large := region.large_pages && address % LARGE_PAGE_SIZE == 0 && first % op.LARGE_PAGE_PAGES == 0 && count % op.LARGE_PAGE_PAGES == 0
+	// One cache type over the memory of a device, across its memory objects
+	// (device_cache_type_claim), after each check of the arguments: a
+	// conflict is the last refusal of a map that is otherwise right. A map
+	// that fails after the claim gives it back, until the mapping owns it.
+	cache_type := device_cache_type_of(region, flags)
+	cache_claimed := false
+	if region.cache_types_counted {
+		if !device_cache_type_claim(region_index, cache_type) {
+			return 0, .Bad_State
+		}
+		cache_claimed = true
+	}
+	defer if status != .Ok && cache_claimed {
+		device_cache_type_release(region_index, cache_type)
+	}
 	// The origin first: during a revocation, a path with no control lock
 	// adds no holding, and runs again under the control lock.
 	holding := holding_of_mapping(process, mapping)
@@ -1287,6 +1378,9 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	// it (Memory_Map through target_lock in enter.odin, process_create and
 	// thread_create in this file, the start of the root service in main.odin).
 	mapping^ = {address = address, page_count = count, first = first, bits = bits, region = region_index, present_page_count = present_page_count, limit_bits = limit_bits, large = large, receive_handles = .Receive_Handles in flags}
+	// The mapping owns its count of the cache type now: its unmap gives it
+	// back, and the deferred release must not give it a second time.
+	cache_claimed = false
 	intrinsics.atomic_add(&region.references, 1)
 	if process_records[index_of_process(process)].mode != .None {
 		intrinsics.atomic_add(&region.recorded_mappings, 1)
@@ -1449,6 +1543,11 @@ unmap :: proc "contextless" (process: ^Process, mapping: ^Mapping) {
 	// A mapping of the registers of a device keeps the domain of that device
 	// as a handle does: the last one of the two ends it.
 	iommu_mapping_ended(process, mapping)
+	if regions[mapping.region].cache_types_counted {
+		if cache_type, known := page_attributes.mapping_cache_type_of_bits(mapping.limit_bits); known {
+			device_cache_type_release(mapping.region, cache_type)
+		}
+	}
 	region_release(mapping.region)
 	mapping^ = {} // The count of the present pages ends with the mapping (under the process lock: the caller holds it).
 }

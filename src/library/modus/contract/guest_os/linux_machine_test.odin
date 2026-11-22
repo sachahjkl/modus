@@ -610,14 +610,17 @@ machine_interrupt_shadow_defers_the_tick :: proc(t: ^testing.T) {
 	out(machine, &registers, 0x40, 0x00)
 	out(machine, &registers, 0x40, 0x10) // 4096 ticks.
 	machine.clock += 2 * 4096
-	// In the shadow, with interrupts on: nothing is injected, at each exit
-	// that leaves the guest at its instruction.
+	// In the shadow, with interrupts on: the record asks for the tick only
+	// to open the interrupt window, and no line goes into service, at each
+	// exit that leaves the guest at its instruction.
 	registers.rflags = 0x202
 	registers.interrupt_shadow = 1
 	at := registers.rip
 	for _ in 0 ..< 3 {
 		testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Interrupted}), Machine_Step.Continue)
-		testing.expect_value(t, registers.inject_kind, u8(op.Guest_Inject_Kind.None))
+		testing.expect_value(t, registers.inject_kind, u8(op.Guest_Inject_Kind.External_Interrupt))
+		testing.expect(t, machine.window_requested)
+		testing.expect_value(t, machine.interrupts.primary.service, u8(0))
 		testing.expect_value(t, registers.interrupt_shadow, u8(1))
 		testing.expect_value(t, registers.rip, at)
 		_, refusal := op.guest_registers_check(registers)
@@ -644,7 +647,9 @@ machine_interrupt_shadow_defers_the_tick :: proc(t: ^testing.T) {
 	registers.inject_kind, registers.inject_vector = 0, 0
 	registers.rflags = 0x2
 	out(machine, &registers, 0x20, 0x20)
+	// No tick waits yet: no request, and no window.
 	testing.expect_value(t, registers.inject_kind, u8(op.Guest_Inject_Kind.None))
+	testing.expect(t, !machine.window_requested)
 	registers.rflags = 0x202
 	registers.interrupt_shadow = 1
 	testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Halt, next = registers.rip + 1}), Machine_Step.Continue)
@@ -680,4 +685,78 @@ host_interruptions_do_not_advance_guest_tsc_and_rdpru_faults :: proc(t: ^testing
 	testing.expect_value(t, registers.rip, before_rip)
 	testing.expect_value(t, registers.inject_kind, u8(op.Guest_Inject_Kind.Exception))
 	testing.expect_value(t, registers.inject_vector, u8(6))
+}
+
+// The interrupt window from the side of the machine: a line that waits
+// while the guest takes no interrupt opens the window with no acknowledge;
+// the exit Interrupt_Window acknowledges it and asks for its vector; a
+// controller that the guest did not program (base 0) never gives a vector
+// below 32 to the kernel.
+@(test)
+machine_interrupt_window_and_unprogrammed_controller :: proc(t: ^testing.T) {
+	machine := new(Linux_Machine)
+	defer free(machine)
+	linux_machine_start(machine, {}, nil, nil)
+	registers := op.Guest_Registers{rflags = 0x202, rip = 0x100}
+	out :: proc(machine: ^Linux_Machine, registers: ^op.Guest_Registers, port: u16, value: u8) {
+		linux_machine_handle_exit(machine, registers, {kind = .Port_Write, a = u64(port), b = 1, c = u64(value), next = registers.rip + 1})
+	}
+	// The controller at reset: base 0, nothing masked. The timer line
+	// rises, the guest takes interrupts, and still nothing is asked.
+	out(machine, &registers, 0x43, 0x34)
+	out(machine, &registers, 0x40, 0x00)
+	out(machine, &registers, 0x40, 0x10) // 4096 ticks.
+	machine.clock += 2 * 4096
+	for _ in 0 ..< 3 {
+		testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Interrupted}), Machine_Step.Continue)
+		testing.expect_value(t, registers.inject_kind, u8(op.Guest_Inject_Kind.None))
+		testing.expect_value(t, machine.interrupts.primary.service, u8(0))
+		_, refusal := op.guest_registers_check(registers)
+		testing.expect_value(t, refusal, op.Guest_Registers_Refusal.None)
+	}
+	// The guest programs the controllers at 0x30 and 0x38, the timer line
+	// alone unmasked, with interrupts off.
+	registers.rflags = 0x2
+	for pair in ([?][2]u16{{0x20, 0x11}, {0x21, 0x30}, {0x21, 0x04}, {0x21, 0x01}, {0xA0, 0x11}, {0xA1, 0x38}, {0xA1, 0x02}, {0xA1, 0x01}, {0x21, 0xFE}, {0xA1, 0xFF}}) {
+		out(machine, &registers, pair[0], u8(pair[1]))
+	}
+	machine.clock += 2 * 4096
+	linux_machine_handle_exit(machine, &registers, {kind = .Interrupted})
+	// Interrupts off: the record asks for 0x30 to open the window, and the
+	// line is not in service.
+	testing.expect_value(t, registers.inject_kind, u8(op.Guest_Inject_Kind.External_Interrupt))
+	testing.expect_value(t, registers.inject_vector, u8(0x30))
+	testing.expect(t, machine.window_requested)
+	testing.expect_value(t, machine.interrupts.primary.service, u8(0))
+	_, window_refusal := op.guest_registers_check(registers)
+	testing.expect_value(t, window_refusal, op.Guest_Registers_Refusal.None)
+	// The same in the shadow of sti, with the flag set.
+	registers.rflags = 0x202
+	registers.interrupt_shadow = 1
+	linux_machine_handle_exit(machine, &registers, {kind = .Interrupted})
+	testing.expect_value(t, registers.inject_kind, u8(op.Guest_Inject_Kind.External_Interrupt))
+	testing.expect(t, machine.window_requested)
+	testing.expect_value(t, machine.interrupts.primary.service, u8(0))
+	// An exception of the machine at that exit replaces the request: the
+	// line still waits, and no line went into service.
+	registers.rcx = 0x1B
+	linux_machine_handle_exit(machine, &registers, {kind = .Other, code = u64(Other_Exit_Code.Model_Specific_Register), information = 0})
+	testing.expect(t, registers.inject_kind == u8(op.Guest_Inject_Kind.Exception) && registers.inject_vector == VECTOR_GENERAL_PROTECTION)
+	testing.expect(t, !machine.window_requested)
+	testing.expect_value(t, machine.interrupts.primary.service, u8(0))
+	registers.inject_kind, registers.inject_vector, registers.inject_error_code_valid = 0, 0, 0
+	registers.rflags = 0x2
+	registers.interrupt_shadow = 0
+	linux_machine_handle_exit(machine, &registers, {kind = .Interrupted})
+	testing.expect(t, machine.window_requested)
+	// The successful case last: the guest opened its window (sti, then one
+	// instruction). The exit acknowledges the line and asks for its vector.
+	registers.rflags = 0x202
+	testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Interrupt_Window}), Machine_Step.Continue)
+	testing.expect_value(t, registers.inject_kind, u8(op.Guest_Inject_Kind.External_Interrupt))
+	testing.expect_value(t, registers.inject_vector, u8(0x30))
+	testing.expect(t, !machine.window_requested)
+	testing.expect_value(t, machine.interrupts.primary.service, u8(1))
+	_, refusal := op.guest_registers_check(registers)
+	testing.expect_value(t, refusal, op.Guest_Registers_Refusal.None)
 }

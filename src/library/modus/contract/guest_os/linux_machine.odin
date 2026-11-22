@@ -129,6 +129,9 @@ Linux_Machine :: struct {
 	failure:                          Machine_Failure,
 	faults_injected:                  u64, // The general protection faults of refused model-specific registers.
 	unclaimed_accesses:               u64, // Accesses to an address or a port where no device answers.
+	// The record asks for an external interrupt only to open the interrupt window: no line went into
+	// service. The next exit takes the request back, and the machine asks again.
+	window_requested:                 bool,
 }
 
 // linux_machine_start makes the machine of a build on the memory of the
@@ -200,10 +203,17 @@ linux_machine_handle_exit :: proc "contextless" (machine: ^Linux_Machine, regist
 	if exit.kind != .Interrupted {
 		machine.clock += LINUX_TICKS_PER_EXIT
 	}
+	// A request that only opened the window leaves the record: no line is in
+	// service for it, and the update below asks again from the state now.
+	if machine.window_requested {
+		registers.inject_kind = u8(op.Guest_Inject_Kind.None)
+		registers.inject_vector = 0
+		machine.window_requested = false
+	}
 	address_of_exit := registers.rip
 	step := Machine_Step.Continue
 	switch exit.kind {
-	case .Interrupted:
+	case .Interrupted, .Interrupt_Window:
 	case .Port_Read, .Port_Write:
 		step = machine_port(machine, registers, exit)
 	case .Memory:
@@ -639,20 +649,32 @@ machine_lines_update :: proc "contextless" (machine: ^Linux_Machine) {
 	}
 }
 
-// machine_interrupts_update sets the lines, then asks the kernel to deliver
-// the interrupt that waits, when the guest takes interrupts and no other
-// event waits in the record. Inside the interrupt shadow of sti or mov ss,
-// the interrupt waits for a later exit: the processor would deliver it one
-// instruction early, and the kernel refuses that record.
+// machine_interrupts_update sets the lines, then asks for the interrupt
+// that waits, when no other event waits in the record. When the guest takes
+// interrupts (its interrupt flag set, out of the shadow of sti or mov ss),
+// the line goes into service, as at the acknowledge cycle of the processor,
+// and the kernel delivers its vector. Else the record asks for the same
+// vector with no acknowledge: the kernel opens the interrupt window, and
+// the exit Interrupt_Window brings the machine back here, where the line is
+// acknowledged then. A vector below 32 is never asked: a controller that
+// the guest did not program yet has the base 0, the guest would take the
+// interrupt for an exception, and the kernel refuses it.
 machine_interrupts_update :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Guest_Registers) {
 	machine_lines_update(machine)
-	if registers.inject_kind != u8(op.Guest_Inject_Kind.None) || registers.rflags & FLAGS_INTERRUPT == 0 || registers.interrupt_shadow != 0 {
+	if registers.inject_kind != u8(op.Guest_Inject_Kind.None) {
 		return
 	}
-	vector, waiting := interrupt_acknowledge(&machine.interrupts)
-	if !waiting {
+	vector, waiting := interrupt_waiting_vector(&machine.interrupts)
+	if !waiting || vector < op.GUEST_VECTOR_FIRST_EXTERNAL {
 		return
 	}
+	if !op.guest_external_interrupt_taken(registers^) {
+		registers.inject_kind = u8(op.Guest_Inject_Kind.External_Interrupt)
+		registers.inject_vector = vector
+		machine.window_requested = true
+		return
+	}
+	acknowledged, _ := interrupt_acknowledge(&machine.interrupts)
 	registers.inject_kind = u8(op.Guest_Inject_Kind.External_Interrupt)
-	registers.inject_vector = vector
+	registers.inject_vector = acknowledged
 }
