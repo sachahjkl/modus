@@ -553,7 +553,11 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 	can_read_state := .Read in target_slot.rights
 	caller_process_index := index_of_process(caller_process)
 	if target_index == caller_process_index {
-		return thread_control_state_refuse(.Process_Not_Created, 1, v[0], u64(op.Process_State.Created), u64(op.Process_State.Ready))
+		self_found := can_read_state ? u64(op.Process_State.Ready) : 0
+		if command == .Record_End {
+			return thread_control_state_refuse(.Not_Recording, 1, v[0], 0, self_found)
+		}
+		return thread_control_state_refuse(.Process_Not_Created, 1, v[0], u64(op.Process_State.Created), self_found)
 	}
 	if (command == .Record_Start || command == .Replay_Start) && !intrinsics.atomic_load(&cpuid_faulting_supported) {
 		return .Bad_Operation
@@ -564,6 +568,11 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 	target := &processes[target_index]
 	target_state := can_read_state ? u64(target.state) : 0
 	if target.state == .None || target.state == .Stopped {
+		// Without Read, keep the refusal identical for Stopped and Ready
+		// targets so a Debug-only handle cannot oracle target state.
+		if !can_read_state && command != .Record_End {
+			return thread_control_state_refuse(.Process_Not_Created, 1, v[0], u64(op.Process_State.Created), 0)
+		}
 		return thread_control_state_refuse(.Process_Stopped, 1, v[0], 0, target_state)
 	}
 	rec := &process_records[target_index]

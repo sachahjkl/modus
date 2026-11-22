@@ -84,7 +84,7 @@ trust_check :: proc "contextless" () {
 		system.log_fact(.Info, Boot_Program_Check_Time{check_time = value_kinds.Time_In_Microseconds(trust.check_cycles * 1_000_000 / report.cycle_frequency)})
 	}
 	key_kind, key_kind_ok := info.signing_key_kind_of_word(trust.key_kind)
-	if !key_kind_ok {
+	if !key_kind_ok || key_kind == .None {
 		fail("the boot record names no signing key kind", .Bad_State)
 	}
 	if key_kind == .Test {

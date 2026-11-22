@@ -210,6 +210,14 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 	// takes nothing (process_lock).
 	taken := process_lock(owner)
 	defer process_unlock(owner, taken)
+	if by_debugger {
+		// Check debugger ownership before process state so a non-debugger
+		// holding a Debug-only handle without Read cannot tell stopped from
+		// live targets via Error_Record.unit.
+		if !debugger_is(owner, caller_process_index) {
+			return thread_control_state_refuse(.Not_Debugger, 1, v[0], 0, can_read_state ? u64(processes[owner].state) : 0)
+		}
+	}
 	if processes[owner].state == .Stopped || processes[owner].state == .None {
 		if by_debugger {
 			return thread_control_state_refuse(.Process_Stopped, 1, v[0], 0, can_read_state ? u64(processes[owner].state) : 0)
@@ -217,12 +225,6 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		return thread_control_state_refuse(.Thread_Ended, target_argument, target_value, 0, can_read_state ? u64(op.Process_State.Stopped) : 0)
 	}
 	if by_debugger {
-		// The right Debug alone names no thread: the caller first made one
-		// of its threads the debug handler of the process, so that the end
-		// of that handler gives the process back what these commands take.
-		if !debugger_is(owner, caller_process_index) {
-			return thread_control_state_refuse(.Not_Debugger, 1, v[0], 0, can_read_state ? u64(processes[owner].state) : 0)
-		}
 		// Under the process lock of the process, no thread of it starts
 		// or ends.
 		target_index = thread_of_number(owner, v[1])
