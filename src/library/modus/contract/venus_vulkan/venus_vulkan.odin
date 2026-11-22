@@ -53,12 +53,21 @@ Command_Type :: enum u32 {
 	Queue_Wait_Idle                = 19,
 	Allocate_Memory                = 21,
 	Bind_Buffer_Memory             = 28,
+	Bind_Image_Memory              = 29,
 	Create_Buffer                  = 50,
+	Create_Image                   = 54,
+	Create_Image_View              = 57,
+	Create_Shader_Module           = 59,
+	Create_Graphics_Pipelines      = 65,
+	Create_Pipeline_Layout         = 68,
+	Create_Framebuffer             = 80,
+	Create_Render_Pass             = 82,
 	Create_Command_Pool            = 85,
 	Allocate_Command_Buffers       = 88,
 	Begin_Command_Buffer           = 90,
 	End_Command_Buffer             = 91,
 	Cmd_Bind_Pipeline              = 93,
+	Cmd_Set_Viewport               = 94,
 	Cmd_Set_Scissor                = 95,
 	Cmd_Bind_Descriptor_Sets       = 103,
 	Cmd_Bind_Index_Buffer          = 104,
@@ -67,7 +76,11 @@ Command_Type :: enum u32 {
 	Cmd_Draw_Indexed               = 107,
 	Cmd_Copy_Buffer                = 112,
 	Cmd_Copy_Buffer_To_Image       = 115,
+	Cmd_Copy_Image_To_Buffer       = 116,
+	Cmd_Update_Buffer              = 117,
 	Cmd_Clear_Color_Image          = 119,
+	Cmd_Pipeline_Barrier           = 126,
+	Cmd_Push_Constants             = 132,
 	Cmd_Begin_Render_Pass          = 133,
 	Cmd_End_Render_Pass            = 135,
 	Get_Device_Queue_2             = 155,
@@ -93,11 +106,28 @@ Structure_Type :: enum i32 {
 	Device_Create_Info           = 3,
 	Submit_Info                  = 4,
 	Memory_Allocate_Info         = 5,
-	Buffer_Create_Info           = 12,
-	Command_Pool_Create_Info     = 39,
-	Command_Buffer_Allocate_Info = 40,
-	Command_Buffer_Begin_Info    = 42,
-	Render_Pass_Begin_Info       = 43,
+	Buffer_Create_Info                        = 12,
+	Image_Create_Info                         = 14,
+	Image_View_Create_Info                    = 15,
+	Shader_Module_Create_Info                 = 16,
+	Pipeline_Shader_Stage_Create_Info         = 18,
+	Pipeline_Vertex_Input_State_Create_Info   = 19,
+	Pipeline_Input_Assembly_State_Create_Info = 20,
+	Pipeline_Viewport_State_Create_Info       = 22,
+	Pipeline_Rasterization_State_Create_Info  = 23,
+	Pipeline_Multisample_State_Create_Info    = 24,
+	Pipeline_Color_Blend_State_Create_Info    = 26,
+	Pipeline_Dynamic_State_Create_Info        = 27,
+	Graphics_Pipeline_Create_Info             = 28,
+	Pipeline_Layout_Create_Info               = 30,
+	Framebuffer_Create_Info                   = 37,
+	Render_Pass_Create_Info                   = 38,
+	Command_Pool_Create_Info                  = 39,
+	Command_Buffer_Allocate_Info              = 40,
+	Command_Buffer_Begin_Info                 = 42,
+	Render_Pass_Begin_Info                    = 43,
+	Image_Memory_Barrier                      = 45,
+	Memory_Barrier                            = 46,
 	Device_Queue_Info_2          = 1000145003,
 	Ring_Create_Info             = 1000384000,
 }
@@ -150,9 +180,219 @@ Image_Layout :: enum i32 {
 	Undefined                    = 0,
 	General                      = 1,
 	Color_Attachment_Optimal     = 2,
+	Shader_Read_Only_Optimal     = 5,
 	Transfer_Source_Optimal      = 6,
 	Transfer_Destination_Optimal = 7,
+	Present_Source               = 1000001002, // VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
 }
+
+// The VkFormat values that the objects of this package name: the color
+// formats of a render target and the vertex attribute formats of the 2D
+// vertex.
+Format :: enum i32 {
+	Undefined                 = 0,
+	R8G8B8A8_Unorm            = 37,
+	R8G8B8A8_Srgb             = 43,
+	B8G8R8A8_Unorm            = 44,
+	B8G8R8A8_Srgb             = 50,
+	R32G32_Signed_Float       = 103,
+	R32G32B32A32_Signed_Float = 109,
+}
+
+Image_Type :: enum i32 {
+	One_Dimension    = 0,
+	Two_Dimensions   = 1,
+	Three_Dimensions = 2,
+}
+
+Image_View_Type :: enum i32 {
+	One_Dimension    = 0,
+	Two_Dimensions   = 1,
+	Three_Dimensions = 2,
+}
+
+Image_Tiling :: enum i32 {
+	Optimal = 0,
+	Linear  = 1,
+}
+
+// VkSampleCountFlagBits as a value: the system renders with one sample.
+Sample_Count :: enum u32 {
+	One = 1,
+}
+
+Sharing_Mode :: enum i32 {
+	Exclusive  = 0,
+	Concurrent = 1,
+}
+
+Component_Swizzle :: enum i32 {
+	Identity = 0,
+	Zero     = 1,
+	One      = 2,
+	Red      = 3,
+	Green    = 4,
+	Blue     = 5,
+	Alpha    = 6,
+}
+
+Attachment_Load_Op :: enum i32 {
+	Load      = 0,
+	Clear     = 1,
+	Dont_Care = 2,
+}
+
+Attachment_Store_Op :: enum i32 {
+	Store     = 0,
+	Dont_Care = 1,
+}
+
+Vertex_Input_Rate :: enum i32 {
+	Vertex   = 0,
+	Instance = 1,
+}
+
+Primitive_Topology :: enum i32 {
+	Point_List     = 0,
+	Line_List      = 1,
+	Line_Strip     = 2,
+	Triangle_List  = 3,
+	Triangle_Strip = 4,
+	Triangle_Fan   = 5,
+}
+
+Polygon_Mode :: enum i32 {
+	Fill  = 0,
+	Line  = 1,
+	Point = 2,
+}
+
+Front_Face :: enum i32 {
+	Counter_Clockwise = 0,
+	Clockwise         = 1,
+}
+
+Blend_Factor :: enum i32 {
+	Zero                        = 0,
+	One                         = 1,
+	Source_Color                = 2,
+	One_Minus_Source_Color      = 3,
+	Destination_Color           = 4,
+	One_Minus_Destination_Color = 5,
+	Source_Alpha                = 6,
+	One_Minus_Source_Alpha      = 7,
+	Destination_Alpha           = 8,
+	One_Minus_Destination_Alpha = 9,
+}
+
+Blend_Op :: enum i32 {
+	Add              = 0,
+	Subtract         = 1,
+	Reverse_Subtract = 2,
+	Min              = 3,
+	Max              = 4,
+}
+
+// The logic operation of a color blend state. The system blends and never
+// enables a logic operation, so the wire carries only the first member.
+Logic_Op :: enum i32 {
+	Clear = 0,
+}
+
+Dynamic_State :: enum i32 {
+	Viewport = 0,
+	Scissor  = 1,
+}
+
+// VkShaderStageFlagBits, by bit position.
+Shader_Stage_Flag :: enum u32 {
+	Vertex                  = 0,
+	Tessellation_Control    = 1,
+	Tessellation_Evaluation = 2,
+	Geometry                = 3,
+	Fragment                = 4,
+	Compute                 = 5,
+}
+
+Shader_Stages :: bit_set[Shader_Stage_Flag; u32]
+
+// VkCullModeFlagBits, by bit position.
+Cull_Mode_Flag :: enum u32 {
+	Front = 0,
+	Back  = 1,
+}
+
+Cull_Modes :: bit_set[Cull_Mode_Flag; u32]
+
+// VkColorComponentFlagBits, by bit position.
+Color_Component_Flag :: enum u32 {
+	Red   = 0,
+	Green = 1,
+	Blue  = 2,
+	Alpha = 3,
+}
+
+Color_Components :: bit_set[Color_Component_Flag; u32]
+
+// VkImageUsageFlagBits, by bit position.
+Image_Usage_Flag :: enum u32 {
+	Transfer_Source          = 0,
+	Transfer_Destination     = 1,
+	Sampled                  = 2,
+	Storage                  = 3,
+	Color_Attachment         = 4,
+	Depth_Stencil_Attachment = 5,
+	Transient_Attachment     = 6,
+	Input_Attachment         = 7,
+}
+
+Image_Usage :: bit_set[Image_Usage_Flag; u32]
+
+// VkPipelineStageFlagBits, by bit position.
+Pipeline_Stage_Flag :: enum u32 {
+	Top_Of_Pipe                    = 0,
+	Draw_Indirect                  = 1,
+	Vertex_Input                   = 2,
+	Vertex_Shader                  = 3,
+	Tessellation_Control_Shader    = 4,
+	Tessellation_Evaluation_Shader = 5,
+	Geometry_Shader                = 6,
+	Fragment_Shader                = 7,
+	Early_Fragment_Tests           = 8,
+	Late_Fragment_Tests            = 9,
+	Color_Attachment_Output        = 10,
+	Compute_Shader                 = 11,
+	Transfer                       = 12,
+	Bottom_Of_Pipe                 = 13,
+	Host                           = 14,
+	All_Graphics                   = 15,
+	All_Commands                   = 16,
+}
+
+Pipeline_Stages :: bit_set[Pipeline_Stage_Flag; u32]
+
+// VkAccessFlagBits, by bit position.
+Access_Flag :: enum u32 {
+	Indirect_Command_Read          = 0,
+	Index_Read                     = 1,
+	Vertex_Attribute_Read          = 2,
+	Uniform_Read                   = 3,
+	Input_Attachment_Read          = 4,
+	Shader_Read                    = 5,
+	Shader_Write                   = 6,
+	Color_Attachment_Read          = 7,
+	Color_Attachment_Write         = 8,
+	Depth_Stencil_Attachment_Read  = 9,
+	Depth_Stencil_Attachment_Write = 10,
+	Transfer_Read                  = 11,
+	Transfer_Write                 = 12,
+	Host_Read                      = 13,
+	Host_Write                     = 14,
+	Memory_Read                    = 15,
+	Memory_Write                   = 16,
+}
+
+Access_Flags :: bit_set[Access_Flag; u32]
 
 Command_Buffer_Level :: enum i32 {
 	Primary   = 0,
@@ -261,6 +501,11 @@ Venus_Problem :: enum u8 {
 	Ring_Status_Invalid,
 	Webgpu_Stream_Invalid,
 	Virtio_Frame_Invalid,
+	Missing_Flag_Bits,
+	Shader_Code_Invalid,
+	Layout_Transition_Invalid,
+	Draw_Table_Refused,
+	Gpu_Buffer_Too_Small,
 }
 
 // Encoder appends commands to caller-owned storage. In measuring mode it
@@ -359,11 +604,51 @@ clear_color_tag_of_word :: proc "contextless" (word: u32) -> (tag: Clear_Color_T
 	return enum_word.member_of_word(Clear_Color_Tag, u64(word))
 }
 
+format_of_word :: proc "contextless" (word: i32) -> (format: Format, ok: bool) {
+	return enum_word.member_of_word(Format, u64(i64(word)))
+}
+
+sample_count_of_word :: proc "contextless" (word: u32) -> (count: Sample_Count, ok: bool) {
+	return enum_word.member_of_word(Sample_Count, u64(word))
+}
+
 // The masks of the known bits of each flag word.
 BUFFER_USAGE_KNOWN_BITS :: u32(0x0000_01FF)
 COMMAND_POOL_KNOWN_BITS :: u32(0x0000_0003)
 COMMAND_BUFFER_USAGE_KNOWN_BITS :: u32(0x0000_0007)
 IMAGE_ASPECT_KNOWN_BITS :: u32(0x0000_0007)
+IMAGE_USAGE_KNOWN_BITS :: u32(0x0000_00FF)
+SHADER_STAGE_KNOWN_BITS :: u32(0x0000_003F)
+CULL_MODE_KNOWN_BITS :: u32(0x0000_0003)
+COLOR_COMPONENT_KNOWN_BITS :: u32(0x0000_000F)
+PIPELINE_STAGE_KNOWN_BITS :: u32(0x0001_FFFF)
+ACCESS_KNOWN_BITS :: u32(0x0001_FFFF)
+
+// VkDependencyFlagBits: by region, view local, device group.
+DEPENDENCY_KNOWN_BITS :: u32(0x0000_0007)
+
+// VK_ATTACHMENT_UNUSED: a reference that names no attachment.
+ATTACHMENT_UNUSED :: u32(0xFFFF_FFFF)
+
+// VK_QUEUE_FAMILY_IGNORED: a barrier that transfers no ownership.
+QUEUE_FAMILY_IGNORED :: u32(0xFFFF_FFFF)
+
+// The largest width or height of an image or a framebuffer that the
+// encoders take, the bound of the WebGPU subset.
+MAX_IMAGE_DIMENSION :: 16384
+
+// vkCmdUpdateBuffer carries at most 65536 bytes, a multiple of 4.
+MAX_UPDATE_BUFFER_BYTES :: 65536
+
+// vkCmdPushConstants: the system pushes at most 128 bytes, the least
+// maxPushConstantsSize that Vulkan guarantees.
+MAX_PUSH_CONSTANT_BYTES :: 128
+
+// A shader module of the system is at most 64 KiB of SPIR-V.
+MAX_SHADER_CODE_WORDS :: 16384
+
+// The first word of a SPIR-V module.
+SPIRV_MAGIC :: u32(0x0723_0203)
 
 // Encoder primitives. Each one stops on the first fault of the encoder.
 
@@ -425,6 +710,18 @@ put_structure :: proc "contextless" (encoder: ^Encoder, structure_type: Structur
 	put_i32(encoder, i32(structure_type))
 	// The system sends no extension structure: every pNext is null.
 	put_pointer(encoder, false)
+}
+
+// put_bytes writes the bytes of a blob array, padded with zero bytes to 32
+// bits. The caller writes the array size before it.
+@(private)
+put_bytes :: proc "contextless" (encoder: ^Encoder, bytes: []u8) {
+	padded := (len(bytes) + 3) & ~int(3)
+	if offset, write := encoder_room(encoder, padded); write {
+		for index in 0 ..< padded {
+			encoder.storage[offset + index] = index < len(bytes) ? bytes[index] : 0
+		}
+	}
 }
 
 // put_string writes an optional C string: absent when empty, else its bytes

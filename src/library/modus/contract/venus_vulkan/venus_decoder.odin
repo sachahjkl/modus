@@ -1,5 +1,7 @@
 package venus_vulkan
 
+import "modus:contract/webgpu_subset"
+
 // The command decoder of the renderer side. It reads each command that this
 // package encodes, with the rules of the generated vn_decode_vk* functions:
 // every array size must equal its count, every structure must have its
@@ -174,6 +176,300 @@ output_object :: proc "contextless" (decoder: ^Decoder, command: ^Decoded_Comman
 	required_object(decoder, command)
 }
 
+// boolean reads a VkBool32: 0 or 1.
+@(private = "file")
+boolean :: proc "contextless" (decoder: ^Decoder, command: ^Decoded_Command) -> bool {
+	value := value_u32(decoder, command)
+	if decoder.problem == .None && value > 1 {
+		fail(decoder, .Unknown_Enum_Word)
+	}
+	return value == 1
+}
+
+// flags_required reads a flag word that must have at least one bit, and
+// only known bits.
+@(private = "file")
+flags_required :: proc "contextless" (decoder: ^Decoder, command: ^Decoded_Command, known_bits: u32) -> u32 {
+	value := value_u32(decoder, command)
+	if decoder.problem != .None {
+		return 0
+	}
+	if value == 0 {
+		fail(decoder, .Missing_Flag_Bits)
+	} else if value & ~known_bits != 0 {
+		fail(decoder, .Unknown_Flag_Bits)
+	}
+	return value
+}
+
+@(private = "file")
+layout_value :: proc "contextless" (decoder: ^Decoder, command: ^Decoded_Command) -> Image_Layout {
+	word := value_i32(decoder, command)
+	if decoder.problem != .None {
+		return .Undefined
+	}
+	layout, ok := image_layout_of_word(word)
+	if !ok {
+		fail(decoder, .Unknown_Enum_Word)
+	}
+	return layout
+}
+
+@(private = "file")
+color_format_value :: proc "contextless" (decoder: ^Decoder, command: ^Decoded_Command) {
+	word := value_i32(decoder, command)
+	if decoder.problem != .None {
+		return
+	}
+	format, ok := format_of_word(word)
+	if !ok || color_format_check(format) != .None {
+		fail(decoder, .Unknown_Enum_Word)
+	}
+}
+
+@(private = "file")
+sample_count_value :: proc "contextless" (decoder: ^Decoder, command: ^Decoded_Command) {
+	word := value_u32(decoder, command)
+	if decoder.problem != .None {
+		return
+	}
+	if _, ok := sample_count_of_word(word); !ok {
+		fail(decoder, .Unknown_Enum_Word)
+	}
+}
+
+@(private = "file")
+subresource_range :: proc "contextless" (decoder: ^Decoder, command: ^Decoded_Command) {
+	flags_required(decoder, command, IMAGE_ASPECT_KNOWN_BITS)
+	value_u32(decoder, command) // baseMipLevel
+	level_count := value_u32(decoder, command)
+	value_u32(decoder, command) // baseArrayLayer
+	layer_count := value_u32(decoder, command)
+	if decoder.problem == .None && (level_count == 0 || layer_count == 0) {
+		fail(decoder, .Zero_Extent)
+	}
+}
+
+// image_copy_regions reads the regions of vkCmdCopyBufferToImage and
+// vkCmdCopyImageToBuffer: VkBufferImageCopy.
+@(private = "file")
+image_copy_regions :: proc "contextless" (decoder: ^Decoder, command: ^Decoded_Command) {
+	d := decoder
+	c := command
+	region_count := count(d, 1, MAX_ARRAY_ELEMENTS)
+	expect_array_size(d, u64(region_count))
+	for _ in 0 ..< region_count {
+		value_u64(d, c)
+		value_u32(d, c)
+		value_u32(d, c)
+		value_flags(d, c, IMAGE_ASPECT_KNOWN_BITS)
+		value_u32(d, c)
+		value_u32(d, c)
+		value_u32(d, c)
+		value_i32(d, c)
+		value_i32(d, c)
+		value_i32(d, c)
+		value_u32(d, c)
+		value_u32(d, c)
+		value_u32(d, c)
+	}
+}
+
+// required_string reads a C string that must be present.
+@(private = "file")
+required_string :: proc "contextless" (decoder: ^Decoder) {
+	if peek_u64(decoder) == 0 && decoder.problem == .None {
+		fail(decoder, .String_Unterminated)
+		return
+	}
+	skip_string(decoder)
+}
+
+// blob reads the bytes of a blob array of size byte_count, padded to 32
+// bits, and returns them.
+@(private = "file")
+blob :: proc "contextless" (decoder: ^Decoder, byte_count: u64) -> []u8 {
+	expect_array_size(decoder, byte_count)
+	if decoder.problem != .None {
+		return nil
+	}
+	padded := (int(byte_count) + 3) & ~int(3)
+	if offset, ok := decoder_take(decoder, padded); ok {
+		return decoder.source[offset:][:int(byte_count)]
+	}
+	return nil
+}
+
+// attachment_reference reads a VkAttachmentReference whose attachment is
+// below attachment_count or VK_ATTACHMENT_UNUSED.
+@(private = "file")
+attachment_reference :: proc "contextless" (decoder: ^Decoder, command: ^Decoded_Command, attachment_count: u32) {
+	attachment := value_u32(decoder, command)
+	if decoder.problem == .None && attachment >= attachment_count && attachment != ATTACHMENT_UNUSED {
+		fail(decoder, .Count_Out_Of_Range)
+	}
+	layout_value(decoder, command)
+}
+
+@(private = "file")
+attachment_references :: proc "contextless" (decoder: ^Decoder, command: ^Decoded_Command, attachment_count: u32) -> u32 {
+	reference_count := count(decoder, 0, MAX_ARRAY_ELEMENTS)
+	expect_array_size(decoder, u64(reference_count))
+	for _ in 0 ..< reference_count {
+		attachment_reference(decoder, command, attachment_count)
+	}
+	return reference_count
+}
+
+// The pipeline state structures of vkCreateGraphicsPipelines, each behind
+// its pointer.
+
+@(private = "file")
+pipeline_shader_stages :: proc "contextless" (decoder: ^Decoder, command: ^Decoded_Command) {
+	d := decoder
+	c := command
+	stage_count := count(d, 1, MAX_ARRAY_ELEMENTS)
+	expect_array_size(d, u64(stage_count))
+	for _ in 0 ..< stage_count {
+		expect_structure(d, .Pipeline_Shader_Stage_Create_Info)
+		zero_word(d)
+		stage := flags_required(d, c, SHADER_STAGE_KNOWN_BITS)
+		// A stage create info names exactly one stage.
+		if d.problem == .None && stage & (stage - 1) != 0 {
+			fail(d, .Unknown_Flag_Bits)
+		}
+		required_object(d, c)
+		required_string(d)
+		expect_pointer(d, false) // pSpecializationInfo
+	}
+}
+
+@(private = "file")
+pipeline_vertex_input :: proc "contextless" (decoder: ^Decoder, command: ^Decoded_Command) {
+	d := decoder
+	c := command
+	expect_pointer(d, true)
+	expect_structure(d, .Pipeline_Vertex_Input_State_Create_Info)
+	zero_word(d)
+	binding_count := count(d, 0, MAX_ARRAY_ELEMENTS)
+	expect_array_size(d, u64(binding_count))
+	for _ in 0 ..< binding_count {
+		value_u32(d, c)
+		value_u32(d, c)
+		enum_value(d, c, Vertex_Input_Rate)
+	}
+	attribute_count := count(d, 0, MAX_ARRAY_ELEMENTS)
+	expect_array_size(d, u64(attribute_count))
+	for _ in 0 ..< attribute_count {
+		value_u32(d, c)
+		value_u32(d, c)
+		word := value_i32(d, c)
+		if d.problem == .None {
+			format, format_ok := format_of_word(word)
+			if !format_ok || vertex_format_bytes(format) == 0 {
+				fail(d, .Unknown_Enum_Word)
+			}
+		}
+		value_u32(d, c)
+	}
+}
+
+@(private = "file")
+pipeline_fixed_states :: proc "contextless" (decoder: ^Decoder, command: ^Decoded_Command) {
+	d := decoder
+	c := command
+	expect_pointer(d, true) // pInputAssemblyState
+	expect_structure(d, .Pipeline_Input_Assembly_State_Create_Info)
+	zero_word(d)
+	enum_value(d, c, Primitive_Topology)
+	boolean(d, c)
+
+	expect_pointer(d, false) // pTessellationState
+
+	expect_pointer(d, true) // pViewportState
+	expect_structure(d, .Pipeline_Viewport_State_Create_Info)
+	zero_word(d)
+	viewport_count := count(d, 1, MAX_ARRAY_ELEMENTS)
+	if array_present(d, viewport_count) {
+		for _ in 0 ..< viewport_count * 6 {
+			value_u32(d, c)
+		}
+	}
+	scissor_count := count(d, 1, MAX_ARRAY_ELEMENTS)
+	if array_present(d, scissor_count) {
+		for _ in 0 ..< scissor_count {
+			value_i32(d, c)
+			value_i32(d, c)
+			value_u32(d, c)
+			value_u32(d, c)
+		}
+	}
+
+	expect_pointer(d, true) // pRasterizationState
+	expect_structure(d, .Pipeline_Rasterization_State_Create_Info)
+	zero_word(d)
+	boolean(d, c) // depthClampEnable
+	boolean(d, c) // rasterizerDiscardEnable
+	enum_value(d, c, Polygon_Mode)
+	value_flags(d, c, CULL_MODE_KNOWN_BITS)
+	enum_value(d, c, Front_Face)
+	boolean(d, c) // depthBiasEnable
+	for _ in 0 ..< 4 {
+		value_u32(d, c) // the three depth bias floats and the line width
+	}
+
+	expect_pointer(d, true) // pMultisampleState
+	expect_structure(d, .Pipeline_Multisample_State_Create_Info)
+	zero_word(d)
+	sample_count_value(d, c)
+	boolean(d, c) // sampleShadingEnable
+	value_u32(d, c) // minSampleShading
+	// One sample has a mask of one word.
+	if array_present(d, 1) {
+		value_u32(d, c)
+	}
+	boolean(d, c) // alphaToCoverageEnable
+	boolean(d, c) // alphaToOneEnable
+
+	expect_pointer(d, false) // pDepthStencilState
+
+	expect_pointer(d, true) // pColorBlendState
+	expect_structure(d, .Pipeline_Color_Blend_State_Create_Info)
+	zero_word(d)
+	// The system never enables a logic operation.
+	if boolean(d, c) && d.problem == .None {
+		fail(d, .Unknown_Enum_Word)
+	}
+	enum_value(d, c, Logic_Op)
+	blend_count := count(d, 0, MAX_ARRAY_ELEMENTS)
+	expect_array_size(d, u64(blend_count))
+	for _ in 0 ..< blend_count {
+		boolean(d, c)
+		enum_value(d, c, Blend_Factor)
+		enum_value(d, c, Blend_Factor)
+		enum_value(d, c, Blend_Op)
+		enum_value(d, c, Blend_Factor)
+		enum_value(d, c, Blend_Factor)
+		enum_value(d, c, Blend_Op)
+		value_flags(d, c, COLOR_COMPONENT_KNOWN_BITS)
+	}
+	expect_array_size(d, 4) // blendConstants
+	for _ in 0 ..< 4 {
+		value_u32(d, c)
+	}
+
+	// pDynamicState
+	if get_pointer(d) {
+		expect_structure(d, .Pipeline_Dynamic_State_Create_Info)
+		zero_word(d)
+		dynamic_count := count(d, 0, MAX_ARRAY_ELEMENTS)
+		expect_array_size(d, u64(dynamic_count))
+		for _ in 0 ..< dynamic_count {
+			enum_value(d, c, Dynamic_State)
+		}
+	}
+}
+
 @(private = "file")
 no_names :: proc "contextless" (decoder: ^Decoder) {
 	// enabledLayerCount and enabledExtensionCount: the system enables none.
@@ -316,7 +612,7 @@ command_decode_next :: proc "contextless" (decoder: ^Decoder) -> (command: Decod
 		allocator_absent(d)
 		output_object(d, c)
 
-	case .Bind_Buffer_Memory:
+	case .Bind_Buffer_Memory, .Bind_Image_Memory:
 		required_object(d, c)
 		required_object(d, c)
 		required_object(d, c)
@@ -487,22 +783,309 @@ command_decode_next :: proc "contextless" (decoder: ^Decoder) -> (command: Decod
 		required_object(d, c)
 		required_object(d, c)
 		enum_value(d, c, Image_Layout)
-		region_count := count(d, 1, MAX_ARRAY_ELEMENTS)
-		expect_array_size(d, u64(region_count))
-		for _ in 0 ..< region_count {
-			value_u64(d, c)
+		image_copy_regions(d, c)
+
+	case .Cmd_Copy_Image_To_Buffer:
+		required_object(d, c)
+		required_object(d, c)
+		layout := layout_value(d, c)
+		if d.problem == .None && layout != .Transfer_Source_Optimal && layout != .General {
+			fail(d, .Layout_Transition_Invalid)
+		}
+		required_object(d, c)
+		image_copy_regions(d, c)
+
+	case .Create_Image:
+		required_object(d, c)
+		expect_pointer(d, true)
+		expect_structure(d, .Image_Create_Info)
+		zero_word(d)
+		enum_value(d, c, Image_Type)
+		color_format_value(d, c)
+		width := value_u32(d, c)
+		height := value_u32(d, c)
+		depth := value_u32(d, c)
+		if d.problem == .None {
+			if check := extent_check(width, height); check != .None {
+				fail(d, check)
+			} else if depth != 1 {
+				fail(d, depth == 0 ? .Zero_Extent : .Dimension_Too_Large)
+			}
+		}
+		keep_value(d, c, u64(count(d, 1, MAX_ARRAY_ELEMENTS))) // mipLevels
+		keep_value(d, c, u64(count(d, 1, MAX_ARRAY_ELEMENTS))) // arrayLayers
+		sample_count_value(d, c)
+		enum_value(d, c, Image_Tiling)
+		flags_required(d, c, IMAGE_USAGE_KNOWN_BITS)
+		enum_value(d, c, Sharing_Mode)
+		family_count := count(d, 0, MAX_ARRAY_ELEMENTS)
+		if array_present(d, family_count) {
+			for _ in 0 ..< family_count {
+				value_u32(d, c)
+			}
+		}
+		// A new image has no contents: its layout is UNDEFINED until a barrier.
+		if layout := layout_value(d, c); d.problem == .None && layout != .Undefined {
+			fail(d, .Layout_Transition_Invalid)
+		}
+		allocator_absent(d)
+		output_object(d, c)
+
+	case .Create_Image_View:
+		required_object(d, c)
+		expect_pointer(d, true)
+		expect_structure(d, .Image_View_Create_Info)
+		zero_word(d)
+		required_object(d, c)
+		enum_value(d, c, Image_View_Type)
+		color_format_value(d, c)
+		for _ in 0 ..< 4 {
+			enum_value(d, c, Component_Swizzle)
+		}
+		subresource_range(d, c)
+		allocator_absent(d)
+		output_object(d, c)
+
+	case .Create_Shader_Module:
+		required_object(d, c)
+		expect_pointer(d, true)
+		expect_structure(d, .Shader_Module_Create_Info)
+		zero_word(d)
+		code_size := value_u64(d, c)
+		if d.problem == .None {
+			switch {
+			case code_size == 0:
+				fail(d, .Zero_Extent)
+			case code_size % 4 != 0:
+				fail(d, .Misaligned_Length)
+			case code_size > MAX_SHADER_CODE_WORDS * 4:
+				fail(d, .Count_Out_Of_Range)
+			}
+		}
+		// pCode: an array of codeSize / 4 words.
+		expect_array_size(d, code_size / 4)
+		if d.problem == .None {
+			if offset, ok := decoder_take(d, int(code_size)); ok {
+				if _, refusal := webgpu_subset.spirv_bytes_validate(d.source[offset:][:int(code_size)]); refusal != .None {
+					fail(d, .Shader_Code_Invalid)
+				}
+			}
+		}
+		allocator_absent(d)
+		output_object(d, c)
+
+	case .Create_Pipeline_Layout:
+		required_object(d, c)
+		expect_pointer(d, true)
+		expect_structure(d, .Pipeline_Layout_Create_Info)
+		zero_word(d)
+		set_count := count(d, 0, MAX_ARRAY_ELEMENTS)
+		expect_array_size(d, u64(set_count))
+		for _ in 0 ..< set_count {
+			required_object(d, c)
+		}
+		range_count := count(d, 0, MAX_ARRAY_ELEMENTS)
+		expect_array_size(d, u64(range_count))
+		for _ in 0 ..< range_count {
+			stages := value_u32(d, c)
+			offset := value_u32(d, c)
+			size := value_u32(d, c)
+			if d.problem == .None {
+				if check := push_constant_range_check(transmute(Shader_Stages)stages, offset, size); check != .None {
+					fail(d, check)
+				}
+			}
+		}
+		allocator_absent(d)
+		output_object(d, c)
+
+	case .Create_Render_Pass:
+		required_object(d, c)
+		expect_pointer(d, true)
+		expect_structure(d, .Render_Pass_Create_Info)
+		zero_word(d)
+		attachment_count := count(d, 1, MAX_ARRAY_ELEMENTS)
+		expect_array_size(d, u64(attachment_count))
+		for _ in 0 ..< attachment_count {
+			zero_word(d)
+			color_format_value(d, c)
+			sample_count_value(d, c)
+			enum_value(d, c, Attachment_Load_Op)
+			enum_value(d, c, Attachment_Store_Op)
+			enum_value(d, c, Attachment_Load_Op)
+			enum_value(d, c, Attachment_Store_Op)
+			layout_value(d, c)
+			if layout_value(d, c) == .Undefined && d.problem == .None {
+				fail(d, .Layout_Transition_Invalid)
+			}
+		}
+		subpass_count := count(d, 1, MAX_ARRAY_ELEMENTS)
+		expect_array_size(d, u64(subpass_count))
+		for _ in 0 ..< subpass_count {
+			zero_word(d)
+			// A subpass of a render pass is a graphics subpass.
+			if value_i32(d, c) != i32(Pipeline_Bind_Point.Graphics) && d.problem == .None {
+				fail(d, .Unknown_Enum_Word)
+			}
+			attachment_references(d, c, attachment_count)
+			color_count := attachment_references(d, c, attachment_count)
+			if array_present(d, color_count) {
+				for _ in 0 ..< color_count {
+					attachment_reference(d, c, attachment_count)
+				}
+			}
+			if get_pointer(d) {
+				attachment_reference(d, c, attachment_count)
+			}
+			preserve_count := count(d, 0, MAX_ARRAY_ELEMENTS)
+			expect_array_size(d, u64(preserve_count))
+			for _ in 0 ..< preserve_count {
+				if value_u32(d, c) >= attachment_count && d.problem == .None {
+					fail(d, .Count_Out_Of_Range)
+				}
+			}
+		}
+		dependency_count := count(d, 0, MAX_ARRAY_ELEMENTS)
+		expect_array_size(d, u64(dependency_count))
+		for _ in 0 ..< dependency_count {
 			value_u32(d, c)
 			value_u32(d, c)
-			value_flags(d, c, IMAGE_ASPECT_KNOWN_BITS)
+			flags_required(d, c, PIPELINE_STAGE_KNOWN_BITS)
+			flags_required(d, c, PIPELINE_STAGE_KNOWN_BITS)
+			value_flags(d, c, ACCESS_KNOWN_BITS)
+			value_flags(d, c, ACCESS_KNOWN_BITS)
+			value_flags(d, c, DEPENDENCY_KNOWN_BITS)
+		}
+		allocator_absent(d)
+		output_object(d, c)
+
+	case .Create_Framebuffer:
+		required_object(d, c)
+		expect_pointer(d, true)
+		expect_structure(d, .Framebuffer_Create_Info)
+		zero_word(d)
+		required_object(d, c)
+		attachment_count := count(d, 1, MAX_ARRAY_ELEMENTS)
+		expect_array_size(d, u64(attachment_count))
+		for _ in 0 ..< attachment_count {
+			required_object(d, c)
+		}
+		width := value_u32(d, c)
+		height := value_u32(d, c)
+		if d.problem == .None {
+			if check := extent_check(width, height); check != .None {
+				fail(d, check)
+			}
+		}
+		keep_value(d, c, u64(count(d, 1, MAX_ARRAY_ELEMENTS))) // layers
+		allocator_absent(d)
+		output_object(d, c)
+
+	case .Create_Graphics_Pipelines:
+		required_object(d, c)
+		optional_object(d, c) // pipelineCache
+		info_count := count(d, 1, MAX_ARRAY_ELEMENTS)
+		expect_array_size(d, u64(info_count))
+		for _ in 0 ..< info_count {
+			expect_structure(d, .Graphics_Pipeline_Create_Info)
+			zero_word(d)
+			pipeline_shader_stages(d, c)
+			pipeline_vertex_input(d, c)
+			pipeline_fixed_states(d, c)
+			required_object(d, c) // layout
+			required_object(d, c) // renderPass
+			value_u32(d, c) // subpass
+			optional_object(d, c) // basePipelineHandle
+			value_i32(d, c) // basePipelineIndex
+		}
+		allocator_absent(d)
+		expect_array_size(d, u64(info_count))
+		for _ in 0 ..< info_count {
+			required_object(d, c)
+		}
+
+	case .Cmd_Pipeline_Barrier:
+		required_object(d, c)
+		flags_required(d, c, PIPELINE_STAGE_KNOWN_BITS)
+		flags_required(d, c, PIPELINE_STAGE_KNOWN_BITS)
+		zero_word(d) // dependencyFlags
+		memory_count := count(d, 0, MAX_ARRAY_ELEMENTS)
+		expect_array_size(d, u64(memory_count))
+		for _ in 0 ..< memory_count {
+			expect_structure(d, .Memory_Barrier)
+			value_flags(d, c, ACCESS_KNOWN_BITS)
+			value_flags(d, c, ACCESS_KNOWN_BITS)
+		}
+		// The system sends no buffer memory barrier.
+		count(d, 0, 0)
+		empty_array(d)
+		barrier_count := count(d, 0, MAX_ARRAY_ELEMENTS)
+		expect_array_size(d, u64(barrier_count))
+		if d.problem == .None && memory_count + barrier_count == 0 {
+			fail(d, .Count_Out_Of_Range)
+		}
+		for _ in 0 ..< barrier_count {
+			expect_structure(d, .Image_Memory_Barrier)
+			value_flags(d, c, ACCESS_KNOWN_BITS)
+			value_flags(d, c, ACCESS_KNOWN_BITS)
+			layout_value(d, c)
+			if layout_value(d, c) == .Undefined && d.problem == .None {
+				fail(d, .Layout_Transition_Invalid)
+			}
 			value_u32(d, c)
 			value_u32(d, c)
-			value_u32(d, c)
-			value_i32(d, c)
-			value_i32(d, c)
-			value_i32(d, c)
-			value_u32(d, c)
-			value_u32(d, c)
-			value_u32(d, c)
+			required_object(d, c)
+			subresource_range(d, c)
+		}
+
+	case .Cmd_Update_Buffer:
+		required_object(d, c)
+		required_object(d, c)
+		offset := value_u64(d, c)
+		size := value_u64(d, c)
+		if d.problem == .None {
+			switch {
+			case size == 0:
+				fail(d, .Zero_Extent)
+			case size > MAX_UPDATE_BUFFER_BYTES:
+				fail(d, .Count_Out_Of_Range)
+			case size % 4 != 0 || offset % 4 != 0:
+				fail(d, .Misaligned_Length)
+			}
+		}
+		blob(d, size)
+
+	case .Cmd_Push_Constants:
+		required_object(d, c)
+		required_object(d, c)
+		stages := value_u32(d, c)
+		offset := value_u32(d, c)
+		size := value_u32(d, c)
+		if d.problem == .None {
+			if check := push_constant_range_check(transmute(Shader_Stages)stages, offset, size); check != .None {
+				fail(d, check)
+			}
+		}
+		blob(d, u64(size))
+
+	case .Cmd_Set_Viewport:
+		required_object(d, c)
+		value_u32(d, c)
+		viewport_count := count(d, 1, MAX_ARRAY_ELEMENTS)
+		expect_array_size(d, u64(viewport_count))
+		for _ in 0 ..< viewport_count {
+			viewport: Viewport
+			viewport.x = transmute(f32)value_u32(d, c)
+			viewport.y = transmute(f32)value_u32(d, c)
+			viewport.width = transmute(f32)value_u32(d, c)
+			viewport.height = transmute(f32)value_u32(d, c)
+			viewport.min_depth = transmute(f32)value_u32(d, c)
+			viewport.max_depth = transmute(f32)value_u32(d, c)
+			if d.problem == .None {
+				if check := viewport_check(viewport); check != .None {
+					fail(d, check)
+				}
+			}
 		}
 
 	case .Queue_Submit:

@@ -78,10 +78,10 @@ Ring_Create_Info :: struct {
 	extra_size:    u64,
 }
 
-@(private = "file")
+@(private)
 REPLY :: Command_Flags{.Generate_Reply}
 
-@(private = "file")
+@(private)
 string_check :: proc "contextless" (text: string) -> Venus_Problem {
 	if len(text) + 1 > MAX_STRING_BYTES {
 		return .String_Too_Long
@@ -94,7 +94,7 @@ string_check :: proc "contextless" (text: string) -> Venus_Problem {
 	return .None
 }
 
-@(private = "file")
+@(private)
 objects_check :: proc "contextless" (ids: []Object_Id) -> Venus_Problem {
 	if len(ids) == 0 || len(ids) > MAX_ARRAY_ELEMENTS {
 		return .Count_Out_Of_Range
@@ -393,7 +393,7 @@ encode_cmd_copy_buffer :: proc "contextless" (encoder: ^Encoder, command_buffer,
 	return command_end(encoder, mark)
 }
 
-@(private = "file")
+@(private)
 range_check :: proc "contextless" (range: Image_Subresource_Range) -> Venus_Problem {
 	aspect_word := transmute(u32)range.aspects
 	if aspect_word == 0 || aspect_word & ~IMAGE_ASPECT_KNOWN_BITS != 0 {
