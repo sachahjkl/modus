@@ -4,6 +4,7 @@ import "internal:compositor/bar"
 import "modus:contract/desktop_shell"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import pr "modus:contract/plans_recipes"
 import "modus:contract/pointer_pictures"
 import "modus:contract/ring"
 import "modus:system"
@@ -597,6 +598,47 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
 	}
 	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
+}
+
+// plan_diff_poll gives the decision of the principal on the difference that plan_diff_ask showed with a serial: 0 while the dialog shows, 1 accepted, 2 refused, 3 unknown (a later dialog replaced it, or no dialog had the serial). The values are the members of plans_recipes.Plan_Display_Decision. The result is the decision, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Bad_Value (-1, a serial under 1).
+//
+// **What it is for.** The service plans asks for a difference, then reads
+// the decision here, and commits the plan only when the principal accepted
+// it on the trusted display. The dialog keeps the decision of the last
+// dialog only.
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// connect("compositor")
+// compositor.plan_diff_poll(1)
+// ```
+#assert(bar.PLAN_DIFFERENCE_NAME_BYTES == pr.PLAN_DISPLAY_NAME_BYTES)
+#assert(bar.PLAN_DIFFERENCE_ITEM_BYTES == pr.PLAN_DISPLAY_ITEM_BYTES)
+#assert(bar.PLAN_DIFFERENCE_ITEM_CAPACITY == pr.PLAN_DISPLAY_ITEM_CAPACITY)
+
+@(export, link_name = "plan_diff_poll")
+plan_diff_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if serial < 1 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Records, 1, serial, max(i64))
+	}
+	decision, known := bar.plan_difference_decision_of_serial(&plan_difference_dialog, u64(serial))
+	if !known {
+		return i64(pr.Plan_Display_Decision.Unknown)
+	}
+	switch decision {
+	case .Pending:
+		return i64(pr.Plan_Display_Decision.Pending)
+	case .Accepted:
+		return i64(pr.Plan_Display_Decision.Accepted)
+	case .Refused:
+		return i64(pr.Plan_Display_Decision.Refused)
+	}
+	return i64(pr.Plan_Display_Decision.Unknown)
 }
 
 // assistive_attach records a holder of the assistive role, which reads the semantic trees of the windows from here on, and gives its number. The bar shows a mark in the warning color with the word assistive and the nickname while it reads. The result is the number of the holder, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Empty (-1, no nickname); Too_Long (-1, a nickname past 31 bytes); Bad_Value (-1, a nickname with a control byte or a damaged character, or a kind that names no holder: 1 screen reader, 2 magnifier, 3 switch input); Full (-1, 4 holders read already).

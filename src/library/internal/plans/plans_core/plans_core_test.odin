@@ -62,7 +62,8 @@ make_plan_consent :: proc(
 test_plans_apply_requires_trusted_consent_on_added_grants :: proc(t: ^testing.T) {
 	state := new(Plans_State)
 	defer free(state)
-	state_init(state, TRUSTED_DISPLAY_SLOT)
+	store := plans_test_state_init(state, TRUSTED_DISPLAY_SLOT)
+	defer free(store)
 
 	store_bit := u64(1) << u64(start_grant.Grant.Store)
 	net_bit := u64(1) << u64(start_grant.Grant.Network)
@@ -135,7 +136,8 @@ test_plans_apply_requires_trusted_consent_on_added_grants :: proc(t: ^testing.T)
 test_plans_rollback_and_monotonic_generation_history :: proc(t: ^testing.T) {
 	state := new(Plans_State)
 	defer free(state)
-	state_init(state, TRUSTED_DISPLAY_SLOT)
+	store := plans_test_state_init(state, TRUSTED_DISPLAY_SLOT)
+	defer free(store)
 
 	// Rollback on empty history refused.
 	_, empty_ref := rollback(state, 0)
@@ -169,7 +171,7 @@ test_plans_rollback_and_monotonic_generation_history :: proc(t: ^testing.T) {
 	testing.expect_value(t, sel2.generation, u64(2))
 
 	hist: [MAX_HISTORY_PER_PRINCIPAL]pr.Applied_Plan_Record
-	count, cur_gen := history_snapshot(state, 0, hist[:])
+	count, cur_gen, _ := history_snapshot(state, 0, hist[:])
 	testing.expect_value(t, count, 3)
 	testing.expect_value(t, cur_gen, u64(2))
 
@@ -189,7 +191,7 @@ test_plans_rollback_and_monotonic_generation_history :: proc(t: ^testing.T) {
 	testing.expect_value(t, r4.generation, u64(4))
 	testing.expect_value(t, r4.previous_plan_hash, r1.plan_hash)
 
-	count, cur_gen = history_snapshot(state, 0, hist[:])
+	count, cur_gen, _ = history_snapshot(state, 0, hist[:])
 	testing.expect_value(t, count, 4)
 	testing.expect_value(t, cur_gen, u64(4))
 }

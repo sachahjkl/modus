@@ -740,6 +740,16 @@ The design: `src/md/features/declarations.md`.
 
 Do not use: generation (for this), profile, system list.
 
+### Pending apply
+
+A pending apply is a plan that `plans.apply` showed on the trusted display and that waits for the decision of the principal.
+
+`plans.apply` gives a ticket, the serial of the dialog of the difference. `plans.apply_poll(ticket)` reads the decision: a plan that the principal accepted becomes the next applied plan, and a refused one changes nothing. A principal has one pending apply at a time, and the service drops it, uncommitted, when its dialog closed with no poll. It is no applied plan: no store holds it.
+
+The design: `src/md/features/declarations.md`, "Apply, the difference and the rollback".
+
+Do not use: draft plan, staged plan, proposal.
+
 ### Catalog declaration
 
 A catalog declaration is a declaration whose value is a record of recipes, modules and functions.
@@ -802,7 +812,7 @@ Do not use: package, flake, workspace.
 
 ### Plans service
 
-The plans service is the service `plans`: it gives the commands `plans.apply`, `plans.difference` and `plans.rollback`.
+The plans service is the service `plans`: it gives the commands `plans.apply`, `plans.apply_poll`, `plans.difference` and `plans.rollback`.
 
 It holds the right to send the root ring commands `Apply` and `Rollback` for the principal of the caller, and for no other. The root service computes the difference of a plan itself, so `plans` can hide no grant. It reads a plan through an evaluation process that it starts. The applied plans are in the store `applied_plans`.
 

@@ -12,6 +12,11 @@
 // 4. hashes the builder's output with tree_hash (or BLAKE3 for blobs), compares
 //    against the cached realisation in Verify mode, and records the signed
 //    realisation and provenance in the local store.
+//
+// The local store is the memory of the service and its private store: each
+// realisation is written to the private store with its output before the
+// memory takes it, so a build of the same recipe after a start reads it
+// back, checks its output against its hash, and builds nothing.
 package recipes_core
 
 import "modus:contract/blake3"
@@ -74,6 +79,7 @@ Local_Realisation_Slot :: struct {
 Recipes_Counters :: struct {
 	total_builds:          u64,
 	cache_hits_local:      u64,
+	cache_hits_store:      u64, // The local hits that the private store answered, after a start.
 	cache_hits_remote:     u64,
 	local_builds:          u64,
 	verify_agreements:     u64,
@@ -89,12 +95,71 @@ Recipes_State :: struct {
 	cache_staging:  [MAX_OBJECT_BYTES]u8,
 	build_staging:  [MAX_OBJECT_BYTES]u8,
 	counters:       Recipes_Counters,
+	store:          pr.Private_Store_Port,
+	// One realisation object of the private store: its head and its output.
+	store_staging:  [pr.REALISATION_OBJECT_HEAD_SIZE + MAX_OBJECT_BYTES]u8,
 }
 
-// state_init zeroes state and marks it ready.
-state_init :: proc "contextless" (state: ^Recipes_State) {
+// state_init zeroes state, binds the private store that keeps the
+// realisations, and marks it ready.
+state_init :: proc "contextless" (state: ^Recipes_State, store: pr.Private_Store_Port) {
 	state^ = {}
 	state.initialized = true
+	state.store = store
+}
+
+// realisation_persist writes the realisation object of record and its
+// output to the private store, before the memory takes them: a refusal of
+// the store records nothing.
+@(private = "file")
+realisation_persist :: proc "contextless" (state: ^Recipes_State, record: ^object_cache.Realisation_Record, origin: Provenance_Origin, payload: []u8) -> pr.Recipe_Refusal {
+	written, refusal := pr.encode_realisation_object(record, u64(origin), payload, state.store_staging[:])
+	if refusal != .None {
+		return refusal
+	}
+	name := pr.realisation_object_name(record.recipe_hash)
+	if pr.private_store_write(&state.store, pr.private_object_name_text(&name), state.store_staging[:written]) != .Ok {
+		return .Store_Failed
+	}
+	return .None
+}
+
+// realisation_recall reads the realisation of recipe_hash from the private
+// store into the memory: found is false when the store holds none. A
+// realisation whose output does not match its hash is Store_Damaged.
+@(private = "file")
+realisation_recall :: proc "contextless" (state: ^Recipes_State, recipe_hash: blake3.Hash, expected_kind: object_cache.Cache_Object_Kind) -> (found: bool, refusal: pr.Recipe_Refusal) {
+	name := pr.realisation_object_name(recipe_hash)
+	bytes, status := pr.private_store_read(&state.store, pr.private_object_name_text(&name), state.store_staging[:])
+	switch status {
+	case .Ok:
+	case .Absent:
+		return false, .None
+	case .Failed:
+		// A service with no store, or a store that does not answer: the
+		// build goes on as a miss, and the record of its realisation then
+		// fails with Store_Failed.
+		return false, .None
+	case .Too_Large:
+		return false, .Store_Damaged
+	}
+	record, origin_word, payload, decode_refusal := pr.decode_realisation_object(bytes, recipe_hash, expected_kind)
+	if decode_refusal != .None {
+		return false, decode_refusal
+	}
+	origin := Provenance_Origin.Local_Build
+	switch origin_word {
+	case u64(Provenance_Origin.Local_Build):
+		origin = .Local_Build
+	case u64(Provenance_Origin.Remote_Cache):
+		origin = .Remote_Cache
+	case:
+		return false, .Store_Damaged
+	}
+	if !store_local_object(state, record.output_hash, record.output_kind, payload) || !store_local_realisation(state, record, origin, false) {
+		return false, .Store_Full
+	}
+	return true, .None
 }
 
 // cache_hit_count returns the builds that a cached realisation answered, from
@@ -222,14 +287,27 @@ build_recipe :: proc "contextless" (
 		trusted_signers = policy.trusted_signers,
 	}
 
-	// Step 1: check local store for Cache_First and Cache_Only.
+	// Step 1: check local store for Cache_First and Cache_Only: the memory,
+	// then the private store.
 	if checked_mode == .Cache_First || checked_mode == .Cache_Only {
+		recalled := false
+		if find_local_realisation(state, rhash) == nil {
+			found, recall_refusal := realisation_recall(state, rhash, expected_kind)
+			if recall_refusal != .None {
+				state.counters.total_refusals += 1
+				return {outcome = .Refused, refusal = recall_refusal, recipe_hash = rhash, output_kind = expected_kind}
+			}
+			recalled = found
+		}
 		if existing_real := find_local_realisation(state, rhash); existing_real != nil {
 			if obj := find_local_object(state, existing_real.record.output_hash); obj != nil && obj.kind == expected_kind {
 				// Re-verify stored bytes against hash before trusting local cache.
 				recomputed, check_ref := pr.recipe_hash_output(obj.kind, obj.payload[:obj.length])
 				if check_ref == .None && recomputed == existing_real.record.output_hash {
 					state.counters.cache_hits_local += 1
+					if recalled {
+						state.counters.cache_hits_store += 1
+					}
 					return {
 						outcome               = .From_Cache,
 						refusal               = .None,
@@ -288,6 +366,12 @@ build_recipe :: proc "contextless" (
 		}
 
 		if have_verified_cache && (checked_mode == .Cache_First || checked_mode == .Cache_Only) {
+			if persist_refusal := realisation_persist(state, &cached_realisation, .Remote_Cache, state.cache_staging[:cached_payload_len]); persist_refusal != .None {
+				state.counters.total_refusals += 1
+				result.outcome = .Refused
+				result.refusal = persist_refusal
+				return result
+			}
 			if !store_local_object(state, cached_realisation.output_hash, expected_kind, state.cache_staging[:cached_payload_len]) {
 				state.counters.total_refusals += 1
 				result.outcome = .Refused
@@ -395,6 +479,12 @@ build_recipe :: proc "contextless" (
 		}
 	}
 
+	if persist_refusal := realisation_persist(state, &local_realisation, .Local_Build, state.build_staging[:built_len]); persist_refusal != .None {
+		state.counters.total_refusals += 1
+		result.outcome = .Refused
+		result.refusal = persist_refusal
+		return result
+	}
 	if !store_local_object(state, local_hash, expected_kind, state.build_staging[:built_len]) {
 		state.counters.total_refusals += 1
 		result.outcome = .Refused

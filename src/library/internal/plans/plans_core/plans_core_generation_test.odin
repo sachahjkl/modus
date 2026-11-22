@@ -27,7 +27,8 @@ apply_zero_grant_plan :: proc(t: ^testing.T, state: ^Plans_State, principal: u64
 test_plans_generation_queries_refuse_and_change_nothing :: proc(t: ^testing.T) {
 	state := new(Plans_State)
 	defer free(state)
-	state_init(state, 5)
+	store := plans_test_state_init(state, 5)
+	defer free(store)
 
 	// A principal with no applied plan: no generation, and no rollback target.
 	testing.expect_value(t, highest_generation(state, 0), u64(0))
@@ -67,7 +68,8 @@ test_plans_generation_queries_refuse_and_change_nothing :: proc(t: ^testing.T) {
 test_plans_rollback_refuses_bad_targets_and_keeps_the_highest_generation :: proc(t: ^testing.T) {
 	state := new(Plans_State)
 	defer free(state)
-	state_init(state, 5)
+	store := plans_test_state_init(state, 5)
+	defer free(store)
 
 	first := apply_zero_grant_plan(t, state, 0, 1, {}, 100)
 	second := apply_zero_grant_plan(t, state, 0, 2, first.plan_hash, 200)
@@ -110,7 +112,8 @@ test_plans_rollback_refuses_bad_targets_and_keeps_the_highest_generation :: proc
 test_plans_rollback_refuses_a_damaged_history :: proc(t: ^testing.T) {
 	state := new(Plans_State)
 	defer free(state)
-	state_init(state, 5)
+	store := plans_test_state_init(state, 5)
+	defer free(store)
 
 	first := apply_zero_grant_plan(t, state, 0, 1, {}, 100)
 	second := apply_zero_grant_plan(t, state, 0, 2, first.plan_hash, 200)
@@ -162,7 +165,8 @@ test_plans_rollback_refuses_a_damaged_history :: proc(t: ^testing.T) {
 test_plans_difference_counts_only_accepted_plans :: proc(t: ^testing.T) {
 	state := new(Plans_State)
 	defer free(state)
-	state_init(state, 5)
+	store := plans_test_state_init(state, 5)
+	defer free(store)
 
 	diff: pr.Plan_Difference
 	testing.expect_value(t, compute_difference(state, nil, &diff), pr.Plan_Refusal.Empty_Plan)

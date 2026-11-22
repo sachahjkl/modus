@@ -70,6 +70,8 @@ Recipe_Refusal :: enum u8 {
 	Unknown_Recipe        = 22,
 	Recipe_Limit_Reached  = 23,
 	Builder_Needs_Sandbox = 24,
+	Store_Failed          = 25, // The private store did not take the realisation: nothing was recorded.
+	Store_Damaged         = 26, // A realisation of the private store does not decode, or its output does not match its hash.
 }
 
 // Closed set of commands accepted on the recipes service ring.

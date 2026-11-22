@@ -123,7 +123,8 @@ harness_sign_local :: proc "contextless" (
 test_recipes_build_cache_sandbox_verify_and_refusals :: proc(t: ^testing.T) {
 	state := new(Recipes_State)
 	defer free(state)
-	state_init(state)
+	store := recipes_test_state_init(state)
+	defer free(store)
 
 	spec := pr.Recipe_Spec {
 		builder_hash       = make_hash(1),
@@ -199,8 +200,10 @@ test_recipes_build_cache_sandbox_verify_and_refusals :: proc(t: ^testing.T) {
 	testing.expect_value(t, res_disagree.local_output_hash, h_diff)
 	testing.expect_value(t, state.counters.verify_disagreements, u64(1))
 
-	// Tampered remote cache payload in fresh state is refused immediately.
-	state_init(state)
+	// Tampered remote cache payload in fresh state, with an empty store, is
+	// refused immediately.
+	fresh_store := recipes_test_state_init(state)
+	defer free(fresh_store)
 	harness.cache_payload[n_built - 1] ~= 0x01
 	res_tampered := build_recipe(state, &spec, .Cache_First, policy, harness_cache_lookup, harness_builder_invoke, mock_verify, harness_sign_local, &harness)
 	testing.expect_value(t, res_tampered.outcome, pr.Recipe_Build_Outcome.Refused)

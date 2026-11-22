@@ -12,7 +12,7 @@ import "modus:contract/value_kinds"
 import "modus:system"
 
 // The bytes of the evaluation of a project.lex that load takes.
-PROJECT_EVALUATION_BYTES_MOST :: 16384
+PROJECT_EVALUATION_BYTES_MOST :: projects_core.MAX_PROJECT_EVALUATION_BYTES
 
 // The failures of the exports of this file, each with its error record.
 ERROR_NO_CALLER :: i64(-1) // No_Grant, Connection: the call came through no connection.
@@ -99,6 +99,10 @@ project_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, refusal
 		return errors.fail(error, ERROR_PROJECT, .No_Grant, .Stores, argument, 0, 0, found)
 	case .Child_Console_Active:
 		return errors.fail(error, ERROR_PROJECT, .State, .None, argument, 0, 0, found)
+	case .Store_Failed:
+		return errors.fail(error, ERROR_PROJECT, .Device, .Store, argument, 0, 0, found)
+	case .Store_Damaged:
+		return errors.fail(error, ERROR_PROJECT, .Damaged, .Store, argument, 0, 0, found)
 	case .Bad_Evaluation, .Evaluation_Refused, .Not_A_Project, .Malformed_Syntax, .Trailing_Tokens:
 		return errors.fail(error, ERROR_PROJECT, .Malformed, .None, argument, 0, 0, found)
 	case .None, .Invalid_Pin_Name, .Zero_Hash, .Duplicate_Pin, .Invalid_Upstream_Ref, .Invalid_Hash_Literal, .Unknown_Field, .Missing_Field, .Duplicate_Field, .Bad_Resolver_Action, .Bad_Resolver_Status, .Invalid_Address, .Host_Mismatch, .Hash_Mismatch, .Invalid_Module_Name, .Duplicate_Module, .Invalid_Store_Name, .Duplicate_Store, .Bad_Store_Rights, .Empty_Console:
@@ -251,9 +255,9 @@ pins :: proc "c" (project_name: ^string, result: ^[]pr.Pin_Row, error: ^errors.E
 	if !name_ok {
 		return name_failure
 	}
-	project := projects_core.find_loaded(&loaded_projects, principal, name)
-	if project == nil {
-		return project_refusal_fail(error, .Unknown_Project, 1)
+	project, refusal := projects_core.project_of(&loaded_projects, &service_state, principal, name)
+	if refusal != .None {
+		return project_refusal_fail(error, refusal, 1)
 	}
 	for index in 0 ..< project.pin_count {
 		if index < len(result^) {
@@ -261,4 +265,47 @@ pins :: proc "c" (project_name: ^string, result: ^[]pr.Pin_Row, error: ^errors.E
 		}
 	}
 	return i64(project.pin_count)
+}
+
+// build_recipe gives the recipe of the inputs tree of a project of the
+// principal of the caller: the builder that the recipes service runs itself,
+// and one input for each pin: a tree, by the tree hash that pins.lex gives
+// it, under the name of the pin. The caller registers it with recipes.register and builds it
+// with recipes.build.
+//
+// - **project_name**: the name that load gave the project.
+// - **head**: one row: the builder hash and the output kind Tree.
+// - **result**: one row for each input, in the order of pins.lex.
+//
+// The result is the count of inputs, or a negative number with an error
+// record: ERROR_NO_CALLER, ERROR_NOT_READY, or ERROR_PROJECT with the
+// refusal as the value found: Unknown_Project, Pin_Not_Found for a project
+// with no pin, Store_Failed and Store_Damaged for the private store.
+@(export, link_name = "build_recipe")
+build_recipe :: proc "c" (project_name: ^string, head: ^system.Table_To_Append(pr.Recipe_Head), result: ^[]pr.Recipe_Input_Row, error: ^errors.Error_Record) -> i64 {
+	principal, failure, allowed := caller_principal(false, error)
+	if !allowed {
+		return failure
+	}
+	name, name_failure, name_ok := name_copy(project_name, copied_project_name[:], 1, error)
+	if !name_ok {
+		return name_failure
+	}
+	spec, refusal := projects_core.inputs_recipe(&loaded_projects, &service_state, principal, name)
+	if refusal != .None {
+		system.log_fact(.Warning, Project_Command_Refused{refusal_code = u64(refusal)})
+		return project_refusal_fail(error, refusal, 1)
+	}
+	if head != nil {
+		system.table_append(head, pr.Recipe_Head{output_kind_word = i64(spec.output_kind_word), builder_hash = value_kinds.Hash_Field(spec.builder_hash)})
+	}
+	for index in 0 ..< int(spec.input_count) {
+		if index < len(result^) {
+			input := &spec.inputs[index]
+			row := pr.Recipe_Input_Row{kind_word = i64(input.kind_word), hash = value_kinds.Hash_Field(input.hash)}
+			copy(row.name[:], input.name_bytes[:input.name_length])
+			result[index] = row
+		}
+	}
+	return i64(spec.input_count)
 }
