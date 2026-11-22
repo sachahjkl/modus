@@ -750,7 +750,6 @@ Enum_Cast_Exception :: struct {
 ENUM_CAST_EXCEPTIONS := [?]Enum_Cast_Exception {
 	{foundation.SOURCE_FOLDER_KERNEL + "/enter.odin", "op.Operation", 1, "the dispatch of the kernel on the kind of a command record: its default branch refuses a kind of no operation and reads the bit of a table of error details, at no cost to a command with no table (src/md/features/kernel_error_details.md)"},
 	{foundation.DEMONSTRATION_MODULE_SOURCES + "errors/main.odin", "op.Operation", 1, "the machine test of the refusal of a kind of no operation: it writes, on purpose, the word one past the last operation, which the kernel must refuse with Unknown_Operation"},
-	{foundation.TOOL_SOURCE_FOLDER + "/machine/peer_remote.odin", "remote.Request_Kind", 1, "the peer of the tests of remote breaks one field of a request on purpose: it writes a kind of no request, which remote must refuse with an error record that names the field"},
 }
 
 // An exception whose count of casts is not the count that it holds: none

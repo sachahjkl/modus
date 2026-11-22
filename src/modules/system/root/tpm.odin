@@ -1,5 +1,6 @@
 package root
 
+import info "modus:contract/boot_info"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/tpm_service"
@@ -34,7 +35,7 @@ TPM_MEASURE_BOUND_MILLISECONDS :: 30_000
 
 // tpm_service_start starts the TPM service, once, before `unlock`.
 tpm_service_start :: proc "contextless" () {
-	if trust_boot_report.trust.measure != .Measured {
+	if measure, ok := info.measure_state_of_word(trust_boot_report.trust.measure); !ok || measure != .Measured {
 		system.log_fact(.Info, Tpm_Service_Absent_Unmeasured{})
 		return
 	}
@@ -229,5 +230,6 @@ tpm_measure_status_words := [tpm_service.Status]string {
 // correct description: a seal then trusts a boot program that nothing
 // verified. An unseal stays allowed: it opens only a seal that was made.
 tpm_seal_allowed :: proc "contextless" () -> bool {
-	return trust_boot_report.trust.verifier == .Firmware_And_Boot_Program
+	verifier, ok := info.verifier_of_word(trust_boot_report.trust.verifier)
+	return ok && verifier == .Firmware_And_Boot_Program
 }

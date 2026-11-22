@@ -550,9 +550,10 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 	}
 	target_slot := handle_find(caller_process, v[0], .Process, {.Debug}) or_return
 	target_index := target_slot.object
+	can_read_state := .Read in target_slot.rights
 	caller_process_index := index_of_process(caller_process)
 	if target_index == caller_process_index {
-		return .Bad_State
+		return thread_control_state_refuse(.Process_Not_Created, 1, v[0], u64(op.Process_State.Created), u64(op.Process_State.Ready))
 	}
 	if (command == .Record_Start || command == .Replay_Start) && !intrinsics.atomic_load(&cpuid_faulting_supported) {
 		return .Bad_Operation
@@ -561,17 +562,21 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 	target_taken := process_lock(target_index)
 	defer process_unlock(target_index, target_taken)
 	target := &processes[target_index]
+	target_state := can_read_state ? u64(target.state) : 0
 	if target.state == .None || target.state == .Stopped {
-		return .Bad_State
+		return thread_control_state_refuse(.Process_Stopped, 1, v[0], 0, target_state)
 	}
 	rec := &process_records[target_index]
 	switch command {
 	case .Record_Start:
-		if target.state != .Created || rec.mode != .None {
-			return .Bad_State
+		if target.state != .Created {
+			return thread_control_state_refuse(.Process_Not_Created, 1, v[0], u64(op.Process_State.Created), target_state)
+		}
+		if rec.mode != .None {
+			return thread_control_state_refuse(.Process_Recording, 1, v[0], 0, target_state)
 		}
 		if process_disqualified_for_recording(target_index) {
-			return .Bad_State
+			return thread_control_state_refuse(.Process_Disqualified, 1, v[0], 0, target_state)
 		}
 		memory_slot := handle_find(caller_process, v[1], .Memory, {.Read, .Write}) or_return
 		region_index := memory_slot.object
@@ -580,11 +585,11 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 			return .Bad_Operation
 		}
 		if history_region_in_use(region_index) {
-			return .Bad_State
+			return thread_control_state_refuse(.History_In_Use, 2, v[1])
 		}
 		pinned_cpu, pinned_ok := choose_pinned_processor(caller_index)
 		if !pinned_ok {
-			return .Bad_State
+			return thread_control_state_refuse(.No_Pinned_Processor, 1, v[0], 0, target_state)
 		}
 		history_buffer := ([^]u8)(direct(region.physical, u8))[:region.page_count * PAGE_SIZE]
 		writer, writer_ok := input_history.history_writer_init(
@@ -610,6 +615,9 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		if setup_status := point_copies_setup(target_index, rec, copy_initial = true); setup_status != .Ok {
 			intrinsics.mem_zero(rec, size_of(Process_Record_State))
 			region_release(region_index)
+			if setup_status == .Bad_State {
+				return thread_control_state_refuse(.Process_Disqualified, 1, v[0], 0, target_state)
+			}
 			return setup_status
 		}
 		// Record initial non-zero point copy contents into the history so replay
@@ -636,17 +644,20 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 
 	case .Record_End:
 		if rec.mode == .None || rec.recorder_process != caller_process_index || rec.recorder_serial != caller_process.serial {
-			return .Bad_State
+			return thread_control_state_refuse(.Not_Recording, 1, v[0], 0, target_state)
 		}
 		record_replay_end_locked(target_index, .Recorder_Stopped)
 		return .Ok
 
 	case .Replay_Start:
-		if target.state != .Created || rec.mode != .None {
-			return .Bad_State
+		if target.state != .Created {
+			return thread_control_state_refuse(.Process_Not_Created, 1, v[0], u64(op.Process_State.Created), target_state)
+		}
+		if rec.mode != .None {
+			return thread_control_state_refuse(.Process_Recording, 1, v[0], 0, target_state)
 		}
 		if process_disqualified_for_recording(target_index) {
-			return .Bad_State
+			return thread_control_state_refuse(.Process_Disqualified, 1, v[0], 0, target_state)
 		}
 		memory_slot := handle_find(caller_process, v[1], .Memory, {.Read, .Write}) or_return
 		region_index := memory_slot.object
@@ -655,11 +666,11 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 			return .Bad_Operation
 		}
 		if history_region_in_use(region_index) {
-			return .Bad_State
+			return thread_control_state_refuse(.History_In_Use, 2, v[1])
 		}
 		pinned_cpu, pinned_ok := choose_pinned_processor(caller_index)
 		if !pinned_ok {
-			return .Bad_State
+			return thread_control_state_refuse(.No_Pinned_Processor, 1, v[0], 0, target_state)
 		}
 		history_buffer := ([^]u8)(direct(region.physical, u8))[:region.page_count * PAGE_SIZE]
 		reader, reader_ok := input_history.history_reader_open(history_buffer)
@@ -680,6 +691,9 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		if setup_status := point_copies_setup(target_index, rec, copy_initial = false); setup_status != .Ok {
 			intrinsics.mem_zero(rec, size_of(Process_Record_State))
 			region_release(region_index)
+			if setup_status == .Bad_State {
+				return thread_control_state_refuse(.Process_Disqualified, 1, v[0], 0, target_state)
+			}
 			return setup_status
 		}
 		// Apply initial Page_Delta records before the first instruction so the

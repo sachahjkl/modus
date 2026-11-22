@@ -118,13 +118,19 @@ Request_Kind :: enum u32 {
 	Call = 1, // An isolated call of one export of one service.
 }
 
+// request_kind_of_word is the border of the kind word of a Request
+// (Request.kind): the member, or false for a word that names no kind.
+request_kind_of_word :: proc "contextless" (word: u32) -> (kind: Request_Kind, ok: bool) {
+	return enum_word.member_of_word(Request_Kind, u64(word))
+}
+
 // The header of a call request. The bytes of the call region follow it.
 //
 // The host writes it; the remote service reads it as hostile input and
 // refuses a field that it cannot use (`Status.Refused`, with the field in the
 // error record).
 Request :: struct {
-	kind:         Request_Kind, // Call.
+	kind:         u32, // The word of a Request_Kind (request_kind_of_word): Call.
 	export:       u32, // The index of the export in the module of the service: the kind of the command record.
 	service:      [32]u8, // The name of the service, as the root service names it: zero bytes after the name.
 	hash:         [32]u8, // The BLAKE3 hash of the module file of the service that the host read.
@@ -239,9 +245,10 @@ request_check :: proc "contextless" (bytes: []u8, region_size: u64) -> (request:
 		return {}, nil, refuse(.Too_Small, .Bytes, 0, i64(len(bytes)), REQUEST_SIZE), false
 	}
 	request = read(bytes, Request)
+	kind, kind_ok := request_kind_of_word(request.kind)
 	rest := u64(len(bytes) - REQUEST_SIZE)
 	switch {
-	case request.kind != .Call:
+	case !kind_ok || kind != .Call:
 		return request, nil, refuse(.Bad_Value, .None, FIELD_KIND, i64(request.kind), i64(Request_Kind.Call)), false
 	case request.service[0] == 0:
 		return request, nil, refuse(.Empty, .Bytes, FIELD_SERVICE, 0, i64(len(request.service) - 1)), false

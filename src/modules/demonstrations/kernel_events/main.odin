@@ -442,7 +442,7 @@ case_end :: proc "contextless" (index: int, right: bool, parts: ..system.Part) {
 cases_of_refusal :: proc "contextless" () {
 	rules: [op.EVENT_RULE_CAPACITY + 1]op.Event_Rule
 	for &rule in rules {
-		rule = {kind = .Lock_Wait}
+		rule = {kind = u32(op.Event_Kind.Lock_Wait)}
 	}
 	// 1. A copy of the machine handle in this process, with no right: the
 	// grant of the root service is the only way to the event table.
@@ -486,9 +486,9 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) ->
 	// process here: its records would share the rings with the counted
 	// ones, and a ring that it fills would lose counted records.
 	exact := [3]op.Event_Rule {
-		{kind = .Operation, flags = {.Match_Detail}, process = u64(load.process), detail = memory_size},
-		{kind = .Switch, process = u64(load.process)},
-		{kind = .Fault, process = u64(faulter.process)},
+		{kind = u32(op.Event_Kind.Operation), flags = {.Match_Detail}, process = u64(load.process), detail = memory_size},
+		{kind = u32(op.Event_Kind.Switch), process = u64(load.process)},
+		{kind = u32(op.Event_Kind.Fault), process = u64(faulter.process)},
 	}
 	tally: Tally
 	given := table_give(exact[:], RING_RECORDS)
@@ -522,7 +522,7 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) ->
 	interface_draw(window)
 
 	// 6. One in 10.
-	one_in := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, process = u64(load.process), detail = memory_size, one_in = ONE_IN}}
+	one_in := [1]op.Event_Rule{{kind = u32(op.Event_Kind.Operation), flags = {.Match_Detail}, process = u64(load.process), detail = memory_size, one_in = ONE_IN}}
 	tally = {}
 	ran = table_give(one_in[:], RING_RECORDS) == .Ok && round_run(load, .One_In)
 	rings_read(&tally)
@@ -560,8 +560,8 @@ cases_of_counts :: proc "contextless" (window: ^display.Window, load: ^Child) ->
 // process, no Fault record has an address; with a rule that names the
 // child, one record has that address.
 case_of_the_fault_address :: proc "contextless" (load: ^Child) {
-	every := [1]op.Event_Rule{{kind = .Fault, flags = {.Match_Detail}, detail = 14}}
-	named := [1]op.Event_Rule{{kind = .Fault, flags = {.Match_Detail}, process = u64(load.process), detail = 14}}
+	every := [1]op.Event_Rule{{kind = u32(op.Event_Kind.Fault), flags = {.Match_Detail}, detail = 14}}
+	named := [1]op.Event_Rule{{kind = u32(op.Event_Kind.Fault), flags = {.Match_Detail}, process = u64(load.process), detail = 14}}
 	all_tally, named_tally: Tally
 	ran := table_give(every[:], RING_RECORDS) == .Ok && round_run(load, .First_Use_All)
 	ran = ran && system.events_end(machine) == .Ok
@@ -587,7 +587,7 @@ case_of_the_fault_address :: proc "contextless" (load: ^Child) {
 // the whole memory object, lets the loaders run, and reads it back: a
 // changed word is a record that the kernel wrote after the end.
 case_of_the_ends_under_load :: proc "contextless" (load: ^Child, window: ^display.Window) {
-	rules := [1]op.Event_Rule{{kind = .Operation, process = u64(load.process)}}
+	rules := [1]op.Event_Rule{{kind = u32(op.Event_Kind.Operation), process = u64(load.process)}}
 	words := rings_pages * PAGE / size_of(u64)
 	base := ([^]u64)(rings_base)
 	ran := round_run(load, .Loaders_Start)
@@ -640,7 +640,7 @@ case_of_the_ends_under_load :: proc "contextless" (load: ^Child, window: ^displa
 // table must have ended with it: a round after it adds no record, and
 // Events_Set with the handle is refused.
 case_of_the_revoked_right :: proc "contextless" (load: ^Child) {
-	rules := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, process = u64(load.process), detail = u64(op.Operation.Memory_Size)}}
+	rules := [1]op.Event_Rule{{kind = u32(op.Event_Kind.Operation), flags = {.Match_Detail}, process = u64(load.process), detail = u64(op.Operation.Memory_Size)}}
 	ran := table_give(rules[:], RING_RECORDS) == .Ok && round_run(load, .Before_Revocation)
 	written_before, lost_before, _ := heads()
 	system.log_fact(.Info, Table_Given{})
@@ -732,9 +732,9 @@ case_of_the_cost :: proc "contextless" (load: ^Child, other: ^Child) {
 	if other != nil {
 		other_process = u64(other.process)
 	}
-	named_other := [1]op.Event_Rule{{kind = .Operation, process = other_process}}
-	nothing := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, detail = u64(op.Operation.Machine_Stop)}}
-	each := [1]op.Event_Rule{{kind = .Operation, flags = {.Match_Detail}, process = u64(load.process), detail = u64(op.Operation.Memory_Size)}}
+	named_other := [1]op.Event_Rule{{kind = u32(op.Event_Kind.Operation), process = other_process}}
+	nothing := [1]op.Event_Rule{{kind = u32(op.Event_Kind.Operation), flags = {.Match_Detail}, detail = u64(op.Operation.Machine_Stop)}}
+	each := [1]op.Event_Rule{{kind = u32(op.Event_Kind.Operation), flags = {.Match_Detail}, process = u64(load.process), detail = u64(op.Operation.Memory_Size)}}
 	ran := measure_round(load, .Measure_No_Rule, nil, &measures[0])
 	// With no other process, the round does not run: a rule for every
 	// process would not measure the same path.
@@ -753,7 +753,7 @@ case_of_the_cost :: proc "contextless" (load: ^Child, other: ^Child) {
 
 	// What every process does while this one sleeps 200 ms: shown, not
 	// checked (no count of this process can check it).
-	everything := [2]op.Event_Rule{{kind = .Operation}, {kind = .Lock_Wait}}
+	everything := [2]op.Event_Rule{{kind = u32(op.Event_Kind.Operation)}, {kind = u32(op.Event_Kind.Lock_Wait)}}
 	tally: Tally
 	if table_give(everything[:], RING_RECORDS) == .Ok {
 		system.sleep(system.time() + 200)

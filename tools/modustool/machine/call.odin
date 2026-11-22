@@ -468,7 +468,7 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 		case .Table, .Bytes:
 			// The answer of the remote service has one result place: the
 			// rows of a Change or Append table would not come back.
-			if direction := function.parameter_directions[number]; direction != .Read {
+			if direction, direction_ok := module.direction_of_word(function.parameter_directions[number]); !direction_ok || direction != .Read {
 				return {}, fmt.tprintf("the parameter %s of %s.%s is %s: a call from the host gives tables to read only, its rows would not come back", name, service, export, parameter_type_name(file, function, number))
 			}
 			if type == .Bytes {
@@ -561,7 +561,7 @@ call_prepare :: proc(client: ^Call_Client, text: string) -> (call: Prepared_Call
 		return {}, fmt.tprintf("the arguments of %s.%s take %d bytes; one call request carries %d", service, export, end, remote.REGION_SIZE)
 	}
 	request := remote.Request {
-		kind         = .Call,
+		kind         = u32(remote.Request_Kind.Call),
 		export       = index,
 		record_size  = u32(size),
 		result_start = u32(result.start),

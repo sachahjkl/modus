@@ -375,7 +375,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	place, loaded := system.module_space_load(&direct, agenda, &error)
 	load_direct = system.cycles() - start
 	days := loaded ? year_days(&direct, place, 2000) : 0
-	note("agenda, with calendar: year_days(2000)", loaded && error.stage == .None && days == 365, days, ": the fault of calendar")
+	note("agenda, with calendar: year_days(2000)", loaded && error.stage == u32(module.Load_Stage.None) && days == 365, days, ": the fault of calendar")
 
 	// 2. calendar_fixed in place of calendar: the same file of agenda.
 	replaced := space_of(2, fixed)
@@ -399,14 +399,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.module_space_release(&direct, place, &error)
 		system.module_space_release(&replaced, fixed_place, &error)
 	}
-	note("unload agenda: its import leaves too", used(&direct) == 0 && used(&replaced) == 0 && error.stage == .None, "0 modules in each space")
+	note("unload agenda: its import leaves too", used(&direct) == 0 && used(&replaced) == 0 && error.stage == u32(module.Load_Stage.None), "0 modules in each space")
 
 	// 3. A replacement with another description: the record names the
 	// modules, the export and the two descriptions.
 	refused := space_of(3, changed)
 	system.module_space_load(&refused, agenda, &error)
 	note("calendar_changed in place of calendar",
-		error.stage == .Check && error.difference == .Parameter_Count && error.expected.detail == 2 && error.found.detail == 3 &&
+		error.stage == u32(module.Load_Stage.Check) && error.difference == u32(module.Difference.Parameter_Count) && error.expected.detail == 2 && error.found.detail == 3 &&
 		module.name_get(&error.export) == "days_in_month" && error.module.hash == hash_of("agenda") && error.imported.hash == hash_of("calendar") &&
 		error.replacement.hash == hash_of("calendar_changed") && used(&refused) == 0,
 		"refused: 3 parameters, not 2")
@@ -424,12 +424,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.module_space_load(&lonely, system.image_find(image, "lonely"), &error, &lonely_details)
 	first_detail := &lonely_detail_records[0]
 	details_agree := lonely_details.count >= 1 && first_detail.stage == error.stage && first_detail.module.hash == error.module.hash && first_detail.imported.hash == error.imported.hash
-	note("lonely: its import is not in the boot image", error.stage == .Find && error.module.hash == hash_of("lonely") && error.imported.hash != {} && system.image_entry_of(image, error.imported.hash) == nil && used(&lonely) == 0 && details_agree, "refused: missing import; error details: ", lonely_details.count)
+	note("lonely: its import is not in the boot image", error.stage == u32(module.Load_Stage.Find) && error.module.hash == hash_of("lonely") && error.imported.hash != {} && system.image_entry_of(image, error.imported.hash) == nil && used(&lonely) == 0 && details_agree, "refused: missing import; error details: ", lonely_details.count)
 
 	// 5. A replacement that makes a cycle.
 	cycled := space_of(5, cycle)
 	system.module_space_load(&cycled, agenda, &error)
-	note("agenda in place of calendar", error.stage == .Cycle && error.imported.hash == hash_of("calendar") && error.replacement.hash == hash_of("agenda") && used(&cycled) == 0, "refused: an import cycle")
+	note("agenda in place of calendar", error.stage == u32(module.Load_Stage.Cycle) && error.imported.hash == hash_of("calendar") && error.replacement.hash == hash_of("agenda") && used(&cycled) == 0, "refused: an import cycle")
 
 	// 6. Each module one time: agenda, then calendar, share one calendar.
 	shared := space_of(6, nil)

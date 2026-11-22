@@ -104,7 +104,7 @@ machine_parts_page_create :: proc "contextless" () {
 			parts += {.Entropy_Device}
 		}
 	}
-	if trust_boot_report.trust.measure == .Measured {
+	if trust_boot_report.trust.measure == u64(info.Measure_State.Measured) {
 		parts += {.Tpm}
 	}
 	machine_parts = parts

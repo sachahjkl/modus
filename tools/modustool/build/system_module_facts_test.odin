@@ -927,7 +927,7 @@ the_facts_of_a_load_error_write_the_fields_of_each_stage :: proc(t: ^testing.T) 
 
 			// Read: each member of module.Error, and a word past them.
 			for word in 0 ..= u64(max(module.Error)) + 1 {
-				error.file_error = module.Error(word)
+				error.file_error = u32(word)
 				read := module.load_read_fact_fields(&error)
 				file_error, named := module.contract_enum_member_name(.Module_Error, word)
 				if !named {
@@ -942,7 +942,7 @@ the_facts_of_a_load_error_write_the_fields_of_each_stage :: proc(t: ^testing.T) 
 			// parameter.
 			for word in 0 ..= u64(max(module.Difference)) + 1 {
 				for number in numbers {
-					error.difference = module.Difference(word)
+					error.difference = u32(word)
 					error.parameter = number
 					check := module.load_check_fact_fields(&error)
 					difference, named := module.contract_enum_member_name(.Load_Difference, word)

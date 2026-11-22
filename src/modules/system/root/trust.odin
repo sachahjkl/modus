@@ -29,7 +29,8 @@ trust_check :: proc "contextless" () {
 	report := &trust_boot_report
 	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Boot), 0, u64(uintptr(report)), size_of(op.Boot_Report))
 	trust := &report.trust
-	if trust.verifier == .None {
+	verifier, verifier_ok := info.verifier_of_word(trust.verifier)
+	if !verifier_ok || verifier == .None {
 		fail("the boot program did not verify the system description", .Bad_State)
 	}
 	description, _, found := system_description.trust_resources(image)
@@ -82,25 +83,34 @@ trust_check :: proc "contextless" () {
 	if report.cycle_frequency != 0 {
 		system.log_fact(.Info, Boot_Program_Check_Time{check_time = value_kinds.Time_In_Microseconds(trust.check_cycles * 1_000_000 / report.cycle_frequency)})
 	}
-	if trust.key_kind == .Test {
+	key_kind, key_kind_ok := info.signing_key_kind_of_word(trust.key_kind)
+	if !key_kind_ok {
+		fail("the boot record names no signing key kind", .Bad_State)
+	}
+	if key_kind == .Test {
 		system.log_fact(.Warning, Description_Signed_By_Test_Key{})
 	}
-	if trust.verifier == .Boot_Program {
+	if verifier == .Boot_Program {
 		system.log_fact(.Info, Verified_By_Boot_Program{})
 	} else {
 		system.log_fact(.Info, Verified_By_Firmware{})
 	}
-	switch trust.measure {
-	case .Measured:
-		system.log_fact(.Info, System_Description_Measured{measure_register = trust.measure_register, measure_tries = trust.measure_tries, measure_value = value_kinds.Hash_Field(trust.measure_value)})
-	case .No_Tpm:
-		system.log_fact(.Info, Description_Unmeasured_No_Tpm{})
-	case .Refused:
-		system.log_fact(.Warning, Description_Measure_Refused{measure_status = value_kinds.Hexadecimal_Sixteen_Digits(trust.measure_status), measure_tries = trust.measure_tries, measure_register = trust.measure_register})
-	case .Not_Read:
-		system.log_fact(.Warning, Description_Register_Unread{measure_register = trust.measure_register, measure_status = value_kinds.Hexadecimal_Sixteen_Digits(trust.measure_status)})
-	case .None:
+	measure, measure_ok := info.measure_state_of_word(trust.measure)
+	if !measure_ok {
 		system.log_fact(.Warning, Measure_Not_Tried{})
+	} else {
+		switch measure {
+		case .Measured:
+			system.log_fact(.Info, System_Description_Measured{measure_register = trust.measure_register, measure_tries = trust.measure_tries, measure_value = value_kinds.Hash_Field(trust.measure_value)})
+		case .No_Tpm:
+			system.log_fact(.Info, Description_Unmeasured_No_Tpm{})
+		case .Refused:
+			system.log_fact(.Warning, Description_Measure_Refused{measure_status = value_kinds.Hexadecimal_Sixteen_Digits(trust.measure_status), measure_tries = trust.measure_tries, measure_register = trust.measure_register})
+		case .Not_Read:
+			system.log_fact(.Warning, Description_Register_Unread{measure_register = trust.measure_register, measure_status = value_kinds.Hexadecimal_Sixteen_Digits(trust.measure_status)})
+		case .None:
+			system.log_fact(.Warning, Measure_Not_Tried{})
+		}
 	}
 	// The TPM floors that the boot program compared
 	// (src/md/features/rollback_floors.md).

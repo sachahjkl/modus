@@ -39,6 +39,32 @@ fuzz_page_ranges_follow_the_rules :: proc(ranges: []operation.Page_Range, object
 	return true
 }
 
+// fuzz_address_ranges_follow_the_rules says if a table of Address_Range
+// records follows the rules of Memory_Protect: each range is page-aligned,
+// has at least one page, stays inside [PAGE_SIZE, USER_END), increases
+// without overlap, and sums to at most RANGE_TABLE_PAGE_LIMIT pages.
+fuzz_address_ranges_follow_the_rules :: proc(ranges: []operation.Address_Range) -> bool {
+	end: u64
+	total_pages: u64
+	for item, index in ranges {
+		if item.page_count < 1 || item.address < operation.PAGE_SIZE || item.address >= operation.USER_END || item.address % operation.PAGE_SIZE != 0 {
+			return false
+		}
+		if item.page_count > (operation.USER_END - item.address) / operation.PAGE_SIZE {
+			return false
+		}
+		if index > 0 && item.address < end {
+			return false
+		}
+		total_pages += item.page_count
+		if total_pages > operation.RANGE_TABLE_PAGE_LIMIT {
+			return false
+		}
+		end = item.address + item.page_count * operation.PAGE_SIZE
+	}
+	return true
+}
+
 // fuzz_record_form_problem decodes the bytes of one record as its type and
 // says what its form breaks: a valid record that its contract refuses, or
 // a record with a word that names nothing that its contract takes. ""
@@ -54,6 +80,27 @@ fuzz_record_form_problem :: proc(type: Fuzz_Record_Type, form: Fuzz_Record_Form,
 		count := len(bytes) / size_of(operation.Page_Range)
 		copy(([^]u8)(&ranges[0])[:len(bytes)], bytes)
 		refused = !fuzz_page_ranges_follow_the_rules(ranges[:count], object_pages)
+	case .Address_Range_Table:
+		if len(bytes) % size_of(operation.Address_Range) != 0 || len(bytes) > operation.RANGE_TABLE_CAPACITY * size_of(operation.Address_Range) {
+			return fmt.tprintf("a table of address ranges of %d bytes", len(bytes))
+		}
+		ranges: [operation.RANGE_TABLE_CAPACITY]operation.Address_Range
+		count := len(bytes) / size_of(operation.Address_Range)
+		copy(([^]u8)(&ranges[0])[:len(bytes)], bytes)
+		refused = !fuzz_address_ranges_follow_the_rules(ranges[:count])
+	case .Event_Rule_Table:
+		if len(bytes) % size_of(operation.Event_Rule) != 0 || len(bytes) > operation.EVENT_RULE_CAPACITY * size_of(operation.Event_Rule) {
+			return fmt.tprintf("a table of event rules of %d bytes", len(bytes))
+		}
+		rules: [operation.EVENT_RULE_CAPACITY]operation.Event_Rule
+		count := len(bytes) / size_of(operation.Event_Rule)
+		copy(([^]u8)(&rules[0])[:len(bytes)], bytes)
+		for rule in rules[:count] {
+			if _, ok := operation.event_rule_check_fields(rule); !ok {
+				refused = true
+				break
+			}
+		}
 	case .Register_Image:
 		if len(bytes) != size_of(operation.Thread_Registers) {
 			return fmt.tprintf("a register image of %d bytes", len(bytes))
@@ -88,6 +135,50 @@ fuzz_record_form_problem :: proc(type: Fuzz_Record_Type, form: Fuzz_Record_Form,
 		case .Edge:
 		}
 		return ""
+	case .Thread_Schedule:
+		if len(bytes) != size_of(operation.Thread_Schedule) {
+			return fmt.tprintf("a thread schedule of %d bytes", len(bytes))
+		}
+		schedule: operation.Thread_Schedule
+		copy(([^]u8)(&schedule)[:size_of(schedule)], bytes)
+		refused = schedule.weight > operation.WEIGHT_FULL || schedule.request > operation.REQUEST_LIMIT || schedule.weight_limit > operation.WEIGHT_FULL || schedule.new_thread_weight_limit > operation.WEIGHT_FULL
+	case .Process_Schedule:
+		if len(bytes) != size_of(operation.Process_Schedule) {
+			return fmt.tprintf("a process schedule of %d bytes", len(bytes))
+		}
+		schedule: operation.Process_Schedule
+		copy(([^]u8)(&schedule)[:size_of(schedule)], bytes)
+		_, refusal := operation.process_schedule_after_write(schedule)
+		refused = refusal != .None
+	case .Thread_Placement:
+		if len(bytes) != size_of(operation.Thread_Placement) {
+			return fmt.tprintf("a thread placement of %d bytes", len(bytes))
+		}
+		placement: operation.Thread_Placement
+		copy(([^]u8)(&placement)[:size_of(placement)], bytes)
+		for machine in ([?]u64{0b1, 0b1111, max(u64)}) {
+			held := operation.Thread_Placement{processors = machine, processors_limit = machine}
+			_, refusal, _ := operation.thread_placement_after_write(placement, held, machine, true)
+			switch form {
+			case .Valid:
+				if refusal != .None {
+					return fmt.tprintf("a valid Thread_Placement is refused on machine %x with %v", machine, refusal)
+				}
+			case .Names_Nothing:
+				if refusal == .None {
+					return fmt.tprintf("a Thread_Placement with a word that names nothing is taken on machine %x", machine)
+				}
+			case .Edge:
+			}
+		}
+		return ""
+	case .Guest_Registers:
+		if len(bytes) != size_of(operation.Guest_Registers) {
+			return fmt.tprintf("a guest registers record of %d bytes", len(bytes))
+		}
+		registers: operation.Guest_Registers
+		copy(([^]u8)(&registers)[:size_of(registers)], bytes)
+		refused = operation.guest_registers_refusal(registers)
 	}
 	switch form {
 	case .Valid:
@@ -139,6 +230,42 @@ each_record_of_the_writers_is_what_its_form_says :: proc(t: ^testing.T) {
 			area := fuzz_extended_state_write(&choices, form)
 			problem = fuzz_record_form_problem(.Extended_State_Area, form, area[:], 0)
 			testing.expectf(t, problem == "", "round %d, %v: %s", round, form, problem)
+
+			choices = fuzz_choices_of(input[:length])
+			guest := fuzz_guest_registers_write(&choices, form)
+			problem = fuzz_record_form_problem(.Guest_Registers, form, ([^]u8)(&guest)[:size_of(guest)], 0)
+			testing.expectf(t, problem == "", "round %d, %v: %s", round, form, problem)
+
+			choices = fuzz_choices_of(input[:length])
+			tsched := fuzz_thread_schedule_write(&choices, form)
+			problem = fuzz_record_form_problem(.Thread_Schedule, form, ([^]u8)(&tsched)[:size_of(tsched)], 0)
+			testing.expectf(t, problem == "", "round %d, %v: %s", round, form, problem)
+
+			choices = fuzz_choices_of(input[:length])
+			psched := fuzz_process_schedule_write(&choices, form)
+			problem = fuzz_record_form_problem(.Process_Schedule, form, ([^]u8)(&psched)[:size_of(psched)], 0)
+			testing.expectf(t, problem == "", "round %d, %v: %s", round, form, problem)
+
+			choices = fuzz_choices_of(input[:length])
+			placement := fuzz_thread_placement_write(&choices, form)
+			problem = fuzz_record_form_problem(.Thread_Placement, form, ([^]u8)(&placement)[:size_of(placement)], 0)
+			testing.expectf(t, problem == "", "round %d, %v: %s", round, form, problem)
+
+			for rule_count in ([?]int{1, 2, operation.EVENT_RULE_CAPACITY}) {
+				choices = fuzz_choices_of(input[:length])
+				rules: [operation.EVENT_RULE_CAPACITY]operation.Event_Rule
+				fuzz_event_rules_write(&choices, form, rules[:rule_count])
+				problem = fuzz_record_form_problem(.Event_Rule_Table, form, ([^]u8)(&rules[0])[:rule_count * size_of(operation.Event_Rule)], 0)
+				testing.expectf(t, problem == "", "round %d, %v, %d event rules: %s", round, form, rule_count, problem)
+			}
+
+			for range_count in ([?]int{1, 2, operation.RANGE_TABLE_CAPACITY}) {
+				choices = fuzz_choices_of(input[:length])
+				addr_ranges: [operation.RANGE_TABLE_CAPACITY]operation.Address_Range
+				fuzz_address_ranges_write(&choices, form, addr_ranges[:range_count])
+				problem = fuzz_record_form_problem(.Address_Range_Table, form, ([^]u8)(&addr_ranges[0])[:range_count * size_of(operation.Address_Range)], 0)
+				testing.expectf(t, problem == "", "round %d, %v, %d address ranges: %s", round, form, range_count, problem)
+			}
 
 			for object_pages in object_pages_cases {
 				for count in counts {
@@ -414,7 +541,28 @@ the_table_of_the_address_parameters_refuses_a_record_in_the_wrong_place :: proc(
 			row.record = .Thread_Control_Command
 		}
 	}
+	bad_guest := fuzz_address_parameters
+	for &row in bad_guest {
+		if row.operation == .Process_State {
+			row.record = .Guest_Registers
+		}
+	}
+	bad_events := fuzz_address_parameters
+	for &row in bad_events {
+		if row.operation == .Process_State {
+			row.record = .Event_Rule_Table
+		}
+	}
+	bad_protect := fuzz_address_parameters
+	for &row in bad_protect {
+		if row.operation == .Process_State {
+			row.record = .Address_Range_Table
+		}
+	}
 	testing.expect(t, fuzz_address_parameters_problem(no_count[:]) != "", "a table of ranges with no count is taken")
 	testing.expect(t, fuzz_address_parameters_problem(moved[:]) != "", "the records of Thread_Control on Memory_Commit are taken")
+	testing.expect(t, fuzz_address_parameters_problem(bad_guest[:]) != "", "Guest_Registers on Process_State is taken")
+	testing.expect(t, fuzz_address_parameters_problem(bad_events[:]) != "", "Event_Rule_Table with no count is taken")
+	testing.expect(t, fuzz_address_parameters_problem(bad_protect[:]) != "", "Address_Range_Table with no count is taken")
 	testing.expect_value(t, fuzz_address_parameters_problem(fuzz_address_parameters[:]), "")
 }

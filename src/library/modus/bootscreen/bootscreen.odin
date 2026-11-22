@@ -1066,16 +1066,18 @@ check_line :: proc "contextless" (area: Area, y: int, data: ^Data) {
 	x := write_name(area, 0, y, "check", FACT_VALUE - 8, graphics.DARK_DIM)
 	x = max(x + 8, 56)
 	trust := &data.boot.trust
+	verifier, verifier_ok := info.verifier_of_word(trust.verifier)
+	key_kind, key_kind_ok := info.signing_key_kind_of_word(trust.key_kind)
 	switch {
 	case len(data.failed_name) != 0:
 		put(&text, "failed: ")
 		put(&text, data.failed_name)
 		show(area, x, y, &text, graphics.DARK_FAILED)
-	case trust.verifier != .None:
+	case verifier_ok && verifier != .None:
 		put_number(&text, trust.entry_count)
 		put(&text, " verified, the kernel included")
 		show(area, x, y, &text, graphics.DARK_PROCESS)
-	case data.state == .Failed && trust.key_kind != .None:
+	case data.state == .Failed && key_kind_ok && key_kind != .None:
 		write(area, x, y, "no file verified", graphics.DARK_FAILED)
 	case:
 		write(area, x, y, "not verified yet", graphics.DARK_DIM)
@@ -1105,54 +1107,72 @@ trust_line :: proc "contextless" (area: Area, y: int, data: ^Data) {
 	x := write_name(area, 0, y, "trust", FACT_VALUE - 8, graphics.DARK_DIM)
 	x = max(x + 8, 56)
 	color := graphics.Color(graphics.DARK_DIM)
-	switch trust.key_kind {
-	case .None:
-		put(&text, "not signed")
-	case .Test:
-		put(&text, "TEST key")
+	key_kind, key_kind_ok := info.signing_key_kind_of_word(trust.key_kind)
+	if !key_kind_ok {
+		put(&text, "unknown key kind")
 		color = graphics.DARK_FAILED
-	case .Person:
-		put(&text, "key ")
-		put_hex_bytes(&text, trust.public_key[:4])
-		color = graphics.DARK_TEXT
-	}
-	x = trust_part(area, x, y, &text, color, false)
-	color = graphics.DARK_DIM
-	switch trust.verifier {
-	case .None:
-		if data.state == .Failed && trust.key_kind != .None {
-			put(&text, "check failed")
+	} else {
+		switch key_kind {
+		case .None:
+			put(&text, "not signed")
+		case .Test:
+			put(&text, "TEST key")
 			color = graphics.DARK_FAILED
-		} else {
-			put(&text, "not verified yet")
+		case .Person:
+			put(&text, "key ")
+			put_hex_bytes(&text, trust.public_key[:4])
+			color = graphics.DARK_TEXT
 		}
-	case .Boot_Program:
-		put(&text, "boot program only")
-		color = graphics.DARK_BOOT_PROGRAM
-	case .Firmware_And_Boot_Program:
-		put(&text, "Secure Boot")
-		color = graphics.DARK_PROCESS
 	}
 	x = trust_part(area, x, y, &text, color, false)
 	color = graphics.DARK_DIM
-	switch trust.measure {
-	case .None:
-		put(&text, "not measured yet")
-	case .Measured:
-		put(&text, "PCR ")
-		put_number(&text, trust.measure_register)
-		put(&text, " ")
-		put_hex_bytes(&text, trust.measure_value[:4])
-		color = graphics.DARK_PROCESS
-	case .No_Tpm:
-		put(&text, "no TPM")
-		color = graphics.DARK_BOOT_PROGRAM
-	case .Refused:
-		put(&text, "TPM refused the measure")
+	verifier, verifier_ok := info.verifier_of_word(trust.verifier)
+	if !verifier_ok {
+		put(&text, "unknown verifier")
 		color = graphics.DARK_FAILED
-	case .Not_Read:
-		put(&text, "PCR not read")
+	} else {
+		switch verifier {
+		case .None:
+			if data.state == .Failed && key_kind_ok && key_kind != .None {
+				put(&text, "check failed")
+				color = graphics.DARK_FAILED
+			} else {
+				put(&text, "not verified yet")
+			}
+		case .Boot_Program:
+			put(&text, "boot program only")
+			color = graphics.DARK_BOOT_PROGRAM
+		case .Firmware_And_Boot_Program:
+			put(&text, "Secure Boot")
+			color = graphics.DARK_PROCESS
+		}
+	}
+	x = trust_part(area, x, y, &text, color, false)
+	color = graphics.DARK_DIM
+	measure, measure_ok := info.measure_state_of_word(trust.measure)
+	if !measure_ok {
+		put(&text, "unknown measure state")
 		color = graphics.DARK_FAILED
+	} else {
+		switch measure {
+		case .None:
+			put(&text, "not measured yet")
+		case .Measured:
+			put(&text, "PCR ")
+			put_number(&text, trust.measure_register)
+			put(&text, " ")
+			put_hex_bytes(&text, trust.measure_value[:4])
+			color = graphics.DARK_PROCESS
+		case .No_Tpm:
+			put(&text, "no TPM")
+			color = graphics.DARK_BOOT_PROGRAM
+		case .Refused:
+			put(&text, "TPM refused the measure")
+			color = graphics.DARK_FAILED
+		case .Not_Read:
+			put(&text, "PCR not read")
+			color = graphics.DARK_FAILED
+		}
 	}
 	_ = trust_part(area, x, y, &text, color, true)
 }

@@ -194,7 +194,7 @@ list_add :: proc "contextless" (list: ^Range_List, start: u64, page_count: u64, 
 		// A join whose end would pass the last address is refused: the
 		// range then stays a range of its own.
 		last_end_fits := last.page_count <= (max(u64) - last.start) / info.PAGE_SIZE
-		if last_end_fits && last.kind == kind && last.start + last.page_count * info.PAGE_SIZE == start && page_count <= (max(u64) - last.start) / info.PAGE_SIZE - last.page_count {
+		if last_end_fits && last.kind == u32(kind) && last.start + last.page_count * info.PAGE_SIZE == start && page_count <= (max(u64) - last.start) / info.PAGE_SIZE - last.page_count {
 			last.page_count += page_count
 			return .Added
 		}
@@ -212,7 +212,7 @@ list_add :: proc "contextless" (list: ^Range_List, start: u64, page_count: u64, 
 			return .No_Room
 		}
 	}
-	list.ranges[list.count] = {start = start, page_count = page_count, kind = kind}
+	list.ranges[list.count] = {start = start, page_count = page_count, kind = u32(kind)}
 	list.count += 1
 	return .Added
 }

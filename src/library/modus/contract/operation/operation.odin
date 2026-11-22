@@ -2752,11 +2752,11 @@ Event_Rule_Flags :: bit_set[Event_Rule_Flag;u32]
 // handle gives `Bad_Handle`. "One in N" is a count, never a random choice.
 // 64 bytes. See [event rule](term:event-rule).
 //
-// Example: `{kind = .Operation, flags = {.Match_Detail}, detail =
+// Example: `{kind = u32(Event_Kind.Operation), flags = {.Match_Detail}, detail =
 // u64(Operation.Memory_Map), least_nanoseconds = 10_000}` records each
 // `Memory_Map` of the machine that takes 10 µs or more.
 Event_Rule :: struct {
-	kind:    Event_Kind, // The kind of the events that the rule tests.
+	kind:    u32, // The word of an Event_Kind (event_kind_of_word). None is refused.
 	flags:   Event_Rule_Flags, // `Match_Detail`, or no flag.
 	// A process handle of the caller with the right Read: only the events
 	// of that process, with the address of its page faults (Read gives its
@@ -2771,6 +2771,33 @@ Event_Rule :: struct {
 	reserved: [3]u64, // 0.
 }
 #assert(size_of(Event_Rule) == 64)
+
+// event_rule_check_fields validates the non-handle fields of an Event_Rule
+// and decodes its kind through event_kind_of_word. Used by both the kernel
+// and host tests so one border enforces every rule constraint.
+event_rule_check_fields :: proc "contextless" (rule: Event_Rule) -> (kind: Event_Kind, ok: bool) {
+	parsed_kind, known := event_kind_of_word(rule.kind)
+	if !known || parsed_kind == .None || rule.flags - {.Match_Detail} != {} || rule.reserved[0] | rule.reserved[1] | rule.reserved[2] != 0 {
+		return {}, false
+	}
+	if rule.least_nanoseconds > EVENT_LEAST_NANOSECONDS_MOST || rule.one_in > EVENT_ONE_IN_MOST {
+		return {}, false
+	}
+	switch parsed_kind {
+	case .None:
+		return {}, false
+	case .Switch:
+		if .Match_Detail in rule.flags || rule.least_nanoseconds != 0 {
+			return {}, false
+		}
+	case .Fault:
+		if rule.least_nanoseconds != 0 {
+			return {}, false
+		}
+	case .Operation, .Lock_Wait:
+	}
+	return parsed_kind, true
+}
 
 // The rules of one event table. The bound makes the cost of an event point
 // a bound that does not depend on the table: at most 16 tests of a few

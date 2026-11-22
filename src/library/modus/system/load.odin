@@ -216,13 +216,13 @@ module_space_load :: proc "contextless" (space: ^Module_Space, file: []u8, error
 	error^ = {}
 	hash := blake3.hash(file)
 	if file_error := module.validate(file); len(file) == 0 || file_error != .None {
-		error^ = {stage = .Read, file_error = file_error, module = named_of(space.source, hash)}
+		error^ = {stage = u32(module.Load_Stage.Read), file_error = u32(file_error), module = named_of(space.source, hash)}
 		if details != nil {
 			table_append(details, error^)
 		}
 		return -1, false
 	}
-	defer if !ok && details != nil && (error.stage == .Find || error.stage == .Read) {
+	defer if !ok && details != nil && (error.stage == u32(module.Load_Stage.Find) || error.stage == u32(module.Load_Stage.Read)) {
 		load_source_problems(space.source, file, details)
 	}
 	before: [MODULE_SPACE_CAPACITY]u32
@@ -261,13 +261,13 @@ module_space_release :: proc "contextless" (space: ^Module_Space, index: int, er
 	}
 	imports := item.import_places
 	count := item.import_count
-	if status := place_remove(space, item); status != .Ok && error.stage == .None {
-		error^ = {stage = .Unmap, status = u32(status), module = named_of(space.source, item.hash)}
+	if status := place_remove(space, item); status != .Ok && error.stage == u32(module.Load_Stage.None) {
+		error^ = {stage = u32(module.Load_Stage.Unmap), status = u32(status), module = named_of(space.source, item.hash)}
 	}
 	for number in 0 ..< count {
 		module_space_release(space, int(imports[number]), error)
 	}
-	return error.stage == .None
+	return error.stage == u32(module.Load_Stage.None)
 }
 
 // load_source_problems appends one load error for each import of the graph
@@ -327,7 +327,7 @@ import_problems :: proc "contextless" (source: Load_Source, importer: [32]u8, fi
 		}
 		imported_file, stage, file_error := source_file(source, hash)
 		if stage != .None {
-			problem.stage, problem.file_error = stage, file_error
+			problem.stage, problem.file_error = u32(stage), u32(file_error)
 			table_append(details, problem)
 			continue
 		}
@@ -335,7 +335,7 @@ import_problems :: proc "contextless" (source: Load_Source, importer: [32]u8, fi
 		// the import names: the load reads it too.
 		if replaces != {} {
 			if _, original_stage, original_error := source_file(source, replaces); original_stage != .None {
-				problem.stage, problem.file_error = original_stage, original_error
+				problem.stage, problem.file_error = u32(original_stage), u32(original_error)
 				table_append(details, problem)
 				continue
 			}
@@ -414,7 +414,7 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 	}
 	// A failure here concerns this module, as the import of importer.
 	fail :: proc "contextless" (space: ^Module_Space, error: ^module.Load_Error, stage: module.Load_Stage, importer: ^Placed, named: [32]u8, hash: [32]u8) -> int {
-		error.stage = stage
+		error.stage = u32(stage)
 		if importer != nil {
 			error.module = named_of(space.source, importer.hash)
 			error.imported = named_of(space.source, named)
@@ -447,14 +447,17 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 	file := first
 	original: []u8
 	stage: module.Load_Stage
+	file_error: module.Error
 	if importer != nil {
-		if file, stage, error.file_error = source_file(space.source, hash); stage != .None {
+		if file, stage, file_error = source_file(space.source, hash); stage != .None {
+			error.file_error = u32(file_error)
 			return fail(space, error, stage, importer, named, hash)
 		}
 	}
 	if replaces != {} {
 		// The names of the exports that the import slots use are in the module of the import.
-		if original, stage, error.file_error = source_file(space.source, replaces); stage != .None {
+		if original, stage, file_error = source_file(space.source, replaces); stage != .None {
+			error.file_error = u32(file_error)
 			return fail(space, error, stage, importer, named, hash)
 		}
 	}
@@ -463,7 +466,7 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 	// size is used.
 	head, header_error := module.header(file)
 	if header_error != .None {
-		error.file_error = header_error
+		error.file_error = u32(header_error)
 		return fail(space, error, .Read, importer, named, hash)
 	}
 	import_count := int(max(module.count(file, .Imports), 1)) - 1
@@ -492,7 +495,8 @@ place :: proc "contextless" (space: ^Module_Space, named: [32]u8, first: []u8, i
 			// A replacement: the import slots name exports of the module of the import.
 			imports[number].named = used.replaces == record.hash ? used.original : nil
 			if imports[number].named == nil {
-				if imports[number].named, stage, error.file_error = source_file(space.source, record.hash); stage != .None {
+				if imports[number].named, stage, file_error = source_file(space.source, record.hash); stage != .None {
+					error.file_error = u32(file_error)
 					return fail(space, error, stage, item, record.hash, used.hash)
 				}
 			}
@@ -535,7 +539,12 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 	}
 	if status != .Ok {
 		place_unmap(space, item)
-		switch error.stage {
+		stage, stage_ok := module.load_stage_of_word(error.stage)
+		if !stage_ok {
+			error^ = {stage = u32(module.Load_Stage.Map), status = u32(status), module = named_of(space.source, item.hash)}
+			return false
+		}
+		switch stage {
 		case .Check, .Bind:
 			// The import of the import slot, and its replacement if the loader applied one.
 			error.module = named_of(space.source, item.hash)
@@ -551,7 +560,7 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 			error.module = named_of(space.source, item.hash)
 		case .None, .Find, .Cycle, .Map, .Unmap:
 			// No stage of this load said why: a kernel operation of the map failed.
-			error^ = {stage = .Map, status = u32(status), module = named_of(space.source, item.hash)}
+			error^ = {stage = u32(module.Load_Stage.Map), status = u32(status), module = named_of(space.source, item.hash)}
 		}
 		return false
 	}
@@ -563,7 +572,7 @@ place_map :: proc "contextless" (space: ^Module_Space, item: ^Placed, head: modu
 		replaces = item.replaces,
 	}
 	if _, status = call(.Process_Module, u64(space.process), u64(uintptr(&record))); status != .Ok {
-		error^ = {stage = .Map, status = u32(status), module = named_of(space.source, item.hash)}
+		error^ = {stage = u32(module.Load_Stage.Map), status = u32(status), module = named_of(space.source, item.hash)}
 		return false
 	}
 	return true
@@ -701,18 +710,18 @@ module_prepare :: proc "contextless" (file: []u8, hash: [32]u8, part: Module_Par
 @(private)
 code_ready :: proc "contextless" (file: []u8, hash: [32]u8, view: []u8, base: u64, imports: []module.Bound_Import, error: ^module.Load_Error, first, end: u64) -> bool {
 	if rebased := module.rebase_range(file, view, uintptr(base), first, end); rebased != .None {
-		error.stage, error.file_error = .Read, rebased
+		error.stage, error.file_error = u32(module.Load_Stage.Read), u32(rebased)
 		return false
 	}
 	if !module.own_hash_write(file, view, hash, first, end) {
-		error.stage, error.file_error = .Read, .Bad_Own_Hash_Place
+		error.stage, error.file_error = u32(module.Load_Stage.Read), u32(module.Error.Bad_Own_Hash_Place)
 		return false
 	}
 	// The index of each record stream, which the library reads in its
 	// variable (src/md/features/module_outputs.md, "The declaration in the
 	// module").
 	if !module.record_stream_indexes_write(file, view, first, end) {
-		error.stage, error.file_error = .Read, .Bad_Record_Stream_Place
+		error.stage, error.file_error = u32(module.Load_Stage.Read), u32(module.Error.Bad_Record_Stream_Place)
 		return false
 	}
 	return module.bind(file, view, imports, error, first, end)
@@ -760,7 +769,7 @@ prepared_find :: proc "contextless" (table: ^Prepared_Modules, file: []u8, hash:
 		}
 		chosen: [1]int
 		if prepared_drop_choose(uses[:], 1, chosen[:]) == 0 {
-			error.stage = .Room
+			error.stage = u32(module.Load_Stage.Room)
 			return nil, .No_Slot
 		}
 		free = &table.modules[chosen[0]]
@@ -969,7 +978,7 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 		// The border gives Bad_Operation for a status word that names no
 		// status: the status of the map, never a status that it did not give.
 		status = .Bad_Operation
-		if loaded.stage == .Map {
+		if loaded.stage == u32(module.Load_Stage.Map) {
 			status, _ = status_of_word(loaded.status)
 		}
 	}
@@ -1111,7 +1120,14 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 	}
 	// The module that the stage concerns: the import, or the module itself.
 	subject := error.imported.hash != {} ? &error.imported : &error.module
-	switch error.stage {
+	stage, stage_ok := module.load_stage_of_word(error.stage)
+	if !stage_ok {
+		write_part(writer, "load failed at stage ")
+		write_part(writer, u64(error.stage))
+		write_part(writer, ", which this process does not know\n")
+		return
+	}
+	switch stage {
 	case .None:
 		return
 	case .Find:
@@ -1128,10 +1144,12 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 	case .Read:
 		write_part(writer, "the file of ")
 		name(writer, subject)
-		write_part(writer, error.file_error == .None ? " does not have the hash that names it\n" : " is not a valid module: ")
-		if error.file_error != .None {
-			// The record can come from another process: a value out of the enumeration is a value.
-			write_part(writer, error.file_error <= max(module.Error) ? file_error_names[error.file_error] : "an error that this process does not know")
+		file_error, file_error_ok := module.file_error_of_word(error.file_error)
+		if file_error_ok && file_error == .None {
+			write_part(writer, " does not have the hash that names it\n")
+		} else {
+			write_part(writer, " is not a valid module: ")
+			write_part(writer, file_error_ok ? file_error_names[file_error] : "an error that this process does not know")
 			write_part(writer, "\n")
 		}
 	case .Cycle:
@@ -1154,39 +1172,46 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 		write_part(writer, " of ")
 		name(writer, &error.replacement)
 		write_part(writer, ": ")
-		switch error.difference {
-		case .None:
-		case .Missing_Export:
-			write_part(writer, "no export has this name")
-		case .Parameter_Count:
-			write_part(writer, u64(error.found.detail))
-			write_part(writer, " parameters, ")
-			name(writer, &error.imported)
-			write_part(writer, " has ")
-			write_part(writer, u64(error.expected.detail))
-		case .Parameter_Type, .Parameter_Detail, .Parameter_Direction:
-			write_part(writer, "parameter ")
-			write_part(writer, u64(error.parameter))
-			write_part(writer, " is ")
-			described(writer, &error.found)
-			write_part(writer, ", ")
-			name(writer, &error.imported)
-			write_part(writer, " has ")
-			described(writer, &error.expected)
-		case .Result_Type, .Result_Detail:
-			write_part(writer, "the result is ")
-			described(writer, &error.found)
-			write_part(writer, ", ")
-			name(writer, &error.imported)
-			write_part(writer, " has ")
-			described(writer, &error.expected)
-		case .Error_Record:
-			write_part(writer, "the error record is ")
-			described(writer, &error.found)
-			write_part(writer, ", ")
-			name(writer, &error.imported)
-			write_part(writer, " has ")
-			described(writer, &error.expected)
+		difference, difference_ok := module.difference_of_word(error.difference)
+		if !difference_ok {
+			write_part(writer, "a difference that this process does not know (")
+			write_part(writer, u64(error.difference))
+			write_part(writer, ")")
+		} else {
+			switch difference {
+			case .None:
+			case .Missing_Export:
+				write_part(writer, "no export has this name")
+			case .Parameter_Count:
+				write_part(writer, u64(error.found.detail))
+				write_part(writer, " parameters, ")
+				name(writer, &error.imported)
+				write_part(writer, " has ")
+				write_part(writer, u64(error.expected.detail))
+			case .Parameter_Type, .Parameter_Detail, .Parameter_Direction:
+				write_part(writer, "parameter ")
+				write_part(writer, u64(error.parameter))
+				write_part(writer, " is ")
+				described(writer, &error.found)
+				write_part(writer, ", ")
+				name(writer, &error.imported)
+				write_part(writer, " has ")
+				described(writer, &error.expected)
+			case .Result_Type, .Result_Detail:
+				write_part(writer, "the result is ")
+				described(writer, &error.found)
+				write_part(writer, ", ")
+				name(writer, &error.imported)
+				write_part(writer, " has ")
+				described(writer, &error.expected)
+			case .Error_Record:
+				write_part(writer, "the error record is ")
+				described(writer, &error.found)
+				write_part(writer, ", ")
+				name(writer, &error.imported)
+				write_part(writer, " has ")
+				described(writer, &error.expected)
+			}
 		}
 		write_part(writer, "\n")
 		return // The first line names the replacement.
@@ -1204,7 +1229,7 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 		}
 		write_part(writer, "\n")
 	case .Map, .Unmap:
-		write_part(writer, error.stage == .Map ? "the kernel refused to map " : "the kernel refused to remove ")
+		write_part(writer, stage == .Map ? "the kernel refused to map " : "the kernel refused to remove ")
 		name(writer, &error.module)
 		// The name of the contract (op.STATUS_NAMES). The record can come
 		// from another process: a word that names no status is written as
@@ -1221,13 +1246,13 @@ load_error_text :: proc "contextless" (writer: ^Writer, error: ^module.Load_Erro
 		name(writer, subject)
 		write_part(writer, ": a process has 16 modules at most, a module 8 imports, a table of prepared modules 64 parts, and its modules fit below the fixed ranges of the system\n")
 	}
-	if error.replaced.hash != {} && error.stage != .Cycle {
+	if error.replaced.hash != {} && stage != .Cycle {
 		write_part(writer, "on the path of the load, the replacement table gives ")
 		name(writer, &error.replacement)
 		write_part(writer, " in place of ")
 		name(writer, &error.replaced)
 		write_part(writer, "\n")
-	} else if error.stage == .Cycle && error.replaced.hash != {} {
+	} else if stage == .Cycle && error.replaced.hash != {} {
 		write_part(writer, "the replacement table gives ")
 		name(writer, &error.replacement)
 		write_part(writer, " in place of ")

@@ -39,6 +39,56 @@ a_word_of_the_boot_record_that_names_no_member :: proc(t: ^testing.T) {
 		testing.expect(t, ok)
 		testing.expect_value(t, state, member)
 	}
+	for word in ([?]u32{u32(max(Memory_Kind)) + 1, 0x100, max(u32)}) {
+		_, ok := memory_kind_of_word(word)
+		testing.expectf(t, !ok, "the word %d names no memory kind, and it is taken", word)
+	}
+	for member in Memory_Kind {
+		kind, ok := memory_kind_of_word(u32(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, kind, member)
+	}
+	for word in ([?]u32{u32(max(Pixel_Format)) + 1, 0x100, max(u32)}) {
+		_, ok := pixel_format_of_word(word)
+		testing.expectf(t, !ok, "the word %d names no pixel format, and it is taken", word)
+	}
+	for member in Pixel_Format {
+		format, ok := pixel_format_of_word(u32(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, format, member)
+	}
+	for word in ([?]u64{u64(max(Verifier)) + 1, 0x100, max(u64)}) {
+		_, ok := verifier_of_word(word)
+		testing.expectf(t, !ok, "the word %d names no verifier, and it is taken", word)
+	}
+	for member in Verifier {
+		verifier, ok := verifier_of_word(u64(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, verifier, member)
+	}
+	for word in ([?]u64{u64(max(Signing_Key_Kind)) + 1, 0x100, max(u64)}) {
+		_, ok := signing_key_kind_of_word(word)
+		testing.expectf(t, !ok, "the word %d names no signing key kind, and it is taken", word)
+	}
+	for member in Signing_Key_Kind {
+		kind, ok := signing_key_kind_of_word(u64(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, kind, member)
+	}
+	for word in ([?]u64{u64(max(Measure_State)) + 1, 0x100, max(u64)}) {
+		_, ok := measure_state_of_word(word)
+		testing.expectf(t, !ok, "the word %d names no measure state, and it is taken", word)
+	}
+	for member in Measure_State {
+		state, ok := measure_state_of_word(u64(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, state, member)
+	}
+	testing.expect_value(t, size_of(Memory_Range{}.kind), 4)
+	testing.expect_value(t, size_of(Framebuffer{}.format), 4)
+	testing.expect_value(t, size_of(Boot_Trust{}.verifier), 8)
+	testing.expect_value(t, size_of(Boot_Trust{}.key_kind), 8)
+	testing.expect_value(t, size_of(Boot_Trust{}.measure), 8)
 }
 
 // The two words of the start request: a word past the last member of

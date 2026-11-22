@@ -602,7 +602,7 @@ disk_load_start :: proc "contextless" () {
 	if load.for_start_policy {
 		chosen_error: module.Load_Error
 		chosen_status := start_policy_chosen_run(name, load.bytes, found, disk_imports_files(), &chosen_error)
-		if chosen_status != .Ok && chosen_error.stage != .None {
+		if chosen_status != .Ok && chosen_error.stage != u32(module.Load_Stage.None) {
 			disk_loader_refusal_log(name, &chosen_error)
 		} else if chosen_status != .Ok {
 			system.log_fact(.Warning, Disk_Load_Refused_Not_Started{status = chosen_status, refused_process = module_name_field(name)})
@@ -627,7 +627,7 @@ disk_load_start :: proc "contextless" () {
 	load_error: module.Load_Error
 	status := disk_process_run(name, load.bytes, found, principal, granted, disk_imports_files(), &load_error)
 	if status != .Ok {
-		if load_error.stage != .None {
+		if load_error.stage != u32(module.Load_Stage.None) {
 			disk_loader_refusal_log(name, &load_error)
 			disk_load_end(status, errors.ring_fail(kind, .Malformed, .None, 1, i64(load_error.file_error)))
 		} else {

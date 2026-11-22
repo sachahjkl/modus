@@ -91,7 +91,7 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 			capacity := u64(len(argument.table.records)) / size
 			// An Append count can be over the capacity: earlier calls did
 			// not fit (docs/MODULE_CONTRACT.md, "Did not fit, across calls").
-			if function.parameter_directions[index] != .Append && argument.table.count > capacity {
+			if function.parameter_directions[index] != u8(module.Direction.Append) && argument.table.count > capacity {
 				return not_done(error, index + 1, argument.table.count)
 			}
 			places[index] = {address = u64(uintptr(raw_data(argument.table.records))), count = argument.table.count, capacity = capacity}
@@ -107,7 +107,7 @@ call_direct :: proc "contextless" (file: []u8, address: uintptr, function: modul
 	out: [CALL_RESULTS]u64
 	export_call(address, &integers, &floats, &out)
 	for word, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
-		if isolated.is_table_or_bytes(word) && function.parameter_directions[index] == .Append {
+		if isolated.is_table_or_bytes(word) && function.parameter_directions[index] == u8(module.Direction.Append) {
 			arguments[index].table.count = places[index].count
 		}
 	}

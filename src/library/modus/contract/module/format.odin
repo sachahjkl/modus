@@ -268,6 +268,23 @@ Direction :: enum u8 {
 	Append = 2,
 }
 
+// direction_of_word is the border of the byte of a Direction in a module
+// file (Function.parameter_directions, Described.direction): the member,
+// or false for a byte that names no direction.
+direction_of_word :: proc "contextless" (word: u8) -> (direction: Direction, ok: bool) {
+	return enum_word.member_of_word(Direction, u64(word))
+}
+
+// function_parameter_direction reads the direction of the parameter index
+// of an export through the border: false for an index past
+// PARAMETER_CAPACITY or negative, and for a byte that names no direction.
+function_parameter_direction :: proc "contextless" (function: Function, index: int) -> (direction: Direction, ok: bool) {
+	if index < 0 || index >= PARAMETER_CAPACITY {
+		return {}, false
+	}
+	return direction_of_word(function.parameter_directions[index])
+}
+
 // The table place: the record that names the memory of a Table or Bytes
 // parameter in a direct call. The register of the parameter has its
 // address. address is aligned on the alignment of the record. count and
@@ -298,9 +315,10 @@ Function :: struct {
 	result:                u8, // The type of the result, the byte of a Type (function_result_type): None, Integer, Text, Record or Table.
 	parameters:            [PARAMETER_CAPACITY]u8, // The type of each parameter, the byte of a Type (function_parameter_type), in the order of the arguments.
 	parameter_name_counts: [PARAMETER_CAPACITY]u8, // The bytes of the name of each parameter.
-	// The direction of each Table or Bytes parameter, 0 (Read) for each other
+	// The direction of each Table or Bytes parameter, the byte of a
+	// Direction (function_parameter_direction), 0 (Read) for each other
 	// parameter.
-	parameter_directions:  [PARAMETER_CAPACITY]Direction,
+	parameter_directions:  [PARAMETER_CAPACITY]u8,
 	// Bit n: a call may leave out the parameter n, an Enum. The other
 	// bits are 0 (function_enums_check).
 	optional_parameters:   u16,

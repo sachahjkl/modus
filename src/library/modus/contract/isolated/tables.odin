@@ -96,8 +96,8 @@ table_record :: proc "contextless" (file: []u8, word: u8, detail: u32) -> (size,
 directions_valid :: proc "contextless" (function: module.Function) -> bool {
 	function := function
 	for word, index in function.parameters[:min(int(function.parameter_count), module.PARAMETER_CAPACITY)] {
-		direction := function.parameter_directions[index]
-		if direction > max(module.Direction) || direction != .Read && !is_table_or_bytes(word) {
+		direction, direction_ok := module.direction_of_word(function.parameter_directions[index])
+		if !direction_ok || direction != .Read && !is_table_or_bytes(word) {
 			return false
 		}
 	}
@@ -265,7 +265,7 @@ table_decode :: proc "contextless" (file: []u8, word: u8, detail: u32, direction
 counts_store :: proc "contextless" (function: module.Function, call: ^Call, region: []u8) {
 	function := function
 	for word, index in function.parameters[:function.parameter_count] {
-		if is_table_or_bytes(word) && function.parameter_directions[index] == .Append {
+		if is_table_or_bytes(word) && function.parameter_directions[index] == u8(module.Direction.Append) {
 			offset := call.count_offsets[index]
 			if offset <= u64(len(region)) && 8 <= u64(len(region)) - offset {
 				store(region, offset, call.places[index].count)
@@ -319,8 +319,8 @@ tables_return_of :: proc "contextless" (file: []u8, function: module.Function, a
 		field := offset
 		for word, index in function.parameters[:min(int(function.parameter_count), len(arguments))] {
 			defer field += field_size(word)
-			direction := function.parameter_directions[index]
-			if !is_table_or_bytes(word) || direction == .Read || (only_parameter != 0 && index + 1 != only_parameter) {
+			direction, direction_ok := module.direction_of_word(function.parameter_directions[index])
+			if !is_table_or_bytes(word) || !direction_ok || direction == .Read || (only_parameter != 0 && index + 1 != only_parameter) {
 				continue
 			}
 			argument := &arguments[index].table
@@ -399,7 +399,10 @@ room_missing :: proc "contextless" (file: []u8, function: module.Function, argum
 			if !ok {
 				continue
 			}
-			direction := function.parameter_directions[index]
+			direction, direction_ok := module.direction_of_word(function.parameter_directions[index])
+			if !direction_ok {
+				continue
+			}
 			capacity := u64(len(argument.records)) / size
 			records_in_region := direction == .Append ? capacity - min(argument.count, capacity) : argument.count
 			next = (next + 7) &~ 7

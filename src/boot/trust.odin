@@ -50,7 +50,8 @@ trust_check :: proc "contextless" (boot: ^info.Boot_Info, image: []u8) -> (descr
 	if trust.key_number == 0 || trust.key_number > info.FLOOR_LIMIT {
 		trust_fail(boot, .Boot_Image, "the key number of the boot program is not 1 to 64")
 	}
-	trust.key_kind = trust.public_key == system_description.TEST_PUBLIC_KEY ? info.Signing_Key_Kind.Test : info.Signing_Key_Kind.Person
+	key_kind := trust.public_key == system_description.TEST_PUBLIC_KEY ? info.Signing_Key_Kind.Test : info.Signing_Key_Kind.Person
+	trust.key_kind = u64(key_kind)
 	signature: []u8
 	found: bool
 	description, signature, found = system_description.trust_resources(image)
@@ -74,7 +75,8 @@ trust_check :: proc "contextless" (boot: ^info.Boot_Info, image: []u8) -> (descr
 	if kernel_result := system_description.kernel_check(description, kernel_file); kernel_result.fault != .None {
 		check_fail(boot, .Kernel_Module, &kernel_result)
 	}
-	trust.verifier = secure_boot_on() ? info.Verifier.Firmware_And_Boot_Program : info.Verifier.Boot_Program
+	verifier := secure_boot_on() ? info.Verifier.Firmware_And_Boot_Program : info.Verifier.Boot_Program
+	trust.verifier = u64(verifier)
 	trust.description_hash = blake3.hash(description)
 	trust.entry_count = u64(len(list))
 	trust.check_cycles = u64(intrinsics.read_cycle_counter()) - start
@@ -87,7 +89,7 @@ trust_check :: proc "contextless" (boot: ^info.Boot_Info, image: []u8) -> (descr
 	hash_digits := system_description.hexadecimal(trust.description_hash)
 	print(string(hash_digits[:]))
 	print("\r\n")
-	if trust.key_kind == .Test {
+	if key_kind == .Test {
 		print("boot program: the signature is from the test signing key, whose private key is published: this system is not trusted\r\n")
 	} else {
 		key_digits := system_description.hexadecimal(trust.public_key)
@@ -95,7 +97,7 @@ trust_check :: proc "contextless" (boot: ^info.Boot_Info, image: []u8) -> (descr
 		print(string(key_digits[:]))
 		print("\r\n")
 	}
-	if trust.verifier == .Firmware_And_Boot_Program {
+	if verifier == .Firmware_And_Boot_Program {
 		print("boot program: verified by the firmware (Secure Boot), then by the boot program\r\n")
 	} else {
 		print("boot program: verified by the boot program, which the firmware did not verify\r\n")
@@ -240,7 +242,7 @@ measure :: proc "contextless" (boot: ^info.Boot_Info, description: []u8) {
 	guid := EFI_TCG2_GUID
 	tpm: ^Efi_Tcg2_Protocol
 	if system.boot_services.locate_protocol(&guid, nil, (^rawptr)(&tpm)) != 0 || tpm == nil {
-		trust.measure = .No_Tpm
+		trust.measure = u64(info.Measure_State.No_Tpm)
 		print("boot program: the firmware has no TPM protocol: the system description is not measured\r\n")
 		return
 	}
@@ -275,7 +277,7 @@ measure :: proc "contextless" (boot: ^info.Boot_Info, description: []u8) {
 	}
 	text.count = 0
 	if status != 0 {
-		trust.measure = .Refused
+		trust.measure = u64(info.Measure_State.Refused)
 		trust.measure_status = u64(status)
 		bootscreen.put(&text, "boot program: the TPM refused the measure of the system description: status ")
 		bootscreen.put_hex(&text, u64(status), 16)
@@ -306,7 +308,7 @@ measure :: proc "contextless" (boot: ^info.Boot_Info, description: []u8) {
 	}
 	value, read_status, read := register_read(tpm, info.MEASURE_REGISTER)
 	if !read {
-		trust.measure = .Not_Read
+		trust.measure = u64(info.Measure_State.Not_Read)
 		trust.measure_status = read_status
 		bootscreen.put(&text, "boot program: the system description is measured, but the read of the register failed: ")
 		bootscreen.put_hex(&text, read_status, 16)
@@ -314,7 +316,7 @@ measure :: proc "contextless" (boot: ^info.Boot_Info, description: []u8) {
 		print("\r\n")
 		return
 	}
-	trust.measure = .Measured
+	trust.measure = u64(info.Measure_State.Measured)
 	trust.measure_value = value
 	digits := system_description.hexadecimal(value)
 	bootscreen.put(&text, "boot program: PCR ")
@@ -480,7 +482,7 @@ floors_check :: proc "contextless" (boot: ^info.Boot_Info, description: []u8) {
 	}
 	// With Secure Boot off, PCR 7 says "off": a floor defined now would
 	// have a policy that any boot program satisfies.
-	if trust.verifier != .Firmware_And_Boot_Program {
+	if trust.verifier != u64(info.Verifier.Firmware_And_Boot_Program) {
 		print("boot program: the TPM floors stay as they are: the firmware did not verify this boot program\r\n")
 		return
 	}

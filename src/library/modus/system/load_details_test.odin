@@ -71,10 +71,10 @@ load_details_name_each_import_that_is_wrong :: proc(t: ^testing.T) {
 	details := Table_To_Append(module.Load_Error){records = &records[0], count = 0, capacity = 2}
 	load_source_problems(source, agenda, &details)
 	testing.expect_value(t, details.count, 3) // Three problems; the table of 2 places says that one did not fit.
-	testing.expect_value(t, records[0].stage, module.Load_Stage.Find)
+	testing.expect_value(t, records[0].stage, u32(module.Load_Stage.Find))
 	testing.expect_value(t, module.name_get(&records[0].module.name), "planner")
 	testing.expect(t, records[0].imported.hash == absent, "the first: the import of planner that no file has")
-	testing.expect_value(t, records[1].stage, module.Load_Stage.Find)
+	testing.expect_value(t, records[1].stage, u32(module.Load_Stage.Find))
 	testing.expect_value(t, module.name_get(&records[1].module.name), "agenda")
 	testing.expect(t, records[1].imported.hash == missing, "the second: the import of agenda that no file has")
 
@@ -82,10 +82,10 @@ load_details_name_each_import_that_is_wrong :: proc(t: ^testing.T) {
 	every := Table_To_Append(module.Load_Error){records = &all[0], count = 0, capacity = 4}
 	load_source_problems(source, agenda, &every)
 	testing.expect_value(t, every.count, 3)
-	testing.expect_value(t, all[2].stage, module.Load_Stage.Read)
-	testing.expect_value(t, all[2].file_error, module.Error.None) // The file is valid: its hash differs.
+	testing.expect_value(t, all[2].stage, u32(module.Load_Stage.Read))
+	testing.expect_value(t, all[2].file_error, u32(module.Error.None)) // The file is valid: its hash differs.
 	testing.expect_value(t, module.name_get(&all[2].imported.name), "calendar")
-	testing.expect_value(t, all[3].stage, module.Load_Stage.None)
+	testing.expect_value(t, all[3].stage, u32(module.Load_Stage.None))
 }
 
 // A module that two modules import, and a sound graph: no detail.

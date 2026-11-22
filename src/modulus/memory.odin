@@ -41,7 +41,7 @@ memory_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	ranges := info.physical_slice(boot.memory_ranges, boot.memory_range_count, info.Memory_Range)
 	top: u64
 	for range in ranges {
-		if range.kind == .Free {
+		if kind, ok := info.memory_kind_of_word(range.kind); ok && kind == .Free {
 			top = max(top, range.start + range.page_count * PAGE_SIZE)
 		}
 	}
@@ -50,7 +50,7 @@ memory_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	bitmap_pages := (words * 8 + PAGE_SIZE - 1) / PAGE_SIZE
 	bitmap_address: u64
 	for range in ranges {
-		if range.kind == .Free && range.page_count >= bitmap_pages && range.start >= 1 << 20 {
+		if kind, ok := info.memory_kind_of_word(range.kind); ok && kind == .Free && range.page_count >= bitmap_pages && range.start >= 1 << 20 {
 			bitmap_address = range.start
 			break
 		}
@@ -64,7 +64,7 @@ memory_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		word = max(u64)
 	}
 	for range in ranges {
-		if range.kind != .Free {
+		if kind, ok := info.memory_kind_of_word(range.kind); !ok || kind != .Free {
 			continue
 		}
 		for page in 0 ..< range.page_count {
@@ -730,7 +730,8 @@ user_range :: proc "contextless" (process: ^Process, address: u64, size: u64, wr
 // same frames are undefined for the processor (src/md/infrastructure/whole_frame.md).
 display_memory_range :: proc "contextless" (start: u64, page_count: u64) -> bool {
 	framebuffer := boot_record.framebuffer
-	return framebuffer.format != .None && framebuffer.address >= start && framebuffer.address - start < page_count * PAGE_SIZE
+	format, format_ok := info.pixel_format_of_word(framebuffer.format)
+	return format_ok && format != .None && framebuffer.address >= start && framebuffer.address - start < page_count * PAGE_SIZE
 }
 
 // device_range says if a range of physical addresses can be device memory:
@@ -741,7 +742,7 @@ device_range :: proc "contextless" (start: u64, page_count: u64) -> bool {
 	}
 	end := start + page_count * PAGE_SIZE
 	for range in info.physical_slice(boot_record.memory_ranges, boot_record.memory_range_count, info.Memory_Range) {
-		if range.kind == .Reserved {
+		if kind, ok := info.memory_kind_of_word(range.kind); ok && kind == .Reserved {
 			continue
 		}
 		range_end := range.start + range.page_count * PAGE_SIZE

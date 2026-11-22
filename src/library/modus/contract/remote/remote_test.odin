@@ -8,7 +8,7 @@ import "core:testing"
 
 @(private = "file")
 request_make :: proc() -> (request: Request) {
-	request.kind = .Call
+	request.kind = u32(Request_Kind.Call)
 	request.export = 3
 	name_set(&request.service, "monitor")
 	request.hash = {0 = 0xAB, 31 = 0xCD}
@@ -55,8 +55,10 @@ request_refusals :: proc(t: ^testing.T) {
 		kind:   errors.Kind,
 	}
 	cases := [?]Case {
-		{proc(request: ^Request) {request.kind = .None}, FIELD_KIND, .Bad_Value},
-		{proc(request: ^Request) {request.kind = Request_Kind(9)}, FIELD_KIND, .Bad_Value},
+		{proc(request: ^Request) {request.kind = u32(Request_Kind.None)}, FIELD_KIND, .Bad_Value},
+		{proc(request: ^Request) {request.kind = u32(max(Request_Kind)) + 1}, FIELD_KIND, .Bad_Value},
+		{proc(request: ^Request) {request.kind = 9}, FIELD_KIND, .Bad_Value},
+		{proc(request: ^Request) {request.kind = max(u32)}, FIELD_KIND, .Bad_Value},
 		{proc(request: ^Request) {request.service = {}}, FIELD_SERVICE, .Empty},
 		{proc(request: ^Request) {for &byte in request.service {byte = 'a'}}, FIELD_SERVICE, .Too_Long},
 		{proc(request: ^Request) {request.record_size = 41}, FIELD_RECORD_SIZE, .Too_Long},
@@ -274,6 +276,23 @@ stream_error_codes :: proc(t: ^testing.T) {
 	testing.expect_value(t, stream_error_name(max(u64)), "")
 	for code in Stream_Error {
 		testing.expect(t, STREAM_ERROR_NAMES[code] != "")
+	}
+}
+
+// request_kind_of_word refuses words that name no Request_Kind and accepts
+// every member.
+@(test)
+request_kind_border_refuses_unknown_words :: proc(t: ^testing.T) {
+	refused := [?]u32{u32(max(Request_Kind)) + 1, 9, max(u32)}
+	for word in refused {
+		kind, ok := request_kind_of_word(word)
+		testing.expectf(t, !ok, "request kind word %d must be refused", word)
+		testing.expect_value(t, kind, Request_Kind.None)
+	}
+	for member in Request_Kind {
+		read, ok := request_kind_of_word(u32(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, read, member)
 	}
 }
 

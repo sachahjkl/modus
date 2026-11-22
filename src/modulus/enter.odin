@@ -165,6 +165,14 @@ Operation_In_Progress :: struct {
 	// read, which a write of the holder of the machine can change between
 	// the operation and the record.
 	thread_create_weight_limit: u32,
+	// The state refusal that Thread_Control hit and its fields: the error
+	// record takes them from here, so diagnose needs no second walk of
+	// locks and does not race with another thread.
+	thread_state_refusal:          op.Thread_Control_State_Refusal,
+	thread_state_refused_argument: i64,
+	thread_state_refused_value:    u64,
+	thread_state_refused_limit:    u64,
+	thread_state_refused_found:    u64,
 }
 
 // command_run executes one command under the process lock of the caller,

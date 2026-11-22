@@ -599,7 +599,7 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	// A budget of no page: the start failed before process_start.
 	if status == .No_Budget && process_budget.pages != 0 {
 		budget_refusal_log(name, process_budget, 0, "this service")
-	} else if load_error.stage != .None {
+	} else if load_error.stage != u32(module.Load_Stage.None) {
 		system.log_fact(.Warning, Start_Refused_By_Loader{refused_process = module_name_field(name)})
 		load_error_log(.Warning, &load_error)
 	} else {

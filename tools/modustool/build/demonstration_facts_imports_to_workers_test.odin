@@ -1209,32 +1209,32 @@ the_load_errors_of_the_demonstrations_write_each_stage :: proc(t: ^testing.T) {
 			own := name
 			agenda := "agenda"
 
-			error.stage = .Find
+			error.stage = u32(module.Load_Stage.Find)
 			find := module.load_find_fact_fields(&error)
 			facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, "Find"), find), line_of_before(item.head, "the load of ", own, " (", demonstration_hash_head(error.module), ") found no file of its import ", agenda, " (", demonstration_hash_head(error.imported), ")"))
 
-			error.stage = .Read
+			error.stage = u32(module.Load_Stage.Read)
 			for file_error in module.Error {
-				error.file_error = file_error
+				error.file_error = u32(file_error)
 				read := module.load_read_fact_fields(&error)
 				// The stage concerns the import: it has a hash.
 				facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, "Read"), read), line_of_before(item.head, "the file of ", agenda, " (", demonstration_hash_head(error.imported), ") does not have the hash that names it, or is not a valid module: ", module.ERROR_NAMES[file_error]))
 			}
 
-			error.stage = .Cycle
+			error.stage = u32(module.Load_Stage.Cycle)
 			cycle := module.load_cycle_fact_fields(&error)
 			facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, "Cycle"), cycle), line_of_before(item.head, "an import cycle: ", own, " imports ", agenda, ", and ", "calendar_fixed", " still loads its imports"))
 
-			error.stage = .Check
+			error.stage = u32(module.Load_Stage.Check)
 			for difference in module.Difference {
 				for parameter in edges {
-					error.difference, error.parameter = difference, parameter
+					error.difference, error.parameter = u32(difference), parameter
 					check := module.load_check_fact_fields(&error)
 					facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, "Check"), check), line_of_before(item.head, own, " imports ", agenda, ", and its replacement fails the check: export ", own, ": ", module.DIFFERENCE_NAMES[difference], ", parameter ", u64(parameter)))
 				}
 			}
 
-			error.stage = .Bind
+			error.stage = u32(module.Load_Stage.Bind)
 			for import_slot in edges {
 				error.import_slot = import_slot
 				bind := module.load_bind_fact_fields(&error)
@@ -1246,7 +1246,7 @@ the_load_errors_of_the_demonstrations_write_each_stage :: proc(t: ^testing.T) {
 			stages := [2]module.Load_Stage{.Map, .Unmap}
 			verbs := [2]string{"map", "remove"}
 			for stage, index in stages {
-				error.stage = stage
+				error.stage = u32(stage)
 				for status in op.Status {
 					error.status = u32(status)
 					memory := module.load_memory_fact_fields(&error)
@@ -1257,7 +1257,7 @@ the_load_errors_of_the_demonstrations_write_each_stage :: proc(t: ^testing.T) {
 				facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, index == 0 ? "Map" : "Unmap"), memory), line_of_before(item.head, "the kernel refused to ", verbs[index], " ", own, " (", demonstration_hash_head(error.module), "): status ", u64(max(u32))))
 			}
 
-			error.stage = .Room
+			error.stage = u32(module.Load_Stage.Room)
 			room := module.load_room_fact_fields(&error)
 			facts_expect_line(t, demonstration_load_fact_render(t, file, item.folder, type_name(item.type_head, "Room"), room), line_of_before(item.head, "no room for ", own, " (", demonstration_hash_head(error.module), "): a process has 16 modules at most, a module 8 imports, a table of prepared modules 64 parts, and its modules fit below the fixed ranges of the system"))
 		}

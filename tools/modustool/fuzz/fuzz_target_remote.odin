@@ -8,7 +8,6 @@ import "modus:contract/errors"
 import "modus:contract/isolated"
 import module "modus:contract/module"
 import "modus:contract/remote"
-import "modustool:foundation"
 
 // The fuzz targets of the remote protocol (src/md/infrastructure/fuzzing.md,
 // "The targets, in order of value"): the remote service reads a call
@@ -49,8 +48,8 @@ fuzz_remote_request_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	}
 	region_size := u64(remote.REGION_SIZE)
 	switch {
-	case request.kind != .Call:
-		return fuzz_broken(.Contract, "request_check accepts the kind %d", u32(request.kind))
+	case request.kind != u32(remote.Request_Kind.Call):
+		return fuzz_broken(.Contract, "request_check accepts the kind %d", request.kind)
 	case u64(len(arguments)) != u64(request.arguments) || len(input) != remote.REQUEST_SIZE + len(arguments):
 		return fuzz_broken(.Contract, "the arguments are %d bytes, the request names %d", len(arguments), request.arguments)
 	case len(arguments) > 0 && raw_data(arguments) != &input[remote.REQUEST_SIZE]:
@@ -103,11 +102,11 @@ fuzz_remote_request_seeds :: proc(seeds: ^[dynamic][]u8) {
 	}
 	error_last := u32(remote.REGION_SIZE - isolated.ERROR_RECORD_SIZE)
 	list := [?]Seed {
-		{request = {kind = .Call}, arguments = 0},
-		{request = {kind = .Call, export = 3, record_size = 16, result_start = 16, result_count = 64, result_unit = 1}, arguments = 16},
-		{request = {kind = .Call, export = 1, record_size = 40, result_start = 64, result_count = 96, result_unit = 24, error_start = 160, details_end = 40}, arguments = 64},
-		{request = {kind = .Call, record_size = 8, result_start = remote.REGION_SIZE, error_start = error_last}, arguments = 8},
-		{request = {kind = .None}, arguments = 0},
+		{request = {kind = u32(remote.Request_Kind.Call)}, arguments = 0},
+		{request = {kind = u32(remote.Request_Kind.Call), export = 3, record_size = 16, result_start = 16, result_count = 64, result_unit = 1}, arguments = 16},
+		{request = {kind = u32(remote.Request_Kind.Call), export = 1, record_size = 40, result_start = 64, result_count = 96, result_unit = 24, error_start = 160, details_end = 40}, arguments = 64},
+		{request = {kind = u32(remote.Request_Kind.Call), record_size = 8, result_start = remote.REGION_SIZE, error_start = error_last}, arguments = 8},
+		{request = {kind = u32(remote.Request_Kind.None)}, arguments = 0},
 	}
 	for item in list {
 		request := item.request
@@ -380,7 +379,7 @@ fuzz_call_function :: proc(choices: ^Fuzz_Choices) -> (function: module.Function
 		word = u8(fuzz_choice_below(choices, type_count))
 	}
 	for &direction in function.parameter_directions {
-		direction = foundation.enum_member_at(module.Direction, fuzz_choice_below(choices, direction_count))
+		direction = u8(fuzz_choice_below(choices, direction_count + 1))
 	}
 	for &detail in function.parameter_details {
 		detail = u32(fuzz_choice_word(choices, 4))

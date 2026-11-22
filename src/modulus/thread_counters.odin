@@ -219,7 +219,7 @@ thread_counters_control :: proc "contextless" (caller_index: u32, caller_process
 			return .Bad_Address
 		}
 		if !thread.counting {
-			return .Bad_State
+			return thread_control_state_refuse(.Counters_Not_Started, 3, u64(command), 1, u64(op.Process_State.Ready))
 		}
 		// The totals up to the last take, and the counts of this processor
 		// since it: the selects stay on, so the thread goes on counting.

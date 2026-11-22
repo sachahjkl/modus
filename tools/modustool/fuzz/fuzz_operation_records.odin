@@ -1,6 +1,7 @@
 package fuzz
 
 import "modus:contract/enum_word"
+import "modus:contract/fixed_addresses"
 import "modus:contract/operation"
 import "modus:contract/operation_sequence"
 
@@ -18,15 +19,24 @@ import "modus:contract/operation_sequence"
 Fuzz_Address_Record :: enum u8 {
 	Plain_Bytes,            // The bytes that the choices gave the area.
 	Page_Range_Table,       // A table of `Page_Range`, with the count of the next argument.
+	Address_Range_Table,    // A table of `Address_Range`, with the count of the next argument.
+	Event_Rule_Table,       // A table of `Event_Rule`, with the count of the next argument.
 	Thread_Control_Command, // The record that the command of Thread_Control reads; plain bytes for a command that reads none.
+	Guest_Registers,        // `operation.Guest_Registers` for `Guest_Run`.
 }
 
 // The record types that the generator writes.
 Fuzz_Record_Type :: enum u8 {
 	Page_Range_Table,    // `operation.Page_Range`, as many as the count argument.
+	Address_Range_Table, // `operation.Address_Range`, as many as the count argument.
+	Event_Rule_Table,    // `operation.Event_Rule`, as many as the count argument.
 	Register_Image,      // `operation.Thread_Registers`.
 	Breakpoint_Image,    // `operation.Thread_Breakpoints`.
 	Extended_State_Area, // The legacy part and the header of an extended state area.
+	Thread_Schedule,     // `operation.Thread_Schedule`.
+	Process_Schedule,    // `operation.Process_Schedule`.
+	Thread_Placement,    // `operation.Thread_Placement`.
+	Guest_Registers,     // `operation.Guest_Registers`.
 }
 
 // How a writer fills one record, the valid form first.
@@ -307,6 +317,225 @@ fuzz_extended_state_write :: proc(choices: ^Fuzz_Choices, form: Fuzz_Record_Form
 	return area
 }
 
+// The fields of an Event_Rule that a write checks
+// (`operation.event_rule_check_fields`).
+Fuzz_Event_Rule_Field :: enum u8 {
+	Kind,
+	Flags,
+	Least_Nanoseconds,
+	One_In,
+	Reserved,
+}
+
+// fuzz_event_rules_write fills a table of kernel event rules: each rule
+// holds a valid Event_Kind, allowed flags and bounds for that kind, zero
+// reserved words, and process 0. Edge and Names_Nothing break one field of
+// one rule.
+fuzz_event_rules_write :: proc(choices: ^Fuzz_Choices, form: Fuzz_Record_Form, rules: []operation.Event_Rule) {
+	valid_kinds := [?]operation.Event_Kind{.Operation, .Switch, .Fault, .Lock_Wait}
+	for &rule in rules {
+		kind := valid_kinds[fuzz_choice_below(choices, len(valid_kinds))]
+		rule = {kind = u32(kind)}
+		if fuzz_choice_below(choices, 4) == 3 {
+			rule.one_in = operation.EVENT_ONE_IN_MOST
+		} else {
+			rule.one_in = u64(fuzz_choice_below(choices, 16))
+		}
+		switch kind {
+		case .None:
+		case .Switch:
+			// Switch accepts neither Match_Detail nor least_nanoseconds.
+		case .Fault:
+			if fuzz_choice_flag(choices) {
+				rule.flags = {.Match_Detail}
+				rule.detail = u64(fuzz_choice_below(choices, 32))
+			}
+		case .Operation, .Lock_Wait:
+			if fuzz_choice_flag(choices) {
+				rule.flags = {.Match_Detail}
+				rule.detail = fuzz_choice_word(choices, 1)
+			}
+			if fuzz_choice_below(choices, 4) == 3 {
+				rule.least_nanoseconds = operation.EVENT_LEAST_NANOSECONDS_MOST
+			} else {
+				rule.least_nanoseconds = u64(fuzz_choice_below(choices, 10_000))
+			}
+		}
+	}
+	if form == .Valid || len(rules) == 0 {
+		return
+	}
+	rule := &rules[fuzz_choice_below(choices, len(rules))]
+	switch fuzz_member_of_choice(choices, Fuzz_Event_Rule_Field) {
+	case .Kind:
+		edges := [?]u64{0, 1, u64(max(operation.Event_Kind)), u64(max(operation.Event_Kind)) + 1}
+		rule.kind = u32(fuzz_edge_or_nothing(choices, form, edges[:], u64(max(u32))))
+	case .Flags:
+		edges := [?]u64{0, 1, 2, 3}
+		rule.flags = transmute(operation.Event_Rule_Flags)u32(fuzz_edge_or_nothing(choices, form, edges[:], u64(max(u32))))
+	case .Least_Nanoseconds:
+		edges := [?]u64{0, 1, operation.EVENT_LEAST_NANOSECONDS_MOST, operation.EVENT_LEAST_NANOSECONDS_MOST + 1}
+		rule.least_nanoseconds = fuzz_edge_or_nothing(choices, form, edges[:], max(u64))
+	case .One_In:
+		edges := [?]u64{0, 1, operation.EVENT_ONE_IN_MOST, operation.EVENT_ONE_IN_MOST + 1}
+		rule.one_in = fuzz_edge_or_nothing(choices, form, edges[:], max(u64))
+	case .Reserved:
+		slot := fuzz_choice_below(choices, len(rule.reserved))
+		edges := [?]u64{0, 1, max(u64)}
+		rule.reserved[slot] = fuzz_edge_or_nothing(choices, form, edges[:], max(u64))
+	}
+}
+
+// fuzz_guest_registers_write fills a Guest_Registers record: any general
+// registers and instruction pointer, with defined flags in Valid, edge
+// flags in Edge, and all bits set in Names_Nothing.
+fuzz_guest_registers_write :: proc(choices: ^Fuzz_Choices, form: Fuzz_Record_Form) -> (registers: operation.Guest_Registers) {
+	general := ([^]u8)(&registers)[:int(offset_of(operation.Guest_Registers, rflags))]
+	fuzz_choice_fill(choices, general)
+	registers.rflags = fuzz_choice_word(choices, 4) & operation.GUEST_FLAGS_DEFINED
+	if form == .Valid {
+		return registers
+	}
+	flag_outside := ~operation.GUEST_FLAGS_DEFINED & (operation.GUEST_FLAGS_DEFINED + 1)
+	edges := [?]u64{0, 2, operation.GUEST_FLAGS_DEFINED, operation.GUEST_FLAGS_DEFINED | flag_outside}
+	registers.rflags = fuzz_edge_or_nothing(choices, form, edges[:], max(u64))
+	return registers
+}
+
+// The fields of a Thread_Schedule that Write_Schedule checks.
+Fuzz_Thread_Schedule_Field :: enum u8 {
+	Weight,
+	Request,
+	Weight_Limit,
+	New_Thread_Weight_Limit,
+}
+
+// fuzz_thread_schedule_write fills a Thread_Schedule record within
+// WEIGHT_FULL and REQUEST_LIMIT in Valid, or breaks one field in Edge or
+// Names_Nothing.
+fuzz_thread_schedule_write :: proc(choices: ^Fuzz_Choices, form: Fuzz_Record_Form) -> (schedule: operation.Thread_Schedule) {
+	schedule.weight = u32(fuzz_choice_below(choices, operation.WEIGHT_FULL + 1))
+	schedule.request = u32(fuzz_choice_below(choices, operation.REQUEST_LIMIT + 1))
+	schedule.weight_limit = u32(fuzz_choice_below(choices, operation.WEIGHT_FULL + 1))
+	schedule.new_thread_weight_limit = u32(fuzz_choice_below(choices, operation.WEIGHT_FULL + 1))
+	if form == .Valid {
+		return schedule
+	}
+	switch fuzz_member_of_choice(choices, Fuzz_Thread_Schedule_Field) {
+	case .Weight:
+		edges := [?]u64{0, 1, operation.WEIGHT_FULL, operation.WEIGHT_FULL + 1}
+		schedule.weight = u32(fuzz_edge_or_nothing(choices, form, edges[:], u64(max(u32))))
+	case .Request:
+		edges := [?]u64{0, 1, operation.REQUEST_LIMIT, operation.REQUEST_LIMIT + 1}
+		schedule.request = u32(fuzz_edge_or_nothing(choices, form, edges[:], u64(max(u32))))
+	case .Weight_Limit:
+		edges := [?]u64{0, 1, operation.WEIGHT_FULL, operation.WEIGHT_FULL + 1}
+		schedule.weight_limit = u32(fuzz_edge_or_nothing(choices, form, edges[:], u64(max(u32))))
+	case .New_Thread_Weight_Limit:
+		edges := [?]u64{0, 1, operation.WEIGHT_FULL, operation.WEIGHT_FULL + 1}
+		schedule.new_thread_weight_limit = u32(fuzz_edge_or_nothing(choices, form, edges[:], u64(max(u32))))
+	}
+	return schedule
+}
+
+// fuzz_process_schedule_write fills a Process_Schedule record within
+// WEIGHT_FULL in Valid, at boundary values in Edge, and max(u32) in
+// Names_Nothing.
+fuzz_process_schedule_write :: proc(choices: ^Fuzz_Choices, form: Fuzz_Record_Form) -> (schedule: operation.Process_Schedule) {
+	schedule.new_thread_weight_limit = u32(fuzz_choice_below(choices, operation.WEIGHT_FULL + 1))
+	if form == .Valid {
+		return schedule
+	}
+	edges := [?]u64{0, 1, operation.WEIGHT_FULL, operation.WEIGHT_FULL + 1}
+	schedule.new_thread_weight_limit = u32(fuzz_edge_or_nothing(choices, form, edges[:], u64(max(u32))))
+	return schedule
+}
+
+// The fields of a Thread_Placement that Write_Placement checks.
+Fuzz_Thread_Placement_Field :: enum u8 {
+	Processors,
+	Processors_Limit,
+}
+
+// fuzz_thread_placement_write fills a Thread_Placement record: in Valid,
+// each non-zero mask includes processor 0 so the placement is valid on any
+// machine of 1 to 64 processors. In Names_Nothing, processors and
+// processors_limit are non-zero and disjoint without processor 0, which
+// every machine of 1 to 64 processors refuses.
+fuzz_thread_placement_write :: proc(choices: ^Fuzz_Choices, form: Fuzz_Record_Form) -> (placement: operation.Thread_Placement) {
+	if fuzz_choice_flag(choices) {
+		placement.processors = fuzz_choice_word(choices, 8) | 1
+	}
+	if fuzz_choice_flag(choices) {
+		placement.processors_limit = fuzz_choice_word(choices, 8) | 1
+	}
+	if form == .Valid {
+		return placement
+	}
+	if form == .Names_Nothing {
+		return {processors = 0b10, processors_limit = 0b01}
+	}
+	edges := [?]u64{0, 1, 0b10, max(u64)}
+	switch fuzz_member_of_choice(choices, Fuzz_Thread_Placement_Field) {
+	case .Processors:
+		placement.processors = edges[fuzz_choice_below(choices, len(edges))]
+	case .Processors_Limit:
+		placement.processors_limit = edges[fuzz_choice_below(choices, len(edges))]
+	}
+	return placement
+}
+
+// The base addresses from which valid Address_Range tables start: page 1,
+// the base of a process, and OWN_CHOICE_START (where the runner maps its
+// areas and fixed objects).
+@(private = "file", rodata)
+FUZZ_ADDRESS_RANGE_BASES := [?]u64 {
+	fixed_addresses.OWN_CHOICE_START,
+	operation.PROCESS_BASE,
+	operation.PAGE_SIZE,
+}
+
+// fuzz_address_ranges_write fills a table of Address_Range records for
+// Memory_Protect: page-aligned, strictly increasing, non-overlapping user
+// ranges with total pages within RANGE_TABLE_PAGE_LIMIT in Valid; boundary
+// addresses or counts in Edge; and unaligned / overflowing max(u64) in
+// Names_Nothing.
+fuzz_address_ranges_write :: proc(choices: ^Fuzz_Choices, form: Fuzz_Record_Form, ranges: []operation.Address_Range) {
+	base := FUZZ_ADDRESS_RANGE_BASES[fuzz_choice_below(choices, len(FUZZ_ADDRESS_RANGE_BASES))]
+	cursor := base + u64(fuzz_choice_below(choices, 64)) * operation.PAGE_SIZE
+	for &item in ranges {
+		gap := u64(fuzz_choice_below(choices, FUZZ_PAGE_RANGE_GAP_MOST + 1))
+		pages := u64(1 + fuzz_choice_below(choices, FUZZ_PAGE_RANGE_PAGES_MOST))
+		item = {address = cursor + gap * operation.PAGE_SIZE, page_count = pages}
+		cursor = item.address + pages * operation.PAGE_SIZE
+	}
+	if form == .Valid || len(ranges) == 0 {
+		return
+	}
+	broken := fuzz_choice_below(choices, 2 * len(ranges))
+	place := broken / 2
+	item := &ranges[place]
+	if form == .Names_Nothing {
+		if broken % 2 == 0 {
+			item.address = max(u64)
+		} else {
+			item.page_count = max(u64)
+		}
+		return
+	}
+	if broken % 2 == 0 {
+		previous := item.address
+		if place > 0 {
+			previous = ranges[place - 1].address
+		}
+		edges := [?]u64{0, operation.PAGE_SIZE - 1, operation.USER_END - operation.PAGE_SIZE, operation.USER_END, previous}
+		item.address = edges[fuzz_choice_below(choices, len(edges))]
+	} else {
+		edges := [?]u64{0, 1, operation.RANGE_TABLE_PAGE_LIMIT, operation.RANGE_TABLE_PAGE_LIMIT + 1}
+		item.page_count = edges[fuzz_choice_below(choices, len(edges))]
+	}
+}
+
 // fuzz_edge_or_nothing gives one of the edges for the form Edge, and the
 // word that names nothing for the form Names_Nothing.
 @(private = "file")
@@ -370,6 +599,30 @@ fuzz_step_records_write :: proc(choices: ^Fuzz_Choices, sequence: ^operation_seq
 			form := fuzz_page_ranges_write(choices, fuzz_record_form_choose(choices), pages, table)
 			place.object_pages = pages
 			fuzz_record_place(&place, .Page_Range_Table, form, ([^]u8)(&ranges[0])[:len(table) * size_of(operation.Page_Range)])
+		case .Address_Range_Table:
+			count := item.arguments[row.parameter + 1]
+			if count.source != .Value || count.value < 1 || count.value > operation.RANGE_TABLE_CAPACITY {
+				continue
+			}
+			ranges: [operation.RANGE_TABLE_CAPACITY]operation.Address_Range
+			table := ranges[:count.value]
+			form := fuzz_record_form_choose(choices)
+			fuzz_address_ranges_write(choices, form, table)
+			fuzz_record_place(&place, .Address_Range_Table, form, ([^]u8)(&ranges[0])[:len(table) * size_of(operation.Address_Range)])
+		case .Event_Rule_Table:
+			count := item.arguments[row.parameter + 1]
+			if count.source != .Value || count.value < 1 || count.value > operation.EVENT_RULE_CAPACITY {
+				continue
+			}
+			rules: [operation.EVENT_RULE_CAPACITY]operation.Event_Rule
+			table := rules[:count.value]
+			form := fuzz_record_form_choose(choices)
+			fuzz_event_rules_write(choices, form, table)
+			fuzz_record_place(&place, .Event_Rule_Table, form, ([^]u8)(&rules[0])[:len(table) * size_of(operation.Event_Rule)])
+		case .Guest_Registers:
+			form := fuzz_record_form_choose(choices)
+			registers := fuzz_guest_registers_write(choices, form)
+			fuzz_record_place(&place, .Guest_Registers, form, ([^]u8)(&registers)[:size_of(registers)])
 		case .Thread_Control_Command:
 			command_place := operation_parameter_place(chosen, "command")
 			if command_place < 0 || item.arguments[command_place].source != .Value {
@@ -392,9 +645,20 @@ fuzz_step_records_write :: proc(choices: ^Fuzz_Choices, sequence: ^operation_seq
 				form := fuzz_record_form_choose(choices)
 				area := fuzz_extended_state_write(choices, form)
 				fuzz_record_place(&place, .Extended_State_Area, form, area[:])
-			case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Write_Schedule, .Read_Breakpoints, .Read_Memory, .Read_Placement, .Write_Placement, .Read_Process_Schedule, .Write_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start:
-				// No record type is described for these commands yet, or
-				// the command reads no record.
+			case .Write_Schedule:
+				form := fuzz_record_form_choose(choices)
+				schedule := fuzz_thread_schedule_write(choices, form)
+				fuzz_record_place(&place, .Thread_Schedule, form, ([^]u8)(&schedule)[:size_of(schedule)])
+			case .Write_Process_Schedule:
+				form := fuzz_record_form_choose(choices)
+				schedule := fuzz_process_schedule_write(choices, form)
+				fuzz_record_place(&place, .Process_Schedule, form, ([^]u8)(&schedule)[:size_of(schedule)])
+			case .Write_Placement:
+				form := fuzz_record_form_choose(choices)
+				placement := fuzz_thread_placement_write(choices, form)
+				fuzz_record_place(&place, .Thread_Placement, form, ([^]u8)(&placement)[:size_of(placement)])
+			case .None, .Stop, .Resume, .Read_Registers, .Read_Extended_State, .Read_Schedule, .Read_Breakpoints, .Read_Memory, .Read_Placement, .Read_Process_Schedule, .Start_Counters, .Read_Counters, .Stop_Counters, .Record_Start, .Record_End, .Replay_Start:
+				// The command reads no structured record at address.
 			}
 		}
 	}

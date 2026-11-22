@@ -744,7 +744,7 @@ test_descriptions :: proc() -> bool {
 				parameter_name := module.string_at(file, function.parameter_names[parameter], u32(function.parameter_name_counts[parameter]))
 				agree &&= function.parameters[parameter] == u8(description.parameters[parameter]) && parameter_name == description.names[parameter]
 				agree &&= function.parameter_details[parameter] == description.details[parameter]
-				agree &&= function.parameter_directions[parameter] == description.directions[parameter]
+				agree &&= function.parameter_directions[parameter] == u8(description.directions[parameter])
 				fmt.sbprintf(&last, "%s%s: %s", parameter > 0 ? ", " : "", parameter_name, type_names[description.parameters[parameter]])
 			}
 			fmt.sbprintf(&last, ") -> %s", type_names[description.result])

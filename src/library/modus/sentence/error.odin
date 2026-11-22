@@ -207,9 +207,30 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			amount(writer, record.limit, unit)
 		}
 	case .State:
-		handle(writer, record, argument)
 		process_state, state_known := enum_word.member_of_word(op.Process_State, u64(record.found))
 		state := state_known ? op.STATE_NAMES[process_state] : "in an unknown state"
+		if record.unit == i64(errors.Unit.Threads) {
+			subject(writer, record, argument)
+			write_part(writer, " names a thread that is ")
+			write_part(writer, state)
+			if record.limit != 0 {
+				write_part(writer, "; the call needs the thread in another state")
+			}
+			return
+		}
+		if record.unit == i64(errors.Unit.Held_Threads) {
+			subject(writer, record, argument)
+			write_part(writer, " names a thread that is not held off a processor (")
+			write_part(writer, state)
+			write_part(writer, ")")
+			return
+		}
+		if record.unit == i64(errors.Unit.Debugged_Processes) {
+			handle(writer, record, argument)
+			write_part(writer, " is not debugged by this process")
+			return
+		}
+		handle(writer, record, argument)
 		write_part(writer, " names a process that is ")
 		write_part(writer, state)
 		if record.limit != 0 {

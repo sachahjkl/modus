@@ -53,8 +53,10 @@ a_replacement_in_another_unit_fails_the_check :: proc(t: ^testing.T) {
 	}
 
 	// The sentence of the loader names the two units.
-	error := module.Load_Error{stage = .Check}
-	error.difference, error.parameter, error.expected, error.found = module.functions_compare(imported, 1, other, 1)
+	error := module.Load_Error{stage = u32(module.Load_Stage.Check)}
+	diff: module.Difference
+	diff, error.parameter, error.expected, error.found = module.functions_compare(imported, 1, other, 1)
+	error.difference = u32(diff)
 	module.name_set(&error.module.name, "importer")
 	module.name_set(&error.imported.name, "pager")
 	module.name_set(&error.replacement.name, "pager_in_bytes")

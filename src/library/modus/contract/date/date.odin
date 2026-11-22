@@ -46,10 +46,16 @@ Source :: enum u32 {
 	Real_Time_Clock = 1, // The real-time clock of the machine (CMOS), read at the start.
 }
 
+// source_of_word is the border of the source word of a date page
+// (Page.source): the member, or false for a word that names no source.
+source_of_word :: proc "contextless" (word: u32) -> (source: Source, ok: bool) {
+	return enum_word.member_of_word(Source, u64(word))
+}
+
 // The date page: what the process `date` writes and each process reads.
 Page :: struct {
 	change_count:              u32, // Even when the page is stable. Each change adds 2.
-	source:                    Source, // Where the date comes from. None: no date is known.
+	source:                    u32, // The word of a Source (source_of_word). None: no date is known.
 	milliseconds_at_time_zero: i64, // Milliseconds since 1970-01-01 00:00:00 UTC at the time 0 of the system.
 	zone_offset_seconds:       i64, // The time zone of the principal: the local time is the date of UTC and this. 0: UTC.
 }
@@ -98,14 +104,14 @@ milliseconds_now :: proc "contextless" (page: ^Page, system_milliseconds: u64) -
 			intrinsics.cpu_relax()
 			continue
 		}
-		source_word := intrinsics.atomic_load_explicit((^u32)(&page.source), .Acquire)
+		source_word := intrinsics.atomic_load_explicit(&page.source, .Acquire)
 		at_zero := intrinsics.atomic_load_explicit(&page.milliseconds_at_time_zero, .Acquire)
 		if intrinsics.atomic_load_explicit(&page.change_count, .Acquire) != before {
 			continue
 		}
 		// The page is shared: a word that names no source gives no date,
 		// as the source None does.
-		source, source_known := enum_word.member_of_word(Source, u64(source_word))
+		source, source_known := source_of_word(source_word)
 		if !source_known || source == .None || system_milliseconds > u64(DATE_MILLISECONDS_LIMIT) {
 			return 0, false
 		}
@@ -130,7 +136,7 @@ zone_write :: proc "contextless" (page: ^Page, zone_offset_seconds: i64) {
 // write sets the date of the time 0. The one writer is the process `date`.
 write :: proc "contextless" (page: ^Page, source: Source, milliseconds_at_time_zero: i64) {
 	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
-	intrinsics.atomic_store_explicit((^u32)(&page.source), u32(source), .Release)
+	intrinsics.atomic_store_explicit(&page.source, u32(source), .Release)
 	intrinsics.atomic_store_explicit(&page.milliseconds_at_time_zero, milliseconds_at_time_zero, .Release)
 	intrinsics.atomic_store_explicit(&page.change_count, page.change_count + 1, .Release)
 }

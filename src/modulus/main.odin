@@ -178,7 +178,7 @@ debug_image_pages :: proc "contextless" (boot: ^info.Boot_Info) -> (pages: u64, 
 	pages = (size + PAGE_SIZE - 1) / PAGE_SIZE
 	end := start + pages * PAGE_SIZE
 	for range in info.physical_slice(boot.memory_ranges, boot.memory_range_count, info.Memory_Range) {
-		if range.kind != .Boot || range.page_count > (max(u64) - range.start) / PAGE_SIZE {
+		if kind, ok := info.memory_kind_of_word(range.kind); !ok || kind != .Boot || range.page_count > (max(u64) - range.start) / PAGE_SIZE {
 			continue
 		}
 		if start >= range.start && end <= range.start + range.page_count * PAGE_SIZE {
@@ -278,7 +278,7 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	}
 	record.handles[op.ROOT_MACHINE] = handle_insert(process, {kind = .Machine, rights = RIGHTS_MACHINE})
 	framebuffer := boot.framebuffer
-	if framebuffer.format != .None {
+	if format, format_ok := info.pixel_format_of_word(framebuffer.format); format_ok && format != .None {
 		pages := (u64(framebuffer.pixels_per_line) * u64(framebuffer.height) * 4 + PAGE_SIZE - 1) / PAGE_SIZE
 		record.handles[op.ROOT_FRAMEBUFFER] = handle_insert(process, {kind = .Memory, rights = {.Give, .Read, .Write}, object = region_device(framebuffer.address, pages)})
 		record.values[op.ROOT_VALUE_WIDTH] = u64(framebuffer.width)

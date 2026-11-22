@@ -120,18 +120,19 @@ direction_names := [module.Direction]string {
 	.Append = "Append",
 }
 
-// direction_name gives the name of a direction: "?" for a value out of
-// the enumeration (a description is input that nobody checked).
-direction_name :: proc "contextless" (direction: module.Direction) -> string {
-	return direction <= max(module.Direction) ? direction_names[direction] : "?"
+// direction_name gives the name of a direction from its byte: "?" for a
+// byte that names no direction (a description is input that nobody checked).
+direction_name :: proc "contextless" (word: u8) -> string {
+	direction, ok := module.direction_of_word(word)
+	return ok ? direction_names[direction] : "?"
 }
 
 // write_parameter_type writes the type of a parameter: as write_type, and
 // for a Table or Bytes parameter its direction too: "Table(Reading,
 // Change)", "Bytes(Read)". One form in the manual, the console and the
 // errors.
-write_parameter_type :: proc "contextless" (writer: ^Writer, file: []u8, type: module.Type, detail: u32, direction: module.Direction) {
-	name := direction_name(direction)
+write_parameter_type :: proc "contextless" (writer: ^Writer, file: []u8, type: module.Type, detail: u32, direction_word: u8) {
+	name := direction_name(direction_word)
 	switch type {
 	case .Table:
 		write_part(writer, "Table(")
@@ -150,13 +151,13 @@ write_parameter_type :: proc "contextless" (writer: ^Writer, file: []u8, type: m
 
 // write_parameter_type_word writes the type of a parameter from its byte in
 // a module file, as write_parameter_type: "?" for a byte that names no type.
-write_parameter_type_word :: proc "contextless" (writer: ^Writer, file: []u8, word: u8, detail: u32, direction: module.Direction) {
+write_parameter_type_word :: proc "contextless" (writer: ^Writer, file: []u8, word: u8, detail: u32, direction_word: u8) {
 	type, type_ok := module.type_of_word(word)
 	if !type_ok {
 		write_part(writer, "?")
 		return
 	}
-	write_parameter_type(writer, file, type, detail, direction)
+	write_parameter_type(writer, file, type, detail, direction_word)
 }
 
 // write_field_type writes the type of a field of a record: as write_type,

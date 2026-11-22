@@ -969,7 +969,7 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 			function.parameter_details[parameter] = detail
 		}
 		for direction, parameter in item.parameter_directions {
-			function.parameter_directions[parameter] = direction
+			function.parameter_directions[parameter] = u8(direction)
 		}
 		function.name_offset = string_append(&strings, item.name)
 		function.about_offset = string_append(&strings, item.about)
