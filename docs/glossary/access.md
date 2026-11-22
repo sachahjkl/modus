@@ -984,6 +984,16 @@ The design: `src/md/features/several_machines.md`, "The frames on a stream of re
 
 Do not use: packet, message (alone), mesh request.
 
+### Outbound link
+
+An outbound link is a QUIC connection that `remote` opens to a paired machine, whose handshake pins the identity key of that machine.
+
+It is the other direction of the mesh frames: this machine sends the requests (an object by hash, a role call, a store offer, the two pairing steps of the joiner) and the other machine answers. The link refuses a handshake that proves any other key. Each request ends Answered, Refused, Unknown_Outcome when it left and lost its answer, or Unreachable when the link was not up. It is not a grant: the other machine still checks the uses that its plan gives this machine.
+
+The design: `src/md/features/several_machines.md`, "The outbound link".
+
+Do not use: dial, client connection (alone), tunnel.
+
 ### Relay envelope
 
 A relay envelope is a datagram that a relay machine carries between two machines: a routing token and the sealed bytes, which only the two ends open.

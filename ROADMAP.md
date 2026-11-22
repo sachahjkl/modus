@@ -24,6 +24,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **Builds across paired machines, on the machine.** The root service connects `recipes` to the outbound links of `remote` and gives `remote` the listen grant of each address, so `recipes.build` gives the recipes of a graph to the builders and the caches that a principal paired, and a machine test runs it on two machines. [Design](src/md/features/recipes.md)
+
 - **The elements and the other windows on the layout tree.** The elements of the interface package and the windows other than `monitor` and `settings` take their rectangles from `modus:layout`, so a text that grows, a scale factor or a resize moves each element with no place computed by hand. [Design](src/md/features/box_layout.md)
 - **A principal resizes `monitor` and `settings`.** The two windows lay out each frame at their size now, but stay fixed: they become resizable when their stated budgets hold a second surface at their largest size, so a larger `monitor` shows more rows of processes and wider graphs. [Design](src/md/features/box_layout.md)
 - **Stored data that survives each change of its type, from 1.0.** Each object of records in a store carries the description of its records, and a module that changes a stored type declares how the data of the release before takes the new form and goes back, so an update keeps the data of a principal. It starts at the preparation of 1.0; before it, a change breaks the old data. [Design](src/md/features/data_evolution.md)

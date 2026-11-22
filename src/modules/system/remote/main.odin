@@ -16,7 +16,9 @@
 // least). Its public key goes on the log and in the window: the host pins
 // it. A new start makes a new key. A seed weaker than "processor" makes no
 // key: the process says so, and listens on nothing. The public key is also
-// the machine identity of this start toward paired machines (mesh.odin).
+// the machine identity of this start toward paired machines (mesh.odin),
+// and the key of the client of each outbound link to a paired machine
+// (mesh_client.odin).
 //
 // The key of the client: the handshake asks each client for its own
 // Ed25519 key, as a raw public key with its signature (mutual TLS 1.3), and
@@ -1142,6 +1144,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !quic.server_init(&server, quic_connections, records[:], streams, &configuration, &cryptography, &process_generator, limits, &error) {
 		fail("the server refused its configuration")
 	}
+	// The outbound links prove this machine with the same key, as clients.
+	mesh_client_configure(&configuration)
 	// The server keeps its own copy of the key. A plain store of zeros to a
 	// record that is not read again can be removed by the compiler.
 	quic.secret_erase(&configuration.tls.server_private_key, size_of(configuration.tls.server_private_key))
@@ -1159,7 +1163,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wait := system.wait_begin()
 		count := quic_server.completions_drain(&quic_endpoint, &server, records[:], arrived[:])
 		counts.sends_refused = quic_endpoint.sends_refused
+		// The datagrams of the outbound links go to their connections; the
+		// server sees the others.
+		count = mesh_client_receive(arrived[:count], now_microseconds())
 		deadline := quic_server.exchange(&quic_endpoint, &server, records[:], arrived[:count], now_microseconds(), calls_work)
+		deadline = min(deadline, mesh_client_work(now_microseconds()))
 		quic_server.endpoint_wake(&quic_endpoint)
 		if count > 0 {
 			dirty = true
