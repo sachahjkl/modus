@@ -2746,7 +2746,7 @@ scenario := [?]Step {
 	{kind = .Shot, text = "pointers_system"},
 	{kind = .Close, text = "pointers"},
 	{kind = .Wait, text = "root: pointers stopped"},
-	{kind = .Point, x = 116, y = 14, text = "pointing_hand"}, // The button start in the bar.
+	{kind = .Point, x = 26, y = 14, text = "pointing_hand"}, // The button start in the bar.
 	{kind = .Point, x = 600, y = 16, text = "arrow"}, // The bar.
 	{kind = .Front, text = "console"},
 	{kind = .Point, inside_window = "console", x = 200, y = 120, text = "text"}, // The surface of the terminal: its request.
@@ -2912,7 +2912,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: the pointer form in use: light", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light, scale 1.25; the appearance in force light; ", any_order = true},
 	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light"},
-	{kind = .Point, x = 116, y = 14, text = "pointing_hand", form = "light"}, // The button start of the bar: the light form of the pointer.
+	{kind = .Point, x = 26, y = 14, text = "pointing_hand", form = "light"}, // The button start of the bar: the light form of the pointer.
 	{kind = .Front, text = "settings"},
 	{kind = .Shot, text = "desktop_light"},
 	// The console in the light appearance: a record whose values have the
@@ -2935,7 +2935,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "settings: the appearance in force is dark: the setting dark"},
 	{kind = .Wait, text = "compositor: the pointer form in use: dark", any_order = true},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance dark, scale 1.25; the appearance in force dark; "},
-	{kind = .Point, x = 116, y = 14, text = "pointing_hand", form = "dark"},
+	{kind = .Point, x = 26, y = 14, text = "pointing_hand", form = "dark"},
 	{kind = .Call, text = "settings.set(appearance = .auto)", expected = "1"},
 	{kind = .Appearance_Auto, text = "settings: the appearance in force is "},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; the appearance in force dark; "},
