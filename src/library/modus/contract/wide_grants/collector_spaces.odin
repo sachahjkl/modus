@@ -68,6 +68,7 @@ Space_Refusal :: enum u8 {
 	Own_Space           = 13,
 	Chain_Broken        = 14,
 	Forward_Empty       = 15,
+	Bad_Limit           = 16,
 }
 
 // The terms of a space, as space_open takes them: the kind (Keep or Audit),
@@ -392,13 +393,16 @@ space_read_allowed :: proc "contextless" (store: ^Space_Store, space: ^Collector
 }
 
 // records_read writes the heads and the bytes of the kept records of a space
-// whose serial is after after (from -1 for all), oldest first, into heads and
-// bytes, and gives the count of such records, which can pass what the two
-// places hold. A record goes in only when its head and its bytes both fit.
+// whose serial is after after (from -1 for all), oldest first, at most limit
+// of them, into heads and bytes, and gives the count of such records, which
+// can pass what the two places hold. A record goes in only when its head and
+// its bytes both fit. A reader that wants more asks again, after the serial
+// of the last record that it received.
 records_read :: proc "contextless" (
 	store: ^Space_Store,
 	space_number: u32,
 	after: i64,
+	limit: int,
 	reader: ^Space_Reader,
 	heads: []Kept_Record_Head,
 	bytes: []u8,
@@ -410,8 +414,14 @@ records_read :: proc "contextless" (
 	if allowed := space_read_allowed(store, space, reader); allowed != .None {
 		return 0, allowed
 	}
+	if limit < 1 || limit > SPACE_RECORDS_MOST {
+		return 0, .Bad_Limit
+	}
 	written_bytes := 0
 	for index in 0 ..< space.count {
+		if count >= limit {
+			break
+		}
 		place := (space.first + index) % space.bound
 		serial := space.serials[place]
 		if after >= 0 && serial <= u64(after) {
@@ -458,6 +468,51 @@ space_verify :: proc "contextless" (store: ^Space_Store, space_number: u32) -> (
 		return .Chain_Broken, space.next_serial
 	}
 	return .None, 0
+}
+
+// space_rows writes the row of each space that reader may read into rows,
+// and gives the count of such spaces, which can pass what rows holds. The
+// space of a source is not in the rows of that source: a source does not
+// learn the counts or the last link of its own audit.
+space_rows :: proc "contextless" (store: ^Space_Store, reader: ^Space_Reader, rows: []Space_Row) -> (count: int, refusal: Space_Refusal) {
+	if reader == nil || !reader.acts_for_principal || reader.principal != store.principal {
+		return 0, .Not_Principal
+	}
+	for &space, index in store.spaces {
+		if !space.active || space_read_allowed(store, &space, reader) != .None {
+			continue
+		}
+		if count < len(rows) {
+			rows[count] = space_row_of(&space, u32(index + 1))
+		}
+		count += 1
+	}
+	return count, .None
+}
+
+// space_stats gives the row of one space, under the rule of records_read.
+space_stats :: proc "contextless" (store: ^Space_Store, space_number: u32, reader: ^Space_Reader) -> (row: Space_Row, refusal: Space_Refusal) {
+	space := space_of(store, space_number)
+	if space == nil {
+		return {}, .Unknown_Space
+	}
+	if allowed := space_read_allowed(store, space, reader); allowed != .None {
+		return {}, allowed
+	}
+	return space_row_of(space, space_number), .None
+}
+
+// space_open_allowed decides whether reader sets the terms of a space of
+// source: a reader that acts for the principal and is not that source, since
+// the terms of an audit are the choice of the starter, not of its subject.
+space_open_allowed :: proc "contextless" (store: ^Space_Store, source: []u8, reader: ^Space_Reader) -> Space_Refusal {
+	if reader == nil || !reader.acts_for_principal || reader.principal != store.principal {
+		return .Not_Principal
+	}
+	if name_field_equal(&reader.name, source) {
+		return .Own_Space
+	}
+	return .None
 }
 
 // space_row_of gives the row of one space.
