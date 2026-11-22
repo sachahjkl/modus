@@ -1,28 +1,87 @@
-// Test module for single-thread record and replay
+// The record and the replay of a process with a shared writer
 // (src/md/features/record_and_replay.md).
 //
-// Runs deterministic arithmetic, reads the cycle counter through
-// system.nanoseconds, queries CPUID leaves 0, 1 and 7, logs a summary fact,
-// and stops cleanly. An opt-in context mode executes an extra nondeterministic
-// divergence step so replay proves that divergence is caught immediately.
+// The test process starts a reader: a child of this module that maps a page
+// with Write, which the test process maps with Write too. The kernel records
+// the reader from its first instruction, so the test process is a shared
+// writer that the gate holds. In each round the test process writes bytes
+// that come from its own clock into the page, and the reader sums them with
+// its trapped reads of the cycle counter and of cpuid. Then:
+//
+// - The record holds one shared mapping, a delta of the shared page for each
+//   round, the cycle counter and cpuid, and ends with the stop of the reader.
+// - A replay of the history, in a new child that maps no shared page and
+//   has no writer, reaches the end of the history with no divergence: the
+//   kernel maps a private page where the record had the shared one, and
+//   writes each delta at its input point.
+// - A replay of a copy of the history with one byte of a delta changed stops
+//   at the first entry after it that carries the sum: its input point, the
+//   value of the history and the value of the replay.
+//
+// **What it is for.** It is the machine test of the record of a shared
+// writer, and of the replay with no peer.
+//
+// **Start**: `start("replay_probe")` in the console. It starts each child
+// from the boot image.
+//
+// **Grants**, as the root service gives them: **Image**, the boot image, to
+// start the children from it.
+//
+// **What a reader sees**: one line for each case, which ends with "as it
+// must", then "replay_probe: ok, 3 cases: ...", or "replay_probe: failed:
+// N cases of 3". The process has no window.
 package replay_probe
 
 import "base:intrinsics"
 import "modus:contract/enum_word"
+import "modus:contract/input_history"
+import "modus:contract/module"
+import op "modus:contract/operation"
+import "modus:contract/value_kinds"
+import "modus:random"
 import "modus:system"
 
-// Working memory: 128 pages for the stack and probe scratch. Threads: 1, the main thread of the probe.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 128, processes = 1, threads = 1}
+// The test process, a child at a time, and the threads of both. The
+// working memory pays each child, its histories, and the point copies and
+// private pages that the kernel takes from the budget of a history.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1200, processes = 2, threads = 2}
 
-COMPUTATION_ROUNDS :: u64(256)
+// The value of the context that gives the role. Not the value 0: the root
+// service writes there the size of the boot image of the grant Image.
+VALUE_ROLE :: 7
 
-// Selected by ctx.values[0]. Zero is the deterministic recording/replay run.
-Probe_Mode :: enum u64 {
-	Deterministic         = 0,
-	Diverge_Operation     = 1,
-	Diverge_Cpuid         = 2,
-	Diverge_Cycle_Counter = 3,
+// What a process of this module does.
+Role :: enum u64 {
+	Test   = 0, // The test process: it writes the shared page and checks the record and the replays.
+	Reader = 1, // The recorded child: it reads the shared page each round.
 }
+
+CASE_COUNT :: 3
+// The rounds of the reader: one write of the test process each.
+ROUNDS :: 4
+// The pages of each history: the head, about ten records each round, and the
+// start of the reader. A full history ends the record with Buffer_Full.
+HISTORY_PAGES :: 16
+// Where the reader maps the shared page: far from each place that a
+// starter or the kernel chooses.
+SHARED_ADDRESS :: u64(0x0000_0100_0000_0000)
+
+// The page that the test process and the reader share.
+Shared_Page :: struct {
+	round:        u32, // The round whose bytes the test process wrote.
+	acknowledged: u32, // The round that the reader read.
+	data:         [64]u8, // The bytes of the round. The last one is never the one of the round before.
+}
+#assert(size_of(Shared_Page) <= system.PAGE_SIZE)
+
+// The word whose wake carries the sum of the reader. No thread waits on it:
+// the wake only puts the sum into an argument of a kernel entry, which a
+// replay compares with the history.
+checksum_word: u32
+
+image: []u8
+process_generator: random.Generator
+right_count: int
 
 // mix_deterministic runs a pure integer mixing loop whose result depends only
 // on its inputs.
@@ -35,54 +94,378 @@ mix_deterministic :: proc "contextless" (seed: u64, rounds: u64) -> u64 {
 	return state
 }
 
+// hang_bound gives a deadline that only ends a hang.
+hang_bound :: proc "contextless" () -> u64 {
+	return system.time() + system.TEST_HANG_BOUND_MILLISECONDS
+}
+
+// verdict counts a case and gives the verdict field of its fact.
+verdict :: proc "contextless" (right: bool) -> [16]u8 {
+	if right {
+		right_count += 1
+		return value_kinds.text_field("as it must", 16)
+	}
+	return value_kinds.text_field("WRONG", 16)
+}
+
+// reader_run is the recorded child. Each value that it reads from outside
+// is an input of the history: the shared page, the cycle counter, cpuid.
+reader_run :: proc "contextless" () -> ! {
+	shared := (^Shared_Page)(uintptr(SHARED_ADDRESS))
+	_, _, leaf1_ecx, _ := intrinsics.x86_cpuid(1, 0)
+	checksum := mix_deterministic(system.nanoseconds() ~ u64(leaf1_ecx), 64)
+	for round in u32(1) ..= ROUNDS {
+		for {
+			seen := intrinsics.atomic_load(&shared.round)
+			if seen == round {
+				break
+			}
+			system.word_wait(&shared.round, seen)
+		}
+		for value, index in shared.data {
+			checksum = mix_deterministic(checksum ~ (u64(value) << (u64(index % 8) * 8)), 1)
+		}
+		checksum = mix_deterministic(checksum ~ system.nanoseconds(), 4)
+		system.word_wake(&checksum_word, checksum)
+		intrinsics.atomic_store(&shared.acknowledged, round)
+		system.word_wake(&shared.acknowledged)
+	}
+	system.stop(.Done)
+}
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	mode_word: u64
-	if ctx != nil {
-		mode_word = ctx.values[0]
-	}
-	mode, mode_ok := enum_word.member_of_word(Probe_Mode, mode_word)
-	if !mode_ok {
-		system.log_fact(.Error, Probe_Bad_Mode{word = mode_word})
+	role, role_known := enum_word.member_of_word(Role, ctx.values[VALUE_ROLE])
+	if !role_known {
+		system.log_fact(.Error, Probe_Bad_Role{word = ctx.values[VALUE_ROLE]})
 		system.stop(.Refused)
 	}
-
-	started := system.nanoseconds()
-	checksum := mix_deterministic(started, COMPUTATION_ROUNDS)
-
-	highest_leaf, _, _, _ := intrinsics.x86_cpuid(0, 0)
-	_, _, leaf1_ecx, _ := intrinsics.x86_cpuid(1, 0)
-	leaf7_ebx, leaf7_ecx: u32
-	if highest_leaf >= 7 {
-		_, leaf7_ebx, leaf7_ecx, _ = intrinsics.x86_cpuid(7, 0)
+	switch role {
+	case .Reader:
+		reader_run()
+	case .Test:
 	}
-	checksum = mix_deterministic(checksum ~ u64(leaf1_ecx) ~ (u64(leaf7_ebx) << 32) ~ u64(leaf7_ecx), 32)
-
-	// Opt-in divergence paths for verifying replay divergence detection.
-	switch mode {
-	case .Deterministic:
-	case .Diverge_Operation:
-		system.log_fact(.Info, Probe_Divergence_Triggered{mode = u64(mode), value = checksum})
-	case .Diverge_Cpuid:
-		ext_eax, _, _, _ := intrinsics.x86_cpuid(0x8000_0001, 0)
-		checksum = mix_deterministic(checksum ~ u64(ext_eax), 8)
-		system.log_fact(.Info, Probe_Divergence_Triggered{mode = u64(mode), value = u64(ext_eax)})
-	case .Diverge_Cycle_Counter:
-		extra := system.nanoseconds()
-		checksum = mix_deterministic(checksum ~ extra, 8)
-		system.log_fact(.Info, Probe_Divergence_Triggered{mode = u64(mode), value = extra})
+	if !random.generator_from_context(&process_generator, ctx) {
+		system.log_fact(.Info, Probe_No_Random_Seed{})
+		system.stop(.Refused)
 	}
+	address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {})
+	if status != .Ok {
+		system.log_fact(.Info, Probe_No_Boot_Image{})
+		system.stop(.Failed)
+	}
+	image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
+	test_run()
+	if right_count == CASE_COUNT {
+		system.log_fact(.Info, Probe_Held{cases = CASE_COUNT})
+		system.stop(.Done)
+	}
+	system.log_fact(.Info, Probe_Failed{wrong_cases = u64(CASE_COUNT - right_count), cases = CASE_COUNT})
+	system.stop(.Failed)
+}
 
-	finished := system.nanoseconds()
-	elapsed := finished >= started ? finished - started : 0
-	checksum = mix_deterministic(checksum ~ elapsed, 16)
+// A memory object of this process and its mapping.
+Mapped :: struct {
+	memory: system.Handle,
+	bytes:  []u8,
+}
 
-	system.log_fact(.Info, Probe_Summary {
-		checksum            = checksum,
-		elapsed_nanoseconds = elapsed,
-		leaf1_ecx           = u64(leaf1_ecx),
-		leaf7_ebx           = u64(leaf7_ebx),
-		leaf7_ecx           = u64(leaf7_ecx),
-	})
-	system.stop(.Done)
+// mapped_create makes a memory object, contiguous for a history, and maps
+// it with Write.
+mapped_create :: proc "contextless" (page_count: u64, contiguous: bool) -> (mapped: Mapped, ok: bool) {
+	flags: op.Memory_Flags
+	if contiguous {
+		flags = {.Contiguous}
+	}
+	memory, made := system.memory_create(page_count, flags = flags)
+	if made != .Ok {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = op.Status_Word(made), step = value_kinds.text_field("Memory_Create", 32)})
+		return {}, false
+	}
+	address, mapped_status := system.memory_map(memory, {.Write})
+	if mapped_status != .Ok {
+		system.close(memory)
+		system.log_fact(.Info, Probe_Step_Failed{status_word = op.Status_Word(mapped_status), step = value_kinds.text_field("Memory_Map", 32)})
+		return {}, false
+	}
+	return {memory = memory, bytes = ([^]u8)(address)[:page_count * system.PAGE_SIZE]}, true
+}
+
+mapped_release :: proc "contextless" (mapped: Mapped) {
+	if mapped.bytes != nil {
+		system.memory_unmap(raw_data(mapped.bytes))
+	}
+	if mapped.memory != 0 {
+		system.close(mapped.memory)
+	}
+}
+
+// reader_start starts a reader held before its first instruction. A record
+// maps the shared page into it; a replay maps nothing there.
+reader_start :: proc "contextless" (shared: system.Handle) -> (process: system.Handle, entry: u64, ok: bool) {
+	grants: [op.CONTEXT_HANDLES]system.Grant
+	values: [op.CONTEXT_VALUES]u64
+	values[VALUE_ROLE] = u64(Role.Reader)
+	mappings: [1]system.Mapping
+	mapping_count := 0
+	if shared != 0 {
+		mappings[0] = {memory = shared, address = SHARED_ADDRESS, page_count = 1, flags = {.Write}}
+		mapping_count = 1
+	}
+	error: module.Load_Error
+	status: system.Status
+	process, status = system.process_start(system.image_find(image, "replay_probe"), "replay_probe reader", grants, random.values_with_seed(&process_generator, values), {pages = 256, processes = 1, threads = 1, processor = 200_000, log_records = 10}, mappings[:mapping_count], nil, {image = image}, &error, held_entry = &entry)
+	if status != .Ok {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field("process_start", 32)})
+		return 0, 0, false
+	}
+	return process, entry, true
+}
+
+// reader_wait_stopped waits until a reader stopped. The bound only ends a
+// hang.
+reader_wait_stopped :: proc "contextless" (process: system.Handle) -> (cause: op.Stop_Cause, outcome: op.Stop_Outcome, stopped: bool) {
+	for deadline := hang_bound(); system.time() < deadline; {
+		state: op.Process_State
+		state, cause, outcome = system.process_state(process)
+		if state == .Stopped {
+			return cause, outcome, true
+		}
+		system.sleep(system.time() + 1)
+	}
+	system.log_fact(.Info, Probe_Reader_Hung{})
+	return .None, .None, false
+}
+
+// Counts of the records of a history.
+History_Counts :: struct {
+	points:             u64,
+	shared_mappings:    u64, // The Shared_Mapping records of the shared page: one page, Read_Write.
+	other_mappings:     u64,
+	shared_deltas:      u64,
+	cycle_reads:        u64,
+	cpuid_reads:        u64,
+	carriers:           u64, // The wakes of checksum_word.
+	end:                input_history.History_End_Reason,
+}
+
+// history_counts reads a history through the border of the contract.
+history_counts :: proc "contextless" (bytes: []u8, scratch: []u8) -> (counts: History_Counts, ok: bool) {
+	reader := input_history.history_reader_open(bytes) or_return
+	counts.points = reader.header.point_count
+	for {
+		_, kind, payload, has_more, read_ok := input_history.history_reader_next_into(&reader, scratch)
+		if !read_ok {
+			return {}, false
+		}
+		if !has_more {
+			return counts, true
+		}
+		switch kind {
+		case .None:
+			return {}, false
+		case .Shared_Mapping:
+			entry, access, _ := input_history.shared_mapping_validate(payload)
+			if entry.virtual_address == SHARED_ADDRESS && entry.page_count == 1 && access == .Read_Write {
+				counts.shared_mappings += 1
+			} else {
+				counts.other_mappings += 1
+			}
+		case .Page_Delta:
+			if header, _ := input_history.page_delta_validate(payload); header.virtual_address == SHARED_ADDRESS {
+				counts.shared_deltas += 1
+			}
+		case .Cycle_Counter:
+			counts.cycle_reads += 1
+		case .Processor_Identification:
+			counts.cpuid_reads += 1
+		case .Kernel_Completion:
+			if entry, _, _ := input_history.kernel_completion_from_payload(payload); carries_checksum(entry) {
+				counts.carriers += 1
+			}
+		case .History_End:
+			_, counts.end, _, _ = input_history.history_end_from_payload(payload)
+		}
+	}
+}
+
+// carries_checksum says whether a kernel entry is the wake of the reader
+// that carries its sum: the same module at the same base, so the word has
+// the same address in the reader as in this process.
+carries_checksum :: proc "contextless" (entry: input_history.Kernel_Completion_Payload) -> bool {
+	return entry.command_kind &~ op.COMMAND_NAMES_ERROR_DETAILS == u32(op.Operation.Word_Wake) && entry.command_values[0] == u64(uintptr(&checksum_word))
+}
+
+// One record of a history, private to this process.
+record_scratch: [input_history.MAX_RECORD_PAYLOAD_BYTES]u8
+
+// test_run runs the three cases.
+test_run :: proc "contextless" () {
+	shared, shared_ok := mapped_create(1, false)
+	if !shared_ok {
+		return
+	}
+	defer mapped_release(shared)
+	history, history_ok := mapped_create(HISTORY_PAGES, true)
+	if !history_ok {
+		return
+	}
+	defer mapped_release(history)
+	if !case_of_the_record(shared, history) {
+		return
+	}
+	case_of_the_replay(history)
+	case_of_the_divergence(history)
+}
+
+// case_of_the_record records the reader while this process writes the
+// shared page, and checks what the history holds.
+case_of_the_record :: proc "contextless" (shared: Mapped, history: Mapped) -> bool {
+	reader, entry, started := reader_start(shared.memory)
+	if !started {
+		return false
+	}
+	defer system.close(reader)
+	if status := system.process_record_start(reader, history.memory); status != .Ok {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field("Record_Start", 32)})
+		system.process_stop(reader)
+		return false
+	}
+	if status := system.process_release(reader, entry); status != .Ok {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field("process_release", 32)})
+		system.process_stop(reader)
+		return false
+	}
+	page := (^Shared_Page)(raw_data(shared.bytes))
+	for round in u32(1) ..= ROUNDS {
+		// Bytes that only this run gives: a replay that reads them comes
+		// from the history, never from a second run of the writer.
+		clock := system.nanoseconds()
+		for &value, index in page.data {
+			value = u8(clock >> (u64(index % 8) * 8)) ~ u8(index)
+		}
+		page.data[len(page.data) - 1] = 0x80 | u8(round)
+		intrinsics.atomic_store(&page.round, round)
+		system.word_wake(&page.round)
+		for deadline := hang_bound(); intrinsics.atomic_load(&page.acknowledged) != round; {
+			seen := intrinsics.atomic_load(&page.acknowledged)
+			if seen == round || system.time() >= deadline {
+				break
+			}
+			system.word_wait(&page.acknowledged, seen, system.time() + 10)
+		}
+	}
+	cause, outcome, stopped := reader_wait_stopped(reader)
+	counts, counted := history_counts(history.bytes, record_scratch[:])
+	system.log_fact(.Info, Probe_Recorded{points = counts.points, shared_deltas = counts.shared_deltas, cycle_reads = counts.cycle_reads, cpuid_reads = counts.cpuid_reads})
+	right := stopped && cause == .Itself && outcome == .Done && counted && counts.end == .Normal_Stop
+	right = right && counts.shared_mappings == 1 && counts.other_mappings == 0 && counts.shared_deltas >= ROUNDS
+	right = right && counts.cycle_reads >= ROUNDS && counts.cpuid_reads >= 1 && counts.carriers == ROUNDS
+	system.log_fact(.Info, Record_Checked{verdict = verdict(right)})
+	return right
+}
+
+// replay_of runs a replay of history in a new reader with no shared page,
+// and gives the header of the history after it.
+replay_of :: proc "contextless" (history: Mapped) -> (header: input_history.History_Header, cause: op.Stop_Cause, outcome: op.Stop_Outcome, ok: bool) {
+	reader, entry, started := reader_start(0)
+	if !started {
+		return {}, .None, .None, false
+	}
+	defer system.close(reader)
+	if status := system.process_replay_start(reader, history.memory); status != .Ok {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field("Replay_Start", 32)})
+		system.process_stop(reader)
+		return {}, .None, .None, false
+	}
+	if status := system.process_release(reader, entry); status != .Ok {
+		system.log_fact(.Info, Probe_Step_Failed{status_word = op.Status_Word(status), step = value_kinds.text_field("process_release", 32)})
+		system.process_stop(reader)
+		return {}, .None, .None, false
+	}
+	stopped: bool
+	cause, outcome, stopped = reader_wait_stopped(reader)
+	if !stopped {
+		system.process_stop(reader)
+		return {}, .None, .None, false
+	}
+	opened: input_history.History_Reader
+	opened, ok = input_history.history_reader_open(history.bytes)
+	return opened.header, cause, outcome, ok
+}
+
+// history_copy makes a contiguous copy of a history for one replay: each
+// replay writes its end into the header of its own copy.
+history_copy :: proc "contextless" (history: Mapped) -> (copied: Mapped, ok: bool) {
+	copied = mapped_create(HISTORY_PAGES, true) or_return
+	copy(copied.bytes, history.bytes)
+	return copied, true
+}
+
+// case_of_the_replay replays the history with no writer: the same inputs
+// at the same points, and the end of the history.
+case_of_the_replay :: proc "contextless" (history: Mapped) {
+	copied, copied_ok := history_copy(history)
+	if !copied_ok {
+		system.log_fact(.Info, Replay_Checked{verdict = verdict(false)})
+		return
+	}
+	defer mapped_release(copied)
+	header, cause, outcome, replayed := replay_of(copied)
+	end, _ := input_history.history_end_reason_of_word(u64(header.end_reason))
+	divergences := u64(end == .Divergence ? 1 : 0)
+	system.log_fact(.Info, Probe_Replayed{divergences = divergences, divergence_point = header.divergence_point})
+	system.log_fact(.Info, Replay_Checked{verdict = verdict(replayed && end == .Normal_Stop && cause == .Itself && outcome == .Done)})
+}
+
+// case_of_the_divergence changes the last byte of a delta of the shared
+// page in a copy of the history: the replay must stop at the first wake
+// after it that carries the sum, with the sum of the history.
+case_of_the_divergence :: proc "contextless" (history: Mapped) {
+	copied, copied_ok := history_copy(history)
+	if !copied_ok {
+		system.log_fact(.Info, Divergence_Checked{verdict = verdict(false)})
+		return
+	}
+	defer mapped_release(copied)
+	// The second delta of the shared page, the bytes of round 2; its last
+	// byte is the last byte of data, which differs each round.
+	reader, opened := input_history.history_reader_open(copied.bytes)
+	changed_offset := -1
+	deltas := 0
+	expected_point, expected_sum: u64
+	for opened {
+		offset := reader.read_offset
+		record_header, kind, payload, has_more, read_ok := input_history.history_reader_next_into(&reader, record_scratch[:])
+		if !read_ok || !has_more {
+			break
+		}
+		if kind == .Page_Delta {
+			if header, _ := input_history.page_delta_validate(payload); header.virtual_address == SHARED_ADDRESS {
+				deltas += 1
+				if deltas == 2 {
+					changed_offset = size_of(input_history.History_Header) + int(offset) + size_of(input_history.History_Record_Header) + len(payload) - 1
+				}
+			}
+		} else if kind == .Kernel_Completion {
+			if entry, _, _ := input_history.kernel_completion_from_payload(payload); changed_offset >= 0 && expected_point == 0 && carries_checksum(entry) {
+				expected_point = record_header.point_number
+				expected_sum = entry.command_values[1]
+			}
+		}
+	}
+	if changed_offset < 0 || expected_point == 0 {
+		system.log_fact(.Info, Divergence_Checked{verdict = verdict(false)})
+		return
+	}
+	copied.bytes[changed_offset] ~= 0x01
+	header, cause, _, replayed := replay_of(copied)
+	end, _ := input_history.history_end_reason_of_word(u64(header.end_reason))
+	kind, _ := input_history.divergence_kind_of_word(u64(header.divergence_kind))
+	report, found, reported := input_history.divergence_report_of_history(copied.bytes, record_scratch[:])
+	system.log_fact(.Info, Probe_Divergence{kind = u64(kind), point = header.divergence_point, expected_point = expected_point, recorded_sum = header.divergence_expected, replayed_sum = header.divergence_actual, recorded_instruction = report.recorded_instruction_address})
+	right := replayed && end == .Divergence && kind == .Unexpected_Arguments && cause == .Holder
+	right = right && header.divergence_point == expected_point && header.divergence_expected == expected_sum && header.divergence_actual != expected_sum
+	right = right && reported && found && report.recorded_kind == .Kernel_Completion && report.point == expected_point
+	system.log_fact(.Info, Divergence_Checked{verdict = verdict(right)})
 }

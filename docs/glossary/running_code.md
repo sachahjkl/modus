@@ -1236,6 +1236,16 @@ The design: `src/md/features/record_and_replay.md`.
 
 Do not use: shadow page, page snapshot.
 
+### Stand-in mapping
+
+A stand-in mapping is a range of private pages that the kernel maps into a replay, before its first instruction, where the recorded process had a mapping of pages that another process wrote.
+
+The head of an input history holds one record `Shared_Mapping` for each such mapping: its address, its pages, and the access of the recorded process (Read for a point copy, Read and Write for the pages of a shared writer). A replay holds no peer, so `Replay_Start` maps a new memory object there, paid by the budget of the history, and each Page_Delta of the history writes what the peer wrote, at its input point. A range that the replay maps already, such as its context page, takes the deltas there and needs no stand-in mapping.
+
+The design: `src/md/features/record_and_replay.md`.
+
+Do not use: shadow mapping, mirror page, fake mapping.
+
 ### Shared writer
 
 A shared writer of a recorded process is a process that maps with Write a memory object that the recorded process also maps with Write.

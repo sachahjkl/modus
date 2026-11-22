@@ -666,8 +666,11 @@ frame_take :: proc "contextless" () -> u64 {
 
 // region_create makes a memory object. The budget pays for its pages and
 // for its frame list. A contiguous object has all its frames now; another
-// one has its frames at first use, or now with `now`.
-region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous := false, now := false, uncommitted := false, large_pages := false) -> (index: u32, status: Operation_Outcome) {
+// one has its frames at first use, or now with `now`. With
+// budget_of_region, the budget of that memory object pays in place of
+// budget: it is read under the frame lock, where a release of a budget
+// gives its objects to the parent budget.
+region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous := false, now := false, uncommitted := false, large_pages := false, budget_of_region: u32 = 0) -> (index: u32, status: Operation_Outcome) {
 	if page_count == 0 || !contiguous && page_count > op.MEMORY_PAGE_LIMIT {
 		return 0, .Bad_Operation
 	}
@@ -678,6 +681,10 @@ region_create :: proc "contextless" (budget: u32, page_count: u64, contiguous :=
 	// frames of a contiguous object or of the frame list are taken, the pages
 	// are reserved. The frames are zero filled after the section.
 	lock_take(&frame_lock, .Frame)
+	budget := budget
+	if budget_of_region != 0 {
+		budget = regions[budget_of_region].budget
+	}
 	if !budgets[budget].live || budgets[budget].amounts.pages < cost {
 		lock_free(&frame_lock, .Frame)
 		return 0, .No_Budget

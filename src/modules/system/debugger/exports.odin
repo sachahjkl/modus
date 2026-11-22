@@ -125,6 +125,10 @@ Record_Row :: struct {
 	end:         [20]u8, // Why the history ended, or empty while the kernel writes it.
 	checkpoints: i64, // The checkpoints that the service keeps.
 	divergence:  i64, // The input point where a replay found its first difference; 0: none.
+	differed:    [12]u8, // What differed there: operation, instruction, arguments, record, kind, or end; empty: none.
+	expected:    [20]u8, // The value of the history there, in hexadecimal.
+	actual:      [20]u8, // The value of the replay there, in hexadecimal.
+	recorded_at: [20]u8, // The instruction address of the record of the history at that point, in hexadecimal; empty when the history had no record there.
 }
 
 // One checkpoint of the record: replay_checkpoint().
@@ -2070,7 +2074,7 @@ watch_back :: proc "c" (address: i64, size: value_kinds.Size_In_Bytes, before_po
 		system.format(row.source[:], "page delta")
 	case .Kernel_Completion:
 		system.format(row.source[:], "kernel entry")
-	case .None, .Cycle_Counter, .Processor_Identification, .History_End:
+	case .None, .Cycle_Counter, .Processor_Identification, .History_End, .Shared_Mapping:
 	}
 	hex_column(row.address[:], match.written_address)
 	hex_column(row.instruction[:], match.instruction_address)

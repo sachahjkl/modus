@@ -179,7 +179,7 @@ history_find_last_write :: proc "contextless" (history_bytes: []u8, address: u64
 					match_take(&candidate, overlap)
 				}
 			}
-		case .None, .Cycle_Counter, .Processor_Identification, .History_End:
+		case .None, .Cycle_Counter, .Processor_Identification, .History_End, .Shared_Mapping:
 		}
 		if candidate.written_count > 0 {
 			match = candidate

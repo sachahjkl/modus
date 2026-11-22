@@ -27,8 +27,14 @@ import "modustool:build"
 // selector holds before a syscall; a full ring of the debugger, with the
 // one line of the kernel for it.
 //
+// Then the record and the replay of a process with a shared writer
+// (src/md/features/record_and_replay.md): replay_probe records a child that
+// reads a page that replay_probe writes, replays the history with no
+// writer, and replays a copy with one changed byte to its first divergence.
+//
 // Each line of a case has a fixed text: the addresses and the statuses
-// are in the lines "debugged: detail:", which no step waits for.
+// are in the lines "debugged: detail:" and "replay_probe: detail:", which
+// no step waits for.
 
 TEST_OUTPUT_DEBUGGER :: foundation.BUILD_FOLDER + "/test_output_debugger.txt"
 
@@ -65,6 +71,16 @@ scenario_debugger := [?]Step {
 	{kind = .Wait, text = "kernel: process debugged child: the ring of its debugger is full (1 times): the debugger does not see the fault"},
 	{kind = .Wait, text = "debugged: a full ring of the debugger: the breakpoint is lost for the debugger, the child goes on, and a record comes again when the ring has room: as it must"},
 	{kind = .Wait, text = "debugged: ok, 24 cases: a debugger holds, reads and steps one process, and its end gives the process back"},
+	// The record and the replay of a process with a shared writer: the
+	// record of a reader while replay_probe writes their shared page, the
+	// replay of the history with no writer, and the first divergence of a
+	// history with one changed byte.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "start(\"replay_probe\")"},
+	{kind = .Wait, text = "replay_probe: the record holds the shared mapping, a delta of the shared page for each round, the cycle counter and cpuid, and ends with the stop of the reader: as it must"},
+	{kind = .Wait, text = "replay_probe: the replay with no writer reached the end of the history with 0 divergences: as it must"},
+	{kind = .Wait, text = "replay_probe: a changed byte of the shared page in the history: the replay stopped at the first entry after it that carries the sum: as it must"},
+	{kind = .Wait, text = "replay_probe: ok, 3 cases: a record with a shared writer, its replay with no writer, and the first divergence"},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},
