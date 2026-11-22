@@ -12,13 +12,19 @@
 //     not leave partial writes or partial stack updates behind.
 //   - Traps (Syscall, Breakpoint) advance `rip` past the instruction so the
 //     kernel loop can resume execution directly after servicing the trap.
-//   - Every `processor_run` enforces a strict `max_steps` execution budget
-//     (including bounding `rep movsb`/`rep stosb` to one iteration per step).
+//   - Every `processor_run` enforces a strict `max_steps` execution budget.
+//     Each iteration of `rep movsb`/`rep stosb` counts one step; a run
+//     moves the iterations that stay inside one page of each operand in one
+//     copy, and counts each of them, so the run and the steps one by one
+//     leave the same state.
+//   - The fetch of an instruction byte in the page of the last fetch reads
+//     the frame of that page with no lookup (mmu.odin, `Fetch_Page`).
 //
 // This package is freestanding (`"contextless"`), allocates no memory, and
 // imports only `base:` and `modus:contract/` packages.
 package software_machine
 
+import "base:intrinsics"
 import "modus:contract/enum_word"
 
 // Maximum architectural x86-64 instruction byte length.
@@ -1335,6 +1341,13 @@ step_two_byte_opcode :: proc "contextless" (
 // processor_step fetches and executes one x86-64 user-mode instruction (or one
 // iteration of a `rep` string instruction) strictly through the Software MMU.
 processor_step :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8) -> Step_Outcome {
+	return processor_step_within(cpu, physical_memory, 1)
+}
+
+// processor_step_within runs one instruction, or, for a repeated string
+// form, up to step_allowance of its iterations, each counted as one step.
+@(private)
+processor_step_within :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, step_allowance: u64) -> Step_Outcome {
 	// A fault on x86-64 is precise, but a read-modify-write form computes its
 	// flags, and some forms write a register, before the memory write that
 	// can fault. The state before the instruction comes back here, in one
@@ -1342,7 +1355,7 @@ processor_step :: proc "contextless" (cpu: ^Processor_State, physical_memory: []
 	cpu.rflags |= RFLAGS_RESERVED_ONE
 	registers_before := cpu.registers
 	rflags_before := cpu.rflags
-	outcome := instruction_execute(cpu, physical_memory)
+	outcome := instruction_execute(cpu, physical_memory, step_allowance)
 	switch outcome {
 	case .Page_Fault, .General_Protection, .Invalid_Opcode, .Divide_Error, .Simd_Floating_Point:
 		cpu.registers = registers_before
@@ -1354,7 +1367,7 @@ processor_step :: proc "contextless" (cpu: ^Processor_State, physical_memory: []
 
 // instruction_execute decodes and executes one instruction for processor_step.
 @(private)
-instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8) -> Step_Outcome {
+instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, step_allowance: u64) -> Step_Outcome {
 	cpu.fault_address = 0
 	cpu.fault_error_code = 0
 	cpu.outcome = .Running
@@ -1956,7 +1969,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 		return .Running
 
 	case 0xA4:
-		// MOVSB / REP MOVSB: executes one byte per step so `max_steps` strictly
+		// MOVSB / REP MOVSB: one step for each byte, so `max_steps` strictly
 		// bounds arbitrary RCX counts and faults preserve exact progress.
 		if prefixes.has_rep {
 			rcx := cpu.registers[int(General_Register.Rcx)]
@@ -1968,6 +1981,16 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 			rsi := cpu.registers[int(General_Register.Rsi)]
 			rdi := cpu.registers[int(General_Register.Rdi)]
 			src_addr := rsi + (cpu.gs_base if prefixes.has_gs_override else 0)
+			if step_allowance > 1 && (cpu.rflags & RFLAGS_DF) == 0 {
+				if moved := repeated_move_page_chunk(cpu, physical_memory, &cursor, src_addr, rdi, min(rcx, step_allowance)); moved != 0 {
+					cpu.registers[int(General_Register.Rsi)] = rsi + moved
+					cpu.registers[int(General_Register.Rdi)] = rdi + moved
+					cpu.registers[int(General_Register.Rcx)] = rcx - moved
+					cpu.rip = cursor.current_rip if rcx == moved else cursor.start_rip
+					cpu.steps_executed += moved
+					return .Running
+				}
+			}
 			byte_val, res_r := mmu_read_u8(&cpu.tlb, physical_memory, cpu.cr3, src_addr, .User)
 			if res_r.status != .Ok {
 				return record_translation_fault(cpu, cursor.start_rip, res_r)
@@ -2017,6 +2040,15 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 				return .Running
 			}
 			rdi := cpu.registers[int(General_Register.Rdi)]
+			if step_allowance > 1 && (cpu.rflags & RFLAGS_DF) == 0 {
+				if stored := repeated_store_page_chunk(cpu, physical_memory, &cursor, rdi, al, min(rcx, step_allowance)); stored != 0 {
+					cpu.registers[int(General_Register.Rdi)] = rdi + stored
+					cpu.registers[int(General_Register.Rcx)] = rcx - stored
+					cpu.rip = cursor.current_rip if rcx == stored else cursor.start_rip
+					cpu.steps_executed += stored
+					return .Running
+				}
+			}
 			res_w := mmu_write_u8(&cpu.tlb, physical_memory, cpu.cr3, rdi, .User, al)
 			if res_w.status != .Ok {
 				return record_translation_fault(cpu, cursor.start_rip, res_w)
@@ -2592,8 +2624,15 @@ processor_run :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u
 		cpu.outcome = .Step_Budget_Exhausted
 		return .Step_Budget_Exhausted
 	}
+	// Each instruction that runs counts at least one step, so the count of
+	// the calls is a second bound that never binds before the budget.
+	steps_at_start := cpu.steps_executed
 	for _ in 0 ..< max_steps {
-		outcome := processor_step(cpu, physical_memory)
+		steps_used := cpu.steps_executed - steps_at_start
+		if steps_used >= max_steps {
+			break
+		}
+		outcome := processor_step_within(cpu, physical_memory, max_steps - steps_used)
 		if outcome != .Running {
 			return outcome
 		}
@@ -2601,3 +2640,77 @@ processor_run :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u
 	cpu.outcome = .Step_Budget_Exhausted
 	return .Step_Budget_Exhausted
 }
+
+// repeated_move_page_chunk runs up to count iterations of `rep movsb` with
+// the direction flag clear, in one copy: the iterations whose source byte
+// and destination byte stay inside the page of the first one. It gives the
+// count of the iterations that ran; 0 when a translation fails, and the
+// step of one iteration then gives the exact fault. The translations are
+// the ones of the first iteration, read then write, so the accessed and
+// dirty bits are the ones of the steps one by one.
+@(private)
+repeated_move_page_chunk :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, cursor: ^Instruction_Cursor, source_address: u64, destination_address: u64, count: u64) -> u64 {
+	source := translate_virtual_address(&cpu.tlb, physical_memory, cpu.cr3, source_address, .User, .Read)
+	if source.status != .Ok {
+		return 0
+	}
+	destination := translate_virtual_address(&cpu.tlb, physical_memory, cpu.cr3, destination_address, .User, .Write)
+	if destination.status != .Ok || writes_instruction_frame(cpu, physical_memory, cursor, destination.physical_address) {
+		return 0
+	}
+	chunk := min(count, PAGE_SIZE - (source_address & PAGE_OFFSET_MASK), PAGE_SIZE - (destination_address & PAGE_OFFSET_MASK))
+	// A destination that starts inside the source and above it repeats the
+	// bytes that the iterations before wrote: only the iterations before
+	// the destination reaches the first byte that it overwrites read the
+	// bytes of before. Two virtual pages can name one frame, so the test
+	// reads the physical addresses.
+	if destination.physical_address > source.physical_address {
+		chunk = min(chunk, destination.physical_address - source.physical_address)
+	}
+	// A destination at or below the source reads each byte before an
+	// iteration overwrites it: the move of the intrinsic keeps that order.
+	intrinsics.mem_copy(&physical_memory[int(destination.physical_address)], &physical_memory[int(source.physical_address)], int(chunk))
+	return chunk
+}
+
+// repeated_store_page_chunk runs up to count iterations of `rep stosb`
+// with the direction flag clear, in one fill: the iterations whose byte
+// stays inside the page of the first one. It gives the count of the
+// iterations that ran; 0 when the translation fails, and the step of one
+// iteration then gives the exact fault.
+@(private)
+repeated_store_page_chunk :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, cursor: ^Instruction_Cursor, destination_address: u64, value: u8, count: u64) -> u64 {
+	destination := translate_virtual_address(&cpu.tlb, physical_memory, cpu.cr3, destination_address, .User, .Write)
+	if destination.status != .Ok || writes_instruction_frame(cpu, physical_memory, cursor, destination.physical_address) {
+		return 0
+	}
+	chunk := min(count, PAGE_SIZE - (destination_address & PAGE_OFFSET_MASK))
+	// The compiler makes this loop one fill (memory.fill in WebAssembly).
+	for &byte in physical_memory[int(destination.physical_address):][:int(chunk)] {
+		byte = value
+	}
+	return chunk
+}
+
+// writes_instruction_frame says whether a destination is in a frame that
+// holds a byte of the instruction that runs. A frame can be writable in one
+// mapping and executable in another; there each iteration of the steps one
+// by one fetches the bytes that the iterations before wrote, so only the
+// path of one iteration gives the same state.
+@(private)
+writes_instruction_frame :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, cursor: ^Instruction_Cursor, destination_physical_address: u64) -> bool {
+	destination_frame := destination_physical_address & ~PAGE_OFFSET_MASK
+	// The fetch of the last byte of the instruction left its page here.
+	if !cpu.tlb.fetch_page.valid || cpu.tlb.fetch_page.physical_page == destination_frame {
+		return true
+	}
+	first_page := cursor.start_rip & ~PAGE_OFFSET_MASK
+	if first_page == cpu.tlb.fetch_page.virtual_page {
+		return false
+	}
+	// The instruction starts on the page before. Its fetch walked that page
+	// a moment ago, so this walk sets no bit that the steps do not set.
+	first := translate_virtual_address(&cpu.tlb, physical_memory, cpu.cr3, cursor.start_rip, .User, .Execute)
+	return first.status != .Ok || first.physical_address & ~PAGE_OFFSET_MASK == destination_frame
+}
+

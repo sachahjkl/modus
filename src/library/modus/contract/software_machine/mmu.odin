@@ -13,7 +13,8 @@
 //   - atomic multi-byte and page-straddling reads and writes (a write that
 //     faults on the second page modifies zero bytes of the first page);
 //   - a per-processor direct-mapped software TLB with full and single-page
-//     (`invlpg`) invalidation.
+//     (`invlpg`) invalidation, and a cache of the page of the last
+//     instruction fetch that each invalidation empties.
 //
 // This package is freestanding (`"contextless"`), allocates no memory, and
 // imports only `base:` and `modus:contract/` packages.
@@ -106,6 +107,20 @@ Software_Tlb :: struct {
 	has_large_page_entries: bool,
 	hits:                   u64,
 	misses:                 u64,
+	// The page of the last instruction fetch: the next byte of the same
+	// page is one read of the frame, with no lookup. It holds only a
+	// translation that the walk allowed for an execute, and every flush of
+	// the TLB empties it, as the TLB of instructions of a processor.
+	fetch_page:             Fetch_Page,
+}
+
+// The page of the last instruction fetch that the walk allowed.
+Fetch_Page :: struct {
+	virtual_page:    u64,
+	physical_page:   u64,
+	page_table_root: u64,
+	privilege:       Privilege_Level,
+	valid:           bool,
 }
 
 // Result of a virtual-to-physical translation or memory access.
@@ -132,6 +147,7 @@ tlb_flush_all :: proc "contextless" (tlb: ^Software_Tlb) {
 		entry.valid = false
 	}
 	tlb.has_large_page_entries = false
+	tlb.fetch_page.valid = false
 }
 
 // tlb_flush_page invalidates translations matching `virtual_address` (`invlpg`).
@@ -141,6 +157,9 @@ tlb_flush_page :: proc "contextless" (tlb: ^Software_Tlb, virtual_address: u64) 
 	if tlb == nil {
 		return
 	}
+	// The fetch page can be a subpage of the same large page: an invlpg
+	// empties it whatever its address, which costs one walk at most.
+	tlb.fetch_page.valid = false
 	target_page := virtual_address & ~PAGE_OFFSET_MASK
 	slot := (target_page >> 12) & TLB_INDEX_MASK
 	if tlb.entries[slot].valid && tlb.entries[slot].virtual_page == target_page {
@@ -445,6 +464,17 @@ translate_virtual_address :: proc "contextless" (
 	return translate_virtual_address_internal(tlb, physical_memory, page_table_root, virtual_address, privilege, access, true)
 }
 
+// bytes_copy copies the bytes of one checked page chunk. The kernel of a
+// browser machine copies between process memory and its own memory, and
+// both are the one linear memory, so the two ranges can overlap: the copy
+// keeps the order of a copy byte after byte from the lowest address only
+// when the destination is below the source, which is the move of the
+// intrinsic.
+@(private = "file")
+bytes_copy :: #force_inline proc "contextless" (destination, source: rawptr, count: int) {
+	intrinsics.mem_copy(destination, source, count)
+}
+
 // mmu_read_bytes reads `len(destination)` bytes from virtual memory into
 // `destination`. For page-straddling accesses, every spanned page is validated
 // before copying so a fault on a later page leaves `destination` untouched.
@@ -475,10 +505,7 @@ mmu_read_bytes :: proc "contextless" (
 		if translated.status != .Ok {
 			return translated
 		}
-		phys := int(translated.physical_address)
-		for index in 0 ..< len(destination) {
-			destination[index] = physical_memory[phys + index]
-		}
+		bytes_copy(raw_data(destination), &physical_memory[int(translated.physical_address)], len(destination))
 		return translated
 	}
 
@@ -507,10 +534,7 @@ mmu_read_bytes :: proc "contextless" (
 		if cursor == 0 {
 			first_physical = translated.physical_address
 		}
-		phys := int(translated.physical_address)
-		for offset in 0 ..< int(chunk) {
-			destination[int(cursor) + offset] = physical_memory[phys + offset]
-		}
+		bytes_copy(&destination[int(cursor)], &physical_memory[int(translated.physical_address)], int(chunk))
 		cursor += chunk
 	}
 
@@ -549,10 +573,7 @@ mmu_write_bytes :: proc "contextless" (
 		if translated.status != .Ok {
 			return translated
 		}
-		phys := int(translated.physical_address)
-		for index in 0 ..< len(source) {
-			physical_memory[phys + index] = source[index]
-		}
+		bytes_copy(&physical_memory[int(translated.physical_address)], raw_data(source), len(source))
 		return translated
 	}
 
@@ -581,10 +602,7 @@ mmu_write_bytes :: proc "contextless" (
 		if cursor == 0 {
 			first_physical = translated.physical_address
 		}
-		phys := int(translated.physical_address)
-		for offset in 0 ..< int(chunk) {
-			physical_memory[phys + offset] = source[int(cursor) + offset]
-		}
+		bytes_copy(&physical_memory[int(translated.physical_address)], &source[int(cursor)], int(chunk))
 		cursor += chunk
 	}
 
@@ -602,9 +620,26 @@ mmu_fetch_u8 :: proc "contextless" (
 	virtual_address: u64,
 	privilege: Privilege_Level,
 ) -> (value: u8, result: Translation_Result) {
+	virtual_page := virtual_address & ~PAGE_OFFSET_MASK
+	if tlb != nil {
+		page := &tlb.fetch_page
+		if page.valid && page.virtual_page == virtual_page && page.page_table_root == page_table_root && page.privilege == privilege {
+			physical_address := page.physical_page | (virtual_address & PAGE_OFFSET_MASK)
+			return physical_memory[int(physical_address)], Translation_Result{physical_address = physical_address, status = .Ok}
+		}
+	}
 	translated := translate_virtual_address_internal(tlb, physical_memory, page_table_root, virtual_address, privilege, .Execute, true)
 	if translated.status != .Ok {
 		return 0, translated
+	}
+	if tlb != nil {
+		tlb.fetch_page = Fetch_Page {
+			virtual_page    = virtual_page,
+			physical_page   = translated.physical_address & ~PAGE_OFFSET_MASK,
+			page_table_root = page_table_root,
+			privilege       = privilege,
+			valid           = true,
+		}
 	}
 	return physical_memory[int(translated.physical_address)], translated
 }

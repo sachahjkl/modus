@@ -1157,3 +1157,445 @@ test_cpu_read_modify_write_fault_keeps_registers_and_flags :: proc(t: ^testing.T
 		}
 	}
 }
+
+
+// test_run_against_steps runs one machine twice from the same state: once
+// in one call of processor_run, which moves the iterations of a repeated
+// string form a page at a time, and once step by step, which moves one
+// byte at each step. Both must give the same outcome, registers, place,
+// count of steps, fault and memory. It gives the state of the run.
+test_run_against_steps :: proc(t: ^testing.T, m: ^Test_Machine, start: Processor_State, budget: u64, location := #caller_location) -> (run: Processor_State, outcome: Step_Outcome) {
+	stepped_memory := make([]u8, len(m.ram))
+	defer delete(stepped_memory)
+	copy(stepped_memory, m.ram)
+	stepped := start
+	stepped_outcome := Step_Outcome.Step_Budget_Exhausted
+	for _ in 0 ..< budget {
+		step_outcome := processor_step(&stepped, stepped_memory)
+		if step_outcome != .Running {
+			stepped_outcome = step_outcome
+			break
+		}
+	}
+	run = start
+	outcome = processor_run(&run, m.ram, budget)
+	testing.expect_value(t, outcome, stepped_outcome, loc = location)
+	testing.expect(t, run.registers == stepped.registers, "the run and the steps leave other registers", loc = location)
+	testing.expect_value(t, run.rip, stepped.rip, loc = location)
+	testing.expect_value(t, run.rflags, stepped.rflags, loc = location)
+	testing.expect_value(t, run.steps_executed, stepped.steps_executed, loc = location)
+	testing.expect_value(t, run.fault_address, stepped.fault_address, loc = location)
+	testing.expect_value(t, run.fault_error_code, stepped.fault_error_code, loc = location)
+	first_difference := -1
+	for byte, index in m.ram {
+		if byte != stepped_memory[index] {
+			first_difference = index
+			break
+		}
+	}
+	testing.expectf(t, first_difference == -1, "the run and the steps leave other memory at the physical address %x", first_difference, loc = location)
+	return run, outcome
+}
+
+// The code of the tests of the repeated string forms: the form, then int3.
+@(private = "file")
+REP_MOVSB_CODE :: [?]u8{0xF3, 0xA4, 0xCC}
+@(private = "file")
+REP_STOSB_CODE :: [?]u8{0xF3, 0xAA, 0xCC}
+
+// rep movsb that crosses a page of its destination, then faults on the
+// third page, which is not present: the run stops at the exact iteration,
+// with rcx, rsi and rdi of that iteration, and with no byte of the third
+// page written.
+@(test)
+test_cpu_rep_movsb_crosses_pages_and_faults_at_the_exact_byte :: proc(t: ^testing.T) {
+	m := test_machine_create(256 * 1024)
+	defer test_machine_destroy(&m)
+	code_frame := test_alloc_frame(&m)
+	source_frame := test_alloc_frame(&m)
+	destination_frames := [2]u64{test_alloc_frame(&m), test_alloc_frame(&m)}
+	code_va := u64(0x40_0000)
+	source_va := u64(0x60_0000)
+	destination_va := u64(0x70_0000)
+	test_map_4k_page(&m, code_va, code_frame, PAGE_PRESENT | PAGE_USER)
+	test_map_4k_page(&m, source_va, source_frame, PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
+	test_map_4k_page(&m, destination_va, destination_frames[0], PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
+	test_map_4k_page(&m, destination_va + PAGE_SIZE, destination_frames[1], PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
+	// destination_va + 2 pages is not present.
+	code := REP_MOVSB_CODE
+	test_load_code(&m, code_frame, code[:])
+	for i in 0 ..< int(PAGE_SIZE) {
+		m.ram[int(source_frame) + i] = u8(i * 7 + 1)
+	}
+
+	// From 0x10 bytes before the end of the first destination page: 0x10
+	// bytes, then a whole page, then the fault, with 0x30 iterations left.
+	count := u64(0x10 + PAGE_SIZE + 0x30)
+	start: Processor_State
+	processor_init(&start, m.cr3, code_va, 0)
+	start.registers[int(General_Register.Rsi)] = source_va
+	start.registers[int(General_Register.Rdi)] = destination_va + PAGE_SIZE - 0x10
+	start.registers[int(General_Register.Rcx)] = count
+	// The source has one page: the fault of the destination comes first,
+	// at the iteration whose source byte is 0x10 + PAGE_SIZE.
+	test_map_4k_page(&m, source_va + PAGE_SIZE, source_frame, PAGE_PRESENT | PAGE_USER | PAGE_NO_EXECUTE)
+
+	run, outcome := test_run_against_steps(t, &m, start, 100_000)
+	testing.expect_value(t, outcome, Step_Outcome.Page_Fault)
+	testing.expect_value(t, run.rip, code_va)
+	testing.expect_value(t, run.registers[int(General_Register.Rcx)], u64(0x30))
+	testing.expect_value(t, run.registers[int(General_Register.Rsi)], source_va + 0x10 + PAGE_SIZE)
+	testing.expect_value(t, run.registers[int(General_Register.Rdi)], destination_va + 2 * PAGE_SIZE)
+	testing.expect_value(t, run.steps_executed, 0x10 + PAGE_SIZE)
+	testing.expect_value(t, run.fault_address, destination_va + 2 * PAGE_SIZE)
+	testing.expect_value(t, run.fault_error_code, PAGE_FAULT_WRITE | PAGE_FAULT_USER)
+	testing.expect_value(t, m.ram[int(destination_frames[0]) + int(PAGE_SIZE) - 0x10], u8(1))
+	testing.expect_value(t, m.ram[int(destination_frames[0]) + int(PAGE_SIZE) - 0x11], u8(0))
+	testing.expect_value(t, m.ram[int(destination_frames[1])], m.ram[int(source_frame) + 0x10])
+	testing.expect(t, (test_read_pte(&m, destination_va + PAGE_SIZE) & PAGE_DIRTY) != 0, "the second destination page is dirty")
+
+	// The budget ends inside a page: the run counts each iteration, and
+	// stops at the budget with the instruction still to finish.
+	budget_run, budget_outcome := test_run_against_steps(t, &m, start, 0x10 + 0x123)
+	testing.expect_value(t, budget_outcome, Step_Outcome.Step_Budget_Exhausted)
+	testing.expect_value(t, budget_run.steps_executed, 0x10 + 0x123)
+	testing.expect_value(t, budget_run.registers[int(General_Register.Rcx)], count - 0x10 - 0x123)
+	testing.expect_value(t, budget_run.rip, code_va)
+}
+
+// rep movsb whose source faults on its second page, which the user cannot
+// read: the bytes of the first page move, and nothing after.
+@(test)
+test_cpu_rep_movsb_source_fault_on_the_second_page :: proc(t: ^testing.T) {
+	m := test_machine_create(256 * 1024)
+	defer test_machine_destroy(&m)
+	code_frame := test_alloc_frame(&m)
+	source_frames := [2]u64{test_alloc_frame(&m), test_alloc_frame(&m)}
+	destination_frame := test_alloc_frame(&m)
+	code_va := u64(0x40_0000)
+	source_va := u64(0x60_0000)
+	destination_va := u64(0x70_0000)
+	test_map_4k_page(&m, code_va, code_frame, PAGE_PRESENT | PAGE_USER)
+	test_map_4k_page(&m, source_va, source_frames[0], PAGE_PRESENT | PAGE_USER | PAGE_NO_EXECUTE)
+	// A supervisor page: the user read faults with the present bit.
+	test_map_4k_page(&m, source_va + PAGE_SIZE, source_frames[1], PAGE_PRESENT | PAGE_NO_EXECUTE)
+	test_map_4k_page(&m, destination_va, destination_frame, PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
+	code := REP_MOVSB_CODE
+	test_load_code(&m, code_frame, code[:])
+	for i in 0 ..< 2 * int(PAGE_SIZE) {
+		m.ram[int(source_frames[0]) + i] = 0xA0 | u8(i & 0x0F)
+	}
+
+	start: Processor_State
+	processor_init(&start, m.cr3, code_va, 0)
+	start.registers[int(General_Register.Rsi)] = source_va + PAGE_SIZE - 5
+	start.registers[int(General_Register.Rdi)] = destination_va
+	start.registers[int(General_Register.Rcx)] = 9
+	run, outcome := test_run_against_steps(t, &m, start, 1000)
+	testing.expect_value(t, outcome, Step_Outcome.Page_Fault)
+	testing.expect_value(t, run.registers[int(General_Register.Rcx)], u64(4))
+	testing.expect_value(t, run.registers[int(General_Register.Rsi)], source_va + PAGE_SIZE)
+	testing.expect_value(t, run.registers[int(General_Register.Rdi)], destination_va + 5)
+	testing.expect_value(t, run.fault_address, source_va + PAGE_SIZE)
+	testing.expect_value(t, run.fault_error_code, PAGE_FAULT_PRESENT | PAGE_FAULT_USER)
+	testing.expect_value(t, m.ram[int(destination_frame) + 4], 0xA0 | u8((int(PAGE_SIZE) - 1) & 0x0F))
+	testing.expect_value(t, m.ram[int(destination_frame) + 5], u8(0))
+}
+
+// rep movsb whose destination starts inside its source, above it
+// (rsi < rdi < rsi + rcx): each iteration reads a byte that an earlier one
+// wrote, so the first bytes repeat. Then the destination below the source,
+// and two virtual pages of one frame, where only the physical addresses
+// show the overlap.
+@(test)
+test_cpu_rep_movsb_overlapping_ranges :: proc(t: ^testing.T) {
+	m := test_machine_create(256 * 1024)
+	defer test_machine_destroy(&m)
+	code_frame := test_alloc_frame(&m)
+	data_frame := test_alloc_frame(&m)
+	code_va := u64(0x40_0000)
+	data_va := u64(0x60_0000)
+	alias_va := u64(0x80_0000)
+	test_map_4k_page(&m, code_va, code_frame, PAGE_PRESENT | PAGE_USER)
+	test_map_4k_page(&m, data_va, data_frame, PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
+	test_map_4k_page(&m, alias_va, data_frame, PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
+	code := REP_MOVSB_CODE
+	test_load_code(&m, code_frame, code[:])
+	fill :: proc(m: ^Test_Machine, frame: u64) {
+		for i in 0 ..< int(PAGE_SIZE) {
+			m.ram[int(frame) + i] = u8(i % 251)
+		}
+	}
+
+	// The destination 3 bytes above the source: the 3 first bytes repeat.
+	fill(&m, data_frame)
+	start: Processor_State
+	processor_init(&start, m.cr3, code_va, 0)
+	start.registers[int(General_Register.Rsi)] = data_va + 0x100
+	start.registers[int(General_Register.Rdi)] = data_va + 0x103
+	start.registers[int(General_Register.Rcx)] = 0x400
+	run, outcome := test_run_against_steps(t, &m, start, 100_000)
+	testing.expect_value(t, outcome, Step_Outcome.Breakpoint)
+	testing.expect_value(t, run.registers[int(General_Register.Rcx)], u64(0))
+	for i in 0 ..< 0x403 {
+		testing.expect_value(t, m.ram[int(data_frame) + 0x100 + i], u8((0x100 + i % 3) % 251))
+	}
+	testing.expect_value(t, m.ram[int(data_frame) + 0x503], u8(0x503 % 251))
+
+	// The destination 0x40 bytes below the source: a move down.
+	fill(&m, data_frame)
+	start.registers[int(General_Register.Rsi)] = data_va + 0x240
+	start.registers[int(General_Register.Rdi)] = data_va + 0x200
+	start.registers[int(General_Register.Rcx)] = 0x300
+	_, outcome = test_run_against_steps(t, &m, start, 100_000)
+	testing.expect_value(t, outcome, Step_Outcome.Breakpoint)
+	for i in 0 ..< 0x300 {
+		testing.expect_value(t, m.ram[int(data_frame) + 0x200 + i], u8((0x240 + i) % 251))
+	}
+
+	// The source through one virtual page, the destination through the
+	// other, one byte above it in the same frame: the virtual addresses are
+	// 2 MiB apart, the physical ones overlap.
+	fill(&m, data_frame)
+	start.registers[int(General_Register.Rsi)] = alias_va + 0x10
+	start.registers[int(General_Register.Rdi)] = data_va + 0x11
+	start.registers[int(General_Register.Rcx)] = 0x80
+	_, outcome = test_run_against_steps(t, &m, start, 100_000)
+	testing.expect_value(t, outcome, Step_Outcome.Breakpoint)
+	for i in 0 ..< 0x81 {
+		testing.expect_value(t, m.ram[int(data_frame) + 0x10 + i], u8(0x10))
+	}
+}
+
+// rep movsb and rep stosb with the direction flag set move down, one byte
+// at each step, across a page border and into a fault.
+@(test)
+test_cpu_rep_string_forms_backward :: proc(t: ^testing.T) {
+	m := test_machine_create(256 * 1024)
+	defer test_machine_destroy(&m)
+	code_frame := test_alloc_frame(&m)
+	data_frames := [2]u64{test_alloc_frame(&m), test_alloc_frame(&m)}
+	code_va := u64(0x40_0000)
+	data_va := u64(0x60_1000)
+	test_map_4k_page(&m, code_va, code_frame, PAGE_PRESENT | PAGE_USER)
+	test_map_4k_page(&m, data_va, data_frames[0], PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
+	test_map_4k_page(&m, data_va + PAGE_SIZE, data_frames[1], PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
+	// data_va - PAGE_SIZE is not present.
+	for i in 0 ..< 2 * int(PAGE_SIZE) {
+		m.ram[int(data_frames[0]) + i] = u8(i % 239)
+	}
+
+	code := REP_MOVSB_CODE
+	test_load_code(&m, code_frame, code[:])
+	start: Processor_State
+	processor_init(&start, m.cr3, code_va, 0)
+	start.rflags |= RFLAGS_DF
+	start.registers[int(General_Register.Rsi)] = data_va + PAGE_SIZE + 0x20
+	start.registers[int(General_Register.Rdi)] = data_va + PAGE_SIZE + 0x40
+	start.registers[int(General_Register.Rcx)] = 0x60
+	run, outcome := test_run_against_steps(t, &m, start, 100_000)
+	testing.expect_value(t, outcome, Step_Outcome.Breakpoint)
+	testing.expect_value(t, run.registers[int(General_Register.Rsi)], data_va + PAGE_SIZE + 0x20 - 0x60)
+	testing.expect_value(t, run.registers[int(General_Register.Rdi)], data_va + PAGE_SIZE + 0x40 - 0x60)
+	// The iterations, then int3.
+	testing.expect_value(t, run.steps_executed, u64(0x60 + 1))
+
+	stores := REP_STOSB_CODE
+	test_load_code(&m, code_frame, stores[:])
+	processor_init(&start, m.cr3, code_va, 0)
+	start.rflags |= RFLAGS_DF
+	start.registers[int(General_Register.Rax)] = 0x3C
+	start.registers[int(General_Register.Rdi)] = data_va + 0x8
+	start.registers[int(General_Register.Rcx)] = 0x20
+	run, outcome = test_run_against_steps(t, &m, start, 100_000)
+	testing.expect_value(t, outcome, Step_Outcome.Page_Fault)
+	testing.expect_value(t, run.registers[int(General_Register.Rcx)], u64(0x20 - 9))
+	testing.expect_value(t, run.registers[int(General_Register.Rdi)], data_va - 1)
+	testing.expect_value(t, run.fault_address, data_va - 1)
+	testing.expect_value(t, m.ram[int(data_frames[0])], u8(0x3C))
+}
+
+// rep stosb across a page into a page that the user cannot write: the run
+// fills up to the border, then faults with the exact rcx and rdi.
+@(test)
+test_cpu_rep_stosb_faults_on_a_read_only_second_page :: proc(t: ^testing.T) {
+	m := test_machine_create(256 * 1024)
+	defer test_machine_destroy(&m)
+	code_frame := test_alloc_frame(&m)
+	data_frames := [2]u64{test_alloc_frame(&m), test_alloc_frame(&m)}
+	code_va := u64(0x40_0000)
+	data_va := u64(0x60_0000)
+	test_map_4k_page(&m, code_va, code_frame, PAGE_PRESENT | PAGE_USER)
+	test_map_4k_page(&m, data_va, data_frames[0], PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
+	test_map_4k_page(&m, data_va + PAGE_SIZE, data_frames[1], PAGE_PRESENT | PAGE_USER | PAGE_NO_EXECUTE)
+	code := REP_STOSB_CODE
+	test_load_code(&m, code_frame, code[:])
+
+	start: Processor_State
+	processor_init(&start, m.cr3, code_va, 0)
+	start.registers[int(General_Register.Rax)] = 0x1234_5678_9ABC_DE5A
+	start.registers[int(General_Register.Rdi)] = data_va + 0x10
+	start.registers[int(General_Register.Rcx)] = max(u64)
+	run, outcome := test_run_against_steps(t, &m, start, 1_000_000)
+	testing.expect_value(t, outcome, Step_Outcome.Page_Fault)
+	testing.expect_value(t, run.rip, code_va)
+	testing.expect_value(t, run.registers[int(General_Register.Rcx)], max(u64) - (PAGE_SIZE - 0x10))
+	testing.expect_value(t, run.registers[int(General_Register.Rdi)], data_va + PAGE_SIZE)
+	testing.expect_value(t, run.fault_error_code, PAGE_FAULT_PRESENT | PAGE_FAULT_WRITE | PAGE_FAULT_USER)
+	testing.expect_value(t, m.ram[int(data_frames[0]) + 0xF], u8(0))
+	testing.expect_value(t, m.ram[int(data_frames[0]) + 0x10], u8(0x5A))
+	testing.expect_value(t, m.ram[int(data_frames[0]) + int(PAGE_SIZE) - 1], u8(0x5A))
+	testing.expect_value(t, m.ram[int(data_frames[1])], u8(0))
+
+	// A count of 1 and a budget of 1: the edges of the chunk.
+	start.registers[int(General_Register.Rcx)] = 1
+	run, outcome = test_run_against_steps(t, &m, start, 1)
+	testing.expect_value(t, outcome, Step_Outcome.Step_Budget_Exhausted)
+	testing.expect_value(t, run.registers[int(General_Register.Rcx)], u64(0))
+	testing.expect_value(t, run.rip, code_va + 2)
+	start.registers[int(General_Register.Rcx)] = 0
+	run, outcome = test_run_against_steps(t, &m, start, 2)
+	testing.expect_value(t, outcome, Step_Outcome.Breakpoint)
+	testing.expect_value(t, run.steps_executed, u64(2))
+}
+
+// A repeated string form that writes the frame of its own instruction
+// through a second, writable mapping of that frame: each iteration of the
+// steps one by one fetches the bytes that the iterations before wrote, so
+// the run takes the path of one iteration there too. rep stosb writes int3
+// over its own prefix: the next fetch is the breakpoint, with 4 iterations
+// left.
+@(test)
+test_cpu_rep_string_forms_that_write_their_own_instruction :: proc(t: ^testing.T) {
+	m := test_machine_create(256 * 1024)
+	defer test_machine_destroy(&m)
+	code_frame := test_alloc_frame(&m)
+	source_frame := test_alloc_frame(&m)
+	code_va := u64(0x40_0000)
+	alias_va := u64(0x60_0000)
+	source_va := u64(0x70_0000)
+	test_map_4k_page(&m, code_va, code_frame, PAGE_PRESENT | PAGE_USER)
+	test_map_4k_page(&m, alias_va, code_frame, PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
+	test_map_4k_page(&m, source_va, source_frame, PAGE_PRESENT | PAGE_USER | PAGE_NO_EXECUTE)
+	for i in 0 ..< 16 {
+		m.ram[int(source_frame) + i] = 0xCC
+	}
+
+	stores := REP_STOSB_CODE
+	test_load_code(&m, code_frame, stores[:])
+	start: Processor_State
+	processor_init(&start, m.cr3, code_va, 0)
+	start.registers[int(General_Register.Rax)] = 0xCC
+	start.registers[int(General_Register.Rdi)] = alias_va
+	start.registers[int(General_Register.Rcx)] = 5
+	run, outcome := test_run_against_steps(t, &m, start, 1000)
+	testing.expect_value(t, outcome, Step_Outcome.Breakpoint)
+	testing.expect_value(t, run.registers[int(General_Register.Rcx)], u64(4))
+	testing.expect_value(t, run.rip, code_va + 1)
+	testing.expect_value(t, m.ram[int(code_frame) + 1], u8(0xAA))
+
+	// rep movsb that copies int3 over its own prefix from another page.
+	moves := REP_MOVSB_CODE
+	test_load_code(&m, code_frame, moves[:])
+	start.registers[int(General_Register.Rsi)] = source_va
+	start.registers[int(General_Register.Rdi)] = alias_va
+	start.registers[int(General_Register.Rcx)] = 8
+	run, outcome = test_run_against_steps(t, &m, start, 1000)
+	testing.expect_value(t, outcome, Step_Outcome.Breakpoint)
+	testing.expect_value(t, run.registers[int(General_Register.Rcx)], u64(7))
+	testing.expect_value(t, m.ram[int(code_frame) + 1], u8(0xA4))
+}
+
+// The page of the last instruction fetch serves the next fetches until a
+// flush: a new mapping of the page of the code is seen after invlpg of
+// that page, after a write of cr3, and after a flush of the whole TLB, as
+// the TLB of a processor gives it.
+@(test)
+test_cpu_fetch_page_is_flushed_by_invlpg_and_cr3 :: proc(t: ^testing.T) {
+	m := test_machine_create(256 * 1024)
+	defer test_machine_destroy(&m)
+	code_frames := [2]u64{test_alloc_frame(&m), test_alloc_frame(&m)}
+	code_va := u64(0x40_0000)
+	test_map_4k_page(&m, code_va, code_frames[0], PAGE_PRESENT | PAGE_USER)
+	// mov eax, 1; int3 in the first frame, mov eax, 2; int3 in the second.
+	first := [?]u8{0xB8, 0x01, 0x00, 0x00, 0x00, 0xCC}
+	second := [?]u8{0xB8, 0x02, 0x00, 0x00, 0x00, 0xCC}
+	test_load_code(&m, code_frames[0], first[:])
+	test_load_code(&m, code_frames[1], second[:])
+
+	cpu: Processor_State
+	processor_init(&cpu, m.cr3, code_va, 0)
+	run_from_start :: proc(cpu: ^Processor_State, m: ^Test_Machine) -> u64 {
+		cpu.rip = 0x40_0000
+		_ = processor_run(cpu, m.ram, 10)
+		return cpu.registers[int(General_Register.Rax)]
+	}
+	testing.expect_value(t, run_from_start(&cpu, &m), u64(1))
+	testing.expect(t, cpu.tlb.fetch_page.valid, "the fetch keeps its page")
+
+	// The new mapping, with no flush: the old translation serves.
+	test_map_4k_page(&m, code_va, code_frames[1], PAGE_PRESENT | PAGE_USER)
+	testing.expect_value(t, run_from_start(&cpu, &m), u64(1))
+	// invlpg of another page keeps no stale fetch page either.
+	processor_invlpg(&cpu, code_va + 0x10_0000)
+	testing.expect(t, !cpu.tlb.fetch_page.valid, "invlpg empties the fetch page")
+	processor_invlpg(&cpu, code_va)
+	testing.expect_value(t, run_from_start(&cpu, &m), u64(2))
+
+	test_map_4k_page(&m, code_va, code_frames[0], PAGE_PRESENT | PAGE_USER)
+	processor_set_cr3(&cpu, m.cr3)
+	testing.expect_value(t, run_from_start(&cpu, &m), u64(1))
+
+	test_map_4k_page(&m, code_va, code_frames[1], PAGE_PRESENT | PAGE_USER)
+	tlb_flush_all(&cpu.tlb)
+	testing.expect_value(t, run_from_start(&cpu, &m), u64(2))
+
+	// A page that loses its execute right faults after the flush: the fetch
+	// page never holds a translation that the walk refuses.
+	test_map_4k_page(&m, code_va, code_frames[1], PAGE_PRESENT | PAGE_USER | PAGE_NO_EXECUTE)
+	processor_invlpg(&cpu, code_va)
+	cpu.rip = code_va
+	testing.expect_value(t, processor_run(&cpu, m.ram, 10), Step_Outcome.Page_Fault)
+	testing.expect_value(t, cpu.fault_error_code, PAGE_FAULT_PRESENT | PAGE_FAULT_USER | PAGE_FAULT_INSTRUCTION)
+	testing.expect(t, !cpu.tlb.fetch_page.valid, "a refused fetch keeps no page")
+}
+
+// mmu_read_bytes and mmu_write_bytes copy whole page chunks: a range that
+// straddles two pages reads and writes each byte at its place, and a write
+// whose second page faults writes no byte of the first.
+@(test)
+test_mmu_chunk_copies_straddle_pages :: proc(t: ^testing.T) {
+	m := test_machine_create(256 * 1024)
+	defer test_machine_destroy(&m)
+	frames := [3]u64{test_alloc_frame(&m), test_alloc_frame(&m), test_alloc_frame(&m)}
+	data_va := u64(0x60_0000)
+	// Two pages in the opposite order of their frames, then a read-only one.
+	test_map_4k_page(&m, data_va, frames[1], PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
+	test_map_4k_page(&m, data_va + PAGE_SIZE, frames[0], PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
+	test_map_4k_page(&m, data_va + 2 * PAGE_SIZE, frames[2], PAGE_PRESENT | PAGE_USER | PAGE_NO_EXECUTE)
+	tlb: Software_Tlb
+
+	source: [64]u8
+	for &byte, index in source {
+		byte = u8(index + 1)
+	}
+	written := mmu_write_bytes(&tlb, m.ram, m.cr3, data_va + PAGE_SIZE - 20, .User, source[:])
+	testing.expect_value(t, written.status, Memory_Translation_Status.Ok)
+	testing.expect_value(t, m.ram[int(frames[1]) + int(PAGE_SIZE) - 20], u8(1))
+	testing.expect_value(t, m.ram[int(frames[1]) + int(PAGE_SIZE) - 1], u8(20))
+	testing.expect_value(t, m.ram[int(frames[0])], u8(21))
+	testing.expect_value(t, m.ram[int(frames[0]) + 43], u8(64))
+	testing.expect_value(t, m.ram[int(frames[0]) + 44], u8(0))
+
+	destination: [64]u8
+	read := mmu_read_bytes(&tlb, m.ram, m.cr3, data_va + PAGE_SIZE - 20, .User, .Read, destination[:])
+	testing.expect_value(t, read.status, Memory_Translation_Status.Ok)
+	testing.expect(t, destination == source, "the read gives the bytes that the write wrote")
+
+	refused := mmu_write_bytes(&tlb, m.ram, m.cr3, data_va + 2 * PAGE_SIZE - 8, .User, source[:16])
+	testing.expect_value(t, refused.status, Memory_Translation_Status.Page_Fault)
+	testing.expect_value(t, refused.fault_address, data_va + 2 * PAGE_SIZE)
+	for i in 1 ..= 8 {
+		testing.expect_value(t, m.ram[int(frames[0]) + int(PAGE_SIZE) - i], u8(0))
+	}
+}

@@ -10,6 +10,8 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 import "modus:contract/blake3"
+import info "modus:contract/boot_info"
+import "modus:contract/replacement_list"
 import "modus:contract/system_description"
 import "modustool:foundation"
 
@@ -20,6 +22,69 @@ BROWSER_MACHINE_HOST_FILE :: "browser_machine_host.js"
 BROWSER_MACHINE_KERNEL_PATH :: BROWSER_MACHINE_FOLDER + "/" + BROWSER_MACHINE_KERNEL_FILE
 BROWSER_MACHINE_BOOT_IMAGE_PATH :: BROWSER_MACHINE_FOLDER + "/" + BROWSER_MACHINE_BOOT_IMAGE_FILE
 BROWSER_MACHINE_HOST_PATH :: BROWSER_MACHINE_FOLDER + "/" + BROWSER_MACHINE_HOST_FILE
+// The boot image of the page before its signature: the input of the signed
+// write of the system description.
+BROWSER_MACHINE_UNSIGNED_IMAGE_PATH :: BROWSER_MACHINE_FOLDER + "/boot_unsigned.image"
+
+// The modules of the boot image of the page: the desktop and its
+// applications, the holder of each role of the root service
+// (src/modules/system/root/role_holders.odin), and the module of each row
+// of the start list and of the rescue list (start_lists.odin). The imports
+// of each one join it from the module table. No module that only a test
+// runs is in it: the root service hashes each file of the image at its
+// start, and the software processor makes each byte of that work slow.
+@(rodata)
+BROWSER_MACHINE_PAGE_MODULES := [?]string {
+	// The services of the start and the holders of the roles.
+	"root",
+	"log",
+	"wiring",
+	"start_policy",
+	"input",
+	"compositor",
+	"console",
+	"terminal",
+	"settings",
+	"date",
+	"unlock",
+	"storage",
+	"module_files",
+	"network",
+	"block",
+	"frame",
+	"sound",
+	"entropy",
+	"tpm",
+	"remote",
+	"remote_display",
+	"plans",
+	"recipes",
+	"projects",
+	"powerbox",
+	"collector",
+	"disk_processes",
+	"devices",
+	"principals",
+	// The libraries of the windows.
+	"drawing",
+	"interface_module",
+	// The applications of the desktop.
+	"monitor",
+	"edit",
+	"notes",
+	"browser",
+	"inspect",
+	"clock",
+	"life",
+	"paint",
+	"plasma",
+	"heron",
+	"manual",
+	"disk",
+	// The demonstration pair of the default start list.
+	"wired_reader",
+	"wired_writer",
+}
 
 // The lowest major version of Node that runs the host: the version that the
 // development shell of the project was checked with.
@@ -70,7 +135,11 @@ BROWSER_MACHINE_EXPORTS :: [?]Webassembly_Export {
 	{name = "memory", kind = .Memory},
 	{name = "entry", kind = .Function},
 	{name = "modus_processor_loop_run", kind = .Function},
+	// The pointer of the shadow stack, which the page sets back to the top
+	// after each throw of the processor loop.
+	{name = BROWSER_MACHINE_STACK_POINTER_EXPORT, kind = .Global},
 }
+BROWSER_MACHINE_STACK_POINTER_EXPORT :: "__stack_pointer"
 
 // The kind of an import or an export of a WebAssembly module: the byte of
 // its description in the binary format.
@@ -321,7 +390,7 @@ browser_machine_build :: proc() -> bool {
 		return false
 	}
 	kernel := BROWSER_MACHINE_KERNEL_PATH
-	if !foundation.run({"odin", "build", foundation.SOURCE_FOLDER_KERNEL, "-target:freestanding_wasm64p32", "-o:speed", "-no-entry-point", "-default-to-nil-allocator", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG, "-out:" + BROWSER_MACHINE_KERNEL_PATH}) {
+	if !foundation.run({"odin", "build", foundation.SOURCE_FOLDER_KERNEL, "-target:freestanding_wasm64p32", "-o:speed", "-no-entry-point", "-default-to-nil-allocator", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG, "-extra-linker-flags:--export=" + BROWSER_MACHINE_STACK_POINTER_EXPORT, "-out:" + BROWSER_MACHINE_KERNEL_PATH}) {
 		return false
 	}
 	bytes, read_error := os.read_entire_file(kernel, context.temp_allocator)
@@ -351,8 +420,111 @@ browser_machine_build :: proc() -> bool {
 		}
 	}
 	if os.is_file(BOOT_IMAGE) {
-		return browser_machine_boot_image_copy(BOOT_IMAGE)
+		return browser_machine_page_image_write(BOOT_IMAGE)
 	}
+	return true
+}
+
+// browser_machine_page_image_files gives the files of the boot image of the
+// page from a boot image of the build, signed or not: each module of
+// BROWSER_MACHINE_PAGE_MODULES and of their imports, in the order of the
+// base, then each resource of the base but the system description, its
+// signature and the replacement list, which the signed write makes again
+// for these modules. A module of the list that the base does not hold is a
+// problem: the page would start a machine with no holder for a role.
+browser_machine_page_image_files :: proc(base: []u8, allocator := context.temp_allocator) -> (files: []Image_File, module_count: int, problem: string) {
+	modules, resources, valid := info.image_tables(base)
+	if !valid {
+		return nil, 0, "it is not a boot image"
+	}
+	wanted := make(map[string]bool, allocator)
+	defer delete(wanted)
+	page_modules := BROWSER_MACHINE_PAGE_MODULES
+	for name in page_modules {
+		wanted[name] = false
+	}
+	// The imports of the table, until no row adds a name.
+	for added := true; added; {
+		added = false
+		for build in foundation.module_builds {
+			if build.name not_in wanted {
+				continue
+			}
+			for name in build.imports {
+				if name not_in wanted {
+					wanted[name] = false
+					added = true
+				}
+			}
+		}
+	}
+	list := make([dynamic]Image_File, allocator)
+	for &entry in modules {
+		name := system_description.name_of(&entry.name)
+		if name not_in wanted {
+			continue
+		}
+		bytes, inside := info.image_entry_bytes(base, &entry)
+		if !inside {
+			return nil, 0, fmt.tprintf("the entry of the module %s points outside the image", name)
+		}
+		if wanted[name] {
+			return nil, 0, fmt.tprintf("the image holds the module %s twice", name)
+		}
+		wanted[name] = true
+		append(&list, Image_File{name = strings.clone(name, allocator), file = bytes})
+	}
+	module_count = len(list)
+	for &entry in resources {
+		name := system_description.name_of(&entry.name)
+		if name == system_description.RESOURCE_DESCRIPTION || name == system_description.RESOURCE_SIGNATURE || name == replacement_list.RESOURCE_NAME {
+			continue
+		}
+		bytes, inside := info.image_entry_bytes(base, &entry)
+		if !inside {
+			return nil, 0, fmt.tprintf("the entry of the resource %s points outside the image", name)
+		}
+		append(&list, Image_File{name = strings.clone(name, allocator), file = bytes})
+	}
+	for name, found in wanted {
+		if !found {
+			return nil, 0, fmt.tprintf("it holds no module %s", name)
+		}
+	}
+	return list[:], module_count, ""
+}
+
+// browser_machine_page_image_write writes the boot image of the page from
+// the boot image at base_path: the modules of the page and the resources,
+// with a system description and its signature, as the image of a boot
+// volume (system_description.odin).
+@(private = "file")
+browser_machine_page_image_write :: proc(base_path: string) -> bool {
+	base, read_error := os.read_entire_file(base_path, context.temp_allocator)
+	if read_error != nil {
+		fmt.eprintfln("modustool: cannot read %s: %v", base_path, read_error)
+		return false
+	}
+	files, module_count, problem := browser_machine_page_image_files(base)
+	if problem != "" {
+		fmt.eprintfln("modustool: the boot image of the page from %s: %s", base_path, problem)
+		return false
+	}
+	unsigned := boot_image_encode(files, module_count)
+	if error := os.write_entire_file(BROWSER_MACHINE_UNSIGNED_IMAGE_PATH, unsigned); error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", BROWSER_MACHINE_UNSIGNED_IMAGE_PATH, error)
+		return false
+	}
+	if _, signed := boot_image_signed_write(BROWSER_MACHINE_UNSIGNED_IMAGE_PATH, "kernel", BROWSER_MACHINE_BOOT_IMAGE_PATH, {}); !signed {
+		return false
+	}
+	base_modules, _, _ := info.image_tables(base)
+	written, stat_error := os.stat(BROWSER_MACHINE_BOOT_IMAGE_PATH, context.temp_allocator)
+	if stat_error != nil {
+		fmt.eprintfln("modustool: cannot read the size of %s: %v", BROWSER_MACHINE_BOOT_IMAGE_PATH, stat_error)
+		return false
+	}
+	fmt.printfln("modustool: measure: the boot image of the page: %d bytes, %d modules of the %d of %s (%d bytes)", written.size, module_count, len(base_modules), base_path, len(base))
 	return true
 }
 

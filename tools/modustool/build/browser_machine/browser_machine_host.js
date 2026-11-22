@@ -19,7 +19,10 @@ export const PAGE_IMPORT_NAMES = [
   "page_idle_wait",
   "page_interrupt_lines_take",
 ];
-export const KERNEL_EXPORT_NAMES = ["memory", "entry", "modus_processor_loop_run"];
+// __stack_pointer is the global of the shadow stack: the loop sets it back
+// to the top of the stack after each throw (browser_machine.md, "The
+// processor loop").
+export const KERNEL_EXPORT_NAMES = ["memory", "entry", "modus_processor_loop_run", "__stack_pointer"];
 
 // The byte offsets of the boot record (Boot_Info in
 // src/library/modus/contract/boot_info/boot_info.odin). A host test of the
@@ -495,6 +498,8 @@ export class BrowserMachine {
     }
     this.instance = instance;
     this.memory = instance.exports.memory;
+    // The top of the shadow stack, before the first call.
+    this.stackTop = instance.exports.__stack_pointer.value;
     this.layout = physicalLayout({
       kernelBytes: this.memory.buffer.byteLength,
       bootImageSize: this.bootImage.length,
@@ -522,7 +527,13 @@ export class BrowserMachine {
     try {
       return body();
     } catch (error) {
-      if (error instanceof ProcessorLoopUnwind) return LoopResult.Kernel_Returned;
+      if (error instanceof ProcessorLoopUnwind) {
+        // The throw skipped the end of each frame, so the shadow stack
+        // pointer stays where the deepest frame left it: without this, each
+        // throw leaks those frames, and the stack runs past its bottom.
+        this.instance.exports.__stack_pointer.value = this.stackTop;
+        return LoopResult.Kernel_Returned;
+      }
       if (error instanceof ProcessorStop) {
         this.state = MachineState.Stopped;
       } else {
