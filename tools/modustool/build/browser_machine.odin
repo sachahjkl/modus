@@ -303,7 +303,7 @@ browser_machine_border_faults :: proc(imports: []Webassembly_Import, exports: []
 // of the page, checks its border, and writes the files of the page beside
 // it, with a copy of the boot image of the build when there is one.
 browser_machine_build :: proc() -> bool {
-	if error := os.make_directory_all(BROWSER_MACHINE_FOLDER); error != nil {
+	if error := os.make_directory_all(BROWSER_MACHINE_FOLDER); error != nil && error != .Exist {
 		fmt.eprintfln("modustool: cannot make %s: %v", BROWSER_MACHINE_FOLDER, error)
 		return false
 	}

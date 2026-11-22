@@ -147,20 +147,25 @@ kernel_enter :: proc "c" () {
 
 // The extended state of a thread, in the legacy area of fxsave: the x87
 // control word at offset 0, MXCSR at 24 and xmm0 to xmm15 from 160. The
-// software processor holds the SSE registers only, so each form moves the
-// same bytes.
-EXTENDED_STATE_CONTROL_WORD_OFFSET :: 0
-EXTENDED_STATE_MXCSR_OFFSET :: 24
-EXTENDED_STATE_XMM_OFFSET :: 160
+// software processor holds the SSE registers and MXCSR only, so each form
+// moves the same bytes.
+EXTENDED_STATE_CONTROL_WORD_OFFSET :: software.FXSAVE_CONTROL_WORD_OFFSET
+EXTENDED_STATE_MXCSR_OFFSET :: software.FXSAVE_MXCSR_OFFSET
+EXTENDED_STATE_XMM_OFFSET :: software.FXSAVE_XMM_OFFSET
 
 extended_state_save :: proc "c" (area: ^Extended_State_Area, form: Extended_State_Form) {
+	(^u32le)(&area.bytes[EXTENDED_STATE_MXCSR_OFFSET])^ = u32le(software_processor.mxcsr)
 	for index in 0 ..< len(software_processor.xmm) {
 		start := EXTENDED_STATE_XMM_OFFSET + index * 16
 		copy(area.bytes[start:start + 16], software_processor.xmm[index][:])
 	}
 }
 
+// The kernel checks each area against the bits of MXCSR that the processor
+// takes before it restores it (extended_state_refusal), as fxrstor would
+// fault on any other bit.
 extended_state_restore :: proc "c" (area: ^Extended_State_Area, form: Extended_State_Form) {
+	software_processor.mxcsr = u32((^u32le)(&area.bytes[EXTENDED_STATE_MXCSR_OFFSET])^)
 	for &register, index in software_processor.xmm {
 		start := EXTENDED_STATE_XMM_OFFSET + index * 16
 		copy(register[:], area.bytes[start:start + 16])
@@ -221,6 +226,14 @@ frame_to_software_processor :: proc "contextless" (frame: ^Frame) {
 	cpu.rip = frame.rip
 	cpu.rflags = frame.rflags
 	cpu.outcome = .Running
+	cpu.cycle_counter_read = software_processor_cycle_counter_read
+}
+
+// rdtsc of a process reads the cycle counter of the kernel: the clock of
+// the page, at 1 GHz.
+@(private = "file")
+software_processor_cycle_counter_read :: proc "contextless" () -> u64 {
+	return cycles_now()
 }
 
 @(private = "file")

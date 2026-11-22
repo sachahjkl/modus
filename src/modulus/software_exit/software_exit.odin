@@ -20,6 +20,7 @@ Exception_Vector :: enum u8 {
 	Invalid_Opcode     = 6,
 	General_Protection = 13,
 	Page_Fault         = 14,
+	Simd_Floating_Point = 19,
 }
 
 Exit_Kind :: enum u8 {
@@ -60,6 +61,8 @@ exit_of :: proc "contextless" (cpu: ^software.Processor_State, outcome: software
 		return {kind = .Exception, vector = .Breakpoint}, true
 	case .Divide_Error:
 		return {kind = .Exception, vector = .Divide_Error}, true
+	case .Simd_Floating_Point:
+		return {kind = .Exception, vector = .Simd_Floating_Point}, true
 	}
 	unreachable()
 }
