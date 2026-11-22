@@ -21,12 +21,15 @@ import module "modus:contract/module"
 import writer "modus:contract/module_file_writer"
 
 // The bounds of a text. A bound is a cost that the workspace pays, not a
-// rule of the language. The tables are sized for a text of 256 KiB that
-// chibicc writes: about 20 bytes of text for each instruction of about 5
-// bytes, a label for each 10 lines, a reference for each 5. The workspace
-// is in the memory of the module, which the budget of its call host pays
+// rule of the language. The caller gives the memory of the workspace, so
+// it chooses the bounds of the code, the data and the tables
+// (workspace_make). The bounds below are those of `Workspace_Memory`,
+// sized for a text of 256 KiB that chibicc writes: about 20 bytes of text
+// for each instruction of about 5 bytes, a label for each 10 lines, a
+// reference for each 5. The module `assemble` keeps that memory in its
+// own data, which the budget of its call host pays
 // (src/md/features/assembler.md, "The bounds of the workspace").
-TEXT_BYTES_MOST :: 1 << 20 // The bytes of a text.
+TEXT_BYTES_MOST :: 1 << 24 // The bytes of a text: a place counts its offset in 32 bits.
 LINE_BYTES_MOST :: 1024 // The bytes of one line, its comment included.
 CODE_BYTES_MOST :: 128 * 1024 // The bytes of the section code that a file stores.
 DATA_BYTES_MOST :: 128 * 1024 // The bytes of the section data that a file stores.
@@ -34,10 +37,17 @@ DATA_BYTES_MOST :: 128 * 1024 // The bytes of the section data that a file store
 // writes no byte.
 SECTION_EXTENT_MOST :: u64(1) << 40
 LABEL_CAPACITY :: 2048
+// The slots of the table of the names of the labels: a power of two, with
+// room for each label and for the second slot of each global label, at
+// most half full.
+LABEL_SLOTS_PER_LABEL :: 4
 REFERENCE_CAPACITY :: 4096 // The operands that name a label.
 EXPORT_CAPACITY :: 32
 REBASE_CAPACITY :: 2048 // The `quad` values that name a label: each is one rebase of the module.
 LOCAL_LABEL_DIGITS :: 10 // The numeric local labels `0:` to `9:`.
+// The largest alignment of `align`: the section data starts on a page, so
+// an alignment of a page or less is exact in memory.
+ALIGNMENT_MOST :: module.PAGE_SIZE
 
 // The sections of a text. The section code comes first in the module, at
 // the offset 0; the section data follows it on the next page.
@@ -70,21 +80,23 @@ Refusal :: enum u32 {
 	Label_In_Wrong_Section = 18, // A jump or a call names a label of the data, or an export a label that is not in the code.
 	Distance_Too_Large     = 19, // A jump, a call or a `%rip` operand is more than 2 GiB from its label. value: the offset of the label in the module.
 	Section_Unknown        = 20, // `section` names neither `code` nor `data`.
-	Section_Past_Capacity  = 21, // A section passes CODE_BYTES_MOST or DATA_BYTES_MOST bytes, or SECTION_EXTENT_MOST of extent. value: the bytes that it would reach.
+	Section_Past_Capacity  = 21, // A section passes the bytes of its buffer in the workspace, or SECTION_EXTENT_MOST of extent. value: the bytes that it would reach.
 	Instruction_In_Data    = 22, // An instruction in the section data, which no processor runs.
 	Directive_Not_Valid    = 23, // A directive with a wrong form: a missing `(`, `:` or `,`, words after its end.
 	Type_Unknown           = 24, // A type of an export that the assembler does not take: parameters Integer and Text, the result Integer.
 	Too_Many_Parameters    = 25, // An export with more than module.PARAMETER_CAPACITY parameters.
 	Export_Twice           = 26, // Two exports have one name.
 	Name_Not_Valid         = 27, // The name of an export or of a parameter is not a name of the module format.
-	Labels_Full            = 28, // More than LABEL_CAPACITY labels.
-	References_Full        = 29, // More than REFERENCE_CAPACITY operands that name a label.
+	Labels_Full            = 28, // More labels than the workspace holds. value: its capacity.
+	References_Full        = 29, // More operands that name a label than the workspace holds. value: its capacity.
 	Exports_Full           = 30, // More than EXPORT_CAPACITY exports.
 	No_Instruction         = 31, // The text has no byte in the section code.
 	Rebase_Not_In_Data     = 32, // A `quad` names a label in the section code: a loader rebases writable data only.
 	Rebase_Not_Aligned     = 33, // A `quad` that names a label is not on 8 bytes of the section data. value: its offset in the section.
-	Rebases_Full           = 34, // More than REBASE_CAPACITY `quad` values that name a label.
+	Rebases_Full           = 34, // More `quad` values that name a label than the workspace holds. value: its capacity.
 	Address_Out_Of_Range   = 35, // A label with its offset is below 0 or past 2^63 - 1. value: the address with no sign, modulo 2^64.
+	Global_Twice           = 36, // Two units make one name global. value: the line of the first `global`.
+	Alignment_Not_Valid    = 37, // `align` takes a power of two from 1 to ALIGNMENT_MOST. value: the number, at most 2^64.
 }
 
 // Where a refusal is in the text: its first byte.
@@ -101,10 +113,15 @@ Refusal_Record :: struct {
 	value:   u64, // What the member of Refusal says.
 }
 
-// A label: a name and its place in a section. A label that an operand names
-// before its definition is in the table with defined false.
+// A label: a name of a unit and its place in a section. A label that an
+// operand names before its definition is in the table with defined false.
+// A label of a unit that the unit never defines takes the place of the
+// global label of that name, once the text is read.
 Label :: struct {
 	name:       string, // A view of the text.
+	unit:       u32, // The unit of the text that names it: 0 before the first `unit`.
+	global:     bool, // A `global` of its unit names it: the other units see it.
+	global_at:  Place, // The first `global` that names it.
 	section:    Section,
 	offset:     u64, // From the start of its section.
 	defined:    bool,
@@ -150,31 +167,108 @@ Export_Declaration :: struct {
 	parameter_names: [module.PARAMETER_CAPACITY]string,
 	parameter_count: int,
 	result:          module.Type,
+	unit:            u32, // The unit of the directive: its label is a label of that unit, or a global label.
 	place:           Place, // The name in the directive.
 }
 
-// The memory of one assembly, which the caller gives. `assemble` sets it to
-// zero first. The parts that `assemble` gives are views of it and of the
-// text: both must stay until the file is written.
+// A slot of the table of the names of the labels. A label has one slot
+// for its unit and its name, a numeric local label one for its digit and
+// its order, and a global label a second slot under GLOBAL_UNIT, where a
+// label of another unit finds it.
+Label_Slot :: struct {
+	label: i32, // The index of the label, plus 1: 0 is an empty slot.
+	unit:  u32, // The unit of the key: a unit of the text, GLOBAL_UNIT or LOCAL_LABEL_UNIT.
+}
+
+// The keys of the slots that are not the name of a unit.
+GLOBAL_UNIT :: max(u32)
+LOCAL_LABEL_UNIT :: max(u32) - 1
+
+// The memory of one assembly, which the caller gives through
+// workspace_make: the buffers of the sections and the tables are its
+// slices, and their lengths are the bounds of a text. `assemble` resets
+// the counts first. The parts that `assemble` gives are views of it and of
+// the text: both must stay until the file is written.
 Workspace :: struct {
-	code:            [CODE_BYTES_MOST]u8,
-	data:            [DATA_BYTES_MOST]u8,
+	code:            []u8,
+	data:            []u8,
 	extents:         [Section]u64, // The place of the next byte of each section.
 	stored:          [Section]u64, // The bytes of each section in its buffer: the zero bytes after them are not stored.
-	labels:          [LABEL_CAPACITY]Label,
+	labels:          []Label,
 	label_count:     int,
-	references:      [REFERENCE_CAPACITY]Reference,
+	label_slots:     []Label_Slot, // A power of two of slots, LABEL_SLOTS_PER_LABEL for each label.
+	references:      []Reference,
 	reference_count: int,
 	exports:         [EXPORT_CAPACITY]Export_Declaration,
 	export_count:    int,
-	data_references:      [REBASE_CAPACITY]Data_Reference,
+	data_references:      []Data_Reference,
 	data_reference_count: int,
-	rebases:              [REBASE_CAPACITY]u64, // The memory offset of each data reference, in the order of the data.
+	rebases:              []u64, // The memory offset of each data reference, in the order of the data.
 	// The definitions of each digit so far: `Nb` names the last one, `Nf`
 	// the next one.
 	local_label_definitions: [LOCAL_LABEL_DIGITS]u32,
+	unit:            u32, // The unit of the statements from here: each `unit` adds 1.
 	segments:        [2]writer.Segment_Part, // The code, and the data when the text has data.
 	export_parts:    [EXPORT_CAPACITY]writer.Export_Part,
+}
+
+// The memory of a workspace with the bounds of the constants above: the
+// module `assemble` keeps one in its data.
+Workspace_Memory :: struct {
+	code:            [CODE_BYTES_MOST]u8,
+	data:            [DATA_BYTES_MOST]u8,
+	labels:          [LABEL_CAPACITY]Label,
+	label_slots:     [LABEL_CAPACITY * LABEL_SLOTS_PER_LABEL]Label_Slot,
+	references:      [REFERENCE_CAPACITY]Reference,
+	data_references: [REBASE_CAPACITY]Data_Reference,
+	rebases:         [REBASE_CAPACITY]u64,
+}
+
+// workspace_make gives a workspace over memory of the caller. The label
+// slots are cut to a power of two, and the labels to the slots that they
+// need; the rebases to the data references, one for each.
+workspace_make :: proc "contextless" (code: []u8, data: []u8, labels: []Label, label_slots: []Label_Slot, references: []Reference, data_references: []Data_Reference, rebases: []u64) -> Workspace {
+	slot_count := 1
+	for slot_count * 2 <= len(label_slots) {
+		slot_count *= 2
+	}
+	if len(label_slots) == 0 {
+		slot_count = 0
+	}
+	label_count := min(len(labels), slot_count / LABEL_SLOTS_PER_LABEL)
+	reference_count := min(len(data_references), len(rebases))
+	return {
+		code            = code,
+		data            = data,
+		labels          = labels[:label_count],
+		label_slots     = label_slots[:slot_count],
+		references      = references,
+		data_references = data_references[:reference_count],
+		rebases         = rebases[:reference_count],
+	}
+}
+
+// workspace_of_memory gives the workspace of a Workspace_Memory.
+workspace_of_memory :: proc "contextless" (memory: ^Workspace_Memory) -> Workspace {
+	return workspace_make(memory.code[:], memory.data[:], memory.labels[:], memory.label_slots[:], memory.references[:], memory.data_references[:], memory.rebases[:])
+}
+
+// workspace_reset sets the counts of a workspace to zero, and empties its
+// table of names. The buffers keep their bytes: each byte that a part
+// gives is written by this assembly.
+workspace_reset :: proc "contextless" (workspace: ^Workspace) {
+	workspace.extents = {}
+	workspace.stored = {}
+	workspace.label_count = 0
+	workspace.reference_count = 0
+	workspace.export_count = 0
+	workspace.data_reference_count = 0
+	workspace.local_label_definitions = {}
+	workspace.unit = 0
+	workspace.segments = {}
+	if len(workspace.label_slots) > 0 {
+		intrinsics.mem_zero(raw_data(workspace.label_slots), len(workspace.label_slots) * size_of(Label_Slot))
+	}
 }
 
 // assemble reads a text and gives the parts of its module file: the
@@ -182,7 +276,7 @@ Workspace :: struct {
 // when the text has data, and one export for each `export`. The parts are
 // views of the workspace and of the text.
 assemble :: proc "contextless" (text: string, workspace: ^Workspace) -> (parts: writer.Module_Parts, refusal: Refusal_Record) {
-	intrinsics.mem_zero(workspace, size_of(Workspace))
+	workspace_reset(workspace)
 	if len(text) == 0 {
 		return {}, {refusal = .Text_Empty, place = {line = 1, column = 1}}
 	}
@@ -209,7 +303,7 @@ refusal_sentence :: proc "contextless" (refusal: Refusal) -> string {
 	case .Text_Empty:
 		return "the text is empty"
 	case .Text_Too_Long:
-		return "the text has more than 1 MiB"
+		return "the text has more than 16 MiB"
 	case .Line_Too_Long:
 		return "the line has more than 1024 bytes"
 	case .Character_Not_Valid:
@@ -261,9 +355,9 @@ refusal_sentence :: proc "contextless" (refusal: Refusal) -> string {
 	case .Name_Not_Valid:
 		return "the name is not a name of the module format: ASCII letters, digits and _, with no digit first"
 	case .Labels_Full:
-		return "the text has more than 2048 labels"
+		return "the text has more labels than the workspace holds"
 	case .References_Full:
-		return "the text has more than 4096 operands that name a label"
+		return "the text has more operands that name a label than the workspace holds"
 	case .Exports_Full:
 		return "the text has more than 32 exports"
 	case .No_Instruction:
@@ -273,9 +367,13 @@ refusal_sentence :: proc "contextless" (refusal: Refusal) -> string {
 	case .Rebase_Not_Aligned:
 		return "a quad of a label is on 8 bytes of the section data"
 	case .Rebases_Full:
-		return "the text has more than 2048 quad values that name a label"
+		return "the text has more quad values that name a label than the workspace holds"
 	case .Address_Out_Of_Range:
 		return "the label with its offset is below 0 or past 2^63 - 1"
+	case .Global_Twice:
+		return "two units make this name global"
+	case .Alignment_Not_Valid:
+		return "align takes a power of two from 1 to 4096"
 	}
 	return "an unknown refusal"
 }
@@ -451,6 +549,12 @@ statement_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) ->
 		return zero_directive(cursor, workspace)
 	case "quad":
 		return quad_directive(cursor, workspace)
+	case "align":
+		return align_directive(cursor, workspace)
+	case "unit":
+		return unit_directive(cursor, workspace)
+	case "global":
+		return global_directive(cursor, workspace)
 	}
 	return instruction_read(cursor, workspace, word, word_place)
 }
@@ -463,29 +567,82 @@ label_name_check :: proc "contextless" (name: string, place: Place) -> Refusal_R
 	return {}
 }
 
-// label_find gives the index of the label with the name, or -1.
+// label_slot_first gives the first slot of a key: the FNV-1a hash of the
+// name, mixed with the unit, cut to the slots.
 @(private)
-label_find :: proc "contextless" (workspace: ^Workspace, name: string) -> int {
-	for index in 0 ..< workspace.label_count {
-		label := &workspace.labels[index]
-		if !label.local && label.name == name {
+label_slot_first :: proc "contextless" (workspace: ^Workspace, unit: u32, name: string) -> int {
+	hash := u64(0xCBF29CE484222325)
+	for character in transmute([]u8)name {
+		hash = (hash ~ u64(character)) * 0x100000001B3
+	}
+	hash = (hash ~ u64(unit)) * 0x100000001B3
+	return int(hash & u64(len(workspace.label_slots) - 1))
+}
+
+// label_slot_matches says if a slot holds the key: a name of a unit, or a
+// digit and its order under LOCAL_LABEL_UNIT, whose name is the digit.
+@(private)
+label_slot_matches :: proc "contextless" (workspace: ^Workspace, slot: Label_Slot, unit: u32, name: string, ordinal: u32) -> bool {
+	if slot.unit != unit {
+		return false
+	}
+	label := &workspace.labels[slot.label - 1]
+	if unit == LOCAL_LABEL_UNIT {
+		return label.local_digit == name[0] - '0' && label.local_ordinal == ordinal
+	}
+	return label.name == name
+}
+
+// label_slot_find gives the slot of a key, or the empty slot where it goes.
+// The table is at most half full, so an empty slot ends each search.
+@(private)
+label_slot_find :: proc "contextless" (workspace: ^Workspace, unit: u32, name: string, ordinal: u32 = 0) -> int {
+	if len(workspace.label_slots) == 0 {
+		return -1
+	}
+	mask := len(workspace.label_slots) - 1
+	key_name := name
+	if unit == LOCAL_LABEL_UNIT {
+		// The ordinal tells two definitions of a digit apart.
+		key_name = name[:1]
+	}
+	index := label_slot_first(workspace, unit ~ (unit == LOCAL_LABEL_UNIT ? ordinal : 0), key_name)
+	for {
+		slot := workspace.label_slots[index]
+		if slot.label == 0 || label_slot_matches(workspace, slot, unit, name, ordinal) {
 			return index
 		}
+		index = (index + 1) & mask
 	}
-	return -1
+}
+
+// label_find gives the index of the label of the unit with the name, or -1.
+@(private)
+label_find :: proc "contextless" (workspace: ^Workspace, name: string, unit: u32) -> int {
+	slot := label_slot_find(workspace, unit, name)
+	if slot < 0 {
+		return -1
+	}
+	return int(workspace.label_slots[slot].label) - 1
 }
 
 // local_label_find gives the index of a definition of a numeric local
 // label, or -1 while the text has not named it.
 @(private)
 local_label_find :: proc "contextless" (workspace: ^Workspace, digit: u8, ordinal: u32) -> int {
-	for index in 0 ..< workspace.label_count {
-		label := &workspace.labels[index]
-		if label.local && label.local_digit == digit && label.local_ordinal == ordinal {
-			return index
-		}
+	name := [1]u8{'0' + digit}
+	slot := label_slot_find(workspace, LOCAL_LABEL_UNIT, string(name[:]), ordinal)
+	if slot < 0 {
+		return -1
 	}
-	return -1
+	return int(workspace.label_slots[slot].label) - 1
+}
+
+// label_slot_add puts a label in its empty slot. The capacity of the
+// labels keeps the table at most half full.
+@(private)
+label_slot_add :: proc "contextless" (workspace: ^Workspace, slot: int, label: int, unit: u32) {
+	workspace.label_slots[slot] = {label = i32(label + 1), unit = unit}
 }
 
 // local_label_add adds a definition of a numeric local label that the text
@@ -493,12 +650,13 @@ local_label_find :: proc "contextless" (workspace: ^Workspace, digit: u8, ordina
 // only the digit and the order find it.
 @(private)
 local_label_add :: proc "contextless" (workspace: ^Workspace, name: string, digit: u8, ordinal: u32, place: Place) -> (index: int, refusal: Refusal_Record) {
-	if workspace.label_count == LABEL_CAPACITY {
-		return -1, refuse(.Labels_Full, place, LABEL_CAPACITY)
+	if workspace.label_count == len(workspace.labels) {
+		return -1, refuse(.Labels_Full, place, u64(len(workspace.labels)))
 	}
 	index = workspace.label_count
-	workspace.labels[index] = {name = name, first_use = place, local = true, local_digit = digit, local_ordinal = ordinal}
+	workspace.labels[index] = {name = name, unit = workspace.unit, first_use = place, local = true, local_digit = digit, local_ordinal = ordinal}
 	workspace.label_count += 1
+	label_slot_add(workspace, label_slot_find(workspace, LOCAL_LABEL_UNIT, name, ordinal), index, LOCAL_LABEL_UNIT)
 	return index, {}
 }
 
@@ -583,12 +741,13 @@ label_add :: proc "contextless" (workspace: ^Workspace, name: string, place: Pla
 	if refusal = label_name_check(name, place); refusal.refusal != .None {
 		return -1, refusal
 	}
-	if workspace.label_count == LABEL_CAPACITY {
-		return -1, refuse(.Labels_Full, place, LABEL_CAPACITY)
+	if workspace.label_count == len(workspace.labels) {
+		return -1, refuse(.Labels_Full, place, u64(len(workspace.labels)))
 	}
 	index = workspace.label_count
-	workspace.labels[index] = {name = name, first_use = place}
+	workspace.labels[index] = {name = name, unit = workspace.unit, first_use = place}
 	workspace.label_count += 1
+	label_slot_add(workspace, label_slot_find(workspace, workspace.unit, name), index, workspace.unit)
 	return index, {}
 }
 
@@ -596,7 +755,7 @@ label_add :: proc "contextless" (workspace: ^Workspace, name: string, place: Pla
 // section.
 @(private)
 label_define :: proc "contextless" (workspace: ^Workspace, name: string, place: Place, section: Section) -> Refusal_Record {
-	index := label_find(workspace, name)
+	index := label_find(workspace, name, workspace.unit)
 	if index >= 0 && workspace.labels[index].defined {
 		return refuse(.Label_Defined_Twice, place, u64(workspace.labels[index].defined_at.line))
 	}
@@ -618,10 +777,91 @@ label_define :: proc "contextless" (workspace: ^Workspace, name: string, place: 
 // it when the text did not name it before.
 @(private)
 label_named :: proc "contextless" (workspace: ^Workspace, name: string, place: Place) -> (index: int, refusal: Refusal_Record) {
-	if index = label_find(workspace, name); index >= 0 {
+	if index = label_find(workspace, name, workspace.unit); index >= 0 {
 		return index, {}
 	}
 	return label_add(workspace, name, place)
+}
+
+// unit_directive starts the next unit of the text: the units of a program
+// in one text, as a linker joins its objects. A name that no `global`
+// names stays in its unit; a unit starts in the section code, as a text.
+@(private)
+unit_directive :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) -> Refusal_Record {
+	if !at_end(cursor) {
+		return refuse(.Directive_Not_Valid, place_here(cursor))
+	}
+	workspace.unit += 1
+	cursor.section^ = .Code
+	return {}
+}
+
+// global_directive makes a label of the unit seen by the other units: a
+// unit that names it and does not define it takes its place.
+@(private)
+global_directive :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) -> Refusal_Record {
+	blanks_skip(cursor)
+	place := place_here(cursor)
+	// A name with a digit first, a numeric local label too, is refused here.
+	name := word_read(cursor)
+	if refusal := label_name_check(name, place); refusal.refusal != .None {
+		return refusal
+	}
+	if !at_end(cursor) {
+		return refuse(.Directive_Not_Valid, place_here(cursor))
+	}
+	index, refusal := label_named(workspace, name, place)
+	if refusal.refusal != .None {
+		return refusal
+	}
+	label := &workspace.labels[index]
+	if label.global {
+		return {}
+	}
+	slot := label_slot_find(workspace, GLOBAL_UNIT, name)
+	if workspace.label_slots[slot].label != 0 {
+		first := workspace.labels[workspace.label_slots[slot].label - 1]
+		return refuse(.Global_Twice, place, u64(first.global_at.line))
+	}
+	label.global = true
+	label.global_at = place
+	label_slot_add(workspace, slot, index, GLOBAL_UNIT)
+	return {}
+}
+
+// align_directive moves the place of the next byte of the section to a
+// multiple of a power of two. The data takes zero bytes, which the file
+// does not store at the end of the section; the code takes `nop` bytes,
+// which a processor that runs into them passes.
+@(private)
+align_directive :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) -> Refusal_Record {
+	blanks_skip(cursor)
+	place := place_here(cursor)
+	alignment, ok := number_read(cursor)
+	if !ok {
+		return refuse(.Number_Not_Valid, place)
+	}
+	if alignment < 1 || alignment > ALIGNMENT_MOST || alignment & (alignment - 1) != 0 {
+		return refuse(.Alignment_Not_Valid, place, u64(min(alignment, i128(max(u64)))))
+	}
+	if !at_end(cursor) {
+		return refuse(.Directive_Not_Valid, place_here(cursor))
+	}
+	section := cursor.section^
+	start := workspace.extents[section]
+	padding := (u64(alignment) - start % u64(alignment)) % u64(alignment)
+	if section == .Data {
+		// SECTION_EXTENT_MOST is a multiple of each alignment, so the
+		// padding never passes it.
+		workspace.extents[.Data] = start + padding
+		return {}
+	}
+	NOP :: 0x90
+	nops: [ALIGNMENT_MOST]u8
+	for index in 0 ..< padding {
+		nops[index] = NOP
+	}
+	return section_write(workspace, .Code, nops[:padding], place)
 }
 
 @(private)
@@ -659,6 +899,7 @@ type_of_word :: proc "contextless" (word: string, result: bool) -> (type: module
 export_directive :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) -> Refusal_Record {
 	blanks_skip(cursor)
 	declaration := Export_Declaration {
+		unit  = workspace.unit,
 		place = place_here(cursor),
 	}
 	declaration.name = word_read(cursor)
@@ -670,7 +911,7 @@ export_directive :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) 
 			return refuse(.Export_Twice, declaration.place)
 		}
 	}
-	if workspace.export_count == EXPORT_CAPACITY {
+	if workspace.export_count == len(workspace.exports) {
 		return refuse(.Exports_Full, declaration.place, EXPORT_CAPACITY)
 	}
 	if !next_is(cursor, '(') {
@@ -781,9 +1022,15 @@ section_write :: proc "contextless" (workspace: ^Workspace, section: Section, by
 	if start > u64(len(buffer)) || u64(len(bytes)) > u64(len(buffer)) - start {
 		return refuse(.Section_Past_Capacity, place, start + u64(len(bytes)))
 	}
-	// The bytes between the last stored byte and start are zero already:
-	// the workspace starts at zero and nothing writes past the extent.
-	intrinsics.mem_copy_non_overlapping(&buffer[start], raw_data(bytes), len(bytes))
+	// The bytes between the last stored byte and start are the zero bytes
+	// of `zero` and `align`: the buffer holds the bytes of an earlier text.
+	stored := workspace.stored[section]
+	if start > stored {
+		intrinsics.mem_zero(&buffer[stored], int(start - stored))
+	}
+	if len(bytes) > 0 {
+		intrinsics.mem_copy_non_overlapping(&buffer[start], raw_data(bytes), len(bytes))
+	}
 	workspace.extents[section] = start + u64(len(bytes))
 	workspace.stored[section] = workspace.extents[section]
 	return {}
@@ -906,8 +1153,8 @@ quad_label_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace, p
 	if data_offset % module.REBASE_WORD_SIZE != 0 {
 		return refuse(.Rebase_Not_Aligned, place, data_offset)
 	}
-	if workspace.data_reference_count == REBASE_CAPACITY {
-		return refuse(.Rebases_Full, place, REBASE_CAPACITY)
+	if workspace.data_reference_count == len(workspace.data_references) {
+		return refuse(.Rebases_Full, place, u64(len(workspace.data_references)))
 	}
 	zero := [8]u8{}
 	if refusal = section_write(workspace, .Data, zero[:], place); refusal.refusal != .None {
@@ -928,6 +1175,24 @@ quad_label_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace, p
 // first page after the code.
 @(private)
 references_resolve :: proc "contextless" (workspace: ^Workspace) -> Refusal_Record {
+	// A unit that names a label that it does not define names the global
+	// label of that name, which a unit defines.
+	for &label in workspace.labels[:workspace.label_count] {
+		if label.defined || label.local {
+			continue
+		}
+		slot := label_slot_find(workspace, GLOBAL_UNIT, label.name)
+		if workspace.label_slots[slot].label == 0 {
+			continue
+		}
+		global := workspace.labels[workspace.label_slots[slot].label - 1]
+		if global.defined {
+			label.section = global.section
+			label.offset = global.offset
+			label.defined = true
+			label.defined_at = global.defined_at
+		}
+	}
 	for label in workspace.labels[:workspace.label_count] {
 		if !label.defined {
 			return refuse(.Label_Not_Defined, label.first_use)
@@ -972,8 +1237,13 @@ page_round :: proc "contextless" (size: u64) -> u64 {
 @(private)
 parts_fill :: proc "contextless" (workspace: ^Workspace) -> (parts: writer.Module_Parts, refusal: Refusal_Record) {
 	for &declaration, index in workspace.exports[:workspace.export_count] {
-		label_index := label_find(workspace, declaration.name)
+		label_index := label_find(workspace, declaration.name, declaration.unit)
 		if label_index < 0 {
+			if slot := label_slot_find(workspace, GLOBAL_UNIT, declaration.name); slot >= 0 {
+				label_index = int(workspace.label_slots[slot].label) - 1
+			}
+		}
+		if label_index < 0 || !workspace.labels[label_index].defined {
 			return {}, refuse(.Label_Not_Defined, declaration.place)
 		}
 		label := workspace.labels[label_index]

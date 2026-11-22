@@ -1,0 +1,24 @@
+--- a/parse.c
++++ b/parse.c
+@@ -561,7 +561,8 @@
+       ty = ty_double;
+       break;
+     case LONG + DOUBLE:
+-      ty = ty_ldouble;
++      // modus: a long double is a double, as with -mlong-double-64.
++      ty = ty_double;
+       break;
+     default:
+       error_tok(tok, "invalid type");
+--- a/tokenize.c
++++ b/tokenize.c
+@@ -440,7 +440,8 @@
+     ty = ty_float;
+     end++;
+   } else if (*end == 'l' || *end == 'L') {
+-    ty = ty_ldouble;
++    // modus: a long double is a double, as with -mlong-double-64.
++    ty = ty_double;
+     end++;
+   } else {
+     ty = ty_double;

@@ -49,6 +49,7 @@ Operation :: enum u8 {
 	Vector_Arithmetic            = 39, // addss … divsd, sqrtss, sqrtsd, the bitwise forms, the comparisons, cvtss2sd, cvtsd2ss
 	Vector_From_Integer          = 40, // cvtsi2ss, cvtsi2sd and their suffixes
 	Integer_From_Vector          = 41, // cvttss2si, cvttsd2si and their suffixes
+	Undefined_Instruction        = 42, // ud2: the trap of a C program that must not go on
 }
 
 // The prefix of an SSE instruction that selects its form, before any
@@ -194,6 +195,7 @@ MNEMONICS := [?]Mnemonic {
 	{name = "call", operation = .Call},
 	{name = "ret", operation = .Return},
 	{name = "stosb", operation = .Store_Byte},
+	{name = "ud2", operation = .Undefined_Instruction},
 	{name = "xchg", operation = .Exchange, suffixable = true},
 	{name = "cmpxchg", operation = .Compare_Exchange, suffixable = true},
 	// SSE scalar and packed forms (Intel manual, volume 2): the prefix and
@@ -834,7 +836,7 @@ two_operand_opcodes :: proc "contextless" (operation: Operation) -> (opcodes: Tw
 	     .Sign_Extend_Word_To_Double, .Sign_Extend_Long_To_Double,
 	     .Sign_Extend_Quad_To_Octaword, .Store_Byte, .Repeat_Store_Byte,
 	     .Exchange, .Compare_Exchange, .Vector_Move, .Vector_Arithmetic,
-	     .Vector_From_Integer, .Integer_From_Vector:
+	     .Vector_From_Integer, .Integer_From_Vector, .Undefined_Instruction:
 	}
 	return {}, false
 }
@@ -917,8 +919,8 @@ instruction_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace, 
 		return refusal
 	}
 	if encoding.reference_field >= 0 {
-		if workspace.reference_count == REFERENCE_CAPACITY {
-			return refuse(.References_Full, encoding.reference_place, REFERENCE_CAPACITY)
+		if workspace.reference_count == len(workspace.references) {
+			return refuse(.References_Full, encoding.reference_place, u64(len(workspace.references)))
 		}
 		workspace.references[workspace.reference_count] = {
 			label           = encoding.reference_label,
@@ -1004,7 +1006,7 @@ instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemoni
 	     .Sign_Extend_Word_To_Long, .Sign_Extend_Long_To_Quad,
 	     .Sign_Extend_Word_To_Double, .Sign_Extend_Long_To_Double,
 	     .Sign_Extend_Quad_To_Octaword, .Store_Byte, .Repeat_Store_Byte,
-	     .Exchange, .Compare_Exchange:
+	     .Exchange, .Compare_Exchange, .Undefined_Instruction:
 		if vector_operand >= 0 {
 			return refuse(.Operand_Form_Not_Valid, operands[vector_operand].place)
 		}
@@ -1025,7 +1027,7 @@ instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemoni
 	     .Sign_Extend_Word_To_Double, .Sign_Extend_Long_To_Double,
 	     .Sign_Extend_Quad_To_Octaword, .Store_Byte, .Repeat_Store_Byte,
 	     .Exchange, .Compare_Exchange, .Vector_Move, .Vector_Arithmetic,
-	     .Vector_From_Integer, .Integer_From_Vector:
+	     .Vector_From_Integer, .Integer_From_Vector, .Undefined_Instruction:
 	}
 
 	wanted := 2
@@ -1033,7 +1035,7 @@ instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemoni
 	case .Return, .Sign_Extend_Byte_To_Word, .Sign_Extend_Word_To_Long,
 	     .Sign_Extend_Long_To_Quad, .Sign_Extend_Word_To_Double,
 	     .Sign_Extend_Long_To_Double, .Sign_Extend_Quad_To_Octaword,
-	     .Store_Byte, .Repeat_Store_Byte:
+	     .Store_Byte, .Repeat_Store_Byte, .Undefined_Instruction:
 		wanted = 0
 	case .Jump, .Call, .Jump_If, .Push, .Pop, .Divide_Signed, .Divide_Unsigned,
 	     .Negate, .Bitwise_Not, .Increment, .Decrement, .Set_If:
@@ -1056,6 +1058,10 @@ instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemoni
 	case .Store_Byte:
 		// STOSB: AA.
 		put_byte(encoding, 0xAA)
+	case .Undefined_Instruction:
+		// UD2: 0F 0B.
+		put_byte(encoding, 0x0F)
+		put_byte(encoding, 0x0B)
 	case .Repeat_Store_Byte:
 		// REP STOSB: F3 AA.
 		put_byte(encoding, 0xF3)
@@ -1781,7 +1787,7 @@ unary_encode :: proc "contextless" (encoding: ^Encoding, operation: Operation, s
 	     .Sign_Extend_Word_To_Double, .Sign_Extend_Long_To_Double,
 	     .Sign_Extend_Quad_To_Octaword, .Store_Byte, .Repeat_Store_Byte,
 	     .Exchange, .Compare_Exchange, .Vector_Move, .Vector_Arithmetic,
-	     .Vector_From_Integer, .Integer_From_Vector:
+	     .Vector_From_Integer, .Integer_From_Vector, .Undefined_Instruction:
 		return refuse(.Mnemonic_Unknown, word_place)
 	}
 	force_rex, forbid_rex, conflict_place := rex_flags_of(operand)
@@ -1920,7 +1926,7 @@ shift_encode :: proc "contextless" (encoding: ^Encoding, operation: Operation, s
 	     .Sign_Extend_Long_To_Double, .Sign_Extend_Quad_To_Octaword,
 	     .Store_Byte, .Repeat_Store_Byte, .Exchange, .Compare_Exchange,
 	     .Vector_Move, .Vector_Arithmetic, .Vector_From_Integer,
-	     .Integer_From_Vector:
+	     .Integer_From_Vector, .Undefined_Instruction:
 		return refuse(.Mnemonic_Unknown, word_place)
 	}
 	target := operands[len(operands) - 1]

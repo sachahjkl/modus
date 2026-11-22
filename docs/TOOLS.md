@@ -1133,6 +1133,7 @@ A module of the system can compile in a work of others written in C (`glossary/c
 | `src/outside/<work>/patches/` | The changes of the work, applied by Nix in the order of their names |
 | `src/outside/<work>/system/` | The C files of the system for the work: its entry and its tables |
 | `src/outside/<work>/libc/` | The thin libc and its headers in `libc/include` |
+| `src/outside/<work>/self_host/` | The units that the work compiles in when it builds itself, and the module does not (`modustool c-self-host`) |
 | `flake.nix` | The commit and the hash of the source, and the variable that names the folder of the store in each shell and in the check |
 | The module table | The row of the module, with `c_source` |
 
@@ -1186,6 +1187,21 @@ modustool self-host [--staging-dir <folder>] [--verify-chains]
 3. The tool computes the BLAKE3 hash of both binaries and verifies `blake3(stage1) == blake3(stage2)`. When the two binaries differ, the command fails and prints the exact byte offset of the first divergence.
 4. When `--verify-chains` is passed, the command also verifies the stage-by-stage `plans_recipes.Recipe_Spec` and `guest_builder.Guest_Build_Spec` DAGs for the `chibicc` self-host chain, the `hex0` to `odin` live-bootstrap guest chain, and the SQLite, Lua, and zstd freestanding C-world validation recipes.
 
+## The self-hosting of the C compiler
+
+`modustool c-self-host` verifies that the C compiler builds itself through the assembler of modus: `chibicc` built by clang compiles the sources of `chibicc`, and two stages built by `chibicc` have one BLAKE3 hash. The design is in `src/md/features/bootstrap.md`, "The self-hosting of the C compiler"; the code is `tools/modustool/build/c_self_host.odin`. It runs in a shell of the flake: it reads the outside source of `chibicc` through the variable `CHIBICC_SOURCE`, and runs clang, nasm and ld.lld.
+
+```
+modustool c-self-host
+```
+
+1. Stage 0: the tool compiles the C files of the outside source with the flags of a module, links them with the copies and the fills of `src/runtime/memory.asm`, and converts the link into a module with the one export `compile_record_at`, in `build/c_self_host/stage_zero`.
+2. Stage 0 compiles each C source of the folder and of its folder `self_host`, each in a fresh copy of the module, and writes each text in `build/c_self_host/stage_zero/texts`. The texts and `self_host/jump.s` are one text of the assembler, whose module is `build/c_self_host/stage_one/chibicc.modus`.
+3. Stage 1 compiles the same sources into `build/c_self_host/stage_one/texts`, and the assembler writes `build/c_self_host/stage_two/chibicc.modus`.
+4. The tool prints the sources, says whether stage 1 gave the text of stage 0 for each, prints the size and the BLAKE3 hash of the two modules, and fails when they differ, with the first byte where they differ. A refusal of a stage prints the diagnostic of `chibicc`; a refusal of the assembler prints the line, the column, the sentence and the line of the text.
+
+The host test `chibicc_builds_itself_to_the_same_bytes` runs the same chain in a temporary folder.
+
 ## The commands of the tool
 
 All the automation of the project is one program of the host, `tools/modustool`. It is one command over packages, one for each concern: `foundation`, `resources`, `build`, `checks`, `fuzz`, `similarity`, `machine` and `site`, in the order of their imports. A package imports another one as `"modustool:<package>"`, with the flag `-collection:modustool=tools/modustool`, never by a relative path. The layout is in "The packages of the tool", below; the design is in `src/md/infrastructure/repository_layout.md`. Each task (a build, a test, the site, a release) is one of its commands, so the same steps run on each computer and in each check. Run a command with `nix develop -c modustool <command>`; `modustool help` prints the list with one line for each.
@@ -1217,6 +1233,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `fuzz operations <executions> [seed]`, `fuzz regression operations <finding>`, `fuzz replay operations <file>` | Fuzzes the kernel operations on machines of the counted kernel: operation sequences that the counters of the kernel guide, a new machine after each fault, each fault of the kernel kept one time for its signature and minimized by machine lives and by steps, and the reach inputs of the corpus at the end of the run; a fixed finding into the corpus with the answers of the kernel that ships; or one sequence again on the kernel that ships ("The fuzzing of the kernel operations", "The corpus of the kernel operations", "The operation sequences") |
 | `repeat <module> <count>` | Builds one module again and again, with no machine, and counts the distinct results (`docs/REPRODUCIBLE_BUILD.md`). Each of its builds is a whole build |
 | `self-host [--staging-dir <folder>] [--emit-binary <path>] [--verify-chains]` | Builds `stage1/modustool`, invokes it to build `stage2/modustool` with identical deterministic flags, and verifies `blake3(stage1) == blake3(stage2)` or reports the first diverging byte offset ("The self-hosting check") |
+| `c-self-host` | Builds `chibicc` with clang, then twice with itself through the assembler of modus, on the host, and verifies `blake3(stage 1) == blake3(stage 2)` ("The self-hosting of the C compiler") |
 | `module-hashes write <file>`, `module-hashes compare <file>` | Records the hash of each module of the build in a file, or compares the build with such a record and fails when a module has another hash ("The hashes of the modules of two builds") |
 | `site` | Writes the site in `build/site/` |
 | `changelog ...`, `news ...`, `release_number` | The fragments of the changelog and its releases, the news entries, the number of the newest release |

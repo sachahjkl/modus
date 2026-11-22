@@ -1,0 +1,104 @@
+--- a/chibicc.h
++++ b/chibicc.h
+@@ -102,6 +102,9 @@
+ // modus: the entry of the system records the place of an error before
+ // its diagnostic, so the error record of the export names the byte.
+ void error_place_record(char *filename, char *input, char *loc);
++// modus: says if a function that is not static is an export of the
++// module. The entry of the system defines it.
++bool function_is_export(char *name);
+ 
+ #define unreachable() \
+   error("internal error at %s:%d", __FILE__, __LINE__)
+--- a/codegen.c
++++ b/codegen.c
+@@ -138,16 +138,9 @@
+     // address of a stuff that may be in a shared object file from the
+     // Global Offset Table using `@GOTPCREL(%rip)` notation.
+ 
+-    // Function
+-    if (node->ty->kind == TY_FUNC) {
+-      if (node->var->is_definition)
+-        println("  lea %s(%%rip), %%rax", node->var->name);
+-      else
+-        println("  mov %s@GOTPCREL(%%rip), %%rax", node->var->name);
+-      return;
+-    }
+-
+-    // Global variable
++    // modus: a function of another unit of the program is a global label
++    // of the same text, so the address of each function, as of each global
++    // variable, is its distance from %rip.
+     println("  lea %s(%%rip), %%rax", node->var->name);
+     return;
+   case ND_DEREF:
+@@ -1373,13 +1366,12 @@
+   }
+ }
+ 
+-// modus: the data is one section, `section data`, of `byte`, `quad` and
+-// `zero` lines. An address is a `quad` of its label, which the module
+-// rebases at its load. The assembler of modus has no alignment directive: the section
+-// starts on a page, so this count of its bytes gives the padding of each
++// modus: the data is one section, `section data`, of `align`, `byte`,
++// `quad` and `zero` lines. An address is a `quad` of its label, which
++// the module rebases at its load. The text is one unit of a program, whose
++// data starts where the unit before it ended, so the assembler aligns each
+ // variable. A variable with no initializer is zero bytes, which the module
+ // file does not store at the end of the section.
+-static long data_offset;
+ 
+ // modus: an object has no token of its own; the name of its type is the
+ // place of its declaration, and an object with no name (a string, a
+@@ -1402,12 +1394,12 @@
+       ? MAX(16, var->align) : var->align;
+ 
+     println("section data");
+-    long padding = (data_offset + align - 1) / align * align - data_offset;
+-    if (padding)
+-      println("  zero %ld", padding);
+-    data_offset += padding;
++    println("  align %d", align);
++    // modus: a name with external linkage is seen by the other units of
++    // the program; each other name stays in its unit.
++    if (!var->is_static)
++      println("  global %s", var->name);
+     println("%s:", var->name);
+-    data_offset += var->ty->size;
+ 
+     if (var->init_data) {
+       Relocation *rel = var->rel;
+@@ -1501,8 +1493,11 @@
+       continue;
+ 
+     println("section code");
+-    if (!fn->is_static)
+-      export_directive(fn);
++    if (!fn->is_static) {
++      println("  global %s", fn->name);
++      if (function_is_export(fn->name))
++        export_directive(fn);
++    }
+     println("%s:", fn->name);
+     current_fn = fn;
+ 
+@@ -1597,7 +1592,7 @@
+     println(".L.return.%s:", fn->name);
+     // modus: an Integer is 64 bits, and a 32-bit operation writes zero in
+     // the high half of %rax: an export that gives an int extends its sign.
+-    if (!fn->is_static && fn->ty->return_ty->kind == TY_INT)
++    if (!fn->is_static && function_is_export(fn->name) && fn->ty->return_ty->kind == TY_INT)
+       println("  movsxd %%eax, %%rax");
+     println("  mov %%rbp, %%rsp");
+     println("  pop %%rbp");
+@@ -1609,7 +1604,9 @@
+   output_file = out;
+ 
+   // modus: the assembler of modus has no line table, so no .file and no
+-  // .loc line.
++  // .loc line. Each text is one unit: the units of a program are one text
++  // of the assembler, and a name that is not global stays in its unit.
++  println("unit");
+   assign_lvar_offsets(prog);
+   emit_data(prog);
+   emit_text(prog);

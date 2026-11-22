@@ -204,12 +204,15 @@
       dontBuild = true;
       installPhase = ''
         runHook preInstall
-        mkdir -p $out/libc/include
+        mkdir -p $out/libc/include $out/self_host
         # main.c is not copied: the entry of the system takes its place.
         cp chibicc.h codegen.c hashmap.c parse.c preprocess.c strings.c tokenize.c type.c unicode.c $out/
         cp ${./src/outside/chibicc/system}/* $out/
         cp ${./src/outside/chibicc/libc}/*.c $out/
         cp ${./src/outside/chibicc/libc/include}/*.h $out/libc/include/
+        # The units that chibicc compiles in when it builds itself, and the
+        # module of clang does not: `modustool c-self-host` reads them.
+        cp ${./src/outside/chibicc/self_host}/* $out/self_host/
         {
           echo '// This file is the output of the flake: the include files of chibicc, as a table.'
           echo '#include "include_table.h"'

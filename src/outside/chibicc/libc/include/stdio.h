@@ -38,8 +38,15 @@ int fclose(FILE *stream);
 // precision as digits or `*`, the sizes `hh`, `h`, `l`, `ll`, `z` and `j`,
 // and the conversions `d`, `i`, `u`, `x`, `X`, `o`, `c`, `s`, `p` and `%`.
 // A conversion of floating point writes `?`.
+// clang checks the arguments of a format; chibicc reads no attribute of a
+// function.
+#ifdef __GNUC__
+#define THIN_LIBC_FORMAT(format_index, first_argument) __attribute__((format(printf, format_index, first_argument)))
+#else
+#define THIN_LIBC_FORMAT(format_index, first_argument)
+#endif
 int vfprintf(FILE *stream, const char *format, va_list arguments);
-int fprintf(FILE *stream, const char *format, ...) __attribute__((format(printf, 2, 3)));
-int printf(const char *format, ...) __attribute__((format(printf, 1, 2)));
+int fprintf(FILE *stream, const char *format, ...) THIN_LIBC_FORMAT(2, 3);
+int printf(const char *format, ...) THIN_LIBC_FORMAT(1, 2);
 
 #endif

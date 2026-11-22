@@ -27,6 +27,21 @@ A recipe proves that an output follows from its inputs and its builder. It does 
 
 The compiler of both builds is the compiler of the flake. So the check proves that the steps of the tool are a function of its source, not of the tool that ran them or the directory that staged them. It does not prove the compiler; the chain below does. The command is `modustool self-host` ([`docs/TOOLS.md`](../../../docs/TOOLS.md), "The self-hosting check").
 
+### The self-hosting of the C compiler
+
+`modustool c-self-host` proves that `chibicc` builds itself through the assembler of modus ([c_compiler.md](c_compiler.md), [assembler.md](assembler.md)):
+
+1. **Stage 0.** clang compiles the C files of the outside source of `chibicc` (its sources with the six patches, the entry `compile.c`, the thin libc and the table of its include files) with the flags of a module, and the tool links and converts them as a module, with the one export `compile_record_at`.
+2. **Stage 1.** Stage 0 compiles each C source of that folder and `self_host/bytes.c`, 14 sources, each into one assembly unit. The texts, then `self_host/jump.s`, are one text; the assembler of modus writes the module of stage 1.
+3. **Stage 2.** Stage 1 compiles the same 14 sources, and the assembler writes the module of stage 2 of their texts.
+4. **The check.** Stage 1 gives the text of stage 0 for each source, and `blake3(stage 1) == blake3(stage 2)`. When two texts or the two modules differ, the command names the first source and the first byte.
+
+The tool runs each stage on the host: for each source, a copy of the segments of the module in fresh memory, rebased at its place, and one call of its export with the record of `compile.c`. The C part calls no procedure of the host: its files are the table of the record, and its memory is an arena of the tool that a procedure of the record gives. The host test `chibicc_builds_itself_to_the_same_bytes` (`tools/modustool/build/c_self_host_test.odin`) runs the same chain, and first gives stage 0 a source that it must refuse, and two units that the assembler must refuse as one program.
+
+- **Why stage 0 is a module too.** The same loader runs the three stages, so a difference between stage 0 and stage 1 is a difference of the compilers, not of the ways they were run. Stage 0 is the C part of the module `c_compiler`, built by the same steps.
+- **Why the texts of stage 0 and of stage 1 must be equal.** The two are the same source of `chibicc`, one compiled by clang and one by `chibicc`. A different text names a fault of `chibicc`, of the thin libc or of the assembler at its first byte, before the hashes of the modules say only that they differ.
+- **Why on the host first.** The module `c_compiler` takes one source, and the module `assemble` keeps a workspace for 128 KiB of code; the program of `chibicc` has 295 KiB. The proof of the chain does not wait for the export `build` and its builders.
+
 ### Stage-by-stage chain verification and C-world validation
 
 Each bootstrap chain is expressed as a directed acyclic graph of typed stages backed by `plans_recipes.Recipe_Spec` and, for guest stages, `guest_builder.Guest_Build_Spec`:
@@ -82,4 +97,4 @@ Each arrow is a recipe. Its builder is the stage before it, its inputs are the s
 
 Built: the deterministic `modustool self-host` command, bootstrap verification harness (`tools/modustool/build/bootstrap.odin` and `tools/modustool/build/bootstrap_test.odin`), and canonical reproducible recipe catalog (`tools/modustool/build/bootstrap_recipes.odin` and `tools/modustool/build/bootstrap_recipes_test.odin`). `modustool self-host` compiles `tools/modustool` in two isolated staging directories (`stage1/modustool` builds `stage2/modustool`) and verifies exact BLAKE3 fixed-point equality (`H₁ == H₂`) or reports the first diverging byte offset. The canonical recipe catalog defines validated `plans_recipes.Recipe_Spec` and `guest_builder.Guest_Build_Spec` entries for `chibicc_stage1` and `chibicc_stage2` (with Stage 1 == Stage 2 hash verification), `sqlite` (amalgamation build plus self-test recipe), `lua` (Lua VM build plus test suite recipe), `zstd` (codec build plus round-trip verification recipe), and `live_bootstrap_chain` (`hex0` → `M2-Planet` → `mes` → `tcc` → `gcc` → `odin` in verified topological order with deterministic `recipe_hash` stability), alongside end-to-end host tests proving bit-for-bit identical BLAKE3 hashes for both the native x86-64 assembler (`internal:assemble/assembler`) and multi-function freestanding C + x86-64 assembly `ET_REL` → `.modus` conversion.
 
-Left: publishing signed Tier 1 realisations to the object cache, executing the full Tier 2 live-bootstrap chain inside the Linux guest builder, running the `chibicc` self-host recipe natively inside modus, and running the full upstream SQLite, Lua, and zstd test suites inside modus.
+Built also: `modustool c-self-host` and its host test: `chibicc` built by clang compiles the 14 C sources of `chibicc`, the assembler of modus makes stage 1 of their texts with no refusal, stage 1 gives the same texts, and stage 1 and stage 2 have one BLAKE3 hash (354 972 bytes on the tree of this change). Left: publishing signed Tier 1 realisations to the object cache, executing the full Tier 2 live-bootstrap chain inside the Linux guest builder, running the stages of the `chibicc` self-host on modus, each a recipe, and running the full upstream SQLite, Lua, and zstd test suites inside modus.

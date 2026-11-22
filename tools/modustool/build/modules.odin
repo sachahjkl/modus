@@ -331,17 +331,32 @@ module_c_commands :: proc(build: foundation.Module_Build) -> (commands: [][]stri
 	if build.c_source.folder == "" {
 		return nil, true
 	}
-	folder := os.get_env(build.c_source.variable, context.temp_allocator)
+	objects := foundation.join(foundation.module_build_folder, "/", build.name, "/objects")
+	return outside_source_c_commands(build.c_source, foundation.join("the module ", build.name), objects)
+}
+
+// c_source_folder gives the folder of the store of an outside source,
+// which its variable names. user names the one who compiles it, for the
+// message when the variable is not set.
+c_source_folder :: proc(c_source: foundation.Outside_Source, user: string) -> (folder: string, ok: bool) {
+	folder = os.get_env(c_source.variable, context.temp_allocator)
 	if folder == "" {
-		fmt.eprintfln("modustool: the module %s compiles in the C files of %s, and the variable %s is not set: run the tool in a shell of the flake (src/md/infrastructure/outside_source.md)", build.name, build.c_source.work, build.c_source.variable)
-		return nil, false
+		fmt.eprintfln("modustool: %s compiles in the C files of %s, and the variable %s is not set: run the tool in a shell of the flake (src/md/infrastructure/outside_source.md)", user, c_source.work, c_source.variable)
+		return "", false
 	}
+	return folder, true
+}
+
+// outside_source_c_commands gives the command of clang for each C file at
+// the top of the folder of an outside source, in the order of the names,
+// with each object in the folder objects.
+outside_source_c_commands :: proc(c_source: foundation.Outside_Source, user: string, objects: string) -> (commands: [][]string, ok: bool) {
+	folder := c_source_folder(c_source, user) or_return
 	sources := foundation.files_with_suffix(folder, ".c") or_return
 	if len(sources) == 0 {
-		fmt.eprintfln("modustool: the folder %s of %s (the variable %s) has no C file", folder, build.c_source.work, build.c_source.variable)
+		fmt.eprintfln("modustool: the folder %s of %s (the variable %s) has no C file", folder, c_source.work, c_source.variable)
 		return nil, false
 	}
-	objects := foundation.join(foundation.module_build_folder, "/", build.name, "/objects")
 	list := make([dynamic][]string, context.temp_allocator)
 	for source in sources {
 		name := strings.trim_suffix(source[strings.last_index(source, "/") + 1:], ".c")
@@ -352,7 +367,7 @@ module_c_commands :: proc(build: foundation.Module_Build) -> (commands: [][]stri
 		// each folder of -isystem that the wrapper adds.
 		append(&command, foundation.join("-I", folder, "/libc/include"), foundation.join("-I", folder))
 		// __FILE__ names the work, not a folder of the store.
-		append(&command, foundation.join("-ffile-prefix-map=", folder, "=", build.c_source.work))
+		append(&command, foundation.join("-ffile-prefix-map=", folder, "=", c_source.work))
 		append(&command, "-c", "-o", foundation.join(objects, "/c_", name, ".o"), source)
 		append(&list, command[:])
 	}
@@ -477,12 +492,30 @@ module_compile :: proc(build: foundation.Module_Build) -> bool {
 		foundation.run(command) or_return
 	}
 
-	// Only the exports of the module are visible in the linked object.
+	description := describe_package(build.source) or_return
+	export_names := make([dynamic]string, context.temp_allocator)
+	for export in description.exports {
+		append(&export_names, export.name)
+	}
+	linked := module_linked_file(build.name)
+	module_objects_link(folder, objects, export_names[:], linked) or_return
+	if build.kernel {
+		listing := kernel_listing(linked) or_return
+		kernel_has_no_vector_instruction(listing) or_return
+		kernel_stack_check(build, linked, listing) or_return
+	}
+	return true
+}
+
+// module_objects_link links each object of the folder objects with lld
+// into one position-independent object, linked. Only the exports are
+// visible in it: the version script of the folder makes each other symbol
+// local.
+module_objects_link :: proc(folder: string, objects: string, export_names: []string, linked: string) -> bool {
 	script := strings.builder_make(context.temp_allocator)
 	strings.write_string(&script, "{ global: ")
-	description := describe_package(build.source) or_return
-	for export in description.exports {
-		fmt.sbprintf(&script, "%s; ", export.name)
+	for name in export_names {
+		fmt.sbprintf(&script, "%s; ", name)
 	}
 	strings.write_string(&script, "local: *; };\n")
 	script_path := foundation.join(folder, "/exports.version")
@@ -490,8 +523,6 @@ module_compile :: proc(build: foundation.Module_Build) -> bool {
 		fmt.eprintfln("modustool: cannot write %s: %v", script_path, err)
 		return false
 	}
-
-	linked := module_linked_file(build.name)
 	link := make([dynamic]string, context.temp_allocator)
 	append(
 		&link,
@@ -510,13 +541,7 @@ module_compile :: proc(build: foundation.Module_Build) -> bool {
 		linked,
 	)
 	append(&link, ..(foundation.files_with_suffix(objects, ".o") or_return))
-	foundation.run(link[:]) or_return
-	if build.kernel {
-		listing := kernel_listing(linked) or_return
-		kernel_has_no_vector_instruction(listing) or_return
-		kernel_stack_check(build, linked, listing) or_return
-	}
-	return true
+	return foundation.run(link[:])
 }
 
 // module_convert is the conversion of a module: it writes the module file
