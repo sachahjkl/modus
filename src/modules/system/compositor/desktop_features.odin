@@ -88,6 +88,7 @@ desktop_window_opened :: proc "contextless" (index: int) {
 		return
 	}
 	_ = desktop_layout.workspace_add_window(&desktop_workspaces, u64(index + 1), desktop_workspaces.active_index)
+	damage_add(0, desktop_bar_y(), desktop_width, BAR_HEIGHT)
 }
 
 desktop_window_closed :: proc "contextless" (index: int) {
@@ -95,6 +96,7 @@ desktop_window_closed :: proc "contextless" (index: int) {
 		return
 	}
 	_ = desktop_layout.workspace_remove_window(&desktop_workspaces, u64(index + 1))
+	damage_add(0, desktop_bar_y(), desktop_width, BAR_HEIGHT)
 }
 
 desktop_features_tick :: proc "contextless" (now_ns: u64) {
