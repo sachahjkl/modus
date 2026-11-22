@@ -165,7 +165,7 @@ sandbox_free :: proc "contextless" () -> (sandbox: ^Sandbox, number: int) {
 }
 image_memory: system.Handle
 
-COMMAND_CAPACITY :: 256
+COMMAND_CAPACITY :: 512
 LOADED_CAPACITY :: 8
 
 // A module that the console loaded.
@@ -206,7 +206,7 @@ requests_memory: system.Handle
 request_count: u32 // The tag of the last command to the root service.
 
 // The names of the commands of services: "process.export".
-names: [8192]u8
+names: [16384]u8
 names_count: int
 
 // units: what the Integer of each parameter counts, in the order of the
@@ -350,7 +350,7 @@ commands_start :: proc "contextless" () {
 	//
 	// Errors: no module has the name; the module is loaded already; it
 	// exports no command (`start` runs a process); no room for its commands
-	// (256 commands, 8 modules); the hash differs from the boot image; the
+	// (512 commands, 8 modules); the hash differs from the boot image; the
 	// loader refuses the file, with the stage and the reason.
 	command("load", {.Text}, .Record, "load a module here: direct calls", load_module)
 	// Loads a module of the boot image into a new sandboxed process, a call
