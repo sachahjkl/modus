@@ -862,7 +862,7 @@ palette_turn :: proc "contextless" () {
 	// still in the terminal ring, was typed before the choice, and acts
 	// before it. The loop reads the terminal ring at its next turn, which
 	// comes at once: the ring is in its wait while no line runs.
-	if pending_count > 0 || ring.count(&output.ring.completions) > 0 {
+	if pending.count > 0 || ring.count(&output.ring.completions) > 0 {
 		return
 	}
 	// The typed values of a choice come before it, with its tag: they are

@@ -835,16 +835,16 @@ history_file_of_lines_of_utf8 :: proc(t: ^testing.T) {
 // what they mean when typed slowly.
 @(test)
 keys_while_a_line_runs :: proc(t: ^testing.T) {
-	testing.expect_value(t, running_key_action(false, false, 0, 4), Running_Key_Action.Wait)
-	testing.expect_value(t, running_key_action(false, true, 0, 4), Running_Key_Action.Wait)
-	testing.expect_value(t, running_key_action(true, true, 0, 4), Running_Key_Action.Stop_Call)
+	plain := Running_Line{runs = true}
+	stoppable := Running_Line{runs = true, call_stoppable = true}
+	testing.expect_value(t, running_key_action(false, plain, 0, 4), Running_Key_Action.Wait)
+	testing.expect_value(t, running_key_action(false, stoppable, 0, 4), Running_Key_Action.Wait)
+	testing.expect_value(t, running_key_action(true, stoppable, 0, 4), Running_Key_Action.Stop_Call)
 	// The line runs no call that Escape stops: Escape is a key of the next line.
-	testing.expect_value(t, running_key_action(true, false, 0, 4), Running_Key_Action.Wait)
-	testing.expect_value(t, running_key_action(true, false, 3, 4), Running_Key_Action.Wait)
+	testing.expect_value(t, running_key_action(true, plain, 0, 4), Running_Key_Action.Wait)
+	testing.expect_value(t, running_key_action(true, plain, 3, 4), Running_Key_Action.Wait)
 	// Escape stops the call also when keys wait, and when no key has room.
-	testing.expect_value(t, running_key_action(true, true, 4, 4), Running_Key_Action.Stop_Call)
-	testing.expect_value(t, running_key_action(true, false, 4, 4), Running_Key_Action.Drop)
-	testing.expect_value(t, running_key_action(false, false, 4, 4), Running_Key_Action.Drop)
+	testing.expect_value(t, running_key_action(true, stoppable, 4, 4), Running_Key_Action.Stop_Call)
 }
 
 // The process takes a key from its queue while a place is free. With no
@@ -852,23 +852,42 @@ keys_while_a_line_runs :: proc(t: ^testing.T) {
 // other case the key stays in the queue, and no key is lost.
 @(test)
 keys_stay_in_the_queue_when_no_key_can_wait_or_act :: proc(t: ^testing.T) {
-	testing.expect(t, running_key_can_be_taken(false, 0, 4))
-	testing.expect(t, running_key_can_be_taken(false, 3, 4))
-	testing.expect(t, running_key_can_be_taken(true, 3, 4))
-	testing.expect(t, !running_key_can_be_taken(false, 4, 4), "no place and no call to stop: the key stays in the queue")
-	testing.expect(t, running_key_can_be_taken(true, 4, 4), "the process reads on to find Escape")
-	// A key that is taken with a place never gives Drop.
-	for waiting in 0 ..< 4 {
-		for escape in ([2]bool{false, true}) {
-			for stoppable in ([2]bool{false, true}) {
-				if running_key_can_be_taken(stoppable, waiting, 4) {
-					testing.expect(t, running_key_action(escape, stoppable, waiting, 4) != .Drop)
+	plain := Running_Line{runs = true}
+	stoppable := Running_Line{runs = true, call_stoppable = true}
+	asked := Running_Line{runs = true, call_stoppable = true, stop_asked = true}
+	testing.expect(t, running_key_can_be_taken({}, 4, 4), "no line runs: each key acts at once")
+	testing.expect(t, running_key_can_be_taken(plain, 0, 4))
+	testing.expect(t, running_key_can_be_taken(plain, 3, 4))
+	testing.expect(t, running_key_can_be_taken(stoppable, 3, 4))
+	testing.expect(t, !running_key_can_be_taken(plain, 4, 4), "no place and no call to stop: the key stays in the queue")
+	testing.expect(t, !running_key_can_be_taken(asked, 4, 4), "the stop is asked already: the key stays in the queue")
+	testing.expect(t, running_key_can_be_taken(stoppable, 4, 4), "the process reads on to find Escape")
+	// With no place, a key is taken only when Escape can stop a call: the
+	// one key that is then lost is a key that is not Escape.
+	testing.expect_value(t, running_key_action(true, stoppable, 4, 4), Running_Key_Action.Stop_Call)
+	testing.expect_value(t, running_key_action(false, stoppable, 4, 4), Running_Key_Action.Drop)
+}
+
+// For each read of the line and each count of waiting keys, the two
+// decisions agree: a key that the read lets the process take is dropped
+// only when that same read says that an Escape can still stop a call, and
+// an Escape is never dropped.
+@(test)
+one_read_of_the_line_never_drops_a_key_that_could_stay :: proc(t: ^testing.T) {
+	for runs in ([2]bool{false, true}) {
+		for call_stoppable in ([2]bool{false, true}) {
+			for stop_asked in ([2]bool{false, true}) {
+				line := Running_Line{runs, call_stoppable, stop_asked}
+				for waiting in 0 ..= 5 {
+					if !runs || !running_key_can_be_taken(line, waiting, 4) {
+						continue
+					}
+					testing.expect(t, running_key_action(true, line, waiting, 4) != .Drop, "an Escape is never dropped")
+					if running_key_action(false, line, waiting, 4) == .Drop {
+						testing.expect(t, waiting >= 4 && call_stoppable && !stop_asked)
+					}
 				}
 			}
 		}
 	}
-	// With no place, a key is taken only when Escape can stop a call: the
-	// one key that is then lost is a key that is not Escape.
-	testing.expect_value(t, running_key_action(true, true, 4, 4), Running_Key_Action.Stop_Call)
-	testing.expect_value(t, running_key_action(false, true, 4, 4), Running_Key_Action.Drop)
 }

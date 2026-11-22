@@ -9,13 +9,17 @@ package console
 //   the load   At the start, in the first thread, before it reads a key:
 //              the connection, then the file of the history. The second
 //              thread runs no line yet, so the history has one user.
-//   the save   After each line that the history added, in the second
-//              thread, while the line still counts as running: the first
-//              thread adds no line meanwhile. One commit for each line
-//              added: a held Enter adds one line at most (an empty line
-//              and the newest line again add nothing), so the commits
-//              follow the lines that the input types. Before shutdown()
-//              and stop("console"), whose save after the line never comes.
+//   the save   In the second thread, after the line ended, when no other
+//              line waits: a line that the principal entered never waits
+//              for a commit (line_editor.line_thread_work_choose). One
+//              commit for each line added: a held Enter adds one line at
+//              most (an empty line and the newest line again add
+//              nothing), so the commits follow the lines that the input
+//              types, whatever the speed of the host. Each commit writes
+//              a copy of the history of now, so the first thread can add
+//              a line meanwhile. A save that fails gives up the commits
+//              owed until a new line is added. Before shutdown() and
+//              stop("console"), whose save after the line never comes.
 //
 // A line of the file is data that this run did not write: the read checks
 // each field and each byte, a line keeps the bounds of a typed line (200
@@ -39,7 +43,11 @@ HISTORY_CONNECT_TIME :: 30_000
 
 history_client: storage.Client
 history_connected: bool
-history_saved_lines: u64 // history.lines_written at the last save or load.
+history_saved_lines: u64 // history.lines_written at the last save or load that succeeded.
+// The lines added to the history whose commit was tried, whether it
+// succeeded or failed: one commit for each line, and a failure gives up
+// the rest until a new line.
+history_tried_lines: u64
 history_save_failure_logged: bool
 // The history as the save writes it: a copy, so that the first thread can
 // add a line during the commit. Only the second thread uses it.
@@ -136,16 +144,24 @@ history_load :: proc "contextless" () {
 	// A refused file left an empty history, so an empty frecency.
 	line_editor.frecency_from_history(&completion_frecency, &history)
 	history_saved_lines = history.lines_written
+	history_tried_lines = history.lines_written
+}
+
+// history_save_owed says if the history has lines that no save tried. With
+// no store, nothing is owed.
+history_save_owed :: proc "contextless" () -> bool {
+	if !history_connected {
+		return false
+	}
+	system.lock(&history_lock)
+	defer system.unlock(&history_lock)
+	return line_editor.history_save_owed(history.lines_written, history_tried_lines)
 }
 
 // history_save writes the history to its store, when lines were added
-// since the last save. A failure writes one log line in a run: the history
-// stays in memory.
-//
-// The second thread calls it, also after its line ended: the first thread
-// can add a line meanwhile. So the save works on a copy of the history,
-// made under history_lock, and the call of the storage service holds no
-// lock.
+// since the last save that succeeded. shutdown(), stop("console") and
+// exit() call it before they act: the save after their line never comes.
+// The owed commits of the lines before are then one commit.
 history_save :: proc "contextless" () {
 	if !history_connected {
 		return
@@ -156,14 +172,56 @@ history_save :: proc "contextless" () {
 		return
 	}
 	history_copy = history
+	written := history.lines_written
 	system.unlock(&history_lock)
+	ok := history_commit()
+	system.lock(&history_lock)
+	if ok || written > history_tried_lines {
+		history_tried_lines = written
+	}
+	system.unlock(&history_lock)
+}
+
+// history_save_owed_line makes the commit of the oldest line that the
+// history added and that no commit tried, with the history of now: the
+// thread that runs the lines calls it when no line waits
+// (line_editor.line_thread_work_choose). A line typed during a line runs
+// before the save of that line; the commits stay one for each line added,
+// so their count is a fact of the lines, not of the speed of the host.
+// A save that fails gives up the commits owed until the next line: a store
+// that cannot be reached is not tried again in a loop.
+history_save_owed_line :: proc "contextless" () {
+	if !history_connected {
+		return
+	}
+	system.lock(&history_lock)
+	if !line_editor.history_save_owed(history.lines_written, history_tried_lines) {
+		system.unlock(&history_lock)
+		return
+	}
+	history_copy = history
+	written := history.lines_written
+	system.unlock(&history_lock)
+	ok := history_commit()
+	system.lock(&history_lock)
+	// The count of the lines tried never passes the lines written.
+	if history_tried_lines < written {
+		history_tried_lines = ok ? history_tried_lines + 1 : written
+	}
+	system.unlock(&history_lock)
+}
+
+// history_commit writes history_copy to the store. The call of the storage
+// service holds no lock: the first thread can add a line meanwhile. A
+// failure writes one log line in a run: the history stays in memory.
+history_commit :: proc "contextless" () -> (ok: bool) {
 	buffer: [line_editor.HISTORY_FILE_SIZE_LIMIT]u8
 	bytes := line_editor.history_file_write(&history_copy, buffer[:])
 	error: errors.Error_Record
 	_, status := storage.write(&history_client, storage.ROOT, HISTORY_OBJECT_NAME, bytes, &error)
 	if status == .Ok {
 		history_saved_lines = history_copy.lines_written
-		return
+		return true
 	}
 	if !history_save_failure_logged {
 		history_save_failure_logged = true
@@ -173,6 +231,7 @@ history_save :: proc "contextless" () {
 			system.log_fact(.Info, History_Store_Unreachable{})
 		}
 	}
+	return false
 }
 
 // history_clear forgets the line history: in the memory of the console,
@@ -188,6 +247,7 @@ history_clear :: proc "contextless" (arguments: []Value) -> Value {
 	system.unlock(&history_lock)
 	history_place = 0
 	history_saved_lines = history.lines_written
+	history_tried_lines = history.lines_written
 	if !history_connected {
 		return {kind = .Integer, integer = i64(count)} // It had no store.
 	}

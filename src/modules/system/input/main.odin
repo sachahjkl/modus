@@ -299,6 +299,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// An interrupt of this process is an event.
 		wait := system.wait_begin()
 		held := false
+		room_needed: u32 = 1 // The records that the next record or byte needs: a byte of the keyboard with an accent waiting needs two.
 		for {
 			pointer_backlog_send()
 			tablet_backlog_send()
@@ -316,6 +317,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				// No place for the record of this byte: the byte stays in
 				// the controller, and the device holds the ones after it.
 				held = true
+				room_needed = u32(records_needed)
 				break
 			}
 			value := system.port_read_8(PORT_DATA)
@@ -339,8 +341,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if held || pointer_backlog.count > 0 || tablet_backlog.count > 0 {
 			// The compositor wakes this thread when half of the ring is
 			// free, or before it waits itself. If the ring already has
-			// room, the wait ends at once.
-			system.wait_room(&wait, &output.commands)
+			// room for what waits, the wait ends at once. A byte that
+			// needs two records and finds one place waits for a read of
+			// the compositor: with wait_room, it found the ring not full
+			// and turned with no wait until the compositor read.
+			system.wait_room_for(&wait, &output.commands, room_needed)
 		}
 		system.wait_end(&wait)
 	}
