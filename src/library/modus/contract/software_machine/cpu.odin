@@ -2029,6 +2029,53 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 		cpu.steps_executed += 1
 		return .Running
 
+	case 0xA5:
+		// MOVSW / MOVSD / MOVSQ (+ REP): word/dword/qword move.
+		elem_size: u64 = 2 if width == .Bits_16 else (8 if width == .Bits_64 else 4)
+		if prefixes.has_rep {
+			rcx := cpu.registers[int(General_Register.Rcx)]
+			if rcx == 0 {
+				cpu.rip = cursor.current_rip
+				cpu.steps_executed += 1
+				return .Running
+			}
+			rsi := cpu.registers[int(General_Register.Rsi)]
+			rdi := cpu.registers[int(General_Register.Rdi)]
+			src_addr := rsi + (cpu.gs_base if prefixes.has_gs_override else 0)
+			val, o_r := read_memory_width(cpu, physical_memory, cursor.start_rip, src_addr, width)
+			if o_r != .Running {
+				return o_r
+			}
+			o_w := write_memory_width(cpu, physical_memory, cursor.start_rip, rdi, width, val)
+			if o_w != .Running {
+				return o_w
+			}
+			delta := -elem_size if (cpu.rflags & RFLAGS_DF) != 0 else elem_size
+			cpu.registers[int(General_Register.Rsi)] = rsi + delta
+			cpu.registers[int(General_Register.Rdi)] = rdi + delta
+			cpu.registers[int(General_Register.Rcx)] = rcx - 1
+			cpu.rip = cursor.current_rip if rcx - 1 == 0 else cursor.start_rip
+			cpu.steps_executed += 1
+			return .Running
+		}
+		rsi := cpu.registers[int(General_Register.Rsi)]
+		rdi := cpu.registers[int(General_Register.Rdi)]
+		src_addr := rsi + (cpu.gs_base if prefixes.has_gs_override else 0)
+		val, o_r := read_memory_width(cpu, physical_memory, cursor.start_rip, src_addr, width)
+		if o_r != .Running {
+			return o_r
+		}
+		o_w := write_memory_width(cpu, physical_memory, cursor.start_rip, rdi, width, val)
+		if o_w != .Running {
+			return o_w
+		}
+		delta := -elem_size if (cpu.rflags & RFLAGS_DF) != 0 else elem_size
+		cpu.registers[int(General_Register.Rsi)] = rsi + delta
+		cpu.registers[int(General_Register.Rdi)] = rdi + delta
+		cpu.rip = cursor.current_rip
+		cpu.steps_executed += 1
+		return .Running
+
 	case 0xAA:
 		// STOSB / REP STOSB: one byte per step so `max_steps` strictly bounds RCX.
 		al := u8(cpu.registers[int(General_Register.Rax)] & 0xFF)
@@ -2070,6 +2117,40 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 			return record_translation_fault(cpu, cursor.start_rip, res_w)
 		}
 		delta := max(u64) if (cpu.rflags & RFLAGS_DF) != 0 else u64(1)
+		cpu.registers[int(General_Register.Rdi)] = rdi + delta
+		cpu.rip = cursor.current_rip
+		cpu.steps_executed += 1
+		return .Running
+
+	case 0xAB:
+		// STOSW / STOSD / STOSQ (+ REP): word/dword/qword store.
+		elem_size: u64 = 2 if width == .Bits_16 else (8 if width == .Bits_64 else 4)
+		val := read_register(cpu, u8(General_Register.Rax), width, prefixes.has_rex)
+		if prefixes.has_rep {
+			rcx := cpu.registers[int(General_Register.Rcx)]
+			if rcx == 0 {
+				cpu.rip = cursor.current_rip
+				cpu.steps_executed += 1
+				return .Running
+			}
+			rdi := cpu.registers[int(General_Register.Rdi)]
+			o_w := write_memory_width(cpu, physical_memory, cursor.start_rip, rdi, width, val)
+			if o_w != .Running {
+				return o_w
+			}
+			delta := -elem_size if (cpu.rflags & RFLAGS_DF) != 0 else elem_size
+			cpu.registers[int(General_Register.Rdi)] = rdi + delta
+			cpu.registers[int(General_Register.Rcx)] = rcx - 1
+			cpu.rip = cursor.current_rip if rcx - 1 == 0 else cursor.start_rip
+			cpu.steps_executed += 1
+			return .Running
+		}
+		rdi := cpu.registers[int(General_Register.Rdi)]
+		o_w := write_memory_width(cpu, physical_memory, cursor.start_rip, rdi, width, val)
+		if o_w != .Running {
+			return o_w
+		}
+		delta := -elem_size if (cpu.rflags & RFLAGS_DF) != 0 else elem_size
 		cpu.registers[int(General_Register.Rdi)] = rdi + delta
 		cpu.rip = cursor.current_rip
 		cpu.steps_executed += 1

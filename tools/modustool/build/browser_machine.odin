@@ -99,7 +99,7 @@ BROWSER_MACHINE_ROOT_STAGE_LINE :: "kernel: boot: kernel: root service: "
 // writes its usable line, the host types the command on the PS/2 keyboard,
 // and the console must write the answer line. The answer is the line of
 // help() for shutdown: the echo of the typed line does not hold it.
-BROWSER_MACHINE_USABLE_LINE :: "root: the machine is usable"
+BROWSER_MACHINE_USABLE_LINE :: "[console] modus console"
 BROWSER_MACHINE_TYPED_COMMAND :: "help()"
 BROWSER_MACHINE_ANSWER_PREFIX :: "[console] shutdown "
 BROWSER_MACHINE_ANSWER_TEXT :: "stop the machine"
