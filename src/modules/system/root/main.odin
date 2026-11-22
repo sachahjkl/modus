@@ -148,6 +148,7 @@ COMPOSITOR_GRANT_CONTROL :: 2 // The control ring from this service.
 // registers of the standard VGA, when its handle 0 is the memory of two
 // screen pages (devices.odin, display_open). 0: no page flip.
 COMPOSITOR_GRANT_DISPLAY_REGISTERS :: 3
+COMPOSITOR_GRANT_GPU_RING :: 4 // Optional VirtIO-GPU client ring when gpu_device started.
 // The values 0 to 3 of the context of the compositor: the screen.
 COMPOSITOR_VALUE_WIDTH :: 0
 COMPOSITOR_VALUE_HEIGHT :: 1
@@ -942,6 +943,9 @@ compositor_start :: proc "contextless" () -> system.Status {
 	}
 	system.grant_put(&context_grants, COMPOSITOR_GRANT_INPUT, {input_memory, {.Read, .Write}})
 	system.grant_put(&context_grants, COMPOSITOR_GRANT_CONTROL, {control_memory, {.Read, .Write}})
+	if gpu_client_ring_memory != 0 {
+		system.grant_put(&context_grants, COMPOSITOR_GRANT_GPU_RING, {gpu_client_ring_memory, {.Read, .Write}})
+	}
 	display_name := role_holder_name(.Display)
 	start_grant_set := start_grant_set_of(display_name)
 	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set))

@@ -292,6 +292,7 @@ screen_page_debts: interface.Picture_Debts
 page_flips: u64 // The page flips since the start.
 frames_on_the_shown_page: u64 // The frames written into the screen page that the display showed.
 frame: graphics.Canvas // The picture that the compositor builds, then copies to the screen.
+frame_memory_handle: system.Handle
 background: graphics.Canvas
 background_appearance: graphics.Appearance // The appearance of the pixels of `background` and of the mark of the bar.
 clients: [CLIENT_CAPACITY]Client
@@ -586,6 +587,19 @@ damage_bar :: proc "contextless" () {
 	damage_add(0, desktop_bar_y(), desktop_width, BAR_HEIGHT)
 }
 
+canvas_create_with_handle :: proc "contextless" (width, height: int) -> (canvas: graphics.Canvas, handle: system.Handle) {
+	memory, status := system.memory_create((u64(width * height * 4) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+	address: rawptr
+	if status == .Ok {
+		address, status = system.memory_map(memory)
+	}
+	if status != .Ok {
+		system.log_fact(.Info, No_Memory{})
+		system.stop(.Failed)
+	}
+	return {pixels = ([^]graphics.Color)(address), width = width, height = height, stride = width}, memory
+}
+
 canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
 	memory, status := system.memory_create((u64(width * height * 4) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
 	address: rawptr
@@ -703,7 +717,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Info, Screen_Past_Budget{width = u64(width), height = u64(height), needed_pages = needed_pages, budget_pages = u64(budget_left.pages)})
 		system.stop(.Failed)
 	}
-	frame = canvas_create(width, height)
+	frame, frame_memory_handle = canvas_create_with_handle(width, height)
+	gpu_scanout_open(ctx, frame_memory_handle, width, height)
 	background = canvas_create(width, height)
 	// The layout at the default scale until the settings page is read
 	// below: a page that the root service created holds it.
@@ -1575,6 +1590,7 @@ draw_areas :: proc "contextless" (areas: []Rectangle) {
 		pointer_draw(canvas, -area.left, -area.top) // pointer_picture.odin
 	}
 	screen_put(areas)
+	gpu_scanout_present(areas)
 }
 
 // screen_put puts the frame in memory on the screen. With one screen page,

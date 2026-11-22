@@ -61,6 +61,17 @@ Window :: struct {
 	due:      i64, // 1: the process said that a change of the window waits for its next picture, which it draws at a time of its own clock. The window does not show the last state of the process yet. The process says this of itself.
 }
 
+// VirtIO-GPU 1.2 scanout and Venus capability status: gpu_info().
+Gpu_Info :: struct {
+	present:           i64, // 1: VirtIO-GPU PCI device discovered and gpu_device running.
+	attached:          i64, // 1: compositor framebuffer attached to VirtIO-GPU scanout.
+	width:             i64, // Reported VirtIO-GPU scanout width in pixels.
+	height:            i64, // Reported VirtIO-GPU scanout height in pixels.
+	venus:             i64, // 1: host VirtIO-GPU exposes a Venus Vulkan capability set.
+	venus_max_version: i64, // Highest Venus capset version reported by the host.
+	presents:          i64, // Number of Present_Rect flushes completed on VirtIO-GPU.
+}
+
 // What the screen shows against what the compositor received: screen().
 Screen :: struct {
 	frames:   i64, // The frames that the compositor drew since the start.
@@ -437,5 +448,29 @@ bar_position_export :: proc "c" (pos_word: i64, error: ^errors.Error_Record) -> 
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Counts, 1, pos_word)
 	}
 	desktop_bar_position_set(pos)
+	return 1
+}
+
+// gpu_info returns one row describing the VirtIO-GPU 1.2 scanout and Venus
+// capability state discovered by the compositor, or a negative number with an
+// error record.
+//
+// **Grant**: the caller must **act for the principal**.
+@(export, link_name = "gpu_info")
+gpu_info_export :: proc "c" (result: ^[]Gpu_Info, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if len(result^) > 0 {
+		result[0] = {
+			present           = gpu_present ? 1 : 0,
+			attached          = gpu_attached ? 1 : 0,
+			width             = i64(gpu_width),
+			height            = i64(gpu_height),
+			venus             = gpu_venus_available ? 1 : 0,
+			venus_max_version = i64(gpu_venus_max_version),
+			presents          = i64(gpu_presents),
+		}
+	}
 	return 1
 }

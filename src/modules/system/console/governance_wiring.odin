@@ -5,6 +5,7 @@ package console
 import "modus:contract/console_prompt"
 import "modus:contract/locale_cldr"
 import "modus:contract/blake3"
+import "modus:system"
 import "modus:contract/role_contract"
 import "modus:contract/tree_hash"
 
@@ -110,4 +111,59 @@ tree_hash_command :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	scratch_count += 64
 	return {kind = .Text, text = string(dst)}
+}
+
+// compile_c_command compiles C source text inside modus in one step:
+// ensures c_compiler (chibicc) and assemble call hosts are running, compiles
+// C -> x86-64 assembly -> validated .modus module, and isolates it under name
+// so its exports become immediately callable Lex commands.
+compile_c_command :: proc "contextless" (arguments: []Value) -> Value {
+	mod_name := arguments[0]
+	c_source := arguments[1]
+	if len(mod_name.text) == 0 || len(c_source.text) == 0 {
+		return fail("compile_c: expected a module name and C source text")
+	}
+	if command_find("c_compiler") == nil {
+		iso_cc := [1]Value{{kind = .Text, text = "c_compiler"}}
+		r := isolate_module(iso_cc[:])
+		if r.kind == .None {
+			return {}
+		}
+	}
+	if command_find("assemble") == nil {
+		iso_as := [1]Value{{kind = .Text, text = "assemble"}}
+		r := isolate_module(iso_as[:])
+		if r.kind == .None {
+			return {}
+		}
+	}
+	buf_pages := [1]Value{{kind = .Integer, integer = 16}}
+	asm_buf := call_run("buffer", buf_pages[:])
+	if asm_buf.kind != .Handle {
+		return {}
+	}
+	defer system.close(system.Handle(asm_buf.integer))
+	mod_buf := call_run("buffer", buf_pages[:])
+	if mod_buf.kind != .Handle {
+		return {}
+	}
+	defer system.close(system.Handle(mod_buf.integer))
+
+	cc_args := [2]Value{c_source, asm_buf}
+	asm_len := call_run("c_compiler", cc_args[:])
+	if asm_len.kind != .Integer || asm_len.integer <= 0 {
+		return {}
+	}
+	slice_args := [3]Value{asm_buf, {kind = .Integer, integer = 0}, asm_len}
+	asm_bytes := call_run("bytes", slice_args[:])
+	if asm_bytes.kind != .Bytes {
+		return {}
+	}
+	as_args := [2]Value{asm_bytes, mod_buf}
+	mod_len := call_run("assemble", as_args[:])
+	if mod_len.kind != .Integer || mod_len.integer <= 0 {
+		return {}
+	}
+	iso_args := [3]Value{mod_name, mod_buf, mod_len}
+	return isolate_from_memory(iso_args[:])
 }

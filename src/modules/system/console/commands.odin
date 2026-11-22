@@ -972,6 +972,11 @@ commands_start :: proc "contextless" () {
 	// - `name`: entry name inside the tree.
 	// - `content`: text bytes hashed as the file leaf.
 	command("tree_hash", {.Text, .Text}, .Text, "canonical BLAKE3 hash of an immutable tree entry", tree_hash_command)
+	// Compiles C source text in one step via c_compiler and assemble, then isolates the resulting module under name.
+	//
+	// - `name`: name of the new isolated module in the console.
+	// - `source`: C source code whose exported functions become callable commands.
+	command("compile_c", {.Text, .Text}, .Record, "compile C source into an isolated module and load its exports", compile_c_command)
 	debugger_commands_start()
 	tables_start()
 	facts_start() // facts.odin
