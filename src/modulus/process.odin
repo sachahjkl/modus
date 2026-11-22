@@ -1110,8 +1110,11 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	if intrinsics.atomic_load(&region.marked_pages) != 0 {
 		return 0, .Bad_State
 	}
-	if record_replay_map_conflict(index_of_process(process), region_index, flags) {
-		return 0, .Bad_State
+	// A recorded process can map memory that another process holds: the
+	// record takes the mapping after it is made (record_received_mapping_locked).
+	received_by_record, record_status := record_replay_map_check(index_of_process(process), region_index, flags, first, count, by_the_process)
+	if record_status != .Ok {
+		return 0, record_status
 	}
 	count := count
 	if count == 0 && first < region.page_count {
@@ -1292,6 +1295,13 @@ map_region :: proc "contextless" (process: ^Process, region_index: u32, address:
 	process.mappings_held += 1
 	if process.mappings_held > process.mappings_peak {
 		process.mappings_peak = process.mappings_held
+	}
+	if received_by_record {
+		if taken_status := record_received_mapping_locked(process, mapping); taken_status != .Ok {
+			// The unmap frees what the record took for this mapping.
+			unmap(process, mapping)
+			return 0, taken_status
+		}
 	}
 	return address, .Ok
 }

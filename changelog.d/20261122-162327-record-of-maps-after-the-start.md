@@ -1,0 +1,3 @@
+type: Added
+
+**A recorded process maps memory that it receives after its start**: a process that is recorded can now map a ring or a window surface that another process gives it, in place of a refusal. The input history holds the mapping right after its `Memory_Map`, with its first bytes and each later change by the peer, and a replay maps private pages at the same address, so the console and a window process can be recorded and replayed alone. A mapping that a replay could not hold (more than 96 stand-in mappings or 96 pages, a second mapping of the same object, `Execute`) gives its `Memory_Map` a status.

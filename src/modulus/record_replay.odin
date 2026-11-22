@@ -71,6 +71,17 @@ Shared_Page :: struct {
 	active:          bool,
 }
 
+// A mapping that a recorded process made, after its start, of memory that
+// another process holds, whose Shared_Mapping record waits for the
+// Kernel_Completion of its Memory_Map: the replay reads the completion
+// first, and maps its stand-in mapping at the recorded address.
+Pending_Shared_Mapping :: struct {
+	virtual_address: u64,
+	page_count:      u64,
+	access:          input_history.Shared_Mapping_Access,
+	active:          bool,
+}
+
 // Per-process record/replay state, indexed by process slot. Kept out of
 // Process so unrecorded processes pay no cache footprint.
 Process_Record_State :: struct {
@@ -95,8 +106,16 @@ Process_Record_State :: struct {
 	shared_page_count:  u32,
 	// The replay: the private pages that it maps where the record had a
 	// shared mapping (replay_stand_in_mapping_add_locked). Each place is a
-	// memory object of the replay, paid by the budget of the history.
+	// memory object of the replay, paid by the budget of the history. The
+	// record keeps the same set for each Shared_Mapping that it writes,
+	// with the shared memory object as the place: a mapping that the replay
+	// could not hold is refused while the process runs, not at its replay.
 	stand_ins:          input_history.Stand_In_Mapping_Set,
+	// A mapping of received memory that the recorded process made in this
+	// kernel entry (record_received_mapping_locked): its Shared_Mapping and
+	// its first bytes enter the history right after the completion of its
+	// Memory_Map (record_received_mapping_write_locked).
+	pending_mapping:    Pending_Shared_Mapping,
 	has_shared_writers: bool, // The gate is in use: the writers know this record (atomic).
 	writers_held:       bool, // The writers wait for the recorded thread: the pick passes over them (atomic).
 	writers_held_since: u64, // Milliseconds since boot when the recorded thread last left its input point (atomic).
@@ -288,8 +307,8 @@ process_disqualified_for_recording :: proc "contextless" (target_index: u32, sha
 			if intrinsics.atomic_load(&region.declared) != 0 {
 				return true
 			}
-			// A handle alone writes nothing: the process can map it later only
-			// when no other process holds it (record_replay_map_conflict).
+			// A handle alone writes nothing: a later map of it by the process
+			// is checked then (record_replay_map_check).
 			if !shared_writers_allowed && .Write in slot.rights && region_mapped_by_other(target_index, slot.object) {
 				return true
 			}
@@ -512,14 +531,34 @@ record_replay_on_unmap :: proc "contextless" (process_index: u32, region_index: 
 		return
 	}
 	intrinsics.atomic_sub(&regions[region_index].recorded_mappings, 1)
-	// A stand-in mapping that the replay unmaps ends: its memory object
-	// can serve again, for another process, and a later delta there is a
-	// divergence.
-	_ = input_history.stand_in_mapping_set_remove(&rec.stand_ins, region_index)
+	end := address + page_count * PAGE_SIZE
+	if rec.mode == .Recording {
+		// The replay unmaps its stand-in mapping at the same input point:
+		// the record keeps its set as the replay will have it. A mapping
+		// that failed in its own Memory_Map writes no Shared_Mapping.
+		_ = input_history.stand_in_mapping_set_remove_range(&rec.stand_ins, address, page_count)
+		pending := rec.pending_mapping
+		if pending.active && pending.virtual_address < end && address < pending.virtual_address + pending.page_count * PAGE_SIZE {
+			rec.pending_mapping = {}
+		}
+		// The memory object of an unmapped shared page can end: no diff
+		// reads it again.
+		for index in u32(0) ..< rec.shared_page_count {
+			page := &rec.shared_pages[index]
+			if page.active && page.virtual_address >= address && page.virtual_address < end {
+				point_copy_frame_free(rec.history_region, page.baseline_frame)
+				page^ = {}
+			}
+		}
+	} else {
+		// A stand-in mapping that the replay unmaps ends: its memory object
+		// can serve again, for another process, and a later delta there is
+		// a divergence.
+		_ = input_history.stand_in_mapping_set_remove(&rec.stand_ins, region_index)
+	}
 	if rec.point_copy_count == 0 {
 		return
 	}
-	end := address + page_count * PAGE_SIZE
 	for index in u32(0) ..< rec.point_copy_count {
 		pc := &rec.point_copies[index]
 		if pc.active && pc.virtual_address >= address && pc.virtual_address < end {
@@ -529,32 +568,309 @@ record_replay_on_unmap :: proc "contextless" (process_index: u32, region_index: 
 	}
 }
 
-// record_replay_map_conflict enforces mapping isolation while any process is
-// recorded or replayed:
+// record_replay_map_check enforces mapping isolation while any process is
+// recorded or replayed, before map_region changes anything:
 // - A recorded or replayed process cannot map an active history buffer, device
-//   memory, IOMMU-declared memory, or any region shared with another process.
+//   memory or IOMMU-declared memory (Bad_State).
+// - A recorded process maps memory that another process holds (a window
+//   surface, a ring) only by itself, after the checks of
+//   record_received_mapping_admit: received is true, and map_region then
+//   gives the mapping to record_received_mapping_locked. A replay holds no
+//   peer, and a map by another process changes the address space at any
+//   instruction: both are refused (Bad_State).
 // - Another process cannot gain a writable mapping to a region currently
-//   mapped by a recorded or replayed process.
+//   mapped by a recorded or replayed process (Bad_State).
 // Called from map_region under process's process lock.
-record_replay_map_conflict :: proc "contextless" (process_index: u32, region_index: u32, flags: op.Map_Flags) -> bool {
+record_replay_map_check :: proc "contextless" (process_index: u32, region_index: u32, flags: op.Map_Flags, first: u64, count: u64, by_the_process: bool) -> (received: bool, status: Operation_Outcome) {
 	if intrinsics.atomic_load(&record_replay_active_count) == 0 {
-		return false
+		return false, .Ok
 	}
-	if intrinsics.atomic_load(&process_records[process_index].mode) != .None {
-		region := &regions[region_index]
-		if history_region_in_use(region_index) || (region.device && !region_record_allowed_static(region_index)) || intrinsics.atomic_load(&region.declared) != 0 {
-			return true
+	mode := intrinsics.atomic_load(&process_records[process_index].mode)
+	if mode == .None {
+		if .Write in flags && intrinsics.atomic_load(&regions[region_index].recorded_mappings) != 0 {
+			return false, .Bad_State
 		}
-		own_refs := process_own_region_references(&processes[process_index], region_index)
-		if intrinsics.atomic_load(&region.references) > own_refs {
-			return true
+		return false, .Ok
+	}
+	region := &regions[region_index]
+	if history_region_in_use(region_index) || (region.device && !region_record_allowed_static(region_index)) || intrinsics.atomic_load(&region.declared) != 0 {
+		return false, .Bad_State
+	}
+	own_refs := process_own_region_references(&processes[process_index], region_index)
+	if intrinsics.atomic_load(&region.references) <= own_refs {
+		return false, .Ok
+	}
+	if mode != .Recording || !by_the_process {
+		return false, .Bad_State
+	}
+	return true, record_received_mapping_admit(process_index, region_index, flags, first, count)
+}
+
+// record_received_mapping_admit refuses, before any change, a mapping of
+// received memory that the record or its replay cannot hold: an access
+// that no stand-in mapping can have, an uncommitted or large-page object,
+// more pages than one Shared_Mapping names, a stand-in mapping past the
+// capacity of a replay, or a second mapping of an object that the process
+// maps already: the replay gives each mapping its own stand-in memory, so
+// the writes of the process through one would not reach the other. Then it
+// asks for the control lock: the scan of the
+// writers of the object (record_received_mapping_locked) takes the lock of
+// each other process. A range that map_region refuses itself gives Ok here,
+// and map_region gives its own status. Caller holds the process lock.
+@(private = "file")
+record_received_mapping_admit :: proc "contextless" (process_index: u32, region_index: u32, flags: op.Map_Flags, first: u64, count: u64) -> Operation_Outcome {
+	rec := &process_records[process_index]
+	region := &regions[region_index]
+	if _, access_ok := input_history.shared_mapping_access_of_map_flags(flags); !access_ok || region.uncommitted || region.large_pages {
+		return .Bad_State
+	}
+	count := count
+	if count == 0 && first < region.page_count {
+		count = region.page_count - first
+	}
+	if count == 0 || first >= region.page_count || count > region.page_count - first {
+		return .Ok
+	}
+	if count > input_history.SHARED_MAPPING_PAGE_LIMIT || rec.stand_ins.count >= input_history.STAND_IN_MAPPING_CAPACITY || count > input_history.STAND_IN_PAGE_LIMIT - rec.stand_ins.page_count {
+		return .No_Slot
+	}
+	for mapping in processes[process_index].mappings {
+		if mapping.page_count != 0 && mapping.region == region_index {
+			return .Bad_State
 		}
-		return false
 	}
-	if .Write in flags && intrinsics.atomic_load(&regions[region_index].recorded_mappings) != 0 {
-		return true
+	return require_control()
+}
+
+// record_received_mapping_locked takes a mapping that the recorded process
+// just made of memory that another process holds. The set of the stand-in
+// mappings gets it, and the pages that another process writes get what the
+// record needs while the process runs: a point copy for each page mapped
+// without Write, or a baseline under the gate of its shared writers for
+// each page mapped with Write. A page that no other process writes needs
+// nothing more: only its first bytes, which the history takes after the
+// completion of the Memory_Map. On a refusal, map_region unmaps the
+// mapping, which takes back what this procedure took for each page before
+// the failed one: the entries go to 0 before the shoot-down, and
+// record_replay_on_unmap frees the point copies and the baselines of the
+// range, removes the stand-in entry and clears the pending mapping. The
+// pending mapping is set last, so a refusal never leaves one.
+// Caller holds Control and the process lock; the recorded thread is in its
+// kernel entry, at an input point.
+record_received_mapping_locked :: proc "contextless" (process: ^Process, mapping: ^Mapping) -> Operation_Outcome {
+	process_index := index_of_process(process)
+	rec := &process_records[process_index]
+	region := &regions[mapping.region]
+	access := mapping.bits & PAGE_WRITE != 0 ? input_history.Shared_Mapping_Access.Read_Write : input_history.Shared_Mapping_Access.Read
+	for page in u64(0) ..< mapping.page_count {
+		state := region_page_state(region, mapping.first + page)
+		if page_bits(mapping, state) == 0 || !page_committed(region, state) {
+			return .Bad_State
+		}
 	}
-	return false
+	entry := input_history.Shared_Mapping_Payload {
+		virtual_address = mapping.address,
+		page_count      = mapping.page_count,
+		access          = u32(access),
+	}
+	if !input_history.stand_in_mapping_set_add(&rec.stand_ins, entry, access, mapping.region, region.serial) {
+		return .No_Slot
+	}
+	// The scan comes after map_region counted this mapping in
+	// recorded_mappings: a process that maps the object with Write later is
+	// refused, and one that did it before is seen here.
+	switch access {
+	case .None:
+		return .Bad_State
+	case .Read:
+		if mapping.region == time_region || region_mapped_writable_by_other(process_index, mapping.region) {
+			point_copies_install_locked(process_index, rec, mapping) or_return
+		}
+	case .Read_Write:
+		if region_mapped_writable_by_other(process_index, mapping.region) {
+			shared_pages_install_locked(process_index, rec, mapping) or_return
+		}
+	}
+	rec.pending_mapping = {
+		virtual_address = mapping.address,
+		page_count      = mapping.page_count,
+		access          = access,
+		active          = true,
+	}
+	return .Ok
+}
+
+// point_copy_free_slots gives the count of the point copies that a record
+// can still take: the slots past the count, and the slots that an unmap
+// freed.
+@(private = "file")
+point_copy_free_slots :: proc "contextless" (rec: ^Process_Record_State) -> (free: u64) {
+	free = u64(POINT_COPY_CAPACITY - rec.point_copy_count)
+	for index in u32(0) ..< rec.point_copy_count {
+		if !rec.point_copies[index].active {
+			free += 1
+		}
+	}
+	return free
+}
+
+// point_copy_slot_take gives a free slot of the point copies: one that an
+// unmap freed, else the next one. The caller checked point_copy_free_slots.
+@(private = "file")
+point_copy_slot_take :: proc "contextless" (rec: ^Process_Record_State) -> ^Point_Copy {
+	for index in u32(0) ..< rec.point_copy_count {
+		if !rec.point_copies[index].active {
+			return &rec.point_copies[index]
+		}
+	}
+	rec.point_copy_count += 1
+	return &rec.point_copies[rec.point_copy_count - 1]
+}
+
+// point_copies_install_locked puts a point copy in place of each page of a
+// mapping that the recorded process just made without Write: the process
+// reads the bytes of the copy, and each input point writes what the writer
+// changed since (record_refresh_point_copies_locked). The page tables of
+// the mapping exist: map_region holds an entry for each page. Caller holds
+// the process lock.
+@(private = "file")
+point_copies_install_locked :: proc "contextless" (process_index: u32, rec: ^Process_Record_State, mapping: ^Mapping) -> Operation_Outcome {
+	if point_copy_free_slots(rec) < mapping.page_count {
+		return .No_Slot
+	}
+	target := &processes[process_index]
+	region := &regions[mapping.region]
+	self := processor_self()
+	status := Operation_Outcome.Ok
+	for page in u64(0) ..< mapping.page_count {
+		source_page := mapping.first + page
+		bits := page_bits(mapping, region_page_state(region, source_page))
+		virtual_address := mapping.address + page * PAGE_SIZE
+		entry := page_entry(target.table, virtual_address)
+		if entry == nil {
+			status = .Bad_State
+			break
+		}
+		copy_frame, allocated := point_copy_frame_allocate(rec.history_region)
+		if !allocated {
+			status = .No_Budget
+			break
+		}
+		if source_frame := region_frame(region, source_page, false); source_frame != 0 {
+			intrinsics.mem_copy_non_overlapping(direct(copy_frame, u8), direct(source_frame, u8), PAGE_SIZE)
+		}
+		if entry^ & PAGE_PRESENT == 0 {
+			mapping.present_page_count += 1
+		}
+		entry^ = copy_frame | bits
+		if self.table == target.table {
+			page_flush(virtual_address)
+		}
+		point_copy_slot_take(rec)^ = {
+			virtual_address = virtual_address,
+			source_region   = mapping.region,
+			source_page     = source_page,
+			original_bits   = bits,
+			copy_frame      = copy_frame,
+			active          = true,
+		}
+	}
+	// The entries named the frames of the object for a moment: no other
+	// processor keeps that translation.
+	intrinsics.atomic_thread_fence(.Seq_Cst)
+	processor_sync(processors_with_table(target.table))
+	return status
+}
+
+// shared_page_free_slots gives the count of the shared pages that a record
+// can still take.
+@(private = "file")
+shared_page_free_slots :: proc "contextless" (rec: ^Process_Record_State) -> (free: u64) {
+	free = u64(SHARED_PAGE_CAPACITY - rec.shared_page_count)
+	for index in u32(0) ..< rec.shared_page_count {
+		if !rec.shared_pages[index].active {
+			free += 1
+		}
+	}
+	return free
+}
+
+// shared_page_slot_take gives a free slot of the shared pages. The caller
+// checked shared_page_free_slots.
+@(private = "file")
+shared_page_slot_take :: proc "contextless" (rec: ^Process_Record_State) -> ^Shared_Page {
+	for index in u32(0) ..< rec.shared_page_count {
+		if !rec.shared_pages[index].active {
+			return &rec.shared_pages[index]
+		}
+	}
+	rec.shared_page_count += 1
+	return &rec.shared_pages[rec.shared_page_count - 1]
+}
+
+// shared_pages_install_locked takes each page of a mapping with Write that
+// the recorded process just made, and that another process writes: the
+// writers enter the gate (made now, if the record had none), and each page
+// gets a baseline with its bytes of now. The leave of this input point
+// writes what the writers changed since (record_leave_input_point). Each
+// check comes before the gate changes: a writer that is recorded itself,
+// or that writes for another record, a full table of writers and a spent
+// budget refuse the mapping, and the unmap frees the baselines. Caller
+// holds Control and the process lock.
+@(private = "file")
+shared_pages_install_locked :: proc "contextless" (process_index: u32, rec: ^Process_Record_State, mapping: ^Mapping) -> Operation_Outcome {
+	if shared_page_free_slots(rec) < mapping.page_count {
+		return .No_Slot
+	}
+	shared_writers_add_of_region(process_index, rec, mapping.region, admit_only = true) or_return
+	// The recorded thread is in this kernel entry: it enters the gate at
+	// its input point, and its leave waits for the writers.
+	thread := &threads[processor_self().current]
+	if thread.process != process_index || thread.record_outside_point {
+		return .Bad_State
+	}
+	region := &regions[mapping.region]
+	for page in u64(0) ..< mapping.page_count {
+		baseline, allocated := point_copy_frame_allocate(rec.history_region)
+		if !allocated {
+			return .No_Budget
+		}
+		source_page := mapping.first + page
+		if source_frame := region_frame(region, source_page, false); source_frame != 0 {
+			intrinsics.mem_copy_non_overlapping(direct(baseline, u8), direct(source_frame, u8), PAGE_SIZE)
+		}
+		shared_page_slot_take(rec)^ = {
+			virtual_address = mapping.address + page * PAGE_SIZE,
+			region          = mapping.region,
+			page            = source_page,
+			baseline_frame  = baseline,
+			active          = true,
+		}
+	}
+	// A gate that this map makes, and that fails before its publication,
+	// goes: no record keeps a gate that no writer knows.
+	gate_made := rec.gate.state == .Inactive
+	if gate_made {
+		if !replay_filter.shared_writer_gate_init(&rec.gate, process_index, processes[process_index].serial, SHARED_WRITER_WAIT_BOUND_MILLISECONDS) {
+			rec.gate = {}
+			return .Bad_State
+		}
+		if !replay_filter.register_recorded_thread(&rec.gate, thread_index(thread), starts_at_input_point = true) {
+			rec.gate = {}
+			return .Bad_State
+		}
+	}
+	// The admission saw each writer under the control lock, and a new
+	// writer is refused since map_region counted this mapping: the adds
+	// do not fail, and a failure takes back a gate that this map made.
+	if added := shared_writers_add_of_region(process_index, rec, mapping.region); added != .Ok {
+		if gate_made {
+			rec.gate = {}
+		}
+		return added
+	}
+	shared_writers_publish(process_index, rec)
+	return .Ok
 }
 
 // record_replay_write_conflict says if Memory_Protect would give Write to a
@@ -828,7 +1144,7 @@ record_start_setup :: proc "contextless" (cpu: ^Processor, target_index: u32, re
 				}
 				run += 1
 			}
-			if !record_shared_mapping_locked(rec, first.virtual_address, u64(run), .Read) {
+			if !record_shared_mapping_locked(rec, first.virtual_address, u64(run), .Read, first.source_region) {
 				return .Bad_Operation
 			}
 		}
@@ -864,17 +1180,18 @@ point_copy_needs_stand_in :: proc "contextless" (pc: ^Point_Copy) -> bool {
 }
 
 // record_shared_mapping_locked writes the Shared_Mapping record of a range
-// of the recorded process whose pages another process writes. false: the
-// history is full, or the range fails the border of the contract. Caller
+// of the head whose pages another process writes, and adds it to the set
+// of the stand-in mappings that the replay will make. false: the history is
+// full, or the range fails the border of the contract or the set. Caller
 // holds the process lock of the recorded process.
 @(private = "file")
-record_shared_mapping_locked :: proc "contextless" (rec: ^Process_Record_State, virtual_address: u64, page_count: u64, access: input_history.Shared_Mapping_Access) -> bool {
+record_shared_mapping_locked :: proc "contextless" (rec: ^Process_Record_State, virtual_address: u64, page_count: u64, access: input_history.Shared_Mapping_Access, region_index: u32) -> bool {
 	entry := input_history.Shared_Mapping_Payload {
 		virtual_address = virtual_address,
 		page_count      = page_count,
 		access          = u32(access),
 	}
-	return input_history.history_writer_append(&rec.writer, .Shared_Mapping, 0, 0, ([^]u8)(&entry)[:size_of(entry)])
+	return input_history.stand_in_mapping_set_add(&rec.stand_ins, entry, access, region_index, regions[region_index].serial) && input_history.history_writer_append(&rec.writer, .Shared_Mapping, 0, 0, ([^]u8)(&entry)[:size_of(entry)])
 }
 
 // record_replay_thread_create_refused checks single-thread and placement-limit
@@ -1128,9 +1445,17 @@ record_replay_stint_bound_check :: proc "contextless" (thread: ^Thread) {
 @(private = "file")
 record_refresh_point_copies_locked :: proc "contextless" (cpu: ^Processor, process_index: u32, thread: ^Thread) -> bool {
 	rec := &process_records[process_index]
+	pending := rec.pending_mapping
 	for index in u32(0) ..< rec.point_copy_count {
 		pc := &rec.point_copies[index]
 		if !pc.active {
+			continue
+		}
+		// A point copy of a mapping whose Shared_Mapping is not written
+		// yet: a delta before it would name a page that the replay does not
+		// map yet. The copy keeps its bytes, and the next point writes what
+		// changed since.
+		if pending.active && pc.virtual_address >= pending.virtual_address && pc.virtual_address - pending.virtual_address < pending.page_count * PAGE_SIZE {
 			continue
 		}
 		source_frame := region_frame(&regions[pc.source_region], pc.source_page, false)
@@ -1263,15 +1588,18 @@ replay_head_apply_locked :: proc "contextless" (cpu: ^Processor, process_index: 
 // write what the peer wrote. The budget of the history pays it, as it pays
 // the point copies: the replayer pays its replay. A range that the replay
 // maps already, whole, inside one mapping (its context page, a page that
-// its starter mapped) takes the deltas there, and needs no stand-in. Caller
-// holds Control and process_index's process lock.
+// its starter mapped) takes the deltas there, and needs no stand-in. After
+// the start (in_head false), the recorded process made the mapping itself
+// at that address, so a range that the replay maps already is refused. The
+// stand-in mapping never has Execute. Caller holds process_index's process
+// lock, and Control in the head.
 @(private = "file")
-replay_stand_in_mapping_add_locked :: proc "contextless" (process_index: u32, entry: input_history.Shared_Mapping_Payload, access: input_history.Shared_Mapping_Access) -> bool {
+replay_stand_in_mapping_add_locked :: proc "contextless" (process_index: u32, entry: input_history.Shared_Mapping_Payload, access: input_history.Shared_Mapping_Access, in_head := true) -> bool {
 	rec := &process_records[process_index]
 	process := &processes[process_index]
 	end := entry.virtual_address + entry.page_count * PAGE_SIZE
 	if existing := mapping_at(process, entry.virtual_address); existing != nil {
-		return end <= existing.address + existing.page_count * PAGE_SIZE
+		return in_head && end <= existing.address + existing.page_count * PAGE_SIZE
 	}
 	if !input_history.stand_in_mapping_set_admits(&rec.stand_ins, entry) {
 		return false
@@ -1297,7 +1625,46 @@ replay_stand_in_mapping_add_locked :: proc "contextless" (process_index: u32, en
 		region_release(region)
 		return false
 	}
-	return input_history.stand_in_mapping_set_add(&rec.stand_ins, entry, access, region, regions[region].serial)
+	if !input_history.stand_in_mapping_set_add(&rec.stand_ins, entry, access, region, regions[region].serial) {
+		// The set admitted it above, under the same lock. If it refuses
+		// anyway, no stand-in mapping that the set does not name stays.
+		if mapping := mapping_at(process, entry.virtual_address); mapping != nil && mapping.region == region {
+			unmap(process, mapping)
+		}
+		return false
+	}
+	return true
+}
+
+// replay_received_mapping_locked takes the Shared_Mapping that follows the
+// completion of a Memory_Map in the history: the recorded process mapped
+// memory that it received after its start. The record and the map of the
+// replay must agree (input_history.replay_shared_mapping_check); then the
+// replay maps a stand-in mapping at the recorded address, and the deltas
+// that follow write its bytes. A disagreement, or a stand-in mapping that
+// the replay cannot make (an address that the replay maps already, a full
+// set, a spent budget), is a divergence at the point of the Shared_Mapping,
+// and leaves no stand-in mapping. Caller holds the process lock.
+@(private = "file")
+replay_received_mapping_locked :: proc "contextless" (cpu: ^Processor, process_index: u32, command_values: [7]u64, completion_address: u64) -> (check: input_history.Replay_Check_Result, point: u64) {
+	rec := &process_records[process_index]
+	record_header, kind, payload, stride, has_more, ok := input_history.history_reader_peek_into(&rec.reader, cpu.replay_record_scratch[:])
+	if !ok || !has_more || kind != .Shared_Mapping {
+		return {.Missing_Record, u64(input_history.History_Record_Kind.Shared_Mapping), u64(kind)}, input_history.history_reader_next_point(&rec.reader)
+	}
+	entry, access, valid := input_history.shared_mapping_validate(payload)
+	if !valid {
+		return {.Missing_Record, u64(input_history.History_Record_Kind.Shared_Mapping), 0}, record_header.point_number
+	}
+	check = input_history.replay_shared_mapping_check(command_values, completion_address, entry, access)
+	if check.divergence != .None {
+		return check, record_header.point_number
+	}
+	if !replay_stand_in_mapping_add_locked(process_index, entry, access, in_head = false) {
+		return {.Unexpected_Arguments, entry.virtual_address, 0}, record_header.point_number
+	}
+	input_history.history_reader_advance(&rec.reader, record_header, stride)
+	return {}, 0
 }
 
 // replay_stand_in_mappings_unmap unmaps each stand-in mapping of a replay
@@ -1648,10 +2015,80 @@ record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread
 		}
 		buffer_ok = input_history.history_writer_append_kernel_completion(&rec.writer, thread.frame.rip, thread.frame.rsp, entry, copied_slice)
 	}
+	if buffer_ok && rec.pending_mapping.active {
+		// Only the completion of the Memory_Map that made the mapping takes
+		// it. Another completion cannot come first: the map and this record
+		// run in one kernel entry, and a stop ends the record (which zeroes
+		// the pending mapping). If it came, the history gets no
+		// Shared_Mapping, and the replay stops at the first delta of that
+		// mapping with Missing_Record: a clear refusal, never a wrong place.
+		if command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS == u32(op.Operation.Memory_Map) && status == .Ok && completion_values[0] == rec.pending_mapping.virtual_address {
+			buffer_ok = record_received_mapping_write_locked(cpu, process_index, thread)
+		} else {
+			rec.pending_mapping = {}
+		}
+	}
 	process_unlock(process_index, taken)
 	if !buffer_ok {
 		record_end_on_buffer_full(process_index)
 	}
+}
+
+// record_received_mapping_write_locked writes, right after the completion
+// of the Memory_Map that made it, the Shared_Mapping of a mapping of
+// received memory, then the first bytes of each of its pages: the bytes
+// that the process sees, from its point copy, from the baseline of its
+// shared page, else from the page of the object, which no other process
+// writes. The replay reads the completion, maps its stand-in mapping at
+// that address, and writes these bytes there. false: the history is full.
+// Caller holds the process lock.
+@(private = "file")
+record_received_mapping_write_locked :: proc "contextless" (cpu: ^Processor, process_index: u32, thread: ^Thread) -> bool {
+	rec := &process_records[process_index]
+	pending := rec.pending_mapping
+	rec.pending_mapping = {}
+	entry := input_history.Shared_Mapping_Payload {
+		virtual_address = pending.virtual_address,
+		page_count      = pending.page_count,
+		access          = u32(pending.access),
+	}
+	if !input_history.history_writer_append(&rec.writer, .Shared_Mapping, thread.frame.rip, thread.frame.rsp, ([^]u8)(&entry)[:size_of(entry)]) {
+		return false
+	}
+	mapping := mapping_at(&processes[process_index], pending.virtual_address)
+	for page in u64(0) ..< pending.page_count {
+		virtual_address := pending.virtual_address + page * PAGE_SIZE
+		seen := received_page_bytes_locked(rec, mapping, virtual_address)
+		written, changed, ok := input_history.page_delta_encode(virtual_address, &RECORD_ZERO_PAGE, seen, cpu.page_delta_scratch[:])
+		if !ok || (changed && !input_history.history_writer_append(&rec.writer, .Page_Delta, thread.frame.rip, thread.frame.rsp, cpu.page_delta_scratch[:written])) {
+			return false
+		}
+	}
+	return true
+}
+
+// received_page_bytes_locked gives the bytes of a page of a received
+// mapping as the history must hold them at its Shared_Mapping: the point
+// copy, else the baseline of the shared page, else the page of the object.
+// A page with no frame yet holds zeros. Caller holds the process lock.
+@(private = "file")
+received_page_bytes_locked :: proc "contextless" (rec: ^Process_Record_State, mapping: ^Mapping, virtual_address: u64) -> ^[PAGE_SIZE]u8 {
+	for index in u32(0) ..< rec.point_copy_count {
+		if pc := &rec.point_copies[index]; pc.active && pc.virtual_address == virtual_address {
+			return direct(pc.copy_frame, [PAGE_SIZE]u8)
+		}
+	}
+	for index in u32(0) ..< rec.shared_page_count {
+		if page := &rec.shared_pages[index]; page.active && page.virtual_address == virtual_address {
+			return direct(page.baseline_frame, [PAGE_SIZE]u8)
+		}
+	}
+	if mapping != nil {
+		if frame := region_frame(&regions[mapping.region], mapping.first + (virtual_address - mapping.address) / PAGE_SIZE, false); frame != 0 {
+			return direct(frame, [PAGE_SIZE]u8)
+		}
+	}
+	return &RECORD_ZERO_PAGE
 }
 
 // record_context_page_locked writes the context page of the target into
@@ -1706,10 +2143,13 @@ record_context_page_locked :: proc "contextless" (cpu: ^Processor, target_index:
 // shared_writers_add_of_region adds each other live process that maps
 // region_index with Write as a shared writer of the gate. A writer that is
 // recorded or replayed itself, or that writes for another record, is
-// refused: one gate holds each writer. Caller holds Control and target's
+// refused: one gate holds each writer. admit_only: the same checks, and a
+// count of the new writers against the free slots of the gate, with no
+// change; the gate can be Inactive then. Caller holds Control and target's
 // process lock.
 @(private = "file")
-shared_writers_add_of_region :: proc "contextless" (target_index: u32, rec: ^Process_Record_State, region_index: u32) -> Operation_Outcome {
+shared_writers_add_of_region :: proc "contextless" (target_index: u32, rec: ^Process_Record_State, region_index: u32, admit_only := false) -> Operation_Outcome {
+	new_writers: u32
 	for &other, slot in processes[1:] {
 		other_index := u32(slot + 1)
 		if other_index == target_index {
@@ -1743,7 +2183,15 @@ shared_writers_add_of_region :: proc "contextless" (target_index: u32, rec: ^Pro
 				break
 			}
 		}
-		if !known && !replay_filter.add_shared_writer(&rec.gate, other_index, serial) {
+		if known {
+			continue
+		}
+		if admit_only {
+			new_writers += 1
+			if new_writers > replay_filter.SHARED_WRITER_CAPACITY - rec.gate.writer_count {
+				return .No_Slot
+			}
+		} else if !replay_filter.add_shared_writer(&rec.gate, other_index, serial) {
 			return .No_Slot
 		}
 	}
@@ -1776,7 +2224,7 @@ shared_writers_setup :: proc "contextless" (cpu: ^Processor, target_index: u32, 
 		}
 		// The replay holds no writer: it maps private pages here, and each
 		// Page_Delta of the history writes them.
-		if !record_shared_mapping_locked(rec, mapping.address, mapping.page_count, .Read_Write) {
+		if !record_shared_mapping_locked(rec, mapping.address, mapping.page_count, .Read_Write, mapping.region) {
 			return .Bad_Operation
 		}
 		for page in u64(0) ..< mapping.page_count {
@@ -1816,21 +2264,28 @@ shared_writers_setup :: proc "contextless" (cpu: ^Processor, target_index: u32, 
 // shared_writers_publish tells each writer of the gate that its threads ask
 // the gate before they run. The generation names this record for the writer
 // threads that the gate counts, so a run that ends after a later record
-// began changes nothing there. Caller holds Control and target's process lock.
+// began changes nothing there. A record publishes again when a mapping
+// that the process makes after its start adds writers: the generation and
+// the count of the records stay. Caller holds Control and target's process
+// lock.
 @(private = "file")
 shared_writers_publish :: proc "contextless" (target_index: u32, rec: ^Process_Record_State) {
 	if rec.gate.state != .Active {
 		return
 	}
-	record_generation_last += 1
-	rec.generation = record_generation_last
+	if !intrinsics.atomic_load(&rec.has_shared_writers) {
+		record_generation_last += 1
+		rec.generation = record_generation_last
+	}
 	for entry in rec.gate.writers {
 		if entry.process_slot != 0 {
 			intrinsics.atomic_store(&processes[entry.process_slot].shared_writer_of, target_index)
 		}
 	}
-	intrinsics.atomic_store(&rec.has_shared_writers, true)
-	intrinsics.atomic_add(&shared_writer_recordings, 1)
+	if !intrinsics.atomic_load(&rec.has_shared_writers) {
+		intrinsics.atomic_store(&rec.has_shared_writers, true)
+		intrinsics.atomic_add(&shared_writer_recordings, 1)
+	}
 }
 
 // shared_writers_teardown frees the baselines, tells each writer that it
@@ -2382,6 +2837,8 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		run_local := false
 		refused_op := false
 		record_new_handle := false
+		received_mapping: input_history.Replay_Check_Result
+		received_mapping_point: u64
 		if !copy_failed && op_known && status_known && recorded_status == .Ok {
 			switch replay_filter.replay_operation_policy(operation) {
 			case .Refused:
@@ -2393,7 +2850,14 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 					run_local = true
 					record_new_handle = true
 				case .Memory_Map:
-					if exec_command.values[1] == 0 {
+					// Memory that the record received from another process:
+					// its Shared_Mapping follows this completion, and a
+					// stand-in mapping takes the place of the map. The copied
+					// bytes of the completion are written already, so the
+					// scratch can hold the next record.
+					if _, next_kind, _, _, next_has_more, next_ok := input_history.history_reader_peek_into(&rec.reader, cpu.replay_record_scratch[:]); next_ok && next_has_more && next_kind == .Shared_Mapping {
+						received_mapping, received_mapping_point = replay_received_mapping_locked(cpu, process_index, exec_command.values, kc.completion_values[0])
+					} else if exec_command.values[1] == 0 {
 						if real_mem, mapped := replay_filter.replay_handle_map_lookup(&rec.handle_map, exec_command.values[0]); mapped {
 							exec_command.values[0] = real_mem
 						}
@@ -2424,6 +2888,10 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		}
 		process_unlock(process_index, taken)
 
+		if received_mapping.divergence != .None {
+			replay_stop_on_divergence(process_index, received_mapping.divergence, received_mapping_point, received_mapping.expected, received_mapping.actual)
+			return
+		}
 		if copy_failed {
 			replay_stop_on_divergence(process_index, .Unexpected_Arguments, rec_header.point_number, kc.copied_user_address, 0)
 			return
