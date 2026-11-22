@@ -7,6 +7,7 @@ source: https://dev-www.libreoffice.org/src/zstd-1.5.7.tar.gz
 source_hash: sha256-6zPlH0mhXgI5UM14Jcp0pKK0Pbg1SCWsJPwbfuCeb6M=
 unpack: tar.gz
 root: zstd-1.5.7/lib
+patch: zstd/patches/0001-read-no-cpuid-on-modus.patch
 force_include: zstd/modus_zstd_conf.h
 compile: common/debug.c
 compile: common/entropy_common.c
@@ -35,6 +36,9 @@ compile: decompress/zstd_decompress.c
 compile: decompress/zstd_decompress_block.c
 adapter: thin_libc/modus_thin_libc.c
 adapter: thin_libc/modus_thin_libc_memory.c
+adapter: thin_libc/modus_thin_libc_math.c
+adapter: zstd/modus_zstd_entry.c
+manifest: zstd/zstd.manifest
 include: zstd
 flag: --target=x86_64-unknown-none-elf
 flag: -std=gnu11
@@ -47,11 +51,15 @@ flag: -fno-omit-frame-pointer
 flag: -mno-omit-leaf-frame-pointer
 flag: -mlong-double-64
 flag: -fno-stack-protector
+flag: -fno-stack-clash-protection
 flag: -fcf-protection=none
+flag: -fzero-call-used-regs=skip
+flag: -U_FORTIFY_SOURCE
 flag: -fno-asynchronous-unwind-tables
 flag: -fno-unwind-tables
 flag: -fno-common
 include: thin_libc/include
 include: thin_libc
-test: compress and decompress the files of the release image at each level from 1 to 19, and compare the bytes
-test: decompress each frame of the tests of the zstd source that it refuses or accepts, and compare the verdict
+test: compress and decompress empty, small, repetitive, random and multi-block payloads at levels from -5 to 19, and compare the bytes
+test: decompress the frames of the zstd of the host, and give the zstd of the host frames that it decompresses
+test: refuse a damaged frame, a cut frame, a wrong magic number and an output too small, with the code of zstd

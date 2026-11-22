@@ -1,6 +1,6 @@
 # Lua 5.4 on modus: the core, the auxiliary library and the libraries that
-# reach no host. The io, os and math libraries and the loader of C modules
-# wait for the parts of the thin libc that they call (src/md/features/c_compiler.md,
+# reach no host. The io and os libraries and the loader of C modules wait for
+# the parts of the thin libc that they call (src/md/features/c_compiler.md,
 # "The C programs").
 recipe: lua
 version: 5.4.7
@@ -35,9 +35,13 @@ compile: lcorolib.c
 compile: lstrlib.c
 compile: ltablib.c
 compile: lutf8lib.c
+compile: lmathlib.c
 adapter: thin_libc/modus_thin_libc.c
 adapter: thin_libc/modus_thin_libc_memory.c
+adapter: thin_libc/modus_thin_libc_math.c
 adapter: lua/modus_lua_output.c
+adapter: lua/modus_lua_entry.c
+manifest: lua/lua.manifest
 include: lua
 flag: --target=x86_64-unknown-none-elf
 flag: -std=gnu11
@@ -50,11 +54,15 @@ flag: -fno-omit-frame-pointer
 flag: -mno-omit-leaf-frame-pointer
 flag: -mlong-double-64
 flag: -fno-stack-protector
+flag: -fno-stack-clash-protection
 flag: -fcf-protection=none
+flag: -fzero-call-used-regs=skip
+flag: -U_FORTIFY_SOURCE
 flag: -fno-asynchronous-unwind-tables
 flag: -fno-unwind-tables
 flag: -fno-common
 include: thin_libc/include
 include: thin_libc
-test: run the files of the test suite of Lua 5.4.7 that use the base, string, table, coroutine and utf8 libraries
-test: compare the output of print with the output of the Lua of the host for each file
+test: run scripts of arithmetic, closures, tables, metamethods, coroutines, pcall and the string, math and utf8 libraries, and compare the output of print
+test: refuse a syntax error, a runtime error and an arena too small, with the status of Lua
+test: close each state and find each block of its heap given back

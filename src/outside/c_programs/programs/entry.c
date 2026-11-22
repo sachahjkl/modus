@@ -157,6 +157,18 @@ typedef enum Math_Operation {
   MATH_LDEXP = 7,
   MATH_FREXP_FRACTION = 8,
   MATH_FREXP_EXPONENT = 9,
+  MATH_EXP = 10,
+  MATH_LOG = 11,
+  MATH_LOG2 = 12,
+  MATH_LOG10 = 13,
+  MATH_POW = 14,
+  MATH_SIN = 15,
+  MATH_COS = 16,
+  MATH_TAN = 17,
+  MATH_ASIN = 18,
+  MATH_ACOS = 19,
+  MATH_ATAN = 20,
+  MATH_ATAN2 = 21,
 } Math_Operation;
 
 Word call_math(Word operation, Word left_bits, Word right_bits) {
@@ -183,6 +195,30 @@ Word call_math(Word operation, Word left_bits, Word right_bits) {
   case MATH_FREXP_EXPONENT:
     frexp(left, &exponent);
     return exponent;
+  case MATH_EXP:
+    return bits_of(exp(left));
+  case MATH_LOG:
+    return bits_of(log(left));
+  case MATH_LOG2:
+    return bits_of(log2(left));
+  case MATH_LOG10:
+    return bits_of(log10(left));
+  case MATH_POW:
+    return bits_of(pow(left, right));
+  case MATH_SIN:
+    return bits_of(sin(left));
+  case MATH_COS:
+    return bits_of(cos(left));
+  case MATH_TAN:
+    return bits_of(tan(left));
+  case MATH_ASIN:
+    return bits_of(asin(left));
+  case MATH_ACOS:
+    return bits_of(acos(left));
+  case MATH_ATAN:
+    return bits_of(atan(left));
+  case MATH_ATAN2:
+    return bits_of(atan2(left, right));
   }
   // The border of the export: a word that names no operation is refused.
   return 0x7ff8dead00000000LL;

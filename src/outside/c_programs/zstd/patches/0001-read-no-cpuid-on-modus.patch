@@ -1,0 +1,16 @@
+zstd reads cpuid to choose its BMI2 code at run time, even when that choice
+is compiled out (DYNAMIC_BMI2 0). A module of modus runs no cpuid: with
+MODUS_ZSTD_NO_CPUID, which modus_zstd_conf.h defines, the flags of the
+processor stay zero, as on a processor that zstd does not know.
+
+--- a/common/cpu.h
++++ b/common/cpu.h
+@@ -118,7 +118,7 @@
+           : "a"(7), "c"(0)
+           : "edx");
+     }
+-#elif defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
++#elif (defined(__x86_64__) || defined(_M_X64) || defined(__i386__)) && !defined(MODUS_ZSTD_NO_CPUID)
+     U32 n;
+     __asm__("cpuid" : "=a"(n) : "a"(0) : "ebx", "ecx", "edx");
+     if (n >= 1) {

@@ -1151,6 +1151,8 @@ modustool: the module c_compiler compiles in the C files of chibicc, and the var
 
 **A new patch.** Make the change in a checkout of the work at the pinned commit, write it with `git diff` as a file of `src/outside/<work>/patches/` with a name after the last one, add the file to git, and build: Nix applies it, and a patch that does not apply stops the shell with the line of the patch.
 
+**The C programs.** SQLite, Lua and zstd are not modules of the system build. Each has a recipe in `src/outside/c_programs/recipes` (its format is in the `README.md` there): the flake reads its archive, its hash, its root and its patches, and the variables `SQLITE_SOURCE`, `LUA_SOURCE` and `ZSTD_SOURCE` name the patched roots in the default shell and in the host checks. The host test of `src/outside/c_programs` builds the module of each recipe with clang and runs SQL, Lua scripts and zstd frames through its exports. With no variable, the test of the program writes one line and does not run. A patch of a recipe is a file of the folder of the program, named by a line `patch:` of the recipe, with its paths relative to the root.
+
 ## The SDK
 
 The SDK (`glossary/communication.md`, "SDK") packages the public surface of modus into a self-contained directory so a developer can build an outside module in Odin or in any compiled language with no repository checkout and no Nix. The design is `src/md/infrastructure/sdk.md` and `src/md/infrastructure/language_neutral_abi.md`; the code is `tools/modustool/build/sdk.odin`.

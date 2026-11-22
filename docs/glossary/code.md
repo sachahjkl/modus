@@ -712,11 +712,11 @@ Do not use: cc, toolchain.
 
 ### Thin libc
 
-The thin libc is the C library that a ported C program compiles in: the procedures that the program calls, over an arena and over streams in memory, with no path and no standard stream of a terminal.
+The thin libc is the C library that a ported C program compiles in: the procedures that the program calls, over memory that the caller lends and streams in memory, with no system call, no path and no clock.
 
-`malloc` pushes on an arena of the budget, and `free` ends nothing. `fopen` opens a name of a table of files, to read. `stderr` is the diagnostic, which the module writes on its log, and `exit` returns to the entry of the program. Today it is the part that `chibicc` calls, in C beside it; it grows with each port. It is not a C library of the host.
+There are two. The one of `chibicc` pushes on an arena where `free` ends nothing, and `fopen` reads a table of files. The one of SQLite, Lua and zstd has a heap that releases memory, `setjmp`, and the elementary functions of `math.h`. It is not a C library of the host.
 
-The design: `src/md/features/c_compiler.md`, "The thin libc".
+The design: `src/md/features/c_compiler.md`, "The thin libc" and "The C programs".
 
 Do not use: C runtime, standard library (for this).
 

@@ -588,6 +588,18 @@ Math_Operation :: enum i64 {
 	Ldexp          = 7,
 	Frexp_Fraction = 8,
 	Frexp_Exponent = 9,
+	Exp            = 10,
+	Log            = 11,
+	Log2           = 12,
+	Log10          = 13,
+	Pow            = 14,
+	Sin            = 15,
+	Cos            = 16,
+	Tan            = 17,
+	Asin           = 18,
+	Acos           = 19,
+	Atan           = 20,
+	Atan2          = 21,
 }
 
 @(test)
@@ -646,7 +658,7 @@ thin_libc_math_matches_the_c_library_of_the_host :: proc(t: ^testing.T) {
 		testing.expectf(t, same(libc.fmod(pair[0], pair[1]), found), "fmod(%v, %v)", pair[0], pair[1])
 	}
 	// A word that names no operation is refused.
-	for word in ([?]i64{0, 10, -1, max(i64)}) {
+	for word in ([?]i64{0, 22, -1, max(i64)}) {
 		testing.expect_value(t, u64(call(loaded, "call_math", word, 0, 0)), u64(0x7ff8dead00000000))
 	}
 }

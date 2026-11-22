@@ -1,0 +1,12 @@
+module: lua
+about: Lua 5.4.7 over the thin libc: a run executes one script in a new state over a lent arena.
+library: no
+
+export script_run
+  about: Run the script of a request record with the libraries base, coroutine, table, string, math and utf8; give the status of Lua.
+  param request: integer
+  result: integer
+
+export script_request_size
+  about: Give the size of a request record.
+  result: integer

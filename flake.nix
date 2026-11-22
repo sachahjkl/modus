@@ -235,6 +235,42 @@
       CHIBICC_SOURCE = "${chibiccSource}";
     };
 
+    # The C programs of others that the host test of src/outside/c_programs
+    # builds into modules: each recipe of src/outside/c_programs/recipes
+    # names its archive, its hash, its root and its patches, and the flake
+    # reads them from there, so the hash is written once. Each folder of the
+    # store is the root of the archive, patched; the variables SQLITE_SOURCE,
+    # LUA_SOURCE and ZSTD_SOURCE name them. Only the host checks and the
+    # default shell read them: no module of the system build holds them.
+    cProgramRecipe = name: let
+      lines = builtins.filter (line: builtins.isString line && line != "" && builtins.substring 0 1 line != "#") (builtins.split "\n" (builtins.readFile (./src/outside/c_programs/recipes + "/${name}.recipe")));
+      pairs = builtins.filter (pair: pair != null) (map (line: builtins.match "([a-z_]+): (.*)" line) lines);
+      valuesOf = key: map (pair: builtins.elemAt pair 1) (builtins.filter (pair: builtins.head pair == key) pairs);
+      single = key: builtins.head (valuesOf key);
+    in
+      pkgs.stdenvNoCC.mkDerivation {
+        name = "${name}-${single "version"}-source";
+        src = pkgs.fetchurl {
+          url = single "source";
+          hash = single "source_hash";
+        };
+        nativeBuildInputs = lib.optional (single "unpack" == "zip") pkgs.unzip;
+        sourceRoot = single "root";
+        patches = map (patch: ./src/outside/c_programs + "/${patch}") (valuesOf "patch");
+        dontConfigure = true;
+        dontBuild = true;
+        installPhase = ''
+          runHook preInstall
+          cp -r . $out
+          runHook postInstall
+        '';
+      };
+    cProgramSources = {
+      SQLITE_SOURCE = "${cProgramRecipe "sqlite"}";
+      LUA_SOURCE = "${cProgramRecipe "lua"}";
+      ZSTD_SOURCE = "${cProgramRecipe "zstd"}";
+    };
+
     preCommitCheck = inputs.git-hooks.lib.${system}.run {
       package = pkgs.prek;
       src = ./.;
@@ -466,7 +502,8 @@
       // firmware
       # The source fonts: a test of the tool reads the feature "zero" of Paper Mono in them.
       // vectorFontSources
-      // outsideSources);
+      // outsideSources
+      // cProgramSources);
 
     # The join of the host checks and of every test part, in the layout that
     # `modustool screenshots` reads: logs/ and screenshots/. The tool refuses
@@ -519,7 +556,8 @@
         // firmware
         // ownerPointerTheme
         // vectorFontSources
-        // outsideSources);
+        // outsideSources
+        // cProgramSources);
 
       # The shell of the release workflow: the build tools and the firmware,
       # with no pointer theme of the owner and no hook. `modustool release
