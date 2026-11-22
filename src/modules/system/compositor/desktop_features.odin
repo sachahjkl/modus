@@ -223,6 +223,7 @@ desktop_context_menu_open :: proc "contextless" (x, y: int) {
 	if !desktop_features_ready {
 		return
 	}
+	tray_widget_close() // tray_widgets.odin: one card at a time.
 	// A shortcut is shown only for an act that desktop_shortcut_key does
 	// with the same keys. The edge that the bar holds now is disabled.
 	at_bottom := bar_layout.edge == .Bottom
@@ -411,7 +412,7 @@ desktop_taskbar_preview_records :: proc "contextless" (table: ^interface.Draw_Ta
 // new one.
 desktop_taskbar_pointer_move :: proc "contextless" (x, y: int) {
 	slot := -1
-	if desktop_features_ready && menu_open == .None {
+	if desktop_features_ready && menu_open == .None && tray_state.open == .None {
 		slot = bar.plate_at(bar_layout, taskbar_plates_right, x, y)
 	}
 	if slot == taskbar_hover_slot {
@@ -540,7 +541,7 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 				all_minimized = false
 			}
 		}
-		hovered := slot == taskbar_hover_slot && menu_open == .None
+		hovered := slot == taskbar_hover_slot && menu_open == .None && tray_state.open == .None
 		// The plate in front is a step lighter than the bar: white text
 		// reads on the steel plate of the dark appearance and vanishes on
 		// the white plate of the light one, so the text is the strong text.
@@ -795,6 +796,7 @@ desktop_notification_post :: proc "contextless" (source_id: u64, urgency: notifi
 	id, refusal := notifications.queue_post(&desktop_notifications, source_id, urgency, now_ms, 8_000, title, body)
 	if refusal == .None {
 		desktop_damage_notifications()
+		tray_notification_keep(title, body) // tray_widgets.odin
 		return id
 	}
 	return 0

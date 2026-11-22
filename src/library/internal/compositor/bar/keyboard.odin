@@ -73,6 +73,29 @@ Bar_Item_Kind :: enum u8 {
 	Windows, // The button of the windows: Enter opens the menu of the windows.
 	Plate, // The plate of a group of windows: Enter brings the group to the front.
 	Viewer_Mark, // The mark of the viewers of the remote display: Enter opens the list of the viewers.
+	Control_Center, // The button of the control center: Enter opens its card.
+	Notifications, // The button of the notifications: Enter opens the history.
+	Clock, // The clock: Enter opens the calendar.
+}
+
+// The tray buttons that the keys reach, after the viewer mark: the control
+// center, the notifications, the clock.
+TRAY_ITEM_COUNT :: 3
+
+// bar_item_tray_widget gives the widget that an item opens, or None for an
+// item that opens no tray widget.
+bar_item_tray_widget :: proc "contextless" (kind: Bar_Item_Kind) -> Tray_Widget {
+	switch kind {
+	case .None, .Start, .Windows, .Plate, .Viewer_Mark:
+		return .None
+	case .Control_Center:
+		return .Control_Center
+	case .Notifications:
+		return .Notifications
+	case .Clock:
+		return .Calendar
+	}
+	return .None
 }
 
 // One item of the bar that the keys reach. plate: the slot of a Plate, 0
@@ -82,12 +105,29 @@ Bar_Item :: struct {
 	plate: int,
 }
 
+// bar_item_of_tray_widget gives the item of the bar that opens a widget, or
+// None for None.
+bar_item_of_tray_widget :: proc "contextless" (widget: Tray_Widget) -> Bar_Item_Kind {
+	switch widget {
+	case .None:
+		return .None
+	case .Control_Center:
+		return .Control_Center
+	case .Notifications:
+		return .Notifications
+	case .Calendar:
+		return .Clock
+	}
+	return .None
+}
+
 // bar_item_count gives the items that the keys reach: the two buttons, the
-// plates that the bar shows, and the viewer mark when it is shown. A pill
+// plates that the bar shows, the viewer mark when it is shown, and the
+// tray buttons with the clock. A pill
 // of the tray that does nothing is no item: the focus never stops on a
 // thing that no key acts on.
 bar_item_count :: proc "contextless" (plate_count: int, viewer_mark: bool) -> int {
-	return 2 + max(plate_count, 0) + (viewer_mark ? 1 : 0)
+	return 2 + max(plate_count, 0) + (viewer_mark ? 1 : 0) + TRAY_ITEM_COUNT
 }
 
 // bar_item_place gives the place of an item in the order of the keys, or
@@ -110,6 +150,12 @@ bar_item_place :: proc "contextless" (item: Bar_Item, plate_count: int, viewer_m
 			return -1
 		}
 		return 2 + max(plate_count, 0)
+	case .Control_Center:
+		return 2 + max(plate_count, 0) + (viewer_mark ? 1 : 0)
+	case .Notifications:
+		return 3 + max(plate_count, 0) + (viewer_mark ? 1 : 0)
+	case .Clock:
+		return 4 + max(plate_count, 0) + (viewer_mark ? 1 : 0)
 	}
 	return -1
 }
@@ -127,8 +173,16 @@ bar_item_at :: proc "contextless" (place, plate_count: int, viewer_mark: bool) -
 		return {kind = .Windows}
 	case place < 2 + max(plate_count, 0):
 		return {kind = .Plate, plate = place - 2}
+	case viewer_mark && place == 2 + max(plate_count, 0):
+		return {kind = .Viewer_Mark}
 	}
-	return {kind = .Viewer_Mark}
+	switch place - (count - TRAY_ITEM_COUNT) {
+	case 0:
+		return {kind = .Control_Center}
+	case 1:
+		return {kind = .Notifications}
+	}
+	return {kind = .Clock}
 }
 
 // bar_item_step gives the next item (Right, forward) or the item before

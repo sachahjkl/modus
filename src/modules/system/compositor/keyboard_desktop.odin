@@ -87,6 +87,10 @@ keyboard_desktop_key :: proc "contextless" (code: u32, character: rune, pressed:
 		// goes to its button.
 		bar_focus_take(menu_open == .Start ? bar.Bar_Item{kind = .Start} : bar.Bar_Item{kind = .Windows})
 	}
+	if bar_focus.kind == .None && tray_state.open != .None {
+		// A card of the tray that the pointer opened takes the keys too.
+		bar_focus_take({kind = bar.bar_item_of_tray_widget(tray_state.open)})
+	}
 	if bar_focus.kind == .None {
 		return false
 	}
@@ -332,6 +336,7 @@ bar_focus_take :: proc "contextless" (item: bar.Bar_Item) {
 // keys back to the window in front.
 bar_focus_leave :: proc "contextless" () {
 	menu_close()
+	tray_widget_close() // tray_widgets.odin
 	bar_focus = {}
 	damage_bar()
 	damage_menu()
@@ -354,6 +359,7 @@ bar_key :: proc "contextless" (code: u32, character: rune, shift: bool) -> bool 
 	case code == display.KEY_LEFT || code == display.KEY_RIGHT || code == display.KEY_TAB:
 		forward := code == display.KEY_RIGHT || code == display.KEY_TAB && !shift
 		menu_close()
+		tray_widget_close()
 		bar_focus_take(bar.bar_item_step(bar_focus, taskbar_plate_count, bar_viewer_mark_shown(), forward))
 	case code == display.KEY_DOWN || code == display.KEY_UP:
 		bar_menu_step(code == display.KEY_DOWN)
@@ -374,6 +380,15 @@ bar_menu_step :: proc "contextless" (forward: bool) {
 			menu_show(.Start)
 		case .Windows:
 			menu_show(.Windows)
+		case .Control_Center, .Notifications, .Clock:
+			// The card of the item opens, then the keys walk its parts.
+			widget := bar.bar_item_tray_widget(bar_focus.kind)
+			if tray_state.open != widget {
+				tray_widget_show(widget) // tray_widgets.odin
+			}
+			tray_state.chosen = bar.tray_part_step(widget, notification_history.count, tray_state.chosen, forward)
+			tray_card_damage(widget)
+			return
 		case .None, .Plate, .Viewer_Mark:
 			return
 		}
@@ -411,6 +426,24 @@ bar_item_act :: proc "contextless" () {
 	case .None:
 	case .Start, .Windows:
 		bar_menu_step(true)
+	case .Control_Center, .Notifications, .Clock:
+		// Enter opens the card; on the card, it does the chosen part.
+		widget := bar.bar_item_tray_widget(bar_focus.kind)
+		if tray_state.open != widget {
+			tray_widget_show(widget) // tray_widgets.odin
+			return
+		}
+		part := tray_state.chosen
+		if part == .None {
+			return
+		}
+		if bar.tray_part_closes_card(part) {
+			tray_widget_close()
+		}
+		tray_part_do(part)
+		if tray_state.open == .None {
+			bar_focus_leave()
+		}
 	case .Plate:
 		if desktop_taskbar_slot_activate(bar_focus.plate) {
 			bar_focus_leave()
@@ -445,6 +478,8 @@ bar_focus_records :: proc "contextless" (table: ^interface.Draw_Table) {
 			return
 		}
 		x, y, width, height = capture_mark_x, capture_mark_y, capture_mark_width, capture_mark_height
+	case .Control_Center, .Notifications, .Clock:
+		x, y, width, height = bar.tray_widget_button(bar_layout, desktop_width, bar.bar_item_tray_widget(bar_focus.kind))
 	}
 	interface.draw_focus_ring(table, {x, y, width, height})
 }

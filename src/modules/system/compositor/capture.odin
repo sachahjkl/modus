@@ -533,6 +533,7 @@ capture_popover_press :: proc "contextless" (x, y: int) -> bool {
 		}
 	}
 	if capture_mark_contains(x, y) {
+		tray_widget_close() // tray_widgets.odin: one card at a time.
 		if menu_open != .None {
 			menu_open = .None
 			menu_line = -1

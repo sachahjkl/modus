@@ -302,13 +302,23 @@ Do not use: task button, pill, tab.
 
 ### Tray
 
-The tray is the part of the bar between the window plates and the clock that shows the state of the desktop: the mark of a viewer and the pills of `desktop_shell.Tray_State`.
+The tray is the part of the bar between the window plates and the clock that shows the state of the desktop: the buttons of the tray widgets, the mark of a viewer and the pills of `desktop_shell.Tray_State`.
 
-A pill of the tray has the module icon of its kind, its label, or both. A pill that asks for attention has the red plate of the concept "stop a process". The tray keeps the room of one window plate at least: a pill that does not fit is not drawn. The tray is not a place to start a module.
+A pill of the tray has the module icon of its kind, its label, or both. A pill that asks for attention has the red plate of the concept "stop a process". The two buttons of the tray widgets keep their places next to the clock; the marks and the pills start at their left. The tray keeps the room of one window plate at least: a pill that does not fit is not drawn. The tray is not a place to start a module.
 
 The design: `src/md/features/desktop_shell_look.md`.
 
 Do not use: notification area, status area.
+
+### Tray widget
+
+A tray widget is a card of the bar that a button of the tray or the clock opens: the control center, the notification center, or the calendar.
+
+The control center has tiles for the bar edge, the magnifier, the appearance in force and the display, and buttons that start `settings`, `monitor`, `browser` and `edit`. The notification center lists the last 6 notifications that the desktop showed, with the button `Clear all`. The calendar shows the month of today, the time zone and the time since the boot. One card of the bar shows at a time; Escape and a press outside close it. The export `compositor.tray_widget_open` opens or closes one. A tray widget is not a window: no process draws it.
+
+The design: `src/md/features/tray_widgets.md`.
+
+Do not use: widget popover, flyout, applet.
 
 ### Module icon
 

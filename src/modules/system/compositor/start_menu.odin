@@ -159,6 +159,9 @@ start_menu_records :: proc "contextless" (table: ^interface.Draw_Table) {
 
 // menu_show opens a menu of the bar, with no line chosen.
 menu_show :: proc "contextless" (menu: Menu) {
+	if menu != .None {
+		tray_widget_close() // tray_widgets.odin: one card at a time.
+	}
 	menu_open, menu_line, menu_action, menu_on_revoke = menu, -1, .None, false
 	switch menu {
 	case .None:
