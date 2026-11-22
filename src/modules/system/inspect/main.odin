@@ -58,6 +58,8 @@ import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "internal:inspect/addresses"
 import "modus:display"
+import "modus:graphics"
+import "modus:layout"
 import "modus:system"
 
 SAMPLE_INTERVAL :: 250 // Milliseconds.
@@ -416,6 +418,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(.Failed)
 	}
+	// The list counts the lines of its names in the column of the names, so
+	// the places come before the first read of the list. A window of its
+	// own size always takes its tree.
+	element_tokens, _ = layout.tokens_for(graphics.appearance, .Standard)
+	places, _ = inspect_layout(window.width, window.height, element_tokens)
 	machine = ctx.handles[system.GRANT_MACHINE]
 	if address, status := system.memory_map(ctx.handles[system.GRANT_IMAGE], {}); status == .Ok {
 		image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]

@@ -80,6 +80,7 @@ import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:layout"
 import "modus:system"
 
 ROWS :: 30
@@ -95,7 +96,8 @@ COLUMN_TEXT :: COLUMN_PROCESS + 13 * 8
 // the rest of it.
 TEXT_CHARACTERS :: 91
 // Literals, so the tool reads the window of the budget; the assertions
-// keep them the sizes of the layout.
+// keep them the sizes of the layout at the start. Each place in the window
+// comes from its layout tree (log_layout), from the size of its picture.
 WIDTH :: 944
 #assert(WIDTH == 2 * MARGIN + COLUMN_TEXT + TEXT_CHARACTERS * 8)
 TOP_LINES :: 4
@@ -121,15 +123,15 @@ hand_picture: interface.Hand_Picture
 level_color :: proc "contextless" (level: system.Log_Level) -> graphics.Color {
 	switch level {
 	case .Info:
-		return graphics.colors.process
+		return element_tokens.expected
 	case .Debug:
-		return graphics.colors.dim
+		return element_tokens.text_dim
 	case .Warning:
-		return graphics.colors.warning
+		return element_tokens.warning
 	case .Error:
-		return graphics.colors.failed
+		return element_tokens.failed
 	}
-	return graphics.colors.text
+	return element_tokens.text
 }
 
 // The count of the records of one process. The process slot and the process
@@ -181,8 +183,92 @@ JOIN_PARTS :: max(4, op.LOG_FACT_RECORDS_MOST)
 RECORD_TEXT_SIZE :: size_of(system.Log_Record) - offset_of(system.Log_Record, text)
 JOIN_CAPACITY :: JOIN_PARTS * RECORD_TEXT_SIZE
 JOIN_RUN_CAPACITY :: 64 // The value runs of one joined text that keep their color; a run past them is plain.
-NAME_ROOM :: COLUMN_TEXT - COLUMN_PROCESS - 8 // The box of the name of the process.
-TEXT_ROOM :: TEXT_CHARACTERS * 8 // The box of the text.
+NAME_GAP :: 8 // The room between the name of the process and the text.
+CARD_LINES :: TOP_LINES - 2 // The lines of the cards of the processes, between the top line and the heads of the columns.
+
+// The columns of the table of the records.
+Record_Column :: enum u8 {
+	Time    = 0,
+	Process = 1,
+	Text    = 2,
+}
+
+// The time and the process keep their widths; the text takes the rest of
+// the width of the window.
+@(rodata)
+record_column_widths := [Record_Column]layout.Table_Column {
+	.Time    = {width = COLUMN_PROCESS},
+	.Process = {width = COLUMN_TEXT - COLUMN_PROCESS},
+	.Text    = {weight = 1, least = 16 * graphics.CELL_WIDTH},
+}
+
+// The places of the window that the draw reads after the solve, in the
+// pixels of its picture.
+Log_Places :: struct {
+	counts:       interface.Area, // The top line: the counts of the records and of each level.
+	processes:    interface.Area, // The cards of the processes, with their counts.
+	heads:        interface.Area, // The heads of the columns and the legend of the value kinds.
+	records:      interface.Area, // The newest records.
+	record_lines: int, // The lines of the records, at most ROWS: the window holds ROWS records.
+	columns:      [Record_Column]layout.Table_Column_Place,
+	name_room:    int, // The box of the name of the process.
+	text_room:    int, // The box of the text.
+}
+
+// The places of the frame that the draw builds.
+places: Log_Places
+
+// The layout tree of a frame. A global: the tree is too large for the stack.
+layout_tree: layout.Box_Tree
+
+// The colors of the frame, from the appearance in force.
+element_tokens: layout.Element_Tokens
+
+// line_box gives a box of a height across the whole width.
+line_box :: proc "contextless" (height: i32) -> layout.Box_Description {
+	return {size = {.X = layout.fill(), .Y = layout.px(height)}}
+}
+
+// log_layout builds and solves the layout tree of the picture of the window:
+// the top line of the counts, the cards of the processes, the heads of the
+// columns, then the records in the height left, and the columns of the
+// table of the records. ok false: the tree or the table refused, and the
+// caller keeps the places before.
+log_layout :: proc "contextless" (width, height: int) -> (laid_out: Log_Places, ok: bool) {
+	tree := &layout_tree
+	if width <= 0 || height <= 0 || width > layout.LENGTH_LIMIT || height > layout.LENGTH_LIMIT {
+		return {}, false
+	}
+	if layout.tree_begin(tree, i32(width), i32(height), {child_axis = .Y, padding = {.X = MARGIN, .Y = MARGIN}}) != .Done {
+		return {}, false
+	}
+	counts, counts_status := layout.box_add(tree, line_box(LINE))
+	processes, processes_status := layout.box_add(tree, line_box(CARD_LINES * LINE))
+	heads, heads_status := layout.box_add(tree, line_box(LINE))
+	records, records_status := layout.box_add(tree, {size = {.X = layout.fill(), .Y = layout.fill()}, overflow = {.X = .Visible, .Y = .Clip}})
+	if counts_status != .Done || processes_status != .Done || heads_status != .Done || records_status != .Done || layout.solve(tree) != .Done {
+		return {}, false
+	}
+	area_of :: proc "contextless" (tree: ^layout.Box_Tree, index: layout.Box_Index) -> interface.Area {
+		rect := tree.boxes[index].rect
+		return {int(rect.x), int(rect.y), int(rect.width), int(rect.height)}
+	}
+	laid_out = {
+		counts    = area_of(tree, counts),
+		processes = area_of(tree, processes),
+		heads     = area_of(tree, heads),
+		records   = area_of(tree, records),
+	}
+	laid_out.record_lines = min(laid_out.records.height / LINE, ROWS)
+	widths := record_column_widths
+	rect := tree.boxes[records].rect
+	if layout.table_columns(([^]layout.Table_Column)(&widths)[:len(widths)], ([^]layout.Table_Column_Place)(&laid_out.columns)[:len(laid_out.columns)], rect, 0) != .Done {
+		return {}, false
+	}
+	laid_out.name_room = max(int(laid_out.columns[.Process].width) - NAME_GAP, graphics.CELL_WIDTH)
+	laid_out.text_room = int(laid_out.columns[.Text].width)
+	return laid_out, true
+}
 
 // A value run of a joined text: its bytes in the joined text.
 Joined_Run :: struct {
@@ -428,8 +514,8 @@ join :: proc "contextless" (joined: ^Joined, group: Group) {
 // text and of the name of its process, each in its box.
 group_lines :: proc "contextless" (joined: ^Joined, group: Group) -> int {
 	record := record_shown(group.first)
-	text_lines := interface.text_wrapped_line_count(nil, {}, string(joined.bytes[joined.from:joined.count]), TEXT_ROOM)
-	name_lines := interface.text_wrapped_line_count(nil, {}, system.name_of(record.name[:]), NAME_ROOM)
+	text_lines := interface.text_wrapped_line_count(nil, {}, string(joined.bytes[joined.from:joined.count]), places.text_room)
+	name_lines := interface.text_wrapped_line_count(nil, {}, system.name_of(record.name[:]), places.name_room)
 	return max(text_lines, name_lines, 1)
 }
 
@@ -452,7 +538,7 @@ joined_text_draw :: proc "contextless" (canvas: graphics.Canvas, x, y: int, join
 	for line_y := y; len(rest) > 0; line_y += LINE {
 		line_start := len(text) - len(rest)
 		line: string
-		line, rest = interface.text_wrap_line(nil, {}, rest, TEXT_ROOM)
+		line, rest = interface.text_wrap_line(nil, {}, rest, places.text_room)
 		line_end := line_start + len(line)
 		at := line_start
 		left := x
@@ -516,28 +602,38 @@ card_width :: proc "contextless" (name: string, count: u64) -> int {
 // card_draw draws the card of a count at its place: a band, its name, and
 // the count.
 card_draw :: proc "contextless" (canvas: graphics.Canvas, x, y, width: int, name: string, count: u64) {
-	graphics.fill(canvas, x - 4, y, width - 8, LINE, graphics.colors.card_top)
-	after := graphics.text(canvas, x, y, name, graphics.colors.text)
-	graphics.unsigned(canvas, after + 8, y, count, graphics.colors.text)
+	graphics.fill(canvas, x - 4, y, width - 8, LINE, element_tokens.surface_card)
+	after := graphics.text(canvas, x, y, name, element_tokens.text)
+	graphics.unsigned(canvas, after + 8, y, count, element_tokens.text)
 }
 
 // draw draws the whole window: the counts, the processes, the legend of the
-// value kinds, and the last records. A text drops the start that repeats
-// its process (`repeated_start`).
+// value kinds, and the last records, each in the place that the layout
+// tree gave. A text drops the start that repeats its process
+// (`repeated_start`).
 draw :: proc "contextless" (canvas: graphics.Canvas) {
-	graphics.clear(canvas, graphics.colors.background)
+	// graphics holds only members of the appearance: the tokens of the
+	// standard contrast are the colors that the window drew with before.
+	element_tokens, _ = layout.tokens_for(graphics.appearance, .Standard)
+	// The size of the picture now. A size that the tree refuses keeps the
+	// places before.
+	if laid_out, laid_out_ok := log_layout(canvas.width, canvas.height); laid_out_ok {
+		places = laid_out
+	}
+	graphics.clear(canvas, element_tokens.surface_background)
 	// The log is a ring of the kernel: its title in the color of the kernel.
-	graphics.fill(canvas, MARGIN, MARGIN - 4, WIDTH - 2 * MARGIN, 2, graphics.colors.kernel)
-	x := graphics.text(canvas, MARGIN, MARGIN, "the log  ", graphics.colors.kernel)
-	x = graphics.unsigned(canvas, x, MARGIN, row_count, graphics.colors.text)
-	x = graphics.text(canvas, x, MARGIN, " read, ", graphics.colors.dim)
+	counts := places.counts
+	graphics.fill(canvas, counts.x, counts.y - 4, counts.width, 2, graphics.colors.kernel)
+	x := graphics.text(canvas, counts.x, counts.y, "the log  ", graphics.colors.kernel)
+	x = graphics.unsigned(canvas, x, counts.y, row_count, element_tokens.text)
+	x = graphics.text(canvas, x, counts.y, " read, ", element_tokens.text_dim)
 	// Records gone before the start are a fact of the boot, not a fault
 	// of this reader: only the count lost since is in the color of a
 	// failure (src/md/features/log_window_losses.md).
-	x = graphics.unsigned(canvas, x, MARGIN, gone_before_start, graphics.colors.text)
-	x = graphics.text(canvas, x, MARGIN, " gone before its start, ", graphics.colors.dim)
-	x = graphics.unsigned(canvas, x, MARGIN, lost, lost == 0 ? graphics.colors.text : graphics.colors.failed)
-	x = graphics.text(canvas, x, MARGIN, " lost since    ", graphics.colors.dim)
+	x = graphics.unsigned(canvas, x, counts.y, gone_before_start, element_tokens.text)
+	x = graphics.text(canvas, x, counts.y, " gone before its start, ", element_tokens.text_dim)
+	x = graphics.unsigned(canvas, x, counts.y, lost, lost == 0 ? element_tokens.text : element_tokens.failed)
+	x = graphics.text(canvas, x, counts.y, " lost since    ", element_tokens.text_dim)
 	for count, level in level_counts {
 		names := [system.Log_Level]string {
 			.Info    = "info ",
@@ -545,34 +641,35 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 			.Warning = "warning ",
 			.Error   = "error ",
 		}
-		graphics.fill(canvas, x, MARGIN + 4, 8, 8, level_color(level))
-		x = graphics.text(canvas, x + 12, MARGIN, names[level], graphics.colors.dim)
-		x = graphics.unsigned(canvas, x, MARGIN, count, graphics.colors.text) + 16
+		graphics.fill(canvas, x, counts.y + 4, 8, 8, level_color(level))
+		x = graphics.text(canvas, x + 12, counts.y, names[level], element_tokens.text_dim)
+		x = graphics.unsigned(canvas, x, counts.y, count, element_tokens.text) + 16
 	}
 
 	// The processes, with the count of records of each one, on the lines
 	// between the top line and the heads of the columns. A card that does
 	// not fit there counts with the others, in the last card, so no card
 	// covers the heads of the columns.
-	CARD_LINES :: TOP_LINES - 2
-	cards_left := MARGIN + graphics.text_width("processes ")
-	graphics.text(canvas, MARGIN, MARGIN + LINE, "processes ", graphics.colors.dim)
+	cards := places.processes
+	cards_left := cards.x + graphics.text_width("processes ")
+	cards_right := cards.x + cards.width
+	graphics.text(canvas, cards.x, cards.y, "processes ", element_tokens.text_dim)
 	others_width := card_width("others", max(u64))
 	x = cards_left
-	y := MARGIN + LINE
-	last_line_y := MARGIN + CARD_LINES * LINE
+	y := cards.y
+	last_line_y := cards.y + cards.height - LINE
 	others := other_processes
 	for &counted, index in process_counts[:process_count] {
 		name := system.name_of(counted.name[:])
 		width := card_width(name, counted.count)
 		card_x, card_y := x, y
-		if card_x + width > WIDTH - MARGIN {
+		if card_x + width > cards_right {
 			card_x = cards_left
 			card_y += LINE
 		}
 		// The last line keeps the room of the card of the others while a
 		// card of the others can come after this one.
-		room := WIDTH - MARGIN
+		room := cards_right
 		if card_y == last_line_y && (index < process_count - 1 || other_processes > 0) {
 			room -= others_width
 		}
@@ -588,19 +685,20 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 	if others > 0 {
 		// The room is kept on the last line: the card fits there, or on
 		// the line of the cards when that line is before the last one.
-		if x + others_width > WIDTH - MARGIN {
+		if x + others_width > cards_right {
 			x = cards_left
 			y += LINE
 		}
 		card_draw(canvas, x, y, card_width("others", others), "others", others)
 	}
 
-	top := MARGIN + TOP_LINES * LINE
-	graphics.text(canvas, MARGIN, top - LINE, "time (s)", graphics.colors.dim)
-	graphics.text(canvas, MARGIN + COLUMN_PROCESS, top - LINE, "process", graphics.colors.dim)
-	x = graphics.text(canvas, MARGIN + COLUMN_TEXT, top - LINE, "text   ", graphics.colors.dim)
+	columns := &places.columns
+	heads := places.heads
+	graphics.text(canvas, int(columns[.Time].x), heads.y, "time (s)", element_tokens.text_dim)
+	graphics.text(canvas, int(columns[.Process].x), heads.y, "process", element_tokens.text_dim)
+	x = graphics.text(canvas, int(columns[.Text].x), heads.y, "text   ", element_tokens.text_dim)
 	for kind, index in legend_kinds {
-		x = graphics.text(canvas, x, top - LINE, legend_names[index], graphics.value_kind_color(kind, graphics.appearance)) + 16
+		x = graphics.text(canvas, x, heads.y, legend_names[index], graphics.value_kind_color(kind, graphics.appearance)) + 16
 	}
 	// The texts of the records that the window holds: a record whose text
 	// continues is one text with the records after it.
@@ -619,30 +717,32 @@ draw :: proc "contextless" (canvas: graphics.Canvas) {
 		group_count += 1
 		place += group.count
 	}
-	// The window has ROWS lines: it shows the newest texts that fit whole.
-	// The older ones are in the log, as each record that left the window.
+	// The window shows the newest texts that fit whole in the lines of its
+	// records. The older ones are in the log, as each record that left the
+	// window.
 	first_group, used := group_count, 0
-	for first_group > 0 && used + groups[first_group - 1].lines <= ROWS {
+	for first_group > 0 && used + groups[first_group - 1].lines <= places.record_lines {
 		first_group -= 1
 		used += groups[first_group].lines
 	}
-	y = top
+	records := places.records
+	y = records.y
 	for group, index in groups[first_group:group_count] {
 		record := record_shown(group.first)
 		height := group.lines * LINE
 		// Every second row on a band of the top of a card, as a table of
 		// the rules (docs/DESIGN.md, "10. Elements").
 		if index % 2 == 1 {
-			graphics.fill(canvas, MARGIN - 4, y, WIDTH - 2 * MARGIN + 8, height, graphics.colors.card_top)
+			graphics.fill(canvas, records.x - 4, y, records.width + 8, height, element_tokens.surface_card)
 		}
-		graphics.fill(canvas, MARGIN - 4, y, 3, height, level_color(record.level))
+		graphics.fill(canvas, records.x - 4, y, 3, height, level_color(record.level))
 		milliseconds := record.time / 1000
-		x = graphics.unsigned(canvas, MARGIN + 4, y, milliseconds / 1000, graphics.colors.dim, 4)
-		x = graphics.text(canvas, x, y, ".", graphics.colors.dim)
-		graphics.unsigned(canvas, x, y, milliseconds % 1000, graphics.colors.dim, 3)
-		lines_draw(canvas, MARGIN + COLUMN_PROCESS, y, NAME_ROOM, system.name_of(record.name[:]), record.process == 0 ? graphics.colors.text : graphics.colors.series[record.process % graphics.SERIES_COLOR_COUNT])
+		x = graphics.unsigned(canvas, int(columns[.Time].x) + 4, y, milliseconds / 1000, element_tokens.text_dim, 4)
+		x = graphics.text(canvas, x, y, ".", element_tokens.text_dim)
+		graphics.unsigned(canvas, x, y, milliseconds % 1000, element_tokens.text_dim, 3)
+		lines_draw(canvas, int(columns[.Process].x), y, places.name_room, system.name_of(record.name[:]), record.process == 0 ? element_tokens.text : graphics.colors.series[record.process % graphics.SERIES_COLOR_COUNT])
 		join(joined, group)
-		joined_text_draw(canvas, MARGIN + COLUMN_TEXT, y, joined, record.level == .Error ? graphics.colors.failed : graphics.colors.text)
+		joined_text_draw(canvas, int(columns[.Text].x), y, joined, record.level == .Error ? element_tokens.failed : element_tokens.text)
 		y += height
 	}
 }

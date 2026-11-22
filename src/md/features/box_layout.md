@@ -68,4 +68,14 @@ Then one pass snaps each edge (not each size) to the nearest whole logical pixel
 
 ## State
 
-Built: the package `modus:layout` with the four passes, the snap and the clip, the split pane, the table columns, the state table, the input of a box, the element tokens and their stack, and host tests. No module imports it yet, and the check of the imports refuses a support package with fewer than two owners: the interface package and its windows are its first users, which [ROADMAP.md](../../../ROADMAP.md) names.
+Built: the package `modus:layout` with the four passes, the snap and the clip, the split pane, the table columns, the state table, the input of a box, the element tokens and their stack, and host tests.
+
+Its owners include the windows of `notes`, `inspect` and `log`. Each builds its tree at each frame at the size that its window has then, and takes its colors and its spacing from the element tokens of the appearance in force:
+
+- `notes` places its lines one under the other, then the action bar at the bottom. The status of the start wraps in the width that a first solve gives, so the tree is solved twice.
+- `inspect` places the card of the list of the processes at the left, the address space over a low row of the modules and the threads at the right, and the bytes of `inspect` in the place of the low row. The list, the table of the mappings, the table of the threads and the rows of the bytes take their columns from `table_columns`. The press on a row of the list reads the places of the last frame.
+- `log` draws its picture by hand: its tree has the size of the picture, and places the line of the counts, the cards of the processes, the heads of the columns and the records, whose columns come from `table_columns`.
+
+A fill box starts at the whole content of its parent and gives room in proportion with each sibling that is not strict. Each of these windows keeps its fixed parts strict, so the one fill box of a column takes the room left.
+
+At their size of start the three windows keep the places that they had before the layout tree. They do not declare themselves resizable: their stated budgets hold no second surface. The interface package and the other windows are the next users, which [ROADMAP.md](../../../ROADMAP.md) names.
