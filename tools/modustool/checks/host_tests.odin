@@ -420,4 +420,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/vnc_rdp_gateway",
 	foundation.SOURCE_FOLDER_CONTRACT + "/document_picker",
 	foundation.SOURCE_FOLDER_CONTRACT + "/ghostty_vt",
+	foundation.SOURCE_FOLDER_CONTRACT + "/layout_measure",
+	foundation.SOURCE_FOLDER_CONTRACT + "/video_codec",
+	foundation.SOURCE_FOLDER_CONTRACT + "/processor_profiler",
+	foundation.SOURCE_FOLDER_CONTRACT + "/driver_domain",
 }
