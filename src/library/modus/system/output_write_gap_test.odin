@@ -466,3 +466,48 @@ a_write_of_a_pair_reaches_the_rings_of_that_pair_only :: proc(t: ^testing.T) {
 	testing.expect(t, closed_ok && closed.tag == 12)
 	testing.expect_value(t, output_end_pair(&forward, 6, size_of(Large_Record)), output.Stream_Status.No_Reader)
 }
+
+// The pairs that a record output Paired holds, each once, then the close
+// of one pair with no write: its end is free, its word Closed goes to the
+// root service, and the other pair keeps its end. A pair of 0, and a pair
+// with no end, close nothing.
+@(test)
+the_end_of_a_pair_with_no_source_closes_alone :: proc(t: ^testing.T) {
+	wiring_mem := host_stream_seam_begin(t)
+	defer host_stream_seam_end(wiring_mem)
+	STREAM_INDEX :: u32(1)
+	ring_one := host_output_ring_make(t, size_of(Gap_Test_Record))
+	defer host_output_ring_destroy(&ring_one)
+	ring_two := host_output_ring_make(t, size_of(Gap_Test_Record))
+	defer host_output_ring_destroy(&ring_two)
+	ring_three := host_output_ring_make(t, size_of(Gap_Test_Record))
+	defer host_output_ring_destroy(&ring_three)
+	host_seed_writer_end(t, 0, &ring_one, STREAM_INDEX, 11, size_of(Gap_Test_Record), .Always_Holds_Writer, full = false, joined = false)
+	stream_ends[0].pair = 5
+	host_seed_writer_end(t, 1, &ring_two, STREAM_INDEX, 12, size_of(Gap_Test_Record), .Always_Holds_Writer, full = false, joined = false)
+	stream_ends[1].pair = 6
+	host_seed_writer_end(t, 2, &ring_three, STREAM_INDEX, 13, size_of(Gap_Test_Record), .Always_Holds_Writer, full = false, joined = false)
+	stream_ends[2].pair = 5
+	forward: Record_Output(Any_Record, .Paired)
+	forward.state.index = STREAM_INDEX
+
+	listed: [4]u32
+	testing.expect_value(t, output_pairs(&forward, listed[:]), 2)
+	testing.expect_value(t, listed[0], u32(5))
+	testing.expect_value(t, listed[1], u32(6))
+	small: [1]u32
+	testing.expect_value(t, output_pairs(&forward, small[:]), 1)
+
+	testing.expect_value(t, output_pair_close(&forward, 0), 0)
+	testing.expect_value(t, output_pair_close(&forward, 7), 0)
+	testing.expect_value(t, output_pair_close(&forward, 5), 2)
+	testing.expect_value(t, stream_ends[0].command, output.Wiring_Command.None)
+	testing.expect_value(t, stream_ends[2].command, output.Wiring_Command.None)
+	testing.expect_value(t, stream_ends[1].command, output.Wiring_Command.Writer_End)
+	for tag in ([2]u32{11, 13}) {
+		closed, closed_ok := ring.pop(&wiring_ring.completions)
+		testing.expect(t, closed_ok && closed.tag == tag)
+	}
+	testing.expect_value(t, output_pairs(&forward, listed[:]), 1)
+	testing.expect_value(t, listed[0], u32(6))
+}

@@ -47,6 +47,11 @@ source_record: [module.RECORD_SIZE_LIMIT]u8
 // rings of one pair, with no wait, so a full ring never stops the loop.
 @(private = "file")
 forward_write :: proc "contextless" (user: rawptr, pair: u32, bytes: []u8) -> wide_grants.Forward_Write {
+	// A write to a pair with no ring yet would count the record as
+	// discarded and move the serial of forward for nothing.
+	if system.output_pair_rings(&forward, pair, u32(len(bytes))) == 0 {
+		return .No_Ring
+	}
 	switch system.output_write_pair(&forward, pair, bytes, wait = false) {
 	case .Ok:
 		return .Taken
@@ -94,6 +99,11 @@ source_open :: proc "contextless" (tag: u32) -> (opened: ^wide_grants.Source_Lin
 	}
 	system.log_fact(.Warning, Source_Refused{wiring_number = u64(tag), refusal_code = u64(refusal)})
 	system.input_close(&sources, tag)
+	// A pair of this source that came already ends with the refusal; one
+	// that comes later has no source, and pairs_orphaned_close closes it.
+	if described {
+		_ = system.output_end_pair(&forward, tag, description.size, errors.error_make(.Refused, .Records, 0, i64(refusal), 0, i64(tag)), system.time())
+	}
 	return nil, false
 }
 
@@ -116,22 +126,25 @@ source_read :: proc "contextless" (link: ^wide_grants.Source_Link) {
 		if link.state != .Open {
 			return
 		}
-		if link.pending && wide_grants.link_retry(&space_service.store, link) != .Kept {
-			return
+		if link.pending {
+			if step, _ := wide_grants.link_retry(&space_service.store, link); step != .Kept {
+				return
+			}
 		}
 		item, status := system.input_read_from(&sources, link.tag, source_record[:], 0)
 		switch status {
 		case .Ok:
 			switch item.kind {
 			case .Record:
-				switch wide_grants.link_keep(&space_service.store, link, source_record[:item.record_size], system.time()) {
+				step, refusal := wide_grants.link_keep(&space_service.store, link, source_record[:item.record_size], system.time())
+				switch step {
 				case .Kept:
 				case .Held:
 					return
 				case .Refused:
-					system.log_fact(.Warning, Source_Refused{wiring_number = u64(link.tag), refusal_code = u64(wide_grants.Space_Refusal.Wrong_Size)})
+					system.log_fact(.Warning, Source_Refused{wiring_number = u64(link.tag), refusal_code = u64(refusal)})
 					system.input_close(&sources, link.tag)
-					wide_grants.link_close(link, errors.error_make(.Bad_Value, .Records, 0, i64(item.record_size), i64(link.record_size), i64(link.tag)))
+					wide_grants.link_close(link, errors.error_make(.Bad_Value, .Records, 0, i64(refusal), i64(link.record_size), i64(link.tag)))
 					return
 				}
 			case .Joined, .Gap, .End:
@@ -175,16 +188,47 @@ sources_pass :: proc "contextless" () -> (pending: bool) {
 	// it: its pair ends after it.
 	for &link in source_links.links {
 		if link.active && link.state == .Ended && link.pending {
-			_ = wide_grants.link_retry(&space_service.store, &link)
+			_, _ = wide_grants.link_retry(&space_service.store, &link)
 		}
 	}
 	port := forward_port()
 	wide_grants.forward_pass(&space_service.store, &source_links, port)
 	wide_grants.links_settle(&space_service.store, &source_links, port)
+	pairs_orphaned_close(source_tags[:count])
 	for &link in source_links.links {
 		pending ||= link.active && (link.pending || link.state == .Ended)
 	}
 	return pending
+}
+
+// The pairs that forward holds, as output_pairs lists them.
+pair_tags: [wide_grants.SOURCE_LINKS_MOST]u32
+
+// pairs_orphaned_close closes each end of forward whose pair has no source
+// that this collector keeps: no link and no ring of sources of that
+// wiring (a source that it refused or closed, or that ended and settled),
+// or a link whose space does not forward. Such an end would else hold a
+// place of the ends of the process for ever, and its reader would wait
+// for records that never come. A source that waits for its space
+// (Space_Held) keeps its ring, so its pair stays. source_tags are the
+// rings of sources that this pass read.
+@(private = "file")
+pairs_orphaned_close :: proc "contextless" (source_tags: []u32) {
+	count := system.output_pairs(&forward, pair_tags[:])
+	pairs: for pair in pair_tags[:count] {
+		if link := wide_grants.link_of(&source_links, pair); link != nil {
+			if link.pair == .None {
+				_ = system.output_pair_close(&forward, pair)
+			}
+			continue
+		}
+		for tag in source_tags {
+			if tag == pair {
+				continue pairs
+			}
+		}
+		_ = system.output_pair_close(&forward, pair)
+	}
 }
 
 // sources_wait adds the rings of the sources and the full rings of the

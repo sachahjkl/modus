@@ -74,8 +74,9 @@ Forward_Write :: enum u8 {
 // What one pass of the forward did.
 Forward_Step :: enum u8 {
 	Empty   = 0, // The queue holds no record.
-	Full    = 1, // The ring of the pair of the oldest record is full: the queue waits for its room.
-	Waiting = 2, // The oldest record waits for the first ring of its pair.
+	Full    = 1, // No record moved, and a full ring of a pair holds a record.
+	Waiting = 2, // No record moved, and each record left waits for the first ring of its pair.
+	Moved   = 3, // Records moved, and others still wait for their pairs.
 }
 
 // The rings of the pairs, as the collector writes them. write writes the
@@ -156,13 +157,15 @@ link_open :: proc "contextless" (links: ^Source_Links, store: ^Space_Store, tag:
 // one first (link_retry), and reads no more of its ring meanwhile. A
 // record of another size is Refused and kept nowhere; a full space, a full
 // forward queue and a store that refuses or holds damage keep the record
-// pending, as Held.
-link_keep :: proc "contextless" (store: ^Space_Store, link: ^Source_Link, record: []u8, time_ms: u64) -> Link_Step {
+// pending, as Held. refusal is the refusal of the space (Wrong_Size for a
+// record of another size), None when it kept the record or when another
+// record is pending.
+link_keep :: proc "contextless" (store: ^Space_Store, link: ^Source_Link, record: []u8, time_ms: u64) -> (step: Link_Step, refusal: Space_Refusal) {
 	if link.pending {
-		return .Held
+		return .Held, .None
 	}
 	if u32(len(record)) != link.record_size || len(record) > SPACE_RECORD_BYTES_MOST {
-		return .Refused
+		return .Refused, .Wrong_Size
 	}
 	link.pending = true
 	link.pending_size = u32(len(record))
@@ -172,23 +175,24 @@ link_keep :: proc "contextless" (store: ^Space_Store, link: ^Source_Link, record
 }
 
 // link_retry gives the pending record of a link to its space again, with
-// the time of its first read. Kept clears it.
-link_retry :: proc "contextless" (store: ^Space_Store, link: ^Source_Link) -> Link_Step {
+// the time of its first read. Kept clears it; Held and Refused give the
+// refusal of the space.
+link_retry :: proc "contextless" (store: ^Space_Store, link: ^Source_Link) -> (step: Link_Step, refusal: Space_Refusal) {
 	if !link.pending {
-		return .Kept
+		return .Kept, .None
 	}
-	_, refusal := record_append(store, link.space, link.pending_bytes[:link.pending_size], link.pending_time)
+	_, refusal = record_append(store, link.space, link.pending_bytes[:link.pending_size], link.pending_time)
 	switch refusal {
 	case .None:
 		link.pending = false
 		link.pending_size = 0
-		return .Kept
+		return .Kept, .None
 	case .Space_Full, .Forward_Full, .Store_Failed, .Store_Damaged:
-		return .Held
+		return .Held, refusal
 	case .Bad_Kind, .Bad_Forwarding, .Bad_Bound, .Bound_Past_Room, .Space_Limit_Reached, .Bad_Name, .Bad_Record_Size, .Unknown_Space, .Wrong_Size, .Not_Principal, .Own_Space, .Chain_Broken, .Forward_Empty, .Bad_Limit, .Space_Held:
-		return .Refused
+		return .Refused, refusal
 	}
-	return .Refused
+	return .Refused, refusal
 }
 
 // link_end marks the end of the ring of a source: its end record, or the
@@ -213,42 +217,75 @@ link_close :: proc "contextless" (link: ^Source_Link, error: errors.Error_Record
 }
 
 // forward_pass gives the records of the queue to the rings of their pairs,
-// oldest first, while each ring takes them. A record whose space no link
-// feeds, or whose pair is None or Gone, is dropped and counted
-// (forward_drop). A pair that was Live and has no ring now is Gone: its
-// records are dropped. The first record of a pair that has no ring yet
-// waits, and the queue with it: the forward keeps the order of the queue.
+// oldest first, while each ring takes them. The order matters within one
+// pair only: a space whose pair cannot take its record now (a full ring,
+// or a first ring that has not come) is skipped for the rest of the pass,
+// and the records of the other spaces go on. So one consumer that does
+// not read, or one pair that never comes, holds only its own space.
+//
+// A record is dropped and counted (forward_drop) when no link feeds its
+// space, when its pair is None or Gone, when its pair was Live and has no
+// ring now (the pair becomes Gone), and when its source ended while its
+// pair never came (the pair becomes Gone, so links_settle frees the link
+// and its space is no longer held).
 forward_pass :: proc "contextless" (store: ^Space_Store, links: ^Source_Links, port: Forward_Port) -> Forward_Step {
+	held: [SPACE_CAPACITY + 1]bool
+	moved, full, waiting := false, false, false
+	offset := u32(0)
 	for {
-		item, empty := forward_peek(store)
-		if empty != .None {
-			return .Empty
+		item := forward_item_at(store, offset)
+		if item == nil {
+			break
+		}
+		if item.space <= SPACE_CAPACITY && held[item.space] {
+			offset += 1
+			continue
 		}
 		link := link_of_space(links, item.space)
 		if link == nil {
-			forward_drop(store)
+			forward_remove_at(store, offset, .Dropped)
+			moved = true
 			continue
 		}
 		switch link.pair {
 		case .None, .Gone:
-			forward_drop(store)
+			forward_remove_at(store, offset, .Dropped)
+			moved = true
 			continue
 		case .Waiting, .Live:
 		}
 		switch port.write(port.user, link.tag, item.bytes[:item.size]) {
 		case .Taken:
 			link.pair = .Live
-			forward_done(store)
+			forward_remove_at(store, offset, .Forwarded)
+			moved = true
 		case .Full:
-			return .Full
+			held[item.space] = true
+			full = true
+			offset += 1
 		case .No_Ring:
-			if link.pair == .Waiting {
-				return .Waiting
+			if link.pair == .Waiting && link.state == .Open {
+				held[item.space] = true
+				waiting = true
+				offset += 1
+				continue
 			}
 			link.pair = .Gone
-			forward_drop(store)
+			forward_remove_at(store, offset, .Dropped)
+			moved = true
 		}
 	}
+	switch {
+	case store.forward_count == 0:
+		return .Empty
+	case moved:
+		return .Moved
+	case full:
+		return .Full
+	case waiting:
+		return .Waiting
+	}
+	return .Moved
 }
 
 // links_settle frees each link whose source ended, whose pending record
@@ -259,10 +296,13 @@ links_settle :: proc "contextless" (store: ^Space_Store, links: ^Source_Links, p
 		if !link.active || link.state != .Ended || link.pending || forward_waits_for(store, link.space) {
 			continue
 		}
+		// A space that does not forward can still have a ring of a pair,
+		// which its asker wired: it ends too, so its reader never waits
+		// for a record that never comes. A Gone pair has no ring.
 		switch link.pair {
-		case .Waiting, .Live:
+		case .Waiting, .Live, .None:
 			port.finish(port.user, link.tag, link.record_size, link.end_error)
-		case .None, .Gone:
+		case .Gone:
 		}
 		link = {}
 	}

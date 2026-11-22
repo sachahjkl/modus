@@ -75,6 +75,8 @@ Source_Refused :: struct {
 	refusal_code:  u64,
 }
 
+#assert(size_of(Source_Refused) == 16)
+
 @(log_fact = "collector: act chain verification failed at index {failing_index} with refusal {refusal_code}")
 Chain_Verification_Failed :: struct {
 	failing_index: u64,

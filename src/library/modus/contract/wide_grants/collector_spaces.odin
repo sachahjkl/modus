@@ -408,15 +408,45 @@ forward_peek :: proc "contextless" (store: ^Space_Store) -> (item: ^Forward_Item
 // ring any more, and counts it as unforwarded in its space: the space keeps
 // it, and no later reader of a new pair takes a record of another wiring.
 forward_drop :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
-	if store.forward_count == 0 {
+	return forward_remove_at(store, 0, .Dropped)
+}
+
+// How a record leaves the forward queue.
+Forward_Removal :: enum u8 {
+	Forwarded = 0, // The ring of its pair took it: its space counts it as forwarded.
+	Dropped   = 1, // Its pair has no ring any more: its space keeps it, and counts it as unforwarded.
+}
+
+// forward_item_at gives the record at offset from the oldest one of the
+// queue, or nil past the queue.
+forward_item_at :: proc "contextless" (store: ^Space_Store, offset: u32) -> ^Forward_Item {
+	if offset >= store.forward_count {
+		return nil
+	}
+	return &store.forward[(store.forward_first + offset) % FORWARD_QUEUE_CAPACITY]
+}
+
+// forward_remove_at removes the record at offset from the oldest one, and
+// counts it in its space. The records after it move one place toward the
+// oldest one, so the order of the others stays: the forward keeps the
+// order of each space, and a space whose pair waits does not hold another.
+forward_remove_at :: proc "contextless" (store: ^Space_Store, offset: u32, removal: Forward_Removal) -> Space_Refusal {
+	item := forward_item_at(store, offset)
+	if item == nil {
 		return .Forward_Empty
 	}
-	item := &store.forward[store.forward_first]
 	if space := space_of(store, item.space); space != nil {
-		space.unforwarded += 1
+		switch removal {
+		case .Forwarded:
+			space.forwarded += 1
+		case .Dropped:
+			space.unforwarded += 1
+		}
 	}
-	item^ = {}
-	store.forward_first = (store.forward_first + 1) % FORWARD_QUEUE_CAPACITY
+	for place in offset ..< store.forward_count - 1 {
+		store.forward[(store.forward_first + place) % FORWARD_QUEUE_CAPACITY] = store.forward[(store.forward_first + place + 1) % FORWARD_QUEUE_CAPACITY]
+	}
+	store.forward[(store.forward_first + store.forward_count - 1) % FORWARD_QUEUE_CAPACITY] = {}
 	store.forward_count -= 1
 	return .None
 }
@@ -434,17 +464,7 @@ forward_waits_for :: proc "contextless" (store: ^Space_Store, space_number: u32)
 // forward_done removes the oldest record of the queue, which its record
 // output took, and counts it as forwarded in its space.
 forward_done :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
-	if store.forward_count == 0 {
-		return .Forward_Empty
-	}
-	item := &store.forward[store.forward_first]
-	if space := space_of(store, item.space); space != nil {
-		space.forwarded += 1
-	}
-	item^ = {}
-	store.forward_first = (store.forward_first + 1) % FORWARD_QUEUE_CAPACITY
-	store.forward_count -= 1
-	return .None
+	return forward_remove_at(store, 0, .Forwarded)
 }
 
 // space_read_allowed decides whether reader reads the records of space: a
