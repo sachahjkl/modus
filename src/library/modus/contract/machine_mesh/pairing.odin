@@ -446,12 +446,14 @@ pairing_exchange_finish :: proc "contextless" (
 }
 
 // pairing_confirm checks the confirmation tag of the peer, then writes the
-// peer in the table with the uses that the principal accepted.
+// peer in the table with the uses that the principal accepted. A set that
+// the client table refuses (empty, or Input without View) is refused
+// before the tag is read.
 pairing_confirm :: proc "contextless" (
 	session: ^Pairing_Session,
 	table: ^Paired_Machine_Table,
 	peer_confirmation_tag: [CPACE_CONFIRM_TAG_SIZE]u8,
-	uses_word: u64,
+	uses: remote.Client_Uses,
 	now_ms: u64,
 ) -> (paired: Paired_Machine, status: Pairing_Status) {
 	if session == nil || table == nil {
@@ -460,8 +462,7 @@ pairing_confirm :: proc "contextless" (
 	if session.phase != .Confirming {
 		return {}, .Refused_Bad_Phase
 	}
-	uses, uses_ok := remote.client_uses_of_word(uses_word)
-	if !uses_ok {
+	if _, uses_ok := remote.client_uses_of_word(remote.client_uses_word(uses)); !uses_ok {
 		return {}, pairing_fail(session, .Refused_Bad_Uses)
 	}
 	session_key, cpace_status := cpace_verify_peer_confirmation(&session.cpace, peer_confirmation_tag)

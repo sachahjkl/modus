@@ -17,6 +17,7 @@ plans_required_exports := [?]Required_Export{
 	{name = "diff", parameters = nil, result = .Table, result_record_name = "Plan_Diff_Row", has_error_record = true, error_record_name = "Error_Record"},
 	{name = "apply", parameters = nil, result = .Integer, has_error_record = true, error_record_name = "Error_Record"},
 	{name = "rollback", parameters = nil, result = .Integer, has_error_record = true, error_record_name = "Error_Record"},
+	{name = "rollback_poll", parameters = nil, result = .Integer, has_error_record = true, error_record_name = "Error_Record"},
 }
 
 @(private = "file")

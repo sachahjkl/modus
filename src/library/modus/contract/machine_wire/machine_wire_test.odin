@@ -146,8 +146,8 @@ pair :: proc(t: ^testing.T, offerer, joiner: ^Machine, now_ms: u64) -> bool {
 	if offer_status != .Ok {
 		return false
 	}
-	offerer.peer.pairing_uses_word = remote.client_uses_word({.Calls})
-	joiner.peer.pairing_uses_word = remote.client_uses_word({.Calls})
+	offerer.peer.pairing_uses = {.Calls}
+	joiner.peer.pairing_uses = {.Calls}
 	if machine_mesh.pairing_join(&joiner.peer.pairing, identity_of(joiner), code[:], now_ms) != .Ok {
 		return false
 	}
@@ -282,8 +282,8 @@ pairing_with_a_wrong_code_ends_on_both_machines :: proc(t: ^testing.T) {
 	now := u64(9_000)
 
 	code, _ := machine_mesh.pairing_offer(&home.peer.pairing, identity_of(home), [8]u8{1, 2, 3, 4, 5, 6, 7, 8}, now)
-	home.peer.pairing_uses_word = remote.client_uses_word({.Calls})
-	laptop.peer.pairing_uses_word = remote.client_uses_word({.Calls})
+	home.peer.pairing_uses = {.Calls}
+	laptop.peer.pairing_uses = {.Calls}
 	wrong := code
 	wrong[0] = wrong[0] == 'A' ? 'B' : 'A'
 	testing.expect_value(t, machine_mesh.pairing_join(&laptop.peer.pairing, identity_of(laptop), wrong[:], now), machine_mesh.Pairing_Status.Ok)

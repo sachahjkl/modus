@@ -182,6 +182,7 @@ Distributed_Counters :: struct {
 	local_store_hits:       u64,
 	cache_hits:             u64,
 	cache_untrusted_skips:  u64, // Cache_First: a realisation of a signer that the policy does not trust, passed over.
+	cache_faults:           u64, // A cache gave a bad realisation or withheld its output: it left the run.
 	remote_builds:          u64,
 	local_builds:           u64,
 	links_lost:             u64, // Calls that ended Unknown_Outcome or Unreachable.
@@ -233,14 +234,14 @@ remote_build_arguments_write :: proc "contextless" (spec: ^pr.Recipe_Spec, outpu
 	copy(bytes[0:32], spec.builder_hash[:])
 	byte_order.write_u64_little_endian(bytes, 32, spec.source_date_unix)
 	byte_order.write_u64_little_endian(bytes, 40, spec.output_block_limit)
-	byte_order.write_u32_little_endian(bytes, 48, u32(spec.output_kind_word))
+	byte_order.write_u32_little_endian(bytes, 48, u32(spec.output_kind))
 	byte_order.write_u32_little_endian(bytes, 52, spec.input_count)
 	byte_order.write_u32_little_endian(bytes, 56, spec.arguments_length)
 	offset := REMOTE_BUILD_HEADER_SIZE
 	for index in 0 ..< spec.input_count {
 		input := &spec.inputs[index]
 		bytes[offset] = input.name_length
-		bytes[offset + 1] = u8(input.kind_word)
+		bytes[offset + 1] = u8(input.kind)
 		copy(bytes[offset + 4:][:blake3.HASH_SIZE], input.hash[:])
 		offset += REMOTE_BUILD_INPUT_HEADER_SIZE
 		copy(bytes[offset:][:input.name_length], input.name_bytes[:input.name_length])
@@ -262,7 +263,12 @@ remote_build_arguments_read :: proc "contextless" (bytes: []u8, spec: ^pr.Recipe
 	copy(spec.builder_hash[:], bytes[0:32])
 	spec.source_date_unix = byte_order.read_u64_little_endian(bytes, 32)
 	spec.output_block_limit = byte_order.read_u64_little_endian(bytes, 40)
-	spec.output_kind_word = u64(byte_order.read_u32_little_endian(bytes, 48))
+	output_kind, output_kind_ok := object_cache.cache_object_kind_of_word(u64(byte_order.read_u32_little_endian(bytes, 48)))
+	if !output_kind_ok {
+		spec^ = {}
+		return .Bad_Output_Kind
+	}
+	spec.output_kind = output_kind
 	input_count := byte_order.read_u32_little_endian(bytes, 52)
 	arguments_length := byte_order.read_u32_little_endian(bytes, 56)
 	if byte_order.read_u32_little_endian(bytes, 60) != 0 {
@@ -286,8 +292,13 @@ remote_build_arguments_read :: proc "contextless" (bytes: []u8, spec: ^pr.Recipe
 		if name_length == 0 || name_length > pr.MAX_ENTRY_NAME_BYTES {
 			return .Invalid_Input_Name
 		}
+		input_kind, input_kind_ok := object_cache.cache_object_kind_of_word(u64(bytes[offset + 1]))
+		if !input_kind_ok {
+			spec^ = {}
+			return .Bad_Input_Kind
+		}
 		input := &spec.inputs[index]
-		input.kind_word = u64(bytes[offset + 1])
+		input.kind = input_kind
 		copy(input.hash[:], bytes[offset + 4:][:blake3.HASH_SIZE])
 		offset += REMOTE_BUILD_INPUT_HEADER_SIZE
 		if len(bytes) - offset < name_length {
@@ -588,7 +599,7 @@ recipe_fill :: proc "contextless" (builder: ^Distributed_Builder, index: int) ->
 			return .Hash_Mismatch
 		}
 		input := &recipe.spec.inputs[dependency.input_index]
-		if input.kind_word != u64(producer.output_kind) {
+		if input.kind != producer.output_kind {
 			return .Bad_Dependency_Input
 		}
 		input.hash = producer.output_hash
@@ -606,7 +617,8 @@ recipe_realise :: proc "contextless" (builder: ^Distributed_Builder, peer: ^mach
 	if hash_refusal != .None {
 		return .Bad_Recipe
 	}
-	kind, _ := object_cache.cache_object_kind_of_word(spec.output_kind_word)
+	// recipe_hash refused a spec whose kinds name no member.
+	kind := spec.output_kind
 	result := &builder.results[index]
 	result.recipe_hash = recipe_hash
 	result.output_kind = kind
@@ -632,13 +644,21 @@ recipe_realise :: proc "contextless" (builder: ^Distributed_Builder, peer: ^mach
 			}
 		}
 	}
+	// A cache that gives a bad realisation or withholds the output leaves
+	// the run, and the next cache, a builder or this machine gives the
+	// output: one faulty cache never stops a build. Cache_Only with no hit
+	// names the last fault, which says more than a miss.
+	last_fault := Distributed_Refusal.None
 	for peer_index in 0 ..< builder.peer_count {
 		if builder.peers[peer_index].purpose != .Cache || builder.peer_out[peer_index] {
 			continue
 		}
 		hit, refusal := cache_fetch(builder, peer, policy, mode, peer_index, index, recipe_hash, kind, now_ms)
 		if refusal != .None {
-			return refusal
+			builder.counters.cache_faults += 1
+			builder.peer_out[peer_index] = true
+			last_fault = refusal
+			continue
 		}
 		if hit {
 			builder.counters.cache_hits += 1
@@ -646,7 +666,7 @@ recipe_realise :: proc "contextless" (builder: ^Distributed_Builder, peer: ^mach
 		}
 	}
 	if mode == .Cache_Only {
-		return .Cache_Miss
+		return last_fault != .None ? last_fault : .Cache_Miss
 	}
 	_, refusal, built, _ := builders_try(builder, peer, policy, index, false, spec, recipe_hash, kind, {}, now_ms)
 	if refusal != .None {

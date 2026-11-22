@@ -754,7 +754,7 @@ Do not use: configuration, profile, manifest.
 
 An applied plan is a plan that the root ring command `Apply` wrote in the store `applied_plans` of a principal, with its number.
 
-Each `plans.apply` writes the number after the highest one, then names it in the row "current plan" of the disk grant table: that write makes it current. `plans.rollback()` names the applied plan before it again, and writes no plan. The applied plans that the store keeps are roots of the garbage collector of `module_files`. It is not a generation, which numbers a commit.
+Each `plans.apply` writes the number after the highest one, then names it in the row "current plan" of the disk grant table: that write makes it current. `plans.rollback()` names the applied plan before it again, once the principal accepts its difference, and writes no plan. The applied plans that the store keeps are roots of the garbage collector of `module_files`. It is not a generation, which numbers a commit.
 
 The design: `src/md/features/declarations.md`.
 
@@ -769,6 +769,16 @@ A pending apply is a plan that `plans.apply` showed on the trusted display and t
 The design: `src/md/features/declarations.md`, "Apply, the difference and the rollback".
 
 Do not use: draft plan, staged plan, proposal.
+
+### Pending rollback
+
+A pending rollback is a rollback that `plans.rollback` showed on the trusted display and that waits for the decision of the principal.
+
+`plans.rollback` gives a ticket, the serial of the dialog of the difference back to the selected applied plan. `plans.rollback_poll(ticket)` reads the decision: a rollback that the principal accepted makes that applied plan current, and gives principal 0 its role holders; a refused one changes nothing. A principal has one dialog at a time: a pending apply and a pending rollback refuse each other. It writes nothing in the store until it commits.
+
+The design: `src/md/features/declarations.md`, "Apply, the difference and the rollback".
+
+Do not use: staged rollback, rollback request.
 
 ### Catalog declaration
 

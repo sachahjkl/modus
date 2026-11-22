@@ -31,10 +31,11 @@ plan_at_start_chosen: bool
 // the answer of the root ring.
 plan_at_start_policy_due: bool
 
-// The name of the Plans holder that plan_at_start_begin actually started,
-// kept separately so an override of Role.Plans does not break the liveness check.
-plan_at_start_holder_buf: [32]u8
-plan_at_start_holder_len: int
+// The name of the holder of Plans that plan_at_start_begin started: a plan
+// can change the holder of Plans during the wait, and the check of the
+// stop names the process that runs.
+plan_at_start_holder_bytes: [32]u8
+plan_at_start_holder_length: int
 
 // plan_at_start_begin keeps the choice of principal 0, then starts the
 // holder of Plans and waits, or starts the start policy at once when the
@@ -71,7 +72,7 @@ plan_at_start_begin :: proc "contextless" (chosen: ^disk_process.Grant_Row) {
 		plan_at_start_end()
 		return
 	}
-	plan_at_start_holder_len = copy(plan_at_start_holder_buf[:], plans_name)
+	plan_at_start_holder_length = copy(plan_at_start_holder_bytes[:], plans_name)
 	show("the root service reads the plan of principal 0", .Running, .Root)
 	if find(plans_name) == nil {
 		if status := start(plans_name); status != .Ok {
@@ -84,11 +85,11 @@ plan_at_start_begin :: proc "contextless" (chosen: ^disk_process.Grant_Row) {
 	system.log_fact(.Info, Plan_At_Start_Waiting{bound = START_POLICY_HANG_BOUND_MILLISECONDS})
 }
 
-// plan_at_start_without_window says if the boot plan wait is active:
-// neither Plans nor any storage/dependency service started for it gets a
-// display ring because no display holder runs yet.
-plan_at_start_without_window :: proc "contextless" (name: string) -> bool {
-	_ = name
+// plan_at_start_without_window says if the wait for the plan of principal
+// 0 runs: a process that starts during it, the holder of Plans or a
+// service that it needs, gets no display ring, because no holder of
+// Display runs yet.
+plan_at_start_without_window :: proc "contextless" () -> bool {
 	return plan_at_start.stage == .Waiting
 }
 
@@ -100,7 +101,7 @@ plan_at_start_step :: proc "contextless" () {
 		plan_at_start_end()
 		return
 	}
-	holder_name := string(plan_at_start_holder_buf[:plan_at_start_holder_len])
+	holder_name := string(plan_at_start_holder_bytes[:plan_at_start_holder_length])
 	switch role_policy.plan_at_start_check(&plan_at_start, system.time(), find(holder_name) != nil) {
 	case .None:
 	case .Holder_Stopped:

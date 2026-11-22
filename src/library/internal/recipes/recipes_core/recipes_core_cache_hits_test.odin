@@ -42,7 +42,7 @@ test_recipes_refused_requests_count_no_build_and_no_hit :: proc(t: ^testing.T) {
 	policy := object_cache.Substitution_Policy{mode = .Prefer_Cache}
 
 	spec := pr.Recipe_Spec {
-		output_kind_word   = u64(object_cache.Cache_Object_Kind.Tree),
+		output_kind        = .Tree,
 		output_block_limit = 256,
 	}
 

@@ -254,7 +254,7 @@ Three separated services hold least authority (`src/library/modus/contract/plans
 - **Plans (`plans` service):**
   - `plans.difference(p)` forces plan `p` in a sandboxed evaluator and asks the root service for the grant, role, module, and store difference against the current applied plan.
   - `plans.apply(p)` displays that root-computed difference on the trusted display (`Show_Plan_Difference`). After whole-plan consent, the root service checks that the current plan has not changed, checks module closure in `module_files`, writes applied plan `N + 1` into `applied_plans` (104-byte wire record), and commits the current-plan pointer atomically.
-  - `plans.rollback()` selects the previous applied plan generation without writing a new record. `plans.rollback(n)` selects generation `n`.
+  - `plans.rollback()` shows the difference back to the previous applied plan generation on the trusted display and gives a ticket; `plans.rollback_poll(ticket)` selects that generation, without writing a new record, once the principal accepts. `plans.rollback(n)` selects generation `n`.
 - **Recipes (`recipes` service):**
   - `recipes.build(target)` realises `outputs.default` (or a named output such as `recipes.build(kernel.tools)`).
   - Substitution mode is passed as a named argument: `recipes.build(kernel, substitution = { mode = .Verify })`. Modes are `.Cache_First`, `.Build_Only`, `.Cache_Only`, and `.Verify` (builds locally and verifies byte-for-byte equality with a signed cache realisation).

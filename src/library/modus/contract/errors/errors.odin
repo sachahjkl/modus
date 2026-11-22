@@ -589,6 +589,22 @@ completion_record :: proc "contextless" (values: [7]u64) -> Error_Record {
 	return transmute(Error_Record)values
 }
 
+// refusal_record_of_values is the border of an error record that another
+// process sent with a refusal: its kind and its unit must name members,
+// and a refusal names a kind, never None. ok is false, and the record is
+// zero, for a record that fails one of these checks.
+refusal_record_of_values :: proc "contextless" (values: [7]u64) -> (record: Error_Record, ok: bool) {
+	candidate := completion_record(values)
+	kind, kind_known := kind_of_word(candidate.kind)
+	if !kind_known || kind == .None {
+		return {}, false
+	}
+	if _, unit_known := unit_of_word(candidate.unit); !unit_known {
+		return {}, false
+	}
+	return candidate, true
+}
+
 // completion_values gives the seven values of a completion that carry a
 // record: the reverse of `completion_record`.
 completion_values :: proc "contextless" (record: Error_Record) -> [7]u64 {

@@ -159,7 +159,7 @@ pairing_refuses_bad_phases_keys_and_channel_bindings :: proc(t: ^testing.T) {
 	testing.expect_value(t, status, Pairing_Status.Refused_Bad_Phase)
 	_, status = pairing_exchange_finish(&session, {}, identity[:])
 	testing.expect_value(t, status, Pairing_Status.Refused_Bad_Phase)
-	_, status = pairing_confirm(&session, &table, {}, 1, START_MS)
+	_, status = pairing_confirm(&session, &table, {}, {.Calls}, START_MS)
 	testing.expect_value(t, status, Pairing_Status.Refused_Bad_Phase)
 	testing.expect_value(t, ledger.count, 0)
 	testing.expect_value(t, table.count, 0)
@@ -215,17 +215,24 @@ pairing_with_the_same_code_records_each_peer_once :: proc(t: ^testing.T) {
 	offerer_tag, joiner_tag := pairing_test_exchange(t, &run, typed[:], binding, binding)
 
 	// The wrong uses are refused before the tag is read.
-	_, status := pairing_confirm(&run.joiner, &run.joiner_table, offerer_tag, 0, START_MS + 30)
+	_, status := pairing_confirm(&run.joiner, &run.joiner_table, offerer_tag, {}, START_MS + 30)
 	testing.expect_value(t, status, Pairing_Status.Refused_Bad_Uses)
 	testing.expect_value(t, run.joiner.phase, Pairing_Phase.Failed)
+	testing.expect_value(t, run.joiner_table.count, 0)
+
+	// Input without View is refused as well, before the tag is read.
+	run = {}
+	offerer_tag, joiner_tag = pairing_test_exchange(t, &run, typed[:], binding, binding)
+	_, input_alone := pairing_confirm(&run.joiner, &run.joiner_table, offerer_tag, {.Input}, START_MS + 30)
+	testing.expect_value(t, input_alone, Pairing_Status.Refused_Bad_Uses)
 	testing.expect_value(t, run.joiner_table.count, 0)
 
 	// A new run, with good uses this time.
 	run = {}
 	offerer_tag, joiner_tag = pairing_test_exchange(t, &run, typed[:], binding, binding)
-	joiner_row, joiner_status := pairing_confirm(&run.joiner, &run.joiner_table, offerer_tag, 1, START_MS + 30)
+	joiner_row, joiner_status := pairing_confirm(&run.joiner, &run.joiner_table, offerer_tag, {.Calls}, START_MS + 30)
 	testing.expect_value(t, joiner_status, Pairing_Status.Ok)
-	offerer_row, offerer_status := pairing_confirm(&run.offerer, &run.offerer_table, joiner_tag, 3, START_MS + 30)
+	offerer_row, offerer_status := pairing_confirm(&run.offerer, &run.offerer_table, joiner_tag, {.Calls, .View}, START_MS + 30)
 	testing.expect_value(t, offerer_status, Pairing_Status.Ok)
 	testing.expect(t, joiner_row.identity_key == OFFERER_KEY)
 	testing.expect(t, offerer_row.identity_key == JOINER_KEY)
@@ -246,7 +253,7 @@ pairing_with_the_same_code_records_each_peer_once :: proc(t: ^testing.T) {
 	testing.expect_value(t, run.joiner_table.count, 1)
 
 	// A pairing that reached the end cannot confirm a second time.
-	_, status = pairing_confirm(&run.offerer, &run.offerer_table, joiner_tag, 1, START_MS + 50)
+	_, status = pairing_confirm(&run.offerer, &run.offerer_table, joiner_tag, {.Calls}, START_MS + 50)
 	testing.expect_value(t, status, Pairing_Status.Refused_Bad_Phase)
 	testing.expect_value(t, run.offerer_table.count, 1)
 }
@@ -262,8 +269,8 @@ pairing_with_a_wrong_code_or_another_connection_fails_on_both_sides :: proc(t: ^
 
 	run: Pairing_Test_Run
 	offerer_tag, joiner_tag := pairing_test_exchange(t, &run, typed[:], binding, binding)
-	_, joiner_status := pairing_confirm(&run.joiner, &run.joiner_table, offerer_tag, 1, START_MS + 30)
-	_, offerer_status := pairing_confirm(&run.offerer, &run.offerer_table, joiner_tag, 1, START_MS + 30)
+	_, joiner_status := pairing_confirm(&run.joiner, &run.joiner_table, offerer_tag, {.Calls}, START_MS + 30)
+	_, offerer_status := pairing_confirm(&run.offerer, &run.offerer_table, joiner_tag, {.Calls}, START_MS + 30)
 	testing.expect_value(t, joiner_status, Pairing_Status.Refused_Confirmation_Failed)
 	testing.expect_value(t, offerer_status, Pairing_Status.Refused_Confirmation_Failed)
 	testing.expect_value(t, run.joiner.phase, Pairing_Phase.Failed)
@@ -278,8 +285,8 @@ pairing_with_a_wrong_code_or_another_connection_fails_on_both_sides :: proc(t: ^
 	run = {}
 	right := pairing_code_text(secret)
 	offerer_tag, joiner_tag = pairing_test_exchange(t, &run, right[:], pairing_test_binding(3), pairing_test_binding(4))
-	_, joiner_status = pairing_confirm(&run.joiner, &run.joiner_table, offerer_tag, 1, START_MS + 30)
-	_, offerer_status = pairing_confirm(&run.offerer, &run.offerer_table, joiner_tag, 1, START_MS + 30)
+	_, joiner_status = pairing_confirm(&run.joiner, &run.joiner_table, offerer_tag, {.Calls}, START_MS + 30)
+	_, offerer_status = pairing_confirm(&run.offerer, &run.offerer_table, joiner_tag, {.Calls}, START_MS + 30)
 	testing.expect_value(t, joiner_status, Pairing_Status.Refused_Confirmation_Failed)
 	testing.expect_value(t, offerer_status, Pairing_Status.Refused_Confirmation_Failed)
 	testing.expect_value(t, run.joiner_table.count + run.offerer_table.count, 0)
@@ -287,12 +294,12 @@ pairing_with_a_wrong_code_or_another_connection_fails_on_both_sides :: proc(t: ^
 	// A tag of all zeros, and a tag replayed from another run, are refused.
 	run = {}
 	offerer_tag, _ = pairing_test_exchange(t, &run, right[:], binding, binding)
-	_, joiner_status = pairing_confirm(&run.joiner, &run.joiner_table, {}, 1, START_MS + 30)
+	_, joiner_status = pairing_confirm(&run.joiner, &run.joiner_table, {}, {.Calls}, START_MS + 30)
 	testing.expect_value(t, joiner_status, Pairing_Status.Refused_Confirmation_Failed)
 	old_tag := offerer_tag
 	run = {}
 	_, _ = pairing_test_exchange(t, &run, right[:], pairing_test_binding(5), pairing_test_binding(5))
-	_, joiner_status = pairing_confirm(&run.joiner, &run.joiner_table, old_tag, 1, START_MS + 30)
+	_, joiner_status = pairing_confirm(&run.joiner, &run.joiner_table, old_tag, {.Calls}, START_MS + 30)
 	testing.expect_value(t, joiner_status, Pairing_Status.Refused_Confirmation_Failed)
 	testing.expect_value(t, run.joiner_table.count, 0)
 }

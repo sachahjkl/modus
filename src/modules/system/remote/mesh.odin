@@ -23,6 +23,7 @@ import "modus:contract/machine_mesh"
 import "modus:contract/machine_sync"
 import "modus:contract/machine_wire"
 import "modus:contract/object_cache"
+import "modus:contract/remote"
 import "modus:random"
 import "modus:system"
 
@@ -133,7 +134,11 @@ mesh_pairing_offer :: proc "contextless" (code_text: ^[machine_mesh.PAIRING_CODE
 	if !mesh_identity_check(error) {
 		return -1
 	}
-	mesh.pairing_uses_word = uses_word
+	uses, uses_known := remote.client_uses_of_word(uses_word)
+	if !uses_known {
+		return errors.fail(error, -1, .Bad_Value, .None, 2, i64(uses_word), i64(remote.client_uses_word({.Calls, .View, .Input})))
+	}
+	mesh.pairing_uses = uses
 	random_bytes: [8]u8
 	defer machine_mesh.clear_bytes_explicitly(random_bytes[:])
 	if !random.fill_for_a_key(&process_generator, random_bytes[:], .Processor, error) {
@@ -153,7 +158,11 @@ mesh_pairing_join :: proc "contextless" (code_text: []u8, uses_word: u64, error:
 	if !mesh_identity_check(error) {
 		return -1
 	}
-	mesh.pairing_uses_word = uses_word
+	uses, uses_known := remote.client_uses_of_word(uses_word)
+	if !uses_known {
+		return errors.fail(error, -1, .Bad_Value, .None, 2, i64(uses_word), i64(remote.client_uses_word({.Calls, .View, .Input})))
+	}
+	mesh.pairing_uses = uses
 	status := machine_mesh.pairing_join(&mesh.pairing, mesh.identity.public_key, code_text, system.time())
 	if status != .Ok {
 		return mesh_pairing_fail(error, status, 1)

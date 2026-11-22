@@ -139,6 +139,13 @@ TABLE_CAUSE_SERVICE_SILENT :: "the principals service gave no answer in time"
 TABLE_CAUSE_HANDLES_NOT_GIVEN :: "the principals service took no handle"
 TABLE_CAUSE_UNDECODED :: "the principals service gave a table that does not decode"
 TABLE_CAUSE_BAD_ANSWER :: "the principals service gave an answer that names no cause"
+TABLE_CAUSE_OUTSIDE_CLASS :: "the principals service gave a row outside the disk grant classes"
+TABLE_CAUSE_BAD_ERROR_RECORD :: "the principals service gave an error record that names no kind"
+
+// The rows of a table that the principals service read, as the border of
+// Disk_Rows_Set takes them. A file variable: the set is too large for the
+// stack of this service.
+persisted_table_read_rows: rd.Disk_Rows_Set_Request
 
 // The cause of each failure that the principals service names.
 @(rodata)
@@ -578,9 +585,11 @@ persisted_table_open :: proc "contextless" (principal: u64) -> (cause: string, g
 		return TABLE_CAUSE_NO_CONNECTION, {}, false
 	}
 	// The handle of the storage service is a copy of its own, so its
-	// revocation does not reach the handle of its row.
+	// revocation does not reach the handle of its row. The copy has Give so
+	// that this service can give it through the ring; the service receives
+	// it with Read only.
 	storage_copy: system.Handle
-	storage_copy, status = system.give(0, service.process, {.Read})
+	storage_copy, status = system.give(0, service.process, {.Read, .Give})
 	sources := [3]system.Handle{storage_copy, ring_memory, region_memory}
 	rights := [3]system.Rights{{.Read}, {.Read, .Write}, {.Read, .Write}}
 	given_count := 0
@@ -781,9 +790,16 @@ persisted_table_answer :: proc "contextless" (record: ring.Record, status: rd.Pr
 	table := &persisted_tables[principal]
 	switch status {
 	case .Storage_Refused:
+		// The error record is a claim of the principals service: its kind
+		// and its unit must name members, and a refusal names a kind.
+		error_record, error_record_known := errors.refusal_record_of_values(record.values)
+		if !error_record_known {
+			persisted_table_failed(principal, TABLE_CAUSE_BAD_ERROR_RECORD)
+			return
+		}
 		// The error record is a fact of its own fields; the line of the
 		// table names the refusal.
-		system.log_fact(.Warning, Table_Call_Refused(errors.error_record_fact_fields(transmute(errors.Error_Record)record.values)))
+		system.log_fact(.Warning, Table_Call_Refused(errors.error_record_fact_fields(error_record)))
 		persisted_table_failed(principal, TABLE_CALL_REFUSED)
 		return
 	case .Refused, .Bad_Command:
@@ -837,6 +853,13 @@ persisted_table_read_take :: proc "contextless" (principal: u64, values: [7]u64)
 		from_disk = decoded
 		// Only principal 0 chooses the start policy of the machine.
 		problem = disk_process.table_principal_problem(&from_disk, principal == principals.MACHINE)
+		// The table is a claim of the principals service: its rows pass
+		// the border of Disk_Rows_Set, so no row gives a grant outside the
+		// disk grant classes, whatever the service verified.
+		if problem == .None && !disk_process.disk_rows_set_request_of_table(&from_disk, principal, 1, &persisted_table_read_rows) {
+			persisted_table_read_failed(principal, TABLE_CAUSE_OUTSIDE_CLASS)
+			return
+		}
 	}
 	decision := disk_process.table_read_decision(absent, problem, table.key_new)
 	if decision != .Take {

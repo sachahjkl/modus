@@ -140,7 +140,7 @@ test_plans_rollback_and_monotonic_generation_history :: proc(t: ^testing.T) {
 	defer free(store)
 
 	// Rollback on empty history refused.
-	_, empty_ref := rollback(state, 0)
+	_, empty_ref := rollback_commit(state, 0)
 	testing.expect_value(t, empty_ref, pr.Plan_Refusal.Empty_History)
 
 	// Apply gen 1, gen 2, gen 3 (all zero-grant modules to test history & rollback directly).
@@ -151,7 +151,7 @@ test_plans_rollback_and_monotonic_generation_history :: proc(t: ^testing.T) {
 	testing.expect_value(t, err1, pr.Plan_Refusal.None)
 
 	// Rollback from gen 1 refused (no previous generation).
-	_, rb1_ref := rollback(state, 0)
+	_, rb1_ref := rollback_commit(state, 0)
 	testing.expect_value(t, rb1_ref, pr.Plan_Refusal.Empty_History)
 
 	p2 := pr.Plan_Spec{principal = 0, entry_count = 1}
@@ -166,7 +166,7 @@ test_plans_rollback_and_monotonic_generation_history :: proc(t: ^testing.T) {
 	testing.expect_value(t, r3.generation, u64(3))
 
 	// Rollback without target selects gen 2 and writes no new plan.
-	sel2, rb2_ref := rollback(state, 0)
+	sel2, rb2_ref := rollback_commit(state, 0)
 	testing.expect_value(t, rb2_ref, pr.Plan_Refusal.None)
 	testing.expect_value(t, sel2.generation, u64(2))
 
@@ -176,11 +176,11 @@ test_plans_rollback_and_monotonic_generation_history :: proc(t: ^testing.T) {
 	testing.expect_value(t, cur_gen, u64(2))
 
 	// Explicit rollback to gen 1 succeeds; rollback to current gen 1 refused.
-	sel1, rb_to1 := rollback(state, 0, 1, true)
+	sel1, rb_to1 := rollback_commit(state, 0, 1, true)
 	testing.expect_value(t, rb_to1, pr.Plan_Refusal.None)
 	testing.expect_value(t, sel1.generation, u64(1))
 
-	_, rb_same := rollback(state, 0, 1, true)
+	_, rb_same := rollback_commit(state, 0, 1, true)
 	testing.expect_value(t, rb_same, pr.Plan_Refusal.Already_At_Generation)
 
 	// Next apply after rollback writes generation 4 (never overwrites 2 or 3).

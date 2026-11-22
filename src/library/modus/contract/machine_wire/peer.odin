@@ -14,6 +14,7 @@ import "modus:contract/byte_order"
 import "modus:contract/machine_mesh"
 import "modus:contract/machine_sync"
 import "modus:contract/object_cache"
+import "modus:contract/remote"
 import "modus:contract/role_contract"
 
 OBJECT_CAPACITY :: 8 // The objects by hash that a peer keeps: a few small objects, in the data of the process.
@@ -94,8 +95,9 @@ Peer :: struct {
 	spent_codes:       machine_mesh.Pairing_Code_Ledger,
 	paired:            machine_mesh.Paired_Machine_Table,
 	// The uses that the principal gave at the offer or the join: the row of
-	// the other machine takes them when the exchange confirms.
-	pairing_uses_word: u64,
+	// the other machine takes them when the exchange confirms. The caller
+	// took them at its border (remote.client_uses_of_word).
+	pairing_uses:      remote.Client_Uses,
 	machine_list:      machine_mesh.Machine_List_Holder,
 	has_principal:     bool,
 	// Zero: a machine with no TPM attestation is refused, as the design
@@ -347,7 +349,7 @@ serve_pairing_confirm :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_
 	}
 	tag: [machine_mesh.CPACE_CONFIRM_TAG_SIZE]u8
 	copy(tag[:], body)
-	paired, status := machine_mesh.pairing_confirm(&peer.pairing, &peer.paired, tag, peer.pairing_uses_word, serve_context.now_ms)
+	paired, status := machine_mesh.pairing_confirm(&peer.pairing, &peer.paired, tag, peer.pairing_uses, serve_context.now_ms)
 	if status != .Ok {
 		return refusal_write(output, .Pairing_Refused, u32(status))
 	}
@@ -411,7 +413,7 @@ pairing_element_reply_accept :: proc "contextless" (peer: ^Peer, answer: []u8, n
 		return nil, machine_mesh.pairing_fail(&peer.pairing, .Refused_Nil_Input)
 	}
 	copy(confirm_body, own_tag[:])
-	_, confirm_status := machine_mesh.pairing_confirm(&peer.pairing, &peer.paired, tag, peer.pairing_uses_word, now_ms)
+	_, confirm_status := machine_mesh.pairing_confirm(&peer.pairing, &peer.paired, tag, peer.pairing_uses, now_ms)
 	return frame_bytes(output, confirm_body), confirm_status
 }
 

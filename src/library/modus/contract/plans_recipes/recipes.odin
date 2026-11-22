@@ -86,7 +86,7 @@ Recipes_Ring_Command :: enum u32 {
 Recipe_Input :: struct {
 	name_bytes:  [MAX_ENTRY_NAME_BYTES]u8,
 	name_length: u8,
-	kind_word:   u64,
+	kind:        object_cache.Cache_Object_Kind, // A border that takes a word refuses one that names no kind.
 	hash:        blake3.Hash,
 }
 
@@ -95,7 +95,7 @@ Recipe_Input :: struct {
 // canonical arguments produce the same recipe_hash.
 Recipe_Spec :: struct {
 	builder_hash:       blake3.Hash,
-	output_kind_word:   u64,
+	output_kind:        object_cache.Cache_Object_Kind, // A border that takes a word refuses one that names no kind.
 	source_date_unix:   u64,
 	output_block_limit: u64,
 	input_count:        u32,
@@ -190,7 +190,7 @@ recipe_input_make :: proc "contextless" (name: string, kind: object_cache.Cache_
 	}
 	copy(input.name_bytes[:len(raw)], raw)
 	input.name_length = u8(len(raw))
-	input.kind_word = u64(kind)
+	input.kind = kind
 	input.hash = hash
 	return input, .None
 }
@@ -203,7 +203,8 @@ recipe_validate :: proc "contextless" (spec: ^Recipe_Spec) -> (refusal: Recipe_R
 	if spec == nil || hash_is_zero(spec.builder_hash) {
 		return .Zero_Builder_Hash, 0
 	}
-	if _, out_ok := object_cache.cache_object_kind_of_word(spec.output_kind_word); !out_ok {
+	// The zero value of a spec names no kind.
+	if _, out_ok := object_cache.cache_object_kind_of_word(u64(spec.output_kind)); !out_ok {
 		return .Bad_Output_Kind, 0
 	}
 	if spec.input_count > MAX_RECIPE_INPUTS {
@@ -231,7 +232,7 @@ recipe_validate :: proc "contextless" (spec: ^Recipe_Spec) -> (refusal: Recipe_R
 				return .Nonzero_Padding, index
 			}
 		}
-		if _, kind_ok := object_cache.cache_object_kind_of_word(input.kind_word); !kind_ok {
+		if _, kind_ok := object_cache.cache_object_kind_of_word(u64(input.kind)); !kind_ok {
 			return .Bad_Input_Kind, index
 		}
 		if hash_is_zero(input.hash) {
@@ -282,14 +283,14 @@ recipe_hash :: proc "contextless" (spec: ^Recipe_Spec) -> (digest: blake3.Hash, 
 	canonical_buffer: [MAX_RECIPE_CANONICAL_BYTES]u8
 	encoder := Canonical_Encoder{buffer = canonical_buffer[:]}
 	encoder_raw_bytes(&encoder, spec.builder_hash[:])
-	encoder_byte(&encoder, u8(spec.output_kind_word))
+	encoder_byte(&encoder, u8(spec.output_kind))
 	encoder_u64(&encoder, spec.source_date_unix)
 	encoder_u64(&encoder, spec.output_block_limit)
 	encoder_u32(&encoder, spec.input_count)
 	for pos in u32(0) ..< spec.input_count {
 		input := &spec.inputs[order[pos]]
 		encoder_bytes(&encoder, input.name_bytes[:input.name_length])
-		encoder_byte(&encoder, u8(input.kind_word))
+		encoder_byte(&encoder, u8(input.kind))
 		encoder_raw_bytes(&encoder, input.hash[:])
 	}
 	encoder_bytes(&encoder, spec.arguments[:spec.arguments_length])
@@ -306,14 +307,13 @@ builder_sandbox_prepare :: proc "contextless" (spec: ^Recipe_Spec) -> (sandbox: 
 	if hash_refusal != .None {
 		return {}, hash_refusal
 	}
-	out_kind, _ := object_cache.cache_object_kind_of_word(spec.output_kind_word)
 	order: [MAX_RECIPE_INPUTS]u32
 	sort_recipe_input_indices(spec, &order)
 
 	sandbox = {
 		recipe_hash        = rhash,
 		builder_hash       = spec.builder_hash,
-		output_kind        = out_kind,
+		output_kind        = spec.output_kind,
 		random_seed        = rhash,
 		frozen_date_unix   = spec.source_date_unix,
 		output_block_limit = spec.output_block_limit,
@@ -374,11 +374,7 @@ recipe_verify_cache_realisation :: proc "contextless" (
 	if hash_refusal != .None {
 		return {}, hash_refusal
 	}
-	expected_kind, kind_ok := object_cache.cache_object_kind_of_word(spec.output_kind_word)
-	if !kind_ok {
-		return {}, .Bad_Output_Kind
-	}
-	if realisation.output_kind != expected_kind {
+	if realisation.output_kind != spec.output_kind {
 		return {}, .Malformed_Output
 	}
 

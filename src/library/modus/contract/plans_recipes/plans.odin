@@ -91,8 +91,8 @@ Plan_Refusal :: enum u8 {
 	Trusted_Path_Forbidden = 23,
 	History_Full           = 24,
 	No_Change              = 25, // The plan is the current plan: the trusted display has nothing to show.
-	Apply_Pending          = 26, // An apply of the principal waits for the decision of the trusted display.
-	No_Pending_Apply       = 27, // No apply of the principal waits under this ticket.
+	Apply_Pending          = 26, // An apply or a rollback of the principal waits for the decision of the trusted display.
+	No_Pending_Apply       = 27, // No apply, or no rollback, of the principal waits under this ticket.
 	Refused_By_Principal   = 28, // The principal refused the difference on the trusted display.
 	Display_Refused        = 29, // The trusted display did not show the difference whole, so nobody accepted it.
 	Store_Failed           = 30, // The private store did not take a write: nothing was committed.

@@ -111,10 +111,12 @@ console_renderer_start_check :: proc "contextless" (renderer: Console_Renderer, 
 }
 
 // console_renderer_holders_set writes the default holders of Display and
-// Terminal for a renderer. Serial_Terminal and Dom_Terminal leave Display
-// with no holder: no process draws on the screen, and a start of "display"
-// is refused as a role with no holder. Grid_Terminal gives both roles to
-// grid_terminal: it is the one process that writes the screen. Desktop_Terminal changes
+// Terminal for a renderer. Each renderer that draws no window holds
+// Terminal only, and leaves Display with no holder: a start of "display"
+// is refused as a role with no holder. grid_terminal writes the screen,
+// but it does not implement the display contract: a caller that resolves
+// "display" must never reach it. The framebuffer is its device grant, and
+// the start check keeps it the one screen writer. Desktop_Terminal changes
 // nothing. Overrides stay as they are: a plan still wins over the image.
 console_renderer_holders_set :: proc "contextless" (names: ^Holder_Names, renderer: Console_Renderer) {
 	switch renderer {
@@ -126,7 +128,7 @@ console_renderer_holders_set :: proc "contextless" (names: ^Holder_Names, render
 		names.defaults[.Display] = ""
 		names.defaults[.Terminal] = DOM_TERMINAL_MODULE
 	case .Grid_Terminal:
-		names.defaults[.Display] = GRID_TERMINAL_MODULE
+		names.defaults[.Display] = ""
 		names.defaults[.Terminal] = GRID_TERMINAL_MODULE
 	}
 }

@@ -10,14 +10,15 @@ The root service chooses the renderer once, before the start policy, from the mo
 |---|---|---|---|
 | the compositor | any | `terminal` | `compositor` |
 | no compositor, `dom_terminal` | any | `dom_terminal` | none |
-| no compositor, `grid_terminal` | a screen | `grid_terminal` | `grid_terminal` |
+| no compositor, `grid_terminal` | a screen | `grid_terminal` | none |
 | no compositor, `serial_terminal` | any other case | `serial_terminal` | none |
 | none of the four | any | `terminal` | `compositor` |
 
 - The compositor wins. A desktop image behaves as before, whatever else it holds: the choice changes no holder, no start and no window.
 - `dom_terminal` comes next, with or without a screen: an image that holds it is made for a page, which draws the terminal itself.
 - The choice writes the defaults of the image only. A plan of principal 0 still overrides a holder, as for each other role.
-- A console image has no window server. `start_view_give` starts a process with no terminal with no window, and a disk process gets none either. A start of `display` is refused: with `serial_terminal` or `dom_terminal` the role Display has no holder, and with `grid_terminal` the procedure of the compositor refuses a holder that is not a compositor.
+- A console image has no window server. `start_view_give` starts a process with no terminal with no window, and a disk process gets none either. A start of `display` is refused: with each of the three renderers the role Display has no holder.
+- **`grid_terminal` does not hold Display.** It writes the screen, but it does not implement the display contract: a caller that resolves `display` and reached it would send records that it does not read (property 23). The framebuffer is its device grant as the holder of Terminal, and the start check keeps it the one screen writer. Refused: `grid_terminal` as the holder of both roles.
 - `serial_terminal` and `dom_terminal` need no screen: on a machine with no framebuffer, the console starts with them (`role_policy.console_renderer_needs_screen`). With `grid_terminal` or the desktop, a process with the grant Terminal still needs a screen.
 - The root service writes one line for a console image: "root: no compositor in the boot image: the console writes to the second serial port through serial_terminal", or the line of the grid, or of `dom_terminal`.
 
@@ -83,7 +84,7 @@ Refused: the demonstration `disk` in the image. It is a window that imports the 
 
 ## The subtle points
 
-- **Property 18.** `grid_terminal` draws characters with `graphics.character` and fills, not through the draw table. It is the holder of Display in a console image, so no process draws beside it. A grid that draws through the draw table waits for a measure of its cost against the direct path.
+- **Property 18.** `grid_terminal` draws characters with `graphics.character` and fills, not through the draw table. The root service gives the framebuffer to it alone, so no process draws beside it. A grid that draws through the draw table waits for a measure of its cost against the direct path (`ROADMAP.md`).
 - **The pixel format.** `grid_terminal` writes the colors of `graphics` as the compositor writes them on the framebuffer of the firmware of the test machine (blue first). A framebuffer with red first shows red and blue swapped.
 - **The list over the output.** On the serial port, a completion list above the edit line covers rows of the output; when it closes, these rows are cleared, and their text is not drawn again.
 

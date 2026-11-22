@@ -24,7 +24,7 @@ store_test_hash :: proc(tag: u8) -> blake3.Hash {
 @(private = "file")
 store_test_spec :: proc() -> (spec: pr.Recipe_Spec) {
 	spec.builder_hash = pr.inputs_tree_builder_hash()
-	spec.output_kind_word = u64(object_cache.Cache_Object_Kind.Tree)
+	spec.output_kind = .Tree
 	spec.input_count = 2
 	spec.inputs[0], _ = pr.recipe_input_make("src", .Tree, store_test_hash(1))
 	spec.inputs[1], _ = pr.recipe_input_make("lib", .Blob, store_test_hash(2))
@@ -84,7 +84,7 @@ the_recipe_hash_is_deterministic_and_names_each_part :: proc(t: ^testing.T) {
 	changes[0].inputs[0], _ = pr.recipe_input_make("src", .Tree, store_test_hash(9))
 	changes[1].inputs[1], _ = pr.recipe_input_make("lib", .Tree, store_test_hash(2))
 	changes[2].builder_hash = store_test_hash(7)
-	changes[3].output_kind_word = u64(object_cache.Cache_Object_Kind.Blob)
+	changes[3].output_kind = .Blob
 	for &changed, index in changes {
 		digest, changed_refusal := pr.recipe_hash(&changed)
 		testing.expectf(t, changed_refusal == .None && digest != first, "change %d gives another hash", index)

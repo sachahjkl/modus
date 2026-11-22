@@ -167,7 +167,7 @@ test_plans_accept_commits_and_rollback_restores_the_exact_prior_state :: proc(t:
 
 	// The rollback selects generation 1, and the service that starts again
 	// reads the same state from the store: the plan of generation 1 whole.
-	selected, refusal := rollback(state, 3)
+	selected, refusal := rollback_commit(state, 3)
 	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
 	testing.expect_value(t, selected, first)
 	forget(state)
@@ -183,7 +183,7 @@ test_plans_accept_commits_and_rollback_restores_the_exact_prior_state :: proc(t:
 	writes := store.writes
 	current_object := pr.memory_private_store_find(store, "plan_3_current")
 	current_before := string(current_object.bytes[:current_object.length])
-	_, double := rollback(state, 3)
+	_, double := rollback_commit(state, 3)
 	testing.expect_value(t, double, pr.Plan_Refusal.Empty_History)
 	testing.expect_value(t, store.writes, writes)
 	testing.expect_value(t, string(current_object.bytes[:current_object.length]), current_before)
@@ -358,7 +358,7 @@ test_plans_store_failure_commits_nothing :: proc(t: ^testing.T) {
 	second_plan := module_plan(0, 2, 0)
 	second := accepted_apply(t, state, &display, &second_plan, record.plan_hash, 300)
 	store.writes_allowed = store.writes
-	_, refused := rollback(state, 0)
+	_, refused := rollback_commit(state, 0)
 	testing.expect_value(t, refused, pr.Plan_Refusal.Store_Failed)
 	_, current, _ := current_plan(state, 0)
 	testing.expect_value(t, current, second)
@@ -410,7 +410,7 @@ test_plans_damaged_store_is_refused_whole :: proc(t: ^testing.T) {
 		forget(state)
 		_, refusal := principal_entry(state, 0)
 		testing.expectf(t, refusal == .Store_Damaged, "damage %d: %v", index, refusal)
-		_, rollback_refusal := rollback(state, 0)
+		_, rollback_refusal := rollback_commit(state, 0)
 		testing.expectf(t, rollback_refusal == .Store_Damaged, "damage %d: rollback %v", index, rollback_refusal)
 		_, _, found := current_plan(state, 0)
 		testing.expect(t, !found)
@@ -456,4 +456,135 @@ test_plans_display_lists_name_each_side :: proc(t: ^testing.T) {
 	testing.expect_value(t, display_lists_of_difference(&difference, &lists), pr.Plan_Refusal.None)
 	testing.expect_value(t, string(lists.added[:lists.added_length]), "store documents read write")
 	testing.expect_value(t, string(lists.removed[:lists.removed_length]), "disk calc narrowed, store notes read, start clock")
+}
+
+// A rollback restores grants, so it shows its difference on the trusted
+// display and commits nothing until the principal accepts. Refused first:
+// no buffer, no display, a display that does not show it, a second dialog
+// while it shows, a poll of the rollback as an apply, a poll of another
+// ticket or principal, a refusal of the principal, a dialog that the
+// display forgets, a display that does not answer, and a current plan that
+// changed since the difference. Last: an accepted rollback commits the
+// generation that the principal saw.
+@(test)
+test_plans_rollback_waits_for_the_decision_of_the_principal :: proc(t: ^testing.T) {
+	state := new(Plans_State)
+	defer free(state)
+	store := plans_test_state_init(state, 5)
+	defer free(store)
+	display: Test_Display
+	port := test_display_port(&display)
+	network_bit := u64(1) << u64(start_grant.Grant.Network)
+	first_plan := module_plan(3, 1, 0)
+	first := accepted_apply(t, state, &display, &first_plan, {}, 100)
+	second_plan := module_plan(3, 2, network_bit)
+	second := accepted_apply(t, state, &display, &second_plan, first.plan_hash, 200)
+	difference: pr.Plan_Difference
+	lists: Plan_Display_Lists
+	writes := store.writes
+	current_generation_is :: proc(t: ^testing.T, state: ^Plans_State, generation: u64) {
+		_, record, _ := current_plan(state, 3)
+		testing.expect_value(t, record.generation, generation)
+	}
+
+	_, no_buffer := rollback_request(state, &port, 3, nil, &lists)
+	testing.expect_value(t, no_buffer, pr.Plan_Refusal.Buffer_Too_Small)
+	_, no_lists := rollback_request(state, &port, 3, &difference, nil)
+	testing.expect_value(t, no_lists, pr.Plan_Refusal.Buffer_Too_Small)
+	_, no_display := rollback_request(state, nil, 3, &difference, &lists)
+	testing.expect_value(t, no_display, pr.Plan_Refusal.Consent_Required)
+	empty_port: Trusted_Display_Port
+	_, no_ask := rollback_request(state, &empty_port, 3, &difference, &lists)
+	testing.expect_value(t, no_ask, pr.Plan_Refusal.Consent_Required)
+	display.refuse_to_ask = true
+	_, not_shown := rollback_request(state, &port, 3, &difference, &lists)
+	testing.expect_value(t, not_shown, pr.Plan_Refusal.Display_Refused)
+	display.refuse_to_ask = false
+	_, no_history := rollback_request(state, &port, 9, &difference, &lists)
+	testing.expect_value(t, no_history, pr.Plan_Refusal.Empty_History)
+	_, same_generation := rollback_request(state, &port, 3, &difference, &lists, 2, true)
+	testing.expect_value(t, same_generation, pr.Plan_Refusal.Already_At_Generation)
+	testing.expect_value(t, store.writes, writes)
+	current_generation_is(t, state, 2)
+
+	// The dialog shows the difference back to generation 1, and nothing
+	// changes while it shows.
+	ticket, refusal := rollback_request(state, &port, 3, &difference, &lists)
+	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
+	testing.expect_value(t, display.plan_name, ROLLBACK_DISPLAY_NAME)
+	testing.expect_value(t, display.added, "disk calc changed")
+	testing.expect_value(t, pending_ticket(state, 3), ticket)
+	_, finished, pending_refusal := rollback_poll(state, &port, 3, ticket)
+	testing.expect(t, !finished)
+	testing.expect_value(t, pending_refusal, pr.Plan_Refusal.None)
+	_, second_rollback := rollback_request(state, &port, 3, &difference, &lists)
+	testing.expect_value(t, second_rollback, pr.Plan_Refusal.Apply_Pending)
+	third_plan := module_plan(3, 3, 0)
+	_, apply_while := apply_request(state, &port, "home", &third_plan, second.plan_hash, &difference, &lists)
+	testing.expect_value(t, apply_while, pr.Plan_Refusal.Apply_Pending)
+	_, _, as_apply := apply_poll(state, &port, 3, ticket, 300, &difference)
+	testing.expect_value(t, as_apply, pr.Plan_Refusal.No_Pending_Apply)
+	for bad_ticket in ([?]u64{0, ticket + 1, max(u64)}) {
+		_, bad_finished, bad_refusal := rollback_poll(state, &port, 3, bad_ticket)
+		testing.expect(t, bad_finished)
+		testing.expect_value(t, bad_refusal, pr.Plan_Refusal.No_Pending_Apply)
+	}
+	_, _, other_principal := rollback_poll(state, &port, 4, ticket)
+	testing.expect_value(t, other_principal, pr.Plan_Refusal.No_Pending_Apply)
+	testing.expect_value(t, pending_ticket(state, 3), ticket)
+	testing.expect_value(t, store.writes, writes)
+	current_generation_is(t, state, 2)
+
+	// The principal refuses: nothing is written, and the rollback ends.
+	display.decisions[ticket] = .Refused
+	refused_record, refused_finished, refused := rollback_poll(state, &port, 3, ticket)
+	testing.expect(t, refused_finished)
+	testing.expect_value(t, refused, pr.Plan_Refusal.Refused_By_Principal)
+	testing.expect_value(t, refused_record, pr.Applied_Plan_Record{})
+	testing.expect_value(t, pending_ticket(state, 3), u64(0))
+	_, _, again := rollback_poll(state, &port, 3, ticket)
+	testing.expect_value(t, again, pr.Plan_Refusal.No_Pending_Apply)
+
+	// A dialog that the display no longer knows, and a display that does
+	// not answer, end the rollback with nothing written.
+	forgotten, _ := rollback_request(state, &port, 3, &difference, &lists)
+	display.decisions[forgotten] = .Unknown
+	_, _, unknown := rollback_poll(state, &port, 3, forgotten)
+	testing.expect_value(t, unknown, pr.Plan_Refusal.Display_Refused)
+	silent, _ := rollback_request(state, &port, 3, &difference, &lists)
+	display.poll_fails = true
+	_, _, no_answer := rollback_poll(state, &port, 3, silent)
+	testing.expect_value(t, no_answer, pr.Plan_Refusal.Display_Refused)
+	display.poll_fails = false
+	testing.expect_value(t, pending_ticket(state, 3), u64(0))
+	testing.expect_value(t, store.writes, writes)
+	current_generation_is(t, state, 2)
+
+	// The current plan changes after the dialog: the accepted rollback is
+	// stale, and the change that came first stays.
+	stale, _ := rollback_request(state, &port, 3, &difference, &lists)
+	display.decisions[stale] = .Accepted
+	_, came_first := rollback_commit(state, 3)
+	testing.expect_value(t, came_first, pr.Plan_Refusal.None)
+	writes = store.writes
+	_, _, stale_refusal := rollback_poll(state, &port, 3, stale)
+	testing.expect_value(t, stale_refusal, pr.Plan_Refusal.Stale_Current_Plan)
+	testing.expect_value(t, store.writes, writes)
+	current_generation_is(t, state, 1)
+
+	// Last: from generation 3, the principal accepts a rollback to the
+	// generation 1 that the dialog named, and it commits.
+	third := accepted_apply(t, state, &display, &third_plan, first.plan_hash, 400)
+	testing.expect_value(t, third.generation, u64(3))
+	accepted, accepted_request := rollback_request(state, &port, 3, &difference, &lists, 2, true)
+	testing.expect_value(t, accepted_request, pr.Plan_Refusal.None)
+	testing.expect_value(t, display.plan_name, ROLLBACK_DISPLAY_NAME)
+	display.decisions[accepted] = .Accepted
+	selected, accepted_finished, accepted_refusal := rollback_poll(state, &port, 3, accepted)
+	testing.expect(t, accepted_finished)
+	testing.expect_value(t, accepted_refusal, pr.Plan_Refusal.None)
+	testing.expect_value(t, selected, second)
+	current_generation_is(t, state, 2)
+	testing.expect_value(t, pending_ticket(state, 3), u64(0))
+	testing.expect_value(t, highest_generation(state, 3), u64(3))
 }

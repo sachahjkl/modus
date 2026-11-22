@@ -330,7 +330,7 @@ test_recipe_hash_stability_and_tampered_cache_refusal :: proc(t: ^testing.T) {
 
 	spec1 := Recipe_Spec {
 		builder_hash       = make_hash(1),
-		output_kind_word   = u64(object_cache.Cache_Object_Kind.Tree),
+		output_kind        = .Tree,
 		source_date_unix   = 1700000000,
 		output_block_limit = 512,
 		input_count        = 3,

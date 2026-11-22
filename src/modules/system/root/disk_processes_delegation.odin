@@ -327,8 +327,10 @@ disk_load_begin :: proc "contextless" (asker: ^Started, tag: u32, name: string, 
 	// the copies then: a service that keeps a handle past its load holds
 	// no page of this service. The handle of the storage service is a copy
 	// of its own, so its revocation does not reach the handles of its row.
+	// The copy has Give so that this service can give it through the ring;
+	// the service receives it with Read only.
 	storage_copy: system.Handle
-	storage_copy, status = system.give(0, storage_service.process, {.Read})
+	storage_copy, status = system.give(0, storage_service.process, {.Read, .Give})
 	sources := [3]system.Handle{storage_copy, ring_memory, region_memory}
 	rights := [3]system.Rights{{.Read}, {.Read, .Write}, {.Read, .Write}}
 	given: [3]system.Handle
@@ -513,13 +515,15 @@ disk_load_end :: proc "contextless" (status: system.Status, values: [7]u64) -> [
 			returned := &disk_load_return
 			returned^ = {pending = true, service_tag = load.service_tag, storage_handles = load.storage_handles, deadline = system.time() + DISK_LOAD_CANCEL_BOUND_MILLISECONDS}
 			load.storage_handles = {}
-			#partial switch load.step {
+			switch load.step {
 			case .Module_Lent:
 				returned.files[0] = load.module
 				load.module = {}
 			case .Candidate_Lent:
 				returned.files[1] = load.candidate
 				load.candidate = {}
+			case .Idle, .Module_Asked, .Module_Checked, .Scan:
+			// No file is lent at these steps: nothing waits for Cancelled.
 			}
 		} else {
 			system.log_fact(.Warning, Disk_Processes_Service_Faulted{})

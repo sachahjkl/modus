@@ -70,6 +70,12 @@ Plan_Difference_Asked :: struct {
 	principal: u64,
 }
 
+@(log_fact = "plans: asked the trusted display for a rollback with ticket {ticket} for principal {principal}")
+Plan_Rollback_Asked :: struct {
+	ticket:    u64,
+	principal: u64,
+}
+
 @(log_fact = "plans: rolled back to generation {generation} for principal {principal}")
 Plan_Rolled_Back :: struct {
 	generation: u64,

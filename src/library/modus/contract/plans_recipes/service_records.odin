@@ -365,7 +365,12 @@ recipe_spec_of_parts :: proc "contextless" (head: ^Recipe_Head, rows: []Recipe_I
 		return .Arguments_Too_Large, 0
 	}
 	out.builder_hash = blake3.Hash(head.builder_hash)
-	out.output_kind_word = u64(head.output_kind_word)
+	output_kind, output_kind_ok := object_cache.cache_object_kind_of_word(u64(head.output_kind_word))
+	if !output_kind_ok {
+		out^ = {}
+		return .Bad_Output_Kind, 0
+	}
+	out.output_kind = output_kind
 	out.source_date_unix = u64(head.source_date_unix)
 	out.output_block_limit = u64(head.output_block_limit)
 	for index in 0 ..< len(rows) {
@@ -375,14 +380,15 @@ recipe_spec_of_parts :: proc "contextless" (head: ^Recipe_Head, rows: []Recipe_I
 			out^ = {}
 			return .Invalid_Input_Name, u32(index)
 		}
-		if row.kind_word < 0 {
+		input_kind, input_kind_ok := object_cache.cache_object_kind_of_word(u64(row.kind_word))
+		if row.kind_word < 0 || !input_kind_ok {
 			out^ = {}
 			return .Bad_Input_Kind, u32(index)
 		}
 		input := &out.inputs[index]
 		copy(input.name_bytes[:length], row.name[:length])
 		input.name_length = u8(length)
-		input.kind_word = u64(row.kind_word)
+		input.kind = input_kind
 		input.hash = blake3.Hash(row.hash)
 	}
 	out.input_count = u32(len(rows))
@@ -438,12 +444,12 @@ inputs_tree_build :: proc "contextless" (sandbox: ^Builder_Sandbox_Spec, output:
 	entries: [MAX_RECIPE_INPUTS]tree_hash.Tree_Entry
 	for index in 0 ..< int(sandbox.input_count) {
 		input := &sandbox.inputs[index]
-		input_kind, kind_ok := object_cache.cache_object_kind_of_word(input.kind_word)
-		if !kind_ok {
+		// A sandbox made by hand can hold the zero value, which names no kind.
+		if _, kind_ok := object_cache.cache_object_kind_of_word(u64(input.kind)); !kind_ok {
 			return 0, .Bad_Input_Kind
 		}
 		entry_kind := tree_hash.Tree_Entry_Kind.Object
-		switch input_kind {
+		switch input.kind {
 		case .Blob:
 			entry_kind = .Object
 		case .Tree:

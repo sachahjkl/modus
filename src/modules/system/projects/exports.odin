@@ -297,12 +297,12 @@ build_recipe :: proc "c" (project_name: ^string, head: ^system.Table_To_Append(p
 		return project_refusal_fail(error, refusal, 1)
 	}
 	if head != nil {
-		system.table_append(head, pr.Recipe_Head{output_kind_word = i64(spec.output_kind_word), builder_hash = value_kinds.Hash_Field(spec.builder_hash)})
+		system.table_append(head, pr.Recipe_Head{output_kind_word = i64(spec.output_kind), builder_hash = value_kinds.Hash_Field(spec.builder_hash)})
 	}
 	for index in 0 ..< int(spec.input_count) {
 		if index < len(result^) {
 			input := &spec.inputs[index]
-			row := pr.Recipe_Input_Row{kind_word = i64(input.kind_word), hash = value_kinds.Hash_Field(input.hash)}
+			row := pr.Recipe_Input_Row{kind_word = i64(input.kind), hash = value_kinds.Hash_Field(input.hash)}
 			copy(row.name[:], input.name_bytes[:input.name_length])
 			result[index] = row
 		}

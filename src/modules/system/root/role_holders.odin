@@ -12,7 +12,6 @@ import "internal:root/role_policy"
 import "modus:contract/role_contract"
 import rd "modus:contract/root_delegation"
 import "modus:contract/supervision"
-import "modus:contract/work_budget"
 import "modus:system"
 
 // The holder of each role: the default of the boot image, then the override
@@ -52,8 +51,8 @@ role_holder_names := role_policy.Holder_Names {
 console_renderer: role_policy.Console_Renderer
 
 // console_renderer_choose_at_start chooses the renderer of the terminal from
-// the modules of the boot image and the screen of the machine, and gives
-// the roles Display and Terminal to its module
+// the modules of the boot image and the screen of the machine, gives the
+// role Terminal to its module and leaves Display with no holder
 // (src/md/features/console_renderers.md, "Which renderer a machine runs").
 // An image with the compositor keeps each holder as it is.
 console_renderer_choose_at_start :: proc "contextless" (screen_at_the_start: bool) {
@@ -92,12 +91,6 @@ role_supervision_advance :: proc "contextless" (role: role_contract.Role, page: 
 		_ = supervision.connection_page_complete_reconnect(page, gen)
 	}
 	return gen
-}
-
-// role_connection_work_budget_check checks a requested per-connection work
-// budget against the contract requirements before carving pages from the caller.
-role_connection_work_budget_check :: proc "contextless" (requirements: work_budget.Work_Budget_Requirements, offered_pages, offered_time, offered_threads: u64) -> bool {
-	return work_budget.work_budget_check(requirements, offered_pages, offered_time, offered_threads, true) == .None
 }
 
 // role_holder_name returns the active module name holding role.

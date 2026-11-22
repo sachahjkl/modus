@@ -3,7 +3,6 @@ package recipes_core
 
 import "core:testing"
 import "modus:contract/blake3"
-import "modus:contract/object_cache"
 import pr "modus:contract/plans_recipes"
 
 @(private = "file")
@@ -15,7 +14,7 @@ registry_hash :: proc(tag: u8) -> blake3.Hash {
 @(private = "file")
 inputs_tree_spec :: proc(builder: blake3.Hash) -> (spec: pr.Recipe_Spec) {
 	spec.builder_hash = builder
-	spec.output_kind_word = u64(object_cache.Cache_Object_Kind.Tree)
+	spec.output_kind = .Tree
 	spec.input_count = 2
 	spec.inputs[0], _ = pr.recipe_input_make("src", .Tree, registry_hash(1))
 	spec.inputs[1], _ = pr.recipe_input_make("lib", .Blob, registry_hash(2))
