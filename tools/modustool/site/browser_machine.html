@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>modus browser machine</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0f1115;
+  --panel: #161a20;
+  --line: #2d3440;
+  --text: #e6ebf2;
+  --dim: #9aa5b4;
+  --accent: #5fa8ff;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.45;
+}
+main {
+  max-width: 980px;
+  margin: 0 auto;
+  display: grid;
+  gap: 12px;
+}
+header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+}
+h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.status {
+  color: var(--dim);
+}
+.controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+label {
+  display: grid;
+  gap: 4px;
+  color: var(--dim);
+}
+input, button {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  padding: 6px 8px;
+}
+button {
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--accent);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+}
+.stage {
+  display: grid;
+  grid-template-columns: 640px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+@media (max-width: 960px) {
+  .stage { grid-template-columns: 1fr; }
+}
+canvas {
+  display: block;
+  width: 640px;
+  height: 400px;
+  max-width: 100%;
+  background: #000;
+  border: 1px solid var(--line);
+  image-rendering: pixelated;
+  outline: none;
+}
+canvas:focus {
+  border-color: var(--accent);
+}
+.console-box {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 8px;
+  min-height: 400px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 6px;
+}
+.console-head {
+  color: var(--dim);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 4px;
+}
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+  max-height: 360px;
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>modus browser machine</h1>
+    <div id="machine-status" class="status">state: uninitialized</div>
+  </header>
+
+  <section class="controls" aria-label="Machine configuration">
+    <label for="wasm-url">
+      WebAssembly runtime (.wasm)
+      <input id="wasm-url" type="text" value="modus_browser_machine.wasm" autocomplete="off">
+    </label>
+    <label for="relay-url">
+      Link relay URL (optional, blank = no network; site runs no relay)
+      <input id="relay-url" type="url" value="" placeholder="wss://relay.example/modus" autocomplete="off">
+    </label>
+    <div class="actions">
+      <button id="btn-start" type="button">Start</button>
+      <button id="btn-step" type="button">Step 4096</button>
+      <button id="btn-reset" type="button">Reset</button>
+    </div>
+  </section>
+
+  <section class="stage">
+    <canvas id="screen" width="640" height="400" tabindex="0" aria-label="Browser machine framebuffer"></canvas>
+    <div class="console-box">
+      <div class="console-head">Serial console</div>
+      <pre id="serial-output"></pre>
+    </div>
+  </section>
+</main>
+
+<script>
+(() => {
+  "use strict";
+
+  const FB_WIDTH = 640;
+  const FB_HEIGHT = 400;
+  const DEFAULT_STEP_BUDGET = 4096;
+
+  // Contract enum values matching src/library/modus/contract/software_machine/wasm_exports.odin.
+  const KEY_ACTION = { Press: 1, Release: 2, Repeat: 3 };
+  const POINTER_KIND = { Move: 1, Button_Down: 2, Button_Up: 3, Wheel: 4 };
+  const RUN_STATE_NAMES = [
+    "uninitialized",
+    "ready",
+    "running",
+    "halted",
+    "fault: page_fault",
+    "fault: general_protection",
+    "fault: invalid_opcode",
+    "fault: divide_error",
+    "fault: invalid_syscall",
+    "breakpoint",
+  ];
+
+  const statusEl = document.getElementById("machine-status");
+  const wasmUrlEl = document.getElementById("wasm-url");
+  const relayUrlEl = document.getElementById("relay-url");
+  const serialEl = document.getElementById("serial-output");
+  const canvas = document.getElementById("screen");
+  const ctx = canvas.getContext("2d", { alpha: false });
+
+  let wasmExports = null;
+  let wasmMemory = null;
+  let relaySocket = null;
+  let rafHandle = 0;
+
+  function setStatus(detail) {
+    const mode = window.crossOriginIsolated ? "isolated" : "single-processor (no cross-origin isolation)";
+    statusEl.textContent = mode + " | " + detail;
+  }
+
+  function appendSerial(text) {
+    serialEl.textContent += text;
+    if (serialEl.textContent.length > 65536) {
+      serialEl.textContent = serialEl.textContent.slice(-65536);
+    }
+    serialEl.scrollTop = serialEl.scrollHeight;
+  }
+
+  function validateRelayUrl(raw) {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      return { ok: true, url: "" };
+    }
+    let parsed;
+    try {
+      parsed = new URL(trimmed);
+    } catch (_) {
+      return { ok: false, reason: "invalid relay URL" };
+    }
+    if (parsed.username !== "" || parsed.password !== "") {
+      return { ok: false, reason: "embedded credentials refused" };
+    }
+    if (parsed.protocol === "wss:" || parsed.protocol === "https:") {
+      return { ok: true, url: trimmed };
+    }
+    if (parsed.protocol === "ws:") {
+      const host = parsed.hostname;
+      if (host === "127.0.0.1" || host === "localhost" || host === "[::1]" || host === "::1") {
+        return { ok: true, url: trimmed };
+      }
+      return { ok: false, reason: "plaintext ws:// allowed on loopback only" };
+    }
+    return { ok: false, reason: "relay must use wss://, https://, or loopback ws://" };
+  }
+
+  function closeRelay() {
+    if (relaySocket !== null) {
+      relaySocket.close();
+      relaySocket = null;
+    }
+  }
+
+  function connectOptionalRelay() {
+    closeRelay();
+    const check = validateRelayUrl(relayUrlEl.value);
+    if (!check.ok) {
+      setStatus("relay refused: " + check.reason);
+      return false;
+    }
+    if (check.url === "") {
+      return true;
+    }
+    if (check.url.startsWith("ws://") || check.url.startsWith("wss://")) {
+      relaySocket = new WebSocket(check.url);
+      relaySocket.binaryType = "arraybuffer";
+    }
+    return true;
+  }
+
+  function modifiersMask(event) {
+    let mask = 0;
+    if (event.shiftKey) mask |= 1;
+    if (event.ctrlKey) mask |= 2;
+    if (event.altKey) mask |= 4;
+    if (event.metaKey) mask |= 8;
+    return mask;
+  }
+
+  function keyCodeOf(event) {
+    if (event.key && event.key.length === 1) {
+      const code = event.key.charCodeAt(0);
+      if (code >= 1 && code <= 0xFFFF) return code;
+    }
+    return Math.min(0xFFFF, Math.max(1, event.keyCode || 1));
+  }
+
+  function canvasCoords(event) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = rect.width > 0 ? FB_WIDTH / rect.width : 1;
+    const scaleY = rect.height > 0 ? FB_HEIGHT / rect.height : 1;
+    const x = Math.max(0, Math.min(FB_WIDTH - 1, Math.floor((event.clientX - rect.left) * scaleX)));
+    const y = Math.max(0, Math.min(FB_HEIGHT - 1, Math.floor((event.clientY - rect.top) * scaleY)));
+    return { x, y };
+  }
+
+  function blitFramebuffer() {
+    if (!wasmExports || !wasmMemory) return;
+    const fbPtr = Number(wasmExports.modus_vm_framebuffer_ptr());
+    const fbBytes = wasmExports.modus_vm_framebuffer_bytes() >>> 0;
+    if (fbPtr === 0 || fbBytes !== FB_WIDTH * FB_HEIGHT * 4) return;
+    const pixels = new Uint8ClampedArray(wasmMemory.buffer, fbPtr, fbBytes);
+    const frame = new ImageData(pixels, FB_WIDTH, FB_HEIGHT);
+    ctx.putImageData(frame, 0, 0);
+  }
+
+  function drainSerial() {
+    if (!wasmExports) return;
+    const bytes = [];
+    for (let i = 0; i < 4096; i += 1) {
+      const value = wasmExports.modus_vm_pop_serial();
+      if (value < 0) break;
+      bytes.push(value & 0xFF);
+    }
+    if (bytes.length > 0) {
+      const text = new TextDecoder("utf-8", { fatal: false }).decode(new Uint8Array(bytes));
+      appendSerial(text);
+    }
+  }
+
+  function refreshStateLabel() {
+    if (!wasmExports) {
+      setStatus("state: uninitialized");
+      return;
+    }
+    const word = wasmExports.modus_vm_state_word() >>> 0;
+    const name = RUN_STATE_NAMES[word] || ("state_" + word);
+    setStatus("state: " + name);
+  }
+
+  function loadGuestImage(guestOffset, bytes) {
+    if (!wasmExports || !wasmMemory || !bytes || bytes.length === 0) return false;
+    const stagingPtr = Number(wasmExports.modus_vm_staging_ptr());
+    const stagingCap = wasmExports.modus_vm_staging_bytes() >>> 0;
+    if (stagingPtr === 0 || bytes.length > stagingCap) return false;
+    new Uint8Array(wasmMemory.buffer, stagingPtr, bytes.length).set(bytes);
+    const status = wasmExports.modus_vm_load_bytes(guestOffset >>> 0, stagingPtr, bytes.length >>> 0) >>> 0;
+    return status === 0;
+  }
+
+  function stepOnce(budget) {
+    if (!wasmExports) return;
+    wasmExports.modus_vm_step_budget(budget >>> 0);
+    blitFramebuffer();
+    drainSerial();
+    refreshStateLabel();
+  }
+
+  function frameLoop() {
+    if (!wasmExports) return;
+    const state = wasmExports.modus_vm_state_word() >>> 0;
+    if (state === 1 || state === 2) {
+      stepOnce(DEFAULT_STEP_BUDGET);
+    }
+    rafHandle = window.requestAnimationFrame(frameLoop);
+  }
+
+  async function loadAndStart() {
+    if (!connectOptionalRelay()) return;
+    if (rafHandle !== 0) {
+      window.cancelAnimationFrame(rafHandle);
+      rafHandle = 0;
+    }
+    serialEl.textContent = "";
+    const url = wasmUrlEl.value.trim();
+    if (url === "") {
+      setStatus("error: empty wasm path");
+      return;
+    }
+    setStatus("loading " + url + "...");
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        setStatus("error: HTTP " + response.status + " fetching " + url);
+        return;
+      }
+      let result;
+      if (typeof WebAssembly.instantiateStreaming === "function") {
+        try {
+          result = await WebAssembly.instantiateStreaming(response.clone(), {});
+        } catch (_) {
+          const bytes = await response.arrayBuffer();
+          result = await WebAssembly.instantiate(bytes, {});
+        }
+      } else {
+        const bytes = await response.arrayBuffer();
+        result = await WebAssembly.instantiate(bytes, {});
+      }
+      wasmExports = result.instance.exports;
+      wasmMemory = wasmExports.memory;
+      const initStatus = wasmExports.modus_vm_init(FB_WIDTH, FB_HEIGHT) >>> 0;
+      if (initStatus !== 0) {
+        setStatus("error: modus_vm_init returned " + initStatus);
+        return;
+      }
+      blitFramebuffer();
+      refreshStateLabel();
+      canvas.focus();
+      rafHandle = window.requestAnimationFrame(frameLoop);
+    } catch (err) {
+      setStatus("error: " + (err && err.message ? err.message : String(err)));
+    }
+  }
+
+  canvas.addEventListener("keydown", (event) => {
+    if (!wasmExports) return;
+    event.preventDefault();
+    const action = event.repeat ? KEY_ACTION.Repeat : KEY_ACTION.Press;
+    wasmExports.modus_vm_push_key(keyCodeOf(event), action, modifiersMask(event));
+  });
+
+  canvas.addEventListener("keyup", (event) => {
+    if (!wasmExports) return;
+    event.preventDefault();
+    wasmExports.modus_vm_push_key(keyCodeOf(event), KEY_ACTION.Release, modifiersMask(event));
+  });
+
+  canvas.addEventListener("pointermove", (event) => {
+    if (!wasmExports) return;
+    const { x, y } = canvasCoords(event);
+    wasmExports.modus_vm_push_pointer(POINTER_KIND.Move, x, y, event.buttons & 0x1F);
+  });
+
+  canvas.addEventListener("pointerdown", (event) => {
+    if (!wasmExports) return;
+    canvas.focus();
+    const { x, y } = canvasCoords(event);
+    wasmExports.modus_vm_push_pointer(POINTER_KIND.Button_Down, x, y, event.buttons & 0x1F);
+  });
+
+  canvas.addEventListener("pointerup", (event) => {
+    if (!wasmExports) return;
+    const { x, y } = canvasCoords(event);
+    wasmExports.modus_vm_push_pointer(POINTER_KIND.Button_Up, x, y, event.buttons & 0x1F);
+  });
+
+  canvas.addEventListener("wheel", (event) => {
+    if (!wasmExports) return;
+    event.preventDefault();
+    const { x, y } = canvasCoords(event);
+    wasmExports.modus_vm_push_pointer(POINTER_KIND.Wheel, x, y, event.buttons & 0x1F);
+  }, { passive: false });
+
+  document.getElementById("btn-start").addEventListener("click", () => {
+    void loadAndStart();
+  });
+
+  document.getElementById("btn-step").addEventListener("click", () => {
+    stepOnce(DEFAULT_STEP_BUDGET);
+  });
+
+  document.getElementById("btn-reset").addEventListener("click", () => {
+    closeRelay();
+    if (!wasmExports) return;
+    serialEl.textContent = "";
+    wasmExports.modus_vm_init(FB_WIDTH, FB_HEIGHT);
+    blitFramebuffer();
+    refreshStateLabel();
+  });
+
+  setStatus("state: uninitialized");
+})();
+</script>
+</body>
+</html>
