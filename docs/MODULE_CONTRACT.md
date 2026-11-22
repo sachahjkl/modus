@@ -171,7 +171,7 @@ offset  size  field                  type
     65     1  result                 u8
     66    12  parameters             [PARAMETER_CAPACITY]u8
     78    12  parameter_name_counts  [PARAMETER_CAPACITY]u8
-    90    12  parameter_directions   [PARAMETER_CAPACITY]Direction
+    90    12  parameter_directions   [PARAMETER_CAPACITY]u8
    102     2  optional_parameters    u16
    104     4  text_offset            u32
    108     4  text_count             u32
