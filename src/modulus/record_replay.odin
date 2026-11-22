@@ -255,6 +255,14 @@ process_own_region_references :: proc "contextless" (process: ^Process, region_i
 // replay holds no peer, so a shared object there is a refusal. Caller holds
 // Control and target's process lock.
 @(private = "file")
+// region_record_allowed_static identifies kernel-created read-only static
+// regions (the time page and immutable boot/debug images) that use
+// region_device for pre-allocated physical memory rather than hardware MMIO.
+@(private = "file")
+region_record_allowed_static :: #force_inline proc "contextless" (region_index: u32) -> bool {
+	return region_index != 0 && (region_index == time_region || region_index == boot_image_region || region_index == debug_image_region)
+}
+
 process_disqualified_for_recording :: proc "contextless" (target_index: u32, shared_writers_allowed: bool) -> bool {
 	target := &processes[target_index]
 	if target.has_ports || process_is_guest(target_index) {
@@ -266,7 +274,7 @@ process_disqualified_for_recording :: proc "contextless" (target_index: u32, sha
 		}
 		if slot.kind == .Memory {
 			region := &regions[slot.object]
-			if region.device && slot.object != time_region {
+			if region.device && !region_record_allowed_static(slot.object) {
 				return true
 			}
 			if intrinsics.atomic_load(&region.declared) != 0 {
@@ -284,7 +292,7 @@ process_disqualified_for_recording :: proc "contextless" (target_index: u32, sha
 			continue
 		}
 		region := &regions[mapping.region]
-		if region.device && mapping.region != time_region {
+		if region.device && !region_record_allowed_static(mapping.region) {
 			return true
 		}
 		if intrinsics.atomic_load(&region.declared) != 0 {
@@ -522,7 +530,7 @@ record_replay_map_conflict :: proc "contextless" (process_index: u32, region_ind
 	}
 	if intrinsics.atomic_load(&process_records[process_index].mode) != .None {
 		region := &regions[region_index]
-		if history_region_in_use(region_index) || (region.device && region_index != time_region) || intrinsics.atomic_load(&region.declared) != 0 {
+		if history_region_in_use(region_index) || (region.device && !region_record_allowed_static(region_index)) || intrinsics.atomic_load(&region.declared) != 0 {
 			return true
 		}
 		own_refs := process_own_region_references(&processes[process_index], region_index)

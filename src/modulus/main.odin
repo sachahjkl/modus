@@ -286,13 +286,15 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 		record.values[op.ROOT_VALUE_PIXELS_PER_LINE] = u64(framebuffer.pixels_per_line)
 		record.values[op.ROOT_VALUE_FORMAT] = u64(framebuffer.format)
 	}
-	record.handles[op.ROOT_BOOT_IMAGE] = handle_insert(process, {kind = .Memory, rights = {.Give, .Read}, object = region_device(boot.boot_image, (boot.boot_image_size + PAGE_SIZE - 1) / PAGE_SIZE)})
+	boot_image_region = region_device(boot.boot_image, (boot.boot_image_size + PAGE_SIZE - 1) / PAGE_SIZE)
+	record.handles[op.ROOT_BOOT_IMAGE] = handle_insert(process, {kind = .Memory, rights = {.Give, .Read}, object = boot_image_region})
 	record.values[op.ROOT_VALUE_BOOT_IMAGE_SIZE] = boot.boot_image_size
 	// The debug image: the kernel gives its pages and reads none of them
 	// (docs/MODULE_CONTRACT.md, "Debug information").
 	if boot.debug_image_size != 0 {
 		if pages, accepted := debug_image_pages(boot); accepted {
-			record.handles[op.ROOT_DEBUG_IMAGE] = handle_insert(process, {kind = .Memory, rights = {.Give, .Read}, object = region_device(boot.debug_image, pages)})
+			debug_image_region = region_device(boot.debug_image, pages)
+			record.handles[op.ROOT_DEBUG_IMAGE] = handle_insert(process, {kind = .Memory, rights = {.Give, .Read}, object = debug_image_region})
 			record.values[op.ROOT_VALUE_DEBUG_IMAGE_SIZE] = boot.debug_image_size
 		} else {
 			log("kernel: the debug image of the boot program is refused: its range is not on a page, is over its bound, or is not memory of the boot; a stop report names no procedure")

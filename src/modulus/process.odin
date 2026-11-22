@@ -558,6 +558,8 @@ interrupt_references: [INTERRUPT_CAPACITY]u32 // Handles. A message interrupt wi
 time_milliseconds: u64
 cycle_start: u64 // The cycle counter at the time 0.
 time_region: u32 // The memory object of the time page. It is in each process.
+boot_image_region: u32 // Immutable read-only boot image memory object (not MMIO).
+debug_image_region: u32 // Immutable read-only debug image memory object (not MMIO).
 time_record: ^op.Time_Record
 
 // budget_create moves amounts from a budget to a new budget.
