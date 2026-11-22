@@ -491,6 +491,7 @@ the_facts_of_unlock_write_an_error_record_a_code_and_a_change_refused :: proc(t:
 		.Seal_Not_Allowed = "Change_Refused_Seal_Not_Allowed",
 		.Unknown_Form     = "Change_Refused_Unknown_Form",
 		.Unknown_Change   = "Change_Refused_Unknown_Change",
+		.Wrong_Principal  = "Change_Refused_Wrong_Principal",
 	}
 	numbers := [3]u64{0, 1, max(u64)}
 	names := [2]string{"a", strings.repeat("n", principals.NAME_LIMIT, context.temp_allocator)}

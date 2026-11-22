@@ -80,6 +80,7 @@ Unlock_Run :: struct {
 	mode:         principals.Unlock_Mode,
 	name:         [principals.NAME_LIMIT]u8, // Starting: the name of the principal to create.
 	name_length:  int,
+	principal:    u64, // Starting: the number of the principal that asked for a change.
 	failed_stops: int, // Below UNLOCK_RESTART_LIMIT: see above.
 }
 
@@ -132,16 +133,18 @@ principals_start :: proc "contextless" () {
 // unlock_start starts `unlock`: at boot to read its files (with none it
 // stops at once, and the machine runs as principal 0 only), after a lock,
 // to create a principal, or to set the machine passphrase.
-unlock_start :: proc "contextless" (mode: principals.Unlock_Mode, name: string) -> system.Status {
+unlock_start :: proc "contextless" (mode: principals.Unlock_Mode, name: string, principal: u64 = principals.MACHINE) -> system.Status {
 	status := system.Status.Bad_State
 	// An `unlock` that runs keeps its stage: it is reaped first.
 	if unlock_run.stage == .Stopped {
 		unlock_run.stage = .Starting
 		unlock_run.mode = mode
 		unlock_run.name_length = copy(unlock_run.name[:], name)
+		unlock_run.principal = principal
 		status = start("unlock")
 		unlock_run.name = {}
 		unlock_run.name_length = 0
+		unlock_run.principal = principals.MACHINE
 		unlock_run.stage = status == .Ok ? .Running : .Stopped
 	}
 	if status != .Ok {
@@ -151,9 +154,10 @@ unlock_start :: proc "contextless" (mode: principals.Unlock_Mode, name: string) 
 }
 
 // unlock_values_write writes the values of the context of the `unlock`
-// that starts: its mode and the name of the principal to create. After a
-// lock this service holds the key of the table of principal 0: unlock
-// does not ask for the machine passphrase again.
+// that starts: its mode, the name of the principal to create, and the number
+// of the principal that asked for a change. After a lock this service holds
+// the key of the table of principal 0: unlock does not ask for the machine
+// passphrase again.
 unlock_values_write :: proc "contextless" (values: ^system.Context_Values) {
 	start_mode := unlock_run.mode
 	if start_mode == .Unlock && machine_key_held() {
@@ -162,6 +166,7 @@ unlock_values_write :: proc "contextless" (values: ^system.Context_Values) {
 	system.value_put(values, system.GRANT_VALUE_UNLOCK_MODE, u64(start_mode))
 	packed := principals.name_pack(string(unlock_run.name[:unlock_run.name_length]))
 	system.values_put(values, system.GRANT_VALUE_UNLOCK_NAME, packed[:])
+	system.value_put(values, system.GRANT_VALUE_UNLOCK_PRINCIPAL, unlock_run.principal)
 }
 
 // unlock_without_window says if a start of a name is the start of `unlock`
@@ -472,7 +477,7 @@ principal_change_begin :: proc "contextless" (caller: ^Started, change: u64, val
 	} else {
 		system.log_fact(.Info, Recovery_Key_Change_Started{principal = number, principal_name = text_field(principal_name(number), 24)})
 	}
-	started_status := unlock_start(mode, "")
+	started_status := unlock_start(mode, "", number)
 	if started_status != .Ok {
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(started_status))
 		return started_status, false

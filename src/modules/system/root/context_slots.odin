@@ -33,6 +33,7 @@ import "modus:system"
 #assert(disk_process.SERVICE_VALUE_PRINCIPAL == system.GRANT_VALUE_SERVICE_PRINCIPAL)
 #assert(principals.VALUE_MODE == system.GRANT_VALUE_UNLOCK_MODE)
 #assert(principals.VALUE_NAME == system.GRANT_VALUE_UNLOCK_NAME)
+#assert(principals.VALUE_PRINCIPAL == system.GRANT_VALUE_UNLOCK_PRINCIPAL)
 #assert(principals.VALUE_SEAL_ALLOWED == system.GRANT_VALUE_SEAL_ALLOWED)
 
 // grant_slot_refused writes the line of a start that a taken slot stopped:

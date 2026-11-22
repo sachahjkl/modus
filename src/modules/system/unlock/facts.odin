@@ -707,6 +707,14 @@ Change_Refused_Unknown_Change :: struct {
 	principal_name: [24]u8,
 }
 
+// A change refused: the file of the principal does not belong to the
+// principal that asked for the change.
+@(log_fact = "unlock: principal {principal} \"{principal_name}\" is not changed: the file of the principal does not belong to the principal that asked for the change")
+Change_Refused_Wrong_Principal :: struct {
+	principal:      u64,
+	principal_name: [24]u8,
+}
+
 // The lines with no value: each is a fact type with no field, whose
 // sentence is its template.
 
@@ -1107,5 +1115,7 @@ change_refusal_log :: proc "contextless" (problem: principals.Change_Problem) {
 		system.log_fact(.Info, Change_Refused_Unknown_Form{principal = number, principal_name = principal_name_field()})
 	case .Unknown_Change:
 		system.log_fact(.Info, Change_Refused_Unknown_Change{principal = number, principal_name = principal_name_field()})
+	case .Wrong_Principal:
+		system.log_fact(.Info, Change_Refused_Wrong_Principal{principal = number, principal_name = principal_name_field()})
 	}
 }

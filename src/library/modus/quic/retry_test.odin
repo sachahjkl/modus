@@ -116,10 +116,13 @@ the_server_checks_each_token :: proc(t: ^testing.T) {
 	// Too old.
 	old := token_for(harness, remote, retry_source, harness.now)
 	old_datagram := authentic_initial(&harness.cryptography, retry_source, old[:])
-	outcome = server_datagram_receive(server, old_datagram[:], remote, answer[:], harness.now + RETRY_TOKEN_LIFETIME + 1)
+	later := harness.now + RETRY_TOKEN_LIFETIME + 1
+	outcome = server_datagram_receive(server, old_datagram[:], remote, answer[:], later)
 	testing.expectf(t, outcome.record < 0 && server.counters.tokens_expired == 1, "%s", harness_describe(harness))
-	// The right one.
-	outcome = server_datagram_receive(server, datagram[:], remote, answer[:], harness.now)
+	// The right one (at the monotonic clock `later`, since backwards timestamps are refused).
+	fresh_token := token_for(harness, remote, retry_source, later)
+	fresh_datagram := authentic_initial(&harness.cryptography, retry_source, fresh_token[:])
+	outcome = server_datagram_receive(server, fresh_datagram[:], remote, answer[:], later)
 	testing.expectf(t, outcome.record == 0 && outcome.validate_remote && !outcome.release_remote && server.counters.accepted == 1, "%s", harness_describe(harness))
 	testing.expect(t, harness.connections[0].retried && harness.connections[0].address_validated)
 	_ = error
@@ -182,7 +185,8 @@ the_work_of_new_connections_has_token_buckets :: proc(t: ^testing.T) {
 	burst :: proc(server: ^Server, state: ^u64, count: int, first_address: u32, now: u64, answer: []u8) {
 		for index in 0 ..< count {
 			forged := forged_initial(state)
-			server_datagram_receive(server, forged[:], {first_address + u32(index), 40_000}, answer, now)
+			// Spread across distinct /24 ranges so this test exercises the shared work buckets.
+			server_datagram_receive(server, forged[:], {first_address + (u32(index) << 8) + 1, 40_000}, answer, now)
 		}
 	}
 	burst(server, &state, 3000, 0x0E00_0000, start, answer[:])
@@ -196,7 +200,7 @@ the_work_of_new_connections_has_token_buckets :: proc(t: ^testing.T) {
 	identifier: [CONNECTION_ID_SIZE]u8 = {3, 3, 3, 3, 3, 3, 3, 3}
 	datagram := authentic_initial(&harness.cryptography, identifier, garbage[:])
 	for index in 0 ..< 4000 {
-		server_datagram_receive(server, datagram[:], {u32(0x0F00_0000 + index), 40_000}, answer[:], start + 101_000)
+		server_datagram_receive(server, datagram[:], {u32(0x0F00_0001) + (u32(index) << 8), 40_000}, answer[:], start + 101_000)
 	}
 	testing.expectf(t, server.counters.tokens_refused == 3000 && server.counters.over_budget == 3080, "%s", harness_describe(harness))
 	testing.expectf(t, server.counters.authenticity_checks == 0, "%s", harness_describe(harness))

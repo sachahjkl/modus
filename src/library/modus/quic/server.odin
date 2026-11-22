@@ -80,6 +80,9 @@ Server_Limits :: struct {
 	initial_checks_depth:                  int, // The depth of the shared budget of Initial checks.
 	initial_checks_per_address_per_second: int, // The rate of the budget of Initial checks of one address whose token opened (`SERVER_ADDRESS_BUDGETS`): it is taken before the shared budget.
 	initial_checks_per_address_depth:      int, // The depth of the budget of Initial checks of one address: the Initial packets that a new client can have opened at once.
+	source_range_attempts_per_second:      int, // The rate of the per-/24 source-range admission budget: new-connection Initial attempts admitted per second for one IPv4 /24 range.
+	source_range_burst:                    int, // The burst depth of the per-/24 source-range admission budget.
+	handshakes_per_source_range:           int, // The most records in the handshake that one IPv4 /24 source range holds at once.
 }
 
 // The limits of quic_echo, and of the tests: a table of 16 records. The
@@ -118,6 +121,9 @@ SERVER_LIMITS_DEFAULT :: Server_Limits {
 	initial_checks_depth                  = 200,
 	initial_checks_per_address_per_second = 1,
 	initial_checks_per_address_depth      = 4,
+	source_range_attempts_per_second      = 32,
+	source_range_burst                    = 64,
+	handshakes_per_source_range           = 4,
 }
 
 // The remote of a datagram: the address and the port that it came from, or
@@ -171,8 +177,10 @@ Server_Counters :: struct {
 	refused_handshake_limit:      u64, // Initials refused because `handshakes_at_once` records are in the handshake.
 	refused_full:                 u64, // Initials refused because no record is free.
 	over_budget:                  u64, // Datagrams of unknown identifiers dropped over a shared budget (Retries, token checks, Initial checks), before any cryptography.
-	over_address_budget:          u64, // Initials with a valid token dropped over the budget of Initial checks of their address, before the Initial is opened.
-	address_table_full:           u64, // Initials with a valid token of a new address, dropped because no place of the table of address budgets was free or full again.
+	over_address_budget:            u64, // Initials with a valid token dropped over the budget of Initial checks of their address, before the Initial is opened.
+	address_table_full:             u64, // Initials with a valid token of a new address, dropped because no place of the table of address budgets was free or full again.
+	over_source_budget:             u64, // Initials dropped because their /24 source range spent its admission budget or carried a backwards timestamp.
+	refused_source_handshake_limit: u64, // Initials refused because their /24 source range holds its most records in the handshake.
 	tokens_used_again:            u64, // A valid token whose record was taken before.
 	used_tokens_forgotten:        u64, // A used token that the full table forgot before it expired: it can take a record again.
 	other_remote:                 u64, // A known identifier from another remote.
@@ -240,6 +248,7 @@ Server :: struct {
 	negotiation_second: u64, // The second of the clock in which the last Version Negotiation packet was asked for.
 	negotiation_count:  int, // The Version Negotiation packets written in that second.
 	work_buckets:       [Server_Work]Work_Bucket, // The shared budgets of work: one token bucket for each kind of work.
+	source_budgets:     Source_Budget_Table, // The per-/24 source-range admission budgets for new-connection Initial packets.
 	address_budgets:    [SERVER_ADDRESS_BUDGETS]Server_Address_Budget, // The table of address budgets: the Initial checks of each address whose token opened.
 	used_tokens:        [SERVER_USED_TOKENS]Server_Used_Token, // The Retry tokens that took a record, kept for their lifetime: each token takes a record once.
 	retry_key:          [RETRY_TOKEN_KEY_SIZE]u8, // The key that seals the Retry tokens, made at `server_init` from the generator: the tokens of another start of the server do not open.
@@ -326,6 +335,7 @@ server_init :: proc "contextless" (server: ^Server, connections: []Connection, r
 	server.counters = {}
 	server.token_counter = 0
 	server.work_buckets = {}
+	source_budget_table_init(&server.source_budgets)
 	server.address_budgets = {}
 	server.used_tokens = {}
 	for &record in records {
@@ -601,9 +611,35 @@ server_work_take :: proc "contextless" (server: ^Server, work: Server_Work, now:
 // **Results**: `index`, the place of the record, or -1; `answer_length`, the
 // bytes of a Retry in `answer`, or 0.
 @(private)
+server_source_range_handshakes :: proc "contextless" (server: ^Server, address: u32) -> int {
+	prefix := source_range_prefix(address)
+	count := 0
+	for record, place in server.records {
+		if record.in_use && server.connections[place].state == .Handshake && source_range_prefix(record.remote.address) == prefix {
+			count += 1
+		}
+	}
+	return count
+}
+
+@(private)
 server_new_connection :: proc "contextless" (server: ^Server, datagram: []u8, header: ^Packet_Header, remote: Remote, answer: []u8, now: u64) -> (index: int, answer_length: int) {
 	if len(datagram) < SMALLEST_MAX_UDP_PAYLOAD_SIZE || header.destination_connection_id.length < CONNECTION_ID_SIZE {
 		server.counters.too_small += 1
+		return -1, 0
+	}
+	source_limits := Source_Budget_Limits {
+		attempts_per_second     = server.limits.source_range_attempts_per_second,
+		burst                   = server.limits.source_range_burst,
+		active_handshakes_limit = server.limits.handshakes_per_source_range,
+	}
+	switch source_budget_take(&server.source_budgets, remote.address, source_limits, now, server_source_range_handshakes(server, remote.address)) {
+	case .Admitted:
+	case .Over_Rate_Budget, .Backwards_Time, .Invalid_Limits:
+		server.counters.over_source_budget += 1
+		return -1, 0
+	case .Over_Handshake_Limit:
+		server.counters.refused_source_handshake_limit += 1
 		return -1, 0
 	}
 	if header.token_length == 0 {
