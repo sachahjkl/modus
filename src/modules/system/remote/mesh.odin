@@ -103,6 +103,7 @@ mesh_principal_set :: proc "contextless" (principal_root_public_key: [32]u8, err
 		row := mesh.paired.machines[index]
 		if row.source == .Machine_List {
 			machine_mesh.paired_machine_remove(&mesh.paired, row.identity_key)
+			machine_wire.machine_grant_clear(&mesh, row.identity_key)
 		}
 		index -= 1
 	}

@@ -193,6 +193,16 @@ machine_grant_set :: proc "contextless" (peer: ^Peer, identity: [machine_mesh.PU
 	return true
 }
 
+// machine_grant_clear removes any grant row of an unpaired machine so a
+// later pairing starts with no leftover uses or roles.
+machine_grant_clear :: proc "contextless" (peer: ^Peer, identity: [machine_mesh.PUBLIC_KEY_SIZE]u8) {
+	for &item in peer.machine_grants {
+		if item.identity == identity {
+			item = {}
+		}
+	}
+}
+
 // machine_grant_of gives the grant of a machine that is paired now, or none:
 // a grant outlives no row of the paired machines.
 machine_grant_of :: proc "contextless" (peer: ^Peer, identity: [machine_mesh.PUBLIC_KEY_SIZE]u8) -> (grant: Machine_Grant, found: bool) {
@@ -269,7 +279,7 @@ serve :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_Context, input: 
 	if !granted || use not_in grant.uses {
 		return refusal_write(output, .Use_Not_Granted, u32(use))
 	}
-	#partial switch frame.message {
+	switch frame.message {
 	case .Grant_Present:
 		return serve_grant_present(peer, serve_context, frame.body, output)
 	case .Object_Request:
@@ -282,6 +292,8 @@ serve :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_Context, input: 
 		return serve_relay_deposit(peer, serve_context, frame.body, output)
 	case .Relay_Collect:
 		return serve_relay_collect(peer, serve_context, frame.body, output)
+	case .None, .Refusal, .Pairing_Element, .Pairing_Element_Reply, .Pairing_Confirm, .Pairing_Confirmed, .Object_Response, .Grant_Accepted, .Store_Offer_Reply, .Role_Reply, .Relay_Deposited, .Relay_Delivery:
+		return refusal_write(output, .Unexpected_Message, u32(frame.message))
 	}
 	return refusal_write(output, .Unexpected_Message, u32(frame.message))
 }
@@ -414,6 +426,7 @@ pairing_confirmed_accept :: proc "contextless" (peer: ^Peer, server_identity: [m
 	}
 	if paired {
 		machine_mesh.paired_machine_remove(&peer.paired, server_identity)
+		machine_grant_clear(peer, server_identity)
 	}
 	if answer_ok {
 		return .Malformed, 0, false

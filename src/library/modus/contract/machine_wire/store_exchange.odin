@@ -578,22 +578,32 @@ store_offer_answer :: proc "contextless" (store: ^Exchanged_Store, body: []u8, o
 		}
 		return nil, .Refused_Base_Differs
 	}
-	merged, merge_status := store_merge(&store.common, &store.current, &theirs)
+	// When this machine has its own offer in flight, merge and reply from its
+	// snapshot so crossing offers compute the same common version on both
+	// sides, then carry any local writes made since the snapshot onto current.
+	reply_version := store.has_offer ? &store.offered : &store.current
+	merged, merge_status := store_merge(&store.common, reply_version, &theirs)
 	if merge_status != .Ok {
 		return nil, merge_status
 	}
-	frame = store_offer_write(output, .Store_Offer_Reply, store.store_identifier, common_hash, &store.current)
+	next_current := merged
+	if store.has_offer {
+		later_status: Store_Status
+		next_current, later_status = store_merge(&store.offered, &store.current, &merged)
+		if later_status != .Ok {
+			return nil, later_status
+		}
+	}
+	frame = store_offer_write(output, .Store_Offer_Reply, store.store_identifier, common_hash, reply_version)
 	if frame == nil {
 		return nil, .Refused_Full
 	}
 	store.previous_common = store.common
 	store.last_offer_hash = offer_hash
-	store.last_reply = store.current
+	store.last_reply = reply_version^
 	store.has_last_exchange = true
-	store.current = merged
+	store.current = next_current
 	store.common = merged
-	// An offer of this machine in flight is void: the merge took its current
-	// version, and the next offer starts from the new common version.
 	store.has_offer = false
 	store.offered = {}
 	return frame, .Ok
