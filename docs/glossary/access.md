@@ -700,6 +700,16 @@ The design: `docs/ARCHITECTURE.md`, "A guest", section 1.
 
 Do not use: extended page table, EPT, second-level table.
 
+### Initial archive
+
+An initial archive is an archive of files in the cpio form that the process of a Linux guest places in the memory of the guest beside the kernel, and that Linux unpacks as its first tree of files.
+
+It is a concept of the foreign system, inside its guest only: Linux finds it through two fields of its zero page, and runs its `init` from it when no disk holds one. The process places it at the top of the memory of the guest, above the kernel and under the highest address that the header of the kernel allows (`linux_boot_prepare` in `modus:contract/guest_os`). It is not the boot image of the system, which no guest sees.
+
+The design: `src/md/features/foreign_systems.md`, "The machine of a Linux guest".
+
+Do not use: initrd, initramfs, ramdisk.
+
 ### Driver domain
 
 A driver domain is a guest that owns one device and serves it to the system; it is not built yet.

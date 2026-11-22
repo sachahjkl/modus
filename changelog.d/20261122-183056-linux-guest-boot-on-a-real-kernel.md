@@ -1,0 +1,3 @@
+type: Added
+
+**The Linux boot of the guest builder, checked on a real kernel and on a program of 64 bits**: the guest builder places an initial archive beside the kernel, starts Linux with `nokaslr` and `nolapic`, decodes `movsx` on a device, and answers `wbinvd` and the registers `PAT`, `MTRRCAP`, `MTRRdefType`, `MISC_ENABLE` and the time stamp counter with no fault. Host tests load the bzImage of Nixpkgs (Linux 6.18, protocol 2.15) by the boot protocol, and run a whole build of a program of 64 bits through the loop of the builder, from its read-only input disk to the tree hash of its output disk; a write to the input disk refuses the build.

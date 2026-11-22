@@ -8,9 +8,13 @@ import op "modus:contract/operation"
 // the process reads it in the memory of the guest. Only the forms of `mov`
 // that a driver uses on a register of a device are decoded: `mov` between a
 // register and memory (88, 89, 8A, 8B), `mov` of an immediate to memory
-// (C6, C7) and `movzx` from memory (0F B6, 0F B7). Each other instruction is
-// refused: the process then stops the guest, and emulates nothing that it
-// did not decode whole.
+// (C6, C7), `movzx` from memory (0F B6, 0F B7) and `movsx` from memory
+// (0F BE, 0F BF). The accessors of Linux (`readb`, `readw`, `readl`,
+// `writeb`, `writew`, `writel`) are inline assembly of one `mov` with a
+// memory operand of any addressing form; the address comes from the exit,
+// so the decode reads the bytes of the operand only to find the length.
+// Each other instruction is refused: the process then stops the guest, and
+// emulates nothing that it did not decode whole.
 
 // The longest instruction of the processor.
 INSTRUCTION_BYTES_MOST :: 15
@@ -48,7 +52,8 @@ Device_Access :: struct {
 	high_byte:        bool, // The register is ah, ch, dh or bh: bits 8 to 15 of rax, rcx, rdx or rbx.
 	immediate:        bool, // A write of the immediate value, not of a register.
 	immediate_value:  u64,
-	destination_size: u8, // A read: the bytes of the register that it writes (movzx writes more than it reads).
+	destination_size: u8, // A read: the bytes of the register that it writes (movzx and movsx write more than they read).
+	sign_extend:      bool, // A read of movsx: the value fills the register with its sign bit.
 	length:           u8, // The bytes of the instruction.
 }
 
@@ -128,6 +133,10 @@ device_access_decode :: proc "contextless" (bytes: []u8, long_mode: bool) -> (ac
 		access = {direction = .Read, size = 1, destination_size = wide_size}
 	case 0x0FB7:
 		access = {direction = .Read, size = 2, destination_size = wide_size}
+	case 0x0FBE:
+		access = {direction = .Read, size = 1, destination_size = wide_size, sign_extend = true}
+	case 0x0FBF:
+		access = {direction = .Read, size = 2, destination_size = wide_size, sign_extend = true}
 	case:
 		return {}, .Unknown_Opcode
 	}
@@ -259,6 +268,18 @@ device_access_value :: proc "contextless" (registers: op.Guest_Registers, access
 	return value & size_mask(access.size)
 }
 
+// sign_extended gives a value of size bytes with its sign bit copied up
+// through all 64 bits.
+sign_extended :: proc "contextless" (value: u64, size: u8) -> u64 {
+	if size >= 8 {
+		return value
+	}
+	bits := u64(size) * 8
+	sign := u64(1) << (bits - 1)
+	low := value & size_mask(size)
+	return (low ~ sign) - sign
+}
+
 // device_access_complete writes the value of a decoded read in its register
 // with the rules of the processor: a write of 4 bytes clears the high half,
 // a write of 1 or 2 bytes keeps the other bytes; then it moves rip past the
@@ -267,6 +288,9 @@ device_access_complete :: proc "contextless" (registers: ^op.Guest_Registers, ac
 	if access.direction == .Read {
 		target := general_register_pointer(registers, access.register)
 		read := value & size_mask(access.size)
+		if access.sign_extend {
+			read = sign_extended(read, access.size) & size_mask(access.destination_size)
+		}
 		switch {
 		case access.high_byte:
 			target^ = target^ &~ u64(0xFF00) | (read & 0xFF) << 8

@@ -399,7 +399,9 @@ build :: proc "c" (
 	guest_memory := guest_os.Guest_Memory{ram}
 	guest_os.linux_machine_start(&machine, guest_memory, input_bytes, output_bytes)
 	places := guest_os.linux_machine_places()
-	registers, start_refusal := guest_os.linux_boot_prepare(guest_memory, kernel_slice, parsed, places[:], spec.command[:spec.command_length])
+	// No initial archive yet: the spec names none. The ceiling keeps the
+	// place of one below the copy of the image.
+	registers, start_refusal := guest_os.linux_boot_prepare(guest_memory, kernel_slice, parsed, places[:], spec.command[:spec.command_length], nil, staging)
 	if start_refusal != .None {
 		system.log_fact(.Info, Kernel_Refused{refusal_code = u64(start_refusal)})
 		return refuse(report, error, &resources, .Invalid_Command_Text, ARGUMENT_SPEC)
