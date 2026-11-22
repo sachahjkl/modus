@@ -379,4 +379,6 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/tpm_attestation",
 	foundation.SOURCE_FOLDER_CONTRACT + "/nvme",
 	foundation.SOURCE_FOLDER_CONTRACT + "/store_history",
+	foundation.SOURCE_FOLDER_CONTRACT + "/desktop_layout",
+	foundation.SOURCE_FOLDER_CONTRACT + "/unicode_latin",
 }
