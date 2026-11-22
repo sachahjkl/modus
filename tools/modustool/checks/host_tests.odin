@@ -369,4 +369,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_PUBLIC + "/quic_server",
 	foundation.SOURCE_FOLDER_INTERNAL + "/terminal/grid_resize",
 	foundation.SOURCE_FOLDER_CONTRACT + "/memory_screen",
+	foundation.SOURCE_FOLDER_CONTRACT + "/tpm_attestation",
+	foundation.SOURCE_FOLDER_CONTRACT + "/nvme",
+	foundation.SOURCE_FOLDER_CONTRACT + "/store_history",
 }
