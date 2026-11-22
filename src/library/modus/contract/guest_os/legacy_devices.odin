@@ -225,6 +225,18 @@ interrupt_chip_next :: proc "contextless" (chip: ^Interrupt_Chip, extra: u8) -> 
 	return 0, false
 }
 
+// interrupt_waiting_vector gives the vector that interrupt_acknowledge
+// would give now, and changes nothing: no line goes into service.
+interrupt_waiting_vector :: proc "contextless" (controllers: ^Interrupt_Controllers) -> (vector: u8, ok: bool) {
+	secondary_line, secondary_waits := interrupt_chip_next(&controllers.secondary, 0)
+	cascade := secondary_waits ? u8(1) << INTERRUPT_CASCADE_LINE : 0
+	line := interrupt_chip_next(&controllers.primary, cascade) or_return
+	if line == INTERRUPT_CASCADE_LINE && secondary_waits {
+		return controllers.secondary.vector_base + secondary_line, true
+	}
+	return controllers.primary.vector_base + line, true
+}
+
 // interrupt_acknowledge gives the vector of the interrupt that the guest
 // takes now, and moves its line into service, as the acknowledge cycle of
 // the processor does; false when none waits.

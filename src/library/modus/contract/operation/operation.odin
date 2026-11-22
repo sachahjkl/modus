@@ -342,7 +342,8 @@ Operation :: enum u32 {
 	//   `Large_Pages` that is mapped by whole large pages. With `At_Address_Zero`, the address is 0.
 	// - `flags`: a `Map_Flags`: `Write`, `Execute`, `No_Access` (the pages fault until `Memory_Protect`
 	//   gives them access), `Receive_Handles` (this process agrees to receive handles through this memory
-	//   object from `Handle_Give`), or `At_Address_Zero`. No flag: read only. The kernel refuses any other
+	//   object from `Handle_Give`), `At_Address_Zero`, or `Write_Combining` (device memory of
+	//   `Device_Kind.Memory` that is write-combining, not uncached). No flag: read only. The kernel refuses any other
 	//   bit. `Write` with `Execute` needs `No_Access`: no page is writable and executable, and
 	//   `Memory_Protect` then gives the pages `Write` or `Execute` in turn. `Write` with `Execute` and
 	//   `At_Address_Zero` are guest memory: only for another process that no thread ran
@@ -359,11 +360,14 @@ Operation :: enum u32 {
 	//   writer `Starter` (`Module_Writer`). The error kind is `Starter_Module`. The kernel checks it before
 	//   the other mappings. An address that the kernel chooses meets no such record.
 	// - `Bad_State`: the process is stopped; a part of the object has a protection of its own
-	//   (`Memory_Protect`): such an object has one mapping only; or guest memory for this process, or for
-	//   a process that a thread ran.
+	//   (`Memory_Protect`): such an object has one mapping only; guest memory for this process, or for
+	//   a process that a thread ran; or device memory with a live mapping of another cache type (no cache,
+	//   `Write_Combining`, or the entry of a screen) through this object or another object whose physical
+	//   pages meet its pages. The error kind is `Object_Shared`.
 	// - `Bad_Address`: the pages are not inside the object; the address is not a multiple of 4096, is below
 	//   4096 with no `At_Address_Zero`, is not 0 with it, ends above `USER_END`, or meets another mapping.
-	// - `Bad_Operation`: `Write` with `Execute` and with no `No_Access`; or a flag that the kernel does not know, which it refuses
+	// - `Bad_Operation`: `Write` with `Execute` and with no `No_Access`; `Write_Combining` on memory that is
+	//   not device memory of `Device_Kind.Memory`, or with `Execute`; or a flag that the kernel does not know, which it refuses
 	//   before it reads the handles; or, with the IOMMU in use, `memory` is device memory over the
 	//   registers of a device with a domain and `process` names another process: only the holder of the
 	//   registers maps them, so that its mappings keep the domain of the device.
@@ -1263,7 +1267,9 @@ Operation :: enum u32 {
 	//
 	// A guest has up to `GUEST_PROCESSOR_CAPACITY` guest processors. One thread runs one guest processor at
 	// a time; several threads of the caller run several guest processors of one guest at once. The record
-	// can ask for one event to deliver at the entry (`Guest_Inject_Kind`).
+	// can ask for one event to deliver at the entry (`Guest_Inject_Kind`). The kernel delivers an
+	// `External_Interrupt` only when the guest takes interrupts: else it opens the interrupt window, and
+	// the run ends with `Interrupt_Window` when the guest takes interrupts again.
 	//
 	// The kernel gives a page on first use of a mapping of the guest its frame when the guest touches it,
 	// and enters the guest again: that exit does not end the operation. The operation ends at each other
@@ -1648,6 +1654,10 @@ Guest_Exit_Kind :: enum u64 {
 	Shutdown      = 7, // The guest processor shut down: a fault while it delivered a double fault. Its state means nothing now.
 	Refused_State = 8, // The processor refused the state of the guest processor: no instruction of the guest ran.
 	Other         = 9, // Another instruction that the guest may not run alone: the exit code of the processor is the sixth result. `rdtsc` (0x6E) and `rdtscp` (0x87) are here: the process answers them from its own clock.
+	// The guest opened its interrupt window: the record asked for an `External_Interrupt` while the guest
+	// took no interrupt (its interrupt flag clear, or in its interrupt shadow), and the guest now takes one.
+	// The request stays in the record: the next run delivers it.
+	Interrupt_Window = 10,
 }
 
 // A module record: one module that a loader put in a process (Process_Module).
@@ -3023,13 +3033,38 @@ Map_Flag :: enum u64 {
 	No_Access       = 2, // Memory_Map: a mapping whose pages fault until Memory_Protect gives them access. Memory_Protect: no access.
 	Receive_Handles = 3, // Memory_Map: this process agrees to receive handles through this memory object (`Handle_Give`). Refused by `Memory_Protect`.
 	At_Address_Zero = 4, // Memory_Map: the mapping starts at the address 0, the guest physical address 0 of a guest. Refused by `Memory_Protect`.
+	// Memory_Map: the pages are write-combining: the processor gathers the writes and sends them to the
+	// device in bursts, and does not cache a read. Only for device memory of `Device_Kind.Memory`, which
+	// is else mapped with no cache, and never with `Execute` (map_write_combining_refused). The mappings of a
+	// device memory object, and of each object whose pages meet its pages, have one cache type at a time: a
+	// live mapping with no cache refuses a write-combining one, and the reverse. Refused by
+	// `Memory_Protect`. For the memory of a device that the processor fills and the device reads: a
+	// shared memory region of a GPU.
+	Write_Combining = 5,
 }
 // The flags of one `Memory_Map` or `Memory_Protect`. Example: `{.Write}`.
 Map_Flags :: bit_set[Map_Flag;u64]
 // The flags that `Memory_Map` knows, as the word of its argument.
-MAP_FLAGS_KNOWN :: u64(1) << u64(Map_Flag.Write) | u64(1) << u64(Map_Flag.Execute) | u64(1) << u64(Map_Flag.No_Access) | u64(1) << u64(Map_Flag.Receive_Handles) | u64(1) << u64(Map_Flag.At_Address_Zero)
+MAP_FLAGS_KNOWN :: u64(1) << u64(Map_Flag.Write) | u64(1) << u64(Map_Flag.Execute) | u64(1) << u64(Map_Flag.No_Access) | u64(1) << u64(Map_Flag.Receive_Handles) | u64(1) << u64(Map_Flag.At_Address_Zero) | u64(1) << u64(Map_Flag.Write_Combining)
 // The flags that `Memory_Protect` knows, as the word of its argument: protection bits only.
 PROTECT_FLAGS_KNOWN :: u64(1) << u64(Map_Flag.Write) | u64(1) << u64(Map_Flag.Execute) | u64(1) << u64(Map_Flag.No_Access)
+
+// map_write_combining_refused says if `Memory_Map` refuses the flag
+// `Write_Combining` of a mapping: on normal memory, the kernel reads and
+// writes its frames through its direct map, write-back, and two cache types
+// over one frame break the coherence of the caches; on the device memory of
+// a screen (`Device_Kind.Display_Memory`), the type is the one of the
+// firmware; with `Execute`, the processor would fetch instructions from
+// memory that it does not cache. Over the registers of a device, the kernel
+// then keeps one cache type across the live mappings of an object and of
+// each object whose pages meet its pages (`Bad_State` with `Object_Shared`
+// else).
+map_write_combining_refused :: proc "contextless" (flags: Map_Flags, device_registers: bool) -> bool {
+	if .Write_Combining not_in flags {
+		return false
+	}
+	return !device_registers || .Execute in flags
+}
 
 // The largest code of `Machine_Stop`: the host receives one byte.
 MACHINE_STOP_CODE_MOST :: 255
@@ -3058,7 +3093,7 @@ Device_Kind :: enum u64 {
 	None      = 0, // Refused: `Bad_Operation`.
 	Ports     = 1, // A range of input and output ports: `a` the first port, `b` the count.
 	Interrupt = 2, // A line of the 8259: `a` from 1 to 15.
-	Memory    = 3, // The registers of a device: `a` the physical address, `b` the count of pages; mapped with no cache.
+	Memory    = 3, // The registers of a device: `a` the physical address, `b` the count of pages; mapped with no cache, or write-combining with `Map_Flag.Write_Combining`.
 	Message   = 4, // A message interrupt (MSI-X): the results give the address and the value that the device writes.
 	// The video memory of a display, which holds its screen pages: `a` the physical address, `b` the count of
 	// pages; the range must hold the address of the framebuffer of the firmware. The same device memory as
@@ -3134,6 +3169,7 @@ Process_Mapping_Flag :: enum u32 {
 	Large       = 8, // The mapping uses large pages of 2 MiB.
 	Protected   = 9, // Memory_Protect changed the protection of pages of the mapping.
 	No_Access   = 10, // The protection of the mapping is No_Access now.
+	Write_Combining = 11, // Memory_Map gave `Write_Combining`: the pages of device memory are write-combining, not uncached.
 }
 
 // One mapping of a process: Process_Mapping_Report.

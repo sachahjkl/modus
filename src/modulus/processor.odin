@@ -495,6 +495,7 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 	// interrupt_common drops.
 	debug_register_7_write(DR7_NO_BREAKPOINT)
 	debug_register_6_write(DR6_CLEAR)
+	page_attribute_table_setup(cpu)
 	apic_setup(cpu)
 	guest_processor_setup(cpu)
 	thread_counters_processor_setup(cpu)

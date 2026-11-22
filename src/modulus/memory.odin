@@ -2,6 +2,7 @@ package kernel
 
 import info "modus:contract/boot_info"
 import "base:intrinsics"
+import "modulus:page_attributes"
 
 // Memory: the page frames, and the page tables of address spaces
 // (docs/ARCHITECTURE.md, "Memory").
@@ -10,7 +11,9 @@ PAGE_SIZE :: info.PAGE_SIZE
 PAGE_PRESENT :: u64(1) << 0
 PAGE_WRITE :: u64(1) << 1
 PAGE_USER :: u64(1) << 2
-PAGE_NO_CACHE :: u64(1) << 4 | u64(1) << 3 // No cache, and each write goes to the device at once.
+PAGE_NO_CACHE :: page_attributes.PAGE_UNCACHEABLE // No cache, and each write goes to the device at once.
+PAGE_WRITE_COMBINING :: page_attributes.PAGE_WRITE_COMBINING // Writes gather and reach the device in bursts; no read is cached.
+PAGE_CACHE_TYPE_BITS :: page_attributes.PAGE_CACHE_TYPE_BITS // The bits of an entry that select its cache type.
 PAGE_NO_EXECUTE :: u64(1) << 63
 PAGE_ADDRESS :: u64(0x000F_FFFF_FFFF_F000)
 

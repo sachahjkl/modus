@@ -1,0 +1,3 @@
+type: Added
+
+**Write-combining device memory**: `Memory_Map` takes the flag `Write_Combining` for device memory of `Device_Kind.Memory`, which a device service maps write-combining in place of uncached, for a shared region such as the host-visible memory of a virtual GPU. The kernel writes write-combining in the page attribute table of each processor at its start, and each processor reads it back; the flag is refused on normal memory, on the memory of a screen and with `Execute`, the mappings of a memory object of a device, and of each object over the same pages, keep one cache type (`Bad_State` else), and the report of the mappings names such a mapping `Write_Combining`.

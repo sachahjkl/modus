@@ -225,22 +225,29 @@ guest_event_border_vectors_and_error_codes :: proc(t: ^testing.T) {
 	for vector in ([?]u8{0, 1, 3, 6, 7, 9, 16, 19, 20, 28}) {
 		testing.expectf(t, refusal_of({inject_kind = u8(Guest_Inject_Kind.Exception), inject_vector = vector, inject_error_code_valid = 1}) == .Inject_Error_Code, "exception %v pushes no error code", vector)
 	}
+	// An external interrupt is a vector from 32: below, the guest would take
+	// it for an exception.
+	for vector in ([?]u8{0, 1, 2, 8, 14, 18, 31}) {
+		testing.expectf(t, refusal_of({inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = vector}) == .Inject_Vector, "external vector %v", vector)
+	}
+	testing.expect_value(t, GUEST_VECTOR_FIRST_EXTERNAL, 32)
 	// An interrupt pushes no error code.
 	testing.expect_value(t, refusal_of({inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = 32, inject_error_code_valid = 1}), Guest_Registers_Refusal.Inject_Error_Code)
 	testing.expect_value(t, refusal_of({inject_kind = u8(Guest_Inject_Kind.Software_Interrupt), inject_vector = 0x80, inject_error_code = 4}), Guest_Registers_Refusal.Inject_Error_Code)
 	// The reserved bytes: each one alone, and all at their largest value.
-	testing.expect_value(t, refusal_of({reserved = {1, 0, 0}}), Guest_Registers_Refusal.Reserved)
-	testing.expect_value(t, refusal_of({reserved = {0, 1, 0}}), Guest_Registers_Refusal.Reserved)
-	testing.expect_value(t, refusal_of({reserved = {0, 0, 0x80}}), Guest_Registers_Refusal.Reserved)
-	testing.expect_value(t, refusal_of({reserved = {max(u8), max(u8), max(u8)}}), Guest_Registers_Refusal.Reserved)
+	testing.expect_value(t, refusal_of({reserved = {1, 0}}), Guest_Registers_Refusal.Reserved)
+	testing.expect_value(t, refusal_of({reserved = {0, 0x80}}), Guest_Registers_Refusal.Reserved)
+	testing.expect_value(t, refusal_of({reserved = {max(u8), max(u8)}}), Guest_Registers_Refusal.Reserved)
 	// The successful cases last.
 	for vector in ([?]u8{8, 10, 11, 12, 13, 14, 17, 21, 29, 30}) {
 		testing.expectf(t, refusal_of({inject_kind = u8(Guest_Inject_Kind.Exception), inject_vector = vector, inject_error_code_valid = 1, inject_error_code = max(u32)}) == .None, "exception %v with its error code", vector)
 		testing.expectf(t, refusal_of({inject_kind = u8(Guest_Inject_Kind.Exception), inject_vector = vector}) == .None, "exception %v in real mode, with no error code", vector)
 	}
-	for vector in ([?]u8{0, 8, 32, max(u8)}) {
-		testing.expectf(t, refusal_of({inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = vector}) == .None, "external vector %v", vector)
+	for vector in ([?]u8{0, 3, 8, 32, max(u8)}) {
 		testing.expectf(t, refusal_of({inject_kind = u8(Guest_Inject_Kind.Software_Interrupt), inject_vector = vector}) == .None, "software vector %v", vector)
+	}
+	for vector in ([?]u8{32, 33, 0x80, max(u8)}) {
+		testing.expectf(t, refusal_of({inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = vector}) == .None, "external vector %v", vector)
 	}
 	testing.expect_value(t, refusal_of({inject_kind = u8(Guest_Inject_Kind.Non_Maskable_Interrupt), inject_vector = 2}), Guest_Registers_Refusal.None)
 	testing.expect_value(t, u8(max(Guest_Inject_Kind)), u8(4))
@@ -250,7 +257,7 @@ guest_event_border_vectors_and_error_codes :: proc(t: ^testing.T) {
 // that the checks give, and the checks give the requests as members.
 @(test)
 guest_registers_refusal_agrees_with_the_check :: proc(t: ^testing.T) {
-	records := [?]Guest_Registers{{}, {rflags = max(u64)}, {cr4 = u64(1) << 13}, {mode_load = max(u8)}, {inject_kind = 5}, {reserved = {1, 0, 0}}, {interrupt_shadow = 2}, {interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.External_Interrupt)}, LONG_MODE_REGISTERS}
+	records := [?]Guest_Registers{{}, {rflags = max(u64)}, {cr4 = u64(1) << 13}, {mode_load = max(u8)}, {inject_kind = 5}, {reserved = {1, 0}}, {interrupt_shadow = 2}, {event_pending = 2}, {interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.Non_Maskable_Interrupt), inject_vector = 2}, {interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = 0x30}, LONG_MODE_REGISTERS}
 	for registers in records {
 		testing.expect_value(t, guest_registers_refusal(registers), refusal_of(registers) != .None)
 	}
@@ -269,26 +276,33 @@ guest_registers_refusal_agrees_with_the_check :: proc(t: ^testing.T) {
 	testing.expect_value(t, requests, Guest_Requests{})
 }
 
-// The interrupt shadow: a word that is not 0 or 1 is refused, and an
-// external interrupt or the non-maskable interrupt in the shadow is refused,
-// since the processor would deliver it one instruction early. An exception
-// and a software interrupt in the shadow are accepted.
+// The interrupt shadow: a word that is not 0 or 1 is refused, and the
+// non-maskable interrupt in the shadow is refused, since the processor
+// would deliver it one instruction early. An external interrupt in the
+// shadow is accepted: the kernel waits for the interrupt window. An
+// exception and a software interrupt in the shadow are accepted.
 @(test)
 guest_interrupt_shadow_border :: proc(t: ^testing.T) {
 	for word in ([?]u8{2, 3, 0x80, max(u8)}) {
 		testing.expectf(t, refusal_of({interrupt_shadow = word}) == .Interrupt_Shadow, "shadow word %v", word)
-		testing.expectf(t, refusal_of({interrupt_shadow = word, reserved = {1, 1, 1}}) == .Interrupt_Shadow, "shadow word %v before the reserved bytes", word)
+		testing.expectf(t, refusal_of({interrupt_shadow = word, reserved = {1, 1}}) == .Interrupt_Shadow, "shadow word %v before the reserved bytes", word)
 	}
-	testing.expect_value(t, refusal_of({interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = 0x30}), Guest_Registers_Refusal.Inject_In_Interrupt_Shadow)
-	testing.expect_value(t, refusal_of({interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = max(u8)}), Guest_Registers_Refusal.Inject_In_Interrupt_Shadow)
 	testing.expect_value(t, refusal_of({interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.Non_Maskable_Interrupt), inject_vector = 2}), Guest_Registers_Refusal.Inject_In_Interrupt_Shadow)
 	long := LONG_MODE_REGISTERS
 	long.interrupt_shadow = 1
-	long.inject_kind = u8(Guest_Inject_Kind.External_Interrupt)
-	long.inject_vector = 0x20
+	long.inject_kind = u8(Guest_Inject_Kind.Non_Maskable_Interrupt)
+	long.inject_vector = 2
 	requests, refusal := guest_registers_check(long)
 	testing.expect_value(t, refusal, Guest_Registers_Refusal.Inject_In_Interrupt_Shadow)
 	testing.expect_value(t, requests, Guest_Requests{})
+	// An external interrupt below 32 in the shadow names its vector first.
+	testing.expect_value(t, refusal_of({interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = 31}), Guest_Registers_Refusal.Inject_Vector)
+	long.inject_kind = u8(Guest_Inject_Kind.External_Interrupt)
+	long.inject_vector = 0x20
+	requests, refusal = guest_registers_check(long)
+	testing.expect_value(t, refusal, Guest_Registers_Refusal.None)
+	testing.expect_value(t, requests, Guest_Requests{mode_load = .Keep, inject_kind = .External_Interrupt})
+	testing.expect_value(t, refusal_of({interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = max(u8)}), Guest_Registers_Refusal.None)
 	// A bad event is named first: the checks of the event come before.
 	testing.expect_value(t, refusal_of({interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.Non_Maskable_Interrupt), inject_vector = 3}), Guest_Registers_Refusal.Inject_Vector)
 	// The successful cases last: no shadow, the shadow with no event, and
@@ -299,8 +313,66 @@ guest_interrupt_shadow_border :: proc(t: ^testing.T) {
 	testing.expect_value(t, refusal_of({interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.Software_Interrupt), inject_vector = 0x80}), Guest_Registers_Refusal.None)
 	testing.expect_value(t, refusal_of({interrupt_shadow = 0, inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = 0x30}), Guest_Registers_Refusal.None)
 	testing.expect_value(t, offset_of(Guest_Registers, interrupt_shadow), uintptr(188))
-	testing.expect_value(t, offset_of(Guest_Registers, reserved), uintptr(189))
+	testing.expect_value(t, offset_of(Guest_Registers, event_pending), uintptr(189))
+	testing.expect_value(t, offset_of(Guest_Registers, reserved), uintptr(190))
 	testing.expect_value(t, size_of(Guest_Registers), 240)
+}
+
+// The word that the kernel writes when an event waits: 0 or 1 passes back,
+// each other value is refused, before the reserved bytes.
+@(test)
+guest_event_pending_border :: proc(t: ^testing.T) {
+	for word in ([?]u8{2, 3, 0x80, max(u8)}) {
+		testing.expectf(t, refusal_of({event_pending = word}) == .Event_Pending, "pending word %v", word)
+		testing.expectf(t, refusal_of({event_pending = word, reserved = {1, 1}}) == .Event_Pending, "pending word %v before the reserved bytes", word)
+	}
+	// The successful cases last: the kernel does not read it.
+	testing.expect_value(t, refusal_of({event_pending = 0}), Guest_Registers_Refusal.None)
+	testing.expect_value(t, refusal_of({event_pending = 1}), Guest_Registers_Refusal.None)
+	testing.expect_value(t, refusal_of({event_pending = 1, inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = 0x30}), Guest_Registers_Refusal.None)
+}
+
+// When a guest takes an external interrupt: its interrupt flag set and out
+// of its shadow, whatever the other flags.
+@(test)
+guest_external_interrupt_taken_needs_the_flag_and_no_shadow :: proc(t: ^testing.T) {
+	testing.expect(t, !guest_external_interrupt_taken({}))
+	testing.expect(t, !guest_external_interrupt_taken({rflags = GUEST_FLAGS_DEFINED &~ GUEST_FLAGS_INTERRUPT}))
+	testing.expect(t, !guest_external_interrupt_taken({rflags = GUEST_FLAGS_INTERRUPT, interrupt_shadow = 1}))
+	testing.expect(t, !guest_external_interrupt_taken({rflags = GUEST_FLAGS_DEFINED, interrupt_shadow = 1}))
+	testing.expect_value(t, GUEST_FLAGS_INTERRUPT, u64(0x200))
+	testing.expect(t, GUEST_FLAGS_DEFINED & GUEST_FLAGS_INTERRUPT != 0)
+	// The successful cases last.
+	testing.expect(t, guest_external_interrupt_taken({rflags = GUEST_FLAGS_INTERRUPT}))
+	testing.expect(t, guest_external_interrupt_taken({rflags = GUEST_FLAGS_DEFINED}))
+}
+
+// The flag Write_Combining of Memory_Map: refused on memory that is not
+// the registers of a device, and with Execute; accepted on the registers of
+// a device with Read and Write. A map with no Write_Combining is not
+// refused by this rule.
+@(test)
+map_write_combining_border :: proc(t: ^testing.T) {
+	testing.expect_value(t, Map_Flag.Write_Combining, Map_Flag(5))
+	testing.expect(t, MAP_FLAGS_KNOWN & (u64(1) << u64(Map_Flag.Write_Combining)) != 0)
+	testing.expect(t, PROTECT_FLAGS_KNOWN & (u64(1) << u64(Map_Flag.Write_Combining)) == 0)
+	// Normal memory, and the device memory of a screen (Display_Memory),
+	// which has the entry of the firmware: the kernel passes false for both.
+	for flags in ([?]Map_Flags{{.Write_Combining}, {.Write_Combining, .Write}, {.Write_Combining, .No_Access}, {.Write_Combining, .At_Address_Zero}}) {
+		testing.expectf(t, map_write_combining_refused(flags, false), "%v on normal memory or a screen", flags)
+	}
+	for flags in ([?]Map_Flags{{.Write_Combining, .Execute}, {.Write_Combining, .Write, .Execute, .No_Access}, {.Write_Combining, .Execute, .At_Address_Zero}}) {
+		testing.expectf(t, map_write_combining_refused(flags, true), "%v on device memory", flags)
+		testing.expectf(t, map_write_combining_refused(flags, false), "%v on normal memory", flags)
+	}
+	// The successful cases last.
+	for flags in ([?]Map_Flags{{}, {.Write}, {.Execute}, {.Write, .Execute, .No_Access}}) {
+		testing.expectf(t, !map_write_combining_refused(flags, false), "%v with no Write_Combining", flags)
+		testing.expectf(t, !map_write_combining_refused(flags, true), "%v with no Write_Combining on device memory", flags)
+	}
+	for flags in ([?]Map_Flags{{.Write_Combining}, {.Write_Combining, .Write}, {.Write_Combining, .Write, .No_Access}, {.Write_Combining, .Receive_Handles}}) {
+		testing.expectf(t, !map_write_combining_refused(flags, true), "%v on device memory", flags)
+	}
 }
 
 // The index of a guest processor: 0 to 3, nothing past.

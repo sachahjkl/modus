@@ -258,7 +258,7 @@ protection_bits :: proc "contextless" (mapping: ^Mapping, flags: op.Map_Flags) -
 	if .No_Access in flags {
 		return 0
 	}
-	bits := PAGE_PRESENT | PAGE_USER | mapping.limit_bits & PAGE_NO_CACHE
+	bits := PAGE_PRESENT | PAGE_USER | mapping.limit_bits & PAGE_CACHE_TYPE_BITS
 	if .Write in flags {
 		bits |= PAGE_WRITE
 	}

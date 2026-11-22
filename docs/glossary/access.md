@@ -684,11 +684,21 @@ Do not use: vCPU, virtual processor.
 
 A guest exit is the moment when a guest processor stops and the kernel gets the processor back: an instruction that the guest may not run alone, an access to memory that no mapping allows, or an interrupt of the machine.
 
-The kernel handles one exit itself: a page on first use. Each other exit ends `Guest_Run`, and its completion record says what it was (`Guest_Exit_Kind`): a port write with its port and its value, a port read, `hlt`, `cpuid`, an access to memory, an interrupt. The process answers it with a change of the registers record, then runs the guest again.
+The kernel handles one exit itself: a page on first use. Each other exit ends `Guest_Run`, and its completion record says what it was (`Guest_Exit_Kind`): a port write with its port and its value, a port read, `hlt`, `cpuid`, an access to memory, an interrupt, the interrupt window that a waiting interrupt asked for. The process answers it with a change of the registers record, then runs the guest again.
 
 The design: `docs/ARCHITECTURE.md`, "A guest", section 3.
 
 Do not use: VM exit, world switch.
+
+### Interrupt window
+
+An interrupt window is the moment when a guest processor takes interrupts again: its interrupt flag set, and out of the shadow of `sti` or `mov ss`.
+
+`Guest_Run` delivers an external interrupt that its record asks for only at such a moment: the processor would deliver it with no check, into code that `cli` protects. When the guest takes no interrupt, the kernel asks the processor for a virtual interrupt and intercepts it; the run then ends with the exit `Interrupt_Window` as soon as the guest takes interrupts, and the next run delivers the request. It is not an interrupt of the machine, and the guest receives nothing at that exit.
+
+The design: `src/md/features/guest.md`, "The interrupt window".
+
+Do not use: IRQ window, VINTR window.
 
 ### Nested page table
 

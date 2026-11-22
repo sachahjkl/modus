@@ -78,6 +78,12 @@ STATE_PAGE_ATTRIBUTES :: 0x668 // The page attribute table of the guest under ne
 #assert(CONTROL_INTERCEPT_MORE_INSTRUCTIONS == 0x010)
 #assert(guest_rules.INTERCEPT_TIME_STAMP_COUNTER == 1 << 14)
 #assert(guest_rules.INTERCEPT_TIME_STAMP_COUNTER_AND_PROCESSOR == 1 << 7)
+// The interrupt window: guest_rules writes its bits in the two words of the
+// control block that the kernel writes here, and no bit of the kernel.
+#assert(guest_rules.CONTROL_INTERCEPT_INSTRUCTIONS == CONTROL_INTERCEPT_INSTRUCTIONS)
+#assert(guest_rules.CONTROL_VIRTUAL_INTERRUPT == CONTROL_INTERRUPTS)
+#assert(INTERCEPT_INSTRUCTIONS & guest_rules.INTERCEPT_VIRTUAL_INTERRUPT == 0)
+#assert(INTERRUPTS_MASKED_BY_THE_KERNEL & guest_rules.VIRTUAL_INTERRUPT_WINDOW == 0)
 
 // What the guest may not do alone. The first vector: the interrupt, the
 // non-maskable interrupt, the system management interrupt and INIT of the
@@ -125,6 +131,7 @@ GUEST_EXIT_INTERRUPT :: u64(0x60)
 GUEST_EXIT_NON_MASKABLE_INTERRUPT :: u64(0x61)
 GUEST_EXIT_MANAGEMENT_INTERRUPT :: u64(0x62)
 GUEST_EXIT_INIT :: u64(0x63)
+GUEST_EXIT_VIRTUAL_INTERRUPT :: guest_rules.EXIT_VIRTUAL_INTERRUPT
 GUEST_EXIT_CPUID :: u64(0x72)
 GUEST_EXIT_HALT :: u64(0x78)
 GUEST_EXIT_PORT :: u64(0x7B)
@@ -622,6 +629,8 @@ guest_exit_results :: proc "contextless" (exit: Guest_Exit, registers: ^op.Guest
 		results[2] = exit.information_1 & NESTED_FAULT_ACCESS
 	case GUEST_EXIT_INTERRUPT, GUEST_EXIT_NON_MASKABLE_INTERRUPT, GUEST_EXIT_MANAGEMENT_INTERRUPT, GUEST_EXIT_INIT:
 		kind = .Interrupted
+	case GUEST_EXIT_VIRTUAL_INTERRUPT:
+		kind = .Interrupt_Window
 	case GUEST_EXIT_SHUTDOWN:
 		kind = .Shutdown
 	case GUEST_EXIT_REFUSED_STATE:
@@ -724,14 +733,22 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 	mode_loaded := guest_mode_write(block, requests.mode_load, registers.code_selector, registers.data_selector)
 	// An event that an exit interrupted goes first, as the processor would
 	// deliver it: the request of the process waits in the record for a
-	// later run.
+	// later run. An external interrupt that the guest does not take now
+	// waits for the interrupt window: the processor would deliver it with no
+	// check of the interrupt flag of the guest.
 	injected := false
-	if requests.inject_kind != .None && direct(block + CONTROL_EVENT_INJECTION, u64)^ & guest_rules.EVENT_VALID == 0 {
+	service := guest_rules.event_service(registers, requests.inject_kind, direct(block + CONTROL_EVENT_INJECTION, u64)^ & guest_rules.EVENT_VALID != 0)
+	switch service {
+	case .Inject:
 		injection := guest_rules.event_injection_word(requests.inject_kind, registers.inject_vector, registers.inject_error_code_valid == 1, registers.inject_error_code)
 		direct(block + CONTROL_EVENT_INJECTION, u64)^ = injection
 		processor.pending_injection = {event = injection, address = registers.rip}
 		injected = true
+	case .None, .Wait, .Open_Window, .Wait_Then_Window:
 	}
+	// Each run sets the window again: a window of an earlier run that the
+	// guest did not open must not end this run.
+	guest_rules.interrupt_window_write(direct(block, [guest_rules.CONTROL_BLOCK_BYTES]u8)[:], guest_rules.interrupt_window_open(service))
 
 	cpu := processor_self()
 	exit: Guest_Exit
@@ -775,6 +792,12 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 			break
 		}
 	}
+
+	// The process learns that the next entry delivers an event first, so
+	// that it knows why its request waits, and that the guest lost none.
+	// Read once after the last entry, on each path out of the loop: a run
+	// that a stop ended before its entry gives the word too.
+	registers.event_pending = direct(block + CONTROL_EVENT_INJECTION, u64)^ & guest_rules.EVENT_VALID != 0 ? 1 : 0
 
 	// A served request leaves the record. After a refused state, the
 	// processor delivered nothing and the kernel dropped the event: the

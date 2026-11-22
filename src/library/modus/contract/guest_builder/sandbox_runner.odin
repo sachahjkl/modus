@@ -513,7 +513,7 @@ runner_answer_exit :: proc "contextless" (
 		registers.rip = next_rip
 		return true
 
-	case .Halt, .Memory, .Shutdown, .Refused_State, .Other, .None:
+	case .Halt, .Memory, .Shutdown, .Refused_State, .Other, .Interrupt_Window, .None:
 		runner.state = .Failed
 		if runner.refusal == .None {
 			runner.refusal = .Nonzero_Guest_Exit

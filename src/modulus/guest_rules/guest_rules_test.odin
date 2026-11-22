@@ -2,6 +2,7 @@
 package guest_rules
 
 import "core:testing"
+import "modus:contract/byte_order"
 import op "modus:contract/operation"
 
 // The word of EVENTINJ, bit by bit, for each kind (the AMD manual, volume
@@ -297,4 +298,142 @@ instruction_exit_lengths :: proc(t: ^testing.T) {
 	testing.expect(t, named && length == 2)
 	length, named = instruction_exit_length(0x87)
 	testing.expect(t, named && length == 3)
+}
+// The interrupt window: opened, the intercept VINTR and the request of a
+// virtual interrupt at the highest priority, whatever the task priority;
+// closed, none of them. The other bits of the two words stay.
+@(test)
+interrupt_window_bits :: proc(t: ^testing.T) {
+	block: [CONTROL_BLOCK_BYTES]u8
+	interrupt_window_write(block[:], true)
+	testing.expect_value(t, byte_order.read_u32_little_endian(block[:], CONTROL_INTERCEPT_INSTRUCTIONS), u32(0x10))
+	testing.expect_value(t, byte_order.read_u32_little_endian(block[:], CONTROL_VIRTUAL_INTERRUPT), u32(0x001F_0100))
+	interrupt_window_write(block[:], false)
+	testing.expect_value(t, byte_order.read_u32_little_endian(block[:], CONTROL_INTERCEPT_INSTRUCTIONS), u32(0))
+	testing.expect_value(t, byte_order.read_u32_little_endian(block[:], CONTROL_VIRTUAL_INTERRUPT), u32(0))
+	// Each other byte of the block is untouched.
+	for byte_value, offset in block {
+		testing.expectf(t, byte_value == 0, "byte %x", offset)
+	}
+	// Every other bit of the two words set: the window changes only its own.
+	byte_order.write_u32_little_endian(block[:], CONTROL_INTERCEPT_INSTRUCTIONS, max(u32) &~ INTERCEPT_VIRTUAL_INTERRUPT)
+	byte_order.write_u32_little_endian(block[:], CONTROL_VIRTUAL_INTERRUPT, max(u32) &~ VIRTUAL_INTERRUPT_WINDOW)
+	interrupt_window_write(block[:], false)
+	testing.expect_value(t, byte_order.read_u32_little_endian(block[:], CONTROL_INTERCEPT_INSTRUCTIONS), max(u32) &~ INTERCEPT_VIRTUAL_INTERRUPT)
+	testing.expect_value(t, byte_order.read_u32_little_endian(block[:], CONTROL_VIRTUAL_INTERRUPT), max(u32) &~ VIRTUAL_INTERRUPT_WINDOW)
+	interrupt_window_write(block[:], true)
+	testing.expect_value(t, byte_order.read_u32_little_endian(block[:], CONTROL_INTERCEPT_INSTRUCTIONS), max(u32))
+	testing.expect_value(t, byte_order.read_u32_little_endian(block[:], CONTROL_VIRTUAL_INTERRUPT), max(u32))
+	// Open twice, closed once: closed.
+	interrupt_window_write(block[:], true)
+	interrupt_window_write(block[:], false)
+	testing.expect_value(t, byte_order.read_u32_little_endian(block[:], CONTROL_INTERCEPT_INSTRUCTIONS) & INTERCEPT_VIRTUAL_INTERRUPT, u32(0))
+	testing.expect_value(t, byte_order.read_u32_little_endian(block[:], CONTROL_VIRTUAL_INTERRUPT) & VIRTUAL_INTERRUPT_WINDOW, u32(0))
+	// The interrupt masking of the kernel (bit 24) is not a bit of the
+	// window, and the exit code is VMEXIT_VINTR.
+	testing.expect_value(t, VIRTUAL_INTERRUPT_WINDOW & (u32(1) << 24), u32(0))
+	testing.expect_value(t, EXIT_VIRTUAL_INTERRUPT, u64(0x64))
+	testing.expect_value(t, CONTROL_VIRTUAL_INTERRUPT, 0x060)
+	testing.expect_value(t, CONTROL_INTERRUPT_STATE, CONTROL_VIRTUAL_INTERRUPT + 8)
+}
+
+// How a run serves the event of a record: an event that an exit
+// interrupted goes first; an external interrupt waits for the window while
+// the guest takes none; each other kind goes in at once.
+@(test)
+event_service_of_each_state :: proc(t: ^testing.T) {
+	INTERRUPT_FLAG :: op.GUEST_FLAGS_INTERRUPT
+	open := op.Guest_Registers{rflags = INTERRUPT_FLAG}
+	closed := op.Guest_Registers{}
+	shadow := op.Guest_Registers{rflags = INTERRUPT_FLAG, interrupt_shadow = 1}
+	closed_in_shadow := op.Guest_Registers{interrupt_shadow = 1}
+	// No request: nothing, whatever the state.
+	for registers in ([?]op.Guest_Registers{open, closed, shadow, closed_in_shadow}) {
+		for held in ([?]bool{false, true}) {
+			testing.expectf(t, event_service(registers, .None, held) == .None, "none with %v held %v", registers.rflags, held)
+		}
+	}
+	// A held event goes first, for each kind; an external interrupt behind
+	// it also opens the window, so the run ends when the guest takes
+	// interrupts again, not at the next interrupt of the machine.
+	for kind in ([?]op.Guest_Inject_Kind{.Non_Maskable_Interrupt, .Exception, .Software_Interrupt}) {
+		for registers in ([?]op.Guest_Registers{open, closed, shadow, closed_in_shadow}) {
+			testing.expectf(t, event_service(registers, kind, true) == .Wait, "%v behind a held event", kind)
+		}
+	}
+	for registers in ([?]op.Guest_Registers{open, closed, shadow, closed_in_shadow}) {
+		testing.expectf(t, event_service(registers, .External_Interrupt, true) == .Wait_Then_Window, "external interrupt behind a held event, flags %x", registers.rflags)
+	}
+	// The interrupt flag clear, the shadow, or both: the window opens.
+	testing.expect_value(t, event_service(closed, .External_Interrupt, false), Event_Service.Open_Window)
+	testing.expect_value(t, event_service(shadow, .External_Interrupt, false), Event_Service.Open_Window)
+	testing.expect_value(t, event_service(closed_in_shadow, .External_Interrupt, false), Event_Service.Open_Window)
+	// The other kinds do not wait for the window: an exception and a
+	// software interrupt do not look at the interrupt flag, and the rules
+	// refuse the non-maskable interrupt in the shadow.
+	for kind in ([?]op.Guest_Inject_Kind{.Non_Maskable_Interrupt, .Exception, .Software_Interrupt}) {
+		testing.expectf(t, event_service(closed, kind, false) == .Inject, "%v with the flag clear", kind)
+	}
+	// The successful case last: the guest takes interrupts.
+	testing.expect_value(t, event_service(open, .External_Interrupt, false), Event_Service.Inject)
+	testing.expect_value(t, event_service({rflags = op.GUEST_FLAGS_DEFINED}, .External_Interrupt, false), Event_Service.Inject)
+}
+
+// The window of each way to serve an event, and the window of one run
+// closed again at the next run that does not ask for it: the block holds
+// what the last run wrote, and nothing of the run before.
+@(test)
+interrupt_window_follows_each_run :: proc(t: ^testing.T) {
+	testing.expect(t, !interrupt_window_open(.None))
+	testing.expect(t, !interrupt_window_open(.Inject))
+	testing.expect(t, !interrupt_window_open(.Wait))
+	testing.expect(t, interrupt_window_open(.Open_Window))
+	testing.expect(t, interrupt_window_open(.Wait_Then_Window))
+	is_open :: proc(block: []u8) -> bool {
+		intercept := byte_order.read_u32_little_endian(block, CONTROL_INTERCEPT_INSTRUCTIONS) & INTERCEPT_VIRTUAL_INTERRUPT != 0
+		request := byte_order.read_u32_little_endian(block, CONTROL_VIRTUAL_INTERRUPT) & VIRTUAL_INTERRUPT_REQUEST != 0
+		return intercept && request
+	}
+	is_closed :: proc(block: []u8) -> bool {
+		return byte_order.read_u32_little_endian(block, CONTROL_INTERCEPT_INSTRUCTIONS) & INTERCEPT_VIRTUAL_INTERRUPT == 0 && byte_order.read_u32_little_endian(block, CONTROL_VIRTUAL_INTERRUPT) & VIRTUAL_INTERRUPT_WINDOW == 0
+	}
+	block: [CONTROL_BLOCK_BYTES]u8
+	closed := op.Guest_Registers{}
+	open := op.Guest_Registers{rflags = op.GUEST_FLAGS_INTERRUPT}
+	// Run 1: the guest takes no interrupt, the window opens.
+	interrupt_window_write(block[:], interrupt_window_open(event_service(closed, .External_Interrupt, false)))
+	testing.expect(t, is_open(block[:]))
+	// Run 2: no request (the process withdrew it): the window closes.
+	interrupt_window_write(block[:], interrupt_window_open(event_service(closed, .None, false)))
+	testing.expect(t, is_closed(block[:]))
+	// Run 3: behind a held event, the window opens again.
+	interrupt_window_write(block[:], interrupt_window_open(event_service(open, .External_Interrupt, true)))
+	testing.expect(t, is_open(block[:]))
+	// Run 4: the guest takes interrupts and the kernel injects: closed.
+	interrupt_window_write(block[:], interrupt_window_open(event_service(open, .External_Interrupt, false)))
+	testing.expect(t, is_closed(block[:]))
+	// Run 5: an exception behind a held event waits with no window.
+	interrupt_window_write(block[:], interrupt_window_open(event_service(closed, .Exception, true)))
+	testing.expect(t, is_closed(block[:]))
+}
+
+// An injected external interrupt that an exit interrupted before its
+// delivery comes back in EXITINTINFO: the next entry delivers it again, so
+// the guest loses no interrupt.
+@(test)
+undelivered_external_interrupt_is_delivered_again :: proc(t: ^testing.T) {
+	injected := event_injection_word(.External_Interrupt, 0x30, false, 0)
+	pending := Pending_Injection{event = injected, address = 0x1000}
+	next, still := event_after_exit(injected, 0x1000, pending)
+	testing.expect_value(t, next, injected)
+	testing.expect_value(t, still, pending)
+	// An external interrupt of the machine in EXITINTINFO, with no
+	// injection: delivered again too.
+	next, still = event_after_exit(injected, 0x2000, {})
+	testing.expect_value(t, next, injected)
+	testing.expect_value(t, still, Pending_Injection{})
+	// Delivered: EXITINTINFO not valid, nothing goes again.
+	next, still = event_after_exit(0, 0x1000, pending)
+	testing.expect_value(t, next, u64(0))
+	testing.expect_value(t, still, Pending_Injection{})
 }

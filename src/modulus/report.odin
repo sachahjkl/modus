@@ -2,6 +2,7 @@ package kernel
 
 import info "modus:contract/boot_info"
 import op "modus:contract/operation"
+import "modulus:page_attributes"
 import "base:intrinsics"
 
 // The record of how the machine started (op.Boot_Report). The kernel reads
@@ -162,8 +163,8 @@ process_mappings_report :: proc "contextless" (report: ^op.Process_Mapping_Repor
 			if region.uncommitted {
 				item.flags += {.Uncommitted}
 			}
-			if region.uncached {
-				item.flags += {.Uncached}
+			if flag, named := page_attributes.report_flag_of_bits(mapping.limit_bits); named {
+				item.flags += {flag}
 			}
 			if region.device {
 				item.flags += {.Device}

@@ -225,6 +225,83 @@ interrupt_shadow_read :: proc "contextless" (block: []u8, registers: ^op.Guest_R
 	registers.interrupt_shadow = u8(byte_order.read_u64_little_endian(block, CONTROL_INTERRUPT_STATE) & INTERRUPT_SHADOW)
 }
 
+// The interrupt window of a guest processor (the AMD manual, volume 2,
+// "Virtual Interrupts" and table B-1): the kernel asks the processor for a
+// virtual interrupt (V_IRQ) at the highest priority, whatever the task
+// priority of the guest (V_IGN_TPR), and intercepts it (VINTR). With the
+// interrupts masked by the flag of the kernel (V_INTR_MASKING, which the
+// kernel always sets), the guest takes the virtual interrupt when its own
+// interrupt flag is set and it is out of its interrupt shadow: the processor
+// exits then, with the exit code EXIT_VIRTUAL_INTERRUPT, and the guest
+// receives nothing.
+CONTROL_INTERCEPT_INSTRUCTIONS :: 0x00C // u32: the first vector of instructions and events.
+CONTROL_VIRTUAL_INTERRUPT :: 0x060 // u32: the low half of the virtual interrupt control.
+INTERCEPT_VIRTUAL_INTERRUPT :: u32(1) << 4 // VINTR.
+VIRTUAL_INTERRUPT_REQUEST :: u32(1) << 8 // V_IRQ.
+VIRTUAL_INTERRUPT_PRIORITY_HIGHEST :: u32(0xF) << 16 // V_INTR_PRIO.
+VIRTUAL_INTERRUPT_IGNORE_TASK_PRIORITY :: u32(1) << 20 // V_IGN_TPR.
+VIRTUAL_INTERRUPT_WINDOW :: VIRTUAL_INTERRUPT_REQUEST | VIRTUAL_INTERRUPT_PRIORITY_HIGHEST | VIRTUAL_INTERRUPT_IGNORE_TASK_PRIORITY
+EXIT_VIRTUAL_INTERRUPT :: u64(0x64) // VMEXIT_VINTR.
+
+// interrupt_window_write opens or closes the interrupt window in a control
+// block, for the next entry. It changes only its own bits of the two words:
+// the other intercepts and the interrupt masking of the kernel stay.
+interrupt_window_write :: proc "contextless" (block: []u8, open: bool) {
+	intercepts := byte_order.read_u32_little_endian(block, CONTROL_INTERCEPT_INSTRUCTIONS)
+	control := byte_order.read_u32_little_endian(block, CONTROL_VIRTUAL_INTERRUPT)
+	if open {
+		intercepts |= INTERCEPT_VIRTUAL_INTERRUPT
+		control |= VIRTUAL_INTERRUPT_WINDOW
+	} else {
+		intercepts &~= INTERCEPT_VIRTUAL_INTERRUPT
+		control &~= VIRTUAL_INTERRUPT_WINDOW
+	}
+	byte_order.write_u32_little_endian(block, CONTROL_INTERCEPT_INSTRUCTIONS, intercepts)
+	byte_order.write_u32_little_endian(block, CONTROL_VIRTUAL_INTERRUPT, control)
+}
+
+// The request of an event of a run, as the kernel serves it.
+Event_Service :: enum u8 {
+	None        = 0, // No request: the entry delivers no event of the record.
+	Inject      = 1, // The entry delivers the event of the record (EVENTINJ).
+	Wait        = 2, // An event that an exit interrupted goes first: the request stays in the record.
+	Open_Window = 3, // An external interrupt that the guest does not take now: the entry opens the interrupt window, and the request stays in the record.
+	// An external interrupt behind an event that an exit interrupted: the entry delivers that event, and
+	// opens the interrupt window, so the run ends when the guest takes interrupts again, not at the next
+	// interrupt of the machine. The request stays in the record.
+	Wait_Then_Window = 4,
+}
+
+// interrupt_window_open says if the entries of a run open the interrupt
+// window for the way that the run serves its event.
+interrupt_window_open :: proc "contextless" (service: Event_Service) -> bool {
+	switch service {
+	case .Open_Window, .Wait_Then_Window:
+		return true
+	case .None, .Inject, .Wait:
+		return false
+	}
+	return false
+}
+
+// event_service says how a run serves the event of a record that the rules
+// of the contract accepted: event_held is true when the control block holds
+// an event that an exit interrupted.
+event_service :: proc "contextless" (registers: op.Guest_Registers, kind: op.Guest_Inject_Kind, event_held: bool) -> Event_Service {
+	switch kind {
+	case .None:
+		return .None
+	case .External_Interrupt:
+		if event_held {
+			return .Wait_Then_Window
+		}
+		return op.guest_external_interrupt_taken(registers) ? .Inject : .Open_Window
+	case .Non_Maskable_Interrupt, .Exception, .Software_Interrupt:
+		return event_held ? .Wait : .Inject
+	}
+	return .None
+}
+
 // The exit codes of the intercepted instructions whose exit gives the
 // process the address of the next instruction, in the exit Other (the AMD
 // manual, volume 2, appendix C, "SVM Intercept Exit Codes").

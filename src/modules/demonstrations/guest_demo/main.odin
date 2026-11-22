@@ -142,7 +142,7 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 				system.log_fact(.Info, Instruction_Not_Reached{runs = u64(INTERRUPTED_RUNS_LIMIT), instruction = value_kinds.text_field("hlt", 8)})
 				system.stop(.Failed)
 			}
-		case .None, .Port_Read, .Cpuid, .Memory, .Shutdown, .Refused_State, .Other:
+		case .None, .Port_Read, .Cpuid, .Memory, .Shutdown, .Refused_State, .Other, .Interrupt_Window:
 			system.log_fact(.Info, Exit_Unexpected{exit_kind = u64(exit.kind), exit_code = value_kinds.Hexadecimal_Sixteen_Digits(exit.code), information = value_kinds.Hexadecimal_Sixteen_Digits(exit.information), instruction_address = value_kinds.Hexadecimal_Sixteen_Digits(registers.rip)})
 			system.stop(.Failed)
 		}
