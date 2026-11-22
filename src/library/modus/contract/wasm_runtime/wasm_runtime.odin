@@ -1,6 +1,5 @@
 // Pure freestanding sandboxed WebAssembly 1.0 module validator and bounded
-// stack-machine interpreter (src/md/features/desktop_to_browser.md,
-// "WebAssembly modules").
+// stack-machine interpreter (src/md/features/desktop_to_browser.md).
 //
 // Confines every module to caller-supplied linear memory, bounded operand/call
 // stacks, strict instruction fuel, and an explicit capability import table.

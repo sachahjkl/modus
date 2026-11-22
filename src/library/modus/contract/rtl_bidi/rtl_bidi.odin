@@ -1,6 +1,6 @@
 // Pure freestanding UAX #9 bidirectional text ordering (Arabic & Hebrew) and
 // right-to-left interface layout mirroring
-// (src/md/features/interface_language.md, "Text from right to left").
+// (src/md/features/interface_language.md).
 //
 // Zero dynamic allocations, zero kernel operations, and strict UTF-8 borders.
 package rtl_bidi

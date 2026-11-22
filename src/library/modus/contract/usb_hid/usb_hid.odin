@@ -1,5 +1,5 @@
 // Pure freestanding USB HID boot-protocol keyboard and pointer parser
-// (src/md/features/device_services.md, "A USB keyboard and a USB pointer").
+// (src/md/features/device_services.md).
 //
 // Translates USB HID boot reports into typed key-press/key-release and
 // pointer-delta events with rollover error refusal, bounds clamping, and zero
