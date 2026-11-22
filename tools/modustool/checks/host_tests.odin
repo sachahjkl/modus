@@ -381,4 +381,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/store_history",
 	foundation.SOURCE_FOLDER_CONTRACT + "/desktop_layout",
 	foundation.SOURCE_FOLDER_CONTRACT + "/unicode_latin",
+	foundation.SOURCE_FOLDER_CONTRACT + "/usb_hid",
+	foundation.SOURCE_FOLDER_CONTRACT + "/rtl_bidi",
+	foundation.SOURCE_FOLDER_CONTRACT + "/wasm_runtime",
 }
