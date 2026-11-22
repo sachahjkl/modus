@@ -1215,7 +1215,7 @@ Plan_Difference_Refused :: struct {
 @(log_fact = "compositor: the assistive holder {holder} reads the trees as {kind}: {nickname}")
 Assistive_Holder_Attached :: struct {
 	holder:   u64,
-	kind:     [ASSISTIVE_KIND_FIELD_BYTES]u8,
+	kind:     [16]u8,
 	nickname: value_kinds.Module_Name_Field,
 }
 

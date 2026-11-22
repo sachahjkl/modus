@@ -222,7 +222,7 @@ the_facts_of_debugger_window_write_the_lines_of_before :: proc(t: ^testing.T) {
 		}
 		facts_expect_line(t, render(t, file, "Window_Ready", {{"exports", count}}), line_of_before("debugger_window: ok, connected to the service debugger; ", count, " exports, each record with the size of its description"))
 	}
-	facts_expect_text_fields_last(t, file, text_bytes_most_of({"debugged_process", value_kinds.MODULE_NAME_FIELD_BYTES - 1}, {"act", u32(len(acts[4]))}, {"pending", u32(len(pendings[1]))}, {"procedure", 79}, {"card", 13}, {"problem", u32(len("a record of the service debugger has another size than in this window"))}))
+	facts_expect_text_fields_last(t, file, text_bytes_most_of({"debugged_process", value_kinds.MODULE_NAME_FIELD_BYTES - 1}, {"act", u32(len(acts[4]))}, {"pending", u32(len(pendings[1]))}, {"procedure", 79}, {"card", 13}, {"problem", u32(len("a record of the service debugger has another size than in this window"))}, {"cause", 63}))
 }
 
 // The facts of manual: the counts and the times at their edges, each words
@@ -294,7 +294,7 @@ the_facts_of_edit_write_the_lines_of_before :: proc(t: ^testing.T) {
 			facts_expect_line(t, render(t, file, "Walk_Refused", {{"action", action}, {"walk_problem", problem}}), line_of_before("edit: ", action, ": ", problem))
 		}
 	}
-	facts_expect_text_fields_last(t, file, text_bytes_most_of({"action", 4}, {"replaced_words", u32(len(replaced_words[1]))}, {"walk_problem", u32(len(problems[1]))}))
+	facts_expect_text_fields_last(t, file, text_bytes_most_of({"action", 4}, {"replaced_words", u32(len(replaced_words[1]))}, {"walk_problem", u32(len(problems[1]))}, {"cause", 63}))
 }
 
 // The facts of the terminal: the counts at their edges, the longest name of
@@ -597,6 +597,10 @@ the_texts_of_the_compositor_facts_come_last_and_whole :: proc(t: ^testing.T) {
 	most["profile"] = u32(len("the processor profile"))
 	most["profile_reason"] = u32(len("the system drives no GPU device"))
 	most["viewer_key_head"] = 8
+	most["resource"] = 95
+	most["plan"] = 48
+	most["kind"] = u32(len("screen_reader"))
+	most["nickname"] = value_kinds.MODULE_NAME_FIELD_BYTES - 1
 	facts_expect_text_fields_last(t, file, most)
 }
 
