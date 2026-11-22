@@ -309,7 +309,7 @@ layout_build :: proc "contextless" (window: ^display.Window, origin_width, count
 	boxes.forward, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.px(NAVIGATION_BUTTON_WIDTH), .Y = box_layout.px(ROW_HEIGHT)}})
 	boxes.address, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.fill_least(ADDRESS_LEAST_WIDTH), .Y = box_layout.px(ROW_HEIGHT)}})
 	boxes.go, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.px(GO_BUTTON_WIDTH), .Y = box_layout.px(ROW_HEIGHT)}})
-	boxes.origin, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.text_size(gap, 5_000), .Y = box_layout.px(ROW_HEIGHT)}, text_width = i32(clamp(origin_width, 0, box_layout.LENGTH_LIMIT))})
+	boxes.origin, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.text_size(gap, 10_000), .Y = box_layout.px(ROW_HEIGHT)}, text_width = i32(clamp(origin_width, 0, box_layout.LENGTH_LIMIT))})
 	_ = box_layout.box_close(&box_tree)
 	_, _ = box_layout.box_open(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill()}, child_axis = .X, overflow = {.X = .Clip, .Y = .Clip}})
 	boxes.page, _ = box_layout.box_add(&box_tree, {identity = box_layout.identity_of(PAGE_LABEL), size = {.X = box_layout.fill(), .Y = box_layout.fill()}})
