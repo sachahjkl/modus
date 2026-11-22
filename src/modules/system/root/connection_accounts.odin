@@ -1,6 +1,6 @@
 // Live per-connection work-budget accounting, supervision generation tracking,
 // and service CPU-time attribution inside the root core
-// (src/md/features/work_accounting.md, src/md/features/supervision.md).
+// (src/md/features/work_accounting.md) and (src/md/features/supervision.md).
 package root
 
 import "modus:contract/console_prompt"

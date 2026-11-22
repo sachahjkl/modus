@@ -1,6 +1,6 @@
 // Unforgeable trusted-display Powerbox grant dialog and Wide-Grant active bar
-// mark inside the compositor (src/md/features/powerbox.md,
-// src/md/features/wide_grants.md).
+// mark inside the compositor (src/md/features/powerbox.md) and
+// (src/md/features/wide_grants.md).
 //
 // Drawn directly by the Display role holder above every client window so no
 // process can spoof, cover, or click-jack a grant approval, and while a wide
