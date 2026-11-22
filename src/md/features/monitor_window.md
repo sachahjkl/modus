@@ -1,6 +1,6 @@
 # The window of `monitor`
 
-The window of `monitor` shows what the machine does now, from the reports of the kernel: the memory, the counts of the kernel, and one row for each process. This file records two parts of its look: the sample graphs, which show the last minute of three measures, and the intensity steps, which color each gauge by its value. The guide is [`docs/TOOLS.md`](../../../docs/TOOLS.md), "The window of `monitor`". The colors follow [`docs/DESIGN.md`](../../../docs/DESIGN.md), "4. Color", and [appearance.md](appearance.md).
+The window of `monitor` shows what the machine does now, from the reports of the kernel: the memory, the counts of the kernel, and one row for each process. This file records three parts of its look: the cards that hold each part, the sample graphs, which show the last minute of three measures, and the intensity steps, which color each gauge by its value. The guide is [`docs/TOOLS.md`](../../../docs/TOOLS.md), "The window of `monitor`". The colors follow [`docs/DESIGN.md`](../../../docs/DESIGN.md), "4. Color", and [appearance.md](appearance.md).
 
 ## The constraints
 
@@ -23,8 +23,8 @@ A sample is one read of the system report and of each process report (`docs/glos
 - **The horizontal axis is the place of the sample, not the clock.** The newest sample is at the right edge; each older sample is one step to the left; the oldest of a full sample history is at the left edge. A step is 1/119 of the width. A sample history that is not full yet starts in the middle of the graph. The period is the aim of the loop: a call that the monitor runs between two samples can make one step longer, and the graph does not show it. The guide states the period as the step.
 - **The first sample** has no sample before. Its processor time and its rate of kernel entries are the means since the start of the machine: true values, not zeros.
 - **The scale of a rate is the largest value of the minute, rounded up**, so the curve fills the graph, and the top of the scale is a number that a reader reads at once (2000, not 1873). The rounded tops end at 10^19, the largest such number in 64 bits: a larger value draws on the top edge. A fixed scale also draws a value past its top on the top edge: the sample keeps its place in time, and the scale says what the top means.
-- **The text of a scale** is "0 to <top> <unit>" under the name, in the dim color. A rate of 10 000 or more is written with the suffixes k, M, G, T, P and E, so that a top has at most four digits and one letter. The current value of memory is the line at the top of the window, so its graph does not repeat it.
-- **The grid.** Each graph is the grid of points of the background (`interface.draw_point_grid`), the pattern that the compositor draws under the windows, inside an outline of 1 pixel in `track`. The pattern is placed on the surface, so the graphs and the desktop show one grid. The boxes start and end on multiples of `POINT_STEP` (24 pixels), so the points of a graph are 12 pixels inside each edge.
+- **The header of a graph card** holds, on one line: its title in its color, the text of its scale "0 to <top> <unit>" in the dim color, and at the right its value now in its color with its peak of the minute, "peak <value>", in the dim color. A rate of 10 000 or more is written with the suffixes k, M, G, T, P and E, so that a number has at most four digits and one letter. The peak is found at each push, in the same pass over the samples as the rounded top: a frame reads it. A text at the right is drawn only when it stays clear of the texts at the left: no text is cut and none lies over another.
+- **The plot.** Each graph is a recess in its card (`recess`), with a line of 1 pixel at each quarter of its height in `point` at alpha 150, inside an outline of 1 pixel in `track`. The lines give a reader the half and the quarters of the scale.
 - **The curve** is one path of the samples, stroked 2 pixels wide in the color of its concept, over a second path that closes the area under it, filled with the same color at alpha 64. The places are 1 pixel inside the box, so the stroke stays inside it.
 
 ### The sample history
@@ -41,7 +41,7 @@ The text table of the window grows from 8 KiB to 16 KiB: the three graphs put 2 
 
 ## The intensity steps
 
-A gauge is a bar on the track whose length is a share: the memory bar under the line of the memory, and the bar of the processor share of each process. A gauge takes the color of its intensity step, in `graphics` (`intensity.odin`), so that another window can use it:
+A gauge is a bar on the track whose length is a share: the gauge of each metric card, and the bar of the processor share of each process. A gauge takes the color of its intensity step, in `graphics` (`intensity.odin`), so that another window can use it:
 
 | Step | From | Color | Why |
 |---|---|---|---|
@@ -50,7 +50,7 @@ A gauge is a bar on the track whose length is a share: the memory bar under the 
 | Very high | `INTENSITY_VERY_HIGH_PERCENT`, 85 % | `near_limit` | A measure near its limit. A new token: no token had this meaning |
 
 - **A value at a threshold is in the higher step**: 60 % is high, 85 % is very high. A value past 100 % is very high: the processor share of a process with several threads can pass 100 % before the window cuts it, and it is a measure, not a wrong input.
-- **The color is never the only sign.** The share is written at the right of each bar, and the memory in MiB above its bar.
+- **The color is never the only sign.** The share is written at the right of each bar, and the number of each metric card above its gauge.
 - **The new token `near_limit`.** Dark `0xF2843C`, an orange between the yellow of `warning` and the coral of `failed`. Light `0xA85C29`, `shade(DARK_NEAR_LIMIT, 70)`: the shade that keeps 4.5 to 1 on the light surfaces, by the rule of every concept.
 
 The contrast of each color of a gauge, which the host tests compute (`src/library/modus/graphics/intensity_test.odin`, `appearance_test.odin`):
@@ -66,13 +66,14 @@ A bar is a graphic on the track: 3 to 1. As each concept, `near_limit` is a text
 
 ## The layout
 
-The window is 520 × 640 at its start (it was 520 × 560). From the top: the line of the memory and its bar, the kernel entries, the interrupts, the locks of the kernel, the three graphs, then the rows of the processes. 640 keeps the window and its title bar of 24 pixels inside the screen at y = 408.
+The window is 520 × 640 at its start. From the top: a row of three metric cards, three graph cards, then the card of the table of the processes. 640 keeps the window and its title bar of 24 pixels inside the screen at y = 408.
 
-Each place comes from a layout tree of `modus:layout` ([box_layout.md](box_layout.md)), solved at each frame at the size that the window has then (`monitor_layout`): no place is a constant of the window.
+Each place comes from a layout tree of `modus:layout` ([box_layout.md](box_layout.md)), solved at each frame at the size that the window has then (`monitor_layout`): no place is a constant of the window. A host test checks the places at the size of the start (`src/modules/system/monitor/monitor_test.odin`).
 
-- **The summary** is five lines of 20 pixels, with 10 pixels of the window over and under them: 120 pixels, five steps of the grid of points, so the first graph starts on the grid.
-- **A graph** is a row of 48 pixels: the column of the names (184 pixels, the column of a nickname) holds its name and its scale on two lines, and the graph takes the width that the column leaves. Its left and top edges go up to the next point of the grid and its right edge down to the point before. At 520 pixels a graph is 288 × 40 from x = 216, as before the layout tree. A wider window gives a wider graph: the sample history places its curve again in the new box, once for the change (`sample_history_box_set`), never at a frame with the same box.
-- **The table of the processes** takes the height left. `table_columns` gives its columns: the name (184 pixels and a gap), the pages (68), the bar of the processor share, which takes the width left, never under 100 pixels, and the share (`100%`, 32 pixels) at the edge of the content. At 520 pixels the bar is 200 pixels: the share ends 10 pixels from the edge, as the summary does. The last line counts the rows that do not fit, as before.
+- **The cards.** Each part is a card (`docs/DESIGN.md`, "3. Surfaces"): the gradient of a card, its border of 1 pixel in its accent, a light line on its top edge, and an accent rail of 3 pixels along its left edge, in the color of its concept: `memory`, `process` or `kernel`; the table is `process`. The cards are 8 pixels (the gap token) from the edges of the window and from each other. The content of a card starts 13 pixels inside it: the rail and 10 pixels.
+- **A metric card** has five lines: its title in capitals in its color, its one number at the large size (32) in `text_strong`, a detail and a second detail at the caption size, and a gauge of 6 pixels, cut in tenths by lines of the card. A memory card: the share in use, "<used> / <all> MiB", "<reserved> MiB reserved", the gauge of the pages in use. A processor card: the processor time of the last sample, the processes, the processors, the gauge of the processor time. A kernel card: the kernel entries since the start as a compact number, the interrupts, the waits of the locks of the kernel of all their takes with the kind that waited most, and a gauge of the share of the takes that waited. The second detail has three forms, from the longest; the card draws the first that fits its width.
+- **A graph card** is a header of 20 pixels and the plot, 40 pixels high, at the width of the card less its insets. A wider window gives a wider graph: the sample history places its curve again in the new box, once for the change (`sample_history_box_set`), never at a frame with the same box.
+- **The table card** takes the height left: its title, the band of the column titles in `recess`, then the rows, every second one on a band of `recess` at alpha 150. `table_columns` gives its columns: the name (184 pixels and a gap), the pages (68, the number at the right), the bar of the processor share, which takes the width left, never under 100 pixels, and the share (`100%`, 32 pixels, at the right) at the edge of the content. At the start size the table holds ten rows of one line; the last line counts the rows that do not fit, as before.
 
 ## The refused forms
 
@@ -84,11 +85,13 @@ Each place comes from a layout tree of `modus:layout` ([box_layout.md](box_layou
 - **A scale with any top.** A top of 1873 is read slowly; 1, 2 and 5 times a power of ten are the steps of a ruler.
 - **The samples placed by their time.** The monitor waits for its period, so the steps are equal but for a late call; places by time would need the times of 120 samples in the record and a scale of time in the window, for a difference that a reader does not see.
 - **A sample history in a shared service.** The monitor reads the reports itself, and keeps what it shows; a second process that kept a sample history would need the grant to inspect the machine too.
-- **Graphs side by side.** Three graphs in the width of 520 pixels are 160 pixels each, and "kernel entries" with its scale does not fit one line of that width.
+- **Graphs side by side.** Three graphs in the width of 520 pixels are 160 pixels each, and "kernel entries" with its scale does not fit one line of that width. The metric cards are side by side because each holds short texts on lines of its own.
+- **The grid of points in the plots.** The plots once showed the grid of points of the desktop, with their boxes on multiples of 24 pixels. A plot in a card is a recess; the quarter lines read the scale, the points did not, and the boxes no longer need the grid.
+- **A text cut to fit a metric card.** A cut number or a cut unit says a wrong fact. The second detail has shorter forms instead, and a card draws the first that fits.
 - **A larger window.** At 700 pixels the window passes the bottom of the screen at y = 408, where a machine test puts it.
 
 ## State
 
-Built: the three sample graphs, the sample history with its host tests, the intensity steps in `graphics` with the token `near_limit` and their host tests, the memory bar and the processor bars in the color of their step.
+Built: the cards, the three metric cards and their gauges, the three sample graphs with their value now and their peak, the sample history with its host tests, the intensity steps in `graphics` with the token `near_limit` and their host tests, the gauges and the processor bars in the color of their step, and the host test of the layout.
 
 Left: none of this design.

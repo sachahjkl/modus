@@ -49,14 +49,16 @@ A tool with no grant to inspect the machine reads nothing. It says so in its win
 
 ## The window of `monitor`
 
-![The window of monitor in the light appearance: the memory and its bar, the counts of the kernel, three graphs of the last minute over the grid of points, and the rows of the processes](screenshots/monitor_light.png)
+![The window of monitor in the light appearance: three metric cards for the memory, the processor and the kernel, three graph cards of the last minute, and the table of the processes](screenshots/monitor_light.png)
 
 The monitor takes one sample each 500 ms and draws its window after each sample. From the top:
 
-1. The memory in use, of all the memory, and the reserved memory, with a bar of the memory in use.
-2. The kernel entries and the interrupts since the start of the machine, and the waits of the locks of the kernel.
-3. Three sample graphs of the last minute: the last 120 samples, the newest at the right edge.
-4. One row for each process: its name, its pages, and its share of the processor in the last 500 ms, as a bar and in percent. The rows that do not fit are counted on the last line; `monitor.processes()` gives them all.
+1. Three metric cards, each with one large number and a gauge:
+   - **Memory**: the share of the memory in use, the MiB in use of all the MiB, and the reserved memory.
+   - **Processor**: the processor time of all the processes in the last sample, the processes, and the processors.
+   - **Kernel**: the kernel entries and the interrupts since the start of the machine, and the waits of the locks of the kernel of all their takes, with the kind that waited most when it fits. The gauge is the share of the takes that waited.
+2. Three graph cards of the last minute: the last 120 samples, the newest at the right edge. The header of each card gives its scale, its value now and its peak of the minute.
+3. The table of the processes: one row for each process, with its name, its pages, and its share of the processor in the last 500 ms, as a bar and in percent. The rows that do not fit are counted on the last line; `monitor.processes()` gives them all.
 
 | Graph | What one sample shows | Color | Scale |
 |---|---|---|---|
@@ -64,11 +66,11 @@ The monitor takes one sample each 500 ms and draws its window after each sample.
 | processor time | The processor time of all the processes since the sample before, over that time on every processor | Process | From 0 to 100 % |
 | kernel entries | The kernel entries since the sample before, for one second | Kernel | From 0 to the largest value of the minute, rounded up to 1, 2 or 5 times a power of ten; 10 000 and more with k, M, G, T, P or E |
 
-- Each graph is drawn over the grid of points of the desktop, the same points at the same places. Its name and its scale are at its left.
+- Each graph is a recess in its card, with a line at each quarter of its height.
 - The first sample has no sample before it: its processor time and its rate are the means since the start of the machine.
 - A step of the graph is one sample, not a time: a call that the monitor runs between two samples can make one step longer than 500 ms.
 
-**The colors of the bars.** Each bar takes the color of its intensity step (`DESIGN.md`, "The intensity of a gauge"): the color of what it measures under 60 %, the warning color from 60 %, and the color of a measure near its limit from 85 %. The number beside the bar gives the same fact.
+**The colors of the bars.** Each gauge and each bar takes the color of its intensity step (`DESIGN.md`, "The intensity of a gauge"): the color of what it measures under 60 %, the warning color from 60 %, and the color of a measure near its limit from 85 %. The number beside the bar gives the same fact.
 
 The design: `src/md/features/monitor_window.md`.
 

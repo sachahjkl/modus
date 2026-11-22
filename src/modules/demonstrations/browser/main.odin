@@ -19,8 +19,10 @@
 //
 // **What a reader sees.** A window that the principal resizes, laid out by
 // the layout tree of modus:layout (src/md/features/box_layout.md). The top
-// band: back, forward, the address field, go, and the origin of the page.
-// Under it, the page with its scroll bar. The status band: the title of the
+// band: back, forward, reload, the address field in its recessed well, go,
+// and the origin badge of the page. Under it, the bookmarks band: one
+// button for each page built in, the page shown marked. Then the page with
+// its scroll bar. The status band: the title of the
 // page, its nodes and its document boxes, then the address of the link under
 // the pointer, or what the last act did.
 //
@@ -29,6 +31,7 @@
 // the page; the wheel scrolls it too. Tab moves the focus.
 package browser
 
+import "modus:contract/draw_record"
 import "modus:contract/html_css"
 import "modus:contract/value_kinds"
 import "modus:display"
@@ -66,8 +69,30 @@ ROW_HEIGHT :: interface.TABLE_LINE // A text field and a button.
 TOP_BAND_HEIGHT :: ROW_HEIGHT + 2 * graphics.GAP
 STATUS_BAND_HEIGHT :: 2 * LINE + 8
 NAVIGATION_BUTTON_WIDTH :: 40
+// "reload" in the interface font, with the room of a button at each side.
+RELOAD_BUTTON_WIDTH :: 72
 GO_BUTTON_WIDTH :: 56
-ADDRESS_LEAST_WIDTH :: 160
+// The top band holds at the least width of the window: two gaps of
+// padding, five gaps between six boxes, back, forward, reload, the least
+// address field, go, and the badge of "origin modus://properties".
+ADDRESS_LEAST_WIDTH :: 140
+// The well of the address field: the field lies this far inside it.
+ADDRESS_WELL_INSET :: 2
+// The badge of the origin: its mark, a square in the color of an expected
+// state, and the room from the mark to the text.
+ORIGIN_MARK_SIZE :: 8
+ORIGIN_MARK_ROOM :: ORIGIN_MARK_SIZE + 6
+#assert(2 * graphics.GAP + 5 * graphics.GAP + 2 * NAVIGATION_BUTTON_WIDTH + RELOAD_BUTTON_WIDTH + ADDRESS_LEAST_WIDTH + GO_BUTTON_WIDTH + 2 * graphics.GAP + ORIGIN_MARK_ROOM + len("origin modus://properties") * graphics.CELL_WIDTH <= LEAST_WIDTH)
+// The bookmarks band: a row of buttons, BOOKMARK_HEIGHT high, with the
+// room of the band around them.
+BOOKMARK_HEIGHT :: 22
+BOOKMARK_BAND_HEIGHT :: BOOKMARK_HEIGHT + 2 * 5
+// The room inside a bookmark, at each side of its label.
+BOOKMARK_PADDING :: 12
+// The bevel of a button: a light line on its top edge and a dark line on
+// its bottom edge, at these alphas.
+BEVEL_LIGHT_ALPHA :: 56
+BEVEL_DARK_ALPHA :: 48
 // A wheel notch or an arrow key moves the page by this, and a page key by
 // the view less this, so a line of the view before stays in sight.
 SCROLL_LINE :: 3 * LINE
@@ -98,7 +123,7 @@ document_source_count: int
 loaded_appearance: graphics.Appearance
 scroll: int
 view_width: i32 = WIDTH - interface.SCROLL_BAR_THICKNESS
-view_height: i32 = HEIGHT - TOP_BAND_HEIGHT - STATUS_BAND_HEIGHT
+view_height: i32 = HEIGHT - TOP_BAND_HEIGHT - BOOKMARK_BAND_HEIGHT - STATUS_BAND_HEIGHT
 
 // The text of the address field.
 address_field: [ADDRESS_CAPACITY]u8
@@ -124,19 +149,42 @@ Act_Kind :: enum u8 {
 	None,
 	Back,
 	Forward,
+	Reload,
 	Load_Address_Field,
 	Follow_Link,
 	Send_Form,
+	Open_Bookmark,
 }
 
 Act :: struct {
-	kind: Act_Kind,
-	node: u16, // The element a of a link, or the form to send.
+	kind:     Act_Kind,
+	node:     u16, // The element a of a link, or the form to send.
+	bookmark: Built_In_Page, // The page of a bookmark.
+}
+
+// The label of the bookmark of each page built in.
+@(rodata)
+BOOKMARK_LABELS := [Built_In_Page]string {
+	.Welcome    = "Welcome",
+	.Properties = "Properties",
+	.Guide      = "Guide",
+	.Forms      = "Forms",
+}
+
+// The addresses that the bookmarks load.
+@(rodata)
+BOOKMARK_ADDRESSES := [Built_In_Page]string {
+	.Welcome    = "modus://welcome",
+	.Properties = "modus://properties",
+	.Guide      = "modus://guide",
+	.Forms      = "modus://forms",
 }
 
 // The boxes of the window that the frame draws into.
 Window_Boxes :: struct {
-	top_band, back, forward, address, go, origin:          box_layout.Box_Index,
+	top_band, back, forward, reload, address, go, origin:  box_layout.Box_Index,
+	bookmark_band:                                         box_layout.Box_Index,
+	bookmarks:                                             [Built_In_Page]box_layout.Box_Index,
 	page, scroll_bar:                                      box_layout.Box_Index,
 	status_band, status_title, status_counts, status_line: box_layout.Box_Index,
 }
@@ -287,6 +335,13 @@ act_run :: proc "contextless" (act: Act) -> bool {
 		history_go(history_place - 1)
 	case .Forward:
 		history_go(history_place + 1)
+	case .Reload:
+		// The page shown, parsed again from its address: the history and
+		// the scroll stay.
+		entry := &history[history_place]
+		page_load(string(entry.address[:entry.count]), false)
+	case .Open_Bookmark:
+		page_load(BOOKMARK_ADDRESSES[act.bookmark], true)
 	case .Load_Address_Field:
 		page_load(string(address_field[:address_field_count]), true)
 	case .Follow_Link:
@@ -298,8 +353,9 @@ act_run :: proc "contextless" (act: Act) -> bool {
 }
 
 // layout_build makes the layout tree of the window at its size, and solves
-// it: the top band, the page with its scroll bar, and the status band.
-layout_build :: proc "contextless" (window: ^display.Window, origin_width, counts_width: int) -> (boxes: Window_Boxes) {
+// it: the top band, the bookmarks band, the page with its scroll bar, and
+// the status band.
+layout_build :: proc "contextless" (window: ^display.Window, origin_width, counts_width: int, bookmark_widths: ^[Built_In_Page]int) -> (boxes: Window_Boxes) {
 	width := i32(clamp(window.width, 0, box_layout.LENGTH_LIMIT))
 	height := i32(clamp(window.height, 0, box_layout.LENGTH_LIMIT))
 	gap := tokens.gap
@@ -307,9 +363,15 @@ layout_build :: proc "contextless" (window: ^display.Window, origin_width, count
 	boxes.top_band, _ = box_layout.box_open(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(TOP_BAND_HEIGHT)}, child_axis = .X, cross_align = .Center, padding = {.X = gap, .Y = 0}, gap = gap})
 	boxes.back, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.px(NAVIGATION_BUTTON_WIDTH), .Y = box_layout.px(ROW_HEIGHT)}})
 	boxes.forward, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.px(NAVIGATION_BUTTON_WIDTH), .Y = box_layout.px(ROW_HEIGHT)}})
+	boxes.reload, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.px(RELOAD_BUTTON_WIDTH), .Y = box_layout.px(ROW_HEIGHT)}})
 	boxes.address, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.fill_least(ADDRESS_LEAST_WIDTH), .Y = box_layout.px(ROW_HEIGHT)}})
 	boxes.go, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.px(GO_BUTTON_WIDTH), .Y = box_layout.px(ROW_HEIGHT)}})
-	boxes.origin, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.text_size(gap, 10_000), .Y = box_layout.px(ROW_HEIGHT)}, text_width = i32(clamp(origin_width, 0, box_layout.LENGTH_LIMIT))})
+	boxes.origin, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.text_size(gap, 10_000), .Y = box_layout.px(ROW_HEIGHT)}, text_width = i32(clamp(origin_width + ORIGIN_MARK_ROOM, 0, box_layout.LENGTH_LIMIT))})
+	_ = box_layout.box_close(&box_tree)
+	boxes.bookmark_band, _ = box_layout.box_open(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(BOOKMARK_BAND_HEIGHT)}, child_axis = .X, cross_align = .Center, padding = {.X = gap, .Y = 0}, gap = 6})
+	for page in Built_In_Page {
+		boxes.bookmarks[page], _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.text_size(BOOKMARK_PADDING, 10_000), .Y = box_layout.px(BOOKMARK_HEIGHT)}, text_width = i32(clamp(bookmark_widths[page], 0, box_layout.LENGTH_LIMIT))})
+	}
 	_ = box_layout.box_close(&box_tree)
 	_, _ = box_layout.box_open(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill()}, child_axis = .X, overflow = {.X = .Clip, .Y = .Clip}})
 	boxes.page, _ = box_layout.box_add(&box_tree, {identity = box_layout.identity_of(PAGE_LABEL), size = {.X = box_layout.fill(), .Y = box_layout.fill()}})
@@ -364,7 +426,11 @@ draw :: proc "contextless" (window: ^display.Window) -> (act: Act) {
 	origin_text := writer_text(&origin_writer)
 	counts_buffer: [64]u8
 	counts_text := system.format(counts_buffer[:], u64(document_tree.node_count), " nodes, ", u64(document_layout.box_count), " document boxes")
-	boxes := layout_build(window, interface.text_measured_width(table, {}, origin_text), interface.text_measured_width(table, {}, counts_text))
+	bookmark_widths: [Built_In_Page]int
+	for page in Built_In_Page {
+		bookmark_widths[page] = interface.text_measured_width(table, interface.FONT_INTERFACE, BOOKMARK_LABELS[page])
+	}
+	boxes := layout_build(window, interface.text_measured_width(table, {}, origin_text), interface.text_measured_width(table, {}, counts_text), &bookmark_widths)
 	// The page: laid out at the width of its view, scrolled, then painted.
 	page := area_of(boxes.page)
 	view_width, view_height = i32(max(page.width, 0)), i32(max(page.height, 0))
@@ -383,6 +449,7 @@ draw :: proc "contextless" (window: ^display.Window) -> (act: Act) {
 	document_paint(table, page, scroll, tokens.surface_card)
 	fields_draw(&frame, page, &act)
 	draw_top_band(&frame, &boxes, origin_text, &act)
+	draw_bookmark_band(&frame, &boxes, &act)
 	draw_status_band(table, &boxes, counts_text, hovered)
 	// The keys that no element took scroll the page.
 	for &press in frame.input.keys[:frame.input.key_count] {
@@ -432,36 +499,86 @@ fields_draw :: proc "contextless" (frame: ^interface.Frame, page: interface.Area
 	}
 }
 
-// draw_top_band draws back, forward, the address field, go, and the origin
-// label. The address field takes the focus when no element has it, so the
-// keys type an address.
+// bevel_draw draws the bevel of a button: a light line on its top edge and
+// a dark line on its bottom edge, so the button stands out of its band in
+// both appearances.
+bevel_draw :: proc "contextless" (table: ^interface.Draw_Table, area: interface.Area) {
+	if area.width <= 0 || area.height < 2 {
+		return
+	}
+	interface.draw_rectangle_with_alpha(table, area.x, area.y, area.width, 1, draw_record.with_alpha(graphics.COLOR_WHITE, BEVEL_LIGHT_ALPHA))
+	interface.draw_rectangle_with_alpha(table, area.x, area.y + area.height - 1, area.width, 1, draw_record.with_alpha(graphics.COLOR_BLACK, BEVEL_DARK_ALPHA))
+}
+
+// bevelled_button draws a button of the interface package with its bevel.
+bevelled_button :: proc "contextless" (frame: ^interface.Frame, area: interface.Area, element: interface.Element_Identity, label: string, open := false) -> interface.Element_Result {
+	result := interface.button(frame, area, element, label, open)
+	bevel_draw(frame.table, area)
+	return result
+}
+
+// draw_top_band draws back, forward, reload, the address field in its
+// recessed well, go, and the origin badge. The address field takes the
+// focus when no element has it, so the keys type an address.
 draw_top_band :: proc "contextless" (frame: ^interface.Frame, boxes: ^Window_Boxes, origin_text: string, act: ^Act) {
 	table := frame.table
 	band := area_of(boxes.top_band)
-	interface.draw_rectangle(table, band.x, band.y, band.width, band.height, tokens.surface_card)
+	interface.draw_vertical_gradient(table, band.x, band.y, band.width, band.height, graphics.colors.card_top, graphics.colors.card_bottom)
 	interface.draw_rectangle(table, band.x, band.y + band.height - 1, band.width, 1, tokens.divider)
 	address_identity := interface.identity("browser address field")
 	if frame.state.focus == 0 {
 		frame.state.focus = address_identity
 	}
-	if interface.button(frame, area_of(boxes.back), interface.identity("browser back"), "<").activated && history_place > 0 {
+	if bevelled_button(frame, area_of(boxes.back), interface.identity("browser back"), "<").activated && history_place > 0 {
 		act^ = {kind = .Back}
 	}
-	if interface.button(frame, area_of(boxes.forward), interface.identity("browser forward"), ">").activated && history_place + 1 < history_count {
+	if bevelled_button(frame, area_of(boxes.forward), interface.identity("browser forward"), ">").activated && history_place + 1 < history_count {
 		act^ = {kind = .Forward}
 	}
-	if interface.text_input(frame, area_of(boxes.address), address_identity, address_field[:], &address_field_count, "an address").activated {
+	if bevelled_button(frame, area_of(boxes.reload), interface.identity("browser reload"), "reload").activated && history_count > 0 {
+		act^ = {kind = .Reload}
+	}
+	// The well: a recess with a border that a reader sees on each surface,
+	// and the field inside it. The field draws its focus ring around it.
+	well := area_of(boxes.address)
+	interface.draw_rectangle(table, well.x, well.y, well.width, well.height, tokens.surface_recess)
+	interface.draw_outline(table, well.x, well.y, well.width, well.height, 1, tokens.border)
+	field := interface.Area{well.x + ADDRESS_WELL_INSET, well.y + ADDRESS_WELL_INSET, max(well.width - 2 * ADDRESS_WELL_INSET, 0), max(well.height - 2 * ADDRESS_WELL_INSET, 0)}
+	if interface.text_input(frame, field, address_identity, address_field[:], &address_field_count, "an address").activated {
 		act^ = {kind = .Load_Address_Field}
 	}
-	if interface.button(frame, area_of(boxes.go), interface.identity("browser go"), "go").activated {
+	if bevelled_button(frame, area_of(boxes.go), interface.identity("browser go"), "go").activated {
 		act^ = {kind = .Load_Address_Field}
 	}
-	// The origin of the page, outlined in the color of an expected state:
-	// each origin is isolated, and the label says which one the page is.
-	label := area_of(boxes.origin)
-	interface.draw_rectangle(table, label.x, label.y, label.width, label.height, tokens.surface_recess)
-	interface.draw_outline(table, label.x, label.y, label.width, label.height, 1, tokens.expected)
-	interface.draw_text(table, label.x + int(tokens.gap), label.y + (label.height - LINE) / 2, interface.text_fit(table, {}, origin_text, label.width - 2 * int(tokens.gap)), tokens.expected)
+	// The badge of the origin, outlined in the color of an expected state,
+	// with its square mark: each origin is isolated, and the badge says
+	// which one the page is. Its box is as wide as its whole text.
+	badge := area_of(boxes.origin)
+	interface.draw_rectangle(table, badge.x, badge.y, badge.width, badge.height, tokens.surface_recess)
+	interface.draw_outline(table, badge.x, badge.y, badge.width, badge.height, 1, tokens.expected)
+	mark_x := badge.x + int(tokens.gap)
+	interface.draw_rectangle(table, mark_x, badge.y + (badge.height - ORIGIN_MARK_SIZE) / 2, ORIGIN_MARK_SIZE, ORIGIN_MARK_SIZE, tokens.expected)
+	text_x := mark_x + ORIGIN_MARK_ROOM
+	interface.draw_text(table, text_x, badge.y + (badge.height - LINE) / 2, interface.text_fit(table, {}, origin_text, badge.x + badge.width - int(tokens.gap) - text_x), tokens.expected)
+}
+
+// draw_bookmark_band draws one bookmark for each page built in. The
+// bookmark of the page shown is marked as open; a press loads its page.
+draw_bookmark_band :: proc "contextless" (frame: ^interface.Frame, boxes: ^Window_Boxes, act: ^Act) {
+	table := frame.table
+	band := area_of(boxes.bookmark_band)
+	interface.draw_rectangle(table, band.x, band.y, band.width, band.height, graphics.colors.card_bottom)
+	interface.draw_rectangle(table, band.x, band.y + band.height - 1, band.width, 1, tokens.divider)
+	shown, shown_found := Built_In_Page{}, false
+	if current.scheme == .Modus && current.path_count == 0 && current.query_count == 0 {
+		shown, shown_found = built_in_of(address_host(&current))
+	}
+	base := interface.identity("browser bookmark")
+	for page in Built_In_Page {
+		if bevelled_button(frame, area_of(boxes.bookmarks[page]), interface.identity_with(base, int(page)), BOOKMARK_LABELS[page], shown_found && shown == page).activated {
+			act^ = {kind = .Open_Bookmark, bookmark = page}
+		}
+	}
 }
 
 // draw_status_band draws the title of the page and its counts, then the
