@@ -307,10 +307,11 @@ the_pages_of_the_wirings_of_a_list_are_counted :: proc(t: ^testing.T) {
 
 // The names that the root service starts by a procedure of its own: no
 // other name gives a procedure, the empty name first, then each name gives
-// its own, and no two procedures have one name.
+// its own, and no two procedures have one name. The display is started by
+// its role: the name of the module that holds it today gives no procedure.
 @(test)
 a_part_of_the_system_is_started_by_the_root_service :: proc(t: ^testing.T) {
-	for name in ([?]string{"", "console", "wired_writer", "inputs", "input_", "Input"}) {
+	for name in ([?]string{"", "console", "wired_writer", "inputs", "input_", "Input", "compositor", "Display"}) {
 		testing.expectf(t, root_procedure_of(name) == .None, "%q gives a procedure of the root service", name)
 	}
 	for procedure in Root_Procedure {

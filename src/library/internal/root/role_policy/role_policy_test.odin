@@ -312,3 +312,89 @@ local_service_resolution_is_caller_scoped_and_never_global :: proc(t: ^testing.T
 	testing.expect_value(t, res_still_b, Local_Service_Refusal.None)
 	testing.expect_value(t, still_b, hash_b)
 }
+
+
+// The table of the root service with the default of the boot image: the
+// display is held by the module compositor.
+@(private = "file")
+image_holder_names :: proc() -> (names: Holder_Names) {
+	names.defaults[.Display] = "compositor"
+	names.defaults[.Input] = "input"
+	names.defaults[.Storage] = "storage"
+	names.defaults[.Console] = "console"
+	return names
+}
+
+// A second holder of the role Display, panel_display, which is not the
+// module compositor: the root service starts it, routes "display" to it,
+// and trusts it as the holder, through the table only. The refusals come
+// first: the empty name, None, a role with no holder, a text that is no
+// role name (the module of the image, a role name in other letters), and
+// the old holder once the role moved. The contract check binds the second
+// holder last, with the same descriptions as any holder of the role.
+@(test)
+a_second_display_holder_takes_the_routing_of_the_role :: proc(t: ^testing.T) {
+	names := image_holder_names()
+	_, empty_ok := target_resolve(&names, "")
+	testing.expect(t, !empty_ok, "the empty name resolves")
+	testing.expect_value(t, holder_name(&names, .None), "")
+	testing.expect(t, !is_holder(&names, "", .Assistive), "the empty name holds a role with no holder")
+	_, assistive_ok := target_resolve(&names, "assistive")
+	testing.expect(t, !assistive_ok, "a role with no holder falls through to a module of its name")
+	testing.expect_value(t, role_of_module(&names, ""), role_contract.Role.None)
+	for text in ([?]string{"compositor", "Display", "display ", "displays"}) {
+		testing.expectf(t, role_of_name(text) == .None, "%q names a role", text)
+	}
+
+	// The image: "display" reaches compositor.
+	resolved, resolved_ok := target_resolve(&names, "display")
+	testing.expect(t, resolved_ok)
+	testing.expect_value(t, resolved, "compositor")
+
+	// The plan gives the role to panel_display: each answer follows.
+	names.overrides[.Display] = "panel_display"
+	resolved, resolved_ok = target_resolve(&names, "display")
+	testing.expect(t, resolved_ok)
+	testing.expect_value(t, resolved, "panel_display")
+	testing.expect_value(t, holder_name(&names, .Display), "panel_display")
+	testing.expect(t, is_holder(&names, "panel_display", .Display))
+	testing.expect(t, !is_holder(&names, "compositor", .Display), "the module of the image still holds the role")
+	testing.expect_value(t, role_of_module(&names, "panel_display"), role_contract.Role.Display)
+	testing.expect_value(t, role_of_module(&names, "compositor"), role_contract.Role.None)
+	// The name of the old module is a plain name: it reaches no role.
+	plain, plain_ok := target_resolve(&names, "compositor")
+	testing.expect(t, plain_ok)
+	testing.expect_value(t, plain, "compositor")
+	// The other roles keep their holders.
+	testing.expect_value(t, holder_name(&names, .Input), "input")
+
+	// An image whose default is panel_display gives the same answers.
+	image_of_panel: Holder_Names
+	image_of_panel.defaults[.Display] = "panel_display"
+	resolved, resolved_ok = target_resolve(&image_of_panel, "display")
+	testing.expect(t, resolved_ok)
+	testing.expect_value(t, resolved, "panel_display")
+	testing.expect_value(t, role_of_module(&image_of_panel, "panel_display"), role_contract.Role.Display)
+
+	// The contract check: panel_display fills the display contract with
+	// the same descriptions, and the registry binds it.
+	registry: Role_Registry
+	display_hash := role_contract.display_contract_hash()
+	hashes := [1]role_contract.Contract_Hash{display_hash}
+	request := Bind_Request {
+		role                = .Display,
+		scope               = {.Machine, 0},
+		module_hash         = make_hash(0x33),
+		origin              = .Boot_Image,
+		chosen_by_principal = role_contract.MACHINE_PRINCIPAL,
+		process_slot        = 3,
+		module_bytes        = build_display_module(t),
+		declaration         = {contract_hashes = hashes[:], ring_faces = role_contract.display_ring_faces()},
+		contract            = role_contract.display_contract(),
+	}
+	testing.expect_value(t, bind_holder(&registry, request).refusal, Bind_Refusal.None)
+	holder, found := holder_find(&registry, .Display, {.Machine, 0})
+	testing.expect(t, found)
+	testing.expect_value(t, holder.process_slot, u32(3))
+	testing.expect_value(t, holder.contract_hash, display_hash)
+}

@@ -35,7 +35,7 @@ TEST_OUTPUT_DEBUGGER :: foundation.BUILD_FOLDER + "/test_output_debugger.txt"
 @(rodata)
 scenario_debugger := [?]Step {
 	{kind = .Wait, text = "kernel: ok"},
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"debugged\")"},
 	{kind = .Wait, text = "debugged: attach: the debugger is the debug handler of the child: as it must"},
@@ -137,7 +137,7 @@ REFUSES_THE_DEBUG_ACCESS :: " of the process refuses it (-4)"
 @(rodata)
 scenario_debugger_commands := [?]Step {
 	{kind = .Wait, text = "kernel: ok"},
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "start(\"debug_target\")"},
 	{kind = .Wait, text = "root: started debug_target"},
@@ -261,7 +261,7 @@ scenario_debugger_commands := [?]Step {
 	// of the log of the window.
 	{kind = .Launch, text = "debugger_window"},
 	{kind = .Wait, text = "debugger_window: ok, connected to the service debugger", any_order = true},
-	{kind = .Wait, text = "compositor: surface debugger_window", any_order = true},
+	{kind = .Wait, text = "display: debugger_window" + WINDOW_TAKEN, any_order = true},
 	{kind = .Front, text = "debugger_window"},
 	{kind = .Keys, text = "debug_target"},
 	{kind = .Key, text = "ret"},
@@ -334,7 +334,7 @@ scenario_debugger_commands := [?]Step {
 	// Who can debug which process. A private store belongs to its process:
 	// the grant Store refuses, though the console holds a grant Store too.
 	{kind = .Type, text = "start(\"notes\")"},
-	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "debug(\"notes\")"},
 	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + "Store" + REFUSES_THE_DEBUG_ACCESS},
@@ -351,7 +351,7 @@ scenario_debugger_commands := [?]Step {
 	// debugs clock, with a thread held: the root service ends the
 	// debugging, and a new attach is refused by the grant Inspect.
 	{kind = .Type, text = "start(\"clock\")"},
-	{kind = .Wait, text = "compositor: surface clock"},
+	{kind = .Wait, text = "display: clock" + WINDOW_TAKEN, any_order = true},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "columns(debug(\"clock\"), process, described)"},
 	// Two modules with a debug object: clock and the drawing module it imports.

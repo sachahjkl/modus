@@ -357,11 +357,11 @@ hard_image :: proc(durable: []u8, pending: []Pending_Write) -> (image: []u8, tor
 // blocks of limit); in the second, after the count 1200, when the store is
 // at its limit, and each commit thins the oldest versions of the store.
 scenario_power_loss_early := [?]Step {
-	{kind = .Wait, text = "compositor: surface console", any_order = true}, // The storage service can start first, for the boot pass of settings.
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true}, // The storage service can start first, for the boot pass of settings.
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
-	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Type, text = "kept through a loss of power"},
 	// The line of Enter comes after the commit of each character.
 	{kind = .Wait, text = "notes: the note is \"kept through a loss of power\", generation "},
@@ -372,11 +372,11 @@ scenario_power_loss_early := [?]Step {
 }
 
 scenario_power_loss_thinning := [?]Step {
-	{kind = .Wait, text = "compositor: surface console", any_order = true}, // The storage service can start first, for the boot pass of settings.
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true}, // The storage service can start first, for the boot pass of settings.
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
-	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Type, text = "kept through a loss of power"},
 	{kind = .Wait, text = "notes: the note is \"kept through a loss of power\", generation "},
 	{kind = .Key, text = "tab"},
@@ -453,14 +453,14 @@ power_loss_sequence :: proc(part: ^Test_Part_Run, what: string, steps: []Step, o
 	// temporary memory after each step.
 	second := make([dynamic]Step)
 	defer delete(second)
-	append(&second, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
+	append(&second, Step{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true})
 	append(&second, Step{kind = .Launch, text = "notes"})
 	if torn_root {
 		append(&second, Step{kind = .Wait, text = "has a wrong check: a write that a stop cut; the service uses the root before it", any_order = true})
 	}
 	append(&second, Step{kind = .Wait, text = fmt.aprintf("storage: ok, generation %d: 1 stores, 2 objects, 0 trees, %d versions, ", durable_contents.mount.generation, version_count(&durable_contents)), any_order = true})
 	append(&second, Step{kind = .Wait, text = "notes: restored the note \"kept through a loss of power\" and the count ", any_order = true})
-	append(&second, Step{kind = .Wait, text = "compositor: surface notes"})
+	append(&second, Step{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true})
 	if thinning {
 		append(&second, Step{kind = .Shot, text = "power_loss"})
 	}
@@ -476,11 +476,11 @@ power_loss_sequence :: proc(part: ^Test_Part_Run, what: string, steps: []Step, o
 // record. The second machine starts on the hard image, and the boot pass of
 // settings writes the record of the durable commit on the page.
 scenario_power_loss_settings_first := [?]Step {
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults", any_order = true},
 	{kind = .Wait, text = "root: settings stopped: itself, done"},
 	{kind = .Launch, text = "settings"},
-	{kind = .Wait, text = "compositor: surface settings", any_order = true},
+	{kind = .Wait, text = "display: settings" + WINDOW_TAKEN, any_order = true},
 	{kind = .Wait, text = "settings: ok, "},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"settings\")"},
@@ -569,7 +569,7 @@ power_loss_settings_run :: proc(part: ^Test_Part_Run) -> bool {
 		return false
 	}
 	second := [?]Step {
-		{kind = .Wait, text = "compositor: surface console", any_order = true},
+		{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 		{kind = .Wait, text = fmt.aprintf("settings: the boot pass: the settings kept in the store: %s; in ", durable_text), any_order = true},
 		{kind = .Wait, text = "root: settings stopped: itself, done"},
 		{kind = .Quit},
@@ -591,7 +591,7 @@ power_loss_settings_run :: proc(part: ^Test_Part_Run) -> bool {
 // through: the commit in flight is one of the commits 2 to 41 of the 200 of
 // the loop, and the durable image has the object loop.
 scenario_power_loss_ranges := [?]Step {
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
 	{kind = .Front, text = "console"},
 	{kind = .Power_Loss_Arm, text = RANGES_LOOP_MARKER, commits = 1},
@@ -678,7 +678,7 @@ power_loss_ranges_run :: proc(part: ^Test_Part_Run) -> bool {
 	// temporary memory after each step.
 	second := make([dynamic]Step)
 	defer delete(second)
-	append(&second, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
+	append(&second, Step{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true})
 	if torn_root {
 		append(&second, Step{kind = .Wait, text = "has a wrong check: a write that a stop cut; the service uses the root before it", any_order = true})
 	}

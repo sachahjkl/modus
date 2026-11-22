@@ -10,6 +10,7 @@ package root
 // usable (Machine_Usable); this service does not judge what it started.
 
 import info "modus:contract/boot_info"
+import "modus:contract/errors"
 import op "modus:contract/operation"
 import rd "modus:contract/root_delegation"
 import "modus:contract/root_ring"
@@ -491,7 +492,18 @@ start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: stri
 	// the bound of a start row on the restarts of a start policy from the
 	// disk. Each refusal of a Start with a list closes its lent numbers.
 	listed := list == .In_The_List_Page
-	facts := start_policy_facts(sender, name)
+	// A row that names a role starts the module that holds it: the start
+	// list says "display", never the module of one holder.
+	module_name, has_holder := role_target_resolve_strict(name)
+	if !has_holder {
+		if listed {
+			lent_handles_close(sender)
+		}
+		values^ = errors.ring_fail(u32(root_ring.Root_Command.Start), .Absent, .None, 1)
+		written^ = true
+		return .Bad_Handle
+	}
+	facts := start_policy_facts(sender, module_name)
 	step := start_policy_rules.start_step(listed, facts, &start_policy_name_counts, start_policy_from_disk, name)
 	if step.status != .Ok {
 		if step.lent_close {
@@ -510,8 +522,8 @@ start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: stri
 	switch start_list.root_procedure_of(name) {
 	case .Input:
 		status = input_start()
-	case .Compositor:
-		status = compositor_start()
+	case .Display:
+		status = display_holder_start()
 	case .Shortage:
 		status = shortage_start()
 	case .Operation_Fuzzing:
@@ -523,12 +535,12 @@ start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: stri
 	case .None:
 		if listed {
 			is_held: bool
-			status, is_held = start_with_wiring_begin(sender, tag, name, principals.MACHINE, .Process_Handle, true, step.counted, values, written)
+			status, is_held = start_with_wiring_begin(sender, tag, module_name, principals.MACHINE, .Process_Handle, true, step.counted, values, written)
 			held^ = is_held
 			return status
 		}
 		// start refuses a part of the system with Bad_Operation.
-		status = start(name, principals.MACHINE, sender, nil, &started_place, &refusal)
+		status = start(module_name, principals.MACHINE, sender, nil, &started_place, &refusal)
 		if status != .Ok && refusal != ([7]u64{}) {
 			values^ = refusal
 			written^ = true
@@ -542,10 +554,10 @@ start_policy_start :: proc "contextless" (sender: ^Started, tag: u32, name: stri
 	}
 	slot := started_place
 	if slot == nil {
-		slot = find_running(name)
+		slot = find_running(module_name)
 	}
 	if slot == nil {
-		slot = find(name)
+		slot = find(module_name)
 	}
 	if slot == nil {
 		// The process ended before this answer, and its place is gone.

@@ -719,7 +719,7 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 			return status
 		}
 		client: system.Handle
-		if client, status = system.give(compositor, display_memory, {.Read, .Write}); status != .Ok {
+		if client, status = system.give(display_holder, display_memory, {.Read, .Write}); status != .Ok {
 			return status
 		}
 		slot.client = client

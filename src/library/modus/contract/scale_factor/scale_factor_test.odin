@@ -222,18 +222,27 @@ the_logical_screen_of_each_scale :: proc(t: ^testing.T) {
 	}
 }
 
-// The window bound: the tallest window of today with its title under the
-// bar fits the logical screen of each scale up to WINDOW_BOUND, and not
-// the scale after it.
+// The window bound: the least work area that a holder of the display gives
+// fits the logical screen of each scale up to WINDOW_BOUND, and not the
+// scale after it. No part of one holder is counted: a holder with no bar
+// and a holder that keeps HOLDER_LINES_MOST both give the least work area,
+// and a holder that keeps one line more does not.
 @(test)
-the_window_bound_is_the_largest_scale_that_the_tallest_window_fits :: proc(t: ^testing.T) {
+the_window_bound_is_the_largest_scale_that_the_least_work_area_fits :: proc(t: ^testing.T) {
 	TALLEST_WINDOW :: 708
 	TITLE :: 40
-	BAR :: 32
+	testing.expect_value(t, WORK_AREA_LEAST_HEIGHT, TALLEST_WINDOW + TITLE)
 	for scale in Scale {
 		_, height := logical_screen(scale)
-		fits := height >= TALLEST_WINDOW + TITLE + BAR
-		testing.expectf(t, fits == (u8(scale) <= u8(WINDOW_BOUND)), "the scale %d eighths: the tallest window fits %v", u8(scale), fits)
+		fits := height >= WORK_AREA_LEAST_HEIGHT
+		testing.expectf(t, fits == (u8(scale) <= u8(WINDOW_BOUND)), "the scale %d eighths: the least work area fits %v", u8(scale), fits)
+	}
+	_, bound_height := logical_screen(WINDOW_BOUND)
+	testing.expect_value(t, bound_height, WINDOW_BOUND_LOGICAL_HEIGHT)
+	testing.expect(t, HOLDER_LINES_MOST >= 0)
+	for holder_lines in ([3]i64{0, HOLDER_LINES_MOST, HOLDER_LINES_MOST + 1}) {
+		work_height := bound_height - holder_lines
+		testing.expectf(t, (work_height >= WORK_AREA_LEAST_HEIGHT) == (holder_lines <= HOLDER_LINES_MOST), "a holder that keeps %d lines", holder_lines)
 	}
 }
 

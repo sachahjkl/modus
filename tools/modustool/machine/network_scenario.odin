@@ -17,7 +17,7 @@ network_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 // the next datagram is refused. Then the endpoint ends with its process,
 // and each page is free or paid.
 scenario_network := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Launch, text = "net"},
 	{kind = .Wait, text = "root: started frame for the device at the place 18 of the bus"},
 	// The device found, by its hardware address: the step reads the field,
@@ -107,9 +107,9 @@ scenario_network := [?]Step {
 	// host"). The remote service holds an endpoint whose grant names the
 	// host, and connects to the services that the root service names for it.
 	{kind = .Launch, text = "monitor"},
-	{kind = .Wait, text = "compositor: surface monitor"},
+	{kind = .Wait, text = "display: monitor" + WINDOW_TAKEN, any_order = true},
 	{kind = .Launch, text = "manual"},
-	{kind = .Wait, text = "compositor: surface manual"},
+	{kind = .Wait, text = "display: manual" + WINDOW_TAKEN, any_order = true},
 	{kind = .Launch, text = "remote"},
 	// The service prints its key while the root service starts it: the key
 	// can come before the line of the start.
@@ -267,13 +267,13 @@ scenario_network := [?]Step {
 	{kind = .Keys, text = "lif"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette starts life"},
-	{kind = .Wait, text = "compositor: surface life"},
+	{kind = .Wait, text = "display: life" + WINDOW_TAKEN, any_order = true},
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "pla"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette starts plasma"},
-	{kind = .Wait, text = "compositor: surface plasma"},
+	{kind = .Wait, text = "display: plasma" + WINDOW_TAKEN, any_order = true},
 	// The windows move from the one in front to the one at the back: no
 	// window covers the title bar of the next one. The console covers the
 	// title bar of monitor: monitor comes to the front first. Then each
@@ -322,7 +322,7 @@ scenario_network := [?]Step {
 // the first process with an endpoint, refuses a second one with no new
 // start of the frame service, and the console still runs.
 scenario_no_network_device := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Launch, text = "net"},
 	{kind = .Wait, text = "root: no virtio device for frame at the place 18 of the bus"},
 	{kind = .Wait, text = "root: the network service did not start: no process with an endpoint of the network starts until the machine starts again; the other processes start"},

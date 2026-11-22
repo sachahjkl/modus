@@ -53,7 +53,7 @@ DEFAULT_START_LIST := [?]Start_List_Row {
 	// With no screen, no window reads a key. An absent PS/2 controller is
 	// the line of the input service itself, which stops.
 	{name = "input", needs = {.Screen}, absent_rule = .Not_Started},
-	{name = "compositor", needs = {.Screen}, absent_rule = .Not_Started},
+	{name = "display", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "date", absent_rule = .Not_Started},
 	// A failure of the console no longer stops the machine: the start
 	// policy stops before Machine_Usable, and the rescue starts.
@@ -78,7 +78,7 @@ DEFAULT_START_WIRINGS := [?]Start_List_Wiring{{writer = "wired_writer", record_o
 @(rodata)
 DEFAULT_RESCUE_LIST := [?]Start_List_Row {
 	{name = "input", needs = {.Screen}, absent_rule = .Not_Started},
-	{name = "compositor", needs = {.Screen}, absent_rule = .Not_Started},
+	{name = "display", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "console", needs = {.Screen}, absent_rule = .Not_Started, usable_mark = .Needed},
 	{name = "remote", needs = {.Network_Device}, absent_rule = .Not_Started},
 }
@@ -110,7 +110,7 @@ ABSENT_TEST_MODULE :: "shortage"
 @(rodata)
 MISSING_CONSOLE_START_LIST := [?]Start_List_Row {
 	{name = "input", needs = {.Screen}, absent_rule = .Not_Started},
-	{name = "compositor", needs = {.Screen}, absent_rule = .Not_Started},
+	{name = "display", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "date", absent_rule = .Not_Started},
 	{name = ABSENT_TEST_MODULE, absent_rule = .Not_Started},
 	{name = MISSING_CONSOLE_MODULE, needs = {.Screen}, absent_rule = .Not_Started, usable_mark = .Needed},
@@ -130,7 +130,7 @@ STOP_TEST_RESTARTS :: 2
 @(rodata)
 MISSING_CONSOLE_RESCUE_LIST := [?]Start_List_Row {
 	{name = "input", needs = {.Screen}, absent_rule = .Not_Started},
-	{name = "compositor", needs = {.Screen}, absent_rule = .Not_Started},
+	{name = "display", needs = {.Screen}, absent_rule = .Not_Started},
 	{name = "console", needs = {.Screen}, absent_rule = .Not_Started, usable_mark = .Needed},
 	{name = "remote", needs = {.Network_Device}, absent_rule = .Not_Started},
 	{name = "stops_refused", absent_rule = .Not_Started, restart_count = STOP_TEST_RESTARTS},
@@ -360,9 +360,12 @@ start_list_problems :: proc(rows: []Start_List_Row, image_modules: []string, res
 		}
 	}
 	for row in rows {
+		// A row of the role Display starts the module that holds the role,
+		// so the image must hold that module.
+		module_name := start_list.root_procedure_of(row.name) == .Display ? foundation.DISPLAY_HOLDER_MODULE : row.name
 		found := false
 		for name in image_modules {
-			found ||= name == row.name
+			found ||= name == module_name
 		}
 		if !found {
 			append(&problems, fmt.tprintf("the row %s names no module with an entry in the image", row.name))

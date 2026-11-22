@@ -37,10 +37,10 @@ import "modus:system"
 // page and their page tables.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 32, processes = 1, threads = 1}
 
-// The order of this start policy: the input service and the compositor
-// when the machine has a screen, then the console, which makes the machine
-// usable.
-ORDER :: [3]string{"input", "compositor", "console"}
+// The order of this start policy: the input service and the holder of the
+// display, by its role, when the machine has a screen, then the console,
+// which makes the machine usable.
+ORDER :: [3]string{"input", "display", "console"}
 
 requests: ring.Ring
 next_tag: u32 = 1

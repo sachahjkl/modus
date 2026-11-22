@@ -410,7 +410,7 @@ image_memory: system.Handle
 started: [STARTED_CAPACITY]Started
 // The shared code of the modules of the processes that this service starts.
 prepared: system.Prepared_Modules
-compositor: system.Handle
+display_holder: system.Handle
 control: ring.Ring
 control_memory: system.Handle
 // The machine has no screen: no framebuffer at the start, or a compositor
@@ -593,15 +593,15 @@ fail :: proc "contextless" (text: string, status: system.Status) -> ! {
 // failure_show takes the screen back from the compositor and shows a
 // failure on the boot display.
 failure_show :: proc "contextless" (text: string, status: system.Status) {
-	if compositor != 0 {
+	if display_holder != 0 {
 		// This service asks the stop: the screen returns to it, and the
 		// stop is no absence of the screen.
 		for &item in started {
-			if item.process == compositor {
+			if item.process == display_holder {
 				item.stop_asked_by_root_service = true
 			}
 		}
-		system.process_stop(compositor) // The screen returns to this service.
+		system.process_stop(display_holder) // The screen returns to this service.
 		// The compositor could leave the page 1 on the screen; the boot
 		// display is on the page 0, the framebuffer of the firmware.
 		if display_registers_address != nil {
@@ -912,14 +912,16 @@ screen_absence_note :: proc "contextless" () {
 	}
 }
 
-// compositor_start starts the compositor with the framebuffer, the input
+// display_holder_start starts the holder of the role Display, the module
+// that role_holder_name(.Display) names, with the framebuffer, the input
 // ring and a new control ring from this service: the ring of an earlier
-// compositor can hold records that name handles of that compositor only. A
-// connection to the compositor finds it by its name, in any place of the
-// table of the processes. A start policy asks for it: a failure is its
-// status, with one line. With no screen it is refused: a start list that
-// asks for it on such a machine gets Bad_State.
-compositor_start :: proc "contextless" () -> system.Status {
+// holder can hold records that name handles of that holder only. Nothing
+// here depends on the module of today: any module that fills the display
+// contract gets the same context. A start policy asks for it by the role
+// name "display": a failure is its status, with one line. With no screen it
+// is refused: a start list that asks for it on such a machine gets
+// Bad_State.
+display_holder_start :: proc "contextless" () -> system.Status {
 	if screen_absent {
 		return .Bad_State
 	}
@@ -1013,25 +1015,25 @@ compositor_start :: proc "contextless" () -> system.Status {
 	date_page_give(mappings[:], &mapping_count, &values)
 	fresh_bytes_page_give(served, mappings[:], &mapping_count, &values)
 	if context_refused(display_name, &context_grants, &values) {
-		compositor_place_free(served)
+		display_holder_place_free(served)
 		return .Bad_State
 	}
 	// The compositor imports the drawing module: its load needs the boot
 	// image as the source of its imports.
-	compositor_load_error: module.Load_Error
-	compositor, status = system.process_start(system.image_find(image, display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, display_name), display_name), mappings[:mapping_count], &prepared, load_source(), &compositor_load_error)
+	display_holder_load_error: module.Load_Error
+	display_holder, status = system.process_start(system.image_find(image, display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, display_name), display_name), mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error)
 	if status != .Ok {
-		if compositor_load_error.stage != u32(module.Load_Stage.None) {
+		if display_holder_load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Error, Compositor_Load_Refused{})
-			load_error_log(.Error, &compositor_load_error)
+			load_error_log(.Error, &display_holder_load_error)
 		}
 		system.log_fact(.Warning, Compositor_Start_Failed{status = status})
-		compositor = 0
-		compositor_place_free(served)
+		display_holder = 0
+		display_holder_place_free(served)
 		return status
 	}
-	served.process = compositor
-	served.process_slot, served.process_serial, _ = system.process_place(compositor)
+	served.process = display_holder
+	served.process_slot, served.process_serial, _ = system.process_place(display_holder)
 	served.start_grant_set = start_grant_set
 	copy(served.name[:len(served.name) - 1], display_name)
 	for &item in system.image_entries(image) {
@@ -1044,9 +1046,9 @@ compositor_start :: proc "contextless" () -> system.Status {
 	return .Ok
 }
 
-// compositor_place_free frees the place of a compositor that did not
+// display_holder_place_free frees the place of a display holder that did not
 // start, with its service ring.
-compositor_place_free :: proc "contextless" (served: ^Started) {
+display_holder_place_free :: proc "contextless" (served: ^Started) {
 	if served.service.head != nil {
 		system.ring_close(&served.service)
 		system.close(served.service_memory)
@@ -1054,11 +1056,11 @@ compositor_place_free :: proc "contextless" (served: ^Started) {
 	served^ = {}
 }
 
-// compositor_end forgets the compositor that stopped: no process gets a
+// display_holder_end forgets the display holder that stopped: no process gets a
 // window until a start policy starts another one, and the boot display,
 // on the page 0 of the framebuffer of the firmware, is on the screen again.
-compositor_end :: proc "contextless" () {
-	compositor = 0
+display_holder_end :: proc "contextless" () {
+	display_holder = 0
 	// Each window ring was a handle in the table of that compositor, and
 	// died with it: a later Client_Remove for one would name a handle of
 	// the next compositor. This clears the window of each disk process too,
@@ -1687,7 +1689,7 @@ give_through_service_ring :: proc "contextless" (target_process, ring_memory, ha
 // revocation ends what the provider holds of them.
 palette_provider: ^Started // nil: no provider.
 palette_table_memory, palette_ring_memory: system.Handle
-palette_table_in_compositor, palette_ring_in_compositor: system.Handle
+palette_table_in_display_holder, palette_ring_in_display_holder: system.Handle
 
 // palette_provide makes a process with the grant Palette the palette
 // provider: a new entry table and a new ring, which the process and the
@@ -1713,10 +1715,10 @@ palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> sys
 	palette_ring_memory, status = system.memory_create(ring.PAGE_COUNT)
 	given_table, given_ring: system.Handle
 	if status == .Ok {
-		palette_table_in_compositor, status = system.give(compositor, palette_table_memory, {.Read})
+		palette_table_in_display_holder, status = system.give(display_holder, palette_table_memory, {.Read})
 	}
 	if status == .Ok {
-		palette_ring_in_compositor, status = system.give(compositor, palette_ring_memory, {.Read, .Write})
+		palette_ring_in_display_holder, status = system.give(display_holder, palette_ring_memory, {.Read, .Write})
 	}
 	if status == .Ok {
 		given_table, status = system.give(caller.requests_memory, palette_table_memory, {.Read, .Write})
@@ -1735,7 +1737,7 @@ palette_provide :: proc "contextless" (caller: ^Started, values: ^[7]u64) -> sys
 	palette_provider = caller
 	caller.granted += {.Palette}
 	values^ = {0 = u64(given_table), 1 = u64(given_ring)}
-	system.send(&control.commands, ring.Record{kind = u32(display.Control.Palette_Provider_Add), values = {0 = u64(palette_ring_in_compositor), 1 = u64(palette_table_in_compositor)}})
+	system.send(&control.commands, ring.Record{kind = u32(display.Control.Palette_Provider_Add), values = {0 = u64(palette_ring_in_display_holder), 1 = u64(palette_table_in_display_holder)}})
 	system.log_fact(.Info, Palette_Provider_Set{provider = module_name_field(system.name_of(caller.name[:]))})
 	return .Ok
 }
@@ -1754,7 +1756,7 @@ palette_provider_end :: proc "contextless" (item: ^Started, revoke: bool) -> (co
 			count += ended
 		}
 	}
-	system.send(&control.commands, ring.Record{kind = u32(display.Control.Palette_Provider_Remove), values = {0 = u64(palette_ring_in_compositor), 1 = u64(palette_table_in_compositor)}})
+	system.send(&control.commands, ring.Record{kind = u32(display.Control.Palette_Provider_Remove), values = {0 = u64(palette_ring_in_display_holder), 1 = u64(palette_table_in_display_holder)}})
 	system.close(palette_table_memory)
 	system.close(palette_ring_memory)
 	palette_provider = nil
@@ -1771,7 +1773,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	view^ = {}
 	display_memory := system.memory_create(ring.PAGE_COUNT) or_return
 	defer system.close(display_memory)
-	client := system.give(compositor, display_memory, {.Read, .Write}) or_return
+	client := system.give(display_holder, display_memory, {.Read, .Write}) or_return
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(client)}})
 
 	// The slots of a terminal are its own: the terminal has no other role.
@@ -2115,8 +2117,8 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	if item.network.head != nil {
 		network_end(item)
 	}
-	if item.process != 0 && item.process == compositor {
-		compositor_end()
+	if item.process != 0 && item.process == display_holder {
+		display_holder_end()
 	}
 	if item.process != 0 {
 		system.close(item.process)
@@ -2197,7 +2199,7 @@ reap :: proc "contextless" () {
 			start_policy_stopped(&item, cause, outcome)
 			// release closes the handle of the process, which is the handle
 			// of the compositor: no later start may give to it.
-			compositor_reaped := item.process == compositor
+			display_holder_reaped := item.process == display_holder
 			// A compositor that this service stopped for the rescue is
 			// started again by the rescue: it is no absence of the screen.
 			stopped_for_the_rescue := item.stop_asked_by_root_service
@@ -2217,8 +2219,8 @@ reap :: proc "contextless" () {
 			}
 			// A later start gets no window and a start with a terminal is
 			// refused (start_view_give), and nothing starts here.
-			if compositor_reaped {
-				compositor = 0
+			if display_holder_reaped {
+				display_holder = 0
 				if !stopped_for_the_rescue {
 					screen_absence_note()
 				}

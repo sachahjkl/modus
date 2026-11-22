@@ -8,11 +8,11 @@ import op "modus:contract/operation"
 import "modus:contract/palette_table"
 
 // Contract version number for readers; the BLAKE3 hash decides every check.
-DISPLAY_CONTRACT_VERSION :: u32(1)
+DISPLAY_CONTRACT_VERSION :: u32(2)
 
 // Closed counts of the Display ring protocols, matching the compositor faces.
 DISPLAY_WINDOW_COMMAND_COUNT :: u32(20)
-DISPLAY_WINDOW_EVENT_COUNT :: u32(10)
+DISPLAY_WINDOW_EVENT_COUNT :: u32(12)
 DISPLAY_CONTROL_COMMAND_COUNT :: u32(7)
 DISPLAY_CONTROL_EVENT_COUNT :: u32(2)
 DISPLAY_INPUT_COMMAND_COUNT :: u32(2)

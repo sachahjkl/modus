@@ -385,6 +385,12 @@ BOOT_IMAGE_MISSING_CONSOLE :: BUILD_FOLDER + "/boot_missing_console.image"
 
 OPERATION_FUZZING_MODULE :: "operation_fuzzing"
 
+// The module that holds the role Display in each boot image: the row of
+// the role in the table of the root service (src/modules/system/root,
+// role_holder_names). A start list names the role "display", and the check
+// of a list finds this module in the image in its place.
+DISPLAY_HOLDER_MODULE :: "compositor"
+
 // The module of the start policy, which the boot image of a start that
 // fails leaves out, and whose source the tool checks (start_lists.odin).
 START_POLICY_MODULE :: "start_policy"

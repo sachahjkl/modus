@@ -1107,6 +1107,10 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 	for &client in clients {
 		if client.ring.head != nil {
 			send(&client, .Settings_Changed, {0 = settings_count_told, 1 = u64(scale)})
+			// The scale and the edge of the bar change the work area.
+			if client.created {
+				work_area_send(&client)
+			}
 			told += 1
 		}
 	}
@@ -1121,6 +1125,17 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 // The change count of the last choice that the windows were told: the
 // first word of each Settings_Changed.
 settings_count_told: u64
+
+// work_area_send names the work area to a window, as the display contract
+// asks of each holder: the desktop without the bar, in logical pixels.
+work_area_send :: proc "contextless" (client: ^Client) {
+	height := desktop_work_bottom() - desktop_work_top()
+	send(client, .Work_Area, {0 = u64(max(desktop_width, 1)), 1 = u64(max(height, 1))})
+}
+
+// The bar fits the lines that the display contract lets a holder keep, so
+// each window gets the least work area up to the window bound.
+#assert(BAR_HEIGHT <= scale_factor.HOLDER_LINES_MOST)
 
 // send gives an event to a window. A full ring loses no key: the event
 // waits for the window in the compositor (window_events.odin). The kind is
@@ -1280,6 +1295,9 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	order_count += 1
 	damage_window(client)
 	system.log_fact(.Info, Surface_Made{window = window_field(client.title[:]), width = u64(client.width), height = u64(client.height), x = u64(client.x), y = u64(client.y)})
+	// The take of the window, by the display contract: the window writes
+	// the fact of the contract when it reads it.
+	work_area_send(client)
 	palette_entries_refresh() // A window appeared.
 	windows_menu_rows_build() // start_menu.odin
 }

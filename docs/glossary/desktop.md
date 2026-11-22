@@ -1262,13 +1262,25 @@ Do not use: pill (for this), badge, chip.
 
 ### Window bound
 
-The window bound is the largest size of a window with its frame: 1024 × 768 under the bar, so at most 1000 × 708 for the surface.
+The window bound is the largest size of a window: at most 1000 × 708 for the surface, which with a title of at most 40 lines fits the least work area of 748 lines.
 
-It keeps each window inside a screen of 1024 × 768, and inside the logical screen of the reference screen at each scale up to 1.375. A window larger than the bound is a fault of its layout. The range of the scale factor sets the bound: a scale above 1.375 needs a smaller bound or resizable windows.
+It keeps each window inside the least work area that a holder of the display gives, at each scale up to 1.375 of the reference screen. It counts no bar: a holder keeps at most `scale_factor.HOLDER_LINES_MOST` lines of the logical screen for its own parts. A window larger than the bound is a fault of its layout. The range of the scale factor sets the bound: a scale above 1.375 needs a smaller bound or resizable windows.
 
-The design: `src/md/features/desktop_to_browser.md`, "The reference screen".
+The design: `src/md/features/desktop_to_browser.md`, "The reference screen", and `src/md/features/roles_and_contracts.md`, "The work area".
 
 Do not use: maximum window size.
+
+### Work area
+
+The work area is the part of the logical screen that the holder of the display gives the windows: the screen without the parts that the holder draws itself, such as a bar.
+
+The holder names it in the display event `Work_Area` when it takes the surface of a window, and again when the area changes. A window reads it with `display.work_area` and never counts the bar of one holder. Up to the window bound it has at least `scale_factor.WORK_AREA_LEAST_HEIGHT` lines. The first one writes the contract fact `display.Window_Taken`, which the tests of other parts wait for.
+
+Example: the compositor with its bar at the top names 1536 × 832 at the scale 1.25.
+
+The design: `src/md/features/roles_and_contracts.md`, "The work area".
+
+Do not use: usable area, desktop area, client area.
 
 ### WebGPU subset
 

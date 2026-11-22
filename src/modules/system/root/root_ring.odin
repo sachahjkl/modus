@@ -106,7 +106,7 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 			if .Start_Policy in item.start_grant_set.grants && !other.asked_by_start_policy {
 				continue
 			}
-			if other.process != 0 && other.process != compositor && !other.is_terminal && system.name_of(other.name[:]) == name {
+			if other.process != 0 && other.process != display_holder && !other.is_terminal && system.name_of(other.name[:]) == name {
 				started_process_stop(&other)
 				answer.status = .Ok
 				break

@@ -25,7 +25,7 @@ TEST_PRINCIPALS_DISK :: foundation.BUILD_FOLDER + "/test_principals_disk.img"
 TEST_OUTPUT_PRINCIPALS :: foundation.BUILD_FOLDER + "/test_output_principals_%d.txt"
 
 scenario_principals_first := [?]Step {
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	// The machine has no TPM: principal 0 has no measure.
 	{kind = .Wait, text = "root: principal 0 is the machine: the system is not measured; its key, the attestation key of the TPM, is not built", any_order = true},
 	{kind = .Wait, text = "unlock: no named principal: the machine runs as principal 0, with no unlock", any_order = true},
@@ -36,7 +36,7 @@ scenario_principals_first := [?]Step {
 	{kind = .Type, text = "start(\"notes\")"},
 	{kind = .Wait, text = "root: started notes"},
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
-	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Front, text = "notes"},
 	{kind = .Type, text = "of the machine"},
 	{kind = .Wait, text = "notes: the note is \"of the machine\", generation "},
@@ -49,7 +49,7 @@ scenario_principals_first := [?]Step {
 	// of unlock, never in the console, which keeps its lines.
 	{kind = .Type, text = "principal_create(\"alice\")"},
 	{kind = .Wait, text = "root: started unlock"},
-	{kind = .Wait, text = "compositor: surface unlock"},
+	{kind = .Wait, text = "display: unlock" + WINDOW_TAKEN, any_order = true},
 	{kind = .Front, text = "unlock"},
 	{kind = .Type, text = PRINCIPAL_PASSPHRASE},
 	{kind = .Type, text = PRINCIPAL_PASSPHRASE},
@@ -61,7 +61,7 @@ scenario_principals_first := [?]Step {
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "root: started notes, in the session of principal 1 \"alice\""},
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
-	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Type, text = "of alice"},
 	// The generation of the last commit of the note: the current version.
 	{kind = .Generation, text = "notes: the note is \"of alice\", generation "},
@@ -99,7 +99,7 @@ scenario_principals_first := [?]Step {
 	{kind = .Wait, text = "root: notes stopped: ", any_order = true},
 	{kind = .Wait, text = "unlock: principal 1 \"alice\" is locked: its passphrase opens its session", any_order = true},
 	{kind = .Wait, text = "[console] 1", any_order = true},
-	{kind = .Wait, text = "compositor: surface unlock"},
+	{kind = .Wait, text = "display: unlock" + WINDOW_TAKEN, any_order = true},
 	// A wrong passphrase opens nothing.
 	{kind = .Front, text = "unlock"},
 	{kind = .Type, text = "wrong passphrase"},
@@ -116,7 +116,7 @@ scenario_principals_first := [?]Step {
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it"},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "notes: restored the note \"of alice\" and the count 1000, its 3 blocks agree", any_order = true},
-	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	// A revocation ends a grant of a process of the session.
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "revoke(\"notes\", \"store\")"},
@@ -130,24 +130,24 @@ scenario_principals_first := [?]Step {
 }
 
 scenario_principals_second := [?]Step {
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Wait, text = "root: principal 1 \"alice\" is recorded, its public key ", any_order = true},
 	{kind = .Wait, text = "unlock: principal 1 \"alice\" is locked: its passphrase opens its session", any_order = true},
-	{kind = .Wait, text = "compositor: surface unlock"},
+	{kind = .Wait, text = "display: unlock" + WINDOW_TAKEN, any_order = true},
 	{kind = .Front, text = "unlock"},
 	{kind = .Type, text = PRINCIPAL_PASSPHRASE},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" starts: the desktop starts each process in it"},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "root: started notes, in the session of principal 1 \"alice\""},
 	{kind = .Wait, text = "notes: restored the note \"of alice\" and the count 1000, its 3 blocks agree", any_order = true},
-	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "lock()"},
 	{kind = .Wait, text = "root: the session of principal 1 \"alice\" ends: 1 processes stopped"},
 	// The lock starts unlock again, and its window takes the front: the
 	// console comes back to the front after that window, so the last line
 	// goes to the console and not to unlock as a passphrase.
-	{kind = .Wait, text = "compositor: surface unlock"},
+	{kind = .Wait, text = "display: unlock" + WINDOW_TAKEN, any_order = true},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "shutdown()"},
 	{kind = .Wait, text = "kernel: the machine stops with code 0"},

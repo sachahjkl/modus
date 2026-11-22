@@ -78,7 +78,9 @@ OPERATION_FUZZING_NAME :: "operation_fuzzing"
 Root_Procedure :: enum u8 {
 	None              = 0, // The name starts with the grants of its start grant set, and takes a list.
 	Input             = 1,
-	Compositor        = 2,
+	// The holder of the role Display, whatever its module: the row names
+	// the role, and the root service starts the module that holds it.
+	Display           = 2,
 	Settings          = 3,
 	Unlock            = 4,
 	Shortage          = 5,
@@ -89,7 +91,7 @@ Root_Procedure :: enum u8 {
 ROOT_PROCEDURE_NAMES := [Root_Procedure]string {
 	.None              = "",
 	.Input             = "input",
-	.Compositor        = "compositor",
+	.Display           = "display",
 	.Settings          = "settings",
 	.Unlock            = "unlock",
 	.Shortage          = "shortage",
