@@ -21,6 +21,9 @@ BROWSER_MACHINE_KERNEL_FILE :: "modulus_kernel.wasm"
 BROWSER_MACHINE_BOOT_IMAGE_FILE :: "boot.image"
 BROWSER_MACHINE_HOST_FILE :: "browser_machine_host.js"
 BROWSER_MACHINE_KERNEL_PATH :: BROWSER_MACHINE_FOLDER + "/" + BROWSER_MACHINE_KERNEL_FILE
+// The features of WebAssembly past the base set that the kernel uses. Not
+// atomics yet: its idle wait would wait on a memory that is not shared.
+BROWSER_MACHINE_KERNEL_TARGET_FEATURES :: "bulk-memory"
 BROWSER_MACHINE_BOOT_IMAGE_PATH :: BROWSER_MACHINE_FOLDER + "/" + BROWSER_MACHINE_BOOT_IMAGE_FILE
 BROWSER_MACHINE_HOST_PATH :: BROWSER_MACHINE_FOLDER + "/" + BROWSER_MACHINE_HOST_FILE
 // The boot image of the page before its signature: the input of the signed
@@ -445,7 +448,11 @@ browser_machine_build :: proc() -> bool {
 		return false
 	}
 	kernel := BROWSER_MACHINE_KERNEL_PATH
-	if !foundation.run({"odin", "build", foundation.SOURCE_FOLDER_KERNEL, "-target:freestanding_wasm64p32", "-o:speed", "-no-entry-point", "-default-to-nil-allocator", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG, "-extra-linker-flags:--export=" + BROWSER_MACHINE_STACK_POINTER_EXPORT, "-out:" + BROWSER_MACHINE_KERNEL_PATH}) {
+	// bulk-memory makes each copy of the compiler one memory.copy. Without
+	// it, a copy calls the memcpy of the runtime, a loop of one byte, and the
+	// software processor copies its register file at each instruction
+	// (src/md/features/browser_machine.md, "The size and the speed").
+	if !foundation.run({"odin", "build", foundation.SOURCE_FOLDER_KERNEL, "-target:freestanding_wasm64p32", "-target-features:" + BROWSER_MACHINE_KERNEL_TARGET_FEATURES, "-o:speed", "-no-entry-point", "-default-to-nil-allocator", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG, "-extra-linker-flags:--export=" + BROWSER_MACHINE_STACK_POINTER_EXPORT, "-out:" + BROWSER_MACHINE_KERNEL_PATH}) {
 		return false
 	}
 	bytes, read_error := os.read_entire_file(kernel, context.temp_allocator)
@@ -735,8 +742,9 @@ browser_machine_trust_write :: proc(image_path: string) -> bool {
 // the bound. Its arguments: the host module, the kernel, the boot image
 // (empty: none), the bound in milliseconds, the usable line, the command,
 // the prefix and the text of the answer line. After the answer it writes
-// "framebuffer: <pixels that are not black> <pixels>". Its last line is
-// "machine: <state> <stop code> <trap>".
+// "framebuffer: <pixels that are not black> <pixels>". At each stage of the
+// start (BootStageTracker of the host) it writes "stage: <stage> at <time>".
+// Its last line is "machine: <state> <stop code> <trap>".
 BROWSER_MACHINE_NODE_PROGRAM :: `
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -750,6 +758,8 @@ const idleWord = new Int32Array(new SharedArrayBuffer(4));
 let usable = false, typed = false, answered = false;
 const started = Date.now();
 const end = started + Number(boundText);
+const tracker = new host.BootStageTracker({ desktop: true, onStage: (stage) => console.log("stage: " + stage + " at " + ((Date.now() - started) / 1000).toFixed(1) + " s") });
+tracker.enter(host.BootStage.Kernel);
 const machine = new host.BrowserMachine({
   kernelModule, bootImage, trustDescriptionHash, memoryMebibytes: 512, framebufferWidth: 1280, framebufferHeight: 800,
   clockNanoseconds: () => process.hrtime.bigint(),
@@ -760,6 +770,7 @@ const machine = new host.BrowserMachine({
   },
   onSerialLine: (line) => {
     console.log("serial: " + line);
+    tracker.serialLine(line);
     if (!usable && line.includes(usableLine)) usable = true;
     if (typed && line.startsWith(answerPrefix) && line.includes(answerText)) answered = true;
   },
@@ -855,6 +866,8 @@ browser_machine_boot :: proc(boot_image: string) -> bool {
 			answered_line = line
 		} else if strings.has_prefix(line, "framebuffer: ") {
 			framebuffer_line = line
+		} else if strings.has_prefix(line, "stage: ") {
+			fmt.printfln("modustool: measure: the browser machine in node: the stage %s", line[len("stage: "):])
 		}
 	}
 	fmt.printfln("modustool: measure: the browser machine in node: %.1f s, %s", time.duration_seconds(time.tick_since(started)), machine_line)

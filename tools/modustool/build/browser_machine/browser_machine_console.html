@@ -71,6 +71,7 @@
 </div>
 <div id="chips" hidden></div>
 <script type="module">
+import { BOOT_STAGE_SENTENCES } from "./browser_machine_host.js";
 // The page draws the lines that dom_terminal writes on COM2, one JSON
 // object for each line (src/md/features/console_renderers.md, "Variant C:
 // dom_terminal"). Each place in a text is a place in Array.from(text).
@@ -273,10 +274,30 @@ function consoleLine(line) {
 
 const worker = new Worker("./browser_machine_worker.js", { type: "module" });
 let running = false;
+// The stage of the start, which the header shows until the prompt
+// (src/md/features/browser_machine.md, "The boot stages of the page"); the
+// worker names each one, and the host gives its sentence.
+let stage = "download";
+let stageStarted = performance.now();
+let stageDetail = "";
+function stageShow() {
+  if (stage === "ready" || !Object.hasOwn(BOOT_STAGE_SENTENCES, stage)) return;
+  element("state-text").textContent = BOOT_STAGE_SENTENCES[stage] + stageDetail + " (" + ((performance.now() - stageStarted) / 1000).toFixed(0) + " s)";
+}
+const stageTimer = setInterval(stageShow, 500);
 worker.onmessage = (event) => {
   const message = event.data;
   if (!message || typeof message !== "object") return;
   switch (message.kind) {
+    case "stage": {
+      if (typeof message.stage !== "string") return;
+      if (message.stage !== stage) { stage = message.stage; stageStarted = performance.now(); }
+      const loaded = Number(message.loaded) || 0, total = Number(message.total) || 0;
+      stageDetail = stage === "download" && loaded ? ": " + (loaded / 1048576).toFixed(1) + (total ? " of " + (total / 1048576).toFixed(1) : "") + " MiB" : "";
+      if (stage === "ready") { clearInterval(stageTimer); if (running) stateSet("running"); }
+      else stageShow();
+      return;
+    }
     case "console": {
       if (!Array.isArray(message.lines)) return;
       // Output follows the end only when the reader is at the end.
@@ -293,6 +314,9 @@ worker.onmessage = (event) => {
       const state = STATES.has(message.state) ? message.state : "stopped";
       if (state === "running" && !running) { running = true; promptBar.focus(); }
       if (state !== "running" && typeof message.trap === "string") console.error(message.trap);
+      // While the machine starts, the header keeps the stage.
+      if (state === "running" && stage !== "ready") return;
+      if (state !== "running") clearInterval(stageTimer);
       stateSet(state);
       return;
     }

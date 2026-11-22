@@ -2,6 +2,7 @@
 package build
 
 import "core:fmt"
+import "core:os"
 import "core:reflect"
 import "core:strconv"
 import "core:strings"
@@ -669,4 +670,46 @@ browser_machine_console_lists_pass_the_check_of_the_build :: proc(t: ^testing.T)
 	files, problem := browser_machine_console_list_files()
 	testing.expect_value(t, problem, "")
 	testing.expect(t, len(files[0].file) > 0 && len(files[1].file) > 0)
+}
+
+// The key tags of the facts that end a stage of the start: each one is the
+// tag of a fact type that its module declares. A fact type that is renamed
+// or moved fails here, not in a page that never leaves a stage.
+@(test)
+browser_machine_host_names_the_key_tags_of_the_stage_facts :: proc(t: ^testing.T) {
+	text := browser_machine_host_text()
+	start := strings.index(text, "export const BOOT_STAGE_FACT_TAGS = {")
+	if !testing.expect(t, start >= 0, "the host names no BOOT_STAGE_FACT_TAGS") {
+		return
+	}
+	body := text[start + strings.index_byte(text[start:], '{') + 1:]
+	body = body[:strings.index_byte(body, '}')]
+	count := 0
+	for part in strings.split(body, ",", context.temp_allocator) {
+		name, separator, tag := strings.partition(strings.trim_space(part), "\": \"")
+		if len(separator) == 0 {
+			continue
+		}
+		name, tag = strings.trim(name, "\""), strings.trim(tag, "\"")
+		package_name, between, type_name := strings.partition(name, "::")
+		if !testing.expectf(t, len(between) > 0, "the stage fact %q names no package", name) {
+			continue
+		}
+		count += 1
+		expected := fmt.tprintf("%06x", fact_key(package_name, type_name) >> 40)
+		testing.expectf(t, tag == expected, "the key tag of %s is %s in the host, and %s from its fact key", name, tag, expected)
+		declared := false
+		folder := strings.concatenate({foundation.SYSTEM_MODULE_SOURCES, package_name}, context.temp_allocator)
+		entries, read_error := os.read_directory_by_path(folder, -1, context.temp_allocator)
+		testing.expectf(t, read_error == nil, "cannot read %s: %v", folder, read_error)
+		for entry in entries {
+			if !strings.has_suffix(entry.name, ".odin") {
+				continue
+			}
+			source, source_error := os.read_entire_file(entry.fullpath, context.temp_allocator)
+			declared ||= source_error == nil && strings.contains(string(source), strings.concatenate({"\n", type_name, " :: struct {"}, context.temp_allocator))
+		}
+		testing.expectf(t, declared, "the module %s declares no fact type %s", package_name, type_name)
+	}
+	testing.expect_value(t, count, 4)
 }

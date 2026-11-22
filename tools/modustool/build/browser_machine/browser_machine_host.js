@@ -562,6 +562,83 @@ export function trustDescriptionHashParse(text) {
   return Uint8Array.from(digits.match(/../g), (pair) => parseInt(pair, 16));
 }
 
+// The stages of the start of a machine, which a page shows while it waits
+// (browser_machine.md, "The boot stages of the page"). The worker names the
+// download; the lines of the serial ports name the others.
+export const BootStage = Object.freeze({
+  Download: "download",
+  Kernel: "kernel",
+  Image_Check: "image_check",
+  Services: "services",
+  Desktop: "desktop",
+  Console: "console",
+  Ready: "ready",
+});
+export const BOOT_STAGE_SENTENCES = Object.freeze({
+  download: "downloading the kernel and the boot image",
+  kernel: "starting the kernel and the root service",
+  image_check: "the root service checks each file of the boot image",
+  services: "starting the services",
+  desktop: "starting the desktop",
+  console: "starting the console",
+  ready: "ready",
+});
+// The line of the kernel when it starts the root service.
+export const ROOT_SERVICE_STAGE_LINE = "kernel: boot: kernel: root service: ";
+// The key tags of the log facts that end a stage: the first 3 bytes of the
+// fact key, which the serial line of a fact writes after the module tag
+// (log_facts.md, "The serial port"). A host test of the tool computes each
+// one from its fact type.
+export const BOOT_STAGE_FACT_TAGS = {
+  "root::Boot_Image_Agrees": "9bf297",
+  "root::Process_Started": "526e32",
+  "root::Process_Started_With_Terminal": "a29438",
+  "compositor::First_Frame": "cd3633",
+};
+Object.freeze(BOOT_STAGE_FACT_TAGS);
+// The serial line of a fact: the process, the module tag, the key tag, and
+// the value bytes.
+const FACT_LINE = /^\[([a-z0-9_]+)\] #[0-9a-f]{8}:([0-9a-f]{6})(?: ([0-9a-z]*))?$/;
+const hexadecimalOf = (text) => Array.from(new TextEncoder().encode(text), (byte) => byte.toString(16).padStart(2, "0")).join("");
+
+// BootStageTracker follows the stages of one start from the lines of the
+// serial ports. A start with a framebuffer ends at the first frame of the
+// compositor; a console image ends at the first line of the console prompt
+// on COM2. Each stage comes once and in order: a line of an earlier stage
+// changes nothing.
+export class BootStageTracker {
+  constructor({ desktop, onStage = () => {} }) {
+    this.desktop = desktop;
+    this.onStage = onStage;
+    this.stage = BootStage.Download;
+    this.order = [BootStage.Download, BootStage.Kernel, BootStage.Image_Check, BootStage.Services, desktop ? BootStage.Desktop : BootStage.Console, BootStage.Ready];
+  }
+  enter(stage) {
+    if (this.order.indexOf(stage) <= this.order.indexOf(this.stage)) return;
+    this.stage = stage;
+    this.onStage(stage);
+  }
+  serialLine(line) {
+    if (line.startsWith(ROOT_SERVICE_STAGE_LINE)) {
+      this.enter(BootStage.Image_Check);
+      return;
+    }
+    const fact = FACT_LINE.exec(line);
+    if (!fact) return;
+    const [, process, tag, values = ""] = fact;
+    const named = (name) => BOOT_STAGE_FACT_TAGS[name] === tag && name.startsWith(process + "::");
+    if (named("root::Boot_Image_Agrees")) this.enter(BootStage.Services);
+    else if (this.desktop && named("root::Process_Started") && values === hexadecimalOf("compositor")) this.enter(BootStage.Desktop);
+    else if (!this.desktop && named("root::Process_Started_With_Terminal") && values === hexadecimalOf("console")) this.enter(BootStage.Console);
+    else if (this.desktop && named("compositor::First_Frame")) this.enter(BootStage.Ready);
+  }
+  // consoleLine reads a line of COM2: the first line of the prompt ends
+  // the start of a console image.
+  consoleLine(line) {
+    if (!this.desktop && line.startsWith('{"t":"edit"')) this.enter(BootStage.Ready);
+  }
+}
+
 // The machine: one instance of the kernel, its memory and its devices, on
 // one processor. The caller gives the clock and the idle wait of its
 // runtime: Atomics.wait in Node and in a worker with shared memory; with

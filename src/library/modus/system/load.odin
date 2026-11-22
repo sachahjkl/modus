@@ -152,6 +152,12 @@ Prepared_Modules :: struct {
 // process reaches only the modules that it was granted.
 Load_Source :: struct {
 	image:        []u8, // The files that the process was granted, in the form of the boot image. A file has the hash that names it, or the loader refuses it.
+	// The giver checked each entry of the image against a signed system
+	// description, and no process can write its pages: the loader then
+	// takes the hash of an entry and computes none. Only the root service
+	// sets it, for its boot image, after its image check (docs/TRUSTED_BOOT.md,
+	// "Layer 1: the signed system description").
+	image_checked: bool,
 	files:        []Source_File, // Files beside the image, which the starter read and gives. A file of the image with the same hash is taken first.
 	replacements: []module.Replacement, // From the party that starts the process. The process cannot change them.
 }
@@ -214,7 +220,7 @@ cycles :: #force_inline proc "contextless" () -> u64 {
 // not only the first (load_source_problems).
 module_space_load :: proc "contextless" (space: ^Module_Space, file: []u8, error: ^module.Load_Error, details: ^Table_To_Append(module.Load_Error) = nil) -> (index: int, ok: bool) {
 	error^ = {}
-	hash := blake3.hash(file)
+	hash := file_hash(space.source, file)
 	if file_error := module.validate(file); len(file) == 0 || file_error != .None {
 		error^ = {stage = u32(module.Load_Stage.Read), file_error = u32(file_error), module = named_of(space.source, hash)}
 		if details != nil {
@@ -365,9 +371,9 @@ named_of :: proc "contextless" (source: Load_Source, hash: [32]u8) -> (value: mo
 // with the same hash has the same bytes, or it fails its check.
 @(private)
 source_file :: proc "contextless" (source: Load_Source, hash: [32]u8) -> (file: []u8, stage: module.Load_Stage, file_error: module.Error) {
-	found := false
+	found, checked := false, false
 	if entry := image_entry_of(source.image, hash); entry != nil {
-		file, found = source.image[entry.offset:][:entry.size], true
+		file, found, checked = source.image[entry.offset:][:entry.size], true, source.image_checked
 	} else {
 		for item in source.files {
 			if item.hash == hash {
@@ -379,10 +385,25 @@ source_file :: proc "contextless" (source: Load_Source, hash: [32]u8) -> (file: 
 	if !found {
 		return nil, .Find, .None
 	}
-	if file_error = module.validate(file); file_error != .None || blake3.hash(file) != hash {
+	if file_error = module.validate(file); file_error != .None || (!checked && blake3.hash(file) != hash) {
 		return nil, .Read, file_error
 	}
 	return file, .None, .None
+}
+
+// file_hash gives the hash of the first file of a load: the hash of its
+// entry when the file is the whole entry of a checked image, else the hash
+// of its bytes.
+@(private)
+file_hash :: proc "contextless" (source: Load_Source, file: []u8) -> [32]u8 {
+	if source.image_checked && len(file) > 0 {
+		for &entry in image_entries(source.image) {
+			if entry.size == u64(len(file)) && entry.offset < u64(len(source.image)) && raw_data(source.image[entry.offset:]) == raw_data(file) {
+				return entry.hash
+			}
+		}
+	}
+	return blake3.hash(file)
 }
 
 // module_fits_below_band says if a module of memory_size bytes at the

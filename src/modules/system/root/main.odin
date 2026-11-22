@@ -436,7 +436,7 @@ replacement_records: [system.REPLACEMENT_CAPACITY]module.Replacement
 // load_source gives what the loader of a process that this service starts can
 // read: the boot image, and the replacements of this time.
 load_source :: proc "contextless" () -> system.Load_Source {
-	return {image = image, replacements = system.replacements_read(replacement_table, &replacement_records)}
+	return {image = image, image_checked = image_checked, replacements = system.replacements_read(replacement_table, &replacement_records)}
 }
 
 // The boot display (package bootscreen), on the screen of the machine.

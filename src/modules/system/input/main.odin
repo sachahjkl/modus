@@ -124,6 +124,11 @@ MOUSE_ENABLE_REPORTING :: 0xF4
 // with a wheel knows this order and answers MOUSE_IDENTITY_WHEEL after it.
 @(rodata)
 mouse_wheel_rates := [3]u8{200, 100, 80}
+// The sample rate after the probe, in reports each second: the probe
+// leaves the last rate of its order, 80, which a mouse keeps. 200 is the
+// highest rate of the PS/2 protocol, so the pointer moves at each frame of
+// a screen of 60 Hz and more.
+MOUSE_SAMPLE_RATE :: 200
 
 output: ring.Ring
 output_memory: system.Handle
@@ -213,7 +218,8 @@ mouse_command :: proc "contextless" (command: u8) {
 // **What it sets up**: it opens the input ring (handle 0), drops the bytes
 // that wait in the controller, enables the mouse port, turns on both
 // interrupts and the clock of the mouse, gives the mouse its default
-// settings, asks it for the wheel, and asks it to send its moves. It then
+// settings, asks it for the wheel, sets its sample rate to 200 reports
+// each second, and asks it to send its moves. It then
 // writes `input: ok, the mouse has a wheel` (or `no wheel`).
 //
 // **The loop.** It waits for an interrupt. It then reads each byte while
@@ -283,6 +289,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if identity, answered := mouse_answer_read(); answered {
 		mouse_decoder.protocol = key_path.mouse_protocol_of_identity(identity)
 	}
+	mouse_command(MOUSE_SET_SAMPLE_RATE)
+	mouse_command(MOUSE_SAMPLE_RATE)
 	mouse_command(MOUSE_ENABLE_REPORTING)
 	if keyboard_bytes_dropped_at_start > 0 {
 		system.log_fact(.Info, Keyboard_Bytes_Lost_At_Start{keyboard_bytes = keyboard_bytes_dropped_at_start})

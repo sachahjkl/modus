@@ -338,6 +338,44 @@ pointer_frame_end :: proc "contextless" () {
 	}
 }
 
+// The rate of the frames while the pointer moves: a series of frames that
+// each show a pointer record that came after the frame before, with no gap
+// of more than POINTER_MOTION_GAP_NANOSECONDS between two of them. After
+// POINTER_MOTION_FRAMES frames, the log has the rate of the series, and a
+// new series starts. A gap ends a series with no line: the pointer stopped.
+POINTER_MOTION_FRAMES :: 120
+POINTER_MOTION_GAP_NANOSECONDS :: 250_000_000
+pointer_motion_moves_seen: u64 // pointer_moves at the frame before.
+pointer_motion_frames: u64 // The frames of the series after its first one.
+pointer_motion_records: u64 // The pointer records of those frames.
+pointer_motion_first, pointer_motion_last: u64 // The flips of the first and of the last frame of the series.
+
+// pointer_motion_frame_end counts a frame of the series of a pointer that
+// moves: flipped is the time of its flip.
+pointer_motion_frame_end :: proc "contextless" (flipped: u64) {
+	moved := pointer_moves - pointer_motion_moves_seen
+	pointer_motion_moves_seen = pointer_moves
+	if moved == 0 {
+		return
+	}
+	if pointer_motion_first == 0 || flipped - pointer_motion_last > POINTER_MOTION_GAP_NANOSECONDS {
+		// The first frame starts the series: the records that it shows
+		// came before the series.
+		pointer_motion_first, pointer_motion_last = flipped, flipped
+		pointer_motion_frames, pointer_motion_records = 0, 0
+		return
+	}
+	pointer_motion_frames += 1
+	pointer_motion_records += moved
+	pointer_motion_last = flipped
+	if pointer_motion_frames < POINTER_MOTION_FRAMES {
+		return
+	}
+	span := pointer_motion_last - pointer_motion_first
+	system.log_fact(.Info, Pointer_Motion_Measured{frames = pointer_motion_frames, span = value_kinds.Nanoseconds_As_Microseconds(span), frames_each_second = pointer_motion_frames * 1_000_000_000 / max(span, 1), records = pointer_motion_records})
+	pointer_motion_first = 0
+}
+
 // pointer_blend_measure measures the blend of the arrow of the theme, and
 // of each picture size of the theme, on the frame, before the first frame:
 // nanoseconds for one picture, and a copy of the same size with no alpha.
@@ -345,17 +383,24 @@ pointer_blend_measure :: proc "contextless" () {
 	ROUNDS :: 2000
 	chosen := pointer_pictures.choose(pointer_theme, pointer_form, .Arrow, pointer_size_asked(), 0)
 	picture := graphics.Canvas{pixels = raw_data(chosen.pixels), width = int(chosen.picture.width), height = int(chosen.picture.height), stride = int(chosen.picture.width)}
+	// The clock is read once for each CLOCK_STEP rounds, so that its read
+	// stays small beside a blend of one picture.
+	CLOCK_STEP :: 16
+	done: u64
 	start := system.nanoseconds()
-	for round in 0 ..< ROUNDS {
-		graphics.blend_premultiplied_alpha(frame, 100 + round % 7, 100, picture)
+	for done < ROUNDS && (done == 0 || done % CLOCK_STEP != 0 || system.nanoseconds() - start < START_MEASURE_BOUND_NANOSECONDS) {
+		graphics.blend_premultiplied_alpha(frame, 100 + int(done % 7), 100, picture)
+		done += 1
 	}
-	blend := (system.nanoseconds() - start) / ROUNDS
+	blend := (system.nanoseconds() - start) / done
 	opaque := graphics.Canvas{pixels = background.pixels, width = picture.width, height = picture.height, stride = background.stride}
+	done = 0
 	start = system.nanoseconds()
-	for round in 0 ..< ROUNDS {
-		graphics.copy(frame, 100 + round % 7, 100, opaque)
+	for done < ROUNDS && (done == 0 || done % CLOCK_STEP != 0 || system.nanoseconds() - start < START_MEASURE_BOUND_NANOSECONDS) {
+		graphics.copy(frame, 100 + int(done % 7), 100, opaque)
+		done += 1
 	}
-	copied := (system.nanoseconds() - start) / ROUNDS
+	copied := (system.nanoseconds() - start) / done
 	transparent := 0
 	for pixel in chosen.pixels {
 		if pixel >> 24 == 0 {

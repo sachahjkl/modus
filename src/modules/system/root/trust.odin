@@ -24,6 +24,10 @@ import "modus:system"
 
 // The boot record, read once: about 2.5 KiB, kept out of the stack.
 trust_boot_report: op.Boot_Report
+// The image check passed: each module and resource of the boot image has
+// the hash of its entry. The loads and the resources of this service then
+// compute no second hash (load_source, resource_mapping).
+image_checked: bool
 
 trust_check :: proc "contextless" () {
 	report := &trust_boot_report
@@ -79,7 +83,12 @@ trust_check :: proc "contextless" () {
 		}
 		fail(text, .Bad_State)
 	}
-	system.log_fact(.Info, Boot_Image_Agrees{checked_entries = trust.entry_count - 1, check_time = value_kinds.Time_In_Microseconds(spent / 1000)})
+	image_checked = true
+	// The count of the entries that this check read, not the count of the
+	// trust record: a browser machine writes no count there.
+	list, _ := system_description.entries(description)
+	checked_entries := u64(max(len(list), 1) - 1)
+	system.log_fact(.Info, Boot_Image_Agrees{checked_entries = checked_entries, check_time = value_kinds.Time_In_Microseconds(spent / 1000)})
 	if report.cycle_frequency != 0 {
 		system.log_fact(.Info, Boot_Program_Check_Time{check_time = value_kinds.Time_In_Microseconds(trust.check_cycles * 1_000_000 / report.cycle_frequency)})
 	}

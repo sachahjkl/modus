@@ -54,6 +54,12 @@ compositor: measure: the time of a key to the screen, from its record in the inp
 compositor: measure: the start of the window <name>, from Process_Start to its first frame: <t> us
 ```
 
+**The rate of the frames while the pointer moves.** A fourth line, beside the three: over a series of 120 frames that each show a pointer record that came after the frame before, with no gap of more than 250 ms, the compositor writes the frames, the time from the flip of the first to the flip of the last, the frames each second and the pointer records. It says whether a pointer that moves gets a frame at each step of the pacing, which the time of a frame alone does not say. A gap ends a series with no line.
+
+```
+compositor: measure: the pointer moved in <n> frames over <t> us: <n> frames each second, for <n> pointer records
+```
+
 **The tie of a key to its effect.** A frame shows a key only when the process says so. The path:
 
 1. The input service writes the time of the system in the record of the key.

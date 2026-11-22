@@ -225,19 +225,11 @@ Store_Name_Too_Long :: struct {
 	caller:    value_kinds.Module_Name_Field,
 }
 
-// A resource of the boot image whose bytes do not have the hash of its
-// entry: it is not given.
-@(log_fact = "root: the resource {resource} does not have the hash of its entry: not given")
-Resource_Hash_Wrong :: struct {
-	resource: [32]u8,
-}
-
-// A resource of the boot image given read-only, after the check of its
-// hash.
-@(log_fact = "root: the resource {resource} ({resource_size}, its hash checked in {check_time}) is given to {receiver}, read-only")
+// A resource of the boot image given read-only. The image check of the
+// start hashed it.
+@(log_fact = "root: the resource {resource} ({resource_size}) is given to {receiver}, read-only")
 Resource_Given :: struct {
 	resource_size: value_kinds.Size_In_Bytes,
-	check_time:    value_kinds.Time_In_Microseconds,
 	resource:      [32]u8,
 	receiver:      value_kinds.Module_Name_Field,
 }
