@@ -629,6 +629,12 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 
 // plan_diff_poll gives the decision of the principal on the difference that plan_diff_ask showed with a serial: 0 while the dialog shows, 1 accepted, 2 refused, 3 unknown (a later dialog replaced it, or no dialog had the serial). The values are the members of plans_recipes.Plan_Display_Decision. The result is the decision, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Bad_Value (-1, a serial under 1).
 //
+#assert(bar.PLAN_DIFFERENCE_NAME_BYTES == pr.PLAN_DISPLAY_NAME_BYTES)
+#assert(bar.PLAN_DIFFERENCE_ITEM_BYTES == pr.PLAN_DISPLAY_ITEM_BYTES)
+#assert(bar.PLAN_DIFFERENCE_ITEM_CAPACITY == pr.PLAN_DISPLAY_ITEM_CAPACITY)
+
+// Return the principal's decision for a trusted plan difference dialog.
+//
 // **What it is for.** The service plans asks for a difference, then reads
 // the decision here, and commits the plan only when the principal accepted
 // it on the trusted display. The dialog keeps the decision of the last
@@ -641,10 +647,6 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 // connect("compositor")
 // compositor.plan_diff_poll(1)
 // ```
-#assert(bar.PLAN_DIFFERENCE_NAME_BYTES == pr.PLAN_DISPLAY_NAME_BYTES)
-#assert(bar.PLAN_DIFFERENCE_ITEM_BYTES == pr.PLAN_DISPLAY_ITEM_BYTES)
-#assert(bar.PLAN_DIFFERENCE_ITEM_CAPACITY == pr.PLAN_DISPLAY_ITEM_CAPACITY)
-
 @(export, link_name = "plan_diff_poll")
 plan_diff_poll_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
