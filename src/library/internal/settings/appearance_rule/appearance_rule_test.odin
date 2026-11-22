@@ -100,3 +100,71 @@ hms_and_next_transition_boundaries :: proc(t: ^testing.T) {
 	testing.expect_value(t, r5, Appearance_Time_Refusal.None)
 	testing.expect_value(t, w5, i64(7 * 3_600 + 1))
 }
+
+@(test)
+next_edge_milliseconds_enforces_refusals_zones_and_subsecond_edges :: proc(t: ^testing.T) {
+	// Unknown appearance words are refused even when time is unknown.
+	for bad_word in ([?]u32{3, 42, max(u32)}) {
+		wait_ms, has_edge, ref := next_edge_milliseconds(settings.Appearance(bad_word), 0, 0, false)
+		testing.expect_value(t, ref, Appearance_Time_Refusal.Unknown_Appearance_Setting)
+		testing.expect(t, !has_edge && wait_ms == 0)
+	}
+
+	// Out-of-range zone offsets are refused whenever time is known.
+	for bad_zone in ([?]i64{min(i64), MIN_ZONE_OFFSET_SECONDS - 1, MAX_ZONE_OFFSET_SECONDS + 1, max(i64)}) {
+		wait_ms, has_edge, ref := next_edge_milliseconds(.Auto, 0, bad_zone, true)
+		testing.expect_value(t, ref, Appearance_Time_Refusal.Invalid_Zone_Offset)
+		testing.expect(t, !has_edge && wait_ms == 0)
+		wait_dark, edge_dark, ref_dark := next_edge_milliseconds(.Dark, 0, bad_zone, true)
+		testing.expect_value(t, ref_dark, Appearance_Time_Refusal.Invalid_Zone_Offset)
+		testing.expect(t, !edge_dark && wait_dark == 0)
+	}
+
+	// Explicit Dark/Light and unknown time never schedule a day-edge wake.
+	for setting in ([?]settings.Appearance{.Dark, .Light}) {
+		wait_ms, has_edge, ref := next_edge_milliseconds(setting, 7 * 3_600 * 1000, 0, true)
+		testing.expect_value(t, ref, Appearance_Time_Refusal.None)
+		testing.expect(t, !has_edge && wait_ms == 0)
+	}
+	wait_unk, edge_unk, ref_unk := next_edge_milliseconds(.Auto, 0, 0, false)
+	testing.expect_value(t, ref_unk, Appearance_Time_Refusal.None)
+	testing.expect(t, !edge_unk && wait_unk == 0)
+
+	// Sub-second boundaries around 07:00 and 19:00 UTC.
+	Edge_Ms_Case :: struct {
+		utc_ms:   i64,
+		zone_s:   i64,
+		expected: u64,
+	}
+	cases := [?]Edge_Ms_Case {
+		{0, 0, 7 * 3_600 * 1000},
+		{1, 0, 7 * 3_600 * 1000 - 1},
+		{-1, 0, 7 * 3_600 * 1000 + 1},
+		{(6 * 3_600 + 59 * 60 + 59) * 1000 + 999, 0, 1},
+		{7 * 3_600 * 1000, 0, 12 * 3_600 * 1000},
+		{7 * 3_600 * 1000 + 500, 0, 12 * 3_600 * 1000 - 500},
+		{(18 * 3_600 + 59 * 60 + 59) * 1000 + 999, 0, 1},
+		{19 * 3_600 * 1000, 0, 12 * 3_600 * 1000},
+		// +08:00 at 01:00 UTC is 09:00 local -> 10 hours to 19:00 local.
+		{1 * 3_600 * 1000, 8 * 3_600, 10 * 3_600 * 1000},
+		// Extreme valid zone offsets (-12:00 and +14:00) at 00:00 UTC.
+		{0, MIN_ZONE_OFFSET_SECONDS, 7 * 3_600 * 1000},
+		{0, MAX_ZONE_OFFSET_SECONDS, 5 * 3_600 * 1000},
+	}
+	for c in cases {
+		wait_ms, has_edge, ref := next_edge_milliseconds(.Auto, c.utc_ms, c.zone_s, true)
+		testing.expect_value(t, ref, Appearance_Time_Refusal.None)
+		testing.expect(t, has_edge)
+		testing.expect_value(t, wait_ms, c.expected)
+	}
+
+	// Extreme i64 UTC timestamps stay overflow-free and within [1, 12h].
+	for extreme_ms in ([?]i64{min(i64), max(i64)}) {
+		for extreme_zone in ([?]i64{MIN_ZONE_OFFSET_SECONDS, 0, MAX_ZONE_OFFSET_SECONDS}) {
+			wait_ms, has_edge, ref := next_edge_milliseconds(.Auto, extreme_ms, extreme_zone, true)
+			testing.expect_value(t, ref, Appearance_Time_Refusal.None)
+			testing.expect(t, has_edge)
+			testing.expect(t, wait_ms >= 1 && wait_ms <= 12 * 3_600 * 1000)
+		}
+	}
+}

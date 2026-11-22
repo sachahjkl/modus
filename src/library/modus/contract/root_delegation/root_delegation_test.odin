@@ -357,3 +357,28 @@ canonical_role_catalog_covers_all_14_core_roles_with_unique_blake3_hashes :: pro
 		hashes[idx] = digest
 	}
 }
+
+@(test)
+principals_ring_command_and_status_borders :: proc(t: ^testing.T) {
+	for bad in ([?]u32{0, u32(max(Principals_Ring_Command)) + 1, max(u32)}) {
+		_, ok := principals_ring_command_from_word(bad)
+		testing.expect(t, !ok)
+	}
+	for cmd in Principals_Ring_Command {
+		if cmd == .None {
+			continue
+		}
+		got, ok := principals_ring_command_from_word(u32(cmd))
+		testing.expect(t, ok)
+		testing.expect_value(t, got, cmd)
+	}
+	for bad in ([?]u32{u32(max(Principals_Ring_Status)) + 1, max(u32)}) {
+		_, ok := principals_ring_status_from_word(bad)
+		testing.expect(t, !ok)
+	}
+	for st in Principals_Ring_Status {
+		got, ok := principals_ring_status_from_word(u32(st))
+		testing.expect(t, ok)
+		testing.expect_value(t, got, st)
+	}
+}

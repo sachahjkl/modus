@@ -1,7 +1,7 @@
 package machine
 
 import "modus:contract/settings"
-import "modus:appearance"
+import "internal:settings/appearance"
 import "modus:calendar"
 import "core:fmt"
 import "core:strconv"

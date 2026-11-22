@@ -9,20 +9,20 @@
 //
 // The time zone (src/md/features/time_zone.md) is a fixed offset from UTC,
 // "+08:00". This process writes it on the settings page; the process `date`
-// copies it into the date page, and the root service then moves the
-// appearance in force when the new local time asks for it. So this process
-// computes the appearance in force with the zone of the date page, never
-// with the zone that it writes.
+// copies it into the date page and wakes waiters on the date page. This
+// process wakes on the date page and moves the appearance in force when the
+// new local time asks for it. So this process computes the appearance in
+// force with the zone of the date page, never with the zone that it writes.
 //
-// This process is the one writer of the values of the settings page
+// This process is the sole writer of the settings page
 // (modus:contract/settings). A change is written first to its private
 // store, as one record in one object (one commit), then to the page, with
 // the appearance in force that the setting `appearance` gives now
 // (src/md/features/appearance.md); the page wakes the compositor, which
 // gives the new font, pointer theme and appearance to each window: every
 // process draws again, with no code of its own for it. With the setting
-// `auto`, the root service changes the appearance in force at 07:00 and at
-// 19:00: this process runs only while its window is open.
+// `auto`, this process waits for the next 07:00 or 19:00 local-time edge
+// and for date-page changes, and updates the appearance in force itself.
 //
 // At boot the root service starts this process for one pass with no window
 // (the context value VALUE_BOOT_PASS): it reads the record of its store,
@@ -59,6 +59,7 @@
 // 1794791040 s since 1970".
 package settings_process
 
+import "base:intrinsics"
 import "internal:settings/appearance_rule"
 import "modus:contract/date"
 import "modus:contract/errors"
@@ -67,7 +68,7 @@ import op "modus:contract/operation"
 import "modus:contract/scale_factor"
 import "modus:contract/settings"
 import "modus:contract/value_kinds"
-import "modus:appearance"
+import "internal:settings/appearance"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
@@ -179,26 +180,33 @@ keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -
 	return true
 }
 
-// in_force_now gives the appearance in force of the values at this moment:
+// in_force_at gives the appearance in force of the values at system time now:
 // the setting `appearance`, with `auto` by the rule of the day over the
 // date page (src/md/features/appearance.md), and the moment that the rule
 // read, for the fact of the appearance. The zone is the one of the date
-// page: the root service writes the appearance of a new zone after the
-// process `date` copies it, so the page never holds the appearance of a
-// zone that the date page does not have yet.
-in_force_now :: proc "contextless" (choice: settings.Choice) -> (settings.Appearance_In_Force, appearance.Moment) {
-	moment := appearance.moment_of(date_page, system.time())
+// page: this process wakes on the date page after `date` copies a new zone,
+// so the page never holds the appearance of a zone that the date page does
+// not have yet.
+in_force_at :: proc "contextless" (choice: settings.Choice, now: u64) -> (settings.Appearance_In_Force, appearance.Moment) {
+	moment := appearance.moment_of(date_page, now)
 	hour, minute, second: i32
 	time_known := false
 	if moment.known {
-		hour, minute, second, time_known = appearance_rule.hms_of_second_of_day(appearance.local_second_of_day(moment))
+		refusal: appearance_rule.Appearance_Time_Refusal
+		hour, minute, second, _, refusal = appearance_rule.local_hms_of_utc(moment.milliseconds, moment.zone_offset_seconds)
+		time_known = refusal == .None
 	}
 	in_force, _ := appearance_rule.appearance_for_time(choice.appearance, hour, minute, second, time_known)
 	return in_force, moment
 }
 
+// in_force_now evaluates the appearance in force at the current system time.
+in_force_now :: proc "contextless" (choice: settings.Choice) -> (settings.Appearance_In_Force, appearance.Moment) {
+	return in_force_at(choice, system.time())
+}
+
 // page_write writes the values and their appearance in force on the page in
-// one change, and wakes the compositor and the root service. Before the
+// one change, and wakes the compositor and the process `date`. Before the
 // write, it writes the sentence of the appearance in force on the log when
 // the setting or the appearance changes, or when `always`: the log then
 // has it before the line of the compositor that the write causes.
@@ -206,10 +214,36 @@ page_write :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: 
 	before, before_ok := settings.read(page)
 	in_force, moment := in_force_now(choice)
 	if always || !before_ok || before.appearance != choice.appearance || before.appearance_in_force != in_force {
-		appearance_log(choice.appearance, moment)
+		appearance_log(choice.appearance, in_force, moment)
 	}
 	settings.write(page, choice, zone_offset_minutes, in_force)
 	system.word_wake(&page.change_count, 64)
+}
+
+// appearance_edge_step arms the wait on the date page, updates the appearance
+// in force as the sole writer of the settings page whenever the local time or
+// zone crossed a rule edge, and returns the system-time deadline of the next
+// 07:00 or 19:00 local transition.
+appearance_edge_step :: proc "contextless" (wait: ^system.Wait) -> u64 {
+	if date_page != nil {
+		system.wait_word(wait, &date_page.change_count, intrinsics.atomic_load_explicit(&date_page.change_count, .Acquire))
+	}
+	choice, ok := settings.read(page)
+	if !ok {
+		return system.WAIT_FOREVER
+	}
+	now := system.time()
+	in_force, moment := in_force_at(choice, now)
+	if in_force != choice.appearance_in_force {
+		appearance_log(choice.appearance, in_force, moment)
+		settings.write(page, choice, choice.zone_offset_minutes, in_force)
+		system.word_wake(&page.change_count, 64)
+	}
+	wait_ms, has_edge, refusal := appearance_rule.next_edge_milliseconds(choice.appearance, moment.milliseconds, moment.zone_offset_seconds, moment.known)
+	if refusal != .None || !has_edge || wait_ms > system.WAIT_FOREVER - now {
+		return system.WAIT_FOREVER
+	}
+	return now + wait_ms
 }
 
 // page_choice reads the page that this process writes. A refused page (a
@@ -726,7 +760,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wait := system.wait_begin()
 		display.wait_events(&wait, &window)
 		system.service_wait(&wait, &service)
-		system.wait_end(&wait)
+		deadline := appearance_edge_step(&wait)
+		system.wait_end(&wait, deadline)
 		system.service_run(&service)
 		if interface.window_events(&window_memory.drawing, &window) {
 			draw_with_bar(&window)

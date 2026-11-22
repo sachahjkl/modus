@@ -11,11 +11,6 @@ import "modus:contract/value_kinds"
 // a field of 8 bytes is the word type op.Status_Word, so the record has no
 // padding.
 
-@(log_fact = "root: the date page is not mapped in this service (status {status}): the setting appearance auto is dark")
-Appearance_Date_Page_Unmapped :: struct {
-	status: op.Status,
-}
-
 @(log_fact = "root: cannot make the budget of the disk processes: status {status}")
 Disk_Processes_Budget_Refused :: struct {
 	status: op.Status,

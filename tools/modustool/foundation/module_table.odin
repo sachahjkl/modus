@@ -300,10 +300,11 @@ module_builds := [?]Module_Build {
 	// The VirtIO-GPU device service: 2D scanout setup and Venus capability
 	// probing over the VirtIO-GPU 1.2 control queue (src/md/features/gpu_access.md).
 	{name = "gpu_device", source = SYSTEM_MODULE_SOURCES + "gpu_device", entry = true, image = true},
-	// The delegated disk_processes and devices services split out of the root
-	// service (src/md/api/root_service_split.md).
+	// The delegated disk_processes, devices, and principals services split out
+	// of the root service (src/md/api/root_service_split.md).
 	{name = "disk_processes", source = SYSTEM_MODULE_SOURCES + "disk_processes", entry = true, image = true},
 	{name = "devices", source = SYSTEM_MODULE_SOURCES + "devices", entry = true, image = true},
+	{name = "principals", source = SYSTEM_MODULE_SOURCES + "principals", entry = true, image = true},
 }
 
 // The counted kernel and its setting. Each other kernel gets the setting

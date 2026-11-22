@@ -3946,16 +3946,16 @@ scenario := [?]Step {
 	{kind = .Shot, text = "settings"},
 	// The time zone (src/md/features/time_zone.md). The clock of the
 	// machine is at 01:00 UTC: +08:00 moves its local time into the day.
-	// The process date copies the zone into the date page; the root service
-	// then gives the light appearance of auto in that zone, and the bar
-	// shows the local time. The compositor can tell the windows of the zone
-	// and of the appearance in one line or in two: the step waits for the
-	// last state only.
+	// The process date copies the zone into the date page; settings wakes
+	// on the date page and gives the light appearance of auto in that zone,
+	// and the bar shows the local time. The compositor can tell the windows
+	// of the zone and of the appearance in one line or in two: the step
+	// waits for the last state only.
 	{kind = .Call, text = "settings.set_time_zone(\"+08:00\")", expected = "1"},
 	{kind = .Wait, text = "settings: time zone +08:00; kept in the store"},
 	{kind = .Bar_Local_Time, text = "compositor: the bar shows the local time ", expected = "+08:00", any_order = true},
 	{kind = .Wait, text = "date: the time zone of the date page is +08:00, from the setting time_zone"},
-	{kind = .Appearance_Auto, text = "root: the appearance in force is ", expected = "28800"},
+	{kind = .Appearance_Auto, text = "settings: the appearance in force is ", expected = "28800"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; the appearance in force light; the time zone +08:00; "},
 	{kind = .Call, text = "settings.time_zone()", expected = "+08:00"},
 	{kind = .Call, text = "settings.set_time_zone(\"+8:00\")", outcome = .Failed, expected = "(-3)"},
@@ -3964,7 +3964,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "settings: time zone +00:00; kept in the store"},
 	{kind = .Bar_Local_Time, text = "compositor: the bar shows the local time ", expected = "+00:00", any_order = true},
 	{kind = .Wait, text = "date: the time zone of the date page is +00:00, from the setting time_zone"},
-	{kind = .Appearance_Auto, text = "root: the appearance in force is ", expected = "0"},
+	{kind = .Appearance_Auto, text = "settings: the appearance in force is ", expected = "0"},
 	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; the appearance in force dark; the time zone +00:00; "},
 	// The scale (src/md/features/window_resize.md, "The rescale"): 1.375,
 	// then 1.25 again, with windows open. Each window releases its surface,

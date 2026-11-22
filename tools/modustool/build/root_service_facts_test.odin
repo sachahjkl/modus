@@ -5,12 +5,10 @@ import "modus:contract/font_outlines"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/replacement_list"
-import "modus:contract/settings"
 import "modus:contract/start_grant"
 import "modus:contract/system_description"
 import "modus:contract/value_kinds"
 import "internal:root/replacement_signature"
-import "modus:appearance"
 import "modus:sentence"
 import "core:strings"
 import "core:testing"
@@ -542,7 +540,6 @@ the_statuses_of_the_root_service_are_the_names_of_their_members :: proc(t: ^test
 		return
 	}
 	lines := [?]Status_Line {
-		{"Appearance_Date_Page_Unmapped", "root: the date page is not mapped in this service (status ", "): the setting appearance auto is dark"},
 		{"Disk_Processes_Budget_Refused", "root: cannot make the budget of the disk processes: status ", ""},
 		{"Entropy_Configuration_Unread", "root: cannot read the configuration of the bus for the entropy device: status ", ": the random seed of the system has the sources of the processor only"},
 		{"Entropy_Service_Start_Failed", "root: cannot start the entropy service: status ", ": the random seed of the system has the sources of the processor only"},
@@ -882,50 +879,6 @@ the_seed_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testing
 				written := render(t, file, "Random_Seed_Made", {{"rdseed_good", count}, {"rdseed_refused", count}, {"rdrand_good", count}, {"rdrand_refused", count}, {"jitter_samples", count}, {"jitter_distinct", count}, {"strength", strength}, {"rdseed_presence", presence}, {"rdrand_presence", presence}})
 				expect(t, written, line_of_before("root: the random seed of the system, strength ", strength, ": rdseed ", presence, ", ", count, " good values, ", count, " refused; rdrand ", presence, ", ", count, " good, ", count, " refused; the cycle counter, ", count, " samples, ", count, " distinct low bytes"))
 			}
-		}
-	}
-}
-
-// The facts of the appearance in force write the sentence of
-// appearance.sentence_write, which the line wrote, for each setting and for
-// moments at the edges: no date, the first second of 1970, a millisecond
-// before it (the whole seconds round toward the past), the local times
-// 00:00, 07:04 and 23:59, and the zones -3600, 0 and 50400.
-@(test)
-the_appearance_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testing.T) {
-	file, ok := root_service_facts_file(t)
-	if !ok {
-		return
-	}
-	moments := [?]appearance.Moment {
-		{},
-		{known = true, milliseconds = 0},
-		{known = true, milliseconds = -1},
-		{known = true, milliseconds = (7 * 3_600 + 4 * 60) * 1000 + 999},
-		{known = true, milliseconds = 86_399 * 1000, zone_offset_seconds = 0},
-		{known = true, milliseconds = 1_794_791_040_500, zone_offset_seconds = -3_600},
-		{known = true, milliseconds = 1_794_791_040_500, zone_offset_seconds = 50_400},
-	}
-	for setting in settings.Appearance {
-		for moment in moments {
-			buffer: [256]u8
-			line := line_of_before("root: ", appearance.sentence_write(buffer[:], setting, moment))
-			in_force := settings.appearance_in_force_names[appearance.in_force_of(setting, moment)]
-			written: string
-			switch {
-			case setting != .Auto:
-				written = render(t, file, "Appearance_Set", {{"appearance_in_force", in_force}, {"appearance_setting", settings.descriptions[.Appearance].value_names[u32(setting)]}})
-			case !moment.known:
-				written = render(t, file, "Appearance_Auto_Without_Date", {{"appearance_in_force", in_force}})
-			case:
-				rest := moment.milliseconds % 1000
-				if rest < 0 {
-					rest += 1000
-				}
-				seconds := (moment.milliseconds - rest) / 1000
-				written = render(t, file, "Appearance_Auto", {{"light_from", u64(appearance.LIGHT_FROM_SECOND)}, {"dark_from", u64(appearance.DARK_FROM_SECOND)}, {"local_time", u64(appearance.local_second_of_day(moment))}, {"zone_offset", signed_bits(moment.zone_offset_seconds)}, {"seconds_since_1970", signed_bits(seconds)}, {"appearance_in_force", in_force}})
-			}
-			expect(t, written, line)
 		}
 	}
 }

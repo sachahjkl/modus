@@ -4,7 +4,7 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/settings"
 import "modus:contract/value_kinds"
-import "modus:appearance"
+import "internal:settings/appearance"
 import "modus:system"
 
 // The log facts of settings (src/md/features/log_facts.md, "The
@@ -59,8 +59,8 @@ LOCAL_TIME_FIELD_BYTES :: 8
 
 // appearance_log writes the fact of the appearance in force of a setting
 // at a moment, in the case that the moment gives.
-appearance_log :: proc "contextless" (setting: settings.Appearance, moment: appearance.Moment) {
-	in_force := value_kinds.text_field(settings.appearance_in_force_names[appearance.in_force_of(setting, moment)], IN_FORCE_FIELD_BYTES)
+appearance_log :: proc "contextless" (setting: settings.Appearance, in_force_value: settings.Appearance_In_Force, moment: appearance.Moment) {
+	in_force := value_kinds.text_field(settings.appearance_in_force_names[in_force_value], IN_FORCE_FIELD_BYTES)
 	if setting != .Auto {
 		system.log_fact(.Info, Appearance_By_Setting{in_force = in_force, setting_value = value_kinds.text_field(settings.descriptions[.Appearance].value_names[u32(setting)], VALUE_NAME_FIELD_BYTES)})
 		return
