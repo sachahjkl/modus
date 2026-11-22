@@ -5,10 +5,7 @@ import "core:testing"
 import "modus:contract/role_contract"
 
 @(test)
-merkle_sync_peer_authenticated_grant_replay_defense_and_relay :: proc(t: ^testing.T) {
-	_, bad := sync_kind_of_word(99)
-	testing.expect(t, !bad)
-
+merkle_sync_peer_authenticated_grant_replay_defense :: proc(t: ^testing.T) {
 	h1: [HASH_BYTES]u8; h1[0] = 1
 	h2: [HASH_BYTES]u8; h2[0] = 2
 	h3: [HASH_BYTES]u8; h3[0] = 3
@@ -36,11 +33,4 @@ merkle_sync_peer_authenticated_grant_replay_defense_and_relay :: proc(t: ^testin
 	// Valid first verification succeeds, replay of same nonce refused!
 	testing.expect(t, cross_grant_verify(secret, m_local, m_peer, g, 9_500, &seen))
 	testing.expect(t, !cross_grant_verify(secret, m_local, m_peer, g, 9_501, &seen))
-
-	dest: [32]u8; dest[0] = 0x55
-	wire: [256]u8
-	rn, rok := relay_encode(dest, transmute([]u8)string("encrypted-quic-frame"), wire[:])
-	testing.expect(t, rok)
-	hdr, payload, dok := relay_decode(wire[:rn])
-	testing.expect(t, dok && hdr.dest_machine == dest && string(payload) == "encrypted-quic-frame")
 }

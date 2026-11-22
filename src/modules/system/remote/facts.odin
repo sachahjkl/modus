@@ -76,6 +76,22 @@ Client_Key_Proved :: struct {
 	peer:            [32]u8,
 }
 
+// A host proved the identity key of a paired machine, or of the machine of
+// an open pairing: its streams carry mesh frames only.
+@(log_fact = "remote: {peer} proved the machine identity key {client_key_head}: a paired machine, whose streams carry mesh frames only")
+Mesh_Peer_Proved :: struct {
+	client_key_head: [24]u8,
+	peer:            [32]u8,
+}
+
+// The row of a paired machine ended while its connection was open: a newer
+// machine list removed it, or its pairing ended.
+@(log_fact = "remote: the machine identity key {client_key_head} is no longer paired: the connection from {peer} ends with the code Revoked")
+Mesh_Peer_Ended :: struct {
+	client_key_head: [24]u8,
+	peer:            [32]u8,
+}
+
 // A second principal allowed the client key of an open connection: the
 // connection ends.
 @(log_fact = "remote: the client key {client_key_head} of principal {principal} is contested: principal {other_principal} allowed it too, and it acts for neither; the connection from {peer} ends with the code Revoked")

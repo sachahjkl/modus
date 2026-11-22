@@ -968,11 +968,31 @@ Do not use: token, capability token, invitation, certificate.
 
 A remote role is a role whose holder runs on a paired machine, and which `remote` fills on this machine as an interposed holder.
 
-`remote` carries each call and each record of the contract over QUIC to `remote` on the paired machine, which gets a connection to the real holder for the row of this machine. Only a contract of calls and records crosses: a face that lends memory or carries a handle does not. A call whose answer did not come gets `Unknown_Outcome`; a call while the link is down gets `Unreachable`. Designed, not built.
+`remote` carries each call and each record of the contract over QUIC to `remote` on the paired machine, which gets a connection to the real holder for the row of this machine. Only a contract of calls and records crosses: a face that lends memory or carries a handle does not. A call whose answer did not come gets `Unknown_Outcome`; a call while the link is down gets `Unreachable`. The frames of a call and the proxy of the calls in flight are built (`modus:contract/machine_wire`); the connection to the real holder is not.
 
 The design: `src/md/features/several_machines.md`, "A role held on another machine".
 
 Do not use: proxy, stub, remote service (for this), mount.
+
+### Mesh frame
+
+A mesh frame is the request or the answer of a protocol between paired machines, on one stream of a connection to `remote`.
+
+The first word of the stream is the word of `Request_Kind.Mesh`, so a stream carries either a call request of a client or a mesh frame, never both. The frame names its message: a pairing step, an object by hash, a signed grant, a store exchange, a role call, or a relay envelope. The answer is one frame, or a refusal with its reason. The identity key of the sender comes from the handshake, never from the frame.
+
+The design: `src/md/features/several_machines.md`, "The frames on a stream of remote".
+
+Do not use: packet, message (alone), mesh request.
+
+### Relay envelope
+
+A relay envelope is a datagram that a relay machine carries between two machines: a routing token and the sealed bytes, which only the two ends open.
+
+The two ends seal the datagram under a key that they share, with the routing token as associated data. The routing token is a keyed hash of that key and an epoch, so the relay learns no identity key and cannot link two epochs. The relay is a paired machine of the principal; it keeps an envelope only for a route that its principal added, and gives it back byte for byte.
+
+The design: `src/md/features/several_machines.md`, "The relay envelope".
+
+Do not use: tunnel, relay packet, forwarded frame.
 
 ### Input
 
