@@ -216,6 +216,7 @@ module_builds := [?]Module_Build {
 	{name = "probe", source = TEST_MODULE_SOURCES + "probe", image = true},
 	{name = "math", source = LIBRARY_MODULE_SOURCES + "math", image = true},
 	{name = "cryptography", source = LIBRARY_MODULE_SOURCES + "cryptography", image = true},
+	{name = "ssh_client", source = LIBRARY_MODULE_SOURCES + "ssh_client", image = true},
 	{name = "cryptography_vectors", source = DEMONSTRATION_MODULE_SOURCES + "cryptography_vectors", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "quic_echo", source = DEMONSTRATION_MODULE_SOURCES + "quic_echo", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "remote", source = SYSTEM_MODULE_SOURCES + "remote", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
