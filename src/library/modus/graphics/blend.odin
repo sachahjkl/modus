@@ -230,18 +230,9 @@ blend_fill :: proc "contextless" (canvas: Canvas, x, y, width, height: int, colo
 	if x0 >= x1 {
 		return
 	}
-	// The row of one color that the blend reads: a part of a span at a
-	// time, so the stack holds a fixed size. Only the columns that a part
-	// reads are written: a cell of a pattern of 1 pixel writes one.
-	colors: [BLEND_PART]u32 = ---
-	for index in 0 ..< min(BLEND_PART, x1 - x0) {
-		colors[index] = color
-	}
+	span := x1 - x0
 	for line in y0 ..< y1 {
-		row := canvas.pixels[line * canvas.stride:]
-		for part := x0; part < x1; part += BLEND_PART {
-			blend_straight_alpha_row(row[part:], raw_data(colors[:]), min(BLEND_PART, x1 - part), square_root)
-		}
+		blend_span(canvas.pixels[line * canvas.stride + x0:], span, color, square_root)
 	}
 }
 
@@ -262,10 +253,6 @@ blend_copy :: proc "contextless" (canvas: Canvas, x, y: int, source: Canvas, squ
 		blend_straight_alpha_row(canvas.pixels[line * canvas.stride + x0:], source.pixels[(line - y) * source.stride + (x0 - x):], x1 - x0, square_root)
 	}
 }
-
-// The pixels of the row of one color of blend_fill.
-@(private)
-BLEND_PART :: 64
 
 // blend_straight_alpha_row blends one row in the form of the target.
 @(private)

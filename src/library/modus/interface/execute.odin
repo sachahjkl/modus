@@ -335,14 +335,21 @@ gradient_row :: proc "contextless" (row: []u32, gradient: draw_record.Draw_Gradi
 	UNITS :: draw_record.UNITS_PER_PIXEL
 	HALF :: UNITS / 2
 	start, end := u32(gradient.start_color), u32(gradient.end_color)
+	levels: [512]u8 = ---
+	for index in 0 ..< len(row) {
+		levels[index] = u8(draw_record.gradient_level(gradient, i64(first + index) * UNITS + HALF, y))
+	}
+	graphics.mix_with_alpha_span(row, start, end, levels[:len(row)])
+	if len(columns) == 1 && columns[0].covered == UNITS && covered_y == UNITS {
+		return
+	}
 	span := 0
 	for &color, index in row {
 		x := first + index
 		for span < len(columns) - 1 && x >= columns[span].first + columns[span].count {
 			span += 1
 		}
-		mixed := graphics.mix_with_alpha(start, end, draw_record.gradient_level(gradient, i64(x) * UNITS + HALF, y))
-		color = covered_alpha(mixed >> 24, columns[span].covered, covered_y) << 24 | mixed & 0x00FFFFFF
+		color = covered_alpha(color >> 24, columns[span].covered, covered_y) << 24 | color & 0x00FFFFFF
 	}
 }
 

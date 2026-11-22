@@ -310,31 +310,12 @@ block :: proc "contextless" (canvas: Canvas, x, y, width, height: int, top, bott
 // end, at column total - 1. Each channel steps by a fixed-point number: no
 // division for each pixel.
 gradient :: proc "contextless" (row: []Color, start, end: Color, total, first: int) {
-	steps := i64(max(total - 1, 1))
-	value, step: [3]i64
-	for channel in 0 ..< 3 {
-		shift := uint(16 - 8 * channel)
-		from, to := i64(start >> shift & 0xFF), i64(end >> shift & 0xFF)
-		step[channel] = (to - from) * 65536 / steps
-		value[channel] = from * 65536 + step[channel] * i64(first) + 32768
-	}
-	for &color in row {
-		color = rgb(u32(value[0] >> 16), u32(value[1] >> 16), u32(value[2] >> 16))
-		value += step
-	}
+	horizontal_gradient_span(row, start, end, total, first)
 }
 
 // gradient_with_alpha is gradient for two colors with straight alpha,
 // 0xAARRGGBB: the alpha steps as each channel does, and the red, the green
 // and the blue of each column are those of gradient.
 gradient_with_alpha :: proc "contextless" (row: []u32, start, end: u32, total, first: int) {
-	gradient(row, start, end, total, first)
-	steps := i64(max(total - 1, 1))
-	from, to := i64(start >> 24), i64(end >> 24)
-	step := (to - from) * 65536 / steps
-	value := from * 65536 + step * i64(first) + 32768
-	for &color in row {
-		color |= u32(value >> 16) << 24
-		value += step
-	}
+	horizontal_gradient_with_alpha_span(row, start, end, total, first)
 }

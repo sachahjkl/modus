@@ -122,8 +122,10 @@ path_draw :: #force_no_inline proc "contextless" (table: ^Draw_Table, view: grap
 // Rectangle whose box covers that part of the pixel.
 @(private)
 path_pass_draw :: proc "contextless" (band: ^Path_Band, view: graphics.Canvas, area: Rectangle, points: []draw_record.Path_Point, pass: Path_Pass, width: i64, color: draw_record.Draw_Color) {
-	alpha, channels := u32(draw_record.alpha_of(color)), draw_record.channels_of(color)
-	row: [PATH_BAND_COLUMNS]u32 = ---
+	#assert(PATH_FULL_PIXEL == graphics.PATH_COVERAGE_FULL_PIXEL)
+	#assert(PATH_FULL_PIXEL_SHIFT == graphics.PATH_COVERAGE_FULL_SHIFT)
+	draw_color := u32(color)
+	square_root := &graphics.text_state.square_root
 	for top := area.top; top < area.bottom; top += PATH_BAND_ROWS {
 		bottom := min(top + PATH_BAND_ROWS, area.bottom)
 		for left := area.left; left < area.right; left += PATH_BAND_COLUMNS {
@@ -141,21 +143,10 @@ path_pass_draw :: proc "contextless" (band: ^Path_Band, view: graphics.Canvas, a
 			case .Stroke:
 				path_stroke_add(band, points, width)
 			}
+			column_offset := left - area.left
 			for line in 0 ..< bottom - top {
-				sum: i32
-				drawn := false
-				for column in 0 ..< columns {
-					sum += band.cells[line][column]
-					covered := u32(min(abs(sum), PATH_FULL_PIXEL))
-					part := (alpha * covered + PATH_FULL_PIXEL / 2) >> PATH_FULL_PIXEL_SHIFT
-					row[column] = part << 24 | channels
-					if part != 0 {
-						drawn = true
-					}
-				}
-				if drawn {
-					graphics.blend_copy(view, left - area.left, top + line - area.top, {pixels = raw_data(row[:]), width = columns, height = 1, stride = columns}, &graphics.text_state.square_root)
-				}
+				dst_row := view.pixels[(top + line - area.top) * view.stride + column_offset:]
+				_ = graphics.path_coverage_span(dst_row, raw_data(band.cells[line][:]), columns, draw_color, square_root)
 			}
 		}
 	}
