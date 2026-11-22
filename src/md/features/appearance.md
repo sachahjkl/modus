@@ -17,6 +17,9 @@ The desktop has two appearances: dark and light. The principal chooses one, or `
 | `card_top` | `0x17212E` | `0xFFFFFF` | The top of a card |
 | `card_bottom` | `0x111822` | `0xF9FAFB` | The bottom of a card |
 | `track` | `0x1C2633` | `0xD6DBE0` | The empty part of a bar, a band, a button |
+| `shadow` | `0x06080D` | `0xC3CAD2` | The sharp shadow of a menu or a dialog over the desktop |
+| `edge` | `0x05070B` | `0x808B99` | The outer line of a menu or a dialog: 3 to 1 on the light surfaces |
+| `recess` | `0x0D131B` | `0xF4F6F8` | A list sunk into a card |
 | `firmware` | `0x8E7CC3` | `0x7566A1` | The accent at 83 % in the light appearance |
 | `boot_program` | `0xE0A040` | `0x906729` | At 65 % |
 | `kernel` | `0x4A9CF0` | `0x3571AF` | At 73 % |
@@ -44,7 +47,9 @@ The desktop has two appearances: dark and light. The principal chooses one, or `
 | `stop_process_quiet` | `0x4E2229` | `0xF2D5D9` | The close button of another window |
 | `stop_process_quiet_mark` | `0xC09098` | `0x8E3A47` | Its `x` |
 
-White (`COLOR_WHITE`) and black (`COLOR_BLACK`) are not tokens: white is a text on a fill of the blue or of the red in both appearances, and the pointer is black and white.
+White (`COLOR_WHITE`) and black (`COLOR_BLACK`) are not tokens: white is a text on a fill of the blue or of the red in both appearances, and the pointer is black and white. White is never a text on a card: the title of a card over the desktop (a notification, the preview of a plate, the asker of the powerbox, the plate in front on the bar) is `text_strong`, white on the dark card and black on the white one.
+
+The border of a card is not a token: it is its accent, through `graphics.card_border_colors`. The dark appearance takes the accent toward black (28 % then 14 %), the light one into the white of the card (40 % then 55 %).
 
 ## The contrast rules hold in both appearances
 
@@ -80,7 +85,8 @@ A concept is not a text on the track: the track holds the label of a button in t
 ## What a change redraws
 
 - **Each window once.** The compositor reads the page after each wake. When the values or the appearance in force differ from what it told the windows last, it sends `Settings_Changed` to each window, draws its whole screen again, and writes one line on the log. `display.next_event` gives the new appearance to the process before the event, as it gives the new font.
-- **Each frame reads the appearance.** `interface.window_frame_begin` reads the appearance in force from the page. When it differs from the appearance of the last frame, the next frame of each picture is a whole frame. So a window that the interface package draws never shows two appearances, also when it draws a frame before the event.
+- **Each frame reads the appearance.** `interface.window_frame_begin` reads the appearance in force from the page. When the appearance or the font changed since the last frame of the window, the next frame of each picture is a whole frame. So a window that the interface package draws never shows two appearances, also when it draws a frame before the event.
+- **A change is a number, not an answer.** `display.text_settings_apply` moves `display.text_settings_generation` at each change, and each window keeps the number of its last frame (`interface.text_settings_follow`). The answer `true` of the call goes to its caller only: `next_event` applies the page at the event, before the frame, so a frame that asked for the answer saw no change. A window that reads its events with `next_event` (`rings`, `monitor`) then drew only the records that changed, and each part of its surface that no record covers kept the background of the old appearance: dark bands and blocks around a light content.
 - **One line at the first frame of a new appearance.** A window of the interface package writes `interface: <title>: a frame in the light appearance` when it presents its first frame in another appearance than its frame before. A machine test waits for that line before it takes a picture of the window: the picture then holds the new colors. The first frame of a window writes nothing, so the line is one for each window at each change.
 - **A window that draws its canvas whole.** `log` draws again at the event `Settings_Changed`, also with no new record. `pages` draws its whole canvas at each read of its reports, each 500 ms.
 - **The compositor** draws the background again with its grid of points, the bar, the title bars and the frames of the windows, the menus and the palette, in the tokens of the new appearance. The mark of the bar is drawn again over the new color of the bar, in the colors of the light background in the light appearance.
@@ -116,6 +122,7 @@ Three tokens came with this work, each because no token had the meaning: `warnin
 - **The appearance in force computed by each reader.** Each process would need the date page and the rule, and two processes could draw two appearances at one moment. One word on the page is one answer for all.
 - **The appearance as a second set of constants that each process chooses.** A process would hold an `if` for each color, and a process that forgot one would draw a dark part in the light appearance with no fault of the build. The tokens are one record that one procedure changes; the `DARK_` constants are the one exception, and their name says that they do not follow.
 - **A remap of each pixel by its color.** A table from each dark value to its light value, applied to the pixels of a surface, misses each color that `mix`, `shade` or a gradient computed, and changes the colors of a picture. The tokens change the colors before the draw.
+- **A shade of the background or of the title for a shadow and a border.** `shade(colors.background, 50)` is near black in both appearances: on the light desktop it drew a black box around each menu and dialog. A shadow, an edge and a recess are tokens, so the light appearance gives each its own value.
 - **A dark and a light value for each color that a process owns.** Twenty modules held about sixty colors. Each with two values in its process is sixty pairs that no host test reads, and two processes could give one meaning two colors. Each became the token of its meaning, and only three meanings needed a new token.
 - **A token named by its module.** A token `rings_blocked` or `manual_heading` holds a color for one window, and a second process with the same meaning takes another. A token is named by its meaning.
 - **A color of the rules by its value.** The kernel entries had the value of the boot program, `0xE0A040`. A token by value is a color with a wrong meaning: the kernel entries take the kernel blue.
@@ -126,6 +133,7 @@ Three tokens came with this work, each because no token had the meaning: `warnin
 - **The test machines have a fixed hour.** The tool gives each machine a real-time clock at 01:00 UTC of the day of the host (`-rtc base=`), and keeps the difference to the clock of the host: a check of a date of the machine takes the difference off before it compares by order. So the default `auto` gives the dark appearance in each picture of a test, whatever the hour of the host, and a run of six hours stays in the night.
 - **The test of `auto` cannot choose the hour, and need not.** The process `settings` writes the time that the rule read with the appearance that it gave: "the appearance in force is dark: auto, light from 07:00 to 19:00 of the local time; the local time is 01:04 with a zone of 0 s, at 1794791040 s since 1970". The step `Appearance_Auto` of the tool checks the date by order against the clock that it gave the machine, then calls the same rule over that date and that zone, and compares the two appearances. A zone of `+08:00` moves the local time of the test machine into the day: the same step then checks the light appearance in the line of `settings` ([time_zone.md](time_zone.md)).
 - **A frame and the event.** A window can draw a frame between the new page and the event `Settings_Changed`. The read of each frame makes that frame whole, so the event then draws a whole frame of the same appearance: one more frame, never a mix.
+- **Two readers of one change.** The event and the frame both apply the page; whichever comes first makes the change. The number of the changes, compared at each frame, gives one whole frame whatever the order. Several changes between two frames are one whole frame.
 - **The track is not a surface for a concept.** In the light appearance a concept at its light shade has about 3.6 to 1 on the track. No rule draws a concept as a text there; a process that did would fail the contrast.
 
 ## State

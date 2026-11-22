@@ -2036,6 +2036,47 @@ whole_window_next_forgets_each_picture :: proc(t: ^testing.T) {
 	testing.expect(t, !drawing.debts.known[0] && !drawing.debts.known[1])
 }
 
+// A change of the text settings that another reader took first (next_event
+// applies the page before the frame does) still makes the next frame of
+// each picture whole. A window whose frame saw no change kept the
+// background of the old appearance wherever no record covers its surface.
+@(test)
+a_change_of_the_text_settings_read_elsewhere_draws_the_window_whole :: proc(t: ^testing.T) {
+	saved := display.text_settings_generation
+	defer display.text_settings_generation = saved
+
+	// No change since the last frame: the pictures stay known.
+	drawing: Window_Drawing
+	display.text_settings_generation = 0
+	drawing.debts.known = {true, true}
+	testing.expect(t, !text_settings_follow(&drawing))
+	testing.expect(t, drawing.debts.known[0] && drawing.debts.known[1])
+
+	// One change, read before the frame: both pictures are drawn whole.
+	display.text_settings_generation = 1
+	testing.expect(t, text_settings_follow(&drawing))
+	testing.expect(t, !drawing.debts.known[0] && !drawing.debts.known[1])
+	testing.expect_value(t, drawing.text_settings_generation, u64(1))
+
+	// The same change is followed once: the next frame keeps its pictures.
+	drawing.debts.known = {true, true}
+	testing.expect(t, !text_settings_follow(&drawing))
+	testing.expect(t, drawing.debts.known[0] && drawing.debts.known[1])
+
+	// Several changes between two frames are one whole frame.
+	display.text_settings_generation = 5
+	testing.expect(t, text_settings_follow(&drawing))
+	testing.expect(t, !text_settings_follow(&drawing))
+
+	// The number wraps past its largest value: a change is still a change.
+	display.text_settings_generation = max(u64)
+	testing.expect(t, text_settings_follow(&drawing))
+	display.text_settings_generation += 1
+	drawing.debts.known = {true, true}
+	testing.expect(t, text_settings_follow(&drawing))
+	testing.expect(t, !drawing.debts.known[0] && !drawing.debts.known[1])
+}
+
 // The records of a table as a list of their texts: has_text says if one
 // record draws exactly this text.
 @(private = "file")

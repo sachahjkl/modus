@@ -67,6 +67,26 @@ Window_Drawing :: struct {
 	// (appearance_presented_note).
 	appearance_presented:       graphics.Appearance,
 	appearance_presented_known: bool,
+	// The text settings generation of the last frame that began
+	// (display.text_settings_generation). A frame whose number differs
+	// draws whole: no picture holds a part of another appearance or font.
+	text_settings_generation: u64,
+}
+
+// text_settings_follow makes the next frame of each picture whole when the
+// text settings of the process changed since the last frame of the window.
+// The number, not the answer of display.text_settings_apply: next_event
+// applies the new page before the frame does, and a window that reads its
+// events with next_event had no whole frame then, so the parts of its
+// surface that no record covers kept the background of the old appearance.
+// It gives true when the next frame is whole for that reason.
+text_settings_follow :: proc "contextless" (drawing: ^Window_Drawing) -> (changed: bool) {
+	if drawing.text_settings_generation == display.text_settings_generation {
+		return false
+	}
+	drawing.text_settings_generation = display.text_settings_generation
+	draw_whole_window_next(drawing)
+	return true
 }
 
 // appearance_presented_note writes one line when the window presents its
@@ -482,9 +502,8 @@ window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^dis
 	// `spleen`. Each picture then draws whole, so that no picture keeps a
 	// part of the other font or appearance
 	// (src/md/features/appearance.md).
-	if display.text_settings_apply() {
-		draw_whole_window_next(drawing)
-	}
+	_ = display.text_settings_apply()
+	_ = text_settings_follow(drawing)
 	if window != nil {
 		display.picture_begin(window)
 	}

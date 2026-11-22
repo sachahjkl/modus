@@ -1364,7 +1364,9 @@ cell_faces := [settings.Grid_Fit]text_rendering.Face {
 // that the outlines lack draws nothing, and graphics draws in Spleen.
 //
 // It gives true when the font, the order of the stripes, a face or the
-// appearance changed: the caller then draws its whole window.
+// appearance changed, and then moves text_settings_generation. A window
+// compares that number with the number of its last frame: the true of one
+// call goes to that caller only, and next_event calls it too.
 // interface.window_frame_begin calls it at each frame, as the drawing
 // module does at each draw. The event Settings_Changed alone is not
 // enough: the compositor tells only the windows that have a surface, and a
@@ -1394,5 +1396,15 @@ text_settings_apply :: proc "contextless" () -> (changed: bool) {
 	}
 	graphics.text_choice_set(font, order)
 	changed = changed || state.font != font_before || state.order != order_before || state.cell_face != cells_before || state.bold_face != bold_before
+	if changed {
+		text_settings_generation += 1
+	}
 	return changed
 }
+
+// The count of the changes of the text settings that text_settings_apply
+// made in this process: the appearance, the font, the order of the stripes
+// and the faces. A drawer that keeps pixels between frames keeps the number
+// of its last frame, and draws whole when the number moved, whoever read
+// the change (interface.window_frame_begin).
+text_settings_generation: u64

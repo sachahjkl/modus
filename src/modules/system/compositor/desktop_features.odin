@@ -193,7 +193,9 @@ desktop_notifications_records :: proc "contextless" (table: ^interface.Draw_Tabl
 		case .Critical:
 			rail_color = graphics.colors.stop_process
 		}
-		// Kernel-theme card plate: subtle vertical gradient, 1px specular top edge, clean dark border.
+		// A card plate: the gradient of the cards, a line of light under its
+		// top edge and a border of the track. The title is the strong text:
+		// white on the dark card, black on the white one.
 		interface.draw_vertical_gradient(table, x, y, NOTIFICATION_BANNER_WIDTH, NOTIFICATION_BANNER_HEIGHT, graphics.colors.card_top, graphics.colors.card_bottom)
 		interface.draw_outline(table, x, y, NOTIFICATION_BANNER_WIDTH, NOTIFICATION_BANNER_HEIGHT, 1, graphics.colors.track)
 		interface.draw_rectangle(table, x + 1, y + 1, NOTIFICATION_BANNER_WIDTH - 2, 1, graphics.shade(graphics.colors.card_top, 125))
@@ -205,12 +207,12 @@ desktop_notifications_records :: proc "contextless" (table: ^interface.Draw_Tabl
 		title_str := string(item.title[:item.title_len])
 		title_fit := interface.text_fit(table, interface.FONT_INTERFACE, title_str, text_room)
 		if item.body_len > 0 {
-			interface.draw_text(table, text_x, y + 12, title_fit, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+			interface.draw_text(table, text_x, y + 12, title_fit, graphics.colors.text_strong, interface.FONT_INTERFACE)
 			body_str := string(item.body[:item.body_len])
 			body_fit := interface.text_fit(table, interface.FONT_INTERFACE, body_str, text_room)
 			interface.draw_text(table, text_x, y + 34, body_fit, graphics.colors.dim, interface.FONT_INTERFACE)
 		} else {
-			interface.draw_text(table, text_x, y + (NOTIFICATION_BANNER_HEIGHT - graphics.CELL_HEIGHT) / 2, title_fit, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+			interface.draw_text(table, text_x, y + (NOTIFICATION_BANNER_HEIGHT - graphics.CELL_HEIGHT) / 2, title_fit, graphics.colors.text_strong, interface.FONT_INTERFACE)
 		}
 		shown += 1
 	}
@@ -379,7 +381,7 @@ desktop_taskbar_preview_records :: proc "contextless" (table: ^interface.Draw_Ta
 	interface.draw_outline(table, left, y, TASKBAR_PREVIEW_WIDTH, height, 1, graphics.colors.title)
 	interface.draw_rectangle(table, left + 1, y + 1, TASKBAR_PREVIEW_WIDTH - 2, 1, graphics.shade(graphics.colors.card_top, 135))
 	bar.icon_records(table, left + 8, y + 5, bar.icon_of(group.name), graphics.colors.text, graphics.colors.title)
-	interface.draw_text(table, left + 8 + bar.ICON_SIZE + 6, y + 5, group.title, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+	interface.draw_text(table, left + 8 + bar.ICON_SIZE + 6, y + 5, group.title, graphics.colors.text_strong, interface.FONT_INTERFACE)
 	interface.draw_rectangle(table, left + 1, y + TASKBAR_PREVIEW_TITLE - 1, TASKBAR_PREVIEW_WIDTH - 2, 1, graphics.colors.track)
 	row := 0
 	for position in 0 ..< order_count {
@@ -536,7 +538,12 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 			}
 		}
 		hovered := slot == taskbar_hover_slot && menu_open == .None
-		foreground := any_focus ? graphics.COLOR_WHITE : (all_minimized ? graphics.colors.dim : graphics.colors.text)
+		// The plate in front is a step lighter than the bar: white text
+		// reads on the steel plate of the dark appearance and vanishes on
+		// the white plate of the light one, so the text is the strong text.
+		// The light blue of the accent vanishes there too.
+		foreground := any_focus ? graphics.colors.text_strong : (all_minimized ? graphics.colors.dim : graphics.colors.text)
+		focus_accent := graphics.appearance == .Dark ? graphics.shade(graphics.colors.title, 160) : graphics.colors.title
 		if any_focus {
 			// The group of the window in front: a raised steel plate, a line
 			// of light under its top edge, and an accent of 2 pixels at its foot.
@@ -554,7 +561,7 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 			// A group of minimized windows: no plate, a quiet line at its foot.
 			interface.draw_rectangle(table, x + 10, y + height - 2, width - 20, 1, graphics.colors.dim)
 		}
-		bar.icon_records(table, x + bar.PADDING, y + (height - bar.ICON_SIZE) / 2, client.icon, foreground, any_focus ? graphics.shade(graphics.colors.title, 160) : graphics.colors.title)
+		bar.icon_records(table, x + bar.PADDING, y + (height - bar.ICON_SIZE) / 2, client.icon, foreground, any_focus ? focus_accent : graphics.colors.title)
 		text_x := x + bar.PADDING + bar.ICON_SIZE + 6
 		count_room := same_count > 1 ? 16 : 0
 		fit := interface.text_fit(table, interface.FONT_INTERFACE, name, x + width - bar.PADDING - count_room - text_x)

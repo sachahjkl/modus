@@ -1460,9 +1460,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// compositor tells only a window with a surface, and this window
 		// can read the page before the boot pass of `settings` and make its
 		// surface after it. A change then draws the whole window, as the
-		// event does.
-		if display.text_settings_apply() {
-			interface.draw_whole_window_next(&drawing)
+		// event does. The number of the changes, not the answer of the
+		// call: next_event applies the page too, before this turn sees it.
+		_ = display.text_settings_apply()
+		if interface.text_settings_follow(&drawing) {
 			dirty = true
 		}
 		for event in display.next_event(&window) {

@@ -78,6 +78,83 @@ the_rules_keep_their_contrast_in_each_appearance :: proc(t: ^testing.T) {
 	}
 }
 
+// darker_than says if the first color has less luminance than the second.
+@(private = "file")
+darker_than :: proc(first, second: Color) -> bool {
+	return relative_luminance_ppm(first) < relative_luminance_ppm(second)
+}
+
+// The surfaces that lie over the desktop (a menu, a dialog) take their
+// shadow, their edge and their recess from the tokens. In the light
+// appearance none of them is a near black box around a light card: the
+// shadow stays near the background, the edge keeps 3 to 1 as a graphic, and
+// the recess keeps the text readable. In the dark appearance each keeps the
+// shade that the desktop drew before it was a token.
+@(test)
+the_surfaces_over_the_desktop_follow_the_appearance :: proc(t: ^testing.T) {
+	dark, light := color_tokens_of(.Dark), color_tokens_of(.Light)
+	testing.expect_value(t, dark.shadow, shade(DARK_BACKGROUND, 55))
+	testing.expect_value(t, dark.edge, shade(DARK_BACKGROUND, 50))
+	testing.expect_value(t, dark.recess, shade(DARK_CARD_BOTTOM, 80))
+	for of in Appearance {
+		tokens := color_tokens_of(of)
+		// A shadow and an edge are darker than the surfaces that they frame.
+		for surface in ([?]Color{tokens.card_top, tokens.card_bottom}) {
+			testing.expectf(t, darker_than(tokens.shadow, surface), "%v appearance: the shadow %06x is not darker than the card %06x", of, u32(tokens.shadow), u32(surface))
+			testing.expectf(t, darker_than(tokens.edge, surface), "%v appearance: the edge %06x is not darker than the card %06x", of, u32(tokens.edge), u32(surface))
+		}
+		// Text on the recess, as on a card.
+		expect_contrast(t, of, "the text on the recess", tokens.text, tokens.recess, TEXT_CONTRAST_LEAST)
+		expect_contrast(t, of, "the strong text on the recess", tokens.text_strong, tokens.recess, TEXT_CONTRAST_LEAST)
+		// The strong text is the title of a card over the desktop: a
+		// notification, the preview of a plate, the asker of the powerbox.
+		for surface in ([?]Color{tokens.card_top, tokens.card_bottom, tokens.track}) {
+			expect_contrast(t, of, "the strong text on a card", tokens.text_strong, surface, TEXT_CONTRAST_LEAST)
+		}
+	}
+	// The light edge is a graphic on the background and on a card.
+	for surface in ([?]Color{light.background, light.card_top, light.card_bottom}) {
+		expect_contrast(t, .Light, "the edge", light.edge, surface, GRAPHIC_CONTRAST_LEAST)
+	}
+	// The light shadow is a depth, not a black box: lighter than the edge,
+	// and under 2 to 1 on the background.
+	testing.expect(t, darker_than(light.edge, light.shadow))
+	testing.expectf(t, value_contrast_ratio(light.shadow, light.background) < 2.0, "the light shadow %06x has %.2f to 1 on the background: a box, not a depth", u32(light.shadow), value_contrast_ratio(light.shadow, light.background))
+	// White is never the text of a card of the light appearance: it has
+	// no contrast on its white.
+	testing.expect(t, value_contrast_ratio(COLOR_WHITE, light.card_top) < LARGE_TEXT_CONTRAST_LEAST)
+}
+
+// The border of a card is darker at the bottom in both appearances, and
+// in the light appearance it is a tint of the accent, never the near black
+// of the dark rule (the dark rule on a white card is a black frame).
+@(test)
+the_border_of_a_card_follows_the_appearance :: proc(t: ^testing.T) {
+	light := color_tokens_of(.Light)
+	accents := [?]Color{DARK_KERNEL, DARK_PROCESS, DARK_FAILED, light.kernel, light.warning, COLOR_BLACK, COLOR_WHITE}
+	for accent in accents {
+		dark_top, dark_bottom := card_border_colors(accent, .Dark)
+		testing.expect_value(t, dark_top, shade(accent, 28))
+		testing.expect_value(t, dark_bottom, shade(accent, 14))
+		light_top, light_bottom := card_border_colors(accent, .Light)
+		testing.expect_value(t, light_top, mix(COLOR_WHITE, accent, 40 * 255 / 100))
+		testing.expect_value(t, light_bottom, mix(COLOR_WHITE, accent, 55 * 255 / 100))
+		// The edges of the range: black and white give no darker bottom.
+		if accent != COLOR_WHITE && accent != COLOR_BLACK {
+			testing.expectf(t, darker_than(dark_bottom, dark_top), "the dark border of %06x is not darker at the bottom", u32(accent))
+			testing.expectf(t, darker_than(light_bottom, light_top), "the light border of %06x is not darker at the bottom", u32(accent))
+		}
+	}
+	// Each concept that titles a card: its light border is far from the
+	// near black of the dark rule.
+	for accent in ([?]Color{light.kernel, light.process, light.memory, light.firmware, light.machine, light.failed, light.warning}) {
+		top, bottom := card_border_colors(accent, .Light)
+		near_black, _ := card_border_colors(accent, .Dark)
+		testing.expectf(t, value_contrast_ratio(top, light.card_top) < value_contrast_ratio(near_black, light.card_top), "the light border %06x is as heavy as the dark rule", u32(top))
+		testing.expectf(t, value_contrast_ratio(bottom, light.card_top) < 4.5, "the light border %06x of %06x is a dark frame", u32(bottom), u32(accent))
+	}
+}
+
 // The text of the light appearance is the ink that the dark appearance has
 // as its background: the two are one color of the rules, and the text on a
 // fill of white has it in both.

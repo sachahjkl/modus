@@ -74,12 +74,12 @@ windows_button_records :: proc "contextless" (table: ^interface.Draw_Table) {
 }
 
 // menu_card_records appends the card of a menu of the bar: a sharp shadow
-// on its side away from the bar, a dark border, the gradient of the cards
-// and a line of light under its top edge. The shadow never falls on the
-// bar.
+// on its side away from the bar, a border of the edge, the gradient of the
+// cards and a line of light under its top edge. The shadow never falls on
+// the bar.
 menu_card_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width, height: int) {
 	SHADOW :: 3
-	shadow := graphics.shade(graphics.colors.background, 45)
+	shadow := graphics.colors.shadow
 	interface.draw_rectangle(table, x + width, y + SHADOW, SHADOW, height - SHADOW, shadow)
 	switch bar_layout.edge {
 	case .Top:
@@ -87,7 +87,7 @@ menu_card_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, wid
 	case .Bottom:
 		// The menu ends on the bar: its shadow is on its right side only.
 	}
-	interface.draw_rectangle(table, x, y, width, height, graphics.shade(graphics.colors.title_end, 70))
+	interface.draw_rectangle(table, x, y, width, height, graphics.colors.edge)
 	interface.draw_vertical_gradient(table, x + bar.BORDER, y + bar.BORDER, width - 2 * bar.BORDER, height - 2 * bar.BORDER, graphics.colors.card_top, graphics.colors.card_bottom)
 	interface.draw_rectangle(table, x + bar.BORDER, y + bar.BORDER, width - 2 * bar.BORDER, 1, graphics.shade(graphics.colors.card_top, 135))
 }
@@ -210,7 +210,16 @@ windows_menu_records :: proc "contextless" (table: ^interface.Draw_Table) {
 		}
 		text_y := line_y + (line_height - graphics.CELL_HEIGHT) / 2
 		title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(clients[index].title[:]), room)
-		title_end := interface.draw_text(table, line_x + bar.WINDOWS_TITLE_X, text_y, title, focus || chosen ? graphics.COLOR_WHITE : color, interface.FONT_INTERFACE)
+		// The window in front has more weight than the others: the strong
+		// text on the card, white only on the chosen blue.
+		title_color := color
+		if focus {
+			title_color = graphics.colors.text_strong
+		}
+		if chosen {
+			title_color = graphics.COLOR_WHITE
+		}
+		title_end := interface.draw_text(table, line_x + bar.WINDOWS_TITLE_X, text_y, title, title_color, interface.FONT_INTERFACE)
 		if clients[index].from_disk {
 			// A value, in the font of the cells at the caption size,
 			// faded, on the baseline of the nickname: the name is the
