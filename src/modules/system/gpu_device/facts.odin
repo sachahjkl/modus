@@ -9,6 +9,7 @@ import "modus:contract/value_kinds"
 
 FAILURE_FIELD_BYTES :: 96
 REQUEST_FIELD_BYTES :: 32
+REASON_FIELD_BYTES :: 64
 
 // The service stops on a fatal device or contract failure.
 @(log_fact = "gpu_device: {failure}")
@@ -31,6 +32,24 @@ Device_Ready :: struct {
 Venus_Probed :: struct {
 	max_version: u64,
 	max_size:    u64,
+}
+
+// The service created its Venus context. A ring that is not mapped has the
+// cache 0; a context with no ring blob has the ring resource 0.
+@(log_fact = "gpu_device: venus context {context_id} ready for vk.xml {vk_xml_version}, ring resource {ring_resource_id}, mapped {ring_mapped} with the cache {ring_cache}")
+Venus_Context_Ready :: struct {
+	context_id:       u64,
+	vk_xml_version:   u64,
+	ring_resource_id: u64,
+	ring_mapped:      u64,
+	ring_cache:       u64,
+}
+
+// A device with a 3D feature carries no Venus: the service keeps its 2D
+// scanout only.
+@(log_fact = "gpu_device: 2D scanout only, {reason}")
+Venus_Unavailable :: struct {
+	reason: [64]u8,
 }
 
 // A client framebuffer was bound to a 2D scanout resource.
@@ -66,6 +85,8 @@ Request_Refused :: struct {
 #assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
 #assert(size_of(Device_Silent) == 8 + REQUEST_FIELD_BYTES)
 #assert(size_of(Request_Refused) == 8 + REQUEST_FIELD_BYTES)
+#assert(size_of(Venus_Context_Ready) == 5 * 8)
+#assert(size_of(Venus_Unavailable) == REASON_FIELD_BYTES)
 
 request_field :: proc "contextless" (name: string) -> [REQUEST_FIELD_BYTES]u8 {
 	return value_kinds.text_field(name, REQUEST_FIELD_BYTES)

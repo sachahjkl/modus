@@ -342,7 +342,15 @@ The design: `docs/ARCHITECTURE.md`, "U4. Device services".
 
 Do not use: paravirtual device.
 
-### Device model
+### Venus
+
+Venus is the serialization of Vulkan commands that Mesa and virglrenderer define, which the virtual GPU of the test machine carries to the Vulkan of the host.
+
+A Venus command is its type, its flags, then the parameters of the Vulkan call in order; an object travels as an id that the sender chooses. The GPU device service creates one Venus context when the device announces the Venus capset, and sends the commands in `Submit_3D` packets. `src/library/modus/contract/venus_vulkan` holds the encoder and the decoder. Venus is not a Vulkan driver: the host runs the driver.
+
+The design: `src/md/features/gpu_access.md`, "The chosen form: a driver domain, with one serialization".
+
+Do not use: virgl, Vulkan forwarding.
 
 A device model is the code outside the system that plays a device for a machine: QEMU for the test machine, the code of the page for a browser machine.
 

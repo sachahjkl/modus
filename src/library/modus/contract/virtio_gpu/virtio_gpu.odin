@@ -1,7 +1,9 @@
 // The contract of a VirtIO-GPU 1.2 device (VIRTIO 1.2, section 5.7): control
-// queue headers, 2D scanout lifecycle commands, Venus context and command
-// stream framing, strict border decoding into closed enumerations, and the
-// client service ring protocol for the GPU device service.
+// queue headers, 2D scanout lifecycle commands, the 3D context, capability set
+// and blob resource commands that carry Venus, strict border decoding into
+// closed enumerations, and the client service ring protocol for the GPU
+// device service. The command words and the layouts follow the Linux header
+// include/uapi/linux/virtio_gpu.h.
 //
 // All wire integers are little-endian. This package allocates no memory and
 // calls no kernel operation.
@@ -52,12 +54,21 @@ MEM_ENTRY_SIZE :: 16
 MAX_BACKING_ENTRIES :: 256
 GET_CAPSET_INFO_SIZE :: CTRL_HEADER_SIZE + 8
 RESP_CAPSET_INFO_SIZE :: CTRL_HEADER_SIZE + 16
+GET_CAPSET_SIZE :: CTRL_HEADER_SIZE + 8
+MAX_CAPSET_DATA_BYTES :: 4096
 CTX_CREATE_NAME_BYTES :: 64
 CTX_CREATE_SIZE :: CTRL_HEADER_SIZE + 8 + CTX_CREATE_NAME_BYTES
 CTX_DESTROY_SIZE :: CTRL_HEADER_SIZE
+CTX_RESOURCE_SIZE :: CTRL_HEADER_SIZE + 8
 RESOURCE_CREATE_BLOB_SIZE :: CTRL_HEADER_SIZE + 32
-SUBMIT_3D_HEADER_SIZE :: CTRL_HEADER_SIZE + 4
+RESOURCE_MAP_BLOB_SIZE :: CTRL_HEADER_SIZE + 16
+RESP_MAP_INFO_SIZE :: CTRL_HEADER_SIZE + 8
+RESOURCE_UNMAP_BLOB_SIZE :: CTRL_HEADER_SIZE + 8
+SUBMIT_3D_HEADER_SIZE :: CTRL_HEADER_SIZE + 8
 MAX_SUBMIT_3D_BYTES :: 65536
+// The host maps a blob at a page boundary of its host-visible region.
+MAP_BLOB_OFFSET_ALIGNMENT :: 4096
+MAP_INFO_CACHE_MASK :: u32(0x0000_000F)
 MAX_RESOURCE_DIMENSION :: 16384
 CONTEXT_INIT_CAPSET_ID_MASK :: u32(0x0000_00FF)
 
@@ -74,8 +85,10 @@ Command_Type :: enum u32 {
 	Resource_Detach_Backing          = 0x0107,
 	Get_Capset_Info                  = 0x0108,
 	Get_Capset                       = 0x0109,
-	Resource_Create_Blob             = 0x010B,
-	Set_Scanout_Blob                 = 0x010C,
+	Get_Edid                         = 0x010A,
+	Resource_Assign_Uuid             = 0x010B,
+	Resource_Create_Blob             = 0x010C,
+	Set_Scanout_Blob                 = 0x010D,
 
 	// 3D and Venus context commands.
 	Ctx_Create                       = 0x0200,
@@ -86,12 +99,21 @@ Command_Type :: enum u32 {
 	Transfer_To_Host_3D              = 0x0205,
 	Transfer_From_Host_3D            = 0x0206,
 	Submit_3D                        = 0x0207,
+	Resource_Map_Blob                = 0x0208,
+	Resource_Unmap_Blob              = 0x0209,
+
+	// Cursor commands.
+	Update_Cursor                    = 0x0300,
+	Move_Cursor                      = 0x0301,
 
 	// Success responses.
 	Response_Ok_Nodata               = 0x1100,
 	Response_Ok_Display_Info         = 0x1101,
 	Response_Ok_Capset_Info          = 0x1102,
 	Response_Ok_Capset               = 0x1103,
+	Response_Ok_Edid                 = 0x1104,
+	Response_Ok_Resource_Uuid        = 0x1105,
+	Response_Ok_Map_Info             = 0x1106,
 
 	// Error responses.
 	Response_Err_Unspec              = 0x1200,
@@ -119,6 +141,26 @@ Capset_Id :: enum u32 {
 	Gfxstream    = 3,
 	Venus        = 4,
 	Cross_Domain = 5,
+	Drm          = 6,
+}
+
+// The cache type of a mapped blob, in the low four bits of map_info
+// (VIRTIO_GPU_MAP_CACHE_*). The kernel maps the host-visible pages with it.
+Map_Cache :: enum u32 {
+	None           = 0,
+	Cached         = 1,
+	Uncached       = 2,
+	Write_Combined = 3,
+}
+
+// Whether a device can carry Venus, or the first missing part. The GPU device
+// service keeps its 2D scanout in every case.
+Venus_Support :: enum u8 {
+	Available,
+	No_Virgl_Feature,
+	No_Resource_Blob_Feature,
+	No_Context_Init_Feature,
+	No_Venus_Capset,
 }
 
 // Bits of Ctrl_Header.flags (VIRTIO 1.2, section 5.7.6.7).
@@ -167,19 +209,29 @@ Validation_Problem :: enum u8 {
 	Backing_Address_Overflow,
 	Name_Too_Long,
 	Zero_Blob_Size,
+	Blob_Entries_Invalid,
 	Submit_Size_Invalid,
 	Unexpected_Response_Type,
 	Non_Zero_Padding,
 	Device_Error_Response,
+	Capset_Data_Too_Large,
+	Misaligned_Offset,
+	Unknown_Map_Cache,
 }
 
 // Commands carried on the client service ring of the GPU device service.
+// Venus_Info answers: 0 the Venus context exists, 1 the capset max version,
+// 2 the capset max size, 3 the Venus_Support word, 4 the context id, 5 the
+// vk.xml version of the host, 6 the resource id of the ring blob.
+// Venus_Submit takes: 0 a memory handle with the right Read, 1 the byte
+// offset of the Venus stream in it, 2 its byte length; it answers the length.
 Service_Command :: enum u32 {
 	None               = 0,
 	Display_Info       = 1,
 	Attach_Framebuffer = 2,
 	Present_Rect       = 3,
-	Probe_Venus        = 4,
+	Venus_Info         = 4,
+	Venus_Submit       = 5,
 }
 
 // Completion status words of the client service ring of the GPU device service.
@@ -305,6 +357,44 @@ Submit_3D_Frame :: struct {
 	payload: []u8,
 }
 
+// Decoded Get_Capset command.
+Get_Capset_Request :: struct {
+	header:         Ctrl_Header,
+	capset_id:      Capset_Id,
+	capset_version: u32,
+}
+
+// Decoded Response_Ok_Capset: the header and a slice over the capset bytes.
+Capset_Response :: struct {
+	header: Ctrl_Header,
+	data:   []u8,
+}
+
+// Decoded Ctx_Attach_Resource or Ctx_Detach_Resource command.
+Ctx_Resource_Request :: struct {
+	header:      Ctrl_Header,
+	resource_id: u32,
+}
+
+// Decoded Resource_Map_Blob command.
+Resource_Map_Blob_Request :: struct {
+	header:      Ctrl_Header,
+	resource_id: u32,
+	offset:      u64,
+}
+
+// Decoded Response_Ok_Map_Info payload.
+Map_Info_Response :: struct {
+	header: Ctrl_Header,
+	cache:  Map_Cache,
+}
+
+// Decoded Resource_Unmap_Blob command.
+Resource_Unmap_Blob_Request :: struct {
+	header:      Ctrl_Header,
+	resource_id: u32,
+}
+
 // command_type_of_word is the one border from a wire word to Command_Type.
 command_type_of_word :: proc "contextless" (word: u32) -> (command_type: Command_Type, ok: bool) {
 	return enum_word.member_of_word(Command_Type, u64(word))
@@ -318,6 +408,33 @@ pixel_format_of_word :: proc "contextless" (word: u32) -> (format: Pixel_Format,
 // capset_id_of_word is the one border from a wire word to Capset_Id.
 capset_id_of_word :: proc "contextless" (word: u32) -> (capset: Capset_Id, ok: bool) {
 	return enum_word.member_of_word(Capset_Id, u64(word))
+}
+
+// map_cache_of_word is the one border from a map_info word to Map_Cache. The
+// bits above the cache mask are reserved and refused.
+map_cache_of_word :: proc "contextless" (word: u32) -> (cache: Map_Cache, ok: bool) {
+	if word & ~MAP_INFO_CACHE_MASK != 0 {
+		return .None, false
+	}
+	return enum_word.member_of_word(Map_Cache, u64(word))
+}
+
+// venus_support_check says whether the offered feature word and the probed
+// capability sets let the service create a Venus context.
+venus_support_check :: proc "contextless" (offered_features: u32, venus_capset_reported: bool) -> Venus_Support {
+	if offered_features & (1 << FEATURE_VIRGL) == 0 {
+		return .No_Virgl_Feature
+	}
+	if offered_features & (1 << FEATURE_RESOURCE_BLOB) == 0 {
+		return .No_Resource_Blob_Feature
+	}
+	if offered_features & (1 << FEATURE_CONTEXT_INIT) == 0 {
+		return .No_Context_Init_Feature
+	}
+	if !venus_capset_reported {
+		return .No_Venus_Capset
+	}
+	return .Available
 }
 
 // blob_memory_of_word is the one border from a wire word to Blob_Memory.
@@ -366,6 +483,8 @@ command_type_is_error :: proc "contextless" (command_type: Command_Type) -> bool
 	     .Resource_Detach_Backing,
 	     .Get_Capset_Info,
 	     .Get_Capset,
+	     .Get_Edid,
+	     .Resource_Assign_Uuid,
 	     .Resource_Create_Blob,
 	     .Set_Scanout_Blob,
 	     .Ctx_Create,
@@ -376,10 +495,17 @@ command_type_is_error :: proc "contextless" (command_type: Command_Type) -> bool
 	     .Transfer_To_Host_3D,
 	     .Transfer_From_Host_3D,
 	     .Submit_3D,
+	     .Resource_Map_Blob,
+	     .Resource_Unmap_Blob,
+	     .Update_Cursor,
+	     .Move_Cursor,
 	     .Response_Ok_Nodata,
 	     .Response_Ok_Display_Info,
 	     .Response_Ok_Capset_Info,
-	     .Response_Ok_Capset:
+	     .Response_Ok_Capset,
+	     .Response_Ok_Edid,
+	     .Response_Ok_Resource_Uuid,
+	     .Response_Ok_Map_Info:
 		return false
 	case .Response_Err_Unspec,
 	     .Response_Err_Out_Of_Memory,
@@ -1111,6 +1237,332 @@ ctx_destroy_encode :: proc "contextless" (ctx_id: u32, destination: []u8, fence_
 	return ctrl_header_encode(Ctrl_Header{command_type = .Ctx_Destroy, flags = flags, fence_id = fence_id, ctx_id = ctx_id}, destination)
 }
 
+// ctx_destroy_decode validates and decodes a 24-byte Ctx_Destroy command.
+ctx_destroy_decode :: proc "contextless" (source: []u8) -> (header: Ctrl_Header, problem: Validation_Problem) {
+	header, problem = ctrl_header_decode(source)
+	if problem != .None {
+		return {}, problem
+	}
+	if header.command_type != .Ctx_Destroy {
+		return {}, .Unexpected_Response_Type
+	}
+	if header.ctx_id == 0 {
+		return {}, .Zero_Context_Id
+	}
+	return header, .None
+}
+
+// ctx_attach_resource_encode writes a Ctx_Attach_Resource command (32 bytes):
+// the context ctx_id gains access to the resource.
+ctx_attach_resource_encode :: proc "contextless" (ctx_id, resource_id: u32, destination: []u8, fence_id: u64 = 0) -> (written: int, problem: Validation_Problem) {
+	return ctx_resource_encode(.Ctx_Attach_Resource, ctx_id, resource_id, destination, fence_id)
+}
+
+// ctx_detach_resource_encode writes a Ctx_Detach_Resource command (32 bytes).
+ctx_detach_resource_encode :: proc "contextless" (ctx_id, resource_id: u32, destination: []u8, fence_id: u64 = 0) -> (written: int, problem: Validation_Problem) {
+	return ctx_resource_encode(.Ctx_Detach_Resource, ctx_id, resource_id, destination, fence_id)
+}
+
+@(private = "file")
+ctx_resource_encode :: proc "contextless" (command_type: Command_Type, ctx_id, resource_id: u32, destination: []u8, fence_id: u64) -> (written: int, problem: Validation_Problem) {
+	if ctx_id == 0 {
+		return 0, .Zero_Context_Id
+	}
+	if resource_id == 0 {
+		return 0, .Zero_Resource_Id
+	}
+	if len(destination) < CTX_RESOURCE_SIZE {
+		return 0, .Buffer_Too_Short
+	}
+	flags := Header_Flags{}
+	if fence_id != 0 {
+		flags = {.Fence}
+	}
+	_, problem = ctrl_header_encode(Ctrl_Header{command_type = command_type, flags = flags, fence_id = fence_id, ctx_id = ctx_id}, destination)
+	if problem != .None {
+		return 0, problem
+	}
+	byte_order.write_u32_little_endian(destination, 24, resource_id)
+	byte_order.write_u32_little_endian(destination, 28, 0)
+	return CTX_RESOURCE_SIZE, .None
+}
+
+// ctx_resource_decode validates a Ctx_Attach_Resource or Ctx_Detach_Resource command.
+ctx_resource_decode :: proc "contextless" (source: []u8) -> (request: Ctx_Resource_Request, problem: Validation_Problem) {
+	if len(source) < CTX_RESOURCE_SIZE {
+		return {}, .Buffer_Too_Short
+	}
+	header, header_problem := ctrl_header_decode(source)
+	if header_problem != .None {
+		return {}, header_problem
+	}
+	if header.command_type != .Ctx_Attach_Resource && header.command_type != .Ctx_Detach_Resource {
+		return {}, .Unexpected_Response_Type
+	}
+	if header.ctx_id == 0 {
+		return {}, .Zero_Context_Id
+	}
+	resource_id := byte_order.read_u32_little_endian(source, 24)
+	if resource_id == 0 {
+		return {}, .Zero_Resource_Id
+	}
+	if byte_order.read_u32_little_endian(source, 28) != 0 {
+		return {}, .Non_Zero_Padding
+	}
+	return Ctx_Resource_Request{header = header, resource_id = resource_id}, .None
+}
+
+// get_capset_encode writes a Get_Capset command (32 bytes) that asks for the
+// bytes of one capability set at one version.
+get_capset_encode :: proc "contextless" (capset_id: Capset_Id, capset_version: u32, destination: []u8, fence_id: u64 = 0) -> (written: int, problem: Validation_Problem) {
+	if _, capset_ok := capset_id_of_word(u32(capset_id)); !capset_ok {
+		return 0, .Unknown_Capset_Id
+	}
+	if len(destination) < GET_CAPSET_SIZE {
+		return 0, .Buffer_Too_Short
+	}
+	flags := Header_Flags{}
+	if fence_id != 0 {
+		flags = {.Fence}
+	}
+	_, problem = ctrl_header_encode(Ctrl_Header{command_type = .Get_Capset, flags = flags, fence_id = fence_id}, destination)
+	if problem != .None {
+		return 0, problem
+	}
+	byte_order.write_u32_little_endian(destination, 24, u32(capset_id))
+	byte_order.write_u32_little_endian(destination, 28, capset_version)
+	return GET_CAPSET_SIZE, .None
+}
+
+// get_capset_decode validates and decodes a Get_Capset command.
+get_capset_decode :: proc "contextless" (source: []u8) -> (request: Get_Capset_Request, problem: Validation_Problem) {
+	if len(source) < GET_CAPSET_SIZE {
+		return {}, .Buffer_Too_Short
+	}
+	header, header_problem := ctrl_header_decode(source)
+	if header_problem != .None {
+		return {}, header_problem
+	}
+	if header.command_type != .Get_Capset {
+		return {}, .Unexpected_Response_Type
+	}
+	capset_id, capset_ok := capset_id_of_word(byte_order.read_u32_little_endian(source, 24))
+	if !capset_ok {
+		return {}, .Unknown_Capset_Id
+	}
+	return Get_Capset_Request{
+		header         = header,
+		capset_id      = capset_id,
+		capset_version = byte_order.read_u32_little_endian(source, 28),
+	}, .None
+}
+
+// capset_response_encode writes a Response_Ok_Capset: the header, then the
+// capset bytes. The device writes it; the tests use it.
+capset_response_encode :: proc "contextless" (header: Ctrl_Header, data: []u8, destination: []u8) -> (written: int, problem: Validation_Problem) {
+	if len(data) > MAX_CAPSET_DATA_BYTES {
+		return 0, .Capset_Data_Too_Large
+	}
+	total_bytes := CTRL_HEADER_SIZE + len(data)
+	if len(destination) < total_bytes {
+		return 0, .Buffer_Too_Short
+	}
+	response_header := header
+	response_header.command_type = .Response_Ok_Capset
+	_, problem = ctrl_header_encode(response_header, destination)
+	if problem != .None {
+		return 0, problem
+	}
+	copy(destination[CTRL_HEADER_SIZE:total_bytes], data)
+	return total_bytes, .None
+}
+
+// capset_response_decode validates a Response_Ok_Capset and returns a slice
+// over its bytes. The length comes from the used length of the device.
+capset_response_decode :: proc "contextless" (source: []u8) -> (response: Capset_Response, problem: Validation_Problem) {
+	header, header_problem := ctrl_header_decode(source)
+	if header_problem != .None {
+		return {}, header_problem
+	}
+	if command_type_is_error(header.command_type) {
+		return Capset_Response{header = header}, .Device_Error_Response
+	}
+	if header.command_type != .Response_Ok_Capset {
+		return {}, .Unexpected_Response_Type
+	}
+	if len(source) - CTRL_HEADER_SIZE > MAX_CAPSET_DATA_BYTES {
+		return {}, .Capset_Data_Too_Large
+	}
+	return Capset_Response{header = header, data = source[CTRL_HEADER_SIZE:]}, .None
+}
+
+// resource_map_blob_encode writes a Resource_Map_Blob command (40 bytes): the
+// device maps the blob at offset in its host-visible memory region.
+resource_map_blob_encode :: proc "contextless" (resource_id: u32, offset: u64, destination: []u8, fence_id: u64 = 0) -> (written: int, problem: Validation_Problem) {
+	if resource_id == 0 {
+		return 0, .Zero_Resource_Id
+	}
+	if offset % MAP_BLOB_OFFSET_ALIGNMENT != 0 {
+		return 0, .Misaligned_Offset
+	}
+	if len(destination) < RESOURCE_MAP_BLOB_SIZE {
+		return 0, .Buffer_Too_Short
+	}
+	flags := Header_Flags{}
+	if fence_id != 0 {
+		flags = {.Fence}
+	}
+	_, problem = ctrl_header_encode(Ctrl_Header{command_type = .Resource_Map_Blob, flags = flags, fence_id = fence_id}, destination)
+	if problem != .None {
+		return 0, problem
+	}
+	byte_order.write_u32_little_endian(destination, 24, resource_id)
+	byte_order.write_u32_little_endian(destination, 28, 0)
+	byte_order.write_u64_little_endian(destination, 32, offset)
+	return RESOURCE_MAP_BLOB_SIZE, .None
+}
+
+// resource_map_blob_decode validates and decodes a Resource_Map_Blob command.
+resource_map_blob_decode :: proc "contextless" (source: []u8) -> (request: Resource_Map_Blob_Request, problem: Validation_Problem) {
+	if len(source) < RESOURCE_MAP_BLOB_SIZE {
+		return {}, .Buffer_Too_Short
+	}
+	header, header_problem := ctrl_header_decode(source)
+	if header_problem != .None {
+		return {}, header_problem
+	}
+	if header.command_type != .Resource_Map_Blob {
+		return {}, .Unexpected_Response_Type
+	}
+	resource_id := byte_order.read_u32_little_endian(source, 24)
+	if resource_id == 0 {
+		return {}, .Zero_Resource_Id
+	}
+	if byte_order.read_u32_little_endian(source, 28) != 0 {
+		return {}, .Non_Zero_Padding
+	}
+	offset := byte_order.read_u64_little_endian(source, 32)
+	if offset % MAP_BLOB_OFFSET_ALIGNMENT != 0 {
+		return {}, .Misaligned_Offset
+	}
+	return Resource_Map_Blob_Request{header = header, resource_id = resource_id, offset = offset}, .None
+}
+
+// map_info_response_encode writes a Response_Ok_Map_Info (32 bytes).
+map_info_response_encode :: proc "contextless" (response: Map_Info_Response, destination: []u8) -> (written: int, problem: Validation_Problem) {
+	if _, cache_ok := map_cache_of_word(u32(response.cache)); !cache_ok {
+		return 0, .Unknown_Map_Cache
+	}
+	if len(destination) < RESP_MAP_INFO_SIZE {
+		return 0, .Buffer_Too_Short
+	}
+	header := response.header
+	header.command_type = .Response_Ok_Map_Info
+	_, problem = ctrl_header_encode(header, destination)
+	if problem != .None {
+		return 0, problem
+	}
+	byte_order.write_u32_little_endian(destination, 24, u32(response.cache))
+	byte_order.write_u32_little_endian(destination, 28, 0)
+	return RESP_MAP_INFO_SIZE, .None
+}
+
+// map_info_response_decode validates a Response_Ok_Map_Info and its cache type.
+map_info_response_decode :: proc "contextless" (source: []u8) -> (response: Map_Info_Response, problem: Validation_Problem) {
+	header, header_problem := ctrl_header_decode(source)
+	if header_problem != .None {
+		return {}, header_problem
+	}
+	if command_type_is_error(header.command_type) {
+		return Map_Info_Response{header = header}, .Device_Error_Response
+	}
+	if header.command_type != .Response_Ok_Map_Info {
+		return {}, .Unexpected_Response_Type
+	}
+	if len(source) < RESP_MAP_INFO_SIZE {
+		return {}, .Buffer_Too_Short
+	}
+	cache, cache_ok := map_cache_of_word(byte_order.read_u32_little_endian(source, 24))
+	if !cache_ok {
+		return {}, .Unknown_Map_Cache
+	}
+	if byte_order.read_u32_little_endian(source, 28) != 0 {
+		return {}, .Non_Zero_Padding
+	}
+	return Map_Info_Response{header = header, cache = cache}, .None
+}
+
+// resource_unmap_blob_encode writes a Resource_Unmap_Blob command (32 bytes).
+resource_unmap_blob_encode :: proc "contextless" (resource_id: u32, destination: []u8, fence_id: u64 = 0) -> (written: int, problem: Validation_Problem) {
+	if resource_id == 0 {
+		return 0, .Zero_Resource_Id
+	}
+	if len(destination) < RESOURCE_UNMAP_BLOB_SIZE {
+		return 0, .Buffer_Too_Short
+	}
+	flags := Header_Flags{}
+	if fence_id != 0 {
+		flags = {.Fence}
+	}
+	_, problem = ctrl_header_encode(Ctrl_Header{command_type = .Resource_Unmap_Blob, flags = flags, fence_id = fence_id}, destination)
+	if problem != .None {
+		return 0, problem
+	}
+	byte_order.write_u32_little_endian(destination, 24, resource_id)
+	byte_order.write_u32_little_endian(destination, 28, 0)
+	return RESOURCE_UNMAP_BLOB_SIZE, .None
+}
+
+// resource_unmap_blob_decode validates and decodes a Resource_Unmap_Blob command.
+resource_unmap_blob_decode :: proc "contextless" (source: []u8) -> (request: Resource_Unmap_Blob_Request, problem: Validation_Problem) {
+	if len(source) < RESOURCE_UNMAP_BLOB_SIZE {
+		return {}, .Buffer_Too_Short
+	}
+	header, header_problem := ctrl_header_decode(source)
+	if header_problem != .None {
+		return {}, header_problem
+	}
+	if header.command_type != .Resource_Unmap_Blob {
+		return {}, .Unexpected_Response_Type
+	}
+	resource_id := byte_order.read_u32_little_endian(source, 24)
+	if resource_id == 0 {
+		return {}, .Zero_Resource_Id
+	}
+	if byte_order.read_u32_little_endian(source, 28) != 0 {
+		return {}, .Non_Zero_Padding
+	}
+	return Resource_Unmap_Blob_Request{header = header, resource_id = resource_id}, .None
+}
+
+// blob_rules_check refuses the blob forms that the device cannot honour: a
+// blob of host memory belongs to a 3D context and has no guest pages, and a
+// blob of guest memory needs its guest pages.
+@(private = "file")
+blob_rules_check :: proc "contextless" (ctx_id: u32, blob_memory: Blob_Memory, entry_count: u32) -> Validation_Problem {
+	switch blob_memory {
+	case .Host3D:
+		if ctx_id == 0 {
+			return .Zero_Context_Id
+		}
+		if entry_count != 0 {
+			return .Blob_Entries_Invalid
+		}
+	case .Host3D_Guest:
+		if ctx_id == 0 {
+			return .Zero_Context_Id
+		}
+		if entry_count == 0 {
+			return .Blob_Entries_Invalid
+		}
+	case .Guest:
+		if entry_count == 0 {
+			return .Blob_Entries_Invalid
+		}
+	}
+	return .None
+}
+
 // resource_create_blob_encode validates and writes a Resource_Create_Blob command (56 bytes).
 resource_create_blob_encode :: proc "contextless" (
 	ctx_id: u32,
@@ -1135,6 +1587,9 @@ resource_create_blob_encode :: proc "contextless" (
 	}
 	if entry_count > MAX_BACKING_ENTRIES {
 		return 0, .Too_Many_Backing_Entries
+	}
+	if problem = blob_rules_check(ctx_id, blob_memory, entry_count); problem != .None {
+		return 0, problem
 	}
 	if size == 0 {
 		return 0, .Zero_Blob_Size
@@ -1187,6 +1642,9 @@ resource_create_blob_decode :: proc "contextless" (source: []u8) -> (request: Re
 	if entry_count > MAX_BACKING_ENTRIES {
 		return {}, .Too_Many_Backing_Entries
 	}
+	if rules_problem := blob_rules_check(header.ctx_id, blob_memory, entry_count); rules_problem != .None {
+		return {}, rules_problem
+	}
 	blob_id := byte_order.read_u64_little_endian(source, 40)
 	size := byte_order.read_u64_little_endian(source, 48)
 	if size == 0 {
@@ -1203,6 +1661,32 @@ resource_create_blob_decode :: proc "contextless" (source: []u8) -> (request: Re
 	}, .None
 }
 
+// submit_3d_header_encode writes the 32-byte Submit_3D header for a command
+// stream of payload_bytes that the caller places right after it. A caller that
+// encodes the stream in place uses it, and copies nothing.
+submit_3d_header_encode :: proc "contextless" (ctx_id: u32, payload_bytes: int, destination: []u8, fence_id: u64 = 0) -> (written: int, problem: Validation_Problem) {
+	if ctx_id == 0 {
+		return 0, .Zero_Context_Id
+	}
+	if payload_bytes <= 0 || payload_bytes > MAX_SUBMIT_3D_BYTES || payload_bytes % 4 != 0 {
+		return 0, .Submit_Size_Invalid
+	}
+	if len(destination) < SUBMIT_3D_HEADER_SIZE {
+		return 0, .Buffer_Too_Short
+	}
+	flags := Header_Flags{}
+	if fence_id != 0 {
+		flags = {.Fence}
+	}
+	_, problem = ctrl_header_encode(Ctrl_Header{command_type = .Submit_3D, flags = flags, fence_id = fence_id, ctx_id = ctx_id}, destination)
+	if problem != .None {
+		return 0, problem
+	}
+	byte_order.write_u32_little_endian(destination, 24, u32(payload_bytes))
+	byte_order.write_u32_little_endian(destination, 28, 0)
+	return SUBMIT_3D_HEADER_SIZE, .None
+}
+
 // submit_3d_encode frames a 32-bit word-aligned Venus or 3D command stream
 // inside a Submit_3D control queue packet.
 submit_3d_encode :: proc "contextless" (ctx_id: u32, command_stream: []u8, destination: []u8, fence_id: u64 = 0) -> (written: int, problem: Validation_Problem) {
@@ -1216,15 +1700,10 @@ submit_3d_encode :: proc "contextless" (ctx_id: u32, command_stream: []u8, desti
 	if len(destination) < total_bytes {
 		return 0, .Buffer_Too_Short
 	}
-	flags := Header_Flags{}
-	if fence_id != 0 {
-		flags = {.Fence}
-	}
-	_, problem = ctrl_header_encode(Ctrl_Header{command_type = .Submit_3D, flags = flags, fence_id = fence_id, ctx_id = ctx_id}, destination)
+	_, problem = submit_3d_header_encode(ctx_id, len(command_stream), destination, fence_id)
 	if problem != .None {
 		return 0, problem
 	}
-	byte_order.write_u32_little_endian(destination, 24, u32(len(command_stream)))
 	copy(destination[SUBMIT_3D_HEADER_SIZE:total_bytes], command_stream)
 	return total_bytes, .None
 }
@@ -1245,6 +1724,9 @@ submit_3d_decode :: proc "contextless" (source: []u8) -> (frame: Submit_3D_Frame
 		return {}, .Zero_Context_Id
 	}
 	payload_size := byte_order.read_u32_little_endian(source, 24)
+	if byte_order.read_u32_little_endian(source, 28) != 0 {
+		return {}, .Non_Zero_Padding
+	}
 	if payload_size == 0 || payload_size > MAX_SUBMIT_3D_BYTES || payload_size % 4 != 0 {
 		return {}, .Submit_Size_Invalid
 	}
