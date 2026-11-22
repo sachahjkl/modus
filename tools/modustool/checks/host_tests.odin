@@ -301,6 +301,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_PUBLIC + "/calendar",
 	foundation.SOURCE_FOLDER_PUBLIC + "/line_editor",
 	foundation.SOURCE_FOLDER_PUBLIC + "/console_language",
+	foundation.SOURCE_FOLDER_INTERNAL + "/c_compiler/program_files",
 	foundation.SOURCE_FOLDER_INTERNAL + "/debugger/debugging",
 	foundation.LIBRARY_MODULE_SOURCES + "interface_module",
 	foundation.LIBRARY_MODULE_SOURCES + "drawing",
