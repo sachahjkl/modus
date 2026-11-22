@@ -732,7 +732,9 @@ history_reader_peek_into :: proc "contextless" (reader: ^History_Reader, scratch
 	if !kind_ok || parsed_kind == .None {
 		return {}, .None, nil, 0, false, false
 	}
-	if record_header.point_number <= reader.last_point || record_header.payload_bytes > MAX_RECORD_PAYLOAD_BYTES {
+	// The largest point is refused too: the point after it, which a reader
+	// names at a damaged record, would wrap to 0.
+	if record_header.point_number <= reader.last_point || record_header.point_number == max(u64) || record_header.payload_bytes > MAX_RECORD_PAYLOAD_BYTES {
 		return {}, .None, nil, 0, false, false
 	}
 	padded_payload := align_up_record(u64(record_header.payload_bytes))
@@ -786,7 +788,9 @@ history_reader_peek :: proc "contextless" (reader: ^History_Reader) -> (record_h
 	if !kind_ok || parsed_kind == .None {
 		return {}, .None, nil, 0, false, false
 	}
-	if record_header.point_number <= reader.last_point || record_header.payload_bytes > MAX_RECORD_PAYLOAD_BYTES {
+	// The largest point is refused too: the point after it, which a reader
+	// names at a damaged record, would wrap to 0.
+	if record_header.point_number <= reader.last_point || record_header.point_number == max(u64) || record_header.payload_bytes > MAX_RECORD_PAYLOAD_BYTES {
 		return {}, .None, nil, 0, false, false
 	}
 	padded_payload := align_up_record(u64(record_header.payload_bytes))
@@ -971,9 +975,11 @@ replay_end_check :: proc "contextless" (has_recorded: bool, recorded_kind: Histo
 	return {.None, 0, 0}
 }
 
-// The most stand-in mappings of one replay: one for each shared mapping of
-// the record.
-STAND_IN_MAPPING_CAPACITY :: 32
+// The most stand-in mappings of one replay: one for each page that the
+// kernel keeps for one record (a point copy or a shared page), so a record
+// whose pages are each a mapping of their own can still be replayed. The
+// kernel checks this sum against its own capacities.
+STAND_IN_MAPPING_CAPACITY :: 96
 // The most pages of all the stand-in mappings of one replay: the point copies
 // and the shared pages that the kernel keeps for one record.
 STAND_IN_PAGE_LIMIT :: u64(96)
@@ -985,6 +991,7 @@ Stand_In_Mapping :: struct {
 	page_count:      u64,
 	access:          Shared_Mapping_Access,
 	place:           u32, // What backs the pages, for the owner of the set: the memory object in the kernel.
+	place_serial:    u64, // The serial of that place when it was added: a place used again later is another object.
 }
 
 // The stand-in mappings of one replay. They never overlap, so a page names at
@@ -1022,14 +1029,38 @@ stand_in_mapping_set_admits :: proc "contextless" (set: ^Stand_In_Mapping_Set, e
 // that backs it. Refused: a range that meets one of the set, a full set,
 // pages past STAND_IN_PAGE_LIMIT, an access None. On a refusal the set is
 // unchanged.
-stand_in_mapping_set_add :: proc "contextless" (set: ^Stand_In_Mapping_Set, entry: Shared_Mapping_Payload, access: Shared_Mapping_Access, place: u32) -> bool {
+stand_in_mapping_set_add :: proc "contextless" (set: ^Stand_In_Mapping_Set, entry: Shared_Mapping_Payload, access: Shared_Mapping_Access, place: u32, place_serial: u64 = 0) -> bool {
 	if access == .None || !stand_in_mapping_set_admits(set, entry) {
 		return false
 	}
-	set.mappings[set.count] = {virtual_address = entry.virtual_address, page_count = entry.page_count, access = access, place = place}
+	set.mappings[set.count] = {virtual_address = entry.virtual_address, page_count = entry.page_count, access = access, place = place, place_serial = place_serial}
 	set.count += 1
 	set.page_count += entry.page_count
 	return true
+}
+
+// stand_in_mapping_set_remove removes each stand-in mapping backed by
+// place, when the replay unmapped it: a later delta at its addresses finds
+// no stand-in mapping, and a place that serves again names nothing of the
+// set. It gives the count of the mappings that it removed; the order of the
+// others does not count.
+stand_in_mapping_set_remove :: proc "contextless" (set: ^Stand_In_Mapping_Set, place: u32) -> (removed: int) {
+	if set == nil {
+		return 0
+	}
+	index := 0
+	for index < set.count {
+		if set.mappings[index].place != place {
+			index += 1
+			continue
+		}
+		set.page_count -= set.mappings[index].page_count
+		set.count -= 1
+		set.mappings[index] = set.mappings[set.count]
+		set.mappings[set.count] = {}
+		removed += 1
+	}
+	return removed
 }
 
 // stand_in_mapping_set_find gives the stand-in mapping that holds the page at
@@ -1063,7 +1094,8 @@ Divergence_Report :: struct {
 // at the point of the divergence. found is false when the history did not
 // end with a divergence. ok is false when the header or a record before
 // that point fails the border: a report from a damaged history could name
-// a record that is not the one the replay read. scratch holds one record:
+// a record that is not the one the replay read. A record that fails the
+// border at that point gives the report of the header with no record. scratch holds one record:
 // at least MAX_RECORD_PAYLOAD_BYTES bytes.
 divergence_report_of_history :: proc "contextless" (buffer: []u8, scratch: []u8) -> (report: Divergence_Report, found: bool, ok: bool) {
 	reader, opened := history_reader_open(buffer)
@@ -1084,6 +1116,13 @@ divergence_report_of_history :: proc "contextless" (buffer: []u8, scratch: []u8)
 	for {
 		record_header, record_kind, _, has_more, read_ok := history_reader_next_into(&reader, scratch)
 		if !read_ok {
+			// A damaged record at or past the point is the record that the
+			// replay could not read, as Missing_Record says: the header
+			// holds the report, and no record is named. A damaged record
+			// before the point refuses the report.
+			if history_reader_next_point(&reader) >= report.point {
+				return report, true, true
+			}
 			return {}, false, false
 		}
 		if !has_more || record_header.point_number > report.point {

@@ -901,3 +901,141 @@ divergence_report_of_history_edges :: proc(t: ^testing.T) {
 	_, found, ok = divergence_report_of_history(buffer, scratch)
 	testing.expect(t, !ok && !found)
 }
+
+// The capacity of the set is one stand-in mapping for each page that the
+// kernel keeps for a record: 96 one-page mappings fit, the 97th does not,
+// and a removal makes room again. Each entry keeps the serial of its place.
+@(test)
+stand_in_mapping_set_holds_96_and_removes_by_place :: proc(t: ^testing.T) {
+	testing.expect_value(t, STAND_IN_MAPPING_CAPACITY, 96)
+	testing.expect_value(t, STAND_IN_PAGE_LIMIT, u64(96))
+	set := new(Stand_In_Mapping_Set)
+	defer free(set)
+	page := HISTORY_PAGE_SIZE
+	for slot in 0 ..< STAND_IN_MAPPING_CAPACITY {
+		testing.expect(t, stand_in_mapping_set_add(set, {virtual_address = 0x40_0000 + u64(slot) * 2 * page, page_count = 1}, .Read_Write, u32(100 + slot), u64(1000 + slot)))
+	}
+	testing.expect_value(t, set.count, 96)
+	testing.expect_value(t, set.page_count, u64(96))
+	before := set^
+	testing.expect(t, !stand_in_mapping_set_add(set, {virtual_address = 0x100_0000, page_count = 1}, .Read, 999, 1))
+	testing.expect(t, set^ == before)
+
+	found, _, ok := stand_in_mapping_set_find(set, 0x40_0000 + 10 * 2 * page)
+	testing.expect(t, ok)
+	testing.expect_value(t, found.place, u32(110))
+	testing.expect_value(t, found.place_serial, u64(1010))
+
+	// A place that names nothing removes nothing.
+	testing.expect_value(t, stand_in_mapping_set_remove(set, 7), 0)
+	testing.expect_value(t, stand_in_mapping_set_remove(nil, 110), 0)
+	testing.expect(t, set^ == before)
+	// The removal of a place: its addresses find nothing, the others stay,
+	// and the set takes one more mapping.
+	testing.expect_value(t, stand_in_mapping_set_remove(set, 110), 1)
+	testing.expect_value(t, set.count, 95)
+	testing.expect_value(t, set.page_count, u64(95))
+	_, _, ok = stand_in_mapping_set_find(set, 0x40_0000 + 10 * 2 * page)
+	testing.expect(t, !ok)
+	for slot in 0 ..< STAND_IN_MAPPING_CAPACITY {
+		if slot == 10 {
+			continue
+		}
+		found, _, ok = stand_in_mapping_set_find(set, 0x40_0000 + u64(slot) * 2 * page)
+		testing.expect(t, ok && found.place == u32(100 + slot) && found.place_serial == u64(1000 + slot))
+	}
+	testing.expect(t, stand_in_mapping_set_add(set, {virtual_address = 0x100_0000, page_count = 1}, .Read, 999, 1))
+	testing.expect_value(t, set.count, 96)
+
+	// Two mappings of one place both leave; the last entry of the set leaves too.
+	two := new(Stand_In_Mapping_Set)
+	defer free(two)
+	testing.expect(t, stand_in_mapping_set_add(two, {virtual_address = 0x40_0000, page_count = 2}, .Read, 5, 1))
+	testing.expect(t, stand_in_mapping_set_add(two, {virtual_address = 0x50_0000, page_count = 1}, .Read, 6, 2))
+	testing.expect(t, stand_in_mapping_set_add(two, {virtual_address = 0x60_0000, page_count = 3}, .Read, 5, 1))
+	testing.expect_value(t, stand_in_mapping_set_remove(two, 5), 2)
+	testing.expect_value(t, two.count, 1)
+	testing.expect_value(t, two.page_count, u64(1))
+	testing.expect_value(t, two.mappings[0].place, u32(6))
+	testing.expect_value(t, stand_in_mapping_set_remove(two, 6), 1)
+	testing.expect_value(t, two.count, 0)
+	testing.expect_value(t, two.page_count, u64(0))
+}
+
+// A record with the largest input point is refused: the point after it,
+// which a reader names at a damaged record, would wrap to 0. The point
+// below it is accepted.
+@(test)
+reader_refuses_the_largest_point :: proc(t: ^testing.T) {
+	buffer: [4096]u8
+	writer, ok := history_writer_init(buffer[:], {}, 1, 0, 3)
+	testing.expect(t, ok)
+	testing.expect(t, history_writer_append_cycle_counter(&writer, 0x40_1000, 0x7000, {cycles = 5}))
+	scratch := make([]u8, MAX_RECORD_PAYLOAD_BYTES)
+	defer delete(scratch)
+	first := size_of(History_Header)
+
+	for point, accepted in ([?]u64{max(u64) - 1, max(u64)}) {
+		edited := buffer
+		(^History_Record_Header)(&edited[first])^.point_number = point
+		reader, opened := history_reader_open(edited[:])
+		testing.expect(t, opened)
+		record_header, _, _, has_more, read_ok := history_reader_next_into(&reader, scratch)
+		if accepted == 0 {
+			testing.expect(t, read_ok && has_more)
+			testing.expect_value(t, record_header.point_number, max(u64) - 1)
+			testing.expect_value(t, history_reader_next_point(&reader), max(u64))
+		} else {
+			testing.expect(t, !read_ok && !has_more)
+			testing.expect_value(t, reader.read_offset, u64(0))
+			testing.expect_value(t, history_reader_next_point(&reader), u64(1))
+			plain, plain_opened := history_reader_open(edited[:])
+			testing.expect(t, plain_opened)
+			_, _, _, _, plain_ok := history_reader_next(&plain)
+			testing.expect(t, !plain_ok)
+		}
+	}
+}
+
+// A replay that stopped at a damaged record (Missing_Record at the point of
+// that record) keeps the report of its header: the point, the kind and the
+// values, with no record named. A record past the point that is damaged
+// changes nothing either.
+@(test)
+divergence_report_at_a_damaged_record_keeps_the_header :: proc(t: ^testing.T) {
+	buffer := make([]u8, 65536)
+	defer delete(buffer)
+	scratch := make([]u8, MAX_RECORD_PAYLOAD_BYTES)
+	defer delete(scratch)
+	simulated_record(t, buffer)
+	// A delta of round 2 with a reserved word: the replay stops there.
+	offset, delta_point, _ := find_record(buffer, .Page_Delta, 5)
+	(^Page_Delta_Header)(&buffer[offset])^.reserved = 1
+	result, point, _ := simulated_replay(t, buffer, .Same)
+	testing.expect_value(t, result.divergence, Divergence_Kind.Missing_Record)
+	testing.expect_value(t, point, delta_point)
+	testing.expect(t, history_header_record_end(buffer, .Divergence, result.divergence, point, 0, 0))
+
+	report, found, ok := divergence_report_of_history(buffer, scratch)
+	testing.expect(t, ok && found)
+	testing.expect_value(t, report.kind, Divergence_Kind.Missing_Record)
+	testing.expect_value(t, report.point, delta_point)
+	testing.expect_value(t, report.recorded_kind, History_Record_Kind.None)
+	testing.expect_value(t, report.recorded_instruction_address, u64(0))
+
+	// A divergence at an earlier point, before the damaged record: its
+	// record is read, as the damage comes after it.
+	_, carrier_point, _ := find_record(buffer, .Kernel_Completion, 2)
+	testing.expect(t, carrier_point < delta_point)
+	testing.expect(t, history_header_record_end(buffer, .Divergence, .Unexpected_Arguments, carrier_point, 3, 4))
+	report, found, ok = divergence_report_of_history(buffer, scratch)
+	testing.expect(t, ok && found)
+	testing.expect_value(t, report.recorded_kind, History_Record_Kind.Kernel_Completion)
+	testing.expect_value(t, report.recorded_instruction_address, SIMULATED_CHECKSUM_ADDRESS)
+
+	// A divergence one point past the damaged record: the damage comes
+	// before it, so the report is refused.
+	testing.expect(t, history_header_record_end(buffer, .Divergence, .Unexpected_Arguments, delta_point + 1, 3, 4))
+	_, found, ok = divergence_report_of_history(buffer, scratch)
+	testing.expect(t, !ok && !found)
+}

@@ -49,6 +49,18 @@ Record_Session :: struct {
 	replay_process: system.Handle,
 	replay_slot:    u64,
 	replay_serial:  u64,
+	// The first divergence of the last replay, read once from the history
+	// when its header says that the replay diverged: the kernel writes that
+	// end once, and a replay_status() then reads no record again.
+	divergence_read:   Divergence_Read,
+	divergence_report: input_history.Divergence_Report,
+}
+
+// Whether the service read the first divergence of the last replay.
+Divergence_Read :: enum u8 {
+	Not_Read = 0, // No replay diverged since the last replay began.
+	Read     = 1, // divergence_report holds it.
+	Damaged  = 2, // A record before its point failed the border: only the header shows the point.
 }
 
 record_session: Record_Session
@@ -230,9 +242,19 @@ record_row_fill :: proc "contextless" (row: ^Record_Row) -> bool {
 	row^ = {points = i64(header.point_count), bytes = i64(header.written_bytes), capacity = i64(header.capacity_bytes), checkpoints = i64(record_session.checkpoints.count)}
 	if end == .Divergence {
 		row.divergence = i64(min(header.divergence_point, u64(max(i64))))
-		// The first divergence in full. A history whose records before that
-		// point fail the border shows the point from its header only.
-		if report, found, report_ok := input_history.divergence_report_of_history(record_session.bytes, divergence_record_scratch[:]); report_ok && found {
+		// The first divergence in full, once the replay ended: while a new
+		// replay runs, the header still holds the end of the one before. A
+		// history whose records before that point fail the border shows the
+		// point from its header only.
+		if record_session.state == .Replayed && record_session.divergence_read == .Not_Read {
+			report, found, report_ok := input_history.divergence_report_of_history(record_session.bytes, divergence_record_scratch[:])
+			record_session.divergence_read = report_ok && found ? .Read : .Damaged
+			record_session.divergence_report = report
+		}
+		switch record_session.divergence_read {
+		case .Not_Read, .Damaged:
+		case .Read:
+			report := record_session.divergence_report
 			system.format(row.differed[:], divergence_kind_names[report.kind])
 			hex_column(row.expected[:], report.expected)
 			hex_column(row.actual[:], report.actual)
@@ -370,6 +392,9 @@ replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.E
 	record_session.replay_process = handle
 	record_session.replay_slot = slot
 	record_session.replay_serial = process_serial
+	// The report of a replay before this one no longer holds.
+	record_session.divergence_read = .Not_Read
+	record_session.divergence_report = {}
 	record_session.state = .Replaying
 	return 0
 }

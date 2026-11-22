@@ -40,6 +40,10 @@ RECORD_COPY_SCRATCH_BYTES :: 8192
 REPLAY_RECORD_SCRATCH_BYTES :: size_of(input_history.Kernel_Completion_Payload) + RECORD_COPY_SCRATCH_BYTES
 
 #assert(REPLAY_RECORD_SCRATCH_BYTES >= input_history.PAGE_DELTA_MAX_BYTES)
+// A replay maps a stand-in mapping for each mapping that a record names, and
+// a record names at most one for each point copy and each shared page.
+#assert(input_history.STAND_IN_MAPPING_CAPACITY == POINT_COPY_CAPACITY + SHARED_PAGE_CAPACITY)
+#assert(input_history.STAND_IN_PAGE_LIMIT == u64(POINT_COPY_CAPACITY + SHARED_PAGE_CAPACITY))
 #assert(REPLAY_RECORD_SCRATCH_BYTES >= size_of(input_history.Cycle_Counter_Payload))
 #assert(REPLAY_RECORD_SCRATCH_BYTES >= size_of(input_history.Cpuid_Payload))
 #assert(REPLAY_RECORD_SCRATCH_BYTES >= size_of(input_history.History_End_Payload))
@@ -508,6 +512,10 @@ record_replay_on_unmap :: proc "contextless" (process_index: u32, region_index: 
 		return
 	}
 	intrinsics.atomic_sub(&regions[region_index].recorded_mappings, 1)
+	// A stand-in mapping that the replay unmaps ends: its memory object
+	// can serve again, for another process, and a later delta there is a
+	// divergence.
+	_ = input_history.stand_in_mapping_set_remove(&rec.stand_ins, region_index)
 	if rec.point_copy_count == 0 {
 		return
 	}
@@ -779,6 +787,7 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		// the time page (cycle_frequency, cycle_start), of the context and of
 		// the shared pages.
 		if !replay_head_apply_locked(processor_self(), target_index) {
+			replay_stand_in_mappings_unmap(target_index)
 			point_copies_teardown(target_index, rec)
 			intrinsics.mem_zero(rec, size_of(Process_Record_State))
 			region_release(region_index)
@@ -1191,10 +1200,11 @@ replay_page_delta_apply_locked :: proc "contextless" (process_index: u32, payloa
 	}
 	if target_frame == 0 {
 		if stand_in, _, found := input_history.stand_in_mapping_set_find(&rec.stand_ins, delta_header.virtual_address); found {
-			// The stand-in mapping stays while the replay runs: an unmap by the
-			// replay itself leaves its memory object to the mapping only, and
-			// a later delta there finds no mapping and is a divergence.
-			if mapping := mapping_at(&processes[process_index], delta_header.virtual_address); mapping != nil && mapping.region == stand_in.place && !mapping.large {
+			// The mapping there must still be the stand-in mapping: the same
+			// memory object, by its slot and its serial. An unmap removes it
+			// from the set (record_replay_on_unmap); the serial also keeps a
+			// slot that serves again from passing for it.
+			if mapping := mapping_at(&processes[process_index], delta_header.virtual_address); mapping != nil && mapping.region == stand_in.place && regions[mapping.region].serial == stand_in.place_serial && !mapping.large {
 				target_frame = region_frame(&regions[stand_in.place], mapping.first + (delta_header.virtual_address - mapping.address) / PAGE_SIZE, true)
 			}
 		}
@@ -1216,9 +1226,10 @@ replay_page_delta_apply_locked :: proc "contextless" (process_index: u32, payloa
 // place (replay_stand_in_mapping_add_locked), and each Page_Delta writes the
 // first bytes of a page. It stops at the first record of another kind.
 // false: a damaged record, a mapping that the replay cannot make, or a
-// delta with no page. The stand-in mappings that it made stay in the process,
-// which the replayer stops: a process that Replay_Start refused never
-// runs. Caller holds Control and process_index's process lock.
+// delta with no page. Its caller then unmaps the stand-in mappings that it
+// made (replay_stand_in_mappings_unmap): a process that Replay_Start
+// refused never runs, and keeps no page that the history paid. Caller
+// holds Control and process_index's process lock.
 @(private = "file")
 replay_head_apply_locked :: proc "contextless" (cpu: ^Processor, process_index: u32) -> bool {
 	rec := &process_records[process_index]
@@ -1265,7 +1276,9 @@ replay_stand_in_mapping_add_locked :: proc "contextless" (process_index: u32, en
 	if !input_history.stand_in_mapping_set_admits(&rec.stand_ins, entry) {
 		return false
 	}
-	region, created := region_create(regions[rec.history_region].budget, entry.page_count)
+	// The budget of the history pays: region_create reads it under the
+	// frame lock, as a release of that budget changes it there.
+	region, created := region_create(0, entry.page_count, budget_of_region = rec.history_region)
 	if created != .Ok {
 		return false
 	}
@@ -1284,7 +1297,25 @@ replay_stand_in_mapping_add_locked :: proc "contextless" (process_index: u32, en
 		region_release(region)
 		return false
 	}
-	return input_history.stand_in_mapping_set_add(&rec.stand_ins, entry, access, region)
+	return input_history.stand_in_mapping_set_add(&rec.stand_ins, entry, access, region, regions[region].serial)
+}
+
+// replay_stand_in_mappings_unmap unmaps each stand-in mapping of a replay
+// that Replay_Start refused: the process never runs, and its address space
+// keeps no page that the history paid. A mapping that is no longer the
+// stand-in mapping (another object, or the same slot with another serial)
+// stays. Caller holds Control and process_index's process lock.
+@(private = "file")
+replay_stand_in_mappings_unmap :: proc "contextless" (process_index: u32) {
+	rec := &process_records[process_index]
+	process := &processes[process_index]
+	for stand_in in rec.stand_ins.mappings[:rec.stand_ins.count] {
+		mapping := mapping_at(process, stand_in.virtual_address)
+		if mapping != nil && mapping.region == stand_in.place && regions[mapping.region].serial == stand_in.place_serial {
+			unmap(process, mapping)
+		}
+	}
+	rec.stand_ins = {}
 }
 
 // replay_record_point gives the input point of a divergence found at a
