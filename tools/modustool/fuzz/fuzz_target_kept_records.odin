@@ -2,6 +2,7 @@ package fuzz
 
 import "core:mem"
 import "core:slice"
+import "modus:contract/language_tag"
 import op "modus:contract/operation"
 import "modus:contract/settings"
 import "modus:disk_process"
@@ -20,8 +21,9 @@ import "modustool:foundation"
 // fuzz_kept_settings_execute reads the input as a kept record, as the text
 // of a zone, and as a settings page. The model of a record is read from
 // its bytes: a record of this size, magic, version and count is accepted
-// only when each value inside its count names a value of its setting; one
-// value that names nothing refuses the record whole. A refused record gives
+// only when each value inside its count names a value of its setting and
+// its language list passes language_list_valid; one value that names
+// nothing, or one damaged list, refuses the record whole. A refused record gives
 // the defaults; an accepted one gives its values, the default past its
 // count, and the valid zone, and kept_of of the choice reads again to the
 // same choice. A zone that zone_parse accepts is written and read again to
@@ -52,23 +54,32 @@ fuzz_kept_settings_execute :: proc(input: []u8) -> Fuzz_Verdict {
 			}
 		}
 	}
+	model_languages := settings.Language_List{locales = record.languages, count = record.language_count}
+	if model_ok {
+		if problem, _, _ := settings.language_list_valid(model_languages); problem != .None {
+			model_ok = false
+		}
+	}
 	if ok != model_ok {
 		return fuzz_broken(.Model, "kept_read gives ok %v, and the record has ok %v: a value of no member must refuse the whole record", ok, model_ok)
 	}
 	if !ok {
-		if settings.values_of(choice) != defaults || zone != 0 {
+		if settings.values_of(choice) != defaults || zone != 0 || choice.languages != (settings.Language_List{}) {
 			return fuzz_broken(.Contract, "kept_read refuses the record and gives values")
 		}
 	} else {
 		if settings.values_of(choice) != model_values {
 			return fuzz_broken(.Model, "kept_read gives the values %v of a record of the values %v", settings.values_of(choice), model_values)
 		}
+		if choice.languages != model_languages {
+			return fuzz_broken(.Model, "kept_read gives %d languages of a record of %d languages", choice.languages.count, record.language_count)
+		}
 		if zone != settings.zone_offset_minutes_valid(record.zone_offset_minutes) {
 			return fuzz_broken(.Contract, "kept_read gives the zone %d of a record of the zone %d", zone, record.zone_offset_minutes)
 		}
 		kept := settings.kept_of(choice, zone)
 		again_choice, again_zone, again_ok := settings.kept_read(mem.ptr_to_bytes(&kept))
-		if !again_ok || settings.values_of(again_choice) != settings.values_of(choice) || again_zone != zone {
+		if !again_ok || settings.values_of(again_choice) != settings.values_of(choice) || again_zone != zone || again_choice.languages != choice.languages {
 			return fuzz_broken(.Round_Trip, "the record of kept_of reads as %v, %d, %v", settings.values_of(again_choice), again_zone, again_ok)
 		}
 	}
@@ -92,9 +103,10 @@ fuzz_kept_settings_execute :: proc(input: []u8) -> Fuzz_Verdict {
 
 // fuzz_settings_page_check reads the start of an input as a settings page.
 // A page in a change is refused with the defaults and its count. A stable
-// page is accepted only when each value names a value of its setting and
-// the word of the appearance in force names one: one word that names
-// nothing refuses the whole page, with the defaults and its count. An
+// page is accepted only when each value names a value of its setting, the
+// word of the appearance in force names one, and its language list passes
+// language_list_valid: one word that names nothing, or one damaged list,
+// refuses the whole page, with the defaults and its count. An
 // accepted page gives its words as members, and a page written with the
 // choice reads again to it.
 @(private = "file")
@@ -119,6 +131,10 @@ fuzz_settings_page_check :: proc(input: []u8) -> Fuzz_Verdict {
 			model_ok = false
 		}
 	}
+	page_languages := settings.Language_List{locales = page.languages, count = page.language_count}
+	if problem, _, _ := settings.language_list_valid(page_languages); problem != .None {
+		model_ok = false
+	}
 	if ok != model_ok {
 		return fuzz_broken(.Model, "read gives ok %v, and the page has ok %v: a word of no member must refuse the whole page", ok, model_ok)
 	}
@@ -130,6 +146,9 @@ fuzz_settings_page_check :: proc(input: []u8) -> Fuzz_Verdict {
 	}
 	if choice.change_count != page.change_count {
 		return fuzz_broken(.Contract, "read gives the count %d of a page of the count %d", choice.change_count, page.change_count)
+	}
+	if choice.languages != page_languages {
+		return fuzz_broken(.Model, "read gives %d languages of a page of %d languages", choice.languages.count, page.language_count)
 	}
 	if settings.values_of(choice) != page_values {
 		return fuzz_broken(.Model, "read gives the values %v of a page of the values %v", settings.values_of(choice), page_values)
@@ -178,6 +197,24 @@ fuzz_kept_settings_seeds :: proc(seeds: ^[dynamic][]u8) {
 		kept.values[setting] = values[setting] + 1
 		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
 		kept.count = u32(setting)
+		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
+	}
+	// A record with a full language list, then the same list with one
+	// language past the capacity and with a language twice.
+	{
+		languages: settings.Language_List
+		for tag in ([?]string{"fr-CA", "fr", "en", "de", "es", "ja", "ar-EG-u-nu-latn", "zh-Hant-TW"}) {
+			locale, _, _ := language_tag.tag_read(tag)
+			languages, _ = settings.language_list_add(languages, locale)
+		}
+		with_languages := last
+		with_languages.languages = languages
+		kept := settings.kept_of(with_languages, 0)
+		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
+		kept.language_count = settings.LANGUAGE_LIST_CAPACITY + 1
+		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
+		kept.language_count = settings.LANGUAGE_LIST_CAPACITY
+		kept.languages[1] = kept.languages[0]
 		append(seeds, slice.clone(mem.ptr_to_bytes(&kept)))
 	}
 	// A record of another version, one byte short and one byte long.

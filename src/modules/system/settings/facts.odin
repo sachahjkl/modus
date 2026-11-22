@@ -213,6 +213,20 @@ Zone_Changed :: struct {
 	store: [32]u8,
 }
 
+// The bytes of the Text field of a language list: the canonical tags in
+// their order, joined by ", ", and a zero byte. A fact holds at most
+// op.LOG_FACT_VALUE_CAPACITY bytes, so a longer list gives the tags that
+// fit whole.
+LANGUAGES_FIELD_BYTES :: 112
+
+// A change of the language list, and what the store did with it.
+@(log_fact = "settings: languages {languages}; {store}")
+Languages_Changed :: struct {
+	languages: [112]u8,
+	store:     [32]u8,
+}
+#assert(size_of(Languages_Changed{}.languages) == LANGUAGES_FIELD_BYTES)
+
 // The test export repeat kept its records, one commit each.
 @(log_fact = "settings: kept {records} records, one commit each")
 Records_Repeated :: struct {
