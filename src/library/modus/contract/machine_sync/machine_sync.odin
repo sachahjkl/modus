@@ -7,6 +7,7 @@ package machine_sync
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/enum_word"
+import "modus:contract/object_cache"
 import "modus:contract/role_contract"
 
 HASH_BYTES :: 32
@@ -100,6 +101,8 @@ cross_grant_mac :: proc "contextless" (shared_secret: [32]u8, g: Cross_Machine_G
 
 // cross_grant_verify verifies peer/local machine identity, role enum border,
 // bounded expiry TTL, nonce replay exclusion, and constant-time MAC equality.
+// A full replay set refuses each new grant: a nonce that the set cannot
+// record could be replayed later.
 cross_grant_verify :: proc "contextless" (
 	shared_secret: [32]u8,
 	local_machine: [32]u8,
@@ -136,11 +139,102 @@ cross_grant_verify :: proc "contextless" (
 	if diff != 0 {
 		return false
 	}
-	if seen != nil && seen.count < MAX_SEEN_NONCES {
+	if seen != nil {
+		if seen.count < 0 || seen.count >= MAX_SEEN_NONCES {
+			return false
+		}
 		seen.nonces[seen.count] = g.grant_nonce
 		seen.count += 1
 	}
 	return true
+}
+
+// One object of an Object_Store: its hash and its place in the bytes.
+Stored_Object :: struct {
+	hash:   [HASH_BYTES]u8,
+	kind:   object_cache.Cache_Object_Kind,
+	offset: int,
+	length: int,
+}
+
+// A bounded store of objects that came from a paired machine, by hash. The
+// caller gives the rows and the bytes, so the store allocates nothing. It
+// never evicts: a full store refuses, and the caller fetches again later.
+Object_Store :: struct {
+	objects:    []Stored_Object,
+	bytes:      []u8,
+	count:      int,
+	bytes_used: int,
+}
+
+Object_Store_Status :: enum u8 {
+	Stored                = 1,
+	Already_Stored        = 2,
+	Refused_Nil_Input     = 3,
+	Refused_Hash_Mismatch = 4,
+	Refused_Malformed     = 5,
+	Refused_Full          = 6,
+	Refused_Too_Large     = 7,
+}
+
+object_store_init :: proc "contextless" (store: ^Object_Store, objects: []Stored_Object, bytes: []u8) -> bool {
+	if store == nil || len(objects) == 0 || len(bytes) == 0 {
+		return false
+	}
+	store^ = Object_Store{objects = objects, bytes = bytes}
+	return true
+}
+
+// object_store_lookup gives the bytes of the object with this hash.
+object_store_lookup :: proc "contextless" (store: ^Object_Store, hash: [HASH_BYTES]u8) -> (bytes: []u8, kind: object_cache.Cache_Object_Kind, found: bool) {
+	if store == nil || store.count < 0 || store.count > len(store.objects) {
+		return nil, {}, false
+	}
+	for index in 0 ..< store.count {
+		object := store.objects[index]
+		if object.hash == hash {
+			return store.bytes[object.offset:object.offset + object.length], object.kind, true
+		}
+	}
+	return nil, {}, false
+}
+
+// object_store_accept keeps the bytes that a paired machine sent for a
+// requested hash, only when they hash to it (BLAKE3 for a blob, the tree hash
+// for a tree). The hash is checked before any byte is copied, so a refused
+// object leaves the store unchanged.
+object_store_accept :: proc "contextless" (
+	store: ^Object_Store,
+	kind: object_cache.Cache_Object_Kind,
+	requested_hash: [HASH_BYTES]u8,
+	payload: []u8,
+) -> Object_Store_Status {
+	if store == nil || store.count < 0 || store.count > len(store.objects) || store.bytes_used < 0 || store.bytes_used > len(store.bytes) {
+		return .Refused_Nil_Input
+	}
+	switch object_cache.verify_object_content(kind, requested_hash, payload) {
+	case .Trust_By_Hash:
+	case .Refuse_Hash_Mismatch:
+		return .Refused_Hash_Mismatch
+	case .Trust_By_Signer, .Refuse_Untrusted_Signer, .Refuse_Bad_Signature, .Refuse_Malformed:
+		// An object by hash proves itself; any other answer is no proof.
+		return .Refused_Malformed
+	}
+	if _, _, found := object_store_lookup(store, requested_hash); found {
+		return .Already_Stored
+	}
+	if len(payload) > len(store.bytes) - store.bytes_used {
+		return .Refused_Too_Large
+	}
+	if store.count >= len(store.objects) {
+		return .Refused_Full
+	}
+	offset := store.bytes_used
+	copy(store.bytes[offset:offset + len(payload)], payload)
+	store.objects[store.count] = Stored_Object{hash = requested_hash, kind = kind, offset = offset, length = len(payload)}
+	store.count += 1
+	store.bytes_used += len(payload)
+	return .Stored
 }
 
 RELAY_HEADER_BYTES :: 36

@@ -15,7 +15,8 @@
 // start from its own generator (fill_for_a_key, the strength "processor" at
 // least). Its public key goes on the log and in the window: the host pins
 // it. A new start makes a new key. A seed weaker than "processor" makes no
-// key: the process says so, and listens on nothing.
+// key: the process says so, and listens on nothing. The public key is also
+// the machine identity of this start toward paired machines (mesh.odin).
 //
 // The key of the client: the handshake asks each client for its own
 // Ed25519 key, as a raw public key with its signature (mutual TLS 1.3), and
@@ -1044,6 +1045,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				system.wait_end(&wait, system.time() + 1000)
 			}
 		}
+	}
+	// The key of the service is the identity of this machine to its paired
+	// machines (mesh.odin).
+	mesh_error: errors.Error_Record
+	if mesh_identity_set(public_key, &mesh_error) != 0 {
+		fail("the public key of the service is not a machine identity")
 	}
 	key_text: [64]u8
 	system.log_fact(.Info, Public_Key_Made{public_key = value_kinds.text_field(quic_server.hex_text(key_text[:], public_key[:]), KEY_FIELD_BYTES)})
