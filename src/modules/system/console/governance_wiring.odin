@@ -123,12 +123,22 @@ compile_c_command :: proc "contextless" (arguments: []Value) -> Value {
 	if len(mod_name.text) == 0 || len(c_source.text) == 0 {
 		return fail("compile_c: expected a module name and C source text")
 	}
-	if command_find("c_compiler") == nil {
+	// Each c_compiler call host compiles one C source cleanly; isolate fresh
+	// and unload after compile so compile_c can be invoked repeatedly.
+	if command_find("compile") != nil {
+		unload_cc := [1]Value{{kind = .Text, text = "c_compiler"}}
+		_ = call_run("unload", unload_cc[:])
+	}
+	{
 		iso_cc := [1]Value{{kind = .Text, text = "c_compiler"}}
 		r := isolate_module(iso_cc[:])
 		if r.kind == .None {
 			return {}
 		}
+	}
+	defer {
+		unload_cc := [1]Value{{kind = .Text, text = "c_compiler"}}
+		_ = call_run("unload", unload_cc[:])
 	}
 	if command_find("assemble") == nil {
 		iso_as := [1]Value{{kind = .Text, text = "assemble"}}
@@ -150,7 +160,7 @@ compile_c_command :: proc "contextless" (arguments: []Value) -> Value {
 	defer system.close(system.Handle(mod_buf.integer))
 
 	cc_args := [2]Value{c_source, asm_buf}
-	asm_len := call_run("c_compiler", cc_args[:])
+	asm_len := call_run("compile", cc_args[:])
 	if asm_len.kind != .Integer || asm_len.integer <= 0 {
 		return {}
 	}
