@@ -1,5 +1,6 @@
 package compositor
 
+import "internal:compositor/bar"
 import "modus:contract/desktop_shell"
 import "modus:contract/errors"
 import "modus:contract/isolated"
@@ -81,6 +82,14 @@ Screen :: struct {
 	page_flips: i64, // The page flips since the start: each one showed a frame whole.
 	frames_on_the_shown_page: i64, // The frames that the compositor wrote into the screen page that the display showed. 0 on a display with two screen pages.
 }
+
+// One row for each requested grant that holds: window_grants().
+Window_Grant_Row :: struct {
+	grant:    i64, // The number of the grant: revoke_grant takes it.
+	window:   [32]u8, // The name of the process, and the title of its window.
+	resource: [96]u8, // The object of the grant, as the dialog showed it.
+}
+#assert(bar.WINDOW_GRANT_PROCESS_BYTES < 32 && bar.WINDOW_GRANT_RESOURCE_BYTES < 96)
 
 ERROR_ACTS_FOR_PRINCIPAL :: -1
 
@@ -355,6 +364,9 @@ powerbox_ask_export :: proc "c" (process_name: ^string, resource: ^string, error
 	if !acts_for_principal() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
+	if plan_difference_dialog.open {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Requests, 0, 1, 1)
+	}
 	id := powerbox_prompt_open(.Network_Endpoint, process_name^, resource^)
 	if id == 0 {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
@@ -425,6 +437,9 @@ powerbox_pick_store_export :: proc "c" (process_name: ^string, mode: ^string, er
 	if !acts_for_principal() {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
+	if plan_difference_dialog.open {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Requests, 0, 1, 1)
+	}
 	id := powerbox_prompt_open(.Store_Share, process_name^, mode^)
 	if id == 0 {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
@@ -473,4 +488,105 @@ gpu_info_export :: proc "c" (result: ^[]Gpu_Info, error: ^errors.Error_Record) -
 		}
 	}
 	return 1
+}
+
+// window_grants gives one row for each requested grant that holds, in the order of their record: its number, the process that holds it, and its object. The result is the count of the grants, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+//
+// **What it is for.** The menu of the windows lists the same grants under
+// the window of their process, each with a button that revokes it. A
+// caller reads them here, and revokes one with `revoke_grant`.
+//
+// **A row** (`Window_Grant_Row`):
+//
+// - `grant`: the number of the grant, from 1, never given twice in one run.
+// - `window`: the name of the process, the title of its window.
+// - `resource`: the object of the grant: an endpoint, or the store that
+//   the principal picked with the mode that the process asked for.
+//
+// If the table of the caller has fewer places than grants, the last
+// grants are missing, and the result still gives the count of all.
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// connect("compositor")
+// compositor.window_grants()
+// ```
+@(export, link_name = "window_grants")
+window_grants_export :: proc "c" (result: ^[]Window_Grant_Row, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	for slot in 0 ..< min(window_grants.count, len(result^)) {
+		grant := &window_grants.grants[slot]
+		result[slot] = {grant = i64(grant.grant_id)}
+		copy(result[slot].window[:len(result[slot].window) - 1], bar.window_grant_process(grant))
+		copy(result[slot].resource[:len(result[slot].resource) - 1], bar.window_grant_resource(grant))
+	}
+	return i64(window_grants.count)
+}
+
+// revoke_grant ends a requested grant by its number, as its button in the menu of the windows does. The result is 1, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Bad_Value (-1, a number under 1); Absent (-1, no grant of that number holds).
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// connect("compositor")
+// compositor.revoke_grant(1)
+// ```
+@(export, link_name = "revoke_grant")
+revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if grant_id < 1 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Grants, 1, grant_id)
+	}
+	if !window_grant_revoke(u64(grant_id)) {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Absent, .Grants, 1, grant_id)
+	}
+	return 1
+}
+
+// plan_diff_ask shows the difference of a plan on the trusted display: its name, the grants and roles that it adds, and the ones that it removes, each a list of names that commas separate. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Busy (-1, a dialog of the trusted display shows); Empty (-1, no name, or nothing added and nothing removed); Too_Long (-1, a name past 48 bytes, or more than 8 items on one side); Bad_Value (-1, an empty item in a list).
+//
+// **The act.** The focus starts on Refuse. An act counts 500 ms after the
+// dialog showed: Enter acts on the button that has the focus, Tab and the
+// arrows move it, a press on a button acts on it. Escape refuses at once.
+// While the dialog shows, no window receives a key or a press.
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// connect("compositor")
+// compositor.plan_diff_ask("home", "notes: store documents", "paint: network")
+// ```
+@(export, link_name = "plan_diff_ask")
+plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^string, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	serial, refusal, argument := plan_difference_show(plan_name^, added^, removed^)
+	switch refusal {
+	case .None:
+		return i64(serial)
+	case .Busy:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Requests, 0, 1, 1)
+	case .Empty_Name:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1, 0, bar.PLAN_DIFFERENCE_NAME_BYTES)
+	case .Name_Too_Long:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 1, i64(len(plan_name^)), bar.PLAN_DIFFERENCE_NAME_BYTES)
+	case .No_Change:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
+	case .Empty_Item:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, i64(argument))
+	case .Item_Too_Long:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_BYTES)
+	case .Too_Many_Items:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
+	}
+	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
 }

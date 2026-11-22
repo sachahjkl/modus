@@ -1,5 +1,6 @@
 package compositor
 
+import "internal:compositor/bar"
 import process_page "modus:contract/disk_process_page"
 import "modus:contract/palette_table"
 import "modus:contract/pointer_pictures"
@@ -1145,6 +1146,66 @@ THEME_FILE_FIELD_BYTES :: 16
 setting_value_field :: proc "contextless" (choice: settings.Choice, setting: settings.Setting) -> [SETTING_VALUE_FIELD_BYTES]u8 {
 	values := settings.values_of(choice)
 	return value_kinds.text_field(settings.value_name_of(setting, values[setting]), SETTING_VALUE_FIELD_BYTES)
+}
+
+// The bytes of the Text field of the object of a requested grant: the
+// object whole, and a zero byte.
+GRANT_RESOURCE_FIELD_BYTES :: bar.WINDOW_GRANT_RESOURCE_BYTES + 1
+// The bytes of the Text field of the name of a plan: the name whole and a
+// zero byte, rounded up to a word, so the fact has no padding after its
+// counts.
+PLAN_NAME_FIELD_BYTES :: (bar.PLAN_DIFFERENCE_NAME_BYTES + 1 + 7) / 8 * 8
+
+// The principal kept a requested grant on the trusted display: the menu of
+// the windows lists it under the window of its process.
+@(log_fact = "compositor: {window} holds the grant {grant} to {resource}")
+Window_Grant_Recorded :: struct {
+	grant:    u64,
+	resource: [GRANT_RESOURCE_FIELD_BYTES]u8,
+	window:   value_kinds.Module_Name_Field,
+}
+
+// A requested grant that the principal kept is not in the menu of the
+// windows: the table of the grants is full, or a name does not fit.
+@(log_fact = "compositor: a grant of {window} is not listed in the menu of the windows: the table of the grants is full or a name does not fit")
+Window_Grant_Not_Listed :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
+// The principal revoked a requested grant: by its button in the menu of
+// the windows, or by revoke_grant.
+@(log_fact = "compositor: the grant {grant} of {window} to {resource} is revoked")
+Window_Grant_Revoked :: struct {
+	grant:    u64,
+	resource: [GRANT_RESOURCE_FIELD_BYTES]u8,
+	window:   value_kinds.Module_Name_Field,
+}
+
+// The window of a process closed: its grants for this run end with it.
+@(log_fact = "compositor: {window} closed, and its {grants} grants end")
+Window_Grants_Ended :: struct {
+	grants: u64,
+	window: value_kinds.Module_Name_Field,
+}
+
+// The difference of a plan shows on the trusted display.
+@(log_fact = "compositor: the difference of the plan {plan} shows: {added} added, {removed} removed")
+Plan_Difference_Shown :: struct {
+	added:   u64,
+	removed: u64,
+	plan:    [PLAN_NAME_FIELD_BYTES]u8,
+}
+
+// The principal accepted the difference of a plan.
+@(log_fact = "compositor: the difference of the plan {plan} is accepted")
+Plan_Difference_Accepted :: struct {
+	plan: [PLAN_NAME_FIELD_BYTES]u8,
+}
+
+// The principal refused the difference of a plan.
+@(log_fact = "compositor: the difference of the plan {plan} is refused")
+Plan_Difference_Refused :: struct {
+	plan: [PLAN_NAME_FIELD_BYTES]u8,
 }
 
 // entry_field gives the Text field of a palette entry name.

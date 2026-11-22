@@ -383,7 +383,8 @@ bar_menu_step :: proc "contextless" (forward: bool) {
 	case .Start:
 		menu_line, menu_action = bar.start_menu_step(menu_line, menu_action, forward)
 	case .Windows:
-		menu_line = bar.windows_menu_step(menu_line, order_count, forward)
+		menu_line = bar.windows_menu_step(menu_line, windows_menu_row_count, forward)
+		menu_on_revoke = false
 	}
 	damage_menu()
 }
@@ -398,8 +399,10 @@ bar_item_act :: proc "contextless" () {
 		if menu_line < 0 && menu_action == .None {
 			return
 		}
+		if menu_choice_do(true) { // start_menu.odin
+			return // A grant was revoked: the menu and the focus of the keys stay.
+		}
 		bar_focus = {}
-		menu_choice_do() // start_menu.odin
 		damage_bar()
 		system.log_fact(.Info, Bar_Focus_Left{})
 		return
