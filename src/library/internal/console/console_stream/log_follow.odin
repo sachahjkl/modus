@@ -141,7 +141,7 @@ Follow_Loop_Breaker :: struct {
 // is_log_output_name reports whether owner.stream names the implicit log
 // record output of a valid module/process owner.
 is_log_output_name :: proc "contextless" (owner, stream: string) -> bool {
-	return short_form_name_valid(owner) && stream == LOG_STREAM_NAME
+	return short_form_owner_valid(owner) && stream == LOG_STREAM_NAME
 }
 
 // is_log_follow_name reports whether owner.stream names log.follow.
@@ -253,8 +253,8 @@ wire_descriptor_lower :: proc "contextless" (
 	from_owner, from_stream, from_ok := typed_name_split(from_name)
 	to_owner, to_input, to_ok := typed_name_split(to_name)
 	if !from_ok || !to_ok ||
-	   !short_form_name_valid(from_owner) || !short_form_name_valid(from_stream) ||
-	   !short_form_name_valid(to_owner) || !short_form_name_valid(to_input) {
+	   !short_form_owner_valid(from_owner) || !short_form_name_valid(from_stream) ||
+	   !short_form_owner_valid(to_owner) || !short_form_name_valid(to_input) {
 		return {}, .Invalid_Target
 	}
 	if from_owner == to_owner {

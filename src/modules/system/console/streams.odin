@@ -1469,6 +1469,21 @@ start_with_list :: proc "contextless" (name: string, list: Value) -> Value {
 	for column, index in reference_columns {
 		items[index], _ = table_field(table, column.name)
 	}
+	edges: [output.WIRING_LIST_ROW_LIMIT]console_stream.Start_Row_Edge
+	for index in 0 ..< table.rows {
+		row := table_row(table, list, index)
+		edges[index] = {
+			writer    = module.field_text(row, items[WIRING_COLUMN_WRITER]),
+			output    = module.field_text(row, items[WIRING_COLUMN_OUTPUT]),
+			reader    = module.field_text(row, items[WIRING_COLUMN_READER]),
+			input     = module.field_text(row, items[WIRING_COLUMN_INPUT]),
+			condition = module.field_text(row, items[WIRING_COLUMN_CONDITION]),
+		}
+	}
+	if earlier, later, duplicate := console_stream.start_rows_duplicate(edges[:table.rows]); duplicate {
+		edge := edges[later - 1]
+		return fail("start: the row ", u64(later), " repeats the row ", u64(earlier), " (", edge.writer, ".", edge.output, " to ", edge.reader, ".", edge.input, "): a repeated row gives its reader each record twice")
+	}
 	handle_count := 0
 	condition_count := 0
 	fixed_file: []u8

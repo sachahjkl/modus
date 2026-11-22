@@ -357,8 +357,18 @@ The rows come from the next request on: the console draws "joined after N record
 | Refused by | What |
 |---|---|
 | `wire` | a first argument that is no `Stream`, a second that is no `Record_Input`; two records that differ; one process at both ends; a `Stream` with more than one condition, or that `columns` cut |
-| `start` with a list | a list that is no `Table` of `Wiring`; a row that names no end of the module, or names it at both ends; an end that does not run; more than 32 rows or 16 lent handles; each check comes before the console lends a handle |
+| `start` with a list | a list that is no `Table` of `Wiring`; a row that names no end of the module, or names it at both ends; an end that does not run; a row that repeats an earlier row with the same condition, whose reader then takes each record twice; more than 32 rows or 16 lent handles; each check comes before the console lends a handle |
 | the root service | each refusal of the list, with the row in its error record: a record input of the count `One` wired twice among them, and a second source of a generic record input of another record than the first |
+
+**The log of a module, and the whole log as it comes.** Each process has the record output `log`, which only the list of its own start wires: its first record is then in the ring. `log.follow` is a record output of the log service: the records of the whole log, from the next one on.
+
+```
+> start("server", wire(server.log, collector.sources))
+> log.follow |> where(level = Warning)
+> log.follow |> where(process = "storage") |> first(5)
+```
+
+The module `collector` declares no record input `sources` yet, so the first line fails at that name until it does. `wire` refuses a condition on `log`, and `start` refuses the `log` of a process that already runs: its first records are gone. A typed name whose owner has more than 31 bytes names no process, and the line fails. `log.follow` in the console never shows the records of the console itself: the console writes each line that it draws to the log, so a draw of its own rows gives a new row at each line, without end. The rows of `log.follow` that the console draws do not go to the log either. `log.records` with `where(process = "console")` gives the past records of the console. Escape ends `log.follow`, as each record stream.
 
 **A generic record input or output.** `merge.sources` is a generic record input: `wire` takes it with no check of the record, and the root service checks the record of each wiring against the one that the first fixed. `merge.merged` writes the record that a list of a `start` of this console fixed for `merge`; with none, the line fails and says so:
 

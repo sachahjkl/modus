@@ -16,6 +16,7 @@
 package console_stream
 
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/wide_grants"
 
@@ -139,6 +140,14 @@ short_form_name_valid :: proc "contextless" (name: string) -> bool {
 	return true
 }
 
+// short_form_owner_valid reports whether name can name the owner of a
+// stream: a short-form name that also fits the name of a process, which
+// holds PROCESS_NAME_BYTES_MOST bytes at most. A longer owner names no
+// process, so the console refuses it before it asks the root service.
+short_form_owner_valid :: proc "contextless" (name: string) -> bool {
+	return short_form_name_valid(name) && len(name) <= op.PROCESS_NAME_BYTES_MOST
+}
+
 // block_limit_valid checks that a space block limit is within the closed range
 // KEEP_BLOCK_LIMIT_LEAST ..= KEEP_BLOCK_LIMIT_MOST.
 @(private = "file")
@@ -175,11 +184,11 @@ validate_source_against_file :: proc "contextless" (source: Stream_Source_Ref) -
 
 // short_form_row_validate checks all structural invariants of one expanded row.
 short_form_row_validate :: proc "contextless" (row: Short_Form_Wiring_Row) -> Short_Form_Refusal {
-	if !short_form_name_valid(row.source_owner) || !short_form_name_valid(row.source_stream) {
+	if !short_form_owner_valid(row.source_owner) || !short_form_name_valid(row.source_stream) {
 		return .Invalid_Target
 	}
 	if !row.reader_is_asker {
-		if !short_form_name_valid(row.target_owner) || !short_form_name_valid(row.target_input) {
+		if !short_form_owner_valid(row.target_owner) || !short_form_name_valid(row.target_input) {
 			return .Invalid_Target
 		}
 		if row.source_owner == row.target_owner {

@@ -164,6 +164,33 @@ start_row_ends :: proc "contextless" (module_name, writer, reader: string) -> (w
 	return writer_is_child, reader_is_child, .None
 }
 
+// Start_Row_Edge is one row of a list of a start, by the names of its ends
+// and the text of its condition.
+Start_Row_Edge :: struct {
+	writer:    string,
+	output:    string,
+	reader:    string,
+	input:     string,
+	condition: string,
+}
+
+// start_rows_duplicate finds the first row of a list that repeats an earlier
+// row: the same record output, the same record input and the same
+// condition. Such a row adds a second ring for one edge, and the reader then
+// takes each record twice. No reader asks for that, so the console refuses
+// it before it lends a handle. Two rows of one edge with two conditions are two wirings, and pass.
+// The rows are 1-based in the answer, as the console names them.
+start_rows_duplicate :: proc "contextless" (edges: []Start_Row_Edge) -> (earlier, later: int, found: bool) {
+	for later_index in 1 ..< len(edges) {
+		for earlier_index in 0 ..< later_index {
+			if edges[earlier_index] == edges[later_index] {
+				return earlier_index + 1, later_index + 1, true
+			}
+		}
+	}
+	return 0, 0, false
+}
+
 // start_list_fits says if a list of rows, with its lent handles and the
 // condition of each row, fits the bounds of the contract and the bytes of
 // the list page. It gives the first byte of the conditions, after the lent

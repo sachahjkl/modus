@@ -481,3 +481,77 @@ call_parameter_at_caret_after_pipe :: proc(t: ^testing.T) {
 		testing.expectf(t, found && name == item.name && parameter == item.parameter, "%q at %d: got (%q, %d, %v), want (%q, %d, true)", item.text, item.caret, name, parameter, found, item.name, item.parameter)
 	}
 }
+
+// The lines of log.follow nest as the console runs them: each "|>" gives
+// its left value as the first argument of its call, so the evaluator sees
+// where(log.follow, ...) and first(..., 5), and a bad pipe runs nothing.
+@(test)
+pipe_of_log_follow_lines :: proc(t: ^testing.T) {
+	memory: [256]u8
+	stages: [PIPE_STAGE_CAPACITY]Pipe_Stage
+	Case :: struct {
+		text:   string,
+		nested: string,
+	}
+	cases := [?]Case {
+		{"log.follow", "log.follow"},
+		{"log.follow |> where(level = Warning)", "where(log.follow, level = Warning)"},
+		{"log.follow |> where(level = Warning) |> first(5)", "first(where(log.follow, level = Warning), 5)"},
+		{"log.follow |> where(level = Warning) |> columns(\"process\", \"text\")", "columns(where(log.follow, level = Warning), \"process\", \"text\")"},
+		{"start(\"server\", wire(server.log, collector.sources))", "start(\"server\", wire(server.log, collector.sources))"},
+	}
+	for item in cases {
+		form := nested_of(item.text, memory[:], stages[:])
+		testing.expectf(t, form.refusal == .None && form.nested == item.nested, "%q: %v %q, not %q", item.text, form.refusal, form.nested, item.nested)
+	}
+	Refused :: struct {
+		text:    string,
+		refusal: Pipe_Refusal,
+	}
+	refused := [?]Refused {
+		{"log.follow |>", .Line_End},
+		{"log.follow | where(level = Warning)", .Lone_Bar},
+		{"log.follow |> 5", .Not_A_Call},
+		{"|> log.follow", .No_Left_Value},
+		{"log.follow) |> first(5)", .Unmatched_Close},
+	}
+	for item in refused {
+		form := nested_of(item.text, memory[:], stages[:])
+		testing.expectf(t, form.refusal == item.refusal && form.nested == "", "%q: %v %q, not %v", item.text, form.refusal, form.nested, item.refusal)
+	}
+}
+
+// A typed name is one token: the evaluator reads server.log and
+// collector.sources whole, and a leading dot or a leading digit is no name.
+@(test)
+tokens_of_a_wiring_of_the_log :: proc(t: ^testing.T) {
+	text := "start(\"server\", wire(server.log, collector.sources))"
+	Expected :: struct {
+		kind:  Token_Kind,
+		bytes: string,
+	}
+	expected := [?]Expected {
+		{.Name, "start"},
+		{.Operator, "("},
+		{.Text, "\"server\""},
+		{.Operator, ","},
+		{.Name, "wire"},
+		{.Operator, "("},
+		{.Name, "server.log"},
+		{.Operator, ","},
+		{.Name, "collector.sources"},
+		{.Operator, ")"},
+		{.Operator, ")"},
+		{.None, ""},
+	}
+	place := 0
+	for item in expected {
+		token := token_next(text, place)
+		testing.expectf(t, token.kind == item.kind && text[token.start:token.end] == item.bytes, "at %d: %v %q, not %v %q", place, token.kind, text[token.start:token.end], item.kind, item.bytes)
+		place = token.end
+	}
+	member := token_next(".log", 0)
+	testing.expect_value(t, member.kind, Token_Kind.Member)
+	digit_first := token_next("1server.log", 0)
+	testing.expect_value(t, digit_first.kind, Token_Kind.Number)
+}
