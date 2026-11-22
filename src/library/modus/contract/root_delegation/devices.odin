@@ -31,7 +31,7 @@ DEVICES_REGION_SLOT :: 11
 // place of the table of processes of the core, so two Bind_Device commands
 // in flight never share bytes: the discovered record at the start of the
 // place, the grant specification that the service writes after it.
-DEVICES_BIND_PLACE_COUNT :: 32
+DEVICES_BIND_PLACE_COUNT :: 48
 DEVICES_BIND_PLACE_BYTES :: 512
 DEVICES_BIND_SPEC_OFFSET :: 256
 DEVICES_REGION_PAGES :: DEVICES_BIND_PLACE_COUNT * DEVICES_BIND_PLACE_BYTES / op.PAGE_SIZE

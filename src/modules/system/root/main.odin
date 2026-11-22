@@ -404,7 +404,7 @@ CONNECTION_CAPACITY :: 32
 
 connections: [CONNECTION_CAPACITY]Connection
 
-STARTED_CAPACITY :: 32
+STARTED_CAPACITY :: 48
 
 machine: system.Handle
 image: []u8

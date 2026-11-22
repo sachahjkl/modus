@@ -994,11 +994,13 @@ principals_tpm_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 }
 
 // principals_tpm_principal_tests_run runs the six machines of the keys of a
-// named principal, on a new disk and the state of the software TPM that the
-// machines of the machine key left.
+// named principal, on a new disk and a fresh state of the software TPM so
+// the machine-key NV pin from machines 1 to 6 does not conflict with the
+// empty disk.
 @(private = "file")
 principals_tpm_principal_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	disk_prepare(TEST_TPM_PRINCIPAL_DISK, build.DATA_DISK_SIZE, true) or_return
+	foundation.reset_folder(TPM_KEY_STATE_FOLDER) or_return
 	screen_text_forget(part)
 	tpm_key_machine_run(part, [][]Step{tpm_key_new_disk_and_font[:], scenario_tpm_principal_create[:]}, build.BOOT_VOLUME_SECURE_BOOT, .With_Secure_Boot, 7, TEST_TPM_PRINCIPAL_DISK) or_return
 	foundation.test_passed_print("%s", "principal_create() sealed the keys of alice by the TPM with her passphrase, and the window of unlock showed her recovery key")

@@ -32,10 +32,10 @@ import op "modus:contract/operation"
 
 PAGE_ADDRESS :: fixed_addresses.DISK_PROCESS_PAGE_ADDRESS // Where a process maps the disk process page.
 
-// The rows of the page: the root service starts 32 processes at most, and a
+// The rows of the page: the root service starts 48 processes at most, and a
 // row is the place of the slot of the process in its table of started
 // processes.
-ROW_CAPACITY :: 32
+ROW_CAPACITY :: 48
 
 // The most bytes of a nickname: three words of a row, with a zero byte
 // after it, as the root ring carries it.

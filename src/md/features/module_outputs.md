@@ -695,7 +695,7 @@ A table that holds no part to close and is still short lets the work run: its re
 
 - **The fixed words:** 12. The event word 1, the date page 1, the control ring of the compositor 2, the ring of the entropy service 2, the call of a load from the disk 2, the call of the persisted table of each of the 2 principals 4.
 - **Each queue:** 2 words, its counter and the word that says that the root service waits. The queues are the root rings, the control rings of the network and the wiring rings.
-- **The bound:** `ROOT_WAITED_QUEUES_MOST` = (64 − 12) / 2 = 26 queues, checked against `op.WORD_WAIT_CAPACITY` by an `#assert`. `STARTED_CAPACITY` (32) processes could hold two queues each, so honest use reaches it.
+- **The bound:** `ROOT_WAITED_QUEUES_MOST` = (64 − 12) / 2 = 26 queues, checked against `op.WORD_WAIT_CAPACITY` by an `#assert`. `STARTED_CAPACITY` (48) processes could hold two queues each, so honest use reaches it.
 
 The root service refuses a new queue past the bound where it is made, with `Full` of the unit `Words`, the words with the new queues as the value and 64 as the limit (`root_ring.waited_queues_refusal`, with host tests at 26, 27 and no queue added):
 
