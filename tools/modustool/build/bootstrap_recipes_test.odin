@@ -193,7 +193,7 @@ sum_range:
 	assemble_once :: proc(t: ^testing.T, source: string) -> (module_bytes: []u8, digest: blake3.Hash) {
 		memory := new(assembler.Workspace_Memory)
 		defer free(memory)
-		workspace := assembler.workspace_of(memory)
+		workspace := assembler.workspace_of_memory(memory)
 
 		parts, asm_refusal := assembler.assemble(source, &workspace)
 		testing.expect_value(t, asm_refusal.refusal, assembler.Refusal.None)
