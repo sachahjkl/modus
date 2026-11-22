@@ -1,28 +1,57 @@
 // Full-screen direct framebuffer monospace grid terminal for modus:terminal
 // (src/md/features/console_renderers.md, "Variant B: grid_terminal").
 //
-// Reads typed terminal records from console on the shared terminal ring and
-// blits a Spleen 8x16 monospace grid with Modus 24-bit colors, Lex syntax
-// highlighting, cursor, and interactive completion popup directly onto a
-// linear framebuffer — zero compositor, zero window chrome, zero TrueType.
+// Reads typed terminal records from console on the shared terminal ring
+// through the renderer intake of modus:terminal, and blits a Spleen 8x16
+// monospace grid with Modus 24-bit colors, Lex syntax highlighting, cursor,
+// and interactive completion popup directly onto the framebuffer. It reads
+// the keys of the input service from the input ring, in place of the
+// compositor, and sends each press to its process: it is the one process
+// that writes the screen. Zero compositor, zero window chrome, zero
+// TrueType.
 package grid_terminal
 
 import "internal:grid_terminal/grid_renderer"
-import "modus:contract/enum_word"
+import "modus:contract/ring"
 import "modus:graphics"
 import "modus:system"
 import terminal_records "modus:terminal"
 
 // Working memory for the terminal ring mapping, text region, cell grid and
-// optional direct framebuffer mapping; zero child processes and one thread.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 64, processes = 0, threads = 1}
+// the intake with its completion list, and one thread.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 64, threads = 1}
+
+// The size of the grid when the context gives none in the bounds.
+DEFAULT_COLUMNS :: 80
+DEFAULT_ROWS :: 25
+
+// The largest side of a framebuffer, in pixels: a value past it is no
+// screen, and a product of two such values stays far from the bound of an
+// int.
+SCREEN_SIDE_LIMIT :: 16384
 
 screen: grid_renderer.Grid_Screen
-edit_runs: terminal_records.Code_Runs
-pending_edit_runs: terminal_records.Code_Runs
-has_pending_edit_runs: bool
-list_keeping: terminal_records.List_Keeping
-output_row: int
+intake: terminal_records.Renderer_Intake
+output: grid_renderer.Grid_Output
+
+// framebuffer_open maps the framebuffer of the context, and gives a canvas
+// of its size, or a canvas with no pixels when it is absent or its size is
+// not one that a screen has.
+@(private = "file")
+framebuffer_open :: proc "contextless" (ctx: ^system.Context) -> graphics.Canvas {
+	handle := ctx.handles[terminal_records.GRANT_DEVICE]
+	width := ctx.values[terminal_records.VALUE_SCREEN_WIDTH]
+	height := ctx.values[terminal_records.VALUE_SCREEN_HEIGHT]
+	pixels_per_line := ctx.values[terminal_records.VALUE_SCREEN_PIXELS_PER_LINE]
+	if handle == 0 || width == 0 || height == 0 || pixels_per_line < width || width > SCREEN_SIDE_LIMIT || height > SCREEN_SIDE_LIMIT || pixels_per_line > SCREEN_SIDE_LIMIT {
+		return {}
+	}
+	address, status := system.memory_map(handle, {.Write})
+	if status != .Ok {
+		return {}
+	}
+	return {pixels = ([^]graphics.Color)(address), width = int(width), height = int(height), stride = int(pixels_per_line)}
+}
 
 @(export)
 entry :: proc "c" (ctx: ^system.Context) -> ! {
@@ -33,113 +62,89 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	terminal_ring, ring_status := system.ring_open(ring_handle)
-	text_address, map_status := system.memory_map(text_handle)
+	text_address, map_status := system.memory_map(text_handle, {})
 	if ring_status != .Ok || map_status != .Ok {
 		system.log(.Error, "grid_terminal: cannot map terminal ring or text region")
 		system.stop(.Failed)
 	}
-	text_region := ([^]u8)(text_address)[:terminal_records.TEXT_SIZE]
-	columns := 80
-	rows := 25
-	if col_val := int(ctx.values[terminal_records.VALUE_COLUMNS]); col_val >= 20 && col_val <= grid_renderer.GRID_COLUMNS_LIMIT {
-		columns = col_val
+	intake = terminal_records.renderer_intake_make(([^]u8)(text_address)[:terminal_records.TEXT_SIZE])
+	canvas := framebuffer_open(ctx)
+	if canvas.pixels == nil {
+		system.log(.Error, "grid_terminal: no framebuffer of a size that a screen has")
+		system.stop(.Failed)
 	}
-	if row_val := int(ctx.values[terminal_records.VALUE_ROWS]); row_val >= 8 && row_val <= grid_renderer.GRID_ROWS_LIMIT {
-		rows = row_val
-	}
-	grid_renderer.grid_init(&screen, columns, rows, .Dark)
-	// Direct framebuffer surface when provided in the display slot.
-	canvas: graphics.Canvas
-	if fb_handle := ctx.handles[system.GRANT_DISPLAY]; fb_handle != 0 {
-		if fb_addr, fb_status := system.memory_map(fb_handle, {.Write}); fb_status == .Ok {
-			fb_w := columns * graphics.CELL_WIDTH
-			fb_h := rows * graphics.CELL_HEIGHT
-			canvas = {pixels = ([^]graphics.Color)(fb_addr), width = fb_w, height = fb_h, stride = fb_w}
+	// The input ring of the input service; with none, the grid shows the
+	// console and no key reaches it.
+	input_ring: ring.Ring
+	has_input := false
+	if input_handle := ctx.handles[terminal_records.GRANT_INPUT]; input_handle != 0 {
+		opened, input_status := system.ring_open(input_handle)
+		if input_status == .Ok {
+			input_ring, has_input = opened, true
 		}
 	}
-
-	read_offset: u64 = 0
+	// The grid of the process, cut to the cells that the screen holds.
+	columns := DEFAULT_COLUMNS
+	rows := DEFAULT_ROWS
+	if value := ctx.values[terminal_records.VALUE_COLUMNS]; value >= 20 && value <= grid_renderer.GRID_COLUMNS_LIMIT {
+		columns = int(value)
+	}
+	if value := ctx.values[terminal_records.VALUE_ROWS]; value >= 8 && value <= grid_renderer.GRID_ROWS_LIMIT {
+		rows = int(value)
+	}
+	columns = max(min(columns, canvas.width / graphics.CELL_WIDTH), 1)
+	rows = max(min(rows, canvas.height / graphics.CELL_HEIGHT), 2)
+	grid_renderer.grid_init(&screen, columns, rows, .Dark)
+	palette := graphics.colors_for_contrast_mode(.Standard, true)
+	// The screen outside the grid: the background, once.
+	graphics.fill(canvas, 0, 0, canvas.width, canvas.height, palette.background)
+	// The last row is the edit line; the rows above it are the output.
 	edit_row := rows - 1
 	system.log(.Info, "grid_terminal: ready")
 
 	for {
-		for record in system.receive(&terminal_ring.commands) {
-			kind, known := enum_word.member_of_word(terminal_records.Kind, u64(record.kind))
-			if !known {
-				continue
-			}
-			count := int(min(u64(record.tag), terminal_records.RUN_LIMIT))
-			text_slice: [terminal_records.RUN_LIMIT]u8
-			if count > 0 {
-				for i in 0 ..< count {
-					text_slice[i] = text_region[(read_offset + u64(i)) & (terminal_records.TEXT_SIZE - 1)]
+		if has_input {
+			for record in system.receive(&input_ring.commands) {
+				if key, ok := grid_renderer.key_of_input_record(record); ok {
+					_ = system.send(&terminal_ring.completions, ring.Record{kind = u32(terminal_records.Input.Key), tag = key.code, values = {0 = u64(key.character), 1 = u64(key.modifiers), 2 = key.serial}})
 				}
-				read_offset += u64(count)
 			}
-			switch kind {
-			case .None, .Status, .Hint:
+		}
+		for record in system.receive(&terminal_ring.commands) {
+			event := terminal_records.renderer_intake_take(&intake, record)
+			switch event.step {
+			case .None:
+			case .List:
+				grid_renderer.grid_list_changed(&screen)
 			case .Clear:
 				grid_renderer.grid_init(&screen, columns, rows, .Dark)
-				output_row = 0
+				output = {}
 			case .Text:
-				style := transmute(terminal_records.Style)record.values[0]
+				style := event.style
 				tone, ok := terminal_records.tone_of_byte(style.tone)
-				fg := grid_renderer.grid_tone_color(ok ? tone : .Default, .Dark)
-				bg := graphics.colors_for_contrast_mode(.Standard, true).background
+				foreground := grid_renderer.grid_tone_color(ok ? tone : .Default, .Dark)
+				if .Color in style.flags {
+					foreground = graphics.Color(style.color & 0x00FF_FFFF)
+				}
+				background := palette.background
 				if .Reverse in style.flags {
-					fg, bg = bg, fg
+					foreground, background = background, foreground
 				}
-				for i in 0 ..< min(count, screen.columns) {
-					grid_renderer.grid_cell_set(&screen, output_row, i, rune(text_slice[i]), fg, bg)
-				}
-				if .End_Line in style.flags {
-					output_row = (output_row + 1) % max(edit_row, 1)
-				}
-			case .Code_Runs:
-				if record.values[0] == u64(terminal_records.Kind.Edit) {
-					run_count := min(count / size_of(terminal_records.Code_Run), terminal_records.CODE_RUN_LIMIT)
-					pending_edit_runs.count = run_count
-					for i in 0 ..< run_count {
-						base := i * 4
-						pending_edit_runs.runs[i] = {
-							start  = text_slice[base + 0],
-							length = text_slice[base + 1],
-							kind   = text_slice[base + 2],
-						}
-					}
-					has_pending_edit_runs = true
-				}
+				grid_renderer.grid_write_output(&screen, &output, intake.text[:intake.text_length], foreground, background, .End_Line in style.flags, edit_row, .Dark)
 			case .Edit:
-				if has_pending_edit_runs {
-					edit_runs = pending_edit_runs
-					has_pending_edit_runs = false
-				} else {
-					edit_runs = {}
-				}
-				grid_renderer.grid_write_edit_line(&screen, edit_row, text_slice[:count], &edit_runs, record.values[1], .Dark)
-			case .List_Row:
-				row_index := int(record.values[0])
-				if row_index >= 0 && row_index < terminal_records.LIST_ROWS {
-					row := &list_keeping.next[row_index]
-					copy(row.text[:count], text_slice[:count])
-					row.length = count
-					row.name_length = min(int(record.values[1]), count)
-				}
-			case .List:
-				n := min(int(record.values[0]), terminal_records.LIST_ROWS)
-				list_keeping.shown.row_count = n
-				list_keeping.shown.chosen = record.values[1] == terminal_records.NO_CHOICE ? -1 : int(record.values[1])
-				list_keeping.shown.anchor = int(record.values[4])
-				for i in 0 ..< n {
-					list_keeping.shown.rows[i] = list_keeping.next[i]
-				}
+				edit := &intake.edit
+				cursor := edit.has_cursor ? u64(edit.cursor) : terminal_records.NO_CURSOR
+				grid_renderer.grid_write_edit_line(&screen, edit_row, edit.text[:edit.length], &edit.code, cursor, .Dark)
 			}
 		}
-		if canvas.pixels != nil {
-			_ = grid_renderer.grid_present_dirty(&screen, canvas, &list_keeping.shown, edit_row, .Dark)
-		}
+		_ = grid_renderer.grid_present_dirty(&screen, canvas, &intake.list.shown, edit_row, .Dark)
+		// The grid has no blinking cursor: it waits for a record of one of
+		// its two rings, with no deadline.
 		wait := system.wait_begin()
 		system.wait_records(&wait, &terminal_ring.commands)
-		_ = system.wait_end(&wait, system.time() + 16)
+		if has_input {
+			system.wait_records(&wait, &input_ring.commands)
+		}
+		_ = system.wait_end(&wait)
 	}
 }

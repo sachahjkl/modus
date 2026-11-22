@@ -325,9 +325,15 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	{name = "input", grants = {.System_Part}},
 	// The text of the process that writes in it (terminal_start).
 	{name = "terminal", grants = {.System_Part}},
-	// Desktop-free ANSI 24-bit serial terminal renderer over COM1.
+	// The terminal of a console image with no compositor: the ports of the
+	// second serial port, COM2, where it writes ANSI text and reads keys
+	// (renderer_terminal_start).
+	// COM1 stays the log of the kernel.
 	{name = "serial_terminal", grants = {.System_Part}},
-	// Desktop-free direct framebuffer Spleen 8x16 monospace grid renderer.
+	// The terminal of a console image with no compositor on a machine with
+	// a screen: the framebuffer, where it draws a grid of characters, and
+	// the input ring, whose keys it sends to its process
+	// (renderer_terminal_start).
 	{name = "grid_terminal", grants = {.System_Part}},
 	// One block device and the ring of its one client (driver_start).
 	{name = "block", grants = {.System_Part}},

@@ -271,6 +271,8 @@ the_start_facts_of_the_root_service_write_the_lines_of_before :: proc(t: ^testin
 
 	// The names of the processes and of the texts of a closed set.
 	expect(t, render(t, file, "Start_Refused_Sound_Device_Busy", {{"refused_process", process}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, ": the sound device plays for another process; one process plays at a time"))
+	expect(t, render(t, file, "Console_Renderer_Refused_Holder", {{"refused_process", process}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, " as the terminal of the console: it is not the renderer that the boot image chose; it gets no serial port and no screen"))
+	expect(t, render(t, file, "Console_Renderer_Refused_Running", {{"refused_process", process}}), line_of_before("root: cannot start ", sentence.Module_Name{process}, " as the terminal of the console: a renderer runs already; one process at a time holds the serial port or the screen"))
 	// The old line wrote the name as a plain text: the same bytes.
 	expect(t, render(t, file, "Window_Start_Not_Measured", {{"window_process", process}}), line_of_before("root: the control ring of the compositor is full: the start of the window of ", process, " is not measured"))
 	expect(t, render(t, file, "Debugging_Ended", {{"debugger", process}, {"target", other}, {"caller", third}}), line_of_before("root: ", sentence.Module_Name{process}, " ended the debugging of ", sentence.Module_Name{other}, " for ", sentence.Module_Name{third}))
@@ -470,6 +472,8 @@ the_facts_with_no_field_of_the_root_service_write_the_lines_of_before :: proc(t:
 		{"Failure_Shown", "root: the boot display shows the failure"},
 		{"No_Screen", "root: no screen: no console, no window; the other services start"},
 		{"Compositor_Stopped", "root: the compositor stopped: no screen; a start of a window or a terminal is refused from now on"},
+		{"Console_Renderer_Serial", "root: no compositor in the boot image: the console writes to the second serial port through serial_terminal"},
+		{"Console_Renderer_Grid", "root: no compositor in the boot image: the console draws a text grid on the screen through grid_terminal"},
 		{"Palette_Provider_Absent", "root: no palette provider"},
 		{"Machine_Passphrase_Refused_Unreadable", "root: refused a machine passphrase: the record of the machine passphrase cannot be read, and a new one would replace a key that can be good"},
 		{"Machine_Passphrase_Refused_Exists", "root: refused a machine passphrase: the machine has one, and a change is not built"},

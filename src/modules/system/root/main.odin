@@ -127,6 +127,7 @@ import "modus:contract/palette_table"
 import "modus:contract/start_grant"
 import "modus:contract/start_list"
 import "modus:contract/value_kinds"
+import "internal:root/role_policy"
 
 // What a process receives, by name: a start grant. The list and the name of
 // each one are a contract, because the reader of an error record names the
@@ -441,11 +442,17 @@ load_source :: proc "contextless" () -> system.Load_Source {
 // The boot display (package bootscreen), on the screen of the machine.
 // This service draws it until the compositor has the screen.
 screen: graphics.Canvas
+// grid_terminal runs, and writes the screen: this service draws no more on it.
+screen_given_to_renderer: bool
+// The place of the renderer of the terminal that runs, serial_terminal or
+// grid_terminal, or nil: one at a time holds its device.
+console_renderer_view: ^Started
 screen_data: bootscreen.Data
 message: bootscreen.Text
 
 show :: proc "contextless" (text: string, state: bootscreen.State, step: bootscreen.Step) {
-	if screen.pixels == nil {
+	// grid_terminal holds the screen once it runs: one process writes it.
+	if screen.pixels == nil || screen_given_to_renderer {
 		return
 	}
 	screen_data.message = text
@@ -609,6 +616,17 @@ failure_show :: proc "contextless" (text: string, status: system.Status) {
 			bochs_display.page_show(display_registers_address, 0, display_screen_height)
 		}
 	}
+	// grid_terminal holds the screen: it stops, and the screen returns to
+	// this service for the failure.
+	if screen_given_to_renderer {
+		for &item in started {
+			if item.process != 0 && item.is_terminal {
+				item.stop_asked_by_root_service = true
+				system.process_stop(item.process)
+			}
+		}
+		screen_given_to_renderer = false
+	}
 	message.count = 0
 	bootscreen.put(&message, "the start failed: ")
 	bootscreen.put(&message, text)
@@ -727,6 +745,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		no_screen_at_the_start = true
 		screen_absence_note()
 	}
+	// The renderer of the terminal of the console, before any start that
+	// names the roles Display or Terminal (role_holders.odin).
+	console_renderer_choose_at_start(screen_at_the_start)
 	// The devices service classifies the bus before any device service
 	// starts (devices_delegation.odin).
 	bus_classify()
@@ -928,6 +949,12 @@ screen_absence_note :: proc "contextless" () {
 // Bad_State.
 display_holder_start :: proc "contextless" () -> system.Status {
 	if screen_absent {
+		return .Bad_State
+	}
+	// A console image has no window server: grid_terminal takes the screen
+	// as the terminal of the console (renderer_terminal_start), never by
+	// this procedure, which gives the context of a compositor.
+	if console_renderer != .Desktop_Terminal {
 		return .Bad_State
 	}
 	_ = gpu_driver_start()
@@ -1772,11 +1799,125 @@ palette_provider_end :: proc "contextless" (item: ^Started, revoke: bool) -> (co
 	return count
 }
 
-// terminal_start starts the terminal of a process that runs. The terminal
-// receives a surface, the terminal ring, the text region with the right
-// Read, and a handle that reads the state of the process. It receives
-// nothing of the start grant set of the process.
+// terminal_start starts the terminal of a process that runs, by the
+// renderer that the boot image chose (role_holders.odin): a window of the
+// desktop, or a renderer that draws no window.
 terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_memory, text_memory: system.Handle) -> system.Status {
+	switch console_renderer {
+	case .Desktop_Terminal:
+		return window_terminal_start(view, writer, ring_memory, text_memory)
+	case .Serial_Terminal, .Grid_Terminal:
+		return renderer_terminal_start(view, writer, ring_memory, text_memory)
+	}
+	return .Bad_State
+}
+
+// renderer_terminal_start starts the terminal of a process when the
+// terminal draws no window (src/md/features/console_renderers.md, "The
+// context of a renderer"): serial_terminal with the ports of the second
+// serial port, or grid_terminal with the framebuffer and the input ring,
+// which it reads in place of the compositor. Each receives the terminal
+// ring, the text region with the right Read, and a handle that reads the
+// state of the process, and nothing of the start grant set of the process.
+//
+// One renderer runs at a time, and only the module of the renderer that
+// the image chose: a second one, or a module that a plan named, never gets
+// COM2 or the framebuffer (role_policy.console_renderer_start_check).
+renderer_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_memory, text_memory: system.Handle) -> system.Status {
+	view^ = {}
+	terminal_name := role_holder_name(.Terminal)
+	running := console_renderer_view != nil && console_renderer_view.process != 0
+	switch role_policy.console_renderer_start_check(console_renderer, terminal_name, running) {
+	case .None:
+	case .Desktop_Terminal, .Holder_Is_Not_The_Renderer:
+		system.log_fact(.Warning, Console_Renderer_Refused_Holder{refused_process = module_name_field(terminal_name)})
+		return .Bad_Operation
+	case .Renderer_Running:
+		system.log_fact(.Warning, Console_Renderer_Refused_Running{refused_process = module_name_field(terminal_name)})
+		return .Bad_State
+	}
+	start_grant_set := start_grant_set_of(terminal_name)
+	columns, rows, _ := start_grant_set_terminal(&writer.start_grant_set)
+	handles := terminal.Renderer_Handles{ring = ring_memory, text = text_memory, writer = writer.process, log = log_grant(start_grant_set)}
+	screen_size: terminal.Renderer_Screen
+	// The renderer holds its own handle of the ports after its start.
+	serial_ports: system.Handle
+	defer if serial_ports != 0 {
+		system.close(serial_ports)
+	}
+	switch console_renderer {
+	case .Desktop_Terminal:
+		return .Bad_State
+	case .Serial_Terminal:
+		results, ports_status := system.call(.Device_Create, u64(machine), u64(op.Device_Kind.Ports), terminal.SERIAL_PORT_FIRST, terminal.SERIAL_PORT_COUNT)
+		if ports_status != .Ok {
+			return ports_status
+		}
+		serial_ports = system.Handle(results[0])
+		handles.device = {serial_ports, {}}
+	case .Grid_Terminal:
+		if screen_absent {
+			return .Bad_State
+		}
+		handles.device = {root_framebuffer, {.Read, .Write}}
+		handles.input = {input_memory, {.Read, .Write}}
+		screen_size = {width = root_screen_values[0], height = root_screen_values[1], pixels_per_line = root_screen_values[2]}
+	}
+	context_grants: system.Context_Grants
+	values: system.Context_Values
+	terminal.renderer_context_of(&context_grants, &values, handles, system.name_pack(system.name_of(writer.name[:])), columns, rows, screen_size)
+	mappings: [1]system.Mapping
+	mapping_count := 0
+	fresh_bytes_page_give(view, mappings[:], &mapping_count, &values)
+	if context_refused(terminal_name, &context_grants, &values) {
+		fresh_bytes_forget(view)
+		return .Bad_State
+	}
+	load_error: module.Load_Error
+	process, status := system.process_start(system.image_find(image, terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, terminal_name), terminal_name), mappings[:mapping_count], &prepared, load_source(), &load_error)
+	if status != .Ok {
+		fresh_bytes_forget(view)
+		if load_error.stage != u32(module.Load_Stage.None) {
+			system.log_fact(.Warning, Terminal_Load_Refused{})
+			load_error_log(.Warning, &load_error)
+		}
+		return status
+	}
+	view.process, view.writer, view.is_terminal = process, writer, true
+	view.start_grant_set = start_grant_set
+	view.principal = writer.principal // The lock stops the terminal of a process of the session with it.
+	copy(view.name[:len(view.name) - 1], terminal_name)
+	console_renderer_view = view
+	if console_renderer == .Grid_Terminal {
+		screen_given_to_renderer = true
+	}
+	return .Ok
+}
+
+// console_renderer_release forgets the renderer of the terminal when it
+// stops, and stops it when its process stops: a renderer whose process is
+// gone keeps no serial port and no screen. The boot display can then draw
+// again, and the next console gets a renderer.
+console_renderer_release :: proc "contextless" (item: ^Started) {
+	view := console_renderer_view
+	if view == nil {
+		return
+	}
+	if item == view {
+		console_renderer_view = nil
+		screen_given_to_renderer = false
+		return
+	}
+	if view.writer == item && view.process != 0 {
+		started_process_stop(view)
+	}
+}
+
+// window_terminal_start starts the terminal of a process as a window of
+// the desktop. The terminal receives a surface, the terminal ring, the text
+// region with the right Read, and a handle that reads the state of the
+// process. It receives nothing of the start grant set of the process.
+window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_memory, text_memory: system.Handle) -> system.Status {
 	view^ = {}
 	display_memory := system.memory_create(ring.PAGE_COUNT) or_return
 	defer system.close(display_memory)
@@ -2071,10 +2212,12 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	// that it served.
 	served := item.service.head != nil
 	// A terminal that stops: its process stops. A process that stops: its
-	// terminal stays, and shows what the process wrote.
+	// terminal stays, and shows what the process wrote; but a renderer of
+	// the terminal with a device stops with its process.
 	if item.writer != nil && item.writer.process != 0 {
 		started_process_stop(item.writer)
 	}
+	console_renderer_release(item)
 	// A debugged process that stops, a debugger service that stops, and a
 	// caller of the debugger service that stops: the debug access ends.
 	if item.debugger != nil {

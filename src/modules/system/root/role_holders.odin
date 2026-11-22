@@ -13,6 +13,7 @@ import "modus:contract/role_contract"
 import rd "modus:contract/root_delegation"
 import "modus:contract/supervision"
 import "modus:contract/work_budget"
+import "modus:system"
 
 // The holder of each role: the default of the boot image, then the override
 // that a plan installs. Nothing of this service names the module of a role
@@ -44,6 +45,33 @@ role_holder_names := role_policy.Holder_Names {
 		.Devices        = "devices",
 		.Settings       = "settings",
 	},
+}
+
+// The renderer of the terminal of the console: the boot image and the screen
+// choose it once, before the start policy (console_renderer_choose_at_start).
+console_renderer: role_policy.Console_Renderer
+
+// console_renderer_choose_at_start chooses the renderer of the terminal from
+// the modules of the boot image and the screen of the machine, and gives
+// the roles Display and Terminal to its module
+// (src/md/features/console_renderers.md, "Which renderer a machine runs").
+// An image with the compositor keeps each holder as it is.
+console_renderer_choose_at_start :: proc "contextless" (screen_at_the_start: bool) {
+	parts := role_policy.Console_Parts {
+		compositor      = len(system.image_find(image, role_holder_name(.Display))) != 0,
+		serial_terminal = len(system.image_find(image, role_policy.SERIAL_TERMINAL_MODULE)) != 0,
+		grid_terminal   = len(system.image_find(image, role_policy.GRID_TERMINAL_MODULE)) != 0,
+		screen          = screen_at_the_start,
+	}
+	console_renderer = role_policy.console_renderer_choose(parts)
+	role_policy.console_renderer_holders_set(&role_holder_names, console_renderer)
+	switch console_renderer {
+	case .Desktop_Terminal:
+	case .Serial_Terminal:
+		system.log_fact(.Info, Console_Renderer_Serial{})
+	case .Grid_Terminal:
+		system.log_fact(.Info, Console_Renderer_Grid{})
+	}
 }
 
 // Live supervision generation per role for reconnecting Connection_Page holders.

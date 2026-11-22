@@ -581,13 +581,18 @@ COMMANDS :: [?]foundation.Command {
 	//   or later must be on the path.
 	// - `<boot image>` (optional, after `boot`): the boot image to start, in
 	//   place of the one of the build.
+	// - `console`: then write the console page,
+	//   `browser_machine_console.html`, and its boot image, `console.image`,
+	//   from the boot image of the build: the console with `serial_terminal`
+	//   on the second serial port, and no compositor, drawing module or font.
 	//
 	// ```
 	// nix develop -c modustool browser-machine boot
+	// nix develop -c modustool browser-machine console
 	// ```
 	//
 	// The design: src/md/features/browser_machine.md, "The page and its host".
-	{name = "browser-machine", about = "build the kernel for WebAssembly in " + build.BROWSER_MACHINE_FOLDER + ", check its imports and its exports, and write the page of the browser machine beside it; `browser-machine boot [<boot image>]`: then start it in Node and print its serial port", run = build.run_browser_machine},
+	{name = "browser-machine", about = "build the kernel for WebAssembly in " + build.BROWSER_MACHINE_FOLDER + ", check its imports and its exports, and write the page of the browser machine beside it; `browser-machine boot [<boot image>]`: then start it in Node and print its serial port; `browser-machine console`: then write the console page and its console image, with serial_terminal on the second serial port and no desktop", run = build.run_browser_machine},
 	// Prints the number of the newest release of `CHANGELOG.md`, as `0.91.0`:
 	// the number that a workflow gives to a release.
 	{name = "release_number", about = "print the release number of the system: the newest release of `" + checks.CHANGELOG_FILE + "`", run = checks.run_release_number},

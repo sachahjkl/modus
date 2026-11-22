@@ -73,10 +73,14 @@ export const PAGE_SIZE = 4096;
 const WEBASSEMBLY_PAGE_SIZE = 65536;
 
 // The ports of the devices of the test machine that the page plays.
+// COM1 (0x3f8) is the log of the kernel. COM2 (0x2f8) is the terminal of a
+// console image: serial_terminal writes its ANSI text there and reads the
+// keys of the page there.
 export const Port = Object.freeze({
   SerialData: 0x3f8,
   SerialLineControl: 0x3fb,
   SerialLineStatus: 0x3fd,
+  ConsoleData: 0x2f8,
   Ps2Data: 0x60,
   Ps2Command: 0x64,
   ClockIndex: 0x70,
@@ -101,24 +105,38 @@ const SERIAL_TRANSMIT_EMPTY = 0x60;
 const SERIAL_DATA_READY = 0x01;
 const SERIAL_DIVISOR_LATCH = 0x80;
 
-// The serial port COM1: each byte that the kernel writes goes to a line,
-// and each line to the page.
+// The registers of a 16550 UART, from its data port.
+const SerialRegister = Object.freeze({ Data: 0, LineControl: 3, LineStatus: 5 });
+// The ports of one UART.
+export const SERIAL_PORT_COUNT = 8;
+
+// A serial port at its data port: COM1 at Port.SerialData, COM2 at
+// Port.ConsoleData. Each byte that the kernel writes goes to onBytes as it
+// comes, and to a line; each line goes to onLine. A line holds the bytes
+// as they came, escape sequences included.
 export class SerialPort {
-  constructor(onLine) {
+  constructor(onLine, base = Port.SerialData, onBytes = () => {}) {
+    this.base = base;
     this.onLine = onLine;
+    this.onBytes = onBytes;
     this.line = [];
     this.lines = [];
     this.input = [];
     this.lineControl = 0;
     this.decoder = new TextDecoder();
   }
+  holds(port) {
+    return port >= this.base && port < this.base + SERIAL_PORT_COUNT;
+  }
   write(port, value) {
-    if (port === Port.SerialLineControl) {
+    const register = port - this.base;
+    if (register === SerialRegister.LineControl) {
       this.lineControl = value;
       return;
     }
     // With the divisor latch on, the data port is the low byte of the divisor.
-    if (port !== Port.SerialData || this.lineControl & SERIAL_DIVISOR_LATCH) return;
+    if (register !== SerialRegister.Data || this.lineControl & SERIAL_DIVISOR_LATCH) return;
+    this.onBytes(value);
     if (value === 0x0a) {
       const text = this.decoder.decode(new Uint8Array(this.line));
       this.line = [];
@@ -129,10 +147,16 @@ export class SerialPort {
     }
   }
   read(port) {
-    if (port === Port.SerialLineStatus) return SERIAL_TRANSMIT_EMPTY | (this.input.length ? SERIAL_DATA_READY : 0);
-    if (port === Port.SerialData && !(this.lineControl & SERIAL_DIVISOR_LATCH)) return this.input.shift() ?? 0;
-    if (port === Port.SerialLineControl) return this.lineControl;
+    const register = port - this.base;
+    if (register === SerialRegister.LineStatus) return SERIAL_TRANSMIT_EMPTY | (this.input.length ? SERIAL_DATA_READY : 0);
+    if (register === SerialRegister.Data && !(this.lineControl & SERIAL_DIVISOR_LATCH)) return this.input.shift() ?? 0;
+    if (register === SerialRegister.LineControl) return this.lineControl;
     return 0;
+  }
+  // type queues the bytes of a text as the input of the port: UTF-8, as a
+  // terminal sends it.
+  type(text) {
+    for (const byte of new TextEncoder().encode(text)) this.input.push(byte);
   }
 }
 
@@ -427,7 +451,7 @@ export function writeBootRecord(memory, layout, { bootImageSize, framebufferWidt
 // its reset: the boot record then names the time of the page before the
 // kernel as its firmware time.
 export class BrowserMachine {
-  constructor({ kernelModule, bootImage, trustDescriptionHash = null, memoryMebibytes = 256, framebufferWidth = 0, framebufferHeight = 0, clockNanoseconds, idleWait, onSerialLine = () => {}, onStop = () => {} }) {
+  constructor({ kernelModule, bootImage, trustDescriptionHash = null, memoryMebibytes = 256, framebufferWidth = 0, framebufferHeight = 0, clockNanoseconds, idleWait, onSerialLine = () => {}, onConsoleLine = () => {}, onConsoleBytes = () => {}, onStop = () => {} }) {
     this.kernelModule = kernelModule;
     this.bootImage = bootImage ?? new Uint8Array(0);
     this.trustDescriptionHash = trustDescriptionHash;
@@ -438,7 +462,8 @@ export class BrowserMachine {
     this.clockNanoseconds = () => clockNanoseconds() - clockBase;
     this.idleWait = idleWait;
     this.onStop = onStop;
-    this.serial = new SerialPort(onSerialLine);
+    this.serial = new SerialPort(onSerialLine, Port.SerialData);
+    this.consolePort = new SerialPort(onConsoleLine, Port.ConsoleData, onConsoleBytes);
     this.interruptLines = 0;
     this.keyboard = new Ps2Controller((line) => { this.interruptLines |= 1 << line; });
     this.clock = new MachineClock(() => Date.now());
@@ -473,7 +498,8 @@ export class BrowserMachine {
   }
 
   portWrite(port, value) {
-    if (port >= Port.SerialData && port <= Port.SerialData + 7) this.serial.write(port, value);
+    if (this.serial.holds(port)) this.serial.write(port, value);
+    else if (this.consolePort.holds(port)) this.consolePort.write(port, value);
     else if (port === Port.Ps2Data || port === Port.Ps2Command) this.keyboard.write(port, value);
     else if (port === Port.ClockIndex) this.clock.write(port, value);
     else if (port === Port.DebugExit) { this.stopCode = value; throw new ProcessorStop(); }
@@ -481,7 +507,8 @@ export class BrowserMachine {
   }
 
   portRead(port) {
-    if (port >= Port.SerialData && port <= Port.SerialData + 7) return this.serial.read(port);
+    if (this.serial.holds(port)) return this.serial.read(port);
+    if (this.consolePort.holds(port)) return this.consolePort.read(port);
     if (port === Port.Ps2Data || port === Port.Ps2Command) return this.keyboard.read(port);
     if (port === Port.ClockData) return this.clock.read(port);
     // A port with no device reads all ones.

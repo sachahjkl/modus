@@ -37,6 +37,14 @@ GRANT_ROOT :: 1 // Memory: the ring to the root service, to start and stop proce
 // The handle 1 of a terminal, which has no root ring: the process that
 // writes in it, with the right Read (package terminal).
 GRANT_TERMINAL_PROCESS :: 1 // A terminal: the process that writes, with Read.
+// The handle 0 of a terminal that draws no window (package terminal,
+// renderer_context_of): the ports of the second serial port for
+// serial_terminal, the framebuffer for grid_terminal. A terminal with a
+// window has its display ring there.
+GRANT_TERMINAL_DEVICE :: 0 // Ports, or memory: the device that the terminal draws on.
+// The handle 2 of grid_terminal: the input ring of the input service, which
+// it reads in place of the compositor.
+GRANT_TERMINAL_INPUT :: 2 // Memory: the input ring.
 // The handle 2: the machine, with only the rights of the grants of the
 // process: **Inspect** to read the reports of the processes and of the
 // kernel, **Stop** to stop the machine, **Schedule** to change the
@@ -150,6 +158,12 @@ GRANT_VALUE_UNLOCK_NAME :: 6
 GRANT_VALUE_UNLOCK_PRINCIPAL :: 14
 // The value 6 of a terminal: 1 when it shows the rates of its process.
 GRANT_VALUE_TERMINAL_MEASURE :: 6
+// The values 7, 8 and 13 of grid_terminal: the width and the height of the
+// framebuffer in pixels, and its pixels of a line. The values 9 to 12 are
+// the seed.
+GRANT_VALUE_TERMINAL_SCREEN_WIDTH :: 7
+GRANT_VALUE_TERMINAL_SCREEN_HEIGHT :: 8
+GRANT_VALUE_TERMINAL_SCREEN_PIXELS_PER_LINE :: 13
 // The value 13 of a process with the grant Tpm: 1 when a seal by the TPM is
 // allowed, as the firmware verified the boot program.
 GRANT_VALUE_SEAL_ALLOWED :: 13

@@ -1,11 +1,15 @@
 #+build !freestanding
 package build
 
+import "core:fmt"
 import "core:reflect"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
 import info "modus:contract/boot_info"
+import "modus:contract/start_list"
+import terminal_records "modus:terminal"
+import "modustool:foundation"
 
 // A module of the binary format with one import section and one export
 // section, built byte by byte.
@@ -387,4 +391,155 @@ browser_machine_page_image_keeps_the_modules_of_the_page :: proc(t: ^testing.T) 
 	modules[0].size = u64(len(damaged))
 	_, _, problem = browser_machine_page_image_files(damaged)
 	testing.expect_value(t, problem, "the entry of the module root points outside the image")
+}
+
+
+// The console of the page is on COM2 and the log of the kernel on COM1: the
+// host plays a UART at each, the data port of COM2 is the first port that
+// the root service gives serial_terminal, and the console page reads COM2,
+// types on COM2, and loads the console image.
+@(test)
+browser_machine_host_puts_the_console_on_com2 :: proc(t: ^testing.T) {
+	text := browser_machine_host_text()
+	testing.expect(t, strings.contains(text, "  SerialData: 0x3f8,\n"))
+	testing.expect(t, strings.contains(text, fmt.tprintf("  ConsoleData: 0x%x,\n", terminal_records.SERIAL_PORT_FIRST)))
+	testing.expect(t, strings.contains(text, fmt.tprintf("export const SERIAL_PORT_COUNT = %d;", terminal_records.SERIAL_PORT_COUNT)))
+	testing.expect(t, strings.contains(text, "this.serial = new SerialPort(onSerialLine, Port.SerialData);"))
+	testing.expect(t, strings.contains(text, "this.consolePort = new SerialPort(onConsoleLine, Port.ConsoleData, onConsoleBytes);"))
+	// COM1 and COM2 never overlap.
+	testing.expect(t, terminal_records.SERIAL_PORT_FIRST + terminal_records.SERIAL_PORT_COUNT <= 0x3F8 || terminal_records.SERIAL_PORT_FIRST >= 0x3F8 + terminal_records.SERIAL_PORT_COUNT)
+	page := BROWSER_MACHINE_CONSOLE_PAGE_TEXT
+	testing.expect(t, strings.has_prefix(page, "<!doctype html>"))
+	testing.expect(t, strings.contains(page, "from \"./" + BROWSER_MACHINE_HOST_FILE + "\""))
+	testing.expect(t, strings.contains(page, "fetch(\"./" + BROWSER_MACHINE_KERNEL_FILE + "\")"))
+	testing.expect(t, strings.contains(page, "fetch(\"./" + BROWSER_MACHINE_CONSOLE_IMAGE_FILE + "\")"))
+	testing.expect(t, strings.contains(page, "onConsoleBytes:"))
+	testing.expect(t, strings.contains(page, "machine.consolePort.type(sequence)"))
+	testing.expect(t, !strings.contains(page, "machine.serial.input"))
+	// The site publishes the desktop page only: the console page needs its
+	// own image, which the site does not write.
+	files := BROWSER_MACHINE_PAGE_FILES
+	for file in files {
+		testing.expect(t, file.name != BROWSER_MACHINE_CONSOLE_PAGE_FILE)
+	}
+}
+
+// A base image of the test with every module of the module table and the
+// resources of a desktop image.
+@(private = "file")
+console_image_base :: proc(without: string = "") -> []u8 {
+	names := make([dynamic]string, context.temp_allocator)
+	for build in foundation.module_builds {
+		if build.name != without {
+			append(&names, build.name)
+		}
+	}
+	resources := []string{"start_list", "rescue_list", "pointers", "font_outlines", "replacement_list", "system_description", "system_description_signature"}
+	files := make([dynamic]Image_File, context.temp_allocator)
+	for name in names {
+		append(&files, Image_File{name = name, file = transmute([]u8)name})
+	}
+	for name in resources {
+		append(&files, Image_File{name = name, file = transmute([]u8)name})
+	}
+	return boot_image_encode(files[:], len(names))
+}
+
+// The console image holds the modules of BROWSER_MACHINE_CONSOLE_MODULES and
+// their imports only: serial_terminal and start_policy, and no compositor,
+// no terminal of the desktop, no drawing module, no input service and no
+// grid_terminal. Its resources are its own start list and rescue list,
+// which name the console alone with no machine part: no font, no pointer
+// theme, and none of the three resources that the signature makes again.
+// The image that the files give reads back with its tables.
+@(test)
+browser_machine_console_image_holds_the_console_and_no_desktop :: proc(t: ^testing.T) {
+	files, module_count, problem := browser_machine_page_image_files(console_image_base(), .Console)
+	if !testing.expect_value(t, problem, "") {
+		return
+	}
+	console_modules := BROWSER_MACHINE_CONSOLE_MODULES
+	refused := BROWSER_MACHINE_CONSOLE_REFUSED_MODULES
+	kept := make(map[string]bool, context.temp_allocator)
+	for file in files[:module_count] {
+		kept[file.name] = true
+	}
+	for name in console_modules {
+		testing.expectf(t, kept[name], "the console image holds no %s", name)
+	}
+	for name in refused {
+		testing.expectf(t, !kept[name], "the console image holds %s", name)
+	}
+	testing.expect(t, kept["serial_terminal"] && kept["start_policy"])
+	// Each module is a module of the list or an import of a kept module.
+	for name in kept {
+		imported := false
+		for build in foundation.module_builds {
+			if kept[build.name] {
+				for import_name in build.imports {
+					imported ||= import_name == name
+				}
+			}
+		}
+		listed := false
+		for listed_name in console_modules {
+			listed ||= listed_name == name
+		}
+		testing.expectf(t, listed || imported, "the console image holds %s, which no module of the list imports", name)
+	}
+	resources := files[module_count:]
+	testing.expect_value(t, len(resources), 2)
+	for resource, index in resources {
+		testing.expect_value(t, resource.name, index == 0 ? start_list.START_LIST_RESOURCE : start_list.RESCUE_LIST_RESOURCE)
+		list: start_list.List
+		read_problem, _, _ := start_list.list_read(resource.file, &list)
+		testing.expect_value(t, read_problem, start_list.List_Problem.None)
+		testing.expect_value(t, list.row_count, 1)
+		row := list.rows[0]
+		testing.expect_value(t, start_list.row_name(&row), "console")
+		testing.expect_value(t, row.needs, start_list.Machine_Parts{})
+		testing.expect_value(t, row.usable_mark, start_list.Usable_Mark.Needed)
+	}
+	image := boot_image_encode(files, module_count)
+	modules, image_resources, valid := info.image_tables(image)
+	testing.expect(t, valid)
+	testing.expect_value(t, len(modules), module_count)
+	testing.expect_value(t, len(image_resources), 2)
+
+	// The desktop image of the same base keeps its fonts and its pointers.
+	desktop, desktop_count, desktop_problem := browser_machine_page_image_files(console_image_base(), .Desktop)
+	testing.expect_value(t, desktop_problem, "")
+	testing.expect(t, desktop_count > module_count)
+	testing.expect_value(t, len(desktop) - desktop_count, 4)
+}
+
+// A base with no serial_terminal, or with no console, gives no console
+// image: the root service would find no terminal, or no shell, for the page.
+// A base that is not an image is refused first.
+@(test)
+browser_machine_console_image_refuses_a_base_without_its_modules :: proc(t: ^testing.T) {
+	for name in ([?]string{"serial_terminal", "console", "start_policy", "root"}) {
+		_, _, problem := browser_machine_page_image_files(console_image_base(name), .Console)
+		testing.expect_value(t, problem, fmt.tprintf("it holds no module %s", name))
+	}
+	_, _, problem := browser_machine_page_image_files(nil, .Console)
+	testing.expect_value(t, problem, "it is not a boot image")
+}
+
+// The lists of the console image pass the check of the lists of each image
+// of the build: a rescue list with a row that makes the machine usable, and
+// rows that name modules of the image.
+@(test)
+browser_machine_console_lists_pass_the_check_of_the_build :: proc(t: ^testing.T) {
+	modules := BROWSER_MACHINE_CONSOLE_MODULES
+	rows := BROWSER_MACHINE_CONSOLE_START_LIST
+	testing.expect_value(t, len(start_list_problems(rows[:], modules[:], false)), 0)
+	testing.expect_value(t, len(start_list_problems(rows[:], modules[:], true)), 0)
+	for row in rows {
+		testing.expect_value(t, row.needs, start_list.Machine_Parts{})
+		testing.expect(t, row.name != "display" && row.name != "input")
+	}
+	files, problem := browser_machine_console_list_files()
+	testing.expect_value(t, problem, "")
+	testing.expect(t, len(files[0].file) > 0 && len(files[1].file) > 0)
 }

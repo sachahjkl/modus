@@ -12,6 +12,7 @@ import "core:time"
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
 import "modus:contract/replacement_list"
+import "modus:contract/start_list"
 import "modus:contract/system_description"
 import "modustool:foundation"
 
@@ -25,6 +26,13 @@ BROWSER_MACHINE_HOST_PATH :: BROWSER_MACHINE_FOLDER + "/" + BROWSER_MACHINE_HOST
 // The boot image of the page before its signature: the input of the signed
 // write of the system description.
 BROWSER_MACHINE_UNSIGNED_IMAGE_PATH :: BROWSER_MACHINE_FOLDER + "/boot_unsigned.image"
+// The console page and its boot image, beside the desktop page: the
+// console image has its own name, so the two pages share the kernel and
+// the host and never overwrite the image of the other.
+BROWSER_MACHINE_CONSOLE_PAGE_FILE :: "browser_machine_console.html"
+BROWSER_MACHINE_CONSOLE_IMAGE_FILE :: "console.image"
+BROWSER_MACHINE_CONSOLE_IMAGE_PATH :: BROWSER_MACHINE_FOLDER + "/" + BROWSER_MACHINE_CONSOLE_IMAGE_FILE
+BROWSER_MACHINE_CONSOLE_UNSIGNED_IMAGE_PATH :: BROWSER_MACHINE_FOLDER + "/console_unsigned.image"
 
 // The modules of the boot image of the page: the desktop and its
 // applications, the holder of each role of the root service
@@ -84,6 +92,48 @@ BROWSER_MACHINE_PAGE_MODULES := [?]string {
 	// The demonstration pair of the default start list.
 	"wired_reader",
 	"wired_writer",
+}
+
+// The modules of the console image of the page
+// (src/md/features/console_renderers.md, "The console image"): the core
+// services of the root service, the console with its compilers, and
+// serial_terminal as its terminal on the second serial port. No
+// compositor, no drawing module, no window and no font: the root service
+// finds no compositor in the image and gives the role Terminal to
+// serial_terminal. block is the device service of the data disk of the
+// private store of the console; devices, principals and disk_processes
+// are the delegated services that the root service starts at each boot.
+@(rodata)
+BROWSER_MACHINE_CONSOLE_MODULES := [?]string {
+	"root",
+	"start_policy",
+	"log",
+	"wiring",
+	"serial_terminal",
+	"console",
+	"c_compiler",
+	"assemble",
+	"storage",
+	"block",
+	"devices",
+	"principals",
+	"disk_processes",
+}
+
+// The modules that a console image never holds: each one draws, or holds
+// the screen, and the root service would run the desktop with it.
+@(rodata)
+BROWSER_MACHINE_CONSOLE_REFUSED_MODULES := [?]string{"compositor", "terminal", "drawing", "interface_module", "grid_terminal", "input"}
+
+// The start list and the rescue list of the console image: the console
+// alone, which needs no screen. Its terminal starts with it.
+@(rodata)
+BROWSER_MACHINE_CONSOLE_START_LIST := [?]Start_List_Row{{name = "console", absent_rule = .Not_Started, usable_mark = .Needed}}
+
+// Which boot image of a page the tool writes.
+Browser_Machine_Image :: enum u8 {
+	Desktop = 0, // The desktop and its applications: BROWSER_MACHINE_PAGE_MODULES.
+	Console = 1, // The console on the serial port: BROWSER_MACHINE_CONSOLE_MODULES.
 }
 
 // The lowest major version of Node that runs the host: the version that the
@@ -425,21 +475,59 @@ browser_machine_build :: proc() -> bool {
 	return true
 }
 
-// browser_machine_page_image_files gives the files of the boot image of the
-// page from a boot image of the build, signed or not: each module of
-// BROWSER_MACHINE_PAGE_MODULES and of their imports, in the order of the
-// base, then each resource of the base but the system description, its
-// signature and the replacement list, which the signed write makes again
-// for these modules. A module of the list that the base does not hold is a
-// problem: the page would start a machine with no holder for a role.
-browser_machine_page_image_files :: proc(base: []u8, allocator := context.temp_allocator) -> (files: []Image_File, module_count: int, problem: string) {
+// browser_machine_console_list_files gives the start list and the rescue
+// list of the console image, written through the contract and checked
+// against the modules of that image, as the build checks the lists of each
+// image (start_lists.odin).
+browser_machine_console_list_files :: proc(allocator := context.temp_allocator) -> (files: [2]Image_File, problem: string) {
+	modules := BROWSER_MACHINE_CONSOLE_MODULES
+	rows := BROWSER_MACHINE_CONSOLE_START_LIST
+	kinds := [2]struct {
+		resource: string,
+		rescue:   bool,
+	}{{start_list.START_LIST_RESOURCE, false}, {start_list.RESCUE_LIST_RESOURCE, true}}
+	for kind, index in kinds {
+		if problems := start_list_problems(rows[:], modules[:], kind.rescue); len(problems) > 0 {
+			return {}, fmt.tprintf("the list %s of the console image is refused: %s", kind.resource, problems[0])
+		}
+		bytes, _, list_problem := start_list_bytes(rows[:])
+		if list_problem != "" {
+			return {}, fmt.tprintf("the list %s of the console image is refused: %s", kind.resource, list_problem)
+		}
+		files[index] = {name = kind.resource, file = bytes}
+	}
+	return files, ""
+}
+
+// browser_machine_page_image_files gives the files of the boot image of a
+// page from a boot image of the build, signed or not: each module of the
+// modules of the image (BROWSER_MACHINE_PAGE_MODULES, or
+// BROWSER_MACHINE_CONSOLE_MODULES) and of their imports, in the order of
+// the base, then the resources. The desktop image keeps each resource of
+// the base but the system description, its signature and the replacement
+// list, which the signed write makes again for these modules. The console
+// image keeps no resource of the base, fonts and pointers included, and
+// holds its own start list and rescue list. A module of the list that the
+// base does not hold is a problem: the page would start a machine with no
+// holder for a role. A console image that would hold a module of
+// BROWSER_MACHINE_CONSOLE_REFUSED_MODULES, through an import, is a problem
+// too: the root service would run the desktop.
+browser_machine_page_image_files :: proc(base: []u8, image := Browser_Machine_Image.Desktop, allocator := context.temp_allocator) -> (files: []Image_File, module_count: int, problem: string) {
 	modules, resources, valid := info.image_tables(base)
 	if !valid {
 		return nil, 0, "it is not a boot image"
 	}
 	wanted := make(map[string]bool, allocator)
 	defer delete(wanted)
-	page_modules := BROWSER_MACHINE_PAGE_MODULES
+	desktop_modules := BROWSER_MACHINE_PAGE_MODULES
+	console_modules := BROWSER_MACHINE_CONSOLE_MODULES
+	page_modules: []string
+	switch image {
+	case .Desktop:
+		page_modules = desktop_modules[:]
+	case .Console:
+		page_modules = console_modules[:]
+	}
 	for name in page_modules {
 		wanted[name] = false
 	}
@@ -475,16 +563,31 @@ browser_machine_page_image_files :: proc(base: []u8, allocator := context.temp_a
 		append(&list, Image_File{name = strings.clone(name, allocator), file = bytes})
 	}
 	module_count = len(list)
-	for &entry in resources {
-		name := system_description.name_of(&entry.name)
-		if name == system_description.RESOURCE_DESCRIPTION || name == system_description.RESOURCE_SIGNATURE || name == replacement_list.RESOURCE_NAME {
-			continue
+	switch image {
+	case .Desktop:
+		for &entry in resources {
+			name := system_description.name_of(&entry.name)
+			if name == system_description.RESOURCE_DESCRIPTION || name == system_description.RESOURCE_SIGNATURE || name == replacement_list.RESOURCE_NAME {
+				continue
+			}
+			bytes, inside := info.image_entry_bytes(base, &entry)
+			if !inside {
+				return nil, 0, fmt.tprintf("the entry of the resource %s points outside the image", name)
+			}
+			append(&list, Image_File{name = strings.clone(name, allocator), file = bytes})
 		}
-		bytes, inside := info.image_entry_bytes(base, &entry)
-		if !inside {
-			return nil, 0, fmt.tprintf("the entry of the resource %s points outside the image", name)
+	case .Console:
+		refused := BROWSER_MACHINE_CONSOLE_REFUSED_MODULES
+		for name in refused {
+			if name in wanted {
+				return nil, 0, fmt.tprintf("the console image would hold the module %s", name)
+			}
 		}
-		append(&list, Image_File{name = strings.clone(name, allocator), file = bytes})
+		lists, list_problem := browser_machine_console_list_files(allocator)
+		if list_problem != "" {
+			return nil, 0, list_problem
+		}
+		append(&list, ..lists[:])
 	}
 	for name, found in wanted {
 		if !found {
@@ -494,39 +597,67 @@ browser_machine_page_image_files :: proc(base: []u8, allocator := context.temp_a
 	return list[:], module_count, ""
 }
 
-// browser_machine_page_image_write writes the boot image of the page from
-// the boot image at base_path: the modules of the page and the resources,
-// with a system description and its signature, as the image of a boot
-// volume (system_description.odin).
+// browser_machine_page_image_write writes a boot image of a page from the
+// boot image at base_path: the modules and the resources of the image
+// (browser_machine_page_image_files), with a system description and its
+// signature, as the image of a boot volume (system_description.odin).
 @(private = "file")
-browser_machine_page_image_write :: proc(base_path: string) -> bool {
+browser_machine_page_image_write :: proc(base_path: string, image := Browser_Machine_Image.Desktop) -> bool {
+	unsigned_path, signed_path: string
+	switch image {
+	case .Desktop:
+		unsigned_path, signed_path = BROWSER_MACHINE_UNSIGNED_IMAGE_PATH, BROWSER_MACHINE_BOOT_IMAGE_PATH
+	case .Console:
+		unsigned_path, signed_path = BROWSER_MACHINE_CONSOLE_UNSIGNED_IMAGE_PATH, BROWSER_MACHINE_CONSOLE_IMAGE_PATH
+	}
 	base, read_error := os.read_entire_file(base_path, context.temp_allocator)
 	if read_error != nil {
 		fmt.eprintfln("modustool: cannot read %s: %v", base_path, read_error)
 		return false
 	}
-	files, module_count, problem := browser_machine_page_image_files(base)
+	files, module_count, problem := browser_machine_page_image_files(base, image)
 	if problem != "" {
-		fmt.eprintfln("modustool: the boot image of the page from %s: %s", base_path, problem)
+		fmt.eprintfln("modustool: the %v boot image of the page from %s: %s", image, base_path, problem)
 		return false
 	}
 	unsigned := boot_image_encode(files, module_count)
-	if error := os.write_entire_file(BROWSER_MACHINE_UNSIGNED_IMAGE_PATH, unsigned); error != nil {
-		fmt.eprintfln("modustool: cannot write %s: %v", BROWSER_MACHINE_UNSIGNED_IMAGE_PATH, error)
+	if error := os.write_entire_file(unsigned_path, unsigned); error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", unsigned_path, error)
 		return false
 	}
-	if _, signed := boot_image_signed_write(BROWSER_MACHINE_UNSIGNED_IMAGE_PATH, "kernel", BROWSER_MACHINE_BOOT_IMAGE_PATH, {}); !signed {
+	if _, signed := boot_image_signed_write(unsigned_path, "kernel", signed_path, {}); !signed {
 		return false
 	}
 	base_modules, _, _ := info.image_tables(base)
-	written, stat_error := os.stat(BROWSER_MACHINE_BOOT_IMAGE_PATH, context.temp_allocator)
+	written, stat_error := os.stat(signed_path, context.temp_allocator)
 	if stat_error != nil {
-		fmt.eprintfln("modustool: cannot read the size of %s: %v", BROWSER_MACHINE_BOOT_IMAGE_PATH, stat_error)
+		fmt.eprintfln("modustool: cannot read the size of %s: %v", signed_path, stat_error)
 		return false
 	}
-	fmt.printfln("modustool: measure: the boot image of the page: %d bytes, %d modules of the %d of %s (%d bytes)", written.size, module_count, len(base_modules), base_path, len(base))
+	fmt.printfln("modustool: measure: the %v boot image of the page: %d bytes, %d modules of the %d of %s (%d bytes)", image, written.size, module_count, len(base_modules), base_path, len(base))
 	return true
 }
+
+// browser_machine_console_write writes the console page and its boot image
+// beside the files of the page, from the boot image of the build. The
+// console page reads the second serial port of the host; the first stays
+// the log of the kernel.
+browser_machine_console_write :: proc() -> bool {
+	if !os.is_file(BOOT_IMAGE) {
+		fmt.eprintfln("modustool: browser-machine console needs the boot image of the build, %s: run modustool build first", BOOT_IMAGE)
+		return false
+	}
+	path := strings.concatenate({BROWSER_MACHINE_FOLDER, "/", BROWSER_MACHINE_CONSOLE_PAGE_FILE}, context.temp_allocator)
+	if error := os.write_entire_file(path, transmute([]u8)BROWSER_MACHINE_CONSOLE_PAGE_TEXT); error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", path, error)
+		return false
+	}
+	return browser_machine_page_image_write(BOOT_IMAGE, .Console)
+}
+
+// The console page: the host of the page with the second serial port as
+// its terminal. The site publishes the desktop page only.
+BROWSER_MACHINE_CONSOLE_PAGE_TEXT :: #load("browser_machine/browser_machine_console.html", string)
 
 @(private = "file")
 browser_machine_boot_image_copy :: proc(source: string) -> bool {
@@ -734,12 +865,16 @@ browser_machine_framebuffer_line_parse :: proc(line: string) -> (lit: u64, pixel
 // run_browser_machine is the command browser-machine.
 run_browser_machine :: proc(args: []string) -> int {
 	boot := len(args) >= 1 && args[0] == "boot"
-	if len(args) > 2 || (len(args) >= 1 && !boot) {
-		fmt.eprintln("modustool: browser-machine takes no argument, or boot [<boot image>]")
+	console := len(args) == 1 && args[0] == "console"
+	if len(args) > 2 || (len(args) >= 1 && !boot && !console) {
+		fmt.eprintln("modustool: browser-machine takes no argument, boot [<boot image>], or console")
 		return foundation.EXIT_USAGE
 	}
 	if !browser_machine_build() {
 		return foundation.EXIT_FAILURE
+	}
+	if console {
+		return browser_machine_console_write() ? 0 : foundation.EXIT_FAILURE
 	}
 	if !boot {
 		return 0

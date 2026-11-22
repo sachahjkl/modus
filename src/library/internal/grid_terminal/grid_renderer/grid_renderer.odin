@@ -8,6 +8,10 @@
 // zero TrueType outline rasterization.
 package grid_renderer
 
+import "modus:contract/enum_word"
+import "modus:contract/ring"
+import "modus:contract/text_encoding"
+import "modus:display"
 import "modus:graphics"
 import terminal_records "modus:terminal"
 
@@ -31,6 +35,103 @@ Grid_Screen :: struct {
 	popup_visible: bool,
 	popup_top:     int,
 	popup_bottom:  int,
+	popup_column:  int, // The first column of the box on the screen.
+	popup_columns: int, // The columns of the box.
+	list_changed:  bool, // A List record came since the box was drawn: the box is drawn again.
+}
+
+// grid_list_changed marks the completion list as changed: the next present
+// draws its box again.
+grid_list_changed :: proc "contextless" (screen: ^Grid_Screen) {
+	screen.list_changed = true
+}
+
+// The place where the next output goes: a row of the output and a column.
+Grid_Output :: struct {
+	row:    int,
+	column: int,
+}
+
+// The largest code of a key: a scan code of set 1 with KEY_EXTENDED.
+KEY_CODE_MOST :: display.KEY_EXTENDED | 0xFF
+
+// The modifier bits that a key record can hold.
+KEY_MODIFIERS_KNOWN :: u64(display.MODIFIER_SHIFT | display.MODIFIER_CONTROL)
+
+// key_of_input_record is the border of a record of the input ring, which
+// the input service writes and grid_terminal reads in place of the
+// compositor: the key of a press. A record whose kind names no input, a
+// pointer record, a release, a pressed word other than 0 and 1, a code past
+// KEY_CODE_MOST, a character that is no code point or a surrogate, and a
+// modifier bit that names no modifier give no key. It reads and changes no
+// state.
+key_of_input_record :: proc "contextless" (record: ring.Record) -> (key: terminal_records.Key, ok: bool) {
+	kind := enum_word.member_of_word(display.Input, u64(record.kind)) or_return
+	switch kind {
+	case .None, .Pointer, .Pointer_Absolute:
+		return {}, false
+	case .Key:
+	}
+	code, character, pressed, modifiers := record.values[0], record.values[1], record.values[2], record.values[3]
+	if pressed > 1 || code > KEY_CODE_MOST || character > text_encoding.CODE_POINT_LAST || (character >= 0xD800 && character <= 0xDFFF) || modifiers & ~KEY_MODIFIERS_KNOWN != 0 {
+		return {}, false
+	}
+	if pressed == 0 {
+		return {}, false
+	}
+	return {code = u32(code), character = rune(character), modifiers = u32(modifiers)}, true
+}
+
+// grid_scroll_up moves the rows 1 to last_row up by one row, and clears
+// last_row: the rows below it, the edit line, stay. A last_row past the
+// screen is cut to its last row; a negative one does nothing.
+grid_scroll_up :: proc "contextless" (screen: ^Grid_Screen, last_row: int, appearance: graphics.Appearance) {
+	last := min(last_row, screen.rows - 1)
+	if last < 0 {
+		return
+	}
+	for r in 0 ..< last {
+		screen.cells[r] = screen.cells[r + 1]
+		screen.dirty_rows[r] = true
+	}
+	grid_row_clear(screen, last, appearance)
+	screen.dirty_rows[last] = true
+}
+
+// grid_output_new_line moves the output to the start of its next row; at
+// the last row of the output, the output scrolls up.
+grid_output_new_line :: proc "contextless" (screen: ^Grid_Screen, output: ^Grid_Output, output_rows: int, appearance: graphics.Appearance) {
+	output.column = 0
+	if output.row + 1 < output_rows {
+		output.row += 1
+	} else {
+		grid_scroll_up(screen, output_rows - 1, appearance)
+	}
+}
+
+// grid_write_output writes a run of output at the place of the output, one
+// cell for each character: it wraps at the last column, and a new line at
+// the last of the output_rows rows scrolls them up. An invalid sequence
+// and a control character show the replacement character, as the terminal
+// of the desktop shows them. output_rows is cut to the rows of the screen
+// and is at least 1; a place out of the output is moved into it.
+grid_write_output :: proc "contextless" (screen: ^Grid_Screen, output: ^Grid_Output, text: []u8, foreground, background: graphics.Color, end_line: bool, output_rows: int, appearance: graphics.Appearance) {
+	rows := clamp(output_rows, 1, screen.rows)
+	output.row = clamp(output.row, 0, rows - 1)
+	output.column = clamp(output.column, 0, screen.columns)
+	place := 0
+	for place < len(text) {
+		character, length, _ := text_encoding.character_decode(text, place)
+		place += max(length, 1)
+		if output.column >= screen.columns {
+			grid_output_new_line(screen, output, rows, appearance)
+		}
+		grid_cell_set(screen, output.row, output.column, character, foreground, background)
+		output.column += 1
+	}
+	if end_line {
+		grid_output_new_line(screen, output, rows, appearance)
+	}
 }
 
 grid_init :: proc "contextless" (screen: ^Grid_Screen, columns, rows: int, appearance: graphics.Appearance) {
@@ -105,10 +206,21 @@ grid_write_edit_line :: proc "contextless" (
 	}
 	palette := graphics.colors_for_contrast_mode(.Standard, appearance == .Dark)
 	grid_row_clear(screen, row, appearance)
-	for i in 0 ..< min(len(text), screen.columns) {
+	// One cell for each UTF-8 character; the runs and the cursor name
+	// bytes, so each cell keeps the byte where its character starts.
+	cursor_cell := 0
+	cell := 0
+	place := 0
+	for place < len(text) && cell < screen.columns {
+		character, length, _ := text_encoding.character_decode(text, place)
+		length = max(length, 1)
+		if cursor_byte != terminal_records.NO_CURSOR && u64(place) < cursor_byte {
+			cursor_cell = cell + 1
+		}
+		i := place
 		fg := palette.text
 		if runs != nil {
-			for r_idx in 0 ..< min(runs.count, terminal_records.CODE_RUN_LIMIT) {
+			for r_idx in 0 ..< clamp(runs.count, 0, terminal_records.CODE_RUN_LIMIT) {
 				run := runs.runs[r_idx]
 				if i >= int(run.start) && i < int(run.start) + int(run.length) {
 					if kind, ok := terminal_records.code_kind_of(run.kind); ok && kind != .None {
@@ -121,14 +233,21 @@ grid_write_edit_line :: proc "contextless" (
 				}
 			}
 		}
-		grid_cell_set(screen, row, i, rune(text[i]), fg, palette.background)
+		grid_cell_set(screen, row, cell, character, fg, palette.background)
+		place += length
+		cell += 1
 	}
 	if screen.cursor_shown && screen.cursor_row >= 0 && screen.cursor_row < screen.rows {
 		screen.dirty_rows[screen.cursor_row] = true
 	}
 	screen.cursor_shown = cursor_byte != terminal_records.NO_CURSOR
 	screen.cursor_row = row
-	screen.cursor_col = clamp(int(cursor_byte), 0, screen.columns - 1)
+	// The cursor is after each character that starts before its byte, cut
+	// to the last column: a word past the largest int never wraps.
+	if cursor_byte != terminal_records.NO_CURSOR && cursor_byte > u64(len(text)) {
+		cursor_cell = screen.columns
+	}
+	screen.cursor_col = clamp(cursor_cell, 0, screen.columns - 1)
 	screen.dirty_rows[row] = true
 }
 
@@ -142,18 +261,39 @@ grid_present_dirty :: proc "contextless" (
 	anchor_row: int,
 	appearance: graphics.Appearance,
 ) -> (blitted_rows: int) {
-	if canvas.width < graphics.CELL_WIDTH || canvas.height < graphics.CELL_HEIGHT {
+	if canvas.pixels == nil || canvas.width < graphics.CELL_WIDTH || canvas.height < graphics.CELL_HEIGHT || canvas.stride < canvas.width {
 		return 0
 	}
 	palette := graphics.colors_for_contrast_mode(.Standard, appearance == .Dark)
-	// If a popup was shown before and is now closed, mark its rows dirty to restore background.
 	want_popup := popup != nil && popup.row_count > 0
-	if screen.popup_visible && !want_popup {
-		for r in max(screen.popup_top, 0) ..= min(screen.popup_bottom, screen.rows - 1) {
-			screen.dirty_rows[r] = true
-		}
-		screen.popup_visible = false
+	// The box of the list this time: when it moved, shrank or closed, the
+	// rows under the box of the last time are drawn again first.
+	rows := 0
+	box_col, box_cols, top_row := 0, 0, 0
+	if want_popup {
+		rows = min(popup.row_count, terminal_records.LIST_ROWS)
+		box_col = clamp(popup.anchor, 0, max(screen.columns - 24, 0))
+		box_cols = min(clamp(screen.columns - box_col, 20, 54), screen.columns - box_col)
+		top_row = clamp(anchor_row + 1, 0, max(screen.rows - rows - 1, 0))
 	}
+	if screen.popup_visible {
+		moved := !want_popup || top_row != screen.popup_top || min(top_row + rows + 1, screen.rows - 1) != screen.popup_bottom || box_col != screen.popup_column || box_cols != screen.popup_columns
+		if moved {
+			for r in max(screen.popup_top, 0) ..= min(screen.popup_bottom, screen.rows - 1) {
+				screen.dirty_rows[r] = true
+			}
+			screen.popup_visible = false
+		}
+	}
+	// The box is drawn again only when it is not on the screen, when the
+	// list changed, or when a row under it is drawn again over it.
+	draw_popup := want_popup && (!screen.popup_visible || screen.list_changed)
+	if want_popup && !draw_popup {
+		for r in max(top_row, 0) ..= min(top_row + rows + 1, screen.rows - 1) {
+			draw_popup ||= screen.dirty_rows[r]
+		}
+	}
+	screen.list_changed = false
 
 	for r in 0 ..< screen.rows {
 		if !screen.dirty_rows[r] {
@@ -182,11 +322,7 @@ grid_present_dirty :: proc "contextless" (
 		blitted_rows += 1
 	}
 
-	if want_popup {
-		rows := min(popup.row_count, terminal_records.LIST_ROWS)
-		box_col := clamp(popup.anchor, 0, max(screen.columns - 24, 0))
-		box_cols := clamp(screen.columns - box_col, 20, 54)
-		top_row := clamp(anchor_row + 1, 0, max(screen.rows - rows - 1, 0))
+	if draw_popup {
 		px := box_col * graphics.CELL_WIDTH
 		py := top_row * graphics.CELL_HEIGHT
 		pw := min(box_cols * graphics.CELL_WIDTH, canvas.width - px)
@@ -203,7 +339,8 @@ grid_present_dirty :: proc "contextless" (
 				desc_fg := selected ? graphics.COLOR_WHITE : palette.dim
 				graphics.fill(canvas, px + 1, ry, pw - 2, graphics.CELL_HEIGHT, row_bg)
 				cx := px + 6
-				name_len := min(row.name_length, row.length)
+				length := clamp(row.length, 0, len(row.text))
+				name_len := clamp(row.name_length, 0, length)
 				for k in 0 ..< name_len {
 					if cx + graphics.CELL_WIDTH > px + pw - 4 {
 						break
@@ -212,7 +349,7 @@ grid_present_dirty :: proc "contextless" (
 					cx += graphics.CELL_WIDTH
 				}
 				cx += graphics.CELL_WIDTH
-				for k in name_len ..< row.length {
+				for k in name_len ..< length {
 					if cx + graphics.CELL_WIDTH > px + pw - 4 {
 						break
 					}
@@ -223,6 +360,8 @@ grid_present_dirty :: proc "contextless" (
 			screen.popup_visible = true
 			screen.popup_top = top_row
 			screen.popup_bottom = min(top_row + rows + 1, screen.rows - 1)
+			screen.popup_column = box_col
+			screen.popup_columns = box_cols
 		}
 	}
 	return blitted_rows

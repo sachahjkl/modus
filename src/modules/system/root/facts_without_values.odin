@@ -26,6 +26,12 @@ No_Screen :: struct {}
 @(log_fact = "root: the compositor stopped: no screen; a start of a window or a terminal is refused from now on")
 Compositor_Stopped :: struct {}
 
+@(log_fact = "root: no compositor in the boot image: the console writes to the second serial port through serial_terminal")
+Console_Renderer_Serial :: struct {}
+
+@(log_fact = "root: no compositor in the boot image: the console draws a text grid on the screen through grid_terminal")
+Console_Renderer_Grid :: struct {}
+
 @(log_fact = "root: no palette provider")
 Palette_Provider_Absent :: struct {}
 

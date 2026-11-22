@@ -8,6 +8,7 @@
 // and zero framebuffer.
 package ansi_terminal
 
+import "modus:contract/text_encoding"
 import "modus:graphics"
 import terminal_records "modus:terminal"
 
@@ -145,21 +146,82 @@ emit_cursor_move :: proc "contextless" (sink: ^Byte_Sink, row_1based, col_1based
 	sink_byte(sink, 'H')
 }
 
-// emit_styled_text emits a plain styled run, sanitizing any raw ESC byte so
-// untrusted process output can never inject escape sequences.
+// The mark that a renderer writes for a character of a process that would
+// act on the terminal of the reader, and for an invalid UTF-8 sequence.
+SANITIZED_MARK :: '?'
+
+// sink_sanitized_characters appends the text of a process, at most
+// character_limit characters, and gives the characters written. Each
+// character is decoded as UTF-8 (text_encoding.character_decode): a valid
+// character that is no control passes whole; Tab passes; each C0 control
+// (ESC, CR, LF, BS, BEL...), Delete, each C1 control (U+0080 to U+009F: the
+// CSI, OSC and DCS of 8 bits, as 0xC2 0x9B) and each invalid sequence (a raw
+// byte 0x80 to 0xFF, a cut or overlong sequence, a surrogate) becomes one
+// SANITIZED_MARK. The text of a process never acts on the terminal: only
+// this renderer writes sequences.
+sink_sanitized_characters :: proc "contextless" (sink: ^Byte_Sink, text: []u8, character_limit: int) -> (written: int) {
+	place := 0
+	for place < len(text) && written < character_limit {
+		character, length, valid := text_encoding.character_decode(text, place)
+		length = max(length, 1)
+		switch {
+		case text[place] == '\t':
+			sink_byte(sink, '\t')
+		case valid && text_encoding.character_in_text(character):
+			sink_text(sink, string(text[place:][:length]))
+		case:
+			sink_byte(sink, SANITIZED_MARK)
+		}
+		place += length
+		written += 1
+	}
+	return written
+}
+
+// sink_sanitized appends the whole text of a process through
+// sink_sanitized_characters.
+sink_sanitized :: proc "contextless" (sink: ^Byte_Sink, text: []u8) {
+	_ = sink_sanitized_characters(sink, text, max(int))
+}
+
+// emit_styled_text emits a plain styled run. The text goes through
+// sink_sanitized, so the output of a process can never inject an escape
+// sequence or a control byte.
 emit_styled_text :: proc "contextless" (sink: ^Byte_Sink, text: []u8, style: terminal_records.Style, appearance: graphics.Appearance) {
 	fg, bg := style_colors(style, appearance)
 	emit_sgr_rgb(sink, fg, bg)
-	for b in text {
-		if b == 0x1B {
-			sink_byte(sink, '?')
-		} else {
-			sink_byte(sink, b)
-		}
-	}
+	sink_sanitized(sink, text)
 	if .End_Line in style.flags {
 		sink_text(sink, "\x1b[K\r\n")
 	}
+}
+
+// The layout of the screen of serial_terminal: the rows 1 to rows - 1 are
+// the output, a scroll region that scrolls by itself at each new line; the
+// last row is the edit line. The output keeps its own cursor, which DEC
+// saves with ESC 7 and gives back with ESC 8, so the edit line and the
+// completion list never move where the next output goes.
+
+// emit_layout clears the screen, sets the scroll region of the output, and
+// saves the cursor of the output at its first row. rows below 2 give one
+// row of output.
+emit_layout :: proc "contextless" (sink: ^Byte_Sink, rows: int, appearance: graphics.Appearance) {
+	emit_clear_screen(sink, appearance)
+	sink_text(sink, "\x1b[1;")
+	sink_unsigned(sink, u64(max(rows - 1, 1)))
+	sink_byte(sink, 'r')
+	emit_cursor_move(sink, 1, 1)
+	sink_text(sink, "\x1b7")
+}
+
+// emit_output_text writes a run of output at the cursor of the output,
+// saves that cursor again, then puts the cursor back on the edit line at
+// edit_column: the reader types there.
+emit_output_text :: proc "contextless" (sink: ^Byte_Sink, text: []u8, style: terminal_records.Style, edit_row_1based, edit_column_1based: int, appearance: graphics.Appearance) {
+	sink_text(sink, "\x1b8")
+	emit_styled_text(sink, text, style, appearance)
+	sink_text(sink, "\x1b7")
+	emit_cursor_move(sink, edit_row_1based, edit_column_1based)
 }
 
 // emit_edit_line renders the active console edit line with Lex syntax
@@ -184,9 +246,7 @@ emit_edit_line :: proc "contextless" (
 			end := min(start + int(run.length), len(text))
 			if start > pos && start <= len(text) {
 				emit_sgr_rgb(sink, palette.text, palette.background)
-				for b in text[pos:start] {
-					sink_byte(sink, b == 0x1B ? '?' : b)
-				}
+				sink_sanitized(sink, text[pos:start])
 				pos = start
 			}
 			if start >= pos && end > start {
@@ -199,51 +259,84 @@ emit_edit_line :: proc "contextless" (
 					}
 				}
 				emit_sgr_rgb(sink, color, palette.background)
-				for b in text[start:end] {
-					sink_byte(sink, b == 0x1B ? '?' : b)
-				}
+				sink_sanitized(sink, text[start:end])
 				pos = end
 			}
 		}
 	}
 	if pos < len(text) {
 		emit_sgr_rgb(sink, palette.text, palette.background)
-		for b in text[pos:] {
-			sink_byte(sink, b == 0x1B ? '?' : b)
-		}
+		sink_sanitized(sink, text[pos:])
 	}
 	if cursor_byte != terminal_records.NO_CURSOR {
-		col := min(int(cursor_byte), len(text)) + 1
-		emit_cursor_move(sink, row_1based, col)
+		// The cut is in u64: a word past the largest int never wraps to a
+		// column before the line.
+		emit_cursor_move(sink, row_1based, edit_column_of(cursor_byte, len(text)))
 	}
 }
 
+// edit_column_of gives the column, from 1, of the cursor of an edit line of
+// length bytes: a cursor past the text is at its end.
+edit_column_of :: proc "contextless" (cursor_byte: u64, length: int) -> int {
+	return int(min(cursor_byte, u64(max(length, 0)))) + 1
+}
+
+// popup_top_row gives the row, from 1, of the top border of a completion
+// list of row_count rows at the edit line anchor_row: under it when the
+// list fits there, else above it. A screen too small for the list above
+// gives row 1.
+popup_top_row :: proc "contextless" (anchor_row_1based, row_count, rows: int) -> int {
+	height := row_count + 2
+	if anchor_row_1based + height <= rows {
+		return anchor_row_1based + 1
+	}
+	return max(anchor_row_1based - height, 1)
+}
+
+// The least width of the box of a completion list: the two borders and
+// one character.
+POPUP_LEAST_WIDTH :: 3
+
 // emit_completion_popup renders the floating completion popup box (List_Shown)
-// below anchor_row using Unicode box-drawing borders, highlighted selected row,
-// and dim descriptions. Passing row_count == 0 clears the popup rows cleanly.
+// at the edit line anchor_row, under it when it fits and above it if not
+// (popup_top_row), using Unicode box-drawing borders, highlighted selected
+// row, and dim descriptions. The box never passes the columns of the
+// screen; a screen narrower than POPUP_LEAST_WIDTH shows no box. Passing
+// row_count == 0 clears the rows that the largest list takes, on the same
+// side. A row whose name length is out of its text is drawn with the name
+// cut to the text.
 emit_completion_popup :: proc "contextless" (
 	sink: ^Byte_Sink,
 	list: ^terminal_records.List_Shown,
 	anchor_row_1based: int,
 	columns: int,
+	screen_rows: int,
 	appearance: graphics.Appearance,
 ) {
 	palette := graphics.colors_for_contrast_mode(.Standard, appearance == .Dark)
 	if list == nil || list.row_count <= 0 {
 		emit_sgr_rgb(sink, palette.text, palette.background)
+		top := popup_top_row(anchor_row_1based, terminal_records.LIST_ROWS, screen_rows)
 		for offset in 0 ..< terminal_records.LIST_ROWS + 2 {
-			emit_cursor_move(sink, anchor_row_1based + 1 + offset, 1)
-			sink_text(sink, "\x1b[K")
+			row := top + offset
+			if row != anchor_row_1based && row >= 1 && row <= max(screen_rows, 1) {
+				emit_cursor_move(sink, row, 1)
+				sink_text(sink, "\x1b[2K")
+			}
 		}
+		return
+	}
+	if columns < POPUP_LEAST_WIDTH {
 		return
 	}
 	rows := min(list.row_count, terminal_records.LIST_ROWS)
 	box_col := clamp(list.anchor + 1, 1, max(columns - 24, 1))
-	box_width := clamp(columns - box_col + 1, 20, 56)
+	box_width := min(clamp(columns - box_col + 1, 20, 56), columns - box_col + 1)
 	inner := box_width - 2
+	top := popup_top_row(anchor_row_1based, rows, screen_rows)
 
 	// Top border.
-	emit_cursor_move(sink, anchor_row_1based + 1, box_col)
+	emit_cursor_move(sink, top, box_col)
 	emit_sgr_rgb(sink, palette.edge, palette.card_top)
 	sink_text(sink, "┌")
 	for _ in 0 ..< inner {
@@ -259,33 +352,20 @@ emit_completion_popup :: proc "contextless" (
 		name_fg := selected ? graphics.COLOR_WHITE : palette.text_strong
 		desc_fg := selected ? graphics.COLOR_WHITE : palette.dim
 
-		emit_cursor_move(sink, anchor_row_1based + 2 + row_index, box_col)
+		emit_cursor_move(sink, top + 1 + row_index, box_col)
 		emit_sgr_rgb(sink, palette.edge, palette.card_bottom)
 		sink_text(sink, "│")
 		emit_sgr_rgb(sink, name_fg, row_bg)
 		sink_byte(sink, ' ')
 		written := 1
-		name_len := min(row.name_length, row.length)
-		for i in 0 ..< name_len {
-			if written >= inner {
-				break
-			}
-			b := row.text[i]
-			sink_byte(sink, b == 0x1B ? '?' : b)
-			written += 1
-		}
-		if row.length > name_len && written + 2 < inner {
+		length := clamp(row.length, 0, len(row.text))
+		name_len := clamp(row.name_length, 0, length)
+		written += sink_sanitized_characters(sink, row.text[:name_len], inner - written)
+		if length > name_len && written + 2 < inner {
 			sink_text(sink, "  ")
 			written += 2
 			emit_sgr_rgb(sink, desc_fg, row_bg)
-			for i in name_len ..< row.length {
-				if written >= inner {
-					break
-				}
-				b := row.text[i]
-				sink_byte(sink, b == 0x1B ? '?' : b)
-				written += 1
-			}
+			written += sink_sanitized_characters(sink, row.text[name_len:length], inner - written)
 		}
 		for written < inner {
 			sink_byte(sink, ' ')
@@ -296,7 +376,7 @@ emit_completion_popup :: proc "contextless" (
 	}
 
 	// Bottom border.
-	emit_cursor_move(sink, anchor_row_1based + 2 + rows, box_col)
+	emit_cursor_move(sink, top + 1 + rows, box_col)
 	emit_sgr_rgb(sink, palette.edge, palette.card_bottom)
 	sink_text(sink, "└")
 	for _ in 0 ..< inner {
