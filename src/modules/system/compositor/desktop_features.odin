@@ -4,6 +4,7 @@
 // right-click filterable context menu.
 package compositor
 
+import "internal:compositor/bar"
 import "modus:contract/desktop_layout"
 import "modus:contract/enum_word"
 import "modus:contract/desktop_shell"
@@ -32,6 +33,9 @@ Desktop_Context_Action :: enum u32 {
 	Restore_All = 5,
 	Bar_Top     = 6,
 	Bar_Bottom  = 7,
+	Snap_Left   = 8,
+	Snap_Right  = 9,
+	Maximize    = 10,
 }
 
 desktop_workspaces: desktop_layout.Workspace_Manager
@@ -43,13 +47,62 @@ desktop_tray: desktop_shell.Tray_State
 desktop_context_menu: interface.Context_Menu_State
 desktop_features_ready: bool
 
-// desktop_bar_y returns the top pixel Y coordinate of the horizontal bar
-// (0 for Top, desktop_height - BAR_HEIGHT for Bottom).
+// desktop_bar_y gives the logical y of the first row of the bar: the
+// layout of the bar holds its edge (src/md/features/bar_edge.md).
 desktop_bar_y :: proc "contextless" () -> int {
-	if desktop_bar_position == .Bottom && desktop_height > BAR_HEIGHT {
-		return desktop_height - BAR_HEIGHT
+	return bar.top(bar_layout)
+}
+
+// desktop_work_top gives the first row of the desktop under a bar at the
+// top, or the first row of the screen over a bar at the bottom: the place of
+// a maximized window and of the first notification.
+desktop_work_top :: proc "contextless" () -> int {
+	switch bar_layout.edge {
+	case .Top:
+		return BAR_HEIGHT
+	case .Bottom:
+		return 0
 	}
-	return 0
+	return BAR_HEIGHT
+}
+
+// desktop_work_bottom gives the row after the last row of the desktop.
+desktop_work_bottom :: proc "contextless" () -> int {
+	switch bar_layout.edge {
+	case .Top:
+		return desktop_height
+	case .Bottom:
+		return desktop_bar_y()
+	}
+	return desktop_height
+}
+
+// bar_edge_of gives the edge that the compositor draws for a setting of the
+// bar. A vertical bar is not drawn yet: the bar then stays at the top.
+bar_edge_of :: proc "contextless" (position: desktop_shell.Bar_Position) -> bar.Edge {
+	switch position {
+	case .Top, .Left, .Right:
+		return .Top
+	case .Bottom:
+		return .Bottom
+	}
+	return .Top
+}
+
+// desktop_bar_position_set takes a new setting of the bar and moves the bar,
+// its menus and the windows maximized against it.
+desktop_bar_position_set :: proc "contextless" (position: desktop_shell.Bar_Position) {
+	before_top := desktop_work_top()
+	desktop_bar_position = position
+	bar_layout_update()
+	if after_top := desktop_work_top(); after_top != before_top {
+		for &client in clients {
+			if client.created && client.maximized {
+				client.y = after_top
+			}
+		}
+	}
+	damage_whole_screen()
 }
 
 desktop_features_init :: proc "contextless" (screen_w, screen_h, bar_h: i32) {
@@ -88,7 +141,7 @@ desktop_window_opened :: proc "contextless" (index: int) {
 		return
 	}
 	_ = desktop_layout.workspace_add_window(&desktop_workspaces, u64(index + 1), desktop_workspaces.active_index)
-	damage_add(0, desktop_bar_y(), desktop_width, BAR_HEIGHT)
+	damage_bar()
 }
 
 desktop_window_closed :: proc "contextless" (index: int) {
@@ -96,7 +149,7 @@ desktop_window_closed :: proc "contextless" (index: int) {
 		return
 	}
 	_ = desktop_layout.workspace_remove_window(&desktop_workspaces, u64(index + 1))
-	damage_add(0, desktop_bar_y(), desktop_width, BAR_HEIGHT)
+	damage_bar()
 }
 
 desktop_features_tick :: proc "contextless" (now_ns: u64) {
@@ -111,7 +164,8 @@ desktop_features_tick :: proc "contextless" (now_ns: u64) {
 desktop_damage_notifications :: proc "contextless" () {
 	x := max(0, desktop_width - NOTIFICATION_BANNER_WIDTH - NOTIFICATION_BANNER_MARGIN - 2)
 	h := NOTIFICATION_MAX_VISIBLE * (NOTIFICATION_BANNER_HEIGHT + NOTIFICATION_BANNER_GAP) + NOTIFICATION_BANNER_MARGIN * 2
-	damage_add(x, BAR_HEIGHT, desktop_width - x, min(h, max(0, desktop_height - BAR_HEIGHT)))
+	work_top := desktop_work_top()
+	damage_add(x, work_top, desktop_width - x, min(h, max(0, desktop_work_bottom() - work_top)))
 }
 
 // desktop_notifications_records draws urgency-badged rectangular notification
@@ -129,7 +183,7 @@ desktop_notifications_records :: proc "contextless" (table: ^interface.Draw_Tabl
 		if shown >= NOTIFICATION_MAX_VISIBLE {
 			break
 		}
-		y := BAR_HEIGHT + NOTIFICATION_BANNER_MARGIN + shown * (NOTIFICATION_BANNER_HEIGHT + NOTIFICATION_BANNER_GAP)
+		y := desktop_work_top() + NOTIFICATION_BANNER_MARGIN + shown * (NOTIFICATION_BANNER_HEIGHT + NOTIFICATION_BANNER_GAP)
 		rail_color := graphics.colors.title
 		switch item.urgency {
 		case .Low:
@@ -167,17 +221,47 @@ desktop_context_menu_open :: proc "contextless" (x, y: int) {
 	if !desktop_features_ready {
 		return
 	}
-	items := [7]interface.Context_Menu_Item{
+	// A shortcut is shown only for an act that desktop_shortcut_key does
+	// with the same keys. The edge that the bar holds now is disabled.
+	at_bottom := bar_layout.edge == .Bottom
+	items := [10]interface.Context_Menu_Item{
 		{id = u32(Desktop_Context_Action.New_Console), label = "New Console"},
 		{id = u32(Desktop_Context_Action.Open_Monitor), label = "Open Monitor"},
 		{id = u32(Desktop_Context_Action.Open_Clock), label = "Open Clock"},
-		{id = u32(Desktop_Context_Action.Toggle_Mag), label = "Toggle Magnifier"},
+		{id = u32(Desktop_Context_Action.Snap_Left), label = "Snap Window Left", shortcut = "Ctrl+Shift+Left"},
+		{id = u32(Desktop_Context_Action.Snap_Right), label = "Snap Window Right", shortcut = "Ctrl+Shift+Right"},
+		{id = u32(Desktop_Context_Action.Maximize), label = "Maximize Window", shortcut = "Ctrl+Shift+Up"},
+		{id = u32(Desktop_Context_Action.Toggle_Mag), label = "Toggle Magnifier", shortcut = "Ctrl+Shift+M"},
 		{id = u32(Desktop_Context_Action.Restore_All), label = "Restore Minimized"},
-		{id = u32(Desktop_Context_Action.Bar_Top), label = "Bar Position Top"},
-		{id = u32(Desktop_Context_Action.Bar_Bottom), label = "Bar Position Bottom"},
+		{id = u32(Desktop_Context_Action.Bar_Top), label = "Bar Position Top", disabled = !at_bottom},
+		{id = u32(Desktop_Context_Action.Bar_Bottom), label = "Bar Position Bottom", disabled = at_bottom},
 	}
-	interface.context_menu_open(&desktop_context_menu, x, y, desktop_width, desktop_height, items[:])
+	// The menu stays on the desktop: it never covers the bar at the bottom.
+	interface.context_menu_open(&desktop_context_menu, x, y, desktop_width, desktop_work_bottom(), items[:])
 	damage_whole_screen()
+}
+
+// desktop_context_menu_damage records the card of the open context menu,
+// with the room of every item, so a filter that shrinks it leaves no row.
+desktop_context_menu_damage :: proc "contextless" () {
+	height := interface.CONTEXT_MENU_HEADER_HEIGHT + max(1, desktop_context_menu.item_count) * interface.CONTEXT_MENU_ROW_HEIGHT + interface.CONTEXT_MENU_FOOT
+	damage_add(desktop_context_menu.x, desktop_context_menu.y, interface.CONTEXT_MENU_WIDTH, height)
+}
+
+// desktop_context_menu_pointer gives the pointer to the open context menu.
+// It gives true when the menu took the event: nothing under it receives it.
+desktop_context_menu_pointer :: proc "contextless" (x, y: int, pressed: bool) -> bool {
+	if !desktop_context_menu.open {
+		return false
+	}
+	result := interface.context_menu_pointer(&desktop_context_menu, x, y, pressed)
+	if result.changed {
+		desktop_context_menu_damage()
+	}
+	if result.triggered {
+		desktop_context_action(result.triggered_id)
+	}
+	return result.consumed
 }
 
 desktop_context_menu_key :: proc "contextless" (code: u32, character: rune, pressed: bool) -> bool {
@@ -188,9 +272,19 @@ desktop_context_menu_key :: proc "contextless" (code: u32, character: rune, pres
 	if !consumed {
 		return false
 	}
+	desktop_context_menu_damage()
+	desktop_context_action(act_id)
+	return true
+}
+
+// desktop_context_action does the act of an item of the context menu. The
+// word of the menu becomes its enum here, and nowhere else.
+desktop_context_action :: proc "contextless" (act_id: u32) {
 	if action, ok := enum_word.member_of_word(Desktop_Context_Action, u64(act_id)); ok {
 		switch action {
 		case .None:
+			// A key that filters or moves the choice: the menu damaged its card.
+			return
 		case .New_Console:
 			packed := system.name_pack("console")
 			system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
@@ -209,13 +303,18 @@ desktop_context_menu_key :: proc "contextless" (code: u32, character: rune, pres
 				}
 			}
 		case .Bar_Top:
-			desktop_bar_position = .Top
+			desktop_bar_position_set(.Top)
 		case .Bar_Bottom:
-			desktop_bar_position = .Bottom
+			desktop_bar_position_set(.Bottom)
+		case .Snap_Left:
+			_ = desktop_snap_front_window(.Left_Half)
+		case .Snap_Right:
+			_ = desktop_snap_front_window(.Right_Half)
+		case .Maximize:
+			_ = desktop_snap_front_window(.Maximized)
 		}
+		damage_whole_screen()
 	}
-	damage_whole_screen()
-	return true
 }
 
 TASKBAR_PILL_START_X :: 224
@@ -223,6 +322,97 @@ TASKBAR_PILL_WIDTH :: 136
 TASKBAR_PILL_GAP :: 4
 TRAY_BADGE_WIDTH :: 34
 TRAY_BADGE_GAP :: 4
+TASKBAR_PREVIEW_WIDTH :: 184
+TASKBAR_PREVIEW_TITLE :: 26 // The name of the group and the line under it.
+TASKBAR_PREVIEW_LINE :: 20 // One window of the group.
+TASKBAR_PREVIEW_FOOT :: 6
+TASKBAR_PREVIEW_GAP :: 2 // Between the bar and the card.
+
+// The slot of the plate under the pointer at the last move, or -1: a change
+// draws the plates and the preview again.
+taskbar_hover_slot := -1
+// The card of the preview in the last frame; a width of 0: none.
+taskbar_preview_area: interface.Area
+
+// taskbar_preview_height gives the height of the preview of a group of
+// count windows.
+taskbar_preview_height :: proc "contextless" (count: int) -> int {
+	return TASKBAR_PREVIEW_TITLE + max(count, 1) * TASKBAR_PREVIEW_LINE + TASKBAR_PREVIEW_FOOT
+}
+
+// taskbar_preview_top gives the y of a preview of a height: next to the
+// bar, away from its edge, with a gap of its own.
+taskbar_preview_top :: proc "contextless" (height: int) -> int {
+	y := bar.menu_top(bar_layout, height + TASKBAR_PREVIEW_GAP)
+	switch bar_layout.edge {
+	case .Top:
+		return y + TASKBAR_PREVIEW_GAP
+	case .Bottom:
+		return y
+	}
+	return y
+}
+
+// taskbar_preview_records draws the preview of a group of windows of one
+// name: a card in the gradient of the cards with a line of light under its
+// top border, the name, a line under it, then one line for each window with
+// its state. The window in front has the square of the focus, as in the
+// menu of the windows.
+taskbar_preview_records :: proc "contextless" (table: ^interface.Draw_Table, x: int, title, name: string, count: int) {
+	height := taskbar_preview_height(count)
+	left := clamp(x, 0, max(0, desktop_width - TASKBAR_PREVIEW_WIDTH))
+	y := taskbar_preview_top(height)
+	taskbar_preview_area = {left, y, TASKBAR_PREVIEW_WIDTH, height}
+	interface.draw_vertical_gradient(table, left, y, TASKBAR_PREVIEW_WIDTH, height, graphics.colors.card_top, graphics.colors.card_bottom)
+	interface.draw_outline(table, left, y, TASKBAR_PREVIEW_WIDTH, height, 1, graphics.colors.title)
+	interface.draw_rectangle(table, left + 1, y + 1, TASKBAR_PREVIEW_WIDTH - 2, 1, graphics.shade(graphics.colors.card_top, 135))
+	interface.draw_text(table, left + 10, y + 5, title, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+	interface.draw_rectangle(table, left + 1, y + TASKBAR_PREVIEW_TITLE - 1, TASKBAR_PREVIEW_WIDTH - 2, 1, graphics.colors.track)
+	row := 0
+	for position in 0 ..< order_count {
+		client := &clients[order[position]]
+		if !client.created || system.name_of(client.title[:]) != name {
+			continue
+		}
+		line_y := y + TASKBAR_PREVIEW_TITLE + row * TASKBAR_PREVIEW_LINE
+		in_front := position == order_count - 1 && !client.minimized
+		state := client.minimized ? "minimized" : (in_front ? "active" : "open")
+		color := client.minimized ? graphics.colors.dim : (in_front ? graphics.colors.text_strong : graphics.colors.text)
+		if in_front {
+			interface.draw_rectangle(table, left + 10, line_y + 7, 6, 6, graphics.colors.title)
+		}
+		interface.draw_text(table, left + 24, line_y + 2, state, color, interface.FONT_INTERFACE)
+		row += 1
+	}
+}
+
+// desktop_taskbar_pointer_move draws the plates and the preview again when
+// the pointer reaches another plate slot or leaves the plates. The slots
+// are at fixed places, so the test needs no pass over the windows; only a
+// change damages the card of the preview, the old one and the room of the
+// new one.
+desktop_taskbar_pointer_move :: proc "contextless" (x, y: int) {
+	slot := -1
+	if desktop_features_ready && menu_open == .None && bar.inside_bar(bar_layout, y) && x >= TASKBAR_PILL_START_X {
+		offset := x - TASKBAR_PILL_START_X
+		if offset % (TASKBAR_PILL_WIDTH + TASKBAR_PILL_GAP) < TASKBAR_PILL_WIDTH {
+			slot = offset / (TASKBAR_PILL_WIDTH + TASKBAR_PILL_GAP)
+		}
+	}
+	if slot == taskbar_hover_slot {
+		return
+	}
+	taskbar_hover_slot = slot
+	damage_bar()
+	if taskbar_preview_area.width > 0 {
+		damage_add(taskbar_preview_area.x, taskbar_preview_area.y, taskbar_preview_area.width, taskbar_preview_area.height)
+	}
+	if slot >= 0 {
+		height := taskbar_preview_height(order_count)
+		left := clamp(TASKBAR_PILL_START_X + slot * (TASKBAR_PILL_WIDTH + TASKBAR_PILL_GAP), 0, max(0, desktop_width - TASKBAR_PREVIEW_WIDTH))
+		damage_add(left, taskbar_preview_top(height), TASKBAR_PREVIEW_WIDTH, height)
+	}
+}
 
 // desktop_taskbar_and_tray_records draws live taskbar window pills (highlighting
 // focused windows, dimming minimized ones, showing module window counts when
@@ -232,6 +422,7 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 		return
 	}
 	// 1. Kernel-theme taskbar window plates after a crisp vertical hairline divider.
+	taskbar_preview_area = {}
 	bar_top := desktop_bar_y()
 	interface.draw_rectangle(table, TASKBAR_PILL_START_X - 10, bar_top + 6, 1, BAR_HEIGHT - 12, graphics.colors.track)
 	max_right := max(TASKBAR_PILL_START_X, desktop_width - CLOCK_WIDTH - 240)
@@ -299,22 +490,8 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 			digit := u8('0' + min(same_count, 9))
 			interface.draw_character(table, px + TASKBAR_PILL_WIDTH - 14, by + 8, digit, graphics.colors.dim)
 		}
-		// Hover preview popover when pointer hovers over a taskbar pill.
-		if inside(pointer_x, pointer_y, px, 0, TASKBAR_PILL_WIDTH, BAR_HEIGHT) && menu_open == .None {
-			pop_h := 22 + same_count * 20 + 6
-			interface.draw_rectangle(table, px, BAR_HEIGHT + 2, 180, pop_h, graphics.colors.card_bottom)
-			interface.draw_outline(table, px, BAR_HEIGHT + 2, 180, pop_h, 1, graphics.colors.title)
-			interface.draw_text(table, px + 8, BAR_HEIGHT + 6, fit, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
-			row := 0
-			for p2 in 0 ..< order_count {
-				c2 := &clients[order[p2]]
-				if !c2.created || system.name_of(c2.title[:]) != name {
-					continue
-				}
-				status_txt := c2.minimized ? "minimized" : (p2 == order_count - 1 ? "active" : "open")
-				interface.draw_text(table, px + 8, BAR_HEIGHT + 24 + row * 20, status_txt, c2.minimized ? graphics.colors.dim : graphics.colors.text, interface.FONT_INTERFACE)
-				row += 1
-			}
+		if hovered {
+			taskbar_preview_records(table, px, fit, name, same_count)
 		}
 		px += TASKBAR_PILL_WIDTH + TASKBAR_PILL_GAP
 	}
@@ -340,7 +517,7 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 
 // desktop_taskbar_press restores or raises a window group when clicking its pill in the bar.
 desktop_taskbar_press :: proc "contextless" (click_x, click_y: int) -> bool {
-	if !desktop_features_ready || click_y >= BAR_HEIGHT || click_x < TASKBAR_PILL_START_X {
+	if !desktop_features_ready || !bar.inside_bar(bar_layout, click_y) || click_x < TASKBAR_PILL_START_X {
 		return false
 	}
 	max_right := max(TASKBAR_PILL_START_X, desktop_width - CLOCK_WIDTH - 240)
@@ -438,7 +615,9 @@ desktop_snap_front_window :: proc "contextless" (zone: desktop_layout.Snap_Zone)
 	client := &clients[idx]
 	damage_window(client)
 	client.x = int(rect.x)
-	client.y = int(rect.y)
+	// The zones of the layout start under a bar at the top: over a bar at
+	// the bottom they start at the first row of the screen.
+	client.y = int(rect.y) - BAR_HEIGHT + desktop_work_top()
 	damage_window(client)
 	return true
 }
@@ -453,7 +632,7 @@ desktop_toggle_maximize :: proc "contextless" (client: ^Client) {
 		client.saved_y = client.y
 		client.maximized = true
 		client.x = 0
-		client.y = BAR_HEIGHT
+		client.y = desktop_work_top()
 	} else {
 		client.maximized = false
 		client.x = client.saved_x

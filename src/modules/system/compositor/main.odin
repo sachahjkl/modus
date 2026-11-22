@@ -474,16 +474,23 @@ bar_measure :: proc "contextless" () {
 bar_layout_update :: proc "contextless" () {
 	font := display.interface_font_of()
 	in_interface_font := font != nil && graphics.text_state.font == .Vector
-	layout := bar.layout_of(in_interface_font ? text_rendering.Face.Interface : text_rendering.Face.None)
+	layout := bar.placed(bar.layout_of(in_interface_font ? text_rendering.Face.Interface : text_rendering.Face.None), bar_edge_of(desktop_bar_position), desktop_height)
 	if bar_layout_known && layout == bar_layout && in_interface_font == bar_in_interface_font {
 		return
 	}
+	// A move of the bar alone writes no line: the line says the font and the
+	// widths that the modus tool measures, and a move changes neither.
+	measured_again := !bar_layout_known || in_interface_font != bar_in_interface_font || bar.placed(layout, .Top, 0) != bar.placed(bar_layout, .Top, 0)
 	if bar_layout_known {
 		damage_menu_of(bar_layout)
+		damage_bar()
 	}
 	bar_layout, bar_layout_known, bar_in_interface_font = layout, true, in_interface_font
-	damage_add(0, 0, desktop_width, BAR_HEIGHT)
+	damage_bar()
 	damage_menu_of(bar_layout)
+	if !measured_again {
+		return
+	}
 	if in_interface_font {
 		system.log_fact(.Info, Bar_In_Interface_Font{start_width = u64(layout.label_width), windows_width = u64(layout.windows_label_width), name_width = u64(layout.longest_name_width)})
 	} else {
@@ -565,7 +572,12 @@ next_second_of_bar :: proc "contextless" (now: u64) -> u64 {
 }
 
 damage_clock :: proc "contextless" () {
-	damage_add(desktop_width - CLOCK_WIDTH - 16, 8, CLOCK_WIDTH, graphics.CELL_HEIGHT)
+	damage_add(desktop_width - CLOCK_WIDTH - 16, desktop_bar_y() + 8, CLOCK_WIDTH, graphics.CELL_HEIGHT)
+}
+
+// damage_bar records each row of the bar, at its edge now.
+damage_bar :: proc "contextless" () {
+	damage_add(0, desktop_bar_y(), desktop_width, BAR_HEIGHT)
 }
 
 canvas_create :: proc "contextless" (width, height: int) -> graphics.Canvas {
@@ -1325,8 +1337,15 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	// brings the window to the front.
 	desktop_magnifier_track(i32(pointer_x), i32(pointer_y))
 	capture_popover_pointer_move(pointer_x, pointer_y)
-	if right_pressed && menu_open == .None && pointer_y >= BAR_HEIGHT {
+	desktop_taskbar_pointer_move(pointer_x, pointer_y)
+	if right_pressed && menu_open == .None && !bar.inside_bar(bar_layout, pointer_y) {
 		desktop_context_menu_open(pointer_x, pointer_y)
+		return
+	}
+	// The context menu of the desktop takes the pointer while it is open: a
+	// line under the pointer is chosen, a press on it acts, a press outside
+	// closes the menu and goes on to what is under it.
+	if desktop_context_menu_pointer(pointer_x, pointer_y, pressed) {
 		return
 	}
 	if menu_open != .None {
@@ -1374,10 +1393,10 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			windows_log()
 			damage_menu()
 		}
-		if was_open == .None && pointer_y < BAR_HEIGHT && desktop_taskbar_press(pointer_x, pointer_y) {
+		if was_open == .None && bar.inside_bar(bar_layout, pointer_y) && desktop_taskbar_press(pointer_x, pointer_y) {
 			return
 		}
-		if was_open != .None || pointer_y < BAR_HEIGHT {
+		if was_open != .None || bar.inside_bar(bar_layout, pointer_y) {
 			return
 		}
 		// An edge of a resizable window, before the window under the
@@ -1385,10 +1404,6 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		if index, edges := resize_edges_under_pointer(); edges != {} {
 			resize_begin(index, edges) // window_resize.odin
 			return
-		}
-		if desktop_context_menu.open {
-			interface.context_menu_close(&desktop_context_menu)
-			damage_whole_screen()
 		}
 		for position := order_count - 1; position >= 0; position -= 1 {
 			client := &clients[order[position]]
@@ -1872,10 +1887,21 @@ bar_mark_pixels: [bar.MARK_SIZE * bar.MARK_SIZE]graphics.Color
 bar_mark_picture: graphics.Canvas
 
 // bar_background_records appends the surface of the bar, with its corner
-// at (x, y): its gradient and the line under it.
-bar_background_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width: int) {
+// at (x, y): its gradient and the line on the side of the windows. The
+// gradient has the same rows at both edges, so the one picture of the mark,
+// built at the top, shows the bar around the heron at the bottom too.
+bar_background_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width: int, edge: bar.Edge) {
 	interface.draw_vertical_gradient(table, x, y, width, BAR_HEIGHT - 1, graphics.colors.card_top, graphics.colors.card_bottom)
-	interface.draw_rectangle(table, x, y + BAR_HEIGHT - 1, width, 1, graphics.colors.track)
+	switch edge {
+	case .Top:
+		interface.draw_rectangle(table, x, y + BAR_HEIGHT - 1, width, 1, graphics.colors.track)
+	case .Bottom:
+		// The line faces the windows over the bar, with the light of a
+		// plate under it; the last row of the screen ends the gradient.
+		interface.draw_rectangle(table, x, y, width, 1, graphics.colors.track)
+		interface.draw_rectangle(table, x, y + 1, width, 1, graphics.shade(graphics.colors.card_top, 125))
+		interface.draw_rectangle(table, x, y + BAR_HEIGHT - 1, width, 1, graphics.colors.card_bottom)
+	}
 }
 
 // bar_mark_build draws the heron of the bar into its picture. A picture has
@@ -1888,7 +1914,7 @@ bar_mark_build :: proc "contextless" () {
 	bar_mark_picture = {pixels = raw_data(bar_mark_pixels[:]), width = bar.MARK_SIZE, height = bar.MARK_SIZE, stride = bar.MARK_SIZE}
 	records: [4]interface.Draw_Record
 	table := interface.Draw_Table{records = records[:]}
-	bar_background_records(&table, -bar.MARK_X, -bar.MARK_Y, bar.MARK_X + bar.MARK_SIZE)
+	bar_background_records(&table, -bar.MARK_X, -bar.MARK_Y, bar.MARK_X + bar.MARK_SIZE, .Top)
 	whole_picture := [1]interface.Rectangle{{0, 0, bar.MARK_SIZE, bar.MARK_SIZE}}
 	screen_draw_part(&table, 0, table.record_count, nil, bar_mark_picture, whole_picture[:])
 	// The mark of the bar is a small icon, one pixel for a cell: the cells
@@ -2054,8 +2080,9 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	// of day (the time since boot when the system has no date).
 	bar_first := table.record_count
 	width := desktop_width
-	bar_background_records(table, 0, 0, width)
-	screen_picture_append(bar.MARK_X, bar.MARK_Y, bar_mark_picture, bar_mark_pixels[:], BAR_MARK_GENERATION)
+	bar_top := desktop_bar_y()
+	bar_background_records(table, 0, bar_top, width, bar_layout.edge)
+	screen_picture_append(bar.MARK_X, bar.mark_y(bar_layout), bar_mark_picture, bar_mark_pixels[:], BAR_MARK_GENERATION)
 	bar_button_records :: proc "contextless" (table: ^interface.Draw_Table, x, y, width, height: int, label: string, open: bool) {
 		interface.draw_rectangle(table, x, y, width, height, open ? graphics.colors.chosen : graphics.colors.track)
 		interface.draw_text(table, x + bar.PADDING, y + (height - graphics.CELL_HEIGHT) / 2, label, open ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)
@@ -2074,7 +2101,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	if capture_is_open() && capture_mark_room(hint_x) < CAPTURE_MARK_SQUARE {
 		capture_mark_records(table, width - CLOCK_WIDTH - 16)
 	} else {
-		interface.draw_text(table, interface.draw_text(table, hint_x, 8, PALETTE_HINT_NAME, graphics.colors.dim, interface.FONT_INTERFACE), 8, PALETTE_HINT_KEY, graphics.colors.text, interface.FONT_INTERFACE)
+		interface.draw_text(table, interface.draw_text(table, hint_x, bar_top + 8, PALETTE_HINT_NAME, graphics.colors.dim, interface.FONT_INTERFACE), bar_top + 8, PALETTE_HINT_KEY, graphics.colors.text, interface.FONT_INTERFACE)
 		capture_mark_records(table, hint_x)
 	}
 	seconds := now / 1000
@@ -2085,7 +2112,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		zone := date.zone_offset_seconds_read(date_page)
 		date_text: [24]u8
 		shown := calendar.iso_text(date_text[:], milliseconds / 1000 + zone)
-		interface.draw_text(table, x, 8, shown, graphics.colors.text)
+		interface.draw_text(table, x, bar_top + 8, shown, graphics.colors.text)
 		if zone != bar_zone_logged {
 			bar_zone_logged = zone
 			zone_buffer: [settings.ZONE_TEXT_SIZE]u8
@@ -2093,11 +2120,11 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		}
 	} else {
 		x += CLOCK_WIDTH - 8 * 8
-		x = interface.draw_unsigned(table, x, 8, seconds / 3600, graphics.colors.text, 2)
-		x = interface.draw_text(table, x, 8, ":", graphics.colors.dim)
-		x = interface.draw_unsigned(table, x, 8, seconds / 60 % 60, graphics.colors.text, 2)
-		x = interface.draw_text(table, x, 8, ":", graphics.colors.dim)
-		interface.draw_unsigned(table, x, 8, seconds % 60, graphics.colors.text, 2)
+		x = interface.draw_unsigned(table, x, bar_top + 8, seconds / 3600, graphics.colors.text, 2)
+		x = interface.draw_text(table, x, bar_top + 8, ":", graphics.colors.dim)
+		x = interface.draw_unsigned(table, x, bar_top + 8, seconds / 60 % 60, graphics.colors.text, 2)
+		x = interface.draw_text(table, x, bar_top + 8, ":", graphics.colors.dim)
+		interface.draw_unsigned(table, x, bar_top + 8, seconds % 60, graphics.colors.text, 2)
 	}
 
 	// The menus of the bar, as cards of the package.

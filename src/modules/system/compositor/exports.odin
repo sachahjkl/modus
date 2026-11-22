@@ -421,8 +421,10 @@ powerbox_pick_store_export :: proc "c" (process_name: ^string, mode: ^string, er
 	return i64(id)
 }
 
-// bar_position moves the desktop taskbar between Top (1), Bottom (2), Left (3),
-// and Right (4) and returns 1, or a negative number with an error record.
+// bar_position moves the bar of the desktop to Top (1) or Bottom (2), and
+// returns 1, or a negative number with an error record. Left (3) and Right
+// (4) are taken and keep the bar at the top: the compositor draws no
+// vertical bar yet (src/md/features/bar_edge.md).
 //
 // **Grant**: the caller must **act for the principal**.
 @(export, link_name = "bar_position")
@@ -434,7 +436,6 @@ bar_position_export :: proc "c" (pos_word: i64, error: ^errors.Error_Record) -> 
 	if pos_word <= 0 || !ok {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Counts, 1, pos_word)
 	}
-	desktop_bar_position = pos
-	damage_whole_screen()
+	desktop_bar_position_set(pos)
 	return 1
 }

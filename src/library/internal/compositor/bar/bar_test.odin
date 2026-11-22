@@ -79,6 +79,93 @@ each_entry_maps_back_to_itself :: proc(t: ^testing.T) {
 	entries_round_trip(t, {label_width = 91, windows_label_width = 77, longest_name_width = 260}, "wider")
 	b612_open(t)
 	entries_round_trip(t, layout_of(.Interface), "B612")
+	entries_round_trip(t, placed(layout_of(.None), .Bottom, 1080), "the font of the cells, at the bottom")
+	entries_round_trip(t, placed({label_width = 91, windows_label_width = 77, longest_name_width = 260}, .Bottom, 1200), "wider, at the bottom")
+}
+
+// The zero value of the layout is a bar at the top, at the places that the
+// machine test clicks: an edge in the layout moves no place of a bar at the
+// top, whatever the height of the screen.
+@(test)
+a_bar_at_the_top_keeps_its_places :: proc(t: ^testing.T) {
+	widths := layout_of(.None)
+	for height in ([?]int{0, 1, HEIGHT, 720, 1080, max(int)}) {
+		layout := placed(widths, .Top, height)
+		testing.expect_value(t, top(layout), 0)
+		_, button_y, _, _ := button(layout)
+		testing.expect_value(t, button_y, BUTTON_Y)
+		_, menu_y, _, _ := menu(layout)
+		testing.expect_value(t, menu_y, HEIGHT)
+		_, windows_y, _, _ := windows_menu(layout, 3)
+		testing.expect_value(t, windows_y, HEIGHT)
+		_, line_y, _, _ := windows_line(layout, 2)
+		testing.expect_value(t, line_y, HEIGHT + BORDER + TITLE + 2 * LINE_HEIGHT)
+		testing.expect_value(t, mark_y(layout), MARK_Y)
+		testing.expect(t, button_center_matches(widths, layout))
+	}
+}
+
+@(private = "file")
+button_center_matches :: proc(widths, layout: Layout) -> bool {
+	x0, y0 := button_center(widths)
+	x1, y1 := button_center(layout)
+	x2, y2 := windows_button_center(widths)
+	x3, y3 := windows_button_center(layout)
+	return x0 == x1 && y0 == y1 && x2 == x3 && y2 == y3
+}
+
+// A bar at the bottom: its last row is the last row of the screen, and each
+// menu ends on the first row of the bar.
+@(test)
+a_bar_at_the_bottom_opens_its_menus_up :: proc(t: ^testing.T) {
+	layout := placed(layout_of(.None), .Bottom, 1080)
+	testing.expect_value(t, top(layout), 1080 - HEIGHT)
+	_, button_y, _, button_height := button(layout)
+	testing.expect_value(t, button_y, 1080 - HEIGHT + BUTTON_Y)
+	testing.expect(t, button_y + button_height <= 1080)
+	testing.expect_value(t, mark_y(layout), 1080 - HEIGHT + MARK_Y)
+	_, menu_y, _, menu_height := menu(layout)
+	testing.expect_value(t, menu_y + menu_height, top(layout))
+	for count in ([?]int{0, 1, 5, 24}) {
+		_, windows_y, _, windows_height := windows_menu(layout, count)
+		testing.expect_value(t, windows_y + windows_height, top(layout))
+		for index in 0 ..< count {
+			// Each line is inside the card, under its title.
+			_, line_y, _, line_height := windows_line(layout, index)
+			testing.expectf(t, line_y >= windows_y + BORDER + TITLE && line_y + line_height <= windows_y + windows_height - BORDER, "the line %v of %v windows is in the card", index, count)
+		}
+	}
+	// The first line is next to the bar.
+	_, first_y, _, first_height := windows_line(layout, 0)
+	testing.expect_value(t, first_y + first_height, top(layout) - BORDER)
+	// A press on the bar is on the bar, one row past it on either side is not.
+	testing.expect(t, inside_bar(layout, top(layout)) && inside_bar(layout, 1079))
+	testing.expect(t, !inside_bar(layout, top(layout) - 1) && !inside_bar(layout, 1080) && !inside_bar(layout, 0))
+	// A button of a bar at the bottom is not at the place of the button of
+	// a bar at the top.
+	testing.expect_value(t, button_at(layout, START + 1, BUTTON_Y + 1), Bar_Button.None)
+}
+
+// The edges of the height of the screen: a screen no higher than the bar
+// keeps the bar at 0, a negative height is 0, and a menu taller than the
+// room over the bar starts at the first row of the screen, never above it.
+@(test)
+a_bar_at_the_bottom_stays_on_a_small_screen :: proc(t: ^testing.T) {
+	widths := layout_of(.None)
+	testing.expect_value(t, top(placed(widths, .Bottom, 0)), 0)
+	testing.expect_value(t, top(placed(widths, .Bottom, HEIGHT - 1)), 0)
+	testing.expect_value(t, top(placed(widths, .Bottom, HEIGHT)), 0)
+	testing.expect_value(t, top(placed(widths, .Bottom, HEIGHT + 1)), 1)
+	testing.expect_value(t, placed(widths, .Bottom, -5).screen_height, 0)
+	testing.expect_value(t, top(placed(widths, .Bottom, -5)), 0)
+	small := placed(widths, .Bottom, 200)
+	_, menu_y, _, menu_height := menu(small)
+	testing.expect(t, menu_height > 200 - HEIGHT)
+	testing.expect_value(t, menu_y, 0)
+	testing.expect_value(t, menu_top(small, 0), 200 - HEIGHT)
+	testing.expect_value(t, menu_top(small, 200 - HEIGHT), 0)
+	testing.expect_value(t, menu_top(small, 200 - HEIGHT + 1), 0)
+	testing.expect_value(t, menu_top(small, max(int)), 0)
 }
 
 // The places follow the widths: a wider label moves the button windows to
