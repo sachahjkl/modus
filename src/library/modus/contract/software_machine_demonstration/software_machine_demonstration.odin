@@ -444,7 +444,7 @@ modus_vm_step_budget :: proc "c" (max_steps: u32) -> u32 {
 		case .Invalid_Opcode:
 			vm.run_state = .Faulted_Invalid_Opcode
 			return u32(Vm_Call_Status.Ok)
-		case .Divide_Error:
+		case .Divide_Error, .Simd_Floating_Point:
 			vm.run_state = .Faulted_Divide_Error
 			return u32(Vm_Call_Status.Ok)
 		case .Step_Budget_Exhausted:

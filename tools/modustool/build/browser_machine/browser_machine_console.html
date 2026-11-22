@@ -259,7 +259,7 @@ const [kernelResponse, imageResponse] = await Promise.all([fetch("./modulus_kern
 const kernelModule = await WebAssembly.compile(await kernelResponse.arrayBuffer());
 const bootImage = new Uint8Array(await imageResponse.arrayBuffer());
 const machine = new BrowserMachine({
-  kernelModule, bootImage, memoryMebibytes: 256, framebufferWidth: 0, framebufferHeight: 0,
+  kernelModule, bootImage, memoryMebibytes: 512, framebufferWidth: 0, framebufferHeight: 0,
   clockNanoseconds: () => BigInt(Math.round(performance.now() * 1e6)),
   idleWait: () => {},
   // COM1 is the log of the kernel: the console of the developer shows it.
