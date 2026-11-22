@@ -1104,3 +1104,56 @@ test_cpu_straddling_sse2_atomic_store_fault :: proc(t: ^testing.T) {
 		testing.expect_value(t, m.ram[int(rw_frame) + i], u8(0xCC))
 	}
 }
+
+// A read-modify-write form whose memory write faults leaves the registers and
+// the flags of before the instruction. The fuzz target software_machine found
+// `add [rax-0x34], cl` into the code page changing the flags.
+@(test)
+test_cpu_read_modify_write_fault_keeps_registers_and_flags :: proc(t: ^testing.T) {
+	m := test_machine_create(256 * 1024)
+	defer test_machine_destroy(&m)
+
+	code_frame := test_alloc_frame(&m)
+	ro_frame := test_alloc_frame(&m)
+	code_va := u64(0x0000_0000_0040_0000)
+	ro_va := u64(0x0000_0000_00A0_0000)
+	test_map_4k_page(&m, code_va, code_frame, PAGE_PRESENT | PAGE_USER)
+	test_map_4k_page(&m, ro_va, ro_frame, PAGE_PRESENT | PAGE_USER | PAGE_NO_EXECUTE)
+	for i in 0 ..< 16 {
+		m.ram[int(ro_frame) + i] = 0x81
+	}
+
+	forms := [?][]u8 {
+		{0x00, 0x08}, // add [rax], cl
+		{0x48, 0x01, 0x08}, // add [rax], rcx
+		{0x48, 0x83, 0x00, 0x01}, // add qword [rax], 1
+		{0x48, 0xD1, 0x20}, // shl qword [rax], 1
+		{0x48, 0xF7, 0x18}, // neg qword [rax]
+		{0x48, 0xFF, 0x00}, // inc qword [rax]
+		{0xFE, 0x08}, // dec byte [rax]
+		{0x48, 0x0F, 0xC1, 0x08}, // xadd [rax], rcx
+		{0x48, 0x0F, 0xB1, 0x08}, // cmpxchg [rax], rcx, with rax not equal to the memory: the write back faults
+		{0x48, 0x87, 0x08}, // xchg [rax], rcx
+	}
+	flags_before := RFLAGS_RESERVED_ONE | RFLAGS_IF | RFLAGS_ZF | RFLAGS_PF
+	for form in forms {
+		test_load_code(&m, code_frame, form)
+		cpu: Processor_State
+		processor_init(&cpu, m.cr3, code_va, 0)
+		cpu.registers[int(General_Register.Rax)] = ro_va
+		cpu.registers[int(General_Register.Rcx)] = 0x7F
+		cpu.rflags = flags_before
+		registers_before := cpu.registers
+
+		outcome := processor_step(&cpu, m.ram)
+		testing.expectf(t, outcome == .Page_Fault, "%x: the outcome %v", form, outcome)
+		testing.expectf(t, cpu.rflags == flags_before, "%x: the flags %x after the fault", form, cpu.rflags)
+		testing.expectf(t, cpu.registers == registers_before, "%x: a register changed with the fault", form)
+		testing.expectf(t, cpu.rip == code_va && cpu.steps_executed == 0, "%x: the place %x and %d steps after the fault", form, cpu.rip, cpu.steps_executed)
+		testing.expect_value(t, cpu.fault_address, ro_va)
+		testing.expect_value(t, cpu.fault_error_code, PAGE_FAULT_PRESENT | PAGE_FAULT_WRITE | PAGE_FAULT_USER)
+		for i in 0 ..< 16 {
+			testing.expect_value(t, m.ram[int(ro_frame) + i], u8(0x81))
+		}
+	}
+}
