@@ -1180,6 +1180,26 @@ The design: `src/md/features/box_layout.md`.
 
 Do not use: widget, view, frame (for this), panel.
 
+### Document box
+
+A document box is one box of the layout of a document of HTML and CSS: the place and the size that `html_css.compute_layout` gives to one node of the document from its computed style.
+
+The contract package `html_css` lays out at most 512 document boxes in block, inline and flex flow, in a `Layout_Tree` in the memory of the caller, then `emit_draw_records` paints each one as a rectangle or a text of the draw table. The browser keeps the document boxes in the places of the document and moves them by its scroll. A document box is not a layout box: a layout box places a part of a window, and a document box places a part of a page inside it.
+
+The design: `src/md/features/desktop_to_browser.md`, "E. A light browser".
+
+Do not use: layout box (for this), render box, render object.
+
+### Document origin
+
+A document origin is the principal, the scheme, the host and the port of the address of a page, which a parsed document is bound to.
+
+`html_css.parse_html` binds each document to one `html_css.Document_Origin`, and two documents share a state only when `html_css.origins_equal` says that their document origins are one. The schemes are `http`, `https`, and `modus` for a page built into a program of the system, whose host names the page. A page of one document origin reads nothing of the state of another, not even whether it exists. It is not the origin of a holding, which is the handle that a holding came from. Example: `modus://forms` and `modus://welcome` are two document origins, and `https://example.org` and `http://example.org` are two more.
+
+The design: `src/md/features/desktop_to_browser.md`, "E. A light browser".
+
+Do not use: site, domain, origin (alone, for this).
+
 ### Box input
 
 The box input is what the input of one frame does to one layout box: the pointer over it, held, activated, activated twice, a secondary press, a drag, the focus and the scroll.

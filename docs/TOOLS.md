@@ -346,7 +346,7 @@ What follows from the rule:
 
 | Process | The answer for the console |
 |---|---|
-| A process with no grant (`debug_target`, `plasma`, `fault`, `hall_of_fame`, each process that the root service gives only the log and a window) | Given |
+| A process with no grant (`debug_target`, `plasma`, `fault`, `hall_of_fame`, `browser`, each process that the root service gives only the log and a window) | Given |
 | A process with a right of the machine that the console holds, Inspect or Stop (`clock`, `processors`, `pages`, `flow`, `crowd`) | Given, until the grant `machine` of the console is revoked |
 | A process with the boot image, with or without Inspect (`pointers`, `rings`, `boot`, `rights`, `frames`, `locks`, `address_space`, `imports`, `return_fault`, `fault_ring`, `debugged`, `cryptography_vectors`, `interface_through_module`) | Given, until the grant `image` of the console is revoked |
 | A process with a private store (`notes`, `hierarchy`, `ranges`, `errors`, `unlock`) | Refused: the grant Store |

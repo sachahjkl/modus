@@ -282,6 +282,26 @@ The seven steps of the draw table, already in `ROADMAP.md`, "Next": [../api/draw
 - **One process for each origin.** Each origin runs in its own process, with the network grant of that origin only (property 20, line 3). A page of one origin reads nothing of another. The process of the window holds the address bar and starts the process of each origin.
 - **JavaScript** is a separate decision, in `ROADMAP.md`, "Maybe".
 
+### The window of the browser
+
+The first layer is one process with one window, `browser` (`src/modules/demonstrations/browser`), with no grant but its window. It shows the pipeline of a page end to end on pages built into it, before any process of an origin exists.
+
+- **The pipeline.** The window composes the style sheet of the appearance and the HTML of the page into one document, and `html_css` parses it under the document origin of its address (`parse_html`), reads its `<style>` blocks (`parse_document_styles`), lays out its document boxes at the width of the view (`compute_layout`) and paints them as draw records (`emit_draw_records`). The window copies the records that its view shows into its own draw table, moved by its scroll and cut by a clip of the view. It lays the document out again only when the width of the view changes. The document tree, the style sheet, the document boxes and the records are globals of the module: the style sheet alone is about 160 KiB.
+- **The text in the cells.** `html_css` measures a text at half its size for each byte, the width of the font of the cells, and gives a text that wraps one box of several lines. The window draws it in the font of the cells, at the spaces when its lines then fit the box, else at the width of the box: a text never leaves the box that the layout gave it.
+- **The chrome by the layout tree.** The top band (back, forward, the address field, go, and a label of the document origin that the parse bound), the page with its scroll bar, and the status band (the title, the counts of the nodes and of the document boxes, then the link under the pointer) are layout boxes of `modus:layout`, solved at each frame at the size of the window. The window is resizable from 640 × 420 to 1280 × 900.
+- **Links and forms.** A press on the box of the page follows the link of the document box on top under the pointer: each node of an element `a` with an `href`, and each node under it, has that link as its target. A button inside a form sends it. Each element `input` with a name gets a text input of the interface package over its document box, when the view shows that box whole; a send writes the named values into the query of the action, encoded, and loads that address.
+- **The history** holds 32 addresses with the scroll of each. A load drops the entries after the page shown; a full history drops its oldest entry.
+- **The state of a document origin.** A form result keeps its query as the state of its document origin. A read names the document origin of the reader, and is refused for each other one: the page of `modus://welcome/peek` asks for the state of `modus://forms`, and the window shows the refusal.
+- **An address of HTTP or HTTPS** gets a page, under its own document origin, that says that the window has no grant of the network.
+
+Refused for this layer:
+
+- **A scheme for the built-in pages outside the contract.** Each page must have a document origin, and a scheme of HTTPS with a made-up host would say that a page came from the network. `Document_Scheme` has the member `Modus` for a page of a program of the system.
+- **The text of a page in the interface font.** `html_css` measures the cells; a proportional font would draw a text narrower or wider than its document box, and the boxes would overlap.
+- **A layout at each frame.** The cascade of 128 rules over 512 nodes is far more work than the copy of the records, and it changes only with the width of the view, the page or the appearance.
+
+What is left of this phase: the process of each document origin, started by the window, with the network grant of that origin only, and a fetch over HTTPS; the window then keeps the address bar and the history, and each page comes from the process of its origin.
+
 ## F. 3D
 
 The GPU path and the WebGPU of the system are in [gpu_access.md](gpu_access.md). In order:

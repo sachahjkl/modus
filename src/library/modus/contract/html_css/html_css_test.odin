@@ -326,8 +326,8 @@ test_block_inline_flex_layout_and_draw_records :: proc(t: ^testing.T) {
 test_origin_isolation_and_scheme_border :: proc(t: ^testing.T) {
 	_, ok := document_scheme_of_word(0)
 	testing.expect(t, !ok, "scheme 0 must be refused")
-	_, ok = document_scheme_of_word(3)
-	testing.expect(t, !ok, "scheme 3 must be refused")
+	_, ok = document_scheme_of_word(4)
+	testing.expect(t, !ok, "scheme 4, one past the last member, must be refused")
 	_, ok = document_scheme_of_word(255)
 	testing.expect(t, !ok, "scheme 255 must be refused")
 
@@ -336,4 +336,17 @@ test_origin_isolation_and_scheme_border :: proc(t: ^testing.T) {
 	o0_same := make_test_origin(0, "site.example")
 	testing.expect(t, origins_equal(&o0, &o0_same), "identical principal+origin must match")
 	testing.expect(t, !origins_equal(&o0, &o1), "different principals must never share origin")
+
+	// A page of a program of the system is its own origin: the same host
+	// under another scheme, and another host under the same scheme, differ.
+	scheme, known := document_scheme_of_word(3)
+	testing.expect(t, known && scheme == .Modus, "scheme 3 is Modus")
+	built_in := make_test_origin(0, "site.example")
+	built_in.scheme = .Modus
+	built_in.port = 0
+	testing.expect(t, !origins_equal(&built_in, &o0), "a page of the system never shares the origin of a page of HTTPS")
+	other_page := make_test_origin(0, "other.example")
+	other_page.scheme = .Modus
+	other_page.port = 0
+	testing.expect(t, !origins_equal(&built_in, &other_page), "two hosts of the scheme modus are two origins")
 }
