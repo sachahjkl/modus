@@ -1,0 +1,322 @@
+module: c_programs
+about: The thin libc of the C programs of modus, its adapters for SQLite, Lua and zstd, and their test programs.
+library: no
+
+export call_format_double
+  about: Format the double of the bits with snprintf of the thin libc; give its count.
+  param output: integer
+  param capacity: integer
+  param format: integer
+  param bits: integer
+  result: integer
+
+export call_format_integer
+  about: Format a long long with snprintf of the thin libc; give its count.
+  param output: integer
+  param capacity: integer
+  param format: integer
+  param value: integer
+  result: integer
+
+export call_parse_double
+  about: Read a double with strtod; give its bits, and write the end offset and errno.
+  param text: integer
+  param end_place: integer
+  param error_place: integer
+  result: integer
+
+export call_parse_integer
+  about: Read a long long with strtoll; write the end offset and errno.
+  param text: integer
+  param base: integer
+  param end_place: integer
+  param error_place: integer
+  result: integer
+
+export call_parse_unsigned
+  about: Read an unsigned long long with strtoull; write the end offset and errno.
+  param text: integer
+  param base: integer
+  param end_place: integer
+  param error_place: integer
+  result: integer
+
+export call_heap_record_size
+  about: Give the size of a Modus_Heap record.
+  result: integer
+
+export call_heap_init
+  about: Make a heap over a lent arena; give 0 or -1.
+  param heap: integer
+  param arena: integer
+  param size: integer
+  result: integer
+
+export call_heap_allocate
+  about: Allocate from a heap; give the address or 0.
+  param heap: integer
+  param size: integer
+  result: integer
+
+export call_heap_release
+  about: Release a block of a heap; give 0 or -1.
+  param heap: integer
+  param payload: integer
+  result: integer
+
+export call_heap_resize
+  about: Resize a block of a heap; give the address or 0.
+  param heap: integer
+  param payload: integer
+  param size: integer
+  result: integer
+
+export call_heap_check
+  about: Check the blocks of a heap; give the fault, 0 when none.
+  param heap: integer
+  result: integer
+
+export call_sort_integers
+  about: Sort long long values with qsort; give 0.
+  param values: integer
+  param count: integer
+  result: integer
+
+export call_jump
+  about: Call down depth frames, longjmp back with the value; give the result of setjmp times 1000 plus the depth reached.
+  param depth: integer
+  param value: integer
+  result: integer
+
+export call_stream_write
+  about: Write a text repeat times to a memory stream; give the length times 2 plus the error flag.
+  param buffer: integer
+  param capacity: integer
+  param text: integer
+  param repeat: integer
+  result: integer
+
+export call_stream_read_lines
+  about: Read the lines of a memory stream with fgets, fgetc and ungetc; give the sum of the bytes read.
+  param buffer: integer
+  param length: integer
+  param line_count_place: integer
+  result: integer
+
+export call_open_by_name
+  about: Give 1 when fopen refuses the name with ENOENT.
+  param name: integer
+  result: integer
+
+export call_math
+  about: Run one function of the floating point part; give the bits of its result.
+  param operation: integer
+  param left_bits: integer
+  param right_bits: integer
+  result: integer
+
+export call_codec_compress
+  about: Compress bytes; give the frame length or a refusal.
+  param heap: integer
+  param input: integer
+  param count: integer
+  param output: integer
+  param capacity: integer
+  result: integer
+
+export call_codec_decompress
+  about: Decompress a frame; give the content length or a refusal.
+  param input: integer
+  param count: integer
+  param output: integer
+  param capacity: integer
+  result: integer
+
+export call_codec_crc32
+  about: Give the CRC32 of bytes.
+  param bytes: integer
+  param count: integer
+  result: integer
+
+export call_script_run
+  about: Run a script described by a request record; give its status.
+  param request: integer
+  result: integer
+
+export call_vfs_record_sizes
+  about: Write the sizes of the store, the VFS and the file records; give 0.
+  param place: integer
+  result: integer
+
+export call_vfs_store_init
+  about: Split lent bytes into the slots of a store; give the SQLite code.
+  param store: integer
+  param bytes: integer
+  param byte_count: integer
+  param capacities: integer
+  param slot_count: integer
+  param seed: integer
+  result: integer
+
+export call_vfs_make
+  about: Fill a sqlite3_vfs over a store; give its address.
+  param vfs: integer
+  param store: integer
+  result: integer
+
+export call_vfs_open
+  about: Call xOpen; give the SQLite code.
+  param vfs: integer
+  param name: integer
+  param file: integer
+  param flags: integer
+  result: integer
+
+export call_vfs_delete
+  about: Call xDelete; give the SQLite code.
+  param vfs: integer
+  param name: integer
+  result: integer
+
+export call_vfs_access
+  about: Call xAccess; give the SQLite code.
+  param vfs: integer
+  param name: integer
+  param flags: integer
+  param place: integer
+  result: integer
+
+export call_vfs_full_pathname
+  about: Call xFullPathname; give the SQLite code.
+  param vfs: integer
+  param name: integer
+  param count: integer
+  param output: integer
+  result: integer
+
+export call_vfs_randomness
+  about: Call xRandomness; give its count.
+  param vfs: integer
+  param count: integer
+  param output: integer
+  result: integer
+
+export call_vfs_current_time
+  about: Call xCurrentTimeInt64; give the SQLite code.
+  param vfs: integer
+  param place: integer
+  result: integer
+
+export call_file_read
+  about: Call xRead; give the SQLite code.
+  param file: integer
+  param buffer: integer
+  param amount: integer
+  param offset: integer
+  result: integer
+
+export call_file_write
+  about: Call xWrite; give the SQLite code.
+  param file: integer
+  param buffer: integer
+  param amount: integer
+  param offset: integer
+  result: integer
+
+export call_file_truncate
+  about: Call xTruncate; give the SQLite code.
+  param file: integer
+  param size: integer
+  result: integer
+
+export call_file_size
+  about: Call xFileSize; give the SQLite code.
+  param file: integer
+  param place: integer
+  result: integer
+
+export call_file_lock
+  about: Call xLock; give the SQLite code.
+  param file: integer
+  param level: integer
+  result: integer
+
+export call_file_unlock
+  about: Call xUnlock; give the SQLite code.
+  param file: integer
+  param level: integer
+  result: integer
+
+export call_file_reserved
+  about: Call xCheckReservedLock; give the SQLite code.
+  param file: integer
+  param place: integer
+  result: integer
+
+export call_file_close
+  about: Call xClose; give the SQLite code.
+  param file: integer
+  result: integer
+
+export call_kv_open
+  about: Open a key-value store; give its status.
+  param place: integer
+  param heap: integer
+  param vfs: integer
+  param name: integer
+  result: integer
+
+export call_kv_begin
+  about: Begin a transaction; give its status.
+  param store: integer
+  result: integer
+
+export call_kv_put
+  about: Put a record; give its status.
+  param store: integer
+  param key: integer
+  param value: integer
+  result: integer
+
+export call_kv_get
+  about: Get a record; give its status.
+  param store: integer
+  param key: integer
+  param place: integer
+  result: integer
+
+export call_kv_sum
+  about: Sum the values of a range of keys; give its status.
+  param store: integer
+  param low: integer
+  param high: integer
+  param sum_place: integer
+  param count_place: integer
+  result: integer
+
+export call_kv_commit
+  about: Commit; stop after a count of pages when the limit is 0 or more; give its status.
+  param store: integer
+  param page_write_limit: integer
+  result: integer
+
+export call_kv_rollback
+  about: Roll back; give its status.
+  param store: integer
+  result: integer
+
+export call_kv_check
+  about: Check the tree; give its status.
+  param store: integer
+  param place: integer
+  result: integer
+
+export call_kv_close
+  about: Close a store; give its status.
+  param store: integer
+  result: integer
+
+export call_kv_abandon
+  about: Drop a store as a stop of the machine does; give 0.
+  param store: integer
+  result: integer

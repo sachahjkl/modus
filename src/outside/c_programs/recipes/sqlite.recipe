@@ -1,0 +1,44 @@
+# SQLite on modus: the amalgamation with its operating system "other", and
+# the VFS of modus in place of the VFS of Unix. The hash is the one that
+# Nixpkgs pins for this archive.
+recipe: sqlite
+version: 3.54.1
+source: https://dev-www.libreoffice.org/src/sqlite-amalgamation-3540100.zip
+source_hash: sha256-CpyONDUtrUYAaqgoNtU4O/+dxryc5aYFU8Baow5q0fk=
+unpack: zip
+root: sqlite-amalgamation-3540100
+compile: sqlite3.c
+adapter: thin_libc/modus_thin_libc.c
+adapter: thin_libc/modus_thin_libc_memory.c
+adapter: sqlite/modus_vfs.c
+include: sqlite
+define: SQLITE_OS_OTHER=1
+define: SQLITE_THREADSAFE=0
+define: SQLITE_OMIT_LOAD_EXTENSION=1
+define: SQLITE_OMIT_LOCALTIME=1
+define: SQLITE_OMIT_WAL=1
+define: SQLITE_OMIT_SHARED_CACHE=1
+define: SQLITE_TEMP_STORE=3
+define: SQLITE_DEFAULT_MEMSTATUS=0
+define: SQLITE_ENABLE_MEMSYS5=1
+define: MODUS_VFS_WITH_SQLITE=1
+flag: --target=x86_64-unknown-none-elf
+flag: -std=gnu11
+flag: -O2
+flag: -ffreestanding
+flag: -nostdinc
+flag: -fPIC
+flag: -fvisibility=hidden
+flag: -fno-omit-frame-pointer
+flag: -mno-omit-leaf-frame-pointer
+flag: -mlong-double-64
+flag: -fno-stack-protector
+flag: -fcf-protection=none
+flag: -fno-asynchronous-unwind-tables
+flag: -fno-unwind-tables
+flag: -fno-common
+include: thin_libc/include
+include: thin_libc
+test: create a table, insert 10000 rows in one transaction, and compare SELECT SUM with the sum of the rows
+test: stop a commit after each count of pages, open again, and find the rows of the last commit
+test: run PRAGMA integrity_check after each test
