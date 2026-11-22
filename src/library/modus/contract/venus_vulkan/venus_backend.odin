@@ -28,7 +28,7 @@ Translation_Objects :: struct {
 // The depth that a render pass with a depth texture clears to.
 CLEAR_DEPTH :: f32(1)
 
-@(private = "file")
+@(private)
 object_of :: proc "contextless" (base: Object_Id, number: u32) -> (id: Object_Id, problem: Venus_Problem) {
 	if number == 0 {
 		return 0, .Zero_Object_Id
@@ -88,6 +88,17 @@ encode_webgpu_buffers :: proc "contextless" (encoder: ^Encoder, resources: webgp
 translate :: proc "contextless" (encoder: ^Encoder, stream: webgpu_subset.Gpu_Command_Stream, resources: webgpu_subset.Resource_Registry, objects: Translation_Objects) -> Venus_Problem {
 	command_buffer := objects.command_buffer
 	encode_begin_command_buffer(encoder, command_buffer, {.One_Time_Submit}) or_return
+	record_webgpu_commands(encoder, stream, resources, objects) or_return
+	encode_end_command_buffer(encoder, command_buffer) or_return
+	submitted := [1]Object_Id{command_buffer}
+	return encode_queue_submit(encoder, objects.queue, submitted[:], objects.fence)
+}
+
+// record_webgpu_commands writes one Venus command for each record of a
+// validated stream, into the command buffer of objects.
+@(private)
+record_webgpu_commands :: proc "contextless" (encoder: ^Encoder, stream: webgpu_subset.Gpu_Command_Stream, resources: webgpu_subset.Resource_Registry, objects: Translation_Objects) -> Venus_Problem {
+	command_buffer := objects.command_buffer
 	record_count := len(stream.bytes) / webgpu_subset.COMMAND_RECORD_SIZE
 	for index in 0 ..< record_count {
 		record := stream.bytes[index * webgpu_subset.COMMAND_RECORD_SIZE:][:webgpu_subset.COMMAND_RECORD_SIZE]
@@ -227,9 +238,7 @@ translate :: proc "contextless" (encoder: ^Encoder, stream: webgpu_subset.Gpu_Co
 			encode_cmd_copy_buffer_to_image(encoder, command_buffer, source, destination, .Transfer_Destination_Optimal, region) or_return
 		}
 	}
-	encode_end_command_buffer(encoder, command_buffer) or_return
-	submitted := [1]Object_Id{command_buffer}
-	return encode_queue_submit(encoder, objects.queue, submitted[:], objects.fence)
+	return .None
 }
 
 // webgpu_stream_to_venus validates stream against resources, then writes

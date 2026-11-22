@@ -131,12 +131,15 @@ echoed_object :: proc "contextless" (decoder: ^Decoder, expected: Object_Id) {
 decode_result_reply :: proc "contextless" (decoder: ^Decoder, command_type: Command_Type) -> (result: Vulkan_Result, problem: Venus_Problem) {
 	start := decoder.cursor
 	switch command_type {
-	case .Bind_Buffer_Memory, .Begin_Command_Buffer, .End_Command_Buffer, .Queue_Submit, .Queue_Wait_Idle:
+	case .Bind_Buffer_Memory, .Bind_Image_Memory, .Begin_Command_Buffer, .End_Command_Buffer, .Queue_Submit, .Queue_Wait_Idle:
 	case .Create_Instance, .Enumerate_Physical_Devices, .Get_Physical_Device_Properties, .Create_Device, .Allocate_Memory,
-	     .Create_Buffer, .Create_Command_Pool, .Allocate_Command_Buffers, .Cmd_Bind_Pipeline, .Cmd_Set_Scissor,
-	     .Cmd_Bind_Descriptor_Sets, .Cmd_Bind_Index_Buffer, .Cmd_Bind_Vertex_Buffers, .Cmd_Draw, .Cmd_Draw_Indexed,
-	     .Cmd_Copy_Buffer, .Cmd_Copy_Buffer_To_Image, .Cmd_Clear_Color_Image, .Cmd_Begin_Render_Pass, .Cmd_End_Render_Pass,
-	     .Get_Device_Queue_2, .Set_Reply_Command_Stream, .Seek_Reply_Command_Stream, .Create_Ring, .Destroy_Ring, .Notify_Ring:
+	     .Create_Buffer, .Create_Image, .Create_Image_View, .Create_Shader_Module, .Create_Graphics_Pipelines,
+	     .Create_Pipeline_Layout, .Create_Framebuffer, .Create_Render_Pass, .Create_Command_Pool, .Allocate_Command_Buffers,
+	     .Cmd_Bind_Pipeline, .Cmd_Set_Viewport, .Cmd_Set_Scissor, .Cmd_Bind_Descriptor_Sets, .Cmd_Bind_Index_Buffer,
+	     .Cmd_Bind_Vertex_Buffers, .Cmd_Draw, .Cmd_Draw_Indexed, .Cmd_Copy_Buffer, .Cmd_Copy_Buffer_To_Image,
+	     .Cmd_Copy_Image_To_Buffer, .Cmd_Update_Buffer, .Cmd_Clear_Color_Image, .Cmd_Pipeline_Barrier, .Cmd_Push_Constants,
+	     .Cmd_Begin_Render_Pass, .Cmd_End_Render_Pass, .Get_Device_Queue_2, .Set_Reply_Command_Stream,
+	     .Seek_Reply_Command_Stream, .Create_Ring, .Destroy_Ring, .Notify_Ring:
 		return .Error_Unknown, .Unexpected_Command_Type
 	}
 	expect_command_type(decoder, command_type)
@@ -146,17 +149,21 @@ decode_result_reply :: proc "contextless" (decoder: ^Decoder, command_type: Comm
 
 // decode_create_object_reply reads the reply of a command that creates one
 // object: vkCreateInstance, vkCreateDevice, vkAllocateMemory, vkCreateBuffer,
+// vkCreateImage, vkCreateImageView, vkCreateShaderModule,
+// vkCreatePipelineLayout, vkCreateRenderPass, vkCreateFramebuffer,
 // vkCreateCommandPool. The renderer echoes the id when the result is a success.
 decode_create_object_reply :: proc "contextless" (decoder: ^Decoder, command_type: Command_Type, object: Object_Id) -> (result: Vulkan_Result, problem: Venus_Problem) {
 	start := decoder.cursor
 	switch command_type {
-	case .Create_Instance, .Create_Device, .Allocate_Memory, .Create_Buffer, .Create_Command_Pool:
-	case .Enumerate_Physical_Devices, .Get_Physical_Device_Properties, .Bind_Buffer_Memory, .Begin_Command_Buffer,
-	     .End_Command_Buffer, .Queue_Submit, .Queue_Wait_Idle, .Allocate_Command_Buffers, .Cmd_Bind_Pipeline,
-	     .Cmd_Set_Scissor, .Cmd_Bind_Descriptor_Sets, .Cmd_Bind_Index_Buffer, .Cmd_Bind_Vertex_Buffers, .Cmd_Draw,
-	     .Cmd_Draw_Indexed, .Cmd_Copy_Buffer, .Cmd_Copy_Buffer_To_Image, .Cmd_Clear_Color_Image, .Cmd_Begin_Render_Pass,
-	     .Cmd_End_Render_Pass, .Get_Device_Queue_2, .Set_Reply_Command_Stream, .Seek_Reply_Command_Stream, .Create_Ring,
-	     .Destroy_Ring, .Notify_Ring:
+	case .Create_Instance, .Create_Device, .Allocate_Memory, .Create_Buffer, .Create_Image, .Create_Image_View,
+	     .Create_Shader_Module, .Create_Pipeline_Layout, .Create_Render_Pass, .Create_Framebuffer, .Create_Command_Pool:
+	case .Enumerate_Physical_Devices, .Get_Physical_Device_Properties, .Bind_Buffer_Memory, .Bind_Image_Memory,
+	     .Begin_Command_Buffer, .End_Command_Buffer, .Queue_Submit, .Queue_Wait_Idle, .Allocate_Command_Buffers,
+	     .Create_Graphics_Pipelines, .Cmd_Bind_Pipeline, .Cmd_Set_Viewport, .Cmd_Set_Scissor, .Cmd_Bind_Descriptor_Sets,
+	     .Cmd_Bind_Index_Buffer, .Cmd_Bind_Vertex_Buffers, .Cmd_Draw, .Cmd_Draw_Indexed, .Cmd_Copy_Buffer,
+	     .Cmd_Copy_Buffer_To_Image, .Cmd_Copy_Image_To_Buffer, .Cmd_Update_Buffer, .Cmd_Clear_Color_Image,
+	     .Cmd_Pipeline_Barrier, .Cmd_Push_Constants, .Cmd_Begin_Render_Pass, .Cmd_End_Render_Pass, .Get_Device_Queue_2,
+	     .Set_Reply_Command_Stream, .Seek_Reply_Command_Stream, .Create_Ring, .Destroy_Ring, .Notify_Ring:
 		return .Error_Unknown, .Unexpected_Command_Type
 	}
 	if object == 0 {
@@ -275,6 +282,26 @@ decode_allocate_command_buffers_reply :: proc "contextless" (decoder: ^Decoder, 
 	return result, reply_end(decoder, start)
 }
 
+// decode_create_graphics_pipelines_reply reads the result and checks the
+// echoed ids of the pipelines. A renderer that fails a pipeline writes
+// VK_NULL_HANDLE in its place, so a failed result accepts the id 0.
+decode_create_graphics_pipelines_reply :: proc "contextless" (decoder: ^Decoder, pipelines: []Object_Id) -> (result: Vulkan_Result, problem: Venus_Problem) {
+	start := decoder.cursor
+	if len(pipelines) == 0 || len(pipelines) > MAX_ARRAY_ELEMENTS {
+		return .Error_Unknown, .Count_Out_Of_Range
+	}
+	expect_command_type(decoder, .Create_Graphics_Pipelines)
+	result = get_result(decoder)
+	expect_array_size(decoder, u64(len(pipelines)))
+	for id in pipelines {
+		got := get_object(decoder)
+		if decoder.problem == .None && got != id && !(result != .Success && got == 0) {
+			fail(decoder, .Object_Id_Mismatch)
+		}
+	}
+	return result, reply_end(decoder, start)
+}
+
 // decode_get_device_queue_2_reply checks the echoed id of the queue.
 decode_get_device_queue_2_reply :: proc "contextless" (decoder: ^Decoder, queue: Object_Id) -> Venus_Problem {
 	start := decoder.cursor
@@ -376,6 +403,20 @@ encode_allocate_command_buffers_reply :: proc "contextless" (encoder: ^Encoder, 
 	put_i32(encoder, i32(result))
 	put_array_size(encoder, u64(len(command_buffers)))
 	for id in command_buffers {
+		put_object(encoder, id)
+	}
+	return command_end(encoder, mark)
+}
+
+encode_create_graphics_pipelines_reply :: proc "contextless" (encoder: ^Encoder, result: Vulkan_Result, pipelines: []Object_Id) -> Venus_Problem {
+	if encoder.problem != .None {
+		return encoder.problem
+	}
+	mark := encoder.used_bytes
+	put_u32(encoder, u32(Command_Type.Create_Graphics_Pipelines))
+	put_i32(encoder, i32(result))
+	put_array_size(encoder, u64(len(pipelines)))
+	for id in pipelines {
 		put_object(encoder, id)
 	}
 	return command_end(encoder, mark)
