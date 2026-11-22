@@ -576,3 +576,73 @@ locale_script :: proc "contextless" (locale: ^Locale) -> string {
 locale_region :: proc "contextless" (locale: ^Locale) -> string {
 	return field_text(locale.region[:])
 }
+
+// SOURCE_LANGUAGE is the language in which a module writes each text of
+// its interface: the language of a principal whose language list is empty.
+SOURCE_LANGUAGE :: "en"
+
+// source_locale gives the record of SOURCE_LANGUAGE, with no script, no
+// region and no keyword.
+source_locale :: proc "contextless" () -> Locale {
+	locale: Locale
+	field_put(locale.language[:], SOURCE_LANGUAGE)
+	return locale
+}
+
+// locale_problem_text gives the words of a problem for the sentence of a
+// refusal: the console writes them after the tag and the offset. A whole
+// switch, so a new problem is a compile error here and never a sentence
+// with no words.
+locale_problem_text :: proc "contextless" (problem: Locale_Problem) -> string {
+	switch problem {
+	case .None:
+		return "names a locale"
+	case .Empty:
+		return "a tag has no byte"
+	case .Too_Long:
+		return "a tag has 128 bytes at most"
+	case .Not_Ascii:
+		return "a tag holds ASCII letters, digits and '-' only"
+	case .Empty_Subtag:
+		return "a subtag is empty: a '-' at the start, at the end, or after another '-'"
+	case .Long_Subtag:
+		return "a subtag has 8 characters at most"
+	case .Malformed:
+		return "the subtags keep no form of BCP 47: a language, then a script, a region, variants and the extension u"
+	case .Extended_Language:
+		return "an extended language subtag: write the extended language alone (yue, not zh-yue)"
+	case .Private_Use:
+		return "a private use (-x-): the record has no field for it"
+	case .Extension_Not_U:
+		return "an extension other than u: the record has no field for it"
+	case .Third_Variant:
+		return "a third variant: the record holds two"
+	case .Duplicate_Variant:
+		return "one variant twice"
+	case .Attribute:
+		return "an attribute of the extension u: the record has no field for it"
+	case .Unknown_Keyword:
+		return "a key of the extension u other than ca, co, fw, hc, ms, nu and rg"
+	case .Keyword_Without_Value:
+		return "a key of the extension u with no value"
+	case .Duplicate_Keyword:
+		return "one key of the extension u twice"
+	case .Unknown_Value:
+		return "a value that names no member of the enum of its key"
+	case .Bad_Region_Override:
+		return "a value of rg that is not 2 letters and 1 to 4 letters or digits"
+	case .Bad_Language:
+		return "a language that is not 2, 3 or 5 to 8 lower case letters, or a deprecated language"
+	case .Bad_Script:
+		return "a script that is not a capital and 3 lower case letters"
+	case .Bad_Region:
+		return "a region that is not 2 capitals or 3 digits"
+	case .Bad_Variant:
+		return "a variant of a wrong form, or two variants out of order"
+	case .Bad_Keyword_Word:
+		return "a keyword byte that names no member of its enum"
+	case .Reserved_Not_Zero:
+		return "reserved bytes that are not zero"
+	}
+	return "a problem that names no member"
+}

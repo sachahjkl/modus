@@ -1,6 +1,8 @@
 #+build !freestanding
 package language_tag
 
+import "core:strconv"
+import "core:strings"
 import "core:testing"
 
 // read_written reads a text, and gives the canonical text of its record.
@@ -222,5 +224,60 @@ locale_valid_refuses_each_damaged_record :: proc(t: ^testing.T) {
 		testing.expectf(t, locale_valid(damaged) == damage.problem, "damage %d gives %v, not %v", index, locale_valid(damaged), damage.problem)
 		_, written := tag_write(damaged, buffer[:])
 		testing.expectf(t, !written, "tag_write writes the damaged record %d", index)
+	}
+}
+
+@(test)
+source_locale_is_a_valid_record_of_english :: proc(t: ^testing.T) {
+	locale := source_locale()
+	testing.expect_value(t, locale_valid(locale), Locale_Problem.None)
+	testing.expect_value(t, locale_language(&locale), SOURCE_LANGUAGE)
+	testing.expect_value(t, locale_script(&locale), "")
+	testing.expect_value(t, locale_region(&locale), "")
+	// The record that tag_read gives for the text of the source language:
+	// the console and the settings page compare the two by their bytes.
+	read, problem, _ := tag_read(SOURCE_LANGUAGE)
+	testing.expect_value(t, problem, Locale_Problem.None)
+	testing.expect(t, read == locale, "source_locale is the record of tag_read(SOURCE_LANGUAGE)")
+	buffer: [LOCALE_TEXT_CAPACITY]u8
+	written, ok := tag_write(locale, buffer[:])
+	testing.expect(t, ok, "tag_write writes the source locale")
+	testing.expect_value(t, written, SOURCE_LANGUAGE)
+	// The root locale is not the source language: und names no language.
+	testing.expect(t, locale != Locale{}, "the source locale is not the root locale")
+}
+
+@(test)
+each_locale_problem_has_its_own_words :: proc(t: ^testing.T) {
+	seen := make(map[string]Locale_Problem, context.temp_allocator)
+	for problem in Locale_Problem {
+		text := locale_problem_text(problem)
+		testing.expectf(t, text != "", "%v has no words", problem)
+		testing.expectf(t, text != "a problem that names no member", "%v has the words of no member", problem)
+		if other, found := seen[text]; found {
+			testing.expectf(t, false, "%v and %v have the same words %q", problem, other, text)
+		}
+		seen[text] = problem
+	}
+	// The bound that the words name is the bound that tag_read keeps.
+	digits: [8]u8
+	testing.expect(t, strings.contains(locale_problem_text(.Too_Long), strconv.write_int(digits[:], LOCALE_TEXT_CAPACITY, 10)), "the words of Too_Long name LOCALE_TEXT_CAPACITY")
+	// A byte that names no member gives its own words, never the words of a
+	// member.
+	unknown := transmute(Locale_Problem)(u8(max(Locale_Problem)) + 1)
+	testing.expect_value(t, locale_problem_text(unknown), "a problem that names no member")
+	testing.expect_value(t, locale_problem_text(transmute(Locale_Problem)u8(255)), "a problem that names no member")
+}
+
+@(test)
+each_refusal_of_tag_read_has_words_for_the_console :: proc(t: ^testing.T) {
+	// The console writes the words of the problem that tag_read gives: each
+	// refusal that a principal can type has words of its own member.
+	texts := [?]string{"", "en_US", "en--US", "en-abcdefghi", "e", "zh-yue", "en-x-twain", "en-t-ja", "de-1901-1996-1997", "de-1901-1901", "en-u-foo-ca-roc", "en-u-tz-usnyc", "en-u-ca", "en-u-ca-roc-ca-roc", "en-u-ca-julian", "en-u-rg-uszzzzz"}
+	for text in texts {
+		_, problem, place := tag_read(text)
+		testing.expectf(t, problem != .None, "tag_read(%q) takes the text", text)
+		testing.expectf(t, place >= 0 && place <= len(text), "tag_read(%q) gives the offset %d outside the text", text, place)
+		testing.expect(t, locale_problem_text(problem) != locale_problem_text(.None), "a refusal has the words of a refusal")
 	}
 }

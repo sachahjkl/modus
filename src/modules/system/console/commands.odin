@@ -963,6 +963,54 @@ commands_start :: proc "contextless" () {
 	//
 	// - `tag`: `"en"`, `"fr"`, or `""` to read the active locale tag.
 	command("locale", {.Text}, .Text, "set or read the active CLDR locale (en or fr)", locale_command)
+	// Reads a language tag of BCP 47 into its record, a `Locale`: the
+	// language, the script, the region, two variants, the keywords of the
+	// extension `u` (`ca`, `nu`, `fw`, `hc`, `ms`, `co`, `rg`), in
+	// the canonical form of UTS #35 (`iw` gives `he`).
+	//
+	// - `tag`: the text of the tag, in any case; the call may leave it
+	//   out. With no tag, or `""`, it gives the first language of the
+	//   language list of the settings page, and English when the list is
+	//   empty.
+	//
+	// The console reads the text once: an export takes the record, never
+	// the text, so no process parses the tag again. `settings.set_languages`
+	// takes a table of these records, and `settings.languages()` gives each
+	// one with its canonical tag.
+	//
+	// ```
+	// > language("fr-CA")
+	// > language("ar-EG-u-nu-latn")
+	// > settings.set_languages([language("fr-CA"), language("en")])
+	// > language()
+	// ```
+	//
+	// Error: the tag is refused, with the byte of the subtag at fault and
+	// the reason: a private use (`-x-`), an extension other than `u`, a
+	// key of `u` other than the seven, a value that names no member of
+	// its key, a third variant, an extended language, a tag past 128 bytes.
+	command("language", {.Text}, .Record, "the record of a language tag, or the first language of the principal", language_command, optional_last = true)
+	// Gives one row for each connection of a process to a service: the
+	// service, the state of its work account, the pages of its work budget
+	// in use and in total, the processor time of its work thread since the
+	// connection, and its step debt.
+	//
+	// - `process`: the name of a process that runs, as `processes()`
+	//   gives it.
+	//
+	// The console knows the connections of its own process only. No
+	// service charges a work budget yet: each row has the state
+	// `unaccounted` and no numbers, because the service paid the work
+	// itself.
+	//
+	// ```
+	// > work("console")
+	// ```
+	//
+	// It needs the grant **machine**, as `memory()`. Errors: the name is
+	// empty or past 31 bytes; no process that runs has the name; the
+	// process is not this console.
+	command("work", {.Text}, .Table, "the work that services did for each connection of a process", work_command)
 	// Lists the closed system roles defined by the role contract.
 	command("roles", {}, .Table, "the closed system roles", roles_command)
 	// Lists the delegated system services (plans, recipes, projects, powerbox, disk_processes, principals, devices, settings).

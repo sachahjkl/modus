@@ -467,3 +467,122 @@ shared_step_selection_and_overflow_refusal :: proc(t: ^testing.T) {
 	testing.expect_value(t, snap1.processor_nanoseconds, u64(500_000))
 	testing.expect_value(t, snap1.step_debt_nanoseconds, u64(100_000))
 }
+
+@(private = "file")
+test_snapshot_record :: proc() -> Accounting_Snapshot_Record {
+	return {
+		version                      = u64(ACCOUNTING_SNAPSHOT_VERSION),
+		connection_identifier        = 7,
+		state_word                   = u64(Work_Account_State.Active),
+		pages_limit                  = 100,
+		pages_charged                = 40,
+		pages_peak                   = 60,
+		processor_limit_microseconds = 50_000,
+		processor_nanoseconds        = 2_500_999,
+		step_debt_nanoseconds        = 1_000,
+		requests_served              = 3,
+	}
+}
+
+@(test)
+microseconds_round_down_at_each_edge :: proc(t: ^testing.T) {
+	testing.expect_value(t, microseconds_of_nanoseconds(0), u64(0))
+	testing.expect_value(t, microseconds_of_nanoseconds(1), u64(0))
+	testing.expect_value(t, microseconds_of_nanoseconds(999), u64(0))
+	testing.expect_value(t, microseconds_of_nanoseconds(1000), u64(1))
+	testing.expect_value(t, microseconds_of_nanoseconds(1999), u64(1))
+	testing.expect_value(t, microseconds_of_nanoseconds(max(u64)), max(u64) / 1000)
+	// The largest row time fits the Integer of a console cell.
+	testing.expect(t, microseconds_of_nanoseconds(max(u64)) <= u64(max(i64)), "a row time fits an i64")
+}
+
+@(test)
+work_row_border_refuses_each_damaged_snapshot_record :: proc(t: ^testing.T) {
+	Damage :: struct {
+		damage: proc(record: ^Accounting_Snapshot_Record),
+		reason: string,
+	}
+	damages := [?]Damage {
+		{proc(record: ^Accounting_Snapshot_Record) {record.version = 0}, "version 0"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.version = u64(ACCOUNTING_SNAPSHOT_VERSION) + 1}, "version past the known one"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.version = max(u64)}, "the largest version"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.state_word = 0}, "state word 0"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.state_word = u64(max(Work_Account_State)) + 1}, "state word one past the bound"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.state_word = max(u64)}, "the largest state word"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.connection_identifier = 0}, "connection 0"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.pages_limit = MAX_WORK_BUDGET_PAGES + 1; record.pages_peak = MAX_WORK_BUDGET_PAGES + 1}, "a limit past the bound"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.pages_charged = record.pages_limit + 1}, "more pages charged than the limit"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.pages_peak = record.pages_charged - 1}, "a peak under the pages charged"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.pages_peak = record.pages_limit + 1}, "a peak past the limit"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.processor_limit_microseconds = MAX_PROCESSOR_MICROSECONDS_PER_SECOND + 1}, "a processor limit past the bound"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.processor_limit_microseconds = 0}, "an active connection with no processor limit"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.state_word = u64(Work_Account_State.Exhausted)}, "exhausted with no exhaustion"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.state_word = u64(Work_Account_State.Closed)}, "closed with pages still charged"},
+		{proc(record: ^Accounting_Snapshot_Record) {record.state_word = u64(Work_Account_State.Revoked)}, "revoked with pages still charged"},
+	}
+	for damage in damages {
+		record := test_snapshot_record()
+		damage.damage(&record)
+		row, refusal := work_row_of_snapshot_record(record)
+		testing.expectf(t, refusal == .Invalid_State, "%s gives %v, not Invalid_State", damage.reason, refusal)
+		testing.expectf(t, row == Work_Row{}, "%s gives a row", damage.reason)
+		testing.expectf(t, !row.accounted, "%s gives an accounted row", damage.reason)
+	}
+}
+
+@(test)
+work_row_of_a_valid_snapshot_record :: proc(t: ^testing.T) {
+	row, refusal := work_row_of_snapshot_record(test_snapshot_record())
+	testing.expect_value(t, refusal, Work_Budget_Refusal.None)
+	testing.expect(t, row.accounted, "a valid snapshot gives an accounted row")
+	testing.expect_value(t, row.state, Work_Account_State.Active)
+	testing.expect_value(t, row.pages_charged, u64(40))
+	testing.expect_value(t, row.pages_limit, u64(100))
+	testing.expect_value(t, row.processor_microseconds, u64(2500))
+	testing.expect_value(t, row.step_debt_microseconds, u64(1))
+	testing.expect_value(t, work_row_state_text(row), "active")
+
+	// A closed connection with no page charged is a valid last row.
+	closed := test_snapshot_record()
+	closed.state_word = u64(Work_Account_State.Closed)
+	closed.pages_charged = 0
+	closed_row, closed_refusal := work_row_of_snapshot_record(closed)
+	testing.expect_value(t, closed_refusal, Work_Budget_Refusal.None)
+	testing.expect_value(t, work_row_state_text(closed_row), "closed")
+	testing.expect_value(t, closed_row.pages_charged, u64(0))
+
+	// The snapshot that a live table gives crosses the border whole.
+	table, init_refusal := table_init(test_requirements(), 999)
+	testing.expect_value(t, init_refusal, Work_Budget_Refusal.None)
+	minimum, _ := work_budget_minimum_pages(test_requirements())
+	testing.expect_value(t, connection_open(&table, 11, 501, minimum, 50_000, 1, true, 601), Work_Budget_Refusal.None)
+	testing.expect_value(t, connection_charge_processor_time(&table, 11, 4_000_000, 2_000), Work_Budget_Refusal.None)
+	snapshot, _ := connection_snapshot(&table, 11)
+	live_row, live_refusal := work_row_of_snapshot_record(accounting_snapshot_encode(snapshot))
+	testing.expect_value(t, live_refusal, Work_Budget_Refusal.None)
+	testing.expect_value(t, live_row.processor_microseconds, u64(4000))
+	testing.expect_value(t, live_row.step_debt_microseconds, u64(2))
+	testing.expect_value(t, live_row.pages_limit, minimum)
+}
+
+@(test)
+each_state_has_its_own_word_and_unaccounted_is_none_of_them :: proc(t: ^testing.T) {
+	seen := make(map[string]Work_Account_State, context.temp_allocator)
+	for state in Work_Account_State {
+		text := work_account_state_text(state)
+		testing.expectf(t, text != "", "%v has no word", state)
+		testing.expectf(t, text != "unaccounted", "%v has the word of a connection with no snapshot", state)
+		if other, found := seen[text]; found {
+			testing.expectf(t, false, "%v and %v have the word %q", state, other, text)
+		}
+		seen[text] = state
+	}
+	unaccounted := work_row_unaccounted()
+	testing.expect(t, !unaccounted.accounted, "an unaccounted row is not accounted")
+	testing.expect_value(t, work_row_state_text(unaccounted), "unaccounted")
+	testing.expect(t, unaccounted == Work_Row{}, "an unaccounted row holds no number")
+	// A word that names no state gives no word, never the word of a state.
+	testing.expect_value(t, work_account_state_text(transmute(Work_Account_State)u64(0)), "")
+	testing.expect_value(t, work_account_state_text(transmute(Work_Account_State)max(u64)), "")
+	testing.expect_value(t, work_row_state_text(Work_Row{accounted = true}), "")
+}

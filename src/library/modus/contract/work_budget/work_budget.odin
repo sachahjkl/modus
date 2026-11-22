@@ -422,6 +422,76 @@ accounting_snapshot_decode :: proc "contextless" (record: Accounting_Snapshot_Re
 	return candidate, .None
 }
 
+// One row of the work that a service did for one connection of a process:
+// what the console command work(process) shows. A connection whose service
+// charges no work budget yet is unaccounted: its numbers are zero because
+// the service paid the work itself, not because the work was free.
+Work_Row :: struct {
+	accounted:              bool, // false: no accounting snapshot exists for the connection.
+	state:                  Work_Account_State, // Read only when accounted.
+	pages_charged:          u64, // Pages of the work budget in use.
+	pages_limit:            u64, // Pages of the work budget in total.
+	processor_microseconds: u64, // Processor time of the work thread since the connection.
+	step_debt_microseconds: u64, // Time of the shared steps of the connection.
+}
+
+// microseconds_of_nanoseconds gives a count of nanoseconds in whole
+// microseconds, rounded down: a row never shows time that was not spent.
+microseconds_of_nanoseconds :: proc "contextless" (nanoseconds: u64) -> u64 {
+	return nanoseconds / 1000
+}
+
+// work_row_unaccounted gives the row of a connection whose service charges
+// no work budget.
+work_row_unaccounted :: proc "contextless" () -> Work_Row {
+	return {}
+}
+
+// work_row_of_snapshot_record is the border of the snapshot that a service
+// writes for one connection: it decodes the record and gives the row, or
+// the refusal of accounting_snapshot_decode and no row.
+work_row_of_snapshot_record :: proc "contextless" (record: Accounting_Snapshot_Record) -> (row: Work_Row, refusal: Work_Budget_Refusal) {
+	snapshot, decoded := accounting_snapshot_decode(record)
+	if decoded != .None {
+		return {}, decoded
+	}
+	return {
+		accounted              = true,
+		state                  = snapshot.state,
+		pages_charged          = snapshot.pages_charged,
+		pages_limit            = snapshot.pages_limit,
+		processor_microseconds = microseconds_of_nanoseconds(snapshot.processor_nanoseconds),
+		step_debt_microseconds = microseconds_of_nanoseconds(snapshot.step_debt_nanoseconds),
+	}, .None
+}
+
+// work_account_state_text gives the word of a state in a row.
+work_account_state_text :: proc "contextless" (state: Work_Account_State) -> string {
+	switch state {
+	case .Inactive:
+		return "inactive"
+	case .Active:
+		return "active"
+	case .Exhausted:
+		return "exhausted"
+	case .Revoked:
+		return "revoked"
+	case .Closed:
+		return "closed"
+	}
+	return ""
+}
+
+// work_row_state_text gives the word of the state column of a row:
+// "unaccounted" for a connection with no snapshot, else the word of its
+// state.
+work_row_state_text :: proc "contextless" (row: Work_Row) -> string {
+	if !row.accounted {
+		return "unaccounted"
+	}
+	return work_account_state_text(row.state)
+}
+
 // table_init creates a new Connection_Worker_Table bound to a service's budget
 // requirements and its own budget handle (which is refused as any client's
 // work budget).
