@@ -549,3 +549,580 @@ rollback_floor_counter_and_policy_authorize :: proc(t: ^testing.T) {
 	_, r = rollback_floor_verify_policy_authorize(&state, stmt_v6, sig_v6[:], test_policy_sig_verify, &pub_secret)
 	testing.expect_value(t, r, Rollback_Refusal.Key_Number_Below_Floor)
 }
+
+
+// The checksum of a pin payload, computed with the SHA-256 of the core
+// library, so that a test does not trust the code that it checks.
+@(private = "file")
+reference_pin_checksum :: proc(domain: string, covered: []u8) -> (out: Digest) {
+	joined: [256]u8
+	copy(joined[:], domain)
+	copy(joined[len(domain):], covered)
+	reference: [32]u8
+	hash.hash_bytes_to_buffer(.SHA256, joined[:len(domain) + len(covered)], reference[:])
+	return Digest(reference)
+}
+
+// Writes a fresh checksum over a payload that a test changed, so that the
+// field checks behind the checksum are reached.
+@(private = "file")
+reseal_machine_key_pin :: proc(payload: []u8) {
+	checksum := reference_pin_checksum(MACHINE_KEY_PIN_DOMAIN, payload[:MACHINE_KEY_PIN_OFFSET_CHECKSUM])
+	copy(payload[MACHINE_KEY_PIN_OFFSET_CHECKSUM:], checksum[:])
+}
+
+@(private = "file")
+reseal_principal_file_pin :: proc(payload: []u8) {
+	checksum := reference_pin_checksum(PRINCIPAL_FILE_PIN_DOMAIN, payload[:PRINCIPAL_FILE_PIN_OFFSET_CHECKSUM])
+	copy(payload[PRINCIPAL_FILE_PIN_OFFSET_CHECKSUM:], checksum[:])
+}
+
+@(private = "file")
+all_bytes_are :: proc(bytes: []u8, value: u8) -> bool {
+	for item in bytes {
+		if item != value {
+			return false
+		}
+	}
+	return true
+}
+
+@(test)
+machine_key_form_border_refuses_unknown_words :: proc(t: ^testing.T) {
+	for word in ([?]u64{0, 4, 255, 256, 257, 0xFFFF_FFFF_FFFF_FFFF}) {
+		form, ok := machine_key_form_of_word(word)
+		testing.expectf(t, !ok, "word %d must name no form", word)
+		testing.expect_value(t, form, Machine_Key_Form.None)
+	}
+	form, ok := machine_key_form_of_word(1)
+	testing.expect(t, ok && form == .MachineT)
+	form, ok = machine_key_form_of_word(2)
+	testing.expect(t, ok && form == .MachineP)
+	form, ok = machine_key_form_of_word(3)
+	testing.expect(t, ok && form == .MachineK)
+
+	short := transmute([]u8)string("MACHINE")
+	_, ok = machine_key_form_of_record_magic(short)
+	testing.expect(t, !ok)
+	unknown := transmute([]u8)string("MACHINEX and more")
+	_, ok = machine_key_form_of_record_magic(unknown)
+	testing.expect(t, !ok)
+	lower := transmute([]u8)string("machinet")
+	_, ok = machine_key_form_of_record_magic(lower)
+	testing.expect(t, !ok)
+	sealed := transmute([]u8)string("MACHINET followed by the record")
+	form, ok = machine_key_form_of_record_magic(sealed)
+	testing.expect(t, ok && form == .MachineT)
+	with_passphrase := transmute([]u8)string("MACHINEP")
+	form, ok = machine_key_form_of_record_magic(with_passphrase)
+	testing.expect(t, ok && form == .MachineP)
+	passphrase_alone := transmute([]u8)string("MACHINEK")
+	form, ok = machine_key_form_of_record_magic(passphrase_alone)
+	testing.expect(t, ok && form == .MachineK)
+}
+
+@(test)
+machine_key_pin_payload_refuses_damage :: proc(t: ^testing.T) {
+	// The encoder refuses what a decoder refuses, and writes nothing then.
+	untouched: [MACHINE_KEY_PIN_RECORD_SIZE]u8
+	for &item in untouched {
+		item = 0xEE
+	}
+	count, refusal := machine_key_pin_encode({form = .None, epoch = 1}, untouched[:])
+	testing.expect_value(t, refusal, Pin_Refusal.Unknown_Form)
+	testing.expect_value(t, count, 0)
+	count, refusal = machine_key_pin_encode({form = .MachineT, epoch = 0}, untouched[:])
+	testing.expect_value(t, refusal, Pin_Refusal.Epoch_Zero)
+	count, refusal = machine_key_pin_encode({form = .MachineT, epoch = 1}, untouched[:MACHINE_KEY_PIN_RECORD_SIZE - 1])
+	testing.expect_value(t, refusal, Pin_Refusal.Buffer_Too_Small)
+	testing.expect(t, all_bytes_are(untouched[:], 0xEE))
+
+	// The exact layout.
+	payload: [MACHINE_KEY_PIN_RECORD_SIZE]u8
+	count, refusal = machine_key_pin_encode({form = .MachineT, epoch = 0x0102_0304_0506_0708}, payload[:])
+	testing.expect_value(t, refusal, Pin_Refusal.None)
+	testing.expect_value(t, count, 52)
+	expected_head := [20]u8{'M', 'O', 'D', 'U', 'S', 'M', 'K', 'P', 0x00, 0x01, 0x01, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
+	testing.expect(t, string(payload[:20]) == string(expected_head[:]))
+	checksum := reference_pin_checksum(MACHINE_KEY_PIN_DOMAIN, payload[:20])
+	testing.expect(t, string(payload[20:]) == string(checksum[:]))
+	pin, decode_refusal := machine_key_pin_decode(payload[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.None)
+	testing.expect_value(t, pin, Machine_Key_Pin{form = .MachineT, epoch = 0x0102_0304_0506_0708})
+
+	// Sizes: 0, one short, one long.
+	_, decode_refusal = machine_key_pin_decode(nil)
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Truncated)
+	_, decode_refusal = machine_key_pin_decode(payload[:MACHINE_KEY_PIN_RECORD_SIZE - 1])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Truncated)
+	longer: [MACHINE_KEY_PIN_RECORD_SIZE + 1]u8
+	copy(longer[:], payload[:])
+	_, decode_refusal = machine_key_pin_decode(longer[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Trailing_Bytes)
+
+	// Each single flipped bit is refused.
+	for index in 0 ..< MACHINE_KEY_PIN_RECORD_SIZE {
+		damaged := payload
+		damaged[index] ~= 0x01
+		_, flipped := machine_key_pin_decode(damaged[:])
+		testing.expectf(t, flipped != .None, "a flipped bit at byte %d was taken", index)
+	}
+
+	// The magic and the format come before the checksum.
+	damaged := payload
+	damaged[0] = 'X'
+	_, decode_refusal = machine_key_pin_decode(damaged[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Bad_Magic)
+	damaged = payload
+	damaged[MACHINE_KEY_PIN_OFFSET_FORMAT + 1] = 2
+	reseal_machine_key_pin(damaged[:])
+	_, decode_refusal = machine_key_pin_decode(damaged[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Unknown_Format)
+	damaged = payload
+	damaged[MACHINE_KEY_PIN_OFFSET_EPOCH + 7] ~= 0xFF
+	_, decode_refusal = machine_key_pin_decode(damaged[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Bad_Checksum)
+
+	// Behind a correct checksum, each field is still checked.
+	for word in ([?]u8{0, 4, 255}) {
+		damaged = payload
+		damaged[MACHINE_KEY_PIN_OFFSET_FORM] = word
+		reseal_machine_key_pin(damaged[:])
+		_, decode_refusal = machine_key_pin_decode(damaged[:])
+		testing.expect_value(t, decode_refusal, Pin_Refusal.Unknown_Form)
+	}
+	damaged = payload
+	damaged[MACHINE_KEY_PIN_OFFSET_RESERVED] = 1
+	reseal_machine_key_pin(damaged[:])
+	_, decode_refusal = machine_key_pin_decode(damaged[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Reserved_Not_Zero)
+	damaged = payload
+	for index in 0 ..< 8 {
+		damaged[MACHINE_KEY_PIN_OFFSET_EPOCH + index] = 0
+	}
+	reseal_machine_key_pin(damaged[:])
+	_, decode_refusal = machine_key_pin_decode(damaged[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Epoch_Zero)
+
+	// A payload under the text of the other kind fails its checksum.
+	damaged = payload
+	other := reference_pin_checksum(PRINCIPAL_FILE_PIN_DOMAIN, damaged[:MACHINE_KEY_PIN_OFFSET_CHECKSUM])
+	copy(damaged[MACHINE_KEY_PIN_OFFSET_CHECKSUM:], other[:])
+	_, decode_refusal = machine_key_pin_decode(damaged[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Bad_Checksum)
+}
+
+@(test)
+machine_key_pin_refuses_downgrade_and_rollback :: proc(t: ^testing.T) {
+	sealed_five := Machine_Key_Pin{form = .MachineT, epoch = 5}
+	testing.expect_value(t, machine_key_pin_advance({form = .MachineT, epoch = 5}, {form = .MachineK, epoch = 6}), Pin_Refusal.Form_Downgrade)
+	testing.expect_value(t, machine_key_pin_advance({form = .MachineP, epoch = 5}, {form = .MachineK, epoch = 900}), Pin_Refusal.Form_Downgrade)
+	testing.expect_value(t, machine_key_pin_advance({form = .MachineT, epoch = 5}, {form = .MachineK, epoch = 1}), Pin_Refusal.Form_Downgrade)
+	testing.expect_value(t, machine_key_pin_advance({form = .MachineK, epoch = 5}, {form = .MachineT, epoch = 6}), Pin_Refusal.Form_Change)
+	testing.expect_value(t, machine_key_pin_advance({form = .MachineT, epoch = 5}, {form = .MachineP, epoch = 6}), Pin_Refusal.Form_Change)
+	testing.expect_value(t, machine_key_pin_advance(sealed_five, {form = .MachineT, epoch = 5}), Pin_Refusal.Epoch_Replay)
+	testing.expect_value(t, machine_key_pin_advance(sealed_five, {form = .MachineT, epoch = 4}), Pin_Refusal.Epoch_Rollback)
+	testing.expect_value(t, machine_key_pin_advance(sealed_five, {form = .MachineT, epoch = 0}), Pin_Refusal.Epoch_Zero)
+	testing.expect_value(t, machine_key_pin_advance(sealed_five, {form = .None, epoch = 6}), Pin_Refusal.Unknown_Form)
+	testing.expect_value(t, machine_key_pin_advance({}, {form = .None, epoch = 1}), Pin_Refusal.Unknown_Form)
+	testing.expect_value(t, machine_key_pin_advance({}, {form = .MachineK, epoch = 0}), Pin_Refusal.Epoch_Zero)
+	testing.expect_value(t, machine_key_pin_advance({form = .MachineT, epoch = max(u64)}, {form = .MachineT, epoch = max(u64)}), Pin_Refusal.Epoch_Replay)
+
+	// The record on the disk against the pin.
+	sealed_record := transmute([]u8)string("MACHINET record")
+	passphrase_record := transmute([]u8)string("MACHINEK record")
+	testing.expect_value(t, machine_key_record_matches_pin(sealed_five, passphrase_record), Pin_Refusal.Form_Mismatch)
+	testing.expect_value(t, machine_key_record_matches_pin(sealed_five, sealed_record[:7]), Pin_Refusal.Truncated)
+	testing.expect_value(t, machine_key_record_matches_pin(sealed_five, transmute([]u8)string("PRINCIPT")), Pin_Refusal.Unknown_Form)
+	testing.expect_value(t, machine_key_record_matches_pin({}, sealed_record), Pin_Refusal.Not_Pinned)
+
+	// The accepted cases come last.
+	testing.expect_value(t, machine_key_pin_advance({}, {form = .MachineT, epoch = 1}), Pin_Refusal.None)
+	testing.expect_value(t, machine_key_pin_advance(sealed_five, {form = .MachineT, epoch = 6}), Pin_Refusal.None)
+	testing.expect_value(t, machine_key_pin_advance({form = .MachineT, epoch = max(u64) - 1}, {form = .MachineT, epoch = max(u64)}), Pin_Refusal.None)
+	testing.expect_value(t, machine_key_record_matches_pin(sealed_five, sealed_record), Pin_Refusal.None)
+}
+
+@(test)
+principal_file_pin_payload_refuses_damage :: proc(t: ^testing.T) {
+	digest := make_digest(0x40)
+	pin := Principal_File_Pin{principal = 0x0A0B_0C0D, generation = 0x1122_3344_5566_7788, file_digest = digest}
+
+	untouched: [PRINCIPAL_FILE_PIN_RECORD_SIZE]u8
+	for &item in untouched {
+		item = 0xEE
+	}
+	_, refusal := principal_file_pin_encode({principal = 0, generation = 1, file_digest = digest}, untouched[:])
+	testing.expect_value(t, refusal, Pin_Refusal.Principal_Zero)
+	_, refusal = principal_file_pin_encode({principal = 1, generation = 0, file_digest = digest}, untouched[:])
+	testing.expect_value(t, refusal, Pin_Refusal.Generation_Zero)
+	_, refusal = principal_file_pin_encode({principal = 1, generation = 1}, untouched[:])
+	testing.expect_value(t, refusal, Pin_Refusal.Zero_Digest)
+	_, refusal = principal_file_pin_encode(pin, untouched[:PRINCIPAL_FILE_PIN_RECORD_SIZE - 1])
+	testing.expect_value(t, refusal, Pin_Refusal.Buffer_Too_Small)
+	testing.expect(t, all_bytes_are(untouched[:], 0xEE))
+
+	payload: [PRINCIPAL_FILE_PIN_RECORD_SIZE]u8
+	count: int
+	count, refusal = principal_file_pin_encode(pin, payload[:])
+	testing.expect_value(t, refusal, Pin_Refusal.None)
+	testing.expect_value(t, count, 88)
+	expected_head := [24]u8{'M', 'O', 'D', 'U', 'S', 'P', 'F', 'P', 0x00, 0x01, 0x00, 0x00, 0x0A, 0x0B, 0x0C, 0x0D, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88}
+	testing.expect(t, string(payload[:24]) == string(expected_head[:]))
+	testing.expect(t, string(payload[24:56]) == string(digest[:]))
+	checksum := reference_pin_checksum(PRINCIPAL_FILE_PIN_DOMAIN, payload[:56])
+	testing.expect(t, string(payload[56:]) == string(checksum[:]))
+	decoded, decode_refusal := principal_file_pin_decode(payload[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.None)
+	testing.expect_value(t, decoded, pin)
+
+	_, decode_refusal = principal_file_pin_decode(payload[:PRINCIPAL_FILE_PIN_RECORD_SIZE - 1])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Truncated)
+	for index in 0 ..< PRINCIPAL_FILE_PIN_RECORD_SIZE {
+		damaged := payload
+		damaged[index] ~= 0x80
+		_, flipped := principal_file_pin_decode(damaged[:])
+		testing.expectf(t, flipped != .None, "a flipped bit at byte %d was taken", index)
+	}
+
+	// A machine key pin is not a principal file pin.
+	machine_payload: [MACHINE_KEY_PIN_RECORD_SIZE]u8
+	_, _ = machine_key_pin_encode({form = .MachineT, epoch = 1}, machine_payload[:])
+	_, decode_refusal = principal_file_pin_decode(machine_payload[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Truncated)
+	damaged := payload
+	copy(damaged[:8], MACHINE_KEY_PIN_MAGIC)
+	reseal_principal_file_pin(damaged[:])
+	_, decode_refusal = principal_file_pin_decode(damaged[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Bad_Magic)
+
+	// Behind a correct checksum, each field is still checked.
+	damaged = payload
+	damaged[PRINCIPAL_FILE_PIN_OFFSET_RESERVED + 1] = 1
+	reseal_principal_file_pin(damaged[:])
+	_, decode_refusal = principal_file_pin_decode(damaged[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Reserved_Not_Zero)
+	damaged = payload
+	byte_order.write_u32_big_endian(damaged[:], PRINCIPAL_FILE_PIN_OFFSET_PRINCIPAL, 0)
+	reseal_principal_file_pin(damaged[:])
+	_, decode_refusal = principal_file_pin_decode(damaged[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Principal_Zero)
+	damaged = payload
+	byte_order.write_u64_big_endian(damaged[:], PRINCIPAL_FILE_PIN_OFFSET_GENERATION, 0)
+	reseal_principal_file_pin(damaged[:])
+	_, decode_refusal = principal_file_pin_decode(damaged[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Generation_Zero)
+	damaged = payload
+	for index in 0 ..< SHA256_SIZE {
+		damaged[PRINCIPAL_FILE_PIN_OFFSET_DIGEST + index] = 0
+	}
+	reseal_principal_file_pin(damaged[:])
+	_, decode_refusal = principal_file_pin_decode(damaged[:])
+	testing.expect_value(t, decode_refusal, Pin_Refusal.Zero_Digest)
+}
+
+@(test)
+principal_file_pin_refuses_rollback_and_mismatch :: proc(t: ^testing.T) {
+	file_three := transmute([]u8)string("PRINCIPT the file of generation three")
+	file_two := transmute([]u8)string("PRINCIPT the file of generation two")
+	reference: [32]u8
+	hash.hash_bytes_to_buffer(.SHA256, file_three, reference[:])
+	testing.expect_value(t, principal_file_digest(file_three), Digest(reference))
+
+	current := Principal_File_Pin{principal = 7, generation = 3, file_digest = principal_file_digest(file_three)}
+	older := Principal_File_Pin{principal = 7, generation = 2, file_digest = principal_file_digest(file_two)}
+	testing.expect_value(t, principal_file_pin_advance(current, older), Pin_Refusal.Generation_Rollback)
+	testing.expect_value(t, principal_file_pin_advance(current, current), Pin_Refusal.Generation_Replay)
+	same_generation_other_file := Principal_File_Pin{principal = 7, generation = 3, file_digest = principal_file_digest(file_two)}
+	testing.expect_value(t, principal_file_pin_advance(current, same_generation_other_file), Pin_Refusal.Generation_Replay)
+	testing.expect_value(t, principal_file_pin_advance(current, {principal = 8, generation = 4, file_digest = current.file_digest}), Pin_Refusal.Principal_Mismatch)
+	testing.expect_value(t, principal_file_pin_advance(current, {principal = 7, generation = 4}), Pin_Refusal.Zero_Digest)
+	testing.expect_value(t, principal_file_pin_advance(current, {principal = 7, generation = 0, file_digest = current.file_digest}), Pin_Refusal.Generation_Zero)
+	testing.expect_value(t, principal_file_pin_advance(current, {principal = 0, generation = 4, file_digest = current.file_digest}), Pin_Refusal.Principal_Zero)
+	testing.expect_value(t, principal_file_pin_advance({}, {principal = 7, generation = 1}), Pin_Refusal.Zero_Digest)
+
+	// The file that the disk gives against the pin.
+	testing.expect_value(t, principal_file_pin_check(current, 7, file_two), Pin_Refusal.Digest_Mismatch)
+	testing.expect_value(t, principal_file_pin_check(current, 7, nil), Pin_Refusal.Digest_Mismatch)
+	testing.expect_value(t, principal_file_pin_check(current, 7, file_three[:len(file_three) - 1]), Pin_Refusal.Digest_Mismatch)
+	changed: [64]u8
+	copy(changed[:], file_three)
+	changed[len(file_three) - 1] ~= 0x01
+	testing.expect_value(t, principal_file_pin_check(current, 7, changed[:len(file_three)]), Pin_Refusal.Digest_Mismatch)
+	testing.expect_value(t, principal_file_pin_check(current, 8, file_three), Pin_Refusal.Principal_Mismatch)
+	testing.expect_value(t, principal_file_pin_check({}, 7, file_three), Pin_Refusal.Not_Pinned)
+
+	// The accepted cases come last.
+	testing.expect_value(t, principal_file_pin_advance({}, older), Pin_Refusal.None)
+	forward := Principal_File_Pin{principal = 7, generation = 4, file_digest = principal_file_digest(file_two)}
+	testing.expect_value(t, principal_file_pin_advance(current, forward), Pin_Refusal.None)
+	testing.expect_value(t, principal_file_pin_check(current, 7, file_three), Pin_Refusal.None)
+}
+
+@(private = "file")
+Expected_Writer :: struct {
+	bytes: [256]u8,
+	place: int,
+}
+
+@(private = "file")
+expected_put :: proc(writer: ^Expected_Writer, data: ..u8) {
+	for item in data {
+		writer.bytes[writer.place] = item
+		writer.place += 1
+	}
+}
+
+@(private = "file")
+expected_put_slice :: proc(writer: ^Expected_Writer, data: []u8) {
+	for item in data {
+		writer.bytes[writer.place] = item
+		writer.place += 1
+	}
+}
+
+@(private = "file")
+make_key_name :: proc(seed: u8) -> (name: [KEY_NAME_SIZE]u8) {
+	name[0] = 0x00
+	name[1] = 0x0B
+	digest := make_digest(seed)
+	copy(name[2:], digest[:])
+	return name
+}
+
+@(test)
+policy_authorize_command_layout_and_refusals :: proc(t: ^testing.T) {
+	approved := make_digest(0x10)
+	reference := [4]u8{0xA1, 0xA2, 0xA3, 0xA4}
+	name := make_key_name(0x20)
+	ticket := Verified_Ticket{hierarchy = .Owner, digest = make_digest(0x30)}
+	session := u32(0x0300_0001)
+
+	expected: Expected_Writer
+	expected_put(&expected, 0x80, 0x01, 0x00, 0x00, 0x00, 0x82, 0x00, 0x00, 0x01, 0x6A)
+	expected_put(&expected, 0x03, 0x00, 0x00, 0x01)
+	expected_put(&expected, 0x00, 0x20)
+	expected_put_slice(&expected, approved[:])
+	expected_put(&expected, 0x00, 0x04, 0xA1, 0xA2, 0xA3, 0xA4)
+	expected_put(&expected, 0x00, 0x22)
+	expected_put_slice(&expected, name[:])
+	expected_put(&expected, 0x80, 0x22, 0x40, 0x00, 0x00, 0x01, 0x00, 0x20)
+	ticket_digest := ticket.digest
+	expected_put_slice(&expected, ticket_digest[:])
+	testing.expect_value(t, expected.place, 130)
+
+	untouched: [256]u8
+	for &item in untouched {
+		item = 0xEE
+	}
+	count, refusal := encode_policy_authorize(session, approved, reference[:], name[:], ticket, untouched[:129])
+	testing.expect_value(t, refusal, Wire_Refusal.Buffer_Too_Small)
+	testing.expect_value(t, count, 0)
+	_, refusal = encode_policy_authorize(session, approved, reference[:], name[:], ticket, nil)
+	testing.expect_value(t, refusal, Wire_Refusal.Buffer_Too_Small)
+	for handle in ([?]u32{0, 0x0200_0000, 0x02FF_FFFF, 0x0400_0000, 0x4000_0001, 0x8000_0000, max(u32)}) {
+		_, refusal = encode_policy_authorize(handle, approved, reference[:], name[:], ticket, untouched[:])
+		testing.expectf(t, refusal == .Handle_Not_Policy_Session, "handle %x was taken for a policy session", handle)
+	}
+	_, refusal = encode_policy_authorize(session, {}, reference[:], name[:], ticket, untouched[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Zero_Approved_Policy)
+	too_long_reference: [POLICY_REFERENCE_LIMIT + 1]u8
+	_, refusal = encode_policy_authorize(session, approved, too_long_reference[:], name[:], ticket, untouched[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Policy_Reference_Too_Large)
+	_, refusal = encode_policy_authorize(session, approved, reference[:], name[:KEY_NAME_SIZE - 1], ticket, untouched[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Key_Name_Malformed)
+	_, refusal = encode_policy_authorize(session, approved, reference[:], nil, ticket, untouched[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Key_Name_Malformed)
+	wrong_algorithm := name
+	wrong_algorithm[1] = 0x04
+	_, refusal = encode_policy_authorize(session, approved, reference[:], wrong_algorithm[:], ticket, untouched[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Key_Name_Malformed)
+	zero_name: [KEY_NAME_SIZE]u8
+	zero_name[1] = 0x0B
+	_, refusal = encode_policy_authorize(session, approved, reference[:], zero_name[:], ticket, untouched[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Key_Name_Malformed)
+	_, refusal = encode_policy_authorize(session, approved, reference[:], name[:], {hierarchy = .Owner}, untouched[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Zero_Ticket_Digest)
+	testing.expect(t, all_bytes_are(untouched[:], 0xEE))
+
+	// The borders of the words of a ticket and an answer.
+	_, ok := ticket_hierarchy_of_word(0x4000_0007)
+	testing.expect(t, !ok)
+	_, ok = ticket_hierarchy_of_word(0x4000_000A)
+	testing.expect(t, !ok)
+	_, ok = hierarchy_of_word(0x4000_0007)
+	testing.expect(t, !ok)
+	_, ok = hierarchy_of_word(0)
+	testing.expect(t, !ok)
+	_, ok = response_tag_of_word(0x8022)
+	testing.expect(t, !ok)
+
+	// The accepted cases come last: the exact bytes, an empty reference,
+	// and the largest reference.
+	out: [256]u8
+	count, refusal = encode_policy_authorize(session, approved, reference[:], name[:], ticket, out[:130])
+	testing.expect_value(t, refusal, Wire_Refusal.None)
+	testing.expect_value(t, count, 130)
+	testing.expect(t, string(out[:130]) == string(expected.bytes[:130]))
+	count, refusal = encode_policy_authorize(0x03FF_FFFF, approved, nil, name[:], ticket, out[:])
+	testing.expect_value(t, refusal, Wire_Refusal.None)
+	testing.expect_value(t, count, 126)
+	testing.expect_value(t, byte_order.read_u32_big_endian(out[:], 2), u32(126))
+	testing.expect_value(t, byte_order.read_u16_big_endian(out[:], 48), u16(0))
+	largest_reference: [POLICY_REFERENCE_LIMIT]u8
+	largest_reference[0] = 1
+	count, refusal = encode_policy_authorize(session, approved, largest_reference[:], name[:], ticket, out[:])
+	testing.expect_value(t, refusal, Wire_Refusal.None)
+	testing.expect_value(t, count, 158)
+}
+
+@(test)
+hierarchy_change_auth_command_layout_and_refusals :: proc(t: ^testing.T) {
+	new_value := [3]u8{0x01, 0x02, 0x03}
+	current_value := [2]u8{0xC1, 0xC2}
+
+	untouched: [128]u8
+	for &item in untouched {
+		item = 0xEE
+	}
+	count, refusal := encode_hierarchy_change_auth(.Lockout, nil, new_value[:], untouched[:31])
+	testing.expect_value(t, refusal, Wire_Refusal.Buffer_Too_Small)
+	testing.expect_value(t, count, 0)
+	_, refusal = encode_hierarchy_change_auth(.Lockout, nil, nil, untouched[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Empty_Authorization)
+	zeros: [16]u8
+	_, refusal = encode_hierarchy_change_auth(.Owner, nil, zeros[:], untouched[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Zero_Authorization)
+	too_long: [AUTHORIZATION_LIMIT + 1]u8
+	too_long[0] = 1
+	_, refusal = encode_hierarchy_change_auth(.Owner, nil, too_long[:], untouched[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Authorization_Too_Large)
+	_, refusal = encode_hierarchy_change_auth(.Owner, too_long[:], new_value[:], untouched[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Authorization_Too_Large)
+	testing.expect(t, all_bytes_are(untouched[:], 0xEE))
+
+	// The accepted cases come last: the exact bytes with the empty current
+	// value, then with a current value, then the largest values.
+	out: [128]u8
+	count, refusal = encode_hierarchy_change_auth(.Lockout, nil, new_value[:], out[:32])
+	testing.expect_value(t, refusal, Wire_Refusal.None)
+	testing.expect_value(t, count, 32)
+	expected_empty := [32]u8 {
+		0x80, 0x02, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x01, 0x29,
+		0x40, 0x00, 0x00, 0x0A,
+		0x00, 0x00, 0x00, 0x09,
+		0x40, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x03, 0x01, 0x02, 0x03,
+	}
+	testing.expect(t, string(out[:32]) == string(expected_empty[:]))
+
+	count, refusal = encode_hierarchy_change_auth(.Owner, current_value[:], new_value[:], out[:])
+	testing.expect_value(t, refusal, Wire_Refusal.None)
+	testing.expect_value(t, count, 34)
+	expected_current := [34]u8 {
+		0x80, 0x02, 0x00, 0x00, 0x00, 0x22, 0x00, 0x00, 0x01, 0x29,
+		0x40, 0x00, 0x00, 0x01,
+		0x00, 0x00, 0x00, 0x0B,
+		0x40, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x02, 0xC1, 0xC2,
+		0x00, 0x03, 0x01, 0x02, 0x03,
+	}
+	testing.expect(t, string(out[:34]) == string(expected_current[:]))
+
+	largest: [AUTHORIZATION_LIMIT]u8
+	largest[AUTHORIZATION_LIMIT - 1] = 1
+	count, refusal = encode_hierarchy_change_auth(.Endorsement, largest[:], largest[:], out[:])
+	testing.expect_value(t, refusal, Wire_Refusal.None)
+	testing.expect_value(t, count, 29 + 2 * AUTHORIZATION_LIMIT)
+	one := [1]u8{0x7F}
+	count, refusal = encode_hierarchy_change_auth(.Platform, nil, one[:], out[:])
+	testing.expect_value(t, refusal, Wire_Refusal.None)
+	testing.expect_value(t, count, 30)
+}
+
+@(test)
+tpm_response_decoding_refuses_truncated_and_error_answers :: proc(t: ^testing.T) {
+	_, refusal := decode_tpm_response_header(nil)
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Truncated)
+	success := [10]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x00, 0x00}
+	_, refusal = decode_tpm_response_header(success[:9])
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Truncated)
+
+	for tag in ([?]u16{0x0000, 0x8000, 0x8003, 0x8022, 0xFFFF, 0x0180}) {
+		answer := success
+		byte_order.write_u16_big_endian(answer[:], 0, tag)
+		_, refusal = decode_tpm_response_header(answer[:])
+		testing.expectf(t, refusal == .Response_Tag_Unknown, "tag %x was taken", tag)
+	}
+
+	// The size field must be the bytes given, in both directions.
+	for size in ([?]u32{0, 9, 11, 0xFFFF_FFFF}) {
+		answer := success
+		byte_order.write_u32_big_endian(answer[:], 2, size)
+		_, refusal = decode_tpm_response_header(answer[:])
+		testing.expectf(t, refusal == .Response_Size_Mismatch, "size %d was taken", size)
+	}
+	longer: [11]u8
+	copy(longer[:], success[:])
+	_, refusal = decode_tpm_response_header(longer[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Size_Mismatch)
+
+	// A failure gives its code, and only in the form of a failure.
+	failure := [10]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x09, 0x8E}
+	header: Response_Header
+	header, refusal = decode_tpm_response_header(failure[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Error)
+	testing.expect_value(t, header.code, u32(0x098E))
+	code: u32
+	code, refusal = decode_policy_authorize_response(failure[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Error)
+	testing.expect_value(t, code, u32(0x098E))
+	code, refusal = decode_hierarchy_change_auth_response(failure[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Error)
+	testing.expect_value(t, code, u32(0x098E))
+	failure_with_sessions := failure
+	failure_with_sessions[1] = 0x02
+	_, refusal = decode_tpm_response_header(failure_with_sessions[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Malformed)
+	failure_with_body := [14]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x0E, 0x00, 0x00, 0x09, 0x8E, 0, 0, 0, 0}
+	_, refusal = decode_tpm_response_header(failure_with_body[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Malformed)
+
+	// The answer of TPM2_PolicyAuthorize is the header alone.
+	success_with_sessions := success
+	success_with_sessions[1] = 0x02
+	_, refusal = decode_policy_authorize_response(success_with_sessions[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Malformed)
+	success_with_body := [12]u8{0x80, 0x01, 0x00, 0x00, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+	_, refusal = decode_policy_authorize_response(success_with_body[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Malformed)
+
+	// The answer of TPM2_HierarchyChangeAuth: no parameter, an empty nonce
+	// and an empty HMAC.
+	change_success := [19]u8{0x80, 0x02, 0x00, 0x00, 0x00, 0x13, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00}
+	_, refusal = decode_hierarchy_change_auth_response(change_success[:15])
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Size_Mismatch)
+	_, refusal = decode_hierarchy_change_auth_response(success[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Malformed)
+	with_parameters := change_success
+	with_parameters[13] = 0x04
+	_, refusal = decode_hierarchy_change_auth_response(with_parameters[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Malformed)
+	with_nonce := change_success
+	with_nonce[15] = 0x01
+	_, refusal = decode_hierarchy_change_auth_response(with_nonce[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Malformed)
+	with_hmac := change_success
+	with_hmac[18] = 0x01
+	_, refusal = decode_hierarchy_change_auth_response(with_hmac[:])
+	testing.expect_value(t, refusal, Wire_Refusal.Response_Malformed)
+
+	// The accepted cases come last.
+	header, refusal = decode_tpm_response_header(success[:])
+	testing.expect_value(t, refusal, Wire_Refusal.None)
+	testing.expect_value(t, header, Response_Header{tag = .No_Sessions, size = 10, code = 0})
+	code, refusal = decode_policy_authorize_response(success[:])
+	testing.expect_value(t, refusal, Wire_Refusal.None)
+	code, refusal = decode_hierarchy_change_auth_response(change_success[:])
+	testing.expect_value(t, refusal, Wire_Refusal.None)
+	testing.expect_value(t, code, TPM_RC_SUCCESS)
+}

@@ -146,6 +146,17 @@ A stop at any point must lose no recovery key that nobody wrote down. So each wi
 
 The machine passphrase on a machine with the TPM service and Secure Boot on has the same form, in the record `MACHINEP`: the TPM seals a TPM secret with an authorization value from the machine passphrase, with a text of its own for each key ([tpm_sealed_machine_passphrase.md](tpm_sealed_machine_passphrase.md)). The two share the count of the TPM. A machine key sealed by the TPM with no passphrase keeps the form `MACHINET`, which needs no typing.
 
+### The pin of the file
+
+A copy of the disk keeps an older file of a named principal, and the older passphrase opens it on this TPM and system. A value that the TPM keeps, and that only this system writes, names the current file. Only its payload is built; its index needs the policy that the pin of the machine key needs ([tpm_sealed_machine_key.md](tpm_sealed_machine_key.md), "The form of the record is not pinned").
+
+The payload has 88 bytes: the magic `MODUSPFP`, the format 1, two reserved zero bytes, the number of the principal, a generation of 64 bits, SHA-256 of the whole file, and SHA-256 of a text of its own and the bytes before it. Principal 0 is refused: the machine has no principal file. The rules (`principal_file_pin_advance`, `principal_file_pin_check` in `modus:contract/tpm_attestation`):
+
+- a new pin names the same principal and a higher generation, and a digest that is not zero;
+- the file of the disk must have the digest of the pin.
+
+SHA-256 and not BLAKE2b: the contract of the TPM has SHA-256 only, as each digest of the TPM.
+
 ## Refused forms
 
 - **The keys sealed by the TPM alone, with no passphrase in the seal key.** A reader of the bus at one unseal gets the secret, and then the keys, with no guess.
@@ -216,7 +227,11 @@ Built: a recovery key for a named principal on a machine with no TPM or with Sec
 
 Left:
 
-- **The file of a named principal pinned in the TPM**, so a kept old file and its old passphrase are refused.
+- **The file of a named principal pinned in the TPM**, so a kept old file and its old passphrase are refused. Its payload, its rules and their host tests are built ("The pin of the file"), with the steps `principal_file_pin_transition` and `principal_file_check` in the TPM service; the index with its policy, the commands of the service and of `unlock`, and the machine tests remain.
 - **A machine test of the refusal of PCR 11 after a change of the passphrase.** Machine 11 presses Ctrl+R where it typed the changed passphrase, so no machine sees the TPM refuse on PCR 11 a passphrase that a change set; machine 9 tests that refusal with the passphrase of before. The path runs no other code. An unseal in machine 11 would move the lockout line that proves Ctrl+R sends nothing to the TPM, so the case needs a machine of its own.
 - **An encrypted session with the TPM** ([tpm_sealed_machine_key.md](tpm_sealed_machine_key.md)): the TPM secret and the value cross the bus encrypted.
 - **The state of the lockout hierarchy in the window of the creation.** Today only the log says that another system set the value, or that the change failed; the window of `unlock` presents the seal by the TPM the same way.
+
+## State
+
+Built: the keys of a named principal sealed by the TPM with the passphrase, the lockout authorization value, the change of the passphrase and of the recovery key, the recovery with no TPM, and the payload of the pin of the file with its rules, host tests and steps in the TPM service. Left: the index of the pin with its policy and its machine tests, an encrypted session, a machine test of the refusal of PCR 11 after a change of the passphrase, and the state of the lockout hierarchy in the window of the creation.

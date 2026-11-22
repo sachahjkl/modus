@@ -85,6 +85,14 @@ The first 8 bytes of the record choose its form, and no state outside the disk s
 
 A pin would be a value that the TPM keeps, such as an index of its memory that says "this machine has a record sealed by the TPM". It is not built: the owner hierarchy has no authorization value, so another system on the machine can remove such an index. A pin needs an index whose removal and write need the policy of this system (`TPM2_PolicyPCR` on the index, `TPMA_NV_POLICY_DELETE`), or an authorization value of the owner hierarchy that the system keeps. It is a roadmap entry.
 
+**The content of the pin** is built, ahead of its index. The payload has 52 bytes: the magic `MODUSMKP`, the format 1, the form (1 `MACHINET`, 2 `MACHINEP`, 3 `MACHINEK`), a reserved zero byte, an epoch of 64 bits, and SHA-256 of a text of its own and the bytes before it. The checksum finds a damaged or partly written index; the policy of the index decides who writes it. The rules of a change (`machine_key_pin_advance` in `modus:contract/tpm_attestation`):
+
+- a machine with no pin takes any form;
+- after that the form stays, as a record keeps its form for its life ([tpm_sealed_machine_passphrase.md](tpm_sealed_machine_passphrase.md), "Refused forms"); a form with the TPM that becomes `MACHINEK` is a downgrade, the swap of a sealed record for one under a passphrase of the attacker;
+- the epoch only rises: a new seal after a recovery and a new passphrase raise it, so an older record of the same form is refused too.
+
+At each start, the form of the record on the disk must be the pinned form (`machine_key_record_matches_pin`).
+
 ### Who may seal
 
 A seal and a new seal after a recovery run only when the firmware verified the boot program (the trust record says `Firmware_And_Boot_Program`). With Secure Boot off, PCR 7 says "off", and a replaced boot program can extend PCR 11 with the hash of a correct description: a seal then trusts a boot program that nothing verified. The rule matters most after a recovery: an attacker who turns Secure Boot off makes the TPM refuse, as an update does, and a new seal after the recovery would bind the key to "Secure Boot off". The root service refuses `machine_seal()` then, and gives `unlock` the context value `VALUE_SEAL_ALLOWED`; `unlock` skips the new seal with a line of the log. An unseal stays allowed: it opens only a seal that was made with Secure Boot on. The rule has no exception, in a test either.
@@ -156,11 +164,11 @@ Built: the TPM service with the CRB interface, its ring and its two commands; th
 
 Left:
 
-- **A pin of the form of the record in the TPM** (see "The form of the record is not pinned").
+- **A pin of the form of the record in the TPM** (see "The form of the record is not pinned"). Its payload, its rules and their host tests are built, with the steps `machine_key_pin_transition` and `machine_key_record_check` in the TPM service; the index with its policy, the commands of the service and of `unlock`, and the machine tests remain.
 - **An encrypted session with the TPM.** The freestanding salted-session contract (`modus:contract/tpm_attestation`) implements `KDFa`, AES-128-CFB and XOR-stream parameter encryption, `cpHash`/`rpHash` HMACs, and nonce rolling; wiring it into the TPM service remains.
 - **A seal to the measure of the next system.** The `TPM2_PolicyAuthorize` floor verification contract is built in `modus:contract/tpm_attestation`; wiring `TPM2_PolicyNV` into the TPM service remains ([rollback_floors.md](rollback_floors.md)).
 - **A change of the recovery key**, and a new one when the old one is lost while the TPM still opens the key.
 
 ## State
 
-Built: CRB TPM service, format 2 sealed records with creation proof, recovery key flow, and the freestanding `modus:contract/tpm_attestation` contract for salted-session parameter encryption and `TPM2_PolicyAuthorize` floor checks. Left: wiring salted sessions and signed policies into the TPM service, and a record form pin in TPM NV memory.
+Built: CRB TPM service, format 2 sealed records with creation proof, recovery key flow, and the freestanding `modus:contract/tpm_attestation` contract for salted-session parameter encryption and `TPM2_PolicyAuthorize` floor checks. The contract also holds the payload of the record form pin with its rules, and the wire forms of `TPM2_PolicyAuthorize` and `TPM2_HierarchyChangeAuth`; the TPM service has their steps, which no command runs yet. Left: wiring salted sessions into the TPM service, a command that runs the signed policy, and the index of the record form pin with its policy and its machine tests.
