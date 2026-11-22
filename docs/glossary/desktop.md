@@ -1210,6 +1210,36 @@ The design: `src/md/features/box_layout.md`.
 
 Do not use: splitter, sash, gutter.
 
+### Top band
+
+A top band is the band at the top of a window that holds the fields of the window, their buttons and its state label.
+
+The process lays it out as a layout box of a fixed height, the first child of its layout tree. It holds no key of the action bar: each key is named once, in the action bar. Example: the search field and the state label of `edit`; the debug place field, its three buttons and the state label of `debugger_window`. A top band is not the title bar, which the compositor draws, and not the bar of the desktop.
+
+The design: `src/md/features/box_layout.md`.
+
+Do not use: toolbar, header, ribbon.
+
+### Status band
+
+A status band is the band above the action bar that says what the last act did, or a problem, and the place in the content.
+
+Its height comes from its children, so a long sentence takes more lines and is never cut. Example: a problem of the store and the line, the column and the bytes of the text in `edit`; the sentence of the last act in `debugger_window`. A status band is not the action bar, and not the tray.
+
+The design: `src/md/features/box_layout.md`.
+
+Do not use: status bar, status line, footer.
+
+### State label
+
+A state label is a short text in an outline of its state color, in the top band, that says the state of what the window shows.
+
+Example: "kept" or "a change waits" in `edit`; the attached process and the state of its chosen thread in `debugger_window`. A state label is not a pill of the tray, which the bar draws, and not a button: a press on it does nothing.
+
+The design: `src/md/features/box_layout.md`.
+
+Do not use: pill (for this), badge, chip.
+
 ### Window bound
 
 The window bound is the largest size of a window with its frame: 1024 × 768 under the bar, so at most 1000 × 708 for the surface.

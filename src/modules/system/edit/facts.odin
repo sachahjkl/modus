@@ -182,6 +182,18 @@ Selection_Cut :: struct {
 	length: value_kinds.Size_In_Bytes,
 }
 
+// The bytes of the Text field of the cause of a window that stays fixed:
+// the longest sentence of display.SIZE_LIMITS_PROBLEM_SENTENCES, and a zero
+// byte.
+STAYS_FIXED_CAUSE_FIELD_BYTES :: 64
+
+// The window cannot be resized: the limits that this process gave were
+// refused, or the command ring of the window was full.
+@(log_fact = "edit: the window stays fixed: {cause}")
+Window_Stays_Fixed :: struct {
+	cause: [64]u8,
+}
+
 // A text was pasted from the clipboard.
 @(log_fact = "edit: pasted {length} from the clipboard")
 Text_Pasted :: struct {

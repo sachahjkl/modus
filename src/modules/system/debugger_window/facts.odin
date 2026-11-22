@@ -126,6 +126,18 @@ Service_Not_Reached :: struct {
 // window", 70 bytes, and a zero byte, on 8 bytes.
 SERVICE_PROBLEM_FIELD_BYTES :: 72
 
+// The window cannot be resized: the limits that this process gave were
+// refused, or the command ring of the window was full.
+@(log_fact = "debugger_window: the window stays fixed: {cause}")
+Window_Stays_Fixed :: struct {
+	cause: [64]u8,
+}
+
+// The bytes of the Text field of the cause of a window that stays fixed:
+// the longest sentence of display.SIZE_LIMITS_PROBLEM_SENTENCES, and a zero
+// byte.
+STAYS_FIXED_CAUSE_FIELD_BYTES :: 64
+
 // process_field gives the field of the name of a process in a row of the
 // service: its text before the first zero byte.
 process_field :: proc "contextless" (name: []u8) -> value_kinds.Module_Name_Field {

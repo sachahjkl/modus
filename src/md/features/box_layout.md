@@ -70,9 +70,11 @@ Then one pass snaps each edge (not each size) to the nearest whole logical pixel
 
 Built: the package `modus:layout` with the four passes, the snap and the clip, the split pane, the table columns, the state table, the input of a box, the element tokens and their stack, and host tests, which `modustool check` runs.
 
-Its owners are the windows of `monitor` and `settings`. Each builds its tree at each frame at the size that its window has then, and takes its colors and its spacing from the element tokens:
+Its owners are four windows of the system, each building its tree at each frame from the live window size and taking its colors and spacing from `tokens_for`:
 
-- `monitor` places its summary, its three graphs and the table of the processes, whose columns come from `table_columns` ([monitor_window.md](monitor_window.md), "The layout").
-- `settings` places its two cards, each row of the card `SETTINGS` (a column of titles, then the buttons, each one as wide as its label at least), the rows of the time zone and of the languages, the text sizes of the second card and the action bar. The heading and the caption of the second card wrap in the width that a first solve gives, so the tree is solved twice.
+- `monitor` places its summary, its three graphs and the process table via `table_columns` ([monitor_window.md](monitor_window.md), "The layout").
+- `settings` places its two cards, each row of `SETTINGS`, the time zone and language rows, the preview card and the action bar.
+- `edit` is resizable with a top band, the text with its scroll bar, a draggable split pane for store versions (`Ctrl+H`), and a status band.
+- `debugger_window` is resizable with a top band, a draggable split pane of two card columns (`THREADS`, `BREAKPOINTS`, `SOURCE`, `MEMORY`, `STACK`, `VARIABLES`), and a status band.
 
-At their size of start the two windows keep the places that they had before the layout tree. They do not declare themselves resizable yet: their stated budgets do not hold the second surface of a resize. The interface package and the other windows are the next users, which [ROADMAP.md](../../../ROADMAP.md) names.
+**What the windows taught.** A split pane is sized before the tree is built: the width of the workspace is known from the size of the view, so `split_pane` gives the widths of the two parts as `Pixels` boxes, and the divider is a box with an identity whose state keeps the ratio and whose input gives the drag. Each part keeps a least width while the window has room for both. Left: the elements of the interface package, making `monitor` and `settings` resizable, and the other windows, which [ROADMAP.md](../../../ROADMAP.md) names.
