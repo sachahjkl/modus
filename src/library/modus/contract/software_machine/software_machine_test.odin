@@ -858,8 +858,8 @@ test_cpu_hostile_isolation_faults_and_budget :: proc(t: ^testing.T) {
 	testing.expect_value(t, cpu.registers[int(General_Register.Rsp)], ro_va + 16)
 	testing.expect_value(t, cpu.rip, code_va)
 
-	// 5. Privileged and invalid opcodes (HLT, CLI, UD2) -> Invalid_Opcode.
-	for bad_insn in ([][]u8{{0xF4}, {0xFA}, {0xEC}, {0x0F, 0x0B}}) {
+	// 5. Privileged and invalid opcodes (HLT, CLI, INSB, UD2) -> Invalid_Opcode.
+	for bad_insn in ([][]u8{{0xF4}, {0xFA}, {0x6C}, {0x0F, 0x0B}}) {
 		test_load_code(&m, code_frame, bad_insn)
 		processor_init(&cpu, m.cr3, code_va, 0)
 		testing.expect_value(t, processor_step(&cpu, m.ram), Step_Outcome.Invalid_Opcode)

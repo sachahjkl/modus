@@ -212,6 +212,78 @@ browser_machine_host_names_the_border_of_the_tool :: proc(t: ^testing.T) {
 	for item in exports {
 		testing.expectf(t, strings.contains(text, strings.concatenate({"\"", item.name, "\""}, context.temp_allocator)), "KERNEL_EXPORT_NAMES names no %s", item.name)
 	}
+	// And each import of the host is an import of the tool: a name added
+	// to the host and to the kernel alone fails here, not at the build.
+	start := strings.index(text, "export const PAGE_IMPORT_NAMES = [")
+	if !testing.expect(t, start >= 0, "the host names no PAGE_IMPORT_NAMES") {
+		return
+	}
+	body := text[start + strings.index_byte(text[start:], '[') + 1:]
+	body = body[:strings.index_byte(body, ']')]
+	host_count := 0
+	for part in strings.split(body, ",", context.temp_allocator) {
+		name := strings.trim(strings.trim_space(part), "\"")
+		if len(name) == 0 {
+			continue
+		}
+		host_count += 1
+		known := false
+		for tool_name in names {
+			known ||= tool_name == name
+		}
+		testing.expectf(t, known, "the host gives %s, which BROWSER_MACHINE_IMPORT_NAMES does not name", name)
+	}
+	testing.expect_value(t, host_count, len(names))
+}
+
+// The line of the framebuffer of the Node program: each form that is not
+// "framebuffer: <lit> <pixels>" with lit at most pixels is refused.
+@(test)
+browser_machine_framebuffer_line_refuses_each_damaged_form :: proc(t: ^testing.T) {
+	refused := []string {
+		"",
+		"framebuffer:",
+		"framebuffer: ",
+		"framebuffer: 12",
+		"framebuffer: 12 ",
+		"framebuffer:  12 100",
+		"framebuffer: -1 100",
+		"framebuffer: 12 x",
+		"framebuffer: 101 100",
+		"framebuffer: 0 0",
+		"framebuffer: 1 18446744073709551616",
+		"Framebuffer: 1 100",
+		"serial: framebuffer: 1 100",
+	}
+	for line in refused {
+		_, _, ok := browser_machine_framebuffer_line_parse(line)
+		testing.expectf(t, !ok, "%q is read", line)
+	}
+	lit, pixels, ok := browser_machine_framebuffer_line_parse("framebuffer: 0 1024000")
+	testing.expect(t, ok)
+	testing.expect_value(t, lit, u64(0))
+	testing.expect_value(t, pixels, u64(1024000))
+	lit, pixels, ok = browser_machine_framebuffer_line_parse("framebuffer: 1024000 1024000")
+	testing.expect(t, ok && lit == 1024000 && pixels == 1024000)
+}
+
+// The host raises the lines that the kernel delivers to the input service,
+// and the import that gives them to the kernel is in the imports of the
+// machine.
+@(test)
+browser_machine_host_raises_the_lines_of_the_input_service :: proc(t: ^testing.T) {
+	text := browser_machine_host_text()
+	lines := host_object_numbers(t, "InterruptLine")
+	testing.expect_value(t, len(lines), 2)
+	testing.expect_value(t, lines["Keyboard"], 1)
+	testing.expect_value(t, lines["Mouse"], 12)
+	testing.expect(t, strings.contains(text, "page_interrupt_lines_take: () => machine.interruptLinesTake(),"))
+	// The command that the boot types needs only keys of the layout.
+	testing.expect(t, strings.contains(text, "[\"Digit9\", \"9\", \"(\"]"))
+	testing.expect(t, strings.contains(text, "[\"Digit0\", \"0\", \")\"]"))
+	for character in BROWSER_MACHINE_TYPED_COMMAND {
+		testing.expectf(t, (character >= 'a' && character <= 'z') || character == '(' || character == ')', "the command has %q, which the test does not find in the layout", character)
+	}
 }
 
 // Each file of the page that another file names is a file of the page.

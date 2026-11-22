@@ -6,6 +6,7 @@ package build
 
 import "core:fmt"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:time"
 import "modustool:foundation"
@@ -26,6 +27,15 @@ BROWSER_MACHINE_NODE_MAJOR_VERSION :: 24
 // with a boot image, the line of the stage of the root service.
 BROWSER_MACHINE_KERNEL_MARK :: "kernel: ok"
 BROWSER_MACHINE_ROOT_STAGE_LINE :: "kernel: boot: kernel: root service: "
+
+// The interactive part of a start with a boot image: once the root service
+// writes its usable line, the host types the command on the PS/2 keyboard,
+// and the console must write the answer line. The answer is the line of
+// help() for shutdown: the echo of the typed line does not hold it.
+BROWSER_MACHINE_USABLE_LINE :: "root: the machine is usable"
+BROWSER_MACHINE_TYPED_COMMAND :: "help()"
+BROWSER_MACHINE_ANSWER_PREFIX :: "[console] shutdown "
+BROWSER_MACHINE_ANSWER_TEXT :: "stop the machine"
 
 // One file of the page of a browser machine. The site writes the same
 // files (site_browser_machine.odin).
@@ -52,6 +62,7 @@ BROWSER_MACHINE_IMPORT_NAMES :: [?]string {
 	"page_processor_loop_unwind",
 	"page_processor_stop",
 	"page_idle_wait",
+	"page_interrupt_lines_take",
 }
 BROWSER_MACHINE_EXPORTS :: [?]Webassembly_Export {
 	{name = "memory", kind = .Memory},
@@ -359,14 +370,18 @@ browser_machine_boot_image_copy :: proc(source: string) -> bool {
 
 // The program that Node runs: it imports the host of the page, starts the
 // kernel with a boot image or none, prints each line of the serial port,
-// and ends when the machine stops or at the bound. Its arguments: the host
-// module, the kernel, the boot image (empty: none), the bound in
-// milliseconds. Its last line is "machine: <state> <stop code> <trap>".
+// types the command and its Enter on the PS/2 keyboard after the usable
+// line, and ends when the answer line comes, when the machine stops, or at
+// the bound. Its arguments: the host module, the kernel, the boot image
+// (empty: none), the bound in milliseconds, the usable line, the command,
+// the prefix and the text of the answer line. After the answer it writes
+// "framebuffer: <pixels that are not black> <pixels>". Its last line is
+// "machine: <state> <stop code> <trap>".
 BROWSER_MACHINE_NODE_PROGRAM :: `
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
-const [hostPath, kernelPath, imagePath, boundText] = process.argv.slice(1);
+const [hostPath, kernelPath, imagePath, boundText, usableLine, command, answerPrefix, answerText] = process.argv.slice(1);
 const host = await import(pathToFileURL(resolve(hostPath)).href);
 const kernelModule = await WebAssembly.compile(readFileSync(kernelPath));
 const bootImage = imagePath ? new Uint8Array(readFileSync(imagePath)) : undefined;
@@ -375,12 +390,30 @@ const machine = new host.BrowserMachine({
   kernelModule, bootImage, memoryMebibytes: 512, framebufferWidth: 1280, framebufferHeight: 800,
   clockNanoseconds: () => process.hrtime.bigint(),
   idleWait: (bound) => { Atomics.wait(idleWord, 0, 0, Number(bound) / 1e6); },
-  onSerialLine: (line) => console.log("serial: " + line),
+  onSerialLine: (line) => {
+    console.log("serial: " + line);
+    if (!usable && line.includes(usableLine)) usable = true;
+    if (typed && line.startsWith(answerPrefix) && line.includes(answerText)) answered = true;
+  },
 });
+let usable = false, typed = false, answered = false;
+const started = Date.now();
 await machine.start();
-const end = Date.now() + Number(boundText);
-while (machine.state === host.MachineState.Running && Date.now() < end) {
+const end = started + Number(boundText);
+while (machine.state === host.MachineState.Running && Date.now() < end && !answered) {
+  if (usable && !typed) {
+    typed = true;
+    if (!machine.keyboard.typeText(command + "\n")) throw new Error("the layout has no key for a character of " + command);
+    console.log("typed: " + command + " at " + ((Date.now() - started) / 1000).toFixed(1) + " s");
+  }
   if (machine.runSlice(10000000) === host.LoopResult.Idle) Atomics.wait(idleWord, 0, 0, 1);
+}
+if (answered) {
+  console.log("answered: at " + ((Date.now() - started) / 1000).toFixed(1) + " s");
+  const pixels = machine.framebufferPixels();
+  let lit = 0;
+  for (let at = 0; at < pixels.length; at += 4) if (pixels[at] | pixels[at + 1] | pixels[at + 2]) lit += 1;
+  console.log("framebuffer: " + lit + " " + pixels.length / 4);
 }
 const trap = machine.trap ? String(machine.trap).replace(/\s+/g, " ") : "";
 console.log("machine: " + machine.state + " " + machine.stopCode + " " + trap);
@@ -410,7 +443,9 @@ browser_machine_node_major :: proc() -> int {
 
 // browser_machine_boot starts the kernel of the folder in Node with the
 // host of the page, prints each line of its serial port, and checks the
-// mark of the kernel and, with a boot image, the start of the root service.
+// mark of the kernel. With a boot image it also checks the start of the
+// root service, the answer of the console to the command typed on the
+// PS/2 keyboard, and a framebuffer that is not black.
 browser_machine_boot :: proc(boot_image: string) -> bool {
 	if major := browser_machine_node_major(); major < BROWSER_MACHINE_NODE_MAJOR_VERSION {
 		fmt.eprintfln("modustool: browser-machine boot needs node %d or later on the path; found %d (0: none)", BROWSER_MACHINE_NODE_MAJOR_VERSION, major)
@@ -418,7 +453,7 @@ browser_machine_boot :: proc(boot_image: string) -> bool {
 	}
 	bound := fmt.tprintf("%d", i64(foundation.HANG_BOUND / time.Millisecond))
 	started := time.tick_now()
-	state, output, error_output, error := os.process_exec({command = {"node", "--input-type=module", "--eval", BROWSER_MACHINE_NODE_PROGRAM, BROWSER_MACHINE_HOST_PATH, BROWSER_MACHINE_KERNEL_PATH, boot_image, bound}}, context.temp_allocator)
+	state, output, error_output, error := os.process_exec({command = {"node", "--input-type=module", "--eval", BROWSER_MACHINE_NODE_PROGRAM, BROWSER_MACHINE_HOST_PATH, BROWSER_MACHINE_KERNEL_PATH, boot_image, bound, BROWSER_MACHINE_USABLE_LINE, BROWSER_MACHINE_TYPED_COMMAND, BROWSER_MACHINE_ANSWER_PREFIX, BROWSER_MACHINE_ANSWER_TEXT}}, context.temp_allocator)
 	if error != nil {
 		fmt.eprintfln("modustool: cannot start node: %v", error)
 		return false
@@ -427,8 +462,8 @@ browser_machine_boot :: proc(boot_image: string) -> bool {
 		fmt.eprintfln("modustool: node failed (code %d): %s", state.exit_code, string(error_output))
 		return false
 	}
-	mark_seen, root_seen := false, false
-	machine_line := ""
+	mark_seen, root_seen, answer_seen := false, false, false
+	machine_line, typed_line, answered_line, framebuffer_line := "", "", "", ""
 	lines := string(output)
 	for line in strings.split_lines_iterator(&lines) {
 		if strings.has_prefix(line, "serial: ") {
@@ -436,11 +471,22 @@ browser_machine_boot :: proc(boot_image: string) -> bool {
 			fmt.println(serial)
 			mark_seen ||= serial == BROWSER_MACHINE_KERNEL_MARK
 			root_seen ||= strings.has_prefix(serial, BROWSER_MACHINE_ROOT_STAGE_LINE)
+			answer_seen ||= strings.has_prefix(serial, BROWSER_MACHINE_ANSWER_PREFIX) && strings.contains(serial, BROWSER_MACHINE_ANSWER_TEXT)
 		} else if strings.has_prefix(line, "machine: ") {
 			machine_line = line
+		} else if strings.has_prefix(line, "typed: ") {
+			typed_line = line
+			fmt.printfln("modustool: the host typed %s on the PS/2 keyboard", line[len("typed: "):])
+		} else if strings.has_prefix(line, "answered: ") {
+			answered_line = line
+		} else if strings.has_prefix(line, "framebuffer: ") {
+			framebuffer_line = line
 		}
 	}
 	fmt.printfln("modustool: measure: the browser machine in node: %.1f s, %s", time.duration_seconds(time.tick_since(started)), machine_line)
+	if answered_line != "" {
+		fmt.printfln("modustool: measure: the browser machine in node: the console answered %s %s", BROWSER_MACHINE_TYPED_COMMAND, answered_line[len("answered: "):])
+	}
 	if !mark_seen {
 		fmt.eprintfln("modustool: the kernel in node wrote no line %q", BROWSER_MACHINE_KERNEL_MARK)
 		return false
@@ -453,8 +499,48 @@ browser_machine_boot :: proc(boot_image: string) -> bool {
 		fmt.eprintln("modustool: the kernel in node ended with a trap of WebAssembly")
 		return false
 	}
-	foundation.test_passed_print("the kernel for WebAssembly starts in node %s", boot_image != "" ? "to the root service" : "to its mark, with no boot image")
+	if boot_image == "" {
+		foundation.test_passed_print("the kernel for WebAssembly starts in node to its mark, with no boot image")
+		return true
+	}
+	if typed_line == "" {
+		fmt.eprintfln("modustool: the kernel in node wrote no line that holds %q, so the host typed nothing", BROWSER_MACHINE_USABLE_LINE)
+		return false
+	}
+	if !answer_seen {
+		fmt.eprintfln("modustool: the console in node wrote no line that starts with %q and holds %q after %s on the PS/2 keyboard", BROWSER_MACHINE_ANSWER_PREFIX, BROWSER_MACHINE_ANSWER_TEXT, BROWSER_MACHINE_TYPED_COMMAND)
+		return false
+	}
+	lit, pixels, framebuffer_read := browser_machine_framebuffer_line_parse(framebuffer_line)
+	if !framebuffer_read || lit == 0 {
+		fmt.eprintfln("modustool: the framebuffer of the machine in node is black, or its line is missing: %q", framebuffer_line)
+		return false
+	}
+	fmt.printfln("modustool: the framebuffer in node: %d of %d pixels are not black", lit, pixels)
+	foundation.test_passed_print("the kernel for WebAssembly starts in node to the root service, and the console answers %s typed on the PS/2 keyboard", BROWSER_MACHINE_TYPED_COMMAND)
 	return true
+}
+
+// browser_machine_framebuffer_line_parse reads the line
+// "framebuffer: <pixels that are not black> <pixels>" of the Node program.
+// ok is false for another line, a number that does not parse, and more lit
+// pixels than pixels.
+browser_machine_framebuffer_line_parse :: proc(line: string) -> (lit: u64, pixels: u64, ok: bool) {
+	PREFIX :: "framebuffer: "
+	if !strings.has_prefix(line, PREFIX) {
+		return 0, 0, false
+	}
+	lit_text, separator, pixels_text := strings.partition(line[len(PREFIX):], " ")
+	if len(separator) == 0 {
+		return 0, 0, false
+	}
+	lit_read, pixels_read: bool
+	lit, lit_read = strconv.parse_u64_of_base(lit_text, 10)
+	pixels, pixels_read = strconv.parse_u64_of_base(pixels_text, 10)
+	if !lit_read || !pixels_read || pixels == 0 || lit > pixels {
+		return 0, 0, false
+	}
+	return lit, pixels, true
 }
 
 // run_browser_machine is the command browser-machine.

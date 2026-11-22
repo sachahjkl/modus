@@ -133,6 +133,9 @@ Processor_State :: struct {
 	// The source of rdtsc: the kernel gives its cycle counter. With none,
 	// rdtsc reads the count of steps, which also only grows.
 	cycle_counter_read:   proc "contextless" () -> u64,
+	// The ports that in and out reach. With none, each in and each out is
+	// a protection fault, as for a process with no port.
+	ports:                Port_Bus,
 	tlb:                  Software_Tlb,
 	outcome:              Step_Outcome,
 	fault_address:        u64,
@@ -140,6 +143,35 @@ Processor_State :: struct {
 	steps_executed:       u64,
 	syscall_return_rip:   u64,
 	syscall_saved_rflags: u64,
+}
+
+// The ports of the machine, as the kernel gives them to the software
+// processor. A process runs with IOPL 0, so the permission map of the task
+// state alone decides each access, as on the processor.
+Port_Bus :: struct {
+	// One bit for each port; 1 refuses the port. An access whose bits pass
+	// the end of the map is refused: the processor reads the map past its
+	// end as refused bits.
+	permission_map: []u8,
+	// The device access, after the check. A width is 1, 2 or 4 bytes.
+	read:           proc "contextless" (port: u16, width: Operand_Width) -> u32,
+	write:          proc "contextless" (port: u16, width: Operand_Width, value: u32),
+}
+
+// port_access_permitted says whether each port of an access of width
+// bytes from port is open in the map of the bus.
+port_access_permitted :: proc "contextless" (bus: Port_Bus, port: u16, width: Operand_Width) -> bool {
+	if bus.read == nil || bus.write == nil || width == .Bits_64 {
+		return false
+	}
+	for offset in 0 ..< u32(width) {
+		bit := u32(port) + offset
+		index := bit / 8
+		if index >= u32(len(bus.permission_map)) || bus.permission_map[index] & (u8(1) << (bit % 8)) != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // condition_code_from_word decodes a 4-bit opcode condition field at the
@@ -2137,6 +2169,39 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 		cpu.outcome = .Breakpoint
 		return .Breakpoint
 
+	case 0xE4, 0xE5, 0xE6, 0xE7, 0xEC, 0xED, 0xEE, 0xEF:
+		// IN and OUT: the port is an 8-bit immediate (0xE4 to 0xE7) or dx;
+		// the value is al, or ax with 0x66, else eax. REX.W changes
+		// nothing. A refused port is a protection fault with error code 0,
+		// before the device sees the access.
+		port_width := Operand_Width.Bits_8
+		if opcode & 1 != 0 {
+			port_width = .Bits_16 if prefixes.has_operand_size_override && !prefixes.rex_w else .Bits_32
+		}
+		port: u16
+		if opcode <= 0xE7 {
+			immediate, o_immediate := fetch_u8(cpu, physical_memory, &cursor)
+			if o_immediate != .Running {
+				return o_immediate
+			}
+			port = u16(immediate)
+		} else {
+			port = u16(cpu.registers[int(General_Register.Rdx)])
+		}
+		if !port_access_permitted(cpu.ports, port, port_width) {
+			return record_fault(cpu, cursor.start_rip, .General_Protection)
+		}
+		if opcode & 0x02 == 0 {
+			value := cpu.ports.read(port, port_width)
+			write_register(cpu, u8(General_Register.Rax), port_width, true, u64(value))
+		} else {
+			value := read_register(cpu, u8(General_Register.Rax), port_width, true)
+			cpu.ports.write(port, port_width, u32(value))
+		}
+		cpu.rip = cursor.current_rip
+		cpu.steps_executed += 1
+		return .Running
+
 	case 0xE8:
 		// CALL rel32.
 		rel32, o_rel := fetch_u32(cpu, physical_memory, &cursor)
@@ -2513,7 +2578,8 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 		}
 	}
 
-	// Privileged opcodes (HLT, CLI, STI, IN/OUT, IRET, etc.) and any unsupported
+	// Privileged opcodes (HLT, CLI, STI, IRET, the string forms of IN and
+	// OUT, etc.) and any unsupported
 	// opcode trap cleanly as `.Invalid_Opcode` in user mode.
 	return record_fault(cpu, cursor.start_rip, .Invalid_Opcode, cursor.start_rip)
 }

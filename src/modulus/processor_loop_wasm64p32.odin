@@ -227,6 +227,31 @@ frame_to_software_processor :: proc "contextless" (frame: ^Frame) {
 	cpu.rflags = frame.rflags
 	cpu.outcome = .Running
 	cpu.cycle_counter_read = software_processor_cycle_counter_read
+	// The map of the task state of this processor: ports_switch opened
+	// in it the ports of the process of the thread, as for the processor.
+	cpu.ports = {
+		permission_map = processor_self().task_state.ports[:],
+		read           = software_processor_port_read,
+		write          = software_processor_port_write,
+	}
+}
+
+// The devices of the page have registers of one byte, so an access of 2
+// or 4 bytes is that many accesses of one byte, the lowest port first, as
+// a bus of 8 bits splits it.
+@(private = "file")
+software_processor_port_read :: proc "contextless" (port: u16, width: software.Operand_Width) -> (value: u32) {
+	for offset in 0 ..< u32(width) {
+		value |= u32(port_read_8(port + u16(offset))) << (8 * offset)
+	}
+	return value
+}
+
+@(private = "file")
+software_processor_port_write :: proc "contextless" (port: u16, width: software.Operand_Width, value: u32) {
+	for offset in 0 ..< u32(width) {
+		port_write_8(port + u16(offset), u8(value >> (8 * offset)))
+	}
 }
 
 // rdtsc of a process reads the cycle counter of the kernel: the clock of
