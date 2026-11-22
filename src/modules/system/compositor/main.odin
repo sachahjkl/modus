@@ -422,7 +422,7 @@ damage_menu_of :: proc "contextless" (layout: bar.Layout) {
 	damage_add(x, y, width, height)
 	x, y, width, height = bar.windows_button(layout)
 	damage_add(x, y, width, height)
-	x, y, width, height = bar.windows_menu(layout, CLIENT_CAPACITY) // A window can leave while the menu is open.
+	x, y, width, height = bar.windows_menu(layout, bar.WINDOWS_MENU_ROW_CAPACITY) // A window or a grant can leave while the menu is open.
 	damage_add(x, y, width, height)
 }
 
@@ -1197,8 +1197,12 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		window_queue_close(index) // window_events.odin
 		system.ring_close(&client.ring)
 		system.close(client.ring_memory)
+		if client.created {
+			window_grants_window_closed(system.name_of(client.title[:])) // powerbox_dialog.odin
+		}
 		client = {}
 		palette_entries_refresh() // A window left.
+		windows_menu_rows_build() // start_menu.odin
 		return
 	}
 }
@@ -1277,6 +1281,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	damage_window(client)
 	system.log_fact(.Info, Surface_Made{window = window_field(client.title[:]), width = u64(client.width), height = u64(client.height), x = u64(client.x), y = u64(client.y)})
 	palette_entries_refresh() // A window appeared.
+	windows_menu_rows_build() // start_menu.odin
 }
 
 raise :: proc "contextless" (position: int) {
@@ -1332,6 +1337,10 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		system.log_fact(.Info, Left_Button_Pressed{x = u64(pointer_x), y = u64(pointer_y)})
 	}
 
+	if plan_difference_pointer(pressed) { // powerbox_dialog.odin
+		// The dialog of the trusted display takes the pointer.
+		return
+	}
 	if palette_is_open() {
 		// The panel takes the pointer: no menu and no window receives it.
 		palette_pointer(motion_x != 0 || motion_y != 0, pressed, released, wheel)
@@ -1382,10 +1391,13 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 		return
 	}
 	if menu_open != .None {
-		over := menu_open == .Start ? bar.line_at(bar_layout, pointer_x, pointer_y) : bar.windows_line_at(bar_layout, order_count, pointer_x, pointer_y)
+		over, on_revoke := bar.line_at(bar_layout, pointer_x, pointer_y), false
+		if menu_open == .Windows {
+			over, on_revoke = bar.windows_menu_point(bar_layout, windows_menu_rows[:windows_menu_row_count], pointer_x, pointer_y)
+		}
 		action := menu_open == .Start ? bar.action_at(bar_layout, pointer_x, pointer_y) : bar.Start_Action.None
-		if over != menu_line || action != menu_action {
-			menu_line, menu_action = over, action
+		if over != menu_line || action != menu_action || on_revoke != menu_on_revoke {
+			menu_line, menu_action, menu_on_revoke = over, action, on_revoke
 			damage_menu()
 		}
 	}
@@ -1395,8 +1407,8 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			return
 		}
 		was_open := menu_open
-		if menu_open != .None {
-			menu_choice_do() // start_menu.odin
+		if menu_open != .None && menu_choice_do(false) { // start_menu.odin
+			return // A press on a grant row keeps the menu open, and reaches nothing under it.
 		}
 		under := bar.button_at(bar_layout, pointer_x, pointer_y)
 		if under == .Start && was_open != .Start {

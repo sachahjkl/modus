@@ -159,7 +159,7 @@ start_menu_records :: proc "contextless" (table: ^interface.Draw_Table) {
 
 // menu_show opens a menu of the bar, with no line chosen.
 menu_show :: proc "contextless" (menu: Menu) {
-	menu_open, menu_line, menu_action = menu, -1, .None
+	menu_open, menu_line, menu_action, menu_on_revoke = menu, -1, .None, false
 	switch menu {
 	case .None:
 	case .Start:
@@ -175,21 +175,67 @@ menu_close :: proc "contextless" () {
 	if menu_open == .None {
 		return
 	}
-	menu_open, menu_line, menu_action = .None, -1, .None
+	menu_open, menu_line, menu_action, menu_on_revoke = .None, -1, .None, false
 	damage_menu()
+}
+
+// The rows of the menu of the windows: each window, and under it each
+// requested grant of its process. They are built again when a window or a
+// grant comes or goes, never in a frame.
+windows_menu_rows: [bar.WINDOWS_MENU_ROW_CAPACITY]bar.Windows_Menu_Row
+windows_menu_row_count: int
+// The pointer is on the button that revokes the grant of the chosen row.
+menu_on_revoke: bool
+
+// windows_menu_rows_build builds the rows of the menu of the windows again,
+// and keeps the chosen row on the menu.
+windows_menu_rows_build :: proc "contextless" () {
+	names: [CLIENT_CAPACITY]string
+	count := 0
+	for &client in clients {
+		if client.created {
+			names[count] = system.name_of(client.title[:])
+			count += 1
+		}
+	}
+	windows_menu_row_count = bar.windows_menu_rows(&window_grants, names[:count], windows_menu_rows[:])
+	if menu_open == .Windows {
+		menu_line = bar.windows_menu_row_after_change(menu_line, windows_menu_row_count)
+		damage_menu()
+	}
 }
 
 // menu_choice_do does the chosen line of the open menu, from a press of the
 // pointer or from Enter, then closes the menu: a line of the start menu
 // starts its module, a quick action acts, a line of the menu of the windows
 // brings its window to the front. With no line chosen, the menu closes
-// alone.
-menu_choice_do :: proc "contextless" () {
+// alone. A grant row of the menu of the windows revokes its grant, from a
+// key or a press on its button, and the menu stays open so the principal
+// sees the grant go; a press elsewhere on that row does nothing. It
+// reports whether the menu stays open.
+menu_choice_do :: proc "contextless" (from_keys: bool) -> bool {
+	if menu_open == .Windows {
+		rows := windows_menu_rows[:windows_menu_row_count]
+		switch bar.windows_menu_act(rows, menu_line, from_keys || menu_on_revoke) {
+		case .Close, .Raise_Window:
+		case .Stay_Open:
+			return true
+		case .Revoke_Grant:
+			window_grant_revoke(window_grants.grants[rows[menu_line].grant].grant_id) // powerbox_dialog.odin
+			menu_on_revoke = false
+			return true
+		}
+	}
 	if menu_open == .Start && menu_line >= 0 && menu_line < len(bar.names) {
 		packed := system.name_pack(bar.names[menu_line])
 		system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 	}
-	if index := window_of_line(menu_line); menu_open == .Windows && menu_line >= 0 && index >= 0 {
+	if menu_open == .Windows && menu_line >= 0 && menu_line < windows_menu_row_count {
+		index := window_of_line(windows_menu_rows[menu_line].window)
+		if index < 0 {
+			menu_close()
+			return false
+		}
 		if clients[index].minimized {
 			clients[index].minimized = false
 			damage_whole_screen()
@@ -205,6 +251,7 @@ menu_choice_do :: proc "contextless" () {
 	chosen_action := menu_open == .Start ? menu_action : bar.Start_Action.None
 	menu_close()
 	start_action_do(chosen_action)
+	return false
 }
 
 // start_action_do does a quick action of the start menu.
@@ -226,9 +273,10 @@ start_action_do :: proc "contextless" (action: bar.Start_Action) {
 // windows_menu_records appends the menu of the windows: a heading with the
 // count of the windows, then one line for each window, with its icon and
 // its title; the window in front has a bar of the title blue at the left
-// of its line, and its title in white.
+// of its line, and its title in white. Under a window, one row for each
+// requested grant of its process.
 windows_menu_records :: proc "contextless" (table: ^interface.Draw_Table) {
-	x, y, width, height := bar.windows_menu(bar_layout, order_count)
+	x, y, width, height := bar.windows_menu(bar_layout, windows_menu_row_count)
 	interface.draw_element_push(table, {x, y, width, height}, u32(interface.identity("windows menu")), .Menu, {name = "windows"})
 	defer interface.draw_element_pop(table)
 	menu_card_records(table, x, y, width, height)
@@ -237,14 +285,21 @@ windows_menu_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	count: interface.Text_Builder
 	interface.draw_text_right(table, x + width - bar.BORDER - bar.PADDING, heading_y, interface.number_text(&count, u64(order_count)), graphics.colors.text)
 	interface.draw_rectangle(table, x + bar.BORDER + bar.PADDING, y + bar.BORDER + bar.TITLE - 4, width - 2 * bar.BORDER - 2 * bar.PADDING, 1, graphics.colors.track)
-	for line in 0 ..< order_count {
-		index := window_of_line(line)
+	for line in 0 ..< windows_menu_row_count {
+		row := windows_menu_rows[line]
+		index := window_of_line(row.window)
 		if index < 0 {
-			break
+			continue
 		}
 		line_x, line_y, line_width, line_height := bar.windows_line(bar_layout, line)
-		focus := index == order[order_count - 1]
 		chosen := line == menu_line
+		switch row.kind {
+		case .Window:
+		case .Grant:
+			windows_grant_row_records(table, line, &window_grants.grants[row.grant], chosen)
+			continue
+		}
+		focus := index == order[order_count - 1]
 		color, accent := graphics.colors.text, graphics.colors.title
 		if chosen {
 			interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.colors.chosen)
@@ -282,4 +337,38 @@ windows_menu_records :: proc "contextless" (table: ^interface.Draw_Table) {
 			interface.draw_text(table, title_end + bar.WINDOWS_HASH_GAP, prefix_top, string(clients[index].hash_prefix[:]), chosen ? graphics.COLOR_WHITE : graphics.colors.dim, interface.FONT_CAPTION_CELLS)
 		}
 	}
+}
+
+// windows_grant_row_records appends a row of a requested grant under its
+// window: the key icon at the place of the title of the window, so the row
+// reads as a part of it; the object of the grant; and the button that
+// revokes it, at the right end. The chosen row is in the chosen blue, as a
+// line of a window.
+windows_grant_row_records :: proc "contextless" (table: ^interface.Draw_Table, line: int, grant: ^bar.Window_Grant, chosen: bool) {
+	line_x, line_y, line_width, line_height := bar.windows_line(bar_layout, line)
+	color, accent := graphics.colors.text, graphics.colors.title
+	if chosen {
+		interface.draw_rectangle(table, line_x, line_y, line_width, line_height, graphics.colors.chosen)
+		color, accent = graphics.COLOR_WHITE, graphics.shade(graphics.colors.chosen, 175)
+	}
+	bar.icon_records(table, line_x + bar.WINDOWS_GRANT_ICON_X, line_y + (line_height - bar.ICON_SIZE) / 2, .Grant, color, accent)
+	button_x, button_y, button_width, button_height := bar.windows_revoke_button(bar_layout, line)
+	text_x := line_x + bar.WINDOWS_GRANT_TEXT_X
+	shown := interface.text_fit(table, interface.FONT_INTERFACE, bar.window_grant_resource(grant), button_x - bar.PADDING - text_x)
+	interface.draw_text(table, text_x, line_y + (line_height - graphics.CELL_HEIGHT) / 2, shown, color, interface.FONT_INTERFACE)
+	// The button: a plate of the track with a hairline border, as the
+	// refusal of a dialog; lighter under the pointer. On the chosen blue
+	// its border is white, so the plate stands apart from the row; its
+	// text is the strong text, which reads on the track in both
+	// appearances.
+	interface.draw_element_push(table, {button_x, button_y, button_width, button_height}, u32(interface.identity("revoke")) ~ u32(grant.grant_id), .Button, {name = "revoke"})
+	defer interface.draw_element_pop(table)
+	track := graphics.colors.track
+	if chosen && menu_on_revoke {
+		track = graphics.shade(track, 130)
+	}
+	interface.draw_vertical_gradient(table, button_x, button_y, button_width, button_height, track, graphics.shade(track, 88))
+	interface.draw_outline(table, button_x, button_y, button_width, button_height, 1, chosen ? graphics.COLOR_WHITE : graphics.shade(graphics.colors.track, 150))
+	label_width := interface.text_measured_width(table, interface.FONT_INTERFACE, "Revoke")
+	interface.draw_text(table, button_x + (button_width - label_width) / 2, button_y + (button_height - graphics.CELL_HEIGHT) / 2, "Revoke", graphics.colors.text_strong, interface.FONT_INTERFACE)
 }
