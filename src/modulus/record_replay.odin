@@ -254,7 +254,6 @@ process_own_region_references :: proc "contextless" (process: ^Process, region_i
 // Write: its other writers become shared writers (shared_writers_setup). A
 // replay holds no peer, so a shared object there is a refusal. Caller holds
 // Control and target's process lock.
-@(private = "file")
 // region_record_allowed_static identifies kernel-created read-only static
 // regions (the time page and immutable boot/debug images) that use
 // region_device for pre-allocated physical memory rather than hardware MMIO.
@@ -263,6 +262,7 @@ region_record_allowed_static :: #force_inline proc "contextless" (region_index: 
 	return region_index != 0 && (region_index == time_region || region_index == boot_image_region || region_index == debug_image_region)
 }
 
+@(private = "file")
 process_disqualified_for_recording :: proc "contextless" (target_index: u32, shared_writers_allowed: bool) -> bool {
 	target := &processes[target_index]
 	if target.has_ports || process_is_guest(target_index) {
