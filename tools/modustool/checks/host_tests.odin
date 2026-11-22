@@ -439,4 +439,5 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/rich_toolkit",
 	foundation.SOURCE_FOLDER_CONTRACT + "/serial_ring",
 	foundation.SOURCE_FOLDER_CONTRACT + "/console_prompt",
+	foundation.SOURCE_FOLDER_CONTRACT + "/desktop_shell",
 }

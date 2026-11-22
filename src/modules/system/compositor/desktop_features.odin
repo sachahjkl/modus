@@ -1,25 +1,42 @@
-// Live desktop workspace switching, edge-snapping, notification banner
-// rendering, and viewport magnifier zoom integrated directly into the
-// compositor event loop and frame draw pass.
+// Live desktop shell features integrated into the compositor:
+// workspaces, edge-snapping, urgency-badged notifications with balanced
+// spacing, viewport magnifier, positionable bar/tray state, and a live
+// right-click filterable context menu.
 package compositor
 
 import "modus:contract/desktop_layout"
+import "modus:contract/desktop_shell"
 import "modus:contract/notifications"
+import "modus:contract/ring"
 import "modus:contract/screen_reader"
+import "modus:system"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
 
-NOTIFICATION_BANNER_WIDTH :: 280
-NOTIFICATION_BANNER_HEIGHT :: 54
-NOTIFICATION_BANNER_MARGIN :: 10
-NOTIFICATION_BANNER_GAP :: 6
+NOTIFICATION_BANNER_WIDTH :: 296
+NOTIFICATION_BANNER_HEIGHT :: 60
+NOTIFICATION_BANNER_MARGIN :: 12
+NOTIFICATION_BANNER_GAP :: 8
+NOTIFICATION_ICON_SIZE :: 22
 NOTIFICATION_MAX_VISIBLE :: 4
+
+// Context menu action IDs for desktop right-click menu.
+CTX_ACT_NEW_CONSOLE    :: u32(1)
+CTX_ACT_OPEN_MONITOR   :: u32(2)
+CTX_ACT_OPEN_CLOCK     :: u32(3)
+CTX_ACT_TOGGLE_MAG     :: u32(4)
+CTX_ACT_RESTORE_ALL    :: u32(5)
+CTX_ACT_BAR_TOP        :: u32(6)
+CTX_ACT_BAR_BOTTOM     :: u32(7)
 
 desktop_workspaces: desktop_layout.Workspace_Manager
 desktop_work_area: desktop_layout.Work_Area
 desktop_notifications: notifications.Notification_Queue
 desktop_magnifier: screen_reader.Magnifier_State
+desktop_bar_position: desktop_shell.Bar_Position = .Top
+desktop_tray: desktop_shell.Tray_State
+desktop_context_menu: interface.Context_Menu_State
 desktop_features_ready: bool
 
 desktop_features_init :: proc "contextless" (screen_w, screen_h, bar_h: i32) {
@@ -32,6 +49,10 @@ desktop_features_init :: proc "contextless" (screen_w, screen_h, bar_h: i32) {
 	notifications.queue_init(&desktop_notifications, min_interval_ms = 500)
 	_ = screen_reader.magnifier_init(&desktop_magnifier, screen_w, screen_h, 16)
 	desktop_magnifier.enabled = false
+	desktop_bar_position = .Top
+	desktop_tray = {}
+	desktop_shell.tray_set(&desktop_tray, .Locale, true, false, "EN")
+	desktop_context_menu = {}
 	desktop_features_ready = true
 }
 
@@ -78,8 +99,8 @@ desktop_damage_notifications :: proc "contextless" () {
 	damage_add(x, BAR_HEIGHT, desktop_width - x, min(h, max(0, desktop_height - BAR_HEIGHT)))
 }
 
-// desktop_notifications_records appends non-focus-stealing rectangular banner
-// cards for active notifications in the top-right corner below the bar.
+// desktop_notifications_records draws urgency-badged rectangular notification
+// cards with symmetric top/bottom padding in the top-right corner below the bar.
 desktop_notifications_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	if !desktop_features_ready {
 		return
@@ -94,23 +115,250 @@ desktop_notifications_records :: proc "contextless" (table: ^interface.Draw_Tabl
 			break
 		}
 		y := BAR_HEIGHT + NOTIFICATION_BANNER_MARGIN + shown * (NOTIFICATION_BANNER_HEIGHT + NOTIFICATION_BANNER_GAP)
-		border_color := item.urgency == .Critical ? graphics.colors.stop_process : graphics.colors.title
+		border_color := graphics.colors.title
+		badge_color := graphics.colors.title
+		glyph := u8('i')
+		switch item.urgency {
+		case .Low:
+			border_color = graphics.colors.track
+			badge_color = graphics.colors.track
+			glyph = '-'
+		case .Normal:
+			border_color = graphics.colors.title
+			badge_color = graphics.colors.title
+			glyph = 'i'
+		case .Critical:
+			border_color = graphics.colors.stop_process
+			badge_color = graphics.colors.stop_process
+			glyph = '!'
+		}
 		interface.draw_rectangle(table, x, y, NOTIFICATION_BANNER_WIDTH, NOTIFICATION_BANNER_HEIGHT, graphics.colors.card_bottom)
 		interface.draw_outline(table, x, y, NOTIFICATION_BANNER_WIDTH, NOTIFICATION_BANNER_HEIGHT, 1, border_color)
+
+		// Left urgency icon badge centered vertically inside the 60px card.
+		icon_x := x + 10
+		icon_y := y + (NOTIFICATION_BANNER_HEIGHT - NOTIFICATION_ICON_SIZE) / 2
+		interface.draw_rectangle(table, icon_x, icon_y, NOTIFICATION_ICON_SIZE, NOTIFICATION_ICON_SIZE, badge_color)
+		interface.draw_character(table, icon_x + (NOTIFICATION_ICON_SIZE - graphics.CELL_WIDTH) / 2, icon_y + (NOTIFICATION_ICON_SIZE - graphics.CELL_HEIGHT) / 2, glyph, graphics.COLOR_WHITE)
+
+		// Balanced text block: 11px top margin, 6px gap between title and body, 11px bottom margin.
+		text_x := icon_x + NOTIFICATION_ICON_SIZE + 10
+		text_room := NOTIFICATION_BANNER_WIDTH - (text_x - x) - 10
 		title_str := string(item.title[:item.title_len])
-		title_fit := interface.text_fit(table, interface.FONT_INTERFACE, title_str, NOTIFICATION_BANNER_WIDTH - 16)
-		interface.draw_text(table, x + 8, y + 6, title_fit, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+		title_fit := interface.text_fit(table, interface.FONT_INTERFACE, title_str, text_room)
 		if item.body_len > 0 {
+			interface.draw_text(table, text_x, y + 11, title_fit, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
 			body_str := string(item.body[:item.body_len])
-			body_fit := interface.text_fit(table, interface.FONT_INTERFACE, body_str, NOTIFICATION_BANNER_WIDTH - 16)
-			interface.draw_text(table, x + 8, y + 26, body_fit, graphics.colors.dim, interface.FONT_INTERFACE)
+			body_fit := interface.text_fit(table, interface.FONT_INTERFACE, body_str, text_room)
+			interface.draw_text(table, text_x, y + 33, body_fit, graphics.colors.dim, interface.FONT_INTERFACE)
+		} else {
+			interface.draw_text(table, text_x, y + (NOTIFICATION_BANNER_HEIGHT - graphics.CELL_HEIGHT) / 2, title_fit, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
 		}
 		shown += 1
 	}
 }
 
-// desktop_magnifier_sample reads a magnified pixel from frame for screen
-// destination coordinates (dst_x, dst_y), applying the active filter mode.
+// desktop_context_menu_open opens the filterable fuzzy right-click menu at (x, y).
+desktop_context_menu_open :: proc "contextless" (x, y: int) {
+	if !desktop_features_ready {
+		return
+	}
+	items := [7]interface.Context_Menu_Item{
+		{id = CTX_ACT_NEW_CONSOLE, label = "New Console"},
+		{id = CTX_ACT_OPEN_MONITOR, label = "Open Monitor"},
+		{id = CTX_ACT_OPEN_CLOCK, label = "Open Clock"},
+		{id = CTX_ACT_TOGGLE_MAG, label = "Toggle Magnifier"},
+		{id = CTX_ACT_RESTORE_ALL, label = "Restore Minimized"},
+		{id = CTX_ACT_BAR_TOP, label = "Bar Position Top"},
+		{id = CTX_ACT_BAR_BOTTOM, label = "Bar Position Bottom"},
+	}
+	interface.context_menu_open(&desktop_context_menu, x, y, desktop_width, desktop_height, items[:])
+	damage_whole_screen()
+}
+
+desktop_context_menu_key :: proc "contextless" (code: u32, character: rune, pressed: bool) -> bool {
+	if !desktop_context_menu.open {
+		return false
+	}
+	consumed, act_id := interface.context_menu_handle_key(&desktop_context_menu, code, character, pressed)
+	if !consumed {
+		return false
+	}
+	switch act_id {
+	case CTX_ACT_NEW_CONSOLE:
+		packed := system.name_pack("console")
+		system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
+	case CTX_ACT_OPEN_MONITOR:
+		packed := system.name_pack("monitor")
+		system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
+	case CTX_ACT_OPEN_CLOCK:
+		packed := system.name_pack("clock")
+		system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
+	case CTX_ACT_TOGGLE_MAG:
+		desktop_magnifier_toggle(i32(pointer_x), i32(pointer_y))
+	case CTX_ACT_RESTORE_ALL:
+		for &c in clients {
+			if c.created && c.minimized {
+				c.minimized = false
+			}
+		}
+	case CTX_ACT_BAR_TOP:
+		desktop_bar_position = .Top
+	case CTX_ACT_BAR_BOTTOM:
+		desktop_bar_position = .Bottom
+	}
+	damage_whole_screen()
+	return true
+}
+
+TASKBAR_PILL_START_X :: 220
+TASKBAR_PILL_WIDTH :: 112
+TASKBAR_PILL_GAP :: 6
+TRAY_BADGE_WIDTH :: 36
+TRAY_BADGE_GAP :: 4
+
+// desktop_taskbar_and_tray_records draws live taskbar window pills (highlighting
+// focused windows, dimming minimized ones, showing module window counts when
+// grouped) and system tray badges directly inside the top bar.
+desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_Table) {
+	if !desktop_features_ready {
+		return
+	}
+	// 1. Window pills in the center band of the bar (safe margin before palette hint / clock).
+	max_right := max(TASKBAR_PILL_START_X, desktop_width - CLOCK_WIDTH - 240)
+	px := TASKBAR_PILL_START_X
+	for position in 0 ..< order_count {
+		if px + TASKBAR_PILL_WIDTH > max_right {
+			break
+		}
+		idx := order[position]
+		client := &clients[idx]
+		if !client.created {
+			continue
+		}
+		name := system.name_of(client.title[:])
+		// Deduplicate by title so multiple windows of the same module group cleanly into one pill.
+		already := false
+		same_count := 0
+		any_focus := false
+		all_minimized := true
+		for p2 in 0 ..< order_count {
+			c2 := &clients[order[p2]]
+			if !c2.created || system.name_of(c2.title[:]) != name {
+				continue
+			}
+			if p2 < position {
+				already = true
+				break
+			}
+			same_count += 1
+			if p2 == order_count - 1 && !c2.minimized {
+				any_focus = true
+			}
+			if !c2.minimized {
+				all_minimized = false
+			}
+		}
+		if already {
+			continue
+		}
+		pill_bg := any_focus ? graphics.colors.title : (all_minimized ? graphics.colors.card_bottom : graphics.colors.track)
+		pill_fg := any_focus ? graphics.COLOR_WHITE : (all_minimized ? graphics.colors.dim : graphics.colors.text)
+		interface.draw_rectangle(table, px, 4, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 8, pill_bg)
+		if all_minimized {
+			interface.draw_outline(table, px, 4, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 8, 1, graphics.colors.track)
+		}
+		label_room := same_count > 1 ? TASKBAR_PILL_WIDTH - 26 : TASKBAR_PILL_WIDTH - 12
+		fit := interface.text_fit(table, interface.FONT_INTERFACE, name, label_room)
+		interface.draw_text(table, px + 6, 8, fit, pill_fg, interface.FONT_INTERFACE)
+		if same_count > 1 {
+			// Count badge when multiple windows of the same module are open.
+			bx := px + TASKBAR_PILL_WIDTH - 18
+			interface.draw_rectangle(table, bx, 7, 14, 18, graphics.colors.chosen)
+			digit := u8('0' + min(same_count, 9))
+			interface.draw_character(table, bx + 3, 8, digit, graphics.COLOR_WHITE)
+		}
+		// Hover preview popover when pointer hovers over a taskbar pill.
+		if inside(pointer_x, pointer_y, px, 0, TASKBAR_PILL_WIDTH, BAR_HEIGHT) && menu_open == .None {
+			pop_h := 22 + same_count * 20 + 6
+			interface.draw_rectangle(table, px, BAR_HEIGHT + 2, 180, pop_h, graphics.colors.card_bottom)
+			interface.draw_outline(table, px, BAR_HEIGHT + 2, 180, pop_h, 1, graphics.colors.title)
+			interface.draw_text(table, px + 8, BAR_HEIGHT + 6, fit, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+			row := 0
+			for p2 in 0 ..< order_count {
+				c2 := &clients[order[p2]]
+				if !c2.created || system.name_of(c2.title[:]) != name {
+					continue
+				}
+				status_txt := c2.minimized ? "minimized" : (p2 == order_count - 1 ? "active" : "open")
+				interface.draw_text(table, px + 8, BAR_HEIGHT + 24 + row * 20, status_txt, c2.minimized ? graphics.colors.dim : graphics.colors.text, interface.FONT_INTERFACE)
+				row += 1
+			}
+		}
+		px += TASKBAR_PILL_WIDTH + TASKBAR_PILL_GAP
+	}
+
+	// 2. System tray icon pills (to the left of the palette hint).
+	tray_x := desktop_width - CLOCK_WIDTH - 230
+	for &e in desktop_tray.entries {
+		if !e.active || tray_x < px + 12 {
+			continue
+		}
+		tray_x -= TRAY_BADGE_WIDTH + TRAY_BADGE_GAP
+		bg := e.alert ? graphics.colors.stop_process : graphics.colors.track
+		fg := e.alert ? graphics.COLOR_WHITE : graphics.colors.text
+		interface.draw_rectangle(table, tray_x, 5, TRAY_BADGE_WIDTH, BAR_HEIGHT - 10, bg)
+		interface.draw_text(table, tray_x + 6, 8, string(e.label[:e.len]), fg, interface.FONT_INTERFACE)
+	}
+}
+
+// desktop_taskbar_press restores or raises a window group when clicking its pill in the bar.
+desktop_taskbar_press :: proc "contextless" (click_x, click_y: int) -> bool {
+	if !desktop_features_ready || click_y >= BAR_HEIGHT || click_x < TASKBAR_PILL_START_X {
+		return false
+	}
+	max_right := max(TASKBAR_PILL_START_X, desktop_width - CLOCK_WIDTH - 240)
+	px := TASKBAR_PILL_START_X
+	for position in 0 ..< order_count {
+		if px + TASKBAR_PILL_WIDTH > max_right {
+			break
+		}
+		idx := order[position]
+		client := &clients[idx]
+		if !client.created {
+			continue
+		}
+		name := system.name_of(client.title[:])
+		already := false
+		for p2 in 0 ..< position {
+			if clients[order[p2]].created && system.name_of(clients[order[p2]].title[:]) == name {
+				already = true
+				break
+			}
+		}
+		if already {
+			continue
+		}
+		if click_x >= px && click_x < px + TASKBAR_PILL_WIDTH {
+			// Restore any minimized window of this group or raise it to the front.
+			if client.minimized {
+				client.minimized = false
+			}
+			raise(position)
+			damage_whole_screen()
+			return true
+		}
+		px += TASKBAR_PILL_WIDTH + TASKBAR_PILL_GAP
+	}
+	return false
+}
+
+desktop_context_menu_records :: proc "contextless" (table: ^interface.Draw_Table) {
+	if desktop_context_menu.open {
+		interface.context_menu_draw(table, &desktop_context_menu)
+	}
+}
+
 desktop_magnifier_sample :: proc "contextless" (dst_x, dst_y: int) -> graphics.Color {
 	zoom := max(i32(12), i32(desktop_magnifier.zoom_eighths))
 	src_x := clamp(int(desktop_magnifier.view_x) + (dst_x * 8) / int(zoom), 0, max(0, frame.width - 1))
@@ -169,6 +417,33 @@ desktop_snap_front_window :: proc "contextless" (zone: desktop_layout.Snap_Zone)
 	return true
 }
 
+desktop_toggle_maximize :: proc "contextless" (client: ^Client) {
+	if client == nil {
+		return
+	}
+	damage_window(client)
+	if !client.maximized {
+		client.saved_x = client.x
+		client.saved_y = client.y
+		client.maximized = true
+		client.x = 0
+		client.y = BAR_HEIGHT
+	} else {
+		client.maximized = false
+		client.x = client.saved_x
+		client.y = client.saved_y
+	}
+	damage_whole_screen()
+}
+
+desktop_toggle_minimize :: proc "contextless" (client: ^Client) {
+	if client == nil {
+		return
+	}
+	client.minimized = !client.minimized
+	damage_whole_screen()
+}
+
 desktop_magnifier_set :: proc "contextless" (zoom_eighths: u16, tx, ty: i32) -> bool {
 	if !desktop_features_ready {
 		return false
@@ -210,8 +485,6 @@ desktop_magnifier_track :: proc "contextless" (tx, ty: i32) {
 	}
 }
 
-// desktop_shortcut_key handles Ctrl+Shift desktop shell bindings (workspaces
-// 1..4, edge snapping Left/Right/Up, and viewport magnifier toggle M).
 desktop_shortcut_key :: proc "contextless" (code: u32, character: rune, pressed: bool, modifiers: u32) -> bool {
 	if !desktop_features_ready || !pressed {
 		return false

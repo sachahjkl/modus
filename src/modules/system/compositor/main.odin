@@ -94,6 +94,7 @@ import "modus:contract/errors"
 import "modus:contract/settings"
 import "modus:contract/scale_factor"
 import "modus:contract/date"
+import "modus:contract/desktop_shell"
 import "modus:calendar"
 import "modus:graphics"
 import "modus:interface"
@@ -262,6 +263,10 @@ Client :: struct {
 	// says: the compositor takes the commands of the capture face and of
 	// the input face from it (capture.odin).
 	capture_allowed: bool,
+	minimized:       bool,
+	maximized:       bool,
+	saved_x, saved_y: int,
+	decoration:      desktop_shell.Window_Decoration,
 }
 
 // A rectangle of the screen. right and bottom are not in the rectangle.
@@ -822,6 +827,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				switch {
 				case powerbox_and_wide_grant_key(u32(record.values[0]), record.values[2] != 0, u32(record.values[3])):
 					// Trusted powerbox modal or Ctrl+Shift+Escape wide-grant revocation took the key.
+				case desktop_context_menu_key(u32(record.values[0]), character, record.values[2] != 0):
+					// Trusted powerbox modal or Ctrl+Shift+Escape wide-grant revocation took the key.
 				case record.values[2] != 0 && u32(record.values[0]) == display.KEY_ESCAPE && capture_popover_escape():
 					// Local Escape closed the bar viewer list popover.
 				case palette_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
@@ -1273,6 +1280,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	pressed := new_buttons & display.BUTTON_LEFT != 0 && buttons & display.BUTTON_LEFT == 0
 	released := new_buttons & display.BUTTON_LEFT == 0 && buttons & display.BUTTON_LEFT != 0
 	held := buttons != 0 || new_buttons != 0
+	right_pressed := new_buttons & display.BUTTON_RIGHT != 0 && buttons & display.BUTTON_RIGHT == 0
 	buttons = new_buttons
 	// The place of each press is a fact that only the compositor has: the
 	// input service joins the moves that find its ring full, and the edges
@@ -1317,6 +1325,10 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	// brings the window to the front.
 	desktop_magnifier_track(i32(pointer_x), i32(pointer_y))
 	capture_popover_pointer_move(pointer_x, pointer_y)
+	if right_pressed && menu_open == .None && pointer_y >= BAR_HEIGHT {
+		desktop_context_menu_open(pointer_x, pointer_y)
+		return
+	}
 	if menu_open != .None {
 		over := menu_open == .Start ? bar.line_at(bar_layout, pointer_x, pointer_y) : bar.windows_line_at(bar_layout, order_count, pointer_x, pointer_y)
 		if over != menu_line {
@@ -1335,6 +1347,10 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 				system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
 			}
 			if index := window_of_line(menu_line); menu_open == .Windows && menu_line >= 0 && index >= 0 {
+				if clients[index].minimized {
+					clients[index].minimized = false
+					damage_whole_screen()
+				}
 				for position in 0 ..< order_count {
 					if order[position] == index {
 						raise(position)
@@ -1358,6 +1374,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			windows_log()
 			damage_menu()
 		}
+		if was_open == .None && pointer_y < BAR_HEIGHT && desktop_taskbar_press(pointer_x, pointer_y) {
+			return
+		}
 		if was_open != .None || pointer_y < BAR_HEIGHT {
 			return
 		}
@@ -1367,21 +1386,43 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			resize_begin(index, edges) // window_resize.odin
 			return
 		}
+		if desktop_context_menu.open {
+			interface.context_menu_close(&desktop_context_menu)
+			damage_whole_screen()
+		}
 		for position := order_count - 1; position >= 0; position -= 1 {
 			client := &clients[order[position]]
-			outer_width := client.width + 2 * BORDER
-			if !inside(pointer_x, pointer_y, client.x, client.y, outer_width, client.height + TITLE_HEIGHT + BORDER) {
+			if client.minimized {
+				continue
+			}
+			csd := client.decoration == .Client
+			outer_width := csd ? client.width : client.width + 2 * BORDER
+			outer_height := csd ? client.height : client.height + TITLE_HEIGHT + BORDER
+			if !inside(pointer_x, pointer_y, client.x, client.y, outer_width, outer_height) {
 				continue
 			}
 			raise(position)
-			if inside(pointer_x, pointer_y, client.x + outer_width - BORDER - CLOSE_SIZE, client.y, CLOSE_SIZE, TITLE_HEIGHT) {
-				system.send(&control.completions, ring.Record{kind = u32(display.Control.Stop), values = {0 = u64(client.ring_memory)}})
-				return
-			}
-			if pointer_y < client.y + TITLE_HEIGHT {
-				dragging = order[order_count - 1]
-				drag_x, drag_y = pointer_x - client.x, pointer_y - client.y
-				return
+			if !csd {
+				close_x := client.x + outer_width - BORDER - CLOSE_SIZE
+				max_x := close_x - CLOSE_SIZE - 2
+				min_x := max_x - CLOSE_SIZE - 2
+				if inside(pointer_x, pointer_y, close_x, client.y, CLOSE_SIZE, TITLE_HEIGHT) {
+					system.send(&control.completions, ring.Record{kind = u32(display.Control.Stop), values = {0 = u64(client.ring_memory)}})
+					return
+				}
+				if inside(pointer_x, pointer_y, max_x, client.y, CLOSE_SIZE, TITLE_HEIGHT) {
+					desktop_toggle_maximize(client)
+					return
+				}
+				if inside(pointer_x, pointer_y, min_x, client.y, CLOSE_SIZE, TITLE_HEIGHT) {
+					desktop_toggle_minimize(client)
+					return
+				}
+				if pointer_y < client.y + TITLE_HEIGHT {
+					dragging = order[order_count - 1]
+					drag_x, drag_y = pointer_x - client.x, pointer_y - client.y
+					return
+				}
 			}
 			break
 		}
@@ -1609,8 +1650,9 @@ frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Clie
 	interface.draw_horizontal_gradient(table, bottom_part.left, bottom_part.top, bottom_part.right - bottom_part.left, bottom_part.bottom - bottom_part.top, start, end)
 	interface.draw_rectangle(table, left_part.left, left_part.top, left_part.right - left_part.left, left_part.bottom - left_part.top, start)
 	interface.draw_rectangle(table, right_part.left, right_part.top, right_part.right - right_part.left, right_part.bottom - right_part.top, end)
-	// The title: a name, cut in its font to the room before the close button.
-	title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(client.title[:]), outer_width - CLOSE_SIZE - 16)
+	// The title: a name, cut in its font to the room before minimize/maximize/close.
+	title_room := max(24, outer_width - 3 * CLOSE_SIZE - 24)
+	title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(client.title[:]), title_room)
 	interface.draw_text(table, x + 8, y + 4, title, focus ? graphics.COLOR_WHITE : graphics.colors.dim, interface.FONT_INTERFACE)
 	base := graphics.Color(graphics.colors.stop_process_quiet)
 	cross_color := graphics.Color(graphics.colors.stop_process_quiet_mark)
@@ -1619,9 +1661,33 @@ frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Clie
 		cross_color = graphics.COLOR_WHITE
 	}
 	close_x := x + outer_width - BORDER - CLOSE_SIZE
+	max_x := close_x - CLOSE_SIZE - 2
+	min_x := max_x - CLOSE_SIZE - 2
+	ctrl_mark := focus ? graphics.COLOR_WHITE : graphics.colors.dim
+	ctrl_bg := focus ? graphics.shade(end, 112) : graphics.shade(end, 92)
+	// Minimize (_) button
+	if min_x > x + 40 {
+		interface.draw_rectangle(table, min_x, y + 3, CLOSE_SIZE, TITLE_HEIGHT - 6, ctrl_bg)
+		interface.draw_rectangle(table, min_x + 6, y + TITLE_HEIGHT - 8, CLOSE_SIZE - 12, 2, ctrl_mark)
+	}
+	// Maximize / Restore (square) button
+	if max_x > x + 40 {
+		interface.draw_rectangle(table, max_x, y + 3, CLOSE_SIZE, TITLE_HEIGHT - 6, ctrl_bg)
+		interface.draw_outline(table, max_x + 6, y + 7, CLOSE_SIZE - 12, TITLE_HEIGHT - 14, 1, ctrl_mark)
+	}
+	// Close (x) button (exact rightmost position preserved)
 	interface.draw_vertical_gradient(table, close_x, y, CLOSE_SIZE, TITLE_HEIGHT, graphics.shade(base, 118), graphics.shade(base, 82))
 	interface.draw_rectangle(table, close_x, y, CLOSE_SIZE, 1, graphics.shade(base, 150))
 	interface.draw_character(table, close_x + (CLOSE_SIZE - graphics.CELL_WIDTH) / 2, y + (TITLE_HEIGHT - graphics.CELL_HEIGHT) / 2, 'x', cross_color)
+	// Bottom-right stepped resize grip triangle on resizable windows
+	if client.resizable {
+		gx := x + outer_width - BORDER - 10
+		gy := y + TITLE_HEIGHT + client.height - 10
+		grip_col := focus ? graphics.colors.text : graphics.colors.dim
+		interface.draw_rectangle(table, gx + 7, gy + 1, 2, 8, grip_col)
+		interface.draw_rectangle(table, gx + 1, gy + 7, 8, 2, grip_col)
+		interface.draw_rectangle(table, gx + 4, gy + 4, 3, 3, grip_col)
+	}
 }
 
 // title_measure measures three forms of the title bar of the widest window
@@ -1921,6 +1987,9 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	pointer_close := close_button_under_pointer()
 	for position in 0 ..< order_count {
 		client := &clients[order[position]]
+		if client.minimized {
+			continue
+		}
 		focus := position == order_count - 1
 		first := table.record_count
 		// A window shows a picture that its process presented, or none:
@@ -1933,7 +2002,9 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		if !shows_surface {
 			interface.draw_rectangle(table, client.x + BORDER, client.y + TITLE_HEIGHT, client.width, client.height, graphics.colors.background)
 		}
-		frame_records(table, client, client.x, client.y, focus, client == pointer_close)
+		if client.decoration != .Client {
+			frame_records(table, client, client.x, client.y, focus, client == pointer_close)
+		}
 		screen_part_end(first, nil, outer, true, true)
 		if !shows_surface {
 			continue
@@ -2071,6 +2142,8 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	capture_popover_records(&card_frame)
 	desktop_notifications_records(table)
 	powerbox_dialog_records(table)
+	desktop_taskbar_and_tray_records(table)
+	desktop_context_menu_records(table)
 	screen_part_end(bar_first, bar_mark_pixels[:], {}, false, true)
 	if table.full {
 		system.log_fact(.Warning, Screen_Draw_Table_Full{})

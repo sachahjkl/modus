@@ -1,5 +1,6 @@
 package compositor
 
+import "modus:contract/desktop_shell"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/pointer_pictures"
@@ -364,5 +365,41 @@ wide_grant_indicator_export :: proc "c" (active: i64, grant_id: i64, error: ^err
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Out_Of_Range, .Counts, 2, grant_id)
 	}
 	wide_grant_mark_set(active != 0, u64(grant_id))
+	return 1
+}
+
+// set_decoration switches a window between default server decorations (0) and
+// borderless client-side decorations (1), returning 1 on success or a negative
+// number with an error record.
+//
+// **Grant**: the caller must **act for the principal**.
+@(export, link_name = "set_decoration")
+set_decoration_export :: proc "c" (window_order: i64, mode: i64, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	dec, ok := desktop_shell.window_decoration_of_word(u64(mode))
+	if mode < 0 || !ok {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Counts, 2, mode)
+	}
+	if window_order < 0 || int(window_order) >= order_count {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Out_Of_Range, .Counts, 1, window_order, i64(order_count))
+	}
+	idx := order[order_count - 1 - int(window_order)]
+	clients[idx].decoration = dec
+	damage_whole_screen()
+	return 1
+}
+
+// open_context_menu opens the filterable fuzzy desktop context menu at (x, y)
+// and returns 1, or a negative number with an error record.
+//
+// **Grant**: the caller must **act for the principal**.
+@(export, link_name = "open_context_menu")
+open_context_menu_export :: proc "c" (x: i64, y: i64, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	desktop_context_menu_open(int(x), int(y))
 	return 1
 }
