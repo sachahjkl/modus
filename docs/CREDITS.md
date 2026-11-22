@@ -22,6 +22,7 @@ Each work of others that the system ships in a module or in the boot image, or t
 | Iosevka, as the subset "Iosevka ASCII" | `resources/fonts/iosevka.ttf` | Iosevka | Belleve Invis | OFL-1.1 | `resources/fonts/OFL.txt` | https://github.com/sponsors/be5invis |
 | B612, as the subset "B612 ASCII" | `resources/fonts/b612.ttf` | B612 | Airbus, Intactile DESIGN, PolarSys | OFL-1.1 | `resources/fonts/OFL.txt` | — |
 | B612 Bold, as the subset "B612 ASCII Bold" | `resources/fonts/b612_bold.ttf` | B612 | Airbus, Intactile DESIGN, PolarSys | OFL-1.1 | `resources/fonts/OFL.txt` | — |
+| Noto Sans, as the subset "Noto Sans LGC" | `resources/fonts/noto_sans.ttf` | Noto | The Noto Project Authors | OFL-1.1 | `resources/fonts/OFL.txt` | — |
 | Spleen 8x16, the fallback font | `src/library/modus/graphics/font.odin` | Spleen | Frederic Cambus | BSD-2-Clause | `src/library/modus/graphics/FONT_LICENSE` | https://github.com/sponsors/fcambus |
 | Spleen 12x24, 16x32 and 32x64, the text of the boot display at 12, 16 and 32 eighths | `src/library/modus/bootscreen/spleen_sizes.odin` | Spleen | Frederic Cambus | BSD-2-Clause | `src/library/modus/graphics/FONT_LICENSE` | https://github.com/sponsors/fcambus |
 | The pointer theme "Posy's Cursor", in the boot image of a development build that has it, never in a release image | `resources/pointers/posy.manifest` | Posy's Cursor | Michiel de Boer (Posy) | CC-BY-NC-4.0 | `resources/pointers/posy.manifest` | — |

@@ -109,11 +109,12 @@ fuzz_shaping_long_text: []u8
 
 fuzz_text_shaping_start :: proc() -> bool {
 	fuzz_shaping_long_text = make([]u8, text_rendering.TEXT_LIMIT + 1)
-	fonts := [4]font_outlines.Font_Input {
+	fonts := [5]font_outlines.Font_Input {
 		{"b612", fuzz_b612},
 		{"b612_bold", #load("../../../resources/fonts/b612_bold.ttf")},
 		{"paper_mono", fuzz_paper_mono},
 		{"paper_mono_semibold", #load("../../../resources/fonts/paper_mono_semibold.ttf")},
+		{"noto_sans", #load("../../../resources/fonts/noto_sans.ttf")},
 	}
 	size := font_outlines.resource_size(fonts[:])
 	fuzz_shaping_outlines_words = make([]u64, (size + 7) / 8)

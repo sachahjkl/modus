@@ -39,11 +39,12 @@ interface_outlines_open :: proc(t: ^testing.T) {
 	if interface_outlines_words != nil {
 		return
 	}
-	fonts := [4]font_outlines.Font_Input {
+	fonts := [5]font_outlines.Font_Input {
 		{"b612", #load("../../../../resources/fonts/b612.ttf")},
 		{"b612_bold", #load("../../../../resources/fonts/b612_bold.ttf")},
 		{"paper_mono", #load("../../../../resources/fonts/paper_mono.ttf")},
 		{"paper_mono_semibold", #load("../../../../resources/fonts/paper_mono_semibold.ttf")},
+		{"noto_sans", #load("../../../../resources/fonts/noto_sans.ttf")},
 	}
 	size := font_outlines.resource_size(fonts[:])
 	interface_outlines_words = make([]u64, (size + 7) / 8, runtime.heap_allocator())

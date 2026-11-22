@@ -22,6 +22,8 @@ b612_bold_file := #load("../../../../resources/fonts/b612_bold.ttf")
 paper_mono_file := #load("../../../../resources/fonts/paper_mono.ttf")
 @(private = "file")
 paper_mono_semibold_file := #load("../../../../resources/fonts/paper_mono_semibold.ttf")
+@(private = "file")
+noto_sans_file := #load("../../../../resources/fonts/noto_sans.ttf")
 
 // A resource of font outlines in words of the test, on 8 bytes, as the
 // caller passes it.
@@ -45,7 +47,7 @@ test_outlines_of :: proc(t: ^testing.T, fonts: []font_outlines.Font_Input) -> (o
 
 @(private = "file")
 repository_outlines :: proc(t: ^testing.T) -> Test_Outlines {
-	fonts := [4]font_outlines.Font_Input{{"b612", b612_file}, {"b612_bold", b612_bold_file}, {"paper_mono", paper_mono_file}, {"paper_mono_semibold", paper_mono_semibold_file}}
+	fonts := [5]font_outlines.Font_Input{{"b612", b612_file}, {"b612_bold", b612_bold_file}, {"paper_mono", paper_mono_file}, {"paper_mono_semibold", paper_mono_semibold_file}, {"noto_sans", noto_sans_file}}
 	return test_outlines_of(t, fonts[:])
 }
 
@@ -478,7 +480,7 @@ a_font_that_lies_keeps_the_bounds :: proc(t: ^testing.T) {
 	for lie in Lie {
 		lying := lying_b612(t, lie)
 		defer delete(lying)
-		fonts := [4]font_outlines.Font_Input{{"b612", lying}, {"b612_bold", b612_bold_file}, {"paper_mono", paper_mono_file}, {"paper_mono_semibold", paper_mono_semibold_file}}
+		fonts := [5]font_outlines.Font_Input{{"b612", lying}, {"b612_bold", b612_bold_file}, {"paper_mono", paper_mono_file}, {"paper_mono_semibold", paper_mono_semibold_file}, {"noto_sans", noto_sans_file}}
 		outlines := test_outlines_of(t, fonts[:])
 		defer delete(outlines.words)
 		switch lie {
@@ -530,14 +532,22 @@ a_font_that_lies_keeps_the_bounds :: proc(t: ^testing.T) {
 
 // A call opens only the fonts that the chains of its face name: the bold
 // weights and Paper Mono SemiBold stay closed for the face Interface. A
-// font that is not wanted is not missing.
+// font that is not wanted is not missing. A letter of Greek, of Cyrillic
+// and of Latin Extended-A that B612 lacks comes from Noto Sans, the last
+// font of each chain, with its own advance.
 @(test)
 a_call_opens_the_fonts_of_its_face :: proc(t: ^testing.T) {
 	outlines := repository_outlines(t)
 	defer delete(outlines.words)
 	testing.expect_value(t, text_rendering.fonts_of_face(.None), text_rendering.Outline_Fonts{})
-	testing.expect_value(t, text_rendering.fonts_of_face(.Interface), text_rendering.Outline_Fonts{.B612, .Paper_Mono})
-	testing.expect_value(t, text_rendering.fonts_of_face(.Cells_Bold), text_rendering.Outline_Fonts{.Paper_Mono_Semibold, .B612_Bold, .B612})
+	testing.expect_value(t, text_rendering.fonts_of_face(.Interface), text_rendering.Outline_Fonts{.B612, .Paper_Mono, .Noto_Sans})
+	testing.expect_value(t, text_rendering.fonts_of_face(.Cells_Bold), text_rendering.Outline_Fonts{.Paper_Mono_Semibold, .B612_Bold, .B612, .Noto_Sans})
+	placed: [3]text_rendering.Placed_Glyph
+	count, _ := shape_through_module(t, &outlines, "ΠЖā", text_rendering.TEXT_SIZE_OF_SCALE_ONE, placed[:])
+	testing.expect_value(t, count, 3)
+	for character, index in ([3]rune{0x03A0, 0x0416, 0x0101}) {
+		testing.expectf(t, placed[index].glyph == text_rendering.FALLBACK_GLYPH_FIRST + u32(character) && placed[index].advance > 0, "U+%04X: the glyph %v, the advance %v", int(character), placed[index].glyph, placed[index].advance)
+	}
 	resource, problem := font_outlines.validate(outlines.bytes)
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
 	fonts := new(Package_Fonts)
@@ -546,7 +556,7 @@ a_call_opens_the_fonts_of_its_face :: proc(t: ^testing.T) {
 	missing := text_rendering.fonts_open(&fonts.set, &resource, &outline, text_rendering.fonts_of_face(.Interface))
 	testing.expect_value(t, missing, text_rendering.Outline_Fonts{})
 	for font in text_rendering.Outline_Font {
-		wanted := font == .B612 || font == .Paper_Mono
+		wanted := font == .B612 || font == .Paper_Mono || font == .Noto_Sans
 		testing.expectf(t, fonts.set.fonts[font].opened == wanted, "%v is open: %v", font, fonts.set.fonts[font].opened)
 	}
 }

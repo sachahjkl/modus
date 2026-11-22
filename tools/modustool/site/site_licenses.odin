@@ -246,11 +246,13 @@ site_licenses_read :: proc(boot_image: []Site_Image_Entry, release_number: strin
 	append(&system_rows, system_row)
 
 	// The fonts that the repository holds as subsets: the candidates, the
-	// emphasis and the interface fonts of vector_fonts.odin.
+	// emphasis, the interface fonts and the font of the missing scripts of
+	// vector_fonts.odin.
 	fonts := make([dynamic]resources.Vector_Font_Candidate, context.temp_allocator)
 	append(&fonts, ..resources.vector_font_candidates[:])
 	append(&fonts, ..resources.vector_font_emphasis[:])
 	append(&fonts, ..resources.vector_font_interface[:])
+	append(&fonts, ..resources.vector_font_script_fallback[:])
 	for candidate in fonts {
 		file_name := strings.concatenate({checks.FONT_FOLDER, "/", candidate.name, ".license"}, context.temp_allocator)
 		text := foundation.read_text_file(file_name) or_return

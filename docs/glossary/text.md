@@ -144,7 +144,7 @@ Do not use: font bundle, font pack.
 
 A fallback chain is the list of fonts, in order, that give the glyph of a character of a face: the first font of the list that has the character gives its glyph and its advance.
 
-The chains are data, one row for each script (`text_rendering.scripts`): Greek, Cyrillic, the box-drawing characters and the block elements, and a default chain for each other character. The first font of each chain is the first font of the face, and a glyph of another font stands on its baseline, with its capitals as high. A character that no font of its chain has draws the replacement glyph. The chain of the interface is B612 then Paper Mono; the chain of the cells is Paper Mono then B612.
+The chains are data, one row for each script (`text_rendering.scripts`): Greek, Cyrillic, the box-drawing characters and the block elements, and a default chain for each other character. The first font of each chain is the first font of the face, and a glyph of another font stands on its baseline, with its capitals as high. A character that no font of its chain has draws the replacement glyph. The chain of the interface is B612, Paper Mono, then Noto Sans; the chain of the cells is Paper Mono, B612, then Noto Sans.
 
 The design: `src/md/features/glyphs_on_demand.md`, "The fallback chain by script".
 

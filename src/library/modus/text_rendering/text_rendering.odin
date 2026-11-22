@@ -101,6 +101,7 @@ Outline_Font :: enum u8 {
 	B612_Bold, // B612 Bold: the bold weight of the interface font.
 	Paper_Mono, // Paper Mono: the font of the cells.
 	Paper_Mono_Semibold, // Paper Mono SemiBold: the bold weight of the cells.
+	Noto_Sans, // Noto Sans: the scripts that the fonts of the faces lack, the last font of each chain.
 }
 Outline_Fonts :: bit_set[Outline_Font]
 // The font is 4 bits in the key of the private glyph cache.
@@ -120,6 +121,8 @@ outline_font_name :: proc "contextless" (font: Outline_Font) -> string {
 		return "paper_mono"
 	case .Paper_Mono_Semibold:
 		return "paper_mono_semibold"
+	case .Noto_Sans:
+		return "noto_sans"
 	}
 	return ""
 }
@@ -243,21 +246,22 @@ Script_Row :: struct {
 
 // The fallback chains by script: the data of the choice of a font. A new
 // font is one member of Outline_Font, one record of the resource and its
-// place in these rows.
+// place in these rows. No font of the faces has a Cyrillic letter, so its
+// chains name Noto Sans alone.
 @(rodata)
 scripts := [Script]Script_Row {
-	.Greek = {ranges = {{0x0391, 0x03A1}, {0x03A3, 0x03A9}, {0x03B1, 0x03C9}, {}}, range_count = 3, chains = {.Interface = {.B612, .Paper_Mono, .None, .None}, .Interface_Bold = {.B612_Bold, .B612, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .None, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612_Bold, .B612, .None}}},
-	.Cyrillic = {ranges = {{0x0400, 0x045F}, {}, {}, {}}, range_count = 1, chains = {.Interface = {.B612, .Paper_Mono, .None, .None}, .Interface_Bold = {.B612_Bold, .B612, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .None, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612_Bold, .B612, .None}}},
+	.Greek = {ranges = {{0x0391, 0x03A1}, {0x03A3, 0x03A9}, {0x03B1, 0x03C9}, {}}, range_count = 3, chains = {.Interface = {.B612, .Paper_Mono, .Noto_Sans, .None}, .Interface_Bold = {.B612_Bold, .B612, .Paper_Mono_Semibold, .Noto_Sans}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612_Bold, .B612, .Noto_Sans}}},
+	.Cyrillic = {ranges = {{0x0400, 0x045F}, {}, {}, {}}, range_count = 1, chains = {.Interface = {.Noto_Sans, .None, .None, .None}, .Interface_Bold = {.Noto_Sans, .None, .None, .None}, .Cells = {.Noto_Sans, .None, .None, .None}, .Cells_Bold = {.Noto_Sans, .None, .None, .None}}},
 	.Box_Drawing = {ranges = {{0x2500, 0x259F}, {}, {}, {}}, range_count = 1, chains = {.Interface = {.Paper_Mono, .None, .None, .None}, .Interface_Bold = {.Paper_Mono_Semibold, .None, .None, .None}, .Cells = {.Paper_Mono, .None, .None, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .None, .None, .None}}},
 }
 
 // The chain of each face for a character of no script.
 @(rodata)
 default_chains := [Chain_Kind]Chain {
-	.Interface      = {.B612, .Paper_Mono, .None, .None},
-	.Interface_Bold = {.B612_Bold, .Paper_Mono_Semibold, .None, .None},
-	.Cells          = {.Paper_Mono, .B612, .None, .None},
-	.Cells_Bold     = {.Paper_Mono_Semibold, .B612, .None, .None},
+	.Interface      = {.B612, .Paper_Mono, .Noto_Sans, .None},
+	.Interface_Bold = {.B612_Bold, .Paper_Mono_Semibold, .Noto_Sans, .None},
+	.Cells          = {.Paper_Mono, .B612, .Noto_Sans, .None},
+	.Cells_Bold     = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .None},
 }
 
 // Where a glyph comes from.

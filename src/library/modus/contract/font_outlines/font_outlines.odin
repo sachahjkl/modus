@@ -76,6 +76,19 @@ cell_past_cache_ranges := [?]Character_Range {
 }
 CELL_PAST_CACHE_COUNT :: 165 // The characters of cell_past_cache_ranges.
 
+// The subset of Noto Sans, the font of the scripts that the fonts of the
+// faces lack: Latin Extended-A, the whole Greek alphabet and the basic
+// Cyrillic letters. It closes each fallback chain.
+@(rodata)
+script_fallback_past_cache_ranges := [?]Character_Range {
+	{0x0100, 0x017F}, // Latin Extended-A.
+	{0x0391, 0x03A1}, // Alpha to rho, capitals.
+	{0x03A3, 0x03A9}, // Sigma to omega, capitals.
+	{0x03B1, 0x03C9}, // Alpha to omega, small.
+	{0x0400, 0x045F}, // The basic Cyrillic letters.
+}
+SCRIPT_FALLBACK_PAST_CACHE_COUNT :: 273 // The characters of script_fallback_past_cache_ranges.
+
 // The first HEADER_SIZE bytes of the resource.
 Header :: struct {
 	magic:      u64, // MAGIC.
