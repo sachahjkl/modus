@@ -579,6 +579,7 @@ When the export has a table of error details and wrote more than one detail, one
 | `process_modules()` | Table of `Process_Module` | One row for each module of each process: `slot`, `process`, `module`, `replaces`, `hash_head`, `writer` (`starter` or `process`: the module writer of the record) |
 | `memory()` | Record `Memory` | The memory of the machine and the counters of the kernel: `memory` and `free` in MiB, `used`, `reserved`, `budgets` and `free_no_budget_holds` in pages, then counts. `free_no_budget_holds` is 0 pages when each page is free or paid |
 | `locks()` | Table of `Lock` | One row for each kind of kernel lock: `lock`, `waits`, `takes` |
+| `work(process)` | Table of `Service_Work` | One row for each connection of this console to a service: `service`, `state`, `pages` and `pages_limit` of its work budget, `processor` and `step_debt` in microseconds. No service charges a work budget yet, so each row is `unaccounted`, with no numbers. Another process than this console is refused: the root service does not report its connections yet (`src/md/features/work_accounting.md`) |
 | `modules()` | Table of `Module` | One row for each module of the boot image: `name`, `size` in bytes, `hash_head` |
 | `load(name)`, `isolate(name)`, `connect(name)` | Record `Loaded` | `module`, `commands`, `call` (`direct`, `isolated` or `service`), `hash_head` |
 | `isolate_memory(name, memory, size)` | Record `Loaded` | A module from memory: the console copies `size` bytes of the memory object, checks them as a module file, and isolates them, with the call `isolated` (`MODULE_CONTRACT.md`, "The assembler") |
@@ -614,6 +615,7 @@ When the export has a table of error details and wrote more than one detail, one
 | `hash(text)` | Text | 64 hexadecimal digits |
 | `length(text)` | Integer | The bytes of the text: a character outside ASCII is 2 to 4 bytes of UTF-8 |
 | `text(integer)` | Text | |
+| `language(tag)`, `language()` | Record `Locale` | A language tag of BCP 47 read once into its record: `language`, `script`, `region`, `variant_first`, `variant_second`, the keyword bytes `calendar`, `numbering_system`, `first_day`, `hour_cycle`, `measurement_system`, `collation`, then `region_override`. `settings.set_languages` takes a table of them. With no tag or `""`, the first language of the settings page, else `en`. A refused tag gives the byte of the subtag at fault and the reason (`src/md/features/interface_language.md`, "1. The identity of a language") |
 | `character(code_point)` | Text | One character of Unicode: `character(233)` is the two bytes C3 A9. This command writes a character that no key gives. A control character, a surrogate and a number past 1114111 are refused: "N is no character of a text" |
 | `repeat(text, count)` | Text | |
 | `buffer(count)` | Handle | A new memory object of `count` pages |
@@ -669,9 +671,9 @@ A fact that a service holds is an export of that service, and the console calls 
 | `start`, `stop`, `grants`, `revoke`, `principal_create`, `lock`, `principals`, `machine_passphrase`, `machine_seal`, `replace`, `connect`, `remote_allow`, `remote_display_allow`, `remote_disallow`, `remote_clients` | A command of the root ring, with typed values and an error record. The root service serves no exports: it has a ring of its own commands, and these built-in commands are its callers |
 | `modules()` | The boot image that the root service granted to the console. `manual.modules()` gives the same modules with more fields, when the process `manual` runs |
 | `replacements()` | The replacement table that the root service granted to the console, read-only. `manual.replacements()` gives it too, when `manual` runs |
-| `process_modules()`, `memory()`, `locks()` | The reports of the kernel, with the grant of the console to inspect the machine. `manual.running()` gives the modules of the processes, and `monitor.counts()` the counts, when those processes run |
+| `process_modules()`, `memory()`, `locks()`, `work(process)` | The reports of the kernel, with the grant of the console to inspect the machine. `manual.running()` gives the modules of the processes, and `monitor.counts()` the counts, when those processes run |
 | `load`, `isolate`, `isolate_memory`, `unload`, `loaded`, `buffer`, `byte`, `bytes`, `release` | The console itself: its command table, its modules, its handles |
-| `help`, `describe`, `variables`, `where`, `sort`, `join`, `columns`, `first`, `skip`, `rows`, `row`, `time`, `hash`, `length`, `text`, `repeat`, `clear`, `history_clear`, `measure_completion`, `shutdown` | The language and the console itself |
+| `help`, `describe`, `variables`, `where`, `sort`, `join`, `columns`, `first`, `skip`, `rows`, `row`, `time`, `hash`, `length`, `text`, `repeat`, `language`, `clear`, `history_clear`, `measure_completion`, `shutdown` | The language and the console itself |
 
 `modules`, `replacements`, `process_modules`, `memory` and `locks` stay in the console because the processes that serve the same facts (`manual`, `monitor`) do not run at each boot, and these commands must work with no other process. The stores are a fact of the storage service: the console has no built-in command for them, and calls `storage.stores()` and `storage.usage()`.
 
