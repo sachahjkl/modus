@@ -391,7 +391,12 @@ if result.ran {
 | The terminal | Page Up, Page Down | At the right of the line count |
 | `settings` | Tab, Shift+Tab, Enter | All in one row |
 | `unlock` | Enter, and Escape in the modes that clear | At the right of a fact of the mode |
-| `tally`, `rings`, `paint` | Space; a and 1-6; c | At the right of the counts, of what the pointer does, of the calls |
+| `tally`, `rings` | Space; a and 1-6 | At the right of the counts, of what the pointer does |
+| `paint` | Ctrl+Z, Ctrl+Shift+Z, Ctrl+O, C | At the right of the status line |
+
+### 4.5 The background work
+
+A call that waits for another process never runs on the thread of a window. `interface.Background_Work` runs it on one worker thread: `background_work_start` starts the thread, `background_work_ask(&work, job, parameter)` gives it one job, `background_work_wait(&wait, &work)` adds the end of a job to the wait list of the loop, and `background_work_take(&work)` gives true once, when the result of the job is ready for the window. One job runs at a time: an ask while a job is not taken is refused, and the window shows that it waits. The job owns the memory that it reads and writes from the ask to the take. The design: `src/md/features/background_work.md`.
 
 ## 5. Text
 
@@ -506,7 +511,7 @@ The module is the right form: the interface is shared code, as P10 and P11 say. 
 
 **The compositor.** Each surface is a memory object of another process, mapped at its own address: a picture memory of its own. The screen table is in parts: one for each window (its frame, then its surface), then one for the bar and its menus (with the heron). A Picture record of a part names memory 0 of the list of its part. A frame is one call of `draw_part_through_module` for each window whose outer rectangle meets a damage rectangle, from the back to the front, with the damage rectangles that it meets, then one for the bar and one for the palette when it is open. The compositor copies its background into each rectangle first, so the calls do not fill it; it draws the pointer after the last call, then copies each rectangle, with the debt of the hidden screen page, into the screen page that the display does not show, and flips (`src/md/infrastructure/whole_frame.md`, "The screen: two screen pages and a page flip"). The damage rectangles of the compositor never touch, so these phases give the pixels of one rectangle after the other. The canvas of each call is the whole frame, so the records stay in the coordinates of the screen. With 17 windows, a frame of 8 damage rectangles makes at most 18 calls, where one call for each rectangle made 144. The difference of the palette is `difference_through_module`. The design: `src/md/api/picture.md`, "The compositor: one call for each part".
 
-**Which modules import it.** 36 modules with the setting: `browser`, `budget`, `clock`, `compositor`, `crowd`, `cryptography_vectors`, `debugger_window`, `disk`, `extended_state`, `flow`, `frames`, `hall_of_fame`, `heron`, `inspect`, `life`, `limits`, `locks`, `manual`, `monitor`, `net`, `notes`, `origin`, `paint`, `persistence_check`, `plasma`, `processors`, `quic_echo`, `randomness`, `remote`, `rights`, `rings`, `scheduler`, `terminal`, `threads`, `unlock` and `workers`. `interface_through_module` imports it too, and calls the exports itself. The modules that keep the package compiled in, and why:
+**Which modules import it.** 37 modules with the setting: `browser`, `budget`, `clock`, `compositor`, `crowd`, `cryptography_vectors`, `debugger_window`, `disk`, `extended_state`, `flow`, `frames`, `hall_of_fame`, `heron`, `inspect`, `life`, `limits`, `locks`, `manual`, `monitor`, `net`, `notes`, `origin`, `paint`, `persistence_check`, `plasma`, `processors`, `quic_echo`, `randomness`, `remote`, `rights`, `rings`, `scheduler`, `terminal`, `threads`, `time_page`, `unlock` and `workers`. `interface_through_module` imports it too, and calls the exports itself. The modules that keep the package compiled in, and why:
 
 | Modules | Why |
 |---|---|
@@ -526,14 +531,14 @@ The module is the right form: the interface is shared code, as P10 and P11 say. 
 
 **The elements as a module: the test of the claim** (`MODULE_CONTRACT.md`, "Tables and bytes as parameters"): the module `interface_module` has six exports that call the element functions of the package with no change to the package: the draw table is a `Table(Draw_Record, Append)`, the text table `Bytes(Append)`, an area a Record, the area of the content of a card a `Table(Area, Change)` of one row. The process `interface_through_module` imports it, builds one frame through it and the same frame with the package compiled in: the two draw tables are equal, record for record. Where the claim does not hold exactly: (1) the calls are not the same calls: a function of the package takes a `^Frame` (three addresses: the table, the state, the input), which a description cannot carry; an export takes the two tables and the records of its element, and makes a frame over them for one call. (2) The record `Draw_Record` has fields of 1 and 4 bytes: the description has Integer fields of 1, 2 and 4 bytes for them. (3) The elements that take input (a button, a list, a text input) keep the interface state of the process between frames: as exports they need the state as a `Table(Interface_State, Change)` of one row; this is not done. Measured (the process `interface_through_module`, QEMU with KVM, one run, the least of 200 builds): one frame of 31 draw records in 25 element calls took 6 556 ns through the module and 4 055 ns with the package compiled in: about 100 ns more for each element call. A call through an import slot costs 2.4 ns (the process `imports`): the rest is the adapter, which builds each element into a frame of its own and appends it to the tables of the caller. This cost is the reason why the elements stay in the process.
 
-**Measures of the cut.** Two processes, `clock` and `monitor`, built two times, with the package and with the two calls through a module (QEMU with KVM, one run each, other work on the host):
+**Measures of the cut.** Two processes, `time_page` and `monitor`, built two times, with the package and with the two calls through a module (QEMU with KVM, one run each, other work on the host):
 
 | | Package compiled in | Through the module |
 |---|---|---|
-| The file of `clock` | 92 112 bytes | 72 864 bytes (-21 %) |
+| The file of `time_page` | 92 112 bytes | 72 864 bytes (-21 %) |
 | The file of `monitor` | 114 688 bytes | 94 208 bytes (-18 %) |
-| `clock`, one picture, the mean of 10 | 29.1 us | 34.1 us |
-| `clock`, the draw of 34 records in 1 damage rectangle | 16.3 us | 17.7 us |
+| `time_page`, one picture, the mean of 10 | 29.1 us | 34.1 us |
+| `time_page`, the draw of 34 records in 1 damage rectangle | 16.3 us | 17.7 us |
 
 Two runs of the same code differed by 30 % on the draw time (12.6 and 16.3 us): the difference between the two columns is inside that spread. The sizes of this build are a line of the modus tool at each build ("the library module drawing has ... bytes; the files of the ... modules that import it have ... bytes in all"), with the size of each importer. The window of `clock` prints its build, difference and draw times, and `heron` writes the mean draw time of a picture of an asked animation on its log: each is a measure, and no test asserts them. The files of seven modules that show a picture, with the package compiled in: `heron` 147 456 bytes, `life` 100 924, `paint` 106 496, `plasma` 77 824, `processors` 90 112, `threads` 81 920, `workers` 86 016; the drawing module had 49 152 bytes.
 
@@ -644,7 +649,7 @@ The package has 49 host tests (45 in `src/library/modus/interface/interface_test
 | origin | 10 | 0 | 24 576 | 40 960 |
 | manual | 10 | 0 | 114 688 | 126 976 |
 | life | 2 | 2 (its own board picture, by design: the Picture record) | 32 768 | 51 148 |
-| clock, remote, the palette | 32, 31, 48 lines | 0 | | |
+| time_page, remote, the palette | 32, 31, 48 lines | 0 | | |
 | Sum of the 19 modules above | 346 | 2 | | |
 
 - Each converted module grows by 8 to 16 KiB (2 to 4 pages): the package is in each one. `processors`, which is not converted, grows by 4 KiB from the measure of pictures of `display`. This is the measured argument for the package as one shared module (section 7): about 230 KiB in all for these modules, today paid once for each.

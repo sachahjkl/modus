@@ -2549,7 +2549,7 @@ measured_windows := [?]struct {
 	name:  string,
 	often: bool,
 } {
-	{"clock", true},
+	{"time_page", true},
 	{"life", true},
 	{"monitor", true},
 	{"inspect", true},

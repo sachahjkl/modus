@@ -58,7 +58,7 @@ scenario_desktop_film := [?]Step {
 	{kind = .Wait, text = "compositor: surface monitor"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK, text = "desktop.process"},
 	{kind = .Launch, text = "clock"},
-	{kind = .Wait, text = "compositor: window clock is resizable from 816x336 to 1216x640", any_order = true},
+	{kind = .Wait, text = "compositor: window clock is resizable from 480x420 to 1536x864", any_order = true},
 	{kind = .Wait, text = "compositor: surface clock"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK},
 
@@ -66,7 +66,7 @@ scenario_desktop_film := [?]Step {
 	// place of the window in the log, before and after.
 	{kind = .Move, text = "monitor", to_x = LOGICAL_SCREEN_WIDTH - 560, to_y = 48},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_GLANCE, text = "desktop.move"},
-	{kind = .Move, text = "clock", to_x = LOGICAL_SCREEN_WIDTH - 1200, to_y = LOGICAL_SCREEN_HEIGHT - 440},
+	{kind = .Move, text = "clock", to_x = LOGICAL_SCREEN_WIDTH - 1200, to_y = LOGICAL_SCREEN_HEIGHT - 600},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_LOOK},
 
 	// Scene 5: a drag of the lower left corner resizes the window. The
@@ -74,9 +74,9 @@ scenario_desktop_film := [?]Step {
 	// shows the window at that size from that picture. The process can
 	// draw before the compositor writes its line of the request: the two
 	// lines come in either order.
-	{kind = .Resize, text = "clock", to_x = 880, to_y = 384},
-	{kind = .Wait, text = "compositor: window clock asked to draw at 880x384", any_order = true},
-	{kind = .Wait, text = "display: clock: the first picture of 880x384 after a resize"},
+	{kind = .Resize, text = "clock", to_x = 880, to_y = 520},
+	{kind = .Wait, text = "compositor: window clock asked to draw at 880x520", any_order = true},
+	{kind = .Wait, text = "display: clock: the first picture of 880x520 after a resize"},
 	{kind = .Film_Hold, milliseconds = FILM_HOLD_READ, text = "desktop.resize"},
 
 	// Scene 6: the menu of the windows, one line for each window; a line

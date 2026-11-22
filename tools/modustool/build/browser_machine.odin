@@ -94,6 +94,7 @@ BROWSER_MACHINE_PAGE_MODULES := [?]string {
 	"browser",
 	"inspect",
 	"clock",
+	"time_page",
 	"life",
 	"paint",
 	"plasma",

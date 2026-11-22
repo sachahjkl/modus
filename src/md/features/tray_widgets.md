@@ -36,6 +36,13 @@ An off tile is sunk in the card: `recess`, a border of `track`, a line of `shado
 
 **The calendar.** The month and the year, a row of the days of the week from Monday, a grid of 6 rows of 7 days on a recessed plate, and a foot with the time zone and the time since the boot. Today is a plate of the chosen blue with white text; a day of the month before or after is dim. With no date, the card says `No date` and its foot gives the time since the boot only. The grid comes from `modus:calendar`: `days_from_civil` gives the weekday of the first day, `days_in_month` the length.
 
+**The export notify.** `compositor.notify(title, body)` posts a banner, which the history keeps too. Two kinds of caller post:
+
+- A caller that acts for the principal (the console, `remote`) posts as before: no label and no bound of its own, in the one source of the principal.
+- Any other caller with a connection to the compositor (the clock, at the end of its timer) posts in a source of its own, the hash of its process name. The banner and the history show that name before the title, in the dim color: the name is the one that the root service gave to the connection, never a text of the caller, so a process cannot show a card in the name of another one. Such a source holds at most `notifications.CARDS_PER_SOURCE_LIMIT` (3) banners at once; one more is refused with `Full`, unit `Requests`, its limit and the count found, and changes nothing. A banner leaves after 8 seconds, so the room comes back.
+
+Why a caller needs no grant to act for the principal: that grant lets a caller see what the compositor holds for all callers; a notification shows the caller nothing of the others, only its own text, under its own name. The bound and the rate of the queue (one card in 500 ms for each source) keep one process from filling the corner of the screen.
+
 **The export.** `compositor.tray_widget_open(widget)` opens a tray widget (1 the control center, 2 the notifications, 3 the calendar) or closes the one that is open (0), for a caller that acts for the principal. A word that names no member of `bar.Tray_Widget` is refused with `Bad_Value`. The export `pointer` names the open card in its field `menu`: `control_center`, `notifications` or `calendar`.
 
 ## Refused forms
@@ -44,6 +51,8 @@ An off tile is sunk in the card: `recess`, a border of `track`, a line of `shado
 - **A heading on the control center and on the calendar.** The button that opened the card says what it is; the month heads the calendar.
 - **The tray buttons after the pills.** A pill can come and go; a tray button keeps one place, so the pointer and the machine test find it.
 - **The notification center as the queue of the banners.** A banner leaves after 8 seconds; the history must keep it.
+- **A label that the caller gives.** A process could write the name of another one, or of the system. The compositor knows the name of the connection, and only that name labels a card.
+- **The grant to act for the principal for each notifier.** It is a far wider authority than a card in the corner of the screen.
 - **Rounded tiles and round buttons.** The look of the desktop is rectangles, bevels and lines of light (`docs/DESIGN.md`).
 
 ## Subtle points
@@ -55,4 +64,4 @@ An off tile is sunk in the card: `recess`, a border of `track`, a line of `shado
 
 ## State
 
-Built: the three buttons, the three cards, the history of the notifications, the keys, the export `tray_widget_open`. Left: a vertical bar.
+Built: the three buttons, the three cards, the history of the notifications, the keys, the exports `tray_widget_open` and `notify` with the label and the bound of a caller. Left: a vertical bar.

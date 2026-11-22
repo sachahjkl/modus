@@ -9,6 +9,16 @@ MAX_TITLE_BYTES :: 96
 MAX_BODY_BYTES :: 256
 MAX_ACTIONS :: 3
 MAX_ACTION_LABEL_BYTES :: 32
+// The label of a card: the process name of a caller that does not act for
+// the principal, as the root service names the connection.
+MAX_LABEL_BYTES :: 32
+// The cards that one labelled source shows at once: a process cannot fill
+// the corner of the screen (src/md/features/tray_widgets.md, "The export
+// notify").
+CARDS_PER_SOURCE_LIMIT :: 3
+// The source of the cards of the principal. A labelled source never has
+// this number: source_of_caller_name sets the top bit.
+PRINCIPAL_SOURCE :: u64(1)
 
 Urgency :: enum u8 {
 	Low      = 1,
@@ -30,6 +40,8 @@ Notification_Refusal :: enum u8 {
 	Suppressed    = 6,
 	Queue_Full    = 7,
 	Not_Found     = 8,
+	Label_Too_Long = 9, // The label passes MAX_LABEL_BYTES.
+	Source_Full   = 10, // The source shows its bound of cards already.
 }
 
 Notification :: struct {
@@ -46,6 +58,8 @@ Notification :: struct {
 	action_count: u8,
 	actions:      [MAX_ACTIONS][MAX_ACTION_LABEL_BYTES]u8,
 	action_lens:  [MAX_ACTIONS]u8,
+	label:        [MAX_LABEL_BYTES]u8, // The process name of the caller, or empty for the principal.
+	label_len:    u8,
 }
 
 Notification_Queue :: struct {
@@ -64,6 +78,32 @@ queue_init :: proc "contextless" (q: ^Notification_Queue, min_interval_ms: u64 =
 	q^ = {next_id = 1, min_interval_ms = min_interval_ms}
 }
 
+// source_of_caller_name gives the source of the cards of a caller by its
+// process name: the 64-bit FNV-1a hash of the name with the top bit set, so
+// it is never PRINCIPAL_SOURCE.
+source_of_caller_name :: proc "contextless" (name: string) -> u64 {
+	hash: u64 = 0xCBF2_9CE4_8422_2325
+	for index in 0 ..< len(name) {
+		hash = (hash ~ u64(name[index])) * 0x0000_0100_0000_01B3
+	}
+	return hash | (u64(1) << 63)
+}
+
+// source_card_count gives the active cards of a source.
+source_card_count :: proc "contextless" (q: ^Notification_Queue, source_id: u64) -> int {
+	if q == nil {
+		return 0
+	}
+	count := 0
+	for &it in q.items {
+		count += it.active && it.source_id == source_id ? 1 : 0
+	}
+	return count
+}
+
+// queue_post adds a card. A label names the caller on the card; a
+// cards_limit above 0 bounds the active cards of the source. Each refusal
+// changes nothing, the rate of the source too.
 queue_post :: proc "contextless" (
 	q: ^Notification_Queue,
 	source_id: u64,
@@ -72,6 +112,8 @@ queue_post :: proc "contextless" (
 	ttl_ms: u64,
 	title: []u8,
 	body: []u8,
+	label: []u8 = nil,
+	cards_limit := 0,
 ) -> (id: u64, refusal: Notification_Refusal) {
 	if q == nil {
 		return 0, .Nil_Queue
@@ -85,8 +127,14 @@ queue_post :: proc "contextless" (
 	if len(body) > MAX_BODY_BYTES {
 		return 0, .Body_Too_Long
 	}
+	if len(label) > MAX_LABEL_BYTES {
+		return 0, .Label_Too_Long
+	}
 	if q.do_not_disturb && urgency != .Critical {
 		return 0, .Suppressed
+	}
+	if cards_limit > 0 && source_card_count(q, source_id) >= cards_limit {
+		return 0, .Source_Full
 	}
 	// Rate-limit non-critical notifications per source_id.
 	if urgency != .Critical && q.min_interval_ms > 0 {
@@ -119,9 +167,11 @@ queue_post :: proc "contextless" (
 		expire_ms  = ttl_ms > 0 ? now_ms + ttl_ms : 0,
 		title_len  = u16(len(title)),
 		body_len   = u16(len(body)),
+		label_len  = u8(len(label)),
 	}
 	copy(it.title[:], title)
 	copy(it.body[:], body)
+	copy(it.label[:], label)
 	return assigned, .None
 }
 

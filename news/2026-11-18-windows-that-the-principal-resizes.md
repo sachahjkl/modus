@@ -1,7 +1,7 @@
 title: A window takes the size that the principal drags
 date: 2026-11-18
 release: next
-picture: docs/screenshots/clock_resized.png
+picture: docs/screenshots/time_page_resized.png
 kind: Shown
 guide: docs/DESIGN.md
 

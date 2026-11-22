@@ -104,7 +104,7 @@ Demonstration_Text :: struct {
 DEMONSTRATION_TEXTS := [?]Demonstration_Texts {
 	{"address_space", {{"verdict", "as expected"}, {"refusal_name", "a range outside the object"}, {"case_name", "a holder's stop with an outcome and a stop of itself with no outcome are refused, and nothing stops"}, {"waiter", "did not wake"}, {"stop_verdict", "was not refused with No_Right"}, {"target", "this process"}, {"budget_after_decommit", "not the same"}, {"neighbour_page", "stayed right"}, {"problem", "a decommit of more than the page limit of one call was not refused with its record"}}},
 	{"budget", {{"step", "close the new budget, keep the memory"}, {"answer", "0123456789012345678901234567890123456789"}}},
-	{"clock", {{"cause", "a least size is below the least size of a resizable surface"}, {"removal", "does not refuse"}}},
+	{"time_page", {{"cause", "a least size is below the least size of a resizable surface"}, {"removal", "does not refuse"}}},
 	{"counters", {{"step", "Read_Counters gave Unsupported and Start_Counters"}, {"refused_step", "Start_Counters with a copy of the machine handle with no right"}, {"measure", "the reads in order"}}},
 	{"crowd", {{"queue", "queue with a lock"}}},
 	{"cryptography_vectors", {{"verdict", "FAILED"}, {"primitive", "Ed25519 verify, 32 bytes"}, {"standard", "RFC 8032 7.1 test 1"}, {"refusal", "; a bad input is refused with no byte given"}}},
@@ -208,19 +208,19 @@ the_facts_of_address_space_write_the_lines_of_before :: proc(t: ^testing.T) {
 	facts_expect_line(t, render(t, file, "Demonstration_Wrong", {{"problem", problem}}), line_of_before("address_space: wrong: ", problem))
 }
 
-// Each fact type of budget, clock, crowd, cryptography_vectors, flow,
+// Each fact type of budget, time_page, crowd, cryptography_vectors, flow,
 // frames and hall_of_fame writes the line of before: the counts 0, 1 and
 // max(u64), and each text of a closed set.
 @(test)
 the_facts_of_the_small_demonstrations_write_the_lines_of_before :: proc(t: ^testing.T) {
 	budget, budget_ok := demonstration_file(t, "budget")
-	clock, clock_ok := demonstration_file(t, "clock")
+	time_page, time_page_ok := demonstration_file(t, "time_page")
 	crowd, crowd_ok := demonstration_file(t, "crowd")
 	vectors, vectors_ok := demonstration_file(t, "cryptography_vectors")
 	flow, flow_ok := demonstration_file(t, "flow")
 	frames, frames_ok := demonstration_file(t, "frames")
 	hall, hall_ok := demonstration_file(t, "hall_of_fame")
-	if !budget_ok || !clock_ok || !crowd_ok || !vectors_ok || !flow_ok || !frames_ok || !hall_ok {
+	if !budget_ok || !time_page_ok || !crowd_ok || !vectors_ok || !flow_ok || !frames_ok || !hall_ok {
 		return
 	}
 	for count in DEMONSTRATION_COUNTS {
@@ -229,12 +229,12 @@ the_facts_of_the_small_demonstrations_write_the_lines_of_before :: proc(t: ^test
 		facts_expect_line(t, fact_test_render(t, budget, "budget", "Wrong_Answer", {{"pages", count}, {"step", "close the new budget, keep the memory"}, {"answer", budget_answer}}), line_of_before("budget: wrong answer: ", "close the new budget, keep the memory", ": ", budget_answer, ", ", count, " pages"))
 		facts_expect_line(t, fact_test_render(t, budget, "budget", "Budget_Held", {{"memory_objects", count}, {"threads", other}}), line_of_before("budget: ok, ", count, " memory objects then no budget, ", other, " threads then no budget, each page returned"))
 
-		facts_expect_line(t, fact_test_render(t, clock, "clock", "Time_Page_Measured", {{"reads_in_one_second", count}, {"kernel_entries", other}}), line_of_before("clock: the time page: ", count, " reads in one second, ", other, " kernel entries for one million reads"))
-		facts_expect_line(t, fact_test_render(t, clock, "clock", "Kernel_Entry_Measured", {{"reads_in_one_second", other}, {"kernel_entries", count}}), line_of_before("clock: a kernel entry: ", other, " reads in one second, ", count, " kernel entries for one million reads"))
-		facts_expect_line(t, fact_test_render(t, clock, "clock", "Time_Page_Checked", {{"reads", count}, {"kernel_entries", other}}), line_of_before("clock: the check of the time page: ", count, " reads, ", other, " kernel entries"))
-		facts_expect_line(t, fact_test_render(t, clock, "clock", "Kernel_Entry_Checked", {{"reads", other}, {"kernel_entries", count}}), line_of_before("clock: the check of a kernel entry: ", other, " reads, ", count, " kernel entries"))
-		facts_expect_line(t, fact_test_render(t, clock, "clock", "Page_And_Kernel_Entry", {{"outside", count}, {"apart_most", other}}), line_of_before("clock: the time page and a kernel entry: in 1000 pairs of reads of the page with an entry between them, the entry was outside the two reads ", count, " times; the two reads were at most ", other, " ms apart (a measure)"))
-		facts_expect_line(t, fact_test_render(t, clock, "clock", "Page_And_Cycle_Counter", {{"compared", count}, {"least_behind", other}, {"most_behind", count}, {"most_ahead", other}}), line_of_before("clock: the time page and the cycle counter: in ", count, " reads the page was ", other, " to ", count, " ms behind and at most ", other, " ms ahead"))
+		facts_expect_line(t, fact_test_render(t, time_page, "time_page", "Time_Page_Measured", {{"reads_in_one_second", count}, {"kernel_entries", other}}), line_of_before("time_page: the time page: ", count, " reads in one second, ", other, " kernel entries for one million reads"))
+		facts_expect_line(t, fact_test_render(t, time_page, "time_page", "Kernel_Entry_Measured", {{"reads_in_one_second", other}, {"kernel_entries", count}}), line_of_before("time_page: a kernel entry: ", other, " reads in one second, ", count, " kernel entries for one million reads"))
+		facts_expect_line(t, fact_test_render(t, time_page, "time_page", "Time_Page_Checked", {{"reads", count}, {"kernel_entries", other}}), line_of_before("time_page: the check of the time page: ", count, " reads, ", other, " kernel entries"))
+		facts_expect_line(t, fact_test_render(t, time_page, "time_page", "Kernel_Entry_Checked", {{"reads", other}, {"kernel_entries", count}}), line_of_before("time_page: the check of a kernel entry: ", other, " reads, ", count, " kernel entries"))
+		facts_expect_line(t, fact_test_render(t, time_page, "time_page", "Page_And_Kernel_Entry", {{"outside", count}, {"apart_most", other}}), line_of_before("time_page: the time page and a kernel entry: in 1000 pairs of reads of the page with an entry between them, the entry was outside the two reads ", count, " times; the two reads were at most ", other, " ms apart (a measure)"))
+		facts_expect_line(t, fact_test_render(t, time_page, "time_page", "Page_And_Cycle_Counter", {{"compared", count}, {"least_behind", other}, {"most_behind", count}, {"most_ahead", other}}), line_of_before("time_page: the time page and the cycle counter: in ", count, " reads the page was ", other, " to ", count, " ms behind and at most ", other, " ms ahead"))
 
 		for queue in ([2]string{"shared queue", "queue with a lock"}) {
 			facts_expect_line(t, fact_test_render(t, crowd, "crowd", "Run_Measured", {{"writers", u64(3)}, {"readers", u64(1)}, {"records_in_one_second", count}, {"kernel_entries", other}, {"written_records", count}, {"read_records", other}, {"wrong_records", count}, {"queue", queue}}), line_of_before("crowd: ", queue, ", ", u64(3), " writers, ", u64(1), " readers: ", count, " records in one second, ", other, " kernel entries for one million records, ", count, " written, ", other, " read, ", count, " wrong"))
@@ -265,7 +265,7 @@ the_facts_of_the_small_demonstrations_write_the_lines_of_before :: proc(t: ^test
 	}
 	causes := [2]string{"a least size is below the least size of a resizable surface", "the command ring of the window is full"}
 	for cause in causes {
-		facts_expect_line(t, fact_test_render(t, clock, "clock", "Window_Stays_Fixed", {{"cause", cause}}), line_of_before("clock: the window stays fixed: ", cause))
+		facts_expect_line(t, fact_test_render(t, time_page, "time_page", "Window_Stays_Fixed", {{"cause", cause}}), line_of_before("time_page: the window stays fixed: ", cause))
 	}
 	refusals := [3]string{"; a bad input is refused with no byte given", "; a bad input was NOT refused", ""}
 	for verdict in ([2]string{"passed", "FAILED"}) {
@@ -677,7 +677,7 @@ the_facts_with_no_field_write_the_lines_of_before :: proc(t: ^testing.T) {
 		{"address_space", "address_space", "Own_Handle_Child_Without_Handle", "address_space: the child of its own handle got no handle"},
 		{"address_space", "address_space", "Refused_Stop_Stopped_Child", "address_space: WRONG: a refused Process_Stop stopped the child"},
 		{"address_space", "address_space", "Neighbour_Page_Not_Mapped", "address_space: page tables: the page of the other thread: no mapping: WRONG"},
-		{"clock", "clock", "Clock_Held", "clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page"},
+		{"time_page", "time_page", "Clock_Held", "time_page: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page"},
 		{"counters", "counters", "Start_Without_Right_Refused", "counters: Start_Counters with a copy of the machine handle with no right gave No_Right: as it must"},
 		{"counters", "counters", "Counters_Unsupported", "counters: Read_Counters and Start_Counters gave Bad_Operation with the error kind Unsupported: the processors of this machine have no counters that the kernel uses: as it must"},
 		{"counters", "counters", "Read_Before_Start_Refused", "counters: Read_Counters before Start_Counters gave Bad_State: as it must"},
@@ -849,27 +849,27 @@ the_facts_of_address_space_of_the_second_round_write_their_lines :: proc(t: ^tes
 	}
 }
 
-// Each fact type of clock, cryptography_vectors, debugged and disk of the
+// Each fact type of time_page, cryptography_vectors, debugged and disk of the
 // second round writes its line: the times as microseconds with one decimal
 // at their edges, the head of a hash, each address of these tests, the
 // status words, and each error record of these tests.
 @(test)
-the_facts_of_clock_debugged_and_disk_of_the_second_round_write_their_lines :: proc(t: ^testing.T) {
-	clock, clock_ok := demonstration_file(t, "clock")
+the_facts_of_time_page_debugged_and_disk_of_the_second_round_write_their_lines :: proc(t: ^testing.T) {
+	time_page, time_page_ok := demonstration_file(t, "time_page")
 	vectors, vectors_ok := demonstration_file(t, "cryptography_vectors")
 	debugged, debugged_ok := demonstration_file(t, "debugged")
 	disk, disk_ok := demonstration_file(t, "disk")
-	if !clock_ok || !vectors_ok || !debugged_ok || !disk_ok {
+	if !time_page_ok || !vectors_ok || !debugged_ok || !disk_ok {
 		return
 	}
 	times := [4]u64{0, 999, 812_499, max(u64)}
 	for time in times {
-		facts_expect_line(t, fact_test_render(t, clock, "clock", "Picture_Measured", {{"picture_time", time}}), line_of_before("clock: the window drew one picture in ", microseconds_text(time), ", the mean of 10"))
-		facts_expect_line(t, fact_test_render(t, clock, "clock", "Interface_Measured", {{"records", u64(1)}, {"damage_rectangles", max(u64)}, {"build_time", time}, {"difference_time", time}, {"draw_time", time}}), line_of_before("clock: the interface: ", u64(1), " records, ", max(u64), " damage rectangles; build ", microseconds_text(time), ", difference ", microseconds_text(time), ", draw ", microseconds_text(time)))
+		facts_expect_line(t, fact_test_render(t, time_page, "time_page", "Picture_Measured", {{"picture_time", time}}), line_of_before("time_page: the window drew one picture in ", microseconds_text(time), ", the mean of 10"))
+		facts_expect_line(t, fact_test_render(t, time_page, "time_page", "Interface_Measured", {{"records", u64(1)}, {"damage_rectangles", max(u64)}, {"build_time", time}, {"difference_time", time}, {"draw_time", time}}), line_of_before("time_page: the interface: ", u64(1), " records, ", max(u64), " damage rectangles; build ", microseconds_text(time), ", difference ", microseconds_text(time), ", draw ", microseconds_text(time)))
 	}
 	for count in DEMONSTRATION_COUNTS {
 		for removal in ([2]string{"refuses", "does not refuse"}) {
-			facts_expect_line(t, fact_test_render(t, clock, "clock", "Time_Wrong", {{"went_back", count}, {"outside", count}, {"page_changes", count}, {"least_behind", count}, {"most_ahead", count}, {"removal", removal}}), line_of_before("clock: wrong: the time went back ", count, " times, a kernel entry was outside two reads of the page ", count, " times, the page changed ", count, " times and is at least ", count, " ms behind and ", count, " ms ahead of the cycle counter, the kernel ", removal, " to remove the time page"))
+			facts_expect_line(t, fact_test_render(t, time_page, "time_page", "Time_Wrong", {{"went_back", count}, {"outside", count}, {"page_changes", count}, {"least_behind", count}, {"most_ahead", count}, {"removal", removal}}), line_of_before("time_page: wrong: the time went back ", count, " times, a kernel entry was outside two reads of the page ", count, " times, the page changed ", count, " times and is at least ", count, " ms behind and ", count, " ms ahead of the cycle counter, the kernel ", removal, " to remove the time page"))
 		}
 	}
 

@@ -72,7 +72,7 @@ measure_process_steps_wait_for_the_lines :: proc(t: ^testing.T) {
 		testing.expect_value(t, at, last_wait)
 		testing.expect_value(t, steps[len(steps) - 1].text, "kernel: the machine stops with code 0")
 	}
-	_, found := measure_process_find("clock")
+	_, found := measure_process_find("time_page")
 	testing.expect(t, found)
 	_, found = measure_process_find("log_reader")
 	testing.expect(t, found)

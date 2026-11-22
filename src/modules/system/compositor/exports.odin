@@ -4,6 +4,7 @@ import "internal:compositor/bar"
 import "modus:contract/desktop_shell"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import "modus:contract/notifications"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/pointer_pictures"
 import "modus:contract/ring"
@@ -339,20 +340,48 @@ screen_state :: proc "c" (result: ^[]Screen, error: ^errors.Error_Record) -> i64
 // corner below the bar and returns its assigned notification identifier, or a
 // negative number with an error record.
 //
-// **Grant**: the caller must **act for the principal**.
+// A caller that acts for the principal posts as the principal. Any other
+// caller posts under its own process name, which the card shows before the
+// title, and holds at most 3 cards at once
+// (src/md/features/tray_widgets.md, "The export notify").
+//
+// The error kinds: Empty (an empty title), Full (the caller shows 3 cards
+// already: unit Requests, its limit and the count found), Bad_Value (a title,
+// a body or a name too long, a post within 500 ms of the last one of the
+// caller, or the notifications off).
+//
+// **Grant**: a connection to the compositor.
 @(export, link_name = "notify")
 notify_export :: proc "c" (title: ^string, body: ^string, error: ^errors.Error_Record) -> i64 {
-	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
-	}
 	if len(title^) == 0 {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
 	}
-	id := desktop_notification_post(1, .Normal, system.time(), transmute([]u8)(title^), transmute([]u8)(body^))
-	if id == 0 {
+	source := notifications.PRINCIPAL_SOURCE
+	label: []u8
+	cards_limit := 0
+	if !acts_for_principal() {
+		// The name of the connection, as the root service gave it: never
+		// a text of the caller.
+		caller := system.service_caller()
+		name := system.name_of(caller.caller[:])
+		source = notifications.source_of_caller_name(name)
+		label = transmute([]u8)name
+		cards_limit = notifications.CARDS_PER_SOURCE_LIMIT
+	}
+	id, refusal := desktop_notification_post(source, .Normal, system.time(), transmute([]u8)(title^), transmute([]u8)(body^), label, cards_limit)
+	switch refusal {
+	case .None:
+		return i64(id)
+	case .Source_Full:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Full, .Requests, 0, 0, notifications.CARDS_PER_SOURCE_LIMIT, i64(notifications.source_card_count(&desktop_notifications, source)))
+	case .Empty_Title:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
+	case .Body_Too_Long:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, 2, i64(len(body^)), notifications.MAX_BODY_BYTES)
+	case .Nil_Queue, .Title_Too_Long, .Rate_Limited, .Suppressed, .Queue_Full, .Not_Found, .Label_Too_Long:
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, 1)
 	}
-	return i64(id)
+	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, 1)
 }
 
 // magnifier sets the desktop viewport magnifier zoom factor in eighths

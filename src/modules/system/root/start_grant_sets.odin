@@ -132,7 +132,12 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// It reads the kernel entries of the process for its measures.
 	{name = "crowd", grants = {.Inspect}},
 	// It reads the kernel entries of the process for its measures.
-	{name = "clock", grants = {.Inspect}},
+	{name = "time_page", grants = {.Inspect}},
+	// The clock of the desktop: a connection to the compositor only, for
+	// the notification at the end of its timer, and the boot image for the
+	// description of the exports of the compositor
+	// (src/md/features/clock_application.md, "The grants").
+	{name = "clock", grants = {.Connect, .Image}, terms = {callable = {0 = "compositor"}}},
 	// It shows what the kernel refuses.
 	{name = "rights", grants = {.Inspect, .Image}},
 	// It reads the pointer themes in the resource table of the boot image.
@@ -186,8 +191,10 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// four processes of its case of the shares from the boot image, and
 	// serves strategy_set(), share() and policy() to the console.
 	{name = "scheduler", grants = {.Inspect, .Schedule, .Image, .Serve}},
-	// A service: the console calls its exports through a connection.
-	{name = "paint", grants = {.Serve}},
+	// A service: the console calls its exports through a connection. Its
+	// private store keeps the pictures that the principal saves
+	// (src/md/features/paint_application.md).
+	{name = "paint", grants = {.Serve, .Store}, terms = {store_blocks = 12000}},
 	// A service: the console calls its exports through a connection.
 	{name = "life", grants = {.Serve}},
 	// A service: the console calls its exports through a connection.

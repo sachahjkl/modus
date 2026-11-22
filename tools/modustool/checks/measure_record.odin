@@ -477,7 +477,7 @@ TEST_OUTPUT :: foundation.BUILD_FOLDER + "/test_output.txt"
 TEST_OUTPUT_MEASURE :: foundation.BUILD_FOLDER + "/test_output_measure.txt"
 
 // The logs of the measure runs whose lines the measure record holds.
-TEST_OUTPUT_MEASURE_CLOCK :: foundation.BUILD_FOLDER + "/test_output_measure_clock.txt"
+TEST_OUTPUT_MEASURE_TIME_PAGE :: foundation.BUILD_FOLDER + "/test_output_measure_time_page.txt"
 
 TEST_OUTPUT_MEASURE_DISK :: foundation.BUILD_FOLDER + "/test_output_measure_disk.txt"
 
@@ -545,7 +545,7 @@ COMPOSITOR_FULL_FRAME :: "compositor: a full frame of 1920x1080 "
 
 measure_entries := [?]Measure_Entry {
 	{sentence = "Kernel entries in one second, with 1, 2 and 4 processes that each take the locks of their own objects", files = {TEST_OUTPUT_MEASURE, ""}, pattern = "locks: kernel entries in one second", choice = .First, accent = graphics.DARK_KERNEL, place = .Numbers, required = true, reading = "Each locker is a process that enters the kernel again and again and takes only the locks of its own objects, so no two lockers wait for one lock. A count that grows with the lockers shows that the kernel serves several processors at once. It does not say what happens when processes share one object."},
-	{sentence = "Reads of the time in one second from the time page, with no kernel entry", files = {TEST_OUTPUT_MEASURE_CLOCK, ""}, pattern = "clock: the time page:", choice = .First, accent = graphics.DARK_KERNEL, place = .Numbers, required = true, reading = "A process reads the time from a page that the kernel keeps up to date. The part that matters is the second one: **0 kernel entries for one million reads**, so the time costs a read of memory. The count of reads follows the speed of the host processor."},
+	{sentence = "Reads of the time in one second from the time page, with no kernel entry", files = {TEST_OUTPUT_MEASURE_TIME_PAGE, ""}, pattern = "time_page: the time page:", choice = .First, accent = graphics.DARK_KERNEL, place = .Numbers, required = true, reading = "A process reads the time from a page that the kernel keeps up to date. The part that matters is the second one: **0 kernel entries for one million reads**, so the time costs a read of memory. The count of reads follows the speed of the host processor."},
 	{sentence = "Wakes in one second of two threads that wake each other on a busy machine, under the strategy EEVDF", files = {TEST_OUTPUT_MEASURE_SCHEDULER, ""}, pattern = "scheduler: EEVDF: two threads that wake each other", choice = .First, accent = graphics.DARK_KERNEL, place = .Numbers, required = true, reading = "Two threads wake each other while a spinner keeps each processor busy: the count is their wakes in one second. The same line gives how late a thread that sleeps 2 ms wakes among spinners; the next line gives the share of the processor of each spinner of one weight. It shows the scheduler under load; it compares no other strategy."},
 	{sentence = "One glyph of the vector font, from its outline and from the glyph cache", files = {TEST_OUTPUT, ""}, pattern = "vector_glyphs: one glyph from its outline", choice = .First, accent = graphics.DARK_PROCESS, place = .Numbers, required = true, reading = "The time to draw one glyph of the vector font from its outline at three scales, the time to copy it from the private glyph cache of the process, and the time of one glyph of the bitmap font. A process draws each glyph from its outline once, then copies it at each frame."},
 	{sentence = "The handles and the mappings of the root service in the main test, after the stop of the asker of the record outputs", files = {TEST_OUTPUT, ""}, pattern = ROOT_TABLES_AFTER_THE_ASKER, choice = .Last, accent = graphics.DARK_KERNEL, place = .Numbers, required = false, reading = "The root service holds handles for each process that it starts and for each service of the system, in a table of 128, as each process. It writes this line after the stop of `output_wiring`, whose wirings, list page and budget handle end with it: the handles that stay are those of the processes of the run and of the system. The second number is the parts of the table of prepared modules among them: a cache that gives its handles back, the parts used least recently first, when a start or a wiring needs the room. The kernel gives no peak, so the line is the count at that point only (src/md/features/module_outputs.md, \"The budget\")."},
@@ -583,7 +583,7 @@ Measure_Output_File :: struct {
 
 measure_output_files := [?]Measure_Output_File {
 	{TEST_OUTPUT_MEASURE, "The machine of `modustool measure`: a measure run, only the desktop and the process that measures run"},
-	{TEST_OUTPUT_MEASURE_CLOCK, "The machine of `modustool measure clock`: a measure run, only the desktop and the process `clock` run"},
+	{TEST_OUTPUT_MEASURE_TIME_PAGE, "The machine of `modustool measure time_page`: a measure run, only the desktop and the process `time_page` run"},
 	{TEST_OUTPUT_MEASURE_DISK, "The machine of `modustool measure disk`: a measure run, only the desktop and the process `disk` run"},
 	{TEST_OUTPUT_MEASURE_SCHEDULER, "The machine of `modustool measure scheduler`: a measure run, only the desktop and the process `scheduler` run"},
 	{TEST_OUTPUT, "The main machine of `modustool test`, while the other processes of the test run"},
