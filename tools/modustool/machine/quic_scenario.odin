@@ -84,3 +84,10 @@ scenario_quic := [?]Step {
 quic_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	return machine_test(part, scenario_quic[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_QUIC, exit_status = build.MACHINE_STOP_OK})
 }
+
+// A binary of the tool runs the test part quic only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+quic_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("quic", quic_tests_run)
+}

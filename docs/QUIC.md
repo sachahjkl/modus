@@ -519,7 +519,7 @@ Before the budgets, each forged Initial cost the 11 exports (about 30 us), with 
 
 ### A stack that this project did not write
 
-**A stack that this project did not write** (`modustool test quic-real`, `tools/modustool/machine/quic_real.odin`). OpenSSL has a QUIC client since 3.2, with raw public keys of a server (`openssl s_client -quic`, `-enable_server_rpk`); the nixpkgs of the flake has OpenSSL 3.6.5, now in the development shell. What the manual and the source of `apps/s_client.c` (tag openssl-3.6.0) say:
+**A stack that this project did not write** (`modustool test quic-real`, `tools/modustool/machine/quic_real.odin`, and its step in `tools/modustool/machine/openssl_quic.odin`). OpenSSL has a QUIC client since 3.2, with raw public keys of a server (`openssl s_client -quic`, `-enable_server_rpk`); the nixpkgs of the flake has OpenSSL 3.6.5, now in the development shell. What the manual and the source of `apps/s_client.c` (tag openssl-3.6.0) say:
 - `-quic` needs `-alpn`.
 - `-enable_server_rpk` offers the server certificate types {raw public key, X.509}; this server accepts a list that has the raw public key.
 - After the handshake, `s_client` prints "Server-to-client raw public key negotiated", then "Server raw public key" and the key (`EVP_PKEY_print_public`).

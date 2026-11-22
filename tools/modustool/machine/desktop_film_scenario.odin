@@ -23,7 +23,7 @@ package machine
 //     "@mon" and Enter bring monitor to the front.
 //
 // The keys and the lines of each scene are those of the main scenario of
-// the machine test (machine.odin): the film shows what the test checks.
+// the machine test (main_scenario.odin): the film shows what the test checks.
 // Each scene waits for its line before its hold, so the film never shows a
 // state that the machine did not reach.
 //

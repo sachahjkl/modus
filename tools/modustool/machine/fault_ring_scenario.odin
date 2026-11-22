@@ -112,3 +112,10 @@ scenario_fault_ring := [?]Step {
 fault_ring_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	return machine_test(part, scenario_fault_ring[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_FAULT_RING, exit_status = build.MACHINE_STOP_OK})
 }
+
+// A binary of the tool runs the test part fault_ring only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+fault_ring_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("fault_ring", fault_ring_tests_run)
+}

@@ -87,3 +87,10 @@ hierarchy_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_test(part, scenario_hierarchy_first[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_HIERARCHY, 1), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_HIERARCHY_DISK}) or_return
 	return machine_test(part, scenario_hierarchy_second[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_HIERARCHY, 2), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_HIERARCHY_DISK})
 }
+
+// A binary of the tool runs the test part hierarchy only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+hierarchy_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("hierarchy", hierarchy_tests_run)
+}

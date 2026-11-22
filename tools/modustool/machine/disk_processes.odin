@@ -697,10 +697,6 @@ disk_processes_nickname_steps :: proc(steps: ^[dynamic]Step, importer_hash: stri
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("[console] %s  %s", foundation.STORE_IMPORTER_MODULE, importer_hash)})
 }
 
-// The machine passphrase of the test. It is a constant of the tool: a test
-// passphrase guards nothing.
-MACHINE_PASSPHRASE :: "a machine of the test"
-
 // disk_processes_store_steps adds the steps of one start of the nickname
 // visitor with no hash and the grant store: the root service takes the
 // hash of the row, and the process finds its count of visits in the store
@@ -714,4 +710,11 @@ disk_processes_store_steps :: proc(steps: ^[dynamic]Step, hash: string, visit: i
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("visitor: the store of its nickname holds the visit %d, read again: as it must", visit)})
 	append(steps, Step{kind = .Type, text = fmt.aprintf("stop(\"%s\")", foundation.DISK_MODULE_NAME)})
 	append(steps, Step{kind = .Wait, text = fmt.aprintf("root: %s stopped: ", foundation.DISK_MODULE_NAME)})
+}
+
+// A binary of the tool runs the test part disk_processes only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+disk_processes_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("disk_processes", disk_processes_tests_run)
 }

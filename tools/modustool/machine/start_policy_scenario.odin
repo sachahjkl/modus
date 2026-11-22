@@ -318,3 +318,10 @@ firmware_variable_read :: proc(name: string) -> (data: string, found: bool) {
 	}
 	return "", false
 }
+
+// A binary of the tool runs the test part start_policy only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+start_policy_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("start_policy", start_policy_tests_run)
+}

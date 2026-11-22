@@ -279,26 +279,48 @@
     # file includes the memory procedures of the system.
     toolSources = inputs.nixpkgs.lib.fileset.unions ([(sourcesOfOdin ./tools/modustool) ./tools/modustool/site/browser_machine.html (sourcesOfOdin ./src/library) (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "asm") ./src/runtime) ./resources/fonts/commit_mono.ttf ./resources/fonts/b612.ttf ./resources/fonts/b612_bold.ttf ./resources/fonts/paper_mono.ttf ./resources/fonts/paper_mono_semibold.ttf] ++ map sourcesOfOdin kernelParts);
 
-    # The tool as a derivation of its own: the check and the release shell
-    # run this binary, and Nix builds it again only when a file of
-    # toolSources changes. It never compiles itself: its sources are the
-    # inputs of the derivation. -show-timings prints the time of each
-    # phase of the compiler in the log of the build, as a measure.
-    modustoolBinary = pkgs.stdenvNoCC.mkDerivation {
-      name = "modustool";
-      src = inputs.nixpkgs.lib.fileset.toSource {
-        root = ./.;
-        fileset = toolSources;
+    # The tool as a derivation of its own, from a set of its sources: Nix
+    # builds it again only when a file of the set changes. It never
+    # compiles itself: its sources are the inputs of the derivation.
+    # -show-timings prints the time of each phase of the compiler in the
+    # log of the build, as a measure.
+    toolBinaryOf = name: fileset:
+      pkgs.stdenvNoCC.mkDerivation {
+        inherit name;
+        src = inputs.nixpkgs.lib.fileset.toSource {
+          root = ./.;
+          inherit fileset;
+        };
+        nativeBuildInputs = [odin pkgs.nasm];
+        buildPhase = ''
+          export HOME=$TMPDIR
+          odin build tools/modustool -vet -collection:modus=src/library/modus -collection:internal=src/library/internal -collection:modulus=src/modulus -collection:modustool=tools/modustool -custom-attribute:log_fact,enum_getters,optional_parameters,member_texts -define:TOOL_BUILDS_ITSELF=false -show-timings -out:modustool
+        '';
+        installPhase = ''
+          install -D modustool $out/bin/modustool
+        '';
       };
-      nativeBuildInputs = [odin pkgs.nasm];
-      buildPhase = ''
-        export HOME=$TMPDIR
-        odin build tools/modustool -vet -collection:modus=src/library/modus -collection:internal=src/library/internal -collection:modulus=src/modulus -collection:modustool=tools/modustool -custom-attribute:log_fact,enum_getters,optional_parameters,member_texts -define:TOOL_BUILDS_ITSELF=false -show-timings -out:modustool
-      '';
-      installPhase = ''
-        install -D modustool $out/bin/modustool
-      '';
-    };
+
+    # The whole tool: the check, the release shell and the package run it.
+    modustoolBinary = toolBinaryOf "modustool" toolSources;
+
+    # The files of the scenario of each test part, by their names in the
+    # folder of the machine test (tools/modustool/machine/test_part_files.json).
+    # A file that no part names is of the core of the tool.
+    machineToolFolder = ./tools/modustool/machine;
+    testPartFiles = builtins.fromJSON (builtins.readFile ./tools/modustool/machine/test_part_files.json);
+    partFilesOf = names: map (name: machineToolFolder + "/${name}") names;
+    everyPartFile = partFilesOf (inputs.nixpkgs.lib.unique (builtins.concatLists (builtins.attrValues testPartFiles)));
+    toolCoreSources = inputs.nixpkgs.lib.fileset.difference toolSources (inputs.nixpkgs.lib.fileset.unions everyPartFile);
+
+    # The binary of the tool of one test part: the core and the files of that
+    # part alone. A part registers its run from its own files, so the binary
+    # runs that part only, and a change of the scenario of one part builds
+    # the binary of that part only
+    # (src/md/infrastructure/full_check.md, "A binary of the tool for each part").
+    partToolBinaries = builtins.mapAttrs (part: names:
+      toolBinaryOf "modustool-part-${part}" (inputs.nixpkgs.lib.fileset.unions ([toolCoreSources] ++ partFilesOf names)))
+    testPartFiles;
 
     # The check `boot-test` is the join of several derivations, so that Nix
     # runs again only what a change reaches: a whole build that gives the
@@ -369,14 +391,16 @@
     };
 
     # One derivation for each test part: the part alone, on the test inputs,
-    # with no build. The tool needs the mark of the root of the repository,
-    # flake.nix, which the part does not read: an empty file stands for it,
-    # so a change of the flake file runs no part again.
+    # with no build, with the binary of the tool of that part. The tool needs
+    # the mark of the root of the repository, flake.nix, which the part does
+    # not read: an empty file stands for it, so a change of the flake file
+    # runs no part again. A part that the manifest of the scenario files
+    # does not name stops the evaluation here, with its name.
     machineTestPart = part:
       pkgs.stdenvNoCC.mkDerivation ({
           name = "machine-test-${part}";
           src = partSources;
-          nativeBuildInputs = buildTools ++ [modustoolBinary];
+          nativeBuildInputs = buildTools ++ [partToolBinaries.${part}];
           # /dev/kvm in the sandbox. Without it QEMU falls back to TCG, which
           # takes every register write: the self test of a refused register
           # then fails, and the thread counters have nothing to try
@@ -459,6 +483,9 @@
       passthru = {
         partOutputs = lib.mapAttrs (_: partCheck: partCheck.outPath) testParts;
         partDerivations = lib.mapAttrs (_: partCheck: partCheck.drvPath) testParts;
+        # The binary of the tool of each part. Its evaluation builds nothing:
+        # `modustool part_cache` compares these without a whole build.
+        partToolDerivations = lib.mapAttrs (_: binary: binary.drvPath) partToolBinaries;
         systemBuildDerivation = systemBuild.drvPath;
         # `modustool failed_parts` lists the host checks beside the parts.
         hostChecksOutput = hostChecks.outPath;

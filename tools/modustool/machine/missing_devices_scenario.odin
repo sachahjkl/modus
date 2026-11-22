@@ -119,3 +119,10 @@ missing_devices_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	foundation.test_passed_print("%s", "an entropy device that never answers: its reads passed their deadline and counted as refused, and a process started after it")
 	return true
 }
+
+// A binary of the tool runs the test part missing_devices only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+missing_devices_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("missing_devices", missing_devices_tests_run)
+}

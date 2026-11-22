@@ -101,3 +101,10 @@ scenario_random_without_the_processor := [?]Step {
 random_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	return machine_test(part, scenario_random_with_the_processor[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_RANDOM, exit_status = build.MACHINE_STOP_OK, entropy_device = true}) && machine_test(part, scenario_random_restart[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_RANDOM, exit_status = build.MACHINE_STOP_OK}) && machine_test(part, scenario_random_without_the_processor[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_RANDOM, exit_status = build.MACHINE_STOP_OK, processor = .Without_Random})
 }
+
+// A binary of the tool runs the test part random only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+random_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("random", random_tests_run)
+}

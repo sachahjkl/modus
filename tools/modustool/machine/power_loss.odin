@@ -16,6 +16,10 @@ import "modustool:foundation"
 import "modustool:build"
 import "modustool:fuzz"
 
+power_tests_run :: proc(part: ^Test_Part_Run) -> bool {
+	return power_loss_run(part) && power_loss_settings_run(part) && power_loss_ranges_run(part) && dropped_write_run(part) && silent_disk_run(part)
+}
+
 // The loss of power: a stop of the machine never shows a part of a commit.
 // The tool serves the data disk itself (network_block_device.odin), so it
 // knows each write that a flush made durable, and each write after the
@@ -42,7 +46,6 @@ import "modustool:fuzz"
 // Then one machine starts on a hard image (the writes after the last flush
 // lost, and the write of the root torn) and `notes` finds its note.
 
-POWER_LOSS_SEED :: 20261111 // The moment of the loss and the random subsets: one seed, printed.
 POWER_LOSS_RANDOM_SUBSETS :: 300
 SECTOR_SIZE :: 512
 TEST_POWER_LOSS_DISK :: foundation.BUILD_FOLDER + "/test_power_loss_disk.img"
@@ -346,10 +349,6 @@ hard_image :: proc(durable: []u8, pending: []Pending_Write) -> (image: []u8, tor
 	return image, false
 }
 
-// The writes of a root after the count of a step Power_Loss_Arm, before the
-// cut: 1 to this, from the seed.
-POWER_LOSS_SEEDED_ROOTS :: 40
-
 // The first machine of each loss: a new disk, a note, then the count. The
 // disk loses its power in the middle of the count, at a commit that it
 // counts itself from before the key Tab: the process makes no other commit
@@ -608,16 +607,6 @@ scenario_power_loss_ranges := [?]Step {
 // LOOP_MARKER): no other block of the disk starts with them.
 RANGES_LOOP_MARKER :: "ranges: the first commit of the loop of range commits"
 
-// stored_object_of gives an object of the contents of an image, or nil.
-stored_object_of :: proc(contents: ^fuzz.Disk_Contents, store: string, name: string) -> ^fuzz.Stored_Object {
-	for &item in contents.objects {
-		if item.store == store && item.name == name {
-			return &item
-		}
-	}
-	return nil
-}
-
 power_loss_ranges_run :: proc(part: ^Test_Part_Run) -> bool {
 	fresh := make([]u8, build.DATA_DISK_SIZE)
 	defer delete(fresh)
@@ -703,4 +692,11 @@ power_loss_ranges_run :: proc(part: ^Test_Part_Run) -> bool {
 	append(&second, Step{kind = .Wait, text = "ranges: done, 0 wrong"})
 	append(&second, Step{kind = .Quit})
 	return machine_test(part, second[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_POWER_LOSS, 6), exit_status = 0, data_disk = TEST_POWER_LOSS_DISK})
+}
+
+// A binary of the tool runs the test part power only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+power_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("power", power_tests_run)
 }

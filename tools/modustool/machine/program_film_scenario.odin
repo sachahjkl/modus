@@ -22,7 +22,7 @@ package machine
 //  5. stop("plasma"): the process stops and its window closes.
 //
 // The lines and the waits are those of the main scenario of the machine
-// test (machine.odin): the film shows what the test checks.
+// test (main_scenario.odin): the film shows what the test checks.
 @(rodata)
 scenario_program_film := [?]Step {
 	// The boot. The processes write in an order that the system does not fix.

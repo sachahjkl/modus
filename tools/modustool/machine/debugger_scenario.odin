@@ -424,3 +424,10 @@ debugger_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	commands := machine_test(part, scenario_debugger_commands[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_DEBUGGER_COMMANDS, exit_status = QEMU_QUIT_STATUS})
 	return kernel_contract && commands
 }
+
+// A binary of the tool runs the test part debugger only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+debugger_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("debugger", debugger_tests_run)
+}

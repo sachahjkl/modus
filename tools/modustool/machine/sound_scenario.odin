@@ -21,8 +21,6 @@ import "modustool:checks"
 // counts frames: it reads no time of the host.
 
 TEST_OUTPUT_SOUND :: foundation.BUILD_FOLDER + "/test_output_sound.txt"
-// The wave file of the sound device, beside the log of its machine.
-SOUND_OUTPUT_SUFFIX :: "_sound.wav"
 
 // The line of `tone` that names the frame where the tone played.
 TONE_FRAME_LINE :: "tone: the tone of 440 Hz played from the frame "
@@ -277,4 +275,11 @@ tone_check :: proc(file: []u8, expected_frame: int) -> (check: Tone_Check) {
 		check.problem = .Wrong_Length
 	}
 	return
+}
+
+// A binary of the tool runs the test part sound only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+sound_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("sound", sound_tests_run)
 }

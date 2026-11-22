@@ -7,7 +7,7 @@ The machine test is a list of parts. A part is one or more machines that share a
 - `modustool test <part>` runs one part alone, for the work on it, and builds only the boot volumes of that part.
 - `modustool test` runs every part, several at once, and ends when the last part ends.
 - In the full check, each part is a derivation of the flake of its own, which Nix takes from the store when the bytes of the build and the tool did not change ([full_check.md](full_check.md), "The derivations of the check").
-- A new part is one row. No other place of the tool, of the flake or of the guide names the parts.
+- A new part is one row, its line of the guide, its entry in the manifest of the scenario files, and the registration of its run in its own file. A host test refuses a part that lacks one of them; no other place of the tool or of the flake names the parts.
 
 ## Constraints
 
@@ -19,12 +19,14 @@ The machine test is a list of parts. A part is one or more machines that share a
 
 ## The chosen form
 
-**One table, `test_parts` in `tools/modustool/machine/test_parts.odin`.** A row is a `Test_Part`: its name, the sentence of the guide, its procedure, the procedures whose volumes a host test checks, and its boot volumes. Everything else derives from the rows:
+**One table, `test_parts` in `tools/modustool/machine/test_parts.odin`.** A row is a `Test_Part`: its name, the sentence of the guide, its run procedure, the procedures whose volumes a host test checks, and its boot volumes. Everything else derives from the rows:
 
 - The refusal of `test <word>` lists the names of the rows.
 - `boot_volumes_of_test` gives the volumes of a row; the whole test builds every volume.
 - The whole test is the list of the rows. Each part of the old chain has its row, also the ones that had none: `fails`, `self_tests`, `persist` and `host_modules` (the loader and the descriptions on the host). The test of the debug objects against the linked files left the parts: the linked files are no test inputs, so `check` runs it after its build.
 - The table of the guide, [`docs/TOOLS.md`](../../../docs/TOOLS.md), "The parts of the machine test", is checked line by line against `test_part_guide_row`: the name, the sentence and the short names of the boot volumes. A host test prints the line that it expected, so the guide follows the table.
+
+**The run procedure of a row comes from the files of its part.** The table is of the core of the tool, and its rows name no procedure of a scenario. Each file that holds the run procedure of a part registers it in the row at the start of the process (`test_part_scenario_register`, from an `@(init)` procedure). The binary of the tool of one part holds the core and the files of that part alone, so it holds that run only, and refuses `test` of another part and the whole test with the names of the parts that it lacks. The manifest of these files and the binary of each part are in [full_check.md](full_check.md), "A binary of the tool for each part".
 
 **The run of a part, `Test_Part_Run`.** What the machines of one part share lives in one record, and each machine reaches it through its machine record (`Machine.part`): the data disk of the part, the values of the steps Remember, the texts of the steps Screen_Text, and the times of its machines and steps. A command that starts machines outside the test (`measure`, `film`) makes one run with its own name.
 
@@ -60,6 +62,8 @@ The pool is the path of `modustool test` on a host. The full check does not use 
 ## Refused forms
 
 - **The state in the machine record.** The values that a step Remember keeps are compared by the step Distinct of a later machine of the same part, and a later machine types the screen text that an earlier one read. The record of one machine cannot hold them; the record of the part can.
+- **The run procedure in the row, as before.** The table would then name the procedure of every scenario, so the core would need every scenario file to compile, and a change of one scenario would reach the binary of every part.
+- **The whole row in the file of its part.** The core reads the volumes of every part: `test_inputs` refuses a whole build that lacks the volume of any part, and a part on given test inputs links the volumes of every part in place of a copy. The rows stay in the core; only the run comes from the file of the part.
 - **A thread-local current part.** It hides the dependence of a scenario procedure on its part. A parameter states it, and the compiler checks each call.
 - **One process for each part in `modustool test`.** The tool would start itself again for each part, and the times, the count of the checks and the pictures would cross a process border. Threads share the build that the process made, and the temporary memory of Odin is already of each thread. The full check pays that border once, in `test_join`, because a derivation for each part is what lets Nix keep a part whose inputs did not change.
 - **The longest part split into sections.** The main machine holds about a quarter of the machine time and bounds the whole test. Its scenario in named sections, each a machine, is the next step; it changes the scenario, not the engine.
@@ -88,6 +92,6 @@ The pool is the path of `modustool test` on a host. The full check does not use 
 
 ## State
 
-Built: the table, the derived refusal, volumes and guide check, the run of a part, the files beside the log, the shared boot volume, the names of the pictures, the ports, the pool with its bound by processors and by memory, the share of the host in the line of a failed wait, the run state of QEMU in the processors report, the times of each part, a part on a given build, a step range of one machine of a part, and a derivation of the flake for each part.
+Built: the table, the derived refusal, volumes and guide check, the run of a part, the files beside the log, the shared boot volume, the names of the pictures, the ports, the pool with its bound by processors and by memory, the share of the host in the line of a failed wait, the run state of QEMU in the processors report, the times of each part, a part on a given build, a step range of one machine of a part, and a derivation of the flake for each part, and a binary of the tool for each part, with the run of each row registered by the files of its part.
 
-Left: a way for `nix flake check` to take the bound by memory, which today only `modustool test` and `screenshots` apply; the main scenario in named sections, so that its sections run as parts at once; the host test folders of `modustool check` through the process pool of the build; a binary of the tool for each part, so that a change of the scenario of one part runs that part only ([full_check.md](full_check.md), "State").
+Left: a way for `nix flake check` to take the bound by memory, which today only `modustool test` and `screenshots` apply; the main scenario in named sections, so that its sections run as parts at once; the host test folders of `modustool check` through the process pool of the build.

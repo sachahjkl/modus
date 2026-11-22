@@ -293,3 +293,10 @@ tcp_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	frames_of_the_fetch_report(checks.TEST_OUTPUT_TCP_REAL)
 	return true
 }
+
+// A binary of the tool runs the test part tcp only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+tcp_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("tcp", tcp_tests_run)
+}

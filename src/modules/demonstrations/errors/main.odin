@@ -393,7 +393,7 @@ LOG_LEVEL_NO_MEMBER :: u64(1) << 8
 // A line longer than the text of one log record by construction: the kernel
 // cuts it into two records, and the step Record of the machine test finds
 // the whole line only when it joins the two rows of log.records. The tool
-// waits for the same text (tools/modustool/machine/machine.odin).
+// waits for the same text (tools/modustool/machine/main_scenario.odin).
 JOINED_LINE :: "errors: a line longer than one log record: its words only make it longer than the text of one record, so that the cut between two records falls inside it, and a reader of the log joins two rows to read it whole: as it must"
 #assert(len(JOINED_LINE) > op.LOG_TEXT_CAPACITY)
 #assert(len(JOINED_LINE) <= 2 * op.LOG_TEXT_CAPACITY)

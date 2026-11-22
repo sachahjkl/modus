@@ -633,35 +633,54 @@ test_parts_in_store_count :: proc(evaluation: Flake_Check_Evaluation) -> (in_sto
 	return in_store, to_run
 }
 
-// The changes of the proof of the cache: a line more in an intent file, and
-// a line more in a host test of the tool. Neither is read by a machine.
+// The changes of the proof of the cache: a line more in an intent file, a
+// line more in a host test of the tool, and a line more in the scenario of
+// one part. A machine reads none of them, and the scenario reaches the
+// binary of the tool of its own part only.
 PART_CACHE_FOLDER :: foundation.BUILD_FOLDER + "/part_cache"
 PART_CACHE_DOCUMENT :: "src/md/infrastructure/full_check.md"
 PART_CACHE_HOST_TEST :: "tools/modustool/machine/test_derivations_test.odin"
+PART_CACHE_SCENARIO :: "tools/modustool/machine/debugger_scenario.odin"
+// The part whose files hold PART_CACHE_SCENARIO, and no other part: a host
+// test checks this against the manifest of the scenario files.
+PART_CACHE_SCENARIO_PART :: "debugger"
+
+// The manifest of the scenario files of each part: the flake builds the
+// binary of the tool of a part from the core and from these files of the
+// part (src/md/infrastructure/full_check.md, "A binary of the tool for each part").
+TEST_PART_FILES_MANIFEST :: foundation.TOOL_SOURCE_FOLDER + "/machine/test_part_files.json"
 
 // One tree of the proof of the cache: its folder name, the file that it
-// changes ("" for the tree with no change) and the line that it adds.
+// changes ("" for the tree with no change), the line that it adds, and the
+// one part whose derivation must change ("" when none must).
 Part_Cache_Tree :: struct {
-	name:  string,
-	file:  string,
-	line:  string,
-	what:  string, // What the change is, for the lines of the check.
+	name:         string,
+	file:         string,
+	line:         string,
+	what:         string, // What the change is, for the lines of the check.
+	changed_part: string,
 }
 
 PART_CACHE_TREES :: [?]Part_Cache_Tree {
 	{name = "unchanged"},
 	{name = "document", file = PART_CACHE_DOCUMENT, line = "\nA line that the proof of the cache adds.\n", what = "a line more in an intent file"},
 	{name = "host_test", file = PART_CACHE_HOST_TEST, line = "\n// A line that the proof of the cache adds.\n", what = "a line more in a host test of the tool"},
+	{name = "scenario", file = PART_CACHE_SCENARIO, line = "\n// A line that the proof of the cache adds.\n", what = "a line more in the scenario of the part " + PART_CACHE_SCENARIO_PART, changed_part = PART_CACHE_SCENARIO_PART},
 }
 
 // part_derivations_compare gives the problems of a change that must leave
-// the derivation of each part the same: a part that a tree lacks, a part
-// that is not in the list, a part whose derivation differs, and a change
-// that did not reach the whole build, which would prove nothing.
-part_derivations_compare :: proc(unchanged, changed: map[string]string, part_names: []string, unchanged_build, changed_build, what: string) -> []string {
+// the derivation of each part the same, except the derivation of
+// changed_part ("" for none), which must change: a part that a tree lacks,
+// a part that is not in the list, a part whose derivation differs or stays
+// against that rule, and a change that did not reach the whole build, which
+// would prove nothing.
+part_derivations_compare :: proc(unchanged, changed: map[string]string, part_names: []string, unchanged_build, changed_build, what: string, changed_part: string = "") -> []string {
 	problems := make([dynamic]string, context.temp_allocator)
 	if unchanged_build == "" || unchanged_build == changed_build {
 		append(&problems, fmt.tprintf("after %s the whole build has the same derivation: the change did not reach the check, so it proves nothing", what))
+	}
+	if changed_part != "" && !slice.contains(part_names, changed_part) {
+		append(&problems, fmt.tprintf("after %s the derivation of %s must change, and %s is no test part", what, changed_part, changed_part))
 	}
 	for name in part_names {
 		before, before_found := unchanged[name]
@@ -669,7 +688,11 @@ part_derivations_compare :: proc(unchanged, changed: map[string]string, part_nam
 		switch {
 		case !before_found || !after_found:
 			append(&problems, fmt.tprintf("the tree before or after %s has no derivation of the test part %s", what, name))
-		case before == "" || before != after:
+		case before == "" || after == "":
+			append(&problems, fmt.tprintf("the tree before or after %s has an empty derivation of the test part %s", what, name))
+		case name == changed_part && before == after:
+			append(&problems, fmt.tprintf("after %s the test part %s has the same derivation: the change did not reach the binary of its tool", what, name))
+		case name != changed_part && before != after:
 			append(&problems, fmt.tprintf("after %s the test part %s has another derivation: %s, then %s", what, name, before, after))
 		}
 	}
@@ -708,12 +731,14 @@ part_cache_tree_write :: proc(tree: Part_Cache_Tree, tracked: []string) -> (fold
 	return folder, true
 }
 
-// part_cache_check is the command `part_cache`: three copies of the tracked
-// files, one with no change, one with a line more in an intent file and one
-// with a line more in a host test of the tool. Each test part must have the
-// same derivation in the three, and the whole build another one in each
-// changed tree. It compares derivation paths, never a time. Each evaluation
-// builds the test inputs of its tree: two whole builds in all.
+// part_cache_check is the command `part_cache`: four copies of the tracked
+// files, one with no change, one with a line more in an intent file, one
+// with a line more in a host test of the tool, and one with a line more in
+// the scenario of one part. Each test part must have the same derivation in
+// the four, except the part of that scenario, which must have another one
+// in its tree; the whole build must have another derivation in each changed
+// tree. It compares derivation paths, never a time. Each evaluation builds
+// the test inputs of its tree: three whole builds in all.
 part_cache_check :: proc(flake_check_attribute: string) -> bool {
 	listing := host_command_output({"git", "ls-files", "-z"}) or_return
 	tracked := make([dynamic]string, context.temp_allocator)
@@ -757,7 +782,7 @@ part_cache_check :: proc(flake_check_attribute: string) -> bool {
 	}
 	passed := true
 	for tree, place in trees[1:] {
-		problems := part_derivations_compare(derivations[0], derivations[place + 1], part_names, builds[0], builds[place + 1], tree.what)
+		problems := part_derivations_compare(derivations[0], derivations[place + 1], part_names, builds[0], builds[place + 1], tree.what, tree.changed_part)
 		for problem in problems {
 			fmt.eprintfln("modustool: test failed: %s", problem)
 		}
@@ -765,356 +790,11 @@ part_cache_check :: proc(flake_check_attribute: string) -> bool {
 			passed = false
 			continue
 		}
+		if tree.changed_part != "" {
+			foundation.test_passed_print("after %s, the test part %s has another derivation, each of the %d other test parts the same one, and the whole build another one", tree.what, tree.changed_part, len(part_names) - 1)
+			continue
+		}
 		foundation.test_passed_print("after %s, each of the %d test parts has the same derivation, and the whole build another one", tree.what, len(part_names))
 	}
 	return passed
-}
-
-// Per-part test binary dependency manifest: maps each machine test part to
-// its minimal scenario source files (relative to the repository root) and
-// its claimed output log names so no two parts conflict on an output and
-// each part binary rebuilds only when its own scenario or the shared engine
-// changes (src/md/infrastructure/full_check.md, "The derivations of the check").
-Part_Binary_Plan :: struct {
-	part:    string,
-	sources: []string,
-	outputs: []string,
-}
-
-// Minimal scenario source files and claimed output log patterns for each of
-// the test parts, in the order of test_parts.
-part_binary_plans := [?]Part_Binary_Plan {
-	{
-		part    = "main",
-		sources = {"tools/modustool/machine/machine.odin"},
-		outputs = {"test_output.txt"},
-	},
-	{
-		part    = "tcp",
-		sources = {"tools/modustool/machine/tcp_scenario.odin", "tools/modustool/machine/peer_tcp.odin"},
-		outputs = {"test_output_tcp.txt"},
-	},
-	{
-		part    = "random",
-		sources = {"tools/modustool/machine/random_scenario.odin"},
-		outputs = {"test_output_random.txt"},
-	},
-	{
-		part    = "quic",
-		sources = {"tools/modustool/machine/quic_scenario.odin", "tools/modustool/machine/peer_quic.odin"},
-		outputs = {"test_output_quic.txt"},
-	},
-	{
-		part    = "remote_display",
-		sources = {"tools/modustool/machine/remote_display_scenario.odin", "tools/modustool/machine/peer_remote_display.odin", "tools/modustool/machine/remote_display_run.odin"},
-		outputs = {"test_output_remote_display.txt"},
-	},
-	{
-		part    = "network",
-		sources = {"tools/modustool/machine/machine.odin", "tools/modustool/machine/silent_disk.odin"},
-		outputs = {"test_output_network.txt", "test_output_no_network_device.txt"},
-	},
-	{
-		part    = "principals",
-		sources = {"tools/modustool/machine/principals_scenario.odin", "tools/modustool/machine/tpm_key_scenario.odin"},
-		outputs = {"test_output_principals_%d.txt", "test_output_tpm_key_%d.txt", "test_output_tpm_lockout_%d.txt"},
-	},
-	{
-		part    = "disk_processes",
-		sources = {"tools/modustool/machine/disk_processes.odin"},
-		outputs = {"test_output_disk_processes_%d.txt"},
-	},
-	{
-		part    = "missing_devices",
-		sources = {"tools/modustool/machine/missing_devices_scenario.odin"},
-		outputs = {"test_output_missing_devices_%d.txt"},
-	},
-	{
-		part    = "trusted_boot",
-		sources = {"tools/modustool/machine/trusted_boot_scenario.odin"},
-		outputs = {
-			"test_output_changed_module.txt",
-			"test_output_wrong_signature.txt",
-			"test_output_changed_kernel.txt",
-			"test_output_without_description.txt",
-			"test_output_stated_hash.txt",
-			"test_output_kernel_memory_raised.txt",
-			"test_output_measured.txt",
-			"test_output_other_system.txt",
-			"test_output_secure_boot.txt",
-			"test_output_secure_boot_changed.txt",
-			"test_output_secure_boot_unsigned.txt",
-			"test_output_floor_%d.txt",
-			"test_output_release_image.txt",
-		},
-	},
-	{
-		part    = "hierarchy",
-		sources = {"tools/modustool/machine/hierarchy_scenario.odin"},
-		outputs = {"test_output_hierarchy_%d.txt"},
-	},
-	{
-		part    = "power",
-		sources = {"tools/modustool/machine/power_loss.odin", "tools/modustool/machine/dropped_write.odin", "tools/modustool/machine/silent_disk.odin"},
-		outputs = {"test_output_power_loss_%d.txt", "test_output_dropped_write_%d.txt", "test_output_silent_disk.txt"},
-	},
-	{
-		part    = "persist",
-		sources = {"tools/modustool/machine/machine.odin"},
-		outputs = {"test_output_persist_%d.txt"},
-	},
-	{
-		part    = "extended_state",
-		sources = {"tools/modustool/machine/extended_state_scenario.odin"},
-		outputs = {"test_output_extended_state.txt"},
-	},
-	{
-		part    = "return_fault",
-		sources = {"tools/modustool/machine/return_fault_scenario.odin"},
-		outputs = {"test_output_return_fault.txt", "test_output_return_fault_without_check.txt", "test_output_non_maskable_interrupt.txt"},
-	},
-	{
-		part    = "kernel_events",
-		sources = {"tools/modustool/machine/kernel_events_scenario.odin"},
-		outputs = {"test_output_kernel_events.txt"},
-	},
-	{
-		part    = "self_tests",
-		sources = {"tools/modustool/machine/machine.odin"},
-		outputs = {"test_output_self_test_%d.txt"},
-	},
-	{
-		part    = "debugger",
-		sources = {"tools/modustool/machine/debugger_scenario.odin"},
-		outputs = {"test_output_debugger.txt", "test_output_debugger_commands.txt"},
-	},
-	{
-		part    = "ranges",
-		sources = {"tools/modustool/machine/ranges_scenario.odin"},
-		outputs = {"test_output_ranges_%d.txt"},
-	},
-	{
-		part    = "quic-real",
-		sources = {"tools/modustool/machine/quic_real.odin"},
-		outputs = {"test_output_quic_real.txt"},
-	},
-	{
-		part    = "outside_module",
-		sources = {"tools/modustool/build/outside_module.odin"},
-		outputs = {},
-	},
-	{
-		part    = "host_modules",
-		sources = {"tools/modustool/build/modules.odin", "tools/modustool/build/describe.odin", "tools/modustool/build/facts.odin"},
-		outputs = {},
-	},
-	{
-		part    = "iommu_amd",
-		sources = {"tools/modustool/machine/iommu_scenario.odin"},
-		outputs = {"test_output_iommu_amd.txt"},
-	},
-	{
-		part    = "iommu",
-		sources = {"tools/modustool/machine/iommu_scenario.odin"},
-		outputs = {"test_output_iommu.txt"},
-	},
-	{
-		part    = "fault_ring",
-		sources = {"tools/modustool/machine/fault_ring_scenario.odin"},
-		outputs = {"test_output_fault_ring.txt"},
-	},
-	{
-		part    = "sound",
-		sources = {"tools/modustool/machine/sound_scenario.odin"},
-		outputs = {"test_output_sound.txt"},
-	},
-	{
-		part    = "crypto",
-		sources = {"tools/modustool/machine/cryptography_scenario.odin"},
-		outputs = {"test_output_cryptography.txt"},
-	},
-	{
-		part    = "guest",
-		sources = {"tools/modustool/machine/guest_scenario.odin"},
-		outputs = {"test_output_guest.txt"},
-	},
-	{
-		part    = "no_pit",
-		sources = {"tools/modustool/machine/no_pit_scenario.odin"},
-		outputs = {"test_output_no_pit.txt"},
-	},
-	{
-		part    = "fails",
-		sources = {"tools/modustool/machine/machine.odin"},
-		outputs = {"test_output_fails.txt"},
-	},
-	{
-		part    = "start_policy",
-		sources = {"tools/modustool/machine/start_policy_scenario.odin", "tools/modustool/machine/start_policy_from_disk_scenario.odin"},
-		outputs = {
-			"test_output_start_policy_key.txt",
-			"test_output_start_policy_missing_console.txt",
-			"test_output_start_policy_entry.txt",
-			"test_output_start_policy_boot_next.txt",
-			"test_output_start_policy_wrong_word.txt",
-			"test_output_start_policy_from_disk_%d.txt",
-		},
-	},
-	{
-		part    = "shortage",
-		sources = {"tools/modustool/machine/machine.odin"},
-		outputs = {"test_output_shortage.txt"},
-	},
-	{
-		part    = "operation_sequences",
-		sources = {"tools/modustool/machine/operation_sequences.odin", "tools/modustool/machine/operation_corpus.odin", "tools/modustool/machine/operation_fuzzing.odin"},
-		outputs = {"test_output_operation_sequences.txt", "test_output_operation_replay.txt"},
-	},
-}
-#assert(len(part_binary_plans) == len(test_parts))
-
-// part_binary_plan_find returns the dependency manifest entry for part_name.
-part_binary_plan_find :: proc(part_name: string) -> (plan: Part_Binary_Plan, found: bool) {
-	for entry in part_binary_plans {
-		if entry.part == part_name {
-			return entry, true
-		}
-	}
-	return {}, false
-}
-
-// part_scenario_sources gives the minimal scenario source files of a test
-// part, or false when part_name names no part in part_binary_plans.
-part_scenario_sources :: proc(part_name: string) -> (sources: []string, found: bool) {
-	plan, ok := part_binary_plan_find(part_name)
-	if !ok {
-		return nil, false
-	}
-	return plan.sources, true
-}
-
-@(private = "file")
-plan_source_path_valid :: proc(path: string) -> bool {
-	if path == "" || strings.has_prefix(path, "/") || !strings.has_prefix(path, foundation.TOOL_SOURCE_FOLDER + "/") {
-		return false
-	}
-	if !strings.has_suffix(path, ".odin") || strings.has_suffix(path, "_test.odin") {
-		return false
-	}
-	for segment in strings.split(path, "/", context.temp_allocator) {
-		if segment == "" || segment == "." || segment == ".." {
-			return false
-		}
-	}
-	return true
-}
-
-@(private = "file")
-plan_output_name_valid :: proc(name: string) -> bool {
-	if name == "" || strings.contains_any(name, "/\\") || name == "." || name == ".." {
-		return false
-	}
-	return true
-}
-
-// part_binary_plan_problems validates a per-part binary manifest against the
-// table of test parts and the filesystem. It refuses missing parts, duplicate
-// or unknown parts, empty or invalid source lists, missing source files on
-// disk, machine parts without claimed outputs, invalid output names, and any
-// output name claimed by more than one part.
-part_binary_plan_problems :: proc(plans: []Part_Binary_Plan, parts: []Test_Part, file_exists: proc(path: string) -> bool = os.exists) -> []string {
-	problems := make([dynamic]string, context.temp_allocator)
-	part_by_name := make(map[string]Test_Part, allocator = context.temp_allocator)
-	for part in parts {
-		part_by_name[part.name] = part
-	}
-	seen_parts := make(map[string]int, allocator = context.temp_allocator)
-	output_owner := make(map[string]string, allocator = context.temp_allocator)
-
-	for plan in plans {
-		part, known := part_by_name[plan.part]
-		if !known {
-			append(&problems, fmt.tprintf("the binary plan names %s, which is no test part", plan.part))
-			continue
-		}
-		seen_parts[plan.part] = seen_parts[plan.part] + 1
-		if seen_parts[plan.part] > 1 {
-			append(&problems, fmt.tprintf("the binary plan lists the test part %s %d times", plan.part, seen_parts[plan.part]))
-			continue
-		}
-		if len(plan.sources) == 0 {
-			append(&problems, fmt.tprintf("the test part %s has no scenario source file", plan.part))
-		}
-		seen_sources := make(map[string]bool, allocator = context.temp_allocator)
-		for src in plan.sources {
-			if !plan_source_path_valid(src) {
-				append(&problems, fmt.tprintf("the test part %s has invalid scenario source %q", plan.part, src))
-				continue
-			}
-			if seen_sources[src] {
-				append(&problems, fmt.tprintf("the test part %s lists scenario source %s twice", plan.part, src))
-				continue
-			}
-			seen_sources[src] = true
-			if file_exists != nil && !file_exists(src) {
-				append(&problems, fmt.tprintf("the scenario source %s of the test part %s does not exist", src, plan.part))
-			}
-		}
-		if !part.starts_no_machine && len(plan.outputs) == 0 {
-			append(&problems, fmt.tprintf("the machine test part %s claims no output log", plan.part))
-		}
-		seen_outputs := make(map[string]bool, allocator = context.temp_allocator)
-		for out in plan.outputs {
-			if !plan_output_name_valid(out) {
-				append(&problems, fmt.tprintf("the test part %s claims invalid output %q", plan.part, out))
-				continue
-			}
-			if seen_outputs[out] {
-				append(&problems, fmt.tprintf("the test part %s claims output %s twice", plan.part, out))
-				continue
-			}
-			seen_outputs[out] = true
-			if owner, taken := output_owner[out]; taken {
-				append(&problems, fmt.tprintf("the test parts %s and %s both claim output %s", owner, plan.part, out))
-				continue
-			}
-			output_owner[out] = plan.part
-		}
-	}
-	for part in parts {
-		if seen_parts[part.name] == 0 {
-			append(&problems, fmt.tprintf("the binary plan has no entry for the test part %s", part.name))
-		}
-	}
-	return problems[:]
-}
-
-// part_binary_plans_json serializes the per-part binary manifest as a JSON
-// object keyed by part name so Nix derivations can evaluate per-part inputs.
-part_binary_plans_json :: proc(plans: []Part_Binary_Plan) -> string {
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_byte(&b, '{')
-	for plan, place in plans {
-		if place > 0 {
-			strings.write_byte(&b, ',')
-		}
-		foundation.json_string_write(&b, plan.part)
-		strings.write_string(&b, ":{\"sources\":[")
-		for src, s_idx in plan.sources {
-			if s_idx > 0 {
-				strings.write_byte(&b, ',')
-			}
-			foundation.json_string_write(&b, src)
-		}
-		strings.write_string(&b, "],\"outputs\":[")
-		for out, o_idx in plan.outputs {
-			if o_idx > 0 {
-				strings.write_byte(&b, ',')
-			}
-			foundation.json_string_write(&b, out)
-		}
-		strings.write_string(&b, "]}")
-	}
-	strings.write_string(&b, "}\n")
-	return strings.to_string(b)
 }

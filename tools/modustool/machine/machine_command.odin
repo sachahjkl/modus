@@ -409,7 +409,7 @@ machine_command :: proc(volume: string, test_output: string, data_disk: string, 
 		append(&list, "-global", "driver=cfi.pflash01,property=secure,value=on")
 	}
 	if tpm_device {
-		// The software TPM that machine_test starts (trusted_boot_scenario.odin),
+		// The software TPM that machine_test starts (tpm_machine.odin),
 		// through the socket of this machine, on the CRB interface: the
 		// command and its answer are in a buffer of memory, not moved byte
 		// by byte through one register. The device does not depend on the

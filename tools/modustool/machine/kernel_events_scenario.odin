@@ -241,3 +241,10 @@ kernel_events_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	}
 	return true
 }
+
+// A binary of the tool runs the test part kernel_events only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+kernel_events_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("kernel_events", kernel_events_tests_run)
+}
