@@ -441,7 +441,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	if behind_conventional_bridge {
 		system.log_fact(.Info, Bridge_Registers_Held{bus = u64(group.first_bus), other_devices = u64(bridge_device_count), service = module_name_field(kind.name)})
 	}
-	devices_bind_tell(driver, place, identity, bars, u32(message[2]))
+	devices_bind_tell(driver, place, identity, bars, u32(message[2]), table_bar, pending_place & 7)
 	return driver, ring_memory, .Ok
 }
 

@@ -557,6 +557,9 @@ the_statuses_of_the_root_service_are_the_names_of_their_members :: proc(t: ^test
 		{"Settings_Boot_Pass_Failed", "root: the boot pass of settings did not start (status ", "): the settings are the defaults"},
 		{"Tpm_Service_Start_Failed", "root: cannot start the TPM service: status ", ""},
 		{"Start_Policy_Not_Started_Of_No_Module", "root: the start policy of no module did not start, with the status ", ": the rescue start policy starts"},
+		{"Devices_Service_Start_Failed", "root: cannot start the devices service: status ", ""},
+		{"Bus_Configuration_Unread", "root: cannot read the configuration of the bus: status ", ": no device service starts"},
+		{"Principals_Service_Start_Failed", "root: cannot start the principals service: status ", ""},
 	}
 	process := strings.repeat("p", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
 	failure := strings.repeat("f", ROOT_FAILURE_MOST, context.temp_allocator)
@@ -985,4 +988,35 @@ the_table_wait_and_wiring_facts_of_the_root_service_write_the_lines_of_before ::
 	// The measure record finds the line by the start of its template.
 	measured := render(t, file, "Own_Tables_Measured", {{"handles", u64(1)}, {"prepared_parts", u64(0)}, {"mappings", u64(1)}, {"capacity", capacity}, {"stopped_process", "output_wiring"}})
 	testing.expectf(t, strings.has_prefix(measured, "root: the tables of this service after the stop of output_wiring: "), "the measure record does not find %q", measured)
+}
+
+// The facts of the bridges to the delegated devices and principals
+// services write their sentences: the counts and the words 0, 1 and
+// max(u64), and the facts with no field.
+@(test)
+the_devices_and_principals_bridge_facts_of_the_root_service_write_their_lines :: proc(t: ^testing.T) {
+	file, ok := root_service_facts_file(t)
+	if !ok {
+		return
+	}
+	process := strings.repeat("p", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
+	counts := [3]u64{0, 1, max(u64)}
+	for count in counts {
+		other := max(u64) - count
+		expect(t, render(t, file, "Devices_Service_Started", {{"starts", count}, {"start_limit", other}}), line_of_before("root: started the delegated devices service (start ", count, " of ", other, ")"))
+		expect(t, render(t, file, "Devices_Service_Silent", {{"starts", count}}), line_of_before("root: the devices service gave no answer for a device of the bus (start ", count, "): it is stopped"))
+		expect(t, render(t, file, "Bus_Classified", {{"classified", count}, {"looked_up", other}}), line_of_before("root: the devices service classified ", count, " of the ", other, " devices of the bus"))
+		expect(t, render(t, file, "Devices_Service_Absent", {{"start_limit", count}}), line_of_before("root: the devices service did not classify the bus in ", count, " starts: no device service starts, so the machine has no data disk, no network device, no sound device and no entropy device"))
+		expect(t, render(t, file, "Classified_Devices_Full", {{"capacity", count}}), line_of_before("root: the bus holds more than ", count, " devices of a known class: the devices past them get no device service"))
+		expect(t, render(t, file, "Device_Unclassified", {{"device", count}, {"bus", other}, {"service", process}}), line_of_before("root: no devices service classified the bus: ", sentence.Module_Name{process}, " does not start for the device ", count, " of the bus ", other))
+		expect(t, render(t, file, "Devices_Answer_Refused", {{"status_word", count}}), line_of_before("root: the devices service answered with the status word ", count, ", which names no status"))
+		expect(t, render(t, file, "Devices_Notice_Refused", {{"status_word", count}, {"first_value", other}, {"second_value", count}}), line_of_before("root: the devices service refused a notice of a binding: status word ", count, ", values ", other, " and ", count))
+		expect(t, render(t, file, "Principals_Service_Started", {{"starts", count}, {"start_limit", other}}), line_of_before("root: started the delegated principals service (start ", count, " of ", other, ")"))
+		expect(t, render(t, file, "Principals_Service_Absent", {{"start_limit", count}}), line_of_before("root: the principals service did not start in ", count, " starts: the root service keeps the principals, their disk grant tables and the client keys with no mirror"))
+		expect(t, render(t, file, "Principals_Answer_Refused", {{"status_word", count}, {"tag", other}}), line_of_before("root: the principals service answered with the status word ", count, " and the tag ", other, ", which name no status or no command in flight"))
+		expect(t, render(t, file, "Principals_Command_Refused", {{"command_word", count}, {"status_word", other}, {"first_value", count}, {"second_value", other}}), line_of_before("root: the principals service refused the command ", count, ": status word ", other, ", values ", count, " and ", other))
+		expect(t, render(t, file, "Principals_Rows_Unsent", {{"principal", count}}), line_of_before("root: the disk grant table of principal ", count, " does not pass the border of the principals service: its rows are not sent"))
+	}
+	expect(t, render(t, file, "Devices_Service_Stopped", {}), "root: the delegated devices service stopped")
+	expect(t, render(t, file, "Principals_Service_Stopped", {}), "root: the delegated principals service stopped")
 }

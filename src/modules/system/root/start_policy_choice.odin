@@ -398,6 +398,7 @@ start_policy_choice_command :: proc "contextless" (caller: ^Started, record: rin
 		}
 		system.log_fact(.Info, Start_Policy_Choice_Ended{})
 		persisted_table_changed(principals.MACHINE)
+		principals_start_policy_tell("", {})
 		return .Ok
 	}
 	problem_of_the_name, offset := disk_process.nickname_grant_problem(nickname)
@@ -454,5 +455,6 @@ start_policy_choice_command :: proc "contextless" (caller: ^Started, record: rin
 	}
 	system.log_fact(.Info, Start_Policy_Chosen{hash = value_kinds.Hash_Field(row.hash), nickname = module_name_field(nickname)})
 	persisted_table_changed(principals.MACHINE)
+	principals_start_policy_tell(nickname, row.hash)
 	return .Ok
 }

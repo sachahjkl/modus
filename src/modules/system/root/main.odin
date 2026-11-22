@@ -730,6 +730,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// the entropy device when they come (entropy.odin).
 	entropy_service_start()
 	tpm_service_start()
+	// The principals service holds the mirror of the principals and of
+	// their tables before the start policy gives them a change
+	// (principals_delegation.odin).
+	principals_service_boot()
 	machine_parts_page_create()
 	start_policy_begin()
 	for {
@@ -1095,6 +1099,7 @@ root_loop_pass :: proc "contextless" () {
 	network_answers(&wait)
 	wiring_request_step(&wait)
 	devices_answers(&wait)
+	principals_answers(&wait)
 	system.wait_records(&wait, &control.completions)
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {
@@ -2071,6 +2076,7 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	// its slots, then release core wiring handles.
 	wiring_service_end(item)
 	devices_service_end(item)
+	principals_service_end(item)
 	wiring_emit_stop_notice(item, stop)
 	for &other in started {
 		if other.process != 0 && (other.debugger == item || other.debug_for == item) {

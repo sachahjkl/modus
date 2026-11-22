@@ -37,6 +37,11 @@ DEVICES_RESTART_LIMIT :: 3
 // classification of the bus: only a service that hangs meets it.
 DEVICES_ANSWER_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
 
+// The most answers of notices that one wait of a lookup, or one pass of the
+// loop, reads: each bind place has at most a Bind_Device and a
+// Release_Device in flight, so a service that writes more floods the core.
+DEVICES_ANSWERS_PER_PASS :: 2 * rd.DEVICES_BIND_PLACE_COUNT
+
 // The most devices of the bus that the core keeps a class of.
 CLASSIFIED_DEVICE_CAPACITY :: 64
 
@@ -187,11 +192,19 @@ devices_lookup :: proc "contextless" (vendor_id, device_id: u16) -> (entry: rd.D
 		return {}, false, false
 	}
 	limit := system.time() + DEVICES_ANSWER_BOUND_MILLISECONDS
+	foreign_answers := 0
 	for {
 		wait := system.wait_begin()
 		for record in system.receive(&devices_ring.completions) {
 			if record.tag != tag {
 				// The answer of a notice of a binding: nothing waits for it.
+				// A service that writes such answers with no end would hold
+				// this wait past its bound, so their count and the clock
+				// both end it.
+				foreign_answers += 1
+				if foreign_answers > DEVICES_ANSWERS_PER_PASS || system.time() >= limit {
+					return {}, false, false
+				}
 				continue
 			}
 			status, status_known := rd.devices_ring_status_from_word(record.kind)
@@ -203,7 +216,11 @@ devices_lookup :: proc "contextless" (vendor_id, device_id: u16) -> (entry: rd.D
 				entry, known = rd.device_identity_answer_of_values(record.values, vendor_id, device_id)
 				return entry, known, known
 			case .Refused:
-				return {}, false, true
+				// Only a refusal that says the identity has no class is an
+				// answer; another one says the table of the service is
+				// damaged, and the service is started again.
+				_, refusal_answered := rd.device_identity_refusal_of_values(record.values)
+				return {}, false, refusal_answered
 			case .Bad_Command:
 				return {}, false, false
 			}
@@ -359,12 +376,15 @@ devices_bind_send :: proc "contextless" (index: int) {
 		return
 	}
 	intrinsics.mem_copy_non_overlapping(&devices_region[discovered_offset], &bound_devices[index], size_of(rd.Pci_Discovered_Device))
-	_ = system.send(&devices_ring.commands, ring.Record{kind = u32(rd.Devices_Ring_Command.Bind_Device), tag = devices_tag_next(), values = {0 = discovered_offset, 1 = service_slot, 2 = spec_offset}})
+	_ = system.send(&devices_ring.commands, ring.Record{kind = u32(rd.Devices_Ring_Command.Bind_Device), tag = devices_tag_next(), values = {0 = discovered_offset, 1 = service_slot, 2 = spec_offset, 3 = rd.device_bind_identity_word(&bound_devices[index])}})
 }
 
 // devices_bind_tell records the device of a device service that started,
-// and tells the devices service of the binding.
-devices_bind_tell :: proc "contextless" (driver: ^Started, place: pci.Place, identity: u32, bars: [pci.BAR_COUNT]pci.Bar, interrupt_vector: u32) {
+// and tells the devices service of the binding. table_bar and pending_bar
+// name the BARs of the MSI-X table and of its pending bits, which the core
+// keeps out of the grant of the device service: the record leaves them out
+// too, so the grant that the devices service records is the grant given.
+devices_bind_tell :: proc "contextless" (driver: ^Started, place: pci.Place, identity: u32, bars: [pci.BAR_COUNT]pci.Bar, interrupt_vector: u32, table_bar, pending_bar: u32) {
 	index, ok := started_index_of(driver)
 	if !ok {
 		return
@@ -376,11 +396,14 @@ devices_bind_tell :: proc "contextless" (driver: ^Started, place: pci.Place, ide
 		interrupt_vector = interrupt_vector,
 		has_interrupt    = true,
 	}
-	for bar in bars {
-		if bar.size == 0 || bar.address == 0 {
+	for bar, bar_index in bars {
+		if bar.size == 0 || bar.address == 0 || rd.device_bar_withheld(u32(bar_index), table_bar, pending_bar) {
 			continue
 		}
-		discovered.bars[discovered.bar_count] = {base_address = bar.address, page_count = u32((bar.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE)}
+		// A count of pages past the limit is written as max(u32), which
+		// the devices service refuses whole: a cut count would record a
+		// grant smaller than the window of a 64-bit BAR.
+		discovered.bars[discovered.bar_count] = {base_address = bar.address, page_count = rd.device_bar_page_count_word(bar.size)}
 		discovered.bar_count += 1
 	}
 	bound_devices[index] = discovered
@@ -418,7 +441,11 @@ devices_answers :: proc "contextless" (wait: ^system.Wait) {
 	if devices_ring.head == nil {
 		return
 	}
+	// A bounded count of answers in one pass: the records past it stay in
+	// the ring, and the wait below ends at once while the ring holds one.
+	read := 0
 	for record in system.receive(&devices_ring.completions) {
+		read += 1
 		status, known := rd.devices_ring_status_from_word(record.kind)
 		if !known {
 			system.log_fact(.Warning, Devices_Answer_Refused{status_word = u64(record.kind)})
@@ -428,6 +455,9 @@ devices_answers :: proc "contextless" (wait: ^system.Wait) {
 		case .Ok:
 		case .Refused, .Bad_Command:
 			system.log_fact(.Warning, Devices_Notice_Refused{status_word = u64(record.kind), first_value = record.values[0], second_value = record.values[1]})
+		}
+		if read >= DEVICES_ANSWERS_PER_PASS {
+			break
 		}
 	}
 	system.wait_records(wait, &devices_ring.completions)

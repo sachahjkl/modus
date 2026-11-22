@@ -36,11 +36,11 @@ service_region_base: [^]u8
 service_region_bytes: u64
 
 // Private BSS buffers for copy-then-check reading of shared transfer memory.
-copied_register_input: pc.Register_Principal_Input
-copied_session_input: pc.Session_Transition_Input
+copied_register_input: rd.Register_Principal_Input
+copied_session_input: rd.Session_Transition_Input
 copied_disk_rows_request: rd.Disk_Rows_Set_Request
-copied_client_key_input: pc.Client_Key_Input
-copied_start_policy_input: pc.Start_Policy_Input
+copied_client_key_input: rd.Client_Key_Input
+copied_start_policy_input: rd.Start_Policy_Input
 
 @(private = "file")
 fail :: proc "contextless" (text: string) -> ! {
@@ -102,11 +102,11 @@ handle_command :: proc "contextless" (command: ring.Record) {
 
 	case .Register_Principal:
 		input_offset := command.values[0]
-		if !region_range_valid(input_offset, size_of(pc.Register_Principal_Input)) {
+		if !region_range_valid(input_offset, size_of(rd.Register_Principal_Input)) {
 			reply_bad_command(command, .Out_Of_Range, 1, i64(input_offset), i64(service_region_bytes))
 			return
 		}
-		intrinsics.mem_copy_non_overlapping(&copied_register_input, rawptr(&service_region_base[input_offset]), size_of(pc.Register_Principal_Input))
+		intrinsics.mem_copy_non_overlapping(&copied_register_input, rawptr(&service_region_base[input_offset]), size_of(rd.Register_Principal_Input))
 		refusal := pc.register_principal(&service_state, &copied_register_input)
 		if refusal != .None {
 			system.log_fact(.Warning, Command_Refused{command_kind = u64(command.kind), refusal_code = u64(refusal)})
@@ -132,11 +132,11 @@ handle_command :: proc "contextless" (command: ring.Record) {
 
 	case .Session_Transition:
 		input_offset := command.values[0]
-		if !region_range_valid(input_offset, size_of(pc.Session_Transition_Input)) {
+		if !region_range_valid(input_offset, size_of(rd.Session_Transition_Input)) {
 			reply_bad_command(command, .Out_Of_Range, 1, i64(input_offset), i64(service_region_bytes))
 			return
 		}
-		intrinsics.mem_copy_non_overlapping(&copied_session_input, rawptr(&service_region_base[input_offset]), size_of(pc.Session_Transition_Input))
+		intrinsics.mem_copy_non_overlapping(&copied_session_input, rawptr(&service_region_base[input_offset]), size_of(rd.Session_Transition_Input))
 		refusal := pc.session_transition(&service_state, &copied_session_input)
 		if refusal != .None {
 			system.log_fact(.Warning, Command_Refused{command_kind = u64(command.kind), refusal_code = u64(refusal)})
@@ -200,11 +200,11 @@ handle_command :: proc "contextless" (command: ring.Record) {
 
 	case .Client_Key_Command:
 		input_offset := command.values[0]
-		if !region_range_valid(input_offset, size_of(pc.Client_Key_Input)) {
+		if !region_range_valid(input_offset, size_of(rd.Client_Key_Input)) {
 			reply_bad_command(command, .Out_Of_Range, 1, i64(input_offset), i64(service_region_bytes))
 			return
 		}
-		intrinsics.mem_copy_non_overlapping(&copied_client_key_input, rawptr(&service_region_base[input_offset]), size_of(pc.Client_Key_Input))
+		intrinsics.mem_copy_non_overlapping(&copied_client_key_input, rawptr(&service_region_base[input_offset]), size_of(rd.Client_Key_Input))
 		serial, refusal := pc.client_key_command(&service_state, &copied_client_key_input)
 		if refusal != .None {
 			system.log_fact(.Warning, Command_Refused{command_kind = u64(command.kind), refusal_code = u64(refusal)})
@@ -234,11 +234,11 @@ handle_command :: proc "contextless" (command: ring.Record) {
 
 	case .Start_Policy_Command:
 		input_offset := command.values[0]
-		if !region_range_valid(input_offset, size_of(pc.Start_Policy_Input)) {
+		if !region_range_valid(input_offset, size_of(rd.Start_Policy_Input)) {
 			reply_bad_command(command, .Out_Of_Range, 1, i64(input_offset), i64(service_region_bytes))
 			return
 		}
-		intrinsics.mem_copy_non_overlapping(&copied_start_policy_input, rawptr(&service_region_base[input_offset]), size_of(pc.Start_Policy_Input))
+		intrinsics.mem_copy_non_overlapping(&copied_start_policy_input, rawptr(&service_region_base[input_offset]), size_of(rd.Start_Policy_Input))
 		refusal := pc.start_policy_command(&service_state, &copied_start_policy_input)
 		if refusal != .None {
 			system.log_fact(.Warning, Command_Refused{command_kind = u64(command.kind), refusal_code = u64(refusal)})

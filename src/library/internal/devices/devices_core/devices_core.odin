@@ -23,6 +23,9 @@ Devices_Bind_Refusal :: enum u8 {
 	Location_Already_Claimed = 5,
 	Table_Full               = 6,
 	Invalid_Grant_Spec       = 7,
+	// The record in the bind place names another device than the word of
+	// the command: the core reused the place for a newer binding.
+	Identity_Mismatch        = 8,
 }
 
 // Active binding between a PCI bus location, its device service slot, and its
@@ -153,6 +156,30 @@ scan_and_bind :: proc "contextless" (
 	state.counters.active_bindings += 1
 	state.counters.total_binds += 1
 	return spec, .None, .None
+}
+
+// bind_device serves a Bind_Device: it checks that the record copied from
+// the bind place is the record that the core named in the command
+// (identity_word), then binds it as scan_and_bind does. A mismatch is
+// refused before any state changes.
+bind_device :: proc "contextless" (
+	state: ^Devices_State,
+	discovered: ^rd.Pci_Discovered_Device,
+	service_slot: u32,
+	identity_word: u64,
+) -> (
+	grant_spec: rd.Device_Grant_Spec,
+	refusal: Devices_Bind_Refusal,
+	grant_refusal: rd.Device_Grant_Refusal,
+) {
+	if state == nil || !state.initialized || discovered == nil {
+		return {}, .Uninitialized, .None
+	}
+	if !rd.device_bind_identity_matches(discovered, identity_word) {
+		state.counters.total_refusals += 1
+		return {}, .Identity_Mismatch, .None
+	}
+	return scan_and_bind(state, discovered, service_slot)
 }
 
 // lookup_identity finds the identity entry of a PCI vendor and device pair
