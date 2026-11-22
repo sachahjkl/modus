@@ -673,3 +673,160 @@ a_whole_program_is_a_valid_module_that_runs :: proc(t: ^testing.T) {
 		testing.expect_value(t, message_difference_export(), i64(0))
 	}
 }
+
+@(test)
+numeric_local_labels_name_the_next_and_the_last_definition :: proc(t: ^testing.T) {
+	// jmp 1b to itself; jmp 1f to the next instruction.
+	expect_code(t, "1: jmp 1b", {0xE9, 0xFB, 0xFF, 0xFF, 0xFF})
+	expect_code(t, "jmp 1f; 1: ret", {0xE9, 0x00, 0x00, 0x00, 0x00, 0xC3})
+	// A digit defined three times: each reference names the definition
+	// after it (f) or before it (b), not the first one.
+	expect_code(t, "1: jmp 1f; 1: jmp 1b; 1: jmp 1b", {0xE9, 0x00, 0x00, 0x00, 0x00, 0xE9, 0xFB, 0xFF, 0xFF, 0xFF, 0xE9, 0xFB, 0xFF, 0xFF, 0xFF})
+	// Two digits at once, and a forward reference across another digit.
+	expect_code(t, "jmp 2f; 1: ret; 2: jmp 1b", {0xE9, 0x01, 0x00, 0x00, 0x00, 0xC3, 0xE9, 0xFA, 0xFF, 0xFF, 0xFF})
+	// Each digit 0 to 9, and a %rip operand.
+	expect_code(t, "0: 9: lea 9b(%rip), %rax; jmp 0b", {0x48, 0x8D, 0x05, 0xF9, 0xFF, 0xFF, 0xFF, 0xE9, 0xF4, 0xFF, 0xFF, 0xFF})
+	expect_code(t, "lea 5f(%rip), %rax; 5: ret", {0x48, 0x8D, 0x05, 0x00, 0x00, 0x00, 0x00, 0xC3})
+	// A name and a local label do not meet: the label `f1` is a name.
+	expect_code(t, "f1: 1: jmp f1; jmp 1b", {0xE9, 0xFB, 0xFF, 0xFF, 0xFF, 0xE9, 0xF6, 0xFF, 0xFF, 0xFF})
+
+	// Refusals: a reference with no definition in its direction, a label of
+	// two digits, a word that is neither a number nor Nf/Nb.
+	expect_refusal(t, "jmp 1f; ret", .Label_Not_Defined, 1, 5)
+	expect_refusal(t, "jmp 1b; 1: ret", .Label_Not_Defined, 1, 5)
+	expect_refusal(t, "1: ret; 1: jmp 1f", .Label_Not_Defined, 1, 16)
+	expect_refusal(t, "ret\n1:\n\tje 1b\n\tjne 1f\n\tret", .Label_Not_Defined, 4, 6)
+	expect_refusal(t, "10: ret", .Label_Not_Valid, 1, 1)
+	expect_refusal(t, "jmp 12f; ret", .Number_Not_Valid, 1, 5)
+	expect_refusal(t, "jmp 1fa; ret", .Number_Not_Valid, 1, 5)
+	expect_refusal(t, "jmp 1x; ret", .Number_Not_Valid, 1, 5)
+	expect_refusal(t, "jmp *1f; 1: ret", .Operand_Not_Valid, 1, 5)
+	expect_refusal(t, "mov 1f(%rax), %rcx; 1: ret", .Operand_Not_Valid, 1, 5)
+	expect_refusal(t, "section data; 1: byte 0; section code; jmp 1b", .Label_In_Wrong_Section, 1, 44)
+	expect_refusal(t, "export 1(); 1: ret", .Name_Not_Valid, 1, 8)
+}
+
+@(test)
+numeric_local_label_loop_runs :: proc(t: ^testing.T) {
+	text := "export count(n: Integer) -> Integer\ncount:\n\txor %eax, %eax\n1:\tcmp $0, %rdi\n\tje 2f\n\tadd $3, %rax\n\tdec %rdi\n\tjmp 1b\n2:\tret"
+	workspace := new(Workspace)
+	defer free(workspace)
+	parts, refusal := assemble(text, workspace)
+	if !testing.expectf(t, refusal.refusal == .None, "refused with %v at line %d, column %d", refusal.refusal, refusal.place.line, refusal.place.column) {
+		return
+	}
+	when ODIN_ARCH == .amd64 {
+		memory, error := virtual.reserve_and_commit(uint(parts.segments[0].memory_size))
+		if !testing.expect(t, error == .None, "the host gave no memory for the code") {
+			return
+		}
+		defer virtual.release(raw_data(memory), uint(parts.segments[0].memory_size))
+		copy(memory, parts.segments[0].data)
+		testing.expect(t, virtual.protect(raw_data(memory), uint(parts.segments[0].memory_size), {.Read, .Execute}))
+		count := cast(proc "c" (n: i64) -> i64)rawptr(&memory[parts.exports[0].code_offset])
+		testing.expect_value(t, count(0), i64(0))
+		testing.expect_value(t, count(1), i64(3))
+		testing.expect_value(t, count(7), i64(21))
+	}
+}
+
+@(test)
+quad_writes_numbers_and_rebased_addresses :: proc(t: ^testing.T) {
+	workspace := new(Workspace)
+	defer free(workspace)
+	// The code has 1 byte, so the data starts on the next page: 0x1000.
+	text := "f: ret\nsection data\nt: quad 1, -1, 0xFFFFFFFFFFFFFFFF, -0x8000000000000000\nquad f, t + 8, t-8, f+0, 1f\n1: quad t + 0x7FFFFFFFFFFFEFFF\nzero 3"
+	parts, refusal := assemble(text, workspace)
+	if !testing.expectf(t, refusal.refusal == .None, "refused with %v at line %d, column %d", refusal.refusal, refusal.place.line, refusal.place.column) {
+		return
+	}
+	expected := [?]u64{1, max(u64), max(u64), 0x8000000000000000, 0, 0x1008, 0xFF8, 0, 0x1048, 0x7FFFFFFFFFFFFFFF}
+	data := workspace.data[:workspace.stored[.Data]]
+	testing.expect_value(t, len(data), len(expected) * 8)
+	for value, index in expected {
+		testing.expectf(t, intrinsics.unaligned_load((^u64le)(&data[index * 8])) == u64le(value), "word %d is %X, not %X", index, intrinsics.unaligned_load((^u64le)(&data[index * 8])), value)
+	}
+	// The rebases are the words that name a label, in the order of the
+	// data, as memory offsets of the module.
+	rebases := [?]u64{0x1020, 0x1028, 0x1030, 0x1038, 0x1040, 0x1048}
+	testing.expect_value(t, len(parts.rebases), len(rebases))
+	for offset, index in rebases {
+		testing.expect_value(t, parts.rebases[index], offset)
+	}
+	testing.expect_value(t, workspace.extents[.Data], u64(len(expected) * 8 + 3))
+
+	size, needed := writer.file_size_needed(parts)
+	testing.expect_value(t, needed.refusal, writer.Refusal.None)
+	file := make([]u8, int(size))
+	defer delete(file)
+	_, written := writer.write(parts, file)
+	testing.expect_value(t, written.refusal, writer.Refusal.None)
+	testing.expect_value(t, module.validate(file), module.Error.None)
+	// The loader adds the base to each rebase and to nothing else.
+	memory := make([]u8, int(parts.segments[1].memory_offset + parts.segments[1].memory_size))
+	defer delete(memory)
+	for segment in parts.segments {
+		copy(memory[segment.memory_offset:], segment.data)
+	}
+	BASE :: 0x7F00_0000_0000
+	testing.expect_value(t, module.rebase(file, memory, BASE), module.Error.None)
+	loaded := memory[0x1000:]
+	testing.expect_value(t, intrinsics.unaligned_load((^u64le)(&loaded[0])), u64le(1))
+	testing.expect_value(t, intrinsics.unaligned_load((^u64le)(&loaded[0x20])), u64le(BASE))
+	testing.expect_value(t, intrinsics.unaligned_load((^u64le)(&loaded[0x28])), u64le(BASE + 0x1008))
+	testing.expect_value(t, intrinsics.unaligned_load((^u64le)(&loaded[0x30])), u64le(BASE + 0xFF8))
+}
+
+@(test)
+quad_refuses_what_a_loader_cannot_rebase :: proc(t: ^testing.T) {
+	// A label in the code: the loader writes the data only.
+	expect_refusal(t, "f: ret; quad f", .Rebase_Not_In_Data, 1, 14)
+	// Off 8 bytes of the section data.
+	record := expect_refusal(t, "f: ret; section data; byte 1; quad f", .Rebase_Not_Aligned, 1, 36)
+	testing.expect_value(t, record.value, 1)
+	expect_refusal(t, "f: ret; section data; zero 4; quad 0, f", .Rebase_Not_Aligned, 1, 39)
+	// A label that the text never defines; a local label with no definition.
+	expect_refusal(t, "f: ret; section data; quad g", .Label_Not_Defined, 1, 28)
+	expect_refusal(t, "f: ret; section data; quad 1f", .Label_Not_Defined, 1, 28)
+	expect_refusal(t, "f: ret; section data; quad 1b", .Label_Not_Defined, 1, 28)
+	// An address below 0, past 2^63 - 1, or an offset past 64 bits.
+	record = expect_refusal(t, "f: ret; section data; quad f - 1", .Address_Out_Of_Range, 1, 28)
+	testing.expect_value(t, record.value, max(u64))
+	expect_refusal(t, "f: ret; section data; t: quad t + 0x7FFFFFFFFFFFF000", .Address_Out_Of_Range, 1, 31)
+	expect_refusal(t, "f: ret; section data; quad f + 0x8000000000000000", .Immediate_Too_Large, 1, 32)
+	expect_refusal(t, "f: ret; section data; quad f - 0x8000000000000001", .Immediate_Too_Large, 1, 32)
+	expect_refusal(t, "f: ret; section data; quad f + 0x10000000000000000", .Immediate_Too_Large, 1, 32)
+	// Numbers past 64 bits.
+	expect_refusal(t, "ret; section data; quad 0x10000000000000000", .Immediate_Too_Large, 1, 25)
+	expect_refusal(t, "ret; section data; quad -0x8000000000000001", .Immediate_Too_Large, 1, 25)
+	// The form of the directive.
+	expect_refusal(t, "ret; section data; quad", .Number_Not_Valid, 1, 24)
+	expect_refusal(t, "ret; section data; quad 1,", .Number_Not_Valid, 1, 27)
+	expect_refusal(t, "ret; section data; quad 1x", .Number_Not_Valid, 1, 25)
+	expect_refusal(t, "f: ret; section data; quad f +", .Number_Not_Valid, 1, 31)
+	expect_refusal(t, "f: ret; section data; quad f + g", .Number_Not_Valid, 1, 32)
+	expect_refusal(t, "f: ret; section data; quad f g", .Directive_Not_Valid, 1, 30)
+	expect_refusal(t, "f: ret; section data; quad $1", .Operand_Not_Valid, 1, 28)
+	expect_refusal(t, "f: ret; section data; quad 9abc", .Number_Not_Valid, 1, 28)
+	// A quad that passes the bytes of the section data.
+	expect_refusal(t, "ret; section data; zero 65528; quad 0, 0", .Section_Past_Capacity, 1, 40)
+}
+
+@(test)
+quad_refuses_past_its_rebase_capacity :: proc(t: ^testing.T) {
+	builder := strings.builder_make()
+	defer strings.builder_destroy(&builder)
+	strings.write_string(&builder, "f: ret\nsection data\n")
+	for _ in 0 ..< REBASE_CAPACITY {
+		strings.write_string(&builder, "quad f\n")
+	}
+	// The last quad that fits gives a module; one more is refused.
+	workspace := new(Workspace)
+	defer free(workspace)
+	parts, refusal := assemble(strings.to_string(builder), workspace)
+	testing.expect_value(t, refusal.refusal, Refusal.None)
+	testing.expect_value(t, len(parts.rebases), REBASE_CAPACITY)
+	strings.write_string(&builder, "quad 0, f")
+	record := expect_refusal(t, strings.to_string(builder), .Rebases_Full, REBASE_CAPACITY + 3, 9)
+	testing.expect_value(t, record.value, REBASE_CAPACITY)
+}

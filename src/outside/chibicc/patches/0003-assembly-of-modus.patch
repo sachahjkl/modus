@@ -16,12 +16,13 @@
  
    switch (node->kind) {
    case ND_IF: {
-@@ -1375,63 +1373,80 @@
+@@ -1375,63 +1373,88 @@
    }
  }
  
-+// modus: the data is one section, `section data`, of `byte` and `zero`
-+// lines. The assembler of modus has no alignment directive: the section
++// modus: the data is one section, `section data`, of `byte`, `quad` and
++// `zero` lines. An address is a `quad` of its label, which the module
++// rebases at its load. The assembler of modus has no alignment directive: the section
 +// starts on a page, so this count of its bytes gives the padding of each
 +// variable. A variable with no initializer is zero bytes, which the module
 +// file does not store at the end of the section.
@@ -76,21 +77,19 @@
 -      println("  .align %d", align);
 -      println("%s:", var->name);
 -
--      Relocation *rel = var->rel;
--      int pos = 0;
--      while (pos < var->ty->size) {
--        if (rel && rel->offset == pos) {
+       Relocation *rel = var->rel;
+       int pos = 0;
+       while (pos < var->ty->size) {
+         if (rel && rel->offset == pos) {
 -          println("  .quad %s%+ld", *rel->label, rel->addend);
--          rel = rel->next;
--          pos += 8;
--        } else {
++          println("  quad %s%+ld", *rel->label, rel->addend);
+           rel = rel->next;
+           pos += 8;
+         } else {
 -          println("  .byte %d", var->init_data[pos++]);
--        }
--      }
-+      if (var->rel)
-+        refuse_object(var, var->ty->name, "an address in an initializer needs a rebase, which the assembler does not write");
-+      for (int pos = 0; pos < var->ty->size; pos++)
-+        println("  byte %d", var->init_data[pos]);
++          println("  byte %d", var->init_data[pos++]);
+         }
+       }
        continue;
      }
  

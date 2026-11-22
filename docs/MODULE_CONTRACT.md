@@ -564,7 +564,7 @@ assemble(source: Bytes, file: Handle) -> Integer
 5
 ```
 
-**The text.** A statement ends at a new line or at `;`, so a whole program fits in one line of the console. `#` starts a comment to the end of the line. A label is a name and `:`. The instructions are in the syntax of AT&T: the source first, `%rax`, `$42`, `8(%rbp)`, `16(%rax,%rcx,4)`, `table(%rip)`, `*reg`, and the suffixes `b`, `w`, `l` and `q`.
+**The text.** A statement ends at a new line or at `;`, so a whole program fits in one line of the console. `#` starts a comment to the end of the line. A label is a name and `:`. A numeric local label (`glossary/code.md`, "Numeric local label") is one digit and `:`, `0:` to `9:`, and the text can define a digit many times: `1f` names the next `1:` after the operand, and `1b` the last `1:` before it. The instructions are in the syntax of AT&T: the source first, `%rax`, `$42`, `8(%rbp)`, `16(%rax,%rcx,4)`, `table(%rip)`, `*reg`, and the suffixes `b`, `w`, `l` and `q`.
 
 | Directive | What it does |
 |---|---|
@@ -572,6 +572,7 @@ assemble(source: Bytes, file: Handle) -> Integer
 | `export name(a: Integer, b: Text) -> Integer` | The export `name` at the label `name`, described with the types: Integer and Text parameters, an Integer result or none, 12 parameters at most |
 | `byte 1, 0x41, -1` | Bytes from -128 to 255 |
 | `zero 4096` | Zero bytes, which the file does not store at the end of a section |
+| `quad 7, table, table + 16, 1f` | 8 bytes for each value, from -2^63 to 2^64 − 1. A label, with an optional `+` or `-` and a number, is its address in the module: the module records a rebase there, and the loader adds the base of the load, so a table of pointers works at each base. A label is allowed in the section data only, on 8 bytes of the section, at most 2048 times |
 
 | Instruction | Forms |
 |---|---|
@@ -590,10 +591,16 @@ assemble(source: Bytes, file: Handle) -> Integer
 | `jo`, `jno`, `jb`, `jae`, `je`, `jne`, `jbe`, `ja`, `js`, `jns`, `jp`, `jnp`, `jl`, `jge`, `jle`, `jg` (and standard aliases) | a label of the code |
 | `seto`, `setno`, `setb`, `setae`, `sete`, `setne`, `setbe`, `seta`, `sets`, `setns`, `setp`, `setnp`, `setl`, `setge`, `setle`, `setg` (and standard aliases) | an 8-bit register or memory operand |
 | `ret` | none |
+| `xchg` | register and register, or register and memory in either order; `lock cmpxchg` and `cmpxchg` a register into memory (`lock` with memory only), and `cmpxchg` into a register |
+| `movss`, `movsd`, `movaps`, `movapd` | `%xmm` or memory to `%xmm`, and `%xmm` to memory |
+| `movq` | a 64-bit register to `%xmm` and back, `%xmm` or memory to `%xmm`, and `%xmm` to memory |
+| `addss`, `addsd`, `subss`, `subsd`, `mulss`, `mulsd`, `divss`, `divsd`, `sqrtss`, `sqrtsd`, `andps`, `andpd`, `orps`, `orpd`, `xorps`, `xorpd`, `pxor`, `ucomiss`, `ucomisd`, `comiss`, `comisd`, `cvtss2sd`, `cvtsd2ss` | `%xmm` or memory to `%xmm` |
+| `cvtsi2ss`, `cvtsi2sd` (with `l` or `q`) | a 32- or 64-bit register, or memory with the suffix, to `%xmm` |
+| `cvttss2si`, `cvttsd2si` (with `l` or `q`) | `%xmm` or memory to a 32- or 64-bit register |
 
-The registers are those of 8, 16, 32 and 64 bits (`%al`..`%r15b`, `%ah`..`%bh`, `%spl`..`%dil`, `%ax`..`%r15w`, `%eax`..`%r15d`, `%rax`..`%r15`). A memory operand is a displacement of 32 bits with a 64-bit base register, a scaled index `disp(base, index, scale)` or `disp(, index, scale)` with scale 1, 2, 4 or 8, or `%rip` with a number or a label. Each form has one encoding, the encoding of the Intel manual, and a direct jump always takes 32 bits.
+The registers are those of 8, 16, 32 and 64 bits (`%al`..`%r15b`, `%ah`..`%bh`, `%spl`..`%dil`, `%ax`..`%r15w`, `%eax`..`%r15d`, `%rax`..`%r15`), and `%xmm0`..`%xmm15` of SSE2, which the forms of SSE and `movq` take only. A memory operand is a displacement of 32 bits with a 64-bit base register, a scaled index `disp(base, index, scale)` or `disp(, index, scale)` with scale 1, 2, 4 or 8, or `%rip` with a number or a label. Each form has one encoding, the encoding of the Intel manual, and a direct jump always takes 32 bits.
 
-**The refusals.** The assembler takes a text whole or not at all. Each refusal of `assembler.Refusal` has the line and the column of its first byte: an empty text, a text past 1 MiB or a line past 1024 bytes, a control byte, an unknown mnemonic, register, section or type, a form out of the subset, operands of two sizes or of no size, a value past its field, a label defined twice or never, a jump to the data, a label more than 2 GiB away, a section past 64 KiB of bytes or 1 TiB, more than 512 labels, 2048 references or 32 exports, a text with no instruction. The export gives the error record `Bad_Byte` for the argument `source`: the value is the offset of the byte, found is the byte. The log of the call host has the sentence:
+**The refusals.** The assembler takes a text whole or not at all. Each refusal of `assembler.Refusal` has the line and the column of its first byte: an empty text, a text past 1 MiB or a line past 1024 bytes, a control byte, an unknown mnemonic, register, section or type, a form out of the subset, operands of two sizes or of no size, a value past its field, a label defined twice or never (`1f` with no `1:` after it, `1b` with none before it), a jump to the data, a label more than 2 GiB away, a section past 64 KiB of bytes or 1 TiB, more than 512 labels, 2048 references, 2048 `quad` values of a label or 32 exports, a text with no instruction, a `quad` of a label in the code or off 8 bytes, and a label with its offset below 0 or past 2^63 − 1. The export gives the error record `Bad_Byte` for the argument `source`: the value is the offset of the byte, found is the byte. The log of the call host has the sentence:
 
 ```
 assemble: line 1, column 6: no instruction of the subset and no directive has this name (refusal 5, value 0)
@@ -630,7 +637,7 @@ compile(source: Bytes, output: Handle) -> Integer
 
 **The exports of the C source.** Each function that is not `static` becomes an export of the assembled module: an `export` directive with its parameters, each `int` or `long` an Integer, and an `int` or `long` result an Integer, a `void` result none. A function that is not `static` with another type is refused: make it `static`.
 
-**The C that passes.** The compiler takes C11, and the assembler takes the integer subset of its output: functions using signed and unsigned `char`, `short`, `int`, `long`, `_Bool`, pointers, arrays, structs, local initializers, arithmetic (`+`, `-`, `*`, `/`, `%`, unary `-`), bitwise and shift operations (`&`, `|`, `^`, `~`, `<<`, `>>`), comparisons and logical operations, `if`, `while`, `for`, `do`, `switch`, and calls (including recursion) between functions of the same source. A floating constant is refused by the compiler; any instruction outside the subset (floating-point SSE, `alloca`, atomics) is refused by the assembler, with its line and its column in the text of `compile`. The remaining gaps: `src/md/features/c_compiler.md`, "The gaps of the assembler".
+**The C that passes.** The compiler takes C11, and the assembler takes its output: functions using signed and unsigned `char`, `short`, `int`, `long`, `_Bool`, `float` and `double`, pointers, arrays, structs, local initializers, global initializers that hold addresses (tables of functions, of strings, pointers into arrays), arithmetic (`+`, `-`, `*`, `/`, `%`, unary `-`), bitwise and shift operations (`&`, `|`, `^`, `~`, `<<`, `>>`), comparisons and logical operations, the conversions between the integers and the floating types, `if`, `while`, `for`, `do`, `switch`, `alloca`, the atomic exchange and compare-and-swap, and calls (including recursion and calls through a pointer) between functions of the same source. A floating constant is refused by the compiler, which reads no decimal number of floating point; a `long double`, which `chibicc` computes with x87 instructions, is refused by the assembler, with its line and its column in the text of `compile`. The remaining gaps: `src/md/features/c_compiler.md`, "The gaps of the assembler".
 
 **The refusals.** An empty source gives `Empty`; a source past 64 KiB gives `Too_Long`. A source that the compiler refuses gives `Bad_Byte` for the argument `source`, with the offset of the byte that the diagnostic names; the log of the call host has the diagnostic of `chibicc`:
 

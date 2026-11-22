@@ -32,6 +32,8 @@ SECTION_EXTENT_MOST :: u64(1) << 40
 LABEL_CAPACITY :: 512
 REFERENCE_CAPACITY :: 2048 // The operands that name a label.
 EXPORT_CAPACITY :: 32
+REBASE_CAPACITY :: 2048 // The `quad` values that name a label: each is one rebase of the module.
+LOCAL_LABEL_DIGITS :: 10 // The numeric local labels `0:` to `9:`.
 
 // The sections of a text. The section code comes first in the module, at
 // the offset 0; the section data follows it on the next page.
@@ -75,6 +77,10 @@ Refusal :: enum u32 {
 	References_Full        = 29, // More than REFERENCE_CAPACITY operands that name a label.
 	Exports_Full           = 30, // More than EXPORT_CAPACITY exports.
 	No_Instruction         = 31, // The text has no byte in the section code.
+	Rebase_Not_In_Data     = 32, // A `quad` names a label in the section code: a loader rebases writable data only.
+	Rebase_Not_Aligned     = 33, // A `quad` that names a label is not on 8 bytes of the section data. value: its offset in the section.
+	Rebases_Full           = 34, // More than REBASE_CAPACITY `quad` values that name a label.
+	Address_Out_Of_Range   = 35, // A label with its offset is below 0 or past 2^63 - 1. value: the address with no sign, modulo 2^64.
 }
 
 // Where a refusal is in the text: its first byte.
@@ -100,6 +106,12 @@ Label :: struct {
 	defined:    bool,
 	first_use:  Place, // Where the text names it first: its definition or an operand.
 	defined_at: Place, // Its definition, when defined.
+	// A numeric local label (`1:`) has no name of its own: the text defines
+	// the digit many times, and `1f` or `1b` names one definition by its
+	// order among the definitions of that digit.
+	local:         bool,
+	local_digit:   u8,
+	local_ordinal: u32, // From 0: the definitions of the digit before this one.
 }
 
 // What the 4 bytes of a reference hold, once the label is placed.
@@ -116,6 +128,15 @@ Reference :: struct {
 	field_offset:    u64, // The 4 bytes, from the start of the code.
 	instruction_end: u64, // The end of the instruction, from the start of the code: the distance counts from there.
 	place:           Place, // The operand.
+}
+
+// A `quad` that names a label: 8 bytes of the data that hold the address
+// of the label in the module, which a loader rebases.
+Data_Reference :: struct {
+	label:       int, // The index of the label.
+	addend:      i64, // The number after the label: `quad table + 16`.
+	data_offset: u64, // The 8 bytes, from the start of the section data.
+	place:       Place, // The operand.
 }
 
 // An export as the directive declares it.
@@ -142,6 +163,12 @@ Workspace :: struct {
 	reference_count: int,
 	exports:         [EXPORT_CAPACITY]Export_Declaration,
 	export_count:    int,
+	data_references:      [REBASE_CAPACITY]Data_Reference,
+	data_reference_count: int,
+	rebases:              [REBASE_CAPACITY]u64, // The memory offset of each data reference, in the order of the data.
+	// The definitions of each digit so far: `Nb` names the last one, `Nf`
+	// the next one.
+	local_label_definitions: [LOCAL_LABEL_DIGITS]u32,
 	segments:        [2]writer.Segment_Part, // The code, and the data when the text has data.
 	export_parts:    [EXPORT_CAPACITY]writer.Export_Part,
 }
@@ -237,6 +264,14 @@ refusal_sentence :: proc "contextless" (refusal: Refusal) -> string {
 		return "the text has more than 32 exports"
 	case .No_Instruction:
 		return "the text has no instruction"
+	case .Rebase_Not_In_Data:
+		return "a quad of a label is in the section data only"
+	case .Rebase_Not_Aligned:
+		return "a quad of a label is on 8 bytes of the section data"
+	case .Rebases_Full:
+		return "the text has more than 2048 quad values that name a label"
+	case .Address_Out_Of_Range:
+		return "the label with its offset is below 0 or past 2^63 - 1"
 	}
 	return "an unknown refusal"
 }
@@ -391,7 +426,13 @@ statement_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) ->
 			break
 		}
 		cursor.position += 1
-		if refusal := label_define(workspace, word, word_place, cursor.section^); refusal.refusal != .None {
+		refusal: Refusal_Record
+		if len(word) == 1 && is_digit(word[0]) {
+			refusal = local_label_define(workspace, word, word_place, cursor.section^)
+		} else {
+			refusal = label_define(workspace, word, word_place, cursor.section^)
+		}
+		if refusal.refusal != .None {
 			return refusal
 		}
 	}
@@ -404,6 +445,8 @@ statement_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) ->
 		return byte_directive(cursor, workspace)
 	case "zero":
 		return zero_directive(cursor, workspace)
+	case "quad":
+		return quad_directive(cursor, workspace)
 	}
 	return instruction_read(cursor, workspace, word, word_place)
 }
@@ -420,11 +463,114 @@ label_name_check :: proc "contextless" (name: string, place: Place) -> Refusal_R
 @(private)
 label_find :: proc "contextless" (workspace: ^Workspace, name: string) -> int {
 	for index in 0 ..< workspace.label_count {
-		if workspace.labels[index].name == name {
+		label := &workspace.labels[index]
+		if !label.local && label.name == name {
 			return index
 		}
 	}
 	return -1
+}
+
+// local_label_find gives the index of a definition of a numeric local
+// label, or -1 while the text has not named it.
+@(private)
+local_label_find :: proc "contextless" (workspace: ^Workspace, digit: u8, ordinal: u32) -> int {
+	for index in 0 ..< workspace.label_count {
+		label := &workspace.labels[index]
+		if label.local && label.local_digit == digit && label.local_ordinal == ordinal {
+			return index
+		}
+	}
+	return -1
+}
+
+// local_label_add adds a definition of a numeric local label that the text
+// names for the first time. Its name is a view of the text, for no lookup:
+// only the digit and the order find it.
+@(private)
+local_label_add :: proc "contextless" (workspace: ^Workspace, name: string, digit: u8, ordinal: u32, place: Place) -> (index: int, refusal: Refusal_Record) {
+	if workspace.label_count == LABEL_CAPACITY {
+		return -1, refuse(.Labels_Full, place, LABEL_CAPACITY)
+	}
+	index = workspace.label_count
+	workspace.labels[index] = {name = name, first_use = place, local = true, local_digit = digit, local_ordinal = ordinal}
+	workspace.label_count += 1
+	return index, {}
+}
+
+// local_label_define places the next definition of a digit: a `Nf` before
+// it names it already, and each `Nb` after it names it until the next one.
+@(private)
+local_label_define :: proc "contextless" (workspace: ^Workspace, word: string, place: Place, section: Section) -> Refusal_Record {
+	digit := word[0] - '0'
+	ordinal := workspace.local_label_definitions[digit]
+	index := local_label_find(workspace, digit, ordinal)
+	if index < 0 {
+		refusal: Refusal_Record
+		if index, refusal = local_label_add(workspace, word, digit, ordinal, place); refusal.refusal != .None {
+			return refusal
+		}
+	}
+	workspace.local_label_definitions[digit] = ordinal + 1
+	label := &workspace.labels[index]
+	label.section = section
+	label.offset = workspace.extents[section]
+	label.defined = true
+	label.defined_at = place
+	return {}
+}
+
+// is_local_reference_here says if the next word is `Nf` or `Nb`: one digit,
+// then `f` or `b`, then no byte of a word.
+@(private)
+is_local_reference_here :: proc "contextless" (cursor: ^Cursor) -> bool {
+	position := cursor.position
+	if position + 1 >= cursor.end || !is_digit(cursor.text[position]) {
+		return false
+	}
+	direction := cursor.text[position + 1]
+	if direction != 'f' && direction != 'b' {
+		return false
+	}
+	return position + 2 >= cursor.end || !is_word_byte(cursor.text[position + 2])
+}
+
+// local_reference_read reads `Nf` or `Nb` and gives the label that it names:
+// `Nb` the last definition of the digit before it, `Nf` the next one.
+@(private)
+local_reference_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace, place: Place) -> (index: int, refusal: Refusal_Record) {
+	name := cursor.text[cursor.position:cursor.position + 2]
+	digit := name[0] - '0'
+	cursor.position += 2
+	definitions := workspace.local_label_definitions[digit]
+	if name[1] == 'b' {
+		if definitions == 0 {
+			return -1, refuse(.Label_Not_Defined, place)
+		}
+		return local_label_find(workspace, digit, definitions - 1), {}
+	}
+	if index = local_label_find(workspace, digit, definitions); index >= 0 {
+		return index, {}
+	}
+	return local_label_add(workspace, name, digit, definitions, place)
+}
+
+// label_reference_read reads the label that an operand names: a name, or a
+// numeric local label `Nf` or `Nb`. It adds a name that the text did not
+// name before.
+@(private)
+label_reference_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace, place: Place) -> (index: int, refusal: Refusal_Record) {
+	if is_local_reference_here(cursor) {
+		return local_reference_read(cursor, workspace, place)
+	}
+	name := word_read(cursor)
+	if name == "" {
+		return -1, refuse(.Operand_Not_Valid, place)
+	}
+	if refusal = label_name_check(name, place); refusal.refusal != .None {
+		return -1, refusal
+	}
+	return label_named(workspace, name, place)
 }
 
 // label_add adds a label that the text names for the first time.
@@ -683,6 +829,96 @@ zero_directive :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) ->
 	return {}
 }
 
+// quad_directive writes 8 bytes for each value: a number, or a label with
+// an optional `+ number` or `- number`. A label gives its address in the
+// module, which the module records as a rebase: the loader adds the base of
+// the load, so a table of pointers holds addresses at any base.
+@(private)
+quad_directive :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) -> Refusal_Record {
+	for {
+		blanks_skip(cursor)
+		place := place_here(cursor)
+		if cursor.position >= cursor.end {
+			return refuse(.Number_Not_Valid, place)
+		}
+		character := cursor.text[cursor.position]
+		value := [8]u8{}
+		if (character == '-' || is_digit(character)) && !is_local_reference_here(cursor) {
+			number, ok := signed_number_read(cursor)
+			if !ok {
+				return refuse(.Number_Not_Valid, place)
+			}
+			if number < i128(min(i64)) || number > i128(max(u64)) {
+				return refuse(.Immediate_Too_Large, place)
+			}
+			intrinsics.unaligned_store((^u64le)(&value[0]), u64le(u64(number & i128(max(u64)))))
+			if refusal := section_write(workspace, cursor.section^, value[:], place); refusal.refusal != .None {
+				return refusal
+			}
+		} else if refusal := quad_label_read(cursor, workspace, place); refusal.refusal != .None {
+			return refusal
+		}
+		if at_end(cursor) {
+			return {}
+		}
+		if !next_is(cursor, ',') {
+			return refuse(.Directive_Not_Valid, place_here(cursor))
+		}
+	}
+}
+
+// quad_label_read reads a label with its offset, and keeps its 8 bytes of
+// the data: their value is known once the code has its size.
+@(private)
+quad_label_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace, place: Place) -> Refusal_Record {
+	label, refusal := label_reference_read(cursor, workspace, place)
+	if refusal.refusal != .None {
+		return refusal
+	}
+	addend := i128(0)
+	blanks_skip(cursor)
+	if cursor.position < cursor.end && (cursor.text[cursor.position] == '+' || cursor.text[cursor.position] == '-') {
+		negative := cursor.text[cursor.position] == '-'
+		cursor.position += 1
+		blanks_skip(cursor)
+		addend_place := place_here(cursor)
+		ok: bool
+		if addend, ok = number_read(cursor); !ok {
+			return refuse(.Number_Not_Valid, addend_place)
+		}
+		if negative {
+			addend = -addend
+		}
+		if addend < i128(min(i64)) || addend > i128(max(i64)) {
+			return refuse(.Immediate_Too_Large, addend_place)
+		}
+	}
+	// The loader writes the segment of the data only: the code is never
+	// writable, so no loader rebases an address there.
+	if cursor.section^ != .Data {
+		return refuse(.Rebase_Not_In_Data, place)
+	}
+	data_offset := workspace.extents[.Data]
+	if data_offset % module.REBASE_WORD_SIZE != 0 {
+		return refuse(.Rebase_Not_Aligned, place, data_offset)
+	}
+	if workspace.data_reference_count == REBASE_CAPACITY {
+		return refuse(.Rebases_Full, place, REBASE_CAPACITY)
+	}
+	zero := [8]u8{}
+	if refusal = section_write(workspace, .Data, zero[:], place); refusal.refusal != .None {
+		return refusal
+	}
+	workspace.data_references[workspace.data_reference_count] = {
+		label       = label,
+		addend      = i64(addend),
+		data_offset = data_offset,
+		place       = place,
+	}
+	workspace.data_reference_count += 1
+	return {}
+}
+
 // references_resolve writes the 4 bytes of each reference, once each label
 // has its place: the section code at the offset 0, the section data on the
 // first page after the code.
@@ -708,6 +944,17 @@ references_resolve :: proc "contextless" (workspace: ^Workspace) -> Refusal_Reco
 			return refuse(.Distance_Too_Large, reference.place, target)
 		}
 		intrinsics.unaligned_store((^i32le)(&workspace.code[reference.field_offset]), i32le(distance))
+	}
+	// The data references are in the order of the data, so the rebases are
+	// in order, as the module file writer requires.
+	for reference, index in workspace.data_references[:workspace.data_reference_count] {
+		label := workspace.labels[reference.label]
+		address := i128(bases[label.section] + label.offset) + i128(reference.addend)
+		if address < 0 || address > i128(max(i64)) {
+			return refuse(.Address_Out_Of_Range, reference.place, u64(address & i128(max(u64))))
+		}
+		intrinsics.unaligned_store((^u64le)(&workspace.data[reference.data_offset]), u64le(u64(address)))
+		workspace.rebases[index] = bases[.Data] + reference.data_offset
 	}
 	return {}
 }
@@ -757,6 +1004,7 @@ parts_fill :: proc "contextless" (workspace: ^Workspace) -> (parts: writer.Modul
 	parts = {
 		segments = workspace.segments[:segment_count],
 		exports  = workspace.export_parts[:workspace.export_count],
+		rebases  = workspace.rebases[:workspace.data_reference_count],
 	}
 	return parts, {}
 }

@@ -49,7 +49,7 @@ The Odin package `src/modules/system/c_compiler` copies the source, makes an are
 |---|---|
 | `0001-headers-of-the-thin-libc.patch` | `chibicc.h` includes no header of a host program (`glob.h`, `sys/stat.h`, `sys/types.h`, `sys/wait.h`, `time.h`, `unistd.h`): only `main.c` and the date macros used them. It declares the place of an error |
 | `0002-reproducible-dates.patch` | `__DATE__`, `__TIME__` and `__TIMESTAMP__` give the start of the epoch. A compiler that reads the clock gives other bytes at each run; the system has no time of a file |
-| `0003-assembly-of-modus.patch` | The output is the syntax of the assembler: `section code` and `section data` in place of the sections of ELF, an `export` directive for each function that is not `static`, no `.file` and no `.loc`, data as `byte` and `zero` lines |
+| `0003-assembly-of-modus.patch` | The output is the syntax of the assembler: `section code` and `section data` in place of the sections of ELF, an `export` directive for each function that is not `static`, no `.file` and no `.loc`, data as `byte`, `quad` and `zero` lines |
 | `0004-place-of-an-error.patch` | Each diagnostic with a place records the offset of that place in its file, so the error record names the byte |
 
 ### The marker of an export: each function that is not static
@@ -63,7 +63,7 @@ A C function that is not `static` has external linkage: C already says "other co
 
 ### The data
 
-The assembler has no alignment directive. The compiler counts the bytes of the section data that it wrote, and writes `zero` before a variable to reach its alignment: the section data starts on a page, so an offset aligned in the section is an address aligned in memory. A variable with an initializer is `byte` lines; one with none is `zero`. An initializer that holds an address is refused: it needs a rebase, which the assembler does not write yet.
+The assembler has no alignment directive. The compiler counts the bytes of the section data that it wrote, and writes `zero` before a variable to reach its alignment: the section data starts on a page, so an offset aligned in the section is an address aligned in memory. A variable with an initializer is `byte` lines, and a `quad` line for each address that it holds (`quad add+0`, `quad numbers+8`); one with none is `zero`. The assembler records a rebase for each `quad` of a label, so a table of functions or of strings holds addresses at each base of the load. A `quad` off 8 bytes of the data (a pointer in a packed struct) is refused by the assembler with its line.
 
 ### The thin libc
 
@@ -79,7 +79,7 @@ It is the C library that `chibicc` calls, and nothing more, in C beside the work
 - **`copy_bytes_without_overlap` and its kin.** `memcpy`, `memmove` and `memset` are the procedures of `src/runtime/memory.asm` in each module.
 - **No path.** `fopen` takes a name of the table of files: the source as `source.c`, and the include files of `chibicc` (`include/stddef.h` and the others), which the flake writes into a C table. Each other name is refused, as a file that does not exist. A mode other than `r` is refused.
 - **`stderr` and `stdout`** are one memory stream of 4 KiB: the diagnostic. The Odin package writes its first line on the log when the compile fails.
-- **`strtold` reads no number.** The assembler has no instruction of floating point, so a C source with a floating constant is refused by `chibicc` ("invalid numeric constant") at the constant, not later by the assembler.
+- **`strtold` reads no number.** A decimal number of floating point needs a correct rounding, which the thin libc does not have yet: a C source with a floating constant is refused by `chibicc` ("invalid numeric constant") at the constant. The assembler takes the instructions of `float` and `double`.
 
 **Why in C, beside the work, and not in Odin under `src/library`.** `vfprintf` takes a `va_list`, which an Odin procedure cannot receive: the Odin compiler takes `#c_vararg` in a declaration of a `foreign` procedure only. One C program uses it today, and a support package of `src/library` needs two owners. The next ported C program moves the thin libc into a place that both share, with what that program adds.
 
@@ -96,10 +96,14 @@ What `chibicc` writes for a C source, and how the assembler handles it:
 | `.file`, `.loc`, `.globl`, `.local`, `.text`, `.data`, `.bss`, `.type`, `.size`, `.align`, `.comm`, `.byte`, `.zero` | The patch writes the directives of modus, or nothing |
 | `movsxd`/`movslq`, `movsbl`, `movsbq`, `movswl`, `movswq`, `movsbw`, `movsb`, `movsw`, `movsx`, `movzbl`, `movzbq`, `movzwl`, `movzwq`, `movzbw`, `movzb`, `movzw`, `movzx`, `cbw`, `cwtl`, `cltq`, `cwd`, `cdq`, `cqo` | Assembled, with host tests |
 | `sete` and all 16 `setcc`, `test`, `imul`, `idiv`, `div`, `and`, `or`, `xor`, `not`, `neg`, `inc`, `dec`, `shl`/`sal`, `shr`, `sar`, `rep stosb`, 8- and 16-bit registers (`%al`..`%r15b`, `%ax`..`%r15w`), scaled indexed addressing, indirect `call *reg` / `jmp *reg` | Assembled, with host tests |
-| `.quad label`, `mov x@GOTPCREL(%rip), %rax`, a section of thread-local data | Refused by the compiler: an address in data needs a rebase, a symbol of another module an import slot, and the module format has no thread-local data |
-| `movss`, `movsd`, x87 and SSE instructions, numeric local labels (`1:`/`1f`/`1b` in `alloca` and atomics), `lock cmpxchg`, `xchg` | Not added: the assembler refuses each with its line and its column |
+| `.quad label+offset` in an initializer | The patch writes `quad label+offset`; the assembler writes the address of the label in the module and records a rebase, with host tests that run tables of function pointers, of strings, and a pointer into an array |
+| `movss`, `movsd`, `movq`, `addss`…`divsd`, `xorps`/`xorpd`, `pxor`, `ucomiss`/`ucomisd`, `cvtsi2ss`/`cvtsi2sd`, `cvttss2si`/`cvttsd2si`, `cvtss2sd`/`cvtsd2ss`, `%xmm0`..`%xmm15` | Assembled, with bytes compared with `llvm-mc`, and host tests that run `float` and `double` arithmetic, comparisons and conversions |
+| Numeric local labels (`1:`/`1f`/`1b` in `alloca`, in the compare-and-swap and in the conversion of an `unsigned long`), `lock cmpxchg`, `xchg` | Assembled, with host tests that run the atomic builtins |
+| `mov x@GOTPCREL(%rip), %rax`, a section of thread-local data | Refused by the compiler: a symbol of another module needs an import slot, and the module format has no thread-local data |
+| x87 instructions (`fldt`, `fstpt`, `fucomip`), for `long double` | Not added: the assembler refuses each with its line and its column |
+| A floating constant (`1.5`) | Refused by the compiler: `strtold` of the thin libc reads no number. A `float` or a `double` comes from an integer by a conversion |
 
-So the C subset that passes today covers integer C functions: signed and unsigned `char`, `short`, `int`, `long`, `_Bool`, pointers, local and global arrays, structs, local initializers (`rep stosb`), comparisons, `if`/`else`, `while`, `for`, `do`, `switch`, `&&`/`||`/`!`/`?:`, `+`, `-`, `*`, `/`, `%`, bitwise `&`/`|`/`^`/`~`/`<<`/`>>`, unary `-`, and direct or recursive calls to functions in the same translation unit (`call *%r10`). Exported functions still take and return `int` or `long` (`Integer`) or `void`; `static` helper functions can take any integer, pointer, or small struct type.
+So the C subset that passes today covers signed and unsigned `char`, `short`, `int`, `long`, `_Bool`, `float` and `double` (with no floating constant), pointers, local and global arrays, structs, local initializers (`rep stosb`), global initializers that hold addresses, `alloca`, the atomic builtins `__builtin_atomic_exchange` and `__builtin_compare_and_swap`, calls through a pointer to a function, comparisons, `if`/`else`, `while`, `for`, `do`, `switch`, `&&`/`||`/`!`/`?:`, `+`, `-`, `*`, `/`, `%`, bitwise `&`/`|`/`^`/`~`/`<<`/`>>`, unary `-`, and direct or recursive calls to functions in the same translation unit (`call *%r10`). Exported functions still take and return `int` or `long` (`Integer`) or `void`; `static` helper functions can take any integer, pointer, or small struct type.
 
 ## The refused forms
 
@@ -120,4 +124,4 @@ So the C subset that passes today covers integer C functions: signed and unsigne
 
 ## State
 
-Built: the module `c_compiler` with its export `compile`, the four patches, the thin libc, the table of the include files, the expanded integer instruction subset of the assembler (comparisons, `setcc`, loops, indirect calls, `imul`, `idiv`/`div`, `cqo`/`cdq`, bitwise and shift operations, 8/16/32/64-bit registers, sign/zero-extending moves, `rep stosb`, scaled indexed SIB addressing) with end-to-end host tests running `chibicc` output for factorial, recursive Fibonacci, signed/unsigned division and modulo, comparisons, bitwise ops and byte/short arrays, and the step of the main machine test. Left: the export `build` with the store "out", exports with non-`int`/`long` C types, the calls of an import through an import slot, floating-point instructions, `alloca`/atomics, and the next ported C program.
+Built: the module `c_compiler` with its export `compile`, the four patches, the thin libc, the table of the include files, the expanded integer instruction subset of the assembler (comparisons, `setcc`, loops, indirect calls, `imul`, `idiv`/`div`, `cqo`/`cdq`, bitwise and shift operations, 8/16/32/64-bit registers, sign/zero-extending moves, `rep stosb`, scaled indexed SIB addressing) with end-to-end host tests running `chibicc` output for factorial, recursive Fibonacci, signed/unsigned division and modulo, comparisons, bitwise ops and byte/short arrays, and the step of the main machine test. The assembler now takes the scalar SSE2 forms, numeric local labels, `xchg`, `lock cmpxchg` and the `quad` of an address with its rebase, and the patch writes `quad` for an address in an initializer, with host tests that run `chibicc` output for each. Left: the export `build` with the store "out", exports with non-`int`/`long` C types, the calls of an import through an import slot, floating constants (`strtold`), `long double` (x87), and the next ported C program.
