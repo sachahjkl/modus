@@ -11,10 +11,13 @@ MAX_TEXT_POOL :: 32768
 MAX_ORIGIN_HOST_LEN :: 128
 NO_NODE :: u16(0xFFFF)
 
-// Scheme of an origin-isolated document.
+// Scheme of an origin-isolated document. Modus names a page built into a
+// program of the system: it comes from no network, and its host names the
+// page, so each such page is its own origin.
 Document_Scheme :: enum u8 {
 	Http  = 1,
 	Https = 2,
+	Modus = 3,
 }
 
 document_scheme_of_word :: proc "contextless" (word: u8) -> (scheme: Document_Scheme, ok: bool) {

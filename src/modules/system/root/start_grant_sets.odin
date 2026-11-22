@@ -369,6 +369,9 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	{name = "fault"},
 	// The cards of the people whose work inspired the system.
 	{name = "hall_of_fame"},
+	// A light browser: the pages that it shows are built into it, so its
+	// window is its one handle.
+	{name = "browser"},
 	// A node of `rings`: its starter gives it four memory objects.
 	{name = "node"},
 	// Five threads in one address space.
