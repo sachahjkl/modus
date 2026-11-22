@@ -33,6 +33,10 @@ BROWSER_MACHINE_CONSOLE_PAGE_FILE :: "browser_machine_console.html"
 BROWSER_MACHINE_CONSOLE_IMAGE_FILE :: "console.image"
 BROWSER_MACHINE_CONSOLE_IMAGE_PATH :: BROWSER_MACHINE_FOLDER + "/" + BROWSER_MACHINE_CONSOLE_IMAGE_FILE
 BROWSER_MACHINE_CONSOLE_UNSIGNED_IMAGE_PATH :: BROWSER_MACHINE_FOLDER + "/console_unsigned.image"
+// The suffix of the file beside a signed boot image of the page that holds
+// the hash of its system description: the page has no BLAKE3, and its
+// worker gives this hash to the trust of the boot record.
+BROWSER_MACHINE_TRUST_SUFFIX :: ".trust"
 
 // The modules of the boot image of the page: the desktop and its
 // applications, the holder of each role of the root service
@@ -629,6 +633,9 @@ browser_machine_page_image_write :: proc(base_path: string, image := Browser_Mac
 	if _, signed := boot_image_signed_write(unsigned_path, "kernel", signed_path, {}); !signed {
 		return false
 	}
+	if !browser_machine_trust_write(signed_path) {
+		return false
+	}
 	base_modules, _, _ := info.image_tables(base)
 	written, stat_error := os.stat(signed_path, context.temp_allocator)
 	if stat_error != nil {
@@ -669,6 +676,53 @@ browser_machine_boot_image_copy :: proc(source: string) -> bool {
 	}
 	if write_error := os.write_entire_file(BROWSER_MACHINE_BOOT_IMAGE_PATH, bytes); write_error != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", BROWSER_MACHINE_BOOT_IMAGE_PATH, write_error)
+		return false
+	}
+	return browser_machine_trust_write(BROWSER_MACHINE_BOOT_IMAGE_PATH)
+}
+
+// browser_machine_trust_hash_hex gives the hash of the system description
+// of a signed boot image, in 64 lowercase hexadecimal digits; found is
+// false for an image with no description and its signature.
+browser_machine_trust_hash_hex :: proc(image: []u8, allocator := context.temp_allocator) -> (hex: string, found: bool) {
+	description, _, has_description := system_description.trust_resources(image)
+	if !has_description {
+		return "", false
+	}
+	hash := blake3.hash(description)
+	digits := "0123456789abcdef"
+	text := make([]u8, 2 * len(hash), allocator)
+	for value, index in hash {
+		text[2 * index] = digits[value >> 4]
+		text[2 * index + 1] = digits[value & 0x0F]
+	}
+	return string(text), true
+}
+
+// browser_machine_trust_write writes the trust file beside the boot image
+// at image_path, or removes an old one when the image holds no
+// description: a trust of another image would stop the root service.
+@(private = "file")
+browser_machine_trust_write :: proc(image_path: string) -> bool {
+	trust_path := strings.concatenate({image_path, BROWSER_MACHINE_TRUST_SUFFIX}, context.temp_allocator)
+	image, read_error := os.read_entire_file(image_path, context.temp_allocator)
+	if read_error != nil {
+		fmt.eprintfln("modustool: cannot read %s: %v", image_path, read_error)
+		return false
+	}
+	hex, found := browser_machine_trust_hash_hex(image)
+	if !found {
+		if os.is_file(trust_path) {
+			if error := os.remove(trust_path); error != nil {
+				fmt.eprintfln("modustool: cannot remove %s: %v", trust_path, error)
+				return false
+			}
+		}
+		return true
+	}
+	text := strings.concatenate({hex, "\n"}, context.temp_allocator)
+	if error := os.write_entire_file(trust_path, transmute([]u8)text); error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", trust_path, error)
 		return false
 	}
 	return true
@@ -764,12 +818,12 @@ browser_machine_boot :: proc(boot_image: string) -> bool {
 	}
 	trust_hash_hex := ""
 	if boot_image != "" {
-		if image_bytes, read_err := os.read_entire_file(boot_image, context.temp_allocator); read_err == nil {
-			if description, _, found := system_description.trust_resources(image_bytes); found {
-				h := blake3.hash(description)
-				trust_hash_hex = fmt.tprintf("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x", h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8], h[9], h[10], h[11], h[12], h[13], h[14], h[15], h[16], h[17], h[18], h[19], h[20], h[21], h[22], h[23], h[24], h[25], h[26], h[27], h[28], h[29], h[30], h[31])
-			}
+		image_bytes, read_error := os.read_entire_file(boot_image, context.temp_allocator)
+		if read_error != nil {
+			fmt.eprintfln("modustool: cannot read %s: %v", boot_image, read_error)
+			return false
 		}
+		trust_hash_hex, _ = browser_machine_trust_hash_hex(image_bytes)
 	}
 	bound := fmt.tprintf("%d", i64(foundation.HANG_BOUND / time.Millisecond))
 	started := time.tick_now()

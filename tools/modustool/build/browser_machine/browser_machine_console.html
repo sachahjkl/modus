@@ -71,11 +71,13 @@
 </div>
 <div id="chips" hidden></div>
 <script type="module">
-import { BrowserMachine, MachineState } from "./browser_machine_host.js";
-
 // The page draws the lines that dom_terminal writes on COM2, one JSON
 // object for each line (src/md/features/console_renderers.md, "Variant C:
 // dom_terminal"). Each place in a text is a place in Array.from(text).
+// The machine runs in the worker of the browser machine, never on the
+// thread of this document (src/md/features/browser_machine.md, "The page
+// and its host"): the lines come in one message for each slice of the
+// worker, and the text that the reader types goes back as one message.
 const OUTPUT_LINE_LIMIT = 4000;
 const LINE_SPAN_LIMIT = 256;
 const LIST_ROW_LIMIT = 8;
@@ -250,31 +252,56 @@ for (const command of STARTERS) {
   chips.append(chip);
 }
 
+// The states of the machine that the worker names (MachineState of the
+// host of the browser machine); any other word shows as stopped.
+const STATES = new Set(["created", "running", "stopped", "trapped"]);
 function stateSet(text) {
   element("state-text").textContent = text;
   element("dot").className = text === "running" ? "running" : text === "starting" || text === "loading" ? "" : "stopped";
 }
 
-const [kernelResponse, imageResponse] = await Promise.all([fetch("./modulus_kernel.wasm"), fetch("./console.image")]);
-const kernelModule = await WebAssembly.compile(await kernelResponse.arrayBuffer());
-const bootImage = new Uint8Array(await imageResponse.arrayBuffer());
-const machine = new BrowserMachine({
-  kernelModule, bootImage, memoryMebibytes: 512, framebufferWidth: 0, framebufferHeight: 0,
-  clockNanoseconds: () => BigInt(Math.round(performance.now() * 1e6)),
-  idleWait: () => {},
-  // COM1 is the log of the kernel: the console of the developer shows it.
-  onSerialLine: (line) => console.log(line),
-  onConsoleLine: (line) => {
-    let record;
-    try { record = JSON.parse(line); } catch { return; }
-    if (!record || typeof record !== "object" || typeof record.t !== "string") return;
-    if (!Object.hasOwn(records, record.t)) return;
-    try { records[record.t](record); } catch {}
-  },
-});
+// consoleLine draws one line of COM2. The worker passes the lines of the
+// system as they are, so each check of a line is here.
+function consoleLine(line) {
+  if (typeof line !== "string") return;
+  let record;
+  try { record = JSON.parse(line); } catch { return; }
+  if (!record || typeof record !== "object" || typeof record.t !== "string") return;
+  if (!Object.hasOwn(records, record.t)) return;
+  try { records[record.t](record); } catch {}
+}
+
+const worker = new Worker("./browser_machine_worker.js", { type: "module" });
+let running = false;
+worker.onmessage = (event) => {
+  const message = event.data;
+  if (!message || typeof message !== "object") return;
+  switch (message.kind) {
+    case "console": {
+      if (!Array.isArray(message.lines)) return;
+      // Output follows the end only when the reader is at the end.
+      const atEnd = output.scrollHeight - output.scrollTop - output.clientHeight < 40;
+      for (const line of message.lines) consoleLine(line);
+      if (atEnd) output.scrollTop = output.scrollHeight;
+      return;
+    }
+    // COM1 is the log of the kernel: the console of the developer shows it.
+    case "serial":
+      if (Array.isArray(message.lines)) for (const line of message.lines) console.log(String(line));
+      return;
+    case "state": {
+      const state = STATES.has(message.state) ? message.state : "stopped";
+      if (state === "running" && !running) { running = true; promptBar.focus(); }
+      if (state !== "running" && typeof message.trap === "string") console.error(message.trap);
+      stateSet(state);
+      return;
+    }
+  }
+};
+worker.onerror = (event) => { console.error(event.message); stateSet("stopped"); };
 // send gives text to COM2 as a terminal sends it: UTF-8 and VT100 keys,
 // which dom_terminal decodes.
-function send(text) { machine.consolePort.type(text); }
+function send(text) { worker.postMessage({ kind: "console_type", text }); }
 
 const NAMED_KEYS = { ArrowUp: "\x1b[A", ArrowDown: "\x1b[B", ArrowRight: "\x1b[C", ArrowLeft: "\x1b[D", Home: "\x1b[H", End: "\x1b[F", Delete: "\x1b[3~", PageUp: "\x1b[5~", PageDown: "\x1b[6~", Enter: "\r", Backspace: "\x7f", Escape: "\x1b" };
 document.addEventListener("keydown", (event) => {
@@ -300,19 +327,12 @@ document.addEventListener("paste", (event) => {
 promptBar.addEventListener("mousedown", () => promptBar.focus());
 
 stateSet("starting");
-await machine.start();
-stateSet("running");
-promptBar.focus();
-
-function step() {
-  if (machine.state !== MachineState.Running) { stateSet(machine.state); return; }
-  // Output follows the end only when the reader is at the end.
-  const atEnd = output.scrollHeight - output.scrollTop - output.clientHeight < 40;
-  machine.runSlice(8_000_000);
-  if (atEnd) output.scrollTop = output.scrollHeight;
-  requestAnimationFrame(step);
-}
-requestAnimationFrame(step);
+// ?cache=<address> names an object cache; the host refuses any address
+// that is not one it may fetch.
+worker.postMessage({
+  kind: "start", kernelUrl: "./modulus_kernel.wasm", bootImageUrl: "./console.image", memoryMebibytes: 512, width: 0, height: 0,
+  cacheBaseUrl: new URLSearchParams(location.search).get("cache") ?? "",
+});
 </script>
 </body>
 </html>

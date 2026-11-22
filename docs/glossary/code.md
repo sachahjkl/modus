@@ -944,9 +944,9 @@ Do not use: substituters, nix.conf, cache configuration.
 
 An object cache is a source of objects by hash, of realisations and of release pointers, reached by the cache protocol over QUIC.
 
-An object cache needs no trust: an object checks itself against its hash, and a realisation or a release pointer against its signer. A mirror, a peer of the local network, a removable disk and another machine of modus are object caches. It is not the build record of the tool.
+An object cache needs no trust: an object checks itself against its hash, and a realisation or a release pointer against its signer. A mirror, a peer of the local network, a removable disk and another machine of modus are object caches. A browser machine reads a blob or a realisation of an object cache over HTTPS, at one path for each hash, with the `fetch()` of its page and no relay. It is not the build record of the tool.
 
-The design: `src/md/features/recipes.md`, "The object cache and its protocol".
+The design: `src/md/features/recipes.md`, "The object cache and its protocol", and `src/md/features/browser_machine.md`, "The object cache of the page".
 
 Do not use: binary cache, substituter, package repository.
 
