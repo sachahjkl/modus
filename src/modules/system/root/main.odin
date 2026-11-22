@@ -2125,6 +2125,7 @@ reap :: proc "contextless" () {
 			// which release closes: a disk process keeps it here.
 			if stopped_role := role_of_module_name(system.name_of(item.name[:])); stopped_role != .None {
 				_ = role_supervision_advance(stopped_role, nil)
+				_, _ = delegated_service_on_stop(system.name_of(item.name[:]), system.time(), true)
 			}
 			stop_report_keep(&item)
 			if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {

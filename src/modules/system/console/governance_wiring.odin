@@ -54,3 +54,25 @@ roles_command :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	return made_value(&table, "roles")
 }
+
+// delegated_services_command lists the delegated system service roles and their
+// module names (plans, recipes, projects, powerbox, disk_processes, principals,
+// devices, settings) as a typed table.
+delegated_services_command :: proc "contextless" (arguments: []Value) -> Value {
+	columns := [2]Column{text_column("role", 24), text_column("module", 24)}
+	table, made := made_table("Delegated_Service", columns[:])
+	if !made {
+		return fail("delegated_services: the line has no room for the description")
+	}
+	DELEGATED :: [8]role_contract.Role{.Disk_Processes, .Principals, .Devices, .Settings, .Powerbox, .Plans, .Recipes, .Projects}
+	for role in DELEGATED {
+		props := role_contract.role_properties(role)
+		row := made_row(&table)
+		if row == nil {
+			break
+		}
+		made_text(&table, row, 0, props.name)
+		made_text(&table, row, 1, props.name)
+	}
+	return made_value(&table, "delegated_services")
+}

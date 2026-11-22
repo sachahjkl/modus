@@ -965,6 +965,8 @@ commands_start :: proc "contextless" () {
 	command("locale", {.Text}, .Text, "set or read the active CLDR locale (en or fr)", locale_command)
 	// Lists the closed system roles defined by the role contract.
 	command("roles", {}, .Table, "the closed system roles", roles_command)
+	// Lists the delegated system services (plans, recipes, projects, powerbox, disk_processes, principals, devices, settings).
+	command("delegated_services", {}, .Table, "the delegated system services", delegated_services_command)
 	debugger_commands_start()
 	tables_start()
 	facts_start() // facts.odin

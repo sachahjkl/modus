@@ -1,5 +1,6 @@
 package interface
 
+import "modus:contract/scale_factor"
 import "modus:display"
 
 KEY_CAPACITY :: 16 // The keys of one frame.
@@ -129,6 +130,7 @@ Interface_State :: struct {
 	// Tab and Shift+Tab follow it.
 	focus_order:   [FOCUS_ORDER_CAPACITY]Element_Identity,
 	focus_count:   int, // The entries of `focus_order` in use.
+	view_zoom:     scale_factor.View_Zoom, // Independent per-view zoom in eighths (0 reads as .One).
 	// The scroll bar that holds the press (`pressed` is its identity): one
 	// button is down at a time, so one scroll bar at most is held, and no
 	// process keeps a state for its scroll bars.
@@ -250,6 +252,7 @@ frame_begin :: proc "contextless" (table: ^Draw_Table, state: ^Interface_State, 
 		step := backward ? state.focus_count - 1 : 1
 		state.focus = state.focus_order[(position + step) % state.focus_count]
 	}
+	view_zoom_apply_keys(state, input)
 	return {table = table, state = state, input = input, time = time}
 }
 
