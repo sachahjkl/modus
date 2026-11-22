@@ -464,6 +464,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/kernel_fault_isolation",
 	foundation.SOURCE_FOLDER_CONTRACT + "/store_crypto",
 	foundation.SOURCE_FOLDER_CONTRACT + "/machine_sync",
+	foundation.SOURCE_FOLDER_CONTRACT + "/machine_wire",
 	foundation.SOURCE_FOLDER_CONTRACT + "/browser_vm_runtime",
 	foundation.SOURCE_FOLDER_CONTRACT + "/guest_os",
 	foundation.SOURCE_FOLDER_CONTRACT + "/rich_toolkit",

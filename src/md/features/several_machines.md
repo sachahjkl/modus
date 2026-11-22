@@ -2,7 +2,7 @@
 
 A principal uses more than one machine: a desktop, a laptop, a machine at home with the large disks. This file records how modus works across them: how a machine proves who it is, how a principal pairs two machines by an explicit act, how a principal lives on several machines, how a role of one machine serves the processes of another, how two machines exchange the versions of one store and merge them, and which objects cross and which never leave a machine. It is layer 5 of [`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "21. Principals: who acts, without users".
 
-The terms Machine identity key, Pairing, Pairing code, Paired machine, Machine list, Remote role, Store exchange, Common version, Merge export and Conflict value are in [`docs/glossary/access.md`](../../../docs/glossary/access.md) and [`docs/glossary/storage.md`](../../../docs/glossary/storage.md). Client key, Client table and Use of a client key are in [`docs/glossary/access.md`](../../../docs/glossary/access.md); Object cache and Realisation in [`docs/glossary/code.md`](../../../docs/glossary/code.md).
+The terms Machine identity key, Pairing, Pairing code, Paired machine, Machine list, Remote role, Mesh frame, Relay envelope, Store exchange, Common version, Merge export and Conflict value are in [`docs/glossary/access.md`](../../../docs/glossary/access.md) and [`docs/glossary/storage.md`](../../../docs/glossary/storage.md). Client key, Client table and Use of a client key are in [`docs/glossary/access.md`](../../../docs/glossary/access.md); Object cache and Realisation in [`docs/glossary/code.md`](../../../docs/glossary/code.md).
 
 ## Purpose
 
@@ -133,7 +133,7 @@ A machine finds another only when the principal pairs them by an explicit act. T
 
 **The address.** The pairing code holds an address, and each connection after it tells the paired machine the addresses of the machine. When an address changes, the next contact from the other machine carries the new one; when both changed, the principal gives an address with `machine_address(key, "…")`. An address is never a grant: the handshake decides, by the identity key.
 
-**A machine behind a NAT.** The principal gives a reachable address: a port that the router of the network forwards to the machine, given with `machine_address`. A relay that carries the encrypted datagrams of two machines behind NATs is later work; it is a server that learns when two machines speak, so it comes with its own design.
+**A machine behind a NAT.** The principal gives a reachable address: a port that the router of the network forwards to the machine, given with `machine_address`. When no address is reachable, a machine of the same principal that both machines reach can relay their datagrams, as "The relay envelope" says. The relay is a paired machine that the principal chose, never a server of the project.
 
 **The address hint on the local network.** It is off by default, and the setting `machine_address_hint` turns it on for one machine. When it is on, the machine sends on the local link only, at its start and at each change of its address, a datagram that holds its address and a tag that only its paired machines can check: a keyed BLAKE2b of the identity key over a fresh nonce, with the nonce. It holds no name and no identity key in clear. A paired machine that checks the tag takes the address as a hint and tries it; the handshake decides, as for each address. It is off by default because it tells each host of the local network that a machine of modus is there.
 
@@ -171,6 +171,55 @@ A principal shares an object or a role with another principal by a **signed gran
 | See what this principal shared | `shared()` |
 | End a share | `share_revoke(serial)` |
 
+### The frames on a stream of remote
+
+The protocols between paired machines cross the QUIC connection of `remote`, on the streams that the calls of the host use (`modus:contract/machine_wire`). Each stream carries one request and its answer, then the end of the stream, as a call does.
+
+- **The first word of a stream chooses the protocol.** A call request starts with the word of `Request_Kind.Call`, a mesh frame with the word of `Request_Kind.Mesh`. `request_check` refuses the word `Mesh`, and `frame_decode` refuses each other word, so a stream reaches one protocol only. Both protocols share the stream records, the bounds of time and the limit of bytes of `remote`.
+- **A mesh frame.** A header of 16 bytes: the kind word, the message word, the count of the body, a zero word; then the body. The answer is one frame: the answer message of the request, or a `Refusal` with its reason and the status of the contract that refused. `frame_decode` is the border of the message word.
+- **The transport names the peer, never the frame.** `serve` takes the identity key that the handshake proved, and the principal root key of the list that names it. A body that names another key is refused: the associated data of CPace must be the key of the handshake, and a grant is checked for the receiver that the transport proved. Today `remote` proves a principal only for a machine of the newest machine list of its own principal, because a machine of another principal does not present its list yet.
+- **Who a stream of a paired machine reaches.** The handshake of `remote` admits a key of the client table, a key of a paired machine, and, while an offer is open and its code has not ended, the key of the machine that pairs (`peer_admits`). The service ends an offer whose code ended at its next pass (`pairing_expire`), which erases its secrets and ends the connection of its machine. A connection of a paired machine with no row of the client table carries mesh frames only: a call request on it is refused with `No_Grant`. When its row ends, the connection ends with the code `Revoked`.
+- **Each request is authorized before any table is read.** A machine that is not paired reaches the two pairing steps only; each other request is refused with `Not_Paired`. A paired machine reaches a request only when the grant of the plan gives it the use of that request (`Machine_Use`: `Objects`, `Stores`, `Roles`, `Relay`, `Grants`); else the refusal `Use_Not_Granted` names the use. A pairing gives no use. A grant holds only while the row of the paired machine holds.
+- **A signed grant needs a pairing.** The authority of a share is the signed grant, but the machine that presents it is a paired machine with the use `Grants`, and the transport must prove the principal of the receiver; with no proven principal the refusal is `No_Principal`. A machine of another principal is paired by its principal as any machine, and presents its machine list in a later step.
+
+**The messages.**
+
+| Request | Answer | What it does |
+|---|---|---|
+| `Pairing_Element` | `Pairing_Element_Reply` | The joiner sends its CPace element and its key; the offerer answers its element, its key and its confirmation tag |
+| `Pairing_Confirm` | `Pairing_Confirmed` | The joiner sends its tag; the offerer writes the row and answers the fingerprint of the session key, which the joiner compares with its own |
+| `Object_Request` | `Object_Response` | A kind and a hash; the bytes. The receiver computes the hash again before it keeps any byte |
+| `Grant_Present` | `Grant_Accepted` | A signed grant of another principal; its serial and its end time |
+| `Store_Offer` | `Store_Offer_Reply` | The version of an exchanged store; the version of the receiver before its merge |
+| `Role_Call` | `Role_Reply` | One call of a role contract; its outcome, its integer result and its bytes |
+| `Relay_Deposit` | `Relay_Deposited` | A relay envelope for a routing token |
+| `Relay_Collect` | `Relay_Delivery` | The oldest envelope of a routing token, byte for byte |
+
+**The pairing in frames.** A wrong code fails the check of the tag on the joiner. The joiner still sends its own tag, so the offerer fails too, and the code ends on both machines. A confirm from another key than the key of the exchange is refused, and does not end the exchange.
+
+**The channel binding.** CPace binds the code to the connection by a channel identifier. The design names the TLS exporter, but the QUIC library has no exporter yet. Until it has one, the binding is a keyed hash of the two identity keys that the handshake proved (`channel_binding_of_identities`). A relay that ends the handshake with its own key gives other bytes. Two connections of the same two machines give the same binding, and the code still runs one exchange only.
+
+**The uses of a pairing.** The window of `unlock` that shows the head of the other key before the principal accepts is not built. Until it is, the principal gives the uses at the offer and at the join (`mesh_pairing_offer`, `mesh_pairing_join`), and the row takes them when the exchange confirms.
+
+**The store exchange in frames.** The sender offers a snapshot of its version, with the hash of its common version; the receiver reads the whole offer and computes the merge before any change, answers its version before the merge, then applies the merge. The sender merges the same three versions. The merge is symmetric, so both machines end with one common version and one set of conflict values. A write of an object that holds a conflict value is refused until the principal resolves it, once; the resolution crosses with the next exchange.
+
+- **Each version carries its conflict records.** A record crosses with its entry. Its reader computes its hash again from its base and its sides, and refuses a record that its entry does not hold and that no other record of the object names.
+- **A write in flight is kept.** The sender writes while its offer waits, to its current version; the snapshot does not change. When the reply comes, the sender merges the snapshot with the reply, then merges its later writes over that result, with the snapshot as their base. A later write of an object that the merge also changed gives a conflict whose side is the conflict value of the merge: the version keeps both records, so the write of each machine stays a side. One resolution ends both.
+- **The common versions must agree.** An offer, and a reply, whose common version is not the common version of the reader are refused with `Refused_Base_Differs`, and nothing changes.
+- **The recovery of a lost reply.** The receiver merged, and its reply was lost: its common version is newer than the common version of the sender. The sender keeps its offer in flight and sends the same snapshot again. The receiver keeps the last exchange that it answered (its common version before it, the hash of the offer, and its reply), and answers the repeat with the same reply, with no change. The sender then reaches the same common version. An offer of the receiver in the meantime is refused by the sender, as its common version differs.
+- **Two offers at once.** Each machine answers the offer of the other and merges; the two merges are equal, and each machine drops its own offer, whose reply now names an older common version and is refused.
+
+**A role call in frames.** The proxy on the machine of the clients keeps each call in flight with its bound; a bound whose end passes the largest time is refused. A refusal that says the call did not run (`Role_Refused`, `Not_Paired`, `Use_Not_Granted`) is `Refused`. A holder that ran and then broke its contract (a count past its result, an outcome of a link) gives `Role_Holder_Fault`, which the proxy reads as `Unknown_Outcome`, as a malformed reply, a reply for another call, a reply with an outcome of a link, a break of the link and a passed bound. A call that starts while the link is broken gives `Unreachable` at once. An idempotent call waits for the link and goes again.
+
+### The relay envelope
+
+A relay carries the datagrams of two machines that cannot reach each other: a machine of the principal that both reach, and that is paired with both.
+
+- **The envelope holds a routing token and sealed bytes.** The two ends share a key from their pairing. The sender seals the datagram with ChaCha20-Poly1305 under that key, with the routing token as its associated data, and puts the nonce before the sealed bytes. The envelope adds no identity key, no address and no plaintext. The relay holds no key: it cannot open, change or forge an envelope. It knows the two ends of each route, which its principal named, and the keys that the handshakes of their connections proved.
+- **The routing token** is a keyed hash of the shared key and an epoch (`relay_routing_token`). The relay cannot link two epochs of one pair.
+- **A route has one sender and one receiver.** The principal of the relay adds a route with its token, the machine that deposits and the machine that collects; two directions are two routes. A deposit of another machine, and a collect of another machine, get the refusal of an unknown token, also from a paired machine that learned the token: it can neither take the envelopes of the route nor fill its queue, and it learns nothing of the routes of others. Both ends need the use `Relay`.
+- **The queue of a route is bounded, and an envelope has a lifetime.** Past two envelopes, a deposit is refused, never dropped in silence. An envelope that waited one minute is dropped, so a sender whose receiver is gone gets its route back. The end of a route erases what waits on it.
+
 ## The prior art
 
 | Work | What modus takes | What modus refuses |
@@ -205,7 +254,9 @@ A principal shares an object or a role with another principal by a **signed gran
 - **The root key kept on a machine, sealed by its TPM.** The theft of that machine with the passphrase then gives the root key, and the gain of the two levels is lost.
 - **The join of a named principal on a machine with no TPM, or with Secure Boot off, with no setting.** A copy of its disk gives an attack on the passphrase with no count of the tries. The setting makes the choice visible and the warning says its cost.
 - **SPAKE2 as the PAKE.** It is an RFC (RFC 9382), but it needs two fixed points of the group whose discrete logarithm no one must know. CPace needs no fixed point, and the CFRG chose it as its balanced PAKE.
-- **A relay of the project for the machines behind a NAT, now.** A relay learns when two machines speak, and the project then runs a server for every principal. The principal gives a reachable address first; a relay is later work, with its own design.
+- **A relay of the project for the machines behind a NAT.** A relay learns when two machines speak, and the project then runs a server for every principal. The relay is a machine of the principal, paired, with a route that its principal adds.
+- **A relay frame that names the destination by its identity key.** The first form of the relay frame carried that key in clear in each datagram. The routing token names a route of one epoch, and the envelope adds no key.
+- **A route that any paired machine with the token can use.** A token can leak; a machine that knew it could take the envelopes of the route or fill its queue. A route names its sender and its receiver.
 - **The address hint on by default.** Each machine then tells each local network where it goes that a machine of modus is there.
 - **A signed grant with no end time and no revocation list.** A copy of it gives access for ever, against property 20, line 13.
 - **A signed grant that its receiver gives on.** A chain of delegations makes each check walk the chain, and the giver no longer knows who holds its object.
@@ -263,6 +314,8 @@ The freestanding contract layer in `src/library/modus/contract/machine_mesh` is 
 
 The same package holds the pairing by a code (`pairing.odin`): a 50-bit code as ten characters of base32, a session that runs CPace once with the TLS exporter as the channel identifier and each identity key as the associated data of its side, a ledger of spent codes, the bounded table of paired machines, and the holder of the newest machine list, which removes at once the row of each machine that a newer list no longer names as active. A refusal at any step ends the session and erases its secrets. `modus:contract/machine_sync` holds a bounded store of objects by hash that keeps an object only when its bytes hash to the requested hash, and its replay set of cross-machine grants refuses each grant once it is full.
 
-`remote` holds this state (`src/modules/system/remote/mesh.odin`): it takes its own public key as the machine identity at its start, draws the code and the CPace scalar from its generator for keys, checks the signatures of machine lists, revocation lists and signed grants with the module cryptography, and gives each refusal as an error record. Its identity is still the key of one start, because the root service does not hold the machine identity key yet.
+`modus:contract/machine_wire` holds the frames of "The frames on a stream of remote" and the state of one machine (`Peer`): the dispatch `serve`, the pairing by frames, the fetch of objects by hash, the check of a presented grant, the store exchange with its conflict values and their one resolution, the proxy of role calls, and the relay envelope with its routes. Its host tests run two and three peers in memory through the frames, and try each refusal.
 
-Left: the identity key from the machine key in the root service and `unlock`, the pairing messages on the QUIC connection of `remote` and the window of `unlock` that shows the code, the rows of paired machines in the client table, the cache protocol and the store exchange over `remote`, `storage`, and the multi-machine QEMU tests.
+`remote` holds one `Peer` (`src/modules/system/remote/mesh.odin`): it takes its own public key as the machine identity at its start, draws the code and the CPace scalar from its generator for keys, and checks the signatures with the module cryptography. Its handshake admits paired machines and the machine of an open offer, and a stream whose first word is `Mesh` goes to `serve`. Its identity is still the key of one start, because the root service does not hold the machine identity key yet.
+
+Left: the identity key from the machine key in the root service and `unlock`; the TLS exporter as the channel binding; the window of `unlock` that shows the code and the key of the other machine; the client side of `remote`, which connects to a paired machine and sends the requests; the rows of paired machines in the client table; the holder of a remote role, which asks the root service for a connection to the real holder; the store exchange in `storage`, with the merge export; the end-to-end sealing of the relay in the modules; and the multi-machine QEMU tests.

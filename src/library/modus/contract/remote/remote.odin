@@ -112,10 +112,14 @@ stream_error_name :: proc "contextless" (code: u64) -> string {
 	return known ? STREAM_ERROR_NAMES[stream_error] : ""
 }
 
-// What a request asks.
+// What a stream asks: the first word of each stream of the remote service.
 Request_Kind :: enum u32 {
 	None = 0, // Not a request: refused.
-	Call = 1, // An isolated call of one export of one service.
+	Call = 1, // An isolated call of one export of one service: a Request header follows.
+	// A frame of the protocols between paired machines
+	// (modus:contract/machine_wire). request_check refuses it: the remote
+	// service reads this word first and gives the stream to the mesh.
+	Mesh = 2,
 }
 
 // request_kind_of_word is the border of the kind word of a Request

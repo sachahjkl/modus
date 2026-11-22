@@ -3,12 +3,14 @@ package remote_service
 // The state of this machine among the other machines of its principal
 // (src/md/features/several_machines.md): its identity, the pairing by a code,
 // the paired machines, the newest signed machine list, the signed grants
-// that it serves, and the objects by hash that paired machines send.
+// that it serves, the objects by hash, the exchanged stores, the roles that
+// it holds for paired machines, and the routes of the relay.
 //
-// The contracts decide (modus:contract/machine_mesh, machine_sync and
-// object_cache); this file holds their state for the process, draws the
-// random bytes, checks the Ed25519 signatures through the module
-// cryptography, and gives each refusal as an error record.
+// The contracts decide (modus:contract/machine_wire, machine_mesh,
+// machine_sync and object_cache); this file holds their state for the
+// process, draws the random bytes, checks the Ed25519 signatures through the
+// module cryptography, gives each refusal as an error record, and answers
+// each mesh frame that a stream of a paired machine carries (mesh_serve).
 //
 // The identity is the public key of this start of the service. The design
 // derives it from the machine key in the root service, which then signs
@@ -19,34 +21,16 @@ import "modus:contract/blake3"
 import "modus:contract/errors"
 import "modus:contract/machine_mesh"
 import "modus:contract/machine_sync"
+import "modus:contract/machine_wire"
 import "modus:contract/object_cache"
 import "modus:random"
 import "modus:system"
 
-// The objects by hash that this process keeps from paired machines: a few
-// small objects, in the data of the process, never on a stack.
-MESH_OBJECT_CAPACITY :: 8
-MESH_OBJECT_BYTES :: 16 * 1024
-
-Mesh :: struct {
-	identity:        machine_mesh.Machine_Identity,
-	has_identity:    bool,
-	pairing:         machine_mesh.Pairing_Session,
-	spent_codes:     machine_mesh.Pairing_Code_Ledger,
-	paired:          machine_mesh.Paired_Machine_Table,
-	machine_list:    machine_mesh.Machine_List_Holder,
-	has_principal:   bool,
-	// Zero: a machine with no TPM attestation is refused, as the design
-	// asks by default.
-	join_policy:     machine_mesh.Join_Policy,
-	revocations:     machine_mesh.Revocation_List,
-	has_revocations: bool,
-	objects:         machine_sync.Object_Store,
-	object_rows:     [MESH_OBJECT_CAPACITY]machine_sync.Stored_Object,
-	object_bytes:    [MESH_OBJECT_BYTES]u8,
-}
-
-mesh: Mesh
+// The state of the mesh: in the data of the process, never on a stack.
+mesh: machine_wire.Peer
+// The answer of one mesh frame, before it goes to the buffer of its stream,
+// which still holds the request.
+mesh_answer: [machine_wire.FRAME_LIMIT]u8
 
 // mesh_signature_verify gives the contracts the strict Ed25519 check of the
 // module cryptography.
@@ -65,20 +49,46 @@ mesh_signature_verify :: proc "contextless" (
 	return ed25519_verify(&key_text, &message_text, &signature_text, &error) == 0
 }
 
+// mesh_fill_random draws the CPace scalar of an exchange from the generator
+// for keys of this process.
+mesh_fill_random :: proc "contextless" (bytes: []u8, _: rawptr) -> bool {
+	error: errors.Error_Record
+	return random.fill_for_a_key(&process_generator, bytes, .Processor, &error)
+}
+
 // mesh_identity_set takes the public key of this service as the machine
-// identity, and makes the store of objects empty. 0, or -1 with an error
-// record.
+// identity, and makes the state of the mesh empty. No role holder is given
+// yet: a role call of a paired machine is refused until the root service
+// gives remote a connection to the real holder for the row of that machine.
+// 0, or -1 with an error record.
 mesh_identity_set :: proc "contextless" (public_key: [32]u8, error: ^errors.Error_Record) -> i64 {
-	identity, ok := machine_mesh.machine_identity_from_public_key(public_key)
-	if !ok {
+	services := machine_wire.Peer_Services {
+		signature_verify = mesh_signature_verify,
+		fill_random      = mesh_fill_random,
+	}
+	if !machine_wire.peer_init(&mesh, public_key, services) {
 		return errors.fail(error, -1, .Bad_Value, .None, 1)
 	}
-	mesh.identity = identity
-	mesh.has_identity = true
-	if !machine_sync.object_store_init(&mesh.objects, mesh.object_rows[:], mesh.object_bytes[:]) {
-		return errors.fail(error, -1, .Too_Small, .Bytes, 0, 0, 1)
-	}
 	return 0
+}
+
+// mesh_serve answers one mesh frame of a stream: the request is in
+// buffer[:received], and the answer replaces it. peer_identity is the key
+// that the handshake proved. It gives the length of the answer.
+mesh_serve :: proc "contextless" (buffer: []u8, received: int, peer_identity: [32]u8) -> int {
+	serve_context := machine_wire.Serve_Context {
+		peer_identity   = peer_identity,
+		channel_binding = machine_wire.channel_binding_of_identities(mesh.identity.public_key, peer_identity),
+		now_ms          = system.time(),
+	}
+	// The principal of the sender: a machine that the newest machine list
+	// of this principal names. The machine lists of other principals are
+	// not presented yet, so a machine of another principal proves none.
+	if row, paired := machine_mesh.paired_machine_find(&mesh.paired, peer_identity); paired && row.source == .Machine_List && mesh.machine_list.has_list {
+		serve_context.peer_root_public_key = mesh.machine_list.principal_root_public_key
+	}
+	answer := machine_wire.serve(&mesh, &serve_context, buffer[:received], mesh_answer[:])
+	return copy(buffer, answer)
 }
 
 // mesh_principal_set names the principal root key whose signed machine list
@@ -112,14 +122,17 @@ mesh_identity_check :: proc "contextless" (error: ^errors.Error_Record) -> bool 
 }
 
 // mesh_pairing_offer starts a pairing on this machine and writes the code to
-// show. 0, or -1 with an error record.
-mesh_pairing_offer :: proc "contextless" (code_text: ^[machine_mesh.PAIRING_CODE_TEXT_SIZE]u8, error: ^errors.Error_Record) -> i64 {
+// show. uses_word is the word of the uses that the principal gives the
+// machine that types the code: its row takes them when the exchange of the
+// mesh frames confirms (machine_wire.serve). 0, or -1 with an error record.
+mesh_pairing_offer :: proc "contextless" (code_text: ^[machine_mesh.PAIRING_CODE_TEXT_SIZE]u8, uses_word: u64, error: ^errors.Error_Record) -> i64 {
 	if code_text == nil {
 		return errors.fail(error, -1, .Bad_Address, .None, 1)
 	}
 	if !mesh_identity_check(error) {
 		return -1
 	}
+	mesh.pairing_uses_word = uses_word
 	random_bytes: [8]u8
 	defer machine_mesh.clear_bytes_explicitly(random_bytes[:])
 	if !random.fill_for_a_key(&process_generator, random_bytes[:], .Processor, error) {
@@ -133,70 +146,14 @@ mesh_pairing_offer :: proc "contextless" (code_text: ^[machine_mesh.PAIRING_CODE
 	return 0
 }
 
-// mesh_pairing_join starts a pairing with the code that the principal typed.
-mesh_pairing_join :: proc "contextless" (code_text: []u8, error: ^errors.Error_Record) -> i64 {
+// mesh_pairing_join starts a pairing with the code that the principal
+// typed, and the uses that it gives the machine that showed the code.
+mesh_pairing_join :: proc "contextless" (code_text: []u8, uses_word: u64, error: ^errors.Error_Record) -> i64 {
 	if !mesh_identity_check(error) {
 		return -1
 	}
+	mesh.pairing_uses_word = uses_word
 	status := machine_mesh.pairing_join(&mesh.pairing, mesh.identity.public_key, code_text, system.time())
-	if status != .Ok {
-		return mesh_pairing_fail(error, status, 1)
-	}
-	return 0
-}
-
-// mesh_pairing_exchange_start binds the pairing to the identity key that the
-// peer proved in the handshake and to the TLS exporter of the connection,
-// and writes the CPace element to send.
-mesh_pairing_exchange_start :: proc "contextless" (
-	peer_identity: [32]u8,
-	channel_binding: []u8,
-	own_element: ^[machine_mesh.CPACE_PUBLIC_ELEMENT_SIZE]u8,
-	error: ^errors.Error_Record,
-) -> i64 {
-	if own_element == nil {
-		return errors.fail(error, -1, .Bad_Address, .None, 3)
-	}
-	scalar: [machine_mesh.CPACE_SCALAR_SIZE]u8
-	defer machine_mesh.clear_bytes_explicitly(scalar[:])
-	if !random.fill_for_a_key(&process_generator, scalar[:], .Processor, error) {
-		return -1
-	}
-	element, status := machine_mesh.pairing_exchange_start(&mesh.pairing, &mesh.spent_codes, peer_identity, channel_binding, scalar, system.time())
-	if status != .Ok {
-		return mesh_pairing_fail(error, status, 1)
-	}
-	own_element^ = element
-	return 0
-}
-
-// mesh_pairing_exchange_finish takes the element of the peer and its
-// associated data, and writes the confirmation tag to send.
-mesh_pairing_exchange_finish :: proc "contextless" (
-	peer_element: [machine_mesh.CPACE_PUBLIC_ELEMENT_SIZE]u8,
-	peer_associated_data: []u8,
-	own_tag: ^[machine_mesh.CPACE_CONFIRM_TAG_SIZE]u8,
-	error: ^errors.Error_Record,
-) -> i64 {
-	if own_tag == nil {
-		return errors.fail(error, -1, .Bad_Address, .None, 3)
-	}
-	tag, status := machine_mesh.pairing_exchange_finish(&mesh.pairing, peer_element, peer_associated_data)
-	if status != .Ok {
-		return mesh_pairing_fail(error, status, 2)
-	}
-	own_tag^ = tag
-	return 0
-}
-
-// mesh_pairing_confirm checks the tag of the peer and writes the row of the
-// peer with the uses that the principal accepted.
-mesh_pairing_confirm :: proc "contextless" (
-	peer_tag: [machine_mesh.CPACE_CONFIRM_TAG_SIZE]u8,
-	uses_word: u64,
-	error: ^errors.Error_Record,
-) -> i64 {
-	_, status := machine_mesh.pairing_confirm(&mesh.pairing, &mesh.paired, peer_tag, uses_word, system.time())
 	if status != .Ok {
 		return mesh_pairing_fail(error, status, 1)
 	}
@@ -340,9 +297,9 @@ mesh_object_accept :: proc "contextless" (
 	case .Refused_Malformed:
 		return errors.fail(error, -1, .Bad_Value, .None, 4, 0, 0, i64(status))
 	case .Refused_Full:
-		return errors.fail(error, -1, .Full, .Objects, 0, 0, MESH_OBJECT_CAPACITY)
+		return errors.fail(error, -1, .Full, .Objects, 0, 0, machine_wire.OBJECT_CAPACITY)
 	case .Refused_Too_Large:
-		return errors.fail(error, -1, .Too_Long, .Bytes, 4, i64(len(payload)), i64(MESH_OBJECT_BYTES - mesh.objects.bytes_used))
+		return errors.fail(error, -1, .Too_Long, .Bytes, 4, i64(len(payload)), i64(machine_wire.OBJECT_BYTES_LIMIT - mesh.objects.bytes_used))
 	case .Refused_Nil_Input:
 		return errors.fail(error, -1, .State, .None, 0)
 	}

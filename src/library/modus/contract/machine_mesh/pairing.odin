@@ -227,8 +227,8 @@ pairing_session_clear :: proc "contextless" (session: ^Pairing_Session) {
 }
 
 // A refusal after the start spends the session: one wrong step ends the
-// pairing, and the code is gone.
-@(private = "file")
+// pairing, and the code is gone. The transport calls it too, when a step
+// fails before the contract sees it (no random bytes, a malformed answer).
 pairing_fail :: proc "contextless" (session: ^Pairing_Session, status: Pairing_Status) -> Pairing_Status {
 	cpace_status := session.cpace_status
 	side := session.side

@@ -78,6 +78,7 @@ package remote_service
 import "base:intrinsics"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import "modus:contract/machine_wire"
 import "modus:contract/remote"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
@@ -237,6 +238,10 @@ Record_Client :: struct {
 	serial:     u64, // The serial of the row when the record was bound: the grant.
 	principal:  u64, // The principal that allowed the key.
 	key:        [32]u8, // The key that the client proved.
+	// The key has no row of the client table: it is a paired machine, or
+	// the machine of an open pairing (machine_wire.peer_admits). Its streams
+	// carry mesh frames only, and no call acts for a principal.
+	mesh_only:  bool,
 }
 record_clients: [CAPACITY]Record_Client
 
@@ -471,6 +476,9 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 	if row >= 0 && remote.client_grant_holds(&rows, row, rows[row].serial, .Calls) {
 		return true
 	}
+	if machine_wire.peer_admits(&mesh, proven, system.time()) {
+		return true
+	}
 	counts.keys_refused += 1
 	if log_allowed() {
 		client_key := key_field(proven)
@@ -494,6 +502,13 @@ client_bind :: proc "contextless" (connection: ^quic.Connection, client: ^Record
 	key := connection.tls.client_public_key
 	row := remote.client_find(&client_rows, key)
 	if row < 0 || !remote.client_grant_holds(&client_rows, row, client_rows[row].serial, .Calls) {
+		if machine_wire.peer_admits(&mesh, key, system.time()) {
+			client.bound, client.mesh_only, client.row, client.key = true, true, -1, key
+			if log_allowed() {
+				system.log_fact(.Info, Mesh_Peer_Proved{client_key_head = key_head_field(key), peer = peer_field(peer)})
+			}
+			return
+		}
 		client.ended = true
 		quic.connection_close(connection, u64(remote.Stream_Error.Revoked), now_microseconds())
 		counts.revoked += 1
@@ -512,6 +527,21 @@ client_bind :: proc "contextless" (connection: ^quic.Connection, client: ^Record
 // ended: the principal revoked the key, or locked its session. Its
 // connections to services end in service_connections_of_ended_grants.
 client_grant_check :: proc "contextless" (connection: ^quic.Connection, client: ^Record_Client, peer: quic.Remote) {
+	if client.mesh_only {
+		// A paired machine holds while its row of the mesh holds: a newer
+		// machine list, or the end of an open pairing, removes it.
+		if machine_wire.peer_admits(&mesh, client.key, system.time()) {
+			return
+		}
+		client.bound = false
+		client.ended = true
+		quic.connection_close(connection, u64(remote.Stream_Error.Revoked), now_microseconds())
+		counts.revoked += 1
+		if log_allowed() {
+			system.log_fact(.Info, Mesh_Peer_Ended{client_key_head = key_head_field(client.key), peer = peer_field(peer)})
+		}
+		return
+	}
 	if remote.client_grant_holds(&client_rows, client.row, client.serial, .Calls) {
 		return
 	}
@@ -564,6 +594,9 @@ calls_work :: proc "contextless" () {
 	client_table_version_seen = intrinsics.atomic_load_explicit(&client_table.version, .Acquire)
 	remote.client_table_read(client_table, &client_rows)
 	service_connections_of_ended_grants()
+	// An offer whose code ended admits no key: the connection of its
+	// machine ends below, in client_grant_check.
+	machine_wire.pairing_expire(&mesh, now)
 	for record, place in records {
 		place_calls := calls[place * STREAMS_PER_CONNECTION:][:STREAMS_PER_CONNECTION]
 		if !record.in_use {
@@ -928,6 +961,17 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client) -> int {
 	counts.requests += 1
 	counts.bytes_in += u64(received)
+	// The first word of the stream chooses the protocol: a mesh frame of a
+	// machine, or a call request of a client of the client table.
+	if machine_wire.stream_is_mesh(buffer[:received]) {
+		length := mesh_serve(buffer, received, client.key)
+		counts.bytes_out += u64(length)
+		return length
+	}
+	if client.mesh_only {
+		// A paired machine with no row of the client table acts for no principal.
+		return refuse(buffer, errors.error_make(.No_Grant, .None, remote.FIELD_KIND, i64(remote.Request_Kind.Call), i64(remote.Request_Kind.Mesh)))
+	}
 	start := system.nanoseconds()
 	request, arguments, error, ok := remote.request_check(buffer[:received], remote.REGION_SIZE)
 	if !ok {
