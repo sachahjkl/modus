@@ -1549,6 +1549,18 @@ screen_copy :: proc "contextless" (page: graphics.Canvas, area: Rectangle) {
 	width, height := area.right - area.left, area.bottom - area.top
 	canvas := graphics.view(frame, area.left, area.top, width, height)
 	target := graphics.view(page, area.left, area.top, width, height)
+	if desktop_magnifier.enabled {
+		for y in 0 ..< height {
+			for column in 0 ..< width {
+				color := desktop_magnifier_sample(area.left + column, area.top + y)
+				if red_first {
+					color = color >> 16 & 0xFF | color & 0xFF00 | (color & 0xFF) << 16
+				}
+				target.pixels[y * target.stride + column] = color
+			}
+		}
+		return
+	}
 	if !red_first {
 		graphics.copy(target, 0, 0, canvas)
 		return
@@ -2055,6 +2067,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		}
 	}
 	capture_popover_records(&card_frame)
+	desktop_notifications_records(table)
 	screen_part_end(bar_first, bar_mark_pixels[:], {}, false, true)
 	if table.full {
 		system.log_fact(.Warning, Screen_Draw_Table_Full{})

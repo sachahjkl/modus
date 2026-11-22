@@ -963,6 +963,8 @@ commands_start :: proc "contextless" () {
 	//
 	// - `tag`: `"en"`, `"fr"`, or `""` to read the active locale tag.
 	command("locale", {.Text}, .Text, "set or read the active CLDR locale (en or fr)", locale_command)
+	// Lists the closed system roles defined by the role contract.
+	command("roles", {}, .Table, "the closed system roles", roles_command)
 	debugger_commands_start()
 	tables_start()
 	facts_start() // facts.odin

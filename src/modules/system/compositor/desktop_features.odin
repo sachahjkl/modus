@@ -1,11 +1,20 @@
-// Live desktop workspace switching, edge-snapping, notification queue, and
-// viewport magnifier state integrated directly into the compositor event loop.
+// Live desktop workspace switching, edge-snapping, notification banner
+// rendering, and viewport magnifier zoom integrated directly into the
+// compositor event loop and frame draw pass.
 package compositor
 
 import "modus:contract/desktop_layout"
 import "modus:contract/notifications"
 import "modus:contract/screen_reader"
 import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+
+NOTIFICATION_BANNER_WIDTH :: 280
+NOTIFICATION_BANNER_HEIGHT :: 54
+NOTIFICATION_BANNER_MARGIN :: 10
+NOTIFICATION_BANNER_GAP :: 6
+NOTIFICATION_MAX_VISIBLE :: 4
 
 desktop_workspaces: desktop_layout.Workspace_Manager
 desktop_work_area: desktop_layout.Work_Area
@@ -58,7 +67,68 @@ desktop_features_tick :: proc "contextless" (now_ns: u64) {
 	if !desktop_features_ready {
 		return
 	}
-	_ = notifications.queue_expire(&desktop_notifications, now_ns / 1_000_000)
+	if notifications.queue_expire(&desktop_notifications, now_ns / 1_000_000) > 0 {
+		desktop_damage_notifications()
+	}
+}
+
+desktop_damage_notifications :: proc "contextless" () {
+	x := max(0, desktop_width - NOTIFICATION_BANNER_WIDTH - NOTIFICATION_BANNER_MARGIN - 2)
+	h := NOTIFICATION_MAX_VISIBLE * (NOTIFICATION_BANNER_HEIGHT + NOTIFICATION_BANNER_GAP) + NOTIFICATION_BANNER_MARGIN * 2
+	damage_add(x, BAR_HEIGHT, desktop_width - x, min(h, max(0, desktop_height - BAR_HEIGHT)))
+}
+
+// desktop_notifications_records appends non-focus-stealing rectangular banner
+// cards for active notifications in the top-right corner below the bar.
+desktop_notifications_records :: proc "contextless" (table: ^interface.Draw_Table) {
+	if !desktop_features_ready {
+		return
+	}
+	shown := 0
+	x := max(0, desktop_width - NOTIFICATION_BANNER_WIDTH - NOTIFICATION_BANNER_MARGIN)
+	for &item in desktop_notifications.items {
+		if !item.active {
+			continue
+		}
+		if shown >= NOTIFICATION_MAX_VISIBLE {
+			break
+		}
+		y := BAR_HEIGHT + NOTIFICATION_BANNER_MARGIN + shown * (NOTIFICATION_BANNER_HEIGHT + NOTIFICATION_BANNER_GAP)
+		border_color := item.urgency == .Critical ? graphics.colors.stop_process : graphics.colors.title
+		interface.draw_rectangle(table, x, y, NOTIFICATION_BANNER_WIDTH, NOTIFICATION_BANNER_HEIGHT, graphics.colors.card_bottom)
+		interface.draw_outline(table, x, y, NOTIFICATION_BANNER_WIDTH, NOTIFICATION_BANNER_HEIGHT, 1, border_color)
+		title_str := string(item.title[:item.title_len])
+		title_fit := interface.text_fit(table, interface.FONT_INTERFACE, title_str, NOTIFICATION_BANNER_WIDTH - 16)
+		interface.draw_text(table, x + 8, y + 6, title_fit, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+		if item.body_len > 0 {
+			body_str := string(item.body[:item.body_len])
+			body_fit := interface.text_fit(table, interface.FONT_INTERFACE, body_str, NOTIFICATION_BANNER_WIDTH - 16)
+			interface.draw_text(table, x + 8, y + 26, body_fit, graphics.colors.dim, interface.FONT_INTERFACE)
+		}
+		shown += 1
+	}
+}
+
+// desktop_magnifier_sample reads a magnified pixel from frame for screen
+// destination coordinates (dst_x, dst_y), applying the active filter mode.
+desktop_magnifier_sample :: proc "contextless" (dst_x, dst_y: int) -> graphics.Color {
+	zoom := max(i32(12), i32(desktop_magnifier.zoom_eighths))
+	src_x := clamp(int(desktop_magnifier.view_x) + (dst_x * 8) / int(zoom), 0, max(0, frame.width - 1))
+	src_y := clamp(int(desktop_magnifier.view_y) + (dst_y * 8) / int(zoom), 0, max(0, frame.height - 1))
+	color := frame.pixels[src_y * frame.stride + src_x]
+	switch desktop_magnifier.filter {
+	case .Normal:
+		return color
+	case .Inverted:
+		return (^graphics.Color)(&color)^ ~ 0x00FF_FFFF
+	case .High_Contrast:
+		r := (color >> 16) & 0xFF
+		g := (color >> 8) & 0xFF
+		b := color & 0xFF
+		luma := (r * 3 + g * 6 + b) / 10
+		return luma >= 96 ? graphics.COLOR_WHITE : graphics.Color(0x0000_0000)
+	}
+	return color
 }
 
 desktop_workspace_select :: proc "contextless" (index: u8) -> bool {
@@ -99,6 +169,25 @@ desktop_snap_front_window :: proc "contextless" (zone: desktop_layout.Snap_Zone)
 	return true
 }
 
+desktop_magnifier_set :: proc "contextless" (zoom_eighths: u16, tx, ty: i32) -> bool {
+	if !desktop_features_ready {
+		return false
+	}
+	if zoom_eighths == 0 {
+		desktop_magnifier.enabled = false
+		damage_whole_screen()
+		return true
+	}
+	if zoom_eighths < 12 || zoom_eighths > 64 {
+		return false
+	}
+	desktop_magnifier.zoom_eighths = zoom_eighths
+	desktop_magnifier.enabled = true
+	screen_reader.magnifier_focus_on(&desktop_magnifier, tx, ty)
+	damage_whole_screen()
+	return true
+}
+
 desktop_magnifier_toggle :: proc "contextless" (tx, ty: i32) {
 	if !desktop_features_ready {
 		return
@@ -114,7 +203,11 @@ desktop_magnifier_track :: proc "contextless" (tx, ty: i32) {
 	if !desktop_features_ready || !desktop_magnifier.enabled {
 		return
 	}
+	before_x, before_y := desktop_magnifier.view_x, desktop_magnifier.view_y
 	screen_reader.magnifier_focus_on(&desktop_magnifier, tx, ty)
+	if desktop_magnifier.view_x != before_x || desktop_magnifier.view_y != before_y {
+		damage_whole_screen()
+	}
 }
 
 // desktop_shortcut_key handles Ctrl+Shift desktop shell bindings (workspaces
@@ -156,5 +249,9 @@ desktop_notification_post :: proc "contextless" (source_id: u64, urgency: notifi
 		return 0
 	}
 	id, refusal := notifications.queue_post(&desktop_notifications, source_id, urgency, now_ms, 8_000, title, body)
-	return refusal == .None ? id : 0
+	if refusal == .None {
+		desktop_damage_notifications()
+		return id
+	}
+	return 0
 }

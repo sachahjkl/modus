@@ -293,3 +293,42 @@ screen_state :: proc "c" (result: ^[]Screen, error: ^errors.Error_Record) -> i64
 	}
 	return 1
 }
+
+// notify posts a non-focus-stealing desktop notification card in the top-right
+// corner below the bar and returns its assigned notification identifier, or a
+// negative number with an error record.
+//
+// **Grant**: the caller must **act for the principal**.
+@(export, link_name = "notify")
+notify_export :: proc "c" (title: ^string, body: ^string, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if len(title^) == 0 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
+	}
+	id := desktop_notification_post(1, .Normal, system.time(), transmute([]u8)(title^), transmute([]u8)(body^))
+	if id == 0 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, 1)
+	}
+	return i64(id)
+}
+
+// magnifier sets the desktop viewport magnifier zoom factor in eighths
+// (0 disables; 12 to 64 enables 1.5x to 8x zoom centered on the pointer) and
+// returns 1 on success, or a negative number with an error record.
+//
+// **Grant**: the caller must **act for the principal**.
+@(export, link_name = "magnifier")
+magnifier_export :: proc "c" (zoom_eighths: i64, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if zoom_eighths < 0 || zoom_eighths > 64 || (zoom_eighths != 0 && zoom_eighths < 12) {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Out_Of_Range, .Counts, 1, zoom_eighths, 64)
+	}
+	if !desktop_magnifier_set(u16(zoom_eighths), i32(pointer_x), i32(pointer_y)) {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Counts, 1, zoom_eighths)
+	}
+	return 1
+}

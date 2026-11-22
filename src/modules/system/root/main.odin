@@ -2123,6 +2123,9 @@ reap :: proc "contextless" () {
 			}
 			// The kernel forgets the stop report with the last handle,
 			// which release closes: a disk process keeps it here.
+			if stopped_role := role_of_module_name(system.name_of(item.name[:])); stopped_role != .None {
+				_ = role_supervision_advance(stopped_role, nil)
+			}
 			stop_report_keep(&item)
 			if !item.is_terminal && system.name_of(item.name[:]) == "unlock" {
 				unlock_stopped()

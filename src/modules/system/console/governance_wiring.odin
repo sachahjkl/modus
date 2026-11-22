@@ -1,9 +1,10 @@
-// Live console pre-call / wide-grant confirmation policy and CLDR en/fr
-// localized prompt labels integrated into the console service.
+// Live console pre-call / wide-grant confirmation policy, CLDR en/fr
+// localized prompt labels, and role contract listing integrated into console.
 package console
 
 import "modus:contract/console_prompt"
 import "modus:contract/locale_cldr"
+import "modus:contract/role_contract"
 
 console_active_locale: locale_cldr.Locale_Id = .En_US
 
@@ -29,4 +30,27 @@ locale_command :: proc "contextless" (arguments: []Value) -> Value {
 	}
 	data := locale_cldr.locale_data(console_active_locale)
 	return {kind = .Text, text = data.tag}
+}
+
+// roles_command returns a typed table of all closed system roles and their
+// scope, trust path, and multi-holder rules from role_contract.
+roles_command :: proc "contextless" (arguments: []Value) -> Value {
+	columns := [2]Column{text_column("role", 32), text_column("multi_holder", 16)}
+	table, made := made_table("Role", columns[:])
+	if !made {
+		return fail("roles: the line has no room for the description")
+	}
+	for role in role_contract.Role {
+		if role == .None {
+			continue
+		}
+		props := role_contract.role_properties(role)
+		row := made_row(&table)
+		if row == nil {
+			break
+		}
+		made_text(&table, row, 0, props.name)
+		made_text(&table, row, 1, props.allows_multiple_holders ? "yes" : "no")
+	}
+	return made_value(&table, "roles")
 }
