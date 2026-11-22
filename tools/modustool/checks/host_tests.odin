@@ -327,6 +327,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/object_cache",
 	foundation.SOURCE_FOLDER_CONTRACT + "/draw_record",
 	foundation.SOURCE_FOLDER_CONTRACT + "/accessibility",
+	foundation.SOURCE_FOLDER_CONTRACT + "/speech_output",
 	foundation.SOURCE_FOLDER_INTERNAL + "/sound/sound_device",
 	foundation.SOURCE_FOLDER_KERNEL + "/acpi_processors",
 	foundation.SOURCE_FOLDER_CONTRACT + "/role_contract",
