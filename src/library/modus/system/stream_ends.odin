@@ -1105,6 +1105,52 @@ output_pair_rings :: proc "contextless" (stream: ^Record_Output(Any_Record, modu
 	return output_ends_of(&stream.state, record_size, pair)
 }
 
+// output_pairs writes the pairs of the writer ends that a record output
+// Paired holds now, after it took the ends of the wiring ring, each pair
+// once, and gives their count: at most len(into).
+output_pairs :: proc "contextless" (stream: ^Record_Output(Any_Record, module.Record_Output_Pairing.Paired), into: []u32) -> (count: int) {
+	stream_ends_take()
+	index := stream_index_read(&stream.state.index)
+	if index == 0 {
+		return 0
+	}
+	ends: for &end in stream_ends {
+		if end.command != .Writer_End || end.index != index || end.pair == 0 {
+			continue
+		}
+		for listed in into[:count] {
+			if listed == end.pair {
+				continue ends
+			}
+		}
+		if count < len(into) {
+			into[count] = end.pair
+			count += 1
+		}
+	}
+	return count
+}
+
+// output_pair_close closes each writer end of one pair of a record output
+// Paired, with no end record, and says Closed to the root service: its
+// reader reads Side_Closed after the records that its ring holds. It
+// needs no size of a record, so it closes an end that no write opened: the
+// end of a pair whose source the process does not keep. It gives the
+// count of the ends that it closed.
+output_pair_close :: proc "contextless" (stream: ^Record_Output(Any_Record, module.Record_Output_Pairing.Paired), pair: u32) -> (closed: int) {
+	index := stream_index_read(&stream.state.index)
+	if index == 0 || pair == 0 {
+		return 0
+	}
+	for &end in stream_ends {
+		if writer_end_in(&end, index, pair) {
+			stream_end_finish(&end)
+			closed += 1
+		}
+	}
+	return closed
+}
+
 // output_end_pair ends the rings of one pair of a record output Paired: an
 // end record with error, zero for a clean end, then the close of each of
 // its rings, as output_end does for each ring. The other pairs go on.

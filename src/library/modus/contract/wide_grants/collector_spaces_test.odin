@@ -230,7 +230,7 @@ a_forwarded_record_is_kept_first_and_a_full_queue_holds_the_writer :: proc(t: ^t
 	testing.expect_value(t, refusal, Space_Refusal.Forward_Empty)
 	testing.expect_value(t, forward_done(store), Space_Refusal.Forward_Empty)
 
-	for value in u8(0) ..< FORWARD_QUEUE_CAPACITY {
+	for value in u8(0) ..< FORWARD_QUEUE_PER_SPACE_LIMIT {
 		record := record_of(value)
 		serial, append_refusal := record_append(store, space, record[:], 1)
 		testing.expect_value(t, append_refusal, Space_Refusal.None)
@@ -245,19 +245,19 @@ a_forwarded_record_is_kept_first_and_a_full_queue_holds_the_writer :: proc(t: ^t
 	_, refusal = record_append(store, space, record[:], 1)
 	testing.expect_value(t, refusal, Space_Refusal.Forward_Full)
 	testing.expect_value(t, held.count, kept_before)
-	testing.expect_value(t, held.next_serial, u64(FORWARD_QUEUE_CAPACITY))
+	testing.expect_value(t, held.next_serial, u64(FORWARD_QUEUE_PER_SPACE_LIMIT))
 
-	for expected in u64(0) ..< FORWARD_QUEUE_CAPACITY {
+	for expected in u64(0) ..< FORWARD_QUEUE_PER_SPACE_LIMIT {
 		item, peek_refusal := forward_peek(store)
 		testing.expect_value(t, peek_refusal, Space_Refusal.None)
 		testing.expect_value(t, item.serial, expected)
 		testing.expect_value(t, item.bytes[0], u8(expected))
 		testing.expect_value(t, forward_done(store), Space_Refusal.None)
 	}
-	testing.expect_value(t, held.forwarded, u64(FORWARD_QUEUE_CAPACITY))
+	testing.expect_value(t, held.forwarded, u64(FORWARD_QUEUE_PER_SPACE_LIMIT))
 	serial, after_refusal := record_append(store, space, record[:], 1)
 	testing.expect_value(t, after_refusal, Space_Refusal.None)
-	testing.expect_value(t, serial, u64(FORWARD_QUEUE_CAPACITY))
+	testing.expect_value(t, serial, u64(FORWARD_QUEUE_PER_SPACE_LIMIT))
 }
 
 @(test)

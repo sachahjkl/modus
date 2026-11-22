@@ -542,6 +542,7 @@ resolve_end_from_request :: proc "contextless" (s: ^State, work: ^Plan_Work, req
 // - the writer of a pair is a process that runs, never the child of a
 //   start: it keeps the source before it forwards, so its reader end of
 //   the source reaches it before the end of the pair;
+// - its pace is Always_Holds_Writer, which the stall bound watches;
 // - the row names its source: an earlier row of the list, whose reader is
 //   the generic record input of the same process, and whose writer is
 //   another process;
@@ -557,6 +558,13 @@ paired_source_of :: proc "contextless" (work: ^Plan_Work, number: u32, writer_id
 	op_code := work.command_op
 	if row.writer_end == .Child {
 		return nil, .Bad_Command, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Writer_End), i64(row.writer_end), 0, found)
+	}
+	// A pair has the pace of an audit: the stall bound of the wiring
+	// service ends a ring that holds its writer past the hang bound, so a
+	// consumer that never reads cannot hold the forward of the collector
+	// for ever.
+	if row.pace != .Always_Holds_Writer {
+		return nil, .Bad_Command, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Pace), i64(row.pace), i64(output.Wiring_Pace.Always_Holds_Writer), found)
 	}
 	pair := row.paired_row
 	if pair == 0 || pair >= number {
@@ -640,6 +648,12 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 			return .Bad_Command, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), i64(row.writer_index), i64(outputs), found)
 		}
 		plan.description = output_row.record
+		// A record output Paired takes the type of each source: a record of
+		// its own would bypass the rule of the pairs. The border of the
+		// module file refuses it too; this check does not lean on that.
+		if pairing == .Paired && output_row.record != 0 {
+			return .Bad_Command, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), i64(row.writer_index), 0, found)
+		}
 		// A pair names its source only beside a record output Paired.
 		if pairing == .Unpaired && row.paired_row != 0 {
 			return .Bad_Command, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Paired_Row), i64(row.paired_row), 0, found)

@@ -357,6 +357,8 @@ short_form_audited_and_list_composition :: proc(t: ^testing.T) {
 	testing.expect(t, audited_list.rows[1].source_owner == "collector" && audited_list.rows[1].source_stream == "forward" && audited_list.rows[1].target_owner == "server")
 	testing.expect_value(t, audited_list.rows[0].paired_row, u32(0))
 	testing.expect_value(t, audited_list.rows[1].paired_row, u32(1))
+	// A pair has the pace of an audit, which the root service requires.
+	testing.expect_value(t, audited_list.rows[1].pace, output.Wiring_Pace.Always_Holds_Writer)
 
 	audit_list, audit_ref := short_form_audit("server", server_file)
 	testing.expect_value(t, audit_ref, Short_Form_Refusal.None)

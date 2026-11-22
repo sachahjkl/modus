@@ -866,7 +866,7 @@ a_pair_that_breaks_a_rule_is_refused_with_no_change :: proc(t: ^testing.T) {
 	// The source goes to the asker.
 	expect_pair_refused(t, &machine, {make_wire_row(.Started, 1, 1, .Asker, 0, 0), paired_row_make(forward_to_child, 1)}, lent[:], server_child, .Bad_Command, .Bad_Value, .Wiring_Rows, .Paired_Row, 2)
 	// Two pairs of one source.
-	expect_pair_refused(t, &machine, {shop_to_collector, paired_row_make(forward_to_child, 1), paired_row_make(make_wire_row(.Started, 2, 1, .Asker, 0, 0), 1)}, lent[:], server_child, .Bad_State, .Exists, .Wirings, .Paired_Row, 3)
+	expect_pair_refused(t, &machine, {shop_to_collector, paired_row_make(forward_to_child, 1), paired_row_make(make_wire_row(.Started, 2, 1, .Asker, 0, 0, .Always_Holds_Writer), 1)}, lent[:], server_child, .Bad_State, .Exists, .Wirings, .Paired_Row, 3)
 	// A loop: the pair goes back to the writer of its source.
 	expect_pair_refused(t, &machine, {shop_to_collector, paired_row_make(make_wire_row(.Started, 2, 1, .Started, 1, 1), 1)}, lent[:], server_child, .Bad_State, .Bad_Value, .Wirings, .Reader_End, 2)
 	// The collector is the child of the start.
@@ -881,12 +881,17 @@ a_pair_that_breaks_a_rule_is_refused_with_no_change :: proc(t: ^testing.T) {
 	testing.expect_value(t, output.Description_Difference(refusal.value), output.Description_Difference.Name)
 	testing.expect_value(t, refusal.found, 2)
 	testing.expect(t, machine.state == before)
+	// A pair with another pace than Always_Holds_Writer, which the stall
+	// bound of the wiring service does not watch: each other pace.
+	for pace in ([2]output.Wiring_Pace{.Writer_Chooses, .Never_Holds_Writer}) {
+		expect_pair_refused(t, &machine, {shop_to_collector, paired_row_make(make_wire_row(.Started, 2, 1, .Child, 0, 1, pace), 1)}, lent[:], server_child, .Bad_Command, .Unsupported, .Wiring_Rows, .Pace, 2)
+	}
 	// A collector that the asker did not start.
 	lent_foreign := [2]ws.Resolved_Lent_End{lent_of(machine.shop), lent_of(machine.collector, 0)}
 	expect_pair_refused(t, &machine, {shop_to_collector, paired_row_make(forward_to_child, 1)}, lent_foreign[:], server_child, .No_Right, .No_Grant, .Wirings, .Whole, 1)
 	// A Wire of the forward has no earlier row, so it names no pair.
 	lent_wire := [1]ws.Resolved_Lent_End{lent_of(machine.collector)}
-	wire_status, wire_refusal, _, _ := wire_once(&machine.state, machine.image, machine.asker, make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent_wire[:])
+	wire_status, wire_refusal, _, _ := wire_once(&machine.state, machine.image, machine.asker, make_wire_row(.Started, 1, 1, .Asker, 0, 0, .Always_Holds_Writer), lent_wire[:])
 	testing.expect_value(t, wire_status, ws.Response_Status.Bad_Command)
 	testing.expect_value(t, output.Wiring_Field(wire_refusal.argument), output.Wiring_Field.Paired_Row)
 	testing.expect_value(t, machine.state.wirings_running, 0)
@@ -902,7 +907,7 @@ a_pair_with_no_room_in_a_wiring_ring_is_refused :: proc(t: ^testing.T) {
 		return 1, 32, true
 	}
 	lent := [2]ws.Resolved_Lent_End{lent_of(machine.shop), lent_of(machine.collector)}
-	rows := [2]output.Wiring{make_wire_row(.Started, 1, 1, .Started, 2, 1), paired_row_make(make_wire_row(.Started, 2, 1, .Child, 0, 1), 1)}
+	rows := [2]output.Wiring{make_wire_row(.Started, 1, 1, .Started, 2, 1), paired_row_make(make_wire_row(.Started, 2, 1, .Child, 0, 1, .Always_Holds_Writer), 1)}
 	before := machine.state
 	work: Plan_Work
 	status, refusal := plan_start(&machine.state, machine.image, machine.asker, rows[:], lent[:], machine.offsets[2], machine.sizes[2], &work, no_room)
@@ -930,10 +935,36 @@ a_pair_takes_the_record_of_its_source :: proc(t: ^testing.T) {
 
 	log_row := output.Wiring{writer_end = u32(output.Wiring_End.Child), writer_stream = u32(output.Writer_Stream.Log), reader_end = u32(output.Wiring_End.Started), reader_handle = 1, reader_index = 1, pace = u32(output.Wiring_Pace.Always_Holds_Writer)}
 	lent_collector := [1]ws.Resolved_Lent_End{lent_of(machine.collector)}
-	log_rows := [2]output.Wiring{log_row, paired_row_make(make_wire_row(.Started, 1, 1, .Asker, 0, 0), 1)}
+	log_rows := [2]output.Wiring{log_row, paired_row_make(make_wire_row(.Started, 1, 1, .Asker, 0, 0, .Always_Holds_Writer), 1)}
 	log_work: Plan_Work
 	log_status, log_refusal := plan_start(&machine.state, machine.image, machine.asker, log_rows[:], lent_collector[:], machine.offsets[2], machine.sizes[2], &log_work)
 	testing.expectf(t, log_status == .Ok, "the pair of the log is refused: %v", log_refusal)
 	testing.expect(t, log_work.plans[1].paired && log_work.plans[1].writer_is_log_file)
 	testing.expect_value(t, log_work.plans[1].description, u32(output.DESCRIPTION_RECORD_INDEX))
+}
+
+// A record output Paired that declares a record of its own: the border of
+// the module file refuses it, and the root service refuses the row whole,
+// with no change of state, whatever its pair says.
+@(test)
+a_paired_record_output_of_a_declared_record_is_refused :: proc(t: ^testing.T) {
+	shop := build_test_module({{"Order", "amount", 8, true}}, {{"orders", 1, .One}}, nil)
+	typed := build_test_module({{"Order", "amount", 8, true}}, {{"forward", 1, .One}}, {{"sources", 0, .Many_Types}}, "forward")
+	server := build_test_module({{"Order", "amount", 8, true}}, nil, {{"orders", 1, .One}})
+	image, offsets, sizes := pack_image(shop, typed, server)
+	s: State
+	state_init(&s)
+	asker := ws.Process_Identity{1, 10}
+	_, _ = process_register(&s, asker, 0, 0, {.Can_Wire})
+	_, _ = process_register(&s, {2, 20}, offsets[0], sizes[0], {.Has_Wiring_Ring})
+	_, _ = process_register(&s, {3, 30}, offsets[1], sizes[1], {.Has_Wiring_Ring})
+	lent := [2]ws.Resolved_Lent_End{lent_of({2, 20}), lent_of({3, 30})}
+	rows := [2]output.Wiring{make_wire_row(.Started, 1, 1, .Started, 2, 1, .Always_Holds_Writer), paired_row_make(make_wire_row(.Started, 2, 1, .Child, 0, 1, .Always_Holds_Writer), 1)}
+	before := s
+	work: Plan_Work
+	status, refusal := plan_start(&s, image, asker, rows[:], lent[:], offsets[2], sizes[2], &work)
+	testing.expect_value(t, status, ws.Response_Status.Bad_Command)
+	testing.expect_value(t, output.Wiring_Field(refusal.argument), output.Wiring_Field.Writer_Index)
+	testing.expect_value(t, refusal.found, 2)
+	testing.expect(t, s == before)
 }
