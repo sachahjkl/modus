@@ -211,6 +211,148 @@ desktop_context_menu_key :: proc "contextless" (code: u32, character: rune, pres
 	return true
 }
 
+TASKBAR_PILL_START_X :: 220
+TASKBAR_PILL_WIDTH :: 112
+TASKBAR_PILL_GAP :: 6
+TRAY_BADGE_WIDTH :: 36
+TRAY_BADGE_GAP :: 4
+
+// desktop_taskbar_and_tray_records draws live taskbar window pills (highlighting
+// focused windows, dimming minimized ones, showing module window counts when
+// grouped) and system tray badges directly inside the top bar.
+desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_Table) {
+	if !desktop_features_ready {
+		return
+	}
+	// 1. Window pills in the center band of the bar (safe margin before palette hint / clock).
+	max_right := max(TASKBAR_PILL_START_X, desktop_width - CLOCK_WIDTH - 240)
+	px := TASKBAR_PILL_START_X
+	for position in 0 ..< order_count {
+		if px + TASKBAR_PILL_WIDTH > max_right {
+			break
+		}
+		idx := order[position]
+		client := &clients[idx]
+		if !client.created {
+			continue
+		}
+		name := system.name_of(client.title[:])
+		// Deduplicate by title so multiple windows of the same module group cleanly into one pill.
+		already := false
+		same_count := 0
+		any_focus := false
+		all_minimized := true
+		for p2 in 0 ..< order_count {
+			c2 := &clients[order[p2]]
+			if !c2.created || system.name_of(c2.title[:]) != name {
+				continue
+			}
+			if p2 < position {
+				already = true
+				break
+			}
+			same_count += 1
+			if p2 == order_count - 1 && !c2.minimized {
+				any_focus = true
+			}
+			if !c2.minimized {
+				all_minimized = false
+			}
+		}
+		if already {
+			continue
+		}
+		pill_bg := any_focus ? graphics.colors.title : (all_minimized ? graphics.colors.card_bottom : graphics.colors.track)
+		pill_fg := any_focus ? graphics.COLOR_WHITE : (all_minimized ? graphics.colors.dim : graphics.colors.text)
+		interface.draw_rectangle(table, px, 4, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 8, pill_bg)
+		if all_minimized {
+			interface.draw_outline(table, px, 4, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 8, 1, graphics.colors.track)
+		}
+		label_room := same_count > 1 ? TASKBAR_PILL_WIDTH - 26 : TASKBAR_PILL_WIDTH - 12
+		fit := interface.text_fit(table, interface.FONT_INTERFACE, name, label_room)
+		interface.draw_text(table, px + 6, 8, fit, pill_fg, interface.FONT_INTERFACE)
+		if same_count > 1 {
+			// Count badge when multiple windows of the same module are open.
+			bx := px + TASKBAR_PILL_WIDTH - 18
+			interface.draw_rectangle(table, bx, 7, 14, 18, graphics.colors.chosen)
+			digit := u8('0' + min(same_count, 9))
+			interface.draw_character(table, bx + 3, 8, digit, graphics.COLOR_WHITE)
+		}
+		// Hover preview popover when pointer hovers over a taskbar pill.
+		if inside(pointer_x, pointer_y, px, 0, TASKBAR_PILL_WIDTH, BAR_HEIGHT) && menu_open == .None {
+			pop_h := 22 + same_count * 20 + 6
+			interface.draw_rectangle(table, px, BAR_HEIGHT + 2, 180, pop_h, graphics.colors.card_bottom)
+			interface.draw_outline(table, px, BAR_HEIGHT + 2, 180, pop_h, 1, graphics.colors.title)
+			interface.draw_text(table, px + 8, BAR_HEIGHT + 6, fit, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+			row := 0
+			for p2 in 0 ..< order_count {
+				c2 := &clients[order[p2]]
+				if !c2.created || system.name_of(c2.title[:]) != name {
+					continue
+				}
+				status_txt := c2.minimized ? "minimized" : (p2 == order_count - 1 ? "active" : "open")
+				interface.draw_text(table, px + 8, BAR_HEIGHT + 24 + row * 20, status_txt, c2.minimized ? graphics.colors.dim : graphics.colors.text, interface.FONT_INTERFACE)
+				row += 1
+			}
+		}
+		px += TASKBAR_PILL_WIDTH + TASKBAR_PILL_GAP
+	}
+
+	// 2. System tray icon pills (to the left of the palette hint).
+	tray_x := desktop_width - CLOCK_WIDTH - 230
+	for &e in desktop_tray.entries {
+		if !e.active || tray_x < px + 12 {
+			continue
+		}
+		tray_x -= TRAY_BADGE_WIDTH + TRAY_BADGE_GAP
+		bg := e.alert ? graphics.colors.stop_process : graphics.colors.track
+		fg := e.alert ? graphics.COLOR_WHITE : graphics.colors.text
+		interface.draw_rectangle(table, tray_x, 5, TRAY_BADGE_WIDTH, BAR_HEIGHT - 10, bg)
+		interface.draw_text(table, tray_x + 6, 8, string(e.label[:e.len]), fg, interface.FONT_INTERFACE)
+	}
+}
+
+// desktop_taskbar_press restores or raises a window group when clicking its pill in the bar.
+desktop_taskbar_press :: proc "contextless" (click_x, click_y: int) -> bool {
+	if !desktop_features_ready || click_y >= BAR_HEIGHT || click_x < TASKBAR_PILL_START_X {
+		return false
+	}
+	max_right := max(TASKBAR_PILL_START_X, desktop_width - CLOCK_WIDTH - 240)
+	px := TASKBAR_PILL_START_X
+	for position in 0 ..< order_count {
+		if px + TASKBAR_PILL_WIDTH > max_right {
+			break
+		}
+		idx := order[position]
+		client := &clients[idx]
+		if !client.created {
+			continue
+		}
+		name := system.name_of(client.title[:])
+		already := false
+		for p2 in 0 ..< position {
+			if clients[order[p2]].created && system.name_of(clients[order[p2]].title[:]) == name {
+				already = true
+				break
+			}
+		}
+		if already {
+			continue
+		}
+		if click_x >= px && click_x < px + TASKBAR_PILL_WIDTH {
+			// Restore any minimized window of this group or raise it to the front.
+			if client.minimized {
+				client.minimized = false
+			}
+			raise(position)
+			damage_whole_screen()
+			return true
+		}
+		px += TASKBAR_PILL_WIDTH + TASKBAR_PILL_GAP
+	}
+	return false
+}
+
 desktop_context_menu_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	if desktop_context_menu.open {
 		interface.context_menu_draw(table, &desktop_context_menu)

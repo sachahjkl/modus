@@ -1374,6 +1374,9 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			windows_log()
 			damage_menu()
 		}
+		if was_open == .None && pointer_y < BAR_HEIGHT && desktop_taskbar_press(pointer_x, pointer_y) {
+			return
+		}
 		if was_open != .None || pointer_y < BAR_HEIGHT {
 			return
 		}
@@ -2139,6 +2142,7 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	capture_popover_records(&card_frame)
 	desktop_notifications_records(table)
 	powerbox_dialog_records(table)
+	desktop_taskbar_and_tray_records(table)
 	desktop_context_menu_records(table)
 	screen_part_end(bar_first, bar_mark_pixels[:], {}, false, true)
 	if table.full {
