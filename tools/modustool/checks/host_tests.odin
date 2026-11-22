@@ -419,4 +419,5 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/ime_cjk",
 	foundation.SOURCE_FOLDER_CONTRACT + "/vnc_rdp_gateway",
 	foundation.SOURCE_FOLDER_CONTRACT + "/document_picker",
+	foundation.SOURCE_FOLDER_CONTRACT + "/ghostty_vt",
 }
