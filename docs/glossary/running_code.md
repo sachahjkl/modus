@@ -1260,7 +1260,7 @@ Do not use: playback, rerun.
 
 A checkpoint is a place in an input history that the debugger service keeps, from which a replay reaches a later point of the same run again.
 
-It holds the input point, the bytes of the history before it, and the instruction and the stack pointer of the thread there; the design adds a copy of each memory object and of each thread of the replay, so a replay starts there and not at the first instruction. A step back is a replay from the nearest checkpoint at or before the target point. The service keeps 32 checkpoints; a newer one takes the place of the oldest. It is not a snapshot of a store, and it is not made by a fork.
+It holds the input point, the history offset, and the thread instruction and stack pointers; the design adds copies of the replay's memory objects and threads so replay resumes there instead of at the first instruction. A step back replays from the nearest checkpoint at or before the target. The service keeps 32 checkpoints in a ring. It is neither a store snapshot nor a fork.
 
 The design: `src/md/features/record_and_replay.md`, "The debugger: step back, and a watch back".
 
