@@ -234,7 +234,9 @@ Do not use: recording light, share indicator.
 
 The bar is the line at the top or at the bottom of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the palette, and the clock.
 
-The bar is the fixed place of the desktop where the input starts a process or finds a window. A press on a button opens its menu next to the bar, away from the bar edge. `src/library/internal/compositor/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the processes, `bar.names`: the compositor draws from it, and the modus tool presses the same places in the machine tests. The bar is not a task bar and not a dock: it holds two menus and no state of a process.
+The bar is the fixed desktop edge where the principal starts a process or switches windows. A press on a button opens its menu away from the bar edge. `src/library/internal/compositor/bar` holds the layout of the buttons, menus, and process names (`bar.names`) shared by the compositor and machine tests.
+
+The bar carries window plates, the system tray, and the clock.
 
 The design: `docs/DESIGN.md`, "Background and bar".
 
@@ -244,7 +246,7 @@ Do not use: task bar, panel, dock.
 
 The bar layout is the widths of the texts of the bar, measured in the font that draws them, with the bar edge and the height of the screen, from which come the place of each button and of each line of a menu.
 
-The names of the bar are in the interface font, which has proportional widths. With places from a fixed width, a press can land beside the entry that the eye sees. So the compositor measures `bar.Layout` at its start and when the font changes, and writes it on the log. The modus tool measures the same layout from the same font file, so it presses the right places. The bar layout is not a set of constants: it depends on the font in use and on the bar edge. Its zero value is a bar at the top.
+Bar labels use the proportional interface font, so fixed widths would misplace clicks. The compositor measures `bar.Layout` at start and on font changes, and the modus tool measures the same layout from the same font file. `bar.Layout` depends on both the font and the bar edge, defaulting to the top edge.
 
 The design: `docs/FONTS.md`, "12.8 The parts, each one working".
 
