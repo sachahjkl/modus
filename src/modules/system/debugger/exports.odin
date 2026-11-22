@@ -116,7 +116,7 @@ Event_Row :: struct {
 	line:        i64,
 }
 
-// The record of the process: record_start(), record_end(), replay_status().
+// The record of the process: record(), record_start(), record_end(), replay_start(), replay_status().
 Record_Row :: struct {
 	state:       [12]u8, // recording, or ended.
 	points:      i64, // The input points in the history: one record each.
@@ -124,6 +124,7 @@ Record_Row :: struct {
 	capacity:    i64, // The bytes of records that the history holds.
 	end:         [20]u8, // Why the history ended, or empty while the kernel writes it.
 	checkpoints: i64, // The checkpoints that the service keeps.
+	divergence:  i64, // The input point where a replay found its first difference; 0: none.
 }
 
 // One checkpoint of the record: replay_checkpoint().
@@ -1660,9 +1661,10 @@ wait_stop :: proc "c" (milliseconds: value_kinds.Time_In_Milliseconds, result: ^
 // counter and of `cpuid`, and the changes of its point copies
 // (src/md/features/record_and_replay.md). The record needs the right
 // Debug on the process, which the attach gave. The kernel records only a
-// process that did not run yet, and refuses a process that holds a device
-// or memory that another process writes. An earlier history that ended
-// goes, with its checkpoints.
+// process that did not run yet, so an attach to a process that runs gets
+// the refusal: `record("clock")` starts a process recorded from its first
+// instruction. The kernel refuses a process that holds a device. An
+// earlier history goes, with its checkpoints.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
 // `Debugged_Processes` (-2); (-4) the record of the kernel: `State`,
@@ -1692,9 +1694,9 @@ record_start :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) ->
 // record_end ends the record of the process, and gives the row of the record with its end.
 //
 // The kernel writes the end record into the input history and stops
-// writing it. The history and its checkpoints stay until the next
-// `record_start` or the end of the debugging, so `replay_status` and
-// `replay_step_back` still read it.
+// writing it. The history and its checkpoints stay until the next record,
+// after the end of the debugging too, so `replay_status`,
+// `replay_step_back` and `replay_start` still read it.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
 // `Debugged_Processes` (-2); (-4) the record of the kernel; `Absent`,
@@ -1720,16 +1722,145 @@ record_end :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> i
 	return record_rows(result, error)
 }
 
+// record starts a process held before its first instruction, makes the service its debugger, records it from that instruction, then lets it run, and gives the row of the record.
+//
+// It is `attach`, `record_start` and the start of the process in one
+// step: the root service starts the module for the caller as `start`
+// does, holds it before its first instruction, and gives the service the
+// debug access under the rule of `attach`. So the kernel records each
+// process input from the first instruction
+// (src/md/features/record_and_replay.md, "The frequent tasks"). Memory
+// that the process and another process both write is recorded too: the
+// other process writes only while the process is at an input point.
+//
+// - **process**: the name of a module of the boot image, at most 31 bytes.
+//
+// **Errors**:
+//
+// - `No_Grant`, `Acts_For_Principal` (-1).
+// - `Full`, `Debugged_Processes` (-3): the service debugs a process
+//   already; `detach()` first.
+// - (-4) the record of the root service: those of `attach` and of
+//   `start`; `Full`, `Debugged_Processes` when the caller has a held
+//   process already. Or the record of the kernel: `State`, `Processes`
+//   for a process that the kernel cannot record; `Refused` with the
+//   status of the kernel.
+// - `Absent`, `Processes` (-13): the process stopped before it ran.
+// - `Bad_Value`, `Processes` (-14): two held processes have this name
+//   and this module.
+// - `Too_Long`, `Bytes` (-15).
+//
+// ```
+// connect("debugger")
+// debugger.record("clock")
+// ```
+@(export, link_name = "record")
+record :: proc "c" (process: ^string, result: ^[]Record_Row, error: ^errors.Error_Record) -> i64 {
+	caller := system.service_caller()
+	if caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	buffer: [PROCESS_NAME_LIMIT]u8
+	name, fits := text_copy(buffer[:], process)
+	if !fits || name == "" {
+		return errors.fail(error, ERROR_TEXT, .Too_Long, .Bytes, 1, i64(len(process^)), PROCESS_NAME_LIMIT)
+	}
+	// A session whose debug access ended holds nothing.
+	if session.attached {
+		if kind, _, _ := system.handle_state(session.process); kind != .Process {
+			session_end("the debug access was revoked")
+		}
+	}
+	if session.attached {
+		return errors.fail(error, ERROR_BUSY, .Full, .Debugged_Processes, 0, 0, 1)
+	}
+	completion, answered := root_debug_start(name, caller.ring_memory, .Start_Held)
+	if !answered {
+		// The request stays: when its completion comes, the held process
+		// stops (root_completion_take).
+		return errors.fail(error, ERROR_REFUSED, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
+	}
+	if system.Status(completion.kind) != .Ok {
+		if error != nil {
+			error^ = errors.completion_record(completion.values)
+		}
+		return ERROR_REFUSED
+	}
+	if failure := held_session_begin(name, caller, completion.values, error); failure != 0 {
+		return failure
+	}
+	if failure := record_begin(error); failure != 0 {
+		// A start that asked for a record does not run unrecorded.
+		root_debug_start(name, caller.ring_memory, .Abandon)
+		session_end("the record did not start")
+		return failure
+	}
+	released, released_answered := root_debug_start(name, caller.ring_memory, .Release)
+	if !released_answered {
+		return errors.fail(error, ERROR_REFUSED, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
+	}
+	if system.Status(released.kind) != .Ok {
+		if error != nil {
+			error^ = errors.completion_record(released.values)
+		}
+		return ERROR_REFUSED
+	}
+	return record_rows(result, error)
+}
+
+// replay_start runs the recorded module again from the input history of the caller, and gives the row of the record: the replay reaches the same instructions with the same values, or stops at the first difference.
+//
+// The root service starts the module of the history again with no start
+// grant, held before its first instruction; the kernel writes the context
+// of the record into it, answers each kernel entry, each read of the cycle
+// counter and each `cpuid` from the history, and stops it at the first
+// difference (src/md/features/record_and_replay.md, "The replay"). The
+// row is `replaying` while it runs, then `replayed`, with why it ended
+// and the input point of a divergence. A replay sends nothing to any
+// process: a process that maps memory that it received from another
+// process diverges at that map.
+//
+// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); (-4) the record of
+// the root service or of the kernel; `Absent`, `Processes` (-13), the
+// replay stopped before it ran; `Absent`, `Input_Histories` (-16), the
+// caller has no history; `Full`, `Input_Histories` (-16), the record or
+// a replay runs; `Bad_Value`, `Input_Histories` (-16), the module of
+// the boot image is not the module of the history; `Damaged`,
+// `Input_Histories` (-16).
+//
+// ```
+// debugger.replay_start()
+// ```
+@(export, link_name = "replay_start")
+replay_start :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> i64 {
+	if failure := record_of_caller(error); failure != 0 {
+		return failure
+	}
+	switch record_session.state {
+	case .None:
+		return errors.fail(error, ERROR_RECORD, .Absent, .Input_Histories)
+	case .Recording, .Replaying:
+		return errors.fail(error, ERROR_RECORD, .Full, .Input_Histories, 0, 0, 1)
+	case .Ended, .Replayed:
+	}
+	if failure := replay_begin(system.service_caller(), error); failure != 0 {
+		return failure
+	}
+	return record_rows(result, error)
+}
+
 // replay_status gives the row of the record: its state, its input points, its bytes, why it ended, and its checkpoints.
 //
 // A record that the kernel ended by itself shows `ended`, with its
 // reason: the process stopped, the history is full, the bound of one
 // stint, or a revocation. While the process runs, the row is the history
-// at one moment.
+// at one moment. A replay shows `replaying`, then `replayed` with why
+// it ended and the input point of a divergence. The history stays after
+// the process and the debugging end, until the next record: no attach is
+// needed to read it.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Absent`, `Processes` (-13); `Absent`,
-// `Input_Histories` (-16), no record started; `Damaged`,
+// `Input_Histories` (-16), the caller has no history; `Damaged`,
 // `Input_Histories` (-16), the header of the history is not valid.
 //
 // ```
@@ -1737,12 +1868,8 @@ record_end :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> i
 // ```
 @(export, link_name = "replay_status")
 replay_status :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
+	if failure := record_of_caller(error); failure != 0 {
 		return failure
-	}
-	record_state_refresh()
-	if record_session.state == .None {
-		return errors.fail(error, ERROR_RECORD, .Absent, .Input_Histories)
 	}
 	return record_rows(result, error)
 }
@@ -1774,7 +1901,7 @@ replay_checkpoint :: proc "c" (thread: i64, result: ^[]Checkpoint_Row, error: ^e
 		return failure
 	}
 	record_state_refresh()
-	if record_session.state != .Recording {
+	if record_session.state != .Recording || record_session.caller_ring != session.caller_ring {
 		return errors.fail(error, ERROR_RECORD, .Absent, .Input_Histories)
 	}
 	number, failure := thread_of_argument(thread, true, error)
@@ -1813,8 +1940,7 @@ replay_checkpoint :: proc "c" (thread: i64, result: ^[]Checkpoint_Row, error: ^e
 //   history.
 //
 // **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
-// `Debugged_Processes` (-2); `Absent`, `Processes` (-13); `Absent`,
-// `Input_Histories` (-16), no record started; `Damaged`,
+// `Input_Histories` (-16), the caller has no history; `Damaged`,
 // `Input_Histories` (-16); `Out_Of_Range`, `Input_Histories` (-16), 0
 // points, or more than the history holds; `Absent`, `Checkpoints` (-17),
 // no checkpoint is at or before the target point.
@@ -1824,12 +1950,8 @@ replay_checkpoint :: proc "c" (thread: i64, result: ^[]Checkpoint_Row, error: ^e
 // ```
 @(export, link_name = "replay_step_back")
 replay_step_back :: proc "c" (points: i64, result: ^[]Step_Back_Row, error: ^errors.Error_Record) -> i64 {
-	if failure := session_of_caller(error); failure != 0 {
+	if failure := record_of_caller(error); failure != 0 {
 		return failure
-	}
-	record_state_refresh()
-	if record_session.state == .None {
-		return errors.fail(error, ERROR_RECORD, .Absent, .Input_Histories)
 	}
 	header, _, ok := history_header_read()
 	if !ok {

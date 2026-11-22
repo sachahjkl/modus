@@ -35,7 +35,7 @@
 // to the services of its start grant set, and `Disconnect`; the process with
 // **Principals** sends `Principal_Record`, `Principal_Unlock`,
 // `Machine_Key` and `Principal_Change_End`, and no other process can; the
-// process with **Debugger** sends `Debug` and `Debug_Store`.
+// process with **Debugger** sends `Debug`, `Debug_Store` and `Debug_Start`.
 //
 // - `Start`, `Stop`: a process by name, in the session of the caller. The
 //   start policy (the grant **Start_Policy**) sends them too, with
@@ -73,6 +73,9 @@
 //   debug object of the process is (debug_store.odin); or that connection
 //   and the stop report that this service kept of a disk process that
 //   stopped on a fault.
+// - `Debug_Start`: for that debugger service, a module started for one of
+//   its callers held before its first instruction, with the handle of
+//   `Debug`; then its release or its stop (debug_start.odin).
 //
 // A refused command has an error record in its completion: the console
 // prints it, for example after `revoke("notes", "store")` on a process
@@ -339,6 +342,14 @@ Started :: struct {
 	list_memory:     system.Handle,
 	// Whether the delegated wiring service currently holds this process.
 	wiring_registered: bool,
+	// The entry address of a process that Debug_Start holds before its
+	// first instruction (debug_start.odin). 0: the process runs.
+	held_entry:      u64,
+	// The process is the start of a replay (Start_Replay). Held, it stops
+	// at the end of its debugging in place of a run: with no Replay_Start
+	// its context is not the one of a history. Released, it keeps the mark
+	// while it runs.
+	held_for_replay: bool,
 }
 
 // place_is_free says if a place of the table of the processes holds no
@@ -1309,38 +1320,37 @@ GRANTS_OF_ONE_PROCESS :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Stor
 // grant `debug` was revoked from the caller.
 debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u64, end: bool, values: ^[7]u64) -> system.Status {
 	kind := u32(root_ring.Root_Command.Debug)
-	caller: ^Started
-	// The principal that the caller acts for through this connection: a
-	// connection of `remote` for a row of the client table acts for the
-	// principal of the row, not for the session of `remote`.
-	caller_principal: u64
-	caller_row: int
-	for &connection in connections {
-		if connection.caller != nil && connection.service == holder && !connection.history && u64(connection.ring) == connection_ring {
-			caller = connection.caller
-			caller_principal = connection_principal(&connection)
-			caller_row = connection.client.place
-		}
-	}
+	caller, caller_principal, caller_row := debug_caller_of(holder, connection_ring)
 	if caller == nil {
 		values^ = errors.ring_fail(kind, .Absent, .Connections, 2)
 		return .Bad_Handle
+	}
+	// The service ended the debugging of the process for this caller: this
+	// service forgets the debug access, and another caller can ask for it.
+	// Each process with the name that the service debugs for this caller
+	// ends, not the first with the name: a replay (Debug_Start) has the
+	// name of the process that was recorded.
+	if end {
+		ended: u64
+		found := false
+		for &item in started {
+			if item.process != 0 && !item.is_terminal && system.name_of(item.name[:]) == name && item.debugger == holder && item.debug_for == caller && item.debug_for_row == caller_row {
+				ended += debug_end(&item)
+				found = true
+			}
+		}
+		if !found {
+			values^ = errors.ring_fail(kind, .Absent, .Debugged_Processes, 1)
+			return .Bad_State
+		}
+		values[0] = ended
+		system.log_fact(.Info, Debugging_Ended{debugger = module_name_field(system.name_of(holder.name[:])), target = module_name_field(name), caller = module_name_field(system.name_of(caller.name[:]))})
+		return .Ok
 	}
 	target := find(name)
 	if target == nil {
 		values^ = errors.ring_fail(kind, .Absent, .Processes, 1)
 		return .Bad_Handle
-	}
-	// The service ended the debugging of the process for this caller: this
-	// service forgets the debug access, and another caller can ask for it.
-	if end {
-		if target.debugger != holder || target.debug_for != caller || target.debug_for_row != caller_row {
-			values^ = errors.ring_fail(kind, .Absent, .Debugged_Processes, 1)
-			return .Bad_State
-		}
-		values[0] = debug_end(target)
-		system.log_fact(.Info, Debugging_Ended{debugger = module_name_field(system.name_of(holder.name[:])), target = module_name_field(name), caller = module_name_field(system.name_of(caller.name[:]))})
-		return .Ok
 	}
 	if target == caller || target == holder {
 		values^ = errors.ring_fail(kind, .No_Grant, .Debug_Access, 1)
@@ -1364,6 +1374,31 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 		values^ = errors.ring_fail(kind, .Full, .Debugged_Processes, 1, 0, 1)
 		return .Bad_State
 	}
+	return debug_give(holder, caller, caller_principal, caller_row, target, name, kind, values)
+}
+
+// debug_caller_of gives the caller of the debugger service whose connection
+// has this call ring, the principal that it acts for through that
+// connection, and the row of the client table of that connection. A
+// connection of `remote` for a row of the client table acts for the
+// principal of the row, not for the session of `remote`. nil: the ring
+// names no connection of the service.
+debug_caller_of :: proc "contextless" (holder: ^Started, connection_ring: u64) -> (caller: ^Started, caller_principal: u64, caller_row: int) {
+	for &connection in connections {
+		if connection.caller != nil && connection.service == holder && !connection.history && u64(connection.ring) == connection_ring {
+			caller = connection.caller
+			caller_principal = connection_principal(&connection)
+			caller_row = connection.client.place
+		}
+	}
+	return caller, caller_principal, caller_row
+}
+
+// debug_give gives the debugger service the handle of a process with the
+// right Debug and no other, for a caller, and records the debug access.
+// values is the completion: the handle, the hash of the file of the
+// process, its principal. kind names the command of a refusal.
+debug_give :: proc "contextless" (holder: ^Started, caller: ^Started, caller_principal: u64, caller_row: int, target: ^Started, name: string, kind: u32, values: ^[7]u64) -> system.Status {
 	given, status := system.give(holder.requests_memory, target.process, {.Debug})
 	if status != .Ok {
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(status))
@@ -1385,6 +1420,17 @@ debug :: proc "contextless" (holder: ^Started, name: string, connection_ring: u6
 // only while the service debugs another process for it. It gives the count
 // of the holdings that ended.
 debug_end :: proc "contextless" (target: ^Started) -> (count: u64) {
+	// A process held before its first instruction runs at the end of its
+	// debugging, as each thread that a debugger held does. A held replay
+	// stops: it has no context of its own to run with.
+	if target.held_entry != 0 {
+		if target.held_for_replay {
+			target.held_entry = 0
+			started_process_stop(target)
+		} else {
+			_ = held_process_release(target)
+		}
+	}
 	holder, caller := target.debugger, target.debug_for
 	target.debugger, target.debug_for, target.debug_for_row = nil, nil, 0
 	// The connection to the store of the debug object is a part of the

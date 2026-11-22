@@ -113,7 +113,7 @@ fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, start_grant
 		return false
 	case .Principal_Record, .Principal_Unlock, .Machine_Key, .Principal_Change_End:
 		return .Principals in start_grant_set
-	case .Debug, .Debug_Store:
+	case .Debug, .Debug_Store, .Debug_Start:
 		return .Debugger in start_grant_set
 	case .Connect:
 		return .Root_Ring in start_grant_set || .Connect in start_grant_set && listed

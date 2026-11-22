@@ -20,11 +20,22 @@ import "modulus:replay_filter"
 // the history memory object. At each input point while recording, the kernel
 // snapshots each live shared page once into per-processor scratch memory,
 // diffs it against the point copy, writes changed byte ranges into the input
-// history, and updates the point copy from the snapshot. On replay, each
+// history, and updates the point copy from the snapshot. Pages that the
+// recorded process and a shared writer both map with Write are recorded at
+// the leave of each input point ("Shared writers" below). On replay, each
 // record is copied once into private per-processor scratch memory before
-// validation, and Page_Delta records apply strictly to tracked point copies.
+// validation, and a Page_Delta applies to a tracked point copy, or else to a
+// page that the replayed process maps with Write (a shared page or the
+// context page of the record), never to any other page.
 
 POINT_COPY_CAPACITY :: 32
+// The pages that a recorded process maps with Write and that another
+// process maps with Write too: one baseline frame each, paid by the budget
+// of the history. Each kernel entry copies them once, so the count bounds
+// the cost of an entry.
+SHARED_PAGE_CAPACITY :: 64
+// The longest wait of a shared writer for the recorded thread: one stint.
+SHARED_WRITER_WAIT_BOUND_MILLISECONDS :: TIME_SLICE * 1000 / TICKS_PER_SECOND
 RECORD_COPY_SCRATCH_BYTES :: 8192
 REPLAY_RECORD_SCRATCH_BYTES :: size_of(input_history.Kernel_Completion_Payload) + RECORD_COPY_SCRATCH_BYTES
 
@@ -44,6 +55,18 @@ Point_Copy :: struct {
 	active:          bool,
 }
 
+// One page that the recorded process and a shared writer both map with
+// Write. The baseline holds the bytes of the page when the recorded thread
+// last reached an input point: the diff at its leave gives what the writers
+// wrote meanwhile.
+Shared_Page :: struct {
+	virtual_address: u64, // Page-aligned user virtual address in the recorded process.
+	region:          u32, // The shared memory object.
+	page:            u64, // Page index inside region.
+	baseline_frame:  u64, // Physical frame of the baseline copy.
+	active:          bool,
+}
+
 // Per-process record/replay state, indexed by process slot. Kept out of
 // Process so unrecorded processes pay no cache footprint.
 Process_Record_State :: struct {
@@ -59,6 +82,18 @@ Process_Record_State :: struct {
 	handle_map:        replay_filter.Replay_Handle_Map, // Replay translation from recorded handle -> real handle.
 	stint_start_point: u64, // Point count when the current stint started (atomic).
 	pinned_processor:  u32, // Single processor index assigned to this process.
+	// The shared writers (shared_writers_setup). The gate
+	// is Inactive when no other process writes a page that this process
+	// maps with Write. Process lock of the recorded process.
+	gate:               replay_filter.Shared_Writer_Gate,
+	generation:         u64, // Names this record for the writer threads that the gate counted.
+	shared_pages:       [SHARED_PAGE_CAPACITY]Shared_Page,
+	shared_page_count:  u32,
+	has_shared_writers: bool, // The gate is in use: the writers know this record (atomic).
+	writers_held:       bool, // The writers wait for the recorded thread: the pick passes over them (atomic).
+	writers_held_since: u64, // Milliseconds since boot when the recorded thread last left its input point (atomic).
+	writer_wait_armed:  bool, // The gate counts the wait of a writer (gate.wait_timer_armed, atomic copy for the tick).
+	writer_wait_since:  u64, // The first start of that wait (gate.wait_started_tick, atomic copy for the tick).
 }
 
 process_records: [PROCESS_CAPACITY]Process_Record_State
@@ -68,6 +103,11 @@ process_records: [PROCESS_CAPACITY]Process_Record_State
 RECORD_ZERO_PAGE: [PAGE_SIZE]u8
 // Count of processes currently in Recording or Replaying mode.
 record_replay_active_count: u32
+// Count of records whose gate holds shared writers: the pick and the tick
+// read this one word when it is 0.
+shared_writer_recordings: u32
+// The generation of the last record that published a gate. Control lock.
+record_generation_last: u64
 
 // Machine capabilities probed safely via register trials at processor start.
 cpuid_faulting_supported: bool
@@ -209,10 +249,13 @@ process_own_region_references :: proc "contextless" (process: ^Process, region_i
 }
 
 // process_disqualified_for_recording checks the exclusions: device memory,
-// ports, interrupts, IOMMU-declared memory, guests, or writable shared
-// memory objects. Caller holds Control and target's process lock.
+// ports, interrupts, IOMMU-declared memory, guests, and for a replay
+// writable shared memory objects. A record takes memory that it shares with
+// Write: its other writers become shared writers (shared_writers_setup). A
+// replay holds no peer, so a shared object there is a refusal. Caller holds
+// Control and target's process lock.
 @(private = "file")
-process_disqualified_for_recording :: proc "contextless" (target_index: u32) -> bool {
+process_disqualified_for_recording :: proc "contextless" (target_index: u32, shared_writers_allowed: bool) -> bool {
 	target := &processes[target_index]
 	if target.has_ports || process_is_guest(target_index) {
 		return true
@@ -229,7 +272,9 @@ process_disqualified_for_recording :: proc "contextless" (target_index: u32) -> 
 			if intrinsics.atomic_load(&region.declared) != 0 {
 				return true
 			}
-			if .Write in slot.rights && region_mapped_by_other(target_index, slot.object) {
+			// A handle alone writes nothing: the process can map it later only
+			// when no other process holds it (record_replay_map_conflict).
+			if !shared_writers_allowed && .Write in slot.rights && region_mapped_by_other(target_index, slot.object) {
 				return true
 			}
 		}
@@ -245,7 +290,7 @@ process_disqualified_for_recording :: proc "contextless" (target_index: u32) -> 
 		if intrinsics.atomic_load(&region.declared) != 0 {
 			return true
 		}
-		if mapping.bits & PAGE_WRITE != 0 && region_mapped_by_other(target_index, mapping.region) {
+		if !shared_writers_allowed && mapping.bits & PAGE_WRITE != 0 && region_mapped_by_other(target_index, mapping.region) {
 			return true
 		}
 	}
@@ -492,6 +537,18 @@ record_replay_map_conflict :: proc "contextless" (process_index: u32, region_ind
 	return false
 }
 
+// record_replay_write_conflict says if Memory_Protect would give Write to a
+// process that is not recorded on memory that a recorded or replayed process
+// maps: that process would become a writer that no gate holds, as a new
+// mapping with Write would (record_replay_map_conflict). Caller holds the
+// process lock of process_index.
+record_replay_write_conflict :: proc "contextless" (process_index: u32, region_index: u32) -> bool {
+	if intrinsics.atomic_load(&record_replay_active_count) == 0 || intrinsics.atomic_load(&process_records[process_index].mode) != .None {
+		return false
+	}
+	return intrinsics.atomic_load(&regions[region_index].recorded_mappings) != 0
+}
+
 // record_replay_mark_mappings adjusts Region.recorded_mappings for all active
 // mappings of target_index when entering or leaving record/replay mode.
 // Caller holds target_index's process lock.
@@ -584,7 +641,7 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		if rec.mode != .None {
 			return thread_control_state_refuse(.Process_Recording, 1, v[0], 0, target_state)
 		}
-		if process_disqualified_for_recording(target_index) {
+		if process_disqualified_for_recording(target_index, shared_writers_allowed = true) {
 			return thread_control_state_refuse(.Process_Disqualified, 1, v[0], 0, target_state)
 		}
 		memory_slot := handle_find(caller_process, v[1], .Memory, {.Read, .Write}) or_return
@@ -621,7 +678,21 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		rec.history_buffer = history_buffer
 		rec.writer = writer
 		rec.pinned_processor = pinned_cpu
-		if setup_status := point_copies_setup(target_index, rec, copy_initial = true); setup_status != .Ok {
+		// Mark the mappings of the target and count the record before any
+		// scan of the other processes: a process that maps a region of the
+		// target with Write (or gives itself Write with Memory_Protect)
+		// after the scan of its process lock is refused there
+		// (record_replay_map_conflict, record_replay_write_conflict), and one
+		// that did it before is seen by the scan. So the set of writers that
+		// the gate holds is the whole set.
+		record_replay_mark_mappings(target_index, true)
+		intrinsics.atomic_add(&record_replay_active_count, 1)
+		cpu := processor_self()
+		if setup_status := record_start_setup(cpu, target_index, rec); setup_status != .Ok {
+			shared_writers_teardown(target_index, rec)
+			point_copies_teardown(target_index, rec)
+			record_replay_mark_mappings(target_index, false)
+			intrinsics.atomic_sub(&record_replay_active_count, 1)
 			intrinsics.mem_zero(rec, size_of(Process_Record_State))
 			region_release(region_index)
 			if setup_status == .Bad_State {
@@ -629,26 +700,8 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 			}
 			return setup_status
 		}
-		// Record initial non-zero point copy contents into the history so replay
-		// starts with the exact same read-only shared page values.
-		cpu := processor_self()
-		for index in u32(0) ..< rec.point_copy_count {
-			pc := &rec.point_copies[index]
-			if !pc.active {
-				continue
-			}
-			after_page := direct(pc.copy_frame, [PAGE_SIZE]u8)
-			written, changed, ok := input_history.page_delta_encode(pc.virtual_address, &RECORD_ZERO_PAGE, after_page, cpu.page_delta_scratch[:])
-			if !ok || (changed && !input_history.history_writer_append(&rec.writer, .Page_Delta, 0, 0, cpu.page_delta_scratch[:written])) {
-				point_copies_teardown(target_index, rec)
-				intrinsics.mem_zero(rec, size_of(Process_Record_State))
-				region_release(region_index)
-				return .Bad_Operation
-			}
-		}
-		record_replay_mark_mappings(target_index, true)
 		intrinsics.atomic_store(&rec.mode, input_history.Record_Mode.Recording)
-		intrinsics.atomic_add(&record_replay_active_count, 1)
+		shared_writers_publish(target_index, rec)
 		return .Ok
 
 	case .Record_End:
@@ -665,7 +718,7 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		if rec.mode != .None {
 			return thread_control_state_refuse(.Process_Recording, 1, v[0], 0, target_state)
 		}
-		if process_disqualified_for_recording(target_index) {
+		if process_disqualified_for_recording(target_index, shared_writers_allowed = false) {
 			return thread_control_state_refuse(.Process_Disqualified, 1, v[0], 0, target_state)
 		}
 		memory_slot := handle_find(caller_process, v[1], .Memory, {.Read, .Write}) or_return
@@ -705,9 +758,13 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 			}
 			return setup_status
 		}
+		// The context of the replay is the context of the record: the
+		// starter of the replay wrote its own, which goes first, so that no
+		// byte of it stays where the record had a zero.
+		replay_context_page_clear_locked(target_index)
 		// Apply initial Page_Delta records before the first instruction so the
-		// time page (cycle_frequency, cycle_start) and shared read-only pages
-		// hold their recorded initial bytes at entry.
+		// time page (cycle_frequency, cycle_start), the context and the shared
+		// pages hold their recorded initial bytes at entry.
 		if !replay_apply_pending_page_deltas_locked(processor_self(), target_index) {
 			point_copies_teardown(target_index, rec)
 			intrinsics.mem_zero(rec, size_of(Process_Record_State))
@@ -723,6 +780,35 @@ record_replay_control :: proc "contextless" (caller_index: u32, caller_process: 
 		return .Bad_Operation
 	}
 	return .Bad_Operation
+}
+
+// record_start_setup builds what a record holds before its first
+// instruction: the point copies with their first bytes, the context page,
+// and the shared pages with the gate of their writers. A failure leaves
+// what it built for the teardown of the caller. Caller holds Control and
+// target's process lock.
+@(private = "file")
+record_start_setup :: proc "contextless" (cpu: ^Processor, target_index: u32, rec: ^Process_Record_State) -> Operation_Outcome {
+	point_copies_setup(target_index, rec, copy_initial = true) or_return
+	// The first bytes of each point copy, so that the replay starts with the
+	// same read-only shared pages.
+	for index in u32(0) ..< rec.point_copy_count {
+		pc := &rec.point_copies[index]
+		if !pc.active {
+			continue
+		}
+		after_page := direct(pc.copy_frame, [PAGE_SIZE]u8)
+		written, changed, ok := input_history.page_delta_encode(pc.virtual_address, &RECORD_ZERO_PAGE, after_page, cpu.page_delta_scratch[:])
+		if !ok || (changed && !input_history.history_writer_append(&rec.writer, .Page_Delta, 0, 0, cpu.page_delta_scratch[:written])) {
+			return .Bad_Operation
+		}
+	}
+	// The context is an input that the starter wrote before the first
+	// instruction: the replay writes it back at the same place.
+	if !record_context_page_locked(cpu, target_index, rec) {
+		return .Bad_Operation
+	}
+	return shared_writers_setup(cpu, target_index, rec)
 }
 
 // record_replay_thread_create_refused checks single-thread and placement-limit
@@ -751,11 +837,43 @@ record_replay_thread_init :: proc "contextless" (process_index: u32, thread: ^Th
 		return
 	}
 	intrinsics.atomic_store(&thread.record_mode, rec.mode)
+	// A new thread has run no instruction: it starts at an input point, so
+	// its first leave copies what the writers wrote before it.
+	thread.record_outside_point = false
+	if rec.gate.state == .Active && !replay_filter.register_recorded_thread(&rec.gate, thread_index(thread), starts_at_input_point = true) {
+		// A thread that the gate does not hold would read the shared pages
+		// while a writer writes them: the history ends rather than lose an
+		// input. The record holds one thread, so this is a full table of
+		// the gate, which the history reports as full.
+		record_replay_end_locked(process_index, .Buffer_Full)
+		intrinsics.atomic_store(&thread.record_mode, input_history.Record_Mode.None)
+		return
+	}
 	pinned_mask := (u64(1) << rec.pinned_processor) & thread.processors_limit
 	every_processor := machine_processors()
 	intrinsics.atomic_store(&thread.processors, pinned_mask)
 	intrinsics.atomic_store(&thread.processors_limit, pinned_mask)
 	intrinsics.atomic_store(&thread.placement_restricted, pinned_mask != every_processor)
+}
+
+// record_replay_thread_finished removes a thread that ends from the gate of
+// its record: a thread that left at an input point, or outside one, holds no
+// writer any more. A writer that waited for it may then run. Caller holds
+// the process lock of process_index.
+record_replay_thread_finished :: proc "contextless" (process_index: u32, thread_slot: u32) {
+	rec := &process_records[process_index]
+	if rec.mode != .Recording || rec.gate.state != .Active {
+		return
+	}
+	if replay_filter.unregister_recorded_thread(&rec.gate, thread_slot) {
+		if rec.gate.thread_count == 0 {
+			intrinsics.atomic_store(&rec.writers_held, false)
+		}
+		shared_writer_wait_mirror_locked(rec)
+		if rec.gate.waiting_writer_count != 0 {
+			kick_all()
+		}
+	}
 }
 
 // record_replay_end_locked ends recording or replay of target_index, writes
@@ -782,8 +900,18 @@ record_replay_end_locked :: proc "contextless" (target_index: u32, reason: input
 		if thread.process == target_index {
 			intrinsics.atomic_store(&thread.record_mode, input_history.Record_Mode.None)
 			thread.record_wait_pending = false
+			thread.record_outside_point = false
 		}
 	}
+	// The gate ends with the history: each writer runs freely again.
+	if rec.gate.state == .Active {
+		if reason == .Revocation {
+			_, _ = replay_filter.shared_writer_revoke_immediately(&rec.gate)
+		} else {
+			_ = replay_filter.shared_writer_end_normal(&rec.gate)
+		}
+	}
+	shared_writers_teardown(target_index, rec)
 	// Clear recorded_mappings before tearing down mode so other processes are
 	// unblocked cleanly.
 	record_replay_mark_mappings(target_index, false)
@@ -930,9 +1058,11 @@ record_refresh_point_copies_locked :: proc "contextless" (cpu: ^Processor, proce
 }
 
 // replay_apply_pending_page_deltas_locked snapshots each leading Page_Delta
-// record ONCE into private per-processor scratch memory and applies it
-// strictly to a tracked point copy of process_index. Never writes to arbitrary
-// non-point-copied pages. Caller holds process_index's process lock.
+// record ONCE into private per-processor scratch memory and applies it to a
+// tracked point copy of process_index, or else to a page that the process
+// maps with Write (replay_shared_page_frame_locked): a shared page or the
+// context page of the record. Never writes to a page that the process cannot
+// write itself. Caller holds process_index's process lock.
 @(private = "file")
 replay_apply_pending_page_deltas_locked :: proc "contextless" (cpu: ^Processor, process_index: u32) -> bool {
 	rec := &process_records[process_index]
@@ -955,6 +1085,11 @@ replay_apply_pending_page_deltas_locked :: proc "contextless" (cpu: ^Processor, 
 				target_frame = pc.copy_frame
 				break
 			}
+		}
+		if target_frame == 0 {
+			// The page of a shared writer: in the replay it is a page that
+			// the process maps with Write, and no peer writes it.
+			target_frame = replay_shared_page_frame_locked(process_index, delta_header.virtual_address)
 		}
 		if target_frame == 0 {
 			return false
@@ -1289,6 +1424,578 @@ record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread
 	if !buffer_ok {
 		record_end_on_buffer_full(process_index)
 	}
+}
+
+// record_context_page_locked writes the context page of the target into
+// the history as its first bytes (src/md/features/record_and_replay.md,
+// "What an input history holds": the head holds the context). A process
+// with no context page, or a context page that a point copy already
+// records, adds nothing. false: the history is full. Caller holds target's
+// process lock.
+@(private = "file")
+record_context_page_locked :: proc "contextless" (cpu: ^Processor, target_index: u32, rec: ^Process_Record_State) -> bool {
+	for index in u32(0) ..< rec.point_copy_count {
+		if rec.point_copies[index].active && rec.point_copies[index].virtual_address == op.CONTEXT_ADDRESS {
+			return true
+		}
+	}
+	mapping := mapping_at(&processes[target_index], op.CONTEXT_ADDRESS)
+	if mapping == nil || mapping.large {
+		return true
+	}
+	region := &regions[mapping.region]
+	frame := region_frame(region, mapping.first + (op.CONTEXT_ADDRESS - mapping.address) / PAGE_SIZE, false)
+	if frame == 0 || region.device {
+		return true
+	}
+	written, changed, ok := input_history.page_delta_encode(op.CONTEXT_ADDRESS, &RECORD_ZERO_PAGE, direct(frame, [PAGE_SIZE]u8), cpu.page_delta_scratch[:])
+	return ok && (!changed || input_history.history_writer_append(&rec.writer, .Page_Delta, 0, 0, cpu.page_delta_scratch[:written]))
+}
+
+// Shared writers (src/md/features/record_and_replay.md, "The hard cases, and
+// the choices"). A page that the recorded process maps with Write, and that
+// another process maps with Write too, cannot take a point copy: the writes of
+// the recorded process must reach the peer at once. So the peer writes the
+// real page, and only while the recorded thread is at an input point. The
+// pure gate (replay_filter.Shared_Writer_Gate), under the process lock of the
+// recorded process, decides; the kernel keeps three hooks:
+//
+// - the pick of a processor (shared_writer_run_begin) asks the gate before a
+//   thread of a writer runs, and the leave of the processor
+//   (shared_writer_run_end) ends that run. The pick passes over a waiting
+//   writer by one hint (shared_writer_held), so a processor does not take it
+//   again and again;
+// - the kernel entry of the recorded thread (record_enter_input_point) copies
+//   each shared page into its baseline, then lets the writers run;
+// - the return of the recorded thread to its own instructions
+//   (record_leave_input_point) waits until no writer is on a processor, then
+//   writes each range that the writers changed as a Page_Delta, at that point.
+//
+// The tick of the first processor (shared_writer_wait_bound_check) ends the
+// history when a writer waited one stint: a record never holds a process
+// that the recorder does not hold for ever.
+
+// shared_writers_add_of_region adds each other live process that maps
+// region_index with Write as a shared writer of the gate. A writer that is
+// recorded or replayed itself, or that writes for another record, is
+// refused: one gate holds each writer. Caller holds Control and target's
+// process lock.
+@(private = "file")
+shared_writers_add_of_region :: proc "contextless" (target_index: u32, rec: ^Process_Record_State, region_index: u32) -> Operation_Outcome {
+	for &other, slot in processes[1:] {
+		other_index := u32(slot + 1)
+		if other_index == target_index {
+			continue
+		}
+		other_taken := process_lock(other_index)
+		writes := false
+		if other.state != .None && other.state != .Stopped {
+			for mapping in other.mappings {
+				if mapping.page_count != 0 && mapping.region == region_index && mapping.bits & PAGE_WRITE != 0 {
+					writes = true
+					break
+				}
+			}
+		}
+		serial := other.serial
+		process_unlock(other_index, other_taken)
+		if !writes {
+			continue
+		}
+		if intrinsics.atomic_load(&process_records[other_index].mode) != .None {
+			return .Bad_State
+		}
+		if writes_for := intrinsics.atomic_load(&other.shared_writer_of); writes_for != 0 && writes_for != target_index {
+			return .Bad_State
+		}
+		known := false
+		for entry in rec.gate.writers {
+			if entry.process_slot == other_index && entry.process_serial == serial {
+				known = true
+				break
+			}
+		}
+		if !known && !replay_filter.add_shared_writer(&rec.gate, other_index, serial) {
+			return .No_Slot
+		}
+	}
+	return .Ok
+}
+
+// shared_writers_setup finds each page that the target maps with Write and
+// that another live process maps with Write too, keeps a baseline copy of
+// it paid by the budget of the history, records its first bytes, and makes
+// the gate of its writers. Large pages, uncommitted objects and pages with
+// no access are refused: the copy of each entry must stay bounded and see
+// what the process sees. Caller holds Control and target's process lock.
+@(private = "file")
+shared_writers_setup :: proc "contextless" (cpu: ^Processor, target_index: u32, rec: ^Process_Record_State) -> Operation_Outcome {
+	target := &processes[target_index]
+	for &mapping in target.mappings {
+		if mapping.page_count == 0 || mapping.bits & PAGE_WRITE == 0 || !region_mapped_writable_by_other(target_index, mapping.region) {
+			continue
+		}
+		region := &regions[mapping.region]
+		if mapping.large || region.uncommitted || region.device {
+			return .Bad_State
+		}
+		if rec.gate.state == .Inactive && !replay_filter.shared_writer_gate_init(&rec.gate, target_index, target.serial, SHARED_WRITER_WAIT_BOUND_MILLISECONDS) {
+			return .Bad_State
+		}
+		shared_writers_add_of_region(target_index, rec, mapping.region) or_return
+		for page in u64(0) ..< mapping.page_count {
+			if rec.shared_page_count >= SHARED_PAGE_CAPACITY {
+				return .No_Slot
+			}
+			source_page := mapping.first + page
+			if page_bits(&mapping, region_page_state(region, source_page)) == 0 {
+				return .Bad_State
+			}
+			baseline, allocated := point_copy_frame_allocate(rec.history_region)
+			if !allocated {
+				return .No_Budget
+			}
+			virtual_address := mapping.address + page * PAGE_SIZE
+			rec.shared_pages[rec.shared_page_count] = {
+				virtual_address = virtual_address,
+				region          = mapping.region,
+				page            = source_page,
+				baseline_frame  = baseline,
+				active          = true,
+			}
+			rec.shared_page_count += 1
+			if source_frame := region_frame(region, source_page, false); source_frame != 0 {
+				intrinsics.mem_copy_non_overlapping(direct(baseline, u8), direct(source_frame, u8), PAGE_SIZE)
+			}
+			// The first bytes of the page are an input, as those of a point copy.
+			written, changed, ok := input_history.page_delta_encode(virtual_address, &RECORD_ZERO_PAGE, direct(baseline, [PAGE_SIZE]u8), cpu.page_delta_scratch[:])
+			if !ok || (changed && !input_history.history_writer_append(&rec.writer, .Page_Delta, 0, 0, cpu.page_delta_scratch[:written])) {
+				return .Bad_Operation
+			}
+		}
+	}
+	return .Ok
+}
+
+// shared_writers_publish tells each writer of the gate that its threads ask
+// the gate before they run. The generation names this record for the writer
+// threads that the gate counts, so a run that ends after a later record
+// began changes nothing there. Caller holds Control and target's process lock.
+@(private = "file")
+shared_writers_publish :: proc "contextless" (target_index: u32, rec: ^Process_Record_State) {
+	if rec.gate.state != .Active {
+		return
+	}
+	record_generation_last += 1
+	rec.generation = record_generation_last
+	for entry in rec.gate.writers {
+		if entry.process_slot != 0 {
+			intrinsics.atomic_store(&processes[entry.process_slot].shared_writer_of, target_index)
+		}
+	}
+	intrinsics.atomic_store(&rec.has_shared_writers, true)
+	intrinsics.atomic_add(&shared_writer_recordings, 1)
+}
+
+// shared_writers_teardown frees the baselines, tells each writer that it
+// runs freely again, and wakes the idle processors so that a writer that
+// waited runs. Caller holds Control and target's process lock.
+@(private = "file")
+shared_writers_teardown :: proc "contextless" (target_index: u32, rec: ^Process_Record_State) {
+	for index in u32(0) ..< rec.shared_page_count {
+		page := &rec.shared_pages[index]
+		if page.active {
+			point_copy_frame_free(rec.history_region, page.baseline_frame)
+		}
+		page^ = {}
+	}
+	rec.shared_page_count = 0
+	if rec.gate.state == .Inactive {
+		return
+	}
+	for entry in rec.gate.writers {
+		if entry.process_slot != 0 && processes[entry.process_slot].serial == entry.process_serial {
+			_, _ = intrinsics.atomic_compare_exchange_strong(&processes[entry.process_slot].shared_writer_of, target_index, 0)
+		}
+	}
+	intrinsics.atomic_store(&rec.writers_held, false)
+	if intrinsics.atomic_load(&rec.has_shared_writers) {
+		intrinsics.atomic_store(&rec.has_shared_writers, false)
+		intrinsics.atomic_sub(&shared_writer_recordings, 1)
+	}
+	rec.gate = {}
+	kick_all()
+}
+
+// record_replay_writer_stopped removes a stopped process from the gate that
+// it wrote for. It runs at the cleanup, when no thread of the process is on
+// a processor, so the recorded thread no longer waits for a writer that
+// cannot write. Caller holds Control and no process lock.
+record_replay_writer_stopped :: proc "contextless" (writer_index: u32) {
+	target_index := intrinsics.atomic_load(&processes[writer_index].shared_writer_of)
+	if target_index == 0 {
+		return
+	}
+	taken := process_lock(target_index)
+	rec := &process_records[target_index]
+	if rec.mode == .Recording && rec.gate.state == .Active {
+		_ = replay_filter.remove_shared_writer(&rec.gate, writer_index, processes[writer_index].serial)
+	}
+	intrinsics.atomic_store(&processes[writer_index].shared_writer_of, 0)
+	process_unlock(target_index, taken)
+}
+
+// shared_writer_held is the hint of the pick: a thread of a shared writer
+// whose recorded thread runs its own instructions. Each candidate of a pick
+// pays one load of a word that is 0 when no record has a shared writer. The
+// gate decides under the lock at the run (shared_writer_run_begin).
+shared_writer_held :: #force_inline proc "contextless" (thread: ^Thread) -> bool {
+	if intrinsics.atomic_load(&shared_writer_recordings) == 0 {
+		return false
+	}
+	target_index := intrinsics.atomic_load(&processes[thread.process].shared_writer_of)
+	return target_index != 0 && intrinsics.atomic_load(&process_records[target_index].writers_held)
+}
+
+// shared_writer_run_begin asks the gate before a processor runs a thread of
+// a shared writer. false: the recorded thread runs its own instructions or
+// waits to: the thread goes back to its queue. The caller holds no lock.
+shared_writer_run_begin :: proc "contextless" (thread: ^Thread) -> bool {
+	writer_index := thread.process
+	target_index := intrinsics.atomic_load(&processes[writer_index].shared_writer_of)
+	if target_index == 0 {
+		return true
+	}
+	taken := process_lock(target_index)
+	defer process_unlock(target_index, taken)
+	rec := &process_records[target_index]
+	if rec.mode != .Recording || rec.gate.state != .Active {
+		return true
+	}
+	serial := processes[writer_index].serial
+	may_run, decision := replay_filter.shared_writer_may_run(&rec.gate, writer_index, serial, intrinsics.atomic_load(&time_milliseconds))
+	switch decision {
+	case .Run_Freely:
+		return true
+	case .Wait_Input_Point:
+		// The gate armed the bound for this writer: the tick reads it.
+		shared_writer_wait_mirror_locked(rec)
+		return false
+	case .Run_At_Input_Point:
+	}
+	began := may_run && replay_filter.shared_writer_begin_run(&rec.gate, writer_index, serial)
+	shared_writer_wait_mirror_locked(rec)
+	if !began {
+		return false
+	}
+	thread.shared_writer_gate_process = target_index
+	thread.shared_writer_gate_generation = rec.generation
+	return true
+}
+
+// shared_writer_run_end ends the run that shared_writer_run_begin counted,
+// when the processor leaves the thread. A record that ended or that another
+// record replaced (another generation) changes nothing. The caller holds no
+// lock.
+shared_writer_run_end :: proc "contextless" (thread: ^Thread) {
+	target_index := thread.shared_writer_gate_process
+	generation := thread.shared_writer_gate_generation
+	thread.shared_writer_gate_process = 0
+	thread.shared_writer_gate_generation = 0
+	if target_index == 0 {
+		return
+	}
+	taken := process_lock(target_index)
+	rec := &process_records[target_index]
+	if rec.mode == .Recording && rec.generation == generation {
+		_ = replay_filter.shared_writer_end_run(&rec.gate, thread.process, processes[thread.process].serial)
+	}
+	process_unlock(target_index, taken)
+}
+
+// shared_writers_on_processor_locked says if a thread of a writer is on a
+// processor. The count of the process covers a writer that a processor took
+// before the gate counted it, at the start of the record. Caller holds
+// target's process lock.
+@(private = "file")
+shared_writers_on_processor_locked :: proc "contextless" (rec: ^Process_Record_State) -> bool {
+	if rec.gate.active_writer_cpus != 0 {
+		return true
+	}
+	for entry in rec.gate.writers {
+		if entry.process_slot != 0 && processes[entry.process_slot].serial == entry.process_serial && u32(intrinsics.atomic_load(&processes[entry.process_slot].holds)) != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// shared_writers_preempt ends the stint of each processor that runs a thread
+// of a writer of target_index, so the recorded thread waits at most for the
+// end of a kernel entry of a writer. It reads the current thread of each
+// processor with no lock: a processor that changed its thread meanwhile
+// passes through schedule once more.
+@(private = "file")
+shared_writers_preempt :: proc "contextless" (target_index: u32) {
+	self := processor_self()
+	for cpu in processors[:processor_count] {
+		if cpu == self {
+			continue
+		}
+		running := intrinsics.atomic_load(&cpu.current)
+		if running != 0 && intrinsics.atomic_load(&processes[threads[running].process].shared_writer_of) == target_index {
+			intrinsics.atomic_store(&cpu.preempt, true)
+			apic_send(cpu.apic_id, VECTOR_WAKE)
+		}
+	}
+}
+
+// shared_pages_diff_locked writes, as Page_Delta records at this point, each
+// range of a shared page that changed since the baseline. No writer is on a
+// processor, so each page holds still during its read. A page with no frame
+// yet holds zeros. false: the history is full. Caller holds the process lock.
+@(private = "file")
+shared_pages_diff_locked :: proc "contextless" (cpu: ^Processor, rec: ^Process_Record_State, thread: ^Thread) -> bool {
+	for index in u32(0) ..< rec.shared_page_count {
+		page := &rec.shared_pages[index]
+		if !page.active {
+			continue
+		}
+		live := &RECORD_ZERO_PAGE
+		if frame := region_frame(&regions[page.region], page.page, false); frame != 0 {
+			live = direct(frame, [PAGE_SIZE]u8)
+		}
+		written, changed, ok := input_history.page_delta_encode(page.virtual_address, direct(page.baseline_frame, [PAGE_SIZE]u8), live, cpu.page_delta_scratch[:])
+		if !ok {
+			return false
+		}
+		if changed && !input_history.history_writer_append(&rec.writer, .Page_Delta, thread.frame.rip, thread.frame.rsp, cpu.page_delta_scratch[:written]) {
+			return false
+		}
+	}
+	return true
+}
+
+// record_enter_input_point runs at the start of a kernel entry of a recorded
+// thread that ran its own instructions. While it ran, no writer was on a
+// processor, so each shared page holds what the recorded process left there:
+// the baseline takes it, then the writers may run. Caller holds no lock.
+record_enter_input_point :: proc "contextless" (thread: ^Thread) {
+	thread.record_outside_point = false
+	process_index := thread.process
+	rec := &process_records[process_index]
+	if !intrinsics.atomic_load(&rec.has_shared_writers) {
+		return
+	}
+	taken := process_lock(process_index)
+	released := false
+	if rec.mode == .Recording && rec.gate.state == .Active {
+		for index in u32(0) ..< rec.shared_page_count {
+			page := &rec.shared_pages[index]
+			if !page.active {
+				continue
+			}
+			if frame := region_frame(&regions[page.region], page.page, false); frame != 0 {
+				intrinsics.mem_copy_non_overlapping(direct(page.baseline_frame, u8), direct(frame, u8), PAGE_SIZE)
+			} else {
+				frames_zero(page.baseline_frame, 1)
+			}
+		}
+		// A writer that is ready now waits from this entry on, unless it
+		// waited already: the gate keeps the first start of the wait until
+		// a writer runs, so a thread that enters and leaves again before
+		// any writer is taken does not move the bound.
+		shared_writers_waiting_mark_locked(rec, intrinsics.atomic_load(&time_milliseconds))
+		_ = replay_filter.recorded_thread_enter_input_point(&rec.gate, thread_index(thread))
+		intrinsics.atomic_store(&rec.writers_held, false)
+		// Only a writer that waits needs an idle processor to look again.
+		released = rec.gate.waiting_writer_count != 0
+		shared_writer_wait_mirror_locked(rec)
+	}
+	process_unlock(process_index, taken)
+	if released {
+		kick_all()
+	}
+}
+
+// shared_writers_waiting_mark_locked tells the gate of each writer that has
+// a thread ready and on no processor: the gate marks it waiting and arms
+// the bound at start, or keeps the start of an earlier wait. Caller holds
+// the process lock of the recorded process.
+@(private = "file")
+shared_writers_waiting_mark_locked :: proc "contextless" (rec: ^Process_Record_State, start: u64) {
+	for entry in rec.gate.writers {
+		if entry.process_slot != 0 && shared_writer_has_ready_thread(entry.process_slot, entry.process_serial) {
+			_, _ = replay_filter.shared_writer_may_run(&rec.gate, entry.process_slot, entry.process_serial, start)
+		}
+	}
+}
+
+// shared_writer_wait_mirror_locked copies the bound of the gate where the
+// tick reads it with no lock. Caller holds the process lock of the recorded
+// process, after each change of the gate.
+@(private = "file")
+shared_writer_wait_mirror_locked :: proc "contextless" (rec: ^Process_Record_State) {
+	intrinsics.atomic_store(&rec.writer_wait_since, rec.gate.wait_started_tick)
+	intrinsics.atomic_store(&rec.writer_wait_armed, rec.gate.wait_timer_armed)
+}
+
+// record_leave_input_point runs before a recorded thread at an input point
+// returns to its own instructions. false: a writer is still on a processor;
+// its processor got an interrupt, the leave stays asked, and the caller
+// passes through schedule before it tries again. true: no writer runs until
+// the next input point, and the history holds each range that the writers
+// wrote at this point. Caller holds no lock.
+record_leave_input_point :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> bool {
+	process_index := thread.process
+	rec := &process_records[process_index]
+	if !intrinsics.atomic_load(&rec.has_shared_writers) {
+		thread.record_outside_point = true
+		return true
+	}
+	taken := process_lock(process_index)
+	if rec.mode != .Recording || rec.gate.state != .Active {
+		process_unlock(process_index, taken)
+		thread.record_outside_point = true
+		return true
+	}
+	if !rec.writers_held {
+		intrinsics.atomic_store(&rec.writers_held_since, intrinsics.atomic_load(&time_milliseconds))
+		intrinsics.atomic_store(&rec.writers_held, true)
+	}
+	thread_id := thread_index(thread)
+	if shared_writers_on_processor_locked(rec) {
+		_ = replay_filter.recorded_thread_request_leave(&rec.gate, thread_id)
+		shared_writer_wait_mirror_locked(rec)
+		process_unlock(process_index, taken)
+		shared_writers_preempt(process_index)
+		return false
+	}
+	switch replay_filter.recorded_thread_leave_input_point(&rec.gate, thread_id) {
+	case .Left, .Refused:
+		// Refused: the gate does not hold this thread (it left already).
+	case .Must_Wait_Writers:
+		process_unlock(process_index, taken)
+		shared_writers_preempt(process_index)
+		return false
+	}
+	buffer_ok := shared_pages_diff_locked(cpu, rec, thread)
+	thread.record_outside_point = true
+	process_unlock(process_index, taken)
+	if !buffer_ok {
+		record_end_on_buffer_full(process_index)
+	}
+	return true
+}
+
+// shared_writer_has_ready_thread says if a process has a thread that is
+// ready and on no processor: a writer that waits. It reads with no lock: the
+// bound acts on what the tick saw.
+@(private = "file")
+shared_writer_has_ready_thread :: proc "contextless" (process_index: u32, serial: u32) -> bool {
+	if processes[process_index].serial != serial {
+		return false
+	}
+	for &thread in threads[1:] {
+		if thread.process == process_index && intrinsics.atomic_load(&thread.state) == .Ready && intrinsics.atomic_load(&thread.processor) == 0 && intrinsics.atomic_load(&thread.control_stops) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// shared_writer_wait_bound_check ends the history of each record whose
+// writer waited one stint for its recorded thread: the writer then runs.
+// The gate decides, from the first start of the wait, which it keeps until
+// a writer runs; the kernel entries of the recorded thread do not move it.
+// A writer that became ready while the recorded thread ran its own
+// instructions, and that no entry saw yet, waits since the thread left its
+// input point. Runs at the tick of the first processor, with no lock held;
+// it takes the control lock only for a record past its bound.
+shared_writer_wait_bound_check :: proc "contextless" (now: u64) {
+	for target_index in u32(1) ..< PROCESS_CAPACITY {
+		rec := &process_records[target_index]
+		if !intrinsics.atomic_load(&rec.has_shared_writers) {
+			continue
+		}
+		armed := intrinsics.atomic_load(&rec.writer_wait_armed)
+		since: u64
+		switch {
+		case armed:
+			since = intrinsics.atomic_load(&rec.writer_wait_since)
+		case intrinsics.atomic_load(&rec.writers_held):
+			since = intrinsics.atomic_load(&rec.writers_held_since)
+		case:
+			continue
+		}
+		if now < since || now - since < SHARED_WRITER_WAIT_BOUND_MILLISECONDS {
+			continue
+		}
+		// With no wait that the gate knows, a writer must be ready now. The
+		// table of the writers is read with no lock, as a hint: the gate
+		// decides under the lock.
+		if !armed && !shared_writers_any_ready(rec) {
+			continue
+		}
+		control_take()
+		taken := process_lock(target_index)
+		if rec.mode == .Recording && rec.gate.state == .Active {
+			if !rec.gate.wait_timer_armed && rec.writers_held {
+				shared_writers_waiting_mark_locked(rec, rec.writers_held_since)
+			}
+			if expired, _ := replay_filter.shared_writer_stint_expired(&rec.gate, now); expired {
+				record_replay_end_locked(target_index, .Stint_Bound_Reached)
+			} else {
+				shared_writer_wait_mirror_locked(rec)
+			}
+		}
+		process_unlock(target_index, taken)
+		control_free()
+	}
+}
+
+// shared_writers_any_ready says if a writer of the gate has a thread ready
+// and on no processor. It reads with no lock: a hint for the tick.
+@(private = "file")
+shared_writers_any_ready :: proc "contextless" (rec: ^Process_Record_State) -> bool {
+	for entry in rec.gate.writers {
+		if entry.process_slot != 0 && shared_writer_has_ready_thread(entry.process_slot, entry.process_serial) {
+			return true
+		}
+	}
+	return false
+}
+
+// replay_context_page_clear_locked zeroes the context page of a process that
+// has not run, before the history writes the context of the record there.
+// Caller holds the process lock.
+@(private = "file")
+replay_context_page_clear_locked :: proc "contextless" (process_index: u32) {
+	if frame := replay_shared_page_frame_locked(process_index, op.CONTEXT_ADDRESS); frame != 0 {
+		frames_zero(frame, 1)
+	}
+}
+
+// replay_shared_page_frame_locked gives the frame of a page that a replayed
+// process maps with Write, for a Page_Delta that a shared writer wrote in
+// the record. A page with no frame yet gets one: the record saw its bytes.
+// 0: no such page. Caller holds the process lock.
+@(private = "file")
+replay_shared_page_frame_locked :: proc "contextless" (process_index: u32, virtual_address: u64) -> u64 {
+	mapping := mapping_at(&processes[process_index], virtual_address)
+	if mapping == nil || mapping.large || mapping.bits & PAGE_WRITE == 0 {
+		return 0
+	}
+	region := &regions[mapping.region]
+	if region.device {
+		return 0
+	}
+	page := mapping.first + (virtual_address - mapping.address) / PAGE_SIZE
+	state := region_page_state(region, page)
+	if page_bits(mapping, state) == 0 || !page_committed(region, state) {
+		return 0
+	}
+	return region_frame(region, page, true)
 }
 
 // record_wait_wake_completion records a deferred pure-wait entry right when

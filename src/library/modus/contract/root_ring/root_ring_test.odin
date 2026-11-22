@@ -43,6 +43,72 @@ the_words_of_the_list_page_refuse_a_word_that_names_no_member :: proc(t: ^testin
 	}
 }
 
+// values[5] of a Debug_Start: None, one past the last member, a word far
+// past it and the largest word name nothing; each member comes back from
+// its word, last. Only the debugger sends the command: the console, which
+// starts processes, does not start one held for a debugger by itself.
+@(test)
+debug_start_step_of_word_refuses_a_word_that_names_no_member :: proc(t: ^testing.T) {
+	for word in ([?]u64{u64(Debug_Start_Step.None), u64(max(Debug_Start_Step)) + 1, 1 << 32, max(u64)}) {
+		step, ok := debug_start_step_of_word(word)
+		testing.expectf(t, !ok, "the step %d of a Debug_Start is taken", word)
+		testing.expect_value(t, step, Debug_Start_Step.None)
+	}
+	for member in ([?]Debug_Start_Step{.Start_Held, .Start_Replay, .Release, .Abandon}) {
+		read, ok := debug_start_step_of_word(u64(member))
+		testing.expect(t, ok && read == member)
+	}
+	testing.expect(t, sender_allowed(.Debug_Start, {.Debugger}))
+	testing.expect(t, !sender_allowed(.Debug_Start, {.Root_Ring}))
+	testing.expect(t, !sender_allowed(.Debug_Start, {.Root_Ring, .Connect, .Principals, .Start_Policy}))
+	testing.expect(t, !sender_allowed(.Debug_Start, {}))
+	decision := dispatch_decide(u32(Root_Command.Debug_Start), {.Root_Ring}, false)
+	testing.expect_value(t, decision.step, Dispatch_Step.Sender)
+	testing.expect_value(t, decision.status, op.Status.No_Right)
+	refusal := errors.completion_record(decision.refusal)
+	testing.expect_value(t, errors.Kind(refusal.kind), errors.Kind.No_Grant)
+	testing.expect_value(t, refusal.operation, i64(Root_Command.Debug_Start))
+	testing.expect_value(t, root_command_name(i64(Root_Command.Debug_Start)), "Debug_Start")
+	testing.expect_value(t, root_argument_name(i64(Root_Command.Debug_Start), 1), "name")
+}
+
+// The border of a Debug_Start: a step that names nothing, then values[6]
+// not 0 (1, the largest word), each refused with Bad_Operation and the
+// record Bad_Value of its argument; the step is read before values[6].
+// Each step with values[6] 0 passes, last.
+@(test)
+debug_start_border_refuses_each_word_it_does_not_take :: proc(t: ^testing.T) {
+	for word in ([?]u64{u64(Debug_Start_Step.None), u64(max(Debug_Start_Step)) + 1, max(u64)}) {
+		step, status, refusal := debug_start_border({5 = word})
+		testing.expect_value(t, step, Debug_Start_Step.None)
+		testing.expect_value(t, status, op.Status.Bad_Operation)
+		record := errors.completion_record(refusal)
+		testing.expect_value(t, errors.Kind(record.kind), errors.Kind.Bad_Value)
+		testing.expect_value(t, record.operation, i64(Root_Command.Debug_Start))
+		testing.expect_value(t, record.argument, i64(3))
+		testing.expect_value(t, record.limit, i64(max(Debug_Start_Step)))
+	}
+	for word in ([?]u64{1, 1 << 62, max(u64)}) {
+		step, status, refusal := debug_start_border({5 = u64(Debug_Start_Step.Release), 6 = word})
+		testing.expect_value(t, step, Debug_Start_Step.None)
+		testing.expect_value(t, status, op.Status.Bad_Operation)
+		record := errors.completion_record(refusal)
+		testing.expect_value(t, errors.Kind(record.kind), errors.Kind.Bad_Value)
+		testing.expect_value(t, record.argument, i64(4))
+		testing.expect_value(t, record.value, i64(min(word, 1 << 62)))
+		testing.expect_value(t, record.limit, i64(0))
+	}
+	// A bad step with a bad values[6]: the step is the argument named.
+	_, _, both := debug_start_border({5 = 0, 6 = 7})
+	testing.expect_value(t, errors.completion_record(both).argument, i64(3))
+	for member in ([?]Debug_Start_Step{.Start_Held, .Start_Replay, .Release, .Abandon}) {
+		step, status, refusal := debug_start_border({0 = max(u64), 4 = max(u64), 5 = u64(member)})
+		testing.expect_value(t, step, member)
+		testing.expect_value(t, status, op.Status.Ok)
+		testing.expect_value(t, refusal, [7]u64{})
+	}
+}
+
 // The kind of a record becomes a command at command_of_word only. Each word
 // that names no command is refused first: 0, which is None and which no
 // sender sends, one past the largest member, a word far past it, the

@@ -615,3 +615,85 @@ single_fetch_snapshot_reader_and_null_copy_address_refusal :: proc(t: ^testing.T
 	testing.expect_value(t, len(copied), 4)
 	testing.expect_value(t, copied[3], u8(4))
 }
+
+// The head of a record holds the context page as a delta from the zero
+// page, so the delta names only the bytes that are not zero. Applied on a
+// zeroed page, it gives the context of the record exactly; applied on the
+// context that the starter of the replay wrote, it leaves each byte that
+// the record had at zero as the starter wrote it. So the kernel zeroes the
+// context of a replay first.
+@(test)
+context_delta_from_the_zero_page_needs_a_zeroed_target :: proc(t: ^testing.T) {
+	zero, recorded, starter: [HISTORY_PAGE_SIZE]u8
+	scratch: [PAGE_DELTA_MAX_BYTES]u8
+	recorded[8] = 0x11 // A handle of the record.
+	recorded[200] = 0x22 // A seed byte of the record.
+	starter[8] = 0x33
+	starter[16] = 0x44 // A handle that the record did not have.
+	written, changed, ok := page_delta_encode(op.CONTEXT_ADDRESS, &zero, &recorded, scratch[:])
+	testing.expect(t, ok && changed)
+	header, valid := page_delta_validate(scratch[:written])
+	testing.expect(t, valid)
+	testing.expect_value(t, header.virtual_address, u64(op.CONTEXT_ADDRESS))
+
+	not_cleared := starter
+	testing.expect(t, page_delta_apply(scratch[:written], &not_cleared))
+	testing.expect(t, not_cleared != recorded, "a byte that the record had at zero stays as the starter wrote it")
+	testing.expect_value(t, not_cleared[16], u8(0x44))
+
+	cleared: [HISTORY_PAGE_SIZE]u8
+	testing.expect(t, page_delta_apply(scratch[:written], &cleared))
+	testing.expect(t, cleared == recorded)
+
+	// A context of zeros alone records nothing: a zeroed page is its replay.
+	written, changed, ok = page_delta_encode(op.CONTEXT_ADDRESS, &zero, &zero, scratch[:])
+	testing.expect(t, ok && !changed && written == 0)
+}
+
+// The writes of a shared writer at an input point are one delta from the
+// baseline: a byte written back to its old value leaves no delta. A replay
+// whose reader reaches the end record diverges at its next entry with
+// Missing_Record: it reached the end of the history. An ended history
+// takes no record.
+@(test)
+shared_page_delta_and_the_end_of_a_history :: proc(t: ^testing.T) {
+	baseline, live: [HISTORY_PAGE_SIZE]u8
+	scratch: [PAGE_DELTA_MAX_BYTES]u8
+	live[0] = 1
+	live[0] = 0
+	written, changed, ok := page_delta_encode(0x40_0000, &baseline, &live, scratch[:])
+	testing.expect(t, ok && !changed && written == 0)
+	live[4095] = 0xFF
+	written, changed, ok = page_delta_encode(0x40_0000, &baseline, &live, scratch[:])
+	testing.expect(t, ok && changed)
+
+	buffer: [size_of(History_Header) + 512]u8
+	writer, writer_ok := history_writer_init(buffer[:], {}, 1, 0, 0)
+	testing.expect(t, writer_ok)
+	testing.expect(t, history_writer_append(&writer, .Page_Delta, 0x1000, 0x2000, scratch[:written]))
+	testing.expect(t, history_writer_append_end(&writer, 0x1000, 0x2000, .Recorder_Stopped))
+	testing.expect(t, !history_writer_append(&writer, .Page_Delta, 0x1000, 0x2000, scratch[:written]), "an ended history takes no record")
+
+	reader, reader_ok := history_reader_open(buffer[:])
+	testing.expect(t, reader_ok)
+	record_scratch: [PAGE_DELTA_MAX_BYTES]u8
+	header, kind, payload, has_more, next_ok := history_reader_next_into(&reader, record_scratch[:])
+	testing.expect(t, next_ok && has_more)
+	testing.expect_value(t, kind, History_Record_Kind.Page_Delta)
+	page := baseline
+	testing.expect(t, page_delta_apply(payload, &page))
+	testing.expect(t, page == live)
+
+	header, kind, payload, has_more, next_ok = history_reader_next_into(&reader, record_scratch[:])
+	testing.expect(t, next_ok && has_more)
+	testing.expect_value(t, kind, History_Record_Kind.History_End)
+	actual := Replay_Actual_Event{kind = .Kernel_Completion, instruction_address = 0x1000, stack_pointer = 0x2000}
+	check := replay_step_check(actual, has_more, header, kind, payload)
+	testing.expect_value(t, check.divergence, Divergence_Kind.Missing_Record)
+	testing.expect_value(t, check.actual, u64(History_Record_Kind.History_End))
+
+	_, _, _, has_more, next_ok = history_reader_next_into(&reader, record_scratch[:])
+	testing.expect(t, next_ok && !has_more, "a clean end of the stream")
+	check = replay_step_check(actual, has_more, {}, .None, nil)
+	testing.expect_value(t, check.divergence, Divergence_Kind.Missing_Record)
+}

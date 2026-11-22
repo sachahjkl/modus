@@ -151,6 +151,10 @@ Processor :: struct {
 	// CR4.TSD and CPUID faulting are enabled on this processor for a recorded
 	// or replayed thread (record_replay.odin). Only this processor writes it.
 	record_traps_loaded: bool,
+	// The recorded thread of this processor could not leave its input point
+	// while a shared writer ran: the next pass of schedule opens one
+	// interrupt window first (schedule.odin). Only this processor writes it.
+	record_leave_retry: bool,
 	// The kinds of kernel events that the event table has rules for: bit n
 	// for the Event_Kind n; 0 with no table (events.odin). Each event point
 	// reads it first. It is in the first line of the record, which each

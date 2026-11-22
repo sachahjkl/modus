@@ -673,6 +673,18 @@ process_record_start :: proc "contextless" (process: Handle, history: Handle, er
 	return status
 }
 
+// process_replay_start makes the kernel run a process in replay mode from an
+// input history (src/md/features/record_and_replay.md, "The replay"): each
+// input comes from the history, and the first difference stops the process
+// with a divergence. `process` is a process handle with Debug that did not
+// run yet; `history` a contiguous memory object with Read and Write whose
+// record ended. The kernel writes the end of the replay into the header of
+// the history.
+process_replay_start :: proc "contextless" (process: Handle, history: Handle, error: ^errors.Error_Record = nil) -> Status {
+	_, status := call_with_error(error, .Thread_Control, u64(process), u64(history), u64(op.Thread_Control_Command.Replay_Start))
+	return status
+}
+
 // process_record_end ends the record that process_record_start began: the
 // kernel writes the end record into the input history and stops writing it.
 process_record_end :: proc "contextless" (process: Handle, error: ^errors.Error_Record = nil) -> Status {

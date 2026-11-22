@@ -166,6 +166,14 @@ Debugging_Ended :: struct {
 	caller:   value_kinds.Module_Name_Field,
 }
 
+// The root service started a process held before its first instruction,
+// for the debugger service and one of its callers (Debug_Start).
+@(log_fact = "root: started {held_process} held before its first instruction for the debugger of {caller}")
+Process_Held_For_Debugger :: struct {
+	held_process: value_kinds.Module_Name_Field,
+	caller:       value_kinds.Module_Name_Field,
+}
+
 // A caller refused the debug access to a process, by a grant of that
 // process.
 @(log_fact = "root: refused {caller} the debug access to {target}: the grant {grant} of the process refuses it")
