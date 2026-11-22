@@ -797,6 +797,7 @@ site_build :: proc(address: string, commands: []foundation.Command) -> bool {
 	site_write_file(&site, SITE_SEARCH_SCRIPT, transmute([]u8)site_search_script()) or_return
 	site_write_file(&site, SITE_MODULE_GRAPH_SCRIPT, transmute([]u8)site_module_graph_script()) or_return
 	site_write_file(&site, SITE_GLOSSARY_SCRIPT, transmute([]u8)site_glossary_script()) or_return
+	site_write_file(&site, SITE_BROWSER_MACHINE_FILE, transmute([]u8)site_browser_machine_html()) or_return
 	// The commit and the time of this build: a page that a cache kept from
 	// an older build finds that it is older.
 	site_write_file(&site, SITE_VERSION_FILE, transmute([]u8)site_version_json(site.commit, site.build_time)) or_return
