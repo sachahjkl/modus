@@ -60,10 +60,40 @@ A second address space is a page table that the kernel builds from memory object
 - **The test host is an AMD processor.** Nested virtualization gives the test machine the AMD form of guest support, so that form comes first.
 - **Three primitives are gaps of the native system too**: faults of every kind as records, the control of a thread with its registers, and storage at the size of a tree of files. They were built first, because each is useful with no foreign system.
 
+## The machine of a Linux guest
+
+A Linux kernel of 64 bits runs in a guest of [guest.md](guest.md), and the process that runs it answers each exit. The answers are pure code in `modus:contract/guest_os`, with no kernel operation, so a host test drives them with exits that it writes itself. The process `guest_builder` wires them to `Guest_Run` (`src/modules/system/guest_builder`).
+
+### The chosen form
+
+- **The 64-bit boot protocol of Linux, with no firmware** (`linux_boot.odin`). The process checks the image first: a bzImage of protocol 2.12 or later with a 64-bit entry, or a vmlinux (ELF64 for x86-64 whose segments name their physical addresses). It copies the kernel to its place, writes the zero page (the setup header of the image, the memory map, the command line), a page table that maps the first 4 GiB at their own address and the first 2 GiB again at `0xFFFF_FFFF_8000_0000`, and the descriptors of the protocol at the guest physical address 0. It enters the kernel in long mode with `rsi` at the zero page. A new guest processor already has its descriptor table at 0 with the limit 0xFFFF, so the descriptors need no field of the record.
+- **Legacy devices that a kernel finds with no table** (`legacy_devices.odin`): the serial port 8250 at 0x3F8 (the console), the two interrupt controllers 8259, and the interval timer 8254. `cpuid` offers no local APIC, so Linux takes its interrupts through the controllers 8259 and its tick from the timer.
+- **virtio over MMIO, version 2** (`virtio_mmio.odin`): a console, a read-only disk of inputs and a writable disk of outputs, at 0xD000_0000, 0xD000_1000 and 0xD000_2000, with the lines 5, 10 and 11. The command line names them (`virtio_mmio.device=`), so the kernel needs no PCI. No network device exists.
+- **The decode of the instruction of a device access** (`instruction_decode.odin`). A memory exit gives the guest physical address and the access, not the instruction. The process reads the instruction at `rip` through the page table of the guest, decodes the forms of `mov` that a driver uses on a register of a device (88, 89, 8A, 8B, C6, C7, 0F B6, 0F B7), and writes the register with the rules of the processor. It refuses each other instruction, and an instruction whose access is not the access of the exit: the guest stops.
+- **The model-specific registers** (`linux_machine.odin`). `EFER`, `STAR`, `LSTAR`, `SFMASK` and the three bases go to the record, so the kernel loads them in the guest processor. `CSTAR` and the `SYSENTER` registers stay in the machine. Each other register, the local APIC base, and each value that the processor refuses give a general protection fault, as a processor gives it.
+- **A virtual clock.** The time of the guest is a count of ticks of the timer that the process moves: a fixed step at each exit, and a jump to the next tick at `hlt`. The process injects the interrupt that the controllers give when the guest takes interrupts.
+- **Memory in regions that switch.** The memory of the guest is one memory object, mapped in the guest in regions of 2 MiB (more for a memory past 120 regions) that are each writable or executable, never both. A write to a region in `Execute` exits, and the process gives the region `Write`, and the reverse.
+
+### Refused forms
+
+- **An emulator of the whole instruction set for device accesses.** A driver reaches a register of a device with a few forms of `mov`. Each form that the process decodes is a form that a host test checks; a form that it does not decode stops the guest, with no guess.
+- **The local APIC and an I/O APIC.** Linux needs a table of the firmware (MP or ACPI) to use them, and an emulation of each. The controllers 8259 need neither, and a build runs on one guest processor.
+- **PCI.** A bus to probe, configuration space, and its interrupts, for three devices whose places the command line can give.
+- **One mapping of the whole memory.** Each switch between `Write` and `Execute` then changes the whole memory, and code that writes its stack switches at each instruction.
+
+### Subtle points
+
+- **The bytes of a guest are hostile.** Each descriptor, each ring index and each address that a driver gives is checked against the memory before a byte moves, with no overflow. A chain longer than its queue (a loop), an indirect descriptor (not offered), a readable buffer after a writable one, or more available chains than the ring holds ends the device: it sets `DEVICE_NEEDS_RESET` and serves nothing until a reset.
+- **The read-only disk refuses each write.** The device offers `VIRTIO_BLK_F_RO`, answers each write with `IOERR`, changes no byte, and counts it. The builder takes the first refused write as a violation of the sandbox, and refuses the build.
+- **The kernel image is hashed in the memory of the guest.** The builder copies the image once to the top of the guest memory, hashes that copy, parses it, loads the kernel below it, and clears the copy before the first run.
+- **The time of a guest is not the time of a build.** The virtual clock moves at each exit, and the exits `Interrupted` come from the timer of the machine; the guest also reads the time stamp counter, which the kernel does not intercept. The output of a build must not depend on time, and only a comparison of two builds checks it ([recipes.md](recipes.md), "Subtle points and hazards").
+- **The interrupt shadow is not in the record.** An interrupt that the process injects after an exit inside the shadow of `sti` or `mov ss` comes one instruction early.
+- **The cost of the switch of a region.** Code and data in one region switch it at each change of access. The kernel of Linux aligns its text and its data on 2 MiB, so they fall in different regions; the processes of the guest share regions. No measure exists yet.
+
 ## The order
 
 The primitives, then the IOMMU (a device reaches only the memory that its service was granted; the properties already require it on real hardware), then guest support, then Linux in a guest, then Wine in that guest, then the GPU. The order of the work is in `ROADMAP.md`.
 
 ## State
 
-The three primitives are built, and the IOMMU of Intel. Guest support is built in its AMD form, with one new kernel operation: a guest is a process whose page table is the nested page table, and the exits arrive as completion records ([guest.md](guest.md)). Linux in a guest is the next step of this order.
+The three primitives are built, and the IOMMU of Intel. Guest support is built in its AMD form, with one new kernel operation: a guest is a process whose page table is the nested page table, and the exits arrive as completion records ([guest.md](guest.md)). The machine of a Linux guest above is built and checked by host tests only: no machine test boots a Linux kernel yet. Linux in a guest is the next step of this order.

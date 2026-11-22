@@ -63,6 +63,12 @@ STATE_RIP :: 0x578
 STATE_RSP :: 0x5D8
 STATE_RAX :: 0x5F8
 STATE_PAGE_ATTRIBUTES :: 0x668 // The page attribute table of the guest under nested paging.
+// The 64-bit system state is written by guest_rules, which a host test
+// checks: its bases are the bases of the segment records above.
+#assert(guest_rules.STATE_FS_BASE == STATE_SEGMENT_FS + 8)
+#assert(guest_rules.STATE_GS_BASE == STATE_SEGMENT_GS + 8)
+#assert(guest_rules.STATE_SYSTEM_CALL_TARGET == STATE_RAX + 8)
+#assert(guest_rules.CONTROL_BLOCK_BYTES == PAGE_SIZE)
 
 // What the guest may not do alone. The first vector: the interrupt, the
 // non-maskable interrupt, the system management interrupt and INIT of the
@@ -481,6 +487,10 @@ guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, proces
 	direct(block + STATE_CR3, u64)^ = registers.cr3
 	direct(block + STATE_CR4, u64)^ = registers.cr4
 	direct(block + STATE_EFER, u64)^ = registers.efer | EFER_SECURE_VIRTUAL_MACHINE
+	// The system call targets and the bases of fs and gs: vmload loads them
+	// from the block before vmrun, and vmsave keeps them after the exit. The
+	// record wins over a mode load, which wrote the bases of its segments.
+	guest_rules.system_registers_write(direct(block, [guest_rules.CONTROL_BLOCK_BYTES]u8)[:], registers^)
 	// Every guest has one identifier, and a guest can run on another
 	// processor than before: each entry flushes its translations.
 	direct(block + CONTROL_TRANSLATION_FLUSH, u8)^ = guest_support.flush_by_identifier ? TRANSLATION_FLUSH_THE_GUEST : TRANSLATION_FLUSH_ALL
@@ -530,6 +540,7 @@ guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, proces
 	registers.cr3 = direct(block + STATE_CR3, u64)^ & op.GUEST_CONTROL_3_DEFINED
 	registers.cr4 = direct(block + STATE_CR4, u64)^ & op.GUEST_CONTROL_4_DEFINED
 	registers.efer = direct(block + STATE_EFER, u64)^ & op.GUEST_EFER_DEFINED
+	guest_rules.system_registers_read(direct(block, [guest_rules.CONTROL_BLOCK_BYTES]u8)[:], registers)
 	registers.code_selector = direct(block + STATE_SEGMENT_CS, u16)^
 	registers.data_selector = direct(block + STATE_SEGMENT_DS, u16)^
 	exit = {

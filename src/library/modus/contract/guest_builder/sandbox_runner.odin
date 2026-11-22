@@ -340,6 +340,43 @@ runner_handle_cpuid :: proc "contextless" (registers: ^op.Guest_Registers) {
 	}
 }
 
+// runner_report_violation records a sandbox violation that a device of the
+// guest found, such as a write to a read-only disk through virtio-blk, and
+// ends the run: the build is refused.
+runner_report_violation :: proc "contextless" (runner: ^Guest_Sandbox_Runner, kind: Sandbox_Violation_Kind) {
+	if runner == nil {
+		return
+	}
+	refusal := Guest_Builder_Refusal.Network_Forbidden
+	switch kind {
+	case .Read_Only_Disk_Write:
+		refusal = .Writable_Input_Forbidden
+	case .Output_Size_Exceeded:
+		refusal = .Output_Too_Large
+	case .Network_Access_Attempt, .None:
+	}
+	runner_record_violation(runner, kind, refusal)
+	runner.state = .Refused
+}
+
+// runner_exit_counted counts one Guest_Run exit against the bound of the
+// spec, and gives false, with the state Timed_Out, past it.
+runner_exit_counted :: proc "contextless" (runner: ^Guest_Sandbox_Runner) -> bool {
+	if runner == nil || runner.state != .Running {
+		return false
+	}
+	limit := runner.spec.max_guest_exits
+	if limit == 0 {
+		limit = DEFAULT_MAX_GUEST_EXITS
+	}
+	if runner.guest_exits_handled >= limit {
+		runner.state = .Timed_Out
+		return false
+	}
+	runner.guest_exits_handled += 1
+	return true
+}
+
 // runner_handle_exit processes one Guest_Run exit deterministically. Returns
 // keep_running = true when the VMM loop should re-enter the guest, or false
 // when execution has ended (exit port, violation, fault, or timeout).
@@ -352,19 +389,28 @@ runner_handle_exit :: proc "contextless" (
 	c: u64,
 	next_rip: u64,
 ) -> (keep_running: bool) {
+	if registers == nil || !runner_exit_counted(runner) {
+		return false
+	}
+	return runner_answer_exit(runner, registers, exit_kind, a, b, c, next_rip)
+}
+
+// runner_answer_exit answers one exit that the caller counted with
+// runner_exit_counted: the ports of the build (the frozen clock, the exit
+// status, the trap of a network device), cpuid, and the end of the run on
+// each other exit.
+runner_answer_exit :: proc "contextless" (
+	runner: ^Guest_Sandbox_Runner,
+	registers: ^op.Guest_Registers,
+	exit_kind: op.Guest_Exit_Kind,
+	a: u64,
+	b: u64,
+	c: u64,
+	next_rip: u64,
+) -> (keep_running: bool) {
 	if runner == nil || registers == nil || runner.state != .Running {
 		return false
 	}
-	limit := runner.spec.max_guest_exits
-	if limit == 0 {
-		limit = DEFAULT_MAX_GUEST_EXITS
-	}
-	if runner.guest_exits_handled >= limit {
-		runner.state = .Timed_Out
-		return false
-	}
-	runner.guest_exits_handled += 1
-
 	switch exit_kind {
 	case .Interrupted:
 		return true

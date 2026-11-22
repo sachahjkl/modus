@@ -84,19 +84,17 @@ disks_check :: proc "c" (spec_bytes: ^system.Bytes_To_Read, input_disk: ^system.
 	if spec_refusal != .None {
 		return errors.fail(error, ERROR, .Bad_Value, .None, ARGUMENT_SPEC, 0, 0, i64(spec_refusal))
 	}
-	if spec.output_size_bound > OUTPUT_DISK_BYTES_MOST {
-		return errors.fail(error, ERROR, .Over_Limit, .Bytes, ARGUMENT_SPEC, i64(spec.output_size_bound), OUTPUT_DISK_BYTES_MOST, i64(contract.Guest_Builder_Refusal.Output_Too_Large))
+	if spec.memory_pages > GUEST_MEMORY_PAGES_MOST {
+		return errors.fail(error, ERROR, .Over_Limit, .Pages, ARGUMENT_SPEC, i64(spec.memory_pages), i64(GUEST_MEMORY_PAGES_MOST), i64(contract.Guest_Builder_Refusal.Memory_Past_Bound))
 	}
-	if input_disk != nil {
-		input_count := intrinsics.volatile_load(&input_disk.count)
-		if input_count > INPUT_DISK_BYTES_MOST {
-			return errors.fail(error, ERROR, .Too_Long, .Bytes, ARGUMENT_INPUT_DISK, i64(input_count), INPUT_DISK_BYTES_MOST)
-		}
-		if input_count > 0 {
-			intrinsics.mem_copy_non_overlapping(&input_disk_copy[0], input_disk.bytes, int(input_count))
-			if _, disk_refusal := contract.validate_disk_image(input_disk_copy[:input_count], .Inputs_Read_Only, 0); disk_refusal != .None {
-				return errors.fail(error, ERROR, .Bad_Value, .None, ARGUMENT_INPUT_DISK, 0, 0, i64(disk_refusal))
-			}
+	memory, disk, copied := input_disk_copy(input_disk, error)
+	if !copied {
+		return ERROR
+	}
+	defer owned_memory_end(&memory)
+	if len(disk) > 0 {
+		if _, disk_refusal := contract.validate_disk_image(disk, .Inputs_Read_Only, 0); disk_refusal != .None {
+			return errors.fail(error, ERROR, .Bad_Value, .None, ARGUMENT_INPUT_DISK, 0, 0, i64(disk_refusal))
 		}
 	}
 	return i64(spec.output_size_bound)

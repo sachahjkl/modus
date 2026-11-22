@@ -288,3 +288,86 @@ guest_processor_index_bounds :: proc(t: ^testing.T) {
 	problem, _ = argument_value_problem(.Guest_Run, 2, {0, 0, GUEST_PROCESSOR_CAPACITY - 1, 0, 0, 0, 0})
 	testing.expect_value(t, problem, errors.Kind.None)
 }
+
+// The 64-bit system state: each address that is not canonical is refused,
+// in each mode, with the width of the addresses that cr4 gives; the
+// reserved bits of SFMASK are refused; STAR takes any value.
+@(test)
+guest_registers_system_state_refusals :: proc(t: ^testing.T) {
+	// The edges of the four-level width: the last canonical address of each
+	// half, and the first address past each.
+	not_canonical := [?]u64{0x0000_8000_0000_0000, 0xFFFF_7FFF_FFFF_FFFF, 0x0001_0000_0000_0000, 0x8000_0000_0000_0000, 0x7FFF_FFFF_FFFF_FFFF, 0xFFFE_FFFF_FFFF_FFFF}
+	for mode_registers in ([?]Guest_Registers{{}, LONG_MODE_REGISTERS}) {
+		for address in not_canonical {
+			registers := mode_registers
+			registers.lstar = address
+			testing.expectf(t, refusal_of(registers) == .System_Call_Address, "lstar %x is refused", address)
+			registers = mode_registers
+			registers.fs_base = address
+			testing.expectf(t, refusal_of(registers) == .Segment_Base, "fs_base %x is refused", address)
+			registers = mode_registers
+			registers.gs_base = address
+			testing.expectf(t, refusal_of(registers) == .Segment_Base, "gs_base %x is refused", address)
+			registers = mode_registers
+			registers.kernel_gs_base = address
+			testing.expectf(t, refusal_of(registers) == .Segment_Base, "kernel_gs_base %x is refused", address)
+		}
+	}
+	// A refused record leaves the other fields alone: the refusal names the
+	// first field in the order of the checks.
+	both := LONG_MODE_REGISTERS
+	both.lstar = 0x0000_8000_0000_0000
+	both.fs_base = 0x0000_8000_0000_0000
+	testing.expect_value(t, refusal_of(both), Guest_Registers_Refusal.System_Call_Address)
+	both.rip = 0x0000_8000_0000_0000
+	testing.expect_value(t, refusal_of(both), Guest_Registers_Refusal.Instruction_Address)
+	for bit in ([?]u64{32, 33, 47, 63}) {
+		testing.expectf(t, refusal_of({sfmask = u64(1) << bit}) == .System_Call_Mask, "sfmask bit %v is refused", bit)
+	}
+	testing.expect_value(t, refusal_of({sfmask = max(u64)}), Guest_Registers_Refusal.System_Call_Mask)
+	// With five-level paging, an address of 57 bits is canonical, and the
+	// first address past it is not.
+	five := LONG_MODE_REGISTERS
+	five.cr4 |= GUEST_CONTROL_4_FIVE_LEVEL_PAGING
+	five.fs_base = 0x00FF_FFFF_FFFF_FFFF
+	testing.expect_value(t, refusal_of(five), Guest_Registers_Refusal.None)
+	five.fs_base = 0x0100_0000_0000_0000
+	testing.expect_value(t, refusal_of(five), Guest_Registers_Refusal.Segment_Base)
+	four := LONG_MODE_REGISTERS
+	four.fs_base = 0x00FF_FFFF_FFFF_FFFF
+	testing.expect_value(t, refusal_of(four), Guest_Registers_Refusal.Segment_Base)
+	// The successful cases last: the canonical edges, any STAR, a full mask.
+	canonical := [?]u64{0, 0x0000_7FFF_FFFF_FFFF, 0xFFFF_8000_0000_0000, max(u64)}
+	for address in canonical {
+		registers := LONG_MODE_REGISTERS
+		registers.lstar = address
+		registers.fs_base = address
+		registers.gs_base = address
+		registers.kernel_gs_base = address
+		registers.star = max(u64)
+		registers.sfmask = GUEST_SYSTEM_CALL_MASK_DEFINED
+		testing.expectf(t, refusal_of(registers) == .None, "canonical %x is accepted", address)
+	}
+}
+
+// The canonical form of an address copies the last bit below the width
+// into each bit above it; a canonical address keeps its value.
+@(test)
+guest_address_canonical_form :: proc(t: ^testing.T) {
+	testing.expect_value(t, guest_address_canonical_of(0x0000_8000_0000_0000, false), u64(0xFFFF_8000_0000_0000))
+	testing.expect_value(t, guest_address_canonical_of(0x8000_7FFF_FFFF_FFFF, false), u64(0x0000_7FFF_FFFF_FFFF))
+	testing.expect_value(t, guest_address_canonical_of(0x0100_0000_0000_0000, true), u64(0xFF00_0000_0000_0000))
+	testing.expect_value(t, guest_address_canonical_of(0x0200_0000_0000_0000, true), u64(0))
+	testing.expect_value(t, guest_address_canonical_of(0x0080_0000_0000_0000, true), u64(0x0080_0000_0000_0000))
+	for address in ([?]u64{0, 1, 0x0000_7FFF_FFFF_FFFF, 0xFFFF_8000_0000_0000, max(u64)}) {
+		testing.expect_value(t, guest_address_canonical_of(address, false), address)
+		testing.expect(t, guest_address_canonical(guest_address_canonical_of(address ~ 0x00F0_0000_0000_0000, false), false))
+	}
+	testing.expect_value(t, size_of(Guest_Registers), 240)
+	testing.expect_value(t, offset_of(Guest_Registers, star), uintptr(192))
+	testing.expect_value(t, offset_of(Guest_Registers, lstar), uintptr(200))
+	testing.expect_value(t, offset_of(Guest_Registers, sfmask), uintptr(208))
+	testing.expect_value(t, offset_of(Guest_Registers, fs_base), uintptr(216))
+	testing.expect_value(t, offset_of(Guest_Registers, gs_base), uintptr(224))
+	testing.expect_value(t, offset_of(Guest_Registers, kernel_gs_base), uintptr(232))
+}

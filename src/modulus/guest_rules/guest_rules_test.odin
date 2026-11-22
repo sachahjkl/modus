@@ -139,3 +139,89 @@ next_instruction_only_for_injected_instruction_events :: proc(t: ^testing.T) {
 		testing.expectf(t, !needed, "word %x", word)
 	}
 }
+
+// The offsets of the 64-bit system state in the control block, from the
+// AMD manual, volume 2, table B-2: each field lands on its own eight bytes,
+// and no other byte of the block changes.
+@(test)
+system_registers_offsets :: proc(t: ^testing.T) {
+	testing.expect_value(t, STATE_FS_BASE, 0x448)
+	testing.expect_value(t, STATE_GS_BASE, 0x458)
+	testing.expect_value(t, STATE_SYSTEM_CALL_TARGET, 0x600)
+	testing.expect_value(t, STATE_LONG_SYSTEM_CALL_TARGET, 0x608)
+	testing.expect_value(t, STATE_COMPATIBILITY_SYSTEM_CALL_TARGET, 0x610)
+	testing.expect_value(t, STATE_SYSTEM_CALL_FLAGS_MASK, 0x618)
+	testing.expect_value(t, STATE_KERNEL_GS_BASE, 0x620)
+	block: [CONTROL_BLOCK_BYTES]u8
+	for &value in block {
+		value = 0xA5
+	}
+	registers := op.Guest_Registers {
+		fs_base        = 0x1111_2222_3333_4444 & 0x0000_7FFF_FFFF_FFFF,
+		gs_base        = 0xFFFF_8000_0000_1000,
+		star           = 0x0023_0010_DEAD_BEEF,
+		lstar          = 0xFFFF_FFFF_8100_0000,
+		sfmask         = 0x0004_7700,
+		kernel_gs_base = 0x0000_0000_0123_4000,
+	}
+	system_registers_write(block[:], registers)
+	Written :: struct {
+		offset: int,
+		value:  u64,
+	}
+	expected := [?]Written{{0x448, registers.fs_base}, {0x458, registers.gs_base}, {0x600, registers.star}, {0x608, registers.lstar}, {0x618, registers.sfmask}, {0x620, registers.kernel_gs_base}}
+	for offset := 0; offset < CONTROL_BLOCK_BYTES; offset += 8 {
+		word := u64(0)
+		for index in 0 ..< 8 {
+			word |= u64(block[offset + index]) << (u64(index) * 8)
+		}
+		value, written := u64(0), false
+		for entry in expected {
+			if entry.offset == offset {
+				value, written = entry.value, true
+			}
+		}
+		if written {
+			testing.expectf(t, word == value, "offset %x holds %x, not %x", offset, word, value)
+		} else {
+			testing.expectf(t, word == 0xA5A5_A5A5_A5A5_A5A5, "offset %x is not changed", offset)
+		}
+	}
+	// The read gives the same record back.
+	back := op.Guest_Registers{}
+	system_registers_read(block[:], &back)
+	testing.expect_value(t, back.fs_base, registers.fs_base)
+	testing.expect_value(t, back.gs_base, registers.gs_base)
+	testing.expect_value(t, back.star, registers.star)
+	testing.expect_value(t, back.lstar, registers.lstar)
+	testing.expect_value(t, back.sfmask, registers.sfmask)
+	testing.expect_value(t, back.kernel_gs_base, registers.kernel_gs_base)
+}
+
+// The read masks what a block can hold that the rules refuse: an address
+// that is not canonical comes back canonical, and the reserved bits of
+// SFMASK come back clear, so the record passes the checks again.
+@(test)
+system_registers_read_masks :: proc(t: ^testing.T) {
+	block: [CONTROL_BLOCK_BYTES]u8
+	for &value in block {
+		value = 0xFF
+	}
+	for offset in ([?]int{STATE_FS_BASE, STATE_GS_BASE, STATE_LONG_SYSTEM_CALL_TARGET, STATE_KERNEL_GS_BASE}) {
+		for index in 0 ..< 8 {
+			block[offset + index] = index == 5 ? 0x80 : 0
+		}
+	}
+	registers := op.Guest_Registers{}
+	system_registers_read(block[:], &registers)
+	testing.expect_value(t, registers.fs_base, u64(0xFFFF_8000_0000_0000))
+	testing.expect_value(t, registers.lstar, u64(0xFFFF_8000_0000_0000))
+	testing.expect_value(t, registers.sfmask, u64(0xFFFF_FFFF))
+	testing.expect_value(t, registers.star, max(u64))
+	_, refusal := op.guest_registers_check(registers)
+	testing.expect_value(t, refusal, op.Guest_Registers_Refusal.None)
+	// With five-level paging, the same bit 47 is inside the width.
+	registers.cr4 = op.GUEST_CONTROL_4_FIVE_LEVEL_PAGING
+	system_registers_read(block[:], &registers)
+	testing.expect_value(t, registers.fs_base, u64(0x0000_8000_0000_0000))
+}
