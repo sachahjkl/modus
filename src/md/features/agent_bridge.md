@@ -8,7 +8,7 @@ An external agent drives a running modus machine through one typed bridge on the
 - Give an agent lossless screen snapshots through the `remote_display` client key.
 - Gate every synthetic key and pointer event by an active wide grant ([wide_grants.md](wide_grants.md)) covering the target window, and record each act in the append-only BLAKE3 hash chain of the collector before delivery.
 - Give an agent structured log fact queries filtered by module, fact name, and sequence range ([log_facts.md](log_facts.md)).
-- Keep the principal as the one source of new grants: any `plans.apply` whose `Plan_Difference.any_grant_added` is true, or any sensitive action that `wide_grants.act_requires_principal_proof` gates, stops at the bridge border with `Awaiting_Principal_Approval`.
+- Keep the principal as the one source of new grants: each Lex call outside a short list of read-only exports, `plans.apply` and `plans.rollback` among them, stops at the bridge border with `Awaiting_Principal_Approval`. The bridge decides this from the line alone, never from a flag of the request.
 
 ## Constraints
 
@@ -24,8 +24,8 @@ An external agent drives a running modus machine through one typed bridge on the
 
 | Command | Required permission | Required remote key uses | Safety gate |
 |---|---|---|---|
-| `Eval_Lex` | `Eval_Lex` | `Calls` | UTF-8 text validation; refuses grant-adding `Plan_Difference` (`any_grant_added == true`), unverified `plans.apply`, and any sensitive action gated by `wide_grants.act_requires_principal_proof` with `Awaiting_Principal_Approval` |
-| `Read_Screen` | `Read_Screen` | `View` | Screen dimensions within `remote_display` bounds; returns typed frame metadata and PNG or raw BGRX pixels |
+| `Eval_Lex` | `Eval_Lex` | `Calls` | UTF-8 text validation; exactly one call with literal arguments, else refused; a call outside `READ_ONLY_EXPORTS` stops with `Awaiting_Principal_Approval` |
+| `Read_Screen` | `Read_Screen` | `View` | Screen dimensions within `remote_display` bounds; returns typed frame metadata and PNG or raw BGRX pixels; writes a host file only in the folder of `--snapshot-dir`, under a name of the bridge |
 | `Send_Key` | `Send_Input` | `View`, `Input` | Active, non-expired `wide_grants.Wide_Grant_Terms` bound to the client key and covering `target_window_id`; scan code, code point, and modifiers within `remote_display` limits; fail-closed act record in the BLAKE3 hash chain before send |
 | `Send_Pointer` | `Send_Input` | `View`, `Input` | Active, non-expired `wide_grants.Wide_Grant_Terms` bound to the client key and covering `target_window_id`; coordinates, buttons, and wheel within `remote_display` limits; fail-closed act record in the BLAKE3 hash chain before send |
 | `Read_Log_Facts` | `Read_Log_Facts` | `Calls` | Bounded record limit and valid sequence range (`sequence_end == 0` or `sequence_end >= sequence_start`); optional identifier filters for module and fact name |
@@ -44,8 +44,31 @@ Each decoder checks the magic, version, reserved word, exact byte length (refusi
 `bridge_authorize_command` evaluates every command as a pure, contextless decision before any transport call runs:
 
 1. **Client identity and permissions.** Refuses an all-zero client public key, unknown or empty `Bridge_Permissions` bits, unknown `remote.Client_Uses` bits, and any command whose required permission or remote use is absent.
-2. **Sensitive action and grant-adding plan gate.** Checks `wide_grants.act_requires_principal_proof` on the requested sensitive action and checks `plans_recipes.Plan_Difference.any_grant_added`. For `Eval_Lex`, also inspects the Lex line for `plans.apply` and grant-changing or principal-management calls (`allow`, `disallow`, `remote_allow`, `remote_disallow`, `remote_display_allow`, `agent_allow`, `agent_disallow`, `machine_passphrase`, `principal_create`, `lock`, `unlock`, `replace`, `debug`). A `plans.apply` line is permitted only when a validated `Plan_Difference` accompanies it with `any_grant_added == false`; otherwise, it stops with `Bridge_Status.Awaiting_Principal_Approval` and `Bridge_Refusal.Principal_Approval_Required`.
+2. **The read-only list of `Eval_Lex`.** `lex_line_classify` parses the line as exactly one call, `service.export` or `service.export(arguments)`. An argument is a literal (an integer, `true`, `false`, a text, a hash `blake3:<hex>`, a member `.name`), or a name, a comparison and a literal. Every other line is `Malformed` and refused with `Invalid_Text`: a line end or another control byte, a comment (`//`, and `#` and `--`, which Lex does not have), a pipe `|>`, a `;`, a nested call, a bare name (it can name a command such as `lock`), a list, a record, a function or a `let`. A call of an export on `READ_ONLY_EXPORTS` runs; a call of any other export stops with `Bridge_Status.Awaiting_Principal_Approval` and `Bridge_Refusal.Principal_Approval_Required`. The request carries no flag of sensitivity and no `Plan_Difference`: the bridge reads none, so an agent cannot say that its own call is safe.
 3. **Wide grant and window scope gate for input.** For `Send_Key` and `Send_Pointer`, verifies that a wide grant is present, active, within its monotonic `[created_ms, expires_ms)` window, has valid `Wide_Grant_Terms` whose `principal_id` matches the policy and whose `grantee_identity_hash` equals `blake3.hash(client_key_public)`, holds both `.View_Screen` and `.Send_Input`, includes the non-zero `target_window_id` in `target_window_ids`, and has an available collector audit chain.
+
+### The read-only list
+
+`READ_ONLY_EXPORTS` names each export that reads and changes nothing and gives no secret of the principal. It is a list of the exports that exist:
+
+| Service | Exports |
+|---|---|
+| `log` | `records`, `process_records`, `value_runs`, `process_value_runs`, `fact_records` |
+| `plans` | `status`, `current_generation`, `diff_count`, `difference`, `generations` |
+| `recipes` | `status`, `build_count`, `cache_hits`, `builds`, `realisations` |
+| `projects` | `status`, `active_console_count`, `pin_count`, `pins` |
+| `monitor` | `processes`, `counts`, `count`, `counts_named`, `served` |
+| `compositor` | `pointer`, `windows`, `screen`, `gpu_info` |
+
+What is not on it, and why:
+
+- `plans.apply`, `plans.apply_poll` and `plans.rollback`: they change the plan, so the grants. `apply_poll` commits an accepted plan.
+- Each export of `storage` and `settings`: they write.
+- Each export of `debugger`, the reads too: `memory`, `registers` and `locals` give the state of another process.
+- `compositor.wide_grant_indicator`, `notify`, `powerbox_ask`, `revoke_grant`, `plan_diff_ask` and the other exports of the compositor that change the screen or answer a dialog.
+- Each export of `collector`: the act records of a wide grant are the audit of its holder, which the holder never reads.
+
+A new entry must read only. The host test `test_lex_line_classification_is_a_strict_read_only_allowlist` refuses an entry whose name says that it writes.
 
 ### Host stdio JSON-RPC adapter (`modustool agent-bridge`)
 
@@ -55,7 +78,10 @@ On the host, `tools/modustool/agent_bridge` provides a line-delimited JSON-RPC 2
 - runs `bridge_authorize_command` and validates every payload against the contract borders before touching any transport;
 - records an append-only `"modus act record v1"` BLAKE3 hash-chained `wide_grants.Act_Record` for every input act before invoking the transport, refusing the act if the audit chain is full;
 - delegates execution to a pluggable `Machine_Transport`, with a real `remote` QUIC call client adapter (`tools/modustool/machine`) for live machines ([`docs/QUIC.md`](../../../docs/QUIC.md), "7. `remote` over QUIC (built)") and an in-memory fake transport for deterministic host tests;
-- returns structured JSON responses containing typed Lex values/tables, base64-encoded (and optionally saved) PNG screen snapshots, structured log fact arrays, or explicit `Awaiting_Principal_Approval` / `Refused` error objects.
+- returns structured JSON responses containing typed Lex values/tables, base64-encoded screen snapshots with their BLAKE3 hash, structured log fact arrays, or explicit `Awaiting_Principal_Approval` / `Refused` error objects;
+- writes a snapshot to a host file only when the operator started it with `--snapshot-dir <folder>`: the file is `snapshot_<sequence>.png` or `snapshot_<sequence>.bgrx` in that folder, created new. A request names no path: the field `output_path` of an agent is not read.
+
+**The snapshot folder.** At the start, the folder must exist and must not be a symbolic link; at each write, it is checked again, and the file is opened with create-new, so a link or a file planted at the next name is refused, never followed or overwritten. Without `--snapshot-dir`, the bridge writes no file.
 
 ## Refused forms
 
@@ -64,14 +90,18 @@ On the host, `tools/modustool/agent_bridge` provides a line-delimited JSON-RPC 2
 - **Unscoped input injection.** Allowing `Send_Key` or `Send_Pointer` without an active `wide_grants.Wide_Grant_Terms` window list would let an agent type into any console or palette without explicit principal bounds.
 - **Best-effort or post-hoc audit logging.** Recording an input act after delivery, or dropping records when the collector is full, would let an agent act without trace.
 - **Untyped string commands or open integer status codes.** Every command kind, status, permission, refusal, and sensitive action is a closed explicit-value enum checked at one border.
+- **A flag of the agent that says a call is safe.** The first form read `sensitive_action` and `plan_diff.any_grant_added` from the request: an agent that set them to `false` applied a plan with no principal. A caller never classifies its own call.
+- **A denylist of dangerous names.** The first form scanned the line for names such as `plans.apply` and stopped at `#` or `--`. Lex has no such comment, so `# x` then a line end hid the call. A list of what may run fails closed for each export that is new or forgotten.
+- **A path of the agent for the snapshot.** The first form wrote the snapshot to `output_path` of the request: an agent wrote any file that the host user can write.
 
 ## Subtle points
 
 - **Host-side enforcement is defense in depth, not a replacement for machine enforcement.** On a running machine, `remote`, `remote_display`, the root service, and the collector independently enforce client keys, wide grants, trusted display isolation, and principal proof ([wide_grants.md](wide_grants.md), [declarations.md](declarations.md)). The host bridge enforces the same contract locally so a prompt-injected agent is stopped before sending unauthorized or self-approving calls.
-- **`plans.apply` fail-closed classification.** Lex lines can contain whitespace, comments, or pipelines (`plan |> plans.apply()`). The classifier scans identifiers across the line so a `plans.apply` call cannot hide behind formatting or pipes; without an accompanying grant-free `Plan_Difference`, it stops with `Awaiting_Principal_Approval`.
+- **A text of Lex has no escape.** It ends at the next quote. The parser of the bridge reads it the same way, so `"a\" plans.apply(1)` is a text, then a second call, and is refused. A parser that took `\"` as an escape would see one text and let the call through.
+- **A bare name is no literal.** In Lex a name can be a command with no arguments; `monitor.count(lock)` would run `lock`. So an argument is a literal or a member `.name`, never a bare name.
 - **Single-use window scope.** Window identifier `0` is always refused for input injection, even if other fields are valid.
 - **Time monotonicity.** A clock value earlier than `wide_grant_created_ms` or at or past `wide_grant_expires_ms` refuses input, closing clock-skew and boundary expiry bugs.
 
 ## State
 
-Built: the freestanding contract package `src/library/modus/contract/agent_bridge` (`"MODAB1"` binary framing, closed enums, `bridge_authorize_command`, Lex sensitive-action classification, and adversarial host tests), the host JSON-RPC stdio adapter `tools/modustool/agent_bridge` (pluggable `Machine_Transport`, real `remote` QUIC call transport adapter, append-only BLAKE3 act collector verification, and comprehensive host tests), and the CLI command `modustool agent-bridge`. Live `remote_display` frame/input streaming over the peer relay and end-to-end machine tests remain.
+Built: the freestanding contract package `src/library/modus/contract/agent_bridge` (`"MODAB1"` binary framing, closed enums, `bridge_authorize_command`, the read-only list of `Eval_Lex`, and adversarial host tests), the host JSON-RPC stdio adapter `tools/modustool/agent_bridge` (pluggable `Machine_Transport`, real `remote` QUIC call transport adapter, append-only BLAKE3 act collector verification, and comprehensive host tests), and the CLI command `modustool agent-bridge`. Live `remote_display` frame/input streaming over the peer relay and end-to-end machine tests remain.

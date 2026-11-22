@@ -120,11 +120,13 @@ test_manager_verify_chain_fails_closed_and_counts_each_call :: proc(t: ^testing.
 	// A manager that was never initialized verifies nothing.
 	refusal, _ := manager_verify_chain(manager)
 	testing.expect_value(t, refusal, wide_grants.Wide_Grant_Refusal.Chain_Tampered)
-	testing.expect(t, !manager_init(manager, 1, {}, 0), "a collector of capacity 0 is refused")
+	authority_key := blake3.hash(transmute([]u8)string("unlock-authority-key"))
+	testing.expect(t, !manager_init(manager, 1, authority_key, {}, 0), "a collector of capacity 0 is refused")
+	testing.expect(t, !manager_init(manager, 1, {}, {}, 8), "the all-zero authority key is refused")
 	refusal, _ = manager_verify_chain(manager)
 	testing.expect_value(t, refusal, wide_grants.Wide_Grant_Refusal.Chain_Tampered)
 
-	testing.expect(t, manager_init(manager, 1, {}, 8))
+	testing.expect(t, manager_init(manager, 1, authority_key, {}, 8))
 	refusal, _ = manager_verify_chain(manager)
 	testing.expect_value(t, refusal, wide_grants.Wide_Grant_Refusal.None)
 	testing.expect_value(t, manager.collector.verify_calls, u64(1))

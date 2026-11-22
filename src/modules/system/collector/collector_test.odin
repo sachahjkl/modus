@@ -4,6 +4,7 @@ package collector_service
 import "base:intrinsics"
 import "core:testing"
 import "internal:collector/collector_core"
+import "modus:contract/blake3"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import pr "modus:contract/plans_recipes"
@@ -339,7 +340,8 @@ a_record_is_kept_before_it_is_forwarded :: proc(t: ^testing.T) {
 act_records_are_refused_when_malformed_and_read_by_the_principal_only :: proc(t: ^testing.T) {
 	manager := new(collector_core.Wide_Grant_Manager)
 	defer free(manager)
-	testing.expect(t, collector_core.manager_init(manager, PRINCIPAL))
+	testing.expect(t, !collector_core.manager_init(manager, PRINCIPAL, {}), "the all-zero authority key is refused")
+	testing.expect(t, collector_core.manager_init(manager, PRINCIPAL, blake3.hash(transmute([]u8)string("unlock-authority-key"))))
 	collector := &manager.collector
 	kinds := [?]wide_grants.Act_Kind{.Grant_Started, .Key_Injected, .Frame_Read, .Pointer_Clicked, .Grant_Revoked}
 	grants := [?]u64{1, 1, 2, 1, 2}

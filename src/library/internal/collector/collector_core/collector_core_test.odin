@@ -12,6 +12,11 @@ test_hash :: proc(label: string) -> blake3.Hash {
 }
 
 @(private = "file")
+test_authority_key :: proc() -> wide_grants.Authority_Key {
+	return test_hash("unlock-authority-key")
+}
+
+@(private = "file")
 make_sealed_terms :: proc(
 	principal_id: u64,
 	grantee_label: string,
@@ -150,7 +155,10 @@ test_wide_grant_manager_proofs_scopes_and_sensitive_blocks :: proc(t: ^testing.T
 	host_key := test_hash("host-key-principal-0")
 	unlock_token := test_hash("local-unlock-token")
 	manager: Wide_Grant_Manager
-	testing.expect(t, manager_init(&manager, 0, host_key, 64))
+	authority_key := test_authority_key()
+	testing.expect(t, !manager_init(&manager, 0, {}, host_key, 64), "the all-zero authority key is refused")
+	testing.expect(t, !manager.initialized)
+	testing.expect(t, manager_init(&manager, 0, authority_key, host_key, 64))
 
 	// Terms with survives_restart = true refused, nothing changed
 	bad_terms := make_sealed_terms(0, "agent-1", {.View_Screen, .Send_Input}, {101, 202}, 60_000)
@@ -168,17 +176,29 @@ test_wide_grant_manager_proofs_scopes_and_sensitive_blocks :: proc(t: ^testing.T
 
 	// Wrong principal refused
 	other_principal_terms := make_sealed_terms(7, "agent-1", {.View_Screen}, {101}, 60_000)
-	other_proof, _ := wide_grants.wide_grant_proof_make(&other_principal_terms, .Passphrase_Verified, unlock_token, 1000)
+	other_proof, _ := wide_grants.wide_grant_proof_make(authority_key, &other_principal_terms, .Passphrase_Verified, .Local_Unlock_Dialog, 1, unlock_token, 1000)
 	_, r_principal := manager_create_grant(&manager, &other_principal_terms, &other_proof, 1000)
 	testing.expect_value(t, r_principal, wide_grants.Wide_Grant_Refusal.Invalid_Proof)
 
+	// A proof forged without the authority key, or under the zero key, is refused.
+	forged_proof, _ := wide_grants.wide_grant_proof_make(test_hash("forger-key"), &terms, .Passphrase_Verified, .Local_Unlock_Dialog, 1, unlock_token, 1000)
+	_, r_forged := manager_create_grant(&manager, &terms, &forged_proof, 1000)
+	testing.expect_value(t, r_forged, wide_grants.Wide_Grant_Refusal.Invalid_Proof)
+	testing.expect_value(t, manager.collector.count, u32(0))
+
 	// Create grant with Passphrase_Verified
-	pass_proof, make_err := wide_grants.wide_grant_proof_make(&terms, .Passphrase_Verified, unlock_token, 1000)
+	pass_proof, make_err := wide_grants.wide_grant_proof_make(authority_key, &terms, .Passphrase_Verified, .Local_Unlock_Dialog, 1, unlock_token, 1000)
 	testing.expect_value(t, make_err, wide_grants.Wide_Grant_Refusal.None)
 	serial_1, r_create := manager_create_grant(&manager, &terms, &pass_proof, 1000)
 	testing.expect_value(t, r_create, wide_grants.Wide_Grant_Refusal.None)
 	testing.expect_value(t, serial_1, u64(1))
 	testing.expect_value(t, manager.counters.active_grants, u64(1))
+	testing.expect_value(t, manager.collector.count, u32(1))
+	testing.expect_value(t, manager.last_accepted_proof_serial, u64(1))
+
+	// The same proof used again is refused: a proof serial is used once.
+	_, r_replay := manager_create_grant(&manager, &terms, &pass_proof, 1001)
+	testing.expect_value(t, r_replay, wide_grants.Wide_Grant_Refusal.Invalid_Proof)
 	testing.expect_value(t, manager.collector.count, u32(1))
 
 	// Permitted acts within window scope succeed and are recorded
@@ -225,7 +245,7 @@ test_wide_grant_manager_proofs_scopes_and_sensitive_blocks :: proc(t: ^testing.T
 
 	// Replacement grant for same grantee (via Host_Key_Signed, View_Screen only) revokes old serial_1 whole
 	view_only_terms := make_sealed_terms(0, "agent-1", {.View_Screen}, {101}, 5000)
-	host_proof, h_err := wide_grants.wide_grant_proof_make(&view_only_terms, .Host_Key_Signed, host_key, 1200)
+	host_proof, h_err := wide_grants.wide_grant_proof_make(authority_key, &view_only_terms, .Host_Key_Signed, .Local_Host_Key, 2, host_key, 1200)
 	testing.expect_value(t, h_err, wide_grants.Wide_Grant_Refusal.None)
 	serial_2, r_replace := manager_create_grant(&manager, &view_only_terms, &host_proof, 1200)
 	testing.expect_value(t, r_replace, wide_grants.Wide_Grant_Refusal.None)
@@ -253,10 +273,11 @@ test_wide_grant_expiry_revocation_suspension_and_full_log_fail_closed :: proc(t:
 	host_key := test_hash("host-key-headless")
 	manager: Wide_Grant_Manager
 	// Tight collector capacity of 3: 1 Grant_Started + 2 acts max!
-	testing.expect(t, manager_init(&manager, 0, host_key, 3))
+	authority_key := test_authority_key()
+	testing.expect(t, manager_init(&manager, 0, authority_key, host_key, 3))
 
 	terms := make_sealed_terms(0, "agent-tight", {.View_Screen, .Send_Input}, {42}, 500)
-	proof, _ := wide_grants.wide_grant_proof_make(&terms, .Host_Key_Signed, host_key, 1000)
+	proof, _ := wide_grants.wide_grant_proof_make(authority_key, &terms, .Host_Key_Signed, .Local_Host_Key, 1, host_key, 1000)
 	serial, r_create := manager_create_grant(&manager, &terms, &proof, 1000)
 	testing.expect_value(t, r_create, wide_grants.Wide_Grant_Refusal.None)
 	testing.expect_value(t, manager.collector.count, u32(1))
@@ -275,8 +296,12 @@ test_wide_grant_expiry_revocation_suspension_and_full_log_fail_closed :: proc(t:
 	testing.expect_value(t, manager.counters.total_acts_permitted, u64(2))
 	testing.expect_value(t, manager.collector.refused_full_count, u64(1))
 
+	// A revocation without a reason is refused and changes nothing.
+	testing.expect_value(t, manager_revoke_grant(&manager, serial, 1255, .None), wide_grants.Wide_Grant_Refusal.Grant_Revoked)
+	testing.expect_value(t, manager.counters.active_grants, u64(1))
+
 	// One-press revocation MUST still succeed even when act log is full!
-	testing.expect_value(t, manager_revoke_grant(&manager, serial, 1260), wide_grants.Wide_Grant_Refusal.None)
+	testing.expect_value(t, manager_revoke_grant(&manager, serial, 1260, .Principal_Revoked), wide_grants.Wide_Grant_Refusal.None)
 	testing.expect_value(t, manager.counters.active_grants, u64(0))
 	grant_info, found := manager_get_grant(&manager, serial)
 	testing.expect(t, found && grant_info.state == .Revoked)
@@ -290,9 +315,9 @@ test_wide_grant_expiry_revocation_suspension_and_full_log_fail_closed :: proc(t:
 	testing.expect_value(t, v_ref, wide_grants.Wide_Grant_Refusal.None)
 
 	// Test monotonic expiry + duplicate connection suspension in fresh manager
-	testing.expect(t, manager_init(&manager, 0, host_key, 32))
+	testing.expect(t, manager_init(&manager, 0, authority_key, host_key, 32))
 	t_exp := make_sealed_terms(0, "agent-exp", {.View_Screen}, {10}, 100)
-	p_exp, _ := wide_grants.wide_grant_proof_make(&t_exp, .Host_Key_Signed, host_key, 5000)
+	p_exp, _ := wide_grants.wide_grant_proof_make(authority_key, &t_exp, .Host_Key_Signed, .Local_Host_Key, 1, host_key, 5000)
 	s_exp, _ := manager_create_grant(&manager, &t_exp, &p_exp, 5000)
 
 	// At expires_ms - 1 (5099): still active
@@ -311,7 +336,7 @@ test_wide_grant_expiry_revocation_suspension_and_full_log_fail_closed :: proc(t:
 
 	// Duplicate connection suspension
 	t_dup := make_sealed_terms(0, "agent-dup", {.View_Screen}, {10}, 10_000)
-	p_dup, _ := wide_grants.wide_grant_proof_make(&t_dup, .Host_Key_Signed, host_key, 5200)
+	p_dup, _ := wide_grants.wide_grant_proof_make(authority_key, &t_dup, .Host_Key_Signed, .Local_Host_Key, 2, host_key, 5200)
 	s_dup, _ := manager_create_grant(&manager, &t_dup, &p_dup, 5200)
 	testing.expect_value(t, manager_suspend_for_duplicate_connection(&manager, s_dup, 5210), wide_grants.Wide_Grant_Refusal.None)
 	g_dup, _ := manager_get_grant(&manager, s_dup)
@@ -321,7 +346,7 @@ test_wide_grant_expiry_revocation_suspension_and_full_log_fail_closed :: proc(t:
 
 	// Sweep expiry test on a third grant
 	t_sweep := make_sealed_terms(0, "agent-sweep", {.View_Screen}, {10}, 200)
-	p_sweep, _ := wide_grants.wide_grant_proof_make(&t_sweep, .Host_Key_Signed, host_key, 5300)
+	p_sweep, _ := wide_grants.wide_grant_proof_make(authority_key, &t_sweep, .Host_Key_Signed, .Local_Host_Key, 3, host_key, 5300)
 	s_sweep, _ := manager_create_grant(&manager, &t_sweep, &p_sweep, 5300)
 	testing.expect_value(t, manager_expire_grants(&manager, 5499), u32(0))
 	testing.expect_value(t, manager_expire_grants(&manager, 5500), u32(1))

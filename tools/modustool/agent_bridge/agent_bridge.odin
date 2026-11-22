@@ -18,7 +18,6 @@ import "core:strings"
 import "core:time"
 import contract "modus:contract/agent_bridge"
 import "modus:contract/blake3"
-import "modus:contract/plans_recipes"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
 import "modus:contract/wide_grants"
@@ -137,6 +136,10 @@ Agent_Bridge :: struct {
 	clock_ms_proc:   proc(user_data: rawptr) -> u64,
 	clock_user_data: rawptr,
 	next_request_id: u64,
+	// The folder that the operator named with --snapshot-dir, or empty: then
+	// read_screen writes no file. An agent never names a path of the host.
+	snapshot_directory:     string,
+	next_snapshot_sequence: u64,
 }
 
 // bridge_act_log_init initializes a bounded append-only BLAKE3 act log.
@@ -248,6 +251,78 @@ bridge_destroy :: proc(bridge: ^Agent_Bridge) {
 	bridge_act_log_destroy(&bridge.act_log)
 }
 
+// snapshot_directory_check gives the absolute path of the folder that the
+// operator named for the snapshots, or a problem: the path must name an
+// existing folder, and not a symbolic link, which can move the files of the
+// bridge to another place after the check.
+snapshot_directory_check :: proc(path: string, allocator := context.allocator) -> (absolute: string, problem: string) {
+	if path == "" || strings.contains_rune(path, 0) {
+		return "", "the snapshot folder has no valid path"
+	}
+	// The absolute path resolves the links, so the path as given is checked first.
+	given_info, given_error := os.lstat(path, context.temp_allocator)
+	if given_error != nil {
+		return "", fmt.tprintf("the snapshot folder %s does not exist", path)
+	}
+	if given_info.type != .Directory {
+		return "", fmt.tprintf("the snapshot folder %s is not a folder; a symbolic link is refused", path)
+	}
+	resolved, absolute_error := os.get_absolute_path(path, allocator)
+	if absolute_error != nil {
+		return "", fmt.tprintf("cannot resolve the snapshot folder %s", path)
+	}
+	info, stat_error := os.lstat(resolved, context.temp_allocator)
+	if stat_error != nil {
+		delete(resolved, allocator)
+		return "", fmt.tprintf("the snapshot folder %s does not exist", path)
+	}
+	if info.type != .Directory {
+		delete(resolved, allocator)
+		return "", fmt.tprintf("the snapshot folder %s is not a folder; a symbolic link is refused", path)
+	}
+	return resolved, ""
+}
+
+// bridge_write_snapshot writes the bytes of a snapshot to a new file
+// snapshot_<sequence>.<format> of the snapshot folder and gives its path.
+// The name comes from the bridge only. The file is created new: an existing
+// file or a symbolic link at the name is refused, never followed or
+// overwritten. The folder is checked again at each write.
+bridge_write_snapshot :: proc(bridge: ^Agent_Bridge, snap: Screen_Snapshot_Result) -> (path: string, problem: string) {
+	if bridge.snapshot_directory == "" {
+		return "", "no snapshot folder"
+	}
+	info, stat_error := os.lstat(bridge.snapshot_directory, context.temp_allocator)
+	if stat_error != nil || info.type != .Directory {
+		return "", "the snapshot folder is no longer a folder"
+	}
+	extension := ""
+	switch snap.format {
+	case .None:
+		return "", "the snapshot has no format"
+	case .Png:
+		extension = "png"
+	case .Raw_Bgrx:
+		extension = "bgrx"
+	}
+	bridge.next_snapshot_sequence += 1
+	name := fmt.tprintf("snapshot_%d.%s", bridge.next_snapshot_sequence, extension)
+	joined, join_error := os.join_path({bridge.snapshot_directory, name}, context.temp_allocator)
+	if join_error != nil {
+		return "", "cannot name the snapshot file"
+	}
+	file, open_error := os.open(joined, {.Write, .Create, .Excl}, os.Permissions_Default_File)
+	if open_error != nil {
+		return "", fmt.tprintf("cannot create the snapshot file %s", name)
+	}
+	defer os.close(file)
+	written, write_error := os.write(file, snap.bytes)
+	if write_error != nil || written != len(snap.bytes) {
+		return "", fmt.tprintf("cannot write the snapshot file %s", name)
+	}
+	return joined, ""
+}
+
 @(private = "file")
 bridge_now_ms :: proc(bridge: ^Agent_Bridge) -> u64 {
 	if bridge.clock_ms_proc != nil {
@@ -283,35 +358,6 @@ bridge_method_from_string :: proc(name: string) -> Bridge_Json_Method {
 		return .Wire_Command
 	}
 	return .None
-}
-
-@(private = "file")
-sensitive_action_word_from_string :: proc(name: string) -> (word: u64, ok: bool) {
-	switch name {
-	case "":
-		return 0, true
-	case "Normal_Window_Input":
-		return u64(wide_grants.Sensitive_Action.Normal_Window_Input), true
-	case "Normal_Screen_Read":
-		return u64(wide_grants.Sensitive_Action.Normal_Screen_Read), true
-	case "Normal_Semantic_Read":
-		return u64(wide_grants.Sensitive_Action.Normal_Semantic_Read), true
-	case "Plans_Apply_Adding_Grant":
-		return u64(wide_grants.Sensitive_Action.Plans_Apply_Adding_Grant), true
-	case "Passphrase_Or_Unlock_Dialog":
-		return u64(wide_grants.Sensitive_Action.Passphrase_Or_Unlock_Dialog), true
-	case "Trusted_Display_Grant_Dialog":
-		return u64(wide_grants.Sensitive_Action.Trusted_Display_Grant_Dialog), true
-	case "Disk_Grant_Change":
-		return u64(wide_grants.Sensitive_Action.Disk_Grant_Change), true
-	case "Principal_Management":
-		return u64(wide_grants.Sensitive_Action.Principal_Management), true
-	case "Module_Replace_Or_Debug":
-		return u64(wide_grants.Sensitive_Action.Module_Replace_Or_Debug), true
-	case "Wide_Grant_Screen_Or_Mark":
-		return u64(wide_grants.Sensitive_Action.Wide_Grant_Screen_Or_Mark), true
-	}
-	return 0, false
 }
 
 // JSON formatting helpers.
@@ -480,48 +526,6 @@ json_get_u32 :: proc(obj: json.Object, key: string) -> (value: u32, present: boo
 		return 0, true, false
 	}
 	return u32(unsigned), true, true
-}
-
-@(private = "file")
-json_extract_sensitive_and_plan_diff :: proc(
-	params: json.Object,
-) -> (
-	sensitive_word: u64,
-	has_plan_diff: bool,
-	plan_diff: plans_recipes.Plan_Difference,
-	valid: bool,
-	err_message: string,
-) {
-	if sensitive_name, has_sensitive, ok := json_get_string(params, "sensitive_action"); !ok {
-		return 0, false, {}, false, "sensitive_action must be a string"
-	} else if has_sensitive {
-		word, known := sensitive_action_word_from_string(sensitive_name)
-		if !known {
-			// Unknown sensitive action name fails closed in authorization.
-			sensitive_word = max(u64)
-		} else {
-			sensitive_word = word
-		}
-	}
-
-	if raw_diff, found := params["plan_diff"]; found {
-		diff_obj, is_obj := raw_diff.(json.Object)
-		if !is_obj {
-			return 0, false, {}, false, "plan_diff must be an object"
-		}
-		any_added, has_added, added_ok := json_get_bool(diff_obj, "any_grant_added")
-		if !added_ok || !has_added {
-			return 0, false, {}, false, "plan_diff.any_grant_added must be a boolean"
-		}
-		added_count, _, count_ok := json_get_u32(diff_obj, "added_grants_count")
-		if !count_ok {
-			return 0, false, {}, false, "plan_diff.added_grants_count must be a non-negative integer"
-		}
-		plan_diff.any_grant_added = any_added || added_count > 0
-		plan_diff.added_grants_count = added_count
-		has_plan_diff = true
-	}
-	return sensitive_word, has_plan_diff, plan_diff, true, ""
 }
 
 // bridge_handle_wire_frame decodes one binary "MODAB1" command frame,
@@ -809,17 +813,12 @@ bridge_handle_json_line :: proc(
 		if !line_ok || !has_line {
 			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "eval_lex requires string parameter line", allocator)
 		}
-		sensitive_word, has_plan_diff, plan_diff, meta_ok, meta_err := json_extract_sensitive_and_plan_diff(params)
-		if !meta_ok {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, meta_err, allocator)
-		}
+		// The bridge classifies the line itself: no field of the request
+		// that says the call is safe is read.
 		auth_req := contract.Bridge_Authorization_Request {
-			command               = .Eval_Lex,
-			now_ms                = now_ms,
-			sensitive_action_word = sensitive_word,
-			has_plan_difference   = has_plan_diff,
-			plan_difference       = has_plan_diff ? &plan_diff : nil,
-			lex_line              = transmute([]u8)lex_line,
+			command  = .Eval_Lex,
+			now_ms   = now_ms,
+			lex_line = transmute([]u8)lex_line,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
 		if decision.status != .Ok {
@@ -853,8 +852,7 @@ bridge_handle_json_line :: proc(
 		max_width, _, mw_ok := json_get_u32(params, "max_width")
 		max_height, _, mh_ok := json_get_u32(params, "max_height")
 		wait_settled_ms, _, ws_ok := json_get_u32(params, "wait_settled_ms")
-		output_path, has_output_path, op_ok := json_get_string(params, "output_path")
-		if !mw_ok || !mh_ok || !ws_ok || !op_ok {
+		if !mw_ok || !mh_ok || !ws_ok {
 			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "invalid read_screen parameter type", allocator)
 		}
 		payload := contract.Read_Screen_Payload {
@@ -866,16 +864,9 @@ bridge_handle_json_line :: proc(
 		if check := contract.validate_read_screen_payload(&payload); check != .None {
 			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, check, "read_screen parameters out of bounds", allocator)
 		}
-		sensitive_word, has_plan_diff, plan_diff, meta_ok, meta_err := json_extract_sensitive_and_plan_diff(params)
-		if !meta_ok {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, meta_err, allocator)
-		}
 		auth_req := contract.Bridge_Authorization_Request {
-			command               = .Read_Screen,
-			now_ms                = now_ms,
-			sensitive_action_word = sensitive_word,
-			has_plan_difference   = has_plan_diff,
-			plan_difference       = has_plan_diff ? &plan_diff : nil,
+			command = .Read_Screen,
+			now_ms  = now_ms,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
 		if decision.status != .Ok {
@@ -897,15 +888,15 @@ bridge_handle_json_line :: proc(
 		if !ok {
 			return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, err_text != "" ? err_text : "remote read_screen failed", allocator)
 		}
+		// The snapshot goes to a file only in the folder of the operator, under
+		// a name of the bridge: a request names no path.
 		saved_path := ""
-		if has_output_path && len(output_path) > 0 {
-			if strings.contains_any(output_path, "\x00") {
-				return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, "output_path contains invalid bytes", allocator)
+		if bridge.snapshot_directory != "" {
+			path, problem := bridge_write_snapshot(bridge, snap)
+			if problem != "" {
+				return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, problem, allocator)
 			}
-			if write_err := os.write_entire_file(output_path, snap.bytes); write_err != nil {
-				return json_error_response(id_value, has_id, .Transport_Error, .Transport_Error, .None, fmt.tprintf("cannot write snapshot to %s", output_path), allocator)
-			}
-			saved_path = output_path
+			saved_path = path
 		}
 		return format_read_screen_json(id_value, has_id, snap, saved_path, allocator)
 
@@ -929,17 +920,10 @@ bridge_handle_json_line :: proc(
 		if check := contract.validate_send_key_payload(&key_payload); check != .None {
 			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, check, "send_key fields out of bounds", allocator)
 		}
-		sensitive_word, has_plan_diff, plan_diff, meta_ok, meta_err := json_extract_sensitive_and_plan_diff(params)
-		if !meta_ok {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, meta_err, allocator)
-		}
 		auth_req := contract.Bridge_Authorization_Request {
-			command               = .Send_Key,
-			now_ms                = now_ms,
-			target_window_id      = window_id,
-			sensitive_action_word = sensitive_word,
-			has_plan_difference   = has_plan_diff,
-			plan_difference       = has_plan_diff ? &plan_diff : nil,
+			command          = .Send_Key,
+			now_ms           = now_ms,
+			target_window_id = window_id,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
 		if decision.status != .Ok {
@@ -985,18 +969,11 @@ bridge_handle_json_line :: proc(
 		if check := contract.validate_send_pointer_payload(&ptr_payload); check != .None {
 			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, check, "send_pointer fields out of bounds", allocator)
 		}
-		sensitive_word, has_plan_diff, plan_diff, meta_ok, meta_err := json_extract_sensitive_and_plan_diff(params)
-		if !meta_ok {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, meta_err, allocator)
-		}
 		auth_req := contract.Bridge_Authorization_Request {
-			command               = .Send_Pointer,
-			now_ms                = now_ms,
-			target_window_id      = window_id,
-			sensitive_action_word = sensitive_word,
-			has_plan_difference   = has_plan_diff,
-			plan_difference       = has_plan_diff ? &plan_diff : nil,
-			pointer_has_click     = buttons != 0,
+			command           = .Send_Pointer,
+			now_ms            = now_ms,
+			target_window_id  = window_id,
+			pointer_has_click = buttons != 0,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
 		if decision.status != .Ok {
@@ -1049,16 +1026,9 @@ bridge_handle_json_line :: proc(
 		if check := contract.validate_read_log_facts_payload(&payload); check != .None {
 			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, check, "read_log_facts parameters invalid", allocator)
 		}
-		sensitive_word, has_plan_diff, plan_diff, meta_ok, meta_err := json_extract_sensitive_and_plan_diff(params)
-		if !meta_ok {
-			return json_error_response(id_value, has_id, .Invalid_Params, .Refused, .Invalid_Field, meta_err, allocator)
-		}
 		auth_req := contract.Bridge_Authorization_Request {
-			command               = .Read_Log_Facts,
-			now_ms                = now_ms,
-			sensitive_action_word = sensitive_word,
-			has_plan_difference   = has_plan_diff,
-			plan_difference       = has_plan_diff ? &plan_diff : nil,
+			command = .Read_Log_Facts,
+			now_ms  = now_ms,
 		}
 		decision := contract.bridge_authorize_command(&bridge.policy, &auth_req)
 		if decision.status != .Ok {
@@ -1336,7 +1306,7 @@ parse_permissions_csv :: proc(text: string) -> (perms: contract.Bridge_Permissio
 
 // run_agent_bridge is the CLI entry point for `modustool agent-bridge`.
 run_agent_bridge :: proc(args: []string) -> int {
-	usage_text :: "modustool: agent-bridge --remote-key <64-hex> --client-key <64-hex> [--socket <path>] [--principal <id>] [--permissions <eval_lex,read_screen,send_input,read_log_facts>] [--wide-grant-serial <u64> --wide-grant-windows <id,id,...> [--wide-grant-duration-ms <u64>]]"
+	usage_text :: "modustool: agent-bridge --remote-key <64-hex> --client-key <64-hex> [--socket <path>] [--principal <id>] [--permissions <eval_lex,read_screen,send_input,read_log_facts>] [--snapshot-dir <folder>] [--wide-grant-serial <u64> --wide-grant-windows <id,id,...> [--wide-grant-duration-ms <u64>]]"
 
 	remote_key_text := ""
 	client_key_text := ""
@@ -1346,6 +1316,7 @@ run_agent_bridge :: proc(args: []string) -> int {
 	wide_grant_serial: u64 = 0
 	wide_grant_windows_text := ""
 	wide_grant_duration_ms := wide_grants.DEFAULT_WIDE_GRANT_DURATION_MS
+	snapshot_directory_text := ""
 
 	for index := 0; index < len(args); index += 1 {
 		switch args[index] {
@@ -1382,6 +1353,13 @@ run_agent_bridge :: proc(args: []string) -> int {
 				return foundation.EXIT_USAGE
 			}
 			principal_id = val
+		case "--snapshot-dir":
+			if index + 1 >= len(args) {
+				fmt.eprintln(usage_text)
+				return foundation.EXIT_USAGE
+			}
+			index += 1
+			snapshot_directory_text = args[index]
 		case "--permissions":
 			if index + 1 >= len(args) {
 				fmt.eprintln(usage_text)
@@ -1493,6 +1471,17 @@ run_agent_bridge :: proc(args: []string) -> int {
 		policy.wide_grant_expires_ms = now_ms + wide_grant_duration_ms
 	}
 
+	snapshot_directory := ""
+	if snapshot_directory_text != "" {
+		checked, problem := snapshot_directory_check(snapshot_directory_text)
+		if problem != "" {
+			fmt.eprintfln("modustool: agent-bridge: %s", problem)
+			return foundation.EXIT_USAGE
+		}
+		snapshot_directory = checked
+	}
+	defer delete(snapshot_directory)
+
 	remote_transport: Remote_Machine_Transport
 	if !remote_transport_open(&remote_transport, socket_path, remote_key) {
 		fmt.eprintln("modustool: agent-bridge: cannot open remote QUIC call transport")
@@ -1506,6 +1495,7 @@ run_agent_bridge :: proc(args: []string) -> int {
 		return foundation.EXIT_FAILURE
 	}
 	defer bridge_destroy(&bridge)
+	bridge.snapshot_directory = snapshot_directory
 
 	return bridge_serve_stdio(&bridge)
 }

@@ -70,6 +70,41 @@ official_vectors :: proc(t: ^testing.T) {
 	}
 }
 
+// The keyed vectors of the same official file: key is the 32 bytes of
+// "whats the Elvish word for friend".
+@(private = "file")
+keyed_vectors := [?]Vector {
+	{0, "92b2b75604ed3c761f9d6f62392c8a9227ad0ea3f09573e783f1498a4ed60d26"},
+	{1, "6d7878dfff2f485635d39013278ae14f1454b8c0a3a2d34bc1ab38228a80c95b"},
+	{1023, "c951ecdf03288d0fcc96ee3413563d8a6d3589547f2c2fb36d9786470f1b9d6e"},
+	{1025, "357dc55de0c7e382c900fd6e320acc04146be01db6a8ce7210b7189bd664ea69"},
+	{3073, "68dede9bef00ba89e43f31a6825f4cf433389fedae75c04ee9f0cf16a427c95a"},
+}
+
+@(test)
+official_keyed_vectors :: proc(t: ^testing.T) {
+	input := make([]u8, 3073)
+	defer delete(input)
+	for &b, i in input {
+		b = u8(i % 251)
+	}
+	key: Hash
+	key_text := "whats the Elvish word for friend"
+	for index in 0 ..< HASH_SIZE {
+		key[index] = key_text[index]
+	}
+	for vector in keyed_vectors {
+		result := keyed_hash(key, input[:vector.size])
+		text := string(hex.encode(result[:], context.temp_allocator))
+		testing.expectf(t, text == vector.hash, "size %d: got %s, want %s", vector.size, text, vector.hash)
+	}
+	// A different key gives a different tag for the same input.
+	other_key := key
+	other_key[0] ~= 1
+	testing.expect(t, keyed_hash(other_key, input[:64]) != keyed_hash(key, input[:64]))
+	testing.expect(t, keyed_hash(key, input[:64]) != hash(input[:64]))
+}
+
 @(test)
 derive_key_domain_separation :: proc(t: ^testing.T) {
 	sizes := [?]int{0, 1, 63, 64, 65, 1024, 1025, 4096, 8193}

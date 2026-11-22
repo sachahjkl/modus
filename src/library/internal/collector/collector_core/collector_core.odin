@@ -67,14 +67,16 @@ Manager_Counters :: struct {
 
 // Pure wide grant lifecycle manager paired with its append-only Act_Collector.
 Wide_Grant_Manager :: struct {
-	initialized:            bool,
-	principal_id:           u64,
-	host_principal_key:     blake3.Hash,
-	next_grant_serial:      u64,
-	last_clock_ms:          u64,
-	grants:                 [MAX_WIDE_GRANTS]Managed_Wide_Grant,
-	collector:              Act_Collector,
-	counters:               Manager_Counters,
+	initialized:                bool,
+	principal_id:               u64,
+	authority_key:              wide_grants.Authority_Key,
+	host_principal_key:         blake3.Hash,
+	last_accepted_proof_serial: u64,
+	next_grant_serial:          u64,
+	last_clock_ms:              u64,
+	grants:                     [MAX_WIDE_GRANTS]Managed_Wide_Grant,
+	collector:                  Act_Collector,
+	counters:                   Manager_Counters,
 }
 
 // collector_init initializes an append-only Audit Act_Collector with a bounded
@@ -283,19 +285,25 @@ collector_query_by_window :: proc "contextless" (
 }
 
 // manager_init initializes a Wide_Grant_Manager and its embedded append-only
-// Act_Collector for one principal.
+// Act_Collector for one principal. It refuses the all-zero authority key: a
+// manager without the key of the unlock authority cannot check a proof.
 manager_init :: proc "contextless" (
 	manager: ^Wide_Grant_Manager,
 	principal_id: u64,
+	authority_key: wide_grants.Authority_Key,
 	host_principal_key: blake3.Hash = {},
 	collector_capacity: u32 = COLLECTOR_ACT_CAPACITY,
 ) -> bool {
 	manager^ = Wide_Grant_Manager{}
+	if !wide_grants.authority_key_is_valid(authority_key) {
+		return false
+	}
 	if !collector_init(&manager.collector, collector_capacity) {
 		return false
 	}
 	manager.initialized = true
 	manager.principal_id = principal_id
+	manager.authority_key = authority_key
 	manager.host_principal_key = host_principal_key
 	manager.next_grant_serial = 1
 	return true
@@ -383,13 +391,20 @@ manager_create_grant :: proc "contextless" (
 	proof: ^wide_grants.Wide_Grant_Proof,
 	now_ms: u64,
 ) -> (grant_serial: u64, refusal: wide_grants.Wide_Grant_Refusal) {
+	// A manager without the authority key cannot check any proof.
 	if !manager.initialized {
-		return 0, .Act_Log_Full
+		return 0, .Invalid_Proof
 	}
 	if terms.principal_id != manager.principal_id {
 		return 0, .Invalid_Proof
 	}
-	proof_refusal := wide_grants.wide_grant_proof_validate(terms, proof, manager.host_principal_key)
+	proof_refusal := wide_grants.wide_grant_proof_validate(
+		manager.authority_key,
+		terms,
+		proof,
+		manager.host_principal_key,
+		manager.last_accepted_proof_serial,
+	)
 	if proof_refusal != .None {
 		return 0, proof_refusal
 	}
@@ -433,7 +448,7 @@ manager_create_grant :: proc "contextless" (
 			now_ms,
 			.Grant_Revoked,
 			0,
-			1, // Replaced by a newer grant for the same holder.
+			u64(wide_grants.Revocation_Reason.Replaced_By_Newer_Grant),
 			0,
 		)
 		if revoke_log_refusal != .None {
@@ -459,6 +474,7 @@ manager_create_grant :: proc "contextless" (
 	}
 
 	manager.next_grant_serial += 1
+	manager.last_accepted_proof_serial = proof.proof_serial
 	manager.last_clock_ms = now_ms
 	manager.grants[target_slot] = Managed_Wide_Grant {
 		occupied     = true,
@@ -482,8 +498,11 @@ manager_revoke_grant :: proc "contextless" (
 	manager: ^Wide_Grant_Manager,
 	grant_serial: u64,
 	now_ms: u64,
-	reason_word: u64 = 0,
+	reason: wide_grants.Revocation_Reason,
 ) -> wide_grants.Wide_Grant_Refusal {
+	if reason == .None {
+		return .Grant_Revoked
+	}
 	if !manager.initialized {
 		return .Grant_Revoked
 	}
@@ -508,7 +527,7 @@ manager_revoke_grant :: proc "contextless" (
 		}
 		manager.counters.total_grants_revoked += 1
 		manager.last_clock_ms = now_ms
-		_, _ = collector_append(&manager.collector, grant.grant_serial, now_ms, .Grant_Revoked, 0, reason_word, 0)
+		_, _ = collector_append(&manager.collector, grant.grant_serial, now_ms, .Grant_Revoked, 0, u64(reason), 0)
 		return .None
 	}
 	return .Grant_Revoked
@@ -536,7 +555,7 @@ manager_suspend_for_duplicate_connection :: proc "contextless" (
 		return .Chain_Tampered
 	}
 	grant.suspended_for_duplicate_connection = true
-	return manager_revoke_grant(manager, grant_serial, now_ms, 2)
+	return manager_revoke_grant(manager, grant_serial, now_ms, .Duplicate_Connection)
 }
 
 // manager_expire_grants monotonically expires every active grant whose

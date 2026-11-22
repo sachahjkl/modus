@@ -716,7 +716,7 @@ COMMANDS :: [?]foundation.Command {
 	// - `--wide-grant-serial <u64>`, `--wide-grant-windows <id,...>`,
 	//   `--wide-grant-duration-ms <u64>` (optional): active wide-grant window
 	//   scope required for synthetic input.
-	{name = "agent-bridge", about = "agent-bridge --remote-key <64-hex> --client-key <64-hex> [--socket <path>] [--principal <id>] [--permissions <csv>] [--wide-grant-serial <u64> --wide-grant-windows <id,...> [--wide-grant-duration-ms <u64>]]: serve the typed host agent bridge over stdio JSON-RPC 2.0", run = agent_bridge.run_agent_bridge},
+	{name = "agent-bridge", about = "agent-bridge --remote-key <64-hex> --client-key <64-hex> [--socket <path>] [--principal <id>] [--permissions <csv>] [--snapshot-dir <folder>] [--wide-grant-serial <u64> --wide-grant-windows <id,...> [--wide-grant-duration-ms <u64>]]: serve the typed host agent bridge over stdio JSON-RPC 2.0", run = agent_bridge.run_agent_bridge},
 }
 
 main :: proc() {

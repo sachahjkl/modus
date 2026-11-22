@@ -68,6 +68,21 @@ derive_key :: proc "contextless" (context_string: string, input: []u8) -> Hash {
 	return words_to_hash(root_words_with_key(input, context_key, {.Derive_Key_Material}))
 }
 
+// keyed_hash gives the BLAKE3 keyed hash of input under a 32-byte key
+// (BLAKE3 specification, section 2.3). It is a message authentication code:
+// without the key, nobody can compute the hash of a chosen input.
+keyed_hash :: proc "contextless" (key: Hash, input: []u8) -> Hash {
+	key_words: [8]u32
+	for index in 0 ..< 8 {
+		key_words[index] =
+			u32(key[index * 4 + 0]) |
+			u32(key[index * 4 + 1]) << 8 |
+			u32(key[index * 4 + 2]) << 16 |
+			u32(key[index * 4 + 3]) << 24
+	}
+	return words_to_hash(root_words_with_key(input, key_words, {.Keyed_Hash}))
+}
+
 // words_to_hash encodes 8 little-endian state words as a 32-byte Hash.
 @(private)
 words_to_hash :: proc "contextless" (words: [8]u32) -> (result: Hash) {

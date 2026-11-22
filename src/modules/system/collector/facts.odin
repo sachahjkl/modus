@@ -41,6 +41,13 @@ Wide_Grant_Action_Refused :: struct {
 	grant_serial: u64,
 }
 
+// The start gave the collector no authority key: it refuses each wide
+// grant, because it cannot check the proof of one.
+@(log_fact = "collector: no authority key for principal {principal_id}, each wide grant is refused")
+Wide_Grants_Refused_Without_Authority_Key :: struct {
+	principal_id: u64,
+}
+
 @(log_fact = "collector: expired {expired_grants} wide grants")
 Grants_Expired :: struct {
 	expired_grants: u64,
