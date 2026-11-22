@@ -23,8 +23,10 @@ DISK_ROWS_CAPACITY :: STORE_ROWS_LIMIT + CLIENT_KEY_ROWS_LIMIT
 STORE_BLOCKS_LIMIT :: 4096
 
 // Context handle slots used by the delegated principals service.
-PRINCIPALS_RING_SLOT :: 10
-PRINCIPALS_REGION_SLOT :: 11
+PRINCIPALS_RING_SLOT :: 10 // Memory (Read, Write): the ring from the core, opened with Receive_Handles.
+PRINCIPALS_REGION_SLOT :: 11 // Memory (Read, Write): the transfer region.
+PRINCIPALS_IMAGE_SLOT :: 12 // Memory (Read): the boot image, for the file of the storage service.
+PRINCIPALS_VALUE_IMAGE_SIZE :: 0 // The context value with the bytes of the boot image.
 
 // Commands accepted on the delegated principals service ring.
 // Zero means unset and is refused at the border.
@@ -35,13 +37,19 @@ Principals_Ring_Command :: enum u32 {
 	Replace_Disk_Rows    = 3,
 	Client_Key_Command   = 4,
 	Start_Policy_Command = 5,
+	Table_Key            = 6, // values[0..3] the key of the tag of the table, values[4] the principal (principals_tables.odin).
+	Table_Read           = 7, // values[0..2] the storage handles, values[3] the offset of a Table_Call_Input.
+	Table_Write          = 8, // As Table_Read; the input holds the table to write.
 }
 
 // Completion statuses returned on the delegated principals service ring.
 Principals_Ring_Status :: enum u32 {
-	Ok          = 0,
-	Refused     = 1,
-	Bad_Command = 2,
+	Ok              = 0,
+	Refused         = 1,
+	Bad_Command     = 2,
+	// The storage service refused the call of a table: the values are its
+	// error record (errors.Error_Record).
+	Storage_Refused = 3,
 }
 
 // Closed set of row classes that principals may push to the root core via

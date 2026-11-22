@@ -15,20 +15,58 @@ import "modus:system"
 // The name of the holder of the Display role that the root service connects.
 DISPLAY_SERVICE_NAME :: "compositor"
 
+// The ring to the root service: Connect to the display, and Plan_Roles.
+// Both wait for their own completion by its tag, one at a time: the service
+// runs one export at a time.
+Root_Requests :: struct {
+	opened:   bool,
+	ring:     ring.Ring,
+	next_tag: u32,
+}
+
+root_requests: Root_Requests
+root_requests_handle: system.Handle
+
+// root_requests_bind keeps the handle of the ring to the root service. The
+// ring opens at its first use.
+root_requests_bind :: proc "contextless" (ctx: ^system.Context) {
+	root_requests_handle = ctx.handles[system.GRANT_ROOT]
+}
+
+// root_requests_open opens the ring to the root service, once.
+root_requests_open :: proc "contextless" () -> bool {
+	if root_requests.opened {
+		return true
+	}
+	if root_requests_handle == 0 {
+		return false
+	}
+	requests, status := system.ring_open(root_requests_handle, receive_handles = true)
+	if status != .Ok {
+		return false
+	}
+	root_requests.ring = requests
+	root_requests.opened = true
+	return true
+}
+
+// root_requests_tag_next gives the tag of the next command on the ring to
+// the root service.
+root_requests_tag_next :: proc "contextless" () -> u32 {
+	root_requests.next_tag = root_requests.next_tag == max(u32) ? 1 : root_requests.next_tag + 1
+	return root_requests.next_tag
+}
+
 // The connection to the trusted display, made at the first apply.
 Display_Connection :: struct {
-	tried:       bool, // The context has what a connection needs: a ring to the root service and the boot image.
-	requests:    ring.Ring,
 	connected:   bool,
 	connection:  system.Call_Connection,
 	file:        []u8, // The module file of the display: the descriptions of its exports.
 	ask_export:  u32,
 	poll_export: u32,
-	next_tag:    u32,
 }
 
 display_connection: Display_Connection
-display_requests_handle: system.Handle
 display_image: []u8
 
 // display_port_bind keeps what the connection to the trusted display needs:
@@ -37,9 +75,8 @@ display_image: []u8
 // procedure, and an apply is refused with Consent_Required: no plan commits
 // without the decision of the principal.
 display_port_bind :: proc "contextless" (ctx: ^system.Context) -> (port: plans_core.Trusted_Display_Port) {
-	display_requests_handle = ctx.handles[system.GRANT_ROOT]
 	image_handle := ctx.handles[system.GRANT_IMAGE]
-	if display_requests_handle == 0 || image_handle == 0 {
+	if root_requests_handle == 0 || image_handle == 0 {
 		return {}
 	}
 	address, status := system.memory_map(image_handle, {})
@@ -57,16 +94,8 @@ display_connect :: proc "contextless" () -> bool {
 	if display_connection.connected {
 		return true
 	}
-	if display_requests_handle == 0 || len(display_image) == 0 {
+	if len(display_image) == 0 || !root_requests_open() {
 		return false
-	}
-	if !display_connection.tried {
-		requests, status := system.ring_open(display_requests_handle, receive_handles = true)
-		if status != .Ok {
-			return false
-		}
-		display_connection.requests = requests
-		display_connection.tried = true
 	}
 	file := system.image_find(display_image, DISPLAY_SERVICE_NAME)
 	if file == nil {
@@ -77,8 +106,7 @@ display_connect :: proc "contextless" () -> bool {
 	if ask == 0 || poll == 0 {
 		return false
 	}
-	display_connection.next_tag += 1
-	connection, status := system.service_connection(&display_connection.requests, display_connection.next_tag, DISPLAY_SERVICE_NAME)
+	connection, status := system.service_connection(&root_requests.ring, root_requests_tag_next(), DISPLAY_SERVICE_NAME)
 	if status != .Ok {
 		return false
 	}

@@ -1098,7 +1098,7 @@ root_loop_pass :: proc "contextless" () {
 	unlock_for_a_locked_principal()
 	// After reap: a storage service that stopped ended its connections.
 	disk_load_step(&wait)
-	persisted_tables_step(&wait)
+	persisted_tables_step()
 	network_answers(&wait)
 	wiring_request_step(&wait)
 	devices_answers(&wait)
@@ -1291,12 +1291,14 @@ debug_refusing_grant :: proc "contextless" (caller: ^Started, target: ^Started) 
 // - Start_Policy: a root ring that starts and stops the processes of the
 //   machine, which no caller holds;
 // - Screen_Capture: the copy of the screen and the input of the desktop,
-//   which show and drive each window of the principal in front.
+//   which show and drive each window of the principal in front;
+// - Plans: the roles page, which names the holders of the roles of the
+//   machine.
 // Each other grant reaches one thing that each of its holders reaches: the
 // machine by its rights, the boot image, the debug image, the replacement
 // table, the settings page, the date page, the records of the log, the
 // commands of the root ring.
-GRANTS_OF_ONE_PROCESS :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device, .Network, .Connect, .Principals, .Tpm, .Debugger, .System_Part, .Versions_Erase, .Remote_Clients, .Start_Policy, .Screen_Capture}
+GRANTS_OF_ONE_PROCESS :: bit_set[Grant]{.Serve, .Terminal, .Store, .History_Store, .Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device, .Network, .Connect, .Principals, .Tpm, .Debugger, .System_Part, .Versions_Erase, .Remote_Clients, .Start_Policy, .Screen_Capture, .Plans}
 
 // debug gives the debugger service the handle of the process with a name,
 // with the right Debug and no other, on behalf of one of its callers:

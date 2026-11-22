@@ -1,0 +1,3 @@
+type: Security
+
+**The principals service.** The root service holds no key of a disk grant table and calls no storage service: it passes each key that `unlock` gives on to `principals`, keeps only its BLAKE3 hash, and makes for each read and each write a connection of `principals` to the store `module_files` of the principal. `principals` adds or checks the tag, and the root service reads each table that it gives again with the decoder of the disk, so a hostile `principals` gives no row that the disk could not give. A `principals` that starts again holds no key: a change of a table is then refused until the next unlock.

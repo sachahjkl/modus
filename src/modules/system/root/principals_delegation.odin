@@ -3,17 +3,17 @@ package root
 // The bridge of the core to the delegated principals service
 // (src/md/api/root_service_split.md, "State").
 //
-// The core still holds the principals, their sessions, the disk grant
-// tables and the client table: it reads and writes the tables through the
-// storage service, and each rule of a grant runs here. The principals
-// service holds a mirror of that state, which the core keeps whole with
-// the commands of the ring of the service: the record of each named
-// principal (Register_Principal), the state of its session
-// (Session_Transition), the whole set of rows of each table
+// The principals service holds the key of the tag of each disk grant table,
+// and reads and writes each table in the store module_files of its
+// principal (persisted_grant_table.odin): the core holds no key and calls no
+// storage service. The core keeps the tables in memory, and each rule of a
+// grant runs here. The service also holds a mirror of the state of the
+// core, which the core keeps whole with the commands of its ring: the
+// record of each named principal (Register_Principal), the state of its
+// session (Session_Transition), the whole set of rows of each table
 // (Replace_Disk_Rows), each allow and revocation of a client key
 // (Client_Key_Command), and the choice of a start policy and the machine
-// passphrase (Start_Policy_Command). The mirror is where the service owns
-// these domains when the core gives it the storage connections.
+// passphrase (Start_Policy_Command).
 //
 // The core never waits for the service. A change marks what differs, and
 // one pass of the loop sends the commands, each from a place of the
@@ -72,9 +72,11 @@ principals_mirror: Principals_Mirror
 principals_rows_generation: [principals.PRINCIPAL_CAPACITY]u64
 
 // The tag of the command in flight from each place of the transfer region,
-// 0 for a free place, and its command for the line of a refusal.
+// 0 for a free place, its command for the line of a refusal, and the
+// principal of a Table_Key.
 principals_place_tags: [rd.PRINCIPALS_TRANSFER_PLACE_COUNT]u32
 principals_place_commands: [rd.PRINCIPALS_TRANSFER_PLACE_COUNT]rd.Principals_Ring_Command
+principals_place_principals: [rd.PRINCIPALS_TRANSFER_PLACE_COUNT]u64
 
 // The set of rows that the bridge builds: too large for the stack of the
 // loop.
@@ -125,7 +127,11 @@ principals_service_start :: proc "contextless" () -> bool {
 		values: system.Context_Values
 		system.grant_put(&grants, rd.PRINCIPALS_RING_SLOT, {ring_memory, {.Read, .Write}})
 		system.grant_put(&grants, rd.PRINCIPALS_REGION_SLOT, {region_memory, {.Read, .Write}})
+		// The boot image, read-only: the file of the storage service, whose
+		// exports a call of a table names.
+		system.grant_put(&grants, rd.PRINCIPALS_IMAGE_SLOT, {image_memory, {.Read}})
 		system.grant_put(&grants, op.CONTEXT_LOG, log_grant(start_grant_set_of("principals")))
+		system.value_put(&values, rd.PRINCIPALS_VALUE_IMAGE_SIZE, u64(len(image)))
 		if context_refused("principals", &grants, &values) {
 			status = .Bad_State
 		} else {
@@ -184,6 +190,7 @@ principals_service_end :: proc "contextless" (item: ^Started) {
 	principals_place_tags = {}
 	principals_process = nil
 	system.log_fact(.Warning, Principals_Service_Stopped{})
+	persisted_tables_service_ended()
 }
 
 // principals_rows_changed says that the disk grant table of a principal
@@ -263,32 +270,64 @@ principals_free_places :: proc "contextless" () -> (count: int) {
 	return count
 }
 
-// principals_command_send copies an input record to a free place of the
-// transfer region and sends its command, with no wait. false: the service
-// does not run, no place is free, or the ring took no record.
-@(private = "file")
-principals_command_send :: proc "contextless" (command: rd.Principals_Ring_Command, input: rawptr, size: int) -> bool {
+// principals_place_send copies an input record to a free place of the
+// transfer region and sends its command, with no wait: the offset of the
+// place goes in values[offset_index], and a negative index sends none. The
+// values are the caller's: a caller that sends a key erases them after. The
+// place stays taken until the answer. ok is false when the service does not
+// run, no place is free, or the ring took no record.
+principals_place_send :: proc "contextless" (command: rd.Principals_Ring_Command, input: rawptr, size: int, values: ^[7]u64, offset_index: int, principal: u64 = 0) -> (tag: u32, ok: bool) {
 	if principals_process == nil || principals_ring.head == nil || raw_data(principals_region) == nil {
-		return false
+		return 0, false
 	}
 	for &place_tag, place in principals_place_tags {
 		if place_tag != 0 {
 			continue
 		}
-		offset, ok := rd.principals_transfer_place_offset(place)
-		if !ok || size > rd.PRINCIPALS_TRANSFER_PLACE_BYTES {
-			return false
+		offset, place_ok := rd.principals_transfer_place_offset(place)
+		if !place_ok || size > rd.PRINCIPALS_TRANSFER_PLACE_BYTES {
+			return 0, false
 		}
-		intrinsics.mem_copy_non_overlapping(&principals_region[offset], input, size)
-		tag := principals_tag_next()
-		if !system.send(&principals_ring.commands, ring.Record{kind = u32(command), tag = tag, values = {0 = offset}}) {
-			return false
+		if input != nil && size > 0 {
+			intrinsics.mem_copy_non_overlapping(&principals_region[offset], input, size)
+		}
+		if offset_index >= 0 && offset_index < len(values) {
+			values[offset_index] = offset
+		}
+		tag = principals_tag_next()
+		if !system.send(&principals_ring.commands, ring.Record{kind = u32(command), tag = tag, values = values^}) {
+			return 0, false
 		}
 		place_tag = tag
 		principals_place_commands[place] = command
-		return true
+		principals_place_principals[place] = principal
+		return tag, true
 	}
-	return false
+	return 0, false
+}
+
+// principals_command_send sends a command of the mirror, whose input record
+// is at the offset of values[0].
+@(private = "file")
+principals_command_send :: proc "contextless" (command: rd.Principals_Ring_Command, input: rawptr, size: int) -> bool {
+	values: [7]u64
+	_, sent := principals_place_send(command, input, size, &values, 0)
+	return sent
+}
+
+// principals_table_key_send gives the principals service the key of the tag
+// of the table of a principal, in the values of the record: the key is in
+// no place of the region, and the service erases the slot of its ring after
+// it reads it. This service keeps no copy. false: the service does not run
+// or took no record.
+principals_table_key_send :: proc "contextless" (principal: u64, key: ^[32]u8) -> bool {
+	values: [7]u64
+	defer key_erase((cast(^[size_of(values)]u8)&values)[:])
+	words := (cast(^[4]u64)key)^
+	values = {0 = words[0], 1 = words[1], 2 = words[2], 3 = words[3], 4 = principal}
+	words = {}
+	_, sent := principals_place_send(.Table_Key, nil, 0, &values, -1, principal)
+	return sent
 }
 
 // principals_session_send sends one transition of the session of a
@@ -416,10 +455,22 @@ principals_answers :: proc "contextless" (wait: ^system.Wait) {
 			if place < 0 || !known {
 				system.log_fact(.Warning, Principals_Answer_Refused{status_word = u64(record.kind), tag = u64(record.tag)})
 			} else {
-				switch status {
-				case .Ok:
-				case .Refused, .Bad_Command:
-					system.log_fact(.Warning, Principals_Command_Refused{command_word = u64(principals_place_commands[place]), status_word = u64(record.kind), first_value = record.values[0], second_value = record.values[1]})
+				offset, _ := rd.principals_transfer_place_offset(place)
+				command := principals_place_commands[place]
+				switch command {
+				case .Table_Read, .Table_Write:
+					persisted_table_answer(record, status, offset)
+				case .None, .Register_Principal, .Session_Transition, .Replace_Disk_Rows, .Client_Key_Command, .Start_Policy_Command, .Table_Key:
+					switch status {
+					case .Ok:
+					case .Refused, .Bad_Command, .Storage_Refused:
+						system.log_fact(.Warning, Principals_Command_Refused{command_word = u64(command), status_word = u64(record.kind), first_value = record.values[0], second_value = record.values[1]})
+						// A key that the service refused is not held: the
+						// next unlock gives it again.
+						if command == .Table_Key && principals_place_principals[place] < principals.PRINCIPAL_CAPACITY {
+							persisted_tables[principals_place_principals[place]].key_held = false
+						}
+					}
 				}
 			}
 			if read >= PRINCIPALS_ANSWERS_PER_PASS {

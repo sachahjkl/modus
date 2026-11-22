@@ -189,6 +189,8 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 			return grant == .Root_Ring || grant == .Start_Policy
 		case .Start_Policy:
 			return grant == .Start_Policy
+		case .Plans:
+			return grant == .Plans
 		}
 		return false
 	}
@@ -204,6 +206,13 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 	testing.expect(t, !sender_allowed(.Principal_Unlock, {.Root_Ring}))
 	testing.expect(t, !sender_allowed(.Machine_Key, {.Root_Ring, .Debugger}))
 	testing.expect(t, !sender_allowed(.Debug, {.Root_Ring, .Principals}))
+	// The roles of the machine come from the holder of Plans only: the
+	// console and a holder of Connect never name them.
+	testing.expect(t, !sender_allowed(.Plan_Roles, {.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy}))
+	testing.expect(t, !sender_allowed(.Plan_Roles, {.Plans} - ROOT_RING_GRANTS))
+	testing.expect(t, sender_allowed(.Plan_Roles, {.Plans}))
+	testing.expect(t, !sender_allowed(.Start, {.Plans}))
+	testing.expect(t, !sender_allowed(.Connect, {.Plans}))
 	testing.expect(t, !sender_allowed(.Start, {.Connect, .Principals, .Debugger}))
 	testing.expect(t, sender_allowed(.Disconnect, {.Principals}))
 	testing.expect(t, sender_allowed(.Connect, {.Connect}))

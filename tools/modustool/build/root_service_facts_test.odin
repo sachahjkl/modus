@@ -143,7 +143,7 @@ APPEARANCE_WORDS := [?]string{"auto", "dark", "light"}
 // sentences are written here; a change of one of them fails the test of
 // its line.
 @(private = "file")
-TABLE_CALL_FAILURES := [?]string{"no connection to the storage service", "the call ring and the call region of the storage service do not map", "the storage service took no call", "the storage service stopped", "the storage service gave no answer in time", "the storage service refused the call"}
+TABLE_CALL_FAILURES := [?]string{"no connection to the storage service", "the call ring and the call region of the storage service do not map", "the storage service took no call", "the storage service stopped", "the storage service gave no answer in time", "the storage service refused the call", "the principals service does not run", "the principals service stopped", "the principals service gave no answer in time", "the principals service took no handle", "the principals service gave a table that does not decode", "the principals service gave an answer that names no cause", "the principals service holds no key of the table", "the principals service refused the call"}
 // The sentences of disk_process.table_problem_sentences that a Text field
 // holds; the three longer ones have a fact type each.
 @(private = "file")
@@ -1027,6 +1027,8 @@ the_devices_and_principals_bridge_facts_of_the_root_service_write_their_lines ::
 		expect(t, render(t, file, "Principals_Answer_Refused", {{"status_word", count}, {"tag", other}}), line_of_before("root: the principals service answered with the status word ", count, " and the tag ", other, ", which name no status or no command in flight"))
 		expect(t, render(t, file, "Principals_Command_Refused", {{"command_word", count}, {"status_word", other}, {"first_value", count}, {"second_value", other}}), line_of_before("root: the principals service refused the command ", count, ": status word ", other, ", values ", count, " and ", other))
 		expect(t, render(t, file, "Principals_Rows_Unsent", {{"principal", count}}), line_of_before("root: the disk grant table of principal ", count, " does not pass the border of the principals service: its rows are not sent"))
+		expect(t, render(t, file, "Plan_Roles_Replaced", {{"generation", count}, {"serial", other}, {"overrides", count}, {"rollback", other}}), line_of_before("root: the roles of the plan of generation ", count, " are in force: ", count, " overrides, serial ", other, ", rollback ", other))
+		expect(t, render(t, file, "Plan_Roles_Refused", {{"refusal_code", count}, {"override_index", other}, {"generation", count}, {"serial", other}}), line_of_before("root: refused the roles of the plan of generation ", count, ": refusal ", count, " at the override ", other, "; the serial ", other, " stays in force"))
 	}
 	expect(t, render(t, file, "Devices_Service_Stopped", {}), "root: the delegated devices service stopped")
 	expect(t, render(t, file, "Principals_Service_Stopped", {}), "root: the delegated principals service stopped")
