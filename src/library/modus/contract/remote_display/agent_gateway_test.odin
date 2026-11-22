@@ -285,8 +285,13 @@ display_token_verify_renew_and_revocation_edges :: proc(t: ^testing.T) {
 	new_exp := renew_now + DISPLAY_TOKEN_MAX_WINDOW_SECONDS
 	renewed, renew_status := display_token_verify_and_renew(&token, &revocations, renew_now, new_exp, pub, ed25519_verify_cb)
 	testing.expect_value(t, renew_status, Display_Token_Status.Renewed)
+	testing.expect_value(t, renewed.issued_at_unix, renew_now)
 	testing.expect_value(t, renewed.expires_at_unix, new_exp)
 	testing.expect_value(t, renewed.signature, [DISPLAY_TOKEN_SIGNATURE_SIZE]u8{})
+	// Re-signing the renewed token produces a structurally valid, verifiable token.
+	sign_display_token(&renewed, &priv)
+	_, renewed_verify_status := display_token_verify_and_renew(&renewed, &revocations, renew_now + 60, 0, pub, ed25519_verify_cb)
+	testing.expect_value(t, renewed_verify_status, Display_Token_Status.Valid)
 	// Original token struct was not mutated.
 	testing.expect_value(t, token.expires_at_unix, issued + DISPLAY_TOKEN_MAX_WINDOW_SECONDS)
 

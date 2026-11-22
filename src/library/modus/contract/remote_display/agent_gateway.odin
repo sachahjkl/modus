@@ -130,7 +130,7 @@ settle_tracker_observe :: proc "contextless" (
 	if damage_generation < tracker.damage_generation {
 		return .Refused_Generation_Backwards
 	}
-	if damage_generation > tracker.damage_generation || surfaces_pending > 0 {
+	if damage_generation > tracker.damage_generation || surfaces_pending > 0 || tracker.surfaces_pending > 0 {
 		tracker.last_damage_at_ms = now_ms
 	}
 	tracker.damage_generation = damage_generation
@@ -160,7 +160,7 @@ agent_screen_evaluate :: proc "contextless" (
 	if !mode_ok {
 		return {status = .Refused_Invalid_Mode}
 	}
-	if now_ms < tracker.last_observed_at_ms || now_ms < request.started_at_ms {
+	if now_ms < tracker.last_observed_at_ms || now_ms < tracker.last_damage_at_ms || now_ms < request.started_at_ms {
 		return {status = .Refused_Timestamp_Backwards, mode = mode}
 	}
 
@@ -559,14 +559,14 @@ display_token_verify_and_renew :: proc "contextless" (
 	if signing_status != .Valid {
 		return {}, signing_status
 	}
-	if token_revocation_contains(revocations, token.token_id) {
-		return {}, .Refused_Revoked
-	}
 	if verify_signature == nil {
 		return {}, .Refused_Invalid_Signature
 	}
 	if !verify_signature(principal_pub_key, signing_bytes[:], token.signature, user_data) {
 		return {}, .Refused_Invalid_Signature
+	}
+	if token_revocation_contains(revocations, token.token_id) {
+		return {}, .Refused_Revoked
 	}
 	if now_unix < token.issued_at_unix {
 		return {}, .Refused_Not_Yet_Valid
@@ -587,6 +587,7 @@ display_token_verify_and_renew :: proc "contextless" (
 	}
 
 	renewed := token^
+	renewed.issued_at_unix = now_unix
 	renewed.expires_at_unix = requested_new_expiry
 	renewed.signature = {}
 	return renewed, .Renewed
@@ -713,7 +714,7 @@ gateway_frame_encode :: proc "contextless" (
 	byte_order.write_u32_little_endian(out_bytes, 8, header.sequence)
 	byte_order.write_u32_little_endian(out_bytes, 12, u32(len(payload)))
 	if len(payload) > 0 {
-		intrinsics.mem_copy_non_overlapping(raw_data(out_bytes[GATEWAY_FRAME_HEADER_SIZE:]), raw_data(payload), len(payload))
+		copy(out_bytes[GATEWAY_FRAME_HEADER_SIZE:], payload)
 	}
 	return total, .None
 }
