@@ -1,6 +1,6 @@
 // The configuration of zstd on modus (src/md/features/c_compiler.md, "The
-// configuration of zstd"). The recipe compiles the single file zstd.c with
-// this header first (-include modus_zstd_conf.h): it takes the place of
+// configuration of zstd"). The recipe compiles each C file of the library
+// with this header first (-include modus_zstd_conf.h): it takes the place of
 // lib/common/zstd_deps.h, whose sections each start with a guard that this
 // header defines, so zstd reads no header of a host C library.
 #ifndef MODUS_ZSTD_CONF_H
@@ -21,6 +21,12 @@
 #define ZSTD_DISABLE_ASM 1
 #define ZSTD_HAVE_WEAK_SYMBOLS 0
 #define DEBUGLEVEL 0
+
+// No choice of code by the processor at run time: that choice reads cpuid,
+// which a module does not run. The code of BMI2 is not compiled in, and the
+// patch of cpu.h reads no cpuid under MODUS_ZSTD_NO_CPUID.
+#define DYNAMIC_BMI2 0
+#define MODUS_ZSTD_NO_CPUID
 
 // The scalar code of zstd: the headers of the intrinsics (emmintrin.h) are
 // headers of the compiler, which a module of C does not read (-nostdinc).

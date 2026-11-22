@@ -10,7 +10,10 @@ root: sqlite-amalgamation-3540100
 compile: sqlite3.c
 adapter: thin_libc/modus_thin_libc.c
 adapter: thin_libc/modus_thin_libc_memory.c
+adapter: thin_libc/modus_thin_libc_math.c
 adapter: sqlite/modus_vfs.c
+adapter: sqlite/modus_sqlite_entry.c
+manifest: sqlite/sqlite.manifest
 include: sqlite
 define: SQLITE_OS_OTHER=1
 define: SQLITE_THREADSAFE=0
@@ -33,12 +36,17 @@ flag: -fno-omit-frame-pointer
 flag: -mno-omit-leaf-frame-pointer
 flag: -mlong-double-64
 flag: -fno-stack-protector
+flag: -fno-stack-clash-protection
 flag: -fcf-protection=none
+flag: -fzero-call-used-regs=skip
+flag: -U_FORTIFY_SOURCE
 flag: -fno-asynchronous-unwind-tables
 flag: -fno-unwind-tables
 flag: -fno-common
 include: thin_libc/include
 include: thin_libc
 test: create a table, insert 10000 rows in one transaction, and compare SELECT SUM with the sum of the rows
-test: stop a commit after each count of pages, open again, and find the rows of the last commit
+test: update and delete rows, roll back a transaction, and find the rows of the last commit
+test: refuse a syntax error, a constraint, an output too small and a store too small, with the code of SQLite
+test: close, open again over the same store, and find the rows
 test: run PRAGMA integrity_check after each test

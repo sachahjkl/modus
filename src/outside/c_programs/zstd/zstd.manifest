@@ -1,0 +1,45 @@
+module: zstd
+about: zstd 1.5.7 over the thin libc: frames compressed and decompressed with contexts over a lent arena.
+library: no
+
+export zstd_heap_bind
+  about: Make the heap of the contexts over a lent arena; give 0 or -1.
+  param arena: integer
+  param size: integer
+  result: integer
+
+export zstd_heap_live_bytes
+  about: Give the bytes of the heap in use, or -1 with no heap.
+  result: integer
+
+export zstd_compress_bound
+  about: Give the largest frame of a count of bytes.
+  param count: integer
+  result: integer
+
+export zstd_compress
+  about: Compress bytes into one frame with its checksum; give its length or a negated ZSTD_ErrorCode.
+  param source: integer
+  param count: integer
+  param destination: integer
+  param capacity: integer
+  param level: integer
+  result: integer
+
+export zstd_decompress
+  about: Decompress frames; give the length of the content or a negated ZSTD_ErrorCode.
+  param source: integer
+  param count: integer
+  param destination: integer
+  param capacity: integer
+  result: integer
+
+export zstd_frame_content_size
+  about: Give the content size that a frame declares, or a negated ZSTD_ErrorCode.
+  param source: integer
+  param count: integer
+  result: integer
+
+export zstd_version_number
+  about: Give the version number of zstd.
+  result: integer

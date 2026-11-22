@@ -139,6 +139,21 @@ double sqrt(double value);
 double frexp(double value, int *exponent);
 double ldexp(double value, int exponent);
 
+// The elementary functions (modus_thin_libc_math.c). The circular functions
+// take radians, as the C standard says.
+double exp(double value);
+double log(double value);
+double log2(double value);
+double log10(double value);
+double pow(double base, double exponent);
+double sin(double angle);
+double cos(double angle);
+double tan(double angle);
+double asin(double value);
+double acos(double value);
+double atan(double value);
+double atan2(double y, double x);
+
 // ---- Formatted output and memory streams ------------------------------------
 
 typedef enum Modus_Stream_Mode {

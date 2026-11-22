@@ -19,6 +19,7 @@ Recipe_Key :: enum {
 	Root,
 	Compile,
 	Adapter,
+	Manifest,
 	Include,
 	Patch,
 	Force_Include,
@@ -36,6 +37,7 @@ RECIPE_KEY_WORDS := [Recipe_Key]string {
 	.Root          = "root",
 	.Compile       = "compile",
 	.Adapter       = "adapter",
+	.Manifest      = "manifest",
 	.Include       = "include",
 	.Patch         = "patch",
 	.Force_Include = "force_include",
@@ -44,10 +46,8 @@ RECIPE_KEY_WORDS := [Recipe_Key]string {
 	.Test          = "test",
 }
 
-RECIPE_SINGLE_KEYS :: bit_set[Recipe_Key]{.Recipe, .Version, .Source, .Source_Hash, .Unpack, .Root}
-RECIPE_REQUIRED_KEYS :: bit_set[Recipe_Key]{.Recipe, .Version, .Source, .Source_Hash, .Unpack, .Root, .Compile, .Adapter, .Flag, .Test}
-// The keys whose values are paths of this folder.
-RECIPE_PATH_KEYS :: bit_set[Recipe_Key]{.Adapter, .Include, .Patch, .Force_Include}
+RECIPE_SINGLE_KEYS :: bit_set[Recipe_Key]{.Recipe, .Version, .Source, .Source_Hash, .Unpack, .Root, .Manifest}
+RECIPE_REQUIRED_KEYS :: bit_set[Recipe_Key]{.Recipe, .Version, .Source, .Source_Hash, .Unpack, .Root, .Compile, .Adapter, .Manifest, .Flag, .Test}
 
 // The flags without which a C file reaches the host or its headers.
 RECIPE_REQUIRED_FLAGS := [?]string{"--target=x86_64-unknown-none-elf", "-ffreestanding", "-nostdinc", "-fPIC", "-mlong-double-64", "-fno-stack-protector"}
@@ -124,7 +124,7 @@ recipe_check :: proc(name: string, text: string) -> string {
 			if strings.index_byte(value, '=') <= 0 {
 				return fmt.tprintf("the definition %q is not NAME=VALUE", value)
 			}
-		case .Adapter, .Include, .Patch, .Force_Include:
+		case .Adapter, .Manifest, .Include, .Patch, .Force_Include:
 			path := strings.concatenate({folder_of_programs(), "/", value}, context.temp_allocator)
 			if strings.contains(value, "..") || !os.exists(path) {
 				return fmt.tprintf("the file %q of this folder does not exist", value)
@@ -181,6 +181,9 @@ recipes_refuse_a_bad_recipe :: proc(t: ^testing.T) {
 		{strings.concatenate({good, "version: 9\n"}, context.temp_allocator), ""},
 		{strings.concatenate({good, "colour: blue\n"}, context.temp_allocator), ""},
 		{replace(good, "define: SQLITE_OS_OTHER=1", "define: SQLITE_OS_OTHER"), "the definition \"SQLITE_OS_OTHER\" is not NAME=VALUE"},
+		{replace(good, "manifest: sqlite/sqlite.manifest\n", ""), "the key manifest is missing"},
+		{strings.concatenate({good, "manifest: lua/lua.manifest\n"}, context.temp_allocator), "line 53: the key manifest is written twice"},
+		{replace(good, "manifest: sqlite/sqlite.manifest", "manifest: sqlite/missing.manifest"), "the file \"sqlite/missing.manifest\" of this folder does not exist"},
 	}
 	for test_case in cases {
 		problem := recipe_check("sqlite", test_case.text)

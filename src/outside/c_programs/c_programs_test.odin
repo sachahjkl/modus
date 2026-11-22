@@ -25,6 +25,7 @@ MANIFEST_TEXT :: #load("c_programs.manifest", string)
 C_SOURCES := [?]string {
 	"thin_libc/modus_thin_libc.c",
 	"thin_libc/modus_thin_libc_memory.c",
+	"thin_libc/modus_thin_libc_math.c",
 	"sqlite/modus_vfs.c",
 	"lua/modus_lua_output.c",
 	"programs/codec.c",
@@ -87,6 +88,7 @@ built_once: sync.Once
 @(private = "file")
 built_shared: Built_Module
 
+// Tests build at once: each build takes its own folder.
 @(private = "file")
 build_folder_count: int
 
@@ -108,29 +110,43 @@ run_tool :: proc(command: []string, working_dir: string) -> (ok: bool, output: s
 	return false, strings.concatenate({string(stdout), string(stderr)})
 }
 
-@(private = "file")
-compile_command :: proc(source: string, extra: ..string) -> [dynamic]string {
-	command := make([dynamic]string)
-	append(&command, "clang")
-	for flag in C_FLAGS {
-		append(&command, flag)
-	}
-	for folder in C_INCLUDE_FOLDERS {
-		append(&command, "-I", strings.concatenate({folder_of_programs(), "/", folder}))
-	}
-	for flag in extra {
-		append(&command, flag)
-	}
-	append(&command, strings.concatenate({folder_of_programs(), "/", source}))
-	return command
+// One C file of a module and the flags of its compile.
+C_Unit :: struct {
+	source: string,
+	flags:  []string,
 }
 
-// build_module compiles, links, checks and converts the C of the folder. It
+// What becomes one module: its C files, its manifest, and the folders whose
+// headers its files may read.
+Module_Plan :: struct {
+	units:          []C_Unit,
+	manifest_text:  string,
+	header_folders: []string,
+}
+
+// The plan of the test module of this folder: each file of C_SOURCES with
+// the flags of a module and the headers of this folder.
+c_programs_plan :: proc(allocator := context.temp_allocator) -> Module_Plan {
+	flags := make([dynamic]string, allocator)
+	append(&flags, ..C_FLAGS[:])
+	for folder in C_INCLUDE_FOLDERS {
+		append(&flags, "-I", strings.concatenate({folder_of_programs(), "/", folder}, allocator))
+	}
+	units := make([]C_Unit, len(C_SOURCES), allocator)
+	for source, index in C_SOURCES {
+		units[index] = {strings.concatenate({folder_of_programs(), "/", source}, allocator), flags[:]}
+	}
+	header_folders := make([]string, 1, allocator)
+	header_folders[0] = folder_of_programs()
+	return {units, MANIFEST_TEXT, header_folders}
+}
+
+// build_module compiles, links, checks and converts the C of a plan. It
 // gives the problem of the first step that failed.
-build_module :: proc(result_allocator := context.allocator) -> Built_Module {
+build_module :: proc(plan: Module_Plan, result_allocator := context.allocator) -> Built_Module {
 	// Each step works in the temporary memory; the file of the module and the
 	// texts of the result go to the allocator of the caller.
-	built := build_module_in_temporary_memory()
+	built := build_module_in_temporary_memory(plan)
 	return Built_Module {
 		file = slice.clone(built.file, result_allocator),
 		digest = built.digest,
@@ -142,15 +158,26 @@ build_module :: proc(result_allocator := context.allocator) -> Built_Module {
 	}
 }
 
+// The compiles that run at once: a program of many files compiles on each
+// core, and the tests that build at once do not start hundreds of compilers.
 @(private = "file")
-build_module_in_temporary_memory :: proc() -> (built: Built_Module) {
+COMPILES_AT_ONCE :: 16
+
+@(private = "file")
+Running_Compile :: struct {
+	process:    os.Process,
+	source:     string,
+	diagnostic: string,
+}
+
+@(private = "file")
+build_module_in_temporary_memory :: proc(plan: Module_Plan) -> (built: Built_Module) {
 	context.allocator = context.temp_allocator
 	temp_base, _ := os.temp_dir(context.allocator)
 	if temp_base == "" {
 		temp_base = "/tmp"
 	}
-	build_folder_count += 1
-	work := fmt.aprintf("%s/modus_c_programs_%d_%d", strings.trim_right(temp_base, "/"), os.get_pid(), build_folder_count)
+	work := fmt.aprintf("%s/modus_c_programs_%d_%d", strings.trim_right(temp_base, "/"), os.get_pid(), sync.atomic_add(&build_folder_count, 1))
 	_ = os.remove_all(work)
 	if os.make_directory_all(work) != nil {
 		built.problem = fmt.aprintf("cannot make %s", work)
@@ -158,41 +185,79 @@ build_module_in_temporary_memory :: proc() -> (built: Built_Module) {
 	}
 	defer _ = os.remove_all(work)
 
-	ok: bool
-	output: string
+	// Each compile writes its object, the list of the headers that it read
+	// (-MD), and its diagnostics to a file of the work folder.
 	objects := make([dynamic]string)
-	for source, index in C_SOURCES {
+	dependencies := make([dynamic]string)
+	running := make([dynamic]Running_Compile)
+	finish_oldest :: proc(running: ^[dynamic]Running_Compile, built: ^Built_Module) {
+		oldest := running[0]
+		ordered_remove(running, 0)
+		state, error := os.process_wait(oldest.process)
+		if built.problem == "" && (error != nil || !state.success) {
+			diagnostic, _ := os.read_entire_file(oldest.diagnostic, context.allocator)
+			built.problem = fmt.aprintf("clang refused %s:\n%s", oldest.source, string(diagnostic))
+		}
+	}
+	for unit, index in plan.units {
 		object := fmt.aprintf("%s/object_%d.o", work, index)
-		command := compile_command(source, "-c", "-o", object)
-		ok, output = run_tool(command[:], work)
-		if !ok {
-			built.problem = fmt.aprintf("clang refused %s:\n%s", source, output)
-			return
+		dependency := fmt.aprintf("%s/object_%d.d", work, index)
+		diagnostic := fmt.aprintf("%s/object_%d.txt", work, index)
+		command := make([dynamic]string)
+		append(&command, "clang")
+		append(&command, ..unit.flags)
+		append(&command, "-MD", "-MF", dependency, "-c", "-o", object, unit.source)
+		diagnostic_file, create_error := os.create(diagnostic)
+		if create_error != nil {
+			built.problem = fmt.aprintf("cannot make %s", diagnostic)
+			break
 		}
+		process, start_error := os.process_start({command = command[:], working_dir = work, stdout = diagnostic_file, stderr = diagnostic_file})
+		os.close(diagnostic_file)
+		if start_error != nil {
+			built.problem = fmt.aprintf("cannot start clang: %v", start_error)
+			break
+		}
+		append(&running, Running_Compile{process, unit.source, diagnostic})
 		append(&objects, object)
+		append(&dependencies, dependency)
+		if len(running) >= COMPILES_AT_ONCE {
+			finish_oldest(&running, &built)
+		}
+	}
+	for len(running) > 0 {
+		finish_oldest(&running, &built)
+	}
+	if built.problem != "" {
+		return
+	}
 
-		// The headers that the compiler read: the folder of the programs and
-		// the headers of the compiler only, never a header of a C library of
-		// the host.
-		dependency_command := compile_command(source, "-M", "-MT", "object")
-		ok, output = run_tool(dependency_command[:], work)
-		if !ok {
-			built.problem = fmt.aprintf("clang -M refused %s:\n%s", source, output)
+	// The headers that the compiler read: the folders of the plan only, never
+	// a header of a C library of the host.
+	for dependency in dependencies {
+		text, read_error := os.read_entire_file(dependency, context.allocator)
+		if read_error != nil {
+			built.problem = fmt.aprintf("cannot read %s", dependency)
 			return
 		}
-		joined, _ := strings.replace_all(output, "\\\n", " ")
+		joined, _ := strings.replace_all(string(text), "\\\n", " ")
 		for path, path_index in strings.fields(joined) {
 			if path_index == 0 || path == "" {
 				continue
 			}
-			inside := strings.has_prefix(path, folder_of_programs())
+			inside := false
+			for folder in plan.header_folders {
+				inside ||= strings.has_prefix(path, folder)
+			}
 			if !inside {
 				append(&built.headers_outside, strings.clone(path))
 			}
 		}
 	}
 
-	combined := fmt.aprintf("%s/c_programs.o", work)
+	ok: bool
+	output: string
+	combined := fmt.aprintf("%s/combined.o", work)
 	link_command := make([dynamic]string)
 	append(&link_command, "ld.lld", "-r", "-o", combined)
 	for object in objects {
@@ -255,7 +320,7 @@ build_module_in_temporary_memory :: proc() -> (built: Built_Module) {
 		built.problem = fmt.aprintf("cannot read %s", combined)
 		return
 	}
-	manifest, manifest_problem := build.manifest_parse(MANIFEST_TEXT)
+	manifest, manifest_problem := build.manifest_parse(plan.manifest_text)
 	if manifest_problem != "" {
 		built.problem = fmt.aprintf("the manifest is refused: %s", manifest_problem)
 		return
@@ -283,7 +348,7 @@ clone_texts :: proc(texts: [dynamic]string, allocator: runtime.Allocator) -> [dy
 // that the run keeps.
 shared_module :: proc() -> ^Built_Module {
 	sync.once_do(&built_once, proc() {
-		built_shared = build_module(runtime.heap_allocator())
+		built_shared = build_module(c_programs_plan(), runtime.heap_allocator())
 	})
 	return &built_shared
 }
@@ -310,8 +375,12 @@ Loaded_Module :: struct {
 // load_module maps a copy of the module for one test: each test has its own
 // data, so tests that run at once share no state of the C part.
 load_module :: proc(t: ^testing.T) -> (loaded: Loaded_Module, ok: bool) {
-	built := shared_module()
-	if !testing.expectf(t, built.problem == "", "the build of the C programs failed: %s", built.problem) {
+	return load_built_module(t, shared_module())
+}
+
+// load_built_module maps a copy of a built module.
+load_built_module :: proc(t: ^testing.T, built: ^Built_Module) -> (loaded: Loaded_Module, ok: bool) {
+	if !testing.expectf(t, built.problem == "", "the build of the module failed: %s", built.problem) {
 		return
 	}
 	file := built.file
@@ -418,7 +487,7 @@ c_programs_build_is_deterministic :: proc(t: ^testing.T) {
 	if !testing.expectf(t, shared.problem == "", "the build failed: %s", shared.problem) {
 		return
 	}
-	again := build_module()
+	again := build_module(c_programs_plan())
 	defer delete_built_module(again)
 	testing.expectf(t, again.problem == "", "the second build failed: %s", again.problem)
 	testing.expect(t, again.digest == shared.digest, "two builds of one source must give the same bytes")

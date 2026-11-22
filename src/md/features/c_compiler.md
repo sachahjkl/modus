@@ -87,7 +87,7 @@ It is the C library that `chibicc` calls, and nothing more, in C beside the work
 - **`stderr` and `stdout`** are one memory stream of 4 KiB: the diagnostic. The Odin package writes its first line on the log when the compile fails.
 - **`strtold` gives the nearest double.** The module is built with `-mlong-double-64`, so a `long double` of the thin libc is a `double`, and `strtold` rounds each text to the nearest `double`, ties to even. It reads blanks, a sign, a decimal number with its exponent `e`, a hexadecimal number after `0x` with its exponent `p`, `inf`, `infinity`, `nan` and `nan(...)`. A value past the largest `double` gives infinity and `ERANGE`; a value below the least normal `double` that is not exact gives `ERANGE` too; a text with no number gives 0 and `*end` at the text. Its design is the section "The conversion of a floating constant", below.
 
-**Why in C, beside the work, and not in Odin under `src/library`.** `vfprintf` takes a `va_list`, which an Odin procedure cannot receive: the Odin compiler takes `#c_vararg` in a declaration of a `foreign` procedure only. One C program uses it today, and a support package of `src/library` needs two owners. The next ported C program moves the thin libc into a place that both share, with what that program adds.
+**Why in C, beside the work, and not in Odin under `src/library`.** `vfprintf` takes a `va_list`, which an Odin procedure cannot receive: the Odin compiler takes `#c_vararg` in a declaration of a `foreign` procedure only. A support package of `src/library` needs two owners. The C programs have a second thin libc in C ("The C programs", below); one place for both is left work.
 
 ### One source for each call host
 
@@ -123,6 +123,72 @@ What `chibicc` writes for a C source, and how the assembler handles it:
 
 So the C subset that passes today covers signed and unsigned `char`, `short`, `int`, `long`, `_Bool`, `float`, `double` and `long double` (a `double`) with their constants, pointers, local and global arrays, structs, local initializers (`rep stosb`), global initializers that hold addresses, `alloca`, the atomic builtins `__builtin_atomic_exchange` and `__builtin_compare_and_swap`, calls through a pointer to a function, comparisons, `if`/`else`, `while`, `for`, `do`, `switch`, `&&`/`||`/`!`/`?:`, `+`, `-`, `*`, `/`, `%`, bitwise `&`/`|`/`^`/`~`/`<<`/`>>`, unary `-`, and direct or recursive calls to functions in the same translation unit (`call *%r10`) and, in a program, in the other units. Exported functions still take and return `int` or `long` (`Integer`) or `void`; `static` helper functions can take any integer, pointer, or small struct type.
 
+## The C programs
+
+SQLite 3.54.1, Lua 5.4.7 and zstd 1.5.7 are C programs of others that the system wants as modules: a database for a service that brings its own, a scripting language that tests a C compiler hard, and the compression of the cache and of the images. Their files of the system are in `src/outside/c_programs`. Today the clang of the host builds each into a module, with the flags and the converter of a module, and a host test runs it.
+
+### The recipes
+
+A recipe of `recipes/` declares one program: the archive at its SHA-256, the folder of the archive that is its root, the patches, the C files of the source, the adapters of this folder, the manifest of the module, the definitions and the flags. The format is in `recipes/README.md`.
+
+- **The hash is written once.** The flake reads `source`, `source_hash`, `unpack`, `root` and `patch` from the recipe, and makes one folder of the store with the root patched. The variables `SQLITE_SOURCE`, `LUA_SOURCE` and `ZSTD_SOURCE` name the three folders.
+- **Only the host checks and the default shell see them.** No module of the system build holds a C program, so a new archive builds no system again and runs no machine test.
+- **The test of the recipe is the build of its module.** `real_programs_test.odin` reads the recipe and gives its files to the build of the test module of the folder: the same compile, the same link, the same checks.
+
+### The thin libc of the C programs
+
+`thin_libc/` is the part of a C library that the three programs call, in C, with no system call, no path and no clock. Each standard header of `thin_libc/include` includes `modus_thin_libc.h` only.
+
+| Part | What it does |
+|---|---|
+| Heap | `malloc`, `calloc`, `realloc`, `free` over a heap that the program makes over an arena that the caller lends; the heap refuses the release of a pointer that is no block in use, and counts the bytes in use |
+| Text and numbers | The procedures of `string.h`, `ctype.h`, `strtod` and `strtoll`, and the `printf` family with the floating conversions |
+| Streams | `FILE` as a memory stream; `fopen` of a name refuses with `ENOENT` |
+| Jumps | `setjmp` and `longjmp` in assembly: the registers that a call keeps, the stack and the place of the return |
+| Time and locale | Each time is the start of the epoch; the one locale is "C" |
+| Elementary functions | `exp`, `log`, `log2`, `log10`, `pow`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2` (`modus_thin_libc_math.c`) |
+
+- **A heap, not the arena of `chibicc`.** SQLite, Lua and zstd release and reuse their memory: a script of Lua releases most of its blocks, and a closed state releases each one. An arena where `free` ends nothing would grow until it fails.
+- **Its own, beside the thin libc of `chibicc`.** The two are not one place yet: the left work is in "State".
+
+### The elementary functions
+
+- **`log` gives a double-double.** `pow(x, y)` is `exp(y log x)`: an error ε in `y log x` is a relative error ε of the result. A `log` in one double gives `|y log x|` times 2^-53, up to 700 units for a result near the overflow. The logarithm is `k ln 2 + 2 atanh(s)` with three terms of the series as double-doubles, about 70 good bits, so the error of `pow` stays below one unit. `log2` and `log10` multiply that pair by `1/ln 2` and `1/ln 10` as pairs, so an exact power of 2 or of 10 gives an exact result.
+- **`exp` takes a pair.** The reduction `x = k ln 2 + r` and the rational form of fdlibm carry the low part of `y log x` in the low part of `r`.
+- **The reduction of an angle.** Below 2^19 π/2, three parts of π/2 of 33 bits subtract in turn, as many as the cancellation asks. Above it, the product of the mantissa with 256 bits of a table of 1280 bits of 2/π gives the quadrant and 128 bits of the fraction (Payne and Hanek). Each angle of a double reduces with no loss.
+- **`asin` and `acos` are `atan` of a quotient with `sqrt(1 - x^2)` as a double-double, so `acos` near 1 keeps its bits.
+- **Radians.** The functions of C take radians, as the C standard says: a ported program calls them unchanged. The code of the system uses turns ([../data/angles_in_turns.md](../data/angles_in_turns.md)).
+- **No fused multiply-add.** `#pragma STDC FP_CONTRACT OFF`: the exact products and sums count on one rounding each.
+- **The bound.** Against the C library of the host, on the edges, random bits, and the ranges where each algorithm changes its path, the test allows 1 unit in the last place for `exp`, `log`, `log2`, `pow`, `sin`, `cos`, `asin`, `acos`, `atan` and `atan2`, and 2 units for `tan`, a quotient of the sine and the cosine. `log10` of glibc is 2 units off at inputs where this one gives the correct rounding (checked at 300 bits with mpmath), so the test pins those inputs. `pow` follows each special case of Annex F of C, and gives the exact powers of 2, 3 and 10 exactly.
+
+### The VFS of SQLite
+
+`sqlite/modus_vfs.c` is a VFS whose files are the slots of a store of bytes that the caller lends: each slot has a fixed capacity, a new file takes the first free slot, the lock levels live in the slot, the randomness comes from a seed, and the time is the start of the epoch. SQLite is built with `SQLITE_OS_OTHER`, so it asks the program for `sqlite3_os_init`, which registers the VFS over the store that the program bound first.
+
+- **SQLite calls no `malloc`.** The entry gives SQLite the lent arena with `SQLITE_CONFIG_HEAP` (memsys5, `SQLITE_ENABLE_MEMSYS5`).
+- **The bytes of the store are the file.** A session that opens the same store again finds the database of the last commit.
+- **The entry** (`sqlite/modus_sqlite_entry.c`): open a session over an arena and a store, run SQL text and write the rows as the list mode of the shell of SQLite writes them, close. A fault gives the code of SQLite and its message; rows past the output give `SQLITE_TOOBIG`.
+
+### The configuration of Lua
+
+The one patch of Lua adds `#include "modus_lua_conf.h"` to the section "Local configuration" of `luaconf.h`, so each definition of `lua/modus_lua_conf.h` replaces the one of Lua: `print` and the diagnostics write into memory that the caller lends, a write past its end is cut and recorded, no shell, no `popen` and no temporary name, and the seed of the hashes of strings is a constant.
+
+- **The libraries.** Base, coroutine, table, string, math and utf8. io, os and the loader of C modules wait for the parts of the thin libc that they call.
+- **The entry** (`lua/modus_lua_entry.c`) runs one script in a new state of `luaL_newstate`, over a heap of an arena that the caller lends, and gives the status of Lua. It calls `luaL_loadstring` and `lua_pcall`: `luaL_dostring` gives only whether a step failed.
+- **The heap is empty after `lua_close`.** The entry gives the bytes in use after the close; the test checks 0 after each script, also after an error of memory.
+
+### The configuration of zstd
+
+`zstd/modus_zstd_conf.h` is read first by each C file of the library (`-include`). It takes the place of `lib/common/zstd_deps.h`: no thread, no legacy format, no assembly file of the host, no intrinsics of the compiler, and no choice of code by the processor at run time (`DYNAMIC_BMI2 0`).
+
+- **No `cpuid`.** zstd reads `cpuid` when it makes a context, even when no code of BMI2 is compiled in. The patch of `cpu.h` reads none under `MODUS_ZSTD_NO_CPUID`, as on a processor that zstd does not know.
+- **The memory of a context** comes from a heap over a lent arena, through `ZSTD_customMem`.
+- **The entry** (`zstd/modus_zstd_entry.c`) writes one frame with its content size and the checksum of its content, and gives a count or the negated `ZSTD_ErrorCode`.
+
+### The checks of the build
+
+For each program, the host test proves that the relocatable object needs no symbol that its files do not define, that its disassembly holds no instruction that reaches the host (`syscall`, `cpuid`, `rdtsc`, `in`, `out` and their kin), that the compiler read no header outside this folder and the root of the source, and that the module has no import. The test prints the size of each module.
+
 ## The refused forms
 
 - **TCC.** It writes machine code, so its port needs a second writer of the module format ([first_compiler.md](first_compiler.md)).
@@ -134,6 +200,9 @@ So the C subset that passes today covers signed and unsigned `char`, `short`, `i
 - **The state of `chibicc` reset by a patch.** The static variables are in eight files. A patch that sets each to its start would be large and would miss the next one that the work adds.
 - **A copy of the writable data at the first call, written back at each call.** The tool would need the bounds of the writable data of the C part in the module, which the link mixes with the data of the Odin package.
 - **An export for each C type.** A `char`, a `short` and the unsigned types need agreed export conventions; a pointer needs a table or a handle in the description.
+- **The C programs as modules of the system build.** The system holds no SQLite ([`docs/PROPERTIES.md`](../../../docs/PROPERTIES.md), "12. Module metadata in flat tables, read through functions"): a process brings it as its own module. The build of the system reads none of the three archives.
+- **The elementary functions of the host, or of `core:math`.** A module calls nothing of the host, and `core:math` turns into calls of the libm of the host.
+- **A correctly rounded library with tables (CORE-MATH, the `pow` of musl with its table of 128 entries).** It brings many more constants to check, for less than one unit in the last place, which none of the three programs needs.
 
 ## Subtle points
 
@@ -145,4 +214,4 @@ So the C subset that passes today covers signed and unsigned `char`, `short`, `i
 
 ## State
 
-Built: the module `c_compiler` with its export `compile`, the six patches, the thin libc, the table of the include files, the expanded integer instruction subset of the assembler (comparisons, `setcc`, loops, indirect calls, `imul`, `idiv`/`div`, `cqo`/`cdq`, bitwise and shift operations, 8/16/32/64-bit registers, sign/zero-extending moves, `rep stosb`, scaled indexed SIB addressing) with end-to-end host tests running `chibicc` output for factorial, recursive Fibonacci, signed/unsigned division and modulo, comparisons, bitwise ops and byte/short arrays, and the step of the main machine test. The assembler now takes the scalar SSE2 forms, numeric local labels, `xchg`, `lock cmpxchg` and the `quad` of an address with its rebase, and the patch writes `quad` for an address in an initializer, with host tests that run `chibicc` output for each. Built also: the units of a program, the self-hosting entry `compile_record_at`, the jump of `exit` in assembly for `chibicc`, and `modustool c-self-host`, whose host test proves that `chibicc` compiles its 14 C sources and that stage 1 and stage 2 have one BLAKE3 hash ([bootstrap.md](bootstrap.md), "The self-hosting of the C compiler"). Left: the export `build` with the store "out", a program of several sources in the export of the module, exports with non-`int`/`long` C types, the calls of an import through an import slot, and the next ported C program.
+Built: the module `c_compiler` with its export `compile`, the six patches, the thin libc, the table of the include files, the expanded integer instruction subset of the assembler (comparisons, `setcc`, loops, indirect calls, `imul`, `idiv`/`div`, `cqo`/`cdq`, bitwise and shift operations, 8/16/32/64-bit registers, sign/zero-extending moves, `rep stosb`, scaled indexed SIB addressing) with end-to-end host tests running `chibicc` output for factorial, recursive Fibonacci, signed/unsigned division and modulo, comparisons, bitwise ops and byte/short arrays, and the step of the main machine test. The assembler now takes the scalar SSE2 forms, numeric local labels, `xchg`, `lock cmpxchg` and the `quad` of an address with its rebase, and the patch writes `quad` for an address in an initializer, with host tests that run `chibicc` output for each. Built also: the units of a program, the self-hosting entry `compile_record_at`, the jump of `exit` in assembly for `chibicc`, and `modustool c-self-host`, whose host test proves that `chibicc` compiles its 14 C sources and that stage 1 and stage 2 have one BLAKE3 hash ([bootstrap.md](bootstrap.md), "The self-hosting of the C compiler"). Built also: the C programs: the recipes of SQLite 3.54.1, Lua 5.4.7 and zstd 1.5.7 with their pinned archives in the flake, the thin libc of the C programs with its heap and its elementary functions, the VFS of SQLite, the configurations of Lua and zstd, and a host test that builds the three modules from the real sources with the clang of the host and runs SQL, Lua scripts and zstd frames through them. Left: the export `build` with the store "out", a program of several sources in the export of the module, exports with non-`int`/`long` C types, the calls of an import through an import slot, the build of the recipes by the C compiler of modus on a machine of modus, the io and os libraries of Lua, and one thin libc for `chibicc` and the C programs.

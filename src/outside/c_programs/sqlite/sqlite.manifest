@@ -1,0 +1,35 @@
+module: sqlite
+about: SQLite 3.54.1 over the thin libc and the VFS of modus: a session runs SQL on a database in lent bytes.
+library: no
+
+export sqlite_session_open
+  about: Open main.db over a lent arena and lent store bytes, the store made anew when fresh is 1; give the SQLite code.
+  param arena: integer
+  param arena_size: integer
+  param store: integer
+  param store_size: integer
+  param fresh: integer
+  result: integer
+
+export sqlite_session_execute
+  about: Run each statement of a SQL text; write the rows or the message; give the SQLite code.
+  param sql: integer
+  param output: integer
+  param capacity: integer
+  result: integer
+
+export sqlite_session_changes
+  about: Give the count of rows that the last statement changed.
+  result: integer
+
+export sqlite_session_close
+  about: Close the database and end SQLite; give the SQLite code.
+  result: integer
+
+export sqlite_session_database_size
+  about: Give the size of main.db in the store, or -1.
+  result: integer
+
+export sqlite_version_number
+  about: Give the version number of SQLite.
+  result: integer

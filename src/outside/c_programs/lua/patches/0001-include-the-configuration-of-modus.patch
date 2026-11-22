@@ -2,8 +2,8 @@ luaconf.h has no hook for a configuration of its own: its section "Local
 configuration" is a place for lines. One line there includes the
 configuration of modus, after each definition of luaconf.h.
 
---- a/src/luaconf.h
-+++ b/src/luaconf.h
+--- a/luaconf.h
++++ b/luaconf.h
 @@ -794,6 +794,7 @@
  ** without modifying the main part of the file.
  */
