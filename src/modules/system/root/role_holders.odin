@@ -83,6 +83,27 @@ is_role_holder :: proc "contextless" (module_name: string, role: role_contract.R
 	return holder != "" && module_name == holder
 }
 
+// role_target_resolve resolves a canonical role name (e.g. "display", "storage",
+// "plans") to the active holder module name; non-role module names pass through unchanged.
+role_target_resolve :: proc "contextless" (name: string) -> string {
+	if name == "" {
+		return ""
+	}
+	for role in role_contract.Role {
+		if role == .None {
+			continue
+		}
+		if role_contract.role_properties(role).name == name {
+			holder := role_holder_name(role)
+			if holder != "" {
+				return holder
+			}
+			return name
+		}
+	}
+	return name
+}
+
 // role_of_module_name returns the closed Role currently held by module_name, or .None.
 role_of_module_name :: proc "contextless" (module_name: string) -> role_contract.Role {
 	if module_name == "" {

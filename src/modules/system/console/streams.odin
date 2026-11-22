@@ -1255,6 +1255,112 @@ wire :: proc "contextless" (arguments: []Value) -> Value {
 	return made_value(&table, "wire")
 }
 
+// keep gives a one-row Wiring table that sends a record output into collector.in
+// so the collector keeps every matching record in an append-only audit space.
+keep_stream :: proc "contextless" (arguments: []Value) -> Value {
+	from := stream_of_argument("keep", arguments[0])
+	if from == nil {
+		return {}
+	}
+	if from.projection_file != nil {
+		return fail("keep: a wiring carries a record output whole, not the fields that columns chose")
+	}
+	if from.is_log && from.condition_count > 0 {
+		return fail("keep: the record output log takes no condition")
+	}
+	if from.condition_count > 1 {
+		return fail("keep: a wiring takes one condition; the record stream ", from.owner, ".", from.stream_name, " has ", u64(from.condition_count))
+	}
+	if from.owner == "collector" {
+		return fail("keep: collector is at both ends: a wiring joins two processes")
+	}
+	columns := wiring_columns()
+	table, made := made_table("Wiring", columns[:])
+	if !made {
+		return fail("keep: the line has no room for the description")
+	}
+	row := made_row(&table)
+	made_text(&table, row, WIRING_COLUMN_WRITER, from.owner)
+	made_text(&table, row, WIRING_COLUMN_OUTPUT, from.stream_name)
+	made_text(&table, row, WIRING_COLUMN_READER, "collector")
+	made_text(&table, row, WIRING_COLUMN_INPUT, "in")
+	if from.condition_count == 1 {
+		condition := from.conditions[0]
+		terms := from.terms[0]
+		value_text := condition.text
+		if terms.value_kind == u32(output.Condition_Value_Kind.Integer) {
+			value_text = scratch_text(condition.compared)
+		}
+		made_text(&table, row, WIRING_COLUMN_CONDITION, scratch_text(condition.field, " ", console_condition.COMPARISON_TEXTS[condition.comparison], " ", value_text))
+		made_integer(&table, row, WIRING_COLUMN_FIELD, i64(terms.field))
+		made_integer(&table, row, WIRING_COLUMN_COMPARISON, i64(terms.comparison))
+		made_integer(&table, row, WIRING_COLUMN_VALUE_KIND, i64(terms.value_kind))
+		made_integer(&table, row, WIRING_COLUMN_INTEGER, terms.integer)
+		made_text(&table, row, WIRING_COLUMN_TEXT, condition.text)
+	}
+	return made_value(&table, "keep")
+}
+
+// audit gives a Wiring table that wires a named service's log output into
+// collector.in for append-only principal auditing.
+audit_service :: proc "contextless" (arguments: []Value) -> Value {
+	target := arguments[0].text
+	if len(target) == 0 {
+		return fail("audit: expected a non-empty service name")
+	}
+	if target == "collector" {
+		return fail("audit: collector cannot audit itself")
+	}
+	columns := wiring_columns()
+	table, made := made_table("Wiring", columns[:])
+	if !made {
+		return fail("audit: the line has no room for the description")
+	}
+	row := made_row(&table)
+	made_text(&table, row, WIRING_COLUMN_WRITER, target)
+	made_text(&table, row, WIRING_COLUMN_OUTPUT, "log")
+	made_text(&table, row, WIRING_COLUMN_READER, "collector")
+	made_text(&table, row, WIRING_COLUMN_INPUT, "in")
+	return made_value(&table, "audit")
+}
+
+// merge_streams gives a two-row Wiring table that feeds two compatible record
+// outputs into the merge module's two generic inputs (first, second).
+merge_streams :: proc "contextless" (arguments: []Value) -> Value {
+	first := stream_of_argument("merge", arguments[0])
+	if first == nil {
+		return {}
+	}
+	second := stream_of_argument("merge", arguments[1])
+	if second == nil {
+		return {}
+	}
+	if first.projection_file != nil || second.projection_file != nil {
+		return fail("merge: a wiring carries each record output whole, not columns")
+	}
+	if first.condition_count > 1 || second.condition_count > 1 {
+		return fail("merge: each stream takes at most one condition")
+	}
+	diff, part := output.record_descriptions_compare(first.file, first.detail, second.file, second.detail)
+	if diff != .Equal {
+		return fail("merge: the two streams have different record descriptions at part ", i64(part))
+	}
+	columns := wiring_columns()
+	table, made := made_table("Wiring", columns[:])
+	if !made {
+		return fail("merge: the line has no room for the description")
+	}
+	for idx in 0 ..< 2 {
+		src := idx == 0 ? first : second
+		row := made_row(&table)
+		made_text(&table, row, WIRING_COLUMN_WRITER, src.owner)
+		made_text(&table, row, WIRING_COLUMN_OUTPUT, src.stream_name)
+		made_text(&table, row, WIRING_COLUMN_READER, "merge")
+		made_text(&table, row, WIRING_COLUMN_INPUT, idx == 0 ? "first" : "second")
+	}
+	return made_value(&table, "merge")
+}
+
 // A row of a list of a start, resolved against the module that starts and
 // the owners of the console, before any handle is lent.
 Start_Row :: struct {

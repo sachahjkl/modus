@@ -333,6 +333,12 @@ tables_start :: proc "contextless" () {
 	// Errors: the two records differ; one process at both ends; a Stream
 	// with more than one condition, or that `columns` cut.
 	command("wire", {.Stream, .Record_Input}, .Table, "one row of a wiring list, from a record output to a record input", wire)
+	// Short form of a wiring list that sends a record output to collector.in.
+	command("keep", {.Stream}, .Table, "a wiring list that keeps a record stream in collector", keep_stream)
+	// Short form of a wiring list that audits a service's log output in collector.in.
+	command("audit", {.Text}, .Table, "a wiring list that audits a service log in collector", audit_service)
+	// Short form of a wiring list that merges two compatible record streams through merge.
+	command("merge", {.Stream, .Stream}, .Table, "a wiring list that merges two compatible record streams", merge_streams)
 }
 
 // command_takes_stream marks the command added last as a command whose
