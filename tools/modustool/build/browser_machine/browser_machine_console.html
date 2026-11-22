@@ -77,24 +77,47 @@ import { BrowserMachine, MachineState } from "./browser_machine_host.js";
 // object for each line (src/md/features/console_renderers.md, "Variant C:
 // dom_terminal"). Each place in a text is a place in Array.from(text).
 const OUTPUT_LINE_LIMIT = 4000;
+const LINE_SPAN_LIMIT = 256;
+const LIST_ROW_LIMIT = 8;
+const HEX_COLOR = /^#[0-9a-f]{6}$/;
+const TONES = new Set(["default", "dim", "strong", "good", "warning", "bad", "accent", "number"]);
+const CODE_KINDS = new Set(["function", "module", "type", "parameter", "variable", "number", "text", "text_unfinished", "operator", "arrow", "words", "unknown"]);
+const ICONS = new Set(["command", "export", "record", "service", "module", "process", "variable", "history_line"]);
 const STARTERS = ["help()", "processes()", "log.follow()"];
 const THEME_KEY = "modus-console-theme";
 const element = (id) => document.getElementById(id);
 const output = element("output"), promptBar = element("prompt-bar"), hintBar = element("hint-bar"), popup = element("completion-popup"), chips = element("chips");
 
+function clampIndex(value, limit) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(Math.trunc(value), limit)) : 0;
+}
+function validColor(value) {
+  return typeof value === "string" && HEX_COLOR.test(value) ? value : "";
+}
 function span(text, className) {
   const node = document.createElement("span");
   node.textContent = text;
   if (className) node.className = className;
   return node;
 }
+function sanitizeRuns(runs, limit) {
+  if (!Array.isArray(runs)) return [];
+  const clean = [];
+  for (const entry of runs.slice(0, 64)) {
+    if (!Array.isArray(entry) || entry.length < 3 || !CODE_KINDS.has(entry[2])) continue;
+    const start = clampIndex(entry[0], limit), end = clampIndex(entry[1], limit);
+    if (start < end) clean.push([start, end, entry[2]]);
+  }
+  return clean;
+}
 function kindAt(runs, place) {
-  for (const [start, end, kind] of runs ?? []) if (place >= start && place < end) return "c-" + kind;
+  for (const [start, end, kind] of runs) if (place >= start && place < end) return "c-" + kind;
   return "";
 }
 // appendParts appends characters from..to of chars, one span for each run
 // of characters with the same class.
 function appendParts(parent, chars, from, to, classOf) {
+  if (from >= to) return;
   let start = from;
   for (let place = from + 1; place <= to; place++) {
     if (place === to || classOf(place) !== classOf(start)) {
@@ -121,56 +144,74 @@ element("clear").addEventListener("click", clearOutput);
 let listChosen = -1;
 const records = {
   out(record) {
-    if (!openLine) {
+    if (typeof record.s !== "string") return;
+    if (!openLine || openLine.childElementCount >= LINE_SPAN_LIMIT) {
       openLine = document.createElement("div");
       openLine.className = "line";
       output.append(openLine);
       while (output.childElementCount > OUTPUT_LINE_LIMIT) output.firstElementChild.remove();
     }
-    const node = span(record.s, [record.tone && "t-" + record.tone, record.code && "c-" + record.code].filter(Boolean).join(" "));
-    if (record.fg) node.style.color = record.fg;
-    if (record.rev) { node.style.background = record.fg ?? "var(--text)"; node.style.color = "var(--bg)"; }
+    const classes = [];
+    if (TONES.has(record.tone)) classes.push("t-" + record.tone);
+    if (CODE_KINDS.has(record.code)) classes.push("c-" + record.code);
+    const node = span(record.s, classes.join(" "));
+    const color = validColor(record.fg);
+    if (color) node.style.color = color;
+    if (record.rev === true) { node.style.backgroundColor = color || "var(--text)"; node.style.color = "var(--bg)"; }
     openLine.append(node);
-    if (record.nl) openLine = null;
+    if (record.nl === true) openLine = null;
   },
   clr: clearOutput,
   edit(record) {
-    const chars = Array.from(record.text), classOf = (place) => kindAt(record.runs, place);
+    if (typeof record.text !== "string") return;
+    const chars = Array.from(record.text), runs = sanitizeRuns(record.runs, chars.length);
+    const classOf = (place) => kindAt(runs, place);
     promptBar.replaceChildren();
-    if (record.cur === undefined) appendParts(promptBar, chars, 0, chars.length, classOf);
+    if (typeof record.cur !== "number" || !Number.isFinite(record.cur)) appendParts(promptBar, chars, 0, chars.length, classOf);
     else {
-      appendParts(promptBar, chars, 0, record.cur, classOf);
+      const cursor = clampIndex(record.cur, chars.length);
+      appendParts(promptBar, chars, 0, cursor, classOf);
       promptBar.append(span("", "caret"));
-      appendParts(promptBar, chars, record.cur, chars.length, classOf);
+      appendParts(promptBar, chars, cursor, chars.length, classOf);
     }
     chips.hidden = !/^>\s*$/.test(record.text);
   },
   hint(record) {
-    const chars = Array.from(record.text), start = record.ms ?? 0, end = start + (record.ml ?? 0);
+    if (typeof record.text !== "string") return;
+    const chars = Array.from(record.text);
+    const start = clampIndex(record.ms, chars.length);
+    const end = clampIndex(start + clampIndex(record.ml, chars.length), chars.length);
     hintBar.replaceChildren();
     appendParts(hintBar, chars, 0, chars.length, (place) => (place >= start && place < end ? "mark" : ""));
   },
   status(record) {
-    element("status-bar").hidden = !(record.tot > 0);
-    if (!(record.tot > 0)) return;
-    element("status-text").textContent = record.text;
-    element("status-fill").style.width = Math.min(100, (100 * record.v) / record.tot) + "%";
-    element("status-count").textContent = record.v + " / " + record.tot;
+    const total = typeof record.tot === "number" && Number.isFinite(record.tot) ? Math.max(0, Math.trunc(record.tot)) : 0;
+    element("status-bar").hidden = !(total > 0);
+    if (!(total > 0)) return;
+    const value = typeof record.v === "number" && Number.isFinite(record.v) ? Math.max(0, Math.trunc(record.v)) : 0;
+    element("status-text").textContent = typeof record.text === "string" ? record.text : "";
+    element("status-fill").style.width = Math.min(100, (100 * value) / total) + "%";
+    element("status-count").textContent = value + " / " + total;
   },
   list(record) {
     popup.replaceChildren();
-    popup.hidden = record.items.length === 0;
-    listChosen = record.chosen;
+    const rawItems = Array.isArray(record.items) ? record.items.slice(0, LIST_ROW_LIMIT) : [];
+    const items = rawItems.filter((item) => item && typeof item === "object" && typeof item.name === "string" && typeof item.detail === "string");
+    popup.hidden = items.length === 0;
+    const chosen = typeof record.chosen === "number" && Number.isFinite(record.chosen) ? Math.trunc(record.chosen) : -1;
+    listChosen = chosen >= 0 && chosen < items.length ? chosen : -1;
     if (popup.hidden) return;
-    record.items.forEach((item, index) => {
+    items.forEach((item, index) => {
       const row = document.createElement("div");
-      row.className = "item" + (index === record.chosen ? " chosen" : "");
+      row.className = "item" + (index === listChosen ? " chosen" : "");
       row.setAttribute("role", "option");
-      if (item.icon) row.append(span(item.icon.replace("_", " "), "icon"));
-      const chars = Array.from(item.name + item.detail), nameLength = Array.from(item.name).length, matched = new Set(item.match ?? []);
+      if (ICONS.has(item.icon)) row.append(span(item.icon.replace("_", " "), "icon"));
+      const chars = Array.from(item.name + item.detail), nameLength = Array.from(item.name).length;
+      const runs = sanitizeRuns(item.runs, chars.length);
+      const matched = new Set(Array.isArray(item.match) ? item.match.map((p) => clampIndex(p, nameLength)) : []);
       const name = span("", "name"), detail = span("", "detail");
-      appendParts(name, chars, 0, nameLength, (place) => (matched.has(place) ? "matched" : kindAt(item.runs, place)));
-      appendParts(detail, chars, nameLength, chars.length, (place) => kindAt(item.runs, place));
+      appendParts(name, chars, 0, nameLength, (place) => (matched.has(place) ? "matched" : kindAt(runs, place)));
+      appendParts(detail, chars, nameLength, chars.length, (place) => kindAt(runs, place));
       row.append(name, detail);
       // The console moves its choice by the arrows and takes it by Tab: a
       // click sends the keys that choose its row.
@@ -182,18 +223,21 @@ const records = {
       });
       popup.append(row);
     });
-    if (record.total > record.items.length) {
+    const total = typeof record.total === "number" && Number.isFinite(record.total) ? Math.max(0, Math.trunc(record.total)) : items.length;
+    const first = typeof record.first === "number" && Number.isFinite(record.first) ? Math.max(0, Math.trunc(record.first)) : 0;
+    if (total > items.length) {
       const count = document.createElement("div");
       count.id = "list-count";
-      count.textContent = record.first + 1 + "–" + (record.first + record.items.length) + " / " + record.total;
+      count.textContent = first + 1 + "–" + (first + items.length) + " / " + total;
       popup.append(count);
     }
     // The list starts at the column of the name, inside the window.
+    const startColumn = clampIndex(record.start, 256);
     const probe = span("0".repeat(10));
     promptBar.append(probe);
     const columnWidth = probe.getBoundingClientRect().width / 10;
     probe.remove();
-    const left = 14 + record.start * columnWidth - promptBar.scrollLeft;
+    const left = 14 + startColumn * columnWidth - promptBar.scrollLeft;
     popup.style.left = Math.max(8, Math.min(left, window.innerWidth - popup.offsetWidth - 8)) + "px";
   },
 };
@@ -223,7 +267,9 @@ const machine = new BrowserMachine({
   onConsoleLine: (line) => {
     let record;
     try { record = JSON.parse(line); } catch { return; }
-    records[record.t]?.(record);
+    if (!record || typeof record !== "object" || typeof record.t !== "string") return;
+    if (!Object.hasOwn(records, record.t)) return;
+    try { records[record.t](record); } catch {}
   },
 });
 // send gives text to COM2 as a terminal sends it: UTF-8 and VT100 keys,
