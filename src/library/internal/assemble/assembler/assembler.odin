@@ -21,16 +21,20 @@ import module "modus:contract/module"
 import writer "modus:contract/module_file_writer"
 
 // The bounds of a text. A bound is a cost that the workspace pays, not a
-// rule of the language.
+// rule of the language. The tables are sized for a text of 256 KiB that
+// chibicc writes: about 20 bytes of text for each instruction of about 5
+// bytes, a label for each 10 lines, a reference for each 5. The workspace
+// is in the memory of the module, which the budget of its call host pays
+// (src/md/features/assembler.md, "The bounds of the workspace").
 TEXT_BYTES_MOST :: 1 << 20 // The bytes of a text.
 LINE_BYTES_MOST :: 1024 // The bytes of one line, its comment included.
-CODE_BYTES_MOST :: 64 * 1024 // The bytes of the section code that a file stores.
-DATA_BYTES_MOST :: 64 * 1024 // The bytes of the section data that a file stores.
+CODE_BYTES_MOST :: 128 * 1024 // The bytes of the section code that a file stores.
+DATA_BYTES_MOST :: 128 * 1024 // The bytes of the section data that a file stores.
 // The extent of a section with its zero bytes: `zero` adds to it and
 // writes no byte.
 SECTION_EXTENT_MOST :: u64(1) << 40
-LABEL_CAPACITY :: 512
-REFERENCE_CAPACITY :: 2048 // The operands that name a label.
+LABEL_CAPACITY :: 2048
+REFERENCE_CAPACITY :: 4096 // The operands that name a label.
 EXPORT_CAPACITY :: 32
 REBASE_CAPACITY :: 2048 // The `quad` values that name a label: each is one rebase of the module.
 LOCAL_LABEL_DIGITS :: 10 // The numeric local labels `0:` to `9:`.
@@ -257,9 +261,9 @@ refusal_sentence :: proc "contextless" (refusal: Refusal) -> string {
 	case .Name_Not_Valid:
 		return "the name is not a name of the module format: ASCII letters, digits and _, with no digit first"
 	case .Labels_Full:
-		return "the text has more than 512 labels"
+		return "the text has more than 2048 labels"
 	case .References_Full:
-		return "the text has more than 2048 operands that name a label"
+		return "the text has more than 4096 operands that name a label"
 	case .Exports_Full:
 		return "the text has more than 32 exports"
 	case .No_Instruction:

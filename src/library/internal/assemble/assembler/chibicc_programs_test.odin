@@ -2090,3 +2090,723 @@ rebased_floating_and_atomic_program_validates_and_runs :: proc(t: ^testing.T) {
 		testing.expect_value(t, swap_if(6, 3), i64(77))
 	}
 }
+
+// Verbatim assembly emitted by the patched chibicc of modus, with the
+// strtold of its thin libc, for a program with floating constants:
+// decimal, scientific and hexadecimal, of double and of float, the least
+// normal and the least subnormal double, and a table of doubles in the
+// data. Each constant must be the double or the float nearest to its text:
+// the test compares the bits.
+//
+//   static long double_bits_of(double value) { return *(long *)&value; }
+//   static long float_bits_of(float value) { return *(unsigned int *)&value; }
+//
+//   long double_constant(long which) {
+//     switch (which) {
+//     case 0: return double_bits_of(3.141592653589793);
+//     case 1: return double_bits_of(0x1.8p+1);
+//     case 2: return double_bits_of(1e-6);
+//     case 3: return double_bits_of(2.5E+10);
+//     case 4: return double_bits_of(1e308);
+//     case 5: return double_bits_of(.5);
+//     case 6: return double_bits_of(42.);
+//     case 7: return double_bits_of(0X0.Fp0);
+//     case 8: return double_bits_of(0x1p-10);
+//     case 9: return double_bits_of(2.2250738585072014e-308);
+//     case 10: return double_bits_of(4.9406564584124654e-324);
+//     case 11: return double_bits_of(0.1);
+//     case 12: return double_bits_of(-0.0);
+//     }
+//     return 0;
+//   }
+//
+//   long float_constant(long which) {
+//     switch (which) {
+//     case 0: return float_bits_of(1.5f);
+//     case 1: return float_bits_of(0.1f);
+//     case 2: return float_bits_of(3.4028235e38f);
+//     case 3: return float_bits_of(0x1.8p+1f);
+//     }
+//     return 0;
+//   }
+//
+//   double table[3] = {0.25, 1e100, -2.5};
+//
+//   long scaled(long value) {
+//     double pi = 3.141592653589793;
+//     float half = 0.5f;
+//     return (long)(value * pi * half * 1000.0 + table[0] * 4);
+//   }
+FLOATING_CONSTANT_PROGRAM :: `section data
+.L..28:
+  byte 115
+  byte 99
+  byte 97
+  byte 108
+  byte 101
+  byte 100
+  byte 0
+section data
+.L..27:
+  byte 115
+  byte 99
+  byte 97
+  byte 108
+  byte 101
+  byte 100
+  byte 0
+section data
+  zero 2
+table:
+  byte 0
+  byte 0
+  byte 0
+  byte 0
+  byte 0
+  byte 0
+  byte -48
+  byte 63
+  byte 125
+  byte -61
+  byte -108
+  byte 37
+  byte -83
+  byte 73
+  byte -78
+  byte 84
+  byte 0
+  byte 0
+  byte 0
+  byte 0
+  byte 0
+  byte 0
+  byte 4
+  byte -64
+section data
+.L..21:
+  byte 102
+  byte 108
+  byte 111
+  byte 97
+  byte 116
+  byte 95
+  byte 99
+  byte 111
+  byte 110
+  byte 115
+  byte 116
+  byte 97
+  byte 110
+  byte 116
+  byte 0
+section data
+.L..20:
+  byte 102
+  byte 108
+  byte 111
+  byte 97
+  byte 116
+  byte 95
+  byte 99
+  byte 111
+  byte 110
+  byte 115
+  byte 116
+  byte 97
+  byte 110
+  byte 116
+  byte 0
+section data
+  zero 10
+.L..5:
+  byte 100
+  byte 111
+  byte 117
+  byte 98
+  byte 108
+  byte 101
+  byte 95
+  byte 99
+  byte 111
+  byte 110
+  byte 115
+  byte 116
+  byte 97
+  byte 110
+  byte 116
+  byte 0
+section data
+.L..4:
+  byte 100
+  byte 111
+  byte 117
+  byte 98
+  byte 108
+  byte 101
+  byte 95
+  byte 99
+  byte 111
+  byte 110
+  byte 115
+  byte 116
+  byte 97
+  byte 110
+  byte 116
+  byte 0
+section data
+.L..3:
+  byte 102
+  byte 108
+  byte 111
+  byte 97
+  byte 116
+  byte 95
+  byte 98
+  byte 105
+  byte 116
+  byte 115
+  byte 95
+  byte 111
+  byte 102
+  byte 0
+section data
+.L..2:
+  byte 102
+  byte 108
+  byte 111
+  byte 97
+  byte 116
+  byte 95
+  byte 98
+  byte 105
+  byte 116
+  byte 115
+  byte 95
+  byte 111
+  byte 102
+  byte 0
+section data
+.L..1:
+  byte 100
+  byte 111
+  byte 117
+  byte 98
+  byte 108
+  byte 101
+  byte 95
+  byte 98
+  byte 105
+  byte 116
+  byte 115
+  byte 95
+  byte 111
+  byte 102
+  byte 0
+section data
+.L..0:
+  byte 100
+  byte 111
+  byte 117
+  byte 98
+  byte 108
+  byte 101
+  byte 95
+  byte 98
+  byte 105
+  byte 116
+  byte 115
+  byte 95
+  byte 111
+  byte 102
+  byte 0
+section code
+export scaled(value: Integer) -> Integer
+scaled:
+  push %rbp
+  mov %rsp, %rbp
+  sub $32, %rsp
+  mov %rsp, -24(%rbp)
+  mov %rdi, -32(%rbp)
+  mov $8, %rcx
+  lea -16(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -16(%rbp), %rax
+  push %rax
+  mov $4614256656552045848, %rax  # double ?
+  movq %rax, %xmm0
+  pop %rdi
+  movsd %xmm0, (%rdi)
+  mov $4, %rcx
+  lea -4(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -4(%rbp), %rax
+  push %rax
+  mov $1056964608, %eax  # float ?
+  movq %rax, %xmm0
+  pop %rdi
+  movss %xmm0, (%rdi)
+  mov $4, %rax
+  cvtsi2sdl %eax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  mov $8, %rax
+  push %rax
+  mov $0, %rax
+  movsxd %eax, %rax
+  pop %rdi
+  imul %rdi, %rax
+  push %rax
+  lea table(%rip), %rax
+  pop %rdi
+  add %rdi, %rax
+  movsd (%rax), %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  mulsd %xmm1, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  mov $4652007308841189376, %rax  # double ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea -4(%rbp), %rax
+  movss (%rax), %xmm0
+  cvtss2sd %xmm0, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea -16(%rbp), %rax
+  movsd (%rax), %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea -32(%rbp), %rax
+  mov (%rax), %rax
+  cvtsi2sdq %rax, %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  mulsd %xmm1, %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  mulsd %xmm1, %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  mulsd %xmm1, %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  addsd %xmm1, %xmm0
+  cvttsd2siq %xmm0, %rax
+  jmp .L.return.scaled
+.L.return.scaled:
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+export float_constant(which: Integer) -> Integer
+float_constant:
+  push %rbp
+  mov %rsp, %rbp
+  sub $16, %rsp
+  mov %rsp, -8(%rbp)
+  mov %rdi, -16(%rbp)
+  lea -16(%rbp), %rax
+  mov (%rax), %rax
+  cmp $3, %rax
+  je .L..26
+  cmp $2, %rax
+  je .L..25
+  cmp $1, %rax
+  je .L..24
+  cmp $0, %rax
+  je .L..23
+  jmp .L..22
+.L..23:
+  mov $1069547520, %eax  # float ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea float_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.float_constant
+.L..24:
+  mov $1036831949, %eax  # float ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea float_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.float_constant
+.L..25:
+  mov $2139095039, %eax  # float ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea float_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.float_constant
+.L..26:
+  mov $1077936128, %eax  # float ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea float_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.float_constant
+.L..22:
+  mov $0, %rax
+  movsxd %eax, %rax
+  jmp .L.return.float_constant
+.L.return.float_constant:
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+export double_constant(which: Integer) -> Integer
+double_constant:
+  push %rbp
+  mov %rsp, %rbp
+  sub $16, %rsp
+  mov %rsp, -8(%rbp)
+  mov %rdi, -16(%rbp)
+  lea -16(%rbp), %rax
+  mov (%rax), %rax
+  cmp $12, %rax
+  je .L..19
+  cmp $11, %rax
+  je .L..18
+  cmp $10, %rax
+  je .L..17
+  cmp $9, %rax
+  je .L..16
+  cmp $8, %rax
+  je .L..15
+  cmp $7, %rax
+  je .L..14
+  cmp $6, %rax
+  je .L..13
+  cmp $5, %rax
+  je .L..12
+  cmp $4, %rax
+  je .L..11
+  cmp $3, %rax
+  je .L..10
+  cmp $2, %rax
+  je .L..9
+  cmp $1, %rax
+  je .L..8
+  cmp $0, %rax
+  je .L..7
+  jmp .L..6
+.L..7:
+  mov $4614256656552045848, %rax  # double ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea double_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.double_constant
+.L..8:
+  mov $4613937818241073152, %rax  # double ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea double_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.double_constant
+.L..9:
+  mov $4517329193108106637, %rax  # double ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea double_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.double_constant
+.L..10:
+  mov $4762354806503243776, %rax  # double ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea double_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.double_constant
+.L..11:
+  mov $9214871658872686752, %rax  # double ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea double_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.double_constant
+.L..12:
+  mov $4602678819172646912, %rax  # double ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea double_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.double_constant
+.L..13:
+  mov $4631107791820423168, %rax  # double ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea double_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.double_constant
+.L..14:
+  mov $4606619468846596096, %rax  # double ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea double_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.double_constant
+.L..15:
+  mov $4562146422526312448, %rax  # double ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea double_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.double_constant
+.L..16:
+  mov $4503599627370496, %rax  # double ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea double_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.double_constant
+.L..17:
+  mov $1, %rax  # double ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea double_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.double_constant
+.L..18:
+  mov $4591870180066957722, %rax  # double ?
+  movq %rax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea double_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.double_constant
+.L..19:
+  mov $0, %rax  # double ?
+  movq %rax, %xmm0
+  mov $1, %rax
+  shl $63, %rax
+  movq %rax, %xmm1
+  xorpd %xmm1, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea double_bits_of(%rip), %rax
+  movsd (%rsp), %xmm0
+  add $8, %rsp
+  mov %rax, %r10
+  mov $1, %rax
+  call *%r10
+  add $0, %rsp
+  jmp .L.return.double_constant
+.L..6:
+  mov $0, %rax
+  movsxd %eax, %rax
+  jmp .L.return.double_constant
+.L.return.double_constant:
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+float_bits_of:
+  push %rbp
+  mov %rsp, %rbp
+  sub $16, %rsp
+  mov %rsp, -8(%rbp)
+  movss %xmm0, -12(%rbp)
+  lea -12(%rbp), %rax
+  movsxd (%rax), %rax
+  mov %eax, %eax
+  jmp .L.return.float_bits_of
+.L.return.float_bits_of:
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+double_bits_of:
+  push %rbp
+  mov %rsp, %rbp
+  sub $16, %rsp
+  mov %rsp, -8(%rbp)
+  movsd %xmm0, -16(%rbp)
+  lea -16(%rbp), %rax
+  mov (%rax), %rax
+  jmp .L.return.double_bits_of
+.L.return.double_bits_of:
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+`
+
+@(test)
+floating_constant_program_validates_and_runs :: proc(t: ^testing.T) {
+	workspace := new(Workspace)
+	defer free(workspace)
+	parts, refusal := assemble(FLOATING_CONSTANT_PROGRAM, workspace)
+	if !testing.expectf(t, refusal.refusal == .None, "refused with %v at line %d, column %d", refusal.refusal, refusal.place.line, refusal.place.column) {
+		return
+	}
+	size, needed := writer.file_size_needed(parts)
+	testing.expect_value(t, needed.refusal, writer.Refusal.None)
+	file := make([]u8, int(size))
+	defer delete(file)
+	written, written_refusal := writer.write(parts, file)
+	testing.expect_value(t, written_refusal.refusal, writer.Refusal.None)
+	testing.expect_value(t, written, size)
+	testing.expect_value(t, module.validate(file), module.Error.None)
+
+	when ODIN_ARCH == .amd64 {
+		last := parts.segments[len(parts.segments) - 1]
+		memory_size := last.memory_offset + last.memory_size
+		memory, error := virtual.reserve_and_commit(uint(memory_size))
+		if !testing.expect(t, error == .None, "the host gave no memory for the module") {
+			return
+		}
+		defer virtual.release(raw_data(memory), uint(memory_size))
+		for segment in parts.segments {
+			copy(memory[segment.memory_offset:], segment.data)
+		}
+		testing.expect_value(t, module.rebase(file, memory, uintptr(raw_data(memory))), module.Error.None)
+		testing.expect(t, virtual.protect(raw_data(memory), uint(parts.segments[0].memory_size), {.Read, .Execute}))
+
+		One_Arg :: proc "c" (a: i64) -> i64
+		export_named :: proc(memory: []u8, parts: writer.Module_Parts, name: string) -> rawptr {
+			for export in parts.exports {
+				if export.name == name {
+					return &memory[export.code_offset]
+				}
+			}
+			return nil
+		}
+
+		// The bits that the host compiler gives to the same constants.
+		double_bits := [?]u64 {
+			0x400921FB54442D18, // 3.141592653589793
+			0x4008000000000000, // 0x1.8p+1
+			0x3EB0C6F7A0B5ED8D, // 1e-6
+			0x42174876E8000000, // 2.5E+10
+			0x7FE1CCF385EBC8A0, // 1e308
+			0x3FE0000000000000, // .5
+			0x4045000000000000, // 42.
+			0x3FEE000000000000, // 0X0.Fp0
+			0x3F50000000000000, // 0x1p-10
+			0x0010000000000000, // 2.2250738585072014e-308
+			0x0000000000000001, // 4.9406564584124654e-324
+			0x3FB999999999999A, // 0.1
+			0x8000000000000000, // -0.0
+		}
+		double_constant := cast(One_Arg)export_named(memory, parts, "double_constant")
+		for bits, which in double_bits {
+			found := u64(double_constant(i64(which)))
+			testing.expectf(t, found == bits, "double %d: %x, not %x", which, found, bits)
+		}
+		float_bits := [?]u64 {
+			0x3FC00000, // 1.5f
+			0x3DCCCCCD, // 0.1f
+			0x7F7FFFFF, // 3.4028235e38f
+			0x40400000, // 0x1.8p+1f
+		}
+		float_constant := cast(One_Arg)export_named(memory, parts, "float_constant")
+		for bits, which in float_bits {
+			found := u64(float_constant(i64(which)))
+			testing.expectf(t, found == bits, "float %d: %x, not %x", which, found, bits)
+		}
+		// value * pi * 0.5 * 1000 + 0.25 * 4, truncated toward zero.
+		scaled := cast(One_Arg)export_named(memory, parts, "scaled")
+		testing.expect_value(t, scaled(0), i64(1))
+		testing.expect_value(t, scaled(1), i64(1571))
+		testing.expect_value(t, scaled(7), i64(10996))
+		testing.expect_value(t, scaled(-3), i64(-4711))
+	}
+}

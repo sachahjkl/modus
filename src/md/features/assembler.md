@@ -90,11 +90,27 @@ The package refuses each text that it does not assemble whole, with a `Refusal_R
 - a vector register in an integer form, a conversion with no size of its integer (`cvtsi2ss (%rax), %xmm0`), `movq` with no 64-bit general register, `lock` before another instruction than `cmpxchg`, or `lock cmpxchg` into a register;
 - a `quad` of a label in the section code or off 8 bytes of the section data, past 2048 of them, or a label with its offset below 0 or past 2^63 − 1;
 - a distance past ±2 GiB between a jump or a `%rip` operand and its label;
-- a section past its capacity (64 KiB of bytes, 1 TiB of extent), past 512 labels, 2048 references or 32 exports;
+- a section past its capacity (128 KiB of bytes, 1 TiB of extent), past 2048 labels, 4096 references or 32 exports;
 - an export twice, a name that is not a name of the module format, more than 12 parameters;
 - a text with no instruction.
 
 The module gives a refusal as the error record `Bad_Byte` of the argument `source`, with the offset of its first byte as the value and that byte as found. The kind of the error record is a kind of the contract; the line and the column are in the line of the log.
+
+### The bounds of the workspace
+
+The module takes a text of at most 256 KiB. Its copy of the text and the workspace are memory of the module, about 950 KiB, and the budget of the call host pays them: 512 pages, with the module `host`, the stack of 64 pages and the page tables. The module takes about 250 pages of it, so the call host keeps about 160 pages free.
+
+| Bound | Value | What it holds |
+|---|---|---|
+| `SOURCE_BYTES_MOST` of the module | 256 KiB | The text; the package itself takes up to `TEXT_BYTES_MOST`, 1 MiB |
+| `CODE_BYTES_MOST` | 128 KiB | The code of a text of 256 KiB that `chibicc` writes: about 20 bytes of text for an instruction of about 5 bytes gives 64 KiB, and the bound doubles it |
+| `DATA_BYTES_MOST` | 128 KiB | The strings and the initialized globals; `zero` does not count |
+| `LABEL_CAPACITY` | 2048 | A label of `chibicc` for each 10 lines or so: the labels of each branch, of each return and of each string |
+| `REFERENCE_CAPACITY` | 4096 | An operand that names a label for each 5 lines or so: the jumps, the calls and the `%rip` operands |
+| `REBASE_CAPACITY` | 2048 | A `quad` of a label: each pointer of a global initializer |
+
+- **Why fixed tables, and not tables of the size of the text.** The package allocates nothing and calls no kernel operation; the tables are a record that the caller gives. A text past a bound is refused whole, with its line, so a bound costs a refusal, never a wrong file.
+- **Why not larger.** Each table is memory of the module, and the budget of the call host pays it at each load, whatever the text. A compile of a whole program waits for the export `build`, whose builder has a budget of its own.
 
 ## The machine step: a module from the memory of the console
 

@@ -34,8 +34,9 @@ import "modus:system"
 
 // The bytes of a source that the module takes. The source is copied
 // before the C part reads it: in an isolated call it is in the call
-// region, which the caller can change during the call.
-SOURCE_BYTES_MOST :: 64 * 1024
+// region, which the caller can change during the call. The copy is in the
+// arena, so a short source does not pay for the bound.
+SOURCE_BYTES_MOST :: 256 * 1024
 
 // The bytes of the diagnostic of chibicc that the module keeps for its
 // log. It is memory of the module, not of the arena: a diagnostic still
@@ -83,7 +84,6 @@ foreign _ {
 	chibicc_compile :: proc "c" (call: ^Compile_Call) -> i32 ---
 }
 
-source_copy: [SOURCE_BYTES_MOST]u8
 diagnostic: [DIAGNOSTIC_BYTES]u8
 
 // chibicc keeps its state in static variables, and the module is loaded
@@ -168,7 +168,7 @@ output_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Re
 
 // compile writes the text of assembly of a C source into a memory object, and gives the bytes of the text.
 //
-// `source` is the C source, 1 byte to 64 KiB, with no byte 0. `output` is a memory object that the caller lends to
+// `source` is the C source, 1 byte to 256 KiB, with no byte 0. `output` is a memory object that the caller lends to
 // write; the text starts at its first byte, and the module `assemble` takes it. Each function that is not `static`
 // becomes an `export` of the text: its `int` and `long` parameters and result are Integers. A call host compiles one
 // source: a second call that reaches the compiler fails with `Refused`, and `unload` then `isolate` give a new one. A
@@ -186,18 +186,6 @@ compile :: proc "c" (source: ^system.Bytes_To_Read, output: system.Lent({.Read, 
 	if count > SOURCE_BYTES_MOST {
 		return errors.fail(error, ERROR, .Too_Long, .Bytes, ARGUMENT_SOURCE, i64(count), SOURCE_BYTES_MOST)
 	}
-	intrinsics.mem_copy_non_overlapping(&source_copy[0], source.bytes, int(count))
-	// chibicc reads a file up to its first byte 0: a source with one would
-	// be compiled in part, with no word of it.
-	for index in 0 ..< int(count) {
-		if source_copy[index] == 0 {
-			return errors.fail(error, ERROR, .Bad_Byte, .None, ARGUMENT_SOURCE, i64(index), 0, 0)
-		}
-	}
-	if compiler_used {
-		system.log_fact(.Info, Second_Source_Refused{})
-		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, 0)
-	}
 
 	amounts, budget_status := system.budget_read()
 	if budget_status != .Ok {
@@ -214,11 +202,36 @@ compile :: proc "c" (source: ^system.Bytes_To_Read, output: system.Lent({.Read, 
 		}
 		return ERROR
 	}
+	copy_address, copy_status := system.arena_push(&arena, count, 1, &arena_refusal)
+	if copy_status != .Ok {
+		system.arena_end(&arena)
+		if error != nil {
+			error^ = arena_refusal
+			error.operation = 0
+			error.argument = 0
+		}
+		return ERROR
+	}
+	source_copy := ([^]u8)(copy_address)
+	intrinsics.mem_copy_non_overlapping(source_copy, source.bytes, int(count))
+	// chibicc reads a file up to its first byte 0: a source with one would
+	// be compiled in part, with no word of it.
+	for index in 0 ..< int(count) {
+		if source_copy[index] == 0 {
+			system.arena_end(&arena)
+			return errors.fail(error, ERROR, .Bad_Byte, .None, ARGUMENT_SOURCE, i64(index), 0, 0)
+		}
+	}
+	if compiler_used {
+		system.arena_end(&arena)
+		system.log_fact(.Info, Second_Source_Refused{})
+		return errors.fail(error, ERROR, .Refused, .None, 0, 0, 0, 0)
+	}
 	compiler_used = true
 	memory_refused = false
 
 	call := Compile_Call {
-		source                  = &source_copy[0],
+		source                  = source_copy,
 		source_size             = count,
 		memory_provider         = memory_provide,
 		memory_provider_context = &arena,
@@ -237,6 +250,13 @@ compile :: proc "c" (source: ^system.Bytes_To_Read, output: system.Lent({.Read, 
 
 	switch result {
 	case .Refused:
+		// The byte that the diagnostic names is read before the arena ends:
+		// the copy of the source is in the arena.
+		named_byte: i64
+		named := call.error_offset >= 0 && call.error_offset < i64(count)
+		if named {
+			named_byte = i64(source_copy[call.error_offset])
+		}
 		system.arena_end(&arena)
 		if memory_refused {
 			// The record of the refused commit, in the words of the export:
@@ -248,8 +268,8 @@ compile :: proc "c" (source: ^system.Bytes_To_Read, output: system.Lent({.Read, 
 			}
 			return ERROR
 		}
-		if call.error_offset >= 0 && call.error_offset < i64(count) {
-			return errors.fail(error, ERROR, .Bad_Byte, .None, ARGUMENT_SOURCE, call.error_offset, 0, i64(source_copy[call.error_offset]))
+		if named {
+			return errors.fail(error, ERROR, .Bad_Byte, .None, ARGUMENT_SOURCE, call.error_offset, 0, named_byte)
 		}
 		return errors.fail(error, ERROR, .Refused, .None, ARGUMENT_SOURCE, 0, 0, 0)
 	case .Done:

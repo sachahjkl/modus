@@ -305,7 +305,7 @@ texts_past_their_bounds_are_refused :: proc(t: ^testing.T) {
 	record = expect_refusal(t, line_past_bound, .Line_Too_Long, 2, LINE_BYTES_MOST + 1)
 	testing.expect_value(t, record.value, u64(LINE_BYTES_MOST + 1))
 
-	// The code: 65 536 bytes, then one more.
+	// The code: 131 072 bytes, then one more.
 	code_at_bound := strings.repeat("ret\n", CODE_BYTES_MOST, context.temp_allocator)
 	workspace := new(Workspace)
 	defer free(workspace)
@@ -315,8 +315,8 @@ texts_past_their_bounds_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, record.value, u64(CODE_BYTES_MOST + 1))
 
 	// The data: its last byte, then one past it; an extent past its bound.
-	expect_code(t, "ret; section data; zero 65535; byte 1", {0xC3})
-	record = expect_refusal(t, "ret; section data; zero 65536; byte 1", .Section_Past_Capacity, 1, 37)
+	expect_code(t, "ret; section data; zero 131071; byte 1", {0xC3})
+	record = expect_refusal(t, "ret; section data; zero 131072; byte 1", .Section_Past_Capacity, 1, 38)
 	testing.expect_value(t, record.value, u64(DATA_BYTES_MOST + 1))
 	record = expect_refusal(t, "section data; zero 0x10000000001", .Section_Past_Capacity, 1, 20)
 	testing.expect_value(t, record.value, SECTION_EXTENT_MOST + 1)
@@ -521,7 +521,7 @@ exports_that_break_a_rule_are_refused :: proc(t: ^testing.T) {
 
 @(test)
 tables_past_their_capacity_are_refused :: proc(t: ^testing.T) {
-	// 512 labels, then 513.
+	// 2048 labels, then 2049.
 	builder := strings.builder_make(context.temp_allocator)
 	for index in 0 ..< LABEL_CAPACITY {
 		fmt.sbprintf(&builder, "label_%d:\n", index)
@@ -532,7 +532,7 @@ tables_past_their_capacity_are_refused :: proc(t: ^testing.T) {
 	record := expect_refusal(t, strings.concatenate({labels_at_bound, "one_more: ret"}, context.temp_allocator), .Labels_Full, LABEL_CAPACITY + 2, 1)
 	testing.expect_value(t, record.value, u64(LABEL_CAPACITY))
 
-	// 2048 references, then 2049.
+	// 4096 references, then 4097.
 	references_at_bound := strings.concatenate({"x: jmp x\n", strings.repeat("jmp x\n", REFERENCE_CAPACITY - 1, context.temp_allocator)}, context.temp_allocator)
 	workspace := new(Workspace)
 	defer free(workspace)
@@ -809,7 +809,7 @@ quad_refuses_what_a_loader_cannot_rebase :: proc(t: ^testing.T) {
 	expect_refusal(t, "f: ret; section data; quad $1", .Operand_Not_Valid, 1, 28)
 	expect_refusal(t, "f: ret; section data; quad 9abc", .Number_Not_Valid, 1, 28)
 	// A quad that passes the bytes of the section data.
-	expect_refusal(t, "ret; section data; zero 65528; quad 0, 0", .Section_Past_Capacity, 1, 40)
+	expect_refusal(t, "ret; section data; zero 131064; quad 0, 0", .Section_Past_Capacity, 1, 41)
 }
 
 @(test)
