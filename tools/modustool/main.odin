@@ -565,6 +565,29 @@ COMMANDS :: [?]foundation.Command {
 	// stops the command with the page and the reason, and writes nothing. The
 	// design: (docs/SITE.md, "The command").
 	{name = "site", about = "write the site of the system in " + site.SITE_FOLDER + ": the pages from the documents, the code, the news, the pictures and the logs of the last machine tests, an index and one small script for the search, and the feed of the news; no request to another server", run = run_site},
+	// Builds the kernel of a browser machine: `src/modulus` for
+	// `freestanding_wasm64p32`, in `build/browser_machine/modulus_kernel.wasm`.
+	// It checks the border of the file: each import is one of the six
+	// functions of the module `modus_page` that the page gives, and the
+	// exports are `memory`, `entry` and `modus_processor_loop_run`. It
+	// writes the page, its worker and the host of the kernel beside it, and
+	// the boot image of the build when there is one: the folder is a site
+	// that a static server serves.
+	//
+	// - `boot` (optional): then start the kernel in Node with the host of
+	//   the page, print each line of its serial port, and check the mark of
+	//   the kernel and, with a boot image, the start of the root service.
+	//   The run ends when the machine stops, or at the hang bound. Node 24
+	//   or later must be on the path.
+	// - `<boot image>` (optional, after `boot`): the boot image to start, in
+	//   place of the one of the build.
+	//
+	// ```
+	// nix develop -c modustool browser-machine boot
+	// ```
+	//
+	// The design: src/md/features/browser_machine.md, "The page and its host".
+	{name = "browser-machine", about = "build the kernel for WebAssembly in " + build.BROWSER_MACHINE_FOLDER + ", check its imports and its exports, and write the page of the browser machine beside it; `browser-machine boot [<boot image>]`: then start it in Node and print its serial port", run = build.run_browser_machine},
 	// Prints the number of the newest release of `CHANGELOG.md`, as `0.91.0`:
 	// the number that a workflow gives to a release.
 	{name = "release_number", about = "print the release number of the system: the newest release of `" + checks.CHANGELOG_FILE + "`", run = checks.run_release_number},
