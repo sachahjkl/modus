@@ -156,17 +156,18 @@ powerbox_dialog_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	x := max(0, (desktop_width - width) / 2)
 	y := max(desktop_work_top() + 16, min((desktop_height - height) / 2, desktop_work_bottom() - height - 16))
 
-	// The frame of a window of the Kernel theme: a sharp shadow, a dark
-	// outer line, a line of the blue of the title inside it, the cards
-	// gradient, and the title plate in the gradient of a focused window
-	// with its line of light.
-	interface.draw_rectangle(table, x + 4, y + 4, width, height, graphics.shade(graphics.colors.background, 55))
+	// The frame of a window: a sharp shadow, the outer line of the edge, a
+	// line of the blue of the title inside it, the cards gradient, and the
+	// title plate in the gradient of a focused window with its line of
+	// light. The shadow and the edge are tokens: a shade of the background
+	// is near black in the light appearance too, a black box there.
+	interface.draw_rectangle(table, x + 4, y + 4, width, height, graphics.colors.shadow)
 	interface.draw_vertical_gradient(table, x, y, width, height, graphics.colors.card_top, graphics.colors.card_bottom)
-	interface.draw_outline(table, x, y, width, height, 1, graphics.shade(graphics.colors.background, 50))
+	interface.draw_outline(table, x, y, width, height, 1, graphics.colors.edge)
 	interface.draw_outline(table, x + 1, y + 1, width - 2, height - 2, 1, graphics.colors.title)
 	interface.draw_horizontal_gradient(table, x + 2, y + 2, width - 4, 1, graphics.shade(graphics.colors.title, 125), graphics.shade(graphics.colors.title_end, 125))
 	interface.draw_horizontal_gradient(table, x + 2, y + 3, width - 4, POWERBOX_TITLE_HEIGHT - 1, graphics.colors.title, graphics.colors.title_end)
-	interface.draw_rectangle(table, x + 2, y + 2 + POWERBOX_TITLE_HEIGHT, width - 4, 1, graphics.shade(graphics.colors.background, 50))
+	interface.draw_rectangle(table, x + 2, y + 2 + POWERBOX_TITLE_HEIGHT, width - 4, 1, graphics.colors.edge)
 	header := is_picker ? "TRUSTED STORE PICKER" : "TRUSTED GRANT REQUEST"
 	interface.draw_text(table, x + POWERBOX_MARGIN - 4, y + 2 + (POWERBOX_TITLE_HEIGHT - graphics.CELL_HEIGHT) / 2, header, graphics.COLOR_WHITE, interface.FONT_INTERFACE_BOLD)
 
@@ -175,7 +176,7 @@ powerbox_dialog_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	body_y := y + 2 + POWERBOX_TITLE_HEIGHT + 1 + 12
 	proc_str := string(powerbox_prompt.process_name[:powerbox_prompt.process_len])
 	res_str := string(powerbox_prompt.resource_text[:powerbox_prompt.resource_len])
-	interface.draw_text(table, x + POWERBOX_MARGIN, body_y, interface.text_fit(table, interface.FONT_INTERFACE, proc_str, text_room), graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+	interface.draw_text(table, x + POWERBOX_MARGIN, body_y, interface.text_fit(table, interface.FONT_INTERFACE, proc_str, text_room), graphics.colors.text_strong, interface.FONT_INTERFACE)
 	interface.draw_text(table, x + POWERBOX_MARGIN, body_y + 22, interface.text_fit(table, interface.FONT_INTERFACE, res_str, text_room), graphics.colors.dim, interface.FONT_INTERFACE)
 
 	button_y := y + height - POWERBOX_MARGIN - POWERBOX_BUTTON_HEIGHT
@@ -184,7 +185,7 @@ powerbox_dialog_records :: proc "contextless" (table: ^interface.Draw_Table) {
 		// store is a plate in the gradient of the chosen blue.
 		list_x, list_y := x + POWERBOX_MARGIN, body_y + 48
 		list_width, list_height := text_room, POWERBOX_PICKER_SLOTS * POWERBOX_PICKER_LINE + 2
-		interface.draw_rectangle(table, list_x, list_y, list_width, list_height, graphics.shade(graphics.colors.card_bottom, 80))
+		interface.draw_rectangle(table, list_x, list_y, list_width, list_height, graphics.colors.recess)
 		interface.draw_outline(table, list_x, list_y, list_width, list_height, 1, graphics.colors.track)
 		for i in 0 ..< powerbox_prompt.picker_count {
 			ry := list_y + 1 + i * POWERBOX_PICKER_LINE
@@ -223,7 +224,9 @@ powerbox_button_records :: proc "contextless" (table: ^interface.Draw_Table, rig
 		interface.draw_rectangle(table, left + 1, y + 1, width - 2, 1, graphics.shade(graphics.colors.track, 130))
 	}
 	text_y := y + (POWERBOX_BUTTON_HEIGHT - graphics.CELL_HEIGHT) / 2
-	key_x := interface.draw_text(table, left + POWERBOX_BUTTON_PADDING, text_y, act, graphics.COLOR_WHITE, interface.FONT_INTERFACE) + POWERBOX_BUTTON_GAP
+	// The act: white on the chosen blue; on the track, the strong text, so
+	// the refusal reads on the light track too.
+	key_x := interface.draw_text(table, left + POWERBOX_BUTTON_PADDING, text_y, act, grants ? graphics.COLOR_WHITE : graphics.colors.text_strong, interface.FONT_INTERFACE) + POWERBOX_BUTTON_GAP
 	// The key in the text color on the track: the dim color has the
 	// contrast of a large text only there.
 	interface.draw_text(table, key_x, text_y, key, grants ? graphics.COLOR_WHITE : graphics.colors.text, interface.FONT_INTERFACE)

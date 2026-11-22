@@ -582,7 +582,8 @@ panel_draw :: proc "contextless" (frame: ^interface.Frame, panel: ^Panel, x, y: 
 	// band is the edge there.
 	body_top := y + INPUT_BAND_HEIGHT
 	body_height := PANEL_HEIGHT - INPUT_BAND_HEIGHT
-	interface.draw_vertical_gradient(table, x, body_top, PANEL_WIDTH, body_height, graphics.shade(graphics.colors.kernel, 28), graphics.shade(graphics.colors.kernel, 14))
+	border_top, border_bottom := graphics.card_border_colors(graphics.colors.kernel, graphics.appearance)
+	interface.draw_vertical_gradient(table, x, body_top, PANEL_WIDTH, body_height, border_top, border_bottom)
 	interface.draw_vertical_gradient(table, x + BORDER, body_top, PANEL_WIDTH - 2 * BORDER, body_height - BORDER, graphics.colors.card_top, graphics.colors.card_bottom)
 	if list == nil {
 		return
@@ -952,8 +953,11 @@ form_buttons_draw :: proc "contextless" (frame: ^interface.Frame, form: ^Form, b
 		chosen := index == form.candidate_choice
 		fill := graphics.Color(buttons.in_band ? graphics.colors.card_top : graphics.colors.track)
 		color := graphics.Color(graphics.colors.text)
+		// The chosen candidate is a reversed plate: the strong text as its
+		// fill, the background as its label. A white plate vanishes on the
+		// white card of the light appearance.
 		if chosen {
-			fill, color = graphics.COLOR_WHITE, graphics.COLOR_INK
+			fill, color = graphics.colors.text_strong, graphics.colors.background
 		}
 		interface.draw_rectangle(table, area.x, area.y, area.width, area.height, fill)
 		interface.draw_text(table, area.x + VALUE_BUTTON_PADDING, area.y + (area.height - interface.LINE) / 2, candidate_name(form, index), color, interface.FONT_INTERFACE)

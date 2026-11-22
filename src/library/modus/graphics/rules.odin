@@ -44,6 +44,18 @@ Color_Tokens :: struct {
 	card_top:    Color, // A card goes from this color at the top...
 	card_bottom: Color, // ...to this color at the bottom.
 	track:       Color, // The empty part of a bar, a band or a tube; a button.
+	// The sharp shadow of a surface that lies over the desktop: a menu, a
+	// dialog. A shade of the background in each appearance: a shadow of
+	// near black on the light background is a black box, not a depth.
+	shadow:      Color,
+	// The outer line of a surface that lies over the desktop: a menu, a
+	// dialog, the line under the title plate of a dialog. Darker than a
+	// card in both appearances, and 3 to 1 on the light surfaces.
+	edge:        Color,
+	// A list sunk into a card: the stores of the dialog of the powerbox.
+	// One step under the card in the dark appearance; the background in
+	// the light one, so the list stays a light surface for the text.
+	recess:      Color,
 	// The colors of the concepts (section 4). One color is one concept.
 	firmware:     Color, // The firmware.
 	boot_program: Color, // Also the state "starts".
@@ -106,6 +118,9 @@ DARK_POINT :: 0x18212D
 DARK_CARD_TOP :: 0x17212E
 DARK_CARD_BOTTOM :: 0x111822
 DARK_TRACK :: 0x1C2633
+DARK_SHADOW :: 0x06080D // shade(DARK_BACKGROUND, 55).
+DARK_EDGE :: 0x05070B // shade(DARK_BACKGROUND, 50).
+DARK_RECESS :: 0x0D131B // shade(DARK_CARD_BOTTOM, 80).
 DARK_FIRMWARE :: 0x8E7CC3
 DARK_BOOT_PROGRAM :: 0xE0A040
 DARK_KERNEL :: 0x4A9CF0
@@ -149,6 +164,9 @@ DARK_COLOR_TOKENS :: Color_Tokens {
 	card_top                  = DARK_CARD_TOP,
 	card_bottom               = DARK_CARD_BOTTOM,
 	track                     = DARK_TRACK,
+	shadow                    = DARK_SHADOW,
+	edge                      = DARK_EDGE,
+	recess                    = DARK_RECESS,
 	firmware                  = DARK_FIRMWARE,
 	boot_program              = DARK_BOOT_PROGRAM,
 	kernel                    = DARK_KERNEL,
@@ -191,6 +209,9 @@ LIGHT_COLOR_TOKENS :: Color_Tokens {
 	card_top                  = 0xFFFFFF,
 	card_bottom               = 0xF9FAFB, // mix(white, background, 50 %).
 	track                     = 0xD6DBE0, // mix(background, DARK_DIM, 25 %).
+	shadow                    = 0xC3CAD2,
+	edge                      = 0x808B99, // 3.2 to 1 on the background, 3.5 on white.
+	recess                    = 0xF4F6F8, // The background.
 	firmware                  = 0x7566A1, // shade(DARK_FIRMWARE, 83).
 	boot_program              = 0x906729, // shade(DARK_BOOT_PROGRAM, 65).
 	kernel                    = 0x3571AF, // shade(DARK_KERNEL, 73).
@@ -247,6 +268,21 @@ color_tokens_of :: proc "contextless" (of: Appearance) -> Color_Tokens {
 appearance_use :: proc "contextless" (of: Appearance) {
 	appearance = of
 	colors = color_tokens_of(of)
+}
+
+// card_border_colors gives the border of a card in its accent, at the top
+// and at the bottom (docs/DESIGN.md, "3. Surfaces"). The dark appearance
+// takes the accent toward black, 28 % then 14 %; the light appearance takes
+// the accent into the white of the card, 40 % then 55 %. The dark rule on a
+// white card draws a line of near black: a dark frame around a light card.
+// Both ends are darker at the bottom, the sign of depth of a surface.
+card_border_colors :: proc "contextless" (accent: Color, of: Appearance) -> (top, bottom: Color) {
+	switch of {
+	case .Light:
+		return mix(COLOR_WHITE, accent, 40 * 255 / 100), mix(COLOR_WHITE, accent, 55 * 255 / 100)
+	case .Dark:
+	}
+	return shade(accent, 28), shade(accent, 14)
 }
 
 // mix gives a color between two colors: level 0 is the first, 255 the second.

@@ -72,7 +72,8 @@ card :: proc "contextless" (frame: ^Frame, area: Area, title, caption: string, a
 	card_id := title != "" ? identity_in(identity("card"), title) : identity("card")
 	draw_element_push(table, area, u32(card_id), .Group, {name = title, description = caption})
 	defer draw_element_pop(table)
-	draw_vertical_gradient(table, area.x, area.y, area.width, area.height, graphics.shade(accent, 28), graphics.shade(accent, 14), u32(card_id))
+	border_top, border_bottom := graphics.card_border_colors(accent, graphics.appearance)
+	draw_vertical_gradient(table, area.x, area.y, area.width, area.height, border_top, border_bottom, u32(card_id))
 	draw_vertical_gradient(table, area.x + 1, area.y + 1, area.width - 2, area.height - 2, graphics.colors.card_top, graphics.colors.card_bottom, u32(card_id))
 	title_top := area.y + 12
 	draw_vertical_gradient(table, area.x + graphics.MARGIN, title_top, 4, 16, graphics.shade(accent, 130), accent, u32(card_id))
