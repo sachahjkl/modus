@@ -24,6 +24,7 @@ package output_reader
 
 import op "modus:contract/operation"
 import "modus:contract/output"
+import "modus:contract/value_kinds"
 import "modus:system"
 
 // One probe, as the writer describes it: the type check compares the two
@@ -56,7 +57,7 @@ hang_deadline :: proc "contextless" () -> u64 {
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "output_reader: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
@@ -81,7 +82,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			if first.kind != .Joined || status != .Ok || second.kind != .Record {
 				wrong("watched did not give the joined record and one probe; the status", u64(status))
 			}
-			system.log(.Info, "output_reader: watched: the joined record and one probe, then this reader stops: as it must")
+			system.log_fact(.Info, Watched_Read{})
 			system.stop(.Done)
 		}
 		if system.time() >= deadline {
@@ -110,7 +111,7 @@ probes_read :: proc "contextless" () {
 	if status != .Ended || item.kind != .End || item.error.kind != 0 || item.serial != PROBES_OF_THE_STREAM {
 		wrong("probes did not end with a clean end record; the status", u64(status))
 	}
-	system.log(.Info, "output_reader: probes: joined after ", u64(joined), " records, the probes ", u64(joined), " to ", u64(PROBES_OF_THE_STREAM - 1), " in order, and a clean end: as it must")
+	system.log_fact(.Info, Probes_Read{joined_serial = u64(joined), first_probe = u64(joined), last_probe = PROBES_OF_THE_STREAM - 1})
 }
 
 // unended_read reads the joined record of 0, one probe, and the end word
@@ -132,5 +133,5 @@ unended_read :: proc "contextless" () {
 	if end.stop_cause != .Itself || end.stop_outcome != .Done {
 		wrong("unended did not carry the stop itself, Done; the stop cause", u64(end.stop_cause))
 	}
-	system.log(.Info, "output_reader: unended: the joined record of 0, one probe, then the end word ", output.end_word_names[end.end_word], " with the stop ", op.STOP_CAUSE_TEXTS[end.stop_cause], ", ", op.STOP_OUTCOME_TEXTS[end.stop_outcome], ": as it must")
+	system.log_fact(.Info, Unended_Read{stop_cause = op.Stop_Cause_Word(end.stop_cause), stop_outcome = op.Stop_Outcome_Word(end.stop_outcome), end_word = value_kinds.text_field(output.end_word_names[end.end_word], END_WORD_FIELD_BYTES)})
 }

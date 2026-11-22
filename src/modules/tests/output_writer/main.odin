@@ -25,6 +25,7 @@
 package output_writer
 
 import "modus:contract/output"
+import "modus:contract/value_kinds"
 import "modus:system"
 
 // One probe: its serial in the record output, and a mark of it.
@@ -83,7 +84,7 @@ probe_of :: proc "contextless" (serial: u64) -> Probe {
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "output_writer: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
@@ -98,7 +99,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		if status := system.output_write(&unended, probe_of(0)); status != .Ok {
 			wrong("the probe of unended gave the status", u64(status))
 		}
-		system.log(.Info, "output_writer: unended: one probe, then the stop with no end record: as it must")
+		system.log_fact(.Info, Unended_Written{})
 	case system.output_read_by(&watched):
 		ended_case(&watched, .Reader_Stopped, "watched")
 	case system.output_read_by(&asked):
@@ -135,7 +136,7 @@ probes_case :: proc "contextless" () {
 	if status := system.output_write(&probes, probe_of(PROBES_OF_THE_STREAM)); status != .Ended {
 		wrong("a write after the end gave the status", u64(status))
 	}
-	system.log(.Info, "output_writer: probes: ", u64(PROBES_OF_THE_STREAM), " probes to two readers, the second one after ", u64(PROBES_BEFORE_THE_SECOND_READER), ", a clean end, and Ended after it: as it must")
+	system.log_fact(.Info, Probes_Written{probes = PROBES_OF_THE_STREAM, probes_before_second = PROBES_BEFORE_THE_SECOND_READER})
 }
 
 // ended_case writes one probe, then waits until the ring ends with the end
@@ -155,7 +156,7 @@ ended_case :: proc "contextless" (stream: ^system.Record_Output(Probe), wanted: 
 	if stream.last_end != wanted {
 		wrong("the ring ended with the end word", u64(stream.last_end))
 	}
-	system.log(.Info, "output_writer: ", name, ": the ring ended with the end word ", output.end_word_names[wanted], ": as it must")
+	system.log_fact(.Info, Ring_Ended{case_name = value_kinds.text_field(name, CASE_FIELD_BYTES), end_word = value_kinds.text_field(output.end_word_names[wanted], END_WORD_FIELD_BYTES)})
 }
 
 // The wirings of `large` that the asker makes: the limit of the wirings of
@@ -181,5 +182,5 @@ revoked_case :: proc "contextless" () {
 	if large.rings_ended != LARGE_WIRINGS || large.last_end != .Revoked {
 		wrong("the rings of large ended with the end word", u64(large.last_end))
 	}
-	system.log(.Info, "output_writer: large: ", u64(LARGE_WIRINGS), " rings, each ended with the end word Revoked: as it must")
+	system.log_fact(.Info, Large_Rings_Revoked{rings = LARGE_WIRINGS})
 }

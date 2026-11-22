@@ -28,6 +28,7 @@
 package output_measure_writer
 
 import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:system"
 
 // One record of the measures: the size and the Text fields of the access
@@ -71,7 +72,7 @@ WAKE_PAUSE_MILLISECONDS :: 1
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "output_measure_writer: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
@@ -130,7 +131,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		times[index] = system.cycles() - start
 	}
 	least, median := least_and_median(times[:])
-	system.log(.Info, "output_measure_writer: ", readers, " readers: one write of a record of ", u64(size_of(Sample)), " bytes into the ring of each reader: least ", least, ", median ", median, " cycles, of ", u64(TIMED_SAMPLES), " writes")
+	system.log_fact(.Info, Write_Measured{readers = readers, record_bytes = size_of(Sample), least = least, median = median, writes = TIMED_SAMPLES})
 	if readers == 1 {
 		for index in 0 ..< LOG_FACT_SAMPLES {
 			sample := sample_of(readers)
@@ -142,18 +143,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// The context says if the start wired log: the root service writes
 		// the handle of its ring there, and 0 else.
 		wired := ctx.handles[op.CONTEXT_LOG_OUTPUT] != 0
-		state := wired ? "wired" : "not wired"
+		log_state := value_kinds.text_field(wired ? "wired" : "not wired", LOG_STATE_FIELD_BYTES)
 		if !wired {
-			system.log(.Info, "output_measure_writer: one log fact of the same record: least ", least, ", median ", median, " cycles, of ", u64(LOG_FACT_SAMPLES), " facts")
+			system.log_fact(.Info, Log_Fact_Measured{least = least, median = median, facts = LOG_FACT_SAMPLES})
 		}
-		system.log(.Info, "output_measure_writer: measure 9, the log ", state, ": one log fact: least ", least, ", median ", median, " cycles, of ", u64(LOG_FACT_SAMPLES), " facts")
+		system.log_fact(.Info, Measure_Nine_Fact{least = least, median = median, facts = LOG_FACT_SAMPLES, log_state = log_state})
 		for index in 0 ..< LOG_FACT_SAMPLES {
 			start := system.cycles()
+			// The line of text is the subject of this measure, against the
+			// fact above: it stays text.
 			system.log(.Info, "output_measure_writer: a line of the measure ", u64(index))
 			times[index] = system.cycles() - start
 		}
 		least, median = least_and_median(times[:LOG_FACT_SAMPLES])
-		system.log(.Info, "output_measure_writer: measure 9, the log ", state, ": one line of text with one value: least ", least, ", median ", median, " cycles, of ", u64(LOG_FACT_SAMPLES), " lines")
+		system.log_fact(.Info, Measure_Nine_Line{least = least, median = median, lines = LOG_FACT_SAMPLES, log_state = log_state})
 	}
 	if status := system.output_end(&samples, deadline = system.time() + system.TEST_HANG_BOUND_MILLISECONDS); status != .Ok {
 		wrong("the end of samples gave the status word", u64(status))

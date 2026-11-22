@@ -35,7 +35,7 @@ STATUS_NOT_FOUND :: 404
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "output_count_reader: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
@@ -61,6 +61,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		serials[index] = record.serial
 	}
-	system.log(.Info, "output_count_reader: joined after ", u64(joined.serial), " records, then ", u64(RECORDS_READ), " records of the status 404, serials ", serials[0], ", ", serials[1], " and ", serials[2], ", each 3 or more past the one before: as it must")
+	system.log_fact(.Info, Counts_Read{joined_serial = u64(joined.serial), records = RECORDS_READ, first_serial = serials[0], second_serial = serials[1], third_serial = serials[2]})
 	system.stop(.Done)
 }

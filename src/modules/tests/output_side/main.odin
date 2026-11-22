@@ -51,7 +51,7 @@ hang_deadline :: proc "contextless" () -> u64 {
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "output_side: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
@@ -136,7 +136,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// this side and kept the wiring for the asker.
 	probe_write(second)
 	answer(output.wiring_closed_completion(second.tag))
-	system.log(.Info, "output_side: refused the end of its start; for the end of a Wire, wrote Closed for a number of no wiring, then Taken, Taken again, one probe and Closed; it reads no more commands: as it must")
+	system.log_fact(.Info, Ends_Written{})
 	deadline := hang_deadline()
 	for system.time() < deadline {
 		wait := system.wait_begin()

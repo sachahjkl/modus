@@ -125,7 +125,7 @@ hang_deadline :: proc "contextless" () -> u64 {
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "output_wiring: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
@@ -133,7 +133,7 @@ wrong :: proc "contextless" (text: string, value: u64) -> ! {
 // error record of the completion too: several limits of the root service
 // give one status, and the record names the one that refused.
 wrong_refused :: proc "contextless" (text: string, status: system.Status, answer: [7]u64) -> ! {
-	system.log(.Error, "output_wiring: WRONG: ", text, " ", u64(status), "; the error record: ", answer[0], " ", answer[1], " ", answer[2], " ", answer[3], " ", answer[4], " ", answer[5], " ", answer[6])
+	system.log_fact(.Error, Wrong_Refused{status = u64(status), error_kind = answer[0], error_unit = answer[1], error_operation = answer[2], error_argument = answer[3], error_value = answer[4], error_limit = answer[5], error_found = answer[6]}, text)
 	system.stop(.Failed)
 }
 
@@ -267,12 +267,12 @@ refused :: proc "contextless" (what: string, before: u64, status: system.Status,
 		want.found = record.found
 	}
 	if status != wanted || record != want {
-		system.log(.Error, "output_wiring: WRONG: ", what, ": the status ", status, ", the kind ", record.kind, ", the unit ", record.unit, ", the operation ", record.operation, ", the argument ", record.argument, ", the value ", record.value, ", the limit ", record.limit, ", the found ", record.found)
-		system.log(.Error, "output_wiring: WRONG: ", what, ": wanted the status ", wanted, ", the kind ", want.kind, ", the unit ", want.unit, ", the operation ", want.operation, ", the argument ", want.argument, ", the value ", want.value, ", the limit ", want.limit, ", the found ", want.found)
+		system.log_fact(.Error, Wrong_Refusal{status = op.Status_Word(status), kind = record.kind, unit = record.unit, operation = record.operation, argument = record.argument, value = record.value, limit = record.limit, found = record.found}, what)
+		system.log_fact(.Error, Wrong_Refusal_Wanted{status = op.Status_Word(wanted), kind = want.kind, unit = want.unit, operation = want.operation, argument = want.argument, value = want.value, limit = want.limit, found = want.found}, what)
 		system.stop(.Failed)
 	}
 	if after := budget_pages(); after != before {
-		system.log(.Error, "output_wiring: WRONG: ", what, ": the budget held ", before, " pages before and ", after, " after")
+		system.log_fact(.Error, Wrong_Budget{pages_before = before, pages_after = after}, what)
 		system.stop(.Failed)
 	}
 	refusals += 1
@@ -319,7 +319,7 @@ budget_settled_wait :: proc "contextless" (wanted: u64, case_name: string) {
 			return
 		}
 		if system.time() >= deadline {
-			system.log(.Error, "output_wiring: WRONG: after ", case_name, ", the budget held ", held, " pages within the hang bound, and ", wanted, " at its start")
+			system.log_fact(.Error, Wrong_Budget_Not_Settled{pages_held = held, pages_wanted = wanted}, case_name)
 			system.stop(.Failed)
 		}
 		root_call(.Grants, {asker_name[0], asker_name[1], asker_name[2], asker_name[3], 0, 0, 0})
@@ -507,7 +507,7 @@ words_case :: proc "contextless" () {
 	system.memory_unmap(first_address)
 	system.close(first)
 	list_page_take()
-	system.log(.Info, "output_wiring: Wire before its list page, with a step that names nothing and with a reserved word, and the list page past the budget: refused, each with its status and its error record, the budget unchanged; then the list page, its handle revoked, unmapped and closed, and a new handle of it: as it must")
+	system.log_fact(.Info, List_Page_Checked{})
 }
 
 // lent_return_case: handles that an asker lent and names in a list of no
@@ -530,7 +530,7 @@ lent_return_case :: proc "contextless" () {
 		refused("a list of no row that gives back its lent handles", before, status, answer, .Bad_Operation, fail(.Wire, .Bad_Value, .Wiring_Rows, 0, 0, 1))
 	}
 	system.close(memory)
-	system.log(.Info, "output_wiring: ", u64(2 * LENT_MEMORY_ROUNDS), " lent handles given back with lists of no row, each list refused with its status and its error record and the budget unchanged: as it must")
+	system.log_fact(.Info, Lent_Handles_Given_Back{lent_handles = 2 * LENT_MEMORY_ROUNDS})
 }
 
 // probes_case: the reader of the start joins at 0, the reader of a Wire at
@@ -659,7 +659,7 @@ probes_case :: proc "contextless" () {
 	if status != .Ok || answer[0] == 0 {
 		wrong("the Wire of the second reader gave the status", u64(status))
 	}
-	system.log(.Info, "output_wiring: the refusals of a wiring, each with its status and its error record and the budget unchanged, ", u64(2 * LENT_MEMORY_ROUNDS), " lent memory handles among them, ", u64(LENT_MEMORY_ROUNDS), " conditions that the root service refuses at its border, and the Wire of the second reader: as it must")
+	system.log_fact(.Info, Wiring_Refusals_Checked{lent_handles = 2 * LENT_MEMORY_ROUNDS, conditions = LENT_MEMORY_ROUNDS})
 	processes := [3]system.Handle{writer, first_reader, second_reader}
 	stopped_wait(processes[:])
 	for process in processes {
@@ -751,7 +751,7 @@ start_case :: proc "contextless" () {
 	if found := errors.completion_record(answer).found; found < 1 || found > output.WIRING_ASKER_ROWS_OF_A_START {
 		wrong("the rings past the budget name the row", u64(found))
 	}
-	system.log(.Info, "output_wiring: the refusals of Start and of its list, each with its status and its error record and the budget unchanged: as it must")
+	system.log_fact(.Info, Start_Refusals_Checked{})
 }
 
 // end_words_case: Writer_Stopped and Reader_Stopped.
@@ -775,7 +775,7 @@ end_words_case :: proc "contextless" () {
 		system.close(reader)
 	}
 	budget_settled_wait(settled, "the end words")
-	system.log(.Info, "output_wiring: the writer that stopped and the reader that stopped: as it must")
+	system.log_fact(.Info, Stopped_Ends_Checked{})
 }
 
 // decimal_text writes value in decimal into digits, and gives the text.
@@ -803,7 +803,7 @@ decimal_text :: proc "contextless" (digits: []u8, value: u64) -> string {
 @(private = "file")
 log_text_wrong :: proc "contextless" (serial: u32, record: ^output.Log_Output_Record, wanted: string) -> ! {
 	text, _ := output.log_output_text(record)
-	system.log(.Error, "output_wiring: WRONG: the log of log_flood: the record ", u64(serial), " has the form ", u64(record.form), ", the level ", u64(record.level), ", more ", u64(record.more), ", the runs ", u64(record.run_count), " and the text \"", text, "\"; wanted \"", wanted, "\"")
+	system.log_fact(.Error, Wrong_Log_Text{record_serial = u64(serial), form_word = u64(record.form), level_word = u64(record.level), more = u64(record.more), runs = u64(record.run_count)}, text, wanted)
 	system.stop(.Failed)
 }
 
@@ -844,7 +844,7 @@ log_case :: proc "contextless" () {
 	read_next :: proc "contextless" (number: u32, record: ^output.Log_Output_Record, serial: u32) {
 		item, read_status := system.asker_read(number, record, hang_deadline())
 		if read_status != .Ok || item.kind != .Record || item.serial != serial {
-			system.log(.Error, "output_wiring: WRONG: the log of log_flood: the record ", u64(serial), " came as the status word ", u64(read_status), ", the kind word ", u64(item.kind), " and the serial ", u64(item.serial))
+			system.log_fact(.Error, Wrong_Log_Record{record_serial = u64(serial), status_word = u64(read_status), kind_word = u64(item.kind), serial = u64(item.serial)})
 			system.stop(.Failed)
 		}
 	}
@@ -875,7 +875,7 @@ log_case :: proc "contextless" () {
 	wanted_bytes := transmute([size_of(Flood_Fact)]u8)wanted_fact
 	fact, fact_ok := output.log_output_fact(&record)
 	if !fact_ok || record.level != .Warning || record.more != 0 || fact.part != 0 || fact.part_count != 1 || fact.key == 0 || int(fact.value_count) != size_of(Flood_Fact) || string(fact.values[:size_of(Flood_Fact)]) != string(wanted_bytes[:]) {
-		system.log(.Error, "output_wiring: WRONG: the log of log_flood: the record ", u64(next), " is not the fact Flood_Fact: the form ", u64(record.form), ", the level ", u64(record.level), ", the part ", u64(fact.part), " of ", u64(fact.part_count), ", the values ", u64(fact.value_count))
+		system.log_fact(.Error, Wrong_Flood_Fact{record_serial = u64(next), form_word = u64(record.form), level_word = u64(record.level), part = u64(fact.part), part_count = u64(fact.part_count), value_count = u64(fact.value_count)})
 		system.stop(.Failed)
 	}
 	next += 1
@@ -895,7 +895,7 @@ log_case :: proc "contextless" () {
 	// holds it past the end of its reader.
 	full, held_now, capacity := system.asker_full_and_writer_waits(number, output.Log_Output_Record, hang_deadline())
 	if full != .Held || held_now != capacity {
-		system.log(.Error, "output_wiring: WRONG: the ring of the log of log_flood was not full with log_flood waiting on it: the end ", u64(full), ", ", u64(held_now), " compartments of ", u64(capacity))
+		system.log_fact(.Error, Wrong_Log_Ring_Not_Full{end_word = u64(full), held_compartments = u64(held_now), capacity = u64(capacity)})
 		system.stop(.Failed)
 	}
 	if !system.asker_close(number) {
@@ -905,12 +905,12 @@ log_case :: proc "contextless" () {
 	stopped_wait(processes[:])
 	_, cause, outcome := system.process_state(flood)
 	if cause != .Itself || outcome != .Done {
-		system.log(.Error, "output_wiring: WRONG: log_flood, held by its log, stopped after the end of its reader with the cause ", u64(cause), " and the outcome ", u64(outcome), "; wanted itself and Done")
+		system.log_fact(.Error, Wrong_Flood_Stop{stop_cause_word = u64(cause), stop_outcome_word = u64(outcome)})
 		system.stop(.Failed)
 	}
 	system.close(flood)
 	budget_settled_wait(settled, "the log")
-	system.log(.Info, "output_wiring: the log of log_flood kept its ", u64(next), " records in order while the kernel refused its ", calls, " calls; then this asker closed its end, and log_flood, which its log held, stopped with Done: as it must")
+	system.log_fact(.Info, Flood_Log_Kept{records = u64(next), calls = calls})
 }
 
 // limit_case: the wirings of this process up to its limit, one past it
@@ -949,7 +949,7 @@ limit_case :: proc "contextless" () {
 	stopped_wait(processes[:])
 	system.close(writer)
 	budget_settled_wait(settled, "the limit of an asker")
-	system.log(.Info, "output_wiring: ", u64(output.WIRINGS_OF_AN_ASKER_MOST), " wirings, one past them refused with Wire and with a Start, each with its status and its error record and the budget unchanged, then the revocation of the grant wirings: as it must")
+	system.log_fact(.Info, Asker_Limit_Checked{wirings = output.WIRINGS_OF_AN_ASKER_MOST})
 }
 
 // side_case: output_side refuses the end of its start, then writes words
@@ -1047,7 +1047,7 @@ side_case :: proc "contextless" () {
 	stopped_wait(processes[:])
 	system.close(side)
 	budget_settled_wait(settled, "the side")
-	system.log(.Info, "output_wiring: the end that a side refused ended with Refused, the wiring that a side closed gave its probe then Side_Closed, and ", u64(SIDE_RING_CAPACITY), " ends filled the wiring ring that it does not read, then one more refused with Busy, its status and its error record and the budget unchanged: as it must")
+	system.log_fact(.Info, Side_Checked{ends = SIDE_RING_CAPACITY})
 }
 
 // asker_case: a wiring to this process as its asker, read with
@@ -1068,7 +1068,7 @@ asker_case :: proc "contextless" () -> ! {
 	if joined_status != .Ok || joined.kind != .Joined || joined.serial != 0 || item_status != .Ok || item.kind != .Record || probe.serial != 0 {
 		wrong("the wiring of the asker did not give the joined record of 0 and the probe 0; the status", u64(item_status))
 	}
-	system.log(.Info, "output_wiring: the wiring of this asker gave the joined record of 0 and the probe 0, after ", u64(refusals), " refusals; this asker stops: as it must")
-	system.log(.Info, "output_wiring: ok")
+	system.log_fact(.Info, Asker_Wiring_Checked{refusals = u64(refusals)})
+	system.log_fact(.Info, Checked{})
 	system.stop(.Done)
 }

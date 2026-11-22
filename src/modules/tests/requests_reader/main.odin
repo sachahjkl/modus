@@ -73,7 +73,7 @@ hang_deadline :: proc "contextless" () -> u64 {
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "requests_reader: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
@@ -86,11 +86,11 @@ next :: proc "contextless" (stream: ^system.Record_Input(Access_Record), name: s
 	status: output.Stream_Status
 	item, status = system.input_read(stream, &record, hang_deadline())
 	if status != .Ok {
-		system.log(.Error, "requests_reader: WRONG: ", name, ": the read of the serial ", u64(serial), " gave the status word ", u64(status))
+		system.log_fact(.Error, Wrong_Read_Status{serial = u64(serial), status_word = u64(status)}, name)
 		system.stop(.Failed)
 	}
 	if item.kind != kind || item.serial != serial {
-		system.log(.Error, "requests_reader: WRONG: ", name, ": wanted the kind word ", u64(kind), " and the serial ", u64(serial), ", read the kind word ", u64(item.kind), " and the serial ", u64(item.serial))
+		system.log_fact(.Error, Wrong_Read_Record{wanted_kind_word = u64(kind), wanted_serial = u64(serial), kind_word = u64(item.kind), serial = u64(item.serial)}, name)
 		system.stop(.Failed)
 	}
 	if kind == .Record && record.status != 200 {
@@ -113,7 +113,7 @@ records_read :: proc "contextless" (stream: ^system.Record_Input(Access_Record),
 writer_waits_on :: proc "contextless" (phase: u64) -> (capacity: u32) {
 	ended, held_now, ring_capacity := system.input_full_and_writer_waits(&held, hang_deadline())
 	if ended != .Held {
-		system.log(.Error, "requests_reader: WRONG: the ring of held was not full with the server waiting on it, in the phase ", phase, "; the end word ", u64(ended))
+		system.log_fact(.Error, Wrong_Held_Not_Full{phase = phase, end_word = u64(ended)})
 		system.stop(.Failed)
 	}
 	if ring_capacity != PACE_RING_CAPACITY || held_now != ring_capacity {
@@ -130,8 +130,12 @@ end_read :: proc "contextless" (stream: ^system.Record_Input(Access_Record), nam
 	if status != .Ended || item.end_word != .Writer_Stopped {
 		// No_Record: the writer neither stopped nor ended the stream within
 		// the hang bound.
-		meaning := status == .No_Record ? " (No_Record: no end within the hang bound)" : ""
-		system.log(.Error, "requests_reader: WRONG: ", name, ": after the last request, the status word ", u64(status), meaning, " and the end word ", output.end_word_names[item.end_word])
+		end_word := value_kinds.text_field(output.end_word_names[item.end_word], END_WORD_FIELD_BYTES)
+		if status == .No_Record {
+			system.log_fact(.Error, Wrong_End_Not_Read{status_word = u64(status), end_word = end_word}, name)
+		} else {
+			system.log_fact(.Error, Wrong_End{status_word = u64(status), end_word = end_word}, name)
+		}
 		system.stop(.Failed)
 	}
 }
@@ -152,14 +156,14 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	capacity := writer_waits_on(1)
 	next(&held, "held", .Joined, 0)
 	records_read(&held, "held", 0, capacity - 1)
-	system.log(.Info, "requests_reader: phase 1 read")
+	system.log_fact(.Info, Phase_One_Read{})
 	// 2. The second fill of held, which gapped refused whole: the records
 	// C - 1 to 2 C - 2, and the server waits for the record 2 C - 1.
 	writer_waits_on(2)
 	next(&gapped, "gapped", .Joined, 0)
 	records_read(&gapped, "gapped", 0, capacity - 1)
 	records_read(&held, "held", capacity - 1, 2 * capacity - 1)
-	system.log(.Info, "requests_reader: phase 2 read")
+	system.log_fact(.Info, Phase_Two_Read{})
 	// 3. The rest of the stream, and in gapped the gap record first.
 	records_read(&held, "held", 2 * capacity - 1, PACE_REQUESTS)
 	// The counts that the server published at the write of the last
@@ -167,7 +171,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// none refused, and held waited twice, once for each phase.
 	counts, counted := system.input_writer_counts(&held)
 	if !counted || counts.written != PACE_REQUESTS - 1 || counts.discarded != 0 || counts.refused != 0 || counts.held != HOLDS_OF_THE_TEST || counts.rings_past_gap != 0 {
-		system.log(.Error, "requests_reader: WRONG: the counts of the server in the ring of held: written ", counts.written, ", discarded ", counts.discarded, ", refused ", counts.refused, ", held ", counts.held, ", past their gap ", counts.rings_past_gap, "; wanted ", u64(PACE_REQUESTS - 1), ", 0, 0, ", u64(HOLDS_OF_THE_TEST), " and 0")
+		system.log_fact(.Error, Wrong_Counts{written = counts.written, discarded = counts.discarded, refused = counts.refused, held = counts.held, rings_past_gap = counts.rings_past_gap, wanted_written = PACE_REQUESTS - 1, wanted_held = HOLDS_OF_THE_TEST})
 		system.stop(.Failed)
 	}
 	end_read(&held, "held")
@@ -177,7 +181,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	records_read(&gapped, "gapped", 2 * capacity - 1, PACE_REQUESTS)
 	end_read(&gapped, "gapped")
-	system.log(.Info, "requests_reader: held, of the pace Always_Holds_Writer: the joined record of 0 and the ", u64(PACE_REQUESTS), " records in order, no gap, with a ring of ", u64(capacity), " that held the server twice: as it must")
-	system.log(.Info, "requests_reader: gapped, of the pace Never_Holds_Writer: the joined record of 0, ", u64(PACE_REQUESTS - capacity), " records, and one gap record of exactly ", u64(capacity), " records from the serial ", u64(capacity - 1), ", which the records around it meet: as it must")
+	system.log_fact(.Info, Held_Read{records = PACE_REQUESTS, ring_capacity = u64(capacity)})
+	system.log_fact(.Info, Gapped_Read{records = u64(PACE_REQUESTS - capacity), gap_records = u64(capacity), gap_serial = u64(capacity - 1)})
 	system.stop(.Done)
 }

@@ -40,7 +40,7 @@ other: system.Record_Output(Other)
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "generic_source: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
@@ -68,6 +68,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if system.output_reader_count(&other) != 0 {
 		wrong("other has a reader, which no list of the test gives it:", u64(system.output_reader_count(&other)))
 	}
-	system.log(.Info, "generic_source: wrote ", u64(PROBES_OF_A_SIDE), " probes into left and into right, and ended both")
+	system.log_fact(.Info, Probes_Written{probes = PROBES_OF_A_SIDE})
 	system.stop(.Done)
 }

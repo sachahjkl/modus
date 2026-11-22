@@ -36,12 +36,12 @@ STATUS_NOT_FOUND :: 404
 
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	system.log(.Info, "output_counter: it writes one record of counts each ", u64(COUNT_INTERVAL_MILLISECONDS), " ms while a reader is wired, and waits for a reader")
+	system.log_fact(.Info, Running{interval_milliseconds = COUNT_INTERVAL_MILLISECONDS})
 	had_reader := false
 	for {
 		if !system.output_read_by(&counts) {
 			if had_reader {
-				system.log(.Info, "output_counter: counts has no reader after ", u64(counts.next_serial), " records: it waits for one")
+				system.log_fact(.Info, Reader_Left{records = u64(counts.next_serial)})
 				had_reader = false
 			}
 			// A wiring brings an end in the wiring ring, which ends the wait.

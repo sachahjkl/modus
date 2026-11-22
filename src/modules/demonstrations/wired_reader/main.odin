@@ -33,7 +33,7 @@ numbers: system.Record_Input(Wired_Number)
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "wired_reader: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
@@ -69,6 +69,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if status != .Ended || item.kind != .End || item.error.kind != 0 || item.serial != NUMBERS_WRITTEN {
 		wrong("numbers did not end with a clean end record; the status", u64(status))
 	}
-	system.log(.Info, "wired_reader: read the joined record of 0, the ", u64(NUMBERS_WRITTEN), " numbers of wired_writer in order, and a clean end: the start list wired them before the first instruction of the writer")
+	system.log_fact(.Info, Numbers_Read{numbers = NUMBERS_WRITTEN})
 	system.stop(.Done)
 }

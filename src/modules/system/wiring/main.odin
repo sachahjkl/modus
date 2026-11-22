@@ -28,6 +28,7 @@ import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
+import "modus:contract/value_kinds"
 import ws "modus:contract/wiring_service"
 import "internal:wiring/wiring_core"
 import "modus:system"
@@ -102,12 +103,6 @@ prepared_batch: Prepared_Batch
 next_batch_id: u32 = 1
 
 @(private = "file")
-fail :: proc "contextless" (reason: string) -> ! {
-	system.log(.Error, "wiring: ", reason)
-	system.stop(.Failed)
-}
-
-@(private = "file")
 prove_core_handle :: proc "contextless" (handle: op.Handle, expected_kind: op.Object_Kind, grant_kind: ws.Attenuated_Grant_Kind) -> (ok: bool) {
 	if handle == 0 {
 		return false
@@ -161,7 +156,7 @@ end_words_write_and_wake :: proc "contextless" (wiring_slot: int, end_word: outp
 	}
 	address, status := system.memory_map(end_mem)
 	if status != .Ok {
-		system.log(.Warning, "wiring: cannot map end page of slot ", u64(wiring_slot), ": status ", status)
+		system.log_fact(.Warning, End_Page_Not_Mapped{wiring_slot = u64(wiring_slot), status = op.Status_Word(status)})
 		return
 	}
 	words := (^output.End_Words)(address)
@@ -586,11 +581,19 @@ process_module_name :: proc "contextless" (idx: int) -> string {
 log_wiring_created :: proc "contextless" (plan: ^wiring_core.Row_Plan, number: u32) {
 	writer_name := process_module_name(plan.writer_index)
 	reader_name := process_module_name(plan.reader_index)
-	if plan.row.writer_stream == .Log {
-		system.log(.Info, "wiring: wired the record output log of ", system.Module_Name{writer_name}, " to ", plan.row.reader_end == .Asker ? "its asker " : "", system.Module_Name{reader_name}, ", wiring ", u64(number))
-		return
+	writer_module := value_kinds.module_name_field(writer_name)
+	reader_module := value_kinds.module_name_field(reader_name)
+	asker := plan.row.reader_end == .Asker
+	switch {
+	case plan.row.writer_stream == .Log && asker:
+		system.log_fact(.Info, Log_Wired_To_Asker{wiring_number = u64(number), writer_module = writer_module, reader_module = reader_module})
+	case plan.row.writer_stream == .Log:
+		system.log_fact(.Info, Log_Wired{wiring_number = u64(number), writer_module = writer_module, reader_module = reader_module})
+	case asker:
+		system.log_fact(.Info, Output_Wired_To_Asker{writer_output = u64(plan.row.writer_index), wiring_number = u64(number), writer_module = writer_module, reader_module = reader_module})
+	case:
+		system.log_fact(.Info, Output_Wired{writer_output = u64(plan.row.writer_index), wiring_number = u64(number), writer_module = writer_module, reader_module = reader_module})
 	}
-	system.log(.Info, "wiring: wired the record output ", u64(plan.row.writer_index), " of ", system.Module_Name{writer_name}, " to ", plan.row.reader_end == .Asker ? "its asker " : "", system.Module_Name{reader_name}, ", wiring ", u64(number))
 }
 
 @(private = "file")
@@ -919,7 +922,7 @@ stops_drain :: proc "contextless" () {
 	for record in system.receive(&stops_ring.commands) {
 		notice, ok := ws.stop_notice_from_record(record)
 		if !ok {
-			system.log(.Warning, "wiring: refused malformed stop notice on stops ring, kind ", u64(record.kind))
+			system.log_fact(.Warning, Stop_Notice_Refused{notice_kind = u64(record.kind)})
 			continue
 		}
 		count, proc_idx, matched := wiring_core.process_stop_apply(&state, notice, actions[:])
@@ -980,18 +983,18 @@ process_completions_drain :: proc "contextless" () {
 				end_words_write_and_wake(act.wiring_slot, act.end_word)
 			case .End_Wiring:
 				if act.end_word == .Refused {
-					system.log(.Info, "wiring: ", system.Module_Name{process_module_name(proc_idx)}, " refused its end of the wiring ", u64(act.wiring_number))
+					system.log_fact(.Info, Wiring_End_Refused{wiring_number = u64(act.wiring_number), process_module = value_kinds.module_name_field(process_module_name(proc_idx))})
 				}
 				end_words_write_and_wake(act.wiring_slot, act.end_word)
 				wiring_slot_handles_close(act.wiring_slot)
 			case .Unknown_Word:
 				ph.unknown_wiring_words += 1
 				if ph.unknown_wiring_words == 1 {
-					system.log(.Info, "wiring: ", system.Module_Name{process_module_name(proc_idx)}, " wrote a word of its wiring ring that names no wiring of it: it is dropped, and each later one is counted until its stop")
+					system.log_fact(.Info, Unknown_Wiring_Word{process_module = value_kinds.module_name_field(process_module_name(proc_idx))})
 				}
 			case .Dropped_Word:
 				if act.first_drop {
-					system.log(.Info, "wiring: ", system.Module_Name{process_module_name(proc_idx)}, " wrote a word of its wiring ring for the wiring ", u64(act.wiring_number), " after its answer: dropped")
+					system.log_fact(.Info, Wiring_Word_Dropped{wiring_number = u64(act.wiring_number), process_module = value_kinds.module_name_field(process_module_name(proc_idx))})
 				}
 			}
 		}
@@ -1054,34 +1057,40 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	status: system.Status
 	core_ring, status = system.ring_open(core_ring_memory, receive_handles = true)
 	if status != .Ok {
-		fail("no service ring")
+		system.log_fact(.Error, No_Service_Ring{})
+		system.stop(.Failed)
 	}
 	stops_ring, status = system.ring_open(stops_ring_memory)
 	if status != .Ok {
-		fail("no stops ring")
+		system.log_fact(.Error, No_Stops_Ring{})
+		system.stop(.Failed)
 	}
 	img_kind, img_rights, _ := system.handle_state(image_memory)
 	if img_kind != .Memory || !ws.attenuated_rights_allowed(.Read_Only_Image, img_rights) || image_size == 0 {
-		fail("no read-only boot image")
+		system.log_fact(.Error, No_Boot_Image{})
+		system.stop(.Failed)
 	}
 	img_addr, img_status := system.memory_map(image_memory, {})
 	if img_status != .Ok {
-		fail("cannot map boot image")
+		system.log_fact(.Error, Boot_Image_Not_Mapped{})
+		system.stop(.Failed)
 	}
 	image = ([^]u8)(img_addr)[:image_size]
 
 	reg_pages, reg_size_status := system.memory_size(region_memory)
 	if reg_size_status != .Ok || reg_pages < ws.SERVICE_REGION_PAGES {
-		fail("transfer region too small")
+		system.log_fact(.Error, Transfer_Region_Too_Small{})
+		system.stop(.Failed)
 	}
 	reg_addr, reg_map_status := system.memory_map(region_memory, {.Write})
 	if reg_map_status != .Ok {
-		fail("cannot map transfer region")
+		system.log_fact(.Error, Transfer_Region_Not_Mapped{})
+		system.stop(.Failed)
 	}
 	region = ([^]u8)(reg_addr)[:ws.SERVICE_REGION_SIZE]
 
 	wiring_core.state_init(&state)
-	system.log(.Info, "wiring: ready, read-only boot image ", image_size, " bytes")
+	system.log_fact(.Info, Ready{image_bytes = image_size})
 
 	for {
 		wait := system.wait_begin()
@@ -1152,6 +1161,6 @@ stall_rings_check :: proc "contextless" () {
 		act := actions[i]
 		end_words_write_and_wake(act.wiring_slot, act.end_word)
 		wiring_slot_handles_close(act.wiring_slot)
-		system.log(.Warning, "wiring: revoked stalled Always_Holds_Writer wiring ", u64(act.wiring_number))
+		system.log_fact(.Warning, Stalled_Wiring_Revoked{wiring_number = u64(act.wiring_number)})
 	}
 }
