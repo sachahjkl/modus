@@ -352,6 +352,16 @@ The design: `src/md/features/gpu_access.md`, "The chosen form: a driver domain, 
 
 Do not use: virgl, Vulkan forwarding.
 
+### Reply stream
+
+A reply stream is the range of a blob resource of the virtual GPU into which the Vulkan of the host writes the replies of the Venus commands that ask for one.
+
+The driver names the range with `vkSetReplyCommandStreamMESA`, and puts `vkSeekReplyCommandStreamMESA` before each command with the reply flag, in the same write of the Venus ring. A reply has no length: the driver reserves the size of each reply before it sends the command, and reads it when the head of the ring passes the command. `src/library/modus/contract/venus_vulkan` holds the driver side (`venus_ring_submit_command`, `venus_ring_poll_reply`). It is not a ring: it starts again at 0 only when no reply waits in it.
+
+The design: `src/md/features/gpu_access.md`, "The Venus wire".
+
+Do not use: reply buffer, reply shmem.
+
 ### Device model
 
 A device model is the code outside the system that plays a device for a machine: QEMU for the test machine, the code of the page for a browser machine.

@@ -1,5 +1,7 @@
 package venus_vulkan
 
+import "modus:contract/text_encoding"
+
 // The replies. The driver side decodes a reply with the decode_*_reply
 // procedures: each checks the command type, refuses an unknown VkResult, and
 // checks that the renderer echoes the object ids that the command bound. The
@@ -235,6 +237,8 @@ decode_get_physical_device_properties_reply :: proc "contextless" (decoder: ^Dec
 		copy(properties.device_name[:], decoder.source[offset:offset + PHYSICAL_DEVICE_NAME_BYTES])
 		if properties.device_name[PHYSICAL_DEVICE_NAME_BYTES - 1] != 0 {
 			fail(decoder, .String_Unterminated)
+		} else if !text_encoding.text_valid(transmute([]u8)device_name_text(properties)) {
+			fail(decoder, .String_Not_Text)
 		}
 	}
 	expect_array_size(decoder, UUID_BYTES)

@@ -8,6 +8,9 @@
 //   - decodes and validates the canonical Guest_Build_Spec;
 //   - copies the kernel image into the memory of the guest and verifies it
 //     against spec.kernel_hash via BLAKE3 there, before any parse;
+//   - copies the initial archive that the spec names to its place in the
+//     memory of the guest and verifies it against spec.initial_archive_hash
+//     there, before the boot gives it to Linux;
 //   - loads it by the 64-bit boot protocol of Linux (zero page, page table,
 //     descriptors, command line with the command of the build);
 //   - maps the memory of the guest in regions that switch between Write and
@@ -59,9 +62,10 @@ ERROR :: i64(-1)
 // Export parameter indices reported in errors.Error_Record.
 ARGUMENT_SPEC :: 1
 ARGUMENT_KERNEL :: 2
-ARGUMENT_INPUT_DISK :: 3
-ARGUMENT_OUTPUT_TREE :: 4
-ARGUMENT_REPORT :: 5
+ARGUMENT_INITIAL_ARCHIVE :: 3
+ARGUMENT_INPUT_DISK :: 4
+ARGUMENT_OUTPUT_TREE :: 5
+ARGUMENT_REPORT :: 6
 
 // Parameter index of the memory handle in kernel Memory_Map error records.
 MEMORY_MAP_ARGUMENT_MEMORY :: 1
@@ -144,6 +148,38 @@ input_disk_copy :: proc "contextless" (input_disk: ^system.Bytes_To_Read, error:
 	}
 	intrinsics.mem_copy_non_overlapping(raw_data(memory.bytes), input_disk.bytes, int(count))
 	return memory, memory.bytes[:count], true
+}
+
+// initial_archive_stage copies the initial archive of the caller to the
+// place that the boot gives it in the memory of the guest, under ceiling,
+// and checks its size and its hash there: the caller shares its memory and
+// can change it, the copy it cannot. linux_boot_prepare then finds the
+// bytes at their place already. A refused archive leaves no byte of it in
+// the memory of the guest.
+initial_archive_stage :: proc "contextless" (ram: []u8, parsed: guest_os.Linux_Image, ceiling: u64, spec: ^contract.Guest_Build_Spec, source: rawptr, count: u64) -> (archive: []u8, refusal: contract.Guest_Builder_Refusal) {
+	if contract.hash_is_zero(spec.initial_archive_hash) {
+		if count != 0 || spec.initial_archive_size != 0 {
+			return nil, .Initial_Archive_Size_Invalid
+		}
+		return nil, .None
+	}
+	if count > contract.MAX_INITIAL_ARCHIVE_BYTES {
+		return nil, .Initial_Archive_Too_Large
+	}
+	if count != spec.initial_archive_size || source == nil {
+		return nil, .Initial_Archive_Size_Invalid
+	}
+	address, place_refusal := guest_os.linux_initial_archive_place(parsed, count, min(ceiling, u64(len(ram))))
+	if place_refusal != .None {
+		return nil, .Initial_Archive_Too_Large
+	}
+	archive = ram[address:][:count]
+	intrinsics.mem_copy_non_overlapping(raw_data(archive), source, int(count))
+	if refusal = contract.initial_archive_check(spec, archive); refusal != .None {
+		intrinsics.mem_zero(raw_data(archive), int(count))
+		return nil, refusal
+	}
+	return archive, .None
 }
 
 // What the loop of a build does after one exit.
@@ -307,6 +343,7 @@ guest_region_switch :: proc "contextless" (guest: system.Handle, memory_bytes: u
 build :: proc "c" (
 	spec_bytes: ^system.Bytes_To_Read,
 	kernel_image: ^system.Bytes_To_Read,
+	initial_archive: ^system.Bytes_To_Read,
 	input_disk: ^system.Bytes_To_Read,
 	output_tree: system.Lent({.Read, .Write}),
 	report: ^Guest_Build_Report,
@@ -377,6 +414,20 @@ build :: proc "c" (
 		return refuse(report, error, &resources, boot_refusal == .Memory_Too_Small ? .Memory_Too_Small : .Malformed_Disk_Image, ARGUMENT_KERNEL)
 	}
 
+	// The initial archive goes to its place below the copy of the image,
+	// and is checked there.
+	archive_source: rawptr
+	archive_count: u64
+	if initial_archive != nil {
+		archive_count = intrinsics.volatile_load(&initial_archive.count)
+		archive_source = initial_archive.bytes
+	}
+	archive, archive_refusal := initial_archive_stage(ram, parsed, staging, &spec, archive_source, archive_count)
+	if archive_refusal != .None {
+		system.log_fact(.Info, Initial_Archive_Refused{refusal_code = u64(archive_refusal), archive_bytes = archive_count})
+		return refuse(report, error, &resources, archive_refusal, ARGUMENT_INITIAL_ARCHIVE)
+	}
+
 	input_bytes: []u8
 	ok: bool
 	resources.input_disk, input_bytes, ok = input_disk_copy(input_disk, error)
@@ -399,9 +450,9 @@ build :: proc "c" (
 	guest_memory := guest_os.Guest_Memory{ram}
 	guest_os.linux_machine_start(&machine, guest_memory, input_bytes, output_bytes)
 	places := guest_os.linux_machine_places()
-	// No initial archive yet: the spec names none. The ceiling keeps the
-	// place of one below the copy of the image.
-	registers, start_refusal := guest_os.linux_boot_prepare(guest_memory, kernel_slice, parsed, places[:], spec.command[:spec.command_length], nil, staging)
+	// The ceiling is the one of initial_archive_stage: the boot finds the
+	// archive at its place, below the copy of the image.
+	registers, start_refusal := guest_os.linux_boot_prepare(guest_memory, kernel_slice, parsed, places[:], spec.command[:spec.command_length], archive, staging)
 	if start_refusal != .None {
 		system.log_fact(.Info, Kernel_Refused{refusal_code = u64(start_refusal)})
 		return refuse(report, error, &resources, .Invalid_Command_Text, ARGUMENT_SPEC)

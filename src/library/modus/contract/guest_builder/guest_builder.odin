@@ -7,7 +7,9 @@
 //   - a read-only input disk packed in the canonical MODGBD1 format from
 //     validated relative mounts of immutable tree_hash inputs;
 //   - a blank writable output disk capped at output_size_bound;
-//   - a frozen epoch timestamp (default 0, never the wall clock).
+//   - a frozen epoch timestamp (default 0, never the wall clock);
+//   - an optional content-addressed initial archive (cpio newc), placed in
+//     the memory of the guest beside the kernel.
 //
 // Every integer crossing a binary border is little-endian. Every enum crosses
 // a border through one procedure calling enum_word.member_of_word that refuses
@@ -40,12 +42,19 @@ MAX_GUEST_MEMORY_PAGES :: u64(262_144)
 // Maximum size in bytes of the blank writable output disk (64 MiB).
 MAX_OUTPUT_DISK_BYTES :: u64(64 * 1024 * 1024)
 
+// Maximum size in bytes of the initial archive (64 MiB). The archive lives in
+// the memory of the guest, so the memory of the spec bounds it too.
+MAX_INITIAL_ARCHIVE_BYTES :: u64(64 * 1024 * 1024)
+
+// Size in bytes of one page of Guest_Build_Spec.memory_pages.
+GUEST_PAGE_BYTES :: u64(4096)
+
 // Default bound on guest exits when spec.max_guest_exits is left zero.
 DEFAULT_MAX_GUEST_EXITS :: u64(1_000_000)
 
 // Wire magic and version for canonical serialized Guest_Build_Spec records.
 SPEC_WIRE_MAGIC :: [8]u8{'M', 'O', 'D', 'G', 'B', 'S', 'P', '1'}
-SPEC_WIRE_VERSION :: u32(1)
+SPEC_WIRE_VERSION :: u32(2)
 
 // Domain separation string for hashing a canonical Guest_Build_Spec.
 BUILD_SPEC_HASH_DOMAIN :: "modus guest build spec v1"
@@ -76,11 +85,15 @@ INPUT_MOUNT_WIRE_SIZE :: blake3.HASH_SIZE + 2 + 2 + MAX_MOUNT_PATH_BYTES
 //   [2680..2684] command_length        u32 LE
 //   [2684..2688] reserved_command      u32 LE (must be 0)
 //   [2688..3200] command               [512]u8 (zero-padded)
+//   [3200..3232] initial_archive_hash  [32]u8 (all zero: no initial archive)
+//   [3232..3240] initial_archive_size  u64 LE
 SPEC_WIRE_HEADER_SIZE :: 120
-SPEC_WIRE_SIZE :: SPEC_WIRE_HEADER_SIZE + MAX_INPUT_MOUNTS * INPUT_MOUNT_WIRE_SIZE + 4 + 4 + MAX_COMMAND_BYTES
+SPEC_WIRE_INITIAL_ARCHIVE_OFFSET :: SPEC_WIRE_HEADER_SIZE + MAX_INPUT_MOUNTS * INPUT_MOUNT_WIRE_SIZE + 4 + 4 + MAX_COMMAND_BYTES
+SPEC_WIRE_SIZE :: SPEC_WIRE_INITIAL_ARCHIVE_OFFSET + blake3.HASH_SIZE + 8
 
 #assert(INPUT_MOUNT_WIRE_SIZE == 160)
-#assert(SPEC_WIRE_SIZE == 3200)
+#assert(SPEC_WIRE_INITIAL_ARCHIVE_OFFSET == 3200)
+#assert(SPEC_WIRE_SIZE == 3240)
 
 // Closed lifecycle state of a sandboxed guest build.
 Guest_Build_State :: enum u8 {
@@ -120,6 +133,9 @@ Guest_Builder_Refusal :: enum u8 {
 	Malformed_Disk_Image     = 15,
 	Nonzero_Guest_Exit       = 16,
 	Output_Extraction_Failed = 17,
+	Initial_Archive_Too_Large    = 18, // Past MAX_INITIAL_ARCHIVE_BYTES, the memory of the guest, or the place that the kernel leaves.
+	Initial_Archive_Size_Invalid = 19, // A size with no hash, a hash with no size, or bytes whose count is not the size.
+	Initial_Archive_Mismatch     = 20, // The bytes do not have the hash of the spec.
 }
 
 // Closed set of block device operations dispatched by the sandbox controller.
@@ -202,6 +218,8 @@ Guest_Build_Spec :: struct {
 	command_length:        u32,
 	reserved_command:      u32,
 	command:               [MAX_COMMAND_BYTES]u8,
+	initial_archive_hash:  blake3.Hash, // All zero: the build has no initial archive.
+	initial_archive_size:  u64,
 }
 
 // Border conversions: every raw transport word becomes its enum member here
@@ -381,6 +399,42 @@ build_spec_add_input :: proc "contextless" (spec: ^Guest_Build_Spec, mount_path:
 	return .None
 }
 
+// build_spec_set_initial_archive names archive as the initial archive of
+// spec by its hash and its size, leaving spec unchanged when refused.
+build_spec_set_initial_archive :: proc "contextless" (spec: ^Guest_Build_Spec, archive: []u8) -> Guest_Builder_Refusal {
+	if spec == nil || len(archive) == 0 {
+		return .Initial_Archive_Size_Invalid
+	}
+	if u64(len(archive)) > MAX_INITIAL_ARCHIVE_BYTES {
+		return .Initial_Archive_Too_Large
+	}
+	spec.initial_archive_hash = blake3.hash(archive)
+	spec.initial_archive_size = u64(len(archive))
+	return .None
+}
+
+// initial_archive_check checks the size and the hash of the spec against the
+// bytes that a caller gave as its initial archive. The caller copies the
+// bytes first, so that no other process can change them after the check.
+initial_archive_check :: proc "contextless" (spec: ^Guest_Build_Spec, archive: []u8) -> Guest_Builder_Refusal {
+	if spec == nil {
+		return .Initial_Archive_Size_Invalid
+	}
+	if hash_is_zero(spec.initial_archive_hash) {
+		return len(archive) == 0 && spec.initial_archive_size == 0 ? .None : .Initial_Archive_Size_Invalid
+	}
+	if u64(len(archive)) > MAX_INITIAL_ARCHIVE_BYTES {
+		return .Initial_Archive_Too_Large
+	}
+	if u64(len(archive)) != spec.initial_archive_size {
+		return .Initial_Archive_Size_Invalid
+	}
+	if blake3.hash(archive) != spec.initial_archive_hash {
+		return .Initial_Archive_Mismatch
+	}
+	return .None
+}
+
 // validate_build_spec checks every sandbox and determinism invariant of spec.
 // Any violation is refused before a guest processor is created or entered.
 validate_build_spec :: proc "contextless" (spec: ^Guest_Build_Spec) -> Guest_Builder_Refusal {
@@ -413,6 +467,20 @@ validate_build_spec :: proc "contextless" (spec: ^Guest_Build_Spec) -> Guest_Bui
 	}
 	if spec.output_size_bound == 0 || spec.output_size_bound > MAX_OUTPUT_DISK_BYTES {
 		return .Output_Too_Large
+	}
+	if hash_is_zero(spec.initial_archive_hash) {
+		if spec.initial_archive_size != 0 {
+			return .Initial_Archive_Size_Invalid
+		}
+	} else {
+		if spec.initial_archive_size == 0 {
+			return .Initial_Archive_Size_Invalid
+		}
+		// The archive and the kernel share the memory of the guest: an
+		// archive as large as that memory leaves no room for the kernel.
+		if spec.initial_archive_size > MAX_INITIAL_ARCHIVE_BYTES || spec.initial_archive_size >= spec.memory_pages * GUEST_PAGE_BYTES {
+			return .Initial_Archive_Too_Large
+		}
 	}
 	if spec.command_length == 0 {
 		return .Empty_Command
@@ -513,6 +581,9 @@ encode_build_spec :: proc "contextless" (spec: ^Guest_Build_Spec, output_buffer:
 	byte_order.write_u32_little_endian(output_buffer, offset, spec.command_length)
 	byte_order.write_u32_little_endian(output_buffer, offset + 4, 0)
 	copy(output_buffer[offset + 8:offset + 8 + MAX_COMMAND_BYTES], spec.command[:])
+	archive_offset := SPEC_WIRE_INITIAL_ARCHIVE_OFFSET
+	copy(output_buffer[archive_offset:archive_offset + blake3.HASH_SIZE], spec.initial_archive_hash[:])
+	byte_order.write_u64_little_endian(output_buffer, archive_offset + blake3.HASH_SIZE, spec.initial_archive_size)
 	return SPEC_WIRE_SIZE, .None
 }
 
@@ -568,6 +639,9 @@ decode_build_spec :: proc "contextless" (wire_bytes: []u8) -> (spec: Guest_Build
 	decoded.command_length = byte_order.read_u32_little_endian(wire_bytes, offset)
 	decoded.reserved_command = byte_order.read_u32_little_endian(wire_bytes, offset + 4)
 	copy(decoded.command[:], wire_bytes[offset + 8:offset + 8 + MAX_COMMAND_BYTES])
+	archive_offset := SPEC_WIRE_INITIAL_ARCHIVE_OFFSET
+	copy(decoded.initial_archive_hash[:], wire_bytes[archive_offset:archive_offset + blake3.HASH_SIZE])
+	decoded.initial_archive_size = byte_order.read_u64_little_endian(wire_bytes, archive_offset + blake3.HASH_SIZE)
 	if validation := validate_build_spec(&decoded); validation != .None {
 		return {}, validation
 	}
