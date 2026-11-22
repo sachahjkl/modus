@@ -40,6 +40,16 @@ The design: `src/md/data/text_encoding.md`.
 
 Do not use: tofu, missing glyph, question mark (for this).
 
+### Wide character
+
+A wide character is a character that takes two cells of a grid of cells: a CJK ideograph, a kana, a syllable of Hangul, a fullwidth form.
+
+Its width is a fact of the character, its East Asian Width (Unicode Standard Annex 11), never of its glyph: `text_rendering.cell_width_of` gives `Two` for it, `Zero` for a combining mark, `One` for each other character. In the terminal, its first cell is its lead, which holds it, and the second its trail, which draws nothing; a write over one half clears the other. Example: `日本` takes four cells.
+
+The design: `src/md/features/glyphs_on_demand.md`, "Characters of two columns".
+
+Do not use: double-width character, full-width cell, wcwidth.
+
 ### Font
 
 A font is a set of glyphs of one design, with the measures that place them side by side.

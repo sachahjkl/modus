@@ -82,6 +82,7 @@
 package terminal_process
 
 import "internal:terminal/grid_resize"
+import "internal:terminal/wide_cells"
 import "modus:contract/enum_word"
 import op "modus:contract/operation"
 import "modus:display"
@@ -593,10 +594,48 @@ character_at :: #force_inline proc "contextless" (text: []u8, place: int) -> (ch
 	return
 }
 
-// cells_of gives the cells that a text of a record takes: one for each
-// character and each invalid sequence.
+// cells_of gives the cells that a text of a record takes: two for a wide
+// character, none for a combining mark, one for each other character and
+// each invalid sequence (text_rendering.cell_width_of).
 cells_of :: #force_inline proc "contextless" (text: []u8) -> int {
-	return text_encoding.character_count(text)
+	return text_rendering.cell_count(text)
+}
+
+// A row of the view as the terminal lays it out: each wide character a
+// lead and a trail (internal:terminal/wide_cells), each cell with its
+// style. cells_from_wide turns it into the cells that the drawer draws:
+// the lead holds the character, the trail is a blank cell of the same
+// style, so the cells keep their format of 16 bytes.
+Wide_Row :: [COLUMNS_LIMIT]wide_cells.Cell(Cell)
+
+cells_from_wide :: proc "contextless" (row: ^[COLUMNS_LIMIT]Cell, wide: []wide_cells.Cell(Cell)) {
+	for cell, column in wide {
+		switch cell.part {
+		case .Empty:
+			row[column] = {}
+		case .Single, .Wide_Lead:
+			row[column] = cell.payload
+			row[column].character = cell.character
+		case .Wide_Trail:
+			row[column] = cell.payload
+			row[column].character = ' '
+		}
+	}
+}
+
+// edit_column_of gives the column of the character of the edit line that
+// starts at a byte, in the flow of the edit line over rows of columns
+// cells: a wide character that finds one column left starts the next row.
+edit_column_of :: proc "contextless" (byte_place: int) -> int {
+	flow := wide_cells.Flow{columns = columns}
+	text := edit_line.text[:edit_line.length]
+	for place := 0; place < len(text) && place < byte_place; {
+		character, length := character_at(text, place)
+		wide_cells.flow_place(&flow, character)
+		place += length
+	}
+	_, column := wide_cells.flow_cursor(flow)
+	return column
 }
 
 // list_fill writes the cells of the completion list over the rows of the
@@ -649,8 +688,8 @@ list_fill :: proc "contextless" (edit_top, below: int) {
 	}
 	// The anchor is a byte of the edit line: the list starts at the cell of
 	// its character.
-	anchor := cells_of(edit_line.text[:min(list_keeping.shown.anchor, edit_line.length)])
-	left := min(anchor % columns, columns - list_width)
+	anchor := edit_column_of(min(list_keeping.shown.anchor, edit_line.length))
+	left := min(anchor, columns - list_width)
 	inner := list_width - 2 - scroll - icon_cells
 	view.list_icon_cells = icon_cells
 	view.list_icons = {}
@@ -786,20 +825,43 @@ view_make :: proc "contextless" () {
 	if lines[lines_written & (LINE_CAPACITY - 1)].run_count != 0 {
 		count += 1
 	}
-	// The line that the process changes takes rows after the last line: one
-	// cell for each of its characters, decoded once here, and one for the
-	// cursor.
+	// The line that the process changes takes rows after the last line: its
+	// characters, decoded once here, flow over the rows, two cells for a
+	// wide character, which starts the next row when one column is left;
+	// and one cell for the cursor.
 	edit_characters: [terminal.RUN_LIMIT]rune
 	edit_starts: [terminal.RUN_LIMIT]u16 // The byte where each character starts.
+	edit_places: [terminal.RUN_LIMIT][2]u16 // The row and the column of each character in the flow.
 	edit_count := 0
+	edit_flow := wide_cells.Flow{columns = columns}
+	edit_cursor_row, edit_cursor_column := -1, 0
 	for edit_place := 0; edit_place < edit_line.length; edit_count += 1 {
 		character, length := character_at(edit_line.text[:edit_line.length], edit_place)
+		place_row, place_column, _ := wide_cells.flow_place(&edit_flow, character)
+		if edit_line.has_cursor && edit_cursor_row < 0 && edit_place >= edit_line.cursor {
+			edit_cursor_row, edit_cursor_column = place_row, place_column
+		}
 		edit_characters[edit_count], edit_starts[edit_count] = character, u16(edit_place)
+		edit_places[edit_count] = {u16(place_row), u16(place_column)}
 		edit_place += length
 	}
-	edit_cursor_cell := cells_of(edit_line.text[:edit_line.cursor])
-	edit_cells := edit_count + int(edit_line.has_cursor)
-	edit_rows := u64(min((edit_cells + columns - 1) / columns, rows))
+	if edit_line.has_cursor && (edit_cursor_row < 0 || edit_cursor_column >= columns) {
+		// The cursor after the last character, or after a mark of no width
+		// at the end of a full row.
+		if edit_cursor_row < 0 {
+			edit_cursor_row, edit_cursor_column = wide_cells.flow_cursor(edit_flow)
+		} else {
+			edit_cursor_row, edit_cursor_column = edit_cursor_row + 1, 0
+		}
+	}
+	edit_used_rows := 0
+	if edit_count > 0 {
+		edit_used_rows = edit_flow.row + 1
+	}
+	if edit_line.has_cursor {
+		edit_used_rows = max(edit_used_rows, edit_cursor_row + 1)
+	}
+	edit_rows := u64(min(edit_used_rows, rows))
 	// One row under the edit line stays free at all times, with or without
 	// a hint line: the hint is drawn over it, as the list is drawn over the
 	// text, so the text does not move when a hint comes or goes.
@@ -823,21 +885,26 @@ view_make :: proc "contextless" () {
 	top = max(top, oldest)
 	view.top = top
 	edit_color := style_color(edit_line.style)
+	// One row of lead and trail cells for each row of the view, in turn:
+	// one array on the stack of the reader, not one for each kind of row.
+	wide_row: Wide_Row
 	for &row, index in view.cells[:rows] {
+		wide_row = {}
 		row = {}
 		number := top + u64(index)
 		if number >= count && number - count < edit_rows {
-			first := int(number - count) * columns
+			edit_row := int(number - count)
 			code_cursor := 0 // The run of code of the bytes of this row, in order.
-			for column in 0 ..< columns {
-				cell_index := first + column
-				if cell_index < edit_count {
-					kind := terminal.code_runs_kind_at(&edit_line.code, int(edit_starts[cell_index]), &code_cursor)
-					row[column] = {character = edit_characters[cell_index], color = terminal.code_kind_color(kind, edit_color)}
+			for character_index in 0 ..< edit_count {
+				if int(edit_places[character_index][0]) != edit_row {
+					continue
 				}
-				if edit_line.has_cursor && cell_index == edit_cursor_cell {
-					row[column] = {character = max(row[column].character, ' '), reverse = true, color = own_colors().cursor}
-				}
+				kind := terminal.code_runs_kind_at(&edit_line.code, int(edit_starts[character_index]), &code_cursor)
+				wide_cells.row_put(wide_row[:columns], int(edit_places[character_index][1]), edit_characters[character_index], Cell{color = terminal.code_kind_color(kind, edit_color)})
+			}
+			cells_from_wide(&row, wide_row[:columns])
+			if edit_line.has_cursor && edit_cursor_row == edit_row && edit_cursor_column < columns {
+				row[edit_cursor_column] = {character = max(row[edit_cursor_column].character, ' '), reverse = true, color = own_colors().cursor}
 			}
 			continue
 		}
@@ -867,21 +934,23 @@ view_make :: proc "contextless" () {
 			}
 			run_place := 0
 			for run_place < run_byte_count {
-				if column == columns {
+				character, length := character_at(run_bytes[:run_byte_count], run_place)
+				// A character that does not fit before the end of the row,
+				// a wide one at the last column too: the line continues.
+				next, result := wide_cells.row_put(wide_row[:columns], column, character, Cell{reverse = reverse, color = color})
+				if result == .No_Room {
 					continues = true
 					break
 				}
-				character, length := character_at(run_bytes[:run_byte_count], run_place)
-				row[column] = {character = character, reverse = reverse, color = color}
 				// The fill of the view looks at each cell already: the
 				// drawer then looks at one character, not at the cells.
-				if !graphics.cell_font_draws(character) {
+				if result == .Placed && !graphics.cell_font_draws(character) {
 					if view.fallback_first == 0 {
 						view.fallback_first = character
 					}
 					view.fallback_last = character
 				}
-				column += 1
+				column = next
 				run_place += length
 			}
 			if continues {
@@ -889,8 +958,11 @@ view_make :: proc "contextless" () {
 			}
 		}
 		if continues {
-			row[columns - 1] = {character = '>', reverse = true, color = graphics.colors.dim} // The line continues after the window.
+			// The line continues after the window. The mark clears the
+			// half of a wide character that it covers.
+			wide_cells.row_put(wide_row[:columns], columns - 1, '>', Cell{reverse = true, color = graphics.colors.dim})
 		}
+		cells_from_wide(&row, wide_row[:columns])
 	}
 	edit_top := int(i64(count) - i64(top))
 	list_fill(edit_top, edit_top + int(edit_rows + free_rows))
@@ -906,13 +978,20 @@ hint_fill :: proc "contextless" (row: ^[COLUMNS_LIMIT]Cell) {
 	text := form == .Long ? long_text : short_text
 	marked := hint_line.marked[form]
 	color := style_color(hint_line.style)
-	place := 0 // The byte of the form where the character of the cell starts: the mark is in bytes.
-	for cell_index in 0 ..< shown {
+	place := 0 // The byte of the form where the character starts: the mark is in bytes.
+	column := 0
+	wide_row: Wide_Row
+	for place < len(text) {
 		character, length := character_at(text, place)
 		in_mark := place >= marked[0] && place < marked[0] + marked[1]
-		row[cell_index] = {character = character, color = in_mark ? own_colors().tones[.Accent] : color}
+		next, result := wide_cells.row_put(wide_row[:shown], column, character, Cell{color = in_mark ? own_colors().tones[.Accent] : color})
+		if result == .No_Room {
+			break
+		}
+		column = next
 		place += length
 	}
+	cells_from_wide(row, wide_row[:shown])
 }
 
 BATCH :: 1024 // The records that the reader reads between two looks at the request.

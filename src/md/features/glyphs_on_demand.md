@@ -90,6 +90,14 @@ Refused:
 
 A glyph of a fallback font stands on the baseline of the first font of its face, and its capitals are as high as the capitals of the first font. The style of the glyph (the size of its cell, its baseline and its grid fit) is the style of the first font. Its outlines are scaled so that its cap height equals the cap height of the first font (`fallback_glyphs` sets the units of one cell of the fallback font from the two cap heights). A glyph of a face of cells is drawn as the build draws a cache of cells: the ink cut to the cell, the advance the width of the cell. So a Greek letter of B612 in a cell of the terminal stays in its cell and stands on the baseline of Paper Mono.
 
+### Characters of two columns
+
+A terminal gives each character the cells of its East Asian Width (Unicode Standard Annex 11). `text_rendering.cell_width_of` gives a closed enum, `Cell_Width`: `Two` for a wide or fullwidth character (the CJK ideographs and their extension A and compatibility forms, Hiragana and Katakana, the syllables of Hangul, the fullwidth forms), `Zero` for a combining mark, a joiner or a variation selector, `One` for each other character. It is a table of ranges in order, searched by halves: no table of the annex is copied whole, and a character out of the table takes one cell, as an ambiguous character does in a terminal of the West.
+
+The terminal lays out each row of its view with `internal:terminal/wide_cells`. A wide character takes the cell of its column as its lead and the next cell as its trail. A write over either half clears the other half, so no half of a glyph stays alone. The edit line flows over the rows under it: a wide character that finds one column left starts the next row, and that column stays empty. A line of the text does not wrap: a wide character that does not fit ends the row with the continuation mark, which clears the half that it covers. The drawer gets the 16-byte cells of the text grid as before: the lead holds the character, the trail is a blank cell of the same style. The cursor of the edit line, the anchor of the completion list and the hint line count the cells the same way. The console cuts a long line of output into rows by the same widths (`text_rendering.cell_part`), so a wide character never crosses the right edge.
+
+Until a font with the ideographs is in a chain, a wide character draws the replacement glyph in its lead cell: the columns of a line are already the columns of the text, and the font changes the glyph only.
+
 ### The order of the lookup
 
 For a character that no glyph cache holds:
@@ -138,6 +146,9 @@ The decisions that they made:
 - **Fixed slots of the largest glyph.** A slot for a proportional glyph at scale 3 holds 3 072 words; the mean glyph at scale 1 is 83. Blocks that split by halves waste at most half a block.
 - **A ring of words that evicts in the order of the writes.** A glyph that each frame uses (a letter of a title) would leave when the ring turns, and be drawn again.
 - **The Greek letters of B612 drawn in the frame of B612 in the cells.** Its baseline is not the baseline of Paper Mono, and its glyphs pass the cell. In the frame of the first font, cut to the cell, they stand beside Paper Mono.
+- **A wide glyph in a cell of the text grid of two cells.** A field of the cell that says "lead" or "trail" changes the format of 16 bytes that crosses the border of the drawing module ([../api/text_grid.md](../api/text_grid.md)). The terminal keeps the two halves in its own rows, and the grid stays the same.
+- **The whole table of the East Asian Width.** It holds about 1 000 ranges for characters that a terminal of the system does not meet yet. The ranges of the scripts that a principal writes come first; a range joins the table with its test of its edges.
+- **A width from the advance of the glyph.** The advance depends on the font of the chain that has the glyph: the columns of a line would change with a setting. The width is a fact of the character.
 - **A glyph of Paper Mono beside Spleen 8x16.** A glyph of Paper Mono beside the glyphs of Spleen has another form and another weight. With the setting `font` at `spleen`, a cell past the glyph cache draws the replacement glyph.
 - **The code point as the index of a table.** The code points are 1 114 112 places; the characters that a process uses are a few hundred. A hash table keeps the table small.
 
@@ -163,12 +174,13 @@ Each step leaves a working system.
 2. The fallback chain by script, as data, and the frame of the first font: the cells draw the Greek letters of B612, the interface draws the box-drawing characters of Paper Mono, and the font service names what each chain lacks.
 3. Layer 1 and the font service removed: each process draws every glyph past the glyph caches; the compositor names what each chain lacks.
 4. The font of the missing scripts: Noto Sans closes each chain, and the chains draw every Greek letter, the basic Cyrillic letters and Latin Extended-A.
-5. Later: a TrueType CJK font, with a cell of two columns; the shaping of complex scripts in the process.
+5. The cells of two columns: the table of the East Asian Width, the lead and the trail of a wide character in the rows of the terminal, and the cut of the output lines of the console by cells.
+6. Later: a TrueType CJK font in the chains; the shaping of complex scripts in the process.
 
 ## State
 
-Built: the resource `font_outlines` and its fixed range; the package `fallback_glyphs`, now `text_rendering`, with the private glyph cache (its form of today: [text_rendering.md](text_rendering.md), "The cache"), the fallback faces, the chains by script and the frame of the first font; the shaper and the draws of `graphics` with it, in each process and in the drawing module; the root service, which maps the outlines with the settings page; the compositor, which names what each chain lacks; the font of the missing scripts, Noto Sans; the terminal and the process `interface_font` with their machine test lines; the host tests of the cache and of the measure. Layer 1 and the font service are removed.
+Built: the resource `font_outlines` and its fixed range; the package `fallback_glyphs`, now `text_rendering`, with the private glyph cache (its form of today: [text_rendering.md](text_rendering.md), "The cache"), the fallback faces, the chains by script and the frame of the first font; the shaper and the draws of `graphics` with it, in each process and in the drawing module; the root service, which maps the outlines with the settings page; the compositor, which names what each chain lacks; the font of the missing scripts, Noto Sans; the terminal and the process `interface_font` with their machine test lines; the host tests of the cache and of the measure; the cells of two columns, with host tests of the table at the edges of each range and of the rows of the terminal (the right edge, a write over each half, Backspace, the lines of the scrollback). Layer 1 and the font service are removed.
 
-Left (`ROADMAP.md`): a CJK font; the shaping of complex scripts.
+Left (`ROADMAP.md`): a CJK font; the shaping of complex scripts. A name of the completion list with a wide character takes one cell for each character, and a combining mark is not drawn: it takes no cell, and the cell model holds one character for each cell.
 
 Built after it: the text rendering module draws each glyph at any size into the private glyph cache, which holds every glyph; the glyph caches of the boot image left ([text_rendering.md](text_rendering.md), "The glyph caches of the boot image and the demand cache: removed").

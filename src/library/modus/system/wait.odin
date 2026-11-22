@@ -89,6 +89,39 @@ wait_room :: proc "contextless" (wait: ^Wait, queue: ^ring.Queue) {
 	wait_word(wait, &counters.read, intrinsics.atomic_load_explicit(&counters.write, .Relaxed) - ring.capacity(queue), &counters.writer_waits, &counters.reader_waits, &counters.write)
 }
 
+// wait_room_for adds a queue that this thread writes: the thread waits
+// until the queue has room for records. wait_room ends as soon as the
+// queue is not full, so a writer that needs two places and finds one would
+// loop with no wait while the reader does not read. Here the count of the
+// records read is read once, and the room is judged from that same count:
+// a record that the reader takes after this read changes the word, and the
+// wait ends at once. With room now, the wait ends at once. The reader wakes
+// the writer when half of the queue is free, or before it waits itself. A
+// count past the capacity waits for an empty queue.
+wait_room_for :: proc "contextless" (wait: ^Wait, queue: ^ring.Queue, records: u32) {
+	counters := queue.counters
+	read := intrinsics.atomic_load_explicit(&counters.read, .Acquire)
+	if room_is_enough(queue, read, records) {
+		wait.full = true // Room now: the wait ends at once, as with a word that changed.
+		return
+	}
+	wait_word(wait, &counters.read, read, &counters.writer_waits, &counters.reader_waits, &counters.write)
+}
+
+// room_is_enough says if a queue whose reader has read read records has
+// room for records more. The writer is the caller: its count of the
+// records written does not change meanwhile.
+@(private = "package")
+room_is_enough :: proc "contextless" (queue: ^ring.Queue, read: u32, records: u32) -> bool {
+	capacity := ring.capacity(queue)
+	written := intrinsics.atomic_load_explicit(&queue.counters.write, .Relaxed)
+	held := written - read
+	if held > capacity {
+		return false // A count that the reader wrote wrong: no room is assumed, and the word still ends the wait.
+	}
+	return capacity - held >= min(records, capacity)
+}
+
 // wait_spin reads the words of the list for a short time, with no kernel
 // entry. true: a word changed, the thread does not need to wait. Call it
 // before wait_end when the other side answers in less time than a kernel

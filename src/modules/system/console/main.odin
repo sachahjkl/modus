@@ -127,6 +127,7 @@ import "modus:line_editor"
 import "modus:random"
 import "modus:system"
 import terminal "modus:terminal"
+import "modus:text_rendering"
 import "base:intrinsics"
 
 // Itself and four sandboxes, each a call host with its thread. The working
@@ -167,8 +168,7 @@ Work :: struct {
 
 work: Work
 running: bool // For the first thread: a line runs.
-pending: [PENDING_CAPACITY]Key // The keys that the input typed during a line.
-pending_count: int
+pending: line_editor.Waiting_Keys(Key, PENDING_CAPACITY) // The keys that the input typed during a line.
 keys_loss: key_path.Loss_Period // The keys that found `pending` full while Escape could stop the call of the line.
 // The second thread adds 1 when it ends a line. The first thread waits on
 // this word.
@@ -262,14 +262,18 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 	history_load()
 
 	for {
-		seen := intrinsics.atomic_load_explicit(&changes, .Relaxed)
+		seen := intrinsics.atomic_load_explicit(&changes, .Acquire)
 		for {
-			if !keys_are_taken() {
+			// One read of the line for this key: the decision to take the
+			// key and the action on it use the same read. The call of the
+			// line can end between two reads, and two reads then took a
+			// key that only an Escape could justify and dropped it.
+			line_now := running_line_read()
+			if !line_editor.running_key_can_be_taken(line_now, pending.count, PENDING_CAPACITY) {
 				// No place for a key, and no key can act now: the keys
 				// stay in the terminal ring, in order, and none is lost.
 				break
 			}
-			stoppable := running && intrinsics.atomic_load_explicit(&work.call_stoppable, .Relaxed) != 0
 			given := terminal.input(&output) or_break
 			switch given.kind {
 			case .None, .Resized:
@@ -292,14 +296,13 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 			// means what it means when typed slowly. Escape acts at once
 			// only when the line waits in a call that it can stop; if not,
 			// it is a key of the next line, as the keys before it.
-			switch line_editor.running_key_action(pressed.code == display.KEY_ESCAPE, stoppable, pending_count, PENDING_CAPACITY) {
+			switch line_editor.running_key_action(pressed.code == display.KEY_ESCAPE, line_now, pending.count, PENDING_CAPACITY) {
 			case .Stop_Call:
-				system.log_fact(.Info, Escape_Stops_Line{line_time = value_kinds.Time_In_Milliseconds(system.time() - work.since), waiting_keys = u64(pending_count)})
+				system.log_fact(.Info, Escape_Stops_Line{line_time = value_kinds.Time_In_Milliseconds(system.time() - work.since), waiting_keys = u64(pending.count)})
 				intrinsics.atomic_store(&work.cancel, 1)
 				system.word_wake(&work.cancel)
 			case .Wait:
-				pending[pending_count] = pressed
-				pending_count += 1
+				line_editor.waiting_keys_add(&pending, pressed)
 				// The edit line shows each key that waits.
 				key_serial_in_line = max(key_serial_in_line, pressed.serial)
 			case .Drop:
@@ -316,13 +319,10 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 				system.log_fact(.Info, Line_Ended_With_Lost_Keys{lost_keys = lost})
 			}
 			// The keys that waited, until one of them starts a line.
-			taken := 0
-			for taken < pending_count && !running {
-				key(pending[taken])
-				taken += 1
+			for !running {
+				waiting := line_editor.waiting_keys_take_first(&pending) or_break
+				key(waiting)
 			}
-			copy(pending[:], pending[taken:pending_count])
-			pending_count -= taken
 		}
 		// A choice of the palette, when no line runs: after the keys that
 		// waited, as one more key.
@@ -333,7 +333,7 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 		// must not end the wait: the end of the line does, and the time of
 		// the status, after which the console looks again at what Escape
 		// can do.
-		if keys_are_taken() {
+		if line_editor.running_key_can_be_taken(running_line_read(), pending.count, PENDING_CAPACITY) {
 			system.wait_records(&wait, &output.ring.completions)
 		}
 		// A choice of the palette is taken only when no line runs: while
@@ -347,34 +347,48 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 	}
 }
 
-// keys_are_taken says if the first thread takes keys from the terminal ring
-// now. With no line running, and while a key has a place to wait, yes.
-// With no place, only while an Escape can still stop the call of the line:
-// the console must then read each key to find it. After that Escape, and
-// during a line with no such call, the keys stay in the terminal ring.
-keys_are_taken :: proc "contextless" () -> bool {
-	if !running {
-		return true
+// running_line_read reads, once, the state of the line that the second
+// thread runs: whether a line runs, whether it waits in a call that Escape
+// can stop, and whether an Escape already asked that call to stop. The
+// first thread takes the keys from the terminal ring by it
+// (line_editor.running_key_can_be_taken): with no line running, and while
+// a key has a place to wait, yes; with no place, only while an Escape can
+// still stop the call of the line. After that Escape, and during a line
+// with no such call, the keys stay in the terminal ring.
+running_line_read :: proc "contextless" () -> line_editor.Running_Line {
+	return {
+		runs           = running,
+		call_stoppable = running && intrinsics.atomic_load_explicit(&work.call_stoppable, .Acquire) != 0,
+		stop_asked     = intrinsics.atomic_load_explicit(&work.cancel, .Acquire) != 0,
 	}
-	escape_can_act := intrinsics.atomic_load_explicit(&work.call_stoppable, .Relaxed) != 0 && intrinsics.atomic_load_explicit(&work.cancel, .Relaxed) == 0
-	return line_editor.running_key_can_be_taken(escape_can_act, pending_count, PENDING_CAPACITY)
 }
 
 // run_lines is the entry of the second thread: it runs each line that the
 // first thread gives.
-// A line comes first; a refresh of the marks of the palette waits for the
-// end of the lines that were given before it.
+// A line comes first (line_editor.line_thread_work_choose): a refresh of
+// the marks of the palette and the save of the line history wait until no
+// line waits. Each is a call of another process, which a loaded host can
+// make slow, and a line that the principal entered never waits for one.
 run_lines :: proc "c" (parameter: rawptr) -> ! {
 	done: u32
 	for {
 		seen := intrinsics.atomic_load_explicit(&work.wake, .Acquire)
-		if intrinsics.atomic_load_explicit(&work.started, .Acquire) == done {
-			if intrinsics.atomic_exchange(&work.refresh, 0) != 0 {
-				palette_table_write(call_getters = true)
-				continue
-			}
+		line_waits := intrinsics.atomic_load_explicit(&work.started, .Acquire) != done
+		getters_asked := intrinsics.atomic_load_explicit(&work.refresh, .Acquire) != 0
+		switch line_editor.line_thread_work_choose(line_waits, getters_asked, history_save_owed()) {
+		case .Palette_Getters:
+			intrinsics.atomic_store(&work.refresh, 0)
+			palette_table_write(call_getters = true)
+			continue
+		case .History_Save:
+			// The save holds no key: the first thread can enter a line
+			// meanwhile, and that line runs after this one commit.
+			history_save_owed_line()
+			continue
+		case .Wait:
 			system.word_wait(&work.wake, seen)
 			continue
+		case .Run_Line:
 		}
 		done += 1
 		services_check()
@@ -393,13 +407,8 @@ run_lines :: proc "c" (parameter: rawptr) -> ! {
 		// keys never wait for them, and before the save of the history, so
 		// the mark does not wait for a commit of the storage service.
 		if chosen_by_palette {
-			palette_table_write(call_getters = true)
+			intrinsics.atomic_store(&work.refresh, 1)
 		}
-		// The save of the line history holds no key: it is a commit of the
-		// storage service, which takes milliseconds. This thread runs the
-		// next line after the save, so the commits keep the order of the
-		// lines.
-		history_save()
 	}
 }
 
@@ -541,7 +550,7 @@ edit_show :: proc "contextless" () {
 		system.write_part(&writer, ".")
 		system.write_part(&writer, elapsed / 100 % 10)
 		system.write_part(&writer, " s. Escape stops a call or a record stream. Keys that wait: ")
-		for waiting in pending[:pending_count] {
+		for waiting in pending.keys[:pending.count] {
 			shown_key: rune = '^' // A key with no character: an arrow key, Control with a key.
 			switch {
 			case waiting.code == display.KEY_ENTER:
@@ -634,14 +643,18 @@ emit :: proc "contextless" (text: string, style: terminal.Style) {
 				terminal.write(&output, terminal.Run{blank[:output_column], {}})
 			}
 		}
-		// The text is UTF-8 and the terminal shows one column for each
-		// character: the part ends after a whole character.
-		room := WINDOW_COLUMNS - output_column
-		part_bytes, part_columns := 0, 0
-		for part_bytes < len(rest) && part_columns < room {
-			_, length, _ := text_encoding.character_decode(rest, part_bytes)
-			part_bytes += length
-			part_columns += 1
+		// The text is UTF-8, and the terminal shows a character in its
+		// cells (text_rendering.cell_width_of): two for a wide character,
+		// none for a combining mark. The part ends after a whole character,
+		// and a wide character that finds one column left starts the next
+		// row, as the terminal would cut it there.
+		part_bytes, part_columns := text_rendering.cell_part(rest, WINDOW_COLUMNS - output_column)
+		if part_bytes == 0 {
+			// A wide character at the last column: the next row takes it.
+			// A new row starts at most at the column of a blank of 48
+			// spaces, so it has room for it.
+			output_column = WINDOW_COLUMNS
+			continue
 		}
 		terminal.write(&output, terminal.Run{string(rest[:part_bytes]), style})
 		output_column += part_columns
