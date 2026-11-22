@@ -1,6 +1,6 @@
 // Pure freestanding per-principal encrypted store page envelope, monotonic
 // anti-rollback grant-table floor bound to TPM NV, and PCR-7 policy rotation
-// helper (src/md/features/trusted_boot.md).
+// helper (docs/TRUSTED_BOOT.md).
 //
 // Uses BLAKE3 domain-separated KDF/MAC + CTR keystream (freestanding
 // modus:contract/blake3) so store pages are authenticated-encrypted with zero
