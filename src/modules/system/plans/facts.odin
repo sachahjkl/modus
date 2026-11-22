@@ -4,14 +4,24 @@ package plans_service
 
 FAILURE_FIELD_BYTES :: 96
 
-// store and display are 1 when the root service gave the private store and
-// the way to the trusted display, else 0: with no store no plan commits,
-// and with no display an apply is refused with Consent_Required.
-@(log_fact = "plans: ready, trusted display slot {display_slot}, store {store}, display {display}")
+// store, display and roles are 1 when the root service gave the private
+// store, the way to the trusted display and the roles page, else 0: with no
+// store no plan commits, with no display an apply is refused with
+// Consent_Required, and with no roles page a plan of principal 0 that names
+// a role is refused with Roles_Refused.
+@(log_fact = "plans: ready, store {store}, display {display}, roles {roles}")
 Service_Ready :: struct {
-	display_slot: u64,
-	store:        u64,
-	display:      u64,
+	store:   u64,
+	display: u64,
+	roles:   u64,
+}
+
+// The root service refused the roles of a plan of principal 0: nothing was
+// committed.
+@(log_fact = "plans: the root service refused the roles of generation {generation} with refusal {refusal_code}")
+Plan_Roles_Refused :: struct {
+	generation:   u64,
+	refusal_code: u64,
 }
 
 @(log_fact = "plans: {failure}")

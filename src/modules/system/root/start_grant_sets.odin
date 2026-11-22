@@ -210,6 +210,20 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// serves a private store to each caller with the grant Store. It starts
 	// at the first connection to it.
 	{name = "storage", grants = {.Serve, .Data_Disk}, terms = {on_demand = true}},
+	// The holder of the role Plans: the generations of the plan of each
+	// principal in its private store, the boot image and a connection to the
+	// trusted display for the difference that the principal sees, and the
+	// roles page of this service, which takes the roles of an accepted plan
+	// of principal 0 whole or refuses them whole (Root_Command.Plan_Roles;
+	// src/md/features/declarations.md, "Apply, the difference and the
+	// rollback"). Its callers act for their principal; it acts for nobody.
+	{name = "plans", grants = {.Serve, .Store, .Image, .Connect, .Plans}, terms = {callable = {0 = "compositor"}, on_demand = true}},
+	// The holder of the role Recipes: the cache of the realisations and the
+	// recipes in its private store (src/md/features/recipes.md).
+	{name = "recipes", grants = {.Serve, .Store}, terms = {on_demand = true}},
+	// The holder of the role Projects: the pins of each project in its
+	// private store (src/md/features/declarations.md).
+	{name = "projects", grants = {.Serve, .Store}, terms = {on_demand = true}},
 	// Its note, its count and their versions live in its private store:
 	// the versions of a run of 1000 commits of the count (4 blocks each),
 	// then thinning at the limit.
@@ -329,15 +343,6 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// The delegated collector service: its service ring and transfer region
 	// for hash-chained act records and wide-grant enforcement.
 	{name = "collector", grants = {.System_Part, .Serve}},
-	// The delegated plans service: its service ring and transfer region for
-	// plan diffs, trusted display consent checks, atomic apply, and rollback.
-	{name = "plans", grants = {.System_Part, .Serve}},
-	// The delegated recipes service: its service ring and transfer region for
-	// cache verification, sandboxed builds, and provenance queries.
-	{name = "recipes", grants = {.System_Part, .Serve}},
-	// The delegated projects service: its service ring and transfer region for
-	// pins.lex inspection, source updates, and ephemeral project consoles.
-	{name = "projects", grants = {.System_Part, .Serve}},
 	// The delegated disk_processes service: it reads the module file of a
 	// disk process and its imports through a connection that reads only,
 	// into memory that the core lends, and asks for Start_From_Bytes
@@ -490,7 +495,7 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 // (tools/modustool/build/start_grant_sets_check.odin), because the debug access to
 // a process reads that grant. The names are strings that the tool reads.
 @(rodata)
-system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "gpu_device", "wiring", "powerbox", "collector", "plans", "recipes", "projects", "disk_processes", "devices", "principals"}
+system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "gpu_device", "wiring", "powerbox", "collector", "disk_processes", "devices", "principals"}
 
 // name_is_a_system_part says if a name is one of system_part_names.
 name_is_a_system_part :: proc "contextless" (name: string) -> bool {
@@ -570,7 +575,7 @@ start_grant_set_terminal :: proc "contextless" (start_grant_set: ^Start_Grant_Se
 // on_demand says if the service with a name starts when a process asks for
 // a connection to it.
 on_demand :: proc "contextless" (name: string) -> bool {
-	if name == "plans" || name == "recipes" || name == "projects" || name == "collector" || name == "powerbox" {
+	if name == "collector" || name == "powerbox" {
 		return true
 	}
 	return start_grant_set_of(name).on_demand

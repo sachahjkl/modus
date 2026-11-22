@@ -74,7 +74,7 @@ grant_by_command :: proc "contextless" (grant: start_grant.Grant) -> (given: Dis
 	switch grant {
 	case .Store:
 		return .Store, .Given
-	case .Root_Ring, .Connect, .Principals, .Tpm, .Debugger, .Inspect, .Stop, .Schedule, .Events, .Counters, .Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device, .Settings, .Clock, .Replace, .System_Part, .Acts_For_Principal, .Versions_Erase, .Remote_Clients, .Start_Policy, .Screen_Capture:
+	case .Root_Ring, .Connect, .Principals, .Tpm, .Debugger, .Inspect, .Stop, .Schedule, .Events, .Counters, .Data_Disk, .Scratch_Disk, .Network_Device, .Sound_Device, .Settings, .Clock, .Replace, .System_Part, .Acts_For_Principal, .Versions_Erase, .Remote_Clients, .Start_Policy, .Screen_Capture, .Plans:
 		// The start grant of a start policy starts and stops each process
 		// of the machine, and the capture of the screen shows each window
 		// of the principal: a disk grant never gives them.
@@ -637,11 +637,24 @@ tags_equal :: proc "contextless" (first, second: [TAG_SIZE]u8) -> bool {
 }
 
 
-// table_encode writes the persisted table: the global setting, then each
-// row that persists (row_persists), then the client keys of remote unless
-// the global setting is to forget, then the tag under the key. A row or a
-// key that lasts until the machine stops is not written.
+// table_encode writes the persisted table, then its tag under the key.
 table_encode :: proc "contextless" (table: ^Grant_Table, key: ^[KEY_SIZE]u8, out: ^[TABLE_SIZE]u8) {
+	table_body_encode(table, out)
+	table_tag_put(key, out)
+}
+
+// table_tag_put writes the tag of the bytes before it under the key.
+table_tag_put :: proc "contextless" (key: ^[KEY_SIZE]u8, out: ^[TABLE_SIZE]u8) {
+	tag := table_tag(key, out)
+	copy(out^[TABLE_OFFSET_TAG:][:TAG_SIZE], tag[:])
+}
+
+// table_body_encode writes the persisted table with a tag of zero bytes:
+// the global setting, then each row that persists (row_persists), then the
+// client keys of remote unless the global setting is to forget. A row or a
+// key that lasts until the machine stops is not written. The root service
+// writes it; the principals service, which holds the key, adds the tag.
+table_body_encode :: proc "contextless" (table: ^Grant_Table, out: ^[TABLE_SIZE]u8) {
 	out^ = {}
 	copy(out^[TABLE_OFFSET_MAGIC:][:8], TABLE_MAGIC)
 	byte_order.write_u32_little_endian(out^[TABLE_OFFSET_FORMAT:], 0, TABLE_FORMAT)
@@ -668,8 +681,6 @@ table_encode :: proc "contextless" (table: ^Grant_Table, key: ^[KEY_SIZE]u8, out
 		byte_order.write_u64_little_endian(row_place[CLIENT_KEY_ROW_OFFSET_USES:], 0, remote.client_uses_word(table.client_keys[place].uses))
 	}
 	out^[TABLE_OFFSET_CLIENT_KEY_COUNT] = u8(client_key_count)
-	tag := table_tag(key, out)
-	copy(out^[TABLE_OFFSET_TAG:][:TAG_SIZE], tag[:])
 }
 
 // table_decode reads a persisted table that a store gave. It copies the
@@ -690,6 +701,15 @@ table_decode :: proc "contextless" (bytes: []u8, key: ^[KEY_SIZE]u8) -> (table: 
 	if !tags_equal(table_tag(key, &kept), stored) {
 		return {}, .Not_Authentic
 	}
+	return table_body_decode(&kept)
+}
+
+// table_body_decode reads the fields of a persisted table, before its tag,
+// which it does not read: the caller verified the tag, or it holds no key
+// and reads a table that another process verified. The root service reads
+// each table that the principals service gives with it, so a table that the
+// disk could not give gives no row. The caller copied the bytes once.
+table_body_decode :: proc "contextless" (kept: ^[TABLE_SIZE]u8) -> (table: Grant_Table, problem: Table_File_Problem) {
 	if string(kept[TABLE_OFFSET_MAGIC:][:8]) != TABLE_MAGIC {
 		return {}, .Wrong_Magic
 	}

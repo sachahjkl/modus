@@ -65,6 +65,7 @@ Grant :: enum i64 {
 	Sound_Device       = 30, // The sound service of the sound device, with the right Read, and its stream ring (modus:contract/timed_stream): the one process that plays sound (docs/SOUND.md).
 	Start_Policy       = 31, // A root ring for Start, Stop, Machine_Usable and Wire (the wiring rows of a start list only), and the machine parts page, read-only: the one process that starts the machine (src/md/features/start_policy.md). It has no window and nothing else.
 	Screen_Capture     = 32, // The capture face and the input face of the compositor on the ring of its window: a copy of the screen, and keys and a pointer that go to the desktop, while the bar shows the mark of a viewer (src/md/features/remote_display.md).
+	Plans              = 33, // A root ring for Plan_Roles only, and Connect to the services of its start grant set: the holder of the role Plans, which gives the core the roles of the plan of principal 0 that the principal accepted (src/md/features/declarations.md).
 }
 
 // The name of each start grant, as the log of the root service and the
@@ -104,6 +105,7 @@ GRANT_NAMES := [Grant]string {
 	.Sound_Device       = "Sound_Device",
 	.Start_Policy       = "Start_Policy",
 	.Screen_Capture     = "Screen_Capture",
+	.Plans              = "Plans",
 }
 
 // grant_name gives the name of the start grant with a number, and says if

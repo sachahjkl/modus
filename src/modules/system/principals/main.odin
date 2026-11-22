@@ -32,6 +32,7 @@ Principals_Status :: struct {
 // Package-level BSS state so shared-memory staging never lives on the stack.
 service_state: pc.Principals_State
 service_ring: ring.Ring
+service_ring_memory: system.Handle
 service_region_base: [^]u8
 service_region_bytes: u64
 
@@ -48,7 +49,6 @@ fail :: proc "contextless" (text: string) -> ! {
 	system.stop(.Failed)
 }
 
-@(private = "file")
 region_range_valid :: proc "contextless" (offset: u64, length: u64) -> bool {
 	if service_region_base == nil || length == 0 || length > service_region_bytes {
 		return false
@@ -89,21 +89,35 @@ reply_bad_command :: proc "contextless" (command: ring.Record, kind: errors.Kind
 }
 
 @(private = "file")
-handle_command :: proc "contextless" (command: ring.Record) {
+handle_command :: proc "contextless" (command: ^ring.Record) {
 	parsed, ok := rd.principals_ring_command_from_word(command.kind)
 	if !ok {
-		reply_bad_command(command, .Unsupported, 0, i64(command.kind))
+		reply_bad_command(command^, .Unsupported, 0, i64(command.kind))
 		return
 	}
 
 	switch parsed {
 	case .None:
-		reply_bad_command(command, .Unsupported, 0, i64(command.kind))
+		reply_bad_command(command^, .Unsupported, 0, i64(command.kind))
+
+	case .Table_Key, .Table_Read, .Table_Write:
+		answer: Table_Answer
+		switch parsed {
+		case .Table_Key:
+			answer = table_key_take(command)
+		case .Table_Read, .Table_Write:
+			answer = table_call(command^, parsed == .Table_Write)
+		case .None, .Register_Principal, .Session_Transition, .Replace_Disk_Rows, .Client_Key_Command, .Start_Policy_Command:
+		}
+		if answer.status != .Ok {
+			system.log_fact(.Warning, Command_Refused{command_kind = u64(command.kind), refusal_code = answer.values[0]})
+		}
+		ring.push(&service_ring.completions, ring.Record{kind = u32(answer.status), tag = command.tag, values = answer.values})
 
 	case .Register_Principal:
 		input_offset := command.values[0]
 		if !region_range_valid(input_offset, size_of(rd.Register_Principal_Input)) {
-			reply_bad_command(command, .Out_Of_Range, 1, i64(input_offset), i64(service_region_bytes))
+			reply_bad_command(command^, .Out_Of_Range, 1, i64(input_offset), i64(service_region_bytes))
 			return
 		}
 		intrinsics.mem_copy_non_overlapping(&copied_register_input, rawptr(&service_region_base[input_offset]), size_of(rd.Register_Principal_Input))
@@ -133,7 +147,7 @@ handle_command :: proc "contextless" (command: ring.Record) {
 	case .Session_Transition:
 		input_offset := command.values[0]
 		if !region_range_valid(input_offset, size_of(rd.Session_Transition_Input)) {
-			reply_bad_command(command, .Out_Of_Range, 1, i64(input_offset), i64(service_region_bytes))
+			reply_bad_command(command^, .Out_Of_Range, 1, i64(input_offset), i64(service_region_bytes))
 			return
 		}
 		intrinsics.mem_copy_non_overlapping(&copied_session_input, rawptr(&service_region_base[input_offset]), size_of(rd.Session_Transition_Input))
@@ -167,7 +181,7 @@ handle_command :: proc "contextless" (command: ring.Record) {
 	case .Replace_Disk_Rows:
 		req_offset := command.values[0]
 		if !region_range_valid(req_offset, size_of(rd.Disk_Rows_Set_Request)) {
-			reply_bad_command(command, .Out_Of_Range, 1, i64(req_offset), i64(service_region_bytes))
+			reply_bad_command(command^, .Out_Of_Range, 1, i64(req_offset), i64(service_region_bytes))
 			return
 		}
 		intrinsics.mem_copy_non_overlapping(&copied_disk_rows_request, rawptr(&service_region_base[req_offset]), size_of(rd.Disk_Rows_Set_Request))
@@ -201,7 +215,7 @@ handle_command :: proc "contextless" (command: ring.Record) {
 	case .Client_Key_Command:
 		input_offset := command.values[0]
 		if !region_range_valid(input_offset, size_of(rd.Client_Key_Input)) {
-			reply_bad_command(command, .Out_Of_Range, 1, i64(input_offset), i64(service_region_bytes))
+			reply_bad_command(command^, .Out_Of_Range, 1, i64(input_offset), i64(service_region_bytes))
 			return
 		}
 		intrinsics.mem_copy_non_overlapping(&copied_client_key_input, rawptr(&service_region_base[input_offset]), size_of(rd.Client_Key_Input))
@@ -235,7 +249,7 @@ handle_command :: proc "contextless" (command: ring.Record) {
 	case .Start_Policy_Command:
 		input_offset := command.values[0]
 		if !region_range_valid(input_offset, size_of(rd.Start_Policy_Input)) {
-			reply_bad_command(command, .Out_Of_Range, 1, i64(input_offset), i64(service_region_bytes))
+			reply_bad_command(command^, .Out_Of_Range, 1, i64(input_offset), i64(service_region_bytes))
 			return
 		}
 		intrinsics.mem_copy_non_overlapping(&copied_start_policy_input, rawptr(&service_region_base[input_offset]), size_of(rd.Start_Policy_Input))
@@ -274,9 +288,23 @@ handle_command :: proc "contextless" (command: ring.Record) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	open_status: system.Status
-	if service_ring, open_status = system.ring_open(ctx.handles[rd.PRINCIPALS_RING_SLOT]); open_status != .Ok {
+	// The ring takes handles: the core gives the connection of each call of
+	// a table through it.
+	service_ring_memory = ctx.handles[rd.PRINCIPALS_RING_SLOT]
+	if service_ring, open_status = system.ring_open(service_ring_memory, receive_handles = true); open_status != .Ok {
 		fail("no principals service ring")
 	}
+	image_memory := ctx.handles[rd.PRINCIPALS_IMAGE_SLOT]
+	image_size := ctx.values[rd.PRINCIPALS_VALUE_IMAGE_SIZE]
+	image_kind, image_rights, _ := system.handle_state(image_memory)
+	if image_kind != .Memory || .Write in image_rights || image_size == 0 {
+		fail("no boot image that reads only")
+	}
+	image_address, image_status := system.memory_map(image_memory, {})
+	if image_status != .Ok {
+		fail("the boot image does not map")
+	}
+	image = ([^]u8)(image_address)[:image_size]
 	region_handle := ctx.handles[rd.PRINCIPALS_REGION_SLOT]
 	if region_handle != 0 {
 		pages, size_status := system.memory_size(region_handle)
@@ -299,7 +327,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		answered := false
 		for ring.count(&service_ring.completions) < ring.capacity(&service_ring.completions) {
 			command := system.receive(&service_ring.commands) or_break
-			handle_command(command)
+			handle_command(&command)
+			// A Table_Key carries a key in its values: no copy stays here.
+			intrinsics.mem_zero_volatile(&command, size_of(command))
 			answered = true
 		}
 		if answered {

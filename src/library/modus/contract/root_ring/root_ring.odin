@@ -448,6 +448,27 @@ Root_Command :: enum u32 {
 	// stops one held with Start_Replay. Only the process with the grant
 	// Debugger sends this command.
 	Debug_Start = 31,
+	// Plan_Roles gives the core the roles of the plan of principal 0
+	// (src/md/features/declarations.md, "Apply, the difference and the
+	// rollback"). values[0] is a root_delegation.Plan_Roles_Step;
+	// values[1..6] are 0. Its name is not read.
+	//
+	// Page gives the roles page: one page that the core makes once and
+	// keeps. The completion: values[0] a handle of it with Read and Write,
+	// given through the root ring, values[1] the serial of the set of
+	// overrides in force, values[2] its generation. The sender writes a
+	// root_delegation.Plan_Roles_Set there.
+	//
+	// Apply and Rollback copy the set once out of the page, check it whole
+	// (root_delegation.plan_roles_set_check, then the module of each hash in
+	// the boot image and its contract), and replace the overrides of the
+	// roles with it in one step: a refused set changes nothing. The
+	// completion: values[0] the new serial, values[1] the generation. A
+	// refusal has the kind Refused (unit Records), the index of the
+	// override as the argument and the Plan_Roles_Refusal as the value
+	// found; Bad_State with no page. Only the process with the start grant
+	// Plans sends this command.
+	Plan_Roles = 32,
 }
 
 // values[5] of a Debug_Start: what it does.
@@ -625,6 +646,9 @@ Root_Command_Sender :: enum u8 {
 	Root_Ring_Or_Start_Policy,
 	// The process with the start grant Start_Policy only.
 	Start_Policy,
+	// The process with the start grant Plans only: the holder of the role
+	// Plans names the holders of the roles of the machine.
+	Plans,
 }
 
 // The sender of each command. The table is whole: a new command does not
@@ -663,12 +687,13 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Wire                   = .Root_Ring_Or_Start_Policy,
 	.Start_Edit             = .Root_Ring,
 	.Debug_Start            = .Debugger,
+	.Plan_Roles             = .Plans,
 }
 
 // The start grants that give a process a root ring. A process with none of
 // them has no root ring, so it sends no command: a disk process, whose
 // grants a command gives, and which no command gives one of these.
-ROOT_RING_GRANTS :: bit_set[start_grant.Grant]{.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy}
+ROOT_RING_GRANTS :: bit_set[start_grant.Grant]{.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Plans}
 
 // root_ring_given says if a process with these start grants receives a
 // root ring at its start.
@@ -789,6 +814,8 @@ sender_allowed :: proc "contextless" (command: Root_Command, start_grant_set: bi
 		return .Root_Ring in start_grant_set || .Start_Policy in start_grant_set
 	case .Start_Policy:
 		return .Start_Policy in start_grant_set
+	case .Plans:
+		return .Plans in start_grant_set
 	}
 	return false
 }
@@ -841,6 +868,7 @@ ROOT_COMMAND_REFUSAL_WRITERS := [Root_Command]Refusal_Writer {
 	.Wire                   = .Command,
 	.Start_Edit             = .Command,
 	.Debug_Start            = .Command,
+	.Plan_Roles             = .Command,
 }
 
 // The step at which the dispatch of one record ends, in the order of the
@@ -1016,6 +1044,7 @@ root_command_names := [Root_Command]string {
 	.Wire                   = "Wire",
 	.Start_Edit             = "Start_Edit",
 	.Debug_Start            = "Debug_Start",
+	.Plan_Roles             = "Plan_Roles",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -1054,6 +1083,7 @@ root_first_argument_names := [Root_Command]string {
 	.Wire                   = "step",
 	.Start_Edit             = "store",
 	.Debug_Start            = "name",
+	.Plan_Roles             = "override",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1093,6 +1123,7 @@ root_second_argument_names := [Root_Command]string {
 	.Wire                   = "",
 	.Start_Edit             = "name",
 	.Debug_Start            = "",
+	.Plan_Roles             = "",
 }
 
 // command_of_record reads the command that an error record names: the

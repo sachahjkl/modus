@@ -85,6 +85,8 @@ plan_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, result: i6
 		return errors.fail(error, result, .Device, .Store, 0, 0, 0, found)
 	case .Store_Damaged:
 		return errors.fail(error, result, .Damaged, .Store, 0, 0, 0, found)
+	case .Roles_Refused:
+		return errors.fail(error, result, .Refused, .Grants, 1, 0, 0, found)
 	}
 	return errors.fail(error, result, .Refused, .None, 0, 0, 0, found)
 }

@@ -6,18 +6,25 @@ package root
 // docs/MODULE_CONTRACT.md, "The grants of a disk process").
 //
 // Principal 0: with no machine passphrase, its table lasts until the
-// machine stops. With one, `unlock` gives this service the key of the tag
-// of the table (Machine_Key) after the passphrase is typed.
+// machine stops. With one, `unlock` gives the key of the tag of the table
+// (Machine_Key) after the passphrase is typed.
 //
 // A named principal: `unlock` gives the key of the tag of its table with
 // the start of its session (Principal_Unlock), from the secret unlock key
-// that the passphrase opens. This service keeps it until the machine stops:
-// a lock does not erase it, as a write that runs at the lock still needs it.
+// that the passphrase opens.
 //
-// With the key, this service reads the object `grant_table` of the store
-// `module_files` of the principal, then writes it after each change. The key is
-// the only key that this service receives: it opens no seal, and it signs
-// nothing but a table.
+// This service holds no key and is the client of no storage service
+// (src/md/api/root_service_split.md, "State"). It passes
+// each key on to the principals service, which keeps it until the machine
+// stops, and keeps only the BLAKE3 hash of the key, to compare the key of a
+// later unlock. For each read and each write, this service makes the
+// connection of the principals service to the store `module_files` of the
+// principal, gives its handles through the ring of the service, and sends
+// Table_Read or Table_Write: the service calls the storage service, adds or
+// checks the tag, and answers. This service decides each grant from its own
+// table: it writes the table that the service writes
+// (disk_process.table_body_encode), and checks the table that the service
+// read with the decoder of the disk (disk_process.table_body_decode).
 //
 // A table that does not verify under a key that opened an existing record
 // is refused and kept: it can be a good table of another key, or a table
@@ -26,28 +33,34 @@ package root
 // when no record existed, or a new principal) writes over such a table: no
 // key of a record signed it.
 //
-// The read and the write are calls of the storage service, which this
-// service started and does not wait for: each one is a state of the loop
-// (persisted_tables_step), with the deadline of a load, as the load of a
-// module file is (disk_processes.odin). Each principal has its own
-// connection, so the calls of two tables do not wait for each other. A
-// write that fails is tried again at once, up to WRITE_TRY_LIMIT tries, so
-// a `disallow` reaches the disk with no later change.
+// This service never waits for the principals service: each call is a
+// state of the loop, with a deadline past the deadline of the service for
+// the storage service. A write that fails is tried again at once, up to
+// WRITE_TRY_LIMIT tries, so a `disallow` reaches the disk with no later
+// change. A principals service that starts again holds no key: a write then
+// fails until the next unlock gives the key again.
 
 import "base:intrinsics"
+import "modus:contract/blake3"
+import "modus:contract/enum_word"
 import "modus:contract/errors"
-import "modus:contract/storage_status"
-import "modus:contract/isolated"
 import "modus:contract/ring"
+import rd "modus:contract/root_delegation"
+import "modus:contract/root_ring"
 import "modus:disk_process"
 import "modus:principals"
-import "modus:storage"
-import "modus:contract/root_ring"
 import "modus:system"
 
-// The tries of one write. Each try has the deadline of a load; the bound
+#assert(rd.TABLE_BYTES == disk_process.TABLE_SIZE)
+
+// The tries of one write. Each try has the deadline of a call; the bound
 // ends the tries when the storage service fails for good.
 WRITE_TRY_LIMIT :: 3
+
+// The deadline of a call of a table in this service: past the deadline of
+// the principals service for the storage service, so the cause that the
+// service gives comes first.
+TABLE_CALL_DEADLINE_MILLISECONDS :: 2 * disk_process.LOAD_DEADLINE_MILLISECONDS
 
 // The states of the table of a principal on the disk.
 Persisted_Table_State :: enum u8 {
@@ -61,7 +74,7 @@ Persisted_Table_State :: enum u8 {
 	Unwritten, // A write failed WRITE_TRY_LIMIT times: the disk holds an older table, so no change is taken.
 }
 
-// The call of the storage service that runs for a table.
+// The call of a table that runs in the principals service.
 Persisted_Table_Call :: enum u8 {
 	None,
 	Read,
@@ -69,25 +82,30 @@ Persisted_Table_Call :: enum u8 {
 }
 
 Persisted_Table :: struct {
-	state:          Persisted_Table_State,
-	key:            [disk_process.KEY_SIZE]u8, // The key of the tag. Zero bytes until it comes.
-	key_new:        bool, // The key is the key of a new record: no record signed the table on the disk.
-	call:           Persisted_Table_Call,
-	write_again:    bool, // A change came while a write ran: one more write after it.
-	write_failures: int, // The failed tries of the write that runs.
-	// The caller record of the connection of this service for the table:
-	// its name is the name of the store `module_files`, and its principal the
-	// principal of the table, so the table is an object of the store of the
-	// module files of that principal. grant_for gives it the limit of that
-	// store and no grant to act for a principal.
-	keeper:         Started,
-	connection:     ^Connection, // The connection to the storage service for the call. nil: none, or it ended.
-	client:         storage.Client, // The call ring and the call region of that connection, mapped here.
-	sent:           storage.Sent_Call,
-	arguments:      [3]isolated.Argument,
-	argument_count: int,
-	bytes:          [disk_process.TABLE_SIZE]u8, // The table that a write sends.
-	deadline:       u64, // The time at which the call ends with no answer.
+	state:           Persisted_Table_State,
+	// The BLAKE3 hash of the key of the tag: a later unlock gives the same
+	// key. Zero bytes until the key comes. This service keeps no key.
+	key_hash:        blake3.Hash,
+	// The principals service that runs holds the key: a service that
+	// started again since does not.
+	key_held:        bool,
+	key_new:         bool, // The key is the key of a new record: no record signed the table on the disk.
+	call:            Persisted_Table_Call,
+	write_again:     bool, // A change came while a write ran: one more write after it.
+	write_failures:  int, // The failed tries of the write that runs.
+	// The caller record of the connection of the principals service for the
+	// table: its name is the name of the store `module_files`, and its
+	// principal the principal of the table, so the table is an object of
+	// the store of the module files of that principal. grant_for gives it
+	// the limit of that store and no grant to act for a principal.
+	keeper:          Started,
+	connection:      ^Connection, // The connection for the call. nil: none, or it ended.
+	// The handles of the connection that the principals service holds
+	// copies of: this service revokes the copies at the end of the call.
+	storage_handles: [3]system.Handle,
+	tag:             u32, // The tag of the command of the call that runs.
+	bytes:           [disk_process.TABLE_SIZE]u8, // The table that a write sends, with no tag.
+	deadline:        u64, // The time at which the call ends with no answer.
 	// Why the table on the disk was refused, in the state Refused: the
 	// sentence of a refused change depends on it.
 	refused_problem: disk_process.Table_File_Problem,
@@ -100,11 +118,39 @@ Persisted_Table :: struct {
 
 persisted_tables: [principals.PRINCIPAL_CAPACITY]Persisted_Table
 
+// The table that the principals service read, copied out of its place:
+// too large for the stack of the loop.
+persisted_table_read_copy: [disk_process.TABLE_SIZE]u8
+
+// The input of a table call that this service writes in a place.
+persisted_table_input: rd.Table_Call_Input
+
 // The record of the machine key opens with no passphrase: unlock reported a
 // record sealed by the TPM alone, or made one in this run. Only then is a
 // choice of a start policy read before the start policy runs
 // (start_policy_choice.odin).
 machine_key_without_passphrase: bool
+
+// The causes of a call of a table that did not end, as the log writes them.
+TABLE_CAUSE_NO_CONNECTION :: "no connection to the storage service"
+TABLE_CAUSE_NO_SERVICE :: "the principals service does not run"
+TABLE_CAUSE_SERVICE_STOPPED :: "the principals service stopped"
+TABLE_CAUSE_SERVICE_SILENT :: "the principals service gave no answer in time"
+TABLE_CAUSE_HANDLES_NOT_GIVEN :: "the principals service took no handle"
+TABLE_CAUSE_UNDECODED :: "the principals service gave a table that does not decode"
+TABLE_CAUSE_BAD_ANSWER :: "the principals service gave an answer that names no cause"
+
+// The cause of each failure that the principals service names.
+@(rodata)
+table_call_failure_causes := [rd.Table_Call_Failure]string {
+	.None            = TABLE_CAUSE_BAD_ANSWER,
+	.Not_Mapped      = "the call ring and the call region of the storage service do not map",
+	.Call_Not_Taken  = "the storage service took no call",
+	.Storage_Stopped = "the storage service stopped",
+	.No_Answer       = "the storage service gave no answer in time",
+	.No_Key          = "the principals service holds no key of the table",
+	.Bad_Input       = "the principals service refused the call",
+}
 
 // persisted_tables_start gives each named principal the state Awaited: its
 // key comes at its first unlock. Principal 0 starts with no passphrase,
@@ -119,7 +165,7 @@ persisted_tables_start :: proc "contextless" () {
 }
 
 // persisted_table_keeper_is says if a caller record is the caller of the
-// connection of this service for a persisted table.
+// connection of the principals service for a persisted table.
 persisted_table_keeper_is :: proc "contextless" (caller: ^Started) -> bool {
 	for &table in persisted_tables {
 		if caller == &table.keeper {
@@ -143,13 +189,14 @@ key_words :: proc "contextless" (principal: u64) -> string {
 	return principal == principals.MACHINE ? "the machine key" : "the key of the principal"
 }
 
-// machine_key_held says if this service holds the key of the tag of the
-// table of principal 0: `unlock` then does not ask for the machine
+// machine_key_held says if the principals service holds the key of the tag
+// of the table of principal 0: `unlock` then does not ask for the machine
 // passphrase (after a lock).
 machine_key_held :: proc "contextless" () -> bool {
-	switch persisted_tables[principals.MACHINE].state {
+	table := &persisted_tables[principals.MACHINE]
+	switch table.state {
 	case .Reading, .Kept, .Unread, .Refused, .Unwritten:
-		return true
+		return table.key_held
 	case .No_Passphrase, .Awaited, .Record_Unreadable:
 		return false
 	}
@@ -208,9 +255,10 @@ machine_seal_ask :: proc "contextless" () -> system.Status {
 
 // machine_key_take runs the command Machine_Key, which only `unlock`
 // sends: the machine has a passphrase that is not typed yet, its record
-// cannot be read, or the key of the tag came. The key is a copy in this
-// service; the local copy is erased here, and the main loop erases the
-// slot of the ring (key_ring_erase).
+// cannot be read, or the key of the tag came. The key goes on to the
+// principals service, and this service keeps its hash only; the local copy
+// is erased here, and the main loop erases the slot of the ring
+// (key_ring_erase).
 machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 	table := &persisted_tables[principals.MACHINE]
 	state := table.state
@@ -245,23 +293,30 @@ machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 		return .Ok
 	case .Opened, .New:
 		key_new := reported == .New
-		// A new passphrase is set only on a machine with no record; an
-		// opened key comes after the report that a record exists.
-		if key_new && state != .No_Passphrase || !key_new && state != .Awaited {
-			return .Bad_State
-		}
 		key := transmute([disk_process.KEY_SIZE]u8)[4]u64{values[0], values[1], values[2], values[3]}
 		defer key_erase(key[:])
 		if key == {} {
 			return .Bad_Operation
 		}
-		table.key = key
+		// The principals service started again since the key came, and
+		// unlock asked for the passphrase again: the same key goes to the
+		// new service, and the writes start again.
+		if !key_new && !waiting && !table.key_held {
+			return persisted_table_key_again(principals.MACHINE, &key)
+		}
+		// A new passphrase is set only on a machine with no record; an
+		// opened key comes after the report that a record exists.
+		if key_new && state != .No_Passphrase || !key_new && state != .Awaited {
+			return .Bad_State
+		}
+		table.key_hash = blake3.hash(key[:])
 		table.key_new = key_new
 		// A new record comes from the one run of unlock that this service
 		// started for it: a seal by the TPM has no passphrase.
 		if key_new {
 			machine_key_without_passphrase = unlock_run.mode == .Seal_Machine_Key
 		}
+		table.key_held = principals_table_key_send(principals.MACHINE, &key)
 		table.state = .Reading
 		persisted_table_read_begin(principals.MACHINE)
 		return .Ok
@@ -271,15 +326,17 @@ machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 
 // principal_key_take takes the key of the tag of the table of a named
 // principal, which `unlock` gives with Principal_Unlock: values[0..3] the
-// key, values[5] its origin. At the first unlock of the run the read of the
-// table starts. A later unlock, after a lock, gives the key of the same
-// file: a key that differs is refused, as this service keeps one key for
-// each table. A read that failed starts again at such an unlock. The origin
-// Principal_Key_Origin.New, which lets the read write over a table that does not
-// verify, is taken only for a principal that this service saw created in
-// this run: the rule then holds in this service, not in the code of
-// `unlock` alone. The local copy is erased here, and the main loop erases
-// the slot of the ring (key_ring_erase).
+// key, values[5] its origin. At the first unlock of the run the key goes on
+// to the principals service, and the read of the table starts. A later
+// unlock, after a lock, gives the key of the same file: a key whose hash
+// differs is refused, as each table has one key. A read that failed starts
+// again at such an unlock, and a principals service that started again
+// gets the key again. The origin Principal_Key_Origin.New, which lets the
+// read write over a table that does not verify, is taken only for a
+// principal that this service saw created in this run: the rule then holds
+// in this service, not in the code of `unlock` alone. The local copy is
+// erased here, and the main loop erases the slot of the ring
+// (key_ring_erase).
 principal_key_take :: proc "contextless" (number: u64, values: [7]u64) -> system.Status {
 	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY {
 		return .Bad_Handle
@@ -296,9 +353,12 @@ principal_key_take :: proc "contextless" (number: u64, values: [7]u64) -> system
 		return .Bad_State
 	}
 	if table.state != .Awaited {
-		if !keys_equal(&table.key, &key) {
+		if !hashes_equal(table.key_hash, blake3.hash(key[:])) {
 			system.log_fact(.Warning, Unlock_Refused_Other_Key{principal = number})
 			return .Bad_State
+		}
+		if !table.key_held {
+			return persisted_table_key_again(number, &key)
 		}
 		// The read at an earlier unlock failed: this unlock tries it again.
 		// No write ran since, so the origin of the first key still holds.
@@ -308,18 +368,50 @@ principal_key_take :: proc "contextless" (number: u64, values: [7]u64) -> system
 		}
 		return .Ok
 	}
-	table.key = key
+	table.key_hash = blake3.hash(key[:])
 	table.key_new = origin == .New
+	table.key_held = principals_table_key_send(number, &key)
 	table.state = .Reading
 	persisted_table_read_begin(number)
 	return .Ok
 }
 
-// keys_equal compares two keys in a time that does not depend on the first
-// byte that differs.
-keys_equal :: proc "contextless" (first, second: ^[disk_process.KEY_SIZE]u8) -> bool {
+// persisted_table_key_again gives a principals service that started again
+// the key of a table whose hash this service kept. A table whose writes
+// stopped for want of the key writes again; a table whose read failed is
+// read again.
+@(private = "file")
+persisted_table_key_again :: proc "contextless" (principal: u64, key: ^[disk_process.KEY_SIZE]u8) -> system.Status {
+	table := &persisted_tables[principal]
+	if !hashes_equal(table.key_hash, blake3.hash(key[:])) {
+		system.log_fact(.Warning, Unlock_Refused_Other_Key{principal = principal})
+		return .Bad_State
+	}
+	table.key_held = principals_table_key_send(principal, key)
+	if !table.key_held {
+		return .Ok
+	}
+	switch table.state {
+	case .Unread:
+		table.state = .Reading
+		persisted_table_read_begin(principal)
+	case .Unwritten:
+		table.state = .Kept
+		table.write_failures = 0
+		table.write_again = false
+		persisted_table_write_begin(principal)
+	case .No_Passphrase, .Awaited, .Record_Unreadable, .Reading, .Kept, .Refused:
+		// A read that runs, a kept table and a refused table go on with the
+		// key: the next change writes it.
+	}
+	return .Ok
+}
+
+// hashes_equal compares two hashes in a time that does not depend on the
+// first byte that differs.
+hashes_equal :: proc "contextless" (first, second: blake3.Hash) -> bool {
 	difference: u8
-	for index in 0 ..< disk_process.KEY_SIZE {
+	for index in 0 ..< len(first) {
 		difference |= first[index] ~ second[index]
 	}
 	return difference == 0
@@ -468,68 +560,86 @@ persisted_table_revoked_keys_take :: proc "contextless" (table: ^Persisted_Table
 	return count
 }
 
-// persisted_table_open opens the connection of this service to the store
-// `module_files` of a principal. It gives the reason when the storage service
-// gives none.
-persisted_table_open :: proc "contextless" (principal: u64) -> (reason: string, opened: bool) {
+// persisted_table_open makes the connection of the principals service to
+// the store `module_files` of a principal, and gives the service copies of
+// its three handles through its ring. It gives the cause when it fails.
+persisted_table_open :: proc "contextless" (principal: u64) -> (cause: string, given: [3]system.Handle, opened: bool) {
 	table := &persisted_tables[principal]
+	if principals_process == nil || principals_ring.head == nil {
+		return TABLE_CAUSE_NO_SERVICE, {}, false
+	}
 	table.keeper = {}
 	copy(table.keeper.name[:len(table.keeper.name) - 1], disk_process.STORE_NAME)
 	table.keeper.principal = principal
 	storage_name := role_holder_name(.Storage)
 	connection, service, ring_memory, region_memory, status := connection_open(&table.keeper, storage_name)
 	if status != .Ok {
-		return "no connection to the storage service", false
+		return TABLE_CAUSE_NO_CONNECTION, {}, false
 	}
-	client, mapped := storage.open_handles(ring_memory, region_memory, service.process, system.image_find(image, storage_name))
-	if !mapped {
-		system.close(ring_memory)
-		system.close(region_memory)
-		disconnect(connection)
-		return "the call ring and the call region of the storage service do not map", false
+	// The handle of the storage service is a copy of its own, so its
+	// revocation does not reach the handle of its row.
+	storage_copy: system.Handle
+	storage_copy, status = system.give(0, service.process, {.Read})
+	sources := [3]system.Handle{storage_copy, ring_memory, region_memory}
+	rights := [3]system.Rights{{.Read}, {.Read, .Write}, {.Read, .Write}}
+	given_count := 0
+	for source, index in sources {
+		if status != .Ok {
+			break
+		}
+		given[index], status = give_through_service_ring(principals_process.process, principals_ring_memory, source, rights[index], &principals_process.service_ring_ready)
+		if status == .Ok {
+			given_count += 1
+		}
 	}
 	table.connection = connection
-	table.client = client
-	table.deadline = system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS
-	return "", true
+	table.storage_handles = sources
+	if status != .Ok {
+		persisted_table_end(principal)
+		return TABLE_CAUSE_HANDLES_NOT_GIVEN, {}, false
+	}
+	return "", given, true
 }
 
-// persisted_table_send sends the call of a table, with its arguments: the
-// root of the store, the name of the object, and for a write its bytes.
-persisted_table_send :: proc "contextless" (principal: u64, call: Persisted_Table_Call) -> bool {
+// persisted_table_send sends the call of a table to the principals service:
+// its handles and, in a place of the transfer region, the name of the
+// storage service and, for a write, the table with no tag.
+persisted_table_send :: proc "contextless" (principal: u64, call: Persisted_Table_Call) -> (cause: string, sent: bool) {
 	table := &persisted_tables[principal]
-	table.arguments = {}
-	table.arguments[0].integer = u64(storage.ROOT)
-	// The name is a constant: its bytes stay after this procedure returns.
-	object_name := disk_process.TABLE_OBJECT_NAME
-	table.arguments[1].text = transmute([]u8)object_name
-	table.argument_count = 2
-	export := "read"
+	given: [3]system.Handle
+	opened: bool
+	if cause, given, opened = persisted_table_open(principal); !opened {
+		return cause, false
+	}
+	persisted_table_input = {principal = principal}
+	storage_name := role_holder_name(.Storage)
+	persisted_table_input.storage_module_length = u64(copy(persisted_table_input.storage_module[:], storage_name))
+	command := rd.Principals_Ring_Command.Table_Read
 	if call == .Write {
-		table.arguments[2].text = table.bytes[:]
-		table.argument_count = 3
-		export = "write"
+		persisted_table_input.table = table.bytes
+		command = .Table_Write
 	}
-	status: storage_status.Status
-	table.sent, status = storage.call_send(&table.client, export, table.arguments[:table.argument_count])
-	if status != .Ok {
-		return false
+	values := [7]u64{0 = u64(given[0]), 1 = u64(given[1]), 2 = u64(given[2])}
+	tag, place_sent := principals_place_send(command, &persisted_table_input, size_of(persisted_table_input), &values, 3)
+	if !place_sent {
+		persisted_table_end(principal)
+		return TABLE_CAUSE_NO_SERVICE, false
 	}
+	table.tag = tag
 	table.call = call
-	return true
+	table.deadline = system.time() + TABLE_CALL_DEADLINE_MILLISECONDS
+	return "", true
 }
 
 // persisted_table_read_begin starts the read of a table, after its key
 // came. A read that cannot start leaves the table unread.
 persisted_table_read_begin :: proc "contextless" (principal: u64) {
-	reason, opened := persisted_table_open(principal)
-	if !opened {
-		persisted_table_read_failed(principal, reason)
+	if !persisted_tables[principal].key_held {
+		persisted_table_read_failed(principal, TABLE_CAUSE_NO_SERVICE)
 		return
 	}
-	if !persisted_table_send(principal, .Read) {
-		persisted_table_end(principal)
-		persisted_table_read_failed(principal, "the storage service took no call")
+	if cause, sent := persisted_table_send(principal, .Read); !sent {
+		persisted_table_read_failed(principal, cause)
 	}
 }
 
@@ -541,197 +651,95 @@ persisted_table_write_begin :: proc "contextless" (principal: u64) {
 		table.write_again = true
 		return
 	}
-	disk_process.table_encode(&disk_grant_tables[principal], &table.key, &table.bytes)
-	reason, opened := persisted_table_open(principal)
-	if !opened {
-		persisted_table_write_failed(principal, reason)
+	if !table.key_held {
+		persisted_table_write_failed(principal, table_call_failure_causes[.No_Key])
 		return
 	}
-	if !persisted_table_send(principal, .Write) {
-		persisted_table_end(principal)
-		persisted_table_write_failed(principal, "the storage service took no call")
+	disk_process.table_body_encode(&disk_grant_tables[principal], &table.bytes)
+	if cause, sent := persisted_table_send(principal, .Write); !sent {
+		persisted_table_write_failed(principal, cause)
 	}
 }
 
-// persisted_table_end gives back what the call of a table held: the
-// mappings, the handles and the connection.
+// persisted_table_end gives back what the call of a table held: the copies
+// of the handles in the principals service, the handles of this service and
+// the connection.
 persisted_table_end :: proc "contextless" (principal: u64) {
 	table := &persisted_tables[principal]
-	if table.client.calls.head != nil {
-		system.ring_close(&table.client.calls)
-	}
-	if table.client.region != nil {
-		system.memory_unmap(raw_data(table.client.region))
-	}
-	// The handle of the storage service is the handle of its row in the
-	// table of the started processes: it stays.
-	for handle in ([2]system.Handle{table.client.ring_memory, table.client.region_memory}) {
-		if handle != 0 {
-			system.close(handle)
+	for &handle in table.storage_handles {
+		if handle == 0 {
+			continue
 		}
+		if principals_process != nil {
+			system.handle_revoke(handle, principals_process.process)
+		}
+		system.close(handle)
+		handle = 0
 	}
 	if table.connection != nil {
 		disconnect(table.connection)
 	}
 	table.connection = nil
-	table.client = {}
-	table.sent = {}
-	table.arguments = {}
-	table.argument_count = 0
+	table.tag = 0
 	table.call = .None
 }
 
 // persisted_table_read_failed ends a read that got no answer that this
 // service can use: the table stays unread.
-persisted_table_read_failed :: proc "contextless" (principal: u64, reason: string) {
+persisted_table_read_failed :: proc "contextless" (principal: u64, cause: string) {
 	persisted_tables[principal].state = .Unread
-	system.log_fact(.Warning, Table_Not_Read{principal = principal, absent_grants_principal = principal, call_failure = text_field(reason, 72)})
+	system.log_fact(.Warning, Table_Not_Read{principal = principal, absent_grants_principal = principal, call_failure = text_field(cause, 72)})
 }
 
 // persisted_table_write_failed counts a failed try of a write, and tries
 // again at once up to WRITE_TRY_LIMIT tries. Then the disk holds an older
 // table, which can hold a grant that was taken since: no change is taken,
 // and the log says it.
-persisted_table_write_failed :: proc "contextless" (principal: u64, reason: string) {
+persisted_table_write_failed :: proc "contextless" (principal: u64, cause: string) {
 	table := &persisted_tables[principal]
 	table.write_failures += 1
 	if table.write_failures < WRITE_TRY_LIMIT {
-		system.log_fact(.Warning, Table_Write_Tried_Again{principal = principal, try_number = u64(table.write_failures + 1), try_limit = u64(WRITE_TRY_LIMIT), call_failure = text_field(reason, 72)})
+		system.log_fact(.Warning, Table_Write_Tried_Again{principal = principal, try_number = u64(table.write_failures + 1), try_limit = u64(WRITE_TRY_LIMIT), call_failure = text_field(cause, 72)})
 		persisted_table_write_begin(principal)
 		return
 	}
 	table.state = .Unwritten
 	table.write_again = false
-	system.log_fact(.Warning, Table_Write_Given_Up{principal = principal, try_limit = u64(WRITE_TRY_LIMIT), call_failure = text_field(reason, 72)})
+	system.log_fact(.Warning, Table_Write_Given_Up{principal = principal, try_limit = u64(WRITE_TRY_LIMIT), call_failure = text_field(cause, 72)})
 }
 
 // persisted_table_failed ends a call that got no answer that this service
 // can use.
-persisted_table_failed :: proc "contextless" (principal: u64, reason: string) {
+persisted_table_failed :: proc "contextless" (principal: u64, cause: string) {
 	call := persisted_tables[principal].call
 	persisted_table_end(principal)
 	if call == .Read {
-		persisted_table_read_failed(principal, reason)
+		persisted_table_read_failed(principal, cause)
 	} else {
-		persisted_table_write_failed(principal, reason)
+		persisted_table_write_failed(principal, cause)
 	}
 }
 
-// persisted_tables_step does the next step of the call of each table.
-persisted_tables_step :: proc "contextless" (wait: ^system.Wait) {
+// persisted_tables_step ends each call whose principals service did not
+// answer in time. The answers come in principals_answers.
+persisted_tables_step :: proc "contextless" () {
+	now := system.time()
 	for number in 0 ..< u64(principals.PRINCIPAL_CAPACITY) {
-		persisted_table_step(number, wait)
+		table := &persisted_tables[number]
+		if table.call != .None && now >= table.deadline {
+			persisted_table_failed(number, TABLE_CAUSE_SERVICE_SILENT)
+		}
 	}
 }
 
-// persisted_table_step reads the answer of the call of a table, if it
-// came, and does the next step. It never waits: with no answer, it adds the
-// completions of the connection to the wait of the loop.
-persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) {
-	table := &persisted_tables[principal]
-	if table.call == .None {
-		return
-	}
-	if table.connection == nil {
-		persisted_table_failed(principal, "the storage service stopped")
-		return
-	}
-	error: errors.Error_Record
-	value, text, status, answered := storage.call_answer(&table.client, &table.sent, table.arguments[:table.argument_count], &error)
-	if !answered {
-		if !storage.connected(&table.client) {
-			persisted_table_failed(principal, "the storage service stopped")
-			return
-		}
-		if system.time() >= table.deadline {
-			persisted_table_failed(principal, "the storage service gave no answer in time")
-			return
-		}
-		system.wait_records(wait, &table.client.calls.completions)
-		return
-	}
-	switch table.call {
-	case .None:
-	case .Read:
-		absent := storage.export_failed_with(status, value, .Absent)
-		if !absent && status != .Ok {
-			// The error record is a fact of its own fields; the line of the
-			// table names the refusal.
-			system.log_fact(.Warning, Table_Call_Refused(errors.error_record_fact_fields(error)))
-			persisted_table_failed(principal, TABLE_CALL_REFUSED)
-			return
-		}
-		// The bytes are copied once, by table_decode, before any field is
-		// read: the storage service is a transport.
-		from_disk: disk_process.Grant_Table
-		problem := disk_process.Table_File_Problem.None
-		if !absent {
-			from_disk, problem = disk_process.table_decode(text, &table.key)
-		}
-		// Only principal 0 chooses the start policy of the machine.
-		if !absent && problem == .None {
-			problem = disk_process.table_principal_problem(&from_disk, principal == principals.MACHINE)
-		}
-		persisted_table_end(principal)
-		decision := disk_process.table_read_decision(absent, problem, table.key_new)
-		if decision != .Take {
-			// The table in memory is written, or nothing is: a key revoked
-			// before is in neither.
-			table.revoked_keys = {}
-			table.revoked_key_count = 0
-		}
-		switch decision {
-		case .Write_Over:
-			table.state = .Kept
-			if absent {
-				system.log_fact(.Info, Table_Absent_Written{principal = principal})
-			} else {
-				new_record := principal == principals.MACHINE ? "the new machine passphrase" : "the new principal"
-				table_refused_written_over_log(principal, problem, new_record)
-			}
-			persisted_table_write_begin(principal)
-			return
-		case .Keep:
-			table.state = .Refused
-			table.refused_problem = problem
-			table_refused_kept_log(principal, problem)
-			return
-		case .Take:
-		}
-		table.state = .Kept
-		replaced := disk_grant_tables[principal].count
-		if replaced > 0 {
-			system.log_fact(.Info, Table_Read_Replacing{principal = principal, rows = u64(from_disk.count), client_keys = u64(from_disk.client_key_count), replaced_rows = u64(replaced), table_key = text_field(key_words(principal), 32)})
-		} else {
-			system.log_fact(.Info, Table_Read{principal = principal, rows = u64(from_disk.count), client_keys = u64(from_disk.client_key_count), table_key = text_field(key_words(principal), 32)})
-		}
-		// A key revoked before the read stays revoked: the disk still held
-		// it, and it is written there no more.
-		revoked := persisted_table_revoked_keys_take(table, &from_disk)
-		disk_grant_tables[principal] = from_disk
-		principals_rows_changed(principal)
-		if revoked > 0 {
-			system.log_fact(.Info, Table_Revoked_Keys_Kept{principal = principal, revoked_keys = u64(revoked)})
-			table.write_failures = 0
-			persisted_table_write_begin(principal)
-		}
-		// The client keys of the table hold again, and a key allowed before
-		// the read that the table does not hold ends, as a row does.
-		client_keys_after_read(principal)
-	case .Write:
-		if status != .Ok {
-			system.log_fact(.Warning, Table_Call_Refused(errors.error_record_fact_fields(error)))
-			persisted_table_failed(principal, TABLE_CALL_REFUSED)
-			return
-		}
-		persisted_table_end(principal)
-		table.write_failures = 0
-		// The rows of the bytes that went to the disk: a row that lasts
-		// until the machine stops is not among them.
-		system.log_fact(.Info, Table_Written{principal = principal, rows = u64(table.bytes[disk_process.TABLE_OFFSET_COUNT]), client_keys = u64(table.bytes[disk_process.TABLE_OFFSET_CLIENT_KEY_COUNT]), table_key = text_field(key_words(principal), 32)})
-		if table.write_again {
-			table.write_again = false
-			persisted_table_write_begin(principal)
+// persisted_tables_service_ended ends each call that the principals service
+// held when it stopped. The new service holds no key.
+persisted_tables_service_ended :: proc "contextless" () {
+	for number in 0 ..< u64(principals.PRINCIPAL_CAPACITY) {
+		table := &persisted_tables[number]
+		table.key_held = false
+		if table.call != .None {
+			persisted_table_failed(number, TABLE_CAUSE_SERVICE_STOPPED)
 		}
 	}
 }
@@ -747,6 +755,129 @@ persisted_tables_deadline :: proc "contextless" () -> u64 {
 		}
 	}
 	return deadline
+}
+
+// persisted_table_answer takes the answer of the principals service to the
+// call of a table, which a place of its transfer region holds. An answer
+// whose tag names no call that runs is one line, and changes nothing: the
+// call ended at its deadline.
+persisted_table_answer :: proc "contextless" (record: ring.Record, status: rd.Principals_Ring_Status, place_offset: u64) {
+	principal := u64(principals.PRINCIPAL_CAPACITY)
+	for &table, number in persisted_tables {
+		if table.call != .None && table.tag == record.tag {
+			principal = u64(number)
+		}
+	}
+	if principal >= principals.PRINCIPAL_CAPACITY {
+		system.log_fact(.Warning, Principals_Answer_Refused{status_word = u64(record.kind), tag = u64(record.tag)})
+		return
+	}
+	table := &persisted_tables[principal]
+	switch status {
+	case .Storage_Refused:
+		// The error record is a fact of its own fields; the line of the
+		// table names the refusal.
+		system.log_fact(.Warning, Table_Call_Refused(errors.error_record_fact_fields(transmute(errors.Error_Record)record.values)))
+		persisted_table_failed(principal, TABLE_CALL_REFUSED)
+		return
+	case .Refused, .Bad_Command:
+		failure, known := rd.table_call_failure_of_word(record.values[0])
+		persisted_table_failed(principal, known ? table_call_failure_causes[failure] : TABLE_CAUSE_BAD_ANSWER)
+		return
+	case .Ok:
+	}
+	call := table.call
+	switch call {
+	case .None:
+	case .Write:
+		persisted_table_end(principal)
+		table.write_failures = 0
+		// The rows of the bytes that went to the disk: a row that lasts
+		// until the machine stops is not among them.
+		system.log_fact(.Info, Table_Written{principal = principal, rows = u64(table.bytes[disk_process.TABLE_OFFSET_COUNT]), client_keys = u64(table.bytes[disk_process.TABLE_OFFSET_CLIENT_KEY_COUNT]), table_key = text_field(key_words(principal), 32)})
+		if table.write_again {
+			table.write_again = false
+			persisted_table_write_begin(principal)
+		}
+	case .Read:
+		// The table is copied once out of the place, then checked with the
+		// decoder of the disk: the principals service is a transport.
+		intrinsics.mem_copy_non_overlapping(&persisted_table_read_copy, &principals_region[place_offset + u64(offset_of(rd.Table_Call_Input, table))], disk_process.TABLE_SIZE)
+		persisted_table_end(principal)
+		persisted_table_read_take(principal, record.values)
+	}
+}
+
+// persisted_table_read_take takes what the principals service read: no
+// table, a table that does not verify under the key, or a table that
+// verified, which this service decodes again.
+@(private = "file")
+persisted_table_read_take :: proc "contextless" (principal: u64, values: [7]u64) {
+	table := &persisted_tables[principal]
+	outcome, outcome_known := rd.table_read_outcome_of_word(values[0])
+	problem, problem_known := enum_word.member_of_word(disk_process.Table_File_Problem, values[1])
+	if !outcome_known || !problem_known || outcome == .Absent && problem != .None {
+		persisted_table_read_failed(principal, TABLE_CAUSE_BAD_ANSWER)
+		return
+	}
+	absent := outcome == .Absent
+	from_disk: disk_process.Grant_Table
+	if outcome == .Decoded && problem == .None {
+		decoded, decode_problem := disk_process.table_body_decode(&persisted_table_read_copy)
+		if decode_problem != .None {
+			persisted_table_read_failed(principal, TABLE_CAUSE_UNDECODED)
+			return
+		}
+		from_disk = decoded
+		// Only principal 0 chooses the start policy of the machine.
+		problem = disk_process.table_principal_problem(&from_disk, principal == principals.MACHINE)
+	}
+	decision := disk_process.table_read_decision(absent, problem, table.key_new)
+	if decision != .Take {
+		// The table in memory is written, or nothing is: a key revoked
+		// before is in neither.
+		table.revoked_keys = {}
+		table.revoked_key_count = 0
+	}
+	switch decision {
+	case .Write_Over:
+		table.state = .Kept
+		if absent {
+			system.log_fact(.Info, Table_Absent_Written{principal = principal})
+		} else {
+			new_record := principal == principals.MACHINE ? "the new machine passphrase" : "the new principal"
+			table_refused_written_over_log(principal, problem, new_record)
+		}
+		table.write_failures = 0
+		persisted_table_write_begin(principal)
+		return
+	case .Keep:
+		table.state = .Refused
+		table.refused_problem = problem
+		table_refused_kept_log(principal, problem)
+		return
+	case .Take:
+	}
+	table.state = .Kept
+	replaced := disk_grant_tables[principal].count
+	if replaced > 0 {
+		system.log_fact(.Info, Table_Read_Replacing{principal = principal, rows = u64(from_disk.count), client_keys = u64(from_disk.client_key_count), replaced_rows = u64(replaced), table_key = text_field(key_words(principal), 32)})
+	} else {
+		system.log_fact(.Info, Table_Read{principal = principal, rows = u64(from_disk.count), client_keys = u64(from_disk.client_key_count), table_key = text_field(key_words(principal), 32)})
+	}
+	// A key revoked before the read stays revoked: the disk still held it,
+	// and it is written there no more.
+	revoked := persisted_table_revoked_keys_take(table, &from_disk)
+	disk_grant_tables[principal] = from_disk
+	principals_rows_changed(principal)
+	if revoked > 0 {
+		system.log_fact(.Info, Table_Revoked_Keys_Kept{principal = principal, revoked_keys = u64(revoked)})
+		table.write_failures = 0
+		persisted_table_write_begin(principal)
+	}
+	// The client keys of the table hold again, and a key allowed before
+	// the read that the table does not hold ends, as a row does.
+	client_keys_after_read(principal)
 }
 
 // The cause of a call of a table that the storage service refused: the

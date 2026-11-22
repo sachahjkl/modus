@@ -512,6 +512,25 @@ Principals_Rows_Unsent :: struct {
 	principal: u64,
 }
 
+// The core replaced the overrides of the roles with the set of a
+// generation of the plan of principal 0. rollback is 1 for a rollback.
+@(log_fact = "root: the roles of the plan of generation {generation} are in force: {overrides} overrides, serial {serial}, rollback {rollback}")
+Plan_Roles_Replaced :: struct {
+	generation: u64,
+	serial:     u64,
+	overrides:  u64,
+	rollback:   u64,
+}
+
+// The core refused a set of the roles of a plan: no override changed.
+@(log_fact = "root: refused the roles of the plan of generation {generation}: refusal {refusal_code} at the override {override_index}; the serial {serial} stays in force")
+Plan_Roles_Refused :: struct {
+	refusal_code:   u64,
+	override_index: u64,
+	generation:     u64,
+	serial:         u64,
+}
+
 // The fields of a name: the writers of the facts above fill them with the
 // procedures of the contract, whose host tests give the edges of a cut.
 module_name_field :: value_kinds.module_name_field

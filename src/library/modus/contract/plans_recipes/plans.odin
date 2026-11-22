@@ -35,12 +35,6 @@ MAX_PLAN_DIFF_CHANGES :: 64
 MAX_ENTRY_NAME_BYTES :: 64
 MAX_PLAN_CANONICAL_BYTES :: 16384
 
-// Context slots for the delegated plans service.
-PLANS_SERVICE_RING_SLOT :: 10
-PLANS_SERVICE_REGION_SLOT :: 11
-PLANS_POWERBOX_RING_SLOT :: 12
-PLANS_CONTEXT_VALUE_DISPLAY_SLOT :: 0
-
 #assert(APPLIED_PLAN_WIRE_SIZE == 104)
 
 // Closed set of entry kinds carried inside a Plan_Spec.
@@ -103,19 +97,11 @@ Plan_Refusal :: enum u8 {
 	Display_Refused        = 29, // The trusted display did not show the difference whole, so nobody accepted it.
 	Store_Failed           = 30, // The private store did not take a write: nothing was committed.
 	Store_Damaged          = 31, // A record of the private store does not decode or does not match its hash.
+	Roles_Refused          = 32, // The root service refused the roles of the plan of principal 0: nothing was committed.
 }
 
-// Closed set of commands accepted on the plans service ring.
-Plans_Ring_Command :: enum u32 {
-	None            = 0,
-	Compute_Diff    = 1,
-	Apply_Plan      = 2,
-	Rollback_Plan   = 3,
-	Query_History   = 4,
-}
-
-// Closed set of completion statuses returned on the plans, recipes, and
-// projects service rings.
+// Closed set of completion statuses returned on the recipes and projects
+// service rings.
 Service_Ring_Status :: enum u32 {
 	Ok          = 0,
 	Refused     = 1,
@@ -208,13 +194,6 @@ plan_store_rights_of_word :: proc "contextless" (word: u64) -> (rights: Plan_Sto
 	return member, true
 }
 
-plans_ring_command_of_word :: proc "contextless" (word: u32) -> (command: Plans_Ring_Command, ok: bool) {
-	member := enum_word.member_of_word(Plans_Ring_Command, u64(word)) or_return
-	if member == .None {
-		return .None, false
-	}
-	return member, true
-}
 
 // Canonical byte encoder for hashing without dynamic allocation.
 @(private)

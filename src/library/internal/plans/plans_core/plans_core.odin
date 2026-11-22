@@ -13,12 +13,20 @@
 // - a commit writes the generation object, then the current object, then
 //   the tables: a refusal of the store changes no table;
 // - a rollback writes the current object only, so a later apply never
-//   overwrites a generation that a rollback can still select.
+//   overwrites a generation that a rollback can still select;
+// - the roles of a plan of principal 0 go to the root service core through
+//   the roles port, before the current object is written: a set that the
+//   core refuses commits nothing, and a current object that the store
+//   refuses after the core took the set gives the core the roles of the
+//   generation in force again. The core and the store then name one
+//   generation.
 package plans_core
 
 import "modus:contract/blake3"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/powerbox"
+import "modus:contract/role_contract"
+import rd "modus:contract/root_delegation"
 
 // Maximum distinct principals tracked simultaneously.
 MAX_PRINCIPALS :: 8
@@ -57,11 +65,33 @@ Plans_Counters :: struct {
 	total_refusals:  u64,
 }
 
+// The port of the roles of the machine: the command Plan_Roles of the root
+// ring, which gives the core the whole set of the role overrides of one
+// generation of the plan of principal 0. The core refuses the set whole or
+// takes it whole. A port with no procedure gives no role: an apply of a plan
+// of principal 0 with a role is then refused with Roles_Refused.
+Roles_Port :: struct {
+	user:    rawptr,
+	replace: proc "contextless" (user: rawptr, set: ^rd.Plan_Roles_Set, step: rd.Plan_Roles_Step) -> (refusal: rd.Plan_Roles_Refusal),
+	// The serial of the set in force in the core, which the next set names.
+	serial:  u64,
+}
+
+// The principal whose plan names the roles of the machine.
+MACHINE_PRINCIPAL :: 0
+
 // Complete fixed-capacity state of the plans service engine.
 Plans_State :: struct {
 	initialized:          bool,
 	trusted_display_slot: u32,
 	store:                pr.Private_Store_Port,
+	roles:                Roles_Port,
+	// The refusal of the core for the last set that it refused: the log
+	// names it.
+	roles_refusal:        rd.Plan_Roles_Refusal,
+	// The set that the roles port sends: too large for the stack of a
+	// service.
+	roles_set:            rd.Plan_Roles_Set,
 	principals:           [MAX_PRINCIPALS]Principal_Plans_State,
 	counters:             Plans_Counters,
 	// The bytes of one object of the store: a generation object is too
@@ -99,6 +129,79 @@ state_init :: proc "contextless" (state: ^Plans_State, trusted_display_slot: u32
 	state.initialized = true
 	state.trusted_display_slot = trusted_display_slot
 	state.store = store
+}
+
+// roles_port_bind gives the state the port of the roles of the machine,
+// with the serial of the set in force in the core.
+roles_port_bind :: proc "contextless" (state: ^Plans_State, port: Roles_Port) {
+	state.roles = port
+}
+
+// plan_roles_set_of writes the set of the role overrides of a plan: for each
+// role, the module that callers reach, the outermost of its chain of
+// interposition. A plan with no plan (nil) is the set of the defaults of
+// the image. ok is false for a role with more than one outermost module,
+// which one override cannot name.
+plan_roles_set_of :: proc "contextless" (plan: ^pr.Plan_Spec, generation, serial: u64, set: ^rd.Plan_Roles_Set) -> (ok: bool) {
+	set^ = {generation = generation, expected_serial = serial}
+	if plan == nil {
+		return true
+	}
+	count := min(plan.entry_count, pr.MAX_PLAN_ENTRIES)
+	named: [role_contract.Role]bool
+	for index in 0 ..< count {
+		entry := &plan.entries[index]
+		if entry.kind_word != u64(pr.Plan_Entry_Kind.Role_Holder) {
+			continue
+		}
+		interposed := false
+		for other_index in 0 ..< count {
+			other := &plan.entries[other_index]
+			if other_index != index && other.kind_word == entry.kind_word && other.role_word == entry.role_word && other.interposed_over_hash == entry.module_hash {
+				interposed = true
+				break
+			}
+		}
+		if interposed {
+			continue
+		}
+		role, role_known := role_contract.role_from_word(entry.role_word)
+		if !role_known || named[role] || set.override_count >= rd.PLAN_ROLES_OVERRIDE_CAPACITY {
+			return false
+		}
+		named[role] = true
+		set.overrides[set.override_count] = {role_word = entry.role_word, module_hash = entry.module_hash}
+		set.override_count += 1
+	}
+	return true
+}
+
+// roles_give sends the core the roles of plan as the set of a generation.
+// Only the plan of principal 0 names the roles of the machine: the plan of
+// another principal sends nothing.
+@(private = "file")
+roles_give :: proc "contextless" (state: ^Plans_State, principal: u64, plan: ^pr.Plan_Spec, generation: u64, step: rd.Plan_Roles_Step) -> pr.Plan_Refusal {
+	if principal != MACHINE_PRINCIPAL {
+		return .None
+	}
+	if !plan_roles_set_of(plan, generation, state.roles.serial, &state.roles_set) {
+		state.roles_refusal = .Duplicate_Role
+		return .Roles_Refused
+	}
+	if state.roles.replace == nil {
+		if state.roles_set.override_count == 0 {
+			return .None
+		}
+		state.roles_refusal = .Not_In_Image
+		return .Roles_Refused
+	}
+	refusal := state.roles.replace(state.roles.user, &state.roles_set, step)
+	state.roles_refusal = refusal
+	if refusal != .None {
+		return .Roles_Refused
+	}
+	state.roles.serial += 1
+	return .None
 }
 
 @(private = "file")
@@ -275,8 +378,17 @@ commit_generation :: proc "contextless" (state: ^Plans_State, entry: ^Principal_
 	if current_refusal != .None {
 		return {}, current_refusal
 	}
+	// The roles go to the core before the commit: a set that the core
+	// refuses commits nothing.
+	if refusal = roles_give(state, plan.principal, plan, next_generation, .Apply); refusal != .None {
+		return {}, refusal
+	}
 	current_name := pr.plan_object_name(plan.principal, 0, true)
 	if pr.private_store_write(&state.store, pr.private_object_name_text(&current_name), state.object_bytes[:current_written]) != .Ok {
+		// The core took the roles of a generation that the store did not
+		// commit: it gets the roles of the generation in force again.
+		previous_plan, previous_record, _ := entry_current_plan(entry)
+		_ = roles_give(state, plan.principal, previous_plan, previous_record.generation, .Rollback)
 		return {}, .Store_Failed
 	}
 	slot_index := entry.history_count
@@ -645,8 +757,21 @@ rollback :: proc "contextless" (
 	if encode_refusal != .None {
 		return {}, encode_refusal
 	}
+	// The core takes the roles of the selected generation before the
+	// commit: a set that it refuses rolls nothing back.
+	selected_index := find_generation_index(entry, selected.generation)
+	if selected_index < 0 {
+		return {}, .Unknown_Generation
+	}
+	if refusal = roles_give(state, principal, &entry.plans[selected_index], selected.generation, .Rollback); refusal != .None {
+		return {}, refusal
+	}
 	current_name := pr.plan_object_name(principal, 0, true)
 	if pr.private_store_write(&state.store, pr.private_object_name_text(&current_name), state.object_bytes[:written]) != .Ok {
+		// The core holds the roles of a generation that the store did not
+		// make current: it gets the roles of the generation in force again.
+		previous_plan, previous_record, _ := entry_current_plan(entry)
+		_ = roles_give(state, principal, previous_plan, previous_record.generation, .Rollback)
 		return {}, .Store_Failed
 	}
 	entry.current_generation = selected.generation
