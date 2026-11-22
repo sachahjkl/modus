@@ -372,7 +372,7 @@ export function physicalLayout({ kernelBytes, bootImageSize, framebufferWidth, f
 // writeBootRecord writes the boot record and its memory map: what the
 // boot program writes on a machine of x86-64. The memory of the kernel and
 // the framebuffer are in no range, as the firmware lists no device memory.
-export function writeBootRecord(memory, layout, { bootImageSize, framebufferWidth, framebufferHeight, startNanoseconds }) {
+export function writeBootRecord(memory, layout, { bootImageSize, framebufferWidth, framebufferHeight, startNanoseconds, trustDescriptionHash = null }) {
   const view = new DataView(memory.buffer);
   const u64 = (address, value) => view.setBigUint64(address, BigInt(value), true);
   const u32 = (address, value) => view.setUint32(address, value, true);
@@ -406,6 +406,12 @@ export function writeBootRecord(memory, layout, { bootImageSize, framebufferWidt
   u64(field("cycles_loaded"), startNanoseconds);
   const vendor = new TextEncoder().encode("modus browser machine");
   new Uint8Array(memory.buffer, field("firmware_vendor"), vendor.length).set(vendor);
+  if (trustDescriptionHash && trustDescriptionHash.length === 32) {
+    const trust = field("trust");
+    u64(trust + 0, 1); // Verifier.Boot_Program
+    u64(trust + 8, 1); // Signing_Key_Kind.Test
+    new Uint8Array(memory.buffer, trust + 48, 32).set(trustDescriptionHash);
+  }
   return layout.record;
 }
 
@@ -418,9 +424,10 @@ export function writeBootRecord(memory, layout, { bootImageSize, framebufferWidt
 // its reset: the boot record then names the time of the page before the
 // kernel as its firmware time.
 export class BrowserMachine {
-  constructor({ kernelModule, bootImage, memoryMebibytes = 256, framebufferWidth = 0, framebufferHeight = 0, clockNanoseconds, idleWait, onSerialLine = () => {}, onStop = () => {} }) {
+  constructor({ kernelModule, bootImage, trustDescriptionHash = null, memoryMebibytes = 256, framebufferWidth = 0, framebufferHeight = 0, clockNanoseconds, idleWait, onSerialLine = () => {}, onStop = () => {} }) {
     this.kernelModule = kernelModule;
     this.bootImage = bootImage ?? new Uint8Array(0);
+    this.trustDescriptionHash = trustDescriptionHash;
     this.memoryMebibytes = memoryMebibytes;
     this.framebufferWidth = framebufferWidth;
     this.framebufferHeight = framebufferHeight;
@@ -466,7 +473,7 @@ export class BrowserMachine {
     if (port >= Port.SerialData && port <= Port.SerialData + 7) this.serial.write(port, value);
     else if (port === Port.Ps2Data || port === Port.Ps2Command) this.keyboard.write(port, value);
     else if (port === Port.ClockIndex) this.clock.write(port, value);
-    else if (port === Port.DebugExit) this.stopCode = value;
+    else if (port === Port.DebugExit) { this.stopCode = value; throw new ProcessorStop(); }
     else this.unknownPorts.set(port, (this.unknownPorts.get(port) ?? 0) + 1);
   }
 
@@ -502,6 +509,7 @@ export class BrowserMachine {
       framebufferWidth: this.framebufferWidth,
       framebufferHeight: this.framebufferHeight,
       startNanoseconds: this.clockNanoseconds(),
+      trustDescriptionHash: this.trustDescriptionHash,
     });
     this.state = MachineState.Running;
     this.call(() => this.instance.exports.entry(record));

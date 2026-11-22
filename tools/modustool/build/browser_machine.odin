@@ -9,6 +9,8 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "modus:contract/blake3"
+import "modus:contract/system_description"
 import "modustool:foundation"
 
 BROWSER_MACHINE_FOLDER :: foundation.BUILD_FOLDER + "/browser_machine"
@@ -319,7 +321,7 @@ browser_machine_build :: proc() -> bool {
 		return false
 	}
 	kernel := BROWSER_MACHINE_KERNEL_PATH
-	if !foundation.run({"odin", "build", foundation.SOURCE_FOLDER_KERNEL, "-target:freestanding_wasm64p32", "-no-entry-point", "-default-to-nil-allocator", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG, "-out:" + BROWSER_MACHINE_KERNEL_PATH}) {
+	if !foundation.run({"odin", "build", foundation.SOURCE_FOLDER_KERNEL, "-target:freestanding_wasm64p32", "-o:speed", "-no-entry-point", "-default-to-nil-allocator", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG, "-out:" + BROWSER_MACHINE_KERNEL_PATH}) {
 		return false
 	}
 	bytes, read_error := os.read_entire_file(kernel, context.temp_allocator)
@@ -381,25 +383,30 @@ BROWSER_MACHINE_NODE_PROGRAM :: `
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
-const [hostPath, kernelPath, imagePath, boundText, usableLine, command, answerPrefix, answerText] = process.argv.slice(1);
+const [hostPath, kernelPath, imagePath, boundText, usableLine, command, answerPrefix, answerText, trustHashHex] = process.argv.slice(1);
 const host = await import(pathToFileURL(resolve(hostPath)).href);
 const kernelModule = await WebAssembly.compile(readFileSync(kernelPath));
 const bootImage = imagePath ? new Uint8Array(readFileSync(imagePath)) : undefined;
+const trustDescriptionHash = trustHashHex && trustHashHex.length === 64 ? Uint8Array.from(trustHashHex.match(/../g).map((b) => parseInt(b, 16))) : null;
 const idleWord = new Int32Array(new SharedArrayBuffer(4));
+let usable = false, typed = false, answered = false;
+const started = Date.now();
+const end = started + Number(boundText);
 const machine = new host.BrowserMachine({
-  kernelModule, bootImage, memoryMebibytes: 512, framebufferWidth: 1280, framebufferHeight: 800,
+  kernelModule, bootImage, trustDescriptionHash, memoryMebibytes: 512, framebufferWidth: 1280, framebufferHeight: 800,
   clockNanoseconds: () => process.hrtime.bigint(),
-  idleWait: (bound) => { Atomics.wait(idleWord, 0, 0, Number(bound) / 1e6); },
+  idleWait: (bound) => {
+    const remaining = end - Date.now();
+    if (remaining <= 0) throw new host.ProcessorStop();
+    Atomics.wait(idleWord, 0, 0, Math.min(Number(bound) / 1e6, remaining, 5));
+  },
   onSerialLine: (line) => {
     console.log("serial: " + line);
     if (!usable && line.includes(usableLine)) usable = true;
     if (typed && line.startsWith(answerPrefix) && line.includes(answerText)) answered = true;
   },
 });
-let usable = false, typed = false, answered = false;
-const started = Date.now();
 await machine.start();
-const end = started + Number(boundText);
 while (machine.state === host.MachineState.Running && Date.now() < end && !answered) {
   if (usable && !typed) {
     typed = true;
@@ -451,9 +458,18 @@ browser_machine_boot :: proc(boot_image: string) -> bool {
 		fmt.eprintfln("modustool: browser-machine boot needs node %d or later on the path; found %d (0: none)", BROWSER_MACHINE_NODE_MAJOR_VERSION, major)
 		return false
 	}
+	trust_hash_hex := ""
+	if boot_image != "" {
+		if image_bytes, read_err := os.read_entire_file(boot_image, context.temp_allocator); read_err == nil {
+			if description, _, found := system_description.trust_resources(image_bytes); found {
+				h := blake3.hash(description)
+				trust_hash_hex = fmt.tprintf("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x", h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8], h[9], h[10], h[11], h[12], h[13], h[14], h[15], h[16], h[17], h[18], h[19], h[20], h[21], h[22], h[23], h[24], h[25], h[26], h[27], h[28], h[29], h[30], h[31])
+			}
+		}
+	}
 	bound := fmt.tprintf("%d", i64(foundation.HANG_BOUND / time.Millisecond))
 	started := time.tick_now()
-	state, output, error_output, error := os.process_exec({command = {"node", "--input-type=module", "--eval", BROWSER_MACHINE_NODE_PROGRAM, BROWSER_MACHINE_HOST_PATH, BROWSER_MACHINE_KERNEL_PATH, boot_image, bound, BROWSER_MACHINE_USABLE_LINE, BROWSER_MACHINE_TYPED_COMMAND, BROWSER_MACHINE_ANSWER_PREFIX, BROWSER_MACHINE_ANSWER_TEXT}}, context.temp_allocator)
+	state, output, error_output, error := os.process_exec({command = {"node", "--input-type=module", "--eval", BROWSER_MACHINE_NODE_PROGRAM, BROWSER_MACHINE_HOST_PATH, BROWSER_MACHINE_KERNEL_PATH, boot_image, bound, BROWSER_MACHINE_USABLE_LINE, BROWSER_MACHINE_TYPED_COMMAND, BROWSER_MACHINE_ANSWER_PREFIX, BROWSER_MACHINE_ANSWER_TEXT, trust_hash_hex}}, context.temp_allocator)
 	if error != nil {
 		fmt.eprintfln("modustool: cannot start node: %v", error)
 		return false
