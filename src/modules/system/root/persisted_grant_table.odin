@@ -474,11 +474,12 @@ persisted_table_open :: proc "contextless" (principal: u64) -> (reason: string, 
 	table.keeper = {}
 	copy(table.keeper.name[:len(table.keeper.name) - 1], disk_process.STORE_NAME)
 	table.keeper.principal = principal
-	connection, service, ring_memory, region_memory, status := connection_open(&table.keeper, "storage")
+	storage_name := role_holder_name(.Storage)
+	connection, service, ring_memory, region_memory, status := connection_open(&table.keeper, storage_name)
 	if status != .Ok {
 		return "no connection to the storage service", false
 	}
-	client, mapped := storage.open_handles(ring_memory, region_memory, service.process, system.image_find(image, "storage"))
+	client, mapped := storage.open_handles(ring_memory, region_memory, service.process, system.image_find(image, storage_name))
 	if !mapped {
 		system.close(ring_memory)
 		system.close(region_memory)

@@ -189,14 +189,14 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	if .Store in grants && .Acts_For_Principal not_in grants {
 		running := false
 		for &item in started {
-			if item.process != 0 && item.service.head != nil && system.name_of(item.name[:]) == "storage" {
+			if item.process != 0 && item.service.head != nil && is_role_holder(system.name_of(item.name[:]), .Storage) {
 				running = true
 			}
 		}
 		if !running {
 			// A refusal of that start that names its cause is the cause of
 			// this one.
-			start("storage", refusal = work.refusal) or_return
+			start(role_holder_name(.Storage), refusal = work.refusal) or_return
 		}
 	}
 	// A client of a block service: the service of its disk starts first.
@@ -369,7 +369,7 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	}
 	storage_service: ^Started
 	status: system.Status
-	_, storage_service, work.store_ring, work.store_region, status = connection_open(work.slot, "storage", store_override = work.store_override, store_limit_override = work.store_limit_override)
+	_, storage_service, work.store_ring, work.store_region, status = connection_open(work.slot, role_holder_name(.Storage), store_override = work.store_override, store_limit_override = work.store_limit_override)
 	if status != .Ok {
 		return status
 	}
@@ -377,7 +377,7 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	start_grant_put(work, .Storage_Region, {work.store_region, {.Read, .Write}})
 	start_grant_put(work, .Storage_Service, {storage_service.process, {.Read}})
 	for &item in system.image_entries(image) {
-		if system.name_of(item.name[:]) == "storage" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
+		if is_role_holder(system.name_of(item.name[:]), .Storage) && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 			system.value_put(&work.values, system.GRANT_VALUE_STORAGE_FILE_SIZE, item.size)
 			start_mapping_add(work, "the file of the storage service", {memory = image_memory, address = storage.FILE_ADDRESS, first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE})
 		}
