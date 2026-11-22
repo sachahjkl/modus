@@ -38,7 +38,9 @@ Guest_Mode_Load :: enum u8 {
 // instruction that the process ran in place of the guest. The processor
 // delivers it through the interrupt table of the guest, with no check of the
 // interrupt flag: the process checks first that the guest accepts it (the
-// interrupt flag in `rflags` for an external interrupt).
+// interrupt flag in `rflags` for an external interrupt). The kernel refuses
+// an external interrupt and the non-maskable interrupt while the record
+// says that the guest is in its interrupt shadow.
 Guest_Inject_Kind :: enum u8 {
 	None                   = 0, // Nothing to deliver.
 	External_Interrupt     = 1, // An interrupt of a device, at any vector, with no error code.
@@ -51,7 +53,7 @@ Guest_Inject_Kind :: enum u8 {
 // general registers, the instruction address, the flags, the control
 // registers, and the 64-bit system state that a system writes through
 // model-specific registers (the targets of `syscall`, the bases of `fs` and
-// `gs`). The kernel keeps the rest of the state of the guest processor (its
+// `gs`), and the interrupt shadow. The kernel keeps the rest of the state of the guest processor (its
 // segments, its descriptor tables, its extended state) between two runs. See [guest](term:guest) and (docs/ARCHITECTURE.md, "A guest").
 //
 // A process answers an exit by a change of the record before the next run:
@@ -59,7 +61,10 @@ Guest_Inject_Kind :: enum u8 {
 // instruction in `rip`; for `Port_Write` and `Halt`, the next instruction in
 // `rip`; for a write of `EFER` (an exit `Other`), the new value in `efer`;
 // for a write of `LSTAR`, `SFMASK`, `STAR` or a base of `fs` or `gs`, the
-// new value in its field.
+// new value in its field; for `rdtsc` and `rdtscp` (exits `Other`), the
+// count in `rdx:rax` and the next instruction in `rip`. A process that
+// moves `rip` past the instruction of the exit clears `interrupt_shadow`:
+// that instruction ended the shadow.
 // The kernel loads the control registers before each entry and writes them
 // back after each exit: a process passes back the record that it got.
 //
@@ -92,7 +97,8 @@ Guest_Registers :: struct {
 	mode_load:               u8, // The word of a `Guest_Mode_Load`.
 	code_selector:           u16, // The selector of the code segment of a mode load; after the exit, the selector of `cs` of the guest.
 	data_selector:           u16, // The selector of the data segments of a mode load; after the exit, the selector of `ds` of the guest.
-	reserved:                u32, // 0.
+	interrupt_shadow:        u8, // 1: the guest is just after `sti` or `mov ss`, and takes no interrupt before the next instruction completes. 0 or 1.
+	reserved:                [3]u8, // 0.
 	star:                    u64, // STAR: bits 32 to 47 the selectors of `syscall`, 48 to 63 those of `sysret`. Any value.
 	lstar:                   u64, // LSTAR: the address that `syscall` enters in 64-bit mode. Canonical.
 	sfmask:                  u64, // SFMASK: the flags that `syscall` clears. Bits 32 to 63 are 0.
@@ -101,6 +107,8 @@ Guest_Registers :: struct {
 	kernel_gs_base:          u64, // KERNEL_GS_BASE: the base that `swapgs` exchanges with `gs_base`. Canonical.
 }
 #assert(size_of(Guest_Registers) == 240)
+#assert(offset_of(Guest_Registers, interrupt_shadow) == 188)
+#assert(offset_of(Guest_Registers, reserved) == 189)
 #assert(offset_of(Guest_Registers, star) == 192)
 #assert(offset_of(Guest_Registers, kernel_gs_base) == 232)
 
@@ -163,10 +171,12 @@ Guest_Registers_Refusal :: enum u8 {
 	Inject_Kind         = 9, // `inject_kind` names no `Guest_Inject_Kind`, or `inject_error_code_valid` is not 0 or 1.
 	Inject_Vector       = 10, // A vector that the kind does not take.
 	Inject_Error_Code   = 11, // An error code for an event that pushes none.
-	Reserved            = 12, // `reserved` is not 0.
+	Reserved            = 12, // A byte of `reserved` is not 0.
 	System_Call_Address = 13, // `lstar` is not canonical.
 	System_Call_Mask    = 14, // `sfmask` has a bit outside `GUEST_SYSTEM_CALL_MASK_DEFINED`.
 	Segment_Base        = 15, // `fs_base`, `gs_base` or `kernel_gs_base` is not canonical.
+	Interrupt_Shadow    = 16, // `interrupt_shadow` is not 0 or 1.
+	Inject_In_Interrupt_Shadow = 17, // An `External_Interrupt` or a `Non_Maskable_Interrupt` while `interrupt_shadow` is 1: it would come one instruction early.
 }
 
 // guest_address_canonical says if an address is canonical: each bit from
@@ -274,7 +284,16 @@ guest_registers_check :: proc "contextless" (registers: Guest_Registers) -> (req
 	if event_refusal := guest_event_refusal(inject_kind, registers.inject_vector, registers.inject_error_code_valid == 1, registers.inject_error_code); event_refusal != .None {
 		return {}, event_refusal
 	}
-	if registers.reserved != 0 {
+	if registers.interrupt_shadow > 1 {
+		return {}, .Interrupt_Shadow
+	}
+	// The processor delivers an injected event with no check of the shadow:
+	// an interrupt of a device would come before the instruction that the
+	// shadow protects (the second half of `mov ss`; `sti; hlt`).
+	if registers.interrupt_shadow == 1 && (inject_kind == .External_Interrupt || inject_kind == .Non_Maskable_Interrupt) {
+		return {}, .Inject_In_Interrupt_Shadow
+	}
+	if registers.reserved != {} {
 		return {}, .Reserved
 	}
 	return {mode_load = mode_load, inject_kind = inject_kind}, .None

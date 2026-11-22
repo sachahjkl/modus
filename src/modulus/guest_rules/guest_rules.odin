@@ -9,6 +9,7 @@
 package guest_rules
 
 import "modus:contract/byte_order"
+import "modus:contract/enum_word"
 import op "modus:contract/operation"
 
 // An event in EXITINTINFO and in EVENTINJ (the AMD manual, volume 2,
@@ -194,6 +195,58 @@ STATE_COMPATIBILITY_SYSTEM_CALL_TARGET :: 0x610 // CSTAR: not in the record.
 STATE_SYSTEM_CALL_FLAGS_MASK :: 0x618 // SFMASK.
 STATE_KERNEL_GS_BASE :: 0x620 // KernelGsBase.
 CONTROL_BLOCK_BYTES :: 4096
+
+// The intercepts of the time stamp counter (the AMD manual, volume 2,
+// appendix B, table B-1, "VMCB Layout, Control Area"): bit 14 of the word
+// of instructions at 0x00C, and bit 7 of the second word at 0x010. A guest
+// that reads the counter of the machine measures the time of the machine,
+// and rdtscp gives the processor number in TSC_AUX: each read exits, and the
+// process answers it from its own clock.
+INTERCEPT_TIME_STAMP_COUNTER :: u32(1) << 14 // rdtsc.
+INTERCEPT_TIME_STAMP_COUNTER_AND_PROCESSOR :: u32(1) << 7 // rdtscp.
+
+// The word of the interrupt state in the control area (table B-1): bit 0
+// the interrupt shadow, bit 1 the global interrupt mask of the guest, which
+// the processor writes at the exit and ignores at vmrun.
+CONTROL_INTERRUPT_STATE :: 0x068
+INTERRUPT_SHADOW :: u64(1) << 0
+
+// interrupt_shadow_write writes the interrupt shadow of a record that the
+// rules of the contract accepted into a control block, for the next entry.
+interrupt_shadow_write :: proc "contextless" (block: []u8, registers: op.Guest_Registers) {
+	byte_order.write_u64_little_endian(block, CONTROL_INTERRUPT_STATE, u64(registers.interrupt_shadow) & INTERRUPT_SHADOW)
+}
+
+// interrupt_shadow_read reads the interrupt shadow of a control block after
+// an exit into a record: 0 or 1, whatever the other bits of the word hold,
+// so that a process can always pass the record back.
+interrupt_shadow_read :: proc "contextless" (block: []u8, registers: ^op.Guest_Registers) {
+	registers.interrupt_shadow = u8(byte_order.read_u64_little_endian(block, CONTROL_INTERRUPT_STATE) & INTERRUPT_SHADOW)
+}
+
+// The exit codes of the intercepted instructions whose exit gives the
+// process the address of the next instruction, in the exit Other (the AMD
+// manual, volume 2, appendix C, "SVM Intercept Exit Codes").
+Instruction_Exit :: enum u64 {
+	Time_Stamp_Counter               = 0x6E, // rdtsc: 0F 31.
+	Model_Specific_Register          = 0x7C, // rdmsr and wrmsr: 0F 32 and 0F 30.
+	Time_Stamp_Counter_And_Processor = 0x87, // rdtscp: 0F 01 F9.
+}
+
+// instruction_exit_length gives the length of the instruction of an exit
+// Other with no prefix, or false for an exit code that names no instruction
+// of Instruction_Exit. Without NRIPS, the kernel gives the address of the
+// instruction plus this length, as for hlt and cpuid.
+instruction_exit_length :: proc "contextless" (code: u64) -> (length: u64, ok: bool) {
+	instruction := enum_word.member_of_word(Instruction_Exit, code) or_return
+	switch instruction {
+	case .Time_Stamp_Counter, .Model_Specific_Register:
+		return 2, true
+	case .Time_Stamp_Counter_And_Processor:
+		return 3, true
+	}
+	return 0, false
+}
 
 // system_registers_write writes the 64-bit system state of a record that
 // the rules of the contract accepted into a control block.

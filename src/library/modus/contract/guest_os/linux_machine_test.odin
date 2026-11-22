@@ -142,6 +142,35 @@ machine_model_specific_registers :: proc(t: ^testing.T) {
 		testing.expect(t, registers.lstar == 0 && registers.fs_base == 0 && registers.gs_base == 0 && registers.kernel_gs_base == 0 && registers.sfmask == 0 && registers.efer == long.efer)
 	}
 	testing.expect_value(t, machine.faults_injected, u64(len(refused)))
+	// A change of LME while paging is on: the processor refuses it, in both
+	// directions, and with LMA kept.
+	lme_changes := [?]struct {
+		registers: op.Guest_Registers,
+		value:     u64,
+	} {
+		{long, u64(op.GUEST_EFER_LONG_MODE_ACTIVE)},
+		{long, u64(op.GUEST_EFER_SYSTEM_CALL | op.GUEST_EFER_NO_EXECUTE)},
+		{{rip = 0x1000, cr0 = op.GUEST_CONTROL_0_PROTECTION | op.GUEST_CONTROL_0_PAGING}, u64(op.GUEST_EFER_LONG_MODE_ENABLE)},
+	}
+	for entry in lme_changes {
+		registers := entry.registers
+		msr_exit(machine, &registers, 0xC000_0080, true, entry.value)
+		testing.expectf(t, registers.inject_vector == VECTOR_GENERAL_PROTECTION && registers.rip == entry.registers.rip, "EFER %x with paging on is refused", entry.value)
+		testing.expect_value(t, registers.efer, entry.registers.efer)
+	}
+	testing.expect_value(t, machine.faults_injected, u64(len(refused) + len(lme_changes)))
+	// With paging off, LME turns on; with paging on, a write that keeps LME
+	// is accepted.
+	unpaged := op.Guest_Registers{rip = 0x1000, cr0 = op.GUEST_CONTROL_0_PROTECTION}
+	msr_exit(machine, &unpaged, 0xC000_0080, true, u64(op.GUEST_EFER_LONG_MODE_ENABLE))
+	testing.expect(t, unpaged.inject_kind == 0 && unpaged.efer == op.GUEST_EFER_LONG_MODE_ENABLE && unpaged.rip == 0x1002)
+	// The next instruction that the kernel gives wins: a prefix makes the
+	// instruction longer than 2 bytes.
+	prefixed := long
+	prefixed.rcx = 0xC000_0081
+	prefixed.rax, prefixed.rdx = 1, 0
+	linux_machine_handle_exit(machine, &prefixed, {kind = .Other, code = u64(Other_Exit_Code.Model_Specific_Register), information = 1, next = long.rip + 3})
+	testing.expect(t, prefixed.inject_kind == 0 && prefixed.star == 1 && prefixed.rip == long.rip + 3)
 	// An exit of a model-specific register with an information that names
 	// neither a read nor a write stops the guest.
 	odd := long
@@ -349,4 +378,127 @@ machine_device_access :: proc(t: ^testing.T) {
 	testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Memory, a = 0x40_0000, b = FAULT_ACCESS_EXECUTE | 1}), Machine_Step.Switch_Execute)
 	testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Memory, a = 0x40_0000, b = 1}), Machine_Step.Failed)
 	testing.expect_value(t, machine.failure, Machine_Failure.Memory_Read_Fault)
+}
+
+// rdtsc and rdtscp: the count comes from the virtual clock, never goes
+// back, is the same in two machines that see the same exits, and the
+// instruction completes at the address that the kernel gave, or after its
+// bytes.
+@(test)
+machine_time_stamp_counter :: proc(t: ^testing.T) {
+	machine := new(Linux_Machine)
+	defer free(machine)
+	linux_machine_start(machine, {}, nil, nil)
+	// An exit code that the machine does not answer stops the guest.
+	for code in ([?]u64{0x6D, 0x6F, 0x86, 0x88, max(u64)}) {
+		registers := op.Guest_Registers{rip = 0x1000}
+		testing.expectf(t, linux_machine_handle_exit(machine, &registers, {kind = .Other, code = code}) == .Failed, "exit code %x", code)
+		testing.expect_value(t, registers.rip, u64(0x1000))
+	}
+	machine^ = {}
+	linux_machine_start(machine, {}, nil, nil)
+	registers := op.Guest_Registers{rip = 0x1000, rax = max(u64), rcx = 0x55, rdx = max(u64)}
+	testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Other, code = 0x6E}), Machine_Step.Continue)
+	testing.expect_value(t, registers.rax, LINUX_TICKS_PER_EXIT * LINUX_TIME_STAMP_COUNTS_PER_TICK)
+	testing.expect_value(t, registers.rdx, u64(0))
+	testing.expect_value(t, registers.rcx, u64(0x55)) // rdtsc leaves rcx.
+	testing.expect_value(t, registers.rip, u64(0x1002))
+	linux_machine_handle_exit(machine, &registers, {kind = .Other, code = 0x87})
+	testing.expect_value(t, registers.rax, 2 * LINUX_TICKS_PER_EXIT * LINUX_TIME_STAMP_COUNTS_PER_TICK)
+	testing.expect_value(t, registers.rcx, u64(0))
+	testing.expect_value(t, registers.rip, u64(0x1005))
+	linux_machine_handle_exit(machine, &registers, {kind = .Other, code = 0x6E, next = 0x2000})
+	testing.expect_value(t, registers.rip, u64(0x2000))
+	// The high half goes to rdx.
+	machine.clock = u64(1) << 40
+	linux_machine_handle_exit(machine, &registers, {kind = .Other, code = 0x87, next = 0x2003})
+	count := (u64(1) << 40 + LINUX_TICKS_PER_EXIT) * LINUX_TIME_STAMP_COUNTS_PER_TICK
+	testing.expect(t, registers.rax == count & 0xFFFF_FFFF && registers.rdx == count >> 32)
+	testing.expect(t, registers.rax <= 0xFFFF_FFFF && registers.rdx != 0)
+	// Two reads never give one value, the count never goes back, and two
+	// machines that see the same exits read the same counts.
+	other := new(Linux_Machine)
+	defer free(other)
+	linux_machine_start(machine, {}, nil, nil)
+	linux_machine_start(other, {}, nil, nil)
+	first := op.Guest_Registers{rip = 0x1000}
+	second := first
+	last := u64(0)
+	for index in 0 ..< 100 {
+		linux_machine_handle_exit(machine, &first, {kind = .Other, code = 0x6E, next = first.rip + 2})
+		linux_machine_handle_exit(other, &second, {kind = .Other, code = 0x6E, next = second.rip + 2})
+		read := first.rdx << 32 | first.rax
+		testing.expectf(t, read > last, "read %v: %v after %v", index, read, last)
+		testing.expect_value(t, second.rdx << 32 | second.rax, read)
+		last = read
+	}
+	testing.expect_value(t, first, second)
+	_, refusal := op.guest_registers_check(first)
+	testing.expect_value(t, refusal, op.Guest_Registers_Refusal.None)
+}
+
+// The interrupt shadow: after an exit inside the shadow of sti or mov ss
+// with the guest still at its instruction, the tick waits, and the record
+// passes the checks of the kernel; it comes at the first exit out of the
+// shadow. An exit whose instruction the machine completes (sti; hlt) ends
+// the shadow, and the tick comes at once.
+@(test)
+machine_interrupt_shadow_defers_the_tick :: proc(t: ^testing.T) {
+	machine := new(Linux_Machine)
+	defer free(machine)
+	linux_machine_start(machine, {}, nil, nil)
+	registers := op.Guest_Registers{rflags = 0x2, rip = 0x100}
+	out :: proc(machine: ^Linux_Machine, registers: ^op.Guest_Registers, port: u16, value: u8) {
+		linux_machine_handle_exit(machine, registers, {kind = .Port_Write, a = u64(port), b = 1, c = u64(value), next = registers.rip + 1})
+	}
+	for pair in ([?][2]u16{{0x20, 0x11}, {0x21, 0x30}, {0x21, 0x04}, {0x21, 0x01}, {0xA0, 0x11}, {0xA1, 0x38}, {0xA1, 0x02}, {0xA1, 0x01}, {0x21, 0xFE}, {0xA1, 0xFF}}) {
+		out(machine, &registers, pair[0], u8(pair[1]))
+	}
+	out(machine, &registers, 0x43, 0x34)
+	out(machine, &registers, 0x40, 0x00)
+	out(machine, &registers, 0x40, 0x10) // 4096 ticks.
+	machine.clock += 2 * 4096
+	// In the shadow, with interrupts on: nothing is injected, at each exit
+	// that leaves the guest at its instruction.
+	registers.rflags = 0x202
+	registers.interrupt_shadow = 1
+	at := registers.rip
+	for _ in 0 ..< 3 {
+		testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Interrupted}), Machine_Step.Continue)
+		testing.expect_value(t, registers.inject_kind, u8(op.Guest_Inject_Kind.None))
+		testing.expect_value(t, registers.interrupt_shadow, u8(1))
+		testing.expect_value(t, registers.rip, at)
+		_, refusal := op.guest_registers_check(registers)
+		testing.expect_value(t, refusal, op.Guest_Registers_Refusal.None)
+	}
+	// An exception of the machine in the shadow is still given: a refused
+	// model-specific register does not complete, and the shadow stays.
+	registers.rcx = 0x1B
+	linux_machine_handle_exit(machine, &registers, {kind = .Other, code = u64(Other_Exit_Code.Model_Specific_Register), information = 0})
+	testing.expect(t, registers.inject_kind == u8(op.Guest_Inject_Kind.Exception) && registers.inject_vector == VECTOR_GENERAL_PROTECTION)
+	testing.expect_value(t, registers.interrupt_shadow, u8(1))
+	_, exception_refusal := op.guest_registers_check(registers)
+	testing.expect_value(t, exception_refusal, op.Guest_Registers_Refusal.None)
+	registers.inject_kind, registers.inject_vector, registers.inject_error_code_valid = 0, 0, 0
+	// The shadow ended in the guest: the kernel gives the record with 0, and
+	// the tick comes.
+	registers.interrupt_shadow = 0
+	linux_machine_handle_exit(machine, &registers, {kind = .Interrupted})
+	testing.expect_value(t, registers.inject_kind, u8(op.Guest_Inject_Kind.External_Interrupt))
+	testing.expect_value(t, registers.inject_vector, u8(0x30))
+	// sti; hlt: the end of interrupt with interrupts off, then hlt in the
+	// shadow of sti. The machine completes hlt, so the shadow ends, and the
+	// next tick comes with no exit more.
+	registers.inject_kind, registers.inject_vector = 0, 0
+	registers.rflags = 0x2
+	out(machine, &registers, 0x20, 0x20)
+	testing.expect_value(t, registers.inject_kind, u8(op.Guest_Inject_Kind.None))
+	registers.rflags = 0x202
+	registers.interrupt_shadow = 1
+	testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Halt, next = registers.rip + 1}), Machine_Step.Continue)
+	testing.expect_value(t, registers.interrupt_shadow, u8(0))
+	testing.expect_value(t, registers.inject_kind, u8(op.Guest_Inject_Kind.External_Interrupt))
+	testing.expect_value(t, registers.inject_vector, u8(0x30))
+	_, refusal := op.guest_registers_check(registers)
+	testing.expect_value(t, refusal, op.Guest_Registers_Refusal.None)
 }

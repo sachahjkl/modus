@@ -80,6 +80,14 @@ bz_image_refusals :: proc(t: ^testing.T) {
 	far := image
 	byte_order.write_u64_little_endian(far[:], SETUP_PREFERRED_ADDRESS, 0xFFFF_FFFF_FFE0_0000)
 	testing.expect_value(t, test_parse(far[:]), Linux_Boot_Refusal.Memory_Too_Small)
+	// The round up of a relocatable kernel near the top of the addresses
+	// wraps to 0: refused, not loaded at 0.
+	for preferred in ([?]u64{0xFFFF_FFFF_FFE0_0001, 0xFFFF_FFFF_FFFF_F000, max(u64)}) {
+		wrapping := image
+		byte_order.write_u64_little_endian(wrapping[:], SETUP_PREFERRED_ADDRESS, preferred)
+		testing.expectf(t, test_parse(wrapping[:]) == .Bad_Alignment, "preferred %x gives %v", preferred, test_parse(wrapping[:]))
+		testing.expectf(t, test_parse(wrapping[:], max(u64)) == .Bad_Alignment, "preferred %x with all the memory gives %v", preferred, test_parse(wrapping[:], max(u64)))
+	}
 	testing.expect_value(t, test_parse(image[:], TEST_MEMORY_BYTES - 1), Linux_Boot_Refusal.Memory_Too_Small)
 	testing.expect_value(t, test_parse(image[:0x400 + 0x200]), Linux_Boot_Refusal.Entry_Outside)
 	// The successful case last: a preferred address below 1 MiB goes to

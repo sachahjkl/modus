@@ -1495,7 +1495,13 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 			case .Inject_Error_Code:
 				value = u64(registers.inject_error_code)
 			case .Reserved:
-				value = u64(registers.reserved)
+				value = u64(registers.reserved[0]) | u64(registers.reserved[1]) << 8 | u64(registers.reserved[2]) << 16
+			case .Interrupt_Shadow:
+				value = u64(registers.interrupt_shadow)
+			case .Inject_In_Interrupt_Shadow:
+				// The event that the shadow refuses: the kind, not the shadow,
+				// is what the process changes.
+				value = u64(registers.inject_kind)
 			case .System_Call_Address:
 				value = registers.lstar
 			case .System_Call_Mask:
