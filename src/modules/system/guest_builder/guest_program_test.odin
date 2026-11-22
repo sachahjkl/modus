@@ -425,11 +425,59 @@ GUEST_PROGRAM := [?]u8{
 	0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, // hex_digits: db "0123456789abcdef"
 }
 
-// guest_program_elf writes the program as a vmlinux: an ELF64 file for
+// The program of the initial archive: it reads the place and the size of
+// the initial archive in the zero page (ramdisk_image at 0x218,
+// ramdisk_size at 0x21C, their high halves at 0xC0 and 0xC4), checks that
+// the archive is below 4 GiB, page aligned, above the program and at least
+// one cpio header and its name long, and that it starts with the magic
+// "070701" of the cpio newc form. Then it ends with its exit status on
+// Build_Exit_Status. Assembled by nasm (bits 64, org 0x1000000) from the
+// assembly in the comments.
+ARCHIVE_PROGRAM := [?]u8{
+	0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1
+	0x81, 0xBE, 0x02, 0x02, 0x00, 0x00, 0x48, 0x64, 0x72, 0x53, // cmp dword [rsi+0x202], 0x53726448
+	0x75, 0x52, // jne fail
+	0x8B, 0x86, 0x18, 0x02, 0x00, 0x00, // mov eax, [rsi+0x218]
+	0x8B, 0x8E, 0x1C, 0x02, 0x00, 0x00, // mov ecx, [rsi+0x21C]
+	0x8B, 0x96, 0xC0, 0x00, 0x00, 0x00, // mov edx, [rsi+0x0C0]
+	0x0B, 0x96, 0xC4, 0x00, 0x00, 0x00, // or edx, [rsi+0x0C4]
+	0xBF, 0x02, 0x00, 0x00, 0x00, // mov edi, 2
+	0x75, 0x33, // jnz fail
+	0xBF, 0x03, 0x00, 0x00, 0x00, // mov edi, 3
+	0x83, 0xF9, 0x7C, // cmp ecx, 124
+	0x72, 0x29, // jb fail
+	0xA9, 0xFF, 0x0F, 0x00, 0x00, // test eax, 0xFFF
+	0x75, 0x22, // jnz fail
+	0x3D, 0x00, 0x00, 0x00, 0x01, // cmp eax, 0x1000000
+	0x72, 0x1B, // jb fail
+	0xBF, 0x04, 0x00, 0x00, 0x00, // mov edi, 4
+	0x81, 0x38, 0x30, 0x37, 0x30, 0x37, // cmp dword [rax], 0x37303730
+	0x75, 0x0E, // jne fail
+	0x0F, 0xB7, 0x50, 0x04, // movzx edx, word [rax+4]
+	0x81, 0xFA, 0x30, 0x31, 0x00, 0x00, // cmp edx, 0x3130
+	0x75, 0x02, // jne fail
+	0x31, 0xFF, // xor edi, edi
+	// fail:
+	0x89, 0xF8, // mov eax, edi
+	0xBA, 0x08, 0x05, 0x00, 0x00, // mov edx, 0x508
+	0xEF, // out dx, eax
+	0xEB, 0xF6, // jmp fail
+}
+
+// The exit status of each failure of the program of the initial archive.
+Archive_Program_Status :: enum u32 {
+	Archive_Read        = 0,
+	No_Zero_Page        = 1,
+	Archive_Above_4_GiB = 2,
+	Archive_Misplaced   = 3,
+	Archive_Not_Cpio    = 4,
+}
+
+// guest_program_elf writes a program as a vmlinux: an ELF64 file for
 // x86-64 with one loaded segment at 16 MiB, whose entry is its first byte.
-guest_program_elf :: proc() -> []u8 {
+guest_program_elf :: proc(code: []u8) -> []u8 {
 	CODE_OFFSET :: 0x80
-	image := make([]u8, CODE_OFFSET + len(GUEST_PROGRAM))
+	image := make([]u8, CODE_OFFSET + len(code))
 	copy(image, []u8{0x7F, 'E', 'L', 'F', 2, 1, 1})
 	byte_order.write_u16_little_endian(image, 16, 2) // An executable.
 	byte_order.write_u16_little_endian(image, 18, 0x3E) // x86-64.
@@ -444,10 +492,10 @@ guest_program_elf :: proc() -> []u8 {
 	byte_order.write_u64_little_endian(image, 64 + 0x08, CODE_OFFSET)
 	byte_order.write_u64_little_endian(image, 64 + 0x10, GUEST_PROGRAM_ADDRESS)
 	byte_order.write_u64_little_endian(image, 64 + 0x18, GUEST_PROGRAM_ADDRESS)
-	byte_order.write_u64_little_endian(image, 64 + 0x20, u64(len(GUEST_PROGRAM)))
-	byte_order.write_u64_little_endian(image, 64 + 0x28, u64(len(GUEST_PROGRAM)))
+	byte_order.write_u64_little_endian(image, 64 + 0x20, u64(len(code)))
+	byte_order.write_u64_little_endian(image, 64 + 0x28, u64(len(code)))
 	byte_order.write_u64_little_endian(image, 64 + 0x30, 0x1000)
-	copy(image[CODE_OFFSET:], GUEST_PROGRAM[:])
+	copy(image[CODE_OFFSET:], code)
 	return image
 }
 
@@ -628,32 +676,52 @@ guest_program_input_disk :: proc(content: []u8) -> []u8 {
 	return disk
 }
 
-// guest_program_build_start prepares a build of the program on an input
-// disk, up to the first run.
-guest_program_build_start :: proc(build: ^Guest_Program_Build, input_disk: []u8, output_bound: u64, write_read_only_disk: bool) {
-	kernel := guest_program_elf()
+// guest_program_spec gives the spec of a build of the program code.
+guest_program_spec :: proc(code: []u8, output_bound: u64) -> (spec: contract.Guest_Build_Spec) {
+	kernel := guest_program_elf(code)
 	defer delete(kernel)
-	spec: contract.Guest_Build_Spec
 	spec.kernel_hash = blake3.hash(kernel)
 	spec.root_image_hash = blake3.hash([]u8{2})
 	spec.memory_pages = GUEST_PROGRAM_MEMORY_PAGES
 	spec.output_size_bound = output_bound
 	contract.build_spec_set_command(&spec, "build")
-	build.memory = make([]u8, GUEST_PROGRAM_MEMORY_PAGES * 4096)
+	return spec
+}
+
+// program_build_start prepares a build of the program code up to its first
+// run, in the order of build: the initial archive at its place and checked
+// there, then the runner, the machine and the boot. A refused archive
+// returns before the runner starts, so no instruction of the guest runs.
+program_build_start :: proc(build: ^Guest_Program_Build, code: []u8, spec: ^contract.Guest_Build_Spec, archive: []u8, input_disk: []u8) -> contract.Guest_Builder_Refusal {
+	kernel := guest_program_elf(code)
+	defer delete(kernel)
+	build.memory = make([]u8, spec.memory_pages * 4096)
 	build.input_disk = input_disk
-	build.output_disk = make([]u8, output_bound)
-	assert(contract.runner_prepare(&build.runner, &spec, nil, build.input_disk, build.output_disk) == .None)
+	build.output_disk = make([]u8, spec.output_size_bound)
+	parsed, parse_refusal := guest_os.linux_image_parse(kernel, u64(len(build.memory)))
+	assert(parse_refusal == .None && parsed.kind == .Elf)
+	staged, archive_refusal := initial_archive_stage(build.memory, parsed, u64(len(build.memory)), spec, raw_data(archive), u64(len(archive)))
+	if archive_refusal != .None {
+		return archive_refusal
+	}
+	assert(contract.runner_prepare(&build.runner, spec, nil, build.input_disk, build.output_disk) == .None)
 	assert(contract.runner_start(&build.runner) == .None)
 	memory := guest_os.Guest_Memory{build.memory}
 	guest_os.linux_machine_start(&build.machine, memory, build.input_disk, build.output_disk)
-	parsed, parse_refusal := guest_os.linux_image_parse(kernel, u64(len(build.memory)))
-	assert(parse_refusal == .None && parsed.kind == .Elf)
 	places := guest_os.linux_machine_places()
 	boot_refusal: guest_os.Linux_Boot_Refusal
-	build.registers, boot_refusal = guest_os.linux_boot_prepare(memory, kernel, parsed, places[:], spec.command[:spec.command_length], nil, u64(len(build.memory)))
+	build.registers, boot_refusal = guest_os.linux_boot_prepare(memory, kernel, parsed, places[:], spec.command[:spec.command_length], staged, u64(len(build.memory)))
 	assert(boot_refusal == .None)
-	build.memory[GUEST_PROGRAM_CONFIGURATION] = write_read_only_disk ? 1 : 0
 	software_guest_start(&build.software, memory, build.registers)
+	return .None
+}
+
+// guest_program_build_start prepares a build of the program on an input
+// disk, up to the first run.
+guest_program_build_start :: proc(build: ^Guest_Program_Build, input_disk: []u8, output_bound: u64, write_read_only_disk: bool) {
+	spec := guest_program_spec(GUEST_PROGRAM[:], output_bound)
+	assert(program_build_start(build, GUEST_PROGRAM[:], &spec, nil, input_disk) == .None)
+	build.memory[GUEST_PROGRAM_CONFIGURATION] = write_read_only_disk ? 1 : 0
 }
 
 guest_program_build_end :: proc(build: ^Guest_Program_Build) {
@@ -861,4 +929,169 @@ guest_program_output_refusals :: proc(t: ^testing.T) {
 	testing.expect_value(t, second.runner.guest_exit_code, u32(Guest_Program_Status.Input_File_Outside))
 	_, written, refusal = contract.runner_finish(&second.runner, &extraction.workspace, extraction.tree[:])
 	testing.expect(t, refusal == .Nonzero_Guest_Exit && written == 0)
+}
+
+// cpio_newc_entry appends one entry of the cpio newc form to archive: the
+// magic 070701, thirteen fields of eight hexadecimal digits, the name with
+// its null byte, then the content, each padded to 4 bytes.
+cpio_newc_entry :: proc(archive: ^[dynamic]u8, name: string, mode: u32, content: []u8) {
+	digits := "0123456789ABCDEF"
+	fields := [13]u32{1, mode, 0, 0, 1, 0, u32(len(content)), 0, 0, 0, 0, u32(len(name) + 1), 0}
+	append(archive, "070701")
+	for field in fields {
+		for shift := 28; shift >= 0; shift -= 4 {
+			append(archive, digits[field >> u32(shift) & 0xF])
+		}
+	}
+	append(archive, name)
+	append(archive, 0)
+	for len(archive) % 4 != 0 {
+		append(archive, 0)
+	}
+	append(archive, ..content)
+	for len(archive) % 4 != 0 {
+		append(archive, 0)
+	}
+}
+
+// cpio_newc_archive gives a real initial archive: an init program and the
+// trailer that ends the archive.
+cpio_newc_archive :: proc() -> []u8 {
+	archive: [dynamic]u8
+	cpio_newc_entry(&archive, "init", 0o100755, transmute([]u8)string("#!/bin/sh\nexec /bin/build\n"))
+	cpio_newc_entry(&archive, "TRAILER!!!", 0, nil)
+	return archive[:]
+}
+
+// The initial archive from end to end: the spec names a real cpio newc
+// archive by its hash, the builder copies it to its place in the memory of
+// the guest and checks it there, the boot names it in the zero page, and
+// the program of 64 bits finds it there with the magic of cpio and exits
+// with 0.
+@(test)
+guest_program_reads_its_initial_archive :: proc(t: ^testing.T) {
+	archive := cpio_newc_archive()
+	defer delete(archive)
+	spec := guest_program_spec(ARCHIVE_PROGRAM[:], 4096)
+	testing.expect_value(t, contract.build_spec_set_initial_archive(&spec, archive), contract.Guest_Builder_Refusal.None)
+	testing.expect_value(t, contract.validate_build_spec(&spec), contract.Guest_Builder_Refusal.None)
+	build := new(Guest_Program_Build)
+	defer guest_program_build_end(build)
+	testing.expect_value(t, program_build_start(build, ARCHIVE_PROGRAM[:], &spec, archive, nil), contract.Guest_Builder_Refusal.None)
+	page := build.memory[guest_os.LINUX_ZERO_PAGE_ADDRESS:][:guest_os.ZERO_PAGE_BYTES]
+	address := u64(byte_order.read_u32_little_endian(page, guest_os.SETUP_RAMDISK_ADDRESS)) | u64(byte_order.read_u32_little_endian(page, guest_os.ZERO_PAGE_EXTENDED_RAMDISK_ADDRESS)) << 32
+	size := u64(byte_order.read_u32_little_endian(page, guest_os.SETUP_RAMDISK_SIZE)) | u64(byte_order.read_u32_little_endian(page, guest_os.ZERO_PAGE_EXTENDED_RAMDISK_SIZE)) << 32
+	testing.expect_value(t, size, u64(len(archive)))
+	testing.expect(t, address % 4096 == 0 && address >= GUEST_PROGRAM_ADDRESS && address + size <= u64(len(build.memory)))
+	testing.expect_value(t, blake3.hash(build.memory[address:][:size]), spec.initial_archive_hash)
+	guest_program_build_run(t, build)
+	testing.expect(t, build.runner.guest_exited)
+	testing.expect_value(t, build.runner.guest_exit_code, u32(Archive_Program_Status.Archive_Read))
+	testing.expect_value(t, build.machine.failure, guest_os.Machine_Failure.None)
+}
+
+// expect_no_archive_bytes checks that a refused archive left no byte in the
+// memory of the guest, and that the runner never started: no instruction of
+// the guest ran.
+expect_no_archive_bytes :: proc(t: ^testing.T, build: ^Guest_Program_Build) {
+	for value in build.memory {
+		if value != 0 {
+			testing.expect(t, false, "a refused archive left a byte in the memory of the guest")
+			return
+		}
+	}
+	testing.expect_value(t, build.runner.state, contract.Guest_Build_State(0))
+	testing.expect_value(t, build.exits, 0)
+}
+
+// Each refusal of the initial archive, before any byte of the guest runs:
+// bytes that are not the bytes of the hash, a count that is not the size of
+// the spec, a size past the bound, an archive that leaves no room for the
+// kernel, bytes with no hash in the spec. An empty archive with no hash
+// boots as before.
+@(test)
+guest_program_initial_archive_refusals :: proc(t: ^testing.T) {
+	archive := cpio_newc_archive()
+	defer delete(archive)
+	signed := guest_program_spec(ARCHIVE_PROGRAM[:], 4096)
+	assert(contract.build_spec_set_initial_archive(&signed, archive) == .None)
+
+	// A tampered byte: the hash of the copy is not the hash of the spec.
+	{
+		tampered := make([]u8, len(archive))
+		defer delete(tampered)
+		copy(tampered, archive)
+		tampered[len(tampered) - 1] ~= 0x01
+		spec := signed
+		build := new(Guest_Program_Build)
+		defer guest_program_build_end(build)
+		testing.expect_value(t, program_build_start(build, ARCHIVE_PROGRAM[:], &spec, tampered, nil), contract.Guest_Builder_Refusal.Initial_Archive_Mismatch)
+		expect_no_archive_bytes(t, build)
+	}
+	// One byte fewer and one byte more than the size of the spec.
+	for count in ([]int{len(archive) - 1, len(archive) + 1, 0}) {
+		longer := make([]u8, len(archive) + 1)
+		defer delete(longer)
+		copy(longer, archive)
+		spec := signed
+		build := new(Guest_Program_Build)
+		defer guest_program_build_end(build)
+		testing.expect_value(t, program_build_start(build, ARCHIVE_PROGRAM[:], &spec, longer[:count], nil), contract.Guest_Builder_Refusal.Initial_Archive_Size_Invalid)
+		expect_no_archive_bytes(t, build)
+	}
+	// A count past the bound, whatever the spec says: refused before a copy.
+	{
+		spec := signed
+		build := new(Guest_Program_Build)
+		defer guest_program_build_end(build)
+		build.memory = make([]u8, spec.memory_pages * 4096)
+		kernel := guest_program_elf(ARCHIVE_PROGRAM[:])
+		defer delete(kernel)
+		parsed, _ := guest_os.linux_image_parse(kernel, u64(len(build.memory)))
+		staged, refusal := initial_archive_stage(build.memory, parsed, u64(len(build.memory)), &spec, raw_data(archive), contract.MAX_INITIAL_ARCHIVE_BYTES + 1)
+		testing.expect_value(t, refusal, contract.Guest_Builder_Refusal.Initial_Archive_Too_Large)
+		testing.expect(t, staged == nil)
+		_, refusal = initial_archive_stage(build.memory, parsed, u64(len(build.memory)), &spec, raw_data(archive), max(u64))
+		testing.expect_value(t, refusal, contract.Guest_Builder_Refusal.Initial_Archive_Too_Large)
+		expect_no_archive_bytes(t, build)
+	}
+	// An archive under the bound and under the memory, but with no room
+	// above the program: 60 MiB in 64 MiB, with the program at 16 MiB.
+	{
+		large := make([]u8, 60 * 1024 * 1024)
+		defer delete(large)
+		copy(large, archive)
+		spec := guest_program_spec(ARCHIVE_PROGRAM[:], 4096)
+		testing.expect_value(t, contract.build_spec_set_initial_archive(&spec, large), contract.Guest_Builder_Refusal.None)
+		testing.expect_value(t, contract.validate_build_spec(&spec), contract.Guest_Builder_Refusal.None)
+		build := new(Guest_Program_Build)
+		defer guest_program_build_end(build)
+		testing.expect_value(t, program_build_start(build, ARCHIVE_PROGRAM[:], &spec, large, nil), contract.Guest_Builder_Refusal.Initial_Archive_Too_Large)
+		expect_no_archive_bytes(t, build)
+	}
+	// Bytes that the spec does not name, and a size with no hash.
+	{
+		spec := guest_program_spec(ARCHIVE_PROGRAM[:], 4096)
+		build := new(Guest_Program_Build)
+		defer guest_program_build_end(build)
+		testing.expect_value(t, program_build_start(build, ARCHIVE_PROGRAM[:], &spec, archive, nil), contract.Guest_Builder_Refusal.Initial_Archive_Size_Invalid)
+		expect_no_archive_bytes(t, build)
+		spec.initial_archive_size = u64(len(archive))
+		second := new(Guest_Program_Build)
+		defer guest_program_build_end(second)
+		testing.expect_value(t, program_build_start(second, ARCHIVE_PROGRAM[:], &spec, nil, nil), contract.Guest_Builder_Refusal.Initial_Archive_Size_Invalid)
+		expect_no_archive_bytes(t, second)
+	}
+	// No hash and no bytes: the boot names no archive, and the program sees
+	// none and exits with its status.
+	{
+		spec := guest_program_spec(ARCHIVE_PROGRAM[:], 4096)
+		build := new(Guest_Program_Build)
+		defer guest_program_build_end(build)
+		testing.expect_value(t, program_build_start(build, ARCHIVE_PROGRAM[:], &spec, nil, nil), contract.Guest_Builder_Refusal.None)
+		page := build.memory[guest_os.LINUX_ZERO_PAGE_ADDRESS:][:guest_os.ZERO_PAGE_BYTES]
+		testing.expect_value(t, byte_order.read_u32_little_endian(page, guest_os.SETUP_RAMDISK_SIZE), u32(0))
+		guest_program_build_run(t, build)
+		testing.expect_value(t, build.runner.guest_exit_code, u32(Archive_Program_Status.Archive_Misplaced))
+	}
 }

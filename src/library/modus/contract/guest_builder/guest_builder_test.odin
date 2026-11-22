@@ -17,6 +17,16 @@ non_zero_hash :: proc(seed: u8) -> (result: blake3.Hash) {
 	return result
 }
 
+// valid_spec_with_archive_size gives a valid spec whose initial archive has
+// a nonzero hash and the size size.
+@(private = "file")
+valid_spec_with_archive_size :: proc(size: u64) -> (spec: Guest_Build_Spec) {
+	spec = valid_spec()
+	spec.initial_archive_hash = non_zero_hash(0x55)
+	spec.initial_archive_size = size
+	return spec
+}
+
 @(private = "file")
 valid_spec :: proc() -> (spec: Guest_Build_Spec) {
 	spec.kernel_hash = non_zero_hash(0x11)
@@ -57,8 +67,8 @@ enum_word_borders_refuse_unknown_values :: proc(t: ^testing.T) {
 		testing.expect(t, ok && got == member)
 	}
 
-	// Guest_Builder_Refusal: 0..17 valid.
-	for bad in ([]u64{18, 19, 255, max(u64)}) {
+	// Guest_Builder_Refusal: 0..20 valid.
+	for bad in ([]u64{21, 22, 255, max(u64)}) {
 		_, ok := guest_builder_refusal_of_word(bad)
 		testing.expectf(t, !ok, "Guest_Builder_Refusal must refuse %d", bad)
 	}
@@ -272,6 +282,47 @@ every_refusal_member_is_triggered :: proc(t: ^testing.T) {
 	for b in tiny_tree_out {
 		testing.expect_value(t, b, u8(0xAA))
 	}
+
+	// 18: Initial_Archive_Too_Large (past the bound, at the memory of the
+	// guest, and max(u64))
+	archive := []u8{'0', '7', '0', '7', '0', '1'}
+	for size in ([]u64{MAX_INITIAL_ARCHIVE_BYTES + 1, MIN_GUEST_MEMORY_PAGES * GUEST_PAGE_BYTES, max(u64)}) {
+		s = valid_spec()
+		_ = build_spec_set_initial_archive(&s, archive)
+		s.initial_archive_size = size
+		record(t, &seen, validate_build_spec(&s), .Initial_Archive_Too_Large)
+	}
+	s = valid_spec()
+	s.memory_pages = MAX_GUEST_MEMORY_PAGES
+	_ = build_spec_set_initial_archive(&s, archive)
+	s.initial_archive_size = MAX_INITIAL_ARCHIVE_BYTES
+	testing.expect_value(t, validate_build_spec(&s), Guest_Builder_Refusal.None)
+	s = valid_spec_with_archive_size(MIN_GUEST_MEMORY_PAGES * GUEST_PAGE_BYTES - 1)
+	testing.expect_value(t, validate_build_spec(&s), Guest_Builder_Refusal.None)
+
+	// 19: Initial_Archive_Size_Invalid (a size with no hash, a hash with no
+	// size, an empty archive, bytes whose count is not the size, bytes that
+	// the spec does not name)
+	s = valid_spec()
+	s.initial_archive_size = 1
+	record(t, &seen, validate_build_spec(&s), .Initial_Archive_Size_Invalid)
+	s = valid_spec()
+	_ = build_spec_set_initial_archive(&s, archive)
+	s.initial_archive_size = 0
+	testing.expect_value(t, validate_build_spec(&s), Guest_Builder_Refusal.Initial_Archive_Size_Invalid)
+	s = valid_spec()
+	testing.expect_value(t, build_spec_set_initial_archive(&s, nil), Guest_Builder_Refusal.Initial_Archive_Size_Invalid)
+	testing.expect(t, hash_is_zero(s.initial_archive_hash) && s.initial_archive_size == 0)
+	testing.expect_value(t, initial_archive_check(&s, archive), Guest_Builder_Refusal.Initial_Archive_Size_Invalid)
+	testing.expect_value(t, initial_archive_check(&s, nil), Guest_Builder_Refusal.None)
+	_ = build_spec_set_initial_archive(&s, archive)
+	testing.expect_value(t, initial_archive_check(&s, archive[:len(archive) - 1]), Guest_Builder_Refusal.Initial_Archive_Size_Invalid)
+	testing.expect_value(t, initial_archive_check(&s, nil), Guest_Builder_Refusal.Initial_Archive_Size_Invalid)
+	testing.expect_value(t, initial_archive_check(&s, archive), Guest_Builder_Refusal.None)
+
+	// 20: Initial_Archive_Mismatch (one changed byte of the same size)
+	tampered := [6]u8{'0', '7', '0', '7', '0', '2'}
+	record(t, &seen, initial_archive_check(&s, tampered[:]), .Initial_Archive_Mismatch)
 
 	// Confirm every single enum member of Guest_Builder_Refusal was exercised.
 	for member in Guest_Builder_Refusal {
@@ -749,4 +800,43 @@ build_spec_wire_round_trip_and_refusals :: proc(t: ^testing.T) {
 	// Truncated wire -> Malformed_Disk_Image.
 	_, trunc_ref := decode_build_spec(wire[:SPEC_WIRE_SIZE - 1])
 	testing.expect_value(t, trunc_ref, Guest_Builder_Refusal.Malformed_Disk_Image)
+
+	// The wire of version 1 is refused.
+	bad_wire = wire
+	byte_order.write_u32_little_endian(bad_wire[:], 8, 1)
+	_, version_ref := decode_build_spec(bad_wire[:])
+	testing.expect_value(t, version_ref, Guest_Builder_Refusal.Malformed_Disk_Image)
+
+	// A spec with no initial archive has zero bytes at its place.
+	for value in wire[SPEC_WIRE_INITIAL_ARCHIVE_OFFSET:] {
+		testing.expect_value(t, value, u8(0))
+	}
+
+	// The initial archive crosses the wire, and changes the hash of the spec.
+	with_archive := spec
+	testing.expect_value(t, build_spec_set_initial_archive(&with_archive, transmute([]u8)string("070701")), Guest_Builder_Refusal.None)
+	archive_wire: [SPEC_WIRE_SIZE]u8
+	_, archive_ref := encode_build_spec(&with_archive, archive_wire[:])
+	testing.expect_value(t, archive_ref, Guest_Builder_Refusal.None)
+	testing.expect_value(t, byte_order.read_u64_little_endian(archive_wire[:], SPEC_WIRE_INITIAL_ARCHIVE_OFFSET + 32), u64(6))
+	archive_decoded, archive_dec_ref := decode_build_spec(archive_wire[:])
+	testing.expect_value(t, archive_dec_ref, Guest_Builder_Refusal.None)
+	testing.expect_value(t, archive_decoded, with_archive)
+	archive_hash, _ := build_spec_hash(&with_archive)
+	testing.expect(t, archive_hash != hash1)
+
+	// A size on the wire with no hash, and a hash with the size 0.
+	bad_wire = wire
+	byte_order.write_u64_little_endian(bad_wire[:], SPEC_WIRE_INITIAL_ARCHIVE_OFFSET + 32, 6)
+	_, size_ref := decode_build_spec(bad_wire[:])
+	testing.expect_value(t, size_ref, Guest_Builder_Refusal.Initial_Archive_Size_Invalid)
+	bad_wire = archive_wire
+	byte_order.write_u64_little_endian(bad_wire[:], SPEC_WIRE_INITIAL_ARCHIVE_OFFSET + 32, 0)
+	_, hash_ref := decode_build_spec(bad_wire[:])
+	testing.expect_value(t, hash_ref, Guest_Builder_Refusal.Initial_Archive_Size_Invalid)
+	// A size past the bound on the wire.
+	bad_wire = archive_wire
+	byte_order.write_u64_little_endian(bad_wire[:], SPEC_WIRE_INITIAL_ARCHIVE_OFFSET + 32, max(u64))
+	_, large_ref := decode_build_spec(bad_wire[:])
+	testing.expect_value(t, large_ref, Guest_Builder_Refusal.Initial_Archive_Too_Large)
 }

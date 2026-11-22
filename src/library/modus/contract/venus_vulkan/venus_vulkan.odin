@@ -506,6 +506,10 @@ Venus_Problem :: enum u8 {
 	Layout_Transition_Invalid,
 	Draw_Table_Refused,
 	Gpu_Buffer_Too_Small,
+	Reply_Not_Requested, // A command sent for its reply has no flag Generate_Reply.
+	Reply_Stream_Full, // The reply stream has no room until a waiting reply is read.
+	Reply_Already_Read,
+	String_Not_Text, // A string of a reply is not valid UTF-8.
 }
 
 // Encoder appends commands to caller-owned storage. In measuring mode it

@@ -214,6 +214,21 @@ ring_reader_init :: proc "contextless" (shared: []u8, buffer_size: u32) -> (read
 // ring_reader_read copies the published bytes, at most len(destination)
 // rounded down to whole words, and stores the new head.
 ring_reader_read :: proc "contextless" (reader: ^Ring_Reader, destination: []u8) -> (read: int, problem: Venus_Problem) {
+	read = ring_reader_take(reader, destination) or_return
+	ring_reader_release(reader)
+	return read, .None
+}
+
+// ring_reader_release stores the head after the renderer ran the commands
+// that it took, as vkr_ring does: the replies of those commands are then in
+// the reply stream when the driver sees the head.
+ring_reader_release :: proc "contextless" (reader: ^Ring_Reader) {
+	intrinsics.atomic_store_explicit(control_word(reader.shared, RING_HEAD_OFFSET), reader.head, .Release)
+}
+
+// ring_reader_take copies the published bytes as ring_reader_read does, and
+// keeps the stored head until ring_reader_release.
+ring_reader_take :: proc "contextless" (reader: ^Ring_Reader, destination: []u8) -> (read: int, problem: Venus_Problem) {
 	tail := intrinsics.atomic_load_explicit(control_word(reader.shared, RING_TAIL_OFFSET), .Acquire)
 	available := tail - reader.head
 	if available > reader.buffer_size || available % 4 != 0 {
@@ -226,7 +241,6 @@ ring_reader_read :: proc "contextless" (reader: ^Ring_Reader, destination: []u8)
 	copy(destination[:first], buffer[offset:offset + first])
 	copy(destination[first:read], buffer[:read - first])
 	reader.head += u32(read)
-	intrinsics.atomic_store_explicit(control_word(reader.shared, RING_HEAD_OFFSET), reader.head, .Release)
 	return read, .None
 }
 

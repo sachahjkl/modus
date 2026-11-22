@@ -32,6 +32,15 @@ Kernel_Refused :: struct {
 	refusal_code: u64,
 }
 
+// The initial archive of a build is refused before its guest runs: the word
+// of a guest_builder.Guest_Builder_Refusal (a size, a place or a hash that
+// does not match the spec).
+@(log_fact = "guest_builder: the initial archive of {archive_bytes} bytes is refused: refusal {refusal_code}")
+Initial_Archive_Refused :: struct {
+	refusal_code:  u64,
+	archive_bytes: u64,
+}
+
 // The host processor lacks kernel-supported virtualization for Guest_Run.
 @(log_fact = "guest_builder: Guest_Run gave Unsupported: this processor has no virtualization support for guest builds")
 Guests_Unsupported :: struct {}
