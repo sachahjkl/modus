@@ -32,9 +32,20 @@ MAGIC :: u64(0x4F464E49544F4F42) // The bytes "BOOTINFO".
 // The address where the boot program maps all physical memory, for the
 // kernel: the physical address p is at `DIRECT_MAP_BASE + p` (`physical`).
 // It is the first address of the upper half, which only the kernel uses.
-DIRECT_MAP_BASE :: uintptr(0xFFFF_8000_0000_0000)
+// Both are untyped: a kernel for WebAssembly has 32-bit pointers, and it
+// uses them only as addresses in the page tables of x86-64.
+DIRECT_MAP_BASE :: 0xFFFF_8000_0000_0000
 // The address of the kernel module: the last 2 GiB of the addresses.
-KERNEL_BASE :: uintptr(0xFFFF_FFFF_8000_0000)
+KERNEL_BASE :: 0xFFFF_FFFF_8000_0000
+// The pointer of the kernel to physical address 0. On x86-64 it is the
+// direct map. A kernel for WebAssembly addresses physical memory as offsets
+// in its linear memory, with no translation
+// (src/md/features/browser_machine.md, "What the arch layer becomes").
+when ODIN_ARCH == .wasm32 || ODIN_ARCH == .wasm64p32 {
+	DIRECT_MAP_POINTER_BASE :: uintptr(0)
+} else {
+	DIRECT_MAP_POINTER_BASE :: uintptr(DIRECT_MAP_BASE)
+}
 PAGE_SIZE :: 4096 // The page of the processor.
 PAGE_TABLE_LEVELS :: 4 // The levels of a page table of the processor: addresses of 48 bits.
 // The pages of the stack on which the boot program starts the kernel.
@@ -389,12 +400,12 @@ self_test_of_word :: proc "contextless" (word: u64) -> (test: Self_Test, ok: boo
 //
 // Example: `info.physical(boot.memory_ranges, info.Memory_Range)`.
 physical :: #force_inline proc "contextless" (address: u64, $T: typeid) -> ^T {
-	return (^T)(DIRECT_MAP_BASE + uintptr(address))
+	return (^T)(DIRECT_MAP_POINTER_BASE + uintptr(address))
 }
 
 // physical_slice gives count records of physical memory, through the direct map.
 physical_slice :: #force_inline proc "contextless" (address: u64, count: u64, $T: typeid) -> []T {
-	return ([^]T)(DIRECT_MAP_BASE + uintptr(address))[:count]
+	return ([^]T)(DIRECT_MAP_POINTER_BASE + uintptr(address))[:count]
 }
 
 // The boot image: the module files that the first process needs, and the

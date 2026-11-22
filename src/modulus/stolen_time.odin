@@ -26,19 +26,19 @@ stolen_time_setups: u32
 // features of KVM, only when the highest leaf holds their leaf.
 @(private = "file")
 stolen_time_identification :: proc "contextless" () -> (identification: stolen_time.Identification) {
-	_, _, features, _ := intrinsics.x86_cpuid(1, 0)
+	_, _, features, _ := processor_identification_read(1, 0)
 	identification.hypervisor_present = features & stolen_time.HYPERVISOR_PRESENT_BIT != 0
 	if !identification.hypervisor_present {
 		return
 	}
 	for base := stolen_time.HYPERVISOR_LEAF_FIRST; base < stolen_time.HYPERVISOR_LEAF_END; base += stolen_time.HYPERVISOR_LEAF_STEP {
-		highest_leaf, b, c, d := intrinsics.x86_cpuid(base, 0)
+		highest_leaf, b, c, d := processor_identification_read(base, 0)
 		if stolen_time.is_kvm_signature(b, c, d) {
 			identification.kvm_leaves_found = true
 			identification.kvm_base = base
 			identification.kvm_highest_leaf = highest_leaf
 			if stolen_time.features_leaf_present(base, highest_leaf) {
-				identification.kvm_features, _, _, _ = intrinsics.x86_cpuid(base + stolen_time.KVM_FEATURES_LEAF_OFFSET, 0)
+				identification.kvm_features, _, _, _ = processor_identification_read(base + stolen_time.KVM_FEATURES_LEAF_OFFSET, 0)
 			}
 			return
 		}

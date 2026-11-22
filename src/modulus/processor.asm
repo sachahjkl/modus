@@ -4,7 +4,7 @@
 ; of the extended state, the load of the segment table (a far return), the
 ; switch of the stack, the start code of the other processors, and the two
 ; procedures with hlt, which the compiler takes as an end of the flow. The
-; other instructions of the kernel are templates in src/modulus/instructions.odin
+; other instructions of the kernel are templates in src/modulus/instructions_amd64.odin
 ; (docs/ARCHITECTURE.md, "The instructions of the kernel"). System V
 ; convention.
 bits 64

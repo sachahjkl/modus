@@ -50,12 +50,6 @@ return_refusal_sentences := [Return_Refusal]string {
 	.Refused_By_The_Processor = "the processor refused the return, with the instruction address ",
 }
 
-foreign _ {
-	// The iretq of resume (processor.asm), where a refusal of the processor
-	// faults.
-	resume_return: u8
-}
-
 // A setting of the compiler for one kernel of the test only: the module
 // kernel_without_return_check of tools/modustool/foundation/module_table.odin, which one
 // machine of `modustool test return_fault` boots. It skips the check of

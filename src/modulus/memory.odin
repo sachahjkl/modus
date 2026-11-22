@@ -29,12 +29,12 @@ free_frames: u64
 kernel_table: u64 // The top level page table that all address spaces share the upper half of.
 
 direct :: #force_inline proc "contextless" (address: u64, $T: typeid) -> ^T {
-	return (^T)(info.DIRECT_MAP_BASE + uintptr(address))
+	return (^T)(info.DIRECT_MAP_POINTER_BASE + uintptr(address))
 }
 
 // physical_of gives the physical address of a pointer of the direct map.
 physical_of :: #force_inline proc "contextless" (pointer: rawptr) -> u64 {
-	return u64(uintptr(pointer) - info.DIRECT_MAP_BASE)
+	return u64(uintptr(pointer) - info.DIRECT_MAP_POINTER_BASE)
 }
 
 memory_start :: proc "contextless" (boot: ^info.Boot_Info) {

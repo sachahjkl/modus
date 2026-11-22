@@ -17,13 +17,6 @@ import "modus:contract/value_kinds"
 SERIAL_PORT :: 0x3F8
 DEBUG_EXIT_PORT :: 0xF4 // The isa-debug-exit device of QEMU: a write ends the machine.
 
-foreign _ {
-	// cli, then hlt in a loop. It stays in processor.asm: the compiler
-	// takes hlt as the end of the flow of a template, and a hlt continues
-	// after an NMI.
-	processor_stop :: proc "c" () -> ! ---
-}
-
 serial_start :: proc "contextless" () {
 	port_write_8(SERIAL_PORT + 1, 0x00) // no interrupts
 	port_write_8(SERIAL_PORT + 3, 0x80) // set the divisor

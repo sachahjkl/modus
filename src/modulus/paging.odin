@@ -26,13 +26,6 @@ FAULT_EXECUTE :: 1 << 4
 LARGE_PAGE_SIZE :: 2 << 20
 DIRECT_MAP_INDEX :: (u64(info.DIRECT_MAP_BASE) >> 39) & 511
 
-foreign _ {
-	// 1: the processors refuse the memory of processes to the kernel (SMAP).
-	// interrupt_common reads it too. user_copy is in instructions.odin.
-	user_access_guard: u8
-	stack_switch :: proc "c" (top: u64, entry: rawptr) -> ! ---
-}
-
 kernel_no_execute: bool // The processors refuse to execute the memory of processes in the kernel.
 
 // kernel_entry gives the entry of the last level table for an address of
