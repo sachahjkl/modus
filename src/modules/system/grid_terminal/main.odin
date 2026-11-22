@@ -113,7 +113,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for record in system.receive(&terminal_ring.commands) {
 			event := terminal_records.renderer_intake_take(&intake, record)
 			switch event.step {
-			case .None:
+			case .None, .Status, .Hint:
+			// The grid keeps no status line and no hint line.
 			case .List:
 				grid_renderer.grid_list_changed(&screen)
 			case .Clear:

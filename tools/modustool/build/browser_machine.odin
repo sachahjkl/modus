@@ -97,10 +97,10 @@ BROWSER_MACHINE_PAGE_MODULES := [?]string {
 // The modules of the console image of the page
 // (src/md/features/console_renderers.md, "The console image"): the core
 // services of the root service, the console with its compilers, and
-// serial_terminal as its terminal on the second serial port. No
-// compositor, no drawing module, no window and no font: the root service
-// finds no compositor in the image and gives the role Terminal to
-// serial_terminal. block is the device service of the data disk of the
+// dom_terminal as its terminal on the second serial port, whose lines the
+// page draws with its document. No compositor, no drawing module, no
+// window and no font: the root service finds no compositor in the image
+// and gives the role Terminal to dom_terminal. block is the device service of the data disk of the
 // private store of the console; devices, principals and disk_processes
 // are the delegated services that the root service starts at each boot.
 @(rodata)
@@ -109,7 +109,7 @@ BROWSER_MACHINE_CONSOLE_MODULES := [?]string {
 	"start_policy",
 	"log",
 	"wiring",
-	"serial_terminal",
+	"dom_terminal",
 	"console",
 	"c_compiler",
 	"assemble",
@@ -121,9 +121,10 @@ BROWSER_MACHINE_CONSOLE_MODULES := [?]string {
 }
 
 // The modules that a console image never holds: each one draws, or holds
-// the screen, and the root service would run the desktop with it.
+// the screen, and the root service would run the desktop with it; or it
+// is another renderer of the terminal, which the page does not read.
 @(rodata)
-BROWSER_MACHINE_CONSOLE_REFUSED_MODULES := [?]string{"compositor", "terminal", "drawing", "interface_module", "grid_terminal", "input"}
+BROWSER_MACHINE_CONSOLE_REFUSED_MODULES := [?]string{"compositor", "terminal", "drawing", "interface_module", "grid_terminal", "serial_terminal", "input"}
 
 // The start list and the rescue list of the console image: the console
 // alone, which needs no screen. Its terminal starts with it.

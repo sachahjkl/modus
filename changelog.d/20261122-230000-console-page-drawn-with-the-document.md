@@ -1,0 +1,3 @@
+type: Added
+
+**The console page drawn with the document of the browser.** The console image of the browser machine now runs dom_terminal, which writes one JSON line for each change of the terminal on the second serial port, and the console page draws it with plain elements: output lines that the browser selects, copies and wraps, the edit line with its colors of code and a caret, the hint of the call with its parameter marked, a status bar, and a completion list that a click chooses. A dark and a light theme color the whole output again at once. A paste types its text. The page needs no canvas and no library. serial_terminal on the serial port and grid_terminal on the screen stay as they are.

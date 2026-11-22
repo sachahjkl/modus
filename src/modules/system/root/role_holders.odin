@@ -61,6 +61,7 @@ console_renderer_choose_at_start :: proc "contextless" (screen_at_the_start: boo
 		compositor      = len(system.image_find(image, role_holder_name(.Display))) != 0,
 		serial_terminal = len(system.image_find(image, role_policy.SERIAL_TERMINAL_MODULE)) != 0,
 		grid_terminal   = len(system.image_find(image, role_policy.GRID_TERMINAL_MODULE)) != 0,
+		dom_terminal    = len(system.image_find(image, role_policy.DOM_TERMINAL_MODULE)) != 0,
 		screen          = screen_at_the_start,
 	}
 	console_renderer = role_policy.console_renderer_choose(parts)
@@ -71,6 +72,8 @@ console_renderer_choose_at_start :: proc "contextless" (screen_at_the_start: boo
 		system.log_fact(.Info, Console_Renderer_Serial{})
 	case .Grid_Terminal:
 		system.log_fact(.Info, Console_Renderer_Grid{})
+	case .Dom_Terminal:
+		system.log_fact(.Info, Console_Renderer_Dom{})
 	}
 }
 

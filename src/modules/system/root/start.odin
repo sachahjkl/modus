@@ -4,6 +4,7 @@ package root
 // tables of this service give the name, the services that the start grant set needs,
 // and one context whose handles each take their own slot.
 
+import "internal:root/role_policy"
 import info "modus:contract/boot_info"
 import "modus:contract/fixed_addresses"
 import "modus:contract/isolated"
@@ -417,12 +418,12 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 // with no window (a service, `remote`) runs. The line of the absence of the
 // screen says this once; each refusal here adds no line.
 //
-// serial_terminal needs no screen: with it, a process with the grant
-// Terminal starts on a machine with no screen too. A console image has no
+// serial_terminal and dom_terminal need no screen: with them, a process
+// with the grant Terminal starts on a machine with no screen too. A console image has no
 // window server: there, a process with no terminal starts with no window.
 start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Status) {
 	terminal_wanted := .Terminal in work.start_grant_set.grants
-	if screen_absent && !(terminal_wanted && console_renderer == .Serial_Terminal) {
+	if screen_absent && !(terminal_wanted && !role_policy.console_renderer_needs_screen(console_renderer)) {
 		return terminal_wanted ? .Bad_State : .Ok
 	}
 	if terminal_wanted {

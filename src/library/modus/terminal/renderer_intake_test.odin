@@ -50,16 +50,68 @@ renderer_intake_reads_text_across_the_end_of_the_region :: proc(t: ^testing.T) {
 	testing.expect_value(t, empty.read, u64(7))
 }
 
-// Status and Hint draw nothing here, and their text is read past.
+// Status and Hint keep their text and their values, and the next record
+// reads its own text after theirs.
 @(test)
-renderer_intake_reads_past_status_and_hint :: proc(t: ^testing.T) {
+renderer_intake_keeps_status_and_hint :: proc(t: ^testing.T) {
 	region: [TEST_REGION_SIZE]u8
 	copy(region[:], "statushintTEXT")
 	intake := renderer_intake_make(region[:])
-	testing.expect_value(t, renderer_intake_take(&intake, {kind = u32(Kind.Status), tag = 6}).step, Renderer_Step.None)
-	testing.expect_value(t, renderer_intake_take(&intake, {kind = u32(Kind.Hint), tag = 4}).step, Renderer_Step.None)
+	event := renderer_intake_take(&intake, {kind = u32(Kind.Status), tag = 6, values = {0 = transmute(u64)Style{tone = u8(Tone.Good)}, 1 = 3, 2 = 10}})
+	testing.expect_value(t, event.step, Renderer_Step.Status)
+	testing.expect_value(t, string(intake.status.text[:intake.status.length]), "status")
+	testing.expect_value(t, intake.status.value, u64(3))
+	testing.expect_value(t, intake.status.total, u64(10))
+	testing.expect_value(t, intake.status.style.tone, u8(Tone.Good))
+	event = renderer_intake_take(&intake, {kind = u32(Kind.Hint), tag = 4, values = {1 = 1, 2 = 2, 3 = 3, 4 = 0, 5 = 1}})
+	testing.expect_value(t, event.step, Renderer_Step.Hint)
+	hint := &intake.hint
+	testing.expect_value(t, string(hint.text[:hint.length]), "hint")
+	testing.expect_value(t, hint.long_bytes, 3)
+	testing.expect_value(t, hint.mark_start, 1)
+	testing.expect_value(t, hint.mark_length, 2)
+	testing.expect_value(t, hint.short_mark_start, 0)
+	testing.expect_value(t, hint.short_mark_length, 1)
 	testing.expect_value(t, renderer_intake_take(&intake, {kind = u32(Kind.Text), tag = 4}).step, Renderer_Step.Text)
 	testing.expect_value(t, string(intake.text[:intake.text_length]), "TEXT")
+}
+
+// The values of a hint come from another process: a long form past the
+// text is cut to the text, a mark that starts past its form gives no mark,
+// a mark that passes the end of its form is cut there, and the largest
+// word changes nothing of this. A new status replaces the one before
+// whole.
+@(test)
+renderer_intake_brings_the_marks_of_a_hint_inside_their_form :: proc(t: ^testing.T) {
+	region: [TEST_REGION_SIZE]u8
+	copy(region[:], "abcdefgh")
+	intake := renderer_intake_make(region[:])
+	renderer_intake_take(&intake, {kind = u32(Kind.Hint), tag = 8, values = {1 = 6, 2 = max(u64), 3 = max(u64), 4 = 0, 5 = 4}})
+	hint := &intake.hint
+	testing.expect_value(t, hint.long_bytes, 8)
+	testing.expect_value(t, hint.mark_start, 6)
+	testing.expect_value(t, hint.mark_length, 2)
+	testing.expect_value(t, hint.short_mark_start, 0)
+	testing.expect_value(t, hint.short_mark_length, 0)
+	intake.read = 0
+	renderer_intake_take(&intake, {kind = u32(Kind.Hint), tag = 8, values = {1 = 5, 2 = 9, 3 = 5, 4 = max(u64), 5 = 1}})
+	testing.expect_value(t, hint.long_bytes, 5)
+	testing.expect_value(t, hint.mark_start, 0)
+	testing.expect_value(t, hint.mark_length, 0)
+	testing.expect_value(t, hint.short_mark_start, 0)
+	testing.expect_value(t, hint.short_mark_length, 0)
+	intake.read = 0
+	renderer_intake_take(&intake, {kind = u32(Kind.Hint), tag = 8, values = {1 = 2, 2 = 1, 3 = 5, 4 = 2, 5 = max(u64)}})
+	testing.expect_value(t, hint.mark_start, 2)
+	testing.expect_value(t, hint.mark_length, 1)
+	testing.expect_value(t, hint.short_mark_start, 2)
+	testing.expect_value(t, hint.short_mark_length, 1)
+	intake.read = 0
+	renderer_intake_take(&intake, {kind = u32(Kind.Status), tag = 8, values = {1 = 1, 2 = 2}})
+	renderer_intake_take(&intake, {kind = u32(Kind.Status), tag = 0})
+	testing.expect_value(t, intake.status.length, 0)
+	testing.expect_value(t, intake.status.total, u64(0))
+	testing.expect_value(t, intake.status.value, u64(0))
 }
 
 // Runs of the edit line that are not a whole count of runs, that pass the

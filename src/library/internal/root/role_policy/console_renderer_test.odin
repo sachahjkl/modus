@@ -16,23 +16,26 @@ desktop_holder_names :: proc() -> Holder_Names {
 	return names
 }
 
-// Each of the 16 cases of the four parts: the compositor wins whatever else
-// the image holds; with no compositor, grid_terminal only with a screen,
-// then serial_terminal with or without one; an image with no renderer
-// keeps the desktop holders.
+// Each of the 32 cases of the five parts: the compositor wins whatever else
+// the image holds; with no compositor, dom_terminal with or without a
+// screen, then grid_terminal only with a screen, then serial_terminal with
+// or without one; an image with no renderer keeps the desktop holders.
 @(test)
 console_renderer_choose_takes_each_case_of_the_parts :: proc(t: ^testing.T) {
-	for bits in 0 ..< 16 {
+	for bits in 0 ..< 32 {
 		parts := Console_Parts {
 			compositor      = bits & 1 != 0,
 			serial_terminal = bits & 2 != 0,
 			grid_terminal   = bits & 4 != 0,
 			screen          = bits & 8 != 0,
+			dom_terminal    = bits & 16 != 0,
 		}
 		expected := Console_Renderer.Desktop_Terminal
 		switch {
 		case parts.compositor:
 			expected = .Desktop_Terminal
+		case parts.dom_terminal:
+			expected = .Dom_Terminal
 		case parts.grid_terminal && parts.screen:
 			expected = .Grid_Terminal
 		case parts.serial_terminal:
@@ -41,7 +44,9 @@ console_renderer_choose_takes_each_case_of_the_parts :: proc(t: ^testing.T) {
 		testing.expectf(t, console_renderer_choose(parts) == expected, "%v gives %v, not %v", parts, console_renderer_choose(parts), expected)
 	}
 	// The cases that a reader looks for by name.
-	testing.expect_value(t, console_renderer_choose({compositor = true, serial_terminal = true, grid_terminal = true, screen = true}), Console_Renderer.Desktop_Terminal)
+	testing.expect_value(t, console_renderer_choose({compositor = true, serial_terminal = true, grid_terminal = true, dom_terminal = true, screen = true}), Console_Renderer.Desktop_Terminal)
+	testing.expect_value(t, console_renderer_choose({dom_terminal = true}), Console_Renderer.Dom_Terminal)
+	testing.expect_value(t, console_renderer_choose({dom_terminal = true, grid_terminal = true, serial_terminal = true, screen = true}), Console_Renderer.Dom_Terminal)
 	testing.expect_value(t, console_renderer_choose({serial_terminal = true}), Console_Renderer.Serial_Terminal)
 	testing.expect_value(t, console_renderer_choose({serial_terminal = true, screen = true}), Console_Renderer.Serial_Terminal)
 	testing.expect_value(t, console_renderer_choose({grid_terminal = true}), Console_Renderer.Desktop_Terminal)
@@ -80,7 +85,16 @@ console_renderer_holders_set_gives_display_and_terminal :: proc(t: ^testing.T) {
 	testing.expect(t, is_holder(&grid, GRID_TERMINAL_MODULE, .Terminal))
 	testing.expect(t, !is_holder(&grid, "compositor", .Display))
 
-	for names in ([?]Holder_Names{serial, grid}) {
+	dom := desktop_holder_names()
+	console_renderer_holders_set(&dom, .Dom_Terminal)
+	testing.expect_value(t, holder_name(&dom, .Terminal), DOM_TERMINAL_MODULE)
+	testing.expect_value(t, holder_name(&dom, .Display), "")
+	_, dom_display_ok := target_resolve(&dom, role_contract.role_properties(.Display).name)
+	testing.expect(t, !dom_display_ok)
+	testing.expect_value(t, role_of_module(&dom, DOM_TERMINAL_MODULE), role_contract.Role.Terminal)
+	testing.expect_value(t, role_of_module(&dom, SERIAL_TERMINAL_MODULE), role_contract.Role.None)
+
+	for names in ([?]Holder_Names{serial, grid, dom}) {
 		names := names
 		for role in ([?]role_contract.Role{.Input, .Console, .Storage}) {
 			testing.expect_value(t, holder_name(&names, role), holder_name(&desktop, role))
@@ -114,6 +128,11 @@ console_renderer_start_check_refuses_a_second_renderer_and_another_holder :: pro
 		testing.expectf(t, console_renderer_start_check(.Serial_Terminal, other, true) == .Holder_Is_Not_The_Renderer, "%q holds the serial renderer", other)
 	}
 	testing.expect_value(t, console_renderer_start_check(.Grid_Terminal, SERIAL_TERMINAL_MODULE, false), Console_Renderer_Refusal.Holder_Is_Not_The_Renderer)
+	for other in ([?]string{SERIAL_TERMINAL_MODULE, GRID_TERMINAL_MODULE, "terminal", "", "dom_terminal2", "dom_termina"}) {
+		testing.expectf(t, console_renderer_start_check(.Dom_Terminal, other, false) == .Holder_Is_Not_The_Renderer, "%q holds the DOM renderer", other)
+	}
+	testing.expect_value(t, console_renderer_start_check(.Serial_Terminal, DOM_TERMINAL_MODULE, false), Console_Renderer_Refusal.Holder_Is_Not_The_Renderer)
+	testing.expect_value(t, console_renderer_start_check(.Dom_Terminal, DOM_TERMINAL_MODULE, true), Console_Renderer_Refusal.Renderer_Running)
 	testing.expect_value(t, console_renderer_start_check(.Serial_Terminal, SERIAL_TERMINAL_MODULE, true), Console_Renderer_Refusal.Renderer_Running)
 	testing.expect_value(t, console_renderer_start_check(.Grid_Terminal, GRID_TERMINAL_MODULE, true), Console_Renderer_Refusal.Renderer_Running)
 	// A plan that overrides the terminal of a serial image is refused.
@@ -124,5 +143,8 @@ console_renderer_start_check_refuses_a_second_renderer_and_another_holder :: pro
 	// Last: each renderer as its own module with none running.
 	testing.expect_value(t, console_renderer_start_check(.Serial_Terminal, SERIAL_TERMINAL_MODULE, false), Console_Renderer_Refusal.None)
 	testing.expect_value(t, console_renderer_start_check(.Grid_Terminal, GRID_TERMINAL_MODULE, false), Console_Renderer_Refusal.None)
+	testing.expect_value(t, console_renderer_start_check(.Dom_Terminal, DOM_TERMINAL_MODULE, false), Console_Renderer_Refusal.None)
 	testing.expect_value(t, console_renderer_module(.Desktop_Terminal), "")
+	testing.expect(t, console_renderer_needs_screen(.Desktop_Terminal) && console_renderer_needs_screen(.Grid_Terminal))
+	testing.expect(t, !console_renderer_needs_screen(.Serial_Terminal) && !console_renderer_needs_screen(.Dom_Terminal))
 }

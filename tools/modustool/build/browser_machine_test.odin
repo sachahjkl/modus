@@ -7,6 +7,7 @@ import "core:strconv"
 import "core:strings"
 import "core:testing"
 import info "modus:contract/boot_info"
+import "internal:dom_terminal/dom_protocol"
 import "modus:contract/start_list"
 import terminal_records "modus:terminal"
 import "modustool:foundation"
@@ -396,8 +397,8 @@ browser_machine_page_image_keeps_the_modules_of_the_page :: proc(t: ^testing.T) 
 
 // The console of the page is on COM2 and the log of the kernel on COM1: the
 // host plays a UART at each, the data port of COM2 is the first port that
-// the root service gives serial_terminal, and the console page reads COM2,
-// types on COM2, and loads the console image.
+// the root service gives dom_terminal, and the console page reads the JSON
+// lines of COM2, types on COM2, and loads the console image.
 @(test)
 browser_machine_host_puts_the_console_on_com2 :: proc(t: ^testing.T) {
 	text := browser_machine_host_text()
@@ -413,14 +414,38 @@ browser_machine_host_puts_the_console_on_com2 :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(page, "from \"./" + BROWSER_MACHINE_HOST_FILE + "\""))
 	testing.expect(t, strings.contains(page, "fetch(\"./" + BROWSER_MACHINE_KERNEL_FILE + "\")"))
 	testing.expect(t, strings.contains(page, "fetch(\"./" + BROWSER_MACHINE_CONSOLE_IMAGE_FILE + "\")"))
-	testing.expect(t, strings.contains(page, "onConsoleBytes:"))
-	testing.expect(t, strings.contains(page, "machine.consolePort.type(sequence)"))
+	testing.expect(t, strings.contains(page, "onConsoleLine:"))
+	testing.expect(t, strings.contains(page, "JSON.parse(line)"))
+	testing.expect(t, strings.contains(page, "machine.consolePort.type(text)"))
 	testing.expect(t, !strings.contains(page, "machine.serial.input"))
 	// The site publishes the desktop page only: the console page needs its
 	// own image, which the site does not write.
 	files := BROWSER_MACHINE_PAGE_FILES
 	for file in files {
 		testing.expect(t, file.name != BROWSER_MACHINE_CONSOLE_PAGE_FILE)
+	}
+}
+
+// The console page draws with its document only: no canvas, no grid of
+// cells, no library and no address outside its folder. It reads each kind
+// of line that dom_protocol writes, colors each tone by its class, keeps a
+// bound on its output, and keeps copy and paste with the browser.
+@(test)
+browser_machine_console_page_draws_the_dom_protocol :: proc(t: ^testing.T) {
+	page := BROWSER_MACHINE_CONSOLE_PAGE_TEXT
+	for refused in ([?]string{"<canvas", "getContext", "xterm", "http://", "https://", "<link", "innerHTML"}) {
+		testing.expectf(t, !strings.contains(page, refused), "the console page holds %q", refused)
+	}
+	for kind in ([?]string{"  out(record) {", "  clr: ", "  edit(record) {", "  hint(record) {", "  status(record) {", "  list(record) {"}) {
+		testing.expectf(t, strings.contains(page, kind), "the console page reads no line %q", kind)
+	}
+	for tone in terminal_records.Tone {
+		if tone != .Default {
+			testing.expectf(t, strings.contains(page, strings.concatenate({".t-", dom_protocol.tone_name(tone), " {"}, context.temp_allocator)), "the console page has no class for the tone %v", tone)
+		}
+	}
+	for part in ([?]string{"id=\"output\"", "id=\"prompt-bar\"", "id=\"hint-bar\"", "id=\"status-bar\"", "id=\"completion-popup\"", "data-theme", "OUTPUT_LINE_LIMIT = 4000", "addEventListener(\"paste\"", "getSelection()"}) {
+		testing.expectf(t, strings.contains(page, part), "the console page holds no %q", part)
 	}
 }
 
@@ -446,9 +471,9 @@ console_image_base :: proc(without: string = "") -> []u8 {
 }
 
 // The console image holds the modules of BROWSER_MACHINE_CONSOLE_MODULES and
-// their imports only: serial_terminal and start_policy, and no compositor,
-// no terminal of the desktop, no drawing module, no input service and no
-// grid_terminal. Its resources are its own start list and rescue list,
+// their imports only: dom_terminal and start_policy, and no compositor,
+// no terminal of the desktop, no drawing module, no input service, no
+// grid_terminal and no serial_terminal. Its resources are its own start list and rescue list,
 // which name the console alone with no machine part: no font, no pointer
 // theme, and none of the three resources that the signature makes again.
 // The image that the files give reads back with its tables.
@@ -470,7 +495,8 @@ browser_machine_console_image_holds_the_console_and_no_desktop :: proc(t: ^testi
 	for name in refused {
 		testing.expectf(t, !kept[name], "the console image holds %s", name)
 	}
-	testing.expect(t, kept["serial_terminal"] && kept["start_policy"])
+	testing.expect(t, kept["dom_terminal"] && kept["start_policy"])
+	testing.expect(t, !kept["serial_terminal"] && !kept["grid_terminal"])
 	// Each module is a module of the list or an import of a kept module.
 	for name in kept {
 		imported := false
@@ -513,12 +539,12 @@ browser_machine_console_image_holds_the_console_and_no_desktop :: proc(t: ^testi
 	testing.expect_value(t, len(desktop) - desktop_count, 4)
 }
 
-// A base with no serial_terminal, or with no console, gives no console
+// A base with no dom_terminal, or with no console, gives no console
 // image: the root service would find no terminal, or no shell, for the page.
 // A base that is not an image is refused first.
 @(test)
 browser_machine_console_image_refuses_a_base_without_its_modules :: proc(t: ^testing.T) {
-	for name in ([?]string{"serial_terminal", "console", "start_policy", "root"}) {
+	for name in ([?]string{"dom_terminal", "console", "start_policy", "root"}) {
 		_, _, problem := browser_machine_page_image_files(console_image_base(name), .Console)
 		testing.expect_value(t, problem, fmt.tprintf("it holds no module %s", name))
 	}

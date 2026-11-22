@@ -32,6 +32,9 @@ Console_Renderer_Serial :: struct {}
 @(log_fact = "root: no compositor in the boot image: the console draws a text grid on the screen through grid_terminal")
 Console_Renderer_Grid :: struct {}
 
+@(log_fact = "root: no compositor in the boot image: the console writes lines for a page to the second serial port through dom_terminal")
+Console_Renderer_Dom :: struct {}
+
 @(log_fact = "root: no palette provider")
 Palette_Provider_Absent :: struct {}
 
