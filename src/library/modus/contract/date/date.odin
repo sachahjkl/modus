@@ -72,7 +72,7 @@ zone_offset_seconds_read :: proc "contextless" (page: ^Page) -> i64 {
 	if page == nil {
 		return 0
 	}
-	zone := intrinsics.atomic_load_explicit(&page.zone_offset_seconds, .Relaxed)
+	zone := intrinsics.atomic_load_explicit(&page.zone_offset_seconds, .Acquire)
 	return clamp(zone, -ZONE_OFFSET_SECONDS_LIMIT, ZONE_OFFSET_SECONDS_LIMIT)
 }
 

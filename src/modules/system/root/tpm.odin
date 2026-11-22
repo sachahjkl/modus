@@ -77,14 +77,19 @@ tpm_service_start :: proc "contextless" () {
 		system.grant_put(&context_grants, tpm_service.SERVICE_REGION, {region_memory, {.Read, .Write}})
 		system.grant_put(&context_grants, tpm_service.SERVICE_REGISTERS, {registers, {.Read, .Write}})
 		system.grant_put(&context_grants, tpm_service.SERVICE_MEASURE_RING, {measure_memory, {.Read, .Write}})
-		if context_refused("tpm", &context_grants, &values) {
+		tpm_name := role_holder_name(.Tpm)
+		tpm_mappings: [1]system.Mapping
+		tpm_mapping_count := 0
+		fresh_bytes_page_give(slot, tpm_mappings[:], &tpm_mapping_count, &values)
+		if context_refused(tpm_name, &context_grants, &values) {
 			status = .Bad_State
 		} else {
-			file := system.image_find(image, "tpm")
-			process, status = system.process_start(file, "tpm", context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, "tpm"))
+			file := system.image_find(image, tpm_name)
+			process, status = system.process_start(file, tpm_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, tpm_name), tpm_mappings[:tpm_mapping_count])
 		}
 	}
 	if status != .Ok {
+		fresh_bytes_forget(slot)
 		if measure_ring.head != nil {
 			system.ring_close(&measure_ring)
 		}

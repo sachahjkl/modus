@@ -376,13 +376,17 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	ring_memory, status = system.memory_create(ring.pages(kind.ring_capacity))
 	if status == .Ok {
 		system.grant_put(&context_grants, kind.ring_role, {ring_memory, {.Read, .Write}})
-		if context_refused(kind.name, &context_grants, &values) {
+		driver_mappings: [1]system.Mapping
+		driver_mapping_count := 0
+		fresh_bytes_page_give(driver, driver_mappings[:], &driver_mapping_count, &values)
+		if context_refused(service_name, &context_grants, &values) {
 			status = .Bad_State
 		} else {
-			driver.process, status = system.process_start(system.image_find(image, kind.name), kind.name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, kind.name), kind.name))
+			driver.process, status = system.process_start(system.image_find(image, service_name), service_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, service_name), service_name), driver_mappings[:driver_mapping_count])
 		}
 	}
 	if status != .Ok {
+		fresh_bytes_forget(driver)
 		system.close(driver.queues)
 		if ring_memory != 0 {
 			system.close(ring_memory)

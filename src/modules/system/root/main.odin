@@ -852,17 +852,21 @@ input_start :: proc "contextless" () -> system.Status {
 	// With no settings page, no mapping and no bit of its range: the input
 	// service reads nothing at the range.
 	input_values: system.Context_Values
-	settings_mapping := [1]system.Mapping{{memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}}
-	input_mappings: []system.Mapping
+	input_mappings: [2]system.Mapping
+	input_mapping_count := 0
 	if settings_memory != 0 {
-		input_mappings = settings_mapping[:]
+		input_mappings[input_mapping_count] = {memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}
+		input_mapping_count += 1
 		system.range_mapped_put(&input_values, .Settings_Page)
 	}
+	fresh_bytes_page_give(slot, input_mappings[:], &input_mapping_count, &input_values)
 	if context_refused(input_name, &context_grants, &input_values) {
+		fresh_bytes_forget(slot)
 		return .Bad_State
 	}
-	process, status := system.process_start(system.image_find(image, input_name), input_name, context_grants.grants, random.values_with_seed(&process_generator, input_values.values), budget_of(system.image_find(image, input_name), input_name), input_mappings, &prepared)
+	process, status := system.process_start(system.image_find(image, input_name), input_name, context_grants.grants, random.values_with_seed(&process_generator, input_values.values), budget_of(system.image_find(image, input_name), input_name), input_mappings[:input_mapping_count], &prepared)
 	if status != .Ok {
+		fresh_bytes_forget(slot)
 		system.log_fact(.Warning, Input_Start_Failed{status = status})
 		return status
 	}
@@ -1717,11 +1721,13 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	columns, rows, measure := start_grant_set_terminal(&writer.start_grant_set)
 	handles := terminal.Terminal_Handles{display = display_memory, ring = ring_memory, text = text_memory, writer = writer.process, log = log_grant(start_grant_set)}
 	terminal.context_of(&context_grants, &values, handles, system.name_pack(system.name_of(writer.name[:])), columns, rows, measure)
-	// The settings page and the font outlines.
-	mappings: [2]system.Mapping
+	// The settings page, font outlines, and fresh bytes page.
+	mappings: [3]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
+	fresh_bytes_page_give(view, mappings[:], &mapping_count, &values)
 	if context_refused(terminal_name, &context_grants, &values) {
+		fresh_bytes_forget(view)
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return .Bad_State
 	}
@@ -1730,6 +1736,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	load_error: module.Load_Error
 	process, status := system.process_start(system.image_find(image, terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, terminal_name), terminal_name), mappings[:mapping_count], &prepared, load_source(), &load_error)
 	if status != .Ok {
+		fresh_bytes_forget(view)
 		if load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Warning, Terminal_Load_Refused{})
 			load_error_log(.Warning, &load_error)
