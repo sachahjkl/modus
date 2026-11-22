@@ -224,6 +224,40 @@ collector_query_by_grant :: proc "contextless" (
 	return copied_count, total_matches
 }
 
+// collector_query_acts copies, in sequence order, the act records whose
+// sequence number is in first_sequence ..= last_sequence and whose grant is
+// grant_serial (0 for each grant) into out, and gives the count copied and
+// the count of such records, which can pass what out holds. A range whose
+// first sequence is past its last one is refused, and copies nothing.
+collector_query_acts :: proc "contextless" (
+	collector: ^Act_Collector,
+	grant_serial: u64,
+	first_sequence: u64,
+	last_sequence: u64,
+	out: []wide_grants.Act_Record,
+) -> (copied_count: u32, total_matches: u32, ok: bool) {
+	if !collector.initialized || first_sequence > last_sequence {
+		return 0, 0, false
+	}
+	// The sequence of a record is its index: the append keeps them equal.
+	if first_sequence >= u64(collector.count) {
+		return 0, 0, true
+	}
+	last := min(last_sequence, u64(collector.count) - 1)
+	for index in first_sequence ..= last {
+		entry := &collector.records[index]
+		if grant_serial != 0 && entry.grant_serial != grant_serial {
+			continue
+		}
+		if int(copied_count) < len(out) {
+			out[copied_count] = entry^
+			copied_count += 1
+		}
+		total_matches += 1
+	}
+	return copied_count, total_matches, true
+}
+
 // collector_query_by_window copies act records matching target_window_id into
 // out in sequence order. Returns the number copied and the total matches found.
 collector_query_by_window :: proc "contextless" (

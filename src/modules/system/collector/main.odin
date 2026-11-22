@@ -59,10 +59,22 @@ fail :: proc "contextless" (text: string) -> ! {
 	system.stop(.Failed)
 }
 
+// act_reader_check refuses a caller of the act exports that does not act
+// for the principal of the collector: the act records of a wide grant are
+// the audit of its holder, which the holder never reads.
+@(private = "file")
+act_reader_check :: proc "contextless" (error: ^errors.Error_Record) -> (failure: i64, ok: bool) {
+	_, failure, ok = principal_reader_of(space_service.store.principal, system.service_caller(), error)
+	return failure, ok
+}
+
 // act_record_count returns the number of hash-chained act records of wide
 // grants stored in the collector.
 @(export)
 act_record_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
+	if failure, ok := act_reader_check(error); !ok {
+		return failure
+	}
 	if !manager_state.initialized {
 		return errors.fail(error, -1, .State, .Records)
 	}
@@ -72,6 +84,9 @@ act_record_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
 // active_grant_count returns the number of currently active wide grants.
 @(export)
 active_grant_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
+	if failure, ok := act_reader_check(error); !ok {
+		return failure
+	}
 	if !manager_state.initialized {
 		return errors.fail(error, -1, .State, .Grants)
 	}
@@ -81,6 +96,9 @@ active_grant_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
 // status writes aggregate collector and wide-grant counters into out.
 @(export)
 status :: proc "c" (out: ^Collector_Status, error: ^errors.Error_Record) -> i64 {
+	if failure, ok := act_reader_check(error); !ok {
+		return failure
+	}
 	if out == nil {
 		return errors.fail(error, -1, .Bad_Address, .None, 1)
 	}
@@ -103,6 +121,9 @@ status :: proc "c" (out: ^Collector_Status, error: ^errors.Error_Record) -> i64 
 // verify_chain walks the full hash-chained act store and reports integrity.
 @(export)
 verify_chain :: proc "c" (out: ^Chain_Verification_Report, error: ^errors.Error_Record) -> i64 {
+	if failure, ok := act_reader_check(error); !ok {
+		return failure
+	}
 	if out == nil {
 		return errors.fail(error, -1, .Bad_Address, .None, 1)
 	}
@@ -121,6 +142,62 @@ verify_chain :: proc "c" (out: ^Chain_Verification_Report, error: ^errors.Error_
 		return errors.fail(error, -3, .Damaged, .Records, 0, i64(failing_index), i64(manager_state.collector.count), i64(refusal))
 	}
 	return 0
+}
+
+// act_records_read_for gives the act records of grant (0 for each grant)
+// whose sequence is in first ..= last, oldest first, through staging. It
+// serves only a caller that acts for principal.
+act_records_read_for :: proc "contextless" (
+	manager: ^collector_core.Wide_Grant_Manager,
+	principal: u64,
+	connection: ^system.Connection,
+	grant: i64,
+	first: i64,
+	last: i64,
+	result: ^system.Table_To_Append(wide_grants.Act_Record),
+	staging: []wide_grants.Act_Record,
+	error: ^errors.Error_Record,
+) -> i64 {
+	if _, failure, ok := principal_reader_of(principal, connection, error); !ok {
+		return failure
+	}
+	if !manager.initialized {
+		return errors.fail(error, ERROR_SPACE, .State, .Records)
+	}
+	if grant < 0 {
+		return errors.fail(error, ERROR_SPACE, .Bad_Value, .None, 1, grant, 0)
+	}
+	if first < 0 {
+		return errors.fail(error, ERROR_SPACE, .Bad_Value, .None, 2, first, 0)
+	}
+	if last < first {
+		return errors.fail(error, ERROR_SPACE, .Bad_Value, .None, 3, last, first)
+	}
+	if result == nil {
+		return errors.fail(error, ERROR_SPACE, .Bad_Address, .None, 4)
+	}
+	room := result.count < result.capacity ? result.capacity - result.count : 0
+	copied, total, ok := collector_core.collector_query_acts(&manager.collector, u64(grant), u64(first), u64(last), staging[:min(room, u64(len(staging)))])
+	if !ok {
+		return errors.fail(error, ERROR_SPACE, .Bad_Value, .None, 3, last, first)
+	}
+	for index in 0 ..< copied {
+		system.table_append(result, staging[index])
+	}
+	return i64(total)
+}
+
+// act_records_read gives the act records of the wide grants that this
+// collector keeps, oldest first: those of grant (0 for each grant) whose
+// sequence is in first ..= last. A table holds at most QUERY_STAGING_CAPACITY
+// records of one call; a reader that wants more asks again after the last
+// sequence that it received.
+//
+// The result is the count of such records, or a negative number with an
+// error record: ERROR_NO_CALLER, ERROR_NOT_PRINCIPAL, or ERROR_SPACE.
+@(export, link_name = "act_records_read")
+act_records_read :: proc "c" (grant: i64, first: i64, last: i64, result: ^system.Table_To_Append(wide_grants.Act_Record), error: ^errors.Error_Record) -> i64 {
+	return act_records_read_for(&manager_state, space_service.store.principal, system.service_caller(), grant, first, last, result, query_staging[:], error)
 }
 
 // region_range_valid checks that [offset, offset + length) lies wholly within
@@ -418,7 +495,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !collector_core.manager_init(&manager_state, principal_id) {
 		fail("cannot initialize collector state")
 	}
-	wide_grants.space_store_init(&space_store, principal_id)
+	wide_grants.space_store_init(&space_service.store, principal_id)
 
 	system.log_fact(.Info, Service_Ready{principal_id = principal_id, act_capacity = u64(manager_state.collector.capacity)})
 

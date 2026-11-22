@@ -192,7 +192,7 @@ a_full_keep_space_thins_its_oldest_record_and_counts_it :: proc(t: ^testing.T) {
 	reader := principal_reader(0, "console")
 	heads: [4]Kept_Record_Head
 	bytes: [32]u8
-	count, refusal := records_read(store, space, -1, &reader, heads[:], bytes[:])
+	count, refusal := records_read(store, space, -1, SPACE_RECORDS_MOST, &reader, heads[:], bytes[:])
 	testing.expect_value(t, refusal, Space_Refusal.None)
 	testing.expect_value(t, count, 2)
 	testing.expect_value(t, heads[0].serial, i64(3))
@@ -283,40 +283,40 @@ records_read_serves_the_principal_and_never_the_source :: proc(t: ^testing.T) {
 	}
 	for item in readers {
 		reader := item.reader
-		count, refusal := records_read(store, space, -1, &reader, heads[:], bytes[:])
+		count, refusal := records_read(store, space, -1, SPACE_RECORDS_MOST, &reader, heads[:], bytes[:])
 		testing.expect_value(t, refusal, item.refusal)
 		testing.expect_value(t, count, 0)
 	}
-	_, refusal := records_read(store, space, -1, nil, heads[:], bytes[:])
+	_, refusal := records_read(store, space, -1, SPACE_RECORDS_MOST, nil, heads[:], bytes[:])
 	testing.expect_value(t, refusal, Space_Refusal.Not_Principal)
 	testing.expect(t, heads == {}, "a refused reader receives no head")
 
 	reader := principal_reader(3, "console")
 	count: int
-	count, refusal = records_read(store, space, 0, &reader, heads[:], bytes[:])
+	count, refusal = records_read(store, space, 0, SPACE_RECORDS_MOST, &reader, heads[:], bytes[:])
 	testing.expect_value(t, refusal, Space_Refusal.None)
 	testing.expect_value(t, count, 2)
 	testing.expect_value(t, heads[0].serial, i64(1))
 	testing.expect_value(t, heads[0].time_ms, i64(11))
 	testing.expect_value(t, heads[0].size, i64(8))
 
-	count, refusal = records_read(store, space, 2, &reader, heads[:], bytes[:])
+	count, refusal = records_read(store, space, 2, SPACE_RECORDS_MOST, &reader, heads[:], bytes[:])
 	testing.expect_value(t, count, 0)
-	count, refusal = records_read(store, space, max(i64), &reader, heads[:], bytes[:])
+	count, refusal = records_read(store, space, max(i64), SPACE_RECORDS_MOST, &reader, heads[:], bytes[:])
 	testing.expect_value(t, count, 0)
 
 	// The count of the full answer passes what the places hold.
 	small_heads: [1]Kept_Record_Head
-	count, refusal = records_read(store, space, -1, &reader, small_heads[:], bytes[:])
+	count, refusal = records_read(store, space, -1, SPACE_RECORDS_MOST, &reader, small_heads[:], bytes[:])
 	testing.expect_value(t, count, 3)
 	testing.expect_value(t, small_heads[0].serial, i64(0))
 	small_bytes: [12]u8
 	heads = {}
-	count, refusal = records_read(store, space, -1, &reader, heads[:], small_bytes[:])
+	count, refusal = records_read(store, space, -1, SPACE_RECORDS_MOST, &reader, heads[:], small_bytes[:])
 	testing.expect_value(t, count, 3)
 	testing.expect_value(t, heads[1].size, i64(0))
 
-	_, refusal = records_read(store, 0, -1, &reader, heads[:], bytes[:])
+	_, refusal = records_read(store, 0, -1, SPACE_RECORDS_MOST, &reader, heads[:], bytes[:])
 	testing.expect_value(t, refusal, Space_Refusal.Unknown_Space)
 }
 
@@ -391,4 +391,106 @@ space_rows_give_the_counts_of_each_space :: proc(t: ^testing.T) {
 	testing.expect_value(t, row.next_serial, i64(3))
 	testing.expect_value(t, string(row.source[:6]), "server")
 	testing.expect_value(t, kept_record_count(store), u64(1))
+}
+
+@(test)
+records_read_refuses_each_limit_out_of_its_bound :: proc(t: ^testing.T) {
+	store := new(Space_Store)
+	defer free(store)
+	space_store_init(store, 0)
+	space, _ := space_open(store, text("server"), text("orders"), audit_terms(8))
+	for value in u8(0) ..< 5 {
+		record := record_of(value)
+		record_append(store, space, record[:], u64(value))
+	}
+	reader := principal_reader(0, "console")
+	heads: [8]Kept_Record_Head
+	bytes: [64]u8
+	for limit in ([?]int{min(int), -1, 0, SPACE_RECORDS_MOST + 1, max(int)}) {
+		count, refusal := records_read(store, space, -1, limit, &reader, heads[:], bytes[:])
+		testing.expectf(t, refusal == .Bad_Limit, "the limit %d was taken", limit)
+		testing.expect_value(t, count, 0)
+	}
+	testing.expect(t, heads == {}, "a refused limit wrote a head")
+
+	// A limit of 1 gives the oldest record after the serial, then the next.
+	count, refusal := records_read(store, space, -1, 1, &reader, heads[:], bytes[:])
+	testing.expect_value(t, refusal, Space_Refusal.None)
+	testing.expect_value(t, count, 1)
+	testing.expect_value(t, heads[0].serial, i64(0))
+	count, refusal = records_read(store, space, heads[0].serial, 2, &reader, heads[:], bytes[:])
+	testing.expect_value(t, count, 2)
+	testing.expect_value(t, heads[0].serial, i64(1))
+	testing.expect_value(t, heads[1].serial, i64(2))
+	count, refusal = records_read(store, space, -1, SPACE_RECORDS_MOST, &reader, heads[:], bytes[:])
+	testing.expect_value(t, count, 5)
+}
+
+@(test)
+space_rows_and_space_stats_hide_a_space_from_its_source :: proc(t: ^testing.T) {
+	store := new(Space_Store)
+	defer free(store)
+	space_store_init(store, 2)
+	server_space, _ := space_open(store, text("server"), text("orders"), audit_terms(4))
+	shop_space, _ := space_open(store, text("shop"), text("orders"), audit_terms(4))
+	record := record_of(7)
+	record_append(store, server_space, record[:], 1)
+	rows: [SPACE_CAPACITY]Space_Row
+
+	not_acting := principal_reader(2, "console")
+	not_acting.acts_for_principal = false
+	other := principal_reader(3, "console")
+	for item in ([?]Space_Reader{not_acting, other}) {
+		reader := item
+		count, refusal := space_rows(store, &reader, rows[:])
+		testing.expect_value(t, refusal, Space_Refusal.Not_Principal)
+		testing.expect_value(t, count, 0)
+		_, refusal = space_stats(store, server_space, &reader)
+		testing.expect_value(t, refusal, Space_Refusal.Not_Principal)
+	}
+	count, refusal := space_rows(store, nil, rows[:])
+	testing.expect_value(t, refusal, Space_Refusal.Not_Principal)
+	testing.expect(t, rows == {}, "a refused reader received a row")
+
+	// The source sees the spaces of the others, never its own.
+	source := principal_reader(2, "server")
+	count, refusal = space_rows(store, &source, rows[:])
+	testing.expect_value(t, refusal, Space_Refusal.None)
+	testing.expect_value(t, count, 1)
+	testing.expect_value(t, rows[0].space, i64(shop_space))
+	row: Space_Row
+	row, refusal = space_stats(store, server_space, &source)
+	testing.expect_value(t, refusal, Space_Refusal.Own_Space)
+	testing.expect(t, row == {}, "a refused stats gave a row")
+
+	console := principal_reader(2, "console")
+	count, refusal = space_rows(store, &console, rows[:])
+	testing.expect_value(t, count, 2)
+	// The count of the full answer passes what the rows hold.
+	count, refusal = space_rows(store, &console, rows[:0])
+	testing.expect_value(t, count, 2)
+	row, refusal = space_stats(store, server_space, &console)
+	testing.expect_value(t, refusal, Space_Refusal.None)
+	testing.expect_value(t, row.kept, i64(1))
+	testing.expect_value(t, row.next_serial, i64(1))
+	for number in ([?]u32{0, SPACE_CAPACITY, SPACE_CAPACITY + 1, max(u32)}) {
+		_, refusal = space_stats(store, number, &console)
+		testing.expectf(t, refusal == .Unknown_Space, "the space %d gave a row", number)
+	}
+}
+
+@(test)
+space_open_allowed_refuses_the_source_and_a_stranger :: proc(t: ^testing.T) {
+	store := new(Space_Store)
+	defer free(store)
+	space_store_init(store, 5)
+	source := principal_reader(5, "server")
+	testing.expect_value(t, space_open_allowed(store, text("server"), &source), Space_Refusal.Own_Space)
+	testing.expect_value(t, space_open_allowed(store, text("shop"), &source), Space_Refusal.None)
+	stranger := principal_reader(6, "console")
+	testing.expect_value(t, space_open_allowed(store, text("server"), &stranger), Space_Refusal.Not_Principal)
+	testing.expect_value(t, space_open_allowed(store, text("server"), nil), Space_Refusal.Not_Principal)
+	// A name one byte longer than the source is another process.
+	longer := principal_reader(5, "server2")
+	testing.expect_value(t, space_open_allowed(store, text("server"), &longer), Space_Refusal.None)
 }
