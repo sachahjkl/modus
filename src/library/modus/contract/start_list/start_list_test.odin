@@ -5,6 +5,7 @@ import "base:intrinsics"
 import "core:testing"
 import "modus:contract/errors"
 import "modus:contract/module"
+import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
 
@@ -13,8 +14,8 @@ import "modus:contract/ring"
 @(private = "file")
 three_rows :: proc() -> (rows: [3]Start_Row, bytes: []u8) {
 	first, first_made := row_make("input", {.Screen}, .Not_Started, .Not_Needed)
-	second, second_made := row_make("console", {.Screen}, .Not_Started, .Needed, 2)
-	third, third_made := row_make("date", {}, .Started_Anyway, .Not_Needed, RESTART_LIMIT)
+	second, second_made := row_make("console", {.Screen}, .Not_Started, .Needed, 2, 60)
+	third, third_made := row_make("date", {}, .Started_Anyway, .Not_Needed, RESTART_LIMIT, max(u32))
 	assert(first_made && second_made && third_made)
 	rows = {first, second, third}
 	bytes = make([]u8, list_size(3), context.temp_allocator)
@@ -143,9 +144,10 @@ a_list_with_a_wrong_header_is_refused :: proc(t: ^testing.T) {
 // past ASCII, a name of 32 bytes with no zero after it, a byte after the
 // zero bytes, a bit of needs past the last part and the highest bit, a
 // rule one past the last and the largest word, a mark one past Needed and
-// the largest word, a reserved word that is not 0, one restart past the
-// limit, and two rows of one module. The refusal names the row, and gives
-// no row.
+// the largest word, one restart past the limit, and two rows of one
+// module. The refusal names the row, and gives no row. A restart window on
+// the row with no restart is refused at its row 0: 1 second and the
+// largest word.
 @(test)
 a_row_with_a_wrong_word_is_refused :: proc(t: ^testing.T) {
 	_, bytes := three_rows()
@@ -165,13 +167,16 @@ a_row_with_a_wrong_word_is_refused :: proc(t: ^testing.T) {
 		{proc(record: ^Row_Record) {record.absent_rule = max(u32)}, .Unknown_Rule},
 		{proc(record: ^Row_Record) {record.usable_mark = u32(max(Usable_Mark)) + 1}, .Unknown_Mark},
 		{proc(record: ^Row_Record) {record.usable_mark = max(u32)}, .Unknown_Mark},
-		{proc(record: ^Row_Record) {record.reserved = 1}, .Reserved_Not_Zero},
 		{proc(record: ^Row_Record) {record.restart_count = RESTART_LIMIT + 1}, .Restarts_Past_Limit},
 		{proc(record: ^Row_Record) {record.restart_count = max(u32)}, .Restarts_Past_Limit},
 	}
 	for case_of in cases {
 		expect_refused(t, record_change(bytes, 1, case_of.change), case_of.problem, 1)
 	}
+	expect_refused(t, record_change(bytes, 0, proc(record: ^Row_Record) {record.restart_window_seconds = 1}), .Window_Without_Restarts, 0)
+	expect_refused(t, record_change(bytes, 0, proc(record: ^Row_Record) {record.restart_window_seconds = max(u32)}), .Window_Without_Restarts, 0)
+	// The row with a window of 60 seconds, its restarts set to 0.
+	expect_refused(t, record_change(bytes, 1, proc(record: ^Row_Record) {record.restart_count = 0}), .Window_Without_Restarts, 1)
 	twice := record_change(bytes, 2, proc(record: ^Row_Record) {record.module_name = {}; copy(record.module_name[:], "input")})
 	expect_refused(t, twice, .Name_Twice, 2)
 }
@@ -437,4 +442,195 @@ a_clean_stop_starts_no_restart :: proc(t: ^testing.T) {
 	testing.expect(t, stop_restarts(.Failed), "a stop with Failed does not restart")
 	testing.expect(t, stop_restarts(.Stopped_On_Request), "a stop with Stopped_On_Request does not restart")
 	testing.expect(t, stop_restarts(.None), "a stop with no outcome does not restart")
+}
+
+// expect_take takes one restart and checks the decision and the count left.
+@(private = "file")
+expect_take :: proc(t: ^testing.T, window: ^Restart_Window, restart_count, window_seconds: u32, now: u64, allowed: bool, left: u32, loc := #caller_location) {
+	taken, restarts_left := restart_window_take(window, restart_count, window_seconds, now)
+	testing.expect_value(t, taken, allowed, loc = loc)
+	testing.expect_value(t, restarts_left, left, loc = loc)
+}
+
+// The counts that the bound refuses first: 0 restarts, with and without a
+// window, at the clock 0 and at the largest time; one past RESTART_LIMIT
+// and the largest count. A refusal changes nothing.
+@(test)
+a_restart_past_its_count_is_refused :: proc(t: ^testing.T) {
+	window: Restart_Window
+	for seconds in ([?]u32{0, 1, 60, max(u32)}) {
+		for now in ([?]u64{0, 1, max(u64)}) {
+			expect_take(t, &window, 0, seconds, now, false, 0)
+			expect_take(t, &window, RESTART_LIMIT + 1, seconds, now, false, 0)
+			expect_take(t, &window, max(u32), seconds, now, false, 0)
+		}
+	}
+	testing.expect(t, window == Restart_Window{}, "a refused restart changed the window")
+}
+
+// With no window the count holds for the whole run, and the time is not
+// read: 1 restart then a refusal, whatever the time; 16 restarts with the
+// counts 15 to 0 left, then a refusal; no time is kept.
+@(test)
+a_row_with_no_window_counts_the_whole_run :: proc(t: ^testing.T) {
+	one: Restart_Window
+	expect_take(t, &one, 1, 0, 0, true, 0)
+	expect_take(t, &one, 1, 0, max(u64), false, 0)
+	expect_take(t, &one, 1, 0, 0, false, 0)
+	most: Restart_Window
+	for index in u32(0) ..< RESTART_LIMIT {
+		// A time that goes back and forth: the rule must not read it.
+		expect_take(t, &most, RESTART_LIMIT, 0, index % 2 == 0 ? max(u64) : 0, true, RESTART_LIMIT - 1 - index)
+	}
+	expect_take(t, &most, RESTART_LIMIT, 0, max(u64), false, 0)
+	testing.expect(t, most.times_milliseconds == [RESTART_LIMIT]u64{}, "a row with no window kept a time")
+	testing.expect_value(t, most.taken, RESTART_LIMIT)
+}
+
+// A window of 60 seconds and 2 restarts, at the times 1000 and 2000: the
+// third at window - 1 after the first is refused, at the window and one
+// past it the first has left the window. A window that starts at the clock
+// 0 keeps the same rule.
+@(test)
+a_restart_leaves_its_window_at_the_window :: proc(t: ^testing.T) {
+	WINDOW :: u64(60_000)
+	window: Restart_Window
+	expect_take(t, &window, 2, 60, 1000, true, 1)
+	expect_take(t, &window, 2, 60, 2000, true, 0)
+	expect_take(t, &window, 2, 60, 1000 + WINDOW - 1, false, 0)
+	expect_take(t, &window, 2, 60, 1000 + WINDOW, true, 0)
+	expect_take(t, &window, 2, 60, 1000 + WINDOW + 1, false, 0)
+	expect_take(t, &window, 2, 60, 2000 + WINDOW + 1, true, 0)
+
+	from_zero: Restart_Window
+	expect_take(t, &from_zero, 2, 60, 0, true, 1)
+	expect_take(t, &from_zero, 2, 60, 0, true, 0)
+	expect_take(t, &from_zero, 2, 60, 0, false, 0)
+	expect_take(t, &from_zero, 2, 60, WINDOW - 1, false, 0)
+	expect_take(t, &from_zero, 2, 60, WINDOW, true, 1)
+	testing.expect_value(t, from_zero.taken, u32(1))
+}
+
+// A clock that goes back counts the kept restarts as of age 0: no
+// subtraction wraps into a large age that would free the row. Times at the
+// top of u64 and the largest window keep the rule.
+@(test)
+a_clock_that_goes_back_frees_no_restart :: proc(t: ^testing.T) {
+	back: Restart_Window
+	expect_take(t, &back, 1, 60, 100_000, true, 0)
+	expect_take(t, &back, 1, 60, 50, false, 0)
+	expect_take(t, &back, 1, 60, 0, false, 0)
+	expect_take(t, &back, 1, 60, 160_000, true, 0)
+
+	top: Restart_Window
+	largest := u64(max(u32)) * 1000
+	expect_take(t, &top, 1, max(u32), max(u64) - largest, true, 0)
+	expect_take(t, &top, 1, max(u32), max(u64) - 1, false, 0)
+	expect_take(t, &top, 1, max(u32), max(u64), true, 0)
+}
+
+// A holder that stops in a loop: 5 restarts in 60 seconds, 1 ms apart,
+// then each stop of the next second is refused. A holder with a rare fault,
+// once a week for a year, keeps its role with 1 restart in 60 seconds, and
+// loses it at the second week with no window.
+@(test)
+a_loop_ends_and_a_rare_fault_does_not :: proc(t: ^testing.T) {
+	loop: Restart_Window
+	for index in u32(0) ..< 5 {
+		expect_take(t, &loop, 5, 60, 10_000 + u64(index), true, 4 - index)
+	}
+	for now in u64(10_005) ..< 11_005 {
+		taken, _ := restart_window_take(&loop, 5, 60, now)
+		testing.expectf(t, !taken, "a restart in a loop at %d ms is taken", now)
+	}
+	WEEK :: u64(7 * 24 * 3600 * 1000)
+	rare, whole: Restart_Window
+	for week in u64(1) ..= 52 {
+		expect_take(t, &rare, 1, 60, week * WEEK, true, 0)
+		taken, _ := restart_window_take(&whole, 1, 0, 0)
+		testing.expect_value(t, taken, week == 1)
+	}
+}
+
+// The times turn around their table many times: with a window of 1
+// second, 16 restarts at the start of each period of 2 seconds, then the
+// 17th of the same period is refused. A window slides: in the next
+// period, a restart of the last one still counts until its own age is the
+// window.
+@(test)
+the_times_of_a_window_turn_around_their_table :: proc(t: ^testing.T) {
+	window: Restart_Window
+	for period in u64(0) ..< 100 {
+		for index in u32(0) ..< RESTART_LIMIT {
+			expect_take(t, &window, RESTART_LIMIT, 1, period * 2000 + u64(index), true, RESTART_LIMIT - 1 - index)
+		}
+		expect_take(t, &window, RESTART_LIMIT, 1, period * 2000 + 999, false, 0)
+		// At 1000 ms the first restart of the period leaves, and only it.
+		expect_take(t, &window, RESTART_LIMIT, 1, period * 2000 + 1000, true, 0)
+		expect_take(t, &window, RESTART_LIMIT, 1, period * 2000 + 1000, false, 0)
+		testing.expect(t, window.taken <= RESTART_LIMIT && window.first_index < RESTART_LIMIT)
+	}
+}
+
+// The reads of the clock of the cases of row_stop_step, and the time that
+// the clock gives.
+@(private = "file")
+clock_reads: int
+@(private = "file")
+clock_now: u64
+
+@(private = "file")
+clock_of_test :: proc "contextless" () -> u64 {
+	clock_reads += 1
+	return clock_now
+}
+
+// The steps of a stop. Done and Refused never restart and never read the
+// clock: Silent with no restart, Not_Restarted with some. A row with no
+// restart is Silent past its bound, unless it is needed. A needed row
+// with 2 restarts and no window restarts twice, then escalates, and reads
+// no clock. A row with a window reads the clock once at each stop that
+// restarts or not, and restarts again when its window has passed.
+@(test)
+a_stop_takes_its_step :: proc(t: ^testing.T) {
+	clock_reads, clock_now = 0, 0
+	plain, _ := row_make("date", {}, .Not_Started, .Not_Needed)
+	needed, _ := row_make("console", {}, .Not_Started, .Needed)
+	counted, _ := row_make("console", {}, .Not_Started, .Needed, 2)
+	windowed, _ := row_make("storage", {}, .Not_Started, .Not_Needed, 1, 60)
+	window: Restart_Window
+	for outcome in ([?]op.Stop_Outcome{.Done, .Refused}) {
+		step, _ := row_stop_step(&plain, &window, outcome, clock_of_test)
+		testing.expect_value(t, step, Row_Stop_Step.Silent)
+		step, _ = row_stop_step(&windowed, &window, outcome, clock_of_test)
+		testing.expect_value(t, step, Row_Stop_Step.Not_Restarted)
+	}
+	testing.expect_value(t, clock_reads, 0)
+	testing.expect(t, window == Restart_Window{}, "a stop with no restart counted one")
+	for outcome in ([?]op.Stop_Outcome{.None, .Failed, .Stopped_On_Request}) {
+		step, _ := row_stop_step(&plain, &window, outcome, clock_of_test)
+		testing.expect_value(t, step, Row_Stop_Step.Silent)
+		step, _ = row_stop_step(&needed, &window, outcome, clock_of_test)
+		testing.expect_value(t, step, Row_Stop_Step.Escalate)
+	}
+	counted_window: Restart_Window
+	expected := [?]Row_Stop_Step{.Restarted, .Restarted, .Escalate, .Escalate}
+	lefts := [?]u32{1, 0, 0, 0}
+	for step_of, index in expected {
+		step, left := row_stop_step(&counted, &counted_window, .Failed, clock_of_test)
+		testing.expect_value(t, step, step_of)
+		testing.expect_value(t, left, lefts[index])
+	}
+	testing.expect_value(t, clock_reads, 0)
+	timed: Restart_Window
+	clock_now = 5000
+	step, _ := row_stop_step(&windowed, &timed, .Failed, clock_of_test)
+	testing.expect_value(t, step, Row_Stop_Step.Restarted)
+	clock_now = 5000 + 59_999
+	step, _ = row_stop_step(&windowed, &timed, .None, clock_of_test)
+	testing.expect_value(t, step, Row_Stop_Step.Past_Bound)
+	clock_now = 5000 + 60_000
+	step, _ = row_stop_step(&windowed, &timed, .None, clock_of_test)
+	testing.expect_value(t, step, Row_Stop_Step.Restarted)
+	testing.expect_value(t, clock_reads, 3)
 }

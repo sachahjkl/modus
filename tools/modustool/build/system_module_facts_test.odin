@@ -197,7 +197,8 @@ the_facts_of_the_debugger_write_the_lines_of_before :: proc(t: ^testing.T) {
 
 // Each fact type of the start policy writes the line of before, byte for
 // byte: each stop cause, with each outcome for a stop of itself, and a
-// cause word that names no member; the restarts 0 and max(u32); each fault
+// cause word that names no member; the restarts 0 and max(u32), and the
+// windows max(u32) to 0; each fault
 // of a start list and each part of the machine.
 @(test)
 the_facts_of_the_start_policy_write_the_lines_of_before :: proc(t: ^testing.T) {
@@ -235,6 +236,9 @@ the_facts_of_the_start_policy_write_the_lines_of_before :: proc(t: ^testing.T) {
 		facts_expect_line(t, render(t, file, "Row_Restarted_Without_Outcome", {{"restarts_left", u64(1)}, {"cause", past}, {"row_process", name}}), line_of_before("start_policy: ", sentence.Module_Name{name}, " stopped: ", past, "; it starts again, ", u64(1), " restarts left"))
 		for part in parts {
 			facts_expect_line(t, render(t, file, "Row_Not_Started", {{"row_process", name}, {"missing_part", part}}), line_of_before("start_policy: ", sentence.Module_Name{name}, " is not started: the machine has no ", part))
+		}
+		for count in restarts {
+			facts_expect_line(t, render(t, file, "Needed_Row_Past_Restarts", {{"restarts", count}, {"restart_window_seconds", u64(max(u32)) - count}, {"row_process", name}}), line_of_before("start_policy: ", sentence.Module_Name{name}, " is past its ", count, " restarts in a window of ", u64(max(u32)) - count, " seconds, 0 for the whole run: the machine is not usable without it, and the start policy stops"))
 		}
 		facts_expect_line(t, render(t, file, "Machine_Not_Usable_Without", {{"row_process", name}}), line_of_before("start_policy: the machine is not usable without ", sentence.Module_Name{name}, ": the start policy stops before Machine_Usable"))
 	}

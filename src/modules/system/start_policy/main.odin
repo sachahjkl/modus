@@ -1,13 +1,13 @@
 // The default start policy, and the rescue start policy with the rescue
 // list (src/md/features/start_policy.md). It reads the machine parts page
 // and the list through their borders, starts each row in its order, sends
-// Machine_Usable when each row with the mark Needed runs, then starts a
-// row again at its stop within its restarts. The start of a writer row
-// carries the wiring list that internal:start_policy/wiring_rows
-// decides. Its one grant is Start_Policy: a root ring for Start, Stop,
-// Machine_Usable and Wire, and the machine parts page. The tool refuses its
-// source past 400 lines and an import past its set: it holds no logic of
-// its own. No window; one line for each row that does not start.
+// Machine_Usable when each needed row runs, then starts a row again at its
+// stop within its restart bound, or stops with Failed when a needed row is
+// past it. A writer row starts with the wiring list of wiring_rows. Its one
+// grant is Start_Policy: a root ring for Start, Stop, Machine_Usable and
+// Wire, and the machine parts page. The tool refuses its source past 400
+// lines and an import past its set. No window; one line for each row that
+// does not start.
 package start_policy
 
 import "modus:contract/ring"
@@ -24,9 +24,9 @@ MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 96, processes = 1, 
 
 // The state of one row while the machine runs.
 Row_State :: struct {
-	row:           start_list.Start_Row,
-	process:       system.Handle, // The process of the row, with the rights Read and Give. 0: it does not run.
-	restarts_left: u32,
+	row:      start_list.Start_Row,
+	process:  system.Handle, // The process of the row, with the rights Read and Give. 0: it does not run.
+	restarts: start_list.Restart_Window,
 }
 
 // The root ring, its memory for the lends, and the tag of the next command.
@@ -64,18 +64,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.stop(.Failed)
 	}
 	list_start := ([^]u8)(uintptr(start_list.START_LIST_ADDRESS))
-	bytes := list_start[:list_size]
-	problem, place, _ := start_list.list_read(bytes, &list)
+	problem, place, _ := start_list.list_read(list_start[:list_size], &list)
 	if problem != .None {
 		system.log_fact(.Error, Start_List_Refused{row = u64(place), list_problem = value_kinds.text_field(start_list.LIST_PROBLEM_TEXTS[problem], LIST_PROBLEM_FIELD_BYTES)})
 		system.stop(.Refused)
 	}
 	count := list.row_count
-	for index in 0 ..< count {
-		states[index] = {row = list.rows[index], restarts_left = list.rows[index].restart_count}
-	}
 	system.log_fact(.Info, Start_List_Read{rows = u64(count)})
 	for &state, index in states[:count] {
+		state = {row = list.rows[index]} // A row reads only the states of the rows before it.
 		name := start_list.row_name(&state.row)
 		if missing := state.row.needs - parts; missing != {} && state.row.absent_rule == .Not_Started {
 			system.log_fact(.Info, Row_Not_Started{row_process = value_kinds.module_name_field(name), missing_part = value_kinds.text_field(start_list.PART_NAMES[start_list.first_part(missing)], PART_FIELD_BYTES)})
@@ -119,8 +116,7 @@ row_start :: proc "contextless" (index: int) -> bool {
 		}
 	}
 	if list_page == nil && wiring_rows.row_has_wirings(&list, index) {
-		// A refusal holds its error record in the values: only an answer
-		// Ok names the page.
+		// Only an answer Ok names the page: a refusal holds an error record.
 		status, values := command_call(.Wire, {0 = u64(root_ring.Wire_Step.List_Page)})
 		address: rawptr
 		if status == .Ok {
@@ -163,9 +159,9 @@ reader_lend :: proc "contextless" (reader_row: int) -> (u32, system.Status) {
 	return u32(given), status
 }
 
-// row_watch starts a stopped row again within its restarts, unless it
-// stopped itself with Done or Refused. A row with no restart writes no
-// line: the root service wrote the stop. started: it asked for a start.
+// row_watch takes the step of start_list.row_stop_step at a stop: a needed
+// row past its bound stops the policy with Failed, and the rescue starts.
+// Only a stop by the row itself has an outcome. started: it restarted.
 row_watch :: proc "contextless" (index: int) -> (started: bool) {
 	state := &states[index]
 	if state.process == 0 {
@@ -177,39 +173,35 @@ row_watch :: proc "contextless" (index: int) -> (started: bool) {
 	}
 	system.close(state.process)
 	state.process = 0
-	// A stop of the row by itself has its outcome, and each other stop has
-	// none: each sentence is a fact type, as for the stops of the root
-	// service.
 	row_process := value_kinds.module_name_field(start_list.row_name(&state.row))
-	stopped_itself := cause == .Itself
-	if !start_list.stop_restarts(outcome) {
-		if state.row.restart_count != 0 {
-			if stopped_itself {
-				system.log_fact(.Info, Row_Stopped_Not_Restarted{cause = cause, outcome = outcome, row_process = row_process})
-			} else {
-				system.log_fact(.Info, Row_Stopped_Not_Restarted_Without_Outcome{cause = cause, row_process = row_process})
-			}
+	step, left := start_list.row_stop_step(&state.row, &state.restarts, outcome, system.time)
+	switch step {
+	case .Silent:
+	case .Not_Restarted:
+		if cause == .Itself {
+			system.log_fact(.Info, Row_Stopped_Not_Restarted{cause = cause, outcome = outcome, row_process = row_process})
+		} else {
+			system.log_fact(.Info, Row_Stopped_Not_Restarted_Without_Outcome{cause = cause, row_process = row_process})
 		}
-		return
-	}
-	if state.restarts_left == 0 {
-		if state.row.restart_count != 0 {
-			if stopped_itself {
-				system.log_fact(.Warning, Row_Stopped_Past_Restarts{restarts = state.row.restart_count, cause = cause, outcome = outcome, row_process = row_process})
-			} else {
-				system.log_fact(.Warning, Row_Stopped_Past_Restarts_Without_Outcome{restarts = state.row.restart_count, cause = cause, row_process = row_process})
-			}
+	case .Past_Bound:
+		if cause == .Itself {
+			system.log_fact(.Warning, Row_Stopped_Past_Restarts{restarts = state.row.restart_count, cause = cause, outcome = outcome, row_process = row_process})
+		} else {
+			system.log_fact(.Warning, Row_Stopped_Past_Restarts_Without_Outcome{restarts = state.row.restart_count, cause = cause, row_process = row_process})
 		}
-		return
+	case .Escalate:
+		system.log_fact(.Error, Needed_Row_Past_Restarts{restarts = state.row.restart_count, restart_window_seconds = state.row.restart_window_seconds, row_process = row_process})
+		system.stop(.Failed)
+	case .Restarted:
+		if cause == .Itself {
+			system.log_fact(.Info, Row_Restarted{restarts_left = left, cause = cause, outcome = outcome, row_process = row_process})
+		} else {
+			system.log_fact(.Info, Row_Restarted_Without_Outcome{restarts_left = left, cause = cause, row_process = row_process})
+		}
+		row_start(index)
+		return true
 	}
-	state.restarts_left -= 1
-	if stopped_itself {
-		system.log_fact(.Info, Row_Restarted{restarts_left = state.restarts_left, cause = cause, outcome = outcome, row_process = row_process})
-	} else {
-		system.log_fact(.Info, Row_Restarted_Without_Outcome{restarts_left = state.restarts_left, cause = cause, row_process = row_process})
-	}
-	row_start(index)
-	return true
+	return false
 }
 
 // command_call sends one command of the root ring and waits for its
