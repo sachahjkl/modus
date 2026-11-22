@@ -338,9 +338,11 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// The delegated projects service: its service ring and transfer region for
 	// pins.lex inspection, source updates, and ephemeral project consoles.
 	{name = "projects", grants = {.System_Part, .Serve}},
-	// The delegated disk_processes service: read-only module_files catalog,
-	// iterative import validation, debug-object lookups, and Start_From_Bytes
-	// preparation. Holds no root ring and no machine authority.
+	// The delegated disk_processes service: it reads the module file of a
+	// disk process and its imports through a connection that reads only,
+	// into memory that the core lends, and asks for Start_From_Bytes
+	// (disk_processes_delegation.odin). Holds no root ring and no machine
+	// authority.
 	{name = "disk_processes", grants = {.System_Part, .Serve}},
 	// The delegated devices service: PCI identity table matching and
 	// attenuated per-device grant minting. Holds no root ring.

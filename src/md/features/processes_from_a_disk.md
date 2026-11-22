@@ -2,7 +2,7 @@
 
 ## Purpose
 
-A developer adds a module to a machine with no new boot image. The module file is an object in a store of the storage service. The root service reads it, checks it, and starts it as a process. Such a process is a disk process ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Disk process").
+A developer adds a module to a machine with no new boot image. The module file is an object in a store of the storage service. The delegated service `disk_processes` reads it; the root service checks it and starts it as a process. Such a process is a disk process ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Disk process").
 
 The guide is [`docs/MODULE_CONTRACT.md`](../../../docs/MODULE_CONTRACT.md), "A module from a disk".
 
@@ -36,26 +36,28 @@ So the storage service is a transport, as the boot image is. It can refuse to gi
 
 The command is one record of the root ring, `Start_From_Disk`. A record has seven values: the hash takes four, the name three. This is why the name has 23 bytes at most, as the name of a principal has.
 
-### The root service reads, and never waits
+### The service disk_processes reads, the root service checks, and neither waits
 
-The root service is the load source of each process that it starts. It stays the load source: it opens a connection of its own to the storage service, reads the object into memory of its own budget, checks the hash, and starts the process from that memory.
+The root service is the load source of each process that it starts. It stays the load source, and it reads no module file from a disk: the delegated service `disk_processes` reads the object ([../api/root_service_split.md](../api/root_service_split.md), "The disk processes"). The root service gives that service a connection to the store `module_files` of the principal of the asker, with the right to read only, and lends it the memory of the file. When the service says that the file is whole, the root service revokes the loan, computes the hash on its own mapping, and starts the process from that memory. So neither the service nor the storage service behind it can change a byte after the check.
 
-The root service has one loop that serves every root ring. A call that waits for the storage service inside that loop stops the machine when the storage service does not answer. So the load is a state of the loop, not a call:
+The root service has one loop that serves every root ring. A call that waits for the storage service, or for `disk_processes`, inside that loop stops the machine when that service does not answer. So the load is a state of the loop, not a call. The root service sends one command for each event of the service, and the event is a word of its one wait:
 
-| State | The root service waits for | Then |
+| Step of the root service | It waits for | Then |
 |---|---|---|
-| Idle | nothing | A command `Start_From_Disk` opens the connection and asks for the size |
-| Size | the size of the object | It makes the memory and asks for the first bytes |
-| Bytes | the next bytes | It asks again from the place that it reached, or checks the hash and starts the process |
+| Idle | nothing | A command `Start_From_Disk` gives the connection and sends `Load` |
+| Module asked | the size of the object, as `Memory_Wanted` | It makes the memory of the file and lends it |
+| Module lent | `Module_Filled` | It revokes the loan, checks the hash, and sends `Continue` |
+| Module checked | `Ready` (`Start_From_Bytes`), or `Scan_Started` | It starts the process, or follows the import scan |
 
-The completion of the command is held until the load ends. Between two answers the loop serves each other ring as before.
+The completion of the command is held until the load ends. Between two events the loop serves each other ring as before.
 
-Four rules bound the load. None of them needs the storage service to be honest:
+Five rules bound the load. None of them needs the storage service or `disk_processes` to be honest:
 
-1. **A stop is an event.** The loop reads the state of the storage service at each pass. A storage service that stopped ends the load.
-2. **Each answer must make progress.** An answer with no byte before the end, or with more bytes than the object has left, ends the load. So the count of the calls is at most the bytes of the object.
-3. **The size has a limit.** An object over 4 MiB is refused before any memory is made. The memory of the load comes from the budget of the root service.
+1. **A stop is an event.** A storage service or a service `disk_processes` that stopped ends the load.
+2. **Each answer must make progress.** An answer with no byte before the end, or with more bytes than the object has left, ends the load. So the count of the calls is at most the bytes of the object. `disk_processes` applies this rule; the root service does not depend on it, as it checks the hash.
+3. **The size has a limit.** An object over 4 MiB is refused before any memory is made: `disk_processes` refuses it, and the border of the root service refuses a request of more memory. The memory of the module file comes from the budget of the root service.
 4. **The whole load has a deadline.** 30 seconds after the command, the load ends with "did not answer". The deadline is a rule of the system, not a measure of the disk: it only frees the one place of the load.
+5. **Each event passes a border.** An event that the step does not take, a field out of its bounds, or a request `Start_From_Bytes` that names another nickname, principal, hash, size or kept file ends the load with one line.
 
 One load runs at a time. A second command during a load is refused with `Busy`.
 
@@ -76,15 +78,18 @@ Nothing in the file gives a grant. The root service reads no table of the file t
 
 ### The imports
 
-A disk process imports by hash, as each module does. Its load source is the boot image, the replacement table of the machine, and the module files of the store `module_files` of its principal that the root service found and checked for this load. A developer then adds a process and its library modules to a machine that runs, with no new boot image.
+A disk process imports by hash, as each module does. Its load source is the boot image, the replacement table of the machine, and the module files of the store `module_files` of its principal that `disk_processes` found and the root service checked for this load. A developer then adds a process and its library modules to a machine that runs, with no new boot image.
 
-**The import scan.** The root service finds an import that the boot image does not hold by an import scan ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Import scan"): it lists the root tree of the store `module_files`, reads the bytes of each entry, computes their BLAKE3 hash, and keeps the bytes whose hash an import names. The scan is a stage of the load of the process, after the check of the hash of the module file and before the start:
+**The import scan.** The service `disk_processes` finds an import that the boot image does not hold by an import scan ([`docs/glossary/code.md`](../../../docs/glossary/code.md), "Import scan"): it lists the root tree of the store `module_files`, reads the bytes of each entry, computes their BLAKE3 hash, and keeps the bytes whose hash an import names. The scan is a stage of the load of the process, after the check of the hash of the module file and before the start:
 
-| State | The root service waits for | Then |
+| State of `disk_processes` | It waits for | Then |
 |---|---|---|
 | List | a page of the entries of the root tree | It notes each object of 1 byte to 4 MiB but the entry of the process, and asks for the next page; an empty page ends the list |
-| Import size | the size of the next entry to read | It makes the memory, and asks for the first bytes |
-| Import bytes | the next bytes of that entry | It asks again, or computes the hash: bytes whose hash an import names are kept, the others are freed |
+| Candidate size | the size of the next entry to read | It asks the root service for memory (`Memory_Wanted`) |
+| Candidate memory | the loan of that memory | It asks for the first bytes |
+| Candidate bytes | the next bytes of that entry | It asks again, or computes the hash: bytes whose hash an import names are kept (`Import_Found`), the others are given back (`Candidate_Dropped`) |
+
+For each `Import_Found`, the root service revokes the loan and computes the hash of the bytes again: a hash that differs from the hash of the event ends the load. The logic of the scan is a machine with no kernel operation (`src/library/internal/disk_processes/disk_processes_core/`), which the host tests drive against a hostile store.
 
 The order of the reads: each entry one time, in the order of the list; then an entry that was read before its hash was wanted, one time more. The scan ends when each wanted hash has its bytes, or when no entry is left to read. A hash with no bytes refuses the start with one line of the log, which names the import and its importer:
 
@@ -100,9 +105,9 @@ root: refused store_importer from the disk: store_importer imports 3a9c…, and 
 
 The store `module_files` holds 4096 blocks, 16 MiB: the first pass of a scan never reads more than that, and each wanted hash adds two reads of 4 MiB at most.
 
-**The walk.** The root service reads the import table of the module file, then of each file that it keeps. A hash that a module of the boot image has is not wanted. A replacement of the machine applies as in the loader: the root service wants the hash of the replacement too, and walks the imports of the module that the loader gives. The imports of a module of the boot image are not walked: the boot image holds them, or the loader refuses them at the stage Find.
+**The walk.** The service `disk_processes` reads the import table of the module file, then of each file that it keeps. A hash that a module of the boot image has is not wanted. A replacement of the machine applies as in the loader: the root service gives the replacements of the machine with the command `Load`, and the service wants the hash of the replacement too, and walks the imports of the module that the loader gives. The imports of a module of the boot image are not walked: the boot image holds them, or the loader refuses them at the stage Find.
 
-**The memory.** The bytes of each file that the scan keeps are memory of the root service, paid by the one budget of all disk processes, as the process that imports them is. They stay mapped in the root service until the end of the load: the loader copies each module into the process, and the root service then frees them. A store that does not fit in that budget refuses the start with the status of the budget.
+**The memory.** The bytes of each file that the scan reads are memory of the root service, paid by the one budget of all disk processes, as the process that imports them is, and lent to `disk_processes` for the read. The files that the scan keeps stay mapped in the root service until the end of the load: the loader copies each module into the process, and the root service then frees them. A store that does not fit in that budget refuses the start with the status of the budget.
 
 **The loader checks again.** The root service gives the loader each kept file with the hash of its bytes (`system.Source_File`). The loader checks the hash and the tables of each file, as it checks a file of the boot image. A file of the boot image wins over a file of the store with the same hash: the loader looks at the boot image first. The two have the same bytes anyway, as they have the same hash.
 
@@ -127,7 +132,7 @@ The console calls its two exports through a connection, as for each service (`co
 - `module_files.receive(nickname, path)` sends `GET path` to the web server, takes a body of 1 to 4 MiB with a `Content-Length`, writes it as the object `nickname` of the root tree of the store, and gives the 64 hexadecimal digits of the BLAKE3 hash of the bytes that it received. The log says the same. The principal then types `start_from_disk(nickname, hash)`.
 - `module_files.list()` gives one row for each object of the root tree but `grant_table` and the debug objects: its name, its bytes, and the BLAKE3 hash of its bytes, which the service reads again and computes. The service writes one line of the log for each row.
 
-The hash that `receive` gives is a help for the principal, not a proof: the root service still reads the bytes and checks them against the hash of the command. A service that another party changed, or a web server that gave other bytes, can make the store hold any bytes under the nickname. It cannot make them run under a hash that they do not have.
+The hash that `receive` gives is a help for the principal, not a proof: the root service still checks the bytes against the hash of the command, after the end of the loan. A service that another party changed, or a web server that gave other bytes, can make the store hold any bytes under the nickname. It cannot make them run under a hash that they do not have.
 
 The rules of the service:
 
@@ -233,7 +238,7 @@ Enter with no passphrase skips it: the disk grants of principal 0 stay absent un
    - **A new key.** No record existed before this passphrase, so no key of a record signed that table. It is written over with the table of this machine, which holds the rows made before the passphrase.
 4. Each later change writes the table again. A change during a write marks one more write after it.
 
-The read and the write are states of the loop of the root service, as the load of a module file is: one call of the storage service at a time, through a connection of its own to the store `module_files`, with the deadline of a load. A storage service that stops, or that gives no answer, ends the call with a line of the log. A read that ends so leaves the table unread: changes stay refused, as the root service does not know what the disk holds.
+The read and the write are states of the loop of the root service: one call of the storage service at a time, through a connection of its own to the store `module_files`, with the deadline of a load. The step of the principals moves them into the service `principals` ([../api/root_service_split.md](../api/root_service_split.md)). A storage service that stops, or that gives no answer, ends the call with a line of the log. A read that ends so leaves the table unread: changes stay refused, as the root service does not know what the disk holds.
 
 **A write that fails is tried again at once, 3 tries at most.** A `disallow` whose write does not reach the disk would give the grant back at the next start, so the retry cannot wait for a later change. The retry, and not a completion held until the write ends, fits the loop of the root service: each command is answered in the pass that reads it, and one write carries every change that came during it (a held completion would need a queue of completions for each write). Each try has the deadline of a load, so the tries end in a bound. After the third failure the table is unwritten: the log says that the disk keeps an older table and that a grant taken since can come back at the next start, and each change is refused until the machine starts again.
 
@@ -268,6 +273,8 @@ The read and the write are states of the loop of the root service, as the load o
 - **The service starts the process after the write.** Two processes would then start processes, and the service would need the root ring.
 - **The hash of the list read from the entry.** The entry of an object holds the hash of the object, which differs from the BLAKE3 hash of its bytes when the object has a hole ("Subtle points", below).
 - **A call that waits in the loop of the root service.** One storage service that does not answer stops every command of the machine.
+- **The root service reads the store for the load.** It then parses the list and the answers of the storage service, the most hostile input of a load, in the process that holds every grant. `disk_processes` parses them, and the root service checks only a hash on bytes that no other process can change any more.
+- **A copy of the bytes through the transfer region.** The region of `disk_processes` has two pages; a copy in pieces of a file of 4 MiB costs a thousand events, and the root service would still need to trust the order of the pieces. A loan of the memory of the whole file, revoked before the check, costs one event.
 - **A deadline for each answer in place of one for the load.** The bound is then the deadline times the count of the calls. One deadline is one number to state.
 - **The table of prepared modules for a disk process.** The budget of the root service would hold the code of a process that has no row.
 - **A kernel operation that loads from a store.** The kernel has no file system and no loader for imports.

@@ -5,14 +5,13 @@ package root
 // (docs/MODULE_CONTRACT.md, "A module from a disk").
 //
 // The command Start_From_Disk names the process and the hash of its file.
-// This service reads the object through a connection of its own to the
-// storage service, checks the hash of the bytes, and starts them with no
-// grant. The storage service is a process that this service started: it is
-// not trusted to choose what runs, and it is not waited for. The load is a
-// state of the loop of this service (disk_load_step), so each other ring is
-// served while the bytes come. An import that the boot image does not hold
-// is found in the same store by the hash of its bytes, in more states of
-// the same load (import_scan.odin).
+// The delegated service disk_processes reads the object, and the imports
+// that the boot image does not hold, into memory that this service lends;
+// this service checks the hash of the bytes after the end of each loan,
+// and starts them with the grants of the row of the nickname. Neither
+// service is trusted to choose what runs, and neither is waited for: the
+// load is a state of the loop of this service, so each other ring is
+// served while the bytes come (disk_processes_delegation.odin).
 //
 // The disk grant table of each principal binds a nickname, the name of the
 // entry, to the hash of one file, with the grants of that file
@@ -22,12 +21,9 @@ package root
 // grant that a command gives: the store of the nickname, so it follows the
 // nickname to its next file.
 
-import "modus:contract/blake3"
-import "modus:contract/storage_status"
 import "modus:contract/enum_word"
 import process_page "modus:contract/disk_process_page"
 import "modus:contract/errors"
-import "modus:contract/isolated"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/ring"
@@ -40,51 +36,6 @@ import "modus:storage"
 import "modus:contract/root_ring"
 import "modus:system"
 import "modus:contract/value_kinds"
-
-// What the load that runs waits for.
-Disk_Load_Stage :: enum u8 {
-	Idle, // No load runs.
-	Size, // The answer of the storage service to the question of the size of the object.
-	Bytes, // The next bytes of the object.
-	List, // A page of the entries of the root tree of the store, for the import scan (import_scan.odin).
-	Import_Size, // The size of the entry that the import scan reads.
-	Import_Bytes, // The next bytes of that entry.
-}
-
-// The one load from the disk that runs. A second command during a load is
-// refused: one buffer and one connection bound what a load takes from this
-// service.
-Disk_Load :: struct {
-	stage:          Disk_Load_Stage,
-	asker:          ^Started, // The process that sent the command: it receives the completion. nil: it stopped.
-	tag:            u32, // The tag of the command.
-	name:           [disk_process.NAME_LIMIT]u8, // The name of the process, and of its entry in the store.
-	name_length:    int,
-	hash:           [disk_process.HASH_SIZE]u8, // The hash that the command names.
-	principal:      u64, // The principal of the session of the asker: the store is its store, and the process joins its session.
-	connection:     ^Connection, // The connection of this service to the storage service. nil: it ended.
-	client:         storage.Client, // The call ring and the call region of that connection, mapped here.
-	sent:           storage.Sent_Call, // The call whose answer this service waits for.
-	arguments:      [4]isolated.Argument, // The arguments of that call.
-	argument_count: int,
-	read:           disk_process.Read, // The size of the file, and the bytes that came.
-	memory:         system.Handle, // The memory of the file, from the budget of this service. 0: none yet.
-	bytes:          []u8, // That memory, mapped.
-	deadline:       u64, // The time at which the load ends with no answer.
-	// The load of the start policy that principal 0 chose: no process
-	// asked for it, and its end starts it, or the rescue
-	// (start_policy_choice.odin).
-	for_start_policy: bool,
-}
-
-disk_load: Disk_Load
-
-// The caller record of the connection of this service to the storage
-// service. This service is no row of its own table of started processes, so
-// the connection has this record as its caller: its name is the name of the
-// store, and grant_for gives it the limit of that store and no grant to act
-// for a principal.
-disk_reader: Started
 
 // The disk grant table of each principal. With no machine passphrase, no
 // key signs the table of principal 0: it lasts until the machine stops.
@@ -274,9 +225,9 @@ disk_name_refusal :: proc "contextless" (name: string, values: ^[7]u64) -> (refu
 
 // disk_start_begin runs the command Start_From_Disk of a process with the
 // grant Root_Ring. It refuses at once what needs no read, with the values
-// of the completion; else it opens the connection to the storage service,
-// asks for the size of the object, and holds the completion until the load
-// ends (held): the loop of this service goes on.
+// of the completion; else it starts the load through the service
+// disk_processes, and holds the completion until the load ends (held): the
+// loop of this service goes on.
 disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, values: ^[7]u64) -> (status: system.Status, held: bool) {
 	kind := u32(root_ring.Root_Command.Start_From_Disk)
 	hash := transmute([disk_process.HASH_SIZE]u8)[4]u64{record.values[0], record.values[1], record.values[2], record.values[3]}
@@ -308,286 +259,32 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 		return .Bad_Operation, false
 	}
 	hash = file
-	if disk_load.stage != .Idle {
+	if disk_load_running() {
 		system.log_fact(.Warning, Disk_Load_Refused_Load_Busy{refused_process = module_name_field(name)})
 		values^ = errors.ring_fail(kind, .Busy, .Requests, 0, 1, 1)
 		return .Bad_State, false
 	}
-	// The connection: the store `module_files` of the principal of the asker.
-	disk_reader = {}
-	copy(disk_reader.name[:len(disk_reader.name) - 1], disk_process.STORE_NAME)
-	disk_reader.principal = asker.principal
-	storage_name := role_holder_name(.Storage)
-	connection, service, ring_memory, region_memory, open_status := connection_open(&disk_reader, storage_name)
-	if open_status != .Ok {
-		system.log_fact(.Warning, Disk_Load_Refused_No_Connection{status = open_status, refused_process = module_name_field(name)})
-		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(open_status))
-		return open_status, false
-	}
-	client, opened := storage.open_handles(ring_memory, region_memory, service.process, system.image_find(image, storage_name))
-	if !opened {
-		system.close(ring_memory)
-		system.close(region_memory)
-		disconnect(connection)
+	// The service disk_processes reads the file, through a connection that
+	// reads only to the store `module_files` of the principal of the asker
+	// (disk_processes_delegation.odin).
+	failure, begin_status := disk_load_begin(asker, record.tag, name, hash, asker.principal, false)
+	switch failure {
+	case .None:
+	case .No_Service:
+		system.log_fact(.Warning, Disk_Load_Refused_No_Service{refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Absent, .Services, 0)
+		return .Bad_State, false
+	case .No_Connection:
+		system.log_fact(.Warning, Disk_Load_Refused_No_Connection{status = begin_status, refused_process = module_name_field(name)})
+		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(begin_status))
+		return begin_status, false
+	case .Not_Given:
 		system.log_fact(.Warning, Disk_Load_Refused_Not_Mapped{refused_process = module_name_field(name)})
-		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.No_Memory))
-		return .No_Memory, false
-	}
-	disk_load = {
-		stage       = .Size,
-		asker       = asker,
-		tag         = record.tag,
-		name        = name_bytes,
-		name_length = name_length,
-		hash        = hash,
-		principal   = asker.principal,
-		connection  = connection,
-		client      = client,
-		deadline    = system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS,
+		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(begin_status))
+		return begin_status, false
 	}
 	system.log_fact(.Info, Disk_Load_Started{principal = asker.principal, loaded_process = module_name_field(name)})
-	if !disk_load_ask("size", 0, false) {
-		// The asker receives the completion from the caller of this
-		// procedure, not from the end of the load.
-		disk_load.asker = nil
-		system.log_fact(.Warning, Disk_Load_Refused_Call_Not_Taken{refused_process = module_name_field(name)})
-		values^ = disk_load_end(.Bad_State, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State)))
-		return .Bad_State, false
-	}
 	return .Ok, true
-}
-
-// disk_load_ask sends one call of the storage service for the object of
-// the load: the place 0 (the root of the store), its name, and for a read
-// the offset of the first byte.
-disk_load_ask :: proc "contextless" (export: string, offset: u64, with_offset: bool) -> bool {
-	load := &disk_load
-	load.arguments = {}
-	load.arguments[0].integer = u64(storage.ROOT)
-	load.arguments[1].text = load.name[:load.name_length]
-	load.argument_count = 2
-	if with_offset {
-		load.arguments[2].integer = offset
-		load.argument_count = 3
-	}
-	status: storage_status.Status
-	load.sent, status = storage.call_send(&load.client, export, load.arguments[:load.argument_count])
-	return status == .Ok
-}
-
-// disk_load_end ends the load: this service gives back what it held for it
-// (the connection, the mappings, the memory of the file and of the files
-// of the import scan), and the asker
-// receives the completion. It gives the values back, for a caller that
-// sends the completion itself.
-disk_load_end :: proc "contextless" (status: system.Status, values: [7]u64) -> [7]u64 {
-	load := &disk_load
-	if load.client.calls.head != nil {
-		system.ring_close(&load.client.calls)
-	}
-	if load.client.region != nil {
-		system.memory_unmap(raw_data(load.client.region))
-	}
-	// The handle of the storage service is the handle of its row in the
-	// table of the started processes: it stays.
-	for handle in ([2]system.Handle{load.client.ring_memory, load.client.region_memory}) {
-		if handle != 0 {
-			system.close(handle)
-		}
-	}
-	if load.connection != nil {
-		disconnect(load.connection)
-	}
-	if load.bytes != nil {
-		system.memory_unmap(raw_data(load.bytes))
-	}
-	if load.memory != 0 {
-		system.close(load.memory)
-	}
-	disk_imports_end()
-	if load.asker != nil && load.asker.process != 0 && load.asker.requests.head != nil {
-		system.send(&load.asker.requests.completions, ring.Record{kind = u32(status), tag = load.tag, values = values})
-	}
-	for_start_policy := load.for_start_policy
-	load^ = {}
-	if for_start_policy {
-		start_policy_chosen_load_ended(status)
-	}
-	return values
-}
-
-// disk_load_forget takes a process that stops out of the load: the asker
-// receives no completion, and a connection that ended is not ended again.
-disk_load_forget :: proc "contextless" (item: ^Started) {
-	if disk_load.asker == item {
-		disk_load.asker = nil
-	}
-}
-
-// disk_load_step reads the answer of the storage service to the call of
-// the load, if it came, and does the next step. It never waits: with no
-// answer, it adds the completions of the connection to the wait of the
-// loop, and the loop goes on. Four rules end a load whatever the storage
-// service does: its stop, an answer that makes no progress, a file over
-// the limit, and the deadline.
-disk_load_step :: proc "contextless" (wait: ^system.Wait) {
-	load := &disk_load
-	if load.stage == .Idle {
-		return
-	}
-	kind := u32(root_ring.Root_Command.Start_From_Disk)
-	name := string(load.name[:load.name_length])
-	refused_status := errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(system.Status.Bad_State))
-	if load.asker == nil && !load.for_start_policy {
-		system.log_fact(.Warning, Disk_Load_Refused_Asker_Stopped{refused_process = module_name_field(name)})
-		disk_load_end(.Bad_State, refused_status)
-		return
-	}
-	if load.connection == nil {
-		system.log_fact(.Warning, Disk_Load_Refused_Storage_Stopped{refused_process = module_name_field(name)})
-		disk_load_end(.Bad_State, refused_status)
-		return
-	}
-	error: errors.Error_Record
-	value, text, status, answered := storage.call_answer(&load.client, &load.sent, load.arguments[:load.argument_count], &error)
-	if !answered {
-		if !storage.connected(&load.client) {
-			system.log_fact(.Warning, Disk_Load_Refused_Storage_Stopped{refused_process = module_name_field(name)})
-			disk_load_end(.Bad_State, refused_status)
-			return
-		}
-		if system.time() >= load.deadline {
-			system.log_fact(.Warning, Disk_Load_Refused_No_Answer{bound = disk_process.LOAD_DEADLINE_MILLISECONDS, refused_process = module_name_field(name)})
-			disk_load_end(.Bad_State, errors.ring_fail(kind, .No_Answer, .Milliseconds, 0, 0, disk_process.LOAD_DEADLINE_MILLISECONDS))
-			return
-		}
-		system.wait_records(wait, &load.client.calls.completions)
-		return
-	}
-	if storage.export_failed_with(status, value, .Absent) && (load.stage == .Import_Size || load.stage == .Import_Bytes) {
-		// An entry of the list that left the store since: the scan goes on
-		// without it.
-		disk_import_entry_skip(wait)
-		return
-	}
-	if storage.export_failed_with(status, value, .Absent) {
-		system.log_fact(.Warning, Disk_Load_Refused_No_Object{refused_process = module_name_field(name)})
-		disk_load_end(.Bad_Handle, errors.ring_fail(kind, .Absent, .Objects, 1))
-		return
-	}
-	if status == .Failed {
-		// The error record is a fact of its own fields after the line of
-		// the refusal.
-		system.log_fact(.Warning, Disk_Load_Refused_Read_Refused{refused_process = module_name_field(name)})
-		system.log_fact(.Warning, Disk_Load_Read_Refused(errors.error_record_fact_fields(error)))
-		disk_load_end(.Bad_State, errors.ring_fail(kind, storage.export_failed_with(status, value, .Damaged) ? errors.Kind.Damaged : errors.Kind.Refused, .Objects, 1, 0, 0, value))
-		return
-	}
-	if status != .Ok || value < 0 {
-		system.log_fact(.Warning, Disk_Load_Refused_Answer_Not_Allowed{refused_process = module_name_field(name)})
-		disk_load_end(.Bad_State, refused_status)
-		return
-	}
-	switch load.stage {
-	case .Idle:
-	case .Size:
-		// The size is copied here and checked one time: no later answer
-		// changes it.
-		size := u64(value)
-		answer: disk_process.Size_Answer
-		load.read, answer = disk_process.read_begin(size)
-		switch answer {
-		case .Good:
-		case .Empty:
-			system.log_fact(.Warning, Disk_Load_Refused_Object_Empty{refused_process = module_name_field(name)})
-			disk_load_end(.Bad_Operation, errors.ring_fail(kind, .Malformed, .None, 1))
-			return
-		case .Too_Large:
-			system.log_fact(.Warning, Disk_Load_Refused_Object_Too_Large{object_bytes = size, file_bytes_limit = u64(disk_process.FILE_BYTES_LIMIT), refused_process = module_name_field(name)})
-			disk_load_end(.Bad_Operation, errors.ring_fail(kind, .Too_Long, .Bytes, 1, i64(min(size, 1 << 62)), disk_process.FILE_BYTES_LIMIT))
-			return
-		}
-		pages := (size + system.PAGE_SIZE - 1) / system.PAGE_SIZE
-		memory, create_status := system.memory_create(pages)
-		address: rawptr
-		if create_status == .Ok {
-			load.memory = memory
-			address, create_status = system.memory_map(memory)
-		}
-		if create_status != .Ok {
-			system.log_fact(.Warning, Disk_Load_Refused_No_Memory{object_bytes = size, status = op.Status_Word(create_status), refused_process = module_name_field(name)})
-			disk_load_end(create_status, errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(create_status)))
-			return
-		}
-		load.bytes = ([^]u8)(address)[:size]
-		load.stage = .Bytes
-		if !disk_load_ask("read_range", 0, true) {
-			system.log_fact(.Warning, Disk_Load_Refused_Call_Not_Taken{refused_process = module_name_field(name)})
-			disk_load_end(.Bad_State, refused_status)
-			return
-		}
-		system.wait_records(wait, &load.client.calls.completions)
-	case .Bytes:
-		// The count is the count of the bytes that are in the call region,
-		// as this service bounded it (isolated.result_text): it is compared
-		// with what the file has left before the copy.
-		count := u64(len(text))
-		step := disk_process.read_step(&load.read, count)
-		switch step {
-		case .More, .Complete:
-			copy(load.bytes[load.read.received - count:][:count], text)
-		case .No_Progress:
-			system.log_fact(.Warning, Disk_Load_Refused_No_Byte_At{received_bytes = load.read.received, object_bytes = load.read.size, refused_process = module_name_field(name)})
-			disk_load_end(.Bad_State, refused_status)
-			return
-		case .Too_Many:
-			system.log_fact(.Warning, Disk_Load_Refused_Too_Many_Bytes{given_bytes = count, left_bytes = load.read.size - load.read.received, refused_process = module_name_field(name)})
-			disk_load_end(.Bad_State, refused_status)
-			return
-		}
-		if step == .More {
-			if !disk_load_ask("read_range", load.read.received, true) {
-				system.log_fact(.Warning, Disk_Load_Refused_Call_Not_Taken{refused_process = module_name_field(name)})
-				disk_load_end(.Bad_State, refused_status)
-				return
-			}
-			system.wait_records(wait, &load.client.calls.completions)
-			return
-		}
-		disk_load_complete(wait)
-	case .List:
-		disk_import_list_answer(value, wait)
-	case .Import_Size:
-		disk_import_size_answer(value, wait)
-	case .Import_Bytes:
-		disk_import_bytes_answer(text, wait)
-	}
-}
-
-// disk_load_deadline gives the time at which the loop of this service must
-// run again for the load, or no time when no load runs.
-disk_load_deadline :: proc "contextless" () -> u64 {
-	return disk_load.stage == .Idle ? system.WAIT_FOREVER : disk_load.deadline
-}
-
-// disk_load_complete checks the bytes of the file that came whole, then
-// finds its imports that the boot image does not hold (import_scan.odin).
-// The hash is computed on the bytes that this service holds: the hash of
-// the entry of the storage service is not read. So the storage service
-// gives the bytes that the command names, or nothing runs.
-disk_load_complete :: proc "contextless" (wait: ^system.Wait) {
-	load := &disk_load
-	kind := u32(root_ring.Root_Command.Start_From_Disk)
-	name := string(load.name[:load.name_length])
-	asked := load.hash
-	found := blake3.hash(load.bytes)
-	if found != asked {
-		head := transmute([4]u64)found
-		system.log_fact(.Warning, Disk_Load_Refused_Hash_Differs{found_hash = value_kinds.Hash_Field(found), hash = value_kinds.Hash_Field(asked), refused_process = module_name_field(name)})
-		disk_load_end(.Bad_Operation, errors.ring_fail(kind, .Not_Authentic, .None, 2, i64(head[0])))
-		return
-	}
-	disk_imports_begin(wait)
 }
 
 // disk_load_start starts the file whose bytes this service checked, with
@@ -602,7 +299,7 @@ disk_load_start :: proc "contextless" () {
 	// never with the grants of a disk process.
 	if load.for_start_policy {
 		chosen_error: module.Load_Error
-		chosen_status := start_policy_chosen_run(name, load.bytes, found, disk_imports_files(), &chosen_error)
+		chosen_status := start_policy_chosen_run(name, disk_load_module(), found, disk_load_files(), &chosen_error)
 		if chosen_status != .Ok && chosen_error.stage != u32(module.Load_Stage.None) {
 			disk_loader_refusal_log(name, &chosen_error)
 		} else if chosen_status != .Ok {
@@ -626,7 +323,7 @@ disk_load_start :: proc "contextless" () {
 		return
 	}
 	load_error: module.Load_Error
-	status := disk_process_run(name, load.bytes, found, principal, granted, disk_imports_files(), &load_error)
+	status := disk_process_run(name, disk_load_module(), found, principal, granted, disk_load_files(), &load_error)
 	if status != .Ok {
 		if load_error.stage != u32(module.Load_Stage.None) {
 			disk_loader_refusal_log(name, &load_error)

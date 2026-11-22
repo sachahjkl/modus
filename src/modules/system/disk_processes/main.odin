@@ -1,46 +1,70 @@
-// Delegated disk_processes service implementing Role.Disk_Processes
-// (src/md/api/root_service_split.md).
+// The delegated service disk_processes: the holder of the role
+// Disk_Processes (src/md/api/root_service_split.md, "The disk processes").
 //
-// Maintains the read-only module_files catalog, validates transitive import
-// graphs with iterative 3-color DFS, answers debug-object lookups, and
-// prepares verified Start_From_Bytes_Request payloads for the root core.
+// It reads the module file of a disk process, and the files of its import
+// scan, from the store module_files of the principal of each load,
+// through a connection that reads only, which the core gives with the
+// command Load. The bytes go into memory that the core lends; the core
+// checks each hash on its own mapping after the end of each loan, then
+// starts the module from the request Start_From_Bytes. The core never
+// reads a module file from the disk, and never waits for the storage
+// service during a load.
+//
+// The rules of the load are in the machine of
+// internal:disk_processes/disk_processes_core; this file carries its
+// actions to the storage service and to the core.
 package disk_processes_service
 
 import "base:intrinsics"
 import dpc "internal:disk_processes/disk_processes_core"
 import "modus:contract/blake3"
 import "modus:contract/errors"
+import "modus:contract/isolated"
+import op "modus:contract/operation"
+import module "modus:contract/module"
 import "modus:contract/ring"
 import rd "modus:contract/root_delegation"
+import "modus:contract/storage_status"
 import "modus:contract/value_kinds"
+import "modus:storage"
 import "modus:system"
 
-// Working memory budget for the freestanding disk_processes service process
-// and its fixed-capacity catalog and staging buffers.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 512, processes = 1, threads = 1}
+// The page tables of its mappings: the boot image, one lent file of
+// 4 MiB, and the call ring and the call region of the storage connection.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 64, processes = 1, threads = 1}
 
 // Status record returned by the status() export.
 Disk_Processes_Status :: struct {
-	catalog_entries:    i64,
-	import_validations: i64,
-	debug_lookups:      i64,
-	starts_prepared:    i64,
-	total_refusals:     i64,
+	loads:            i64,
+	starts_requested: i64,
+	refusals:         i64,
+	commands_refused: i64,
 }
 
-// Package-level BSS state so staging buffers never live on the stack.
-service_state: dpc.Disk_Processes_State
-service_ring: ring.Ring
-service_region_base: [^]u8
-service_region_bytes: u64
+machine: dpc.Machine
+core_ring: ring.Ring
+core_ring_memory: system.Handle
+region: []u8
+image: []u8
 
-// Private BSS buffers for copy-then-check reading of shared memory.
-copied_entry: dpc.Catalog_Entry
-copied_prepare_input: dpc.Prepare_Start_Input
-staged_import_result: dpc.Import_Validation_Result
-staged_debug_info: dpc.Debug_Object_Info
-staged_start_request: rd.Start_From_Bytes_Request
-copied_module_bytes: [65536]u8
+// The load that runs: the tag of the core, the storage connection, the
+// call in flight, and the lent memory of the file that is read.
+load_tag: u32
+client: storage.Client
+client_open: bool
+sent: storage.Sent_Call
+arguments: [4]isolated.Argument
+argument_count: int
+call_waiting: bool
+lent_memory: system.Handle
+lent_address: rawptr
+
+// The private copies of what crosses a border: the request of the core,
+// and the rows of a list that the storage service writes.
+copied_request: rd.Load_Request
+list_rows: [dpc.LIST_PAGE_ROWS]storage.Listed
+list_names: [dpc.LIST_NAME_BYTES]u8
+machine_rows: [dpc.LIST_PAGE_ROWS]dpc.List_Row
 
 @(private = "file")
 fail :: proc "contextless" (text: string) -> ! {
@@ -48,230 +72,309 @@ fail :: proc "contextless" (text: string) -> ! {
 	system.stop(.Failed)
 }
 
-@(private = "file")
-region_range_valid :: proc "contextless" (offset: u64, length: u64) -> bool {
-	if service_region_base == nil || length == 0 || length > service_region_bytes {
-		return false
-	}
-	return offset <= service_region_bytes - length
-}
-
-// status writes aggregate disk_processes service counters into out.
+// status writes the counts of the loads into out.
 @(export)
 status :: proc "c" (out: ^Disk_Processes_Status, error: ^errors.Error_Record) -> i64 {
 	if out == nil {
 		return errors.fail(error, -1, .Bad_Address, .None, 1)
 	}
-	if !service_state.initialized {
-		return errors.fail(error, -2, .State, .Requests)
-	}
 	out^ = {
-		catalog_entries    = i64(service_state.counters.catalog_entries),
-		import_validations = i64(service_state.counters.import_validations),
-		debug_lookups      = i64(service_state.counters.debug_lookups),
-		starts_prepared    = i64(service_state.counters.starts_prepared),
-		total_refusals     = i64(service_state.counters.total_refusals),
+		loads            = i64(machine.counters.loads),
+		starts_requested = i64(machine.counters.starts_requested),
+		refusals         = i64(machine.counters.refusals),
+		commands_refused = i64(machine.counters.commands_refused),
 	}
 	return 0
 }
 
 @(private = "file")
-reply_bad_command :: proc "contextless" (command: ring.Record, kind: errors.Kind, arg: i64, value: i64, limit: i64 = 0) {
-	ring.push(
-		&service_ring.completions,
-		ring.Record{
-			kind   = u32(rd.Disk_Processes_Ring_Status.Bad_Command),
-			tag    = command.tag,
-			values = errors.ring_fail(command.kind, kind, .Bytes, arg, value, limit),
-		},
-	)
+image_holds :: proc "contextless" (hash: blake3.Hash) -> bool {
+	return system.image_entry_of(image, hash) != nil
+}
+
+@(private = "file")
+imports_walk :: proc "contextless" (file: []u8, walked: ^dpc.Machine) {
+	if module.validate(file) != .None {
+		return
+	}
+	for number in 1 ..< module.count(file, .Imports) {
+		record, _ := module.record(file, .Imports, number, module.Import)
+		dpc.want_import(walked, record.hash)
+	}
+}
+
+// lent_release gives back the lent memory: the core revokes the loan when
+// it takes the next event.
+@(private = "file")
+lent_release :: proc "contextless" () {
+	if lent_address != nil {
+		system.memory_unmap(lent_address)
+		lent_address = nil
+	}
+	if lent_memory != 0 {
+		system.close(lent_memory)
+		lent_memory = 0
+	}
+}
+
+// load_release gives back what the load holds: the lent memory and the
+// storage connection.
+@(private = "file")
+load_release :: proc "contextless" () {
+	lent_release()
+	if client_open {
+		if client.calls.head != nil {
+			system.ring_close(&client.calls)
+		}
+		if client.region != nil {
+			system.memory_unmap(raw_data(client.region))
+		}
+		for handle in ([3]system.Handle{client.ring_memory, client.region_memory, client.service}) {
+			if handle != 0 {
+				system.close(handle)
+			}
+		}
+	}
+	client = {}
+	client_open = false
+	call_waiting = false
+}
+
+@(private = "file")
+event_send :: proc "contextless" (event: rd.Disk_Load_Event, tag: u32) {
+	report := machine.report
+	intrinsics.mem_copy_non_overlapping(&region[rd.EVENT_REPORT_OFFSET], &report, size_of(rd.Event_Report))
+	if !system.send(&core_ring.completions, ring.Record{kind = u32(event), tag = tag}) {
+		// The core reads one event for each command: a full ring is a
+		// fault of the core, and the load ends with no event.
+		dpc.cancel(&machine)
+		load_release()
+	}
+}
+
+// perform carries the actions of the machine until it waits: for an
+// answer of the storage service, or for a command of the core.
+@(private = "file")
+perform :: proc "contextless" (first: dpc.Action) {
+	action := first
+	for {
+		switch action.kind {
+		case .Wait_Command:
+			return
+		case .Ask_Size, .Ask_Read, .Ask_List:
+			arguments = {}
+			arguments[0].integer = u64(storage.ROOT)
+			arguments[1].text = transmute([]u8)action.name
+			argument_count = 2
+			export := "size"
+			switch action.kind {
+			case .Wait_Command, .Send_Event, .Ask_Size:
+			case .Ask_Read:
+				export = "read_range"
+				arguments[2].integer = action.offset
+				argument_count = 3
+			case .Ask_List:
+				export = "list"
+				// The name after which the page starts, in the memory of the
+				// machine: an empty name of the first page is still a range.
+				arguments[1].text = machine.after[:machine.after_length]
+				arguments[2].table = {records = ([^]u8)(&list_rows)[:size_of(list_rows)], count = 0}
+				arguments[3].table = {records = list_names[:], count = 0}
+				argument_count = 4
+			}
+			call_status: storage_status.Status
+			sent, call_status = storage.call_send(&client, export, arguments[:argument_count])
+			if call_status != .Ok {
+				action = dpc.call_failed(&machine, .Call_Not_Taken)
+				continue
+			}
+			call_waiting = true
+			return
+		case .Send_Event:
+			if action.release_lent {
+				lent_release()
+			}
+			event_send(action.event, load_tag)
+			#partial switch action.event {
+			case .Ready, .Refused, .Command_Refused:
+				load_release()
+			}
+			return
+		}
+	}
+}
+
+// answer_poll reads the answer of the storage service to the call in
+// flight, if it came, and gives it to the machine.
+@(private = "file")
+answer_poll :: proc "contextless" () {
+	if !call_waiting {
+		return
+	}
+	error: errors.Error_Record
+	value, text, status, answered := storage.call_answer(&client, &sent, arguments[:argument_count], &error)
+	answer: dpc.Storage_Answer
+	switch {
+	case !answered && storage.connected(&client):
+		return
+	case !answered:
+		answer.kind = .Gone
+	case storage.export_failed_with(status, value, .Absent):
+		answer.kind = .Absent
+	case status == .Failed:
+		answer = {kind = .Failed, value = value, error = error, damaged = storage.export_failed_with(status, value, .Damaged)}
+	case status != .Ok || value < 0:
+		answer.kind = .Not_Allowed
+	case:
+		answer = {kind = .Value, value = value, text = text}
+		if machine.stage == .List {
+			count := int(min(value, dpc.LIST_PAGE_ROWS))
+			for &item, index in list_rows[:count] {
+				class := dpc.Entry_Class.Unknown
+				if kind, known := storage.entry_kind_of_word(item.kind); known {
+					class = kind == .Object ? .Object : .Other
+				}
+				machine_rows[index] = {name_offset = item.name_offset, name_count = item.name_count, class = class, size = item.size}
+			}
+			answer.rows = machine_rows[:count]
+			answer.names = list_names[:]
+		}
+	}
+	call_waiting = false
+	perform(dpc.storage_answered(&machine, &answer))
+}
+
+// handle_proof says if a handle came from the core through the ring, as a
+// memory or a process with at least the rights asked.
+@(private = "file")
+handle_proof :: proc "contextless" (handle: u64, kind: op.Object_Kind, needed: system.Rights) -> bool {
+	found_kind, rights, through := system.handle_state(system.Handle(handle), core_ring_memory)
+	return through && found_kind == kind && needed <= rights
 }
 
 @(private = "file")
 handle_command :: proc "contextless" (command: ring.Record) {
-	parsed, ok := rd.disk_processes_ring_command_from_word(command.kind)
-	if !ok {
-		reply_bad_command(command, .Unsupported, 0, i64(command.kind))
+	parsed, known := rd.disk_load_command_of_word(command.kind)
+	if !known || parsed != .Load && command.tag != load_tag {
+		system.log_fact(.Warning, Command_Refused{command_kind = u64(command.kind)})
+		machine.report = {}
+		event_send(.Command_Refused, command.tag)
 		return
 	}
-
 	switch parsed {
 	case .None:
-		reply_bad_command(command, .Unsupported, 0, i64(command.kind))
-
-	case .Register_Catalog_Entry:
-		entry_offset := command.values[0]
-		if !region_range_valid(entry_offset, size_of(dpc.Catalog_Entry)) {
-			reply_bad_command(command, .Out_Of_Range, 1, i64(entry_offset), i64(service_region_bytes))
+	case .Load:
+		load_release()
+		dpc.cancel(&machine)
+		load_tag = command.tag
+		intrinsics.mem_copy_non_overlapping(&copied_request, &region[rd.LOAD_REQUEST_OFFSET], size_of(rd.Load_Request))
+		action := dpc.load_begin(&machine, &copied_request)
+		valid := handle_proof(command.values[0], .Process, {.Read}) && handle_proof(command.values[1], .Memory, {.Read, .Write}) && handle_proof(command.values[2], .Memory, {.Read, .Write})
+		if action.kind == .Ask_Size && valid {
+			storage_module := string(copied_request.storage_module[:copied_request.storage_module_length])
+			file := system.image_find(image, storage_module)
+			if module.validate(file) == .None {
+				client, client_open = storage.open_handles(system.Handle(command.values[1]), system.Handle(command.values[2]), system.Handle(command.values[0]), file)
+			}
+			if !client_open {
+				action = dpc.call_failed(&machine, .Not_Mapped)
+			}
+		} else if action.kind == .Ask_Size {
+			action = dpc.call_failed(&machine, .Not_Mapped)
+		}
+		if !client_open {
+			// The handles that came through the ring and that no connection
+			// holds are closed here: a refusal keeps none of them.
+			for index in 0 ..< 3 {
+				word := command.values[index]
+				kind := index == 0 ? op.Object_Kind.Process : op.Object_Kind.Memory
+				if handle_proof(word, kind, {}) {
+					system.close(system.Handle(word))
+				}
+			}
+		}
+		perform(action)
+	case .Memory_Lent:
+		if !handle_proof(command.values[0], .Memory, {.Read, .Write}) {
+			perform(dpc.command_refused(&machine))
 			return
 		}
-		intrinsics.mem_copy_non_overlapping(&copied_entry, rawptr(&service_region_base[entry_offset]), size_of(dpc.Catalog_Entry))
-		refusal := dpc.catalog_register(&service_state, copied_entry)
-		if refusal != .None {
-			system.log_fact(.Warning, Command_Refused{command_kind = u64(command.kind), refusal_code = u64(refusal)})
-			ring.push(
-				&service_ring.completions,
-				ring.Record{
-					kind   = u32(rd.Disk_Processes_Ring_Status.Refused),
-					tag    = command.tag,
-					values = {u64(refusal), 0, 0, 0, 0, 0, 0},
-				},
-			)
+		lent_release()
+		lent_memory = system.Handle(command.values[0])
+		pages, size_status := system.memory_size(lent_memory)
+		address: rawptr
+		map_status := size_status
+		if size_status == .Ok {
+			address, map_status = system.memory_map(lent_memory, {.Write})
+		}
+		if map_status != .Ok {
+			perform(dpc.command_refused(&machine))
 			return
 		}
-		system.log_fact(.Info, Catalog_Entry_Registered{catalog_entries = service_state.counters.catalog_entries})
-		ring.push(
-			&service_ring.completions,
-			ring.Record{
-				kind   = u32(rd.Disk_Processes_Ring_Status.Ok),
-				tag    = command.tag,
-				values = {service_state.counters.catalog_entries, 0, 0, 0, 0, 0, 0},
-			},
-		)
-
-	case .Validate_Imports:
-		hash_offset := command.values[0]
-		out_offset := command.values[1]
-		if !region_range_valid(hash_offset, size_of(blake3.Hash)) || !region_range_valid(out_offset, size_of(dpc.Import_Validation_Result)) {
-			reply_bad_command(command, .Out_Of_Range, 1, i64(hash_offset), i64(service_region_bytes))
-			return
-		}
-		root_hash: blake3.Hash
-		intrinsics.mem_copy_non_overlapping(&root_hash, rawptr(&service_region_base[hash_offset]), size_of(blake3.Hash))
-		staged_import_result = dpc.validate_imports(&service_state, root_hash)
-		intrinsics.mem_copy_non_overlapping(rawptr(&service_region_base[out_offset]), &staged_import_result, size_of(dpc.Import_Validation_Result))
-		if staged_import_result.refusal != .None {
-			system.log_fact(.Warning, Command_Refused{command_kind = u64(command.kind), refusal_code = u64(staged_import_result.refusal)})
-			ring.push(
-				&service_ring.completions,
-				ring.Record{
-					kind   = u32(rd.Disk_Processes_Ring_Status.Refused),
-					tag    = command.tag,
-					values = {u64(staged_import_result.refusal), 0, 0, 0, 0, 0, 0},
-				},
-			)
-			return
-		}
-		ring.push(
-			&service_ring.completions,
-			ring.Record{
-				kind   = u32(rd.Disk_Processes_Ring_Status.Ok),
-				tag    = command.tag,
-				values = {u64(staged_import_result.resolved_count), u64(staged_import_result.max_depth_seen), 0, 0, 0, 0, 0},
-			},
-		)
-
-	case .Lookup_Debug_Object:
-		hash_offset := command.values[0]
-		out_offset := command.values[1]
-		if !region_range_valid(hash_offset, size_of(blake3.Hash)) || !region_range_valid(out_offset, size_of(dpc.Debug_Object_Info)) {
-			reply_bad_command(command, .Out_Of_Range, 1, i64(hash_offset), i64(service_region_bytes))
-			return
-		}
-		module_hash: blake3.Hash
-		intrinsics.mem_copy_non_overlapping(&module_hash, rawptr(&service_region_base[hash_offset]), size_of(blake3.Hash))
-		info, found := dpc.lookup_debug_object(&service_state, module_hash)
-		if !found {
-			ring.push(
-				&service_ring.completions,
-				ring.Record{
-					kind   = u32(rd.Disk_Processes_Ring_Status.Refused),
-					tag    = command.tag,
-					values = {0, 0, 0, 0, 0, 0, 0},
-				},
-			)
-			return
-		}
-		staged_debug_info = info
-		intrinsics.mem_copy_non_overlapping(rawptr(&service_region_base[out_offset]), &staged_debug_info, size_of(dpc.Debug_Object_Info))
-		ring.push(
-			&service_ring.completions,
-			ring.Record{
-				kind   = u32(rd.Disk_Processes_Ring_Status.Ok),
-				tag    = command.tag,
-				values = {info.debug_object_size, 0, 0, 0, 0, 0, 0},
-			},
-		)
-
-	case .Prepare_Start:
-		input_offset := command.values[0]
-		bytes_offset := command.values[1]
-		bytes_length := command.values[2]
-		out_offset := command.values[3]
-		if bytes_length == 0 || bytes_length > len(copied_module_bytes) ||
-			!region_range_valid(input_offset, size_of(dpc.Prepare_Start_Input)) ||
-			!region_range_valid(bytes_offset, bytes_length) ||
-			!region_range_valid(out_offset, size_of(rd.Start_From_Bytes_Request)) {
-			reply_bad_command(command, .Out_Of_Range, 1, i64(bytes_length), len(copied_module_bytes))
-			return
-		}
-		intrinsics.mem_copy_non_overlapping(&copied_prepare_input, rawptr(&service_region_base[input_offset]), size_of(dpc.Prepare_Start_Input))
-		intrinsics.mem_copy_non_overlapping(&copied_module_bytes[0], rawptr(&service_region_base[bytes_offset]), int(bytes_length))
-
-		req, prep_ref, imp_ref, border_ref := dpc.prepare_start_from_bytes(&service_state, &copied_prepare_input, copied_module_bytes[:bytes_length])
-		if prep_ref != .None {
-			system.log_fact(.Warning, Command_Refused{command_kind = u64(command.kind), refusal_code = u64(prep_ref)})
-			ring.push(
-				&service_ring.completions,
-				ring.Record{
-					kind   = u32(rd.Disk_Processes_Ring_Status.Refused),
-					tag    = command.tag,
-					values = {u64(prep_ref), u64(imp_ref), u64(border_ref), 0, 0, 0, 0},
-				},
-			)
-			return
-		}
-		staged_start_request = req
-		intrinsics.mem_copy_non_overlapping(rawptr(&service_region_base[out_offset]), &staged_start_request, size_of(rd.Start_From_Bytes_Request))
-		system.log_fact(.Info, Start_Prepared{principal = req.principal, import_count = u64(req.import_count)})
-		ring.push(
-			&service_ring.completions,
-			ring.Record{
-				kind   = u32(rd.Disk_Processes_Ring_Status.Ok),
-				tag    = command.tag,
-				values = {u64(req.import_count), req.module_byte_count, 0, 0, 0, 0, 0},
-			},
-		)
+		lent_address = address
+		perform(dpc.memory_lent(&machine, ([^]u8)(address)[:pages * system.PAGE_SIZE]))
+	case .Continue:
+		perform(dpc.continue_given(&machine))
+	case .Cancel:
+		// The lent memory and the storage connection are given back first:
+		// the core ends their loans only after Cancelled, so no write of
+		// this service meets a revoked page.
+		dpc.cancel(&machine)
+		load_release()
+		machine.report = {}
+		event_send(.Cancelled, command.tag)
 	}
 }
 
-// entry initializes the delegated disk_processes ring and serves catalog,
-// import validation, debug-object lookup, and Start_From_Bytes preparation.
+// entry opens the ring of the core, the transfer region and the boot
+// image, then serves the loads.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
+	core_ring_memory = ctx.handles[rd.DISK_PROCESSES_RING_SLOT]
 	open_status: system.Status
-	if service_ring, open_status = system.ring_open(ctx.handles[rd.DISK_PROCESSES_RING_SLOT]); open_status != .Ok {
-		fail("no disk_processes service ring")
+	if core_ring, open_status = system.ring_open(core_ring_memory, receive_handles = true); open_status != .Ok {
+		fail("no ring of the core")
 	}
-	region_handle := ctx.handles[rd.DISK_PROCESSES_REGION_SLOT]
-	if region_handle != 0 {
-		pages, size_status := system.memory_size(region_handle)
-		if size_status != .Ok || pages == 0 {
-			fail("the disk_processes data region has no pages")
-		}
-		address, map_status := system.memory_map(region_handle, {.Write})
-		if map_status != .Ok {
-			fail("cannot map the disk_processes data region")
-		}
-		service_region_base = ([^]u8)(address)
-		service_region_bytes = pages * system.PAGE_SIZE
+	region_memory := ctx.handles[rd.DISK_PROCESSES_REGION_SLOT]
+	pages, size_status := system.memory_size(region_memory)
+	if size_status != .Ok || pages < rd.DISK_PROCESSES_REGION_PAGES {
+		fail("the transfer region is smaller than its two pages")
 	}
+	region_address, region_status := system.memory_map(region_memory, {.Write})
+	if region_status != .Ok {
+		fail("the transfer region does not map")
+	}
+	region = ([^]u8)(region_address)[:rd.DISK_PROCESSES_REGION_PAGES * system.PAGE_SIZE]
+	image_memory := ctx.handles[rd.DISK_PROCESSES_IMAGE_SLOT]
+	image_size := ctx.values[rd.DISK_PROCESSES_VALUE_IMAGE_SIZE]
+	image_kind, image_rights, _ := system.handle_state(image_memory)
+	if image_kind != .Memory || .Write in image_rights || image_size == 0 {
+		fail("no boot image that reads only")
+	}
+	image_address, image_status := system.memory_map(image_memory, {})
+	if image_status != .Ok {
+		fail("the boot image does not map")
+	}
+	image = ([^]u8)(image_address)[:image_size]
 
-	dpc.state_init(&service_state)
+	dpc.machine_init(&machine, {image_holds = image_holds, imports_walk = imports_walk})
 	system.log_fact(.Info, Service_Ready{})
 
 	for {
 		wait := system.wait_begin()
 		answered := false
-		for ring.count(&service_ring.completions) < ring.capacity(&service_ring.completions) {
-			command := system.receive(&service_ring.commands) or_break
+		for command in system.receive(&core_ring.commands) {
 			handle_command(command)
 			answered = true
 		}
-		if answered {
-			system.wake_reader(&service_ring.completions)
+		answer_poll()
+		if answered || ring.count(&core_ring.completions) > 0 {
+			system.wake_reader(&core_ring.completions)
 		}
-		system.wait_records(&wait, &service_ring.commands)
+		system.wait_records(&wait, &core_ring.commands)
+		if call_waiting && client.calls.head != nil {
+			system.wait_records(&wait, &client.calls.completions)
+		}
 		system.wait_end(&wait)
 	}
 }

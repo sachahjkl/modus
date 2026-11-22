@@ -224,9 +224,9 @@ Do not use: package manager, installer, downloader.
 
 ### Import scan
 
-An import scan is the read of the store `module_files` of a principal by the root service, to find each import of a disk process that the boot image does not hold by the BLAKE3 hash of the bytes of a file.
+An import scan is the read of the store `module_files` of a principal by the service `disk_processes`, to find each import of a disk process that the boot image does not hold by the BLAKE3 hash of the bytes of a file.
 
-A developer puts a process and its library modules in the store `module_files`, under any nicknames. At the start, the root service reads each entry, keeps the bytes whose hash an import names, and gives them to the loader beside the boot image. A hash that no file has refuses the start. The scan trusts no name and no hash that the storage service gives. It is not a search path: only bytes with the hash of the import are kept.
+A developer puts a process and its library modules in the store `module_files`, under any nicknames. At the start, `disk_processes` reads each entry into memory that the root service lends, and keeps the bytes whose hash an import names; the root service ends each loan, computes the hash again, and gives the kept files to the loader beside the boot image. A hash that no file has refuses the start. The scan trusts no name and no hash that the storage service gives. It is not a search path: only bytes with the hash of the import are kept.
 
 The design: `docs/MODULE_CONTRACT.md`, "A module from a disk".
 

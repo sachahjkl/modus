@@ -81,6 +81,25 @@ Disk_Load_Refused_Not_Mapped :: struct {
 	refused_process: value_kinds.Module_Name_Field,
 }
 
+@(log_fact = "root: refused {refused_process} from the disk: the disk processes service does not run")
+Disk_Load_Refused_No_Service :: struct {
+	refused_process: value_kinds.Module_Name_Field,
+}
+
+@(log_fact = "root: refused {refused_process} from the disk: the disk processes service stopped")
+Disk_Load_Refused_Service_Stopped :: struct {
+	refused_process: value_kinds.Module_Name_Field,
+}
+
+// An event that the contract of the service does not allow at the step of
+// the load, a report out of its bounds, a hash that differs from the
+// bytes of a file after the end of its loan, or a ring that takes no
+// command.
+@(log_fact = "root: refused {refused_process} from the disk: the disk processes service gave an answer that its contract does not allow")
+Disk_Load_Refused_Service_Answer_Not_Allowed :: struct {
+	refused_process: value_kinds.Module_Name_Field,
+}
+
 @(log_fact = "root: refused {refused_process} from the disk: the storage service took no call")
 Disk_Load_Refused_Call_Not_Taken :: struct {
 	refused_process: value_kinds.Module_Name_Field,
