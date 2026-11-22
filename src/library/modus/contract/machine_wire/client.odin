@@ -79,6 +79,7 @@ Mesh_Client_Status :: enum u8 {
 	Refused_Full              = 10, // MESH_REQUESTS_AT_ONCE requests are in flight.
 	Unreachable               = 11, // The link is not up: the request never left.
 	Refused_Bad_Purpose       = 12, // The purpose None.
+	Refused_Code_Expired      = 13, // A link of purpose Pairing, and the code of the pairing ended, or the clock is before its start.
 }
 
 // One request in flight.
@@ -179,6 +180,11 @@ mesh_link_open :: proc "contextless" (
 	case .Pairing:
 		if peer.pairing.side != .Joiner || peer.pairing.phase != .Code_Ready {
 			return .Refused_No_Pairing
+		}
+		// The same rule as peer_admits on the offerer: an ended code opens
+		// no link.
+		if machine_mesh.pairing_code_expired(peer.pairing.code_started_at_ms, now_ms) {
+			return .Refused_Code_Expired
 		}
 	}
 	link^ = Mesh_Link {
@@ -520,8 +526,10 @@ Mesh_Role_Call :: struct {
 }
 
 // mesh_call_role sends one call of a role contract held on the other
-// machine. A reply of another call, or a malformed reply, is
-// Unknown_Outcome. A holder that refused gives the outcome Refused.
+// machine. The call identifier is the identifier of the request in flight,
+// and the reply must name it: a reply of another call (a reply that came
+// late or out of order), or a malformed reply, is Unknown_Outcome. A holder
+// that refused gives the outcome Refused.
 mesh_call_role :: proc "contextless" (
 	link: ^Mesh_Link,
 	transport: ^Mesh_Transport,

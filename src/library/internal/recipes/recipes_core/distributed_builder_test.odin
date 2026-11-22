@@ -597,6 +597,63 @@ distributed_verify_compares_two_machines :: proc(t: ^testing.T) {
 }
 
 @(test)
+distributed_verify_never_compares_one_machine_with_itself :: proc(t: ^testing.T) {
+	world := world_make(t)
+	defer world_free(world)
+	alpha := spec_make("alpha", .Blob, {"source"}, 1)
+
+	// A pool that names one builder twice is refused before any work.
+	twice := [2]Distributed_Peer{{identity = identity(world.b), purpose = .Builder, uses = {.Roles, .Objects}}, {identity = identity(world.b), purpose = .Builder, uses = {.Roles, .Objects}}}
+	refusal, bad_index := distributed_builder_init(world.scheduler, &world.laptop.peer, twice[:])
+	testing.expect(t, refusal == .Bad_Peer && bad_index == 1)
+
+	// One builder and no builder on this machine: refused, with no kept
+	// output, and B built once only.
+	single := [1]Distributed_Peer{{identity = identity(world.b), purpose = .Builder, uses = {.Roles, .Objects}}}
+	refusal, _ = distributed_builder_init(world.scheduler, &world.laptop.peer, single[:])
+	testing.expect_value(t, refusal, Distributed_Refusal.None)
+	dag_recipe_add(world.scheduler, &alpha, nil)
+	policy := world_policy(world, .Verify, local = false)
+	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.Verify_Needs_Two_Machines)
+	testing.expect_value(t, world.scheduler.results[0].phase, Dag_Phase.Failed)
+	testing.expect(t, dag_output(world.scheduler, 0) == nil)
+	testing.expect_value(t, world.b.builds, 1)
+	testing.expect_value(t, world.scheduler.counters.verify_agreements, 0)
+
+	// The second builder runs the build and its link breaks: with no
+	// builder on this machine, the recipe is refused, never kept unverified.
+	pool := world_pool(world)
+	distributed_builder_init(world.scheduler, &world.laptop.peer, pool[:])
+	dag_recipe_add(world.scheduler, &alpha, nil)
+	world.network.lose_build_of = identity(world.c)
+	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.Verify_Needs_Two_Machines)
+	testing.expect(t, dag_output(world.scheduler, 0) == nil)
+	testing.expect_value(t, world.c.builds, 1)
+
+	// With a builder on this machine, B and this machine compare.
+	distributed_builder_init(world.scheduler, &world.laptop.peer, pool[:])
+	dag_recipe_add(world.scheduler, &alpha, nil)
+	policy = world_policy(world, .Verify)
+	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.None)
+	result := &world.scheduler.results[0]
+	testing.expect_value(t, result.machine, identity(world.b))
+	testing.expect_value(t, result.second_machine, identity(world.laptop))
+	testing.expect(t, result.machine != result.second_machine)
+	testing.expect_value(t, world.local_builds, 1)
+	world.network.lose_build_of = {}
+
+	// A changed bit of the second output in transit: refused before the
+	// comparison, so no agreement is counted.
+	distributed_builder_init(world.scheduler, &world.laptop.peer, pool[:])
+	dag_recipe_add(world.scheduler, &alpha, nil)
+	world.network.flip_object_of = identity(world.c)
+	policy = world_policy(world, .Verify, local = false)
+	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.Hash_Mismatch)
+	testing.expect_value(t, world.scheduler.counters.verify_agreements, 0)
+	testing.expect(t, dag_output(world.scheduler, 0) == nil)
+}
+
+@(test)
 distributed_pool_refuses_unpaired_and_ungranted_machines :: proc(t: ^testing.T) {
 	world := world_make(t, grant_b_roles = false)
 	defer world_free(world)
@@ -698,6 +755,71 @@ distributed_graph_refuses_each_bad_edge :: proc(t: ^testing.T) {
 	policy = world_policy(world, .None)
 	testing.expect_value(t, distributed_build(scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.Bad_Mode)
 	testing.expect_value(t, world.b.builds + world.c.builds, 3)
+}
+
+// The local store of the tests: one realisation, whose bytes a test can damage.
+@(private = "file")
+Local_Store_Fixture :: struct {
+	record:  object_cache.Realisation_Record,
+	payload: [256]u8,
+	length:  int,
+}
+
+@(private = "file")
+local_store_fixture: Local_Store_Fixture
+
+@(private = "file")
+fixture_lookup :: proc "contextless" (recipe_hash: blake3.Hash, record: ^object_cache.Realisation_Record, payload: []u8, _: rawptr) -> (int, bool) {
+	if local_store_fixture.record.recipe_hash != recipe_hash {
+		return 0, false
+	}
+	record^ = local_store_fixture.record
+	return copy(payload, local_store_fixture.payload[:local_store_fixture.length]), true
+}
+
+@(test)
+distributed_graph_refuses_bad_counts_and_checks_the_local_store :: proc(t: ^testing.T) {
+	world := world_make(t)
+	defer world_free(world)
+	alpha := spec_make("alpha", .Blob, {"source"}, 1)
+	_, refusal := dag_recipe_add(nil, &alpha, nil)
+	testing.expect_value(t, refusal, Distributed_Refusal.Bad_Recipe)
+	_, refusal = dag_recipe_add(world.scheduler, nil, nil)
+	testing.expect_value(t, refusal, Distributed_Refusal.Bad_Recipe)
+	pool := world_pool(world)
+	distributed_builder_init(world.scheduler, &world.laptop.peer, pool[:])
+	// A count of inputs past its bound is refused before any input is read,
+	// also with a dependency that names an input under the bound.
+	too_many := alpha
+	too_many.input_count = pr.MAX_RECIPE_INPUTS + 1
+	_, refusal = dag_recipe_add(world.scheduler, &too_many, nil)
+	testing.expect_value(t, refusal, Distributed_Refusal.Bad_Recipe)
+	too_many.input_count = max(u32)
+	_, refusal = dag_recipe_add(world.scheduler, &too_many, nil)
+	testing.expect_value(t, refusal, Distributed_Refusal.Bad_Recipe)
+	testing.expect_value(t, world.scheduler.recipe_count, 0)
+
+	// The local store answers with no build when its bytes hash to the
+	// output hash of its realisation.
+	sandbox, _ := pr.builder_sandbox_prepare(&alpha)
+	local_store_fixture.length, _ = sim_build(&sandbox, local_store_fixture.payload[:], world.laptop)
+	output_hash, _ := pr.recipe_hash_output(.Blob, local_store_fixture.payload[:local_store_fixture.length])
+	local_store_fixture.record = object_cache.Realisation_Record{recipe_hash = sandbox.recipe_hash, output_hash = output_hash, output_kind = .Blob}
+	dag_recipe_add(world.scheduler, &alpha, nil)
+	policy := world_policy(world, .Cache_First, local = false)
+	policy.local_lookup = fixture_lookup
+	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.None)
+	testing.expect_value(t, world.scheduler.results[0].source, Distributed_Source.Local_Store)
+	testing.expect_value(t, world.b.builds + world.c.builds, 0)
+
+	// A damaged byte of the local store is never kept: the recipe is built.
+	local_store_fixture.payload[0] ~= 1
+	distributed_builder_init(world.scheduler, &world.laptop.peer, pool[:])
+	dag_recipe_add(world.scheduler, &alpha, nil)
+	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.None)
+	testing.expect_value(t, world.scheduler.results[0].source, Distributed_Source.Remote_Builder)
+	testing.expect_value(t, world.scheduler.results[0].output_hash, output_hash)
+	testing.expect_value(t, world.scheduler.counters.local_store_hits, 0)
 }
 
 @(test)

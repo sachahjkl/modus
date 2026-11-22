@@ -11,9 +11,9 @@ package remote_service
 // the pinned key, the requests in flight with their bounds, and the end of
 // each one (Answered, Refused, Unknown_Outcome, Unreachable).
 //
-// The datagrams of a link cross the endpoint of the server: a datagram that
-// arrives from the address and the port of a link goes to its connection
-// before the server sees the others (mesh_client_receive), and the loop
+// The datagrams of a link cross the endpoint of the server: a datagram
+// whose first packet names the connection identifier that a link chose goes
+// to that link before the server sees the others (mesh_client_receive), and the loop
 // sends the datagrams of each link after the pass of the server
 // (mesh_client_work). The listen grant of today admits the address of the
 // host only, so the network service drops each datagram to another
@@ -25,6 +25,7 @@ package remote_service
 // an identifier, or -1 with an error record; mesh_request_result gives the
 // end of a request when it came.
 
+import "base:intrinsics"
 import "modus:contract/blake3"
 import "modus:contract/enum_word"
 import "modus:contract/errors"
@@ -108,6 +109,35 @@ mesh_client_configure :: proc "contextless" (server_configuration: ^quic.Connect
 	mesh_client.configured = true
 }
 
+// mesh_client_key_erase writes zeros over a copy of the private key of
+// this machine. Each store is volatile: a plain store of zeros to memory
+// that is not read again can be removed by the compiler.
+mesh_client_key_erase :: proc "contextless" (key: ^[quic.ED25519_KEY_SIZE]u8) {
+	for index in 0 ..< len(key) {
+		intrinsics.volatile_store(&key[index], 0)
+	}
+}
+
+// mesh_client_shutdown ends each outbound link and erases the copy of the
+// private key that the links prove this machine with. The service calls it
+// before it stops on a failure; after it, mesh_connect refuses until a new
+// mesh_client_configure.
+mesh_client_shutdown :: proc "contextless" () {
+	now_us := now_microseconds()
+	for &link, index in mesh_client.links {
+		if !link.in_use {
+			continue
+		}
+		connection := &mesh_client.connections[index]
+		if connection.state != .Idle && connection.state != .Closed {
+			quic.connection_close(connection, u64(remote.Stream_Error.None), now_us)
+		}
+		machine_wire.mesh_link_broken(&link.session)
+	}
+	mesh_client_key_erase(&mesh_client.configuration.tls.client_private_key)
+	mesh_client.configured = false
+}
+
 @(private = "file")
 mesh_link_find :: proc "contextless" (identity: [32]u8) -> (link: ^Mesh_Client_Link, index: int) {
 	for &item, place in mesh_client.links {
@@ -134,6 +164,8 @@ mesh_client_status_fail :: proc "contextless" (error: ^errors.Error_Record, stat
 		return errors.fail(error, -1, .State, .None, argument, 0, 0, found)
 	case .Refused_Bad_Bound:
 		return errors.fail(error, -1, .Out_Of_Range, .Milliseconds, argument, 0, 0, found)
+	case .Refused_Code_Expired:
+		return errors.fail(error, -1, .Over_Limit, .Milliseconds, argument, 0, i64(machine_mesh.PAIRING_CODE_LIFETIME_MS), found)
 	case .Refused_Full:
 		return errors.fail(error, -1, .Full, .Requests, argument, 0, machine_wire.MESH_REQUESTS_AT_ONCE, found)
 	case .Unreachable:
@@ -159,6 +191,13 @@ mesh_connect :: proc "contextless" (identity: [32]u8, address: u32, port: u16, p
 		return errors.fail(error, -1, .Bad_Value, .None, 2, i64(address))
 	}
 	link, index := mesh_link_find(identity)
+	// One link for one address and port: two links there would share one
+	// path, and a reader of the datagrams would mistake one for the other.
+	for &item in mesh_client.links {
+		if item.in_use && &item != link && item.address.address == address && item.address.port == port {
+			return errors.fail(error, -1, .Exists, .Connections, 2, i64(address))
+		}
+	}
 	if link == nil {
 		for &item, place in mesh_client.links {
 			if !item.in_use {
@@ -182,10 +221,12 @@ mesh_connect :: proc "contextless" (identity: [32]u8, address: u32, port: u16, p
 	configuration.tls.server_public_key = identity
 	if !quic.connection_start_client(&mesh_client.connections[index], mesh_client.streams[index][:], &configuration, &cryptography, &process_generator, now_microseconds(), error) {
 		machine_wire.mesh_link_broken(&link.session)
-		quic.secret_erase(&configuration.tls.client_private_key, size_of(configuration.tls.client_private_key))
+		mesh_client_key_erase(&configuration.tls.client_private_key)
 		return -1
 	}
-	quic.secret_erase(&configuration.tls.client_private_key, size_of(configuration.tls.client_private_key))
+	// The connection keeps its own copy of the key: the copy on the stack
+	// is erased on each path.
+	mesh_client_key_erase(&configuration.tls.client_private_key)
 	return i64(index)
 }
 
@@ -268,6 +309,9 @@ mesh_call_role :: proc "contextless" (identity: [32]u8, role_word: u64, export: 
 	// The call identifier is the identifier that the session gives this
 	// request: a reply names this request and no other.
 	call_identifier := link.session.next_identifier + 1
+	if call_identifier == 0 {
+		call_identifier = 1
+	}
 	frame := machine_wire.role_call_write(mesh_frame_buffer[:], machine_wire.Role_Call{identifier = call_identifier, role = role, export = export, flags = flags, arguments = arguments})
 	_, identifier := mesh_client_begin(identity, frame, error)
 	return identifier
@@ -314,8 +358,10 @@ mesh_pairing_join_send :: proc "contextless" (identity: [32]u8, error: ^errors.E
 // store merged, the pairing confirmed, the role answered: value and the
 // result bytes), or -1 with an error record: Refused, No_Answer for an
 // unknown outcome, Link_Down for a request that never left, Not_Authentic
-// for an object whose bytes do not hash to its hash.
-mesh_request_result :: proc "contextless" (identity: [32]u8, identifier: u64, value: ^i64, result: []u8, error: ^errors.Error_Record) -> i64 {
+// for an object whose bytes do not hash to its hash, Too_Long for a role
+// result larger than result. For a role call, result_count is the exact
+// count of the result bytes.
+mesh_request_result :: proc "contextless" (identity: [32]u8, identifier: u64, value: ^i64, result: []u8, result_count: ^int, error: ^errors.Error_Record) -> i64 {
 	link, _ := mesh_link_find(identity)
 	if link == nil {
 		return errors.fail(error, -1, .Absent, .Connection, 1)
@@ -359,14 +405,21 @@ mesh_request_result :: proc "contextless" (identity: [32]u8, identifier: u64, va
 				return errors.fail(error, -1, .Refused, .Stores, 2, 0, 0, i64(ended.store))
 			}
 		case .Role_Call:
+			if len(result) < ended.role_result_size {
+				return errors.fail(error, -1, .Too_Long, .Bytes, 4, i64(ended.role_result_size), i64(len(result)))
+			}
 			if value != nil {
 				value^ = ended.role_value
 			}
 			// The bytes of the result are still in the answer frame.
+			copied := 0
 			if reply_frame, frame_status := machine_wire.frame_decode(ended.answer[:ended.received]); frame_status == .Ok {
 				if reply, read_ok := machine_wire.role_reply_read(reply_frame.body); read_ok {
-					copy(result, reply.result)
+					copied = copy(result, reply.result)
 				}
+			}
+			if result_count != nil {
+				result_count^ = copied
 			}
 		case .Pairing_Element, .Pairing_Confirm, .None:
 		}
@@ -375,17 +428,26 @@ mesh_request_result :: proc "contextless" (identity: [32]u8, identifier: u64, va
 	return errors.fail(error, -1, .Absent, .Requests, 2, i64(identifier))
 }
 
-// mesh_client_receive gives each datagram that arrived from the address of
-// a link to its connection, and gives back the count of the others, which
-// stay at the front of arrived for the server.
+// mesh_client_receive gives each datagram whose first packet names the
+// connection identifier of a link to that link, and gives back the count of
+// the others, which stay at the front of arrived for the server. The
+// address and the port do not choose the link: a paired machine that
+// connects to this machine while this machine connects to it sends both
+// from one address and one port, and only the Destination Connection ID
+// says which connection a packet is for.
 mesh_client_receive :: proc "contextless" (arrived: []ring.Record, now_us: u64) -> int {
 	kept := 0
 	for record in arrived {
 		link_index := -1
+		data: []u8
 		if record.tag < u32(quic_endpoint.receive_places) && record.values[2] <= u64(max(u32)) && record.values[3] <= u64(max(u16)) {
-			for &link, place in mesh_client.links {
-				if link.in_use && link.address.address == u32(record.values[2]) && link.address.port == u16(record.values[3]) {
-					link_index = place
+			bytes := quic_server.place_bytes(&quic_endpoint, record.tag)
+			if bytes != nil && record.values[1] >= network.UDP_HEADER && record.values[1] <= u64(len(bytes)) {
+				// QUIC authenticates each packet: the UDP checksum adds nothing.
+				whole: bool
+				data, whole = network.udp_data_read(bytes[:record.values[1]], u32(record.values[2]), quic_endpoint.local_address, .Do_Not_Verify)
+				if whole {
+					link_index = mesh_link_of_datagram(data, quic.Remote{address = u32(record.values[2]), port = u16(record.values[3])})
 				}
 			}
 		}
@@ -394,17 +456,53 @@ mesh_client_receive :: proc "contextless" (arrived: []ring.Record, now_us: u64) 
 			kept += 1
 			continue
 		}
-		bytes := quic_server.place_bytes(&quic_endpoint, record.tag)
-		if bytes != nil && record.values[1] >= network.UDP_HEADER && record.values[1] <= u64(len(bytes)) {
-			// QUIC authenticates each packet: the UDP checksum adds nothing.
-			if data, whole := network.udp_data_read(bytes[:record.values[1]], u32(record.values[2]), quic_endpoint.local_address, .Do_Not_Verify); whole {
-				error: errors.Error_Record
-				quic.connection_datagram_receive(&mesh_client.connections[link_index], data, now_us, &error)
-			}
-		}
+		error: errors.Error_Record
+		quic.connection_datagram_receive(&mesh_client.connections[link_index], data, now_us, &error)
 		quic_server.post_receive(&quic_endpoint, record.tag)
 	}
 	return kept
+}
+
+// mesh_link_of_datagram gives the link whose connection chose the
+// Destination Connection ID of the first packet, when the datagram comes
+// from the address and the port of that link; -1 for each other datagram.
+@(private = "file")
+mesh_link_of_datagram :: proc "contextless" (data: []u8, from: quic.Remote) -> int {
+	header: quic.Packet_Header
+	error: errors.Error_Record
+	if !quic.header_read(data, 0, quic.CONNECTION_ID_SIZE, &header, &error) {
+		return -1
+	}
+	destination := quic.connection_identifier_bytes(&header.destination_connection_id)
+	for &link, place in mesh_client.links {
+		connection := &mesh_client.connections[place]
+		if !link.in_use || connection.state == .Idle || connection.state == .Closed || link.address != from {
+			continue
+		}
+		if string(destination) == string(connection.local_connection_id[:]) {
+			return place
+		}
+	}
+	return -1
+}
+
+// mesh_pairing_abandon ends the pairing of a pairing request that ended with
+// no answer that confirms it: a break, a bound, a reset, a refusal, a
+// malformed answer, or a confirmation that could not leave. The pairing
+// fails, which erases its secrets; the code was spent when its exchange
+// started. A confirmation that did not come back removes the row of the
+// offerer that the reply of its element wrote.
+@(private = "file")
+mesh_pairing_abandon :: proc "contextless" (link: ^Mesh_Client_Link, kind: machine_wire.Mesh_Request_Kind, row_written: bool) {
+	switch kind {
+	case .Pairing_Element, .Pairing_Confirm:
+	case .None, .Object_Request, .Store_Offer, .Role_Call:
+		return
+	}
+	machine_mesh.pairing_fail(&mesh.pairing, .Refused_Exchange)
+	if kind == .Pairing_Confirm || row_written {
+		machine_wire.pairing_confirmed_accept(&mesh, link.session.pinned_identity, nil)
+	}
 }
 
 @(private = "file")
@@ -413,6 +511,7 @@ mesh_request_end :: proc "contextless" (link: ^Mesh_Client_Link, identifier: u64
 		if item.phase != .Free && item.phase != .Ended && item.identifier == identifier {
 			item.outcome = outcome
 			item.phase = .Ended
+			mesh_pairing_abandon(link, item.kind, false)
 		}
 	}
 }
@@ -425,6 +524,7 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 	if !found {
 		item.phase = .Ended
 		item.outcome = .Unknown_Outcome
+		mesh_pairing_abandon(link, item.kind, false)
 		return
 	}
 	item.outcome = outcome
@@ -432,9 +532,7 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 	item.detail = detail
 	item.phase = .Ended
 	if outcome != .Answered {
-		if item.kind == .Pairing_Element || item.kind == .Pairing_Confirm {
-			machine_mesh.pairing_fail(&mesh.pairing, .Refused_Exchange)
-		}
+		mesh_pairing_abandon(link, item.kind, false)
 		return
 	}
 	switch item.kind {
@@ -461,21 +559,30 @@ mesh_answer_take :: proc "contextless" (link: ^Mesh_Client_Link, item: ^Mesh_Cli
 		item.role_result_size = len(reply.result)
 	case .Pairing_Element:
 		confirm, status := machine_wire.pairing_element_reply_accept(&mesh, answer, system.time(), mesh_frame_buffer[:])
+		confirm_sent := false
 		if confirm != nil {
 			// The confirm goes also when the tag of the offerer failed, so
 			// the code ends on both machines.
 			error: errors.Error_Record
-			mesh_client_begin(link.session.pinned_identity, confirm, &error)
+			request, _ := mesh_client_begin(link.session.pinned_identity, confirm, &error)
+			confirm_sent = request != nil
 		}
-		if status != .Ok {
+		if status != .Ok || !confirm_sent {
 			item.outcome = .Refused
 			item.reason = .Pairing_Refused
 			item.detail = u32(status)
+			// The reply wrote the row of the offerer when its tag held: with
+			// no confirmation on its way, that row leaves.
+			if !confirm_sent {
+				mesh_pairing_abandon(link, .Pairing_Element, true)
+			}
 		}
 	case .Pairing_Confirm:
 		if _, _, ok := machine_wire.pairing_confirmed_accept(&mesh, link.session.pinned_identity, answer); !ok {
+			// pairing_confirmed_accept removed the row; the pairing fails too.
 			item.outcome = .Refused
 			item.reason = .Pairing_Refused
+			mesh_pairing_abandon(link, .Pairing_Confirm, false)
 		}
 	case .None:
 	}
@@ -493,8 +600,17 @@ mesh_client_work :: proc "contextless" (now_us: u64) -> (deadline_us: u64) {
 		}
 		connection := &mesh_client.connections[index]
 		quic.connection_time_passes(connection, now_us)
+		// A paired link whose machine is no longer paired (a newer machine
+		// list, a revocation) ends at once, as an inbound connection does.
+		if link.session.purpose == .Paired && (link.session.state == .Connecting || link.session.state == .Up) {
+			if _, paired := machine_mesh.paired_machine_find(&mesh.paired, link.session.pinned_identity); !paired && connection.state != .Closing && connection.state != .Draining && connection.state != .Closed {
+				quic.connection_close(connection, u64(remote.Stream_Error.Revoked), now_us)
+			}
+		}
 		if link.session.state == .Connecting && connection.state == .Connected {
-			if machine_wire.mesh_link_established(&link.session, connection.configuration.tls.server_public_key) != .Ok {
+			// The key that the handshake read from the Certificate and proved
+			// by its signature, not the key that this side pinned.
+			if machine_wire.mesh_link_established(&link.session, connection.tls.server_public_key) != .Ok {
 				quic.connection_close(connection, u64(remote.Stream_Error.Revoked), now_us)
 			} else if !link.logged {
 				link.logged = true
@@ -545,19 +661,30 @@ mesh_client_work :: proc "contextless" (now_us: u64) -> (deadline_us: u64) {
 				case .Receiving:
 					count_read, finished, reset := quic.stream_read(connection, item.stream, item.answer[item.received:])
 					item.received += count_read
+					if !reset && !finished && item.received >= len(item.answer) {
+						// A frame of exactly FRAME_LIMIT bytes fills the place:
+						// one more byte, not a full place, means too large.
+						probe: [1]u8
+						extra: int
+						extra, finished, reset = quic.stream_read(connection, item.stream, probe[:])
+						if extra > 0 {
+							quic.stream_reset(connection, item.stream, u64(remote.Stream_Error.Too_Large))
+							machine_wire.mesh_answer_accept(&link.session, item.identifier, nil)
+							item.phase = .Ended
+							item.outcome = .Unknown_Outcome
+							mesh_pairing_abandon(&link, item.kind, false)
+							continue
+						}
+					}
 					if reset {
 						// The other machine reset the stream after the request
 						// left: it can have run.
 						machine_wire.mesh_answer_accept(&link.session, item.identifier, nil)
 						item.phase = .Ended
 						item.outcome = .Unknown_Outcome
+						mesh_pairing_abandon(&link, item.kind, false)
 					} else if finished {
 						mesh_answer_take(&link, &item)
-					} else if item.received >= len(item.answer) {
-						quic.stream_reset(connection, item.stream, u64(remote.Stream_Error.Too_Large))
-						machine_wire.mesh_answer_accept(&link.session, item.identifier, nil)
-						item.phase = .Ended
-						item.outcome = .Unknown_Outcome
 					}
 				}
 			}

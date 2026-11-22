@@ -162,7 +162,12 @@ Distributed_Policy :: struct {
 	mode:             pr.Build_Mode,
 	trusted_signers:  [][object_cache.PUBLIC_KEY_SIZE]u8,
 	verify_signature: object_cache.Signature_Verify_Proc,
-	// The local store: nil when this run reads none.
+	// The local store: nil when this run reads none. It is the store of this
+	// machine, so its realisation needs no signer; it is still checked: its
+	// recipe hash, its output kind, and the hash of its output bytes, before
+	// any byte is kept. A local_lookup must read only the store of this
+	// machine, never a source of another machine: such a source goes in the
+	// pool as a cache, whose realisations need a trusted signer.
 	local_lookup:     Cache_Lookup_Proc,
 	// The builder of this machine in its sandbox: nil when this machine
 	// builds nothing.
@@ -438,10 +443,17 @@ distributed_builder_init :: proc "contextless" (builder: ^Distributed_Builder, p
 // takes the output hash of that recipe when it is done; the hash of that
 // input in spec is a placeholder until then.
 dag_recipe_add :: proc "contextless" (builder: ^Distributed_Builder, spec: ^pr.Recipe_Spec, dependencies: []Dag_Dependency) -> (index: int, refusal: Distributed_Refusal) {
+	if builder == nil || spec == nil {
+		return -1, .Bad_Recipe
+	}
 	if builder.recipe_count >= DAG_RECIPE_CAPACITY {
 		return -1, .Graph_Full
 	}
-	if spec == nil || len(dependencies) > pr.MAX_RECIPE_INPUTS {
+	// The count of inputs is checked before any input is read by its index.
+	if spec.input_count > pr.MAX_RECIPE_INPUTS || spec.arguments_length > pr.MAX_RECIPE_ARG_BYTES {
+		return -1, .Bad_Recipe
+	}
+	if len(dependencies) > pr.MAX_RECIPE_INPUTS {
 		return -1, .Bad_Dependency_Input
 	}
 	index = builder.recipe_count
@@ -636,7 +648,7 @@ recipe_realise :: proc "contextless" (builder: ^Distributed_Builder, peer: ^mach
 	if mode == .Cache_Only {
 		return .Cache_Miss
 	}
-	_, refusal, built := builders_try(builder, peer, policy, index, false, spec, recipe_hash, kind, {}, now_ms)
+	_, refusal, built, _ := builders_try(builder, peer, policy, index, false, spec, recipe_hash, kind, {}, now_ms)
 	if refusal != .None {
 		return refusal
 	}
@@ -650,21 +662,28 @@ recipe_realise :: proc "contextless" (builder: ^Distributed_Builder, peer: ^mach
 }
 
 // verify_realise builds the recipe on two independent machines: two
-// builders, or one builder and this machine.
+// distinct builders, or one builder and this machine. A machine is never
+// compared with itself, and a run that finds one machine only is refused:
+// Verify never ends as one build with no comparison. Each remote output
+// passed its realisation check (signer and signature) and its hash check in
+// builders_try; both outputs are hashed again over their bytes before the
+// comparison.
 @(private = "file")
 verify_realise :: proc "contextless" (builder: ^Distributed_Builder, peer: ^machine_wire.Peer, policy: ^Distributed_Policy, index: int, spec: ^pr.Recipe_Spec, recipe_hash: blake3.Hash, now_ms: u64) -> Distributed_Refusal {
 	result := &builder.results[index]
 	kind := result.output_kind
-	first, first_refusal, first_built := builders_try(builder, peer, policy, index, false, spec, recipe_hash, kind, {}, now_ms)
+	first, first_refusal, first_built, first_count := builders_try(builder, peer, policy, index, false, spec, recipe_hash, kind, {}, now_ms)
 	if first_refusal != .None {
 		return first_refusal
 	}
 	if !first_built {
+		// No builder built it: this machine alone is one machine.
 		return .Verify_Needs_Two_Machines
 	}
 	first_hash := result.output_hash
 	// The second build goes to staging: the kept output stays the first.
-	second, second_refusal, second_built := builders_try(builder, peer, policy, index, true, spec, recipe_hash, kind, first, now_ms)
+	// The first builder is excluded, so the second is another builder.
+	second, second_refusal, second_built, second_count := builders_try(builder, peer, policy, index, true, spec, recipe_hash, kind, first, now_ms)
 	if second_refusal != .None {
 		return second_refusal
 	}
@@ -672,6 +691,8 @@ verify_realise :: proc "contextless" (builder: ^Distributed_Builder, peer: ^mach
 	if second_built {
 		second_hash = builder.results[index].second_output_hash
 	} else {
+		// No second builder, or it failed during the build: only this
+		// machine can be the second, else the recipe is refused.
 		if policy.local_builder == nil {
 			return .Verify_Needs_Two_Machines
 		}
@@ -686,9 +707,20 @@ verify_realise :: proc "contextless" (builder: ^Distributed_Builder, peer: ^mach
 		}
 		second = builder.own_identity
 		second_hash = hash
+		second_count = count
 	}
 	result.second_machine = second
 	result.second_output_hash = second_hash
+	if machine_mesh.key_is_zero(first) || machine_mesh.keys_equal_constant_time(first, second) {
+		return .Verify_Needs_Two_Machines
+	}
+	// Both outputs are hashed again over the bytes that this machine holds,
+	// so the comparison is of bytes, not of what two records claim.
+	first_recomputed, first_output_refusal := pr.recipe_hash_output(kind, builder.outputs[index][:first_count])
+	second_recomputed, second_output_refusal := pr.recipe_hash_output(kind, builder.staging[:second_count])
+	if first_output_refusal != .None || second_output_refusal != .None || first_recomputed != first_hash || second_recomputed != second_hash {
+		return .Hash_Mismatch
+	}
 	if second_hash != first_hash {
 		builder.counters.determinism_mismatches += 1
 		return .Determinism_Mismatch
@@ -715,14 +747,14 @@ builders_try :: proc "contextless" (
 	kind: object_cache.Cache_Object_Kind,
 	excluded: [machine_mesh.PUBLIC_KEY_SIZE]u8,
 	now_ms: u64,
-) -> (machine: [machine_mesh.PUBLIC_KEY_SIZE]u8, refusal: Distributed_Refusal, built: bool) {
+) -> (machine: [machine_mesh.PUBLIC_KEY_SIZE]u8, refusal: Distributed_Refusal, built: bool, count: int) {
 	if policy.transport == nil {
-		return {}, .None, false
+		return {}, .None, false, 0
 	}
 	arguments, argument_refusal := remote_build_arguments_write(spec, builder.arguments[:])
 	if argument_refusal != .None {
 		// A recipe too large for one call is built on this machine.
-		return {}, .None, false
+		return {}, .None, false, 0
 	}
 	for _ in 0 ..< builder.peer_count {
 		peer_index := builder.cursor % builder.peer_count
@@ -753,10 +785,10 @@ builders_try :: proc "contextless" (
 		}
 		record, record_refusal := realisation_check(policy, call.reply.result, recipe_hash, kind)
 		if record_refusal != .None {
-			return item.identity, record_refusal, false
+			return item.identity, record_refusal, false, 0
 		}
 		target := second ? builder.staging[:] : builder.outputs[index][:]
-		count, fetch_refusal, lost := object_fetch(builder, policy, peer_index, kind, record.output_hash, target, now_ms)
+		fetched, fetch_refusal, lost := object_fetch(builder, policy, peer_index, kind, record.output_hash, target, now_ms)
 		if lost {
 			builder.counters.links_lost += 1
 			builder.peer_out[peer_index] = true
@@ -764,17 +796,17 @@ builders_try :: proc "contextless" (
 			continue
 		}
 		if fetch_refusal != .None {
-			return item.identity, fetch_refusal, false
+			return item.identity, fetch_refusal, false, 0
 		}
 		builder.counters.remote_builds += 1
 		if second {
 			builder.results[index].second_output_hash = record.output_hash
 		} else {
-			output_record(builder, index, .Remote_Builder, item.identity, record.output_hash, count)
+			output_record(builder, index, .Remote_Builder, item.identity, record.output_hash, fetched)
 		}
-		return item.identity, .None, true
+		return item.identity, .None, true, fetched
 	}
-	return {}, .None, false
+	return {}, .None, false, 0
 }
 
 @(private = "file")

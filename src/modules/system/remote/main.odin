@@ -312,6 +312,9 @@ draw_logged: bool
 log_budget := quic_server.Log_Budget{limit = LOG_LIMIT}
 
 fail :: proc "contextless" (text: string) -> ! {
+	// The copy of the private key for the outbound links does not outlive
+	// the service.
+	mesh_client_shutdown()
 	system.log_fact(.Info, Service_Failed{failure = value_kinds.text_field(text, FAILURE_FIELD_BYTES)})
 	system.stop(.Failed)
 }

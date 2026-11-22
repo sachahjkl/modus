@@ -102,6 +102,7 @@ Client_Network :: struct {
 	lose_answer:     bool,
 	time_out:        bool,
 	flip_last_bit:   bool,
+	other_call:      bool, // A role reply comes back with the identifier of another call.
 	proved_override: [32]u8,
 	served:          int,
 	output:          [FRAME_LIMIT]u8,
@@ -151,6 +152,10 @@ network_round_trip :: proc "contextless" (pinned: [32]u8, request: []u8, answer_
 		return 0, .Timed_Out
 	}
 	count := copy(answer_buffer, answer)
+	if reply_frame, status := frame_decode(answer_buffer[:count]); network.other_call && status == .Ok && reply_frame.message == .Role_Reply {
+		identifier := byte_order.read_u64_little_endian(reply_frame.body, 0)
+		byte_order.write_u64_little_endian(reply_frame.body, 0, identifier + 1)
+	}
 	if network.flip_last_bit && count > 0 {
 		answer_buffer[count - 1] ~= 1
 	}
@@ -374,6 +379,17 @@ client_role_calls_end_answered_refused_or_unknown :: proc(t: ^testing.T) {
 	call = mesh_call_role(&link, &transport, .Storage, 3, {}, nil, 30_000, 1_000, buffers.request[:], buffers.answer[:])
 	testing.expect_value(t, call.exchange.outcome, Mesh_Outcome.Unknown_Outcome)
 	testing.expect_value(t, call.exchange.reason, Refusal_Reason.Role_Holder_Fault)
+	// A reply that names another call than the call in flight: unknown,
+	// never taken as the answer of this call. The holder ran it.
+	network.other_call = true
+	call = mesh_call_role(&link, &transport, .Storage, 1, {}, transmute([]u8)string("abc"), 30_000, 1_000, buffers.request[:], buffers.answer[:])
+	testing.expect_value(t, call.exchange.outcome, Mesh_Outcome.Unknown_Outcome)
+	testing.expect_value(t, call.exchange.reason, Refusal_Reason.Malformed)
+	testing.expect(t, call.reply.result == nil)
+	testing.expect_value(t, mesh_link_in_flight(&link), 0)
+	network.other_call = false
+	call = mesh_call_role(&link, &transport, .Storage, 1, {}, transmute([]u8)string("de"), 30_000, 1_000, buffers.request[:], buffers.answer[:])
+	testing.expect(t, call.exchange.outcome == .Answered && string(call.reply.result) == "ed")
 	// The bound passes: unknown, and the link stays up.
 	network.time_out = true
 	call = mesh_call_role(&link, &transport, .Storage, 1, {}, nil, 30_000, 1_000, buffers.request[:], buffers.answer[:])
@@ -523,6 +539,27 @@ client_syncs_a_store_and_repeats_a_lost_offer :: proc(t: ^testing.T) {
 	other := Mesh_Link{state = .Up, purpose = .Paired, pinned_identity = client_identity(laptop)}
 	sync = mesh_sync_store(&laptop.peer, &other, &transport, store_identifier, 50_000, 1_000, buffers.request[:], buffers.answer[:])
 	testing.expect_value(t, sync.store, Store_Status.Refused_Not_Partner)
+}
+
+@(test)
+client_pairing_link_refuses_an_ended_code :: proc(t: ^testing.T) {
+	laptop := client_machine_make(0x47)
+	home := client_machine_make(0x57)
+	defer free(laptop)
+	defer free(home)
+	started: u64 = 70_000
+	random_bytes := [8]u8{1, 3, 5, 7, 9, 11, 13, 15}
+	code, _ := machine_mesh.pairing_offer(&home.peer.pairing, client_identity(home), random_bytes, started)
+	testing.expect_value(t, machine_mesh.pairing_join(&laptop.peer.pairing, client_identity(laptop), code[:], started), machine_mesh.Pairing_Status.Ok)
+	link: Mesh_Link
+	// The edges: the last millisecond of the code, its end, a clock before
+	// its start.
+	ended := started + machine_mesh.PAIRING_CODE_LIFETIME_MS
+	testing.expect_value(t, mesh_link_open(&link, &laptop.peer, client_identity(home), .Pairing, ended, 1_000), Mesh_Client_Status.Refused_Code_Expired)
+	testing.expect_value(t, mesh_link_open(&link, &laptop.peer, client_identity(home), .Pairing, max(u64) - 1_000, 1_000), Mesh_Client_Status.Refused_Code_Expired)
+	testing.expect_value(t, mesh_link_open(&link, &laptop.peer, client_identity(home), .Pairing, started - 1, 1_000), Mesh_Client_Status.Refused_Code_Expired)
+	testing.expect_value(t, link.state, Mesh_Link_State.Idle)
+	testing.expect_value(t, mesh_link_open(&link, &laptop.peer, client_identity(home), .Pairing, ended - 1, 1_000), Mesh_Client_Status.Ok)
 }
 
 @(test)
