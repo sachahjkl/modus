@@ -30,7 +30,7 @@ Two layers, and a chain of fonts. A shared layer between them, layer 1, was buil
 
 ### Layer 0: the outlines, shared and read-only
 
-The font outlines are one resource of the boot image, `font_outlines`, in the format of `src/library/modus/contract/font_outlines`: a header, one record for each font (its name, the BLAKE3 hash of its file, its place and its size), then the font files. The modus tool writes it from the subsets in `resources/fonts`: the files of the glyph caches, B612 Regular and Bold, Paper Mono and Paper Mono SemiBold. The root service checks its hash once, and maps it read-only at the fixed range `Font_Outlines` in each process that gets the glyph caches (each process with a surface, each terminal, the compositor, a process from a disk). The bytes never change, so they tell no process anything.
+The font outlines are one resource of the boot image, `font_outlines`, in the format of `src/library/modus/contract/font_outlines`: a header, one record for each font (its name, the BLAKE3 hash of its file, its place and its size), then the font files. The modus tool writes it from the subsets in `resources/fonts`: the files of the glyph caches, B612 Regular and Bold, Paper Mono and Paper Mono SemiBold, and Noto Sans, the font of the scripts that they lack. The root service checks its hash once, and maps it read-only at the fixed range `Font_Outlines` in each process that gets the glyph caches (each process with a surface, each terminal, the compositor, a process from a disk). The bytes never change, so they tell no process anything.
 
 A process validates the header once (`font_outlines.validate`), as it validates a glyph cache: the root service maps the pages with the right Read only from the boot image, whose one handle has no right Write.
 
@@ -64,14 +64,27 @@ The fallback chain is data: `fallback_glyphs.scripts`, one row for each script, 
 
 | Script | Interface | Interface_Bold | Cells | Cells_Bold |
 |---|---|---|---|---|
-| Greek | B612, Paper Mono | B612 Bold, B612, Paper Mono SemiBold | Paper Mono, B612 | Paper Mono SemiBold, B612 Bold, B612 |
-| Cyrillic | B612, Paper Mono | B612 Bold, B612, Paper Mono SemiBold | Paper Mono, B612 | Paper Mono SemiBold, B612 Bold, B612 |
+| Greek | B612, Paper Mono, Noto Sans | B612 Bold, B612, Paper Mono SemiBold, Noto Sans | Paper Mono, B612, Noto Sans | Paper Mono SemiBold, B612 Bold, B612, Noto Sans |
+| Cyrillic | Noto Sans | Noto Sans | Noto Sans | Noto Sans |
 | Box drawing and block elements | Paper Mono | Paper Mono SemiBold | Paper Mono | Paper Mono SemiBold |
-| Each other character | B612, Paper Mono | B612 Bold, Paper Mono SemiBold | Paper Mono, B612 | Paper Mono SemiBold, B612 |
+| Each other character, Latin Extended-A too | B612, Paper Mono, Noto Sans | B612 Bold, Paper Mono SemiBold, Noto Sans | Paper Mono, B612, Noto Sans | Paper Mono SemiBold, B612, Noto Sans |
 
 The face `Cells_Without_Grid_Fit` takes the chain of `Cells`. A new font is one record of the resource, one member of `fallback_glyphs.Outline_Font`, and its place in the rows.
 
-No font of `resources/fonts` covers more than these: the other monospace candidates are subsets of the 192 characters. So the chains draw 47 of the 49 Greek letters (B612 has no Π, U+03A0, and no ρ, U+03C1) and no Cyrillic letter. The compositor writes, at its start, one line for each script with the count that each chain draws, so the log names what is missing once at each boot (`display.script_coverage_tell`).
+### The font of the missing scripts
+
+B612 has no Π (U+03A0), no ρ (U+03C1), no Cyrillic letter and no letter of Latin Extended-A, and Paper Mono has five Greek letters only. A principal who writes Greek, Russian or a language of Central Europe needs them in every window and in the cells. Noto Sans closes each chain: the subset "Noto Sans LGC" holds the 192 characters, which give its measures, then Latin Extended-A (U+0100 to U+017F), the 49 Greek letters and the 96 basic Cyrillic letters (U+0400 to U+045F), each a simple glyph (`font_outlines.script_fallback_past_cache_ranges`). So every chain of every face draws the 49 Greek letters, the 96 Cyrillic letters and the 128 letters of Latin Extended-A. The compositor writes, at its start, one line for each script with the count that each chain draws, so the log names what is missing once at each boot (`display.script_coverage_tell`); a later chain with a gap shows there.
+
+- **The last font of each chain, never the first.** A letter that B612 or Paper Mono has keeps its glyph: the Greek letters of B612, and the pixels that their golden hashes hold, do not change. The Cyrillic chains name Noto Sans alone, as no font of the faces has a Cyrillic letter.
+- **One weight.** Noto Sans Bold would cost another 87 KB of the boot image for the titles and the bold cells only. A bold Cyrillic letter draws in the regular weight, in the frame of the bold face.
+- **The 192 characters in the subset too.** The open of a font reads the outlines of the characters 33 to 126 for its measures (`vector_font.font_measures`), and the tool writes each subset in one layout. They cost about 30 KB.
+- **Its cost in a call of the library module.** A call opens the fonts of the chains of its face (`fonts_of_face`): Noto Sans is in each chain, so each call reads the outlines of its 94 characters for its measures, as it does for each other font of the chain.
+
+Refused:
+
+- **A subset of the missing letters alone, made by hand with another tool.** It has no outline of the characters 33 to 126, so the open refuses it for its measures; and a subset that the modus tool does not write has no record of its source and no check of its license.
+- **A Cyrillic or Greek row in the cells with a monospace font.** No monospace candidate of the system has Cyrillic. In the frame of the first font, cut to its cell, a letter of Noto Sans stands beside Paper Mono, as a Greek letter of B612 does.
+- **Noto Sans in place of B612.** The interface font keeps its form; Noto Sans only fills the gaps.
 
 ### A fallback font in the frame of the first font
 
@@ -149,12 +162,13 @@ Each step leaves a working system.
 1. Layer 0, layer 2 and the removal of the requests: the resource of the outlines and its range; the package `fallback_glyphs` with the private glyph cache and the fallback faces; the shaper and the draw read it; the font service reads the outlines from the resource, draws layer 1 and ends; the request ring, the budget of requests and the request handles of the root service are removed. Each window draws the Greek letters of B612 and the cells draw the cell subset of Paper Mono.
 2. The fallback chain by script, as data, and the frame of the first font: the cells draw the Greek letters of B612, the interface draws the box-drawing characters of Paper Mono, and the font service names what each chain lacks.
 3. Layer 1 and the font service removed: each process draws every glyph past the glyph caches; the compositor names what each chain lacks.
-4. Later: a font with the whole Greek block, Cyrillic and Latin Extended-A; a TrueType CJK font, with a cell of two columns; the shaping of complex scripts in the process.
+4. The font of the missing scripts: Noto Sans closes each chain, and the chains draw every Greek letter, the basic Cyrillic letters and Latin Extended-A.
+5. Later: a TrueType CJK font, with a cell of two columns; the shaping of complex scripts in the process.
 
 ## State
 
-Built: the resource `font_outlines` and its fixed range; the package `fallback_glyphs`, now `text_rendering`, with the private glyph cache (its form of today: [text_rendering.md](text_rendering.md), "The cache"), the fallback faces, the chains by script and the frame of the first font; the shaper and the draws of `graphics` with it, in each process and in the drawing module; the root service, which maps the outlines with the settings page; the compositor, which names what each chain lacks; the terminal and the process `interface_font` with their machine test lines; the host tests of the cache and of the measure. Layer 1 and the font service are removed.
+Built: the resource `font_outlines` and its fixed range; the package `fallback_glyphs`, now `text_rendering`, with the private glyph cache (its form of today: [text_rendering.md](text_rendering.md), "The cache"), the fallback faces, the chains by script and the frame of the first font; the shaper and the draws of `graphics` with it, in each process and in the drawing module; the root service, which maps the outlines with the settings page; the compositor, which names what each chain lacks; the font of the missing scripts, Noto Sans; the terminal and the process `interface_font` with their machine test lines; the host tests of the cache and of the measure. Layer 1 and the font service are removed.
 
-Left (`ROADMAP.md`): a font for the missing Greek letters, Cyrillic and Latin Extended-A; a CJK font; the shaping of complex scripts.
+Left (`ROADMAP.md`): a CJK font; the shaping of complex scripts.
 
 Built after it: the text rendering module draws each glyph at any size into the private glyph cache, which holds every glyph; the glyph caches of the boot image left ([text_rendering.md](text_rendering.md), "The glyph caches of the boot image and the demand cache: removed").

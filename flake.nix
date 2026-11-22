@@ -179,6 +179,7 @@
         "iosevka=${pkgs.iosevka-bin}/share/fonts/truetype/Iosevka-Regular.ttc"
         "b612=${b612File "B612-Regular.ttf" "sha256-E53OZZEAqDv5W0hHRpbkSL7pVjHvhP09BDfO0r8zz3M="}"
         "b612_bold=${b612File "B612-Bold.ttf" "sha256-kXSVQax7LDKLWIMrfixN+AnX4ro41io6WqP444snGBQ="}"
+        "noto_sans=${pkgs.noto-fonts}/share/fonts/noto/NotoSans.ttf"
       ];
     };
 
@@ -277,7 +278,7 @@
     # The cryptography of the library links the memory procedures of the
     # host in assembly, which nasm assembles at the compile of the tool; that
     # file includes the memory procedures of the system.
-    toolSources = inputs.nixpkgs.lib.fileset.unions ([(sourcesOfOdin ./tools/modustool) ./tools/modustool/site/browser_machine.html (sourcesOfOdin ./src/library) (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "asm") ./src/runtime) ./resources/fonts/commit_mono.ttf ./resources/fonts/b612.ttf ./resources/fonts/b612_bold.ttf ./resources/fonts/paper_mono.ttf ./resources/fonts/paper_mono_semibold.ttf] ++ map sourcesOfOdin kernelParts);
+    toolSources = inputs.nixpkgs.lib.fileset.unions ([(sourcesOfOdin ./tools/modustool) ./tools/modustool/site/browser_machine.html (sourcesOfOdin ./src/library) (inputs.nixpkgs.lib.fileset.fileFilter (file: file.hasExt "asm") ./src/runtime) ./resources/fonts/commit_mono.ttf ./resources/fonts/b612.ttf ./resources/fonts/b612_bold.ttf ./resources/fonts/paper_mono.ttf ./resources/fonts/paper_mono_semibold.ttf ./resources/fonts/noto_sans.ttf] ++ map sourcesOfOdin kernelParts);
 
     # The tool as a derivation of its own, from a set of its sources: Nix
     # builds it again only when a file of the set changes. It never

@@ -27,6 +27,9 @@ each_source_font_has_the_characters_of_a_cache :: proc(t: ^testing.T) {
 	for candidate in vector_font_interface {
 		append(&names, candidate.name)
 	}
+	for candidate in vector_font_script_fallback {
+		append(&names, candidate.name)
+	}
 	for name in names {
 		path := ""
 		rest := sources

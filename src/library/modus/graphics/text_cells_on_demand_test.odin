@@ -17,17 +17,18 @@ import "modus:text_rendering"
 // opens the outlines sets the state back to zero at its end.
 fallback_test_lock: sync.Mutex
 
-// fallback_open_for_test opens the four font files of the resource of the
+// fallback_open_for_test opens the five font files of the resource of the
 // boot image in a fallback state of all zero. The caller frees the words.
 @(private = "file")
 test_glyph_memory: ^text_rendering.Glyph_Memory
 
 fallback_open_for_test :: proc(t: ^testing.T) -> (words: []u64) {
-	fonts := [4]font_outlines.Font_Input {
+	fonts := [5]font_outlines.Font_Input {
 		{"b612", #load("../../../../resources/fonts/b612.ttf")},
 		{"b612_bold", #load("../../../../resources/fonts/b612_bold.ttf")},
 		{"paper_mono", #load("../../../../resources/fonts/paper_mono.ttf")},
 		{"paper_mono_semibold", #load("../../../../resources/fonts/paper_mono_semibold.ttf")},
+		{"noto_sans", #load("../../../../resources/fonts/noto_sans.ttf")},
 	}
 	size := font_outlines.resource_size(fonts[:])
 	words = make([]u64, (size + 7) / 8)
@@ -78,8 +79,10 @@ cell_ink_count :: proc(pixels: []Color, width, left, scale: int) -> (inside, out
 // and the setting Spleen with a character that Spleen lacks. Then 'A' in a
 // cell gives the pixels of the glyph of the face, which the golden hashes
 // of the text rendering hold, drawn by hand at the left of the cell, at
-// each scale. Last, a box-drawing character of Paper Mono and a Greek
-// letter of B612, the second font of the chain, each stay in their cell.
+// each scale. Last, a box-drawing character of Paper Mono, a Greek letter
+// of B612, the second font of the chain, and a Cyrillic letter, a Greek
+// letter and a letter of Latin Extended-A of Noto Sans, the last font,
+// each stay in their cell.
 @(test)
 a_cell_of_a_face_draws_its_glyph :: proc(t: ^testing.T) {
 	sync.mutex_lock(&fallback_test_lock)
@@ -95,7 +98,8 @@ a_cell_of_a_face_draws_its_glyph :: proc(t: ^testing.T) {
 	built := Canvas{pixels = raw_data(built_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
 	drawn := Canvas{pixels = raw_data(fallback_pixels[:]), width = WIDTH, height = HEIGHT, stride = WIDTH}
 
-	// The replacement glyph: no outlines, no font for Ж, and Spleen.
+	// The replacement glyph: no outlines, no font for Ѡ (U+0460, past the
+	// Cyrillic letters of Noto Sans), and Spleen.
 	Case :: enum {
 		No_Outlines,
 		No_Font,
@@ -110,7 +114,7 @@ a_cell_of_a_face_draws_its_glyph :: proc(t: ^testing.T) {
 			text_rendering.state = {}
 		case .No_Font:
 			words = fallback_open_for_test(t)
-			text = "Ж"
+			text = "Ѡ"
 		case .Spleen:
 			words = fallback_open_for_test(t)
 			text_choice_set(.Spleen, .Red_Green_Blue)
@@ -153,14 +157,14 @@ a_cell_of_a_face_draws_its_glyph :: proc(t: ^testing.T) {
 	testing.expect_value(t, text_state.bold_face, text_rendering.Face.Cells_Bold)
 	text_faces_use(.Cells, .Cells_Bold)
 
-	// ═ of Paper Mono and α of B612: each from the private glyph cache, and
-	// each in its cell.
+	// ═ of Paper Mono, α of B612, and Ж, Π and Ł of Noto Sans: each from
+	// the private glyph cache, and each in its cell.
 	Cell_Case :: struct {
 		text:      string,
 		character: rune,
 		font:      text_rendering.Outline_Font,
 	}
-	cell_cases := [2]Cell_Case{{"═", 0x2550, .Paper_Mono}, {"α", 0x03B1, .B612}}
+	cell_cases := [5]Cell_Case{{"═", 0x2550, .Paper_Mono}, {"α", 0x03B1, .B612}, {"Ж", 0x0416, .Noto_Sans}, {"Π", 0x03A0, .Noto_Sans}, {"Ł", 0x0141, .Noto_Sans}}
 	for each in cell_cases {
 		for scale in 1 ..= 3 {
 			text_rendering.frame_begin()

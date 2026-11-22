@@ -77,8 +77,8 @@ scenario := [?]Step {
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	// The compositor names what the fallback chains lack, once at each
 	// boot (docs/FONTS.md, "13. Glyphs past the glyph cache").
-	{kind = .Wait, text = "compositor: the script greek: the chain of the interface draws 47 of its 49 characters, the chain of the cells 47; no font of the system has the others", any_order = true},
-	{kind = .Wait, text = "compositor: the script cyrillic: the chain of the interface draws 0 of its 96 characters, the chain of the cells 0; no font of the system has the others", any_order = true},
+	{kind = .Wait, text = "compositor: the script greek: the chain of the interface draws 49 of its 49 characters, the chain of the cells 49", any_order = true},
+	{kind = .Wait, text = "compositor: the script cyrillic: the chain of the interface draws 96 of its 96 characters, the chain of the cells 96", any_order = true},
 	{kind = .Wait, text = "compositor: the script box drawing: the chain of the interface draws 160 of its 160 characters, the chain of the cells 160", any_order = true},
 	// The boot pass of settings: the storage service starts at boot, with
 	// the block service of the data disk; a new disk keeps no settings.
@@ -107,13 +107,17 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] 2"},
 	// Characters past the glyph cache: the terminal draws each one itself,
 	// in its private glyph cache. α is not in Paper Mono: it comes from
-	// B612, the second font of the chain of the cells; Ж is in no font of
-	// the system: the replacement glyph. The terminal tells the first and
-	// the last such cell of its view, once for each font.
+	// B612, the second font of the chain of the cells; Ж is in neither: it
+	// comes from Noto Sans, the last font of the chain. Ѡ (U+0460) is in no
+	// font of the system: the replacement glyph. The terminal tells the
+	// first and the last such cell of its view, once for each font.
 	{kind = .Type, text = "character(945) + character(1046)"},
 	{kind = .Wait, text = "terminal: console shows the character 945 in its cells, drawn by this process from the font b612 of its fallback chain", any_order = true},
-	{kind = .Wait, text = "terminal: console shows the character 1046 in its cells as the replacement glyph: no font of its fallback chain has it", any_order = true},
+	{kind = .Wait, text = "terminal: console shows the character 1046 in its cells, drawn by this process from the font noto_sans of its fallback chain", any_order = true},
 	{kind = .Wait, text = "[console] αЖ"},
+	{kind = .Type, text = "character(1120)"},
+	{kind = .Wait, text = "terminal: console shows the character 1120 in its cells as the replacement glyph: no font of its fallback chain has it", any_order = true},
+	{kind = .Wait, text = "[console] Ѡ"},
 	// A Greek letter and a box-drawing character of Paper Mono, the first
 	// font of the chain: ─ is now the last such cell of the view. The
 	// picture console below shows them.
@@ -2700,7 +2704,8 @@ scenario := [?]Step {
 	// src/library/modus/text_rendering and drawn by graphics.text_proportional.
 	// Its Greek letters are past the glyph cache: the process draws them
 	// from B612, the box-drawing characters from Paper Mono, the second
-	// font of the chain, and Π, ρ and Ж draw the replacement glyph
+	// font of the chain, and ƀ, Ѡ and Ԁ, which no font of the system has,
+	// draw the replacement glyph
 	// (docs/FONTS.md, "13. Glyphs past the glyph cache"). The lines come
 	// after the first frame; the picture after them.
 	{kind = .Launch, text = "interface_font"},

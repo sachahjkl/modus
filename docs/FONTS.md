@@ -310,7 +310,7 @@ The console stays fast: the producer writes into the terminal ring, and the term
 - No grid fit of each stem; no stem darkening (`gui_toolkit` thickens the stripes by 0.2 pixel; not tried here).
 - The first frames use the default settings until the boot pass of `settings` (section 7).
 - The scheduling strategy is not a setting and does not survive a stop (section 7).
-- The glyph caches hold no character past the Latin-1 Supplement but the euro sign. Past them, each window draws the Greek letters of B612 and the box-drawing characters, the block elements and the five Greek letters of Paper Mono, in its labels, its titles and its cells (section 13). ā, Π, ρ and the Cyrillic letters draw the replacement glyph: no font of the system has them. A character joins the list of the added characters when each font draws it (`src/md/data/text_encoding.md`). A monospace cache has no subpixel position; the proportional font and its pairs are in section 12.
+- The glyph caches hold no character past the Latin-1 Supplement but the euro sign. Past them, each window draws the Greek letters of B612, the box-drawing characters, the block elements and the five Greek letters of Paper Mono, and Π, ρ, the Cyrillic letters and Latin Extended-A of Noto Sans, in its labels, its titles and its cells (section 13). A character joins the list of the added characters when each font draws it (`src/md/data/text_encoding.md`). A monospace cache has no subpixel position; the proportional font and its pairs are in section 12.
 - The order of the stripes of the screen is not detected: under QEMU it is the panel of the host, which the system cannot read.
 - The measures of section 9 were taken on a host with a load above 8.
 
@@ -489,10 +489,11 @@ The process never waits for another process. With the setting `font` at `spleen`
 
 ### 13.2.1 What a terminal does
 
-A terminal draws its cells through the drawing module, which draws each glyph into its private glyph cache. A cell of a box-drawing character, a block element or one of the Greek letters Λ, Ω, λ, μ and π draws its glyph of Paper Mono, in the weight and the grid fit of the cells beside it. A Greek letter that Paper Mono lacks draws its glyph of B612, the second font of the chain of the cells, in the frame of Paper Mono: in its cell, on the baseline of the cells. Its log has one line for each font of the first and the last such characters of its view, and one line for a character that no font has:
+A terminal draws its cells through the drawing module, which draws each glyph into its private glyph cache. A cell of a box-drawing character, a block element or one of the Greek letters Λ, Ω, λ, μ and π draws its glyph of Paper Mono, in the weight and the grid fit of the cells beside it. A Greek letter that Paper Mono lacks draws its glyph of B612, the second font of the chain of the cells, in the frame of Paper Mono: in its cell, on the baseline of the cells. A Cyrillic letter, Π, ρ and a letter of Latin Extended-A draw their glyph of Noto Sans, the last font of the chain, in the same frame. Its log has one line for each font of the first and the last such characters of its view, and one line for a character that no font has:
 
 - `terminal: console shows the character 945 in its cells, drawn by this process from the font b612 of its fallback chain`, which the main machine test waits for after `character(945) + character(1046)` in the console;
-- `terminal: console shows the character 1046 in its cells as the replacement glyph: no font of its fallback chain has it`, after the same;
+- `terminal: console shows the character 1046 in its cells, drawn by this process from the font noto_sans of its fallback chain`, after the same;
+- `terminal: console shows the character 1120 in its cells as the replacement glyph: no font of its fallback chain has it`, after `character(1120)`;
 - `terminal: console shows the character 9472 in its cells, drawn by this process from the font paper_mono of its fallback chain`, after `character(955) + character(9472)`.
 
 ### 13.2.2 What the caches tell a process
@@ -505,17 +506,17 @@ The chains are data (`text_rendering.scripts`): one row for each script, with th
 
 | Script | Interface | Cells |
 |---|---|---|
-| Greek (U+0391 to U+03C9, 49 letters) | B612, Paper Mono | Paper Mono, B612 |
-| Cyrillic (U+0400 to U+045F, 96 letters) | B612, Paper Mono | Paper Mono, B612 |
+| Greek (U+0391 to U+03C9, 49 letters) | B612, Paper Mono, Noto Sans | Paper Mono, B612, Noto Sans |
+| Cyrillic (U+0400 to U+045F, 96 letters) | Noto Sans | Noto Sans |
 | Box drawing and block elements (U+2500 to U+259F) | Paper Mono | Paper Mono |
-| Each other character | B612, Paper Mono | Paper Mono, B612 |
+| Each other character, Latin Extended-A too | B612, Paper Mono, Noto Sans | Paper Mono, B612, Noto Sans |
 
-The bold weights follow the same rows with B612 Bold and Paper Mono SemiBold first. A glyph of a font that is not the first of its face is drawn in the frame of the first font: its outlines are scaled so that its cap height is the cap height of the first font, on the baseline of the first font; in a face of cells it is cut to its cell.
+The bold weights follow the same rows with B612 Bold and Paper Mono SemiBold first. Noto Sans has one weight: a bold Cyrillic letter, Π, ρ or a bold letter of Latin Extended-A draws in its regular weight. A glyph of a font that is not the first of its face is drawn in the frame of the first font: its outlines are scaled so that its cap height is the cap height of the first font, on the baseline of the first font; in a face of cells it is cut to its cell.
 
 The compositor writes one line for each script at its start, with what the chains draw:
 
-- `compositor: the script greek: the chain of the interface draws 47 of its 49 characters, the chain of the cells 47; no font of the system has the others` (Π, U+03A0, and ρ, U+03C1);
-- `compositor: the script cyrillic: the chain of the interface draws 0 of its 96 characters, the chain of the cells 0; no font of the system has the others`;
+- `compositor: the script greek: the chain of the interface draws 49 of its 49 characters, the chain of the cells 49`;
+- `compositor: the script cyrillic: the chain of the interface draws 96 of its 96 characters, the chain of the cells 96`;
 - `compositor: the script box drawing: the chain of the interface draws 160 of its 160 characters, the chain of the cells 160`.
 
 The process `interface_font` shows the Greek letters of B612, box-drawing characters from Paper Mono in the interface font, and writes `interface_font: each Greek letter of B612 is drawn by this process: 47 letters: as it must`, `interface_font: the box-drawing characters come from paper_mono, the second font of the chain of the interface: 7 characters: as it must` and `interface_font: 3 characters that no font of the chain has draw the replacement glyph: as it must`.
@@ -526,9 +527,11 @@ The subsets, the font outlines, Spleen 8x16 and the boot display are built at bu
 
 ### 13.4 The subsets
 
-The subset of B612 Regular holds the Greek letters that its character map has, after the characters of the glyph cache (`font_outlines.interface_past_cache_ranges`, written by `modustool vector_fonts`): 47 characters, U+0391 to U+039F, U+03A1, U+03A3 to U+03A9, U+03B1 to U+03C0 and U+03C2 to U+03C9. B612 1.008 has no capital pi (U+03A0), no small rho (U+03C1) and no Latin Extended-A. The window `interface_font` shows each of these letters, and its line `interface_font: each Greek letter of B612 is drawn by this process: 47 letters: as it must` is a line of the machine test.
+The subset of B612 Regular holds the Greek letters that its character map has, after the characters of the glyph cache (`font_outlines.interface_past_cache_ranges`, written by `modustool vector_fonts`): 47 characters, U+0391 to U+039F, U+03A1, U+03A3 to U+03A9, U+03B1 to U+03C0 and U+03C2 to U+03C9. B612 1.008 has no capital pi (U+03A0), no small rho (U+03C1), no Cyrillic and no Latin Extended-A. The window `interface_font` shows each of these letters, and its line `interface_font: each Greek letter of B612 is drawn by this process: 47 letters: as it must` is a line of the machine test.
 
 The subsets of Paper Mono and of Paper Mono SemiBold hold 165 characters past the glyph cache, after the characters of the glyph cache (`font_outlines.cell_past_cache_ranges`): the box-drawing characters U+2500 to U+257F, the block elements U+2580 to U+259F, and the five Greek letters of Paper Mono, U+039B, U+03A9, U+03BB, U+03BC and U+03C0. Paper Mono has no other Greek letter: a cell of α draws the α of B612, the second font of the chain of the cells. The box-drawing characters of Paper Mono pass their advance by 5 units on each side; the cell cuts them, as it cuts each glyph of the cache of cells.
+
+The subset of Noto Sans, "Noto Sans LGC" (`resources/fonts/noto_sans.ttf`, SIL OFL 1.1), is the last font of each chain: it holds the 192 characters, whose outlines give its measures, then 273 characters past the glyph cache (`font_outlines.script_fallback_past_cache_ranges`): Latin Extended-A, U+0100 to U+017F; the 49 Greek letters, U+0391 to U+03A1, U+03A3 to U+03A9 and U+03B1 to U+03C9; the 96 Cyrillic letters, U+0400 to U+045F. Its source is the variable font `NotoSans.ttf` of the package `noto-fonts` of nixpkgs: the subset holds the outlines of its default instance, the regular weight, with its 196 glyphs made of glyphs made simple. It has no table `kern`, so its glyphs have no pair. It is 87 172 bytes.
 
 The 192 characters keep their glyph indices: the characters past them come after them in each subset.
 
@@ -563,13 +566,13 @@ Host: AMD Ryzen 7 5800X, one core (`taskset`), `-o:speed`, each time the least o
 |---|---|
 | The private glyph cache, in each copy of `text_rendering` that draws a glyph | 1 MiB of words, 4 096 entries of 48 bytes, a Swiss table index of 340 groups (5 440 slots, 16 344 bytes) and the blocks, and about 150 KiB of render memory: about 1.4 MiB (354 pages), one memory object that the process takes from its budget at the frame after its first such glyph (section 14.4) |
 | The globals of each copy of `text_rendering` | about 25 KiB: the memory of one outline (13 KiB), which the measure needs too, a band of one row (11 KiB), and the state; a copy that only measures carries the outline and the state |
-| The font outlines | the four subsets: about 195 KB in the boot image |
+| The font outlines | the five subsets: about 282 KB in the boot image |
 
 These measures are of the rasterizer that drew the glyph cache files that left the system (`vector_font.glyph_render_placed`, which the host test `private_glyph_measure` still measures): there a placed glyph costs about four times a glyph of cells, because `glyph_render_placed` clears and filters a work row of 64 pixels whatever the width of the glyph. The rasterizer of each process has a work row as wide as the glyph (section 14.3); its measures are in section 14.6.
 
 ### 13.8 What is left
 
-A font for the Greek letters that B612 lacks, Cyrillic and Latin Extended-A; a TrueType font for the CJK ideographs, with a cell of two columns; the shaping of complex scripts in the process: `ROADMAP.md`.
+A TrueType font for the CJK ideographs, with a cell of two columns; the shaping of complex scripts in the process: `ROADMAP.md`.
 
 ## 14. Text at any size
 

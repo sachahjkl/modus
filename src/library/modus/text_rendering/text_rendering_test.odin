@@ -21,6 +21,8 @@ b612_bold_file := #load("../../../../resources/fonts/b612_bold.ttf")
 paper_mono_file := #load("../../../../resources/fonts/paper_mono.ttf")
 @(private = "file")
 paper_mono_semibold_file := #load("../../../../resources/fonts/paper_mono_semibold.ttf")
+@(private = "file")
+noto_sans_file := #load("../../../../resources/fonts/noto_sans.ttf")
 
 // The state, the render memory and the private cache of the package are
 // one per process, as in the system, but the runner runs tests on several
@@ -47,9 +49,9 @@ test_state_give :: proc() {
 	sync.mutex_unlock(&test_state_lock)
 }
 
-// The four font files of the resource of the boot image.
-repository_fonts :: proc() -> [4]font_outlines.Font_Input {
-	return {{"b612", b612_file}, {"b612_bold", b612_bold_file}, {"paper_mono", paper_mono_file}, {"paper_mono_semibold", paper_mono_semibold_file}}
+// The five font files of the resource of the boot image.
+repository_fonts :: proc() -> [5]font_outlines.Font_Input {
+	return {{"b612", b612_file}, {"b612_bold", b612_bold_file}, {"paper_mono", paper_mono_file}, {"paper_mono_semibold", paper_mono_semibold_file}, {"noto_sans", noto_sans_file}}
 }
 
 // resource_of writes a resource of fonts and validates it. The caller
@@ -331,7 +333,7 @@ a_damaged_outline_table_is_refused_once :: proc(t: ^testing.T) {
 
 // Before open, and with outlines that lack a font, a chain skips what it
 // does not have: a state of all zero finds no face and no font; outlines
-// with B612 alone name the three other fonts as missing, and the
+// with B612 alone name the four other fonts as missing, and the
 // box-drawing characters, which only Paper Mono has, have no font.
 @(test)
 a_font_that_the_outlines_lack_is_skipped :: proc(t: ^testing.T) {
@@ -345,7 +347,7 @@ a_font_that_the_outlines_lack_is_skipped :: proc(t: ^testing.T) {
 	only := [1]font_outlines.Font_Input{{"b612", b612_file}}
 	missing, words := outlines_open(t, only[:])
 	defer delete(words)
-	testing.expect_value(t, missing, Outline_Fonts{.B612_Bold, .Paper_Mono, .Paper_Mono_Semibold})
+	testing.expect_value(t, missing, Outline_Fonts{.B612_Bold, .Paper_Mono, .Paper_Mono_Semibold, .Noto_Sans})
 	testing.expect_value(t, font_of(.Interface, 0x2500), Outline_Font.None)
 	testing.expect_value(t, font_of(.Cells, 0x03B1), Outline_Font.None) // The cells have no first font.
 	testing.expect_value(t, font_of(.Interface, 0x03B1), Outline_Font.B612)
@@ -359,7 +361,7 @@ a_font_that_the_outlines_lack_is_skipped :: proc(t: ^testing.T) {
 
 // The fonts that the chains of a face can name: none before open and for
 // the face None; only the fonts that the outlines hold; each font of each
-// chain of the face with the four fonts, last.
+// chain of the face with the five fonts, last.
 @(test)
 the_fonts_of_the_chains_of_a_face :: proc(t: ^testing.T) {
 	test_state_take()
@@ -376,35 +378,87 @@ the_fonts_of_the_chains_of_a_face :: proc(t: ^testing.T) {
 	_, all_words := outlines_open(t, fonts[:])
 	defer delete(all_words)
 	testing.expect_value(t, chain_fonts(.None), Outline_Fonts{})
-	testing.expect_value(t, chain_fonts(.Interface), Outline_Fonts{.B612, .Paper_Mono})
-	testing.expect_value(t, chain_fonts(.Cells), Outline_Fonts{.Paper_Mono, .B612})
-	testing.expect_value(t, chain_fonts(.Cells_Without_Grid_Fit), Outline_Fonts{.Paper_Mono, .B612})
-	testing.expect_value(t, chain_fonts(.Interface_Bold), Outline_Fonts{.B612_Bold, .B612, .Paper_Mono_Semibold})
-	testing.expect_value(t, chain_fonts(.Cells_Bold), Outline_Fonts{.Paper_Mono_Semibold, .B612_Bold, .B612})
+	testing.expect_value(t, chain_fonts(.Interface), Outline_Fonts{.B612, .Paper_Mono, .Noto_Sans})
+	testing.expect_value(t, chain_fonts(.Cells), Outline_Fonts{.Paper_Mono, .B612, .Noto_Sans})
+	testing.expect_value(t, chain_fonts(.Cells_Without_Grid_Fit), Outline_Fonts{.Paper_Mono, .B612, .Noto_Sans})
+	testing.expect_value(t, chain_fonts(.Interface_Bold), Outline_Fonts{.B612_Bold, .B612, .Paper_Mono_Semibold, .Noto_Sans})
+	testing.expect_value(t, chain_fonts(.Cells_Bold), Outline_Fonts{.Paper_Mono_Semibold, .B612_Bold, .B612, .Noto_Sans})
 }
 
-// A script that no font covers is named: the chains of the interface and
-// of the cells draw no Cyrillic letter, and 47 of the 49 Greek letters (no
-// font has Π, U+03A0, nor ρ, U+03C1); each box-drawing character comes
-// from Paper Mono.
+// The faces of the chains, with no face None.
+@(private = "file")
+chain_faces := [?]Face{.Interface, .Interface_Bold, .Cells, .Cells_Without_Grid_Fit, .Cells_Bold}
+
+// Latin Extended-A: a run of no script, which takes the default chain of
+// its face.
+@(private = "file")
+LATIN_EXTENDED_A_FIRST :: rune(0x0100)
+@(private = "file")
+LATIN_EXTENDED_A_LAST :: rune(0x017F)
+
+// A script that no font covers is named: with outlines that lack Noto
+// Sans, the chains draw no Cyrillic letter, 47 of the 49 Greek letters
+// (B612 has no Π, U+03A0, nor ρ, U+03C1) and no letter of Latin
+// Extended-A. The characters past the runs have no font: U+03A2 is no
+// character, U+0180 and U+0460 are past the subset of Noto Sans. Last,
+// with each font of the resource, every chain of every face draws every
+// letter of Greek, of Cyrillic and of Latin Extended-A, and each
+// box-drawing character comes from Paper Mono.
 @(test)
 a_script_that_no_font_covers_is_named :: proc(t: ^testing.T) {
 	test_state_take()
-	fonts := repository_fonts()
-	_, words := outlines_open(t, fonts[:])
-	defer delete(words)
 	Expected :: struct {
 		face:         Face,
 		script:       Script,
 		drawn, total: int,
 	}
-	expected := [?]Expected {
+	without := repository_fonts()
+	missing, lacking_words := outlines_open(t, without[:4])
+	defer delete(lacking_words)
+	testing.expect_value(t, missing, Outline_Fonts{.Noto_Sans})
+	lacking := [?]Expected {
 		{.Interface, .Cyrillic, 0, 96},
 		{.Cells, .Cyrillic, 0, 96},
 		{.Interface_Bold, .Cyrillic, 0, 96},
 		{.Interface, .Greek, 47, 49},
 		{.Cells, .Greek, 47, 49},
 		{.Cells_Bold, .Greek, 47, 49},
+	}
+	for each in lacking {
+		drawn, total := coverage(each.face, each.script)
+		testing.expectf(t, drawn == each.drawn && total == each.total, "without Noto Sans, %v, %v: %v of %v; expected %v of %v", each.face, each.script, drawn, total, each.drawn, each.total)
+	}
+	for face in chain_faces {
+		for character in ([?]rune{0x03A0, 0x03C1, 0x0416, LATIN_EXTENDED_A_FIRST, LATIN_EXTENDED_A_LAST}) {
+			testing.expectf(t, font_of(face, character) == .None, "without Noto Sans, %v has no font for U+%04X", face, int(character))
+		}
+	}
+
+	fonts := repository_fonts()
+	_, words := outlines_open(t, fonts[:])
+	defer delete(words)
+	for face in chain_faces {
+		for script in Script {
+			drawn, total := coverage(face, script)
+			testing.expectf(t, drawn == total && total > 0, "%v, %v: %v of %v", face, script, drawn, total)
+		}
+		for character in ([?]rune{0x03A2, LATIN_EXTENDED_A_LAST + 1, 0x0460}) {
+			testing.expectf(t, font_of(face, character) == .None, "%v has no font for U+%04X", face, int(character))
+		}
+		latin_extended_a := 0
+		for character in LATIN_EXTENDED_A_FIRST ..= LATIN_EXTENDED_A_LAST {
+			latin_extended_a += int(font_of(face, character) == .Noto_Sans)
+		}
+		testing.expectf(t, latin_extended_a == 128, "%v draws %v of the 128 letters of Latin Extended-A from Noto Sans", face, latin_extended_a)
+		testing.expect_value(t, font_of(face, 0x03A0), Outline_Font.Noto_Sans)
+		testing.expect_value(t, font_of(face, 0x03C1), Outline_Font.Noto_Sans)
+		testing.expect_value(t, font_of(face, 0x0416), Outline_Font.Noto_Sans)
+	}
+	expected := [?]Expected {
+		{.Interface, .Cyrillic, 96, 96},
+		{.Cells, .Cyrillic, 96, 96},
+		{.Interface, .Greek, 49, 49},
+		{.Cells, .Greek, 49, 49},
 		{.Interface, .Box_Drawing, 160, 160},
 		{.Cells, .Box_Drawing, 160, 160},
 	}
@@ -413,11 +467,50 @@ a_script_that_no_font_covers_is_named :: proc(t: ^testing.T) {
 		testing.expectf(t, drawn == each.drawn && total == each.total, "%v, %v: %v of %v; expected %v of %v", each.face, each.script, drawn, total, each.drawn, each.total)
 	}
 	testing.expect_value(t, font_of(.Interface, 0x2500), Outline_Font.Paper_Mono)
+	testing.expect_value(t, font_of(.Interface, 0x03B1), Outline_Font.B612)
 	testing.expect_value(t, font_of(.Cells, 0x03B1), Outline_Font.B612)
 	testing.expect_value(t, font_of(.Cells, 0x03BB), Outline_Font.Paper_Mono)
 	testing.expect_value(t, font_of(.Cells_Bold, 0x03B1), Outline_Font.B612)
 }
 
+// Every glyph of Noto Sans past the 192 characters draws: each letter of
+// Latin Extended-A, Greek and Cyrillic, in every face, at the sizes of the
+// scales 1, 2 and 3 and at each position of the face, with no glyph that
+// the renderer refuses and no replacement glyph, each with ink and with an
+// advance above zero.
+@(test)
+each_glyph_of_the_missing_scripts_draws :: proc(t: ^testing.T) {
+	test_state_take()
+	fonts := repository_fonts()
+	_, words := outlines_open(t, fonts[:])
+	defer delete(words)
+	drawn := 0
+	for face in chain_faces {
+		for scale in 1 ..= 3 {
+			frame_begin()
+			for range in font_outlines.script_fallback_past_cache_ranges {
+				for character in range.first ..= range.last {
+					for position in 0 ..< positions_of(face) {
+						entry, _, source := glyph(face, character, size_of_scale(scale), position)
+						if !testing.expectf(t, source == .Private_Cache || source == .Not_Kept, "%v, scale %v, U+%04X at the position %v: %v", face, scale, int(character), position, source) {
+							continue
+						}
+						testing.expectf(t, entry.row_count > 0 && entry.width > 0, "%v, scale %v, U+%04X: no ink", face, scale, int(character))
+						drawn += 1
+					}
+					value, found := advance(face, character, size_of_scale(scale))
+					testing.expectf(t, found && value > 0, "%v, scale %v, U+%04X: the advance %v", face, scale, int(character), value)
+				}
+			}
+		}
+	}
+	testing.expect_value(t, counts().refused, u64(0))
+	positions := 0
+	for face in chain_faces {
+		positions += positions_of(face)
+	}
+	testing.expect_value(t, drawn, 3 * font_outlines.SCRIPT_FALLBACK_PAST_CACHE_COUNT * positions)
+}
 // The runs of blocks: a count of 0, a negative count, a count one past the
 // largest block and the largest value have no run; each run splits by
 // halves and joins its free neighbour again, up to the largest block, so

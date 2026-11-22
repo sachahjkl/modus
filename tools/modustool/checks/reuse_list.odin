@@ -447,7 +447,7 @@ reuse_works_read :: proc(problems: ^[dynamic]string) -> []Reused_Work {
 	}
 
 	// The fonts that the repository holds as subsets.
-	font_lists := [?][]resources.Vector_Font_Candidate{resources.vector_font_candidates[:], resources.vector_font_emphasis[:], resources.vector_font_interface[:]}
+	font_lists := [?][]resources.Vector_Font_Candidate{resources.vector_font_candidates[:], resources.vector_font_emphasis[:], resources.vector_font_interface[:], resources.vector_font_script_fallback[:]}
 	for list in font_lists {
 		for candidate in list {
 			record := foundation.join(FONT_FOLDER, "/", candidate.name, ".license")

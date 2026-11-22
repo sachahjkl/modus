@@ -88,6 +88,17 @@ vector_font_interface := [?]Vector_Font_Candidate {
 INTERFACE_VECTOR_FONT :: "b612"
 INTERFACE_EMPHASIS_VECTOR_FONT :: "b612_bold"
 
+// The font of the scripts that the fonts of the faces lack (docs/FONTS.md,
+// "13.4 The subsets"): proportional, the last font of each fallback chain.
+// B612 has no capital pi, no small rho, no Cyrillic and no Latin
+// Extended-A; Noto Sans has them all. The source in the build inputs is the
+// variable font of nixpkgs: its glyphs are the outlines of its default
+// instance, the regular weight. "Noto" is not a Reserved Font Name.
+vector_font_script_fallback := [?]Vector_Font_Candidate {
+	{"noto_sans", "Noto Sans LGC", "SIL OFL 1.1, no Reserved Font Name", "OFL.txt", .Of_The_Font},
+}
+SCRIPT_FALLBACK_VECTOR_FONT :: "noto_sans"
+
 run_vector_fonts :: proc(args: []string) -> int {
 	sources := os.get_env(VECTOR_FONT_SOURCES_VARIABLE, context.temp_allocator)
 	if sources == "" {
@@ -111,6 +122,9 @@ run_vector_fonts :: proc(args: []string) -> int {
 		append(&all, Subset_Request{candidate, false})
 	}
 	for candidate in vector_font_interface {
+		append(&all, Subset_Request{candidate, true})
+	}
+	for candidate in vector_font_script_fallback {
 		append(&all, Subset_Request{candidate, true})
 	}
 	for request in all {
@@ -188,8 +202,8 @@ subset_character :: proc(glyph: int) -> rune {
 // cache that the subset of a font holds, which each process draws from the
 // outlines into its private glyph cache
 // (src/md/features/glyphs_on_demand.md): for the regular weight of the
-// interface font and for the two weights of the font of the cells; none
-// for each other font. The lists are in the contract of the outlines,
+// interface font, for the two weights of the font of the cells and for the
+// font of the missing scripts; none for each other font. The lists are in the contract of the outlines,
 // which the golden hashes of these glyphs read too. The tool adds them
 // after the characters of the glyph cache, so the glyphs of the glyph
 // caches of the build do not change.
@@ -199,6 +213,8 @@ past_cache_ranges_of :: proc(name: string) -> []font_outlines.Character_Range {
 		return font_outlines.interface_past_cache_ranges[:]
 	case DEFAULT_VECTOR_FONT, EMPHASIS_VECTOR_FONT:
 		return font_outlines.cell_past_cache_ranges[:]
+	case SCRIPT_FALLBACK_VECTOR_FONT:
+		return font_outlines.script_fallback_past_cache_ranges[:]
 	}
 	return nil
 }
@@ -747,8 +763,9 @@ append_u32 :: proc(out: ^[dynamic]u8, value: u32) {
 FONT_OUTLINES_OUTPUT :: VECTOR_FONT_BUILD_FOLDER + "/font_outlines.bin"
 
 // The fonts of the resource of the outlines, by the names that
-// text_rendering.outline_font_name gives: the fonts of the faces.
-FONT_OUTLINES_FONTS :: [?]string{INTERFACE_VECTOR_FONT, INTERFACE_EMPHASIS_VECTOR_FONT, DEFAULT_VECTOR_FONT, EMPHASIS_VECTOR_FONT}
+// text_rendering.outline_font_name gives: the fonts of the faces and the
+// font of the missing scripts.
+FONT_OUTLINES_FONTS :: [?]string{INTERFACE_VECTOR_FONT, INTERFACE_EMPHASIS_VECTOR_FONT, DEFAULT_VECTOR_FONT, EMPHASIS_VECTOR_FONT, SCRIPT_FALLBACK_VECTOR_FONT}
 
 // font_outlines_write writes the resource of the font outlines from the
 // subsets in resources/fonts, checks it with the reader of the modules,
