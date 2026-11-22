@@ -552,7 +552,7 @@ The module `assemble` of the boot image is the assembler (`glossary/code.md`, "A
 assemble(source: Bytes, file: Handle) -> Integer
 ```
 
-- `source` is the text, at most 64 KiB. `file` is a memory object that the caller lends with Read and Write. The result is the bytes of the file, which starts at the first byte of `file`.
+- `source` is the text, at most 256 KiB. `file` is a memory object that the caller lends with Read and Write. The result is the bytes of the file, which starts at the first byte of `file`.
 - The module has no entry: the console calls it in a call host, with no grant.
 
 ```
@@ -600,7 +600,7 @@ assemble(source: Bytes, file: Handle) -> Integer
 
 The registers are those of 8, 16, 32 and 64 bits (`%al`..`%r15b`, `%ah`..`%bh`, `%spl`..`%dil`, `%ax`..`%r15w`, `%eax`..`%r15d`, `%rax`..`%r15`), and `%xmm0`..`%xmm15` of SSE2, which the forms of SSE and `movq` take only. A memory operand is a displacement of 32 bits with a 64-bit base register, a scaled index `disp(base, index, scale)` or `disp(, index, scale)` with scale 1, 2, 4 or 8, or `%rip` with a number or a label. Each form has one encoding, the encoding of the Intel manual, and a direct jump always takes 32 bits.
 
-**The refusals.** The assembler takes a text whole or not at all. Each refusal of `assembler.Refusal` has the line and the column of its first byte: an empty text, a text past 1 MiB or a line past 1024 bytes, a control byte, an unknown mnemonic, register, section or type, a form out of the subset, operands of two sizes or of no size, a value past its field, a label defined twice or never (`1f` with no `1:` after it, `1b` with none before it), a jump to the data, a label more than 2 GiB away, a section past 64 KiB of bytes or 1 TiB, more than 512 labels, 2048 references, 2048 `quad` values of a label or 32 exports, a text with no instruction, a `quad` of a label in the code or off 8 bytes, and a label with its offset below 0 or past 2^63 − 1. The export gives the error record `Bad_Byte` for the argument `source`: the value is the offset of the byte, found is the byte. The log of the call host has the sentence:
+**The refusals.** The assembler takes a text whole or not at all. Each refusal of `assembler.Refusal` has the line and the column of its first byte: an empty text, a text past 1 MiB or a line past 1024 bytes, a control byte, an unknown mnemonic, register, section or type, a form out of the subset, operands of two sizes or of no size, a value past its field, a label defined twice or never (`1f` with no `1:` after it, `1b` with none before it), a jump to the data, a label more than 2 GiB away, a section past 128 KiB of bytes or 1 TiB, more than 2048 labels, 4096 references, 2048 `quad` values of a label or 32 exports, a text with no instruction, a `quad` of a label in the code or off 8 bytes, and a label with its offset below 0 or past 2^63 − 1. The export gives the error record `Bad_Byte` for the argument `source`: the value is the offset of the byte, found is the byte. The log of the call host has the sentence:
 
 ```
 assemble: line 1, column 6: no instruction of the subset and no directive has this name (refusal 5, value 0)
@@ -620,7 +620,7 @@ The module `c_compiler` of the boot image is the C compiler (`glossary/code.md`,
 compile(source: Bytes, output: Handle) -> Integer
 ```
 
-- `source` is the C source, 1 byte to 64 KiB. `output` is a memory object that the caller lends with Read and Write. The result is the bytes of the text, which starts at the first byte of `output`.
+- `source` is the C source, 1 byte to 256 KiB. `output` is a memory object that the caller lends with Read and Write. The result is the bytes of the text, which starts at the first byte of `output`.
 - A call host compiles one source: a second call that reaches the compiler fails with `Refused`. To compile again, `unload("c_compiler")` and `isolate("c_compiler")`.
 
 ```
@@ -637,9 +637,9 @@ compile(source: Bytes, output: Handle) -> Integer
 
 **The exports of the C source.** Each function that is not `static` becomes an export of the assembled module: an `export` directive with its parameters, each `int` or `long` an Integer, and an `int` or `long` result an Integer, a `void` result none. A function that is not `static` with another type is refused: make it `static`.
 
-**The C that passes.** The compiler takes C11, and the assembler takes its output: functions using signed and unsigned `char`, `short`, `int`, `long`, `_Bool`, `float` and `double`, pointers, arrays, structs, local initializers, global initializers that hold addresses (tables of functions, of strings, pointers into arrays), arithmetic (`+`, `-`, `*`, `/`, `%`, unary `-`), bitwise and shift operations (`&`, `|`, `^`, `~`, `<<`, `>>`), comparisons and logical operations, the conversions between the integers and the floating types, `if`, `while`, `for`, `do`, `switch`, `alloca`, the atomic exchange and compare-and-swap, and calls (including recursion and calls through a pointer) between functions of the same source. A floating constant is refused by the compiler, which reads no decimal number of floating point; a `long double`, which `chibicc` computes with x87 instructions, is refused by the assembler, with its line and its column in the text of `compile`. The remaining gaps: `src/md/features/c_compiler.md`, "The gaps of the assembler".
+**The C that passes.** The compiler takes C11, and the assembler takes its output: functions using signed and unsigned `char`, `short`, `int`, `long`, `_Bool`, `float` and `double` with their decimal and hexadecimal constants (`1.5`, `2.5e10`, `0x1.8p+1`, `1.5f`), pointers, arrays, structs, local initializers, global initializers that hold addresses (tables of functions, of strings, pointers into arrays), arithmetic (`+`, `-`, `*`, `/`, `%`, unary `-`), bitwise and shift operations (`&`, `|`, `^`, `~`, `<<`, `>>`), comparisons and logical operations, the conversions between the integers and the floating types, `if`, `while`, `for`, `do`, `switch`, `alloca`, the atomic exchange and compare-and-swap, and calls (including recursion and calls through a pointer) between functions of the same source. A `long double`, which `chibicc` computes with x87 instructions, is refused by the assembler, with its line and its column in the text of `compile`. The remaining gaps: `src/md/features/c_compiler.md`, "The gaps of the assembler".
 
-**The refusals.** An empty source gives `Empty`; a source past 64 KiB gives `Too_Long`. A source that the compiler refuses gives `Bad_Byte` for the argument `source`, with the offset of the byte that the diagnostic names; the log of the call host has the diagnostic of `chibicc`:
+**The refusals.** An empty source gives `Empty`; a source past 256 KiB gives `Too_Long`. A source that the compiler refuses gives `Bad_Byte` for the argument `source`, with the offset of the byte that the diagnostic names; the log of the call host has the diagnostic of `chibicc`:
 
 ```
 c_compiler: source.c:1: int add(int a, int b) { return a + ; }

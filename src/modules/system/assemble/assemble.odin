@@ -28,7 +28,7 @@ import "modus:system"
 // The bytes of a text that the module takes. The text is copied before it
 // is read: in an isolated call it is in the call region, which the caller
 // can change during the call, and the labels are views of the text.
-SOURCE_BYTES_MOST :: 64 * 1024
+SOURCE_BYTES_MOST :: 256 * 1024
 
 // The result of an export that fails: the error record says why.
 ERROR :: -1
