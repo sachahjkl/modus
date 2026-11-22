@@ -54,17 +54,23 @@ test_html_malformed_void_rawtext_and_implicit_closure :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, found_script, "must find script element")
 
-	// Verify implicit <p> closure: the two <p> elements must be siblings, not nested.
-	p_parents: [4]u16
+	// The implied end of <p>: the first two <p> are siblings in the div.
+	// The stray </p> after </div> finds no open p, so the WHATWG algorithm
+	// makes an empty one in the body.
+	p_nodes: [4]u16
 	p_count := 0
 	for i := 0; i < int(tree.node_count); i += 1 {
 		if tree.nodes[i].kind == .Element && tree.nodes[i].tag == .P && p_count < 4 {
-			p_parents[p_count] = tree.nodes[i].parent
+			p_nodes[p_count] = u16(i)
 			p_count += 1
 		}
 	}
-	testing.expect_value(t, p_count, 2)
-	testing.expect_value(t, p_parents[0], p_parents[1])
+	testing.expect_value(t, p_count, 3)
+	testing.expect_value(t, tree.nodes[p_nodes[0]].parent, tree.nodes[p_nodes[1]].parent)
+	testing.expect_value(t, tree.nodes[tree.nodes[p_nodes[0]].parent].tag, Html_Tag.Div)
+	testing.expect_value(t, tree.nodes[tree.nodes[p_nodes[2]].parent].tag, Html_Tag.Body)
+	testing.expect_value(t, tree.nodes[p_nodes[2]].first_child, NO_NODE)
+	expect_tree_well_formed(t, tree)
 }
 
 @(test)

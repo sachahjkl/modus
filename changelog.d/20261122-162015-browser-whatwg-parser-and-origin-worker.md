@@ -1,0 +1,3 @@
+type: Added
+
+**The light browser parses HTML after the WHATWG and keeps each origin apart**: the parser follows the insertion modes of the WHATWG with the adoption agency algorithm, tables with foster parenting, comments, doctypes and every numeric character reference, in fixed pools; the CSS engine reads descendant and child selectors with the specificity of the standard, borders, text-align and table layout; an address of HTTP or HTTPS shows the request that the worker of its origin writes; and the storage, the cookies, the form values and the cached style sheet of each origin cross a border of messages that refuses every request for the state of another origin.
