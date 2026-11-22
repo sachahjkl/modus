@@ -1,0 +1,3 @@
+type: Added
+
+**Vulkan commands in the Venus format of Mesa, and a Venus context on the virtual GPU.** `venus_vulkan` now writes and reads the real Venus wire of Mesa and virglrenderer (the instance, the device and its queue, buffers, memory, command pools and buffers, copies, clears, render passes, draws, submits and the Venus ring), and the GPU device service creates a Venus context with its ring blob on a device that carries Venus, takes client streams with `Venus_Submit`, and keeps its 2D scanout unchanged on a device that does not. The VirtIO-GPU contract now has the command words of the Linux header: the blob commands are `0x010C` and `0x010D`, map and unmap are `0x0208` and `0x0209`, and the `SUBMIT_3D` header is 32 bytes.

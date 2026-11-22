@@ -3,413 +3,494 @@ package venus_vulkan
 
 import "core:testing"
 import "modus:contract/byte_order"
-import "modus:contract/virtio_gpu"
-import "modus:contract/webgpu_subset"
+
+// The command words of xmls/VK_EXT_command_serialization.xml and the
+// structure types of vulkan_core.h: the renderer dispatches on these numbers.
+#assert(u32(Command_Type.Create_Instance) == 0)
+#assert(u32(Command_Type.Enumerate_Physical_Devices) == 2)
+#assert(u32(Command_Type.Get_Physical_Device_Properties) == 6)
+#assert(u32(Command_Type.Create_Device) == 11)
+#assert(u32(Command_Type.Queue_Submit) == 18)
+#assert(u32(Command_Type.Queue_Wait_Idle) == 19)
+#assert(u32(Command_Type.Allocate_Memory) == 21)
+#assert(u32(Command_Type.Bind_Buffer_Memory) == 28)
+#assert(u32(Command_Type.Create_Buffer) == 50)
+#assert(u32(Command_Type.Create_Command_Pool) == 85)
+#assert(u32(Command_Type.Allocate_Command_Buffers) == 88)
+#assert(u32(Command_Type.Begin_Command_Buffer) == 90)
+#assert(u32(Command_Type.End_Command_Buffer) == 91)
+#assert(u32(Command_Type.Cmd_Copy_Buffer) == 112)
+#assert(u32(Command_Type.Cmd_Clear_Color_Image) == 119)
+#assert(u32(Command_Type.Cmd_Begin_Render_Pass) == 133)
+#assert(u32(Command_Type.Cmd_End_Render_Pass) == 135)
+#assert(u32(Command_Type.Get_Device_Queue_2) == 155)
+#assert(u32(Command_Type.Set_Reply_Command_Stream) == 178)
+#assert(u32(Command_Type.Create_Ring) == 188)
+#assert(u32(Command_Type.Notify_Ring) == 190)
+#assert(i32(Structure_Type.Ring_Create_Info) == 1000384000)
+#assert(i32(Structure_Type.Device_Queue_Info_2) == 1000145003)
+
+// One expected word of the wire: 4 or 8 bytes.
+Wire_Word :: struct {
+	width: int,
+	value: u64,
+}
 
 @(private = "file")
-minimal_valid_spirv_bytes :: proc() -> [40]u8 {
-	words := [10]u32{
-		webgpu_subset.SPIRV_MAGIC,
-		0x0001_0600,
-		0x000D_0001,
-		8,
-		0,
-		(2 << 16) | 17, 1,
-		(3 << 16) | 14, 0, 1,
+w32 :: proc(value: u64) -> Wire_Word {
+	return {4, value}
+}
+
+@(private = "file")
+w64 :: proc(value: u64) -> Wire_Word {
+	return {8, value}
+}
+
+@(private = "file")
+expect_words :: proc(t: ^testing.T, bytes: []u8, expected: []Wire_Word, loc := #caller_location) {
+	offset := 0
+	for word, index in expected {
+		if offset + word.width > len(bytes) {
+			testing.expectf(t, false, "the wire ends before word %d", index, loc = loc)
+			return
+		}
+		got := word.width == 4 ? u64(byte_order.read_u32_little_endian(bytes, offset)) : byte_order.read_u64_little_endian(bytes, offset)
+		testing.expectf(t, got == word.value, "word %d at byte %d: got 0x%x, want 0x%x", index, offset, got, word.value, loc = loc)
+		offset += word.width
 	}
-	bytes: [40]u8
-	for word, idx in words {
-		byte_order.write_u32_little_endian(bytes[:], idx * 4, word)
-	}
-	return bytes
+	testing.expectf(t, offset == len(bytes), "the wire has %d bytes, the words %d", len(bytes), offset, loc = loc)
 }
 
 @(test)
-enum_and_flag_borders :: proc(t: ^testing.T) {
-	// Zero, one past the last member, and max(u32) must be refused.
-	for word in ([]u32{0, 31, 999, max(u32)}) {
-		_, ok := command_type_of_word(word)
-		testing.expect(t, !ok, "unknown Venus command type must be refused")
-	}
-	for word in ([]u32{2, 1 << 31, max(u32)}) {
-		_, ok := command_flags_of_word(word)
-		testing.expect(t, !ok, "unknown Venus command flags must be refused")
-	}
-	for word in ([]u32{3, 100, max(u32)}) {
-		_, ok := ring_status_of_word(word)
-		testing.expect(t, !ok, "unknown Venus ring status must be refused")
-	}
-
-	// Every valid enum member decodes cleanly.
-	for member in Venus_Command_Type {
-		decoded, ok := command_type_of_word(u32(member))
-		testing.expect(t, ok, "known Venus command type must decode")
-		testing.expect_value(t, decoded, member)
-	}
-	for status in Venus_Ring_Status {
-		decoded, ok := ring_status_of_word(u32(status))
-		testing.expect(t, ok, "known Venus ring status must decode")
-		testing.expect_value(t, decoded, status)
-	}
+create_instance_has_the_wire_layout_of_mesa :: proc(t: ^testing.T) {
+	storage: [512]u8
+	encoder := encoder_init(storage[:])
+	application := Application_Info{application_name = "modus", application_version = 1, api_version = API_VERSION_1_1}
+	testing.expect_value(t, encode_create_instance(&encoder, 7, application), Venus_Problem.None)
+	bytes := encoder_bytes(&encoder)
+	expect_words(t, bytes, {
+		w32(0), w32(1), // vkCreateInstance, VK_COMMAND_GENERATE_REPLY_BIT_EXT
+		w64(1), // pCreateInfo
+		w32(1), w64(0), w32(0), // sType, pNext, flags
+		w64(1), // pApplicationInfo
+		w32(0), w64(0), // sType, pNext
+		w64(6), w64(0x0000_7375_646F_6D), // "modus" and its null byte, padded to 8 bytes
+		w32(1), // applicationVersion
+		w64(0), // pEngineName
+		w32(0), w32(u64(API_VERSION_1_1)),
+		w32(0), w64(0), // no layer
+		w32(0), w64(0), // no extension
+		w64(0), // pAllocator
+		w64(1), w64(7), // pInstance and its id
+	})
+	testing.expect_value(t, len(bytes), 136)
 }
 
 @(test)
-ring_header_border_refusals_and_roundtrip :: proc(t: ^testing.T) {
-	base := Venus_Ring_Header{
-		magic         = VENUS_RING_MAGIC,
-		version       = VENUS_RING_VERSION,
-		head          = 64,
-		tail          = 128,
-		status        = .Active,
-		buffer_size   = 4096,
-		buffer_offset = 64,
-		extra_offset  = 64 + 4096,
-		extra_size    = 1024,
-		ring_id       = 7,
+command_encodings_have_the_wire_layout_of_mesa :: proc(t: ^testing.T) {
+	storage: [1024]u8
+
+	encoder := encoder_init(storage[:])
+	testing.expect_value(t, encode_create_buffer(&encoder, 3, 9, 4096, {.Vertex_Buffer, .Transfer_Destination}), Venus_Problem.None)
+	expect_words(t, encoder_bytes(&encoder), {
+		w32(50), w32(1), w64(3), w64(1),
+		w32(12), w64(0), w32(0), w64(4096), w32(0x82), w32(0), w32(0), w64(0),
+		w64(0), w64(1), w64(9),
+	})
+
+	encoder = encoder_init(storage[:])
+	testing.expect_value(t, encode_get_device_queue_2(&encoder, 3, 0, 0, 12), Venus_Problem.None)
+	expect_words(t, encoder_bytes(&encoder), {
+		w32(155), w32(0), w64(3), w64(1),
+		w32(1000145003), w64(0), w32(0), w32(0), w32(0),
+		w64(1), w64(12),
+	})
+
+	encoder = encoder_init(storage[:])
+	testing.expect_value(t, encode_get_physical_device_properties(&encoder, 2), Venus_Problem.None)
+	expect_words(t, encoder_bytes(&encoder), {
+		w32(6), w32(1), w64(2), w64(1),
+		w64(256), w64(16), // deviceName, pipelineCacheUUID
+		w64(3), w64(3), w64(2), w64(2), w64(2), w64(2), // the fixed arrays of the limits
+	})
+
+	encoder = encoder_init(storage[:])
+	range := Image_Subresource_Range{aspects = {.Color}, level_count = 1, layer_count = 1}
+	testing.expect_value(t, encode_cmd_clear_color_image(&encoder, 20, 21, .Transfer_Destination_Optimal, {0x3F80_0000, 0, 0, 0x3F80_0000}, range), Venus_Problem.None)
+	expect_words(t, encoder_bytes(&encoder), {
+		w32(119), w32(0), w64(20), w64(21), w32(7),
+		w64(1), w32(2), w64(4), w32(0x3F80_0000), w32(0), w32(0), w32(0x3F80_0000),
+		w32(1), w64(1), w32(1), w32(0), w32(1), w32(0), w32(1),
+	})
+
+	encoder = encoder_init(storage[:])
+	clear := [2]Clear_Value{[4]u32{1, 2, 3, 4}, Clear_Depth_Stencil{depth = 1}}
+	testing.expect_value(t, encode_cmd_begin_render_pass(&encoder, 20, 30, 31, {width = 64, height = 32}, clear[:]), Venus_Problem.None)
+	expect_words(t, encoder_bytes(&encoder), {
+		w32(133), w32(0), w64(20), w64(1),
+		w32(43), w64(0), w64(30), w64(31), w32(0), w32(0), w32(64), w32(32),
+		w32(2), w64(2),
+		w32(0), w32(2), w64(4), w32(1), w32(2), w32(3), w32(4),
+		w32(1), w32(0x3F80_0000), w32(0),
+		w32(0), // VK_SUBPASS_CONTENTS_INLINE
+	})
+
+	encoder = encoder_init(storage[:])
+	command_buffers := [1]Object_Id{20}
+	testing.expect_value(t, encode_queue_submit(&encoder, 12, command_buffers[:], 0), Venus_Problem.None)
+	expect_words(t, encoder_bytes(&encoder), {
+		w32(18), w32(0), w64(12), w32(1), w64(1),
+		w32(4), w64(0), w32(0), w64(0), w64(0), w32(1), w64(1), w64(20), w32(0), w64(0),
+		w64(0), // VK_NULL_HANDLE fence
+	})
+
+	encoder = encoder_init(storage[:])
+	testing.expect_value(t, encode_notify_ring(&encoder, 5, 640), Venus_Problem.None)
+	expect_words(t, encoder_bytes(&encoder), {w32(190), w32(0), w64(5), w32(640), w32(0)})
+}
+
+// encode_every_command writes one of each command and returns how many.
+@(private = "file")
+encode_every_command :: proc(encoder: ^Encoder) -> (count: int, problem: Venus_Problem) {
+	physical := [1]Object_Id{2}
+	command_buffers := [2]Object_Id{20, 21}
+	regions := [1]Buffer_Copy{{source_offset = 0, destination_offset = 256, size = 128}}
+	range := Image_Subresource_Range{aspects = {.Color}, level_count = 1, layer_count = 1}
+	clear := [1]Clear_Value{[4]u32{9, 8, 7, 6}}
+	ring_info := Ring_Create_Info{
+		resource_id = 40, size = 192 + 4096, head_offset = RING_HEAD_OFFSET, tail_offset = RING_TAIL_OFFSET,
+		status_offset = RING_STATUS_OFFSET, buffer_offset = RING_BUFFER_OFFSET, buffer_size = 4096, extra_offset = 192 + 4096,
 	}
-	total_blob := u64(64 + 4096 + 1024)
-	wire: [VENUS_RING_HEADER_SIZE]u8
-
-	// Buffer too short.
-	_, short_prob := ring_header_encode(base, total_blob, wire[:VENUS_RING_HEADER_SIZE - 1])
-	testing.expect_value(t, short_prob, Venus_Problem.Buffer_Too_Short)
-
-	// Bad magic & bad version.
-	bad := base
-	bad.magic = 0
-	testing.expect_value(t, ring_header_validate(bad, total_blob), Venus_Problem.Ring_Bad_Magic)
-
-	bad = base
-	bad.version = 2
-	testing.expect_value(t, ring_header_validate(bad, total_blob), Venus_Problem.Ring_Bad_Version)
-
-	// Invalid buffer sizes: 0, below min, non-power-of-two, above max.
-	for size in ([]u32{0, 128, 300, 4097, MAX_RING_BUFFER_SIZE * 2}) {
-		bad = base
-		bad.buffer_size = size
-		testing.expect_value(t, ring_header_validate(bad, u64(MAX_RING_BUFFER_SIZE) * 4), Venus_Problem.Ring_Invalid_Buffer_Size)
-	}
-
-	// Head out of bounds or misaligned.
-	for bad_head in ([]u32{1, 3, 4096, max(u32)}) {
-		bad = base
-		bad.head = bad_head
-		testing.expect_value(t, ring_header_validate(bad, total_blob), Venus_Problem.Ring_Head_Out_Of_Bounds)
-	}
-
-	// Tail out of bounds or misaligned.
-	for bad_tail in ([]u32{2, 4096, max(u32)}) {
-		bad = base
-		bad.tail = bad_tail
-		testing.expect_value(t, ring_header_validate(bad, total_blob), Venus_Problem.Ring_Tail_Out_Of_Bounds)
-	}
-
-	// Buffer offset misaligned, overlapping header, or overflowing blob size.
-	bad = base
-	bad.buffer_offset = 32
-	testing.expect_value(t, ring_header_validate(bad, total_blob), Venus_Problem.Ring_Offset_Out_Of_Bounds)
-
-	bad = base
-	bad.buffer_offset = 68
-	testing.expect_value(t, ring_header_validate(bad, total_blob), Venus_Problem.Ring_Offset_Out_Of_Bounds)
-
-	testing.expect_value(t, ring_header_validate(base, total_blob - 1), Venus_Problem.Ring_Offset_Out_Of_Bounds)
-
-	// Extra region overlapping ring buffer or non-zero extra_offset with zero extra_size.
-	bad = base
-	bad.extra_offset = 64 + 4092
-	testing.expect_value(t, ring_header_validate(bad, total_blob), Venus_Problem.Ring_Offset_Out_Of_Bounds)
-
-	bad = base
-	bad.extra_size = 0
-	testing.expect_value(t, ring_header_validate(bad, total_blob), Venus_Problem.Ring_Offset_Out_Of_Bounds)
-
-	// Zero ring ID refused.
-	bad = base
-	bad.ring_id = 0
-	testing.expect_value(t, ring_header_validate(bad, total_blob), Venus_Problem.Zero_Handle_Id)
-
-	// Valid encode & decode round-trip.
-	written, enc_prob := ring_header_encode(base, total_blob, wire[:])
-	testing.expect_value(t, enc_prob, Venus_Problem.None)
-	testing.expect_value(t, written, VENUS_RING_HEADER_SIZE)
-
-	decoded, dec_prob := ring_header_decode(wire[:], total_blob)
-	testing.expect_value(t, dec_prob, Venus_Problem.None)
-	testing.expect_value(t, decoded, base)
-
-	// Corrupt reserved bytes on wire must be refused.
-	corrupted := wire
-	corrupted[36] = 1
-	_, res_prob1 := ring_header_decode(corrupted[:], total_blob)
-	testing.expect_value(t, res_prob1, Venus_Problem.Ring_Non_Zero_Reserved)
-
-	corrupted = wire
-	corrupted[63] = 0xFF
-	_, res_prob2 := ring_header_decode(corrupted[:], total_blob)
-	testing.expect_value(t, res_prob2, Venus_Problem.Ring_Non_Zero_Reserved)
-
-	// Wrap-around available/free byte accounting.
-	testing.expect_value(t, ring_available_bytes(64, 128, 4096), u32(64))
-	testing.expect_value(t, ring_available_bytes(4000, 32, 4096), u32(128))
-	testing.expect_value(t, ring_free_bytes(0, 0, 4096), u32(4092))
-	testing.expect_value(t, ring_free_bytes(0, 4092, 4096), u32(0))
+	copy_region := Buffer_Image_Copy{buffer_row_length = 64, aspects = {.Color}, layer_count = 1, width = 64, height = 4, depth = 1}
+	encode_set_reply_command_stream(encoder, 41, 0, 4096) or_return
+	encode_create_ring(encoder, 50, ring_info) or_return
+	encode_create_instance(encoder, 1, {application_name = "modus", api_version = API_VERSION_1_1}) or_return
+	encode_enumerate_physical_devices(encoder, 1, nil) or_return
+	encode_enumerate_physical_devices(encoder, 1, physical[:]) or_return
+	encode_get_physical_device_properties(encoder, 2) or_return
+	encode_create_device(encoder, 2, 3, 0, 1) or_return
+	encode_get_device_queue_2(encoder, 3, 0, 0, 12) or_return
+	encode_create_buffer(encoder, 3, 9, 4096, {.Vertex_Buffer}) or_return
+	encode_allocate_memory(encoder, 3, 10, 65536, 1) or_return
+	encode_bind_buffer_memory(encoder, 3, 9, 10, 0) or_return
+	encode_create_command_pool(encoder, 3, 11, 0, {.Reset_Command_Buffer}) or_return
+	encode_allocate_command_buffers(encoder, 3, 11, .Primary, command_buffers[:]) or_return
+	encode_begin_command_buffer(encoder, 20, {.One_Time_Submit}) or_return
+	encode_cmd_copy_buffer(encoder, 20, 9, 9, regions[:]) or_return
+	encode_cmd_clear_color_image(encoder, 20, 13, .General, {1, 2, 3, 4}, range) or_return
+	encode_cmd_copy_buffer_to_image(encoder, 20, 9, 13, .Transfer_Destination_Optimal, copy_region) or_return
+	encode_cmd_begin_render_pass(encoder, 20, 14, 15, {width = 64, height = 64}, clear[:]) or_return
+	encode_cmd_bind_pipeline(encoder, 20, .Graphics, 16) or_return
+	encode_cmd_set_scissor(encoder, 20, {x = 1, y = 2, width = 3, height = 4}) or_return
+	encode_cmd_bind_vertex_buffers(encoder, 20, 0, 9, 64) or_return
+	encode_cmd_bind_index_buffer(encoder, 20, 9, 128, .Uint16) or_return
+	encode_cmd_bind_descriptor_sets(encoder, 20, .Graphics, 17, 0, 18) or_return
+	encode_cmd_draw(encoder, 20, 3, 1, 0, 0) or_return
+	encode_cmd_draw_indexed(encoder, 20, 6, 1, 0, -2, 0) or_return
+	encode_cmd_end_render_pass(encoder, 20) or_return
+	encode_end_command_buffer(encoder, 20) or_return
+	encode_queue_submit(encoder, 12, command_buffers[:1], 19) or_return
+	encode_queue_wait_idle(encoder, 12) or_return
+	encode_seek_reply_command_stream(encoder, 64) or_return
+	encode_notify_ring(encoder, 50, 4) or_return
+	encode_destroy_ring(encoder, 50) or_return
+	return 32, .None
 }
 
 @(test)
-wire_border_and_spirv_refusals :: proc(t: ^testing.T) {
-	// Empty and misaligned streams.
-	_, p_empty := stream_validate(nil)
-	testing.expect_value(t, p_empty, Venus_Problem.Stream_Empty)
+every_command_decodes_to_its_type_objects_and_values :: proc(t: ^testing.T) {
+	storage: [8192]u8
+	encoder := encoder_init(storage[:])
+	count, problem := encode_every_command(&encoder)
+	testing.expect_value(t, problem, Venus_Problem.None)
+	testing.expect_value(t, int(encoder.command_count), count)
 
-	misaligned: [18]u8
-	_, p_mis := stream_validate(misaligned[:])
-	testing.expect_value(t, p_mis, Venus_Problem.Misaligned_Length)
+	// Measuring gives the same size and writes nothing.
+	measure := encoder_measure()
+	_, measure_problem := encode_every_command(&measure)
+	testing.expect_value(t, measure_problem, Venus_Problem.None)
+	testing.expect_value(t, measure.used_bytes, encoder.used_bytes)
 
-	// Raw wire packet with unknown command type, bad flags, non-zero reserved, misaligned payload.
-	pkt: [32]u8
-	byte_order.write_u32_little_endian(pkt[:], 0, 0)
-	_, _, p_zero_cmd := stream_decode_next(pkt[:], 0)
-	testing.expect_value(t, p_zero_cmd, Venus_Problem.Unknown_Command_Type)
+	bytes := encoder_bytes(&encoder)
+	validated, validate_problem := stream_validate(bytes)
+	testing.expect_value(t, validate_problem, Venus_Problem.None)
+	testing.expect_value(t, validated, count)
 
-	byte_order.write_u32_little_endian(pkt[:], 0, u32(Venus_Command_Type.Create_Instance))
-	byte_order.write_u32_little_endian(pkt[:], 4, 2)
-	_, _, p_flags := stream_decode_next(pkt[:], 0)
-	testing.expect_value(t, p_flags, Venus_Problem.Unknown_Command_Flags)
+	expected_types := [?]Command_Type{
+		.Set_Reply_Command_Stream, .Create_Ring, .Create_Instance, .Enumerate_Physical_Devices, .Enumerate_Physical_Devices,
+		.Get_Physical_Device_Properties, .Create_Device, .Get_Device_Queue_2, .Create_Buffer, .Allocate_Memory,
+		.Bind_Buffer_Memory, .Create_Command_Pool, .Allocate_Command_Buffers, .Begin_Command_Buffer, .Cmd_Copy_Buffer,
+		.Cmd_Clear_Color_Image, .Cmd_Copy_Buffer_To_Image, .Cmd_Begin_Render_Pass, .Cmd_Bind_Pipeline, .Cmd_Set_Scissor,
+		.Cmd_Bind_Vertex_Buffers, .Cmd_Bind_Index_Buffer, .Cmd_Bind_Descriptor_Sets, .Cmd_Draw, .Cmd_Draw_Indexed,
+		.Cmd_End_Render_Pass, .End_Command_Buffer, .Queue_Submit, .Queue_Wait_Idle, .Seek_Reply_Command_Stream,
+		.Notify_Ring, .Destroy_Ring,
+	}
+	decoder := decoder_init(bytes)
+	commands: [len(expected_types)]Decoded_Command
+	for expected, index in expected_types {
+		command, decode_problem := command_decode_next(&decoder)
+		testing.expect_value(t, decode_problem, Venus_Problem.None)
+		testing.expect_value(t, command.command_type, expected)
+		commands[index] = command
+	}
+	testing.expect(t, decoder_done(&decoder), "the decoder must end at the end of the stream")
 
-	byte_order.write_u32_little_endian(pkt[:], 4, 0)
-	byte_order.write_u32_little_endian(pkt[:], 8, PAYLOAD_SIZE_CREATE_INSTANCE)
-	byte_order.write_u32_little_endian(pkt[:], 12, 1)
-	_, _, p_res := stream_decode_next(pkt[:], 0)
-	testing.expect_value(t, p_res, Venus_Problem.Non_Zero_Reserved)
+	// The replies asked: the commands that return a VkResult or an object.
+	testing.expect_value(t, commands[2].flags, Command_Flags{.Generate_Reply})
+	testing.expect_value(t, commands[13].flags, Command_Flags{})
 
-	byte_order.write_u32_little_endian(pkt[:], 12, 0)
-	byte_order.write_u32_little_endian(pkt[:], 8, 14) // misaligned payload
-	_, _, p_pay_mis := stream_decode_next(pkt[:], 0)
-	testing.expect_value(t, p_pay_mis, Venus_Problem.Misaligned_Length)
-
-	byte_order.write_u32_little_endian(pkt[:], 8, 8) // wrong size for Create_Instance (expects 16)
-	_, _, p_pay_size := stream_decode_next(pkt[:], 0)
-	testing.expect_value(t, p_pay_size, Venus_Problem.Payload_Size_Mismatch)
-
-	// Zero handle IDs refused across encoder commands.
-	buf: [1024]u8
-	enc := encoder_init(buf[:])
-	testing.expect_value(t, encode_create_instance(&enc, Create_Instance_Payload{instance_id = 0, api_version = 1}), Venus_Problem.Zero_Handle_Id)
-	testing.expect_value(t, encode_create_device(&enc, Create_Device_Payload{physical_device_id = 0, device_id = 2, queue_family_index = 0, queue_count = 1}), Venus_Problem.Zero_Handle_Id)
-	testing.expect_value(t, encode_create_device(&enc, Create_Device_Payload{physical_device_id = 1, device_id = 0, queue_family_index = 0, queue_count = 1}), Venus_Problem.Zero_Handle_Id)
-	testing.expect_value(t, encode_allocate_memory(&enc, Allocate_Memory_Payload{device_id = 1, memory_id = 0, allocation_size = 4096}), Venus_Problem.Zero_Handle_Id)
-	testing.expect_value(t, encode_create_buffer(&enc, Create_Buffer_Payload{device_id = 1, buffer_id = 2, size = 0, usage = {.Vertex}}), Venus_Problem.Zero_Extent)
-	testing.expect_value(t, encode_create_image(&enc, Create_Image_Payload{device_id = 1, image_id = 2, width = MAX_IMAGE_DIMENSION + 1, height = 64, format = .RGBA8_Unorm, usage = {.Render_Attachment}}), Venus_Problem.Dimension_Too_Large)
-	testing.expect_value(t, encode_cmd_draw(&enc, Cmd_Draw_Payload{command_buffer_id = 1, vertex_count = 0, instance_count = 1}), Venus_Problem.Zero_Draw_Count)
-	testing.expect_value(t, encode_cmd_bind_vertex_buffers(&enc, Cmd_Bind_Vertex_Buffers_Payload{command_buffer_id = 1, first_binding = MAX_VERTEX_BUFFER_SLOTS, buffer_id = 2}), Venus_Problem.Invalid_Slot)
-	testing.expect_value(t, encode_queue_submit(&enc, Queue_Submit_Payload{queue_id = 0, command_buffer_id = 1}), Venus_Problem.Zero_Handle_Id)
-	testing.expect_value(t, encode_ring_notify(&enc, Ring_Notify_Payload{ring_id = 0, seqno = 1}), Venus_Problem.Zero_Handle_Id)
-	testing.expect_value(t, enc.used_bytes, 0)
-
-	// SPIR-V refusals: invalid bytes, unaligned bytes, oversized word count.
-	bad_spirv: [24]u8
-	testing.expect_value(t, encode_create_shader_module(&enc, 1, 10, bad_spirv[:]), Venus_Problem.Invalid_Spirv)
-	testing.expect_value(t, encode_create_shader_module(&enc, 1, 10, bad_spirv[:21]), Venus_Problem.Misaligned_Length)
-
-	oversized_spirv := make([]u8, MAX_SPIRV_BYTES + 4)
-	defer delete(oversized_spirv)
-	testing.expect_value(t, encode_create_shader_module(&enc, 1, 10, oversized_spirv), Venus_Problem.Spirv_Too_Large)
-
-	// Raw wire Create_Shader_Module claiming word_count == MAX_SPIRV_WORDS + 1 must be refused.
-	wire_shader: [COMMAND_HEADER_SIZE + PAYLOAD_SIZE_CREATE_SHADER_MODULE_HEADER]u8
-	byte_order.write_u32_little_endian(wire_shader[:], 0, u32(Venus_Command_Type.Create_Shader_Module))
-	byte_order.write_u32_little_endian(wire_shader[:], 8, PAYLOAD_SIZE_CREATE_SHADER_MODULE_HEADER)
-	byte_order.write_u64_little_endian(wire_shader[:], COMMAND_HEADER_SIZE + 0, 1)
-	byte_order.write_u64_little_endian(wire_shader[:], COMMAND_HEADER_SIZE + 8, 2)
-	byte_order.write_u32_little_endian(wire_shader[:], COMMAND_HEADER_SIZE + 16, MAX_SPIRV_WORDS + 1)
-	_, _, p_spirv_wire := stream_decode_next(wire_shader[:], 0)
-	testing.expect_value(t, p_spirv_wire, Venus_Problem.Spirv_Too_Large)
+	// vkEnumeratePhysicalDevices: the count query, then the bound id.
+	testing.expect_value(t, commands[3].object_count, 1)
+	testing.expect_value(t, commands[4].objects[1], Object_Id(2))
+	// vkCreateDevice: physical device, device; family 0, one queue, priority 1.0.
+	testing.expect_value(t, commands[6].objects[0], Object_Id(2))
+	testing.expect_value(t, commands[6].objects[1], Object_Id(3))
+	testing.expect_value(t, commands[6].values[2], u64(0x3F80_0000))
+	// vkAllocateCommandBuffers: device, pool, two command buffers.
+	testing.expect_value(t, commands[12].object_count, 4)
+	testing.expect_value(t, commands[12].objects[3], Object_Id(21))
+	// vkCmdClearColorImage: layout, then the four words of the color.
+	testing.expect_value(t, commands[15].values[0], u64(Image_Layout.General))
+	testing.expect_value(t, commands[15].values[1], u64(1))
+	testing.expect_value(t, commands[15].values[4], u64(4))
+	// vkCmdDrawIndexed: the negative vertex offset keeps its sign.
+	testing.expect_value(t, i64(commands[24].values[3]), i64(-2))
+	// vkQueueSubmit: queue, command buffer, fence.
+	testing.expect_value(t, commands[27].objects[0], Object_Id(12))
+	testing.expect_value(t, commands[27].objects[1], Object_Id(20))
+	testing.expect_value(t, commands[27].objects[2], Object_Id(19))
 }
 
 @(test)
-stream_state_machine_and_all_commands_roundtrip :: proc(t: ^testing.T) {
-	buf: [4096]u8
+encoders_refuse_wrong_inputs_and_leave_no_bytes :: proc(t: ^testing.T) {
+	storage: [256]u8
+	encoder := encoder_init(storage[:])
+	one := [1]Object_Id{1}
+	zero := [1]Object_Id{0}
+	too_many: [MAX_ARRAY_ELEMENTS + 1]Object_Id
+	for &id, index in too_many {
+		id = Object_Id(index + 1)
+	}
+	range := Image_Subresource_Range{aspects = {.Color}, level_count = 1, layer_count = 1}
 
-	// Unbalanced Begin_Command_Buffer refused.
-	enc := encoder_init(buf[:])
-	testing.expect_value(t, encode_begin_command_buffer(&enc, Begin_Command_Buffer_Payload{command_buffer_id = 50}), Venus_Problem.None)
-	_, p_unbal_cb := stream_validate(encoder_bytes(&enc))
-	testing.expect_value(t, p_unbal_cb, Venus_Problem.Unbalanced_Command_Buffer)
+	testing.expect_value(t, encode_create_instance(&encoder, 0, {}), Venus_Problem.Zero_Object_Id)
+	long_name: [MAX_STRING_BYTES]u8
+	for &character in long_name {
+		character = 'a'
+	}
+	testing.expect_value(t, encode_create_instance(&encoder, 1, {application_name = string(long_name[:])}), Venus_Problem.String_Too_Long)
+	testing.expect_value(t, encode_create_instance(&encoder, 1, {engine_name = "a\x00b"}), Venus_Problem.String_Unterminated)
+	testing.expect_value(t, encode_create_instance(&encoder, 1, {}, transmute(Command_Flags)u32(2)), Venus_Problem.Unknown_Command_Flags)
+	testing.expect_value(t, encode_enumerate_physical_devices(&encoder, 1, zero[:]), Venus_Problem.Zero_Object_Id)
+	testing.expect_value(t, encode_enumerate_physical_devices(&encoder, 1, too_many[:]), Venus_Problem.Count_Out_Of_Range)
+	testing.expect_value(t, encode_create_device(&encoder, 1, 2, 0, 1.5), Venus_Problem.Count_Out_Of_Range)
+	testing.expect_value(t, encode_create_device(&encoder, 1, 2, 0, -0.5), Venus_Problem.Count_Out_Of_Range)
+	testing.expect_value(t, encode_create_buffer(&encoder, 1, 2, 0, {.Vertex_Buffer}), Venus_Problem.Zero_Extent)
+	testing.expect_value(t, encode_create_buffer(&encoder, 1, 2, 16, {}), Venus_Problem.Unknown_Flag_Bits)
+	testing.expect_value(t, encode_create_buffer(&encoder, 1, 2, 16, transmute(Buffer_Usage)u32(0x200)), Venus_Problem.Unknown_Flag_Bits)
+	testing.expect_value(t, encode_allocate_memory(&encoder, 1, 2, 0, 0), Venus_Problem.Zero_Extent)
+	testing.expect_value(t, encode_bind_buffer_memory(&encoder, 1, 0, 3, 0), Venus_Problem.Zero_Object_Id)
+	testing.expect_value(t, encode_create_command_pool(&encoder, 1, 2, 0, transmute(Command_Pool_Flags)u32(4)), Venus_Problem.Unknown_Flag_Bits)
+	testing.expect_value(t, encode_allocate_command_buffers(&encoder, 1, 2, .Primary, nil), Venus_Problem.Count_Out_Of_Range)
+	testing.expect_value(t, encode_allocate_command_buffers(&encoder, 1, 2, Command_Buffer_Level(2), one[:]), Venus_Problem.Unknown_Enum_Word)
+	testing.expect_value(t, encode_begin_command_buffer(&encoder, 1, transmute(Command_Buffer_Usage)u32(8)), Venus_Problem.Unknown_Flag_Bits)
+	testing.expect_value(t, encode_cmd_copy_buffer(&encoder, 1, 2, 3, nil), Venus_Problem.Count_Out_Of_Range)
+	testing.expect_value(t, encode_cmd_copy_buffer(&encoder, 1, 2, 3, []Buffer_Copy{{size = 0}}), Venus_Problem.Zero_Extent)
+	testing.expect_value(t, encode_cmd_clear_color_image(&encoder, 1, 2, Image_Layout(3), {}, range), Venus_Problem.Unknown_Enum_Word)
+	testing.expect_value(t, encode_cmd_clear_color_image(&encoder, 1, 2, .General, {}, {level_count = 1, layer_count = 1}), Venus_Problem.Unknown_Flag_Bits)
+	testing.expect_value(t, encode_cmd_clear_color_image(&encoder, 1, 2, .General, {}, {aspects = {.Color}, layer_count = 1}), Venus_Problem.Zero_Extent)
+	testing.expect_value(t, encode_cmd_begin_render_pass(&encoder, 1, 2, 3, {width = 0, height = 1}, nil), Venus_Problem.Zero_Extent)
+	testing.expect_value(t, encode_cmd_begin_render_pass(&encoder, 1, 2, 3, {width = 1, height = 1}, []Clear_Value{nil}), Venus_Problem.Unknown_Union_Tag)
+	testing.expect_value(t, encode_cmd_bind_pipeline(&encoder, 1, Pipeline_Bind_Point(7), 2), Venus_Problem.Unknown_Enum_Word)
+	testing.expect_value(t, encode_cmd_set_scissor(&encoder, 1, {x = -1, width = 1, height = 1}), Venus_Problem.Dimension_Too_Large)
+	testing.expect_value(t, encode_cmd_bind_index_buffer(&encoder, 1, 2, 1, .Uint16), Venus_Problem.Misaligned_Length)
+	testing.expect_value(t, encode_cmd_bind_index_buffer(&encoder, 1, 2, 2, .Uint32), Venus_Problem.Misaligned_Length)
+	testing.expect_value(t, encode_cmd_bind_index_buffer(&encoder, 1, 2, 0, Index_Type(2)), Venus_Problem.Unknown_Enum_Word)
+	testing.expect_value(t, encode_cmd_draw(&encoder, 1, 0, 1, 0, 0), Venus_Problem.Zero_Extent)
+	testing.expect_value(t, encode_cmd_draw_indexed(&encoder, 1, 1, 0, 0, 0, 0), Venus_Problem.Zero_Extent)
+	testing.expect_value(t, encode_cmd_copy_buffer_to_image(&encoder, 1, 2, 3, .General, {aspects = {.Color}, width = 1, height = 1, depth = 0, layer_count = 1}), Venus_Problem.Zero_Extent)
+	testing.expect_value(t, encode_queue_submit(&encoder, 0, one[:], 0), Venus_Problem.Zero_Object_Id)
+	testing.expect_value(t, encode_queue_submit(&encoder, 1, nil, 0), Venus_Problem.Count_Out_Of_Range)
+	testing.expect_value(t, encode_set_reply_command_stream(&encoder, 0, 0, 64), Venus_Problem.Zero_Object_Id)
+	testing.expect_value(t, encode_set_reply_command_stream(&encoder, 1, 2, 64), Venus_Problem.Misaligned_Length)
+	testing.expect_value(t, encode_seek_reply_command_stream(&encoder, 6), Venus_Problem.Misaligned_Length)
+	testing.expect_value(t, encode_create_ring(&encoder, 1, {resource_id = 1, buffer_size = 4096}), Venus_Problem.Ring_Memory_Misaligned)
+	testing.expect_value(t, encode_notify_ring(&encoder, 0, 0), Venus_Problem.Zero_Object_Id)
+	testing.expect_value(t, encoder.used_bytes, 0)
+	testing.expect_value(t, encoder.command_count, u32(0))
 
-	// Cmd_Draw outside render pass refused.
-	enc = encoder_init(buf[:])
-	testing.expect_value(t, encode_begin_command_buffer(&enc, Begin_Command_Buffer_Payload{command_buffer_id = 50}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_draw(&enc, Cmd_Draw_Payload{command_buffer_id = 50, vertex_count = 3, instance_count = 1}), Venus_Problem.None)
-	testing.expect_value(t, encode_end_command_buffer(&enc, End_Command_Buffer_Payload{command_buffer_id = 50}), Venus_Problem.None)
-	_, p_draw_out := stream_validate(encoder_bytes(&enc))
-	testing.expect_value(t, p_draw_out, Venus_Problem.Render_Pass_Not_Active)
+	// A command that does not fit leaves the earlier commands whole.
+	small: [40]u8
+	encoder = encoder_init(small[:])
+	testing.expect_value(t, encode_cmd_draw(&encoder, 1, 3, 1, 0, 0), Venus_Problem.None)
+	used := encoder.used_bytes
+	testing.expect_value(t, used, 32)
+	testing.expect_value(t, encode_cmd_draw(&encoder, 1, 3, 1, 0, 0), Venus_Problem.Buffer_Too_Short)
+	testing.expect_value(t, encoder.used_bytes, used)
+	testing.expect_value(t, encoder.problem, Venus_Problem.None)
+	testing.expect_value(t, encode_end_command_buffer(&encoder, 1), Venus_Problem.Buffer_Too_Short)
+	testing.expect_value(t, encoder.used_bytes, used)
+}
 
-	// Cmd_Copy_Buffer inside render pass refused.
-	enc = encoder_init(buf[:])
-	testing.expect_value(t, encode_begin_command_buffer(&enc, Begin_Command_Buffer_Payload{command_buffer_id = 50}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_begin_render_pass(&enc, Cmd_Begin_Render_Pass_Payload{command_buffer_id = 50, render_pass_id = 10, framebuffer_id = 11, render_width = 64, render_height = 64}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_copy_buffer(&enc, Cmd_Copy_Buffer_Payload{command_buffer_id = 50, src_buffer_id = 1, dst_buffer_id = 2, size = 16}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_end_render_pass(&enc, Cmd_End_Render_Pass_Payload{command_buffer_id = 50}), Venus_Problem.None)
-	testing.expect_value(t, encode_end_command_buffer(&enc, End_Command_Buffer_Payload{command_buffer_id = 50}), Venus_Problem.None)
-	_, p_copy_in := stream_validate(encoder_bytes(&enc))
-	testing.expect_value(t, p_copy_in, Venus_Problem.Copy_Inside_Render_Pass)
+@(private = "file")
+put_word :: proc(bytes: []u8, offset: int, value: u32) {
+	byte_order.write_u32_little_endian(bytes, offset, value)
+}
 
-	// Mismatched command buffer handle inside recording refused.
-	enc = encoder_init(buf[:])
-	testing.expect_value(t, encode_begin_command_buffer(&enc, Begin_Command_Buffer_Payload{command_buffer_id = 50}), Venus_Problem.None)
-	testing.expect_value(t, encode_end_command_buffer(&enc, End_Command_Buffer_Payload{command_buffer_id = 51}), Venus_Problem.None)
-	_, p_cb_mis := stream_validate(encoder_bytes(&enc))
-	testing.expect_value(t, p_cb_mis, Venus_Problem.Command_Buffer_Mismatch)
-
-	// Full valid Venus lifecycle exercising every command type.
-	spirv := minimal_valid_spirv_bytes()
-	enc = encoder_init(buf[:])
-	testing.expect_value(t, encode_set_reply_command_stream(&enc, Set_Reply_Command_Stream_Payload{stream_resource_id = 1, offset = 0, size = 4096}), Venus_Problem.None)
-	testing.expect_value(t, encode_create_instance(&enc, Create_Instance_Payload{instance_id = 1, api_version = 0x0040_3000}), Venus_Problem.None)
-	testing.expect_value(t, encode_enumerate_physical_devices(&enc, Enumerate_Physical_Devices_Payload{instance_id = 1, max_device_count = 4}), Venus_Problem.None)
-	testing.expect_value(t, encode_create_device(&enc, Create_Device_Payload{physical_device_id = 2, device_id = 3, queue_family_index = 0, queue_count = 1}), Venus_Problem.None)
-	testing.expect_value(t, encode_allocate_memory(&enc, Allocate_Memory_Payload{device_id = 3, memory_id = 4, allocation_size = 65536, memory_type_index = 0}), Venus_Problem.None)
-	testing.expect_value(t, encode_create_buffer(&enc, Create_Buffer_Payload{device_id = 3, buffer_id = 5, size = 1024, usage = {.Vertex, .Copy_Dst}}), Venus_Problem.None)
-	testing.expect_value(t, encode_create_image(&enc, Create_Image_Payload{device_id = 3, image_id = 6, width = 800, height = 600, format = .RGBA8_Unorm, usage = {.Render_Attachment}}), Venus_Problem.None)
-	testing.expect_value(t, encode_create_shader_module(&enc, 3, 7, spirv[:]), Venus_Problem.None)
-	testing.expect_value(t, encode_create_render_pass(&enc, Create_Render_Pass_Payload{device_id = 3, render_pass_id = 8, color_format = .RGBA8_Unorm, has_depth = true, load_op = .Clear, store_op = .Store}), Venus_Problem.None)
-	testing.expect_value(t, encode_create_graphics_pipelines(&enc, Create_Graphics_Pipelines_Payload{device_id = 3, pipeline_id = 9, render_pass_id = 8, vertex_shader_id = 7, fragment_shader_id = 7, topology = .Triangle_List, src_blend = .Src_Alpha, dst_blend = .One_Minus_Src_Alpha, vertex_stride = 32}), Venus_Problem.None)
-	testing.expect_value(t, encode_allocate_command_buffers(&enc, Allocate_Command_Buffers_Payload{device_id = 3, command_pool_id = 10, command_buffer_id = 11}), Venus_Problem.None)
-	testing.expect_value(t, encode_begin_command_buffer(&enc, Begin_Command_Buffer_Payload{command_buffer_id = 11}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_copy_buffer(&enc, Cmd_Copy_Buffer_Payload{command_buffer_id = 11, src_buffer_id = 5, dst_buffer_id = 5, src_offset = 0, dst_offset = 512, size = 128}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_copy_buffer_to_image(&enc, Cmd_Copy_Buffer_To_Image_Payload{command_buffer_id = 11, src_buffer_id = 5, dst_image_id = 6, src_offset = 0, bytes_per_row = 64, dst_x = 0, dst_y = 0, width = 16, height = 16}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_begin_render_pass(&enc, Cmd_Begin_Render_Pass_Payload{command_buffer_id = 11, render_pass_id = 8, framebuffer_id = 12, render_width = 800, render_height = 600}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_bind_pipeline(&enc, Cmd_Bind_Pipeline_Payload{command_buffer_id = 11, pipeline_id = 9}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_set_scissor(&enc, Cmd_Set_Scissor_Payload{command_buffer_id = 11, x = 10, y = 20, width = 100, height = 80}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_bind_vertex_buffers(&enc, Cmd_Bind_Vertex_Buffers_Payload{command_buffer_id = 11, first_binding = 0, buffer_id = 5, offset = 0}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_bind_index_buffer(&enc, Cmd_Bind_Index_Buffer_Payload{command_buffer_id = 11, buffer_id = 5, offset = 0, index_format = .Uint32}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_bind_descriptor_sets(&enc, Cmd_Bind_Descriptor_Sets_Payload{command_buffer_id = 11, set_index = 0, descriptor_set_id = 13}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_draw(&enc, Cmd_Draw_Payload{command_buffer_id = 11, vertex_count = 3, instance_count = 1}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_draw_indexed(&enc, Cmd_Draw_Indexed_Payload{command_buffer_id = 11, index_count = 6, instance_count = 1, first_index = 0, vertex_offset = -1, first_instance = 0}), Venus_Problem.None)
-	testing.expect_value(t, encode_cmd_end_render_pass(&enc, Cmd_End_Render_Pass_Payload{command_buffer_id = 11}), Venus_Problem.None)
-	testing.expect_value(t, encode_end_command_buffer(&enc, End_Command_Buffer_Payload{command_buffer_id = 11}), Venus_Problem.None)
-	testing.expect_value(t, encode_queue_submit(&enc, Queue_Submit_Payload{queue_id = 14, command_buffer_id = 11, fence_id = 15}), Venus_Problem.None)
-	testing.expect_value(t, encode_queue_wait_idle(&enc, Queue_Wait_Idle_Payload{queue_id = 14}), Venus_Problem.None)
-	testing.expect_value(t, encode_ring_notify(&enc, Ring_Notify_Payload{ring_id = 16, seqno = 42}), Venus_Problem.None)
-	testing.expect_value(t, encode_free_memory(&enc, Free_Memory_Payload{device_id = 3, memory_id = 4}), Venus_Problem.None)
-	testing.expect_value(t, encode_destroy_device(&enc, Destroy_Device_Payload{device_id = 3}), Venus_Problem.None)
-	testing.expect_value(t, encode_destroy_instance(&enc, Destroy_Instance_Payload{instance_id = 1}), Venus_Problem.None)
-
-	summary, val_prob := stream_validate(encoder_bytes(&enc))
-	testing.expect_value(t, val_prob, Venus_Problem.None)
-	testing.expect_value(t, summary.command_count, u32(30))
-	testing.expect_value(t, summary.shader_count, u32(1))
-	testing.expect_value(t, summary.render_pass_count, u32(1))
-	testing.expect_value(t, summary.draw_call_count, u32(2))
-	testing.expect_value(t, summary.copy_count, u32(2))
-	testing.expect_value(t, summary.submit_count, u32(1))
+@(private = "file")
+decode_one :: proc(bytes: []u8) -> Venus_Problem {
+	decoder := decoder_init(bytes)
+	_, problem := command_decode_next(&decoder)
+	if problem == .None && !decoder_done(&decoder) {
+		return .Stream_Too_Large
+	}
+	return problem
 }
 
 @(test)
-webgpu_stream_to_venus_and_submit_3d :: proc(t: ^testing.T) {
-	buffers := [?]webgpu_subset.Buffer_Desc{
-		{size = 1024, usage = {.Vertex, .Copy_Dst}},
-		{size = 256, usage = {.Index, .Copy_Dst}},
-		{size = 4096, usage = {.Copy_Src}},
-	}
-	textures := [?]webgpu_subset.Texture_Desc{
-		{width = 640, height = 480, format = .RGBA8_Unorm, usage = {.Render_Attachment, .Copy_Dst}},
-		{width = 640, height = 480, format = .Depth24_Plus, usage = {.Render_Attachment}},
-	}
-	pipelines := [?]webgpu_subset.Pipeline_Desc{
-		{topology = .Triangle_List, color_format = .RGBA8_Unorm, src_blend = .Src_Alpha, dst_blend = .One_Minus_Src_Alpha, vertex_stride = 32},
-	}
-	reg := webgpu_subset.Resource_Registry{
-		buffers          = buffers[:],
-		textures         = textures[:],
-		pipelines        = pipelines[:],
-		bind_group_count = 1,
-	}
+decoder_refuses_malformed_commands :: proc(t: ^testing.T) {
+	storage: [8192]u8
+	encoder := encoder_init(storage[:])
+	_, problem := encode_every_command(&encoder)
+	testing.expect_value(t, problem, Venus_Problem.None)
+	stream := encoder_bytes(&encoder)
 
-	ws_buf: [webgpu_subset.COMMAND_RECORD_SIZE * 16]u8
-	ws_enc := webgpu_subset.encoder_init(ws_buf[:])
-	_ = webgpu_subset.encode_copy_buffer_to_buffer(&ws_enc, 3, 1, 0, 0, 512)
-	_ = webgpu_subset.encode_begin_render_pass(&ws_enc, 1, 2, .Clear, .Store, webgpu_subset.Clear_Color{a_bits = 0x3F80_0000})
-	_ = webgpu_subset.encode_set_pipeline(&ws_enc, 1)
-	_ = webgpu_subset.encode_set_vertex_buffer(&ws_enc, 0, 1, 0, 512)
-	_ = webgpu_subset.encode_set_index_buffer(&ws_enc, 2, .Uint32, 0, 128)
-	_ = webgpu_subset.encode_set_bind_group(&ws_enc, 0, 1)
-	_ = webgpu_subset.encode_set_scissor_rect(&ws_enc, 16, 16, 320, 240)
-	_ = webgpu_subset.encode_draw(&ws_enc, 6, 1, 0, 0)
-	_ = webgpu_subset.encode_draw_indexed(&ws_enc, 12, 1, 0, 0, 0)
-	_ = webgpu_subset.encode_end_render_pass(&ws_enc)
-	ws_stream := webgpu_subset.encoder_finish(&ws_enc)
+	// Every cut of the stream inside a command is refused, never read past.
+	for cut := 4; cut < len(stream); cut += 4 {
+		_, cut_problem := stream_validate(stream[:cut])
+		decoder := decoder_init(stream)
+		whole := 0
+		for decoder.cursor < cut {
+			if _, next_problem := command_decode_next(&decoder); next_problem != .None {
+				break
+			}
+			whole = decoder.cursor
+		}
+		if whole == cut {
+			testing.expect_value(t, cut_problem, Venus_Problem.None)
+		} else {
+			testing.expectf(t, cut_problem == .Stream_Truncated, "a cut at %d must be refused as truncated, got %v", cut, cut_problem)
+		}
+	}
+	_, empty := stream_validate(nil)
+	testing.expect_value(t, empty, Venus_Problem.Stream_Empty)
+	_, odd := stream_validate(stream[:6])
+	testing.expect_value(t, odd, Venus_Problem.Misaligned_Length)
 
-	handles := Venus_Translation_Handles{
-		command_buffer_id   = 100,
-		queue_id            = 200,
-		fence_id            = 300,
-		render_pass_id_base = 1000,
-		framebuffer_id_base = 2000,
-		buffer_id_base      = 3000,
-		image_id_base       = 4000,
-		pipeline_id_base    = 5000,
-		descriptor_set_base = 6000,
+	// Every single-bit flip of the stream decodes or is refused, never more.
+	flipped: [8192]u8
+	for bit in 0 ..< len(stream) * 8 {
+		copy(flipped[:len(stream)], stream)
+		flipped[bit / 8] ~= u8(1) << u8(bit % 8)
+		_, _ = stream_validate(flipped[:len(stream)])
 	}
 
-	venus_buf: [4096]u8
-	for i in 0 ..< len(venus_buf) {
-		venus_buf[i] = 0xAA
+	draw: [32]u8
+	encoder = encoder_init(draw[:])
+	_ = encode_cmd_draw(&encoder, 1, 3, 1, 0, 0)
+	testing.expect_value(t, decode_one(draw[:]), Venus_Problem.None)
+	put_word(draw[:], 0, 107 + 1000)
+	testing.expect_value(t, decode_one(draw[:]), Venus_Problem.Unknown_Command_Type)
+	put_word(draw[:], 0, 1) // vkDestroyInstance: not a command of this package
+	testing.expect_value(t, decode_one(draw[:]), Venus_Problem.Unknown_Command_Type)
+	put_word(draw[:], 0, 106)
+	put_word(draw[:], 4, 2)
+	testing.expect_value(t, decode_one(draw[:]), Venus_Problem.Unknown_Command_Flags)
+	put_word(draw[:], 4, 0)
+	byte_order.write_u64_little_endian(draw[:], 8, 0)
+	testing.expect_value(t, decode_one(draw[:]), Venus_Problem.Zero_Object_Id)
+
+	buffer: [128]u8
+	encoder = encoder_init(buffer[:])
+	_ = encode_create_buffer(&encoder, 3, 9, 4096, {.Vertex_Buffer})
+	length := encoder.used_bytes
+	// The words of vkCreateBuffer: 0 type, 4 flags, 8 device, 16 pointer,
+	// 24 sType, 28 pNext, 36 flags, 40 size, 48 usage, 52 sharing mode,
+	// 56 family count, 60 families, 68 pAllocator, 76 pBuffer, 84 id.
+	cases := [?]struct {
+		offset: int,
+		value:  u32,
+		want:   Venus_Problem,
+	}{
+		{16, 2, .Pointer_Invalid},
+		{16, 0, .Pointer_Invalid},
+		{24, 13, .Structure_Type_Mismatch},
+		{24, 0xFFFF_FFFF, .Structure_Type_Mismatch},
+		{28, 1, .Next_Chain_Refused},
+		{36, 1, .Unknown_Flag_Bits},
+		{48, 0x200, .Unknown_Flag_Bits},
+		{52, 2, .Unknown_Enum_Word},
+		{56, MAX_ARRAY_ELEMENTS + 1, .Count_Out_Of_Range},
+		// The count of families is 0: an array of another size is refused.
+		{60, 3, .Array_Size_Mismatch},
+		{68, 1, .Pointer_Invalid},
+		{76, 0, .Pointer_Invalid},
+	}
+	for entry in cases {
+		corrupt: [128]u8
+		copy(corrupt[:], buffer[:length])
+		put_word(corrupt[:], entry.offset, entry.value)
+		testing.expectf(t, decode_one(corrupt[:length]) == entry.want, "word at %d = 0x%x: want %v, got %v", entry.offset, entry.value, entry.want, decode_one(corrupt[:length]))
+	}
+	{
+		corrupt: [128]u8
+		copy(corrupt[:], buffer[:length])
+		byte_order.write_u64_little_endian(corrupt[:], 40, 0)
+		testing.expect_value(t, decode_one(corrupt[:length]), Venus_Problem.Zero_Extent)
+		copy(corrupt[:], buffer[:length])
+		byte_order.write_u64_little_endian(corrupt[:], 80, 0)
+		testing.expect_value(t, decode_one(corrupt[:length]), Venus_Problem.Zero_Object_Id)
 	}
 
-	// Zero command_buffer_id or queue_id refused without touching destination.
-	bad_handles := handles
-	bad_handles.command_buffer_id = 0
-	w0, p0 := webgpu_stream_to_venus(ws_stream, reg, bad_handles, venus_buf[:])
-	testing.expect_value(t, p0, Venus_Problem.Zero_Handle_Id)
-	testing.expect_value(t, w0, 0)
-	testing.expect_value(t, venus_buf[0], u8(0xAA))
+	// An unknown union tag of a clear value, and of a clear color.
+	pass: [256]u8
+	encoder = encoder_init(pass[:])
+	clear := [1]Clear_Value{[4]u32{1, 2, 3, 4}}
+	_ = encode_cmd_begin_render_pass(&encoder, 1, 2, 3, {width = 1, height = 1}, clear[:])
+	pass_length := encoder.used_bytes
+	// 0 type, 4 flags, 8 cb, 16 pointer, 24 sType, 28 pNext, 36 pass, 44 fb,
+	// 52 area, 68 count, 72 size, 80 tag, 84 color tag, 88 size, 96 words, 112 contents.
+	put_word(pass[:], 80, 2)
+	testing.expect_value(t, decode_one(pass[:pass_length]), Venus_Problem.Unknown_Union_Tag)
+	put_word(pass[:], 80, 0)
+	put_word(pass[:], 84, 3)
+	testing.expect_value(t, decode_one(pass[:pass_length]), Venus_Problem.Unknown_Union_Tag)
+	put_word(pass[:], 84, 2)
+	put_word(pass[:], 112, 1)
+	testing.expect_value(t, decode_one(pass[:pass_length]), Venus_Problem.Unknown_Enum_Word)
+	put_word(pass[:], 112, 0)
+	testing.expect_value(t, decode_one(pass[:pass_length]), Venus_Problem.None)
 
-	// Invalid WebGPU stream refused without touching destination.
-	bad_ws := webgpu_subset.Gpu_Command_Stream{bytes = ws_stream.bytes[:len(ws_stream.bytes) - 1]}
-	w1, p1 := webgpu_stream_to_venus(bad_ws, reg, handles, venus_buf[:])
-	testing.expect_value(t, p1, Venus_Problem.Webgpu_Stream_Invalid)
-	testing.expect_value(t, w1, 0)
-	testing.expect_value(t, venus_buf[0], u8(0xAA))
+	// A string with no null byte, and a string longer than the bound.
+	instance: [256]u8
+	encoder = encoder_init(instance[:])
+	_ = encode_create_instance(&encoder, 1, {application_name = "abc"})
+	instance_length := encoder.used_bytes
+	// The name: size at 52, bytes at 60.
+	instance[63] = 'd'
+	testing.expect_value(t, decode_one(instance[:instance_length]), Venus_Problem.String_Unterminated)
+	instance[63] = 0
+	byte_order.write_u64_little_endian(instance[:], 52, MAX_STRING_BYTES + 1)
+	testing.expect_value(t, decode_one(instance[:instance_length]), Venus_Problem.String_Too_Long)
 
-	// Valid translation.
-	written, trans_prob := webgpu_stream_to_venus(ws_stream, reg, handles, venus_buf[:])
-	testing.expect_value(t, trans_prob, Venus_Problem.None)
-	testing.expect(t, written > 0 && written % 4 == 0, "translated Venus stream must be non-empty and 4-byte aligned")
-
-	// Destination 1 byte too short must refuse with zero bytes written.
-	short_dst: [4096]u8
-	for i in 0 ..< len(short_dst) {
-		short_dst[i] = 0xCC
+	// A ring whose layout is not the layout of this package.
+	ring: [256]u8
+	encoder = encoder_init(ring[:])
+	info := Ring_Create_Info{
+		resource_id = 1, size = 192 + 4096, head_offset = RING_HEAD_OFFSET, tail_offset = RING_TAIL_OFFSET,
+		status_offset = RING_STATUS_OFFSET, buffer_offset = RING_BUFFER_OFFSET, buffer_size = 4096, extra_offset = 192 + 4096,
 	}
-	w_short, p_short := webgpu_stream_to_venus(ws_stream, reg, handles, short_dst[:written - 1])
-	testing.expect_value(t, p_short, Venus_Problem.Buffer_Too_Short)
-	testing.expect_value(t, w_short, 0)
-	testing.expect_value(t, short_dst[0], u8(0xCC))
-
-	// Translated stream passes Venus validation with exact counts.
-	summary, val_prob := stream_validate(venus_buf[:written])
-	testing.expect_value(t, val_prob, Venus_Problem.None)
-	testing.expect_value(t, summary.command_count, u32(13)) // Begin_CB + 10 translated + End_CB + Queue_Submit
-	testing.expect_value(t, summary.render_pass_count, u32(1))
-	testing.expect_value(t, summary.draw_call_count, u32(2))
-	testing.expect_value(t, summary.copy_count, u32(1))
-	testing.expect_value(t, summary.submit_count, u32(1))
-
-	// Wrap directly into VirtIO-GPU Submit_3D and verify round-trip decode.
-	submit_buf: [4096]u8
-	submit_written, submit_prob := webgpu_stream_to_submit_3d(7, ws_stream, reg, handles, submit_buf[:], 99)
-	testing.expect_value(t, submit_prob, Venus_Problem.None)
-	testing.expect_value(t, submit_written, virtio_gpu.SUBMIT_3D_HEADER_SIZE + written)
-
-	frame, frame_prob := virtio_gpu.submit_3d_decode(submit_buf[:submit_written])
-	testing.expect_value(t, frame_prob, virtio_gpu.Validation_Problem.None)
-	testing.expect_value(t, frame.header.ctx_id, u32(7))
-	testing.expect_value(t, frame.header.fence_id, u64(99))
-	testing.expect_value(t, len(frame.payload), written)
-
-	payload_summary, payload_prob := stream_validate(frame.payload)
-	testing.expect_value(t, payload_prob, Venus_Problem.None)
-	testing.expect_value(t, payload_summary, summary)
+	testing.expect_value(t, encode_create_ring(&encoder, 7, info), Venus_Problem.None)
+	ring_length := encoder.used_bytes
+	// 0 type, 4 flags, 8 ring, 16 pointer, 24 sType, 28 pNext, 36 flags,
+	// 40 resource, 44 offset, 52 size, 60 idle, 68 head, 76 tail, 84 status,
+	// 92 buffer offset, 100 buffer size, 108 extra offset, 116 extra size.
+	byte_order.write_u64_little_endian(ring[:], 100, 4097)
+	testing.expect_value(t, decode_one(ring[:ring_length]), Venus_Problem.Ring_Buffer_Size_Invalid)
+	byte_order.write_u64_little_endian(ring[:], 100, 4096)
+	byte_order.write_u64_little_endian(ring[:], 52, 100)
+	testing.expect_value(t, decode_one(ring[:ring_length]), Venus_Problem.Ring_Memory_Too_Small)
+	byte_order.write_u64_little_endian(ring[:], 52, 192 + 4096)
+	put_word(ring[:], 40, 0)
+	testing.expect_value(t, decode_one(ring[:ring_length]), Venus_Problem.Zero_Object_Id)
 }

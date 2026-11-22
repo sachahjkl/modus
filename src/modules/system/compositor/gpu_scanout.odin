@@ -3,7 +3,7 @@
 //
 // When root discovered a VirtIO-GPU PCI device (0x1AF4:0x1050) and started
 // gpu_device, it passes the client ring at GRANT_GPU_RING. The compositor
-// queries Display_Info and Probe_Venus at startup, attaches its framebuffer
+// queries Display_Info and Venus_Info at startup, attaches its framebuffer
 // memory via Attach_Framebuffer, and flushes damaged rectangles via
 // Present_Rect inside screen_put. When no VirtIO-GPU is present (handle 0),
 // every procedure is a zero-cost no-op.
@@ -76,7 +76,7 @@ gpu_scanout_open :: proc "contextless" (ctx: ^system.Context, frame_memory: syst
 	} else {
 		return
 	}
-	if reply, ok := gpu_call(.Probe_Venus); ok {
+	if reply, ok := gpu_call(.Venus_Info); ok {
 		gpu_venus_available = reply.values[0] != 0
 		gpu_venus_max_version = u32(reply.values[1])
 	}

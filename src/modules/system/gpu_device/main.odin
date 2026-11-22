@@ -3,8 +3,10 @@
 // VirtIO-GPU features, drives the control queue for 2D scanout setup and
 // rectangle presentation (Get_Display_Info, Resource_Create_2D,
 // Resource_Attach_Backing, Set_Scanout, Transfer_To_Host_2D, Resource_Flush,
-// Resource_Unref), and probes host Venus capability sets for Vulkan forwarding
-// (src/md/features/gpu_access.md).
+// Resource_Unref), and, when the device carries Venus, creates one Venus
+// context with the blob of its command ring and submits client Venus streams
+// with Submit_3D (src/md/features/gpu_access.md). A device with no Venus keeps
+// its 2D scanout unchanged.
 //
 // It holds only its one PCI device (registers, interrupt, queue memory,
 // configuration copy, machine physical handle) and its client ring. No driver
@@ -17,6 +19,7 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
+import "modus:contract/venus_vulkan"
 import "modus:contract/virtio_gpu"
 import "modus:pci"
 import "modus:system"
@@ -28,16 +31,29 @@ import "modus:virtio"
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 190, processes = 1, threads = 1}
 
 // Memory layout inside pci.GRANT_QUEUES (pci.QUEUE_PAGES == 8):
-// pages 0..2 hold the control virtqueue, page 3 holds the outbound command
-// buffer, and page 4 holds the inbound response buffer.
+// pages 0..2 hold the control virtqueue, pages 3..6 hold the outbound
+// command buffer, and page 7 holds the inbound response buffer. The command
+// buffer is four pages so that one Submit_3D carries a client Venus stream.
 PAGE_CONTROL_QUEUE :: 0
 PAGE_REQUEST_BUFFER :: PAGE_CONTROL_QUEUE + virtio.QUEUE_PAGES
-PAGE_RESPONSE_BUFFER :: PAGE_REQUEST_BUFFER + 1
+REQUEST_BUFFER_PAGES :: 4
+PAGE_RESPONSE_BUFFER :: PAGE_REQUEST_BUFFER + REQUEST_BUFFER_PAGES
 #assert(PAGE_RESPONSE_BUFFER < pci.QUEUE_PAGES)
 
-CONTROL_BUFFER_BYTES :: system.PAGE_SIZE
+REQUEST_BUFFER_BYTES :: REQUEST_BUFFER_PAGES * system.PAGE_SIZE
+// The largest response that the service reads: the display info.
+RESPONSE_COPY_BYTES :: virtio_gpu.RESP_DISPLAY_INFO_SIZE
 MAX_CAPSETS_PROBED :: u32(16)
 DEVICE_ANSWER_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
+
+// The one Venus context of the service and its command ring blob.
+VENUS_CONTEXT_ID :: u32(1)
+VENUS_CONTEXT_NAME :: "modus-venus"
+VENUS_RING_BUFFER_BYTES :: u32(64 * 1024)
+VENUS_RING_BLOB_BYTES :: (u64(venus_vulkan.RING_BUFFER_OFFSET) + u64(VENUS_RING_BUFFER_BYTES) + system.PAGE_SIZE - 1) / system.PAGE_SIZE * system.PAGE_SIZE
+MAX_VENUS_SUBMIT_BYTES :: REQUEST_BUFFER_BYTES - virtio_gpu.SUBMIT_3D_HEADER_SIZE
+#assert(virtio_gpu.CTRL_HEADER_SIZE + venus_vulkan.VENUS_CAPSET_BYTES <= RESPONSE_COPY_BYTES)
+#assert(virtio_gpu.RESP_MAP_INFO_SIZE <= RESPONSE_COPY_BYTES)
 
 // VirtIO-GPU feature mask requested during negotiation: Virgl 3D, blob
 // resources, and context init (for Venus capset contexts).
@@ -55,6 +71,7 @@ clients: ring.Ring
 ring_memory: system.Handle
 
 // Negotiated features and device configuration metadata.
+offered_features: u32
 has_virgl: bool
 has_resource_blob: bool
 has_context_init: bool
@@ -70,6 +87,16 @@ display_height: u32
 venus_available: bool
 venus_max_version: u32
 venus_max_size: u32
+
+// The Venus context: 0 when the device carries no Venus. The ring blob is a
+// host blob attached to the context; its mapping into a process waits for the
+// device mapping of the kernel, so the service reports its cache type only.
+venus_support: virtio_gpu.Venus_Support
+venus_capset: venus_vulkan.Venus_Capset
+venus_context_id: u32
+venus_ring_resource_id: u32
+venus_ring_mapped: bool
+venus_ring_cache: virtio_gpu.Map_Cache
 
 // Currently attached 2D scanout framebuffer.
 framebuffer_memory: system.Handle
@@ -88,8 +115,8 @@ fail :: proc "contextless" (text: string) -> ! {
 // control_exchange submits request_bytes from request_buffer on control_queue
 // and waits for the device response in response_buffer up to the hang bound.
 // The response is copied once out of DMA memory before validation.
-control_exchange :: proc "contextless" (name: string, request_bytes: u32, expected_response_bytes: u32) -> (response: [virtio_gpu.RESP_DISPLAY_INFO_SIZE]u8, received: u32, ok: bool) {
-	if request_bytes == 0 || request_bytes > CONTROL_BUFFER_BYTES || expected_response_bytes == 0 || expected_response_bytes > len(response) {
+control_exchange :: proc "contextless" (name: string, request_bytes: u32, expected_response_bytes: u32) -> (response: [RESPONSE_COPY_BYTES]u8, received: u32, ok: bool) {
+	if request_bytes == 0 || request_bytes > REQUEST_BUFFER_BYTES || expected_response_bytes == 0 || expected_response_bytes > len(response) {
 		return {}, 0, false
 	}
 	control_queue.descriptors[0] = {
@@ -148,7 +175,7 @@ control_nodata :: proc "contextless" (name: string, request_bytes: int) -> (head
 
 // query_display_info executes Get_Display_Info and selects the first enabled scanout.
 query_display_info :: proc "contextless" () {
-	written, enc_problem := virtio_gpu.get_display_info_encode(request_buffer[:CONTROL_BUFFER_BYTES])
+	written, enc_problem := virtio_gpu.get_display_info_encode(request_buffer[:REQUEST_BUFFER_BYTES])
 	if enc_problem != .None {
 		fail("failed to encode Get_Display_Info")
 	}
@@ -185,7 +212,7 @@ probe_venus_capsets :: proc "contextless" () {
 	}
 	limit := min(num_capsets, MAX_CAPSETS_PROBED)
 	for capset_index in u32(0) ..< limit {
-		written, enc_problem := virtio_gpu.get_capset_info_encode(capset_index, request_buffer[:CONTROL_BUFFER_BYTES])
+		written, enc_problem := virtio_gpu.get_capset_info_encode(capset_index, request_buffer[:REQUEST_BUFFER_BYTES])
 		if enc_problem != .None {
 			continue
 		}
@@ -207,8 +234,187 @@ probe_venus_capsets :: proc "contextless" () {
 	}
 }
 
+// venus_unavailable records why the device carries no Venus. A device with no
+// 3D feature is the common 2D case and logs nothing more.
+venus_unavailable :: proc "contextless" (reason: string) {
+	venus_context_id = 0
+	if has_virgl {
+		system.log_fact(.Info, Venus_Unavailable{reason = value_kinds.text_field(reason, REASON_FIELD_BYTES)})
+	}
+}
+
+// venus_context_start creates the Venus context when the device carries
+// Venus: Get_Capset, Ctx_Create with the Venus capset, then the blob of the
+// command ring (Resource_Create_Blob, Ctx_Attach_Resource, Resource_Map_Blob).
+// A refusal before Ctx_Create leaves the service with 2D scanout only; a
+// refusal after it leaves the context without a ring, and Submit_3D still
+// carries the client streams.
+venus_context_start :: proc "contextless" () {
+	venus_support = virtio_gpu.venus_support_check(offered_features, venus_available)
+	switch venus_support {
+	case .Available:
+	case .No_Virgl_Feature:
+		venus_unavailable("the device has no virgl feature")
+		return
+	case .No_Resource_Blob_Feature:
+		venus_unavailable("the device has no blob feature")
+		return
+	case .No_Context_Init_Feature:
+		venus_unavailable("the device has no context init feature")
+		return
+	case .No_Venus_Capset:
+		venus_unavailable("the device has no venus capset")
+		return
+	}
+
+	capset_written, capset_problem := virtio_gpu.get_capset_encode(.Venus, venus_max_version, request_buffer[:REQUEST_BUFFER_BYTES])
+	if capset_problem != .None {
+		venus_unavailable("GET_CAPSET was not encoded")
+		return
+	}
+	capset_bytes := min(venus_max_size, RESPONSE_COPY_BYTES - virtio_gpu.CTRL_HEADER_SIZE) &~ 3
+	response, received, answered := control_exchange("GET_CAPSET", u32(capset_written), virtio_gpu.CTRL_HEADER_SIZE + capset_bytes)
+	if !answered {
+		venus_unavailable("the device did not answer GET_CAPSET")
+		return
+	}
+	capset_response, response_problem := virtio_gpu.capset_response_decode(response[:received])
+	if response_problem != .None {
+		venus_unavailable("the device refused GET_CAPSET")
+		return
+	}
+	capset_problem_venus: venus_vulkan.Venus_Problem
+	venus_capset, capset_problem_venus = venus_vulkan.venus_capset_decode(capset_response.data[:len(capset_response.data) &~ 3])
+	if capset_problem_venus != .None {
+		venus_unavailable("the venus capset is not of wire format 1")
+		return
+	}
+
+	create_written, create_problem := virtio_gpu.ctx_create_encode(VENUS_CONTEXT_ID, .Venus, VENUS_CONTEXT_NAME, request_buffer[:REQUEST_BUFFER_BYTES])
+	if create_problem != .None {
+		venus_unavailable("CTX_CREATE was not encoded")
+		return
+	}
+	if _, ok := control_nodata("CTX_CREATE", create_written); !ok {
+		venus_unavailable("the device refused CTX_CREATE")
+		return
+	}
+	venus_context_id = VENUS_CONTEXT_ID
+	venus_ring_start()
+	system.log_fact(.Info, Venus_Context_Ready{
+		context_id       = u64(venus_context_id),
+		vk_xml_version   = u64(venus_capset.vk_xml_version),
+		ring_resource_id = u64(venus_ring_resource_id),
+		ring_mapped      = u64(venus_ring_mapped),
+		ring_cache       = u64(venus_ring_cache),
+	})
+}
+
+// venus_ring_start creates the host blob of the command ring and asks its
+// cache type. A blob with id 0 is shared memory of the renderer; a host that
+// does not announce it gets no ring.
+venus_ring_start :: proc "contextless" () {
+	if !venus_capset.supports_blob_id_0 {
+		return
+	}
+	resource_id := next_resource_id
+	blob_written, blob_problem := virtio_gpu.resource_create_blob_encode(venus_context_id, resource_id, .Host3D, {.Use_Mappable}, 0, 0, VENUS_RING_BLOB_BYTES, request_buffer[:REQUEST_BUFFER_BYTES])
+	if blob_problem != .None {
+		return
+	}
+	if _, ok := control_nodata("RESOURCE_CREATE_BLOB", blob_written); !ok {
+		return
+	}
+	next_resource_id += 1
+	if next_resource_id == 0 {
+		next_resource_id = 1
+	}
+	venus_ring_resource_id = resource_id
+	attach_written, attach_problem := virtio_gpu.ctx_attach_resource_encode(venus_context_id, resource_id, request_buffer[:REQUEST_BUFFER_BYTES])
+	if attach_problem != .None {
+		return
+	}
+	if _, ok := control_nodata("CTX_ATTACH_RESOURCE", attach_written); !ok {
+		return
+	}
+	map_written, map_problem := virtio_gpu.resource_map_blob_encode(resource_id, 0, request_buffer[:REQUEST_BUFFER_BYTES])
+	if map_problem != .None {
+		return
+	}
+	response, received, answered := control_exchange("RESOURCE_MAP_BLOB", u32(map_written), virtio_gpu.RESP_MAP_INFO_SIZE)
+	if !answered {
+		return
+	}
+	map_info, info_problem := virtio_gpu.map_info_response_decode(response[:received])
+	if info_problem != .None {
+		return
+	}
+	venus_ring_mapped = true
+	venus_ring_cache = map_info.cache
+}
+
+// venus_submit sends a client Venus stream to the context with Submit_3D.
+// The stream is copied out of the client memory first and decoded whole, so
+// the device receives the bytes that the service checked.
+venus_submit :: proc "contextless" (command: ring.Record) -> (status: virtio_gpu.Service_Status, values: [7]u64) {
+	SUBMIT :: u32(virtio_gpu.Service_Command.Venus_Submit)
+	handle := system.Handle(command.values[0])
+	kind, rights, through := system.handle_state(handle, ring_memory)
+	// A handle that came through the ring belongs to the service now.
+	defer {
+		if through {
+			system.close(handle)
+		}
+	}
+	needed := system.Rights{.Read}
+	switch {
+	case kind != .Memory:
+		return .Bad_Command, errors.ring_fail(SUBMIT, .Handle_Kind, .None, 1, i64(handle), i64(op.Object_Kind.Memory), i64(kind))
+	case !(needed <= rights):
+		return .Bad_Command, errors.ring_fail(SUBMIT, .Handle_Rights, .None, 1, i64(handle), i64(transmute(u32)needed), i64(transmute(u32)rights))
+	case !through:
+		return .Bad_Command, errors.ring_fail(SUBMIT, .Absent, .Region, 1)
+	}
+	if venus_context_id == 0 {
+		return .Unsupported, errors.ring_fail(SUBMIT, .Unsupported, .None, 0)
+	}
+	offset := command.values[1]
+	length := command.values[2]
+	if length == 0 || length % 4 != 0 || length > MAX_VENUS_SUBMIT_BYTES {
+		return .Out_Of_Range, errors.ring_fail(SUBMIT, .Bad_Value, .Bytes, 3, i64(min(length, 1 << 62)), MAX_VENUS_SUBMIT_BYTES)
+	}
+	pages, size_status := system.memory_size(handle)
+	if size_status != .Ok {
+		return .Bad_Command, errors.ring_fail(SUBMIT, .Refused, .None, 1, i64(handle), 0, i64(size_status))
+	}
+	region_bytes := pages * system.PAGE_SIZE
+	if offset > region_bytes || length > region_bytes - offset {
+		return .Out_Of_Range, errors.ring_fail(SUBMIT, .Out_Of_Range, .Bytes, 2, i64(min(offset, 1 << 62)), i64(region_bytes))
+	}
+	address, map_status := system.memory_map(handle, {})
+	if map_status != .Ok {
+		return .Bad_Command, errors.ring_fail(SUBMIT, .Refused, .None, 1, i64(handle), 0, i64(map_status))
+	}
+	payload := request_buffer[virtio_gpu.SUBMIT_3D_HEADER_SIZE:][:length]
+	intrinsics.mem_copy_non_overlapping(raw_data(payload), rawptr(uintptr(address) + uintptr(offset)), int(length))
+	system.memory_unmap(address)
+
+	if _, stream_problem := venus_vulkan.stream_validate(payload); stream_problem != .None {
+		return .Bad_Command, errors.ring_fail(SUBMIT, .Bad_Value, .None, 1, i64(stream_problem))
+	}
+	header_written, header_problem := virtio_gpu.submit_3d_header_encode(venus_context_id, int(length), request_buffer[:REQUEST_BUFFER_BYTES])
+	if header_problem != .None {
+		return .Bad_Command, errors.ring_fail(SUBMIT, .Bad_Value, .None, 0, i64(header_problem))
+	}
+	if _, ok := control_nodata("SUBMIT_3D", header_written + int(length)); !ok {
+		return .Device_Error, errors.ring_fail(SUBMIT, .Device, .None, 0)
+	}
+	return .Ok, {0 = length}
+}
+
 // start_device negotiates VirtIO-GPU features, initializes controlq, queries
-// display geometry, and probes Venus capability sets.
+// display geometry, probes Venus capability sets, and creates the Venus
+// context when the device carries Venus.
 start_device :: proc "contextless" (queues: system.Handle) {
 	offered, start_error := virtio.start(&device, WANTED_FEATURES)
 	switch start_error {
@@ -220,6 +426,7 @@ start_device :: proc "contextless" (queues: system.Handle) {
 	case .Reset_Not_Done:
 		fail("the device did not finish its reset")
 	}
+	offered_features = offered
 	has_virgl = offered & (1 << virtio_gpu.FEATURE_VIRGL) != 0
 	has_resource_blob = offered & (1 << virtio_gpu.FEATURE_RESOURCE_BLOB) != 0
 	has_context_init = offered & (1 << virtio_gpu.FEATURE_CONTEXT_INIT) != 0
@@ -262,6 +469,7 @@ start_device :: proc "contextless" (queues: system.Handle) {
 	virtio.ready(&device)
 	query_display_info()
 	probe_venus_capsets()
+	venus_context_start()
 	system.log_fact(.Info, Device_Ready{
 		scanout    = u64(active_scanout_id),
 		width      = u64(display_width),
@@ -317,7 +525,7 @@ attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virt
 
 	// Release any previous 2D resource before creating the replacement scanout.
 	if framebuffer_resource_id != 0 {
-		if unref_written, unref_prob := virtio_gpu.resource_unref_encode(framebuffer_resource_id, request_buffer[:CONTROL_BUFFER_BYTES]); unref_prob == .None {
+		if unref_written, unref_prob := virtio_gpu.resource_unref_encode(framebuffer_resource_id, request_buffer[:REQUEST_BUFFER_BYTES]); unref_prob == .None {
 			_, _ = control_nodata("RESOURCE_UNREF", unref_written)
 		}
 		if framebuffer_memory != 0 {
@@ -334,7 +542,7 @@ attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virt
 	}
 
 	// 1. Resource_Create_2D
-	create_bytes, create_prob := virtio_gpu.resource_create_2d_encode(resource_id, format, width, height, request_buffer[:CONTROL_BUFFER_BYTES])
+	create_bytes, create_prob := virtio_gpu.resource_create_2d_encode(resource_id, format, width, height, request_buffer[:REQUEST_BUFFER_BYTES])
 	if create_prob != .None {
 		return .Bad_Command, errors.ring_fail(ATTACH, .Bad_Value, .None, 0, i64(create_prob))
 	}
@@ -344,12 +552,12 @@ attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virt
 
 	// 2. Resource_Attach_Backing
 	backing := [1]virtio_gpu.Mem_Entry{{address = physical, length = u32(required_bytes)}}
-	attach_bytes, attach_prob := virtio_gpu.resource_attach_backing_encode(resource_id, backing[:], request_buffer[:CONTROL_BUFFER_BYTES])
+	attach_bytes, attach_prob := virtio_gpu.resource_attach_backing_encode(resource_id, backing[:], request_buffer[:REQUEST_BUFFER_BYTES])
 	if attach_prob != .None {
 		return .Bad_Command, errors.ring_fail(ATTACH, .Bad_Value, .None, 0, i64(attach_prob))
 	}
 	if _, ok := control_nodata("RESOURCE_ATTACH_BACKING", attach_bytes); !ok {
-		if unref_written, unref_prob := virtio_gpu.resource_unref_encode(resource_id, request_buffer[:CONTROL_BUFFER_BYTES]); unref_prob == .None {
+		if unref_written, unref_prob := virtio_gpu.resource_unref_encode(resource_id, request_buffer[:REQUEST_BUFFER_BYTES]); unref_prob == .None {
 			_, _ = control_nodata("RESOURCE_UNREF", unref_written)
 		}
 		return .Device_Error, errors.ring_fail(ATTACH, .Device, .None, 0)
@@ -357,12 +565,12 @@ attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virt
 
 	// 3. Set_Scanout
 	full_rect := virtio_gpu.Rect{x = 0, y = 0, width = width, height = height}
-	scanout_bytes, scanout_prob := virtio_gpu.set_scanout_encode(active_scanout_id, resource_id, full_rect, width, height, request_buffer[:CONTROL_BUFFER_BYTES])
+	scanout_bytes, scanout_prob := virtio_gpu.set_scanout_encode(active_scanout_id, resource_id, full_rect, width, height, request_buffer[:REQUEST_BUFFER_BYTES])
 	if scanout_prob != .None {
 		return .Bad_Command, errors.ring_fail(ATTACH, .Bad_Value, .None, 0, i64(scanout_prob))
 	}
 	if _, ok := control_nodata("SET_SCANOUT", scanout_bytes); !ok {
-		if unref_written, unref_prob := virtio_gpu.resource_unref_encode(resource_id, request_buffer[:CONTROL_BUFFER_BYTES]); unref_prob == .None {
+		if unref_written, unref_prob := virtio_gpu.resource_unref_encode(resource_id, request_buffer[:REQUEST_BUFFER_BYTES]); unref_prob == .None {
 			_, _ = control_nodata("RESOURCE_UNREF", unref_written)
 		}
 		return .Device_Error, errors.ring_fail(ATTACH, .Device, .None, 0)
@@ -403,7 +611,7 @@ present_rect :: proc "contextless" (command: ring.Record) -> (status: virtio_gpu
 	}
 
 	byte_offset := (u64(rect.y) * u64(framebuffer_width) + u64(rect.x)) * 4
-	transfer_bytes, xfer_prob := virtio_gpu.transfer_to_host_2d_encode(framebuffer_resource_id, rect, byte_offset, framebuffer_width, framebuffer_height, request_buffer[:CONTROL_BUFFER_BYTES])
+	transfer_bytes, xfer_prob := virtio_gpu.transfer_to_host_2d_encode(framebuffer_resource_id, rect, byte_offset, framebuffer_width, framebuffer_height, request_buffer[:REQUEST_BUFFER_BYTES])
 	if xfer_prob != .None {
 		return .Bad_Command, errors.ring_fail(PRESENT, .Bad_Value, .None, 0, i64(xfer_prob))
 	}
@@ -411,7 +619,7 @@ present_rect :: proc "contextless" (command: ring.Record) -> (status: virtio_gpu
 		return .Device_Error, errors.ring_fail(PRESENT, .Device, .None, 0)
 	}
 
-	flush_bytes, flush_prob := virtio_gpu.resource_flush_encode(framebuffer_resource_id, rect, framebuffer_width, framebuffer_height, request_buffer[:CONTROL_BUFFER_BYTES])
+	flush_bytes, flush_prob := virtio_gpu.resource_flush_encode(framebuffer_resource_id, rect, framebuffer_width, framebuffer_height, request_buffer[:REQUEST_BUFFER_BYTES])
 	if flush_prob != .None {
 		return .Bad_Command, errors.ring_fail(PRESENT, .Bad_Value, .None, 0, i64(flush_prob))
 	}
@@ -480,15 +688,18 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					result, values = attach_framebuffer(command)
 				case .Present_Rect:
 					result, values = present_rect(command)
-				case .Probe_Venus:
+				case .Venus_Info:
 					values = {
-						0 = u64(venus_available),
+						0 = u64(venus_context_id != 0),
 						1 = u64(venus_max_version),
 						2 = u64(venus_max_size),
-						3 = u64(num_capsets),
-						4 = u64(has_resource_blob),
-						5 = u64(has_context_init),
+						3 = u64(venus_support),
+						4 = u64(venus_context_id),
+						5 = u64(venus_capset.vk_xml_version),
+						6 = u64(venus_ring_resource_id),
 					}
+				case .Venus_Submit:
+					result, values = venus_submit(command)
 				}
 			}
 			ring.push(&clients.completions, ring.Record{kind = u32(result), tag = command.tag, values = values})
@@ -508,4 +719,4 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 #assert(virtio_gpu.PCI_VENDOR_ID == pci.VENDOR_VIRTIO)
 #assert(virtio_gpu.PCI_DEVICE_ID == pci.DEVICE_VIRTIO_GPU)
-#assert(virtio_gpu.RESP_DISPLAY_INFO_SIZE <= CONTROL_BUFFER_BYTES)
+#assert(virtio_gpu.RESP_DISPLAY_INFO_SIZE <= system.PAGE_SIZE)

@@ -7,7 +7,7 @@ import "modus:contract/byte_order"
 @(test)
 border_enum_refusals :: proc(t: ^testing.T) {
 	// Unknown command words: 0, 1, gaps, one past highest, max(u32).
-	for word in ([]u32{0, 1, 0x00FF, 0x010A, 0x010D, 0x01FF, 0x0208, 0x10FF, 0x1104, 0x11FF, 0x1206, max(u32)}) {
+	for word in ([]u32{0, 1, 0x00FF, 0x010E, 0x01FF, 0x020A, 0x0302, 0x10FF, 0x1107, 0x11FF, 0x1206, max(u32)}) {
 		_, ok := command_type_of_word(word)
 		testing.expectf(t, !ok, "unknown command word 0x%x must be refused", word)
 	}
@@ -29,8 +29,8 @@ border_enum_refusals :: proc(t: ^testing.T) {
 		testing.expect_value(t, decoded, member)
 	}
 
-	// Unknown capset identifiers: 0, 6, max(u32).
-	for word in ([]u32{0, 6, 0xFF, max(u32)}) {
+	// Unknown capset identifiers: 0, 7, max(u32).
+	for word in ([]u32{0, 7, 0xFF, max(u32)}) {
 		_, ok := capset_id_of_word(word)
 		testing.expectf(t, !ok, "unknown capset id %d must be refused", word)
 	}
@@ -51,7 +51,7 @@ border_enum_refusals :: proc(t: ^testing.T) {
 	}
 
 	// Service ring command border refuses 0 (None) and unknown words.
-	for word in ([]u32{0, 5, 99, max(u32)}) {
+	for word in ([]u32{0, 6, 99, max(u32)}) {
 		_, ok := service_command_of_ring_word(word)
 		testing.expect(t, !ok, "invalid service command must be refused")
 	}
