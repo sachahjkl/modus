@@ -502,3 +502,30 @@ machine_interrupt_shadow_defers_the_tick :: proc(t: ^testing.T) {
 	_, refusal := op.guest_registers_check(registers)
 	testing.expect_value(t, refusal, op.Guest_Registers_Refusal.None)
 }
+
+@(test)
+host_interruptions_do_not_advance_guest_tsc_and_rdpru_faults :: proc(t: ^testing.T) {
+	machine := new(Linux_Machine)
+	defer free(machine)
+	linux_machine_start(machine, {}, nil, nil)
+	registers := op.Guest_Registers{rip = 0x1000, rflags = 0x2}
+
+	// First rdtsc exit.
+	testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Other, code = u64(Other_Exit_Code.Time_Stamp_Counter), next = 0x1002}), Machine_Step.Continue)
+	tsc1 := (registers.rdx << 32) | (registers.rax & 0xFFFF_FFFF)
+	// Several host-caused .Interrupted exits must not move the guest clock.
+	for _ in 0 ..< 10 {
+		testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Interrupted}), Machine_Step.Continue)
+	}
+	testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Other, code = u64(Other_Exit_Code.Time_Stamp_Counter), next = 0x1004}), Machine_Step.Continue)
+	tsc2 := (registers.rdx << 32) | (registers.rax & 0xFFFF_FFFF)
+	testing.expect_value(t, tsc2 - tsc1, LINUX_TICKS_PER_EXIT * LINUX_TIME_STAMP_COUNTS_PER_TICK)
+
+	// rdpru (0x8E) must inject #UD (vector 6) without advancing rip.
+	registers.inject_kind, registers.inject_vector = 0, 0
+	before_rip := registers.rip
+	testing.expect_value(t, linux_machine_handle_exit(machine, &registers, {kind = .Other, code = u64(Other_Exit_Code.Read_Processor_Register), next = before_rip + 3}), Machine_Step.Continue)
+	testing.expect_value(t, registers.rip, before_rip)
+	testing.expect_value(t, registers.inject_kind, u8(op.Guest_Inject_Kind.Exception))
+	testing.expect_value(t, registers.inject_vector, u8(6))
+}

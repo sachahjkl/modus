@@ -76,6 +76,7 @@ Other_Exit_Code :: enum u64 {
 	Model_Specific_Register = 0x7C, // rdmsr (information 0) or wrmsr (information 1).
 	Time_Stamp_Counter      = 0x6E, // rdtsc, which the kernel intercepts.
 	Time_Stamp_Counter_And_Processor = 0x87, // rdtscp, which the kernel intercepts.
+	Read_Processor_Register = 0x8E, // rdpru, which the kernel intercepts.
 }
 // The access bits of a nested page fault.
 FAULT_ACCESS_WRITE :: u64(1) << 1
@@ -184,7 +185,11 @@ linux_cpuid :: proc "contextless" (leaf: u32, subleaf: u32) -> (a, b, c, d: u32)
 // linux_machine_handle_exit answers one exit: it changes the record, and
 // gives what the process does next.
 linux_machine_handle_exit :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Guest_Registers, exit: Machine_Exit) -> Machine_Step {
-	machine.clock += LINUX_TICKS_PER_EXIT
+	// Host-caused interruptions must not advance the guest clock, or the guest
+	// can count host interrupts and measure real machine time.
+	if exit.kind != .Interrupted {
+		machine.clock += LINUX_TICKS_PER_EXIT
+	}
 	address_of_exit := registers.rip
 	step := Machine_Step.Continue
 	switch exit.kind {
@@ -442,6 +447,8 @@ machine_other :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Gue
 		machine_time_stamp_counter(machine, registers, exit, false)
 	case .Time_Stamp_Counter_And_Processor:
 		machine_time_stamp_counter(machine, registers, exit, true)
+	case .Read_Processor_Register:
+		machine_exception(registers, 6, false) // #UD: do not advance rip.
 	case .Debug:
 		machine_exception(registers, VECTOR_DEBUG, false)
 	case .Alignment_Check:

@@ -93,7 +93,7 @@ INTERCEPT_INSTRUCTIONS :: u32(1 << 0 | 1 << 1 | 1 << 2 | 1 << 3 | 1 << 15 | 1 <<
 // debug exception the exception intercept does not cover), wbinvd (9),
 // monitor, mwait and its conditional form (10 to 12), xsetbv (13). xsetbv
 // would change the XCR0 of the kernel, which the exit does not restore.
-INTERCEPT_MORE_INSTRUCTIONS :: u32(0b111_1111 | 1 << 8 | 1 << 9 | 1 << 10 | 1 << 11 | 1 << 12 | 1 << 13) | guest_rules.INTERCEPT_TIME_STAMP_COUNTER_AND_PROCESSOR
+INTERCEPT_MORE_INSTRUCTIONS :: u32(0b111_1111 | 1 << 8 | 1 << 9 | 1 << 10 | 1 << 11 | 1 << 12 | 1 << 13) | guest_rules.INTERCEPT_TIME_STAMP_COUNTER_AND_PROCESSOR | guest_rules.INTERCEPT_READ_PROCESSOR_REGISTER
 // Each read and each write of a debug register: the exit does not restore
 // DR0 to DR3, which hold the breakpoints of threads.
 INTERCEPT_DEBUG_REGISTERS :: u32(0xFFFF_FFFF)

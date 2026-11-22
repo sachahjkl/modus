@@ -687,6 +687,12 @@ record_received_mapping_locked :: proc "contextless" (process: ^Process, mapping
 			point_copies_install_locked(process_index, rec, mapping) or_return
 		}
 	case .Read_Write:
+		// Refuse if another recorded process also maps this object: it could
+		// hold a live read mapping with no gate, so writes here would escape
+		// its input history. Control is held and the own mapping counts 1.
+		if intrinsics.atomic_load(&regions[mapping.region].recorded_mappings) > 1 {
+			return .Bad_State
+		}
 		if region_mapped_writable_by_other(process_index, mapping.region) {
 			shared_pages_install_locked(process_index, rec, mapping) or_return
 		}
@@ -1620,7 +1626,7 @@ replay_stand_in_mapping_add_locked :: proc "contextless" (process_index: u32, en
 	case .Read_Write:
 		flags = {.Write}
 	}
-	if _, mapped := map_region(process, region, entry.virtual_address, flags, 0, 0); mapped != .Ok {
+	if _, mapped := map_region(process, region, entry.virtual_address, flags, 0, 0, by_the_process = !in_head); mapped != .Ok {
 		regions[region].references = 1
 		region_release(region)
 		return false

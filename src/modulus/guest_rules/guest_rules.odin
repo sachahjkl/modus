@@ -204,6 +204,7 @@ CONTROL_BLOCK_BYTES :: 4096
 // process answers it from its own clock.
 INTERCEPT_TIME_STAMP_COUNTER :: u32(1) << 14 // rdtsc.
 INTERCEPT_TIME_STAMP_COUNTER_AND_PROCESSOR :: u32(1) << 7 // rdtscp.
+INTERCEPT_READ_PROCESSOR_REGISTER :: u32(1) << 14 // rdpru (MPERF/APERF on Zen 2+).
 
 // The word of the interrupt state in the control area (table B-1): bit 0
 // the interrupt shadow, bit 1 the global interrupt mask of the guest, which
