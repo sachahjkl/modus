@@ -195,10 +195,13 @@ SHARED_MAPPING_PAGE_LIMIT :: u64(64)
 
 // Payload of History_Record_Kind.Shared_Mapping. The head of a history holds
 // one for each mapping of the recorded process whose pages another process
-// writes, before the Page_Delta records of its first bytes. A replay holds no
-// peer, so the kernel maps private pages of the replayer at that place
-// before the first instruction, and each Page_Delta of the history writes
-// them.
+// writes, before the Page_Delta records of its first bytes. A mapping that
+// the recorded process makes after its start, of memory that another
+// process holds, has one right after the Kernel_Completion of its
+// Memory_Map, then the Page_Delta records of its first bytes. A replay holds
+// no peer, so the kernel maps private pages of the replayer at that place,
+// before the first instruction or at that Memory_Map, and each Page_Delta
+// of the history writes them.
 Shared_Mapping_Payload :: struct {
 	virtual_address: u64, // Page-aligned user virtual address of the first page.
 	page_count:      u64, // Pages of the mapping: 1 ..= SHARED_MAPPING_PAGE_LIMIT.
@@ -944,8 +947,9 @@ replay_step_check :: proc "contextless" (actual: Replay_Actual_Event, has_record
 			return {.Missing_Record, u64(actual.kind), 0}
 		}
 	case .Shared_Mapping:
-		// A shared mapping belongs to the head of a history: no event of a
-		// replayed thread is one.
+		// A shared mapping belongs to the head of a history, or follows the
+		// completion of a Memory_Map (replay_shared_mapping_check): no event
+		// of a replayed thread is one.
 		return {.Kind_Mismatch, u64(recorded_kind), u64(actual.kind)}
 	}
 	return {.None, 0, 0}
@@ -1075,6 +1079,85 @@ stand_in_mapping_set_find :: proc "contextless" (set: ^Stand_In_Mapping_Set, vir
 		}
 	}
 	return {}, 0, false
+}
+
+// stand_in_mapping_set_remove_range removes each mapping of the set that
+// lies whole inside the range that a process unmapped. The record keeps the
+// set of the stand-in mappings that its replay will make, by address, so
+// it refuses a mapping that the replay could not hold: one unmap removes
+// what that mapping named, and the other mappings of the same memory object
+// stay. It gives the count of the mappings that it removed.
+stand_in_mapping_set_remove_range :: proc "contextless" (set: ^Stand_In_Mapping_Set, virtual_address: u64, page_count: u64) -> (removed: int) {
+	if set == nil || page_count == 0 || virtual_address >= op.USER_END || page_count > (op.USER_END - virtual_address) / HISTORY_PAGE_SIZE {
+		return 0
+	}
+	end := virtual_address + page_count * HISTORY_PAGE_SIZE
+	index := 0
+	for index < set.count {
+		mapping := set.mappings[index]
+		if mapping.virtual_address < virtual_address || mapping.virtual_address + mapping.page_count * HISTORY_PAGE_SIZE > end {
+			index += 1
+			continue
+		}
+		set.page_count -= mapping.page_count
+		set.count -= 1
+		set.mappings[index] = set.mappings[set.count]
+		set.mappings[set.count] = {}
+		removed += 1
+	}
+	return removed
+}
+
+// shared_mapping_access_of_map_flags gives the access that a record names
+// for a mapping that a recorded process makes, after its start, of memory
+// that another process holds. Refused: Execute (a stand-in mapping never
+// runs code, and a page that a peer writes must not either), No_Access (a
+// point copy needs a page that the process can read), and At_Address_Zero
+// (the memory of a guest, which a recorded process never holds).
+shared_mapping_access_of_map_flags :: proc "contextless" (flags: op.Map_Flags) -> (access: Shared_Mapping_Access, ok: bool) {
+	if .Execute in flags || .No_Access in flags || .At_Address_Zero in flags {
+		return .None, false
+	}
+	if .Write in flags {
+		return .Read_Write, true
+	}
+	return .Read, true
+}
+
+// replay_shared_mapping_check compares a Memory_Map of a replayed process,
+// with the address of its recorded completion, against the Shared_Mapping
+// that the history holds right after that completion. The replay maps a
+// stand-in mapping there only when each of these agrees: the map is in the
+// process itself, its flags give the recorded access, the recorded mapping
+// starts at the recorded completion and at the asked address, and it has
+// the asked count of pages. A count of 0 asks for the rest of the memory
+// object, which the replay does not hold: the history gives it. The first
+// disagreement is an Unexpected_Arguments with the value of the history
+// and the value of the replay.
+replay_shared_mapping_check :: proc "contextless" (command_values: [7]u64, completion_address: u64, entry: Shared_Mapping_Payload, access: Shared_Mapping_Access) -> Replay_Check_Result {
+	if command_values[1] != 0 {
+		return {.Unexpected_Arguments, 0, command_values[1]}
+	}
+	if command_values[3] & ~op.MAP_FLAGS_KNOWN != 0 {
+		return {.Unexpected_Arguments, u64(access), command_values[3]}
+	}
+	asked, asked_ok := shared_mapping_access_of_map_flags(transmute(op.Map_Flags)command_values[3])
+	if !asked_ok {
+		return {.Unexpected_Arguments, u64(access), command_values[3]}
+	}
+	if asked != access {
+		return {.Unexpected_Arguments, u64(access), u64(asked)}
+	}
+	if entry.virtual_address != completion_address {
+		return {.Unexpected_Arguments, entry.virtual_address, completion_address}
+	}
+	if command_values[2] != 0 && command_values[2] != entry.virtual_address {
+		return {.Unexpected_Arguments, entry.virtual_address, command_values[2]}
+	}
+	if command_values[5] != 0 && command_values[5] != entry.page_count {
+		return {.Unexpected_Arguments, entry.page_count, command_values[5]}
+	}
+	return {.None, 0, 0}
 }
 
 // The first divergence of a replay, as a reader shows it: what differed,
