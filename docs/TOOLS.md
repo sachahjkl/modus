@@ -531,7 +531,7 @@ With no process attached, the keys type a name in the name field, then Enter att
 | `d` | Detaches | `detach` |
 | Escape | Takes the focus from the debug place field: the keys above act again | |
 
-**The debug place field.** A debug place is a text that names a place of the debugged process, as the console gives it to the export. A press on the field gives it the focus; then each key is a character of the place. Three buttons under the field take its text:
+**The debug place field.** A debug place is a text that names a place of the debugged process, as the console gives it to the export. A press on the field gives it the focus; then each key is a character of the place. Three buttons beside the field take its text:
 
 | Button | The debug place | The export |
 |---|---|---|
@@ -545,7 +545,9 @@ A breakpoint or a watch that the service took empties the field: its text is in 
 
 ![The window of the debugger with a breakpoint and a watch at typed places, and the memory view of a global](screenshots/debugger_window_memory.png)
 
-The cards: the process, with the debug place field and its threads, each with its state and its place; under it the breakpoints and the watches, each with the number that removes it; the source line of the chosen frame; the memory view, each row an address, 16 bytes in hexadecimal and their printable characters; the stack of the chosen thread; the variables of the chosen frame, or the registers of the chosen thread in two columns. A thread that runs has no stack to read: the cards say so, and `h` holds it. The window reads the threads and the memory view again each 500 ms, so a thread that stops at a breakpoint shows as stopped with no key, and a byte that the process writes shows at the next read. The line under the field says what the last act did, or the code of an export that failed.
+The top band holds the name field, or, with a process attached, the state label (the process and the state of its chosen thread), the debug place field and its three buttons. Under it, two panes with a divider between them: a drag of the divider moves it. The left pane: the threads, each with its number, its state and its place in three columns; under them the breakpoints and the watches, each with the number that removes it. The right pane: the source line of the chosen frame; the memory view, each row an address, 16 bytes in hexadecimal and their printable characters; the stack of the chosen thread; the variables of the chosen frame in three columns (the name, the type and the value), or the registers of the chosen thread in as many columns as the card holds. A thread that runs has no stack to read: the cards say so, and `h` holds it. The window reads the threads and the memory view again each 500 ms, so a thread that stops at a breakpoint shows as stopped with no key, and a byte that the process writes shows at the next read. The status band above the action bar says what the last act did, or the code of an export that failed, and how the debug place field reads its text.
+
+The principal resizes the window from 912 × 600 to 1440 × 960. The layout tree (`src/md/features/box_layout.md`) places each part at each size, with the element tokens of the appearance: a taller window gives the source and the cards of the stack and the variables more rows, and each pane keeps its least width (a row of the threads, a row of the memory view) while the window has room for both.
 
 **What the window holds.** A connection to the service `debugger` and to no other service, the boot image to read the description of the exports of that service, and the grant to act for the principal, which the service asks of each caller. It holds no right over a process. The service debugs one process at a time: while the console is attached, the window attaches to nothing, and the other way.
 

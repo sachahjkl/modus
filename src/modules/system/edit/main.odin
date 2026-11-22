@@ -20,23 +20,33 @@
 // a character goes in at the caret, in place of the selection; the
 // arrows, Home, End, Page Up and Page Down move the caret, and Control
 // with Home or End goes to the start or the end of the text; with Shift
-// each of them selects; Ctrl+A selects all. Backspace and Delete remove
+// each of them selects; Ctrl+A selects all. Ctrl+H shows or hides the
+// pane of the versions of the text. Backspace and Delete remove
 // the selection or one character. Escape ends the selection or closes
 // search. Ctrl+C copies, Ctrl+X cuts, Ctrl+V pastes multi-line UTF-8 text
 // through the compositor clipboard. Ctrl+F opens incremental search;
 // Enter or F3 finds next, Shift+Enter or Shift+F3 finds previous,
 // wrapping around the text. Ctrl+Z is undo, Ctrl+Y is redo. A press of
-// the pointer places the caret, a drag selects, and the wheel scrolls.
+// the pointer places the caret, a drag selects, and the wheel or the scroll
+// bar scrolls. A drag of the divider resizes the pane of the versions.
 //
 // **Grants**, as the root service gives them:
 //
 // - **Store**: its private store, which holds the object "text" and its
 //   versions.
 //
-// **What a reader sees**: the text in the font of the cells, a line that is
-// longer than the window on more rows, the number of each line in a gutter
-// at the left, the caret, and the selection with its text in white on the
-// chosen blue. The log has, at the start, one of:
+// **What a reader sees**: a window that the principal resizes, laid out
+// by the layout tree of modus:layout (src/md/features/box_layout.md). In
+// the top band: the search field while search is open, and a state label
+// that says whether the store keeps the text or a change waits for its
+// commit.
+// Under it the text in the font of the cells, a line that is longer than 80
+// cells on more rows, the number of each line in a gutter at the left, the
+// caret, the selection with its text in white on the chosen blue, and a
+// scroll bar; with Ctrl+H, a pane of the versions at the right of a
+// divider. At the bottom a status band: a problem of the store or of a key
+// at the left, the line, the column and the bytes of the text at the
+// right; then the action bar. The log has, at the start, one of:
 //
 // - `edit: a new store: an empty text`;
 // - `edit: restored a text of N bytes, L lines` (with the count of the
@@ -60,6 +70,7 @@ import "internal:edit/text_model"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import box_layout "modus:layout"
 import "modus:storage"
 import "modus:system"
 
@@ -68,37 +79,53 @@ window_memory: interface.Window_Memory(1024, 16384)
 
 OBJECT_NAME :: "text" // The object of the private store that the editor edits.
 
-MARGIN :: 8
+// The padding of the pane of the text, on each side.
+EDITOR_PADDING :: 8
 // The line numbers end one cell before the text. A text has at most
 // TEXT_CAPACITY + 1 lines: 5 digits.
 GUTTER_COLUMNS :: 6
 GUTTER_WIDTH :: GUTTER_COLUMNS * graphics.CELL_WIDTH
-TEXT_LEFT :: MARGIN + GUTTER_WIDTH
-TEXT_TOP :: MARGIN
-VISIBLE_ROWS :: 28
 // One cell more than a row: the caret after a full row stays inside the
-// window.
+// pane.
 TEXT_WIDTH :: (text_model.COLUMNS + 1) * graphics.CELL_WIDTH
-TEXT_HEIGHT :: VISIBLE_ROWS * graphics.CELL_HEIGHT
-// The status: a problem of the store or of a key, on at most two lines.
-STATUS_Y :: TEXT_TOP + TEXT_HEIGHT + MARGIN
-STATUS_LINES :: 2
-STATUS_WIDTH :: WIDTH - 2 * MARGIN
-KEYS_Y :: STATUS_Y + STATUS_LINES * graphics.CELL_HEIGHT + MARGIN // The action bar, at the bottom.
+// The pane of the text with no cut row: its padding, the gutter, a row of
+// 80 cells and the scroll bar. The split pane keeps it this wide while the
+// window has room for the pane of the versions too.
+EDITOR_LEAST_WIDTH :: EDITOR_PADDING + GUTTER_WIDTH + TEXT_WIDTH + interface.SCROLL_BAR_THICKNESS
+// The bands of the window: the top band, the status band and the action
+// bar.
+TOP_BAND_HEIGHT :: 32
+STATUS_HEIGHT :: 24
+STATE_LABEL_HEIGHT :: 20
+SEARCH_BAR_HEIGHT :: 24
+// The divider between the text and the versions, and the least width of
+// the pane of the versions: the word "generation", a number and its bytes.
+DIVIDER_THICKNESS :: 6
+VERSIONS_LEAST_WIDTH :: 176
+// The part of the workspace that the text takes when the pane of the
+// versions first opens, in parts of 10 000.
+VERSIONS_SPLIT_RATIO_START :: 7_000
+VERSION_ROW_HEIGHT :: graphics.CELL_HEIGHT + 4
 // Literals, so the tool reads the window of the budget; the assertions
-// keep them the sizes of the layout.
-WIDTH :: 712
-#assert(WIDTH == TEXT_LEFT + TEXT_WIDTH + MARGIN)
-HEIGHT :: 528
-#assert(HEIGHT == KEYS_Y + interface.ACTION_BAR_ROW_HEIGHT)
+// keep them the sizes of the layout. The window opens at WIDTH by HEIGHT,
+// and the principal resizes it from LEAST_HEIGHT up to LARGEST_WIDTH by
+// LARGEST_HEIGHT; it is never narrower than a row of the text, so no row is
+// cut (src/md/features/window_resize.md).
+WIDTH :: 736
+#assert(WIDTH >= EDITOR_LEAST_WIDTH)
+HEIGHT :: 560
+LEAST_HEIGHT :: 320
+#assert(LEAST_HEIGHT >= TOP_BAND_HEIGHT + 4 * graphics.CELL_HEIGHT + STATUS_HEIGHT + interface.ACTION_BAR_ROW_HEIGHT)
+LARGEST_WIDTH :: 1280
+LARGEST_HEIGHT :: 960
 // The least budget of 2048 pages, in which it ran before it stated its
-// window, less that window at the scale 1 (735 pages): its module, its
-// stack, its text, its tables and its glyph memory. The tool counts the
-// window at the window bound (docs/MODULE_CONTRACT.md, "The budget that a
+// window, less that window at the scale 1 (735 pages): its module, with
+// its layout tree and the states of its boxes, its stack, its text, its
+// tables and its glyph memory. The tool counts the window at the window
+// bound, at its largest size (docs/MODULE_CONTRACT.md, "The budget that a
 // module asks for").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1313, window_width = WIDTH, window_height = HEIGHT}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1313, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 CARET_WIDTH :: 2
-WHEEL_ROWS :: 3 // The rows that one notch of the wheel scrolls.
 // The bytes of one display row as the frame draws it: each cell is one
 // character of at most 4 bytes, or a space of a tab.
 ROW_BUFFER_SIZE :: 4 * text_model.COLUMNS
@@ -135,11 +162,12 @@ window_problem_texts := [Window_Problem]string {
 // The keys of the window, in its action bar (docs/INTERFACE.md, "4.4 The
 // action bar"). A procedure, not a global array: an item is made by a
 // call, and a freestanding process runs no call before its entry.
-bar_items :: proc "contextless" () -> [3]interface.Action_Bar_Item {
+bar_items :: proc "contextless" () -> [4]interface.Action_Bar_Item {
 	return {
 		interface.action_bar_item("find", 3, "Ctrl", "F"),
 		interface.action_bar_item("undo", 2, "Ctrl", "Z"),
 		interface.action_bar_item("redo", 1, "Ctrl", "Y"),
+		interface.action_bar_item("versions", 0, "Ctrl", "H"),
 	}
 }
 bar: interface.Action_Bar_State
@@ -150,6 +178,26 @@ walk: text_model.Version_Walk
 search: text_model.Search
 waiting_kind: text_model.Change_Kind // The kind of the changes that wait for a commit.
 top_row: int // The first display row in the window.
+// The display rows that the pane of the text shows, from the layout of the
+// last frame: Page Up and Page Down move by it.
+visible_rows := 1
+// The places of the last frame that the pointer events read between two
+// frames: the input acts on what the principal saw.
+text_left, text_top: int
+editor_view: interface.Area // The gutter and the text: a press here places the caret.
+
+// The layout tree of each frame and the state of its boxes across frames.
+// They are large: they live in the memory of the module, never on the
+// stack (src/md/features/box_layout.md, "Constraints").
+box_tree: box_layout.Box_Tree
+box_states: box_layout.Box_States
+tokens: box_layout.Element_Tokens // The tokens of the frame in progress.
+
+// The pane of the versions: the rows that the last list gave, newest last,
+// and whether a commit or a restore made them old.
+versions_shown: bool
+versions_stale: bool
+version_count: int
 
 client: storage.Client
 keeping: bool // The store takes the changes.
@@ -337,7 +385,9 @@ group_commit :: proc "contextless" () {
 	if write_status != .Ok || generation < 0 {
 		keeping, problem_shown = false, .Not_Kept
 		log_storage_failure(.Write_Text, write_status, &error)
+		return
 	}
+	versions_stale = true
 }
 
 // line_of_caret gives the line that holds the caret.
@@ -352,10 +402,10 @@ scroll_to_caret :: proc "contextless" () {
 	if row < top_row {
 		top_row = row
 	}
-	if row >= top_row + VISIBLE_ROWS {
-		top_row = row - VISIBLE_ROWS + 1
+	if row >= top_row + visible_rows {
+		top_row = row - visible_rows + 1
 	}
-	top_row = clamp(top_row, 0, max(layout.row_count - VISIBLE_ROWS, 0))
+	top_row = clamp(top_row, 0, max(layout.row_count - visible_rows, 0))
 }
 
 // layout_refresh computes the rows of the text after it changed.
@@ -420,7 +470,7 @@ delete_key :: proc "contextless" (after: bool) {
 // move moves the caret. A move to another line ends the group.
 move :: proc "contextless" (motion: text_model.Motion, extend: bool) {
 	line_before := line_of_caret()
-	text_model.caret_move(&text, &layout, motion, extend, VISIBLE_ROWS)
+	text_model.caret_move(&text, &layout, motion, extend, visible_rows)
 	if line_of_caret() != line_before {
 		group_commit()
 	}
@@ -482,6 +532,7 @@ version_restore :: proc "contextless" (generation: i64, action: string) -> bool 
 	}
 	text_model.text_replace_whole(&text, clean_buffer[:count])
 	layout_refresh()
+	versions_stale = true
 	if search.query_count > 0 {
 		text_model.search_recompute(&search, &text, text.caret, false)
 	}
@@ -522,6 +573,27 @@ redo :: proc "contextless" () {
 	}
 	if version_restore(step.to, "redo") {
 		text_model.walk_went_forward(&walk, step)
+	}
+}
+
+// versions_toggle shows or hides the pane of the versions. Its rows are
+// read before the next frame, not in it: a frame calls no service.
+versions_toggle :: proc "contextless" () {
+	versions_shown = !versions_shown
+	versions_stale = versions_shown
+}
+
+// versions_refresh reads the versions of the text again for the pane, after
+// a commit or a restore made the rows old. A text that is not kept has
+// none.
+versions_refresh :: proc "contextless" () {
+	versions_stale = false
+	version_count = 0
+	if !keeping {
+		return
+	}
+	if generations, listed := versions_list("list"); listed {
+		version_count = len(generations)
 	}
 }
 
@@ -597,6 +669,8 @@ key_run :: proc "contextless" (press: interface.Key_Press) {
 			undo()
 		case 'y', 'Y':
 			redo()
+		case 'h', 'H':
+			versions_toggle()
 		}
 		return
 	}
@@ -717,23 +791,25 @@ paste_event :: proc "contextless" (window: ^display.Window, event: display.Event
 // it. A point above or below the rows in the window gives the row next to
 // them, so a drag past an edge scrolls.
 place_of_pointer :: proc "contextless" (x, y: int) -> int {
-	row_in_window := y < TEXT_TOP ? -1 : (y - TEXT_TOP) / graphics.CELL_HEIGHT
+	row_in_window := y < text_top ? -1 : (y - text_top) / graphics.CELL_HEIGHT
 	row := clamp(top_row + row_in_window, 0, layout.row_count - 1)
-	column := x < TEXT_LEFT ? 0 : (x - TEXT_LEFT + graphics.CELL_WIDTH / 2) / graphics.CELL_WIDTH
+	column := x < text_left ? 0 : (x - text_left + graphics.CELL_WIDTH / 2) / graphics.CELL_WIDTH
 	return text_model.place_at_column(&layout, &text, row, column)
 }
 
+// inside_text says whether a point is on the gutter or the text of the last
+// frame. The scroll bar and the divider are outside it: a press on them is
+// theirs.
 inside_text :: proc "contextless" (x, y: int) -> bool {
-	return x >= MARGIN && x < TEXT_LEFT + TEXT_WIDTH && y >= TEXT_TOP && y < TEXT_TOP + TEXT_HEIGHT
+	return x >= editor_view.x && x < editor_view.x + editor_view.width && y >= editor_view.y && y < editor_view.y + editor_view.height
 }
 
+// pointer_event places the caret and selects. The wheel goes to the scroll
+// bar of the frame, which moves the view over the text.
 pointer_event :: proc "contextless" (event: display.Event) {
 	left := event.buttons & display.BUTTON_LEFT != 0
 	pressed := left && pointer_buttons_before & display.BUTTON_LEFT == 0
 	pointer_buttons_before = event.buttons
-	if event.wheel != 0 && inside_text(event.x, event.y) {
-		top_row = clamp(top_row + event.wheel * display.WHEEL_TOWARD_THE_END * WHEEL_ROWS, 0, max(layout.row_count - VISIBLE_ROWS, 0))
-	}
 	switch {
 	// A press that the action bar takes (its list is open, or the press is
 	// on it) is not a press in the text.
@@ -788,27 +864,27 @@ row_draw :: proc "contextless" (table: ^interface.Draw_Table, row: int, y: int, 
 			m_end := m_start + search.query_count
 			hl_from, hl_to := max(m_start, start), min(m_end, end)
 			if hl_from < hl_to {
-				left := TEXT_LEFT + text_model.column_of(&layout, &text, row, hl_from) * graphics.CELL_WIDTH
-				right := TEXT_LEFT + text_model.column_of(&layout, &text, row, hl_to) * graphics.CELL_WIDTH
+				left := text_left + text_model.column_of(&layout, &text, row, hl_from) * graphics.CELL_WIDTH
+				right := text_left + text_model.column_of(&layout, &text, row, hl_to) * graphics.CELL_WIDTH
 				if index == search.active_match {
-					interface.draw_rectangle(table, left, y, right - left, graphics.CELL_HEIGHT, graphics.colors.chosen)
+					interface.draw_rectangle(table, left, y, right - left, graphics.CELL_HEIGHT, tokens.surface_chosen)
 				} else {
-					interface.draw_rectangle(table, left, y, right - left, graphics.CELL_HEIGHT, graphics.colors.track)
-					interface.draw_rectangle(table, left, y + graphics.CELL_HEIGHT - 2, right - left, 2, graphics.colors.warning)
+					interface.draw_rectangle(table, left, y, right - left, graphics.CELL_HEIGHT, tokens.surface_track)
+					interface.draw_rectangle(table, left, y + graphics.CELL_HEIGHT - 2, right - left, 2, tokens.warning)
 				}
 			}
 		}
 	}
 	from, to := max(first, start), min(last, end)
 	if from < to {
-		left := TEXT_LEFT + text_model.column_of(&layout, &text, row, from) * graphics.CELL_WIDTH
-		right := TEXT_LEFT + text_model.column_of(&layout, &text, row, to) * graphics.CELL_WIDTH
-		interface.draw_rectangle(table, left, y, right - left, graphics.CELL_HEIGHT, graphics.colors.chosen)
+		left := text_left + text_model.column_of(&layout, &text, row, from) * graphics.CELL_WIDTH
+		right := text_left + text_model.column_of(&layout, &text, row, to) * graphics.CELL_WIDTH
+		interface.draw_rectangle(table, left, y, right - left, graphics.CELL_HEIGHT, tokens.surface_chosen)
 	}
 	// A selected line end: one cell after the text of its row.
 	if end < text_model.text_length(&text) && text_model.byte_at(&text, end) == text_model.LINE_END && first <= end && last > end {
-		left := TEXT_LEFT + text_model.column_of(&layout, &text, row, end) * graphics.CELL_WIDTH
-		interface.draw_rectangle(table, left, y, graphics.CELL_WIDTH, graphics.CELL_HEIGHT, graphics.colors.chosen)
+		left := text_left + text_model.column_of(&layout, &text, row, end) * graphics.CELL_WIDTH
+		interface.draw_rectangle(table, left, y, graphics.CELL_WIDTH, graphics.CELL_HEIGHT, tokens.surface_chosen)
 	}
 	buffer: [ROW_BUFFER_SIZE]u8
 	count, column, run_column := 0, 0, 0
@@ -865,32 +941,31 @@ run_draw :: proc "contextless" (table: ^interface.Draw_Table, column: int, y: in
 	color: graphics.Color
 	switch style {
 	case .Normal:
-		color = graphics.colors.text
+		color = tokens.text
 	case .Selected:
-		color = graphics.COLOR_WHITE
+		color = tokens.text_on_chosen
 	case .Match:
-		color = graphics.colors.text_strong
+		color = tokens.text_strong
 	}
-	interface.draw_text(table, TEXT_LEFT + column * graphics.CELL_WIDTH, y, run, color)
+	interface.draw_text(table, text_left + column * graphics.CELL_WIDTH, y, run, color)
 }
 
-SEARCH_BAR_HEIGHT :: 28
-
-// search_bar_draw draws the incremental search bar in the status band:
-// query with caret on the left, match index and count ("2 of 5" or "no
-// match") right-aligned on the right, with guaranteed separation.
-search_bar_draw :: proc "contextless" (table: ^interface.Draw_Table) {
-	interface.draw_rectangle(table, MARGIN, STATUS_Y, STATUS_WIDTH, SEARCH_BAR_HEIGHT, graphics.colors.track)
-	interface.draw_rectangle(table, MARGIN, STATUS_Y + SEARCH_BAR_HEIGHT - 2, STATUS_WIDTH, 2, graphics.colors.title)
-	text_y := STATUS_Y + (SEARCH_BAR_HEIGHT - graphics.CELL_HEIGHT) / 2
-	// Match status at the right: only shown when a query is typed.
+// search_bar_draw draws the incremental search field in an area of the
+// top band: the query with its caret on the left, the index of the match and
+// the count ("2 of 5" or "no match") on the right, with room between them.
+search_bar_draw :: proc "contextless" (table: ^interface.Draw_Table, area: interface.Area) {
+	gap := int(tokens.gap)
+	interface.draw_rectangle(table, area.x, area.y, area.width, area.height, tokens.surface_track)
+	interface.draw_rectangle(table, area.x, area.y + area.height - 2, area.width, 2, tokens.focus_outline)
+	text_y := area.y + (area.height - graphics.CELL_HEIGHT) / 2
+	// The status of the matches at the right: only with a typed query.
 	count_buffer: [32]u8
 	count_text := ""
-	count_color := graphics.colors.dim
+	count_color := tokens.text_dim
 	if search.query_count > 0 {
 		if search.match_count == 0 {
 			count_text = "no match"
-			count_color = graphics.colors.failed
+			count_color = tokens.failed
 		} else {
 			writer := system.Writer{buffer = count_buffer[:]}
 			system.write_number(&writer, u64(search.active_match + 1))
@@ -898,18 +973,18 @@ search_bar_draw :: proc "contextless" (table: ^interface.Draw_Table) {
 			system.write_number(&writer, u64(search.match_count))
 			count_text = system.written(&writer)
 		}
-		interface.draw_text_right(table, MARGIN + STATUS_WIDTH - 8, text_y, count_text, count_color)
+		interface.draw_text_right(table, area.x + area.width - gap, text_y, count_text, count_color)
 	}
-	query_left := MARGIN + 8
-	right_reserve := len(count_text) > 0 ? len(count_text) * graphics.CELL_WIDTH + 24 : 16
-	visible_cells := max((STATUS_WIDTH - 8 - right_reserve) / graphics.CELL_WIDTH, 1)
+	query_left := area.x + gap
+	right_reserve := len(count_text) > 0 ? len(count_text) * graphics.CELL_WIDTH + 3 * gap : 2 * gap
+	visible_cells := max((area.width - gap - right_reserve) / graphics.CELL_WIDTH, 1)
 	if search.query_count == 0 {
-		interface.draw_rectangle(table, query_left, text_y, CARET_WIDTH, graphics.CELL_HEIGHT, graphics.colors.title)
-		interface.draw_text(table, query_left + 8, text_y, "find", graphics.colors.dim)
+		interface.draw_rectangle(table, query_left, text_y, CARET_WIDTH, graphics.CELL_HEIGHT, tokens.text_strong)
+		interface.draw_text(table, query_left + gap, text_y, "find", tokens.text_dim)
 		return
 	}
-	// Scroll the visible slice of the query so the caret stays in view and
-	// never passes the right reserve.
+	// The part of the query that the field shows moves with the caret, so
+	// the caret stays in view and never passes the room of the count.
 	query := text_model.search_query_bytes(&search)
 	caret_cells := text_encoding.character_count(query[:search.query_caret])
 	skip_cells := caret_cells >= visible_cells ? caret_cells - visible_cells + 1 : 0
@@ -925,41 +1000,275 @@ search_bar_draw :: proc "contextless" (table: ^interface.Draw_Table) {
 		byte_end += max(length, 1)
 		shown_cells += 1
 	}
-	interface.draw_text(table, query_left, text_y, string(query[byte_start:byte_end]), graphics.colors.text_strong)
+	interface.draw_text(table, query_left, text_y, string(query[byte_start:byte_end]), tokens.text_strong)
 	caret_x := query_left + (caret_cells - skip_cells) * graphics.CELL_WIDTH
-	interface.draw_rectangle(table, caret_x, text_y, CARET_WIDTH, graphics.CELL_HEIGHT, graphics.colors.title)
+	interface.draw_rectangle(table, caret_x, text_y, CARET_WIDTH, graphics.CELL_HEIGHT, tokens.text_strong)
 }
 
-// draw builds one frame: the rows in the window only, from the layout that
+// The boxes of the window whose rectangles a frame reads after the solve.
+Window_Boxes :: struct {
+	top_band, search_field, state_label, editor, gutter, text_view, scroll_bar, divider, versions, status, status_problem, status_position, action_bar: box_layout.Box_Index,
+}
+
+// The identity of the divider: its state keeps the split ratio across
+// frames, and its input gives the drag.
+DIVIDER_LABEL :: "edit divider"
+
+// area_of gives the rectangle of a box of the solved tree, as an area of
+// the interface package. A box that the tree refused has no area.
+area_of :: proc "contextless" (index: box_layout.Box_Index) -> interface.Area {
+	box := box_layout.box_of(&box_tree, index)
+	if box == nil {
+		return {}
+	}
+	return {int(box.rect.x), int(box.rect.y), int(box.rect.width), int(box.rect.height)}
+}
+
+// The sizes of a band that takes the whole width and a height in pixels.
+band :: proc "contextless" (height: i32) -> [box_layout.Axis]box_layout.Size {
+	return {.X = box_layout.fill(), .Y = box_layout.px(height)}
+}
+
+// state_words gives the words of the state label: whether the store holds
+// the text as the window shows it, or a change waits for the end of its
+// group. A text that the store does not keep has no state label: the
+// status band says why.
+state_words :: proc "contextless" () -> (words: string, color: graphics.Color) {
+	if !keeping {
+		return "", {}
+	}
+	if waiting_kind != .None {
+		return "a change waits", tokens.warning
+	}
+	return "kept", tokens.expected
+}
+
+// line_start_row gives the first display row of the line of a row: a
+// binary search, as the rows are in the order of their lines, so a frame
+// never walks the rows of a long line.
+line_start_row :: proc "contextless" (row: int) -> int {
+	line := layout.rows[row].line
+	low, high := 0, row
+	for low < high {
+		middle := (low + high) / 2
+		if layout.rows[middle].line < line {
+			low = middle + 1
+		} else {
+			high = middle
+		}
+	}
+	return low
+}
+
+// layout_build makes the layout tree of the window at its size, and solves
+// it. The workspace is split by the ratio of the divider when the pane of
+// the versions is shown.
+layout_build :: proc "contextless" (window: ^display.Window, table: ^interface.Draw_Table, split_ratio: i32, state_label_words, position, problem: string) -> (boxes: Window_Boxes) {
+	width := i32(clamp(window.width, 0, box_layout.LENGTH_LIMIT))
+	height := i32(clamp(window.height, 0, box_layout.LENGTH_LIMIT))
+	_ = box_layout.tree_begin(&box_tree, width, height, {label = "edit", child_axis = .Y})
+	// The top band: the search field takes the room while search is open,
+	// and the state label sits at the right.
+	boxes.top_band, _ = box_layout.box_open(&box_tree, {size = band(TOP_BAND_HEIGHT), child_axis = .X, cross_align = .Center, padding = {.X = tokens.gap, .Y = 0}, gap = tokens.gap})
+	boxes.search_field, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(search.active ? SEARCH_BAR_HEIGHT : 0)}})
+	if state_label_words != "" {
+		boxes.state_label, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.text_size(tokens.gap), .Y = box_layout.px(STATE_LABEL_HEIGHT)}, text_width = i32(interface.text_measured_width(table, {}, state_label_words))})
+	}
+	_ = box_layout.box_close(&box_tree)
+	// The workspace takes the height that the bands leave.
+	_, _ = box_layout.box_open(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill()}, child_axis = .X, overflow = {.X = .Clip, .Y = .Clip}})
+	editor_width := width
+	versions_width: i32
+	if versions_shown {
+		pane, _ := box_layout.split_pane({0, 0, width, 0}, .X, split_ratio, min(DIVIDER_THICKNESS, width))
+		room := pane.first.width + pane.second.width
+		// The text keeps a whole row while the window has room for both
+		// panes; past that, the pane of the versions keeps its least width.
+		editor_width = clamp(max(pane.first.width, min(EDITOR_LEAST_WIDTH, room - VERSIONS_LEAST_WIDTH)), 0, max(room - VERSIONS_LEAST_WIDTH, 0))
+		versions_width = room - editor_width
+	}
+	boxes.editor, _ = box_layout.box_open(&box_tree, {size = {.X = box_layout.px(editor_width), .Y = box_layout.fill()}, child_axis = .X, padding = {.X = 0, .Y = EDITOR_PADDING}, overflow = {.X = .Clip, .Y = .Clip}})
+	boxes.gutter, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.px(EDITOR_PADDING + GUTTER_WIDTH), .Y = box_layout.fill()}})
+	boxes.text_view, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill()}})
+	boxes.scroll_bar, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.px(interface.SCROLL_BAR_THICKNESS), .Y = box_layout.fill()}})
+	_ = box_layout.box_close(&box_tree)
+	if versions_shown {
+		boxes.divider, _ = box_layout.box_add(&box_tree, {identity = box_layout.identity_of(DIVIDER_LABEL), size = {.X = box_layout.px(DIVIDER_THICKNESS), .Y = box_layout.fill()}})
+		boxes.versions, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.px(versions_width), .Y = box_layout.fill()}})
+	}
+	_ = box_layout.box_close(&box_tree)
+	// The status band: the problem takes the room, on the lines that it
+	// needs, so no text is cut; the place of the caret sits at the right.
+	position_width := i32(interface.text_measured_width(table, {}, position))
+	problem_lines := 1
+	if problem != "" {
+		problem_room := int(width) - 4 * int(tokens.gap) - int(position_width)
+		problem_lines = clamp(interface.text_wrapped_line_count(table, {}, problem, problem_room), 1, 4)
+	}
+	boxes.status, _ = box_layout.box_open(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.children_sum()}, minimum = {.X = 0, .Y = STATUS_HEIGHT}, child_axis = .X, cross_align = .Center, padding = {.X = tokens.gap, .Y = 4}, gap = 2 * tokens.gap})
+	boxes.status_problem, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(i32(problem_lines) * graphics.CELL_HEIGHT)}})
+	boxes.status_position, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.text_size(), .Y = box_layout.px(graphics.CELL_HEIGHT)}, text_width = position_width})
+	_ = box_layout.box_close(&box_tree)
+	boxes.action_bar, _ = box_layout.box_add(&box_tree, {size = band(interface.ACTION_BAR_ROW_HEIGHT)})
+	_ = box_layout.solve(&box_tree)
+	_ = box_layout.states_record(&box_states, &box_tree)
+	return
+}
+
+// The split ratio when the press on the divider began: a drag moves the
+// ratio by its distance from there, so a frame that is late loses no move.
+divider_ratio_at_press: i32
+
+// divider_drag gives the split ratio of this frame, which the state of the
+// divider keeps across frames, moved by a drag of the divider since its
+// press, and whether the divider holds the press.
+divider_drag :: proc "contextless" (window: ^display.Window) -> (ratio: i32, held: bool) {
+	identity := box_layout.identity_of(DIVIDER_LABEL)
+	input, input_status := box_layout.box_input(&box_states, identity)
+	state, status := box_layout.state_of(&box_states, identity)
+	if status != .Done || input_status != .Done {
+		return VERSIONS_SPLIT_RATIO_START, false
+	}
+	if state.split_ratio == 0 {
+		state.split_ratio = VERSIONS_SPLIT_RATIO_START
+	}
+	if input.held && box_states.input.primary_pressed {
+		divider_ratio_at_press = state.split_ratio
+	}
+	if input.dragging {
+		room := i32(clamp(window.width - DIVIDER_THICKNESS, 0, box_layout.LENGTH_LIMIT))
+		state.split_ratio = box_layout.split_ratio_dragged(divider_ratio_at_press, input.drag_x, room)
+	}
+	return state.split_ratio, input.held
+}
+
+// versions_draw draws the pane of the versions: the newest first, the
+// current version on the chosen color, each with its generation and its
+// bytes, and as many as the pane holds.
+versions_draw :: proc "contextless" (table: ^interface.Draw_Table, area: interface.Area) {
+	gap := int(tokens.gap)
+	interface.draw_rectangle(table, area.x, area.y, area.width, area.height, tokens.surface_card)
+	interface.draw_clip_push(table, area.x, area.y, area.width, area.height)
+	defer interface.draw_clip_pop(table)
+	left := area.x + gap
+	room := area.width - 2 * gap
+	y := area.y + gap
+	interface.draw_text(table, left, y, interface.text_fit(table, interface.FONT_INTERFACE_BOLD, "VERSIONS", room), tokens.text_dim, interface.FONT_INTERFACE_BOLD)
+	y += graphics.LINE_HEIGHT + gap
+	if version_count == 0 {
+		interface.draw_text_wrapped(table, left, y, room, keeping ? "no version yet: the first commit makes one" : "the text is not kept: it has no version", tokens.text_dim)
+		return
+	}
+	for index := version_count - 1; index >= 0 && y + VERSION_ROW_HEIGHT <= area.y + area.height; index -= 1 {
+		row := &version_rows[index]
+		current := row.current == 1
+		text_color := current ? tokens.text_on_chosen : tokens.text
+		if current {
+			interface.draw_rectangle(table, area.x + gap / 2, y, area.width - gap, VERSION_ROW_HEIGHT, tokens.surface_chosen)
+		}
+		row_y := y + (VERSION_ROW_HEIGHT - graphics.CELL_HEIGHT) / 2
+		bytes_buffer: [32]u8
+		bytes := system.format(bytes_buffer[:], u64(max(row.bytes, 0)), " bytes")
+		bytes_width := interface.text_measured_width(table, {}, bytes)
+		interface.draw_text_right(table, left + room, row_y, bytes, current ? tokens.text_on_chosen : tokens.text_dim)
+		generation_buffer: [32]u8
+		generation := system.format(generation_buffer[:], "generation ", row.generation)
+		interface.draw_text(table, left, row_y, interface.text_fit(table, {}, generation, room - bytes_width - gap), text_color)
+		y += VERSION_ROW_HEIGHT
+	}
+}
+
+// draw builds one frame: the layout tree at the size of the window, then
+// the rows in the pane of the text only, from the layout of the text that
 // the last change computed.
 draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
 	frame := interface.window_frame_start(&window_memory, window)
 	interface.action_bar_input_take(&frame, &bar)
 	table := frame.table
+	tokens, _ = box_layout.tokens_for(graphics.appearance, .Standard)
+	input := frame.input
+	box_layout.states_frame_begin(&box_states, {pointer_x = i32(clamp(input.pointer_x, int(min(i32)), int(max(i32)))), pointer_y = i32(clamp(input.pointer_y, int(min(i32)), int(max(i32)))), pointer_present = input.pointer_known, primary_down = input.button_held, primary_pressed = input.pressed, primary_released = input.released, primary_press_count = input.pressed ? 1 : 0})
+	split_ratio: i32 = VERSIONS_SPLIT_RATIO_START
+	divider_held := false
+	if versions_shown {
+		split_ratio, divider_held = divider_drag(window)
+	}
+	problem := window_problem_texts[problem_shown]
+	state_label_words, state_label_color := state_words()
+	caret_row := text_model.row_of(&layout, text.caret)
+	column := text_model.column_of(&layout, &text, caret_row, text.caret) + (caret_row - line_start_row(caret_row)) * text_model.COLUMNS
+	position_buffer: [80]u8
+	position := system.format(position_buffer[:], "line ", u64(layout.rows[caret_row].line) + 1, ", column ", u64(column) + 1, ", ", u64(text_model.text_length(&text)), " bytes")
+	boxes := layout_build(window, table, split_ratio, state_label_words, position, problem)
+
+	// The surfaces: the bands on the card surface, the text on the
+	// background, a line between each part.
+	top_band, status, editor := area_of(boxes.top_band), area_of(boxes.status), area_of(boxes.editor)
+	interface.draw_rectangle(table, 0, 0, window.width, window.height, tokens.surface_background)
+	interface.draw_rectangle(table, top_band.x, top_band.y, top_band.width, top_band.height, tokens.surface_card)
+	interface.draw_rectangle(table, top_band.x, top_band.y + top_band.height - 1, top_band.width, 1, tokens.divider)
+	interface.draw_rectangle(table, status.x, status.y, status.width, status.height, tokens.surface_card)
+	interface.draw_rectangle(table, status.x, status.y, status.width, 1, tokens.divider)
+
+	// The scroll bar first: the wheel and a press on the bar move the view
+	// that this frame draws, not the next one.
+	text_view := area_of(boxes.text_view)
+	gutter := area_of(boxes.gutter)
+	text_left, text_top = text_view.x, text_view.y
+	editor_view = {gutter.x, gutter.y, gutter.width + text_view.width, text_view.height}
+	rows_now := max(text_view.height / graphics.CELL_HEIGHT, 1)
+	if rows_now != visible_rows {
+		visible_rows = rows_now
+		scroll_to_caret()
+	}
+	top_row = clamp(top_row, 0, max(layout.row_count - visible_rows, 0))
+	scrolled := interface.scroll_bar(&frame, area_of(boxes.scroll_bar), interface.identity("edit scroll bar"), .Vertical, {total = layout.row_count, visible = visible_rows, first = top_row}, {}, "", editor_view)
+	if scrolled.changed {
+		top_row = scrolled.first
+	}
+
+	interface.draw_clip_push(table, editor.x, editor.y, editor.width, editor.height)
 	first, last := text_model.selection(&text)
-	end_row := min(top_row + VISIBLE_ROWS, layout.row_count)
+	end_row := min(top_row + visible_rows, layout.row_count)
 	for row in top_row ..< end_row {
-		y := TEXT_TOP + (row - top_row) * graphics.CELL_HEIGHT
+		y := text_top + (row - top_row) * graphics.CELL_HEIGHT
 		if text_model.row_first_of_line(&layout, row) {
 			number: [12]u8
-			interface.draw_text_right(table, TEXT_LEFT - graphics.CELL_WIDTH, y, system.format(number[:], u64(layout.rows[row].line) + 1), graphics.colors.dim)
+			interface.draw_text_right(table, text_left - graphics.CELL_WIDTH, y, system.format(number[:], u64(layout.rows[row].line) + 1), tokens.text_dim)
 		}
 		row_draw(table, row, y, first, last)
 	}
-	if !search.active {
-		caret_row := text_model.row_of(&layout, text.caret)
-		if caret_row >= top_row && caret_row < end_row {
-			column := text_model.column_of(&layout, &text, caret_row, text.caret)
-			interface.draw_rectangle(table, TEXT_LEFT + column * graphics.CELL_WIDTH, TEXT_TOP + (caret_row - top_row) * graphics.CELL_HEIGHT, CARET_WIDTH, graphics.CELL_HEIGHT, graphics.colors.text_strong)
-		}
+	if !search.active && caret_row >= top_row && caret_row < end_row {
+		caret_column := text_model.column_of(&layout, &text, caret_row, text.caret)
+		interface.draw_rectangle(table, text_left + caret_column * graphics.CELL_WIDTH, text_top + (caret_row - top_row) * graphics.CELL_HEIGHT, CARET_WIDTH, graphics.CELL_HEIGHT, tokens.text_strong)
 	}
+	interface.draw_clip_pop(table)
+
+	if versions_shown {
+		divider := area_of(boxes.divider)
+		interface.draw_rectangle(table, divider.x, divider.y, divider.width, divider.height, divider_held ? tokens.surface_pointer_over : tokens.surface_track)
+		interface.draw_rectangle(table, divider.x + divider.width / 2, divider.y, 1, divider.height, tokens.border)
+		versions_draw(table, area_of(boxes.versions))
+	}
+
 	if search.active {
-		search_bar_draw(table)
-	} else if problem_shown != .None {
-		interface.draw_text_wrapped(table, MARGIN, STATUS_Y, STATUS_WIDTH, window_problem_texts[problem_shown], graphics.colors.failed)
+		search_bar_draw(table, area_of(boxes.search_field))
 	}
+	if state_label_words != "" {
+		state_label := area_of(boxes.state_label)
+		interface.draw_rectangle(table, state_label.x, state_label.y, state_label.width, state_label.height, tokens.surface_track)
+		interface.draw_outline(table, state_label.x, state_label.y, state_label.width, state_label.height, 1, state_label_color)
+		interface.draw_text(table, state_label.x + int(tokens.gap), state_label.y + (state_label.height - graphics.CELL_HEIGHT) / 2, state_label_words, state_label_color)
+	}
+	if problem != "" {
+		problem_area := area_of(boxes.status_problem)
+		interface.draw_text_wrapped(table, problem_area.x, problem_area.y, problem_area.width, problem, tokens.failed)
+	}
+	position_area := area_of(boxes.status_position)
+	interface.draw_text(table, position_area.x, position_area.y, position, tokens.text_dim)
+
 	items := bar_items()
-	bar_result := interface.action_bar(&frame, {0, KEYS_Y, WIDTH, HEIGHT - KEYS_Y}, items[:], &bar, {})
+	bar_result := interface.action_bar(&frame, area_of(boxes.action_bar), items[:], &bar, {})
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	return bar_result
 }
@@ -970,8 +1279,8 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 // With no window it stops with `Failed`. With no store it runs, and keeps
 // nothing. Then one loop waits for the events of the window and draws
 // after each of them: a key, a press of the pointer, a drag, a turn of
-// the wheel, and the clipboard events Copy_Asked (Ctrl+C, Ctrl+X) and
-// Pasted (Ctrl+V).
+// the wheel, a resize, and the clipboard events Copy_Asked (Ctrl+C,
+// Ctrl+X) and Pasted (Ctrl+V).
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	title := target_read(ctx)
@@ -979,10 +1288,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !ok {
 		system.stop(.Failed)
 	}
+	// The limits are constants of this process: a refusal is a fault of
+	// this source, and a full ring a fault of the compositor; the line says
+	// which, and the window keeps its size.
+	if problem, sent := display.resizable_set(&window, {least_width = WIDTH, least_height = LEAST_HEIGHT, largest_width = LARGEST_WIDTH, largest_height = LARGEST_HEIGHT}); problem != .None {
+		system.log_fact(.Info, Window_Stays_Fixed{cause = value_kinds.text_field(display.SIZE_LIMITS_PROBLEM_SENTENCES[problem], STAYS_FIXED_CAUSE_FIELD_BYTES)})
+	} else if !sent {
+		system.log_fact(.Info, Window_Stays_Fixed{cause = value_kinds.text_field("the command ring of the window is full", STAYS_FIXED_CAUSE_FIELD_BYTES)})
+	}
 	store_open(ctx)
 	layout_refresh()
 	first_picture := true
 	for {
+		// The rows of the pane of the versions are read before the frame:
+		// a frame calls no service.
+		if versions_shown && versions_stale {
+			versions_refresh()
+		}
 		bar_result := draw(&window)
 		if first_picture {
 			first_picture = false
@@ -1019,7 +1341,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				copy_event(&window, event.copy_action)
 			case .Pasted:
 				paste_event(&window, event)
-			case .None, .Settings_Changed, .Go_To, .Resized, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Surface_Answer:
+			case .Resized:
+				// The surface of the new size has no picture known: the next
+				// frame draws it whole, laid out at the new size. A refused
+				// surface keeps the old one, whose pictures stay known.
+				if display.surface_resize(&window, event.width, event.height) == .Ok {
+					interface.draw_whole_window_next(&window_memory.drawing)
+				}
+			case .Settings_Changed, .Surface_Answer:
+				// A new appearance or a new surface: each pixel changes.
+				interface.draw_whole_window_next(&window_memory.drawing)
+			case .None, .Go_To, .Capture_Size, .Capture_Frame, .Capture_Disconnect:
 			// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

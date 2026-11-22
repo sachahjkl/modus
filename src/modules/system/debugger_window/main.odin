@@ -18,12 +18,18 @@
 // no right over a process: the service does, and the root service decides
 // which process a caller can debug.
 //
-// **What a reader sees.** At the left the process, with the debug place
-// field and its threads, and under it the breakpoints. At the right the
+// **What a reader sees.** A window that the principal resizes, laid out by
+// the layout tree of modus:layout (src/md/features/box_layout.md). In the
+// top band: the name field, or, with a process attached, a state label
+// with the process and the state of its chosen thread, the debug place
+// field and its three buttons. Under it two panes, with a divider that a
+// drag moves: at the left the threads and the breakpoints; at the right the
 // source line of the chosen frame, the memory view, the stack of the chosen
-// thread and the variables of the chosen frame. The action bar at the
-// bottom names the keys; a press on an item does what its key does, and
-// the items that do not fit are behind its button "more".
+// thread and the variables of the chosen frame, in columns. Then the status
+// band: what the last act did, and how the debug place field reads its
+// text. The action bar at the bottom names the keys; a press on an item
+// does what its key does, and the items that do not fit are behind its
+// button "more".
 //
 // **Keys**, with a process attached and no focus in the field:
 //
@@ -49,45 +55,54 @@ import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import box_layout "modus:layout"
 import "modus:system"
 
 // The draw tables of the interface, and the tables of the rows: 2536
 // pages. And the glyph memory of the copy of the text rendering of the
 // drawing module, which draws its text: 354 pages
-// (display.TEXT_MEMORY_PAGES). 2536 + 354 = 2890.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2890, processes = 1, threads = 1, window_width = WIDTH, window_height = HEIGHT}
+// (display.TEXT_MEMORY_PAGES). 2536 + 354 = 2890. The layout tree and the
+// states of its boxes are in the memory of the module, which the tool
+// counts; it counts the window at its largest size.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2890, processes = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
 
-WIDTH :: 1000
-HEIGHT :: 704
 LINE :: graphics.LINE_HEIGHT
 ROW_HEIGHT :: interface.TABLE_LINE // A text field and a button.
-MARGIN :: 8
-LEFT_WIDTH :: 328
-RIGHT_X :: MARGIN + LEFT_WIDTH + MARGIN
-RIGHT_WIDTH :: WIDTH - RIGHT_X - MARGIN
-KEYS_HEIGHT :: interface.ACTION_BAR_ROW_HEIGHT // The action bar.
-CARDS_HEIGHT :: HEIGHT - 2 * MARGIN - KEYS_HEIGHT
-// The left column: the process above, the breakpoints below. The card of
-// the breakpoints has a fixed place, so its first row has one.
+// The top band: a text field or a button, with a gap above and below.
+TOP_BAND_HEIGHT :: ROW_HEIGHT + 2 * graphics.GAP
+BUTTON_WIDTH :: 96
+NAME_FIELD_WIDTH :: 320
+STATE_LABEL_HEIGHT :: 20
+DIVIDER_THICKNESS :: 8
+// The part of the workspace that the left pane takes at the start, in
+// parts of 10 000.
+SPLIT_RATIO_START :: 3_400
+// The least widths of the panes: the left one holds a thread row; the right
+// one holds a row of the memory view inside its card.
+LEFT_LEAST_WIDTH :: 240
+RIGHT_LEAST_WIDTH :: MEMORY_ROW_WIDTH + 2 * graphics.MARGIN
+// The cards with a height of their own: the breakpoints hold their four
+// rows, the memory view its eight rows.
 BREAKS_HEIGHT :: 168
-PROCESS_HEIGHT :: CARDS_HEIGHT - BREAKS_HEIGHT - MARGIN
-BREAKS_Y :: MARGIN + PROCESS_HEIGHT + MARGIN
-// The right column: the source, the memory, then the stack and the
-// variables side by side.
-SOURCE_HEIGHT :: 144
-MEMORY_Y :: MARGIN + SOURCE_HEIGHT + MARGIN
 MEMORY_HEIGHT :: 184
-LOW_Y :: MEMORY_Y + MEMORY_HEIGHT + MARGIN
-LOW_HEIGHT :: MARGIN + CARDS_HEIGHT - LOW_Y
-STACK_WIDTH :: 296
-VARIABLES_X :: RIGHT_X + STACK_WIDTH + MARGIN
-VARIABLES_WIDTH :: WIDTH - VARIABLES_X - MARGIN
-// The debug place field and its three buttons, from the top of the inside
-// of the card of the process: under the line of the attached process.
-PLACE_FIELD_Y :: LINE + 8
-BUTTONS_Y :: PLACE_FIELD_Y + ROW_HEIGHT + 8
-BUTTON_GAP :: 8
-BUTTON_WIDTH :: (LEFT_WIDTH - 2 * graphics.MARGIN - 2 * BUTTON_GAP) / 3
+// The least heights of the cards that take the rest: a title and rows.
+SOURCE_LEAST_HEIGHT :: 96
+LOW_LEAST_HEIGHT :: 160
+STACK_LEAST_WIDTH :: 200
+// The window opens at WIDTH by HEIGHT; the principal resizes it from
+// LEAST_WIDTH by LEAST_HEIGHT up to LARGEST_WIDTH by LARGEST_HEIGHT
+// (src/md/features/window_resize.md). Literals, so the tool reads the
+// window of the budget; the assertions keep them the sizes of the layout.
+WIDTH :: 1000
+HEIGHT :: 704
+LEAST_WIDTH :: 912
+#assert(LEAST_WIDTH >= 2 * graphics.GAP + LEFT_LEAST_WIDTH + DIVIDER_THICKNESS + RIGHT_LEAST_WIDTH)
+#assert(WIDTH >= LEAST_WIDTH)
+LEAST_HEIGHT :: 600
+#assert(LEAST_HEIGHT >= TOP_BAND_HEIGHT + SOURCE_LEAST_HEIGHT + MEMORY_HEIGHT + LOW_LEAST_HEIGHT + 2 * graphics.GAP + 2 * LINE + interface.ACTION_BAR_ROW_HEIGHT)
+#assert(HEIGHT >= LEAST_HEIGHT)
+LARGEST_WIDTH :: 1440
+LARGEST_HEIGHT :: 960
 
 REFRESH_MILLISECONDS :: 500 // The threads are read again: a stop of a thread that ran shows then.
 NAME_LIMIT :: 31 // The bytes of the name of a process, as the service takes it.
@@ -115,7 +130,6 @@ MEMORY_GAP :: 8
 MEMORY_BYTES_X :: MEMORY_ADDRESS_DIGITS * graphics.CELL_WIDTH + MEMORY_GAP
 MEMORY_TEXT_X :: MEMORY_BYTES_X + (3 * MEMORY_ROW_BYTES - 1) * graphics.CELL_WIDTH + MEMORY_GAP
 MEMORY_ROW_WIDTH :: MEMORY_TEXT_X + MEMORY_ROW_BYTES * graphics.CELL_WIDTH
-#assert(MEMORY_ROW_WIDTH <= RIGHT_WIDTH - 2 * graphics.MARGIN)
 #assert(MEMORY_ROWS * LINE <= MEMORY_HEIGHT - graphics.TITLE - 8)
 
 // The records of the exports of the service, as its description has them
@@ -381,6 +395,16 @@ memory_count: int
 window_memory: interface.Window_Memory(2048, 32768)
 frame_table: ^interface.Draw_Table
 frame_acts: Frame_Acts // The acts of the frame that draw builds now.
+
+// The layout tree of each frame and the state of its boxes across frames.
+// They are large: they live in the memory of the module, never on the
+// stack (src/md/features/box_layout.md, "Constraints").
+box_tree: box_layout.Box_Tree
+box_states: box_layout.Box_States
+tokens: box_layout.Element_Tokens // The tokens of the frame in progress.
+// The split ratio when the press on the divider began: a drag moves the
+// ratio by its distance from there.
+divider_ratio_at_press: i32
 
 status_set :: proc "contextless" (failed: bool, parts: ..system.Part) {
 	writer := system.Writer{buffer = status_text[:]}
@@ -816,11 +840,16 @@ lines :: proc "contextless" (area: interface.Area, x, y, width: int, characters:
 	return y + max(count, 1) * LINE
 }
 
+// line_count gives the lines that a text takes in a width: at least one.
+line_count :: proc "contextless" (characters: string, width: int) -> int {
+	return max(interface.text_wrapped_line_count(frame_table, {}, characters, width), 1)
+}
+
 // rest_line says how many rows a card does not show.
 rest_line :: proc "contextless" (area: interface.Area, y: int, shown, total: int, what: string) {
 	if shown < total {
 		buffer: [64]u8
-		write(area, 0, y, system.format(buffer[:], "and ", u64(total - shown), " more ", what), graphics.colors.dim)
+		write(area, 0, y, system.format(buffer[:], "and ", u64(total - shown), " more ", what), tokens.text_dim)
 	}
 }
 
@@ -834,9 +863,9 @@ row_element :: proc "contextless" (frame: ^interface.Frame, element: interface.E
 	interface.element_name(frame, area, system.format(name_buffer[:], row_name, " ", row_number))
 	switch {
 	case chosen:
-		interface.draw_rectangle(frame_table, area.x, area.y, area.width, area.height, graphics.colors.chosen)
+		interface.draw_rectangle(frame_table, area.x, area.y, area.width, area.height, tokens.surface_chosen)
 	case result.under_pointer || result.focused:
-		interface.draw_rectangle(frame_table, area.x, area.y, area.width, area.height, graphics.colors.track)
+		interface.draw_rectangle(frame_table, area.x, area.y, area.width, area.height, tokens.surface_pointer_over)
 	}
 	return result.activated
 }
@@ -849,54 +878,199 @@ act_ask :: proc "contextless" (act: Element_Act, index: int = 0) {
 state_color :: proc "contextless" (state: string) -> graphics.Color {
 	switch state {
 	case "stopped":
-		return graphics.colors.failed
+		return tokens.failed
 	case "held":
-		return graphics.colors.boot_program
+		return tokens.warning
 	}
-	return graphics.colors.process
+	return tokens.expected
 }
 
-draw_process :: proc "contextless" (frame: ^interface.Frame) {
-	inside := interface.card(frame, {MARGIN, MARGIN, LEFT_WIDTH, PROCESS_HEIGHT}, "PROCESS", "debugger.attach", graphics.colors.process)
-	y := 0
+// The boxes of the window whose rectangles a frame reads after the solve.
+Window_Boxes :: struct {
+	top_band, state_label, field, status, status_text, status_help, action_bar: box_layout.Box_Index,
+	buttons:                                                                [3]box_layout.Box_Index,
+	threads, breakpoints, divider, source, memory, stack, variables:        box_layout.Box_Index,
+}
+
+// The labels of the three buttons of the debug place field, and their acts.
+@(rodata)
+place_button_labels := [3]string{"break at", "watch", "memory"}
+@(rodata)
+place_button_acts := [3]Element_Act{.Break_At_Place, .Watch_Place, .Memory_Place}
+
+// The identity of the divider between the panes: its state keeps the split
+// ratio across frames, and its input gives the drag.
+DIVIDER_LABEL :: "debugger_window divider"
+
+// area_of gives the rectangle of a box of the solved tree, as an area of
+// the interface package. A box that the tree refused has no area.
+area_of :: proc "contextless" (index: box_layout.Box_Index) -> interface.Area {
+	box := box_layout.box_of(&box_tree, index)
+	if box == nil {
+		return {}
+	}
+	return {int(box.rect.x), int(box.rect.y), int(box.rect.width), int(box.rect.height)}
+}
+
+// The state label of the top band: the attached process, and the state of
+// its chosen thread.
+state_label_words :: proc "contextless" (buffer: []u8) -> (words: string, color: graphics.Color) {
+	if !attached {
+		return "", {}
+	}
+	state := thread_chosen < thread_count ? system.name_of(thread_rows[thread_chosen].state[:]) : ""
+	if state == "" {
+		return system.format(buffer, system.name_of(attached_row.process[:])), tokens.text
+	}
+	return system.format(buffer, system.name_of(attached_row.process[:]), ": thread ", thread_number(), " ", state), state_color(state)
+}
+
+// The help of the debug place field, under the status.
+PLACE_HELP :: "break at: a procedure, or file:line. watch, memory: an address or a global; a last word 1, 2, 4 or 8 is the bytes of a watch"
+
+// divider_drag gives the split ratio of this frame, which the state of the
+// divider keeps across frames, moved by a drag of the divider since its
+// press, and whether the divider holds the press.
+divider_drag :: proc "contextless" (room: i32) -> (ratio: i32, held: bool) {
+	identity := box_layout.identity_of(DIVIDER_LABEL)
+	input, input_status := box_layout.box_input(&box_states, identity)
+	state, status := box_layout.state_of(&box_states, identity)
+	if status != .Done || input_status != .Done {
+		return SPLIT_RATIO_START, false
+	}
+	if state.split_ratio == 0 {
+		state.split_ratio = SPLIT_RATIO_START
+	}
+	if input.held && box_states.input.primary_pressed {
+		divider_ratio_at_press = state.split_ratio
+	}
+	if input.dragging {
+		state.split_ratio = box_layout.split_ratio_dragged(divider_ratio_at_press, input.drag_x, room)
+	}
+	return state.split_ratio, input.held
+}
+
+// layout_build makes the layout tree of the window at its size, and solves
+// it: the top band, the two panes and their divider, the status band and
+// the action bar.
+layout_build :: proc "contextless" (window: ^display.Window, split_ratio: i32, state_label: string) -> (boxes: Window_Boxes) {
+	width := i32(clamp(window.width, 0, box_layout.LENGTH_LIMIT))
+	height := i32(clamp(window.height, 0, box_layout.LENGTH_LIMIT))
+	gap := tokens.gap
+	_ = box_layout.tree_begin(&box_tree, width, height, {label = "debugger_window", child_axis = .Y})
+	// The top band: the name field alone, or the state label, the debug
+	// place field and its buttons.
+	boxes.top_band, _ = box_layout.box_open(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(TOP_BAND_HEIGHT)}, child_axis = .X, cross_align = .Center, padding = {.X = gap, .Y = 0}, gap = gap})
+	if !attached {
+		boxes.field, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.px(NAME_FIELD_WIDTH, 0), .Y = box_layout.px(ROW_HEIGHT)}})
+	} else {
+		boxes.state_label, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.text_size(gap, 5_000), .Y = box_layout.px(STATE_LABEL_HEIGHT)}, text_width = i32(interface.text_measured_width(frame_table, {}, state_label))})
+		boxes.field, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.fill_least(120), .Y = box_layout.px(ROW_HEIGHT)}})
+		for &button in boxes.buttons {
+			button, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.px(BUTTON_WIDTH), .Y = box_layout.px(ROW_HEIGHT)}})
+		}
+	}
+	_ = box_layout.box_close(&box_tree)
+	// The workspace: the left pane, the divider and the right pane, with
+	// the widths of the split pane. Each pane keeps its least width while
+	// the window has room for both.
+	_, _ = box_layout.box_open(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill()}, child_axis = .X, padding = {.X = gap, .Y = gap}, overflow = {.X = .Clip, .Y = .Clip}})
+	room := max(width - 2 * gap, 0)
+	pane, _ := box_layout.split_pane({0, 0, room, 0}, .X, split_ratio, min(DIVIDER_THICKNESS, room))
+	panes_room := pane.first.width + pane.second.width
+	left_width := clamp(pane.first.width, min(LEFT_LEAST_WIDTH, panes_room), max(panes_room - RIGHT_LEAST_WIDTH, min(LEFT_LEAST_WIDTH, panes_room)))
+	_, _ = box_layout.box_open(&box_tree, {size = {.X = box_layout.px(left_width), .Y = box_layout.fill()}, child_axis = .Y, gap = gap})
+	boxes.threads, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill_least(2 * graphics.TITLE)}})
+	boxes.breakpoints, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(BREAKS_HEIGHT)}})
+	_ = box_layout.box_close(&box_tree)
+	boxes.divider, _ = box_layout.box_add(&box_tree, {identity = box_layout.identity_of(DIVIDER_LABEL), size = {.X = box_layout.px(pane.divider.width), .Y = box_layout.fill()}})
+	_, _ = box_layout.box_open(&box_tree, {size = {.X = box_layout.px(panes_room - left_width), .Y = box_layout.fill()}, child_axis = .Y, gap = gap})
+	boxes.source, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.fill(), .Y = {kind = .Percent, value = 3_000, strictness = 0, least = SOURCE_LEAST_HEIGHT}}})
+	boxes.memory, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(MEMORY_HEIGHT)}})
+	_, _ = box_layout.box_open(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill_least(LOW_LEAST_HEIGHT)}, child_axis = .X, gap = gap})
+	boxes.stack, _ = box_layout.box_add(&box_tree, {size = {.X = {kind = .Percent, value = 4_000, strictness = 0, least = STACK_LEAST_WIDTH}, .Y = box_layout.fill()}})
+	boxes.variables, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.fill()}})
+	_ = box_layout.box_close(&box_tree)
+	_ = box_layout.box_close(&box_tree)
+	_ = box_layout.box_close(&box_tree)
+	// The status band: the last act, then the help of the field, each on
+	// the lines that it needs, so no text is cut.
+	text_room := int(max(width - 2 * gap, 1))
+	status_lines := status_count > 0 ? min(line_count(string(status_text[:status_count]), text_room), 4) : 0
+	help_lines := attached ? min(line_count(PLACE_HELP, text_room), 3) : 0
+	boxes.status, _ = box_layout.box_open(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.children_sum()}, minimum = {.X = 0, .Y = ROW_HEIGHT}, child_axis = .Y, padding = {.X = gap, .Y = 4}})
+	boxes.status_text, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(i32(status_lines * LINE))}})
+	boxes.status_help, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(i32(help_lines * LINE))}})
+	_ = box_layout.box_close(&box_tree)
+	boxes.action_bar, _ = box_layout.box_add(&box_tree, {size = {.X = box_layout.fill(), .Y = box_layout.px(interface.ACTION_BAR_ROW_HEIGHT)}})
+	_ = box_layout.solve(&box_tree)
+	_ = box_layout.states_record(&box_states, &box_tree)
+	return
+}
+
+// draw_top_band draws the name field, or the state label of the attached
+// process, the debug place field and its buttons.
+draw_top_band :: proc "contextless" (frame: ^interface.Frame, boxes: ^Window_Boxes, state_label: string, state_label_color: graphics.Color) {
+	top_band := area_of(boxes.top_band)
+	interface.draw_rectangle(frame_table, top_band.x, top_band.y, top_band.width, top_band.height, tokens.surface_card)
+	interface.draw_rectangle(frame_table, top_band.x, top_band.y + top_band.height - 1, top_band.width, 1, tokens.divider)
 	if !attached {
 		// With no process, the name field is the one element: it keeps the
 		// focus, so the keys type the name.
 		name_field := interface.identity("debugger_window name field")
 		frame.state.focus = name_field
-		if interface.text_input(frame, {inside.x, inside.y, inside.width, ROW_HEIGHT}, name_field, name[:], &name_count, "the name of a process").activated {
+		if interface.text_input(frame, area_of(boxes.field), name_field, name[:], &name_count, "the name of a process").activated {
 			act_ask(.Attach)
 		}
-		y = lines(inside, 0, ROW_HEIGHT + 8, inside.width, ready ? "type the name of a process that runs, then Enter" : "the service debugger is not reachable: this window can attach to nothing", graphics.colors.dim)
-	} else {
-		x := write(inside, 0, y, "attached to ", graphics.colors.dim)
-		write(inside, x, y, system.name_of(attached_row.process[:]), graphics.colors.text)
-		place_field := interface.identity("debugger_window debug place field")
-		if interface.text_input(frame, {inside.x, inside.y + PLACE_FIELD_Y, inside.width, ROW_HEIGHT}, place_field, place_text[:], &place_count, "the debug place").activated {
-			act_ask(.Break_At_Place)
-		}
-		labels := [3]string{"break at", "watch", "memory"}
-		acts := [3]Element_Act{.Break_At_Place, .Watch_Place, .Memory_Place}
-		for label, index in labels {
-			area := interface.Area{inside.x + index * (BUTTON_WIDTH + BUTTON_GAP), inside.y + BUTTONS_Y, BUTTON_WIDTH, ROW_HEIGHT}
-			if interface.button(frame, area, interface.identity_in(place_field, label), label).activated {
-				act_ask(acts[index])
-			}
-		}
-		y = lines(inside, 0, BUTTONS_Y + ROW_HEIGHT + 8, inside.width, "break at: a procedure, or file:line. watch, memory: an address or a global; a last word 1, 2, 4 or 8 is the bytes of a watch", graphics.colors.dim)
+		return
 	}
+	state_label_area := area_of(boxes.state_label)
+	interface.draw_rectangle(frame_table, state_label_area.x, state_label_area.y, state_label_area.width, state_label_area.height, tokens.surface_track)
+	interface.draw_outline(frame_table, state_label_area.x, state_label_area.y, state_label_area.width, state_label_area.height, 1, state_label_color)
+	text_left := state_label_area.x + int(tokens.gap)
+	interface.draw_text(frame_table, text_left, state_label_area.y + (state_label_area.height - LINE) / 2, interface.text_fit(frame_table, {}, state_label, state_label_area.width - 2 * int(tokens.gap)), state_label_color)
+	place_field := interface.identity("debugger_window debug place field")
+	if interface.text_input(frame, area_of(boxes.field), place_field, place_text[:], &place_count, "the debug place").activated {
+		act_ask(.Break_At_Place)
+	}
+	for label, index in place_button_labels {
+		if interface.button(frame, area_of(boxes.buttons[index]), interface.identity_in(place_field, label), label).activated {
+			act_ask(place_button_acts[index])
+		}
+	}
+}
+
+// draw_status draws the status band: what the last act did, or the
+// code of an export that failed, and the help of the debug place field.
+draw_status :: proc "contextless" (boxes: ^Window_Boxes) {
+	band := area_of(boxes.status)
+	interface.draw_rectangle(frame_table, band.x, band.y, band.width, band.height, tokens.surface_card)
+	interface.draw_rectangle(frame_table, band.x, band.y, band.width, 1, tokens.divider)
 	if status_count > 0 {
-		y = lines(inside, 0, y + 4, inside.width, string(status_text[:status_count]), status_failed ? graphics.colors.failed : graphics.colors.dim)
+		area := area_of(boxes.status_text)
+		interface.draw_text_wrapped(frame_table, area.x, area.y, area.width, string(status_text[:status_count]), status_failed ? tokens.failed : tokens.text)
 	}
+	if attached {
+		area := area_of(boxes.status_help)
+		interface.draw_text_wrapped(frame_table, area.x, area.y, area.width, PLACE_HELP, tokens.text_dim)
+	}
+}
+
+// draw_threads draws the threads of the attached process in three columns:
+// the number, the state and the place. A click on a row chooses the thread.
+draw_threads :: proc "contextless" (frame: ^interface.Frame, area: interface.Area) {
+	count_buffer: [32]u8
+	count := attached ? system.format(count_buffer[:], u64(thread_count), " threads") : ""
+	inside := interface.card(frame, area, "THREADS", "debugger.threads", graphics.colors.process, count)
 	if !attached {
+		lines(inside, 0, 0, inside.width, ready ? "type the name of a process that runs, then Enter" : "the service debugger is not reachable: this window can attach to nothing", tokens.text_dim)
 		return
 	}
-	y += 8
-	if y + 2 * LINE > inside.height {
-		return
-	}
-	write(inside, 0, y, "THREADS", graphics.colors.dim)
-	y += LINE + 4
+	columns := [3]box_layout.Table_Column{{width = 24}, {width = 72}, {weight = 1, least = 96}}
+	places: [3]box_layout.Table_Column_Place
+	_ = box_layout.table_columns(columns[:], places[:], {0, 0, i32(max(inside.width, 0)), 0}, 0)
+	place_x, place_width := int(places[2].x), int(places[2].width)
+	y := 0
 	shown := 0
 	thread_row := interface.identity("debugger_window thread row")
 	for &row, index in thread_rows[:thread_count] {
@@ -904,8 +1078,7 @@ draw_process :: proc "contextless" (frame: ^interface.Frame) {
 		state := system.name_of(row.state[:])
 		procedure := system.name_of(row.procedure[:])
 		text := row.line != 0 ? system.format(buffer[:], procedure, ":", row.line) : procedure != "" ? system.format(buffer[:], procedure) : system.format(buffer[:], system.name_of(row.instruction[:]))
-		text_x := 96
-		height := max(interface.text_wrapped_line_count(frame_table, {}, text, inside.width - text_x), 1) * LINE
+		height := line_count(text, place_width) * LINE
 		if y + height > inside.height - LINE {
 			break
 		}
@@ -914,9 +1087,9 @@ draw_process :: proc "contextless" (frame: ^interface.Frame) {
 			act_ask(.Choose_Thread, index)
 		}
 		number: [24]u8
-		write(inside, 0, y, system.format(number[:], row.thread), chosen ? graphics.COLOR_WHITE : graphics.colors.text)
-		write(inside, 24, y, state, chosen ? graphics.COLOR_WHITE : state_color(state))
-		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, chosen ? graphics.COLOR_WHITE : graphics.colors.text)
+		write(inside, int(places[0].x), y, system.format(number[:], row.thread), chosen ? tokens.text_on_chosen : tokens.text)
+		write(inside, int(places[1].x), y, state, chosen ? tokens.text_on_chosen : state_color(state))
+		interface.draw_text_wrapped(frame_table, inside.x + place_x, inside.y + y, place_width, text, chosen ? tokens.text_on_chosen : tokens.text)
 		y += height + 2
 		shown += 1
 	}
@@ -926,14 +1099,14 @@ draw_process :: proc "contextless" (frame: ^interface.Frame) {
 // draw_breakpoints draws the breakpoints and the watches: the number that
 // removes each one, its kind, the bytes of a watch and the place that named
 // it. A click on a row removes it.
-draw_breakpoints :: proc "contextless" (frame: ^interface.Frame) {
-	inside := interface.card(frame, {MARGIN, BREAKS_Y, LEFT_WIDTH, BREAKS_HEIGHT}, "BREAKPOINTS", "debugger.breaks", graphics.colors.boot_program)
+draw_breakpoints :: proc "contextless" (frame: ^interface.Frame, area: interface.Area) {
+	inside := interface.card(frame, area, "BREAKPOINTS", "debugger.breaks", graphics.colors.boot_program)
 	if !attached {
-		lines(inside, 0, 0, inside.width, "no process is attached", graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, "no process is attached", tokens.text_dim)
 		return
 	}
 	if break_count == 0 {
-		lines(inside, 0, 0, inside.width, "none: b, a click on a source line, or break at and watch with a debug place", graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, "none: b, a click on a source line, or break at and watch with a debug place", tokens.text_dim)
 		return
 	}
 	y := 0
@@ -945,7 +1118,7 @@ draw_breakpoints :: proc "contextless" (frame: ^interface.Frame) {
 		place := system.name_of(row.place[:])
 		text := row.length != 0 ? system.format(buffer[:], kind, " ", u64(row.length), " bytes ", place) : system.format(buffer[:], kind, " ", place)
 		text_x := 24
-		height := max(interface.text_wrapped_line_count(frame_table, {}, text, inside.width - text_x), 1) * LINE
+		height := line_count(text, inside.width - text_x) * LINE
 		if y + height > inside.height - LINE {
 			break
 		}
@@ -954,26 +1127,26 @@ draw_breakpoints :: proc "contextless" (frame: ^interface.Frame) {
 		}
 		number: [24]u8
 		write(inside, 0, y, system.format(number[:], row.number), graphics.colors.boot_program)
-		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, graphics.colors.text)
+		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, tokens.text)
 		y += height + 2
 		shown += 1
 	}
 	rest_line(inside, y, shown, break_count, "breakpoints")
 }
 
-draw_source :: proc "contextless" (frame: ^interface.Frame) {
-	inside := interface.card(frame, {RIGHT_X, MARGIN, RIGHT_WIDTH, SOURCE_HEIGHT}, "SOURCE", "debugger.source", graphics.colors.resource)
+draw_source :: proc "contextless" (frame: ^interface.Frame, area: interface.Area) {
+	inside := interface.card(frame, area, "SOURCE", "debugger.source", graphics.colors.resource)
 	if source_count == 0 {
-		lines(inside, 0, 0, inside.width, !attached ? "no process is attached" : thread_can_be_read() ? "the frame has no source line: its module has no debug object, or the service does not have the file" : "the thread runs: hold it (h) to read its line", graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, !attached ? "no process is attached" : thread_can_be_read() ? "the frame has no source line: its module has no debug object, or the service does not have the file" : "the thread runs: hold it (h) to read its line", tokens.text_dim)
 		return
 	}
-	y := lines(inside, 0, 0, inside.width, system.name_of(source_rows[0].path[:]), graphics.colors.dim) + 4
+	y := lines(inside, 0, 0, inside.width, system.name_of(source_rows[0].path[:]), tokens.text_dim) + 4
 	shown := 0
 	source_row := interface.identity("debugger_window source row")
 	for &row, index in source_rows[:source_count] {
 		text := system.name_of(row.text[:])
 		text_x := 80
-		height := max(interface.text_wrapped_line_count(frame_table, {}, text, inside.width - text_x), 1) * LINE
+		height := line_count(text, inside.width - text_x) * LINE
 		if y + height > inside.height - LINE {
 			break
 		}
@@ -984,8 +1157,8 @@ draw_source :: proc "contextless" (frame: ^interface.Frame) {
 		marked := system.name_of(row.mark[:]) != ""
 		number: [24]u8
 		write(inside, 0, y, system.name_of(row.mark[:]), graphics.colors.boot_program)
-		write(inside, 24, y, system.format(number[:], row.line), graphics.colors.dim)
-		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, marked ? graphics.colors.text : graphics.colors.dim)
+		write(inside, 24, y, system.format(number[:], row.line), tokens.text_dim)
+		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, marked ? tokens.text : tokens.text_dim)
 		y += height + 2
 		shown += 1
 	}
@@ -995,21 +1168,21 @@ draw_source :: proc "contextless" (frame: ^interface.Frame) {
 // draw_memory draws the memory view: for each row its address with no
 // leading zero, its 16 bytes and their printable characters, each column at
 // a fixed place in the font of the cells.
-draw_memory :: proc "contextless" (frame: ^interface.Frame) {
+draw_memory :: proc "contextless" (frame: ^interface.Frame, area: interface.Area) {
 	count_buffer: [32]u8
 	count := memory_place_count > 0 && memory_count > 0 ? system.format(count_buffer[:], u64(memory_count), " rows") : ""
-	inside := interface.card(frame, {RIGHT_X, MEMORY_Y, RIGHT_WIDTH, MEMORY_HEIGHT}, "MEMORY", "debugger.memory", graphics.colors.memory, count)
+	inside := interface.card(frame, area, "MEMORY", "debugger.memory", graphics.colors.memory, count)
 	if !attached {
-		lines(inside, 0, 0, inside.width, "no process is attached", graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, "no process is attached", tokens.text_dim)
 		return
 	}
 	if memory_place_count == 0 {
-		lines(inside, 0, 0, inside.width, "type an address or a global in the debug place field, then memory", graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, "type an address or a global in the debug place field, then memory", tokens.text_dim)
 		return
 	}
 	if memory_count == 0 {
 		buffer: [PLACE_LIMIT + 64]u8
-		lines(inside, 0, 0, inside.width, system.format(buffer[:], "the service read no byte at ", string(memory_place[:memory_place_count])), graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, system.format(buffer[:], "the service read no byte at ", string(memory_place[:memory_place_count])), tokens.text_dim)
 		return
 	}
 	shown := 0
@@ -1021,18 +1194,18 @@ draw_memory :: proc "contextless" (frame: ^interface.Frame) {
 			continue
 		}
 		y := shown * LINE
-		write(inside, 0, y, address, graphics.colors.dim)
-		write(inside, MEMORY_BYTES_X, y, system.name_of(row.bytes[:]), graphics.colors.text)
+		write(inside, 0, y, address, tokens.text_dim)
+		write(inside, MEMORY_BYTES_X, y, system.name_of(row.bytes[:]), tokens.text)
 		write(inside, MEMORY_TEXT_X, y, system.name_of(row.text[:]), graphics.colors.memory)
 		shown += 1
 	}
 	rest_line(inside, shown * LINE, shown, memory_count, "rows")
 }
 
-draw_stack :: proc "contextless" (frame: ^interface.Frame) {
-	inside := interface.card(frame, {RIGHT_X, LOW_Y, STACK_WIDTH, LOW_HEIGHT}, "STACK", "debugger.stack", graphics.colors.kernel)
+draw_stack :: proc "contextless" (frame: ^interface.Frame, area: interface.Area) {
+	inside := interface.card(frame, area, "STACK", "debugger.stack", graphics.colors.kernel)
 	if frame_count == 0 {
-		lines(inside, 0, 0, inside.width, !attached ? "no process is attached" : "the thread runs: it has no stack to read", graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, !attached ? "no process is attached" : "the thread runs: it has no stack to read", tokens.text_dim)
 		return
 	}
 	y := 0
@@ -1043,7 +1216,7 @@ draw_stack :: proc "contextless" (frame: ^interface.Frame) {
 		procedure := system.name_of(row.procedure[:])
 		text := procedure == "" ? system.format(buffer[:], system.name_of(row.module[:]), " + ", row.offset) : row.line != 0 ? system.format(buffer[:], procedure, ":", row.line) : system.format(buffer[:], procedure)
 		text_x := 24
-		height := max(interface.text_wrapped_line_count(frame_table, {}, text, inside.width - text_x), 1) * LINE
+		height := line_count(text, inside.width - text_x) * LINE
 		if y + height > inside.height - LINE {
 			break
 		}
@@ -1052,25 +1225,25 @@ draw_stack :: proc "contextless" (frame: ^interface.Frame) {
 			act_ask(.Choose_Frame, index)
 		}
 		number: [24]u8
-		write(inside, 0, y, system.format(number[:], row.frame), chosen ? graphics.COLOR_WHITE : graphics.colors.dim)
-		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, chosen ? graphics.COLOR_WHITE : graphics.colors.text)
+		write(inside, 0, y, system.format(number[:], row.frame), chosen ? tokens.text_on_chosen : tokens.text_dim)
+		interface.draw_text_wrapped(frame_table, inside.x + text_x, inside.y + y, inside.width - text_x, text, chosen ? tokens.text_on_chosen : tokens.text)
 		y += height + 2
 		shown += 1
 	}
 	rest_line(inside, y, shown, frame_count, "frames")
 }
 
-draw_registers :: proc "contextless" (frame: ^interface.Frame) {
-	inside := interface.card(frame, {VARIABLES_X, LOW_Y, VARIABLES_WIDTH, LOW_HEIGHT}, "REGISTERS", "debugger.registers", graphics.colors.machine)
+draw_registers :: proc "contextless" (frame: ^interface.Frame, area: interface.Area) {
+	inside := interface.card(frame, area, "REGISTERS", "debugger.registers", graphics.colors.machine)
 	if register_count == 0 {
-		lines(inside, 0, 0, inside.width, !attached ? "no process is attached" : "the thread runs: hold it (h) to read its registers", graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, !attached ? "no process is attached" : "the thread runs: hold it (h) to read its registers", tokens.text_dim)
 		return
 	}
 	// A column holds a name and a value of up to 16 digits after its "0x".
-	// A second column only when the card is wide enough for two: else the
-	// values of the first column run into the names of the second.
+	// As many columns as the card holds: else the values of one column run
+	// into the names of the next.
 	REGISTER_COLUMN_WIDTH :: 72 + 16 * 8 + 8
-	columns := inside.width >= 2 * REGISTER_COLUMN_WIDTH ? 2 : 1
+	columns := clamp(inside.width / REGISTER_COLUMN_WIDTH, 1, 4)
 	column_width := inside.width / columns
 	rows_of_a_column := (inside.height - LINE) / LINE
 	shown := 0
@@ -1079,11 +1252,11 @@ draw_registers :: proc "contextless" (frame: ^interface.Frame) {
 		if column >= columns {
 			break
 		}
-		write(inside, column * column_width, line * LINE, system.name_of(row.name[:]), graphics.colors.dim)
+		write(inside, column * column_width, line * LINE, system.name_of(row.name[:]), tokens.text_dim)
 		// The value without its leading zeros keeps its column narrow. Its
 		// "0x" stays, dim: a reader knows that the digits are hexadecimal.
-		write(inside, column * column_width + 56, line * LINE, "0x", graphics.colors.dim)
-		write(inside, column * column_width + 72, line * LINE, value_short(system.name_of(row.value[:])), graphics.colors.text)
+		write(inside, column * column_width + 56, line * LINE, "0x", tokens.text_dim)
+		write(inside, column * column_width + 72, line * LINE, value_short(system.name_of(row.value[:])), tokens.text)
 		shown += 1
 	}
 	rest_line(inside, inside.height - LINE, shown, register_count, "registers")
@@ -1102,28 +1275,48 @@ value_short :: proc "contextless" (value: string) -> string {
 	return value[first:]
 }
 
-draw_variables :: proc "contextless" (frame: ^interface.Frame) {
+// draw_variables draws the variables of the chosen frame as a table of
+// three columns, the name, the type and the value, whose widths
+// table_columns shares by their weights. Each cell takes the lines that its
+// text needs, so no text is cut.
+draw_variables :: proc "contextless" (frame: ^interface.Frame, area: interface.Area) {
 	if registers_shown {
-		draw_registers(frame)
+		draw_registers(frame, area)
 		return
 	}
-	inside := interface.card(frame, {VARIABLES_X, LOW_Y, VARIABLES_WIDTH, LOW_HEIGHT}, "VARIABLES", "debugger.locals", graphics.colors.machine)
+	inside := interface.card(frame, area, "VARIABLES", "debugger.locals", graphics.colors.machine)
 	if variable_count == 0 {
-		lines(inside, 0, 0, inside.width, !attached ? "no process is attached" : thread_can_be_read() ? "the frame has no variable that the debug object describes" : "the thread runs: it has no variable to read", graphics.colors.dim)
+		lines(inside, 0, 0, inside.width, !attached ? "no process is attached" : thread_can_be_read() ? "the frame has no variable that the debug object describes" : "the thread runs: it has no variable to read", tokens.text_dim)
 		return
 	}
-	y := 0
+	COLUMN_GAP :: 8
+	columns := [3]box_layout.Table_Column{{weight = 3, least = 64}, {weight = 3, least = 64}, {weight = 4, least = 80}}
+	places: [3]box_layout.Table_Column_Place
+	_ = box_layout.table_columns(columns[:], places[:], {0, 0, i32(max(inside.width, 0)), i32(max(inside.height, 0))}, 1)
+	headers := [3]string{"name", "type", "value"}
+	for header, index in headers {
+		write(inside, int(places[index].x), 0, header, tokens.text_dim)
+		if index < len(headers) - 1 {
+			divider := places[index].divider
+			interface.draw_rectangle(frame_table, inside.x + int(divider.x), inside.y, int(divider.width), inside.height - LINE, tokens.divider)
+		}
+	}
+	y := LINE + 4
 	shown := 0
 	for &row in variable_rows[:variable_count] {
-		buffer: [200]u8
-		label := system.format(buffer[:], system.name_of(row.name[:]), ": ", system.name_of(row.type[:]))
-		value := system.name_of(row.value[:])
-		height := (max(interface.text_wrapped_line_count(frame_table, {}, label, inside.width), 1) + max(interface.text_wrapped_line_count(frame_table, {}, value, inside.width - 16), 1)) * LINE
+		cells := [3]string{system.name_of(row.name[:]), system.name_of(row.type[:]), system.name_of(row.value[:])}
+		height := 0
+		for cell, index in cells {
+			height = max(height, line_count(cell, int(places[index].width) - COLUMN_GAP) * LINE)
+		}
 		if y + height > inside.height - LINE {
 			break
 		}
-		y = lines(inside, 0, y, inside.width, label, graphics.colors.dim)
-		y = lines(inside, 16, y, inside.width - 16, value, graphics.colors.text) + 2
+		colors := [3]graphics.Color{tokens.text, tokens.text_dim, tokens.text_strong}
+		for cell, index in cells {
+			interface.draw_text_wrapped(frame_table, inside.x + int(places[index].x), inside.y + y, int(places[index].width) - COLUMN_GAP, cell, colors[index])
+		}
+		y += height + 2
 		shown += 1
 	}
 	rest_line(inside, y, shown, variable_count, "variables")
@@ -1135,20 +1328,31 @@ draw :: proc "contextless" (window: ^display.Window) -> Frame_Acts {
 	frame_acts = {}
 	frame := interface.window_frame_start(&window_memory, window)
 	frame_table = frame.table
-	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
+	tokens, _ = box_layout.tokens_for(graphics.appearance, .Standard)
+	interface.background(&frame, {0, 0, window.width, window.height})
 	// The keys of the open list of the action bar, and a press on it, go
 	// to the bar before any element of the window.
 	interface.action_bar_input_take(&frame, &bar)
-	draw_process(&frame)
-	draw_breakpoints(&frame)
-	draw_source(&frame)
-	draw_memory(&frame)
-	draw_stack(&frame)
-	draw_variables(&frame)
+	input := frame.input
+	box_layout.states_frame_begin(&box_states, {pointer_x = i32(clamp(input.pointer_x, int(min(i32)), int(max(i32)))), pointer_y = i32(clamp(input.pointer_y, int(min(i32)), int(max(i32)))), pointer_present = input.pointer_known, primary_down = input.button_held, primary_pressed = input.pressed, primary_released = input.released, primary_press_count = input.pressed ? 1 : 0})
+	room := i32(clamp(window.width - 2 * int(tokens.gap) - DIVIDER_THICKNESS, 0, box_layout.LENGTH_LIMIT))
+	split_ratio, divider_held := divider_drag(room)
+	state_label_buffer: [96]u8
+	state_label, state_label_color := state_label_words(state_label_buffer[:])
+	boxes := layout_build(window, split_ratio, state_label)
+	draw_top_band(&frame, &boxes, state_label, state_label_color)
+	draw_threads(&frame, area_of(boxes.threads))
+	draw_breakpoints(&frame, area_of(boxes.breakpoints))
+	divider := area_of(boxes.divider)
+	interface.draw_rectangle(frame_table, divider.x + divider.width / 2 - 1, divider.y, 2, divider.height, divider_held ? tokens.focus_outline : tokens.divider)
+	draw_source(&frame, area_of(boxes.source))
+	draw_memory(&frame, area_of(boxes.memory))
+	draw_stack(&frame, area_of(boxes.stack))
+	draw_variables(&frame, area_of(boxes.variables))
+	draw_status(&boxes)
 	// The bar comes last: its list opens over the cards.
-	bar_area := interface.Area{0, HEIGHT - KEYS_HEIGHT, WIDTH, KEYS_HEIGHT}
 	when_attached, when_detached := attached_items(), detached_items()
-	bar_result := interface.action_bar(&frame, bar_area, attached ? when_attached[:] : when_detached[:], &bar)
+	bar_result := interface.action_bar(&frame, area_of(boxes.action_bar), attached ? when_attached[:] : when_detached[:], &bar)
 	// The input is cleared at the end of the frame: the keys that no
 	// element took are kept first.
 	for press in frame.input.keys[:frame.input.key_count] {
@@ -1234,6 +1438,15 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "debugger_window")
 	if !ok {
 		system.stop(.Failed)
+	}
+	// The limits are constants of this process: a refusal is a fault of
+	// this source, and a full ring a fault of the compositor; the line says
+	// which, and the window keeps its size. The interface package takes the
+	// event Resized and makes the surface of the new size.
+	if problem, sent := display.resizable_set(&window, {least_width = LEAST_WIDTH, least_height = LEAST_HEIGHT, largest_width = LARGEST_WIDTH, largest_height = LARGEST_HEIGHT}); problem != .None {
+		system.log_fact(.Info, Window_Stays_Fixed{cause = value_kinds.text_field(display.SIZE_LIMITS_PROBLEM_SENTENCES[problem], STAYS_FIXED_CAUSE_FIELD_BYTES)})
+	} else if !sent {
+		system.log_fact(.Info, Window_Stays_Fixed{cause = value_kinds.text_field("the command ring of the window is full", STAYS_FIXED_CAUSE_FIELD_BYTES)})
 	}
 	if problem := service_reach(ctx); problem != "" {
 		status_set(true, problem)
