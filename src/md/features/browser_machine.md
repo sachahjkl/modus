@@ -86,7 +86,7 @@ The kernel reads and writes process memory (the kernel ring of a thread, a table
 - **The copy with the memory of a process.** `user_copy_from_process` and `user_copy_to_process` take the address of the process as a `u64`. On x86-64 they are the copy of `rep movsb` of today. On a browser machine they call the kernel part `process_memory`, with host tests, which walks the table of `cr3` through the walk of the software processor with the checks of a user access, and checks each page of the range before the first byte moves. The caller checked the range under the process lock (`user_range`), so a refused walk is a fault of the kernel, and the instance stops, as a page fault of the kernel in its copy stops a processor.
 - **The interrupt controller.** `apic_amd64.odin` holds the local APIC, the 8254 and the search of the processors; `apic_wasm64p32.odin` gives the same procedures over the kernel part `virtual_interrupt_controller`, with host tests. Each processor has one bit for each vector that waits, which a sender sets with an atomic OR and its processor takes, the highest first, and a periodic deadline of the timer on the clock of the page. Deadlines that the processor missed give one tick, as the one bit of the APIC, and the next deadline is one period after the clock. `apic_send` sets the bit, then the word of the idle wait of the target, and notifies it; a start command or a processor that does not exist is refused and counted. The end of an interrupt clears nothing: a vector leaves the controller when the processor takes it. `acpi.odin` holds the walk of the ACPI tables, which both targets compile: a browser machine has no ACPI root.
 - **The exports.** The kernel exports `entry`, `modus_processor_loop_run` and its memory, and nothing else. The demonstration page of the software processor has its own package, `software_machine_demonstration`, so its procedures `modus_vm_*` are not in the kernel. `modustool check` runs `odin check` of the kernel for `freestanding_wasm64p32`, since no build of the image compiles it.
-- **A start in an engine.** In Node, a memory map of one boot range and one free range, given to `entry`, starts the kernel to the start of the root service, through the memory, the processor, the time base of the page, the processors and the absence of an IOMMU; with no boot image, the start stops there with its line.
+- **A start in an engine.** The host of the page ("The page and its host") starts the kernel in Node through the root service: the root service is built from the boot image, and its first thread runs on the software processor. With no boot image, the start stops after the mark `kernel: ok` with its line.
 - **One instance for each worker.** The linear memory is shared, so a global of Odin is in the memory of every worker. The register file and the software processor are thread-locals. The word that the idle wait waits on is in the shared memory, one for each processor.
 - **The idle wait.** It clears the word of its processor, delivers each interrupt that waits, and returns when one came, as `hlt` returns after one. Else a build with the feature `atomics` waits with `memory.atomic.wait32` on that word until the deadline of the timer, at most one tick. A build with no atomics has one processor and calls the import `page_idle_wait`, which suspends the worker. `interrupt_window` delivers each interrupt that waits, as the window between `sti` and `cli` does.
 
@@ -94,6 +94,32 @@ These parts are not done yet, and each one stops the instance or stays inactive 
 
 - **The shared memory.** The build links its own memory. A build for several workers needs `--import-memory` and `--shared-memory` at the link.
 - **The counted kernel** (`KERNEL_EDGE_COUNTERS`) is a build for x86-64 only. The build for WebAssembly refuses it with an `#assert`.
+
+### The page and its host
+
+The page of a browser machine is four static files, which the site writes and `modustool browser-machine` writes beside the kernel and the boot image of the build (`build/browser_machine/`). They are in `tools/modustool/build/browser_machine/`.
+
+- **`browser_machine_host.js`, the host.** One ES module with no document: it is the one place of the border of the page. It gives the six imports of `modus_page`, writes the boot record and its memory map, plays the ports, and drives the processor loop. The worker imports it, and `modustool browser-machine boot` runs it in Node. So Node is not a second set of models ("The refused forms"): it runs the same models as the page.
+- **`browser_machine_worker.js`, the processor.** A module worker: it compiles the kernel, fetches the boot image, starts the machine, and runs the loop in slices of 8 ms. Between two slices it yields to its event loop, so it receives the keys, the pointer and the requests of frames. It sends the lines of the serial port and a copy of the framebuffer.
+- **`browser_machine_page.js` and `browser_machine.html`, the document.** It starts the worker, asks one frame at each animation frame, draws it on a canvas 2D with `putImageData` (blue first in the framebuffer, red first in `ImageData`), shows the serial port, and sends each key and each move of the pointer of the canvas to the worker. It runs no processor and no model.
+
+The physical memory of the machine is the linear memory of the kernel. The host grows it to its size (512 MiB in the page) and places, from offset 0:
+
+| Range | What | In the memory map |
+|---|---|---|
+| From 0 to the end of the memory that the kernel links | The data and the shadow stack of the kernel | None |
+| One page | The boot record | `Boot` |
+| One page | The memory map: two ranges | `Boot` |
+| The boot image, to a page | The boot image of the build | `Boot` |
+| The framebuffer, to a page | 1280 × 800 pixels, blue first, one line of 1280 pixels | None: device memory, as on QEMU |
+| The rest | The free page frames | `Free` |
+
+- **The clock of the machine** counts from the creation of the machine, as the cycle counter counts from a reset. So the stage "firmware" of the boot is the time of the page before the kernel, not the time since the start of the computer.
+- **The loop.** `entry` ends in the throw of its stack switch. The host then calls `modus_processor_loop_run` with a budget of 100 000 instructions. `Kernel_Returned` and `Slice_Ended` both mean "call again": the thread goes on at the next call. `Idle` waits one millisecond. `Budget_Refused` is a fault of the host, and stops the machine. `page_processor_stop` and a trap of WebAssembly end the machine.
+- **The idle wait.** In Node, and in a worker of a page with cross-origin isolation, `page_idle_wait` sleeps with `Atomics.wait` until the deadline. In a page with no isolation it returns at once, the kernel waits for its deadline in its idle loop, and the messages of the page wait for the next run of a thread. A suspension with JSPI is the form that keeps the events of the page during the wait ("Several processors as workers").
+- **The ports.** The host plays the devices that the kernel and the first services reach through ports: the serial port COM1 (`0x3F8` to `0x3FF`: a line for each line feed, the transmitter always empty), the PS/2 controller with its keyboard and its mouse (`0x60`, `0x64`: the answers of a reset and of an identification, the keys as scan code set 1 from `KeyboardEvent.code`, and packets of 3 bytes for the mouse), the clock of the machine (`0x70`, `0x71`: the date of the page in UTC) and the exit device of QEMU (`0xF4`: the stop code). Another port reads all ones and is counted.
+- **The device models in JavaScript.** "The devices of the page" places the models in a worker of their own, in Odin. These four ports are the exception: a port is a synchronous call of the processor, and these devices hold a few bytes of state, so they run in the host, in the worker of the processor. The virtio devices stay models in Odin in their own worker.
+- **The check of the border.** `modustool browser-machine` reads the import section and the export section of the file that it builds, and refuses an import that the host does not give, a missing import, an import twice, and an export that is not one of the three. A host test compares each offset of the boot record in the host with `offset_of` of `Boot_Info`, so a field moved in `boot_info.odin` fails in the tool, not in a page.
 
 ### The processor loop
 
@@ -221,7 +247,7 @@ The models run in a worker of their own, never in a processor and never on the t
 - **The size.** The screen has the size of the canvas in device pixels, read with `ResizeObserver` and its `devicePixelContentBoxSize`, so one pixel of the system is one pixel of the display, with no blur.
 - **The scale factor** is the eighth of the system nearest to `devicePixelRatio` among the scales that exist ([desktop_to_browser.md](desktop_to_browser.md), "The reference screen"). A ratio of 2 gives the largest scale until the scales past 1.375 exist.
 - **A resize of the canvas after the start** is a change of the mode of the display, which the class protocol of the display gives ([device_services.md](device_services.md), "The open points"). A fixed size at the start is not enough: a page that the reader resizes, or turns on a phone, then shows a screen of the wrong size. So the browser machine comes after the class protocol of the display, and each resize of the canvas is a change of the mode.
-- **The present.** At each animation frame, the thread of the document copies the screen page that the display registers name into a texture of WebGL2, and a shader swaps the blue and the red. The copy is whole: the display has no damage. Its cost is a measure.
+- **The present.** At each animation frame, the thread of the document copies the screen page that the display registers name into a texture of WebGL2, and a shader swaps the blue and the red. The copy is whole: the display has no damage. Its cost is a measure. The first page draws the framebuffer of the boot record on a canvas 2D, and swaps the bytes in JavaScript ("The page and its host").
 
 ### The trust
 

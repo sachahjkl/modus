@@ -1,20 +1,18 @@
-// Browser machine runner page emitted as a static asset of the site
-// (src/md/features/browser_machine.md, "The devices of the page").
-//
-// Provides a minimal, self-contained HTML and JavaScript harness that loads
-// the freestanding WebAssembly software machine runtime, blits its RGBA
-// framebuffer onto a canvas, forwards keyboard and pointer events, drains the
-// serial output ring, runs single-processor without cross-origin isolation,
-// and leaves the optional bring-your-own link relay URL blank by default.
+// The page of a browser machine on the site
+// (src/md/features/browser_machine.md, "The page and its host"): the files
+// of the page, its worker and the host of the kernel, which the build
+// package holds for its command browser-machine too.
 package site
 
-SITE_BROWSER_MACHINE_FILE :: "browser_machine.html"
+import "modustool:build"
 
-@(private = "file")
-SITE_BROWSER_MACHINE_HTML :: #load("browser_machine.html", string)
-
-// site_browser_machine_html returns the self-contained browser machine runner
-// HTML document shipped as a static asset beside the generated site.
-site_browser_machine_html :: proc() -> string {
-	return SITE_BROWSER_MACHINE_HTML
+// site_browser_machine_write writes each file of the page beside the pages
+// of the site. The kernel and the boot image are not files of the site: the
+// command browser-machine writes them beside the page.
+site_browser_machine_write :: proc(site: ^Site) -> bool {
+	files := build.BROWSER_MACHINE_PAGE_FILES
+	for file in files {
+		site_write_file(site, file.name, transmute([]u8)file.text) or_return
+	}
+	return true
 }

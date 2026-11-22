@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>modus browser machine</title>
+<style>
+:root { color-scheme: dark; --background: #0f1115; --panel: #161a20; --line: #2d3440; --text: #e6ebf2; --dim: #9aa5b4; --accent: #5fa8ff; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 16px; background: var(--background); color: var(--text); font: 13px/1.45 ui-monospace, Menlo, Consolas, monospace; }
+main { max-width: 1312px; margin: 0 auto; display: grid; gap: 12px; }
+header { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+h1 { margin: 0; font-size: 16px; font-weight: 600; }
+#machine-status { color: var(--dim); flex: 1; }
+button { font: inherit; color: var(--text); background: var(--background); border: 1px solid var(--line); padding: 6px 12px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+canvas { display: block; width: 100%; max-width: 1280px; aspect-ratio: 1280 / 800; background: #000; border: 1px solid var(--line); outline: none; }
+canvas:focus { border-color: var(--accent); }
+pre { margin: 0; padding: 8px; background: var(--panel); border: 1px solid var(--line); white-space: pre-wrap; word-break: break-word; overflow-y: auto; max-height: 320px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>modus browser machine</h1>
+    <div id="machine-status" role="status"></div>
+    <button id="start" type="button">Start</button>
+  </header>
+  <canvas id="screen" width="1280" height="800" tabindex="0" aria-label="The screen of the machine"></canvas>
+  <pre id="serial-output" aria-label="The serial port"></pre>
+</main>
+<script type="module" src="browser_machine_page.js"></script>
+</body>
+</html>
