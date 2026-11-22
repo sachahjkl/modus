@@ -4555,7 +4555,7 @@ machine_bar_layout :: proc(machine: ^Machine) -> (layout: bar.Layout, ok: bool) 
 		}
 	}
 	layout = bar.layout_of(.Interface)
-	expected := fmt.tprintf("%sstart %d pixels, windows %d, the widest name %d", INTERFACE_LINE, layout.label_width, layout.windows_label_width, layout.longest_name_width)
+	expected := fmt.tprintf("%sthe widest name %d pixels", INTERFACE_LINE, layout.longest_name_width)
 	if !strings.has_prefix(text[interface_at:], expected) {
 		end := strings.index_byte(text[interface_at:], '\n')
 		fmt.eprintfln("modustool: test failed: the tool measures the bar as \"%s\", the compositor wrote \"%s\"", expected, text[interface_at:][:end < 0 ? len(text) - interface_at : end])

@@ -224,7 +224,7 @@ Do not use: screen grab, framebuffer read.
 
 The mark of a viewer is the box of the bar that shows, while the capture face is open, the word viewer, the start of the key of each viewer, and which ones have the input.
 
-The compositor draws it from its own state, so the remote display cannot hide it. A text that does not fit becomes the count of the viewers, then a square with no text, which takes the room of the key of the palette when it has no other: it is never left out. It is the visible indicator that property 20 asks of a capture of the screen.
+The compositor draws it from its own state, so the remote display cannot hide it. A text that does not fit becomes the count of the viewers, then a square with no text, which needs no room of its own: it is never left out, and the window plates give way to it. It is the visible indicator that property 20 asks of a capture of the screen.
 
 The design: `docs/DESIGN.md`, "Background and bar".
 
@@ -232,19 +232,19 @@ Do not use: recording light, share indicator.
 
 ### Bar
 
-The bar is the line at the top or at the bottom of the screen that the compositor draws: the mark of the system, the buttons of the two menus, the key of the palette, and the clock.
+The bar is the line at the top or at the bottom of the screen that the compositor draws: the heron button, the button of the windows, the window plates, the tray, and the clock.
 
-The bar is the fixed place of the desktop where the input starts a process or finds a window. A press on a button opens its menu next to the bar, away from the bar edge. `src/library/internal/compositor/bar` holds the places of the buttons and of each line of the menus, and the table of the names of the processes, `bar.names`: the compositor draws from it, and the modus tool presses the same places in the machine tests. The bar is not a task bar and not a dock: it holds two menus and no state of a process.
+The bar is the fixed place of the desktop where the input starts a process or finds a window. A press on a button opens its menu away from the bar edge. `src/library/internal/compositor/bar` holds the places of the buttons, of the window plates and of the lines of the menus, and the table `bar.names`: the compositor draws from it, and the modus tool presses the same places in the machine tests. The bar is not a dock: a window plate shows only a window that is open.
 
-The design: `docs/DESIGN.md`, "Background and bar".
+The design: `docs/DESIGN.md`, "Background and bar", and `src/md/features/desktop_shell_look.md`.
 
 Do not use: task bar, panel, dock.
 
 ### Bar layout
 
-The bar layout is the widths of the texts of the bar, measured in the font that draws them, with the bar edge and the height of the screen, from which come the place of each button and of each line of a menu.
+The bar layout is the width of the widest name of the start menu, measured in the font that draws it, with the bar edge and the height of the screen, from which come the place of each button and of each line of a menu.
 
-The names of the bar are in the interface font, which has proportional widths. With places from a fixed width, a press can land beside the entry that the eye sees. So the compositor measures `bar.Layout` at its start and when the font changes, and writes it on the log. The modus tool measures the same layout from the same font file, so it presses the right places. The bar layout is not a set of constants: it depends on the font in use and on the bar edge. Its zero value is a bar at the top.
+The names of the start menu are in the interface font, which has proportional widths. With places from a fixed width, a press can land beside the entry that the eye sees. So the compositor measures `bar.Layout` at its start and when the font changes, and writes it on the log. The modus tool measures the same layout from the same font file. The bar layout depends on the font in use and on the bar edge. Its zero value is a bar at the top.
 
 The design: `docs/FONTS.md`, "12.8 The parts, each one working".
 
@@ -260,13 +260,53 @@ The design: `src/md/features/bar_edge.md`.
 
 Do not use: bar side, dock position.
 
+### Heron button
+
+The heron button is the button at the left end of the bar that shows the mark of the system and opens the start menu.
+
+It is a night-blue plate with a line of light under its top edge, so the blue body of the heron stands out in both appearances. It has three looks: at rest, under the pointer, and pressed in while the start menu is open. Each look has its own picture of the heron on its plate, made once at the start. The heron button has no label: the mark says what it is.
+
+The design: `src/md/features/desktop_shell_look.md`.
+
+Do not use: start button, logo button.
+
+### Window plate
+
+A window plate is the plate of the bar that stands for the windows of one name: its module icon, the name, and the count of the windows when there are several.
+
+The plates start after the divider that follows the button of the windows, one for each name, in the order of the client table. The plate of the window in front is raised, with an accent of 2 pixels at its foot. A press on a plate brings the first window of its name to the front and restores it when it is minimized. Under the pointer, a plate shows a preview card with the state of each of its windows. The plates stop before the tray: a plate that does not fit is not drawn.
+
+The design: `src/md/features/desktop_shell_look.md`.
+
+Do not use: task button, pill, tab.
+
+### Tray
+
+The tray is the part of the bar between the window plates and the clock that shows the state of the desktop: the mark of a viewer and the pills of `desktop_shell.Tray_State`.
+
+A pill of the tray has the module icon of its kind, its label, or both. A pill that asks for attention has the red plate of the concept "stop a process". The tray keeps the room of one window plate at least: a pill that does not fit is not drawn. The tray is not a place to start a module.
+
+The design: `src/md/features/desktop_shell_look.md`.
+
+Do not use: notification area, status area.
+
+### Module icon
+
+A module icon is a square of 16 pixels made of whole rectangles that names the kind of a module: a console, a chart, a clock, sliders, a page, a book, nodes, a bug, a picture, a disk, a key, or a framed window.
+
+The compositor draws it at the left of the title of each window, of each window plate and of each line of the menus of the bar. `bar.icon_of` gives the icon of a name once, when the window takes its title; a name of no known kind gets the framed window. Each edge of an icon falls on a pixel at the scale 1, so it stays sharp. A module icon is not a kind icon of the palette, which says the kind of a palette entry.
+
+The design: `src/md/features/desktop_shell_look.md`.
+
+Do not use: app icon, logo.
+
 ### Start menu
 
-The start menu is the menu of the bar under the button `start`, with one line for each module of the table `bar.names`: a press on a line starts that module.
+The start menu is the menu of the bar under the heron button, with one line for each module of the table `bar.names`: a press on a line starts that module.
 
-The menu is the way of the pointer to start a module. It is a card in two columns. A press sends `Start` with the name to the root service, which decides the grants of the process. The start menu is not the palette, which the key super opens and which narrows as the input types. It has no folders and no recent entries: one flat table.
+The menu is the way of the pointer to start a module. It is a card in two panes: the pinned modules and the quick actions at the left, each other module at the right, each line with its module icon. A press on a module sends `Start` with the name to the root service, which decides the grants of the process. A quick action moves the bar or turns the magnifier on or off. The start menu is not the palette, which narrows as the input types.
 
-The design: `docs/DESIGN.md`, "Menus".
+The design: `docs/DESIGN.md`, "Menus", and `src/md/features/desktop_shell_look.md`.
 
 Do not use: application menu, launcher.
 

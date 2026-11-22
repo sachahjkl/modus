@@ -198,7 +198,7 @@ pointer_shape_under :: proc "contextless" () -> pointer_pictures.Pointer_Shape {
 	if capture_mark_contains(pointer_x, pointer_y) {
 		return .Pointing_Hand
 	}
-	if menu_open != .None && menu_line >= 0 {
+	if menu_open != .None && (menu_line >= 0 || menu_action != .None) {
 		return .Pointing_Hand
 	}
 	if interface.context_menu_row_at(&desktop_context_menu, pointer_x, pointer_y) >= 0 {

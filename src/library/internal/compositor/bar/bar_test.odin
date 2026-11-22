@@ -39,6 +39,7 @@ b612_open :: proc(t: ^testing.T) {
 	outlines_opened = true
 }
 
+
 // Each entry of the bar and of its menus, in one layout: the middle of each
 // maps back to it, and the points just outside each button map to no
 // button. The layouts: the font of the cells, two made-up proportional
@@ -46,24 +47,38 @@ b612_open :: proc(t: ^testing.T) {
 @(private = "file")
 entries_round_trip :: proc(t: ^testing.T, layout: Layout, name: string) {
 	start_x, start_y := button_center(layout)
-	testing.expectf(t, button_at(layout, start_x, start_y) == .Start, "%s: the middle of the button start", name)
+	testing.expectf(t, button_at(layout, start_x, start_y) == .Start, "%s: the middle of the heron button", name)
 	windows_x, windows_y := windows_button_center(layout)
-	testing.expectf(t, button_at(layout, windows_x, windows_y) == .Windows, "%s: the middle of the button windows", name)
+	testing.expectf(t, button_at(layout, windows_x, windows_y) == .Windows, "%s: the middle of the button of the windows", name)
 	x, y, width, height := button(layout)
-	testing.expectf(t, button_at(layout, x - 1, y) == .None && button_at(layout, x + width - 1, y + height - 1) == .Start, "%s: the edges of the button start", name)
+	testing.expectf(t, button_at(layout, x - 1, y) == .None && button_at(layout, x, y - 1) == .None && button_at(layout, x + width - 1, y + height - 1) == .Start, "%s: the edges of the heron button", name)
 	// The gap between the two buttons is no button.
-	testing.expectf(t, button_at(layout, x + width, y) == .None && button_at(layout, x + width + WINDOWS_GAP - 1, y) == .None, "%s: the gap between the buttons", name)
+	testing.expectf(t, button_at(layout, x + width, y) == .None && button_at(layout, x + width + BUTTON_GAP - 1, y) == .None, "%s: the gap between the buttons", name)
 	windows_left, windows_top, windows_width, windows_height := windows_button(layout)
-	testing.expectf(t, windows_left == x + width + WINDOWS_GAP, "%s: the button windows follows the button start", name)
-	testing.expectf(t, button_at(layout, windows_left + windows_width, windows_top) == .None && button_at(layout, windows_left, windows_top + windows_height) == .None, "%s: past the button windows", name)
+	testing.expectf(t, windows_left == x + width + BUTTON_GAP, "%s: the button of the windows follows the heron button", name)
+	testing.expectf(t, button_at(layout, windows_left + windows_width, windows_top) == .None && button_at(layout, windows_left, windows_top + windows_height) == .None, "%s: past the button of the windows", name)
 	for process, index in names {
 		center_x, center_y, found := center(layout, process)
 		testing.expectf(t, found && line_at(layout, center_x, center_y) == index, "%s: the middle of the line of %s", name, process)
 		line_x, line_y, line_width, line_height := line(layout, index)
 		testing.expectf(t, line_at(layout, line_x, line_y) == index && line_at(layout, line_x + line_width - 1, line_y + line_height - 1) == index, "%s: the corners of the line of %s", name, process)
+		testing.expectf(t, action_at(layout, center_x, center_y) == .None, "%s: the line of %s is no action", name, process)
+	}
+	for action in Start_Action {
+		action_x, action_y, action_width, action_height := action_line(layout, action)
+		if action == .None {
+			testing.expectf(t, action_width == 0 && action_height == 0, "%s: None has no line", name)
+			continue
+		}
+		testing.expectf(t, action_at(layout, action_x + action_width / 2, action_y + action_height / 2) == action, "%s: the middle of the action %v", name, action)
+		testing.expectf(t, action_at(layout, action_x, action_y) == action && action_at(layout, action_x + action_width - 1, action_y + action_height - 1) == action, "%s: the corners of the action %v", name, action)
+		testing.expectf(t, line_at(layout, action_x + 1, action_y + 1) == -1, "%s: the action %v is no line of a module", name, action)
 	}
 	menu_x, menu_y, menu_width, menu_height := menu(layout)
-	testing.expectf(t, line_at(layout, menu_x + menu_width + 1, menu_y + TITLE + 4) == -1 && line_at(layout, menu_x + 4, menu_y + 4) == -1, "%s: past the menu and in its title", name)
+	testing.expectf(t, line_at(layout, menu_x + menu_width + 1, menu_y + menu_height / 2) == -1 && line_at(layout, menu_x, menu_y) == -1, "%s: past the menu and on its border", name)
+	// The heading of the right pane is no line.
+	pane_x, pane_y, _, _ := right_pane(layout)
+	testing.expectf(t, line_at(layout, pane_x + PANE_PADDING + 1, pane_y + PANE_PADDING + 1) == -1, "%s: the heading of the right pane", name)
 	testing.expect(t, menu_height > 0)
 	for index in 0 ..< 5 {
 		line_x, line_y := windows_line_center(layout, index)
@@ -75,12 +90,48 @@ entries_round_trip :: proc(t: ^testing.T, layout: Layout, name: string) {
 @(test)
 each_entry_maps_back_to_itself :: proc(t: ^testing.T) {
 	entries_round_trip(t, layout_of(.None), "the font of the cells")
-	entries_round_trip(t, {label_width = 37, windows_label_width = 41, longest_name_width = 150}, "narrower")
-	entries_round_trip(t, {label_width = 91, windows_label_width = 77, longest_name_width = 260}, "wider")
+	entries_round_trip(t, {longest_name_width = 150}, "narrower")
+	entries_round_trip(t, {longest_name_width = 260}, "wider")
+	entries_round_trip(t, {}, "no name")
 	b612_open(t)
 	entries_round_trip(t, layout_of(.Interface), "B612")
 	entries_round_trip(t, placed(layout_of(.None), .Bottom, 1080), "the font of the cells, at the bottom")
-	entries_round_trip(t, placed({label_width = 91, windows_label_width = 77, longest_name_width = 260}, .Bottom, 1200), "wider, at the bottom")
+	entries_round_trip(t, placed({longest_name_width = 260}, .Bottom, 1200), "wider, at the bottom")
+}
+
+// The two panes of the start menu: each pinned line and each action is in
+// the left pane, each other line in the right pane, under its heading; no
+// two lines share a pixel; the actions are under the last pinned line with
+// their gap, and the last action ends at the padding of the card.
+@(test)
+the_start_menu_has_two_panes :: proc(t: ^testing.T) {
+	for layout in ([?]Layout{layout_of(.None), {longest_name_width = 260}, placed(layout_of(.None), .Bottom, 1080)}) {
+		menu_x, menu_y, menu_width, menu_height := menu(layout)
+		pane_x, pane_y, pane_width_right, pane_height := right_pane(layout)
+		testing.expect_value(t, pane_x, menu_x + BORDER + pane_width(layout) + 1)
+		testing.expect_value(t, pane_x + pane_width_right, menu_x + menu_width - BORDER)
+		testing.expect_value(t, pane_y + pane_height, menu_y + menu_height - BORDER)
+		for index in 0 ..< len(names) {
+			x, y, width, height := line(layout, index)
+			testing.expectf(t, y >= menu_y + BORDER + PANE_PADDING && y + height <= menu_y + menu_height - BORDER - PANE_PADDING, "the line of %s is inside the card", names[index])
+			if index < PINNED_COUNT {
+				testing.expectf(t, x >= menu_x + BORDER && x + width <= pane_x - 1, "the pinned line of %s is in the left pane", names[index])
+			} else {
+				testing.expectf(t, x >= pane_x + PANE_PADDING && x + width <= pane_x + pane_width_right - PANE_PADDING && y >= pane_y + PANE_PADDING + HEADING_HEIGHT, "the line of %s is in the right pane", names[index])
+			}
+			for other in index + 1 ..< len(names) {
+				other_x, other_y, other_width, other_height := line(layout, other)
+				apart := x + width <= other_x || other_x + other_width <= x || y + height <= other_y || other_y + other_height <= y
+				testing.expectf(t, apart, "the lines of %s and %s share no pixel", names[index], names[other])
+			}
+		}
+		_, last_pinned_y, _, last_pinned_height := line(layout, PINNED_COUNT - 1)
+		_, first_action_y, _, _ := action_line(layout, .Bar_Edge)
+		testing.expect(t, first_action_y >= last_pinned_y + last_pinned_height + ACTIONS_GAP)
+		action_x, last_action_y, action_width, last_action_height := action_line(layout, .Magnifier)
+		testing.expect_value(t, last_action_y + last_action_height, menu_y + menu_height - BORDER - PANE_PADDING)
+		testing.expect(t, action_x + action_width <= pane_x - 1)
+	}
 }
 
 // The zero value of the layout is a bar at the top, at the places that the
@@ -93,7 +144,7 @@ a_bar_at_the_top_keeps_its_places :: proc(t: ^testing.T) {
 		layout := placed(widths, .Top, height)
 		testing.expect_value(t, top(layout), 0)
 		_, button_y, _, _ := button(layout)
-		testing.expect_value(t, button_y, BUTTON_Y)
+		testing.expect_value(t, button_y, PLATE_Y)
 		_, menu_y, _, _ := menu(layout)
 		testing.expect_value(t, menu_y, HEIGHT)
 		_, windows_y, _, _ := windows_menu(layout, 3)
@@ -101,6 +152,8 @@ a_bar_at_the_top_keeps_its_places :: proc(t: ^testing.T) {
 		_, line_y, _, _ := windows_line(layout, 2)
 		testing.expect_value(t, line_y, HEIGHT + BORDER + TITLE + 2 * LINE_HEIGHT)
 		testing.expect_value(t, mark_y(layout), MARK_Y)
+		_, plate_y, _, _ := plate(layout, 4)
+		testing.expect_value(t, plate_y, PLATE_Y)
 		testing.expect(t, button_center_matches(widths, layout))
 	}
 }
@@ -121,7 +174,7 @@ a_bar_at_the_bottom_opens_its_menus_up :: proc(t: ^testing.T) {
 	layout := placed(layout_of(.None), .Bottom, 1080)
 	testing.expect_value(t, top(layout), 1080 - HEIGHT)
 	_, button_y, _, button_height := button(layout)
-	testing.expect_value(t, button_y, 1080 - HEIGHT + BUTTON_Y)
+	testing.expect_value(t, button_y, 1080 - HEIGHT + PLATE_Y)
 	testing.expect(t, button_y + button_height <= 1080)
 	testing.expect_value(t, mark_y(layout), 1080 - HEIGHT + MARK_Y)
 	_, menu_y, _, menu_height := menu(layout)
@@ -143,7 +196,9 @@ a_bar_at_the_bottom_opens_its_menus_up :: proc(t: ^testing.T) {
 	testing.expect(t, !inside_bar(layout, top(layout) - 1) && !inside_bar(layout, 1080) && !inside_bar(layout, 0))
 	// A button of a bar at the bottom is not at the place of the button of
 	// a bar at the top.
-	testing.expect_value(t, button_at(layout, START + 1, BUTTON_Y + 1), Bar_Button.None)
+	testing.expect_value(t, button_at(layout, START_BUTTON_X + 1, PLATE_Y + 1), Bar_Button.None)
+	testing.expect_value(t, plate_at(layout, 4000, PLATES_X + 1, PLATE_Y + 1), -1)
+	testing.expect_value(t, plate_at(layout, 4000, PLATES_X + 1, top(layout) + PLATE_Y + 1), 0)
 }
 
 // The edges of the height of the screen: a screen no higher than the bar
@@ -168,33 +223,72 @@ a_bar_at_the_bottom_stays_on_a_small_screen :: proc(t: ^testing.T) {
 	testing.expect_value(t, menu_top(small, max(int)), 0)
 }
 
-// The places follow the widths: a wider label moves the button windows to
-// the right by the same pixels, and a wider name widens each column by the
-// same pixels, past COLUMN_LEAST. In B612 each name fits its line with its padding, and the
-// names of the bar are not the widths of the cells.
+// The plates of the windows: they start after the divider, which follows
+// the button of the windows; the middle and the corners of each plate map
+// back to its slot; the gap between two plates, the rows above and under
+// them, the room before the first and a plate that does not end before the
+// right end of the plates are no plate.
+@(test)
+the_plates_map_back_to_their_slots :: proc(t: ^testing.T) {
+	layout := layout_of(.None)
+	windows_x, _, windows_width, _ := windows_button(layout)
+	testing.expect(t, DIVIDER_X >= windows_x + windows_width && PLATES_X > DIVIDER_X)
+	right := PLATES_X + 3 * (PLATE_WIDTH + PLATE_GAP) - PLATE_GAP // Room for three plates exactly.
+	for slot in 0 ..< 3 {
+		x, y, width, height := plate(layout, slot)
+		testing.expect_value(t, plate_at(layout, right, x + width / 2, y + height / 2), slot)
+		testing.expect_value(t, plate_at(layout, right, x, y), slot)
+		testing.expect_value(t, plate_at(layout, right, x + width - 1, y + height - 1), slot)
+		testing.expect_value(t, plate_at(layout, right, x, y - 1), -1)
+		testing.expect_value(t, plate_at(layout, right, x, y + height), -1)
+		if slot < 2 {
+			testing.expect_value(t, plate_at(layout, right, x + width, y), -1)
+			testing.expect_value(t, plate_at(layout, right, x + width + PLATE_GAP - 1, y), -1)
+		}
+	}
+	_, plate_y, _, _ := plate(layout, 0)
+	testing.expect_value(t, plate_at(layout, right, PLATES_X - 1, plate_y), -1)
+	testing.expect_value(t, plate_at(layout, right, DIVIDER_X, plate_y), -1)
+	fourth_x, _, _, _ := plate(layout, 3)
+	testing.expect_value(t, plate_at(layout, right, fourth_x + 1, plate_y), -1)
+	testing.expect_value(t, plate_at(layout, right + 1, fourth_x + 1, plate_y), -1)
+	testing.expect_value(t, plate_at(layout, right + PLATE_WIDTH + PLATE_GAP, fourth_x + 1, plate_y), 3)
+	testing.expect_value(t, plate_at(layout, 0, PLATES_X + 1, plate_y), -1)
+	testing.expect_value(t, plate_at(layout, max(int) / 2, max(int) / 4, plate_y) >= 0, true)
+}
+
+// The places follow the widths: a wider name widens each column by the
+// same pixels, past COLUMN_LEAST. In B612 each name fits its line with its
+// icon and its padding, and the names of the bar are not the widths of the
+// cells.
 @(test)
 places_follow_the_measured_widths :: proc(t: ^testing.T) {
-	narrow := Layout{label_width = 40, windows_label_width = 40, longest_name_width = 100}
-	wide := Layout{label_width = 52, windows_label_width = 40, longest_name_width = 101}
-	narrow_x, _, _, _ := windows_button(narrow)
-	wide_x, _, _, _ := windows_button(wide)
-	testing.expect_value(t, wide_x - narrow_x, 12)
-	testing.expect_value(t, column_width(narrow), COLUMN_LEAST) // 100 + 16 is 116: under COLUMN_LEAST.
-	testing.expect_value(t, column_width({longest_name_width = COLUMN_LEAST - 2 * PADDING}), COLUMN_LEAST)
-	testing.expect_value(t, column_width({longest_name_width = COLUMN_LEAST - 2 * PADDING + 1}), COLUMN_LEAST + 1) // One pixel past the least: one pixel wider, no round up.
-	testing.expect_value(t, column_width({label_width = 40, windows_label_width = 40, longest_name_width = 113}), 113 + 2 * PADDING)
+	LEAST_NAME :: COLUMN_LEAST - ICON_SIZE - ICON_GAP - 2 * PADDING
+	testing.expect_value(t, column_width({longest_name_width = 100}), COLUMN_LEAST) // 100 + 40 is 140: under COLUMN_LEAST.
+	testing.expect_value(t, column_width({longest_name_width = LEAST_NAME}), COLUMN_LEAST)
+	testing.expect_value(t, column_width({longest_name_width = LEAST_NAME + 1}), COLUMN_LEAST + 1) // One pixel past the least: one pixel wider, no round up.
+	testing.expect_value(t, column_width({longest_name_width = 200}), 200 + ICON_SIZE + ICON_GAP + 2 * PADDING)
 	testing.expect_value(t, column_width({}), COLUMN_LEAST) // No name: the least width.
+	_, _, narrow_width, _ := menu({longest_name_width = 200})
+	_, _, wide_width, _ := menu({longest_name_width = 210})
+	testing.expect_value(t, wide_width - narrow_width, 10 * (COLUMNS + 1)) // The left pane and each column.
 	b612_open(t)
 	layout := layout_of(.Interface)
 	cells := layout_of(.None)
-	testing.expect(t, layout.label_width > 0 && layout.windows_label_width > 0)
+	testing.expect(t, layout.longest_name_width > 0)
 	testing.expect(t, layout != cells, "B612 measures the names of the bar in its own widths")
 	for process, index in names {
 		_, _, line_width, _ := line(layout, index)
-		testing.expectf(t, text_width_in(.Interface, process) + 2 * PADDING <= line_width, "%s fits its line", process)
+		testing.expectf(t, text_width_in(.Interface, process) + ICON_SIZE + ICON_GAP + 2 * PADDING <= line_width, "%s fits its line", process)
 	}
-	_, _, button_width, _ := button(layout)
-	testing.expect_value(t, button_width, text_width_in(.Interface, LABEL) + 2 * PADDING)
+	// The labels of the quick actions fit the least column in both fonts.
+	for label in ([?]string{"bar to bottom", "bar to top", "magnifier"}) {
+		testing.expectf(t, text_width_in(.Interface, label) + ICON_SIZE + ICON_GAP + 2 * PADDING <= COLUMN_LEAST, "%s fits an action line", label)
+		testing.expectf(t, text_width_in(.None, label) + ICON_SIZE + ICON_GAP + 2 * PADDING <= COLUMN_LEAST, "%s fits an action line in the cells", label)
+	}
+	// The start menu of B612 fits the reference screen of 1280 pixels.
+	_, _, menu_width, menu_height := menu(layout)
+	testing.expect(t, menu_width <= 1280 && menu_height <= 720 - HEIGHT)
 	// A face that the outlines lack measures in the font of the cells.
 	testing.expect_value(t, layout_of(.Cells), cells)
 }

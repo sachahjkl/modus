@@ -323,13 +323,11 @@ Clipboard_Emptied :: struct {
 	window: value_kinds.Module_Name_Field,
 }
 
-// The bar is drawn in the interface font: the widths of its labels and of
-// the widest name, in pixels.
-@(log_fact = "compositor: the bar is in the interface font: start {start_width} pixels, windows {windows_width}, the widest name {name_width}")
+// The bar is drawn in the interface font: the width of the widest name of
+// the start menu, in pixels.
+@(log_fact = "compositor: the bar is in the interface font: the widest name {name_width} pixels")
 Bar_In_Interface_Font :: struct {
-	start_width:   u64,
-	windows_width: u64,
-	name_width:    u64,
+	name_width: u64,
 }
 
 // The menu of the windows shows a disk process, by its hash prefix.
