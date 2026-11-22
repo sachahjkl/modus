@@ -2,6 +2,7 @@ package fuzz
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:testing"
 
 // A small tree with the three folders of the seed: the tool with a package
@@ -62,4 +63,96 @@ fuzz_sources_seed_reads_the_tool_to_any_depth :: proc(t: ^testing.T) {
 
 	seed_file_write(root, "kernel/part/part.odin", "package part\n\nchanged :: 1\n")
 	testing.expect(t, seed_of_tree(root) != after_new, "a source of a kernel part changes the seed")
+}
+
+// The count of the children of the check at once: at least one, at most
+// one for each processor, one for each target and the limit. The edges
+// first: no processor, a negative count, no target.
+@(test)
+fuzz_check_children_at_once_is_bounded :: proc(t: ^testing.T) {
+	testing.expect_value(t, fuzz_check_children_at_once(40, 0), 1)
+	testing.expect_value(t, fuzz_check_children_at_once(40, -3), 1)
+	testing.expect_value(t, fuzz_check_children_at_once(0, 16), 1)
+	testing.expect_value(t, fuzz_check_children_at_once(1, 16), 1)
+	testing.expect_value(t, fuzz_check_children_at_once(3, 16), 3)
+	testing.expect_value(t, fuzz_check_children_at_once(40, 1), 1)
+	testing.expect_value(t, fuzz_check_children_at_once(40, FUZZ_CHECK_CHILDREN_LIMIT - 1), FUZZ_CHECK_CHILDREN_LIMIT - 1)
+	testing.expect_value(t, fuzz_check_children_at_once(40, FUZZ_CHECK_CHILDREN_LIMIT), FUZZ_CHECK_CHILDREN_LIMIT)
+	testing.expect_value(t, fuzz_check_children_at_once(40, FUZZ_CHECK_CHILDREN_LIMIT + 1), FUZZ_CHECK_CHILDREN_LIMIT)
+	testing.expect_value(t, fuzz_check_children_at_once(40, max(int)), FUZZ_CHECK_CHILDREN_LIMIT)
+}
+
+// A child of the check that writes the state Done into its mailbox, as the
+// real child does at its end, unless the name of its target says that it
+// fails: then it exits with no record. It prints one line to its standard
+// output.
+@(private = "file")
+check_child_script_make :: proc(t: ^testing.T, folder: string) -> string {
+	path := fmt.tprintf("%s/child.sh", folder)
+	done := u32(Fuzz_Child_State.Done)
+	text := fmt.tprintf(
+		"#!/bin/sh\necho \"the child of $3\"\ncase \"$3\" in *fails*) exit 1;; esac\nprintf '\\%03o\\%03o\\%03o\\%03o' | dd of=\"$4\" bs=1 seek=%d conv=notrunc 2>/dev/null\n",
+		done & 0xff,
+		(done >> 8) & 0xff,
+		(done >> 16) & 0xff,
+		(done >> 24) & 0xff,
+		offset_of(Fuzz_Mailbox, state),
+	)
+	testing.expect_value(t, os.write_entire_file(path, text), nil)
+	testing.expect_value(t, os.change_mode(path, os.Permissions_Read_All + os.Permissions_Execute_All + {.Write_User}), nil)
+	return path
+}
+
+// The children of the check run at once, and a failure of one child ends
+// no other one: each target gets its own verdict and its own output, in
+// the order of the targets, for each count at once from one to more than
+// the targets. A child that cannot start keeps started false. The
+// failures come first in the list, so a pool that stopped after one would
+// leave the later targets with no outcome.
+@(test)
+fuzz_check_children_run_gives_each_target_its_own_verdict :: proc(t: ^testing.T) {
+	folder, folder_error := os.make_directory_temp("", "fuzz_check_children_test_*", context.temp_allocator)
+	testing.expect_value(t, folder_error, nil)
+	defer os.remove_all(folder)
+	script := check_child_script_make(t, folder)
+	names := [?]string{"check_children_test_fails_a", "check_children_test_b", "check_children_test_fails_c", "check_children_test_d", "check_children_test_e"}
+	targets: [len(names)]Fuzz_Target
+	for name, place in names {
+		targets[place] = {name = name}
+	}
+	defer for name in names {
+		_ = os.remove_all(fuzz_target_folder(name))
+	}
+	for at_once in ([]int{1, 2, len(names), len(names) + 3}) {
+		runs: [len(names)]Fuzz_Check_Child
+		for &target, place in targets {
+			runs[place] = {target = &target, executions = 1, output_path = fmt.tprintf("%s/output_%d_%d.txt", folder, at_once, place)}
+		}
+		fuzz_check_children_run(script, runs[:], 7, at_once)
+		for run in runs {
+			name := run.target.name
+			testing.expectf(t, run.started, "%d at once: the child of %s started", at_once, name)
+			testing.expectf(t, run.child.ended, "%d at once: the child of %s ended", at_once, name)
+			fails := strings.contains(name, "fails")
+			if fails {
+				testing.expectf(t, run.outcome.state != .Done && run.outcome.oracle == .Fault, "%d at once: %s ended with no record, a failure, not %v %v", at_once, name, run.outcome.state, run.outcome.oracle)
+				testing.expectf(t, run.outcome.signature == "fault: the child ended with no record", "%d at once: %s: the signature %s", at_once, name, run.outcome.signature)
+			} else {
+				testing.expectf(t, run.outcome.state == .Done && run.outcome.oracle == .None, "%d at once: %s passed, not %v %v", at_once, name, run.outcome.state, run.outcome.oracle)
+			}
+			output, read_error := os.read_entire_file(run.output_path, context.temp_allocator)
+			testing.expectf(t, read_error == nil, "%d at once: the output of %s: %v", at_once, name, read_error)
+			testing.expect_value(t, string(output), fmt.tprintf("the child of %s\n", name))
+		}
+	}
+	// A binary that does not exist starts no child, and the others are not
+	// started in its place.
+	runs: [2]Fuzz_Check_Child
+	for &run, place in runs {
+		run = {target = &targets[place + 1], executions = 1}
+	}
+	fuzz_check_children_run(fmt.tprintf("%s/no_such_binary", folder), runs[:], 7, 2)
+	for run in runs {
+		testing.expectf(t, !run.started, "the child of %s did not start", run.target.name)
+	}
 }

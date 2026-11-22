@@ -36,6 +36,19 @@ host_test_folders_with_one_name_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, host_test_names_first_repeat(folders[:]), "")
 }
 
+// The heaviest folders start first, in their order, so that none of them
+// starts late and runs alone at the end of the pool.
+@(test)
+host_test_folders_start_with_the_heaviest :: proc(t: ^testing.T) {
+	folders := HOST_TEST_FOLDERS
+	heaviest := HOST_TEST_HEAVIEST_FOLDERS
+	testing.expect(t, len(folders) > len(heaviest), "the heaviest folders are a part of the folders")
+	for folder, place in heaviest {
+		testing.expect_value(t, folders[place], folder)
+	}
+	testing.expect_value(t, host_test_names_first_repeat(heaviest[:]), "")
+}
+
 // The flag of the kernel parts goes to the host tests of src/modulus/* and
 // of the tool only, as in the compile of each; each command has its own
 // temporary folder and its own test program.

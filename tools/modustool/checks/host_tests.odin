@@ -234,19 +234,30 @@ host_tests_run :: proc(folders: []string) -> bool {
 	return passed
 }
 
-// The folders whose host tests `modustool check` runs: `odin test` on
-// each, several at once (host_tests.odin). The pool starts them in this
-// order, and reports them in it: the tool comes first, because its
-// compile and its tests are the longest, and a long folder that starts
-// last makes the whole run longer.
-HOST_TEST_FOLDERS :: [?]string {
-	foundation.TOOL_SOURCE_FOLDER + "/machine",
-	foundation.TOOL_SOURCE_FOLDER,
+// The heaviest folders of HOST_TEST_FOLDERS, from the longest: a compile
+// of the tool and the tests that run the longest. They lead the list.
+HOST_TEST_HEAVIEST_FOLDERS :: [?]string {
 	foundation.TOOL_SOURCE_FOLDER + "/site",
 	foundation.TOOL_SOURCE_FOLDER + "/build",
 	foundation.TOOL_SOURCE_FOLDER + "/checks",
-	foundation.TOOL_SOURCE_FOLDER + "/fuzz",
 	foundation.TOOL_SOURCE_FOLDER + "/resources",
+	foundation.TOOL_SOURCE_FOLDER + "/machine",
+}
+
+// The folders whose host tests `modustool check` runs: `odin test` on
+// each, several at once (host_tests.odin). The pool starts them in this
+// order, and reports them in it. The longest folder starts first (the
+// longest processing time first): a long folder that starts last runs
+// alone at the end and makes the whole run longer, while the many short
+// folders fill the processors around the long ones.
+HOST_TEST_FOLDERS :: [?]string {
+	foundation.TOOL_SOURCE_FOLDER + "/site",
+	foundation.TOOL_SOURCE_FOLDER + "/build",
+	foundation.TOOL_SOURCE_FOLDER + "/checks",
+	foundation.TOOL_SOURCE_FOLDER + "/resources",
+	foundation.TOOL_SOURCE_FOLDER + "/machine",
+	foundation.TOOL_SOURCE_FOLDER,
+	foundation.TOOL_SOURCE_FOLDER + "/fuzz",
 	foundation.TOOL_SOURCE_FOLDER + "/similarity",
 	foundation.TOOL_SOURCE_FOLDER + "/cache_server",
 	foundation.TOOL_SOURCE_FOLDER + "/agent_bridge",

@@ -28,6 +28,11 @@ FUZZ_MINIMIZE_CANDIDATE_LIMIT :: 4096
 // poll interval, not a bound. The bound of a stall is HANG_BOUND.
 FUZZ_POLL_INTERVAL :: 200 * time.Millisecond
 
+// The children of `modustool check` at once, at most, beside the bound of
+// the processors: each child is one target, and more of them at once take
+// the memory and the processors that the rest of the host needs.
+FUZZ_CHECK_CHILDREN_LIMIT :: 8
+
 // What a child left when it ended.
 Fuzz_Child_Outcome :: struct {
 	state:         Fuzz_Child_State,
@@ -61,8 +66,10 @@ fuzz_target_folder :: proc(target_name: string) -> string {
 
 // fuzz_child_start creates the mailbox of one child and starts it. The
 // paths are in the allocator of the context: they outlive the temporary
-// memory of a long run.
-fuzz_child_start :: proc(binary: string, mode: Fuzz_Child_Mode, target: ^Fuzz_Target, seed: u64, executions: u64, number: int, file := "") -> (child: Fuzz_Running_Child, ok: bool) {
+// memory of a long run. With an output path, the standard output of the
+// child goes to that file, so that children at once do not mix their
+// lines; else it goes to the standard output of the tool.
+fuzz_child_start :: proc(binary: string, mode: Fuzz_Child_Mode, target: ^Fuzz_Target, seed: u64, executions: u64, number: int, file := "", output_path := "") -> (child: Fuzz_Running_Child, ok: bool) {
 	folder := fuzz_target_folder(target.name)
 	if !foundation.make_folder(folder) {
 		return {}, false
@@ -84,12 +91,24 @@ fuzz_child_start :: proc(binary: string, mode: Fuzz_Child_Mode, target: ^Fuzz_Ta
 	defer {
 		_ = os.close(error_file)
 	}
+	output_file := os.stdout
+	if output_path != "" {
+		opened, output_error := os.open(output_path, {.Write, .Create, .Trunc}, os.Permissions_Default_File)
+		if output_error != nil {
+			fmt.eprintfln("modustool: cannot write %s: %v", output_path, output_error)
+			return {}, false
+		}
+		output_file = opened
+	}
+	defer if output_path != "" {
+		_ = os.close(output_file)
+	}
 	command := make([dynamic]string, context.temp_allocator)
 	append(&command, binary, "fuzz-child", fuzz_child_mode_names[mode], target.name, mailbox_path, fmt.tprintf("%d", seed), fmt.tprintf("%d", executions))
 	if file != "" {
 		append(&command, file)
 	}
-	host_process, start_error := os.process_start({command = command[:], stdout = os.stdout, stderr = error_file})
+	host_process, start_error := os.process_start({command = command[:], stdout = output_file, stderr = error_file})
 	if start_error != nil {
 		fmt.eprintfln("modustool: cannot start the child %s: %v", binary, start_error)
 		return {}, false
@@ -100,10 +119,48 @@ fuzz_child_start :: proc(binary: string, mode: Fuzz_Child_Mode, target: ^Fuzz_Ta
 	return child, true
 }
 
+// What one look of the parent at a child saw.
+Fuzz_Child_Poll :: enum {
+	Running,
+	Ended, // The process exited; its mailbox says how.
+	Stalled, // Its count of executions did not grow for the hang bound.
+}
+
+// fuzz_child_poll looks once at a child that has not ended, and does not
+// block. A child stalls when its count of executions does not grow for the
+// hang bound: one execution that never returns. The parent marks it
+// stalled; the caller ends it.
+fuzz_child_poll :: proc(child: ^Fuzz_Running_Child) -> Fuzz_Child_Poll {
+	// A wait of 0 does not block: Timeout says that the child runs.
+	_, wait_error := os.process_wait(child.host_process, 0)
+	if wait_error != os.General_Error.Timeout {
+		child.ended = true
+		return .Ended
+	}
+	count := intrinsics.atomic_load_explicit(&child.mailbox.executions, .Acquire)
+	if count != child.last_count {
+		child.last_count = count
+		child.last_change = time.tick_now()
+	} else if time.tick_since(child.last_change) > foundation.HANG_BOUND {
+		child.stalled = true
+		return .Stalled
+	}
+	return .Running
+}
+
+// fuzz_child_end kills a child that runs and waits for its end.
+fuzz_child_end :: proc(child: ^Fuzz_Running_Child) {
+	if child.ended {
+		return
+	}
+	_ = os.process_kill(child.host_process)
+	_, _ = os.process_wait(child.host_process)
+	child.ended = true
+}
+
 // fuzz_children_watch waits until each child ended, or until one stalled
-// or broke an oracle: then it ends the others. A child stalls when its
-// count of executions does not grow for the hang bound: one execution
-// that never returns.
+// or broke an oracle: then it ends the others. The children of a long run
+// fuzz one target together, so one finding ends the run.
 fuzz_children_watch :: proc(children: []Fuzz_Running_Child) {
 	for {
 		running := 0
@@ -112,32 +169,20 @@ fuzz_children_watch :: proc(children: []Fuzz_Running_Child) {
 			if child.ended {
 				continue
 			}
-			// A wait of 0 does not block: Timeout says that the child runs.
-			_, wait_error := os.process_wait(child.host_process, 0)
-			if wait_error != os.General_Error.Timeout {
-				child.ended = true
+			switch fuzz_child_poll(&child) {
+			case .Running:
+				running += 1
+			case .Ended:
 				if intrinsics.atomic_load_explicit(&child.mailbox.state, .Acquire) != u32(Fuzz_Child_State.Done) {
 					stop_all = true
 				}
-				continue
-			}
-			running += 1
-			count := intrinsics.atomic_load_explicit(&child.mailbox.executions, .Acquire)
-			if count != child.last_count {
-				child.last_count = count
-				child.last_change = time.tick_now()
-			} else if time.tick_since(child.last_change) > foundation.HANG_BOUND {
-				child.stalled = true
+			case .Stalled:
 				stop_all = true
 			}
 		}
 		if stop_all {
 			for &child in children {
-				if !child.ended {
-					_ = os.process_kill(child.host_process)
-					_, _ = os.process_wait(child.host_process)
-					child.ended = true
-				}
+				fuzz_child_end(&child)
 			}
 			return
 		}
@@ -336,9 +381,75 @@ fuzz_packages_of :: proc(targets: []Fuzz_Target) -> []string {
 	return packages[:]
 }
 
+// One target of `modustool check` and what its child left.
+Fuzz_Check_Child :: struct {
+	target:      ^Fuzz_Target,
+	executions:  u64,
+	output_path: string, // The standard output of the child, "" for the one of the tool.
+	child:       Fuzz_Running_Child,
+	started:     bool,
+	outcome:     Fuzz_Child_Outcome, // Read when the child ended.
+}
+
+// fuzz_check_children_at_once gives the count of the children of the
+// check at once: one for each processor, no more than the targets and
+// FUZZ_CHECK_CHILDREN_LIMIT, and at least one.
+fuzz_check_children_at_once :: proc(target_count, processors: int) -> int {
+	return max(1, min(target_count, processors, FUZZ_CHECK_CHILDREN_LIMIT))
+}
+
+// fuzz_check_children_run runs the child of each target, at most at_once
+// at a time, in the order of the targets, and reads the outcome of each
+// one when it ends. The targets are independent: a finding or a stall of
+// one child ends that child only, so each target gets its own verdict, as
+// when the children ran one after the other. A child that cannot start
+// keeps started false.
+fuzz_check_children_run :: proc(binary: string, runs: []Fuzz_Check_Child, seed: u64, at_once: int) {
+	next := 0
+	running := 0
+	for next < len(runs) || running > 0 {
+		for running < at_once && next < len(runs) {
+			run := &runs[next]
+			next += 1
+			child, started := fuzz_child_start(binary, .Check, run.target, seed, run.executions, 0, output_path = run.output_path)
+			if !started {
+				continue
+			}
+			run.child = child
+			run.started = true
+			running += 1
+		}
+		ended_now := 0
+		for &run in runs[:next] {
+			if !run.started || run.child.ended {
+				continue
+			}
+			switch fuzz_child_poll(&run.child) {
+			case .Running:
+				continue
+			case .Stalled:
+				fuzz_child_end(&run.child)
+			case .Ended:
+			}
+			run.outcome = fuzz_child_outcome(&run.child)
+			running -= 1
+			ended_now += 1
+		}
+		// A child that just ended frees a place: the next one starts at
+		// once, not after a poll interval.
+		if running > 0 && ended_now == 0 {
+			time.sleep(FUZZ_POLL_INTERVAL)
+		}
+	}
+}
+
 // fuzz_check is the part of `modustool check`: the form of the corpus, then
 // for each target its corpus and a fixed count of new executions in the
-// instrumented child, with the seed of the sources.
+// instrumented child, with the seed of the sources. The children of
+// several targets run at once; the check prints their output and their
+// verdicts in the order of the targets, and minimizes a finding only after
+// each child ended, so the report does not depend on which child ended
+// first.
 fuzz_check :: proc() -> bool {
 	if !fuzz_corpus_check() {
 		return false
@@ -348,22 +459,39 @@ fuzz_check :: proc() -> bool {
 		return false
 	}
 	seed := fuzz_sources_seed()
-	all_passed := true
-	for &target in targets {
+	runs := make([]Fuzz_Check_Child, len(targets), context.temp_allocator)
+	for &target, place in targets {
 		executions := target.check_executions > 0 ? target.check_executions : FUZZ_CHECK_EXECUTIONS
-		outcome, started := fuzz_child_run(FUZZ_INSTRUMENTED_BINARY, .Check, &target, seed, u64(executions))
-		if !started {
-			all_passed = false
-			continue
+		runs[place] = {
+			target      = &target,
+			executions  = u64(executions),
+			output_path = strings.concatenate({fuzz_target_folder(target.name), "/check_output.txt"}, context.temp_allocator),
 		}
-		if outcome.oracle != .None || outcome.state != .Done {
-			fmt.eprintfln("modustool: test failed: the fuzz target %s, with the seed %d", target.name, seed)
-			_, _ = fuzz_finding_keep(FUZZ_INSTRUMENTED_BINARY, &target, outcome)
-			all_passed = false
-			continue
-		}
-		foundation.test_passed_print("the fuzz target %s ran its %d corpus inputs and %d new executions with no fuzz finding; %d of %d edges reached", target.name, outcome.corpus_inputs, executions, outcome.edges_reached, outcome.edges)
 	}
+	processors := foundation.test_processors_of(os.get_processor_core_count(), os.get_env("NIX_BUILD_CORES", context.temp_allocator))
+	at_once := fuzz_check_children_at_once(len(runs), processors)
+	started := time.tick_now()
+	fuzz_check_children_run(FUZZ_INSTRUMENTED_BINARY, runs, seed, at_once)
+	whole := time.tick_since(started)
+	all_passed := true
+	for &run in runs {
+		if !run.started {
+			all_passed = false
+			continue
+		}
+		if output, read_error := os.read_entire_file(run.output_path, context.temp_allocator); read_error == nil {
+			os.write(os.stdout, output)
+		}
+		outcome := run.outcome
+		if outcome.oracle != .None || outcome.state != .Done {
+			fmt.eprintfln("modustool: test failed: the fuzz target %s, with the seed %d", run.target.name, seed)
+			_, _ = fuzz_finding_keep(FUZZ_INSTRUMENTED_BINARY, run.target, outcome)
+			all_passed = false
+			continue
+		}
+		foundation.test_passed_print("the fuzz target %s ran its %d corpus inputs and %d new executions with no fuzz finding; %d of %d edges reached", run.target.name, outcome.corpus_inputs, run.executions, outcome.edges_reached, outcome.edges)
+	}
+	fmt.printfln("modustool: measure: the fuzz targets of the check (%d targets): %.1f s on the clock, at most %d at once", len(runs), time.duration_seconds(whole), at_once)
 	return all_passed
 }
 
