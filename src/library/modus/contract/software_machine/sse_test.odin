@@ -689,7 +689,7 @@ test_integer_bit_scans_tests_swaps_and_double_shifts :: proc(t: ^testing.T) {
 	rbx := int(General_Register.Rbx)
 
 	// bsf with a zero source keeps the destination and sets ZF; tzcnt
-	// (F3) runs as bsf, as cpuid names no BMI1.
+	// with prefix 0xF3 runs as bsf, as cpuid names no BMI1.
 	for code in ([?][]u8{{0x48, 0x0F, 0xBC, 0xC3}, {0xF3, 0x48, 0x0F, 0xBC, 0xC3}, {0x48, 0x0F, 0xBD, 0xC3}}) {
 		sse_machine_load(&machine, code)
 		machine.cpu.registers[rax] = 0x1234

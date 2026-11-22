@@ -944,7 +944,7 @@ Do not use: binary cache, substituter, package repository.
 
 A distributed build realises a graph of recipes across the paired machines of a principal: caches that give realisations, and builders that build a recipe that they receive.
 
-The scheduler gives each recipe whose inputs are done to a builder in turn, and takes nothing that it did not check: the signer and the signature of each realisation, then the hash of each output byte. A builder whose link breaks leaves the run, and its recipe goes to the next builder or to this machine. In the mode `Verify`, two machines build each recipe, and two output hashes refuse it with `Determinism_Mismatch`. It is not a daemon of the network that builds for anyone: each machine is paired, and its plan gives the use.
+The scheduler gives each ready recipe to a paired builder and checks each signer, signature, and output hash. If a builder's link breaks, its recipe moves to the next builder or this machine. In `Verify` mode, two machines build each recipe and differing hashes fail with `Determinism_Mismatch`. It is not a public build daemon: each machine is paired and authorized by its plan.
 
 The design: `src/md/features/recipes.md`, "Builds across paired machines".
 

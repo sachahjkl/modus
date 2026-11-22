@@ -1,7 +1,7 @@
 // The files of a program of several C sources, as the export
 // `compile_unit` of the module `c_compiler` takes them: one Bytes argument
 // that holds each header of the program, and one Text argument that names
-// the exports (src/md/features/c_compiler.md, "A unit of a program").
+// the exports (src/md/features/c_compiler.md, "The patches").
 //
 // A file list is a run of records, each a head of 8 bytes and two runs of
 // bytes, with no padding:

@@ -1,6 +1,6 @@
 // The exchange of one store of a principal between two paired machines
 // (src/md/features/several_machines.md, "The exchange of a store between
-// machines", and "The store exchange in frames").
+// machines").
 //
 // A version of a store is its entries, an object identifier and the hash of
 // the object sorted by identifier, with the record of each conflict value

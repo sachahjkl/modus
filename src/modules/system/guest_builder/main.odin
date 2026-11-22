@@ -1,6 +1,6 @@
 // Sandboxed freestanding guest builder module
 // (src/md/features/recipes.md, "The three kinds of builder";
-// src/md/features/guest.md, src/md/features/foreign_systems.md).
+// src/md/features/foreign_systems.md, "The machine of a Linux guest").
 //
 // Boots a Linux kernel of 64 bits in a guest of the kernel's Guest_Run, and
 // answers its exits with the machine of modus:contract/guest_os. Runs inside
