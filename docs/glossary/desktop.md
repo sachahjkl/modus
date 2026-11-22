@@ -1194,7 +1194,7 @@ Do not use: layout box (for this), render box, render object.
 
 A document origin is the principal, the scheme, the host and the port of the address of a page, which a parsed document is bound to.
 
-`html_css.parse_html` binds each document to one `html_css.Document_Origin`, and two documents share a state only when `html_css.origins_equal` says that their document origins are one. The schemes are `http`, `https`, and `modus` for a page built into a program of the system, whose host names the page. A page of one document origin reads nothing of the state of another, not even whether it exists. It is not the origin of a holding, which is the handle that a holding came from. Example: `modus://forms` and `modus://welcome` are two document origins, and `https://example.org` and `http://example.org` are two more.
+`html_css.parse_html` binds each document to one `html_css.Document_Origin`; two documents share state only when `html_css.origins_equal` matches. Schemes are `http`, `https`, and `modus` for built-in pages, whose host names the page. One document origin reads nothing of another, not even whether it exists. It differs from the origin of a holding, which is the handle a holding came from. Example: `modus://forms` and `modus://welcome` are distinct origins, as are `https://example.org` and `http://example.org`.
 
 The design: `src/md/features/desktop_to_browser.md`, "E. A light browser".
 

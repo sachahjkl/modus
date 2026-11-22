@@ -295,7 +295,7 @@ scenario_network := [?]Step {
 	{kind = .Key, text = "meta_l"},
 	{kind = .Wait, text = "compositor: the palette is open"},
 	{kind = .Keys, text = "p"},
-	{kind = .Wait, text = " for \"p\": plasma (module), plasma (window), pages (module), paint (module), ..."},
+	{kind = .Wait, text = " for \"p\": plasma (module), plasma (window), paint (module), pages (module), ..."},
 	{kind = .Key, text = "down"},
 	{kind = .Wait, text = "compositor: the palette chooses plasma (window)"},
 	{kind = .Shot, text = "palette"},

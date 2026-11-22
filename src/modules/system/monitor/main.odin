@@ -499,6 +499,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if from_disk {
 					nickname = process_page.nickname_of(row.nickname)
 					name = process_page.nickname_text(&nickname)
+					disk_process_log(slot, process.process_serial, name, row)
 				}
 				// One line of the grid of the rows for a row with one line of
 				// text; each more line of text adds its height, and the hash
@@ -519,7 +520,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					prefix: [process_page.HASH_PREFIX_DIGITS]u8
 					process_page.hash_prefix_write(&prefix, row.hash[0])
 					interface.draw_text(table, name_x, y + name_lines * text_line, string(prefix[:]), tokens.text_dim, interface.FONT_CAPTION_CELLS)
-					disk_process_log(slot, process.process_serial, name, row)
 				}
 				interface.draw_unsigned(table, int(columns[.Pages].x), y, process.present_pages, tokens.text)
 				bar_x := int(columns[.Processor_Bar].x)

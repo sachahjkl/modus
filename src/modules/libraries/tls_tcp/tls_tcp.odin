@@ -1,5 +1,5 @@
 // TLS 1.3 over TCP and the wire borders of QUIC as a library module of the
-// system (src/md/features/desktop_to_browser.md, src/md/api/library_modules.md).
+// system (src/md/features/desktop_to_browser.md; src/md/api/library_modules.md).
 //
 // Each export calls the support packages `modus:tls_tcp` and `modus:quic`
 // over bytes and tables of the caller, so a process that imports the module
