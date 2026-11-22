@@ -241,6 +241,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 				client_key_allowed_log(principal, key)
 			}
 			persisted_table_changed(principal)
+			principals_client_key_tell(principal, .Allow, key, asked)
 			return .Ok
 		}
 		values^ = errors.ring_fail(kind, .Full, .Grants, 0, 0, remote.CLIENT_CAPACITY)
@@ -262,6 +263,7 @@ remote_client_command :: proc "contextless" (caller: ^Started, record: ring.Reco
 		}
 		revoked_uses, _ := remote.client_uses_of_word(client_table.clients[place].uses)
 		client_row_write(place, {})
+		principals_client_key_tell(principal, .Revoke, key, {})
 		count := client_connections_end(place)
 		values^ = {}
 		values[0] = count

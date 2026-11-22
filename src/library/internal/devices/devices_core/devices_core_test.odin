@@ -157,3 +157,34 @@ all_device_classes_and_capacity_bound :: proc(t: ^testing.T) {
 	_, full_ref, _ := scan_and_bind(&state, &overflow, 999)
 	testing.expect_value(t, full_ref, Devices_Bind_Refusal.Table_Full)
 }
+
+// A Bind_Device whose identity word names another record than the one in
+// the bind place is refused, counted, and binds nothing: a word of another
+// device, of another place, with a bit past the packed form, and the
+// largest word. The word of the record binds it, last.
+@(test)
+bind_device_refuses_a_record_that_the_command_does_not_name :: proc(t: ^testing.T) {
+	state: Devices_State
+	blk := make_virtio_device(0, 0x10, 0, rd.PCI_DEVICE_VIRTIO_BLOCK, 0xFE00_0000)
+	_, uninit_ref, _ := bind_device(&state, &blk, 1, rd.device_bind_identity_word(&blk))
+	testing.expect_value(t, uninit_ref, Devices_Bind_Refusal.Uninitialized)
+
+	state_init(&state)
+	other_device := make_virtio_device(0, 0x10, 0, rd.PCI_DEVICE_VIRTIO_NETWORK, 0xFE10_0000)
+	other_place := make_virtio_device(0, 0x11, 0, rd.PCI_DEVICE_VIRTIO_BLOCK, 0xFE20_0000)
+	word := rd.device_bind_identity_word(&blk)
+	wrong_words := [?]u64{rd.device_bind_identity_word(&other_device), rd.device_bind_identity_word(&other_place), word | 1 << 56, max(u64), 0}
+	for wrong, index in wrong_words {
+		before := state
+		_, refusal, grant_refusal := bind_device(&state, &blk, 1, wrong)
+		testing.expectf(t, refusal == .Identity_Mismatch, "the word %d is taken", index)
+		testing.expect_value(t, grant_refusal, rd.Device_Grant_Refusal.None)
+		testing.expect_value(t, state.counters.total_refusals, before.counters.total_refusals + 1)
+		testing.expect_value(t, state.counters.active_bindings, before.counters.active_bindings)
+		testing.expect(t, state.bindings == before.bindings)
+	}
+	spec, refusal, _ := bind_device(&state, &blk, 1, word)
+	testing.expect_value(t, refusal, Devices_Bind_Refusal.None)
+	testing.expect_value(t, spec.location, blk.location)
+	testing.expect_value(t, state.counters.active_bindings, u64(1))
+}

@@ -128,12 +128,16 @@ handle_command :: proc "contextless" (command: ring.Record) {
 		disc_offset := command.values[0]
 		service_slot := u32(command.values[1])
 		out_offset := command.values[2]
+		identity_word := command.values[3]
 		if !region_range_valid(disc_offset, size_of(rd.Pci_Discovered_Device)) || !region_range_valid(out_offset, size_of(rd.Device_Grant_Spec)) {
 			reply_bad_command(command, .Out_Of_Range, 1, i64(disc_offset), i64(service_region_bytes))
 			return
 		}
+		// The check of the identity runs on the copy: the core can write
+		// the place again after the copy, never between the check and the
+		// bind.
 		intrinsics.mem_copy_non_overlapping(&copied_discovered, rawptr(&service_region_base[disc_offset]), size_of(rd.Pci_Discovered_Device))
-		spec, bind_ref, grant_ref := dc.scan_and_bind(&service_state, &copied_discovered, service_slot)
+		spec, bind_ref, grant_ref := dc.bind_device(&service_state, &copied_discovered, service_slot, identity_word)
 		if bind_ref != .None {
 			system.log_fact(.Warning, Command_Refused{command_kind = u64(command.kind), refusal_code = u64(bind_ref)})
 			ring.push(

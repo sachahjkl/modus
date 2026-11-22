@@ -393,6 +393,7 @@ persisted_table_changed :: proc "contextless" (principal: u64) {
 	if principal >= principals.PRINCIPAL_CAPACITY {
 		return
 	}
+	principals_rows_changed(principal)
 	table := &persisted_tables[principal]
 	if table.state == .Kept {
 		// A change during the tries of a write joins those tries, with no
@@ -417,6 +418,7 @@ persisted_table_changed :: proc "contextless" (principal: u64) {
 // - Refused, Record_Unreadable: nothing is written over the table on the
 //   disk, which can hold the key.
 persisted_table_revocation :: proc "contextless" (principal: u64, key: [disk_process.CLIENT_KEY_SIZE]u8) -> (can_come_back: bool) {
+	principals_rows_changed(principal)
 	table := &persisted_tables[principal]
 	switch table.state {
 	case .No_Passphrase:
@@ -707,6 +709,7 @@ persisted_table_step :: proc "contextless" (principal: u64, wait: ^system.Wait) 
 		// it, and it is written there no more.
 		revoked := persisted_table_revoked_keys_take(table, &from_disk)
 		disk_grant_tables[principal] = from_disk
+		principals_rows_changed(principal)
 		if revoked > 0 {
 			system.log_fact(.Info, Table_Revoked_Keys_Kept{principal = principal, revoked_keys = u64(revoked)})
 			table.write_failures = 0

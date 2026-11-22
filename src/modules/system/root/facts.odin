@@ -435,6 +435,54 @@ Devices_Notice_Refused :: struct {
 	second_value: u64,
 }
 
+// The delegated principals service did not start.
+@(log_fact = "root: cannot start the principals service: status {status}")
+Principals_Service_Start_Failed :: struct {
+	status: op.Status,
+}
+
+// The delegated principals service started, within its bound of starts.
+@(log_fact = "root: started the delegated principals service (start {starts} of {start_limit})")
+Principals_Service_Started :: struct {
+	starts:      u64,
+	start_limit: u64,
+}
+
+@(log_fact = "root: the delegated principals service stopped")
+Principals_Service_Stopped :: struct {}
+
+// The principals service did not start within its bound: the core keeps
+// its state with no mirror.
+@(log_fact = "root: the principals service did not start in {start_limit} starts: the root service keeps the principals, their disk grant tables and the client keys with no mirror")
+Principals_Service_Absent :: struct {
+	start_limit: u64,
+}
+
+// The principals service answered with a status that names no member, or
+// with a tag that names no command in flight.
+@(log_fact = "root: the principals service answered with the status word {status_word} and the tag {tag}, which name no status or no command in flight")
+Principals_Answer_Refused :: struct {
+	status_word: u64,
+	tag:         u64,
+}
+
+// The principals service refused a command of the mirror: the core and
+// the service disagree, and the core keeps its rule.
+@(log_fact = "root: the principals service refused the command {command_word}: status word {status_word}, values {first_value} and {second_value}")
+Principals_Command_Refused :: struct {
+	command_word: u64,
+	status_word:  u64,
+	first_value:  u64,
+	second_value: u64,
+}
+
+// The disk grant table of a principal does not pass the border of the set
+// of rows: the service keeps the set before it.
+@(log_fact = "root: the disk grant table of principal {principal} does not pass the border of the principals service: its rows are not sent")
+Principals_Rows_Unsent :: struct {
+	principal: u64,
+}
+
 // The fields of a name: the writers of the facts above fill them with the
 // procedures of the contract, whose host tests give the edges of a cut.
 module_name_field :: value_kinds.module_name_field

@@ -227,6 +227,70 @@ device_identity_answer_of_values :: proc "contextless" (values: [7]u64, vendor_i
 	}, true
 }
 
+// device_identity_refusal_of_values reads the completion words of a
+// Lookup_Identity that the devices service refused, at the border of the
+// core. answered is true only for a refusal that says the identity has no
+// class (Unknown_Identity) or is no identity (Invalid_Pci_Id), with every
+// word after it zero: any other refusal says that the table of the service
+// is damaged, and the core then treats the service as silent and starts it
+// again, so a damaged table never classifies a device as absent.
+device_identity_refusal_of_values :: proc "contextless" (values: [7]u64) -> (refusal: Device_Identity_Refusal, answered: bool) {
+	refusal = enum_word.member_of_word(Device_Identity_Refusal, values[0]) or_return
+	for index in 1 ..< len(values) {
+		if values[index] != 0 {
+			return refusal, false
+		}
+	}
+	switch refusal {
+	case .Unknown_Identity, .Invalid_Pci_Id:
+		return refusal, true
+	case .None, .Unknown_Device_Class, .Invalid_Bar_Count, .Duplicate_Identity, .Table_Full, .Corrupt_Table_Count:
+		return refusal, false
+	}
+	return refusal, false
+}
+
+// device_bind_identity_word packs the place and the identity of a
+// discovered device in one word, which the core sends with Bind_Device
+// beside the offset of the record. The core reuses a bind place when a
+// device service at the same place of its table starts again, so the
+// service could read a newer record than the one of the command: it
+// refuses a record whose word differs (device_bind_identity_matches).
+device_bind_identity_word :: proc "contextless" (discovered: ^Pci_Discovered_Device) -> u64 {
+	return u64(discovered.location.bus) << 48 | u64(discovered.location.device) << 40 | u64(discovered.location.function) << 32 | u64(discovered.pci_vendor_id) << 16 | u64(discovered.pci_device_id)
+}
+
+// device_bind_identity_matches says if the word of a Bind_Device names the
+// record that the service copied: a word with a bit past the 56 bits of
+// the packed form names no record.
+device_bind_identity_matches :: proc "contextless" (discovered: ^Pci_Discovered_Device, word: u64) -> bool {
+	return word >> 56 == 0 && word == device_bind_identity_word(discovered)
+}
+
+// device_bar_page_count_word gives the count of pages of a BAR of a size in
+// bytes, as the word of a Device_Bar_Range. A count past
+// DEVICE_BAR_PAGES_LIMIT, which a 64-bit BAR can have, gives max(u32), so
+// the border refuses the range (validate_device_grant_spec) rather than
+// grant a cut of the window.
+device_bar_page_count_word :: proc "contextless" (size: u64) -> u32 {
+	pages := size / op.PAGE_SIZE
+	if size % op.PAGE_SIZE != 0 {
+		pages += 1
+	}
+	if pages > DEVICE_BAR_PAGES_LIMIT {
+		return max(u32)
+	}
+	return u32(pages)
+}
+
+// device_bar_withheld says if the core keeps a BAR out of the grant of a
+// device service: the BARs of the table of the MSI-X interrupts and of its
+// pending bits, which the device service must not change. pending_bar is
+// the low 3 bits of the place of the pending bits.
+device_bar_withheld :: proc "contextless" (index, table_bar, pending_bar: u32) -> bool {
+	return index == table_bar || index == pending_bar
+}
+
 // devices_bind_place_offsets gives the offsets in the shared region of the
 // discovered record and of the grant specification of one bind place,
 // refusing a place past DEVICES_BIND_PLACE_COUNT.

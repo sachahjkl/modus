@@ -11,49 +11,22 @@
 package principals_core
 
 import "modus:contract/blake3"
-import "modus:contract/enum_word"
 import "modus:contract/remote"
 import "modus:contract/role_contract"
 import rd "modus:contract/root_delegation"
+import "modus:principals"
 
 // Fixed capacities of the principals service state.
 MAX_PRINCIPALS :: 8
-PRINCIPAL_NAME_CAPACITY :: 23
 MACHINE_PRINCIPAL_NAME :: "machine"
 
 #assert(MAX_PRINCIPALS >= 2)
-#assert(PRINCIPAL_NAME_CAPACITY == rd.NICKNAME_CAPACITY)
 
 // Lifecycle state of one principal slot.
 Session_State :: enum u8 {
 	Absent = 0,
 	Locked = 1,
 	Active = 2,
-}
-
-// Closed set of session lifecycle transitions.
-// Zero means unset and is refused at the border.
-Session_Action :: enum u32 {
-	None           = 0,
-	Unlock         = 1,
-	Lock           = 2,
-	Bring_To_Front = 3,
-	Stop_Session   = 4,
-}
-
-// Closed set of client key operations for remote and remote_display.
-Client_Key_Action :: enum u32 {
-	None   = 0,
-	Allow  = 1,
-	Revoke = 2,
-}
-
-// Closed set of start policy choice operations for principal 0.
-Start_Policy_Action :: enum u32 {
-	None                    = 0,
-	Set_Choice              = 1,
-	Clear_Choice            = 2,
-	Set_Passphrase_Required = 3,
 }
 
 // Why a principals_core operation refused its input.
@@ -91,38 +64,6 @@ Principals_Refusal :: enum u8 {
 	Trailing_Name_Bytes                    = 30,
 }
 
-// Input record for registering a named principal.
-Register_Principal_Input :: struct {
-	principal_id: u64,
-	name:         [PRINCIPAL_NAME_CAPACITY]u8,
-	name_length:  u8,
-	public_key:   [32]u8,
-}
-
-// Input record for transitioning a principal session.
-Session_Transition_Input :: struct {
-	principal_id: u64,
-	action_word:  u32,
-}
-
-// Input record for allowing or revoking a remote client key.
-Client_Key_Input :: struct {
-	principal_id:     u64,
-	action_word:      u32,
-	client_key:       [32]u8,
-	client_uses_word: u64,
-}
-
-// Input record for managing principal 0's start policy choice.
-Start_Policy_Input :: struct {
-	principal_id:        u64,
-	action_word:         u32,
-	nickname:            [rd.NICKNAME_CAPACITY]u8,
-	nickname_length:     u8,
-	module_hash:         blake3.Hash,
-	passphrase_required: bool,
-}
-
 // One Store disk grant row owned by a principal.
 Store_Grant_Row :: struct {
 	active:          bool,
@@ -145,7 +86,7 @@ Principal_Entry :: struct {
 	active:           bool,
 	id:               u64,
 	state:            Session_State,
-	name:             [PRINCIPAL_NAME_CAPACITY]u8,
+	name:             [rd.PRINCIPAL_NAME_CAPACITY]u8,
 	name_length:      u8,
 	public_key:       [32]u8,
 	session_serial:   u64,
@@ -174,36 +115,6 @@ Principals_State :: struct {
 	client_table:                remote.Client_Table,
 	next_client_serial:          u64,
 	counters:                    Principals_Counters,
-}
-
-// session_action_from_word converts a transport word into a Session_Action,
-// refusing zero and every unknown value.
-session_action_from_word :: proc "contextless" (word: u32) -> (action: Session_Action, ok: bool) {
-	member := enum_word.member_of_word(Session_Action, u64(word)) or_return
-	if member == .None {
-		return .None, false
-	}
-	return member, true
-}
-
-// client_key_action_from_word converts a transport word into a
-// Client_Key_Action, refusing zero and every unknown value.
-client_key_action_from_word :: proc "contextless" (word: u32) -> (action: Client_Key_Action, ok: bool) {
-	member := enum_word.member_of_word(Client_Key_Action, u64(word)) or_return
-	if member == .None {
-		return .None, false
-	}
-	return member, true
-}
-
-// start_policy_action_from_word converts a transport word into a
-// Start_Policy_Action, refusing zero and every unknown value.
-start_policy_action_from_word :: proc "contextless" (word: u32) -> (action: Start_Policy_Action, ok: bool) {
-	member := enum_word.member_of_word(Start_Policy_Action, u64(word)) or_return
-	if member == .None {
-		return .None, false
-	}
-	return member, true
 }
 
 // state_init resets state and installs principal 0 (the machine) in Active
@@ -238,25 +149,20 @@ find_principal_index :: proc "contextless" (state: ^Principals_State, principal_
 }
 
 @(private = "file")
-validate_principal_name :: proc "contextless" (bytes: ^[PRINCIPAL_NAME_CAPACITY]u8, length: u8) -> Principals_Refusal {
-	if length == 0 || int(length) > PRINCIPAL_NAME_CAPACITY {
+validate_principal_name :: proc "contextless" (bytes: ^[rd.PRINCIPAL_NAME_CAPACITY]u8, length: u8) -> Principals_Refusal {
+	if length == 0 || int(length) > rd.PRINCIPAL_NAME_CAPACITY {
 		return .Invalid_Principal_Name
 	}
-	for idx in int(length) ..< PRINCIPAL_NAME_CAPACITY {
+	for idx in int(length) ..< rd.PRINCIPAL_NAME_CAPACITY {
 		if bytes[idx] != 0 {
 			return .Trailing_Name_Bytes
 		}
 	}
-	first := bytes[0]
-	if !(first >= 'a' && first <= 'z') {
+	// The core takes a name of a principal by the rule of the principals
+	// library: a stricter rule here would refuse a principal that the core
+	// holds, and the mirror of the core would lose it.
+	if principals.name_problem(string(bytes[:length])) != .None {
 		return .Invalid_Principal_Name
-	}
-	for idx in 1 ..< int(length) {
-		ch := bytes[idx]
-		allowed := (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_'
-		if !allowed {
-			return .Invalid_Principal_Name
-		}
 	}
 	if string(bytes[:length]) == MACHINE_PRINCIPAL_NAME {
 		return .Duplicate_Principal_Name
@@ -306,7 +212,7 @@ sync_client_table_front :: proc "contextless" (state: ^Principals_State) {
 // register_principal adds a named principal in Locked state, refusing
 // principal 0, duplicate IDs/names/keys, invalid names, zero keys, and full
 // capacity with zero domain state mutation.
-register_principal :: proc "contextless" (state: ^Principals_State, input: ^Register_Principal_Input) -> Principals_Refusal {
+register_principal :: proc "contextless" (state: ^Principals_State, input: ^rd.Register_Principal_Input) -> Principals_Refusal {
 	if state == nil || !state.initialized || input == nil {
 		return .Uninitialized
 	}
@@ -365,11 +271,11 @@ register_principal :: proc "contextless" (state: ^Principals_State, input: ^Regi
 // session_transition applies a validated Session_Action to a registered
 // principal, updating session lock state, front-principal display pausing,
 // and client key serials atomically.
-session_transition :: proc "contextless" (state: ^Principals_State, input: ^Session_Transition_Input) -> Principals_Refusal {
+session_transition :: proc "contextless" (state: ^Principals_State, input: ^rd.Session_Transition_Input) -> Principals_Refusal {
 	if state == nil || !state.initialized || input == nil {
 		return .Uninitialized
 	}
-	action, ok := session_action_from_word(input.action_word)
+	action, ok := rd.session_action_from_word(input.action_word)
 	if !ok {
 		state.counters.total_refusals += 1
 		return .Invalid_Session_Action
@@ -583,11 +489,11 @@ apply_disk_rows_set :: proc "contextless" (
 // client_key_command executes Allow or Revoke for a principal's remote client
 // key, refusing unknown actions, locked sessions, invalid uses, duplicate
 // keys, cross-principal revocations, and capacity overflow.
-client_key_command :: proc "contextless" (state: ^Principals_State, input: ^Client_Key_Input) -> (serial: u64, refusal: Principals_Refusal) {
+client_key_command :: proc "contextless" (state: ^Principals_State, input: ^rd.Client_Key_Input) -> (serial: u64, refusal: Principals_Refusal) {
 	if state == nil || !state.initialized || input == nil {
 		return 0, .Uninitialized
 	}
-	action, ok := client_key_action_from_word(input.action_word)
+	action, ok := rd.client_key_action_from_word(input.action_word)
 	if !ok {
 		state.counters.total_refusals += 1
 		return 0, .Invalid_Client_Key_Action
@@ -695,11 +601,11 @@ client_key_lookup :: proc "contextless" (state: ^Principals_State, key: [32]u8) 
 
 // start_policy_command validates and applies a principal 0 start policy
 // choice update. Non-principal-0 callers are always refused.
-start_policy_command :: proc "contextless" (state: ^Principals_State, input: ^Start_Policy_Input) -> Principals_Refusal {
+start_policy_command :: proc "contextless" (state: ^Principals_State, input: ^rd.Start_Policy_Input) -> Principals_Refusal {
 	if state == nil || !state.initialized || input == nil {
 		return .Uninitialized
 	}
-	action, ok := start_policy_action_from_word(input.action_word)
+	action, ok := rd.start_policy_action_from_word(input.action_word)
 	if !ok {
 		state.counters.total_refusals += 1
 		return .Invalid_Start_Policy_Action
