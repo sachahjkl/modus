@@ -116,7 +116,6 @@ CHOICE_CONSTANT_EXCEPTIONS := [?]Choice_Constant_Exception {
 	{foundation.TOOL_SOURCE_FOLDER + "/build", "ELF", .First, "the section, program header and relocation types of ELF (System V ABI, chapter 4): an object file holds types that the tool does not read, and it skips them"},
 	{foundation.TOOL_SOURCE_FOLDER + "/machine", "NBD", .First, "the options, the replies and the commands of the network block device protocol (NBD, the protocol document): a client sends options that the server of the tests answers as unsupported"},
 	{foundation.SOURCE_FOLDER_CONTRACT + "/remote", "FIELD", .First, "the places of the fields of a Request, from 1, which the argument of an error record names (REQUEST_FIELD_NAMES): a place in a record, not a choice; the test of the peer selects the field to break by its place"},
-	{foundation.SOURCE_FOLDER_KERNEL, "EVENT", .First, "the event types of the event injection of AMD SVM (AMD64 volume 2, section 15.20): the numbers of the processor"},
 }
 
 // The state of the walk of one file.

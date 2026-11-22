@@ -512,7 +512,9 @@ memory_decommit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, 
 
 // memory_protect sets the protection of the pages of a table of ranges of
 // addresses of this process: {} is read only, {.Write}, {.Execute}, or
-// {.No_Access}. It can only take away what each mapping has.
+// {.No_Access}. It can only take away what each mapping has. With
+// `process`, the ranges are guest memory of a process that no thread ran:
+// a mapping made with Write and Execute gets one of the two in turn.
 //
 // The object of each range must be named by this process only, with one
 // mapping (`Object_Shared` else). It gives the pages that changed.
@@ -521,9 +523,9 @@ memory_decommit :: proc "contextless" (memory: Handle, ranges: []op.Page_Range, 
 // guard := [1]op.Address_Range{{address = u64(uintptr(stack)), page_count = 1}}
 // system.memory_protect(guard[:], {.No_Access})
 // ```
-memory_protect :: proc "contextless" (ranges: []op.Address_Range, flags: op.Map_Flags, error: ^errors.Error_Record = nil) -> (changed: u64, status: Status) {
+memory_protect :: proc "contextless" (ranges: []op.Address_Range, flags: op.Map_Flags, error: ^errors.Error_Record = nil, process: Handle = 0) -> (changed: u64, status: Status) {
 	results: [7]u64
-	results, status = call_with_error(error, .Memory_Protect, u64(uintptr(raw_data(ranges))), u64(len(ranges)), transmute(u64)flags)
+	results, status = call_with_error(error, .Memory_Protect, u64(uintptr(raw_data(ranges))), u64(len(ranges)), transmute(u64)flags, u64(process))
 	return results[0], status
 }
 
@@ -1216,9 +1218,11 @@ Guest_Exit :: struct {
 	information:   u64, // The first exit information of the processor.
 }
 
-// guest_run runs the guest processor of a process on this thread until an
+// guest_run runs one guest processor of a process on this thread until an
 // exit that the kernel does not handle itself (docs/ARCHITECTURE.md, "A
-// guest"). `process` is a process handle with **Control** of a process
+// guest"). `processor` names it, from 0 to
+// `op.GUEST_PROCESSOR_CAPACITY - 1`; other threads can run the others at
+// the same time. `process` is a process handle with **Control** of a process
 // that `Process_Create` made and that no thread ran; its addresses are the
 // guest physical addresses. `registers` goes in, and holds the registers
 // of the guest after the exit: the process answers an exit by a change of
@@ -1233,9 +1237,9 @@ Guest_Exit :: struct {
 // 	registers.rip = exit.next
 // }
 // ```
-guest_run :: proc "contextless" (process: Handle, registers: ^op.Guest_Registers, error: ^errors.Error_Record = nil) -> (exit: Guest_Exit, status: Status) {
+guest_run :: proc "contextless" (process: Handle, registers: ^op.Guest_Registers, error: ^errors.Error_Record = nil, processor: u64 = 0) -> (exit: Guest_Exit, status: Status) {
 	results: [7]u64
-	results, status = call_with_error(error, .Guest_Run, u64(process), u64(uintptr(registers)))
+	results, status = call_with_error(error, .Guest_Run, u64(process), u64(uintptr(registers)), processor)
 	if status != .Ok {
 		return {}, status
 	}

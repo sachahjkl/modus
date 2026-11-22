@@ -3,6 +3,7 @@ package kernel
 import "base:intrinsics"
 import op "modus:contract/operation"
 import "modulus:extended_switch"
+import "modulus:guest_rules"
 
 // A guest (src/md/features/guest.md; docs/ARCHITECTURE.md, "A guest"): a
 // process whose page table is the nested page table of a guest processor,
@@ -50,7 +51,10 @@ STATE_SEGMENT_GDTR :: 0x460
 STATE_SEGMENT_LDTR :: 0x470
 STATE_SEGMENT_IDTR :: 0x480
 STATE_SEGMENT_TR :: 0x490
+STATE_PRIVILEGE_LEVEL :: 0x4CB // u8: CPL.
 STATE_EFER :: 0x4D0
+STATE_CR4 :: 0x548
+STATE_CR3 :: 0x550
 STATE_CR0 :: 0x558
 STATE_DR7 :: 0x560
 STATE_DR6 :: 0x568
@@ -95,12 +99,6 @@ GUEST_ADDRESS_SPACE_IDENTIFIER :: 1
 TRANSLATION_FLUSH_ALL :: u8(1)
 TRANSLATION_FLUSH_THE_GUEST :: u8(3) // With the feature FlushByAsid.
 PAGE_ATTRIBUTES_AT_RESET :: u64(0x0007_0406_0007_0406)
-// The attributes of a segment: bits 0 to 3 the type, bit 4 code or data,
-// bit 7 present.
-SEGMENT_CODE :: u16(0x9B) // Present, code, readable, accessed.
-SEGMENT_DATA :: u16(0x93) // Present, data, writable, accessed.
-SEGMENT_LOCAL_TABLE :: u16(0x82) // Present, a local descriptor table.
-SEGMENT_TASK :: u16(0x8B) // Present, a busy task state of 32 bits.
 CR0_OF_A_GUEST_AT_START :: u64(CR0_EXTENSION_TYPE) // Real mode, caches on.
 FLAGS_ALWAYS_SET :: u64(1) << 1
 
@@ -117,36 +115,6 @@ GUEST_EXIT_PORT :: u64(0x7B)
 GUEST_EXIT_SHUTDOWN :: u64(0x7F)
 GUEST_EXIT_NESTED_PAGE_FAULT :: u64(0x400)
 GUEST_EXIT_REFUSED_STATE :: max(u64) // VMEXIT_INVALID: -1.
-
-// An event in EXITINTINFO and in EVENTINJ: bits 0 to 7 the vector, 8 to 10
-// the type, bit 31 valid.
-EVENT_VALID :: u64(1) << 31
-EVENT_TYPE_EXTERNAL_INTERRUPT :: 0
-EVENT_TYPE_NON_MASKABLE_INTERRUPT :: 2
-EVENT_TYPE_EXCEPTION :: 3
-GUEST_VECTOR_BREAKPOINT :: 3 // int3: an instruction, which runs again.
-GUEST_VECTOR_OVERFLOW :: 4 // into: an instruction, which runs again.
-
-// guest_event_to_deliver_again gives the event that an exit interrupted,
-// for the next entry, or 0. An exit can come while the guest delivers an
-// event: a page on first use of its interrupt table or of its stack, or an
-// interrupt of the machine. The next entry delivers it again, so the guest
-// loses none. An event of an instruction (int n, int3, into) is not given:
-// the guest is still at that instruction, which runs again.
-guest_event_to_deliver_again :: proc "contextless" (event: u64) -> u64 {
-	if event & EVENT_VALID == 0 {
-		return 0
-	}
-	kind := event >> 8 & 0b111
-	vector := event & 0xFF
-	switch {
-	case kind == EVENT_TYPE_EXTERNAL_INTERRUPT || kind == EVENT_TYPE_NON_MASKABLE_INTERRUPT:
-		return event
-	case kind == EVENT_TYPE_EXCEPTION && vector != GUEST_VECTOR_BREAKPOINT && vector != GUEST_VECTOR_OVERFLOW:
-		return event
-	}
-	return 0
-}
 
 // The first exit information of a port: bit 0 an `in`, bit 2 a string
 // instruction, bit 3 a `rep`, bits 4 to 6 the size, bits 16 to 31 the port.
@@ -195,13 +163,25 @@ guest_host_save_areas: [PROCESSOR_CAPACITY]u64
 // reaches the processor that runs the guest, whose cr3 is another table.
 guest_tables_running: [PROCESSOR_CAPACITY]u64
 
-// The guest processor of a process, by the index of the process. One for
-// each process slot: a guest is a process.
+// One guest processor of a guest. Its pages exist from its first run to the
+// end of the guest. A run owns the whole record while running is true: no
+// other run reads or writes its control block or its extended state.
+Guest_Processor :: struct {
+	running:       bool, // A thread runs this guest processor now. Process lock of the guest.
+	control_block: u64, // Physical: the control block of the guest processor, one page. 0: not made yet.
+	state_area:    u64, // Physical: the extended state of the guest processor, one page.
+	// The event that the process injected and that the guest did not
+	// receive yet: it lives across runs, as the word of EVENTINJ does.
+	pending_injection: guest_rules.Pending_Injection,
+}
+
+// The guest processors of a process, by the index of the process. One for
+// each process slot: a guest is a process. The guest processors share the
+// nested page table, which is the table of the process; each has its own
+// state, so threads run different guest processors at once.
 Guest :: struct {
 	process_serial: u32, // The serial of the process that is this guest. 0: no guest in the slot.
-	running:        bool, // A thread runs the guest processor now. Process lock of the guest.
-	control_block:  u64, // Physical: the control block of the guest processor, one page.
-	state_area:     u64, // Physical: the extended state of the guest processor, one page.
+	processors:     [op.GUEST_PROCESSOR_CAPACITY]Guest_Processor,
 }
 guests: [PROCESS_CAPACITY]Guest
 
@@ -331,13 +311,43 @@ process_is_guest :: proc "contextless" (index: u32) -> bool {
 	return serial != 0 && serial == processes[index].serial
 }
 
-// guest_segment_write writes one segment of the state of a guest processor:
-// the selector 0, the base 0 and the limit of 64 KiB of real mode.
-guest_segment_write :: proc "contextless" (block: u64, offset: u64, attributes: u16) {
-	direct(block + offset, u16)^ = 0
-	direct(block + offset + 2, u16)^ = attributes
-	direct(block + offset + 4, u32)^ = 0xFFFF
-	direct(block + offset + 8, u64)^ = 0
+// process_holds_guest_memory says if a process holds a mapping that only a
+// guest takes: one at the address 0, or one whose pages switch between
+// Write and Execute (map_region). Process_Start refuses such a process: a
+// thread there would run with no fault at the address 0, or on pages that
+// it can write and then execute. The caller holds the process lock.
+process_holds_guest_memory :: proc "contextless" (process: ^Process) -> bool {
+	for mapping in process.mappings {
+		if mapping.page_count == 0 {
+			continue
+		}
+		if mapping.address == 0 || mapping.limit_bits & PAGE_WRITE != 0 && mapping.limit_bits & PAGE_NO_EXECUTE == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// guest_segment_write writes one segment of the state of a guest processor.
+guest_segment_write :: proc "contextless" (block: u64, offset: u64, segment: guest_rules.Segment) {
+	direct(block + offset, u16)^ = segment.selector
+	direct(block + offset + 2, u16)^ = segment.attributes
+	direct(block + offset + 4, u32)^ = segment.limit
+	direct(block + offset + 8, u64)^ = segment.base
+}
+
+// guest_mode_write writes the segments of a mode in the state of a guest
+// processor: the code segment, the five data segments and the privilege
+// level 0. The descriptor tables, the task and the local table stay. With
+// Keep, nothing changes.
+guest_mode_write :: proc "contextless" (block: u64, load: op.Guest_Mode_Load, code_selector: u16, data_selector: u16) -> (loaded: bool) {
+	segments := guest_rules.mode_segments(load, code_selector, data_selector) or_return
+	guest_segment_write(block, STATE_SEGMENT_CS, segments.code)
+	for offset in ([?]u64{STATE_SEGMENT_ES, STATE_SEGMENT_SS, STATE_SEGMENT_DS, STATE_SEGMENT_FS, STATE_SEGMENT_GS}) {
+		guest_segment_write(block, offset, segments.data)
+	}
+	direct(block + STATE_PRIVILEGE_LEVEL, u8)^ = 0
+	return true
 }
 
 // guest_control_block_write writes the control block of a new guest
@@ -354,16 +364,11 @@ guest_control_block_write :: proc "contextless" (block: u64, table: u64) {
 	direct(block + CONTROL_INTERRUPTS, u32)^ = INTERRUPTS_MASKED_BY_THE_KERNEL
 	direct(block + CONTROL_NESTED, u64)^ = NESTED_PAGING_ON
 	direct(block + CONTROL_NESTED_TABLE, u64)^ = table
-	guest_segment_write(block, STATE_SEGMENT_ES, SEGMENT_DATA)
-	guest_segment_write(block, STATE_SEGMENT_SS, SEGMENT_DATA)
-	guest_segment_write(block, STATE_SEGMENT_DS, SEGMENT_DATA)
-	guest_segment_write(block, STATE_SEGMENT_FS, SEGMENT_DATA)
-	guest_segment_write(block, STATE_SEGMENT_GS, SEGMENT_DATA)
-	guest_segment_write(block, STATE_SEGMENT_CS, SEGMENT_CODE)
-	guest_segment_write(block, STATE_SEGMENT_GDTR, 0)
-	guest_segment_write(block, STATE_SEGMENT_IDTR, 0)
-	guest_segment_write(block, STATE_SEGMENT_LDTR, SEGMENT_LOCAL_TABLE)
-	guest_segment_write(block, STATE_SEGMENT_TR, SEGMENT_TASK)
+	guest_mode_write(block, .Real_16, 0, 0)
+	guest_segment_write(block, STATE_SEGMENT_GDTR, {limit = guest_rules.REAL_MODE_LIMIT})
+	guest_segment_write(block, STATE_SEGMENT_IDTR, {limit = guest_rules.REAL_MODE_LIMIT})
+	guest_segment_write(block, STATE_SEGMENT_LDTR, {attributes = guest_rules.SEGMENT_LOCAL_TABLE, limit = guest_rules.REAL_MODE_LIMIT})
+	guest_segment_write(block, STATE_SEGMENT_TR, {attributes = guest_rules.SEGMENT_TASK, limit = guest_rules.REAL_MODE_LIMIT})
 	// vmrun refuses a guest with SVME clear in its EFER.
 	direct(block + STATE_EFER, u64)^ = EFER_SECURE_VIRTUAL_MACHINE
 	direct(block + STATE_CR0, u64)^ = CR0_OF_A_GUEST_AT_START
@@ -382,26 +387,34 @@ guest_frame_return :: proc "contextless" (process: ^Process, frame: u64) {
 	lock_free(&frame_lock, .Frame)
 }
 
-// guest_create makes a process a guest, at its first Guest_Run: the budget
-// of the process pays the control block and the extended state; the time
-// page and the own log ring leave the process, and the kernel half leaves
-// its top table, so
-// that the guest reaches only what its process mapped. Nothing changes when
-// the budget cannot pay. The caller holds the process lock; the process is
-// Created, with no thread.
-guest_create :: proc "contextless" (index: u32) -> Operation_Outcome {
-	process := &processes[index]
+// guest_processor_create makes one guest processor of a process, at its
+// first Guest_Run: the budget of the process pays the control block and the
+// extended state. Nothing changes when the budget cannot pay. The caller
+// holds the process lock.
+guest_processor_create :: proc "contextless" (process: ^Process) -> (processor: Guest_Processor, status: Operation_Outcome) {
 	control_block := frame_paid(&process.budget)
 	if control_block == 0 {
-		return .No_Budget
+		return {}, .No_Budget
 	}
 	state_area := frame_paid(&process.budget)
 	if state_area == 0 {
 		guest_frame_return(process, control_block)
-		return .No_Budget
+		return {}, .No_Budget
 	}
 	extended_state_start(direct(state_area, Extended_State_Area))
 	guest_control_block_write(control_block, process.table)
+	return {control_block = control_block, state_area = state_area}, .Ok
+}
+
+// guest_create makes a process a guest, at its first Guest_Run, with the
+// guest processor of that run: the time page and the own log ring leave the
+// process, and the kernel half leaves its top table, so that the guest
+// reaches only what its process mapped. Nothing changes when the budget
+// cannot pay the guest processor. The caller holds the process lock; the
+// process is Created, with no thread.
+guest_create :: proc "contextless" (index: u32, processor_index: u32) -> Operation_Outcome {
+	process := &processes[index]
+	first := guest_processor_create(process) or_return
 	for &mapping in process.mappings {
 		if mapping.page_count != 0 && mapping.address == op.TIME_ADDRESS {
 			unmap(process, &mapping)
@@ -416,7 +429,8 @@ guest_create :: proc "contextless" (index: u32) -> Operation_Outcome {
 	for &entry in direct(process.table, [512]u64)^[256:] {
 		entry = 0
 	}
-	guests[index] = {process_serial = process.serial, control_block = control_block, state_area = state_area}
+	guests[index] = {process_serial = process.serial}
+	guests[index].processors[processor_index] = first
 	return .Ok
 }
 
@@ -428,17 +442,23 @@ guest_end :: proc "contextless" (index: u32) {
 		return
 	}
 	guest := &guests[index]
-	guest_frame_return(&processes[index], guest.control_block)
-	guest_frame_return(&processes[index], guest.state_area)
+	for processor in guest.processors {
+		if processor.control_block != 0 {
+			guest_frame_return(&processes[index], processor.control_block)
+			guest_frame_return(&processes[index], processor.state_area)
+		}
+	}
 	guest^ = {}
 }
 
 // guest_enter_once enters the guest processor once, with the registers of
 // the record, and gives its exit; the record has the registers after the
-// exit. The extended state of the thread leaves the processor during the
-// guest, and comes back after it: the kernel has no vector instruction of
-// its own, so the registers of the thread are live here.
-guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, guest: ^Guest, process: ^Process, registers: ^op.Guest_Registers) -> (exit: Guest_Exit) {
+// exit. The requests of the record (the mode load and the event) are not
+// read here: guest_run serves them once before the first entry. The
+// extended state of the thread leaves the processor during the guest, and
+// comes back after it: the kernel has no vector instruction of its own, so
+// the registers of the thread are live here.
+guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, processor: ^Guest_Processor, process: ^Process, registers: ^op.Guest_Registers) -> (exit: Guest_Exit) {
 	// Before the entry, and seen by an unmap that cleared its entries, or
 	// by a stop: then either the unmap or the stop sends its interrupt
 	// here, or this entry sees what it wrote: the cleared entries, or the
@@ -449,20 +469,35 @@ guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, guest:
 		intrinsics.atomic_store(&guest_tables_running[cpu.index], 0)
 		return {code = GUEST_EXIT_INTERRUPT} // The process stopped: no instruction of the guest runs after its stop.
 	}
-	block := guest.control_block
+	block := processor.control_block
 	direct(block + STATE_RAX, u64)^ = registers.rax
 	direct(block + STATE_RSP, u64)^ = registers.rsp
 	direct(block + STATE_RIP, u64)^ = registers.rip
 	direct(block + STATE_RFLAGS, u64)^ = registers.rflags | FLAGS_ALWAYS_SET
+	// The process answers a write of a control register or of EFER by the
+	// record; the bits that the processor needs are set here, whatever the
+	// record says.
+	direct(block + STATE_CR0, u64)^ = registers.cr0 | CR0_EXTENSION_TYPE
+	direct(block + STATE_CR3, u64)^ = registers.cr3
+	direct(block + STATE_CR4, u64)^ = registers.cr4
+	direct(block + STATE_EFER, u64)^ = registers.efer | EFER_SECURE_VIRTUAL_MACHINE
 	// Every guest has one identifier, and a guest can run on another
 	// processor than before: each entry flushes its translations.
 	direct(block + CONTROL_TRANSLATION_FLUSH, u8)^ = guest_support.flush_by_identifier ? TRANSLATION_FLUSH_THE_GUEST : TRANSLATION_FLUSH_ALL
 	direct(block + CONTROL_CLEAN, u32)^ = 0
+	// With NRIPS, the delivery of an injected software interrupt, int3 or
+	// into pushes the address in this word, which the last exit wrote: the
+	// address of the injection goes there, so that the guest returns to it.
+	if guest_support.next_instruction {
+		if address, needed := guest_rules.next_instruction_of_injection(direct(block + CONTROL_EVENT_INJECTION, u64)^, processor.pending_injection); needed {
+			direct(block + CONTROL_NEXT_INSTRUCTION, u64)^ = address
+		}
+	}
 	general := Guest_General_Registers {
 		rbx = registers.rbx, rcx = registers.rcx, rdx = registers.rdx, rsi = registers.rsi, rdi = registers.rdi, rbp = registers.rbp,
 		r8 = registers.r8, r9 = registers.r9, r10 = registers.r10, r11 = registers.r11, r12 = registers.r12, r13 = registers.r13, r14 = registers.r14, r15 = registers.r15,
 	}
-	state_area := direct(guest.state_area, Extended_State_Area)
+	state_area := direct(processor.state_area, Extended_State_Area)
 	extended_state_save(&thread.extended_state, extended_state_form)
 	// Running a guest replaces the hardware extended state registers on this
 	// processor, so drop any cached thread identity on this processor.
@@ -482,14 +517,21 @@ guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, guest:
 	} else {
 		debug_register_7_write(DR7_NO_BREAKPOINT)
 	}
-	registers^ = {
-		rax = direct(block + STATE_RAX, u64)^, rbx = general.rbx, rcx = general.rcx, rdx = general.rdx,
-		rsi = general.rsi, rdi = general.rdi, rbp = general.rbp, rsp = direct(block + STATE_RSP, u64)^,
-		r8 = general.r8, r9 = general.r9, r10 = general.r10, r11 = general.r11,
-		r12 = general.r12, r13 = general.r13, r14 = general.r14, r15 = general.r15,
-		rip = direct(block + STATE_RIP, u64)^,
-		rflags = direct(block + STATE_RFLAGS, u64)^ & op.GUEST_FLAGS_DEFINED,
-	}
+	registers.rax, registers.rbx, registers.rcx, registers.rdx = direct(block + STATE_RAX, u64)^, general.rbx, general.rcx, general.rdx
+	registers.rsi, registers.rdi, registers.rbp, registers.rsp = general.rsi, general.rdi, general.rbp, direct(block + STATE_RSP, u64)^
+	registers.r8, registers.r9, registers.r10, registers.r11 = general.r8, general.r9, general.r10, general.r11
+	registers.r12, registers.r13, registers.r14, registers.r15 = general.r12, general.r13, general.r14, general.r15
+	registers.rip = direct(block + STATE_RIP, u64)^
+	registers.rflags = direct(block + STATE_RFLAGS, u64)^ & op.GUEST_FLAGS_DEFINED
+	// The guest writes its control registers itself: the record gives them
+	// back, so that the next run loads what the guest left. The masks keep
+	// the record within its rules whatever the processor wrote.
+	registers.cr0 = direct(block + STATE_CR0, u64)^ & op.GUEST_CONTROL_0_DEFINED
+	registers.cr3 = direct(block + STATE_CR3, u64)^ & op.GUEST_CONTROL_3_DEFINED
+	registers.cr4 = direct(block + STATE_CR4, u64)^ & op.GUEST_CONTROL_4_DEFINED
+	registers.efer = direct(block + STATE_EFER, u64)^ & op.GUEST_EFER_DEFINED
+	registers.code_selector = direct(block + STATE_SEGMENT_CS, u16)^
+	registers.data_selector = direct(block + STATE_SEGMENT_DS, u16)^
 	exit = {
 		code          = direct(block + CONTROL_EXIT_CODE, u64)^,
 		information_1 = direct(block + CONTROL_EXIT_INFORMATION_1, u64)^,
@@ -500,12 +542,17 @@ guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, guest:
 	}
 	// The event that the exit interrupted goes to the next entry, in this
 	// run or in the next one; with none, the next entry delivers nothing.
+	// An injected event that the exit interrupted goes again whatever its
+	// type: the guest is at no instruction that raises it again.
 	// After a refused state, the processor entered nothing and the word can
 	// hold an old event: it is not delivered again at each run.
 	if exit.code == GUEST_EXIT_REFUSED_STATE {
 		direct(block + CONTROL_EVENT_INJECTION, u64)^ = 0
+		processor.pending_injection = {}
 	} else {
-		direct(block + CONTROL_EVENT_INJECTION, u64)^ = guest_event_to_deliver_again(direct(block + CONTROL_EXIT_EVENT, u64)^)
+		next_event, still_pending := guest_rules.event_after_exit(direct(block + CONTROL_EXIT_EVENT, u64)^, registers.rip, processor.pending_injection)
+		direct(block + CONTROL_EVENT_INJECTION, u64)^ = next_event
+		processor.pending_injection = still_pending
 	}
 	// An interrupt of another processor that waits in processor_sync is
 	// held until the return to the process: the answer comes now.
@@ -569,10 +616,15 @@ guest_exit_results :: proc "contextless" (exit: Guest_Exit, registers: ^op.Guest
 
 // guest_run runs the operation Guest_Run (src/md/features/guest.md, "The
 // run, step by step"). It takes its own locks: the lock of the caller for
-// the handle and the record, the lock of the guest process for its state and
-// for each page on first use, and no lock while the guest runs. A run holds
-// the guest process as a thread on a processor holds its process: a stop
-// during the run cleans the process up after it.
+// the handle and the record, the lock of the guest process for its state,
+// for the flag running of the guest processor and for each page on first
+// use, and no lock while the guest runs. The flag running gives the run the
+// guest processor alone: another thread runs another guest processor of the
+// same guest at the same time, with its own control block and extended
+// state; the nested page table is the one that they share, and the lock of
+// the guest process orders its changes. A run holds the guest process as a
+// thread on a processor holds its process: a stop during the run cleans the
+// process up after it.
 guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Operation_Outcome {
 	if !intrinsics.atomic_load(&guest_support.ready) {
 		return .Bad_Operation
@@ -603,7 +655,12 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 	if guest_index == caller_index {
 		return .Bad_State
 	}
-	if op.guest_registers_refusal(registers) {
+	requests, refusal := op.guest_registers_check(registers)
+	if refusal != .None {
+		return .Bad_Operation
+	}
+	processor_index, processor_known := op.guest_processor_of_word(v[2])
+	if !processor_known {
 		return .Bad_Operation
 	}
 
@@ -616,24 +673,47 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 		return .Bad_State
 	}
 	if !process_is_guest(guest_index) {
-		if status := guest_create(guest_index); status != .Ok {
+		if status := guest_create(guest_index, processor_index); status != .Ok {
 			process_unlock(guest_index, guest_taken)
 			return status
 		}
+	} else if guest.processors[processor_index].control_block == 0 {
+		made, status := guest_processor_create(guest_process)
+		if status != .Ok {
+			process_unlock(guest_index, guest_taken)
+			return status
+		}
+		guest.processors[processor_index] = made
 	}
-	if guest.running {
+	processor := &guest.processors[processor_index]
+	if processor.running {
 		process_unlock(guest_index, guest_taken)
-		return .Bad_State // One guest processor: one thread runs it at a time.
+		return .Bad_State // One thread runs a guest processor at a time.
 	}
-	guest.running = true
+	processor.running = true
 	intrinsics.atomic_add(&guest_process.holds, 1)
 	process_unlock(guest_index, guest_taken)
+
+	// The requests of the record, once for the operation. The flag running
+	// gives this run the control block alone.
+	block := processor.control_block
+	mode_loaded := guest_mode_write(block, requests.mode_load, registers.code_selector, registers.data_selector)
+	// An event that an exit interrupted goes first, as the processor would
+	// deliver it: the request of the process waits in the record for a
+	// later run.
+	injected := false
+	if requests.inject_kind != .None && direct(block + CONTROL_EVENT_INJECTION, u64)^ & guest_rules.EVENT_VALID == 0 {
+		injection := guest_rules.event_injection_word(requests.inject_kind, registers.inject_vector, registers.inject_error_code_valid == 1, registers.inject_error_code)
+		direct(block + CONTROL_EVENT_INJECTION, u64)^ = injection
+		processor.pending_injection = {event = injection, address = registers.rip}
+		injected = true
+	}
 
 	cpu := processor_self()
 	exit: Guest_Exit
 	pages_given := 0
 	for {
-		exit = guest_enter_once(cpu, thread, guest, guest_process, &registers)
+		exit = guest_enter_once(cpu, thread, processor, guest_process, &registers)
 		if exit.code == GUEST_EXIT_MACHINE_CHECK {
 			fault_report_begin()
 			log("kernel: machine check while a guest of process ", Module_Name{process_name(caller)}, " ran: a fault of the machine, not of the guest: the machine stops")
@@ -672,8 +752,21 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 		}
 	}
 
+	// A served request leaves the record. After a refused state, the
+	// processor delivered nothing and the kernel dropped the event: the
+	// request stays, so that the process sees it.
+	if mode_loaded {
+		registers.mode_load = u8(op.Guest_Mode_Load.Keep)
+	}
+	if injected && exit.code != GUEST_EXIT_REFUSED_STATE {
+		registers.inject_kind = u8(op.Guest_Inject_Kind.None)
+		registers.inject_vector = 0
+		registers.inject_error_code_valid = 0
+		registers.inject_error_code = 0
+	}
+
 	release_taken := process_lock(guest_index)
-	guest.running = false
+	processor.running = false
 	process_unlock(guest_index, release_taken)
 	// A stop of the guest process during the run waited for this hold.
 	if process_leave(guest_index) {

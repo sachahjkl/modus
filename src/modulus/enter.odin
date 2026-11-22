@@ -527,7 +527,8 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		taken := process_lock(slot.object)
 		defer process_unlock(slot.object, taken)
 		// A guest has no kernel half in its page table: no thread runs on it.
-		if to.state != .Created || process_is_guest(slot.object) {
+		// Guest memory is refused to a thread too.
+		if to.state != .Created || process_is_guest(slot.object) || process_holds_guest_memory(to) {
 			return .Bad_State
 		}
 		// The first thread of the process gets the limit of a new thread of
@@ -1208,7 +1209,17 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		table := &processor_self().range_table
 		user_copy(table, rawptr(uintptr(v[0])), v[1] * size_of(op.Address_Range))
 		ranges := ([^]op.Address_Range)(&table[0])[:v[1]]
-		changed := memory_protect(process, ranges, flags) or_return
+		// Another process: guest memory only, which a guest writes and then
+		// executes. A process that a thread ran keeps its protection its own.
+		if v[3] != 0 {
+			require_control() or_return
+		}
+		to, taken := target_lock(process, v[3]) or_return
+		defer process_unlock(index_of_process(to), taken)
+		if to != process && (to.state != .Created || to.thread_count != 0) {
+			return .Bad_State
+		}
+		changed := memory_protect(to, ranges, flags) or_return
 		results[0] = changed
 		return .Ok
 

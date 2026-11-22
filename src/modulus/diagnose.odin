@@ -1056,8 +1056,10 @@ address_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^P
 		return false
 	case .Memory_Protect:
 		// The first range that is not inside one mapping of this process, or
-		// a part of a mapping that changes only whole.
-		if !read_range(process, v[0], v[1] * size_of(op.Address_Range)) {
+		// a part of a mapping that changes only whole. The mappings of a
+		// guest are not read here: the diagnosis holds the lock of the
+		// caller only.
+		if v[3] != 0 || !read_range(process, v[0], v[1] * size_of(op.Address_Range)) {
 			return false
 		}
 		for index in 0 ..< v[1] {
@@ -1280,6 +1282,11 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 		return true
 	case .Memory_Protect:
 		// A part of a mapping needs an object that only this process names.
+		// For a guest, the state of the guest can be the cause too: no
+		// record names one of the two.
+		if v[3] != 0 {
+			return false
+		}
 		record_set(record, .Object_Shared, .None, 1, 0, 0, 0)
 		return true
 	case .Thread_Control:
@@ -1367,7 +1374,7 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 		if v[3] & ~op.MAP_FLAGS_KNOWN != 0 {
 			record_set(record, .Bad_Flags, .None, 4, v[3], op.MAP_FLAGS_KNOWN, 0)
 		} else {
-			record_set(record, .Bad_Value, .None, 4, v[3], 0, 0) // Write and Execute: no page is both.
+			record_set(record, .Bad_Value, .None, 4, v[3], 0, 0) // Write and Execute with no No_Access: no page is both.
 		}
 		return true
 	case .Memory_Commit:
@@ -1397,7 +1404,7 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 		case:
 			// The entries that the call changes, as the kernel counts them:
 			// one for each large page, the present pages of a whole mapping.
-			if pages := read_protect_walk(process, v[0], v[1]); pages > op.RANGE_TABLE_PAGE_LIMIT {
+			if pages := read_protect_walk(process, v[0], v[1]); v[3] == 0 && pages > op.RANGE_TABLE_PAGE_LIMIT {
 				record_set(record, .Too_Long, .Pages, 1, pages, op.RANGE_TABLE_PAGE_LIMIT, 0)
 			} else {
 				// Write and Execute together; No_Access with another flag;
@@ -1457,9 +1464,40 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 			record_set(record, .Unsupported, .None, 0, u64(op.Operation.Guest_Run), 0, 0)
 			return true
 		}
-		flags: u64
-		if read_user(process, v[1] + u64(offset_of(op.Guest_Registers, rflags)), &flags, size_of(flags)) && flags &~ op.GUEST_FLAGS_DEFINED != 0 {
-			record_set(record, .Bad_Value, .None, 2, flags, 0, 0)
+		// A field of the registers record that its rules refuse: the value
+		// of that field. The process can change its memory since the run:
+		// this read is of the record now.
+		registers: op.Guest_Registers
+		if read_user(process, v[1], &registers, size_of(registers)) {
+			value: u64
+			_, refusal := op.guest_registers_check(registers)
+			switch refusal {
+			case .None:
+				return false
+			case .Flags:
+				value = registers.rflags
+			case .Control_0:
+				value = registers.cr0
+			case .Control_3:
+				value = registers.cr3
+			case .Control_4:
+				value = registers.cr4
+			case .Efer, .Long_Mode:
+				value = registers.efer
+			case .Instruction_Address:
+				value = registers.rip
+			case .Mode_Load:
+				value = u64(registers.mode_load)
+			case .Inject_Kind:
+				value = u64(registers.inject_kind)
+			case .Inject_Vector:
+				value = u64(registers.inject_vector)
+			case .Inject_Error_Code:
+				value = u64(registers.inject_error_code)
+			case .Reserved:
+				value = u64(registers.reserved)
+			}
+			record_set(record, .Bad_Value, .None, 2, value, 0, 0)
 			return true
 		}
 	case .Device_Create:

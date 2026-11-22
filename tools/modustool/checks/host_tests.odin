@@ -283,6 +283,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_KERNEL + "/debug_exception",
 	foundation.SOURCE_FOLDER_KERNEL + "/processor_counters",
 	foundation.SOURCE_FOLDER_KERNEL + "/extended_switch",
+	foundation.SOURCE_FOLDER_KERNEL + "/guest_rules",
 	foundation.SOURCE_FOLDER_KERNEL + "/stolen_time",
 	foundation.SOURCE_FOLDER_KERNEL + "/time_base",
 	foundation.SOURCE_FOLDER_KERNEL + "/delivery_count",
