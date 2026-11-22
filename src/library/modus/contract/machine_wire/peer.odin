@@ -20,7 +20,6 @@ OBJECT_CAPACITY :: 8 // The objects by hash that a peer keeps: a few small objec
 OBJECT_BYTES_LIMIT :: 16 * 1024
 OBJECT_REQUEST_SIZE :: 8 + blake3.HASH_SIZE // The kind, a zero word, the hash.
 OBJECT_RESPONSE_HEADER_SIZE :: 8 + blake3.HASH_SIZE // The kind, the count of bytes, the hash.
-ROLE_GRANT_CAPACITY :: 4
 CHANNEL_BINDING_DOMAIN :: "modus mesh channel binding v1"
 
 PAIRING_ELEMENT_SIZE :: machine_mesh.CPACE_PUBLIC_ELEMENT_SIZE + machine_mesh.PUBLIC_KEY_SIZE
@@ -39,9 +38,34 @@ Role_Holder_Proc :: #type proc "contextless" (role: role_contract.Role, export: 
 
 Role_Set :: bit_set[role_contract.Role;u64]
 
-// The roles that this machine serves for one paired machine, by the plan of the principal.
-Role_Grant :: struct {
+// What a paired machine may ask of this machine. A pairing gives no use:
+// the plan of the principal gives each use to each paired machine, and each
+// request of a use that the machine lacks is refused before any table is
+// read.
+Machine_Use :: enum u32 {
+	Objects = 0, // Object_Request: fetch an object by its hash.
+	Stores  = 1, // Store_Offer: exchange the stores that the plan names with this machine.
+	Roles   = 2, // Role_Call: call the roles of the grant.
+	Relay   = 3, // Relay_Deposit and Relay_Collect, on the routes that name this machine.
+	Grants  = 4, // Grant_Present: a signed grant for the principal that the transport proved.
+}
+Machine_Uses :: bit_set[Machine_Use;u32]
+
+// machine_uses_of_word is the border of the word of the uses: it refuses a
+// bit that names no use.
+machine_uses_of_word :: proc "contextless" (word: u32) -> (uses: Machine_Uses, ok: bool) {
+	known := Machine_Uses{.Objects, .Stores, .Roles, .Relay, .Grants}
+	if word & ~transmute(u32)known != 0 {
+		return {}, false
+	}
+	return transmute(Machine_Uses)word, true
+}
+
+// The uses and the roles that this machine gives one paired machine, by the
+// plan of the principal. roles is empty unless uses holds Roles.
+Machine_Grant :: struct {
 	identity: [machine_mesh.PUBLIC_KEY_SIZE]u8,
+	uses:     Machine_Uses,
 	roles:    Role_Set,
 }
 
@@ -83,7 +107,7 @@ Peer :: struct {
 	object_rows:       [OBJECT_CAPACITY]machine_sync.Stored_Object,
 	object_bytes:      [OBJECT_BYTES_LIMIT]u8,
 	stores:            [EXCHANGED_STORE_CAPACITY]Exchanged_Store,
-	role_grants:       [ROLE_GRANT_CAPACITY]Role_Grant,
+	machine_grants:    [machine_mesh.MAX_PAIRED_MACHINES]Machine_Grant,
 	relay:             Relay_Table,
 }
 
@@ -119,15 +143,16 @@ channel_binding_of_identities :: proc "contextless" (server_identity, client_ide
 }
 
 // peer_admits is the check of the handshake for a key that the client
-// table does not hold: a paired machine, or the machine of an open pairing.
-peer_admits :: proc "contextless" (peer: ^Peer, key: [machine_mesh.PUBLIC_KEY_SIZE]u8) -> bool {
+// table does not hold: a paired machine, or the machine of an open pairing
+// whose code has not ended.
+peer_admits :: proc "contextless" (peer: ^Peer, key: [machine_mesh.PUBLIC_KEY_SIZE]u8, now_ms: u64) -> bool {
 	if !peer.has_identity || machine_mesh.key_is_zero(key) {
 		return false
 	}
 	if _, paired := machine_mesh.paired_machine_find(&peer.paired, key); paired {
 		return true
 	}
-	if peer.pairing.side != .Offerer {
+	if peer.pairing.side != .Offerer || machine_mesh.pairing_code_expired(peer.pairing.code_started_at_ms, now_ms) {
 		return false
 	}
 	switch peer.pairing.phase {
@@ -140,41 +165,59 @@ peer_admits :: proc "contextless" (peer: ^Peer, key: [machine_mesh.PUBLIC_KEY_SI
 	return false
 }
 
-// role_grant_set gives a paired machine the roles of this machine that the
-// plan names for it. An empty set removes the grant.
-role_grant_set :: proc "contextless" (peer: ^Peer, identity: [machine_mesh.PUBLIC_KEY_SIZE]u8, roles: Role_Set) -> bool {
-	if machine_mesh.key_is_zero(identity) || .None in roles {
+// machine_grant_set gives a paired machine its uses and the roles that the
+// plan of the principal names for it, in place of its earlier grant. Empty
+// uses remove the grant. Roles without the use Roles, the use Roles without
+// a role, and the role None are refused.
+machine_grant_set :: proc "contextless" (peer: ^Peer, identity: [machine_mesh.PUBLIC_KEY_SIZE]u8, uses: Machine_Uses, roles: Role_Set) -> bool {
+	if machine_mesh.key_is_zero(identity) || .None in roles || (.Roles in uses) != (roles != {}) {
 		return false
 	}
 	free := -1
-	for &grant, index in peer.role_grants {
-		if grant.roles != {} && grant.identity == identity {
-			grant.roles = roles
-			if roles == {} {
-				grant = {}
-			}
+	for &grant, index in peer.machine_grants {
+		if grant.uses != {} && grant.identity == identity {
+			grant = uses == {} ? {} : Machine_Grant{identity = identity, uses = uses, roles = roles}
 			return true
 		}
-		if grant.roles == {} && free < 0 {
+		if grant.uses == {} && free < 0 {
 			free = index
 		}
 	}
-	if roles == {} {
+	if uses == {} {
 		return true
 	}
 	if free < 0 {
 		return false
 	}
-	peer.role_grants[free] = Role_Grant{identity = identity, roles = roles}
+	peer.machine_grants[free] = Machine_Grant{identity = identity, uses = uses, roles = roles}
 	return true
 }
 
-@(private)
-role_granted :: proc "contextless" (peer: ^Peer, identity: [machine_mesh.PUBLIC_KEY_SIZE]u8, role: role_contract.Role) -> bool {
-	for grant in peer.role_grants {
-		if grant.roles != {} && grant.identity == identity {
-			return role in grant.roles
+// machine_grant_of gives the grant of a machine that is paired now, or none:
+// a grant outlives no row of the paired machines.
+machine_grant_of :: proc "contextless" (peer: ^Peer, identity: [machine_mesh.PUBLIC_KEY_SIZE]u8) -> (grant: Machine_Grant, found: bool) {
+	if !peer_is_paired(peer, identity) {
+		return {}, false
+	}
+	for item in peer.machine_grants {
+		if item.uses != {} && item.identity == identity {
+			return item, true
 		}
+	}
+	return {}, false
+}
+
+// pairing_expire ends an open pairing whose code ended: the service calls
+// it at each pass, so an abandoned offer admits no key and holds no secret.
+// It gives true when it ended one.
+pairing_expire :: proc "contextless" (peer: ^Peer, now_ms: u64) -> bool {
+	switch peer.pairing.phase {
+	case .Code_Ready, .Exchanging, .Confirming:
+		if machine_mesh.pairing_code_expired(peer.pairing.code_started_at_ms, now_ms) {
+			machine_mesh.pairing_fail(&peer.pairing, .Refused_Code_Expired)
+			return true
+		}
+	case .Idle, .Paired, .Failed:
 	}
 	return false
 }
@@ -196,24 +239,49 @@ serve :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_Context, input: 
 	if !peer.has_identity {
 		return refusal_write(output, .No_Identity, 0)
 	}
+	// Each request is authorized here, before any table is read. A machine
+	// that the handshake admitted only for an open offer reaches the two
+	// pairing steps; a paired machine reaches a request of a use only when
+	// its grant holds that use.
+	use: Machine_Use
 	switch frame.message {
 	case .Pairing_Element:
 		return serve_pairing_element(peer, serve_context, frame.body, output)
 	case .Pairing_Confirm:
 		return serve_pairing_confirm(peer, serve_context, frame.body, output)
+	case .Grant_Present:
+		use = .Grants
 	case .Object_Request:
-		return serve_object_request(peer, serve_context, frame.body, output)
+		use = .Objects
+	case .Store_Offer:
+		use = .Stores
+	case .Role_Call:
+		use = .Roles
+	case .Relay_Deposit, .Relay_Collect:
+		use = .Relay
+	case .None, .Refusal, .Pairing_Element_Reply, .Pairing_Confirmed, .Object_Response, .Grant_Accepted, .Store_Offer_Reply, .Role_Reply, .Relay_Deposited, .Relay_Delivery:
+		return refusal_write(output, .Unexpected_Message, u32(frame.message))
+	}
+	if !peer_is_paired(peer, serve_context.peer_identity) {
+		return refusal_write(output, .Not_Paired, 0)
+	}
+	grant, granted := machine_grant_of(peer, serve_context.peer_identity)
+	if !granted || use not_in grant.uses {
+		return refusal_write(output, .Use_Not_Granted, u32(use))
+	}
+	#partial switch frame.message {
 	case .Grant_Present:
 		return serve_grant_present(peer, serve_context, frame.body, output)
+	case .Object_Request:
+		return serve_object_request(peer, serve_context, frame.body, output)
 	case .Store_Offer:
 		return serve_store_offer(peer, serve_context, frame.body, output)
 	case .Role_Call:
-		return serve_role_call(peer, serve_context, frame.body, output)
+		return serve_role_call(peer, &grant, frame.body, output)
 	case .Relay_Deposit:
 		return serve_relay_deposit(peer, serve_context, frame.body, output)
 	case .Relay_Collect:
 		return serve_relay_collect(peer, serve_context, frame.body, output)
-	case .None, .Refusal, .Pairing_Element_Reply, .Pairing_Confirmed, .Object_Response, .Grant_Accepted, .Store_Offer_Reply, .Role_Reply, .Relay_Deposited, .Relay_Delivery:
 	}
 	return refusal_write(output, .Unexpected_Message, u32(frame.message))
 }
@@ -369,9 +437,6 @@ object_request_write :: proc "contextless" (output: []u8, kind: object_cache.Cac
 
 @(private)
 serve_object_request :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_Context, body: []u8, output: []u8) -> []u8 {
-	if !peer_is_paired(peer, serve_context.peer_identity) {
-		return refusal_write(output, .Not_Paired, 0)
-	}
 	if len(body) != OBJECT_REQUEST_SIZE || byte_order.read_u32_little_endian(body, 4) != 0 {
 		return refusal_write(output, .Malformed, 0)
 	}
@@ -473,11 +538,15 @@ grant_present_write :: proc "contextless" (output: []u8, grant: ^machine_mesh.Si
 	return frame_bytes(output, body), .Accepted
 }
 
-// serve_grant_present checks a signed grant that a machine of another
-// principal presents: the receiver is the principal root key that the
-// transport proved, never a key that the frame names.
+// serve_grant_present checks a signed grant that a paired machine with the
+// use Grants presents: the receiver is the principal root key that the
+// transport proved, never a key that the frame names. With no proven
+// principal, nothing is checked.
 @(private)
 serve_grant_present :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_Context, body: []u8, output: []u8) -> []u8 {
+	if machine_mesh.key_is_zero(serve_context.peer_root_public_key) {
+		return refusal_write(output, .No_Principal, 0)
+	}
 	if !peer.machine_list.has_list {
 		return refusal_write(output, .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Grantor_Key_Not_Active))
 	}
@@ -514,13 +583,11 @@ grant_accepted_read :: proc "contextless" (answer: []u8) -> (serial: u64, expire
 
 @(private)
 serve_store_offer :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_Context, body: []u8, output: []u8) -> []u8 {
-	if !peer_is_paired(peer, serve_context.peer_identity) {
-		return refusal_write(output, .Not_Paired, 0)
+	if len(body) < STORE_OFFER_HEADER_SIZE {
+		return refusal_write(output, .Store_Refused, u32(Store_Status.Refused_Bad_Count))
 	}
-	identifier, theirs, read_status := store_offer_read(body)
-	if read_status != .Ok {
-		return refusal_write(output, .Store_Refused, u32(read_status))
-	}
+	identifier: blake3.Hash
+	copy(identifier[:], body[:blake3.HASH_SIZE])
 	store := store_exchange_find(&peer.stores, identifier)
 	if store == nil {
 		return refusal_write(output, .Store_Refused, u32(Store_Status.Refused_Unknown_Store))
@@ -528,48 +595,41 @@ serve_store_offer :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_Cont
 	if !machine_mesh.keys_equal_constant_time(store.partner_identity, serve_context.peer_identity) {
 		return refusal_write(output, .Store_Refused, u32(Store_Status.Refused_Not_Partner))
 	}
-	merged, conflicts, conflict_count, merge_status := store_merge_compute(store, &theirs)
-	if merge_status != .Ok {
-		return refusal_write(output, .Store_Refused, u32(merge_status))
+	// The whole offer is read and merged before the store changes.
+	frame, status := store_offer_answer(store, body, output)
+	if status != .Ok {
+		return refusal_write(output, .Store_Refused, u32(status))
 	}
-	// The reply holds the version before the merge: the sender merges the
-	// same three versions, and both sides end equal.
-	reply := store_offer_write(store, .Store_Offer_Reply, output)
-	if reply == nil {
-		return refusal_write(output, .Malformed, 0)
-	}
-	store_merge_apply(store, &merged, &conflicts, conflict_count)
-	return reply
+	return frame
 }
 
 // ---- Role calls ----
 
 @(private)
-serve_role_call :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_Context, body: []u8, output: []u8) -> []u8 {
-	if !peer_is_paired(peer, serve_context.peer_identity) {
-		return refusal_write(output, .Not_Paired, 0)
-	}
+serve_role_call :: proc "contextless" (peer: ^Peer, grant: ^Machine_Grant, body: []u8, output: []u8) -> []u8 {
 	call, ok := role_call_read(body)
 	if !ok {
 		return refusal_write(output, .Malformed, 0)
 	}
-	if !role_granted(peer, serve_context.peer_identity, call.role) || peer.services.role_holder == nil {
+	if call.role not_in grant.roles || peer.services.role_holder == nil {
 		return refusal_write(output, .Role_Refused, u32(call.role))
 	}
 	result: [ROLE_RESULT_LIMIT]u8
 	value, result_count, outcome := peer.services.role_holder(call.role, call.export, call.arguments, result[:], peer.services.user_data)
+	// From here the holder ran: a fault of its answer is no refusal, since
+	// the call can have changed the state of the holder.
 	if result_count < 0 || result_count > len(result) {
-		return refusal_write(output, .Role_Refused, u32(call.role))
+		return refusal_write(output, .Role_Holder_Fault, u32(call.role))
 	}
 	switch outcome {
 	case .Answered, .Refused:
 	case .None, .Unknown_Outcome, .Unreachable:
 		// A holder gives no outcome of a link.
-		return refusal_write(output, .Role_Refused, u32(call.role))
+		return refusal_write(output, .Role_Holder_Fault, u32(call.role))
 	}
 	reply := role_reply_write(output, Role_Reply{identifier = call.identifier, outcome = outcome, value = value, result = result[:result_count]})
 	if reply == nil {
-		return refusal_write(output, .Malformed, 0)
+		return refusal_write(output, .Role_Holder_Fault, u32(call.role))
 	}
 	return reply
 }
@@ -578,10 +638,7 @@ serve_role_call :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_Contex
 
 @(private)
 serve_relay_deposit :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_Context, body: []u8, output: []u8) -> []u8 {
-	if !peer_is_paired(peer, serve_context.peer_identity) {
-		return refusal_write(output, .Not_Paired, 0)
-	}
-	status := relay_deposit(&peer.relay, body)
+	status := relay_deposit(&peer.relay, serve_context.peer_identity, body, serve_context.now_ms)
 	if status != .Ok {
 		return refusal_write(output, .Relay_Refused, u32(status))
 	}
@@ -594,15 +651,12 @@ serve_relay_deposit :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_Co
 
 @(private)
 serve_relay_collect :: proc "contextless" (peer: ^Peer, serve_context: ^Serve_Context, body: []u8, output: []u8) -> []u8 {
-	if !peer_is_paired(peer, serve_context.peer_identity) {
-		return refusal_write(output, .Not_Paired, 0)
-	}
 	if len(body) != RELAY_COLLECT_BODY_SIZE {
 		return refusal_write(output, .Malformed, 0)
 	}
 	token: Routing_Token
 	copy(token[:], body)
-	frame, status := relay_collect(&peer.relay, token, output)
+	frame, status := relay_collect(&peer.relay, serve_context.peer_identity, token, serve_context.now_ms, output)
 	if status != .Ok {
 		return refusal_write(output, .Relay_Refused, u32(status))
 	}

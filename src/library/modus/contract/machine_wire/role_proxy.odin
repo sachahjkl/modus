@@ -191,7 +191,7 @@ Role_Proxy_Status :: enum u8 {
 	Refused_Full      = 3, // ROLE_CALLS_AT_ONCE calls are in flight.
 	Refused_Too_Large = 4,
 	Refused_Bad_Role  = 5,
-	Refused_Bad_Bound = 6, // A bound of 0: a call must end.
+	Refused_Bad_Bound = 6, // A bound of 0, or a deadline past the largest time: a call must end.
 	Refused_Output    = 7, // The output cannot hold the frame.
 }
 
@@ -218,7 +218,7 @@ role_call_begin :: proc "contextless" (
 	if len(arguments) > ROLE_ARGUMENT_LIMIT {
 		return 0, nil, .Refused_Too_Large
 	}
-	if bound_ms == 0 {
+	if bound_ms == 0 || bound_ms > max(u64) - now_ms {
 		return 0, nil, .Refused_Bad_Bound
 	}
 	if proxy.link == .Broken {
@@ -252,9 +252,11 @@ role_slot_find :: proc "contextless" (proxy: ^Role_Proxy, identifier: u64) -> ^R
 }
 
 // role_reply_accept takes the answer of the stream of call identifier. A
-// refusal frame is a Refused outcome; a malformed answer, or a reply that
-// names another call, is Unknown_Outcome, never a refusal: the call can
-// have run. A call that is not in flight gives found false.
+// refusal that says the call did not run is a Refused outcome. Each other
+// answer that is not a well formed reply of this call (a fault of the
+// holder after it ran, a malformed answer, a reply that names another call)
+// is Unknown_Outcome, never a refusal: the call can have run. A call that is
+// not in flight gives found false.
 role_reply_accept :: proc "contextless" (proxy: ^Role_Proxy, identifier: u64, answer: []u8) -> (reply: Role_Reply, found: bool) {
 	slot := role_slot_find(proxy, identifier)
 	if slot == nil || slot.phase != .In_Flight {
@@ -263,8 +265,10 @@ role_reply_accept :: proc "contextless" (proxy: ^Role_Proxy, identifier: u64, an
 	slot^ = {}
 	body, reason, _, ok := answer_expect(answer, .Role_Reply)
 	if !ok {
-		if reason == .Role_Refused {
+		switch reason {
+		case .Role_Refused, .Not_Paired, .Use_Not_Granted, .No_Identity:
 			return Role_Reply{identifier = identifier, outcome = .Refused}, true
+		case .None, .Malformed, .Unexpected_Message, .Pairing_Refused, .Object_Absent, .Grant_Refused, .Store_Refused, .Relay_Refused, .No_Principal, .Role_Holder_Fault:
 		}
 		return Role_Reply{identifier = identifier, outcome = .Unknown_Outcome}, true
 	}

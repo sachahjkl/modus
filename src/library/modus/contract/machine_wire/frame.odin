@@ -72,9 +72,14 @@ Refusal_Reason :: enum u32 {
 	Object_Absent      = 5, // This machine holds no object with that hash and that kind.
 	Grant_Refused      = 6, // The grant check refused: detail is a machine_mesh.Grant_Check_Status.
 	Store_Refused      = 7, // The store exchange refused: detail is a Store_Status.
-	Role_Refused       = 8, // This machine serves no such role for the peer, or its holder refused.
+	Role_Refused       = 8, // This machine serves no such role for the peer: the call did not run.
 	Relay_Refused      = 9, // The relay refused: detail is a Relay_Status.
 	No_Identity        = 10, // This machine has no identity key yet.
+	Use_Not_Granted    = 11, // The grant of the paired machine lacks the use of the request: detail is a Machine_Use.
+	No_Principal       = 12, // A grant, and the transport proved no principal root key for the sender.
+	// The holder ran the call and gave an answer that breaks the contract:
+	// the call can have changed the state of the holder.
+	Role_Holder_Fault  = 13,
 }
 
 refusal_reason_of_word :: proc "contextless" (word: u32) -> (reason: Refusal_Reason, ok: bool) {

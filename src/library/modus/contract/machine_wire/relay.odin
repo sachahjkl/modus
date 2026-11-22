@@ -4,20 +4,25 @@
 //
 // The two end machines share a key from their pairing. The sender seals the
 // datagram with an AEAD (ChaCha20-Poly1305) under that key, with the routing
-// token as its associated data, and the relay sees only the routing token
-// and the sealed bytes: no identity key, no address of an end, no byte of
-// plaintext. The relay holds no key, so it cannot open, change or forge an
-// envelope: it keeps the bytes of a deposit unchanged and gives them to a
-// machine that collects for the token.
+// token as its associated data. The envelope holds only the routing token
+// and the sealed bytes: no identity key, no address, no byte of plaintext.
+// The relay holds no key, so it cannot open, change or forge an envelope.
+// It knows the two ends of each route, which its principal named, and the
+// identity keys that the handshakes of their connections proved.
+//
+// A route has one sender and one receiver: only the sender deposits on it,
+// and only the receiver collects. Two directions are two routes. A request
+// of a machine that is not the bound end of the route gets the same refusal
+// as an unknown token, so a paired machine learns nothing of the routes of
+// others. An envelope that waits past its lifetime is dropped.
 //
 // The routing token is a keyed hash of the shared key and an epoch, so the
-// relay cannot link two epochs of one pair, and a party without the key
-// cannot name a route that the relay holds. A route exists only when the
-// principal of the relay machine adds its token.
+// relay cannot link two epochs of one pair.
 package machine_wire
 
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
+import "modus:contract/machine_mesh"
 
 ROUTING_TOKEN_SIZE :: 16
 RELAY_NONCE_SIZE :: 12
@@ -29,6 +34,7 @@ RELAY_ENVELOPE_HEADER_SIZE :: ROUTING_TOKEN_SIZE + 8 // The token, the count of 
 RELAY_ENVELOPE_LIMIT :: RELAY_ENVELOPE_HEADER_SIZE + RELAY_SEALED_LIMIT
 RELAY_ROUTE_CAPACITY :: 4
 RELAY_QUEUE_DEPTH :: 2 // Envelopes that wait on one route: a sender past it is refused, never dropped in silence.
+RELAY_ENVELOPE_LIFETIME_MS :: 60_000 // An envelope that waits longer is dropped: a datagram of a link is late after it.
 ROUTING_TOKEN_DOMAIN :: "modus relay routing token v1"
 
 Routing_Token :: [ROUTING_TOKEN_SIZE]u8
@@ -41,7 +47,7 @@ Relay_Envelope :: struct {
 Relay_Status :: enum u8 {
 	Ok                     = 1,
 	Refused_Zero_Token     = 2,
-	Refused_Unknown_Token  = 3, // No route of the relay has this token.
+	Refused_Unknown_Token  = 3, // No route of the relay has this token with the sender as its bound end.
 	Refused_Too_Short      = 4, // Fewer sealed bytes than a nonce and a tag.
 	Refused_Too_Large      = 5,
 	Refused_Length_Differs = 6, // The count of sealed bytes differs from the bytes of the body.
@@ -50,6 +56,7 @@ Relay_Status :: enum u8 {
 	Refused_Empty          = 9, // No envelope waits on the route.
 	Refused_Table_Full     = 10,
 	Refused_Exists         = 11,
+	Refused_Bad_Ends       = 12, // A route whose sender or receiver is zero, or the same machine.
 }
 
 // relay_routing_token derives the token of one epoch of a pair from the key
@@ -120,16 +127,19 @@ relay_envelope_read :: proc "contextless" (body: []u8) -> (envelope: Relay_Envel
 }
 
 Relay_Held_Envelope :: struct {
-	count: int, // The bytes of the body of the deposit.
-	bytes: [RELAY_ENVELOPE_LIMIT]u8,
+	deposited_at_ms: u64,
+	count:           int, // The bytes of the body of the deposit.
+	bytes:           [RELAY_ENVELOPE_LIMIT]u8,
 }
 
 Relay_Route :: struct {
-	in_use: bool,
-	token:  Routing_Token,
-	held:   [RELAY_QUEUE_DEPTH]Relay_Held_Envelope,
-	first:  int,
-	count:  int,
+	in_use:   bool,
+	token:    Routing_Token,
+	sender:   [32]u8, // The one machine that deposits on the route.
+	receiver: [32]u8, // The one machine that collects from it.
+	held:     [RELAY_QUEUE_DEPTH]Relay_Held_Envelope,
+	first:    int,
+	count:    int,
 }
 
 Relay_Table :: struct {
@@ -147,17 +157,21 @@ relay_route_find :: proc "contextless" (table: ^Relay_Table, token: Routing_Toke
 }
 
 // relay_route_add opens a route: the principal of the relay machine names
-// the token of a pair that it relays for.
-relay_route_add :: proc "contextless" (table: ^Relay_Table, token: Routing_Token) -> Relay_Status {
+// the token of a pair, the machine that sends on it and the machine that
+// receives.
+relay_route_add :: proc "contextless" (table: ^Relay_Table, token: Routing_Token, sender, receiver: [32]u8) -> Relay_Status {
 	if token_is_zero(token) {
 		return .Refused_Zero_Token
+	}
+	if machine_mesh.key_is_zero(sender) || machine_mesh.key_is_zero(receiver) || sender == receiver {
+		return .Refused_Bad_Ends
 	}
 	if relay_route_find(table, token) != nil {
 		return .Refused_Exists
 	}
 	for &route in table.routes {
 		if !route.in_use {
-			route = Relay_Route{in_use = true, token = token}
+			route = Relay_Route{in_use = true, token = token, sender = sender, receiver = receiver}
 			return .Ok
 		}
 	}
@@ -174,36 +188,55 @@ relay_route_remove :: proc "contextless" (table: ^Relay_Table, token: Routing_To
 	return .Ok
 }
 
-// relay_deposit keeps the body of a deposit on the route of its token,
+// relay_drop_expired erases the envelopes at the head of a route that
+// waited past their lifetime.
+@(private)
+relay_drop_expired :: proc "contextless" (route: ^Relay_Route, now_ms: u64) {
+	for route.count > 0 {
+		held := &route.held[route.first]
+		if now_ms < held.deposited_at_ms || now_ms - held.deposited_at_ms < RELAY_ENVELOPE_LIFETIME_MS {
+			return
+		}
+		held^ = {}
+		route.first = (route.first + 1) % RELAY_QUEUE_DEPTH
+		route.count -= 1
+	}
+}
+
+// relay_deposit keeps the body of a deposit of the sender of its route,
 // unchanged: the relay neither opens nor checks the sealed bytes.
-relay_deposit :: proc "contextless" (table: ^Relay_Table, body: []u8) -> Relay_Status {
+relay_deposit :: proc "contextless" (table: ^Relay_Table, sender: [32]u8, body: []u8, now_ms: u64) -> Relay_Status {
 	envelope, status := relay_envelope_read(body)
 	if status != .Ok {
 		return status
 	}
 	route := relay_route_find(table, envelope.token)
-	if route == nil {
+	if route == nil || !machine_mesh.keys_equal_constant_time(route.sender, sender) {
 		return .Refused_Unknown_Token
 	}
+	relay_drop_expired(route, now_ms)
 	if route.count >= RELAY_QUEUE_DEPTH {
 		return .Refused_Queue_Full
 	}
 	held := &route.held[(route.first + route.count) % RELAY_QUEUE_DEPTH]
+	held.deposited_at_ms = now_ms
 	held.count = copy(held.bytes[:], body)
 	route.count += 1
 	return .Ok
 }
 
-// relay_collect gives the oldest envelope of a route as a Relay_Delivery
-// frame, byte for byte the body that was deposited, and frees its place.
-relay_collect :: proc "contextless" (table: ^Relay_Table, token: Routing_Token, output: []u8) -> (frame: []u8, status: Relay_Status) {
+// relay_collect gives the receiver of a route its oldest envelope as a
+// Relay_Delivery frame, byte for byte the body that was deposited, and
+// frees its place.
+relay_collect :: proc "contextless" (table: ^Relay_Table, receiver: [32]u8, token: Routing_Token, now_ms: u64, output: []u8) -> (frame: []u8, status: Relay_Status) {
 	if token_is_zero(token) {
 		return nil, .Refused_Zero_Token
 	}
 	route := relay_route_find(table, token)
-	if route == nil {
+	if route == nil || !machine_mesh.keys_equal_constant_time(route.receiver, receiver) {
 		return nil, .Refused_Unknown_Token
 	}
+	relay_drop_expired(route, now_ms)
 	if route.count == 0 {
 		return nil, .Refused_Empty
 	}

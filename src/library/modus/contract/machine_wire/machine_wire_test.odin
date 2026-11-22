@@ -131,6 +131,12 @@ expect_refusal :: proc(t: ^testing.T, answer: []u8, reason: Refusal_Reason, deta
 	testing.expectf(t, got_reason == reason && got_detail == detail, "refusal %v/%d, expected %v/%d", got_reason, got_detail, reason, detail, loc = location)
 }
 
+// grant_uses gives machine other the uses, and the roles, of the plan.
+@(private = "file")
+grant_uses :: proc(t: ^testing.T, machine, other: ^Machine, uses: Machine_Uses, roles: Role_Set = {}, location := #caller_location) {
+	testing.expect(t, machine_grant_set(&machine.peer, identity_of(other), uses, roles), loc = location)
+}
+
 // pair runs the whole pairing of joiner with offerer, by the frames.
 @(private = "file")
 pair :: proc(t: ^testing.T, offerer, joiner: ^Machine, now_ms: u64) -> bool {
@@ -244,7 +250,7 @@ pairing_by_frames_writes_both_rows_and_refuses_strangers :: proc(t: ^testing.T) 
 	stranger := [32]u8{0 = 0x77, 31 = 0x77}
 
 	// No pairing is open: an unknown key is not admitted.
-	testing.expect(t, !peer_admits(&home.peer, identity_of(laptop)))
+	testing.expect(t, !peer_admits(&home.peer, identity_of(laptop), 5_000))
 	testing.expect(t, pair(t, home, laptop, 5_000))
 
 	home_row, home_has := machine_mesh.paired_machine_find(&home.peer.paired, identity_of(laptop))
@@ -252,9 +258,9 @@ pairing_by_frames_writes_both_rows_and_refuses_strangers :: proc(t: ^testing.T) 
 	testing.expect(t, home_has && laptop_has)
 	testing.expect(t, home_row.transcript_fingerprint == laptop_row.transcript_fingerprint)
 	testing.expect(t, home_row.uses == {.Calls})
-	testing.expect(t, peer_admits(&home.peer, identity_of(laptop)))
-	testing.expect(t, !peer_admits(&home.peer, stranger))
-	testing.expect(t, !peer_admits(&home.peer, {}))
+	testing.expect(t, peer_admits(&home.peer, identity_of(laptop), 5_000))
+	testing.expect(t, !peer_admits(&home.peer, stranger, 5_000))
+	testing.expect(t, !peer_admits(&home.peer, {}, 5_000))
 
 	// A second Pairing_Element after the pairing: the session is spent.
 	request: [FRAME_LIMIT]u8
@@ -292,7 +298,7 @@ pairing_with_a_wrong_code_ends_on_both_machines :: proc(t: ^testing.T) {
 	expect_refusal(t, exchange(home, identity_of(laptop), confirm, now), .Pairing_Refused, u32(machine_mesh.Pairing_Status.Refused_Confirmation_Failed))
 	testing.expect_value(t, home.peer.paired.count, 0)
 	testing.expect_value(t, laptop.peer.paired.count, 0)
-	testing.expect(t, !peer_admits(&home.peer, identity_of(laptop)))
+	testing.expect(t, !peer_admits(&home.peer, identity_of(laptop), now))
 
 	// The right code, typed later on a third machine: the code is gone.
 	machine_mesh.pairing_join(&late.peer.pairing, identity_of(late), code[:], now)
@@ -315,7 +321,7 @@ pairing_refuses_a_swapped_key_a_late_confirm_and_no_random :: proc(t: ^testing.T
 	machine_mesh.pairing_join(&laptop.peer.pairing, identity_of(laptop), code[:], now)
 	element, _ := pairing_element_write(&laptop.peer, identity_of(home), channel_binding_of_identities(identity_of(home), identity_of(laptop)), now, request[:])
 	expect_refusal(t, exchange(home, identity_of(relay), element, now), .Pairing_Refused, u32(machine_mesh.Pairing_Status.Refused_Peer_Key_Mismatch))
-	testing.expect(t, !peer_admits(&home.peer, identity_of(relay)))
+	testing.expect(t, !peer_admits(&home.peer, identity_of(relay), now))
 
 	// A confirm from another key than the key of the exchange.
 	code, _ = machine_mesh.pairing_offer(&home.peer.pairing, identity_of(home), [8]u8{7, 7, 3, 4, 5, 6, 7, 8}, now)
@@ -351,6 +357,7 @@ object_fetch_keeps_only_bytes_that_hash_to_the_request :: proc(t: ^testing.T) {
 	laptop := machine_make(0xB0)
 	defer machine_free(home, laptop)
 	testing.expect(t, pair(t, home, laptop, 1_000))
+	grant_uses(t, home, laptop, {.Objects})
 
 	text := "the bytes of a module that the laptop wants"
 	other := "another object"
@@ -423,11 +430,24 @@ object_hash :: proc(text: string) -> blake3.Hash {
 	return blake3.hash(transmute([]u8)text)
 }
 
+// store_offer_to runs one whole exchange: the client offers, the server answers.
 @(private = "file")
 store_offer_to :: proc(server: ^Machine, client: ^Machine, store: ^Exchanged_Store) -> (status: Store_Status, reason: Refusal_Reason, detail: u32) {
 	request: [FRAME_LIMIT]u8
-	answer := exchange(server, identity_of(client), store_offer_write(store, .Store_Offer, request[:]))
+	answer := exchange(server, identity_of(client), store_offer_begin(store, request[:]))
 	return store_offer_reply_accept(store, answer)
+}
+
+@(private = "file")
+stores_paired :: proc(t: ^testing.T, home, laptop: ^Machine, notes: blake3.Hash) -> (home_store, laptop_store: ^Exchanged_Store) {
+	testing.expect(t, pair(t, home, laptop, 1_000))
+	grant_uses(t, home, laptop, {.Stores})
+	grant_uses(t, laptop, home, {.Stores})
+	home_status, laptop_status: Store_Status
+	home_store, home_status = store_exchange_add(&home.peer.stores, notes, identity_of(laptop))
+	laptop_store, laptop_status = store_exchange_add(&laptop.peer.stores, notes, identity_of(home))
+	testing.expect(t, home_status == .Ok && laptop_status == .Ok)
+	return home_store, laptop_store
 }
 
 @(test)
@@ -435,13 +455,9 @@ store_merge_keeps_both_writes_as_a_conflict_until_one_resolution :: proc(t: ^tes
 	home := machine_make(0xC0)
 	laptop := machine_make(0xD0)
 	defer machine_free(home, laptop)
-	testing.expect(t, pair(t, home, laptop, 1_000))
-
 	notes := object_hash("store notes")
 	first, second, third := object_hash("object 1"), object_hash("object 2"), object_hash("object 3")
-	home_store, home_status := store_exchange_add(&home.peer.stores, notes, identity_of(laptop))
-	laptop_store, laptop_status := store_exchange_add(&laptop.peer.stores, notes, identity_of(home))
-	testing.expect(t, home_status == .Ok && laptop_status == .Ok)
+	home_store, laptop_store := stores_paired(t, home, laptop, notes)
 	_, again := store_exchange_add(&home.peer.stores, notes, identity_of(laptop))
 	testing.expect_value(t, again, Store_Status.Refused_Exists)
 
@@ -465,12 +481,12 @@ store_merge_keeps_both_writes_as_a_conflict_until_one_resolution :: proc(t: ^tes
 
 	// Both machines hold the same version and the same conflict.
 	testing.expect(t, store_version_hash(&home_store.current) == store_version_hash(&laptop_store.current))
-	testing.expect(t, store_version_hash(&home_store.common) == store_version_hash(&home_store.current))
+	testing.expect(t, store_version_hash(&home_store.common) == store_version_hash(&laptop_store.common))
 	testing.expect_value(t, store_version_lookup(&home_store.current, second), blake3.Hash{})
 	testing.expect_value(t, store_version_lookup(&laptop_store.current, third), object_hash("third"))
-	testing.expect(t, home_store.conflict_count == 1 && laptop_store.conflict_count == 1)
+	testing.expect(t, home_store.current.conflict_count == 1 && laptop_store.current.conflict_count == 1)
 	for store in ([?]^Exchanged_Store{home_store, laptop_store}) {
-		conflict := store_conflict_find(store, first)
+		conflict := store_conflict_find(&store.current, first)
 		testing.expect(t, conflict != nil)
 		sides := [2]blake3.Hash{conflict.value.local_hash, conflict.value.remote_hash}
 		// Neither write is lost: the conflict keeps both, and the base.
@@ -481,11 +497,11 @@ store_merge_keeps_both_writes_as_a_conflict_until_one_resolution :: proc(t: ^tes
 	}
 	// An exchange with no change keeps the conflict on both sides.
 	status, _, _ = store_offer_to(home, laptop, laptop_store)
-	testing.expect(t, status == .Ok && home_store.conflict_count == 1 && laptop_store.conflict_count == 1)
+	testing.expect(t, status == .Ok && home_store.current.conflict_count == 1 && laptop_store.current.conflict_count == 1)
 
 	// The principal resolves it once, on home; a second resolution is refused,
 	// and so is a resolution that keeps the conflict value.
-	conflict_hash := store_conflict_find(home_store, first).value.conflict_value_hash
+	conflict_hash := store_conflict_find(&home_store.current, first).value.conflict_value_hash
 	testing.expect_value(t, store_conflict_resolve(home_store, first, conflict_hash), Store_Status.Refused_Bad_Resolution)
 	testing.expect_value(t, store_conflict_resolve(home_store, first, laptop_side), Store_Status.Ok)
 	testing.expect_value(t, store_conflict_resolve(home_store, first, home_side), Store_Status.Refused_No_Conflict)
@@ -494,10 +510,95 @@ store_merge_keeps_both_writes_as_a_conflict_until_one_resolution :: proc(t: ^tes
 	// The resolution crosses with the next exchange, offered by home this time.
 	status, _, _ = store_offer_to(laptop, home, home_store)
 	testing.expect_value(t, status, Store_Status.Ok)
-	testing.expect(t, home_store.conflict_count == 0 && laptop_store.conflict_count == 0)
+	testing.expect(t, home_store.current.conflict_count == 0 && laptop_store.current.conflict_count == 0)
 	testing.expect_value(t, store_version_lookup(&laptop_store.current, first), laptop_side)
 	testing.expect(t, store_version_hash(&home_store.current) == store_version_hash(&laptop_store.current))
 	testing.expect_value(t, store_write(laptop_store, first, home_side), Store_Status.Ok)
+}
+
+// A conflict that one side creates over its later writes crosses with its
+// record, and the other side takes the record with the entry.
+@(test)
+store_offer_survives_a_lost_reply_and_a_write_in_flight :: proc(t: ^testing.T) {
+	home := machine_make(0xC1)
+	laptop := machine_make(0xD1)
+	defer machine_free(home, laptop)
+	notes := object_hash("notes")
+	first, second := object_hash("first"), object_hash("second")
+	home_store, laptop_store := stores_paired(t, home, laptop, notes)
+	store_write(home_store, first, object_hash("first, home"))
+	store_write(laptop_store, second, object_hash("second, laptop"))
+
+	// (a) The laptop offers; home merges, and the reply is lost.
+	request: [FRAME_LIMIT]u8
+	lost := exchange(home, identity_of(laptop), store_offer_begin(laptop_store, request[:]))
+	_, _, _, lost_ok := answer_expect(lost, .Store_Offer_Reply)
+	testing.expect(t, lost_ok)
+	testing.expect(t, laptop_store.has_offer && laptop_store.common.count == 0 && home_store.common.count == 2)
+	// Home writes after its merge.
+	store_write(home_store, object_hash("third"), object_hash("third, home"))
+
+	// Home offers now: its common version is not the common version of the
+	// laptop, so the laptop refuses, and nothing changes there.
+	home_offer: [FRAME_LIMIT]u8
+	laptop_before := laptop_store^
+	answer := exchange(laptop, identity_of(home), store_offer_begin(home_store, home_offer[:]))
+	expect_refusal(t, answer, .Store_Refused, u32(Store_Status.Refused_Base_Differs))
+	testing.expect(t, laptop_store^ == laptop_before)
+	status, reason, detail := store_offer_reply_accept(home_store, answer)
+	testing.expect(t, status == .Refused_Nil_Input && reason == .Store_Refused && detail == u32(Store_Status.Refused_Base_Differs))
+
+	// (b) The laptop writes while its offer is in flight, then sends the same
+	// offer again: home answers the same reply, and changes nothing.
+	store_write(laptop_store, object_hash("fourth"), object_hash("fourth, laptop"))
+	home_before := home_store^
+	status, _, _ = store_offer_to(home, laptop, laptop_store)
+	testing.expect_value(t, status, Store_Status.Ok)
+	testing.expect(t, home_store^ == home_before)
+	testing.expect(t, store_version_hash(&home_store.common) == store_version_hash(&laptop_store.common))
+	// The write in flight stays on the laptop, and crosses at the next exchange.
+	testing.expect_value(t, store_version_lookup(&laptop_store.current, object_hash("fourth")), object_hash("fourth, laptop"))
+	testing.expect_value(t, store_version_lookup(&laptop_store.common, object_hash("fourth")), blake3.Hash{})
+	testing.expect(t, !laptop_store.has_offer)
+	status, _, _ = store_offer_to(home, laptop, laptop_store)
+	testing.expect_value(t, status, Store_Status.Ok)
+	testing.expect(t, store_version_hash(&home_store.current) == store_version_hash(&laptop_store.current))
+	testing.expect_value(t, home_store.current.count, 4)
+	// A second reply to an offer that is done is refused.
+	status, _, _ = store_offer_reply_accept(laptop_store, lost)
+	testing.expect_value(t, status, Store_Status.Refused_No_Offer)
+
+	// A write in flight on an object that the merge also changes: a conflict
+	// on the laptop, whose record crosses to home with its entry.
+	store_write(home_store, first, object_hash("first, home again"))
+	store_write(laptop_store, first, object_hash("first, laptop"))
+	offer := store_offer_begin(laptop_store, request[:])
+	store_write(laptop_store, first, object_hash("first, laptop in flight"))
+	status, _, _ = store_offer_reply_accept(laptop_store, exchange(home, identity_of(laptop), offer))
+	testing.expect_value(t, status, Store_Status.Ok)
+	testing.expect(t, store_conflict_find(&laptop_store.current, first) != nil)
+	status, _, _ = store_offer_to(home, laptop, laptop_store)
+	testing.expect_value(t, status, Store_Status.Ok)
+	testing.expect(t, store_version_hash(&home_store.current) == store_version_hash(&laptop_store.current))
+	home_conflict := store_conflict_find(&home_store.current, first)
+	testing.expect(t, home_conflict != nil && home_conflict.value.conflict_value_hash == store_version_lookup(&home_store.current, first))
+	// The older conflict that the new one names as a side stays: the write
+	// of home is still one of the sides.
+	testing.expect_value(t, home_store.current.conflict_count, 2)
+	older := home_conflict.value.local_hash == object_hash("first, laptop in flight") ? home_conflict.value.remote_hash : home_conflict.value.local_hash
+	older_found := false
+	for index in 0 ..< home_store.current.conflict_count {
+		record := home_store.current.conflicts[index]
+		if record.value.conflict_value_hash == older {
+			older_found = true
+			testing.expect(t, record.value.local_hash == object_hash("first, home again") || record.value.remote_hash == object_hash("first, home again"))
+		}
+	}
+	testing.expect(t, older_found)
+	testing.expect_value(t, store_write(home_store, first, object_hash("x")), Store_Status.Refused_Holds_Conflict)
+	// One resolution ends both records.
+	testing.expect_value(t, store_conflict_resolve(home_store, first, object_hash("first, home again")), Store_Status.Ok)
+	testing.expect_value(t, home_store.current.conflict_count, 0)
 }
 
 @(test)
@@ -505,42 +606,54 @@ store_offer_refuses_unknown_stores_strangers_and_malformed_versions :: proc(t: ^
 	home := machine_make(0xE0)
 	laptop := machine_make(0xF0)
 	defer machine_free(home, laptop)
-	testing.expect(t, pair(t, home, laptop, 1_000))
 	notes := object_hash("notes")
+	testing.expect(t, pair(t, home, laptop, 1_000))
+	grant_uses(t, home, laptop, {.Stores})
 	other_machine := [32]u8{0 = 1, 31 = 1}
-	home_store, _ := store_exchange_add(&home.peer.stores, notes, identity_of(laptop))
-	store_write(home_store, object_hash("a"), object_hash("a, 1"))
-	before := store_version_hash(&home_store.current)
 
 	// A store that home does not exchange, and a store exchanged with another machine.
 	laptop_secrets, _ := store_exchange_add(&laptop.peer.stores, object_hash("secrets"), identity_of(home))
-	status, reason, detail := store_offer_to(home, laptop, laptop_secrets)
+	_, reason, detail := store_offer_to(home, laptop, laptop_secrets)
 	testing.expect(t, reason == .Store_Refused && detail == u32(Store_Status.Refused_Unknown_Store))
 	store_exchange_add(&home.peer.stores, object_hash("shared elsewhere"), other_machine)
 	laptop_elsewhere, _ := store_exchange_add(&laptop.peer.stores, object_hash("shared elsewhere"), identity_of(home))
-	status, reason, detail = store_offer_to(home, laptop, laptop_elsewhere)
+	_, reason, detail = store_offer_to(home, laptop, laptop_elsewhere)
 	testing.expect(t, reason == .Store_Refused && detail == u32(Store_Status.Refused_Not_Partner))
-	_ = status
+	_, full := store_exchange_add(&laptop.peer.stores, notes, identity_of(home))
+	testing.expect_value(t, full, Store_Status.Refused_Full)
+	testing.expect_value(t, store_exchange_remove(&laptop.peer.stores, object_hash("secrets")), Store_Status.Ok)
+	testing.expect_value(t, store_exchange_remove(&laptop.peer.stores, object_hash("secrets")), Store_Status.Refused_Unknown_Store)
+	testing.expect_value(t, store_exchange_remove(&home.peer.stores, object_hash("shared elsewhere")), Store_Status.Ok)
 
-	// Malformed versions: unsorted, a duplicate, a zero hash, a zero
-	// identifier, a count that lies, a count over the capacity, the zero word.
+	home_store, _ := store_exchange_add(&home.peer.stores, notes, identity_of(laptop))
+	for index in 0 ..< 20 {
+		name := [2]u8{'h', u8(index)}
+		store_write(home_store, blake3.hash(name[:]), blake3.hash(name[:]))
+	}
+	home_before := home_store^
+
+	// Malformed versions, each refused before any change: unsorted, a
+	// duplicate identifier, a zero hash, a zero identifier, counts that lie
+	// or pass the capacity, a forged conflict record, another common version.
 	laptop_store, _ := store_exchange_add(&laptop.peer.stores, notes, identity_of(home))
 	store_write(laptop_store, object_hash("b"), object_hash("b, 1"))
 	store_write(laptop_store, object_hash("c"), object_hash("c, 1"))
 	request: [FRAME_LIMIT]u8
-	offer := store_offer_write(laptop_store, .Store_Offer, request[:])
+	offer := store_offer_begin(laptop_store, request[:])
 	entries := FRAME_HEADER_SIZE + STORE_OFFER_HEADER_SIZE
 	cases := [?]struct {
 		change: proc(offer: []u8, entries: int),
 		status: Store_Status,
 	} {
 		{proc(offer: []u8, entries: int) {swap_entries(offer, entries)}, .Refused_Not_Sorted},
-		{proc(offer: []u8, entries: int) {copy(offer[entries + STORE_ENTRY_WIRE_SIZE:][:32], offer[entries:][:32])}, .Refused_Not_Sorted},
+		{proc(offer: []u8, entries: int) {copy(offer[entries + STORE_ENTRY_WIRE_SIZE:][:32], offer[entries:][:32])}, .Refused_Duplicate_Identifier},
 		{proc(offer: []u8, entries: int) {for index in 0 ..< 32 {offer[entries + 32 + index] = 0}}, .Refused_Zero_Hash},
 		{proc(offer: []u8, entries: int) {for index in 0 ..< 32 {offer[entries + index] = 0}}, .Refused_Zero_Identifier},
-		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 32, 3)}, .Refused_Bad_Count},
-		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 32, STORE_ENTRY_CAPACITY + 1)}, .Refused_Bad_Count},
-		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 36, 1)}, .Refused_Reserved_Set},
+		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 64, 3)}, .Refused_Bad_Count},
+		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 64, STORE_ENTRY_CAPACITY + 1)}, .Refused_Bad_Count},
+		{proc(offer: []u8, entries: int) {byte_order.write_u32_little_endian(offer, FRAME_HEADER_SIZE + 68, 1)}, .Refused_Bad_Count},
+		{proc(offer: []u8, entries: int) {offer[FRAME_HEADER_SIZE + 32] ~= 1}, .Refused_Base_Differs},
+		{proc(offer: []u8, entries: int) {for index in 0 ..< 32 {offer[FRAME_HEADER_SIZE + index] = 0}}, .Refused_Unknown_Store},
 	}
 	for item, index in cases {
 		changed: [FRAME_LIMIT]u8
@@ -549,15 +662,36 @@ store_offer_refuses_unknown_stores_strangers_and_malformed_versions :: proc(t: ^
 		answer := exchange(home, identity_of(laptop), changed[:len(offer)])
 		_, got_reason, got_detail, _ := answer_expect(answer, .Store_Offer_Reply)
 		testing.expectf(t, got_reason == .Store_Refused && got_detail == u32(item.status), "case %d: %v %d", index, got_reason, got_detail)
+		testing.expectf(t, home_store^ == home_before, "case %d changed the store", index)
 	}
-	// A refused offer changed nothing on home.
-	testing.expect(t, store_version_hash(&home_store.current) == before && home_store.common.count == 0)
 
-	// A reply that names another store is refused by the sender.
+	// A forged conflict record: its hash does not match its entry.
+	forged_store := Exchanged_Store{in_use = true, store_identifier = notes}
+	store_write(&forged_store, object_hash("d"), object_hash("not a conflict value"))
+	forged_store.current.conflicts[0] = Store_Conflict{identifier = object_hash("d"), value = {base_hash = object_hash("1"), local_hash = object_hash("2"), remote_hash = object_hash("3")}}
+	forged_store.current.conflict_count = 1
+	forged: [FRAME_LIMIT]u8
+	expect_refusal(t, exchange(home, identity_of(laptop), store_offer_begin(&forged_store, forged[:])), .Store_Refused, u32(Store_Status.Refused_Bad_Conflict))
+	testing.expect(t, home_store^ == home_before)
+
+	// A version that does not fit: 20 objects on home, 20 others on the
+	// laptop, 32 at most. The offer is refused whole, with no partial write.
+	for index in 0 ..< 20 {
+		name := [2]u8{'l', u8(index)}
+		store_write(laptop_store, blake3.hash(name[:]), blake3.hash(name[:]))
+	}
+	laptop_store.has_offer = false
+	_, reason, detail = store_offer_to(home, laptop, laptop_store)
+	testing.expect(t, reason == .Store_Refused && detail == u32(Store_Status.Refused_Full))
+	testing.expect(t, home_store^ == home_before)
+
+	// A reply that names another store is refused by the sender, which keeps its offer.
 	reply: [FRAME_LIMIT]u8
-	other_store := Exchanged_Store{in_use = true, store_identifier = object_hash("other")}
-	status, _, _ = store_offer_reply_accept(laptop_store, store_offer_write(&other_store, .Store_Offer_Reply, reply[:]))
+	other_version: Store_Version
+	laptop_before := laptop_store^
+	status, _, _ := store_offer_reply_accept(laptop_store, store_offer_write(reply[:], .Store_Offer_Reply, object_hash("other"), {}, &other_version))
 	testing.expect_value(t, status, Store_Status.Refused_Other_Store)
+	testing.expect(t, laptop_store^ == laptop_before)
 	_, zero := store_exchange_add(&home.peer.stores, {}, identity_of(laptop))
 	testing.expect_value(t, zero, Store_Status.Refused_Zero_Identifier)
 	testing.expect_value(t, store_write(laptop_store, {}, object_hash("x")), Store_Status.Refused_Zero_Identifier)
@@ -579,7 +713,7 @@ role_call_answers_and_a_broken_link_gives_no_false_refusal :: proc(t: ^testing.T
 	laptop := machine_make(0x21)
 	defer machine_free(home, laptop)
 	testing.expect(t, pair(t, home, laptop, 1_000))
-	testing.expect(t, role_grant_set(&home.peer, identity_of(laptop), {.Storage}))
+	grant_uses(t, home, laptop, {.Roles}, {.Storage})
 	proxy := new(Role_Proxy)
 	defer free(proxy)
 	request: [FRAME_LIMIT]u8
@@ -601,10 +735,15 @@ role_call_answers_and_a_broken_link_gives_no_false_refusal :: proc(t: ^testing.T
 	identifier, frame, _ = role_call_begin(proxy, .Sound_Device, 1, {}, nil, now, 500, request[:])
 	reply, _ = role_reply_accept(proxy, identifier, exchange(home, identity_of(laptop), frame))
 	testing.expect_value(t, reply.outcome, Role_Outcome.Refused)
+	// The holder ran, then gave an outcome of a link or a count past its
+	// result: the call can have run, so it is no refusal.
 	for export in ([?]u32{3, 4}) {
 		identifier, frame, _ = role_call_begin(proxy, .Storage, export, {}, nil, now, 500, request[:])
-		reply, _ = role_reply_accept(proxy, identifier, exchange(home, identity_of(laptop), frame))
-		testing.expect_value(t, reply.outcome, Role_Outcome.Refused)
+		answer := exchange(home, identity_of(laptop), frame)
+		_, fault, _, _ := answer_expect(answer, .Role_Reply)
+		testing.expect_value(t, fault, Refusal_Reason.Role_Holder_Fault)
+		reply, _ = role_reply_accept(proxy, identifier, answer)
+		testing.expect_value(t, reply.outcome, Role_Outcome.Unknown_Outcome)
 	}
 
 	// The link breaks with two calls in flight: the call that is not
@@ -666,6 +805,10 @@ role_call_answers_and_a_broken_link_gives_no_false_refusal :: proc(t: ^testing.T
 	testing.expect_value(t, status, Role_Proxy_Status.Refused_Too_Large)
 	_, _, status = role_call_begin(proxy, .Storage, 1, {}, nil, now, 0, request[:])
 	testing.expect_value(t, status, Role_Proxy_Status.Refused_Bad_Bound)
+	_, _, status = role_call_begin(proxy, .Storage, 1, {}, nil, now, max(u64) - now + 1, request[:])
+	testing.expect_value(t, status, Role_Proxy_Status.Refused_Bad_Bound)
+	_, _, status = role_call_begin(proxy, .Storage, 1, {}, nil, max(u64), 1, request[:])
+	testing.expect_value(t, status, Role_Proxy_Status.Refused_Bad_Bound)
 	for _ in 0 ..< ROLE_CALLS_AT_ONCE {
 		_, _, status = role_call_begin(proxy, .Storage, 1, {}, nil, now, 500, request[:])
 		testing.expect_value(t, status, Role_Proxy_Status.Sent)
@@ -685,9 +828,11 @@ role_call_answers_and_a_broken_link_gives_no_false_refusal :: proc(t: ^testing.T
 	expect_refusal(t, exchange(home, identity_of(laptop), call_frame), .Malformed, 0)
 	// A machine that is not paired gets no role.
 	expect_refusal(t, exchange(home, [32]u8{0 = 3}, role_call_write(request[:], Role_Call{identifier = 9, role = .Storage, export = 1})), .Not_Paired, 0)
-	testing.expect(t, !role_grant_set(&home.peer, identity_of(laptop), {.None}))
-	testing.expect(t, role_grant_set(&home.peer, identity_of(laptop), {}))
-	expect_refusal(t, exchange(home, identity_of(laptop), role_call_write(request[:], Role_Call{identifier = 9, role = .Storage, export = 1})), .Role_Refused, u32(role_contract.Role.Storage))
+	testing.expect(t, !machine_grant_set(&home.peer, identity_of(laptop), {.Roles}, {.None}))
+	testing.expect(t, !machine_grant_set(&home.peer, identity_of(laptop), {.Roles}, {}))
+	testing.expect(t, !machine_grant_set(&home.peer, identity_of(laptop), {.Objects}, {.Storage}))
+	testing.expect(t, machine_grant_set(&home.peer, identity_of(laptop), {}, {}))
+	expect_refusal(t, exchange(home, identity_of(laptop), role_call_write(request[:], Role_Call{identifier = 9, role = .Storage, export = 1})), .Use_Not_Granted, u32(Machine_Use.Roles))
 }
 
 // ---- Signed grants ----
@@ -702,7 +847,8 @@ sign_grant :: proc(grant: ^machine_mesh.Signed_Grant, signing_key: ^ed25519.Priv
 @(test)
 signed_grant_holds_for_a_day_and_refuses_expired_revoked_and_forged :: proc(t: ^testing.T) {
 	home := machine_make(0x31)
-	defer machine_free(home)
+	presenter := machine_make(0x32)
+	defer machine_free(home, presenter)
 	root_key, root_public := key_pair(0x41)
 	signing_key, signing_public := key_pair(0x51)
 	_, transport_public := key_pair(0x61)
@@ -711,7 +857,6 @@ signed_grant_holds_for_a_day_and_refuses_expired_revoked_and_forged :: proc(t: ^
 	now := u64(50_000)
 	request: [FRAME_LIMIT]u8
 
-	// No machine list yet: no grant holds.
 	grant := machine_mesh.Signed_Grant {
 		grant_serial               = 7,
 		grantor_root_public_key    = root_public,
@@ -726,7 +871,17 @@ signed_grant_holds_for_a_day_and_refuses_expired_revoked_and_forged :: proc(t: ^
 	}
 	sign_grant(&grant, &signing_key)
 	present, _ := grant_present_write(request[:], &grant)
-	expect_refusal(t, exchange(home, {}, present, now, receiver_root), .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Grantor_Key_Not_Active))
+
+	// A machine that is not paired, then paired with no use Grants, presents nothing.
+	expect_refusal(t, exchange(home, identity_of(presenter), present, now, receiver_root), .Not_Paired, 0)
+	testing.expect(t, pair(t, home, presenter, now))
+	expect_refusal(t, exchange(home, identity_of(presenter), present, now, receiver_root), .Use_Not_Granted, u32(Machine_Use.Grants))
+	grant_uses(t, home, presenter, {.Grants})
+	// No principal that the transport proved: nothing is checked.
+	expect_refusal(t, exchange(home, identity_of(presenter), present, now, {}), .No_Principal, 0)
+
+	// No machine list yet: no grant holds.
+	expect_refusal(t, exchange(home, identity_of(presenter), present, now, receiver_root), .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Grantor_Key_Not_Active))
 
 	// The machine list of the principal of home names home and its signing key.
 	list := machine_mesh.Signed_Machine_List{principal_root_public_key = root_public, sequence_number = 1, entry_count = 1}
@@ -739,17 +894,16 @@ signed_grant_holds_for_a_day_and_refuses_expired_revoked_and_forged :: proc(t: ^
 	testing.expect_value(t, list_status, machine_mesh.Machine_List_Status.Accepted)
 
 	// A grant of exactly one day holds, for the receiver that the handshake proved.
-	serial, expires, _, _, accepted := grant_accepted_read(exchange(home, {}, present, now, receiver_root))
+	serial, expires, _, _, accepted := grant_accepted_read(exchange(home, identity_of(presenter), present, now, receiver_root))
 	testing.expect(t, accepted && serial == 7 && expires == now + machine_mesh.MAX_SHORT_GRANT_LIFE_MS)
-	serial, _, _, _, accepted = grant_accepted_read(exchange(home, {}, present, now + machine_mesh.MAX_SHORT_GRANT_LIFE_MS - 1, receiver_root))
+	serial, _, _, _, accepted = grant_accepted_read(exchange(home, identity_of(presenter), present, now + machine_mesh.MAX_SHORT_GRANT_LIFE_MS - 1, receiver_root))
 	testing.expect(t, accepted)
 	// At its end time, before its start, for another receiver, for no receiver.
-	expect_refusal(t, exchange(home, {}, present, now + machine_mesh.MAX_SHORT_GRANT_LIFE_MS, receiver_root), .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Expired))
-	expect_refusal(t, exchange(home, {}, present, now - 1, receiver_root), .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Not_Yet_Valid))
-	expect_refusal(t, exchange(home, {}, present, now, other_root), .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Wrong_Grantee))
-	answer := exchange(home, {}, present, now, {})
-	_, reason, _, _ := answer_expect(answer, .Grant_Accepted)
-	testing.expect_value(t, reason, Refusal_Reason.Grant_Refused)
+	expect_refusal(t, exchange(home, identity_of(presenter), present, now + machine_mesh.MAX_SHORT_GRANT_LIFE_MS, receiver_root), .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Expired))
+	expect_refusal(t, exchange(home, identity_of(presenter), present, now - 1, receiver_root), .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Not_Yet_Valid))
+	expect_refusal(t, exchange(home, identity_of(presenter), present, now, other_root), .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Wrong_Grantee))
+	answer: []u8
+	reason: Refusal_Reason
 
 	// One millisecond over a day with no revocation list.
 	long := grant
@@ -757,7 +911,7 @@ signed_grant_holds_for_a_day_and_refuses_expired_revoked_and_forged :: proc(t: ^
 	long.expires_at_ms = now + machine_mesh.MAX_SHORT_GRANT_LIFE_MS + 1
 	sign_grant(&long, &signing_key)
 	present, _ = grant_present_write(request[:], &long)
-	expect_refusal(t, exchange(home, {}, present, now, receiver_root), .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Long_Grant_Without_Revocation))
+	expect_refusal(t, exchange(home, identity_of(presenter), present, now, receiver_root), .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Long_Grant_Without_Revocation))
 
 	// A long grant under a revocation list: it holds, until its serial is revoked.
 	long.revocation_list_epoch = 1
@@ -770,14 +924,14 @@ signed_grant_holds_for_a_day_and_refuses_expired_revoked_and_forged :: proc(t: ^
 	testing.expect_value(t, machine_mesh.revocation_list_apply_update(&home.peer.machine_list.list, &home.peer.revocations, false, &revocations, verify_ed25519), machine_mesh.Revocation_List_Status.Accepted)
 	home.peer.has_revocations = true
 	present, _ = grant_present_write(request[:], &long)
-	_, _, _, _, accepted = grant_accepted_read(exchange(home, {}, present, now, receiver_root))
+	_, _, _, _, accepted = grant_accepted_read(exchange(home, identity_of(presenter), present, now, receiver_root))
 	testing.expect(t, accepted)
 	revoked := machine_mesh.Revocation_List{grantor_root_public_key = root_public, signer_public_key = signing_public, epoch = 2, revoked_count = 1}
 	revoked.revoked_serials[0] = 8
 	revocation_written, _ = machine_mesh.revocation_list_signing_bytes(&revoked, revocation_bytes[:])
 	ed25519.sign(&signing_key, revocation_bytes[:revocation_written], revoked.signature[:])
 	testing.expect_value(t, machine_mesh.revocation_list_apply_update(&home.peer.machine_list.list, &home.peer.revocations, true, &revoked, verify_ed25519), machine_mesh.Revocation_List_Status.Accepted)
-	expect_refusal(t, exchange(home, {}, present, now, receiver_root), .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Revoked))
+	expect_refusal(t, exchange(home, identity_of(presenter), present, now, receiver_root), .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Revoked))
 
 	// A forged grant: one byte of the signature, one byte of the target, a grant signed by another key.
 	present, _ = grant_present_write(request[:], &grant)
@@ -785,7 +939,7 @@ signed_grant_holds_for_a_day_and_refuses_expired_revoked_and_forged :: proc(t: ^
 		forged: [FRAME_LIMIT]u8
 		copy(forged[:], present)
 		forged[place] ~= 0x01
-		answer = exchange(home, {}, forged[:len(present)], now, receiver_root)
+		answer = exchange(home, identity_of(presenter), forged[:len(present)], now, receiver_root)
 		_, reason, _, _ = answer_expect(answer, .Grant_Accepted)
 		testing.expect_value(t, reason, Refusal_Reason.Grant_Refused)
 	}
@@ -793,12 +947,12 @@ signed_grant_holds_for_a_day_and_refuses_expired_revoked_and_forged :: proc(t: ^
 	forged_grant := grant
 	sign_grant(&forged_grant, &other_signer)
 	present, _ = grant_present_write(request[:], &forged_grant)
-	expect_refusal(t, exchange(home, {}, present, now, receiver_root), .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Invalid_Signature))
+	expect_refusal(t, exchange(home, identity_of(presenter), present, now, receiver_root), .Grant_Refused, u32(machine_mesh.Grant_Check_Status.Refused_Invalid_Signature))
 	// A body of another size.
 	present, _ = grant_present_write(request[:], &grant)
 	shorter := present[:len(present) - 1]
 	byte_order.write_u32_little_endian(shorter, 8, u32(len(shorter) - FRAME_HEADER_SIZE))
-	answer = exchange(home, {}, shorter, now, receiver_root)
+	answer = exchange(home, identity_of(presenter), shorter, now, receiver_root)
 	_, reason, _, _ = answer_expect(answer, .Grant_Accepted)
 	testing.expect_value(t, reason, Refusal_Reason.Grant_Refused)
 }
@@ -848,17 +1002,25 @@ relay_carries_sealed_bytes_unchanged_and_refuses_malformed_envelopes :: proc(t: 
 	relay := machine_make(0x13)
 	laptop := machine_make(0x23)
 	desktop := machine_make(0x33)
-	defer machine_free(relay, laptop, desktop)
+	intruder := machine_make(0x43)
+	defer machine_free(relay, laptop, desktop, intruder)
 	testing.expect(t, pair(t, relay, laptop, 1_000))
 	testing.expect(t, pair(t, relay, desktop, 2_000))
-	testing.expect(t, relay.peer.spent_codes.count == 2)
+	testing.expect(t, pair(t, relay, intruder, 3_000))
+	testing.expect(t, relay.peer.spent_codes.count == 3)
+	grant_uses(t, relay, laptop, {.Relay})
+	grant_uses(t, relay, desktop, {.Relay})
+	grant_uses(t, relay, intruder, {.Relay})
 
 	// The key of the two end machines: the relay never holds it.
 	shared_key := object_hash("the key of laptop and desktop")
 	token := relay_routing_token(shared_key, 1)
 	testing.expect(t, token != relay_routing_token(shared_key, 2))
-	testing.expect_value(t, relay_route_add(&relay.peer.relay, token), Relay_Status.Ok)
-	testing.expect_value(t, relay_route_add(&relay.peer.relay, token), Relay_Status.Refused_Exists)
+	testing.expect_value(t, relay_route_add(&relay.peer.relay, token, identity_of(laptop), identity_of(desktop)), Relay_Status.Ok)
+	testing.expect_value(t, relay_route_add(&relay.peer.relay, token, identity_of(laptop), identity_of(desktop)), Relay_Status.Refused_Exists)
+	testing.expect_value(t, relay_route_add(&relay.peer.relay, relay_routing_token(shared_key, 3), identity_of(laptop), identity_of(laptop)), Relay_Status.Refused_Bad_Ends)
+	testing.expect_value(t, relay_route_add(&relay.peer.relay, relay_routing_token(shared_key, 3), {}, identity_of(desktop)), Relay_Status.Refused_Bad_Ends)
+	testing.expect_value(t, relay_route_add(&relay.peer.relay, relay_routing_token(shared_key, 3), identity_of(laptop), {}), Relay_Status.Refused_Bad_Ends)
 
 	plaintext := transmute([]u8)string("a datagram of the laptop for the desktop")
 	sealed_bytes: [RELAY_SEALED_LIMIT]u8
@@ -878,8 +1040,20 @@ relay_carries_sealed_bytes_unchanged_and_refuses_malformed_envelopes :: proc(t: 
 	testing.expect(t, !contains(held_bytes, laptop_identity[:]) && !contains(held_bytes, desktop_identity[:]))
 	testing.expect(t, !contains(held_bytes, shared_key[:]))
 
-	// The desktop collects the same bytes, and opens them.
+	// Another paired machine that knows the token, and the receiver itself,
+	// cannot deposit on the route; the sender, and that other machine,
+	// cannot collect from it. Each gets the refusal of an unknown token,
+	// and the envelope stays.
 	collect: [FRAME_HEADER_SIZE + RELAY_COLLECT_BODY_SIZE]u8
+	for depositor in ([?]^Machine{intruder, desktop}) {
+		expect_refusal(t, exchange(relay, identity_of(depositor), deposit), .Relay_Refused, u32(Relay_Status.Refused_Unknown_Token))
+	}
+	for collector in ([?]^Machine{intruder, laptop}) {
+		expect_refusal(t, exchange(relay, identity_of(collector), relay_collect_write(collect[:], token)), .Relay_Refused, u32(Relay_Status.Refused_Unknown_Token))
+	}
+	testing.expect_value(t, relay.peer.relay.routes[0].count, 1)
+
+	// The desktop collects the same bytes, and opens them.
 	delivery := exchange(relay, identity_of(desktop), relay_collect_write(collect[:], token))
 	delivered_body, _, _, delivered := answer_expect(delivery, .Relay_Delivery)
 	testing.expect(t, delivered && string(delivered_body) == string(deposit[FRAME_HEADER_SIZE:]))
@@ -950,6 +1124,14 @@ relay_carries_sealed_bytes_unchanged_and_refuses_malformed_envelopes :: proc(t: 
 	}
 	deposit, _ = relay_envelope_write(request[:], .Relay_Deposit, token, sealed)
 	expect_refusal(t, exchange(relay, identity_of(laptop), deposit), .Relay_Refused, u32(Relay_Status.Refused_Queue_Full))
+	// The intruder cannot fill the queue nor empty it: only past the
+	// lifetime of the envelopes does the route take a deposit again.
+	expect_refusal(t, exchange(relay, identity_of(intruder), deposit), .Relay_Refused, u32(Relay_Status.Refused_Unknown_Token))
+	expect_refusal(t, exchange(relay, identity_of(laptop), deposit, 1_000 + RELAY_ENVELOPE_LIFETIME_MS - 1), .Relay_Refused, u32(Relay_Status.Refused_Queue_Full))
+	_, _, _, deposited = answer_expect(exchange(relay, identity_of(laptop), deposit, 1_000 + RELAY_ENVELOPE_LIFETIME_MS), .Relay_Deposited)
+	testing.expect(t, deposited)
+	testing.expect_value(t, relay.peer.relay.routes[0].count, 1)
+	expect_refusal(t, exchange(relay, identity_of(desktop), relay_collect_write(collect[:], token), 1_000 + 2 * RELAY_ENVELOPE_LIFETIME_MS), .Relay_Refused, u32(Relay_Status.Refused_Empty))
 	// A machine that is not paired with the relay can neither deposit nor collect.
 	stranger := [32]u8{0 = 0x99}
 	expect_refusal(t, exchange(relay, stranger, deposit), .Not_Paired, 0)
@@ -961,9 +1143,143 @@ relay_carries_sealed_bytes_unchanged_and_refuses_malformed_envelopes :: proc(t: 
 	// The route ends: what waited on it is erased.
 	testing.expect_value(t, relay_route_remove(&relay.peer.relay, token), Relay_Status.Ok)
 	testing.expect_value(t, relay_route_remove(&relay.peer.relay, token), Relay_Status.Refused_Unknown_Token)
-	testing.expect_value(t, relay_route_add(&relay.peer.relay, {}), Relay_Status.Refused_Zero_Token)
+	testing.expect_value(t, relay_route_add(&relay.peer.relay, {}, identity_of(laptop), identity_of(desktop)), Relay_Status.Refused_Zero_Token)
 	for index in 0 ..< RELAY_ROUTE_CAPACITY {
-		testing.expect_value(t, relay_route_add(&relay.peer.relay, relay_routing_token(shared_key, u64(100 + index))), Relay_Status.Ok)
+		testing.expect_value(t, relay_route_add(&relay.peer.relay, relay_routing_token(shared_key, u64(100 + index)), identity_of(laptop), identity_of(desktop)), Relay_Status.Ok)
 	}
-	testing.expect_value(t, relay_route_add(&relay.peer.relay, relay_routing_token(shared_key, 200)), Relay_Status.Refused_Table_Full)
+	testing.expect_value(t, relay_route_add(&relay.peer.relay, relay_routing_token(shared_key, 200), identity_of(laptop), identity_of(desktop)), Relay_Status.Refused_Table_Full)
+}
+// ---- Authorization of each request ----
+
+// One request of each message that is not a pairing step.
+@(private = "file")
+Request_Case :: struct {
+	message: Message,
+	use:     Machine_Use,
+}
+
+@(private = "file")
+REQUEST_CASES := [?]Request_Case {
+	{.Object_Request, .Objects},
+	{.Store_Offer, .Stores},
+	{.Role_Call, .Roles},
+	{.Relay_Deposit, .Relay},
+	{.Relay_Collect, .Relay},
+	{.Grant_Present, .Grants},
+}
+
+@(private = "file")
+request_of :: proc(message: Message, output: []u8) -> []u8 {
+	token := relay_routing_token(object_hash("a key"), 1)
+	#partial switch message {
+	case .Object_Request:
+		return object_request_write(output, .Blob, object_hash("an object"))
+	case .Store_Offer:
+		store := Exchanged_Store{in_use = true, store_identifier = object_hash("notes")}
+		store_write(&store, object_hash("a"), object_hash("a, 1"))
+		return store_offer_begin(&store, output)
+	case .Role_Call:
+		return role_call_write(output, Role_Call{identifier = 1, role = .Storage, export = 1})
+	case .Relay_Deposit:
+		sealed: [RELAY_SEALED_MINIMUM + 4]u8
+		frame, _ := relay_envelope_write(output, .Relay_Deposit, token, sealed[:])
+		return frame
+	case .Relay_Collect:
+		return relay_collect_write(output, token)
+	case .Grant_Present:
+		body, _ := frame_begin(output, .Grant_Present, machine_mesh.SIGNED_GRANT_WIRE_SIZE)
+		return frame_bytes(output, body)
+	}
+	return nil
+}
+
+@(test)
+each_request_needs_a_pairing_and_its_use :: proc(t: ^testing.T) {
+	home := machine_make(0x15)
+	laptop := machine_make(0x25)
+	joiner := machine_make(0x35)
+	defer machine_free(home, laptop, joiner)
+	testing.expect(t, pair(t, home, laptop, 1_000))
+	store, _ := store_exchange_add(&home.peer.stores, object_hash("notes"), identity_of(laptop))
+	store_write(store, object_hash("a"), object_hash("a, home"))
+	token := relay_routing_token(object_hash("a key"), 1)
+	relay_route_add(&home.peer.relay, token, identity_of(laptop), identity_of(joiner))
+	home_publish(home, transmute([]u8)string("an object"))
+	root := [32]u8{0 = 5, 31 = 5}
+
+	// (a) An open offer admits any key for its pairing steps, and for
+	// nothing else: each other request is refused before any table is read.
+	machine_mesh.pairing_offer(&home.peer.pairing, identity_of(home), [8]u8{4, 4, 4, 4, 5, 6, 7, 8}, 1_000)
+	testing.expect(t, peer_admits(&home.peer, identity_of(joiner), 1_000))
+	store_before, relay_before, objects_before := store^, home.peer.relay, home.peer.objects.count
+	request: [FRAME_LIMIT]u8
+	for item in REQUEST_CASES {
+		expect_refusal(t, exchange(home, identity_of(joiner), request_of(item.message, request[:]), 1_000, root), .Not_Paired, 0)
+	}
+	testing.expect(t, store^ == store_before && home.peer.relay == relay_before && home.peer.objects.count == objects_before)
+	testing.expect_value(t, home.peer.pairing.phase, machine_mesh.Pairing_Phase.Code_Ready)
+
+	// (b) A paired machine with no grant, then with one use at a time: each
+	// request of another use is refused with that use, and changes nothing.
+	for item in REQUEST_CASES {
+		expect_refusal(t, exchange(home, identity_of(laptop), request_of(item.message, request[:]), 1_000, root), .Use_Not_Granted, u32(item.use))
+	}
+	for granted in Machine_Use {
+		roles: Role_Set = granted == .Roles ? {.Display} : {}
+		grant_uses(t, home, laptop, {granted}, roles)
+		for item in REQUEST_CASES {
+			answer := exchange(home, identity_of(laptop), request_of(item.message, request[:]), 1_000, root)
+			_, reason, detail, _ := answer_expect(answer, .Refusal)
+			if item.use == granted {
+				testing.expectf(t, reason != .Use_Not_Granted && reason != .Not_Paired, "%v with %v: %v", item.message, granted, reason)
+			} else {
+				testing.expectf(t, reason == .Use_Not_Granted && detail == u32(item.use), "%v with %v: %v %d", item.message, granted, reason, detail)
+			}
+		}
+	}
+	// Only the request of the granted use changed a table: the laptop, the
+	// sender of the route, deposited once with the use Relay.
+	testing.expect_value(t, home.peer.relay.routes[0].count, 1)
+	testing.expect_value(t, store.current.count, 1)
+
+	// A grant outlives no pairing row.
+	grant_uses(t, home, laptop, {.Objects})
+	machine_mesh.paired_machine_remove(&home.peer.paired, identity_of(laptop))
+	expect_refusal(t, exchange(home, identity_of(laptop), request_of(.Object_Request, request[:])), .Not_Paired, 0)
+	_, found := machine_grant_of(&home.peer, identity_of(laptop))
+	testing.expect(t, !found)
+
+	// The border of the word of the uses.
+	_, ok := machine_uses_of_word(1 << 5)
+	testing.expect(t, !ok)
+	_, ok = machine_uses_of_word(max(u32))
+	testing.expect(t, !ok)
+	uses, all_ok := machine_uses_of_word(transmute(u32)Machine_Uses{.Objects, .Grants})
+	testing.expect(t, all_ok && uses == {.Objects, .Grants})
+	testing.expect(t, !machine_grant_set(&home.peer, {}, {.Objects}, {}))
+}
+
+@(test)
+an_abandoned_offer_admits_no_key_after_its_code_ends :: proc(t: ^testing.T) {
+	home := machine_make(0x16)
+	joiner := machine_make(0x26)
+	defer machine_free(home, joiner)
+	started := u64(10_000)
+	ended := started + machine_mesh.PAIRING_CODE_LIFETIME_MS
+	machine_mesh.pairing_offer(&home.peer.pairing, identity_of(home), [8]u8{6, 6, 3, 4, 5, 6, 7, 8}, started)
+
+	testing.expect(t, peer_admits(&home.peer, identity_of(joiner), ended - 1))
+	testing.expect(t, !peer_admits(&home.peer, identity_of(joiner), ended))
+	// A clock before the offer is no time inside it.
+	testing.expect(t, !peer_admits(&home.peer, identity_of(joiner), started - 1))
+	testing.expect(t, !pairing_expire(&home.peer, ended - 1))
+	testing.expect_value(t, home.peer.pairing.phase, machine_mesh.Pairing_Phase.Code_Ready)
+	testing.expect(t, pairing_expire(&home.peer, ended))
+	testing.expect_value(t, home.peer.pairing.phase, machine_mesh.Pairing_Phase.Failed)
+	testing.expect(t, !pairing_expire(&home.peer, ended + 1))
+	// Its secrets are gone, and a late element is refused.
+	testing.expect(t, machine_mesh.bytes_all_zero(home.peer.pairing.code_secret[:]))
+	request: [FRAME_LIMIT]u8
+	body, _ := frame_begin(request[:], .Pairing_Element, PAIRING_ELEMENT_SIZE)
+	expect_refusal(t, exchange(home, identity_of(joiner), frame_bytes(request[:], body), ended), .Pairing_Refused, u32(machine_mesh.Pairing_Status.Refused_Bad_Phase))
 }

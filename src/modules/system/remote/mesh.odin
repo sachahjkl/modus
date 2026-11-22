@@ -81,6 +81,12 @@ mesh_serve :: proc "contextless" (buffer: []u8, received: int, peer_identity: [3
 		channel_binding = machine_wire.channel_binding_of_identities(mesh.identity.public_key, peer_identity),
 		now_ms          = system.time(),
 	}
+	// The principal of the sender: a machine that the newest machine list
+	// of this principal names. The machine lists of other principals are
+	// not presented yet, so a machine of another principal proves none.
+	if row, paired := machine_mesh.paired_machine_find(&mesh.paired, peer_identity); paired && row.source == .Machine_List && mesh.machine_list.has_list {
+		serve_context.peer_root_public_key = mesh.machine_list.principal_root_public_key
+	}
 	answer := machine_wire.serve(&mesh, &serve_context, buffer[:received], mesh_answer[:])
 	return copy(buffer, answer)
 }

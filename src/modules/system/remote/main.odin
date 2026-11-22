@@ -476,7 +476,7 @@ client_key_allowed :: proc "contextless" (key: ^[32]u8) -> bool {
 	if row >= 0 && remote.client_grant_holds(&rows, row, rows[row].serial, .Calls) {
 		return true
 	}
-	if machine_wire.peer_admits(&mesh, proven) {
+	if machine_wire.peer_admits(&mesh, proven, system.time()) {
 		return true
 	}
 	counts.keys_refused += 1
@@ -502,7 +502,7 @@ client_bind :: proc "contextless" (connection: ^quic.Connection, client: ^Record
 	key := connection.tls.client_public_key
 	row := remote.client_find(&client_rows, key)
 	if row < 0 || !remote.client_grant_holds(&client_rows, row, client_rows[row].serial, .Calls) {
-		if machine_wire.peer_admits(&mesh, key) {
+		if machine_wire.peer_admits(&mesh, key, system.time()) {
 			client.bound, client.mesh_only, client.row, client.key = true, true, -1, key
 			if log_allowed() {
 				system.log_fact(.Info, Mesh_Peer_Proved{client_key_head = key_head_field(key), peer = peer_field(peer)})
@@ -530,7 +530,7 @@ client_grant_check :: proc "contextless" (connection: ^quic.Connection, client: 
 	if client.mesh_only {
 		// A paired machine holds while its row of the mesh holds: a newer
 		// machine list, or the end of an open pairing, removes it.
-		if machine_wire.peer_admits(&mesh, client.key) {
+		if machine_wire.peer_admits(&mesh, client.key, system.time()) {
 			return
 		}
 		client.bound = false
@@ -594,6 +594,9 @@ calls_work :: proc "contextless" () {
 	client_table_version_seen = intrinsics.atomic_load_explicit(&client_table.version, .Acquire)
 	remote.client_table_read(client_table, &client_rows)
 	service_connections_of_ended_grants()
+	// An offer whose code ended admits no key: the connection of its
+	// machine ends below, in client_grant_check.
+	machine_wire.pairing_expire(&mesh, now)
 	for record, place in records {
 		place_calls := calls[place * STREAMS_PER_CONNECTION:][:STREAMS_PER_CONNECTION]
 		if !record.in_use {

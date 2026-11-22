@@ -988,7 +988,7 @@ Do not use: packet, message (alone), mesh request.
 
 A relay envelope is a datagram that a relay machine carries between two machines: a routing token and the sealed bytes, which only the two ends open.
 
-The two ends seal the datagram under a key that they share, with the routing token as associated data. The routing token is a keyed hash of that key and an epoch, so the relay learns no identity key and cannot link two epochs. The relay is a paired machine of the principal; it keeps an envelope only for a route that its principal added, and gives it back byte for byte.
+The two ends seal the datagram under a key that they share, with the routing token as associated data. The routing token is a keyed hash of that key and an epoch, so the envelope adds no identity key and the relay cannot link two epochs. The relay is a paired machine of the principal; it keeps an envelope only for a route that its principal added, only from the sender of that route, and gives it back byte for byte to its receiver.
 
 The design: `src/md/features/several_machines.md`, "The relay envelope".
 
