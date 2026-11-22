@@ -34,6 +34,9 @@ import "modus:system"
 GUEST_MEMORY_PAGES_MOST :: u64(65_536) // 256 MiB.
 INPUT_DISK_BYTES_MOST :: u64(16 * 1024 * 1024)
 OUTPUT_DISK_BYTES_MOST :: contract.MAX_OUTPUT_DISK_BYTES
+// Working memory for up to 256 MiB guest RAM, 16 MiB input disk, 64 MiB
+// output disk, nested page tables and working scratch; two child guest
+// processes and one service thread.
 MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 88064, processes = 2, threads = 1}
 #assert(88064 == GUEST_MEMORY_PAGES_MOST + INPUT_DISK_BYTES_MOST / system.PAGE_SIZE + OUTPUT_DISK_BYTES_MOST / system.PAGE_SIZE + 2048)
 TREE_OUTPUT_BYTES_MOST :: contract.UNPACK_NODE_BUFFER_BYTES
