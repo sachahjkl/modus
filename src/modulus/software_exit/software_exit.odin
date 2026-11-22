@@ -1,7 +1,8 @@
 // The exit of the software processor as the event that a processor of
 // x86-64 gives for the same instruction: the kernel entry of syscall, an
 // exception with its vector and its error code, or the end of a slice,
-// which is the tick of the timer. The processor loop of a browser machine
+// where the processor loop reads the clock for the deadline of the timer
+// and the interrupts that wait. The processor loop of a browser machine
 // builds the frame of the kernel from it
 // (src/md/features/browser_machine.md, "The processor loop"). The kernel
 // holds the frame and the vectors of its own interrupts; this package holds
@@ -24,7 +25,7 @@ Exception_Vector :: enum u8 {
 Exit_Kind :: enum u8 {
 	Kernel_Enter = 0, // syscall: rcx holds the return address and r11 the flags.
 	Exception    = 1,
-	Slice_End    = 2, // The step budget ran out: the tick of the timer.
+	Slice_End    = 2, // The step budget ran out: no event of the thread, a point where an interrupt can come.
 }
 
 Exit :: struct {

@@ -45,6 +45,14 @@ memory_start :: proc "contextless" (boot: ^info.Boot_Info) {
 			top = max(top, range.start + range.page_count * PAGE_SIZE)
 		}
 	}
+	// A pointer of the kernel for WebAssembly has 32 bits, and the direct map
+	// is the linear memory from offset 0: a frame past 4 GiB has no pointer.
+	when size_of(uintptr) < size_of(u64) {
+		if boot.direct_map_size > 1 << 32 || top > 1 << 32 {
+			log("kernel: the memory of the machine passes 4 GiB, which a pointer of the kernel cannot reach")
+			machine_stop(.Start_Failed)
+		}
+	}
 	frame_count = top / PAGE_SIZE
 	words := (frame_count + 63) / 64
 	bitmap_pages := (words * 8 + PAGE_SIZE - 1) / PAGE_SIZE

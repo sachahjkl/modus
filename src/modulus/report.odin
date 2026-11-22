@@ -72,7 +72,7 @@ boot_report :: proc "contextless" (report: ^op.Boot_Report) {
 		direct_map_size     = boot.direct_map_size,
 		acpi_root           = boot.acpi_root,
 		cycle_frequency     = cycle_frequency,
-		timer_frequency     = u64(timer_count) * 16 * TICKS_PER_SECOND,
+		timer_frequency     = timer_frequency_hertz(),
 		trust               = boot.trust,
 		iommu_unit_count    = iommu_in_use ? u64(iommu_unit_count) : 0,
 		// Copied as words: the kernel does not read them.

@@ -1145,7 +1145,7 @@ log_fact_operation :: proc "contextless" (process_index: u32, thread_index: u32,
 	// The copy before the log lock: a page on first use takes the frame
 	// lock, which comes before it.
 	log_text := &processor_self().log_text
-	user_copy(log_text, rawptr(uintptr(v[1])), v[2])
+	user_copy_from_process(log_text, v[1], v[2])
 	body := log_text[:v[2]]
 	part_count := op.log_fact_part_count(int(v[2]) - op.LOG_FACT_HEAD_BYTES)
 	if !budget_log(process.budget, u64(part_count)) {

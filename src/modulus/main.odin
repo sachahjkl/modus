@@ -30,7 +30,7 @@
 // - The rings and the waits: the kernel ring of each process, the
 //   [word wait](term:word-wait), the wait on rings (`src/modulus/wait.odin`).
 // - The device grants and the interrupts: device memory and message
-//   interrupts for a device service (`src/modulus/apic.odin`).
+//   interrupts for a device service (`src/modulus/apic_amd64.odin`).
 //
 // Around them: the [log records](term:log-record) and the serial port
 // (`src/modulus/serial.odin`), the [fault ring](term:fault-ring)

@@ -1,9 +1,10 @@
 #+build !freestanding
-package software_machine
+package software_machine_demonstration
 
 import "core:sync"
 import "core:testing"
 import "modus:contract/byte_order"
+import software "modus:contract/software_machine"
 
 // The C-ABI export bridge owns one static VM instance; serialize tests that
 // exercise it so multi-threaded test runners do not race on vm_instance.
@@ -300,13 +301,13 @@ test_wasm_exports_ring_capacity_and_mmu_fault_isolation :: proc(t: ^testing.T) {
 	// Adversarial guest program 1: attempt to write past the single active framebuffer page (0x101000) -> Page_Fault.
 	{
 		e: Code_Emitter
-		emit_mov_rbx_imm64(&e, VM_FRAMEBUFFER_BASE + PAGE_SIZE)
+		emit_mov_rbx_imm64(&e, VM_FRAMEBUFFER_BASE + software.PAGE_SIZE)
 		emit_bytes(&e, 0xC7, 0x03)
 		emit_u32_le(&e, 0xDEADBEEF)
 		testing.expect_value(t, modus_vm_load_bytes(u32(VM_CODE_BASE), raw_data(e.bytes[:e.count]), u32(e.count)), u32(Vm_Call_Status.Ok))
 		testing.expect_value(t, modus_vm_step_budget(10), u32(Vm_Call_Status.Ok))
 		testing.expect_value(t, modus_vm_state_word(), u32(Vm_Run_State.Faulted_Page_Fault))
-		testing.expect_value(t, modus_vm_fault_address(), VM_FRAMEBUFFER_BASE + PAGE_SIZE)
+		testing.expect_value(t, modus_vm_fault_address(), VM_FRAMEBUFFER_BASE + software.PAGE_SIZE)
 	}
 
 	// Adversarial guest program 2: attempt to overwrite executable code (W^X violation at VM_CODE_BASE) -> Page_Fault.

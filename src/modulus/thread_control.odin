@@ -280,10 +280,10 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 		switch {
 		case command == .Read_Registers:
 			registers := thread_registers_of_frame(thread)
-			user_copy(rawptr(uintptr(v[3])), &registers, size)
+			user_copy_to_process(v[3], &registers, size)
 		case command == .Write_Registers:
 			registers: op.Thread_Registers
-			user_copy(&registers, rawptr(uintptr(v[3])), size)
+			user_copy_from_process(&registers, v[3], size)
 			if refusal, value := op.thread_registers_refusal(&registers); refusal != .None {
 				operation.thread_write_refusal, operation.thread_write_refused_value = refusal, value
 				return .Bad_Operation
@@ -296,14 +296,14 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			// (debug_exception_is_dropped).
 			thread.debugger_step = by_debugger && registers.rflags & FLAG_TRAP != 0
 		case command == .Read_Extended_State:
-			user_copy(rawptr(uintptr(v[3])), &thread.extended_state, size)
+			user_copy_to_process(v[3], &thread.extended_state, size)
 			results[1] = transmute(u64)extended_state_components
 		case command == .Write_Extended_State:
 			written := &cpu.extended_state_written
 			// The bytes past the size of a save keep the values of the thread:
 			// the area is copied whole below.
 			written^ = thread.extended_state
-			user_copy(written, rawptr(uintptr(v[3])), size)
+			user_copy_from_process(written, v[3], size)
 			if refusal, value := extended_state_write_refusal(written); refusal != .None {
 				operation.thread_write_refusal, operation.thread_write_refused_value = refusal, value
 				return .Bad_Operation
@@ -336,9 +336,9 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			if intrinsics.atomic_load(&thread.has_breakpoints) {
 				breakpoints = thread.breakpoints
 			}
-			user_copy(rawptr(uintptr(v[3])), &breakpoints, size)
+			user_copy_to_process(v[3], &breakpoints, size)
 		} else {
-			user_copy(&breakpoints, rawptr(uintptr(v[3])), size)
+			user_copy_from_process(&breakpoints, v[3], size)
 			if refusal, value := op.thread_breakpoints_refusal(&breakpoints); refusal != .None {
 				operation.thread_write_refusal, operation.thread_write_refused_value = refusal, value
 				return .Bad_Operation
@@ -390,9 +390,9 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			if read_status != .Ok {
 				return read_status
 			}
-			user_copy(rawptr(uintptr(v[3])), &schedule, size)
+			user_copy_to_process(v[3], &schedule, size)
 		} else {
-			user_copy(&schedule, rawptr(uintptr(v[3])), size)
+			user_copy_from_process(&schedule, v[3], size)
 			// The check of Thread_Create; the error record names the value
 			// that it refused and the most that it takes. The weight limit
 			// of the record is read only from the holder of the machine.
@@ -436,9 +436,9 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			if read_status != .Ok {
 				return read_status
 			}
-			user_copy(rawptr(uintptr(v[3])), &placement, size)
+			user_copy_to_process(v[3], &placement, size)
 		} else {
-			user_copy(&placement, rawptr(uintptr(v[3])), size)
+			user_copy_from_process(&placement, v[3], size)
 			write_status, refusal, most := thread_placement_write(thread, placement, by_machine, target_index == caller_index, target_argument, target_value, can_read_state)
 			if write_status == .Bad_Operation {
 				// The refused set, and the set that it had to stay inside.
@@ -502,9 +502,9 @@ process_schedule_control :: proc "contextless" (caller_process: ^Process, comman
 	schedule: op.Process_Schedule
 	if command == .Read_Process_Schedule {
 		schedule.new_thread_weight_limit = process_new_thread_weight_limit(process)
-		user_copy(rawptr(uintptr(v[3])), &schedule, size)
+		user_copy_to_process(v[3], &schedule, size)
 	} else {
-		user_copy(&schedule, rawptr(uintptr(v[3])), size)
+		user_copy_from_process(&schedule, v[3], size)
 		after, refusal := op.process_schedule_after_write(schedule)
 		if refusal != .None {
 			operation := &processor_self().operation

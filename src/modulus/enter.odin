@@ -326,7 +326,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		name := transmute([]u8)process_name(process)
 		log_text := &processor_self().log_text
-		user_copy(log_text, rawptr(uintptr(v[1])), v[2])
+		user_copy_from_process(log_text, v[1], v[2])
 		// The text of a log record is UTF-8 with no control character: the
 		// serial port goes to a terminal of the host, which acts on a
 		// carriage return or an escape sequence, so a process could forge or
@@ -344,7 +344,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		// The value runs: checked once, in the copy of this processor. Runs
 		// that do not fit the text leave the record plain; the text is whole.
 		log_runs := processor_self().log_runs[:v[4]]
-		user_copy(raw_data(log_runs), rawptr(uintptr(v[1] + v[2])), run_bytes)
+		user_copy_from_process(raw_data(log_runs), v[1] + v[2], run_bytes)
 		if !value_kinds.value_runs_check(log_runs, int(v[2])) {
 			log_runs = nil
 		}
@@ -394,7 +394,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_State
 		}
 		if copied > 0 {
-			user_copy(rawptr(uintptr(v[4])), &buffer[0], copied * record_size)
+			user_copy_to_process(v[4], &buffer[0], copied * record_size)
 		}
 		results[0] = copied
 		results[1] = lost
@@ -499,7 +499,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_Address
 		}
 		name: [op.PROCESS_NAME_BYTES_MOST + 1]u8
-		user_copy(&name, rawptr(uintptr(v[1])), v[2])
+		user_copy_from_process(&name, v[1], v[2])
 		// The name starts each line of the log of the process on the serial
 		// port: it is a name of the system, printable characters of ASCII
 		// and the space ("node 1"), so that no name acts on a terminal of
@@ -623,7 +623,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				return .Bad_Address
 			}
 			copied: errors.Error_Record
-			user_copy(&copied, rawptr(uintptr(v[2])), size_of(errors.Error_Record))
+			user_copy_from_process(&copied, v[2], size_of(errors.Error_Record))
 			accepted, error_ok := op.stop_error_of_operation(cause == .Itself, outcome, v[2], copied)
 			if !error_ok {
 				return .Bad_Operation
@@ -654,7 +654,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			if !user_range(process, v[1], size_of(op.Stop_Report), true) {
 				return .Bad_Address
 			}
-			user_copy(rawptr(uintptr(v[1])), &processes[slot.object].stop, size_of(op.Stop_Report))
+			user_copy_to_process(v[1], &processes[slot.object].stop, size_of(op.Stop_Report))
 		}
 		return .Ok
 
@@ -774,7 +774,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_Address
 		}
 		record: op.Module_Record
-		user_copy(&record, rawptr(uintptr(v[1])), size_of(record))
+		user_copy_from_process(&record, v[1], size_of(record))
 		// The writer is the party: a process that holds a handle to itself
 		// is still the process.
 		return process_module(to, record, by_the_process = to == process)
@@ -840,7 +840,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 		}
 		for index in 0 ..< v[1] {
 			word: op.Word
-			user_copy(&word, rawptr(uintptr(v[0] + index * size_of(op.Word))), size_of(op.Word))
+			user_copy_from_process(&word, v[0] + index * size_of(op.Word), size_of(op.Word))
 			physical := word_address(process, word.address)
 			if physical == 0 {
 				thread.word_changed = true // The wait cannot end by this word: do not wait.
@@ -994,7 +994,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					report.region_count += 1
 				}
 			}
-			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
+			user_copy_to_process(v[3], &report, size_of(report))
 			results[0] = size_of(op.System_Report)
 		case .Process:
 			if v[4] < size_of(op.Process_Report) || !user_range(process, v[3], size_of(op.Process_Report), true) {
@@ -1033,7 +1033,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					}
 				}
 			}
-			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
+			user_copy_to_process(v[3], &report, size_of(report))
 			results[0] = size_of(op.Process_Report)
 		case .Boot:
 			if v[4] < size_of(op.Boot_Report) || !user_range(process, v[3], size_of(op.Boot_Report), true) {
@@ -1041,7 +1041,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			}
 			record := &processor_self().boot_report
 			boot_report(record)
-			user_copy(rawptr(uintptr(v[3])), record, size_of(op.Boot_Report))
+			user_copy_to_process(v[3], record, size_of(op.Boot_Report))
 			results[0] = size_of(op.Boot_Report)
 		case .Mappings:
 			if v[4] < size_of(op.Mapping_Report) || !user_range(process, v[3], size_of(op.Mapping_Report), true) {
@@ -1053,7 +1053,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			} else {
 				mappings_report(record, process.table, 0, 256)
 			}
-			user_copy(rawptr(uintptr(v[3])), record, size_of(op.Mapping_Report))
+			user_copy_to_process(v[3], record, size_of(op.Mapping_Report))
 			results[0] = size_of(op.Mapping_Report)
 		case .Modules:
 			if v[4] < size_of(op.Module_Report) || !user_range(process, v[3], size_of(op.Module_Report), true) {
@@ -1082,7 +1082,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					report.count += 1
 				}
 			}
-			user_copy(rawptr(uintptr(v[3])), report, size_of(op.Module_Report))
+			user_copy_to_process(v[3], report, size_of(op.Module_Report))
 			results[0] = size_of(op.Module_Report)
 		case .Processor:
 			if v[4] < size_of(op.Processor_Report) || !user_range(process, v[3], size_of(op.Processor_Report), true) {
@@ -1112,25 +1112,25 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 					report.same = u64(processes[report.process].table == process.table)
 				}
 			}
-			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
+			user_copy_to_process(v[3], &report, size_of(report))
 			results[0] = size_of(op.Processor_Report)
 		case .Process_Mappings:
 			developer_report_ready(process, v, size_of(op.Process_Mapping_Report)) or_return
 			report := &processor_self().process_mapping_report
 			process_mappings_report(report, u32(min(v[2], PROCESS_CAPACITY)))
-			user_copy(rawptr(uintptr(v[3])), report, size_of(op.Process_Mapping_Report))
+			user_copy_to_process(v[3], report, size_of(op.Process_Mapping_Report))
 			results[0] = size_of(op.Process_Mapping_Report)
 		case .Threads:
 			developer_report_ready(process, v, size_of(op.Thread_Table_Report)) or_return
 			report := &processor_self().thread_table_report
 			threads_report(report, u32(min(v[2], PROCESS_CAPACITY)))
-			user_copy(rawptr(uintptr(v[3])), report, size_of(op.Thread_Table_Report))
+			user_copy_to_process(v[3], report, size_of(op.Thread_Table_Report))
 			results[0] = size_of(op.Thread_Table_Report)
 		case .Stop:
 			developer_report_ready(process, v, size_of(op.Stop_Report)) or_return
 			report := &processor_self().stop_report
 			stop_report_for_inspect(report, u32(min(v[2], PROCESS_CAPACITY)))
-			user_copy(rawptr(uintptr(v[3])), report, size_of(op.Stop_Report))
+			user_copy_to_process(v[3], report, size_of(op.Stop_Report))
 			results[0] = size_of(op.Stop_Report)
 		case .Pages:
 			if v[4] < size_of(op.Page_Report) || !user_range(process, v[3], size_of(op.Page_Report), true) {
@@ -1142,12 +1142,12 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 				return .Bad_Operation
 			}
 			report: op.Page_Report
-			user_copy(&report, rawptr(uintptr(v[3])), size_of(report))
+			user_copy_from_process(&report, v[3], size_of(report))
 			if report.address & (PAGE_SIZE - 1) != 0 || report.address >= op.USER_END || op.PAGE_REPORT_CAPACITY * PAGE_SIZE > op.USER_END - report.address {
 				return .Bad_Operation
 			}
 			pages_report(&report, process)
-			user_copy(rawptr(uintptr(v[3])), &report, size_of(report))
+			user_copy_to_process(v[3], &report, size_of(report))
 			results[0] = size_of(op.Page_Report)
 		case .None:
 			return .Bad_Operation
@@ -1186,7 +1186,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_Address
 		}
 		table := &processor_self().range_table
-		user_copy(table, rawptr(uintptr(v[2])), v[3] * size_of(op.Page_Range))
+		user_copy_from_process(table, v[2], v[3] * size_of(op.Page_Range))
 		counts: [op.RANGE_TABLE_CAPACITY]u64
 		for range, index in table[:v[3]] {
 			counts[index] = range.page_count
@@ -1207,7 +1207,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 			return .Bad_Address
 		}
 		table := &processor_self().range_table
-		user_copy(table, rawptr(uintptr(v[0])), v[1] * size_of(op.Address_Range))
+		user_copy_from_process(table, v[0], v[1] * size_of(op.Address_Range))
 		ranges := ([^]op.Address_Range)(&table[0])[:v[1]]
 		// Another process: guest memory only, which a guest writes and then
 		// executes. A process that a thread ran keeps its protection its own.

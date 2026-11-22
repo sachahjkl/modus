@@ -643,7 +643,7 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 	readable := found == .Ok && user_range(caller, v[1], size_of(op.Guest_Registers), true)
 	if readable {
 		// A copy, checked after: the process can change its memory meanwhile.
-		user_copy(&registers, rawptr(uintptr(v[1])), size_of(registers))
+		user_copy_from_process(&registers, v[1], size_of(registers))
 		guest_index = slot.object
 		// The handle holds the process: its slot serves no other process
 		// while the handle lives.
@@ -783,7 +783,7 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 	caller_taken = process_lock(caller_index)
 	writable := user_range(caller, v[1], size_of(op.Guest_Registers), true)
 	if writable {
-		user_copy(rawptr(uintptr(v[1])), &registers, size_of(registers))
+		user_copy_to_process(v[1], &registers, size_of(registers))
 	}
 	process_unlock(caller_index, caller_taken)
 	if !writable {

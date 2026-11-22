@@ -30,7 +30,7 @@ import op "modus:contract/operation"
 // While a thread with breakpoints is in the kernel, its registers stay
 // loaded. An execute breakpoint is an address of a process, where the
 // kernel runs no instruction. A data breakpoint can be reached by a copy of
-// the kernel from or to the memory of the process (user_copy): that debug
+// the kernel from or to the memory of the process (user_copy_from_process, user_copy_to_process): that debug
 // exception comes from the kernel, and the stub of the interrupts drops it
 // (interrupt_common in processor.asm). The copy goes on, and the debugger
 // does not see an access that the kernel made.
@@ -227,7 +227,7 @@ process_memory_read :: proc "contextless" (process: ^Process, source: u64, desti
 			break
 		}
 		part := min(count - copied, PAGE_SIZE - address % PAGE_SIZE)
-		user_copy(rawptr(uintptr(destination + copied)), direct(physical, u8), part)
+		user_copy_to_process(destination + copied, direct(physical, u8), part)
 		copied += part
 	}
 	return copied

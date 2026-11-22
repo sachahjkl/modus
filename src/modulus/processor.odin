@@ -473,7 +473,7 @@ processor_setup :: proc "contextless" (cpu: ^Processor) {
 		cr4 |= CR4_MACHINE_CHECK
 	}
 	// The kernel does not execute the memory of processes, and uses it only
-	// in user_copy, when the processor can refuse the rest (SMEP, SMAP).
+	// in user_copy_from_process and user_copy_to_process, when the processor can refuse the rest (SMEP, SMAP).
 	if highest, _, _, _ := processor_identification_read(0, 0); highest >= 7 {
 		_, features, more_features, _ := processor_identification_read(7, 0)
 		if features & (1 << 7) != 0 {

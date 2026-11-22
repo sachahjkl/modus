@@ -271,7 +271,7 @@ events_set :: proc "contextless" (process_index: u32, v: [7]u64, results: ^[7]u6
 	// One copy of the rules of the caller: each later test reads the copy,
 	// never the memory of the process again.
 	given: [op.EVENT_RULE_CAPACITY]op.Event_Rule
-	user_copy(&given, rawptr(uintptr(v[2])), v[3] * size_of(op.Event_Rule))
+	user_copy_from_process(&given, v[2], v[3] * size_of(op.Event_Rule))
 	table := Event_Table {
 		rule_count = u32(v[3]),
 		records    = records,

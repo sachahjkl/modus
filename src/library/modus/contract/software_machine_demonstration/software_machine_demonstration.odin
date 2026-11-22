@@ -1,5 +1,7 @@
-// Freestanding WebAssembly export bridge for the modus browser machine
-// (src/md/features/browser_machine.md, "The kernel for WebAssembly").
+// Freestanding WebAssembly export bridge of the demonstration page of the
+// software processor (src/md/features/browser_machine.md, "State"). It is
+// a package of its own, so a build that imports software_machine, as the
+// kernel for WebAssembly does, exports none of its procedures.
 //
 // Exposes a strict, zero-allocation, C-ABI surface compiling cleanly under
 // freestanding_amd64_sysv, freestanding_wasm32, and freestanding_wasm64p32:
@@ -10,10 +12,11 @@
 //     that refuse overflow without silent drops;
 //   - strict border validation on every transport word, memory offset, step
 //     budget, and device coordinate.
-package software_machine
+package software_machine_demonstration
 
 import "modus:contract/byte_order"
 import "modus:contract/enum_word"
+import software "modus:contract/software_machine"
 
 // Static memory geometry and bounded device capacities.
 VM_MAX_FRAMEBUFFER_WIDTH :: u32(640)
@@ -128,7 +131,7 @@ Browser_Vm_State :: struct #align(8) {
 	fb_width:        u32,
 	fb_height:       u32,
 	fb_bytes:        u32,
-	cpu:             Processor_State,
+	cpu:             software.Processor_State,
 	key_ring:        [VM_INPUT_RING_CAPACITY]Vm_Key_Event,
 	key_head:        u32,
 	key_tail:        u32,
@@ -186,12 +189,12 @@ vm_map_identity_range :: proc "contextless" (ram: []u8, start_address: u64, byte
 	if byte_count == 0 {
 		return
 	}
-	page_count := (byte_count + PAGE_SIZE - 1) / PAGE_SIZE
+	page_count := (byte_count + software.PAGE_SIZE - 1) / software.PAGE_SIZE
 	for page_index in u64(0) ..< page_count {
-		address := start_address + page_index * PAGE_SIZE
-		pt_index := (address >> 12) & PAGE_TABLE_INDEX_MASK
+		address := start_address + page_index * software.PAGE_SIZE
+		pt_index := (address >> 12) & software.PAGE_TABLE_INDEX_MASK
 		entry_offset := int(VM_PT_OFFSET + pt_index * 8)
-		byte_order.write_u64_little_endian(ram, entry_offset, (address & PAGE_ADDRESS_MASK) | leaf_flags)
+		byte_order.write_u64_little_endian(ram, entry_offset, (address & software.PAGE_ADDRESS_MASK) | leaf_flags)
 	}
 }
 
@@ -213,25 +216,25 @@ vm_serial_push_byte :: proc "contextless" (vm: ^Browser_Vm_State, value: u8) -> 
 // the Software MMU or device ring capacities.
 @(private = "file")
 vm_handle_syscall :: proc "contextless" (vm: ^Browser_Vm_State) {
-	raw_number := vm.cpu.registers[int(General_Register.Rax)]
+	raw_number := vm.cpu.registers[int(software.General_Register.Rax)]
 	syscall_number, valid := vm_syscall_number_from_word(raw_number)
 	if !valid {
-		vm.cpu.registers[int(General_Register.Rax)] = max(u64)
+		vm.cpu.registers[int(software.General_Register.Rax)] = max(u64)
 		vm.run_state = .Faulted_Invalid_Syscall
 		return
 	}
 
 	switch syscall_number {
 	case .Write_Serial_Byte:
-		byte_val := u8(vm.cpu.registers[int(General_Register.Rdi)] & 0xFF)
+		byte_val := u8(vm.cpu.registers[int(software.General_Register.Rdi)] & 0xFF)
 		pushed := vm_serial_push_byte(vm, byte_val)
-		vm.cpu.registers[int(General_Register.Rax)] = 0 if pushed else 1
+		vm.cpu.registers[int(software.General_Register.Rax)] = 0 if pushed else 1
 
 	case .Write_Serial_Slice:
-		guest_ptr := vm.cpu.registers[int(General_Register.Rdi)]
-		requested_len := vm.cpu.registers[int(General_Register.Rsi)]
+		guest_ptr := vm.cpu.registers[int(software.General_Register.Rdi)]
+		requested_len := vm.cpu.registers[int(software.General_Register.Rsi)]
 		if requested_len > u64(VM_SERIAL_RING_CAPACITY) {
-			vm.cpu.registers[int(General_Register.Rax)] = max(u64)
+			vm.cpu.registers[int(software.General_Register.Rax)] = max(u64)
 			vm.run_state = .Faulted_Invalid_Syscall
 			return
 		}
@@ -243,7 +246,7 @@ vm_handle_syscall :: proc "contextless" (vm: ^Browser_Vm_State) {
 		}
 		written := u64(0)
 		for offset in u64(0) ..< requested_len {
-			byte_val, read_res := mmu_read_u8(&vm.cpu.tlb, vm.guest_ram[:], vm.cpu.cr3, guest_ptr + offset, .User)
+			byte_val, read_res := software.mmu_read_u8(&vm.cpu.tlb, vm.guest_ram[:], vm.cpu.cr3, guest_ptr + offset, .User)
 			if read_res.status != .Ok {
 				vm.cpu.fault_address = read_res.fault_address
 				vm.cpu.fault_error_code = read_res.fault_error_code
@@ -255,45 +258,45 @@ vm_handle_syscall :: proc "contextless" (vm: ^Browser_Vm_State) {
 			}
 			written += 1
 		}
-		vm.cpu.registers[int(General_Register.Rax)] = written
+		vm.cpu.registers[int(software.General_Register.Rax)] = written
 
 	case .Read_Key_Event:
 		if vm.key_count == 0 {
-			vm.cpu.registers[int(General_Register.Rax)] = 0
-			vm.cpu.registers[int(General_Register.Rdi)] = 0
-			vm.cpu.registers[int(General_Register.Rsi)] = 0
-			vm.cpu.registers[int(General_Register.Rdx)] = 0
+			vm.cpu.registers[int(software.General_Register.Rax)] = 0
+			vm.cpu.registers[int(software.General_Register.Rdi)] = 0
+			vm.cpu.registers[int(software.General_Register.Rsi)] = 0
+			vm.cpu.registers[int(software.General_Register.Rdx)] = 0
 		} else {
 			event := vm.key_ring[vm.key_head]
 			vm.key_head = (vm.key_head + 1) % VM_INPUT_RING_CAPACITY
 			vm.key_count -= 1
-			vm.cpu.registers[int(General_Register.Rax)] = 1
-			vm.cpu.registers[int(General_Register.Rdi)] = u64(event.key_code)
-			vm.cpu.registers[int(General_Register.Rsi)] = u64(event.action)
-			vm.cpu.registers[int(General_Register.Rdx)] = u64(event.modifiers)
+			vm.cpu.registers[int(software.General_Register.Rax)] = 1
+			vm.cpu.registers[int(software.General_Register.Rdi)] = u64(event.key_code)
+			vm.cpu.registers[int(software.General_Register.Rsi)] = u64(event.action)
+			vm.cpu.registers[int(software.General_Register.Rdx)] = u64(event.modifiers)
 		}
 
 	case .Read_Pointer_Event:
 		if vm.pointer_count == 0 {
-			vm.cpu.registers[int(General_Register.Rax)] = 0
-			vm.cpu.registers[int(General_Register.Rdi)] = 0
-			vm.cpu.registers[int(General_Register.Rsi)] = 0
-			vm.cpu.registers[int(General_Register.Rdx)] = 0
+			vm.cpu.registers[int(software.General_Register.Rax)] = 0
+			vm.cpu.registers[int(software.General_Register.Rdi)] = 0
+			vm.cpu.registers[int(software.General_Register.Rsi)] = 0
+			vm.cpu.registers[int(software.General_Register.Rdx)] = 0
 		} else {
 			event := vm.pointer_ring[vm.pointer_head]
 			vm.pointer_head = (vm.pointer_head + 1) % VM_INPUT_RING_CAPACITY
 			vm.pointer_count -= 1
-			vm.cpu.registers[int(General_Register.Rax)] = 1
-			vm.cpu.registers[int(General_Register.Rdi)] = u64(event.x)
-			vm.cpu.registers[int(General_Register.Rsi)] = u64(event.y)
-			vm.cpu.registers[int(General_Register.Rdx)] = u64(event.buttons) | (u64(event.kind) << 32)
+			vm.cpu.registers[int(software.General_Register.Rax)] = 1
+			vm.cpu.registers[int(software.General_Register.Rdi)] = u64(event.x)
+			vm.cpu.registers[int(software.General_Register.Rsi)] = u64(event.y)
+			vm.cpu.registers[int(software.General_Register.Rdx)] = u64(event.buttons) | (u64(event.kind) << 32)
 		}
 
 	case .Get_Framebuffer_Info:
-		vm.cpu.registers[int(General_Register.Rax)] = VM_FRAMEBUFFER_BASE
-		vm.cpu.registers[int(General_Register.Rdi)] = u64(vm.fb_width)
-		vm.cpu.registers[int(General_Register.Rsi)] = u64(vm.fb_height)
-		vm.cpu.registers[int(General_Register.Rdx)] = u64(vm.fb_width * VM_PIXEL_BYTES)
+		vm.cpu.registers[int(software.General_Register.Rax)] = VM_FRAMEBUFFER_BASE
+		vm.cpu.registers[int(software.General_Register.Rdi)] = u64(vm.fb_width)
+		vm.cpu.registers[int(software.General_Register.Rsi)] = u64(vm.fb_height)
+		vm.cpu.registers[int(software.General_Register.Rdx)] = u64(vm.fb_width * VM_PIXEL_BYTES)
 
 	case .Halt:
 		vm.cpu.outcome = .Halted
@@ -334,18 +337,18 @@ modus_vm_init :: proc "c" (framebuffer_width: u32, framebuffer_height: u32) -> u
 	vm_zero_bytes(vm.staging_buffer[:])
 
 	// Build 4-level x86-64 page tables covering the 2 MiB guest RAM.
-	upper_flags := PAGE_PRESENT | PAGE_WRITE | PAGE_USER
+	upper_flags := software.PAGE_PRESENT | software.PAGE_WRITE | software.PAGE_USER
 	byte_order.write_u64_little_endian(vm.guest_ram[:], int(VM_PML4_OFFSET), VM_PDPT_OFFSET | upper_flags)
 	byte_order.write_u64_little_endian(vm.guest_ram[:], int(VM_PDPT_OFFSET), VM_PD_OFFSET | upper_flags)
 	byte_order.write_u64_little_endian(vm.guest_ram[:], int(VM_PD_OFFSET), VM_PT_OFFSET | upper_flags)
 
 	// Map code (RX User), data (RW NX User), stack (RW NX User), and active framebuffer pages (RW NX User).
-	vm_map_identity_range(vm.guest_ram[:], VM_CODE_BASE, u64(VM_CODE_BYTES), PAGE_PRESENT | PAGE_USER)
-	vm_map_identity_range(vm.guest_ram[:], VM_DATA_BASE, u64(VM_DATA_BYTES), PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
-	vm_map_identity_range(vm.guest_ram[:], VM_STACK_BASE, u64(VM_STACK_BYTES), PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
-	vm_map_identity_range(vm.guest_ram[:], VM_FRAMEBUFFER_BASE, u64(vm.fb_bytes), PAGE_PRESENT | PAGE_WRITE | PAGE_USER | PAGE_NO_EXECUTE)
+	vm_map_identity_range(vm.guest_ram[:], VM_CODE_BASE, u64(VM_CODE_BYTES), software.PAGE_PRESENT | software.PAGE_USER)
+	vm_map_identity_range(vm.guest_ram[:], VM_DATA_BASE, u64(VM_DATA_BYTES), software.PAGE_PRESENT | software.PAGE_WRITE | software.PAGE_USER | software.PAGE_NO_EXECUTE)
+	vm_map_identity_range(vm.guest_ram[:], VM_STACK_BASE, u64(VM_STACK_BYTES), software.PAGE_PRESENT | software.PAGE_WRITE | software.PAGE_USER | software.PAGE_NO_EXECUTE)
+	vm_map_identity_range(vm.guest_ram[:], VM_FRAMEBUFFER_BASE, u64(vm.fb_bytes), software.PAGE_PRESENT | software.PAGE_WRITE | software.PAGE_USER | software.PAGE_NO_EXECUTE)
 
-	processor_init(&vm.cpu, VM_PML4_OFFSET, VM_CODE_BASE, VM_STACK_INITIAL_RSP)
+	software.processor_init(&vm.cpu, VM_PML4_OFFSET, VM_CODE_BASE, VM_STACK_INITIAL_RSP)
 	vm.initialized = true
 	vm.run_state = .Ready
 	return u32(Vm_Call_Status.Ok)
@@ -374,7 +377,7 @@ modus_vm_load_bytes :: proc "c" (guest_offset: u32, source_ptr: [^]u8, byte_coun
 	for index in 0 ..< int(byte_count) {
 		vm.guest_ram[destination_start + index] = source_ptr[index]
 	}
-	tlb_flush_all(&vm.cpu.tlb)
+	software.tlb_flush_all(&vm.cpu.tlb)
 	return u32(Vm_Call_Status.Ok)
 }
 
@@ -417,7 +420,7 @@ modus_vm_step_budget :: proc "c" (max_steps: u32) -> u32 {
 	}
 
 	for _ in u32(0) ..< max_steps {
-		outcome := processor_step(&vm.cpu, vm.guest_ram[:])
+		outcome := software.processor_step(&vm.cpu, vm.guest_ram[:])
 		switch outcome {
 		case .Running:
 			continue

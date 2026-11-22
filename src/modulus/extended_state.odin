@@ -1,6 +1,5 @@
 package kernel
 
-import "base:intrinsics"
 import op "modus:contract/operation"
 import "modulus:extended_switch"
 

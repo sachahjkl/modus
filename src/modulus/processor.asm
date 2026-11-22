@@ -181,7 +181,7 @@ interrupt_common:
 	PUSH_REGISTERS
 	cmp byte [user_access_guard], 0
 	je .no_guard
-	clac                         ; The interrupted code could be in user_copy, or a process set the flag.
+	clac                         ; The interrupted code could be in a copy with the memory of a process, or a process set the flag.
 .no_guard:
 	mov rax, [rsp + 15 * 8]      ; The vector. rax, rcx and rdx are on the stack: free here.
 	cmp rax, 8                   ; A double fault: its saved cs says nothing.
@@ -648,7 +648,7 @@ ap_descriptor:
 	dw 4 * 8 - 1
 	dd AP(ap_segments)
 align 8
-; Ap_Parameters in src/modulus/apic.odin.
+; Ap_Parameters in src/modulus/processors_start_amd64.odin.
 ap_table:     dd 0
 ap_cr0:       dd 0
 ap_efer:      dd 0

@@ -89,7 +89,7 @@ read_free_handles :: proc "contextless" (process: ^Process) -> (count: u64) {
 }
 
 // read_user copies memory of the process that runs, if it can read it.
-// Lock: the process lock: no unmap runs between user_range and user_copy.
+// Lock: the process lock: no unmap runs between user_range and the copy.
 @(private = "file")
 read_user :: proc "contextless" (process: ^Process, address: u64, destination: rawptr, size: u64) -> bool {
 	at, taken := caller_lock(process)
@@ -97,7 +97,7 @@ read_user :: proc "contextless" (process: ^Process, address: u64, destination: r
 	if !user_range(process, address, size, false) {
 		return false
 	}
-	user_copy(destination, rawptr(uintptr(address)), size)
+	user_copy_from_process(destination, address, size)
 	return true
 }
 
@@ -629,7 +629,7 @@ argument_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^
 }
 
 // write_user copies to memory of the process that runs, if it can write it.
-// Lock: the process lock: no unmap runs between user_range and user_copy.
+// Lock: the process lock: no unmap runs between user_range and the copy.
 @(private = "file")
 write_user :: proc "contextless" (process: ^Process, address: u64, source: rawptr, size: u64) -> bool {
 	at, taken := caller_lock(process)
@@ -637,7 +637,7 @@ write_user :: proc "contextless" (process: ^Process, address: u64, source: rawpt
 	if !user_range(process, address, size, true) {
 		return false
 	}
-	user_copy(rawptr(uintptr(address)), source, size)
+	user_copy_to_process(address, source, size)
 	return true
 }
 

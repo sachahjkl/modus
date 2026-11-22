@@ -16,6 +16,7 @@ package kernel
 
 import "base:intrinsics"
 import software "modus:contract/software_machine"
+import "modulus:process_memory"
 
 // The imports that the page gives to each instance of the kernel. The
 // device models of the page play the ports (browser_machine.md, "Ports and
@@ -110,6 +111,13 @@ model_specific_register_read :: proc "contextless" (index: u32) -> u64 {
 		return 0
 	}
 	return slot.value
+}
+
+// model_specific_register_is_known says whether the register exists on this
+// processor: the gs register of the process, or a register that the kernel
+// wrote.
+model_specific_register_is_known :: proc "contextless" (index: u32) -> bool {
+	return index == MSR_KERNEL_GS_BASE || model_specific_register_slot(index, false) != nil
 }
 
 // A write past the capacity of the table is a fault of the kernel: it
@@ -216,9 +224,15 @@ task_register_load :: #force_inline proc "contextless" (selector: u16) {
 
 // The kernel writes the address of the record of its processor to
 // MSR_GS_BASE at the start of the processor, as on hardware; the field
-// self is at offset 16 of the record on both targets.
+// self is at offset 16 of the record on both targets. Before that write,
+// the register reads 0, and a read through it would take the bytes at
+// offset 16 of the linear memory as a record: the instance stops, as a
+// read of gs:16 with no base faults on x86-64.
 processor_self :: #force_inline proc "contextless" () -> ^Processor {
 	record := model_specific_register_read(MSR_GS_BASE)
+	if record == 0 {
+		intrinsics.trap()
+	}
 	return (^Processor)(uintptr(record)).self
 }
 
@@ -247,13 +261,35 @@ processor_identification_read :: proc "contextless" (leaf, subleaf: u32) -> (eax
 }
 
 // The memory of a process is not at its own addresses in the linear
-// memory: an address of a process needs a walk of its page table, and a
-// pointer of 32 bits cannot hold it. So the copy with the memory of a
-// process stops the instance until the processor loop gives it that walk
-// (browser_machine.md, "What the arch layer becomes").
-user_copy :: proc "contextless" (destination: rawptr, source: rawptr, count: u64) {
+// memory: a pointer of 32 bits cannot hold an address of a process. So the
+// copy walks the table of cr3 in software, with the checks of the processor
+// for a user access (browser_machine.md, "What the arch layer becomes").
+// The caller checked the range under the process lock (user_range), so a
+// refused walk is a fault of the kernel: the instance stops, as a page
+// fault of the kernel in its copy stops a processor of x86-64.
+user_copy_from_process :: proc "contextless" (destination: rawptr, process_source: u64, count: u64) {
 	if count == 0 {
 		return
 	}
-	intrinsics.trap()
+	if !process_memory.copy_from_process(linear_memory(), software_processor.cr3, process_source, ([^]u8)(destination)[:count]) {
+		intrinsics.trap()
+	}
+}
+
+user_copy_to_process :: proc "contextless" (process_destination: u64, source: rawptr, count: u64) {
+	if count == 0 {
+		return
+	}
+	if !process_memory.copy_to_process(linear_memory(), software_processor.cr3, process_destination, ([^]u8)(source)[:count]) {
+		intrinsics.trap()
+	}
+}
+
+WEBASSEMBLY_PAGE_SIZE :: u64(65536)
+
+// linear_memory is the physical memory of the machine: the whole linear
+// memory, from offset 0 (boot_info.DIRECT_MAP_POINTER_BASE).
+linear_memory :: #force_inline proc "contextless" () -> []u8 {
+	memory_start: [^]u8
+	return memory_start[:u64(intrinsics.wasm_memory_size(0)) * WEBASSEMBLY_PAGE_SIZE]
 }

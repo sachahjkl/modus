@@ -26,7 +26,7 @@ foreign _ {
 // Used by paging.odin.
 foreign _ {
 	// 1: the processors refuse the memory of processes to the kernel (SMAP).
-	// interrupt_common reads it too. user_copy is in instructions_amd64.odin.
+	// interrupt_common reads it too. user_copy_from_process and user_copy_to_process are in instructions_amd64.odin.
 	user_access_guard: u8
 	stack_switch :: proc "c" (top: u64, entry: rawptr) -> ! ---
 }

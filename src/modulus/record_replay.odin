@@ -1629,7 +1629,7 @@ record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread
 			if out_address == 0 || out_size > RECORD_COPY_SCRATCH_BYTES || !user_range(process, out_address, out_size, false) {
 				buffer_ok = false
 			} else {
-				user_copy(&cpu.record_copy_scratch[0], rawptr(uintptr(out_address)), out_size)
+				user_copy_from_process(&cpu.record_copy_scratch[0], out_address, out_size)
 				copied_slice = cpu.record_copy_scratch[:out_size]
 				copied_address = out_address
 			}
@@ -2369,7 +2369,7 @@ replay_enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		copy_failed := false
 		if len(copied_bytes) > 0 && kc.copied_user_address != 0 {
 			if user_range(process, kc.copied_user_address, u64(len(copied_bytes)), true) {
-				user_copy(rawptr(uintptr(kc.copied_user_address)), raw_data(copied_bytes), u64(len(copied_bytes)))
+				user_copy_to_process(kc.copied_user_address, raw_data(copied_bytes), u64(len(copied_bytes)))
 			} else {
 				copy_failed = true
 			}

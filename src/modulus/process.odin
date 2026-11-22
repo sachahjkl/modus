@@ -2297,7 +2297,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 		drain_start := cycles_now()
 		serial_tick(cpu)
 		cpu.charged_from += cycles_now() - drain_start
-		apic_write(APIC_END, 0)
+		apic_end_of_interrupt()
 	case frame.vector == VECTOR_WAKE || frame.vector == VECTOR_SYNC:
 		// A thread that woke on another processor preempts the thread
 		// that runs here (kick). Interrupts are off in the kernel, so this
@@ -2311,14 +2311,14 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 			cpu.preemptions += 1
 			cpu.preempt_from = cycles_now()
 		}
-		apic_write(APIC_END, 0)
+		apic_end_of_interrupt()
 	case frame.vector == VECTOR_SPURIOUS:
 	case frame.vector == VECTOR_IOMMU_FAULT:
 		// A device reached memory that its service did not declare: a line
 		// of the log, and the process that runs goes on.
 		cpu.interrupts += 1
 		iommu_faults_take()
-		apic_write(APIC_END, 0)
+		apic_end_of_interrupt()
 	case frame.vector >= VECTOR_INTERRUPT_BASE && frame.vector < VECTOR_INTERRUPT_BASE + INTERRUPT_LINES:
 		line := frame.vector - VECTOR_INTERRUPT_BASE
 		cpu.interrupts += 1
@@ -2327,7 +2327,7 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 	case frame.vector >= VECTOR_MESSAGE_BASE && frame.vector < VECTOR_MESSAGE_BASE + op.MESSAGE_CAPACITY:
 		cpu.interrupts += 1
 		interrupt_signal(INTERRUPT_LINES + frame.vector - VECTOR_MESSAGE_BASE)
-		apic_write(APIC_END, 0)
+		apic_end_of_interrupt()
 	case frame.vector == VECTOR_PAGE_FAULT && frame.error & FAULT_RESERVED_BIT != 0:
 		// The processor found a reserved bit in an entry of a page table.
 		// Only the kernel writes those entries: it is a mistake of the
@@ -2464,7 +2464,7 @@ process_fault_report :: proc "contextless" (index: u32, frame: ^Frame, address: 
 		log_with_level(.Warning, "kernel: process ", Module_Name{process_name(process)}, " stopped: ", name, " vector ", frame.vector, " at ", Hex(frame.rip), " address ", Hex(address), ", in module ", Hash{found.hash[:8]}, " at offset ", Hex(frame.rip - found.base), ", which replaces ", Hash{found.replaces[:8]})
 	}
 	// The stack trace: the page table of the process is the one of this
-	// processor, and the process lock is held (user_range, user_copy).
+	// processor, and the process lock is held (user_range, user_copy_from_process, user_copy_to_process).
 	if first {
 		stack_trace(process, frame, &process.stop)
 	}

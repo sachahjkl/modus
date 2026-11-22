@@ -215,7 +215,7 @@ processor_self :: asm() -> (cpu: ^Processor) [#volatile, #clobber memory] {
 	mov cpu, [%gs: 16]
 }
 
-// The copy of user_copy: rep movsb copies count bytes from rsi to rdi,
+// The copy of the memory of a process: rep movsb copies count bytes from rsi to rdi,
 // upward (the direction flag is clear in the kernel). The three registers
 // change, so each input is tied to an output in the same register; the
 // caller drops the outputs.
@@ -264,14 +264,26 @@ processor_identification_read :: #force_inline proc "contextless" (leaf, subleaf
 	return intrinsics.x86_cpuid(leaf, subleaf)
 }
 
-// user_copy is the one place where the kernel uses the memory of a process
-// at the addresses of the process. The caller checks the range first
-// (user_range). stac and clac exist only on a processor with SMAP: without
-// the guard, the copy has neither.
-user_copy :: #force_inline proc "contextless" (destination: rawptr, source: rawptr, count: u64) {
+// user_copy_from_process and user_copy_to_process are the one place where
+// the kernel uses the memory of a process at the addresses of the process.
+// The caller checks the range first (user_range), under the process lock,
+// so no unmap runs before the copy. The address of the process is a u64:
+// on x86-64 the processor translates it through the table of cr3.
+user_copy_from_process :: #force_inline proc "contextless" (destination: rawptr, process_source: u64, count: u64) {
+	user_copy_bytes(u64(uintptr(destination)), process_source, count)
+}
+
+user_copy_to_process :: #force_inline proc "contextless" (process_destination: u64, source: rawptr, count: u64) {
+	user_copy_bytes(process_destination, u64(uintptr(source)), count)
+}
+
+// stac and clac exist only on a processor with SMAP: without the guard,
+// the copy has neither.
+@(private = "file")
+user_copy_bytes :: #force_inline proc "contextless" (destination: u64, source: u64, count: u64) {
 	if user_access_guard != 0 {
-		_, _, _ = copy_bytes_upward_with_process_access(u64(uintptr(destination)), u64(uintptr(source)), count)
+		_, _, _ = copy_bytes_upward_with_process_access(destination, source, count)
 	} else {
-		_, _, _ = copy_bytes_upward(u64(uintptr(destination)), u64(uintptr(source)), count)
+		_, _, _ = copy_bytes_upward(destination, source, count)
 	}
 }

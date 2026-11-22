@@ -1147,6 +1147,12 @@ run_check :: proc(args: []string) -> int {
 	if !build.library_imports_check() {
 		return foundation.EXIT_FAILURE
 	}
+	// The kernel of a browser machine is the source of the kernel of x86-64
+	// with other arch files, and no build of the image compiles it: this
+	// check keeps it compiling (src/md/features/browser_machine.md).
+	if !foundation.run({"odin", "check", foundation.SOURCE_FOLDER_KERNEL, "-target:freestanding_wasm64p32", "-no-entry-point", "-default-to-nil-allocator", "-vet", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG}) {
+		return foundation.EXIT_FAILURE
+	}
 	// The count of the kernel operations is the count that the properties
 	// state, no source of the system calls an allocator, each export that
 	// fails gives an error record, and no family of integer constants is a

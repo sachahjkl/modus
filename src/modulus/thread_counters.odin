@@ -233,7 +233,7 @@ thread_counters_control :: proc "contextless" (caller_index: u32, caller_process
 			cache_misses         = counts[.Cache_Misses],
 			branch_misses        = counts[.Branch_Misses],
 		}
-		user_copy(rawptr(uintptr(v[3])), &counters, size)
+		user_copy_to_process(v[3], &counters, size)
 		results[0] = size
 	}
 	return .Ok
