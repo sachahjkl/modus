@@ -151,7 +151,10 @@ register_recorded_thread :: proc "contextless" (gate: ^Shared_Writer_Gate, threa
 
 // unregister_recorded_thread removes a finished recorded thread from the gate.
 // If removing an outside-input-point thread leaves all remaining threads at an
-// input point, waiting shared writers are released immediately.
+// input point, waiting shared writers may run at once. Their wait and the
+// one-stint timer stay until a writer actually runs, as at an input point
+// entry, so a thread that exits and a new one that starts outside an input
+// point cannot restart the bound and starve a writer.
 unregister_recorded_thread :: proc "contextless" (gate: ^Shared_Writer_Gate, thread_id: u32) -> bool {
 	if gate == nil || gate.state != .Active || thread_id == 0 {
 		return false
@@ -164,9 +167,6 @@ unregister_recorded_thread :: proc "contextless" (gate: ^Shared_Writer_Gate, thr
 			entry = {}
 			if gate.thread_count > 0 {
 				gate.thread_count -= 1
-			}
-			if all_recorded_threads_at_input_point(gate) {
-				clear_waiting_writers(gate)
 			}
 			return true
 		}
@@ -205,8 +205,11 @@ add_shared_writer :: proc "contextless" (gate: ^Shared_Writer_Gate, process_slot
 }
 
 // remove_shared_writer removes a tracked shared writer (for example when it
-// unmaps the shared object or stops). Disarms the wait timer if no waiting
-// writers remain.
+// unmaps the shared object or stops). The caller removes it only after the
+// shoot-down of its shared mapping, so a thread of it that still runs on a
+// processor no longer reaches the shared pages, and its processors stop
+// holding the recorded threads at their input points. Disarms the wait timer
+// if no waiting writers remain.
 remove_shared_writer :: proc "contextless" (gate: ^Shared_Writer_Gate, process_slot: u32, process_serial: u32) -> bool {
 	if gate == nil || process_slot == 0 || process_serial == 0 {
 		return false

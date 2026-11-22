@@ -299,6 +299,8 @@ Unit :: enum i64 {
 	Wiring_Rows = 56, // Bad_Value: a row of a wiring list. argument: the field, from 1 (output.Wiring_Field); value: the word; limit: the largest word there; found: the row from 1, or 0 for the list as a whole.
 	Wiring_Terms = 57, // Bad_Value or Out_Of_Range: the wiring terms of a row. value: their count of bytes; limit: the size of their description, 0 for a record input that takes none; found: the row.
 	Wirings     = 58, // The wirings of the root service. No_Grant: the asker did not start the process of the end, or does not act for the principal of the connection. Busy: the wiring ring of a process has no room, limit its capacity. Bad_Value: one process at both ends. found: the row.
+	Input_Histories = 59, // The input history of the process that the debugger service debugs (src/md/features/record_and_replay.md). Absent: the debugger started no record of it, or no record runs. Full: a record of it runs already. Out_Of_Range: value the input points of a step back, limit the input points of the history. Damaged: the header of the history is not a valid header.
+	Checkpoints = 60, // The checkpoints that the debugger service keeps of a recorded process (src/md/features/record_and_replay.md). Absent: no checkpoint is at or before the input point that a step back names. Exists: a checkpoint is at this input point, or at a later one, already.
 }
 
 // The name of each error kind, as the contract names it: a column of a
@@ -411,6 +413,8 @@ UNIT_MEMBER_NAMES := [Unit]string {
 	.Wiring_Rows        = "Wiring_Rows",
 	.Wiring_Terms       = "Wiring_Terms",
 	.Wirings            = "Wirings",
+	.Input_Histories    = "Input_Histories",
+	.Checkpoints        = "Checkpoints",
 }
 
 // The word of a Kind as the record of another party holds it: a field of a
@@ -569,6 +573,8 @@ UNIT_NAMES := [Unit]string {
 	.Wiring_Rows = "rows of the wiring list",
 	.Wiring_Terms = "bytes of the wiring terms",
 	.Wirings     = "wirings of the root service",
+	.Input_Histories = "input history of the debugged process",
+	.Checkpoints = "checkpoints of the recorded process",
 }
 
 // A ring completion (src/library/modus/contract/ring) has the status of the contract of its

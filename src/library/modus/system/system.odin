@@ -662,6 +662,24 @@ thread_control_resume :: proc "contextless" (thread: Handle, number: u64, error:
 	return results[0], status
 }
 
+// process_record_start makes the kernel write each process input of a
+// process into an input history (src/md/features/record_and_replay.md).
+// `process` is a process handle with Debug; `history` a contiguous memory
+// object with Read and Write, which also pays the point copies. The process
+// must not have run yet: the kernel refuses another with the record State,
+// Processes.
+process_record_start :: proc "contextless" (process: Handle, history: Handle, error: ^errors.Error_Record = nil) -> Status {
+	_, status := call_with_error(error, .Thread_Control, u64(process), u64(history), u64(op.Thread_Control_Command.Record_Start))
+	return status
+}
+
+// process_record_end ends the record that process_record_start began: the
+// kernel writes the end record into the input history and stops writing it.
+process_record_end :: proc "contextless" (process: Handle, error: ^errors.Error_Record = nil) -> Status {
+	_, status := call_with_error(error, .Thread_Control, u64(process), 0, u64(op.Thread_Control_Command.Record_End))
+	return status
+}
+
 // thread_registers_read gives the registers of a held thread.
 thread_registers_read :: proc "contextless" (thread: Handle, number: u64, error: ^errors.Error_Record = nil) -> (registers: op.Thread_Registers, status: Status) {
 	_, status = call_with_error(error, .Thread_Control, u64(thread), number, u64(op.Thread_Control_Command.Read_Registers), u64(uintptr(&registers)), size_of(registers))
