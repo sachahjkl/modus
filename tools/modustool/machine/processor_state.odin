@@ -5,6 +5,7 @@ import debug_object "modus:contract/debug_object"
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "modustool:build"
 
@@ -418,6 +419,7 @@ monitor_text_decode :: proc(value: string) -> (text: string, ok: bool) {
 // The kind of code that holds an instruction address.
 Code_Place_Kind :: enum {
 	Kernel,
+	Boot_Program, // The UEFI boot program, at the load address the firmware gave it.
 	Firmware, // Its flash, or the copy of its end under 1 MiB.
 	Firmware_System_Management_Mode,
 	Process, // Privilege level 3.
@@ -426,9 +428,45 @@ Code_Place_Kind :: enum {
 
 // The code whose place the tool knows on a test machine.
 Known_Code :: struct {
+	boot_program_start:   u64, // 0: the serial log did not record the boot program load address.
+	boot_program_size:    u64, // Byte size of the loaded boot program image.
 	firmware_flash_start: u64, // 0: the tool did not find the sizes of the files of the flash.
 	kernel_module:        string, // The name of the kernel module of the boot volume.
 	kernel_debug_object:  []u8, // nil: no debug object of the kernel passed its check.
+}
+
+// boot_program_range_of_log parses "boot program: loaded at 0x<hex>, <dec> bytes"
+// from a machine's serial output so a failed step can name the boot program.
+boot_program_range_of_log :: proc(log_text: string) -> (base: u64, size: u64, ok: bool) {
+	PREFIX :: "boot program: loaded at 0x"
+	remaining := log_text
+	for line in strings.split_lines_iterator(&remaining) {
+		trimmed := strings.trim_space(line)
+		idx := strings.index(trimmed, PREFIX)
+		if idx < 0 {
+			continue
+		}
+		rest := trimmed[idx + len(PREFIX):]
+		comma := strings.index(rest, ", ")
+		if comma <= 0 {
+			continue
+		}
+		base_val, base_ok := strconv.parse_u64_of_base(rest[:comma], 16)
+		if !base_ok || base_val == 0 {
+			continue
+		}
+		after_comma := rest[comma + 2:]
+		space := strings.index(after_comma, " bytes")
+		if space <= 0 {
+			continue
+		}
+		size_val, size_ok := strconv.parse_u64_of_base(after_comma[:space], 10)
+		if !size_ok || size_val == 0 || base_val > max(u64) - size_val {
+			continue
+		}
+		return base_val, size_val, true
+	}
+	return 0, 0, false
 }
 
 code_place_kind :: proc(state: Processor_State, known: Known_Code) -> Code_Place_Kind {
@@ -441,6 +479,8 @@ code_place_kind :: proc(state: Processor_State, known: Known_Code) -> Code_Place
 		return .Process
 	case address >= u64(info.KERNEL_BASE):
 		return .Kernel
+	case known.boot_program_start != 0 && known.boot_program_size != 0 && address >= known.boot_program_start && address - known.boot_program_start < known.boot_program_size:
+		return .Boot_Program
 	case known.firmware_flash_start != 0 && address >= known.firmware_flash_start && address < FIRMWARE_FLASH_END:
 		return .Firmware
 	case address >= FIRMWARE_LOW_COPY_START && address < FIRMWARE_LOW_COPY_END:
@@ -474,6 +514,8 @@ processor_line :: proc(state: Processor_State, known: Known_Code) -> string {
 		if place.file != "" {
 			fmt.sbprintf(&builder, " (%s:%d)", place.file, place.line)
 		}
+	case .Boot_Program:
+		fmt.sbprintf(&builder, "the boot program, at the offset 0x%x", state.instruction_address - known.boot_program_start)
 	case .Firmware:
 		strings.write_string(&builder, "the firmware")
 	case .Firmware_System_Management_Mode:
@@ -513,6 +555,12 @@ known_code_of :: proc(output, volume: string, firmware: Machine_Firmware) -> Kno
 	}
 	if code_size > 0 && variables_size > 0 && u64(code_size + variables_size) < FIRMWARE_FLASH_END {
 		known.firmware_flash_start = FIRMWARE_FLASH_END - u64(code_size + variables_size)
+	}
+	if log_bytes, log_err := os.read_entire_file(output, context.temp_allocator); log_err == nil {
+		if base, size, ok := boot_program_range_of_log(string(log_bytes)); ok {
+			known.boot_program_start = base
+			known.boot_program_size = size
+		}
 	}
 	return known
 }

@@ -223,6 +223,8 @@ Efi_Loaded_Image :: struct {
 	reserved:          rawptr,
 	load_options_size: u32,
 	load_options:      rawptr, // The optional data of the boot option that started this program.
+	image_base:        rawptr, // Physical address where the firmware loaded this image.
+	image_size:        u64, // Size in bytes of this loaded image.
 }
 
 // One node of a device path: a type, a subtype and the bytes of the node,
