@@ -590,6 +590,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		fail("the device has no virtio registers in the memory that it received")
 	}
 	start(ctx.handles[pci.GRANT_QUEUES])
+	sound_mixer_service_init()
 
 	for {
 		wait := system.wait_begin() // An interrupt of the device is an event.
@@ -610,6 +611,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 				device_failed(USED_PROBLEM_TEXTS[problem])
 			}
+			sound_mixer_observe_period(periods.next_frame, system.nanoseconds())
 			answered = taken(taken_end) || answered
 		}
 		if virtio.used_ready(&control_queue) {

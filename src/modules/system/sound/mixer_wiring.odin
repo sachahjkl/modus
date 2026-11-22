@@ -16,6 +16,13 @@ sound_mixer_service_init :: proc "contextless" () {
 	sound_mixer_ready = true
 }
 
+sound_mixer_observe_period :: proc "contextless" (frame_count, now_ns: u64) {
+	if !sound_mixer_ready {
+		return
+	}
+	_ = sound_mixer.clock_drift_observe(&sound_live_drift, frame_count, now_ns)
+}
+
 sound_capture_indicator_visible :: proc "contextless" () -> bool {
 	if !sound_mixer_ready {
 		return false

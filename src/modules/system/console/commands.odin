@@ -959,6 +959,7 @@ commands_start :: proc "contextless" () {
 	// It runs in the second thread, so the list on the screen stays. The
 	// bounds that it measures: (docs/CONSOLE.md, "4. The bounds, and the cost of one key").
 	command("measure_completion", {}, .Table, "measure one key of the completion list", measure_completion)
+	command("locale", {.Text}, .Text, "set or read the active CLDR locale (en or fr)", locale_command)
 	debugger_commands_start()
 	tables_start()
 	facts_start() // facts.odin

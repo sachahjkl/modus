@@ -685,6 +685,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// The layout at the default scale until the settings page is read
 	// below: a page that the root service created holds it.
 	desktop_scale_take(settings.choice_default(), true)
+	desktop_features_init(i32(desktop_width), i32(desktop_height), i32(BAR_HEIGHT))
 	// The background, the mark of the bar and the measures draw in the dark
 	// appearance: the settings are read below, and a change of the
 	// appearance draws the background and the mark again.
@@ -760,6 +761,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		palette_wait(&wait) // palette.odin
 		now := system.wait_end(&wait, deadline)
+		desktop_features_tick(now) // desktop_features.odin
 		quality_turn_start() // quality_measures.odin
 		if display.settings_page != nil {
 			// The root service changes the appearance in force alone, with
@@ -824,6 +826,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					// The palette took the key.
 				case clipboard_key(character, u32(record.values[3]), record.values[2] != 0):
 					// A key of the clipboard goes to no process (clipboard.odin).
+				case desktop_shortcut_key(u32(record.values[0]), character, record.values[2] != 0, u32(record.values[3])):
+					// Workspace switch, window snap, or magnifier toggle (desktop_features.odin).
 				case order_count > 0:
 					in_front := order[order_count - 1]
 					send(&clients[in_front], .Key, quality_key_values(in_front, record.values))
@@ -1139,6 +1143,7 @@ client_remove :: proc "contextless" (memory: system.Handle) {
 		if capture.client == index {
 			capture_end("its service stopped") // capture.odin
 		}
+		desktop_window_closed(index) // desktop_features.odin
 		quality_window_gone(index) // quality_measures.odin
 		window_queue_close(index) // window_events.odin
 		system.ring_close(&client.ring)
@@ -1195,6 +1200,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 		return
 	}
 	client.created = true
+	desktop_window_opened(index) // desktop_features.odin
 	client.pictures = ([^]graphics.Color)(address)
 	client.surface = {pixels = client.pictures, width = int(screen_width), height = int(screen_height), stride = int(screen_width)}
 	client.surface_serial, client.surface_scale = 1, surface_scale
@@ -1307,6 +1313,7 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 	// starts the process. Any press closes the menu.
 	// The menu of the windows: its button opens it, and a press on a line
 	// brings the window to the front.
+	desktop_magnifier_track(i32(pointer_x), i32(pointer_y))
 	capture_popover_pointer_move(pointer_x, pointer_y)
 	if menu_open != .None {
 		over := menu_open == .Start ? bar.line_at(bar_layout, pointer_x, pointer_y) : bar.windows_line_at(bar_layout, order_count, pointer_x, pointer_y)
