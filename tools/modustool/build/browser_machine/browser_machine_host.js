@@ -442,6 +442,126 @@ export function writeBootRecord(memory, layout, { bootImageSize, framebufferWidt
   return layout.record;
 }
 
+// The object cache of the page (browser_machine.md, "The object cache of
+// the page"): a read-only fetch of objects by hash from a server that the
+// page names. The bridge trusts no byte: the system checks the hash of each
+// blob and the signer of each realisation (browser_cache.odin of
+// modus:contract/object_cache). It only keeps the request to one path of
+// one kind and one hash, and the body under the bound of its kind.
+
+// The words of Browser_Cache_Object_Kind and of Browser_Cache_Status. A
+// host test of the tool compares them with the enums.
+export const BrowserCacheObjectKind = { Blob: 1, Realisation: 2 };
+Object.freeze(BrowserCacheObjectKind);
+export const BrowserCacheStatus = { Ok: 0, Absent: 1, Hash_Mismatch: 2, Too_Large: 3, Not_Configured: 4, Invalid_Request: 5, Transport_Error: 6, Malformed_Record: 7, Untrusted_Signer: 8, Bad_Signature: 9 };
+Object.freeze(BrowserCacheStatus);
+// BROWSER_CACHE_OBJECT_LIMIT and REALISATION_WIRE_SIZE of the contract.
+export const BROWSER_CACHE_OBJECT_LIMIT = 16777216;
+export const REALISATION_WIRE_SIZE = 164;
+const BROWSER_CACHE_HASH = /^[0-9a-f]{64}$/;
+const BROWSER_CACHE_ZERO_HASH = "0".repeat(64);
+
+// cacheBaseUrlCheck gives the base address of an object cache, or "" when
+// text names none that the page may fetch: only http: and https:, with no
+// user, no password, no query and no fragment. A final "/" is dropped, so
+// each path of the bridge starts with its own "/".
+export function cacheBaseUrlCheck(text) {
+  if (typeof text !== "string" || text === "" || /[\s\\]/.test(text) || text.includes("#") || text.includes("?")) return "";
+  let url;
+  try { url = new URL(text); } catch { return ""; }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return "";
+  if (url.username || url.password || url.search || url.hash) return "";
+  const path = url.pathname.replace(/\/+$/, "");
+  if (path.split("/").some((part) => part === "." || part === ".." || /%2e|%2f|%5c/i.test(part))) return "";
+  return url.origin + path;
+}
+
+// browserCacheBodyLimit gives the largest body of a kind; 0 for a word
+// that names no kind.
+export function browserCacheBodyLimit(kind) {
+  if (kind === BrowserCacheObjectKind.Blob) return BROWSER_CACHE_OBJECT_LIMIT;
+  if (kind === BrowserCacheObjectKind.Realisation) return REALISATION_WIRE_SIZE;
+  return 0;
+}
+
+export class ObjectCacheBridge {
+  // baseUrl is checked here; fetchProcedure is fetch of the runtime, and a
+  // test gives its own.
+  constructor({ baseUrl = "", fetchProcedure = globalThis.fetch } = {}) {
+    this.baseUrl = cacheBaseUrlCheck(baseUrl);
+    this.fetchProcedure = fetchProcedure;
+  }
+  get configured() {
+    return this.baseUrl !== "";
+  }
+  // urlOf gives the address of the object of kind and hash, or "" for a
+  // request that names no object.
+  urlOf(kind, hash) {
+    if (!this.configured || typeof hash !== "string" || !BROWSER_CACHE_HASH.test(hash) || hash === BROWSER_CACHE_ZERO_HASH) return "";
+    if (kind === BrowserCacheObjectKind.Blob) return this.baseUrl + "/blobs/" + hash;
+    if (kind === BrowserCacheObjectKind.Realisation) return this.baseUrl + "/realisations/" + hash;
+    return "";
+  }
+  // fetchObject gives { status, bytes }: bytes only with Ok, and never
+  // more than the bound of the kind. Ok says only that the server answered:
+  // the system checks the bytes.
+  async fetchObject(kind, hash) {
+    if (!this.configured) return { status: BrowserCacheStatus.Not_Configured, bytes: null };
+    const url = this.urlOf(kind, hash);
+    if (!url) return { status: BrowserCacheStatus.Invalid_Request, bytes: null };
+    const limit = browserCacheBodyLimit(kind);
+    let response;
+    try {
+      response = await this.fetchProcedure(url, { method: "GET", mode: "cors", credentials: "omit", redirect: "error", referrerPolicy: "no-referrer" });
+    } catch {
+      return { status: BrowserCacheStatus.Transport_Error, bytes: null };
+    }
+    if (response.status === 404) return { status: BrowserCacheStatus.Absent, bytes: null };
+    if (!response.ok) return { status: BrowserCacheStatus.Transport_Error, bytes: null };
+    const declared = Number(response.headers?.get?.("content-length") ?? NaN);
+    if (Number.isFinite(declared) && declared > limit) {
+      response.body?.cancel?.().catch?.(() => {});
+      return { status: BrowserCacheStatus.Too_Large, bytes: null };
+    }
+    // The body is read in its chunks and stopped past the bound: a server
+    // that lies about its length never fills the memory of the page.
+    const chunks = [];
+    let size = 0;
+    try {
+      const reader = response.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > limit) {
+          reader.cancel().catch(() => {});
+          return { status: BrowserCacheStatus.Too_Large, bytes: null };
+        }
+        chunks.push(value);
+      }
+    } catch {
+      return { status: BrowserCacheStatus.Transport_Error, bytes: null };
+    }
+    const bytes = new Uint8Array(size);
+    let at = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, at);
+      at += chunk.byteLength;
+    }
+    return { status: BrowserCacheStatus.Ok, bytes };
+  }
+}
+
+// trustDescriptionHashParse reads the file <image>.trust that the tool
+// writes beside a signed boot image of the page: 64 hexadecimal digits and
+// an optional line feed. It gives the 32 bytes, or null for any other text.
+export function trustDescriptionHashParse(text) {
+  if (typeof text !== "string") return null;
+  const digits = text.endsWith("\n") ? text.slice(0, -1) : text;
+  if (!/^[0-9a-f]{64}$/.test(digits) || digits === BROWSER_CACHE_ZERO_HASH) return null;
+  return Uint8Array.from(digits.match(/../g), (pair) => parseInt(pair, 16));
+}
+
 // The machine: one instance of the kernel, its memory and its devices, on
 // one processor. The caller gives the clock and the idle wait of its
 // runtime: Atomics.wait in Node and in a worker with shared memory; with
@@ -451,7 +571,7 @@ export function writeBootRecord(memory, layout, { bootImageSize, framebufferWidt
 // its reset: the boot record then names the time of the page before the
 // kernel as its firmware time.
 export class BrowserMachine {
-  constructor({ kernelModule, bootImage, trustDescriptionHash = null, memoryMebibytes = 256, framebufferWidth = 0, framebufferHeight = 0, clockNanoseconds, idleWait, onSerialLine = () => {}, onConsoleLine = () => {}, onConsoleBytes = () => {}, onStop = () => {} }) {
+  constructor({ kernelModule, bootImage, trustDescriptionHash = null, memoryMebibytes = 256, framebufferWidth = 0, framebufferHeight = 0, cacheBaseUrl = "", clockNanoseconds, idleWait, onSerialLine = () => {}, onConsoleLine = () => {}, onConsoleBytes = () => {}, onStop = () => {} }) {
     this.kernelModule = kernelModule;
     this.bootImage = bootImage ?? new Uint8Array(0);
     this.trustDescriptionHash = trustDescriptionHash;
@@ -467,6 +587,7 @@ export class BrowserMachine {
     this.interruptLines = 0;
     this.keyboard = new Ps2Controller((line) => { this.interruptLines |= 1 << line; });
     this.clock = new MachineClock(() => Date.now());
+    this.objectCache = new ObjectCacheBridge({ baseUrl: cacheBaseUrl });
     this.state = MachineState.Created;
     this.stopCode = null;
     this.trap = null;

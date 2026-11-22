@@ -6,9 +6,12 @@ import "core:reflect"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
+import "modus:contract/blake3"
 import info "modus:contract/boot_info"
+import "modus:contract/object_cache"
 import "internal:dom_terminal/dom_protocol"
 import "modus:contract/start_list"
+import "modus:contract/system_description"
 import terminal_records "modus:terminal"
 import "modustool:foundation"
 
@@ -411,13 +414,35 @@ browser_machine_host_puts_the_console_on_com2 :: proc(t: ^testing.T) {
 	testing.expect(t, terminal_records.SERIAL_PORT_FIRST + terminal_records.SERIAL_PORT_COUNT <= 0x3F8 || terminal_records.SERIAL_PORT_FIRST >= 0x3F8 + terminal_records.SERIAL_PORT_COUNT)
 	page := BROWSER_MACHINE_CONSOLE_PAGE_TEXT
 	testing.expect(t, strings.has_prefix(page, "<!doctype html>"))
-	testing.expect(t, strings.contains(page, "from \"./" + BROWSER_MACHINE_HOST_FILE + "\""))
-	testing.expect(t, strings.contains(page, "fetch(\"./" + BROWSER_MACHINE_KERNEL_FILE + "\")"))
-	testing.expect(t, strings.contains(page, "fetch(\"./" + BROWSER_MACHINE_CONSOLE_IMAGE_FILE + "\")"))
-	testing.expect(t, strings.contains(page, "onConsoleLine:"))
+	// The document runs no machine: it starts the worker of the browser
+	// machine with the kernel and the console image, and never imports the
+	// host.
+	testing.expect(t, strings.contains(page, "new Worker(\"./browser_machine_worker.js\", { type: \"module\" })"))
+	testing.expect(t, !strings.contains(page, BROWSER_MACHINE_HOST_FILE))
+	testing.expect(t, !strings.contains(page, "new BrowserMachine"))
+	testing.expect(t, !strings.contains(page, "runSlice"))
+	testing.expect(t, strings.contains(page, "kernelUrl: \"./" + BROWSER_MACHINE_KERNEL_FILE + "\""))
+	testing.expect(t, strings.contains(page, "bootImageUrl: \"./" + BROWSER_MACHINE_CONSOLE_IMAGE_FILE + "\""))
+	testing.expect(t, strings.contains(page, "memoryMebibytes: 512"))
+	testing.expect(t, strings.contains(page, "case \"console\": {"))
 	testing.expect(t, strings.contains(page, "JSON.parse(line)"))
-	testing.expect(t, strings.contains(page, "machine.consolePort.type(text)"))
+	testing.expect(t, strings.contains(page, "worker.postMessage({ kind: \"console_type\", text })"))
 	testing.expect(t, !strings.contains(page, "machine.serial.input"))
+	// The worker sends the lines of COM2 in batches, types the text of the
+	// page on COM2, and gives the trust of the image to the host.
+	worker := ""
+	page_files := BROWSER_MACHINE_PAGE_FILES
+	for file in page_files {
+		if file.name == "browser_machine_worker.js" {
+			worker = file.text
+		}
+	}
+	testing.expect(t, strings.contains(worker, "onConsoleLine: (line) => pendingConsoleLines.push(line),"))
+	testing.expect(t, strings.contains(worker, "self.postMessage({ kind: \"console\", lines: pendingConsoleLines });"))
+	testing.expect(t, strings.contains(worker, "case \"console_type\":"))
+	testing.expect(t, strings.contains(worker, "machine.consolePort.type(message.text)"))
+	testing.expect(t, strings.contains(worker, "bootImageUrl + \"" + BROWSER_MACHINE_TRUST_SUFFIX + "\""))
+	testing.expect(t, strings.contains(worker, "trustDescriptionHash,"))
 	// The site publishes the desktop page only: the console page needs its
 	// own image, which the site does not write.
 	files := BROWSER_MACHINE_PAGE_FILES
@@ -447,6 +472,82 @@ browser_machine_console_page_draws_the_dom_protocol :: proc(t: ^testing.T) {
 	for part in ([?]string{"id=\"output\"", "id=\"prompt-bar\"", "id=\"hint-bar\"", "id=\"status-bar\"", "id=\"completion-popup\"", "data-theme", "OUTPUT_LINE_LIMIT = 4000", "addEventListener(\"paste\"", "getSelection()"}) {
 		testing.expectf(t, strings.contains(page, part), "the console page holds no %q", part)
 	}
+	// The borders of a line of the system: bounds, closed sets of names, a
+	// color of six digits only, a record kind of the page's own table, and
+	// text through textContent.
+	borders := [?]string {
+		"LINE_SPAN_LIMIT = 256",
+		"LIST_ROW_LIMIT = 8",
+		"HEX_COLOR = /^#[0-9a-f]{6}$/",
+		"const TONES = new Set([",
+		"const CODE_KINDS = new Set([",
+		"const ICONS = new Set([",
+		"if (!Object.hasOwn(records, record.t)) return;",
+		"node.textContent = text;",
+		"node.style.backgroundColor = color || \"var(--text)\";",
+	}
+	for part in borders {
+		testing.expectf(t, strings.contains(page, part), "the console page holds no %q", part)
+	}
+	testing.expect_value(t, strings.count(page, "<script"), 1)
+	testing.expect(t, !strings.contains(page, "<script src"))
+}
+
+// The trust beside a signed image of the page is the BLAKE3 hash of its
+// description, in lowercase hexadecimal; an image with no description, or
+// with a signature of the wrong size, gives none.
+@(test)
+browser_machine_trust_is_the_hash_of_the_description :: proc(t: ^testing.T) {
+	description := "a system description"
+	signature: [system_description.SIGNATURE_SIZE]u8
+	signed := []Image_File{{name = "root", file = transmute([]u8)string("root")}, {name = system_description.RESOURCE_DESCRIPTION, file = transmute([]u8)description}, {name = system_description.RESOURCE_SIGNATURE, file = signature[:]}}
+	unsigned := signed[:2]
+	short_signature := []Image_File{signed[0], signed[1], {name = system_description.RESOURCE_SIGNATURE, file = signature[:len(signature) - 1]}}
+	swapped := []Image_File{signed[0], signed[2], signed[1]}
+	for files in ([][]Image_File{unsigned, short_signature, swapped}) {
+		_, found := browser_machine_trust_hash_hex(boot_image_encode(files, 1))
+		testing.expect(t, !found)
+	}
+	_, found := browser_machine_trust_hash_hex(nil)
+	testing.expect(t, !found)
+
+	hex: string
+	hex, found = browser_machine_trust_hash_hex(boot_image_encode(signed, 1))
+	testing.expect(t, found)
+	hash := blake3.hash(transmute([]u8)description)
+	expected := strings.builder_make(context.temp_allocator)
+	for value in hash {
+		fmt.sbprintf(&expected, "%02x", value)
+	}
+	testing.expect_value(t, hex, strings.to_string(expected))
+}
+
+// The words of the object cache of the page are the words of the
+// contract, and the bridge fetches with no credentials, no referrer and no
+// redirect, from an address of http: or https: only.
+@(test)
+browser_machine_host_object_cache_matches_the_contract :: proc(t: ^testing.T) {
+	text := browser_machine_host_text()
+	statuses := host_object_numbers(t, "BrowserCacheStatus")
+	testing.expect_value(t, len(statuses), len(object_cache.Browser_Cache_Status))
+	for status in object_cache.Browser_Cache_Status {
+		value, named := statuses[reflect.enum_string(status)]
+		testing.expectf(t, named && value == int(status), "BrowserCacheStatus.%v is %d, named %v", status, value, named)
+	}
+	kinds := host_object_numbers(t, "BrowserCacheObjectKind")
+	testing.expect_value(t, len(kinds), len(object_cache.Browser_Cache_Object_Kind))
+	for kind in object_cache.Browser_Cache_Object_Kind {
+		value, named := kinds[reflect.enum_string(kind)]
+		testing.expectf(t, named && value == int(kind), "BrowserCacheObjectKind.%v is %d, named %v", kind, value, named)
+	}
+	testing.expect(t, strings.contains(text, fmt.tprintf("export const BROWSER_CACHE_OBJECT_LIMIT = %d;", object_cache.BROWSER_CACHE_OBJECT_LIMIT)))
+	testing.expect(t, strings.contains(text, fmt.tprintf("export const REALISATION_WIRE_SIZE = %d;", object_cache.REALISATION_WIRE_SIZE)))
+	testing.expect(t, strings.contains(text, "this.baseUrl + \"" + object_cache.BROWSER_CACHE_BLOB_PREFIX + "\" + hash"))
+	testing.expect(t, strings.contains(text, "this.baseUrl + \"" + object_cache.BROWSER_CACHE_REALISATION_PREFIX + "\" + hash"))
+	for part in ([?]string{"credentials: \"omit\"", "redirect: \"error\"", "referrerPolicy: \"no-referrer\"", "const BROWSER_CACHE_HASH = /^[0-9a-f]{64}$/;", "if (url.protocol !== \"https:\" && url.protocol !== \"http:\") return \"\";", "if (url.username || url.password || url.search || url.hash) return \"\";", "if (size > limit) {"}) {
+		testing.expectf(t, strings.contains(text, part), "the host holds no %q", part)
+	}
+	testing.expect(t, strings.contains(text, "this.objectCache = new ObjectCacheBridge({ baseUrl: cacheBaseUrl });"))
 }
 
 // A base image of the test with every module of the module table and the

@@ -1,10 +1,11 @@
 // The worker of the processor of a browser machine
 // (src/md/features/browser_machine.md, "The constraints": the thread of the
 // document never runs a processor). It runs the kernel with the host of
-// browser_machine_host.js, sends the lines of the serial port and the
+// browser_machine_host.js, sends the lines of the serial ports and the
 // pixels of the framebuffer to the page, and gives the keys and the
-// pointer of the page to the PS/2 controller.
-import { BrowserMachine, LoopResult, MachineState } from "./browser_machine_host.js";
+// pointer of the page to the PS/2 controller, and the text of the console
+// page to COM2.
+import { BrowserMachine, LoopResult, MachineState, trustDescriptionHashParse } from "./browser_machine_host.js";
 
 // The time of one slice of the loop before the worker reads its messages.
 const SLICE_NANOSECONDS = 8000000;
@@ -22,16 +23,23 @@ const idleWait = (boundNanoseconds) => {
 
 let machine = null;
 let pendingLines = [];
+let pendingConsoleLines = [];
 
 // A slice ends with a yield to the event loop of the worker, through a
 // message: a timer of 0 ms is clamped to 4 ms after a few calls.
 const yieldChannel = new MessageChannel();
 yieldChannel.port1.onmessage = () => loop();
 
+// The lines of a slice go in one message for each port: a message for
+// each line would cost the page more than the line.
 function postState() {
   if (pendingLines.length) {
     self.postMessage({ kind: "serial", lines: pendingLines });
     pendingLines = [];
+  }
+  if (pendingConsoleLines.length) {
+    self.postMessage({ kind: "console", lines: pendingConsoleLines });
+    pendingConsoleLines = [];
   }
   self.postMessage({
     kind: "state",
@@ -52,27 +60,49 @@ function loop() {
   else yieldChannel.port2.postMessage(null);
 }
 
-async function start({ kernelUrl, bootImageUrl, memoryMebibytes, width, height }) {
+// trustOf reads <image>.trust, the hash of the system description of a
+// signed boot image of the page. No file: no trust, and a line says so. A
+// file that is not one hash stops the start: a damaged trust is not an
+// absent one.
+async function trustOf(bootImageUrl) {
+  const trustUrl = bootImageUrl + ".trust";
+  const response = await fetch(trustUrl);
+  if (!response.ok) {
+    pendingLines.push("page: no trust at " + trustUrl + ": the machine starts with no trust of its description");
+    return null;
+  }
+  const hash = trustDescriptionHashParse(await response.text());
+  if (!hash) throw new Error("the trust at " + trustUrl + " is not the hash of one description");
+  return hash;
+}
+
+async function start({ kernelUrl, bootImageUrl, memoryMebibytes, width = 0, height = 0, cacheBaseUrl = "" }) {
   const kernelModule = await WebAssembly.compileStreaming(fetch(kernelUrl));
   const response = await fetch(bootImageUrl);
   const bootImage = response.ok ? new Uint8Array(await response.arrayBuffer()) : undefined;
   if (!response.ok) pendingLines.push("page: no boot image at " + bootImageUrl + ": the kernel starts with none");
+  const trustDescriptionHash = bootImage ? await trustOf(bootImageUrl) : null;
   machine = new BrowserMachine({
     kernelModule,
     bootImage,
+    trustDescriptionHash,
     memoryMebibytes,
     framebufferWidth: width,
     framebufferHeight: height,
+    cacheBaseUrl,
     clockNanoseconds,
     idleWait,
     onSerialLine: (line) => pendingLines.push(line),
+    onConsoleLine: (line) => pendingConsoleLines.push(line),
   });
+  if (cacheBaseUrl && !machine.objectCache.configured) pendingLines.push("page: the object cache address is refused: the machine has no object cache");
   await machine.start();
   loop();
 }
 
 self.onmessage = (event) => {
   const message = event.data;
+  if (!message || typeof message !== "object") return;
   switch (message.kind) {
     case "start":
       start(message).catch((error) => self.postMessage({ kind: "state", state: MachineState.Trapped, trap: String(error.stack || error) }));
@@ -82,6 +112,9 @@ self.onmessage = (event) => {
       return;
     case "pointer":
       if (machine) machine.keyboard.pointer(message.deltaX, message.deltaY, message.buttons);
+      return;
+    case "console_type":
+      if (machine && typeof message.text === "string") machine.consolePort.type(message.text);
       return;
     case "frame": {
       // A copy, not a view: the memory of the machine is not transferable.
