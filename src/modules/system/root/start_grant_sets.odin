@@ -325,30 +325,30 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	{name = "wiring", grants = {.System_Part}},
 	// The delegated powerbox service: its service ring, trusted display
 	// ring and transfer region. It holds no root ring and no ambient authority.
-	{name = "powerbox", grants = {.System_Part}},
+	{name = "powerbox", grants = {.System_Part, .Serve}},
 	// The delegated collector service: its service ring and transfer region
 	// for hash-chained act records and wide-grant enforcement.
-	{name = "collector", grants = {.System_Part}},
+	{name = "collector", grants = {.System_Part, .Serve}},
 	// The delegated plans service: its service ring and transfer region for
 	// plan diffs, trusted display consent checks, atomic apply, and rollback.
-	{name = "plans", grants = {.System_Part}},
+	{name = "plans", grants = {.System_Part, .Serve}},
 	// The delegated recipes service: its service ring and transfer region for
 	// cache verification, sandboxed builds, and provenance queries.
-	{name = "recipes", grants = {.System_Part}},
+	{name = "recipes", grants = {.System_Part, .Serve}},
 	// The delegated projects service: its service ring and transfer region for
 	// pins.lex inspection, source updates, and ephemeral project consoles.
-	{name = "projects", grants = {.System_Part}},
+	{name = "projects", grants = {.System_Part, .Serve}},
 	// The delegated disk_processes service: read-only module_files catalog,
 	// iterative import validation, debug-object lookups, and Start_From_Bytes
 	// preparation. Holds no root ring and no machine authority.
-	{name = "disk_processes", grants = {.System_Part}},
+	{name = "disk_processes", grants = {.System_Part, .Serve}},
 	// The delegated devices service: PCI identity table matching and
 	// attenuated per-device grant minting. Holds no root ring.
-	{name = "devices", grants = {.System_Part}},
+	{name = "devices", grants = {.System_Part, .Serve}},
 	// The delegated principals service: named principals, session lifecycle,
 	// disk grant tables, remote client keys, and principal 0 start policy
 	// choice. Holds no root ring and no machine authority.
-	{name = "principals", grants = {.System_Part}},
+	{name = "principals", grants = {.System_Part, .Serve}},
 	// Only the image of the test of a shortage of frames holds it: its
 	// start list asks for it, and shortage_start gives it the machine with Inspect and
 	// Stop; a command Start of another sender gives it no grant.

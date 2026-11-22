@@ -800,7 +800,7 @@ The root service gives each process of the boot image the start grant set of its
 - a row that names no module of the boot image, a disk process or the root service;
 - a module with two rows;
 - a grant that is no member of `start_grant.Grant`;
-- the grant System_Part on a row that the list `system_part_names` of the same file does not name, a name of that list with no row, and a part of the system whose row is not System_Part alone, with Serve beside it for the compositor, and no term: the debug access refuses a part of the system by that grant;
+- the grant System_Part on a row that the list `system_part_names` of the same file does not name, a name of that list with no row, and a part of the system whose row is not System_Part alone, with Serve beside it for serving system parts (`compositor`, `powerbox`, `collector`, `plans`, `recipes`, `projects`, `disk_processes`, `devices`, `principals`), and no term: the debug access refuses a part of the system by that grant;
 - the grant Start_Policy on a row other than `start_policy`, a row `start_policy` without it, and that row with another grant beside it;
 - a row in another form than `{name = "<module>", grants = {.A, .B}, terms = {...}}` with no type, or terms that hold a comment.
 

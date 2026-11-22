@@ -21,9 +21,20 @@ START_GRANT_SETS_TABLE :: "start_grant_sets"
 // that the root service starts itself, with handles that no grant names.
 SYSTEM_PART_NAMES_LIST :: "system_part_names"
 
-// The one part of the system whose row holds Serve beside System_Part: its
-// exports serve the processes, and its starter gives it a service ring.
-SYSTEM_PART_THAT_SERVES :: "compositor"
+// The parts of the system whose rows hold Serve beside System_Part: their
+// exports serve callers through a service ring given at start.
+@(rodata)
+SYSTEM_PARTS_THAT_SERVE := [?]string{
+	"compositor",
+	"powerbox",
+	"collector",
+	"plans",
+	"recipes",
+	"projects",
+	"disk_processes",
+	"devices",
+	"principals",
+}
 
 // start_grant_sets_problems gives each fault of the rows against the modules
 // of a build and the parts of the system: a module with an entry in the
@@ -70,7 +81,7 @@ start_grant_sets_problems :: proc(rows: []foundation.Start_Grant_Set_Row, system
 		case has_system_part && !system_part:
 			append(&problems, fmt.tprintf("%s, line %d: the row %s has the grant System_Part, and %s is not in %s: no starter of the root service gives it the handles of a part of the system", file, row.line, row.name, row.name, SYSTEM_PART_NAMES_LIST))
 		case system_part && row.name != ROOT_SERVICE_MODULE && !system_part_grants_hold(row):
-			append(&problems, fmt.tprintf("%s, line %d: the row %s of a part of the system has the grants %v and the terms \"%s\": it has System_Part, Serve beside it for %s only, and no term", file, row.line, row.name, row.grants, row.terms, SYSTEM_PART_THAT_SERVES))
+			append(&problems, fmt.tprintf("%s, line %d: the row %s of a part of the system has the grants %v and the terms \"%s\": it has System_Part, Serve beside it for serving system parts only, and no term", file, row.line, row.name, row.grants, row.terms))
 		}
 	}
 	for build in builds {
@@ -95,7 +106,7 @@ start_grant_sets_problems :: proc(rows: []foundation.Start_Grant_Set_Row, system
 system_part_grants_hold :: proc(row: foundation.Start_Grant_Set_Row) -> bool {
 	expected := make([dynamic]string, context.temp_allocator)
 	append(&expected, start_grant.GRANT_NAMES[.System_Part])
-	if row.name == SYSTEM_PART_THAT_SERVES {
+	if slice.contains(SYSTEM_PARTS_THAT_SERVE[:], row.name) {
 		append(&expected, start_grant.GRANT_NAMES[.Serve])
 	}
 	if row.terms != "" || len(row.grants) != len(expected) {
