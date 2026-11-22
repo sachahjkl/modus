@@ -297,6 +297,144 @@ Gpu_Driver_Failed :: struct {
 	device: u32,
 }
 
+// The tables of this service after the stop of a process that can ask for
+// wirings: the measure record reads its start (OWN_TABLES_MEASURE_LINE).
+@(log_fact = "root: the tables of this service after the stop of {stopped_process}: {handles} handles, {prepared_parts} of them prepared parts, and {mappings} mappings, of {capacity} each")
+Own_Tables_Measured :: struct {
+	handles:         u64,
+	prepared_parts:  u64,
+	mappings:        u64,
+	capacity:        u64,
+	stopped_process: value_kinds.Module_Name_Field,
+}
+
+// A start found a table of this service full, and the kernel gave no
+// report of the tables.
+@(log_fact = "root: the start of {started_process} found a table full; the kernel gives no report of the tables of this service")
+Own_Tables_Full_Unreported :: struct {
+	started_process: value_kinds.Module_Name_Field,
+}
+
+// A start found a table of this service full: the count of each table.
+@(log_fact = "root: the start of {started_process} found a table full: this service holds {mappings} mappings and {handles} handles, {prepared_parts} of them prepared parts, of {capacity} each")
+Own_Tables_Full :: struct {
+	mappings:        u64,
+	handles:         u64,
+	prepared_parts:  u64,
+	capacity:        u64,
+	started_process: value_kinds.Module_Name_Field,
+}
+
+// The root ring of a chosen start policy does not fit the wait of the loop.
+@(log_fact = "root: cannot start the start policy {refused_process}: its root ring makes {words} words of the wait of the loop of this service, past its {word_limit}; the queues of the wait are full")
+Start_Policy_Wait_Full :: struct {
+	words:           u64,
+	word_limit:      u64,
+	refused_process: value_kinds.Module_Name_Field,
+}
+
+// The wait of the loop did not fit: written once.
+@(log_fact = "root: the wait of the loop holds more words than {word_capacity}: each wait ends at once, and the queues past it are not waited on")
+Root_Wait_Full :: struct {
+	word_capacity: u64,
+}
+
+// The delegated wiring service did not start. The status is its number,
+// as the line wrote it.
+@(log_fact = "root: cannot start wiring service: status {status_number}")
+Wiring_Service_Start_Failed :: struct {
+	status_number: u64,
+}
+
+// The delegated wiring service started, within its bound of starts.
+@(log_fact = "root: started delegated wiring service (start {starts} of {start_limit})")
+Wiring_Service_Started :: struct {
+	starts:      u64,
+	start_limit: u64,
+}
+
+@(log_fact = "root: delegated wiring service stopped")
+Wiring_Service_Stopped :: struct {}
+
+// The wiring service ended the wirings of a process whose grant wirings
+// was revoked.
+@(log_fact = "root: revoked the grant wirings of {target}, wirings ended: {ended}")
+Wirings_Revoked :: struct {
+	ended:  u64,
+	target: value_kinds.Module_Name_Field,
+}
+
+// The delegated devices service did not start.
+@(log_fact = "root: cannot start the devices service: status {status}")
+Devices_Service_Start_Failed :: struct {
+	status: op.Status,
+}
+
+// The delegated devices service started, within its bound of starts.
+@(log_fact = "root: started the delegated devices service (start {starts} of {start_limit})")
+Devices_Service_Started :: struct {
+	starts:      u64,
+	start_limit: u64,
+}
+
+@(log_fact = "root: the delegated devices service stopped")
+Devices_Service_Stopped :: struct {}
+
+// The devices service stopped or gave no answer while it classified the
+// bus: it is stopped, and started again within its bound.
+@(log_fact = "root: the devices service gave no answer for a device of the bus (start {starts}): it is stopped")
+Devices_Service_Silent :: struct {
+	starts: u64,
+}
+
+// The devices service classified the bus before any device service.
+@(log_fact = "root: the devices service classified {classified} of the {looked_up} devices of the bus")
+Bus_Classified :: struct {
+	classified: u64,
+	looked_up:  u64,
+}
+
+// The devices service did not classify the bus within its bound of starts.
+@(log_fact = "root: the devices service did not classify the bus in {start_limit} starts: no device service starts, so the machine has no data disk, no network device, no sound device and no entropy device")
+Devices_Service_Absent :: struct {
+	start_limit: u64,
+}
+
+@(log_fact = "root: cannot read the configuration of the bus: status {status}: no device service starts")
+Bus_Configuration_Unread :: struct {
+	status: op.Status,
+}
+
+@(log_fact = "root: the bus holds more than {capacity} devices of a known class: the devices past them get no device service")
+Classified_Devices_Full :: struct {
+	capacity: u64,
+}
+
+// A device service whose device the devices service did not classify,
+// because no devices service answered.
+@(log_fact = "root: no devices service classified the bus: {service} does not start for the device {device} of the bus {bus}")
+Device_Unclassified :: struct {
+	device:  u64,
+	bus:     u64,
+	service: value_kinds.Module_Name_Field,
+}
+
+// The devices service answered a notice of a binding with a status that
+// names no member.
+@(log_fact = "root: the devices service answered with the status word {status_word}, which names no status")
+Devices_Answer_Refused :: struct {
+	status_word: u64,
+}
+
+// The devices service refused a notice of a binding: the core and the
+// service disagree on a device.
+@(log_fact = "root: the devices service refused a notice of a binding: status word {status_word}, values {first_value} and {second_value}")
+Devices_Notice_Refused :: struct {
+	status_word:  u64,
+	first_value:  u64,
+	second_value: u64,
+}
+
 // The fields of a name: the writers of the facts above fill them with the
 // procedures of the contract, whose host tests give the edges of a cut.
 module_name_field :: value_kinds.module_name_field

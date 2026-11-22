@@ -11,6 +11,7 @@ package root
 
 import info "modus:contract/boot_info"
 import op "modus:contract/operation"
+import rd "modus:contract/root_delegation"
 import "modus:contract/root_ring"
 import "modus:contract/start_list"
 import "modus:contract/value_kinds"
@@ -83,24 +84,27 @@ machine_parts_page_create :: proc "contextless" () {
 		parts += {.Screen}
 		width, height = u32(screen.width), u32(screen.height)
 	}
-	if configuration_open() == .Ok {
-		virtio_at := proc "contextless" (place: pci.Place, device: u32) -> bool {
-			identity := pci.read_32(place, 0)
-			return identity & 0xFFFF == pci.VENDOR_VIRTIO && identity >> 16 == device
+	// A device is a part when the devices service classified it with the
+	// class of its place: a machine whose devices service did not classify
+	// the bus has none of these parts (devices_delegation.odin).
+	if bus_classified {
+		classified_at := proc "contextless" (place: pci.Place, role: rd.Device_Class_Role) -> bool {
+			device, found := classified_device_at(place)
+			return found && device.role == role
 		}
-		if virtio_at({device = pci.DATA_DISK_DEVICE}, pci.DEVICE_VIRTIO_BLOCK) {
+		if classified_at({device = pci.DATA_DISK_DEVICE}, .Block_Device) {
 			parts += {.Data_Disk}
 		}
-		if virtio_at(scratch_disk_place(), pci.DEVICE_VIRTIO_BLOCK) {
+		if classified_at(scratch_disk_place(), .Block_Device) {
 			parts += {.Scratch_Disk}
 		}
-		if virtio_at({device = pci.NETWORK_DEVICE}, pci.DEVICE_VIRTIO_NETWORK) {
+		if classified_at({device = pci.NETWORK_DEVICE}, .Network_Device) {
 			parts += {.Network_Device}
 		}
-		if virtio_at({device = pci.SOUND_DEVICE}, pci.DEVICE_VIRTIO_SOUND) {
+		if classified_at({device = pci.SOUND_DEVICE}, .Sound_Device) {
 			parts += {.Sound_Device}
 		}
-		if virtio_at({device = pci.ENTROPY_DEVICE}, pci.DEVICE_VIRTIO_ENTROPY) {
+		if classified_at({device = pci.ENTROPY_DEVICE}, .Entropy_Device) {
 			parts += {.Entropy_Device}
 		}
 	}
@@ -325,10 +329,11 @@ start_policy_none :: proc "contextless" (cause: string) {
 }
 
 // start_policy_stopped is told of each process that stopped, before its
-// place is freed. Any stop cause of the start policy before the machine is
-// usable starts the rescue, whatever its stop outcome: a policy that
-// stopped before it said so did not make the machine usable. The line gives
-// the cause and the outcome.
+// place is freed. Any stop cause of the start policy starts the rescue,
+// whatever its stop outcome: before the machine is usable, a policy that
+// stopped did not make it usable; after, the rows that it asked for have
+// no starter left. A stop of the rescue leaves no start policy. The line
+// gives the cause and the outcome.
 start_policy_stopped :: proc "contextless" (item: ^Started, cause: op.Stop_Cause, outcome: op.Stop_Outcome) {
 	if item != start_policy_process {
 		return
@@ -338,32 +343,39 @@ start_policy_stopped :: proc "contextless" (item: ^Started, cause: op.Stop_Cause
 	// A stop of itself has its outcome; another cause has none, as the line
 	// of the stop of each process says.
 	itself := cause == .Itself
-	switch start_policy_stage {
-	case .None, .Stopping, .No_Policy:
+	usable := start_policy_stage == .Usable
+	switch start_policy_rules.stop_action(start_policy_stage, start_policy_list == .Rescue) {
+	case .Nothing:
 		// The stop was asked by this service, or the policy was no longer
 		// the one that it waits for.
-	case .Running:
-		if start_policy_list == .Rescue {
-			if itself {
-				system.log_fact(.Error, Rescue_Stopped_Before_Usable{start_policy_hash = hash, cause = cause, outcome = outcome})
-			} else {
-				system.log_fact(.Error, Rescue_Stopped_Before_Usable_Without_Outcome{start_policy_hash = hash, cause = cause})
-			}
-			start_policy_none("the rescue start policy stopped before the machine was usable")
-			return
+	case .No_Policy:
+		switch {
+		case usable && itself:
+			system.log_fact(.Error, Rescue_Stopped_After_Usable{start_policy_hash = hash, cause = cause, outcome = outcome})
+		case usable:
+			system.log_fact(.Error, Rescue_Stopped_After_Usable_Without_Outcome{start_policy_hash = hash, cause = cause})
+		case itself:
+			system.log_fact(.Error, Rescue_Stopped_Before_Usable{start_policy_hash = hash, cause = cause, outcome = outcome})
+		case:
+			system.log_fact(.Error, Rescue_Stopped_Before_Usable_Without_Outcome{start_policy_hash = hash, cause = cause})
 		}
-		if itself {
+		start_policy_none(usable ? "the rescue start policy stopped after the machine was usable" : "the rescue start policy stopped before the machine was usable")
+	case .Rescue:
+		// After Machine_Usable too: a needed row past its restart bound
+		// stops the default start policy, and its rows must not run on
+		// with no starter (src/md/features/supervision.md, "A holder that
+		// stops in a loop, and the escalation").
+		switch {
+		case usable && itself:
+			system.log_fact(.Warning, Start_Policy_Stopped_After_Usable{start_policy_hash = hash, cause = cause, outcome = outcome})
+		case usable:
+			system.log_fact(.Warning, Start_Policy_Stopped_After_Usable_Without_Outcome{start_policy_hash = hash, cause = cause})
+		case itself:
 			system.log_fact(.Warning, Start_Policy_Stopped_Before_Usable{start_policy_hash = hash, cause = cause, outcome = outcome})
-		} else {
+		case:
 			system.log_fact(.Warning, Start_Policy_Stopped_Before_Usable_Without_Outcome{start_policy_hash = hash, cause = cause})
 		}
 		start_policy_rescue_begin()
-	case .Usable:
-		if itself {
-			system.log_fact(.Warning, Start_Policy_Stopped_After_Usable{start_policy_hash = hash, cause = cause, outcome = outcome})
-		} else {
-			system.log_fact(.Warning, Start_Policy_Stopped_After_Usable_Without_Outcome{start_policy_hash = hash, cause = cause})
-		}
 	}
 }
 

@@ -128,6 +128,55 @@ a_machine_usable_that_is_not_the_first_of_the_policy_is_refused :: proc(t: ^test
 	testing.expect_value(t, refusal, [7]u64{})
 }
 
+// The stop of the start policy, in each stage, for the rescue and for
+// another policy. A stop that the root service asked for (Stopping), a
+// stop before any policy (None) and a stop with no policy (No_Policy) do
+// nothing; a stop of the rescue, before or after Machine_Usable, leaves
+// the machine with no policy; a stop of another policy, before or after
+// Machine_Usable, starts the rescue.
+@(test)
+the_stop_of_a_start_policy_escalates_before_and_after_the_machine_is_usable :: proc(t: ^testing.T) {
+	for rescue_runs in ([2]bool{false, true}) {
+		testing.expect_value(t, stop_action(.None, rescue_runs), Stop_Action.Nothing)
+		testing.expect_value(t, stop_action(.Stopping, rescue_runs), Stop_Action.Nothing)
+		testing.expect_value(t, stop_action(.No_Policy, rescue_runs), Stop_Action.Nothing)
+	}
+	testing.expect_value(t, stop_action(.Running, true), Stop_Action.No_Policy)
+	testing.expect_value(t, stop_action(.Usable, true), Stop_Action.No_Policy)
+	testing.expect_value(t, stop_action(.Running, false), Stop_Action.Rescue)
+	testing.expect_value(t, stop_action(.Usable, false), Stop_Action.Rescue)
+}
+
+// The order of a stop after Machine_Usable: the first policy said it, so a
+// second one from it is refused; the escalation passes through Stopping,
+// where Machine_Usable is refused from any sender; the rescue then runs,
+// and its own first Machine_Usable is taken, and its second refused.
+@(test)
+the_rescue_after_the_machine_is_usable_says_machine_usable_once :: proc(t: ^testing.T) {
+	stage := Stage.Running
+	first, _ := usable_decision(true, stage)
+	testing.expect_value(t, first, op.Status.Ok)
+	stage = .Usable
+	again, _ := usable_decision(true, stage)
+	testing.expect_value(t, again, op.Status.Bad_State)
+	testing.expect_value(t, stop_action(stage, false), Stop_Action.Rescue)
+	stage = .Stopping
+	for sender_runs in ([2]bool{false, true}) {
+		during, _ := usable_decision(sender_runs, stage)
+		testing.expect_value(t, during, op.Status.Bad_State)
+	}
+	stage = .Running
+	stranger, _ := usable_decision(false, stage)
+	testing.expect_value(t, stranger, op.Status.Bad_State)
+	rescue_first, rescue_refusal := usable_decision(true, stage)
+	testing.expect_value(t, rescue_first, op.Status.Ok)
+	testing.expect_value(t, rescue_refusal, [7]u64{})
+	stage = .Usable
+	rescue_again, _ := usable_decision(true, stage)
+	testing.expect_value(t, rescue_again, op.Status.Bad_State)
+	testing.expect_value(t, stop_action(stage, true), Stop_Action.No_Policy)
+}
+
 // The bound of the restarts of a start policy from the disk, edges first:
 // one past the bound, the largest count, and a full table of the counts
 // are refused with No_Budget and their records; then the bound itself, 1

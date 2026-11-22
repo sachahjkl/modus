@@ -243,11 +243,37 @@ choice_record :: proc "contextless" (refusal: Choice_Refusal) -> [7]u64 {
 }
 
 // usable_decision decides a Machine_Usable: only from the start policy that
-// runs, and only while the machine is not usable yet. Each other one is
-// refused with Exists (unit Processes) and changes nothing.
+// runs, and only while that start policy has not said it yet. Each other
+// one is refused with Exists (unit Processes) and changes nothing. A
+// rescue that starts after the machine was usable runs in the stage
+// Running again, so its own Machine_Usable is taken: the machine was
+// usable by the policy that stopped, not by the rescue.
 usable_decision :: proc "contextless" (sender_runs: bool, stage: Stage) -> (status: op.Status, refusal: [7]u64) {
 	if !sender_runs || stage != .Running {
 		return .Bad_State, errors.ring_fail(u32(root_ring.Root_Command.Machine_Usable), .Exists, .Processes)
 	}
 	return .Ok, {}
+}
+
+// What the root service does at the stop of the start policy that it
+// waits for.
+Stop_Action :: enum u8 {
+	Nothing,   // The root service asked for the stop, or no policy is waited for.
+	Rescue,    // Stop each process that the policy asked for, then start the rescue start policy.
+	No_Policy, // The rescue itself stopped: the machine runs with no start policy.
+}
+
+// stop_action decides the stop of the start policy that the root service
+// waits for. A stop before Machine_Usable and a stop after it give the
+// same escalation: the default or chosen policy gives way to the rescue,
+// and a stop of the rescue leaves the machine with no start policy, so
+// rows that a stopped policy asked for never run on with no starter.
+stop_action :: proc "contextless" (stage: Stage, rescue_runs: bool) -> Stop_Action {
+	switch stage {
+	case .None, .Stopping, .No_Policy:
+		return .Nothing
+	case .Running, .Usable:
+		return rescue_runs ? .No_Policy : .Rescue
+	}
+	return .Nothing
 }

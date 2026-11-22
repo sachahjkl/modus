@@ -25,17 +25,6 @@ Devices_Bind_Refusal :: enum u8 {
 	Invalid_Grant_Spec       = 7,
 }
 
-// Raw PCI discovery record read from bus enumeration before identity binding.
-Pci_Discovered_Device :: struct {
-	location:         rd.Pci_Location,
-	pci_vendor_id:    u16,
-	pci_device_id:    u16,
-	bars:             [rd.PCI_BAR_CAPACITY]rd.Device_Bar_Range,
-	bar_count:        u8,
-	interrupt_vector: u32,
-	has_interrupt:    bool,
-}
-
 // Active binding between a PCI bus location, its device service slot, and its
 // attenuated grant specification.
 Device_Binding :: struct {
@@ -93,7 +82,7 @@ register_identity :: proc "contextless" (state: ^Devices_State, entry: rd.Device
 // records the active binding.
 scan_and_bind :: proc "contextless" (
 	state: ^Devices_State,
-	discovered: ^Pci_Discovered_Device,
+	discovered: ^rd.Pci_Discovered_Device,
 	service_slot: u32,
 ) -> (
 	grant_spec: rd.Device_Grant_Spec,
@@ -164,6 +153,20 @@ scan_and_bind :: proc "contextless" (
 	state.counters.active_bindings += 1
 	state.counters.total_binds += 1
 	return spec, .None, .None
+}
+
+// lookup_identity finds the identity entry of a PCI vendor and device pair
+// for the core, which classifies the bus with it before it arms any device.
+// Each refusal counts.
+lookup_identity :: proc "contextless" (state: ^Devices_State, vendor_id, device_id: u16) -> (entry: rd.Device_Identity_Entry, refusal: rd.Device_Identity_Refusal) {
+	if state == nil || !state.initialized {
+		return {}, .Corrupt_Table_Count
+	}
+	entry, refusal = rd.device_identity_table_lookup(&state.identities, vendor_id, device_id)
+	if refusal != .None {
+		state.counters.total_refusals += 1
+	}
+	return entry, refusal
 }
 
 // find_binding returns the active Device_Binding at location, if any.

@@ -27,6 +27,18 @@ DEVICE_BAR_PAGES_LIMIT :: 16384
 DEVICES_RING_SLOT :: 10
 DEVICES_REGION_SLOT :: 11
 
+// The shared region of the devices service holds one bind place for each
+// place of the table of processes of the core, so two Bind_Device commands
+// in flight never share bytes: the discovered record at the start of the
+// place, the grant specification that the service writes after it.
+DEVICES_BIND_PLACE_COUNT :: 32
+DEVICES_BIND_PLACE_BYTES :: 512
+DEVICES_BIND_SPEC_OFFSET :: 256
+DEVICES_REGION_PAGES :: DEVICES_BIND_PLACE_COUNT * DEVICES_BIND_PLACE_BYTES / op.PAGE_SIZE
+#assert(DEVICES_BIND_PLACE_COUNT * DEVICES_BIND_PLACE_BYTES % op.PAGE_SIZE == 0)
+#assert(size_of(Pci_Discovered_Device) <= DEVICES_BIND_SPEC_OFFSET)
+#assert(size_of(Device_Grant_Spec) <= DEVICES_BIND_PLACE_BYTES - DEVICES_BIND_SPEC_OFFSET)
+
 // PCI vendor and device identifiers for VirtIO 1.0 modern devices and TPM 2.0.
 PCI_VENDOR_VIRTIO :: u16(0x1AF4)
 PCI_DEVICE_VIRTIO_NETWORK :: u16(0x1041)
@@ -62,6 +74,7 @@ Devices_Ring_Command :: enum u32 {
 	Bind_Device       = 2,
 	Release_Device    = 3,
 	Query_Binding     = 4,
+	Lookup_Identity   = 5,
 }
 
 // Completion statuses returned on the delegated devices service ring.
@@ -131,6 +144,18 @@ Device_Bar_Range :: struct {
 	page_count:   u32,
 }
 
+// Raw PCI discovery record that the core reads from the configuration of a
+// device after it armed the device, sent with Bind_Device.
+Pci_Discovered_Device :: struct {
+	location:         Pci_Location,
+	pci_vendor_id:    u16,
+	pci_device_id:    u16,
+	bars:             [PCI_BAR_CAPACITY]Device_Bar_Range,
+	bar_count:        u8,
+	interrupt_vector: u32,
+	has_interrupt:    bool,
+}
+
 // Attenuated per-device grant minted by the devices service for one device
 // service process.
 Device_Grant_Spec :: struct {
@@ -165,6 +190,52 @@ devices_ring_command_from_word :: proc "contextless" (word: u32) -> (command: De
 		return .None, false
 	}
 	return member, true
+}
+
+// device_identity_answer_values gives the completion words of a
+// Lookup_Identity that found an entry: its role, its count of BARs, and
+// whether it needs the IOMMU and an interrupt.
+device_identity_answer_values :: proc "contextless" (entry: Device_Identity_Entry) -> (values: [7]u64) {
+	values[0] = u64(entry.role)
+	values[1] = u64(entry.required_bar_count)
+	values[2] = entry.needs_iommu ? 1 : 0
+	values[3] = entry.needs_interrupt ? 1 : 0
+	return values
+}
+
+// device_identity_answer_of_values reads the completion words of a
+// Lookup_Identity at the border of the core: a role that names no member or
+// None, a count of BARs out of 1 to PCI_BAR_CAPACITY, a flag that is not 0
+// or 1, and a word after the flags that is not zero are each refused.
+device_identity_answer_of_values :: proc "contextless" (values: [7]u64, vendor_id, device_id: u16) -> (entry: Device_Identity_Entry, ok: bool) {
+	role := device_class_role_from_word(values[0]) or_return
+	if values[1] == 0 || values[1] > PCI_BAR_CAPACITY || values[2] > 1 || values[3] > 1 {
+		return {}, false
+	}
+	for index in 4 ..< len(values) {
+		if values[index] != 0 {
+			return {}, false
+		}
+	}
+	return {
+		pci_vendor_id      = vendor_id,
+		pci_device_id      = device_id,
+		role               = role,
+		required_bar_count = u8(values[1]),
+		needs_iommu        = values[2] == 1,
+		needs_interrupt    = values[3] == 1,
+	}, true
+}
+
+// devices_bind_place_offsets gives the offsets in the shared region of the
+// discovered record and of the grant specification of one bind place,
+// refusing a place past DEVICES_BIND_PLACE_COUNT.
+devices_bind_place_offsets :: proc "contextless" (place: int) -> (discovered_offset, spec_offset: u64, ok: bool) {
+	if place < 0 || place >= DEVICES_BIND_PLACE_COUNT {
+		return 0, 0, false
+	}
+	discovered_offset = u64(place) * DEVICES_BIND_PLACE_BYTES
+	return discovered_offset, discovered_offset + DEVICES_BIND_SPEC_OFFSET, true
 }
 
 // devices_ring_status_from_word converts a completion status word into a

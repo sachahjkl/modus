@@ -33,24 +33,11 @@ device_handle :: proc "contextless" (kind: op.Device_Kind, a, b: u64) -> (handle
 	return system.Handle(values[0]), values, status
 }
 
-// Active PCI identity-to-device-class-role table (modus:contract/root_delegation).
-device_identities: rd.Device_Identity_Table
-device_identities_initialized: bool
-
-@(private = "file")
-device_identities_ensure :: proc "contextless" () -> ^rd.Device_Identity_Table {
-	if !device_identities_initialized {
-		device_identities = rd.device_identity_table_default()
-		device_identities_initialized = true
-	}
-	return &device_identities
-}
-
 // A device service, by the class of its device: its device-class role, optional
 // fixed test module override, and the ring that it serves to its one client.
 Driver :: struct {
 	name:          string, // Default or test-specific module name (used when fixed_module is true or role has no override).
-	role:          rd.Device_Class_Role, // Device class role resolved via Device_Identity_Table.
+	role:          rd.Device_Class_Role, // The class that the devices service must give the device (devices_delegation.odin).
 	ring_capacity: u32,
 	ring_role:     int, // The role of the ring in the context of the device service.
 	fixed_module:  bool, // True for test-only drivers such as iommu_device.
@@ -72,29 +59,12 @@ DRIVER_GPU :: Driver{"gpu_device", .Gpu_Device, virtio_gpu.RING_CAPACITY, virtio
 gpu_client_ring_memory: system.Handle
 #assert(timed_stream.GRANT_RING == system.GRANT_DEVICE_RING)
 
-// gpu_device_place scans PCI bus 0 for a VirtIO-GPU 1.2 PCI device (0x1AF4:0x1050).
+// gpu_device_place gives the place of the first device of bus 0 that the
+// devices service classified as a GPU (devices_delegation.odin).
 gpu_device_place :: proc "contextless" () -> (place: pci.Place, found: bool) {
-	if configuration_open() != .Ok {
-		return {}, false
-	}
-	for dev in u32(0) ..< 32 {
-		for fn in u32(0) ..< 8 {
-			candidate := pci.Place{bus = 0, device = dev, function = fn}
-			id := pci.read_32(candidate, 0)
-			vendor := u16(id & 0xFFFF)
-			if vendor == 0xFFFF {
-				if fn == 0 {
-					break
-				}
-				continue
-			}
-			device_id := u16(id >> 16)
-			if vendor == virtio_gpu.PCI_VENDOR_ID && device_id == virtio_gpu.PCI_DEVICE_ID {
-				return candidate, true
-			}
-			if fn == 0 && (pci.read_32(candidate, pci.OFFSET_HEADER_TYPE) >> 16 & 0x80) == 0 {
-				break
-			}
+	for item in classified_devices[:classified_device_count] {
+		if item.role == .Gpu_Device && item.place.bus == 0 {
+			return item.place, true
 		}
 	}
 	return {}, false
@@ -263,11 +233,17 @@ bridge_devices_hold :: proc "contextless" (group: Bridge_Group, place: pci.Place
 driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOCK) -> (driver: ^Started, ring_memory: system.Handle, status: system.Status) {
 	configuration_open() or_return
 	service_name := kind.fixed_module ? kind.name : device_class_holder_name(kind.role, kind.name)
+	// The devices service classified the bus before any device service:
+	// a device that it did not give the class of the service is not armed.
+	if !bus_classified {
+		system.log_fact(.Error, Device_Unclassified{device = u64(place.device), bus = u64(place.bus), service = module_name_field(service_name)})
+		return nil, 0, .Bad_State
+	}
+	// The identifiers are read again, so a place whose device changed since
+	// the classification does not take the class of the device of before.
 	identity := pci.read_32(place, 0)
-	vendor_id := u16(identity & 0xFFFF)
-	device_id := u16(identity >> 16)
-	entry, lookup_refusal := rd.device_identity_table_lookup(device_identities_ensure(), vendor_id, device_id)
-	if lookup_refusal != .None || entry.role != kind.role {
+	classified, classified_found := classified_device_at(place)
+	if !classified_found || classified.vendor_id != u16(identity & 0xFFFF) || classified.device_id != u16(identity >> 16) || classified.role != kind.role {
 		if place.bus == 0 {
 			system.log_fact(.Error, Virtio_Device_Absent{device = u64(place.device), service = module_name_field(service_name)})
 		} else {
@@ -465,6 +441,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	if behind_conventional_bridge {
 		system.log_fact(.Info, Bridge_Registers_Held{bus = u64(group.first_bus), other_devices = u64(bridge_device_count), service = module_name_field(kind.name)})
 	}
+	devices_bind_tell(driver, place, identity, bars, u32(message[2]))
 	return driver, ring_memory, .Ok
 }
 
@@ -561,6 +538,7 @@ started_process_stop :: proc "contextless" (item: ^Started) {
 // PCI Bus Master off if the service stopped on its own, then closes the
 // memory of its queue so it returns to the budget.
 driver_end :: proc "contextless" (driver: ^Started) {
+	devices_release_tell(driver)
 	actions := device_stop.reap_decide(driver.is_driver, &driver.bus_master_active)
 	if actions.disable_bus_master {
 		driver_bus_master_disable(driver)

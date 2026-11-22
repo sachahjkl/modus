@@ -217,16 +217,31 @@ Start_Policy_Stopped_Before_Usable_Without_Outcome :: struct {
 }
 
 // The start policy stopped itself after the machine was usable: the
-// processes that it asked for keep running.
-@(log_fact = "root: the start policy {start_policy_hash} stopped: {cause}, {outcome}, after the machine was usable: the processes that it asked for keep running")
+// processes that it asked for stop, and the rescue starts.
+@(log_fact = "root: the start policy {start_policy_hash} stopped: {cause}, {outcome}, after the machine was usable; the rescue start policy starts")
 Start_Policy_Stopped_After_Usable :: struct {
 	start_policy_hash: value_kinds.Hash_Head_Field,
 	cause:             op.Stop_Cause,
 	outcome:           op.Stop_Outcome,
 }
 
-@(log_fact = "root: the start policy {start_policy_hash} stopped: {cause}, after the machine was usable: the processes that it asked for keep running")
+@(log_fact = "root: the start policy {start_policy_hash} stopped: {cause}, after the machine was usable; the rescue start policy starts")
 Start_Policy_Stopped_After_Usable_Without_Outcome :: struct {
+	start_policy_hash: value_kinds.Hash_Head_Field,
+	cause:             op.Stop_Cause,
+}
+
+// The rescue stopped itself after the machine was usable: no start policy
+// is left.
+@(log_fact = "root: the rescue start policy {start_policy_hash} stopped: {cause}, {outcome}, after the machine was usable")
+Rescue_Stopped_After_Usable :: struct {
+	start_policy_hash: value_kinds.Hash_Head_Field,
+	cause:             op.Stop_Cause,
+	outcome:           op.Stop_Outcome,
+}
+
+@(log_fact = "root: the rescue start policy {start_policy_hash} stopped: {cause}, after the machine was usable")
+Rescue_Stopped_After_Usable_Without_Outcome :: struct {
 	start_policy_hash: value_kinds.Hash_Head_Field,
 	cause:             op.Stop_Cause,
 }
