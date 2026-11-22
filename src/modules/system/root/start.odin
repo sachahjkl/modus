@@ -32,6 +32,7 @@ START_MAPPING_LIMIT :: 8
 Start_Work :: struct {
 	name:           string,
 	principal:      u64,
+	asker:          ^Started,
 	start_grant_set:           Start_Grant_Set,
 	file:           []u8,
 	entry:          ^info.Image_Entry,
@@ -80,6 +81,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 	work := Start_Work {
 		name                 = name,
 		principal            = principal,
+		asker                = asker,
 		premade_wiring       = premade_wiring,
 		store_override       = store_override,
 		store_limit_override = store_limit_override,
@@ -151,7 +153,7 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 			break
 		}
 	}
-	if len(work.file) == 0 || name_is_a_system_part(name) {
+	if len(work.file) == 0 || (name_is_a_system_part(name) && !(work.asker == nil && on_demand(name))) {
 		return .Bad_Operation
 	}
 	// One `unlock` at a time, and only from unlock_start: two runs would
