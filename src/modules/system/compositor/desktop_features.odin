@@ -43,6 +43,15 @@ desktop_tray: desktop_shell.Tray_State
 desktop_context_menu: interface.Context_Menu_State
 desktop_features_ready: bool
 
+// desktop_bar_y returns the top pixel Y coordinate of the horizontal bar
+// (0 for Top, desktop_height - BAR_HEIGHT for Bottom).
+desktop_bar_y :: proc "contextless" () -> int {
+	if desktop_bar_position == .Bottom && desktop_height > BAR_HEIGHT {
+		return desktop_height - BAR_HEIGHT
+	}
+	return 0
+}
+
 desktop_features_init :: proc "contextless" (screen_w, screen_h, bar_h: i32) {
 	desktop_work_area = desktop_layout.Work_Area{
 		screen_width  = screen_w,
@@ -271,19 +280,20 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 		}
 		pill_bg := any_focus ? graphics.colors.title : (all_minimized ? graphics.colors.card_bottom : graphics.colors.track)
 		pill_fg := any_focus ? graphics.COLOR_WHITE : (all_minimized ? graphics.colors.dim : graphics.colors.text)
-		interface.draw_rectangle(table, px, 4, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 8, pill_bg)
+		by := desktop_bar_y()
+		interface.draw_rectangle(table, px, by + 4, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 8, pill_bg)
 		if all_minimized {
-			interface.draw_outline(table, px, 4, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 8, 1, graphics.colors.track)
+			interface.draw_outline(table, px, by + 4, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 8, 1, graphics.colors.track)
 		}
 		label_room := same_count > 1 ? TASKBAR_PILL_WIDTH - 26 : TASKBAR_PILL_WIDTH - 12
 		fit := interface.text_fit(table, interface.FONT_INTERFACE, name, label_room)
-		interface.draw_text(table, px + 6, 8, fit, pill_fg, interface.FONT_INTERFACE)
+		interface.draw_text(table, px + 6, by + 8, fit, pill_fg, interface.FONT_INTERFACE)
 		if same_count > 1 {
 			// Count badge when multiple windows of the same module are open.
 			bx := px + TASKBAR_PILL_WIDTH - 18
-			interface.draw_rectangle(table, bx, 7, 14, 18, graphics.colors.chosen)
+			interface.draw_rectangle(table, bx, by + 7, 14, 18, graphics.colors.chosen)
 			digit := u8('0' + min(same_count, 9))
-			interface.draw_character(table, bx + 3, 8, digit, graphics.COLOR_WHITE)
+			interface.draw_character(table, bx + 3, by + 8, digit, graphics.COLOR_WHITE)
 		}
 		// Hover preview popover when pointer hovers over a taskbar pill.
 		if inside(pointer_x, pointer_y, px, 0, TASKBAR_PILL_WIDTH, BAR_HEIGHT) && menu_open == .None {
@@ -314,8 +324,9 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 		tray_x -= TRAY_BADGE_WIDTH + TRAY_BADGE_GAP
 		bg := e.alert ? graphics.colors.stop_process : graphics.colors.track
 		fg := e.alert ? graphics.COLOR_WHITE : graphics.colors.text
-		interface.draw_rectangle(table, tray_x, 5, TRAY_BADGE_WIDTH, BAR_HEIGHT - 10, bg)
-		interface.draw_text(table, tray_x + 6, 8, string(e.label[:e.len]), fg, interface.FONT_INTERFACE)
+		by := desktop_bar_y()
+		interface.draw_rectangle(table, tray_x, by + 5, TRAY_BADGE_WIDTH, BAR_HEIGHT - 10, bg)
+		interface.draw_text(table, tray_x + 6, by + 8, string(e.label[:e.len]), fg, interface.FONT_INTERFACE)
 	}
 }
 
