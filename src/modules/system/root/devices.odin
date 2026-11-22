@@ -411,7 +411,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		if context_refused(service_name, &context_grants, &values) {
 			status = .Bad_State
 		} else {
-			driver.process, status = system.process_start(system.image_find(image, service_name), service_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, service_name), service_name), driver_mappings[:driver_mapping_count], &prepared, load_source())
+			driver.process, status = system.process_start(image_file_checked(service_name), service_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(image_file_checked(service_name), service_name), driver_mappings[:driver_mapping_count], &prepared, load_source())
 		}
 	}
 	if status != .Ok {

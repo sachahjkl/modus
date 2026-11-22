@@ -38,6 +38,8 @@ Each value comes from the first measure below, on the test machine (one processo
 
 ### The three measures on the path of the system
 
+**The start measures are not on the path.** The compositor also measures its copies and fills, a title bar, the blend of the arrow and the bar with its start menu. Those run once, after the first frame, and only in a measure run (`system.measure_run`, the boot image of `modustool measure`): before, they ran at each boot before the first frame, and on the software processor of a browser machine they took more than 100 s (the bar 69 s and 20 s, the copies 17 s). The three measures below are of the path itself, and cost one read of the clock.
+
 The compositor measures all three, with `system.nanoseconds()`, the clock of the system that the kernel keeps for each process: never a clock of the host. Each measure is one sentence of the log, and the tool keeps it in the measure record; no test reads a time.
 
 | Measure | From | To | Its line |

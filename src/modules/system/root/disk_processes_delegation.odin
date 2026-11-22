@@ -155,7 +155,7 @@ disk_processes_service_start :: proc "contextless" () -> bool {
 		return false
 	}
 	name := role_holder_name(.Disk_Processes)
-	file := system.image_find(image, name)
+	file := image_file_checked(name)
 	if len(file) == 0 {
 		return false
 	}
@@ -184,7 +184,7 @@ disk_processes_service_start :: proc "contextless" () -> bool {
 		if context_refused(name, &grants, &values) {
 			status = .Bad_State
 		} else {
-			process, status = system.process_start(file, name, grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, name), nil, &prepared)
+			process, status = system.process_start(file, name, grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, name), nil, &prepared, load_source())
 		}
 	}
 	if status != .Ok {

@@ -354,6 +354,13 @@ scenario_measure := [?]Step {
 	{kind = .Wait, text = checks.QUALITY_PROFILE_LINE, any_order = true},
 	{kind = .Wait, text = "root: ok"},
 	{kind = .Wait, text = "compositor: first frame", any_order = true},
+	// The start measures of the compositor, after its first frame in a
+	// measure run only (src/md/features/desktop_to_browser.md, "The three
+	// measures on the path of the system").
+	{kind = .Wait, text = "compositor: copy_bytes_without_overlap, ns for 8 64 512 4096 65536 3145600 bytes, aligned: ", any_order = true},
+	{kind = .Wait, text = "compositor: fill_bytes_with_value, not aligned: ", any_order = true},
+	{kind = .Wait, text = "compositor: the processor: ERMS ", any_order = true},
+	{kind = .Wait, text = "compositor: the bar and the start menu, built and drawn (the least of 20): ", any_order = true},
 	{kind = .Wait, text = "compositor: surface console"},
 	{kind = .Launch, text = "locks"},
 	// The start of its window: locks draws its first frame before its

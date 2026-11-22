@@ -293,6 +293,22 @@ kernel_check :: proc "contextless" (description: []u8, kernel_file: []u8) -> (re
 // that the image states. It hashes every byte of every file, so its time
 // grows with the size of the boot image.
 image_check :: proc "contextless" (description: []u8, image: []u8) -> (result: Check) {
+	return image_check_in_form(description, image, true)
+}
+
+// image_check_without_bytes makes each check of image_check but the hash of
+// the bytes: the names, the kinds, the sizes, the place of each file inside
+// the image, and the hash that the image states for each file. Its time does
+// not grow with the bytes. The holder of the image then hashes each file at
+// its first use against the hash that the image states, which this check
+// found equal to the hash of the description (docs/TRUSTED_BOOT.md, "Layer
+// 1: the signed system description").
+image_check_without_bytes :: proc "contextless" (description: []u8, image: []u8) -> (result: Check) {
+	return image_check_in_form(description, image, false)
+}
+
+@(private)
+image_check_in_form :: proc "contextless" (description: []u8, image: []u8, hash_bytes: bool) -> (result: Check) {
 	list, valid := entries(description)
 	if !valid {
 		result.fault = .Not_Valid
@@ -345,9 +361,14 @@ image_check :: proc "contextless" (description: []u8, image: []u8) -> (result: C
 		}
 		// The bytes first: a changed file is reported as such, whatever its
 		// entry states.
-		result.found_hash = blake3.hash(bytes)
-		if result.found_hash != entry.hash {
-			result.fault = .Hash_Differs
+		if hash_bytes {
+			result.found_hash = blake3.hash(bytes)
+			if result.found_hash != entry.hash {
+				result.fault = .Hash_Differs
+				return
+			}
+		} else if len(bytes) != int(entry.size) {
+			result.fault = .Outside_Image
 			return
 		}
 		if image_entry.hash != entry.hash {

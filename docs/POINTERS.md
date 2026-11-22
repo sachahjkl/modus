@@ -9,7 +9,7 @@ The terms are in `glossary/desktop.md`: pointer, pointer shape, pointer picture,
 1. A **pointer manifest** in the repository names the shapes of a theme and where their pictures come from.
 2. At each build, the modus tool reads the manifest and writes one **pointer theme file**.
 3. The boot image holds the file as a resource. The root service checks its hash and maps it read-only into the compositor.
-4. The compositor validates the file once, chooses the shape from what is under the pointer, and blends its picture at the place of the pointer.
+4. The compositor validates the file once, at its first use, chooses the shape from what is under the pointer, and blends its picture at the place of the pointer.
 
 **What this is not.** A process never sends a picture of a pointer: it names a shape, and the compositor draws its own theme. A pointer theme file is not parsed at run time: the compositor reads it in place.
 
@@ -269,7 +269,7 @@ circle 11.5 5 1
 - **The choice of the compositor**: the Posy theme is the default when the build has its input; the theme of the system is the fallback.
   - The root service gives the compositor the themes of the boot image in order: `pointers_posy` when the boot image has it, then `pointers_system` (`pointer_theme_choice` in `src/modules/system/root/resources.odin`: the one place of this order).
   - For each one, the root service checks the hash of the resource and maps it read-only in the compositor. It writes the address and the size of the first in the values 6 and 7 of the context of the compositor, and those of the second in the values 18 and 19 (`MODULE_CONTRACT.md`, "6. The context").
-  - The compositor validates each file once. The setting `pointer_theme` of the principal chooses one of them while the compositor runs: `owner` is the first theme that the boot image has, `system` is the theme of the system (`docs/FONTS.md`, "7. The setting"). The compositor writes `compositor: the pointer theme in use: <name>` on the log at each change.
+  - The compositor validates each file once, when the setting first chooses it: at the start it validates the theme in force only. The setting `pointer_theme` of the principal chooses one of them while the compositor runs: `owner` is the first theme that the boot image has, `system` is the theme of the system (`docs/FONTS.md`, "7. The setting"). The compositor writes `compositor: the pointer theme in use: <name>` on the log at each change.
   - With no build input, the tool prints that `POINTER_THEME_SOURCE` is not set and makes the theme of the system only. The system works the same.
   - `modustool release image` makes the theme of the system only, whatever `POINTER_THEME_SOURCE` names, and refuses to package a boot image with a pointer theme under another license than the license of the repository (section 7).
 - **How a resource enters the boot image and reaches a process**: `docs/ARCHITECTURE.md`, U2b.

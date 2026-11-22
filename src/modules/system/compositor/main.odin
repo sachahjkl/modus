@@ -161,12 +161,6 @@ VALUE_FORMAT :: 3
 FORMAT_RED_FIRST :: 2 // boot_info.Pixel_Format.Red_Green_Blue_X
 
 FRAME_INTERVAL :: 16 // Milliseconds.
-// The time of each start measure before the first frame: a measure stops
-// its rounds when this time passed, after one round at least. A slow
-// processor (the software processor of a browser machine) then spends
-// milliseconds on the measures, not seconds; a fast one runs the rounds
-// that its measure names.
-START_MEASURE_BOUND_NANOSECONDS :: 2_000_000
 BAR_HEIGHT :: bar.HEIGHT
 // The frame of a window: a title bar over the surface, and a border of
 // BORDER pixels at the left, the right and the bottom. The machine test
@@ -445,9 +439,8 @@ bar_in_interface_font: bool
 // bar_measure writes once in the log the time of one whole frame of the
 // bar with the start menu open, built and drawn, in the font of
 // the cells and in the interface font: the least of 20 rounds, so that a
-// round that the host stops in its middle does not count, or of the rounds
-// of START_MEASURE_BOUND_NANOSECONDS. It runs before the first frame,
-// which draws the whole screen after it.
+// round that the host stops in its middle does not count. It runs before
+// the first frame, which draws the whole screen after it.
 bar_measure :: proc "contextless" () {
 	ROUNDS :: 20
 	font := display.interface_font_of()
@@ -455,7 +448,6 @@ bar_measure :: proc "contextless" () {
 	menu_open = .Start
 	fonts := [2]^display.Interface_Font{nil, font}
 	least := [2]u64{max(u64), max(u64)}
-	rounds_done: u64 = ROUNDS
 	measured := 0
 	for measured_font in fonts {
 		if measured == 1 && (font == nil || graphics.text_state.font != .Vector) {
@@ -464,12 +456,7 @@ bar_measure :: proc "contextless" () {
 		bar_layout = bar.layout_of(measured_font != nil ? text_rendering.Face.Interface : text_rendering.Face.None)
 		_, menu_top, _, menu_height := bar.menu(bar_layout)
 		areas := [1]Rectangle{{0, 0, frame.width, screen_pixel_of(max(BAR_HEIGHT, menu_top + menu_height))}}
-		first := system.nanoseconds()
-		for round in 0 ..< ROUNDS {
-			if round > 0 && system.nanoseconds() - first >= START_MEASURE_BOUND_NANOSECONDS {
-				rounds_done = min(rounds_done, u64(round))
-				break
-			}
+		for _ in 0 ..< ROUNDS {
 			start := system.nanoseconds()
 			screen_build(0, measured_font)
 			screen_draw(areas[:])
@@ -479,10 +466,10 @@ bar_measure :: proc "contextless" () {
 	}
 	bar_layout, menu_open = saved_layout, saved_menu
 	if measured < 2 {
-		system.log_fact(.Info, Bar_Measured_Without_Interface_Font{rounds = rounds_done, cells_font_time = value_kinds.Nanoseconds_As_Microseconds(least[0])})
+		system.log_fact(.Info, Bar_Measured_Without_Interface_Font{cells_font_time = value_kinds.Nanoseconds_As_Microseconds(least[0])})
 		return
 	}
-	system.log_fact(.Info, Bar_Measured{rounds = rounds_done, cells_font_time = value_kinds.Nanoseconds_As_Microseconds(least[0]), interface_font_time = value_kinds.Nanoseconds_As_Microseconds(least[1])})
+	system.log_fact(.Info, Bar_Measured{cells_font_time = value_kinds.Nanoseconds_As_Microseconds(least[0]), interface_font_time = value_kinds.Nanoseconds_As_Microseconds(least[1])})
 }
 
 // bar_layout_update measures the bar in the font that draws it now, and
@@ -745,8 +732,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	background_build()
 	pointer_x, pointer_y = desktop_width / 2, desktop_height / 2
 	bar_mark_build()
-	memory_measure()
-	title_measure()
 	pointer_theme_open(ctx) // pointer_picture.odin
 	damage_whole_screen()
 	full_measure = true
@@ -763,7 +748,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	display.script_coverage_tell("compositor")
 	palette_start() // palette.odin
 	bar_layout_update()
-	bar_measure()
 	settings_seen: u32
 	// settings_seen starts at 0: when the boot pass of settings wrote the page
 	// before this read, the first turn of the loop sees a change and tells
@@ -1084,9 +1068,28 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			frames += 1
 			if frames == 1 {
 				system.log_fact(.Info, First_Frame{})
+				if system.measure_run() {
+					start_measures_run()
+				}
 			}
 		}
 	}
+}
+
+// start_measures_run runs the measures of the copies, of a title bar, of
+// the blend of the arrow and of the bar, once, after the first frame of a
+// measure run (system.measure_run). They are never on the path to the first
+// frame: on the software processor of a browser machine they took more
+// than 100 s. Each one writes over the frame in memory, so the next frame
+// draws the whole screen.
+start_measures_run :: proc "contextless" () {
+	memory_measure()
+	title_measure()
+	if pointer_theme != nil {
+		pointer_blend_measure() // pointer_picture.odin
+	}
+	bar_measure()
+	damage_whole_screen()
 }
 
 // settings_changed gives the new font to the text of the desktop, draws the
@@ -1778,10 +1781,8 @@ title_measure :: proc "contextless" () {
 	width := min(screen.width, len(title_row))
 	times: [3]u64
 	for form in 0 ..< 3 {
-		done: u64
 		start := system.nanoseconds()
-		for done < ROUNDS && (done == 0 || system.nanoseconds() - start < START_MEASURE_BOUND_NANOSECONDS) {
-			done += 1
+		for _ in 0 ..< ROUNDS {
 			switch form {
 			case 0:
 				graphics.fill(frame, 0, 0, width, TITLE_HEIGHT, graphics.colors.title)
@@ -1796,7 +1797,7 @@ title_measure :: proc "contextless" () {
 				graphics.copy(frame, 0, 0, {pixels = raw_data(title_row[:]), width = width, height = TITLE_HEIGHT})
 			}
 		}
-		times[form] = (system.nanoseconds() - start) / done
+		times[form] = (system.nanoseconds() - start) / ROUNDS
 	}
 	system.log_fact(.Info, Title_Bar_Measured{width = u64(width), one_color_time = value_kinds.Nanoseconds_As_Microseconds(times[0]), mix_time = value_kinds.Nanoseconds_As_Microseconds(times[1]), row_copy_time = value_kinds.Nanoseconds_As_Microseconds(times[2])})
 }
@@ -1848,13 +1849,8 @@ memory_measure :: proc "contextless" () {
 			offset := form == .Copy_Unaligned || form == .Loop_Unaligned || form == .Fill_Unaligned ? 3 : 0
 			count := min(size, limit - 128)
 			rounds := clamp(64 << 20 / max(count, 64), 8, 100_000)
-			// The clock is read once for each 64 KiB of rounds: a read at
-			// each round of 8 bytes would cost more than the copy.
-			clock_step := clamp(65536 / max(count, 1), 1, 1024)
-			done := 0
 			start := system.nanoseconds()
-			for done < rounds && (done == 0 || done % clock_step != 0 || system.nanoseconds() - start < START_MEASURE_BOUND_NANOSECONDS) {
-				done += 1
+			for _ in 0 ..< rounds {
 				switch form {
 				case .Copy, .Copy_Unaligned:
 					intrinsics.mem_copy_non_overlapping(&to[offset], &from[64 + offset], count)
@@ -1864,7 +1860,7 @@ memory_measure :: proc "contextless" () {
 					intrinsics.mem_zero(&to[offset], count) // A call of memset with 0.
 				}
 			}
-			tenths[form][index] = (system.nanoseconds() - start) * 10 / u64(done)
+			tenths[form][index] = (system.nanoseconds() - start) * 10 / u64(rounds)
 		}
 	}
 	// One fact for each form: the times of the six sizes, in the order of

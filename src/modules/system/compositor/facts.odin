@@ -905,17 +905,15 @@ Palette_Draw_Table_Full :: struct {}
 No_Pointer_Theme :: struct {}
 
 // The measures of the bar and of the start menu, built and drawn, the
-// least of the rounds of each font: in the font of the cells only, with no
-// interface font; and in both fonts. rounds is the fewest rounds of a font.
-@(log_fact = "compositor: the bar and the start menu, built and drawn (the least of {rounds}): the font of the cells {cells_font_time}; no interface font")
+// least of 20 rounds: in the font of the cells only, with no interface
+// font; and in both fonts.
+@(log_fact = "compositor: the bar and the start menu, built and drawn (the least of 20): the font of the cells {cells_font_time}; no interface font")
 Bar_Measured_Without_Interface_Font :: struct {
-	rounds:          u64,
 	cells_font_time: value_kinds.Nanoseconds_As_Microseconds,
 }
 
-@(log_fact = "compositor: the bar and the start menu, built and drawn (the least of {rounds}): the font of the cells {cells_font_time}, the interface font {interface_font_time}")
+@(log_fact = "compositor: the bar and the start menu, built and drawn (the least of 20): the font of the cells {cells_font_time}, the interface font {interface_font_time}")
 Bar_Measured :: struct {
-	rounds:              u64,
 	cells_font_time:     value_kinds.Nanoseconds_As_Microseconds,
 	interface_font_time: value_kinds.Nanoseconds_As_Microseconds,
 }

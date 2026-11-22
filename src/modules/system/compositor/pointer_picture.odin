@@ -80,41 +80,65 @@ pointer_drawn_valid: bool
 pointer_measure_frames, pointer_measure_time, pointer_measure_longest: u64
 pointer_frame_time: u64
 
-// The themes that the root service gives, in the order of
-// pointer_pictures.RESOURCE_PREFERENCE: each one validated once, or nil.
-// The setting "pointer_theme" chooses one (pointer_theme_choose).
-pointer_themes: [len(pointer_pictures.RESOURCE_PREFERENCE)][]u8
+// The theme files that the root service gives, in the order of
+// pointer_pictures.RESOURCE_PREFERENCE, and the state of each one. A file
+// is validated at its first use, once: the boot validates the theme that
+// the setting chooses, not both (on the software processor of a browser
+// machine the two took 11 s).
+Pointer_Theme_State :: enum u8 {
+	Absent    = 0, // The root service gave no file there.
+	Unchecked = 1, // Mapped, never validated.
+	Valid     = 2,
+	Refused   = 3, // Not valid: never used.
+}
+pointer_theme_files: [len(pointer_pictures.RESOURCE_PREFERENCE)][]u8
+pointer_theme_states: [len(pointer_pictures.RESOURCE_PREFERENCE)]Pointer_Theme_State
 
 // pointer_theme_open maps nothing: the root service mapped the files, the
 // first one at the values 6 and 7, the second at the values that
-// modus:contract/operation names for it. It validates
-// each file once; a file that is not valid is not used.
+// modus:contract/operation names for it. It chooses the theme of the
+// owner, which validates that file only.
 pointer_theme_open :: proc "contextless" (ctx: ^system.Context) {
-	for &theme, index in pointer_themes {
+	for index in 0 ..< len(pointer_theme_files) {
 		address := ctx.values[POINTER_THEME_VALUES[index][0]]
 		size := ctx.values[POINTER_THEME_VALUES[index][1]]
 		if address == 0 || size == 0 {
 			continue
 		}
-		file := ([^]u8)(uintptr(address))[:size]
-		start := system.nanoseconds()
-		problem := pointer_pictures.validate(file)
-		spent := system.nanoseconds() - start
-		if problem.kind != .None {
-			system.log_fact(.Warning, Pointer_Theme_Refused{problem_kind = pointer_pictures.Problem_Kind_Word(problem.kind), theme_part = pointer_pictures.Part_Word(problem.part), theme_field = pointer_pictures.Field_Word(problem.field), place_index = problem.index, value = problem.value, limit = problem.limit, theme_file = value_kinds.text_field(pointer_pictures.RESOURCE_PREFERENCE[index], THEME_FILE_FIELD_BYTES)})
-			continue
-		}
-		theme = file
-		head := pointer_pictures.header(file)
-		system.log_fact(.Info, Pointer_Theme_Validated{shapes = u64(head.shape_count), pictures = u64(head.picture_count), size = value_kinds.Size_In_Bytes(size), elapsed = value_kinds.Time_In_Microseconds(spent / 1000), theme = value_kinds.text_field(pointer_pictures.text_of(head.theme_name[:]), THEME_TEXT_FIELD_BYTES), license = value_kinds.text_field(pointer_pictures.text_of(head.license[:]), THEME_TEXT_FIELD_BYTES)})
+		pointer_theme_files[index] = ([^]u8)(uintptr(address))[:size]
+		pointer_theme_states[index] = .Unchecked
 	}
 	pointer_theme_choose(.Of_The_Owner)
 	if pointer_theme == nil {
 		system.log_fact(.Warning, No_Pointer_Theme{})
 		pointer_update(0)
-		return
 	}
-	pointer_blend_measure()
+}
+
+// pointer_theme_valid validates the theme file at an index at its first
+// use, and says whether it is valid. A file that is not valid is refused
+// for good, with its line on the log.
+pointer_theme_valid :: proc "contextless" (index: int) -> bool {
+	switch pointer_theme_states[index] {
+	case .Absent, .Refused:
+		return false
+	case .Valid:
+		return true
+	case .Unchecked:
+	}
+	file := pointer_theme_files[index]
+	start := system.nanoseconds()
+	problem := pointer_pictures.validate(file)
+	spent := system.nanoseconds() - start
+	if problem.kind != .None {
+		pointer_theme_states[index] = .Refused
+		system.log_fact(.Warning, Pointer_Theme_Refused{problem_kind = pointer_pictures.Problem_Kind_Word(problem.kind), theme_part = pointer_pictures.Part_Word(problem.part), theme_field = pointer_pictures.Field_Word(problem.field), place_index = problem.index, value = problem.value, limit = problem.limit, theme_file = value_kinds.text_field(pointer_pictures.RESOURCE_PREFERENCE[index], THEME_FILE_FIELD_BYTES)})
+		return false
+	}
+	pointer_theme_states[index] = .Valid
+	head := pointer_pictures.header(file)
+	system.log_fact(.Info, Pointer_Theme_Validated{shapes = u64(head.shape_count), pictures = u64(head.picture_count), size = value_kinds.Size_In_Bytes(u64(len(file))), elapsed = value_kinds.Time_In_Microseconds(spent / 1000), theme = value_kinds.text_field(pointer_pictures.text_of(head.theme_name[:]), THEME_TEXT_FIELD_BYTES), license = value_kinds.text_field(pointer_pictures.text_of(head.license[:]), THEME_TEXT_FIELD_BYTES)})
+	return true
 }
 
 // pointer_form_in_force gives the form of the pointer for the appearance in
@@ -149,12 +173,13 @@ pointer_form_choose :: proc "contextless" (form: pointer_pictures.Pointer_Form) 
 // again with it.
 pointer_theme_choose :: proc "contextless" (setting: settings.Pointer_Theme) {
 	chosen: []u8
-	if setting == .Of_The_System {
-		chosen = pointer_themes[len(pointer_themes) - 1]
+	last := len(pointer_theme_files) - 1
+	if setting == .Of_The_System && pointer_theme_valid(last) {
+		chosen = pointer_theme_files[last]
 	}
-	for theme in pointer_themes {
-		if chosen == nil {
-			chosen = theme
+	for index in 0 ..< len(pointer_theme_files) {
+		if chosen == nil && pointer_theme_valid(index) {
+			chosen = pointer_theme_files[index]
 		}
 	}
 	if raw_data(chosen) == raw_data(pointer_theme) && len(chosen) == len(pointer_theme) {
@@ -383,24 +408,17 @@ pointer_blend_measure :: proc "contextless" () {
 	ROUNDS :: 2000
 	chosen := pointer_pictures.choose(pointer_theme, pointer_form, .Arrow, pointer_size_asked(), 0)
 	picture := graphics.Canvas{pixels = raw_data(chosen.pixels), width = int(chosen.picture.width), height = int(chosen.picture.height), stride = int(chosen.picture.width)}
-	// The clock is read once for each CLOCK_STEP rounds, so that its read
-	// stays small beside a blend of one picture.
-	CLOCK_STEP :: 16
-	done: u64
 	start := system.nanoseconds()
-	for done < ROUNDS && (done == 0 || done % CLOCK_STEP != 0 || system.nanoseconds() - start < START_MEASURE_BOUND_NANOSECONDS) {
-		graphics.blend_premultiplied_alpha(frame, 100 + int(done % 7), 100, picture)
-		done += 1
+	for round in 0 ..< ROUNDS {
+		graphics.blend_premultiplied_alpha(frame, 100 + round % 7, 100, picture)
 	}
-	blend := (system.nanoseconds() - start) / done
+	blend := (system.nanoseconds() - start) / ROUNDS
 	opaque := graphics.Canvas{pixels = background.pixels, width = picture.width, height = picture.height, stride = background.stride}
-	done = 0
 	start = system.nanoseconds()
-	for done < ROUNDS && (done == 0 || done % CLOCK_STEP != 0 || system.nanoseconds() - start < START_MEASURE_BOUND_NANOSECONDS) {
-		graphics.copy(frame, 100 + int(done % 7), 100, opaque)
-		done += 1
+	for round in 0 ..< ROUNDS {
+		graphics.copy(frame, 100 + round % 7, 100, opaque)
 	}
-	copied := (system.nanoseconds() - start) / done
+	copied := (system.nanoseconds() - start) / ROUNDS
 	transparent := 0
 	for pixel in chosen.pixels {
 		if pixel >> 24 == 0 {

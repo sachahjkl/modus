@@ -225,8 +225,8 @@ Store_Name_Too_Long :: struct {
 	caller:    value_kinds.Module_Name_Field,
 }
 
-// A resource of the boot image given read-only. The image check of the
-// start hashed it.
+// A resource of the boot image given read-only, after its bytes agreed with
+// its entry.
 @(log_fact = "root: the resource {resource} ({resource_size}) is given to {receiver}, read-only")
 Resource_Given :: struct {
 	resource_size: value_kinds.Size_In_Bytes,

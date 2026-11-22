@@ -6,7 +6,7 @@
 // the keys and the
 // pointer of the page to the PS/2 controller, and the text of the console
 // page to COM2.
-import { BootStage, BootStageTracker, BrowserMachine, LoopResult, MachineState, trustDescriptionHashParse } from "./browser_machine_host.js";
+import { BOOT_STAGE_SENTENCES, BootStage, BootStageTracker, BrowserMachine, LoopResult, MachineState, trustDescriptionHashParse } from "./browser_machine_host.js";
 
 // The time of one slice of the loop before the worker reads its messages.
 const SLICE_NANOSECONDS = 8000000;
@@ -77,9 +77,10 @@ async function trustOf(bootImageUrl) {
   return hash;
 }
 
-// The stage of the start, for the page: a message at each new stage, and
-// the bytes of the download as they come.
-const postStage = (stage, loaded = 0, total = 0) => self.postMessage({ kind: "stage", stage, loaded, total });
+// The stage of the start, for the page: a message at each new stage, with
+// its sentence, and the bytes of the download as they come. The document
+// imports nothing of the host: the worker gives the words.
+const postStage = (stage, loaded = 0, total = 0) => self.postMessage({ kind: "stage", stage, sentence: BOOT_STAGE_SENTENCES[stage], loaded, total });
 
 // bytesOf reads the body of a response and posts the bytes that came, at
 // most one message for each 64 KiB.

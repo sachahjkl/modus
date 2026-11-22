@@ -106,7 +106,7 @@ principals_service_start :: proc "contextless" () -> bool {
 	}
 	principals_starts += 1
 	slot := part_place_take()
-	file := system.image_find(image, "principals")
+	file := image_file_checked("principals")
 	if slot == nil {
 		system.log_fact(.Warning, Principals_Service_Start_Failed{status = .No_Slot})
 		return false
@@ -138,7 +138,7 @@ principals_service_start :: proc "contextless" () -> bool {
 		if context_refused("principals", &grants, &values) {
 			status = .Bad_State
 		} else {
-			process, status = system.process_start(file, "principals", grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, "principals"), nil, &prepared)
+			process, status = system.process_start(file, "principals", grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, "principals"), nil, &prepared, load_source())
 		}
 	}
 	if status != .Ok {

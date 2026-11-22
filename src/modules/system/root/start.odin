@@ -159,6 +159,12 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	name := work.name
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == name && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
+			// The bytes have the hash of their entry before any read of
+			// them (trust.odin, image_checks).
+			if !system.image_entry_check(image, &image_checks, &item) {
+				system.log_fact(.Error, Image_File_Hash_Wrong{file = module_name_field(name)})
+				return .Bad_Operation
+			}
 			work.file = image[item.offset:][:item.size]
 			work.entry = &item
 			break

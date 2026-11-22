@@ -84,8 +84,8 @@ tpm_service_start :: proc "contextless" () {
 		if context_refused(tpm_name, &context_grants, &values) {
 			status = .Bad_State
 		} else {
-			file := system.image_find(image, tpm_name)
-			process, status = system.process_start(file, tpm_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, tpm_name), tpm_mappings[:tpm_mapping_count])
+			file := image_file_checked(tpm_name)
+			process, status = system.process_start(file, tpm_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, tpm_name), tpm_mappings[:tpm_mapping_count], nil, load_source())
 		}
 	}
 	if status != .Ok {

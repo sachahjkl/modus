@@ -47,12 +47,18 @@ export const BOOT_INFO_OFFSETS = {
   firmware_revision: 168,
   self_test: 176,
   trust: 184,
-  debug_image: 400,
-  debug_image_size: 408,
-  start_request: 416,
-  start_request_source: 424,
+  debug_image: 408,
+  debug_image_size: 416,
+  start_request: 424,
+  start_request_source: 432,
 };
-export const BOOT_INFO_SIZE = 432;
+export const BOOT_INFO_SIZE = 440;
+// The offsets of the trust record (Boot_Trust) that the page writes, and the
+// word of File_Check that it writes there. A host test of the tool compares
+// each one with the contract.
+export const BOOT_TRUST_OFFSETS = { description_hash: 48, file_check: 216 };
+export const FileCheck = { None: 0, Boot_Program: 1, Root_Service_At_Start: 2, Root_Service_At_Load: 3 };
+Object.freeze(FileCheck);
 export const FRAMEBUFFER_OFFSETS = { address: 0, width: 8, height: 12, pixels_per_line: 16, format: 20 };
 export const MEMORY_RANGE_OFFSETS = { start: 0, page_count: 8, kind: 16, reserved: 20 };
 export const MEMORY_RANGE_SIZE = 24;
@@ -433,11 +439,14 @@ export function writeBootRecord(memory, layout, { bootImageSize, framebufferWidt
   u64(field("cycles_loaded"), startNanoseconds);
   const vendor = new TextEncoder().encode("modus browser machine");
   new Uint8Array(memory.buffer, field("firmware_vendor"), vendor.length).set(vendor);
+  // The page verifies nothing: the verifier and the key kind stay None, and
+  // the record says that the root service checks each file at its first
+  // use, against the description whose hash the page gives
+  // (browser_machine.md, "The boot").
   if (trustDescriptionHash && trustDescriptionHash.length === 32) {
     const trust = field("trust");
-    u64(trust + 0, 1); // Verifier.Boot_Program
-    u64(trust + 8, 1); // Signing_Key_Kind.Test
-    new Uint8Array(memory.buffer, trust + 48, 32).set(trustDescriptionHash);
+    new Uint8Array(memory.buffer, trust + BOOT_TRUST_OFFSETS.description_hash, 32).set(trustDescriptionHash);
+    u64(trust + BOOT_TRUST_OFFSETS.file_check, FileCheck.Root_Service_At_Load);
   }
   return layout.record;
 }
@@ -577,7 +586,7 @@ export const BootStage = Object.freeze({
 export const BOOT_STAGE_SENTENCES = Object.freeze({
   download: "downloading the kernel and the boot image",
   kernel: "starting the kernel and the root service",
-  image_check: "the root service checks each file of the boot image",
+  image_check: "the root service checks the boot image",
   services: "starting the services",
   desktop: "starting the desktop",
   console: "starting the console",
@@ -591,6 +600,8 @@ export const ROOT_SERVICE_STAGE_LINE = "kernel: boot: kernel: root service: ";
 // one from its fact type.
 export const BOOT_STAGE_FACT_TAGS = {
   "root::Boot_Image_Agrees": "9bf297",
+  "root::Image_Checked_At_Start": "877ebf",
+  "root::Image_Checked_At_Load": "671a58",
   "root::Process_Started": "526e32",
   "root::Process_Started_With_Terminal": "a29438",
   "compositor::First_Frame": "cd3633",
@@ -627,7 +638,9 @@ export class BootStageTracker {
     if (!fact) return;
     const [, process, tag, values = ""] = fact;
     const named = (name) => BOOT_STAGE_FACT_TAGS[name] === tag && name.startsWith(process + "::");
-    if (named("root::Boot_Image_Agrees")) this.enter(BootStage.Services);
+    // The end of the check of the root service at its start, in each form
+    // of the check (boot_info.File_Check).
+    if (named("root::Boot_Image_Agrees") || named("root::Image_Checked_At_Start") || named("root::Image_Checked_At_Load")) this.enter(BootStage.Services);
     else if (this.desktop && named("root::Process_Started") && values === hexadecimalOf("compositor")) this.enter(BootStage.Desktop);
     else if (!this.desktop && named("root::Process_Started_With_Terminal") && values === hexadecimalOf("console")) this.enter(BootStage.Console);
     else if (this.desktop && named("compositor::First_Frame")) this.enter(BootStage.Ready);

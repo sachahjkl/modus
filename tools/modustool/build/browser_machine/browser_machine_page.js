@@ -5,7 +5,8 @@
 // the pointer of the canvas to the worker
 // (src/md/features/browser_machine.md, "The display and the scale", and
 // "The boot stages of the page").
-import { BOOT_STAGE_SENTENCES, BootStage } from "./browser_machine_host.js";
+// The stage that ends the start: the first frame of the compositor.
+const STAGE_READY = "ready";
 
 const screen = document.getElementById("screen");
 const status = document.getElementById("machine-status");
@@ -20,6 +21,7 @@ let frameAsked = false;
 // runs. The canvas shows them until the first frame of the compositor.
 const stagesDone = [];
 let stage = null;
+let stageSentence = "";
 let stageStarted = 0;
 let downloaded = { loaded: 0, total: 0 };
 let machineState = "";
@@ -54,10 +56,10 @@ function stagesDraw() {
   };
   line("modus: the machine starts", "#e6ebf2");
   y += STAGE_LINE_STEP / 2;
-  for (const done of stagesDone) line("done  " + BOOT_STAGE_SENTENCES[done.stage] + " (" + done.seconds.toFixed(1) + " s)", "#9aa5b4");
+  for (const done of stagesDone) line("done  " + done.sentence + " (" + done.seconds.toFixed(1) + " s)", "#9aa5b4");
   if (stage) {
-    let text = "now   " + BOOT_STAGE_SENTENCES[stage] + " (" + ((performance.now() - stageStarted) / 1000).toFixed(0) + " s)";
-    if (stage === BootStage.Download && downloaded.loaded) {
+    let text = "now   " + stageSentence + " (" + ((performance.now() - stageStarted) / 1000).toFixed(0) + " s)";
+    if (stage === "download" && downloaded.loaded) {
       text += ": " + (downloaded.loaded / 1048576).toFixed(1) + (downloaded.total ? " of " + (downloaded.total / 1048576).toFixed(1) : "") + " MiB";
     }
     line(text, "#5fa8ff");
@@ -69,7 +71,7 @@ function stagesDraw() {
 // gets no queue of requests. Before the first frame of the compositor, the
 // canvas shows the stages.
 function animationFrame() {
-  if (stage !== BootStage.Ready) stagesDraw();
+  if (stage !== STAGE_READY) stagesDraw();
   else if (worker && !frameAsked) {
     frameAsked = true;
     worker.postMessage({ kind: "frame" });
@@ -83,10 +85,11 @@ function stageTake(message) {
     return;
   }
   const now = performance.now();
-  if (stage) stagesDone.push({ stage, seconds: (now - stageStarted) / 1000 });
+  if (stage) stagesDone.push({ sentence: stageSentence, seconds: (now - stageStarted) / 1000 });
   stage = message.stage;
+  stageSentence = typeof message.sentence === "string" ? message.sentence : String(message.stage);
   stageStarted = now;
-  status.textContent = BOOT_STAGE_SENTENCES[stage] ?? "";
+  status.textContent = stageSentence;
 }
 
 function onWorkerMessage(event) {
@@ -105,7 +108,7 @@ function onWorkerMessage(event) {
       return;
     case "state":
       machineState = message.state;
-      if (stage === BootStage.Ready || message.state !== "running") {
+      if (stage === STAGE_READY || message.state !== "running") {
         status.textContent = message.state + (message.stopCode !== null && message.stopCode !== undefined ? " (code " + message.stopCode + ")" : "") + (message.trap ? ": " + message.trap : "");
       }
       return;

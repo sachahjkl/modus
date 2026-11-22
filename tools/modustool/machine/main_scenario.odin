@@ -64,14 +64,9 @@ scenario := [?]Step {
 	// The standard VGA of the machine holds two screen pages, and the
 	// compositor flips between them (src/md/infrastructure/whole_frame.md).
 	{kind = .Wait, text = "compositor: two screen pages: each frame reaches the screen whole, by a page flip", any_order = true, fails_on = "compositor: one screen page"},
-	// The measure of the copy and the fill of src/runtime/memory.asm, at the start
-	// of the compositor, before its first frame.
-	{kind = .Wait, text = "compositor: copy_bytes_without_overlap, ns for 8 64 512 4096 65536 3145600 bytes, aligned: ", any_order = true},
-	{kind = .Wait, text = "compositor: fill_bytes_with_value, not aligned: ", any_order = true},
 	// The firmware gave the mode that the boot program asked for: the
 	// compositor shows the reference screen.
 	{kind = .Screen_Size, text = SCREEN_SIZE_LINE, any_order = true},
-	{kind = .Wait, text = "compositor: the processor: ERMS ", any_order = true},
 	// The two come in an order that the system does not fix.
 	{kind = .Wait, text = "compositor: first frame", any_order = true},
 	{kind = .Wait, text = "compositor: surface console", any_order = true},

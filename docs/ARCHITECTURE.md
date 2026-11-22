@@ -1385,7 +1385,7 @@ A template is compiled code: the check of the build (`tools/modustool/build/vect
 
 - "locks: kernel entries in one second", with one locker and with 4 lockers (8 063 360 and 8 359 466 with one locker with calls). Each entry runs `processor_self` several times (each lock) and `user_copy_from_process` for its arguments. Expected: more entries, from the call and the return saved at each.
 - "clock: the time page": its reads do not enter the kernel; expected: no change. It shows the noise of the run.
-- The measure of the copy and the fill at the start of the compositor ("compositor: copy_bytes_without_overlap, ns for ..."): `src/runtime/memory.asm` did not change; expected: no change.
+- The measure of the copy and the fill of the compositor, after its first frame in a measure run ("compositor: copy_bytes_without_overlap, ns for ..."): `src/runtime/memory.asm` did not change; expected: no change.
 
 No number of this measure is recorded yet.
 

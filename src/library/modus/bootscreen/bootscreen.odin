@@ -1068,11 +1068,16 @@ check_line :: proc "contextless" (area: Area, y: int, data: ^Data) {
 	trust := &data.boot.trust
 	verifier, verifier_ok := info.verifier_of_word(trust.verifier)
 	key_kind, key_kind_ok := info.signing_key_kind_of_word(trust.key_kind)
+	file_check, file_check_ok := info.file_check_of_word(trust.file_check)
 	switch {
 	case len(data.failed_name) != 0:
 		put(&text, "failed: ")
 		put(&text, data.failed_name)
 		show(area, x, y, &text, graphics.DARK_FAILED)
+	case file_check_ok && file_check == .Root_Service_At_Load:
+		// The root service checks each file at its first use: no count of
+		// verified files is true at the start.
+		write(area, x, y, "at first use", graphics.DARK_DIM)
 	case verifier_ok && verifier != .None:
 		put_number(&text, trust.entry_count)
 		put(&text, " verified, the kernel included")

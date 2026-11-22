@@ -7,6 +7,7 @@ import "modus:contract/enum_word"
 import "modus:contract/fixed_addresses"
 import op "modus:contract/operation"
 import module "modus:contract/module"
+import "modus:contract/system_description"
 import "modus:contract/value_kinds"
 
 // The loader (docs/ARCHITECTURE.md, U3): it builds a process from a module
@@ -152,14 +153,64 @@ Prepared_Modules :: struct {
 // process reaches only the modules that it was granted.
 Load_Source :: struct {
 	image:        []u8, // The files that the process was granted, in the form of the boot image. A file has the hash that names it, or the loader refuses it.
-	// The giver checked each entry of the image against a signed system
-	// description, and no process can write its pages: the loader then
-	// takes the hash of an entry and computes none. Only the root service
-	// sets it, for its boot image, after its image check (docs/TRUSTED_BOOT.md,
-	// "Layer 1: the signed system description").
-	image_checked: bool,
 	files:        []Source_File, // Files beside the image, which the starter read and gives. A file of the image with the same hash is taken first.
 	replacements: []module.Replacement, // From the party that starts the process. The process cannot change them.
+	// The entries of the image whose bytes were hashed against their
+	// entry, or nil: then the loader hashes each file at each load. Only
+	// the root service gives one, for its boot image, whose entries its
+	// start checked against the system description (docs/TRUSTED_BOOT.md,
+	// "Layer 1: the signed system description"); `modustool check` refuses
+	// the name elsewhere.
+	image_checks: ^Image_Checks,
+}
+
+// The entries of an image whose bytes have the hash of their entry. A
+// party that hashed an entry marks it, and does not hash it again: the
+// rule holds while no process writes the pages of the image (the kernel
+// gives them with Read only, and a device reaches them only with no IOMMU).
+IMAGE_CHECK_CAPACITY :: system_description.ENTRY_CAPACITY
+Image_Checks :: struct {
+	checked: [IMAGE_CHECK_CAPACITY]bool, // By the place of the entry: the modules, then the resources.
+}
+
+// image_entry_place gives the place of an entry of the image in a table
+// of checks: the modules first, then the resources. ok is false for an
+// entry of no table of the image, and past the capacity.
+image_entry_place :: proc "contextless" (image: []u8, entry: ^info.Image_Entry) -> (place: int, ok: bool) {
+	modules := image_entries(image)
+	for &candidate, index in modules {
+		if &candidate == entry {
+			return index, index < IMAGE_CHECK_CAPACITY
+		}
+	}
+	for &candidate, index in image_resources(image) {
+		if &candidate == entry {
+			place = len(modules) + index
+			return place, place < IMAGE_CHECK_CAPACITY
+		}
+	}
+	return 0, false
+}
+
+// image_entry_check says whether the bytes of an entry of the image have
+// the hash of the entry. A table of checks answers for an entry hashed
+// before, and keeps each entry whose bytes agree; with no table, each call
+// hashes. An entry outside the image does not agree.
+image_entry_check :: proc "contextless" (image: []u8, checks: ^Image_Checks, entry: ^info.Image_Entry) -> bool {
+	if entry.offset > u64(len(image)) || entry.size > u64(len(image)) - entry.offset {
+		return false
+	}
+	place, placed := image_entry_place(image, entry)
+	if checks != nil && placed && checks.checked[place] {
+		return true
+	}
+	if blake3.hash(image[entry.offset:][:entry.size]) != entry.hash {
+		return false
+	}
+	if checks != nil && placed {
+		checks.checked[place] = true
+	}
+	return true
 }
 
 // A module file of a load source that is not in the image: the root
@@ -220,7 +271,16 @@ cycles :: #force_inline proc "contextless" () -> u64 {
 // not only the first (load_source_problems).
 module_space_load :: proc "contextless" (space: ^Module_Space, file: []u8, error: ^module.Load_Error, details: ^Table_To_Append(module.Load_Error) = nil) -> (index: int, ok: bool) {
 	error^ = {}
-	hash := file_hash(space.source, file)
+	hash, agrees := first_file_hash(space.source, file)
+	if !agrees {
+		// An entry of the image whose bytes do not have its hash: refused
+		// before any read of its tables.
+		error^ = {stage = u32(module.Load_Stage.Read), module = named_of(space.source, hash)}
+		if details != nil {
+			table_append(details, error^)
+		}
+		return -1, false
+	}
 	if file_error := module.validate(file); len(file) == 0 || file_error != .None {
 		error^ = {stage = u32(module.Load_Stage.Read), file_error = u32(file_error), module = named_of(space.source, hash)}
 		if details != nil {
@@ -371,13 +431,15 @@ named_of :: proc "contextless" (source: Load_Source, hash: [32]u8) -> (value: mo
 // with the same hash has the same bytes, or it fails its check.
 @(private)
 source_file :: proc "contextless" (source: Load_Source, hash: [32]u8) -> (file: []u8, stage: module.Load_Stage, file_error: module.Error) {
-	found, checked := false, false
+	found, agrees := false, false
 	if entry := image_entry_of(source.image, hash); entry != nil {
-		file, found, checked = source.image[entry.offset:][:entry.size], true, source.image_checked
+		file, found = source.image[entry.offset:][:entry.size], true
+		agrees = image_entry_check(source.image, source.image_checks, entry)
 	} else {
 		for item in source.files {
 			if item.hash == hash {
 				file, found = item.bytes, true
+				agrees = blake3.hash(file) == hash
 				break
 			}
 		}
@@ -385,25 +447,32 @@ source_file :: proc "contextless" (source: Load_Source, hash: [32]u8) -> (file: 
 	if !found {
 		return nil, .Find, .None
 	}
-	if file_error = module.validate(file); file_error != .None || (!checked && blake3.hash(file) != hash) {
+	// The hash before the tables: a file that is not the one of its hash is
+	// not read.
+	if !agrees {
+		return nil, .Read, .None
+	}
+	if file_error = module.validate(file); file_error != .None {
 		return nil, .Read, file_error
 	}
 	return file, .None, .None
 }
 
-// file_hash gives the hash of the first file of a load: the hash of its
-// entry when the file is the whole entry of a checked image, else the hash
-// of its bytes.
+// first_file_hash gives the hash of the first file of a load. With a
+// table of checks, a file that is the whole bytes of an entry of the image
+// has the hash of its entry, which image_entry_check proves or refuses
+// (agrees false). Any other file, and each file with no table, has the
+// hash of its bytes.
 @(private)
-file_hash :: proc "contextless" (source: Load_Source, file: []u8) -> [32]u8 {
-	if source.image_checked && len(file) > 0 {
+first_file_hash :: proc "contextless" (source: Load_Source, file: []u8) -> (hash: [32]u8, agrees: bool) {
+	if source.image_checks != nil && len(file) > 0 {
 		for &entry in image_entries(source.image) {
 			if entry.size == u64(len(file)) && entry.offset < u64(len(source.image)) && raw_data(source.image[entry.offset:]) == raw_data(file) {
-				return entry.hash
+				return entry.hash, image_entry_check(source.image, source.image_checks, &entry)
 			}
 		}
 	}
-	return blake3.hash(file)
+	return blake3.hash(file), true
 }
 
 // module_fits_below_band says if a module of memory_size bytes at the

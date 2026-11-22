@@ -11,6 +11,7 @@ import "core:strings"
 import "core:time"
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
+import "modus:contract/pointer_pictures"
 import "modus:contract/replacement_list"
 import "modus:contract/start_list"
 import "modus:contract/system_description"
@@ -577,9 +578,30 @@ browser_machine_page_image_files :: proc(base: []u8, image := Browser_Machine_Im
 	module_count = len(list)
 	switch image {
 	case .Desktop:
+		// One pointer theme: the first of the order of preference that the
+		// base holds, the one that the compositor takes at its start. The
+		// root service of a page hashes each resource that it gives, and a
+		// second theme would cost its hash on the software processor with
+		// no use (browser_machine.md, "The boot image of the page").
+		theme_kept := ""
+		preference := pointer_pictures.RESOURCE_PREFERENCE
+		for theme in preference {
+			for &entry in resources {
+				if theme_kept == "" && system_description.name_of(&entry.name) == theme {
+					theme_kept = theme
+				}
+			}
+		}
 		for &entry in resources {
 			name := system_description.name_of(&entry.name)
 			if name == system_description.RESOURCE_DESCRIPTION || name == system_description.RESOURCE_SIGNATURE || name == replacement_list.RESOURCE_NAME {
+				continue
+			}
+			is_theme := false
+			for theme in preference {
+				is_theme ||= name == theme
+			}
+			if is_theme && name != theme_kept {
 				continue
 			}
 			bytes, inside := info.image_entry_bytes(base, &entry)
@@ -669,6 +691,10 @@ browser_machine_console_write :: proc() -> bool {
 	}
 	return browser_machine_page_image_write(BOOT_IMAGE, .Console)
 }
+
+// The tests of the stage tracker of the host, which browser-machine boot
+// runs in Node before the machine.
+BROWSER_MACHINE_HOST_TEST_TEXT :: #load("browser_machine/browser_machine_host_test.js", string)
 
 // The console page: the host of the page with the second serial port as
 // its terminal. The site publishes the desktop page only.
@@ -826,6 +852,16 @@ browser_machine_boot :: proc(boot_image: string) -> bool {
 	if major := browser_machine_node_major(); major < BROWSER_MACHINE_NODE_MAJOR_VERSION {
 		fmt.eprintfln("modustool: browser-machine boot needs node %d or later on the path; found %d (0: none)", BROWSER_MACHINE_NODE_MAJOR_VERSION, major)
 		return false
+	}
+	// The stage tracker of the host first: the stages that the page shows
+	// come from it.
+	{
+		state, output, error_output, error := os.process_exec({command = {"node", "--input-type=module", "--eval", BROWSER_MACHINE_HOST_TEST_TEXT, BROWSER_MACHINE_HOST_PATH}}, context.temp_allocator)
+		if error != nil || !state.success {
+			fmt.eprintfln("modustool: the tests of the stage tracker of %s failed (code %d): %s%s", BROWSER_MACHINE_HOST_PATH, state.exit_code, string(output), string(error_output))
+			return false
+		}
+		foundation.test_passed_print("the stage tracker of the host: %s", strings.trim_space(string(output)))
 	}
 	trust_hash_hex := ""
 	if boot_image != "" {

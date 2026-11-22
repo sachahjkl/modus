@@ -10,6 +10,7 @@ import "core:testing"
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
 import "modus:contract/object_cache"
+import "modus:contract/pointer_pictures"
 import "internal:dom_terminal/dom_protocol"
 import "modus:contract/start_list"
 import "modus:contract/system_description"
@@ -195,6 +196,16 @@ browser_machine_host_writes_the_boot_record_of_the_kernel :: proc(t: ^testing.T)
 	expect_offsets(t, "BOOT_INFO_OFFSETS", info.Boot_Info)
 	expect_offsets(t, "FRAMEBUFFER_OFFSETS", info.Framebuffer)
 	expect_offsets(t, "MEMORY_RANGE_OFFSETS", info.Memory_Range)
+	// The page writes two fields of the trust record only.
+	trust_offsets := host_object_numbers(t, "BOOT_TRUST_OFFSETS")
+	testing.expect_value(t, len(trust_offsets), 2)
+	testing.expect_value(t, trust_offsets["description_hash"], int(offset_of(info.Boot_Trust, description_hash)))
+	testing.expect_value(t, trust_offsets["file_check"], int(offset_of(info.Boot_Trust, file_check)))
+	file_checks := host_object_numbers(t, "FileCheck")
+	testing.expect_value(t, len(file_checks), len(info.File_Check))
+	for check in info.File_Check {
+		testing.expectf(t, file_checks[reflect.enum_string(check)] == int(check), "FileCheck.%v is %d in the host", check, file_checks[reflect.enum_string(check)])
+	}
 	text := browser_machine_host_text()
 	testing.expect(t, strings.contains(text, strings.concatenate({"export const BOOT_INFO_SIZE = ", strconv.write_int(make([]u8, 24, context.temp_allocator), i64(size_of(info.Boot_Info)), 10), ";"}, context.temp_allocator)))
 	testing.expect(t, strings.contains(text, strings.concatenate({"export const MEMORY_RANGE_SIZE = ", strconv.write_int(make([]u8, 24, context.temp_allocator), i64(size_of(info.Memory_Range)), 10), ";"}, context.temp_allocator)))
@@ -332,6 +343,43 @@ page_image_base :: proc(module_names: []string, resource_names: []string) -> []u
 	return boot_image_encode(files[:], len(module_names))
 }
 
+// The desktop image of the page keeps one pointer theme: the first of the
+// order of preference that the base holds.
+@(test)
+browser_machine_page_image_keeps_one_pointer_theme :: proc(t: ^testing.T) {
+	page_modules := BROWSER_MACHINE_PAGE_MODULES
+	all := make([dynamic]string, context.temp_allocator)
+	append(&all, ..page_modules[:])
+	append(&all, "cryptography")
+	preference := pointer_pictures.RESOURCE_PREFERENCE
+	theme_names := names_as_a_set(preference[:])
+	cases := [?]struct {
+		resources: []string,
+		kept:      string,
+	}{{{"start_list", preference[1], preference[0]}, preference[0]}, {{"start_list", preference[1]}, preference[1]}, {{"start_list", preference[0]}, preference[0]}, {{"start_list"}, ""}}
+	for item in cases {
+		files, module_count, problem := browser_machine_page_image_files(page_image_base(all[:], item.resources))
+		testing.expect_value(t, problem, "")
+		themes := 0
+		for file in files[module_count:] {
+			if file.name in theme_names {
+				themes += 1
+				testing.expect_value(t, file.name, item.kept)
+			}
+		}
+		testing.expect_value(t, themes, item.kept == "" ? 0 : 1)
+	}
+}
+
+@(private = "file")
+names_as_a_set :: proc(names: []string) -> map[string]bool {
+	set := make(map[string]bool, context.temp_allocator)
+	for name in names {
+		set[name] = true
+	}
+	return set
+}
+
 // The boot image of the page keeps the modules of the page and their
 // imports, and each resource but the three that the signature makes again;
 // it drops each other module. It refuses a base that is not an image, that
@@ -438,7 +486,9 @@ browser_machine_host_puts_the_console_on_com2 :: proc(t: ^testing.T) {
 			worker = file.text
 		}
 	}
-	testing.expect(t, strings.contains(worker, "onConsoleLine: (line) => pendingConsoleLines.push(line),"))
+	testing.expect(t, strings.contains(worker, "onConsoleLine: (line) => {\n      pendingConsoleLines.push(line);"))
+	// The worker gives the sentence of each stage: no document imports the host.
+	testing.expect(t, strings.contains(worker, "sentence: BOOT_STAGE_SENTENCES[stage]"))
 	testing.expect(t, strings.contains(worker, "self.postMessage({ kind: \"console\", lines: pendingConsoleLines });"))
 	testing.expect(t, strings.contains(worker, "case \"console_type\":"))
 	testing.expect(t, strings.contains(worker, "machine.consolePort.type(message.text)"))
@@ -683,18 +733,23 @@ browser_machine_host_names_the_key_tags_of_the_stage_facts :: proc(t: ^testing.T
 		return
 	}
 	body := text[start + strings.index_byte(text[start:], '{') + 1:]
-	body = body[:strings.index_byte(body, '}')]
+	body = body[:strings.index(body, "\n};")]
 	count := 0
-	for part in strings.split(body, ",", context.temp_allocator) {
-		name, separator, tag := strings.partition(strings.trim_space(part), "\": \"")
-		if len(separator) == 0 {
+	// Each line is one row, in one form: two spaces, the fact type in
+	// quotes as <package>::<type>, a colon, its tag of 6 lowercase
+	// hexadecimal digits in quotes, and a comma. A line of another form
+	// fails here with the line, so a row that the parse would skip is not
+	// lost in silence.
+	lines := body
+	for line in strings.split_lines_iterator(&lines) {
+		if line == "" {
 			continue
 		}
-		name, tag = strings.trim(name, "\""), strings.trim(tag, "\"")
-		package_name, between, type_name := strings.partition(name, "::")
-		if !testing.expectf(t, len(between) > 0, "the stage fact %q names no package", name) {
+		name, tag, form_ok := stage_fact_row_parse(line)
+		if !testing.expectf(t, form_ok, "the row %q of BOOT_STAGE_FACT_TAGS is not of the form   \"<package>::<type>\": \"<6 digits>\",", line) {
 			continue
 		}
+		package_name, _, type_name := strings.partition(name, "::")
 		count += 1
 		expected := fmt.tprintf("%06x", fact_key(package_name, type_name) >> 40)
 		testing.expectf(t, tag == expected, "the key tag of %s is %s in the host, and %s from its fact key", name, tag, expected)
@@ -711,5 +766,47 @@ browser_machine_host_names_the_key_tags_of_the_stage_facts :: proc(t: ^testing.T
 		}
 		testing.expectf(t, declared, "the module %s declares no fact type %s", package_name, type_name)
 	}
-	testing.expect_value(t, count, 4)
+	testing.expect_value(t, count, 6)
+}
+
+// stage_fact_row_parse reads one row of BOOT_STAGE_FACT_TAGS of the host:
+// the fact type and its key tag, or ok false for a line of another form.
+stage_fact_row_parse :: proc(line: string) -> (name, tag: string, ok: bool) {
+	PREFIX :: "  \""
+	if !strings.has_prefix(line, PREFIX) || !strings.has_suffix(line, "\",") {
+		return "", "", false
+	}
+	inner := line[len(PREFIX):len(line) - 2]
+	separator := strings.index(inner, "\": \"")
+	if separator < 0 {
+		return "", "", false
+	}
+	name, tag = inner[:separator], inner[separator + 4:]
+	package_name, between, type_name := strings.partition(name, "::")
+	if len(between) == 0 || package_name == "" || type_name == "" || len(tag) != 6 {
+		return "", "", false
+	}
+	for character in tag {
+		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f') {
+			return "", "", false
+		}
+	}
+	for character in name {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '_' || character == ':') {
+			return "", "", false
+		}
+	}
+	return name, tag, true
+}
+
+@(test)
+stage_fact_row_parse_refuses_each_other_form :: proc(t: ^testing.T) {
+	for line in ([]string{"", "  \"root::Boot_Image_Agrees\": \"9bf297\"", "\"root::Boot_Image_Agrees\": \"9bf297\",", "  \"root::Boot_Image_Agrees\": \"9BF297\",", "  \"root::Boot_Image_Agrees\": \"9bf29\",", "  \"root::Boot_Image_Agrees\": \"9bf2970\",", "  \"Boot_Image_Agrees\": \"9bf297\",", "  \"::Boot_Image_Agrees\": \"9bf297\",", "  \"root::\": \"9bf297\",", "  \"root::Boot Image\": \"9bf297\",", "  \"root::Boot_Image_Agrees\":\"9bf297\","}) {
+		_, _, ok := stage_fact_row_parse(line)
+		testing.expectf(t, !ok, "the row %q is refused", line)
+	}
+	name, tag, ok := stage_fact_row_parse("  \"root::Boot_Image_Agrees\": \"9bf297\",")
+	testing.expect(t, ok)
+	testing.expect_value(t, name, "root::Boot_Image_Agrees")
+	testing.expect_value(t, tag, "9bf297")
 }

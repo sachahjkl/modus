@@ -9,43 +9,110 @@ import "modus:system"
 
 // The check of the root service (docs/TRUSTED_BOOT.md, "Layer 1: the signed system description").
 //
-// The boot program verified the description signature and every hash
-// before the kernel started, and wrote what it verified in the trust
-// record. This service reads the record in the boot record of the kernel,
-// takes the system description of the boot image only when its hash is the
-// one that the boot program verified, and checks every module and resource
-// of the boot image against it once, before it starts the first process.
+// The trust record of the boot record says who checks the files of the
+// boot image (info.File_Check). This service takes the system description
+// of the boot image only when its hash is the one of the record, then:
 //
-// Once is enough: the kernel gives this service the pages of the boot image
-// with the right Read and no Write, so no process can change a module
-// between this check and its start. The kernel itself is not in the boot
-// image: only the boot program checks it. The kernel does not read the
-// description.
+// - Boot_Program: the boot program verified the description signature and
+//   every hash before the kernel. This service checks every module and
+//   resource again, once, before it starts the first process.
+// - Root_Service_At_Start: nothing checked the files before the kernel;
+//   this service checks every one, once, before the first process.
+// - Root_Service_At_Load (a browser machine): nothing checked the files;
+//   this service checks the table of the image against the description,
+//   and its own module, then hashes each other file at its first load or
+//   give, and refuses one whose hash differs before any read of it.
+//
+// A file is hashed once: image_checks keeps each entry whose bytes agree.
+// The rule holds while no process and no device writes the pages of the
+// image: the kernel gives them to this service with Read and no Write, and
+// a device reaches them only on a machine with no IOMMU. The kernel itself
+// is not in the boot image: only the boot program checks it.
 
 // The boot record, read once: about 2.5 KiB, kept out of the stack.
 trust_boot_report: op.Boot_Report
-// The image check passed: each module and resource of the boot image has
-// the hash of its entry. The loads and the resources of this service then
-// compute no second hash (load_source, resource_mapping).
-image_checked: bool
+// The entries of the boot image whose bytes have the hash of their entry:
+// every entry after the check at the start, or each one at its first use.
+// The loads of this service (load_source) and resource_mapping read it.
+image_checks: system.Image_Checks
+
+// own_module_check hashes the module of this service, by its name in the
+// boot image, and keeps it as checked. A failure is the check of the file
+// that failed.
+own_module_check :: proc "contextless" () -> (result: system_description.Check) {
+	for &entry in system.image_entries(image) {
+		if system.name_of(entry.name[:]) != "root" {
+			continue
+		}
+		if !system.image_entry_check(image, &image_checks, &entry) {
+			result.fault = .Hash_Differs
+			result.name = entry.name
+			result.expected_hash = entry.hash
+		}
+		return result
+	}
+	result.fault = .Image_Not_Valid // A boot image with no module of this service.
+	return result
+}
+
+// image_file_checked gives the bytes of a module of the boot image, by its
+// name, after their hash agrees with the entry (image_checks), or nil: no
+// module of that name, or bytes whose hash differs, which the log names.
+image_file_checked :: proc "contextless" (name: string) -> []u8 {
+	for &entry in system.image_entries(image) {
+		if system.name_of(entry.name[:]) != name {
+			continue
+		}
+		if !system.image_entry_check(image, &image_checks, &entry) {
+			system.log_fact(.Error, Image_File_Hash_Wrong{file = module_name_field(name)})
+			return nil
+		}
+		return image[entry.offset:][:entry.size]
+	}
+	return nil
+}
 
 trust_check :: proc "contextless" () {
 	report := &trust_boot_report
 	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Boot), 0, u64(uintptr(report)), size_of(op.Boot_Report))
 	trust := &report.trust
+	file_check, file_check_ok := info.file_check_of_word(trust.file_check)
+	if !file_check_ok || file_check == .None {
+		fail("the boot record names no check of the files of the boot image", .Bad_State)
+	}
 	verifier, verifier_ok := info.verifier_of_word(trust.verifier)
-	if !verifier_ok || verifier == .None {
-		fail("the boot program did not verify the system description", .Bad_State)
+	if !verifier_ok {
+		fail("the boot record names no verifier of the system description", .Bad_State)
+	}
+	// The record says what happened: a boot program that hashed the files
+	// verified the description, and a record whose files nothing hashed
+	// names no verifier.
+	switch file_check {
+	case .Boot_Program:
+		if verifier == .None {
+			fail("the boot program did not verify the system description", .Bad_State)
+		}
+	case .Root_Service_At_Start, .Root_Service_At_Load:
+		if verifier != .None {
+			fail("the boot record names a verifier of the system description, and no check of its files before the kernel", .Bad_State)
+		}
+	case .None:
+		// Refused above.
 	}
 	description, _, found := system_description.trust_resources(image)
 	if !found {
 		fail("the boot image has no system description", .Bad_State)
 	}
 	if blake3.hash(description) != trust.description_hash {
-		fail("the system description is not the one that the boot program verified", .Bad_State)
+		fail(verifier == .None ? "the system description is not the one whose hash the boot record gives" : "the system description is not the one that the boot program verified", .Bad_State)
 	}
 	start := system.nanoseconds()
-	result := system_description.image_check(description, image)
+	result := file_check == .Root_Service_At_Load ? system_description.image_check_without_bytes(description, image) : system_description.image_check(description, image)
+	if result.fault == .None && file_check == .Root_Service_At_Load {
+		// This service runs from its own entry: it is the first file that
+		// the check at the first use hashes.
+		result = own_module_check()
+	}
 	spent := system.nanoseconds() - start
 	if result.fault != .None {
 		buffer: [256]u8
@@ -83,26 +150,43 @@ trust_check :: proc "contextless" () {
 		}
 		fail(text, .Bad_State)
 	}
-	image_checked = true
 	// The count of the entries that this check read, not the count of the
-	// trust record: a browser machine writes no count there.
+	// trust record: a record that the boot program did not write has none.
 	list, _ := system_description.entries(description)
 	checked_entries := u64(max(len(list), 1) - 1)
-	system.log_fact(.Info, Boot_Image_Agrees{checked_entries = checked_entries, check_time = value_kinds.Time_In_Microseconds(spent / 1000)})
-	if report.cycle_frequency != 0 {
-		system.log_fact(.Info, Boot_Program_Check_Time{check_time = value_kinds.Time_In_Microseconds(trust.check_cycles * 1_000_000 / report.cycle_frequency)})
+	check_time := value_kinds.Time_In_Microseconds(spent / 1000)
+	switch file_check {
+	case .Boot_Program, .Root_Service_At_Start:
+		for place in 0 ..< min(len(system.image_entries(image)) + len(system.image_resources(image)), system.IMAGE_CHECK_CAPACITY) {
+			image_checks.checked[place] = true
+		}
+	case .Root_Service_At_Load, .None:
+		// Each file at its first use.
 	}
-	key_kind, key_kind_ok := info.signing_key_kind_of_word(trust.key_kind)
-	if !key_kind_ok || key_kind == .None {
-		fail("the boot record names no signing key kind", .Bad_State)
-	}
-	if key_kind == .Test {
-		system.log_fact(.Warning, Description_Signed_By_Test_Key{})
-	}
-	if verifier == .Boot_Program {
-		system.log_fact(.Info, Verified_By_Boot_Program{})
-	} else {
-		system.log_fact(.Info, Verified_By_Firmware{})
+	switch file_check {
+	case .Boot_Program:
+		system.log_fact(.Info, Boot_Image_Agrees{checked_entries = checked_entries, check_time = check_time})
+		if report.cycle_frequency != 0 {
+			system.log_fact(.Info, Boot_Program_Check_Time{check_time = value_kinds.Time_In_Microseconds(trust.check_cycles * 1_000_000 / report.cycle_frequency)})
+		}
+		key_kind, key_kind_ok := info.signing_key_kind_of_word(trust.key_kind)
+		if !key_kind_ok || key_kind == .None {
+			fail("the boot record names no signing key kind", .Bad_State)
+		}
+		if key_kind == .Test {
+			system.log_fact(.Warning, Description_Signed_By_Test_Key{})
+		}
+		if verifier == .Boot_Program {
+			system.log_fact(.Info, Verified_By_Boot_Program{})
+		} else {
+			system.log_fact(.Info, Verified_By_Firmware{})
+		}
+	case .Root_Service_At_Start:
+		system.log_fact(.Warning, Image_Checked_At_Start{checked_entries = checked_entries, check_time = check_time})
+	case .Root_Service_At_Load:
+		system.log_fact(.Warning, Image_Checked_At_Load{checked_entries = checked_entries, check_time = check_time})
+	case .None:
+		// Refused above.
 	}
 	measure, measure_ok := info.measure_state_of_word(trust.measure)
 	if !measure_ok {

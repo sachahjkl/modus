@@ -898,6 +898,12 @@ modustool: src/modules/demonstrations/frames/main.odin:144: a mention of the ope
 
 What the check does not see: a `#partial switch`, a constant declared inside a procedure or a `when` block, an enum declared inside a procedure, a value past 255 on either side of 0, a value computed from a constant of another package, and a family whose members share neither their first nor their last word. Review holds them. The design: `src/md/infrastructure/choice_constants.md`.
 
+**The table of the checked entries of an image.** The check refuses each source of `src/` and `tools/` that names the field `image_checks` of `system.Load_Source` (a read of the field, or the field in a literal), but the loader (`src/library/modus/system/load.odin`), the root service (`src/modules/system/root/main.odin`) and the host tests of the loader. A process that gave such a table could load a file of an image that nothing checked (`TRUSTED_BOOT.md`, "Layer 1: the signed system description").
+
+```
+modustool: src/modules/system/console/main.odin:12: names the field image_checks of system.Load_Source, which only the root service gives (src/modules/system/root/main.odin)
+```
+
 **When they run.** `modustool check` runs the four after the check of the imports, and `modustool rule-checks` runs them alone. A host test of the tool holds the same four conditions on the sources of the repository.
 
 ## The reuse list
@@ -1255,7 +1261,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `mark <what> [options]` | Makes one file of the mark: the still mark, a frame, an animation, a tile map, the table of a tile map, the picture for a developer, as a PNG file, an icon file, a vector file or an animated PNG file; `mark uses` prints the table of the uses ("The pictures of the mark") |
 | `similarity`, `similarity near <file>:<line>`, `similarity pair <file>:<line> <file>:<line>` | Measures how similar the code pieces of `src/` and `tools/` are: families with their factoring template, ranked by the nodes that a factoring saves, in `build/similarity/`; or the procedures most similar to one; or the score of two procedures ("The similarity finder") |
 | `library-imports` | Checks that each import of each source file of `src/` follows the rule of its file, that the kernel and a contract package import no support package, and that each host test that imports a package of `core:` starts with `#+build !freestanding` ("The imports of the sources of the system") |
-| `rule-checks` | Checks the count of the kernel operations against the properties, that no source of the system calls an allocator, that each export that fails gives an error record, that no family of integer constants is a closed set of choices, that no cast of a word to an enum skips its border, and that no stop word skips its border ("The rules that a check holds") |
+| `rule-checks` | Checks the count of the kernel operations against the properties, that no source of the system calls an allocator, that each export that fails gives an error record, that no family of integer constants is a closed set of choices, that no cast of a word to an enum skips its border, that no stop word skips its border, and that only the loader and the root service name the field `image_checks` ("The rules that a check holds") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
 | `film [terminal \| palette \| heron \| boot \| desktop \| console \| program]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4`, `build/films/<name>.webm` and the cue file `build/films/<name>.cues` ("The film", "The film cues"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
 

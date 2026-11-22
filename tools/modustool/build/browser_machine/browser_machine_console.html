@@ -71,7 +71,6 @@
 </div>
 <div id="chips" hidden></div>
 <script type="module">
-import { BOOT_STAGE_SENTENCES } from "./browser_machine_host.js";
 // The page draws the lines that dom_terminal writes on COM2, one JSON
 // object for each line (src/md/features/console_renderers.md, "Variant C:
 // dom_terminal"). Each place in a text is a place in Array.from(text).
@@ -276,13 +275,14 @@ const worker = new Worker("./browser_machine_worker.js", { type: "module" });
 let running = false;
 // The stage of the start, which the header shows until the prompt
 // (src/md/features/browser_machine.md, "The boot stages of the page"); the
-// worker names each one, and the host gives its sentence.
+// worker names each one with its sentence.
 let stage = "download";
+let stageSentence = "";
 let stageStarted = performance.now();
 let stageDetail = "";
 function stageShow() {
-  if (stage === "ready" || !Object.hasOwn(BOOT_STAGE_SENTENCES, stage)) return;
-  element("state-text").textContent = BOOT_STAGE_SENTENCES[stage] + stageDetail + " (" + ((performance.now() - stageStarted) / 1000).toFixed(0) + " s)";
+  if (stage === "ready" || !stageSentence) return;
+  element("state-text").textContent = stageSentence + stageDetail + " (" + ((performance.now() - stageStarted) / 1000).toFixed(0) + " s)";
 }
 const stageTimer = setInterval(stageShow, 500);
 worker.onmessage = (event) => {
@@ -292,6 +292,7 @@ worker.onmessage = (event) => {
     case "stage": {
       if (typeof message.stage !== "string") return;
       if (message.stage !== stage) { stage = message.stage; stageStarted = performance.now(); }
+      if (typeof message.sentence === "string") stageSentence = message.sentence;
       const loaded = Number(message.loaded) || 0, total = Number(message.total) || 0;
       stageDetail = stage === "download" && loaded ? ": " + (loaded / 1048576).toFixed(1) + (total ? " of " + (total / 1048576).toFixed(1) : "") + " MiB" : "";
       if (stage === "ready") { clearInterval(stageTimer); if (running) stateSet("running"); }
