@@ -82,6 +82,25 @@ sample_history_start :: proc "contextless" (history: ^Sample_History, scale: Sca
 	return true
 }
 
+// sample_history_box_set moves the graph of a history to another box: the
+// window was resized, and its layout gives the graph another place. The
+// points of the curve are placed again from the kept values, once for the
+// change; the same box changes nothing, so a frame that gives the box of
+// the frame before does no work in proportion to the samples. It refuses a
+// box that box_valid refuses and a history that sample_history_start did
+// not start: the history is then not changed.
+sample_history_box_set :: proc "contextless" (history: ^Sample_History, box: Graph_Box) -> bool {
+	if !history.started || !box_valid(box) {
+		return false
+	}
+	if history.box == box {
+		return true
+	}
+	history.box = box
+	curve_place(history)
+	return true
+}
+
 // sample_history_push adds the value of a new sample, which replaces the
 // oldest one in a full history, then finds the top of the scale and the
 // points of the curve. fixed_top is the top of a Fixed scale (all the pages

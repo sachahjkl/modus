@@ -66,7 +66,13 @@ A bar is a graphic on the track: 3 to 1. As each concept, `near_limit` is a text
 
 ## The layout
 
-The window is 520 × 640 (it was 520 × 560). From the top: the line of the memory and its bar, the kernel entries, the interrupts, the locks of the kernel, the three graphs, then the rows of the processes. A graph is 288 × 40 pixels from x = 216: its name and its scale are two lines of 20 pixels in the column of the names (184 pixels, the column of a nickname), at its left. The graphs take 148 pixels; the window grew 80 pixels, so the list of the processes has 68 pixels less, and the last line counts the rows that do not fit, as before. 640 keeps the window and its title bar of 24 pixels inside the screen at y = 408.
+The window is 520 × 640 at its start (it was 520 × 560). From the top: the line of the memory and its bar, the kernel entries, the interrupts, the locks of the kernel, the three graphs, then the rows of the processes. 640 keeps the window and its title bar of 24 pixels inside the screen at y = 408.
+
+Each place comes from a layout tree of `modus:layout` ([box_layout.md](box_layout.md)), solved at each frame at the size that the window has then (`monitor_layout`): no place is a constant of the window.
+
+- **The summary** is five lines of 20 pixels, with 10 pixels of the window over and under them: 120 pixels, five steps of the grid of points, so the first graph starts on the grid.
+- **A graph** is a row of 48 pixels: the column of the names (184 pixels, the column of a nickname) holds its name and its scale on two lines, and the graph takes the width that the column leaves. Its left and top edges go up to the next point of the grid and its right edge down to the point before. At 520 pixels a graph is 288 × 40 from x = 216, as before the layout tree. A wider window gives a wider graph: the sample history places its curve again in the new box, once for the change (`sample_history_box_set`), never at a frame with the same box.
+- **The table of the processes** takes the height left. `table_columns` gives its columns: the name (184 pixels and a gap), the pages (68), the bar of the processor share, which takes the width left, never under 100 pixels, and the share (`100%`, 32 pixels) at the edge of the content. At 520 pixels the bar is 200 pixels: the share ends 10 pixels from the edge, as the summary does. The last line counts the rows that do not fit, as before.
 
 ## The refused forms
 

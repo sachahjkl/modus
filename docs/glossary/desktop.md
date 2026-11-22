@@ -1160,6 +1160,56 @@ The design: `src/md/features/spacing_tokens.md`.
 
 Do not use: grid unit, spacing unit, grid of 8.
 
+### Layout tree
+
+A layout tree is the tree of the layout boxes of one frame of a window, which one solver sizes and places in logical pixels.
+
+The process builds it again at each frame with `layout.box_open`, `layout.box_add` and `layout.box_close`, then calls `layout.solve` with the size of the view. The tree is one flat array of 1024 boxes linked by indexes, in the memory of the process, with no allocator. It is not the semantic tree, which says what each element is for a reader, and it is not the draw table.
+
+The design: `src/md/features/box_layout.md`.
+
+Do not use: DOM, render tree, view hierarchy, widget tree.
+
+### Layout box
+
+A layout box is one node of a layout tree: what it wants on each axis (a size kind, a strictness, a least size), its padding, its gap, its alignment and its overflow mode, and the rectangle that the solver gives it.
+
+An element is drawn in the rectangle of its layout box. A box with a label has an element identity, from the identity of its parent and its label, so its state outlives the frame. A layout box is not a card, which is a frame of one subject in a display, and it is not the box of a draw record.
+
+The design: `src/md/features/box_layout.md`.
+
+Do not use: widget, view, frame (for this), panel.
+
+### Box input
+
+The box input is what the input of one frame does to one layout box: the pointer over it, held, activated, activated twice, a secondary press, a drag, the focus and the scroll.
+
+`layout.box_input` computes it from the input of the frame and the clipped rectangle of the box in the frame before, so the input acts on what the principal saw. Of the boxes under the pointer, the box placed last takes the press. It is the same idea as the element result of the interface package, for a box of a layout tree.
+
+The design: `src/md/features/box_layout.md`, "The input of a box".
+
+Do not use: signal, event (for this), interaction.
+
+### Element tokens
+
+The element tokens are the record of the colors and the lengths that an element draws with, named by their role: a surface, a border, the outline of the focus, a text, the chosen color, a state, and the spacing tokens.
+
+`layout.tokens_for(appearance, contrast_mode)` takes each value from the color tokens and the spacing tokens of `graphics`, so the element tokens hold no value of their own. A stack of 16 records lets a part of a window draw with other tokens and give them back. A host test checks the contrast of each pair of text and surface.
+
+The design: `src/md/features/box_layout.md`, "The element tokens".
+
+Do not use: design token, theme, style, skin.
+
+### Split pane
+
+A split pane is a layout box in two parts along one axis, with a divider between them that the principal drags.
+
+The split ratio, in parts of 10 000, is clamped to 1 000 to 9 000 so that neither part disappears, and the state of the box keeps it across frames. `layout.split_pane` gives the rectangle of each part and of the divider. A split pane is not two windows: one process draws both parts.
+
+The design: `src/md/features/box_layout.md`.
+
+Do not use: splitter, sash, gutter.
+
 ### Window bound
 
 The window bound is the largest size of a window with its frame: 1024 × 768 under the bar, so at most 1000 × 708 for the surface.
