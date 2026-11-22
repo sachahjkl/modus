@@ -405,28 +405,6 @@ record_input_taken :: proc "contextless" (s: ^State, work: ^Plan_Work, number: u
 	return false
 }
 
-// duplicate_wiring_exists checks whether an identical non-Asker wiring
-// (writer, writer_stream, writer_index -> reader, reader_index) is already
-// active or present in an earlier row of this list.
-@(private = "file")
-duplicate_wiring_exists :: proc "contextless" (s: ^State, work: ^Plan_Work, number: u32, writer_idx: int, writer_is_log: bool, writer_stream: u32, reader_idx: int, reader_stream: u32) -> bool {
-	for before in 1 ..< number {
-		plan := &work.plans[before - 1]
-		if plan.writer_index == writer_idx && (plan.row.writer_stream == .Log) == writer_is_log && plan.row.writer_index == writer_stream && plan.reader_index == reader_idx && plan.row.reader_end != .Asker && plan.row.reader_index == reader_stream {
-			return true
-		}
-	}
-	if writer_idx < 0 || reader_idx < 0 {
-		return false
-	}
-	for &kept in s.wirings {
-		if kept.active && kept.writer_index == writer_idx && kept.writer_is_log == writer_is_log && kept.writer_stream_index == writer_stream && kept.reader_index == reader_idx && !kept.reader_is_asker && kept.reader_stream_index == reader_stream {
-			return true
-		}
-	}
-	return false
-}
-
 // graph_reaches performs a bounded breadth-first search from `from_proc`
 // along active wirings and resolved rows of `work` (up to `row_limit`) to
 // detect whether adding `writer -> reader` would close a directed cycle.
@@ -651,10 +629,6 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 			plan.terms_size = terms.size
 		}
 		if wirings == .One && record_input_taken(s, work, number, reader_idx, row.reader_index) {
-			return .Bad_State, make_error(op_code, .Exists, .Wirings, i64(output.Wiring_Field.Reader_Index), i64(row.reader_index), 0, found)
-		}
-		// Duplicate exact wire between the same output and input refused.
-		if duplicate_wiring_exists(s, work, number, writer_idx, row.writer_stream == .Log, row.writer_index, reader_idx, row.reader_index) {
 			return .Bad_State, make_error(op_code, .Exists, .Wirings, i64(output.Wiring_Field.Reader_Index), i64(row.reader_index), 0, found)
 		}
 		fixed_file, _, _, _, fixed_desc, fixed := generic_type_fixed(s, work, image, number, reader_idx, row.reader_index)

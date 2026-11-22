@@ -278,12 +278,11 @@ duplicate_self_and_cycle_wirings_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, st, ws.Response_Status.Bad_State)
 	testing.expect_value(t, errors.Kind(ref.kind), errors.Kind.Exists)
 
-	// 3. Wire A -> B (in_many) succeeds, then exact duplicate A -> B (in_many) refused!
+	// 3. Wire A -> B (in_many) accepts multiple wirings from the same output.
 	st, _, _, _ = wire_once(&s, image, asker, make_wire_row(.Started, 1, 1, .Started, 2, 2), ab[:])
 	testing.expect_value(t, st, ws.Response_Status.Ok)
-	st, ref, _, _ = wire_once(&s, image, asker, make_wire_row(.Started, 1, 1, .Started, 2, 2), ab[:])
-	testing.expect_value(t, st, ws.Response_Status.Bad_State)
-	testing.expect_value(t, errors.Kind(ref.kind), errors.Kind.Exists)
+	st, _, _, _ = wire_once(&s, image, asker, make_wire_row(.Started, 1, 1, .Started, 2, 2), ab[:])
+	testing.expect_value(t, st, ws.Response_Status.Ok)
 
 	// 4. Direct cycle B -> A refused; 3-hop cycle B -> C then C -> A refused!
 	ba := [2]ws.Resolved_Lent_End{
@@ -308,7 +307,7 @@ duplicate_self_and_cycle_wirings_are_refused :: proc(t: ^testing.T) {
 	st, ref, _, _ = wire_once(&s, image, asker, make_wire_row(.Started, 1, 1, .Started, 2, 1), ca[:])
 	testing.expect_value(t, st, ws.Response_Status.Bad_State)
 	testing.expect_value(t, errors.Kind(ref.kind), errors.Kind.Bad_Value)
-	testing.expect_value(t, s.wirings_running, 3)
+	testing.expect_value(t, s.wirings_running, 4)
 }
 
 // Capacity bounds and one past each bound are refused with exact error records:
@@ -391,8 +390,8 @@ capacity_bounds_and_one_past_bound_are_refused :: proc(t: ^testing.T) {
 	testing.expect_value(t, ref.limit, i64(WIRINGS_OF_THE_MACHINE_MOST))
 
 	// Ring room exhaustion refused with Busy when callback reports 0 room.
-	zero_room :: proc "contextless" (data: rawptr, proc_index: int) -> (u32, bool) {
-		return 0, true
+	zero_room :: proc "contextless" (data: rawptr, proc_index: int) -> (u32, u32, bool) {
+		return 0, 32, true
 	}
 	actions: [WIRINGS_OF_THE_MACHINE_MOST]Stop_Action
 	_, _ = revoke_asker_apply(&s, askers[2], actions[:])
