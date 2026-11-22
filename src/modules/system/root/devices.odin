@@ -8,6 +8,7 @@ import "modus:contract/entropy_service"
 import "modus:contract/frame"
 import op "modus:contract/operation"
 import "modus:contract/ring"
+import rd "modus:contract/root_delegation"
 import "modus:pci"
 import "modus:random"
 import "modus:system"
@@ -31,25 +32,39 @@ device_handle :: proc "contextless" (kind: op.Device_Kind, a, b: u64) -> (handle
 	return system.Handle(values[0]), values, status
 }
 
-// A device service, by the class of its device: the process, and the ring
-// that it serves to its one client.
-Driver :: struct {
-	name:          string,
-	device:        u32, // The device number of the class on the bus (src/library/modus/pci).
-	ring_capacity: u32,
-	ring_role:     int, // The role of the ring in the context of the device service.
+// Active PCI identity-to-device-class-role table (modus:contract/root_delegation).
+device_identities: rd.Device_Identity_Table
+device_identities_initialized: bool
+
+@(private = "file")
+device_identities_ensure :: proc "contextless" () -> ^rd.Device_Identity_Table {
+	if !device_identities_initialized {
+		device_identities = rd.device_identity_table_default()
+		device_identities_initialized = true
+	}
+	return &device_identities
 }
 
-DRIVER_BLOCK :: Driver{"block", pci.DEVICE_VIRTIO_BLOCK, block.RING_CAPACITY, block.SERVICE_RING}
-DRIVER_FRAME :: Driver{"frame", pci.DEVICE_VIRTIO_NETWORK, frame.RING_CAPACITY, frame.SERVICE_RING}
+// A device service, by the class of its device: its device-class role, optional
+// fixed test module override, and the ring that it serves to its one client.
+Driver :: struct {
+	name:          string, // Default or test-specific module name (used when fixed_module is true or role has no override).
+	role:          rd.Device_Class_Role, // Device class role resolved via Device_Identity_Table.
+	ring_capacity: u32,
+	ring_role:     int, // The role of the ring in the context of the device service.
+	fixed_module:  bool, // True for test-only drivers such as iommu_device.
+}
+
+DRIVER_BLOCK :: Driver{"block", .Block_Device, block.RING_CAPACITY, block.SERVICE_RING, false}
+DRIVER_FRAME :: Driver{"frame", .Network_Device, frame.RING_CAPACITY, frame.SERVICE_RING, false}
 // The test device service of the IOMMU, for its one client `iommu`, on the
 // disk of the measures (src/md/infrastructure/iommu.md, "The proof").
-DRIVER_IOMMU_DEVICE :: Driver{"iommu_device", pci.DEVICE_VIRTIO_BLOCK, block.RING_CAPACITY, block.SERVICE_RING}
+DRIVER_IOMMU_DEVICE :: Driver{"iommu_device", .Block_Device, block.RING_CAPACITY, block.SERVICE_RING, true}
 // The entropy service, whose one client is this service (entropy.odin).
-DRIVER_ENTROPY :: Driver{"entropy", pci.DEVICE_VIRTIO_ENTROPY, entropy_service.RING_CAPACITY, entropy_service.SERVICE_RING}
+DRIVER_ENTROPY :: Driver{"entropy", .Entropy_Device, entropy_service.RING_CAPACITY, entropy_service.SERVICE_RING, false}
 // The sound service, whose one client is the process with the grant
 // Sound_Device (src/md/features/timed_stream.md).
-DRIVER_SOUND :: Driver{"sound", pci.DEVICE_VIRTIO_SOUND, timed_stream.RING_CAPACITY, timed_stream.SERVICE_RING}
+DRIVER_SOUND :: Driver{"sound", .Sound_Device, timed_stream.RING_CAPACITY, timed_stream.SERVICE_RING, false}
 #assert(timed_stream.GRANT_RING == system.GRANT_DEVICE_RING)
 
 // configuration_open takes the ports of the configuration, once.
@@ -194,12 +209,16 @@ bridge_devices_hold :: proc "contextless" (group: Bridge_Group, place: pci.Place
 // only, and another one with its bus.
 driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOCK) -> (driver: ^Started, ring_memory: system.Handle, status: system.Status) {
 	configuration_open() or_return
+	service_name := kind.fixed_module ? kind.name : device_class_holder_name(kind.role, kind.name)
 	identity := pci.read_32(place, 0)
-	if identity & 0xFFFF != pci.VENDOR_VIRTIO || identity >> 16 != kind.device {
+	vendor_id := u16(identity & 0xFFFF)
+	device_id := u16(identity >> 16)
+	entry, lookup_refusal := rd.device_identity_table_lookup(device_identities_ensure(), vendor_id, device_id)
+	if lookup_refusal != .None || entry.role != kind.role {
 		if place.bus == 0 {
-			system.log_fact(.Error, Virtio_Device_Absent{device = u64(place.device), service = module_name_field(kind.name)})
+			system.log_fact(.Error, Virtio_Device_Absent{device = u64(place.device), service = module_name_field(service_name)})
 		} else {
-			system.log_fact(.Error, Virtio_Device_Absent_Behind_Bridge{device = u64(place.device), bus = u64(place.bus), service = module_name_field(kind.name)})
+			system.log_fact(.Error, Virtio_Device_Absent_Behind_Bridge{device = u64(place.device), bus = u64(place.bus), service = module_name_field(service_name)})
 		}
 		return nil, 0, .Bad_Handle
 	}
@@ -339,7 +358,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		made[2 + index] = memory
 		system.grant_put(&context_grants, pci.GRANT_BAR + index, {memory, {.Read, .Write}})
 	}
-	if kind.device == pci.DEVICE_VIRTIO_NETWORK {
+	if kind.role == .Network_Device {
 		network_device_windows = windows && read_a_range
 	}
 	copied := system.memory_create(1) or_return
