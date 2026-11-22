@@ -147,6 +147,20 @@ Step_Back_Row :: struct {
 	stack:       [20]u8, // The stack pointer of the thread at the checkpoint.
 }
 
+// The last input of the history that wrote some bytes: watch_back().
+Watch_Back_Row :: struct {
+	point:       i64, // The input point of the record that wrote.
+	offset:      i64, // The bytes of records of the history before that record.
+	source:      [16]u8, // page delta: a point copy or a shared page changed; kernel entry: the kernel copied bytes into the process.
+	address:     [20]u8, // The first byte of the range that the record wrote.
+	written:     i64, // The bytes of the range that the record wrote.
+	bytes:       [24]u8, // The values written from address, at most 8, in hexadecimal.
+	instruction: [20]u8, // The instruction of the thread at the point.
+	checkpoint:  i64, // The checkpoint where a replay to the write starts; 0: the first instruction.
+	start:       i64, // The input point of that checkpoint.
+	points:      i64, // The input points that the replay runs from there to the write.
+}
+
 @(rodata)
 thread_states := [op.Process_State]string {
 	.None    = "",
@@ -1980,6 +1994,105 @@ replay_step_back :: proc "c" (points: i64, result: ^[]Step_Back_Row, error: ^err
 		}
 		hex_column(row.instruction[:], plan.checkpoint.instruction_address)
 		hex_column(row.stack[:], plan.checkpoint.stack_pointer)
+	}
+	return 1
+}
+
+// watch_back gives the last input of the history that wrote a byte of a range, and the checkpoint where a replay to that write starts.
+//
+// The history holds each byte that entered the process from outside: the
+// changed ranges of its point copies and of its shared pages, and the bytes
+// that a kernel entry copied into its memory. The service reads it and
+// finds the last input point, before the given point, whose record wrote a
+// byte of the range (src/md/features/record_and_replay.md, "The debugger:
+// step back, and a watch back"). A write by an instruction of the process
+// is not an input and is not in the history: only a replay with a watch
+// finds it, and the debugger runs no replay to a point yet.
+//
+// - **address**: the first byte of the range, in user memory.
+// - **size**: 1 to 4096 bytes.
+// - **before_point**: the input point before which the service looks; 0
+//   for the whole history.
+//
+// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Bad_Value`,
+// `Bytes` (-12), a size that is not 1 to 4096; `Bad_Address`, `Bytes`
+// (-12), an address of 0, or a range past user memory; `Absent`,
+// `Input_Histories` (-16), the caller has no history; `Damaged`,
+// `Input_Histories` (-16), the header or a record of the history is not
+// valid; `Out_Of_Range`, `Input_Histories` (-16), a point that is
+// negative or past the history; `Absent`, `Recorded_Writes` (-18), no
+// input before the point wrote a byte of the range.
+//
+// ```
+// debugger.watch_back(4206608, 8, 0)
+// ```
+@(export, link_name = "watch_back")
+watch_back :: proc "c" (address: i64, size: value_kinds.Size_In_Bytes, before_point: i64, result: ^[]Watch_Back_Row, error: ^errors.Error_Record) -> i64 {
+	if failure := record_of_caller(error); failure != 0 {
+		return failure
+	}
+	if size < 1 || u64(size) > input_history.WATCH_BACK_SIZE_LIMIT {
+		return errors.fail(error, ERROR_ADDRESS, .Bad_Value, .Bytes, 2, i64(size), i64(input_history.WATCH_BACK_SIZE_LIMIT))
+	}
+	if address <= 0 || u64(address) >= op.USER_END || u64(size) > op.USER_END - u64(address) {
+		return errors.fail(error, ERROR_ADDRESS, .Bad_Address, .Bytes, 1, address, i64(size))
+	}
+	header, _, ok := history_header_read()
+	if !ok {
+		return errors.fail(error, ERROR_RECORD, .Damaged, .Input_Histories)
+	}
+	if before_point < 0 || u64(before_point) > header.point_count {
+		return errors.fail(error, ERROR_RECORD, .Out_Of_Range, .Input_Histories, 3, before_point, i64(min(header.point_count, u64(max(i64)))))
+	}
+	match, refusal := input_history.history_find_last_write(record_session.bytes, u64(address), u64(size), u64(before_point))
+	switch refusal {
+	case .None:
+	case .Bad_Size:
+		return errors.fail(error, ERROR_ADDRESS, .Bad_Value, .Bytes, 2, i64(size), i64(input_history.WATCH_BACK_SIZE_LIMIT))
+	case .Bad_Address:
+		return errors.fail(error, ERROR_ADDRESS, .Bad_Address, .Bytes, 1, address, i64(size))
+	case .Damaged_History:
+		return errors.fail(error, ERROR_RECORD, .Damaged, .Input_Histories)
+	case .No_Write:
+		return errors.fail(error, ERROR_NO_WRITE, .Absent, .Recorded_Writes, 1, address, i64(size), before_point)
+	}
+	if len(result^) == 0 {
+		return 1
+	}
+	row := &result[0]
+	row^ = {
+		point   = i64(min(match.point_number, u64(max(i64)))),
+		offset  = i64(min(match.history_byte_offset, u64(max(i64)))),
+		written = i64(match.written_count),
+	}
+	switch match.kind {
+	case .Page_Delta:
+		system.format(row.source[:], "page delta")
+	case .Kernel_Completion:
+		system.format(row.source[:], "kernel entry")
+	case .None, .Cycle_Counter, .Processor_Identification, .History_End:
+	}
+	hex_column(row.address[:], match.written_address)
+	hex_column(row.instruction[:], match.instruction_address)
+	digits := system.HEX_DIGITS
+	for index in 0 ..< int(min(match.shown_count, input_history.WATCH_BACK_SHOWN_BYTES)) {
+		value := match.shown_bytes[index]
+		row.bytes[index * 3] = digits[value >> 4]
+		row.bytes[index * 3 + 1] = digits[value & 15]
+		if index + 1 < int(match.shown_count) {
+			row.bytes[index * 3 + 2] = ' '
+		}
+	}
+	// A checkpoint at the point of the write holds the state after it, so
+	// the replay starts from an earlier one, or from the first instruction.
+	plan := input_history.checkpoint_plan_for_target(&record_session.checkpoints, match.point_number)
+	row.points = row.point
+	switch plan.status {
+	case .Ok:
+		row.checkpoint = i64(plan.checkpoint.id)
+		row.start = i64(plan.start_position.point_number)
+		row.points = i64(plan.replay_points_to_advance)
+	case .No_Prior_Checkpoint, .Invalid_Request, .At_Start:
 	}
 	return 1
 }

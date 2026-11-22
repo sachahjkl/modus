@@ -402,6 +402,7 @@ Each export gives a table, or a negative number with an error record. A caller t
 | `replay_status()` | With no attach: the row of the history of the caller, which stays after the debugging until the next record. Its state (`recording`, `ended`, `replaying`, `replayed`), its input points, its bytes, its capacity, why it ended (`process stopped`, `record ended`, `stint bound`, `revocation`, `history full`, `divergence`), its checkpoints, and the input point of a divergence |
 | `replay_checkpoint(thread)` | A checkpoint of a held thread at the last input point of the record: one row for each checkpoint, its number, its input point, the bytes of the history before it, the instruction and the stack pointer of the thread |
 | `replay_step_back(points)` | The way back by some input points: one row with the nearest checkpoint at or before the target point, its input point, the target point, the input points that a replay runs from it, and the instruction and the stack pointer there |
+| `watch_back(address, size, before_point)` | With no attach: the last input of the history, before the point (0: the whole history), that wrote a byte of 1 to 4096 bytes at the address. One row: its input point, the bytes of the history before it, its source (`page delta`: a point copy or a shared page; `kernel entry`: bytes that the kernel copied into the process), the first byte written and how many, at most 8 values, the instruction of the thread there, and the checkpoint strictly before the write with the input points of a replay from it (checkpoint 0: the first instruction). A write by an instruction of the process is not an input and is not in the history |
 
 **The errors.** Each failure is an error record (`MODULE_CONTRACT.md`, section 8):
 
@@ -417,12 +418,13 @@ Each export gives a table, or a negative number with an error record. A caller t
 | The text is not a path; a step of the path names nothing | `Bad_Byte`; `Bad_Value` | -9 |
 | No procedure and no line has the place | `Absent`, `Source_Places` | -10 |
 | No breakpoint is free; the number names no breakpoint | `Full`, `Breakpoints`; `Absent`, `Breakpoints` | -11 |
-| The process does not map the address; a count or a length that the export does not take | `Bad_Address`; `Bad_Value`; `Not_Multiple` | -12 |
+| The process does not map the address, or a range of `watch_back` is outside user memory; a count or a length that the export does not take | `Bad_Address`; `Bad_Value`; `Not_Multiple` | -12 |
 | The process stopped, or the debug access ended | `Absent`, `Processes` | -13 |
 | Two processes that run have the name and the module | `Bad_Value`, `Processes` | -14 |
 | A text argument is too long | `Too_Long`, `Bytes` | -15 |
-| No record runs or started; a record or a replay runs already; a step back of 0 points or past the history; the module of the boot image is not the module of the history; a header of the history that is not valid | `Absent`; `Full`; `Out_Of_Range`; `Bad_Value`; `Damaged`, `Input_Histories` | -16 |
+| No record runs or started; a record or a replay runs already; a step back of 0 points or past the history, or a point of `watch_back` past it; the module of the boot image is not the module of the history; a header of the history that is not valid | `Absent`; `Full`; `Out_Of_Range`; `Bad_Value`; `Damaged`, `Input_Histories` | -16 |
 | No checkpoint is at or before the target point; a checkpoint is at this input point already | `Absent`; `Exists`, `Checkpoints` | -17 |
+| No input of the history before the point wrote a byte of the range of `watch_back` | `Absent`, `Recorded_Writes` | -18 |
 
 **The stops.** A thread that reaches a breakpoint, that writes watched bytes or that ends a step waits for the debugger: `release`, `step` or `continue_all` lets it run. After an execute breakpoint the instruction of the thread is the one of the breakpoint, which did not run; `release` runs it once, and the breakpoint stays. After a watch and after a step, the instruction is the next one. The service takes each stop when it comes, keeps 32 of them for `events()`, and writes one line of the log. A caller learns of a stop with `wait_stop`, with no loop of `events()`.
 
@@ -463,6 +465,7 @@ Each command is an export of the service under a short name (`bound_call`, `CONS
 | `debug_memory(place, count)` | `memory` | `memory` gives the memory of the machine |
 | `events()`, `wait_stop(milliseconds)` | The same names | |
 | `record(process)`, `record_start()`, `record_end()`, `replay_start()`, `replay_status()`, `replay_checkpoint(thread)`, `replay_step_back(points)` | The same names | |
+| `watch_back(address, size)` | `watch_back`, with the point 0: the whole history | |
 
 A table of the debugger is a table as any other: `columns(stack(0), frame, procedure, line)`, `where(locals(0, 1), name = "total")`.
 
