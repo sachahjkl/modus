@@ -14,6 +14,7 @@ package gpu_device_service
 import "base:intrinsics"
 import "modus:contract/byte_order"
 import "modus:contract/errors"
+import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:contract/virtio_gpu"
@@ -275,8 +276,15 @@ start_device :: proc "contextless" (queues: system.Handle) {
 attach_framebuffer :: proc "contextless" (command: ring.Record) -> (status: virtio_gpu.Service_Status, values: [7]u64) {
 	ATTACH :: u32(virtio_gpu.Service_Command.Attach_Framebuffer)
 	handle := system.Handle(command.values[0])
-	if refusal_values, refused := system.region_refusal(handle, ring_memory, ATTACH); refused {
-		return .No_Framebuffer, refusal_values
+	kind, rights, through := system.handle_state(handle, ring_memory)
+	needed := system.Rights{.Read}
+	switch {
+	case kind != .Memory:
+		return .No_Framebuffer, errors.ring_fail(ATTACH, .Handle_Kind, .None, 1, i64(handle), i64(op.Object_Kind.Memory), i64(kind))
+	case !(needed <= rights):
+		return .No_Framebuffer, errors.ring_fail(ATTACH, .Handle_Rights, .None, 1, i64(handle), i64(transmute(u32)needed), i64(transmute(u32)rights))
+	case !through:
+		return .No_Framebuffer, errors.ring_fail(ATTACH, .Absent, .Region, 1)
 	}
 	if command.values[1] > u64(virtio_gpu.MAX_RESOURCE_DIMENSION) || command.values[2] > u64(virtio_gpu.MAX_RESOURCE_DIMENSION) {
 		return .Bad_Command, errors.ring_fail(ATTACH, .Too_Long, .None, 2, i64(min(max(command.values[1], command.values[2]), 1 << 62)), virtio_gpu.MAX_RESOURCE_DIMENSION)
