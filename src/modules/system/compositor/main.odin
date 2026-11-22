@@ -1404,17 +1404,17 @@ pointer_moved :: proc "contextless" (motion_x, motion_y: int, new_buttons: u32, 
 			raise(position)
 			if !csd {
 				close_x := client.x + outer_width - BORDER - CLOSE_SIZE
-				max_x := close_x - CLOSE_SIZE - 2
-				min_x := max_x - CLOSE_SIZE - 2
+				max_x := close_x - 28
+				min_x := max_x - 28
 				if inside(pointer_x, pointer_y, close_x, client.y, CLOSE_SIZE, TITLE_HEIGHT) {
 					system.send(&control.completions, ring.Record{kind = u32(display.Control.Stop), values = {0 = u64(client.ring_memory)}})
 					return
 				}
-				if inside(pointer_x, pointer_y, max_x, client.y, CLOSE_SIZE, TITLE_HEIGHT) {
+				if inside(pointer_x, pointer_y, max_x, client.y, 28, TITLE_HEIGHT) {
 					desktop_toggle_maximize(client)
 					return
 				}
-				if inside(pointer_x, pointer_y, min_x, client.y, CLOSE_SIZE, TITLE_HEIGHT) {
+				if inside(pointer_x, pointer_y, min_x, client.y, 28, TITLE_HEIGHT) {
 					desktop_toggle_minimize(client)
 					return
 				}
@@ -1651,7 +1651,7 @@ frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Clie
 	interface.draw_rectangle(table, left_part.left, left_part.top, left_part.right - left_part.left, left_part.bottom - left_part.top, start)
 	interface.draw_rectangle(table, right_part.left, right_part.top, right_part.right - right_part.left, right_part.bottom - right_part.top, end)
 	// The title: a name, cut in its font to the room before minimize/maximize/close.
-	title_room := max(24, outer_width - 3 * CLOSE_SIZE - 24)
+	title_room := max(24, outer_width - CLOSE_SIZE - 2 * 28 - 20)
 	title := interface.text_fit(table, interface.FONT_INTERFACE, system.name_of(client.title[:]), title_room)
 	interface.draw_text(table, x + 8, y + 4, title, focus ? graphics.COLOR_WHITE : graphics.colors.dim, interface.FONT_INTERFACE)
 	base := graphics.Color(graphics.colors.stop_process_quiet)
@@ -1661,19 +1661,26 @@ frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Clie
 		cross_color = graphics.COLOR_WHITE
 	}
 	close_x := x + outer_width - BORDER - CLOSE_SIZE
-	max_x := close_x - CLOSE_SIZE - 2
-	min_x := max_x - CLOSE_SIZE - 2
+	CTRL_PITCH :: 28
+	max_x := close_x - CTRL_PITCH
+	min_x := max_x - CTRL_PITCH
 	ctrl_mark := focus ? graphics.COLOR_WHITE : graphics.colors.dim
-	ctrl_bg := focus ? graphics.shade(end, 112) : graphics.shade(end, 92)
-	// Minimize (_) button
+	// Minimize button: flush on the title gradient (Kernel theme), crisp 1px bar, subtle hover highlight.
 	if min_x > x + 40 {
-		interface.draw_rectangle(table, min_x, y + 3, CLOSE_SIZE, TITLE_HEIGHT - 6, ctrl_bg)
-		interface.draw_rectangle(table, min_x + 6, y + TITLE_HEIGHT - 8, CLOSE_SIZE - 12, 2, ctrl_mark)
+		if inside(pointer_x, pointer_y, min_x, y, CTRL_PITCH, TITLE_HEIGHT) {
+			interface.draw_vertical_gradient(table, min_x, y + 1, CTRL_PITCH, TITLE_HEIGHT - 1, graphics.shade(end, 132), graphics.shade(end, 108))
+		}
+		interface.draw_rectangle(table, min_x + (CTRL_PITCH - 9) / 2, y + TITLE_HEIGHT - 9, 9, 1, ctrl_mark)
 	}
-	// Maximize / Restore (square) button
+	// Maximize / Restore button: flush on the title gradient, crisp 1px 8x8 frame with 2px top header bar.
 	if max_x > x + 40 {
-		interface.draw_rectangle(table, max_x, y + 3, CLOSE_SIZE, TITLE_HEIGHT - 6, ctrl_bg)
-		interface.draw_outline(table, max_x + 6, y + 7, CLOSE_SIZE - 12, TITLE_HEIGHT - 14, 1, ctrl_mark)
+		if inside(pointer_x, pointer_y, max_x, y, CTRL_PITCH, TITLE_HEIGHT) {
+			interface.draw_vertical_gradient(table, max_x, y + 1, CTRL_PITCH, TITLE_HEIGHT - 1, graphics.shade(end, 132), graphics.shade(end, 108))
+		}
+		mx := max_x + (CTRL_PITCH - 9) / 2
+		my := y + (TITLE_HEIGHT - 8) / 2
+		interface.draw_outline(table, mx, my, 9, 8, 1, ctrl_mark)
+		interface.draw_rectangle(table, mx + 1, my + 1, 7, 1, ctrl_mark)
 	}
 	// Close (x) button (exact rightmost position preserved)
 	interface.draw_vertical_gradient(table, close_x, y, CLOSE_SIZE, TITLE_HEIGHT, graphics.shade(base, 118), graphics.shade(base, 82))
