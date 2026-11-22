@@ -53,7 +53,7 @@ The count is worth only as much as the lockout authorization value. With an empt
 The TPM service reads two groups of properties of the TPM with `TPM2_GetCapability` (`TPM_CAP_TPM_PROPERTIES`):
 
 - At each start, before it serves its ring: `TPM_PT_LOCKOUT_COUNTER`, `TPM_PT_MAX_AUTH_FAIL`, `TPM_PT_LOCKOUT_INTERVAL` and `TPM_PT_LOCKOUT_RECOVERY`, the count limits. It writes them on one line of the log, and a warning when the interval is 0: such a TPM limits no rate. This read changes nothing.
-- Once in a run, just before the first `Seal` or `Unseal` that carries an authorization value: `TPM_PT_PERMANENT`, whose bit `lockoutAuthSet` says if the lockout hierarchy has an authorization value.
+- Just before the first `Seal` or `Unseal` that carries an authorization value: `TPM_PT_PERMANENT`, whose bit `lockoutAuthSet` says if the lockout hierarchy has an authorization value. The check ends for the run only once the TPM answered that read. A read that fails, or a change whose answer the interface lost, leaves the check to the next such request, so one silent read never leaves the hierarchy unchecked for the run.
 
 The value matters only for an object whose wrong values the TPM counts, that is, the keys of a named principal and the machine key under a machine passphrase ([tpm_sealed_machine_passphrase.md](tpm_sealed_machine_passphrase.md)). So a boot that never seals or unseals such keys (a trial boot, a machine with the machine key sealed by the TPM alone, a system with Secure Boot off that never seals) leaves the lockout hierarchy as it found it. The first guess of an attacker in `unlock` is such a request, so the check comes before it in each case.
 

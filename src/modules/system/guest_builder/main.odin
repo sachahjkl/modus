@@ -52,10 +52,6 @@ GUEST_PROCESS_NAME :: "guest_builder guest"
 GUEST_REGION_BYTES_LEAST :: u64(2 * 1024 * 1024)
 GUEST_REGIONS_MOST :: u64(120)
 
-// Bound on consecutive Interrupted exits from machine timer ticks before
-// aborting a stalled run.
-INTERRUPTED_RUNS_LIMIT :: u64(1000)
-
 // Failing return code of build(): the error record carries the exact cause.
 ERROR :: i64(-1)
 
@@ -195,7 +191,7 @@ Build_Exit_Action :: enum u8 {
 // the exit status, the trap of a network device), and the read-only disk,
 // whose first refused write refuses the build.
 build_exit_handle :: proc "contextless" (runner: ^contract.Guest_Sandbox_Runner, linux: ^guest_os.Linux_Machine, registers: ^op.Guest_Registers, exit: guest_os.Machine_Exit, input_writes_reported: ^u64) -> Build_Exit_Action {
-	if !contract.runner_exit_counted(runner) {
+	if !contract.runner_exit_counted(runner, exit.kind) {
 		return .End
 	}
 	action := Build_Exit_Action.Run_Again
@@ -223,6 +219,21 @@ build_exit_handle :: proc "contextless" (runner: ^contract.Guest_Sandbox_Runner,
 		return .End
 	}
 	return action
+}
+
+// kernel_staging_bytes gives the page-aligned size of the copy of the kernel
+// image, which waits at the top of the memory of the guest while the kernel
+// loads below it. The count is checked before the rounding: a count near the
+// largest u64 wraps the rounded size to 0, past every later check.
+kernel_staging_bytes :: proc "contextless" (kernel_count: u64, memory_bytes: u64) -> (staging_bytes: u64, fits: bool) {
+	if kernel_count == 0 || kernel_count >= memory_bytes {
+		return 0, false
+	}
+	staging_bytes = (kernel_count + system.PAGE_SIZE - 1) &~ u64(system.PAGE_SIZE - 1)
+	if staging_bytes >= memory_bytes {
+		return 0, false
+	}
+	return staging_bytes, true
 }
 
 // guest_region_bytes gives the size of one mapping of the memory of the
@@ -327,6 +338,11 @@ guest_map :: proc "contextless" (guest: system.Handle, memory: system.Handle, me
 // access that the guest asked for.
 @(private = "file")
 guest_region_switch :: proc "contextless" (guest: system.Handle, memory_bytes: u64, address: u64, write: bool) -> system.Status {
+	// The machine names an address of the guest: past the memory, the page
+	// count below wraps.
+	if address >= memory_bytes {
+		return .Bad_Address
+	}
 	region := guest_region_bytes(memory_bytes)
 	start := address / region * region
 	pages := min(region, memory_bytes - start) / system.PAGE_SIZE
@@ -365,7 +381,10 @@ build :: proc "c" (
 	}
 	spec_count := intrinsics.volatile_load(&spec_bytes.count)
 	if spec_count != contract.SPEC_WIRE_SIZE {
-		return errors.fail(error, ERROR, .Bad_Value, .Bytes, ARGUMENT_SPEC, i64(spec_count), contract.SPEC_WIRE_SIZE)
+		return errors.fail(error, ERROR, .Bad_Value, .Bytes, ARGUMENT_SPEC, i64(min(spec_count, 1 << 62)), contract.SPEC_WIRE_SIZE)
+	}
+	if spec_bytes.bytes == nil {
+		return errors.fail(error, ERROR, .Bad_Address, .None, ARGUMENT_SPEC)
 	}
 	intrinsics.mem_copy_non_overlapping(&spec_wire_copy[0], spec_bytes.bytes, contract.SPEC_WIRE_SIZE)
 	spec, spec_refusal := contract.decode_build_spec(spec_wire_copy[:])
@@ -384,11 +403,12 @@ build :: proc "c" (
 	if kernel_count == 0 {
 		return errors.fail(error, ERROR, .Empty, .Bytes, ARGUMENT_KERNEL, 0, i64(memory_bytes))
 	}
-	// The image waits at the top of the memory of the guest, page aligned,
-	// while the kernel loads below it.
-	staging_bytes := (kernel_count + system.PAGE_SIZE - 1) &~ (system.PAGE_SIZE - 1)
-	if staging_bytes >= memory_bytes {
-		return errors.fail(error, ERROR, .Too_Long, .Bytes, ARGUMENT_KERNEL, i64(kernel_count), i64(memory_bytes))
+	if kernel_image.bytes == nil {
+		return errors.fail(error, ERROR, .Bad_Address, .None, ARGUMENT_KERNEL)
+	}
+	staging_bytes, staging_fits := kernel_staging_bytes(kernel_count, memory_bytes)
+	if !staging_fits {
+		return errors.fail(error, ERROR, .Too_Long, .Bytes, ARGUMENT_KERNEL, i64(min(kernel_count, 1 << 62)), i64(memory_bytes))
 	}
 	staging := memory_bytes - staging_bytes
 
@@ -482,7 +502,10 @@ build :: proc "c" (
 		return errors.fail(error, ERROR, .Refused, .None, 0, i64(map_status))
 	}
 
-	consecutive_interrupted := u64(0)
+	// No bound counts the exits Interrupted: they come from the timer of the
+	// host, and a bound on them refuses on a slow machine a build that a fast
+	// one accepts. The bound of the spec counts the exits of the guest; a
+	// guest that runs with no exit of its own runs until its caller stops it.
 	input_writes_reported := u64(0)
 	run_loop: for {
 		run_error: errors.Error_Record
@@ -498,15 +521,6 @@ build :: proc "c" (
 			write_report(report, .Failed, .Nonzero_Guest_Exit)
 			system.log_fact(.Error, Step_Failed{status_word = op.Status_Word(run_status), step = value_kinds.text_field("Guest_Run", 40)})
 			return errors.fail(error, ERROR, .Refused, .None, 0, i64(run_status))
-		}
-		if exit.kind == .Interrupted {
-			consecutive_interrupted += 1
-			if consecutive_interrupted > INTERRUPTED_RUNS_LIMIT {
-				sandbox_runner.state = .Timed_Out
-				break
-			}
-		} else {
-			consecutive_interrupted = 0
 		}
 		machine_exit := guest_os.Machine_Exit{kind = exit.kind, a = exit.a, b = exit.b, c = exit.c, next = exit.next, code = exit.code, information = exit.information}
 		action := build_exit_handle(&sandbox_runner, &machine, &registers, machine_exit, &input_writes_reported)

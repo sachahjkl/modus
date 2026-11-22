@@ -494,3 +494,81 @@ decoder_refuses_malformed_commands :: proc(t: ^testing.T) {
 	put_word(ring[:], 40, 0)
 	testing.expect_value(t, decode_one(ring[:ring_length]), Venus_Problem.Zero_Object_Id)
 }
+
+
+// The border of a client stream: each command of the ring and of the reply
+// stream, and each command that asks for a reply, refuses the whole stream,
+// even after a valid command. The decoder alone accepts each of them.
+@(test)
+client_stream_refuses_ring_and_reply_commands :: proc(t: ^testing.T) {
+	ring_info := Ring_Create_Info{
+		resource_id = 40, size = 192 + 4096, head_offset = RING_HEAD_OFFSET, tail_offset = RING_TAIL_OFFSET,
+		status_offset = RING_STATUS_OFFSET, buffer_offset = RING_BUFFER_OFFSET, buffer_size = 4096, extra_offset = 192 + 4096,
+	}
+	Case :: enum {
+		Create_Ring,
+		Destroy_Ring,
+		Notify_Ring,
+		Set_Reply_Command_Stream,
+		Seek_Reply_Command_Stream,
+		Generate_Reply,
+	}
+	for case_kind in Case {
+		storage: [1024]u8
+		encoder := encoder_init(storage[:])
+		testing.expect_value(t, encode_queue_wait_idle(&encoder, 12, {}), Venus_Problem.None)
+		expected := Venus_Problem.Client_Command_Refused
+		problem: Venus_Problem
+		switch case_kind {
+		case .Create_Ring:
+			problem = encode_create_ring(&encoder, 50, ring_info)
+		case .Destroy_Ring:
+			problem = encode_destroy_ring(&encoder, 50)
+		case .Notify_Ring:
+			problem = encode_notify_ring(&encoder, 50, 4)
+		case .Set_Reply_Command_Stream:
+			problem = encode_set_reply_command_stream(&encoder, 41, 0, 4096)
+		case .Seek_Reply_Command_Stream:
+			problem = encode_seek_reply_command_stream(&encoder, 64)
+		case .Generate_Reply:
+			problem = encode_queue_wait_idle(&encoder, 12, REPLY)
+			expected = .Client_Reply_Refused
+		}
+		testing.expect_value(t, problem, Venus_Problem.None)
+		bytes := encoder_bytes(&encoder)
+		whole, whole_problem := stream_validate(bytes)
+		testing.expectf(t, whole_problem == .None && whole == 2, "%v decodes", case_kind)
+		count, client_problem := stream_validate_client(bytes)
+		testing.expectf(t, client_problem == expected, "%v is refused with %v, got %v", case_kind, expected, client_problem)
+		testing.expectf(t, count == 1, "%v is refused after the one valid command", case_kind)
+	}
+
+	// Each type outside the commands of the ring and of the reply stream is
+	// allowed; the five inside are not.
+	refused := 0
+	for command_type in Command_Type {
+		if !command_type_client_allowed(command_type) {
+			refused += 1
+		}
+	}
+	testing.expect_value(t, refused, 5)
+
+	// The faults of the decoder come first, as in stream_validate.
+	_, empty := stream_validate_client(nil)
+	testing.expect_value(t, empty, Venus_Problem.Stream_Empty)
+	odd: [6]u8
+	_, misaligned := stream_validate_client(odd[:])
+	testing.expect_value(t, misaligned, Venus_Problem.Misaligned_Length)
+
+	// The successful case last: rendering commands with no reply pass.
+	storage: [1024]u8
+	encoder := encoder_init(storage[:])
+	testing.expect_value(t, encode_begin_command_buffer(&encoder, 20, {.One_Time_Submit}), Venus_Problem.None)
+	testing.expect_value(t, encode_cmd_draw(&encoder, 20, 3, 1, 0, 0), Venus_Problem.None)
+	testing.expect_value(t, encode_end_command_buffer(&encoder, 20), Venus_Problem.None)
+	command_buffers := [1]Object_Id{20}
+	testing.expect_value(t, encode_queue_submit(&encoder, 12, command_buffers[:], 19), Venus_Problem.None)
+	count, problem := stream_validate_client(encoder_bytes(&encoder))
+	testing.expect_value(t, problem, Venus_Problem.None)
+	testing.expect_value(t, count, 4)
+}

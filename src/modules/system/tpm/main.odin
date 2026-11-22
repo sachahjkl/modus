@@ -623,8 +623,9 @@ count_limits_log :: proc "contextless" () {
 	}
 }
 
-// The lockout hierarchy was checked in this run: the check runs once, at
-// the first request that carries an authorization value.
+// The check of the lockout hierarchy settled in this run: it runs at each
+// request that carries an authorization value until it settles, then never
+// again.
 lockout_checked: bool
 
 // lockout_authorization_check sets a random lockout authorization value
@@ -639,46 +640,55 @@ lockout_checked: bool
 // gives that reset to whoever reads it
 // (src/md/features/tpm_sealed_principal_keys.md, "The lockout authorization
 // value").
-lockout_authorization_check :: proc "contextless" (seeded: bool) {
+//
+// It gives settled = true only after the TPM answered the read of its
+// state, and false when that read, or the answer of the change, was lost:
+// the check then runs again at the next request with an authorization
+// value, so one silent read never leaves the hierarchy unchecked for the run.
+lockout_authorization_check :: proc "contextless" (seeded: bool) -> (settled: bool) {
 	request_deadline = system.time() + LOCKOUT_CHECK_BOUND_MILLISECONDS
 	permanent: [1]u32
 	if !properties_read(tpm2.PROPERTY_PERMANENT, permanent[:], "the state of the hierarchies") {
 		system.log_fact(.Warning, Lockout_Not_Checked{})
-		return
+		return false
 	}
 	if tpm2.lockout_authorization_set(permanent[0]) {
 		system.log_fact(.Info, Lockout_Authorization_Found{})
-		return
+		return true
 	}
 	value: [tpm2.AUTHORIZATION_VALUE_SIZE]u8
 	defer erase(value[:])
 	// The command holds the value: the buffer is erased on each path.
 	defer erase(command_bytes[:])
 	error: errors.Error_Record
+	// The seed and the refusal of the TPM stay the same for the run: a
+	// later try changes nothing, so the check ends. A change that the
+	// interface lost is tried again at the next request.
 	if !seeded {
 		system.log_fact(.Warning, Lockout_Kept_Empty_Without_Seed{})
-		return
+		return true
 	}
 	if !random.fill_for_a_key(&generator, value[:], .Processor, &error) {
 		system.log_fact(.Warning, Lockout_Kept_Empty_Weak_Seed{})
-		return
+		return true
 	}
 	count := tpm2.lockout_authorization_change_command(command_bytes[:], value[:])
 	answer, step := transact(count)
 	if step != .None {
 		system.log_fact(.Warning, Lockout_Change_Interface_Failed{step = step_field(step)})
-		return
+		return false
 	}
 	code, problem := tpm2.status_answer(answer)
 	if problem == .Refused {
 		system.log_fact(.Warning, Lockout_Authorization_Refused{response_code = value_kinds.Hexadecimal_Sixteen_Digits(code)})
-		return
+		return true
 	}
 	if problem != .None {
 		system.log_fact(.Warning, Lockout_Change_Answer_Malformed{})
-		return
+		return false
 	}
 	system.log_fact(.Info, Lockout_Authorization_Set{})
+	return true
 }
 
 // The entry: it maps the registers and checks the interface, then serves
@@ -769,8 +779,7 @@ requests_serve :: proc "contextless" (requests: ^ring.Ring, source: tpm_service.
 		// own bound, before the bound of the request, so both stay below
 		// the bound of the client.
 		if !lockout_checked && request.authorization == .Value {
-			lockout_checked = true
-			lockout_authorization_check(seeded)
+			lockout_checked = lockout_authorization_check(seeded)
 		}
 		request_deadline = system.time() + REQUEST_BOUND_MILLISECONDS
 		authorization_used = false

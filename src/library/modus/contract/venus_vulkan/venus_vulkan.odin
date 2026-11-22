@@ -510,6 +510,8 @@ Venus_Problem :: enum u8 {
 	Reply_Stream_Full, // The reply stream has no room until a waiting reply is read.
 	Reply_Already_Read,
 	String_Not_Text, // A string of a reply is not valid UTF-8.
+	Client_Command_Refused, // A client stream holds a command of the ring or of the reply stream, which only the GPU device service sends.
+	Client_Reply_Refused, // A client stream asks for a reply, which only the GPU device service reads.
 }
 
 // Encoder appends commands to caller-owned storage. In measuring mode it

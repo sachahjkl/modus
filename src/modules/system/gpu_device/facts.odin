@@ -36,12 +36,11 @@ Venus_Probed :: struct {
 
 // The service created its Venus context. A ring that is not mapped has the
 // cache 0; a context with no ring blob has the ring resource 0.
-@(log_fact = "gpu_device: venus context {context_id} ready for vk.xml {vk_xml_version}, ring resource {ring_resource_id}, mapped {ring_mapped} with the cache {ring_cache}")
+@(log_fact = "gpu_device: venus context {context_id} ready for vk.xml {vk_xml_version}, ring resource {ring_resource_id} with the cache {ring_cache}")
 Venus_Context_Ready :: struct {
 	context_id:       u64,
 	vk_xml_version:   u64,
 	ring_resource_id: u64,
-	ring_mapped:      u64,
 	ring_cache:       u64,
 }
 
@@ -85,7 +84,7 @@ Request_Refused :: struct {
 #assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
 #assert(size_of(Device_Silent) == 8 + REQUEST_FIELD_BYTES)
 #assert(size_of(Request_Refused) == 8 + REQUEST_FIELD_BYTES)
-#assert(size_of(Venus_Context_Ready) == 5 * 8)
+#assert(size_of(Venus_Context_Ready) == 4 * 8)
 #assert(size_of(Venus_Unavailable) == REASON_FIELD_BYTES)
 
 request_field :: proc "contextless" (name: string) -> [REQUEST_FIELD_BYTES]u8 {
