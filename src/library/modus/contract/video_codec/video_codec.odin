@@ -65,7 +65,7 @@ encode_frame :: proc "contextless" (
 	pos := FRAME_HEADER_BYTES
 
 	tile_raw: [TILE_BYTES]u8
-	lz_scratch: [lz4.HASH_TABLE_SIZE]u16
+	lz_scratch: lz4.Hash_Table
 
 	for ty in 0 ..< tiles_y {
 		for tx in 0 ..< tiles_x {

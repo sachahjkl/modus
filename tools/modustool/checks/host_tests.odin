@@ -424,4 +424,10 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/video_codec",
 	foundation.SOURCE_FOLDER_CONTRACT + "/processor_profiler",
 	foundation.SOURCE_FOLDER_CONTRACT + "/driver_domain",
+	foundation.SOURCE_FOLDER_CONTRACT + "/notifications",
+	foundation.SOURCE_FOLDER_CONTRACT + "/blur_filter",
+	foundation.SOURCE_FOLDER_CONTRACT + "/zero_copy_buffer",
+	foundation.SOURCE_FOLDER_CONTRACT + "/screen_reader",
+	foundation.SOURCE_FOLDER_CONTRACT + "/locale_cldr",
+	foundation.SOURCE_FOLDER_CONTRACT + "/complex_shaping",
 }
