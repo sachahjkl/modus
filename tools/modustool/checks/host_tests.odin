@@ -306,6 +306,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.LIBRARY_MODULE_SOURCES + "drawing",
 	foundation.DEMONSTRATION_MODULE_SOURCES + "sample",
 	foundation.DEMONSTRATION_MODULE_SOURCES + "browser",
+	foundation.SYSTEM_MODULE_SOURCES + "guest_builder",
 	foundation.SOURCE_FOLDER_PUBLIC + "/system",
 	foundation.SOURCE_FOLDER_PUBLIC + "/twins",
 	foundation.SOURCE_FOLDER_INTERNAL + "/kernel_events/kernel_events_rounds",

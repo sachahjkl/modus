@@ -674,7 +674,7 @@ Do not use: virtual machine, VM, container.
 
 A guest processor is the processor of a guest, as the kernel keeps it between two runs: its registers, its segments, its control registers and its extended state.
 
-A thread runs it with `Guest_Run`: during the operation, the thread is the guest processor, and its budget pays the time. The general registers, `rip`, `rflags` and the control registers go in and out in a `Guest_Registers` record of the caller; the kernel keeps the rest in the control block of the processor. One thread runs a guest processor at a time; a guest has up to four, which several threads run at once.
+A thread runs it with `Guest_Run`: during the operation, the thread is the guest processor, and its budget pays the time. The general registers, `rip`, `rflags`, the control registers and the 64-bit system state (the targets of `syscall` and the bases of `fs` and `gs`) go in and out in a `Guest_Registers` record of the caller; the kernel keeps the rest in the control block of the processor. One thread runs a guest processor at a time; a guest has up to four, which several threads run at once.
 
 The design: `docs/ARCHITECTURE.md`, "A guest".
 

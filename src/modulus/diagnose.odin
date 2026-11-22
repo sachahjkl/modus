@@ -1496,6 +1496,19 @@ value_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 				value = u64(registers.inject_error_code)
 			case .Reserved:
 				value = u64(registers.reserved)
+			case .System_Call_Address:
+				value = registers.lstar
+			case .System_Call_Mask:
+				value = registers.sfmask
+			case .Segment_Base:
+				// The first base that is not canonical, in the order of the record.
+				five_level := registers.cr4 & op.GUEST_CONTROL_4_FIVE_LEVEL_PAGING != 0
+				value = registers.kernel_gs_base
+				if !op.guest_address_canonical(registers.fs_base, five_level) {
+					value = registers.fs_base
+				} else if !op.guest_address_canonical(registers.gs_base, five_level) {
+					value = registers.gs_base
+				}
 			}
 			record_set(record, .Bad_Value, .None, 2, value, 0, 0)
 			return true

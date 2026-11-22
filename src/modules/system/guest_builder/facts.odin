@@ -25,6 +25,13 @@ Build_Refused :: struct {
 	violations:   u64,
 }
 
+// The kernel image of a build is not one that the boot protocol of Linux
+// loads: the word of a guest_os.Linux_Boot_Refusal.
+@(log_fact = "guest_builder: the kernel image is refused by the Linux boot protocol: refusal {refusal_code}")
+Kernel_Refused :: struct {
+	refusal_code: u64,
+}
+
 // The host processor lacks kernel-supported virtualization for Guest_Run.
 @(log_fact = "guest_builder: Guest_Run gave Unsupported: this processor has no virtualization support for guest builds")
 Guests_Unsupported :: struct {}

@@ -8,6 +8,7 @@
 // a host test checks each encoding.
 package guest_rules
 
+import "modus:contract/byte_order"
 import op "modus:contract/operation"
 
 // An event in EXITINTINFO and in EVENTINJ (the AMD manual, volume 2,
@@ -178,4 +179,44 @@ mode_segments :: proc "contextless" (load: op.Guest_Mode_Load, code_selector: u1
 		segments.data = {data_selector, SEGMENT_DATA | SEGMENT_THIRTY_TWO | SEGMENT_PAGES, FLAT_LIMIT, 0}
 	}
 	return segments, true
+}
+
+// The places of the 64-bit system state in the save area of the control
+// block (the AMD manual, volume 2, appendix B, table B-2, "VMCB Layout,
+// State Save Area"). Offsets in bytes from the start of the control block.
+// vmrun does not load them: vmload loads them before vmrun, and vmsave
+// keeps them after the exit (guest_enter in processor.asm).
+STATE_FS_BASE :: 0x448 // The base of the segment fs, whose record starts at 0x440.
+STATE_GS_BASE :: 0x458 // The base of the segment gs, whose record starts at 0x450.
+STATE_SYSTEM_CALL_TARGET :: 0x600 // STAR.
+STATE_LONG_SYSTEM_CALL_TARGET :: 0x608 // LSTAR.
+STATE_COMPATIBILITY_SYSTEM_CALL_TARGET :: 0x610 // CSTAR: not in the record.
+STATE_SYSTEM_CALL_FLAGS_MASK :: 0x618 // SFMASK.
+STATE_KERNEL_GS_BASE :: 0x620 // KernelGsBase.
+CONTROL_BLOCK_BYTES :: 4096
+
+// system_registers_write writes the 64-bit system state of a record that
+// the rules of the contract accepted into a control block.
+system_registers_write :: proc "contextless" (block: []u8, registers: op.Guest_Registers) {
+	byte_order.write_u64_little_endian(block, STATE_FS_BASE, registers.fs_base)
+	byte_order.write_u64_little_endian(block, STATE_GS_BASE, registers.gs_base)
+	byte_order.write_u64_little_endian(block, STATE_SYSTEM_CALL_TARGET, registers.star)
+	byte_order.write_u64_little_endian(block, STATE_LONG_SYSTEM_CALL_TARGET, registers.lstar)
+	byte_order.write_u64_little_endian(block, STATE_SYSTEM_CALL_FLAGS_MASK, registers.sfmask)
+	byte_order.write_u64_little_endian(block, STATE_KERNEL_GS_BASE, registers.kernel_gs_base)
+}
+
+// system_registers_read reads the 64-bit system state of a control block
+// after an exit into a record. The masks keep the record within the rules
+// of the contract whatever the block holds, so that a process can always
+// pass it back: the addresses in their canonical form, the reserved bits of
+// SFMASK cleared.
+system_registers_read :: proc "contextless" (block: []u8, registers: ^op.Guest_Registers) {
+	five_level := registers.cr4 & op.GUEST_CONTROL_4_FIVE_LEVEL_PAGING != 0
+	registers.fs_base = op.guest_address_canonical_of(byte_order.read_u64_little_endian(block, STATE_FS_BASE), five_level)
+	registers.gs_base = op.guest_address_canonical_of(byte_order.read_u64_little_endian(block, STATE_GS_BASE), five_level)
+	registers.star = byte_order.read_u64_little_endian(block, STATE_SYSTEM_CALL_TARGET)
+	registers.lstar = op.guest_address_canonical_of(byte_order.read_u64_little_endian(block, STATE_LONG_SYSTEM_CALL_TARGET), five_level)
+	registers.sfmask = byte_order.read_u64_little_endian(block, STATE_SYSTEM_CALL_FLAGS_MASK) & op.GUEST_SYSTEM_CALL_MASK_DEFINED
+	registers.kernel_gs_base = op.guest_address_canonical_of(byte_order.read_u64_little_endian(block, STATE_KERNEL_GS_BASE), five_level)
 }

@@ -48,15 +48,18 @@ Guest_Inject_Kind :: enum u8 {
 }
 
 // The registers of a guest processor that `Guest_Run` takes and gives: the
-// general registers, the instruction address, the flags and the control
-// registers. The kernel keeps the rest of the state of the guest processor
-// (its segments, its descriptor tables, its extended state) between two
-// runs. See [guest](term:guest) and (docs/ARCHITECTURE.md, "A guest").
+// general registers, the instruction address, the flags, the control
+// registers, and the 64-bit system state that a system writes through
+// model-specific registers (the targets of `syscall`, the bases of `fs` and
+// `gs`). The kernel keeps the rest of the state of the guest processor (its
+// segments, its descriptor tables, its extended state) between two runs. See [guest](term:guest) and (docs/ARCHITECTURE.md, "A guest").
 //
 // A process answers an exit by a change of the record before the next run:
 // for `Port_Read`, the value in the low bytes of `rax` and the next
 // instruction in `rip`; for `Port_Write` and `Halt`, the next instruction in
-// `rip`; for a write of `EFER` (an exit `Other`), the new value in `efer`.
+// `rip`; for a write of `EFER` (an exit `Other`), the new value in `efer`;
+// for a write of `LSTAR`, `SFMASK`, `STAR` or a base of `fs` or `gs`, the
+// new value in its field.
 // The kernel loads the control registers before each entry and writes them
 // back after each exit: a process passes back the record that it got.
 //
@@ -67,7 +70,7 @@ Guest_Inject_Kind :: enum u8 {
 // record, and the process runs again.
 //
 // A record of zeros is a guest processor at the address 0 in real mode,
-// with no flag set and nothing to deliver. 192 bytes.
+// with no flag set and nothing to deliver. 240 bytes.
 //
 // Example: a guest at 0x1000 in real mode is `{rip = 0x1000}`; after the exit
 // `Port_Write` of `out dx, al` with dx 0x80 and al 42, `rax & 0xFF` is 42.
@@ -90,8 +93,20 @@ Guest_Registers :: struct {
 	code_selector:           u16, // The selector of the code segment of a mode load; after the exit, the selector of `cs` of the guest.
 	data_selector:           u16, // The selector of the data segments of a mode load; after the exit, the selector of `ds` of the guest.
 	reserved:                u32, // 0.
+	star:                    u64, // STAR: bits 32 to 47 the selectors of `syscall`, 48 to 63 those of `sysret`. Any value.
+	lstar:                   u64, // LSTAR: the address that `syscall` enters in 64-bit mode. Canonical.
+	sfmask:                  u64, // SFMASK: the flags that `syscall` clears. Bits 32 to 63 are 0.
+	fs_base:                 u64, // The base of `fs` (FS_BASE). Canonical. A mode load does not change it.
+	gs_base:                 u64, // The base of `gs` (GS_BASE). Canonical. A mode load does not change it.
+	kernel_gs_base:          u64, // KERNEL_GS_BASE: the base that `swapgs` exchanges with `gs_base`. Canonical.
 }
-#assert(size_of(Guest_Registers) == 192)
+#assert(size_of(Guest_Registers) == 240)
+#assert(offset_of(Guest_Registers, star) == 192)
+#assert(offset_of(Guest_Registers, kernel_gs_base) == 232)
+
+// The bits of SFMASK that a processor has: the low 32 bits, a mask of the
+// flags register. The others are reserved.
+GUEST_SYSTEM_CALL_MASK_DEFINED :: u64(0xFFFF_FFFF)
 
 // The bits of the flags register that a processor has: carry, parity,
 // adjust, zero, sign, trap, interrupt, direction, overflow, the I/O
@@ -149,6 +164,9 @@ Guest_Registers_Refusal :: enum u8 {
 	Inject_Vector       = 10, // A vector that the kind does not take.
 	Inject_Error_Code   = 11, // An error code for an event that pushes none.
 	Reserved            = 12, // `reserved` is not 0.
+	System_Call_Address = 13, // `lstar` is not canonical.
+	System_Call_Mask    = 14, // `sfmask` has a bit outside `GUEST_SYSTEM_CALL_MASK_DEFINED`.
+	Segment_Base        = 15, // `fs_base`, `gs_base` or `kernel_gs_base` is not canonical.
 }
 
 // guest_address_canonical says if an address is canonical: each bit from
@@ -157,6 +175,15 @@ guest_address_canonical :: proc "contextless" (address: u64, five_level: bool) -
 	width := u64(five_level ? 57 : 48)
 	high := address >> (width - 1)
 	return high == 0 || high == (u64(1) << (65 - width)) - 1
+}
+
+// guest_address_canonical_of gives the canonical form of an address: the
+// last bit below the width copied into each bit above it. The kernel masks
+// the bases that it writes back with it, so that a process can always pass
+// the record back.
+guest_address_canonical_of :: proc "contextless" (address: u64, five_level: bool) -> u64 {
+	shift := u64(five_level ? 64 - 57 : 64 - 48)
+	return u64(i64(address << shift) >> shift)
 }
 
 // The requests of a registers record that the checks accepted, as members:
@@ -204,8 +231,21 @@ guest_registers_check :: proc "contextless" (registers: Guest_Registers) -> (req
 	if long_active && !(long_enabled && paging && extension) || long_enabled && paging && !long_active {
 		return {}, .Long_Mode
 	}
-	if long_active && !guest_address_canonical(registers.rip, cr4 & GUEST_CONTROL_4_FIVE_LEVEL_PAGING != 0) {
+	five_level := cr4 & GUEST_CONTROL_4_FIVE_LEVEL_PAGING != 0
+	if long_active && !guest_address_canonical(registers.rip, five_level) {
 		return {}, .Instruction_Address
+	}
+	// The processor refuses each of these values in `wrmsr` in any mode, so
+	// the record refuses them in any mode too: `vmload` loads them with no
+	// check.
+	if !guest_address_canonical(registers.lstar, five_level) {
+		return {}, .System_Call_Address
+	}
+	if registers.sfmask &~ GUEST_SYSTEM_CALL_MASK_DEFINED != 0 {
+		return {}, .System_Call_Mask
+	}
+	if !guest_address_canonical(registers.fs_base, five_level) || !guest_address_canonical(registers.gs_base, five_level) || !guest_address_canonical(registers.kernel_gs_base, five_level) {
+		return {}, .Segment_Base
 	}
 	mode_load, mode_known := enum_word.member_of_word(Guest_Mode_Load, u64(registers.mode_load))
 	if !mode_known {
