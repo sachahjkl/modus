@@ -373,4 +373,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_PUBLIC + "/tls_tcp",
 	foundation.SOURCE_FOLDER_CONTRACT + "/http_client",
 	foundation.SOURCE_FOLDER_CONTRACT + "/html_css",
+	foundation.SOURCE_FOLDER_CONTRACT + "/tpm_attestation",
+	foundation.SOURCE_FOLDER_CONTRACT + "/nvme",
+	foundation.SOURCE_FOLDER_CONTRACT + "/store_history",
 }

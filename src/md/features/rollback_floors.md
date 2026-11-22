@@ -129,6 +129,10 @@ Built: the security version in the header of the description (format 2); the key
 
 Left:
 
-- **A remote attestation of the measure** (`TPM2_Quote`): a roadmap entry. It needs an attestation key under the endorsement hierarchy, the certificate of the endorsement key, a nonce of the verifier, a protocol over the network, and a verifier process that holds the expected values: a feature of its own.
+- **A remote attestation of the measure** (`TPM2_Quote`): the freestanding `TPMS_ATTEST` quote parser and verifier covering PCR 7, PCR 11, and PCR 12 is built in `modus:contract/tpm_attestation`; the endorsement attestation key, network transport, and verifier service remain.
 - **The floors kept against code with the TPM:** an authorization value of the owner hierarchy. The roadmap entry says what it leaves open: a compromise of the code that holds that value, and a change of PCR 7.
-- **A seal of the machine key to a signed policy**, with `TPM2_PolicyNV` on the version floor: the roadmap entry "An update of the system that keeps the seal of the machine key".
+- **A seal of the machine key to a signed policy**, with `TPM2_PolicyNV` on the version floor: the freestanding monotonic counter and `TPM2_PolicyAuthorize` floor verifier is built in `modus:contract/tpm_attestation`; wiring it into the boot program and TPM service remains.
+
+## State
+
+Built: boot-program NV bit-field key and version floors with Secure Boot machine tests, plus the freestanding `modus:contract/tpm_attestation` contract for `TPMS_ATTEST` quote verification, monotonic disk-grant-table counters, and `TPM2_PolicyAuthorize` floor checks. Left: end-to-end attestation service, owner authorization value, and TPM service wiring for signed policies.

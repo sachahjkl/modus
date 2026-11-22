@@ -157,6 +157,10 @@ Built: the TPM service with the CRB interface, its ring and its two commands; th
 Left:
 
 - **A pin of the form of the record in the TPM** (see "The form of the record is not pinned").
-- **An encrypted session with the TPM.** The key crosses the bus of a hardware TPM encrypted.
-- **A seal to the measure of the next system.** A signed policy of the publisher of the system, with `TPM2_PolicyNV` on the version floor of the TPM, so that an older system opens nothing ([rollback_floors.md](rollback_floors.md)).
+- **An encrypted session with the TPM.** The freestanding salted-session contract (`modus:contract/tpm_attestation`) implements `KDFa`, AES-128-CFB and XOR-stream parameter encryption, `cpHash`/`rpHash` HMACs, and nonce rolling; wiring it into the TPM service remains.
+- **A seal to the measure of the next system.** The `TPM2_PolicyAuthorize` floor verification contract is built in `modus:contract/tpm_attestation`; wiring `TPM2_PolicyNV` into the TPM service remains ([rollback_floors.md](rollback_floors.md)).
 - **A change of the recovery key**, and a new one when the old one is lost while the TPM still opens the key.
+
+## State
+
+Built: CRB TPM service, format 2 sealed records with creation proof, recovery key flow, and the freestanding `modus:contract/tpm_attestation` contract for salted-session parameter encryption and `TPM2_PolicyAuthorize` floor checks. Left: wiring salted sessions and signed policies into the TPM service, and a record form pin in TPM NV memory.

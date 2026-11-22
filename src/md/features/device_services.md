@@ -83,4 +83,4 @@ USB adds one level. The device service of the xHCI controller owns the controlle
 
 ## State
 
-Not built. The device services of today are of the boot image, at fixed places, for virtio and for the fixed devices of the test machine. The order of this work is in [desktop_to_browser.md](desktop_to_browser.md), phase G.
+Partially built. The device services of today are of the boot image, at fixed places, for virtio and for the fixed devices of the test machine. The freestanding NVMe 1.4+ queue pair, doorbell offset, and Admin/I/O command contract (`modus:contract/nvme`) is built with host tests; the NVMe device service process and PCI identity dispatch remain. The order of this work is in [desktop_to_browser.md](desktop_to_browser.md), phase G.
