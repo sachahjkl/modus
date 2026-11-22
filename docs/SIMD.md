@@ -4,7 +4,7 @@ This document says which procedures of the system compute with vectors, in which
 
 **The idea in plain words.** A processor has registers that hold several numbers side by side, and instructions that compute on all of them at once. A procedure that works on many pixels or many words can use them: it does the work of four values with one instruction. That is its **vector form**. The same procedure written with one value for each instruction is its **scalar form**. In this system a procedure that has a vector form also keeps its scalar form, and the two must give the same bytes for every input: the vector form is only faster, never different. Host tests compare the two, so a fault of the vector form shows as a wrong byte, not as a wrong picture.
 
-**What has a vector form today.** Seven procedures, all with 128-bit registers (SSE2 on x86-64):
+**What has a vector form today.** Eight procedures, all with 128-bit registers (SSE2 on x86-64):
 
 | Procedure | Scalar form | Vector form | Values for each step |
 |---|---|---|---|
@@ -15,12 +15,13 @@ This document says which procedures of the system compute with vectors, in which
 | The check of a text: UTF-8 with no control character | `text_valid_byte_by_byte` (`src/library/modus/contract/text_encoding/text_encoding.odin`) | `text_valid_sixteen_bytes_at_a_time` (`src/library/modus/contract/text_encoding/text_valid_sixteen_bytes_at_a_time.odin`) | 16 bytes |
 | The 16-tag group match of a Swiss table | `group_match_tag_scalar`, `group_match_empty_scalar`, `group_match_free_scalar` (`src/library/modus/hash_table/group_match.odin`) | `group_match_tag_sse2`, `group_match_empty_sse2`, `group_match_free_sse2` (`src/library/modus/hash_table/group_match_amd64.odin`) | 16 control bytes |
 | The fuzzy match of a query against a name | `fuzzy_match_scalar` (`src/library/modus/line_editor/fuzzy_match.odin`) | `fuzzy_match_vectors` (`src/library/modus/line_editor/fuzzy_match_vectors.odin`) | 16 bytes |
+| The triangles of the processor back end of the WebGPU subset | `rasterize_triangle_scalar` (`src/library/modus/contract/webgpu_subset/software_3d.odin`) | `rasterize_triangle_simd` (same file) | 4 pixels |
 
 **What this document is not.** It is not the rule on the vector registers of the kernel. The kernel has no vector instruction at all, and it saves the registers of each thread: `docs/ARCHITECTURE.md`, "The extended state of the processor". It is not the design of the blend in linear light either: `docs/FONTS.md`, "The blend in linear light".
 
 **For whom.** A reader who writes or changes a vector form, and a reader who measures one.
 
-**The map of this document.** Section 1: the rule of the same bytes. Section 2: why one form, SSE2. Sections 3 to 6: the blend of a glyph, the compositor, BLAKE3, the check of a text. Section 7: how to measure on the machine. Section 8: limits. Section 9: the 16-tag group match. Section 10: the fuzzy match.
+**The map of this document.** Section 1: the rule of the same bytes. Section 2: why one form, SSE2. Sections 3 to 6: the blend of a glyph, the compositor, BLAKE3, the check of a text. Section 7: how to measure on the machine. Section 8: limits. Section 9: the 16-tag group match. Section 10: the fuzzy match. Section 11: the triangles of the WebGPU subset.
 
 ## 1. The rule of the same bytes
 
@@ -324,3 +325,51 @@ nix develop -c odin test src/library/modus/fast_hash -o:speed -microarch:x86-64 
 | 100 000 | `stwr` (4894) | 7.4 | 35.7 | 4.9x |
 | 100 000 | `srclinedit` (606) | 6.8 | 34.3 | 5.1x |
 | 100 000 | `zqj` (0) | 8.7 | 64.9 | 7.5x |
+
+## 11. The triangles of the WebGPU subset
+
+**Where it runs.** `software_3d_execute` draws the triangles of a command stream of the WebGPU subset on the processor, in 2D (`Solid_Color_2D`) and in 3D (`Vertex_Color_3D`) (`src/md/features/gpu_access.md`, "The WebGPU of the system"). The design of the step is in `src/md/features/desktop_to_browser.md`, "SIMD on the hot paths".
+
+**The first form of floats.** Each other vector form computes with integers. The rasterizer computes with `f32`, and it keeps the rule of the same bytes in this way:
+
+- Each lane does the operations of the scalar form, in the same order: the edge functions, the barycentric weights, the depth, `1 / w` and the four channels corrected for perspective. An addition and a multiplication of IEEE 754 give the same bits in a lane as in a scalar register. The compiler fuses no multiplication and addition without a flag that allows it, and the build gives none: the host tests pass in a build for a processor with FMA (`-microarch:native`).
+- The product of an edge function that depends on the row only is computed once for each row, as a scalar. This product is the same value that the scalar form computes at each pixel.
+- The test of the top-left rule is written as the refusal of the scalar form (`w < 0`, or `w == 0` on an edge that is not top or left), not as its negation. A NaN fails both comparisons, so both forms keep such a pixel.
+- A lane that is refused divides 1 by 1, so no lane divides by zero. The form never reads the value of a refused lane.
+
+| Part | Form |
+|---|---|
+| The setup of a triangle: the order of the vertices, the area, the box clipped to the scissor rectangle, the top-left edges | scalar, once for each triangle, shared by the two forms (`triangle_setup`) |
+| The three edge values of 4 adjacent pixels | vector, `#simd[4]f32` |
+| The coverage test with the top-left rule | vector: comparisons and masks, no branch |
+| A group of 4 pixels outside the triangle | one test (`simd_reduce_and`), before the interpolation |
+| The barycentric weights, the depth, `1 / w` and the color and alpha corrected for perspective | vector |
+| The depth test, the 24-bit depth and the blend in linear light | scalar, `write_fragment_pixel`, one pixel at a time in lane order |
+| The last 0 to 3 columns of a row | the scalar form, `shade_triangle_pixel` |
+
+The vector form writes each pixel through `write_fragment_pixel`, as the scalar form does. So no load and no store passes the slice of the caller, and the blend of a pixel reads the result of the pixel before it, in the same order as the scalar form.
+
+**The host tests** (`src/library/modus/contract/webgpu_subset/rasterizer_forms_test.odin`) run each stream in each form through `software_3d_execute_in_form`, which is private to the package. They compare each color byte, each depth value and the summary (`pixels_shaded`, `triangles_rasterized`). The textures start with the same random content, so a pass with `Load_Op.Load` blends and tests depth over it. Each test runs the widths 1, 3, 5, 17, 63, 64 and 65 and the formats `RGBA8_Unorm`, `BGRA8_Unorm` and `R8_Unorm`:
+
+- `cube_forms_give_the_same_bytes`: a cube of 12 triangles, turned and seen in perspective, with its 24-bit depth buffer, at 8 angles, at heights of 1 and 37, with `Clear` and `Load`.
+- `blended_triangle_forms_give_the_same_bytes`: 6 translucent 3D triangles that overlap, `Src_Alpha` and `One_Minus_Src_Alpha`, with alphas from below 0 to above 1, vertices behind the eye, with and without a depth buffer.
+- `shared_edge_forms_shade_each_pixel_once`: a fan whose edges pass through pixel centers, a square cut on its diagonal, and a grid of moved points that covers the whole picture. The test checks that the count of shaded pixels equals the count of pixels and that no pixel keeps the clear color: no crack and no pixel shaded twice.
+- `edge_case_forms_give_the_same_bytes`: random triangles from far off the screen, scissor rectangles, a repeated vertex, three points on a line, an area at the bound of a degenerate triangle, tiny triangles, places of 10^7 pixels, vertices on pixel centers and corners, and triangle strips.
+
+A test that fails gives the first wrong byte or depth value and the value of each form. A change of the order of one sum of the vector form, or a top-left rule that is not applied, makes these tests fail.
+
+**The measure on the host.** The test is opt-in: it runs only with `-define:MEASURE=true`. It prints the time of a frame of a cube that fills most of a picture of 640 x 480 in each form, and fails only when the forms shade a different count of pixels:
+
+```
+nix develop -c odin test src/library/modus/contract/webgpu_subset -o:speed -microarch:x86-64 -vet -collection:modus=src/library/modus -define:MEASURE=true -define:ODIN_TEST_NAMES=webgpu_subset.cube_speed_of_each_form
+```
+
+The last run had a host load of 13, above the limit of 8. So these times rank the forms and are not valid measures of speed. One frame of 197 328 pixels, the least of 5 runs of 60 frames:
+
+| Format | Scalar form | Vector form |
+|---|---|---|
+| `RGBA8_Unorm` | 17.9 ms | 16.8 ms |
+| `BGRA8_Unorm` | 22.7 ms | 14.2 ms |
+| `R8_Unorm` | 16.4 ms | 12.7 ms |
+
+Most of the time of a pixel is in `write_fragment_pixel`: the square root of the encoding of each channel takes four divisions. That part is still scalar.
