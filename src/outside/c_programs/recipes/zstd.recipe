@@ -1,0 +1,57 @@
+# zstd on modus: the files of the format, with the configuration of modus in
+# place of lib/common/zstd_deps.h, and each context over a heap that the
+# caller lends. The hash is the one that Nixpkgs pins for this archive.
+recipe: zstd
+version: 1.5.7
+source: https://dev-www.libreoffice.org/src/zstd-1.5.7.tar.gz
+source_hash: sha256-6zPlH0mhXgI5UM14Jcp0pKK0Pbg1SCWsJPwbfuCeb6M=
+unpack: tar.gz
+root: zstd-1.5.7/lib
+force_include: zstd/modus_zstd_conf.h
+compile: common/debug.c
+compile: common/entropy_common.c
+compile: common/error_private.c
+compile: common/fse_decompress.c
+compile: common/pool.c
+compile: common/threading.c
+compile: common/xxhash.c
+compile: common/zstd_common.c
+compile: compress/fse_compress.c
+compile: compress/hist.c
+compile: compress/huf_compress.c
+compile: compress/zstd_compress.c
+compile: compress/zstd_compress_literals.c
+compile: compress/zstd_compress_sequences.c
+compile: compress/zstd_compress_superblock.c
+compile: compress/zstd_double_fast.c
+compile: compress/zstd_fast.c
+compile: compress/zstd_lazy.c
+compile: compress/zstd_ldm.c
+compile: compress/zstd_opt.c
+compile: compress/zstd_preSplit.c
+compile: decompress/huf_decompress.c
+compile: decompress/zstd_ddict.c
+compile: decompress/zstd_decompress.c
+compile: decompress/zstd_decompress_block.c
+adapter: thin_libc/modus_thin_libc.c
+adapter: thin_libc/modus_thin_libc_memory.c
+include: zstd
+flag: --target=x86_64-unknown-none-elf
+flag: -std=gnu11
+flag: -O2
+flag: -ffreestanding
+flag: -nostdinc
+flag: -fPIC
+flag: -fvisibility=hidden
+flag: -fno-omit-frame-pointer
+flag: -mno-omit-leaf-frame-pointer
+flag: -mlong-double-64
+flag: -fno-stack-protector
+flag: -fcf-protection=none
+flag: -fno-asynchronous-unwind-tables
+flag: -fno-unwind-tables
+flag: -fno-common
+include: thin_libc/include
+include: thin_libc
+test: compress and decompress the files of the release image at each level from 1 to 19, and compare the bytes
+test: decompress each frame of the tests of the zstd source that it refuses or accepts, and compare the verdict
