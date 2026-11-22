@@ -11,7 +11,7 @@ import "modus:display"
 
 // view_zoom_current returns the active per-view zoom of state (.One when unset).
 view_zoom_current :: proc "contextless" (state: ^Interface_State) -> scale_factor.View_Zoom {
-	if state == nil || state.view_zoom == scale_factor.View_Zoom(0) {
+	if state == nil || state.view_zoom == {} {
 		return scale_factor.VIEW_ZOOM_DEFAULT
 	}
 	return state.view_zoom
