@@ -384,4 +384,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/usb_hid",
 	foundation.SOURCE_FOLDER_CONTRACT + "/rtl_bidi",
 	foundation.SOURCE_FOLDER_CONTRACT + "/wasm_runtime",
+	foundation.SOURCE_FOLDER_CONTRACT + "/ime_cjk",
+	foundation.SOURCE_FOLDER_CONTRACT + "/vnc_rdp_gateway",
+	foundation.SOURCE_FOLDER_CONTRACT + "/document_picker",
 }
