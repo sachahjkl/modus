@@ -904,6 +904,7 @@ compositor_start :: proc "contextless" () -> system.Status {
 	if screen_absent {
 		return .Bad_State
 	}
+	_ = gpu_driver_start()
 	show("the root service starts the compositor", .Running, .Compositor)
 	served := part_place_take()
 	if served == nil {

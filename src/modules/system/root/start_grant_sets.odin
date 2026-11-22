@@ -563,5 +563,8 @@ start_grant_set_terminal :: proc "contextless" (start_grant_set: ^Start_Grant_Se
 // on_demand says if the service with a name starts when a process asks for
 // a connection to it.
 on_demand :: proc "contextless" (name: string) -> bool {
+	if name == "plans" || name == "recipes" || name == "projects" || name == "collector" || name == "powerbox" {
+		return true
+	}
 	return start_grant_set_of(name).on_demand
 }

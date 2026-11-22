@@ -263,12 +263,18 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) -> (dis
 // consent commands and expiry ticks until stopped.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	status_open: system.Status
-	if service_ring, status_open = system.ring_open(ctx.handles[powerbox.SERVICE_RING_SLOT]); status_open != .Ok {
-		fail("no powerbox service ring")
+	export_service, export_ok := system.service_open(ctx)
+	has_delegated := false
+	if ctx.handles[powerbox.SERVICE_RING_SLOT] != 0 && ctx.handles[powerbox.TRUSTED_DISPLAY_RING_SLOT] != 0 {
+		status_open: system.Status
+		if service_ring, status_open = system.ring_open(ctx.handles[powerbox.SERVICE_RING_SLOT]); status_open == .Ok {
+			if display_ring, status_open = system.ring_open(ctx.handles[powerbox.TRUSTED_DISPLAY_RING_SLOT]); status_open == .Ok {
+				has_delegated = true
+			}
+		}
 	}
-	if display_ring, status_open = system.ring_open(ctx.handles[powerbox.TRUSTED_DISPLAY_RING_SLOT]); status_open != .Ok {
-		fail("no trusted display ring")
+	if !export_ok && !has_delegated {
+		fail("no powerbox service ring")
 	}
 
 	region_handle := ctx.handles[powerbox.SERVICE_REGION_SLOT]
@@ -299,28 +305,34 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log_fact(.Info, Dialogs_Expired{expired_dialogs = u64(expired)})
 		}
 
-		answered := false
-		display_notified := false
-		drained := 0
-		for drained < powerbox.REQUESTS_PER_PASS && ring.count(&service_ring.completions) < ring.capacity(&service_ring.completions) {
-			command := system.receive(&service_ring.commands) or_break
-			if handle_command(command, now_ms) {
-				display_notified = true
+		if export_ok {
+			system.service_run(&export_service)
+			system.service_wait(&wait, &export_service)
+		}
+		if has_delegated {
+			answered := false
+			display_notified := false
+			drained := 0
+			for drained < powerbox.REQUESTS_PER_PASS && ring.count(&service_ring.completions) < ring.capacity(&service_ring.completions) {
+				command := system.receive(&service_ring.commands) or_break
+				if handle_command(command, now_ms) {
+					display_notified = true
+				}
+				answered = true
+				drained += 1
 			}
-			answered = true
-			drained += 1
-		}
 
-		if answered {
-			system.wake_reader(&service_ring.completions)
+			if answered {
+				system.wake_reader(&service_ring.completions)
+			}
+			if display_notified {
+				system.wake_reader(&display_ring.commands)
+			}
+			if drained == powerbox.REQUESTS_PER_PASS && ring.count(&service_ring.commands) > 0 {
+				continue
+			}
+			system.wait_records(&wait, &service_ring.commands)
 		}
-		if display_notified {
-			system.wake_reader(&display_ring.commands)
-		}
-		if drained == powerbox.REQUESTS_PER_PASS && ring.count(&service_ring.commands) > 0 {
-			continue
-		}
-		system.wait_records(&wait, &service_ring.commands)
 		if service_state.counters.pending_dialogs > 0 {
 			system.wait_end(&wait, now_ms + 1000)
 		} else {

@@ -13,6 +13,7 @@ import "modus:pci"
 import "modus:random"
 import "modus:system"
 import "modus:contract/timed_stream"
+import "modus:contract/virtio_gpu"
 
 // The devices of the bus. This service holds the two ports of the
 // configuration of all devices: no other process has them. It gives a
@@ -65,7 +66,57 @@ DRIVER_ENTROPY :: Driver{"entropy", .Entropy_Device, entropy_service.RING_CAPACI
 // The sound service, whose one client is the process with the grant
 // Sound_Device (src/md/features/timed_stream.md).
 DRIVER_SOUND :: Driver{"sound", .Sound_Device, timed_stream.RING_CAPACITY, timed_stream.SERVICE_RING, false}
+// The VirtIO-GPU 1.2 device service (PCI 0x1AF4:0x1050) for 2D scanout and
+// Venus Vulkan capability discovery (src/md/features/gpu_access.md).
+DRIVER_GPU :: Driver{"gpu_device", .Gpu_Device, virtio_gpu.RING_CAPACITY, virtio_gpu.SERVICE_RING, false}
+gpu_client_ring_memory: system.Handle
 #assert(timed_stream.GRANT_RING == system.GRANT_DEVICE_RING)
+
+// gpu_device_place scans PCI bus 0 for a VirtIO-GPU 1.2 PCI device (0x1AF4:0x1050).
+gpu_device_place :: proc "contextless" () -> (place: pci.Place, found: bool) {
+	if configuration_open() != .Ok {
+		return {}, false
+	}
+	for dev in u32(0) ..< 32 {
+		for fn in u32(0) ..< 8 {
+			candidate := pci.Place{bus = 0, device = dev, function = fn}
+			id := pci.read_32(candidate, 0)
+			vendor := u16(id & 0xFFFF)
+			if vendor == 0xFFFF {
+				if fn == 0 {
+					break
+				}
+				continue
+			}
+			device_id := u16(id >> 16)
+			if vendor == virtio_gpu.PCI_VENDOR_ID && device_id == virtio_gpu.PCI_DEVICE_ID {
+				return candidate, true
+			}
+			if fn == 0 && (pci.read_32(candidate, pci.OFFSET_HEADER_TYPE) >> 16 & 0x80) == 0 {
+				break
+			}
+		}
+	}
+	return {}, false
+}
+
+// gpu_driver_start starts gpu_device automatically when a VirtIO-GPU PCI device
+// is present on bus 0, retaining its client ring handle for the Display holder.
+gpu_driver_start :: proc "contextless" () -> bool {
+	if gpu_client_ring_memory != 0 {
+		return true
+	}
+	place, found := gpu_device_place()
+	if !found {
+		return false
+	}
+	_, ring_mem, status := driver_start(place, DRIVER_GPU)
+	if status != .Ok {
+		return false
+	}
+	gpu_client_ring_memory = ring_mem
+	return true
+}
 
 // configuration_open takes the ports of the configuration, once.
 configuration_open :: proc "contextless" () -> system.Status {

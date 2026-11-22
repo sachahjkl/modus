@@ -272,8 +272,15 @@ handle_command :: proc "contextless" (command: ring.Record) {
 // input, update, enter, and exit commands until stopped.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	open_status: system.Status
-	if service_ring, open_status = system.ring_open(ctx.handles[pr.PROJECTS_SERVICE_RING_SLOT]); open_status != .Ok {
+	export_service, export_ok := system.service_open(ctx)
+	has_delegated := false
+	if ctx.handles[pr.PROJECTS_SERVICE_RING_SLOT] != 0 {
+		open_status: system.Status
+		if service_ring, open_status = system.ring_open(ctx.handles[pr.PROJECTS_SERVICE_RING_SLOT]); open_status == .Ok {
+			has_delegated = true
+		}
+	}
+	if !export_ok && !has_delegated {
 		fail("no projects service ring")
 	}
 	region_handle := ctx.handles[pr.PROJECTS_SERVICE_REGION_SLOT]
@@ -295,16 +302,22 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 
 	for {
 		wait := system.wait_begin()
-		answered := false
-		for ring.count(&service_ring.completions) < ring.capacity(&service_ring.completions) {
-			command := system.receive(&service_ring.commands) or_break
-			handle_command(command)
-			answered = true
+		if export_ok {
+			system.service_run(&export_service)
+			system.service_wait(&wait, &export_service)
 		}
-		if answered {
-			system.wake_reader(&service_ring.completions)
+		if has_delegated {
+			answered := false
+			for ring.count(&service_ring.completions) < ring.capacity(&service_ring.completions) {
+				command := system.receive(&service_ring.commands) or_break
+				handle_command(command)
+				answered = true
+			}
+			if answered {
+				system.wake_reader(&service_ring.completions)
+			}
+			system.wait_records(&wait, &service_ring.commands)
 		}
-		system.wait_records(&wait, &service_ring.commands)
 		system.wait_end(&wait)
 	}
 }

@@ -387,8 +387,15 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 // wide-grant manager, then loops over commands and monotonic expiry checks.
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	status_open: system.Status
-	if service_ring, status_open = system.ring_open(ctx.handles[wide_grants.SERVICE_RING_SLOT]); status_open != .Ok {
+	export_service, export_ok := system.service_open(ctx)
+	has_delegated := false
+	if ctx.handles[wide_grants.SERVICE_RING_SLOT] != 0 {
+		status_open: system.Status
+		if service_ring, status_open = system.ring_open(ctx.handles[wide_grants.SERVICE_RING_SLOT]); status_open == .Ok {
+			has_delegated = true
+		}
+	}
+	if !export_ok && !has_delegated {
 		fail("no collector service ring")
 	}
 
@@ -420,22 +427,28 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			system.log_fact(.Info, Grants_Expired{expired_grants = u64(expired)})
 		}
 
-		answered := false
-		drained := 0
-		for drained < wide_grants.REQUESTS_PER_PASS && ring.count(&service_ring.completions) < ring.capacity(&service_ring.completions) {
-			command := system.receive(&service_ring.commands) or_break
-			handle_command(command, now_ms)
-			answered = true
-			drained += 1
+		if export_ok {
+			system.service_run(&export_service)
+			system.service_wait(&wait, &export_service)
 		}
+		if has_delegated {
+			answered := false
+			drained := 0
+			for drained < wide_grants.REQUESTS_PER_PASS && ring.count(&service_ring.completions) < ring.capacity(&service_ring.completions) {
+				command := system.receive(&service_ring.commands) or_break
+				handle_command(command, now_ms)
+				answered = true
+				drained += 1
+			}
 
-		if answered {
-			system.wake_reader(&service_ring.completions)
+			if answered {
+				system.wake_reader(&service_ring.completions)
+			}
+			if drained == wide_grants.REQUESTS_PER_PASS && ring.count(&service_ring.commands) > 0 {
+				continue
+			}
+			system.wait_records(&wait, &service_ring.commands)
 		}
-		if drained == wide_grants.REQUESTS_PER_PASS && ring.count(&service_ring.commands) > 0 {
-			continue
-		}
-		system.wait_records(&wait, &service_ring.commands)
 		if manager_state.counters.active_grants > 0 {
 			system.wait_end(&wait, now_ms + 1000)
 		} else {
