@@ -7,7 +7,6 @@
 // supplied callback so this contract stays independent of support packages.
 package remote_display
 
-import "base:intrinsics"
 import "modus:contract/byte_order"
 import "modus:contract/enum_word"
 
