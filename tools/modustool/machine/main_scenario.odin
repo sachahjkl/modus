@@ -2065,9 +2065,14 @@ scenario := [?]Step {
 	{kind = .Wait, text = "[console] error: start: the row 1 wires output_counter to output_count_reader, and names no end of output_reader"},
 	{kind = .Type, text = "start(\"output_count_reader\", first(output_counter.counts, 1))"},
 	{kind = .Wait, text = "[console] error: start: the list is a Table of Wiring, as wire(from, to) gives it; this one is Table(Counted)"},
-	// A record input of the count One wired twice: the root service
-	// refuses the whole list, and starts nothing.
+	// A row that repeats an earlier row: the console refuses the list
+	// before it lends a handle.
 	{kind = .Type, text = "start(\"output_count_reader\", wire(output_counter.counts, output_count_reader.counts) + wire(output_counter.counts, output_count_reader.counts))"},
+	{kind = .Wait, text = "[console] error: start: the row 2 repeats the row 1 (output_counter.counts to output_count_reader.counts): a repeated row gives its reader each record twice"},
+	// A record input of the count One wired twice, by two rows of two
+	// conditions: the root service refuses the whole list, and starts
+	// nothing.
+	{kind = .Type, text = "start(\"output_count_reader\", wire(where(output_counter.counts, status = 404), output_count_reader.counts) + wire(output_counter.counts, output_count_reader.counts))"},
 	{kind = .Wait, text = "[console] error: start: output_count_reader: "},
 	// The start with its list: the writer writes into that ring only the
 	// records of the status 404, and the reader takes the serials that jump.

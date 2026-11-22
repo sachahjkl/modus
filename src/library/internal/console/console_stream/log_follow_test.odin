@@ -421,3 +421,263 @@ log_follow_self_feedback_loop_breaker_zero_amplification :: proc(t: ^testing.T) 
 	testing.expect(t, !follow_should_emit_to_log(&inc_breaker), "render echo still suppressed even with include_self = true")
 	follow_render_end(&inc_breaker, guard, &output_logged)
 }
+
+// The names of the ends of wire(server.log, collector.sources) at their
+// bounds: an owner is the name of a process, PROCESS_NAME_BYTES_MOST bytes
+// at most; an empty part or a missing dot names no end.
+@(test)
+wire_log_owner_names_at_their_bounds :: proc(t: ^testing.T) {
+	collector_file := lf_build_collector_file()
+	owner_bound := "abcdefghijklmnopqrstuvwxyz01234"
+	owner_past := "abcdefghijklmnopqrstuvwxyz012345"
+	testing.expect_value(t, len(owner_bound), op.PROCESS_NAME_BYTES_MOST)
+	testing.expect_value(t, len(owner_past), op.PROCESS_NAME_BYTES_MOST + 1)
+
+	refused := [?]string {
+		"wire(.log, collector.sources)",
+		"wire(server., collector.sources)",
+		"wire(server.log, .sources)",
+		"wire(server.log, collector.)",
+		"wire(serverlog, collector.sources)",
+		"wire(server.log, collectorsources)",
+		"wire(server.log.extra, collector.sources)",
+		"wire(abcdefghijklmnopqrstuvwxyz012345.log, collector.sources)",
+		"wire(server.log, abcdefghijklmnopqrstuvwxyz012345.sources)",
+	}
+	for expr in refused {
+		row, refusal := wire_expression_lower(expr, nil, collector_file)
+		testing.expectf(t, refusal == .Invalid_Target && row.source_owner == "" && row.target_owner == "", "%q gave %v", expr, refusal)
+	}
+	for owner in ([?]string{owner_past, "", "1server", "ser-ver"}) {
+		testing.expectf(t, !is_log_output_name(owner, "log"), "%q.log is a log output", owner)
+		testing.expectf(t, !short_form_owner_valid(owner), "%q is an owner", owner)
+	}
+	// The same bound in a row that a short form built.
+	past_row := Short_Form_Wiring_Row{source_owner = owner_past, source_stream = "log", writer_stream = .Log, target_owner = "auditor", target_input = "audit_in"}
+	testing.expect_value(t, short_form_row_validate(past_row), Short_Form_Refusal.Invalid_Target)
+	past_row.source_owner, past_row.target_owner = "server", owner_past
+	testing.expect_value(t, short_form_row_validate(past_row), Short_Form_Refusal.Invalid_Target)
+
+	// Self-wiring of the log is refused.
+	_, self_refusal := wire_expression_lower("wire(collector.log, collector.sources)", nil, collector_file)
+	testing.expect_value(t, self_refusal, Short_Form_Refusal.Cyclic_Self_Wiring)
+
+	// The bound itself is an owner.
+	testing.expect(t, is_log_output_name(owner_bound, "log"))
+	bound_row, bound_refusal := wire_expression_lower("wire(abcdefghijklmnopqrstuvwxyz01234.log, collector.sources)", nil, collector_file)
+	testing.expect_value(t, bound_refusal, Short_Form_Refusal.None)
+	testing.expect_value(t, bound_row.source_owner, owner_bound)
+	testing.expect_value(t, bound_row.writer_stream, output.Writer_Stream.Log)
+}
+
+// A list of a start that repeats a row: the later row is named, with the
+// earlier one; a row of the same edge with another condition is another
+// wiring.
+@(test)
+start_rows_that_repeat_a_row_are_found :: proc(t: ^testing.T) {
+	log_row := Start_Row_Edge{writer = "server", output = "log", reader = "collector", input = "sources"}
+	_, _, found := start_rows_duplicate(nil)
+	testing.expect(t, !found, "an empty list repeats no row")
+	_, _, found = start_rows_duplicate([]Start_Row_Edge{log_row})
+	testing.expect(t, !found, "one row repeats no row")
+
+	earlier, later: int
+	earlier, later, found = start_rows_duplicate([]Start_Row_Edge{log_row, log_row})
+	testing.expect(t, found && earlier == 1 && later == 2, "the second row repeats the first")
+
+	other_writer := log_row
+	other_writer.writer = "shop"
+	other_input := log_row
+	other_input.input = "forward"
+	other_reader := log_row
+	other_reader.reader = "auditor"
+	other_output := log_row
+	other_output.output = "requests"
+	conditioned := other_output
+	conditioned.condition = "status = 404"
+	_, _, found = start_rows_duplicate([]Start_Row_Edge{log_row, other_writer, other_input, other_reader, other_output, conditioned})
+	testing.expect(t, !found, "rows that differ in one name or in the condition repeat no row")
+
+	earlier, later, found = start_rows_duplicate([]Start_Row_Edge{log_row, other_output, conditioned, other_input, conditioned})
+	testing.expect(t, found && earlier == 3 && later == 5, "the fifth row repeats the third")
+
+	// A full list of distinct rows passes; its last row made equal to its
+	// first is found at the bound.
+	writers := [?]string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "aa", "ab", "ac", "ad", "ae", "af"}
+	testing.expect(t, output.WIRING_LIST_ROW_LIMIT <= len(writers), "the test has a writer for each row")
+	full: [output.WIRING_LIST_ROW_LIMIT]Start_Row_Edge
+	for &edge, index in full {
+		edge = log_row
+		edge.writer = writers[index]
+	}
+	_, _, found = start_rows_duplicate(full[:])
+	testing.expect(t, !found, "a full list of distinct rows repeats no row")
+	full[len(full) - 1] = full[0]
+	earlier, later, found = start_rows_duplicate(full[:])
+	testing.expect(t, found && earlier == 1 && later == len(full), "the last row of a full list repeats the first")
+}
+
+// The oracle of the 50 rows: the row passes when another process wrote
+// it, at the level Warning.
+@(private = "file")
+lf_mixed_row :: proc(number: i64, own_slot: i64) -> (row: [FOLLOW_ROW_SIZE]u8, slot: i64, process: string, passes: bool) {
+	level := op.Log_Level.Info
+	switch {
+	case number % 5 == 0:
+		slot, process, level = own_slot, "console", .Warning
+	case number % 5 == 1:
+		slot, process, level = own_slot, "console", .Info
+	case number % 2 == 0:
+		slot, process, level = 3, "storage", .Warning
+	case:
+		slot, process, level = 4, "network", .Info
+	}
+	if number % 7 == 0 && slot != own_slot {
+		level = .Warning
+	}
+	row = lf_make_row(number, slot, process, level, "mixed record")
+	passes = slot != own_slot && level == .Warning
+	return row, slot, process, passes
+}
+
+@(private = "file")
+lf_same :: proc(a, b: []i64) -> bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for value, index in a {
+		if value != b[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// log.follow |> where(level = Warning) over 50 rows, a fifth of them from
+// the own slot of the console: each row of another process at Warning is
+// drawn once and in order; each draw asks to echo its line to the log and
+// adds one more console diagnostic; neither ever comes back. The follow
+// then ends by first(5) and by Escape, and reads no row after its end.
+@(test)
+log_follow_fifty_mixed_rows_draw_each_once :: proc(t: ^testing.T) {
+	OWN_SLOT :: i64(7)
+	ROWS :: 50
+	plan, refusal := log_follow_lower("log.follow |> where(level = Warning)", OWN_SLOT)
+	testing.expect_value(t, refusal, Log_Follow_Refusal.None)
+
+	Queued :: struct {
+		row:     [FOLLOW_ROW_SIZE]u8,
+		number:  i64,
+		slot:    i64,
+		process: string,
+		echo:    bool,
+	}
+	// Room for each row, one echo and one diagnostic for each row: a loop
+	// that amplified runs past it, and the test bounds its turns.
+	queue: [ROWS * 3]Queued
+	expected: [ROWS]i64
+	expected_count := 0
+	self_count := 0
+	for number in i64(1) ..= ROWS {
+		row, slot, process, passes := lf_mixed_row(number, OWN_SLOT)
+		queue[number - 1] = {row = row, number = number, slot = slot, process = process}
+		if passes {
+			expected[expected_count] = number
+			expected_count += 1
+		}
+		if slot == OWN_SLOT {
+			self_count += 1
+		}
+	}
+	testing.expect_value(t, self_count, 20)
+	testing.expect(t, expected_count > 5, "the oracle has more rows than first(5) takes")
+
+	// A whole draw, until the queue is empty.
+	{
+		breaker := follow_loop_breaker_init(&plan, "console")
+		output_logged := true
+		tail := ROWS
+		drawn: [ROWS]i64
+		drawn_count := 0
+		for head := 0; head < tail; head += 1 {
+			if tail > len(queue) - 2 {
+				testing.fail_now(t, "the follow did not end: a row came back")
+			}
+			item := queue[head]
+			if follow_filter_record(&breaker, item.row[:], item.slot, item.process, item.echo) != .Pass {
+				continue
+			}
+			guard := follow_render_begin(&breaker, &output_logged)
+			if follow_should_emit_to_log(&breaker) && output_logged {
+				queue[tail] = {row = lf_make_row(1000 + item.number, OWN_SLOT, "console", .Warning, "echo"), number = 1000 + item.number, slot = OWN_SLOT, process = "console", echo = true}
+				tail += 1
+			}
+			queue[tail] = {row = lf_make_row(2000 + item.number, OWN_SLOT, "console", .Warning, "diagnostic"), number = 2000 + item.number, slot = OWN_SLOT, process = "console"}
+			tail += 1
+			follow_render_end(&breaker, guard, &output_logged)
+			drawn[drawn_count] = item.number
+			drawn_count += 1
+		}
+		testing.expect_value(t, drawn_count, expected_count)
+		testing.expect(t, lf_same(drawn[:drawn_count], expected[:expected_count]), "each row is drawn once, in order")
+		testing.expect_value(t, tail, ROWS + expected_count)
+		testing.expect_value(t, breaker.records_seen, u64(ROWS + expected_count))
+		testing.expect_value(t, breaker.records_passed, u64(expected_count))
+		testing.expect_value(t, breaker.self_slot_suppressed, u64(self_count + expected_count))
+		testing.expect_value(t, breaker.filtered_out, u64(ROWS - self_count - expected_count))
+		testing.expect_value(t, breaker.echo_writes_blocked, u64(expected_count))
+		testing.expect_value(t, breaker.self_echo_suppressed, u64(0))
+		testing.expect(t, output_logged && breaker.render_depth == 0 && !breaker.echo_suppressed, "the console logs again after the draw")
+	}
+
+	// first(5): the read ends at its fifth row, and reads no more.
+	{
+		breaker := follow_loop_breaker_init(&plan, "console")
+		kept := 0
+		read := 0
+		loop: for read < ROWS {
+			switch collect_step_of(kept, 5, FOLLOW_ROW_SIZE, ROWS * FOLLOW_ROW_SIZE) {
+			case .Keep:
+			case .Done, .Too_Large:
+				break loop
+			}
+			item := queue[read]
+			read += 1
+			if follow_filter_record(&breaker, item.row[:], item.slot, item.process) == .Pass {
+				testing.expect_value(t, item.number, expected[kept])
+				kept += 1
+			}
+		}
+		testing.expect_value(t, kept, 5)
+		testing.expect_value(t, i64(read), expected[4])
+		testing.expect_value(t, breaker.records_passed, u64(5))
+	}
+
+	// Escape after the 30th row: the rows before it are drawn, none after.
+	{
+		ESCAPE_AFTER :: 30
+		breaker := follow_loop_breaker_init(&plan, "console")
+		drawn_count := 0
+		for &item in queue[:ROWS] {
+			if item.number > ESCAPE_AFTER {
+				break
+			}
+			if follow_filter_record(&breaker, item.row[:], item.slot, item.process) == .Pass {
+				drawn_count += 1
+			}
+		}
+		before := 0
+		for number in expected[:expected_count] {
+			if number <= ESCAPE_AFTER {
+				before += 1
+			}
+		}
+		testing.expect_value(t, drawn_count, before)
+		testing.expect_value(t, breaker.records_seen, u64(ESCAPE_AFTER))
+	}
+
+	// The edges of the count: first(0) reads nothing, and a negative count too.
+	for wanted in ([?]int{0, -1, min(int)}) {
+		testing.expect_value(t, collect_step_of(0, wanted, FOLLOW_ROW_SIZE, ROWS * FOLLOW_ROW_SIZE), Collect_Step.Done)
+	}
+}
