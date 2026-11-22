@@ -1,8 +1,14 @@
 #+build !freestanding
 package software_machine
 
+import "core:sync"
 import "core:testing"
 import "modus:contract/byte_order"
+
+// The C-ABI export bridge owns one static VM instance; serialize tests that
+// exercise it so multi-threaded test runners do not race on vm_instance.
+@(private = "file")
+vm_export_test_mutex: sync.Mutex
 
 // Helper: append bytes to a fixed code buffer during test assembly.
 @(private = "file")
@@ -66,6 +72,7 @@ emit_syscall :: proc(e: ^Code_Emitter) {
 
 @(test)
 test_wasm_exports_uninitialized_and_border_refusals :: proc(t: ^testing.T) {
+	sync.mutex_guard(&vm_export_test_mutex)
 	// Reset static VM state to uninitialized.
 	vm_instance = {}
 
@@ -175,6 +182,7 @@ test_wasm_exports_uninitialized_and_border_refusals :: proc(t: ^testing.T) {
 
 @(test)
 test_wasm_exports_program_draws_framebuffer_writes_serial_and_reads_input :: proc(t: ^testing.T) {
+	sync.mutex_guard(&vm_export_test_mutex)
 	testing.expect_value(t, modus_vm_init(64, 32), u32(Vm_Call_Status.Ok))
 	testing.expect_value(t, modus_vm_framebuffer_bytes(), u32(64 * 32 * 4))
 
@@ -275,6 +283,7 @@ test_wasm_exports_program_draws_framebuffer_writes_serial_and_reads_input :: pro
 
 @(test)
 test_wasm_exports_ring_capacity_and_mmu_fault_isolation :: proc(t: ^testing.T) {
+	sync.mutex_guard(&vm_export_test_mutex)
 	// Small 32x16 framebuffer = 2048 bytes -> occupies exactly 1 four-KiB page at 0x100000.
 	testing.expect_value(t, modus_vm_init(32, 16), u32(Vm_Call_Status.Ok))
 

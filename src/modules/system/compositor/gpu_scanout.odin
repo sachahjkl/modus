@@ -36,7 +36,7 @@ gpu_call :: proc "contextless" (cmd: virtio_gpu.Service_Command, values: [7]u64 
 	if !system.send(&gpu_ring.commands, ring.Record{kind = u32(cmd), tag = tag, values = values}) {
 		return {}, false
 	}
-	deadline := system.time() + 2000
+	deadline := system.time() + 500
 	for {
 		if rec, got := system.receive(&gpu_ring.completions); got {
 			if rec.tag == tag {
@@ -45,6 +45,8 @@ gpu_call :: proc "contextless" (cmd: virtio_gpu.Service_Command, values: [7]u64 
 			continue
 		}
 		if system.time() >= deadline {
+			gpu_present = false
+			gpu_attached = false
 			return {}, false
 		}
 		wait := system.wait_begin()
@@ -69,8 +71,10 @@ gpu_scanout_open :: proc "contextless" (ctx: ^system.Context, frame_memory: syst
 	gpu_present = true
 
 	if reply, ok := gpu_call(.Display_Info); ok {
-		gpu_width = u32(reply.values[1])
-		gpu_height = u32(reply.values[2])
+		gpu_width = u32(reply.values[0])
+		gpu_height = u32(reply.values[1])
+	} else {
+		return
 	}
 	if reply, ok := gpu_call(.Probe_Venus); ok {
 		gpu_venus_available = reply.values[0] != 0
@@ -78,7 +82,7 @@ gpu_scanout_open :: proc "contextless" (ctx: ^system.Context, frame_memory: syst
 	}
 	if frame_memory != 0 && width > 0 && height > 0 {
 		if lent, lend_status := system.give(gpu_ring_memory, frame_memory, {.Read}); lend_status == .Ok {
-			if _, ok := gpu_call(.Attach_Framebuffer, {0 = u64(lent), 1 = u64(width), 2 = u64(height)}); ok {
+			if _, ok := gpu_call(.Attach_Framebuffer, {0 = u64(lent), 1 = u64(width), 2 = u64(height), 3 = u64(virtio_gpu.Pixel_Format.B8G8R8X8_Unorm)}); ok {
 				gpu_attached = true
 			}
 		}

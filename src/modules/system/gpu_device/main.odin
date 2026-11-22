@@ -421,7 +421,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	machine = ctx.handles[pci.GRANT_MACHINE]
 	ring_memory = ctx.handles[virtio_gpu.SERVICE_RING]
 	ring_status: system.Status
-	if clients, ring_status = system.ring_open(ring_memory); ring_status != .Ok {
+	if clients, ring_status = system.ring_open(ring_memory, receive_handles = true); ring_status != .Ok {
 		fail("no gpu device ring")
 	}
 	configuration_address, configuration_status := system.memory_map(ctx.handles[pci.GRANT_CONFIGURATION], {})

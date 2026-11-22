@@ -588,7 +588,11 @@ damage_bar :: proc "contextless" () {
 }
 
 canvas_create_with_handle :: proc "contextless" (width, height: int) -> (canvas: graphics.Canvas, handle: system.Handle) {
-	memory, status := system.memory_create((u64(width * height * 4) + system.PAGE_SIZE - 1) / system.PAGE_SIZE)
+	pages := (u64(width * height * 4) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+	memory, status := system.memory_create(pages, 0, {.Contiguous})
+	if status != .Ok {
+		memory, status = system.memory_create(pages)
+	}
 	address: rawptr
 	if status == .Ok {
 		address, status = system.memory_map(memory)

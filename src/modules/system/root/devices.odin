@@ -68,7 +68,7 @@ DRIVER_ENTROPY :: Driver{"entropy", .Entropy_Device, entropy_service.RING_CAPACI
 DRIVER_SOUND :: Driver{"sound", .Sound_Device, timed_stream.RING_CAPACITY, timed_stream.SERVICE_RING, false}
 // The VirtIO-GPU 1.2 device service (PCI 0x1AF4:0x1050) for 2D scanout and
 // Venus Vulkan capability discovery (src/md/features/gpu_access.md).
-DRIVER_GPU :: Driver{"gpu_device", .Gpu_Device, virtio_gpu.RING_CAPACITY, virtio_gpu.SERVICE_RING, false}
+DRIVER_GPU :: Driver{"gpu_device", .Gpu_Device, virtio_gpu.RING_CAPACITY, virtio_gpu.SERVICE_RING, true}
 gpu_client_ring_memory: system.Handle
 #assert(timed_stream.GRANT_RING == system.GRANT_DEVICE_RING)
 
@@ -112,8 +112,10 @@ gpu_driver_start :: proc "contextless" () -> bool {
 	}
 	_, ring_mem, status := driver_start(place, DRIVER_GPU)
 	if status != .Ok {
+		system.log_fact(.Warning, Gpu_Driver_Failed{status = status, device = place.device})
 		return false
 	}
+	system.log_fact(.Info, Gpu_Driver_Started{device = u64(place.device)})
 	gpu_client_ring_memory = ring_mem
 	return true
 }
@@ -433,7 +435,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		if context_refused(service_name, &context_grants, &values) {
 			status = .Bad_State
 		} else {
-			driver.process, status = system.process_start(system.image_find(image, service_name), service_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, service_name), service_name), driver_mappings[:driver_mapping_count])
+			driver.process, status = system.process_start(system.image_find(image, service_name), service_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, service_name), service_name), driver_mappings[:driver_mapping_count], &prepared, load_source())
 		}
 	}
 	if status != .Ok {

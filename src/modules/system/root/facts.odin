@@ -284,6 +284,19 @@ Entropy_Service_Stopped_Early :: struct {
 	start_reads:    u64,
 }
 
+// The VirtIO-GPU device service started for a PCI GPU device on bus 0.
+@(log_fact = "root: started gpu_device for the GPU at PCI device {device}")
+Gpu_Driver_Started :: struct {
+	device: u64,
+}
+
+// The VirtIO-GPU device service could not start for a discovered PCI GPU device.
+@(log_fact = "root: gpu_device at PCI device {device} failed to start with {status}")
+Gpu_Driver_Failed :: struct {
+	status: op.Status,
+	device: u32,
+}
+
 // The fields of a name: the writers of the facts above fill them with the
 // procedures of the contract, whose host tests give the edges of a cut.
 module_name_field :: value_kinds.module_name_field
