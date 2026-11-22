@@ -170,6 +170,9 @@ Guest_Processor :: struct {
 	running:       bool, // A thread runs this guest processor now. Process lock of the guest.
 	control_block: u64, // Physical: the control block of the guest processor, one page. 0: not made yet.
 	state_area:    u64, // Physical: the extended state of the guest processor, one page.
+	// The event that the process injected and that the guest did not
+	// receive yet: it lives across runs, as the word of EVENTINJ does.
+	pending_injection: guest_rules.Pending_Injection,
 }
 
 // The guest processors of a process, by the index of the process. One for
@@ -482,6 +485,14 @@ guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, proces
 	// processor than before: each entry flushes its translations.
 	direct(block + CONTROL_TRANSLATION_FLUSH, u8)^ = guest_support.flush_by_identifier ? TRANSLATION_FLUSH_THE_GUEST : TRANSLATION_FLUSH_ALL
 	direct(block + CONTROL_CLEAN, u32)^ = 0
+	// With NRIPS, the delivery of an injected software interrupt, int3 or
+	// into pushes the address in this word, which the last exit wrote: the
+	// address of the injection goes there, so that the guest returns to it.
+	if guest_support.next_instruction {
+		if address, needed := guest_rules.next_instruction_of_injection(direct(block + CONTROL_EVENT_INJECTION, u64)^, processor.pending_injection); needed {
+			direct(block + CONTROL_NEXT_INSTRUCTION, u64)^ = address
+		}
+	}
 	general := Guest_General_Registers {
 		rbx = registers.rbx, rcx = registers.rcx, rdx = registers.rdx, rsi = registers.rsi, rdi = registers.rdi, rbp = registers.rbp,
 		r8 = registers.r8, r9 = registers.r9, r10 = registers.r10, r11 = registers.r11, r12 = registers.r12, r13 = registers.r13, r14 = registers.r14, r15 = registers.r15,
@@ -531,12 +542,17 @@ guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, proces
 	}
 	// The event that the exit interrupted goes to the next entry, in this
 	// run or in the next one; with none, the next entry delivers nothing.
+	// An injected event that the exit interrupted goes again whatever its
+	// type: the guest is at no instruction that raises it again.
 	// After a refused state, the processor entered nothing and the word can
 	// hold an old event: it is not delivered again at each run.
 	if exit.code == GUEST_EXIT_REFUSED_STATE {
 		direct(block + CONTROL_EVENT_INJECTION, u64)^ = 0
+		processor.pending_injection = {}
 	} else {
-		direct(block + CONTROL_EVENT_INJECTION, u64)^ = guest_rules.event_to_deliver_again(direct(block + CONTROL_EXIT_EVENT, u64)^)
+		next_event, still_pending := guest_rules.event_after_exit(direct(block + CONTROL_EXIT_EVENT, u64)^, registers.rip, processor.pending_injection)
+		direct(block + CONTROL_EVENT_INJECTION, u64)^ = next_event
+		processor.pending_injection = still_pending
 	}
 	// An interrupt of another processor that waits in processor_sync is
 	// held until the return to the process: the answer comes now.
@@ -687,7 +703,9 @@ guest_run :: proc "contextless" (index: u32, v: [7]u64, results: ^[7]u64) -> Ope
 	// later run.
 	injected := false
 	if requests.inject_kind != .None && direct(block + CONTROL_EVENT_INJECTION, u64)^ & guest_rules.EVENT_VALID == 0 {
-		direct(block + CONTROL_EVENT_INJECTION, u64)^ = guest_rules.event_injection_word(requests.inject_kind, registers.inject_vector, registers.inject_error_code_valid == 1, registers.inject_error_code)
+		injection := guest_rules.event_injection_word(requests.inject_kind, registers.inject_vector, registers.inject_error_code_valid == 1, registers.inject_error_code)
+		direct(block + CONTROL_EVENT_INJECTION, u64)^ = injection
+		processor.pending_injection = {event = injection, address = registers.rip}
 		injected = true
 	}
 

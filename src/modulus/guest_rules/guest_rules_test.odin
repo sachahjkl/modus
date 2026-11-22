@@ -71,3 +71,71 @@ mode_segments_of_each_mode :: proc(t: ^testing.T) {
 	// The processor refuses a code segment with L and D/B together.
 	testing.expect(t, long.code.attributes & SEGMENT_LONG != 0 && long.code.attributes & SEGMENT_THIRTY_TWO == 0)
 }
+
+// An injected software interrupt that a nested page fault interrupted is
+// delivered again; the same event from an int n of the guest is not, since
+// the guest is still at that instruction.
+@(test)
+injected_software_interrupt_is_delivered_again :: proc(t: ^testing.T) {
+	injected := event_injection_word(.Software_Interrupt, 0x80, false, 0)
+	pending := Pending_Injection{event = injected, address = 0x1002}
+	// The int n of the guest: no injection pending.
+	next, still := event_after_exit(injected, 0x1000, {})
+	testing.expect_value(t, next, u64(0))
+	testing.expect_value(t, still, Pending_Injection{})
+	// The injection, interrupted at its address: delivered again, still pending.
+	next, still = event_after_exit(injected, 0x1002, pending)
+	testing.expect_value(t, next, injected)
+	testing.expect_value(t, still, pending)
+	// The guest moved: the injection was delivered, and this event is an int n of the guest.
+	next, still = event_after_exit(injected, 0x1000, pending)
+	testing.expect_value(t, next, u64(0))
+	testing.expect_value(t, still, Pending_Injection{})
+	// Another vector or another type is not the injection.
+	next, still = event_after_exit(event_injection_word(.Software_Interrupt, 0x81, false, 0), 0x1002, pending)
+	testing.expect_value(t, next, u64(0))
+	testing.expect_value(t, still, Pending_Injection{})
+	next, still = event_after_exit(event_injection_word(.Exception, 0x0D, true, 0), 0x1002, pending)
+	testing.expect_value(t, next, event_injection_word(.Exception, 0x0D, true, 0))
+	testing.expect_value(t, still, Pending_Injection{})
+	// No event at the exit: the injection was delivered.
+	next, still = event_after_exit(0, 0x1002, pending)
+	testing.expect_value(t, next, u64(0))
+	testing.expect_value(t, still, Pending_Injection{})
+	// An injected int3 and into are delivered again too; the same events of the guest are not.
+	for vector in ([?]u8{GUEST_VECTOR_BREAKPOINT, GUEST_VECTOR_OVERFLOW}) {
+		word := event_injection_word(.Exception, vector, false, 0)
+		next, still = event_after_exit(word, 0x2000, {event = word, address = 0x2000})
+		testing.expectf(t, next == word && still.event == word, "injected exception %v", vector)
+		next, _ = event_after_exit(word, 0x2000, {})
+		testing.expectf(t, next == 0, "exception %v of the guest", vector)
+	}
+	// An injected external interrupt stays pending while it is interrupted.
+	external := event_injection_word(.External_Interrupt, 0x30, false, 0)
+	next, still = event_after_exit(external, 0x3000, {event = external, address = 0x3000})
+	testing.expect_value(t, next, external)
+	testing.expect_value(t, still.event, external)
+	// events_match: invalid words never match, and the error code does not count.
+	testing.expect(t, !events_match(0, 0))
+	testing.expect(t, !events_match(injected &~ EVENT_VALID, injected &~ EVENT_VALID))
+	testing.expect(t, events_match(event_injection_word(.Exception, 14, true, 2), event_injection_word(.Exception, 14, true, 7)))
+}
+
+// The address for CONTROL_NEXT_INSTRUCTION: only for a pending injected
+// event of an instruction.
+@(test)
+next_instruction_only_for_injected_instruction_events :: proc(t: ^testing.T) {
+	for word in ([?]u64{event_injection_word(.Software_Interrupt, 0x80, false, 0), event_injection_word(.Software_Interrupt, 0, false, 0), event_injection_word(.Exception, GUEST_VECTOR_BREAKPOINT, false, 0), event_injection_word(.Exception, GUEST_VECTOR_OVERFLOW, false, 0)}) {
+		testing.expectf(t, event_needs_next_instruction(word), "word %x needs it", word)
+		address, needed := next_instruction_of_injection(word, {event = word, address = 0x7C02})
+		testing.expectf(t, needed && address == 0x7C02, "word %x", word)
+		// Not the pending injection: none.
+		_, needed = next_instruction_of_injection(word, {})
+		testing.expectf(t, !needed, "word %x with no injection", word)
+	}
+	for word in ([?]u64{0, max(u64) &~ EVENT_VALID, event_injection_word(.External_Interrupt, 0x80, false, 0), event_injection_word(.Non_Maskable_Interrupt, 2, false, 0), event_injection_word(.Exception, 6, false, 0), event_injection_word(.Exception, 14, true, 0)}) {
+		testing.expectf(t, !event_needs_next_instruction(word), "word %x needs none", word)
+		_, needed := next_instruction_of_injection(word, {event = word, address = 1})
+		testing.expectf(t, !needed, "word %x", word)
+	}
+}
