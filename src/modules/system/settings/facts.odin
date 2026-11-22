@@ -264,6 +264,23 @@ Window_Ready :: struct {
 	scale:           [8]u8,
 }
 
+// The window cannot be resized: the limits that this process gave were
+// refused, or the command ring of the window was full.
+@(log_fact = "settings: the window stays fixed: {cause}")
+Window_Stays_Fixed :: struct {
+	cause: [64]u8,
+}
+STAYS_FIXED_CAUSE_FIELD_BYTES :: 64
+#assert(size_of(Window_Stays_Fixed{}.cause) == STAYS_FIXED_CAUSE_FIELD_BYTES)
+
+// A frame of the window held more records or more text than its draw
+// table: the records past it are not drawn. A window writes it one time.
+@(log_fact = "settings: a frame is past its draw table of {records} records and {text_bytes} bytes of text; its last records are not drawn")
+Frame_Table_Full :: struct {
+	records:    u64,
+	text_bytes: u64,
+}
+
 // value_field gives the Text field of the name of the value of one setting
 // of a choice.
 value_field :: proc "contextless" (choice: settings.Choice, setting: settings.Setting) -> [VALUE_NAME_FIELD_BYTES]u8 {

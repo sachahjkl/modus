@@ -1553,7 +1553,7 @@ build :: proc "contextless" (frame: ^interface.Frame) {
 }
 
 frame_draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_start(&window_memory)
+	frame := interface.window_frame_start(&window_memory, window)
 	build(&frame)
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 }

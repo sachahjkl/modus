@@ -12,32 +12,25 @@ import "modus:display"
 // The act names of one window, as hashes (display.act_name_hash).
 Act_Name_Set :: struct {
 	count:  int, // The hashes in use: 0 to display.ACT_NAME_SET_CAPACITY.
-	hashes: [display.ACT_NAME_SET_CAPACITY]u64,
+	hashes: [display.ACT_NAME_SET_CAPACITY]u32,
 }
 
 // act_name_set_of_record checks the values of a record Act_Names from a
-// window and gives its set. The values are those of another process: a
-// count over display.ACT_NAME_SET_CAPACITY, a hash of 0 in the count and a
-// value that is not 0 after it are refused, and ok is false.
+// window and gives its set. The values are those of another process: the
+// border of the record (display.act_names_of_values) refuses a count over
+// display.ACT_NAME_SET_CAPACITY, a hash of 0 in the count and a hash that
+// is not 0 after it, and ok is false.
 act_name_set_of_record :: proc "contextless" (values: [7]u64) -> (set: Act_Name_Set, ok: bool) {
-	if values[0] > display.ACT_NAME_SET_CAPACITY {
+	set.hashes, set.count, ok = display.act_names_of_values(values)
+	if !ok {
 		return {}, false
 	}
-	count := int(values[0])
-	for index in 0 ..< display.ACT_NAME_SET_CAPACITY {
-		value := values[1 + index]
-		if index < count && value == 0 || index >= count && value != 0 {
-			return {}, false
-		}
-		set.hashes[index] = value
-	}
-	set.count = count
 	return set, true
 }
 
 // act_name_set_has says if a set holds the hash of an act name. A hash of 0
 // is no act name, and no set holds it.
-act_name_set_has :: proc "contextless" (set: ^Act_Name_Set, hash: u64) -> bool {
+act_name_set_has :: proc "contextless" (set: ^Act_Name_Set, hash: u32) -> bool {
 	if hash == 0 {
 		return false
 	}
@@ -53,7 +46,7 @@ act_name_set_has :: proc "contextless" (set: ^Act_Name_Set, hash: u64) -> bool {
 // act name, or NO_ROW. The owner gives the sets of its windows, the front
 // window first: two windows that name one act, as two windows of one
 // process, give the one in front.
-act_name_front :: proc "contextless" (sets: []^Act_Name_Set, hash: u64) -> int {
+act_name_front :: proc "contextless" (sets: []^Act_Name_Set, hash: u32) -> int {
 	for set, index in sets {
 		if set != nil && act_name_set_has(set, hash) {
 			return index

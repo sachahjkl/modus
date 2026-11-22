@@ -426,7 +426,7 @@ scenario := [?]Step {
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "compositor: the palette starts settings"},
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
-	{kind = .Wait, text = "compositor: the window settings gave 6 act names", any_order = true},
+	{kind = .Wait, text = "compositor: the window settings gave 7 act names", any_order = true},
 	{kind = .Wait, text = "settings: ok, ", any_order = true},
 	// The rows of the settings come from the enum parameters of the export
 	// set: the console lists them once it is connected to the service.
@@ -2765,6 +2765,36 @@ scenario := [?]Step {
 	{kind = .Launch, text = "settings"},
 	{kind = .Wait, text = "compositor: surface settings", any_order = true},
 	{kind = .Wait, text = "settings: ok, font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},
+	// A click on a value of the window applies it, as the press of a
+	// principal does: the compositor tells each window the new value, and
+	// settings draws with it. A console call proves the export, not the
+	// button, so each value here is a press on its button, at the place
+	// that the window drew it at the scale 1.25. The window draws each
+	// element at the scale of its surface, so a press reaches the element
+	// that the screen shows there: a press on "Light" that reached another
+	// button sets no light appearance. At 1.375 the scale goes back with the
+	// keys, as a principal with no pointer does: the press gave the stop
+	// 137.5 % the focus, Shift+Tab moves it to the stop 125 %, and Enter
+	// presses it. No step presses at 1.375: the places of the tool are at
+	// 1.25 (scale_places.odin).
+	{kind = .Click_Element, text = "settings", element = "Spleen 8x16"},
+	{kind = .Wait, text = "compositor: the settings changed: font spleen, ", any_order = true},
+	{kind = .Wait, text = "settings: drawn with font spleen, "},
+	{kind = .Click_Element, text = "settings", element = "Vector"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, ", any_order = true},
+	{kind = .Wait, text = "settings: drawn with font vector, "},
+	{kind = .Click_Element, text = "settings", element = "Light"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light, ", any_order = true},
+	{kind = .Wait, text = "interface: settings: a frame in the light appearance"},
+	{kind = .Click_Element, text = "settings", element = "Auto"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, ", any_order = true},
+	{kind = .Click_Element, text = "settings", element = "137.5 %"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.375; ", any_order = true},
+	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.375"},
+	{kind = .Key, text = "shift-tab"},
+	{kind = .Key, text = "ret"},
+	{kind = .Wait, text = "compositor: the settings changed: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; ", any_order = true},
+	{kind = .Wait, text = "settings: drawn with font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25"},
 	{kind = .Front, text = "monitor"},
 	{kind = .Move, text = "monitor", to_x = 8, to_y = 408},
 	{kind = .Front, text = "settings"},

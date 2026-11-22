@@ -73,7 +73,7 @@ Built: the package `modus:layout` with the four passes, the snap and the clip, t
 Its owners are seven windows of the system, each building its tree at each frame from the live window size and taking its colors and spacing from `tokens_for`:
 
 - `monitor` places its summary, its three graphs and the process table via `table_columns` ([monitor_window.md](monitor_window.md), "The layout").
-- `settings` places its two cards, each row of `SETTINGS`, the time zone and language rows, the preview card and the action bar.
+- `settings` is resizable: it places its four section cards in one column or two by the width, wraps the value buttons of each setting in lines that the builder breaks from their measured widths (the solver has no wrap), scrolls its view with the scroll offset of the tree, and builds the tree a second time with the scroll bar when the content is taller than the view ([settings_window.md](settings_window.md)).
 - `edit` is resizable with a top band, the text with its scroll bar, a draggable split pane for store versions (`Ctrl+H`), and a status band.
 - `debugger_window` is resizable with a top band, a draggable split pane of two card columns (`THREADS`, `BREAKPOINTS`, `SOURCE`, `MEMORY`, `STACK`, `VARIABLES`), and a status band.
 - `notes` places its lines one under the other and its action bar at the bottom, solving twice so the wrapped status fits cleanly.

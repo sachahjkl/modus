@@ -38,8 +38,8 @@ scenario_palette_film := [?]Step {
 	{kind = .Wait, text = "console: the palette table has ", any_order = true},
 	{kind = .Wait, text = "compositor: the palette has a provider", any_order = true},
 	// The desktop of the film. The monitor at the right, the console over
-	// its left part, the settings at the bottom: their sample of the text
-	// of the system stays in sight under the open panel. The service of
+	// its left part, the settings at the bottom: their section Display
+	// stays in sight under the open panel. The service of
 	// the settings runs with their window: the palette sets a setting
 	// through it, once the console is connected to it, which gives the
 	// rows of the enum parameters of its export set.

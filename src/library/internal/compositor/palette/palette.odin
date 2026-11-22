@@ -101,7 +101,7 @@ Entry :: struct {
 	// on, 1 to BUTTON_CAPACITY. 0: the entry is no setting row.
 	value_count: u8,
 	number:      u32, // For the owner of the source: the index of the thing in its own table. An entry of a provider: its index in the snapshot of the list; of a setting row, the index of its first value.
-	act:         u64, // An entry of a provider with an act name: display.act_name_hash of it. 0: none, and no window can offer go to.
+	act:         u32, // An entry of a provider with an act name: display.act_name_hash of it. 0: none, and no window can offer go to.
 	name:        [NAME_CAPACITY]u8, // The name that the list shows and that the typed part matches.
 	// The window of a disk process and its close: the hash prefix of its
 	// file, which the root service gave, so that a nickname that looks like
@@ -809,7 +809,7 @@ list_content :: proc "contextless" (list: ^List) -> u64 {
 			flags := transmute(u8)entry.flags
 			hash = number(hash, u64(entry.kind) | u64(entry.mark) << 8 | u64(flags) << 16 | u64(entry.windows) << 24 | u64(entry.number) << 32)
 			hash = number(hash, u64(entry.value_count))
-			hash = number(hash, entry.act)
+			hash = number(hash, u64(entry.act))
 			hash = mix(hash, entry.name[:entry.name_length])
 		}
 	}

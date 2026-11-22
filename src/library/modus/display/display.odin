@@ -75,8 +75,10 @@ Command :: enum u32 {
 	// The act names of the window: what its elements act on, so that the
 	// palette offers to go there (docs/INTERFACE.md, "4.2 Act names").
 	// values[0]: the count, 0 to ACT_NAME_SET_CAPACITY; values[1..]: the
-	// act_name_hash of each act name. The set replaces the set before. The
-	// window layer sends it when the set of a frame changes (act_names_send).
+	// act_name_hash of each act name, two in each value, the first in the
+	// low 32 bits (act_names_of_values). The set replaces the set before.
+	// The window layer sends it when the set of a frame changes
+	// (act_names_send).
 	Act_Names      = 4,
 	// A change of the window waits for its next picture: the process draws
 	// it at a time of its own clock, or when the compositor took the last
@@ -343,32 +345,62 @@ clipboard_text_problem :: proc "contextless" (text: []u8, room: int, form: Clipb
 	return .None
 }
 
-ACT_NAME_SET_CAPACITY :: 6 // The act names of one window: the values of one record after its count.
+// The act names of one window: two hashes in each of the 6 values of one
+// record after its count. The settings window names one act for each
+// setting of the settings page, which has room for 8.
+ACT_NAME_SET_CAPACITY :: 12
 ACT_NAME_CAPACITY :: 32 // The bytes of an act name: "settings.set:font".
+#assert(ACT_NAME_SET_CAPACITY == 2 * (len(ring.Record{}.values) - 1))
 
-// act_name_hash gives the hash of an act name: the 64-bit FNV-1a hash of
+// act_name_hash gives the hash of an act name: the 32-bit FNV-1a hash of
 // its bytes, never 0. A record of a ring holds 7 values, so a set of act
-// names travels as hashes; the palette hashes the act name of an entry the
-// same way.
-act_name_hash :: proc "contextless" (name: string) -> u64 {
-	hash: u64 = 0xCBF2_9CE4_8422_2325
+// names travels as hashes, two in a value; the palette hashes the act name
+// of an entry the same way. Two names with one hash only make the palette
+// offer a go to that finds no element.
+act_name_hash :: proc "contextless" (name: string) -> u32 {
+	hash: u32 = 0x811C_9DC5
 	for index in 0 ..< len(name) {
-		hash = (hash ~ u64(name[index])) * 0x0000_0100_0000_01B3
+		hash = (hash ~ u32(name[index])) * 0x0100_0193
 	}
 	return hash | 1
+}
+
+// act_names_values gives the values of a record Act_Names for a set of
+// hashes: the count, then two hashes in each value, the first in the low
+// 32 bits. A set past ACT_NAME_SET_CAPACITY gives its first hashes.
+act_names_values :: proc "contextless" (hashes: []u32) -> (values: [7]u64) {
+	count := min(len(hashes), ACT_NAME_SET_CAPACITY)
+	values[0] = u64(count)
+	for hash, index in hashes[:count] {
+		values[1 + index / 2] |= u64(hash) << (32 * uint(index % 2))
+	}
+	return values
+}
+
+// act_names_of_values is the border of a record Act_Names: the values are
+// those of another process. A count past ACT_NAME_SET_CAPACITY, a hash of 0
+// in the count and a hash that is not 0 after it are refused, and ok is
+// false.
+act_names_of_values :: proc "contextless" (values: [7]u64) -> (hashes: [ACT_NAME_SET_CAPACITY]u32, count: int, ok: bool) {
+	if values[0] > ACT_NAME_SET_CAPACITY {
+		return {}, 0, false
+	}
+	count = int(values[0])
+	for index in 0 ..< ACT_NAME_SET_CAPACITY {
+		hash := u32(values[1 + index / 2] >> (32 * uint(index % 2)))
+		if index < count && hash == 0 || index >= count && hash != 0 {
+			return {}, 0, false
+		}
+		hashes[index] = hash
+	}
+	return hashes, count, true
 }
 
 // act_names_send gives the compositor the set of the act names of the
 // window. It gives false when the command ring was full: the compositor has
 // the set before, and the caller sends it again later.
-act_names_send :: proc "contextless" (window: ^Window, hashes: []u64) -> bool {
-	record := ring.Record{kind = u32(Command.Act_Names)}
-	count := min(len(hashes), ACT_NAME_SET_CAPACITY)
-	record.values[0] = u64(count)
-	for hash, index in hashes[:count] {
-		record.values[1 + index] = hash
-	}
-	return system.send(&window.ring.commands, record)
+act_names_send :: proc "contextless" (window: ^Window, hashes: []u32) -> bool {
+	return system.send(&window.ring.commands, ring.Record{kind = u32(Command.Act_Names), values = act_names_values(hashes)})
 }
 
 // What the compositor tells a process, as the kind of a completion record of
@@ -577,7 +609,7 @@ Event :: struct {
 	x, y:      int, // The pointer: its place in the surface, in logical pixels; it can be outside the surface.
 	buttons:   u32, // The pointer: the `BUTTON_` bits.
 	wheel:     int, // The pointer: the notches that the wheel turned since the event before, signed (WHEEL_TOWARD_THE_END).
-	act:       u64, // Go_To: the act_name_hash of the act name.
+	act:       u32, // Go_To: the act_name_hash of the act name.
 	width, height: int, // Resized: the size that the principal asks for the window, in logical pixels, 1 to SURFACE_LIMIT. Work_Area: the work area, 1 to WORK_AREA_LIMIT.
 	paste_handle:   system.Handle, // Pasted: the lent handle of the content.
 	clipboard_kind: Clipboard_Kind, // Pasted: the kind of the content, never None.
@@ -1192,7 +1224,11 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 		}
 		event.surface_answer, event.surface_serial = answer, record.values[1]
 	case .Go_To:
-		event.act = record.values[0]
+		// A hash is 32 bits: a word past them names no act name.
+		if record.values[0] > u64(max(u32)) {
+			return {}, false
+		}
+		event.act = u32(record.values[0])
 	case .Resized:
 		// The words are read as words: one past the limit never becomes a
 		// negative size.

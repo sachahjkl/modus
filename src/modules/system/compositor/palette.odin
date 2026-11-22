@@ -766,7 +766,7 @@ palette_go_to :: proc "contextless" () {
 	palette.recent_note(panel, picked)
 	palette_close("")
 	raise(position)
-	send(&clients[index], .Go_To, {0 = act})
+	send(&clients[index], .Go_To, {0 = u64(act)})
 	system.log_fact(.Info, Palette_Goes_To_Window{entry = entry_field(name_text), window = window_field(clients[index].title[:])})
 	palette_entries_refresh()
 }
