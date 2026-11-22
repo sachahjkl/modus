@@ -34,7 +34,8 @@ import "modus:system"
 GUEST_MEMORY_PAGES_MOST :: u64(65_536) // 256 MiB.
 INPUT_DISK_BYTES_MOST :: u64(16 * 1024 * 1024)
 OUTPUT_DISK_BYTES_MOST :: contract.MAX_OUTPUT_DISK_BYTES
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = GUEST_MEMORY_PAGES_MOST + INPUT_DISK_BYTES_MOST / system.PAGE_SIZE + OUTPUT_DISK_BYTES_MOST / system.PAGE_SIZE + 2048, processes = 2, threads = 1}
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 88064, processes = 2, threads = 1}
+#assert(88064 == GUEST_MEMORY_PAGES_MOST + INPUT_DISK_BYTES_MOST / system.PAGE_SIZE + OUTPUT_DISK_BYTES_MOST / system.PAGE_SIZE + 2048)
 TREE_OUTPUT_BYTES_MOST :: contract.UNPACK_NODE_BUFFER_BYTES
 
 // Name of the child guest process in kernel reports.

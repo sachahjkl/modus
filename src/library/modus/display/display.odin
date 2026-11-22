@@ -1238,7 +1238,7 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 Window_Taken :: struct {
 	width:  u64,
 	height: u64,
-	window: [WINDOW_FACT_TEXT_BYTES]u8,
+	window: [40]u8,
 }
 
 // work_area_take keeps the work area of an event Work_Area. It gives true
