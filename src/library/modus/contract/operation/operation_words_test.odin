@@ -76,3 +76,45 @@ each_member_reads_back_from_its_word :: proc(t: ^testing.T) {
 		testing.expect_value(t, read, member)
 	}
 }
+
+// Event_Rule.kind is a u32 word: 0 (None), one past max(Event_Kind), and
+// max(u32) are refused, along with unknown flags, non-zero reserved words,
+// disallowed detail/duration combinations, and out-of-range limits.
+@(test)
+event_rule_check_fields_refuses_bad_words_and_fields :: proc(t: ^testing.T) {
+	bad_kinds := [?]u32{0, u32(max(Event_Kind)) + 1, max(u32)}
+	for word in bad_kinds {
+		kind, ok := event_rule_check_fields(Event_Rule{kind = word})
+		testing.expectf(t, !ok, "event rule kind %d must be refused", word)
+		testing.expect_value(t, kind, Event_Kind.None)
+	}
+	bad_rules := [?]Event_Rule {
+		{kind = u32(Event_Kind.Operation), flags = transmute(Event_Rule_Flags)u32(0x2)},
+		{kind = u32(Event_Kind.Operation), reserved = {1, 0, 0}},
+		{kind = u32(Event_Kind.Operation), reserved = {0, 1, 0}},
+		{kind = u32(Event_Kind.Operation), reserved = {0, 0, 1}},
+		{kind = u32(Event_Kind.Operation), least_nanoseconds = EVENT_LEAST_NANOSECONDS_MOST + 1},
+		{kind = u32(Event_Kind.Operation), one_in = EVENT_ONE_IN_MOST + 1},
+		{kind = u32(Event_Kind.Switch), flags = {.Match_Detail}},
+		{kind = u32(Event_Kind.Switch), least_nanoseconds = 1},
+		{kind = u32(Event_Kind.Fault), least_nanoseconds = 1},
+	}
+	for rule, index in bad_rules {
+		_, ok := event_rule_check_fields(rule)
+		testing.expectf(t, !ok, "bad event rule %d must be refused", index)
+	}
+	valid_rules := [?]struct {
+		rule: Event_Rule,
+		kind: Event_Kind,
+	} {
+		{{kind = u32(Event_Kind.Operation), flags = {.Match_Detail}, detail = u64(Operation.Log), least_nanoseconds = EVENT_LEAST_NANOSECONDS_MOST, one_in = EVENT_ONE_IN_MOST}, .Operation},
+		{{kind = u32(Event_Kind.Switch), one_in = 1}, .Switch},
+		{{kind = u32(Event_Kind.Fault), flags = {.Match_Detail}, detail = 14}, .Fault},
+		{{kind = u32(Event_Kind.Lock_Wait), least_nanoseconds = 100}, .Lock_Wait},
+	}
+	for item in valid_rules {
+		kind, ok := event_rule_check_fields(item.rule)
+		testing.expect(t, ok)
+		testing.expect_value(t, kind, item.kind)
+	}
+}

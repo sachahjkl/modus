@@ -892,7 +892,7 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 				bytes = make([]u8, 20, context.temp_allocator)
 			} else {
 				request := remote.Request {
-					kind         = .Call,
+					kind         = u32(remote.Request_Kind.Call),
 					export       = 1,
 					record_size  = 8,
 					result_start = 64,
@@ -903,7 +903,7 @@ remote_case_run :: proc(machine: ^Machine, name: string) -> (passed: bool, resul
 				remote.name_set(&request.service, "manual")
 				switch item.argument {
 				case remote.FIELD_KIND:
-					request.kind = remote.Request_Kind(9)
+					request.kind = 9
 				case remote.FIELD_RESULT_COUNT:
 					request.result_count = remote.REGION_SIZE
 				case remote.FIELD_ERROR_START:

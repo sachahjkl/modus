@@ -53,11 +53,17 @@ Memory_Kind :: enum u32 {
 	Boot     = 2, // In use by what the boot program loaded: this record, the kernel, the boot image, page tables.
 }
 
+// memory_kind_of_word is the border of the kind word of a Memory_Range
+// (Memory_Range.kind): the member, or false for a word that names no kind.
+memory_kind_of_word :: proc "contextless" (word: u32) -> (kind: Memory_Kind, ok: bool) {
+	return enum_word.member_of_word(Memory_Kind, u64(word))
+}
+
 // One run of physical memory, from the memory map of the firmware.
 Memory_Range :: struct {
 	start:      u64, // The physical address of the first page.
 	page_count: u64, // Pages of 4096 bytes.
-	kind:       Memory_Kind, // What the run holds.
+	kind:       u32, // The word of a Memory_Kind (memory_kind_of_word).
 	reserved:   u32, // 0.
 }
 
@@ -68,6 +74,12 @@ Pixel_Format :: enum u32 {
 	Red_Green_Blue_X = 2, // 4 bytes per pixel, red first.
 }
 
+// pixel_format_of_word is the border of the format word of a Framebuffer
+// (Framebuffer.format): the member, or false for a word that names no format.
+pixel_format_of_word :: proc "contextless" (word: u32) -> (format: Pixel_Format, ok: bool) {
+	return enum_word.member_of_word(Pixel_Format, u64(word))
+}
+
 // The framebuffer that the firmware set up: the screen that the boot
 // display and the compositor draw on.
 Framebuffer :: struct {
@@ -75,7 +87,7 @@ Framebuffer :: struct {
 	width:           u32, // Pixels.
 	height:          u32, // Pixels.
 	pixels_per_line: u32, // The distance between two lines, in pixels.
-	format:          Pixel_Format, // The order of the bytes of a pixel.
+	format:          u32, // The word of a Pixel_Format (pixel_format_of_word).
 }
 
 // The boot record: what the boot program found and loaded, given to the
@@ -220,13 +232,13 @@ load_options_write :: proc "contextless" (request: Start_Request) -> (record: Lo
 // program compared, and the two floors that it read before it raised them:
 // the key floor, and the version floor of its key number.
 Boot_Trust :: struct {
-	verifier:            Verifier, // Who verified the system description.
-	key_kind:            Signing_Key_Kind, // The kind of the key that signed it.
+	verifier:            u64, // The word of a Verifier (verifier_of_word): who verified the system description.
+	key_kind:            u64, // The word of a Signing_Key_Kind (signing_key_kind_of_word): the kind of key that signed it.
 	public_key:          [32]u8, // The Ed25519 public key that verified the description signature.
 	description_hash:    [32]u8, // The BLAKE3 hash of the system description.
 	entry_count:         u64, // The entries of the system description, the kernel included.
 	check_cycles:        u64, // The cycles of the check of the signature and of every hash.
-	measure:             Measure_State, // What the measure into the TPM gave.
+	measure:             u64, // The word of a Measure_State (measure_state_of_word): what the measure into the TPM gave.
 	measure_register:    u64, // The register of the TPM that the boot program extended.
 	measure_value:       [32]u8, // The value of the register in the SHA-256 bank, read back from the TPM.
 	measure_status:      u64, // The status of the firmware, or the response code of the TPM, when measure is Refused or Not_Read.
@@ -301,11 +313,23 @@ Verifier :: enum u64 {
 	Firmware_And_Boot_Program = 2, // Secure Boot was on: the firmware verified the boot program, then the boot program verified the description.
 }
 
+// verifier_of_word is the border of Boot_Trust.verifier: the member, or
+// false for a word that names no verifier.
+verifier_of_word :: proc "contextless" (word: u64) -> (verifier: Verifier, ok: bool) {
+	return enum_word.member_of_word(Verifier, word)
+}
+
 // The kind of the key that signed the system description.
 Signing_Key_Kind :: enum u64 {
 	None   = 0, // No key: nothing verified the description.
 	Test   = 1, // The test signing key: its private key is published, so the system is not trusted.
 	Person = 2, // Any other key: the signing key of the publisher of the system.
+}
+
+// signing_key_kind_of_word is the border of Boot_Trust.key_kind: the
+// member, or false for a word that names no signing key kind.
+signing_key_kind_of_word :: proc "contextless" (word: u64) -> (kind: Signing_Key_Kind, ok: bool) {
+	return enum_word.member_of_word(Signing_Key_Kind, word)
 }
 
 // What the boot program did with the measure of the system into the TPM
@@ -316,6 +340,12 @@ Measure_State :: enum u64 {
 	No_Tpm   = 2, // The firmware has no TPM protocol.
 	Refused  = 3, // The firmware refused the extension at each try: the TPM is there, the system is not measured.
 	Not_Read = 4, // The extension was done; the read of the register failed.
+}
+
+// measure_state_of_word is the border of Boot_Trust.measure: the member,
+// or false for a word that names no measure state.
+measure_state_of_word :: proc "contextless" (word: u64) -> (state: Measure_State, ok: bool) {
+	return enum_word.member_of_word(Measure_State, word)
 }
 
 // The register of the measure: PCR 11. The rules of the TCG for PC

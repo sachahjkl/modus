@@ -1,5 +1,6 @@
 package root
 
+import info "modus:contract/boot_info"
 import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/system_description"
@@ -120,7 +121,7 @@ principals_start :: proc "contextless" () {
 	machine_record^ = {state = .Machine, name_length = len(principals.MACHINE_NAME)}
 	copy(machine_record.name[:], principals.MACHINE_NAME)
 	trust := &trust_boot_report.trust
-	if trust.measure == .Measured {
+	if trust.measure == u64(info.Measure_State.Measured) {
 		machine_record.measured = true
 		machine_record.measure = trust.measure_value
 		system.log_fact(.Info, Machine_Principal_Measured{measure_register = trust.measure_register, measure_value = value_kinds.Hash_Field(trust.measure_value)})

@@ -352,7 +352,8 @@ call_form_of_export :: proc(file: []u8, export_index: u32) -> (form: Call_Form, 
 		// A byte that names no type is no call form that a declaration can
 		// agree with.
 		kind := module.function_parameter_type(function, index) or_return
-		parameter = {kind = kind, direction = function.parameter_directions[index]}
+		direction := module.function_parameter_direction(function, index) or_return
+		parameter = {kind = kind, direction = direction}
 		#partial switch parameter.kind {
 		case .Integer:
 			// A file is read as it is: a detail out of the contract is no

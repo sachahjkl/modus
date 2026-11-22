@@ -565,7 +565,7 @@ load_case :: proc "contextless" (writer: ^system.Writer, name: string, replaceme
 			system.write_part(writer, text[index:index + 1])
 		}
 	}
-	return !loaded && error.stage == stage
+	return !loaded && error.stage == u32(stage)
 }
 
 hash_of :: proc "contextless" (name: string) -> [32]u8 {

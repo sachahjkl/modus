@@ -164,7 +164,7 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 		list, _ := read_memory_map(&firmware_map, ranges)
 		for range in ranges[:list.count] {
 			op.boot_range_add(&display_data.boot, range.start, range.page_count, u64(range.kind))
-			if range.kind != .Reserved {
+			if range.kind != u32(info.Memory_Kind.Reserved) {
 				top = max(top, range.start + range.page_count * PAGE_SIZE)
 			}
 		}
@@ -500,9 +500,9 @@ framebuffer :: proc "contextless" () -> (result: info.Framebuffer) {
 	}
 	switch format {
 	case .Red_Green_Blue:
-		result.format = .Red_Green_Blue_X
+		result.format = u32(info.Pixel_Format.Red_Green_Blue_X)
 	case .Blue_Green_Red:
-		result.format = .Blue_Green_Red_X
+		result.format = u32(info.Pixel_Format.Blue_Green_Red_X)
 	case .Bit_Mask, .Blt_Only:
 		result = {}
 	}
@@ -620,7 +620,7 @@ _tls_index: u32
 // the root service draws the display again with the records of the kernel.
 display :: proc "contextless" (boot: ^info.Boot_Info, message: string, state := bootscreen.State.Running, step := bootscreen.Step.Kernel) -> (drawn: bool) {
 	screen := boot.framebuffer
-	if screen.address == 0 || screen.format == .None {
+	if screen.address == 0 || screen.format == u32(info.Pixel_Format.None) {
 		return false
 	}
 	display_on_screen = true
@@ -642,7 +642,7 @@ display :: proc "contextless" (boot: ^info.Boot_Info, message: string, state := 
 	data.message = message
 	data.state = state
 	data.step = step
-	data.red_first = screen.format == .Red_Green_Blue_X
+	data.red_first = screen.format == u32(info.Pixel_Format.Red_Green_Blue_X)
 	bootscreen.draw_screen({pixels = ([^]graphics.Color)(uintptr(screen.address)), width = int(screen.width), height = int(screen.height), stride = int(screen.pixels_per_line)}, data)
 	return true
 }

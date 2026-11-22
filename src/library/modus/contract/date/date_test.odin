@@ -38,3 +38,26 @@ pages_with_no_date :: proc(t: ^testing.T) {
 	_, known = milliseconds_now(&page, 0)
 	testing.expect(t, !known)
 }
+
+// Unknown source words at the edges are refused by source_of_word and give
+// no date from milliseconds_now.
+@(test)
+unknown_source_words_are_refused :: proc(t: ^testing.T) {
+	refused := [?]u32{u32(max(Source)) + 1, 256, max(u32)}
+	for word in refused {
+		member, ok := source_of_word(word)
+		testing.expectf(t, !ok, "word %d must be refused", word)
+		testing.expect_value(t, member, Source.None)
+
+		page: Page
+		write(&page, .Real_Time_Clock, 1_794_400_000_000)
+		page.source = word
+		_, known := milliseconds_now(&page, 5000)
+		testing.expectf(t, !known, "page with unknown source %d must give no date", word)
+	}
+	for member in Source {
+		read, ok := source_of_word(u32(member))
+		testing.expect(t, ok)
+		testing.expect_value(t, read, member)
+	}
+}

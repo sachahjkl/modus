@@ -466,7 +466,7 @@ kind_explains :: proc "contextless" (kind: errors.Kind, status: op.Status) -> bo
 	case .No_Slot:
 		return kind == .Full || kind == .Too_Long
 	case .Bad_State:
-		return kind == .State || kind == .Object_Shared || kind == .Object_Marked
+		return kind == .State || kind == .Absent || kind == .Over_Limit || kind == .Object_Shared || kind == .Object_Marked
 	case .Bad_Operation:
 		return kind == .Bad_Flags || kind == .Bad_Value || kind == .Too_Small || kind == .Too_Long || kind == .Unknown_Operation || kind == .Not_Multiple || kind == .Unsupported
 	}
@@ -1282,6 +1282,21 @@ state_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Pro
 		// A part of a mapping needs an object that only this process names.
 		record_set(record, .Object_Shared, .None, 1, 0, 0, 0)
 		return true
+	case .Thread_Control:
+		// The state refusal that Thread_Control recorded on this processor
+		// before it returned Bad_State.
+		operation_facts := &processor_self().operation
+		if state_record, ok := op.thread_control_state_error(
+			operation_facts.thread_state_refusal,
+			operation_facts.thread_state_refused_argument,
+			operation_facts.thread_state_refused_value,
+			operation_facts.thread_state_refused_limit,
+			operation_facts.thread_state_refused_found,
+		); ok {
+			record^ = state_record
+			return true
+		}
+		return false
 	case:
 		return false
 	}

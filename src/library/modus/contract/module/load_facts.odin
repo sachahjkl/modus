@@ -45,7 +45,7 @@ Load_Find_Fields :: struct {
 // Read: the file of the module that the stage concerns does not have the
 // hash that names it (file_error None), or is not a valid module.
 Load_Read_Fields :: struct {
-	file_error:   Error,
+	file_error:   Error_Word,
 	subject_hash: value_kinds.Hash_Head_Field,
 	subject_name: [40]u8,
 }
@@ -60,8 +60,8 @@ Load_Cycle_Fields :: struct {
 // Check: an export that an import slot uses differs in the module of the
 // replacement: the difference, and the parameter for a difference of one.
 Load_Check_Fields :: struct {
-	difference:    Difference,
-	parameter:     u32,
+	difference:    Difference_Word,
+	parameter:     u64,
 	module_name:   [40]u8,
 	imported_name: [40]u8,
 	export:        [40]u8,
@@ -91,9 +91,9 @@ Load_Room_Fields :: struct {
 
 // The shapes have no padding, which a fact refuses, and fit one record.
 #assert(size_of(Load_Find_Fields) == 2 * value_kinds.HASH_FIELD_BYTES + 2 * LOAD_NAME_FIELD_BYTES)
-#assert(size_of(Load_Read_Fields) == 4 + value_kinds.HASH_FIELD_BYTES + LOAD_NAME_FIELD_BYTES)
+#assert(size_of(Load_Read_Fields) == 8 + value_kinds.HASH_FIELD_BYTES + LOAD_NAME_FIELD_BYTES)
 #assert(size_of(Load_Cycle_Fields) == 3 * LOAD_NAME_FIELD_BYTES)
-#assert(size_of(Load_Check_Fields) == 8 + 3 * LOAD_NAME_FIELD_BYTES)
+#assert(size_of(Load_Check_Fields) == 16 + 3 * LOAD_NAME_FIELD_BYTES)
 #assert(size_of(Load_Bind_Fields) == 4 + 3 * LOAD_NAME_FIELD_BYTES)
 #assert(size_of(Load_Memory_Fields) == 8 + value_kinds.HASH_FIELD_BYTES + LOAD_NAME_FIELD_BYTES)
 #assert(size_of(Load_Room_Fields) == value_kinds.HASH_FIELD_BYTES + LOAD_NAME_FIELD_BYTES)
@@ -122,7 +122,7 @@ load_find_fact_fields :: proc "contextless" (error: ^Load_Error) -> Load_Find_Fi
 // the module that the stage concerns, the import or the module itself.
 load_read_fact_fields :: proc "contextless" (error: ^Load_Error) -> Load_Read_Fields {
 	subject := error.imported.hash != {} ? &error.imported : &error.module
-	return {file_error = error.file_error, subject_hash = value_kinds.Hash_Head_Field(subject.hash), subject_name = load_name_field(subject.name)}
+	return {file_error = Error_Word(error.file_error), subject_hash = value_kinds.Hash_Head_Field(subject.hash), subject_name = load_name_field(subject.name)}
 }
 
 // load_cycle_fact_fields gives the fields of a load error of the stage
@@ -134,7 +134,7 @@ load_cycle_fact_fields :: proc "contextless" (error: ^Load_Error) -> Load_Cycle_
 
 // load_check_fact_fields gives the fields of a load error of the stage Check.
 load_check_fact_fields :: proc "contextless" (error: ^Load_Error) -> Load_Check_Fields {
-	return {difference = error.difference, parameter = error.parameter, module_name = load_name_field(error.module.name), imported_name = load_name_field(error.imported.name), export = load_name_field(error.export)}
+	return {difference = Difference_Word(error.difference), parameter = u64(error.parameter), module_name = load_name_field(error.module.name), imported_name = load_name_field(error.imported.name), export = load_name_field(error.export)}
 }
 
 // load_bind_fact_fields gives the fields of a load error of the stage Bind.

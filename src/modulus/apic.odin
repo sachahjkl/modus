@@ -343,7 +343,7 @@ processors_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	// keeps the first MiB out of the page frames that it gives.
 	page_free := false
 	for range in info.physical_slice(boot.memory_ranges, boot.memory_range_count, info.Memory_Range) {
-		if range.kind == .Free && range.start <= AP_BASE && AP_BASE + PAGE_SIZE <= range.start + range.page_count * PAGE_SIZE {
+		if kind, ok := info.memory_kind_of_word(range.kind); ok && kind == .Free && range.start <= AP_BASE && AP_BASE + PAGE_SIZE <= range.start + range.page_count * PAGE_SIZE {
 			page_free = true
 		}
 	}

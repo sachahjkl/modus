@@ -299,14 +299,14 @@ Replacement :: struct {
 bind :: proc "contextless" (file: []u8, memory: []u8, imports: []Bound_Import, error: ^Load_Error, first: u64 = 0, end: u64 = max(u64)) -> bool {
 	count_of_imports := count(file, .Imports)
 	if count_of_imports > 1 && len(imports) != int(count_of_imports) - 1 {
-		error.stage = .Bind
+		error.stage = u32(Load_Stage.Bind)
 		return false
 	}
 	for index in 1 ..< count(file, .Import_Slots) {
 		import_slot, _ := record(file, .Import_Slots, index, Import_Slot)
 		error.import_slot = index
 		if import_slot.import_index == 0 || import_slot.import_index >= count_of_imports || !writable(file, import_slot.memory_offset) {
-			error.stage = .Bind
+			error.stage = u32(Load_Stage.Bind)
 			return false
 		}
 		item := imports[import_slot.import_index - 1]
@@ -320,22 +320,24 @@ bind :: proc "contextless" (file: []u8, memory: []u8, imports: []Bound_Import, e
 		if item.named != nil {
 			export_index = export_find(item.file, name_get(&error.export))
 			if error.export == {} {
-				error.stage = .Bind
+				error.stage = u32(Load_Stage.Bind)
 				return false
 			}
 			if export_index == 0 {
-				error.stage, error.difference = .Check, .Missing_Export
+				error.stage, error.difference = u32(Load_Stage.Check), u32(Difference.Missing_Export)
 				return false
 			}
-			error.difference, error.parameter, error.expected, error.found = functions_compare(item.named, import_slot.export_index, item.file, export_index)
-			if error.difference != .None {
-				error.stage = .Check
+			difference: Difference
+			difference, error.parameter, error.expected, error.found = functions_compare(item.named, import_slot.export_index, item.file, export_index)
+			error.difference = u32(difference)
+			if difference != .None {
+				error.stage = u32(Load_Stage.Check)
 				return false
 			}
 		}
 		address, ok := export_address(item.file, item.base, export_index)
 		if !ok {
-			error.stage = .Bind
+			error.stage = u32(Load_Stage.Bind)
 			return false
 		}
 		if import_slot.memory_offset >= first && import_slot.memory_offset < end {

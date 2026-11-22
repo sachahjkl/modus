@@ -68,7 +68,12 @@ Load_Failed_Without_Stage :: struct {}
 
 // load_failure_log writes the fact of a load error, by its stage.
 load_failure_log :: proc "contextless" (error: ^module.Load_Error) {
-	switch error.stage {
+	stage, stage_ok := module.load_stage_of_word(error.stage)
+	if !stage_ok {
+		system.log_fact(.Info, Load_Failed_Without_Stage{})
+		return
+	}
+	switch stage {
 	case .None:
 		system.log_fact(.Info, Load_Failed_Without_Stage{})
 	case .Find:

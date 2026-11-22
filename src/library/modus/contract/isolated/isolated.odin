@@ -403,7 +403,11 @@ encode :: proc "contextless" (file: []u8, function: module.Function, arguments: 
 			}
 			store(region, field, arguments[index].integer)
 		case .Table, .Bytes:
-			next = table_encode(file, word, function.parameter_details[index], function.parameter_directions[index], &arguments[index].table, region, field, next) or_return
+			direction, direction_ok := module.direction_of_word(function.parameter_directions[index])
+			if !direction_ok {
+				return 0, 0, {}, {}, false
+			}
+			next = table_encode(file, word, function.parameter_details[index], direction, &arguments[index].table, region, field, next) or_return
 		}
 		field += field_size(word)
 	}
@@ -585,7 +589,11 @@ decode :: proc "contextless" (file: []u8, function: module.Function, offset, siz
 				return refuse(refusal, call.arguments[index] >> 32 != 0 ? .Handle_Absent : .Full, .Handles, argument, call.arguments[index], len(call.lent))
 			}
 		case .Table, .Bytes:
-			table_decode(file, word, function.parameter_details[index], function.parameter_directions[index], index, load(record[:], field, Table_Field), offset + field, region, call, &ranges, refusal) or_return
+			direction, direction_ok := module.direction_of_word(function.parameter_directions[index])
+			if !direction_ok {
+				return refuse(refusal, .Bad_Value, .None, argument, u64(function.parameter_directions[index]), u64(max(module.Direction)))
+			}
+			table_decode(file, word, function.parameter_details[index], direction, index, load(record[:], field, Table_Field), offset + field, region, call, &ranges, refusal) or_return
 		}
 		field += field_size(word)
 	}

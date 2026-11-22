@@ -50,11 +50,7 @@ Fuzz_Address_Parameter :: struct {
 
 // The address parameters of `OPERATIONS`, one row each. The start of the
 // generator refuses an address parameter with no row, so a new operation
-// stops the generator until its addresses are described. The addresses
-// that read a record with no writer yet stay plain bytes: the address
-// ranges of Memory_Protect name mappings, whose addresses a sequence knows
-// only at run time; the event rules, the guest registers, the schedules
-// and the placements wait for their writers.
+// stops the generator until its addresses are described.
 @(rodata)
 fuzz_address_parameters := [?]Fuzz_Address_Parameter {
 	{operation = .Log, parameter = 1},
@@ -73,11 +69,11 @@ fuzz_address_parameters := [?]Fuzz_Address_Parameter {
 	{operation = .Word_Wake, parameter = 0},
 	{operation = .Process_Module, parameter = 1},
 	{operation = .Memory_Commit, parameter = 2, record = .Page_Range_Table},
-	{operation = .Memory_Protect, parameter = 0},
-	{operation = .Events_Set, parameter = 2},
+	{operation = .Memory_Protect, parameter = 0, record = .Address_Range_Table},
+	{operation = .Events_Set, parameter = 2, record = .Event_Rule_Table},
 	{operation = .Thread_Control, parameter = 3, record = .Thread_Control_Command},
 	{operation = .Thread_Control, parameter = 5},
-	{operation = .Guest_Run, parameter = 1},
+	{operation = .Guest_Run, parameter = 1, record = .Guest_Registers},
 	{operation = .Log_Read, parameter = 4},
 }
 
@@ -163,13 +159,17 @@ fuzz_address_parameters_problem :: proc(rows: []Fuzz_Address_Parameter) -> strin
 		}
 		switch row.record {
 		case .Plain_Bytes:
-		case .Page_Range_Table:
+		case .Page_Range_Table, .Address_Range_Table, .Event_Rule_Table:
 			if row.parameter + 1 >= operation_sequence.ARGUMENTS || operation.OPERATIONS[row.operation].parameters[row.parameter + 1].form != .Count {
-				return fmt.tprintf("the row %s %d names a table of ranges, and the parameter after it is not its count", operation.OPERATIONS[row.operation].name, row.parameter)
+				return fmt.tprintf("the row %s %d names a table of records, and the parameter after it is not its count", operation.OPERATIONS[row.operation].name, row.parameter)
 			}
 		case .Thread_Control_Command:
 			if row.operation != .Thread_Control || operation_parameter_place(row.operation, "command") < 0 {
 				return fmt.tprintf("the row %s %d names the records of the commands of Thread_Control", operation.OPERATIONS[row.operation].name, row.parameter)
+			}
+		case .Guest_Registers:
+			if row.operation != .Guest_Run {
+				return fmt.tprintf("the row %s %d names Guest_Registers on another operation", operation.OPERATIONS[row.operation].name, row.parameter)
 			}
 		}
 	}
@@ -388,6 +388,9 @@ Fuzz_Thread_Control_Write :: enum u8 {
 	Write_Registers,
 	Write_Extended_State,
 	Write_Breakpoints,
+	Write_Schedule,
+	Write_Process_Schedule,
+	Write_Placement,
 }
 
 // fuzz_thread_control_write_choose gives the command that a step of
@@ -416,6 +419,12 @@ fuzz_thread_control_write_argument :: proc(written_record: Fuzz_Thread_Control_W
 			command = .Write_Extended_State
 		case .Write_Breakpoints:
 			command = .Write_Breakpoints
+		case .Write_Schedule:
+			command = .Write_Schedule
+		case .Write_Process_Schedule:
+			command = .Write_Process_Schedule
+		case .Write_Placement:
+			command = .Write_Placement
 		}
 		return {source = .Value, value = u64(command)}, false
 	case "address":

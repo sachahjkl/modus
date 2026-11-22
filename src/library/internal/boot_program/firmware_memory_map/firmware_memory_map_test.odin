@@ -229,7 +229,7 @@ the_reserved_ranges_past_the_room_are_counted :: proc(t: ^testing.T) {
 	testing.expect_value(t, list.dropped_count, 3)
 	testing.expect_value(t, list.dropped_pages, max(u64))
 	testing.expect_value(t, list.count, ROOM)
-	testing.expect_value(t, room^[0], info.Memory_Range{start = 0, page_count = 1, kind = .Free})
+	testing.expect_value(t, room^[0], info.Memory_Range{start = 0, page_count = 1, kind = u32(info.Memory_Kind.Free)})
 }
 
 // The usable ranges keep their room: a map whose Reserved ranges come
@@ -246,8 +246,8 @@ the_reserved_ranges_never_take_the_room_of_a_usable_one :: proc(t: ^testing.T) {
 	testing.expect(t, added(&list, 6 * info.PAGE_SIZE, 1, .Boot))
 	testing.expect_value(t, list.count, 3)
 	testing.expect_value(t, list.dropped_count, 1)
-	testing.expect_value(t, room[1].kind, info.Memory_Kind.Free)
-	testing.expect_value(t, room[2].kind, info.Memory_Kind.Boot)
+	testing.expect_value(t, room[1].kind, u32(info.Memory_Kind.Free))
+	testing.expect_value(t, room[2].kind, u32(info.Memory_Kind.Boot))
 }
 
 // A usable range that the kernel cannot hold is refused, and the list does
@@ -289,7 +289,7 @@ a_usable_range_past_the_addresses_is_refused :: proc(t: ^testing.T) {
 	testing.expect(t, added(&list, 0, ADDRESS_LIMIT / info.PAGE_SIZE - 1, .Boot), "a range of every page below the last page is refused")
 	testing.expect(t, added(&list, top, 1, .Reserved), "a Reserved range at the top is refused")
 	testing.expect_value(t, list.count, 3)
-	testing.expect_value(t, room[0], info.Memory_Range{start = last_page, page_count = 1, kind = .Free})
+	testing.expect_value(t, room[0], info.Memory_Range{start = last_page, page_count = 1, kind = u32(info.Memory_Kind.Free)})
 }
 
 // A range that follows the last one with the same kind joins it; one of

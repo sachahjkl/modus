@@ -56,8 +56,8 @@ Reading_Row :: struct {
 @(private = "file")
 double_and_refuse_odd_description :: proc() -> (function: module.Function) {
 	function.parameter_count = 2
-	function.parameters[0], function.parameter_details[0], function.parameter_directions[0] = u8(module.Type.Table), 2, .Change
-	function.parameters[1], function.parameter_details[1], function.parameter_directions[1] = u8(module.Type.Table), 1, .Append
+	function.parameters[0], function.parameter_details[0], function.parameter_directions[0] = u8(module.Type.Table), 2, u8(module.Direction.Change)
+	function.parameters[1], function.parameter_details[1], function.parameter_directions[1] = u8(module.Type.Table), 1, u8(module.Direction.Append)
 	function.error_record = 1
 	function.result = u8(module.Type.Integer)
 	return function
@@ -97,7 +97,7 @@ error_details_parameter_is_found_by_its_form :: proc(t: ^testing.T) {
 	index, found := module.error_details_parameter(file, function)
 	testing.expect(t, found && index == 1, "the last parameter, Append, of the record of the error record")
 	read_only := function
-	read_only.parameter_directions[1] = .Read
+	read_only.parameter_directions[1] = u8(module.Direction.Read)
 	_, found = module.error_details_parameter(file, read_only)
 	testing.expect(t, !found, "a table to read is not a table of error details")
 	no_error_record := function

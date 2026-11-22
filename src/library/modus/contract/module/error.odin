@@ -1,5 +1,7 @@
 package module
 
+import "modus:contract/enum_word"
+
 // The error of a load: a record that the caller of a loader owns. Zero is
 // "no error". It is data, not text: a process in any language reads it,
 // and a call host gives it to its caller in the call region. A loader fills
@@ -40,9 +42,27 @@ Difference :: enum u32 {
 // One side of a difference: a type, its detail (the rights of a Handle, or a
 // count), the direction of a Table or Bytes parameter, and the name of a
 // Record.
+// load_stage_of_word is the border of Load_Error.stage: the member, or
+// false for a word that names no load stage.
+load_stage_of_word :: proc "contextless" (word: u32) -> (stage: Load_Stage, ok: bool) {
+	return enum_word.member_of_word(Load_Stage, u64(word))
+}
+
+// file_error_of_word is the border of Load_Error.file_error: the member,
+// or false for a word that names no file error.
+file_error_of_word :: proc "contextless" (word: u32) -> (file_error: Error, ok: bool) {
+	return enum_word.member_of_word(Error, u64(word))
+}
+
+// difference_of_word is the border of Load_Error.difference: the member,
+// or false for a word that names no difference.
+difference_of_word :: proc "contextless" (word: u32) -> (difference: Difference, ok: bool) {
+	return enum_word.member_of_word(Difference, u64(word))
+}
+
 Described :: struct {
 	type:      u8, // The type of the parameter or of the result: the byte of a Type as the file holds it, read through type_of_word.
-	direction: Direction, // A Table or Bytes parameter: its direction.
+	direction: u8, // A Table or Bytes parameter: the byte of a Direction (direction_of_word).
 	_:         [2]u8,
 	detail: u32, // The detail of the type: the rights of a Handle, the index of a record, or a count of parameters.
 	record: [NAME_SIZE]u8, // A Record or a Table: the name of its record; an Enum: the name of its enum; zero bytes after it.
@@ -60,13 +80,13 @@ Named :: struct {
 // stage does not use are zero. See [load error](term:load-error).
 //
 // Example: a module whose import has no file in the load source gives
-// `{stage = .Find, module = <the importer>, imported = <the hash of the
+// `{stage = u32(Load_Stage.Find), module = <the importer>, imported = <the hash of the
 // import>}`.
 Load_Error :: struct {
-	stage:       Load_Stage, // The stage that failed. None: no error.
+	stage:       u32, // The word of a Load_Stage (load_stage_of_word). 0 (None): no error.
 	status:      u32, // Map, Unmap: the status of the kernel operation.
-	file_error:  Error, // Read: what is not valid in the file; None when the hash differs.
-	difference:  Difference, // Check.
+	file_error:  u32, // Read: the word of an Error (file_error_of_word); 0 (None) when the hash differs.
+	difference:  u32, // Check: the word of a Difference (difference_of_word).
 	module:      Named, // The module that was being loaded: the importer, when the stage concerns one of its imports.
 	imported:    Named, // The import of `module` that the stage concerns, as the file of `module` names it. Zero: the stage concerns `module` itself.
 	// A replacement on the path of the load: where a module imported

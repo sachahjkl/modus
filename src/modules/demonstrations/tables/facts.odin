@@ -53,7 +53,11 @@ Call_Host_Load_Room_Failed :: distinct module.Load_Room_Fields
 // call_host_load_error_log writes the fact of the stage of a load error. A
 // stage None writes nothing: the start failed after the load.
 call_host_load_error_log :: proc "contextless" (error: ^module.Load_Error) {
-	switch error.stage {
+	stage, stage_ok := module.load_stage_of_word(error.stage)
+	if !stage_ok {
+		return
+	}
+	switch stage {
 	case .None:
 	case .Find:
 		system.log_fact(.Info, Call_Host_Load_Find_Failed(module.load_find_fact_fields(error)))

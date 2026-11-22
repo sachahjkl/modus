@@ -454,8 +454,13 @@ lend :: proc "contextless" (file: []u8, function: module.Function, arguments: []
 			// direction, so the callee gets no right to write a table that it
 			// only reads.
 			if arguments[index].table.memory_handle != 0 {
+				direction, direction_ok := module.direction_of_word(function.parameter_directions[index])
+				if !direction_ok {
+					status = .Bad_Operation
+					break each
+				}
 				result: Handle
-				result, status = lend_one_handle(ring_memory, Handle(arguments[index].table.memory_handle), isolated.direction_rights(function.parameter_directions[index]), lending)
+				result, status = lend_one_handle(ring_memory, Handle(arguments[index].table.memory_handle), isolated.direction_rights(direction), lending)
 				if status != .Ok {
 					break each
 				}

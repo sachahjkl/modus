@@ -59,7 +59,11 @@ Load_Room_Failed :: distinct module.Load_Room_Fields
 // load_error_log writes the fact of a load error by its stage. A stage None
 // is no error: it writes nothing.
 load_error_log :: proc "contextless" (level: op.Log_Level, error: ^module.Load_Error) {
-	switch error.stage {
+	stage, stage_ok := module.load_stage_of_word(error.stage)
+	if !stage_ok {
+		return
+	}
+	switch stage {
 	case .None:
 	case .Find:
 		system.log_fact(level, Load_Find_Failed(module.load_find_fact_fields(error)))

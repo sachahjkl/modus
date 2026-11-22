@@ -289,9 +289,10 @@ function_check :: proc "contextless" (file: []u8, index: u32, function: module.F
 		if _, valid := value_kinds.integer_unit_of_detail(function.parameter_details[number]); type == .Integer && !valid {
 			return {kind = .Function, table = .Functions, index = index, offset = detail_at, value = u64(function.parameter_details[number])}
 		}
-		direction := function.parameter_directions[number]
-		if direction > max(module.Direction) || direction != .Read && type != .Table && type != .Bytes {
-			return {kind = .Direction, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, parameter_directions)) + u64(number), value = u64(direction), limit = type == .Table || type == .Bytes ? u64(max(module.Direction)) + 1 : 1}
+		direction_word := function.parameter_directions[number]
+		direction, direction_ok := module.direction_of_word(direction_word)
+		if !direction_ok || direction != .Read && type != .Table && type != .Bytes {
+			return {kind = .Direction, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, parameter_directions)) + u64(number), value = u64(direction_word), limit = type == .Table || type == .Bytes ? u64(max(module.Direction)) + 1 : 1}
 		}
 	}
 	// Bytes is a parameter only: its value past Table is refused as a result.

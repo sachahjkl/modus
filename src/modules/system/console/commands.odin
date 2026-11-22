@@ -1309,7 +1309,7 @@ add_module :: proc "contextless" (name: string, isolate: bool) -> Value {
 			}
 			if !sandbox_create(sandbox, file) {
 				sandbox^ = {}
-				if load_error.stage != .None {
+				if load_error.stage != u32(module.Load_Stage.None) {
 					load_details.count = 0 // A call host gives no details of its load.
 					return fail_load("cannot isolate ", name)
 				}
@@ -1442,7 +1442,7 @@ isolate_from_memory :: proc "contextless" (arguments: []Value) -> Value {
 	if !sandbox_create(sandbox, file) {
 		sandbox^ = {}
 		copy_end(copy_address, copy_memory)
-		if load_error.stage != .None {
+		if load_error.stage != u32(module.Load_Stage.None) {
 			load_details.count = 0 // A call host gives no details of its load.
 			return fail_load("cannot isolate ", name)
 		}
@@ -1815,7 +1815,10 @@ callable_by_console :: proc "contextless" (file: []u8, function: module.Function
 	}
 	details_index, has_details := module.error_details_parameter(file, function)
 	for word, index in function.parameters[:function.parameter_count] {
-		direction := function.parameter_directions[index]
+		direction, direction_ok := module.direction_of_word(function.parameter_directions[index])
+		if !direction_ok {
+			return false
+		}
 		// The type is a byte of a module file: a byte that names no type
 		// makes the export not callable.
 		type, type_ok := module.type_of_word(word)
@@ -2359,7 +2362,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 		}
 	}
 	if sandbox.process == 0 && sandbox_start(sandbox) != .Ok {
-		if !sandbox.service && load_error.stage != .None {
+		if !sandbox.service && load_error.stage != u32(module.Load_Stage.None) {
 			load_details.count = 0 // A call host gives no details of its load.
 			return fail_load("cannot start a sandboxed process for ", sandbox.name)
 		}

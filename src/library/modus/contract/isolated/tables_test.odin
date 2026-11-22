@@ -51,7 +51,7 @@ table_description_of :: proc(directions: ..module.Direction) -> (function: modul
 	for direction, index in directions {
 		function.parameters[index] = u8(module.Type.Table)
 		function.parameter_details[index] = 1
-		function.parameter_directions[index] = direction
+		function.parameter_directions[index] = u8(direction)
 	}
 	return function
 }
@@ -251,7 +251,7 @@ bytes_round_trip :: proc(t: ^testing.T) {
 	function: module.Function
 	function.parameter_count = 2
 	function.parameters[0], function.parameters[1] = u8(module.Type.Bytes), u8(module.Type.Bytes)
-	function.parameter_directions[1] = .Append
+	function.parameter_directions[1] = u8(module.Direction.Append)
 	text := "hello"
 	out: [12]u8
 	copy(out[:], "ab")
@@ -348,7 +348,7 @@ decode_refuses_tables :: proc(t: ^testing.T) {
 	function: module.Function
 	function.parameter_count = 1
 	function.parameters[0] = u8(module.Type.Integer)
-	function.parameter_directions[0] = .Change
+	function.parameter_directions[0] = u8(module.Direction.Change)
 	_, valid := record_size(function)
 	testing.expect(t, !valid, "an Integer with the direction Change")
 }
@@ -367,7 +367,7 @@ decode_random_tables :: proc(t: ^testing.T) {
 		for index in 0 ..< int(function.parameter_count) {
 			function.parameters[index] = rand.int_max(2) == 0 ? u8(module.Type.Table) : u8(module.Type.Bytes)
 			function.parameter_details[index] = function.parameters[index] == u8(module.Type.Table) ? 1 : 0
-			function.parameter_directions[index] = module.Direction(rand.int_max(3))
+			function.parameter_directions[index] = u8(rand.int_max(3))
 		}
 		for i := 0; i < 96; i += 8 {
 			store(region[:], u64(i), rand.int_max(4) == 0 ? rand.uint64() : u64(rand.int_max(80)) * (rand.int_max(2) == 0 ? 8 : 1))
@@ -387,8 +387,8 @@ decode_random_tables :: proc(t: ^testing.T) {
 			// An Append count can be larger than the capacity (calls before
 			// did not fit): the callee then has no free place.
 			filled := min(place.count, place.capacity)
-			first := place.address + (function.parameter_directions[index] == .Append ? filled * record_bytes : 0)
-			reach := function.parameter_directions[index] == .Append ? place.capacity - filled : place.count
+			first := place.address + (function.parameter_directions[index] == u8(module.Direction.Append) ? filled * record_bytes : 0)
+			reach := function.parameter_directions[index] == u8(module.Direction.Append) ? place.capacity - filled : place.count
 			if first < low || first > high || reach * record_bytes > high - first {
 				testing.expectf(t, false, "a place is out of the call region: %v", place)
 				return
@@ -407,7 +407,7 @@ decode_refuses_counts_near_the_end_of_the_numbers :: proc(t: ^testing.T) {
 	function: module.Function
 	function.parameter_count = 1
 	function.parameters[0] = u8(module.Type.Bytes)
-	function.parameter_directions[0] = .Append
+	function.parameter_directions[0] = u8(module.Direction.Append)
 	store(region, 0, Table_Field{start = 65528, count = max(u64) - 9, capacity = max(u64) - 1})
 	call: Call
 	testing.expect(t, !decode(nil, function, 0, 32, region, &call), "a capacity of 2^64 - 1 bytes in the call region")

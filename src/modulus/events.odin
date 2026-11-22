@@ -297,27 +297,12 @@ events_set :: proc "contextless" (process_index: u32, v: [7]u64, results: ^[7]u6
 // tests it. The process of a rule is a handle of the caller with Read.
 @(private = "file")
 event_rule_check :: proc "contextless" (process: ^Process, rule: op.Event_Rule) -> (kept: Event_Rule_In_Kernel, status: Operation_Outcome) {
-	if rule.kind == .None || rule.kind > max(op.Event_Kind) || rule.flags - {.Match_Detail} != {} || rule.reserved[0] | rule.reserved[1] | rule.reserved[2] != 0 {
+	kind, fields_ok := op.event_rule_check_fields(rule)
+	if !fields_ok {
 		return {}, .Bad_Operation
-	}
-	if rule.least_nanoseconds > op.EVENT_LEAST_NANOSECONDS_MOST || rule.one_in > op.EVENT_ONE_IN_MOST {
-		return {}, .Bad_Operation
-	}
-	switch rule.kind {
-	case .None:
-		return {}, .Bad_Operation
-	case .Switch:
-		if .Match_Detail in rule.flags || rule.least_nanoseconds != 0 {
-			return {}, .Bad_Operation
-		}
-	case .Fault:
-		if rule.least_nanoseconds != 0 {
-			return {}, .Bad_Operation
-		}
-	case .Operation, .Lock_Wait:
 	}
 	kept = {
-		kind         = rule.kind,
+		kind         = kind,
 		match_detail = .Match_Detail in rule.flags,
 		detail       = rule.detail,
 		// At most 10^9 ns times a frequency below 1.8 * 10^10: no overflow.

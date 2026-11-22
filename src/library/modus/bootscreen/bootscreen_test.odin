@@ -267,7 +267,7 @@ started_machine :: proc(data: ^Data) {
 	boot.kernel_file_size = 1_300_000
 	boot.cycle_frequency = 2_995_000_000
 	boot.timer_frequency = 1_000_000_000
-	boot.trust = {verifier = .Boot_Program, key_kind = .Test, entry_count = 90, measure = .Measured, measure_register = 11}
+	boot.trust = {verifier = u64(info.Verifier.Boot_Program), key_kind = u64(info.Signing_Key_Kind.Test), entry_count = 90, measure = u64(info.Measure_State.Measured), measure_register = 11}
 	data.machine = {page_count = 262_144, free_pages = 200_000, region_count = 300, budget_pages = 50_000, processors = 4}
 	for index in 0 ..< 4 {
 		data.processors[index].apic_id = u64(index)
