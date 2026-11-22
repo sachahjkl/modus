@@ -63,7 +63,15 @@ root_ring_serve :: proc "contextless" (item: ^Started) {
 // process has the nickname that it chose), then the command.
 root_command_answer :: proc "contextless" (item: ^Started, record: ring.Record) -> (answer: Command_Answer) {
 	name_bytes := system.name_unpack({record.values[0], record.values[1], record.values[2], record.values[3]})
-	name := system.name_of(name_bytes[:])
+	raw_name := system.name_of(name_bytes[:])
+	name := raw_name
+	if record.kind == u32(root_ring.Root_Command.Connect) || record.kind == u32(root_ring.Root_Command.Disconnect) {
+		resolved, resolved_ok := role_target_resolve_strict(raw_name)
+		if !resolved_ok {
+			return {status = .Bad_Handle, values = root_command_refusal(.Connect, raw_name, record.values[4], .Bad_Handle)}
+		}
+		name = resolved
+	}
 	decision := root_ring.dispatch_decide(record.kind, item.start_grant_set.grants, start_grant_set_may_connect(&item.start_grant_set, name))
 	switch decision.step {
 	case .Border, .Sender:
@@ -116,14 +124,12 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		// The connection of the history is not ended by the name of its
 		// service: the process keeps its history when it ends its calls to
 		// the storage service.
-		resolved := role_target_resolve(name)
 		answer.status = .Bad_Handle
 		for &connection in connections {
 			// values[4]: the row of the client table that the connection is
 			// for, as Connect named it; 0 for none.
-			if connection.caller == item && !connection.history && connection.client.place == int(min(record.values[4], u64(max(int)))) && system.name_of(connection.service.name[:]) == resolved {
+			if connection.caller == item && !connection.history && connection.client.place == int(min(record.values[4], u64(max(int)))) && system.name_of(connection.service.name[:]) == name {
 				disconnect(&connection)
-				connection_account_close(u64(item.process), resolved, system.time())
 				answer.status = .Ok
 			}
 		}
@@ -273,21 +279,18 @@ start_process_handle_give :: proc "contextless" (asker: ^Started, process: ^Star
 // of its refusal, and a connection that fails after it gets the record of
 // root_command_refusal.
 root_connect :: proc "contextless" (item: ^Started, record: ring.Record, name: string, values: ^[7]u64) -> (status: system.Status) {
-	target := role_target_resolve(name)
 	if .Remote_Clients in item.start_grant_set.grants || record.values[4] != 0 {
 		client: Client_Grant
 		client, status = client_grant_of(item, record.values[4], record.values[5], values)
 		if status != .Ok {
 			return status
 		}
-		status = connect(item, target, values, client = client)
+		status = connect(item, name, values, client = client)
 	} else {
-		status = connect(item, target, values)
+		status = connect(item, name, values)
 	}
-	if status == .Ok {
-		_ = connection_account_open(u64(item.process), target, system.time())
-	} else {
-		values^ = root_command_refusal(.Connect, target, record.values[4], status)
+	if status != .Ok {
+		values^ = root_command_refusal(.Connect, name, record.values[4], status)
 	}
 	return status
 }

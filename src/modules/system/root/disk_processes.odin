@@ -259,7 +259,7 @@ disk_name_refusal :: proc "contextless" (name: string, values: ^[7]u64) -> (refu
 		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
 		return true
 	}
-	if name_is_a_system_part(name) || start_grant_set_names_the_process(name) {
+	if name_is_a_system_part(name) || start_grant_set_names_the_process(name) || name_is_a_role_name(name) {
 		system.log_fact(.Warning, Disk_Load_Refused_Name_In_Grant_Table{refused_process = module_name_field(name)})
 		values^ = errors.ring_fail(kind, .Reserved, .None, 1)
 		return true

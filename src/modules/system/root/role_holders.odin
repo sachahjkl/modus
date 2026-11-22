@@ -83,11 +83,27 @@ is_role_holder :: proc "contextless" (module_name: string, role: role_contract.R
 	return holder != "" && module_name == holder
 }
 
-// role_target_resolve resolves a canonical role name (e.g. "display", "storage",
-// "plans") to the active holder module name; non-role module names pass through unchanged.
-role_target_resolve :: proc "contextless" (name: string) -> string {
+// name_is_a_role_name reports whether name equals any canonical closed role name
+// so disk processes cannot claim a role name as a nickname.
+name_is_a_role_name :: proc "contextless" (name: string) -> bool {
 	if name == "" {
-		return ""
+		return false
+	}
+	for role in role_contract.Role {
+		if role != .None && role_contract.role_properties(role).name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// role_target_resolve_strict resolves a canonical role name to its active
+// holder module name. When a role has no holder (e.g. assistive/speech), ok is
+// false so Connect refuses cleanly instead of falling through to a disk process.
+// Non-role module names pass through unchanged with ok = true.
+role_target_resolve_strict :: proc "contextless" (name: string) -> (resolved: string, ok: bool) {
+	if name == "" {
+		return "", false
 	}
 	for role in role_contract.Role {
 		if role == .None {
@@ -95,13 +111,13 @@ role_target_resolve :: proc "contextless" (name: string) -> string {
 		}
 		if role_contract.role_properties(role).name == name {
 			holder := role_holder_name(role)
-			if holder != "" {
-				return holder
+			if holder == "" {
+				return "", false
 			}
-			return name
+			return holder, true
 		}
 	}
-	return name
+	return name, true
 }
 
 // role_of_module_name returns the closed Role currently held by module_name, or .None.

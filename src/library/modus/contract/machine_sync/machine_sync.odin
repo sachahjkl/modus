@@ -1,15 +1,19 @@
 // Pure freestanding multi-machine protocols: remote role proxy framing,
-// content-addressed 2-machine store Merkle diff, signed cross-machine grants,
-// and encrypted NAT-traversal relay envelopes (src/md/features/several_machines.md).
+// content-addressed 2-machine store Merkle diff, peer-authenticated bounded
+// cross-machine grants with nonce replay set, and NAT-traversal relay framing
+// (src/md/features/several_machines.md).
 package machine_sync
 
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/enum_word"
+import "modus:contract/role_contract"
 
 HASH_BYTES :: 32
 MAX_SYNC_HASHES :: 64
 MAX_RELAY_PAYLOAD :: 1200
+MAX_GRANT_TTL_SECONDS :: u64(86_400) // 24 hours max TTL
+MAX_SEEN_NONCES :: 64
 
 Sync_Kind :: enum u8 {
 	Role_Proxy_Call   = 1,
@@ -24,14 +28,16 @@ sync_kind_of_word :: proc "contextless" (word: u64) -> (k: Sync_Kind, ok: bool) 
 	return enum_word.member_of_word(Sync_Kind, word)
 }
 
-// Merkle-root set diff: computes which object hashes in remote_have are absent
-// from local_have so two machines sync a store in one round trip.
+// store_missing_hashes computes deduplicated object hashes in remote_have that
+// are absent from local_have, enforcing MAX_SYNC_HASHES and reporting truncation.
 store_missing_hashes :: proc "contextless" (
 	local_have: [][HASH_BYTES]u8,
 	remote_have: [][HASH_BYTES]u8,
 	out_missing: [][HASH_BYTES]u8,
-) -> int {
-	count := 0
+) -> (count: int, truncated: bool) {
+	if len(local_have) > MAX_SYNC_HASHES || len(remote_have) > MAX_SYNC_HASHES {
+		return 0, true
+	}
 	for rh in remote_have {
 		found := false
 		for lh in local_have {
@@ -40,16 +46,29 @@ store_missing_hashes :: proc "contextless" (
 				break
 			}
 		}
-		if !found && count < len(out_missing) {
-			out_missing[count] = rh
-			count += 1
+		if found {
+			continue
 		}
+		// Deduplicate repeated remote hashes.
+		dup := false
+		for i in 0 ..< count {
+			if out_missing[i] == rh {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			continue
+		}
+		if count >= len(out_missing) {
+			return count, true
+		}
+		out_missing[count] = rh
+		count += 1
 	}
-	return count
+	return count, false
 }
 
-// Cross-machine signed grant token (principal A on machine X grants capability
-// to principal B on machine Y, bounded by expiry_unix_seconds).
 Cross_Machine_Grant :: struct {
 	issuer_machine: [32]u8,
 	target_machine: [32]u8,
@@ -58,6 +77,11 @@ Cross_Machine_Grant :: struct {
 	expiry_seconds: u64,
 	grant_nonce:    u64,
 	mac:            [32]u8,
+}
+
+Nonce_Replay_Set :: struct {
+	nonces: [MAX_SEEN_NONCES]u64,
+	count:  int,
 }
 
 cross_grant_mac :: proc "contextless" (shared_secret: [32]u8, g: Cross_Machine_Grant) -> [32]u8 {
@@ -74,20 +98,51 @@ cross_grant_mac :: proc "contextless" (shared_secret: [32]u8, g: Cross_Machine_G
 	return blake3.derive_key("modus cross machine grant v1", buf[:])
 }
 
-cross_grant_verify :: proc "contextless" (shared_secret: [32]u8, g: Cross_Machine_Grant, now_seconds: u64) -> bool {
-	if g.expiry_seconds == 0 || now_seconds > g.expiry_seconds {
+// cross_grant_verify verifies peer/local machine identity, role enum border,
+// bounded expiry TTL, nonce replay exclusion, and constant-time MAC equality.
+cross_grant_verify :: proc "contextless" (
+	shared_secret: [32]u8,
+	local_machine: [32]u8,
+	peer_machine: [32]u8,
+	g: Cross_Machine_Grant,
+	now_seconds: u64,
+	seen: ^Nonce_Replay_Set,
+) -> bool {
+	if g.target_machine != local_machine || g.issuer_machine != peer_machine || local_machine == peer_machine {
 		return false
+	}
+	role, role_ok := enum_word.member_of_word(role_contract.Role, u64(g.role_word))
+	if !role_ok || role == .None {
+		return false
+	}
+	if g.grant_nonce == 0 || g.expiry_seconds == 0 || now_seconds > g.expiry_seconds {
+		return false
+	}
+	if g.expiry_seconds - now_seconds > MAX_GRANT_TTL_SECONDS {
+		return false
+	}
+	if seen != nil {
+		for i in 0 ..< seen.count {
+			if seen.nonces[i] == g.grant_nonce {
+				return false // Replayed nonce refused.
+			}
+		}
 	}
 	exp := cross_grant_mac(shared_secret, g)
 	diff := u8(0)
 	for i in 0 ..< 32 {
 		diff |= exp[i] ~ g.mac[i]
 	}
-	return diff == 0
+	if diff != 0 {
+		return false
+	}
+	if seen != nil && seen.count < MAX_SEEN_NONCES {
+		seen.nonces[seen.count] = g.grant_nonce
+		seen.count += 1
+	}
+	return true
 }
 
-// NAT-traversal relay packet header (blind forwarding by destination machine ID;
-// payload remains end-to-end encrypted by Noise/QUIC between the two machines).
 RELAY_HEADER_BYTES :: 36
 
 Relay_Packet :: struct {

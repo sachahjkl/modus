@@ -363,7 +363,8 @@ Connection :: struct {
 	// A connection of `remote` for one row of the client table: it acts
 	// for the principal of the row, and ends when the grant of the row
 	// ends (remote_clients.odin). place 0: none.
-	client:  Client_Grant,
+	client:          Client_Grant,
+	role_generation: u64, // Supervision generation of service role at Connect time.
 }
 
 // The blocks of the store of a line history. One object of one block

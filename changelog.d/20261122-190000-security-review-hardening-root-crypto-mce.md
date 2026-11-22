@@ -1,0 +1,3 @@
+type: Security
+
+**Security hardening from independent review across `root`, `store_crypto`, `machine_sync`, `serial_ring`, and `kernel_fault_isolation`.** Resolved role names once before sender grant checks in `root` (eliminating confused-deputy mismatch), reserved canonical role names against disk-process nicknames, removed the leaky separate connection-account table in favor of per-`Connection` tracking, bound monotonic versions and nonces in `store_crypto` (blocking page replay and `max(u64)` floor DoS), enforced peer/local identity, role enum borders, TTL caps, and nonce replay checks in `machine_sync`, fixed SPSC atomics and endpoint dequeue/unregister in `serial_ring`, and enforced Intel SDM Vol. 3B `MCG_SER_P`/`OVER`/`EN`/`AR` checks in `kernel_fault_isolation`.
