@@ -3,6 +3,7 @@ package build
 import "modus:contract/errors"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/tpm_attestation"
 import "modus:contract/tpm_service"
 import "modus:principals"
 import "modus:sentence"
@@ -39,6 +40,16 @@ unlock_problem_bytes_most :: proc() -> int {
 	return most
 }
 
+// pin_refusal_words_most gives the bytes of the longest words of a refusal
+// of a pin, which the facts of unlock and of the TPM service write.
+pin_refusal_words_most :: proc() -> int {
+	most := 0
+	for refusal in tpm_attestation.Pin_Refusal {
+		most = max(most, len(tpm_attestation.pin_refusal_words[refusal]))
+	}
+	return most
+}
+
 // The most bytes of the text of each Text field of unlock, which its field
 // holds with a zero byte after it.
 @(private = "file")
@@ -54,6 +65,7 @@ unlock_text_bytes_most :: proc() -> map[string]u32 {
 	most["step"] = u32(step_most)
 	most["request"] = u32(max(len(UNLOCK_REQUESTS[0]), len(UNLOCK_REQUESTS[1])))
 	most["how"] = u32(max(len(UNLOCK_HOW_SENTENCES[0]), len(UNLOCK_HOW_SENTENCES[1])))
+	most["pin_refusal"] = u32(pin_refusal_words_most())
 	return most
 }
 

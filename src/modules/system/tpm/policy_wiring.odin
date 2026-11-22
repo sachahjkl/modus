@@ -1,12 +1,13 @@
-// The steps of the signed policy and of the pins, on the TPM that this
-// service owns (src/md/features/rollback_floors.md, "Built and left";
-// src/md/features/tpm_sealed_machine_key.md, "The form of the record is not pinned").
+// The steps of the signed policy and of the owner authorization value, on
+// the TPM that this service owns (src/md/features/rollback_floors.md,
+// "Built and left").
 //
-// No ring command reaches these steps yet: the NV indices of the pins, the
-// signed policy of the seal and the owner authorization value need their
-// boot and unlock machine tests first. The steps are here so that the rules
-// of modus:contract/tpm_attestation are the ones that the service runs, and
-// a later command only adds its word to the ring.
+// No ring command reaches these steps: a signed policy needs a key of the
+// publisher that the TPM verifies (RSA or ECDSA; the publisher signs with
+// Ed25519), and an owner authorization value needs a place to keep it that
+// the seal of the machine key does not need first, and a boot program that
+// can still define its floors. The steps are here so that the rules of
+// modus:contract/tpm_attestation are the ones that the service runs.
 package tpm_device_service
 
 import "modus:contract/tpm_attestation"
@@ -77,80 +78,4 @@ hierarchy_authorization_change :: proc "contextless" (hierarchy: tpm_attestation
 		return outcome_of_wire(answer_refusal, code, tpm_attestation.COMMAND_HIERARCHY_CHANGE_AUTH), false
 	}
 	return {}, true
-}
-
-// machine_key_pin_of_index reads the payload of the index of the machine
-// key pin. No bytes is the state of a machine with no pin: the index is
-// absent.
-machine_key_pin_of_index :: proc "contextless" (stored: []u8) -> (pin: tpm_attestation.Machine_Key_Pin, refusal: tpm_attestation.Pin_Refusal) {
-	if len(stored) == 0 {
-		return {}, .None
-	}
-	return tpm_attestation.machine_key_pin_decode(stored)
-}
-
-// machine_key_pin_transition decides the next payload of the index of the
-// machine key pin: the stored payload, then the proposed pin, which must be
-// a change that the pin allows. out then holds the bytes to write.
-machine_key_pin_transition :: proc "contextless" (stored: []u8, proposed: tpm_attestation.Machine_Key_Pin, out: []u8) -> (count: int, refusal: tpm_attestation.Pin_Refusal) {
-	current: tpm_attestation.Machine_Key_Pin
-	current, refusal = machine_key_pin_of_index(stored)
-	if refusal != .None {
-		return 0, refusal
-	}
-	refusal = tpm_attestation.machine_key_pin_advance(current, proposed)
-	if refusal != .None {
-		return 0, refusal
-	}
-	return tpm_attestation.machine_key_pin_encode(proposed, out)
-}
-
-// machine_key_record_check checks a record of the machine key from the
-// disk against the payload of the index.
-machine_key_record_check :: proc "contextless" (stored: []u8, record: []u8) -> tpm_attestation.Pin_Refusal {
-	pin, refusal := machine_key_pin_of_index(stored)
-	if refusal != .None {
-		return refusal
-	}
-	return tpm_attestation.machine_key_record_matches_pin(pin, record)
-}
-
-// principal_file_pin_of_index reads the payload of the index of a principal
-// file pin. No bytes is the state of a principal with no pin.
-principal_file_pin_of_index :: proc "contextless" (stored: []u8) -> (pin: tpm_attestation.Principal_File_Pin, refusal: tpm_attestation.Pin_Refusal) {
-	if len(stored) == 0 {
-		return {}, .None
-	}
-	return tpm_attestation.principal_file_pin_decode(stored)
-}
-
-// principal_file_pin_transition decides the next payload of the index of a
-// principal file pin, for the file that the store now keeps. out then
-// holds the bytes to write.
-principal_file_pin_transition :: proc "contextless" (stored: []u8, principal: u32, generation: u64, file: []u8, out: []u8) -> (count: int, refusal: tpm_attestation.Pin_Refusal) {
-	current: tpm_attestation.Principal_File_Pin
-	current, refusal = principal_file_pin_of_index(stored)
-	if refusal != .None {
-		return 0, refusal
-	}
-	proposed := tpm_attestation.Principal_File_Pin {
-		principal   = principal,
-		generation  = generation,
-		file_digest = tpm_attestation.principal_file_digest(file),
-	}
-	refusal = tpm_attestation.principal_file_pin_advance(current, proposed)
-	if refusal != .None {
-		return 0, refusal
-	}
-	return tpm_attestation.principal_file_pin_encode(proposed, out)
-}
-
-// principal_file_check checks a principal file from the disk against the
-// payload of the index.
-principal_file_check :: proc "contextless" (stored: []u8, principal: u32, file: []u8) -> tpm_attestation.Pin_Refusal {
-	pin, refusal := principal_file_pin_of_index(stored)
-	if refusal != .None {
-		return refusal
-	}
-	return tpm_attestation.principal_file_pin_check(pin, principal, file)
 }

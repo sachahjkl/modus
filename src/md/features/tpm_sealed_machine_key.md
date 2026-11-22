@@ -79,19 +79,39 @@ The form `MACHINET` holds:
 
 The additional data of the recovery seal is the magic and the format only. A new seal by the TPM changes the four parts of the sealed object and keeps the recovery seal: the recovery key is not kept, so the copy under it cannot be sealed again.
 
-### The form of the record is not pinned
+### The pin of the record
 
-The first 8 bytes of the record choose its form, and no state outside the disk says which form a machine uses. With the proof of the creation, a replaced record gives no silent grant: a record sealed by the TPM that this system did not make is refused, and the window asks for a recovery key that does not open it; a record under a passphrase that the owner did not set asks for that passphrase; a removed record gives no grant. Each one is a denial that the owner sees at the next start, not a table of another key that the root service takes.
+The first 8 bytes of the record choose its form, and the disk alone cannot say which record is current. On a machine with the TPM service, the TPM pins the record: an index of the TPM holds its form and its digest. `unlock` refuses a record that the pin does not name, so a writer of the disk cannot swap the record for one under a passphrase of its own, remove it, or put back an older record.
 
-A pin would be a value that the TPM keeps, such as an index of its memory that says "this machine has a record sealed by the TPM". It is not built: the owner hierarchy has no authorization value, so another system on the machine can remove such an index. A pin needs an index whose removal and write need the policy of this system (`TPM2_PolicyPCR` on the index, `TPMA_NV_POLICY_DELETE`), or an authorization value of the owner hierarchy that the system keeps. It is a roadmap entry.
+**The index.** An ordinary index of the owner hierarchy at `0x01806E00` (`tpm2.MACHINE_KEY_PIN_INDEX`), after the TPM floors. Anyone reads it with the empty password (`TPMA_NV_AUTHREAD`). Only a policy session of `TPM2_PolicyPCR` of PCR 7 and PCR 11 with the values of its definition writes it (`TPMA_NV_POLICYWRITE`): this system, after its measure, with the same state of Secure Boot. The TPM service reads, defines and writes it with two commands of the TPM ring, `Pin_Read` and `Pin_Write`; `unlock` decides (`tpm_service.machine_record_pin_verdict`).
 
-**The content of the pin** is built, ahead of its index. The payload has 52 bytes: the magic `MODUSMKP`, the format 1, the form (1 `MACHINET`, 2 `MACHINEP`, 3 `MACHINEK`), a reserved zero byte, an epoch of 64 bits, and SHA-256 of a text of its own and the bytes before it. The checksum finds a damaged or partly written index; the policy of the index decides who writes it. The rules of a change (`machine_key_pin_advance` in `modus:contract/tpm_attestation`):
+**The payload** (format 2, 116 bytes): the magic `MODUSMKP`, the format, the form (1 `MACHINET`, 2 `MACHINEP`, 3 `MACHINEK`), a reserved zero byte, an epoch of 64 bits, SHA-256 of the record, SHA-256 of the announced record (zeros when none is), and SHA-256 of a text of its own and the bytes before it. The checksum finds a damaged index; the policy of the index decides who writes it. Format 1 held the form and the epoch only: an older record of the same form passed it.
 
-- a machine with no pin takes any form;
-- after that the form stays, as a record keeps its form for its life ([tpm_sealed_machine_passphrase.md](tpm_sealed_machine_passphrase.md), "Refused forms"); a form with the TPM that becomes `MACHINEK` is a downgrade, the swap of a sealed record for one under a passphrase of the attacker;
-- the epoch only rises: a new seal after a recovery and a new passphrase raise it, so an older record of the same form is refused too.
+**The rules** (`modus:contract/tpm_attestation`):
 
-At each start, the form of the record on the disk must be the pinned form (`machine_key_record_matches_pin`).
+- a machine with no pin takes any form; after that the form stays, as a record keeps its form for its life ([tpm_sealed_machine_passphrase.md](tpm_sealed_machine_passphrase.md), "Refused forms"); a form with the TPM that becomes `MACHINEK` is a downgrade;
+- the epoch rises at each write of the pin, so the service never writes an older pin back (`tpm_service.pin_write_refusal`);
+- the record of the disk must have the form of the pin and its digest, or the announced digest. A pin with no record on the disk refuses the absence too.
+
+**A refusal.** `unlock` writes "the record of the machine key is not the record that the TPM pins", with the rule that failed, and takes the record as unreadable: the disk grants of principal 0 stay absent, no new record is written over it, and no other record is tried in its place.
+
+**The write of a record**, at a creation, a new seal after a recovery, or a new machine passphrase, has three steps (`machine_key_pin_announce`, `machine_key_pin_settle`):
+
+1. The pin announces the new record: the same current digest, the digest of the new record as the announced one, the next epoch.
+2. The store writes the record.
+3. The pin names what the store kept, with nothing announced.
+
+A stop between two steps leaves a record that the pin names, the old one or the announced one, and the next start settles the pin. A pin that refuses the new record, or a TPM that does not take the announce, writes nothing.
+
+**The first pin.** A machine with no pin takes the record that it finds and pins it at once: the first start with this version, or the start after a clear of the TPM. A writer of the disk before that start is not seen.
+
+**Who writes a pin.** Only a run where a seal is allowed, with Secure Boot on (see "Who may seal"): the policy of the index names PCR 7. With Secure Boot off, a pinned record is not written, as the next start would refuse it.
+
+**An update of the system.** A new system has another PCR 11, so the policy of the index is not the policy of now: the state `Held_Other_Policy`. The payload is still read and checked: only a writer of the TPM wrote it. At its next write, the service removes the index and defines it again with the policy of now; the rules of the epoch run against the payload of before. A stop between the removal and the write leaves no pin: the next start pins the record that it finds, as a first pin does.
+
+**A machine with no TPM service** reads and writes no pin: it works as before.
+
+**What the pin does not protect against.** The owner hierarchy has no authorization value. Code with the TPM (another system on the machine, or this system after a flaw) removes the index with `TPM2_NV_UndefineSpace`, or puts an index of another shape there, which pins nothing (`Foreign`); the next start then takes the record that it finds. So the pin stops a writer of the disk, not code with the TPM: that needs the authorization value of the owner hierarchy (`ROADMAP.md`, "The TPM floors kept against code with the TPM"). A payload that does not decode refuses each record, the record of the owner too: only a clear of the TPM in the menu of the firmware ends it, and the recovery key then opens the key.
 
 ### Who may seal
 
@@ -142,7 +162,11 @@ The test needs two systems with the same PCR 7 and two values of PCR 11, and one
 - **Parameter encryption of the sessions, now.** The machine key crosses the interface of the TPM in clear at the seal and at the unseal. On a discrete TPM, a reader of its bus gets the key. Encryption needs a salted session with the storage key, AES-CFB on the parameters of `TPM2_Unseal`, and a check of the HMAC of the answer; a software TPM on the host sees the key anyway. It is a roadmap entry, to build before a machine with a hardware TPM.
 - **A seal with no proof of its creation.** Another system on the machine can make an object with the policy of this system (see "The proof of the creation").
 - **The check of the current PCR values by a read of the PCRs.** The unseal already needs the PCRs to hold the values of the policy, and the policy is checked against the creation data: a read adds a command and proves nothing more.
-- **A pin of the form in the memory of the TPM with no policy.** Another system removes it with the empty authorization of the owner.
+- **A pin with no policy of its write.** Any code with the TPM writes it with the empty authorization of the owner. The policy of PCR 7 and PCR 11 keeps the writes to this system; the removal stays open to code with the TPM (see "The pin of the record").
+- **A pin of the form alone.** It was format 1. A writer of the disk who kept an older record of the same form, under an older seal or an older passphrase, put it back, and the pin took it.
+- **A pin written once, after the write of the record.** A cut of the power between the write of the disk and the write of the TPM leaves a record that the pin does not name, and the owner is refused with no way back. The announce keeps both records named during the write.
+- **A pin of another policy taken as no pin.** Each update of the system would then drop the pin, and a writer of the disk would put back an older record at the first start of the new system.
+- **A fall back to the record of before when the pin refuses a record.** The record of before is what a rollback puts back: the refusal keeps the key closed, and the window says why.
 - **A seal with Secure Boot off.** It trusts a boot program that nothing verified.
 - **A build of the root service for a test that seals with Secure Boot off.** It was the form of the test while no machine of the test had Secure Boot and a TPM together. The test then did not run the rule that a real machine runs, and a boot image of a test held a root service that a release must never hold. With a software TPM on the firmware with Secure Boot, the test needs no such build.
 - **A second signed volume for the other system.** The signature does not change PCR 11, so the volume of the other system of the trusted boot serves the machines of the measure and of the seal. A second volume adds a build and proves nothing more.
@@ -162,13 +186,15 @@ The test needs two systems with the same PCR 7 and two values of PCR 11, and one
 
 Built: the TPM service with the CRB interface, its ring and its two commands; the encoding of the TPM commands and of their answers, with host tests; the proof of the creation (the ticket, the creation data, the public area), with host tests of a forged object; the record `MACHINET` of format 2, the recovery key and the key check, with host tests; `machine_seal()` with Secure Boot on only; the unseal at each start; the recovery key in the window of `unlock`; the new seal after a recovery, with Secure Boot on only; one `unlock` at a time; the test in `modustool test principals`, part of each full check, on six machines with one software TPM: five with Secure Boot on, on signed volumes, in which the tool reads the recovery key off the screen, and one machine finds a record whose creation ticket has one byte changed and the TPM refuses it; one with Secure Boot off, where the TPM refuses for PCR 7 alone and the new seal is refused. No machine test makes a forged object with the policy of this system: it needs a second system that makes objects on the same TPM; the host tests refuse one.
 
+Built: the pin of the record (see "The pin of the record"): the payload of format 2 with the digest of the record and the announced digest, its rules, the index with its policy in `modus:tpm2`, the commands `Pin_Read` and `Pin_Write` of the TPM service, and the check, the announce and the settle in `unlock`, with host tests of a swapped, removed, older and changed record, of a damaged pin, of a pin of another shape and of another policy, and of the bytes of each command and answer.
+
 Left:
 
-- **A pin of the form of the record in the TPM** (see "The form of the record is not pinned"). Its payload, its rules and their host tests are built, with the steps `machine_key_pin_transition` and `machine_key_record_check` in the TPM service; the index with its policy, the commands of the service and of `unlock`, and the machine tests remain.
+- **A machine test of the pin of the record**: a machine with a software TPM and Secure Boot whose record is replaced, removed or rolled back on the host between two starts, and refused. Today only the host tests prove the rules and the commands.
 - **An encrypted session with the TPM.** The freestanding salted-session contract (`modus:contract/tpm_attestation`) implements `KDFa`, AES-128-CFB and XOR-stream parameter encryption, `cpHash`/`rpHash` HMACs, and nonce rolling; wiring it into the TPM service remains.
 - **A seal to the measure of the next system.** The `TPM2_PolicyAuthorize` floor verification contract is built in `modus:contract/tpm_attestation`; wiring `TPM2_PolicyNV` into the TPM service remains ([rollback_floors.md](rollback_floors.md)).
 - **A change of the recovery key**, and a new one when the old one is lost while the TPM still opens the key.
 
 ## State
 
-Built: CRB TPM service, format 2 sealed records with creation proof, recovery key flow, and the freestanding `modus:contract/tpm_attestation` contract for salted-session parameter encryption and `TPM2_PolicyAuthorize` floor checks. The contract also holds the payload of the record form pin with its rules, and the wire forms of `TPM2_PolicyAuthorize` and `TPM2_HierarchyChangeAuth`; the TPM service has their steps, which no command runs yet. Left: wiring salted sessions into the TPM service, a command that runs the signed policy, and the index of the record form pin with its policy and its machine tests.
+Built: CRB TPM service, format 2 sealed records with creation proof, recovery key flow, the pin of the record in an index of the TPM with its commands and its check in `unlock`, and the freestanding `modus:contract/tpm_attestation` contract for salted-session parameter encryption and `TPM2_PolicyAuthorize` floor checks, with the wire forms of `TPM2_PolicyAuthorize` and `TPM2_HierarchyChangeAuth`; the TPM service has their steps, which no command runs. Left: wiring salted sessions into the TPM service, a command that runs the signed policy, and the machine tests of the pin.

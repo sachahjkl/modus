@@ -1,0 +1,3 @@
+type: Security
+
+**The form of the record of the machine key pinned in the TPM.** On a machine with the TPM service and Secure Boot on, an index of the TPM that only this system writes now holds the form and the SHA-256 digest of the record of the machine key, and `unlock` refuses a record that a writer of the disk replaced, removed or rolled back: the log says "the record of the machine key is not the record that the TPM pins", the disk grants of principal 0 stay absent, and no other record is tried. A stop during a write leaves a record that the pin names. A machine with no TPM service works as before.
