@@ -1679,15 +1679,7 @@ frame_records :: proc "contextless" (table: ^interface.Draw_Table, client: ^Clie
 	interface.draw_vertical_gradient(table, close_x, y, CLOSE_SIZE, TITLE_HEIGHT, graphics.shade(base, 118), graphics.shade(base, 82))
 	interface.draw_rectangle(table, close_x, y, CLOSE_SIZE, 1, graphics.shade(base, 150))
 	interface.draw_character(table, close_x + (CLOSE_SIZE - graphics.CELL_WIDTH) / 2, y + (TITLE_HEIGHT - graphics.CELL_HEIGHT) / 2, 'x', cross_color)
-	// Bottom-right stepped resize grip triangle on resizable windows
-	if client.resizable {
-		gx := x + outer_width - BORDER - 10
-		gy := y + TITLE_HEIGHT + client.height - 10
-		grip_col := focus ? graphics.colors.text : graphics.colors.dim
-		interface.draw_rectangle(table, gx + 7, gy + 1, 2, 8, grip_col)
-		interface.draw_rectangle(table, gx + 1, gy + 7, 8, 2, grip_col)
-		interface.draw_rectangle(table, gx + 4, gy + 4, 3, 3, grip_col)
-	}
+
 }
 
 // title_measure measures three forms of the title bar of the widest window
@@ -1852,9 +1844,10 @@ Screen_Part :: struct {
 	scaled:         bool,
 }
 
-// The parts of the screen: two for each window (its frame, then its
-// surface), one for the outline of a resize, then one for the bar.
-screen_parts: [2 * CLIENT_CAPACITY + 2]Screen_Part
+// The parts of the screen: up to three for each window (its frame, its
+// surface, and its resize grip overlay), one for the outline of a resize,
+// then one for the bar.
+screen_parts: [3 * CLIENT_CAPACITY + 2]Screen_Part
 screen_part_count: int
 // The list of one picture memory that the table has while it appends the
 // Picture record of one part: the record then names memory 0.
@@ -2028,6 +2021,17 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 		view.width, view.height = box.right - box.left, box.bottom - box.top
 		screen_picture_append(box.left, box.top, view, memory, 0)
 		screen_part_end(surface_first, memory, {box.left, box.top, box.right, box.bottom}, true, false)
+		if client.resizable && client.decoration != .Client {
+			grip_first := table.record_count
+			outer_width := client.width + 2 * BORDER
+			gx := client.x + outer_width - BORDER - 11
+			gy := client.y + TITLE_HEIGHT + client.height - 11
+			grip_col := focus ? graphics.colors.text : graphics.colors.dim
+			interface.draw_rectangle(table, gx + 7, gy + 1, 2, 8, grip_col)
+			interface.draw_rectangle(table, gx + 1, gy + 7, 8, 2, grip_col)
+			interface.draw_rectangle(table, gx + 4, gy + 4, 3, 3, grip_col)
+			screen_part_end(grip_first, nil, screen_rectangle_of(gx, gy, 11, 11), true, true)
+		}
 	}
 	// The outline of the frame that a drag of the edges gives, over the
 	// windows: the window keeps its picture until its process draws the

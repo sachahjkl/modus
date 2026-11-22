@@ -4,7 +4,9 @@ package console
 
 import "modus:contract/console_prompt"
 import "modus:contract/locale_cldr"
+import "modus:contract/blake3"
 import "modus:contract/role_contract"
+import "modus:contract/tree_hash"
 
 console_active_locale: locale_cldr.Locale_Id = .En_US
 
@@ -75,4 +77,37 @@ delegated_services_command :: proc "contextless" (arguments: []Value) -> Value {
 		made_text(&table, row, 1, props.name)
 	}
 	return made_value(&table, "delegated_services")
+}
+
+// tree_hash_command computes the canonical BLAKE3 tree hash of a single-entry
+// immutable tree (entry name + content bytes) using modus:contract/tree_hash.
+tree_hash_command :: proc "contextless" (arguments: []Value) -> Value {
+	name := arguments[0].text
+	content := arguments[1].text
+	content_hash := blake3.hash(transmute([]u8)content)
+	entry, r1 := tree_hash.tree_entry_make(.Object, name, content_hash)
+	if r1 != .None {
+		return fail("tree_hash: invalid entry name")
+	}
+	entries := [1]tree_hash.Tree_Entry{entry}
+	encoded: [256]u8
+	written, r2 := tree_hash.tree_encode(entries[:], encoded[:])
+	if r2 != .None {
+		return fail("tree_hash: cannot encode canonical tree")
+	}
+	digest, r3 := tree_hash.tree_hash(encoded[:written])
+	if r3 != .None {
+		return fail("tree_hash: cannot hash canonical tree")
+	}
+	hex := "0123456789abcdef"
+	if len(scratch) - scratch_count < 64 {
+		return fail("tree_hash: scratch buffer full")
+	}
+	dst := scratch[scratch_count : scratch_count + 64]
+	for b, i in digest {
+		dst[i * 2] = hex[b >> 4]
+		dst[i * 2 + 1] = hex[b & 0x0F]
+	}
+	scratch_count += 64
+	return {kind = .Text, text = string(dst)}
 }

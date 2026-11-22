@@ -967,6 +967,11 @@ commands_start :: proc "contextless" () {
 	command("roles", {}, .Table, "the closed system roles", roles_command)
 	// Lists the delegated system services (plans, recipes, projects, powerbox, disk_processes, principals, devices, settings).
 	command("delegated_services", {}, .Table, "the delegated system services", delegated_services_command)
+	// Computes the canonical BLAKE3 tree hash of a one-entry immutable tree.
+	//
+	// - `name`: entry name inside the tree.
+	// - `content`: text bytes hashed as the file leaf.
+	command("tree_hash", {.Text, .Text}, .Text, "canonical BLAKE3 hash of an immutable tree entry", tree_hash_command)
 	debugger_commands_start()
 	tables_start()
 	facts_start() // facts.odin
