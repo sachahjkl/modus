@@ -1,6 +1,7 @@
 package guest_os
 
 import "modus:contract/byte_order"
+import "modus:contract/enum_word"
 
 // Devices of the guest in the form of the virtio specification, version
 // 1.2: the transport "virtio over MMIO", version 2, and split virtqueues.
@@ -217,7 +218,7 @@ virtio_read :: proc "contextless" (device: ^Virtio_Device, offset: u64, size: u8
 		device.registers_refused += 1
 		return max(u32), false
 	}
-	register, known := virtio_register_of_offset(offset)
+	register, known := enum_word.member_of_word(Virtio_Register, offset)
 	if !known {
 		device.registers_refused += 1
 		return 0, true // A reserved register reads as 0.
@@ -264,7 +265,7 @@ virtio_write :: proc "contextless" (device: ^Virtio_Device, memory: Guest_Memory
 		device.registers_refused += 1
 		return false
 	}
-	register, known := virtio_register_of_offset(offset)
+	register, known := enum_word.member_of_word(Virtio_Register, offset)
 	if !known {
 		device.registers_refused += 1
 		return false
@@ -354,15 +355,6 @@ virtio_write :: proc "contextless" (device: ^Virtio_Device, memory: Guest_Memory
 		return false
 	}
 	return true
-}
-
-virtio_register_of_offset :: proc "contextless" (offset: u64) -> (register: Virtio_Register, ok: bool) {
-	for member in Virtio_Register {
-		if u64(member) == offset {
-			return member, true
-		}
-	}
-	return .Magic, false
 }
 
 virtio_selected_queue :: proc "contextless" (device: ^Virtio_Device) -> ^Virtio_Queue {
@@ -596,7 +588,7 @@ virtio_block_serve :: proc "contextless" (device: ^Virtio_Device, memory: Guest_
 		type_word := byte_order.read_u32_little_endian(header[:], 0)
 		sector := byte_order.read_u64_little_endian(header[:], 8)
 		capacity := virtio_block_capacity(device)
-		request, known := virtio_block_request_of_word(type_word)
+		request, known := enum_word.member_of_word(Virtio_Block_Request, u64(type_word))
 		if !known {
 			status = .Unsupported
 			device.requests_refused += 1
@@ -634,15 +626,6 @@ virtio_block_serve :: proc "contextless" (device: ^Virtio_Device, memory: Guest_
 	status_byte := [1]u8{u8(status)}
 	chain_copy_in(memory, chain, status_offset, status_byte[:])
 	return written, true
-}
-
-virtio_block_request_of_word :: proc "contextless" (word: u32) -> (request: Virtio_Block_Request, ok: bool) {
-	for member in Virtio_Block_Request {
-		if u32(member) == word {
-			return member, true
-		}
-	}
-	return .In, false
 }
 
 // virtio_sectors_inside says if bytes of data from a sector are whole

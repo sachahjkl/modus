@@ -69,21 +69,31 @@ STATE_PAGE_ATTRIBUTES :: 0x668 // The page attribute table of the guest under ne
 #assert(guest_rules.STATE_GS_BASE == STATE_SEGMENT_GS + 8)
 #assert(guest_rules.STATE_SYSTEM_CALL_TARGET == STATE_RAX + 8)
 #assert(guest_rules.CONTROL_BLOCK_BYTES == PAGE_SIZE)
+// The interrupt state lies between the interrupt control and the exit code
+// (the AMD manual, volume 2, table B-1).
+#assert(guest_rules.CONTROL_INTERRUPT_STATE == 0x068)
+#assert(guest_rules.CONTROL_INTERRUPT_STATE == CONTROL_INTERRUPTS + 8)
+#assert(guest_rules.CONTROL_INTERRUPT_STATE == CONTROL_EXIT_CODE - 8)
+#assert(CONTROL_INTERCEPT_INSTRUCTIONS == 0x00C)
+#assert(CONTROL_INTERCEPT_MORE_INSTRUCTIONS == 0x010)
+#assert(guest_rules.INTERCEPT_TIME_STAMP_COUNTER == 1 << 14)
+#assert(guest_rules.INTERCEPT_TIME_STAMP_COUNTER_AND_PROCESSOR == 1 << 7)
 
 // What the guest may not do alone. The first vector: the interrupt, the
 // non-maskable interrupt, the system management interrupt and INIT of the
 // machine (0 to 3), rdpmc (15), cpuid (18), invd (22), hlt (24), invlpga
 // (26), each port (27), each model-specific register (28) and the shutdown
 // (31). rdpmc would read the performance counters of the processor, which
-// hold the counts of another thread.
-INTERCEPT_INSTRUCTIONS :: u32(1 << 0 | 1 << 1 | 1 << 2 | 1 << 3 | 1 << 15 | 1 << 18 | 1 << 22 | 1 << 24 | 1 << 26 | 1 << 27 | 1 << 28 | 1 << 31)
+// hold the counts of another thread. rdtsc (14) would read the time of the
+// machine: the process answers it from the clock of the guest.
+INTERCEPT_INSTRUCTIONS :: u32(1 << 0 | 1 << 1 | 1 << 2 | 1 << 3 | 1 << 15 | 1 << 18 | 1 << 22 | 1 << 24 | 1 << 26 | 1 << 27 | 1 << 28 | 1 << 31) | guest_rules.INTERCEPT_TIME_STAMP_COUNTER
 // The second vector: vmrun (which the processor requires), vmmcall, vmload,
-// vmsave, stgi, clgi, skinit (0 to 6), icebp (8: the int1 instruction, whose
+// vmsave, stgi, clgi, skinit (0 to 6), rdtscp (7: the time of the machine
+// and the processor number in TSC_AUX), icebp (8: the int1 instruction, whose
 // debug exception the exception intercept does not cover), wbinvd (9),
 // monitor, mwait and its conditional form (10 to 12), xsetbv (13). xsetbv
-// would change the XCR0 of
-// the kernel, which the exit does not restore.
-INTERCEPT_MORE_INSTRUCTIONS :: u32(0b111_1111 | 1 << 8 | 1 << 9 | 1 << 10 | 1 << 11 | 1 << 12 | 1 << 13)
+// would change the XCR0 of the kernel, which the exit does not restore.
+INTERCEPT_MORE_INSTRUCTIONS :: u32(0b111_1111 | 1 << 8 | 1 << 9 | 1 << 10 | 1 << 11 | 1 << 12 | 1 << 13) | guest_rules.INTERCEPT_TIME_STAMP_COUNTER_AND_PROCESSOR
 // Each read and each write of a debug register: the exit does not restore
 // DR0 to DR3, which hold the breakpoints of threads.
 INTERCEPT_DEBUG_REGISTERS :: u32(0xFFFF_FFFF)
@@ -484,6 +494,9 @@ guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, proces
 	// from the block before vmrun, and vmsave keeps them after the exit. The
 	// record wins over a mode load, which wrote the bases of its segments.
 	guest_rules.system_registers_write(direct(block, [guest_rules.CONTROL_BLOCK_BYTES]u8)[:], registers^)
+	// A process that completed the instruction of the exit cleared the
+	// shadow in the record; vmrun loads it from here.
+	guest_rules.interrupt_shadow_write(direct(block, [guest_rules.CONTROL_BLOCK_BYTES]u8)[:], registers^)
 	// Every guest has one identifier, and a guest can run on another
 	// processor than before: each entry flushes its translations.
 	direct(block + CONTROL_TRANSLATION_FLUSH, u8)^ = guest_support.flush_by_identifier ? TRANSLATION_FLUSH_THE_GUEST : TRANSLATION_FLUSH_ALL
@@ -534,6 +547,7 @@ guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, proces
 	registers.cr4 = direct(block + STATE_CR4, u64)^ & op.GUEST_CONTROL_4_DEFINED
 	registers.efer = direct(block + STATE_EFER, u64)^ & op.GUEST_EFER_DEFINED
 	guest_rules.system_registers_read(direct(block, [guest_rules.CONTROL_BLOCK_BYTES]u8)[:], registers)
+	guest_rules.interrupt_shadow_read(direct(block, [guest_rules.CONTROL_BLOCK_BYTES]u8)[:], registers)
 	registers.code_selector = direct(block + STATE_SEGMENT_CS, u16)^
 	registers.data_selector = direct(block + STATE_SEGMENT_DS, u16)^
 	exit = {
@@ -612,6 +626,12 @@ guest_exit_results :: proc "contextless" (exit: Guest_Exit, registers: ^op.Guest
 		kind = .Shutdown
 	case GUEST_EXIT_REFUSED_STATE:
 		kind = .Refused_State
+	case:
+		// rdmsr, wrmsr, rdtsc and rdtscp: the process completes the
+		// instruction, so it needs the address after it.
+		if length, named := guest_rules.instruction_exit_length(exit.code); named {
+			results[4] = guest_next_instruction(exit.next, registers.rip, length)
+		}
 	}
 	results[0] = u64(kind)
 	results[5] = exit.code

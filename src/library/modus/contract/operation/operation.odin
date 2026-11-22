@@ -1283,7 +1283,7 @@ Operation :: enum u32 {
 	// 1. the `Guest_Exit_Kind` of the exit;
 	// 2. to 4. the values of the exit kind: `a`, `b` and `c` (`Guest_Exit_Kind` says what each one holds);
 	// 5. the address of the instruction after the one that exited, for `Port_Write`, `Port_Read`, `Halt`
-	//    and `Cpuid`; else 0;
+	//    and `Cpuid`, and for an exit `Other` of `rdmsr`, `wrmsr`, `rdtsc` or `rdtscp`; else 0;
 	// 6. the exit code of the processor (the AMD manual, volume 2, appendix C): what an exit `Other` was;
 	// 7. the first exit information of the processor.
 	//
@@ -1647,7 +1647,7 @@ Guest_Exit_Kind :: enum u64 {
 	Interrupted   = 6, // An interrupt of the machine ended the run, or its process stopped: nothing to answer. Run again.
 	Shutdown      = 7, // The guest processor shut down: a fault while it delivered a double fault. Its state means nothing now.
 	Refused_State = 8, // The processor refused the state of the guest processor: no instruction of the guest ran.
-	Other         = 9, // Another instruction that the guest may not run alone: the exit code of the processor is the sixth result.
+	Other         = 9, // Another instruction that the guest may not run alone: the exit code of the processor is the sixth result. `rdtsc` (0x6E) and `rdtscp` (0x87) are here: the process answers them from its own clock.
 }
 
 // A module record: one module that a loader put in a process (Process_Module).

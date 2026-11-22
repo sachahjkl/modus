@@ -153,7 +153,14 @@ linux_image_parse :: proc "contextless" (image: []u8, memory_bytes: u64) -> (par
 		if image[SETUP_RELOCATABLE] == 0 {
 			return {}, .Bad_Alignment
 		}
-		parsed.load_address = (parsed.load_address + alignment - 1) &~ (alignment - 1)
+		aligned := (parsed.load_address + alignment - 1) &~ (alignment - 1)
+		// A preferred address near the top of the addresses wraps to a low
+		// one. With no wrap, the round up only moves the kernel up, so it
+		// stays at 1 MiB or above.
+		if aligned < parsed.load_address {
+			return {}, .Bad_Alignment
+		}
+		parsed.load_address = aligned
 	}
 	payload := u64(len(image)) - parsed.setup_bytes
 	working := max(payload, u64(byte_order.read_u32_little_endian(image, SETUP_INITIAL_SIZE)))

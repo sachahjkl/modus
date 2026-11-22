@@ -1213,7 +1213,7 @@ events_end :: proc "contextless" (machine: Handle, error: ^errors.Error_Record =
 Guest_Exit :: struct {
 	kind:          op.Guest_Exit_Kind,
 	a, b, c:       u64,
-	next:          u64, // The address after the instruction of the exit, for a port, `hlt` and `cpuid`.
+	next:          u64, // The address after the instruction of the exit, for a port, `hlt`, `cpuid`, `rdmsr`, `wrmsr`, `rdtsc` and `rdtscp`.
 	code:          u64, // The exit code of the processor.
 	information:   u64, // The first exit information of the processor.
 }

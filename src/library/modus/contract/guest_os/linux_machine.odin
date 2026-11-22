@@ -14,6 +14,9 @@ import op "modus:contract/operation"
 
 LINUX_VIRTIO_BASE :: u64(0xD000_0000)
 LINUX_TICKS_PER_EXIT :: u64(4) // About 3.4 microseconds of the timer for each exit.
+// The counts of the time stamp counter for each tick of the timer: a
+// counter of about 1.19 GHz, which Linux calibrates against the timer.
+LINUX_TIME_STAMP_COUNTS_PER_TICK :: u64(1000)
 
 // The devices of the machine, in the order of their windows.
 Linux_Machine_Device :: enum u8 {
@@ -71,6 +74,8 @@ Other_Exit_Code :: enum u64 {
 	Debug                   = 0x41, // The exception #DB, which the kernel intercepts.
 	Alignment_Check         = 0x51, // The exception #AC, which the kernel intercepts.
 	Model_Specific_Register = 0x7C, // rdmsr (information 0) or wrmsr (information 1).
+	Time_Stamp_Counter      = 0x6E, // rdtsc, which the kernel intercepts.
+	Time_Stamp_Counter_And_Processor = 0x87, // rdtscp, which the kernel intercepts.
 }
 // The access bits of a nested page fault.
 FAULT_ACCESS_WRITE :: u64(1) << 1
@@ -180,6 +185,7 @@ linux_cpuid :: proc "contextless" (leaf: u32, subleaf: u32) -> (a, b, c, d: u32)
 // gives what the process does next.
 linux_machine_handle_exit :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Guest_Registers, exit: Machine_Exit) -> Machine_Step {
 	machine.clock += LINUX_TICKS_PER_EXIT
+	address_of_exit := registers.rip
 	step := Machine_Step.Continue
 	switch exit.kind {
 	case .Interrupted:
@@ -206,10 +212,23 @@ linux_machine_handle_exit :: proc "contextless" (machine: ^Linux_Machine, regist
 		machine.failure = .Unknown_Exit
 		step = .Failed
 	}
+	// The instruction of the exit completed: it was the one that the shadow
+	// of sti or mov ss protected, so the shadow ends, as on the processor.
+	if registers.rip != address_of_exit {
+		registers.interrupt_shadow = 0
+	}
 	if step == .Continue {
 		machine_interrupts_update(machine, registers)
 	}
 	return step
+}
+
+// machine_next_instruction gives the address after the instruction of an
+// exit: the address that the kernel gave, or the address of the
+// instruction plus its length with no prefix.
+@(private = "file")
+machine_next_instruction :: proc "contextless" (exit: Machine_Exit, address: u64, length: u64) -> u64 {
+	return exit.next != 0 ? exit.next : address + length
 }
 
 // The legacy devices of the machine, by their ports.
@@ -418,13 +437,32 @@ machine_other :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Gue
 	}
 	switch code {
 	case .Model_Specific_Register:
-		machine_model_specific(machine, registers, exit.information == 1)
+		machine_model_specific(machine, registers, exit, exit.information == 1)
+	case .Time_Stamp_Counter:
+		machine_time_stamp_counter(machine, registers, exit, false)
+	case .Time_Stamp_Counter_And_Processor:
+		machine_time_stamp_counter(machine, registers, exit, true)
 	case .Debug:
 		machine_exception(registers, VECTOR_DEBUG, false)
 	case .Alignment_Check:
 		machine_exception(registers, VECTOR_ALIGNMENT_CHECK, true)
 	}
 	return .Continue
+}
+
+// machine_time_stamp_counter answers rdtsc and rdtscp from the virtual
+// clock: the guest reads no time of the machine, so a build gives the same
+// count at the same exit. rdtscp gives the processor 0 in rcx: the machine
+// has one guest processor.
+@(private = "file")
+machine_time_stamp_counter :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Guest_Registers, exit: Machine_Exit, with_processor: bool) {
+	count := machine.clock * LINUX_TIME_STAMP_COUNTS_PER_TICK
+	registers.rax = count & 0xFFFF_FFFF
+	registers.rdx = count >> 32
+	if with_processor {
+		registers.rcx = 0
+	}
+	registers.rip = machine_next_instruction(exit, registers.rip, with_processor ? 3 : 2) // 0F 01 F9, or 0F 31.
 }
 
 // machine_exception asks the kernel to deliver an exception at the next
@@ -442,9 +480,9 @@ machine_exception :: proc "contextless" (registers: ^op.Guest_Registers, vector:
 // register, a value that the processor refuses, and the local APIC, which
 // cpuid does not offer, give a general protection fault, as a processor
 // gives it; the instruction does not complete.
-machine_model_specific :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Guest_Registers, write: bool) {
+machine_model_specific :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Guest_Registers, exit: Machine_Exit, write: bool) {
 	five_level := registers.cr4 & op.GUEST_CONTROL_4_FIVE_LEVEL_PAGING != 0
-	register, known := model_specific_register_of_word(u32(registers.rcx))
+	register, known := enum_word.member_of_word(Model_Specific_Register, registers.rcx & 0xFFFF_FFFF)
 	value := registers.rdx << 32 | registers.rax & 0xFFFF_FFFF
 	result := u64(0)
 	refused := !known
@@ -454,7 +492,9 @@ machine_model_specific :: proc "contextless" (machine: ^Linux_Machine, registers
 			refused = true
 		case .Extended_Features:
 			if write {
-				refused = value &~ (GUEST_WRITABLE_EFER | op.GUEST_EFER_LONG_MODE_ACTIVE) != 0
+				// The processor refuses a change of LME while paging is on.
+				long_mode_changes := (value ~ registers.efer) & op.GUEST_EFER_LONG_MODE_ENABLE != 0
+				refused = value &~ (GUEST_WRITABLE_EFER | op.GUEST_EFER_LONG_MODE_ACTIVE) != 0 || long_mode_changes && registers.cr0 & op.GUEST_CONTROL_0_PAGING != 0
 				if !refused {
 					registers.efer = registers.efer &~ GUEST_WRITABLE_EFER | value & GUEST_WRITABLE_EFER
 				}
@@ -510,16 +550,7 @@ machine_model_specific :: proc "contextless" (machine: ^Linux_Machine, registers
 		registers.rax = result & 0xFFFF_FFFF
 		registers.rdx = result >> 32
 	}
-	registers.rip += 2 // rdmsr and wrmsr: 0F 32 and 0F 30.
-}
-
-model_specific_register_of_word :: proc "contextless" (word: u32) -> (register: Model_Specific_Register, ok: bool) {
-	for member in Model_Specific_Register {
-		if u32(member) == word {
-			return member, true
-		}
-	}
-	return .Apic_Base, false
+	registers.rip = machine_next_instruction(exit, registers.rip, 2) // rdmsr and wrmsr: 0F 32 and 0F 30.
 }
 
 // machine_lines_update sets the level of each line from its device.
@@ -537,12 +568,12 @@ machine_lines_update :: proc "contextless" (machine: ^Linux_Machine) {
 
 // machine_interrupts_update sets the lines, then asks the kernel to deliver
 // the interrupt that waits, when the guest takes interrupts and no other
-// event waits in the record. The interrupt shadow after sti or mov ss is
-// not in the record: an exit inside it is rare, and its interrupt then
-// comes one instruction early.
+// event waits in the record. Inside the interrupt shadow of sti or mov ss,
+// the interrupt waits for a later exit: the processor would deliver it one
+// instruction early, and the kernel refuses that record.
 machine_interrupts_update :: proc "contextless" (machine: ^Linux_Machine, registers: ^op.Guest_Registers) {
 	machine_lines_update(machine)
-	if registers.inject_kind != u8(op.Guest_Inject_Kind.None) || registers.rflags & FLAGS_INTERRUPT == 0 {
+	if registers.inject_kind != u8(op.Guest_Inject_Kind.None) || registers.rflags & FLAGS_INTERRUPT == 0 || registers.interrupt_shadow != 0 {
 		return
 	}
 	vector, waiting := interrupt_acknowledge(&machine.interrupts)

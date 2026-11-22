@@ -225,3 +225,76 @@ system_registers_read_masks :: proc(t: ^testing.T) {
 	system_registers_read(block[:], &registers)
 	testing.expect_value(t, registers.fs_base, u64(0x0000_8000_0000_0000))
 }
+
+// The intercepts of rdtsc and rdtscp and the word of the interrupt state,
+// from the AMD manual, volume 2, table B-1: bit 14 of the word at 0x00C,
+// bit 7 of the word at 0x010, bit 0 of the word at 0x068.
+@(test)
+time_stamp_counter_intercepts_and_interrupt_state_offsets :: proc(t: ^testing.T) {
+	testing.expect_value(t, INTERCEPT_TIME_STAMP_COUNTER, u32(0x4000))
+	testing.expect_value(t, INTERCEPT_TIME_STAMP_COUNTER_AND_PROCESSOR, u32(0x80))
+	testing.expect_value(t, CONTROL_INTERRUPT_STATE, 0x068)
+	testing.expect_value(t, INTERRUPT_SHADOW, u64(1))
+	// The interrupt state is in the control area, before the save area.
+	testing.expect(t, CONTROL_INTERRUPT_STATE + 8 <= 0x400)
+}
+
+// The interrupt shadow lands on bit 0 of the word at 0x068 and on no other
+// byte of the block; the read gives 0 or 1 whatever the word holds, so the
+// record passes the checks again.
+@(test)
+interrupt_shadow_write_and_read :: proc(t: ^testing.T) {
+	for shadow in ([?]u8{0, 1}) {
+		block: [CONTROL_BLOCK_BYTES]u8
+		for &value in block {
+			value = 0xA5
+		}
+		interrupt_shadow_write(block[:], {interrupt_shadow = shadow})
+		for value, offset in block {
+			switch {
+			case offset == CONTROL_INTERRUPT_STATE:
+				testing.expectf(t, value == shadow, "shadow %v: the first byte holds %x", shadow, value)
+			case offset > CONTROL_INTERRUPT_STATE && offset < CONTROL_INTERRUPT_STATE + 8:
+				// Bit 1 is the mask of the guest, which vmrun ignores: the
+				// kernel writes 0 there, and no reserved bit.
+				testing.expectf(t, value == 0, "shadow %v: byte %x holds %x", shadow, offset, value)
+			case:
+				testing.expectf(t, value == 0xA5, "shadow %v: byte %x is not changed", shadow, offset)
+			}
+		}
+		back := op.Guest_Registers{interrupt_shadow = 7}
+		interrupt_shadow_read(block[:], &back)
+		testing.expect_value(t, back.interrupt_shadow, shadow)
+	}
+	// A word with the guest mask (bit 1) and every other bit set: the shadow
+	// alone comes back.
+	block: [CONTROL_BLOCK_BYTES]u8
+	for offset in CONTROL_INTERRUPT_STATE ..< CONTROL_INTERRUPT_STATE + 8 {
+		block[offset] = 0xFF
+	}
+	registers := op.Guest_Registers{}
+	interrupt_shadow_read(block[:], &registers)
+	testing.expect_value(t, registers.interrupt_shadow, u8(1))
+	block[CONTROL_INTERRUPT_STATE] = 0xFE
+	interrupt_shadow_read(block[:], &registers)
+	testing.expect_value(t, registers.interrupt_shadow, u8(0))
+	_, refusal := op.guest_registers_check(registers)
+	testing.expect_value(t, refusal, op.Guest_Registers_Refusal.None)
+}
+
+// The exit codes of an exit Other whose instruction the process completes:
+// each other code gives no next instruction.
+@(test)
+instruction_exit_lengths :: proc(t: ^testing.T) {
+	for code in ([?]u64{0, 0x41, 0x51, 0x6D, 0x6F, 0x72, 0x78, 0x7B, 0x7D, 0x86, 0x88, 0x400, max(u64)}) {
+		_, named := instruction_exit_length(code)
+		testing.expectf(t, !named, "exit code %x names no instruction of the list", code)
+	}
+	// The successful cases last.
+	length, named := instruction_exit_length(0x6E)
+	testing.expect(t, named && length == 2)
+	length, named = instruction_exit_length(0x7C)
+	testing.expect(t, named && length == 2)
+	length, named = instruction_exit_length(0x87)
+	testing.expect(t, named && length == 3)
+}

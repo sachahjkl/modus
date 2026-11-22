@@ -228,9 +228,11 @@ guest_event_border_vectors_and_error_codes :: proc(t: ^testing.T) {
 	// An interrupt pushes no error code.
 	testing.expect_value(t, refusal_of({inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = 32, inject_error_code_valid = 1}), Guest_Registers_Refusal.Inject_Error_Code)
 	testing.expect_value(t, refusal_of({inject_kind = u8(Guest_Inject_Kind.Software_Interrupt), inject_vector = 0x80, inject_error_code = 4}), Guest_Registers_Refusal.Inject_Error_Code)
-	// The reserved word.
-	testing.expect_value(t, refusal_of({reserved = 1}), Guest_Registers_Refusal.Reserved)
-	testing.expect_value(t, refusal_of({reserved = max(u32)}), Guest_Registers_Refusal.Reserved)
+	// The reserved bytes: each one alone, and all at their largest value.
+	testing.expect_value(t, refusal_of({reserved = {1, 0, 0}}), Guest_Registers_Refusal.Reserved)
+	testing.expect_value(t, refusal_of({reserved = {0, 1, 0}}), Guest_Registers_Refusal.Reserved)
+	testing.expect_value(t, refusal_of({reserved = {0, 0, 0x80}}), Guest_Registers_Refusal.Reserved)
+	testing.expect_value(t, refusal_of({reserved = {max(u8), max(u8), max(u8)}}), Guest_Registers_Refusal.Reserved)
 	// The successful cases last.
 	for vector in ([?]u8{8, 10, 11, 12, 13, 14, 17, 21, 29, 30}) {
 		testing.expectf(t, refusal_of({inject_kind = u8(Guest_Inject_Kind.Exception), inject_vector = vector, inject_error_code_valid = 1, inject_error_code = max(u32)}) == .None, "exception %v with its error code", vector)
@@ -248,7 +250,7 @@ guest_event_border_vectors_and_error_codes :: proc(t: ^testing.T) {
 // that the checks give, and the checks give the requests as members.
 @(test)
 guest_registers_refusal_agrees_with_the_check :: proc(t: ^testing.T) {
-	records := [?]Guest_Registers{{}, {rflags = max(u64)}, {cr4 = u64(1) << 13}, {mode_load = max(u8)}, {inject_kind = 5}, {reserved = 1}, LONG_MODE_REGISTERS}
+	records := [?]Guest_Registers{{}, {rflags = max(u64)}, {cr4 = u64(1) << 13}, {mode_load = max(u8)}, {inject_kind = 5}, {reserved = {1, 0, 0}}, {interrupt_shadow = 2}, {interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.External_Interrupt)}, LONG_MODE_REGISTERS}
 	for registers in records {
 		testing.expect_value(t, guest_registers_refusal(registers), refusal_of(registers) != .None)
 	}
@@ -265,6 +267,40 @@ guest_registers_refusal_agrees_with_the_check :: proc(t: ^testing.T) {
 	requests, refusal = guest_registers_check(long)
 	testing.expect_value(t, refusal, Guest_Registers_Refusal.Inject_Error_Code)
 	testing.expect_value(t, requests, Guest_Requests{})
+}
+
+// The interrupt shadow: a word that is not 0 or 1 is refused, and an
+// external interrupt or the non-maskable interrupt in the shadow is refused,
+// since the processor would deliver it one instruction early. An exception
+// and a software interrupt in the shadow are accepted.
+@(test)
+guest_interrupt_shadow_border :: proc(t: ^testing.T) {
+	for word in ([?]u8{2, 3, 0x80, max(u8)}) {
+		testing.expectf(t, refusal_of({interrupt_shadow = word}) == .Interrupt_Shadow, "shadow word %v", word)
+		testing.expectf(t, refusal_of({interrupt_shadow = word, reserved = {1, 1, 1}}) == .Interrupt_Shadow, "shadow word %v before the reserved bytes", word)
+	}
+	testing.expect_value(t, refusal_of({interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = 0x30}), Guest_Registers_Refusal.Inject_In_Interrupt_Shadow)
+	testing.expect_value(t, refusal_of({interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = max(u8)}), Guest_Registers_Refusal.Inject_In_Interrupt_Shadow)
+	testing.expect_value(t, refusal_of({interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.Non_Maskable_Interrupt), inject_vector = 2}), Guest_Registers_Refusal.Inject_In_Interrupt_Shadow)
+	long := LONG_MODE_REGISTERS
+	long.interrupt_shadow = 1
+	long.inject_kind = u8(Guest_Inject_Kind.External_Interrupt)
+	long.inject_vector = 0x20
+	requests, refusal := guest_registers_check(long)
+	testing.expect_value(t, refusal, Guest_Registers_Refusal.Inject_In_Interrupt_Shadow)
+	testing.expect_value(t, requests, Guest_Requests{})
+	// A bad event is named first: the checks of the event come before.
+	testing.expect_value(t, refusal_of({interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.Non_Maskable_Interrupt), inject_vector = 3}), Guest_Registers_Refusal.Inject_Vector)
+	// The successful cases last: no shadow, the shadow with no event, and
+	// the shadow with an exception or a software interrupt.
+	testing.expect_value(t, refusal_of({interrupt_shadow = 0}), Guest_Registers_Refusal.None)
+	testing.expect_value(t, refusal_of({interrupt_shadow = 1}), Guest_Registers_Refusal.None)
+	testing.expect_value(t, refusal_of({interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.Exception), inject_vector = 13, inject_error_code_valid = 1}), Guest_Registers_Refusal.None)
+	testing.expect_value(t, refusal_of({interrupt_shadow = 1, inject_kind = u8(Guest_Inject_Kind.Software_Interrupt), inject_vector = 0x80}), Guest_Registers_Refusal.None)
+	testing.expect_value(t, refusal_of({interrupt_shadow = 0, inject_kind = u8(Guest_Inject_Kind.External_Interrupt), inject_vector = 0x30}), Guest_Registers_Refusal.None)
+	testing.expect_value(t, offset_of(Guest_Registers, interrupt_shadow), uintptr(188))
+	testing.expect_value(t, offset_of(Guest_Registers, reserved), uintptr(189))
+	testing.expect_value(t, size_of(Guest_Registers), 240)
 }
 
 // The index of a guest processor: 0 to 3, nothing past.
