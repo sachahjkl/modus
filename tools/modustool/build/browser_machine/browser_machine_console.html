@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>modus — console</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #14171d; color: #e6ebf2; font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #1c2029; border-bottom: 1px solid #2b313e; font-size: 12px; }
+  #term { margin: 0; padding: 12px; height: calc(100% - 34px); box-sizing: border-box; overflow-y: auto; white-space: pre; font-size: 14px; line-height: 1.35; outline: none; }
+</style>
+</head>
+<body>
+<header>
+  <span>modus console (WebAssembly · ANSI 24-bit TrueColor · no desktop)</span>
+  <span id="status">loading...</span>
+</header>
+<pre id="term" tabindex="0" aria-label="modus console"></pre>
+<script type="module">
+import { BrowserMachine, LoopResult, MachineState } from "./browser_machine_host.js";
+
+const term = document.getElementById("term");
+const status = document.getElementById("status");
+let fg = "", bg = "";
+
+function appendAnsi(chunk) {
+  let i = 0;
+  while (i < chunk.length) {
+    const esc = chunk.indexOf("\x1b[", i);
+    const plain = esc === -1 ? chunk.slice(i) : chunk.slice(i, esc);
+    if (plain.length) {
+      const span = document.createElement("span");
+      if (fg) span.style.color = fg;
+      if (bg) span.style.backgroundColor = bg;
+      span.textContent = plain;
+      term.appendChild(span);
+    }
+    if (esc === -1) break;
+    let end = esc + 2;
+    while (end < chunk.length && chunk.charCodeAt(end) < 0x40) end++;
+    const cmd = chunk[end];
+    const params = chunk.slice(esc + 2, end).split(";").map(Number);
+    if (cmd === "m") {
+      for (let p = 0; p < params.length; p++) {
+        if (params[p] === 0) { fg = ""; bg = ""; }
+        else if (params[p] === 38 && params[p + 1] === 2) { fg = `rgb(${params[p+2]},${params[p+3]},${params[p+4]})`; p += 4; }
+        else if (params[p] === 48 && params[p + 1] === 2) { bg = `rgb(${params[p+2]},${params[p+3]},${params[p+4]})`; p += 4; }
+      }
+    } else if (cmd === "J" && params[0] === 2) {
+      term.textContent = "";
+    }
+    i = end + 1;
+  }
+  term.scrollTop = term.scrollHeight;
+}
+
+const [kernelRes, imageRes] = await Promise.all([fetch("./modulus_kernel.wasm"), fetch("./boot.image")]);
+const kernelModule = await WebAssembly.compile(await kernelRes.arrayBuffer());
+const bootImage = new Uint8Array(await imageRes.arrayBuffer());
+const machine = new BrowserMachine({
+  kernelModule, bootImage, memoryMebibytes: 256, framebufferWidth: 0, framebufferHeight: 0,
+  clockNanoseconds: () => BigInt(Math.round(performance.now() * 1e6)),
+  idleWait: () => {},
+  onSerialLine: (line) => appendAnsi(line + "\n"),
+});
+
+term.addEventListener("keydown", (e) => {
+  const map = { ArrowUp: "\x1b[A", ArrowDown: "\x1b[B", ArrowRight: "\x1b[C", ArrowLeft: "\x1b[D", Home: "\x1b[H", End: "\x1b[F", Delete: "\x1b[3~", Tab: e.shiftKey ? "\x1b[Z" : "\t", Enter: "\r", Backspace: "\x7f", Escape: "\x1b" };
+  let seq = map[e.key];
+  if (!seq && e.ctrlKey && e.key.length === 1) {
+    const code = e.key.toLowerCase().charCodeAt(0) - 96;
+    if (code >= 1 && code <= 26) seq = String.fromCharCode(code);
+  } else if (!seq && !e.ctrlKey && !e.metaKey && e.key.length === 1) {
+    seq = e.key;
+  }
+  if (!seq) return;
+  e.preventDefault();
+  for (const b of new TextEncoder().encode(seq)) machine.serial.input.push(b);
+});
+
+status.textContent = "booting...";
+await machine.start();
+status.textContent = "running";
+term.focus();
+
+function step() {
+  if (machine.state !== MachineState.Running) { status.textContent = machine.state; return; }
+  machine.runSlice(8_000_000);
+  requestAnimationFrame(step);
+}
+requestAnimationFrame(step);
+</script>
+</body>
+</html>

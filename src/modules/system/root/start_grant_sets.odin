@@ -325,6 +325,10 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	{name = "input", grants = {.System_Part}},
 	// The text of the process that writes in it (terminal_start).
 	{name = "terminal", grants = {.System_Part}},
+	// Desktop-free ANSI 24-bit serial terminal renderer over COM1.
+	{name = "serial_terminal", grants = {.System_Part}},
+	// Desktop-free direct framebuffer Spleen 8x16 monospace grid renderer.
+	{name = "grid_terminal", grants = {.System_Part}},
 	// One block device and the ring of its one client (driver_start).
 	{name = "block", grants = {.System_Part}},
 	// The network device and the ring of its one client (driver_start).
@@ -499,7 +503,7 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 // (tools/modustool/build/start_grant_sets_check.odin), because the debug access to
 // a process reads that grant. The names are strings that the tool reads.
 @(rodata)
-system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "gpu_device", "wiring", "powerbox", "disk_processes", "devices", "principals"}
+system_part_names := [?]string{"root", "input", "compositor", "terminal", "serial_terminal", "grid_terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "gpu_device", "wiring", "powerbox", "disk_processes", "devices", "principals"}
 
 // name_is_a_system_part says if a name is one of system_part_names.
 name_is_a_system_part :: proc "contextless" (name: string) -> bool {

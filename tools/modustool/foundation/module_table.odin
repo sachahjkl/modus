@@ -142,6 +142,8 @@ module_builds := [?]Module_Build {
 	{name = "guest_demo", source = DEMONSTRATION_MODULE_SOURCES + "guest_demo", entry = true, image = true},
 	{name = "counters", source = DEMONSTRATION_MODULE_SOURCES + "counters", entry = true, image = true},
 	{name = "terminal", source = SYSTEM_MODULE_SOURCES + "terminal", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "serial_terminal", source = SYSTEM_MODULE_SOURCES + "serial_terminal", entry = true, image = true},
+	{name = "grid_terminal", source = SYSTEM_MODULE_SOURCES + "grid_terminal", entry = true, image = true},
 	{name = "flood", source = TEST_MODULE_SOURCES + "flood", entry = true, image = true},
 	{name = "hostile_terminal", source = TEST_MODULE_SOURCES + "hostile_terminal", entry = true, image = true},
 	{name = "arena", source = TEST_MODULE_SOURCES + "arena", entry = true, image = true},
