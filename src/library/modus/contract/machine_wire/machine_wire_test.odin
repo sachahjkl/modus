@@ -1289,7 +1289,7 @@ crossing_store_offers_with_later_write_converge_to_one_common_version :: proc(t:
 	a := machine_make(0x31)
 	b := machine_make(0x41)
 	defer machine_free(a, b)
-	pair_machines(t, a, b)
+	testing.expect(t, pair(t, a, b, 10))
 	testing.expect(t, machine_grant_set(&a.peer, identity_of(b), {.Stores}, {}))
 	testing.expect(t, machine_grant_set(&b.peer, identity_of(a), {.Stores}, {}))
 	store_id := object_hash("crossing")
