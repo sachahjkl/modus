@@ -8,7 +8,9 @@
 // 1. A shared writer may run ONLY while every recorded thread of the recorded
 //    process is at an input point (inside a kernel entry or held at a fault).
 // 2. A recorded thread may not leave an input point while any shared writer is
-//    still running on a processor.
+//    still running on a processor. Its refused leave stays asked: no writer
+//    begins a new run until the thread left, so writers that processors take
+//    again and again never hold the thread at its input point for ever.
 // 3. If a recorded thread stays outside an input point for one whole stint
 //    while a shared writer waits, the gate ends the input history cleanly with
 //    Stint_Bound_Reached and releases every waiting shared writer.
@@ -57,8 +59,9 @@ Shared_Writer_Entry :: struct {
 
 // One tracked thread belonging to the recorded process.
 Recorded_Thread_Entry :: struct {
-	thread_id:      u32,  // Non-zero thread identifier; 0 means free slot.
-	at_input_point: bool, // True while inside a kernel entry or held at a fault.
+	thread_id:       u32,  // Non-zero thread identifier; 0 means free slot.
+	at_input_point:  bool, // True while inside a kernel entry or held at a fault.
+	leave_requested: bool, // A leave was refused while a writer ran: no writer begins until the thread leaves.
 }
 
 // Pure kernel-part state machine gating shared writers on the input points of
@@ -71,6 +74,7 @@ Shared_Writer_Gate :: struct {
 	threads:                 [RECORDED_THREAD_CAPACITY]Recorded_Thread_Entry,
 	thread_count:            u32,
 	threads_at_input_point:  u32,
+	leave_requests:          u32, // Count of recorded threads whose leave waits for the writers on processors.
 	writers:                 [SHARED_WRITER_CAPACITY]Shared_Writer_Entry,
 	writer_count:            u32,
 	active_writer_cpus:      u32, // Sum of active_cpus across all tracked shared writers.
@@ -163,6 +167,9 @@ unregister_recorded_thread :: proc "contextless" (gate: ^Shared_Writer_Gate, thr
 		if entry.thread_id == thread_id {
 			if entry.at_input_point && gate.threads_at_input_point > 0 {
 				gate.threads_at_input_point -= 1
+			}
+			if entry.leave_requested && gate.leave_requests > 0 {
+				gate.leave_requests -= 1
 			}
 			entry = {}
 			if gate.thread_count > 0 {
@@ -263,11 +270,36 @@ recorded_thread_enter_input_point :: proc "contextless" (gate: ^Shared_Writer_Ga
 	return false
 }
 
+// recorded_thread_request_leave keeps a recorded thread at its input point
+// with its leave asked, when a writer runs that the gate does not count yet
+// (a processor took it before the record began). No writer begins a new run
+// until the thread leaves. Refuses unknown threads, a thread outside an input
+// point, or an inactive/ended gate.
+recorded_thread_request_leave :: proc "contextless" (gate: ^Shared_Writer_Gate, thread_id: u32) -> bool {
+	if gate == nil || gate.state != .Active || thread_id == 0 {
+		return false
+	}
+	for &entry in gate.threads {
+		if entry.thread_id == thread_id {
+			if !entry.at_input_point {
+				return false
+			}
+			if !entry.leave_requested {
+				entry.leave_requested = true
+				gate.leave_requests += 1
+			}
+			return true
+		}
+	}
+	return false
+}
+
 // recorded_thread_leave_input_point attempts to transition a recorded thread
 // out of an input point back to user instructions. If any tracked shared
 // writer is currently executing on a processor, returns Must_Wait_Writers and
 // keeps the thread at the input point so recorded code never observes mid-write
-// shared pages.
+// shared pages. The refused leave stays asked until the thread leaves: no
+// shared writer begins a new run meanwhile.
 recorded_thread_leave_input_point :: proc "contextless" (gate: ^Shared_Writer_Gate, thread_id: u32) -> Leave_Input_Point_Result {
 	if gate == nil || gate.state != .Active || thread_id == 0 {
 		return .Refused
@@ -278,7 +310,17 @@ recorded_thread_leave_input_point :: proc "contextless" (gate: ^Shared_Writer_Ga
 				return .Refused
 			}
 			if gate.active_writer_cpus > 0 {
+				if !entry.leave_requested {
+					entry.leave_requested = true
+					gate.leave_requests += 1
+				}
 				return .Must_Wait_Writers
+			}
+			if entry.leave_requested {
+				entry.leave_requested = false
+				if gate.leave_requests > 0 {
+					gate.leave_requests -= 1
+				}
 			}
 			entry.at_input_point = false
 			if gate.threads_at_input_point > 0 {
@@ -293,8 +335,8 @@ recorded_thread_leave_input_point :: proc "contextless" (gate: ^Shared_Writer_Ga
 // shared_writer_may_run decides whether a candidate process may be scheduled
 // right now. Untracked processes and inactive/ended gates always run freely.
 // A tracked shared writer may run ONLY while every recorded thread is at an
-// input point; otherwise it is marked waiting and the one-stint timer is armed
-// from now_tick if not already armed.
+// input point and none asked to leave; otherwise it is marked waiting and the
+// one-stint timer is armed from now_tick if not already armed.
 shared_writer_may_run :: proc "contextless" (gate: ^Shared_Writer_Gate, process_slot: u32, process_serial: u32, now_tick: u64 = 0) -> (may_run: bool, decision: Writer_Schedule_Decision) {
 	if gate == nil || gate.state != .Active || process_slot == 0 || process_serial == 0 {
 		return true, .Run_Freely
@@ -303,7 +345,7 @@ shared_writer_may_run :: proc "contextless" (gate: ^Shared_Writer_Gate, process_
 		if entry.process_slot != process_slot || entry.process_serial != process_serial {
 			continue
 		}
-		if all_recorded_threads_at_input_point(gate) {
+		if all_recorded_threads_at_input_point(gate) && gate.leave_requests == 0 {
 			// Wait state clears only when shared_writer_begin_run actually
 			// dispatches this writer, not on a schedule probe.
 			return true, .Run_At_Input_Point
@@ -323,12 +365,13 @@ shared_writer_may_run :: proc "contextless" (gate: ^Shared_Writer_Gate, process_
 
 // shared_writer_begin_run records that a processor has started executing a
 // tracked shared writer. Refused while any recorded thread is outside an input
-// point on an active gate so mutual exclusion is never violated.
+// point, or asked to leave one, on an active gate so mutual exclusion is never
+// violated and a thread that waits to leave is not held for ever.
 shared_writer_begin_run :: proc "contextless" (gate: ^Shared_Writer_Gate, process_slot: u32, process_serial: u32) -> bool {
 	if gate == nil || gate.state != .Active || process_slot == 0 || process_serial == 0 {
 		return false
 	}
-	if !all_recorded_threads_at_input_point(gate) {
+	if !all_recorded_threads_at_input_point(gate) || gate.leave_requests != 0 {
 		return false
 	}
 	for &entry in gate.writers {
@@ -376,8 +419,9 @@ shared_writer_end_run :: proc "contextless" (gate: ^Shared_Writer_Gate, process_
 
 // shared_writer_stint_expired enforces the strict one-stint wait bound: if at
 // least one shared writer is waiting while a recorded thread stays outside an
-// input point for stint_bound_ticks or longer, the gate ends the history
-// cleanly with Stint_Bound_Reached and releases all shared writers.
+// input point (or waits at one to leave it) for stint_bound_ticks or longer,
+// the gate ends the history cleanly with Stint_Bound_Reached and releases all
+// shared writers.
 shared_writer_stint_expired :: proc "contextless" (gate: ^Shared_Writer_Gate, now_tick: u64) -> (expired: bool, end_reason: input_history.History_End_Reason) {
 	if gate == nil {
 		return false, .None
@@ -385,7 +429,7 @@ shared_writer_stint_expired :: proc "contextless" (gate: ^Shared_Writer_Gate, no
 	if gate.state != .Active {
 		return false, gate.history_end_reason
 	}
-	if !gate.wait_timer_armed || gate.waiting_writer_count == 0 || all_recorded_threads_at_input_point(gate) {
+	if !gate.wait_timer_armed || gate.waiting_writer_count == 0 || (all_recorded_threads_at_input_point(gate) && gate.leave_requests == 0) {
 		return false, .None
 	}
 	if now_tick < gate.wait_started_tick {

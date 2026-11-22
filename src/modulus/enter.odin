@@ -19,6 +19,11 @@ enter :: proc "contextless" (cpu: ^Processor, index: u32) {
 		replay_enter(cpu, index)
 		return
 	}
+	// The recorded thread reaches an input point: its shared writers may run
+	// from here to its return (record_replay.odin).
+	if thread.record_outside_point {
+		record_enter_input_point(thread)
+	}
 	intrinsics.atomic_add(&processes[thread.process].entries, 1)
 	thread.in_enter = true
 	wait_begin(thread)

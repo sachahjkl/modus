@@ -11,6 +11,9 @@ package debugger
 
 import "modus:contract/errors"
 import "modus:contract/input_history"
+import "modus:contract/isolated"
+import op "modus:contract/operation"
+import "modus:contract/value_kinds"
 import "modus:system"
 
 // The pages of the input history: 64 KiB, the header and about one thousand
@@ -25,15 +28,27 @@ Record_State :: enum u8 {
 	None      = 0, // The service started no record of the process of the session.
 	Recording = 1, // The kernel writes the history.
 	Ended     = 2, // The history has its end record: the service, the kernel or the bound ended it.
+	Replaying = 3, // A replay of the module runs from the history (replay_start).
+	Replayed  = 4, // The replay ended: the header of the history says why.
 }
 
-// The record of the process of the session. session_end forgets it with
-// the session.
+// The record of the process of the session. It stays after the session,
+// for the same caller, so that a history whose process stopped can still
+// be read and replayed; the next record, and the end of the connection of
+// its caller, forget it.
 Record_Session :: struct {
 	state:       Record_State,
+	caller_ring: system.Handle, // The call ring of the caller that recorded: only this caller reads the history.
+	name:        [32]u8, // The module that was recorded: a replay starts it again.
+	name_count:  int,
 	history:     system.Handle, // The contiguous memory object of the history: Read and Write, for the kernel.
 	bytes:       []u8, // Its mapping in this process, without Write.
 	checkpoints: input_history.Checkpoint_Ring,
+	// The process of the replay: the handle with Debug from the root
+	// service, and its slot and serial for the reports of Inspect. 0: none.
+	replay_process: system.Handle,
+	replay_slot:    u64,
+	replay_serial:  u64,
 }
 
 record_session: Record_Session
@@ -43,6 +58,8 @@ record_state_names := [Record_State]string {
 	.None      = "none",
 	.Recording = "recording",
 	.Ended     = "ended",
+	.Replaying = "replaying",
+	.Replayed  = "replayed",
 }
 
 @(rodata)
@@ -78,19 +95,40 @@ history_header_read :: proc "contextless" () -> (header: input_history.History_H
 }
 
 // record_state_refresh moves a record that the kernel ended by itself (the
-// process stopped, the history is full, the bound, a revocation) to Ended.
+// process stopped, the history is full, the bound, a revocation) to Ended,
+// and a replay whose process ended to Replayed. A replay ends when its
+// process stops: at the end of the history, at a divergence, or by a stop.
+// The header of the history held the end of the record before the replay,
+// so only the process says when the replay ended.
 record_state_refresh :: proc "contextless" () {
-	if record_session.state != .Recording {
-		return
+	switch record_session.state {
+	case .None, .Ended, .Replayed:
+	case .Recording:
+		if _, end, ok := history_header_read(); ok && end != .None {
+			record_session.state = .Ended
+		}
+	case .Replaying:
+		process: op.Process_Report
+		if !inspect_call(.Process, record_session.replay_slot, &process, size_of(process)) || process.process_serial != record_session.replay_serial || process.state == .None || process.state == .Stopped {
+			replay_process_forget()
+			record_session.state = .Replayed
+		}
 	}
-	if _, end, ok := history_header_read(); ok && end != .None {
-		record_session.state = .Ended
+}
+
+// replay_process_forget closes the handle of the process of a replay. The
+// root service ends the debug access when that process stops.
+replay_process_forget :: proc "contextless" () {
+	if record_session.replay_process != 0 {
+		system.close(record_session.replay_process)
 	}
+	record_session.replay_process, record_session.replay_slot, record_session.replay_serial = 0, 0, 0
 }
 
 // record_session_release unmaps and closes the history. The kernel keeps
 // its own reference while it records, so the close ends nothing there.
 record_session_release :: proc "contextless" () {
+	replay_process_forget()
 	if record_session.bytes != nil {
 		system.memory_unmap(raw_data(record_session.bytes))
 	}
@@ -102,12 +140,40 @@ record_session_release :: proc "contextless" () {
 
 // record_session_end ends a record that runs, before the session closes
 // its process handle, so that the history has its end record from this
-// service and not only from the close of the handle.
+// service and not only from the close of the handle. The history stays for
+// replay_status and replay_start of the same caller.
 record_session_end :: proc "contextless" () {
 	if record_session.state == .Recording {
 		system.process_record_end(session.process)
+		record_session.state = .Ended
 	}
-	record_session_release()
+}
+
+// record_session_name gives the module that was recorded.
+record_session_name :: proc "contextless" () -> string {
+	return string(record_session.name[:record_session.name_count])
+}
+
+// record_of_caller checks that the caller of the export that runs is the
+// caller whose history the service keeps, and that its connection still
+// runs: a history is as secret as the process, and the end of the
+// connection of its caller forgets it. A failure gives the result of the
+// export.
+record_of_caller :: proc "contextless" (error: ^errors.Error_Record) -> (failure: i64) {
+	caller := system.service_caller()
+	if caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL == 0 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if record_session.state != .None {
+		if kind, _, _ := system.handle_state(record_session.caller_ring); kind != .Memory {
+			record_session_release()
+		}
+	}
+	if record_session.state == .None || record_session.caller_ring != caller.ring_memory {
+		return errors.fail(error, ERROR_RECORD, .Absent, .Input_Histories)
+	}
+	record_state_refresh()
+	return 0
 }
 
 // record_begin makes the history, maps it without Write, and asks the
@@ -131,6 +197,8 @@ record_begin :: proc "contextless" (error: ^errors.Error_Record) -> (failure: i6
 		return kernel_refused(error, started)
 	}
 	input_history.checkpoint_ring_init(&record_session.checkpoints)
+	record_session.caller_ring = session.caller_ring
+	record_session.name_count = copy(record_session.name[:], session_name())
 	record_session.state = .Recording
 	return 0
 }
@@ -143,6 +211,9 @@ record_row_fill :: proc "contextless" (row: ^Record_Row) -> bool {
 		return false
 	}
 	row^ = {points = i64(header.point_count), bytes = i64(header.written_bytes), capacity = i64(header.capacity_bytes), checkpoints = i64(record_session.checkpoints.count)}
+	if end == .Divergence {
+		row.divergence = i64(min(header.divergence_point, u64(max(i64))))
+	}
 	system.format(row.state[:], record_state_names[record_session.state])
 	system.format(row.end[:], history_end_names[end])
 	return true
@@ -159,6 +230,121 @@ record_rows :: proc "contextless" (result: ^[]Record_Row, error: ^errors.Error_R
 		result[0] = row
 	}
 	return 1
+}
+
+// held_session_begin makes the service the debugger of a process that the
+// root service holds before its first instruction (Debug_Start), as attach
+// does for a process that runs. A failure stops the held process: it was
+// started for this debugging only. It gives the result of the export.
+held_session_begin :: proc "contextless" (name: string, caller: ^system.Connection, completion: [7]u64, error: ^errors.Error_Record) -> (failure: i64) {
+	// The handle is a number from another process: it must be a process
+	// handle with Debug that came through the ring to the root service.
+	handle := system.Handle(completion[0])
+	if kind, rights, through := system.handle_state(handle, requests_memory); kind != .Process || .Debug not_in rights || !through {
+		root_debug_start(name, caller.ring_memory, .Abandon)
+		return refused(error, .Bad_Handle)
+	}
+	hash := transmute([32]u8)[4]u64{completion[1], completion[2], completion[3], completion[4]}
+	slot, process_serial, matches := slot_find(name, hash, held_only = true)
+	if matches != 1 {
+		system.close(handle)
+		root_debug_start(name, caller.ring_memory, .Abandon)
+		if matches == 0 {
+			return errors.fail(error, ERROR_ENDED, .Absent, .Processes, 1)
+		}
+		system.log_fact(.Info, Attach_Ambiguous{matches = u64(matches), debugged_process = value_kinds.module_name_field(name)})
+		return errors.fail(error, ERROR_AMBIGUOUS, .Bad_Value, .Processes, 1, i64(matches), 1)
+	}
+	// The records of an earlier debugging are of no thread of this process.
+	for {
+		if _, more := record_next_ready(); !more {
+			break
+		}
+	}
+	if status := system.debug_attach(handle); status != .Ok {
+		system.close(handle)
+		root_debug_start(name, caller.ring_memory, .Abandon)
+		return refused(error, status)
+	}
+	session = {
+		attached       = true,
+		process        = handle,
+		caller_ring    = caller.ring_memory,
+		slot           = slot,
+		process_serial = process_serial,
+	}
+	session.name_count = copy(session.name[:], name)
+	reports_read()
+	system.log_fact(.Info, Attach_Done{threads = 0, modules = u64(min(report_modules.count, op.PROCESS_MODULE_CAPACITY)), described = 0, debugged_process = value_kinds.module_name_field(name), caller = value_kinds.module_name_field(system.name_of(caller.caller[:]))})
+	return 0
+}
+
+// replay_begin starts the module of the history again, held before its
+// first instruction with no start grant, gives it the history with
+// Replay_Start, and lets it run. The kernel writes the context of the
+// record into it, answers each kernel entry from the history, and stops it
+// at the first difference. A failure stops the held process and gives the
+// result of the export.
+replay_begin :: proc "contextless" (caller: ^system.Connection, error: ^errors.Error_Record) -> (failure: i64) {
+	name := record_session_name()
+	header, _, ok := history_header_read()
+	if !ok {
+		return errors.fail(error, ERROR_RECORD, .Damaged, .Input_Histories)
+	}
+	completion, answered := root_debug_start(name, caller.ring_memory, .Start_Replay)
+	if !answered {
+		return errors.fail(error, ERROR_REFUSED, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
+	}
+	if system.Status(completion.kind) != .Ok {
+		if error != nil {
+			error^ = errors.completion_record(completion.values)
+		}
+		return ERROR_REFUSED
+	}
+	handle := system.Handle(completion.values[0])
+	if kind, rights, through := system.handle_state(handle, requests_memory); kind != .Process || .Debug not_in rights || !through {
+		root_debug_start(name, caller.ring_memory, .Abandon)
+		return refused(error, .Bad_Handle)
+	}
+	// The boot image can hold another module of this name than the one
+	// that was recorded: its replay would prove another run.
+	hash := transmute([32]u8)[4]u64{completion.values[1], completion.values[2], completion.values[3], completion.values[4]}
+	if hash != header.module_hash {
+		system.close(handle)
+		root_debug_start(name, caller.ring_memory, .Abandon)
+		return errors.fail(error, ERROR_RECORD, .Bad_Value, .Input_Histories, 1)
+	}
+	slot, process_serial, matches := slot_find(name, hash, held_only = true)
+	if matches != 1 {
+		system.close(handle)
+		root_debug_start(name, caller.ring_memory, .Abandon)
+		if matches == 0 {
+			return errors.fail(error, ERROR_ENDED, .Absent, .Processes, 1)
+		}
+		return errors.fail(error, ERROR_AMBIGUOUS, .Bad_Value, .Processes, 1, i64(matches), 1)
+	}
+	if status := system.process_replay_start(handle, record_session.history, error); status != .Ok {
+		system.close(handle)
+		root_debug_start(name, caller.ring_memory, .Abandon)
+		return kernel_refused(error, status)
+	}
+	released, released_answered := root_debug_start(name, caller.ring_memory, .Release)
+	if !released_answered {
+		system.close(handle)
+		return errors.fail(error, ERROR_REFUSED, .No_Answer, .Milliseconds, 0, 0, ROOT_ANSWER_MILLISECONDS)
+	}
+	if system.Status(released.kind) != .Ok {
+		system.close(handle)
+		if error != nil {
+			error^ = errors.completion_record(released.values)
+		}
+		return ERROR_REFUSED
+	}
+	record_session.replay_process = handle
+	record_session.replay_slot = slot
+	record_session.replay_serial = process_serial
+	record_session.state = .Replaying
+	return 0
 }
 
 // checkpoint_rows gives one row for each checkpoint that the service keeps,

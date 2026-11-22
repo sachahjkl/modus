@@ -218,15 +218,20 @@ shared_writer_revocation_overrides_immediately :: proc(t: ^testing.T) {
 // tables hold: a refusal must leave both unchanged.
 @(private = "file")
 gate_counts_match :: proc(t: ^testing.T, gate: ^Shared_Writer_Gate, loc := #caller_location) {
-	threads, at_point, writers, active, waiting: u32
+	threads, at_point, leaves, writers, active, waiting: u32
 	for entry in gate.threads {
 		if entry.thread_id != 0 {
 			threads += 1
 			if entry.at_input_point {
 				at_point += 1
 			}
+			if entry.leave_requested {
+				leaves += 1
+				testing.expect(t, entry.at_input_point, "a thread outside an input point asks no leave", loc = loc)
+			}
 		}
 	}
+	testing.expect_value(t, gate.leave_requests, leaves, loc = loc)
 	for entry in gate.writers {
 		if entry.process_slot != 0 {
 			writers += 1
@@ -519,4 +524,178 @@ shared_writer_gate_removal_releases_waits_and_runs :: proc(t: ^testing.T) {
 	testing.expect(t, shared_writer_end_normal(&gate))
 	testing.expect_value(t, gate.history_end_reason, input_history.History_End_Reason.Normal_Stop)
 	testing.expect(t, !shared_writer_end_normal(&gate))
+}
+
+// A refused leave stays asked: while the thread waits at its input point
+// for a writer that runs, no other writer begins, even though every thread
+// is at an input point. The leave that passes clears the request.
+@(test)
+shared_writer_gate_refused_leave_holds_new_writers :: proc(t: ^testing.T) {
+	gate: Shared_Writer_Gate
+	testing.expect(t, shared_writer_gate_init(&gate, 1, 1, 10))
+	testing.expect(t, register_recorded_thread(&gate, 5, starts_at_input_point = true))
+	testing.expect(t, add_shared_writer(&gate, 2, 2))
+	testing.expect(t, add_shared_writer(&gate, 3, 3))
+	testing.expect(t, shared_writer_begin_run(&gate, 2, 2))
+	testing.expect_value(t, recorded_thread_leave_input_point(&gate, 5), Leave_Input_Point_Result.Must_Wait_Writers)
+	testing.expect_value(t, gate.leave_requests, u32(1))
+	// A second refused leave counts once.
+	testing.expect_value(t, recorded_thread_leave_input_point(&gate, 5), Leave_Input_Point_Result.Must_Wait_Writers)
+	testing.expect_value(t, gate.leave_requests, u32(1))
+	gate_counts_match(t, &gate)
+
+	may, decision := shared_writer_may_run(&gate, 3, 3, 7)
+	testing.expect(t, !may, "a writer waits while the thread asks to leave")
+	testing.expect_value(t, decision, Writer_Schedule_Decision.Wait_Input_Point)
+	testing.expect(t, !shared_writer_begin_run(&gate, 3, 3))
+	testing.expect(t, !shared_writer_begin_run(&gate, 2, 2), "the running writer does not begin a second run either")
+	testing.expect_value(t, gate.active_writer_cpus, u32(1))
+	testing.expect(t, gate.wait_timer_armed)
+	testing.expect_value(t, gate.wait_started_tick, u64(7))
+
+	testing.expect(t, shared_writer_end_run(&gate, 2, 2))
+	testing.expect_value(t, recorded_thread_leave_input_point(&gate, 5), Leave_Input_Point_Result.Left)
+	testing.expect_value(t, gate.leave_requests, u32(0))
+	gate_counts_match(t, &gate)
+	// The waiting writer runs at the next input point, which disarms the bound.
+	testing.expect(t, recorded_thread_enter_input_point(&gate, 5))
+	may, decision = shared_writer_may_run(&gate, 3, 3, 9)
+	testing.expect(t, may)
+	testing.expect_value(t, decision, Writer_Schedule_Decision.Run_At_Input_Point)
+	testing.expect(t, shared_writer_begin_run(&gate, 3, 3))
+	testing.expect(t, !gate.wait_timer_armed)
+	gate_counts_match(t, &gate)
+}
+
+// The leave that the kernel asks for a writer that a processor took before
+// the gate counted it: each refusal first (nil, an inactive gate, 0, an
+// unknown thread, a thread outside an input point), then the request, which
+// holds the writers until the thread leaves or ends.
+@(test)
+shared_writer_gate_request_leave_for_an_uncounted_writer :: proc(t: ^testing.T) {
+	testing.expect(t, !recorded_thread_request_leave(nil, 1))
+	gate: Shared_Writer_Gate
+	testing.expect(t, !recorded_thread_request_leave(&gate, 1), "an inactive gate asks nothing")
+	testing.expect(t, shared_writer_gate_init(&gate, 1, 1, 10))
+	testing.expect(t, register_recorded_thread(&gate, 1, starts_at_input_point = true))
+	testing.expect(t, register_recorded_thread(&gate, 2, starts_at_input_point = false))
+	testing.expect(t, add_shared_writer(&gate, 4, 4))
+	testing.expect(t, !recorded_thread_request_leave(&gate, 0))
+	testing.expect(t, !recorded_thread_request_leave(&gate, 3), "an unknown thread")
+	testing.expect(t, !recorded_thread_request_leave(&gate, 2), "a thread outside an input point")
+	testing.expect_value(t, gate.leave_requests, u32(0))
+
+	testing.expect(t, recorded_thread_enter_input_point(&gate, 2))
+	testing.expect(t, recorded_thread_request_leave(&gate, 1))
+	testing.expect(t, recorded_thread_request_leave(&gate, 1), "a second request is the same request")
+	testing.expect_value(t, gate.leave_requests, u32(1))
+	testing.expect(t, !shared_writer_begin_run(&gate, 4, 4), "every thread is at an input point, and one asks to leave")
+	gate_counts_match(t, &gate)
+
+	// The thread that asked ends: the writers run again.
+	testing.expect(t, unregister_recorded_thread(&gate, 1))
+	testing.expect_value(t, gate.leave_requests, u32(0))
+	testing.expect(t, shared_writer_begin_run(&gate, 4, 4))
+	testing.expect(t, shared_writer_end_run(&gate, 4, 4))
+	// A request, then the leave, which clears it.
+	testing.expect(t, recorded_thread_request_leave(&gate, 2))
+	testing.expect_value(t, recorded_thread_leave_input_point(&gate, 2), Leave_Input_Point_Result.Left)
+	testing.expect_value(t, gate.leave_requests, u32(0))
+	testing.expect(t, !recorded_thread_request_leave(&gate, 2), "the thread left its input point")
+	gate_counts_match(t, &gate)
+
+	// An ended gate takes no request.
+	testing.expect(t, recorded_thread_enter_input_point(&gate, 2))
+	testing.expect(t, shared_writer_end_normal(&gate))
+	testing.expect(t, !recorded_thread_request_leave(&gate, 2))
+}
+
+// The bound counts while the thread waits at its input point to leave: a
+// writer that waits then still runs within one stint. One tick before the
+// bound and a clock that goes back end nothing; the bound ends the history.
+@(test)
+shared_writer_gate_bound_counts_a_leave_that_waits :: proc(t: ^testing.T) {
+	gate: Shared_Writer_Gate
+	STINT :: u64(10)
+	testing.expect(t, shared_writer_gate_init(&gate, 1, 1, STINT))
+	testing.expect(t, register_recorded_thread(&gate, 1, starts_at_input_point = true))
+	testing.expect(t, add_shared_writer(&gate, 2, 2))
+	testing.expect(t, add_shared_writer(&gate, 3, 3))
+	testing.expect(t, shared_writer_begin_run(&gate, 2, 2))
+	testing.expect_value(t, recorded_thread_leave_input_point(&gate, 1), Leave_Input_Point_Result.Must_Wait_Writers)
+	shared_writer_may_run(&gate, 3, 3, 100)
+
+	expired, reason := shared_writer_stint_expired(&gate, 100 + STINT - 1)
+	testing.expect(t, !expired)
+	testing.expect_value(t, reason, input_history.History_End_Reason.None)
+	expired, _ = shared_writer_stint_expired(&gate, 99)
+	testing.expect(t, !expired, "a clock that goes back ends nothing")
+	expired, reason = shared_writer_stint_expired(&gate, 100 + STINT)
+	testing.expect(t, expired)
+	testing.expect_value(t, reason, input_history.History_End_Reason.Stint_Bound_Reached)
+	testing.expect_value(t, gate.state, Shared_Writer_Gate_State.Ended_Stint_Bound)
+	// The ended gate lets each writer run and keeps its reason.
+	may, decision := shared_writer_may_run(&gate, 3, 3, max(u64))
+	testing.expect(t, may)
+	testing.expect_value(t, decision, Writer_Schedule_Decision.Run_Freely)
+	expired, reason = shared_writer_stint_expired(&gate, max(u64))
+	testing.expect(t, !expired)
+	testing.expect_value(t, reason, input_history.History_End_Reason.Stint_Bound_Reached)
+	testing.expect_value(t, recorded_thread_leave_input_point(&gate, 1), Leave_Input_Point_Result.Refused)
+}
+
+// A recorded thread that makes short kernel entries again and again, each
+// one too short for a processor to take the writer, does not move the
+// bound: as the kernel does at each entry, the writer is marked waiting
+// with the time of the entry while the thread is still outside its point,
+// and the gate keeps the first start. The bound then ends the history at
+// that first start plus one stint, at an instant when the thread runs its
+// own instructions; one tick before it, nothing ends.
+@(test)
+shared_writer_gate_short_entries_do_not_move_the_bound :: proc(t: ^testing.T) {
+	gate: Shared_Writer_Gate
+	STINT :: u64(10)
+	testing.expect(t, shared_writer_gate_init(&gate, 1, 1, STINT))
+	testing.expect(t, register_recorded_thread(&gate, 1, starts_at_input_point = true))
+	testing.expect(t, add_shared_writer(&gate, 2, 2))
+	testing.expect_value(t, recorded_thread_leave_input_point(&gate, 1), Leave_Input_Point_Result.Left)
+	FIRST :: u64(1000)
+	for now := FIRST; now < FIRST + STINT; now += 1 {
+		may, decision := shared_writer_may_run(&gate, 2, 2, now)
+		testing.expect(t, !may)
+		testing.expect_value(t, decision, Writer_Schedule_Decision.Wait_Input_Point)
+		testing.expect(t, recorded_thread_enter_input_point(&gate, 1))
+		testing.expect_value(t, recorded_thread_leave_input_point(&gate, 1), Leave_Input_Point_Result.Left)
+		testing.expect_value(t, gate.wait_started_tick, FIRST)
+		expired, _ := shared_writer_stint_expired(&gate, now)
+		testing.expect(t, !expired)
+	}
+	gate_counts_match(t, &gate)
+	expired, reason := shared_writer_stint_expired(&gate, FIRST + STINT - 1)
+	testing.expect(t, !expired)
+	testing.expect_value(t, reason, input_history.History_End_Reason.None)
+	expired, reason = shared_writer_stint_expired(&gate, FIRST + STINT)
+	testing.expect(t, expired)
+	testing.expect_value(t, reason, input_history.History_End_Reason.Stint_Bound_Reached)
+	testing.expect_value(t, gate.waiting_writer_count, u32(0))
+}
+
+// The largest values: a wait from tick 1 under a bound of the largest tick
+// count does not expire at the largest tick, and a wait from tick 0 does,
+// with no wrap of the subtraction.
+@(test)
+shared_writer_gate_bound_at_the_largest_values :: proc(t: ^testing.T) {
+	gate: Shared_Writer_Gate
+	testing.expect(t, shared_writer_gate_init(&gate, 1, 1, max(u64)))
+	testing.expect(t, register_recorded_thread(&gate, 1, starts_at_input_point = false))
+	testing.expect(t, add_shared_writer(&gate, 2, 2))
+	shared_writer_may_run(&gate, 2, 2, 1)
+	expired, _ := shared_writer_stint_expired(&gate, max(u64))
+	testing.expect(t, !expired, "max - 1 ticks is under a bound of max")
+	testing.expect(t, shared_writer_gate_init(&gate, 1, 1, max(u64)))
+	testing.expect(t, register_recorded_thread(&gate, 1, starts_at_input_point = false))
+	testing.expect(t, add_shared_writer(&gate, 2, 2))
+	shared_writer_may_run(&gate, 2, 2, 0)
+	expired, _ = shared_writer_stint_expired(&gate, max(u64))
+	testing.expect(t, expired)
 }

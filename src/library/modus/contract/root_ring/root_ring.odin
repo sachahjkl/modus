@@ -427,6 +427,62 @@ Root_Command :: enum u32 {
 	// principal (Acts_For_Principal); the store must belong to the
 	// principal of the caller.
 	Start_Edit = 30,
+	// Debug_Start starts a process of the boot image held before its first
+	// instruction for the debugger service, on behalf of one of its callers,
+	// so that the kernel records or replays it from that instruction
+	// (src/md/features/record_and_replay.md, "The frequent tasks").
+	// values[0..3]: the name of the module. values[4]: the call ring of the
+	// connection of the caller, as for Debug. values[5]: the step
+	// (Debug_Start_Step). values[6]: 0 (debug_start_border).
+	//
+	// Start_Held starts the module as Start does for the caller, in the
+	// session of the principal that the caller acts for, and gives the
+	// debugger service the handle of the process with the right Debug
+	// only, under the rule of Debug: the completion is the completion of
+	// Debug. Start_Replay does the same with no start grant: the process
+	// receives no handle but its budget and its log, and its context is the
+	// one that the history writes back (Replay_Start). Release lets the held
+	// process of the caller run, and Abandon stops it: values[0] of the
+	// completion is 0. A caller holds one held process at a time; the end
+	// of its debug access lets a process held with Start_Held run, and
+	// stops one held with Start_Replay. Only the process with the grant
+	// Debugger sends this command.
+	Debug_Start = 31,
+}
+
+// values[5] of a Debug_Start: what it does.
+Debug_Start_Step :: enum u64 {
+	None         = 0, // Refused.
+	Start_Held   = 1, // Start the module with its start grants, held before its first instruction.
+	Start_Replay = 2, // Start the module with no start grant, held, for a replay.
+	Release      = 3, // Let the held process of the caller run.
+	Abandon      = 4, // Stop the held process of the caller: no export waits for it any more.
+}
+
+// debug_start_step_of_word is the border of values[5] of a Debug_Start:
+// None and a word that names no member are refused.
+debug_start_step_of_word :: proc "contextless" (word: u64) -> (step: Debug_Start_Step, ok: bool) {
+	member, known := enum_word.member_of_word(Debug_Start_Step, word)
+	if !known || member == .None {
+		return .None, false
+	}
+	return member, true
+}
+
+// debug_start_border is the border of the values of a Debug_Start that are
+// not the name and the call ring: the step of values[5], and values[6],
+// which must be 0. A refusal gives Bad_Operation and the error record
+// Bad_Value of the argument (3 for the step, 4 for values[6]), and the root
+// service runs nothing.
+debug_start_border :: proc "contextless" (values: [7]u64) -> (step: Debug_Start_Step, status: op.Status, refusal: [7]u64) {
+	read, ok := debug_start_step_of_word(values[5])
+	if !ok {
+		return .None, .Bad_Operation, word_refusal(.Debug_Start, 3, values[5], u64(max(Debug_Start_Step)))
+	}
+	if values[6] != 0 {
+		return .None, .Bad_Operation, word_refusal(.Debug_Start, 4, values[6], 0)
+	}
+	return read, .Ok, {}
 }
 
 // values[0] of a Wire: what it does.
@@ -606,6 +662,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Start_Policy_Choice    = .Root_Ring,
 	.Wire                   = .Root_Ring_Or_Start_Policy,
 	.Start_Edit             = .Root_Ring,
+	.Debug_Start            = .Debugger,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -783,6 +840,7 @@ ROOT_COMMAND_REFUSAL_WRITERS := [Root_Command]Refusal_Writer {
 	.Start_Policy_Choice    = .Command,
 	.Wire                   = .Command,
 	.Start_Edit             = .Command,
+	.Debug_Start            = .Command,
 }
 
 // The step at which the dispatch of one record ends, in the order of the
@@ -957,6 +1015,7 @@ root_command_names := [Root_Command]string {
 	.Start_Policy_Choice    = "Start_Policy_Choice",
 	.Wire                   = "Wire",
 	.Start_Edit             = "Start_Edit",
+	.Debug_Start            = "Debug_Start",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -994,6 +1053,7 @@ root_first_argument_names := [Root_Command]string {
 	.Start_Policy_Choice    = "nickname",
 	.Wire                   = "step",
 	.Start_Edit             = "store",
+	.Debug_Start            = "name",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1032,6 +1092,7 @@ root_second_argument_names := [Root_Command]string {
 	.Start_Policy_Choice    = "hash",
 	.Wire                   = "",
 	.Start_Edit             = "name",
+	.Debug_Start            = "",
 }
 
 // command_of_record reads the command that an error record names: the

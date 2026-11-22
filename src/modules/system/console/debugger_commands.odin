@@ -106,6 +106,14 @@ debug_stop_report :: proc "contextless" (arguments: []Value) -> Value {
 	return bound_call("debugger", "stop_report", arguments)
 }
 
+debug_record :: proc "contextless" (arguments: []Value) -> Value {
+	return bound_call("debugger", "record", arguments)
+}
+
+debug_replay_start :: proc "contextless" (arguments: []Value) -> Value {
+	return bound_call("debugger", "replay_start", arguments)
+}
+
 debug_record_start :: proc "contextless" (arguments: []Value) -> Value {
 	return bound_call("debugger", "record_start", arguments)
 }
@@ -277,10 +285,27 @@ debugger_commands_start :: proc "contextless" () {
 	// > stop_report("visitor")
 	// ```
 	command("stop_report", {.Text}, .Table, "the frames of a disk process that faulted, named: debugger.stop_report()", debug_stop_report)
+	// Starts a process held before its first instruction, makes the
+	// service `debugger` its debugger for the console, records each
+	// process input of it from that instruction, then lets it run. It
+	// gives the row of the record: its state, its input points, its bytes,
+	// why it ended, its checkpoints, and the input point of a divergence.
+	// Memory that the process and another process both write is recorded
+	// too: the other process writes only while the process is at an input
+	// point.
+	//
+	// - `process`: the name of a module of the boot image.
+	//
+	// The root service starts the module for the console, as `start`
+	// does, under the rule of `debug`.
+	//
+	// ```
+	// > record("clock")
+	// ```
+	command("record", {.Text}, .Table, "start a process recorded from its first instruction: debugger.record()", debug_record)
 	// Asks the kernel to write each process input of the debugged process
-	// into an input history, and gives the row of the record: its state,
-	// its input points, its bytes, why it ended, and its checkpoints. The
-	// kernel records only a process that did not run yet.
+	// into an input history, and gives the row of the record. The kernel
+	// records only a process that did not run yet: `record` starts one.
 	//
 	// ```
 	// > record_start()
@@ -288,11 +313,21 @@ debugger_commands_start :: proc "contextless" () {
 	command("record_start", {}, .Table, "record the inputs of the debugged process: debugger.record_start()", debug_record_start)
 	// Ends the record of the debugged process, and gives the row of the
 	// record with why it ended. The history and its checkpoints stay until
-	// the next `record_start` or the end of the debugging.
+	// the next record, after the end of the debugging too.
 	command("record_end", {}, .Table, "end the record of the debugged process: debugger.record_end()", debug_record_end)
-	// Gives the row of the record of the debugged process, also after the
-	// kernel ended it by itself: the process stopped, the history is full,
-	// the bound of one stint, or a revocation.
+	// Runs the recorded module again from the history, and gives the row
+	// of the record: `replaying`, then `replayed` with why the replay
+	// ended. The replay reaches the same instructions with the same
+	// values, or stops at the first difference, whose input point is in
+	// the row. A replay sends nothing to any process.
+	//
+	// ```
+	// > replay_start()
+	// ```
+	command("replay_start", {}, .Table, "run the recorded module again from its history: debugger.replay_start()", debug_replay_start)
+	// Gives the row of the record of the console, also after the kernel
+	// ended it by itself (the process stopped, the history is full, the
+	// bound of one stint, a revocation) and after the debugging ended.
 	command("replay_status", {}, .Table, "the record of the debugged process: debugger.replay_status()", debug_replay_status)
 	// Keeps a checkpoint of a held thread at the last input point of the
 	// record, and gives one row for each checkpoint: its number, its input

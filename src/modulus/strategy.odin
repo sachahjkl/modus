@@ -58,7 +58,8 @@ queue_strategy_ready :: #force_inline proc "contextless" (queue: ^Run_Queue, hom
 }
 
 // queue_strategy_pick gives the next thread of a queue, among the threads
-// that a budget lets run and that the processor `taker` can run, or nil.
+// that a budget lets run, that no recorded thread holds (shared_writer_held)
+// and that the processor `taker` can run, or nil.
 // The generic code takes it out of the list.
 queue_strategy_pick :: #force_inline proc "contextless" (queue: ^Run_Queue, home: u32, taker: u32) -> (picked: ^Thread) {
 	switch queue.strategy {
@@ -346,7 +347,7 @@ round_robin_ready :: proc "contextless" (queue: ^Run_Queue, home: u32, thread: ^
 // period: one line of the queue and one line of each thread passed over.
 round_robin_pick :: proc "contextless" (queue: ^Run_Queue, home: u32, taker: u32) -> ^Thread {
 	for index := queue.head; index != 0; index = threads[index].queue_next {
-		if pick_allowed(&threads[index], home, taker) && !budget_spent(threads[index].budget) {
+		if pick_allowed(&threads[index], home, taker) && !budget_spent(threads[index].budget) && !shared_writer_held(&threads[index]) {
 			return &threads[index]
 		}
 	}
@@ -437,7 +438,7 @@ fair_pick :: proc "contextless" (queue: ^Run_Queue, home: u32, taker: u32) -> ^T
 	for index := queue.head; index != 0; index = threads[index].queue_next {
 		thread := &threads[index]
 		floor_to(thread, floor)
-		if pick_allowed(thread, home, taker) && !budget_spent(thread.budget) && (best == nil || before(thread.virtual, best.virtual)) {
+		if pick_allowed(thread, home, taker) && !budget_spent(thread.budget) && !shared_writer_held(thread) && (best == nil || before(thread.virtual, best.virtual)) {
 			best = thread
 		}
 	}
@@ -575,7 +576,7 @@ eevdf_pick :: proc "contextless" (queue: ^Run_Queue, home: u32, taker: u32) -> ^
 	best, least: ^Thread
 	for index := queue.head; index != 0; index = threads[index].queue_next {
 		thread := &threads[index]
-		if !pick_allowed(thread, home, taker) || budget_spent(thread.budget) {
+		if !pick_allowed(thread, home, taker) || budget_spent(thread.budget) || shared_writer_held(thread) {
 			continue
 		}
 		if least == nil || before(thread.virtual, least.virtual) {

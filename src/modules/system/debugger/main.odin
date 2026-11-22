@@ -42,11 +42,16 @@
 // revoked, and when the process stops: the kernel then gives the process
 // back each thread that the debugger held.
 //
-// **The record.** `record_start()` asks the kernel to write each process
-// input of the debugged process into an input history that this service
-// makes and maps without Write; `replay_status()`, `replay_checkpoint(0)`
-// and `replay_step_back(1)` read it, and `record_end()` or the end of the
-// debugging ends it (replay_wiring.odin).
+// **The record.** `record("clock")` asks the root service to start a
+// process held before its first instruction (Debug_Start), attaches to it,
+// and asks the kernel to write each process input of it into an input
+// history that this service makes and maps without Write; `record_start()`
+// does the same for an attached process that did not run.
+// `replay_status()`, `replay_checkpoint(0)` and `replay_step_back(1)`
+// read the history, `replay_start()` runs the module again from it, and
+// `record_end()` or the end of the debugging ends the record. The history
+// stays for its caller after the debugging, until the next record
+// (replay_wiring.odin).
 //
 // **Start**: the root service starts it when a caller connects to
 // `debugger` (`connect("debugger")` in the console, or the first command of
@@ -55,8 +60,8 @@
 // **Grants**, as the root service gives them:
 //
 // - **Serve**: its exports.
-// - **Debugger**: the commands `Debug` and `Debug_Store` of the root ring,
-//   and no other.
+// - **Debugger**: the commands `Debug`, `Debug_Store` and `Debug_Start` of
+//   the root ring, and no other.
 // - **Inspect**: the thread report and the module report of a process.
 // - **Debug_Image**: the debug objects.
 // - **Image**: the name of each module, from its hash.
@@ -96,7 +101,7 @@ ERROR_ADDRESS :: -12 // Bad_Address or Bad_Value: the process does not map the a
 ERROR_ENDED :: -13 // Absent, Processes: the process stopped, or the debug access ended.
 ERROR_AMBIGUOUS :: -14 // Bad_Value, Processes: two processes have the name and the module; the service cannot tell which one the handle names.
 ERROR_TEXT :: -15 // Too_Long, Bytes: a text argument is longer than the service takes.
-ERROR_RECORD :: -16 // Absent, Full, Out_Of_Range or Damaged, Input_Histories: no record runs, a record runs already, a step back past the history, or a header that is not valid.
+ERROR_RECORD :: -16 // Absent, Full, Out_Of_Range, Bad_Value or Damaged, Input_Histories: no record runs, a record or a replay runs already, a step back past the history, a module that is not the module of the history, or a header that is not valid.
 ERROR_CHECKPOINT :: -17 // Absent or Exists, Checkpoints: no checkpoint before the point of a step back, or one at this point already.
 
 // The debug object of the module of a disk process, read from the store
@@ -215,6 +220,7 @@ Root_Request :: struct {
 	end:        bool, // The command ends a debug access; else it asks for one.
 	store:      bool, // The command Debug_Store: the connection to the store of the debug object of a disk process.
 	kept:       bool, // With store: the connection is for the stop report that the root service kept, not for a debug access.
+	start:      root_ring.Debug_Start_Step, // Not None: the command Debug_Start with this step (record, replay_start).
 	abandoned:  bool, // No export waits for the completion.
 	unsent:     bool, // The root ring was full: the loop of the entry sends it again.
 }
@@ -260,7 +266,7 @@ refused :: proc "contextless" (error: ^errors.Error_Record, status: system.Statu
 // `kept` too, the connection and the stop report that the root service
 // kept of that process. tag is 0 when the table of the requests is full,
 // or when a command that asks for an access or a connection was not sent.
-root_request_send :: proc "contextless" (name: string, connection_ring: system.Handle, end: bool, store := false, kept := false) -> (tag: u32) {
+root_request_send :: proc "contextless" (name: string, connection_ring: system.Handle, end: bool, store := false, kept := false, start := root_ring.Debug_Start_Step.None) -> (tag: u32) {
 	if requests.head == nil {
 		return 0
 	}
@@ -276,7 +282,7 @@ root_request_send :: proc "contextless" (name: string, connection_ring: system.H
 		return 0
 	}
 	request_count += 1
-	free^ = {tag = request_count, ring = connection_ring, end = end, store = store, kept = kept, abandoned = end}
+	free^ = {tag = request_count, ring = connection_ring, end = end, store = store, kept = kept, start = start, abandoned = end}
 	free.name_count = copy(free.name[:], name)
 	if !root_request_put(free) {
 		if !end {
@@ -291,6 +297,9 @@ root_request_send :: proc "contextless" (name: string, connection_ring: system.H
 // root_request_put writes the command of a request in the root ring.
 root_request_put :: proc "contextless" (request: ^Root_Request) -> bool {
 	packed := system.name_pack(string(request.name[:request.name_count]))
+	if request.start != .None {
+		return system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Debug_Start), tag = request.tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(request.ring), 5 = u64(request.start)}})
+	}
 	command := request.store ? root_ring.Root_Command.Debug_Store : root_ring.Root_Command.Debug
 	return system.send(&requests.commands, ring.Record{kind = u32(command), tag = request.tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(request.ring), 5 = u64(request.end), 6 = u64(request.kept)}})
 }
@@ -336,6 +345,23 @@ root_completion_take :: proc "contextless" (record: ring.Record) {
 					root_request_send(string(request.name[:request.name_count]), request.ring, true, store = true, kept = true)
 				}
 			}
+			return
+		}
+		// A held process that no export waits for any more stops: its
+		// record or its replay never began. A release or an abandon needs
+		// nothing.
+		switch request.start {
+		case .None:
+		case .Start_Held, .Start_Replay:
+			if system.Status(record.kind) == .Ok {
+				handle := system.Handle(record.values[0])
+				if kind, _, through := system.handle_state(handle, requests_memory); kind == .Process && through {
+					system.close(handle)
+				}
+				root_request_send(string(request.name[:request.name_count]), request.ring, true, start = .Abandon)
+			}
+			return
+		case .Release, .Abandon:
 			return
 		}
 		if request.end || system.Status(record.kind) != .Ok {
@@ -436,6 +462,21 @@ root_answer_wait :: proc "contextless" (tag: u32, limit: u64) -> (completion: ri
 	}
 }
 
+// root_debug_start sends one step of Debug_Start to the root service for
+// the caller of the connection with a call ring, and waits for the answer
+// as root_debug does. Abandon is sent with no wait.
+root_debug_start :: proc "contextless" (name: string, connection_ring: system.Handle, step: root_ring.Debug_Start_Step) -> (completion: ring.Record, answered: bool) {
+	if step == .Abandon {
+		root_request_send(name, connection_ring, true, start = .Abandon)
+		return {}, false
+	}
+	tag := root_request_send(name, connection_ring, false, start = step)
+	if tag == 0 {
+		return {}, false
+	}
+	return root_answer_wait(tag, system.time() + ROOT_ANSWER_MILLISECONDS)
+}
+
 // root_debug_end tells the root service that the debugging of a process
 // ended for a caller. It does not wait for the answer.
 root_debug_end :: proc "contextless" (name: string, connection_ring: system.Handle) {
@@ -445,7 +486,9 @@ root_debug_end :: proc "contextless" (name: string, connection_ring: system.Hand
 // slot_find gives the slot of the process with a name whose module records
 // hold the module with a hash: the process that the root service named.
 // `matches` is the count of such processes: the service acts only on one.
-slot_find :: proc "contextless" (name: string, hash: [32]u8) -> (slot: u64, process_serial: u64, matches: int) {
+// held_only counts only the processes that ran no instruction yet: a held
+// start (Debug_Start).
+slot_find :: proc "contextless" (name: string, hash: [32]u8, held_only := false) -> (slot: u64, process_serial: u64, matches: int) {
 	system_report: op.System_Report
 	if !inspect_call(.System, 0, &system_report, size_of(system_report)) {
 		return 0, 0, 0
@@ -453,6 +496,11 @@ slot_find :: proc "contextless" (name: string, hash: [32]u8) -> (slot: u64, proc
 	for candidate in 1 ..< min(system_report.process_slots, PROCESS_SLOTS_SEARCHED) {
 		process: op.Process_Report
 		if !inspect_call(.Process, candidate, &process, size_of(process)) || process.state == .None || process.state == .Stopped || system.name_of(process.name[:]) != name {
+			continue
+		}
+		// A held start has run no instruction: a process of the same name
+		// that runs is another one.
+		if held_only && process.state != .Created {
 			continue
 		}
 		if !inspect_call(.Modules, candidate, &report_modules, size_of(report_modules)) || report_modules.process_serial != process.process_serial {

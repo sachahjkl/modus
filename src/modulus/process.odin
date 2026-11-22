@@ -325,6 +325,16 @@ Thread :: struct #align (64) {
 	// read only by the processor running this thread.
 	replay_return_time:  u64,  // Return value placed in rax on kernel entry return.
 	record_wait_pending: bool, // Pure wait entry deferred until wake so post-wake time and point copies are recorded.
+	// The recorded thread runs its own instructions, between two input
+	// points: its shared writers wait (record_replay.odin). Written and read
+	// only by the processor running this thread.
+	record_outside_point: bool,
+	// The recorded process whose gate counted this thread of a shared writer
+	// as running on its processor, and the generation of that record: the
+	// leave of the processor ends that run (record_replay.odin). 0: none.
+	// Written and read only by the processor running this thread.
+	shared_writer_gate_process:    u32,
+	shared_writer_gate_generation: u64,
 	// Extended-state switch tracking (modulus:extended_switch): generation
 	// bumped on creation, Thread_Control writes, or stop, plus the processor
 	// (1 + index, 0 for none) that last saved this thread's extended state.
@@ -368,6 +378,11 @@ Process :: struct {
 	thread_areas: u32, // Bit n: thread area n is in use.
 	thread_count: u32,
 	has_ports:    bool,
+	// The recorded process whose shared memory this process writes: its
+	// threads run only while the recorded thread is at an input point
+	// (record_replay.odin). 0: none. Written under the control lock (atomic:
+	// the pick of a processor reads it with no lock).
+	shared_writer_of: u32,
 	// The new-thread weight limit of the process (op.Process_Schedule): no
 	// thread of the process creates a thread with a higher weight limit.
 	// 0 is op.WEIGHT_FULL, so a new process, whose record is zero, has the
@@ -1830,6 +1845,7 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 		debug_handler_end(debugged)
 	}
 	taken := process_lock(process_index)
+	record_replay_thread_finished(process_index, index)
 	thread.events = nil
 	thread.record_in_kernel = nil
 	thread.ring = {}
@@ -2003,6 +2019,9 @@ process_cleanup :: proc "contextless" (index: u32) {
 	// before its handles close (events.odin). No process lock is held here.
 	event_table_end_for(index)
 	record_replay_recorder_stopped(index, process.serial)
+	// No thread of this process is on a processor now: a recorded thread
+	// no longer waits for it as a shared writer.
+	record_replay_writer_stopped(index)
 	for &thread, slot in threads[1:] {
 		if thread.process == index && thread.state == .Stopped && !thread.finished {
 			thread_finish(u32(slot + 1), thread.serial)
@@ -2242,6 +2261,11 @@ kernel_interrupt :: proc "c" (frame: ^Frame) {
 				if intrinsics.atomic_load(&waiting.state) == .Waiting && intrinsics.atomic_load(&waiting.deadline) <= now {
 					thread_wake(&waiting, now)
 				}
+			}
+			// The bound of a shared writer that waits for a recorded
+			// thread: one word read when no record has a shared writer.
+			if intrinsics.atomic_load(&shared_writer_recordings) != 0 {
+				shared_writer_wait_bound_check(now)
 			}
 		}
 		// The lines of the log go to the serial port here, not in Log. Each

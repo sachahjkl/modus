@@ -299,6 +299,9 @@ protect_check :: proc "contextless" (process: ^Process, ranges: []op.Address_Ran
 		if record_replay_mapping_has_point_copies(index_of_process(process), mapping) {
 			return mappings, .Bad_State // Point-copied shared pages keep their read-only protection while recorded/replayed.
 		}
+		if .Write in flags && mapping.bits & PAGE_WRITE == 0 && record_replay_write_conflict(index_of_process(process), mapping.region) {
+			return mappings, .Bad_State // A new writer of memory that a recorded process maps would write outside its gate.
+		}
 		// More than the handle permitted when the process mapped the object.
 		if .Write in flags && mapping.limit_bits & PAGE_WRITE == 0 || .Execute in flags && mapping.limit_bits & PAGE_NO_EXECUTE != 0 {
 			return mappings, .Bad_Operation

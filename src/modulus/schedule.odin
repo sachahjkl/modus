@@ -576,6 +576,11 @@ schedule :: proc "contextless" () -> ! {
 			lock_free(&run_queues[target].lock, .Run)
 		}
 		run_unlock(home)
+		// The gate of a recorded process counted this thread of a shared
+		// writer while it ran (record_replay.odin).
+		if thread.shared_writer_gate_process != 0 {
+			shared_writer_run_end(thread)
+		}
 		if displaced {
 			// The thread is in the list of another processor: that
 			// processor, or an idle one of its set, looks at it.
@@ -594,6 +599,13 @@ schedule :: proc "contextless" () -> ! {
 		}
 	}
 	for {
+		// A recorded thread that waits for its writers to leave the
+		// processors left this one: the interrupts that wait come now, with
+		// no thread and no lock held, as in the idle wait.
+		if cpu.record_leave_retry {
+			cpu.record_leave_retry = false
+			interrupt_window()
+		}
 		// A thread that a queue receives after this read is seen below.
 		pushes := queue_pushes()
 		if index := schedule_pick(cpu); index != 0 {
@@ -633,6 +645,13 @@ schedule :: proc "contextless" () -> ! {
 			// thread is the current thread of this processor now.
 			if event_wanted(cpu, OBSERVED_SWITCH, .Switch, thread.process) {
 				event_record(cpu, .Switch, thread.process, thread.number, 0, u64(left_process), u64(left_number))
+			}
+			// One word when no record has a shared writer. A writer that
+			// the gate holds goes back to its queue, where the pick passes
+			// over it until the recorded thread reaches an input point
+			// (record_replay.odin).
+			if intrinsics.atomic_load(&shared_writer_recordings) != 0 && !shared_writer_run_begin(thread) {
+				schedule_on_a_fresh_stack(cpu)
 			}
 			run(cpu, thread)
 		}
@@ -709,6 +728,18 @@ run :: proc "contextless" (cpu: ^Processor, thread: ^Thread) -> ! {
 	}
 	if thread.record_wait_pending {
 		record_wait_wake_completion(cpu, thread)
+	}
+	// A recorded thread leaves its input point: its shared writers stop
+	// first, and their writes enter the history at this point. While a
+	// writer is still on a processor, the thread passes through schedule
+	// and tries again (record_replay.odin). Each try answers a
+	// processor_sync and opens one interrupt window in schedule: the
+	// writer can wait in processor_sync for this processor, and the tick of
+	// the first processor must go on.
+	if intrinsics.atomic_load(&thread.record_mode) == .Recording && !thread.record_outside_point && !record_leave_input_point(cpu, thread) {
+		sync_acknowledge(cpu)
+		cpu.record_leave_retry = true
+		schedule_on_a_fresh_stack(cpu)
 	}
 	if wants_traps := intrinsics.atomic_load(&thread.record_mode) != .None; cpu.record_traps_loaded != wants_traps {
 		if wants_traps {

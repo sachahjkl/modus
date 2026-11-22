@@ -44,7 +44,7 @@ A tool with no grant to inspect the machine reads nothing. It says so in its win
 | `scheduler` | machine, Inspect and Schedule | `Processor_Report`, `System_Report.strategy`, `Thread_Table_Report` (the machine number of its own threads; for the share policy, the threads of each process), `Process_Report` (the run time of each process) |
 | `manual` | machine, Inspect; boot image; replacement table | the flat tables of the modules, `Module_Report` of each slot |
 | `log` | the log records, Read | `op.Log_Record`. It serves `records(after)` and `value_runs(after)`, to each caller in its log scope, and `process_records(process, after)` and `process_value_runs(process, after)`, the records of a process whose handle the caller lends ("Who reads which records") |
-| `debugger` | machine, Inspect; boot image; debug image; the commands `Debug` and `Debug_Store` of the root ring | `Process_Report`, `Module_Report` and `Thread_Table_Report` of the process that it debugs; the registers and the memory of that process through its handle with `Debug` ("The debugger"). It serves the exports of the debugger |
+| `debugger` | machine, Inspect; boot image; debug image; the commands `Debug`, `Debug_Store` and `Debug_Start` of the root ring | `Process_Report`, `Module_Report` and `Thread_Table_Report` of the process that it debugs; the registers and the memory of that process through its handle with `Debug` ("The debugger"). It serves the exports of the debugger |
 | `inspect` | machine, Inspect; boot image; debug image | `Process_Report`, `Module_Report`, and the four reports below, of the process that the principal chooses. It serves `mappings()`, `threads()` and `modules()` |
 
 ## The window of `monitor`
@@ -324,7 +324,7 @@ The code is `src/modules/system/debugger` (the service), `src/library/internal/d
 ### The service
 
 - **Its start.** The root service starts `debugger` when a caller asks for a connection to it: `connect("debugger")`, or the first command of the debugger in the console. It has no window.
-- **Its grants.** Serve (its exports); Debugger (the commands `Debug` and `Debug_Store` of the root ring, and no other command: `Debug_Store` gives a connection that reads only to the store of the debug object of a disk process that the service debugs, or that stopped on a fault, with the stop report that the root service kept of it); Inspect (the thread report and the module report of a process); Debug_Image (the debug objects); Image (the name of each module, from its hash).
+- **Its grants.** Serve (its exports); Debugger (the commands `Debug`, `Debug_Store` and `Debug_Start` of the root ring, and no other command: `Debug_Store` gives a connection that reads only to the store of the debug object of a disk process that the service debugs, or that stopped on a fault, with the stop report that the root service kept of it; `Debug_Start` starts a module for the caller held before its first instruction, under the rule of `Debug`, and lets it run or stops it when the service asks); Inspect (the thread report and the module report of a process); Debug_Image (the debug objects); Image (the name of each module, from its hash).
 - **How it debugs.** The service is the debugger of the process for the kernel: its main thread is the debug handler, so each breakpoint and each single step of the process is a fault record of that thread. It reads the threads and the module records with `Inspect`, the registers and the memory with `Thread_Control`, and the names, the lines, the types and the variables in the debug object of each module, by the hash of the module. It writes no byte in the process.
 - **One process at a time.** The service debugs one process, for one caller. A second `attach` while it does gets the error `Full` (`Debugged_Processes`). Each export but `attach` acts only for the caller that attached.
 - **The end of the debugging.** `detach()`; the end of the connection of the caller, or of the caller; the revocation of the grant `debug` of the caller; the stop of the process. The kernel then removes the breakpoints, clears the trap flag that the debugger wrote, and resumes each thread that the debugger held.
@@ -396,8 +396,10 @@ Each export gives a table, or a negative number with an error record. A caller t
 | `events()` | One row for each stop of a thread since the last call: the thread, the kind (`breakpoint N`, `watch N`, `step`, `int3`, `int1`), the instruction, its module, its procedure, its offset, its file and its line |
 | `wait_stop(milliseconds)` | Wait for the next stop, at most the given time and 3000 ms, then the rows of `events()` |
 | `stop_report(process)` | With no attach: the stop report that the root service kept of a disk process of the principal of the caller that stopped on a fault. One row for each frame: the frame number, the module, the procedure, the offset, the file, the line, and in the row 0 what stopped the process (`MODULE_CONTRACT.md`, "The debug object of a disk process") |
-| `record_start()`, `record_end()` | Ask the kernel to record the process into an input history of 16 pages of the service, which also pays its point copies; end that record. The row of the record |
-| `replay_status()` | The row of the record: its state (`recording`, `ended`), its input points, its bytes, its capacity, why it ended (`process stopped`, `record ended`, `stint bound`, `revocation`, `history full`, `divergence`), its checkpoints |
+| `record(process)` | Start a module of the boot image held before its first instruction (the command `Debug_Start` of the root service, which starts it for the caller as `start` does, under the rule of `attach`), attach to it, record it from that instruction, then let it run. The row of the record. Memory that the process and another process both write is recorded: the other process writes only while the process is at an input point, at most one stint (`src/md/features/record_and_replay.md`) |
+| `record_start()`, `record_end()` | Ask the kernel to record the attached process into an input history of 16 pages of the service, which also pays its point copies and the copies of its shared pages; end that record. The kernel records only a process that did not run: `record` starts one. The row of the record |
+| `replay_start()` | Run the recorded module again from the history: the root service starts it with no start grant, held; the kernel writes the context of the record into it, answers each kernel entry, each read of the cycle counter and each `cpuid` from the history, and stops it at the first difference. A replay sends nothing to any process, so a process that maps memory that it received diverges at that map. The row of the record |
+| `replay_status()` | With no attach: the row of the history of the caller, which stays after the debugging until the next record. Its state (`recording`, `ended`, `replaying`, `replayed`), its input points, its bytes, its capacity, why it ended (`process stopped`, `record ended`, `stint bound`, `revocation`, `history full`, `divergence`), its checkpoints, and the input point of a divergence |
 | `replay_checkpoint(thread)` | A checkpoint of a held thread at the last input point of the record: one row for each checkpoint, its number, its input point, the bytes of the history before it, the instruction and the stack pointer of the thread |
 | `replay_step_back(points)` | The way back by some input points: one row with the nearest checkpoint at or before the target point, its input point, the target point, the input points that a replay runs from it, and the instruction and the stack pointer there |
 
@@ -419,7 +421,7 @@ Each export gives a table, or a negative number with an error record. A caller t
 | The process stopped, or the debug access ended | `Absent`, `Processes` | -13 |
 | Two processes that run have the name and the module | `Bad_Value`, `Processes` | -14 |
 | A text argument is too long | `Too_Long`, `Bytes` | -15 |
-| No record runs or started; a record runs already; a step back of 0 points or past the history; a header of the history that is not valid | `Absent`; `Full`; `Out_Of_Range`; `Damaged`, `Input_Histories` | -16 |
+| No record runs or started; a record or a replay runs already; a step back of 0 points or past the history; the module of the boot image is not the module of the history; a header of the history that is not valid | `Absent`; `Full`; `Out_Of_Range`; `Bad_Value`; `Damaged`, `Input_Histories` | -16 |
 | No checkpoint is at or before the target point; a checkpoint is at this input point already | `Absent`; `Exists`, `Checkpoints` | -17 |
 
 **The stops.** A thread that reaches a breakpoint, that writes watched bytes or that ends a step waits for the debugger: `release`, `step` or `continue_all` lets it run. After an execute breakpoint the instruction of the thread is the one of the breakpoint, which did not run; `release` runs it once, and the breakpoint stays. After a watch and after a step, the instruction is the next one. The service takes each stop when it comes, keeps 32 of them for `events()`, and writes one line of the log. A caller learns of a stop with `wait_stop`, with no loop of `events()`.
@@ -433,6 +435,7 @@ Each export gives a table, or a negative number with an error record. A caller t
 | Export | What it waits for | Bound |
 |---|---|---|
 | `attach` | The answer of the root service | 2000 ms. A later answer is taken when it comes: the service closes the handle and tells the root service that the access ended |
+| `record`, `replay_start` | The answer of the root service to the held start, then to its release | 2000 ms each. A later answer of the start is taken when it comes: the service closes the handle and the root service stops the held process |
 | `stop_report` | The answer of the root service and the read of the debug object, together | 1500 ms. A later answer is taken when it comes: the service closes its handles and tells the root service to end the connection |
 | `step` | The record of one step | 1000 ms |
 | `step_line` | The records of its steps, together | 2000 ms, and 4096 instructions |
@@ -459,7 +462,7 @@ Each command is an export of the service under a short name (`bound_call`, `CONS
 | `step(thread)`, `step_line(thread)`, `step_over(thread)` | The same names | |
 | `debug_memory(place, count)` | `memory` | `memory` gives the memory of the machine |
 | `events()`, `wait_stop(milliseconds)` | The same names | |
-| `record_start()`, `record_end()`, `replay_status()`, `replay_checkpoint(thread)`, `replay_step_back(points)` | The same names | |
+| `record(process)`, `record_start()`, `record_end()`, `replay_start()`, `replay_status()`, `replay_checkpoint(thread)`, `replay_step_back(points)` | The same names | |
 
 A table of the debugger is a table as any other: `columns(stack(0), frame, procedure, line)`, `where(locals(0, 1), name = "total")`.
 

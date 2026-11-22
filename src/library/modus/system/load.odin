@@ -931,9 +931,13 @@ source_closure :: proc "contextless" (source: Load_Source, file: []u8, files: ^[
 //             output log. Its handle slots CONTEXT_WIRING_RING,
 //             CONTEXT_LOG_OUTPUT and CONTEXT_LOG_OUTPUT_END must be 0: only
 //             a wiring fills them. On a failure its outputs are 0.
+//   held_entry: not nil: the process is built whole and held before its
+//             first instruction, and this receives its entry address;
+//             process_release starts it. A debugger records it from that
+//             instruction (src/md/features/record_and_replay.md).
 // The module is at PROCESS_BASE, its imports after it.
 // The process stops when the last handle to it closes.
-process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0, wiring: ^Start_Wiring = nil) -> (process: Handle, status: Status) {
+process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTEXT_HANDLES]Grant, values: [op.CONTEXT_VALUES]u64, amounts: Budget_Amounts, mappings: []Mapping = nil, prepared: ^Prepared_Modules = nil, source: Load_Source = {}, error: ^module.Load_Error = nil, from_budget: Handle = 0, wiring: ^Start_Wiring = nil, held_entry: ^u64 = nil) -> (process: Handle, status: Status) {
 	if len(file) == 0 || module.validate(file) != .None || grants[op.CONTEXT_BUDGET].handle != 0 || grants[op.CONTEXT_WIRING_RING].handle != 0 || grants[op.CONTEXT_LOG_OUTPUT].handle != 0 || grants[op.CONTEXT_LOG_OUTPUT_END].handle != 0 {
 		return 0, .Bad_Operation
 	}
@@ -994,7 +998,11 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 		status = process_fill(process, budget, grants, values, mappings, file, wiring)
 	}
 	if status == .Ok {
-		_, status = call(.Process_Start, u64(process), u64(entry), op.STACK_TOP, op.CONTEXT_ADDRESS)
+		if held_entry != nil {
+			held_entry^ = u64(entry)
+		} else {
+			status = process_release(process, u64(entry))
+		}
 	}
 	if status != .Ok {
 		process_stop(process)
@@ -1011,6 +1019,13 @@ process_start :: proc "contextless" (file: []u8, name: string, grants: [op.CONTE
 		return 0, status
 	}
 	return process, .Ok
+}
+
+// process_release starts a process that process_start built and held
+// before its first instruction, at the entry address that it gave.
+process_release :: proc "contextless" (process: Handle, entry: u64) -> Status {
+	_, status := call(.Process_Start, u64(process), entry, op.STACK_TOP, op.CONTEXT_ADDRESS)
+	return status
 }
 
 @(private)

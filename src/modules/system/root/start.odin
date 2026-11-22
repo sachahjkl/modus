@@ -26,6 +26,13 @@ import terminal "modus:terminal"
 // the largest start grant set uses 7.
 START_MAPPING_LIMIT :: 8
 
+// How a start lets the process run (debug_start.odin).
+Start_Hold :: enum u8 {
+	None                 = 0, // The process runs at once.
+	At_First_Instruction = 1, // The process is held before its first instruction, with its start grants.
+	For_Replay           = 2, // The process is held, with no start grant and no window: a replay sends nothing to any process.
+}
+
 // The work of one start: what the steps of start() build, and the handles
 // of this service that the start closes at its end, whatever its result.
 // The process and the services hold their own copies of those handles.
@@ -68,6 +75,7 @@ Start_Work :: struct {
 	// the completion of the command that asked for the start. A start that
 	// this one starts first writes there too.
 	refusal:        ^[7]u64,
+	hold:           Start_Hold,
 }
 
 // start starts a process of the boot image that shows a surface or has a
@@ -76,8 +84,9 @@ Start_Work :: struct {
 // holds child ends prepared by the delegated wiring service; place, when
 // not nil, receives the place of the process; refusal, when not nil,
 // receives the error record of a refusal that names its cause, which the
-// state after the start no longer shows.
-start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, asker: ^Started = nil, premade_wiring: ^Premade_Start_Wiring = nil, place: ^^Started = nil, refusal: ^[7]u64 = nil, store_override: string = "", store_limit_override: u64 = 0, edit_target_page: system.Handle = 0) -> system.Status {
+// state after the start no longer shows; hold keeps the process before its
+// first instruction for a debugger.
+start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, asker: ^Started = nil, premade_wiring: ^Premade_Start_Wiring = nil, place: ^^Started = nil, refusal: ^[7]u64 = nil, store_override: string = "", store_limit_override: u64 = 0, edit_target_page: system.Handle = 0, hold: Start_Hold = .None) -> system.Status {
 	work := Start_Work {
 		name                 = name,
 		principal            = principal,
@@ -87,6 +96,7 @@ start :: proc "contextless" (name: string, principal: u64 = principals.MACHINE, 
 		store_limit_override = store_limit_override,
 		edit_target_page     = edit_target_page,
 		refusal              = refusal,
+		hold                 = hold,
 	}
 	defer start_handles_close(&work)
 	// The handles of the start are free before any is made: the table of
@@ -163,6 +173,14 @@ start_prepare :: proc "contextless" (work: ^Start_Work) -> system.Status {
 		return .Bad_State
 	}
 	work.start_grant_set = start_grant_set_of(name)
+	// A replay holds no connection, no ring to another process and no
+	// right of the machine (src/md/features/record_and_replay.md, "The
+	// replay"): its start grant set is empty.
+	switch work.hold {
+	case .For_Replay:
+		work.start_grant_set = {}
+	case .None, .At_First_Instruction:
+	}
 	grants := work.start_grant_set.grants
 	// The start policy starts from start_policy_launch only: a second
 	// holder of its root ring would start and stop the processes of the
@@ -420,8 +438,9 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Sta
 		return .Ok
 	}
 	// The start policy has no window (root_ring.start_grant_set_handles), and neither
-	// has the run of `unlock` before it, as no compositor runs yet.
-	if .Start_Policy in work.start_grant_set.grants || unlock_without_window(work.name) {
+	// has the run of `unlock` before it, as no compositor runs yet. A
+	// replay has none: the compositor would write into its ring.
+	if .Start_Policy in work.start_grant_set.grants || unlock_without_window(work.name) || work.hold == .For_Replay {
 		return .Ok
 	}
 	work.shared[0] = system.memory_create(ring.PAGE_COUNT) or_return
@@ -585,7 +604,16 @@ start_process_load :: proc "contextless" (work: ^Start_Work) -> system.Status {
 	// no handle of this service for its budget: the handle table of this
 	// service holds one handle for each process that it keeps one for.
 	work.wiring.keep_budget = root_ring.sender_allowed(.Wire, work.start_grant_set.grants)
-	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, random.values_with_seed(&process_generator, work.values.values), process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring)
+	held_entry: ^u64
+	switch work.hold {
+	case .None:
+	case .At_First_Instruction:
+		held_entry = &work.slot.held_entry
+	case .For_Replay:
+		held_entry = &work.slot.held_entry
+		work.slot.held_for_replay = true
+	}
+	work.slot.process, status = system.process_start(work.file, name, work.grants.grants, random.values_with_seed(&process_generator, work.values.values), process_budget, work.mappings[:work.mapping_count], &prepared, load_source(), &load_error, wiring = &work.wiring, held_entry = held_entry)
 	if status == .Ok {
 		// A process with a window of its own: the compositor ties the time
 		// to the ring of the window that Client_Add gave.
