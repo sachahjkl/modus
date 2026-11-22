@@ -76,10 +76,14 @@ record_encrypt :: proc "contextless" (keys: ^Traffic_Keys, inner_type: Tls_Conte
 	if !keys.active || keys.key_len == 0 {
 		return 0, .Invalid_State
 	}
+	valid_inner, inner_ok := content_type_of_word(u8(inner_type))
+	if !inner_ok {
+		return 0, .Invalid_Content_Type
+	}
 	if keys.sequence_number == max(u64) {
 		return 0, .Sequence_Exhausted
 	}
-	if len(plaintext) > MAX_PLAINTEXT_SIZE || padding_len < 0 {
+	if len(plaintext) > MAX_PLAINTEXT_SIZE || padding_len < 0 || padding_len > MAX_CIPHERTEXT_SIZE {
 		return 0, .Record_Too_Large
 	}
 	inner_len := len(plaintext) + 1 + padding_len
@@ -87,6 +91,7 @@ record_encrypt :: proc "contextless" (keys: ^Traffic_Keys, inner_type: Tls_Conte
 	if cipher_len > MAX_CIPHERTEXT_SIZE {
 		return 0, .Record_Too_Large
 	}
+	_ = valid_inner
 	total := RECORD_HEADER_SIZE + cipher_len
 	if len(out) < total {
 		return 0, .Buffer_Too_Small

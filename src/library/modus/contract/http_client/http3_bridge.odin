@@ -135,10 +135,11 @@ http3_read_frame :: proc "contextless" (data: []u8) -> (frame: Http3_Frame, refu
 	if plen > MAX_BODY_SIZE {
 		return {}, .Body_Too_Large
 	}
-	total := n1 + n2 + int(plen)
-	if len(data) < total {
+	rem := u64(len(data) - n1 - n2)
+	if plen > rem {
 		return {}, .Incomplete
 	}
+	total := n1 + n2 + int(plen)
 	return Http3_Frame{
 		frame_type = ft,
 		payload    = data[n1 + n2 : total],
@@ -171,11 +172,42 @@ qpack_write_literal_field :: proc "contextless" (name: []u8, value: []u8, out: [
 	return true
 }
 
+@(private = "file")
+has_uppercase_ascii :: proc "contextless" (bytes: []u8) -> bool {
+	for b in bytes {
+		if b >= 'A' && b <= 'Z' {
+			return true
+		}
+	}
+	return false
+}
+
+@(private = "file")
+is_valid_http3_scheme :: proc "contextless" (scheme: []u8) -> (ok: bool, injection: bool) {
+	if has_crlf_or_nul(scheme) {
+		return false, true
+	}
+	if len(scheme) == 4 && scheme[0] == 'h' && scheme[1] == 't' && scheme[2] == 't' && scheme[3] == 'p' {
+		return true, false
+	}
+	if len(scheme) == 5 && scheme[0] == 'h' && scheme[1] == 't' && scheme[2] == 't' && scheme[3] == 'p' && scheme[4] == 's' {
+		return true, false
+	}
+	return false, false
+}
+
 // http3_encode_request encodes an HTTP request into HTTP/3 HEADERS (+ optional DATA) frames.
 http3_encode_request :: proc "contextless" (method: Http_Method, scheme: string, authority: string, path: string, headers: []Http_Header_Input, body: []u8, out: []u8) -> (written: int, refusal: Http_Parse_Refusal) {
 	m, m_ok := http_method_of_word(u8(method))
 	if !m_ok {
 		return 0, .Invalid_Method
+	}
+	scheme_ok, scheme_inj := is_valid_http3_scheme(transmute([]u8)scheme)
+	if scheme_inj {
+		return 0, .Header_Injection
+	}
+	if !scheme_ok {
+		return 0, .Invalid_Scheme
 	}
 	auth_ok, auth_inj := is_valid_host(transmute([]u8)authority)
 	if auth_inj {
@@ -210,7 +242,7 @@ http3_encode_request :: proc "contextless" (method: Http_Method, scheme: string,
 		if has_crlf_or_nul(nbytes) || has_crlf_or_nul(vbytes) {
 			return 0, .Header_Injection
 		}
-		if !is_valid_header_name(nbytes) || !is_valid_header_value(vbytes) {
+		if !is_valid_header_name(nbytes) || has_uppercase_ascii(nbytes) || !is_valid_header_value(vbytes) {
 			return 0, .Malformed_Header
 		}
 		if ascii_equal_ci(nbytes, "transfer-encoding") {
@@ -261,7 +293,7 @@ http3_encode_response :: proc "contextless" (status_code: u16, headers: []Http_H
 		if has_crlf_or_nul(nbytes) || has_crlf_or_nul(vbytes) {
 			return 0, .Header_Injection
 		}
-		if !is_valid_header_name(nbytes) || !is_valid_header_value(vbytes) {
+		if !is_valid_header_name(nbytes) || has_uppercase_ascii(nbytes) || !is_valid_header_value(vbytes) {
 			return 0, .Malformed_Header
 		}
 		if ascii_equal_ci(nbytes, "transfer-encoding") {
@@ -301,18 +333,22 @@ http3_decode_response :: proc "contextless" (stream: []u8, head_out: ^Http_Respo
 		return 0, .Malformed_Frame
 	}
 	q := hdr_frame.payload
+	if len(q) > MAX_HEADER_BLOCK_SIZE {
+		return 0, .Header_Too_Large
+	}
 	if len(q) < 2 || q[0] != 0 || q[1] != 0 {
 		return 0, .Malformed_Header
 	}
 	qpos := 2
 	has_status := false
+	seen_regular_header := false
 	for qpos < len(q) {
 		if q[qpos] != 0x20 {
 			return 0, .Malformed_Header
 		}
 		qpos += 1
 		nlen, c1, ok1 := quic_varint_decode(q[qpos:])
-		if !ok1 || qpos + c1 + int(nlen) > len(q) {
+		if !ok1 || nlen == 0 || nlen > MAX_HEADER_NAME_LEN || nlen > u64(len(q) - qpos - c1) {
 			return 0, .Malformed_Header
 		}
 		qpos += c1
@@ -320,7 +356,7 @@ http3_decode_response :: proc "contextless" (stream: []u8, head_out: ^Http_Respo
 		qpos += int(nlen)
 
 		vlen, c2, ok2 := quic_varint_decode(q[qpos:])
-		if !ok2 || qpos + c2 + int(vlen) > len(q) {
+		if !ok2 || vlen > MAX_HEADER_VALUE_LEN || vlen > u64(len(q) - qpos - c2) {
 			return 0, .Malformed_Header
 		}
 		qpos += c2
@@ -330,7 +366,17 @@ http3_decode_response :: proc "contextless" (stream: []u8, head_out: ^Http_Respo
 		if has_crlf_or_nul(name) || has_crlf_or_nul(val) {
 			return 0, .Header_Injection
 		}
-		if ascii_equal_ci(name, ":status") {
+		// RFC 9114 section 4.2: field names and pseudo-headers must be strictly lowercase.
+		if has_uppercase_ascii(name) {
+			return 0, .Malformed_Header
+		}
+		if name[0] == ':' {
+			if seen_regular_header || len(name) != 7 || string(name) != ":status" {
+				return 0, .Malformed_Header
+			}
+			if has_status {
+				return 0, .Malformed_Header
+			}
 			if len(val) != 3 {
 				return 0, .Invalid_Status_Code
 			}
@@ -342,11 +388,26 @@ http3_decode_response :: proc "contextless" (stream: []u8, head_out: ^Http_Respo
 			has_status = true
 			continue
 		}
+		seen_regular_header = true
 		if !is_valid_header_name(name) || !is_valid_header_value(val) {
 			return 0, .Malformed_Header
 		}
 		if ascii_equal_ci(name, "transfer-encoding") {
 			return 0, .Unsupported_Transfer_Encoding
+		}
+		if ascii_equal_ci(name, "content-length") {
+			cl_val, cl_ok := parse_decimal_u64(trim_ows(val))
+			if !cl_ok || cl_val > MAX_BODY_SIZE {
+				return 0, .Invalid_Content_Length
+			}
+			if head_out.has_content_length {
+				if cl_val != head_out.content_length {
+					return 0, .Conflicting_Content_Length
+				}
+			} else {
+				head_out.has_content_length = true
+				head_out.content_length = cl_val
+			}
 		}
 		if head_out.header_count >= MAX_HEADERS {
 			return 0, .Too_Many_Headers
@@ -362,7 +423,9 @@ http3_decode_response :: proc "contextless" (stream: []u8, head_out: ^Http_Respo
 		return 0, .Invalid_Status_Code
 	}
 
+	// Only DATA frames may follow the response HEADERS frame on a request stream.
 	pos := hdr_frame.total_size
+	cumulative_data: u64 = 0
 	out_pos := 0
 	for pos < len(stream) {
 		f, rf := http3_read_frame(stream[pos:])
@@ -370,13 +433,22 @@ http3_decode_response :: proc "contextless" (stream: []u8, head_out: ^Http_Respo
 			return 0, rf
 		}
 		pos += f.total_size
-		if f.frame_type == .Data {
-			if out_pos + len(f.payload) > len(body_out) {
-				return 0, .Buffer_Too_Small
-			}
-			copy(body_out[out_pos:], f.payload)
-			out_pos += len(f.payload)
+		if f.frame_type != .Data {
+			return 0, .Malformed_Frame
 		}
+		if u64(len(f.payload)) > MAX_BODY_SIZE - cumulative_data {
+			return 0, .Body_Too_Large
+		}
+		cumulative_data += u64(len(f.payload))
+		if out_pos + len(f.payload) > len(body_out) {
+			return 0, .Buffer_Too_Small
+		}
+		copy(body_out[out_pos:], f.payload)
+		out_pos += len(f.payload)
+	}
+
+	if head_out.has_content_length && !is_bodiless_status(head_out.status_code) && cumulative_data != head_out.content_length {
+		return 0, .Content_Length_Mismatch
 	}
 	return out_pos, .None
 }

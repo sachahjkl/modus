@@ -571,3 +571,179 @@ test_small_order_key_share_and_hello_retry_refused :: proc(t: ^testing.T) {
 	}
 }
 
+@(test)
+test_record_encrypt_padding_overflow_and_inner_type_border :: proc(t: ^testing.T) {
+	secret := [HASH_SIZE]u8{
+		1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+		17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+	}
+	keys: Traffic_Keys
+	testing.expect_value(t, derive_traffic_keys(.TLS_AES_128_GCM_SHA256, secret[:], &keys), Tls_Refusal.None)
+
+	out := make([]u8, 256)
+	defer delete(out)
+	msg := transmute([]u8)string("hi")
+
+	// Signed int overflow attempt with padding_len = max(int).
+	_, ref := record_encrypt(&keys, .Application_Data, msg, max(int), out)
+	testing.expect_value(t, ref, Tls_Refusal.Record_Too_Large)
+	_, ref = record_encrypt(&keys, .Application_Data, msg, -1, out)
+	testing.expect_value(t, ref, Tls_Refusal.Record_Too_Large)
+
+	// Invalid inner_type words refused at border.
+	_, ref = record_encrypt(&keys, Tls_Content_Type(0), msg, 0, out)
+	testing.expect_value(t, ref, Tls_Refusal.Invalid_Content_Type)
+	_, ref = record_encrypt(&keys, Tls_Content_Type(99), msg, 0, out)
+	testing.expect_value(t, ref, Tls_Refusal.Invalid_Content_Type)
+}
+
+@(test)
+test_eager_secret_erasure_after_handshake :: proc(t: ^testing.T) {
+	client_cfg, server_cfg := make_test_configs(.TLS_CHACHA20_POLY1305_SHA256, true)
+	client := new(Tls_Session)
+	server := new(Tls_Session)
+	defer free(client)
+	defer free(server)
+
+	testing.expect_value(t, tls_session_init(client, &client_cfg), Tls_Refusal.None)
+	testing.expect_value(t, tls_session_init(server, &server_cfg), Tls_Refusal.None)
+	testing.expect_value(t, tls_client_start(client), Tls_Refusal.None)
+	testing.expect_value(t, pump_stream(client, server, 0), Tls_Refusal.None)
+
+	// Server must have already erased ephemeral X25519 key, Ed25519 signing key, and key schedule!
+	testing.expect(t, is_all_zero(server.config.ephemeral_private_key[:]), "server ephemeral key must be erased after shared secret")
+	testing.expect(t, is_all_zero(server.config.server_ed25519_private_key[:]), "server Ed25519 key must be erased after CertificateVerify")
+	testing.expect(t, is_all_zero(server.schedule.handshake_secret[:]), "server handshake secret must be erased")
+	testing.expect(t, is_all_zero(server.schedule.master_secret[:]), "server master secret must be erased")
+
+	testing.expect_value(t, pump_stream(server, client, 0), Tls_Refusal.None)
+	testing.expect(t, is_all_zero(client.config.ephemeral_private_key[:]), "client ephemeral key must be erased after shared secret")
+	testing.expect(t, is_all_zero(client.schedule.handshake_secret[:]), "client handshake secret must be erased")
+	testing.expect(t, is_all_zero(client.schedule.master_secret[:]), "client master secret must be erased")
+
+	testing.expect_value(t, pump_stream(client, server, 0), Tls_Refusal.None)
+	testing.expect(t, is_all_zero(server.expected_client_finished[:]), "server expected_client_finished must be erased")
+	testing.expect(t, !server.pending_recv_app_keys.active, "server pending_recv_app_keys must be erased")
+}
+
+@(test)
+test_strict_handshake_framing_ccs_sid_compression_and_ee :: proc(t: ^testing.T) {
+	// 1. Server refuses CCS before ClientHello.
+	{
+		_, server_cfg := make_test_configs(.TLS_AES_128_GCM_SHA256, true)
+		server := new(Tls_Session)
+		defer free(server)
+		testing.expect_value(t, tls_session_init(server, &server_cfg), Tls_Refusal.None)
+		ccs := [6]u8{u8(Tls_Content_Type.Change_Cipher_Spec), 0x03, 0x03, 0x00, 0x01, 0x01}
+		testing.expect_value(t, tls_feed_incoming(server, ccs[:]), Tls_Refusal.Malformed_Message)
+	}
+
+	// 2. Client allows at most one CCS during handshake and refuses a second CCS.
+	{
+		client_cfg, _ := make_test_configs(.TLS_AES_128_GCM_SHA256, true)
+		client := new(Tls_Session)
+		defer free(client)
+		testing.expect_value(t, tls_session_init(client, &client_cfg), Tls_Refusal.None)
+		testing.expect_value(t, tls_client_start(client), Tls_Refusal.None)
+		ccs := [6]u8{u8(Tls_Content_Type.Change_Cipher_Spec), 0x03, 0x03, 0x00, 0x01, 0x01}
+		testing.expect_value(t, tls_feed_incoming(client, ccs[:]), Tls_Refusal.None)
+		testing.expect_value(t, tls_feed_incoming(client, ccs[:]), Tls_Refusal.Malformed_Message)
+	}
+
+	// 3. Server refuses ClientHello with multiple compression methods ([0x00, 0x01]).
+	{
+		client_cfg, server_cfg := make_test_configs(.TLS_AES_128_GCM_SHA256, true)
+		client := new(Tls_Session)
+		server := new(Tls_Session)
+		defer free(client)
+		defer free(server)
+		testing.expect_value(t, tls_session_init(client, &client_cfg), Tls_Refusal.None)
+		testing.expect_value(t, tls_session_init(server, &server_cfg), Tls_Refusal.None)
+		testing.expect_value(t, tls_client_start(client), Tls_Refusal.None)
+
+		wire := make([]u8, 1024)
+		mut := make([]u8, 1024)
+		defer delete(wire)
+		defer delete(mut)
+		n := tls_take_outgoing(client, wire)
+		// Locate compression_methods byte right after 5 (rec) + 4 (hs) + 2 (ver) + 32 (rand) + 1 (sid_len=0) + 2 (cs_len=2) + 2 (cs) = 48.
+		comp_off := 48
+		testing.expect_value(t, wire[comp_off], u8(1))
+		testing.expect_value(t, wire[comp_off + 1], u8(0))
+		copy(mut[:comp_off], wire[:comp_off])
+		mut[comp_off] = 2
+		mut[comp_off + 1] = 0
+		mut[comp_off + 2] = 1
+		copy(mut[comp_off + 3:], wire[comp_off + 2:n])
+		new_len := n + 1
+		// Update record length and handshake body length.
+		byte_order.write_u16_big_endian(mut, 3, u16(new_len - RECORD_HEADER_SIZE))
+		hs_body := new_len - RECORD_HEADER_SIZE - HANDSHAKE_HEADER_SIZE
+		mut[6] = u8((hs_body >> 16) & 0xFF)
+		mut[7] = u8((hs_body >> 8) & 0xFF)
+		mut[8] = u8(hs_body & 0xFF)
+		testing.expect_value(t, tls_feed_incoming(server, mut[:new_len]), Tls_Refusal.Malformed_Message)
+	}
+
+	// 4. Client refuses ServerHello echoing a non-empty session_id when client sent empty session_id.
+	{
+		client_cfg, _ := make_test_configs(.TLS_AES_128_GCM_SHA256, true)
+		client := new(Tls_Session)
+		defer free(client)
+		testing.expect_value(t, tls_session_init(client, &client_cfg), Tls_Refusal.None)
+		testing.expect_value(t, tls_client_start(client), Tls_Refusal.None)
+
+		sh: [128]u8
+		pos := HANDSHAKE_HEADER_SIZE
+		byte_order.write_u16_big_endian(sh[:], pos, TLS_LEGACY_VERSION)
+		pos += 2
+		for i := 0; i < 32; i += 1 { sh[pos + i] = u8(0x33) }
+		pos += 32
+		sh[pos] = 1 // non-empty session id!
+		sh[pos + 1] = 0xAA
+		pos += 2
+		byte_order.write_u16_big_endian(sh[:], pos, u16(Tls_Cipher_Suite.TLS_AES_128_GCM_SHA256))
+		pos += 2
+		sh[pos] = 0
+		pos += 1
+		byte_order.write_u16_big_endian(sh[:], pos, 0)
+		pos += 2
+		sh[0] = u8(Tls_Handshake_Type.Server_Hello)
+		blen := pos - HANDSHAKE_HEADER_SIZE
+		sh[1] = 0; sh[2] = u8((blen >> 8) & 0xFF); sh[3] = u8(blen & 0xFF)
+		rec: [160]u8
+		rn, _ := record_write_plaintext(.Handshake, sh[:pos], rec[:])
+		testing.expect_value(t, tls_feed_incoming(client, rec[:rn]), Tls_Refusal.Malformed_Message)
+	}
+
+	// 5. Client refuses EncryptedExtensions containing a malformed/truncated extension.
+	{
+		client_cfg, server_cfg := make_test_configs(.TLS_AES_128_GCM_SHA256, true)
+		client := new(Tls_Session)
+		server := new(Tls_Session)
+		defer free(client)
+		defer free(server)
+		testing.expect_value(t, tls_session_init(client, &client_cfg), Tls_Refusal.None)
+		testing.expect_value(t, tls_session_init(server, &server_cfg), Tls_Refusal.None)
+		testing.expect_value(t, tls_client_start(client), Tls_Refusal.None)
+		testing.expect_value(t, pump_stream(client, server, 0), Tls_Refusal.None)
+
+		wire := make([]u8, MAX_WIRE_BUFFER)
+		defer delete(wire)
+		_ = tls_take_outgoing(server, wire)
+		sh_len := RECORD_HEADER_SIZE + int(byte_order.read_u16_big_endian(wire, 3))
+		testing.expect_value(t, tls_feed_incoming(client, wire[:sh_len]), Tls_Refusal.None)
+		testing.expect_value(t, client.state, Tls_State.Client_Wait_Encrypted_Extensions)
+
+		// Forge an encrypted EncryptedExtensions carrying a truncated 2-byte extension block (invalid framing).
+		bad_ee := [8]u8{u8(Tls_Handshake_Type.Encrypted_Extensions), 0, 0, 4, 0, 2, 0xFF, 0xFF}
+		enc_keys := client.recv_keys
+		forged := make([]u8, 128)
+		defer delete(forged)
+		fn, eref := record_encrypt(&enc_keys, .Handshake, bad_ee[:], 0, forged)
+		testing.expect_value(t, eref, Tls_Refusal.None)
+		testing.expect_value(t, tls_feed_incoming(client, forged[:fn]), Tls_Refusal.Malformed_Message)
+	}
+}
+
+

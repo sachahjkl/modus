@@ -29,9 +29,12 @@ Tls_Session :: struct {
 	peer_server_name: [MAX_SERVER_NAME_LEN]u8,
 	peer_server_name_len: int,
 
-	schedule:  Key_Schedule,
-	send_keys: Traffic_Keys,
-	recv_keys: Traffic_Keys,
+	schedule:                 Key_Schedule,
+	send_keys:                Traffic_Keys,
+	recv_keys:                Traffic_Keys,
+	pending_recv_app_keys:    Traffic_Keys,
+	expected_client_finished: [HASH_SIZE]u8,
+	ccs_received:             u8,
 
 	transcript:     [MAX_TRANSCRIPT_SIZE]u8,
 	transcript_len: int,
@@ -56,6 +59,8 @@ tls_session_erase_secrets :: proc "contextless" (session: ^Tls_Session) {
 	key_schedule_erase(&session.schedule)
 	traffic_keys_erase(&session.send_keys)
 	traffic_keys_erase(&session.recv_keys)
+	traffic_keys_erase(&session.pending_recv_app_keys)
+	erase_bytes(session.expected_client_finished[:])
 }
 
 // tls_session_init validates configuration and prepares a client or server session.
@@ -293,11 +298,17 @@ queue_encrypted_record :: proc "contextless" (session: ^Tls_Session, inner_type:
 process_incoming_record :: proc "contextless" (session: ^Tls_Session, header: Record_Header, full_record: []u8) -> Tls_Refusal {
 	payload := full_record[RECORD_HEADER_SIZE:]
 
-	// Middlebox compatibility ChangeCipherSpec is ignored during an active handshake (RFC 8446 section 5).
+	// Middlebox compatibility ChangeCipherSpec is ignored once during an active handshake (RFC 8446 section 5).
 	if header.content_type == .Change_Cipher_Spec {
-		if session.state == .Connected || session.state == .Initial || len(payload) != 1 || payload[0] != 0x01 {
+		in_handshake := session.state != .Initial &&
+			session.state != .Server_Wait_Client_Hello &&
+			session.state != .Connected &&
+			session.state != .Closed &&
+			session.state != .Failed
+		if !in_handshake || session.handshake_len > 0 || session.ccs_received >= 1 || len(payload) != 1 || payload[0] != 0x01 {
 			return fail_session(session, .Malformed_Message)
 		}
+		session.ccs_received += 1
 		return .None
 	}
 
@@ -316,12 +327,13 @@ process_incoming_record :: proc "contextless" (session: ^Tls_Session, header: Re
 		if dec_ref != .None {
 			return fail_session(session, dec_ref)
 		}
+		defer erase_bytes(plain_buf[:plain_len])
 		plain := plain_buf[:plain_len]
 		switch inner_type {
 		case .Handshake:
 			return ingest_handshake_bytes(session, plain)
 		case .Application_Data:
-			if session.state != .Connected {
+			if session.state != .Connected || session.handshake_len > 0 {
 				return fail_session(session, .Invalid_State)
 			}
 			if session.app_len + plain_len > MAX_APP_BUFFER {
@@ -722,22 +734,13 @@ handle_client_hello :: proc "contextless" (session: ^Tls_Session, raw_msg: []u8,
 		return fail_session(session, .Unsupported_Cipher_Suite)
 	}
 
-	// Compression methods must contain null (0x00).
+	// RFC 8446 section 4.1.2: legacy_compression_methods must be a single null byte [0x00].
 	if pos >= len(body) {
 		return fail_session(session, .Malformed_Message)
 	}
 	comp_len := int(body[pos])
 	pos += 1
-	if comp_len < 1 || pos + comp_len > len(body) {
-		return fail_session(session, .Malformed_Message)
-	}
-	has_null_comp := false
-	for i := 0; i < comp_len; i += 1 {
-		if body[pos + i] == 0 {
-			has_null_comp = true
-		}
-	}
-	if !has_null_comp {
+	if comp_len != 1 || pos + comp_len > len(body) || body[pos] != 0 {
 		return fail_session(session, .Malformed_Message)
 	}
 	pos += comp_len
@@ -898,6 +901,7 @@ handle_client_hello :: proc "contextless" (session: ^Tls_Session, raw_msg: []u8,
 	if r := x25519_scalar_mult(session.config.ephemeral_private_key[:], client_pub_key[:], &shared_secret); r != .None {
 		return fail_session(session, r)
 	}
+	erase_bytes(session.config.ephemeral_private_key[:])
 
 	// 1. ServerHello (plaintext).
 	sh_buf: [256]u8
@@ -957,6 +961,7 @@ handle_client_hello :: proc "contextless" (session: ^Tls_Session, raw_msg: []u8,
 	if r := ed25519_sign_transcript(session.config.server_ed25519_private_key[:], cert_hash[:], &sig); r != .None {
 		return fail_session(session, r)
 	}
+	erase_bytes(session.config.server_ed25519_private_key[:])
 	cv_buf: [128]u8
 	cv_len := build_certificate_verify(sig[:], cv_buf[:])
 	if r := append_transcript(session, cv_buf[:cv_len]); r != .None {
@@ -984,7 +989,7 @@ handle_client_hello :: proc "contextless" (session: ^Tls_Session, raw_msg: []u8,
 		return fail_session(session, r)
 	}
 
-	// Derive application secrets from transcript through server Finished and switch server send keys.
+	// Derive application secrets and precompute expected client Finished so the key schedule can be erased immediately.
 	sf_hash: [HASH_SIZE]u8
 	if !sha256_hash(session.transcript[:session.transcript_len], &sf_hash) {
 		return fail_session(session, .Crypto_Failed)
@@ -995,6 +1000,13 @@ handle_client_hello :: proc "contextless" (session: ^Tls_Session, raw_msg: []u8,
 	if r := derive_traffic_keys(chosen_suite, session.schedule.server_application_traffic[:], &session.send_keys); r != .None {
 		return fail_session(session, r)
 	}
+	if r := derive_traffic_keys(chosen_suite, session.schedule.client_application_traffic[:], &session.pending_recv_app_keys); r != .None {
+		return fail_session(session, r)
+	}
+	if r := compute_finished_verify_data(session.schedule.client_handshake_traffic[:], sf_hash[:], &session.expected_client_finished); r != .None {
+		return fail_session(session, r)
+	}
+	key_schedule_erase(&session.schedule)
 
 	session.state = .Server_Wait_Client_Finished
 	return .None
@@ -1025,12 +1037,12 @@ handle_server_hello :: proc "contextless" (session: ^Tls_Session, raw_msg: []u8,
 		return fail_session(session, .Downgrade_Refused)
 	}
 
+	// Client sent an empty legacy_session_id, so ServerHello must echo length 0.
 	sid_len := int(body[pos])
 	pos += 1
-	if sid_len > 32 || pos + sid_len + 3 > len(body) {
+	if sid_len != 0 || pos + 3 > len(body) {
 		return fail_session(session, .Malformed_Message)
 	}
-	pos += sid_len
 
 	suite_word := byte_order.read_u16_big_endian(body, pos)
 	pos += 2
@@ -1134,6 +1146,7 @@ handle_server_hello :: proc "contextless" (session: ^Tls_Session, raw_msg: []u8,
 	if r := x25519_scalar_mult(session.config.ephemeral_private_key[:], server_pub_key[:], &shared_secret); r != .None {
 		return fail_session(session, r)
 	}
+	erase_bytes(session.config.ephemeral_private_key[:])
 
 	hello_hash: [HASH_SIZE]u8
 	if !sha256_hash(session.transcript[:session.transcript_len], &hello_hash) {
@@ -1158,9 +1171,49 @@ handle_encrypted_extensions :: proc "contextless" (session: ^Tls_Session, raw_ms
 	if len(body) < 2 {
 		return fail_session(session, .Malformed_Message)
 	}
-	ext_len := int(byte_order.read_u16_big_endian(body, 0))
-	if 2 + ext_len != len(body) {
+	ext_total := int(byte_order.read_u16_big_endian(body, 0))
+	if 2 + ext_total != len(body) {
 		return fail_session(session, .Malformed_Message)
+	}
+	pos := 2
+	end := 2 + ext_total
+	seen_exts: [16]u16
+	seen_count := 0
+	for pos < end {
+		if pos + 4 > end {
+			return fail_session(session, .Malformed_Message)
+		}
+		ext_word := byte_order.read_u16_big_endian(body, pos)
+		el := int(byte_order.read_u16_big_endian(body, pos + 2))
+		pos += 4
+		if pos + el > end {
+			return fail_session(session, .Malformed_Message)
+		}
+		for k := 0; k < seen_count; k += 1 {
+			if seen_exts[k] == ext_word {
+				return fail_session(session, .Duplicate_Extension)
+			}
+		}
+		if seen_count >= len(seen_exts) {
+			return fail_session(session, .Malformed_Message)
+		}
+		seen_exts[seen_count] = ext_word
+		seen_count += 1
+		pos += el
+
+		ext_type, known := extension_type_of_word(ext_word)
+		if !known {
+			return fail_session(session, .Malformed_Message)
+		}
+		switch ext_type {
+		case .Server_Name:
+			// RFC 6066: server_name extension in EncryptedExtensions must be empty and only sent if client sent SNI.
+			if session.config.server_name_len == 0 || el != 0 {
+				return fail_session(session, .Malformed_Message)
+			}
+		case .Supported_Groups, .Signature_Algorithms, .Supported_Versions, .Key_Share:
+			return fail_session(session, .Malformed_Message)
+		}
 	}
 	if r := append_transcript(session, raw_msg); r != .None {
 		return fail_session(session, r)
@@ -1275,13 +1328,14 @@ handle_server_finished :: proc "contextless" (session: ^Tls_Session, raw_msg: []
 		return fail_session(session, r)
 	}
 
-	// Switch both client send and receive keys to application traffic keys.
+	// Switch both client send and receive keys to application traffic keys, then erase the key schedule.
 	if r := derive_traffic_keys(session.negotiated_suite, session.schedule.client_application_traffic[:], &session.send_keys); r != .None {
 		return fail_session(session, r)
 	}
 	if r := derive_traffic_keys(session.negotiated_suite, session.schedule.server_application_traffic[:], &session.recv_keys); r != .None {
 		return fail_session(session, r)
 	}
+	key_schedule_erase(&session.schedule)
 
 	session.state = .Connected
 	return .None
@@ -1292,25 +1346,16 @@ handle_client_finished :: proc "contextless" (session: ^Tls_Session, raw_msg: []
 	if len(body) != HASH_SIZE {
 		return fail_session(session, .Invalid_Finished)
 	}
-	// Verify client Finished against transcript through server Finished.
-	sf_hash: [HASH_SIZE]u8
-	if !sha256_hash(session.transcript[:session.transcript_len], &sf_hash) {
-		return fail_session(session, .Crypto_Failed)
-	}
-	expected: [HASH_SIZE]u8
-	if r := compute_finished_verify_data(session.schedule.client_handshake_traffic[:], sf_hash[:], &expected); r != .None {
-		return fail_session(session, r)
-	}
-	if !constant_time_equal(body, expected[:]) {
+	if !constant_time_equal(body, session.expected_client_finished[:]) {
 		return fail_session(session, .Invalid_Finished)
 	}
+	erase_bytes(session.expected_client_finished[:])
 
 	if r := append_transcript(session, raw_msg); r != .None {
 		return fail_session(session, r)
 	}
-	if r := derive_traffic_keys(session.negotiated_suite, session.schedule.client_application_traffic[:], &session.recv_keys); r != .None {
-		return fail_session(session, r)
-	}
+	session.recv_keys = session.pending_recv_app_keys
+	traffic_keys_erase(&session.pending_recv_app_keys)
 
 	session.state = .Connected
 	return .None

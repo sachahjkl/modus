@@ -52,6 +52,8 @@ Http_Parse_Refusal :: enum u8 {
 	Buffer_Too_Small              = 20,
 	Forbidden_H2_Frame            = 21,
 	Malformed_Frame               = 22,
+	Invalid_Scheme                = 23,
+	Content_Length_Mismatch       = 24,
 }
 
 // A borrowed header name/value pair for request encoding.
@@ -290,8 +292,9 @@ encode_request :: proc "contextless" (method: Http_Method, host: string, target:
 	}
 
 	// Validate every caller header before writing a single byte.
-	has_cl := len(body) > 0
-	has_te := false
+	// Framing headers (Host, Content-Length, Transfer-Encoding) are owned solely by the encoder.
+	extra_has_cl := false
+	extra_has_te := false
 	for hdr in extra_headers {
 		nbytes := transmute([]u8)hdr.name
 		vbytes := transmute([]u8)hdr.value
@@ -305,14 +308,20 @@ encode_request :: proc "contextless" (method: Http_Method, host: string, target:
 			return 0, .Malformed_Header
 		}
 		if ascii_equal_ci(nbytes, "content-length") {
-			has_cl = true
+			extra_has_cl = true
 		}
 		if ascii_equal_ci(nbytes, "transfer-encoding") {
-			has_te = true
+			extra_has_te = true
 		}
 	}
-	if has_cl && has_te {
+	if (extra_has_cl || len(body) > 0) && extra_has_te {
 		return 0, .Smuggling_Cl_And_Te
+	}
+	if extra_has_te {
+		return 0, .Unsupported_Transfer_Encoding
+	}
+	if extra_has_cl {
+		return 0, .Conflicting_Content_Length
 	}
 
 	pos := 0
@@ -334,9 +343,6 @@ encode_request :: proc "contextless" (method: Http_Method, host: string, target:
 	}
 
 	for hdr in extra_headers {
-		if len(body) > 0 && ascii_equal_ci(transmute([]u8)hdr.name, "content-length") {
-			return 0, .Conflicting_Content_Length
-		}
 		if !append_str(out, &pos, hdr.name) ||
 		   !append_str(out, &pos, ": ") ||
 		   !append_str(out, &pos, hdr.value) ||
@@ -392,6 +398,11 @@ find_crlf :: proc "contextless" (data: []u8, start: int) -> (line_end: int, refu
 		}
 	}
 	return 0, .Incomplete
+}
+
+// is_bodiless_status returns true for HTTP status codes that carry no message body on the wire (RFC 9112 section 6.3).
+is_bodiless_status :: proc "contextless" (code: u16) -> bool {
+	return (code >= 100 && code <= 199) || code == 204 || code == 304
 }
 
 // parse_response_head parses an HTTP/1.1 or HTTP/1.0 response status line and headers strictly.
@@ -535,6 +546,9 @@ parse_response_head :: proc "contextless" (raw: []u8, head_out: ^Http_Response_H
 				}
 			}
 		} else if ascii_equal_ci(name, "transfer-encoding") {
+			if head_out.version == .Http_1_0 || (head_out.status_code >= 100 && head_out.status_code <= 199) || head_out.status_code == 204 {
+				return .Unsupported_Transfer_Encoding
+			}
 			if head_out.has_content_length {
 				return .Smuggling_Cl_And_Te
 			}
@@ -555,6 +569,11 @@ parse_response_head :: proc "contextless" (raw: []u8, head_out: ^Http_Response_H
 		}
 
 		pos = next_end + 2
+	}
+
+	// Body-bearing responses without Content-Length or Transfer-Encoding are close-delimited (RFC 9112 section 6.3).
+	if !is_bodiless_status(head_out.status_code) && !head_out.has_content_length && !head_out.is_chunked {
+		head_out.connection_close = true
 	}
 
 	return .None
@@ -670,6 +689,9 @@ decode_chunked_body :: proc "contextless" (raw: []u8, out: []u8) -> (decoded_len
 parse_response :: proc "contextless" (raw: []u8, head_out: ^Http_Response_Head, body_out: []u8) -> (body_len: int, total_consumed: int, refusal: Http_Parse_Refusal) {
 	if r := parse_response_head(raw, head_out); r != .None {
 		return 0, 0, r
+	}
+	if is_bodiless_status(head_out.status_code) {
+		return 0, head_out.head_size, .None
 	}
 	body_raw := raw[head_out.head_size:]
 	if head_out.is_chunked {

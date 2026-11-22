@@ -216,6 +216,7 @@ erase_bytes :: proc "contextless" (buf: []u8) {
 }
 
 // constant_time_equal compares two byte slices without early exit on mismatch.
+@(optimization_mode = "none")
 constant_time_equal :: proc "contextless" (a, b: []u8) -> bool {
 	if len(a) != len(b) {
 		return false
