@@ -15,11 +15,11 @@ import "modus:display"
 import "modus:graphics"
 import "modus:interface"
 
-NOTIFICATION_BANNER_WIDTH :: 296
-NOTIFICATION_BANNER_HEIGHT :: 60
+NOTIFICATION_BANNER_WIDTH :: 312
+NOTIFICATION_BANNER_HEIGHT :: 62
 NOTIFICATION_BANNER_MARGIN :: 12
 NOTIFICATION_BANNER_GAP :: 8
-NOTIFICATION_ICON_SIZE :: 22
+NOTIFICATION_RAIL_WIDTH :: 3
 NOTIFICATION_MAX_VISIBLE :: 4
 
 // Closed set of actions offered by the desktop right-click context menu.
@@ -128,42 +128,31 @@ desktop_notifications_records :: proc "contextless" (table: ^interface.Draw_Tabl
 			break
 		}
 		y := BAR_HEIGHT + NOTIFICATION_BANNER_MARGIN + shown * (NOTIFICATION_BANNER_HEIGHT + NOTIFICATION_BANNER_GAP)
-		border_color := graphics.colors.title
-		badge_color := graphics.colors.title
-		glyph := u8('i')
+		rail_color := graphics.colors.title
 		switch item.urgency {
 		case .Low:
-			border_color = graphics.colors.track
-			badge_color = graphics.colors.track
-			glyph = '-'
+			rail_color = graphics.colors.dim
 		case .Normal:
-			border_color = graphics.colors.title
-			badge_color = graphics.colors.title
-			glyph = 'i'
+			rail_color = graphics.colors.title
 		case .Critical:
-			border_color = graphics.colors.stop_process
-			badge_color = graphics.colors.stop_process
-			glyph = '!'
+			rail_color = graphics.colors.stop_process
 		}
-		interface.draw_rectangle(table, x, y, NOTIFICATION_BANNER_WIDTH, NOTIFICATION_BANNER_HEIGHT, graphics.colors.card_bottom)
-		interface.draw_outline(table, x, y, NOTIFICATION_BANNER_WIDTH, NOTIFICATION_BANNER_HEIGHT, 1, border_color)
+		// Kernel-theme card plate: subtle vertical gradient, 1px specular top edge, clean dark border.
+		interface.draw_vertical_gradient(table, x, y, NOTIFICATION_BANNER_WIDTH, NOTIFICATION_BANNER_HEIGHT, graphics.colors.card_top, graphics.colors.card_bottom)
+		interface.draw_outline(table, x, y, NOTIFICATION_BANNER_WIDTH, NOTIFICATION_BANNER_HEIGHT, 1, graphics.colors.track)
+		interface.draw_rectangle(table, x + 1, y + 1, NOTIFICATION_BANNER_WIDTH - 2, 1, graphics.shade(graphics.colors.card_top, 125))
+		// Crisp 3px urgency accent rail (matching Kernel theme Control Panel / Notifications).
+		interface.draw_rectangle(table, x + 11, y + 12, NOTIFICATION_RAIL_WIDTH, NOTIFICATION_BANNER_HEIGHT - 24, rail_color)
 
-		// Left urgency icon badge centered vertically inside the 60px card.
-		icon_x := x + 10
-		icon_y := y + (NOTIFICATION_BANNER_HEIGHT - NOTIFICATION_ICON_SIZE) / 2
-		interface.draw_rectangle(table, icon_x, icon_y, NOTIFICATION_ICON_SIZE, NOTIFICATION_ICON_SIZE, badge_color)
-		interface.draw_character(table, icon_x + (NOTIFICATION_ICON_SIZE - graphics.CELL_WIDTH) / 2, icon_y + (NOTIFICATION_ICON_SIZE - graphics.CELL_HEIGHT) / 2, glyph, graphics.COLOR_WHITE)
-
-		// Balanced text block: 11px top margin, 6px gap between title and body, 11px bottom margin.
-		text_x := icon_x + NOTIFICATION_ICON_SIZE + 10
-		text_room := NOTIFICATION_BANNER_WIDTH - (text_x - x) - 10
+		text_x := x + 24
+		text_room := NOTIFICATION_BANNER_WIDTH - 36
 		title_str := string(item.title[:item.title_len])
 		title_fit := interface.text_fit(table, interface.FONT_INTERFACE, title_str, text_room)
 		if item.body_len > 0 {
-			interface.draw_text(table, text_x, y + 11, title_fit, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
+			interface.draw_text(table, text_x, y + 12, title_fit, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
 			body_str := string(item.body[:item.body_len])
 			body_fit := interface.text_fit(table, interface.FONT_INTERFACE, body_str, text_room)
-			interface.draw_text(table, text_x, y + 33, body_fit, graphics.colors.dim, interface.FONT_INTERFACE)
+			interface.draw_text(table, text_x, y + 34, body_fit, graphics.colors.dim, interface.FONT_INTERFACE)
 		} else {
 			interface.draw_text(table, text_x, y + (NOTIFICATION_BANNER_HEIGHT - graphics.CELL_HEIGHT) / 2, title_fit, graphics.COLOR_WHITE, interface.FONT_INTERFACE)
 		}
@@ -227,10 +216,10 @@ desktop_context_menu_key :: proc "contextless" (code: u32, character: rune, pres
 	return true
 }
 
-TASKBAR_PILL_START_X :: 220
-TASKBAR_PILL_WIDTH :: 112
-TASKBAR_PILL_GAP :: 6
-TRAY_BADGE_WIDTH :: 36
+TASKBAR_PILL_START_X :: 224
+TASKBAR_PILL_WIDTH :: 136
+TASKBAR_PILL_GAP :: 4
+TRAY_BADGE_WIDTH :: 34
 TRAY_BADGE_GAP :: 4
 
 // desktop_taskbar_and_tray_records draws live taskbar window pills (highlighting
@@ -240,7 +229,9 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 	if !desktop_features_ready {
 		return
 	}
-	// 1. Window pills in the center band of the bar (safe margin before palette hint / clock).
+	// 1. Kernel-theme taskbar window plates after a crisp vertical hairline divider.
+	bar_top := desktop_bar_y()
+	interface.draw_rectangle(table, TASKBAR_PILL_START_X - 10, bar_top + 6, 1, BAR_HEIGHT - 12, graphics.colors.track)
 	max_right := max(TASKBAR_PILL_START_X, desktop_width - CLOCK_WIDTH - 240)
 	px := TASKBAR_PILL_START_X
 	for position in 0 ..< order_count {
@@ -278,22 +269,33 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 		if already {
 			continue
 		}
-		pill_bg := any_focus ? graphics.colors.title : (all_minimized ? graphics.colors.card_bottom : graphics.colors.track)
-		pill_fg := any_focus ? graphics.COLOR_WHITE : (all_minimized ? graphics.colors.dim : graphics.colors.text)
 		by := desktop_bar_y()
-		interface.draw_rectangle(table, px, by + 4, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 8, pill_bg)
-		if all_minimized {
-			interface.draw_outline(table, px, by + 4, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 8, 1, graphics.colors.track)
+		hovered := inside(pointer_x, pointer_y, px, by, TASKBAR_PILL_WIDTH, BAR_HEIGHT) && menu_open == .None
+		pill_fg := any_focus ? graphics.COLOR_WHITE : (all_minimized ? graphics.colors.dim : graphics.colors.text)
+		if any_focus {
+			// Focused window plate: beveled steel gradient, 1px specular top highlight, crisp 2px bottom accent line.
+			interface.draw_vertical_gradient(table, px, by + 2, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 4, graphics.shade(graphics.colors.card_top, 135), graphics.shade(graphics.colors.card_bottom, 120))
+			interface.draw_outline(table, px, by + 2, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 4, 1, graphics.shade(graphics.colors.track, 130))
+			interface.draw_rectangle(table, px + 1, by + 3, TASKBAR_PILL_WIDTH - 2, 1, graphics.shade(graphics.colors.card_top, 155))
+			interface.draw_rectangle(table, px + 1, by + BAR_HEIGHT - 4, TASKBAR_PILL_WIDTH - 2, 2, graphics.colors.title)
+		} else if !all_minimized || hovered {
+			// Open/hovered inactive plate: quiet recessed steel plate with hairline border.
+			top_c := hovered ? graphics.shade(graphics.colors.card_top, 120) : graphics.colors.card_top
+			bot_c := hovered ? graphics.shade(graphics.colors.card_bottom, 110) : graphics.colors.card_bottom
+			interface.draw_vertical_gradient(table, px, by + 2, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 4, top_c, bot_c)
+			interface.draw_outline(table, px, by + 2, TASKBAR_PILL_WIDTH, BAR_HEIGHT - 4, 1, graphics.colors.track)
+		} else {
+			// Minimized window: quiet flat slot with subtle bottom tick.
+			interface.draw_rectangle(table, px + 10, by + BAR_HEIGHT - 4, TASKBAR_PILL_WIDTH - 20, 1, graphics.colors.dim)
 		}
-		label_room := same_count > 1 ? TASKBAR_PILL_WIDTH - 26 : TASKBAR_PILL_WIDTH - 12
+		label_room := same_count > 1 ? TASKBAR_PILL_WIDTH - 28 : TASKBAR_PILL_WIDTH - 16
 		fit := interface.text_fit(table, interface.FONT_INTERFACE, name, label_room)
-		interface.draw_text(table, px + 6, by + 8, fit, pill_fg, interface.FONT_INTERFACE)
+		interface.draw_text(table, px + 10, by + 8, fit, pill_fg, interface.FONT_INTERFACE)
 		if same_count > 1 {
-			// Count badge when multiple windows of the same module are open.
-			bx := px + TASKBAR_PILL_WIDTH - 18
-			interface.draw_rectangle(table, bx, by + 7, 14, 18, graphics.colors.chosen)
+			// Stacked-window visual edge on right side + quiet numeric count.
+			interface.draw_rectangle(table, px + TASKBAR_PILL_WIDTH - 3, by + 5, 1, BAR_HEIGHT - 10, graphics.colors.dim)
 			digit := u8('0' + min(same_count, 9))
-			interface.draw_character(table, bx + 3, by + 8, digit, graphics.COLOR_WHITE)
+			interface.draw_character(table, px + TASKBAR_PILL_WIDTH - 14, by + 8, digit, graphics.colors.dim)
 		}
 		// Hover preview popover when pointer hovers over a taskbar pill.
 		if inside(pointer_x, pointer_y, px, 0, TASKBAR_PILL_WIDTH, BAR_HEIGHT) && menu_open == .None {
@@ -325,8 +327,12 @@ desktop_taskbar_and_tray_records :: proc "contextless" (table: ^interface.Draw_T
 		bg := e.alert ? graphics.colors.stop_process : graphics.colors.track
 		fg := e.alert ? graphics.COLOR_WHITE : graphics.colors.text
 		by := desktop_bar_y()
-		interface.draw_rectangle(table, tray_x, by + 5, TRAY_BADGE_WIDTH, BAR_HEIGHT - 10, bg)
-		interface.draw_text(table, tray_x + 6, by + 8, string(e.label[:e.len]), fg, interface.FONT_INTERFACE)
+		if e.alert {
+			interface.draw_vertical_gradient(table, tray_x, by + 4, TRAY_BADGE_WIDTH, BAR_HEIGHT - 8, graphics.shade(bg, 115), graphics.shade(bg, 85))
+		} else {
+			interface.draw_outline(table, tray_x, by + 4, TRAY_BADGE_WIDTH, BAR_HEIGHT - 8, 1, graphics.colors.track)
+		}
+		interface.draw_text(table, tray_x + 8, by + 8, string(e.label[:e.len]), fg, interface.FONT_INTERFACE)
 	}
 }
 
