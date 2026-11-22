@@ -96,6 +96,9 @@ Project_Refusal :: enum u8 {
 	Untrusted_Consent      = 35,
 	Child_Console_Active   = 36,
 	Project_Limit_Reached  = 37,
+	Bad_Evaluation         = 38,
+	Evaluation_Refused     = 39,
+	Not_A_Project          = 40,
 }
 
 // Closed set of commands accepted on the projects service ring.

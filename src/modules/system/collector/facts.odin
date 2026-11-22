@@ -29,6 +29,15 @@ Grants_Expired :: struct {
 	expired_grants: u64,
 }
 
+// The first refusal of a full space or of a full forward queue: the writer
+// of the space waits from now on, and the counts of the space show each
+// later refusal.
+@(log_fact = "collector: space {space} is full and holds its writer, refusal {refusal_code}")
+Space_Refused_Record :: struct {
+	space:        u64,
+	refusal_code: u64,
+}
+
 @(log_fact = "collector: act chain verification failed at index {failing_index} with refusal {refusal_code}")
 Chain_Verification_Failed :: struct {
 	failing_index: u64,
