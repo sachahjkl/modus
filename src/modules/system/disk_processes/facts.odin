@@ -1,6 +1,8 @@
 package disk_processes_service
 
-// Log facts emitted by the delegated disk_processes service.
+// Log facts emitted by the delegated disk_processes service. The core
+// writes the lines of each load: this service writes its start, its fault,
+// and a command of the core that it refuses.
 
 FAILURE_FIELD_BYTES :: 96
 
@@ -14,19 +16,7 @@ Service_Failed :: struct {
 
 #assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
 
-@(log_fact = "disk_processes: catalog entry registered, total {catalog_entries}")
-Catalog_Entry_Registered :: struct {
-	catalog_entries: u64,
-}
-
-@(log_fact = "disk_processes: prepared start request for principal {principal}, imports {import_count}")
-Start_Prepared :: struct {
-	principal:    u64,
-	import_count: u64,
-}
-
-@(log_fact = "disk_processes: command {command_kind} refused with code {refusal_code}")
+@(log_fact = "disk_processes: refused the command {command_kind} of the core: its word, its tag or its order is wrong")
 Command_Refused :: struct {
 	command_kind: u64,
-	refusal_code: u64,
 }

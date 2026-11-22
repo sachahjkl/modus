@@ -750,7 +750,7 @@ Built. A disk process is a process whose module file is an object of the storage
 
 The hash is 64 hexadecimal digits: the BLAKE3 hash of the module file, as the tool that wrote the file prints it. The console sends the record `Start_From_Disk` on the root ring (`root_ring.Root_Command`): the hash in four values, the name in three.
 
-**The root service reads and checks.** The root service opens a connection of its own to the storage service, on the store `module_files` of the principal of the caller. It asks for the size of the object, then for its bytes, into memory of its own budget. Then it computes the BLAKE3 hash of the bytes. It starts the process only when that hash is the hash of the command. So the storage service carries the bytes and does not choose them: bytes with another hash are refused, and the line of the log holds both hashes:
+**The service disk_processes reads, the root service checks.** The root service gives the delegated service `disk_processes` a connection that reads only to the store `module_files` of the principal of the caller. The service asks for the size of the object, then for its bytes, into memory that the root service makes from its own budget and lends it. When the file is whole, the root service ends the loan, then computes the BLAKE3 hash of the bytes. It starts the process only when that hash is the hash of the command. So the storage service carries the bytes and does not choose them: bytes with another hash are refused, and the line of the log holds both hashes:
 
 ```
 root: refused visitor from the disk: its bytes have the hash 9d41…, and the hash asked is 5f0c…
@@ -758,11 +758,12 @@ root: refused visitor from the disk: its bytes have the hash 9d41…, and the ha
 
 The root service does not read the hash of the entry: the hash of an object differs from the BLAKE3 hash of its bytes when the object has a hole (`STORAGE.md`, "The hash of an object").
 
-**The root service does not wait.** The load is a state of the loop of the root service, not a call: between two answers of the storage service, the root service serves each other ring. The completion of the command comes when the load ends. Four rules end a load whatever the storage service does:
+**The root service does not wait.** The load is a state of the loop of the root service, not a call: between two events of `disk_processes`, the root service serves each other ring. The completion of the command comes when the load ends. These rules end a load whatever the storage service and `disk_processes` do:
 
 | Rule | What ends the load |
 |---|---|
-| A stop is an event | The storage service stopped |
+| A stop is an event | The storage service, or `disk_processes`, stopped |
+| Each event passes a border | An event that `disk_processes` cannot send at that step, or a request to start other bytes than the root service checked |
 | Each answer makes progress | An answer with no byte before the end of the file, or with more bytes than the file has left |
 | The size has a limit | An object of more than 4 MiB (`disk_process.FILE_BYTES_LIMIT`), before any memory is made |
 | The load has a deadline | No start 30 seconds after the command (`disk_process.LOAD_DEADLINE_MILLISECONDS`) |
@@ -781,7 +782,7 @@ Without this rule a file named `notes` would start with the store of `notes`.
 
 **The imports.** A disk process imports by hash. Its load source is the boot image, the replacements of the machine, and the files of the store `module_files` of its principal that an import scan found for this load. The modules of a disk process are copies that its own budget pays: it maps no prepared module of the root service.
 
-**The import scan.** When the module file imports a hash that no module of the boot image has, the root service looks for it in the same store, after the check of the module file and before the start (`glossary/code.md`, "Import scan"). It lists the root tree, reads the bytes of each entry, computes their BLAKE3 hash, and keeps the bytes whose hash an import names. A name finds nothing: the name of an entry only says which object to read next. The imports of a kept file are wanted too, and a replacement of the machine applies as in the loader. The scan runs inside the load, with its connection, its deadline and its rules for each answer, and has three bounds of its own:
+**The import scan.** When the module file imports a hash that no module of the boot image has, `disk_processes` looks for it in the same store, after the check of the module file and before the start (`glossary/code.md`, "Import scan"). It lists the root tree, reads the bytes of each entry, computes their BLAKE3 hash, and keeps the bytes whose hash an import names. A name finds nothing: the name of an entry only says which object to read next. The imports of a kept file are wanted too, and a replacement of the machine applies as in the loader. The scan runs inside the load, with its connection, its deadline and its rules for each answer, and has three bounds of its own:
 
 | Bound | Value |
 |---|---|
@@ -789,7 +790,7 @@ Without this rule a file named `notes` would start with the store of `notes`.
 | The modules of the store for one process | 8 (`disk_process.SCAN_WANTED_CAPACITY`), on 4 levels of imports (`disk_process.SCAN_DEPTH_LIMIT`) |
 | The reads | Each entry one time, and two reads for each wanted hash (`disk_process.SCAN_READ_LIMIT`) |
 
-The bytes of a kept file are memory of the root service, paid by the one budget of all disk processes, until the end of the load. The log has a line for the start of the scan and one for each kept file:
+The bytes of each file that the scan reads are memory of the root service, paid by the one budget of all disk processes, and lent to `disk_processes` for the read. For a kept file, the root service ends the loan and computes the hash again before the line of the log; the file stays until the end of the load. The log has a line for the start of the scan and one for each kept file:
 
 ```
 > start_from_disk("store_importer", "8e21…")

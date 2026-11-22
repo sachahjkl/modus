@@ -356,6 +356,23 @@ Wiring_Service_Started :: struct {
 @(log_fact = "root: delegated wiring service stopped")
 Wiring_Service_Stopped :: struct {}
 
+// The delegated service disk_processes did not start.
+@(log_fact = "root: cannot start the disk processes service: status {status}")
+Disk_Processes_Service_Start_Failed :: struct {
+	status: op.Status,
+}
+
+// The delegated service disk_processes started, within its bound of
+// starts.
+@(log_fact = "root: started the disk processes service (start {starts} of {start_limit})")
+Disk_Processes_Service_Started :: struct {
+	starts:      u64,
+	start_limit: u64,
+}
+
+@(log_fact = "root: the disk processes service stopped")
+Disk_Processes_Service_Stopped :: struct {}
+
 // The wiring service ended the wirings of a process whose grant wirings
 // was revoked.
 @(log_fact = "root: revoked the grant wirings of {target}, wirings ended: {ended}")

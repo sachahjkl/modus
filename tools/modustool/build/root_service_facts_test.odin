@@ -407,6 +407,7 @@ the_principal_and_start_policy_facts_of_the_root_service_write_the_lines_of_befo
 	expect(t, render(t, file, "Chosen_Start_Policy_Name_Reserved", {{"nickname", nickname}}), line_of_before("root: the chosen start policy \"", nickname, "\" is not read: the root service gives this name a grant, or a module of the boot image has it: the rescue start policy starts"))
 	expect(t, render(t, file, "Chosen_Start_Policy_Load_Busy", {{"nickname", nickname}}), line_of_before("root: the chosen start policy \"", nickname, "\" is not read: another load from the disk runs: the rescue start policy starts"))
 	expect(t, render(t, file, "Chosen_Start_Policy_Not_Mapped", {{"nickname", nickname}}), line_of_before("root: the chosen start policy \"", nickname, "\" is not read: the call ring and the call region of the storage service do not map: the rescue start policy starts"))
+	expect(t, render(t, file, "Chosen_Start_Policy_No_Service", {{"nickname", nickname}}), line_of_before("root: the chosen start policy \"", nickname, "\" is not read: the disk processes service does not run: the rescue start policy starts"))
 	expect(t, render(t, file, "Chosen_Start_Policy_Read", {{"hash", hash}, {"nickname", nickname}}), line_of_before("root: reads the chosen start policy \"", nickname, "\", the file ", sentence.Hash{hash[:]}, ", from the store ", STORE_NAME, " of principal 0"))
 	expect(t, render(t, file, "Chosen_Start_Policy_Unmeasured", {{"nickname", nickname}}), line_of_before("root: the chosen start policy \"", nickname, "\" does not run unmeasured: it is not started"))
 	expect(t, render(t, file, "Start_Policy_Refused_Reserved_Name", {{"nickname", nickname}}), line_of_before("root: refused the start policy ", sentence.Module_Name{nickname}, ": the root service gives this name a grant, or a module of the boot image has it, and the start policy runs under its nickname"))
@@ -585,6 +586,7 @@ the_statuses_of_the_root_service_are_the_names_of_their_members :: proc(t: ^test
 		expect(t, render(t, file, "Tpm_Registers_Refused", {{"registers", u64(0xFED4_0000)}, {"status", word}}), line_of_before("root: no TPM service: the registers of the TPM at ", sentence.Hex(0xFED4_0000), " are refused: status ", status_text))
 		expect(t, render(t, file, "Start_Policy_Not_Started", {{"start_policy_hash", hash}, {"status", word}}), line_of_before("root: the start policy ", sentence.Hash{hash[:4]}, "…", " did not start, with the status ", status_text, ": the rescue start policy starts"))
 		expect(t, render(t, file, "Disk_Load_Refused_No_Connection", {{"status", word}, {"refused_process", process}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: no connection to the storage service: status ", status_text))
+		expect(t, render(t, file, "Disk_Processes_Service_Start_Failed", {{"status", word}}), line_of_before("root: cannot start the disk processes service: status ", status_text))
 		expect(t, render(t, file, "Disk_Load_Refused_Not_Started", {{"status", word}, {"refused_process", process}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: it does not start: status ", status_text))
 		expect(t, render(t, file, "Disk_Load_Refused_No_Memory", {{"object_bytes", max(u64)}, {"status", word}, {"refused_process", process}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: no memory for its ", max(u64), " bytes: status ", status_text))
 		expect(t, render(t, file, "Disk_Load_Refused_Import_No_Memory", {{"object_bytes", u64(0)}, {"status", word}, {"refused_process", process}, {"file", "fffffffffffffffffffffff"}}), line_of_before("root: refused ", sentence.Module_Name{process}, " from the disk: no memory in the budget of the disk processes for the ", u64(0), " bytes of the file ", sentence.Module_Name{"fffffffffffffffffffffff"}, " of the store ", STORE_NAME, ": status ", status_text))
@@ -761,6 +763,9 @@ the_disk_refusal_facts_of_the_root_service_write_the_lines_of_before :: proc(t: 
 		{"Disk_Load_Refused_Call_Not_Taken", "the storage service took no call"},
 		{"Disk_Load_Refused_Asker_Stopped", "the process that asked for it stopped"},
 		{"Disk_Load_Refused_Storage_Stopped", "the storage service stopped"},
+		{"Disk_Load_Refused_No_Service", "the disk processes service does not run"},
+		{"Disk_Load_Refused_Service_Stopped", "the disk processes service stopped"},
+		{"Disk_Load_Refused_Service_Answer_Not_Allowed", "the disk processes service gave an answer that its contract does not allow"},
 		{"Disk_Load_Refused_No_Object", "the store " + STORE_NAME + " has no object with this name"},
 		{"Disk_Load_Refused_Read_Refused", "the storage service refused the read"},
 		{"Disk_Load_Refused_Answer_Not_Allowed", "the storage service gave no answer that the description of its export allows"},
@@ -978,6 +983,7 @@ the_table_wait_and_wiring_facts_of_the_root_service_write_the_lines_of_before ::
 		expect(t, render(t, file, "Start_Policy_Wait_Full", {{"words", count}, {"word_limit", other}, {"refused_process", process}}), line_of_before("root: cannot start the start policy ", sentence.Module_Name{process}, ": its root ring makes ", count, " words of the wait of the loop of this service, past its ", other, "; the queues of the wait are full"))
 		expect(t, render(t, file, "Root_Wait_Full", {{"word_capacity", count}}), line_of_before("root: the wait of the loop holds more words than ", count, ": each wait ends at once, and the queues past it are not waited on"))
 		expect(t, render(t, file, "Wiring_Service_Started", {{"starts", count}, {"start_limit", other}}), line_of_before("root: started delegated wiring service (start ", count, " of ", other, ")"))
+		expect(t, render(t, file, "Disk_Processes_Service_Started", {{"starts", count}, {"start_limit", other}}), line_of_before("root: started the disk processes service (start ", count, " of ", other, ")"))
 		expect(t, render(t, file, "Wirings_Revoked", {{"ended", count}, {"target", process}}), line_of_before("root: revoked the grant wirings of ", sentence.Module_Name{process}, ", wirings ended: ", count))
 	}
 	for status in op.Status {
@@ -985,6 +991,7 @@ the_table_wait_and_wiring_facts_of_the_root_service_write_the_lines_of_before ::
 	}
 	expect(t, render(t, file, "Own_Tables_Full_Unreported", {{"started_process", process}}), line_of_before("root: the start of ", sentence.Module_Name{process}, " found a table full; the kernel gives no report of the tables of this service"))
 	expect(t, render(t, file, "Wiring_Service_Stopped", {}), "root: delegated wiring service stopped")
+	expect(t, render(t, file, "Disk_Processes_Service_Stopped", {}), "root: the disk processes service stopped")
 	// The measure record finds the line by the start of its template.
 	measured := render(t, file, "Own_Tables_Measured", {{"handles", u64(1)}, {"prepared_parts", u64(0)}, {"mappings", u64(1)}, {"capacity", capacity}, {"stopped_process", "output_wiring"}})
 	testing.expectf(t, strings.has_prefix(measured, "root: the tables of this service after the stop of output_wiring: "), "the measure record does not find %q", measured)

@@ -176,11 +176,12 @@ POINTER_THEME_SPACING :: fixed_addresses.RANGE_SPAN / 2 // The second theme is t
 // caller, and the flag that the caller acts for that principal (the manual
 // gives what runs only to such a caller).
 grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
-	// The connection of this service itself, for the read of the module
-	// file of a disk process: the store of the module files, with its
-	// limit, and no grant to act for a principal.
+	// The connection of the service disk_processes, for the read of the
+	// module file of a disk process and of its imports: the store of the
+	// module files, with its limit, the flag that it reads only, and no
+	// grant to act for a principal (disk_processes_delegation.odin).
 	if caller == &disk_reader {
-		return isolated.caller_grant_make(disk_process.STORE_BLOCKS_LIMIT, caller.principal, false)
+		return isolated.caller_grant_make(disk_process.STORE_BLOCKS_LIMIT, caller.principal, false) | isolated.CALLER_READS_ONLY
 	}
 	// The connection of this service for the disk grant table of a
 	// principal, an object of the store of the module files of that
@@ -2031,8 +2032,8 @@ disconnect :: proc "contextless" (connection: ^Connection) {
 		system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Disconnect), values = {0 = u64(connection.ring), 1 = u64(connection.region)}})
 	}
 	system.log_fact(.Info, Disconnected{caller = module_name_field(system.name_of(connection.caller.name[:])), service = module_name_field(system.name_of(connection.service.name[:]))})
-	// The connection of this service for a load from the disk: the load
-	// learns here that it ended.
+	// The connection of the service disk_processes for a load from the
+	// disk: the load learns here that it ended.
 	if disk_load.connection == connection {
 		disk_load.connection = nil
 	}
@@ -2075,6 +2076,7 @@ release :: proc "contextless" (item: ^Started, stop: Process_Stop = {}) {
 	// delegated wiring service ends each wiring of this process and frees
 	// its slots, then release core wiring handles.
 	wiring_service_end(item)
+	disk_processes_service_end(item)
 	devices_service_end(item)
 	principals_service_end(item)
 	wiring_emit_stop_notice(item, stop)

@@ -386,7 +386,7 @@ The reason: BLAKE3 puts the place of each chunk in its compression, so zero byte
 
 The hash is still a function of the bytes only: a block of zero bytes is always a hole, so two objects with the same bytes have the same hash. The size is in the hash: the last chunk carries its length and its place.
 
-The hash of a module (P11) is the BLAKE3 hash of its file. A module with an aligned block of 4096 zero bytes before its last block has another hash as an object. The root service reads the bytes of the module file of a disk process and computes the BLAKE3 hash on them: it does not read the hash of the entry, so a disk process is named by the hash of its file. The work on objects by their hash (section 5) must name the module by one of the two: it is not decided here.
+The hash of a module (P11) is the BLAKE3 hash of its file. A module with an aligned block of 4096 zero bytes before its last block has another hash as an object. The root service computes the BLAKE3 hash on the bytes of the module file of a disk process, which `disk_processes` read into memory that the root service lent: it does not read the hash of the entry, so a disk process is named by the hash of its file. The work on objects by their hash (section 5) must name the module by one of the two: it is not decided here.
 
 #### Ranges
 

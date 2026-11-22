@@ -41,8 +41,15 @@ Chosen_Start_Policy_Load_Busy :: struct {
 	nickname: value_kinds.Module_Name_Field,
 }
 
+// The chosen start policy is not read: the service disk_processes does not
+// run.
+@(log_fact = "root: the chosen start policy \"{nickname}\" is not read: the disk processes service does not run: the rescue start policy starts")
+Chosen_Start_Policy_No_Service :: struct {
+	nickname: value_kinds.Module_Name_Field,
+}
+
 // The chosen start policy is not read: the call ring and the call region of
-// the storage service do not map.
+// the storage service do not reach the service disk_processes.
 @(log_fact = "root: the chosen start policy \"{nickname}\" is not read: the call ring and the call region of the storage service do not map: the rescue start policy starts")
 Chosen_Start_Policy_Not_Mapped :: struct {
 	nickname: value_kinds.Module_Name_Field,

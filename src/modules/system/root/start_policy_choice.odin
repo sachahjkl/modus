@@ -24,7 +24,6 @@ import "internal:root/start_policy_rules"
 import "modus:disk_process"
 import "modus:principals"
 import "modus:random"
-import "modus:storage"
 import "modus:system"
 import "modus:contract/value_kinds"
 
@@ -193,49 +192,29 @@ start_policy_chosen_load_begin :: proc "contextless" (row: ^disk_process.Grant_R
 		start_policy_launch(.Rescue)
 		return
 	}
-	if disk_load.stage != .Idle {
+	if disk_load.step != .Idle {
 		system.log_fact(.Warning, Chosen_Start_Policy_Load_Busy{nickname = module_name_field(nickname)})
 		start_policy_launch(.Rescue)
 		return
 	}
-	disk_reader = {}
-	copy(disk_reader.name[:len(disk_reader.name) - 1], disk_process.STORE_NAME)
-	disk_reader.principal = principals.MACHINE
-	storage_name := role_holder_name(.Storage)
-	connection, service, ring_memory, region_memory, open_status := connection_open(&disk_reader, storage_name)
-	if open_status != .Ok {
-		system.log_fact(.Warning, Chosen_Start_Policy_No_Connection{status = open_status, nickname = module_name_field(nickname)})
+	failure, status := disk_load_begin(nil, 0, nickname, row.hash, principals.MACHINE, true)
+	switch failure {
+	case .None:
+	case .No_Service:
+		system.log_fact(.Warning, Chosen_Start_Policy_No_Service{nickname = module_name_field(nickname)})
 		start_policy_launch(.Rescue)
 		return
-	}
-	client, opened := storage.open_handles(ring_memory, region_memory, service.process, system.image_find(image, storage_name))
-	if !opened {
-		system.close(ring_memory)
-		system.close(region_memory)
-		disconnect(connection)
+	case .No_Connection:
+		system.log_fact(.Warning, Chosen_Start_Policy_No_Connection{status = status, nickname = module_name_field(nickname)})
+		start_policy_launch(.Rescue)
+		return
+	case .Not_Given:
 		system.log_fact(.Warning, Chosen_Start_Policy_Not_Mapped{nickname = module_name_field(nickname)})
 		start_policy_launch(.Rescue)
 		return
 	}
-	name_bytes: [disk_process.NAME_LIMIT]u8
-	name_length := copy(name_bytes[:], nickname)
-	disk_load = {
-		stage            = .Size,
-		name             = name_bytes,
-		name_length      = name_length,
-		hash             = row.hash,
-		principal        = principals.MACHINE,
-		connection       = connection,
-		client           = client,
-		deadline         = system.time() + disk_process.LOAD_DEADLINE_MILLISECONDS,
-		for_start_policy = true,
-	}
 	start_policy_choice_stage = .Load
 	system.log_fact(.Info, Chosen_Start_Policy_Read{hash = value_kinds.Hash_Field(row.hash), nickname = module_name_field(nickname)})
-	if !disk_load_ask("size", 0, false) {
-		system.log_fact(.Warning, Disk_Load_Refused_Call_Not_Taken{refused_process = module_name_field(nickname)})
-		disk_load_end(.Bad_State, {})
-	}
 }
 
 // start_policy_chosen_load_ended is told of the end of the load of the

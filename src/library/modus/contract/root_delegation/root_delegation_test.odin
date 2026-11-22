@@ -6,7 +6,6 @@ import "modus:contract/blake3"
 import op "modus:contract/operation"
 import "modus:contract/remote"
 import "modus:contract/role_contract"
-import "modus:contract/start_grant"
 
 @(private = "file")
 fill_nickname :: proc(dst: ^[NICKNAME_CAPACITY]u8, name: string) -> u8 {
@@ -23,137 +22,21 @@ make_test_hash :: proc(tag: u8) -> blake3.Hash {
 	return h
 }
 
-@(private = "file")
-make_valid_start_request :: proc(payload: []u8) -> Start_From_Bytes_Request {
-	req: Start_From_Bytes_Request
-	req.principal = 1
-	req.nickname_length = fill_nickname(&req.nickname, "visitor-app")
-	req.expected_module_hash = blake3.hash(payload)
-	req.module_byte_count = u64(len(payload))
-	req.budget_pages = 256
-	return req
-}
-
+// A nickname of a disk process: empty, past its capacity, a byte that is
+// not a letter, a digit, "-" or "_", and a name of the system are refused;
+// a name of each allowed byte at the capacity is taken.
 @(test)
-start_from_bytes_refuses_hostile_hashes_nicknames_imports_and_grants :: proc(t: ^testing.T) {
-	payload := [?]u8{'M', 'O', 'D', 'U', 'S', 1, 2, 3, 4, 5, 6, 7, 8}
-
-	// Nil request and empty payload edges.
-	testing.expect_value(t, validate_start_from_bytes_request(nil, payload[:]).refusal, Start_From_Bytes_Refusal.Empty_Module_Bytes)
-
-	empty_bytes_req := make_valid_start_request(payload[:])
-	testing.expect_value(t, validate_start_from_bytes_request(&empty_bytes_req, nil).refusal, Start_From_Bytes_Refusal.Empty_Module_Bytes)
-
-	// Nickname edges: empty, too long, bad bytes, reserved names, trailing non-zero bytes.
-	bad_nick := make_valid_start_request(payload[:])
-	bad_nick.nickname_length = 0
-	testing.expect_value(t, validate_start_from_bytes_request(&bad_nick, payload[:]).refusal, Start_From_Bytes_Refusal.Empty_Nickname)
-
-	bad_nick = make_valid_start_request(payload[:])
-	bad_nick.nickname_length = NICKNAME_CAPACITY + 1
-	testing.expect_value(t, validate_start_from_bytes_request(&bad_nick, payload[:]).refusal, Start_From_Bytes_Refusal.Nickname_Too_Long)
-
-	for bad in ([?]string{"bad/path", "dot.name", "has space", "..", "."}) {
-		testing.expect_value(t, validate_nickname(bad), Start_From_Bytes_Refusal.Bad_Nickname_Byte)
+a_nickname_refuses_each_name_outside_its_rule :: proc(t: ^testing.T) {
+	testing.expect_value(t, validate_nickname(""), Nickname_Refusal.Empty)
+	testing.expect_value(t, validate_nickname("abcdefghijklmnopqrstuvwx"), Nickname_Refusal.Too_Long)
+	for bad in ([?]string{"bad/path", "dot.name", "has space", "..", ".", "\x00", "tab\t"}) {
+		testing.expect_value(t, validate_nickname(bad), Nickname_Refusal.Bad_Byte)
 	}
 	for reserved in ([?]string{"module_files", "grant_table", "root", "devices", "disk_processes", "principals"}) {
-		testing.expect_value(t, validate_nickname(reserved), Start_From_Bytes_Refusal.Reserved_Nickname)
+		testing.expect_value(t, validate_nickname(reserved), Nickname_Refusal.Reserved)
 	}
-
-	trailing_nick := make_valid_start_request(payload[:])
-	trailing_nick.nickname[NICKNAME_CAPACITY - 1] = 'x'
-	testing.expect_value(t, validate_start_from_bytes_request(&trailing_nick, payload[:]).refusal, Start_From_Bytes_Refusal.Trailing_Nickname_Bytes)
-
-	// Budget edges: 0, bound+1, max(u64).
-	for bad_budget in ([?]u64{0, DISK_PROCESS_BUDGET_PAGES_LIMIT + 1, max(u64)}) {
-		req := make_valid_start_request(payload[:])
-		req.budget_pages = bad_budget
-		testing.expect_value(t, validate_start_from_bytes_request(&req, payload[:]).refusal, Start_From_Bytes_Refusal.Invalid_Budget)
-	}
-
-	// Zero expected hash, size mismatch, oversized module, tampered payload byte.
-	zero_hash_req := make_valid_start_request(payload[:])
-	zero_hash_req.expected_module_hash = {}
-	testing.expect_value(t, validate_start_from_bytes_request(&zero_hash_req, payload[:]).refusal, Start_From_Bytes_Refusal.Zero_Module_Hash)
-
-	size_mismatch := make_valid_start_request(payload[:])
-	size_mismatch.module_byte_count += 1
-	testing.expect_value(t, validate_start_from_bytes_request(&size_mismatch, payload[:]).refusal, Start_From_Bytes_Refusal.Module_Size_Mismatch)
-
-	oversized := make_valid_start_request(payload[:])
-	oversized.module_byte_count = MODULE_BYTES_LIMIT + 1
-	testing.expect_value(t, validate_start_from_bytes_request(&oversized, payload[:]).refusal, Start_From_Bytes_Refusal.Module_Too_Large)
-
-	tampered := payload
-	tampered[0] ~= 0x01
-	tampered_req := make_valid_start_request(payload[:])
-	testing.expect_value(t, validate_start_from_bytes_request(&tampered_req, tampered[:]).refusal, Start_From_Bytes_Refusal.Hash_Mismatch)
-
-	// Import hash edges: bound+1, zero hash, self-import, duplicate import.
-	too_many_imp := make_valid_start_request(payload[:])
-	too_many_imp.import_count = IMPORT_HASH_CAPACITY + 1
-	testing.expect_value(t, validate_start_from_bytes_request(&too_many_imp, payload[:]).refusal, Start_From_Bytes_Refusal.Too_Many_Imports)
-
-	zero_imp := make_valid_start_request(payload[:])
-	zero_imp.import_count = 1
-	testing.expect_value(t, validate_start_from_bytes_request(&zero_imp, payload[:]).refusal, Start_From_Bytes_Refusal.Zero_Import_Hash)
-
-	self_imp := make_valid_start_request(payload[:])
-	self_imp.import_count = 1
-	self_imp.import_hashes[0] = self_imp.expected_module_hash
-	testing.expect_value(t, validate_start_from_bytes_request(&self_imp, payload[:]).refusal, Start_From_Bytes_Refusal.Self_Import_Hash)
-
-	dup_imp := make_valid_start_request(payload[:])
-	dup_imp.import_count = 2
-	dup_imp.import_hashes[0] = make_test_hash(7)
-	dup_imp.import_hashes[1] = make_test_hash(7)
-	testing.expect_value(t, validate_start_from_bytes_request(&dup_imp, payload[:]).refusal, Start_From_Bytes_Refusal.Duplicate_Import_Hash)
-
-	// Grant refusals: System_Part, Machine grants, unknown grant words, duplicates, bound+1.
-	sys_part_req := make_valid_start_request(payload[:])
-	sys_part_req.requested_grant_count = 1
-	sys_part_req.requested_grant_words[0] = u64(start_grant.Grant.System_Part)
-	testing.expect_value(t, validate_start_from_bytes_request(&sys_part_req, payload[:]).refusal, Start_From_Bytes_Refusal.Forbidden_System_Part_Grant)
-
-	for machine_grant in ([?]start_grant.Grant{.Root_Ring, .Inspect, .Stop, .Schedule, .Events, .Counters, .Principals, .Tpm, .Start_Policy, .Data_Disk, .Replace, .Acts_For_Principal}) {
-		req := make_valid_start_request(payload[:])
-		req.requested_grant_count = 1
-		req.requested_grant_words[0] = u64(machine_grant)
-		testing.expect_value(t, validate_start_from_bytes_request(&req, payload[:]).refusal, Start_From_Bytes_Refusal.Forbidden_Machine_Grant)
-	}
-
-	for unknown_word in ([?]u64{u64(max(start_grant.Grant)) + 1, 999, max(u64)}) {
-		req := make_valid_start_request(payload[:])
-		req.requested_grant_count = 1
-		req.requested_grant_words[0] = unknown_word
-		testing.expect_value(t, validate_start_from_bytes_request(&req, payload[:]).refusal, Start_From_Bytes_Refusal.Unknown_Grant)
-	}
-
-	dup_grant := make_valid_start_request(payload[:])
-	dup_grant.requested_grant_count = 2
-	dup_grant.requested_grant_words[0] = u64(start_grant.Grant.Store)
-	dup_grant.requested_grant_words[1] = u64(start_grant.Grant.Store)
-	testing.expect_value(t, validate_start_from_bytes_request(&dup_grant, payload[:]).refusal, Start_From_Bytes_Refusal.Duplicate_Grant)
-
-	too_many_grants := make_valid_start_request(payload[:])
-	too_many_grants.requested_grant_count = GRANT_REQUEST_CAPACITY + 1
-	testing.expect_value(t, validate_start_from_bytes_request(&too_many_grants, payload[:]).refusal, Start_From_Bytes_Refusal.Too_Many_Grants)
-
-	// Valid sandboxed request (0 grants) and valid Store request pass.
-	clean := make_valid_start_request(payload[:])
-	clean.import_count = 2
-	clean.import_hashes[0] = make_test_hash(1)
-	clean.import_hashes[1] = make_test_hash(2)
-	res := validate_start_from_bytes_request(&clean, payload[:])
-	testing.expect_value(t, res.refusal, Start_From_Bytes_Refusal.None)
-	testing.expect_value(t, res.grants, Disk_Start_Grants{})
-
-	with_store := clean
-	with_store.requested_grant_count = 1
-	with_store.requested_grant_words[0] = u64(start_grant.Grant.Store)
-	res_store := validate_start_from_bytes_request(&with_store, payload[:])
-	testing.expect_value(t, res_store.refusal, Start_From_Bytes_Refusal.None)
-	testing.expect(t, .Store in res_store.grants)
+	testing.expect_value(t, validate_nickname("a"), Nickname_Refusal.None)
+	testing.expect_value(t, validate_nickname("Az09-_Az09-_Az09-_Az09-"), Nickname_Refusal.None)
 }
 
 @(test)
