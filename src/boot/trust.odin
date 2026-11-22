@@ -612,6 +612,23 @@ floor_step_failed :: proc "contextless" (name: string, command_name: string, sta
 	print("): the floor stays\r\n")
 }
 
+// print_hex writes a number in lower-case hexadecimal digits on the log.
+print_hex :: proc "contextless" (value: u64) {
+	hex := "0123456789abcdef"
+	buffer: [16]u8
+	n := value
+	start := len(buffer)
+	for {
+		start -= 1
+		buffer[start] = hex[n & 0xF]
+		n >>= 4
+		if n == 0 {
+			break
+		}
+	}
+	print(string(buffer[start:]))
+}
+
 // print_number writes a number in decimal digits on the log.
 print_number :: proc "contextless" (value: u64) {
 	text: bootscreen.Text

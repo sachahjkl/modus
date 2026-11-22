@@ -121,3 +121,12 @@ text_last_lines_of_a_log :: proc(t: ^testing.T) {
 	testing.expect_value(t, text_last_lines("a\n\nc\n", 2), "\nc\n")
 	testing.expect_value(t, text_last_lines("only", 1), "only")
 }
+
+@(test)
+host_test_passed_count_parses_summary_lines :: proc(t: ^testing.T) {
+	testing.expect_value(t, host_test_passed_count("Finished 1 test in 2.3ms. All tests were successful.\n"), 1)
+	testing.expect_value(t, host_test_passed_count("info\nFinished 140 tests in 5.4s. All tests were successful.\n"), 140)
+	testing.expect_value(t, host_test_passed_count("Finished 10 tests in 1s. 1 test failed.\n"), 0)
+	testing.expect_value(t, host_test_passed_count("Finished 0 tests in 1s. All tests were successful.\n"), 0)
+	testing.expect_value(t, host_test_passed_count(""), 0)
+}

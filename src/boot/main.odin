@@ -89,6 +89,18 @@ efi_main :: proc "win64" (image: rawptr, system_table: ^Efi_System_Table) -> Efi
 	image_handle = image
 	services := system.boot_services
 	print("boot program: started\r\n")
+	loaded_guid := EFI_LOADED_IMAGE_GUID
+	loaded_raw: rawptr
+	if services.handle_protocol(image_handle, &loaded_guid, &loaded_raw) == 0 && loaded_raw != nil {
+		loaded := (^Efi_Loaded_Image)(loaded_raw)
+		if loaded.image_base != nil && loaded.image_size != 0 {
+			print("boot program: loaded at 0x")
+			print_hex(u64(uintptr(loaded.image_base)))
+			print(", ")
+			print_number(loaded.image_size)
+			print(" bytes\r\n")
+		}
+	}
 
 	boot := (^info.Boot_Info)(allocate(1))
 	stop_record = boot

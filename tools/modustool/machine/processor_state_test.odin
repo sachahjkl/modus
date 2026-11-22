@@ -220,6 +220,23 @@ the_processors_of_a_machine_are_read_and_named :: proc(t: ^testing.T) {
 
 	// An address that no known range holds.
 	testing.expect_value(t, processor_line({number = 1, instruction_address = 0x7e8c2a0}, known), "processor 1, running, at 0x7e8c2a0: no known code")
+
+	// Boot program range parsed from serial log names the boot program and offset.
+	boot_base, boot_size, boot_ok := boot_program_range_of_log("boot program: started\r\nboot program: loaded at 0x7e80000, 65536 bytes\r\n")
+	testing.expect(t, boot_ok)
+	testing.expect_value(t, boot_base, u64(0x7e80000))
+	testing.expect_value(t, boot_size, u64(65536))
+	boot_known := known
+	boot_known.boot_program_start = boot_base
+	boot_known.boot_program_size = boot_size
+	testing.expect_value(t, processor_line({number = 1, instruction_address = 0x7e8c2a0}, boot_known), "processor 1, running, at 0x7e8c2a0: the boot program, at the offset 0xc2a0")
+	// Address at exact end of boot program is outside it.
+	testing.expect_value(t, processor_line({number = 1, instruction_address = 0x7e90000}, boot_known), "processor 1, running, at 0x7e90000: no known code")
+	// Malformed or overflowing boot-range lines are refused.
+	_, _, bad_zero := boot_program_range_of_log("boot program: loaded at 0x0, 65536 bytes\n")
+	testing.expect(t, !bad_zero)
+	_, _, bad_ovf := boot_program_range_of_log("boot program: loaded at 0xffffffffffffffff, 16 bytes\n")
+	testing.expect(t, !bad_ovf)
 	// A volume that the table of the volumes does not hold names no kernel
 	// module, and the line says so.
 	testing.expect_value(t, processor_line(states[0], Known_Code{}), "processor 0, halted, at 0xffffffff80012345: the kernel, at the offset 0x12345: the table of the volumes names no kernel module for this volume")

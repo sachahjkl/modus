@@ -2,7 +2,9 @@ package checks
 
 import "core:fmt"
 import "core:os"
+import "core:strconv"
 import "core:strings"
+import "core:sync"
 import "core:time"
 import "modustool:foundation"
 
@@ -93,6 +95,30 @@ host_tests_at_once :: proc(folder_count, processors: int) -> int {
 	return max(1, min(folder_count, processors))
 }
 
+// host_test_passed_count extracts the number of passed tests from an `odin test`
+// output summary line ("Finished N test(s) in ... All tests were successful.").
+// Returns 0 when the log does not confirm that all tests succeeded.
+host_test_passed_count :: proc(output: string) -> int {
+	rest := output
+	for line in strings.split_lines_iterator(&rest) {
+		trimmed := strings.trim_space(line)
+		if !strings.has_prefix(trimmed, "Finished ") || !strings.has_suffix(trimmed, "All tests were successful.") {
+			continue
+		}
+		after := trimmed[len("Finished "):]
+		space := strings.index_byte(after, ' ')
+		if space <= 0 {
+			continue
+		}
+		count, ok := strconv.parse_int(after[:space])
+		if !ok || count <= 0 {
+			continue
+		}
+		return count
+	}
+	return 0
+}
+
 // text_last_lines gives the last count lines of a text, with their ends of
 // line. A text with fewer lines is given whole; a count of 0 or less gives
 // nothing.
@@ -161,6 +187,7 @@ host_tests_run :: proc(folders: []string) -> bool {
 	whole := time.tick_since(started)
 	passed := true
 	not_started := 0
+	host_tests_passed := 0
 	for folder, place in folders {
 		outcome := outcomes[place]
 		if !outcome.started {
@@ -175,6 +202,8 @@ host_tests_run :: proc(folders: []string) -> bool {
 		}
 		seconds := time.duration_seconds(outcome.duration)
 		if outcome.success {
+			folder_passed := host_test_passed_count(string(outcome.output))
+			host_tests_passed += folder_passed
 			fmt.printfln("modustool: measure: the host tests of %s: %.1f s", folder, seconds)
 		} else {
 			passed = false
@@ -190,7 +219,10 @@ host_tests_run :: proc(folders: []string) -> bool {
 	if not_started > 0 {
 		fmt.eprintfln("modustool: the host tests of %d folders did not start: the host tests of a folder failed", not_started)
 	}
-	fmt.printfln("modustool: measure: the host tests of %d folders: %.1f s on the clock, at most %d at once", len(folders), time.duration_seconds(whole), at_once)
+	if passed && host_tests_passed > 0 {
+		sync.atomic_add(&foundation.test_passed_count, host_tests_passed)
+	}
+	fmt.printfln("modustool: measure: the host tests of %d folders (%d tests): %.1f s on the clock, at most %d at once", len(folders), host_tests_passed, time.duration_seconds(whole), at_once)
 	return passed
 }
 
