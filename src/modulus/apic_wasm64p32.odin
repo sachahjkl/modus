@@ -13,7 +13,18 @@ package kernel
 // processors.
 
 import "base:intrinsics"
+import "modulus:delivery_count"
 import interrupts "modulus:virtual_interrupt_controller"
+
+foreign import page_interrupts "modus_page"
+
+@(default_calling_convention = "contextless")
+foreign page_interrupts {
+	// The device lines that the models of the page raised since the last
+	// call, one bit for each line of the 8259, and clears them: the PS/2
+	// keyboard is line 1, its mouse line 12.
+	page_interrupt_lines_take :: proc() -> u32 ---
+}
 
 // The controller of one processor. Each processor and each device model
 // sets a bit of pending with an atomic OR; only its processor clears one,
@@ -54,6 +65,42 @@ interrupt_take :: proc "contextless" (controller: ^Virtual_Interrupt_Controller)
 		index, mask, _ := interrupts.vector_bit(vector)
 		if intrinsics.atomic_and(&controller.pending[index], ~mask) & mask != 0 {
 			return vector, true
+		}
+	}
+}
+
+// The lines that the page raised and that no device of the kernel has: line
+// 0, which the 8259 of the kernel masks because each processor has its own
+// timer, and each bit past the 16 lines. Only the first processor counts
+// them, so the counts need no atomic.
+interrupt_lines_refused: u64
+interrupt_lines_refused_written: u64
+
+// interrupt_lines_poll makes each device line that the page raised wait as
+// its vector. Only the first processor takes them: the 8259 of the test
+// machine sends its lines to the first processor.
+@(private = "file")
+interrupt_lines_poll :: proc "contextless" (controller: ^Virtual_Interrupt_Controller) {
+	if apic_id() != 0 {
+		return
+	}
+	lines := page_interrupt_lines_take()
+	if lines == 0 {
+		return
+	}
+	refused := lines & ~u32(0xFFFE)
+	if refused != 0 {
+		interrupt_lines_refused += u64(intrinsics.count_ones(refused))
+		// One line for each doubling: a page that raises a wrong line at
+		// each slice does not fill the log.
+		if delivery_count.line_is_due(interrupt_lines_refused_written, interrupt_lines_refused) {
+			interrupt_lines_refused_written = interrupt_lines_refused
+			log("kernel: the page raised ", interrupt_lines_refused, " device lines that no device of the kernel has (line 0, or past line 15): the kernel drops them")
+		}
+	}
+	for line in u32(1) ..< INTERRUPT_LINES {
+		if lines & (u32(1) << line) != 0 {
+			_ = interrupt_pending_set(controller, u8(VECTOR_INTERRUPT_BASE + line))
 		}
 	}
 }
@@ -149,6 +196,7 @@ timer_pause :: proc "contextless" (pause: bool) {
 interrupts_deliver_in_kernel :: proc "contextless" () -> (delivered: bool) {
 	controller := &virtual_interrupt_controllers[apic_id()]
 	interrupt_timer_check(controller)
+	interrupt_lines_poll(controller)
 	for {
 		vector, taken := interrupt_take(controller)
 		if !taken {
@@ -169,6 +217,7 @@ interrupts_deliver_in_kernel :: proc "contextless" () -> (delivered: bool) {
 interrupt_take_for_process :: proc "contextless" () -> (vector: u8, taken: bool) {
 	controller := &virtual_interrupt_controllers[apic_id()]
 	interrupt_timer_check(controller)
+	interrupt_lines_poll(controller)
 	return interrupt_take(controller)
 }
 

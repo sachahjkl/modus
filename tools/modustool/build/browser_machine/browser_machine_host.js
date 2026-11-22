@@ -17,6 +17,7 @@ export const PAGE_IMPORT_NAMES = [
   "page_processor_loop_unwind",
   "page_processor_stop",
   "page_idle_wait",
+  "page_interrupt_lines_take",
 ];
 export const KERNEL_EXPORT_NAMES = ["memory", "entry", "modus_processor_loop_run"];
 
@@ -80,6 +81,11 @@ export const Port = Object.freeze({
   DebugExit: 0xf4,
 });
 
+// The device lines of the 8259 of the test machine that the page raises.
+// The kernel delivers line n as the vector 32 + n. A host test of the tool
+// reads the numbers.
+export const InterruptLine = { Keyboard: 1, Mouse: 12 };
+
 // The state of the machine, as the page shows it.
 export const MachineState = Object.freeze({
   Created: "created",
@@ -141,11 +147,18 @@ const PS2_QUEUE_LIMIT = 256;
 // What the next byte written to the data port means.
 const Ps2DataTarget = Object.freeze({ Keyboard: 0, KeyboardArgument: 1, Configuration: 2, Mouse: 3, MouseArgument: 4 });
 
+// The bits of the configuration byte that turn on the line of each port.
+const PS2_CONFIGURATION_KEYBOARD_INTERRUPT = 0x01;
+const PS2_CONFIGURATION_MOUSE_INTERRUPT = 0x02;
+
 // The PS/2 controller with its keyboard and its mouse. A key reaches the
 // system as its bytes of scan code set 1, which the controller gives when
-// its translation is on.
+// its translation is on. Each byte that comes to the head of the queue
+// raises the line of its port, when the configuration turns that line on,
+// as the output buffer of the controller does.
 export class Ps2Controller {
-  constructor() {
+  constructor(raiseLine = () => {}) {
+    this.raiseLine = raiseLine;
     this.queue = []; // Of {byte, mouse}.
     this.configuration = PS2_DEFAULT_CONFIGURATION;
     this.dataTarget = Ps2DataTarget.Keyboard;
@@ -153,6 +166,16 @@ export class Ps2Controller {
   push(byte, mouse) {
     if (this.queue.length >= PS2_QUEUE_LIMIT) this.queue.shift();
     this.queue.push({ byte, mouse });
+    if (this.queue.length === 1) this.signalHead();
+  }
+  // signalHead raises the line of the byte at the head of the queue.
+  signalHead() {
+    if (!this.queue.length) return;
+    if (this.queue[0].mouse) {
+      if (this.configuration & PS2_CONFIGURATION_MOUSE_INTERRUPT) this.raiseLine(InterruptLine.Mouse);
+    } else if (this.configuration & PS2_CONFIGURATION_KEYBOARD_INTERRUPT) {
+      this.raiseLine(InterruptLine.Keyboard);
+    }
   }
   read(port) {
     if (port === Port.Ps2Command) {
@@ -160,6 +183,7 @@ export class Ps2Controller {
       return PS2_STATUS_OUTPUT_FULL | (this.queue[0].mouse ? PS2_STATUS_MOUSE : 0);
     }
     const next = this.queue.shift();
+    this.signalHead();
     return next ? next.byte : 0;
   }
   write(port, value) {
@@ -170,7 +194,7 @@ export class Ps2Controller {
     const target = this.dataTarget;
     this.dataTarget = Ps2DataTarget.Keyboard;
     switch (target) {
-      case Ps2DataTarget.Configuration: this.configuration = value; return;
+      case Ps2DataTarget.Configuration: this.configuration = value; this.signalHead(); return;
       case Ps2DataTarget.KeyboardArgument: this.push(PS2_ACKNOWLEDGE, false); return;
       case Ps2DataTarget.MouseArgument: this.push(PS2_ACKNOWLEDGE, true); return;
       case Ps2DataTarget.Mouse: this.mouseCommand(value); return;
@@ -218,6 +242,20 @@ export class Ps2Controller {
     this.push((scan & 0x7f) | (pressed ? 0 : 0x80), false);
     return true;
   }
+  // typeText presses and releases the keys of a text on a keyboard of the
+  // layout United States, with Shift around each character that needs it.
+  // A character that the layout has no key for stops the text: false.
+  typeText(text) {
+    for (const character of text) {
+      const key = US_LAYOUT_KEYS[character];
+      if (key === undefined) return false;
+      if (key.shift) this.key("ShiftLeft", true);
+      this.key(key.code, true);
+      this.key(key.code, false);
+      if (key.shift) this.key("ShiftLeft", false);
+    }
+    return true;
+  }
   // A move of the pointer in pixels, y down as in the document, and the
   // buttons as MouseEvent.buttons gives them (bit 0 left, 1 right, 2 middle).
   pointer(deltaX, deltaY, buttons) {
@@ -251,6 +289,29 @@ export const SCAN_CODE_SET_1 = Object.freeze({
   ArrowUp: 0xe048, PageUp: 0xe049, ArrowLeft: 0xe04b, ArrowRight: 0xe04d, End: 0xe04f, ArrowDown: 0xe050,
   PageDown: 0xe051, Insert: 0xe052, Delete: 0xe053, MetaLeft: 0xe05b, MetaRight: 0xe05c, ContextMenu: 0xe05d,
 });
+
+// The character of each key of the layout United States, with and
+// without Shift: the key that typeText presses for a character.
+export const US_LAYOUT_KEYS = (() => {
+  const keys = { " ": { code: "Space", shift: false }, "\n": { code: "Enter", shift: false } };
+  for (const letter of "abcdefghijklmnopqrstuvwxyz") {
+    const code = "Key" + letter.toUpperCase();
+    keys[letter] = { code, shift: false };
+    keys[letter.toUpperCase()] = { code, shift: true };
+  }
+  const pairs = [
+    ["Digit1", "1", "!"], ["Digit2", "2", "@"], ["Digit3", "3", "#"], ["Digit4", "4", "$"], ["Digit5", "5", "%"],
+    ["Digit6", "6", "^"], ["Digit7", "7", "&"], ["Digit8", "8", "*"], ["Digit9", "9", "("], ["Digit0", "0", ")"],
+    ["Minus", "-", "_"], ["Equal", "=", "+"], ["BracketLeft", "[", "{"], ["BracketRight", "]", "}"],
+    ["Semicolon", ";", ":"], ["Quote", "'", "\""], ["Backquote", "`", "~"], ["Backslash", "\\", "|"],
+    ["Comma", ",", "<"], ["Period", ".", ">"], ["Slash", "/", "?"],
+  ];
+  for (const [code, plain, shifted] of pairs) {
+    keys[plain] = { code, shift: false };
+    keys[shifted] = { code, shift: true };
+  }
+  return Object.freeze(keys);
+})();
 
 // The clock of the machine (the CMOS clock at ports 0x70 and 0x71): the
 // date of the page in UTC, in binary-coded decimal, as the firmware of the
@@ -368,7 +429,8 @@ export class BrowserMachine {
     this.idleWait = idleWait;
     this.onStop = onStop;
     this.serial = new SerialPort(onSerialLine);
-    this.keyboard = new Ps2Controller();
+    this.interruptLines = 0;
+    this.keyboard = new Ps2Controller((line) => { this.interruptLines |= 1 << line; });
     this.clock = new MachineClock(() => Date.now());
     this.state = MachineState.Created;
     this.stopCode = null;
@@ -387,8 +449,17 @@ export class BrowserMachine {
         page_processor_loop_unwind: () => { throw new ProcessorLoopUnwind(); },
         page_processor_stop: () => { throw new ProcessorStop(); },
         page_idle_wait: (boundNanoseconds) => machine.idleWait(boundNanoseconds),
+        page_interrupt_lines_take: () => machine.interruptLinesTake(),
       },
     };
+  }
+
+  // interruptLinesTake gives the kernel the lines raised since its last
+  // call, and clears them.
+  interruptLinesTake() {
+    const lines = this.interruptLines;
+    this.interruptLines = 0;
+    return lines;
   }
 
   portWrite(port, value) {
