@@ -21,11 +21,12 @@ import "modustool:resources"
 
 // One row of a list, as this table writes it.
 Start_List_Row :: struct {
-	name:          string,
-	needs:         start_list.Machine_Parts,
-	absent_rule:   start_list.Absent_Part_Rule,
-	usable_mark:   start_list.Usable_Mark,
-	restart_count: u32,
+	name:                   string,
+	needs:                  start_list.Machine_Parts,
+	absent_rule:            start_list.Absent_Part_Rule,
+	usable_mark:            start_list.Usable_Mark,
+	restart_count:          u32,
+	restart_window_seconds: u32, // 0: the count holds for the whole run.
 }
 
 // One wiring row of a list, as this table writes it: the record output of
@@ -181,7 +182,7 @@ start_list_bytes :: proc(rows: []Start_List_Row, wirings: []start_list.Wiring_Ro
 	}
 	written := make([]start_list.Start_Row, len(rows), context.temp_allocator)
 	for row, index in rows {
-		made, ok := start_list.row_make(row.name, row.needs, row.absent_rule, row.usable_mark, row.restart_count)
+		made, ok := start_list.row_make(row.name, row.needs, row.absent_rule, row.usable_mark, row.restart_count, row.restart_window_seconds)
 		if !ok {
 			return nil, {}, fmt.tprintf("the row %d names %q, which is not a module name", index, row.name)
 		}

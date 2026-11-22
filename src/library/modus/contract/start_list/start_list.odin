@@ -54,7 +54,7 @@ VALUE_LIST_SIZE :: 0
 
 // The bytes "STARTLST" and the version of the format of a list.
 LIST_MAGIC :: u64(0x54534C5452415453)
-LIST_VERSION :: 2
+LIST_VERSION :: 3
 // The rows of one list at most: a list is read into a table of this size,
 // on the stack of the start policy.
 ROW_CAPACITY :: 32
@@ -112,7 +112,7 @@ root_procedure_of :: proc "contextless" (name: string) -> Root_Procedure {
 // The bytes of the name of a module in a row, with zero bytes after it: the
 // size of the name of an entry of the boot image.
 MODULE_NAME_SIZE :: 32
-// The restarts of one row at most, for the whole run of the machine.
+// The restarts of one row at most, in its restart window.
 RESTART_LIMIT :: 16
 
 // stop_restarts says if a stop of the process of a row starts the row again,
@@ -132,6 +132,93 @@ stop_restarts :: proc "contextless" (outcome: op.Stop_Outcome) -> bool {
 	case .None, .Failed, .Stopped_On_Request:
 	}
 	return true
+}
+
+// The restarts that one row took, for its restart bound
+// (src/md/features/supervision.md, "The restart bound"). The zero value is
+// a row that has not restarted yet.
+Restart_Window :: struct {
+	// The times of the restarts inside the window, in milliseconds of the
+	// clock of the system, oldest first from first_index. A row with no
+	// window keeps no time: only taken counts.
+	times_milliseconds: [RESTART_LIMIT]u64,
+	first_index:        u32,
+	taken:              u32, // The restarts that still count against the bound.
+}
+
+// restart_window_take decides one restart of a row with restart_count
+// restarts in a window of restart_window_seconds, at the time
+// now_milliseconds. With a window of 0 the count holds for the whole run
+// and now_milliseconds is not read, so the caller passes 0 and reads no
+// clock. With a window, a restart counts while its age is below the
+// window; a time before a kept time (a clock that went back) counts as age
+// 0, so no subtraction wraps. allowed: the row starts again, and the
+// restart is counted. restarts_left: what the window still allows after
+// this decision. A count past RESTART_LIMIT is refused, as the border of
+// the list refuses it.
+//
+// Example: restart_count 5, window 60: a 6th restart within 60000 ms of
+// the first is refused; at 60000 ms after the first it is allowed.
+restart_window_take :: proc "contextless" (window: ^Restart_Window, restart_count: u32, restart_window_seconds: u32, now_milliseconds: u64) -> (allowed: bool, restarts_left: u32) {
+	if restart_count > RESTART_LIMIT {
+		return false, 0
+	}
+	if restart_window_seconds != 0 {
+		window_milliseconds := u64(restart_window_seconds) * 1000
+		for window.taken > 0 {
+			oldest := window.times_milliseconds[window.first_index]
+			if now_milliseconds <= oldest || now_milliseconds - oldest < window_milliseconds {
+				break
+			}
+			window.first_index = (window.first_index + 1) % RESTART_LIMIT
+			window.taken -= 1
+		}
+	}
+	if window.taken >= restart_count {
+		return false, 0
+	}
+	if restart_window_seconds != 0 {
+		window.times_milliseconds[(window.first_index + window.taken) % RESTART_LIMIT] = now_milliseconds
+	}
+	window.taken += 1
+	return true, restart_count - window.taken
+}
+
+// What the starter of a row does at a stop of its process.
+Row_Stop_Step :: enum u8 {
+	Silent        = 0, // A row with no restart that stays stopped: the line of the root service is its one line.
+	Not_Restarted = 1, // The row stopped itself with Done or Refused.
+	Past_Bound    = 2, // Past its restart bound, and the machine is usable without it: the row stays stopped.
+	Escalate      = 3, // A needed row past its restart bound: the machine is no longer usable.
+	Restarted     = 4,
+}
+
+// row_stop_step decides the stop of the process of a row with the stop
+// outcome outcome: no restart after Done or Refused, then the restart
+// bound of restart_window_take, then the mark of the row past the bound
+// (src/md/features/supervision.md, "A holder that stops in a loop, and the
+// escalation"). A row with no restart that stays stopped is Silent, unless
+// it is needed. It calls clock only for a row with a restart window, so a
+// row with none never reads the time. restarts_left: what the window
+// allows after a restart.
+row_stop_step :: proc "contextless" (row: ^Start_Row, window: ^Restart_Window, outcome: op.Stop_Outcome, clock: proc "contextless" () -> u64) -> (step: Row_Stop_Step, restarts_left: u32) {
+	if !stop_restarts(outcome) {
+		return row.restart_count == 0 ? .Silent : .Not_Restarted, 0
+	}
+	now: u64
+	if row.restart_window_seconds != 0 {
+		now = clock()
+	}
+	allowed, left := restart_window_take(window, row.restart_count, row.restart_window_seconds, now)
+	switch {
+	case allowed:
+		return .Restarted, left
+	case row.usable_mark == .Needed:
+		return .Escalate, 0
+	case row.restart_count == 0:
+		return .Silent, 0
+	}
+	return .Past_Bound, 0
 }
 
 // A part of the machine that a row can need. The member is the bit of the
@@ -233,19 +320,22 @@ Row_Record :: struct {
 	needs:         u64, // A word of Machine_Parts.
 	absent_rule:   u32, // A word of Absent_Part_Rule.
 	usable_mark:   u32, // A word of Usable_Mark.
-	restart_count: u32, // At most RESTART_LIMIT.
-	reserved:      u32, // 0.
+	restart_count: u32, // At most RESTART_LIMIT, and not 0 with a window.
+	// Seconds of the clock of the system. 0: the whole run of the machine,
+	// so a row that names no window never reads the clock.
+	restart_window_seconds: u32,
 }
 #assert(size_of(Row_Record) == 56)
 
 // One row after the border: its words are members.
 Start_Row :: struct {
-	module_name:   [MODULE_NAME_SIZE]u8,
-	name_length:   int,
-	needs:         Machine_Parts,
-	absent_rule:   Absent_Part_Rule,
-	usable_mark:   Usable_Mark,
-	restart_count: u32,
+	module_name:            [MODULE_NAME_SIZE]u8,
+	name_length:            int,
+	needs:                  Machine_Parts,
+	absent_rule:            Absent_Part_Rule,
+	usable_mark:            Usable_Mark,
+	restart_count:          u32,
+	restart_window_seconds: u32, // 0: the whole run.
 }
 
 // row_name gives the name of the module of a row.
@@ -279,6 +369,8 @@ List_Problem :: enum u8 {
 	Writer_Before_Reader = 19, // The reader row comes after the writer row: the writer would run before its reader.
 	Log_Wired_Twice      = 20, // Two wiring rows wire the record output log of one writer row.
 	Writer_Restarts      = 21, // The writer row of a wiring row has restarts: a restart applies its rows again, which a reader of one wiring refuses or not by its speed.
+	// A start row again: place is the start row from 0.
+	Window_Without_Restarts = 22, // A restart window on a row with no restart: a bound of nothing.
 }
 
 @(rodata)
@@ -305,6 +397,8 @@ LIST_PROBLEM_TEXTS := [List_Problem]string {
 	.Writer_Before_Reader = "a wiring row has its writer before its reader",
 	.Log_Wired_Twice      = "two wiring rows wire the log of one row",
 	.Writer_Restarts      = "a wiring row has a writer row with restarts",
+	// A start row again.
+	.Window_Without_Restarts = "a row has a restart window and no restart",
 }
 
 // parts_of_word is the border of a word of Machine_Parts: a bit that names
@@ -360,13 +454,13 @@ row_of_record :: proc "contextless" (record: ^Row_Record) -> (row: Start_Row, pr
 	if !mark_known {
 		return {}, .Unknown_Mark
 	}
-	if record.reserved != 0 {
-		return {}, .Reserved_Not_Zero
-	}
 	if record.restart_count > RESTART_LIMIT {
 		return {}, .Restarts_Past_Limit
 	}
-	row = {module_name = record.module_name, name_length = length, needs = needs, absent_rule = rule, usable_mark = mark, restart_count = record.restart_count}
+	if record.restart_window_seconds != 0 && record.restart_count == 0 {
+		return {}, .Window_Without_Restarts
+	}
+	row = {module_name = record.module_name, name_length = length, needs = needs, absent_rule = rule, usable_mark = mark, restart_count = record.restart_count, restart_window_seconds = record.restart_window_seconds}
 	return row, .None
 }
 
@@ -500,7 +594,7 @@ list_size :: proc "contextless" (row_count: int, wiring_count: int = 0) -> int {
 
 // row_make gives the row of a module, for a writer of a list. ok is false
 // for a name that list_read refuses.
-row_make :: proc "contextless" (name: string, needs: Machine_Parts, absent_rule: Absent_Part_Rule, usable_mark: Usable_Mark, restart_count: u32 = 0) -> (row: Start_Row, ok: bool) {
+row_make :: proc "contextless" (name: string, needs: Machine_Parts, absent_rule: Absent_Part_Rule, usable_mark: Usable_Mark, restart_count: u32 = 0, restart_window_seconds: u32 = 0) -> (row: Start_Row, ok: bool) {
 	if len(name) == 0 || len(name) >= MODULE_NAME_SIZE {
 		return {}, false
 	}
@@ -510,6 +604,7 @@ row_make :: proc "contextless" (name: string, needs: Machine_Parts, absent_rule:
 		return {}, false
 	}
 	row.name_length, row.needs, row.absent_rule, row.usable_mark, row.restart_count = length, needs, absent_rule, usable_mark, restart_count
+	row.restart_window_seconds = restart_window_seconds
 	return row, true
 }
 
@@ -525,11 +620,12 @@ list_write :: proc "contextless" (rows: []Start_Row, wirings: []Wiring_Row_Recor
 	intrinsics.mem_copy_non_overlapping(raw_data(bytes), &header, size_of(List_Header))
 	for &row, index in rows {
 		record := Row_Record {
-			module_name   = row.module_name,
-			needs         = transmute(u64)row.needs,
-			absent_rule   = u32(row.absent_rule),
-			usable_mark   = u32(row.usable_mark),
-			restart_count = row.restart_count,
+			module_name            = row.module_name,
+			needs                  = transmute(u64)row.needs,
+			absent_rule            = u32(row.absent_rule),
+			usable_mark            = u32(row.usable_mark),
+			restart_count          = row.restart_count,
+			restart_window_seconds = row.restart_window_seconds,
 		}
 		intrinsics.mem_copy_non_overlapping(raw_data(bytes[size_of(List_Header) + index * size_of(Row_Record):]), &record, size_of(Row_Record))
 	}

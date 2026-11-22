@@ -136,6 +136,17 @@ a_wiring_row_that_the_module_files_refuse_is_refused :: proc(t: ^testing.T) {
 	restart_problems := start_list_problems(restarting, modules, false, []Start_List_Wiring{{writer = "writer", record_output = "numbers", reader = "reader", record_input = "numbers"}}, files)
 	testing.expectf(t, len(restart_problems) == 1 && strings.contains(restart_problems[0], start_list.LIST_PROBLEM_TEXTS[.Writer_Restarts]), "the problems %v", restart_problems)
 
+	// A restart window on a row with no restart bounds nothing; with its
+	// restarts, the window is written and read back.
+	windowed := []Start_List_Row{{name = "input", absent_rule = .Not_Started, restart_window_seconds = 60}}
+	window_problems := start_list_problems(windowed, modules, false, nil, files)
+	testing.expectf(t, len(window_problems) == 1 && strings.contains(window_problems[0], start_list.LIST_PROBLEM_TEXTS[.Window_Without_Restarts]), "the problems %v", window_problems)
+	windowed[0].restart_count = 5
+	testing.expect_value(t, len(start_list_problems(windowed, modules, false, nil, files)), 0)
+	_, windowed_list, windowed_problem := start_list_bytes(windowed)
+	testing.expect_value(t, windowed_problem, "")
+	testing.expect_value(t, windowed_list.rows[0].restart_window_seconds, u32(60))
+
 	// Eight rows of the largest rings, which the reserve of the start
 	// policy does not pay.
 	large := make([]Start_List_Wiring, start_list.WIRING_ROW_CAPACITY, context.temp_allocator)

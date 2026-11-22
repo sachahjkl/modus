@@ -75,6 +75,14 @@ Row_Stopped_Past_Restarts_Without_Outcome :: struct {
 	row_process: value_kinds.Module_Name_Field,
 }
 
+// A needed row past its restart bound: the line of the root service gave its stop.
+@(log_fact = "start_policy: {row_process} is past its {restarts} restarts in a window of {restart_window_seconds} seconds, 0 for the whole run: the machine is not usable without it, and the start policy stops")
+Needed_Row_Past_Restarts :: struct {
+	restarts:               u32,
+	restart_window_seconds: u32,
+	row_process:            value_kinds.Module_Name_Field,
+}
+
 // A row stopped itself, and starts again.
 @(log_fact = "start_policy: {row_process} stopped: {cause}, {outcome}; it starts again, {restarts_left} restarts left")
 Row_Restarted :: struct {
