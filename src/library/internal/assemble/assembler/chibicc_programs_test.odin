@@ -1113,3 +1113,980 @@ indexed_and_indirect_program_validates_and_runs :: proc(t: ^testing.T) {
 		testing.expect_value(t, sum_table_fn(4), i64(76557))
 	}
 }
+
+
+// Verbatim assembly emitted by the patched chibicc of modus for a program
+// with tables of addresses in its data (`quad` lines that the module
+// rebases), float and double arithmetic, comparisons and conversions
+// (the conversion of an unsigned long uses the numeric local labels `1f`
+// and `2f`), and the atomic `xchg` and `lock cmpxchg`:
+//
+//   typedef int (*operation)(int, int);
+//   static int add(int a, int b) { return a + b; }
+//   static int sub(int a, int b) { return a - b; }
+//   static int mul(int a, int b) { return a * b; }
+//   static operation operations[] = {add, sub, mul};
+//   static char *names[] = {"add", "sub", "mul"};
+//   static int numbers[] = {10, 20, 30, 40};
+//   static int *middle = &numbers[2];
+//   long apply(long index, long a, long b) { return operations[index](a, b); }
+//   long name_byte(long index, long at) { return names[index][at]; }
+//   long middle_value(long step) { return middle[step - 1]; }
+//   int average(int a, int b) { double x = a; double y = b; double half = (x + y) / 2; return (int)(half * 10); }
+//   int scale(int a) { float f = a; f = f * f - f / 4; return (int)f; }
+//   int compare(int a, int b) { double x = a; double y = b; return (x < y) + (x == y) * 2 + (x > y) * 4; }
+//   long widen(long a) { float f = (float)a; double d = f; unsigned long u = (unsigned long)a; double e = (double)u; return (long)(d + e); }
+//   int exchange(int value) { int slot = 5; int old = __builtin_atomic_exchange(&slot, value); return old * 100 + slot; }
+//   int swap_if(int expected, int desired) { int slot = 7; int ok = __builtin_compare_and_swap(&slot, &expected, desired); return ok * 1000 + slot * 10 + expected; }
+@(private = "file")
+REBASED_FLOATING_ATOMIC_PROGRAM :: `section data
+.L..29:
+  byte 115
+  byte 119
+  byte 97
+  byte 112
+  byte 95
+  byte 105
+  byte 102
+  byte 0
+section data
+.L..28:
+  byte 115
+  byte 119
+  byte 97
+  byte 112
+  byte 95
+  byte 105
+  byte 102
+  byte 0
+section data
+.L..27:
+  byte 101
+  byte 120
+  byte 99
+  byte 104
+  byte 97
+  byte 110
+  byte 103
+  byte 101
+  byte 0
+section data
+.L..26:
+  byte 101
+  byte 120
+  byte 99
+  byte 104
+  byte 97
+  byte 110
+  byte 103
+  byte 101
+  byte 0
+section data
+.L..25:
+  byte 119
+  byte 105
+  byte 100
+  byte 101
+  byte 110
+  byte 0
+section data
+.L..24:
+  byte 119
+  byte 105
+  byte 100
+  byte 101
+  byte 110
+  byte 0
+section data
+.L..23:
+  byte 99
+  byte 111
+  byte 109
+  byte 112
+  byte 97
+  byte 114
+  byte 101
+  byte 0
+section data
+.L..22:
+  byte 99
+  byte 111
+  byte 109
+  byte 112
+  byte 97
+  byte 114
+  byte 101
+  byte 0
+section data
+.L..21:
+  byte 115
+  byte 99
+  byte 97
+  byte 108
+  byte 101
+  byte 0
+section data
+.L..20:
+  byte 115
+  byte 99
+  byte 97
+  byte 108
+  byte 101
+  byte 0
+section data
+.L..19:
+  byte 97
+  byte 118
+  byte 101
+  byte 114
+  byte 97
+  byte 103
+  byte 101
+  byte 0
+section data
+.L..18:
+  byte 97
+  byte 118
+  byte 101
+  byte 114
+  byte 97
+  byte 103
+  byte 101
+  byte 0
+section data
+.L..17:
+  byte 109
+  byte 105
+  byte 100
+  byte 100
+  byte 108
+  byte 101
+  byte 95
+  byte 118
+  byte 97
+  byte 108
+  byte 117
+  byte 101
+  byte 0
+section data
+.L..16:
+  byte 109
+  byte 105
+  byte 100
+  byte 100
+  byte 108
+  byte 101
+  byte 95
+  byte 118
+  byte 97
+  byte 108
+  byte 117
+  byte 101
+  byte 0
+section data
+.L..15:
+  byte 110
+  byte 97
+  byte 109
+  byte 101
+  byte 95
+  byte 98
+  byte 121
+  byte 116
+  byte 101
+  byte 0
+section data
+.L..14:
+  byte 110
+  byte 97
+  byte 109
+  byte 101
+  byte 95
+  byte 98
+  byte 121
+  byte 116
+  byte 101
+  byte 0
+section data
+.L..13:
+  byte 97
+  byte 112
+  byte 112
+  byte 108
+  byte 121
+  byte 0
+section data
+.L..12:
+  byte 97
+  byte 112
+  byte 112
+  byte 108
+  byte 121
+  byte 0
+section data
+  zero 4
+middle:
+  quad numbers+8
+section data
+numbers:
+  byte 10
+  byte 0
+  byte 0
+  byte 0
+  byte 20
+  byte 0
+  byte 0
+  byte 0
+  byte 30
+  byte 0
+  byte 0
+  byte 0
+  byte 40
+  byte 0
+  byte 0
+  byte 0
+section data
+.L..11:
+  byte 109
+  byte 117
+  byte 108
+  byte 0
+section data
+.L..10:
+  byte 115
+  byte 117
+  byte 98
+  byte 0
+section data
+.L..9:
+  byte 97
+  byte 100
+  byte 100
+  byte 0
+section data
+.L..8:
+  byte 109
+  byte 117
+  byte 108
+  byte 0
+section data
+.L..7:
+  byte 115
+  byte 117
+  byte 98
+  byte 0
+section data
+.L..6:
+  byte 97
+  byte 100
+  byte 100
+  byte 0
+section data
+  zero 8
+names:
+  quad .L..9+0
+  quad .L..10+0
+  quad .L..11+0
+section data
+  zero 8
+operations:
+  quad add+0
+  quad sub+0
+  quad mul+0
+section data
+.L..5:
+  byte 109
+  byte 117
+  byte 108
+  byte 0
+section data
+.L..4:
+  byte 109
+  byte 117
+  byte 108
+  byte 0
+section data
+.L..3:
+  byte 115
+  byte 117
+  byte 98
+  byte 0
+section data
+.L..2:
+  byte 115
+  byte 117
+  byte 98
+  byte 0
+section data
+.L..1:
+  byte 97
+  byte 100
+  byte 100
+  byte 0
+section data
+.L..0:
+  byte 97
+  byte 100
+  byte 100
+  byte 0
+section code
+export swap_if(expected: Integer, desired: Integer) -> Integer
+swap_if:
+  push %rbp
+  mov %rsp, %rbp
+  sub $32, %rsp
+  mov %rsp, -16(%rbp)
+  mov %edi, -20(%rbp)
+  mov %esi, -24(%rbp)
+  mov $4, %rcx
+  lea -8(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -8(%rbp), %rax
+  push %rax
+  mov $7, %rax
+  pop %rdi
+  mov %eax, (%rdi)
+  mov $4, %rcx
+  lea -4(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -4(%rbp), %rax
+  push %rax
+  lea -8(%rbp), %rax
+  push %rax
+  lea -24(%rbp), %rax
+  movsxd (%rax), %rax
+  push %rax
+  lea -20(%rbp), %rax
+  mov %rax, %r8
+  movsxd (%rax), %rax
+  pop %rdx
+  pop %rdi
+  lock cmpxchg %edx, (%rdi)
+  sete %cl
+  je 1f
+  mov %eax, (%r8)
+1:
+  movzbl %cl, %eax
+  pop %rdi
+  mov %eax, (%rdi)
+  lea -20(%rbp), %rax
+  movsxd (%rax), %rax
+  push %rax
+  mov $10, %rax
+  push %rax
+  lea -8(%rbp), %rax
+  movsxd (%rax), %rax
+  pop %rdi
+  imul %edi, %eax
+  push %rax
+  mov $1000, %rax
+  push %rax
+  lea -4(%rbp), %rax
+  movsxd (%rax), %rax
+  pop %rdi
+  imul %edi, %eax
+  pop %rdi
+  add %edi, %eax
+  pop %rdi
+  add %edi, %eax
+  jmp .L.return.swap_if
+.L.return.swap_if:
+  movsxd %eax, %rax
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+export exchange(value: Integer) -> Integer
+exchange:
+  push %rbp
+  mov %rsp, %rbp
+  sub $32, %rsp
+  mov %rsp, -16(%rbp)
+  mov %edi, -20(%rbp)
+  mov $4, %rcx
+  lea -8(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -8(%rbp), %rax
+  push %rax
+  mov $5, %rax
+  pop %rdi
+  mov %eax, (%rdi)
+  mov $4, %rcx
+  lea -4(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -4(%rbp), %rax
+  push %rax
+  lea -8(%rbp), %rax
+  push %rax
+  lea -20(%rbp), %rax
+  movsxd (%rax), %rax
+  pop %rdi
+  xchg %eax, (%rdi)
+  pop %rdi
+  mov %eax, (%rdi)
+  lea -8(%rbp), %rax
+  movsxd (%rax), %rax
+  push %rax
+  mov $100, %rax
+  push %rax
+  lea -4(%rbp), %rax
+  movsxd (%rax), %rax
+  pop %rdi
+  imul %edi, %eax
+  pop %rdi
+  add %edi, %eax
+  jmp .L.return.exchange
+.L.return.exchange:
+  movsxd %eax, %rax
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+export widen(a: Integer) -> Integer
+widen:
+  push %rbp
+  mov %rsp, %rbp
+  sub $48, %rsp
+  mov %rsp, -40(%rbp)
+  mov %rdi, -48(%rbp)
+  mov $4, %rcx
+  lea -28(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -28(%rbp), %rax
+  push %rax
+  lea -48(%rbp), %rax
+  mov (%rax), %rax
+  cvtsi2ssq %rax, %xmm0
+  pop %rdi
+  movss %xmm0, (%rdi)
+  mov $8, %rcx
+  lea -24(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -24(%rbp), %rax
+  push %rax
+  lea -28(%rbp), %rax
+  movss (%rax), %xmm0
+  cvtss2sd %xmm0, %xmm0
+  pop %rdi
+  movsd %xmm0, (%rdi)
+  mov $8, %rcx
+  lea -16(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -16(%rbp), %rax
+  push %rax
+  lea -48(%rbp), %rax
+  mov (%rax), %rax
+  pop %rdi
+  mov %rax, (%rdi)
+  mov $8, %rcx
+  lea -8(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -8(%rbp), %rax
+  push %rax
+  lea -16(%rbp), %rax
+  mov (%rax), %rax
+  test %rax,%rax; js 1f; pxor %xmm0,%xmm0; cvtsi2sd %rax,%xmm0; jmp 2f; 1: mov %rax,%rdi; and $1,%eax; pxor %xmm0,%xmm0; shr %rdi; or %rax,%rdi; cvtsi2sd %rdi,%xmm0; addsd %xmm0,%xmm0; 2:
+  pop %rdi
+  movsd %xmm0, (%rdi)
+  lea -8(%rbp), %rax
+  movsd (%rax), %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea -24(%rbp), %rax
+  movsd (%rax), %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  addsd %xmm1, %xmm0
+  cvttsd2siq %xmm0, %rax
+  jmp .L.return.widen
+.L.return.widen:
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+export compare(a: Integer, b: Integer) -> Integer
+compare:
+  push %rbp
+  mov %rsp, %rbp
+  sub $32, %rsp
+  mov %rsp, -24(%rbp)
+  mov %edi, -28(%rbp)
+  mov %esi, -32(%rbp)
+  mov $8, %rcx
+  lea -16(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -16(%rbp), %rax
+  push %rax
+  lea -28(%rbp), %rax
+  movsxd (%rax), %rax
+  cvtsi2sdl %eax, %xmm0
+  pop %rdi
+  movsd %xmm0, (%rdi)
+  mov $8, %rcx
+  lea -8(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -8(%rbp), %rax
+  push %rax
+  lea -32(%rbp), %rax
+  movsxd (%rax), %rax
+  cvtsi2sdl %eax, %xmm0
+  pop %rdi
+  movsd %xmm0, (%rdi)
+  mov $4, %rax
+  push %rax
+  lea -16(%rbp), %rax
+  movsd (%rax), %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea -8(%rbp), %rax
+  movsd (%rax), %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  ucomisd %xmm0, %xmm1
+  seta %al
+  and $1, %al
+  movzb %al, %rax
+  pop %rdi
+  imul %edi, %eax
+  push %rax
+  mov $2, %rax
+  push %rax
+  lea -8(%rbp), %rax
+  movsd (%rax), %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea -16(%rbp), %rax
+  movsd (%rax), %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  ucomisd %xmm0, %xmm1
+  sete %al
+  setnp %dl
+  and %dl, %al
+  and $1, %al
+  movzb %al, %rax
+  pop %rdi
+  imul %edi, %eax
+  push %rax
+  lea -8(%rbp), %rax
+  movsd (%rax), %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea -16(%rbp), %rax
+  movsd (%rax), %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  ucomisd %xmm0, %xmm1
+  seta %al
+  and $1, %al
+  movzb %al, %rax
+  pop %rdi
+  add %edi, %eax
+  pop %rdi
+  add %edi, %eax
+  jmp .L.return.compare
+.L.return.compare:
+  movsxd %eax, %rax
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+export scale(a: Integer) -> Integer
+scale:
+  push %rbp
+  mov %rsp, %rbp
+  sub $32, %rsp
+  mov %rsp, -16(%rbp)
+  mov %edi, -20(%rbp)
+  mov $4, %rcx
+  lea -4(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -4(%rbp), %rax
+  push %rax
+  lea -20(%rbp), %rax
+  movsxd (%rax), %rax
+  cvtsi2ssl %eax, %xmm0
+  pop %rdi
+  movss %xmm0, (%rdi)
+  lea -4(%rbp), %rax
+  push %rax
+  mov $4, %rax
+  cvtsi2ssl %eax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea -4(%rbp), %rax
+  movss (%rax), %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  divss %xmm1, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea -4(%rbp), %rax
+  movss (%rax), %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea -4(%rbp), %rax
+  movss (%rax), %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  mulss %xmm1, %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  subss %xmm1, %xmm0
+  pop %rdi
+  movss %xmm0, (%rdi)
+  lea -4(%rbp), %rax
+  movss (%rax), %xmm0
+  cvttss2sil %xmm0, %eax
+  jmp .L.return.scale
+.L.return.scale:
+  movsxd %eax, %rax
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+export average(a: Integer, b: Integer) -> Integer
+average:
+  push %rbp
+  mov %rsp, %rbp
+  sub $48, %rsp
+  mov %rsp, -32(%rbp)
+  mov %edi, -36(%rbp)
+  mov %esi, -40(%rbp)
+  mov $8, %rcx
+  lea -24(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -24(%rbp), %rax
+  push %rax
+  lea -36(%rbp), %rax
+  movsxd (%rax), %rax
+  cvtsi2sdl %eax, %xmm0
+  pop %rdi
+  movsd %xmm0, (%rdi)
+  mov $8, %rcx
+  lea -16(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -16(%rbp), %rax
+  push %rax
+  lea -40(%rbp), %rax
+  movsxd (%rax), %rax
+  cvtsi2sdl %eax, %xmm0
+  pop %rdi
+  movsd %xmm0, (%rdi)
+  mov $8, %rcx
+  lea -8(%rbp), %rdi
+  mov $0, %al
+  rep stosb
+  lea -8(%rbp), %rax
+  push %rax
+  mov $2, %rax
+  cvtsi2sdl %eax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea -16(%rbp), %rax
+  movsd (%rax), %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea -24(%rbp), %rax
+  movsd (%rax), %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  addsd %xmm1, %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  divsd %xmm1, %xmm0
+  pop %rdi
+  movsd %xmm0, (%rdi)
+  mov $10, %rax
+  cvtsi2sdl %eax, %xmm0
+  sub $8, %rsp
+  movsd %xmm0, (%rsp)
+  lea -8(%rbp), %rax
+  movsd (%rax), %xmm0
+  movsd (%rsp), %xmm1
+  add $8, %rsp
+  mulsd %xmm1, %xmm0
+  cvttsd2sil %xmm0, %eax
+  jmp .L.return.average
+.L.return.average:
+  movsxd %eax, %rax
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+export middle_value(step: Integer) -> Integer
+middle_value:
+  push %rbp
+  mov %rsp, %rbp
+  sub $16, %rsp
+  mov %rsp, -8(%rbp)
+  mov %rdi, -16(%rbp)
+  mov $4, %rax
+  push %rax
+  mov $1, %rax
+  movsxd %eax, %rax
+  push %rax
+  lea -16(%rbp), %rax
+  mov (%rax), %rax
+  pop %rdi
+  sub %rdi, %rax
+  pop %rdi
+  imul %rdi, %rax
+  push %rax
+  lea middle(%rip), %rax
+  mov (%rax), %rax
+  pop %rdi
+  add %rdi, %rax
+  movsxd (%rax), %rax
+  movsxd %eax, %rax
+  jmp .L.return.middle_value
+.L.return.middle_value:
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+export name_byte(index: Integer, at: Integer) -> Integer
+name_byte:
+  push %rbp
+  mov %rsp, %rbp
+  sub $32, %rsp
+  mov %rsp, -8(%rbp)
+  mov %rdi, -16(%rbp)
+  mov %rsi, -24(%rbp)
+  mov $1, %rax
+  push %rax
+  lea -24(%rbp), %rax
+  mov (%rax), %rax
+  pop %rdi
+  imul %rdi, %rax
+  push %rax
+  mov $8, %rax
+  push %rax
+  lea -16(%rbp), %rax
+  mov (%rax), %rax
+  pop %rdi
+  imul %rdi, %rax
+  push %rax
+  lea names(%rip), %rax
+  pop %rdi
+  add %rdi, %rax
+  mov (%rax), %rax
+  pop %rdi
+  add %rdi, %rax
+  movsbl (%rax), %eax
+  movsxd %eax, %rax
+  jmp .L.return.name_byte
+.L.return.name_byte:
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+export apply(index: Integer, a: Integer, b: Integer) -> Integer
+apply:
+  push %rbp
+  mov %rsp, %rbp
+  sub $32, %rsp
+  mov %rsp, -8(%rbp)
+  mov %rdi, -16(%rbp)
+  mov %rsi, -24(%rbp)
+  mov %rdx, -32(%rbp)
+  lea -32(%rbp), %rax
+  mov (%rax), %rax
+  push %rax
+  lea -24(%rbp), %rax
+  mov (%rax), %rax
+  push %rax
+  mov $8, %rax
+  push %rax
+  lea -16(%rbp), %rax
+  mov (%rax), %rax
+  pop %rdi
+  imul %rdi, %rax
+  push %rax
+  lea operations(%rip), %rax
+  pop %rdi
+  add %rdi, %rax
+  mov (%rax), %rax
+  pop %rdi
+  pop %rsi
+  mov %rax, %r10
+  mov $0, %rax
+  call *%r10
+  add $0, %rsp
+  movsxd %eax, %rax
+  jmp .L.return.apply
+.L.return.apply:
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+mul:
+  push %rbp
+  mov %rsp, %rbp
+  sub $16, %rsp
+  mov %rsp, -8(%rbp)
+  mov %edi, -12(%rbp)
+  mov %esi, -16(%rbp)
+  lea -16(%rbp), %rax
+  movsxd (%rax), %rax
+  push %rax
+  lea -12(%rbp), %rax
+  movsxd (%rax), %rax
+  pop %rdi
+  imul %edi, %eax
+  jmp .L.return.mul
+.L.return.mul:
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+sub:
+  push %rbp
+  mov %rsp, %rbp
+  sub $16, %rsp
+  mov %rsp, -8(%rbp)
+  mov %edi, -12(%rbp)
+  mov %esi, -16(%rbp)
+  lea -16(%rbp), %rax
+  movsxd (%rax), %rax
+  push %rax
+  lea -12(%rbp), %rax
+  movsxd (%rax), %rax
+  pop %rdi
+  sub %edi, %eax
+  jmp .L.return.sub
+.L.return.sub:
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+section code
+add:
+  push %rbp
+  mov %rsp, %rbp
+  sub $16, %rsp
+  mov %rsp, -8(%rbp)
+  mov %edi, -12(%rbp)
+  mov %esi, -16(%rbp)
+  lea -16(%rbp), %rax
+  movsxd (%rax), %rax
+  push %rax
+  lea -12(%rbp), %rax
+  movsxd (%rax), %rax
+  pop %rdi
+  add %edi, %eax
+  jmp .L.return.add
+.L.return.add:
+  mov %rbp, %rsp
+  pop %rbp
+  ret
+`
+
+@(test)
+rebased_floating_and_atomic_program_validates_and_runs :: proc(t: ^testing.T) {
+	workspace := new(Workspace)
+	defer free(workspace)
+	parts, refusal := assemble(REBASED_FLOATING_ATOMIC_PROGRAM, workspace)
+	if !testing.expectf(t, refusal.refusal == .None, "refused with %v at line %d, column %d", refusal.refusal, refusal.place.line, refusal.place.column) {
+		return
+	}
+	// One rebase for each address: middle, three names, three operations.
+	testing.expect_value(t, len(parts.rebases), 7)
+	size, needed := writer.file_size_needed(parts)
+	testing.expect_value(t, needed.refusal, writer.Refusal.None)
+	file := make([]u8, int(size))
+	defer delete(file)
+	written, written_refusal := writer.write(parts, file)
+	testing.expect_value(t, written_refusal.refusal, writer.Refusal.None)
+	testing.expect_value(t, written, size)
+	testing.expect_value(t, module.validate(file), module.Error.None)
+	testing.expect(t, module.count(file, .Rebases) > 0, "the file has a rebase table")
+
+	when ODIN_ARCH == .amd64 {
+		last := parts.segments[len(parts.segments) - 1]
+		memory_size := last.memory_offset + last.memory_size
+		memory, error := virtual.reserve_and_commit(uint(memory_size))
+		if !testing.expect(t, error == .None, "the host gave no memory for the module") {
+			return
+		}
+		defer virtual.release(raw_data(memory), uint(memory_size))
+		for segment in parts.segments {
+			copy(memory[segment.memory_offset:], segment.data)
+		}
+		// The load: the loader of modus adds the base to each rebase.
+		testing.expect_value(t, module.rebase(file, memory, uintptr(raw_data(memory))), module.Error.None)
+		testing.expect(t, virtual.protect(raw_data(memory), uint(parts.segments[0].memory_size), {.Read, .Execute}))
+
+		One_Arg :: proc "c" (a: i64) -> i64
+		Two_Args :: proc "c" (a: i64, b: i64) -> i64
+		Three_Args :: proc "c" (a: i64, b: i64, c: i64) -> i64
+		export_named :: proc(memory: []u8, parts: writer.Module_Parts, name: string) -> rawptr {
+			for export in parts.exports {
+				if export.name == name {
+					return &memory[export.code_offset]
+				}
+			}
+			return nil
+		}
+
+		// A table of function pointers, rebased.
+		apply := cast(Three_Args)export_named(memory, parts, "apply")
+		testing.expect_value(t, apply(0, 7, 5), i64(12))
+		testing.expect_value(t, apply(1, 7, 5), i64(2))
+		testing.expect_value(t, apply(2, 7, 5), i64(35))
+		// A table of pointers to string literals, rebased.
+		name_byte := cast(Two_Args)export_named(memory, parts, "name_byte")
+		testing.expect_value(t, name_byte(0, 0), i64('a'))
+		testing.expect_value(t, name_byte(1, 0), i64('s'))
+		testing.expect_value(t, name_byte(2, 2), i64('l'))
+		testing.expect_value(t, name_byte(2, 3), i64(0))
+		// A pointer into an array, with an offset: `quad numbers+8`.
+		middle_value := cast(One_Arg)export_named(memory, parts, "middle_value")
+		testing.expect_value(t, middle_value(0), i64(20))
+		testing.expect_value(t, middle_value(1), i64(30))
+		testing.expect_value(t, middle_value(2), i64(40))
+		// Double arithmetic and the conversions of int and double.
+		average := cast(Two_Args)export_named(memory, parts, "average")
+		testing.expect_value(t, average(3, 4), i64(35))
+		testing.expect_value(t, average(-3, -4), i64(-35))
+		testing.expect_value(t, average(0, 0), i64(0))
+		// Float arithmetic: 4 * 4 - 4 / 4, and 10 * 10 - 10 / 4 truncated.
+		scale := cast(One_Arg)export_named(memory, parts, "scale")
+		testing.expect_value(t, scale(4), i64(15))
+		testing.expect_value(t, scale(10), i64(97))
+		testing.expect_value(t, scale(-2), i64(4))
+		// ucomisd and the flags of an unordered compare.
+		compare := cast(Two_Args)export_named(memory, parts, "compare")
+		testing.expect_value(t, compare(1, 2), i64(1))
+		testing.expect_value(t, compare(2, 2), i64(2))
+		testing.expect_value(t, compare(3, 2), i64(4))
+		// long to float, float to double, unsigned long to double (`js 1f`):
+		// -1 is 2^64 - 1 unsigned, and the sum past 2^63 truncates to the
+		// integer indefinite value of cvttsd2si.
+		widen := cast(One_Arg)export_named(memory, parts, "widen")
+		testing.expect_value(t, widen(3), i64(6))
+		testing.expect_value(t, widen(1 << 40), i64(1 << 41))
+		testing.expect_value(t, widen(-1), min(i64))
+		// xchg with memory.
+		exchange := cast(One_Arg)export_named(memory, parts, "exchange")
+		testing.expect_value(t, exchange(9), i64(509))
+		testing.expect_value(t, exchange(-1), i64(499))
+		// lock cmpxchg: a swap that succeeds, and one that fails and writes
+		// the value that it found into `expected`.
+		swap_if := cast(Two_Args)export_named(memory, parts, "swap_if")
+		testing.expect_value(t, swap_if(7, 3), i64(1037))
+		testing.expect_value(t, swap_if(6, 3), i64(77))
+	}
+}

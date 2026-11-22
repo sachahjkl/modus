@@ -38,9 +38,11 @@ The directives are of modus, not of the GNU assembler:
 | `export name(a: Integer, b: Text) -> Integer` | Declares the export `name` at the label `name`, with the types of its parameters and of its result; with no `->`, the export gives nothing |
 | `byte 1, 0x41, -1` | Bytes at the place of the section: each from -128 to 255 |
 | `zero 4096` | Zero bytes at the place of the section: the file stores no zero byte at the end of a section |
+| `quad 7, table + 16, 1f` | 8 bytes for each value: a number, or a label with an optional `+` or `-` and a number, which gives its address in the module and one rebase |
 
-A label is a name and `:` at the start of a statement. A statement ends at a new line or at `;`, so a whole program is one line of the console. `#` starts a comment to the end of the line.
+A label is a name and `:` at the start of a statement. A numeric local label (`docs/glossary/code.md`, "Numeric local label") is one digit and `:`; `Nf` names the next definition of the digit after the operand, and `Nb` the last one before it. A statement ends at a new line or at `;`, so a whole program is one line of the console. `#` starts a comment to the end of the line.
 
+- **Why numeric local labels.** `chibicc` writes `1:`, `jmp 1b` and `je 1f` inside the templates of `alloca`, of `lock cmpxchg` and of the conversion of an `unsigned long` to a floating type, where a unique name needs a counter in each template. The assembler keeps, for each digit, the count of its definitions so far: `Nb` names the last one, and `Nf` the next one, which a definition later places. A label of two digits is refused: no emitter of the subset writes one.
 - **Why the directives are of modus.** A directive of the GNU assembler names a concept of ELF (a symbol binding, a section by name, a relocation type). The module format has none of them, and it needs the types of an export, which no directive of the GNU assembler gives.
 
 ### The subset
@@ -63,6 +65,15 @@ A label is a name and `:` at the start of a statement. A statement ends at a new
 | the 16 conditional jumps (`jo` … `jg` and standard aliases) | a label of the code, with a displacement of 32 bits (`0F 80+cc`) |
 | the 16 conditional byte sets (`seto` … `setg` and standard aliases) | an 8-bit register or memory operand (`0F 90+cc /0`) |
 | `ret` | none |
+| `xchg` | the accumulator and a register of 16, 32 or 64 bits in the short form `90+r`; else a register with a register or memory (`86`, `87`) |
+| `cmpxchg`, `lock cmpxchg` | a register into memory or, with no `lock`, into a register (`0F B0`, `0F B1`; `lock` is `F0`) |
+| `movss`, `movsd`, `movaps`, `movapd` | `%xmm` or memory to `%xmm` (`F3`/`F2`/none/`66` `0F 10`, `0F 28`), `%xmm` to memory (`0F 11`, `0F 29`) |
+| `movq` | a 64-bit register to `%xmm` (`66 REX.W 0F 6E`), `%xmm` to a 64-bit register (`66 REX.W 0F 7E`), `%xmm` or memory to `%xmm` (`F3 0F 7E`), `%xmm` to memory (`66 0F D6`) |
+| `addss`, `addsd`, `subss`, `subsd`, `mulss`, `mulsd`, `divss`, `divsd`, `sqrtss`, `sqrtsd`, `andps`, `andpd`, `orps`, `orpd`, `xorps`, `xorpd`, `pxor`, `ucomiss`, `ucomisd`, `comiss`, `comisd`, `cvtss2sd`, `cvtsd2ss` | `%xmm` or memory to `%xmm`: the prefix of the form, then `0F` and one byte |
+| `cvtsi2ss`, `cvtsi2sd` and the suffixes `l`, `q` | a 32- or 64-bit register or memory to `%xmm` (`F3`/`F2` `0F 2A`, `REX.W` for 64 bits) |
+| `cvttss2si`, `cvttsd2si` and the suffixes `l`, `q` | `%xmm` or memory to a 32- or 64-bit register (`F3`/`F2` `0F 2C`, `REX.W` for 64 bits) |
+
+The registers `%xmm0` to `%xmm15` go in the forms of SSE and in `movq` only: an integer form, a base and an index refuse them. A test compares the bytes of each SSE form, of `xchg` and of `cmpxchg` with the output of `llvm-mc` for the same line.
 
 The sizes are 8, 16, 32 and 64 bits (suffixes `b`, `w`, `l` and `q`), across all 16 general registers including `%spl`/`%bpl`/`%sil`/`%dil` (explicit REX byte `0x40`) and `%ah`/`%ch`/`%dh`/`%bh` (which refuse any instruction that needs a REX byte). A memory operand is a displacement of 32 bits with a 64-bit base register, a scaled index `disp(base, index, scale)` or `disp(, index, scale)` with scale 1, 2, 4 or 8 (encoded through SIB, refusing `%rsp` as index while allowing `%r12`), or `%rip` with a number or a label. The encoding of each form is one: the assembler never chooses a shorter jump by the place of a label, so it reads the text in one pass and writes each displacement of a label at the end.
 
@@ -75,7 +86,9 @@ The package refuses each text that it does not assemble whole, with a `Refusal_R
 - a form that the subset does not have (`mov` from memory to memory, `push` of memory, an absolute address, `%rsp` as an index register, a scale other than 1/2/4/8, `%ah`/`%ch`/`%dh`/`%bh` combined with any REX prefix, indirect `*` outside `call`/`jmp`);
 - an operand of the wrong size (`mov %eax, %rbx`, `push %eax`, `sete %eax`, `imulb %al, %bl`, `movzx %eax, %rax`), and a size that no operand gives (`mov $1, (%rax)`, `not (%rax)`, `movzx (%rax), %eax`);
 - an immediate past its field, a displacement past 32 bits, a byte past -128 to 255;
-- a label defined twice, a label never defined, a jump to a label of the data;
+- a label defined twice, a label never defined (`1f` with no `1:` after it, `1b` with none before it, a label of two digits), a jump to a label of the data;
+- a vector register in an integer form, a conversion with no size of its integer (`cvtsi2ss (%rax), %xmm0`), `movq` with no 64-bit general register, `lock` before another instruction than `cmpxchg`, or `lock cmpxchg` into a register;
+- a `quad` of a label in the section code or off 8 bytes of the section data, past 2048 of them, or a label with its offset below 0 or past 2^63 − 1;
 - a distance past ±2 GiB between a jump or a `%rip` operand and its label;
 - a section past its capacity (64 KiB of bytes, 1 TiB of extent), past 512 labels, 2048 references or 32 exports;
 - an export twice, a name that is not a name of the module format, more than 12 parameters;
@@ -105,7 +118,9 @@ The console isolates a module from memory, a module whose file is in a memory ob
 - **The syntax of Intel.** The emitter of `chibicc` would change in each of its instruction lines.
 - **The directives of the GNU assembler.** They name ELF; the export needs types.
 - **A short jump chosen by the distance.** It needs passes until the sizes stop to change. One form for each instruction gives one pass and one displacement to write for each reference.
-- **A label as an absolute address** (`mov table, %rax`, a `quad` of a label). It needs a rebase. A `%rip` operand reaches a label with no rebase, and the code stays the same at each base.
+- **A label as an absolute address in the code** (`mov table, %rax`, `mov table(%rax), %rcx`). It needs a rebase of the code, and the code is never writable. A `%rip` operand reaches a label with no rebase, and the code stays the same at each base. A `quad` of a label in the data is the one absolute address: the data is writable at the load.
+- **A rebase table that the text writes.** A directive of rebases lets a text name a place that holds no address. The assembler records a rebase for each `quad` of a label, and for nothing else.
+- **x87 instructions.** `chibicc` uses them for `long double` only; a later step adds them when a ported program needs a `long double`.
 - **A call of an import through an import slot.** It is in the design of [first_compiler.md](first_compiler.md); the first subset refuses a label that the text does not define.
 - **The module through the store `module_files` and `start_from_disk`.** That path starts a process at its entry; a console calls no export of a disk process. It also needs the module file service to write the store from the console, a path that [processes_from_a_disk.md](processes_from_a_disk.md) refuses ("The console writes the store `module_files` through `open_store`").
 - **`load` from memory.** The module would run with every handle of the console.
@@ -119,8 +134,11 @@ The console isolates a module from memory, a module whose file is in a memory ob
 - **`(%rbp)` and `(%r13)`** (alone or with an index) have no form with no displacement: the assembler writes `mod = 01` and a displacement of one byte 0. **`(%rsp)` and `(%r12)`** alone need the SIB byte `0x24`. A scaled index with no base (`disp(, index, scale)`) writes `mod = 00`, `rm = 4`, `SIB.base = 5`, and a 4-byte displacement.
 - **`%spl`, `%bpl`, `%sil`, `%dil` versus `%ah`, `%ch`, `%dh`, `%bh`.** The uniform low-byte registers emit a REX prefix (`0x40` even with no W/R/X/B bits). The legacy high-byte registers refuse any instruction that needs a REX prefix.
 - **The name of a module from memory lives in its sandbox.** No file of the boot image holds it, so the entry of the console that names the module is a view of the sandbox, and `unload` sets the sandbox to zero. The record of `unload` takes the name from its argument.
+- **A `quad` of a label holds the offset of the label in the module**, not an address: the loader adds the base of the load (`module.rebase`). Its 8 bytes are written once the code has its size, because the data starts on the page after the code.
+- **`xchg %eax, %eax` is not `90`.** In the 64-bit mode `90` is NOP and keeps the high half of `%rax`, which `xchg %eax, %eax` clears: it takes `87 C0`. `xchg %rax, %rax` is `90`, as `llvm-mc` writes it.
+- **The prefix of an SSE form comes before REX.** `F3 45 0F 10` is `movss %xmm8, %xmm15`: a REX before `F3` is ignored by the processor. With `lock` and 16 bits the order is `66 F0`, as `llvm-mc` writes it.
 - **The zero bytes of a section are not stored.** `zero` adds to the extent of the section and writes no byte, so a test reaches a label 2 GiB away with no memory of 2 GiB.
 
 ## State
 
-Built: the package with its host tests (8/16/32/64-bit moves, ALU, bitwise, `test`, `imul`, `idiv`, `div`, `neg`, `not`, `inc`, `dec`, shifts, `setcc`, sign/zero-extending moves, zero-operand sign extensions, `rep stosb`, scaled indexed SIB addressing, direct and indirect `call`/`jmp`, and end-to-end execution of `chibicc` output for factorial, recursive Fibonacci, signed/unsigned division and modulo, comparisons, bitwise operations, and byte/short arrays), the module `assemble` in the boot image, the command `isolate_memory` of the console, and the step of the main machine test. Left: the export `build` with the store "out", a call of an import through an import slot, floating-point SSE instructions, numeric local labels (`1:` / `1f` / `1b`), atomic instructions (`lock cmpxchg`, `xchg`), a `quad` of a label with a rebase, and the debug object of an assembled module.
+Built: the package with its host tests (8/16/32/64-bit moves, ALU, bitwise, `test`, `imul`, `idiv`, `div`, `neg`, `not`, `inc`, `dec`, shifts, `setcc`, sign/zero-extending moves, zero-operand sign extensions, `rep stosb`, scaled indexed SIB addressing, direct and indirect `call`/`jmp`, and end-to-end execution of `chibicc` output for factorial, recursive Fibonacci, signed/unsigned division and modulo, comparisons, bitwise operations, and byte/short arrays), the module `assemble` in the boot image, the command `isolate_memory` of the console, and the step of the main machine test. Built also: the scalar SSE2 forms and `movq`, `xchg` and `lock cmpxchg`, numeric local labels, and `quad` with the rebases of its labels, with host tests that run `chibicc` output for tables of function pointers and of strings, `float` and `double` arithmetic and conversions, and the atomic builtins. Left: the export `build` with the store "out", a call of an import through an import slot, x87 instructions, and the debug object of an assembled module.

@@ -654,11 +654,21 @@ Do not use: module writer (for this), linker, emitter.
 
 The assembler is the module `assemble`, which reads a text of x86-64 assembly and writes a module file into a memory object that its caller lends.
 
-Its syntax is the syntax of AT&T, with directives of modus: `section`, `export` with the types of the parameters and of the result, `byte` and `zero`. Its package `internal:assemble/assembler` gives the parts of the module file writer, and refuses each text that it does not assemble whole, with the line and the column. It is the first program of modus that writes a program. It is not the assembler of the host that the build of a module runs.
+Its syntax is the syntax of AT&T, with directives of modus: `section`, `export` with the types of the parameters and of the result, `byte`, `quad` and `zero`. A `quad` of a label is an address that the module rebases at its load. Its package `internal:assemble/assembler` gives the parts of the module file writer, and refuses each text that it does not assemble whole, with the line and the column. It is the first program of modus that writes a program. It is not the assembler of the host that the build of a module runs.
 
 The design: `src/md/features/assembler.md`; the guide: `docs/MODULE_CONTRACT.md`, "The assembler".
 
 Do not use: compiler (for this), asm.
+
+### Numeric local label
+
+A numeric local label is a label of the assembler that is one digit, `0:` to `9:`, which a text can define many times, and which an operand names by its direction: `1f` for the next definition of `1`, `1b` for the last one.
+
+A compiler writes it for a short loop or a jump over a few instructions inside one template, where a unique name needs a counter: `chibicc` writes `1:` and `jmp 1b` in `alloca`, and `je 1f` after `lock cmpxchg`. The assembler resolves `Nb` at the operand and `Nf` at the next definition of the digit; a `1f` with no `1:` after it, or a `1b` with none before it, is refused with the place of the operand. It is not a name: `f1` is an ordinary label, and `10:` is refused.
+
+The design: `src/md/features/assembler.md`, "The syntax: AT&T".
+
+Do not use: temporary label, anonymous label, local symbol.
 
 ### Module from memory
 

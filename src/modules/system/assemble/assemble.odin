@@ -73,11 +73,12 @@ file_map :: proc "contextless" (memory: system.Handle, error: ^errors.Error_Reco
 // assemble writes the module file of an assembly text into a memory object, and gives the bytes of the file.
 //
 // `source` is the text: statements separated by a new line or by `;`, in the syntax of AT&T, with the directives
-// `section code`, `section data`, `export name(a: Integer, b: Text) -> Integer`, `byte` and `zero`. `file` is a
-// memory object that the caller lends to write; the file starts at its first byte. A text that the assembler does not
-// take whole fails with -1 and the error record `Bad_Byte`: the value is the offset of the first byte of the statement
-// or the operand that it refuses, and found is that byte; the log has the line, the column and the reason. A memory
-// object smaller than the file fails with `Too_Small`, and the limit is the bytes of the file.
+// `section code`, `section data`, `export name(a: Integer, b: Text) -> Integer`, `byte`, `quad` and `zero`; a `quad`
+// of a label is its address, which the module rebases at its load. `file` is a memory object that the caller lends to
+// write; the file starts at its first byte. A text that the assembler does not take whole fails with -1 and the error
+// record `Bad_Byte`: the value is the offset of the first byte of the statement or the operand that it refuses, and
+// found is that byte; the log has the line, the column and the reason. A memory object smaller than the file fails
+// with `Too_Small`, and the limit is the bytes of the file.
 @(export, link_name = "assemble")
 assemble :: proc "c" (source: ^system.Bytes_To_Read, file: system.Lent({.Read, .Write}), error: ^errors.Error_Record) -> i64 {
 	// The count is read once: the caller can change the record during an

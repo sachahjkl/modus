@@ -43,6 +43,28 @@ Operation :: enum u8 {
 	Sign_Extend_Quad_To_Octaword = 33, // cqo, cqto
 	Store_Byte                   = 34, // stosb
 	Repeat_Store_Byte            = 35, // rep stosb
+	Exchange                     = 36, // xchg
+	Compare_Exchange             = 37, // cmpxchg, lock cmpxchg
+	Vector_Move                  = 38, // movss, movsd, movaps, movapd: a load form and a store form
+	Vector_Arithmetic            = 39, // addss … divsd, sqrtss, sqrtsd, the bitwise forms, the comparisons, cvtss2sd, cvtsd2ss
+	Vector_From_Integer          = 40, // cvtsi2ss, cvtsi2sd and their suffixes
+	Integer_From_Vector          = 41, // cvttss2si, cvttsd2si and their suffixes
+}
+
+// The prefix of an SSE instruction that selects its form, before any
+// prefix REX. Its value is the byte of the Intel manual.
+Vector_Prefix :: enum u8 {
+	None             = 0x00, // The packed single forms: movaps, xorps, ucomiss.
+	Operand_Size     = 0x66, // The packed double forms: movapd, xorpd, ucomisd, pxor.
+	Repeat_Not_Equal = 0xF2, // The scalar double forms: movsd, addsd, cvtsi2sd.
+	Repeat           = 0xF3, // The scalar single forms: movss, addss, cvtsi2ss.
+}
+
+// The kind of a register: a general register of the integer unit, or a
+// register of 128 bits of the SSE unit.
+Register_Class :: enum u8 {
+	General = 0, // %rax … %r15 and their 32-, 16- and 8-bit parts.
+	Vector  = 1, // %xmm0 … %xmm15.
 }
 
 // The condition of a conditional jump or conditional set: its value is the
@@ -86,12 +108,15 @@ Register_Byte_Kind :: enum u8 {
 	High_Byte = 2,
 }
 
-// A register: its number in the encoding, 0 to 15, its size, and its REX
-// rule when it is 8 bits.
+// A register: its number in the encoding, 0 to 15, its size, its REX
+// rule when it is 8 bits, and its class. A vector register has no size of
+// the integer unit: its size is Unknown, and its class keeps it out of each
+// integer form.
 Register :: struct {
 	number:    u8,
 	size:      Operand_Size,
 	byte_kind: Register_Byte_Kind,
+	class:     Register_Class,
 }
 
 @(private)
@@ -104,23 +129,27 @@ Register_Name :: struct {
 // low 3 bits go in the ModRM or SIB byte, its bit 3 in the prefix REX.
 @(private, rodata)
 REGISTER_NAMES := [?]Register_Name {
-	{"rax", {0, .Bits_64, .Standard}}, {"rcx", {1, .Bits_64, .Standard}}, {"rdx", {2, .Bits_64, .Standard}}, {"rbx", {3, .Bits_64, .Standard}},
-	{"rsp", {4, .Bits_64, .Standard}}, {"rbp", {5, .Bits_64, .Standard}}, {"rsi", {6, .Bits_64, .Standard}}, {"rdi", {7, .Bits_64, .Standard}},
-	{"r8", {8, .Bits_64, .Standard}}, {"r9", {9, .Bits_64, .Standard}}, {"r10", {10, .Bits_64, .Standard}}, {"r11", {11, .Bits_64, .Standard}},
-	{"r12", {12, .Bits_64, .Standard}}, {"r13", {13, .Bits_64, .Standard}}, {"r14", {14, .Bits_64, .Standard}}, {"r15", {15, .Bits_64, .Standard}},
-	{"eax", {0, .Bits_32, .Standard}}, {"ecx", {1, .Bits_32, .Standard}}, {"edx", {2, .Bits_32, .Standard}}, {"ebx", {3, .Bits_32, .Standard}},
-	{"esp", {4, .Bits_32, .Standard}}, {"ebp", {5, .Bits_32, .Standard}}, {"esi", {6, .Bits_32, .Standard}}, {"edi", {7, .Bits_32, .Standard}},
-	{"r8d", {8, .Bits_32, .Standard}}, {"r9d", {9, .Bits_32, .Standard}}, {"r10d", {10, .Bits_32, .Standard}}, {"r11d", {11, .Bits_32, .Standard}},
-	{"r12d", {12, .Bits_32, .Standard}}, {"r13d", {13, .Bits_32, .Standard}}, {"r14d", {14, .Bits_32, .Standard}}, {"r15d", {15, .Bits_32, .Standard}},
-	{"ax", {0, .Bits_16, .Standard}}, {"cx", {1, .Bits_16, .Standard}}, {"dx", {2, .Bits_16, .Standard}}, {"bx", {3, .Bits_16, .Standard}},
-	{"sp", {4, .Bits_16, .Standard}}, {"bp", {5, .Bits_16, .Standard}}, {"si", {6, .Bits_16, .Standard}}, {"di", {7, .Bits_16, .Standard}},
-	{"r8w", {8, .Bits_16, .Standard}}, {"r9w", {9, .Bits_16, .Standard}}, {"r10w", {10, .Bits_16, .Standard}}, {"r11w", {11, .Bits_16, .Standard}},
-	{"r12w", {12, .Bits_16, .Standard}}, {"r13w", {13, .Bits_16, .Standard}}, {"r14w", {14, .Bits_16, .Standard}}, {"r15w", {15, .Bits_16, .Standard}},
-	{"al", {0, .Bits_8, .Standard}}, {"cl", {1, .Bits_8, .Standard}}, {"dl", {2, .Bits_8, .Standard}}, {"bl", {3, .Bits_8, .Standard}},
-	{"ah", {4, .Bits_8, .High_Byte}}, {"ch", {5, .Bits_8, .High_Byte}}, {"dh", {6, .Bits_8, .High_Byte}}, {"bh", {7, .Bits_8, .High_Byte}},
-	{"spl", {4, .Bits_8, .Low_Rex}}, {"bpl", {5, .Bits_8, .Low_Rex}}, {"sil", {6, .Bits_8, .Low_Rex}}, {"dil", {7, .Bits_8, .Low_Rex}},
-	{"r8b", {8, .Bits_8, .Standard}}, {"r9b", {9, .Bits_8, .Standard}}, {"r10b", {10, .Bits_8, .Standard}}, {"r11b", {11, .Bits_8, .Standard}},
-	{"r12b", {12, .Bits_8, .Standard}}, {"r13b", {13, .Bits_8, .Standard}}, {"r14b", {14, .Bits_8, .Standard}}, {"r15b", {15, .Bits_8, .Standard}},
+	{"rax", {0, .Bits_64, .Standard, .General}}, {"rcx", {1, .Bits_64, .Standard, .General}}, {"rdx", {2, .Bits_64, .Standard, .General}}, {"rbx", {3, .Bits_64, .Standard, .General}},
+	{"rsp", {4, .Bits_64, .Standard, .General}}, {"rbp", {5, .Bits_64, .Standard, .General}}, {"rsi", {6, .Bits_64, .Standard, .General}}, {"rdi", {7, .Bits_64, .Standard, .General}},
+	{"r8", {8, .Bits_64, .Standard, .General}}, {"r9", {9, .Bits_64, .Standard, .General}}, {"r10", {10, .Bits_64, .Standard, .General}}, {"r11", {11, .Bits_64, .Standard, .General}},
+	{"r12", {12, .Bits_64, .Standard, .General}}, {"r13", {13, .Bits_64, .Standard, .General}}, {"r14", {14, .Bits_64, .Standard, .General}}, {"r15", {15, .Bits_64, .Standard, .General}},
+	{"eax", {0, .Bits_32, .Standard, .General}}, {"ecx", {1, .Bits_32, .Standard, .General}}, {"edx", {2, .Bits_32, .Standard, .General}}, {"ebx", {3, .Bits_32, .Standard, .General}},
+	{"esp", {4, .Bits_32, .Standard, .General}}, {"ebp", {5, .Bits_32, .Standard, .General}}, {"esi", {6, .Bits_32, .Standard, .General}}, {"edi", {7, .Bits_32, .Standard, .General}},
+	{"r8d", {8, .Bits_32, .Standard, .General}}, {"r9d", {9, .Bits_32, .Standard, .General}}, {"r10d", {10, .Bits_32, .Standard, .General}}, {"r11d", {11, .Bits_32, .Standard, .General}},
+	{"r12d", {12, .Bits_32, .Standard, .General}}, {"r13d", {13, .Bits_32, .Standard, .General}}, {"r14d", {14, .Bits_32, .Standard, .General}}, {"r15d", {15, .Bits_32, .Standard, .General}},
+	{"ax", {0, .Bits_16, .Standard, .General}}, {"cx", {1, .Bits_16, .Standard, .General}}, {"dx", {2, .Bits_16, .Standard, .General}}, {"bx", {3, .Bits_16, .Standard, .General}},
+	{"sp", {4, .Bits_16, .Standard, .General}}, {"bp", {5, .Bits_16, .Standard, .General}}, {"si", {6, .Bits_16, .Standard, .General}}, {"di", {7, .Bits_16, .Standard, .General}},
+	{"r8w", {8, .Bits_16, .Standard, .General}}, {"r9w", {9, .Bits_16, .Standard, .General}}, {"r10w", {10, .Bits_16, .Standard, .General}}, {"r11w", {11, .Bits_16, .Standard, .General}},
+	{"r12w", {12, .Bits_16, .Standard, .General}}, {"r13w", {13, .Bits_16, .Standard, .General}}, {"r14w", {14, .Bits_16, .Standard, .General}}, {"r15w", {15, .Bits_16, .Standard, .General}},
+	{"al", {0, .Bits_8, .Standard, .General}}, {"cl", {1, .Bits_8, .Standard, .General}}, {"dl", {2, .Bits_8, .Standard, .General}}, {"bl", {3, .Bits_8, .Standard, .General}},
+	{"ah", {4, .Bits_8, .High_Byte, .General}}, {"ch", {5, .Bits_8, .High_Byte, .General}}, {"dh", {6, .Bits_8, .High_Byte, .General}}, {"bh", {7, .Bits_8, .High_Byte, .General}},
+	{"spl", {4, .Bits_8, .Low_Rex, .General}}, {"bpl", {5, .Bits_8, .Low_Rex, .General}}, {"sil", {6, .Bits_8, .Low_Rex, .General}}, {"dil", {7, .Bits_8, .Low_Rex, .General}},
+	{"r8b", {8, .Bits_8, .Standard, .General}}, {"r9b", {9, .Bits_8, .Standard, .General}}, {"r10b", {10, .Bits_8, .Standard, .General}}, {"r11b", {11, .Bits_8, .Standard, .General}},
+	{"r12b", {12, .Bits_8, .Standard, .General}}, {"r13b", {13, .Bits_8, .Standard, .General}}, {"r14b", {14, .Bits_8, .Standard, .General}}, {"r15b", {15, .Bits_8, .Standard, .General}},
+	{"xmm0", {0, .Unknown, .Standard, .Vector}}, {"xmm1", {1, .Unknown, .Standard, .Vector}}, {"xmm2", {2, .Unknown, .Standard, .Vector}}, {"xmm3", {3, .Unknown, .Standard, .Vector}},
+	{"xmm4", {4, .Unknown, .Standard, .Vector}}, {"xmm5", {5, .Unknown, .Standard, .Vector}}, {"xmm6", {6, .Unknown, .Standard, .Vector}}, {"xmm7", {7, .Unknown, .Standard, .Vector}},
+	{"xmm8", {8, .Unknown, .Standard, .Vector}}, {"xmm9", {9, .Unknown, .Standard, .Vector}}, {"xmm10", {10, .Unknown, .Standard, .Vector}}, {"xmm11", {11, .Unknown, .Standard, .Vector}},
+	{"xmm12", {12, .Unknown, .Standard, .Vector}}, {"xmm13", {13, .Unknown, .Standard, .Vector}}, {"xmm14", {14, .Unknown, .Standard, .Vector}}, {"xmm15", {15, .Unknown, .Standard, .Vector}},
 }
 
 @(private)
@@ -131,6 +160,10 @@ Mnemonic :: struct {
 	source_size:      Operand_Size, // For extending moves: fixed source size, or Unknown.
 	destination_size: Operand_Size, // For extending moves: fixed destination size, or Unknown.
 	suffixable:       bool, // The name takes the suffix `b`, `w`, `l` or `q`.
+	locked:           bool, // `lock` comes before the name: the prefix F0.
+	vector_prefix:    Vector_Prefix, // For SSE forms: the prefix that selects the form.
+	vector_opcode:    u8, // For SSE forms: the byte after 0F; for a move, the load form.
+	vector_store:     u8, // For SSE moves: the byte after 0F of the store form.
 }
 
 @(private, rodata)
@@ -161,6 +194,53 @@ MNEMONICS := [?]Mnemonic {
 	{name = "call", operation = .Call},
 	{name = "ret", operation = .Return},
 	{name = "stosb", operation = .Store_Byte},
+	{name = "xchg", operation = .Exchange, suffixable = true},
+	{name = "cmpxchg", operation = .Compare_Exchange, suffixable = true},
+	// SSE scalar and packed forms (Intel manual, volume 2): the prefix and
+	// the byte after 0F.
+	{name = "movss", operation = .Vector_Move, vector_prefix = .Repeat, vector_opcode = 0x10, vector_store = 0x11},
+	{name = "movsd", operation = .Vector_Move, vector_prefix = .Repeat_Not_Equal, vector_opcode = 0x10, vector_store = 0x11},
+	{name = "movaps", operation = .Vector_Move, vector_prefix = .None, vector_opcode = 0x28, vector_store = 0x29},
+	{name = "movapd", operation = .Vector_Move, vector_prefix = .Operand_Size, vector_opcode = 0x28, vector_store = 0x29},
+	{name = "addss", operation = .Vector_Arithmetic, vector_prefix = .Repeat, vector_opcode = 0x58},
+	{name = "addsd", operation = .Vector_Arithmetic, vector_prefix = .Repeat_Not_Equal, vector_opcode = 0x58},
+	{name = "subss", operation = .Vector_Arithmetic, vector_prefix = .Repeat, vector_opcode = 0x5C},
+	{name = "subsd", operation = .Vector_Arithmetic, vector_prefix = .Repeat_Not_Equal, vector_opcode = 0x5C},
+	{name = "mulss", operation = .Vector_Arithmetic, vector_prefix = .Repeat, vector_opcode = 0x59},
+	{name = "mulsd", operation = .Vector_Arithmetic, vector_prefix = .Repeat_Not_Equal, vector_opcode = 0x59},
+	{name = "divss", operation = .Vector_Arithmetic, vector_prefix = .Repeat, vector_opcode = 0x5E},
+	{name = "divsd", operation = .Vector_Arithmetic, vector_prefix = .Repeat_Not_Equal, vector_opcode = 0x5E},
+	{name = "sqrtss", operation = .Vector_Arithmetic, vector_prefix = .Repeat, vector_opcode = 0x51},
+	{name = "sqrtsd", operation = .Vector_Arithmetic, vector_prefix = .Repeat_Not_Equal, vector_opcode = 0x51},
+	{name = "andps", operation = .Vector_Arithmetic, vector_prefix = .None, vector_opcode = 0x54},
+	{name = "andpd", operation = .Vector_Arithmetic, vector_prefix = .Operand_Size, vector_opcode = 0x54},
+	{name = "orps", operation = .Vector_Arithmetic, vector_prefix = .None, vector_opcode = 0x56},
+	{name = "orpd", operation = .Vector_Arithmetic, vector_prefix = .Operand_Size, vector_opcode = 0x56},
+	{name = "xorps", operation = .Vector_Arithmetic, vector_prefix = .None, vector_opcode = 0x57},
+	{name = "xorpd", operation = .Vector_Arithmetic, vector_prefix = .Operand_Size, vector_opcode = 0x57},
+	{name = "pxor", operation = .Vector_Arithmetic, vector_prefix = .Operand_Size, vector_opcode = 0xEF},
+	{name = "ucomiss", operation = .Vector_Arithmetic, vector_prefix = .None, vector_opcode = 0x2E},
+	{name = "ucomisd", operation = .Vector_Arithmetic, vector_prefix = .Operand_Size, vector_opcode = 0x2E},
+	{name = "comiss", operation = .Vector_Arithmetic, vector_prefix = .None, vector_opcode = 0x2F},
+	{name = "comisd", operation = .Vector_Arithmetic, vector_prefix = .Operand_Size, vector_opcode = 0x2F},
+	{name = "cvtss2sd", operation = .Vector_Arithmetic, vector_prefix = .Repeat, vector_opcode = 0x5A},
+	{name = "cvtsd2ss", operation = .Vector_Arithmetic, vector_prefix = .Repeat_Not_Equal, vector_opcode = 0x5A},
+	// The conversions from an integer: the suffix is the size of the
+	// integer, which a memory operand does not give.
+	{name = "cvtsi2ss", operation = .Vector_From_Integer, vector_prefix = .Repeat, vector_opcode = 0x2A},
+	{name = "cvtsi2ssl", operation = .Vector_From_Integer, source_size = .Bits_32, vector_prefix = .Repeat, vector_opcode = 0x2A},
+	{name = "cvtsi2ssq", operation = .Vector_From_Integer, source_size = .Bits_64, vector_prefix = .Repeat, vector_opcode = 0x2A},
+	{name = "cvtsi2sd", operation = .Vector_From_Integer, vector_prefix = .Repeat_Not_Equal, vector_opcode = 0x2A},
+	{name = "cvtsi2sdl", operation = .Vector_From_Integer, source_size = .Bits_32, vector_prefix = .Repeat_Not_Equal, vector_opcode = 0x2A},
+	{name = "cvtsi2sdq", operation = .Vector_From_Integer, source_size = .Bits_64, vector_prefix = .Repeat_Not_Equal, vector_opcode = 0x2A},
+	// The truncating conversions to an integer: the suffix is the size of
+	// the integer register.
+	{name = "cvttss2si", operation = .Integer_From_Vector, vector_prefix = .Repeat, vector_opcode = 0x2C},
+	{name = "cvttss2sil", operation = .Integer_From_Vector, destination_size = .Bits_32, vector_prefix = .Repeat, vector_opcode = 0x2C},
+	{name = "cvttss2siq", operation = .Integer_From_Vector, destination_size = .Bits_64, vector_prefix = .Repeat, vector_opcode = 0x2C},
+	{name = "cvttsd2si", operation = .Integer_From_Vector, vector_prefix = .Repeat_Not_Equal, vector_opcode = 0x2C},
+	{name = "cvttsd2sil", operation = .Integer_From_Vector, destination_size = .Bits_32, vector_prefix = .Repeat_Not_Equal, vector_opcode = 0x2C},
+	{name = "cvttsd2siq", operation = .Integer_From_Vector, destination_size = .Bits_64, vector_prefix = .Repeat_Not_Equal, vector_opcode = 0x2C},
 	// Zero-operand sign extensions.
 	{name = "cbw", operation = .Sign_Extend_Byte_To_Word},
 	{name = "cwtl", operation = .Sign_Extend_Word_To_Long},
@@ -369,22 +449,19 @@ operand_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) -> (
 		operand.value = value
 		return operand, {}
 	}
-	label_name := ""
+	has_label := false
 	character := cursor.text[cursor.position]
-	if character == '-' || is_digit(character) {
+	if (character == '-' || is_digit(character)) && !is_local_reference_here(cursor) {
 		value, ok := signed_number_read(cursor)
 		if !ok {
 			return operand, refuse(.Number_Not_Valid, operand.place)
 		}
 		operand.value = value
 	} else if character != '(' {
-		label_name = word_read(cursor)
-		if label_name == "" {
-			return operand, refuse(.Operand_Not_Valid, operand.place)
-		}
-		if refusal = label_name_check(label_name, operand.place); refusal.refusal != .None {
+		if operand.label, refusal = label_reference_read(cursor, workspace, operand.place); refusal.refusal != .None {
 			return operand, refusal
 		}
+		has_label = true
 	}
 	if cursor.position < cursor.end && cursor.text[cursor.position] == '(' {
 		cursor.position += 1
@@ -468,20 +545,15 @@ operand_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace) -> (
 		}
 		// A label reached from a register other than %rip is an absolute
 		// address, which needs a rebase.
-		if label_name != "" && !operand.base_is_instruction_pointer {
+		if has_label && !operand.base_is_instruction_pointer {
 			return operand, refuse(.Operand_Not_Valid, operand.place)
 		}
 		operand.kind = .Memory
-	} else if label_name != "" && !operand.indirect {
+	} else if has_label && !operand.indirect {
 		operand.kind = .Label
 	} else {
 		// A number alone is an absolute address; `*label` is no indirect form.
 		return operand, refuse(.Operand_Not_Valid, operand.place)
-	}
-	if label_name != "" {
-		if operand.label, refusal = label_named(workspace, label_name, operand.place); refusal.refusal != .None {
-			return operand, refusal
-		}
 	}
 	return operand, {}
 }
@@ -760,7 +832,9 @@ two_operand_opcodes :: proc "contextless" (operation: Operation) -> (opcodes: Tw
 	     .Shift_Right_Arithmetic, .Set_If, .Sign_Extend_Byte_To_Word,
 	     .Sign_Extend_Word_To_Long, .Sign_Extend_Long_To_Quad,
 	     .Sign_Extend_Word_To_Double, .Sign_Extend_Long_To_Double,
-	     .Sign_Extend_Quad_To_Octaword, .Store_Byte, .Repeat_Store_Byte:
+	     .Sign_Extend_Quad_To_Octaword, .Store_Byte, .Repeat_Store_Byte,
+	     .Exchange, .Compare_Exchange, .Vector_Move, .Vector_Arithmetic,
+	     .Vector_From_Integer, .Integer_From_Vector:
 	}
 	return {}, false
 }
@@ -788,6 +862,18 @@ instruction_read :: proc "contextless" (cursor: ^Cursor, workspace: ^Workspace, 
 		} else {
 			return refuse(.Mnemonic_Unknown, next_word == "" ? word_place : next_place)
 		}
+	} else if word == "lock" {
+		// The subset takes `lock` before `cmpxchg` only: the one atomic
+		// read-modify-write that `chibicc` writes, as `xchg` with memory
+		// is atomic with no prefix.
+		blanks_skip(cursor)
+		next_place := place_here(cursor)
+		next_word := word_read(cursor)
+		mnemonic, suffix_size, known = mnemonic_of_word(next_word)
+		if !known || mnemonic.operation != .Compare_Exchange {
+			return refuse(.Mnemonic_Unknown, next_word == "" ? word_place : next_place)
+		}
+		mnemonic.locked = true
 	} else {
 		mnemonic, suffix_size, known = mnemonic_of_word(word)
 	}
@@ -876,6 +962,54 @@ instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemoni
 		}
 	}
 
+	// A vector register goes in the SSE forms and in `movq` only: each
+	// integer encoder reads the size of a register, which a vector register
+	// does not have.
+	vector_operand := -1
+	for operand, index in operands {
+		if operand.kind == .Register && operand.register.class == .Vector {
+			vector_operand = index
+			break
+		}
+	}
+	switch mnemonic.operation {
+	case .Vector_Move, .Vector_Arithmetic, .Vector_From_Integer, .Integer_From_Vector:
+		if len(operands) != 2 {
+			return refuse(.Operand_Count_Wrong, word_place, u64(len(operands)))
+		}
+		source, destination := operands[0], operands[1]
+		if mnemonic.operation == .Vector_Move {
+			return vector_move_encode(encoding, mnemonic, source, destination)
+		}
+		if mnemonic.operation == .Vector_From_Integer {
+			return vector_from_integer_encode(encoding, mnemonic, source, destination, word_place)
+		}
+		if mnemonic.operation == .Integer_From_Vector {
+			return integer_from_vector_encode(encoding, mnemonic, source, destination)
+		}
+		return vector_arithmetic_encode(encoding, mnemonic, source, destination)
+	case .Move:
+		if vector_operand >= 0 {
+			if len(operands) != 2 {
+				return refuse(.Operand_Count_Wrong, word_place, u64(len(operands)))
+			}
+			return move_quad_encode(encoding, suffix_size, operands[0], operands[1], word_place)
+		}
+	case .Add, .Subtract, .Compare, .Load_Address, .Push, .Pop, .Jump,
+	     .Jump_If, .Call, .Return, .Move_Sign_Extended, .Move_Zero_Extended,
+	     .Bitwise_And, .Bitwise_Or, .Bitwise_Xor, .Test, .Multiply_Signed,
+	     .Divide_Signed, .Divide_Unsigned, .Negate, .Bitwise_Not, .Increment,
+	     .Decrement, .Shift_Left, .Shift_Right_Logical,
+	     .Shift_Right_Arithmetic, .Set_If, .Sign_Extend_Byte_To_Word,
+	     .Sign_Extend_Word_To_Long, .Sign_Extend_Long_To_Quad,
+	     .Sign_Extend_Word_To_Double, .Sign_Extend_Long_To_Double,
+	     .Sign_Extend_Quad_To_Octaword, .Store_Byte, .Repeat_Store_Byte,
+	     .Exchange, .Compare_Exchange:
+		if vector_operand >= 0 {
+			return refuse(.Operand_Form_Not_Valid, operands[vector_operand].place)
+		}
+	}
+
 	// Variable-count operations check their counts in their own encoders.
 	switch mnemonic.operation {
 	case .Multiply_Signed:
@@ -889,7 +1023,9 @@ instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemoni
 	     .Increment, .Decrement, .Set_If, .Sign_Extend_Byte_To_Word,
 	     .Sign_Extend_Word_To_Long, .Sign_Extend_Long_To_Quad,
 	     .Sign_Extend_Word_To_Double, .Sign_Extend_Long_To_Double,
-	     .Sign_Extend_Quad_To_Octaword, .Store_Byte, .Repeat_Store_Byte:
+	     .Sign_Extend_Quad_To_Octaword, .Store_Byte, .Repeat_Store_Byte,
+	     .Exchange, .Compare_Exchange, .Vector_Move, .Vector_Arithmetic,
+	     .Vector_From_Integer, .Integer_From_Vector:
 	}
 
 	wanted := 2
@@ -905,7 +1041,9 @@ instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemoni
 	case .Move, .Add, .Subtract, .Compare, .Bitwise_And, .Bitwise_Or,
 	     .Bitwise_Xor, .Test, .Load_Address, .Move_Sign_Extended,
 	     .Move_Zero_Extended, .Multiply_Signed, .Shift_Left,
-	     .Shift_Right_Logical, .Shift_Right_Arithmetic:
+	     .Shift_Right_Logical, .Shift_Right_Arithmetic, .Exchange,
+	     .Compare_Exchange, .Vector_Move, .Vector_Arithmetic,
+	     .Vector_From_Integer, .Integer_From_Vector:
 	}
 	if len(operands) != wanted {
 		return refuse(.Operand_Count_Wrong, word_place, u64(len(operands)))
@@ -1062,9 +1200,236 @@ instruction_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemoni
 		return test_encode(encoding, suffix_size, operands[0], operands[1], word_place)
 	case .Divide_Signed, .Divide_Unsigned, .Negate, .Bitwise_Not, .Increment, .Decrement:
 		return unary_encode(encoding, mnemonic.operation, suffix_size, operands[0], word_place)
-	case .Multiply_Signed, .Shift_Left, .Shift_Right_Logical, .Shift_Right_Arithmetic:
+	case .Exchange:
+		return exchange_encode(encoding, suffix_size, operands[0], operands[1], word_place)
+	case .Compare_Exchange:
+		return compare_exchange_encode(encoding, mnemonic.locked, suffix_size, operands[0], operands[1], word_place)
+	case .Multiply_Signed, .Shift_Left, .Shift_Right_Logical, .Shift_Right_Arithmetic,
+	     .Vector_Move, .Vector_Arithmetic, .Vector_From_Integer, .Integer_From_Vector:
 	}
 	return {}
+}
+
+// exchange_encode writes XCHG: the accumulator with a register in the short
+// form 90+r (66 for 16 bits, REX.W for 64), and else 86 /r or 87 /r with
+// the destination register, or the one register, in the field reg. Both
+// operands are read and written, so their order does not change the
+// operation; the choice is the one of llvm-mc, so a test compares bytes.
+@(private)
+exchange_encode :: proc "contextless" (encoding: ^Encoding, suffix_size: Operand_Size, source: Operand, destination: Operand, word_place: Place) -> Refusal_Record {
+	operands := [2]Operand{source, destination}
+	size, refusal := operation_size(suffix_size, operands[:])
+	if failed(refusal) {
+		return refusal
+	}
+	if source.kind != .Register && source.kind != .Memory {
+		return refuse(.Operand_Form_Not_Valid, source.place)
+	}
+	if destination.kind != .Register && destination.kind != .Memory {
+		return refuse(.Operand_Form_Not_Valid, destination.place)
+	}
+	if source.kind == .Memory && destination.kind == .Memory {
+		return refuse(.Operand_Form_Not_Valid, destination.place)
+	}
+	if size == .Unknown {
+		return refuse(.Operand_Size_Unknown, word_place)
+	}
+	force_rex, forbid_rex, conflict_place := rex_flags_of(source, destination)
+	if source.kind == .Register && destination.kind == .Register && size != .Bits_8 {
+		// 90 alone is NOP in the 64-bit mode, which keeps the high half of
+		// %rax: `xchg %eax, %eax` must clear it, so it takes 87 /r.
+		both_accumulator := source.register.number == 0 && destination.register.number == 0
+		if both_accumulator && size == .Bits_64 {
+			// REX.W changes nothing when %rax meets itself: NOP, 90.
+			put_byte(encoding, 0x90)
+			return {}
+		}
+		if (source.register.number == 0 || destination.register.number == 0) && !(both_accumulator && size == .Bits_32) {
+			other := source.register.number == 0 ? destination.register : source.register
+			if refusal = put_operand_prefixes(encoding, size, 0, 0, other.number, false, false, word_place); failed(refusal) {
+				return refusal
+			}
+			put_byte(encoding, 0x90 + other.number & 7)
+			return {}
+		}
+	}
+	register, other := destination, source
+	if destination.kind != .Register {
+		register, other = source, destination
+	}
+	if refusal = put_operand_prefixes(encoding, size, register.register.number, rm_index_of(other), rm_number_of(other), force_rex, forbid_rex, conflict_place); failed(refusal) {
+		return refusal
+	}
+	put_byte(encoding, size == .Bits_8 ? u8(0x86) : u8(0x87))
+	return put_rm_body(encoding, register.register.number, other)
+}
+
+// compare_exchange_encode writes CMPXCHG r/m, r: 0F B0 /r (8 bits) or
+// 0F B1 /r, after the prefix F0 of `lock`. A locked form must write memory:
+// the processor faults on `lock` with a register destination.
+@(private)
+compare_exchange_encode :: proc "contextless" (encoding: ^Encoding, locked: bool, suffix_size: Operand_Size, source: Operand, destination: Operand, word_place: Place) -> Refusal_Record {
+	operands := [2]Operand{source, destination}
+	size, refusal := operation_size(suffix_size, operands[:])
+	if failed(refusal) {
+		return refusal
+	}
+	if source.kind != .Register {
+		return refuse(.Operand_Form_Not_Valid, source.place)
+	}
+	if destination.kind != .Memory && (locked || destination.kind != .Register) {
+		return refuse(.Operand_Form_Not_Valid, destination.place)
+	}
+	force_rex, forbid_rex, conflict_place := rex_flags_of(source, destination)
+	// The order 66, F0, REX is the one of llvm-mc; the processor takes the
+	// legacy prefixes in any order, and REX must be last.
+	if size == .Bits_16 {
+		put_byte(encoding, 0x66)
+	}
+	if locked {
+		put_byte(encoding, 0xF0)
+	}
+	if refusal = put_rex(encoding, size == .Bits_64, source.register.number, rm_index_of(destination), rm_number_of(destination), force_rex, forbid_rex, conflict_place); failed(refusal) {
+		return refusal
+	}
+	put_byte(encoding, 0x0F)
+	put_byte(encoding, size == .Bits_8 ? u8(0xB0) : u8(0xB1))
+	return put_rm_body(encoding, source.register.number, destination)
+}
+
+@(private)
+is_vector_register :: proc "contextless" (operand: Operand) -> bool {
+	return operand.kind == .Register && operand.register.class == .Vector
+}
+
+@(private)
+is_general_register :: proc "contextless" (operand: Operand) -> bool {
+	return operand.kind == .Register && operand.register.class == .General
+}
+
+// put_vector_opcode writes the prefix of the form, the prefix REX, 0F and
+// the opcode: the prefix of the form must come before REX.
+@(private)
+put_vector_opcode :: proc "contextless" (encoding: ^Encoding, prefix: Vector_Prefix, wide: bool, reg_number: u8, rm: Operand, opcode: u8) {
+	if prefix != .None {
+		put_byte(encoding, u8(prefix))
+	}
+	// No 8-bit register reaches an SSE form, so REX is never forbidden.
+	_ = put_rex(encoding, wide, reg_number, rm_index_of(rm), rm_number_of(rm), false, false, rm.place)
+	put_byte(encoding, 0x0F)
+	put_byte(encoding, opcode)
+}
+
+// vector_move_encode writes movss, movsd, movaps and movapd: xmm <- xmm/m
+// with the load opcode, m <- xmm with the store opcode.
+@(private)
+vector_move_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemonic, source: Operand, destination: Operand) -> Refusal_Record {
+	if is_vector_register(destination) && (is_vector_register(source) || source.kind == .Memory) {
+		put_vector_opcode(encoding, mnemonic.vector_prefix, false, destination.register.number, source, mnemonic.vector_opcode)
+		return put_rm_body(encoding, destination.register.number, source)
+	}
+	if is_vector_register(source) && destination.kind == .Memory {
+		put_vector_opcode(encoding, mnemonic.vector_prefix, false, source.register.number, destination, mnemonic.vector_store)
+		return put_memory(encoding, source.register.number, destination)
+	}
+	if !is_vector_register(source) && source.kind != .Memory {
+		return refuse(.Operand_Form_Not_Valid, source.place)
+	}
+	return refuse(.Operand_Form_Not_Valid, destination.place)
+}
+
+// vector_arithmetic_encode writes an SSE form xmm <- xmm/m: the arithmetic,
+// the bitwise forms, the comparisons, and cvtss2sd and cvtsd2ss.
+@(private)
+vector_arithmetic_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemonic, source: Operand, destination: Operand) -> Refusal_Record {
+	if !is_vector_register(source) && source.kind != .Memory {
+		return refuse(.Operand_Form_Not_Valid, source.place)
+	}
+	if !is_vector_register(destination) {
+		return refuse(.Operand_Form_Not_Valid, destination.place)
+	}
+	put_vector_opcode(encoding, mnemonic.vector_prefix, false, destination.register.number, source, mnemonic.vector_opcode)
+	return put_rm_body(encoding, destination.register.number, source)
+}
+
+// vector_from_integer_encode writes cvtsi2ss and cvtsi2sd: xmm <- r/m of 32
+// or 64 bits, with REX.W for 64. A memory operand takes its size from the
+// suffix only.
+@(private)
+vector_from_integer_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemonic, source: Operand, destination: Operand, word_place: Place) -> Refusal_Record {
+	if !is_general_register(source) && source.kind != .Memory {
+		return refuse(.Operand_Form_Not_Valid, source.place)
+	}
+	if !is_vector_register(destination) {
+		return refuse(.Operand_Form_Not_Valid, destination.place)
+	}
+	size := mnemonic.source_size
+	if source.kind == .Register {
+		if size != .Unknown && source.register.size != size {
+			return refuse(.Operand_Size_Wrong, source.place)
+		}
+		size = source.register.size
+	}
+	if size == .Unknown {
+		return refuse(.Operand_Size_Unknown, word_place)
+	}
+	if size != .Bits_32 && size != .Bits_64 {
+		return refuse(.Operand_Size_Wrong, source.place)
+	}
+	put_vector_opcode(encoding, mnemonic.vector_prefix, size == .Bits_64, destination.register.number, source, mnemonic.vector_opcode)
+	return put_rm_body(encoding, destination.register.number, source)
+}
+
+// integer_from_vector_encode writes cvttss2si and cvttsd2si: r of 32 or 64
+// bits <- xmm/m, with REX.W for 64.
+@(private)
+integer_from_vector_encode :: proc "contextless" (encoding: ^Encoding, mnemonic: Mnemonic, source: Operand, destination: Operand) -> Refusal_Record {
+	if !is_vector_register(source) && source.kind != .Memory {
+		return refuse(.Operand_Form_Not_Valid, source.place)
+	}
+	if !is_general_register(destination) {
+		return refuse(.Operand_Form_Not_Valid, destination.place)
+	}
+	size := destination.register.size
+	if mnemonic.destination_size != .Unknown && size != mnemonic.destination_size || size != .Bits_32 && size != .Bits_64 {
+		return refuse(.Operand_Size_Wrong, destination.place)
+	}
+	put_vector_opcode(encoding, mnemonic.vector_prefix, size == .Bits_64, destination.register.number, source, mnemonic.vector_opcode)
+	return put_rm_body(encoding, destination.register.number, source)
+}
+
+// move_quad_encode writes MOVQ, the one form of `mov` with a vector
+// register, which the suffix `q` names:
+// - r64 -> xmm: 66 REX.W 0F 6E /r. xmm -> r64: 66 REX.W 0F 7E /r.
+// - xmm/m64 -> xmm: F3 0F 7E /r. xmm -> m64: 66 0F D6 /r.
+@(private)
+move_quad_encode :: proc "contextless" (encoding: ^Encoding, suffix_size: Operand_Size, source: Operand, destination: Operand, word_place: Place) -> Refusal_Record {
+	if suffix_size != .Bits_64 {
+		return refuse(.Operand_Form_Not_Valid, word_place)
+	}
+	switch {
+	case is_vector_register(destination) && (is_vector_register(source) || source.kind == .Memory):
+		put_vector_opcode(encoding, .Repeat, false, destination.register.number, source, 0x7E)
+		return put_rm_body(encoding, destination.register.number, source)
+	case is_vector_register(source) && destination.kind == .Memory:
+		put_vector_opcode(encoding, .Operand_Size, false, source.register.number, destination, 0xD6)
+		return put_memory(encoding, source.register.number, destination)
+	case is_general_register(source) && is_vector_register(destination):
+		if source.register.size != .Bits_64 {
+			return refuse(.Operand_Size_Wrong, source.place)
+		}
+		put_vector_opcode(encoding, .Operand_Size, true, destination.register.number, source, 0x6E)
+		return put_rm_body(encoding, destination.register.number, source)
+	case is_vector_register(source) && is_general_register(destination):
+		if destination.register.size != .Bits_64 {
+			return refuse(.Operand_Size_Wrong, destination.place)
+		}
+		put_vector_opcode(encoding, .Operand_Size, true, source.register.number, destination, 0x7E)
+		return put_rm_body(encoding, source.register.number, destination)
+	case is_vector_register(source):
+		return refuse(.Operand_Form_Not_Valid, destination.place)
+	}
+	return refuse(.Operand_Form_Not_Valid, source.place)
 }
 
 // extending_move_encode writes sign-extending (MOVSX / MOVSXD) and
@@ -1414,7 +1779,9 @@ unary_encode :: proc "contextless" (encoding: ^Encoding, operation: Operation, s
 	     .Shift_Right_Arithmetic, .Set_If, .Sign_Extend_Byte_To_Word,
 	     .Sign_Extend_Word_To_Long, .Sign_Extend_Long_To_Quad,
 	     .Sign_Extend_Word_To_Double, .Sign_Extend_Long_To_Double,
-	     .Sign_Extend_Quad_To_Octaword, .Store_Byte, .Repeat_Store_Byte:
+	     .Sign_Extend_Quad_To_Octaword, .Store_Byte, .Repeat_Store_Byte,
+	     .Exchange, .Compare_Exchange, .Vector_Move, .Vector_Arithmetic,
+	     .Vector_From_Integer, .Integer_From_Vector:
 		return refuse(.Mnemonic_Unknown, word_place)
 	}
 	force_rex, forbid_rex, conflict_place := rex_flags_of(operand)
@@ -1551,7 +1918,9 @@ shift_encode :: proc "contextless" (encoding: ^Encoding, operation: Operation, s
 	     .Sign_Extend_Byte_To_Word, .Sign_Extend_Word_To_Long,
 	     .Sign_Extend_Long_To_Quad, .Sign_Extend_Word_To_Double,
 	     .Sign_Extend_Long_To_Double, .Sign_Extend_Quad_To_Octaword,
-	     .Store_Byte, .Repeat_Store_Byte:
+	     .Store_Byte, .Repeat_Store_Byte, .Exchange, .Compare_Exchange,
+	     .Vector_Move, .Vector_Arithmetic, .Vector_From_Integer,
+	     .Integer_From_Vector:
 		return refuse(.Mnemonic_Unknown, word_place)
 	}
 	target := operands[len(operands) - 1]
