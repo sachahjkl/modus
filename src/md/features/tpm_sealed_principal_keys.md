@@ -120,7 +120,7 @@ The opened keys must give the public keys of the file: that check takes the plac
 - A file written after the change opens with the new passphrase or the new recovery key only. The old recovery key opens nothing in it, and the old passphrase gives a wrong authorization value, which the TPM counts.
 - The write of the new file makes the file from before a version. Right after the write, `unlock` asks the store to erase the versions of the file: the store ends them and writes zeros over each block that no other state names ([version_erase.md](version_erase.md)). Only `unlock` holds the grant for it, `Versions_Erase`. Each unlock whose current file opens the keys asks again, so a stop between the write and the erase leaves the old file on the disk only until the next unlock.
 - After the erase, a thief of the machine who knows the old passphrase or the old recovery key opens nothing that the storage service reads on this disk, under the limits of the erase ([version_erase.md](version_erase.md), "Limits"): a copy of the disk made before the change; a copy that the device or the host keeps under the logical blocks (a flash remap, a snapshot of the image); old bytes in free blocks after a loss of power during the zeros, or after a failed second root or write of zeros; a damaged version that the erase ended with no zeros; and a clone or a restore of the version that a process acting for principal 0 made before the erase. Each of them still opens with the old secret: the old recovery key anywhere, the old passphrase on this TPM and system, as its sealed object stays valid.
-- A writer of the disk who kept the old file can put it back. The pin of the file in the TPM is the roadmap entry for that.
+- A writer of the disk who kept the old file can put it back. On a machine with the TPM service, the pin of the file refuses it (see "The pin of the file").
 
 ### No window of `unlock` outlives a lock
 
@@ -148,14 +148,22 @@ The machine passphrase on a machine with the TPM service and Secure Boot on has 
 
 ### The pin of the file
 
-A copy of the disk keeps an older file of a named principal, and the older passphrase opens it on this TPM and system. A value that the TPM keeps, and that only this system writes, names the current file. Only its payload is built; its index needs the policy that the pin of the machine key needs ([tpm_sealed_machine_key.md](tpm_sealed_machine_key.md), "The form of the record is not pinned").
+A copy of the disk keeps an older file of a named principal, and the older passphrase opens it on this TPM and system: the old sealed object stays valid. On a machine with the TPM service, the TPM pins the current file, as it pins the record of the machine key ([tpm_sealed_machine_key.md](tpm_sealed_machine_key.md), "The pin of the record"): the same commands `Pin_Read` and `Pin_Write`, the same policy of the index, the same announce and settle around each write, the same first pin, and the same limit against code with the TPM.
 
-The payload has 88 bytes: the magic `MODUSPFP`, the format 1, two reserved zero bytes, the number of the principal, a generation of 64 bits, SHA-256 of the whole file, and SHA-256 of a text of its own and the bytes before it. Principal 0 is refused: the machine has no principal file. The rules (`principal_file_pin_advance`, `principal_file_pin_check` in `modus:contract/tpm_attestation`):
+**The index** of the principal n is `0x01806E00` + n, n from 1 to 64 (`tpm2.pin_index_of`).
 
-- a new pin names the same principal and a higher generation, and a digest that is not zero;
-- the file of the disk must have the digest of the pin.
+**The payload** (format 2, 120 bytes): the magic `MODUSPFP`, the format, two reserved zero bytes, the number of the principal, a generation of 64 bits, SHA-256 of the whole file, SHA-256 of the announced file (zeros when none is), and SHA-256 of a text of its own and the bytes before it. Principal 0 is refused: the machine has no principal file. SHA-256 and not BLAKE2b: the contract of the TPM has SHA-256 only, as each digest of the TPM.
 
-SHA-256 and not BLAKE2b: the contract of the TPM has SHA-256 only, as each digest of the TPM.
+**The rules** (`principal_file_pin_advance`, `principal_file_pin_check` in `modus:contract/tpm_attestation`, `principal_file_pin_verdict` in `modus:contract/tpm_service`):
+
+- a new pin names the same principal, a higher generation, and a digest that is not zero;
+- the file of the disk must have the digest of the pin, or the announced digest.
+
+**The check** comes after `unlock` gives the record to the root service, which gives the number of the principal, and before any passphrase is asked. A file that the pin does not name is refused: `unlock` writes "the file of principal 1 is not the file that the TPM pins", with the rule that failed, and no window of the principal opens in this run. The root service keeps the record, so the principal stays locked; the machine key opens as before. A change of the passphrase or of the recovery key on such a file is refused the same way.
+
+**A removed file.** The store gives no file and a pin names one: `unlock` writes the same line with "the pinned record is absent". The removed file is never taken as the absence of a principal: no window of a principal opens, and `principal_create` is refused while the pin exists ("a pin of the TPM names the file of a principal that the disk no longer holds"), as a new principal would move the pin of the removed one to a file of whoever created it. Only a clear of the TPM ends it. The service also refuses each pin that starts the slot again at the generation 1 or at any generation not above the pinned one.
+
+**The creation** writes the file before the root service gives its number, so the pin comes after the record: a stop between the write and the pin leaves a file with no pin, which the next start pins. A pin of that number that appears between the check at the start of the creation and the pin is not moved: the new file stays unpinned, and the next start refuses it.
 
 ## Refused forms
 
@@ -192,7 +200,7 @@ SHA-256 and not BLAKE2b: the contract of the TPM has SHA-256 only, as each diges
 - **A wrong passphrase on another system is not counted, and not known as wrong.** The policy fails first. The window then asks for the recovery key: a principal who mistyped on an updated system needs the recovery key anyway.
 - **The lockout comes before the policy.** A locked TPM refuses the right passphrase on this system too; the recovery key opens the keys, and the new seal works during the lockout: the storage key is exempt from the count.
 - **The keys after a recovery wait in `unlock`** until the new passphrase is typed two times. They are erased at the end of the seal, whatever its result, and the window then ends: it cannot ask again for a passphrase that it has no keys to seal.
-- **A new passphrase does not revoke the old one.** After a recovery or a change, the old sealed object stays valid on this system: its parent is the storage key that the TPM derives again at each use, and its policy still holds. A writer of the disk who kept the old file puts it back, and the old passphrase opens the keys again. This matters when the old passphrase leaked, not when it was lost. Nothing on the disk or in the TPM pins the current file; a pin is the roadmap entry of the pinned form.
+- **A new passphrase does not revoke the old one.** After a recovery or a change, the old sealed object stays valid on this system: its parent is the storage key that the TPM derives again at each use, and its policy still holds. A writer of the disk who kept the old file puts it back; the pin of the file refuses it (see "The pin of the file"). This matters when the old passphrase leaked, not when it was lost. Code with the TPM can remove the pin, and the old file then opens with the old passphrase.
 - **A new recovery key does not revoke the old one either.** A new seal keeps the copy under the recovery key; only `recovery_key_change()` replaces it. The old recovery key then opens no file written after. The store erases the version from before, but each other copy of the old file still opens with the old recovery key, with no TPM: a copy of the disk, or a copy that the device kept. Who holds the old recovery key and such a copy holds the principal.
 - **The proof of a change comes before each new secret.** `unlock` draws the new salt, TPM secret or recovery key only after the current passphrase opened the keys, and keeps the opened keys only until the new seal, as after a recovery. Enter with nothing at the new passphrase erases them and ends the change: opened keys do not wait for anyone at the keyboard. A change that fails keeps the file as it was.
 - **A stop during a request to the TPM** can leave an authorization value or a TPM secret in the region of the TPM service, and a lock stops `unlock` at any point of a window that a session asked. The next `unlock` erases both fields of the region when it maps it.
@@ -225,13 +233,15 @@ Built: the root service passes the requesting principal's number explicitly in `
 
 Built: a recovery key for a named principal on a machine with no TPM or with Secure Boot off (`principals.non_tpm_recovery_seal` and `principals.non_tpm_recovery_open`, stored in `principal_recovery` with HKDF-SHA256 key derivation bound to the principal number and ChaCha20-Poly1305 authentication over the header and public keys), wired into `unlock` for creating, renewing, and opening recovery copies with Ctrl+R, with adversarial host tests.
 
+Built: the pin of the file ("The pin of the file"): the payload of format 2 with the announced digest, its rules, its index, the commands of the TPM service, and the check, the announce and the settle in `unlock` at each write of the file (a creation, a change, a new recovery key, a new seal after a recovery), with host tests of a file put back after a change of the passphrase, of a removed file, of a file of another principal, and of a pin that goes back.
+
 Left:
 
-- **The file of a named principal pinned in the TPM**, so a kept old file and its old passphrase are refused. Its payload, its rules and their host tests are built ("The pin of the file"), with the steps `principal_file_pin_transition` and `principal_file_check` in the TPM service; the index with its policy, the commands of the service and of `unlock`, and the machine tests remain.
+- **A machine test of the pin of the file**: a machine with a software TPM and Secure Boot whose file of alice is put back to the file of before a change of the passphrase, between two starts, and refused with the old passphrase. Today only the host tests prove the rules and the commands.
 - **A machine test of the refusal of PCR 11 after a change of the passphrase.** Machine 11 presses Ctrl+R where it typed the changed passphrase, so no machine sees the TPM refuse on PCR 11 a passphrase that a change set; machine 9 tests that refusal with the passphrase of before. The path runs no other code. An unseal in machine 11 would move the lockout line that proves Ctrl+R sends nothing to the TPM, so the case needs a machine of its own.
 - **An encrypted session with the TPM** ([tpm_sealed_machine_key.md](tpm_sealed_machine_key.md)): the TPM secret and the value cross the bus encrypted.
 - **The state of the lockout hierarchy in the window of the creation.** Today only the log says that another system set the value, or that the change failed; the window of `unlock` presents the seal by the TPM the same way.
 
 ## State
 
-Built: the keys of a named principal sealed by the TPM with the passphrase, the lockout authorization value, the change of the passphrase and of the recovery key, the recovery with no TPM, and the payload of the pin of the file with its rules, host tests and steps in the TPM service. Left: the index of the pin with its policy and its machine tests, an encrypted session, a machine test of the refusal of PCR 11 after a change of the passphrase, and the state of the lockout hierarchy in the window of the creation.
+Built: the keys of a named principal sealed by the TPM with the passphrase, the lockout authorization value, the change of the passphrase and of the recovery key, the recovery with no TPM, and the pin of the file in an index of the TPM, with its commands, its check in `unlock` and host tests. Left: the machine tests of the pin, an encrypted session, a machine test of the refusal of PCR 11 after a change of the passphrase, and the state of the lockout hierarchy in the window of the creation.

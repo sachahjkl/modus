@@ -91,7 +91,9 @@
 //   these commands, so no other process can start a session or give the
 //   key of a disk grant table.
 // - **Tpm**: the ring and the region of the TPM service, when the system is
-//   measured into a TPM: Seal and Unseal only (modus:contract/tpm_service).
+//   measured into a TPM: Seal, Unseal, and the read and the write of the
+//   TPM pins of its record and its file (modus:contract/tpm_service,
+//   pins.odin).
 // - **Versions_Erase**: the storage service lets it end the versions of
 //   the objects of its own store, with zeros over their blocks
 //   ([erase_versions](storage.erase_versions)). No other process has it.
@@ -443,6 +445,7 @@ create :: proc "contextless" () {
 		message, message_failed = "the root service did not take the record", true
 		return
 	}
+	principal_pin_after_creation(file_bytes[:])
 	system.log_fact(.Info, Principal_Created{principal = number, derivation = derivation_field(derived), principal_name = principal_name_field()})
 	session_start(&secrets, root_ring.Principal_Key_Origin.New)
 }
@@ -737,11 +740,16 @@ machine_passphrase_alone_create :: proc "contextless" () {
 		return
 	}
 	principals.machine_file_encode(&machine_file, &machine_file_bytes)
+	if !pin_announce(.Machine_Key, machine_file_bytes[:]) {
+		message, message_failed = "the pin of the TPM refuses the record", true
+		return
+	}
 	if _, status := storage.write(&client, storage.ROOT, principals.MACHINE_OBJECT, machine_file_bytes[:]); status != .Ok {
 		system.log_fact(.Info, Machine_Passphrase_Record_Not_Kept{status_word = u64(status)})
 		message, message_failed = "the store did not keep the record", true
 		return
 	}
+	pin_settle(.Machine_Key, machine_file_bytes[:])
 	system.log_fact(.Info, Machine_Passphrase_Set{derivation = derivation_field(derived)})
 	// The record is on the disk now: this run never writes a second one.
 	// A root service that answers late can still take this key, and a new
@@ -766,6 +774,10 @@ tpm_open :: proc "contextless" (ctx: ^system.Context) {
 		return
 	}
 	tpm_process = ctx.handles[tpm_service.GRANT_SERVICE]
+	// The root service gave the TPM: from here on, a record or a file is
+	// checked against its pin, and no failure of the service makes that
+	// check pass (pins.odin).
+	tpm_granted = true
 	if !tpm_service_runs() {
 		system.log_fact(.Info, Tpm_Service_Stopped_At_Start{})
 		return
@@ -1018,7 +1030,7 @@ machine_seal_create :: proc "contextless" () -> bool {
 // the window ends after it, whatever the result.
 machine_key_sealed_commit :: proc "contextless" () {
 	defer erase(opened_machine_key[:])
-	switch object_write(principals.MACHINE_OBJECT, machine_tpm_file_bytes[:]) {
+	switch machine_record_write(machine_tpm_file_bytes[:]) {
 	case .Kept:
 		erase(recovery_text[:])
 	case .Not_Kept:
@@ -1118,10 +1130,14 @@ machine_reseal :: proc "contextless" (machine_key: ^[principals.MACHINE_KEY_SIZE
 	}
 	machine_tpm_file.object = renewed
 	principals.machine_tpm_file_encode(&machine_tpm_file, &machine_tpm_file_bytes)
+	if !pin_announce(.Machine_Key, machine_tpm_file_bytes[:]) {
+		return
+	}
 	if _, status := storage.write(&client, storage.ROOT, principals.MACHINE_OBJECT, machine_tpm_file_bytes[:]); status != .Ok {
 		system.log_fact(.Info, Machine_Reseal_Not_Kept{status_word = u64(status)})
 		return
 	}
+	pin_settle(.Machine_Key, machine_tpm_file_bytes[:])
 	system.log_fact(.Info, Machine_Key_Resealed{})
 	// The record of before holds a seal to the system that the TPM refused:
 	// with it, a start of that older system would open the machine key.
@@ -1343,7 +1359,7 @@ machine_tpm_passphrase_create :: proc "contextless" () {
 // in a run: the window ends after it, whatever the result.
 machine_passphrase_commit :: proc "contextless" () {
 	defer erase(opened_machine_key[:])
-	switch object_write(principals.MACHINE_OBJECT, machine_tpm_passphrase_file_bytes[:]) {
+	switch machine_record_write(machine_tpm_passphrase_file_bytes[:]) {
 	case .Kept:
 		erase(recovery_text[:])
 	case .Not_Kept:
@@ -1460,12 +1476,18 @@ machine_passphrase_reseal :: proc "contextless" () {
 		message, message_failed = "not sealed again: the recovery key opens it at next start", true
 		return
 	}
+	if !pin_announce(.Machine_Key, renewed_bytes[:]) {
+		mode = .Machine_Reseal_Result
+		message, message_failed = "the pin of the TPM refuses the seal: the recovery key opens it", true
+		return
+	}
 	if _, status := storage.write(&client, storage.ROOT, principals.MACHINE_OBJECT, renewed_bytes[:]); status != .Ok {
 		system.log_fact(.Info, Machine_Reseal_Not_Kept{status_word = u64(status)})
 		mode = .Machine_Reseal_Result
 		message, message_failed = "the store did not keep the seal: the recovery key opens it", true
 		return
 	}
+	pin_settle(.Machine_Key, renewed_bytes[:])
 	machine_tpm_passphrase_file, machine_tpm_passphrase_file_bytes = renewed, renewed_bytes
 	system.log_fact(.Info, Machine_Key_Resealed_With_Passphrase{})
 	// The record of before holds a seal that the old passphrase opens on
@@ -1594,6 +1616,7 @@ principal_created_commit :: proc "contextless" () {
 		mode = .Done
 		return
 	}
+	principal_pin_after_creation(principal_tpm_file_bytes[:])
 	system.log_fact(.Info, Principal_Created_Sealed_By_Tpm{principal = number, principal_name = principal_name_field()})
 	session_start(&opened_secrets, root_ring.Principal_Key_Origin.New)
 	// The keys are erased now: a session that did not start starts at the
@@ -1891,9 +1914,18 @@ Write_Outcome :: enum u8 {
 	Unknown, // The store did not answer, and the object could not be read back.
 }
 
-// principal_file_write writes a new file of the principal (object_write).
+// principal_file_write writes a new file of the principal (object_write),
+// with its pin around the write (pin_announce, pin_settle). A pin that
+// refuses the file writes nothing: the store keeps the file of before.
 principal_file_write :: proc "contextless" (bytes: []u8) -> Write_Outcome {
-	return object_write(principals.FILE_OBJECT, bytes)
+	if !pin_announce(.Principal_File, bytes) {
+		return .Not_Kept
+	}
+	outcome := object_write(principals.FILE_OBJECT, bytes)
+	if outcome == .Kept {
+		pin_settle(.Principal_File, bytes)
+	}
+	return outcome
 }
 
 // object_write writes an object of the store of unlock: the file of the
@@ -1995,9 +2027,12 @@ principal_reseal :: proc "contextless" () {
 		defer erase(verify_key[:])
 		if _, sealed := passphrase_file_seal(&opened_secrets, &renewed, &renewed_bytes); !sealed || !derive(typed[:typed_count], renewed.salt[:], &verify_key) || principals.record_open_verify(renewed_bytes[:], &verify_key, &opened_secrets) != .None {
 			system.log_fact(.Info, Principal_Not_Resealed{principal = number})
+		} else if !pin_announce(.Principal_File, renewed_bytes[:]) {
+			system.log_fact(.Info, Principal_Not_Resealed{principal = number})
 		} else if _, status := storage.write(&client, storage.ROOT, principals.FILE_OBJECT, renewed_bytes[:]); status != .Ok {
 			system.log_fact(.Info, Principal_Reseal_Not_Kept{principal = number, status_word = u64(status)})
 		} else {
+			pin_settle(.Principal_File, renewed_bytes[:])
 			file, file_bytes = renewed, renewed_bytes
 			system.log_fact(.Info, Principal_Resealed{principal = number, principal_name = principal_name_field()})
 			object_versions_erase(principals.FILE_OBJECT)
@@ -2015,10 +2050,13 @@ principal_reseal :: proc "contextless" () {
 	switch {
 	case !principal_tpm_seal(&opened_secrets, &renewed, &renewed_bytes):
 		system.log_fact(.Info, Principal_Not_Resealed{principal = number})
+	case !pin_announce(.Principal_File, renewed_bytes[:]):
+		system.log_fact(.Info, Principal_Not_Resealed{principal = number})
 	case:
 		if _, status := storage.write(&client, storage.ROOT, principals.FILE_OBJECT, renewed_bytes[:]); status != .Ok {
 			system.log_fact(.Info, Principal_Reseal_Not_Kept{principal = number, status_word = u64(status)})
 		} else {
+			pin_settle(.Principal_File, renewed_bytes[:])
 			principal_tpm_file, principal_tpm_file_bytes = renewed, renewed_bytes
 			system.log_fact(.Info, Principal_Resealed{principal = number, principal_name = principal_name_field()})
 			object_versions_erase(principals.FILE_OBJECT)
@@ -2053,6 +2091,11 @@ machine_record_read :: proc "contextless" () -> Record_State {
 		return .Unreadable
 	}
 	if !found {
+		// A pin that names a record that the store does not hold: a writer
+		// of the disk removed it. No new record is written over it.
+		if machine_record_pin_check(nil, false) {
+			return .Unreadable
+		}
 		return .Absent
 	}
 	machine_form = principals.machine_record_form(bytes)
@@ -2078,6 +2121,12 @@ machine_record_read :: proc "contextless" () -> Record_State {
 		}
 	case .Unknown:
 		system.log_fact(.Info, Machine_Record_Form_Unknown{})
+		return .Unreadable
+	}
+	// The record decodes: it must also be the record that the TPM pins. A
+	// record of another form, an older record or a changed one is refused,
+	// and the key stays closed: no other record is tried in its place.
+	if machine_record_pin_check(bytes, true) {
 		return .Unreadable
 	}
 	return .Present
@@ -2562,6 +2611,7 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 		system.stop(.Failed)
 	}
 	if !present {
+		_ = principal_file_removed_check()
 		return false
 	}
 	problem: principals.File_Problem
@@ -2589,6 +2639,12 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 	}
 	if !record_give() {
 		system.stop(.Failed)
+	}
+	// The file decodes: it must also be the file that the TPM pins. An
+	// older file, whose older passphrase a writer of the disk kept, is
+	// refused: no session of the principal starts from it.
+	if principal_file_pin_check(number, bytes) {
+		return false
 	}
 	principal_non_tpm_recovery_present = false
 	if principal_form == .Passphrase {
@@ -2763,6 +2819,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		name, name_length = principals.name_unpack({ctx.values[principals.VALUE_NAME], ctx.values[principals.VALUE_NAME + 1], ctx.values[principals.VALUE_NAME + 2]})
 		if principals.name_problem(the_name()) != .None {
 			system.log_fact(.Info, New_Principal_Name_Refused{})
+			system.stop(.Refused)
+		}
+		if !principal_creation_allowed() {
 			system.stop(.Refused)
 		}
 		mode = .Create_First

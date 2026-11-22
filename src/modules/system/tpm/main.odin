@@ -25,7 +25,9 @@
 // service.
 //
 // **The commands of the TPM.** The service builds each one itself
-// (modus:tpm2): a client sends Seal or Unseal, never a raw command,
+// (modus:tpm2): a client sends Seal, Unseal, Pin_Read or Pin_Write
+// (the TPM pins of the record of the machine key and of the file of a
+// principal, pins.odin), never a raw command,
 // so no client extends a PCR or clears the TPM. On the measure ring the
 // root service sends Measure_Start_Policy before each start policy runs:
 // the service extends PCR 12, twice at most in one start
@@ -782,6 +784,10 @@ requests_serve :: proc "contextless" (requests: ^ring.Ring, source: tpm_service.
 			outcome = unseal(command.values[0], command.values[1], command.values[2], command.values[3], request.authorization)
 		case .Measure_Start_Policy:
 			outcome = measure_start_policy(command.values)
+		case .Pin_Read:
+			outcome = pin_read(command.values)
+		case .Pin_Write:
+			outcome = pin_write(command.values)
 		}
 		// After the flushes of the request, before its completion: the
 		// client learns the outcome only once the TPM is orderly again.

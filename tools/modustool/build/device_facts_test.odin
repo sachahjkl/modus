@@ -51,6 +51,7 @@ device_text_bytes_most :: proc() -> map[string]u32 {
 	most["interface_address"] = len("255.255.255.255/24 ff:ff:ff:ff:ff:ff")
 	most["protocol"] = len("TCP")
 	most["end_reason"] = len("closed by this service")
+	most["pin_refusal"] = u32(pin_refusal_words_most())
 	return most
 }
 

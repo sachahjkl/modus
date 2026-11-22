@@ -104,4 +104,4 @@ Left:
 - **A change and a removal of the machine passphrase, and a change of the recovery key**, as for a named principal.
 - **Machine tests of the lockout of the machine passphrase, of its record with no TPM service, and of a failed new seal.**
 - **The state of the lockout hierarchy in the window**, as for the creation of a named principal.
-- **A pin of the form of the record in the TPM** ([tpm_sealed_machine_key.md](tpm_sealed_machine_key.md), "The form of the record is not pinned").
+- **A machine test of the pin of the record** ([tpm_sealed_machine_key.md](tpm_sealed_machine_key.md), "The pin of the record"): the record `MACHINEP` is pinned as each form is.

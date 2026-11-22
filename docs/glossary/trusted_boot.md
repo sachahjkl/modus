@@ -274,6 +274,16 @@ The design: `src/md/features/rollback_floors.md`.
 
 Do not use: rollback counter, monotonic counter, anti-rollback index.
 
+### TPM pin
+
+A TPM pin is an index of the TPM, which only this system writes, that names the current record of the machine key or the current file of a named principal by its digest.
+
+`unlock` refuses a record or a file that its pin does not name: another form, an older one, a removed one. A write announces the new digest in the pin first, then writes the store, then settles the pin. Anyone reads the index; only a policy of PCR 7 and PCR 11 writes it. Code with the TPM can still remove it while the owner hierarchy has no authorization value. It is not a pin of a declaration input, and not a TPM floor.
+
+The design: `src/md/features/tpm_sealed_machine_key.md`, "The pin of the record".
+
+Do not use: record lock, anchor, seal of the record.
+
 ### Start request
 
 The start request is the field of the boot record that says which start policy the root service starts at this start: `Chosen`, the zero value, or `Rescue`.

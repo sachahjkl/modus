@@ -100,6 +100,52 @@ Count_Limits :: struct {
 	lockout_recovery_seconds: u64,
 }
 
+// The bytes of the Text field of the words of a refusal of a pin: the
+// longest, "a form with the TPM becomes the passphrase alone", has 48
+// bytes, and a zero byte.
+PIN_REFUSAL_FIELD_BYTES :: 56
+
+// The payload of the index of a pin, as Pin_Read gave it to unlock. The
+// state is the word of tpm_service.Pin_State.
+@(log_fact = "tpm: read the pin at the index {index}: state {state}, {payload_bytes} bytes of payload")
+Pin_Read :: struct {
+	index:         value_kinds.Hexadecimal_Sixteen_Digits,
+	state:         u64,
+	payload_bytes: u64,
+}
+
+// The TPM took a new payload of a pin.
+@(log_fact = "tpm: wrote the pin at the index {index}: {payload_bytes} bytes, in a policy session of PCR 7 and PCR 11")
+Pin_Written :: struct {
+	index:         value_kinds.Hexadecimal_Sixteen_Digits,
+	payload_bytes: u64,
+}
+
+// An index at the place of a pin that is not a pin of now was removed
+// before its definition. The state is the word of tpm_service.Pin_State.
+@(log_fact = "tpm: removed the index {index} at the place of a pin, of state {state}, to define it with the policy of PCR 7 and PCR 11 now")
+Pin_Index_Removed :: struct {
+	index: value_kinds.Hexadecimal_Sixteen_Digits,
+	state: u64,
+}
+
+// The service removed an index of an older policy, and its definition or
+// its write failed after: no pin is in the TPM until the next write, and
+// the next start of unlock pins the record that it finds.
+@(log_fact = "tpm: removed the index {index} of a pin, and its definition or its write failed: no pin holds until the next write, and the next start pins the record that it finds")
+Pin_Lost_After_Removal :: struct {
+	index: value_kinds.Hexadecimal_Sixteen_Digits,
+}
+
+// A new payload of a pin was refused: nothing is written.
+@(log_fact = "tpm: refused the new pin at the index {index}: {pin_refusal}; nothing is written")
+Pin_Write_Refused :: struct {
+	index:       value_kinds.Hexadecimal_Sixteen_Digits,
+	pin_refusal: [56]u8,
+}
+
+#assert(size_of(Pin_Write_Refused) == 8 + PIN_REFUSAL_FIELD_BYTES)
+
 // The bytes of the Text field of the failure that stops the service: the
 // longest of the failures of the services of the devices and of the
 // network has 91 bytes, and a zero byte. One size in each module keeps one

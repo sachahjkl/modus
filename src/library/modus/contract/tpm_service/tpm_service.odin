@@ -12,7 +12,7 @@
 // service makes and gives to both:
 //
 //   the TPM ring     a ring (package ring). One command record is one
-//                    request: Seal or Unseal.
+//                    request: Seal, Unseal, Pin_Read or Pin_Write.
 //   the TPM region   one page. The bytes of a request and of its answer:
 //                    the secret, and the two areas of a sealed object.
 //
@@ -77,6 +77,9 @@ REGION_CREATION_TICKET :: 1536 // The creation ticket, whole.
 // takes the request.
 REGION_AUTHORIZATION :: 2048
 AUTHORIZATION_SIZE :: 32
+// The payload of a pin of Pin_Read and Pin_Write: at most PIN_LIMIT bytes.
+REGION_PIN :: 2560
+PIN_LIMIT :: 128
 
 // The authorization of a sealed object, in values[0] of Seal and values[4]
 // of Unseal. Its word crosses the ring, so each value is explicit.
@@ -127,6 +130,21 @@ Command :: enum u32 {
 	// ring of a client it is refused with Bad_Command; past MEASURE_LIMIT
 	// extends, with Measure_Limit.
 	Measure_Start_Policy = 3,
+	// values[0] the word of a Pin_Kind, values[1] the principal: 0 for the
+	// machine key, the number of a named principal for its file. The service
+	// reads the index of the pin. The completion: values[0] the bytes of its
+	// payload at REGION_PIN (0 unless the state is Held or
+	// Held_Other_Policy), values[1] the word of its Pin_State.
+	Pin_Read = 4,
+	// As Pin_Read, with values[2] the bytes of the new payload at
+	// REGION_PIN: the size of the payload of its kind. The service checks
+	// the payload and its change against the index (pin_write_refusal),
+	// defines the index when it must, and writes it in a policy session of
+	// PCR 7 and PCR 11. The completion: Ok, or Bad_Command with values[0]
+	// the word of the Pin_Refusal (modus:contract/tpm_attestation) when the
+	// payload or its change is refused; a refusal at the border has the
+	// word 0, Pin_Refusal.None.
+	Pin_Write = 5,
 }
 
 // The ring on which a request came: the border takes Seal and Unseal on the
@@ -218,8 +236,8 @@ status_of_word :: proc "contextless" (word: u32) -> (status: Status, ok: bool) {
 
 // A request of the ring, past its border.
 Request :: struct {
-	command:       Command, // .Seal, .Unseal or .Measure_Start_Policy.
-	authorization: Authorization, // .None for Measure_Start_Policy.
+	command:       Command,
+	authorization: Authorization, // .None for Measure_Start_Policy, Pin_Read and Pin_Write.
 }
 
 // request_of_record is the border of the service: the command of a record,
@@ -236,6 +254,15 @@ request_of_record :: proc "contextless" (kind: u32, values: [7]u64, source: Requ
 	switch command {
 	case .None:
 		return {}, .Bad_Command
+	case .Pin_Read, .Pin_Write:
+		// The pins are the work of unlock: the root service never asks.
+		if source != .Client_Ring {
+			return {}, .Bad_Command
+		}
+		if _, pin_ok := pin_request_of_values(command, values); !pin_ok {
+			return {}, .Bad_Command
+		}
+		return {command = command, authorization = .None}, .Ok
 	case .Seal, .Unseal:
 		if source != .Client_Ring {
 			return {}, .Bad_Command
