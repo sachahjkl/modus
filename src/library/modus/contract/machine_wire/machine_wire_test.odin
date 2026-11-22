@@ -1292,38 +1292,38 @@ crossing_store_offers_with_later_write_converge_to_one_common_version :: proc(t:
 	pair_machines(t, a, b)
 	testing.expect(t, machine_grant_set(&a.peer, identity_of(b), {.Stores}, {}))
 	testing.expect(t, machine_grant_set(&b.peer, identity_of(a), {.Stores}, {}))
-	store_id := blake3.hash(transmute([]u8)string("crossing"))
-	sa, ok_a := store_exchange_open(&a.peer, store_id)
-	sb, ok_b := store_exchange_open(&b.peer, store_id)
-	testing.expect(t, ok_a && ok_b)
+	store_id := object_hash("crossing")
+	sa, add_a := store_exchange_add(&a.peer.stores, store_id, identity_of(b))
+	sb, add_b := store_exchange_add(&b.peer.stores, store_id, identity_of(a))
+	testing.expect_value(t, add_a, Store_Status.Ok)
+	testing.expect_value(t, add_b, Store_Status.Ok)
 
 	// Both machines begin an offer from the same common version, then A writes
 	// another object before answering B's crossing offer.
-	testing.expect_value(t, store_write(sa, 1, blake3.hash(transmute([]u8)string("a0"))), Store_Status.Ok)
-	testing.expect_value(t, store_write(sb, 2, blake3.hash(transmute([]u8)string("b0"))), Store_Status.Ok)
+	testing.expect_value(t, store_write(sa, object_hash("k1"), object_hash("a0")), Store_Status.Ok)
+	testing.expect_value(t, store_write(sb, object_hash("k2"), object_hash("b0")), Store_Status.Ok)
 	offer_a_buf, offer_b_buf: [FRAME_LIMIT]u8
-	offer_a, st_a := store_offer_begin(sa, offer_a_buf[:])
-	offer_b, st_b := store_offer_begin(sb, offer_b_buf[:])
-	testing.expect_value(t, st_a, Store_Status.Ok)
-	testing.expect_value(t, st_b, Store_Status.Ok)
-	a1_hash := blake3.hash(transmute([]u8)string("a1"))
-	testing.expect_value(t, store_write(sa, 3, a1_hash), Store_Status.Ok)
+	offer_a := store_offer_begin(sa, offer_a_buf[:])
+	offer_b := store_offer_begin(sb, offer_b_buf[:])
+	testing.expect(t, offer_a != nil && offer_b != nil)
+	k3 := object_hash("k3")
+	a1_hash := object_hash("a1")
+	testing.expect_value(t, store_write(sa, k3, a1_hash), Store_Status.Ok)
 
 	// Each side answers the other's crossing offer.
 	_ = exchange(a, identity_of(b), offer_b, 100)
 	_ = exchange(b, identity_of(a), offer_a, 100)
-	// Both common versions must agree identically, and A keeps its later write (3 -> a1).
+	// Both common versions must agree identically, and A keeps its later write (k3 -> a1).
 	testing.expect_value(t, store_version_hash(&sa.common), store_version_hash(&sb.common))
 
 	// Next exchange carries A's later write cleanly to B with no Base_Differs stall.
 	next_buf: [FRAME_LIMIT]u8
-	next_offer, st_next := store_offer_begin(sa, next_buf[:])
-	testing.expect_value(t, st_next, Store_Status.Ok)
+	next_offer := store_offer_begin(sa, next_buf[:])
+	testing.expect(t, next_offer != nil)
 	reply := exchange(b, identity_of(a), next_offer, 200)
 	acc_st, acc_reason, _ := store_offer_reply_accept(sa, reply)
 	testing.expect_value(t, acc_st, Store_Status.Ok)
 	testing.expect_value(t, acc_reason, Refusal_Reason.None)
 	testing.expect_value(t, store_version_hash(&sa.current), store_version_hash(&sb.current))
-	entry_b, found_b := store_entry_find(&sb.current, 3)
-	testing.expect(t, found_b && entry_b.value_hash == a1_hash)
+	testing.expect_value(t, store_version_lookup(&sb.current, k3), a1_hash)
 }
