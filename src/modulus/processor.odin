@@ -4,6 +4,7 @@ import "base:intrinsics"
 import "modus:contract/input_history"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
+import "modulus:extended_switch"
 import "modulus:stolen_time"
 
 // The processor: segments, the interrupt table, the interrupt controller and
@@ -202,6 +203,11 @@ Processor :: struct {
 	processes_held: u64, // Bit n: the processor holds the lock of process n.
 	ports_serial:  u64, // The ports_serial of the process whose ports are open (ports_switch).
 	record_serial: u32, // The serial of the thread whose record address is in the gs register of processes.
+	// The thread whose extended state still lives in this processor's x87, SSE
+	// and AVX registers (extended_state.odin, modulus:extended_switch). Only
+	// this processor reads and writes these fields.
+	extended_state_cache:            extended_switch.Processor_Cache,
+	extended_state_restores_skipped: u64,
 	// The kernel operation of the current thread that runs here (enter.odin).
 	operation:     Operation_In_Progress,
 	// The serial of process n when the operation stopped it: read only for

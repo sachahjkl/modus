@@ -2,6 +2,7 @@ package kernel
 
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:extended_switch"
 
 // A guest (src/md/features/guest.md; docs/ARCHITECTURE.md, "A guest"): a
 // process whose page table is the nested page table of a guest processor,
@@ -463,6 +464,10 @@ guest_enter_once :: proc "contextless" (cpu: ^Processor, thread: ^Thread, guest:
 	}
 	state_area := direct(guest.state_area, Extended_State_Area)
 	extended_state_save(&thread.extended_state, extended_state_form)
+	// Running a guest replaces the hardware extended state registers on this
+	// processor, so drop any cached thread identity on this processor.
+	extended_state_invalidate_cpu(cpu)
+	thread.extended_switch.last_extended_cpu = extended_switch.NO_PROCESSOR
 	extended_state_restore(state_area, extended_state_form)
 	guest_enter(block, &general, guest_host_areas[cpu.index])
 	intrinsics.atomic_store(&guest_tables_running[cpu.index], 0)
