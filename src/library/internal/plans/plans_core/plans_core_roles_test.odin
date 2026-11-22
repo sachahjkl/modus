@@ -368,3 +368,276 @@ test_plans_roles_bind_reconciles_a_restart :: proc(t: ^testing.T) {
 	testing.expect_value(t, core.in_force.overrides[0].module_hash, roles_test_hash(1))
 	testing.expect_value(t, core.steps[core.calls - 1], rd.Plan_Roles_Step.Rollback)
 }
+
+// The machine stops and starts again: a new core holds the roles of the
+// image (serial 0, generation 0), and the service forgets its tables.
+@(private = "file")
+reboot :: proc(state: ^Plans_State, core: ^Test_Core) {
+	core^ = {}
+	forget(state)
+	roles_port_bind(state, {user = core, replace = test_core_replace, read = test_core_read})
+}
+
+// A stored plan of principal 0 that names the holder of Display: at the
+// start, the core gets its roles with one Rollback before any start policy,
+// and the next apply is sent as usual.
+@(test)
+test_plans_start_gives_the_stored_display_holder :: proc(t: ^testing.T) {
+	core: Test_Core
+	state, store := roles_state(&core)
+	defer free(state)
+	defer free(store)
+	plan := role_plan(0, .Display, 7)
+	record, refusal := apply_now(state, &plan, {})
+	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
+
+	reboot(state, &core)
+	testing.expect_value(t, roles_start(state), rd.Plan_Roles_Load_Outcome.Applied)
+	testing.expect_value(t, core.calls, 1)
+	testing.expect_value(t, core.steps[0], rd.Plan_Roles_Step.Rollback)
+	testing.expect_value(t, core.in_force.generation, record.generation)
+	testing.expect_value(t, core.in_force.override_count, u64(1))
+	testing.expect_value(t, core.in_force.overrides[0].role_word, u64(role_contract.Role.Display))
+	testing.expect_value(t, core.in_force.overrides[0].module_hash, roles_test_hash(7))
+	testing.expect_value(t, state.roles_stored_refusal, rd.Plan_Roles_Refusal.None)
+	testing.expect(t, state.roles.synchronized)
+
+	next := role_plan(0, .Display, 8)
+	next_record, next_refusal := apply_now(state, &next, record.plan_hash)
+	testing.expect_value(t, next_refusal, pr.Plan_Refusal.None)
+	testing.expect_value(t, core.in_force.generation, next_record.generation)
+	testing.expect_value(t, core.steps[core.calls - 1], rd.Plan_Roles_Step.Apply)
+}
+
+// A fresh machine: no current object in the store. The core is read once
+// and never asked to change: the roles of the image hold at once.
+@(test)
+test_plans_start_with_no_plan_asks_nothing :: proc(t: ^testing.T) {
+	core: Test_Core
+	state, store := roles_state(&core)
+	defer free(state)
+	defer free(store)
+	testing.expect_value(t, roles_start(state), rd.Plan_Roles_Load_Outcome.No_Plan)
+	testing.expect_value(t, core.calls, 0)
+	testing.expect_value(t, core.reads, 1)
+	testing.expect_value(t, core.in_force, rd.Plan_Roles_Set{})
+	testing.expect(t, state.roles.synchronized)
+	testing.expect_value(t, store.writes, 0)
+
+	// A plan of principal 0 with no role still is a current plan: the
+	// start gives its empty set, and says Applied.
+	module_only := pr.Plan_Spec{principal = 0, entry_count = 1}
+	module_only.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, "calc", roles_test_hash(9), 0)
+	_, refusal := apply_now(state, &module_only, {})
+	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
+	reboot(state, &core)
+	testing.expect_value(t, roles_start(state), rd.Plan_Roles_Load_Outcome.Applied)
+	testing.expect_value(t, core.in_force.override_count, u64(0))
+	testing.expect_value(t, core.in_force.generation, u64(1))
+}
+
+// A newer boot image lacks the stored holder, or its holder no longer
+// fills the contract: the start keeps the roles of the image, keeps the
+// refusal, and the port is synchronized, so the next apply is sent once
+// and commits.
+@(test)
+test_plans_start_with_a_plan_that_the_image_refuses_keeps_the_image :: proc(t: ^testing.T) {
+	refusals := [2]rd.Plan_Roles_Refusal{.Not_In_Image, .Contract_Not_Filled}
+	for content_refusal in refusals {
+		core: Test_Core
+		state, store := roles_state(&core)
+		plan := role_plan(0, .Display, 3)
+		record, refusal := apply_now(state, &plan, {})
+		testing.expect_value(t, refusal, pr.Plan_Refusal.None)
+
+		reboot(state, &core)
+		core.refuse, core.refuse_step = content_refusal, .Rollback
+		testing.expect_value(t, roles_start(state), rd.Plan_Roles_Load_Outcome.Plan_Refused)
+		testing.expect_value(t, state.roles_stored_refusal, content_refusal)
+		testing.expect(t, state.roles.synchronized)
+		// The core held the image already: no second set.
+		testing.expect_value(t, core.calls, 1)
+		testing.expect_value(t, core.in_force, rd.Plan_Roles_Set{})
+		testing.expect_value(t, core.serial, u64(0))
+		// The store keeps its plan: nothing is written at the start.
+		_, current, found := current_plan(state, 0)
+		testing.expect(t, found)
+		testing.expect_value(t, current.generation, record.generation)
+
+		// The next apply names a module of the new image: it is sent at
+		// once, with no reconciliation that the old plan would refuse.
+		reads := core.reads
+		next := role_plan(0, .Display, 4)
+		next_record, next_refusal := apply_now(state, &next, record.plan_hash)
+		testing.expect_value(t, next_refusal, pr.Plan_Refusal.None)
+		testing.expect_value(t, next_record.generation, u64(2))
+		testing.expect_value(t, core.reads, reads)
+		testing.expect_value(t, core.steps[core.calls - 1], rd.Plan_Roles_Step.Apply)
+		testing.expect_value(t, core.in_force.generation, u64(2))
+		testing.expect_value(t, core.in_force.overrides[0].module_hash, roles_test_hash(4))
+		testing.expect_value(t, state.roles_stored_refusal, rd.Plan_Roles_Refusal.None)
+		free(state)
+		free(store)
+	}
+}
+
+// A core that refuses a set naming one hash with Not_In_Image, and takes
+// any other set.
+@(private = "file")
+Content_Refusing_Core :: struct {
+	core:         ^Test_Core,
+	refused_hash: blake3.Hash,
+}
+
+@(private = "file")
+content_refusing_replace :: proc "contextless" (user: rawptr, set: ^rd.Plan_Roles_Set, step: rd.Plan_Roles_Step) -> rd.Plan_Roles_Refusal {
+	refusing := (^Content_Refusing_Core)(user)
+	for override in set.overrides[:set.override_count] {
+		if override.module_hash == refusing.refused_hash {
+			refusing.core.calls += 1
+			return .Not_In_Image
+		}
+	}
+	return test_core_replace(refusing.core, set, step)
+}
+
+@(private = "file")
+content_refusing_read :: proc "contextless" (user: rawptr) -> (serial, generation: u64, ok: bool) {
+	return test_core_read((^Content_Refusing_Core)(user).core)
+}
+
+// The core holds the roles of another generation when the stored one is
+// refused for its content: it gets the roles of the image (generation 0,
+// no override), never a part of either plan. A core that refuses the set
+// of the image too keeps its set, and the port stays unsynchronized.
+@(test)
+test_plans_reconcile_refused_content_gives_the_core_the_image :: proc(t: ^testing.T) {
+	core: Test_Core
+	state, store := roles_state(&core)
+	defer free(state)
+	defer free(store)
+	plan := role_plan(0, .Storage, 1)
+	_, refusal := apply_now(state, &plan, {})
+	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
+	// The core took a generation 5 that the store never committed.
+	core.in_force = {generation = 5, override_count = 1}
+	core.in_force.overrides[0] = {role_word = u64(role_contract.Role.Storage), module_hash = roles_test_hash(5)}
+	core.serial += 1
+	forget(state)
+	roles_port_bind(state, {user = &core, replace = test_core_replace, read = test_core_read})
+	core.refuse, core.refuse_step = .Not_In_Image, .Rollback
+	testing.expect_value(t, roles_reconcile(state), pr.Plan_Refusal.Roles_Refused)
+	testing.expect(t, !state.roles.synchronized)
+	testing.expect_value(t, core.in_force.generation, u64(5))
+
+	core.refuse, core.refuse_step = .None, .None
+	core.calls = 0
+	refusing := Content_Refusing_Core{core = &core, refused_hash = roles_test_hash(1)}
+	roles_port_bind(state, {user = &refusing, replace = content_refusing_replace, read = content_refusing_read})
+	testing.expect_value(t, roles_reconcile(state), pr.Plan_Refusal.None)
+	testing.expect(t, state.roles.synchronized)
+	testing.expect_value(t, state.roles_stored_refusal, rd.Plan_Roles_Refusal.Not_In_Image)
+	testing.expect_value(t, core.in_force.generation, u64(0))
+	testing.expect_value(t, core.in_force.override_count, u64(0))
+	testing.expect_value(t, core.calls, 2)
+}
+
+// A refusal of the order of the sets is no refusal of the content: the
+// start says that the core was not read, and the next set tries again.
+@(test)
+test_plans_start_stale_serial_is_no_fallback :: proc(t: ^testing.T) {
+	core: Test_Core
+	state, store := roles_state(&core)
+	defer free(state)
+	defer free(store)
+	plan := role_plan(0, .Display, 3)
+	_, refusal := apply_now(state, &plan, {})
+	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
+	reboot(state, &core)
+	core.refuse, core.refuse_step = .Stale_Serial, .Rollback
+	testing.expect_value(t, roles_start(state), rd.Plan_Roles_Load_Outcome.Core_Unread)
+	testing.expect(t, !state.roles.synchronized)
+	testing.expect_value(t, state.roles_stored_refusal, rd.Plan_Roles_Refusal.None)
+
+	// A core that does not answer the read.
+	reboot(state, &core)
+	core.read_fails = true
+	testing.expect_value(t, roles_start(state), rd.Plan_Roles_Load_Outcome.Core_Unread)
+	testing.expect_value(t, core.calls, 0)
+
+	// No roles page: no procedure.
+	state.roles = {}
+	testing.expect_value(t, roles_start(state), rd.Plan_Roles_Load_Outcome.Core_Unread)
+}
+
+// A damaged current object, an empty one, a damaged generation object, and
+// a store that fails: the start refuses the plan, asks the core nothing,
+// and the roles of the image hold.
+@(test)
+test_plans_start_with_a_damaged_store_keeps_the_image :: proc(t: ^testing.T) {
+	Damage :: enum {
+		Current_Bytes,
+		Current_Empty,
+		Generation_Bytes,
+		Store_Fails,
+	}
+	for damage in Damage {
+		core: Test_Core
+		state, store := roles_state(&core)
+		plan := role_plan(0, .Display, 3)
+		_, refusal := apply_now(state, &plan, {})
+		testing.expect_value(t, refusal, pr.Plan_Refusal.None)
+		reboot(state, &core)
+		current_name := pr.plan_object_name(0, 0, true)
+		generation_name := pr.plan_object_name(0, 1, false)
+		garbage := [5]u8{0xFF, 0, 1, 2, 3}
+		switch damage {
+		case .Current_Bytes:
+			testing.expect_value(t, pr.private_store_write(&state.store, pr.private_object_name_text(&current_name), garbage[:]), pr.Private_Store_Status.Ok)
+		case .Current_Empty:
+			testing.expect_value(t, pr.private_store_write(&state.store, pr.private_object_name_text(&current_name), garbage[:0]), pr.Private_Store_Status.Ok)
+		case .Generation_Bytes:
+			testing.expect_value(t, pr.private_store_write(&state.store, pr.private_object_name_text(&generation_name), garbage[:]), pr.Private_Store_Status.Ok)
+		case .Store_Fails:
+			state.store = {}
+		}
+		testing.expectf(t, roles_start(state) == .Store_Unread, "damage %v", damage)
+		testing.expect_value(t, core.calls, 0)
+		testing.expect_value(t, core.in_force, rd.Plan_Roles_Set{})
+		testing.expect(t, !state.roles.synchronized)
+		// An apply on that store is refused too: nothing acts on a part of
+		// a history.
+		next := role_plan(0, .Display, 4)
+		_, next_refusal := apply_now(state, &next, {})
+		testing.expect(t, next_refusal != .None)
+		testing.expect_value(t, core.in_force, rd.Plan_Roles_Set{})
+		free(state)
+		free(store)
+	}
+}
+
+// The tags of the commands Page with no answer: a late completion with one
+// of them is a page to close, once; a tag of 0, an unknown tag, and a tag
+// already taken are not; the oldest tag leaves for a new one.
+@(test)
+test_plans_late_page_tags :: proc(t: ^testing.T) {
+	late: Late_Page_Tags
+	testing.expect(t, !late_page_take(&late, 0))
+	testing.expect(t, !late_page_take(&late, 7))
+	late_page_remember(&late, 0)
+	testing.expect_value(t, late, Late_Page_Tags{})
+	late_page_remember(&late, 7)
+	testing.expect(t, !late_page_take(&late, 8))
+	testing.expect(t, late_page_take(&late, 7))
+	testing.expect(t, !late_page_take(&late, 7))
+	for tag in u32(1) ..= LATE_PAGE_TAG_CAPACITY + 1 {
+		late_page_remember(&late, tag)
+	}
+	// The first tag left for the last one.
+	testing.expect(t, !late_page_take(&late, 1))
+	for tag in u32(2) ..= LATE_PAGE_TAG_CAPACITY + 1 {
+		testing.expect(t, late_page_take(&late, tag))
+	}
+	late_page_remember(&late, max(u32))
+	testing.expect(t, late_page_take(&late, max(u32)))
+}

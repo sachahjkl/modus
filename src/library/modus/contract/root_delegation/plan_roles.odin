@@ -34,6 +34,51 @@ Plan_Roles_Step :: enum u64 {
 	Page     = 1, // Give the roles page and the serial of the set in force.
 	Apply    = 2, // Replace the overrides with the set of the page: a new generation.
 	Rollback = 3, // Replace the overrides with the set of the page: an earlier generation.
+	// The holder read the current plan of principal 0 at its start and gave
+	// its roles, or found none: values[1] is a Plan_Roles_Load_Outcome. At
+	// the start of the machine, the core waits for it before the start
+	// policy.
+	Loaded   = 4,
+}
+
+// values[1] of a Plan_Roles with the step Loaded: what the holder of Plans
+// found at its start. With each outcome but Applied, the roles of the boot
+// image hold.
+Plan_Roles_Load_Outcome :: enum u64 {
+	None         = 0, // Refused.
+	No_Plan      = 1, // Principal 0 has no current plan in the store.
+	Applied      = 2, // The core holds the roles of the current plan of principal 0.
+	// The core refused the content of the roles of the current plan (a
+	// module that the boot image lacks, a contract that it does not fill):
+	// the roles of the image hold until the next apply or rollback.
+	Plan_Refused = 3,
+	Store_Unread = 4, // The store failed, or holds a damaged plan.
+	Core_Unread  = 5, // No roles page, or no answer of the core.
+}
+
+// plan_roles_load_outcome_of_word is the border of values[1] of a
+// Plan_Roles with the step Loaded: None and a word that names no member are
+// refused.
+plan_roles_load_outcome_of_word :: proc "contextless" (word: u64) -> (outcome: Plan_Roles_Load_Outcome, ok: bool) {
+	member, known := enum_word.member_of_word(Plan_Roles_Load_Outcome, word)
+	if !known || member == .None {
+		return .None, false
+	}
+	return member, true
+}
+
+// plan_roles_refusal_of_content says if a refusal names the content of the
+// set: the same set is refused again on each send, so the holder falls back
+// to the roles of the image instead of a retry. Stale_Serial names the
+// order of the sets: a read of the core and a new send can pass.
+plan_roles_refusal_of_content :: proc "contextless" (refusal: Plan_Roles_Refusal) -> bool {
+	switch refusal {
+	case .None, .Stale_Serial:
+		return false
+	case .Not_Machine, .Too_Many_Overrides, .Unknown_Role, .Role_Not_Replaceable, .Zero_Module_Hash, .Duplicate_Role, .Zero_Generation, .Not_In_Image, .Contract_Not_Filled, .Bytes_After_Set:
+		return true
+	}
+	return false
 }
 
 // One role of a plan: the role and the hash of the module of the boot

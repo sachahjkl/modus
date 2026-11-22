@@ -648,7 +648,11 @@ entropy_report: random.Entropy_Report
 //    disk, reads the choice of principal 0: `unlock` with no window
 //    unseals the machine key, and the disk grant table of principal 0 is
 //    read (start_policy_choice.odin);
-// 8. starts one start policy, measured into PCR 12 first: the start policy
+// 8. with a data disk and no rescue, starts the holder of Plans, which
+//    reads the current plan of principal 0 from its own store and gives
+//    its roles, and waits for its Loaded within the hang bound
+//    (plan_at_start.odin);
+// 9. starts one start policy, measured into PCR 12 first: the start policy
 //    from the disk that principal 0 chose, the default start policy with
 //    the list start_list, or, when the boot record asks for it, the rescue
 //    start policy with the list rescue_list (start_policy.odin). The start

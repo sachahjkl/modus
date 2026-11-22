@@ -22,14 +22,15 @@ roles_page: ^rd.Plan_Roles_Set
 
 // roles_command sends one Plan_Roles and waits for its completion, within
 // its bound. answered is false when the ring took no record or no
-// completion came.
+// completion came. argument is values[1]: the outcome of the step Loaded,
+// else 0.
 @(private = "file")
-roles_command :: proc "contextless" (step: rd.Plan_Roles_Step) -> (completion: ring.Record, answered: bool) {
+roles_command :: proc "contextless" (step: rd.Plan_Roles_Step, argument: u64 = 0) -> (completion: ring.Record, answered: bool) {
 	if !root_requests_open() {
 		return {}, false
 	}
 	tag := root_requests_tag_next()
-	if !system.send(&root_requests.ring.commands, ring.Record{kind = u32(root_ring.Root_Command.Plan_Roles), tag = tag, values = {0 = u64(step)}}) {
+	if !system.send(&root_requests.ring.commands, ring.Record{kind = u32(root_ring.Root_Command.Plan_Roles), tag = tag, values = {0 = u64(step), 1 = argument}}) {
 		return {}, false
 	}
 	limit := system.time() + ROLES_ANSWER_BOUND_MILLISECONDS
@@ -38,12 +39,29 @@ roles_command :: proc "contextless" (step: rd.Plan_Roles_Step) -> (completion: r
 			if record.tag == tag {
 				return record, true
 			}
+			roles_late_completion_close(record)
 		}
 		wait := system.wait_begin()
 		system.wait_records(&wait, &root_requests.ring.completions)
 		if system.wait_end(&wait, limit) >= limit {
+			if step == .Page {
+				plans_core.late_page_remember(&service_state.roles_late_pages, tag)
+			}
 			return {}, false
 		}
+	}
+}
+
+// roles_late_completion_close closes the handle of the roles page that a
+// late completion of a command Page holds: the root service gave a new
+// handle with each answer, and no later wait reads it.
+@(private = "file")
+roles_late_completion_close :: proc "contextless" (record: ring.Record) {
+	if !plans_core.late_page_take(&service_state.roles_late_pages, record.tag) {
+		return
+	}
+	if record.kind == u32(system.Status.Ok) && record.values[0] != 0 {
+		system.close(system.Handle(record.values[0]))
 	}
 }
 
@@ -80,19 +98,41 @@ roles_read :: proc "contextless" (user: rawptr) -> (serial, generation: u64, ok:
 // state the port with the serial and the generation of the set in force,
 // then reconciles the core with the current generation of the store: a
 // service that stopped after the core took a set and before the store
-// committed it left them apart. With no page, the port has no procedure: a
-// plan of principal 0 that names a role is refused, and a plan with no role
-// commits.
+// committed it left them apart. At the start of the machine, this gives
+// the core the roles of the current plan of principal 0. With no page, the
+// port has no procedure: a plan of principal 0 that names a role is
+// refused, and a plan with no role commits.
+//
+// Then it tells the core what it found, with the step Loaded: the core
+// waits for it before the start policy (src/md/features/declarations.md,
+// "The plan of principal 0 at the start").
 roles_port_bind :: proc "contextless" (state: ^plans_core.Plans_State) -> bool {
 	serial, generation, read := roles_page_read()
 	if !read {
+		roles_loaded_tell(.Core_Unread, 0)
 		return false
 	}
 	plans_core.roles_port_bind(state, {replace = roles_replace, read = roles_read, serial = serial, generation = generation})
-	if refusal := plans_core.roles_reconcile(state); refusal != .None {
-		system.log_fact(.Warning, Plan_Roles_Unreconciled{generation = generation, refusal_code = u64(refusal)})
+	outcome := plans_core.roles_start(state)
+	switch outcome {
+	case .None, .No_Plan, .Applied:
+	case .Plan_Refused:
+		_, record, _ := plans_core.current_plan(state, plans_core.MACHINE_PRINCIPAL)
+		system.log_fact(.Warning, Plan_Roles_Image_Defaults{generation = record.generation, refusal_code = u64(state.roles_stored_refusal)})
+	case .Store_Unread, .Core_Unread:
+		system.log_fact(.Warning, Plan_Roles_Unreconciled{generation = generation, refusal_code = u64(state.roles_refusal)})
 	}
+	roles_loaded_tell(outcome, state.roles.generation)
 	return true
+}
+
+// roles_loaded_tell sends the step Loaded with outcome, once at the start.
+// A core that does not answer meets its own bound and starts the start
+// policy with the roles in force.
+@(private = "file")
+roles_loaded_tell :: proc "contextless" (outcome: rd.Plan_Roles_Load_Outcome, generation: u64) {
+	_, answered := roles_command(.Loaded, u64(outcome))
+	system.log_fact(.Info, Plan_Roles_Loaded{outcome_code = u64(outcome), generation = generation, answered = answered ? 1 : 0})
 }
 
 // roles_compensation_tell writes the line of a compensation of the core that

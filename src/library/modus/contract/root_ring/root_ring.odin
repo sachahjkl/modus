@@ -451,7 +451,7 @@ Root_Command :: enum u32 {
 	// Plan_Roles gives the core the roles of the plan of principal 0
 	// (src/md/features/declarations.md, "Apply, the difference and the
 	// rollback"). values[0] is a root_delegation.Plan_Roles_Step;
-	// values[1..6] are 0. Its name is not read.
+	// values[1..6] are 0, but values[1] of Loaded. Its name is not read.
 	//
 	// Page gives the roles page: one page that the core makes once and
 	// keeps. The completion: values[0] a handle of it with Read and Write,
@@ -466,8 +466,14 @@ Root_Command :: enum u32 {
 	// completion: values[0] the new serial, values[1] the generation. A
 	// refusal has the kind Refused (unit Records), the index of the
 	// override as the argument and the Plan_Roles_Refusal as the value
-	// found; Bad_State with no page. Only the process with the start grant
-	// Plans sends this command.
+	// found; Bad_State with no page.
+	//
+	// Loaded says that the sender read the current plan of principal 0 at
+	// its start: values[1] is a root_delegation.Plan_Roles_Load_Outcome. At
+	// the start of the machine the core waits for it, within the hang
+	// bound, before it starts the start policy. The completion: values[0]
+	// the serial in force, values[1] its generation. Only the process with
+	// the start grant Plans sends this command.
 	Plan_Roles = 32,
 }
 

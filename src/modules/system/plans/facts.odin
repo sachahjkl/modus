@@ -33,6 +33,24 @@ Plan_Roles_Refused :: struct {
 	refusal_code: u64,
 }
 
+// The boot image cannot hold the roles of the current plan of principal 0:
+// the root service holds the roles of the image, and the next apply or
+// rollback is sent as usual.
+@(log_fact = "plans: the boot image cannot hold the roles of generation {generation} of the plan of principal 0: refusal {refusal_code}; the roles of the image hold")
+Plan_Roles_Image_Defaults :: struct {
+	generation:   u64,
+	refusal_code: u64,
+}
+
+// The service read the current plan of principal 0 at its start and told
+// the root service, which starts the start policy after it.
+@(log_fact = "plans: read the plan of principal 0 at the start: outcome {outcome_code}, generation {generation} in the root service, answered {answered}")
+Plan_Roles_Loaded :: struct {
+	outcome_code: u64,
+	generation:   u64,
+	answered:     u64,
+}
+
 @(log_fact = "plans: {failure}")
 Service_Failed :: struct {
 	failure: [96]u8,

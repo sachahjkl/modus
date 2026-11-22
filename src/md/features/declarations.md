@@ -111,7 +111,42 @@ Refused forms:
 - **A second pending apply that replaces the first.** The dialog would show one plan while another commits. A second `plans.apply` while the dialog shows is refused with `Apply_Pending`.
 - **A commit of the dropped pending apply when its dialog closed with Accept and no poll.** The caller that asked is gone, and a later caller did not see that difference. It is dropped, uncommitted.
 
-What is left of the chosen form: the root service does not hold the applied plans or compute the difference yet, and no row of a disk grant table names the current plan. The applied plans change the role holders of the machine (`Plan_Roles`), and no start yet. At the start of the machine the root service runs with the role holders of the image: it does not read the current plan of principal 0 before the start policy.
+What is left of the chosen form: the root service does not hold the applied plans or compute the difference yet, and no row of a disk grant table names the current plan. The applied plans change the role holders of the machine (`Plan_Roles`), and no start list yet.
+
+### The plan of principal 0 at the start
+
+The role holders that principal 0 applied hold from the first start of the machine, not only after the next `plans.apply`. The root service never reads a store: `plans` reads its own private store, and the root service waits for it.
+
+The order of one start (`src/modules/system/root/plan_at_start.odin`, `role_policy/plan_at_start.odin`):
+
+1. The root service reads the choice of principal 0 (`start_policy_choice.odin`). The storage service runs from that read on a machine with a data disk.
+2. It starts the holder of Plans, which connects to its private store, as at a first connection.
+3. `plans` asks for the roles page (`Page`), and reconciles at once: when the current generation of principal 0 in its store is not the generation in force (0, the roles of the image, at each start), it sends the set of that generation with `Rollback`. The root service checks the set as for any rollback, and takes it whole or refuses it whole.
+4. `plans` sends `Plan_Roles` with the step `Loaded` and its outcome (`Plan_Roles_Load_Outcome`): `No_Plan`, `Applied`, `Plan_Refused`, `Store_Unread` or `Core_Unread`. The root service writes one line for it.
+5. The root service starts the start policy with the roles in force. Each start that the start policy asks for reaches the holder of the plan.
+
+The wait ends at `Loaded`, at the stop of the holder of Plans, or at the hang bound, whichever comes first; each end has its line, and the start policy starts. With no wait at all, the roles of the image hold:
+
+- **A rescue.** The rescue start policy runs with the roles of the image: a plan can be what broke the start, as a chosen start policy can.
+- **No data disk.** No store holds a plan, so a machine with no disk starts with no delay.
+- **No holder of Plans or of Storage in the boot image.**
+- **A holder of Plans that does not start.**
+
+Why a stored plan that the image refuses never stops the start. A newer boot image can lack a module that the plan names (`Not_In_Image`), or hold one that no longer fills the contract of its role (`Contract_Not_Filled`). The root service refuses the set whole, so it keeps the roles of the image, and the start goes on. `plans` keeps that refusal as a known difference (`roles_stored_refusal`), with one line (`Plan_Roles_Image_Defaults`), and marks the port synchronized. A refusal of the content comes again on each send of the same set, so a retry would refuse each later `plans.apply` for ever: the next apply or rollback is sent as usual, and a success ends the difference. When the root service holds the roles of another generation at that moment, `plans` gives it the set of the image (generation 0, no override), never a part of either plan. Only `Stale_Serial` is a refusal of the order of the sets, and it is tried again (`plan_roles_refusal_of_content`).
+
+Why a damaged store keeps the image. A current object or a generation object that does not pass its border refuses the whole history with `Store_Damaged` (see "The apply as built"). `plans` sends no set, says `Store_Unread`, and the root service starts with the roles of the image.
+
+Why the holder of Plans says Loaded at each start. It does not know whether the root service waits. Out of the wait at the start, the root service answers `Loaded` and changes nothing.
+
+Why a late answer of `Page` is closed. Each answer of `Page` gives a new handle of the roles page through the root ring. A `Page` whose answer came after its bound keeps its tag (`Late_Page_Tags`); a later wait that receives that answer closes its handle, so no handle stays for each bound that passed.
+
+Refused forms:
+
+- **The root service reads `plan_<0>_current` itself.** The root service never calls the storage service for a delegated service (`src/md/api/root_service_split.md`); the parsing of a plan in the root would be one more border in the most trusted process.
+- **A start policy that waits for the plan.** The root service starts the start policy; a start policy from the disk is foreign code, and the roles of the start must hold before its first `Start`.
+- **A wait with no bound.** A holder of Plans that hangs would hold the start of the machine.
+
+The subtle point of the measure. The role holders are modules of the signed boot image, so the image stays the base (property 17). The choice of the holders by principal 0 changes the start, and no extend of PCR 12 records it yet: a plan with no start policy of its own changes no measure, as the list of the measures says below. The measure of the set of roles at the start is planned work (`ROADMAP.md`).
 
 ### The plan of principal 0
 
@@ -642,4 +677,6 @@ Built with the exports of the services: `src/library/modus/contract/plans_recipe
 
 Built with the grants of the services: `plans`, `recipes` and `projects` are no parts of the system. Each has a row of `start_grant_sets` with Serve, Store and a start at the first connection; `plans` also has the boot image, Connect to the compositor (the trusted display) and the start grant Plans, which sends `Plan_Roles` only. `plans` logs `store 1, display 1, roles 1` at its start. The service ring of `plans` and its commands (`Compute_Diff`, `Apply_Plan`, `Rollback_Plan`, `Query_History`), which no starter gave, are removed: its exports are its one face.
 
-Left: the plan of principal 0 read at the start of the machine, so its roles hold from the first start; the service rings of `recipes` and `projects`, which no starter gives either; the applied plans in the root service, with the root ring commands `Apply` and `Rollback` and the row "current plan", the evaluation process that `plans`, `projects` and `recipes` start (today the caller gives the evaluation of `project.lex`), console service-command wiring for `plans`, `recipes`, and `projects.enter`/`projects.update`/`projects.inputs`, the write of `pins.lex` in the store of the project, which the caller gives with Write, live source resolver modules and sandboxed builder execution, machine tests of immutable trees, project consoles, and `module_files` garbage collection, the evaluation budget measured on full system declarations, and field defaults.
+Built with the plan at the start: the root service starts `plans` after the read of the choice of principal 0 and before the start policy, and waits for `Loaded` within the hang bound, as "The plan of principal 0 at the start" says. The host tests of `plans_core` boot a store with a holder of Display, with no plan, with a plan that a newer image refuses, and with a damaged store; the host tests of `role_policy` prove the wait and its ends.
+
+Left: a machine test of the plan of principal 0 across a restart of the machine, and the measure of its roles at the start; the service rings of `recipes` and `projects`, which no starter gives either; the applied plans in the root service, with the root ring commands `Apply` and `Rollback` and the row "current plan", the evaluation process that `plans`, `projects` and `recipes` start (today the caller gives the evaluation of `project.lex`), console service-command wiring for `plans`, `recipes`, and `projects.enter`/`projects.update`/`projects.inputs`, the write of `pins.lex` in the store of the project, which the caller gives with Write, live source resolver modules and sandboxed builder execution, machine tests of immutable trees, project consoles, and `module_files` garbage collection, the evaluation budget measured on full system declarations, and field defaults.

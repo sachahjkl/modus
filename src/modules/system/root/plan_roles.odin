@@ -43,7 +43,9 @@ plan_roles_command :: proc "contextless" (item: ^Started, values: [7]u64, answer
 		answer^ = errors.ring_fail(u32(root_ring.Root_Command.Plan_Roles), .Bad_Value, .None, 1, i64(min(values[0], u64(max(i64)))), i64(max(rd.Plan_Roles_Step)))
 		return .Bad_Operation
 	}
-	for index in 1 ..< len(values) {
+	// values[1] of Loaded is its outcome; each other word is 0.
+	first_zero := step == .Loaded ? 2 : 1
+	for index in first_zero ..< len(values) {
 		if values[index] != 0 {
 			answer^ = errors.ring_fail(u32(root_ring.Root_Command.Plan_Roles), .Bad_Value, .None, i64(index + 1), i64(min(values[index], u64(max(i64)))), 0)
 			return .Bad_Operation
@@ -58,6 +60,15 @@ plan_roles_command :: proc "contextless" (item: ^Started, values: [7]u64, answer
 			answer^ = errors.ring_fail(u32(root_ring.Root_Command.Plan_Roles), .Refused, .None, 0, 0, 0, i64(status))
 		}
 		return status
+	case .Loaded:
+		outcome, outcome_known := rd.plan_roles_load_outcome_of_word(values[1])
+		if !outcome_known {
+			answer^ = errors.ring_fail(u32(root_ring.Root_Command.Plan_Roles), .Bad_Value, .None, 2, i64(min(values[1], u64(max(i64)))), i64(max(rd.Plan_Roles_Load_Outcome)))
+			return .Bad_Operation
+		}
+		plan_at_start_loaded(outcome)
+		answer^ = {0 = role_override_names.serial, 1 = role_override_names.generation}
+		return .Ok
 	case .Apply, .Rollback:
 	}
 	if plan_roles_page == nil {

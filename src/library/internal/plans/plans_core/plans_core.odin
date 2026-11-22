@@ -90,6 +90,41 @@ Roles_Port :: struct {
 // The principal whose plan names the roles of the machine.
 MACHINE_PRINCIPAL :: 0
 
+// The most commands Page with no answer whose tags the service keeps.
+LATE_PAGE_TAG_CAPACITY :: 4
+
+// The tags of the commands Page that had no answer, in a ring: the oldest
+// tag leaves for a new one. A tag of 0 is no tag.
+Late_Page_Tags :: struct {
+	tags: [LATE_PAGE_TAG_CAPACITY]u32,
+	next: int,
+}
+
+// late_page_remember keeps the tag of a command Page that had no answer.
+late_page_remember :: proc "contextless" (late: ^Late_Page_Tags, tag: u32) {
+	if tag == 0 {
+		return
+	}
+	late.tags[late.next] = tag
+	late.next = (late.next + 1) % LATE_PAGE_TAG_CAPACITY
+}
+
+// late_page_take says if a completion with tag answers a command Page that
+// had no answer, and forgets the tag: a second completion with the same tag
+// is no page. The caller closes the handle of a completion that is one.
+late_page_take :: proc "contextless" (late: ^Late_Page_Tags, tag: u32) -> bool {
+	if tag == 0 {
+		return false
+	}
+	for &kept in late.tags {
+		if kept == tag {
+			kept = 0
+			return true
+		}
+	}
+	return false
+}
+
 // Complete fixed-capacity state of the plans service engine.
 Plans_State :: struct {
 	initialized:          bool,
@@ -102,6 +137,15 @@ Plans_State :: struct {
 	// A compensation of the core failed since the service last read this:
 	// the log names it, and the next set reconciles first.
 	roles_compensation_failed: bool,
+	// The refusal of the core for the roles of the current generation of
+	// principal 0 in the store, when it names their content: the boot image
+	// cannot hold them, and the core holds the roles of the image. None
+	// when the core holds the roles of the store.
+	roles_stored_refusal:      rd.Plan_Roles_Refusal,
+	// The tags of the commands Page that had no answer: a late completion
+	// of one of them holds a handle of the roles page, which the service
+	// closes.
+	roles_late_pages:          Late_Page_Tags,
 	// The set that the roles port sends: too large for the stack of a
 	// service.
 	roles_set:            rd.Plan_Roles_Set,
@@ -159,6 +203,12 @@ roles_port_bind :: proc "contextless" (state: ^Plans_State, port: Roles_Port) {
 // generation of principal 0 in the store, gives it that generation with the
 // step Rollback. The port is then synchronized. A refusal leaves it
 // unsynchronized, and the next set tries again.
+//
+// A refusal of the content of that generation (a module that this boot
+// image lacks, a contract that it does not fill) comes again on each try:
+// it is a known difference, kept in roles_stored_refusal. The core then
+// gets the roles of the image (generation 0) when it holds another set,
+// and the port is synchronized, so the next apply or rollback is sent.
 roles_reconcile :: proc "contextless" (state: ^Plans_State) -> pr.Plan_Refusal {
 	if state.roles.replace == nil || state.roles.read == nil {
 		return .None
@@ -174,13 +224,50 @@ roles_reconcile :: proc "contextless" (state: ^Plans_State) -> pr.Plan_Refusal {
 		return entry_refusal
 	}
 	current_plan, current_record, _ := entry_current_plan(entry)
+	stored_refusal := rd.Plan_Roles_Refusal.None
 	if generation != current_record.generation {
 		if refusal := roles_send(state, current_plan, current_record.generation, .Rollback); refusal != .None {
-			return refusal
+			if !rd.plan_roles_refusal_of_content(state.roles_refusal) {
+				return refusal
+			}
+			stored_refusal = state.roles_refusal
+			if state.roles.generation != 0 {
+				if defaults_refusal := roles_send(state, nil, 0, .Rollback); defaults_refusal != .None {
+					return defaults_refusal
+				}
+			}
 		}
 	}
+	state.roles_stored_refusal = stored_refusal
 	state.roles.synchronized = true
 	return .None
+}
+
+// roles_start reconciles the core with the store at the start of the
+// service, and says what the start of the machine holds: the outcome that
+// the service sends with the step Loaded.
+roles_start :: proc "contextless" (state: ^Plans_State) -> rd.Plan_Roles_Load_Outcome {
+	if state.roles.replace == nil || state.roles.read == nil {
+		return .Core_Unread
+	}
+	refusal := roles_reconcile(state)
+	if refusal == .None {
+		if state.roles_stored_refusal != .None {
+			return .Plan_Refused
+		}
+		_, record, found := current_plan(state, MACHINE_PRINCIPAL)
+		if !found || record.generation == 0 {
+			return .No_Plan
+		}
+		return .Applied
+	}
+	if refusal == .Roles_Refused {
+		// Only a refusal of the order of the sets, or no answer, comes
+		// back from roles_reconcile: a refusal of the content is a known
+		// difference.
+		return .Core_Unread
+	}
+	return .Store_Unread
 }
 
 // roles_send writes the set of plan with the serial in force and sends it
@@ -202,6 +289,9 @@ roles_send :: proc "contextless" (state: ^Plans_State, plan: ^pr.Plan_Spec, gene
 	}
 	state.roles.serial += 1
 	state.roles.generation = generation
+	// The core holds the roles of a generation of the store again; a
+	// reconciliation that falls back to the image writes its refusal after.
+	state.roles_stored_refusal = .None
 	return .None
 }
 
