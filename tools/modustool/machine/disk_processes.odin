@@ -184,7 +184,7 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	// console has its window: the system fixes no order, so neither wait
 	// moves the place of the log.
 	append(&steps, Step{kind = .Wait, text = "storage: ok, generation 2: 2 stores, 12 objects", any_order = true})
-	append(&steps, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
+	append(&steps, Step{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true})
 	append(&steps, Step{kind = .Front, text = "console"})
 	append(&steps, Step{kind = .Type, text = "connect(\"storage\")"})
 	append(&steps, Step{kind = .Wait, text = "[console]   module     storage"})
@@ -253,7 +253,7 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	again := make([dynamic]Step)
 	defer delete(again)
 	append(&again, Step{kind = .Wait, text = "storage: ok, generation ", any_order = true})
-	append(&again, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
+	append(&again, Step{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true})
 	append(&again, Step{kind = .Front, text = "console"})
 	append(&again, Step{kind = .Type, text = "connect(\"storage\")"})
 	append(&again, Step{kind = .Wait, text = "[console]   module     storage"})
@@ -274,7 +274,7 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	// this machine is written over it.
 	append(&again, Step{kind = .Type, text = "machine_passphrase()"})
 	append(&again, Step{kind = .Wait, text = "root: the machine passphrase is set in the window of unlock"})
-	append(&again, Step{kind = .Wait, text = "compositor: surface unlock"})
+	append(&again, Step{kind = .Wait, text = "display: unlock" + WINDOW_TAKEN, any_order = true})
 	append(&again, Step{kind = .Front, text = "unlock"})
 	append(&again, Step{kind = .Type, text = MACHINE_PASSPHRASE})
 	append(&again, Step{kind = .Type, text = MACHINE_PASSPHRASE})
@@ -293,9 +293,9 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	third := make([dynamic]Step)
 	defer delete(third)
 	append(&third, Step{kind = .Wait, text = "storage: ok, generation ", any_order = true})
-	append(&third, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
+	append(&third, Step{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true})
 	append(&third, Step{kind = .Wait, text = "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", any_order = true})
-	append(&third, Step{kind = .Wait, text = "compositor: surface unlock"})
+	append(&third, Step{kind = .Wait, text = "display: unlock" + WINDOW_TAKEN, any_order = true})
 	// Before the passphrase: the machine runs, the table holds no row, and
 	// a change is refused.
 	append(&third, Step{kind = .Front, text = "console"})
@@ -344,9 +344,9 @@ disk_processes_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	fourth := make([dynamic]Step)
 	defer delete(fourth)
 	append(&fourth, Step{kind = .Wait, text = "storage: ok, generation ", any_order = true})
-	append(&fourth, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
+	append(&fourth, Step{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true})
 	append(&fourth, Step{kind = .Wait, text = "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", any_order = true})
-	append(&fourth, Step{kind = .Wait, text = "compositor: surface unlock"})
+	append(&fourth, Step{kind = .Wait, text = "display: unlock" + WINDOW_TAKEN, any_order = true})
 	append(&fourth, Step{kind = .Front, text = "unlock"})
 	append(&fourth, Step{kind = .Type, text = MACHINE_PASSPHRASE})
 	append(&fourth, Step{kind = .Wait, text = "unlock: the machine passphrase opens the machine key; the root service receives the key of the disk grant table only", any_order = true})
@@ -387,9 +387,9 @@ disk_processes_named_principal_tests_run :: proc(part: ^Test_Part_Run, hash: str
 	fifth := make([dynamic]Step)
 	defer delete(fifth)
 	append(&fifth, Step{kind = .Wait, text = "storage: ok, generation ", any_order = true})
-	append(&fifth, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
+	append(&fifth, Step{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true})
 	append(&fifth, Step{kind = .Wait, text = "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", any_order = true})
-	append(&fifth, Step{kind = .Wait, text = "compositor: surface unlock"})
+	append(&fifth, Step{kind = .Wait, text = "display: unlock" + WINDOW_TAKEN, any_order = true})
 	append(&fifth, Step{kind = .Front, text = "unlock"})
 	append(&fifth, Step{kind = .Key, text = "ret"})
 	append(&fifth, Step{kind = .Wait, text = "unlock: the machine passphrase is not typed: the disk grants of principal 0 stay absent until unlock asks again"})
@@ -397,7 +397,7 @@ disk_processes_named_principal_tests_run :: proc(part: ^Test_Part_Run, hash: str
 	append(&fifth, Step{kind = .Front, text = "console"})
 	append(&fifth, Step{kind = .Type, text = "principal_create(\"alice\")"})
 	append(&fifth, Step{kind = .Wait, text = "root: started unlock"})
-	append(&fifth, Step{kind = .Wait, text = "compositor: surface unlock"})
+	append(&fifth, Step{kind = .Wait, text = "display: unlock" + WINDOW_TAKEN, any_order = true})
 	append(&fifth, Step{kind = .Front, text = "unlock"})
 	append(&fifth, Step{kind = .Type, text = PRINCIPAL_PASSPHRASE})
 	append(&fifth, Step{kind = .Type, text = PRINCIPAL_PASSPHRASE})
@@ -437,9 +437,9 @@ disk_processes_named_principal_tests_run :: proc(part: ^Test_Part_Run, hash: str
 	sixth := make([dynamic]Step)
 	defer delete(sixth)
 	append(&sixth, Step{kind = .Wait, text = "storage: ok, generation ", any_order = true})
-	append(&sixth, Step{kind = .Wait, text = "compositor: surface console", any_order = true})
+	append(&sixth, Step{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true})
 	append(&sixth, Step{kind = .Wait, text = "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed", any_order = true})
-	append(&sixth, Step{kind = .Wait, text = "compositor: surface unlock"})
+	append(&sixth, Step{kind = .Wait, text = "display: unlock" + WINDOW_TAKEN, any_order = true})
 	append(&sixth, Step{kind = .Front, text = "unlock"})
 	append(&sixth, Step{kind = .Key, text = "ret"})
 	append(&sixth, Step{kind = .Wait, text = "unlock: principal 1 \"alice\" is locked: its passphrase opens its session"})
@@ -466,7 +466,7 @@ disk_processes_named_principal_tests_run :: proc(part: ^Test_Part_Run, hash: str
 disk_processes_session_console_steps :: proc(steps: ^[dynamic]Step) {
 	append(steps, Step{kind = .Launch, text = "console"})
 	append(steps, Step{kind = .Wait, text = "root: started console, with a terminal, in the session of principal 1 \"alice\""})
-	append(steps, Step{kind = .Wait, text = "compositor: surface console"})
+	append(steps, Step{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true})
 	append(steps, Step{kind = .Front, text = "console"})
 }
 
@@ -478,7 +478,7 @@ disk_processes_session_console_steps :: proc(steps: ^[dynamic]Step) {
 // Revoked, and refuses the key in the next handshake.
 disk_processes_client_key_steps :: proc(steps: ^[dynamic]Step) {
 	append(steps, Step{kind = .Launch, text = "monitor"})
-	append(steps, Step{kind = .Wait, text = "compositor: surface monitor"})
+	append(steps, Step{kind = .Wait, text = "display: monitor" + WINDOW_TAKEN, any_order = true})
 	append(steps, Step{kind = .Launch, text = "remote"})
 	// The service prints its key while the root service starts it: the key
 	// can come before the line of the start.

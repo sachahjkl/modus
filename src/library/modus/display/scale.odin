@@ -232,7 +232,7 @@ Surface_Not_Made :: struct {
 
 // The compositor refused the offered surface: the window draws nothing
 // until the next scale that the compositor names.
-@(log_fact = "display: {window}: the compositor refused the surface {serial} at {scale} eighths; the window waits for the next scale")
+@(log_fact = "display: {window}: the holder of the display refused the surface {serial} at {scale} eighths; the window waits for the next scale")
 Surface_Refused :: struct {
 	serial: u64,
 	scale:  u64,
@@ -241,7 +241,7 @@ Surface_Refused :: struct {
 
 // The compositor refused the surface of a resize: the window draws the
 // surface before it again, which the compositor still shows.
-@(log_fact = "display: {window}: the compositor refused the surface of {width}x{height}; the window keeps {kept_width}x{kept_height}")
+@(log_fact = "display: {window}: the holder of the display refused the surface of {width}x{height}; the window keeps {kept_width}x{kept_height}")
 Resize_Refused :: struct {
 	width:       u64,
 	height:      u64,

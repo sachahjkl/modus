@@ -418,7 +418,18 @@ Event_Kind :: enum u32 {
 	// the bar viewer list popover. values[0]: the first 8 bytes of that
 	// viewer's public key (matching Capture_Viewers). A window refuses it.
 	Capture_Disconnect = 11,
+	// The work area of the window: the logical width and height of the
+	// screen that the holder of the display gives windows, without the
+	// parts that it draws itself (a bar, a panel). The holder sends it when
+	// it takes the surface of the window, and again when the area changes.
+	// A window sizes itself from it, never from the bar of one holder.
+	// values: the width, the height, each 1 to WORK_AREA_LIMIT.
+	Work_Area          = 12,
 }
+
+// The largest width and height of a work area, in logical pixels: a place
+// of the screen fits an i32 with room.
+WORK_AREA_LIMIT :: 1 << 15
 
 // The ring between the root service and the compositor.
 Control :: enum u32 {
@@ -567,7 +578,7 @@ Event :: struct {
 	buttons:   u32, // The pointer: the `BUTTON_` bits.
 	wheel:     int, // The pointer: the notches that the wheel turned since the event before, signed (WHEEL_TOWARD_THE_END).
 	act:       u64, // Go_To: the act_name_hash of the act name.
-	width, height: int, // Resized: the size that the principal asks for the window, in logical pixels, 1 to SURFACE_LIMIT.
+	width, height: int, // Resized: the size that the principal asks for the window, in logical pixels, 1 to SURFACE_LIMIT. Work_Area: the work area, 1 to WORK_AREA_LIMIT.
 	paste_handle:   system.Handle, // Pasted: the lent handle of the content.
 	clipboard_kind: Clipboard_Kind, // Pasted: the kind of the content, never None.
 	byte_count:     int, // Pasted: the bytes of the content, 1 to CLIPBOARD_TEXT_LIMIT.
@@ -604,6 +615,9 @@ Window :: struct {
 	// surface_resize answers it, or the next present declines it.
 	resize_asked: bool,
 	resize_asked_width, resize_asked_height: int,
+	// The last Work_Area of the holder of the display, in logical pixels:
+	// 0 before the first one (work_area).
+	work_area_width, work_area_height: int,
 	copy_asked: bool, // A Copy_Asked came, and no answer went: copy_send or copy_decline answers it.
 	copy_serial: u64, // The serial of the newest Copy_Asked, which the answer names.
 	key_shown_serial: u64, // The newest key that the pictures of the window show (key_shown): each Present names it.
@@ -1108,6 +1122,9 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 			// takes only an answer to it.
 			window.copy_asked, window.copy_serial = true, read.clipboard_serial
 		}
+		if read.kind == .Work_Area && work_area_take(window, read.width, read.height) {
+			system.log_fact(.Info, Window_Taken{width = u64(read.width), height = u64(read.height), window = window_fact_title(window)})
+		}
 		return read, true
 	}
 }
@@ -1198,12 +1215,46 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 			return {}, false
 		}
 		event.paste_handle, event.clipboard_kind, event.byte_count, event.clipboard_serial = system.Handle(handle), kind, int(count), serial
+	case .Work_Area:
+		// The words are read as words, as for Resized.
+		width, height := record.values[0], record.values[1]
+		if width == 0 || height == 0 || width > WORK_AREA_LIMIT || height > WORK_AREA_LIMIT {
+			return {}, false
+		}
+		event.width, event.height = int(width), int(height)
 	case .Capture_Size, .Capture_Frame, .Capture_Disconnect:
 		// The records of the capture face: the service of the remote
 		// display reads them itself, and a window takes none.
 		return {}, false
 	}
 	return event, true
+}
+
+// The holder of the display took the window: its first Work_Area, which
+// the holder sends when it takes the surface. Each holder of the role sends
+// it, so a test of another part waits for this fact, never for a line of
+// one holder (src/md/features/roles_and_contracts.md, "Conformance").
+@(log_fact = "display: {window}: the holder of the display took the window, in a work area of {width}x{height}")
+Window_Taken :: struct {
+	width:  u64,
+	height: u64,
+	window: [WINDOW_FACT_TEXT_BYTES]u8,
+}
+
+// work_area_take keeps the work area of an event Work_Area. It gives true
+// for the first one of the window: the holder took the window. The caller
+// gives a size that event_of_record checked.
+work_area_take :: proc "contextless" (window: ^Window, width, height: int) -> (first: bool) {
+	first = window.work_area_width == 0
+	window.work_area_width, window.work_area_height = width, height
+	return first
+}
+
+// work_area gives the work area that the holder of the display named, in
+// logical pixels, or false before the first one. A window that fills the
+// screen sizes itself to it.
+work_area :: proc "contextless" (window: ^Window) -> (width, height: int, named: bool) {
+	return window.work_area_width, window.work_area_height, window.work_area_width != 0
 }
 
 // The settings page of this process (modus:contract/settings), or nil.

@@ -133,7 +133,7 @@ scenario_measured := [?]Step {
 	{kind = .Wait, text = MEASURE_LINE, fails_on = MEASURE_REFUSED_LINE, seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Wait, text = "root: the boot image agrees with the system description that the boot program verified: ", seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Wait, text = "root: measured: PCR 11 = ", seconds = TPM_MACHINE_STEP_SECONDS},
-	{kind = .Wait, text = "compositor: surface console", any_order = true, seconds = TPM_MACHINE_STEP_SECONDS},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true, seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Launch, text = "boot"},
 	{kind = .Wait, text = "boot: ok, 7 stages, "},
 	{kind = .Shot, text = "boot_measured"},
@@ -151,7 +151,7 @@ scenario_secure_boot := [?]Step {
 	{kind = .Wait, text = "boot program: started", seconds = TPM_MACHINE_FIRST_WAIT_SECONDS},
 	{kind = .Wait, text = SECURE_BOOT_VERIFIED_LINE, seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Wait, text = "root: verified by the firmware (Secure Boot), then by the boot program", seconds = TPM_MACHINE_STEP_SECONDS},
-	{kind = .Wait, text = "compositor: surface console", any_order = true, seconds = TPM_MACHINE_STEP_SECONDS},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true, seconds = TPM_MACHINE_STEP_SECONDS},
 	{kind = .Launch, text = "boot"},
 	{kind = .Wait, text = "boot: ok, 7 stages, "},
 	{kind = .Shot, text = "boot_secure_boot"},
@@ -268,7 +268,7 @@ floor_start_steps :: proc(machine: ^Floor_Machine, firmware: Machine_Firmware, f
 floor_started_steps :: proc(machine: ^Floor_Machine) {
 	append(&machine.steps, Step{kind = .Wait, text = MEASURE_LINE, fails_on = MEASURE_REFUSED_LINE, seconds = TPM_MACHINE_STEP_SECONDS})
 	append(&machine.steps, Step{kind = .Wait, text = "root: the TPM floors before this start: ", seconds = TPM_MACHINE_STEP_SECONDS})
-	append(&machine.steps, Step{kind = .Wait, text = "compositor: surface console", any_order = true, seconds = TPM_MACHINE_STEP_SECONDS})
+	append(&machine.steps, Step{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true, seconds = TPM_MACHINE_STEP_SECONDS})
 	append(&machine.steps, Step{kind = .Quit})
 }
 
@@ -472,7 +472,7 @@ scenario_release_image := [?]Step {
 	{kind = .Wait, text = "boot program: started"},
 	{kind = .Wait, text = "boot program: the kernel and each module and resource have the hash of the system description"},
 	{kind = .Wait, text = "root: the boot image agrees with the system description that the boot program verified: "},
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Quit},
 }
 

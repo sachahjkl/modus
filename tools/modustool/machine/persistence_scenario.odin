@@ -13,7 +13,7 @@ import "modustool:build"
 // the commits, with no stop of the machine. The third one finds a store
 // that the checks accept, and a count of one commit: its three blocks agree.
 scenario_persist_first := [?]Step {
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	// The storage service starts at boot, for the boot pass of settings.
 	{kind = .Wait, text = "root: started storage", any_order = true},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
@@ -22,7 +22,7 @@ scenario_persist_first := [?]Step {
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "root: started notes"},
 	{kind = .Wait, text = "notes: a new store: no note, the count 0", any_order = true},
-	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Type, text = "kept across a restart"},
 	{kind = .Wait, text = "notes: the note is \"kept across a restart\", generation 22"},
 	{kind = .Key, text = "tab"},
@@ -30,7 +30,7 @@ scenario_persist_first := [?]Step {
 	{kind = .Wait, text = "notes: the versions of the count: 1000 rows in "},
 	// A setting that the next machine finds (the boot pass of settings).
 	{kind = .Launch, text = "settings"},
-	{kind = .Wait, text = "compositor: surface settings", any_order = true},
+	{kind = .Wait, text = "display: settings" + WINDOW_TAKEN, any_order = true},
 	{kind = .Wait, text = "settings: ok, "},
 	{kind = .Front, text = "console"},
 	{kind = .Type, text = "connect(\"settings\")"},
@@ -48,7 +48,7 @@ scenario_persist_first := [?]Step {
 }
 
 scenario_persist_second := [?]Step {
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	// 1 + 21 commits of the note, 1000 of the count, 1 of the settings, and
 	// 4 of the line history of the console: after connect, after set,
 	// after length, and before shutdown(). The stores of notes, settings
@@ -65,12 +65,12 @@ scenario_persist_second := [?]Step {
 	{kind = .Wait, text = "terminal: console draws its interface text in the font of the cells", any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count 1000, its 3 blocks agree", any_order = true},
-	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Wait, text = "notes: ok, the first picture is presented"},
 	{kind = .Shot, text = "notes"},
 	// The vector font again, for the machines after this one.
 	{kind = .Launch, text = "settings"},
-	{kind = .Wait, text = "compositor: surface settings", any_order = true},
+	{kind = .Wait, text = "display: settings" + WINDOW_TAKEN, any_order = true},
 	{kind = .Wait, text = "settings: ok, font spleen, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us"},
 	{kind = .Shot, text = "settings_kept"},
 	{kind = .Front, text = "console"},
@@ -102,13 +102,13 @@ scenario_persist_second := [?]Step {
 }
 
 scenario_persist_crash := [?]Step {
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: ok, generation ", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
 	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count ", any_order = true},
 	{kind = .Wait, text = ", its 3 blocks agree, the last run stopped before its end", any_order = true},
-	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Wait, text = "notes: ok, the first picture is presented"},
 	{kind = .Shot, text = "notes_crash"},
 	{kind = .Quit},
@@ -120,12 +120,12 @@ scenario_persist_crash := [?]Step {
 // count is whole. `notes` says that the note is damaged, and does not take
 // it for an empty note. A key writes a new note in place of it.
 scenario_persist_damaged := [?]Step {
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: 1 blocks have a wrong check: 1 objects and 0 stores are damaged; the service serves the others", any_order = true},
 	{kind = .Wait, text = " blocks checked, 1 wrong, in ", any_order = true},
 	{kind = .Wait, text = "notes: WRONG: the storage service cannot give the note: the object is damaged; restored the count ", any_order = true},
-	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Wait, text = "notes: ok, the first picture is presented"},
 	{kind = .Shot, text = "notes_damaged"},
 	{kind = .Type, text = "again"},
@@ -135,11 +135,11 @@ scenario_persist_damaged := [?]Step {
 
 // After the new note: no wrong block, and the note and the count.
 scenario_persist_replaced := [?]Step {
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
 	{kind = .Wait, text = "notes: restored the note \"again\" and the count ", any_order = true},
-	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Quit},
 }
 
@@ -147,7 +147,7 @@ scenario_persist_replaced := [?]Step {
 // whole on the disk. The root before it names no wrong block, so the
 // storage service uses it: the note is the note before its last letter.
 scenario_persist_older := [?]Step {
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: the newest root names a block with a wrong check, and the root before it names none: the root before it is used", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
@@ -158,7 +158,7 @@ scenario_persist_older := [?]Step {
 // A format that a stop cut: a first root with a wrong check, and no commit
 // after it. The disk holds no object: the storage service formats again.
 scenario_persist_first_cut := [?]Step {
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = "storage: the first root of the disk has a wrong check and no commit followed it", any_order = true},
 	{kind = .Wait, text = "storage: ok, a new disk: generation 1, 16384 blocks", any_order = true},
@@ -171,13 +171,13 @@ scenario_persist_first_cut := [?]Step {
 // did not finish. The storage service finds the wrong check and uses the
 // root before it: the count of the commit before.
 scenario_persist_cut := [?]Step {
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Launch, text = "notes"},
 	{kind = .Wait, text = " has a wrong check: a write that a stop cut; the service uses the root before it", any_order = true},
 	{kind = .Wait, text = " blocks checked, 0 wrong, in ", any_order = true},
 	{kind = .Wait, text = "notes: restored the note \"kept across a restart\" and the count ", any_order = true},
 	{kind = .Wait, text = ", its 3 blocks agree, the last run stopped before its end", any_order = true},
-	{kind = .Wait, text = "compositor: surface notes"},
+	{kind = .Wait, text = "display: notes" + WINDOW_TAKEN, any_order = true},
 	{kind = .Quit},
 }
 

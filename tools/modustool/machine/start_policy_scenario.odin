@@ -55,7 +55,7 @@ scenario_start_policy_key := [?]Step {
 	{kind = .Wait, text = RESCUE_KEY_LINE},
 	{kind = .Wait, text = "root: the key R was held at the start: the rescue start policy starts in place of the start policy "},
 	{kind = .Wait, text = "start_policy: the start list has 4 rows: each starts in its order"},
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	{kind = .Wait, text = "start_policy: each needed row runs: the machine is usable", any_order = true},
 	// The root service writes its line when it takes Machine_Usable, before or
 	// after the line of the start policy: two processes, no fixed order.
@@ -92,7 +92,7 @@ scenario_start_policy_missing_console := [?]Step {
 	{kind = .Wait, text = "start_policy: the start list has 6 rows: each starts in its order"},
 	{kind = .Wait, text = "stops_refused: it refuses its context on purpose", any_order = true},
 	{kind = .Wait, text = "stops_failed: it fails on purpose", any_order = true},
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	// The root service writes its line when it takes Machine_Usable, before or
 	// after the line of the start policy: two processes, no fixed order.
 	{kind = .Wait, text = "root: the machine is usable, by the start policy ", any_order = true},
@@ -122,7 +122,7 @@ scenario_start_policy_entry := [?]Step {
 scenario_start_policy_boot_next := [?]Step {
 	{kind = .Wait, text = "boot program: the load options of the boot entry ask for the rescue start policy", fails_on = RESCUE_ENTRY_WRITTEN_LINE},
 	{kind = .Wait, text = "root: the boot entry modus (rescue) started the machine: the rescue start policy starts in place of the start policy "},
-	{kind = .Wait, text = "compositor: surface console", any_order = true},
+	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 	// The root service writes its line when it takes Machine_Usable, before or
 	// after the line of the start policy: two processes, no fixed order.
 	{kind = .Wait, text = "root: the machine is usable, by the start policy ", any_order = true},

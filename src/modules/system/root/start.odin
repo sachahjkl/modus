@@ -444,7 +444,7 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Sta
 		return .Ok
 	}
 	work.shared[0] = system.memory_create(ring.PAGE_COUNT) or_return
-	work.slot.client = system.give(compositor, work.shared[0], {.Read, .Write}) or_return
+	work.slot.client = system.give(display_holder, work.shared[0], {.Read, .Write}) or_return
 	// The capture face and the input face ride this ring: the compositor
 	// takes them only from the client whose record says so.
 	capture: u64 = .Screen_Capture in work.start_grant_set.grants ? display.CLIENT_CAPTURE : 0

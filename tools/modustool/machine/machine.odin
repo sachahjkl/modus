@@ -211,6 +211,15 @@ POWER_LOSS_SEED :: 20261111
 // cut: 1 to this, from the seed.
 POWER_LOSS_SEEDED_ROOTS :: 40
 
+// The end of the fact of the display contract that a window writes when the
+// holder of the display took it (modus:display, Window_Taken): the line is
+// "display: " + the title + WINDOW_TAKEN. A scenario of another part than
+// the display waits for it, never for a line of one holder, so a second
+// holder of the display runs the scenario
+// (src/md/features/roles_and_contracts.md, "Conformance"). The wait has
+// any_order: the window can write its own lines before it reads the event.
+WINDOW_TAKEN :: ": the holder of the display took the window"
+
 Step :: struct {
 	kind:       Step_Kind,
 	text:       string,

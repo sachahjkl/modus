@@ -298,7 +298,7 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// bytes as parameters").
 	{name = "tables", grants = {.Image, .Connect}, terms = {callable = {0 = "sample"}}},
 	// The screen, the input ring and the control ring of this service
-	// (compositor_start); its exports serve the processes.
+	// (display_holder_start); its exports serve the processes.
 	{name = "compositor", grants = {.Serve, .System_Part}},
 	// The ports and the two interrupts of the PS/2 controller (input_start).
 	{name = "input", grants = {.System_Part}},

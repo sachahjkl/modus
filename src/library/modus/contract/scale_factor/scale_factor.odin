@@ -39,12 +39,27 @@ Scale :: enum u8 {
 // The scale of a desktop that the principal did not set.
 DEFAULT :: Scale.Ten_Eighths
 
-// The largest scale whose logical screen each window of today fits: the
-// tallest window, 708 logical pixels, with its title of 40 under the bar of
-// 32, needs 780 lines, which 785 at 1.375 hold and 720 at 1.5 do not. A
-// larger scale waits for windows that fit 960 x 540 or that the principal
-// resizes.
+// The least height of the work area, in logical pixels, that a holder of
+// the display gives its windows at each scale up to WINDOW_BOUND: the
+// tallest window of today, 708 lines, with a title of at most 40 lines that
+// the holder draws over it. A window counts on this height and on the work
+// area that its holder names (modus:display, the event Work_Area), never on
+// the bar or another part that one holder draws.
+WORK_AREA_LEAST_HEIGHT :: 748
+
+// The largest scale whose logical screen holds WORK_AREA_LEAST_HEIGHT: 785
+// lines at 1.375 hold 748, and 720 at 1.5 do not. A larger scale waits for
+// windows that fit 960 x 540 or that the principal resizes.
 WINDOW_BOUND :: Scale.Eleven_Eighths
+
+// The lines of the logical screen at WINDOW_BOUND, rounded down as
+// logical_screen rounds them.
+WINDOW_BOUND_LOGICAL_HEIGHT :: i64(reference_screen.HEIGHT * EIGHTHS_OF_ONE) / i64(WINDOW_BOUND)
+
+// The most lines of the logical screen that a holder of the display keeps
+// for itself at WINDOW_BOUND (a bar, a panel): the rest is the least work
+// area. A holder states that its own part fits, with this constant.
+HOLDER_LINES_MOST :: WINDOW_BOUND_LOGICAL_HEIGHT - WORK_AREA_LEAST_HEIGHT
 
 // What scale_of_word refused. The package holds no table of words for
 // them: a table of texts holds addresses that a loader writes, and the
