@@ -19,7 +19,6 @@
 // imports only `base:` and `modus:contract/` packages.
 package software_machine
 
-import "modus:contract/byte_order"
 import "modus:contract/enum_word"
 
 // Maximum architectural x86-64 instruction byte length.
@@ -70,6 +69,7 @@ Step_Outcome :: enum u8 {
 	Step_Budget_Exhausted = 6,
 	Halted                = 7,
 	Divide_Error          = 8,
+	Simd_Floating_Point   = 9, // An exception that MXCSR does not mask: vector 19.
 }
 
 // Integer operand width in bytes.
@@ -129,6 +129,10 @@ Processor_State :: struct {
 	cr3:                  u64,
 	gs_base:              u64,
 	xmm:                  [16][16]u8,
+	mxcsr:                u32,
+	// The source of rdtsc: the kernel gives its cycle counter. With none,
+	// rdtsc reads the count of steps, which also only grows.
+	cycle_counter_read:   proc "contextless" () -> u64,
 	tlb:                  Software_Tlb,
 	outcome:              Step_Outcome,
 	fault_address:        u64,
@@ -140,14 +144,14 @@ Processor_State :: struct {
 
 // condition_code_from_word decodes a 4-bit opcode condition field at the
 // instruction border and refuses any value naming no member.
-@(private = "file")
+@(private)
 condition_code_from_word :: proc "contextless" (word: u8) -> (cc: Condition_Code, ok: bool) {
 	return enum_word.member_of_word(Condition_Code, u64(word))
 }
 
 // alu_operation_from_word decodes a 3-bit ALU opcode/ModRM selector at the
 // instruction border and refuses any value naming no member.
-@(private = "file")
+@(private)
 alu_operation_from_word :: proc "contextless" (word: u8) -> (op: Alu_Operation, ok: bool) {
 	return enum_word.member_of_word(Alu_Operation, u64(word))
 }
@@ -167,6 +171,7 @@ processor_init :: proc "contextless" (
 	cpu.registers[int(General_Register.Rsp)] = stack_pointer
 	cpu.gs_base = gs_base
 	cpu.rflags = USER_INITIAL_RFLAGS
+	cpu.mxcsr = MXCSR_START
 	cpu.outcome = .Running
 }
 
@@ -184,20 +189,22 @@ processor_invlpg :: proc "contextless" (cpu: ^Processor_State, virtual_address: 
 // Instruction fetch cursor bounded to MAX_INSTRUCTION_BYTES so decoded length
 // is checked incrementally and `next_rip` is exact before resolving RIP-relative
 // addressing.
-@(private = "file")
+@(private)
 Instruction_Cursor :: struct {
 	start_rip:     u64,
 	current_rip:   u64,
 	bytes_fetched: int,
 }
 
-@(private = "file")
+@(private)
 Decoded_Prefixes :: struct {
 	has_operand_size_override: bool, // 0x66
 	has_address_size_override: bool, // 0x67
 	has_lock:                  bool, // 0xF0
 	has_repne:                 bool, // 0xF2
 	has_rep:                   bool, // 0xF3
+	// The last of F2 and F3 wins as the mandatory prefix of a vector form.
+	last_repeat_is_not_equal:  bool,
 	has_gs_override:           bool, // 0x65
 	has_rex:                   bool,
 	rex_w:                     bool,
@@ -208,7 +215,7 @@ Decoded_Prefixes :: struct {
 
 // Decoded ModRM operand; memory operands defer RIP-relative finalization until
 // all trailing immediate bytes of the instruction have been fetched.
-@(private = "file")
+@(private)
 Decoded_Modrm :: struct {
 	is_register:      bool,
 	reg_index:        u8, // 0..15 (with REX.R)
@@ -221,7 +228,7 @@ Decoded_Modrm :: struct {
 
 // record_translation_fault maps an MMU translation failure onto the processor
 // outcome while preserving `instruction_start_rip`.
-@(private = "file")
+@(private)
 record_translation_fault :: proc "contextless" (cpu: ^Processor_State, instruction_start_rip: u64, result: Translation_Result) -> Step_Outcome {
 	cpu.rip = instruction_start_rip
 	cpu.fault_address = result.fault_address
@@ -237,7 +244,7 @@ record_translation_fault :: proc "contextless" (cpu: ^Processor_State, instructi
 	return cpu.outcome
 }
 
-@(private = "file")
+@(private)
 record_fault :: proc "contextless" (cpu: ^Processor_State, instruction_start_rip: u64, outcome: Step_Outcome, fault_address: u64 = 0) -> Step_Outcome {
 	cpu.rip = instruction_start_rip
 	cpu.fault_address = fault_address
@@ -246,7 +253,7 @@ record_fault :: proc "contextless" (cpu: ^Processor_State, instruction_start_rip
 	return outcome
 }
 
-@(private = "file")
+@(private)
 fetch_u8 :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, cursor: ^Instruction_Cursor) -> (value: u8, outcome: Step_Outcome) {
 	if cursor.bytes_fetched >= MAX_INSTRUCTION_BYTES {
 		return 0, record_fault(cpu, cursor.start_rip, .General_Protection, cursor.current_rip)
@@ -260,7 +267,7 @@ fetch_u8 :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, cu
 	return byte, .Running
 }
 
-@(private = "file")
+@(private)
 fetch_u16 :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, cursor: ^Instruction_Cursor) -> (value: u16, outcome: Step_Outcome) {
 	b0, o0 := fetch_u8(cpu, physical_memory, cursor)
 	if o0 != .Running {
@@ -273,7 +280,7 @@ fetch_u16 :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, c
 	return u16(b0) | u16(b1) << 8, .Running
 }
 
-@(private = "file")
+@(private)
 fetch_u32 :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, cursor: ^Instruction_Cursor) -> (value: u32, outcome: Step_Outcome) {
 	b0, o0 := fetch_u8(cpu, physical_memory, cursor)
 	if o0 != .Running {
@@ -294,7 +301,7 @@ fetch_u32 :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, c
 	return u32(b0) | u32(b1) << 8 | u32(b2) << 16 | u32(b3) << 24, .Running
 }
 
-@(private = "file")
+@(private)
 fetch_u64 :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, cursor: ^Instruction_Cursor) -> (value: u64, outcome: Step_Outcome) {
 	lo, o0 := fetch_u32(cpu, physical_memory, cursor)
 	if o0 != .Running {
@@ -307,7 +314,7 @@ fetch_u64 :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, c
 	return u64(lo) | u64(hi) << 32, .Running
 }
 
-@(private = "file")
+@(private)
 operand_width_from_prefixes :: #force_inline proc "contextless" (prefixes: Decoded_Prefixes) -> Operand_Width {
 	if prefixes.rex_w {
 		return .Bits_64
@@ -318,7 +325,7 @@ operand_width_from_prefixes :: #force_inline proc "contextless" (prefixes: Decod
 	return .Bits_32
 }
 
-@(private = "file")
+@(private)
 width_mask :: #force_inline proc "contextless" (width: Operand_Width) -> u64 {
 	switch width {
 	case .Bits_8:
@@ -333,7 +340,7 @@ width_mask :: #force_inline proc "contextless" (width: Operand_Width) -> u64 {
 	return max(u64)
 }
 
-@(private = "file")
+@(private)
 width_sign_bit :: #force_inline proc "contextless" (width: Operand_Width) -> u64 {
 	switch width {
 	case .Bits_8:
@@ -348,7 +355,7 @@ width_sign_bit :: #force_inline proc "contextless" (width: Operand_Width) -> u64
 	return u64(1) << 63
 }
 
-@(private = "file")
+@(private)
 width_bit_count :: #force_inline proc "contextless" (width: Operand_Width) -> uint {
 	switch width {
 	case .Bits_8:
@@ -363,7 +370,7 @@ width_bit_count :: #force_inline proc "contextless" (width: Operand_Width) -> ui
 	return 64
 }
 
-@(private = "file")
+@(private)
 sign_extend_to_i64 :: #force_inline proc "contextless" (value: u64, width: Operand_Width) -> i64 {
 	switch width {
 	case .Bits_8:
@@ -380,7 +387,7 @@ sign_extend_to_i64 :: #force_inline proc "contextless" (value: u64, width: Opera
 
 // read_register reads a register of `width` bits, applying the x86-64 rule
 // that 8-bit indices 4..7 without a REX prefix access AH/CH/DH/BH.
-@(private = "file")
+@(private)
 read_register :: proc "contextless" (cpu: ^Processor_State, index: u8, width: Operand_Width, has_rex: bool) -> u64 {
 	switch width {
 	case .Bits_8:
@@ -400,7 +407,7 @@ read_register :: proc "contextless" (cpu: ^Processor_State, index: u8, width: Op
 
 // write_register writes a register of `width` bits. Writing 32 bits zero-extends
 // to 64 bits; writing 8 or 16 bits preserves all higher bits.
-@(private = "file")
+@(private)
 write_register :: proc "contextless" (cpu: ^Processor_State, index: u8, width: Operand_Width, has_rex: bool, value: u64) {
 	switch width {
 	case .Bits_8:
@@ -422,7 +429,7 @@ write_register :: proc "contextless" (cpu: ^Processor_State, index: u8, width: O
 }
 
 // decode_modrm parses ModRM, optional SIB, and optional disp8/disp32.
-@(private = "file")
+@(private)
 decode_modrm :: proc "contextless" (
 	cpu: ^Processor_State,
 	physical_memory: []u8,
@@ -512,7 +519,7 @@ decode_modrm :: proc "contextless" (
 
 // resolve_effective_address computes the linear address of a memory operand
 // after all immediate bytes of the instruction are fetched (so `next_rip` is exact).
-@(private = "file")
+@(private)
 resolve_effective_address :: proc "contextless" (cpu: ^Processor_State, modrm: Decoded_Modrm, next_rip: u64, apply_segment: bool) -> u64 {
 	offset := modrm.address_offset
 	if modrm.is_rip_relative {
@@ -527,7 +534,7 @@ resolve_effective_address :: proc "contextless" (cpu: ^Processor_State, modrm: D
 	return offset
 }
 
-@(private = "file")
+@(private)
 read_memory_width :: proc "contextless" (
 	cpu: ^Processor_State,
 	physical_memory: []u8,
@@ -564,7 +571,7 @@ read_memory_width :: proc "contextless" (
 	return 0, .Invalid_Opcode
 }
 
-@(private = "file")
+@(private)
 write_memory_width :: proc "contextless" (
 	cpu: ^Processor_State,
 	physical_memory: []u8,
@@ -590,7 +597,7 @@ write_memory_width :: proc "contextless" (
 	return .Running
 }
 
-@(private = "file")
+@(private)
 read_rm_operand :: proc "contextless" (
 	cpu: ^Processor_State,
 	physical_memory: []u8,
@@ -607,7 +614,7 @@ read_rm_operand :: proc "contextless" (
 	return read_memory_width(cpu, physical_memory, instruction_start_rip, address, width)
 }
 
-@(private = "file")
+@(private)
 write_rm_operand :: proc "contextless" (
 	cpu: ^Processor_State,
 	physical_memory: []u8,
@@ -626,7 +633,7 @@ write_rm_operand :: proc "contextless" (
 	return write_memory_width(cpu, physical_memory, instruction_start_rip, address, width, value)
 }
 
-@(private = "file")
+@(private)
 fetch_sign_extended_immediate :: proc "contextless" (
 	cpu: ^Processor_State,
 	physical_memory: []u8,
@@ -648,7 +655,7 @@ fetch_sign_extended_immediate :: proc "contextless" (
 }
 
 // Parity flag is 1 when the least-significant byte has an even count of 1 bits.
-@(private = "file")
+@(private)
 parity_even :: #force_inline proc "contextless" (value: u8) -> bool {
 	folded := value
 	folded ~= folded >> 4
@@ -657,7 +664,7 @@ parity_even :: #force_inline proc "contextless" (value: u8) -> bool {
 	return (folded & 1) == 0
 }
 
-@(private = "file")
+@(private)
 set_flag :: #force_inline proc "contextless" (cpu: ^Processor_State, flag_bit: u64, enabled: bool) {
 	if enabled {
 		cpu.rflags |= flag_bit
@@ -666,7 +673,7 @@ set_flag :: #force_inline proc "contextless" (cpu: ^Processor_State, flag_bit: u
 	}
 }
 
-@(private = "file")
+@(private)
 update_szp_flags :: proc "contextless" (cpu: ^Processor_State, result: u64, width: Operand_Width) {
 	masked := result & width_mask(width)
 	set_flag(cpu, RFLAGS_ZF, masked == 0)
@@ -674,7 +681,7 @@ update_szp_flags :: proc "contextless" (cpu: ^Processor_State, result: u64, widt
 	set_flag(cpu, RFLAGS_PF, parity_even(u8(masked)))
 }
 
-@(private = "file")
+@(private)
 evaluate_condition :: proc "contextless" (cpu: ^Processor_State, condition: Condition_Code) -> bool {
 	cf := (cpu.rflags & RFLAGS_CF) != 0
 	pf := (cpu.rflags & RFLAGS_PF) != 0
@@ -719,7 +726,7 @@ evaluate_condition :: proc "contextless" (cpu: ^Processor_State, condition: Cond
 }
 
 // execute_alu computes one of the 8 standard ALU operations and updates RFLAGS.
-@(private = "file")
+@(private)
 execute_alu :: proc "contextless" (cpu: ^Processor_State, op: Alu_Operation, left, right: u64, width: Operand_Width) -> (result: u64, write_back: bool) {
 	mask := width_mask(width)
 	sign_bit := width_sign_bit(width)
@@ -808,7 +815,7 @@ execute_alu :: proc "contextless" (cpu: ^Processor_State, op: Alu_Operation, lef
 	return 0, false
 }
 
-@(private = "file")
+@(private)
 execute_test_flags :: proc "contextless" (cpu: ^Processor_State, left, right: u64, width: Operand_Width) {
 	mask := width_mask(width)
 	res := (left & right) & mask
@@ -818,7 +825,7 @@ execute_test_flags :: proc "contextless" (cpu: ^Processor_State, left, right: u6
 	update_szp_flags(cpu, res, width)
 }
 
-@(private = "file")
+@(private)
 execute_shift :: proc "contextless" (cpu: ^Processor_State, op: Shift_Operation, value: u64, raw_count: u8, width: Operand_Width) -> u64 {
 	mask := width_mask(width)
 	sign_bit := width_sign_bit(width)
@@ -885,7 +892,7 @@ execute_shift :: proc "contextless" (cpu: ^Processor_State, op: Shift_Operation,
 }
 
 // Pure freestanding 64x64 -> 128-bit unsigned multiplication (avoids compiler-rt).
-@(private = "file")
+@(private)
 multiply_u64_to_u128 :: proc "contextless" (a, b: u64) -> (low: u64, high: u64) {
 	a_lo := a & 0xFFFF_FFFF
 	a_hi := a >> 32
@@ -904,7 +911,7 @@ multiply_u64_to_u128 :: proc "contextless" (a, b: u64) -> (low: u64, high: u64) 
 }
 
 // Pure freestanding 64x64 -> 128-bit signed multiplication.
-@(private = "file")
+@(private)
 multiply_i64_to_i128 :: proc "contextless" (a, b: i64) -> (low: u64, high: i64) {
 	u_lo, u_hi := multiply_u64_to_u128(u64(a), u64(b))
 	s_hi := i64(u_hi)
@@ -918,7 +925,7 @@ multiply_i64_to_i128 :: proc "contextless" (a, b: i64) -> (low: u64, high: i64) 
 }
 
 // Pure freestanding 128/64 -> 64-bit unsigned division (avoids __udivti3).
-@(private = "file")
+@(private)
 divide_u128_by_u64 :: proc "contextless" (low, high, divisor: u64) -> (quotient, remainder: u64, ok: bool) {
 	if divisor == 0 || high >= divisor {
 		return 0, 0, false
@@ -943,7 +950,7 @@ divide_u128_by_u64 :: proc "contextless" (low, high, divisor: u64) -> (quotient,
 }
 
 // Pure freestanding 128/64 -> 64-bit signed division (avoids __divti3).
-@(private = "file")
+@(private)
 divide_i128_by_i64 :: proc "contextless" (low: u64, high: i64, divisor: i64) -> (quotient, remainder: i64, ok: bool) {
 	if divisor == 0 {
 		return 0, 0, false
@@ -980,7 +987,7 @@ divide_i128_by_i64 :: proc "contextless" (low: u64, high: i64, divisor: i64) -> 
 	return quotient, remainder, true
 }
 
-@(private = "file")
+@(private)
 execute_imul_truncating :: proc "contextless" (cpu: ^Processor_State, left, right: u64, width: Operand_Width) -> u64 {
 	sa := sign_extend_to_i64(left, width)
 	sb := sign_extend_to_i64(right, width)
@@ -994,7 +1001,7 @@ execute_imul_truncating :: proc "contextless" (cpu: ^Processor_State, left, righ
 	return truncated
 }
 
-@(private = "file")
+@(private)
 execute_stack_push :: proc "contextless" (
 	cpu: ^Processor_State,
 	physical_memory: []u8,
@@ -1012,7 +1019,7 @@ execute_stack_push :: proc "contextless" (
 	return .Running
 }
 
-@(private = "file")
+@(private)
 read_sse_operand :: proc "contextless" (
 	cpu: ^Processor_State,
 	physical_memory: []u8,
@@ -1035,7 +1042,7 @@ read_sse_operand :: proc "contextless" (
 	return bytes, .Running
 }
 
-@(private = "file")
+@(private)
 write_sse_operand :: proc "contextless" (
 	cpu: ^Processor_State,
 	physical_memory: []u8,
@@ -1060,7 +1067,7 @@ write_sse_operand :: proc "contextless" (
 	return .Running
 }
 
-@(private = "file")
+@(private)
 step_two_byte_opcode :: proc "contextless" (
 	cpu: ^Processor_State,
 	physical_memory: []u8,
@@ -1284,203 +1291,12 @@ step_two_byte_opcode :: proc "contextless" (
 		return .Running
 	}
 
-	// Core SSE2 instructions.
-	switch opcode2 {
-	case 0x6F:
-		// MOVDQU xmm1, xmm2/m128 (F3 0F 6F) or MOVDQA xmm1, xmm2/m128 (66 0F 6F).
-		if !prefixes.has_rep && !prefixes.has_operand_size_override {
-			return record_fault(cpu, cursor.start_rip, .Invalid_Opcode, cursor.start_rip)
-		}
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
-		if o_modrm != .Running {
-			return o_modrm
-		}
-		aligned := !prefixes.has_rep
-		vec, o_vec := read_sse_operand(cpu, physical_memory, cursor.start_rip, cursor.current_rip, modrm, aligned)
-		if o_vec != .Running {
-			return o_vec
-		}
-		cpu.xmm[modrm.reg_index & 15] = vec
-		cpu.rip = cursor.current_rip
-		cpu.steps_executed += 1
-		return .Running
-
-	case 0x7F:
-		// MOVDQU xmm2/m128, xmm1 (F3 0F 7F) or MOVDQA xmm2/m128, xmm1 (66 0F 7F).
-		if !prefixes.has_rep && !prefixes.has_operand_size_override {
-			return record_fault(cpu, cursor.start_rip, .Invalid_Opcode, cursor.start_rip)
-		}
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
-		if o_modrm != .Running {
-			return o_modrm
-		}
-		aligned := !prefixes.has_rep
-		o_write := write_sse_operand(cpu, physical_memory, cursor.start_rip, cursor.current_rip, modrm, aligned, cpu.xmm[modrm.reg_index & 15])
-		if o_write != .Running {
-			return o_write
-		}
-		cpu.rip = cursor.current_rip
-		cpu.steps_executed += 1
-		return .Running
-
-	case 0x6E:
-		// MOVD/MOVQ xmm, r/m32/64 (66 0F 6E).
-		if !prefixes.has_operand_size_override {
-			return record_fault(cpu, cursor.start_rip, .Invalid_Opcode, cursor.start_rip)
-		}
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
-		if o_modrm != .Running {
-			return o_modrm
-		}
-		src_w := Operand_Width.Bits_64 if prefixes.rex_w else Operand_Width.Bits_32
-		val, o_src := read_rm_operand(cpu, physical_memory, cursor.start_rip, cursor.current_rip, modrm, src_w, prefixes.has_rex)
-		if o_src != .Running {
-			return o_src
-		}
-		out_vec: [16]u8
-		if prefixes.rex_w {
-			byte_order.write_u64_little_endian(out_vec[:], 0, val)
-		} else {
-			byte_order.write_u32_little_endian(out_vec[:], 0, u32(val))
-		}
-		cpu.xmm[modrm.reg_index & 15] = out_vec
-		cpu.rip = cursor.current_rip
-		cpu.steps_executed += 1
-		return .Running
-
-	case 0x7E:
-		if prefixes.has_rep {
-			// MOVQ xmm1, xmm2/m64 (F3 0F 7E).
-			modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
-			if o_modrm != .Running {
-				return o_modrm
-			}
-			out_vec: [16]u8
-			if modrm.is_register {
-				src_vec := cpu.xmm[modrm.rm_register & 15]
-				for index in 0 ..< 8 {
-					out_vec[index] = src_vec[index]
-				}
-			} else {
-				val, o_read := read_rm_operand(cpu, physical_memory, cursor.start_rip, cursor.current_rip, modrm, .Bits_64, prefixes.has_rex)
-				if o_read != .Running {
-					return o_read
-				}
-				byte_order.write_u64_little_endian(out_vec[:], 0, val)
-			}
-			cpu.xmm[modrm.reg_index & 15] = out_vec
-			cpu.rip = cursor.current_rip
-			cpu.steps_executed += 1
-			return .Running
-		}
-		if prefixes.has_operand_size_override {
-			// MOVD/MOVQ r/m32/64, xmm (66 0F 7E).
-			modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
-			if o_modrm != .Running {
-				return o_modrm
-			}
-			dst_w := Operand_Width.Bits_64 if prefixes.rex_w else Operand_Width.Bits_32
-			src_vec := cpu.xmm[modrm.reg_index & 15]
-			val := byte_order.read_u64_little_endian(src_vec[:], 0) if prefixes.rex_w else u64(byte_order.read_u32_little_endian(src_vec[:], 0))
-			o_write := write_rm_operand(cpu, physical_memory, cursor.start_rip, cursor.current_rip, modrm, dst_w, prefixes.has_rex, val)
-			if o_write != .Running {
-				return o_write
-			}
-			cpu.rip = cursor.current_rip
-			cpu.steps_executed += 1
-			return .Running
-		}
-		return record_fault(cpu, cursor.start_rip, .Invalid_Opcode, cursor.start_rip)
-
-	case 0xD6:
-		// MOVQ xmm2/m64, xmm1 (66 0F D6).
-		if !prefixes.has_operand_size_override {
-			return record_fault(cpu, cursor.start_rip, .Invalid_Opcode, cursor.start_rip)
-		}
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
-		if o_modrm != .Running {
-			return o_modrm
-		}
-		src_vec := cpu.xmm[modrm.reg_index & 15]
-		if modrm.is_register {
-			dst_vec: [16]u8
-			for index in 0 ..< 8 {
-				dst_vec[index] = src_vec[index]
-			}
-			cpu.xmm[modrm.rm_register & 15] = dst_vec
-		} else {
-			low_qword := byte_order.read_u64_little_endian(src_vec[:], 0)
-			o_write := write_rm_operand(cpu, physical_memory, cursor.start_rip, cursor.current_rip, modrm, .Bits_64, prefixes.has_rex, low_qword)
-			if o_write != .Running {
-				return o_write
-			}
-		}
-		cpu.rip = cursor.current_rip
-		cpu.steps_executed += 1
-		return .Running
-
-	case 0xEF, 0xDB, 0xEB, 0x74:
-		// 66 0F EF: PXOR; 66 0F DB: PAND; 66 0F EB: POR; 66 0F 74: PCMPEQB.
-		if !prefixes.has_operand_size_override {
-			return record_fault(cpu, cursor.start_rip, .Invalid_Opcode, cursor.start_rip)
-		}
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
-		if o_modrm != .Running {
-			return o_modrm
-		}
-		rhs, o_rhs := read_sse_operand(cpu, physical_memory, cursor.start_rip, cursor.current_rip, modrm, true)
-		if o_rhs != .Running {
-			return o_rhs
-		}
-		dst := &cpu.xmm[modrm.reg_index & 15]
-		switch opcode2 {
-		case 0xEF:
-			for index in 0 ..< 16 {
-				dst[index] ~= rhs[index]
-			}
-		case 0xDB:
-			for index in 0 ..< 16 {
-				dst[index] &= rhs[index]
-			}
-		case 0xEB:
-			for index in 0 ..< 16 {
-				dst[index] |= rhs[index]
-			}
-		case 0x74:
-			for index in 0 ..< 16 {
-				dst[index] = 0xFF if dst[index] == rhs[index] else 0x00
-			}
-		}
-		cpu.rip = cursor.current_rip
-		cpu.steps_executed += 1
-		return .Running
-
-	case 0xD7:
-		// PMOVMSKB r32/r64, xmm (66 0F D7). Requires register operand (mod == 3).
-		if !prefixes.has_operand_size_override {
-			return record_fault(cpu, cursor.start_rip, .Invalid_Opcode, cursor.start_rip)
-		}
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
-		if o_modrm != .Running {
-			return o_modrm
-		}
-		if !modrm.is_register {
-			return record_fault(cpu, cursor.start_rip, .Invalid_Opcode, cursor.start_rip)
-		}
-		src_vec := cpu.xmm[modrm.rm_register & 15]
-		mask_bits := u64(0)
-		for index in uint(0) ..< 16 {
-			if (src_vec[index] & 0x80) != 0 {
-				mask_bits |= u64(1) << index
-			}
-		}
-		// Writing to a 32-bit or 64-bit destination both zero-extend bits 16..63.
-		cpu.registers[modrm.reg_index & 15] = mask_bits
-		cpu.rip = cursor.current_rip
-		cpu.steps_executed += 1
-		return .Running
+	if simd_outcome, simd_handled := simd_step(cpu, physical_memory, cursor, prefixes, opcode2); simd_handled {
+		return simd_outcome
 	}
-
+	if integer_outcome, integer_handled := integer_two_byte_step(cpu, physical_memory, cursor, prefixes, opcode2); integer_handled {
+		return integer_outcome
+	}
 	return record_fault(cpu, cursor.start_rip, .Invalid_Opcode, cursor.start_rip)
 }
 
@@ -1496,7 +1312,7 @@ processor_step :: proc "contextless" (cpu: ^Processor_State, physical_memory: []
 	rflags_before := cpu.rflags
 	outcome := instruction_execute(cpu, physical_memory)
 	switch outcome {
-	case .Page_Fault, .General_Protection, .Invalid_Opcode, .Divide_Error:
+	case .Page_Fault, .General_Protection, .Invalid_Opcode, .Divide_Error, .Simd_Floating_Point:
 		cpu.registers = registers_before
 		cpu.rflags = rflags_before
 	case .Running, .Syscall, .Breakpoint, .Step_Budget_Exhausted, .Halted:
@@ -1505,7 +1321,7 @@ processor_step :: proc "contextless" (cpu: ^Processor_State, physical_memory: []
 }
 
 // instruction_execute decodes and executes one instruction for processor_step.
-@(private = "file")
+@(private)
 instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8) -> Step_Outcome {
 	cpu.fault_address = 0
 	cpu.fault_error_code = 0
@@ -1550,6 +1366,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 			prefixes.rex_b = false
 		case 0xF2:
 			prefixes.has_repne = true
+			prefixes.last_repeat_is_not_equal = true
 			prefixes.has_rex = false
 			prefixes.rex_w = false
 			prefixes.rex_r = false
@@ -1557,6 +1374,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 			prefixes.rex_b = false
 		case 0xF3:
 			prefixes.has_rep = true
+			prefixes.last_repeat_is_not_equal = false
 			prefixes.has_rex = false
 			prefixes.rex_w = false
 			prefixes.rex_r = false
@@ -2034,6 +1852,35 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 		b := read_register(cpu, reg, width, prefixes.has_rex)
 		write_register(cpu, u8(General_Register.Rax), width, prefixes.has_rex, b)
 		write_register(cpu, reg, width, prefixes.has_rex, a)
+		cpu.rip = cursor.current_rip
+		cpu.steps_executed += 1
+		return .Running
+
+	case 0x9C:
+		// PUSHF: the flags, 64 bits or 16 with 66.
+		push_width := Operand_Width.Bits_16 if (prefixes.has_operand_size_override && !prefixes.rex_w) else Operand_Width.Bits_64
+		o_push := execute_stack_push(cpu, physical_memory, cursor.start_rip, push_width, cpu.rflags & width_mask(push_width))
+		if o_push != .Running {
+			return o_push
+		}
+		cpu.rip = cursor.current_rip
+		cpu.steps_executed += 1
+		return .Running
+
+	case 0x9D:
+		// POPF: a process changes the arithmetic flags and the direction
+		// only. The interrupt flag and the I/O level need privilege, and
+		// the processor runs no trap flag, alignment check or identification
+		// flag (browser_machine.md, "The vector instructions").
+		pop_width := Operand_Width.Bits_16 if (prefixes.has_operand_size_override && !prefixes.rex_w) else Operand_Width.Bits_64
+		rsp := cpu.registers[int(General_Register.Rsp)]
+		popped, o_read := read_memory_width(cpu, physical_memory, cursor.start_rip, rsp, pop_width)
+		if o_read != .Running {
+			return o_read
+		}
+		changeable := RFLAGS_CF | RFLAGS_PF | RFLAGS_AF | RFLAGS_ZF | RFLAGS_SF | RFLAGS_DF | RFLAGS_OF
+		cpu.rflags = (cpu.rflags & ~changeable) | (popped & changeable) | RFLAGS_RESERVED_ONE
+		cpu.registers[int(General_Register.Rsp)] = rsp + u64(pop_width)
 		cpu.rip = cursor.current_rip
 		cpu.steps_executed += 1
 		return .Running

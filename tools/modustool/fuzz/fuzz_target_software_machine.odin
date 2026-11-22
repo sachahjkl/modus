@@ -144,7 +144,7 @@ fuzz_machine_memory_problem :: proc(now, earlier: []u8, writes_allowed: bool) ->
 @(private = "file")
 fuzz_machine_is_fault :: proc(outcome: software_machine.Step_Outcome) -> bool {
 	switch outcome {
-	case .Page_Fault, .General_Protection, .Invalid_Opcode, .Divide_Error:
+	case .Page_Fault, .General_Protection, .Invalid_Opcode, .Divide_Error, .Simd_Floating_Point:
 		return true
 	case .Running, .Syscall, .Breakpoint, .Step_Budget_Exhausted, .Halted:
 		return false
@@ -154,7 +154,24 @@ fuzz_machine_is_fault :: proc(outcome: software_machine.Step_Outcome) -> bool {
 
 @(private = "file")
 fuzz_machine_same_architectural_state :: proc(a, b: ^software_machine.Processor_State) -> bool {
-	return a.registers == b.registers && a.rip == b.rip && a.rflags == b.rflags && a.cr3 == b.cr3 && a.gs_base == b.gs_base && a.xmm == b.xmm
+	return a.registers == b.registers && a.rip == b.rip && a.rflags == b.rflags && a.cr3 == b.cr3 && a.gs_base == b.gs_base && a.xmm == b.xmm && a.mxcsr == b.mxcsr
+}
+
+// fuzz_machine_same_state_after_fault: a fault changes no register; an
+// unmasked exception of a vector instruction also sets its flags in MXCSR,
+// and only them.
+@(private = "file")
+fuzz_machine_same_state_after_fault :: proc(after, before: ^software_machine.Processor_State, outcome: software_machine.Step_Outcome) -> bool {
+	if outcome != .Simd_Floating_Point {
+		return fuzz_machine_same_architectural_state(after, before)
+	}
+	flags := u32(0x3F)
+	if after.mxcsr & ~flags != before.mxcsr & ~flags || before.mxcsr & flags & ~after.mxcsr != 0 {
+		return false
+	}
+	same := after^
+	same.mxcsr = before.mxcsr
+	return fuzz_machine_same_architectural_state(&same, before)
 }
 
 // fuzz_software_machine_execute: each step ends with an outcome of its
@@ -219,11 +236,11 @@ fuzz_software_machine_execute :: proc(input: []u8) -> Fuzz_Verdict {
 			if outcome == .Syscall && (after.registers[int(software_machine.General_Register.Rcx)] != after.rip || after.registers[int(software_machine.General_Register.R11)] != before.rflags) {
 				return fuzz_broken(.Contract, "the system call at %x saves the place %x and the flags %x", before.rip, after.registers[int(software_machine.General_Register.Rcx)], after.registers[int(software_machine.General_Register.R11)])
 			}
-		case .Page_Fault, .General_Protection, .Invalid_Opcode, .Divide_Error:
+		case .Page_Fault, .General_Protection, .Invalid_Opcode, .Divide_Error, .Simd_Floating_Point:
 			if after.steps_executed != before.steps_executed {
 				return fuzz_broken(.Contract, "the fault %v at %x counts a step", outcome, before.rip)
 			}
-			if !fuzz_machine_same_architectural_state(after, before) {
+			if !fuzz_machine_same_state_after_fault(after, before, outcome) {
 				return fuzz_broken(.Contract, "the fault %v at %x changed a register, the place or the flags", outcome, before.rip)
 			}
 			if fuzz_machine_is_fault(run_outcome) && before.steps_executed == state.run_processor.steps_executed {
