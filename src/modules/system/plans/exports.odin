@@ -30,8 +30,8 @@ export_history: [plans_core.MAX_HISTORY_PER_PRINCIPAL]pr.Applied_Plan_Record
 
 // caller_principal gives the principal of the caller of the export that
 // runs, and refuses a caller that does not act for it: a plan gives the
-// grants of a principal, so only a process that acts for it changes it.
-@(private = "file")
+// grants of a principal, so only a process that acts for it changes it or
+// reads its generations.
 caller_principal :: proc "contextless" (error: ^errors.Error_Record) -> (principal: u64, failure: i64, ok: bool) {
 	connection := system.service_caller()
 	if connection == nil {
@@ -237,31 +237,71 @@ apply_poll :: proc "c" (ticket: i64, result: ^[]pr.Plan_Generation_Row, error: ^
 	return i64(min(record.generation, u64(max(i64))))
 }
 
-// rollback makes the generation before the current one the current
-// generation of the principal of the caller. It writes no plan: the next
-// apply still writes the generation after the highest one.
+// rollback shows on the trusted display the difference between the current
+// plan of the principal of the caller and the generation before it, and
+// keeps the rollback until the principal decides. It commits nothing and
+// changes no role holder: a rollback restores grants and role holders, so
+// rollback_poll commits it only when the principal accepted.
 //
-// The rollback writes the current object of the private store, which is its
-// commit, then the tables: a store that refuses the write changes nothing.
-//
-// The result is the new current generation, or a negative number with an
-// error record: ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY,
-// or ERROR_HISTORY with the refusal as the value found: the kind Absent and
-// the unit Versions when no generation comes before the current one,
-// Store_Failed and Store_Damaged for the private store.
+// The result is the ticket of the rollback, the serial of the dialog, or a
+// negative number with an error record: ERROR_NO_CALLER,
+// ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or ERROR_HISTORY with the
+// refusal as the value found: the kind Absent and the unit Versions when no
+// generation comes before the current one, No_Change, Apply_Pending (the
+// dialog of an earlier apply or rollback still shows), Display_Refused,
+// Consent_Required (the service has no trusted display), Store_Failed and
+// Store_Damaged for the private store.
 @(export, link_name = "rollback")
 rollback :: proc "c" (error: ^errors.Error_Record) -> i64 {
 	principal, failure, allowed := caller_principal(error)
 	if !allowed {
 		return failure
 	}
-	selected, refusal := plans_core.rollback(&service_state, principal)
+	ticket, refusal := plans_core.rollback_request(&service_state, &service_display, principal, &export_difference, &export_lists)
+	if refusal != .None {
+		system.log_fact(.Warning, Plan_Command_Refused{principal = principal, refusal_code = u64(refusal)})
+		return plan_refusal_fail(error, ERROR_HISTORY, refusal)
+	}
+	system.log_fact(.Info, Plan_Rollback_Asked{ticket = ticket, principal = principal})
+	return i64(min(ticket, u64(max(i64))))
+}
+
+// rollback_poll reads the decision of the principal on the rollback of a
+// ticket. While the dialog shows, it gives 0 and changes nothing. When the
+// principal accepted, it makes the generation that the dialog showed the
+// current one: the roles of principal 0 go to the root service first, then
+// the current object of the private store is written, which is the commit.
+// It writes no plan: the next apply still writes the generation after the
+// highest one. A refused difference changes nothing.
+//
+// The result is 0, the new current generation, or a negative number with an
+// error record: ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY,
+// or ERROR_HISTORY with the refusal as the value found:
+// Refused_By_Principal, No_Pending_Apply, Display_Refused,
+// Stale_Current_Plan (an apply or a rollback came first), Roles_Refused,
+// Store_Failed (nothing committed).
+@(export, link_name = "rollback_poll")
+rollback_poll :: proc "c" (ticket: i64, result: ^[]pr.Plan_Generation_Row, error: ^errors.Error_Record) -> i64 {
+	principal, failure, allowed := caller_principal(error)
+	if !allowed {
+		return failure
+	}
+	if ticket < 1 {
+		return errors.fail(error, ERROR_HISTORY, .Bad_Value, .Requests, 1, ticket, max(i64), i64(pr.Plan_Refusal.No_Pending_Apply))
+	}
+	selected, finished, refusal := plans_core.rollback_poll(&service_state, &service_display, principal, u64(ticket))
 	roles_compensation_tell(&service_state)
 	if refusal != .None {
 		system.log_fact(.Warning, Plan_Command_Refused{principal = principal, refusal_code = u64(refusal)})
 		return plan_refusal_fail(error, ERROR_HISTORY, refusal)
 	}
+	if !finished {
+		return 0
+	}
 	system.log_fact(.Info, Plan_Rolled_Back{generation = selected.generation, principal = principal})
+	if len(result^) > 0 {
+		result[0] = pr.plan_generation_row_of(&selected, selected.generation)
+	}
 	return i64(min(selected.generation, u64(max(i64))))
 }
 

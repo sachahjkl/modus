@@ -195,9 +195,11 @@ perform :: proc "contextless" (first: dpc.Action) {
 				lent_release()
 			}
 			event_send(action.event, load_tag)
-			#partial switch action.event {
+			switch action.event {
 			case .Ready, .Refused, .Command_Refused:
 				load_release()
+			case .None, .Memory_Wanted, .Module_Filled, .Scan_Started, .Import_Found, .Candidate_Dropped, .Cancelled:
+			// The load goes on: the core answers this event with a command.
 			}
 			return
 		}

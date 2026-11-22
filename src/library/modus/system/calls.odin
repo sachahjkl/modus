@@ -36,6 +36,7 @@ Call_Connection :: struct {
 	calls:         ring.Ring, // The call ring, mapped in this process.
 	region:        []u8, // The call region, mapped in this process.
 	tag:           u32, // The tag of the last call: each call takes the next one, and its completion must have it.
+	module_hash:   [32]u8, // A service: the hash of the module file of its process, which describes its exports (Root_Command.Connect).
 }
 
 // call_direct calls an export of a module that is in this process, with
@@ -348,6 +349,7 @@ service_connection :: proc "contextless" (requests: ^ring.Ring, tag: u32, name: 
 				return {}, refused
 			}
 			connection = {process = Handle(record.values[0]), ring_memory = Handle(record.values[1]), region_memory = Handle(record.values[2])}
+			connection.module_hash = transmute([32]u8)[4]u64{record.values[3], record.values[4], record.values[5], record.values[6]}
 			defer if status != .Ok {
 				call_connection_end(&connection)
 			}

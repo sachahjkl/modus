@@ -447,7 +447,7 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Sta
 	// have the run of `unlock` and the holder of Plans before it, as no
 	// compositor runs yet. A
 	// replay has none: the compositor would write into its ring.
-	if .Start_Policy in work.start_grant_set.grants || unlock_without_window(work.name) || plan_at_start_without_window(work.name) || work.hold == .For_Replay {
+	if .Start_Policy in work.start_grant_set.grants || unlock_without_window(work.name) || plan_at_start_without_window() || work.hold == .For_Replay {
 		return .Ok
 	}
 	if console_renderer != .Desktop_Terminal {

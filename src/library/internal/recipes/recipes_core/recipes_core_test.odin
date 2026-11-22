@@ -128,7 +128,7 @@ test_recipes_build_cache_sandbox_verify_and_refusals :: proc(t: ^testing.T) {
 
 	spec := pr.Recipe_Spec {
 		builder_hash       = make_hash(1),
-		output_kind_word   = u64(object_cache.Cache_Object_Kind.Tree),
+		output_kind        = .Tree,
 		source_date_unix   = 1700001234,
 		output_block_limit = 256,
 		input_count        = 1,

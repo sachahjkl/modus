@@ -57,8 +57,9 @@ console_renderer_choose_takes_each_case_of_the_parts :: proc(t: ^testing.T) {
 // The desktop keeps each holder of the image. A serial console gives the
 // terminal to serial_terminal and Display to no module, so the role name
 // "display" resolves to nothing and a start of it is refused. A grid
-// console gives both roles to grid_terminal. Each other role keeps its
-// holder in each case.
+// console gives Terminal to grid_terminal and Display to no module too:
+// grid_terminal does not implement the display contract. Each other role
+// keeps its holder in each case.
 @(test)
 console_renderer_holders_set_gives_display_and_terminal :: proc(t: ^testing.T) {
 	desktop := desktop_holder_names()
@@ -79,11 +80,15 @@ console_renderer_holders_set_gives_display_and_terminal :: proc(t: ^testing.T) {
 
 	grid := desktop_holder_names()
 	console_renderer_holders_set(&grid, .Grid_Terminal)
-	testing.expect_value(t, holder_name(&grid, .Display), GRID_TERMINAL_MODULE)
+	testing.expect_value(t, holder_name(&grid, .Display), "")
 	testing.expect_value(t, holder_name(&grid, .Terminal), GRID_TERMINAL_MODULE)
-	testing.expect(t, is_holder(&grid, GRID_TERMINAL_MODULE, .Display))
+	_, grid_display_ok := target_resolve(&grid, role_contract.role_properties(.Display).name)
+	testing.expect(t, !grid_display_ok)
+	testing.expect(t, !is_holder(&grid, GRID_TERMINAL_MODULE, .Display))
+	testing.expect(t, !is_holder(&grid, "", .Display))
 	testing.expect(t, is_holder(&grid, GRID_TERMINAL_MODULE, .Terminal))
 	testing.expect(t, !is_holder(&grid, "compositor", .Display))
+	testing.expect_value(t, role_of_module(&grid, GRID_TERMINAL_MODULE), role_contract.Role.Terminal)
 
 	dom := desktop_holder_names()
 	console_renderer_holders_set(&dom, .Dom_Terminal)

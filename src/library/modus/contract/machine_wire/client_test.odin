@@ -8,7 +8,6 @@ import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/machine_mesh"
 import "modus:contract/machine_sync"
-import "modus:contract/remote"
 import "modus:contract/role_contract"
 
 // ---- Helpers of the outbound side ----
@@ -180,8 +179,8 @@ join_by_link :: proc(t: ^testing.T, offerer, joiner: ^Client_Machine, network: ^
 	random_bytes := [8]u8{offerer.seed, joiner.seed, u8(network.now_ms), 4, 5, 6, 7, 8}
 	code, offer_status := machine_mesh.pairing_offer(&offerer.peer.pairing, client_identity(offerer), random_bytes, network.now_ms)
 	testing.expect_value(t, offer_status, machine_mesh.Pairing_Status.Ok, loc = location)
-	offerer.peer.pairing_uses_word = remote.client_uses_word({.Calls})
-	joiner.peer.pairing_uses_word = remote.client_uses_word({.Calls})
+	offerer.peer.pairing_uses = {.Calls}
+	joiner.peer.pairing_uses = {.Calls}
 	testing.expect_value(t, machine_mesh.pairing_join(&joiner.peer.pairing, client_identity(joiner), code[:], network.now_ms), machine_mesh.Pairing_Status.Ok, loc = location)
 	transport := network_transport(network)
 	link: Mesh_Link
@@ -578,8 +577,8 @@ client_pairing_link_breaks_and_spends_the_code :: proc(t: ^testing.T) {
 	transport := network_transport(network)
 	random_bytes := [8]u8{9, 8, 7, 6, 5, 4, 3, 2}
 	code, _ := machine_mesh.pairing_offer(&home.peer.pairing, client_identity(home), random_bytes, 60_000)
-	home.peer.pairing_uses_word = remote.client_uses_word({.Calls})
-	laptop.peer.pairing_uses_word = remote.client_uses_word({.Calls})
+	home.peer.pairing_uses = {.Calls}
+	laptop.peer.pairing_uses = {.Calls}
 	testing.expect_value(t, machine_mesh.pairing_join(&laptop.peer.pairing, client_identity(laptop), code[:], 60_000), machine_mesh.Pairing_Status.Ok)
 	link: Mesh_Link
 	testing.expect_value(t, mesh_connect(&link, &laptop.peer, &transport, client_identity(home), .Pairing, 60_000, 1_000), Mesh_Client_Status.Ok)

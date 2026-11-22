@@ -97,15 +97,16 @@ MESH_CLIENT_PAGES :: (size_of(Mesh_Client_Memory) + system.PAGE_SIZE - 1) / syst
 
 mesh_client: Mesh_Client_Memory
 
-// mesh_client_configure takes the configuration of the server before its
-// private key is erased: the key of this machine proves this machine to a
-// paired machine, as a client key.
+// mesh_client_configure takes the configuration of the outbound links from
+// the configuration of the server, with no private key. The key of this
+// machine proves this machine to a paired machine as a client key; the
+// server keeps it for its life, and mesh_connect copies it only for the
+// start of one connection, so no idle copy waits in this memory.
 mesh_client_configure :: proc "contextless" (server_configuration: ^quic.Connection_Configuration) {
 	configuration := &mesh_client.configuration
 	configuration^ = {idle_timeout_milliseconds = server_configuration.idle_timeout_milliseconds}
 	configuration.tls = {role = .Client, least_seed_strength = .Processor}
 	configuration.tls.application_protocol_length = copy(configuration.tls.application_protocol[:], remote.APPLICATION_PROTOCOL)
-	configuration.tls.client_private_key = server_configuration.tls.server_private_key
 	mesh_client.configured = true
 }
 
@@ -118,9 +119,8 @@ mesh_client_key_erase :: proc "contextless" (key: ^[quic.ED25519_KEY_SIZE]u8) {
 	}
 }
 
-// mesh_client_shutdown ends each outbound link and erases the copy of the
-// private key that the links prove this machine with. The service calls it
-// before it stops on a failure; after it, mesh_connect refuses until a new
+// mesh_client_shutdown ends each outbound link. The service calls it before
+// it stops on a failure; after it, mesh_connect refuses until a new
 // mesh_client_configure.
 mesh_client_shutdown :: proc "contextless" () {
 	now_us := now_microseconds()
@@ -134,7 +134,6 @@ mesh_client_shutdown :: proc "contextless" () {
 		}
 		machine_wire.mesh_link_broken(&link.session)
 	}
-	mesh_client_key_erase(&mesh_client.configuration.tls.client_private_key)
 	mesh_client.configured = false
 }
 
@@ -219,6 +218,9 @@ mesh_connect :: proc "contextless" (identity: [32]u8, address: u32, port: u16, p
 	link.address = quic.Remote{address = address, port = port}
 	configuration := mesh_client.configuration
 	configuration.tls.server_public_key = identity
+	// The key of this machine, from the server that keeps it, for this
+	// start only.
+	configuration.tls.client_private_key = server.configuration.tls.server_private_key
 	if !quic.connection_start_client(&mesh_client.connections[index], mesh_client.streams[index][:], &configuration, &cryptography, &process_generator, now_microseconds(), error) {
 		machine_wire.mesh_link_broken(&link.session)
 		mesh_client_key_erase(&configuration.tls.client_private_key)

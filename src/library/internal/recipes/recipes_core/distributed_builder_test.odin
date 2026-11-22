@@ -10,7 +10,6 @@ import "modus:contract/machine_mesh"
 import "modus:contract/machine_wire"
 import "modus:contract/object_cache"
 import pr "modus:contract/plans_recipes"
-import "modus:contract/remote"
 import "modus:contract/role_contract"
 import "modus:contract/tree_hash"
 
@@ -255,8 +254,8 @@ sim_pair :: proc(t: ^testing.T, laptop, other: ^Sim_Machine, network: ^Sim_Netwo
 	random_bytes := [8]u8{other.seed, laptop.seed, 3, 4, 5, 6, 7, 8}
 	code, offer_status := machine_mesh.pairing_offer(&other.peer.pairing, identity(other), random_bytes, network.now_ms)
 	testing.expect_value(t, offer_status, machine_mesh.Pairing_Status.Ok)
-	other.peer.pairing_uses_word = remote.client_uses_word({.Calls})
-	laptop.peer.pairing_uses_word = remote.client_uses_word({.Calls})
+	other.peer.pairing_uses = {.Calls}
+	laptop.peer.pairing_uses = {.Calls}
 	testing.expect_value(t, machine_mesh.pairing_join(&laptop.peer.pairing, identity(laptop), code[:], network.now_ms), machine_mesh.Pairing_Status.Ok)
 	transport := machine_wire.Mesh_Transport{connect = sim_connect, round_trip = sim_round_trip, user_data = network}
 	link: machine_wire.Mesh_Link
@@ -352,7 +351,7 @@ world_policy :: proc(world: ^World, mode: pr.Build_Mode, local := true) -> Distr
 @(private = "file")
 spec_make :: proc(name: string, kind: object_cache.Cache_Object_Kind, inputs: []string, argument: u8) -> (spec: pr.Recipe_Spec) {
 	spec.builder_hash = blake3.hash(transmute([]u8)string("modus test builder"))
-	spec.output_kind_word = u64(kind)
+	spec.output_kind = kind
 	spec.source_date_unix = 1_700_000_000
 	spec.output_block_limit = 64
 	for input_name, index in inputs {
@@ -372,17 +371,25 @@ spec_make :: proc(name: string, kind: object_cache.Cache_Object_Kind, inputs: []
 // with its output.
 @(private = "file")
 cache_prepare :: proc(world: ^World, spec: ^pr.Recipe_Spec, signer: ^Sim_Machine) {
+	cache_prepare_on(world.d, spec, signer)
+}
+
+// cache_prepare_on gives a machine that serves as a cache the realisation
+// of a recipe, signed by signer, with its output.
+@(private = "file")
+cache_prepare_on :: proc(cache: ^Sim_Machine, spec: ^pr.Recipe_Spec, signer: ^Sim_Machine) {
 	sandbox, refusal := pr.builder_sandbox_prepare(spec)
 	assert(refusal == .None)
-	count, ok := sim_build(&sandbox, world.d.cache_payload[:], world.d)
+	builds := cache.builds
+	count, ok := sim_build(&sandbox, cache.cache_payload[:], cache)
 	assert(ok)
-	world.d.builds = 0
-	world.d.cache_length = count
-	output_hash, _ := pr.recipe_hash_output(sandbox.output_kind, world.d.cache_payload[:count])
-	world.d.cache_record = object_cache.Realisation_Record{recipe_hash = sandbox.recipe_hash, output_hash = output_hash, output_kind = sandbox.output_kind, signer_public_key = signer.signer_public}
-	signing_bytes, _ := object_cache.realisation_signing_bytes(&world.d.cache_record)
-	ed25519.sign(&signer.signer_key, signing_bytes[:], world.d.cache_record.signature[:])
-	world.d.has_cache = true
+	cache.builds = builds
+	cache.cache_length = count
+	output_hash, _ := pr.recipe_hash_output(sandbox.output_kind, cache.cache_payload[:count])
+	cache.cache_record = object_cache.Realisation_Record{recipe_hash = sandbox.recipe_hash, output_hash = output_hash, output_kind = sandbox.output_kind, signer_public_key = signer.signer_public}
+	signing_bytes, _ := object_cache.realisation_signing_bytes(&cache.cache_record)
+	ed25519.sign(&signer.signer_key, signing_bytes[:], cache.cache_record.signature[:])
+	cache.has_cache = true
 }
 
 // ---- The tests ----
@@ -402,7 +409,7 @@ distributed_dag_runs_across_builders_and_cache :: proc(t: ^testing.T) {
 	gamma := spec_make("gamma", .Blob, {"source"}, 3)
 	cache_prepare(world, &gamma, world.d)
 	join := spec_make("join", .Blob, {"alpha", "beta"}, 4)
-	join.inputs[1].kind_word = u64(object_cache.Cache_Object_Kind.Tree)
+	join.inputs[1].kind = .Tree
 	single := spec_make("single", .Blob, {"gamma"}, 5)
 	top := spec_make("top", .Blob, {"join", "single"}, 6)
 
@@ -892,4 +899,82 @@ remote_build_arguments_cross_whole_and_refuse_damage :: proc(t: ^testing.T) {
 	testing.expect_value(t, outcome, machine_wire.Role_Outcome.Refused)
 	_, _, outcome = remote_recipes_serve(&world.d.host, u32(Remote_Recipes_Export.Build), bytes, result[:])
 	testing.expect_value(t, outcome, machine_wire.Role_Outcome.Refused)
+}
+
+// One faulty cache never stops a build. Refused first: a cache that
+// withholds the output, a cache whose output changes in transit, and a
+// cache whose signature does not verify; each leaves the run and the next
+// source gives the output. Cache_Only with every cache faulty names the
+// last fault. Last: a second, honest cache gives the output after the
+// faulty one.
+@(test)
+distributed_cache_first_skips_a_faulty_cache_peer :: proc(t: ^testing.T) {
+	world := world_make(t)
+	defer world_free(world)
+	gamma := spec_make("gamma", .Blob, {"source"}, 3)
+	cache_uses := machine_wire.Machine_Uses{.Roles, .Objects}
+
+	// D gives the realisation and withholds the output: the builders of
+	// the pool build the recipe.
+	pool := world_pool(world)
+	cache_prepare(world, &gamma, world.d)
+	world.d.host.publish = nil
+	distributed_builder_init(world.scheduler, &world.laptop.peer, pool[:])
+	dag_recipe_add(world.scheduler, &gamma, nil)
+	policy := world_policy(world, .Cache_First, local = false)
+	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.None)
+	testing.expect_value(t, world.scheduler.results[0].source, Distributed_Source.Remote_Builder)
+	testing.expect_value(t, world.scheduler.counters.cache_faults, 1)
+	testing.expect_value(t, world.scheduler.counters.cache_hits, 0)
+	testing.expect(t, world.scheduler.peer_out[2], "the faulty cache leaves the run")
+	world.d.host.publish = sim_publish
+
+	// A pool with the faulty cache alone: this machine builds the recipe,
+	// whatever the fault of the cache.
+	only_cache := [1]Distributed_Peer{{identity = identity(world.d), purpose = .Cache, uses = cache_uses}}
+	for fault in 0 ..< 3 {
+		cache_prepare(world, &gamma, world.d)
+		switch fault {
+		case 0:
+			world.d.host.publish = nil
+		case 1:
+			world.network.flip_object_of = identity(world.d)
+		case 2:
+			world.d.cache_record.signature[7] ~= 0x01
+		}
+		local_builds := world.local_builds
+		distributed_builder_init(world.scheduler, &world.laptop.peer, only_cache[:])
+		dag_recipe_add(world.scheduler, &gamma, nil)
+		policy = world_policy(world, .Cache_First)
+		testing.expectf(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000) == .None, "fault %d stopped the build", fault)
+		testing.expect_value(t, world.scheduler.results[0].source, Distributed_Source.Local_Build)
+		testing.expect_value(t, world.local_builds, local_builds + 1)
+		testing.expect_value(t, world.scheduler.counters.cache_faults, 1)
+		world.d.host.publish = sim_publish
+		world.network.flip_object_of = {}
+	}
+
+	// Cache_Only, and the one cache is faulty: the refusal names the fault.
+	cache_prepare(world, &gamma, world.d)
+	world.d.cache_record.signature[7] ~= 0x01
+	distributed_builder_init(world.scheduler, &world.laptop.peer, only_cache[:])
+	dag_recipe_add(world.scheduler, &gamma, nil)
+	policy = world_policy(world, .Cache_Only)
+	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.Bad_Signature)
+	testing.expect(t, dag_output(world.scheduler, 0) == nil)
+
+	// Last: D is faulty and C is an honest cache after it. Cache_Only takes
+	// the output from C, and no machine builds.
+	cache_prepare_on(world.c, &gamma, world.c)
+	two_caches := [2]Distributed_Peer{{identity = identity(world.d), purpose = .Cache, uses = cache_uses}, {identity = identity(world.c), purpose = .Cache, uses = cache_uses}}
+	builds := world.b.builds + world.c.builds + world.local_builds
+	distributed_builder_init(world.scheduler, &world.laptop.peer, two_caches[:])
+	dag_recipe_add(world.scheduler, &gamma, nil)
+	testing.expect_value(t, distributed_build(world.scheduler, &world.laptop.peer, &policy, 100_000), Distributed_Refusal.None)
+	testing.expect_value(t, world.scheduler.results[0].source, Distributed_Source.Cache_Peer)
+	testing.expect_value(t, world.scheduler.results[0].machine, identity(world.c))
+	testing.expect_value(t, world.scheduler.results[0].output_hash, world.c.cache_record.output_hash)
+	testing.expect_value(t, world.scheduler.counters.cache_faults, 1)
+	testing.expect_value(t, world.scheduler.counters.cache_hits, 1)
+	testing.expect_value(t, world.b.builds + world.c.builds + world.local_builds, builds)
 }

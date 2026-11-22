@@ -54,20 +54,20 @@ status :: proc "c" (out: ^Plans_Status, error: ^errors.Error_Record) -> i64 {
 	return 0
 }
 
-// current_generation returns the active applied plan generation of principal.
+// current_generation returns the active applied plan generation of the
+// principal of the caller, or 0 when none. A caller names no principal:
+// it reads only its own plans (exports.odin, caller_principal).
 @(export)
-current_generation :: proc "c" (principal: i64, error: ^errors.Error_Record) -> i64 {
-	if principal < 0 {
-		return errors.fail(error, -1, .Bad_Value, .None, 1, 0, max(i64), principal)
+current_generation :: proc "c" (error: ^errors.Error_Record) -> i64 {
+	principal, failure, allowed := caller_principal(error)
+	if !allowed {
+		return failure
 	}
-	if !service_state.initialized {
-		return errors.fail(error, -1, .State, .Requests)
-	}
-	_, rec, found := plans_core.current_plan(&service_state, u64(principal))
+	_, rec, found := plans_core.current_plan(&service_state, principal)
 	if !found {
 		return 0
 	}
-	return i64(rec.generation)
+	return i64(min(rec.generation, u64(max(i64))))
 }
 
 // diff_count returns the plan differences that the service computed.
@@ -80,35 +80,32 @@ diff_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
 }
 
 // apply_generation returns the newest generation that an apply committed for
-// principal, or 0 when none: the next apply commits the generation after it,
-// even after a rollback.
+// the principal of the caller, or 0 when none: the next apply commits the
+// generation after it, even after a rollback.
 @(export)
-apply_generation :: proc "c" (principal: i64, error: ^errors.Error_Record) -> i64 {
-	if principal < 0 {
-		return errors.fail(error, -1, .Bad_Value, .None, 1, principal, max(i64))
+apply_generation :: proc "c" (error: ^errors.Error_Record) -> i64 {
+	principal, failure, allowed := caller_principal(error)
+	if !allowed {
+		return failure
 	}
-	if !service_state.initialized {
-		return errors.fail(error, -2, .State, .Requests)
-	}
-	return i64(plans_core.highest_generation(&service_state, u64(principal)))
+	return i64(min(plans_core.highest_generation(&service_state, principal), u64(max(i64))))
 }
 
-// rollback_generation returns the generation that a rollback of principal with
-// no target selects, and rolls nothing back. With no earlier generation, it
-// fails with the kind Absent and the unit Versions; found is the refusal.
+// rollback_generation returns the generation that a rollback of the
+// principal of the caller selects, and rolls nothing back. With no earlier
+// generation, it fails with the kind Absent and the unit Versions; found is
+// the refusal.
 @(export)
-rollback_generation :: proc "c" (principal: i64, error: ^errors.Error_Record) -> i64 {
-	if principal < 0 {
-		return errors.fail(error, -1, .Bad_Value, .None, 1, principal, max(i64))
+rollback_generation :: proc "c" (error: ^errors.Error_Record) -> i64 {
+	principal, failure, allowed := caller_principal(error)
+	if !allowed {
+		return failure
 	}
-	if !service_state.initialized {
-		return errors.fail(error, -2, .State, .Requests)
-	}
-	selected, refusal := plans_core.rollback_target(&service_state, u64(principal))
+	selected, refusal := plans_core.rollback_target(&service_state, principal)
 	if refusal != .None {
-		return errors.fail(error, -3, .Absent, .Versions, 1, principal, 0, i64(refusal))
+		return errors.fail(error, ERROR_HISTORY, .Absent, .Versions, 0, 0, 0, i64(refusal))
 	}
-	return i64(selected.generation)
+	return i64(min(selected.generation, u64(max(i64))))
 }
 
 // entry binds the private store, the way to the trusted display and the

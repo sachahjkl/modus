@@ -15,7 +15,6 @@
 package projects_core
 
 import "modus:contract/blake3"
-import "modus:contract/object_cache"
 import pr "modus:contract/plans_recipes"
 
 // The projects that the service keeps loaded at once, across principals.
@@ -288,7 +287,7 @@ inputs_recipe :: proc "contextless" (table: ^Loaded_Projects, state: ^Projects_S
 		return {}, .Pin_Not_Found
 	}
 	spec.builder_hash = pr.inputs_tree_builder_hash()
-	spec.output_kind_word = u64(object_cache.Cache_Object_Kind.Tree)
+	spec.output_kind = .Tree
 	for index in 0 ..< project.pin_count {
 		pin := &project.pins[index]
 		input, input_refusal := pr.recipe_input_make(string(pin.name_bytes[:pin.name_length]), .Tree, pin.tree_hash)

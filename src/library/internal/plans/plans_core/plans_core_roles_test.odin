@@ -184,14 +184,14 @@ test_plans_roles_follow_apply_and_rollback :: proc(t: ^testing.T) {
 	// The core refuses the rollback: the second generation stays current in
 	// the store and in the core.
 	core.refuse = .Not_In_Image
-	_, refusal = rollback(state, 0)
+	_, refusal = rollback_commit(state, 0)
 	testing.expect_value(t, refusal, pr.Plan_Refusal.Roles_Refused)
 	_, current, _ := current_plan(state, 0)
 	testing.expect_value(t, current.generation, u64(2))
 	testing.expect_value(t, core.in_force.generation, u64(2))
 
 	core.refuse = .None
-	selected, rollback_refusal := rollback(state, 0)
+	selected, rollback_refusal := rollback_commit(state, 0)
 	testing.expect_value(t, rollback_refusal, pr.Plan_Refusal.None)
 	testing.expect_value(t, selected.generation, u64(1))
 	testing.expect_value(t, core.in_force.generation, u64(1))
@@ -640,4 +640,72 @@ test_plans_late_page_tags :: proc(t: ^testing.T) {
 	}
 	late_page_remember(&late, max(u32))
 	testing.expect(t, late_page_take(&late, max(u32)))
+}
+
+// A trusted display whose principal gives one decision to each dialog.
+@(private = "file")
+Deciding_Display :: struct {
+	serial:   u64,
+	decision: pr.Plan_Display_Decision,
+}
+
+@(private = "file")
+deciding_ask :: proc "contextless" (user: rawptr, plan_name: string, added: string, removed: string) -> (serial: u64, ok: bool) {
+	display := (^Deciding_Display)(user)
+	display.serial += 1
+	return display.serial, true
+}
+
+@(private = "file")
+deciding_poll :: proc "contextless" (user: rawptr, serial: u64) -> (decision: pr.Plan_Display_Decision, ok: bool) {
+	return (^Deciding_Display)(user).decision, true
+}
+
+// A rollback of principal 0 changes the holder of a role: the core gets no
+// set while the dialog shows, nor after a refusal of the principal, so the
+// holder never changes in silence. Last: an accepted rollback gives the
+// core the roles of the generation that the principal saw.
+@(test)
+test_plans_rollback_changes_no_role_holder_before_the_principal_accepts :: proc(t: ^testing.T) {
+	core: Test_Core
+	state, store := roles_state(&core)
+	defer free(state)
+	defer free(store)
+	first := role_plan(0, .Storage, 1)
+	first_record, refusal := apply_now(state, &first, {})
+	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
+	second := role_plan(0, .Storage, 2)
+	_, refusal = apply_now(state, &second, first_record.plan_hash)
+	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
+	calls := core.calls
+	in_force := core.in_force
+
+	display := Deciding_Display{decision = .Pending}
+	port := Trusted_Display_Port{user = &display, ask = deciding_ask, poll = deciding_poll}
+	difference: pr.Plan_Difference
+	lists: Plan_Display_Lists
+	ticket, request_refusal := rollback_request(state, &port, 0, &difference, &lists)
+	testing.expect_value(t, request_refusal, pr.Plan_Refusal.None)
+	_, finished, _ := rollback_poll(state, &port, 0, ticket)
+	testing.expect(t, !finished)
+	testing.expect_value(t, core.calls, calls)
+	testing.expect_value(t, core.in_force, in_force)
+
+	display.decision = .Refused
+	_, _, refused := rollback_poll(state, &port, 0, ticket)
+	testing.expect_value(t, refused, pr.Plan_Refusal.Refused_By_Principal)
+	testing.expect_value(t, core.calls, calls)
+	testing.expect_value(t, core.in_force, in_force)
+	_, current, _ := current_plan(state, 0)
+	testing.expect_value(t, current.generation, u64(2))
+
+	display.decision = .Accepted
+	accepted, _ := rollback_request(state, &port, 0, &difference, &lists)
+	selected, accepted_finished, accepted_refusal := rollback_poll(state, &port, 0, accepted)
+	testing.expect(t, accepted_finished)
+	testing.expect_value(t, accepted_refusal, pr.Plan_Refusal.None)
+	testing.expect_value(t, selected.generation, u64(1))
+	testing.expect_value(t, core.in_force.generation, u64(1))
+	testing.expect_value(t, core.in_force.overrides[0].module_hash, roles_test_hash(1))
+	testing.expect_value(t, core.steps[core.calls - 1], rd.Plan_Roles_Step.Rollback)
 }

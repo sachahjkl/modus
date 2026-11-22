@@ -1024,7 +1024,7 @@ bootstrap_make_recipe_spec :: proc(
 	}
 	spec = plans_recipes.Recipe_Spec {
 		builder_hash       = builder_hash,
-		output_kind_word   = u64(output_kind),
+		output_kind        = output_kind,
 		source_date_unix   = source_date_unix,
 		output_block_limit = output_block_limit,
 		input_count        = u32(len(inputs)),

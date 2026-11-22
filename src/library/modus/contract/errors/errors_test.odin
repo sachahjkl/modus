@@ -74,3 +74,30 @@ the_fields_of_an_error_record_keep_each_word :: proc(t: ^testing.T) {
 		testing.expectf(t, UNIT_MEMBER_NAMES[member] != "", "the unit %v has no name", member)
 	}
 }
+
+// A refusal record that another process sent is refused when its kind or
+// its unit names no member, or when its kind is None: each edge of each
+// word, and the zero record. Each other value passes as it is.
+@(test)
+a_refusal_record_that_names_no_kind_is_refused :: proc(t: ^testing.T) {
+	bad_words := [?]i64{-1, i64(max(Kind)) + 1, max(i64), min(i64)}
+	for word in bad_words {
+		record, ok := refusal_record_of_values(completion_values({kind = word, unit = i64(Unit.Bytes)}))
+		testing.expectf(t, !ok, "the kind word %d names no member, and it is taken", word)
+		testing.expect_value(t, record, Error_Record{})
+	}
+	bad_unit_words := [?]i64{-1, i64(max(Unit)) + 1, max(i64), min(i64)}
+	for word in bad_unit_words {
+		_, ok := refusal_record_of_values(completion_values({kind = i64(Kind.Device), unit = word}))
+		testing.expectf(t, !ok, "the unit word %d names no member, and it is taken", word)
+	}
+	_, zero_ok := refusal_record_of_values({})
+	testing.expect(t, !zero_ok)
+	_, none_ok := refusal_record_of_values(completion_values({kind = i64(Kind.None), unit = i64(Unit.Bytes), value = 5}))
+	testing.expect(t, !none_ok)
+	// Last: a whole record passes with each field as it was.
+	sent := Error_Record{kind = i64(Kind.Device), unit = i64(Unit.Dropped_Writes), operation = 4, argument = 1, value = -3, limit = max(i64), found = min(i64)}
+	record, ok := refusal_record_of_values(completion_values(sent))
+	testing.expect(t, ok)
+	testing.expect_value(t, record, sent)
+}

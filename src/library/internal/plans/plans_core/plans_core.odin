@@ -14,6 +14,10 @@
 //   the tables: a refusal of the store changes no table;
 // - a rollback writes the current object only, so a later apply never
 //   overwrites a generation that a rollback can still select;
+// - a rollback is two steps too: rollback_request shows the difference
+//   back to the selected generation on the trusted display, and
+//   rollback_poll commits it only when the principal accepted. A rollback
+//   restores grants and role holders, so it never changes them in silence;
 // - the roles of a plan of principal 0 go to the root service core through
 //   the roles port, before the current object is written: a set that the
 //   core refuses commits nothing, and a current object that the store
@@ -34,15 +38,29 @@ MAX_PRINCIPALS :: 8
 // Maximum historical applied plans retained per principal.
 MAX_HISTORY_PER_PRINCIPAL :: 32
 
-// The apply of a principal that waits for the decision of the trusted
-// display: the plan that the principal sees, and the current plan that its
-// difference read.
+// What a pending dialog of the trusted display decides: an apply of a new
+// plan, or a rollback to a generation of the history.
+Pending_Step :: enum u8 {
+	Apply,
+	Rollback,
+}
+
+// The name that the trusted display shows for a rollback.
+ROLLBACK_DISPLAY_NAME :: "rollback of the plan"
+
+// The apply or the rollback of a principal that waits for the decision of
+// the trusted display: the plan that the principal sees, and the current
+// plan that its difference read. One dialog at a time for each principal.
 Pending_Apply :: struct {
 	active:             bool,
+	step:               Pending_Step,
 	display_serial:     u64,
 	expected_plan_hash: blake3.Hash,
 	proposed_plan_hash: blake3.Hash,
+	// Apply: the plan that the principal saw.
 	plan:               pr.Plan_Spec,
+	// Rollback: the generation that the principal saw.
+	target_generation:  u64,
 }
 
 // Per-principal authoritative applied plan table.
@@ -784,12 +802,8 @@ apply_request :: proc "contextless" (
 	if entry_refusal != .None {
 		return 0, entry_refusal
 	}
-	if entry.pending.active {
-		decision, polled := display_poll(display, entry.pending.display_serial)
-		if polled && decision == .Pending {
-			return 0, .Apply_Pending
-		}
-		entry.pending = {}
+	if refusal = pending_dialog_clear(entry, display); refusal != .None {
+		return 0, refusal
 	}
 	cur_plan, _, _ := entry_current_plan(entry)
 	if refusal = pr.plan_diff_compute(cur_plan, proposed, out_diff); refusal != .None {
@@ -820,12 +834,58 @@ apply_request :: proc "contextless" (
 	state.counters.total_diffs += 1
 	entry.pending = {
 		active             = true,
+		step               = .Apply,
 		display_serial     = serial,
 		expected_plan_hash = out_diff.current_plan_hash,
 		proposed_plan_hash = out_diff.proposed_plan_hash,
 		plan               = proposed^,
 	}
 	return serial, .None
+}
+
+// pending_dialog_clear refuses a second dialog while the dialog of an
+// earlier apply or rollback of the principal still shows, and drops a
+// pending step whose dialog closed or was replaced, uncommitted.
+@(private = "file")
+pending_dialog_clear :: proc "contextless" (entry: ^Principal_Plans_State, display: ^Trusted_Display_Port) -> pr.Plan_Refusal {
+	if !entry.pending.active {
+		return .None
+	}
+	decision, polled := display_poll(display, entry.pending.display_serial)
+	if polled && decision == .Pending {
+		return .Apply_Pending
+	}
+	entry.pending = {}
+	return .None
+}
+
+// pending_decision reads the decision of the principal on the pending
+// step of ticket. finished is false while the dialog shows. A refusal of
+// the principal, a dialog that the display no longer knows and a display
+// that does not answer drop the pending step; accepted is true only for an
+// accepted dialog of the step.
+@(private = "file")
+pending_decision :: proc "contextless" (entry: ^Principal_Plans_State, display: ^Trusted_Display_Port, ticket: u64, step: Pending_Step) -> (accepted: bool, finished: bool, refusal: pr.Plan_Refusal) {
+	if ticket == 0 || !entry.pending.active || entry.pending.step != step || entry.pending.display_serial != ticket {
+		return false, true, .No_Pending_Apply
+	}
+	decision, polled := display_poll(display, ticket)
+	if !polled {
+		entry.pending = {}
+		return false, true, .Display_Refused
+	}
+	switch decision {
+	case .Pending:
+		return false, false, .None
+	case .Refused:
+		entry.pending = {}
+		return false, true, .Refused_By_Principal
+	case .Unknown:
+		entry.pending = {}
+		return false, true, .Display_Refused
+	case .Accepted:
+	}
+	return true, true, .None
 }
 
 @(private = "file")
@@ -861,24 +921,10 @@ apply_poll :: proc "contextless" (
 	if entry_refusal != .None {
 		return {}, true, entry_refusal
 	}
-	if ticket == 0 || !entry.pending.active || entry.pending.display_serial != ticket {
-		return {}, true, .No_Pending_Apply
-	}
-	decision, polled := display_poll(display, ticket)
-	if !polled {
-		entry.pending = {}
-		return {}, true, .Display_Refused
-	}
-	switch decision {
-	case .Pending:
-		return {}, false, .None
-	case .Refused:
-		entry.pending = {}
-		return {}, true, .Refused_By_Principal
-	case .Unknown:
-		entry.pending = {}
-		return {}, true, .Display_Refused
-	case .Accepted:
+	accepted: bool
+	accepted, finished, refusal = pending_decision(entry, display, ticket, .Apply)
+	if !accepted {
+		return {}, finished, refusal
 	}
 	defer entry.pending = {}
 	cur_plan, _, _ := entry_current_plan(entry)
@@ -895,7 +941,8 @@ apply_poll :: proc "contextless" (
 	return record, true, refusal
 }
 
-// pending_ticket gives the ticket of the pending apply of principal, or 0.
+// pending_ticket gives the ticket of the pending apply or rollback of
+// principal, or 0.
 pending_ticket :: proc "contextless" (state: ^Plans_State, principal: u64) -> u64 {
 	entry := find_principal(state, principal)
 	if entry == nil || !entry.pending.active {
@@ -904,11 +951,139 @@ pending_ticket :: proc "contextless" (state: ^Plans_State, principal: u64) -> u6
 	return entry.pending.display_serial
 }
 
-// rollback moves current_generation of principal to the immediately preceding
-// generation (when has_target is false) or to target_generation (when true).
-// It writes the current object of the store, which is the commit, then the
-// tables, and writes no plan: a subsequent apply writes highest_generation + 1.
-rollback :: proc "contextless" (
+// rollback_request shows on the trusted display the difference between the
+// current plan of principal and the generation that a rollback selects: the
+// immediately preceding one (when has_target is false) or target_generation
+// (when true). It keeps the rollback as the pending step of the principal
+// under the serial of the dialog, which it gives as the ticket of
+// rollback_poll. It commits nothing and gives the core no role.
+//
+// It refuses: a history with no generation to select; a generation whose
+// plan equals the current plan (No_Change); a difference that the dialog
+// cannot show whole; a display that does not show it; and a second dialog
+// while the dialog of an earlier apply or rollback still shows.
+rollback_request :: proc "contextless" (
+	state: ^Plans_State,
+	display: ^Trusted_Display_Port,
+	principal: u64,
+	out_diff: ^pr.Plan_Difference,
+	lists: ^Plan_Display_Lists,
+	target_generation: u64 = 0,
+	has_target: bool = false,
+) -> (ticket: u64, refusal: pr.Plan_Refusal) {
+	defer if refusal != .None {
+		state.counters.total_refusals += 1
+	}
+	if out_diff == nil || lists == nil {
+		return 0, .Buffer_Too_Small
+	}
+	out_diff^ = {}
+	lists^ = {}
+	entry, entry_refusal := principal_entry(state, principal)
+	if entry_refusal != .None {
+		return 0, entry_refusal
+	}
+	if refusal = pending_dialog_clear(entry, display); refusal != .None {
+		return 0, refusal
+	}
+	if entry.history_count == 0 || entry.current_generation == 0 {
+		return 0, .Empty_History
+	}
+	selected: pr.Applied_Plan_Record
+	selected, refusal = pr.plan_rollback_check(entry.history[:entry.history_count], entry.current_generation, target_generation, has_target)
+	if refusal != .None {
+		return 0, refusal
+	}
+	selected_index := find_generation_index(entry, selected.generation)
+	if selected_index < 0 {
+		return 0, .Unknown_Generation
+	}
+	cur_plan, _, _ := entry_current_plan(entry)
+	if refusal = pr.plan_diff_compute(cur_plan, &entry.plans[selected_index], out_diff); refusal != .None {
+		return 0, refusal
+	}
+	if out_diff.proposed_plan_hash != selected.plan_hash {
+		return 0, .Store_Damaged
+	}
+	if !out_diff.has_changes || out_diff.change_count == 0 {
+		return 0, .No_Change
+	}
+	if out_diff.change_count > pr.MAX_PLAN_DIFF_CHANGES {
+		return 0, .Display_Refused
+	}
+	if refusal = display_lists_of_difference(out_diff, lists); refusal != .None {
+		return 0, refusal
+	}
+	if display == nil || display.ask == nil {
+		return 0, .Consent_Required
+	}
+	serial, shown := display.ask(display.user, ROLLBACK_DISPLAY_NAME, string(lists.added[:lists.added_length]), string(lists.removed[:lists.removed_length]))
+	if !shown || serial == 0 {
+		return 0, .Display_Refused
+	}
+	state.counters.total_diffs += 1
+	entry.pending = {
+		active             = true,
+		step               = .Rollback,
+		display_serial     = serial,
+		expected_plan_hash = out_diff.current_plan_hash,
+		proposed_plan_hash = selected.plan_hash,
+		target_generation  = selected.generation,
+	}
+	return serial, .None
+}
+
+// rollback_poll reads the decision of the principal on the pending rollback
+// of ticket. While the dialog shows, finished is false and nothing changes.
+// When the principal accepted, it rolls back to the generation that the
+// principal saw, unless the current plan changed since its difference
+// (Stale_Current_Plan). A refusal of the principal, a dialog that the
+// display no longer knows and a display that does not answer drop the
+// pending rollback and change nothing else. Each finished poll ends the
+// pending rollback.
+rollback_poll :: proc "contextless" (
+	state: ^Plans_State,
+	display: ^Trusted_Display_Port,
+	principal: u64,
+	ticket: u64,
+) -> (selected: pr.Applied_Plan_Record, finished: bool, refusal: pr.Plan_Refusal) {
+	defer if refusal != .None {
+		state.counters.total_refusals += 1
+	}
+	entry, entry_refusal := principal_entry(state, principal)
+	if entry_refusal != .None {
+		return {}, true, entry_refusal
+	}
+	accepted: bool
+	accepted, finished, refusal = pending_decision(entry, display, ticket, .Rollback)
+	if !accepted {
+		return {}, finished, refusal
+	}
+	pending := entry.pending
+	entry.pending = {}
+	_, current_record, current_found := entry_current_plan(entry)
+	if !current_found || current_record.plan_hash != pending.expected_plan_hash {
+		return {}, true, .Stale_Current_Plan
+	}
+	selected_index := find_generation_index(entry, pending.target_generation)
+	if selected_index < 0 {
+		return {}, true, .Unknown_Generation
+	}
+	if entry.history[selected_index].plan_hash != pending.proposed_plan_hash {
+		return {}, true, .Untrusted_Consent
+	}
+	selected, refusal = rollback_commit(state, principal, pending.target_generation, true)
+	return selected, true, refusal
+}
+
+// rollback_commit moves current_generation of principal to the immediately
+// preceding generation (when has_target is false) or to target_generation
+// (when true). It writes the current object of the store, which is the
+// commit, then the tables, and writes no plan: a subsequent apply writes
+// highest_generation + 1. Only rollback_poll calls it outside the tests of
+// this package: a rollback needs the decision of the principal.
+@(private)
+rollback_commit :: proc "contextless" (
 	state: ^Plans_State,
 	principal: u64,
 	target_generation: u64 = 0,

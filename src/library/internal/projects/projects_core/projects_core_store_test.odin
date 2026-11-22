@@ -213,7 +213,7 @@ the_recipe_of_a_project_names_each_pin :: proc(t: ^testing.T) {
 	spec, refusal := inputs_recipe(fixture.table, fixture.state, 1, kernel)
 	testing.expect_value(t, refusal, pr.Project_Refusal.None)
 	testing.expect(t, spec.builder_hash == pr.inputs_tree_builder_hash())
-	testing.expect_value(t, spec.output_kind_word, u64(object_cache.Cache_Object_Kind.Tree))
+	testing.expect_value(t, spec.output_kind, object_cache.Cache_Object_Kind.Tree)
 	testing.expect_value(t, spec.input_count, u32(2))
 	testing.expect_value(t, string(spec.inputs[1].name_bytes[:spec.inputs[1].name_length]), "odin")
 	testing.expect(t, spec.inputs[1].hash == store_hash(4), "an input is the tree hash of its pin")

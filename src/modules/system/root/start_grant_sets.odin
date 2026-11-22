@@ -217,7 +217,7 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// of principal 0 whole or refuses them whole (Root_Command.Plan_Roles;
 	// src/md/features/declarations.md, "Apply, the difference and the
 	// rollback"). Its callers act for their principal; it acts for nobody.
-	{name = "plans", grants = {.Serve, .Store, .Image, .Connect, .Plans}, terms = {callable = {0 = "compositor"}, on_demand = true}},
+	{name = "plans", grants = {.Serve, .Store, .Image, .Connect, .Plans}, terms = {callable = {0 = "display"}, on_demand = true}},
 	// The holder of the role Recipes: the cache of the realisations and the
 	// recipes in its private store (src/md/features/recipes.md).
 	{name = "recipes", grants = {.Serve, .Store}, terms = {on_demand = true}},
@@ -575,7 +575,10 @@ start_grant_set_may_connect :: proc "contextless" (start_grant_set: ^Start_Grant
 		if name == "" {
 			return false
 		}
-		if name == service {
+		// A callable name can be a role name: it allows the holder of the
+		// role in force, whichever module a plan gave it to, and nothing
+		// when the role has no holder.
+		if resolved, has_holder := role_target_resolve_strict(name); has_holder && resolved == service {
 			return true
 		}
 	}

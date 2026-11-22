@@ -5,15 +5,14 @@
 package plans_service
 
 import "internal:plans/plans_core"
+import "modus:contract/blake3"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/ring"
+import "modus:contract/role_contract"
 import "modus:system"
-
-// The name of the holder of the Display role that the root service connects.
-DISPLAY_SERVICE_NAME :: "compositor"
 
 // The ring to the root service: Connect to the display, and Plan_Roles.
 // Both wait for their own completion by its tag, one at a time: the service
@@ -89,6 +88,13 @@ display_port_bind :: proc "contextless" (ctx: ^system.Context) -> (port: plans_c
 
 // display_connect makes the connection at the first use, and again after a
 // call that failed: a display that started again has a new connection.
+//
+// It connects by the role name, so the root service reaches the holder of
+// Display in force, whichever module a plan gave it to (property 23). The
+// module file that describes the exports is the entry of the boot image
+// with the hash that the root service gives with the connection, checked
+// against the bytes: a holder that does not have plan_diff_ask and
+// plan_diff_poll is no trusted display, and the apply is refused.
 @(private = "file")
 display_connect :: proc "contextless" () -> bool {
 	if display_connection.connected {
@@ -97,17 +103,24 @@ display_connect :: proc "contextless" () -> bool {
 	if len(display_image) == 0 || !root_requests_open() {
 		return false
 	}
-	file := system.image_find(display_image, DISPLAY_SERVICE_NAME)
-	if file == nil {
+	connection, status := system.service_connection(&root_requests.ring, root_requests_tag_next(), role_contract.role_properties(.Display).name)
+	if status != .Ok {
+		return false
+	}
+	entry := system.image_entry_of(display_image, connection.module_hash)
+	if entry == nil {
+		system.call_connection_end(&connection)
+		return false
+	}
+	file := display_image[entry.offset:][:entry.size]
+	if blake3.hash(file) != connection.module_hash {
+		system.call_connection_end(&connection)
 		return false
 	}
 	ask := module.export_find(file, "plan_diff_ask")
 	poll := module.export_find(file, "plan_diff_poll")
 	if ask == 0 || poll == 0 {
-		return false
-	}
-	connection, status := system.service_connection(&root_requests.ring, root_requests_tag_next(), DISPLAY_SERVICE_NAME)
-	if status != .Ok {
+		system.call_connection_end(&connection)
 		return false
 	}
 	display_connection.connection = connection

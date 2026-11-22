@@ -79,21 +79,21 @@ test_plans_rollback_refuses_bad_targets_and_keeps_the_highest_generation :: proc
 	// generation stays 3.
 	bad_targets := [?]u64{0, 4, 99, max(u64)}
 	for bad in bad_targets {
-		_, refusal := rollback(state, 0, bad, true)
+		_, refusal := rollback_commit(state, 0, bad, true)
 		testing.expect_value(t, refusal, pr.Plan_Refusal.Unknown_Generation)
 		_, record, _ := current_plan(state, 0)
 		testing.expect_value(t, record.generation, u64(3))
 	}
-	_, same := rollback(state, 0, 3, true)
+	_, same := rollback_commit(state, 0, 3, true)
 	testing.expect_value(t, same, pr.Plan_Refusal.Already_At_Generation)
-	_, unknown_principal := rollback(state, 7)
+	_, unknown_principal := rollback_commit(state, 7)
 	testing.expect_value(t, unknown_principal, pr.Plan_Refusal.Empty_History)
 	testing.expect_value(t, state.counters.total_rollbacks, u64(0))
 	testing.expect_value(t, state.counters.total_refusals, u64(len(bad_targets) + 2))
 
 	// A rollback lowers the current generation and keeps the highest one; the
 	// query then names the generation before the new current one.
-	selected, refusal := rollback(state, 0)
+	selected, refusal := rollback_commit(state, 0)
 	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
 	testing.expect_value(t, selected.generation, u64(2))
 	testing.expect_value(t, highest_generation(state, 0), u64(3))
@@ -127,27 +127,27 @@ test_plans_rollback_refuses_a_damaged_history :: proc(t: ^testing.T) {
 	entry.history[1].plan_hash = {}
 	_, zero_query := rollback_target(state, 0)
 	testing.expect_value(t, zero_query, pr.Plan_Refusal.Zero_Plan_Hash)
-	_, zero_rollback := rollback(state, 0)
+	_, zero_rollback := rollback_commit(state, 0)
 	testing.expect_value(t, zero_rollback, pr.Plan_Refusal.Zero_Plan_Hash)
 	testing.expect_value(t, entry.current_generation, u64(3))
 	entry.history[1] = saved
 
 	// A record of another principal in the history.
 	entry.history[2].principal = 9
-	_, mismatch := rollback(state, 0)
+	_, mismatch := rollback_commit(state, 0)
 	testing.expect_value(t, mismatch, pr.Plan_Refusal.Principal_Mismatch)
 	testing.expect_value(t, entry.current_generation, u64(3))
 	entry.history[2].principal = 0
 
 	// Generations out of order.
 	entry.history[2].generation = 1
-	_, order := rollback(state, 0, 1, true)
+	_, order := rollback_commit(state, 0, 1, true)
 	testing.expect_value(t, order, pr.Plan_Refusal.Bad_Header)
 	entry.history[2].generation = 3
 
 	// A current generation that no record holds.
 	entry.current_generation = 17
-	_, lost := rollback(state, 0)
+	_, lost := rollback_commit(state, 0)
 	testing.expect_value(t, lost, pr.Plan_Refusal.Unknown_Generation)
 	_, lost_query := rollback_target(state, 0)
 	testing.expect_value(t, lost_query, pr.Plan_Refusal.Unknown_Generation)
@@ -156,7 +156,7 @@ test_plans_rollback_refuses_a_damaged_history :: proc(t: ^testing.T) {
 
 	// With the history restored, the rollback passes.
 	entry.current_generation = 3
-	selected, restored := rollback(state, 0)
+	selected, restored := rollback_commit(state, 0)
 	testing.expect_value(t, restored, pr.Plan_Refusal.None)
 	testing.expect_value(t, selected.generation, u64(2))
 }

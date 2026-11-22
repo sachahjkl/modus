@@ -277,7 +277,8 @@ build_recipe :: proc "contextless" (
 		state.counters.total_refusals += 1
 		return {outcome = .Refused, refusal = hash_refusal}
 	}
-	expected_kind, _ := object_cache.cache_object_kind_of_word(spec.output_kind_word)
+	// recipe_hash refused a spec whose kinds name no member.
+	expected_kind := spec.output_kind
 	result.recipe_hash = rhash
 	result.output_kind = expected_kind
 	state.counters.total_builds += 1

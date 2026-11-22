@@ -366,11 +366,6 @@ settings_faces := [1]role_contract.Required_Face {
 }
 
 // --- Plans ---
-@(private = "file", rodata)
-plans_gen_params := [1]role_contract.Required_Parameter {
-	{type = .Integer, direction = .Read},
-}
-
 @(private = "file")
 plans_exports := [2]role_contract.Required_Export {
 	{
@@ -383,7 +378,7 @@ plans_exports := [2]role_contract.Required_Export {
 	},
 	{
 		name              = "current_generation",
-		parameters        = plans_gen_params[:],
+		parameters        = nil,
 		result            = .Integer,
 		has_error_record  = true,
 		error_record_name = "Error_Record",
