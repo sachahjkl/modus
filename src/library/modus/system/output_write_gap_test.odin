@@ -394,3 +394,75 @@ output_write_filtered_ring_gap_bound :: proc(t: ^testing.T) {
 		testing.expect_value(t, got, want)
 	}
 }
+
+// A record output Paired: a write of one pair reaches the rings of that
+// pair only, whatever their sizes. Refused first: pair 0 and a pair with
+// no ring, with no record in any ring; then a full ring of one pair gives
+// Full and leaves the other pair writable; the end of one pair ends its
+// ring alone, and the record output goes on.
+@(test)
+a_write_of_a_pair_reaches_the_rings_of_that_pair_only :: proc(t: ^testing.T) {
+	wiring_mem := host_stream_seam_begin(t)
+	defer host_stream_seam_end(wiring_mem)
+	STREAM_INDEX :: u32(1)
+	Large_Record :: struct {
+		first:  Gap_Test_Record,
+		second: Gap_Test_Record,
+	}
+	ring_small := host_output_ring_make(t, size_of(Gap_Test_Record))
+	defer host_output_ring_destroy(&ring_small)
+	ring_large := host_output_ring_make(t, size_of(Large_Record))
+	defer host_output_ring_destroy(&ring_large)
+	host_seed_writer_end(t, 0, &ring_small, STREAM_INDEX, 11, size_of(Gap_Test_Record), .Writer_Chooses, full = false, joined = false)
+	stream_ends[0].pair = 5
+	host_seed_writer_end(t, 1, &ring_large, STREAM_INDEX, 12, size_of(Large_Record), .Writer_Chooses, full = false, joined = false)
+	stream_ends[1].pair = 6
+	forward: Record_Output(Any_Record, .Paired)
+	forward.state.index = STREAM_INDEX
+
+	small := Gap_Test_Record{sequence = 1, tag = 5}
+	small_bytes := transmute([size_of(Gap_Test_Record)]u8)small
+	testing.expect_value(t, output_write_pair(&forward, 0, small_bytes[:], wait = false), output.Stream_Status.Bad_Record)
+	testing.expect_value(t, output_write_pair(&forward, 7, small_bytes[:], wait = false), output.Stream_Status.No_Reader)
+	testing.expect_value(t, output_pair_rings(&forward, 7, size_of(Gap_Test_Record)), 0)
+	testing.expect_value(t, output_pair_rings(&forward, 0, size_of(Gap_Test_Record)), 0)
+	_, _, _, small_empty := host_pop_record(t, &ring_small, size_of(Gap_Test_Record))
+	testing.expect(t, !small_empty)
+
+	// The record of pair 5: the joined record, then the record, in its
+	// ring alone. The write with no ring moved the serial.
+	testing.expect_value(t, output_write_pair(&forward, 5, small_bytes[:], wait = false), output.Stream_Status.Ok)
+	kind, serial, got, ok := host_pop_record(t, &ring_small, size_of(Gap_Test_Record))
+	testing.expect(t, ok && kind == .Joined)
+	testing.expect_value(t, serial, u32(1))
+	kind, serial, got, ok = host_pop_record(t, &ring_small, size_of(Gap_Test_Record))
+	testing.expect(t, ok && kind == .Record)
+	testing.expect_value(t, serial, u32(1))
+	testing.expect_value(t, got, small)
+	_, _, _, large_empty := host_pop_record(t, &ring_large, size_of(Large_Record))
+	testing.expect(t, !large_empty)
+
+	// The ring of pair 5 is full: Full, and pair 6 still takes its record.
+	small_queue := &stream_ends[0].queue.commands
+	small_queue.counters.write = small_queue.counters.read + ring.compartment_capacity(small_queue)
+	testing.expect_value(t, output_write_pair(&forward, 5, small_bytes[:], wait = false), output.Stream_Status.Full)
+	large := Large_Record{first = {sequence = 2, tag = 6}, second = {sequence = 3, tag = 6}}
+	large_bytes := transmute([size_of(Large_Record)]u8)large
+	testing.expect_value(t, output_write_pair(&forward, 6, large_bytes[:], wait = false), output.Stream_Status.Ok)
+	kind, _, _, ok = host_pop_record(t, &ring_large, size_of(Large_Record))
+	testing.expect(t, ok && kind == .Joined)
+	kind, _, _, ok = host_pop_record(t, &ring_large, size_of(Large_Record))
+	testing.expect(t, ok && kind == .Record)
+
+	// The end of pair 6: its end record and the close of its end, with its
+	// word Closed; pair 5 keeps its ring, and the record output goes on.
+	testing.expect_value(t, output_end_pair(&forward, 6, size_of(Large_Record)), output.Stream_Status.Ok)
+	kind, _, _, ok = host_pop_record(t, &ring_large, size_of(Large_Record))
+	testing.expect(t, ok && kind == .End)
+	testing.expect_value(t, stream_ends[1].command, output.Wiring_Command.None)
+	testing.expect_value(t, stream_ends[0].command, output.Wiring_Command.Writer_End)
+	testing.expect(t, !forward.state.ended)
+	closed, closed_ok := ring.pop(&wiring_ring.completions)
+	testing.expect(t, closed_ok && closed.tag == 12)
+	testing.expect_value(t, output_end_pair(&forward, 6, size_of(Large_Record)), output.Stream_Status.No_Reader)
+}

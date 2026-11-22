@@ -27,7 +27,7 @@ Test_Stream_Spec :: struct {
 // build_test_module synthesizes a minimal valid module file in memory with
 // the given record descriptions, record outputs, and record inputs.
 @(private = "file")
-build_test_module :: proc(records_spec: []Test_Record_Spec, outputs_spec: []Test_Stream_Spec, inputs_spec: []Test_Stream_Spec) -> []u8 {
+build_test_module :: proc(records_spec: []Test_Record_Spec, outputs_spec: []Test_Stream_Spec, inputs_spec: []Test_Stream_Spec, paired_output: string = "") -> []u8 {
 	strings_buf := make([dynamic]u8, context.temp_allocator)
 	append(&strings_buf, 0)
 	add_str :: proc(buf: ^[dynamic]u8, s: string) -> (u32, u32) {
@@ -72,7 +72,7 @@ build_test_module :: proc(records_spec: []Test_Record_Spec, outputs_spec: []Test
 			name_offset = n_off,
 			name_count  = n_cnt,
 			record      = spec.record_index,
-			pairing     = u8(module.Record_Output_Pairing.Unpaired),
+			pairing     = u8(spec.name == paired_output ? module.Record_Output_Pairing.Paired : module.Record_Output_Pairing.Unpaired),
 		})
 	}
 
@@ -750,4 +750,190 @@ stall_revocation_preserves_healthy_siblings_and_non_holding_paces :: proc(t: ^te
 	wiring_stall_observe(&s, slot_choice, true, 0, 10 * STALL_HANG_BOUND_MS)
 	testing.expect_value(t, wiring_stall_expire(&s, 20 * STALL_HANG_BOUND_MS, actions[:]), 0)
 	testing.expect(t, s.wirings[slot_never].active && s.wirings[slot_choice].active)
+}
+
+// plan_start resolves a wiring list of a start whose child is the module
+// at child_offset, with the lent processes in order.
+@(private = "file")
+plan_start :: proc(s: ^State, image: []u8, asker: ws.Process_Identity, rows: []output.Wiring, lent: []ws.Resolved_Lent_End, child_offset, child_size: u64, work: ^Plan_Work, room_proc: Ring_Room_Proc = nil) -> (status: ws.Response_Status, refusal: errors.Error_Record) {
+	list_bytes: [output.WIRING_LIST_BYTES_MOST]u8
+	handles: [output.WIRING_LIST_HANDLE_LIMIT]u32
+	for index in 0 ..< len(lent) {
+		handles[index] = u32(index + 1)
+	}
+	output.wiring_list_write(list_bytes[:], rows, handles[:len(lent)])
+	req := ws.Resolved_Wiring_Request{
+		form                = u32(output.Wiring_List_Form.Start),
+		list_bytes          = u32(output.wiring_terms_start(len(rows), len(lent))),
+		lent_count          = u32(len(lent)),
+		child_module_offset = child_offset,
+		child_module_size   = child_size,
+	}
+	for item, index in lent {
+		req.lent[index] = item
+	}
+	return plan_resolve(s, image, list_bytes[:], &req, asker, 1, work, room_proc, nil)
+}
+
+// paired_row_make gives a row of a list with its pair.
+@(private = "file")
+paired_row_make :: proc(row: output.Wiring, pair: u32) -> output.Wiring {
+	paired := row
+	paired.paired_row = pair
+	return paired
+}
+
+// The processes of the tests of the pairs: shop writes orders, the
+// collector keeps sources and forwards, server reads orders, and other
+// reads a record of another type.
+@(private = "file")
+Pair_Machine :: struct {
+	state:     State,
+	image:     []u8,
+	offsets:   []u64,
+	sizes:     []u64,
+	asker:     ws.Process_Identity,
+	shop:      ws.Process_Identity,
+	collector: ws.Process_Identity,
+	server:    ws.Process_Identity,
+	other:     ws.Process_Identity,
+}
+
+@(private = "file")
+pair_machine_make :: proc(machine: ^Pair_Machine) {
+	shop := build_test_module({{"Order", "amount", 8, true}}, {{"orders", 1, .One}}, {{"returns", 1, .One}})
+	collector := build_test_module(nil, {{"forward", 0, .One}}, {{"sources", 0, .Many_Types}}, "forward")
+	server := build_test_module({{"Order", "amount", 8, true}}, nil, {{"orders", 1, .One}})
+	other := build_test_module({{"Other", "amount", 8, true}}, nil, {{"orders", 1, .One}})
+	machine.image, machine.offsets, machine.sizes = pack_image(shop, collector, server, other)
+	state_init(&machine.state)
+	machine.asker = {1, 10}
+	machine.shop = {2, 20}
+	machine.collector = {3, 30}
+	machine.server = {4, 40}
+	machine.other = {5, 50}
+	_, _ = process_register(&machine.state, machine.asker, 0, 0, {.Can_Wire})
+	_, _ = process_register(&machine.state, machine.shop, machine.offsets[0], machine.sizes[0], {.Has_Wiring_Ring})
+	_, _ = process_register(&machine.state, machine.collector, machine.offsets[1], machine.sizes[1], {.Has_Wiring_Ring})
+	_, _ = process_register(&machine.state, machine.server, machine.offsets[2], machine.sizes[2], {.Has_Wiring_Ring})
+	_, _ = process_register(&machine.state, machine.other, machine.offsets[3], machine.sizes[3], {.Has_Wiring_Ring})
+}
+
+@(private = "file")
+lent_of :: proc(id: ws.Process_Identity, started_by_asker: u8 = 1) -> ws.Resolved_Lent_End {
+	return {process_slot = id.slot, process_serial = id.serial, started_by_asker = started_by_asker, present = 1}
+}
+
+// expect_pair_refused checks a refusal of a list with a pair: its status,
+// its kind, its unit, its field and its row, and that no state changed.
+@(private = "file")
+expect_pair_refused :: proc(t: ^testing.T, machine: ^Pair_Machine, rows: []output.Wiring, lent: []ws.Resolved_Lent_End, child: int, status: ws.Response_Status, kind: errors.Kind, unit: errors.Unit, field: output.Wiring_Field, row: i64, loc := #caller_location) {
+	before := machine.state
+	work: Plan_Work
+	got, refusal := plan_start(&machine.state, machine.image, machine.asker, rows, lent, machine.offsets[child], machine.sizes[child], &work)
+	testing.expect_value(t, got, status, loc = loc)
+	testing.expect_value(t, errors.Kind(refusal.kind), kind, loc = loc)
+	testing.expect_value(t, errors.Unit(refusal.unit), unit, loc = loc)
+	testing.expect_value(t, output.Wiring_Field(refusal.argument), field, loc = loc)
+	testing.expect_value(t, refusal.found, row, loc = loc)
+	testing.expectf(t, machine.state == before, "a refused list changed the state", loc = loc)
+}
+
+// Each refusal of a pair, first, with the state unchanged: a pair with no
+// source row; a source row beside a record output that is not Paired; a
+// source that goes to another process than the writer of the pair, or to
+// the asker; two pairs of one source; a pair whose reader is the writer of
+// its source (a loop through the collector); the collector as the child of
+// the start; a reader of another record than the source; a collector that
+// the asker did not start; and a pair in a Wire, which has no earlier row.
+@(test)
+a_pair_that_breaks_a_rule_is_refused_with_no_change :: proc(t: ^testing.T) {
+	machine: Pair_Machine
+	pair_machine_make(&machine)
+	shop_to_collector := make_wire_row(.Started, 1, 1, .Started, 2, 1, .Always_Holds_Writer)
+	forward_to_child := make_wire_row(.Started, 2, 1, .Child, 0, 1, .Always_Holds_Writer)
+	lent := [2]ws.Resolved_Lent_End{lent_of(machine.shop), lent_of(machine.collector)}
+	server_child := 2
+
+	// The pair names no row.
+	expect_pair_refused(t, &machine, {shop_to_collector, forward_to_child}, lent[:], server_child, .Bad_Command, .Bad_Value, .Wiring_Rows, .Paired_Row, 2)
+	// A record output that is not Paired names a pair.
+	expect_pair_refused(t, &machine, {shop_to_collector, paired_row_make(make_wire_row(.Started, 1, 1, .Child, 0, 1), 1)}, lent[:], server_child, .Bad_Command, .Bad_Value, .Wiring_Rows, .Paired_Row, 2)
+	// The source goes to another process: server reads orders, and the
+	// collector pairs with that row.
+	lent_other := [3]ws.Resolved_Lent_End{lent_of(machine.shop), lent_of(machine.collector), lent_of(machine.server)}
+	expect_pair_refused(t, &machine, {make_wire_row(.Started, 1, 1, .Started, 3, 1), paired_row_make(forward_to_child, 1)}, lent_other[:], 3, .Bad_Command, .Bad_Value, .Wiring_Rows, .Paired_Row, 2)
+	// The source goes to the asker.
+	expect_pair_refused(t, &machine, {make_wire_row(.Started, 1, 1, .Asker, 0, 0), paired_row_make(forward_to_child, 1)}, lent[:], server_child, .Bad_Command, .Bad_Value, .Wiring_Rows, .Paired_Row, 2)
+	// Two pairs of one source.
+	expect_pair_refused(t, &machine, {shop_to_collector, paired_row_make(forward_to_child, 1), paired_row_make(make_wire_row(.Started, 2, 1, .Asker, 0, 0), 1)}, lent[:], server_child, .Bad_State, .Exists, .Wirings, .Paired_Row, 3)
+	// A loop: the pair goes back to the writer of its source.
+	expect_pair_refused(t, &machine, {shop_to_collector, paired_row_make(make_wire_row(.Started, 2, 1, .Started, 1, 1), 1)}, lent[:], server_child, .Bad_State, .Bad_Value, .Wirings, .Reader_End, 2)
+	// The collector is the child of the start.
+	lent_server := [2]ws.Resolved_Lent_End{lent_of(machine.shop), lent_of(machine.server)}
+	expect_pair_refused(t, &machine, {make_wire_row(.Started, 1, 1, .Child, 0, 1), paired_row_make(make_wire_row(.Child, 0, 1, .Started, 2, 1), 1)}, lent_server[:], 1, .Bad_Command, .Unsupported, .Wiring_Rows, .Writer_End, 2)
+	// The reader of the pair reads another record than the source.
+	before := machine.state
+	work: Plan_Work
+	status, refusal := plan_start(&machine.state, machine.image, machine.asker, {shop_to_collector, paired_row_make(forward_to_child, 1)}, lent[:], machine.offsets[3], machine.sizes[3], &work)
+	testing.expect_value(t, status, ws.Response_Status.Bad_Command)
+	testing.expect_value(t, errors.Unit(refusal.unit), errors.Unit.Record_Types)
+	testing.expect_value(t, output.Description_Difference(refusal.value), output.Description_Difference.Name)
+	testing.expect_value(t, refusal.found, 2)
+	testing.expect(t, machine.state == before)
+	// A collector that the asker did not start.
+	lent_foreign := [2]ws.Resolved_Lent_End{lent_of(machine.shop), lent_of(machine.collector, 0)}
+	expect_pair_refused(t, &machine, {shop_to_collector, paired_row_make(forward_to_child, 1)}, lent_foreign[:], server_child, .No_Right, .No_Grant, .Wirings, .Whole, 1)
+	// A Wire of the forward has no earlier row, so it names no pair.
+	lent_wire := [1]ws.Resolved_Lent_End{lent_of(machine.collector)}
+	wire_status, wire_refusal, _, _ := wire_once(&machine.state, machine.image, machine.asker, make_wire_row(.Started, 1, 1, .Asker, 0, 0), lent_wire[:])
+	testing.expect_value(t, wire_status, ws.Response_Status.Bad_Command)
+	testing.expect_value(t, output.Wiring_Field(wire_refusal.argument), output.Wiring_Field.Paired_Row)
+	testing.expect_value(t, machine.state.wirings_running, 0)
+}
+
+// A pair whose processes have no room in their wiring rings is refused
+// with Busy, as each row: the list is whole or refused.
+@(test)
+a_pair_with_no_room_in_a_wiring_ring_is_refused :: proc(t: ^testing.T) {
+	machine: Pair_Machine
+	pair_machine_make(&machine)
+	no_room :: proc "contextless" (data: rawptr, proc_index: int) -> (available: u32, capacity: u32, has_ring: bool) {
+		return 1, 32, true
+	}
+	lent := [2]ws.Resolved_Lent_End{lent_of(machine.shop), lent_of(machine.collector)}
+	rows := [2]output.Wiring{make_wire_row(.Started, 1, 1, .Started, 2, 1), paired_row_make(make_wire_row(.Started, 2, 1, .Child, 0, 1), 1)}
+	before := machine.state
+	work: Plan_Work
+	status, refusal := plan_start(&machine.state, machine.image, machine.asker, rows[:], lent[:], machine.offsets[2], machine.sizes[2], &work, no_room)
+	testing.expect_value(t, status, ws.Response_Status.No_Slot)
+	testing.expect_value(t, errors.Kind(refusal.kind), errors.Kind.Busy)
+	testing.expect(t, machine.state == before)
+}
+
+// The pairs that pass, last: the orders of shop through the collector to
+// server, the child, which take the record of shop; and the log of the
+// child through the collector to the asker, which take the record of the
+// log. The pair is resolved after its source.
+@(test)
+a_pair_takes_the_record_of_its_source :: proc(t: ^testing.T) {
+	machine: Pair_Machine
+	pair_machine_make(&machine)
+	lent := [2]ws.Resolved_Lent_End{lent_of(machine.shop), lent_of(machine.collector)}
+	rows := [2]output.Wiring{make_wire_row(.Started, 1, 1, .Started, 2, 1, .Always_Holds_Writer), paired_row_make(make_wire_row(.Started, 2, 1, .Child, 0, 1, .Always_Holds_Writer), 1)}
+	work: Plan_Work
+	status, refusal := plan_start(&machine.state, machine.image, machine.asker, rows[:], lent[:], machine.offsets[2], machine.sizes[2], &work)
+	testing.expectf(t, status == .Ok, "the pair is refused: %v", refusal)
+	testing.expect(t, work.plans[1].paired && !work.plans[0].paired)
+	testing.expect_value(t, work.plans[1].writer_file_offset, machine.offsets[0])
+	testing.expect_value(t, work.plans[1].description, work.plans[0].description)
+
+	log_row := output.Wiring{writer_end = u32(output.Wiring_End.Child), writer_stream = u32(output.Writer_Stream.Log), reader_end = u32(output.Wiring_End.Started), reader_handle = 1, reader_index = 1, pace = u32(output.Wiring_Pace.Always_Holds_Writer)}
+	lent_collector := [1]ws.Resolved_Lent_End{lent_of(machine.collector)}
+	log_rows := [2]output.Wiring{log_row, paired_row_make(make_wire_row(.Started, 1, 1, .Asker, 0, 0), 1)}
+	log_work: Plan_Work
+	log_status, log_refusal := plan_start(&machine.state, machine.image, machine.asker, log_rows[:], lent_collector[:], machine.offsets[2], machine.sizes[2], &log_work)
+	testing.expectf(t, log_status == .Ok, "the pair of the log is refused: %v", log_refusal)
+	testing.expect(t, log_work.plans[1].paired && log_work.plans[1].writer_is_log_file)
+	testing.expect_value(t, log_work.plans[1].description, u32(output.DESCRIPTION_RECORD_INDEX))
 }

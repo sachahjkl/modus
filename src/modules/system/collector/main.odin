@@ -541,8 +541,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			}
 			system.wait_records(&wait, &service_ring.commands)
 		}
-		if manager_state.counters.active_grants > 0 {
-			system.wait_end(&wait, now_ms + 1000)
+		// The sources and the pairs: after the words above, so the rings
+		// that the wait holds are the rings that this pass read.
+		pending := sources_pass()
+		not_waited := sources_wait(&wait)
+		if manager_state.counters.active_grants > 0 || pending || not_waited {
+			system.wait_end(&wait, now_ms + PENDING_RETRY_MILLISECONDS)
 		} else {
 			system.wait_end(&wait)
 		}

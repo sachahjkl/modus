@@ -355,6 +355,8 @@ short_form_audited_and_list_composition :: proc(t: ^testing.T) {
 	testing.expect_value(t, audited_list.row_count, 2)
 	testing.expect(t, audited_list.rows[0].target_owner == "collector" && audited_list.rows[0].forward && audited_list.rows[0].space_kind == .Audit)
 	testing.expect(t, audited_list.rows[1].source_owner == "collector" && audited_list.rows[1].source_stream == "forward" && audited_list.rows[1].target_owner == "server")
+	testing.expect_value(t, audited_list.rows[0].paired_row, u32(0))
+	testing.expect_value(t, audited_list.rows[1].paired_row, u32(1))
 
 	audit_list, audit_ref := short_form_audit("server", server_file)
 	testing.expect_value(t, audit_ref, Short_Form_Refusal.None)
@@ -362,6 +364,10 @@ short_form_audited_and_list_composition :: proc(t: ^testing.T) {
 	combined, sum_ref := short_form_list_sum(&audit_list, &audited_list)
 	testing.expect_value(t, sum_ref, Short_Form_Refusal.None)
 	testing.expect_value(t, combined.row_count, 5)
+	// The pair moves with its source: row 4 of the sum, after the 3 rows
+	// of audit(server).
+	testing.expect_value(t, combined.rows[4].paired_row, u32(4))
+	testing.expect(t, combined.rows[3].forward)
 
 	// Duplicate wiring across sum is refused.
 	_, dup_ref := short_form_list_sum(&audit_list, &audit_list)

@@ -111,8 +111,9 @@ an_index_of_zero_or_past_the_most_is_refused :: proc(t: ^testing.T) {
 
 // The pace of a writer end: one past the last member and the largest word
 // name none. Its condition page is a handle: past 32 bits it is refused,
-// and a page of a handle is taken. A filter word beside a writer end is
-// refused: the reader takes it.
+// and a page of a handle is taken. The last word of a writer end is its
+// pair, a number of a wiring of 32 bits: past 32 bits it is refused, and
+// 1 and the largest word of 32 bits come back as they went.
 @(test)
 a_writer_end_with_an_unknown_pace_or_a_wrong_condition_is_refused :: proc(t: ^testing.T) {
 	paces := [?]u64{u64(max(Wiring_Pace)) + 1, max(u64)}
@@ -126,10 +127,17 @@ a_writer_end_with_an_unknown_pace_or_a_wrong_condition_is_refused :: proc(t: ^te
 		record.values[WIRING_VALUE_TERMS] = word
 		expect_end_refused(t, record, WIRING_VALUE_TERMS + 1, i64(min(word, 1 << 62)), i64(max(u32)))
 	}
-	for word in ([?]u64{u64(Reader_Filter.By_Writer), max(u64)}) {
+	for word in ([?]u64{u64(max(u32)) + 1, max(u64)}) {
 		record := writer_command()
-		record.values[WIRING_VALUE_FILTER] = word
-		expect_end_refused(t, record, WIRING_VALUE_FILTER + 1, i64(min(word, 1 << 62)), 0)
+		record.values[WIRING_VALUE_PAIR] = word
+		expect_end_refused(t, record, WIRING_VALUE_PAIR + 1, i64(min(word, 1 << 62)), i64(max(u32)))
+	}
+	for word in ([?]u64{1, u64(max(u32))}) {
+		record := writer_command()
+		record.values[WIRING_VALUE_PAIR] = word
+		taken, _, ok := given_end_of_record(record)
+		testing.expect(t, ok && taken.pair == u32(word) && taken.filter == .None)
+		testing.expect_value(t, given_end_record(taken), record)
 	}
 	with_condition := writer_command()
 	with_condition.values[WIRING_VALUE_TERMS] = u64(max(u32))

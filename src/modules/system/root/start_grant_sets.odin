@@ -224,6 +224,13 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// The holder of the role Projects: the pins of each project in its
 	// private store (src/md/features/declarations.md).
 	{name = "projects", grants = {.Serve, .Store}, terms = {on_demand = true}},
+	// The collector of principal 0: the audit spaces of the record outputs
+	// that a wiring gives it, as segments chained by their hash in its
+	// private store, and the act records of the wide grants
+	// (src/md/features/module_outputs.md, "The collector"). Its callers
+	// act for its principal; it acts for nobody. A source reaches it only
+	// through a wiring, never through a grant.
+	{name = "collector", grants = {.Serve, .Store}, terms = {on_demand = true}},
 	// Its note, its count and their versions live in its private store:
 	// the versions of a run of 1000 commits of the count (4 blocks each),
 	// then thinning at the limit.
@@ -340,9 +347,6 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// The delegated powerbox service: its service ring, trusted display
 	// ring and transfer region. It holds no root ring and no ambient authority.
 	{name = "powerbox", grants = {.System_Part, .Serve}},
-	// The delegated collector service: its service ring and transfer region
-	// for hash-chained act records and wide-grant enforcement.
-	{name = "collector", grants = {.System_Part, .Serve}},
 	// The delegated disk_processes service: it reads the module file of a
 	// disk process and its imports through a connection that reads only,
 	// into memory that the core lends, and asks for Start_From_Bytes
@@ -495,7 +499,7 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 // (tools/modustool/build/start_grant_sets_check.odin), because the debug access to
 // a process reads that grant. The names are strings that the tool reads.
 @(rodata)
-system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "gpu_device", "wiring", "powerbox", "collector", "disk_processes", "devices", "principals"}
+system_part_names := [?]string{"root", "input", "compositor", "terminal", "block", "frame", "iommu_device", "tpm", "entropy", "sound", "gpu_device", "wiring", "powerbox", "disk_processes", "devices", "principals"}
 
 // name_is_a_system_part says if a name is one of system_part_names.
 name_is_a_system_part :: proc "contextless" (name: string) -> bool {
@@ -575,7 +579,7 @@ start_grant_set_terminal :: proc "contextless" (start_grant_set: ^Start_Grant_Se
 // on_demand says if the service with a name starts when a process asks for
 // a connection to it.
 on_demand :: proc "contextless" (name: string) -> bool {
-	if name == "collector" || name == "powerbox" {
+	if name == "powerbox" {
 		return true
 	}
 	return start_grant_set_of(name).on_demand

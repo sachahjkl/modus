@@ -92,7 +92,8 @@ Wiring :: struct {
 	terms_count:   u32, // The bytes of the terms; 0 with no terms.
 	condition_offset: u32, // The condition of the wiring, a Condition_Terms, in bytes from the start of the memory of the list, after the lent handles; 0 with no condition.
 	condition_count:  u32, // size_of(Condition_Terms), or 0 with no condition.
-	reserved:      [3]u32, // 0.
+	paired_row:    u32, // A writer that is a record output Paired: the number from 1 of an earlier row of the same list that wires the source of its pair into the generic record input of the same process. Else 0.
+	reserved:      [2]u32, // 0.
 }
 #assert(size_of(Wiring) == 64)
 
@@ -113,7 +114,8 @@ Wiring_Field :: enum i64 {
 	Terms_Count   = 11,
 	Condition_Offset = 12,
 	Condition_Count  = 13,
-	Reserved      = 14,
+	Paired_Row    = 14,
+	Reserved      = 15,
 }
 
 // One row after its border: each word is its member or a checked number.
@@ -130,6 +132,7 @@ Checked_Wiring :: struct {
 	terms_offset:  u32,
 	terms_count:   u32,
 	condition_offset: u32, // The condition terms, or 0: their count is size_of(Condition_Terms).
+	paired_row:    u32, // The earlier row of the source of the pair, from 1, or 0.
 }
 
 // Which command lends the list.
@@ -220,6 +223,8 @@ end_handle_check :: proc "contextless" (end: Wiring_End, place: u32, handle_coun
 // - a condition with a count and no offset or an offset and no count, a
 //   count that is not size_of(Condition_Terms), and a condition before
 //   terms_start or past the list;
+// - a paired row that is not an earlier row of the list, or beside the
+//   record output `log`;
 // - a reserved word that is not 0.
 //
 // It reads no state, and a refusal gives no row.
@@ -305,6 +310,13 @@ wiring_row_check :: proc "contextless" (row: Wiring, number: u32, form: Wiring_L
 			return {}, row_refusal(number, .Condition_Offset, u64(row.condition_offset), u64(list_size)), false
 		}
 	}
+	// The source of a pair comes earlier in the list, so its reader end
+	// reaches the process before the end of the pair. A Wire has one row,
+	// so it names no pair. The root service checks the rest of the pair
+	// against the module files.
+	if row.paired_row != 0 && (row.paired_row >= number || writer_stream != .Record_Output) {
+		return {}, row_refusal(number, .Paired_Row, u64(row.paired_row), u64(max(number, 1) - 1)), false
+	}
 	for word in row.reserved {
 		if word != 0 {
 			return {}, row_refusal(number, .Reserved, u64(word), 0), false
@@ -323,6 +335,7 @@ wiring_row_check :: proc "contextless" (row: Wiring, number: u32, form: Wiring_L
 		terms_offset  = row.terms_offset,
 		terms_count   = row.terms_count,
 		condition_offset = row.condition_offset,
+		paired_row    = row.paired_row,
 	}
 	return checked, {}, true
 }
