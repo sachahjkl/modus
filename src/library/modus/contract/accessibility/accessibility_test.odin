@@ -5,7 +5,7 @@ import "core:mem"
 import "core:testing"
 import "modus:contract/draw_record"
 
-@(private = "file")
+@(private = "package")
 Test_Builder :: struct {
 	records:      [512]draw_record.Draw_Record,
 	record_count: int,
@@ -13,7 +13,7 @@ Test_Builder :: struct {
 	byte_count:   int,
 }
 
-@(private = "file")
+@(private = "package")
 builder_append_bytes :: proc(b: ^Test_Builder, text: string) -> (first, count: u32) {
 	if len(text) == 0 {
 		return 0, 0
@@ -24,7 +24,7 @@ builder_append_bytes :: proc(b: ^Test_Builder, text: string) -> (first, count: u
 	return first, u32(len(text))
 }
 
-@(private = "file")
+@(private = "package")
 builder_append_details :: proc(b: ^Test_Builder, details: []Element_Detail_Record) -> (first: u32, count: u16) {
 	if len(details) == 0 {
 		return 0, 0
@@ -38,7 +38,7 @@ builder_append_details :: proc(b: ^Test_Builder, details: []Element_Detail_Recor
 	return first, u16(len(details))
 }
 
-@(private = "file")
+@(private = "package")
 builder_push :: proc(
 	b: ^Test_Builder,
 	element: u32,
@@ -78,13 +78,13 @@ builder_push :: proc(
 	b.record_count += 1
 }
 
-@(private = "file")
+@(private = "package")
 builder_pop :: proc(b: ^Test_Builder, element: u32 = 0) {
 	b.records[b.record_count] = draw_record.record_of(draw_record.Draw_Element_Pop{}, element, 0, 0, 0, 0)
 	b.record_count += 1
 }
 
-@(private = "file")
+@(private = "package")
 builder_clip_push :: proc(b: ^Test_Builder, left, top, right, bottom: int, element: u32 = 0) {
 	b.records[b.record_count] = draw_record.record_of(
 		draw_record.Draw_Clip_Push{},
@@ -97,13 +97,13 @@ builder_clip_push :: proc(b: ^Test_Builder, left, top, right, bottom: int, eleme
 	b.record_count += 1
 }
 
-@(private = "file")
+@(private = "package")
 builder_clip_pop :: proc(b: ^Test_Builder, element: u32 = 0) {
 	b.records[b.record_count] = draw_record.record_of(draw_record.Draw_Clip_Pop{}, element, 0, 0, 0, 0)
 	b.record_count += 1
 }
 
-@(private = "file")
+@(private = "package")
 builder_text :: proc(b: ^Test_Builder, text: string, element: u32 = 0, x := 0, y := 0) {
 	first, count := builder_append_bytes(b, text)
 	primitive := draw_record.Draw_Text{
