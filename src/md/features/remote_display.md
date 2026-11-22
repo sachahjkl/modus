@@ -214,8 +214,8 @@ Left of the first layer: the native viewer, a program of its own that uses `gui_
 
 1. The viewer, a program of its own that uses `gui_toolkit`, and the rest of the first layer above.
 2. Compositor wiring for the screen of memory (`src/library/modus/contract/memory_screen` is built), with its size from the start row and from a viewer.
-3. The interface for agents.
-4. A gateway to a browser by WebTransport, with the display token.
-5. A gateway to a browser by WebSocket, with the same token.
+3. The interface for agents (freestanding contract `Agent_Capture_Mode`, `Agent_Screen_Request`, `Agent_Screen_Response`, and `Settle_Tracker` in `src/library/modus/contract/remote_display/agent_gateway.odin` with host tests; service wiring remains).
+4. A gateway to a browser by WebTransport, with the display token (freestanding contract `Gateway_Transport`, signed 1-day `Display_Token` with `absolute_end_unix` ceiling, `Token_Revocation_List`, `display_token_verify_and_renew`, and binary `gateway_frame_encode` / `gateway_frame_decode` in `src/library/modus/contract/remote_display/agent_gateway.odin` with host tests; service wiring remains).
+5. A gateway to a browser by WebSocket, sharing the same token and binary gateway frame encoder/decoder.
 6. A gateway to VNC, then to RDP.
 7. A video codec, when a measure of the bandwidth needs it.
