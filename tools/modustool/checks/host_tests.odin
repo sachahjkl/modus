@@ -318,6 +318,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_PUBLIC + "/bootscreen/image_card",
 	foundation.SOURCE_FOLDER_PUBLIC + "/graphics",
 	foundation.SOURCE_FOLDER_PUBLIC + "/interface",
+	foundation.SOURCE_FOLDER_PUBLIC + "/layout",
 	foundation.SOURCE_FOLDER_INTERNAL + "/inspect/addresses",
 	foundation.SOURCE_FOLDER_INTERNAL + "/manual/information",
 	foundation.SOURCE_FOLDER_PUBLIC + "/vector_font",

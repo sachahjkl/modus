@@ -80,15 +80,17 @@ import "internal:settings/appearance"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:layout"
 import "modus:storage"
 import "modus:system"
 import "modus:text_rendering"
 
-// One row of 32 for each setting and for the time zone, and the three
-// rows of the languages.
+// The size of the window at its start: one row of 32 for each setting and
+// for the time zone, the three rows of the languages, and the card of the
+// text of the system. Each place in it comes from its layout tree
+// (settings_layout), from the size that the window has now.
 WIDTH :: 560
 HEIGHT :: 688
-LANGUAGE_ROWS :: 3 // The list, the buttons that change it, the languages to add.
 // The least budget of 2048 pages, in which it ran before it stated its
 // window, less that window at the scale 1 (648 pages): its module, its
 // stack, its tables and its glyph memory. The tool counts the window at
@@ -708,31 +710,322 @@ Zone_Step :: struct {
 	minutes: i32,
 }
 
-// zone_row draws the row of the time zone at (x, y): its title, then the
-// buttons that move the zone by an hour or by a quarter of an hour, with
-// the value between them. A press stops at -12:00 and at +14:00. Each
-// button is as wide as its label in the font that draws it, so no label is
-// cut.
-zone_row :: proc "contextless" (frame: ^interface.Frame, x, y: int, choice: settings.Choice) {
-	interface.draw_text(frame.table, x, y + 4, settings.TIME_ZONE_TITLE, graphics.colors.dim)
-	steps := [4]Zone_Step{{"-1 h", -60}, {"-15 min", -settings.ZONE_OFFSET_MINUTES_STEP}, {"+15 min", settings.ZONE_OFFSET_MINUTES_STEP}, {"+1 h", 60}}
-	zone_buffer: [settings.ZONE_TEXT_SIZE]u8
-	shown := settings.zone_text(zone_buffer[:], choice.zone_offset_minutes)
-	left := x + 144
-	for step, index in steps {
-		if index == len(steps) / 2 {
-			left = interface.draw_text(frame.table, left, y + 4, shown, graphics.colors.text) + 8
+// The buttons of the row of the time zone, from the left. The value of the
+// zone is between the two halves. A press stops at -12:00 and at +14:00.
+@(rodata)
+zone_steps := [4]Zone_Step{{"-1 h", -60}, {"-15 min", -settings.ZONE_OFFSET_MINUTES_STEP}, {"+15 min", settings.ZONE_OFFSET_MINUTES_STEP}, {"+1 h", 60}}
+
+// The common languages of the first build, which the third row of the
+// languages adds. The languages whose pack the machine holds take their
+// place when the packs come.
+@(rodata)
+common_languages := [7]string{"en", "fr", "fr-CA", "de", "es", "ja", "ar"}
+
+// The lines of the text of the system that the second card shows at the
+// size of the body text.
+@(rodata)
+sample_lines := [3]string {
+	"> print(monitor.processes())   31 processes",
+	"compositor   12.4 ms   2 418 pages   runs",
+	"{fill} [rings] gi Rb 0O 1lI  ok: 0x4F3A",
+}
+SAMPLE_HEADING :: "EEVDF fair"
+SAMPLE_NUMBER :: "12 345"
+SAMPLE_CAPTION :: "wakes in one second"
+
+// A row of the card SETTINGS: a button of BUTTON_HEIGHT and the gap under it.
+ROW :: 32
+BUTTON_HEIGHT :: 24
+// A button of a value of a setting is this wide, or as wide as its label
+// and its padding when the label is wider; it gives room down to its label
+// when the row is too narrow.
+VALUE_BUTTON_WIDTH :: 96
+// The room on each side of the label of a button.
+BUTTON_LABEL_PADDING :: 8
+// The column of the title of a row, with the gap after it: the first button
+// of each row starts at the same place.
+TITLE_COLUMN :: 144
+// The room of the word "add" before the languages to add, with its gap.
+ADD_COLUMN :: 40
+// The title of a row sits this far under the top of the row, on the line of
+// the labels of its buttons.
+TITLE_DROP :: 4
+
+// The texts of a frame that the layout measures and the draw shows: the
+// draw reads the same texts that gave the widths.
+Frame_Texts :: struct {
+	zone_buffer:    [settings.ZONE_TEXT_SIZE]u8,
+	zone:           string, // The zone in force: "+08:00".
+	tag_buffers:    [settings.LANGUAGE_LIST_CAPACITY][language_tag.LOCALE_TEXT_CAPACITY]u8,
+	tags:           [settings.LANGUAGE_LIST_CAPACITY]string, // The canonical tag of each language of the list.
+	list_count:     int, // The languages of the list.
+	tags_shown:     int, // The languages of the list whose tag was written: the row stops at the first that was not.
+	added:          [len(common_languages)]settings.Language_List, // The list with each common language at its end.
+	can_add:        [len(common_languages)]bool, // The list does not hold the common language, and is not full.
+}
+
+// frame_texts_of gives the texts of a frame of the window.
+frame_texts_of :: proc "contextless" (texts: ^Frame_Texts, choice: settings.Choice) {
+	texts.zone = settings.zone_text(texts.zone_buffer[:], choice.zone_offset_minutes)
+	list := choice.languages
+	texts.list_count = int(min(list.count, settings.LANGUAGE_LIST_CAPACITY))
+	texts.tags_shown = 0
+	for index in 0 ..< texts.list_count {
+		tag, tag_ok := language_tag.tag_write(list.locales[index], texts.tag_buffers[index][:])
+		if !tag_ok {
+			break
 		}
-		width := interface.text_measured_width(frame.table, interface.FONT_INTERFACE, step.label) + 16
+		texts.tags[index] = tag
+		texts.tags_shown += 1
+	}
+	for tag, index in common_languages {
+		texts.can_add[index] = false
+		locale, problem, _ := language_tag.tag_read(tag)
+		if problem != .None {
+			continue
+		}
+		added, add_problem := settings.language_list_add(list, locale)
+		// A problem: the list holds the language, or is full.
+		texts.added[index] = added
+		texts.can_add[index] = add_problem == .None
+	}
+}
+
+// The boxes of the window that the draw reads after the solve. NO_BOX: the
+// frame has no such element.
+Settings_Boxes :: struct {
+	settings_card:   layout.Box_Index,
+	setting_titles:  [settings.Setting]layout.Box_Index,
+	value_buttons:   [settings.Setting][settings.VALUE_NAME_CAPACITY]layout.Box_Index, // NO_BOX: a value that the border refuses has no button.
+	zone_title:      layout.Box_Index,
+	zone_value:      layout.Box_Index,
+	zone_buttons:    [len(zone_steps)]layout.Box_Index,
+	languages_title: layout.Box_Index,
+	languages_none:  layout.Box_Index,
+	language_list:   [settings.LANGUAGE_LIST_CAPACITY]layout.Box_Index,
+	move_up:         layout.Box_Index,
+	remove:          layout.Box_Index,
+	add_title:       layout.Box_Index,
+	add_buttons:     [len(common_languages)]layout.Box_Index,
+	rows:            layout.Box_Index, // The rows of the card SETTINGS: a language button past its right edge is not drawn.
+	console_hint:    layout.Box_Index,
+	sample_card:     layout.Box_Index,
+	sample_lines:    [len(sample_lines)]layout.Box_Index,
+	heading:         layout.Box_Index,
+	number:          layout.Box_Index,
+	caption:         layout.Box_Index,
+	facts:           layout.Box_Index,
+	action_bar:      layout.Box_Index,
+}
+
+// The layout tree of a frame. A global: the tree is too large for the stack.
+layout_tree: layout.Box_Tree
+
+// Layout_Builder adds boxes to a tree and keeps the first refusal, so that
+// one check after the last box says whether the whole tree was built.
+Layout_Builder :: struct {
+	tree:   ^layout.Box_Tree,
+	status: layout.Box_Status,
+}
+
+builder_open :: proc "contextless" (builder: ^Layout_Builder, description: layout.Box_Description) -> layout.Box_Index {
+	index, status := layout.box_open(builder.tree, description)
+	if builder.status == .Done {
+		builder.status = status
+	}
+	return index
+}
+
+builder_add :: proc "contextless" (builder: ^Layout_Builder, description: layout.Box_Description) -> layout.Box_Index {
+	index, status := layout.box_add(builder.tree, description)
+	if builder.status == .Done {
+		builder.status = status
+	}
+	return index
+}
+
+builder_close :: proc "contextless" (builder: ^Layout_Builder) {
+	status := layout.box_close(builder.tree)
+	if builder.status == .Done {
+		builder.status = status
+	}
+}
+
+// area_of gives the area of the interface package of a box that the
+// solver placed.
+area_of :: proc "contextless" (tree: ^layout.Box_Tree, index: layout.Box_Index) -> interface.Area {
+	box := layout.box_of(tree, index)
+	if box == nil {
+		return {}
+	}
+	return {int(box.rect.x), int(box.rect.y), int(box.rect.width), int(box.rect.height)}
+}
+
+// The boxes that the layout of settings repeats.
+
+// A space of a height across the whole width: the parts of a card that its
+// frame draws, over and under its content.
+spacer :: proc "contextless" (height: i32) -> layout.Box_Description {
+	return {size = {.X = layout.fill(), .Y = layout.px(height)}}
+}
+
+// A card: its content between the margins, under the room of its title.
+card_box :: proc "contextless" (height: layout.Size, tokens: layout.Element_Tokens) -> layout.Box_Description {
+	return {size = {.X = layout.fill(), .Y = height}, child_axis = .Y, padding = {.X = tokens.margin, .Y = 0}}
+}
+
+// A row of the card SETTINGS: its title, then its buttons, with the gap between each two.
+row_box :: proc "contextless" (tokens: layout.Element_Tokens) -> layout.Box_Description {
+	return {size = {.X = layout.fill(), .Y = layout.px(ROW)}, child_axis = .X, gap = tokens.gap}
+}
+
+title_box :: proc "contextless" (tokens: layout.Element_Tokens) -> layout.Box_Description {
+	return {size = {.X = layout.px(TITLE_COLUMN - tokens.gap), .Y = layout.px(BUTTON_HEIGHT)}}
+}
+
+// A button as wide as its label in the font that draws it, so no label is cut.
+label_button_box :: proc "contextless" (table: ^interface.Draw_Table, label: string) -> layout.Box_Description {
+	width := i32(interface.text_measured_width(table, interface.FONT_INTERFACE, label)) + 2 * BUTTON_LABEL_PADDING
+	return {size = {.X = layout.px(width), .Y = layout.px(BUTTON_HEIGHT)}}
+}
+
+// A text of the body font as a box: its measured width.
+text_box :: proc "contextless" (table: ^interface.Draw_Table, text: string) -> layout.Box_Description {
+	return {size = {.X = layout.px(i32(interface.text_measured_width(table, {}, text))), .Y = layout.px(BUTTON_HEIGHT)}}
+}
+
+// settings_layout builds and solves the layout tree of the window at a
+// size: the card SETTINGS as high as its rows, the card of the text of the
+// system in the height left, and the action bar at the bottom. The heading
+// and the caption of the second card wrap in its width, so the tree is
+// solved once for that width, then again with their heights. ok false: the
+// tree refused a box, and the frame draws no card.
+settings_layout :: proc "contextless" (table: ^interface.Draw_Table, choice: settings.Choice, texts: ^Frame_Texts, width, height: int, tokens: layout.Element_Tokens) -> (boxes: Settings_Boxes, ok: bool) {
+	tree := &layout_tree
+	if width <= 0 || height <= 0 || width > layout.LENGTH_LIMIT || height > layout.LENGTH_LIMIT {
+		return {}, false
+	}
+	if layout.tree_begin(tree, i32(width), i32(height), {child_axis = .Y}) != .Done {
+		return {}, false
+	}
+	builder := Layout_Builder{tree = tree}
+	gap := tokens.gap
+	builder_open(&builder, {size = {.X = layout.fill(), .Y = layout.fill()}, child_axis = .Y, padding = {.X = gap, .Y = gap}, gap = gap})
+
+	boxes.settings_card = builder_open(&builder, card_box(layout.children_sum(), tokens))
+	builder_add(&builder, spacer(tokens.title))
+	boxes.rows = builder_open(&builder, {size = {.X = layout.fill(), .Y = layout.children_sum()}, child_axis = .Y})
+	for &description, setting in settings.descriptions {
+		builder_open(&builder, row_box(tokens))
+		boxes.setting_titles[setting] = builder_add(&builder, title_box(tokens))
+		for value_name, place in description.value_names[:description.value_count] {
+			// A value that the border refuses has no button: the scales past
+			// the window bound, which no window fits yet.
+			if !settings.value_valid(setting, settings.word_of_value(setting, place)) {
+				continue
+			}
+			label := label_button_box(table, value_name)
+			label_width := label.size[.X].value
+			button := layout.Box_Description{size = {.X = {kind = .Pixels, value = VALUE_BUTTON_WIDTH, strictness = 0, least = label_width}, .Y = layout.px(BUTTON_HEIGHT)}}
+			boxes.value_buttons[setting][place] = builder_add(&builder, button)
+		}
+		builder_close(&builder)
+	}
+	builder_open(&builder, row_box(tokens))
+	boxes.zone_title = builder_add(&builder, title_box(tokens))
+	for step, index in zone_steps {
+		if index == len(zone_steps) / 2 {
+			boxes.zone_value = builder_add(&builder, text_box(table, texts.zone))
+		}
+		boxes.zone_buttons[index] = builder_add(&builder, label_button_box(table, step.label))
+	}
+	builder_close(&builder)
+	// The languages: the list, each language a button that chooses it.
+	builder_open(&builder, row_box(tokens))
+	boxes.languages_title = builder_add(&builder, title_box(tokens))
+	if texts.list_count == 0 {
+		boxes.languages_none = builder_add(&builder, text_box(table, "none: English"))
+	}
+	for index in 0 ..< texts.tags_shown {
+		boxes.language_list[index] = builder_add(&builder, label_button_box(table, texts.tags[index]))
+	}
+	builder_close(&builder)
+	// The buttons that move the chosen language up and remove it.
+	builder_open(&builder, row_box(tokens))
+	builder_add(&builder, title_box(tokens))
+	if texts.list_count > 0 {
+		boxes.move_up = builder_add(&builder, label_button_box(table, "move up"))
+		boxes.remove = builder_add(&builder, label_button_box(table, "remove"))
+	}
+	builder_close(&builder)
+	// The common languages that the list does not hold, to add at its end.
+	builder_open(&builder, row_box(tokens))
+	builder_add(&builder, title_box(tokens))
+	boxes.add_title = builder_add(&builder, {size = {.X = layout.px(ADD_COLUMN - gap), .Y = layout.px(BUTTON_HEIGHT)}})
+	for tag, index in common_languages {
+		if texts.can_add[index] {
+			boxes.add_buttons[index] = builder_add(&builder, label_button_box(table, tag))
+		}
+	}
+	builder_close(&builder)
+	builder_close(&builder)
+	builder_add(&builder, spacer(gap))
+	boxes.console_hint = builder_add(&builder, spacer(graphics.LINE_HEIGHT))
+	builder_add(&builder, spacer(gap))
+	builder_close(&builder)
+
+	// The text of the system at each text size token that the desktop
+	// uses, one under the other; the line of the facts at the bottom.
+	boxes.sample_card = builder_open(&builder, card_box(layout.fill(), tokens))
+	builder_add(&builder, spacer(tokens.title))
+	builder_open(&builder, {size = {.X = layout.fill(), .Y = layout.fill()}, child_axis = .Y})
+	for _, index in sample_lines {
+		boxes.sample_lines[index] = builder_add(&builder, spacer(graphics.LINE_HEIGHT))
+	}
+	builder_add(&builder, spacer(gap))
+	boxes.heading = builder_add(&builder, spacer(i32(interface.line_height(interface.FONT_HEADING))))
+	builder_add(&builder, spacer(gap))
+	boxes.number = builder_add(&builder, spacer(i32(interface.line_height(interface.FONT_LARGE))))
+	boxes.caption = builder_add(&builder, spacer(i32(interface.line_height(interface.FONT_CAPTION))))
+	builder_add(&builder, {size = {.X = layout.fill(), .Y = layout.fill()}})
+	boxes.facts = builder_add(&builder, spacer(graphics.LINE_HEIGHT))
+	builder_close(&builder)
+	builder_add(&builder, spacer(gap))
+	builder_close(&builder)
+	builder_close(&builder)
+	boxes.action_bar = builder_add(&builder, {size = {.X = layout.fill(), .Y = layout.px(interface.ACTION_BAR_ROW_HEIGHT)}})
+	if builder.status != .Done || layout.solve(tree) != .Done {
+		return {}, false
+	}
+	// The heading and the caption take the lines that they need in the
+	// width that the first solve gave them.
+	room := int(tree.boxes[boxes.heading].rect.width)
+	tree.boxes[boxes.heading].size[.Y] = layout.px(i32(interface.heading_height(table, SAMPLE_HEADING, room)))
+	tree.boxes[boxes.caption].size[.Y] = layout.px(i32(interface.caption_height(table, SAMPLE_CAPTION, room)))
+	if layout.solve(tree) != .Done {
+		return {}, false
+	}
+	return boxes, true
+}
+
+// zone_row_draw draws the row of the time zone: its title, then the
+// buttons that move the zone by an hour or by a quarter of an hour, with
+// the value between them.
+zone_row_draw :: proc "contextless" (frame: ^interface.Frame, boxes: ^Settings_Boxes, choice: settings.Choice, texts: ^Frame_Texts, tokens: layout.Element_Tokens) {
+	tree := &layout_tree
+	title := area_of(tree, boxes.zone_title)
+	interface.draw_text(frame.table, title.x, title.y + TITLE_DROP, settings.TIME_ZONE_TITLE, tokens.text_dim)
+	value := area_of(tree, boxes.zone_value)
+	interface.draw_text(frame.table, value.x, value.y + TITLE_DROP, texts.zone, tokens.text)
+	for step, index in zone_steps {
 		builder: interface.Text_Builder
 		interface.text_put(&builder, settings.TIME_ZONE_NAME)
 		interface.text_put(&builder, step.label)
 		element := interface.identity(interface.text_of(&builder))
-		if interface.button(frame, {left, y, width, 24}, element, step.label).activated {
+		if interface.button(frame, area_of(tree, boxes.zone_buttons[index]), element, step.label).activated {
 			moved := clamp(choice.zone_offset_minutes + step.minutes, settings.ZONE_OFFSET_MINUTES_LEAST, settings.ZONE_OFFSET_MINUTES_MOST)
 			change(choice, moved)
 		}
-		left += width + 8
 	}
 }
 
@@ -740,184 +1033,177 @@ zone_row :: proc "contextless" (frame: ^interface.Frame, x, y: int, choice: sett
 // its place, from 0. A press on a language of the list chooses it.
 chosen_language: int
 
-// language_button draws one button of the rows of the languages, as wide
-// as its label, with an element named by the row and the label, and gives
-// whether it was pressed and where the next button starts.
-language_button :: proc "contextless" (frame: ^interface.Frame, left, y: int, row_name, label: string, in_use := false) -> (pressed: bool, next_left: int) {
-	width := interface.text_measured_width(frame.table, interface.FONT_INTERFACE, label) + 16
+// language_button draws one button of the rows of the languages, with an
+// element named by the row and the label, and gives whether it was
+// pressed. A button past the right edge of the card is not drawn: drawn
+// says so, and no button after it in its row is drawn either.
+language_button :: proc "contextless" (frame: ^interface.Frame, index: layout.Box_Index, right: int, row_name, label: string, in_use := false) -> (pressed: bool, drawn: bool) {
+	area := area_of(&layout_tree, index)
+	if area.x + area.width > right {
+		return false, false
+	}
 	builder: interface.Text_Builder
 	interface.text_put(&builder, "languages ")
 	interface.text_put(&builder, row_name)
 	interface.text_put(&builder, label)
 	element := interface.identity(interface.text_of(&builder))
-	pressed = interface.button(frame, {left, y, width, 24}, element, label, in_use).activated
-	return pressed, left + width + 8
+	return interface.button(frame, area, element, label, in_use).activated, true
 }
 
-// languages_rows draws the three rows of the languages at (x, y): the list
-// in its order, each language a button that chooses it; the buttons that
-// move the chosen language up and remove it; the common languages that
-// the list does not hold, to add at its end. A button past the right edge
-// of the card is not drawn.
-languages_rows :: proc "contextless" (frame: ^interface.Frame, x, y, right: int, choice: settings.Choice) {
-	ROW :: 32
+// languages_rows_draw draws the three rows of the languages: the list in
+// its order, each language a button that chooses it; the buttons that move
+// the chosen language up and remove it; the common languages that the list
+// does not hold, to add at its end.
+languages_rows_draw :: proc "contextless" (frame: ^interface.Frame, boxes: ^Settings_Boxes, choice: settings.Choice, texts: ^Frame_Texts, tokens: layout.Element_Tokens) {
+	tree := &layout_tree
 	list := choice.languages
-	count := int(min(list.count, settings.LANGUAGE_LIST_CAPACITY))
+	count := texts.list_count
+	rows := area_of(tree, boxes.rows)
+	right := rows.x + rows.width
 	chosen_language = clamp(chosen_language, 0, max(count - 1, 0))
-	interface.draw_text(frame.table, x, y + 4, "languages", graphics.colors.dim)
-	left := x + 144
+	title := area_of(tree, boxes.languages_title)
+	interface.draw_text(frame.table, title.x, title.y + TITLE_DROP, "languages", tokens.text_dim)
 	if count == 0 {
-		interface.draw_text(frame.table, left, y + 4, "none: English", graphics.colors.text)
+		none := area_of(tree, boxes.languages_none)
+		interface.draw_text(frame.table, none.x, none.y + TITLE_DROP, "none: English", tokens.text)
 	}
-	for index in 0 ..< count {
-		tag_buffer: [language_tag.LOCALE_TEXT_CAPACITY]u8
-		tag, tag_ok := language_tag.tag_write(list.locales[index], tag_buffer[:])
-		width := interface.text_measured_width(frame.table, interface.FONT_INTERFACE, tag) + 16
-		if !tag_ok || left + width > right {
+	for index in 0 ..< texts.tags_shown {
+		pressed, drawn := language_button(frame, boxes.language_list[index], right, "list ", texts.tags[index], index == chosen_language)
+		if !drawn {
 			break
 		}
-		pressed: bool
-		if pressed, left = language_button(frame, left, y, "list ", tag, index == chosen_language); pressed {
+		if pressed {
 			chosen_language = index
 		}
 	}
-	left = x + 144
 	if count > 0 {
-		pressed: bool
-		if pressed, left = language_button(frame, left, y + ROW, "", "move up"); pressed && chosen_language >= 1 {
+		if pressed, _ := language_button(frame, boxes.move_up, right, "", "move up"); pressed && chosen_language >= 1 {
 			changed := choice
 			changed.languages = settings.language_list_move_up(list, chosen_language)
 			if change(changed, choice.zone_offset_minutes) {
 				chosen_language -= 1
 			}
 		}
-		if pressed, left = language_button(frame, left, y + ROW, "", "remove"); pressed {
+		if pressed, _ := language_button(frame, boxes.remove, right, "", "remove"); pressed {
 			changed := choice
 			changed.languages = settings.language_list_remove(list, chosen_language)
 			change(changed, choice.zone_offset_minutes)
 		}
 	}
-	// The common languages of the first build. The languages whose pack the
-	// machine holds take their place when the packs come.
-	common := [?]string{"en", "fr", "fr-CA", "de", "es", "ja", "ar"}
-	interface.draw_text(frame.table, x + 144, y + 2 * ROW + 4, "add", graphics.colors.dim)
-	left = x + 144 + 40
-	for tag in common {
-		locale, problem, _ := language_tag.tag_read(tag)
-		if problem != .None {
+	add := area_of(tree, boxes.add_title)
+	interface.draw_text(frame.table, add.x, add.y + TITLE_DROP, "add", tokens.text_dim)
+	for tag, index in common_languages {
+		if !texts.can_add[index] {
 			continue
 		}
-		added, add_problem := settings.language_list_add(list, locale)
-		if add_problem != .None {
-			// The list holds it, or is full.
-			continue
-		}
-		width := interface.text_measured_width(frame.table, interface.FONT_INTERFACE, tag) + 16
-		if left + width > right {
+		pressed, drawn := language_button(frame, boxes.add_buttons[index], right, "add ", tag)
+		if !drawn {
 			break
 		}
-		pressed: bool
-		if pressed, left = language_button(frame, left, y + 2 * ROW, "add ", tag); pressed {
+		if pressed {
 			changed := choice
-			changed.languages = added
+			changed.languages = texts.added[index]
 			change(changed, choice.zone_offset_minutes)
 		}
 	}
 }
 
-// draw builds the window: a row of buttons for each setting and for the
-// time zone, the rows of the languages, then the text of the system at the
-// text size tokens, then the hash of the font of the cells.
+// draw builds the window from its layout tree at the size of the window
+// now: a row of buttons for each setting and for the time zone, the rows
+// of the languages, then the text of the system at the text size tokens,
+// then the hash of the font of the cells, and the action bar.
 draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
 	// A refused page shows the defaults: a press writes a whole page again.
 	choice, _ := settings.read(page)
 	values := settings.values_of(choice)
 	frame := interface.window_frame_start(&window_memory)
-	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
+	// graphics holds only members of the appearance: the tokens of the
+	// standard contrast are the colors that the window drew with before.
+	tokens, _ := layout.tokens_for(graphics.appearance, .Standard)
+	width, height := window.width, window.height
+	interface.background(&frame, {0, 0, width, height})
 	interface.action_bar_input_take(&frame, &bar)
-	count: interface.Text_Builder
-	interface.text_put(&count, "change ")
-	interface.text_put_number(&count, u64(choice.change_count / 2))
-	// A row: a button of 24 pixels and a gap of 8. The card of the text
-	// under the rows needs 150 pixels of content, so that its line of facts
-	// is under the caption of its large number: 11 rows of 32, the
-	// settings, the time zone and the languages, leave it 168 in the window.
-	ROW :: 32
-	rows_height := (len(settings.Setting) + 1 + LANGUAGE_ROWS) * ROW
-	content := interface.card(&frame, {8, 8, WIDTH - 16, 40 + rows_height + 32}, "SETTINGS", has_store ? "kept in the store of settings" : "NOT kept: no store", graphics.colors.kernel, interface.text_of(&count))
-	for &description, setting in settings.descriptions {
-		y := content.y + int(setting) * ROW
-		interface.draw_text(frame.table, content.x, y + 4, description.title, graphics.colors.dim)
-		for value_name, place in description.value_names[:description.value_count] {
-			// A value that the border refuses has no button: the scales past
-			// the window bound, which no window fits yet.
-			word := settings.word_of_value(setting, place)
-			if !settings.value_valid(setting, word) {
-				continue
-			}
-			area := interface.Area{content.x + 144 + place * 104, y, 96, 24}
-			builder: interface.Text_Builder
-			interface.text_put(&builder, description.name)
-			interface.text_put(&builder, value_name)
-			element := interface.identity(interface.text_of(&builder))
-			in_use := values[setting] == word
-			if interface.button(&frame, area, element, value_name, in_use).activated {
-				if changed, changed_ok, _ := with_value(choice, setting, place); changed_ok {
-					change(changed, choice.zone_offset_minutes)
+	texts: Frame_Texts
+	frame_texts_of(&texts, choice)
+	boxes, laid_out := settings_layout(frame.table, choice, &texts, width, height, tokens)
+	tree := &layout_tree
+	bar_area := interface.Area{0, height - interface.ACTION_BAR_ROW_HEIGHT, width, interface.ACTION_BAR_ROW_HEIGHT}
+	if laid_out {
+		bar_area = area_of(tree, boxes.action_bar)
+		count: interface.Text_Builder
+		interface.text_put(&count, "change ")
+		interface.text_put_number(&count, u64(choice.change_count / 2))
+		interface.card(&frame, area_of(tree, boxes.settings_card), "SETTINGS", has_store ? "kept in the store of settings" : "NOT kept: no store", graphics.colors.kernel, interface.text_of(&count))
+		for &description, setting in settings.descriptions {
+			title := area_of(tree, boxes.setting_titles[setting])
+			interface.draw_text(frame.table, title.x, title.y + TITLE_DROP, description.title, tokens.text_dim)
+			for value_name, place in description.value_names[:description.value_count] {
+				if boxes.value_buttons[setting][place] == layout.NO_BOX {
+					continue
+				}
+				word := settings.word_of_value(setting, place)
+				builder: interface.Text_Builder
+				interface.text_put(&builder, description.name)
+				interface.text_put(&builder, value_name)
+				element := interface.identity(interface.text_of(&builder))
+				in_use := values[setting] == word
+				if interface.button(&frame, area_of(tree, boxes.value_buttons[setting][place]), element, value_name, in_use).activated {
+					if changed, changed_ok, _ := with_value(choice, setting, place); changed_ok {
+						change(changed, choice.zone_offset_minutes)
+					}
+				}
+				if in_use {
+					// The palette sets this setting with the parameter of the
+					// same name of the export set, and its row has the same act
+					// name: "settings.set:" and the name of the parameter
+					// (src/modules/system/console/palette_provider.odin).
+					// The button of the value in use is where go to puts the
+					// focus.
+					act: interface.Text_Builder
+					interface.text_put(&act, "settings.set:")
+					interface.text_put(&act, description.name)
+					interface.element_act_name(&frame, element, interface.text_of(&act))
 				}
 			}
-			if in_use {
-				// The palette sets this setting with the parameter of the
-				// same name of the export set, and its row has the same act
-				// name: "settings.set:" and the name of the parameter
-				// (src/modules/system/console/palette_provider.odin).
-				// The button of the value in use is where go to puts the
-				// focus.
-				act: interface.Text_Builder
-				interface.text_put(&act, "settings.set:")
-				interface.text_put(&act, description.name)
-				interface.element_act_name(&frame, element, interface.text_of(&act))
+		}
+		zone_row_draw(&frame, &boxes, choice, &texts, tokens)
+		languages_rows_draw(&frame, &boxes, choice, &texts, tokens)
+		hint := area_of(tree, boxes.console_hint)
+		interface.draw_text(frame.table, hint.x, hint.y, "the console: settings.set(font = .spleen)", tokens.text_dim)
+
+		vector := choice.font == .Vector && graphics.text_vector_drawn()
+		interface.card(&frame, area_of(tree, boxes.sample_card), "THE TEXT OF THE SYSTEM", vector ? "the vector font, drawn by this process" : "Spleen 8x16, the fallback", graphics.colors.machine)
+		for line, index in sample_lines {
+			place := area_of(tree, boxes.sample_lines[index])
+			interface.draw_text(frame.table, place.x, place.y, line, tokens.text)
+		}
+		// The heading, then the large number with its caption under it: each
+		// text size token that the desktop uses, one under the other.
+		heading := area_of(tree, boxes.heading)
+		interface.draw_heading(&frame, heading.x, heading.y, heading.width, SAMPLE_HEADING, graphics.colors.process)
+		number := area_of(tree, boxes.number)
+		interface.large_number(&frame, number.x, number.y, SAMPLE_NUMBER, tokens.text)
+		caption := area_of(tree, boxes.caption)
+		interface.draw_caption(&frame, caption.x, caption.y, caption.width, SAMPLE_CAPTION)
+		// The hash of the font file of the cells, which the record of the font
+		// outlines names and this process opened.
+		facts: interface.Text_Builder
+		cells_font := &text_rendering.state.fonts[.Paper_Mono]
+		if !cells_font.opened {
+			interface.text_put(&facts, "no font outlines: the text is Spleen 8x16")
+		} else {
+			interface.text_put(&facts, "the font of the cells: hash ")
+			hex := "0123456789abcdef"
+			for byte in cells_font.hash[:4] {
+				interface.text_put(&facts, hex[byte >> 4:][:1])
+				interface.text_put(&facts, hex[byte & 15:][:1])
 			}
 		}
+		facts_place := area_of(tree, boxes.facts)
+		interface.draw_text(frame.table, facts_place.x, facts_place.y, interface.text_of(&facts), tokens.text_dim)
 	}
-	zone_row(&frame, content.x, content.y + len(settings.Setting) * ROW, choice)
-	languages_rows(&frame, content.x, content.y + (len(settings.Setting) + 1) * ROW, content.x + content.width, choice)
-	interface.draw_text(frame.table, content.x, content.y + rows_height + 8, "the console: settings.set(font = .spleen)", graphics.colors.dim)
-
-	top := 8 + 40 + rows_height + 32 + 8
-	vector := choice.font == .Vector && graphics.text_vector_drawn()
-	sample := interface.card(&frame, {8, top, WIDTH - 16, HEIGHT - top - 8 - interface.ACTION_BAR_ROW_HEIGHT}, "THE TEXT OF THE SYSTEM", vector ? "the vector font, drawn by this process" : "Spleen 8x16, the fallback", graphics.colors.machine)
-	lines := [?]string {
-		"> print(monitor.processes())   31 processes",
-		"compositor   12.4 ms   2 418 pages   runs",
-		"{fill} [rings] gi Rb 0O 1lI  ok: 0x4F3A",
-	}
-	for line, index in lines {
-		interface.draw_text(frame.table, sample.x, sample.y + index * 16, line, graphics.colors.text)
-	}
-	// The heading, then the large number with its caption under it: each
-	// text size token that the desktop uses, one under the other.
-	heading_top := sample.y + 3 * graphics.LINE_HEIGHT + graphics.GAP
-	number_top := heading_top + interface.draw_heading(&frame, sample.x, heading_top, sample.width, "EEVDF fair", graphics.colors.process) + graphics.GAP
-	interface.large_number(&frame, sample.x, number_top, "12 345", graphics.colors.text)
-	interface.draw_caption(&frame, sample.x, number_top + interface.line_height(interface.FONT_LARGE), sample.width, "wakes in one second")
-	// The hash of the font file of the cells, which the record of the font
-	// outlines names and this process opened.
-	facts: interface.Text_Builder
-	cells_font := &text_rendering.state.fonts[.Paper_Mono]
-	if !cells_font.opened {
-		interface.text_put(&facts, "no font outlines: the text is Spleen 8x16")
-	} else {
-		interface.text_put(&facts, "the font of the cells: hash ")
-		hex := "0123456789abcdef"
-		for byte in cells_font.hash[:4] {
-			interface.text_put(&facts, hex[byte >> 4:][:1])
-			interface.text_put(&facts, hex[byte & 15:][:1])
-		}
-	}
-	interface.draw_text(frame.table, sample.x, sample.y + sample.height - 16, interface.text_of(&facts), graphics.colors.dim)
 	items := bar_items()
-	bar_result := interface.action_bar(&frame, {0, HEIGHT - interface.ACTION_BAR_ROW_HEIGHT, WIDTH, interface.ACTION_BAR_ROW_HEIGHT}, items[:], &bar)
+	bar_result := interface.action_bar(&frame, bar_area, items[:], &bar)
 	interface.window_frame_end(&window_memory.drawing, &frame, window)
 	if choice.change_count != drawn_change && drawn_change != 1 {
 		system.log_fact(.Info, Values_Drawn{font = value_field(choice, .Font), subpixel_order = value_field(choice, .Subpixel_Order), pointer_theme = value_field(choice, .Pointer_Theme), grid_fit = value_field(choice, .Grid_Fit), keyboard_layout = value_field(choice, .Keyboard_Layout), appearance = value_field(choice, .Appearance), scale = value_field(choice, .Scale)})

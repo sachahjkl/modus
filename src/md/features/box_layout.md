@@ -68,4 +68,11 @@ Then one pass snaps each edge (not each size) to the nearest whole logical pixel
 
 ## State
 
-Built: the package `modus:layout` with the four passes, the snap and the clip, the split pane, the table columns, the state table, the input of a box, the element tokens and their stack, and host tests. No module imports it yet, and the check of the imports refuses a support package with fewer than two owners: the interface package and its windows are its first users, which [ROADMAP.md](../../../ROADMAP.md) names.
+Built: the package `modus:layout` with the four passes, the snap and the clip, the split pane, the table columns, the state table, the input of a box, the element tokens and their stack, and host tests, which `modustool check` runs.
+
+Its owners are the windows of `monitor` and `settings`. Each builds its tree at each frame at the size that its window has then, and takes its colors and its spacing from the element tokens:
+
+- `monitor` places its summary, its three graphs and the table of the processes, whose columns come from `table_columns` ([monitor_window.md](monitor_window.md), "The layout").
+- `settings` places its two cards, each row of the card `SETTINGS` (a column of titles, then the buttons, each one as wide as its label at least), the rows of the time zone and of the languages, the text sizes of the second card and the action bar. The heading and the caption of the second card wrap in the width that a first solve gives, so the tree is solved twice.
+
+At their size of start the two windows keep the places that they had before the layout tree. They do not declare themselves resizable yet: their stated budgets do not hold the second surface of a resize. The interface package and the other windows are the next users, which [ROADMAP.md](../../../ROADMAP.md) names.

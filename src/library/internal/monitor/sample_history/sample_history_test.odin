@@ -300,3 +300,55 @@ compact_numbers_at_their_edges :: proc(t: ^testing.T) {
 		testing.expectf(t, text == test_case.text, "%d: %q, not %q", test_case.value, text, test_case.text)
 	}
 }
+
+// A box that cannot hold a graph, and a history that no start made, are
+// refused by a move: the history keeps its box and its curve. The edges: a
+// side under the least, a negative edge, an edge one past the limit.
+@(test)
+a_move_to_a_box_that_holds_no_graph_is_refused :: proc(t: ^testing.T) {
+	never_started: Sample_History
+	testing.expect(t, !sample_history_box_set(&never_started, TEST_BOX))
+	testing.expect(t, !never_started.started && never_started.box == {})
+
+	history: Sample_History
+	testing.expect(t, sample_history_start(&history, .Rounded_Up, TEST_BOX))
+	testing.expect(t, sample_history_push(&history, 3, 0))
+	testing.expect(t, sample_history_push(&history, 9, 0))
+	kept := history
+	boxes := [?]Graph_Box {
+		{0, 0, 0, 10},
+		{0, 0, BOX_SIDE_LEAST - 1, 10},
+		{0, 0, 10, BOX_SIDE_LEAST - 1},
+		{-1, 0, 10, 10},
+		{0, -1, 10, 10},
+		{draw_record.COORDINATE_LIMIT - 9, 0, 10, 10},
+		{0, draw_record.COORDINATE_LIMIT - 9, 10, 10},
+	}
+	for box in boxes {
+		testing.expectf(t, !sample_history_box_set(&history, box), "the box %v is taken", box)
+		testing.expectf(t, history == kept, "the box %v changed the history", box)
+	}
+}
+
+// A move to the same box changes nothing. A move to another box places the
+// curve of the kept values in the new box, as a history that was in that
+// box from its start: no value is lost, and the scale stays.
+@(test)
+a_move_places_the_kept_curve_in_the_new_box :: proc(t: ^testing.T) {
+	moved_box := Graph_Box{left = 240, top = 144, width = 480, height = 40}
+	moved, direct: Sample_History
+	testing.expect(t, sample_history_start(&moved, .Rounded_Up, TEST_BOX))
+	testing.expect(t, sample_history_start(&direct, .Rounded_Up, moved_box))
+	for value in ([?]u64{4, 17, 0, 250}) {
+		testing.expect(t, sample_history_push(&moved, value, 0))
+		testing.expect(t, sample_history_push(&direct, value, 0))
+	}
+	kept := moved
+	testing.expect(t, sample_history_box_set(&moved, TEST_BOX))
+	testing.expect(t, moved == kept)
+	testing.expect(t, sample_history_box_set(&moved, moved_box))
+	testing.expect(t, moved == direct)
+	testing.expect(t, points_valid(moved.stroke[:moved.stroke_count]) && points_valid(moved.area[:moved.area_count]))
+	right := i32((moved_box.left + moved_box.width - 1) * UNITS)
+	testing.expect_value(t, moved.stroke[moved.stroke_count - 1].x, right)
+}
