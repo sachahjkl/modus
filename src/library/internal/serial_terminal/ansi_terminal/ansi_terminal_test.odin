@@ -3,7 +3,6 @@ package ansi_terminal
 
 import "core:strings"
 import "core:testing"
-import "modus:display"
 import terminal_records "modus:terminal"
 
 @(test)
@@ -73,54 +72,3 @@ ansi_render_completion_popup_draws_box_and_clears_on_close :: proc(t: ^testing.T
 	testing.expect(t, strings.contains(string(sink_written(&sink2)), "\x1b[2K"))
 }
 
-@(test)
-vt_decoder_handles_arrows_ctrl_utf8_and_refuses_overlong_csi :: proc(t: ^testing.T) {
-	dec: Vt_Decoder
-
-	// Up arrow: ESC [ A
-	_, ok0 := vt_decode_byte(&dec, 0x1B)
-	testing.expect(t, !ok0)
-	_, ok1 := vt_decode_byte(&dec, '[')
-	testing.expect(t, !ok1)
-	k_up, ok2 := vt_decode_byte(&dec, 'A')
-	testing.expect(t, ok2 && k_up.code == display.KEY_UP)
-
-	// Shift+Tab: ESC [ Z
-	_, _ = vt_decode_byte(&dec, 0x1B)
-	_, _ = vt_decode_byte(&dec, '[')
-	k_stab, ok_st := vt_decode_byte(&dec, 'Z')
-	testing.expect(t, ok_st && k_stab.code == display.KEY_TAB && k_stab.modifiers == display.MODIFIER_SHIFT)
-
-	// Delete: ESC [ 3 ~
-	for b in ([]u8{0x1B, '[', '3'}) {
-		_, ok := vt_decode_byte(&dec, b)
-		testing.expect(t, !ok)
-	}
-	k_del, ok_del := vt_decode_byte(&dec, '~')
-	testing.expect(t, ok_del && k_del.code == display.KEY_DELETE)
-
-	// Ctrl+R (0x12)
-	k_cr, ok_cr := vt_decode_byte(&dec, 0x12)
-	testing.expect(t, ok_cr && k_cr.character == 'r' && k_cr.modifiers == display.MODIFIER_CONTROL)
-
-	// UTF-8 'é' (0xC3 0xA9)
-	_, ok_u0 := vt_decode_byte(&dec, 0xC3)
-	testing.expect(t, !ok_u0)
-	k_u1, ok_u1 := vt_decode_byte(&dec, 0xA9)
-	testing.expect(t, ok_u1 && k_u1.character == 'é')
-
-	// Overlong CSI sequence (>16 params) resets cleanly to Ground without hanging.
-	_, _ = vt_decode_byte(&dec, 0x1B)
-	_, _ = vt_decode_byte(&dec, '[')
-	for _ in 0 ..< CSI_BUFFER_LIMIT + 4 {
-		_, _ = vt_decode_byte(&dec, '1')
-	}
-	testing.expect_value(t, dec.state, Vt_State.Ground)
-	k_a, ok_a := vt_decode_byte(&dec, 'a')
-	testing.expect(t, ok_a && k_a.character == 'a')
-
-	// Standalone Escape via flush.
-	_, _ = vt_decode_byte(&dec, 0x1B)
-	k_esc, ok_esc := vt_flush_escape(&dec)
-	testing.expect(t, ok_esc && k_esc.code == display.KEY_ESCAPE)
-}

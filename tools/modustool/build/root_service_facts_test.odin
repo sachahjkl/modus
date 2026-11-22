@@ -474,6 +474,7 @@ the_facts_with_no_field_of_the_root_service_write_the_lines_of_before :: proc(t:
 		{"Compositor_Stopped", "root: the compositor stopped: no screen; a start of a window or a terminal is refused from now on"},
 		{"Console_Renderer_Serial", "root: no compositor in the boot image: the console writes to the second serial port through serial_terminal"},
 		{"Console_Renderer_Grid", "root: no compositor in the boot image: the console draws a text grid on the screen through grid_terminal"},
+		{"Console_Renderer_Dom", "root: no compositor in the boot image: the console writes lines for a page to the second serial port through dom_terminal"},
 		{"Palette_Provider_Absent", "root: no palette provider"},
 		{"Machine_Passphrase_Refused_Unreadable", "root: refused a machine passphrase: the record of the machine passphrase cannot be read, and a new one would replace a key that can be good"},
 		{"Machine_Passphrase_Refused_Exists", "root: refused a machine passphrase: the machine has one, and a change is not built"},

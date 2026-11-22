@@ -3,8 +3,9 @@ package terminal_records
 import "modus:contract/enum_word"
 import "modus:contract/ring"
 
-// The intake of a terminal renderer that draws no window: serial_terminal
-// and grid_terminal (src/md/features/console_renderers.md, "One intake").
+// The intake of a terminal renderer that draws no window: serial_terminal,
+// grid_terminal and dom_terminal (src/md/features/console_renderers.md,
+// "One intake").
 // It reads each command record of the terminal ring with the checks of the
 // terminal of the desktop: a word that names no record is refused and
 // counted, the text comes from the text region in two parts, the runs of
@@ -20,6 +21,8 @@ Renderer_Step :: enum u8 {
 	Clear = 2, // Forget all the lines.
 	Edit  = 3, // The edit line changed: Renderer_Intake.edit.
 	List  = 4, // The completion list changed: Renderer_Intake.list.shown.
+	Status = 5, // The status line changed: Renderer_Intake.status.
+	Hint  = 6, // The hint line changed: Renderer_Intake.hint.
 }
 
 // What one record gives a renderer.
@@ -37,6 +40,30 @@ Renderer_Edit :: struct {
 	code:       Code_Runs, // Checked against the text: no runs when they did not fit.
 }
 
+// The status line as a renderer shows it. A total of 0: no status line.
+Renderer_Status :: struct {
+	text:   [RUN_LIMIT]u8,
+	length: int,
+	value:  u64,
+	total:  u64,
+	style:  Style,
+}
+
+// The hint line as a renderer shows it: the long form, then the short form,
+// in one text. Each marked part is brought inside its own form, so a
+// renderer never reads a byte past the form that it shows. No text: no
+// hint line.
+Renderer_Hint :: struct {
+	text:              [RUN_LIMIT]u8,
+	length:            int,
+	long_bytes:        int, // The bytes of the long form, at the start of text; the short form follows.
+	mark_start:        int, // The first marked byte of the long form.
+	mark_length:       int,
+	short_mark_start:  int, // The first marked byte of the short form, from its own start.
+	short_mark_length: int,
+	style:             Style,
+}
+
 // The state of the intake. Zero is an intake with no text region: each
 // text reads as empty.
 Renderer_Intake :: struct {
@@ -45,6 +72,8 @@ Renderer_Intake :: struct {
 	text:              [RUN_LIMIT]u8, // The text of the last Text record.
 	text_length:       int,
 	edit:              Renderer_Edit,
+	status:            Renderer_Status,
+	hint:              Renderer_Hint,
 	edit_runs_pending: Code_Runs,
 	list:              List_Keeping,
 	records_refused:   u64, // Records whose word names no record.
@@ -79,6 +108,18 @@ renderer_take :: proc "contextless" (intake: ^Renderer_Intake, count: u32) -> (f
 	return intake.text_region[place:][:first_size], intake.text_region[:second_size]
 }
 
+// renderer_mark_inside brings a marked part that a process wrote inside a
+// form of size bytes: a start past the form gives no mark, and a length is
+// cut at the end of the form.
+renderer_mark_inside :: proc "contextless" (start, length: u64, size: int) -> (inside_start, inside_length: int) {
+	if start >= u64(size) {
+		return 0, 0
+	}
+	inside_start = int(start)
+	inside_length = int(min(length, u64(size - inside_start)))
+	return
+}
+
 // renderer_intake_take reads one command record and gives what the
 // renderer draws.
 renderer_intake_take :: proc "contextless" (intake: ^Renderer_Intake, record: ring.Record) -> Renderer_Event {
@@ -96,11 +137,23 @@ renderer_intake_take :: proc "contextless" (intake: ^Renderer_Intake, record: ri
 		intake.text_length = copy(intake.text[:], first)
 		intake.text_length += copy(intake.text[intake.text_length:], second)
 		return {step = .Text, style = transmute(Style)record.values[0]}
-	case .Status, .Hint:
-		// A renderer with no window keeps no status line and no hint line:
-		// their text is read past, so the next record reads its own text.
-		_, _ = renderer_take(intake, record.tag)
-		return {}
+	case .Status:
+		first, second := renderer_take(intake, record.tag)
+		status := &intake.status
+		status^ = {value = record.values[1], total = record.values[2], style = transmute(Style)record.values[0]}
+		status.length = copy(status.text[:], first)
+		status.length += copy(status.text[status.length:], second)
+		return {step = .Status, style = status.style}
+	case .Hint:
+		first, second := renderer_take(intake, record.tag)
+		hint := &intake.hint
+		hint^ = {style = transmute(Style)record.values[0]}
+		hint.length = copy(hint.text[:], first)
+		hint.length += copy(hint.text[hint.length:], second)
+		hint.long_bytes = int(min(record.values[3], u64(hint.length)))
+		hint.mark_start, hint.mark_length = renderer_mark_inside(record.values[1], record.values[2], hint.long_bytes)
+		hint.short_mark_start, hint.short_mark_length = renderer_mark_inside(record.values[4], record.values[5], hint.length - hint.long_bytes)
+		return {step = .Hint, style = hint.style}
 	case .Clear:
 		return {step = .Clear}
 	case .Edit:

@@ -74,8 +74,8 @@ const WEBASSEMBLY_PAGE_SIZE = 65536;
 
 // The ports of the devices of the test machine that the page plays.
 // COM1 (0x3f8) is the log of the kernel. COM2 (0x2f8) is the terminal of a
-// console image: serial_terminal writes its ANSI text there and reads the
-// keys of the page there.
+// console image: dom_terminal writes one JSON line for each change of the
+// terminal there, and reads the keys of the page there.
 export const Port = Object.freeze({
   SerialData: 0x3f8,
   SerialLineControl: 0x3fb,

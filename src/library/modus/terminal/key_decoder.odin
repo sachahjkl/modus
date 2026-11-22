@@ -1,14 +1,13 @@
-// Stateful non-blocking VT100 / UTF-8 input decoder for serial_terminal
-// (src/md/features/console_renderers.md, "Variant A: serial_terminal").
-//
-// Translates raw serial bytes of the second serial port (COM2) into typed
-// terminal_records.Key values matching display.KEY_* and display.MODIFIER_*,
-// refusing malformed or overlong CSI sequences and overlong or surrogate
-// UTF-8 cleanly without blocking.
-package ansi_terminal
+package terminal_records
+
+// The decoder of the keys that a terminal of the reader sends on the second
+// serial port, as VT100 sequences and UTF-8: serial_terminal and
+// dom_terminal share it (src/md/features/console_renderers.md, "One key
+// decoder"). It gives a Key with the codes of display.KEY_* and the bits of
+// display.MODIFIER_*, refuses a malformed or overlong CSI sequence and
+// overlong or surrogate UTF-8, and never waits for a byte.
 
 import "modus:display"
-import terminal_records "modus:terminal"
 
 Vt_State :: enum u8 {
 	Ground = 0,
@@ -33,7 +32,7 @@ REPLACEMENT_CHARACTER :: rune(0xFFFD)
 
 // vt_decode_byte feeds one raw byte from the serial port into the decoder.
 // When a complete key is ready, ok is true.
-vt_decode_byte :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: terminal_records.Key, ok: bool) {
+vt_decode_byte :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: Key, ok: bool) {
 	switch decoder.state {
 	case .Ground:
 		return vt_ground(decoder, b)
@@ -71,7 +70,7 @@ vt_decode_byte :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: term
 
 // vt_flush_escape emits a pending standalone Escape when no follow-up byte
 // arrived within the inter-byte timeout.
-vt_flush_escape :: proc "contextless" (decoder: ^Vt_Decoder) -> (key: terminal_records.Key, ok: bool) {
+vt_flush_escape :: proc "contextless" (decoder: ^Vt_Decoder) -> (key: Key, ok: bool) {
 	if decoder.state == .Escape {
 		decoder.state = .Ground
 		return {code = display.KEY_ESCAPE}, true
@@ -80,7 +79,7 @@ vt_flush_escape :: proc "contextless" (decoder: ^Vt_Decoder) -> (key: terminal_r
 }
 
 @(private = "file")
-vt_ground :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: terminal_records.Key, ok: bool) {
+vt_ground :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: Key, ok: bool) {
 	switch b {
 	case 0x1B:
 		decoder.state = .Escape
@@ -127,7 +126,7 @@ vt_ground :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: terminal_
 }
 
 @(private = "file")
-vt_csi :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: terminal_records.Key, ok: bool) {
+vt_csi :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: Key, ok: bool) {
 	// An ESC inside a sequence starts a new one: the reader pressed a key
 	// before the sequence of the last one ended, and the new key is kept.
 	if b == 0x1B {

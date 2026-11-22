@@ -444,8 +444,8 @@ load_source :: proc "contextless" () -> system.Load_Source {
 screen: graphics.Canvas
 // grid_terminal runs, and writes the screen: this service draws no more on it.
 screen_given_to_renderer: bool
-// The place of the renderer of the terminal that runs, serial_terminal or
-// grid_terminal, or nil: one at a time holds its device.
+// The place of the renderer of the terminal that runs, serial_terminal,
+// grid_terminal or dom_terminal, or nil: one at a time holds its device.
 console_renderer_view: ^Started
 screen_data: bootscreen.Data
 message: bootscreen.Text
@@ -1806,7 +1806,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	switch console_renderer {
 	case .Desktop_Terminal:
 		return window_terminal_start(view, writer, ring_memory, text_memory)
-	case .Serial_Terminal, .Grid_Terminal:
+	case .Serial_Terminal, .Grid_Terminal, .Dom_Terminal:
 		return renderer_terminal_start(view, writer, ring_memory, text_memory)
 	}
 	return .Bad_State
@@ -1814,8 +1814,8 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 
 // renderer_terminal_start starts the terminal of a process when the
 // terminal draws no window (src/md/features/console_renderers.md, "The
-// context of a renderer"): serial_terminal with the ports of the second
-// serial port, or grid_terminal with the framebuffer and the input ring,
+// context of a renderer"): serial_terminal or dom_terminal with the ports
+// of the second serial port, or grid_terminal with the framebuffer and the input ring,
 // which it reads in place of the compositor. Each receives the terminal
 // ring, the text region with the right Read, and a handle that reads the
 // state of the process, and nothing of the start grant set of the process.
@@ -1848,7 +1848,7 @@ renderer_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started,
 	switch console_renderer {
 	case .Desktop_Terminal:
 		return .Bad_State
-	case .Serial_Terminal:
+	case .Serial_Terminal, .Dom_Terminal:
 		results, ports_status := system.call(.Device_Create, u64(machine), u64(op.Device_Kind.Ports), terminal.SERIAL_PORT_FIRST, terminal.SERIAL_PORT_COUNT)
 		if ports_status != .Ok {
 			return ports_status

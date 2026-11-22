@@ -1,142 +1,215 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>modus console</title>
 <style>
-  :root { color-scheme: dark; }
-  html, body { margin: 0; height: 100%; background: #14171d; color: #e6ebf2; font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; }
-  header { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #1c2029; border-bottom: 1px solid #2b313e; font-size: 12px; }
-  #term { margin: 0; padding: 12px; white-space: pre; font-size: 14px; line-height: 1.3; outline: none; }
-  .cursor { outline: 1px solid #e6ebf2; }
+  /* The colors of the Modus palette: each tone and each kind of code is a
+     class, so a change of theme colors every line again. */
+  :root { color-scheme: dark; --bg: #14171d; --surface: #1c2029; --edge: #2b313e; --text: #e6ebf2; --dim: #7c8a99; --strong: #ffffff;
+    --good: #58d878; --warning: #e0a040; --bad: #f06060; --accent: #64aaf2; --number: #38c0b0;
+    --code-name: #58d878; --code-type: #9e8fcb; --code-literal: #38c0b0; --code-punctuation: #b0b8c1; --code-comment: #9ca6b2;
+    --chosen: rgba(100, 170, 242, 0.16); --shadow: 0 12px 32px rgba(0, 0, 0, 0.45); }
+  [data-theme="light"] { color-scheme: light; --bg: #f6f7f9; --surface: #ffffff; --edge: #dde1e7; --text: #181c22; --dim: #4a525b; --strong: #000000;
+    --good: #327c45; --warning: #906729; --bad: #ba4a4a; --accent: #3c76bb; --number: #247c71;
+    --code-name: #276035; --code-type: #554a75; --code-literal: #1b5f57; --code-punctuation: #3d444c; --code-comment: #4a525b;
+    --chosen: rgba(60, 118, 187, 0.12); --shadow: 0 12px 32px rgba(24, 28, 34, 0.16); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; }
+  body { display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--surface); border-bottom: 1px solid var(--edge); font-size: 12px; }
+  #badge { font-weight: 700; color: var(--accent); }
+  #state { display: flex; align-items: center; gap: 6px; color: var(--dim); margin-right: auto; }
+  #dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warning); }
+  #dot.running { background: var(--good); }
+  #dot.stopped { background: var(--bad); }
+  button { font: inherit; font-size: 12px; color: var(--text); background: transparent; border: 1px solid var(--edge); border-radius: 4px; padding: 3px 10px; cursor: pointer; }
+  button:hover, button:focus-visible { border-color: var(--accent); outline: none; }
+  #output { flex: 1; overflow-y: auto; padding: 12px 14px 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .line { min-height: 1.45em; }
+  #status-bar { display: flex; align-items: center; gap: 10px; padding: 4px 14px; font-size: 12px; color: var(--dim); border-top: 1px solid var(--edge); }
+  #status-track { flex: 0 0 160px; height: 4px; border-radius: 2px; background: var(--edge); overflow: hidden; }
+  #status-fill { height: 100%; width: 0; background: var(--accent); transition: width 120ms linear; }
+  #prompt-area { position: relative; padding: 8px 14px 6px; background: var(--surface); border-top: 1px solid var(--edge); }
+  #prompt-bar { white-space: pre; overflow-x: auto; min-height: 1.45em; outline: none; cursor: text; }
+  .caret { display: inline-block; width: 0; height: 1.2em; margin-right: -2px; vertical-align: text-bottom; border-left: 2px solid var(--accent); animation: blink 1.1s steps(1) infinite; }
+  #prompt-bar:not(:focus) .caret { animation: none; opacity: 0.4; }
+  @keyframes blink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .caret { animation: none; } }
+  #hint-bar { min-height: 1.45em; font-size: 12px; color: var(--dim); white-space: pre-wrap; }
+  .mark { color: var(--accent); font-weight: 700; }
+  #completion-popup { position: absolute; bottom: 100%; margin-bottom: 6px; min-width: 260px; max-width: min(640px, calc(100vw - 16px)); padding: 4px 0; background: var(--surface); border: 1px solid var(--edge); border-radius: 6px; box-shadow: var(--shadow); }
+  .item { display: flex; gap: 10px; align-items: baseline; padding: 2px 10px; white-space: pre; cursor: pointer; }
+  .item:hover { background: var(--chosen); }
+  .item.chosen { background: var(--chosen); box-shadow: inset 2px 0 var(--accent); }
+  .icon { min-width: 7ch; padding: 0 5px; font-size: 10px; text-align: center; color: var(--dim); border: 1px solid var(--edge); border-radius: 3px; }
+  .detail { overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
+  .matched { color: var(--accent); font-weight: 700; }
+  #list-count { margin-top: 4px; padding: 2px 10px 0; font-size: 11px; text-align: right; color: var(--dim); border-top: 1px solid var(--edge); }
+  #chips { display: flex; gap: 8px; padding: 0 14px 8px; background: var(--surface); }
+  [hidden] { display: none !important; }
+  .t-dim { color: var(--dim); } .t-strong { color: var(--strong); font-weight: 700; } .t-good { color: var(--good); } .t-warning { color: var(--warning); }
+  .t-bad { color: var(--bad); } .t-accent { color: var(--accent); } .t-number { color: var(--number); }
+  .c-function { color: var(--code-name); } .c-type { color: var(--code-type); } .c-number, .c-text, .c-text_unfinished { color: var(--code-literal); }
+  .c-operator, .c-arrow { color: var(--code-punctuation); } .c-words, .c-unknown { color: var(--code-comment); }
 </style>
 </head>
 <body>
 <header>
-  <span>modus console</span>
-  <span id="status">loading</span>
+  <span id="badge">modus</span>
+  <span id="state"><span id="dot"></span><span id="state-text">loading</span></span>
+  <button id="theme" type="button">Light</button>
+  <button id="clear" type="button">Clear</button>
 </header>
-<pre id="term" tabindex="0" aria-label="modus console"></pre>
+<main id="output" aria-live="polite" aria-label="output"></main>
+<div id="status-bar" hidden><span id="status-text"></span><span id="status-track"><span id="status-fill"></span></span><span id="status-count"></span></div>
+<div id="prompt-area">
+  <div id="completion-popup" role="listbox" hidden></div>
+  <div id="prompt-bar" tabindex="0" role="textbox" aria-label="modus console"></div>
+  <div id="hint-bar"></div>
+</div>
+<div id="chips" hidden></div>
 <script type="module">
 import { BrowserMachine, MachineState } from "./browser_machine_host.js";
 
-// The screen of a VT100 terminal, as serial_terminal writes it on COM2:
-// 24-bit colors (SGR 38;2 and 48;2), cursor moves (CUP), erase of the
-// screen and of a line (ED, EL), the scroll region of the output (DECSTBM),
-// and the saved cursor of the output (DECSC, DECRC). The size is the
-// largest terminal of the system: serial_terminal places each row and
-// column itself.
-const COLUMNS = 104, ROWS = 32;
-const DEFAULT_FOREGROUND = "#e6ebf2", DEFAULT_BACKGROUND = "#14171d";
+// The page draws the lines that dom_terminal writes on COM2, one JSON
+// object for each line (src/md/features/console_renderers.md, "Variant C:
+// dom_terminal"). Each place in a text is a place in Array.from(text).
+const OUTPUT_LINE_LIMIT = 4000;
+const STARTERS = ["help()", "processes()", "log.follow()"];
+const THEME_KEY = "modus-console-theme";
+const element = (id) => document.getElementById(id);
+const output = element("output"), promptBar = element("prompt-bar"), hintBar = element("hint-bar"), popup = element("completion-popup"), chips = element("chips");
 
-class Screen {
-  constructor() {
-    this.foreground = DEFAULT_FOREGROUND;
-    this.background = DEFAULT_BACKGROUND;
-    this.cells = Array.from({ length: ROWS }, () => this.blankRow());
-    this.row = 0; this.column = 0;
-    this.saved = { row: 0, column: 0 };
-    this.top = 0; this.bottom = ROWS - 1;
-    this.state = "ground"; this.parameters = "";
-    this.decoder = new TextDecoder();
-    this.dirty = true;
-  }
-  blankCell() { return { character: " ", foreground: this.foreground, background: this.background }; }
-  blankRow() { return Array.from({ length: COLUMNS }, () => this.blankCell()); }
-  lineFeed() {
-    if (this.row === this.bottom) {
-      this.cells.splice(this.top, 1);
-      this.cells.splice(this.bottom, 0, this.blankRow());
-    } else if (this.row < ROWS - 1) {
-      this.row += 1;
+function span(text, className) {
+  const node = document.createElement("span");
+  node.textContent = text;
+  if (className) node.className = className;
+  return node;
+}
+function kindAt(runs, place) {
+  for (const [start, end, kind] of runs ?? []) if (place >= start && place < end) return "c-" + kind;
+  return "";
+}
+// appendParts appends characters from..to of chars, one span for each run
+// of characters with the same class.
+function appendParts(parent, chars, from, to, classOf) {
+  let start = from;
+  for (let place = from + 1; place <= to; place++) {
+    if (place === to || classOf(place) !== classOf(start)) {
+      parent.append(span(chars.slice(start, place).join(""), classOf(start)));
+      start = place;
     }
-  }
-  put(character) {
-    if (this.column >= COLUMNS) { this.column = 0; this.lineFeed(); }
-    this.cells[this.row][this.column] = { character, foreground: this.foreground, background: this.background };
-    this.column += 1;
-  }
-  numbers() { return this.parameters.split(";").map((text) => (text === "" ? 0 : Number(text))); }
-  csi(final) {
-    const numbers = this.numbers();
-    switch (final) {
-      case "m":
-        for (let at = 0; at < numbers.length; at++) {
-          if (numbers[at] === 0) { this.foreground = DEFAULT_FOREGROUND; this.background = DEFAULT_BACKGROUND; }
-          else if ((numbers[at] === 38 || numbers[at] === 48) && numbers[at + 1] === 2) {
-            const color = "rgb(" + numbers.slice(at + 2, at + 5).map((value) => Math.min(Math.max(value | 0, 0), 255)).join(",") + ")";
-            if (numbers[at] === 38) this.foreground = color; else this.background = color;
-            at += 4;
-          }
-        }
-        break;
-      case "H":
-        this.row = Math.min(Math.max((numbers[0] || 1) - 1, 0), ROWS - 1);
-        this.column = Math.min(Math.max((numbers[1] || 1) - 1, 0), COLUMNS - 1);
-        break;
-      case "J":
-        if (numbers[0] === 2) this.cells = Array.from({ length: ROWS }, () => this.blankRow());
-        break;
-      case "K": {
-        const from = numbers[0] === 2 ? 0 : this.column;
-        for (let column = from; column < COLUMNS; column++) this.cells[this.row][column] = this.blankCell();
-        break;
-      }
-      case "r":
-        this.top = Math.min(Math.max((numbers[0] || 1) - 1, 0), ROWS - 1);
-        this.bottom = Math.min(Math.max((numbers[1] || ROWS) - 1, this.top), ROWS - 1);
-        break;
-    }
-  }
-  feed(byte) {
-    const text = this.decoder.decode(new Uint8Array([byte]), { stream: true });
-    for (const character of text) this.take(character);
-    this.dirty = true;
-  }
-  take(character) {
-    if (this.state === "escape") {
-      this.state = "ground";
-      if (character === "[") { this.state = "csi"; this.parameters = ""; }
-      else if (character === "7") this.saved = { row: this.row, column: this.column };
-      else if (character === "8") { this.row = this.saved.row; this.column = this.saved.column; }
-      return;
-    }
-    if (this.state === "csi") {
-      const code = character.charCodeAt(0);
-      if (code >= 0x30 && code <= 0x3f) { this.parameters += character; return; }
-      this.state = "ground";
-      if (code >= 0x40 && code <= 0x7e) this.csi(character);
-      return;
-    }
-    if (character === "\x1b") this.state = "escape";
-    else if (character === "\r") this.column = 0;
-    else if (character === "\n") this.lineFeed();
-    else if (character >= " ") this.put(character);
-  }
-  render(element) {
-    const escape = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-    const lines = this.cells.map((cells, row) => {
-      let html = "", run = "", style = "";
-      const flush = () => { if (run) html += '<span style="' + style + '">' + escape(run) + "</span>"; run = ""; };
-      cells.forEach((cell, column) => {
-        const cursor = row === this.row && column === this.column;
-        const cellStyle = "color:" + cell.foreground + ";background:" + cell.background;
-        if (cursor) { flush(); html += '<span class="cursor" style="' + cellStyle + '">' + escape(cell.character) + "</span>"; style = ""; return; }
-        if (cellStyle !== style) { flush(); style = cellStyle; }
-        run += cell.character;
-      });
-      flush();
-      return html;
-    });
-    element.innerHTML = lines.join("\n");
-    this.dirty = false;
   }
 }
 
-const term = document.getElementById("term");
-const status = document.getElementById("status");
-const screen = new Screen();
+function themeSet(theme) {
+  document.documentElement.dataset.theme = theme;
+  element("theme").textContent = theme === "dark" ? "Light" : "Dark";
+  try { localStorage.setItem(THEME_KEY, theme); } catch {}
+}
+let savedTheme = "dark";
+try { savedTheme = localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark"; } catch {}
+themeSet(savedTheme);
+element("theme").addEventListener("click", () => themeSet(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+
+let openLine = null;
+function clearOutput() { output.replaceChildren(); openLine = null; }
+element("clear").addEventListener("click", clearOutput);
+
+let listChosen = -1;
+const records = {
+  out(record) {
+    if (!openLine) {
+      openLine = document.createElement("div");
+      openLine.className = "line";
+      output.append(openLine);
+      while (output.childElementCount > OUTPUT_LINE_LIMIT) output.firstElementChild.remove();
+    }
+    const node = span(record.s, [record.tone && "t-" + record.tone, record.code && "c-" + record.code].filter(Boolean).join(" "));
+    if (record.fg) node.style.color = record.fg;
+    if (record.rev) { node.style.background = record.fg ?? "var(--text)"; node.style.color = "var(--bg)"; }
+    openLine.append(node);
+    if (record.nl) openLine = null;
+  },
+  clr: clearOutput,
+  edit(record) {
+    const chars = Array.from(record.text), classOf = (place) => kindAt(record.runs, place);
+    promptBar.replaceChildren();
+    if (record.cur === undefined) appendParts(promptBar, chars, 0, chars.length, classOf);
+    else {
+      appendParts(promptBar, chars, 0, record.cur, classOf);
+      promptBar.append(span("", "caret"));
+      appendParts(promptBar, chars, record.cur, chars.length, classOf);
+    }
+    chips.hidden = !/^>\s*$/.test(record.text);
+  },
+  hint(record) {
+    const chars = Array.from(record.text), start = record.ms ?? 0, end = start + (record.ml ?? 0);
+    hintBar.replaceChildren();
+    appendParts(hintBar, chars, 0, chars.length, (place) => (place >= start && place < end ? "mark" : ""));
+  },
+  status(record) {
+    element("status-bar").hidden = !(record.tot > 0);
+    if (!(record.tot > 0)) return;
+    element("status-text").textContent = record.text;
+    element("status-fill").style.width = Math.min(100, (100 * record.v) / record.tot) + "%";
+    element("status-count").textContent = record.v + " / " + record.tot;
+  },
+  list(record) {
+    popup.replaceChildren();
+    popup.hidden = record.items.length === 0;
+    listChosen = record.chosen;
+    if (popup.hidden) return;
+    record.items.forEach((item, index) => {
+      const row = document.createElement("div");
+      row.className = "item" + (index === record.chosen ? " chosen" : "");
+      row.setAttribute("role", "option");
+      if (item.icon) row.append(span(item.icon.replace("_", " "), "icon"));
+      const chars = Array.from(item.name + item.detail), nameLength = Array.from(item.name).length, matched = new Set(item.match ?? []);
+      const name = span("", "name"), detail = span("", "detail");
+      appendParts(name, chars, 0, nameLength, (place) => (matched.has(place) ? "matched" : kindAt(item.runs, place)));
+      appendParts(detail, chars, nameLength, chars.length, (place) => kindAt(item.runs, place));
+      row.append(name, detail);
+      // The console moves its choice by the arrows and takes it by Tab: a
+      // click sends the keys that choose its row.
+      row.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        const step = index - listChosen;
+        send((step > 0 ? "\x1b[B" : "\x1b[A").repeat(Math.abs(step)) + "\t");
+        promptBar.focus();
+      });
+      popup.append(row);
+    });
+    if (record.total > record.items.length) {
+      const count = document.createElement("div");
+      count.id = "list-count";
+      count.textContent = record.first + 1 + "–" + (record.first + record.items.length) + " / " + record.total;
+      popup.append(count);
+    }
+    // The list starts at the column of the name, inside the window.
+    const probe = span("0".repeat(10));
+    promptBar.append(probe);
+    const columnWidth = probe.getBoundingClientRect().width / 10;
+    probe.remove();
+    const left = 14 + record.start * columnWidth - promptBar.scrollLeft;
+    popup.style.left = Math.max(8, Math.min(left, window.innerWidth - popup.offsetWidth - 8)) + "px";
+  },
+};
+
+for (const command of STARTERS) {
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.textContent = command;
+  chip.addEventListener("click", () => { send(command + "\r"); promptBar.focus(); });
+  chips.append(chip);
+}
+
+function stateSet(text) {
+  element("state-text").textContent = text;
+  element("dot").className = text === "running" ? "running" : text === "starting" || text === "loading" ? "" : "stopped";
+}
 
 const [kernelResponse, imageResponse] = await Promise.all([fetch("./modulus_kernel.wasm"), fetch("./console.image")]);
 const kernelModule = await WebAssembly.compile(await kernelResponse.arrayBuffer());
@@ -147,33 +220,50 @@ const machine = new BrowserMachine({
   idleWait: () => {},
   // COM1 is the log of the kernel: the console of the developer shows it.
   onSerialLine: (line) => console.log(line),
-  onConsoleBytes: (byte) => screen.feed(byte),
+  onConsoleLine: (line) => {
+    let record;
+    try { record = JSON.parse(line); } catch { return; }
+    records[record.t]?.(record);
+  },
 });
+// send gives text to COM2 as a terminal sends it: UTF-8 and VT100 keys,
+// which dom_terminal decodes.
+function send(text) { machine.consolePort.type(text); }
 
-// The keys as a VT100 terminal sends them; serial_terminal decodes them.
-term.addEventListener("keydown", (event) => {
-  const named = { ArrowUp: "\x1b[A", ArrowDown: "\x1b[B", ArrowRight: "\x1b[C", ArrowLeft: "\x1b[D", Home: "\x1b[H", End: "\x1b[F", Delete: "\x1b[3~", PageUp: "\x1b[5~", PageDown: "\x1b[6~", Tab: event.shiftKey ? "\x1b[Z" : "\t", Enter: "\r", Backspace: "\x7f", Escape: "\x1b" };
-  let sequence = named[event.key];
-  if (!sequence && event.ctrlKey && event.key.length === 1) {
-    const code = event.key.toLowerCase().charCodeAt(0) - 96;
-    if (code >= 1 && code <= 26) sequence = String.fromCharCode(code);
-  } else if (!sequence && !event.ctrlKey && !event.metaKey && event.key.length === 1) {
-    sequence = event.key;
-  }
+const NAMED_KEYS = { ArrowUp: "\x1b[A", ArrowDown: "\x1b[B", ArrowRight: "\x1b[C", ArrowLeft: "\x1b[D", Home: "\x1b[H", End: "\x1b[F", Delete: "\x1b[3~", PageUp: "\x1b[5~", PageDown: "\x1b[6~", Enter: "\r", Backspace: "\x7f", Escape: "\x1b" };
+document.addEventListener("keydown", (event) => {
+  if (event.target instanceof HTMLButtonElement && (event.key === "Enter" || event.key === " ")) return;
+  // Cmd and Alt stay with the browser; Ctrl+C with a selection copies it,
+  // and Ctrl+V comes as a paste.
+  if (event.metaKey || event.altKey) return;
+  const letter = event.key.length === 1 ? event.key.toLowerCase() : "";
+  if (event.ctrlKey && ((letter === "c" && String(getSelection())) || letter === "v")) return;
+  let sequence = event.key === "Tab" ? (event.shiftKey ? "\x1b[Z" : "\t") : NAMED_KEYS[event.key];
+  if (!sequence && event.ctrlKey && letter >= "a" && letter <= "z") sequence = String.fromCharCode(letter.charCodeAt(0) - 96);
+  else if (!sequence && !event.ctrlKey && event.key.length >= 1 && Array.from(event.key).length === 1) sequence = event.key;
   if (!sequence) return;
   event.preventDefault();
-  machine.consolePort.type(sequence);
+  send(sequence);
 });
+document.addEventListener("paste", (event) => {
+  const text = event.clipboardData?.getData("text/plain");
+  if (!text) return;
+  event.preventDefault();
+  send(text.replace(/\r\n?|\n/g, "\r"));
+});
+promptBar.addEventListener("mousedown", () => promptBar.focus());
 
-status.textContent = "starting";
+stateSet("starting");
 await machine.start();
-status.textContent = "running";
-term.focus();
+stateSet("running");
+promptBar.focus();
 
 function step() {
-  if (machine.state !== MachineState.Running) { status.textContent = machine.state; return; }
+  if (machine.state !== MachineState.Running) { stateSet(machine.state); return; }
+  // Output follows the end only when the reader is at the end.
+  const atEnd = output.scrollHeight - output.scrollTop - output.clientHeight < 40;
   machine.runSlice(8_000_000);
-  if (screen.dirty) screen.render(term);
+  if (atEnd) output.scrollTop = output.scrollHeight;
   requestAnimationFrame(step);
 }
 requestAnimationFrame(step);

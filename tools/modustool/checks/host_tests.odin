@@ -307,6 +307,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_INTERNAL + "/c_compiler/program_files",
 	foundation.SOURCE_FOLDER_INTERNAL + "/serial_terminal/ansi_terminal",
 	foundation.SOURCE_FOLDER_INTERNAL + "/grid_terminal/grid_renderer",
+	foundation.SOURCE_FOLDER_INTERNAL + "/dom_terminal/dom_protocol",
 	foundation.SOURCE_FOLDER_INTERNAL + "/debugger/debugging",
 	foundation.LIBRARY_MODULE_SOURCES + "interface_module",
 	foundation.LIBRARY_MODULE_SOURCES + "drawing",
