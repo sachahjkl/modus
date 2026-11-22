@@ -95,6 +95,7 @@ Projects_Counters :: struct {
 	max_depth_reached:     u64,
 	total_revoked_modules: u64,
 	total_revoked_stores:  u64,
+	last_pin_count:        u64, // The pins of the last pins.lex that list_inputs accepted.
 }
 
 // Complete fixed-capacity state of the projects service engine.
@@ -130,7 +131,8 @@ bytes_equal :: proc "contextless" (first, second: []u8) -> bool {
 }
 
 // list_inputs parses pins.lex strictly into sorted Pin_Entry rows for
-// projects.inputs(project).
+// projects.inputs(project). A refused pins.lex keeps the last pin count, so a
+// damaged file never hides the inputs of the last good one.
 list_inputs :: proc "contextless" (
 	state: ^Projects_State,
 	pins_lex_bytes: []u8,
@@ -142,6 +144,7 @@ list_inputs :: proc "contextless" (
 		return 0, refusal
 	}
 	state.counters.total_inputs_queries += 1
+	state.counters.last_pin_count = u64(count)
 	return count, .None
 }
 

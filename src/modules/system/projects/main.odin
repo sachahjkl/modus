@@ -84,6 +84,17 @@ active_console_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
 	return i64(service_state.counters.active_consoles)
 }
 
+// pin_count returns the pins of the last pins.lex that a command List_Inputs
+// read whole, or 0 before the first one. A pins.lex that the service refuses
+// does not change it.
+@(export)
+pin_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
+	if !service_state.initialized {
+		return errors.fail(error, -1, .State, .Requests)
+	}
+	return i64(service_state.counters.last_pin_count)
+}
+
 @(private = "file")
 handle_command :: proc "contextless" (command: ring.Record) {
 	parsed, ok := pr.projects_ring_command_of_word(command.kind)

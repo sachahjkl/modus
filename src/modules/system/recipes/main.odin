@@ -77,6 +77,27 @@ status :: proc "c" (out: ^Recipes_Status, error: ^errors.Error_Record) -> i64 {
 	return 0
 }
 
+// build_count returns the build requests whose mode and recipe the service
+// accepted, whatever their outcome. A request refused for its mode or for its
+// recipe does not count: status() counts it as a refusal.
+@(export)
+build_count :: proc "c" (error: ^errors.Error_Record) -> i64 {
+	if !service_state.initialized {
+		return errors.fail(error, -1, .State, .Requests)
+	}
+	return i64(min(service_state.counters.total_builds, u64(max(i64))))
+}
+
+// cache_hits returns the builds that a cached realisation answered, from the
+// local store or from a remote cache, with no build in the sandbox.
+@(export)
+cache_hits :: proc "c" (error: ^errors.Error_Record) -> i64 {
+	if !service_state.initialized {
+		return errors.fail(error, -1, .State, .Requests)
+	}
+	return i64(min(recipes_core.cache_hit_count(&service_state), u64(max(i64))))
+}
+
 @(private = "file")
 handle_command :: proc "contextless" (command: ring.Record) {
 	parsed, ok := pr.recipes_ring_command_of_word(command.kind)

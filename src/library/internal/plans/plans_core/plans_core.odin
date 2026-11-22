@@ -252,6 +252,29 @@ rollback :: proc "contextless" (
 	return selected, .None
 }
 
+// highest_generation returns the newest generation that an apply committed for
+// principal, or 0 when no apply committed one. A rollback lowers the current
+// generation and leaves this one: the next apply writes the generation after it,
+// so no apply overwrites a generation that a rollback can still select.
+highest_generation :: proc "contextless" (state: ^Plans_State, principal: u64) -> u64 {
+	entry := find_principal(state, principal)
+	if entry == nil {
+		return 0
+	}
+	return entry.highest_generation
+}
+
+// rollback_target returns the record that a rollback with no target selects for
+// principal, with the refusal that such a rollback gives, and changes no state
+// and no counter: a reader sees the generation before it asks for the rollback.
+rollback_target :: proc "contextless" (state: ^Plans_State, principal: u64) -> (selected: pr.Applied_Plan_Record, refusal: pr.Plan_Refusal) {
+	entry := find_principal(state, principal)
+	if entry == nil || entry.history_count == 0 || entry.current_generation == 0 {
+		return {}, .Empty_History
+	}
+	return pr.plan_rollback_check(entry.history[:entry.history_count], entry.current_generation)
+}
+
 // history_snapshot copies the applied_plans history of principal into out and
 // reports the count copied and the active current_generation.
 history_snapshot :: proc "contextless" (

@@ -97,6 +97,18 @@ state_init :: proc "contextless" (state: ^Recipes_State) {
 	state.initialized = true
 }
 
+// cache_hit_count returns the builds that a cached realisation answered, from
+// the local store or from a remote cache. The sum stops at the largest u64, so
+// two large counters never wrap to a small count.
+cache_hit_count :: proc "contextless" (state: ^Recipes_State) -> u64 {
+	local := state.counters.cache_hits_local
+	remote := state.counters.cache_hits_remote
+	if remote > max(u64) - local {
+		return max(u64)
+	}
+	return local + remote
+}
+
 @(private = "file")
 find_local_object :: proc "contextless" (state: ^Recipes_State, hash: blake3.Hash) -> ^Local_Object_Slot {
 	for &slot in state.objects {
