@@ -152,3 +152,31 @@ plan_difference_grows_with_its_items_and_stays_in_the_room :: proc(t: ^testing.T
 	_, bottom_y, _, _ := plan_difference_place(&dialog, 1280, 0, 736)
 	testing.expect(t, bottom_y >= PLAN_DIFFERENCE_MARGIN)
 }
+
+@(test)
+plan_difference_decision_of_serial_names_only_the_last_dialog :: proc(t: ^testing.T) {
+	dialog: Plan_Difference_Dialog
+	// Before any dialog: serial 0, 1 and the largest serial name nothing.
+	for serial in ([?]u64{0, 1, max(u64)}) {
+		decision, known := plan_difference_decision_of_serial(&dialog, serial)
+		testing.expectf(t, !known && decision == .Pending, "serial %v: %v %v", serial, decision, known)
+	}
+	first, _, _ := plan_difference_open(&dialog, "home", "notes: store documents", "", 1000)
+	decision, known := plan_difference_decision_of_serial(&dialog, first)
+	testing.expect(t, known && decision == .Pending)
+	// A serial one past the one shown names nothing.
+	_, known = plan_difference_decision_of_serial(&dialog, first + 1)
+	testing.expect(t, !known)
+	plan_difference_key(&dialog, .Next, 1000)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 2000), Plan_Difference_Decision.Accepted)
+	decision, known = plan_difference_decision_of_serial(&dialog, first)
+	testing.expect(t, known && decision == .Accepted)
+	// A later dialog replaces the decision: the first serial is unknown, so a
+	// caller never reads the decision of another dialog as its own.
+	second, _, _ := plan_difference_open(&dialog, "home", "", "paint: network", 3000)
+	_, known = plan_difference_decision_of_serial(&dialog, first)
+	testing.expect(t, !known)
+	testing.expect_value(t, plan_difference_key(&dialog, .Escape, 3000), Plan_Difference_Decision.Refused)
+	decision, known = plan_difference_decision_of_serial(&dialog, second)
+	testing.expect(t, known && decision == .Refused)
+}

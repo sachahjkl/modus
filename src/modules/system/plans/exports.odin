@@ -22,6 +22,8 @@ ERROR_HISTORY :: i64(-5) // The history refuses the step: the value found is the
 // The rows of the plan of the call, copied once out of the call region.
 copied_rows: [pr.MAX_PLAN_ENTRIES]pr.Plan_Entry_Row
 copied_expected: pr.Plan_Expected
+copied_plan_name: [pr.PLAN_DISPLAY_NAME_BYTES]u8
+export_lists: plans_core.Plan_Display_Lists
 export_plan: pr.Plan_Spec
 export_difference: pr.Plan_Difference
 export_history: [plans_core.MAX_HISTORY_PER_PRINCIPAL]pr.Applied_Plan_Record
@@ -69,6 +71,20 @@ plan_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, result: i6
 		return errors.fail(error, result, .No_Grant, .Display, 0, 0, 0, found)
 	case .History_Full:
 		return errors.fail(error, result, .Full, .Versions, 0, plans_core.MAX_HISTORY_PER_PRINCIPAL, plans_core.MAX_HISTORY_PER_PRINCIPAL, found)
+	case .No_Change:
+		return errors.fail(error, result, .Empty, .Records, 1, 0, 0, found)
+	case .Apply_Pending:
+		return errors.fail(error, result, .Busy, .Display, 0, 0, 0, found)
+	case .No_Pending_Apply:
+		return errors.fail(error, result, .Absent, .Requests, 1, 0, 0, found)
+	case .Refused_By_Principal:
+		return errors.fail(error, result, .Refused, .Display, 0, 0, 0, found)
+	case .Display_Refused:
+		return errors.fail(error, result, .No_Answer, .Display, 0, 0, 0, found)
+	case .Store_Failed:
+		return errors.fail(error, result, .Device, .Store, 0, 0, 0, found)
+	case .Store_Damaged:
+		return errors.fail(error, result, .Damaged, .Store, 0, 0, 0, found)
 	}
 	return errors.fail(error, result, .Refused, .None, 0, 0, 0, found)
 }
@@ -134,41 +150,87 @@ difference :: proc "c" (rows: ^system.Table_To_Read(pr.Plan_Entry_Row), summary:
 	return i64(count)
 }
 
-// apply applies the plan of rows for the principal of the caller in one
-// step, as the next generation after the highest one.
+// apply shows the difference between the plan of rows and the current plan
+// of the principal of the caller on the trusted display, and keeps the plan
+// until the principal decides. It commits nothing: apply_poll reads the
+// decision and commits an accepted plan.
 //
+// - **plan_name**: the name that the dialog shows, 1 to 48 bytes.
 // - **rows**: the entries of the plan, 1 to 32.
 // - **expected**: the hash of the current plan that a difference gave; zero
 //   when the principal has no applied plan. An apply whose current plan
-//   changed since is refused, so a principal never applies a difference that
+//   changed since is refused, so a principal never accepts a difference that
 //   it did not see.
 //
-// A plan that adds or widens a grant needs the consent of the principal on
-// the trusted display: this export refuses it with No_Grant and the unit
-// Display, as no consent reaches it.
-//
-// The result is the new generation, or a negative number with an error
-// record: ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or
-// ERROR_PLAN with the refusal as the value found.
+// The result is the ticket of the apply, the serial of the dialog, or a
+// negative number with an error record: ERROR_NO_CALLER,
+// ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or ERROR_PLAN with the refusal
+// as the value found: No_Change, Apply_Pending (the dialog of an earlier
+// apply still shows), Display_Refused (the dialog cannot show the whole
+// difference), Consent_Required (the service has no trusted display).
 @(export, link_name = "apply")
-apply :: proc "c" (rows: ^system.Table_To_Read(pr.Plan_Entry_Row), expected: ^pr.Plan_Expected, error: ^errors.Error_Record) -> i64 {
+apply :: proc "c" (plan_name: ^string, rows: ^system.Table_To_Read(pr.Plan_Entry_Row), expected: ^pr.Plan_Expected, error: ^errors.Error_Record) -> i64 {
 	principal, failure, allowed := caller_principal(error)
 	if !allowed {
 		return failure
 	}
+	if plan_name == nil {
+		return errors.fail(error, ERROR_PLAN, .Bad_Address, .None, 1)
+	}
+	name := intrinsics.volatile_load(plan_name)
+	if len(name) == 0 || len(name) > pr.PLAN_DISPLAY_NAME_BYTES {
+		return errors.fail(error, ERROR_PLAN, len(name) == 0 ? .Empty : .Too_Long, .Bytes, 1, i64(len(name)), pr.PLAN_DISPLAY_NAME_BYTES, i64(pr.Plan_Refusal.Invalid_Name))
+	}
+	intrinsics.mem_copy_non_overlapping(&copied_plan_name[0], raw_data(name), len(name))
 	if expected == nil {
-		return errors.fail(error, ERROR_PLAN, .Bad_Address, .None, 2)
+		return errors.fail(error, ERROR_PLAN, .Bad_Address, .None, 3)
 	}
 	copied_expected = intrinsics.volatile_load(expected)
 	if plan_failure, ok := plan_of_table(rows, principal, error); !ok {
 		return plan_failure
 	}
-	record, refusal := plans_core.apply_plan(&service_state, &export_plan, blake3.Hash(copied_expected.current_plan_hash), nil, nil, system.time(), &export_difference)
+	ticket, refusal := plans_core.apply_request(&service_state, &service_display, string(copied_plan_name[:len(name)]), &export_plan, blake3.Hash(copied_expected.current_plan_hash), &export_difference, &export_lists)
 	if refusal != .None {
 		system.log_fact(.Warning, Plan_Command_Refused{principal = principal, refusal_code = u64(refusal)})
 		return plan_refusal_fail(error, ERROR_PLAN, refusal)
 	}
+	system.log_fact(.Info, Plan_Difference_Asked{ticket = ticket, principal = principal})
+	return i64(min(ticket, u64(max(i64))))
+}
+
+// apply_poll reads the decision of the principal on the apply of a ticket.
+// While the dialog shows, it gives 0 and changes nothing. When the
+// principal accepted, it writes the plan as the generation after the
+// highest one in the private store of the service, then makes it current,
+// and gives the generation, with its row in result. A refused difference
+// changes nothing.
+//
+// The result is 0, the new generation, or a negative number with an error
+// record: ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or
+// ERROR_PLAN with the refusal as the value found: Refused_By_Principal,
+// No_Pending_Apply, Display_Refused, Stale_Current_Plan (another apply or a
+// rollback came first), Store_Failed (nothing committed).
+@(export, link_name = "apply_poll")
+apply_poll :: proc "c" (ticket: i64, result: ^[]pr.Plan_Generation_Row, error: ^errors.Error_Record) -> i64 {
+	principal, failure, allowed := caller_principal(error)
+	if !allowed {
+		return failure
+	}
+	if ticket < 1 {
+		return errors.fail(error, ERROR_PLAN, .Bad_Value, .Requests, 1, ticket, max(i64), i64(pr.Plan_Refusal.No_Pending_Apply))
+	}
+	record, finished, refusal := plans_core.apply_poll(&service_state, &service_display, principal, u64(ticket), system.time(), &export_difference)
+	if refusal != .None {
+		system.log_fact(.Warning, Plan_Command_Refused{principal = principal, refusal_code = u64(refusal)})
+		return plan_refusal_fail(error, ERROR_PLAN, refusal)
+	}
+	if !finished {
+		return 0
+	}
 	system.log_fact(.Info, Plan_Applied{generation = record.generation, principal = principal})
+	if len(result^) > 0 {
+		result[0] = pr.plan_generation_row_of(&record, record.generation)
+	}
 	return i64(min(record.generation, u64(max(i64))))
 }
 
@@ -176,10 +238,14 @@ apply :: proc "c" (rows: ^system.Table_To_Read(pr.Plan_Entry_Row), expected: ^pr
 // generation of the principal of the caller. It writes no plan: the next
 // apply still writes the generation after the highest one.
 //
+// The rollback writes the current object of the private store, which is its
+// commit, then the tables: a store that refuses the write changes nothing.
+//
 // The result is the new current generation, or a negative number with an
 // error record: ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY,
-// or ERROR_HISTORY with the kind Absent and the unit Versions when no
-// generation comes before the current one.
+// or ERROR_HISTORY with the refusal as the value found: the kind Absent and
+// the unit Versions when no generation comes before the current one,
+// Store_Failed and Store_Damaged for the private store.
 @(export, link_name = "rollback")
 rollback :: proc "c" (error: ^errors.Error_Record) -> i64 {
 	principal, failure, allowed := caller_principal(error)
@@ -199,14 +265,18 @@ rollback :: proc "c" (error: ^errors.Error_Record) -> i64 {
 // oldest first, each with where it stands against the current one.
 //
 // The result is the count of generations, or a negative number with an
-// error record: ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL or ERROR_NOT_READY.
+// error record: ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY,
+// or ERROR_HISTORY when the private store cannot be read.
 @(export, link_name = "generations")
 generations :: proc "c" (result: ^[]pr.Plan_Generation_Row, error: ^errors.Error_Record) -> i64 {
 	principal, failure, allowed := caller_principal(error)
 	if !allowed {
 		return failure
 	}
-	count, current := plans_core.history_snapshot(&service_state, principal, export_history[:])
+	count, current, refusal := plans_core.history_snapshot(&service_state, principal, export_history[:])
+	if refusal != .None {
+		return plan_refusal_fail(error, ERROR_HISTORY, refusal)
+	}
 	for index in 0 ..< count {
 		if index < len(result^) {
 			result[index] = pr.plan_generation_row_of(&export_history[index], current)

@@ -4,8 +4,12 @@ package projects_service
 
 FAILURE_FIELD_BYTES :: 96
 
-@(log_fact = "projects: ready")
-Service_Ready :: struct {}
+// store is 1 when the root service gave the private store, else 0: with no
+// store the service records no project.
+@(log_fact = "projects: ready, store {store}")
+Service_Ready :: struct {
+	store: u64,
+}
 
 @(log_fact = "projects: {failure}")
 Service_Failed :: struct {

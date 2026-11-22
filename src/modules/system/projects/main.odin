@@ -13,6 +13,7 @@ import "modus:contract/errors"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
+import "modus:storage_port"
 import "modus:system"
 
 // Working memory budget for the freestanding projects service process.
@@ -298,7 +299,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	projects_core.state_init(&service_state, u32(ctx.values[pr.PROJECTS_CONTEXT_VALUE_DISPLAY_SLOT]))
-	system.log_fact(.Info, Service_Ready{})
+	store_port, store_open := storage_port.bind(ctx)
+	projects_core.loaded_projects_init(&loaded_projects, store_port)
+	system.log_fact(.Info, Service_Ready{store = store_open ? 1 : 0})
 
 	for {
 		wait := system.wait_begin()

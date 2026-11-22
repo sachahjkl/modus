@@ -99,6 +99,8 @@ Project_Refusal :: enum u8 {
 	Bad_Evaluation         = 38,
 	Evaluation_Refused     = 39,
 	Not_A_Project          = 40,
+	Store_Failed           = 41, // The private store did not take the write: the project and its pins did not change.
+	Store_Damaged          = 42, // The project object of the private store does not decode, or names another project.
 }
 
 // Closed set of commands accepted on the projects service ring.

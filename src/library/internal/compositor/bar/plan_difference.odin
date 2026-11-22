@@ -180,6 +180,20 @@ plan_difference_decide :: proc "contextless" (dialog: ^Plan_Difference_Dialog, d
 	return decision
 }
 
+// plan_difference_decision_of_serial gives the decision of the dialog that
+// showed with serial: Pending while it shows. known is false for a serial
+// that is not the last one shown, as the dialog keeps the decision of the
+// last dialog only: a later dialog replaced it, or no dialog had it.
+plan_difference_decision_of_serial :: proc "contextless" (dialog: ^Plan_Difference_Dialog, serial: u64) -> (decision: Plan_Difference_Decision, known: bool) {
+	if serial == 0 || serial != dialog.serial {
+		return .Pending, false
+	}
+	if dialog.open {
+		return .Pending, true
+	}
+	return dialog.decision, true
+}
+
 // plan_difference_key gives a key to the dialog, and gives the decision
 // that it made, or Pending.
 plan_difference_key :: proc "contextless" (dialog: ^Plan_Difference_Dialog, key: Plan_Difference_Key, now_milliseconds: u64) -> Plan_Difference_Decision {

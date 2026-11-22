@@ -15,6 +15,7 @@ import pr "modus:contract/plans_recipes"
 import "modus:contract/powerbox"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
+import "modus:storage_port"
 import "modus:system"
 
 // Working memory budget for the freestanding plans service process and its
@@ -31,6 +32,7 @@ Plans_Status :: struct {
 
 // Package-level BSS state so large plan tables never live on the stack.
 service_state: plans_core.Plans_State
+service_display: plans_core.Trusted_Display_Port
 service_ring: ring.Ring
 service_region_base: [^]u8
 service_region_bytes: u64
@@ -302,7 +304,7 @@ handle_command :: proc "contextless" (command: ring.Record, now_ms: u64) {
 	case .Query_History:
 		principal := command.values[0]
 		out_offset := command.values[1]
-		count, cur_gen := plans_core.history_snapshot(&service_state, principal, staged_history[:])
+		count, cur_gen, _ := plans_core.history_snapshot(&service_state, principal, staged_history[:])
 		if count > 0 {
 			byte_len := u64(count) * size_of(pr.Applied_Plan_Record)
 			if region_range_valid(out_offset, byte_len) {
@@ -350,8 +352,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	display_slot := u32(ctx.values[pr.PLANS_CONTEXT_VALUE_DISPLAY_SLOT])
-	plans_core.state_init(&service_state, display_slot)
-	system.log_fact(.Info, Service_Ready{display_slot = u64(display_slot)})
+	store_port, store_open := storage_port.bind(ctx)
+	plans_core.state_init(&service_state, display_slot, store_port)
+	service_display = display_port_bind(ctx)
+	system.log_fact(.Info, Service_Ready{display_slot = u64(display_slot), store = store_open ? 1 : 0, display = service_display.ask != nil ? 1 : 0})
 
 	for {
 		wait := system.wait_begin()

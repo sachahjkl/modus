@@ -13,6 +13,7 @@ import "modus:contract/errors"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
+import "modus:storage_port"
 import "modus:system"
 
 // Working memory budget for the freestanding recipes service process, including
@@ -254,8 +255,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		service_region_bytes = pages * system.PAGE_SIZE
 	}
 
-	recipes_core.state_init(&service_state)
-	system.log_fact(.Info, Service_Ready{})
+	store_port, store_open := storage_port.bind(ctx)
+	recipes_core.state_init(&service_state, store_port)
+	system.log_fact(.Info, Service_Ready{store = store_open ? 1 : 0})
 
 	for {
 		wait := system.wait_begin()

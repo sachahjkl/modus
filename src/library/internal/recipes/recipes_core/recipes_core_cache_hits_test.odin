@@ -9,7 +9,8 @@ import pr "modus:contract/plans_recipes"
 test_recipes_cache_hit_count_sums_without_wrapping :: proc(t: ^testing.T) {
 	state := new(Recipes_State)
 	defer free(state)
-	state_init(state)
+	store := recipes_test_state_init(state)
+	defer free(store)
 	testing.expect_value(t, cache_hit_count(state), u64(0))
 
 	state.counters.cache_hits_local = 3
@@ -36,7 +37,8 @@ test_recipes_cache_hit_count_sums_without_wrapping :: proc(t: ^testing.T) {
 test_recipes_refused_requests_count_no_build_and_no_hit :: proc(t: ^testing.T) {
 	state := new(Recipes_State)
 	defer free(state)
-	state_init(state)
+	store := recipes_test_state_init(state)
+	defer free(store)
 	policy := object_cache.Substitution_Policy{mode = .Prefer_Cache}
 
 	spec := pr.Recipe_Spec {

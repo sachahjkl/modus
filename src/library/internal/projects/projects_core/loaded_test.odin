@@ -39,6 +39,8 @@ an_update_moves_one_input_as_one_line :: proc(t: ^testing.T) {
 	table := new(Loaded_Projects)
 	defer free(table)
 	state_init(state)
+	store := projects_test_tables_init(table)
+	defer free(store)
 	evaluation: [512]u8
 	evaluation_length := project_evaluation_bytes(evaluation[:])
 	pins: [pr.MAX_PINS_LEX_BYTES]u8
@@ -74,6 +76,8 @@ an_update_refuses_and_leaves_the_pins :: proc(t: ^testing.T) {
 	table := new(Loaded_Projects)
 	defer free(table)
 	state_init(state)
+	store := projects_test_tables_init(table)
+	defer free(store)
 	evaluation: [512]u8
 	evaluation_length := project_evaluation_bytes(evaluation[:])
 	pins: [pr.MAX_PINS_LEX_BYTES]u8
@@ -113,6 +117,8 @@ a_refused_load_changes_no_project :: proc(t: ^testing.T) {
 	table := new(Loaded_Projects)
 	defer free(table)
 	state_init(state)
+	store := projects_test_tables_init(table)
+	defer free(store)
 	evaluation: [512]u8
 	evaluation_length := project_evaluation_bytes(evaluation[:])
 	kernel := transmute([]u8)string("kernel")

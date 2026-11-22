@@ -300,6 +300,27 @@ update_pins :: proc "contextless" (
 // projects.enter(project). The console field itself is validated lazily when
 // entering so declarations with empty or invalid console fields are refused
 // at enter time.
+// register_project_check gives the refusal that register_project gives for
+// decl, and changes nothing: a load checks it before it writes the store.
+register_project_check :: proc "contextless" (state: ^Projects_State, decl: ^pr.Project_Declaration) -> pr.Project_Refusal {
+	if decl == nil || int(decl.name_length) == 0 || int(decl.name_length) > pr.MAX_ENTRY_NAME_BYTES {
+		return .Unknown_Project
+	}
+	if !pr.lex_field_name_valid(decl.name_bytes[:decl.name_length]) {
+		return .Unknown_Project
+	}
+	if decl.project_tree_hash == {} {
+		return .Zero_Hash
+	}
+	name_slice := decl.name_bytes[:decl.name_length]
+	for &slot in state.projects {
+		if !slot.active || bytes_equal(slot.declaration.name_bytes[:slot.declaration.name_length], name_slice) {
+			return .None
+		}
+	}
+	return .Project_Limit_Reached
+}
+
 register_project :: proc "contextless" (state: ^Projects_State, decl: ^pr.Project_Declaration) -> pr.Project_Refusal {
 	if decl == nil || int(decl.name_length) == 0 || int(decl.name_length) > pr.MAX_ENTRY_NAME_BYTES {
 		state.counters.total_refusals += 1

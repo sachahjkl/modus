@@ -4,9 +4,14 @@ package plans_service
 
 FAILURE_FIELD_BYTES :: 96
 
-@(log_fact = "plans: ready, trusted display slot {display_slot}")
+// store and display are 1 when the root service gave the private store and
+// the way to the trusted display, else 0: with no store no plan commits,
+// and with no display an apply is refused with Consent_Required.
+@(log_fact = "plans: ready, trusted display slot {display_slot}, store {store}, display {display}")
 Service_Ready :: struct {
 	display_slot: u64,
+	store:        u64,
+	display:      u64,
 }
 
 @(log_fact = "plans: {failure}")
@@ -20,6 +25,12 @@ Service_Failed :: struct {
 Plan_Applied :: struct {
 	generation: u64,
 	principal:  u64,
+}
+
+@(log_fact = "plans: asked the trusted display with ticket {ticket} for principal {principal}")
+Plan_Difference_Asked :: struct {
+	ticket:    u64,
+	principal: u64,
 }
 
 @(log_fact = "plans: rolled back to generation {generation} for principal {principal}")
