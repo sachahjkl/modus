@@ -46,7 +46,7 @@ webassembly_name :: proc(bytes: ^[dynamic]u8, name: string) {
 }
 
 // The border of the kernel as the page gives it: each import a function of
-// modus_page, and the three exports.
+// modus_page, and each export.
 @(private = "file")
 webassembly_kernel_border :: proc() -> []u8 {
 	imports := make([dynamic]u8, context.temp_allocator)
@@ -307,4 +307,84 @@ browser_machine_page_files_name_each_other :: proc(t: ^testing.T) {
 	for file in files {
 		testing.expectf(t, len(file.text) > 0, "%s is empty", file.name)
 	}
+}
+
+// A base image of the test: one file for each name, a module or a
+// resource, whose bytes are its name.
+@(private = "file")
+page_image_base :: proc(module_names: []string, resource_names: []string) -> []u8 {
+	files := make([dynamic]Image_File, context.temp_allocator)
+	for name in module_names {
+		append(&files, Image_File{name = name, file = transmute([]u8)name})
+	}
+	for name in resource_names {
+		append(&files, Image_File{name = name, file = transmute([]u8)name})
+	}
+	return boot_image_encode(files[:], len(module_names))
+}
+
+// The boot image of the page keeps the modules of the page and their
+// imports, and each resource but the three that the signature makes again;
+// it drops each other module. It refuses a base that is not an image, that
+// lacks a module of the page or an import of one, or that holds a module
+// twice.
+@(test)
+browser_machine_page_image_keeps_the_modules_of_the_page :: proc(t: ^testing.T) {
+	page_modules := BROWSER_MACHINE_PAGE_MODULES
+	all := make([dynamic]string, context.temp_allocator)
+	append(&all, ..page_modules[:])
+	// The import of unlock and of remote, which the list does not name.
+	append(&all, "cryptography")
+	tests := []string{"flood", "arena", "kernel_events", "shortage"}
+	with_tests := make([dynamic]string, context.temp_allocator)
+	append(&with_tests, "flood")
+	append(&with_tests, ..all[:])
+	append(&with_tests, ..tests[1:])
+	resources := []string{"start_list", "rescue_list", "pointers", "replacement_list", "system_description", "system_description_signature"}
+
+	files, module_count, problem := browser_machine_page_image_files(page_image_base(with_tests[:], resources))
+	testing.expect_value(t, problem, "")
+	testing.expect_value(t, module_count, len(all))
+	for name, index in all {
+		if index < len(files) {
+			testing.expect_value(t, files[index].name, name)
+			testing.expect_value(t, string(files[index].file), name)
+		}
+	}
+	kept_resources := []string{"start_list", "rescue_list", "pointers"}
+	testing.expect_value(t, len(files), len(all) + len(kept_resources))
+	for name, index in kept_resources {
+		if len(all) + index < len(files) {
+			testing.expect_value(t, files[len(all) + index].name, name)
+		}
+	}
+
+	// The refusals.
+	_, _, problem = browser_machine_page_image_files(nil)
+	testing.expect_value(t, problem, "it is not a boot image")
+	_, _, problem = browser_machine_page_image_files(transmute([]u8)string("not an image of the system"))
+	testing.expect_value(t, problem, "it is not a boot image")
+	without_import := make([dynamic]string, context.temp_allocator)
+	append(&without_import, ..page_modules[:])
+	_, _, problem = browser_machine_page_image_files(page_image_base(without_import[:], resources))
+	testing.expect_value(t, problem, "it holds no module cryptography")
+	without_root := make([dynamic]string, context.temp_allocator)
+	for name in all {
+		if name != "root" {
+			append(&without_root, name)
+		}
+	}
+	_, _, problem = browser_machine_page_image_files(page_image_base(without_root[:], resources))
+	testing.expect_value(t, problem, "it holds no module root")
+	twice := make([dynamic]string, context.temp_allocator)
+	append(&twice, ..all[:])
+	append(&twice, "console")
+	_, _, problem = browser_machine_page_image_files(page_image_base(twice[:], resources))
+	testing.expect_value(t, problem, "the image holds the module console twice")
+	// An entry that points past the end of the image.
+	damaged := page_image_base(all[:], resources)
+	modules, _, _ := info.image_tables(damaged)
+	modules[0].size = u64(len(damaged))
+	_, _, problem = browser_machine_page_image_files(damaged)
+	testing.expect_value(t, problem, "the entry of the module root points outside the image")
 }
