@@ -1601,7 +1601,7 @@ A byte layout (`glossary/project.md`) draws one record of a format as the header
 
 ### The table of sources
 
-`byte_layout_sources` names each layout that a guide can show, by a key: `module.Header`, `module.Table_Entry`, then the record of each table kind of the module format (`byte_layout_table_sources`: `module.Segment`, `module.Import`, `module.Import_Slot`, `module.Export`, `module.Rebases`, `module.Function`, `module.Documentation`, `module.Record`, `module.Field`, `module.Budget_Request`, `module.Fact`, `module.Own_Hash_Place`). The records of the tables Facts and Own_Hash are in `src/library/modus/contract/module/facts.odin`, the others in `format.odin`. A table kind with no record of a fixed size states why: the table Strings is bytes. The rebase table is words: its layout is one word of `REBASE_WORD_SIZE` bytes, with the comment of that constant.
+`byte_layout_sources` names each layout that a guide can show, by a key: `module.Header`, `module.Table_Entry`, then the record of each table kind of the module format (`byte_layout_table_sources`: `module.Segment`, `module.Import`, `module.Import_Slot`, `module.Export`, `module.Rebases`, `module.Function`, `module.Documentation`, `module.Record`, `module.Field`, `module.Budget_Request`, `module.Fact`, `module.Own_Hash_Place`). The records of the tables Facts and Own_Hash are in `src/library/modus/contract/module/facts.odin`, the others in `format.odin`. A table kind with no record of a fixed size states why: the table Strings is bytes. The rebase table is words: its layout is one word of `REBASE_WORD_SIZE` bytes, with the comment of that constant. Then come the records of the draw table, of the output ring, of the kernel (`ring.Record`, `ring.Counters`, `errors.Error_Record`, `operation.Context`, `operation.Log_Record`, `operation.Log_Fact`), of the fault ring (`operation.Thread_Record`, `operation.Fault_Record`) and of the data disk (`store.Root`, `store.Store_Entry`, `store.Pointer`, `store.Store_Block`, `store.Tree_Header`, `store.Entry`, `store.Object_Node`, `store.Object_Child`, `store.Version_Index`, `store.Version_Leaf`, `store.Version_Entry`). Each struct is read in the file of its contract.
 
 The facts of a layout:
 
@@ -1632,10 +1632,10 @@ offset  size  field          type
 - A `figure` with the class `byte-layout`. Its caption names the struct as a type reference that opens its type card (see "The types"), then its size and what it is.
 - A grid of 9 columns in a box that scrolls sideways, as the box of a table: the offsets, then the 8 bytes of a row. Each column of a byte is at least 6 em wide. Two rulers on top: the byte of the row (0 to 7), then its bits (0–7 to 56–63).
 - Rows of 8 bytes: each record of the module format is a multiple of 8 bytes, and a 64-bit field is one rectangle.
-- Each field is a rectangle with its name and its size. A field that starts at a row and covers two rows or more is one rectangle of whole rows. Another field has one rectangle for each row that it crosses: the first holds its size, the others say "continued". Padding is a rectangle on the background, in the dim color.
+- Each field is a rectangle with its name and its size. A field that starts at a row and covers two rows or more is one rectangle of whole rows. A rectangle of more than 8 whole rows (`BYTE_LAYOUT_FOLD_ROWS`) is folded: it is drawn 2 rows high, its first row and its last row with their offsets, with a dashed outline, and its text says how many rows it folds (`store.Root`: the 480 rows of its stores). The rectangles after it move up. Another field has one rectangle for each row that it crosses: the first holds its size, the others say "continued". Padding is a rectangle on the background, in the dim color.
 - The `title` of a rectangle gives the name of the field, its type as the source writes it, its offset, its size and its comment as plain text: a pointer that rests on it shows them.
 - A name breaks after each `_` (`<wbr>`), and inside a word only when one part is wider than its rectangle; the row grows. No text is cut.
-- A rectangle is placed by classes: `byte-column-<n>`, `byte-span-<n>`, `byte-row-<n>` and `byte-rows-<n>`. A page has no style attribute (`site_inline_code_problem`). The style sheet holds the classes of the rows up to the most rows of a layout of the table of sources (21, for `module.Function`).
+- A rectangle is placed by classes: `byte-column-<n>`, `byte-span-<n>`, `byte-row-<n>` and `byte-rows-<n>`. A page has no style attribute (`site_inline_code_problem`). The style sheet holds the classes of the rows up to the most rows of the grid of a layout of the table of sources, folds counted (`byte_layout_most_grid_rows`).
 - The lines are the outline of each rectangle in the dim color, 1 pixel in a gap of 1 pixel of the grid: two neighbours share one line at every zoom. The rectangles are on the card color. The colors are the tokens of the style sheet, so the diagram follows the light and the dark form.
 
 The id of a diagram is `byte-layout-<key>`, as the rule of the ids gives it (`byte-layout-module-header`).
@@ -1643,11 +1643,12 @@ The id of a diagram is `byte-layout-<key>`, as the rule of the ids gives it (`by
 ### The host tests
 
 - `byte_layout_offsets_agree_with_offset_of`: each field of each layout has the offset that `offset_of` gives and the size that `size_of` gives, and each layout has every field of its struct.
-- `byte_layout_rectangles_cover_each_byte_once`: the rectangles of each layout cover each byte of its record once; a struct of the test with padding inside and at its end, and a field that crosses three rows, gives its rows of padding and its pieces.
+- `byte_layout_rectangles_cover_each_byte_once`: the rectangles of each layout cover each byte of its record once, and each cell of its grid once, folds counted; a struct of the test with padding inside and at its end, and a field that crosses three rows, gives its rows of padding and its pieces.
+- `byte_layout_tall_rectangles_fold`: a field of 8 rows is drawn whole, a field of 9 rows is folded to 2, the rectangles after it move up, and the grid of `store.Root` has the offsets of the rows that it shows; the layout from the type information alone has the same grid.
 - `byte_layout_every_table_kind_has_a_layout`: each table kind has a layout or states why it has none.
 - `byte_layout_text_of_the_header`: the text form of `module.Header`.
 - `byte_layout_guides_hold_the_text_of_the_code`: the fences of the guides hold the text that the code gives.
-- `byte_layout_fence_on_a_page`: a fence becomes a diagram with no style attribute, and a wrong body is a fault.
+- `byte_layout_fence_on_a_page`: a fence becomes a diagram with no style attribute, a folded rectangle says so, a wrong body is a fault, and the rules of the rows reach the largest grid.
 
 ## The diagrams
 

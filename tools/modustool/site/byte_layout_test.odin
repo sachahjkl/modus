@@ -4,8 +4,12 @@ import "core:fmt"
 import "core:strings"
 import "core:testing"
 import draw_record "modus:contract/draw_record"
+import "modus:contract/errors"
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modus:contract/output"
+import "modus:contract/ring"
+import "modus:contract/store"
 import "modustool:foundation"
 
 // One field as the compiler places it, written with offset_of and size_of,
@@ -51,6 +55,25 @@ expected_fields :: proc() -> []Expected_Field {
 	grid: draw_record.Text_Grid_Fields
 	path: draw_record.Path_Fields
 	point: draw_record.Path_Point_Record
+	ring_record: ring.Record
+	counters: ring.Counters
+	error_record: errors.Error_Record
+	process_context: op.Context
+	log_record: op.Log_Record
+	log_fact: op.Log_Fact
+	thread_record: op.Thread_Record
+	fault_record: op.Fault_Record
+	root: store.Root
+	store_entry: store.Store_Entry
+	pointer: store.Pointer
+	store_block: store.Store_Block
+	tree_header: store.Tree_Header
+	store_record: store.Entry
+	object_node: store.Object_Node
+	object_child: store.Object_Child
+	version_index: store.Version_Index
+	version_leaf: store.Version_Leaf
+	version_entry: store.Version_Entry
 	rows := [?]Expected_Field {
 		{"module.Header", "magic", offset_of(module.Header, magic), size_of(header.magic)},
 		{"module.Header", "version", offset_of(module.Header, version), size_of(header.version)},
@@ -236,6 +259,121 @@ expected_fields :: proc() -> []Expected_Field {
 		{"draw_record.Path_Point_Record", "command", offset_of(draw_record.Path_Point_Record, command), size_of(point.command)},
 		{"draw_record.Path_Point_Record", "x", offset_of(draw_record.Path_Point_Record, x), size_of(point.x)},
 		{"draw_record.Path_Point_Record", "y", offset_of(draw_record.Path_Point_Record, y), size_of(point.y)},
+		{"ring.Record", "kind", offset_of(ring.Record, kind), size_of(ring_record.kind)},
+		{"ring.Record", "tag", offset_of(ring.Record, tag), size_of(ring_record.tag)},
+		{"ring.Record", "values", offset_of(ring.Record, values), size_of(ring_record.values)},
+		{"ring.Counters", "write", offset_of(ring.Counters, write), size_of(counters.write)},
+		{"ring.Counters", "writer_waits", offset_of(ring.Counters, writer_waits), size_of(counters.writer_waits)},
+		{"ring.Counters", "reserved_0", offset_of(ring.Counters, reserved_0), size_of(counters.reserved_0)},
+		{"ring.Counters", "read", offset_of(ring.Counters, read), size_of(counters.read)},
+		{"ring.Counters", "reader_waits", offset_of(ring.Counters, reader_waits), size_of(counters.reader_waits)},
+		{"ring.Counters", "reserved_1", offset_of(ring.Counters, reserved_1), size_of(counters.reserved_1)},
+		{"errors.Error_Record", "kind", offset_of(errors.Error_Record, kind), size_of(error_record.kind)},
+		{"errors.Error_Record", "unit", offset_of(errors.Error_Record, unit), size_of(error_record.unit)},
+		{"errors.Error_Record", "operation", offset_of(errors.Error_Record, operation), size_of(error_record.operation)},
+		{"errors.Error_Record", "argument", offset_of(errors.Error_Record, argument), size_of(error_record.argument)},
+		{"errors.Error_Record", "value", offset_of(errors.Error_Record, value), size_of(error_record.value)},
+		{"errors.Error_Record", "limit", offset_of(errors.Error_Record, limit), size_of(error_record.limit)},
+		{"errors.Error_Record", "found", offset_of(errors.Error_Record, found), size_of(error_record.found)},
+		{"operation.Context", "handles", offset_of(op.Context, handles), size_of(process_context.handles)},
+		{"operation.Context", "values", offset_of(op.Context, values), size_of(process_context.values)},
+		{"operation.Log_Record", "sequence", offset_of(op.Log_Record, sequence), size_of(log_record.sequence)},
+		{"operation.Log_Record", "time", offset_of(op.Log_Record, time), size_of(log_record.time)},
+		{"operation.Log_Record", "process", offset_of(op.Log_Record, process), size_of(log_record.process)},
+		{"operation.Log_Record", "thread", offset_of(op.Log_Record, thread), size_of(log_record.thread)},
+		{"operation.Log_Record", "level", offset_of(op.Log_Record, level), size_of(log_record.level)},
+		{"operation.Log_Record", "more", offset_of(op.Log_Record, more), size_of(log_record.more)},
+		{"operation.Log_Record", "process_serial", offset_of(op.Log_Record, process_serial), size_of(log_record.process_serial)},
+		{"operation.Log_Record", "own_number", offset_of(op.Log_Record, own_number), size_of(log_record.own_number)},
+		{"operation.Log_Record", "text_count", offset_of(op.Log_Record, text_count), size_of(log_record.text_count)},
+		{"operation.Log_Record", "run_count", offset_of(op.Log_Record, run_count), size_of(log_record.run_count)},
+		{"operation.Log_Record", "form", offset_of(op.Log_Record, form), size_of(log_record.form)},
+		{"operation.Log_Record", "name", offset_of(op.Log_Record, name), size_of(log_record.name)},
+		{"operation.Log_Record", "runs", offset_of(op.Log_Record, runs), size_of(log_record.runs)},
+		{"operation.Log_Record", "text", offset_of(op.Log_Record, text), size_of(log_record.text)},
+		{"operation.Log_Fact", "module_hash", offset_of(op.Log_Fact, module_hash), size_of(log_fact.module_hash)},
+		{"operation.Log_Fact", "key", offset_of(op.Log_Fact, key), size_of(log_fact.key)},
+		{"operation.Log_Fact", "value_count", offset_of(op.Log_Fact, value_count), size_of(log_fact.value_count)},
+		{"operation.Log_Fact", "part", offset_of(op.Log_Fact, part), size_of(log_fact.part)},
+		{"operation.Log_Fact", "part_count", offset_of(op.Log_Fact, part_count), size_of(log_fact.part_count)},
+		{"operation.Log_Fact", "reserved", offset_of(op.Log_Fact, reserved), size_of(log_fact.reserved)},
+		{"operation.Log_Fact", "values", offset_of(op.Log_Fact, values), size_of(log_fact.values)},
+		{"operation.Thread_Record", "self", offset_of(op.Thread_Record, self), size_of(thread_record.self)},
+		{"operation.Thread_Record", "parameter", offset_of(op.Thread_Record, parameter), size_of(thread_record.parameter)},
+		{"operation.Thread_Record", "number", offset_of(op.Thread_Record, number), size_of(thread_record.number)},
+		{"operation.Thread_Record", "events", offset_of(op.Thread_Record, events), size_of(thread_record.events)},
+		{"operation.Thread_Record", "processors", offset_of(op.Thread_Record, processors), size_of(thread_record.processors)},
+		{"operation.Thread_Record", "fault_written", offset_of(op.Thread_Record, fault_written), size_of(thread_record.fault_written)},
+		{"operation.Thread_Record", "fault_read", offset_of(op.Thread_Record, fault_read), size_of(thread_record.fault_read)},
+		{"operation.Thread_Record", "fault_full", offset_of(op.Thread_Record, fault_full), size_of(thread_record.fault_full)},
+		{"operation.Thread_Record", "fault_reserved", offset_of(op.Thread_Record, fault_reserved), size_of(thread_record.fault_reserved)},
+		{"operation.Thread_Record", "fault_records", offset_of(op.Thread_Record, fault_records), size_of(thread_record.fault_records)},
+		{"operation.Fault_Record", "thread", offset_of(op.Fault_Record, thread), size_of(fault_record.thread)},
+		{"operation.Fault_Record", "serial", offset_of(op.Fault_Record, serial), size_of(fault_record.serial)},
+		{"operation.Fault_Record", "address", offset_of(op.Fault_Record, address), size_of(fault_record.address)},
+		{"operation.Fault_Record", "access", offset_of(op.Fault_Record, access), size_of(fault_record.access)},
+		{"operation.Fault_Record", "instruction", offset_of(op.Fault_Record, instruction), size_of(fault_record.instruction)},
+		{"operation.Fault_Record", "kind", offset_of(op.Fault_Record, kind), size_of(fault_record.kind)},
+		{"operation.Fault_Record", "error_code", offset_of(op.Fault_Record, error_code), size_of(fault_record.error_code)},
+		{"operation.Fault_Record", "reserved", offset_of(op.Fault_Record, reserved), size_of(fault_record.reserved)},
+		{"store.Root", "magic", offset_of(store.Root, magic), size_of(root.magic)},
+		{"store.Root", "generation", offset_of(store.Root, generation), size_of(root.generation)},
+		{"store.Root", "disk_blocks", offset_of(store.Root, disk_blocks), size_of(root.disk_blocks)},
+		{"store.Root", "time", offset_of(store.Root, time), size_of(root.time)},
+		{"store.Root", "date", offset_of(store.Root, date), size_of(root.date)},
+		{"store.Root", "reserved", offset_of(store.Root, reserved), size_of(root.reserved)},
+		{"store.Root", "stores", offset_of(store.Root, stores), size_of(root.stores)},
+		{"store.Root", "padding", offset_of(store.Root, padding), size_of(root.padding)},
+		{"store.Root", "check", offset_of(store.Root, check), size_of(root.check)},
+		{"store.Store_Entry", "name", offset_of(store.Store_Entry, name), size_of(store_entry.name)},
+		{"store.Store_Entry", "limit", offset_of(store.Store_Entry, limit), size_of(store_entry.limit)},
+		{"store.Store_Entry", "used", offset_of(store.Store_Entry, used), size_of(store_entry.used)},
+		{"store.Store_Entry", "store", offset_of(store.Store_Entry, store), size_of(store_entry.store)},
+		{"store.Pointer", "block", offset_of(store.Pointer, block), size_of(pointer.block)},
+		{"store.Pointer", "check", offset_of(store.Pointer, check), size_of(pointer.check)},
+		{"store.Store_Block", "tree", offset_of(store.Store_Block, tree), size_of(store_block.tree)},
+		{"store.Store_Block", "removals", offset_of(store.Store_Block, removals), size_of(store_block.removals)},
+		{"store.Store_Block", "next_removal", offset_of(store.Store_Block, next_removal), size_of(store_block.next_removal)},
+		{"store.Store_Block", "objects", offset_of(store.Store_Block, objects), size_of(store_block.objects)},
+		{"store.Store_Block", "trees", offset_of(store.Store_Block, trees), size_of(store_block.trees)},
+		{"store.Store_Block", "current_blocks", offset_of(store.Store_Block, current_blocks), size_of(store_block.current_blocks)},
+		{"store.Store_Block", "node_blocks", offset_of(store.Store_Block, node_blocks), size_of(store_block.node_blocks)},
+		{"store.Store_Block", "removing", offset_of(store.Store_Block, removing), size_of(store_block.removing)},
+		{"store.Store_Block", "reserved", offset_of(store.Store_Block, reserved), size_of(store_block.reserved)},
+		{"store.Store_Block", "padding", offset_of(store.Store_Block, padding), size_of(store_block.padding)},
+		{"store.Tree_Header", "level", offset_of(store.Tree_Header, level), size_of(tree_header.level)},
+		{"store.Tree_Header", "count", offset_of(store.Tree_Header, count), size_of(tree_header.count)},
+		{"store.Tree_Header", "magic", offset_of(store.Tree_Header, magic), size_of(tree_header.magic)},
+		{"store.Tree_Header", "reserved", offset_of(store.Tree_Header, reserved), size_of(tree_header.reserved)},
+		{"store.Tree_Header", "unused", offset_of(store.Tree_Header, unused), size_of(tree_header.unused)},
+		{"store.Entry", "kind", offset_of(store.Entry, kind), size_of(store_record.kind)},
+		{"store.Entry", "size", offset_of(store.Entry, size), size_of(store_record.size)},
+		{"store.Entry", "generation", offset_of(store.Entry, generation), size_of(store_record.generation)},
+		{"store.Entry", "time", offset_of(store.Entry, time), size_of(store_record.time)},
+		{"store.Entry", "date", offset_of(store.Entry, date), size_of(store_record.date)},
+		{"store.Entry", "hash", offset_of(store.Entry, hash), size_of(store_record.hash)},
+		{"store.Entry", "pointer", offset_of(store.Entry, pointer), size_of(store_record.pointer)},
+		{"store.Entry", "versions", offset_of(store.Entry, versions), size_of(store_record.versions)},
+		{"store.Object_Node", "header", offset_of(store.Object_Node, header), size_of(object_node.header)},
+		{"store.Object_Node", "children", offset_of(store.Object_Node, children), size_of(object_node.children)},
+		{"store.Object_Node", "padding", offset_of(store.Object_Node, padding), size_of(object_node.padding)},
+		{"store.Object_Child", "block", offset_of(store.Object_Child, block), size_of(object_child.block)},
+		{"store.Object_Child", "check", offset_of(store.Object_Child, check), size_of(object_child.check)},
+		{"store.Object_Child", "blocks", offset_of(store.Object_Child, blocks), size_of(object_child.blocks)},
+		{"store.Object_Child", "value", offset_of(store.Object_Child, value), size_of(object_child.value)},
+		{"store.Version_Index", "leaf_count", offset_of(store.Version_Index, leaf_count), size_of(version_index.leaf_count)},
+		{"store.Version_Index", "version_count", offset_of(store.Version_Index, version_count), size_of(version_index.version_count)},
+		{"store.Version_Index", "retention_time", offset_of(store.Version_Index, retention_time), size_of(version_index.retention_time)},
+		{"store.Version_Index", "reserved", offset_of(store.Version_Index, reserved), size_of(version_index.reserved)},
+		{"store.Version_Index", "leaves", offset_of(store.Version_Index, leaves), size_of(version_index.leaves)},
+		{"store.Version_Leaf", "count", offset_of(store.Version_Leaf, count), size_of(version_leaf.count)},
+		{"store.Version_Leaf", "reserved", offset_of(store.Version_Leaf, reserved), size_of(version_leaf.reserved)},
+		{"store.Version_Leaf", "entries", offset_of(store.Version_Leaf, entries), size_of(version_leaf.entries)},
+		{"store.Version_Entry", "generation", offset_of(store.Version_Entry, generation), size_of(version_entry.generation)},
+		{"store.Version_Entry", "size", offset_of(store.Version_Entry, size), size_of(version_entry.size)},
+		{"store.Version_Entry", "time", offset_of(store.Version_Entry, time), size_of(version_entry.time)},
+		{"store.Version_Entry", "date", offset_of(store.Version_Entry, date), size_of(version_entry.date)},
+		{"store.Version_Entry", "root", offset_of(store.Version_Entry, root), size_of(version_entry.root)},
 	}
 	list := make([]Expected_Field, len(rows), context.temp_allocator)
 	copy(list, rows[:])
@@ -284,6 +422,80 @@ expect_each_byte_covered_once :: proc(t: ^testing.T, layout: Byte_Layout) {
 	for count, place in covered {
 		testing.expectf(t, count == 1, "%s: the byte %d is covered %d times", layout.key, place, count)
 	}
+	// The grid, folds counted: each cell once, and one offset for each row.
+	grid_rows := len(byte_layout_grid_row_offsets(layout))
+	grid := make([]int, grid_rows * BYTE_LAYOUT_ROW_BYTES, context.temp_allocator)
+	for piece in byte_layout_pieces(layout) {
+		for row in piece.grid_row ..< piece.grid_row + piece.grid_rows {
+			for column in piece.column ..< piece.column + piece.span {
+				place := row * BYTE_LAYOUT_ROW_BYTES + column
+				if testing.expectf(t, place < len(grid), "%s: a rectangle of %s covers the cell %d of the grid, past its %d rows", layout.key, layout.fields[piece.field].name, place, grid_rows) {
+					grid[place] += 1
+				}
+			}
+		}
+	}
+	// Only the end of the last row, past the record, is empty.
+	empty_cells := byte_layout_row_count(layout.size) * BYTE_LAYOUT_ROW_BYTES - layout.size
+	for count, place in grid {
+		expected := place < len(grid) - empty_cells ? 1 : 0
+		testing.expectf(t, count == expected, "%s: the cell %d of the grid is covered %d times", layout.key, place, count)
+	}
+}
+
+// A field of BYTE_LAYOUT_FOLD_ROWS whole rows, then a field of one row more,
+// between two words.
+@(private = "file")
+Fold_Record :: struct {
+	head:  u64,
+	exact: [BYTE_LAYOUT_FOLD_ROWS * BYTE_LAYOUT_ROW_BYTES]u8,
+	over:  [(BYTE_LAYOUT_FOLD_ROWS + 1) * BYTE_LAYOUT_ROW_BYTES]u8,
+	tail:  u64,
+}
+
+// A rectangle of more rows than BYTE_LAYOUT_FOLD_ROWS is folded to its first
+// row and its last row; one of BYTE_LAYOUT_FOLD_ROWS rows is not; the
+// rectangles after a fold move up by the rows that it hides, and the grid
+// keeps the offset of each row that it shows.
+@(test)
+byte_layout_tall_rectangles_fold :: proc(t: ^testing.T) {
+	declarations := make(map[string]Byte_Layout_Declaration, context.temp_allocator)
+	declarations["Fold_Record"] = Byte_Layout_Declaration {
+		fields = []Byte_Layout_Source_Field{{name = "head", type_text = "u64"}, {name = "exact", type_text = "[64]u8"}, {name = "over", type_text = "[72]u8"}, {name = "tail", type_text = "u64"}},
+	}
+	source := Byte_Layout_Source{key = "test.Fold_Record", file = "test", declaration = "Fold_Record", info = type_info_of(Fold_Record), what = "a record of the test"}
+	layout, problem := byte_layout_make(source, declarations)
+	testing.expect_value(t, problem, "")
+	expect_each_byte_covered_once(t, layout)
+	pieces := byte_layout_pieces(layout)
+	if testing.expect_value(t, len(pieces), 4) {
+		testing.expect(t, !pieces[1].folded && pieces[1].grid_rows == BYTE_LAYOUT_FOLD_ROWS && pieces[1].grid_row == 1, "a field of BYTE_LAYOUT_FOLD_ROWS rows is drawn whole")
+		testing.expect(t, pieces[2].folded && pieces[2].grid_rows == BYTE_LAYOUT_FOLDED_ROWS && pieces[2].grid_row == 1 + BYTE_LAYOUT_FOLD_ROWS, "a field of one row more is folded")
+		testing.expect_value(t, pieces[3].row, 1 + 2 * BYTE_LAYOUT_FOLD_ROWS + 1)
+		testing.expect_value(t, pieces[3].grid_row, 1 + BYTE_LAYOUT_FOLD_ROWS + BYTE_LAYOUT_FOLDED_ROWS)
+	}
+	offsets := byte_layout_grid_row_offsets(layout)
+	over_offset := int(offset_of(Fold_Record, over))
+	if testing.expect_value(t, len(offsets), 1 + BYTE_LAYOUT_FOLD_ROWS + BYTE_LAYOUT_FOLDED_ROWS + 1) {
+		testing.expect_value(t, offsets[1 + BYTE_LAYOUT_FOLD_ROWS], over_offset)
+		testing.expect_value(t, offsets[2 + BYTE_LAYOUT_FOLD_ROWS], over_offset + size_of(Fold_Record{}.over) - BYTE_LAYOUT_ROW_BYTES)
+		testing.expect_value(t, offsets[len(offsets) - 1], int(offset_of(Fold_Record, tail)))
+	}
+
+	// The root block of the disk: 512 rows, each array and its padding folded.
+	layouts, ok := byte_layouts_read()
+	testing.expect(t, ok, "the byte layouts are read")
+	root_offsets := byte_layout_grid_row_offsets(layouts["store.Root"])
+	stores_offset := int(offset_of(store.Root, stores))
+	padding_offset := int(offset_of(store.Root, padding))
+	expected_root := [?]int{0, 8, 16, 24, 32, 40, 48, 56, stores_offset, padding_offset - BYTE_LAYOUT_ROW_BYTES, padding_offset, int(offset_of(store.Root, check)) - BYTE_LAYOUT_ROW_BYTES, int(offset_of(store.Root, check))}
+	if testing.expect_value(t, len(root_offsets), len(expected_root)) {
+		for offset, index in expected_root {
+			testing.expect_value(t, root_offsets[index], offset)
+		}
+	}
+	// The layout from the type information alone has the same grid.
+	testing.expect_value(t, len(byte_layout_grid_row_offsets(byte_layout_of_type(Byte_Layout_Source{key = "store.Root", info = type_info_of(store.Root)}))), len(expected_root))
 }
 
 // Each field of each layout has the offset of offset_of and the size of
@@ -503,9 +715,24 @@ byte_layout_fence_on_a_page :: proc(t: ^testing.T) {
 	site_render_markdown(&wrong_renderer, "```byte-layout module.Import_Slot\nan old text\n```\n\n```byte-layout module.Nothing\n```\n")
 	testing.expect_value(t, len(site.byte_layout_problems), 2)
 
-	// The rules of the rows reach the largest layout, and no further.
+	// A folded rectangle says so, beside its size.
+	clear(&site.byte_layout_problems)
+	root_layout := []Byte_Layout{site.byte_layouts["store.Root"]}
+	root_renderer := site_renderer_make(&site, "docs/guides/TEST/index.html", "docs/TEST.md")
+	site_render_markdown(&root_renderer, strings.concatenate({"```byte-layout store.Root\n", byte_layouts_text(root_layout), "```\n"}, context.temp_allocator))
+	root_html := strings.to_string(root_renderer.builder)
+	testing.expect(t, strings.contains(root_html, "<div class=\"byte-cell byte-cell-folded byte-column-1 byte-span-8 byte-row-9 byte-rows-2\" title=\"stores:"), "the array of the stores is folded to two rows of the grid")
+	testing.expect(t, strings.contains(root_html, fmt.tprintf("%d rows folded", size_of(store.Root{}.stores) / BYTE_LAYOUT_ROW_BYTES)), "a folded rectangle says how many rows it folds")
+	testing.expect(t, strings.contains(root_html, fmt.tprintf("<span class=\"byte-offset byte-row-11\">%d</span>", offset_of(store.Root, padding))), "the row after a fold has its own offset")
+	testing.expectf(t, len(site.byte_layout_problems) == 0, "no fault: %v", site.byte_layout_problems)
+
+	// The rules of the rows reach the largest grid of a layout, folds
+	// counted, and no further.
 	rules := byte_layout_rules()
-	most_rows := byte_layout_row_count(size_of(module.Function))
+	most_rows := 0
+	for _, each_layout in site.byte_layouts {
+		most_rows = max(most_rows, len(byte_layout_grid_row_offsets(each_layout)))
+	}
 	testing.expect(t, strings.contains(rules, fmt.tprintf(".byte-row-%d {{ grid-row-start: %d; }}", most_rows, most_rows + 2)), "the rules have the last row of the largest layout")
 	testing.expect(t, !strings.contains(rules, fmt.tprintf(".byte-row-%d {{", most_rows + 1)), "the rules stop at the largest layout")
 }

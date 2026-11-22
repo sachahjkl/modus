@@ -1552,6 +1552,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 | `handles` | 20 handles (`CONTEXT_HANDLES`). The index of a handle is its role. The handles 0 to 13 have the roles that the starter and its process agree on. From 14 the roles are the same for every process: 14 the log of the kernel (`CONTEXT_LOG`), 15 the budget of the process (`CONTEXT_BUDGET`), 16 the wiring ring of a process whose module declares a record output or a record input (`CONTEXT_WIRING_RING`; "The record outputs and the record inputs", above), 17 the output ring of its record output `log` with Read and Write (`CONTEXT_LOG_OUTPUT`), and 18 the end page of that output with Read (`CONTEXT_LOG_OUTPUT_END`), both given only when the wiring list of its start wires `log`, and never by a grant of the starter. The handle 19 has no role yet. A new role of the system takes a handle from 19. A role that the process was not granted holds 0 |
 | `values` | 24 values of 64 bits (`CONTEXT_VALUES`): sizes, addresses, flags. The values 0 to 8 and 13 have the roles that the starter and its process agree on. The other values have the roles of the table below |
 
+```byte-layout operation.Context
+operation.Context, 272 bytes: the context of a process, at CONTEXT_ADDRESS
+offset  size  field    type
+     0    80  handles  [CONTEXT_HANDLES]Handle
+    80   192  values   [CONTEXT_VALUES]u64
+```
+
 The values that the system names:
 
 | Value | Role | Constant |
@@ -1726,6 +1733,18 @@ An example: `Memory_Map` with a handle that lacks Write fails with the status `N
 | `value` | The value that the argument had: a number, the count of bytes of a text, a handle, an address |
 | `limit` | What the argument must respect: a largest value, a size, the rights that the operation needs, the kind of object that it needs |
 | `found` | What the system found: the rights of the handle, what a budget still holds, the kind of the object, how a handle ended |
+
+```byte-layout errors.Error_Record
+errors.Error_Record, 56 bytes: the values of a completion that fails
+offset  size  field      type
+     0     8  kind       i64
+     8     8  unit       i64
+    16     8  operation  i64
+    24     8  argument   i64
+    32     8  value      i64
+    40     8  limit      i64
+    48     8  found      i64
+```
 
 The kinds, the meaning of `limit` and `found` for each kind, and the units are in `src/library/modus/contract/errors/errors.odin`. Examples of sentences:
 
