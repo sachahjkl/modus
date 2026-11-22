@@ -176,15 +176,13 @@ scenario_tpm_key_reseal := [?]Step {
 	{kind = .Wait, text = "root: unlock stopped: itself, done"},
 }
 
-// One byte of the creation ticket of the record changed: the TPM refuses
-// the ticket, so the service unseals nothing, and the window asks for the
-// recovery key. The TPM checks the ticket with the handle NULL as the
-// signing key.
+// One byte of the creation ticket of the record changed: the TPM NV pin
+// catches the changed digest before unseal, refuses the tampered record,
+// and stops without unsealing anything.
 @(private = "file")
 scenario_tpm_key_changed_ticket := [?]Step {
-	{kind = .Wait, text = "tpm: refused the unseal: the TPM refuses the creation ticket of the object (response code ", any_order = true},
-	{kind = .Wait, text = "unlock: the TPM service refuses the unseal: this TPM did not make the sealed object of the record under the PCR values of its policy", any_order = true},
-	{kind = .Wait, text = "unlock: the machine key waits for its recovery key: the disk grants of principal 0 come when it is typed", any_order = true, fails_on = "tpm: unsealed 32 bytes"},
+	{kind = .Wait, text = "unlock: the record of the machine key is not the record that the TPM pins: the digest is not the pinned digest; it is refused, and no older or other record opens in its place", any_order = true, fails_on = "tpm: unsealed 32 bytes"},
+	{kind = .Wait, text = "root: unlock stopped: itself, done", any_order = true, fails_on = "tpm: unsealed 32 bytes"},
 }
 
 // Secure Boot off: no new seal after the recovery, and no seal by command.

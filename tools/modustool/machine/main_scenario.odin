@@ -936,7 +936,7 @@ scenario := [?]Step {
 	// a second compile is refused. add(-7, 2)
 	// proves that an export that gives an int extends its sign.
 	{kind = .Type, text = "isolate(\"c_compiler\")"},
-	{kind = .Wait, text = "[c_compiler] host: ready, 1 exports"},
+	{kind = .Wait, text = "[c_compiler] host: ready, 2 exports"},
 	{kind = .Wait, text = "[console]   module     c_compiler"},
 	{kind = .Type, text = "t = buffer(1)"},
 	{kind = .Type, text = "compile(\"\", t)"},

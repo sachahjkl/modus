@@ -90,7 +90,7 @@ display_port_bind :: proc "contextless" (ctx: ^system.Context) -> (port: plans_c
 // call that failed: a display that started again has a new connection.
 //
 // It connects by the role name, so the root service reaches the holder of
-// Display in force, whichever module a plan gave it to (property 23). The
+// Display in force, whichever module a plan gave it to. The
 // module file that describes the exports is the entry of the boot image
 // with the hash that the root service gives with the connection, checked
 // against the bytes: a holder that does not have plan_diff_ask and
