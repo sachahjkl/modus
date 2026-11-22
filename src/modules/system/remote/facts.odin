@@ -84,6 +84,24 @@ Mesh_Peer_Proved :: struct {
 	peer:            [32]u8,
 }
 
+// The handshake of an outbound link proved the identity key that the link
+// pins: its requests leave.
+@(log_fact = "remote: the outbound link to the machine identity key {client_key_head} at {peer} is up: the handshake proved the pinned key")
+Mesh_Link_Up :: struct {
+	client_key_head: [24]u8,
+	peer:            [32]u8,
+}
+
+// An outbound link ended: each request in flight ended with no known
+// outcome when the link was up, or as unreachable when it never came up.
+@(log_fact = "remote: the outbound link to the machine identity key {client_key_head} at {peer} ended: {unknown_outcome} requests with no known outcome, {unreachable} requests that never left")
+Mesh_Link_Ended :: struct {
+	unknown_outcome: u64,
+	unreachable:     u64,
+	client_key_head: [24]u8,
+	peer:            [32]u8,
+}
+
 // The row of a paired machine ended while its connection was open: a newer
 // machine list removed it, or its pairing ended.
 @(log_fact = "remote: the machine identity key {client_key_head} is no longer paired: the connection from {peer} ends with the code Revoked")
@@ -298,6 +316,8 @@ Interface_Measured :: struct {
 }
 #assert(size_of(Client_Key_Grant_Ended_In_Handshake) == KEY_HEAD_FIELD_BYTES + PEER_FIELD_BYTES)
 #assert(size_of(Connection_Arrived) == PEER_FIELD_BYTES)
+#assert(size_of(Mesh_Link_Up) == KEY_HEAD_FIELD_BYTES + PEER_FIELD_BYTES)
+#assert(size_of(Mesh_Link_Ended) == 16 + KEY_HEAD_FIELD_BYTES + PEER_FIELD_BYTES)
 
 // key_field gives the Text field of a whole client key, in the digits of
 // the line before the fact.
