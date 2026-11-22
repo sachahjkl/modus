@@ -373,4 +373,7 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_PUBLIC + "/tls_tcp",
 	foundation.SOURCE_FOLDER_CONTRACT + "/http_client",
 	foundation.SOURCE_FOLDER_CONTRACT + "/html_css",
+	foundation.SOURCE_FOLDER_CONTRACT + "/usb_hid",
+	foundation.SOURCE_FOLDER_CONTRACT + "/rtl_bidi",
+	foundation.SOURCE_FOLDER_CONTRACT + "/wasm_runtime",
 }
