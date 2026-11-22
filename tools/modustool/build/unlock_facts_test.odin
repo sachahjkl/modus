@@ -374,6 +374,11 @@ UNLOCK_NO_FIELD_LINES := [?][2]string {
 	{"Machine_Passphrase_Awaited", "unlock: the machine has a passphrase: the disk grants of principal 0 come when it is typed"},
 	{"No_Named_Principal", "unlock: no named principal: the machine runs as principal 0, with no unlock"},
 	{"Machine_Recovery_Asked", "unlock: the recovery key of the machine key is asked in the window: the TPM counts no try of the machine passphrase"},
+	{"Machine_Pin_Not_Read", "unlock: the pin of the record of the machine key was not read: the record is refused, and no record is written, as an unread pin must not let a swapped record pass"},
+	{"Pinned_Write_Without_Secure_Boot", "unlock: Secure Boot is off, so no pin is written, and a pinned record or file is not written either: the next start would refuse it"},
+	{"Pin_Announce_Not_Written", "unlock: the TPM service did not write the announce of the new record or file: it is not written"},
+	{"Pin_Settle_Not_Written", "unlock: the TPM service did not write the pin after the write: the next start takes the record or the file that the pin announced, and pins it"},
+	{"Principal_Creation_Refused_By_Pin", "unlock: a pin of the TPM names the file of a principal that the disk no longer holds: no new principal takes its place, until a clear of the TPM"},
 }
 
 // Each fact type of unlock with no field writes the line of before, and
