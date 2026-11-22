@@ -200,7 +200,7 @@ row_persistence_log :: proc "contextless" (principal: u64, nickname, persistence
 // service: the store of its nickname when its start gave it the grant
 // store, and the grant was not revoked; else none.
 disk_store_limit :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
-	if .Store not_in caller.start_grant_set.grants || .Store in caller.revoked || system.name_of(service.name[:]) != "storage" {
+	if .Store not_in caller.start_grant_set.grants || .Store in caller.revoked || !is_role_holder(system.name_of(service.name[:]), .Storage) {
 		return 0
 	}
 	// The budget that a module asks for has no part for a store yet: the
@@ -317,13 +317,14 @@ disk_start_begin :: proc "contextless" (asker: ^Started, record: ring.Record, va
 	disk_reader = {}
 	copy(disk_reader.name[:len(disk_reader.name) - 1], disk_process.STORE_NAME)
 	disk_reader.principal = asker.principal
-	connection, service, ring_memory, region_memory, open_status := connection_open(&disk_reader, "storage")
+	storage_name := role_holder_name(.Storage)
+	connection, service, ring_memory, region_memory, open_status := connection_open(&disk_reader, storage_name)
 	if open_status != .Ok {
 		system.log_fact(.Warning, Disk_Load_Refused_No_Connection{status = open_status, refused_process = module_name_field(name)})
 		values^ = errors.ring_fail(kind, .Refused, .None, 0, 0, 0, i64(open_status))
 		return open_status, false
 	}
-	client, opened := storage.open_handles(ring_memory, region_memory, service.process, system.image_find(image, "storage"))
+	client, opened := storage.open_handles(ring_memory, region_memory, service.process, system.image_find(image, storage_name))
 	if !opened {
 		system.close(ring_memory)
 		system.close(region_memory)
@@ -672,7 +673,7 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	storage_service: ^Started
 	if .Store in disk_grants {
 		for &item in started {
-			if item.process != 0 && item.service.head != nil && system.name_of(item.name[:]) == "storage" {
+			if item.process != 0 && item.service.head != nil && is_role_holder(system.name_of(item.name[:]), .Storage) {
 				storage_service = &item
 			}
 		}
@@ -750,7 +751,7 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	}
 	if .Store in disk_grants {
 		store_status: system.Status
-		_, _, store_ring, store_region, store_status = connection_open(slot, "storage")
+		_, _, store_ring, store_region, store_status = connection_open(slot, role_holder_name(.Storage))
 		if store_status != .Ok {
 			release(slot) // The compositor forgets the ring.
 			return store_status
@@ -759,7 +760,7 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 		system.grant_put(&context_grants, system.GRANT_STORAGE_REGION, {store_region, {.Read, .Write}})
 		system.grant_put(&context_grants, system.GRANT_STORAGE_SERVICE, {storage_service.process, {.Read}})
 		for &item in system.image_entries(image) {
-			if system.name_of(item.name[:]) == "storage" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
+			if is_role_holder(system.name_of(item.name[:]), .Storage) && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 				system.value_put(&values, system.GRANT_VALUE_STORAGE_FILE_SIZE, item.size)
 				mappings[mapping_count] = {memory = image_memory, address = storage.FILE_ADDRESS, first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
 				mapping_count += 1

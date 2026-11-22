@@ -52,6 +52,12 @@ role_holder_name :: proc "contextless" (role: role_contract.Role) -> string {
 	return DEFAULT_ROLE_HOLDERS[role]
 }
 
+// is_role_holder reports whether module_name is the active holder of role.
+is_role_holder :: proc "contextless" (module_name: string, role: role_contract.Role) -> bool {
+	holder := role_holder_name(role)
+	return holder != "" && module_name == holder
+}
+
 // device_class_holder_name resolves the module name holding a PCI device class role.
 device_class_holder_name :: proc "contextless" (class: rd.Device_Class_Role, fallback: string) -> string {
 	if sys_role, ok := rd.device_class_to_system_role(class); ok {

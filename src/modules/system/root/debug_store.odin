@@ -229,7 +229,7 @@ debug_store_connection_give :: proc "contextless" (holder: ^Started, principal: 
 	debug_store_reader = {}
 	copy(debug_store_reader.name[:len(debug_store_reader.name) - 1], disk_process.STORE_NAME)
 	debug_store_reader.principal = principal
-	connection, service, ring_memory, region_memory, status := connection_open(&debug_store_reader, "storage")
+	connection, service, ring_memory, region_memory, status := connection_open(&debug_store_reader, role_holder_name(.Storage))
 	if status != .Ok {
 		return status
 	}

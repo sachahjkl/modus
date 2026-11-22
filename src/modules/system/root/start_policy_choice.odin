@@ -201,13 +201,14 @@ start_policy_chosen_load_begin :: proc "contextless" (row: ^disk_process.Grant_R
 	disk_reader = {}
 	copy(disk_reader.name[:len(disk_reader.name) - 1], disk_process.STORE_NAME)
 	disk_reader.principal = principals.MACHINE
-	connection, service, ring_memory, region_memory, open_status := connection_open(&disk_reader, "storage")
+	storage_name := role_holder_name(.Storage)
+	connection, service, ring_memory, region_memory, open_status := connection_open(&disk_reader, storage_name)
 	if open_status != .Ok {
 		system.log_fact(.Warning, Chosen_Start_Policy_No_Connection{status = open_status, nickname = module_name_field(nickname)})
 		start_policy_launch(.Rescue)
 		return
 	}
-	client, opened := storage.open_handles(ring_memory, region_memory, service.process, system.image_find(image, "storage"))
+	client, opened := storage.open_handles(ring_memory, region_memory, service.process, system.image_find(image, storage_name))
 	if !opened {
 		system.close(ring_memory)
 		system.close(region_memory)

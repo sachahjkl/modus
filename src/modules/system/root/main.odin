@@ -204,7 +204,7 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 	}
 	start_grant_set := &caller.start_grant_set
 	amount: u64
-	if .Store in start_grant_set.grants && .Store not_in caller.revoked && system.name_of(service.name[:]) == "storage" {
+	if .Store in start_grant_set.grants && .Store not_in caller.revoked && is_role_holder(system.name_of(service.name[:]), .Storage) {
 		amount = start_grant_set_store_blocks(start_grant_set)
 	}
 	acts := .Acts_For_Principal in start_grant_set.grants && .Acts_For_Principal not_in caller.revoked
@@ -845,7 +845,8 @@ input_start :: proc "contextless" () -> system.Status {
 	system.grant_put(&context_grants, INPUT_GRANT_PORTS, {devices[0], {}})
 	system.grant_put(&context_grants, INPUT_GRANT_KEYBOARD_INTERRUPT, {devices[1], {.Read}})
 	system.grant_put(&context_grants, INPUT_GRANT_MOUSE_INTERRUPT, {devices[2], {.Read}})
-	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set_of("input")))
+	input_name := role_holder_name(.Input)
+	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set_of(input_name)))
 	// The settings page, read-only: the input service reads the layout of
 	// the keyboard there at each key.
 	// With no settings page, no mapping and no bit of its range: the input
@@ -857,16 +858,16 @@ input_start :: proc "contextless" () -> system.Status {
 		input_mappings = settings_mapping[:]
 		system.range_mapped_put(&input_values, .Settings_Page)
 	}
-	if context_refused("input", &context_grants, &input_values) {
+	if context_refused(input_name, &context_grants, &input_values) {
 		return .Bad_State
 	}
-	process, status := system.process_start(system.image_find(image, "input"), "input", context_grants.grants, random.values_with_seed(&process_generator, input_values.values), budget_of(system.image_find(image, "input"), "input"), input_mappings, &prepared)
+	process, status := system.process_start(system.image_find(image, input_name), input_name, context_grants.grants, random.values_with_seed(&process_generator, input_values.values), budget_of(system.image_find(image, input_name), input_name), input_mappings, &prepared)
 	if status != .Ok {
 		system.log_fact(.Warning, Input_Start_Failed{status = status})
 		return status
 	}
-	part_place_fill(slot, "input", process)
-	started_log("input", principals.MACHINE, false)
+	part_place_fill(slot, input_name, process)
+	started_log(input_name, principals.MACHINE, false)
 	return .Ok
 }
 
@@ -935,7 +936,8 @@ compositor_start :: proc "contextless" () -> system.Status {
 	}
 	system.grant_put(&context_grants, COMPOSITOR_GRANT_INPUT, {input_memory, {.Read, .Write}})
 	system.grant_put(&context_grants, COMPOSITOR_GRANT_CONTROL, {control_memory, {.Read, .Write}})
-	start_grant_set := start_grant_set_of("compositor")
+	display_name := role_holder_name(.Display)
+	start_grant_set := start_grant_set_of(display_name)
 	system.grant_put(&context_grants, op.CONTEXT_LOG, log_grant(start_grant_set))
 	values: system.Context_Values
 	system.value_put(&values, COMPOSITOR_VALUE_WIDTH, root_screen_values[0])
@@ -950,7 +952,7 @@ compositor_start :: proc "contextless" () -> system.Status {
 	mappings: [8]system.Mapping
 	mapping_count := 0
 	for &item in system.image_entries(image) {
-		if system.name_of(item.name[:]) == "compositor" && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
+		if system.name_of(item.name[:]) == display_name && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
 			served.service_memory, served.service, status = system.ring_create()
 			if status != .Ok {
 				system.log_fact(.Warning, Compositor_Service_Ring_Failed{status = status})
@@ -971,7 +973,7 @@ compositor_start :: proc "contextless" () -> system.Status {
 	// "pointer_theme" chooses one in the compositor.
 	for name, index in pointer_theme_choice() {
 		address := POINTER_THEME_ADDRESS + u64(index) * POINTER_THEME_SPACING
-		if mapping, size, given := resource_mapping(name, address, "compositor"); given {
+		if mapping, size, given := resource_mapping(name, address, display_name); given {
 			places := COMPOSITOR_POINTER_THEME_VALUES[index]
 			system.value_put(&values, places[0], address)
 			system.value_put(&values, places[1], size)
@@ -982,14 +984,14 @@ compositor_start :: proc "contextless" () -> system.Status {
 	text_settings_give(mappings[:], &mapping_count, &values)
 	date_page_give(mappings[:], &mapping_count, &values)
 	fresh_bytes_page_give(served, mappings[:], &mapping_count, &values)
-	if context_refused("compositor", &context_grants, &values) {
+	if context_refused(display_name, &context_grants, &values) {
 		compositor_place_free(served)
 		return .Bad_State
 	}
 	// The compositor imports the drawing module: its load needs the boot
 	// image as the source of its imports.
 	compositor_load_error: module.Load_Error
-	compositor, status = system.process_start(system.image_find(image, "compositor"), "compositor", context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, "compositor"), "compositor"), mappings[:mapping_count], &prepared, load_source(), &compositor_load_error)
+	compositor, status = system.process_start(system.image_find(image, display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, display_name), display_name), mappings[:mapping_count], &prepared, load_source(), &compositor_load_error)
 	if status != .Ok {
 		if compositor_load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Error, Compositor_Load_Refused{})
@@ -1003,14 +1005,14 @@ compositor_start :: proc "contextless" () -> system.Status {
 	served.process = compositor
 	served.process_slot, served.process_serial, _ = system.process_place(compositor)
 	served.start_grant_set = start_grant_set
-	copy(served.name[:len(served.name) - 1], "compositor")
+	copy(served.name[:len(served.name) - 1], display_name)
 	for &item in system.image_entries(image) {
-		if system.name_of(item.name[:]) == "compositor" {
+		if system.name_of(item.name[:]) == display_name {
 			served.module_offset = item.offset
 			served.module_size = item.size
 		}
 	}
-	started_log("compositor", principals.MACHINE, false)
+	started_log(display_name, principals.MACHINE, false)
 	return .Ok
 }
 
@@ -1450,7 +1452,7 @@ revoke_grant :: proc "contextless" (caller: ^Started, tag: u32, name: string, gr
 		// on its service ring that the grant of each connection changed.
 		count: u64
 		for &connection in connections {
-			if connection.caller != item || connection.history || system.name_of(connection.service.name[:]) != "storage" {
+			if connection.caller != item || connection.history || !is_role_holder(system.name_of(connection.service.name[:]), .Storage) {
 				continue
 			}
 			// The amount ends, and the grant to erase versions with it, as it
@@ -1708,7 +1710,8 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Add), values = {0 = u64(client)}})
 
 	// The slots of a terminal are its own: the terminal has no other role.
-	start_grant_set := start_grant_set_of("terminal")
+	terminal_name := role_holder_name(.Terminal)
+	start_grant_set := start_grant_set_of(terminal_name)
 	context_grants: system.Context_Grants
 	values: system.Context_Values
 	columns, rows, measure := start_grant_set_terminal(&writer.start_grant_set)
@@ -1718,14 +1721,14 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	mappings: [2]system.Mapping
 	mapping_count := 0
 	text_settings_give(mappings[:], &mapping_count, &values)
-	if context_refused("terminal", &context_grants, &values) {
+	if context_refused(terminal_name, &context_grants, &values) {
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return .Bad_State
 	}
 	// The terminal imports the drawing module: its load needs the boot
 	// image as the source of its imports.
 	load_error: module.Load_Error
-	process, status := system.process_start(system.image_find(image, "terminal"), "terminal", context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, "terminal"), "terminal"), mappings[:mapping_count], &prepared, load_source(), &load_error)
+	process, status := system.process_start(system.image_find(image, terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, terminal_name), terminal_name), mappings[:mapping_count], &prepared, load_source(), &load_error)
 	if status != .Ok {
 		if load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Warning, Terminal_Load_Refused{})
@@ -1737,7 +1740,7 @@ terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, ring_mem
 	view.process, view.client, view.writer, view.is_terminal = process, client, writer, true
 	view.start_grant_set = start_grant_set
 	view.principal = writer.principal // The lock stops the terminal of a process of the session with it.
-	copy(view.name[:len(view.name) - 1], "terminal")
+	copy(view.name[:len(view.name) - 1], terminal_name)
 	return .Ok
 }
 
@@ -1839,7 +1842,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	// fit is refused before anything is made: a cut name can be the name of
 	// another store.
 	store_name: system.Name
-	if system.name_of(service.name[:]) == "storage" {
+	if is_role_holder(system.name_of(service.name[:]), .Storage) {
 		if store_override != "" {
 			if len(store_override) >= len(store_name) {
 				return nil, nil, 0, 0, .Bad_Operation
@@ -1899,7 +1902,7 @@ connection_open :: proc "contextless" (caller: ^Started, name: string, history :
 	}
 	// An amount is a store for the storage service only: for the log
 	// service, it names the process of the caller.
-	if grant & isolated.CALLER_AMOUNT_MASK != 0 && system.name_of(service.name[:]) == "storage" {
+	if grant & isolated.CALLER_AMOUNT_MASK != 0 && is_role_holder(system.name_of(service.name[:]), .Storage) {
 		caller.granted += {history ? system.Root_Grant.History : system.Root_Grant.Store}
 	}
 	free^ = {

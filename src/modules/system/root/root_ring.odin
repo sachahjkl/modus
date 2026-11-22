@@ -138,8 +138,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		answer.status = replace(item, name, record.values[4], &answer.values)
 	case .Connect_History:
 		answer.status = .No_Right
-		if .History_Store in item.start_grant_set.grants && .History not_in item.revoked && name == "storage" {
-			answer.status = connect(item, "storage", &answer.values, history = true)
+		if .History_Store in item.start_grant_set.grants && .History not_in item.revoked && is_role_holder(name, .Storage) {
+			answer.status = connect(item, role_holder_name(.Storage), &answer.values, history = true)
 		}
 	case .Principal_Create:
 		answer.status = principal_create(name)
@@ -461,7 +461,7 @@ root_command_refusal :: proc "contextless" (command: root_ring.Root_Command, nam
 			return errors.ring_fail(kind, .Exists, .Processes, 1)
 		}
 	case .Stop:
-		if status == .Bad_Handle && (name == "compositor" || name == "terminal") {
+		if status == .Bad_Handle && (is_role_holder(name, .Display) || is_role_holder(name, .Terminal)) {
 			return errors.ring_fail(kind, .Reserved, .None, 1)
 		}
 		if status == .Bad_Handle && find(name) == nil {
