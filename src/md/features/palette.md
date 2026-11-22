@@ -138,7 +138,7 @@ Refused forms:
 
 **Rule 3: where to go comes from the window.** An element that a process builds with the interface package can name what it acts on: an act name, a text of at most 32 bytes, such as `settings.set:font`. The window layer sends the set of the act names of a frame to the compositor in one record of the ring of its window, only when the set changes. The compositor keeps the act names of each window. The provider writes the act name of each entry in the table, so the compositor reads it and never parses the name of an entry. An entry whose act name an open window names offers go to. On go to, the compositor raises the window, and sends it an event with the act name; the window layer puts the focus on the element, and the next frame shows it. A module writes no code for go to: it names an element when it builds it.
 
-**One record, so a hash.** A record of a ring holds 7 values of 8 bytes. The names of the settings already need more than 56 bytes. So the record holds a count and at most 6 hashes, the FNV-1a hash of each name (`display.act_name_hash`), and the event holds one hash. The panel hashes the act name of an entry when it collects the list, on its second thread. The window layer keeps the text of each name of its last frame, for its own line of the log. A second record for each name was refused: the set of a window then arrives in parts, and the compositor needs a state for a set that is not whole.
+**One record, so a hash.** A record of a ring holds 7 values of 8 bytes. The names of the settings already need more than 56 bytes. So the record holds a count and at most 12 hashes, the FNV-1a hash of 32 bits of each name (`display.act_name_hash`), two in each value, and the event holds one hash. Hashes of 64 bits gave room for 6, and the window of `settings` names 7 settings: the seventh had no go to. A hash of 32 bits is enough here: two names with one hash only offer a go to that finds no element. The panel hashes the act name of an entry when it collects the list, on its second thread. The window layer keeps the text of each name of its last frame, for its own line of the log. A second record for each name was refused: the set of a window then arrives in parts, and the compositor needs a state for a set that is not whole.
 
 **Which element takes the focus.** The first element of the frame with the act name. A process chooses which element names it: `settings` names the button of the value in use of each setting, and `scheduler` the tile of the strategy in use, so go to puts the focus on what the machine uses now.
 
@@ -153,10 +153,10 @@ Refused forms:
 
 **The subtle points.**
 
-- **A set of act names is hostile input** for the compositor: it copies the record, refuses a count over 6 and a hash of 0, and compares a hash with the hash of the act name of an entry; a hash is never shown. A window that names an act that it does not have gains nothing: go to raises that window only, and its window layer finds no element.
+- **A set of act names is hostile input** for the compositor: it copies the record, refuses a count over 12, a hash of 0 in the count and a hash after it (`display.act_names_of_values`), and compares a hash with the hash of the act name of an entry; a hash is never shown. A window that names an act that it does not have gains nothing: go to raises that window only, and its window layer finds no element.
 - **A window that closes** takes its act names with it: the compositor drops them with the window. The compositor writes a line for the first 8 sets of a window only, so a window that changes its set at each frame does not fill the log.
 - **Two windows that name one act**, as two windows of one process: go to takes the window in front.
-- **A frame with more than 6 act names** sends the first 6; the window layer writes one line for the life of the window.
+- **A frame with more than 12 act names** sends the first 12; the window layer writes one line for the life of the window.
 - **Left and Right on a setting row** choose a value, so they do not move the caret of the typed part there; Home and End still do.
 
 ## Any count of entries

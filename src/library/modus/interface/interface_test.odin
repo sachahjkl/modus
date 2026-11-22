@@ -2452,7 +2452,8 @@ the_act_names_of_a_frame :: proc(t: ^testing.T) {
 	testing.expect_value(t, frame.act_name_count, 1)
 	testing.expect_value(t, frame.act_names[0].element, identity("vector"))
 	testing.expect_value(t, frame.act_names_dropped, 2)
-	names := [?]string{"strategy", "b", "c", "d", "e", "f"}
+	names := [?]string{"strategy", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"}
+	#assert(len(names) == display.ACT_NAME_SET_CAPACITY)
 	for name in names {
 		element_act_name(&frame, identity(name), name)
 	}

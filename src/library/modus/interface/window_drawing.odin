@@ -54,7 +54,7 @@ Window_Drawing :: struct {
 	// The set of the act names that the compositor has from this window, as
 	// hashes in the order of their frame. A frame sends its set only when it
 	// differs (act_names_offer).
-	act_names_sent:       [display.ACT_NAME_SET_CAPACITY]u64,
+	act_names_sent:       [display.ACT_NAME_SET_CAPACITY]u32,
 	act_names_sent_count: int,
 	act_names_sent_once:  bool, // A set went to the compositor: before it, the compositor has none.
 	act_names_dropped_logged: bool, // The line of a frame with act names that it did not keep is on the log: a window writes it one time.
@@ -140,7 +140,7 @@ act_names_offer :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, 
 	if !act_names_differ(drawing, frame) {
 		return
 	}
-	hashes: [display.ACT_NAME_SET_CAPACITY]u64
+	hashes: [display.ACT_NAME_SET_CAPACITY]u32
 	for &name, index in frame.act_names[:frame.act_name_count] {
 		hashes[index] = name.hash
 	}
@@ -156,7 +156,7 @@ act_names_offer :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame, 
 // an act name. The element of the last frame that named it takes the focus,
 // and the next frame draws it.
 @(private = "file")
-act_go_to :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, hash: u64) {
+act_go_to :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, hash: u32) {
 	title := string(window.title[:window.title_count])
 	if name, found := focus_by_act_name(&drawing.state, hash); found {
 		system.log(.Info, "interface: ", title, ": the focus is on the element of ", name)
@@ -405,8 +405,10 @@ window_memory_drawing :: proc "contextless" (memory: ^Window_Memory($RECORDS, $T
 // no background: the draw of a frame paints the background color under
 // each rectangle first (draw_damage_on_surface), so a rectangle of that
 // color over the window would draw no pixel. A window with the grid of
-// points of the rules draws it with background.
-window_frame_start :: proc "contextless" (memory: ^Window_Memory($RECORDS, $TEXT), window: ^display.Window = nil) -> Frame {
+// points of the rules draws it with background. The window is not
+// optional: the compositor gives each pointer event in logical pixels, so a
+// frame drawn with no scale puts each element where no press reaches it.
+window_frame_start :: proc "contextless" (memory: ^Window_Memory($RECORDS, $TEXT), window: ^display.Window) -> Frame {
 	return window_frame_begin(window_memory_drawing(memory), window)
 }
 
@@ -489,7 +491,7 @@ draw_whole_window_next :: proc "contextless" (drawing: ^Window_Drawing) {
 }
 
 // window_frame_begin starts a frame of the window.
-window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window = nil) -> Frame {
+window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window) -> Frame {
 	drawing.build_start = system.nanoseconds()
 	// The choice of the settings page, read at each frame: the appearance
 	// in force, the font, the order of the stripes and the grid fit. A
@@ -504,24 +506,25 @@ window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^dis
 	// (src/md/features/appearance.md).
 	_ = display.text_settings_apply()
 	_ = text_settings_follow(drawing)
-	if window != nil {
-		display.picture_begin(window)
-	}
+	display.picture_begin(window)
 	// The glyphs past the glyph cache that the process draws itself in
 	// this frame count their use in it.
 	display.text_frame_begin()
 	display.text_not_kept_tell()
 	// The elements of a window draw their names and titles in the
 	// interface font of the process, when its starter gave it one.
-	drawing.now.interface_font = display.interface_font_of()
-	// The records are in logical pixels; the drawing module draws them at
-	// the scale of the surface of the window. A drawing with no window
-	// (a host test) draws in the pixels of its canvas.
-	drawing.now.scale = nil
-	if window != nil {
-		drawing.now.scale = window.rescale.scale
-	}
-	return frame_begin(&drawing.now, &drawing.state, &drawing.input, system.time())
+	return window_frame_begin_at(drawing, window, display.interface_font_of(), system.time())
+}
+
+// window_frame_begin_at is the part of window_frame_begin that reads no
+// page and no clock, so a host test runs it on a window in plain memory.
+// The records are in logical pixels, the unit of each pointer event; the
+// drawing module draws them at the scale of the surface of the window, so
+// a press lands on the element that the screen shows there.
+window_frame_begin_at :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.Window, interface_font: ^display.Interface_Font, time: u64) -> Frame {
+	drawing.now.interface_font = interface_font
+	drawing.now.scale = window.rescale.scale
+	return frame_begin(&drawing.now, &drawing.state, &drawing.input, time)
 }
 
 // window_scroll_bar_wake gives the time, in milliseconds of the clock of

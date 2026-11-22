@@ -237,7 +237,7 @@ TIME_TOP :: 616
 
 draw :: proc "contextless" (window: ^display.Window) {
 	interface.draw_whole_window_next(&window_memory.drawing)
-	frame := interface.window_frame_start(&window_memory)
+	frame := interface.window_frame_start(&window_memory, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE INTERFACE FONT", "B612 Regular and Bold: proportional, with its pairs, at three positions in a pixel", graphics.colors.machine)
 	labels := [?]struct {

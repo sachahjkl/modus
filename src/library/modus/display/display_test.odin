@@ -587,9 +587,67 @@ event_of_record_reads_each_event :: proc(t: ^testing.T) {
 	testing.expect(t, ok)
 	testing.expect_value(t, event, Event{kind = .Surface_Answer, surface_answer = .Rescale_Taken, surface_serial = 3})
 
+	// A hash is 32 bits: the first word past them and the largest word
+	// name no act name.
 	go_to := ring.Record{kind = u32(Event_Kind.Go_To)}
-	go_to.values[0] = act_name_hash("settings.set:font")
+	for word in ([?]u64{u64(max(u32)) + 1, max(u64)}) {
+		go_to.values[0] = word
+		_, go_to_ok := event_of_record(go_to)
+		testing.expectf(t, !go_to_ok, "the act %x is taken", word)
+	}
+	go_to.values[0] = u64(max(u32))
+	event, ok = event_of_record(go_to)
+	testing.expect(t, ok)
+	testing.expect_value(t, event, Event{kind = .Go_To, act = max(u32)})
+	go_to.values[0] = u64(act_name_hash("settings.set:font"))
 	event, ok = event_of_record(go_to)
 	testing.expect(t, ok)
 	testing.expect_value(t, event, Event{kind = .Go_To, act = act_name_hash("settings.set:font")})
+}
+
+// The record of a set of act names: two hashes of 32 bits in each value
+// after the count. The border refuses each value that no window layer
+// writes, and gives back each set that one writes, up to the capacity.
+@(test)
+the_record_of_the_act_names :: proc(t: ^testing.T) {
+	hashes: [ACT_NAME_SET_CAPACITY + 1]u32
+	for &hash, index in hashes {
+		hash = act_name_hash(string([]u8{u8('a' + index)}))
+	}
+	// Each count from 0 to the capacity comes back whole and in order.
+	for count in 0 ..= ACT_NAME_SET_CAPACITY {
+		values := act_names_values(hashes[:count])
+		back, back_count, ok := act_names_of_values(values)
+		testing.expectf(t, ok && back_count == count, "the set of %d hashes gave %d, ok %v", count, back_count, ok)
+		for index in 0 ..< count {
+			testing.expectf(t, back[index] == hashes[index], "the set of %d hashes changed the hash %d", count, index)
+		}
+	}
+	// One past the capacity: the record keeps the first ones.
+	values := act_names_values(hashes[:])
+	testing.expect_value(t, values[0], u64(ACT_NAME_SET_CAPACITY))
+	// A count past the capacity, the largest word as a count.
+	for count in ([?]u64{ACT_NAME_SET_CAPACITY + 1, max(u64)}) {
+		refused := act_names_values(hashes[:ACT_NAME_SET_CAPACITY])
+		refused[0] = count
+		_, _, ok := act_names_of_values(refused)
+		testing.expectf(t, !ok, "the count %d is taken", count)
+	}
+	// A hash of 0 in the count: in the low half and in the high half.
+	for place in 0 ..< 2 {
+		refused := act_names_values(hashes[:2])
+		refused[1] &= place == 0 ? 0xFFFF_FFFF_0000_0000 : 0x0000_0000_FFFF_FFFF
+		_, _, ok := act_names_of_values(refused)
+		testing.expectf(t, !ok, "a hash of 0 at the place %d is taken", place)
+	}
+	// A hash after the count: the high half of the last value in use, and
+	// the last value of the record.
+	odd := act_names_values(hashes[:1])
+	odd[1] |= u64(hashes[1]) << 32
+	_, _, odd_ok := act_names_of_values(odd)
+	testing.expect(t, !odd_ok)
+	last := act_names_values(hashes[:1])
+	last[6] = 1
+	_, _, last_ok := act_names_of_values(last)
+	testing.expect(t, !last_ok)
 }

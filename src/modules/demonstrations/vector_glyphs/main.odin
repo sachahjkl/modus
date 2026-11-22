@@ -146,7 +146,7 @@ ENLARGED_TOP :: LIST_TOP + (len(candidates) + 1) * ROW_HEIGHT + 16
 // draw draws the whole window: the frame with the interface package, then
 // the lines of each candidate over it.
 draw :: proc "contextless" (window: ^display.Window) {
-	frame := interface.window_frame_start(&window_memory)
+	frame := interface.window_frame_start(&window_memory, window)
 	interface.background(&frame, {0, 0, WIDTH, HEIGHT})
 	content := interface.card(&frame, {8, 8, WIDTH - 16, HEIGHT - 16}, "THE FONT OF THE SYSTEM", "resources/fonts: seven candidates, ASCII subsets, glyf outlines", graphics.colors.machine)
 	interface.draw_text(frame.table, content.x, content.y, "the same line in each font, at scale 1 (8 x 16 pixels), then a word enlarged 4 times", graphics.colors.dim)

@@ -143,14 +143,14 @@ Interface_State :: struct {
 	act_names:      [display.ACT_NAME_SET_CAPACITY]Act_Name,
 	act_name_count: int, // The entries of `act_names` in use.
 }
-#assert(size_of(Interface_State) == 920)
+#assert(size_of(Interface_State) == 1160)
 
 // One act name of a frame: what an element acts on, in the words of a
 // palette entry that does the same thing
 // (docs/INTERFACE.md, "4.2 Act names").
 Act_Name :: struct {
 	element: Element_Identity, // The first element of the frame that named it.
-	hash:    u64, // display.act_name_hash of the text.
+	hash:    u32, // display.act_name_hash of the text.
 	length:  u8, // The bytes of `text` in use: 1 to display.ACT_NAME_CAPACITY.
 	text:    [display.ACT_NAME_CAPACITY]u8, // "settings.set:font".
 }
@@ -193,7 +193,7 @@ element_act_name :: proc "contextless" (frame: ^Frame, element: Element_Identity
 // named an act name, by its hash: the palette went there. The next frame
 // draws the focus. found is false when no element of the last frame named
 // it; name is the text of the act name, for a line of the log.
-focus_by_act_name :: proc "contextless" (state: ^Interface_State, hash: u64) -> (name: string, found: bool) {
+focus_by_act_name :: proc "contextless" (state: ^Interface_State, hash: u32) -> (name: string, found: bool) {
 	for &kept in state.act_names[:clamp(state.act_name_count, 0, display.ACT_NAME_SET_CAPACITY)] {
 		if kept.hash == hash {
 			state.focus = kept.element
