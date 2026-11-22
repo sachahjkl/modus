@@ -46,6 +46,8 @@ Entry_Kind :: enum u8 {
 	Command      = 3, // A command of the palette provider: the provider runs it.
 	Export       = 4, // An export of a module or of a service, which the palette provider calls.
 	Setting      = 5, // A setting of the machine, or a state that the palette provider sets (the scheduling strategy): a setting row with one button for each value, or one value alone. The provider sets it.
+	Move_Window   = 6, // The move of the window in front by keys: the choice gives the arrows to the compositor until Enter or Escape.
+	Resize_Window = 7, // The resize of the window in front by keys, when it is resizable: as Move_Window, and Enter asks the one Resized.
 }
 
 // The facts of an entry that are true or false.
@@ -145,6 +147,7 @@ Window :: struct {
 	title:  string, // The title of the window.
 	number: u32, // The index of the window in the table of its owner.
 	focus:  bool, // The window has the focus.
+	resizable: bool, // Its process declared it resizable, and no resize of it waits for its process.
 	hash_prefix: string, // A window of a disk process: the hash prefix of its file, as the root service gave it. "" for another window.
 }
 
@@ -364,6 +367,14 @@ panel_uses :: proc "contextless" (panel: ^Panel) -> Uses {
 }
 
 CLOSE_NAME_START :: "close " // The start of the name of the close of a window: "close plasma".
+// The names of the acts on the window in front by keys
+// (src/md/features/accessibility.md, "3. Keyboard access to everything").
+MOVE_WINDOW_NAME :: "move window"
+RESIZE_WINDOW_NAME :: "resize window"
+// The entries of the window in front, beside the entries of each window:
+// its move and its resize. The owner of the list counts them in its
+// capacity.
+FRONT_WINDOW_ENTRY_COUNT :: 2
 
 // list_collect makes the entries of a list again from the sources: the
 // windows, the front one first; the names of the modules, in the order of
@@ -390,6 +401,18 @@ list_collect :: proc "contextless" (list: ^List, uses: Uses, process_names: []st
 			}
 		}
 		entry_add(list, uses, {kind = .Module, mark = count > 0 ? Entry_Mark.Has_Window : Entry_Mark.No_Window, windows = u8(min(count, 255)), number = u32(index)}, name, "")
+	}
+	// The window in front can move and resize by keys: the two entries
+	// name the act, and number names the window that the choice reaches.
+	for window in windows {
+		if !window.focus {
+			continue
+		}
+		entry_add(list, uses, {kind = .Move_Window, mark = .Has_Focus, number = window.number}, MOVE_WINDOW_NAME, "")
+		if window.resizable {
+			entry_add(list, uses, {kind = .Resize_Window, mark = .Has_Focus, number = window.number}, RESIZE_WINDOW_NAME, "")
+		}
+		break
 	}
 	for window in windows {
 		added := Entry{kind = .Close_Window, mark = .Destroys, flags = {.Destroys}, number = window.number}
@@ -639,7 +662,8 @@ action_runs :: proc "contextless" (action: Action) -> bool {
 
 // kind_tie_order gives the place of a kind among entries of one score: a
 // window first, because to reach a window is the most frequent act; then a
-// module, a setting, a command, an export; the close of a window last.
+// module, a setting, a command, an export, the move and the resize of the
+// window in front; the close of a window last.
 @(private)
 kind_tie_order :: proc "contextless" (kind: Entry_Kind) -> u32 {
 	switch kind {
@@ -653,10 +677,14 @@ kind_tie_order :: proc "contextless" (kind: Entry_Kind) -> u32 {
 		return 3
 	case .Export:
 		return 4
-	case .Close_Window:
+	case .Move_Window:
 		return 5
+	case .Resize_Window:
+		return 6
+	case .Close_Window:
+		return 7
 	}
-	return 6
+	return 7
 }
 
 // tie_order gives the order of an entry among the entries with the same
@@ -674,7 +702,7 @@ tie_order :: proc "contextless" (entry: ^Entry, index: int) -> u32 {
 Prefix :: enum u8 {
 	None     = 0, // Each kind.
 	Commands = 1, // ">": the commands and the exports.
-	Windows  = 2, // "@": the windows and their closes.
+	Windows  = 2, // "@": the windows, the move and the resize of the window in front, and the closes.
 	Settings = 3, // ":": the values of the settings.
 	Manual   = 4, // "?": the modules; the choice opens the page of the manual of the module.
 }
@@ -723,7 +751,7 @@ prefix_admits :: proc "contextless" (prefix: Prefix, kind: Entry_Kind) -> bool {
 	case .Commands:
 		return kind == .Command || kind == .Export
 	case .Windows:
-		return kind == .Window || kind == .Close_Window
+		return kind == .Window || kind == .Close_Window || kind == .Move_Window || kind == .Resize_Window
 	case .Settings:
 		return kind == .Setting
 	case .Manual:

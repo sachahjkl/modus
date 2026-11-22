@@ -80,7 +80,7 @@ palette_list_ensure :: proc "contextless" (slot: u32, provider_needed, total_nee
 	if mem.provider_capacity > 0 && provider_cap > mem.provider_capacity && mem.provider_capacity <= max(int) / 2 {
 		provider_cap = max(provider_cap, mem.provider_capacity * 2)
 	}
-	base_local := len(bar.names) + 2 * CLIENT_CAPACITY
+	base_local := len(bar.names) + 2 * CLIENT_CAPACITY + palette.FRONT_WINDOW_ENTRY_COUNT
 	if provider_cap > max(int) - base_local {
 		return false
 	}
@@ -131,6 +131,7 @@ Ranking_Window :: struct {
 	title:  system.Name,
 	number: u32,
 	focus:  bool,
+	resizable: bool, // As palette.Window.resizable.
 	from_disk:   bool, // A window of a disk process: hash_prefix holds the hash prefix of its file.
 	hash_prefix: [process_page.HASH_PREFIX_DIGITS]u8,
 }
@@ -254,7 +255,7 @@ palette_ranking_thread :: proc "c" (parameter: rawptr) -> ! {
 		window_count := clamp(ranking.window_count, 0, CLIENT_CAPACITY)
 		for index in 0 ..< window_count {
 			titles[index] = ranking.windows[index].title
-			windows[index] = {title = system.name_of(titles[index][:]), number = ranking.windows[index].number, focus = ranking.windows[index].focus}
+			windows[index] = {title = system.name_of(titles[index][:]), number = ranking.windows[index].number, focus = ranking.windows[index].focus, resizable = ranking.windows[index].resizable}
 			if ranking.windows[index].from_disk {
 				prefixes[index] = ranking.windows[index].hash_prefix
 				windows[index].hash_prefix = string(prefixes[index][:])
@@ -419,7 +420,8 @@ palette_entries_refresh :: proc "contextless" () {
 	ranking.window_count = 0
 	for position := order_count - 1; position >= 0; position -= 1 {
 		client := &clients[order[position]]
-		ranking.windows[ranking.window_count] = {title = client.title, number = u32(order[position]), focus = position == order_count - 1, from_disk = client.from_disk, hash_prefix = client.hash_prefix}
+		resizable := client.resizable && !client.resize_asked && client.resize_pictures == nil && !client.released
+		ranking.windows[ranking.window_count] = {title = client.title, number = u32(order[position]), focus = position == order_count - 1, resizable = resizable, from_disk = client.from_disk, hash_prefix = client.hash_prefix}
 		ranking.window_count += 1
 	}
 	ranking.recent_count = copy(ranking.recents[:], palette_panel.recents[:clamp(palette_panel.recent_count, 0, palette.RECENT_CAPACITY)])
@@ -1353,6 +1355,12 @@ palette_entry_run :: proc "contextless" (picked: ^palette.Entry) {
 		if number < CLIENT_CAPACITY && clients[number].created && len(name_text) > len(close_start) && system.name_of(clients[number].title[:]) == name_text[len(close_start):] {
 			system.send(&control.completions, ring.Record{kind = u32(display.Control.Stop), values = {0 = u64(clients[number].ring_memory)}})
 			system.log_fact(.Info, Palette_Closes_Window{window = window_field(clients[number].title[:])})
+		}
+	case .Move_Window, .Resize_Window:
+		// The window that the row named, if it is still in front: a
+		// window that took the front since then is not the one chosen.
+		if order_count > 0 && order[order_count - 1] == number {
+			keyboard_window_begin(kind == .Move_Window ? bar.Keyboard_Window_Mode.Move : bar.Keyboard_Window_Mode.Resize) // keyboard_desktop.odin
 		}
 	case .Command, .Export:
 		// An entry with parameters: the provider writes it in its edit

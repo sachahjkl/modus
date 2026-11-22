@@ -140,6 +140,26 @@ The design: `docs/INTERFACE.md`, "4. Input and focus".
 
 Do not use: active window, keyboard owner.
 
+### Focus ring
+
+The focus ring is the outline of 2 logical pixels in the strong text that the compositor and the interface package draw outside the thing that has the focus of the keys.
+
+It marks the element of a window with the focus (`interface.draw_focus_ring`), the item of the bar with the focus of the keys, and the window that the arrows move or resize. It lies outside the area of the thing, after its fill, so nothing of the thing covers it; the strong text keeps at least 3 to 1 against each surface in each appearance and each contrast, which a host test computes (WCAG 2.2, success criterion 2.4.13). It is not the chosen blue of a line of a list or of a menu, which marks a choice, not the focus.
+
+The design: `src/md/features/accessibility.md`, "3. Keyboard access to everything".
+
+Do not use: focus rectangle, focus outline, focus indicator.
+
+### Keyboard window mode
+
+The keyboard window mode is the state of the compositor in which the arrow keys move or resize the window in front: `Move`, `Resize`, or `None`.
+
+Control+Shift+F7 or the palette entry "move window" starts `Move`; Control+Shift+F8 or "resize window" starts `Resize`. An arrow steps by 16 logical pixels, by 1 with Shift. Enter keeps the place, or asks the one `Resized` of the new size; Escape gives back the place and asks nothing. While the mode lasts, no key reaches a process. It is not a drag: the pointer is free, and a press of the pointer ends the mode as Enter does.
+
+The design: `src/md/features/accessibility.md`, "3. Keyboard access to everything".
+
+Do not use: keyboard drag, move mode, resize mode.
+
 ### Title bar
 
 The title bar is the top part of the frame of a window, 24 pixels high: the title and the close button.

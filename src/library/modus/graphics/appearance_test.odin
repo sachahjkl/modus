@@ -217,3 +217,65 @@ the_two_appearances_differ_where_they_must :: proc(t: ^testing.T) {
 	testing.expect_value(t, light.track, mix(light.background, DARK_DIM, 25 * 255 / 100))
 	testing.expect_value(t, light.dim, shade(DARK_DIM, 60))
 }
+
+// The outline of the focus is the strong text (src/md/features/accessibility.md,
+// "3. Keyboard access to everything"). It lies outside the element, so
+// before the focus its pixels were the surface around the element: the
+// strong text keeps at least 3 to 1 against each such surface (WCAG 2.2,
+// success criterion 2.4.13), in each appearance and in each contrast. The
+// bar is the gradient of the cards, with the track as its line and a line
+// of light under it at the bottom edge; the mark of a mode by keys is the
+// strong text on the recess, as a text.
+@(test)
+the_outline_of_the_focus_keeps_its_contrast :: proc(t: ^testing.T) {
+	Token_Set :: struct {
+		name:   string,
+		tokens: Color_Tokens,
+	}
+	sets := [?]Token_Set {
+		{"dark", color_tokens_of(.Dark)},
+		{"light", color_tokens_of(.Light)},
+		{"high contrast dark", colors_for_contrast_mode(.Forced_High_Contrast_Dark, true)},
+		{"high contrast light", colors_for_contrast_mode(.Forced_High_Contrast_Light, false)},
+	}
+	for set in sets {
+		tokens := set.tokens
+		Surface :: struct {
+			name:  string,
+			color: Color,
+		}
+		surfaces := [?]Surface {
+			{"the background", tokens.background},
+			{"the top of a card", tokens.card_top},
+			{"the bottom of a card", tokens.card_bottom},
+			{"the recess", tokens.recess},
+			{"the track", tokens.track},
+			{"the top of the bar", tokens.card_top},
+			{"the bottom of the bar", tokens.card_bottom},
+			{"the line of light of the bar", shade(tokens.card_top, 125)},
+		}
+		for surface in surfaces {
+			ratio := value_contrast_ratio(tokens.text_strong, surface.color)
+			testing.expectf(t, ratio >= GRAPHIC_CONTRAST_LEAST, "%s: the outline of the focus (%06x) on %s (%06x): a contrast of %.2f; at least %.1f", set.name, u32(tokens.text_strong), surface.name, u32(surface.color), ratio, GRAPHIC_CONTRAST_LEAST)
+			// The integer measure of the system says the same: it is the
+			// one that a process can compute at run time.
+			testing.expectf(t, contrast_ratio_x100(tokens.text_strong, surface.color) >= 300, "%s: the integer contrast on %s is under 3 to 1", set.name, surface.name)
+		}
+		ratio := value_contrast_ratio(tokens.text_strong, tokens.recess)
+		testing.expectf(t, ratio >= TEXT_CONTRAST_LEAST, "%s: the words of a mode by keys on the recess: a contrast of %.2f", set.name, ratio)
+	}
+}
+
+// A test that never fails proves nothing: a color one step from a surface
+// is refused by the same check.
+@(test)
+the_contrast_check_of_the_outline_refuses_a_faint_outline :: proc(t: ^testing.T) {
+	for of in Appearance {
+		tokens := color_tokens_of(of)
+		for surface in ([?]Color{tokens.background, tokens.card_top, tokens.card_bottom, tokens.recess}) {
+			testing.expect(t, value_contrast_ratio(surface, surface) < GRAPHIC_CONTRAST_LEAST)
+			testing.expect(t, contrast_ratio_x100(surface, surface) < 300)
+			testing.expect(t, value_contrast_ratio(tokens.edge, surface) < value_contrast_ratio(tokens.text_strong, surface))
+		}
+	}
+}

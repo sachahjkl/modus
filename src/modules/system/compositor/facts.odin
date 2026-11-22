@@ -772,6 +772,41 @@ First_Frame :: struct {}
 @(log_fact = "compositor: the start menu is open")
 Start_Menu_Open :: struct {}
 
+// Control+Shift+F7 or the palette: the arrows move the window in front.
+@(log_fact = "compositor: window {window} moves by keys")
+Keyboard_Move_Started :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
+// Control+Shift+F8 or the palette: the arrows resize the window in front.
+@(log_fact = "compositor: window {window} resizes by keys")
+Keyboard_Resize_Started :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
+// A resize by keys did not start: the window is fixed, or a resize of it
+// waits for its process.
+@(log_fact = "compositor: window {window} does not resize by keys: it is fixed, or its process has not answered a resize")
+Keyboard_Resize_Refused :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
+// Escape ended a move or a resize by keys: the window has its place and
+// its size of before.
+@(log_fact = "compositor: window {window} keeps its place and its size")
+Keyboard_Window_Kept :: struct {
+	window: value_kinds.Module_Name_Field,
+}
+
+// Control+Shift+F10, or a key while a menu of the bar is open: the bar has
+// the focus of the keys.
+@(log_fact = "compositor: the bar has the focus of the keys")
+Bar_Focus_Taken :: struct {}
+
+// The bar gave the focus of the keys back to the window in front.
+@(log_fact = "compositor: the bar gives the focus of the keys back")
+Bar_Focus_Left :: struct {}
+
 // The draw table of the screen is full: records are missing.
 @(log_fact = "compositor: the draw table of the screen is full: records are missing")
 Screen_Draw_Table_Full :: struct {}

@@ -5,6 +5,8 @@
 package compositor
 
 import "internal:compositor/bar"
+import "modus:contract/ring"
+import "modus:display"
 import "modus:graphics"
 import "modus:interface"
 import "modus:system"
@@ -153,6 +155,56 @@ start_menu_records :: proc "contextless" (table: ^interface.Draw_Table) {
 		line_x, line_y, line_width, line_height := bar.action_line(bar_layout, action)
 		menu_line_records(table, line_x, line_y, line_width, line_height, icon, label, action == menu_action)
 	}
+}
+
+// menu_show opens a menu of the bar, with no line chosen.
+menu_show :: proc "contextless" (menu: Menu) {
+	menu_open, menu_line, menu_action = menu, -1, .None
+	switch menu {
+	case .None:
+	case .Start:
+		system.log_fact(.Info, Start_Menu_Open{})
+	case .Windows:
+		windows_log()
+	}
+	damage_menu()
+}
+
+// menu_close closes the menu of the bar that is open, and does nothing.
+menu_close :: proc "contextless" () {
+	if menu_open == .None {
+		return
+	}
+	menu_open, menu_line, menu_action = .None, -1, .None
+	damage_menu()
+}
+
+// menu_choice_do does the chosen line of the open menu, from a press of the
+// pointer or from Enter, then closes the menu: a line of the start menu
+// starts its module, a quick action acts, a line of the menu of the windows
+// brings its window to the front. With no line chosen, the menu closes
+// alone.
+menu_choice_do :: proc "contextless" () {
+	if menu_open == .Start && menu_line >= 0 && menu_line < len(bar.names) {
+		packed := system.name_pack(bar.names[menu_line])
+		system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
+	}
+	if index := window_of_line(menu_line); menu_open == .Windows && menu_line >= 0 && index >= 0 {
+		if clients[index].minimized {
+			clients[index].minimized = false
+			damage_whole_screen()
+		}
+		for position in 0 ..< order_count {
+			if order[position] == index {
+				raise(position)
+				break
+			}
+		}
+		system.log_fact(.Info, Window_In_Front{window = window_field(clients[index].title[:])})
+	}
+	chosen_action := menu_open == .Start ? menu_action : bar.Start_Action.None
+	menu_close()
+	start_action_do(chosen_action)
 }
 
 // start_action_do does a quick action of the start menu.
