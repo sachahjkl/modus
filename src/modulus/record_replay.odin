@@ -537,7 +537,8 @@ record_replay_on_unmap :: proc "contextless" (process_index: u32, region_index: 
 		// the record keeps its set as the replay will have it. A mapping
 		// that failed in its own Memory_Map writes no Shared_Mapping.
 		_ = input_history.stand_in_mapping_set_remove_range(&rec.stand_ins, address, page_count)
-		if rec.pending_mapping.active && rec.pending_mapping.virtual_address >= address && rec.pending_mapping.virtual_address < end {
+		pending := rec.pending_mapping
+		if pending.active && pending.virtual_address < end && address < pending.virtual_address + pending.page_count * PAGE_SIZE {
 			rec.pending_mapping = {}
 		}
 		// The memory object of an unmapped shared page can end: no diff
@@ -649,7 +650,11 @@ record_received_mapping_admit :: proc "contextless" (process_index: u32, region_
 // each page mapped with Write. A page that no other process writes needs
 // nothing more: only its first bytes, which the history takes after the
 // completion of the Memory_Map. On a refusal, map_region unmaps the
-// mapping, which frees what this procedure took (record_replay_on_unmap).
+// mapping, which takes back what this procedure took for each page before
+// the failed one: the entries go to 0 before the shoot-down, and
+// record_replay_on_unmap frees the point copies and the baselines of the
+// range, removes the stand-in entry and clears the pending mapping. The
+// pending mapping is set last, so a refusal never leaves one.
 // Caller holds Control and the process lock; the recorded thread is in its
 // kernel entry, at an input point.
 record_received_mapping_locked :: proc "contextless" (process: ^Process, mapping: ^Mapping) -> Operation_Outcome {
@@ -842,8 +847,12 @@ shared_pages_install_locked :: proc "contextless" (process_index: u32, rec: ^Pro
 			active          = true,
 		}
 	}
-	if rec.gate.state == .Inactive {
+	// A gate that this map makes, and that fails before its publication,
+	// goes: no record keeps a gate that no writer knows.
+	gate_made := rec.gate.state == .Inactive
+	if gate_made {
 		if !replay_filter.shared_writer_gate_init(&rec.gate, process_index, processes[process_index].serial, SHARED_WRITER_WAIT_BOUND_MILLISECONDS) {
+			rec.gate = {}
 			return .Bad_State
 		}
 		if !replay_filter.register_recorded_thread(&rec.gate, thread_index(thread), starts_at_input_point = true) {
@@ -853,8 +862,13 @@ shared_pages_install_locked :: proc "contextless" (process_index: u32, rec: ^Pro
 	}
 	// The admission saw each writer under the control lock, and a new
 	// writer is refused since map_region counted this mapping: the adds
-	// cannot fail.
-	shared_writers_add_of_region(process_index, rec, mapping.region) or_return
+	// do not fail, and a failure takes back a gate that this map made.
+	if added := shared_writers_add_of_region(process_index, rec, mapping.region); added != .Ok {
+		if gate_made {
+			rec.gate = {}
+		}
+		return added
+	}
 	shared_writers_publish(process_index, rec)
 	return .Ok
 }
@@ -2002,7 +2016,17 @@ record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread
 		buffer_ok = input_history.history_writer_append_kernel_completion(&rec.writer, thread.frame.rip, thread.frame.rsp, entry, copied_slice)
 	}
 	if buffer_ok && rec.pending_mapping.active {
-		buffer_ok = record_received_mapping_write_locked(cpu, process_index, thread)
+		// Only the completion of the Memory_Map that made the mapping takes
+		// it. Another completion cannot come first: the map and this record
+		// run in one kernel entry, and a stop ends the record (which zeroes
+		// the pending mapping). If it came, the history gets no
+		// Shared_Mapping, and the replay stops at the first delta of that
+		// mapping with Missing_Record: a clear refusal, never a wrong place.
+		if command.kind &~ op.COMMAND_NAMES_ERROR_DETAILS == u32(op.Operation.Memory_Map) && status == .Ok && completion_values[0] == rec.pending_mapping.virtual_address {
+			buffer_ok = record_received_mapping_write_locked(cpu, process_index, thread)
+		} else {
+			rec.pending_mapping = {}
+		}
 	}
 	process_unlock(process_index, taken)
 	if !buffer_ok {
