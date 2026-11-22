@@ -904,7 +904,7 @@ scenario := [?]Step {
 	// the assembler refuses names its line and its column on the log.
 	{kind = .Type, text = "clear()"},
 	{kind = .Type, text = "isolate(\"assemble\")"},
-	{kind = .Wait, text = "[assemble] host: ready, 1 exports"},
+	{kind = .Wait, text = "[assemble] host: ready, 2 exports"},
 	{kind = .Wait, text = "[console]   module     assemble"},
 	{kind = .Wait, text = "[console]   call       isolated"},
 	{kind = .Type, text = "f = buffer(4)"},

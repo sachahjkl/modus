@@ -712,8 +712,11 @@ open :: proc "contextless" (ctx: ^system.Context, width, height: int, title: str
 	// The compositor maps the ring when the root service tells it of this
 	// process. Until then, the grant has no receiver.
 	granted: system.Handle
-	for attempt in 0 ..< 200 {
-		granted, status = system.give(window.ring_memory, window.surface, {.Read}, attempt == 199 ? error : nil) // The compositor reads the surface.
+	// Bound the wait for the display holder to map this client's ring on a
+	// loaded machine: succeeds on the first pass when the holder is ready.
+	OPEN_RING_WAIT_ATTEMPTS :: 2000
+	for attempt in 0 ..< OPEN_RING_WAIT_ATTEMPTS {
+		granted, status = system.give(window.ring_memory, window.surface, {.Read}, attempt == OPEN_RING_WAIT_ATTEMPTS - 1 ? error : nil) // The compositor reads the surface.
 		if status == .Ok {
 			break
 		}

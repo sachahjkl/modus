@@ -171,37 +171,37 @@ Message_Reader :: struct {
 }
 
 @(private = "file")
-put_u8 :: proc "contextless" (writer: ^Message_Writer, value: u8) {
-	writer.bytes[writer.count] = value
-	writer.count += 1
+put_u8 :: proc "contextless" (target: ^Message_Writer, value: u8) {
+	target.bytes[target.count] = value
+	target.count += 1
 }
 
 @(private = "file")
-put_u16 :: proc "contextless" (writer: ^Message_Writer, value: u16) {
-	byte_order.write_u16_little_endian(writer.bytes, writer.count, value)
-	writer.count += 2
+put_u16 :: proc "contextless" (target: ^Message_Writer, value: u16) {
+	byte_order.write_u16_little_endian(target.bytes, target.count, value)
+	target.count += 2
 }
 
 @(private = "file")
-put_u32 :: proc "contextless" (writer: ^Message_Writer, value: u32) {
-	byte_order.write_u32_little_endian(writer.bytes, writer.count, value)
-	writer.count += 4
+put_u32 :: proc "contextless" (target: ^Message_Writer, value: u32) {
+	byte_order.write_u32_little_endian(target.bytes, target.count, value)
+	target.count += 4
 }
 
 @(private = "file")
-put_u64 :: proc "contextless" (writer: ^Message_Writer, value: u64) {
-	byte_order.write_u64_little_endian(writer.bytes, writer.count, value)
-	writer.count += 8
+put_u64 :: proc "contextless" (target: ^Message_Writer, value: u64) {
+	byte_order.write_u64_little_endian(target.bytes, target.count, value)
+	target.count += 8
 }
 
 // put_array writes count bytes of an array then zero bytes up to its capacity.
 @(private = "file")
-put_array :: proc "contextless" (writer: ^Message_Writer, array: []u8, count: int) {
-	written := copy(writer.bytes[writer.count:writer.count + len(array)], array[:clamp(count, 0, len(array))])
+put_array :: proc "contextless" (target: ^Message_Writer, array: []u8, count: int) {
+	written := copy(target.bytes[target.count:target.count + len(array)], array[:clamp(count, 0, len(array))])
 	for index in written ..< len(array) {
-		writer.bytes[writer.count + index] = 0
+		target.bytes[target.count + index] = 0
 	}
-	writer.count += len(array)
+	target.count += len(array)
 }
 
 @(private = "file")

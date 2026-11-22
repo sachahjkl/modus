@@ -383,14 +383,14 @@ Text_Writer :: struct {
 	overflow: bool,
 }
 
-text_write :: proc "contextless" (writer: ^Text_Writer, text: string) {
+text_write :: proc "contextless" (target: ^Text_Writer, text: string) {
 	for index in 0 ..< len(text) {
-		if writer.count >= len(writer.out) {
-			writer.overflow = true
+		if target.count >= len(target.out) {
+			target.overflow = true
 			return
 		}
-		writer.out[writer.count] = text[index]
-		writer.count += 1
+		target.out[target.count] = text[index]
+		target.count += 1
 	}
 }
 

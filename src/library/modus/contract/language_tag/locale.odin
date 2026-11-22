@@ -506,12 +506,12 @@ Text_Writer :: struct {
 }
 
 @(private)
-text_put :: proc "contextless" (writer: ^Text_Writer, text: string) {
-	if !writer.fits || len(text) > len(writer.buffer) - writer.count {
-		writer.fits = false
+text_put :: proc "contextless" (target: ^Text_Writer, text: string) {
+	if !target.fits || len(text) > len(target.buffer) - target.count {
+		target.fits = false
 		return
 	}
-	writer.count += copy(writer.buffer[writer.count:], text)
+	target.count += copy(target.buffer[target.count:], text)
 }
 
 @(private)

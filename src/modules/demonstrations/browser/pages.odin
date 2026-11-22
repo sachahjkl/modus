@@ -358,12 +358,12 @@ Source_Writer :: struct {
 	full:  bool,
 }
 
-put :: proc "contextless" (writer: ^Source_Writer, text: string) {
-	room := len(writer.bytes) - writer.count
+put :: proc "contextless" (target: ^Source_Writer, text: string) {
+	room := len(target.bytes) - target.count
 	if len(text) > room {
-		writer.full = true
+		target.full = true
 	}
-	writer.count += copy(writer.bytes[writer.count:], text[:min(len(text), room)])
+	target.count += copy(target.bytes[target.count:], text[:min(len(text), room)])
 }
 
 put_number :: proc "contextless" (writer: ^Source_Writer, value: u64) {
