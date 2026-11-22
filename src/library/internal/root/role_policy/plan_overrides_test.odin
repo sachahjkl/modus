@@ -185,7 +185,8 @@ plan_overrides_apply_then_roll_back_whole :: proc(t: ^testing.T) {
 plan_overrides_border_of_the_step :: proc(t: ^testing.T) {
 	_, ok := rd.plan_roles_step_of_word(0)
 	testing.expect(t, !ok)
-	_, ok = rd.plan_roles_step_of_word(4)
+	// The word after the last step, Loaded.
+	_, ok = rd.plan_roles_step_of_word(5)
 	testing.expect(t, !ok)
 	_, ok = rd.plan_roles_step_of_word(max(u64))
 	testing.expect(t, !ok)

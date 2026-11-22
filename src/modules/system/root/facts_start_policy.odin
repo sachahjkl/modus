@@ -21,6 +21,33 @@ Unlock_Stop_Late :: struct {
 	bound: value_kinds.Time_In_Milliseconds,
 }
 
+// The holder of Plans runs, and the start policy waits for its read of the
+// plan of principal 0.
+@(log_fact = "root: the plans service reads the plan of principal 0 before the start policy, within the hang bound of {bound}")
+Plan_At_Start_Waiting :: struct {
+	bound: value_kinds.Time_In_Milliseconds,
+}
+
+// The holder of Plans did not say Loaded within its bound.
+@(log_fact = "root: the plans service did not read the plan of principal 0 within the hang bound of {bound}: the start policy starts with the roles in force")
+Plan_At_Start_Late :: struct {
+	bound: value_kinds.Time_In_Milliseconds,
+}
+
+// The holder of Plans did not start before the start policy.
+@(log_fact = "root: the plans service did not start to read the plan of principal 0: status {status}; the roles of the boot image hold")
+Plan_At_Start_Start_Failed :: struct {
+	status: op.Status,
+}
+
+// The roles of the current plan of principal 0 hold from the start.
+@(log_fact = "root: the roles of generation {generation} of the plan of principal 0 hold from the start: {overrides} overrides, serial {serial}")
+Plan_At_Start_Applied :: struct {
+	generation: u64,
+	serial:     u64,
+	overrides:  u64,
+}
+
 // The read of the disk grant table of principal 0 did not end within its
 // bound.
 @(log_fact = "root: the read of the disk grant table of principal 0 did not end within the hang bound of {bound}: the choice of principal 0 is not read")

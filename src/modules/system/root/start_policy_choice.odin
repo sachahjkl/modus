@@ -159,7 +159,8 @@ start_policy_choice_end :: proc "contextless" () {
 	case .Awaited, .Record_Unreadable, .Reading, .Unread, .Refused, .Unwritten:
 		system.log_fact(.Info, Machine_Table_Unread_Before_Start_Policy{})
 	}
-	start_policy_after_the_choice(chosen)
+	// The plan of principal 0 before the start policy (plan_at_start.odin).
+	plan_at_start_begin(chosen)
 }
 
 // nickname_reserved_for_a_start_policy says if a nickname cannot name a

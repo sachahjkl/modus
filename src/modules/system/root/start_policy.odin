@@ -415,8 +415,10 @@ root_stop_ask :: proc "contextless" (item: ^Started) {
 // processes of a failed start policy are gone, and at the hang bound of a
 // start policy that never said that the machine is usable.
 start_policy_step :: proc "contextless" () {
-	// Before any start policy: the read of the choice of principal 0.
+	// Before any start policy: the read of the choice of principal 0, then
+	// the read of its plan.
 	start_policy_choice_step()
+	plan_at_start_step()
 	switch start_policy_stage {
 	case .None, .Usable, .No_Policy:
 	case .Stopping:
@@ -455,7 +457,7 @@ start_policy_step :: proc "contextless" () {
 // start_policy_step even with no event.
 start_policy_wake :: proc "contextless" () -> u64 {
 	wake := start_policy_stage == .Running || start_policy_stage == .Stopping ? start_policy_deadline : system.WAIT_FOREVER
-	return min(wake, start_policy_choice_wake())
+	return min(wake, start_policy_choice_wake(), plan_at_start_wake())
 }
 
 // start_policy_usable runs Machine_Usable: only from the start policy that

@@ -86,6 +86,33 @@ Start_Policy_Choice_Unread_No_Tpm :: struct {}
 @(log_fact = "root: no choice of a start policy is read: the machine has no data disk")
 Start_Policy_Choice_Unread_No_Disk :: struct {}
 
+@(log_fact = "root: the plan of principal 0 is not read before the rescue start policy: the roles of the boot image hold")
+Plan_At_Start_Unread_Rescue :: struct {}
+
+@(log_fact = "root: the plan of principal 0 is not read before the start policy: the machine has no data disk")
+Plan_At_Start_Unread_No_Disk :: struct {}
+
+@(log_fact = "root: the plan of principal 0 is not read before the start policy: the boot image has no holder of the role Plans")
+Plan_At_Start_Unread_No_Plans_Module :: struct {}
+
+@(log_fact = "root: the plan of principal 0 is not read before the start policy: the boot image has no holder of the role Storage")
+Plan_At_Start_Unread_No_Storage_Module :: struct {}
+
+@(log_fact = "root: principal 0 has no plan stored: the roles of the boot image hold")
+Plan_At_Start_No_Plan :: struct {}
+
+@(log_fact = "root: the boot image cannot hold the roles of the stored plan of principal 0: the roles of the boot image hold")
+Plan_At_Start_Plan_Refused :: struct {}
+
+@(log_fact = "root: the plans service cannot read the plan of principal 0 from its store: the roles of the boot image hold")
+Plan_At_Start_Store_Unread :: struct {}
+
+@(log_fact = "root: the plans service did not read the roles in force: the roles of the boot image hold")
+Plan_At_Start_Core_Unread :: struct {}
+
+@(log_fact = "root: the plans service stopped before it read the plan of principal 0: the roles of the boot image hold")
+Plan_At_Start_Holder_Stopped :: struct {}
+
 @(log_fact = "root: unlock reads the machine key with no window, before the start policy: the choice of principal 0 is in its disk grant table")
 Unlock_Reads_Machine_Key :: struct {}
 

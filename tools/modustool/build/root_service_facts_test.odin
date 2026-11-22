@@ -438,6 +438,8 @@ the_principal_and_start_policy_facts_of_the_root_service_write_the_lines_of_befo
 		expect(t, render(t, file, "Unlock_Machine_Key_Late", {{"bound", time}}), line_of_before("root: unlock gave no machine key within the hang bound of ", time, " ms: the choice of principal 0 is not read, and unlock is stopped"))
 		expect(t, render(t, file, "Unlock_Stop_Late", {{"bound", time}}), line_of_before("root: unlock did not stop within the hang bound of ", time, " ms after its stop was asked: the start policy starts, and its row unlock does not start while it runs"))
 		expect(t, render(t, file, "Machine_Table_Read_Late", {{"bound", time}}), line_of_before("root: the read of the disk grant table of principal 0 did not end within the hang bound of ", time, " ms: the choice of principal 0 is not read"))
+		expect(t, render(t, file, "Plan_At_Start_Waiting", {{"bound", time}}), line_of_before("root: the plans service reads the plan of principal 0 before the start policy, within the hang bound of ", time, " ms"))
+		expect(t, render(t, file, "Plan_At_Start_Late", {{"bound", time}}), line_of_before("root: the plans service did not read the plan of principal 0 within the hang bound of ", time, " ms: the start policy starts with the roles in force"))
 		expect(t, render(t, file, "Start_Policy_Processes_Late", {{"left_processes", count}, {"bound", time}}), line_of_before("root: ", count, " processes of the failed start policy did not stop within the hang bound of ", time, " ms: the rescue start policy starts beside them"))
 		expect(t, render(t, file, "Start_Policy_Choice_Refused_Principal", {{"principal", count}}), line_of_before("root: refused a choice of a start policy: the caller acts for principal ", count, ", and only principal 0 chooses the start policy of the machine"))
 		expect(t, render(t, file, "Start_Request_Refused", {{"start_request", count}, {"start_request_source", other}}), line_of_before("root: the boot record names the start request ", count, " with the source ", other, ", which the border refuses: the rescue start policy starts"))
@@ -489,6 +491,15 @@ the_facts_with_no_field_of_the_root_service_write_the_lines_of_before :: proc(t:
 		{"Start_Policy_Choice_Unread_No_Tpm", "root: no choice of a start policy is read: no TPM service runs, so no machine key opens with no passphrase"},
 		{"Start_Policy_Choice_Unread_No_Disk", "root: no choice of a start policy is read: the machine has no data disk"},
 		{"Unlock_Reads_Machine_Key", "root: unlock reads the machine key with no window, before the start policy: the choice of principal 0 is in its disk grant table"},
+		{"Plan_At_Start_Unread_Rescue", "root: the plan of principal 0 is not read before the rescue start policy: the roles of the boot image hold"},
+		{"Plan_At_Start_Unread_No_Disk", "root: the plan of principal 0 is not read before the start policy: the machine has no data disk"},
+		{"Plan_At_Start_Unread_No_Plans_Module", "root: the plan of principal 0 is not read before the start policy: the boot image has no holder of the role Plans"},
+		{"Plan_At_Start_Unread_No_Storage_Module", "root: the plan of principal 0 is not read before the start policy: the boot image has no holder of the role Storage"},
+		{"Plan_At_Start_No_Plan", "root: principal 0 has no plan stored: the roles of the boot image hold"},
+		{"Plan_At_Start_Plan_Refused", "root: the boot image cannot hold the roles of the stored plan of principal 0: the roles of the boot image hold"},
+		{"Plan_At_Start_Store_Unread", "root: the plans service cannot read the plan of principal 0 from its store: the roles of the boot image hold"},
+		{"Plan_At_Start_Core_Unread", "root: the plans service did not read the roles in force: the roles of the boot image hold"},
+		{"Plan_At_Start_Holder_Stopped", "root: the plans service stopped before it read the plan of principal 0: the roles of the boot image hold"},
 		{"Machine_Table_Unread_Before_Start_Policy", "root: the disk grant table of principal 0 is not read before the start policy: no choice of principal 0 is known"},
 		{"Start_Policy_Choice_Refused_Empty_Nickname", "root: refused a choice of a start policy: a nickname of no byte ends the choice, and the command names a hash"},
 		{"Start_Policy_Choice_Refused_No_Machine_Key", "root: refused a choice of a start policy: the machine has no machine key, so the disk grant table of principal 0 lasts until the machine stops, and no choice reaches the next start; machine_seal() makes a machine key"},
@@ -561,6 +572,7 @@ the_statuses_of_the_root_service_are_the_names_of_their_members :: proc(t: ^test
 		{"Devices_Service_Start_Failed", "root: cannot start the devices service: status ", ""},
 		{"Bus_Configuration_Unread", "root: cannot read the configuration of the bus: status ", ": no device service starts"},
 		{"Principals_Service_Start_Failed", "root: cannot start the principals service: status ", ""},
+		{"Plan_At_Start_Start_Failed", "root: the plans service did not start to read the plan of principal 0: status ", "; the roles of the boot image hold"},
 	}
 	process := strings.repeat("p", value_kinds.MODULE_NAME_FIELD_BYTES - 1, context.temp_allocator)
 	failure := strings.repeat("f", ROOT_FAILURE_MOST, context.temp_allocator)
@@ -1028,6 +1040,7 @@ the_devices_and_principals_bridge_facts_of_the_root_service_write_their_lines ::
 		expect(t, render(t, file, "Principals_Command_Refused", {{"command_word", count}, {"status_word", other}, {"first_value", count}, {"second_value", other}}), line_of_before("root: the principals service refused the command ", count, ": status word ", other, ", values ", count, " and ", other))
 		expect(t, render(t, file, "Principals_Rows_Unsent", {{"principal", count}}), line_of_before("root: the disk grant table of principal ", count, " does not pass the border of the principals service: its rows are not sent"))
 		expect(t, render(t, file, "Plan_Roles_Replaced", {{"generation", count}, {"serial", other}, {"overrides", count}, {"rollback", other}}), line_of_before("root: the roles of the plan of generation ", count, " are in force: ", count, " overrides, serial ", other, ", rollback ", other))
+		expect(t, render(t, file, "Plan_At_Start_Applied", {{"generation", count}, {"serial", other}, {"overrides", count}}), line_of_before("root: the roles of generation ", count, " of the plan of principal 0 hold from the start: ", count, " overrides, serial ", other))
 		expect(t, render(t, file, "Plan_Roles_Refused", {{"refusal_code", count}, {"override_index", other}, {"generation", count}, {"serial", other}}), line_of_before("root: refused the roles of the plan of generation ", count, ": refusal ", count, " at the override ", other, "; the serial ", other, " stays in force"))
 	}
 	expect(t, render(t, file, "Devices_Service_Stopped", {}), "root: the delegated devices service stopped")
