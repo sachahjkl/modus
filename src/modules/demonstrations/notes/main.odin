@@ -38,6 +38,7 @@ import "modus:calendar"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:layout"
 import "modus:storage"
 import "modus:system"
 
@@ -47,21 +48,23 @@ window_memory: interface.Window_Memory(512, 8192)
 NOTE_CAPACITY :: 60
 MARGIN :: 12
 VERSION_LABEL :: "version  "
-// The window has the width of its widest line: an older version of the
-// note at its full length, after its label. Each other line of the window
-// is a text of this process, placed in this width with
+// The window starts with the width of its widest line: an older version
+// of the note at its full length, after its label. Each other line of the
+// window is a text of this process, placed in the width of its box with
 // interface.draw_text_wrapped: a line that the window cannot hold goes on
 // two lines, it is never cut at the edge.
 TEXT_ROOM :: (len(VERSION_LABEL) + NOTE_CAPACITY) * graphics.CELL_WIDTH
 // Literals, so the tool reads the window of the budget; the assertions
-// keep them the sizes of the layout.
+// keep them the sizes of the layout at the start. Each place in the window
+// comes from its layout tree (notes_layout), from the size that the window
+// has now.
 WIDTH :: 576
 #assert(WIDTH == 2 * MARGIN + TEXT_ROOM)
-KEYS_Y :: 276 // The action bar, at the bottom.
 // The action bar wraps: the window is narrow, and its reader learns the
 // keys there, so each one shows at once on two rows.
+ACTION_BAR_HEIGHT :: interface.ACTION_BAR_WRAP_ROWS * interface.ACTION_BAR_ROW_HEIGHT
 HEIGHT :: 324
-#assert(HEIGHT == KEYS_Y + interface.ACTION_BAR_WRAP_ROWS * interface.ACTION_BAR_ROW_HEIGHT)
+#assert(HEIGHT == BODY_HEIGHT + ACTION_BAR_HEIGHT)
 // The least budget of 2048 pages, in which it ran before it stated its
 // window, less that window at the scale 1 (365 pages): its module, its
 // stack, its tables and its glyph memory. The tool counts the window at
@@ -223,67 +226,208 @@ restore :: proc "contextless" () {
 	}
 }
 
+// The lengths of the layout of the window, in logical pixels.
+LINE :: graphics.CELL_HEIGHT // One line of text.
+SECTION_GAP :: 12 // Between the note, the count and the drawing.
+CELL_COLUMNS :: 50 // The drawing: one cell for each step of the count, 400 cells.
+CELL_ROWS :: 8
+CELL_PITCH :: 10
+CELL_SIZE :: 8
+STATUS_GAP :: 8
+STATUS_ROOM :: 40 // The status of the start takes two lines and a half at least, so the lines under it keep their place.
+TRACK_GAP :: 4
+TRACK_HEIGHT :: 16 // A lit mark of the bar of the versions; the bar itself is 4 high in its middle.
+VERSION_GAP :: 6
+BAR_GAP :: 6
+BODY_HEIGHT :: MARGIN + LINE + SECTION_GAP + LINE + SECTION_GAP + CELL_ROWS * CELL_PITCH + STATUS_GAP + STATUS_ROOM + LINE + LINE + TRACK_GAP + TRACK_HEIGHT + VERSION_GAP + LINE + BAR_GAP
+
+// The places of the window that the draw reads after the solve.
+Notes_Places :: struct {
+	note_line:     interface.Area,
+	count_line:    interface.Area,
+	cells:         interface.Area,
+	status:        interface.Area,
+	versions_line: interface.Area,
+	shown_line:    interface.Area,
+	track:         interface.Area,
+	version_text:  interface.Area,
+	action_bar:    interface.Area,
+}
+
+// The layout tree of a frame. A global: the tree is too large for the stack.
+layout_tree: layout.Box_Tree
+
+// The status of the start, then, when the store is gone, what that means
+// for the keys.
+GONE_TEXT :: "the grant of the store ended: the process keeps nothing"
+
+area_of :: proc "contextless" (tree: ^layout.Box_Tree, index: layout.Box_Index) -> interface.Area {
+	box := layout.box_of(tree, index)
+	if box == nil {
+		return {}
+	}
+	return {int(box.rect.x), int(box.rect.y), int(box.rect.width), int(box.rect.height)}
+}
+
+// A line across the width of the body.
+line_box :: proc "contextless" (height: i32) -> layout.Box_Description {
+	return {size = {.X = layout.fill(), .Y = layout.px(height)}}
+}
+
+// notes_layout builds and solves the layout tree of the window at a size:
+// the body with its lines in their order, and the action bar at the
+// bottom. The status wraps in the width that a first solve gives, so the
+// tree is solved again with its height. ok false: the tree refused a box,
+// and the frame draws only its action bar.
+notes_layout :: proc "contextless" (table: ^interface.Draw_Table, width, height: int) -> (places: Notes_Places, ok: bool) {
+	tree := &layout_tree
+	if width <= 0 || height <= 0 || width > layout.LENGTH_LIMIT || height > layout.LENGTH_LIMIT {
+		return {}, false
+	}
+	if layout.tree_begin(tree, i32(width), i32(height), {child_axis = .Y}) != .Done {
+		return {}, false
+	}
+	status: layout.Box_Status
+	add :: proc "contextless" (tree: ^layout.Box_Tree, status: ^layout.Box_Status, description: layout.Box_Description) -> layout.Box_Index {
+		index, added := layout.box_add(tree, description)
+		if status^ == .Done {
+			status^ = added
+		}
+		return index
+	}
+	_, status = layout.box_open(tree, {size = {.X = layout.fill(), .Y = layout.fill()}, child_axis = .Y, padding = {.X = MARGIN, .Y = 0}})
+	add(tree, &status, line_box(MARGIN))
+	note_line := add(tree, &status, line_box(LINE))
+	add(tree, &status, line_box(SECTION_GAP))
+	count_line := add(tree, &status, line_box(LINE))
+	add(tree, &status, line_box(SECTION_GAP))
+	cells := add(tree, &status, line_box(CELL_ROWS * CELL_PITCH))
+	add(tree, &status, line_box(STATUS_GAP))
+	status_box := add(tree, &status, line_box(STATUS_ROOM))
+	versions_line := add(tree, &status, line_box(LINE))
+	shown_line := add(tree, &status, line_box(LINE))
+	add(tree, &status, line_box(TRACK_GAP))
+	track := add(tree, &status, line_box(TRACK_HEIGHT))
+	add(tree, &status, line_box(VERSION_GAP))
+	version_text := add(tree, &status, line_box(LINE))
+	// The room left, over the action bar. The lines before it keep their
+	// heights: a fill box shares a lack of room with each sibling that is
+	// not strict.
+	add(tree, &status, {size = {.X = layout.fill(), .Y = layout.fill()}})
+	if closed := layout.box_close(tree); status == .Done {
+		status = closed
+	}
+	action_bar := add(tree, &status, line_box(ACTION_BAR_HEIGHT))
+	if status != .Done || layout.solve(tree) != .Done {
+		return {}, false
+	}
+	// The status takes the lines that it needs in the width that the first
+	// solve gave it.
+	room := int(tree.boxes[status_box].rect.width)
+	lines := interface.text_wrapped_line_count(table, {}, restored, room)
+	if gone {
+		lines += interface.text_wrapped_line_count(table, {}, GONE_TEXT, room)
+	}
+	tree.boxes[status_box].size[.Y] = layout.px(max(i32(lines * graphics.CELL_HEIGHT), STATUS_ROOM))
+	if layout.solve(tree) != .Done {
+		return {}, false
+	}
+	return {
+			note_line = area_of(tree, note_line),
+			count_line = area_of(tree, count_line),
+			cells = area_of(tree, cells),
+			status = area_of(tree, status_box),
+			versions_line = area_of(tree, versions_line),
+			shown_line = area_of(tree, shown_line),
+			track = area_of(tree, track),
+			version_text = area_of(tree, version_text),
+			action_bar = area_of(tree, action_bar),
+		},
+		true
+}
+
 draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Result {
 	frame := interface.window_frame_start(&window_memory, window)
 	interface.action_bar_input_take(&frame, &bar)
 	table := frame.table
+	// graphics holds only members of the appearance: the tokens of the
+	// standard contrast are the colors that the window drew with before.
+	tokens, _ := layout.tokens_for(graphics.appearance, .Standard)
+	places, laid_out := notes_layout(table, window.width, window.height)
+	if !laid_out {
+		// A size that the tree refuses still shows the keys.
+		places.action_bar = {0, max(window.height - ACTION_BAR_HEIGHT, 0), window.width, ACTION_BAR_HEIGHT}
+	} else {
+		draw_body(table, &places, tokens)
+	}
+	items := bar_items()
+	bar_result := interface.action_bar(&frame, places.action_bar, items[:], &bar, {overflow = .Wrap})
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
+	return bar_result
+}
+
+// draw_body draws the lines of the window in the places that its layout
+// tree gave.
+draw_body :: proc "contextless" (table: ^interface.Draw_Table, places: ^Notes_Places, tokens: layout.Element_Tokens) {
 	buffer: [32]u8
-	x := interface.draw_text(table, 12, 12, "note  ", graphics.colors.dim)
-	x = interface.draw_text(table, x, 12, string(note[:note_count]), graphics.colors.text)
+	line := places.note_line
+	x := interface.draw_text(table, line.x, line.y, "note  ", tokens.text_dim)
+	x = interface.draw_text(table, x, line.y, string(note[:note_count]), tokens.text)
 	// The caret of a text input (docs/DESIGN.md, "10. Elements").
-	interface.draw_rectangle(table, x + 1, 12, 2, 16, graphics.colors.title)
+	interface.draw_rectangle(table, x + 1, line.y, 2, LINE, graphics.colors.title)
 	// The count is a number, and the generations are versions: each in the
 	// color of its value kind (docs/DESIGN.md, "The colors of values"),
 	// which is the token of its accent in both appearances.
-	x = interface.draw_text(table, 12, 40, "count ", graphics.colors.dim)
-	x = interface.draw_text(table, x, 40, system.format(buffer[:], count), graphics.colors.memory)
+	line = places.count_line
+	x = interface.draw_text(table, line.x, line.y, "count ", tokens.text_dim)
+	x = interface.draw_text(table, x, line.y, system.format(buffer[:], count), graphics.colors.memory)
 	if generation > 0 { // The generation of the last commit of this process, after its first change.
-		x = interface.draw_text(table, x + 24, 40, "generation ", graphics.colors.dim)
-		interface.draw_text(table, x, 40, system.format(buffer[:], generation), graphics.colors.text)
+		x = interface.draw_text(table, x + 24, line.y, "generation ", tokens.text_dim)
+		interface.draw_text(table, x, line.y, system.format(buffer[:], generation), tokens.text)
 	}
 	// The drawing: one cell for each step of the count, 400 cells.
-	for cell in 0 ..< 400 {
-		cell_x := 12 + cell % 50 * 10
-		cell_y := 68 + cell / 50 * 10
-		interface.draw_rectangle(table, cell_x, cell_y, 8, 8, u64(cell) < count % 400 ? graphics.colors.memory : graphics.colors.track)
+	cells := places.cells
+	for cell in 0 ..< CELL_COLUMNS * CELL_ROWS {
+		cell_x := cells.x + cell % CELL_COLUMNS * CELL_PITCH
+		cell_y := cells.y + cell / CELL_COLUMNS * CELL_PITCH
+		interface.draw_rectangle(table, cell_x, cell_y, CELL_SIZE, CELL_SIZE, u64(cell) < count % (CELL_COLUMNS * CELL_ROWS) ? graphics.colors.memory : tokens.surface_track)
 	}
 	// The status of the start, then, when the store is gone, what that
-	// means for the keys: each in the width of the window.
-	status_y := 156
-	status_y += graphics.CELL_HEIGHT * interface.draw_text_wrapped(table, MARGIN, status_y, TEXT_ROOM, restored, restored_good ? graphics.colors.process : graphics.colors.failed)
+	// means for the keys: each in the width of its box.
+	status := places.status
+	status_y := status.y + graphics.CELL_HEIGHT * interface.draw_text_wrapped(table, status.x, status.y, status.width, restored, restored_good ? tokens.expected : tokens.failed)
 	if gone {
-		interface.draw_text_wrapped(table, MARGIN, status_y, TEXT_ROOM, "the grant of the store ended: the process keeps nothing", graphics.colors.failed)
+		interface.draw_text_wrapped(table, status.x, status_y, status.width, GONE_TEXT, tokens.failed)
 	}
 	// The versions of the note: one mark for each state, the shown one lit.
 	// The count is on one line; the generation and the date of the version
 	// that the window shows are on the line under it, so the two never meet.
 	count := history_count()
-	x = interface.draw_text(table, MARGIN, 196, "versions of the note ", graphics.colors.dim)
-	interface.draw_text(table, x, 196, system.format(buffer[:], max(history_total - 1, 0)), graphics.colors.text)
+	line = places.versions_line
+	x = interface.draw_text(table, line.x, line.y, "versions of the note ", tokens.text_dim)
+	interface.draw_text(table, x, line.y, system.format(buffer[:], max(history_total - 1, 0)), tokens.text)
 	if shown >= 0 {
-		x = interface.draw_text(table, MARGIN, 212, "showing generation ", graphics.colors.dim)
-		x = interface.draw_text(table, x, 212, system.format(buffer[:], history[shown].generation), graphics.colors.boot_program)
+		line = places.shown_line
+		x = interface.draw_text(table, line.x, line.y, "showing generation ", tokens.text_dim)
+		x = interface.draw_text(table, x, line.y, system.format(buffer[:], history[shown].generation), graphics.colors.boot_program)
 		if history[shown].date != 0 {
-			interface.draw_text(table, x + 16, 212, calendar.iso_text(buffer[:], history[shown].date), graphics.colors.text)
+			interface.draw_text(table, x + 16, line.y, calendar.iso_text(buffer[:], history[shown].date), tokens.text)
 		}
 	}
-	track := TEXT_ROOM
-	interface.draw_rectangle(table, MARGIN, 238, track, 4, graphics.colors.track)
+	track := places.track
+	interface.draw_rectangle(table, track.x, track.y + 6, track.width, 4, tokens.surface_track)
 	if count > 0 {
 		for place in 0 ..< count {
-			mark_x := MARGIN + (count == 1 ? track - 4 : place * (track - 4) / (count - 1))
+			mark_x := track.x + (count == 1 ? track.width - 4 : place * (track.width - 4) / (count - 1))
 			lit := place == shown || shown < 0 && place == count - 1
-			interface.draw_rectangle(table, mark_x, lit ? 232 : 234, lit ? 4 : 2, lit ? 16 : 12, lit ? graphics.colors.boot_program : graphics.colors.dim)
+			interface.draw_rectangle(table, mark_x, lit ? track.y : track.y + 2, lit ? 4 : 2, lit ? TRACK_HEIGHT : 12, lit ? graphics.colors.boot_program : tokens.text_dim)
 		}
 	}
 	if shown >= 0 {
-		x = interface.draw_text(table, MARGIN, 254, VERSION_LABEL, graphics.colors.dim)
-		interface.draw_text(table, x, 254, string(shown_text[:shown_count]), graphics.colors.text)
+		line = places.version_text
+		x = interface.draw_text(table, line.x, line.y, VERSION_LABEL, tokens.text_dim)
+		interface.draw_text(table, x, line.y, string(shown_text[:shown_count]), tokens.text)
 	}
-	items := bar_items()
-	bar_result := interface.action_bar(&frame, {0, KEYS_Y, WIDTH, HEIGHT - KEYS_Y}, items[:], &bar, {overflow = .Wrap})
-	interface.window_frame_end(&window_memory.drawing, &frame, window)
-	return bar_result
 }
 
 // The entry of notes: it restores the note and the count from its store, then commits each key until the
