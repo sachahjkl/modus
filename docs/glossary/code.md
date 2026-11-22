@@ -654,7 +654,7 @@ Do not use: module writer (for this), linker, emitter.
 
 The assembler is the module `assemble`, which reads a text of x86-64 assembly and writes a module file into a memory object that its caller lends.
 
-Its syntax is the syntax of AT&T, with directives of modus: `section`, `export` with the types of the parameters and of the result, `byte`, `quad` and `zero`. A `quad` of a label is an address that the module rebases at its load. Its package `internal:assemble/assembler` gives the parts of the module file writer, and refuses each text that it does not assemble whole, with the line and the column. It is the first program of modus that writes a program. It is not the assembler of the host that the build of a module runs.
+It takes AT&T syntax plus modus directives (`section`, typed `export`, `byte`, `quad`, `zero`). A `quad` of a label writes a rebased address. Its package `internal:assemble/assembler` drives the module file writer and refuses invalid text whole with line and column. It is the first program of modus that writes a program, not the host assembler of the build.
 
 The design: `src/md/features/assembler.md`; the guide: `docs/MODULE_CONTRACT.md`, "The assembler".
 

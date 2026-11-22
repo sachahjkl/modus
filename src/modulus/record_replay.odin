@@ -1436,7 +1436,7 @@ record_kernel_completion :: proc "contextless" (cpu: ^Processor, thread: ^Thread
 
 // record_context_page_locked writes the context page of the target into
 // the history as its first bytes (src/md/features/record_and_replay.md,
-// "What an input history holds": the head holds the context). A process
+// "What an input history holds"). A process
 // with no context page, or a context page that a point copy already
 // records, adds nothing. false: the history is full. Caller holds target's
 // process lock.

@@ -1150,18 +1150,20 @@ setting_value_field :: proc "contextless" (choice: settings.Choice, setting: set
 
 // The bytes of the Text field of the object of a requested grant: the
 // object whole, and a zero byte.
-GRANT_RESOURCE_FIELD_BYTES :: bar.WINDOW_GRANT_RESOURCE_BYTES + 1
+GRANT_RESOURCE_FIELD_BYTES :: 96
+#assert(GRANT_RESOURCE_FIELD_BYTES == bar.WINDOW_GRANT_RESOURCE_BYTES + 1)
 // The bytes of the Text field of the name of a plan: the name whole and a
 // zero byte, rounded up to a word, so the fact has no padding after its
 // counts.
-PLAN_NAME_FIELD_BYTES :: (bar.PLAN_DIFFERENCE_NAME_BYTES + 1 + 7) / 8 * 8
+PLAN_NAME_FIELD_BYTES :: 56
+#assert(PLAN_NAME_FIELD_BYTES == (bar.PLAN_DIFFERENCE_NAME_BYTES + 1 + 7) / 8 * 8)
 
 // The principal kept a requested grant on the trusted display: the menu of
 // the windows lists it under the window of its process.
 @(log_fact = "compositor: {window} holds the grant {grant} to {resource}")
 Window_Grant_Recorded :: struct {
 	grant:    u64,
-	resource: [GRANT_RESOURCE_FIELD_BYTES]u8,
+	resource: [96]u8,
 	window:   value_kinds.Module_Name_Field,
 }
 
@@ -1177,7 +1179,7 @@ Window_Grant_Not_Listed :: struct {
 @(log_fact = "compositor: the grant {grant} of {window} to {resource} is revoked")
 Window_Grant_Revoked :: struct {
 	grant:    u64,
-	resource: [GRANT_RESOURCE_FIELD_BYTES]u8,
+	resource: [96]u8,
 	window:   value_kinds.Module_Name_Field,
 }
 
@@ -1193,19 +1195,19 @@ Window_Grants_Ended :: struct {
 Plan_Difference_Shown :: struct {
 	added:   u64,
 	removed: u64,
-	plan:    [PLAN_NAME_FIELD_BYTES]u8,
+	plan:    [56]u8,
 }
 
 // The principal accepted the difference of a plan.
 @(log_fact = "compositor: the difference of the plan {plan} is accepted")
 Plan_Difference_Accepted :: struct {
-	plan: [PLAN_NAME_FIELD_BYTES]u8,
+	plan: [56]u8,
 }
 
 // The principal refused the difference of a plan.
 @(log_fact = "compositor: the difference of the plan {plan} is refused")
 Plan_Difference_Refused :: struct {
-	plan: [PLAN_NAME_FIELD_BYTES]u8,
+	plan: [56]u8,
 }
 
 // entry_field gives the Text field of a palette entry name.

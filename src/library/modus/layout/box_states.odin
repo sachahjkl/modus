@@ -1,6 +1,5 @@
 // The state of a box across frames, by its identity, and the box input of
-// one frame (src/md/features/box_layout.md, "The state of a box across
-// frames" and "The input of a box").
+// one frame (src/md/features/box_layout.md, "The chosen form").
 package layout
 
 import "modus:hash_table"

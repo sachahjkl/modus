@@ -1,7 +1,6 @@
 // Pairing of two machines by a code of one use, the table of paired
 // machines, and the holder of the newest machine list
-// (src/md/features/several_machines.md, "Pairing, and no discovery", and
-// "A principal across machines").
+// (src/md/features/several_machines.md, "A principal across machines").
 //
 // The machine that shows the code is the offerer and answers the CPace
 // exchange; the machine where the principal types the code is the joiner and

@@ -1,6 +1,6 @@
 // The exports of the spaces of the collector: one bounded space of kept
 // records for each pair of a source process and a record output
-// (src/md/features/module_outputs.md, "The collector" and "The audit").
+// (src/md/features/module_outputs.md).
 //
 // The collector serves only a caller that acts for its principal, the
 // principal of the starter of each source that it keeps, and never the

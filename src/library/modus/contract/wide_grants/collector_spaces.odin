@@ -1,7 +1,7 @@
 // The spaces of the collector: one bounded space of kept records for each
 // pair of a source process and a record output, and the queue of the
 // records that the collector forwards after it kept them
-// (src/md/features/module_outputs.md, "The collector" and "The audit").
+// (src/md/features/module_outputs.md).
 //
 // A space Keep removes its oldest record when it is full and counts it. A
 // space Audit never removes a record: a full audit space refuses the next

@@ -144,7 +144,7 @@ Do not use: active window, keyboard owner.
 
 The focus ring is the outline of 2 logical pixels in the strong text that the compositor and the interface package draw outside the thing that has the focus of the keys.
 
-It marks the element of a window with the focus (`interface.draw_focus_ring`), the item of the bar with the focus of the keys, and the window that the arrows move or resize. It lies outside the area of the thing, after its fill, so nothing of the thing covers it; the strong text keeps at least 3 to 1 against each surface in each appearance and each contrast, which a host test computes (WCAG 2.2, success criterion 2.4.13). It is not the chosen blue of a line of a list or of a menu, which marks a choice, not the focus.
+It marks the focused window element (`interface.draw_focus_ring`), the focused bar item, and the window moved or resized by keys. Drawn outside the element after its fill, it keeps at least 3:1 contrast against each surface in every appearance and contrast mode (WCAG 2.2, 2.4.13). It is not the chosen blue of a list or menu row.
 
 The design: `src/md/features/accessibility.md`, "3. Keyboard access to everything".
 
