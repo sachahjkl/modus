@@ -795,6 +795,14 @@ First_Frame :: struct {}
 @(log_fact = "compositor: the start menu is open")
 Start_Menu_Open :: struct {}
 
+// The start menu shows its demonstrations: the quick action opened them.
+@(log_fact = "compositor: the demonstrations of the start menu are shown")
+Start_Menu_Demonstrations_Shown :: struct {}
+
+// The start menu hides its demonstrations again.
+@(log_fact = "compositor: the demonstrations of the start menu are hidden")
+Start_Menu_Demonstrations_Hidden :: struct {}
+
 // Control+Shift+F7 or the palette: the arrows move the window in front.
 @(log_fact = "compositor: window {window} moves by keys")
 Keyboard_Move_Started :: struct {

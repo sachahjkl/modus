@@ -296,12 +296,31 @@ text_scaled :: proc "contextless" (canvas: Canvas, x, y: int, characters: string
 
 // spleen_scale_of gives the scale at which Spleen 8x16 draws a text size:
 // the largest whole scale whose line is not above the line of the cell, and
-// 1 under it. Spleen is the fallback, so under the body a glyph of it is
-// one row or one column larger than its cell, which the box of its record
-// cuts; its last column and its first row are empty in most glyphs.
+// 1 under it. Under the body a glyph of it is one row larger than its
+// line, which the box of its record cuts; its first row is empty in most
+// glyphs. Its columns never pass the box: cell_advance gives a cell of
+// Spleen its whole width.
 @(private)
 spleen_scale_of :: proc "contextless" (size: int) -> int {
 	return max(1, 2 * text_rendering.cell_columns(size) / CELL_HEIGHT)
+}
+
+// cell_advance gives the pixels from one character of a text in the font of
+// the cells to the next, at a text size, in the font that draws it now: the
+// width of the cell of the size with the vector font, which scales its
+// glyphs to it; with Spleen, the width of a glyph of Spleen at its scale. A
+// Spleen glyph has whole scales only: 8 columns at scale 1. A cell of the
+// size under the body is narrower, and the glyphs would overlap and the
+// last one would pass the measured box, which cuts its last column; a cell
+// between the body and twice the body is wider, and the glyphs would stand
+// apart as letters of a spaced word. The measure of a text
+// (interface.text_width) and its draw (text_sized) both take it, so a box
+// holds its ink and a word reads as one.
+cell_advance :: proc "contextless" (size: int) -> int {
+	if text_vector_drawn() {
+		return text_rendering.cell_columns(size)
+	}
+	return CELL_WIDTH * spleen_scale_of(size)
 }
 
 // text_sized draws characters in the cells of a text size in 1/64 pixel
@@ -323,7 +342,7 @@ text_sized :: proc "contextless" (canvas: Canvas, x, y: int, characters: string,
 	if text_rendering.size_check(size) != .None {
 		return x
 	}
-	advance := text_rendering.cell_columns(size)
+	advance := cell_advance(size)
 	if alpha == 0 {
 		return x + text_encoding.character_count(transmute([]u8)characters) * advance
 	}
@@ -334,7 +353,9 @@ text_sized :: proc "contextless" (canvas: Canvas, x, y: int, characters: string,
 	}
 	spleen_scale := spleen_scale_of(size)
 	spleen_x := (advance - CELL_WIDTH * spleen_scale) / 2
-	spleen_y := (2 * advance - CELL_HEIGHT * spleen_scale) / 2
+	// The line is two cells of the size, not two advances: a wider advance
+	// of Spleen under the body keeps the line of the size.
+	spleen_y := (2 * text_rendering.cell_columns(size) - CELL_HEIGHT * spleen_scale) / 2
 	// The text is UTF-8: one cell for each character, and one for each
 	// invalid sequence, which draws the replacement glyph.
 	bytes := transmute([]u8)characters

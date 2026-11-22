@@ -595,9 +595,14 @@ c_render_modus_module_h :: proc(allocator := context.temp_allocator) -> string {
 	c_emit_enum_u8(&out, "Modus_Module_Direction", "MODUS_MODULE_DIRECTION", module.Direction)
 	c_emit_enum_u8(&out, "Modus_Module_Record_Output_Pairing", "MODUS_MODULE_RECORD_OUTPUT_PAIRING", module.Record_Output_Pairing)
 	c_emit_enum_u8(&out, "Modus_Module_Wiring_Count", "MODUS_MODULE_WIRING_COUNT", module.Wiring_Count)
+	c_emit_enum_u8(&out, "Modus_Module_Category", "MODUS_MODULE_CATEGORY", module.Module_Category)
+	c_emit_enum_u8(&out, "Modus_Module_Tag", "MODUS_MODULE_TAG", module.Module_Tag)
 
 	fmt.sbprintln(&out, "typedef uint32_t Modus_Module_Segment_Flags;")
 	c_emit_size_assert(&out, "Modus_Module_Segment_Flags", size_of(module.Segment_Flags))
+	// The tags: bit n is the tag n of Modus_Module_Tag.
+	fmt.sbprintln(&out, "typedef uint16_t Modus_Module_Tags;")
+	c_emit_size_assert(&out, "Modus_Module_Tags", size_of(module.Module_Tags))
 	fmt.sbprintln(&out)
 
 	fmt.sbprintln(&out, "typedef struct Modus_Module_Header {")
@@ -609,7 +614,9 @@ c_render_modus_module_h :: proc(allocator := context.temp_allocator) -> string {
 	fmt.sbprintln(&out, "\tuint32_t table_count;")
 	fmt.sbprintln(&out, "\tuint64_t memory_size;")
 	fmt.sbprintln(&out, "\tuint32_t entry_export;")
-	fmt.sbprintln(&out, "\tuint32_t reserved;")
+	fmt.sbprintln(&out, "\tModus_Module_Category category;")
+	fmt.sbprintln(&out, "\tuint8_t reserved;")
+	fmt.sbprintln(&out, "\tModus_Module_Tags tags;")
 	fmt.sbprintln(&out, "} Modus_Module_Header;")
 	c_emit_size_assert(&out, "Modus_Module_Header", size_of(module.Header))
 	c_emit_offset_assert(&out, "Modus_Module_Header", "magic", offset_of(module.Header, magic))
@@ -620,7 +627,9 @@ c_render_modus_module_h :: proc(allocator := context.temp_allocator) -> string {
 	c_emit_offset_assert(&out, "Modus_Module_Header", "table_count", offset_of(module.Header, table_count))
 	c_emit_offset_assert(&out, "Modus_Module_Header", "memory_size", offset_of(module.Header, memory_size))
 	c_emit_offset_assert(&out, "Modus_Module_Header", "entry_export", offset_of(module.Header, entry_export))
+	c_emit_offset_assert(&out, "Modus_Module_Header", "category", offset_of(module.Header, category))
 	c_emit_offset_assert(&out, "Modus_Module_Header", "reserved", offset_of(module.Header, reserved))
+	c_emit_offset_assert(&out, "Modus_Module_Header", "tags", offset_of(module.Header, tags))
 	fmt.sbprintln(&out)
 
 	fmt.sbprintln(&out, "typedef struct Modus_Module_Table_Entry {")

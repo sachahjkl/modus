@@ -157,9 +157,12 @@ interface_width_subpixels :: proc "contextless" (font: Font, text: string) -> i6
 }
 
 // text_width gives the width of a text in pixels, in the font of the cells:
-// one cell for each character of the UTF-8 text, and one for each invalid sequence.
+// one advance for each character of the UTF-8 text, and one for each
+// invalid sequence. The advance is the one that the font in force draws
+// (graphics.cell_advance): with Spleen under the body it is wider than the
+// cell of the size, and a box of the cell would cut the last glyph.
 text_width :: proc "contextless" (font: Font, text: string) -> int {
-	return text_encoding.character_count(transmute([]u8)text) * cell_width_of(font)
+	return text_encoding.character_count(transmute([]u8)text) * graphics.cell_advance(font_text_size(font))
 }
 
 // text_measured_width gives the width of a text in pixels, in the font that the
@@ -243,7 +246,7 @@ text_fit :: proc "contextless" (table: ^Draw_Table, font: Font, text: string, ro
 // the font of the cells, so it is measured in it.
 text_wrap_line :: proc "contextless" (table: ^Draw_Table, font: Font, text: string, room: int) -> (line: string, rest: string) {
 	used := font_in_use(table, font, 0)
-	cells := text_rendering.cell_spacing(cell_width_of(used))
+	cells := text_rendering.cell_spacing(graphics.cell_advance(font_text_size(used)))
 	spacing := cells
 	if used.kind == .Interface {
 		if interface_spacing, ok := interface_spacing_of(used); ok {

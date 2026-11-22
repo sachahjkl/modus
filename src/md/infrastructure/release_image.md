@@ -22,7 +22,7 @@ The guide for a reader is [`docs/INSTALL.md`](../../../docs/INSTALL.md), "1. The
 
 ### The image: a GPT disk around the release volume
 
-The release volume is the main boot image with its boot program signed for Secure Boot: `build/boot_volume_release.img`, the boot image `build/boot.image`, the kernel module `kernel`, the firmware signature `Signed`. It is the volume of the machine of Secure Boot of the tests (`boot_volume_secure_boot.img`) with the keys of the publisher. The main volume of the tests has an unsigned boot program, and a firmware with Secure Boot on refuses it.
+The release volume is the release boot image with its boot program signed for Secure Boot: `build/boot_volume_release.img`, the boot image `build/boot_release.image` (the main boot image with no test module, below), the kernel module `kernel`, the firmware signature `Signed`. It is the volume of the machine of Secure Boot of the tests (`boot_volume_secure_boot.img`) with the keys of the publisher. The main volume of the tests has an unsigned boot program, and a firmware with Secure Boot on refuses it.
 
 The boot volume of the build is a FAT32 file system with no partition table. The firmware of the test machine starts from such a disk. A USB key for a real machine needs a partition table: the UEFI specification makes a firmware read a GPT disk, and the support of a disk with no partition table varies from one firmware to the next. So the release image is a GPT disk:
 
@@ -36,6 +36,20 @@ The disk GUID and the partition GUID come from the BLAKE3 hash of the volume, wi
 ### The release volume is built by the release command only
 
 The release volume is not in the list of the volumes of the build (`boot_volumes`): no test boots it, and a test build does not pay for a volume that only a release needs. `boot_volume_release_problem` refuses each volume of that list that a test changed, and each whose kernel is not the module `kernel`. `modustool release image` makes a whole build of the modules and the boot images, then builds the release volume in its own process, with no build record. A kept module could come from another state of the work tree; a whole build cannot.
+
+### The release boot image holds no test module
+
+A test module is wrong on purpose or shows nothing of its own ([`docs/glossary/communication.md`](../../../docs/glossary/communication.md), "Test module"). A principal has no use of it, and a module that is wrong on purpose is a surface that no principal asked for. So the release volume holds `build/boot_release.image`, which `release image` writes after its whole build from `build/boot.image`: each module whose row is not in the module group `tests` and is in the boot image of the build, in its order and with its bytes, then each resource, the start lists among them. The modules keep the bytes that the tests ran; only the set is smaller. The start lists name no test module, which a host test checks, so the start of a release is the start that the tests ran.
+
+`release_volume_problem` compares the volume with the release image made again from the boot image of the build, and refuses an image that holds a module of `tests` or a module of the one image of a test (`release_test_module_problem`), by the group of its row: a new test module is refused with no list to update. The start grant sets of the root service keep their rows of the test modules: they are code of the root service, whose bytes the tests ran, and a row of a module that the image does not hold grants nothing.
+
+Refused forms:
+
+- **A second build with no test module.** Its modules would be bytes that no test ran.
+- **The rows of the test modules dropped from the start grant sets of a release.** The root service would be another file than the one that the tests ran.
+- **A list of the test modules.** A new test module that is not in the list ships.
+
+Left: the machine of Secure Boot boots the boot image of the build; a machine test of the exact release image waits for that machine to need no test module.
 
 ### The pointer theme of a release: the theme of the system only
 

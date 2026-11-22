@@ -1,4 +1,5 @@
-// The module `cryptography` as it ships, at work (docs/CRYPTOGRAPHY.md).
+// The module `cryptography` as it ships, at work on known vectors. The
+// design: docs/CRYPTOGRAPHY.md.
 //
 // This process imports the module through its import slots, as `agenda`
 // imports `calendar`: each call is a direct call of an export. It runs the

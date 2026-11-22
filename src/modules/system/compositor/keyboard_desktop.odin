@@ -397,7 +397,7 @@ bar_menu_step :: proc "contextless" (forward: bool) {
 	switch menu_open {
 	case .None:
 	case .Start:
-		menu_line, menu_action = bar.start_menu_step(menu_line, menu_action, forward)
+		menu_line, menu_action = bar.start_menu_step(bar_layout, menu_line, menu_action, forward)
 	case .Windows:
 		menu_line = bar.windows_menu_step(menu_line, windows_menu_row_count, forward)
 		menu_on_revoke = false

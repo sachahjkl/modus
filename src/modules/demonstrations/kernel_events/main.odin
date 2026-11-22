@@ -1,4 +1,5 @@
-// Kernel events (docs/ARCHITECTURE.md, "Kernel events"), case by case.
+// The events that the kernel sends to a process, case by case. The design:
+// docs/ARCHITECTURE.md, "Kernel events".
 //
 // The kernel records its own work (the operations of the kernel entries,
 // the switches of threads, the faults of processes, the waits for its locks)

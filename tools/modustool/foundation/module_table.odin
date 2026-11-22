@@ -4,6 +4,9 @@
 // (src/md/infrastructure/repository_layout.md, "The tool in packages").
 package foundation
 
+import "core:fmt"
+import module "modus:contract/module"
+
 // The modules of the project, each one after its imports.
 //   source:  the folder of the Odin package, and of its .asm files.
 // The exports of a module and their descriptions come from the source
@@ -45,6 +48,67 @@ Module_Build :: struct {
 	// pinned commit with the patches of the system. The zero record: the
 	// module has no C part (src/md/infrastructure/outside_source.md).
 	c_source:      Outside_Source,
+	// What the module is to a reader, written in the header of its file
+	// (module_category_of_row). A row states it only when its module group
+	// allows more than one category: a row of system is a service, a
+	// system tool or a developer tool. Each other row takes the one
+	// category of its group, so the folder and the category cannot
+	// disagree.
+	category:      module.Module_Category,
+	// What the module is about: the words that the manual filters on.
+	tags:          module.Module_Tags,
+}
+
+// MODULE_GROUP_CATEGORIES gives the categories that a module of each group
+// can have: the first is the category of a row that states none.
+MODULE_GROUP_CATEGORIES :: [Module_Group][]module.Module_Category {
+	.System         = {.Service, .System_Tool, .Developer_Tool},
+	.Applications   = {.Application},
+	.Libraries      = {.Library},
+	.Demonstrations = {.Demonstration},
+	.Tests          = {.Test},
+}
+
+// module_category_of_row gives the category that the file of a row states.
+// A row of a group with one category takes it, a row of system states its
+// own, and a kernel, which is in no group, states none. problem: a row
+// states a category that its group does not allow, or a row of system
+// states none.
+module_category_of_row :: proc(row: Module_Build) -> (category: module.Module_Category, problem: string) {
+	group, found := module_group_of_source(row.source)
+	if !found {
+		if row.category != .None {
+			return .None, fmt.tprintf("the row %s is in no module group and states the category %v: only a module of a group has one", row.name, row.category)
+		}
+		return .None, ""
+	}
+	allowed := MODULE_GROUP_CATEGORIES
+	choices := allowed[group]
+	if row.category == .None {
+		if len(choices) > 1 {
+			return .None, fmt.tprintf("the row %s of the group %v states no category: a module of that group is one of %v", row.name, group, choices)
+		}
+		return choices[0], ""
+	}
+	for choice in choices {
+		if choice == row.category {
+			return row.category, ""
+		}
+	}
+	return .None, fmt.tprintf("the row %s of the group %v states the category %v: a module of that group is one of %v", row.name, group, row.category, choices)
+}
+
+// module_category_of_name gives the category and the tags that the file of
+// a module of the table states: .None and no tags for a name of no row, a
+// module from outside the repository.
+module_category_of_name :: proc(name: string) -> (category: module.Module_Category, tags: module.Module_Tags) {
+	for row in module_builds {
+		if row.name == name {
+			category, _ = module_category_of_row(row)
+			return category, row.tags
+		}
+	}
+	return .None, {}
 }
 
 // A work of others in C whose source is not in the repository. The flake
@@ -101,15 +165,15 @@ module_builds := [?]Module_Build {
 	// only. Its boot volume is BOOT_VOLUME_OPERATION_FUZZING
 	// (src/md/infrastructure/kernel_fuzzing.md, "The test kernel").
 	{name = KERNEL_EDGE_COUNTERS_MODULE, source = SOURCE_FOLDER_KERNEL, kernel = true, defines = {KERNEL_EDGE_COUNTERS_DEFINE}},
-	{name = "root", source = SYSTEM_MODULE_SOURCES + "root", entry = true, image = true},
-	{name = "input", source = SYSTEM_MODULE_SOURCES + "input", entry = true, image = true},
+	{name = "root", source = SYSTEM_MODULE_SOURCES + "root", category = .Service, entry = true, image = true},
+	{name = "input", source = SYSTEM_MODULE_SOURCES + "input", category = .Service, entry = true, image = true},
 	// The drawing of a window, for each module below that imports it.
 	{name = DRAWING_MODULE, source = LIBRARY_MODULE_SOURCES + "drawing", image = true, library = true},
 	// It draws its screen in parts, one call of the drawing module for each
 	// part (src/md/api/picture.md).
-	{name = "compositor", source = SYSTEM_MODULE_SOURCES + "compositor", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "console", source = SYSTEM_MODULE_SOURCES + "console", entry = true, image = true},
-	{name = "monitor", source = SYSTEM_MODULE_SOURCES + "monitor", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "compositor", source = SYSTEM_MODULE_SOURCES + "compositor", category = .Service, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "console", source = SYSTEM_MODULE_SOURCES + "console", category = .System_Tool, entry = true, image = true},
+	{name = "monitor", source = SYSTEM_MODULE_SOURCES + "monitor", category = .System_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "plasma", source = DEMONSTRATION_MODULE_SOURCES + "plasma", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "life", source = DEMONSTRATION_MODULE_SOURCES + "life", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "paint", source = DEMONSTRATION_MODULE_SOURCES + "paint", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
@@ -127,7 +191,7 @@ module_builds := [?]Module_Build {
 	{name = "flow", source = DEMONSTRATION_MODULE_SOURCES + "flow", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "crowd", source = DEMONSTRATION_MODULE_SOURCES + "crowd", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "tally", source = DEMONSTRATION_MODULE_SOURCES + "tally", entry = true, image = true},
-	{name = "manual", source = SYSTEM_MODULE_SOURCES + "manual", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "manual", source = SYSTEM_MODULE_SOURCES + "manual", category = .System_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "clock", source = DEMONSTRATION_MODULE_SOURCES + "clock", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "processor_frame", source = DEMONSTRATION_MODULE_SOURCES + "processor_frame", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "randomness", source = DEMONSTRATION_MODULE_SOURCES + "randomness", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
@@ -135,16 +199,16 @@ module_builds := [?]Module_Build {
 	{name = "return_fault", source = DEMONSTRATION_MODULE_SOURCES + "return_fault", entry = true, image = true},
 	{name = "fault_ring", source = DEMONSTRATION_MODULE_SOURCES + "fault_ring", entry = true, image = true},
 	{name = "debugged", source = DEMONSTRATION_MODULE_SOURCES + "debugged", entry = true, image = true},
-	{name = "debugger", source = SYSTEM_MODULE_SOURCES + "debugger", entry = true, image = true},
+	{name = "debugger", source = SYSTEM_MODULE_SOURCES + "debugger", category = .Service, entry = true, image = true},
 	{name = "debug_target", source = TEST_MODULE_SOURCES + "debug_target", entry = true, image = true},
 	{name = "replay_probe", source = TEST_MODULE_SOURCES + "replay_probe", entry = true, image = true},
 	{name = "kernel_events", source = DEMONSTRATION_MODULE_SOURCES + "kernel_events", entry = true, image = true},
 	{name = "guest_demo", source = DEMONSTRATION_MODULE_SOURCES + "guest_demo", entry = true, image = true},
 	{name = "counters", source = DEMONSTRATION_MODULE_SOURCES + "counters", entry = true, image = true},
-	{name = "terminal", source = SYSTEM_MODULE_SOURCES + "terminal", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "serial_terminal", source = SYSTEM_MODULE_SOURCES + "serial_terminal", entry = true, image = true},
-	{name = "grid_terminal", source = SYSTEM_MODULE_SOURCES + "grid_terminal", entry = true, image = true},
-	{name = "dom_terminal", source = SYSTEM_MODULE_SOURCES + "dom_terminal", entry = true, image = true},
+	{name = "terminal", source = SYSTEM_MODULE_SOURCES + "terminal", category = .Service, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "serial_terminal", source = SYSTEM_MODULE_SOURCES + "serial_terminal", category = .Service, entry = true, image = true},
+	{name = "grid_terminal", source = SYSTEM_MODULE_SOURCES + "grid_terminal", category = .Service, entry = true, image = true},
+	{name = "dom_terminal", source = SYSTEM_MODULE_SOURCES + "dom_terminal", category = .Service, entry = true, image = true},
 	{name = "flood", source = TEST_MODULE_SOURCES + "flood", entry = true, image = true},
 	{name = "hostile_terminal", source = TEST_MODULE_SOURCES + "hostile_terminal", entry = true, image = true},
 	{name = "arena", source = TEST_MODULE_SOURCES + "arena", entry = true, image = true},
@@ -165,8 +229,8 @@ module_builds := [?]Module_Build {
 	{name = "output_measure_writer", source = TEST_MODULE_SOURCES + "output_measure_writer", entry = true, image = true},
 	{name = "output_measure_reader", source = TEST_MODULE_SOURCES + "output_measure_reader", entry = true, image = true},
 	{name = "processors", source = DEMONSTRATION_MODULE_SOURCES + "processors", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "boot", source = SYSTEM_MODULE_SOURCES + "boot", entry = true, image = true},
-	{name = "pages", source = SYSTEM_MODULE_SOURCES + "pages", entry = true, image = true},
+	{name = "boot", source = SYSTEM_MODULE_SOURCES + "boot", category = .Developer_Tool, entry = true, image = true},
+	{name = "pages", source = SYSTEM_MODULE_SOURCES + "pages", category = .Developer_Tool, entry = true, image = true},
 	{name = "frames", source = DEMONSTRATION_MODULE_SOURCES + "frames", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "twin", source = DEMONSTRATION_MODULE_SOURCES + "twin", entry = true, image = true},
 	{name = "locks", source = DEMONSTRATION_MODULE_SOURCES + "locks", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
@@ -182,41 +246,41 @@ module_builds := [?]Module_Build {
 	{name = "scheduler", source = DEMONSTRATION_MODULE_SOURCES + "scheduler", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "address_space", source = DEMONSTRATION_MODULE_SOURCES + "address_space", entry = true, image = true},
 	{name = "locker", source = DEMONSTRATION_MODULE_SOURCES + "locker", entry = true, image = true},
-	{name = "log", source = SYSTEM_MODULE_SOURCES + "log", entry = true, image = true},
+	{name = "log", source = SYSTEM_MODULE_SOURCES + "log", category = .System_Tool, entry = true, image = true},
 	{name = "log_reader", source = TEST_MODULE_SOURCES + "log_reader", entry = true, image = true},
-	{name = "block", source = SYSTEM_MODULE_SOURCES + "block", entry = true, image = true},
-	{name = "frame", source = SYSTEM_MODULE_SOURCES + "frame", entry = true, image = true},
+	{name = "block", source = SYSTEM_MODULE_SOURCES + "block", category = .Service, entry = true, image = true},
+	{name = "frame", source = SYSTEM_MODULE_SOURCES + "frame", category = .Service, entry = true, image = true},
 	{name = "iommu_device", source = TEST_MODULE_SOURCES + "iommu_device", entry = true, image = true},
-	{name = "tpm", source = SYSTEM_MODULE_SOURCES + "tpm", entry = true, image = true},
-	{name = "wiring", source = SYSTEM_MODULE_SOURCES + "wiring", entry = true, image = true},
-	{name = "entropy", source = SYSTEM_MODULE_SOURCES + "entropy", entry = true, image = true},
-	{name = "sound", source = SYSTEM_MODULE_SOURCES + "sound", entry = true, image = true},
+	{name = "tpm", source = SYSTEM_MODULE_SOURCES + "tpm", category = .Service, entry = true, image = true},
+	{name = "wiring", source = SYSTEM_MODULE_SOURCES + "wiring", category = .Service, entry = true, image = true},
+	{name = "entropy", source = SYSTEM_MODULE_SOURCES + "entropy", category = .Service, entry = true, image = true},
+	{name = "sound", source = SYSTEM_MODULE_SOURCES + "sound", category = .Service, entry = true, image = true},
 	{name = "tone", source = DEMONSTRATION_MODULE_SOURCES + "tone", entry = true, image = true},
 	{name = "iommu", source = TEST_MODULE_SOURCES + "iommu", entry = true, image = true},
-	{name = "network", source = SYSTEM_MODULE_SOURCES + "network", entry = true, image = true},
+	{name = "network", source = SYSTEM_MODULE_SOURCES + "network", category = .Service, entry = true, image = true},
 	{name = "net", source = DEMONSTRATION_MODULE_SOURCES + "net", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "server", source = DEMONSTRATION_MODULE_SOURCES + "server", entry = true, image = true},
 	{name = "fetch", source = DEMONSTRATION_MODULE_SOURCES + "fetch", entry = true, image = true},
-	{name = "module_files", source = SYSTEM_MODULE_SOURCES + "module_files", entry = true, image = true},
-	{name = "inspect", source = SYSTEM_MODULE_SOURCES + "inspect", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "debugger_window", source = SYSTEM_MODULE_SOURCES + "debugger_window", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "module_files", source = SYSTEM_MODULE_SOURCES + "module_files", category = .Service, entry = true, image = true},
+	{name = "inspect", source = SYSTEM_MODULE_SOURCES + "inspect", category = .Developer_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "debugger_window", source = SYSTEM_MODULE_SOURCES + "debugger_window", category = .Developer_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "disk", source = DEMONSTRATION_MODULE_SOURCES + "disk", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "storage", source = SYSTEM_MODULE_SOURCES + "storage", entry = true, image = true},
+	{name = "storage", source = SYSTEM_MODULE_SOURCES + "storage", category = .Service, entry = true, image = true},
 	{name = "notes", source = DEMONSTRATION_MODULE_SOURCES + "notes", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "browser", source = DEMONSTRATION_MODULE_SOURCES + "browser", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "edit", source = SYSTEM_MODULE_SOURCES + "edit", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "edit", source = SYSTEM_MODULE_SOURCES + "edit", category = .System_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "hierarchy", source = TEST_MODULE_SOURCES + "hierarchy", entry = true, image = true},
 	{name = "ranges", source = TEST_MODULE_SOURCES + "ranges", entry = true, image = true},
-	{name = "host", source = SYSTEM_MODULE_SOURCES + "host", entry = true, image = true},
+	{name = "host", source = SYSTEM_MODULE_SOURCES + "host", category = .Service, entry = true, image = true},
 	// The assembler: the console calls it in a call host
 	// (src/md/features/assembler.md).
-	{name = "assemble", source = SYSTEM_MODULE_SOURCES + "assemble", image = true},
+	{name = "assemble", source = SYSTEM_MODULE_SOURCES + "assemble", category = .Service, image = true},
 	// The C compiler: chibicc, ported. The console calls it in a call
 	// host, and gives its text to assemble (src/md/features/c_compiler.md).
-	{name = "c_compiler", source = SYSTEM_MODULE_SOURCES + "c_compiler", image = true, c_source = CHIBICC},
+	{name = "c_compiler", source = SYSTEM_MODULE_SOURCES + "c_compiler", category = .Service, image = true, c_source = CHIBICC},
 	// The sandboxed declaration evaluator: evaluates .lex files lazily with
 	// zero grants in a call host (src/md/features/declarations.md).
-	{name = "declaration_eval", source = SYSTEM_MODULE_SOURCES + "declaration_eval", image = true},
+	{name = "declaration_eval", source = SYSTEM_MODULE_SOURCES + "declaration_eval", category = .Service, image = true},
 	{name = "probe", source = TEST_MODULE_SOURCES + "probe", image = true},
 	{name = "math", source = LIBRARY_MODULE_SOURCES + "math", image = true},
 	{name = "cryptography", source = LIBRARY_MODULE_SOURCES + "cryptography", image = true},
@@ -226,9 +290,9 @@ module_builds := [?]Module_Build {
 	{name = "web_engine", source = LIBRARY_MODULE_SOURCES + "web_engine", image = true},
 	{name = "cryptography_vectors", source = DEMONSTRATION_MODULE_SOURCES + "cryptography_vectors", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "quic_echo", source = DEMONSTRATION_MODULE_SOURCES + "quic_echo", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "remote", source = SYSTEM_MODULE_SOURCES + "remote", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "remote_display", source = SYSTEM_MODULE_SOURCES + "remote_display", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
-	{name = "unlock", source = SYSTEM_MODULE_SOURCES + "unlock", entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "remote", source = SYSTEM_MODULE_SOURCES + "remote", category = .System_Tool, entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "remote_display", source = SYSTEM_MODULE_SOURCES + "remote_display", category = .Service, entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "unlock", source = SYSTEM_MODULE_SOURCES + "unlock", category = .Service, entry = true, imports = {"cryptography", DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "sample", source = DEMONSTRATION_MODULE_SOURCES + "sample", image = true},
 	{name = "hostile_exports", source = TEST_MODULE_SOURCES + "hostile_exports", image = true},
 	{name = "calendar", source = LIBRARY_MODULE_SOURCES + "calendar", image = true},
@@ -261,11 +325,11 @@ module_builds := [?]Module_Build {
 	{name = "vector_glyphs", source = DEMONSTRATION_MODULE_SOURCES + "vector_glyphs", entry = true, image = true},
 	{name = "interface_font", source = DEMONSTRATION_MODULE_SOURCES + "interface_font", entry = true, image = true},
 	{name = "pointers", source = DEMONSTRATION_MODULE_SOURCES + "pointers", entry = true, image = true},
-	{name = "settings", source = SYSTEM_MODULE_SOURCES + "settings", entry = true, image = true},
-	{name = "date", source = SYSTEM_MODULE_SOURCES + "date", entry = true, image = true},
+	{name = "settings", source = SYSTEM_MODULE_SOURCES + "settings", category = .System_Tool, entry = true, image = true},
+	{name = "date", source = SYSTEM_MODULE_SOURCES + "date", category = .Service, entry = true, image = true},
 	// The default start policy and the rescue start policy: one module that
 	// reads the list that the root service maps (src/md/features/start_policy.md).
-	{name = START_POLICY_MODULE, source = SYSTEM_MODULE_SOURCES + START_POLICY_MODULE, entry = true, image = true},
+	{name = START_POLICY_MODULE, source = SYSTEM_MODULE_SOURCES + START_POLICY_MODULE, category = .Service, entry = true, image = true},
 	// The module of the operation sequences and its runner: only the boot
 	// image of the operation sequences holds them, and the root service
 	// starts nothing else there.
@@ -288,31 +352,31 @@ module_builds := [?]Module_Build {
 	{name = "display_conformance", source = TEST_MODULE_SOURCES + "display_conformance"},
 	// The delegated powerbox service implementing Role.Powerbox
 	// (src/md/features/powerbox.md).
-	{name = "powerbox", source = SYSTEM_MODULE_SOURCES + "powerbox", entry = true, image = true},
+	{name = "powerbox", source = SYSTEM_MODULE_SOURCES + "powerbox", category = .Service, entry = true, image = true},
 	// The delegated plans, recipes, and projects services implementing
 	// Role.Plans, Role.Recipes, and Role.Projects
 	// (src/md/features/declarations.md; src/md/features/recipes.md).
-	{name = "plans", source = SYSTEM_MODULE_SOURCES + "plans", entry = true, image = true},
-	{name = "recipes", source = SYSTEM_MODULE_SOURCES + "recipes", entry = true, image = true},
-	{name = "projects", source = SYSTEM_MODULE_SOURCES + "projects", entry = true, image = true},
+	{name = "plans", source = SYSTEM_MODULE_SOURCES + "plans", category = .Service, entry = true, image = true},
+	{name = "recipes", source = SYSTEM_MODULE_SOURCES + "recipes", category = .Service, entry = true, image = true},
+	{name = "projects", source = SYSTEM_MODULE_SOURCES + "projects", category = .Service, entry = true, image = true},
 	// The probe module for client-funded work budgets and per-connection work
 	// threads (src/md/features/work_accounting.md).
 	{name = "work_accounting_probe", source = TEST_MODULE_SOURCES + "work_accounting_probe", image = true},
 	// The delegated collector and wide-grant audit service
 	// (src/md/features/module_outputs.md, src/md/features/wide_grants.md).
-	{name = "collector", source = SYSTEM_MODULE_SOURCES + "collector", entry = true, image = true},
+	{name = "collector", source = SYSTEM_MODULE_SOURCES + "collector", category = .Service, entry = true, image = true},
 	// The sandboxed guest builder: runs a deterministic, zero-network guest
 	// with a read-only input disk and a blank writable output disk
 	// (src/md/features/recipes.md).
-	{name = "guest_builder", source = SYSTEM_MODULE_SOURCES + "guest_builder", image = true},
+	{name = "guest_builder", source = SYSTEM_MODULE_SOURCES + "guest_builder", category = .Service, image = true},
 	// The VirtIO-GPU device service: 2D scanout setup and Venus capability
 	// probing over the VirtIO-GPU 1.2 control queue (src/md/features/gpu_access.md).
-	{name = "gpu_device", source = SYSTEM_MODULE_SOURCES + "gpu_device", entry = true, image = true},
+	{name = "gpu_device", source = SYSTEM_MODULE_SOURCES + "gpu_device", category = .Service, entry = true, image = true},
 	// The delegated disk_processes, devices, and principals services split out
 	// of the root service (src/md/api/root_service_split.md).
-	{name = "disk_processes", source = SYSTEM_MODULE_SOURCES + "disk_processes", entry = true, image = true},
-	{name = "devices", source = SYSTEM_MODULE_SOURCES + "devices", entry = true, image = true},
-	{name = "principals", source = SYSTEM_MODULE_SOURCES + "principals", entry = true, image = true},
+	{name = "disk_processes", source = SYSTEM_MODULE_SOURCES + "disk_processes", category = .Service, entry = true, image = true},
+	{name = "devices", source = SYSTEM_MODULE_SOURCES + "devices", category = .Service, entry = true, image = true},
+	{name = "principals", source = SYSTEM_MODULE_SOURCES + "principals", category = .Service, entry = true, image = true},
 }
 
 // The counted kernel and its setting. Each other kernel gets the setting

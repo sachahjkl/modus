@@ -1,6 +1,7 @@
-// A simple HTTP/1.1 server of this system (RFC 9110, RFC 9112): TCP in the
-// process (src/library/modus/tcp), one thread, one table of connections, and records
-// of fixed size for all its state. It allocates nothing.
+// A simple web server: TCP in the process, one thread, one table of
+// connections, and records of fixed size for all its state. It speaks
+// HTTP/1.1 (RFC 9110, RFC 9112) through src/library/modus/tcp, and
+// allocates nothing.
 //
 // What it can reach comes from its grants only, with no ambient access:
 //   a segment endpoint with a listen grant: the TCP port 80, and the

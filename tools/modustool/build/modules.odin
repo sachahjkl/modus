@@ -59,6 +59,14 @@ debug_information := true
 outside_source_folder := ""
 
 build_modules :: proc() -> bool {
+	// Each module file states its category: a row whose category disagrees
+	// with its group stops the build before any module is written.
+	for row in foundation.module_builds {
+		if _, problem := foundation.module_category_of_row(row); problem != "" {
+			fmt.eprintfln("modustool: %s", problem)
+			return false
+		}
+	}
 	// One process for each module, several at once (parallel_build.odin).
 	// A module whose inputs are the same is kept (incremental_build.odin).
 	build_modules_in_parallel() or_return

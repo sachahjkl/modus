@@ -1,5 +1,5 @@
-// The process `tone`: a tone of 440 Hz through the sound service, at a
-// time that it names (src/md/features/timed_stream.md).
+// A tone of 440 Hz through the sound service, at a time that the process
+// names. The design: src/md/features/timed_stream.md.
 //
 // **Who uses it.** A principal starts it from the console:
 // `start("tone")`. Its grant **Sound_Device** gives it the stream ring of

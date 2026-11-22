@@ -495,7 +495,8 @@ scenario_measure_scheduler := [?]Step {
 @(rodata)
 scenario_film := [?]Step {
 	{kind = .Wait, text = "compositor: surface console"},
-	{kind = .Launch, text = "flood"},
+	// flood is a test module: the start menu has no line of it.
+	{kind = .Type, text = "start(\"flood\")"},
 	{kind = .Wait, text = "terminal: ok, flood writes in a ring of 4096 records"},
 	{kind = .Film_Start, text = "terminal"},
 	{kind = .Film_Hold, milliseconds = 5000},
@@ -1980,9 +1981,18 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 			if step.kind == .Click && step.text == BAR_WINDOWS_BUTTON {
 				step.x, step.y = bar.windows_button_center(layout)
 			}
+			// A demonstration is in the right pane, which the menu shows only
+			// after its quick action: its place is in the open layout.
+			launch_demonstration := false
 			if step.kind == .Launch {
+				section, in_menu := bar.section_of_name(step.text)
+				if !in_menu {
+					fmt.eprintfln("error: the start menu does not have the module %s", step.text)
+					return false
+				}
+				launch_demonstration = section == .Demonstrations
 				found: bool
-				step.x, step.y, found = bar.center(layout, step.text)
+				step.x, step.y, found = bar.center(bar.with_demonstrations(layout, launch_demonstration), step.text)
 				if !found {
 					fmt.eprintfln("error: the start menu does not have the module %s", step.text)
 					return false
@@ -2005,6 +2015,23 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				if !open {
 					fmt.eprintfln("modustool: test failed: step %d: the start menu did not open for %s: the machine did not receive the press on its button", index + 1, step.text)
 					return false
+				}
+				if launch_demonstration {
+					action_x, action_y, action_width, action_height := bar.action_line(layout, .Demonstrations)
+					shown_before := len(log_read(machine))
+					pointer_press_at(machine, action_x + action_width / 2, action_y + action_height / 2, index) or_return
+					pointer_button(machine, false) or_return
+					shown := false
+					for start := time.now(); !shown && time.since(start) < foundation.HANG_BOUND; {
+						text := log_read(machine)
+						if shown = len(text) > shown_before && strings.contains(text[shown_before:], "compositor: the demonstrations of the start menu are shown"); !shown {
+							log_change_wait(machine)
+						}
+					}
+					if !shown {
+						fmt.eprintfln("modustool: test failed: step %d: the start menu did not show its demonstrations for %s", index + 1, step.text)
+						return false
+					}
 				}
 			}
 			pointer_press_at(machine, step.x, step.y, index) or_return

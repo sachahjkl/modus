@@ -76,7 +76,9 @@ text_measure :: proc(t: ^testing.T) {
 	// pixels, so the elements under it start on a whole pixel.
 	testing.expect_value(t, line_height(FONT_CAPTION), graphics.TEXT_CAPTION)
 	testing.expect_value(t, line_height(FONT_CAPTION_CELLS), graphics.TEXT_CAPTION)
-	testing.expect_value(t, text_width(FONT_CAPTION_CELLS, "12"), graphics.TEXT_CAPTION)
+	// With no font outlines open, Spleen draws: a character of the caption
+	// takes the 8 columns of its glyph, not the cell of 7.
+	testing.expect_value(t, text_width(FONT_CAPTION_CELLS, "12"), 2 * graphics.CELL_WIDTH)
 	testing.expect_value(t, line_height(FONT_HEADING), graphics.TEXT_HEADING)
 	testing.expect_value(t, line_height(FONT_LARGE), graphics.TEXT_LARGE)
 	testing.expect_value(t, line_height(FONT_LARGEST), graphics.TEXT_LARGEST)
@@ -2395,7 +2397,9 @@ text_input_line_draws_a_caret_at_any_place :: proc(t: ^testing.T) {
 // record and no byte of text, and with refused set: 1, one unit under the
 // smallest size, one past the largest, and the largest u16. A grid of such
 // a size is refused the same way. Then the edges that are taken: the
-// smallest and the largest size, and a caption, whose cells are 7 pixels.
+// smallest and the largest size, and a caption. This test opens no font
+// outlines, so Spleen draws: a character takes its glyph at its scale, 8
+// pixels at the caption, where the cell of the size is 7.
 @(test)
 a_text_of_a_refused_size_is_not_written :: proc(t: ^testing.T) {
 	memory: Tables
@@ -2424,11 +2428,12 @@ a_text_of_a_refused_size_is_not_written :: proc(t: ^testing.T) {
 		view := record_view(table.records[0])
 		testing.expectf(t, view.read && view.size == int(size), "a text of size %d: the record holds %d", size, view.size)
 		cell := text_rendering.cell_columns(int(size))
-		testing.expectf(t, view.width == 2 * cell && view.height == 2 * cell, "a text of size %d: a box of %d by %d", size, view.width, view.height)
+		advance := graphics.cell_advance(int(size))
+		testing.expectf(t, view.width == 2 * advance && view.height == 2 * cell, "a text of size %d: a box of %d by %d", size, view.width, view.height)
 	}
 	draw_table_clear(&table)
 	draw_text(&table, 10, 4, "ab", graphics.colors.text, {size = graphics.TEXT_CAPTION * TEXT_SIZE_UNITS})
-	testing.expect_value(t, record_view(table.records[0]).width, 14)
+	testing.expect_value(t, record_view(table.records[0]).width, 2 * graphics.CELL_WIDTH)
 }
 
 // The act names of a frame: the first element that names one keeps it, a

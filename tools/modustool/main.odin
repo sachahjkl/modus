@@ -805,7 +805,7 @@ run_machine :: proc(args: []string) -> int {
 	if !ok {
 		return foundation.EXIT_FAILURE
 	}
-	if !foundation.run(command) {
+	if !machine.run_with_rendered_serial(command) {
 		return foundation.EXIT_FAILURE
 	}
 	return 0

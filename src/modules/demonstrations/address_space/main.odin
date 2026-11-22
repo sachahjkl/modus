@@ -1,5 +1,5 @@
-// A process drives its own virtual memory (docs/ARCHITECTURE.md, "The
-// virtual memory of a process").
+// A process drives its own virtual memory. The design:
+// docs/ARCHITECTURE.md, "The virtual memory of a process".
 //
 // At its start the process runs its cases, with their numbers:
 //   an arena: a range of 1 GiB of addresses with no memory behind it, whose

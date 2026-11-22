@@ -90,13 +90,23 @@ Do not use: kernel module (a module is a file), kernel library, subsystem.
 
 ### Module group
 
-A module group is the folder of `src/modules` that holds the modules of one use: `system`, `libraries`, `demonstrations` or `tests`.
+A module group is the folder of `src/modules` that holds the modules of one use: `system`, `applications`, `libraries`, `demonstrations` or `tests`.
 
-The group of a module is the folder of its source, and the tool reads it from there. It is not a second format: the module file holds no group, and the loader and the root service never read it. Its folder is `src/modules/<group>/<module>`: `src/modules/system/root`. A release leaving out the group `tests` is planned work of `ROADMAP.md`.
+The group of a module is the folder of its source, and the tool reads it from there. The module file holds no group, and the loader and the root service never read it. Its folder is `src/modules/<group>/<module>`: `src/modules/system/root`. A release leaves out the group `tests`. A group allows one module category or more: the module category says what a module is to a reader, and the group says where its source lives.
 
 The design: `src/md/infrastructure/repository_layout.md`.
 
-Do not use: role (a role is a contract, and the grants of a program are its start grant set), category, kind of module.
+Do not use: role (a role is a contract, and the grants of a program are its start grant set), kind of module, category (a module category is a finer fact, with its own term).
+
+### Module category
+
+A module category is the one word, in the header of a module file, that says what the module is to a reader: an application, a system tool, a developer tool, a service, a library, a demonstration or a test.
+
+The start menu and the manual group the modules by it; the start menu never lists a test. The tool writes it from the table of the modules, and refuses a category that the module group of the source does not allow. The module tags beside it are words of what the module is about, which the filter of the manual matches. No loader and no root service decides anything by the category: a right comes from a start grant set.
+
+The design: `src/md/infrastructure/repository_layout.md`, `src/md/features/desktop_shell_look.md`.
+
+Do not use: module group (the folder), kind, type of module, role.
 
 ### Test module
 

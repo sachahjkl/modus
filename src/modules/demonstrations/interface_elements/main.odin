@@ -1,4 +1,5 @@
-// The elements of the interface package, live (docs/INTERFACE.md).
+// The elements of the windows of the system, live: buttons, fields, lists,
+// tables. The design: docs/INTERFACE.md.
 //
 // The window shows each element of the package: a button, a list with a
 // choice, a text input, bars, lines of a label and a value, a table, the

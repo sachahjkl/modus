@@ -24,6 +24,7 @@ Error :: enum u32 {
 	Bad_Own_Hash_Place = 12, // The own-hash place is not `HASH_SIZE` bytes inside one segment that the loader can write.
 	Bad_Record_Stream_Place = 13, // The place of a record output or a record input is not 0, nor `RECORD_STREAM_PLACE_SIZE` aligned bytes inside one segment that the loader can write and that is not `Read_Only_After_Load`; or it meets the own-hash place, a rebase location, an import slot or the place of another row.
 	Too_Many_Record_Streams = 14, // The table `Record_Outputs` or `Record_Inputs` has more than `RECORD_STREAM_INDEX_MOST` rows after the entry 0.
+	Unknown_Category = 15, // The category of the header names no member of `Module_Category`, a tag bit names no member of `Module_Tag`, or the reserved byte is not 0.
 }
 
 // read copies a T from file at offset. It gives zero when the range is not in file.
@@ -138,6 +139,9 @@ validate :: proc "contextless" (file: []u8) -> Error {
 	}
 	if head.entry_export >= max(count(file, .Exports), 1) {
 		return .Bad_Export
+	}
+	if !header_category_valid(head) {
+		return .Unknown_Category
 	}
 	// Each loader writes the hash there: a place outside writable data
 	// would let a file make the loader write into its code.

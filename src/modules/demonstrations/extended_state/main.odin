@@ -1,5 +1,6 @@
-// The extended state of each thread, kept by the kernel (docs/ARCHITECTURE.md,
-// "The extended state of the processor").
+// The registers of the vector unit of each thread, which the kernel keeps
+// apart. The design: docs/ARCHITECTURE.md, "The extended state of the
+// processor".
 //
 // The process starts as many threads as the machine has processors, plus
 // two, so that threads share processors and move between them. Each thread

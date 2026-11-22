@@ -8,6 +8,7 @@ import "core:math/bits"
 import "core:mem"
 import "core:slice"
 import "core:strings"
+import "modustool:foundation"
 
 // An import of the module that convert writes: the file of the imported module.
 Import_File :: struct {
@@ -637,6 +638,11 @@ module_parts_finalize :: proc(
 		record_outputs     = output_parts,
 		record_inputs      = input_parts,
 	}
+
+	// The category and the tags of the row of the module: the start menu
+	// and the manual read them from the header. A module from outside the
+	// repository has no row and states none.
+	parts.category, parts.tags = foundation.module_category_of_name(name)
 
 	// A module whose source states no budget has no table Budget: it asks
 	// for the least budget.

@@ -49,6 +49,7 @@ ERROR_NAMES := [Error]string {
 	.Bad_Own_Hash_Place = "Bad_Own_Hash_Place",
 	.Bad_Record_Stream_Place = "Bad_Record_Stream_Place",
 	.Too_Many_Record_Streams = "Too_Many_Record_Streams",
+	.Unknown_Category = "Unknown_Category",
 }
 
 // The name of each difference of a replacement, as Difference names it.

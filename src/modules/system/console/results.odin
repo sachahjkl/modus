@@ -173,7 +173,7 @@ failure_draw :: proc "contextless" () {
 // terminal in the color of what it is, and each line to the log. The caller
 // holds output_lock.
 result_sink :: proc "contextless" () -> console_results.Sink {
-	return {write = result_write, end_line = result_end_line}
+	return {write = result_write, end_line = result_end_line, width = WINDOW_COLUMNS}
 }
 
 result_write :: proc "contextless" (sink: ^console_results.Sink, text: string, part: console_results.Part) {

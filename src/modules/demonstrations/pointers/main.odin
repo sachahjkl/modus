@@ -1,5 +1,5 @@
-// The pointer themes of the boot image (docs/POINTERS.md), as a table that
-// a reader reads: each pointer shape of a theme at each of its sizes, in
+// The pointer themes of the boot image, as a table that a reader reads
+// (docs/POINTERS.md): each pointer shape of a theme at each of its sizes, in
 // each of its forms (the light form on a light track), its hot spot marked,
 // its frames, and the theme with its license and its attribution.
 //

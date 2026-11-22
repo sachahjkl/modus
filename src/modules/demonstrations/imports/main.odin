@@ -1,5 +1,6 @@
 // A demonstration of the loader: a module with imports, and the replacement
-// of an import (docs/MODULE_CONTRACT.md, "Replacement of an import").
+// of an import. The design: docs/MODULE_CONTRACT.md, "Replacement of an
+// import".
 //
 // The module agenda imports the module calendar. calendar has a fault: the
 // year 2000 has 365 days. calendar_fixed has the correction and the same

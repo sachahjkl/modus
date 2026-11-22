@@ -64,6 +64,21 @@ List_Cut :: struct {
 	modules: u64,
 }
 
+// The principal typed in the filter of the list, or emptied it: the filter,
+// and the count of the modules that the list shows.
+@(log_fact = "manual: the filter \"{filter}\" shows {shown} modules")
+List_Filtered :: struct {
+	shown:  u64,
+	filter: value_kinds.Text_View,
+}
+
+// The heading of the tests opened or closed their group: the count of the
+// modules that the list shows.
+@(log_fact = "manual: the list shows {shown} modules")
+Tests_Group_Changed :: struct {
+	shown: u64,
+}
+
 // The window shows the page of a module.
 @(log_fact = "manual: {module_name}: {entry_words}, {exports} exports, {rows} rows")
 Module_Page_Shown :: struct {

@@ -334,7 +334,7 @@ Do not use: app icon, logo.
 
 The start menu is the menu of the bar under the heron button, with one line for each module of the table `bar.names`: a press on a line starts that module.
 
-The menu is the way of the pointer to start a module. It is a card in two panes: the pinned modules and the quick actions at the left, each other module at the right, each line with its module icon. A press on a module sends `Start` with the name to the root service, which decides the grants of the process. A quick action moves the bar or turns the magnifier on or off. The start menu is not the palette, which narrows as the input types.
+The menu is the way of the pointer to start a module. Its lines come in sections by the module category: the applications and the tools, then the demonstrations, closed until a quick action opens them. A test module, a service and a library have no line. A press on a module sends `Start` with the name to the root service, which decides the grants of the process. The start menu is not the palette, which narrows as the input types.
 
 The design: `docs/DESIGN.md`, "Menus", and `src/md/features/desktop_shell_look.md`.
 

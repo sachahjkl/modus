@@ -1,5 +1,5 @@
-// The return to a process, with hostile threads (docs/ARCHITECTURE.md, "The
-// return to a process").
+// The return of the kernel to a process, against threads that try to break
+// it. The design: docs/ARCHITECTURE.md, "The return to a process".
 //
 // The kernel returns to a thread with iretq. A thread whose saved state the
 // processor refuses there made the processor fault in the kernel, and one

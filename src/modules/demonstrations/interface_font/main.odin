@@ -1,5 +1,6 @@
-// The interface font (docs/FONTS.md, section 12): B612 Regular and Bold,
-// placed by src/library/modus/text_rendering and drawn by graphics.text_proportional.
+// The interface font, B612 Regular and Bold, as the windows draw it. The
+// design: docs/FONTS.md, section 12. It is placed by
+// src/library/modus/text_rendering and drawn by graphics.text_proportional.
 // It shows a paragraph, three pairs with and without their adjustment, one
 // word at the three positions of a pixel, enlarged, the digits in columns,
 // three lines of characters past the Latin-1 Supplement (Greek letters of

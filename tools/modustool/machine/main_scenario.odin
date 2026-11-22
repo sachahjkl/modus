@@ -1504,17 +1504,28 @@ scenario := [?]Step {
 	{kind = .Wait, text = "manual: tally: a module with an entry, 5 exports, "},
 	{kind = .Move, text = "manual", to_x = 80, to_y = 64},
 	{kind = .Shot, text = "manual"},
-	// The keys of the manual: the next module of the boot image, then the one before.
+	// The keys of the manual: the next module of the list, then the one
+	// before. The list is in groups by category, each in the order of the
+	// alphabet (src/md/features/manual_module_list.md): after tally comes
+	// threads.
 	{kind = .Key, text = "down"},
-	{kind = .Wait, text = "manual: manual: a module with an entry, 17 exports, "},
+	{kind = .Wait, text = "manual: threads: a module with an entry, "},
 	{kind = .Key, text = "pgdn"},
 	{kind = .Key, text = "up"},
 	{kind = .Wait, text = "manual: tally: a module with an entry, 5 exports, "},
+	// A typed word filters the list; Escape empties the filter.
+	{kind = .Key, text = "m"},
+	{kind = .Wait, text = "manual: the filter \"m\" shows "},
+	{kind = .Key, text = "esc"},
+	{kind = .Wait, text = "manual: the filter \"\" shows "},
 	// The links of a page (src/md/features/manual_links.md). Tab puts the
 	// focus on the first link of the page of the manual, a heading of a
-	// guide, and scrolls the page to it.
-	{kind = .Key, text = "down"},
+	// guide, and scrolls the page to it. The console shows the page of the
+	// manual; then the keys go to the manual again.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "manual.show(\"manual\")"},
 	{kind = .Wait, text = "manual: manual: a module with an entry, 17 exports, "},
+	{kind = .Front, text = "manual"},
 	// The element line of the link comes after the line of the page: before
 	// the focus when the view showed the link, after it when Tab scrolled.
 	{kind = .Key, text = "tab"},
@@ -2265,7 +2276,8 @@ scenario := [?]Step {
 	// another: the display does not slow the process.
 	// The root service starts the process and its terminal: the terminal
 	// starts no process, and has nothing of the start grant set of the process.
-	{kind = .Launch, text = "flood"},
+	// flood is a test module: the start menu has no line of it.
+	{kind = .Type, text = "start(\"flood\")"},
 	{kind = .Wait, text = "flood: ok", any_order = true},
 	{kind = .Wait, text = "terminal: ok, flood writes in a ring of 4096 records", any_order = true},
 	{kind = .Wait, text = "root: started flood, with a terminal"},

@@ -173,6 +173,8 @@ Module_Parts :: struct {
 	has_own_hash_place: bool, // The module has an own-hash place: a module that writes a fact must have one.
 	own_hash_place:     u64, // module.HASH_SIZE bytes in a segment with Write and no Execute.
 	about:              string, // One line: what the module is.
+	category:           module.Module_Category, // What the module is to a reader, in the header.
+	tags:               module.Module_Tags, // What the module is about, in the header.
 	text:               string, // The documentation text of the module, in its Markdown.
 	has_budget:         bool, // The module asks for a budget: the file has the table Budget.
 	budget:             module.Budget_Request,
@@ -1107,6 +1109,8 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 		table_count  = module.TABLE_COUNT,
 		memory_size  = layout.memory_size,
 		entry_export = layout.entry_export,
+		category     = parts.category,
+		tags         = parts.tags,
 	}
 	store(file, 0, header)
 	store(file, size_of(module.Header), directory)

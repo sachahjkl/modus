@@ -6,6 +6,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
+- **A machine test of the exact release boot image.** The machine of Secure Boot with the test keys boots the release boot image, with no test module, so the image that a release ships is the image that a machine test ran. [Design](src/md/infrastructure/release_image.md)
+- **The first application.** `notes` moves from the demonstrations to the group `applications` when it is a real program, and the start menu shows it at the top. [Design](src/md/infrastructure/repository_layout.md)
 - **The service `recipes`.** A recipe names how each output is made, and `recipes.build` takes its realisation from the cache or builds it in a sandbox. [Design](src/md/features/recipes.md)
 - **The plan of principal 0 at the start proved across a restart.** A machine test applies a plan of principal 0 that names a holder of a role, restarts the machine, and checks that the start policy reaches that holder from its first start, and that a disk with no plan starts with no delay. [Design](src/md/features/declarations.md)
 - **The roles of the plan of principal 0 measured at the start.** The set of the role holders that the plan of principal 0 gives before the start policy is measured, so an attestation sees which holders of the signed image ran. [Design](src/md/features/declarations.md)

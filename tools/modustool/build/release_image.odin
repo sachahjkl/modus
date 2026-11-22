@@ -140,11 +140,11 @@ release_files_of :: proc(folder, release_number: string) -> Release_Files {
 	return {image_path = foundation.join(folder, "/", release_image_file_name(release_number)), checksum_path = checksum_path, signature_path = foundation.join(checksum_path, RELEASE_SIGNATURE_SUFFIX)}
 }
 
-// release_boot_volume gives the release volume: the main boot image, the
-// kernel of the tests, the boot program signed with the firmware signing
-// key.
+// release_boot_volume gives the release volume: the main boot image with
+// no test module (release_boot_image_of), the kernel of the tests, the boot
+// program signed with the firmware signing key.
 release_boot_volume :: proc() -> Boot_Volume {
-	return Boot_Volume{path = BOOT_VOLUME_RELEASE, image = BOOT_IMAGE, kernel = "kernel", firmware_signature = .Signed}
+	return Boot_Volume{path = BOOT_VOLUME_RELEASE, image = BOOT_IMAGE_RELEASE, kernel = "kernel", firmware_signature = .Signed}
 }
 
 // base64url_text gives bytes in base64url with no padding: the form of a
@@ -318,10 +318,11 @@ release_checksum_list_parse :: proc(text: string) -> (rows: []Release_Checksum, 
 RELEASE_VOLUME_RESOURCES :: [3]string{replacement_list.RESOURCE_NAME, system_description.RESOURCE_DESCRIPTION, system_description.RESOURCE_SIGNATURE}
 
 // release_test_module_problem names the first module of a boot image that
-// only the image of a test holds (a row of module_builds with
-// only_in_image), such as operation_fuzzing, which holds the machine with
-// the right Physical; "" when the image holds none. An image that is not a
-// boot image is refused too.
+// a release does not ship (module_included_in_release_image): a module of
+// the group tests, and a module that only the image of a test holds, such
+// as operation_fuzzing, which holds the machine with the right Physical;
+// "" when the image holds none. An image that is not a boot image is
+// refused too.
 release_test_module_problem :: proc(image: []u8, image_name: string) -> string {
 	modules, _, valid := info.image_tables(image)
 	if !valid {
@@ -329,10 +330,8 @@ release_test_module_problem :: proc(image: []u8, image_name: string) -> string {
 	}
 	for &entry in modules {
 		name := system_description.name_of(&entry.name)
-		for build in foundation.module_builds {
-			if build.only_in_image != "" && build.name == name {
-				return fmt.tprintf("%s holds the module %s, which only the boot image of a test holds: a release never publishes it", image_name, name)
-			}
+		if row, found := module_row_of_name(name); found && !module_included_in_release_image(row) {
+			return fmt.tprintf("%s holds the module %s, a module of a test: a release never publishes it", image_name, name)
 		}
 	}
 	return ""
@@ -721,7 +720,14 @@ release_disk_partition :: proc(disk: []u8) -> (partition: []u8, problem: string)
 // the checksum list, and its release signature with the seed. The disk
 // before its compression stays in disk_folder.
 release_files_write :: proc(volume_path, release_number, disk_folder, output_folder: string, release_seed: []u8, packaging: Release_Packaging) -> (files: Release_Files, ok: bool) {
-	build_image := foundation.read_file(BOOT_IMAGE) or_return
+	// The volume is compared with the release image made again from the
+	// boot image that the tests booted: no other image can pass.
+	tested_image := foundation.read_file(BOOT_IMAGE) or_return
+	build_image, release_problem := release_boot_image_of(tested_image)
+	if release_problem != "" {
+		fmt.eprintfln("modustool: release: %s", release_problem)
+		return
+	}
 	kernel_module := foundation.read_file(foundation.module_path(system_description.KERNEL_ENTRY_NAME)) or_return
 	if problem := release_volume_problem(volume_path, packaging, build_image, kernel_module); problem != "" {
 		fmt.eprintfln("modustool: release: %s", problem)
@@ -965,7 +971,7 @@ release_image_command :: proc() -> int {
 	// license of the theme of the owner allows no public download.
 	resources.build_pointer_theme_of_the_owner = false
 	build_measure_start()
-	if !build_modules() {
+	if !build_modules() || !release_boot_image_write() {
 		return foundation.EXIT_FAILURE
 	}
 	volume := release_boot_volume()

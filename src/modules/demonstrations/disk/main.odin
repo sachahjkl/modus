@@ -1,5 +1,5 @@
-// A check and a measure of the block service (src/library/modus/contract/block), on a disk
-// of its own: the disk of the measures, that holds no data of a process.
+// A check and a measure of the block service, on a disk of its own that
+// holds no data of a process. The contract: src/library/modus/contract/block.
 //
 // The process reads and writes blocks in five runs: one block in each
 // request, with one request in flight and then with 32. The check sends a

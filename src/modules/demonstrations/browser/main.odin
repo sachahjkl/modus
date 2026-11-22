@@ -1,6 +1,7 @@
 // A light web browser in one window: an address field, a history, and a
-// page of HTML and CSS laid out and painted by the contract package
-// html_css (src/md/features/desktop_to_browser.md, "E. A light browser").
+// page of HTML and CSS. The contract package html_css lays out and paints
+// the page. The design: src/md/features/desktop_to_browser.md, "E. A light
+// browser".
 //
 // **What it is for.** It shows the path of a page from its bytes to the
 // draw table: html_css parses the HTML into a bounded tree of nodes, reads
