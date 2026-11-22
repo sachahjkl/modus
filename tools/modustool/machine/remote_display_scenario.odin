@@ -108,3 +108,10 @@ scenario_remote_display := [?]Step {
 remote_display_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	return machine_test(part, scenario_remote_display[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_REMOTE_DISPLAY, exit_status = build.MACHINE_STOP_OK})
 }
+
+// A binary of the tool runs the test part remote_display only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+remote_display_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("remote_display", remote_display_tests_run)
+}

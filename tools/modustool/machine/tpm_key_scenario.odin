@@ -4,8 +4,6 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:sync"
-import "core:sys/linux"
-import "core:time"
 import format "modus:contract/store"
 import "modus:principals"
 import "internal:storage/storage_mount"
@@ -74,14 +72,6 @@ TPM_COUNT_LIMITS_LINE :: "tpm: the count limits of the TPM: a lockout after 3 wr
 // value: the reset that the TPM of the part refuses is taken there.
 TPM_LOCKOUT_EMPTY_STATE_FOLDER :: foundation.BUILD_FOLDER + "/test_tpm_lockout_empty_state"
 TEST_OUTPUT_TPM_LOCKOUT :: foundation.BUILD_FOLDER + "/test_output_tpm_lockout_%d.txt"
-// The largest answer to a command that the tool sends to the TPM.
-TPM_TOOL_ANSWER_LIMIT :: 256
-
-// The line of unlock at Enter on a new recovery key: no record, no file,
-// no key of a table and no session comes before it
-// (src/md/features/tpm_sealed_principal_keys.md).
-RECOVERY_KEY_ENTER_LINE :: "unlock: Enter on the recovery key: it is written down, and the record or the file that holds its copy is written now"
-
 // A recovery key that is not the recovery key of the machine: 32 symbols of
 // base32, each one A.
 WRONG_RECOVERY_KEY :: "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA"
@@ -943,99 +933,6 @@ tpm_lockout_reset_try :: proc(state_folder: string, number: int) -> (code: u32, 
 		return 0, false
 	}
 	return status_code, true
-}
-
-// A software TPM that runs alone, with no QEMU, on a state of the software
-// TPM of a part: the tool sends it the commands that another system on the
-// machine can send.
-Tpm_Alone :: struct {
-	tpm:        Tpm_Host_Process,
-	connection: linux.Fd, // The Unix socket of the commands, in the folder of the output.
-}
-
-// The Unix sockets of swtpm alone, in the folder of its output: no port of
-// the loopback, which a machine of another part that runs at the same time
-// could hold.
-TPM_ALONE_SERVER_SOCKET :: "/server.socket"
-TPM_ALONE_CONTROL_SOCKET :: "/control.socket"
-
-// tpm_alone_start starts swtpm alone on a state of the software TPM, in the
-// folder of the output given, and connects to its socket of the commands.
-tpm_alone_start :: proc(state_folder: string, output: string) -> (alone: Tpm_Alone, ok: bool) {
-	folder := tpm_folder_of(output)
-	foundation.reset_folder(folder) or_return
-	log := strings.concatenate({"file=", folder, "/swtpm.log,level=20"}, context.temp_allocator)
-	server_path := strings.concatenate({folder, TPM_ALONE_SERVER_SOCKET}, context.temp_allocator)
-	server := strings.concatenate({"type=unixio,path=", server_path}, context.temp_allocator)
-	control := strings.concatenate({"type=unixio,path=", folder, TPM_ALONE_CONTROL_SOCKET}, context.temp_allocator)
-	// not-need-init and startup-clear: swtpm starts the TPM itself, as the
-	// firmware of a machine does, with no QEMU.
-	host_process, start_error := os.process_start({command = {"swtpm", "socket", "--tpm2", "--tpmstate", strings.concatenate({"dir=", state_folder}, context.temp_allocator), "--server", server, "--ctrl", control, "--flags", "not-need-init,startup-clear", "--log", log}, stdout = os.stderr, stderr = os.stderr})
-	if start_error != nil {
-		fmt.eprintfln("modustool: cannot start swtpm: %v. Use the development shell: nix develop", start_error)
-		return {}, false
-	}
-	alone.tpm = Tpm_Host_Process{host_process = host_process, started = true, folder = strings.clone(folder)}
-
-	// Wait until swtpm takes a connection.
-	start := time.tick_now()
-	for {
-		connection, connected := call_socket_connect(server_path)
-		if connected {
-			alone.connection = connection
-			break
-		}
-		if time.tick_since(start) > TPM_START_TIMEOUT {
-			fmt.eprintfln("modustool: test failed: swtpm took no connection at %s in %v", server_path, TPM_START_TIMEOUT)
-			tpm_stop(&alone.tpm)
-			return {}, false
-		}
-		time.sleep(CONDITION_POLL_PERIOD)
-	}
-	return alone, true
-}
-
-// tpm_alone_stop closes the connection and ends swtpm, which writes its
-// state.
-tpm_alone_stop :: proc(alone: ^Tpm_Alone) {
-	call_socket_close(alone.connection)
-	tpm_stop(&alone.tpm)
-}
-
-// tpm_alone_transact sends one command and gives its whole answer, in the
-// buffer given: the size of its header bounds it. what names the command in
-// a line of a failure.
-tpm_alone_transact :: proc(alone: ^Tpm_Alone, command: []u8, answer: []u8, what: string) -> (bytes: []u8, ok: bool) {
-	if len(command) == 0 || !call_socket_send_all(alone.connection, command) {
-		fmt.eprintfln("modustool: test failed: the command %s did not go to swtpm (%s)", what, alone.tpm.folder)
-		return nil, false
-	}
-	// The header of an answer has its size in bytes 2 to 5, big-endian.
-	HEADER_SIZE :: 10
-	received := 0
-	size := HEADER_SIZE
-	// The receive of the socket ends after its own short time with no byte;
-	// the bound only ends a wait for a TPM that does not answer.
-	start := time.tick_now()
-	for received < size {
-		got, receive_error := linux.recv(alone.connection, answer[received:size], {})
-		if (receive_error == .EAGAIN || receive_error == .EINTR) && time.tick_since(start) < foundation.HANG_BOUND {
-			continue
-		}
-		if receive_error != .NONE || got <= 0 {
-			fmt.eprintfln("modustool: test failed: swtpm gave %d bytes of an answer of %d to %s: %v (%s)", received, size, what, receive_error, alone.tpm.folder)
-			return nil, false
-		}
-		received += got
-		if received >= HEADER_SIZE && size == HEADER_SIZE {
-			size = int(u32(answer[2]) << 24 | u32(answer[3]) << 16 | u32(answer[4]) << 8 | u32(answer[5]))
-			if size < HEADER_SIZE || size > len(answer) {
-				fmt.eprintfln("modustool: test failed: swtpm gave an answer of %d bytes to %s (%s)", size, what, alone.tpm.folder)
-				return nil, false
-			}
-		}
-	}
-	return answer[:size], true
 }
 
 // tpm_lockout_reset_tests_run sends the reset of the count with the empty

@@ -111,3 +111,10 @@ guest_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	fmt.printfln("modustool: the part guest runs NO guest on this host: %s; the machine checks only that Guest_Run refuses with Unsupported", reason)
 	return machine_test(part, scenario_guest_unsupported[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_GUEST, exit_status = build.MACHINE_STOP_OK})
 }
+
+// A binary of the tool runs the test part guest only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+guest_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("guest", guest_tests_run)
+}

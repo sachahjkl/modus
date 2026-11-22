@@ -147,3 +147,10 @@ extended_state_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	with_each_feature[7].text = kept_lines_with_each_feature[host]
 	return machine_test(part, with_each_feature[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_EXTENDED_STATE, exit_status = build.MACHINE_STOP_OK}) && machine_test(part, scenario_extended_state_without_avx[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_EXTENDED_STATE, exit_status = build.MACHINE_STOP_OK, processor = .Without_Avx}) && machine_test(part, scenario_extended_state_without_xsave[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_EXTENDED_STATE, exit_status = build.MACHINE_STOP_OK, processor = .Without_Xsave})
 }
+
+// A binary of the tool runs the test part extended_state only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+extended_state_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("extended_state", extended_state_tests_run)
+}

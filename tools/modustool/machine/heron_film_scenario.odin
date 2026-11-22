@@ -22,7 +22,7 @@ package machine
 //
 // The keys and the lines of the dash, of the held third frame and of its
 // two ways are those of the main scenario of the machine test
-// (machine.odin): the film shows what the test checks.
+// (main_scenario.odin): the film shows what the test checks.
 //
 // Each key of the process writes one line after the process presented the
 // state of that key, and each scene waits for its line: the film never

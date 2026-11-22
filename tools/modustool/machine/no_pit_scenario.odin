@@ -36,3 +36,10 @@ scenario_no_pit := [?]Step {
 no_pit_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	return machine_test(part, scenario_no_pit[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_NO_PIT, exit_status = MACHINE_STOP_START_FAILED, processor = .Without_Frequency_Leaves, without_pit = true})
 }
+
+// A binary of the tool runs the test part no_pit only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+no_pit_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("no_pit", no_pit_tests_run)
+}

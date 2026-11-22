@@ -25,7 +25,7 @@ package machine
 // 12. shutdown: the question, and Escape.
 //
 // Each key of a scene and each wait for a line of the log is one that the
-// main scenario of the machine test has (machine.odin): the film shows only
+// main scenario of the machine test has (main_scenario.odin): the film shows only
 // what the test checks. A scene waits for its line before its hold, so the
 // film never shows a state that the machine did not reach. The steps
 // Film_Type and Film_Hold are the times of the film, for its viewer.

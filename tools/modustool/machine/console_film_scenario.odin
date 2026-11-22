@@ -23,7 +23,7 @@ package machine
 //     and a second Enter runs it.
 //
 // The lines and the waits are those of the main scenario of the machine
-// test (machine.odin): the film shows what the test checks. A typed line
+// test (main_scenario.odin): the film shows what the test checks. A typed line
 // is a step Film_Type, so a viewer sees it typed; Enter is its own step,
 // and the scene waits for the echo of the line or for its result before
 // its hold.

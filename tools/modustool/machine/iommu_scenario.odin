@@ -172,3 +172,17 @@ scenario_iommu_amd := [?]Step {
 iommu_amd_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	return machine_test(part, scenario_iommu_amd[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_IOMMU_AMD, exit_status = build.MACHINE_STOP_OK, iommu = .Amd})
 }
+
+// A binary of the tool runs the test part iommu only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+iommu_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("iommu", iommu_tests_run)
+}
+
+// A binary of the tool runs the test part iommu_amd only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+iommu_amd_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("iommu_amd", iommu_amd_tests_run)
+}

@@ -3,7 +3,6 @@ package machine
 import "core:fmt"
 import "core:os"
 import "core:strings"
-import "core:time"
 import info "modus:contract/boot_info"
 import "modus:contract/release"
 import "modus:contract/system_description"
@@ -77,179 +76,6 @@ TEST_OUTPUT_SECURE_BOOT :: foundation.BUILD_FOLDER + "/test_output_secure_boot.t
 TEST_OUTPUT_SECURE_BOOT_CHANGED :: foundation.BUILD_FOLDER + "/test_output_secure_boot_changed.txt"
 TEST_OUTPUT_SECURE_BOOT_UNSIGNED :: foundation.BUILD_FOLDER + "/test_output_secure_boot_unsigned.txt"
 
-// The firmware of a test machine. The TPM device is another option of the
-// machine (machine_test, tpm_device): a firmware with a TPM driver and no
-// device runs as on a machine with no TPM.
-Machine_Firmware :: enum {
-	Usual, // OVMF_CODE and OVMF_VARS: no TPM driver, no Secure Boot.
-	With_Tpm_Driver, // OVMF_TPM_CODE and OVMF_TPM_VARS: a TPM driver, no Secure Boot, no system management mode.
-	With_Secure_Boot, // OVMF_FULL_CODE with SECURE_BOOT_VARIABLES: the certificate of the firmware signing key enrolled, Secure Boot on, system management mode, a TPM driver.
-}
-
-// The steps of a machine of the TPM or of Secure Boot after "boot program:
-// started", until the desktop: the firmware with system management mode is
-// slow on a loaded host, and a command of the TPM that the firmware
-// abandons costs it about two minutes. 300 s is the bound of each step; a
-// refused measure ends the wait at once, with the line of the refusal.
-TPM_MACHINE_STEP_SECONDS :: 300
-MEASURE_REFUSED_LINE :: "boot program: the TPM refused the measure"
-
-// The control command of swtpm that QEMU sends when the firmware abandons a
-// command of the TPM before its answer (CMD_CANCEL_TPM_CMD): the trace of a
-// time-out of the interface driver of the firmware.
-SWTPM_CANCEL_COMMAND :: "00 00 00 09"
-
-// The first wait of a machine with that firmware: for "boot program:
-// started", by name, with its own bound. A boot that is slow under the load
-// of the host says nothing about the trusted boot; the tool prints the time
-// that it took.
-TPM_MACHINE_FIRST_WAIT_SECONDS :: 600
-
-// The log that the firmware writes on its debug console port, beside the
-// log of the machine. The firmware of Nixpkgs is a release build: it writes
-// few lines there.
-FIRMWARE_LOG_SUFFIX :: "_firmware.log"
-// The trace of QEMU for the TPM device of a machine of the TPM, each line
-// with its time (main.odin, machine_command).
-QEMU_TRACE_SUFFIX :: "_qemu_tpm_trace.log"
-FIRMWARE_LOG_LINES_SHOWN :: 40
-
-// The line of the firmware when it cannot start a boot option, as its boot
-// manager writes it on the console (UefiBootManagerLib of EDK II).
-FIRMWARE_LOAD_FAILURE_LINE :: "BdsDxe: failed to load Boot"
-
-// machine_file gives a file of one test machine beside its log.
-machine_file :: proc(output, suffix: string) -> string {
-	return strings.concatenate({strings.trim_suffix(output, ".txt"), suffix}, context.temp_allocator)
-}
-
-// The software TPM of one machine: a folder of its own for each machine,
-// with a new state, so that each starts with a TPM with no history and no
-// file of another machine.
-TPM_START_TIMEOUT :: foundation.HANG_BOUND // It only ends a start of swtpm that hangs.
-
-tpm_folder_of :: proc(output: string) -> string {
-	return machine_file(output, "_tpm")
-}
-
-tpm_socket_of :: proc(output: string) -> string {
-	return strings.concatenate({tpm_folder_of(output), "/swtpm.socket"}, context.temp_allocator)
-}
-
-Tpm_Host_Process :: struct {
-	host_process: os.Process,
-	started: bool,
-	folder:  string,
-}
-
-// tpm_start starts swtpm for the machine of this output, and waits until
-// its control socket exists. --terminate ends it when QEMU closes the
-// connection; tpm_stop ends it in each case. state is "" for a TPM with no
-// history, in the folder of the machine; else the folder of a state that
-// several machines of one test part share, as one TPM across restarts of
-// one machine: the part makes it new once.
-tpm_start :: proc(tpm: ^Tpm_Host_Process, output: string, state: string = "") -> bool {
-	folder := tpm_folder_of(output)
-	socket := tpm_socket_of(output)
-	foundation.reset_folder(folder) or_return
-	state_folder := state != "" ? state : folder
-	log := strings.concatenate({"file=", folder, "/swtpm.log,level=20"}, context.temp_allocator)
-	host_process, err := os.process_start({command = {"swtpm", "socket", "--tpm2", "--tpmstate", strings.concatenate({"dir=", state_folder}, context.temp_allocator), "--ctrl", strings.concatenate({"type=unixio,path=", socket}, context.temp_allocator), "--log", log, "--terminate"}, stdout = os.stderr, stderr = os.stderr})
-	if err != nil {
-		fmt.eprintfln("modustool: cannot start swtpm: %v. Use the development shell: nix develop", err)
-		return false
-	}
-	tpm^ = {host_process = host_process, started = true, folder = strings.clone(folder)}
-	start := time.tick_now()
-	for !os.exists(socket) {
-		if time.tick_since(start) > TPM_START_TIMEOUT {
-			fmt.eprintfln("modustool: swtpm made no socket %s in %v", socket, TPM_START_TIMEOUT)
-			tpm_stop(tpm)
-			return false
-		}
-		time.sleep(CONDITION_POLL_PERIOD)
-	}
-	return true
-}
-
-// tpm_stop ends swtpm and waits for its end: the next machine never starts
-// while it runs.
-tpm_stop :: proc(tpm: ^Tpm_Host_Process) {
-	if !tpm.started {
-		return
-	}
-	_ = os.process_kill(tpm.host_process)
-	_, _ = os.process_wait(tpm.host_process)
-	tpm.started = false
-	delete(tpm.folder)
-	tpm.folder = ""
-}
-
-// tpm_traffic_report prints what the swtpm log of a machine of the TPM
-// shows (docs/TRUSTED_BOOT.md, "The machines of the TPM"):
-// - the count of TPM2_Startup commands: one for each start of the
-//   firmware; two or more mean that the firmware reset the machine;
-// - the count of commands that the firmware abandoned (QEMU sends the
-//   control command "cancel"): each one is a command whose answer the
-//   firmware did not take, after which it marks its TPM as absent;
-// - the name of the last command before the first cancel.
-tpm_traffic_report :: proc(output: string) {
-	path := strings.concatenate({tpm_folder_of(output), "/swtpm.log"}, context.temp_allocator)
-	data, err := os.read_entire_file(path, context.temp_allocator)
-	if err != nil {
-		return
-	}
-	lines := strings.split_lines(string(data), context.temp_allocator)
-	startups, cancels := 0, 0
-	last_command, abandoned_command := "", ""
-	for line, index in lines {
-		trimmed := strings.trim_space(line)
-		// "IsEnEnabled(0x17a = 'GetCapability'): 1": swtpm runs a command.
-		if strings.has_prefix(trimmed, "IsEnEnabled(") {
-			last_command = trimmed[len("IsEnEnabled("):]
-			if end := strings.index_byte(last_command, ')'); end >= 0 {
-				last_command = last_command[:end]
-			}
-			if strings.contains(last_command, "'Startup'") {
-				startups += 1
-			}
-		}
-		if strings.has_prefix(trimmed, "Ctrl Cmd:") && index + 1 < len(lines) && strings.trim_space(lines[index + 1]) == SWTPM_CANCEL_COMMAND {
-			cancels += 1
-			if abandoned_command == "" {
-				abandoned_command = last_command
-			}
-		}
-	}
-	if cancels == 0 {
-		fmt.printfln("modustool: the TPM of %s: %d Startup, 0 commands abandoned (%s)", output, startups, path)
-	} else {
-		fmt.printfln("modustool: the TPM of %s: %d Startup, %d commands abandoned; the first after the command %s (%s; the times are in %s)", output, startups, cancels, abandoned_command, path, machine_file(output, QEMU_TRACE_SUFFIX))
-	}
-}
-
-// firmware_failure_report says what a machine with that firmware showed
-// when a step failed, while QEMU still runs: a picture of its screen (a
-// prompt or a menu of the firmware is there), then the end of the log of
-// the firmware and of swtpm.
-firmware_failure_report :: proc(machine: ^Machine, output: string) {
-	name := machine_file(output, "_firmware_screen")
-	name = name[strings.last_index_byte(name, '/') + 1:]
-	_ = screen_save(machine, name)
-	for path in ([]string{machine_file(output, FIRMWARE_LOG_SUFFIX), strings.concatenate({tpm_folder_of(output), "/swtpm.log"}, context.temp_allocator), machine_file(output, QEMU_TRACE_SUFFIX)}) {
-		data, err := os.read_entire_file(path, context.temp_allocator)
-		if err != nil {
-			fmt.eprintfln("modustool: %s: none (%v)", path, err)
-			continue
-		}
-		lines := strings.split_lines(string(data), context.temp_allocator)
-		fmt.eprintfln("modustool: the end of %s (%d bytes):", path, len(data))
-		for line in lines[max(len(lines) - FIRMWARE_LOG_LINES_SHOWN, 0):] {
-			fmt.eprintln("   ", line)
-		}
-	}
-}
-
 scenario_changed_module := [?]Step {
 	{kind = .Wait, text = "boot program: started"},
 	{kind = .Wait, text = "boot program: " + build.CHANGED_MODULE + " does not have the hash of the system description: expected "},
@@ -299,12 +125,6 @@ scenario_kernel_memory_raised := [?]Step {
 	{kind = .Wait, text = "boot program: the boot display shows the failure"},
 	{kind = .Quit},
 }
-
-MEASURE_LINE :: "boot program: PCR 11 = "
-// The line of the boot program that says who verified it: the firmware
-// with Secure Boot, or the boot program alone.
-SECURE_BOOT_VERIFIED_LINE :: "boot program: verified by the firmware (Secure Boot), then by the boot program"
-BOOT_PROGRAM_ONLY_VERIFIED_LINE :: "boot program: verified by the boot program, which the firmware did not verify"
 
 scenario_measured := [?]Step {
 	{kind = .Wait, text = "boot program: started", seconds = TPM_MACHINE_FIRST_WAIT_SECONDS},
@@ -738,4 +558,11 @@ measure_machine_run :: proc(part: ^Test_Part_Run, steps: []Step, volume, output:
 	}
 	foundation.test_passed_print("PCR 11 of %s is %s, the value that the tool computes from its system description", volume, found)
 	return build.measure_expected(description), true
+}
+
+// A binary of the tool runs the test part trusted_boot only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+trusted_boot_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("trusted_boot", trusted_boot_tests_run)
 }

@@ -17,15 +17,10 @@ import "modustool:foundation"
 // the console still runs a command that needs no store. A marker places the
 // silence, not a count of requests: QEMU joins and splits requests, and the
 // count of the start changes with each release.
-//
-// The machine with no network device: the root service writes its line at
-// the first process with an endpoint, refuses a second one with no new
-// start of the frame service, and the console still runs.
 
 SILENT_DISK_MARKER :: "the version that the disk does not answer"
 SILENT_DISK_OBJECT :: "silent"
 TEST_OUTPUT_SILENT_DISK :: foundation.BUILD_FOLDER + "/test_output_silent_disk.txt"
-TEST_OUTPUT_NO_NETWORK_DEVICE :: foundation.BUILD_FOLDER + "/test_output_no_network_device.txt"
 
 // The end of the line of the storage service when the disk goes silent,
 // after its cause: the end of the template of storage_service.Disk_Silent
@@ -101,42 +96,4 @@ silent_disk_run :: proc(part: ^Test_Part_Run) -> bool {
 	}
 	foundation.test_passed_print("the silent disk: the disk answered none of %d requests from the write of the marker, and kept none of it; the block service failed its requests at its deadline and stopped, the storage service refused the write and a read, and the console ran on; the server refused %d connections of QEMU after the disconnect", unanswered, refused)
 	return true
-}
-
-scenario_no_network_device := [?]Step {
-	{kind = .Wait, text = "compositor: surface console"},
-	{kind = .Launch, text = "net"},
-	{kind = .Wait, text = "root: no virtio device for frame at the place 18 of the bus"},
-	{kind = .Wait, text = "root: the network service did not start: no process with an endpoint of the network starts until the machine starts again; the other processes start"},
-	// A second process with an endpoint: refused with no new start of the
-	// frame service, so no second line of the device.
-	{kind = .Launch, text = "net"},
-	{kind = .Front, text = "console"},
-	{kind = .Type, text = "1 + 2 * 3"},
-	{kind = .Wait, text = "[console] 7", fails_on = "root: the network service did not start"},
-	{kind = .Quit},
-}
-
-no_network_device_run :: proc(part: ^Test_Part_Run) -> bool {
-	if !machine_test(part, scenario_no_network_device[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_NO_NETWORK_DEVICE, exit_status = 0, no_network_device = true}) {
-		return false
-	}
-	// Two starts of net, one line of each: the second start is refused
-	// with no new start of the frame service and no new line.
-	return lines_once(TEST_OUTPUT_NO_NETWORK_DEVICE, {"root: no virtio device for frame", "root: the network service did not start"})
-}
-
-// lines_once says if the log of a machine holds each text exactly once,
-// and writes the count of each one that it holds another count of times.
-// A line of a fact counts by its sentence.
-lines_once :: proc(log_path: string, texts: []string) -> bool {
-	log := log_file_rendered(log_path) or_return
-	once := true
-	for text in texts {
-		if count := strings.count(log, text); count != 1 {
-			fmt.eprintfln("modustool: test failed: the log %s holds \"%s\" %d times, and it must hold it once", log_path, text, count)
-			once = false
-		}
-	}
-	return once
 }

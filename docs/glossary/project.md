@@ -940,11 +940,31 @@ Do not use: test artifacts, test fixtures.
 
 A part derivation is the derivation of the flake that runs one test part on the test inputs, with no build.
 
-The check `boot-test` depends on one part derivation for each test part, and Nix takes a part derivation from the store when its inputs did not change: the binary of the tool, the test inputs, the sources of `src` and `resources`, and the programs of the host. Its name is `machine-test-<part>`. It is not a test part, which is the row of the table that it runs.
+The check `boot-test` depends on one part derivation for each test part, and Nix takes a part derivation from the store when its inputs did not change: the binary of its part, the test inputs, the sources of `src` and `resources`, and the programs of the host. Its name is `machine-test-<part>`. It is not a test part, which is the row of the table that it runs.
 
 The design: `src/md/infrastructure/full_check.md`, "The derivations of the check".
 
 Do not use: test job, check shard.
+
+### Scenario file
+
+A scenario file is a source of the machine test of the tool that holds the steps or the run procedure of one or more test parts, and that the manifest `tools/modustool/machine/test_part_files.json` names for those parts.
+
+Every other source of the tool is of its core: the engine of a machine, the table of the test parts, the commands. The scenario file that holds the run procedure of a test part registers it in the row of that part when the process starts, so the core compiles with no scenario file. One scenario file can be of two test parts. Example: `debugger_scenario.odin` is the scenario file of the test part `debugger`; `iommu_scenario.odin` is of `iommu` and `iommu_amd`.
+
+The design: `src/md/infrastructure/full_check.md`, "A binary of the tool for each part".
+
+Do not use: test file, part source, test module.
+
+### Binary of a part
+
+The binary of a part is the binary of the tool that the flake builds for one test part, from the core of the tool and the scenario files of that part alone.
+
+The part derivation of that test part runs it, so a change of the scenario file of one test part gives a new binary of that part only, and Nix runs that part again and takes every other part from the store. It runs its own test part and refuses `test` of another test part and the whole test. Its derivation is `modustool-part-<part>`. It is not the whole tool, `modustoolBinary`, which the whole build, the host checks and the shells run.
+
+The design: `src/md/infrastructure/full_check.md`, "A binary of the tool for each part".
+
+Do not use: part runner, test shard binary.
 
 ### Full check
 

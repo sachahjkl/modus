@@ -24,8 +24,6 @@ import "modustool:build"
 TEST_PRINCIPALS_DISK :: foundation.BUILD_FOLDER + "/test_principals_disk.img"
 TEST_OUTPUT_PRINCIPALS :: foundation.BUILD_FOLDER + "/test_output_principals_%d.txt"
 
-PRINCIPAL_PASSPHRASE :: "correct horse battery"
-
 scenario_principals_first := [?]Step {
 	{kind = .Wait, text = "compositor: surface console", any_order = true},
 	// The machine has no TPM: principal 0 has no measure.
@@ -162,4 +160,11 @@ principals_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_test(part, scenario_principals_first[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PRINCIPALS, 1), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_PRINCIPALS_DISK}) or_return
 	machine_test(part, scenario_principals_second[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_PRINCIPALS, 2), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_PRINCIPALS_DISK}) or_return
 	return principals_tpm_tests_run(part)
+}
+
+// A binary of the tool runs the test part principals only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+principals_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("principals", principals_tests_run)
 }

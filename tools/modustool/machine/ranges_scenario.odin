@@ -73,3 +73,10 @@ ranges_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	machine_test(part, scenario_ranges_first[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_RANGES, 1), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_RANGES_DISK}) or_return
 	return machine_test(part, scenario_ranges_second[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_RANGES, 2), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_RANGES_DISK})
 }
+
+// A binary of the tool runs the test part ranges only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+ranges_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("ranges", ranges_tests_run)
+}

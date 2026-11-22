@@ -43,10 +43,6 @@ import "modustool:build"
 TEST_OUTPUT_RETURN_FAULT :: foundation.BUILD_FOLDER + "/test_output_return_fault.txt"
 TEST_OUTPUT_RETURN_FAULT_WITHOUT_CHECK :: foundation.BUILD_FOLDER + "/test_output_return_fault_without_check.txt"
 
-// The boot line of kernel_without_return_check: the same text as
-// TEST_BUILD_LINE_WITHOUT_RETURN_CHECK in src/modulus/return_to_process.odin.
-TEST_KERNEL_WITHOUT_RETURN_CHECK_LINE :: "kernel: TEST BUILD: the check of the instruction address before a return to a process is skipped"
-
 RETURN_FAULT_OK :: "return_fault: ok, 5 cases: each child stopped as its own fault or returned with the flags of a process, and the machine goes on"
 
 @(rodata)
@@ -110,4 +106,11 @@ scenario_non_maskable_interrupt := [?]Step {
 
 return_fault_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 	return machine_test(part, scenario_return_fault[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_RETURN_FAULT, exit_status = build.MACHINE_STOP_OK}) && machine_test(part, scenario_return_fault_without_check[:], {volume = build.BOOT_VOLUME_WITHOUT_RETURN_CHECK, output = TEST_OUTPUT_RETURN_FAULT_WITHOUT_CHECK, exit_status = build.MACHINE_STOP_OK}) && machine_test(part, scenario_non_maskable_interrupt[:], {volume = build.BOOT_VOLUME, output = TEST_OUTPUT_NON_MASKABLE_INTERRUPT, exit_status = build.MACHINE_STOP_FAULT})
+}
+
+// A binary of the tool runs the test part return_fault only when it holds this file
+// (test_parts.odin, test_part_scenario_register).
+@(init)
+return_fault_test_part_register :: proc "contextless" () {
+	test_part_scenario_register("return_fault", return_fault_tests_run)
 }
