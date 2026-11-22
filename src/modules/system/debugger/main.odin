@@ -47,11 +47,11 @@
 // and asks the kernel to write each process input of it into an input
 // history that this service makes and maps without Write; `record_start()`
 // does the same for an attached process that did not run.
-// `replay_status()`, `replay_checkpoint(0)` and `replay_step_back(1)`
-// read the history, `replay_start()` runs the module again from it, and
-// `record_end()` or the end of the debugging ends the record. The history
-// stays for its caller after the debugging, until the next record
-// (replay_wiring.odin).
+// `replay_status()`, `replay_checkpoint(0)`, `replay_step_back(1)` and
+// `watch_back(4206608, 8)` read the history, `replay_start()` runs the
+// module again from it, and `record_end()` or the end of the debugging
+// ends the record. The history stays for its caller after the debugging,
+// until the next record (replay_wiring.odin).
 //
 // **Start**: the root service starts it when a caller connects to
 // `debugger` (`connect("debugger")` in the console, or the first command of
@@ -103,6 +103,7 @@ ERROR_AMBIGUOUS :: -14 // Bad_Value, Processes: two processes have the name and 
 ERROR_TEXT :: -15 // Too_Long, Bytes: a text argument is longer than the service takes.
 ERROR_RECORD :: -16 // Absent, Full, Out_Of_Range, Bad_Value or Damaged, Input_Histories: no record runs, a record or a replay runs already, a step back past the history, a module that is not the module of the history, or a header that is not valid.
 ERROR_CHECKPOINT :: -17 // Absent or Exists, Checkpoints: no checkpoint before the point of a step back, or one at this point already.
+ERROR_NO_WRITE :: -18 // Absent, Recorded_Writes: no input of the history wrote a byte of the range of a watch back.
 
 // The debug object of the module of a disk process, read from the store
 // into memory of this service: at most DEBUG_OBJECT_BYTES_LIMIT, 2048

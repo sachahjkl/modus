@@ -134,6 +134,16 @@ debug_replay_step_back :: proc "contextless" (arguments: []Value) -> Value {
 	return bound_call("debugger", "replay_step_back", arguments)
 }
 
+// The console asks about the whole history: the export also takes the
+// point before which it looks, 0 for each point.
+debug_watch_back :: proc "contextless" (arguments: []Value) -> Value {
+	if len(arguments) != 2 {
+		return fail("watch_back takes an address and a size")
+	}
+	with_point := [3]Value{arguments[0], arguments[1], {kind = .Integer, integer = 0}}
+	return bound_call("debugger", "watch_back", with_point[:])
+}
+
 // debugger_commands_start lists the commands of the debugger. The comment
 // above each command is its documentation on the site.
 debugger_commands_start :: proc "contextless" () {
@@ -346,4 +356,21 @@ debugger_commands_start :: proc "contextless" () {
 	// > replay_step_back(1)
 	// ```
 	command("replay_step_back", {.Integer}, .Table, "the checkpoint and the points of a step back: debugger.replay_step_back()", debug_replay_step_back)
+	// Gives the last input of the history that wrote a byte of a range,
+	// as one row: its input point, the bytes of the history before it,
+	// what wrote (`page delta` for a point copy or a shared page,
+	// `kernel entry` for bytes that the kernel copied), the first byte
+	// written and how many, at most 8 values, the instruction of the
+	// thread there, and the checkpoint and the input points of a replay to
+	// that write. A write by an instruction of the process is not an
+	// input, so it is not in the history.
+	//
+	// - `address`: the first byte of the range, as a decimal number: the
+	//   console has no hexadecimal number (`4206608` is `0x403010`).
+	// - `size`: 1 to 4096 bytes.
+	//
+	// ```
+	// > watch_back(4206608, 8)
+	// ```
+	command("watch_back", {.Integer, .Integer}, .Table, "the last input that wrote some bytes: debugger.watch_back()", debug_watch_back, {{}, value_kinds.size_in(.Bytes)})
 }

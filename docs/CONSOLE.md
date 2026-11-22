@@ -574,6 +574,7 @@ When the export has a table of error details and wrote more than one detail, one
 | `source(thread, frame)` | Table of `Source_Row` | `line`, `mark`, `text`, `path`, `hash` |
 | `break_at(place)`, `watch(place, length)`, `breaks()`, `break_remove(number)` | Table of `Break_Row` | `number`, `kind`, `address`, `length`, `place` |
 | `debug_memory(place, count)` | Table of `Memory_Row` | `address`, `bytes`, `text` |
+| `watch_back(address, size)` | Table of `Watch_Back_Row` | The last input of the history that wrote a byte of the range: `point`, `offset`, `source`, `address`, `written`, `bytes`, `instruction`, `checkpoint`, `start`, `points` |
 | `events()`, `wait_stop(milliseconds)` | Table of `Event_Row` | `thread`, `kind`, `instruction`, `module`, `procedure`, `offset`, `file`, `line` |
 | `stop_report(process)` | Table of `Stop_Frame_Row` | The frames of a disk process that stopped on a fault, with no attach: `frame`, `module`, `procedure`, `offset`, `file`, `line`, `stop` |
 | `process_modules()` | Table of `Process_Module` | One row for each module of each process: `slot`, `process`, `module`, `replaces`, `hash_head`, `writer` (`starter` or `process`: the module writer of the record) |
@@ -667,7 +668,7 @@ A fact that a service holds is an export of that service, and the console calls 
 |---|---|
 | `processes()` | The export `monitor.processes()`. The root service starts `monitor` at its first connection, in each start policy, the rescue included. When `monitor` cannot start, or lost its grant, the line fails with the error of the connection or of the export |
 | `manual_page(name)`, `strategy(name)` | The exports `manual.show` and `scheduler.strategy_set`. The palette runs them ("8. The palette provider"). Each process must run: the command starts none. `strategy("eevdf")` sets the scheduling strategy of the machine, with `round_robin`, `fair` or `eevdf`: the console holds no right to change it, and the process `scheduler` holds it (`SCHEDULING.md`, "The change at run time") |
-| `debug`, `detach`, `threads`, `hold`, `resume`, `continue_all`, `registers`, `stack`, `locals`, `value`, `source`, `break_at`, `watch`, `breaks`, `break_remove`, `step`, `step_line`, `step_over`, `debug_memory`, `events`, `wait_stop`, `stop_report` | The exports of the service `debugger`, which the root service starts when the console connects to it ("The commands of the debugger") |
+| `debug`, `detach`, `threads`, `hold`, `resume`, `continue_all`, `registers`, `stack`, `locals`, `value`, `source`, `break_at`, `watch`, `breaks`, `break_remove`, `step`, `step_line`, `step_over`, `debug_memory`, `events`, `wait_stop`, `stop_report`, `watch_back` | The exports of the service `debugger`, which the root service starts when the console connects to it ("The commands of the debugger") |
 | `start`, `stop`, `grants`, `revoke`, `principal_create`, `lock`, `principals`, `machine_passphrase`, `machine_seal`, `replace`, `connect`, `remote_allow`, `remote_display_allow`, `remote_disallow`, `remote_clients` | A command of the root ring, with typed values and an error record. The root service serves no exports: it has a ring of its own commands, and these built-in commands are its callers |
 | `modules()` | The boot image that the root service granted to the console. `manual.modules()` gives the same modules with more fields, when the process `manual` runs |
 | `replacements()` | The replacement table that the root service granted to the console, read-only. `manual.replacements()` gives it too, when `manual` runs |
@@ -705,6 +706,7 @@ The debugger is the service `debugger` (`TOOLS.md`, "The debugger"). The console
 | `events()` | `events` |
 | `wait_stop(milliseconds)` | `wait_stop` |
 | `stop_report(process)` | `stop_report` |
+| `watch_back(address, size)` | `watch_back`, with the point 0: the whole history |
 
 `stop_report` needs no `debug`: it names the frames of a disk process that stopped on a fault, from the stop report that the root service kept (`MODULE_CONTRACT.md`, "The debug object of a disk process").
 
