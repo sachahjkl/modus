@@ -3,6 +3,7 @@ package debugger
 import debug_object "modus:contract/debug_object"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import "modus:contract/input_history"
 import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "internal:debugger/debugging"
@@ -113,6 +114,36 @@ Event_Row :: struct {
 	offset:      i64,
 	file:        [80]u8,
 	line:        i64,
+}
+
+// The record of the process: record_start(), record_end(), replay_status().
+Record_Row :: struct {
+	state:       [12]u8, // recording, or ended.
+	points:      i64, // The input points in the history: one record each.
+	bytes:       i64, // The bytes of records that the kernel wrote.
+	capacity:    i64, // The bytes of records that the history holds.
+	end:         [20]u8, // Why the history ended, or empty while the kernel writes it.
+	checkpoints: i64, // The checkpoints that the service keeps.
+}
+
+// One checkpoint of the record: replay_checkpoint().
+Checkpoint_Row :: struct {
+	checkpoint:  i64, // Its number, from 1.
+	point:       i64, // The input point of the history where it is.
+	offset:      i64, // The bytes of records of the history before it.
+	instruction: [20]u8, // The instruction of the thread there.
+	stack:       [20]u8, // The stack pointer of the thread there.
+}
+
+// The way back to an earlier input point: replay_step_back().
+Step_Back_Row :: struct {
+	checkpoint:  i64, // The checkpoint where a replay starts.
+	start:       i64, // Its input point.
+	target:      i64, // The input point that the step back reaches.
+	points:      i64, // The input points that the replay runs from the checkpoint.
+	offset:      i64, // The bytes of records of the history before the checkpoint.
+	instruction: [20]u8, // The instruction of the thread at the checkpoint.
+	stack:       [20]u8, // The stack pointer of the thread at the checkpoint.
 }
 
 @(rodata)
@@ -1619,6 +1650,216 @@ wait_stop :: proc "c" (milliseconds: value_kinds.Time_In_Milliseconds, result: ^
 		}
 	}
 	return event_rows(result)
+}
+
+// record_start asks the kernel to record the process into an input history, and gives the row of the record.
+//
+// The service makes the history, 16 pages of its own memory, and the
+// kernel writes into it each process input of the process: the
+// completions of its kernel entries, the trapped reads of the cycle
+// counter and of `cpuid`, and the changes of its point copies
+// (src/md/features/record_and_replay.md). The record needs the right
+// Debug on the process, which the attach gave. The kernel records only a
+// process that did not run yet, and refuses a process that holds a device
+// or memory that another process writes. An earlier history that ended
+// goes, with its checkpoints.
+//
+// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
+// `Debugged_Processes` (-2); (-4) the record of the kernel: `State`,
+// `Processes` for a process that ran already, that the kernel cannot
+// record, or that another recorder records; `Refused` with the status of
+// the kernel for the history; `Absent`, `Processes` (-13); `Full`,
+// `Input_Histories` (-16), a record of the process runs already.
+//
+// ```
+// debugger.record_start()
+// ```
+@(export, link_name = "record_start")
+record_start :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> i64 {
+	if failure := session_of_caller(error); failure != 0 {
+		return failure
+	}
+	record_state_refresh()
+	if record_session.state == .Recording {
+		return errors.fail(error, ERROR_RECORD, .Full, .Input_Histories, 0, 0, 1)
+	}
+	if failure := record_begin(error); failure != 0 {
+		return failure
+	}
+	return record_rows(result, error)
+}
+
+// record_end ends the record of the process, and gives the row of the record with its end.
+//
+// The kernel writes the end record into the input history and stops
+// writing it. The history and its checkpoints stay until the next
+// `record_start` or the end of the debugging, so `replay_status` and
+// `replay_step_back` still read it.
+//
+// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
+// `Debugged_Processes` (-2); (-4) the record of the kernel; `Absent`,
+// `Processes` (-13); `Absent`, `Input_Histories` (-16), no record runs:
+// none started, or the kernel ended it already.
+//
+// ```
+// debugger.record_end()
+// ```
+@(export, link_name = "record_end")
+record_end :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> i64 {
+	if failure := session_of_caller(error); failure != 0 {
+		return failure
+	}
+	record_state_refresh()
+	if record_session.state != .Recording {
+		return errors.fail(error, ERROR_RECORD, .Absent, .Input_Histories)
+	}
+	if status := system.process_record_end(session.process, error); status != .Ok {
+		return kernel_refused(error, status)
+	}
+	record_session.state = .Ended
+	return record_rows(result, error)
+}
+
+// replay_status gives the row of the record: its state, its input points, its bytes, why it ended, and its checkpoints.
+//
+// A record that the kernel ended by itself shows `ended`, with its
+// reason: the process stopped, the history is full, the bound of one
+// stint, or a revocation. While the process runs, the row is the history
+// at one moment.
+//
+// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
+// `Debugged_Processes` (-2); `Absent`, `Processes` (-13); `Absent`,
+// `Input_Histories` (-16), no record started; `Damaged`,
+// `Input_Histories` (-16), the header of the history is not valid.
+//
+// ```
+// debugger.replay_status()
+// ```
+@(export, link_name = "replay_status")
+replay_status :: proc "c" (result: ^[]Record_Row, error: ^errors.Error_Record) -> i64 {
+	if failure := session_of_caller(error); failure != 0 {
+		return failure
+	}
+	record_state_refresh()
+	if record_session.state == .None {
+		return errors.fail(error, ERROR_RECORD, .Absent, .Input_Histories)
+	}
+	return record_rows(result, error)
+}
+
+// replay_checkpoint keeps a checkpoint of a held thread at the last input point of the history, and gives one row for each checkpoint.
+//
+// The checkpoint keeps the input point, the bytes of the history before
+// it, and the instruction and the stack pointer of the thread. It copies
+// no memory yet: a replay from it runs the module again from its start
+// to that point. The service keeps 32 checkpoints; a newer one takes the
+// place of the oldest.
+//
+// - **thread**: the number of a thread that is held or stopped.
+//
+// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
+// `Debugged_Processes` (-2); `Refused` (-4), with the status of the
+// kernel; `Absent`, `Threads` or `Held_Threads` (-5); `Absent`,
+// `Processes` (-13); `Absent`, `Input_Histories` (-16), no record
+// runs; `Damaged`, `Input_Histories` (-16); `Exists`, `Checkpoints`
+// (-17), a checkpoint is at this input point already: the thread ran no
+// kernel entry since.
+//
+// ```
+// debugger.replay_checkpoint(0)
+// ```
+@(export, link_name = "replay_checkpoint")
+replay_checkpoint :: proc "c" (thread: i64, result: ^[]Checkpoint_Row, error: ^errors.Error_Record) -> i64 {
+	if failure := session_of_caller(error); failure != 0 {
+		return failure
+	}
+	record_state_refresh()
+	if record_session.state != .Recording {
+		return errors.fail(error, ERROR_RECORD, .Absent, .Input_Histories)
+	}
+	number, failure := thread_of_argument(thread, true, error)
+	if failure != 0 {
+		return failure
+	}
+	registers, status := system.thread_registers_read(session.process, number)
+	if status != .Ok {
+		return refused(error, status)
+	}
+	header, _, ok := history_header_read()
+	if !ok {
+		return errors.fail(error, ERROR_RECORD, .Damaged, .Input_Histories)
+	}
+	checkpoint := input_history.Replay_Checkpoint {
+		id                  = record_session.checkpoints.last_id + 1,
+		position            = {point_number = header.point_count},
+		history_byte_offset = header.written_bytes,
+		instruction_address = registers.rip,
+		stack_pointer       = registers.rsp,
+	}
+	if !input_history.checkpoint_ring_push(&record_session.checkpoints, checkpoint) {
+		return errors.fail(error, ERROR_CHECKPOINT, .Exists, .Checkpoints, 0, i64(header.point_count))
+	}
+	return checkpoint_rows(result)
+}
+
+// replay_step_back gives the way back by some input points: the nearest checkpoint at or before the target point, and the input points that a replay runs from it.
+//
+// The replay is deterministic, so an earlier state is the state that a
+// replay from the checkpoint reaches again after these points
+// (src/md/features/record_and_replay.md, "The debugger: step back, and a
+// watch back"). The row is that plan; the debugger runs no replay yet.
+//
+// - **points**: the input points to go back, from 1 to the points of the
+//   history.
+//
+// **Errors**: `No_Grant`, `Acts_For_Principal` (-1); `Absent`,
+// `Debugged_Processes` (-2); `Absent`, `Processes` (-13); `Absent`,
+// `Input_Histories` (-16), no record started; `Damaged`,
+// `Input_Histories` (-16); `Out_Of_Range`, `Input_Histories` (-16), 0
+// points, or more than the history holds; `Absent`, `Checkpoints` (-17),
+// no checkpoint is at or before the target point.
+//
+// ```
+// debugger.replay_step_back(1)
+// ```
+@(export, link_name = "replay_step_back")
+replay_step_back :: proc "c" (points: i64, result: ^[]Step_Back_Row, error: ^errors.Error_Record) -> i64 {
+	if failure := session_of_caller(error); failure != 0 {
+		return failure
+	}
+	record_state_refresh()
+	if record_session.state == .None {
+		return errors.fail(error, ERROR_RECORD, .Absent, .Input_Histories)
+	}
+	header, _, ok := history_header_read()
+	if !ok {
+		return errors.fail(error, ERROR_RECORD, .Damaged, .Input_Histories)
+	}
+	if points <= 0 || u64(points) > header.point_count {
+		return errors.fail(error, ERROR_RECORD, .Out_Of_Range, .Input_Histories, 1, points, i64(header.point_count))
+	}
+	target := input_history.Replay_Position{point_number = header.point_count - u64(points)}
+	plan := input_history.step_back_to_position_plan(&record_session.checkpoints, target)
+	switch plan.status {
+	case .Ok:
+	case .No_Prior_Checkpoint, .Invalid_Request:
+		return errors.fail(error, ERROR_CHECKPOINT, .Absent, .Checkpoints, 1, i64(target.point_number))
+	case .At_Start:
+		return errors.fail(error, ERROR_RECORD, .Out_Of_Range, .Input_Histories, 1, points, i64(header.point_count))
+	}
+	if len(result^) > 0 {
+		row := &result[0]
+		row^ = {
+			checkpoint = i64(plan.checkpoint.id),
+			start      = i64(plan.start_position.point_number),
+			target     = i64(plan.target_position.point_number),
+			points     = i64(plan.replay_points_to_advance),
+			offset     = i64(plan.history_start_offset),
+		}
+		hex_column(row.instruction[:], plan.checkpoint.instruction_address)
+		hex_column(row.stack[:], plan.checkpoint.stack_pointer)
+	}
+	return 1
 }
 
 // The step that describes the records reads a size as a number, not as a

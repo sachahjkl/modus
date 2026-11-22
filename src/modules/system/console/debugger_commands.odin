@@ -106,6 +106,26 @@ debug_stop_report :: proc "contextless" (arguments: []Value) -> Value {
 	return bound_call("debugger", "stop_report", arguments)
 }
 
+debug_record_start :: proc "contextless" (arguments: []Value) -> Value {
+	return bound_call("debugger", "record_start", arguments)
+}
+
+debug_record_end :: proc "contextless" (arguments: []Value) -> Value {
+	return bound_call("debugger", "record_end", arguments)
+}
+
+debug_replay_status :: proc "contextless" (arguments: []Value) -> Value {
+	return bound_call("debugger", "replay_status", arguments)
+}
+
+debug_replay_checkpoint :: proc "contextless" (arguments: []Value) -> Value {
+	return bound_call("debugger", "replay_checkpoint", arguments)
+}
+
+debug_replay_step_back :: proc "contextless" (arguments: []Value) -> Value {
+	return bound_call("debugger", "replay_step_back", arguments)
+}
+
 // debugger_commands_start lists the commands of the debugger. The comment
 // above each command is its documentation on the site.
 debugger_commands_start :: proc "contextless" () {
@@ -257,4 +277,38 @@ debugger_commands_start :: proc "contextless" () {
 	// > stop_report("visitor")
 	// ```
 	command("stop_report", {.Text}, .Table, "the frames of a disk process that faulted, named: debugger.stop_report()", debug_stop_report)
+	// Asks the kernel to write each process input of the debugged process
+	// into an input history, and gives the row of the record: its state,
+	// its input points, its bytes, why it ended, and its checkpoints. The
+	// kernel records only a process that did not run yet.
+	//
+	// ```
+	// > record_start()
+	// ```
+	command("record_start", {}, .Table, "record the inputs of the debugged process: debugger.record_start()", debug_record_start)
+	// Ends the record of the debugged process, and gives the row of the
+	// record with why it ended. The history and its checkpoints stay until
+	// the next `record_start` or the end of the debugging.
+	command("record_end", {}, .Table, "end the record of the debugged process: debugger.record_end()", debug_record_end)
+	// Gives the row of the record of the debugged process, also after the
+	// kernel ended it by itself: the process stopped, the history is full,
+	// the bound of one stint, or a revocation.
+	command("replay_status", {}, .Table, "the record of the debugged process: debugger.replay_status()", debug_replay_status)
+	// Keeps a checkpoint of a held thread at the last input point of the
+	// record, and gives one row for each checkpoint: its number, its input
+	// point, the bytes of the history before it, the instruction and the
+	// stack pointer of the thread.
+	//
+	// - `thread`: the number of a thread that is held or stopped.
+	command("replay_checkpoint", {.Integer}, .Table, "a checkpoint of a held thread: debugger.replay_checkpoint()", debug_replay_checkpoint)
+	// Gives the way back by some input points: the nearest checkpoint at
+	// or before the target point, and the input points that a replay runs
+	// from it to reach that point.
+	//
+	// - `points`: the input points to go back, from 1.
+	//
+	// ```
+	// > replay_step_back(1)
+	// ```
+	command("replay_step_back", {.Integer}, .Table, "the checkpoint and the points of a step back: debugger.replay_step_back()", debug_replay_step_back)
 }

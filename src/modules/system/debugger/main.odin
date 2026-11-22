@@ -42,6 +42,12 @@
 // revoked, and when the process stops: the kernel then gives the process
 // back each thread that the debugger held.
 //
+// **The record.** `record_start()` asks the kernel to write each process
+// input of the debugged process into an input history that this service
+// makes and maps without Write; `replay_status()`, `replay_checkpoint(0)`
+// and `replay_step_back(1)` read it, and `record_end()` or the end of the
+// debugging ends it (replay_wiring.odin).
+//
 // **Start**: the root service starts it when a caller connects to
 // `debugger` (`connect("debugger")` in the console, or the first command of
 // the debugger there). It has no window.
@@ -90,12 +96,16 @@ ERROR_ADDRESS :: -12 // Bad_Address or Bad_Value: the process does not map the a
 ERROR_ENDED :: -13 // Absent, Processes: the process stopped, or the debug access ended.
 ERROR_AMBIGUOUS :: -14 // Bad_Value, Processes: two processes have the name and the module; the service cannot tell which one the handle names.
 ERROR_TEXT :: -15 // Too_Long, Bytes: a text argument is longer than the service takes.
+ERROR_RECORD :: -16 // Absent, Full, Out_Of_Range or Damaged, Input_Histories: no record runs, a record runs already, a step back past the history, or a header that is not valid.
+ERROR_CHECKPOINT :: -17 // Absent or Exists, Checkpoints: no checkpoint before the point of a step back, or one at this point already.
 
 // The debug object of the module of a disk process, read from the store
 // into memory of this service: at most DEBUG_OBJECT_BYTES_LIMIT, 2048
-// pages. The rest: the page tables of its mapping, and the call ring and
-// the call region of the connection that reads it.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2080, processes = 1, threads = 1}
+// pages. The input history of a record, HISTORY_PAGES, 16 pages, and the
+// point copies that the kernel takes from its budget, POINT_COPY_PAGES, 32
+// pages. The rest: the page tables of the mappings, and the call ring and
+// the call region of the connection that reads the debug object.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2128, processes = 1, threads = 1}
 
 PROCESS_SLOTS_SEARCHED :: 256 // The process slots that an attach searches for the name.
 THREAD_CAPACITY :: op.THREAD_REPORT_CAPACITY // The threads of one process.
@@ -469,6 +479,8 @@ session_end :: proc "contextless" (why: string) {
 		return
 	}
 	system.log_fact(.Info, Debugging_Ended{debugged_process = value_kinds.module_name_field(session_name()), why = value_kinds.text_field(why, SESSION_END_FIELD_BYTES)})
+	// The record ends while the service still holds the process handle.
+	record_session_end()
 	system.close(session.process)
 	// The root service forgets the debug access: another caller can then
 	// ask for this process.

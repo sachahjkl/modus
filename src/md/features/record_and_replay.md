@@ -153,16 +153,22 @@ The numbers of rr are not estimates for this system. The modus form records more
 
 ## The frequent tasks
 
-Each one is one expression (property 22). The names are a proposal; the exports are of the debugger service.
+Each one is one expression (property 22). The exports are of the debugger service; the console has each under the same name. The first five exist; the others are a proposal.
 
 | Task | Expression |
 |---|---|
+| Record the debugged process | `record_start()`, which gives the row of the record |
+| End a record and keep its history | `record_end()`, which gives the row of the record with its end |
+| See the record, also after the kernel ended it | `replay_status()` |
+| Keep a checkpoint at the last input point | `replay_checkpoint(0)`, with the thread 0 held |
+| Find the way back by input points | `replay_step_back(1)`: the nearest checkpoint, and the points that a replay runs from it |
 | Start a process recorded from its first instruction | `record("clock")` |
-| End a record and keep its history | `record_end()`, which gives the row of the history |
 | Replay a history and stop where it ended | `replay(history)`, then `wait_stop(3000)` |
 | Go back one instruction, one line | `step_back(0)`, `step_back_line(0)` |
 | Find the last write of a variable | `watch_back("clock::seconds", 8)` |
 | Replay the failure of a part of the full check | `modustool replay <part> <process>` |
+
+**The record of the debugger service today.** `record_start` makes a contiguous history of 16 pages of the service, maps it without Write, and calls `Record_Start` with the process handle of the attach. The service never writes the history: it reads its header through `history_reader_open`, which copies the header once and then checks it, because the kernel writes the header during each kernel entry of the recorded thread. The kernel records only a process that did not run yet, and an attach names a process that runs, so today the kernel refuses `record_start` with the record `State`, `Processes` for each process that `attach` can name: the refusal is the export result, not a silent success. `record("clock")`, a start held at the first instruction for the debugger, removes that refusal. A checkpoint keeps the input point, the bytes before it, and `rip` and `rsp` of a held thread; it copies no memory yet. The position of a checkpoint is the last input point of the history, because the first layer counts no instruction between two points. `replay_step_back` gives the plan of `step_back_to_position_plan`; no replay runs it yet. The end of the debugging ends a record that runs before the service closes the process handle.
 
 ## Prior art
 
@@ -228,4 +234,8 @@ Layer 2 and Layer 3 pure engines are built:
 - Pure kernel part `src/modulus/replay_filter/shared_writer.odin` implements the explicit `Shared_Writer_Gate` state machine (`add_shared_writer`, `recorded_thread_enter_input_point`, `recorded_thread_leave_input_point`, `shared_writer_may_run`, `shared_writer_begin_run`, `shared_writer_end_run`, `shared_writer_stint_expired`, `shared_writer_revoke_immediately`), enforcing that shared writers run only while every recorded thread is at an input point, preventing recorded threads from leaving while a shared writer executes on a processor, ending history cleanly with `Stint_Bound_Reached` at the one-stint bound, and ending immediately with `Revocation` on revocation override, with adversarial host tests.
 - Contract `src/library/modus/contract/input_history/debugger_replay.odin` implements the fixed-capacity `Checkpoint_Ring` and pure reverse-execution planners `step_back_plan` and `watch_back_plan`, selecting the nearest prior checkpoint, computing exact forward replay point and single-step counts, validating hardware data watchpoints, and walking backward across checkpoint windows to locate the last prior write overlapping a watched address, with adversarial host tests.
 
-Left: machine-test integration and measures for layer 1, wiring `Shared_Writer_Gate` into kernel scheduling and shared-page diffing (layer 2), wiring `Checkpoint_Ring` and reverse execution exports into the debugger service (layer 3), machine-test recording and `modustool replay` (layer 4), and branch-count interrupts (layer 5). The planned work is in `ROADMAP.md`.
+Layer 3 is wired into the debugger service for the record: the exports `record_start`, `record_end`, `replay_status`, `replay_checkpoint` and `replay_step_back` (`src/modules/system/debugger/replay_wiring.odin`), with the console commands of the same names ("The frequent tasks").
+
+The kernel does not use `Shared_Writer_Gate` yet: a process with a shared writer is still refused at `Record_Start`. The hook needs a lock of the gate that each processor takes, a test in the scheduler for each writer process, a wait before the return of each kernel entry of the recorded thread until no writer is on a processor, and the diff of each shared page; it is concurrent kernel code, so it comes with its own machine test and an independent review, not as state that the kernel keeps and never reads.
+
+Left: machine-test integration and measures for layer 1, the start of a process recorded from its first instruction for the debugger, wiring `Shared_Writer_Gate` into kernel scheduling and shared-page diffing (layer 2), the replay from a checkpoint, the step back by instructions and the watch back in the debugger service (layer 3), machine-test recording and `modustool replay` (layer 4), and branch-count interrupts (layer 5). The planned work is in `ROADMAP.md`.

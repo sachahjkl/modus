@@ -396,6 +396,10 @@ Each export gives a table, or a negative number with an error record. A caller t
 | `events()` | One row for each stop of a thread since the last call: the thread, the kind (`breakpoint N`, `watch N`, `step`, `int3`, `int1`), the instruction, its module, its procedure, its offset, its file and its line |
 | `wait_stop(milliseconds)` | Wait for the next stop, at most the given time and 3000 ms, then the rows of `events()` |
 | `stop_report(process)` | With no attach: the stop report that the root service kept of a disk process of the principal of the caller that stopped on a fault. One row for each frame: the frame number, the module, the procedure, the offset, the file, the line, and in the row 0 what stopped the process (`MODULE_CONTRACT.md`, "The debug object of a disk process") |
+| `record_start()`, `record_end()` | Ask the kernel to record the process into an input history of 16 pages of the service, which also pays its point copies; end that record. The row of the record |
+| `replay_status()` | The row of the record: its state (`recording`, `ended`), its input points, its bytes, its capacity, why it ended (`process stopped`, `record ended`, `stint bound`, `revocation`, `history full`, `divergence`), its checkpoints |
+| `replay_checkpoint(thread)` | A checkpoint of a held thread at the last input point of the record: one row for each checkpoint, its number, its input point, the bytes of the history before it, the instruction and the stack pointer of the thread |
+| `replay_step_back(points)` | The way back by some input points: one row with the nearest checkpoint at or before the target point, its input point, the target point, the input points that a replay runs from it, and the instruction and the stack pointer there |
 
 **The errors.** Each failure is an error record (`MODULE_CONTRACT.md`, section 8):
 
@@ -415,6 +419,8 @@ Each export gives a table, or a negative number with an error record. A caller t
 | The process stopped, or the debug access ended | `Absent`, `Processes` | -13 |
 | Two processes that run have the name and the module | `Bad_Value`, `Processes` | -14 |
 | A text argument is too long | `Too_Long`, `Bytes` | -15 |
+| No record runs or started; a record runs already; a step back of 0 points or past the history; a header of the history that is not valid | `Absent`; `Full`; `Out_Of_Range`; `Damaged`, `Input_Histories` | -16 |
+| No checkpoint is at or before the target point; a checkpoint is at this input point already | `Absent`; `Exists`, `Checkpoints` | -17 |
 
 **The stops.** A thread that reaches a breakpoint, that writes watched bytes or that ends a step waits for the debugger: `release`, `step` or `continue_all` lets it run. After an execute breakpoint the instruction of the thread is the one of the breakpoint, which did not run; `release` runs it once, and the breakpoint stays. After a watch and after a step, the instruction is the next one. The service takes each stop when it comes, keeps 32 of them for `events()`, and writes one line of the log. A caller learns of a stop with `wait_stop`, with no loop of `events()`.
 
@@ -453,6 +459,7 @@ Each command is an export of the service under a short name (`bound_call`, `CONS
 | `step(thread)`, `step_line(thread)`, `step_over(thread)` | The same names | |
 | `debug_memory(place, count)` | `memory` | `memory` gives the memory of the machine |
 | `events()`, `wait_stop(milliseconds)` | The same names | |
+| `record_start()`, `record_end()`, `replay_status()`, `replay_checkpoint(thread)`, `replay_step_back(points)` | The same names | |
 
 A table of the debugger is a table as any other: `columns(stack(0), frame, procedure, line)`, `where(locals(0, 1), name = "total")`.
 

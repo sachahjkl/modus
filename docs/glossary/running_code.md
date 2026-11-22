@@ -1256,6 +1256,16 @@ The design: `src/md/features/record_and_replay.md`.
 
 Do not use: playback, rerun.
 
+### Checkpoint
+
+A checkpoint is a place in an input history that the debugger service keeps, from which a replay reaches a later point of the same run again.
+
+It holds the input point, the bytes of the history before it, and the instruction and the stack pointer of the thread there; the design adds a copy of each memory object and of each thread of the replay, so a replay starts there and not at the first instruction. A step back is a replay from the nearest checkpoint at or before the target point. The service keeps 32 checkpoints; a newer one takes the place of the oldest. It is not a snapshot of a store, and it is not made by a fork.
+
+The design: `src/md/features/record_and_replay.md`, "The debugger: step back, and a watch back".
+
+Do not use: snapshot (of a process), save point, fork point.
+
 ### Divergence
 
 A divergence is a replay that reaches an input point in another state than its input history.
