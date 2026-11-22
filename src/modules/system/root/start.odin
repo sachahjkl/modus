@@ -416,11 +416,16 @@ start_store_give :: proc "contextless" (work: ^Start_Work) -> system.Status {
 // refuses it with the record No_Grant of a surface, and a process that runs
 // with no window (a service, `remote`) runs. The line of the absence of the
 // screen says this once; each refusal here adds no line.
+//
+// serial_terminal needs no screen: with it, a process with the grant
+// Terminal starts on a machine with no screen too. A console image has no
+// window server: there, a process with no terminal starts with no window.
 start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Status) {
-	if screen_absent {
-		return .Terminal in work.start_grant_set.grants ? .Bad_State : .Ok
+	terminal_wanted := .Terminal in work.start_grant_set.grants
+	if screen_absent && !(terminal_wanted && console_renderer == .Serial_Terminal) {
+		return terminal_wanted ? .Bad_State : .Ok
 	}
-	if .Terminal in work.start_grant_set.grants {
+	if terminal_wanted {
 		for &item in started {
 			if place_is_free(&item) && &item != work.slot {
 				work.view = &item
@@ -442,6 +447,9 @@ start_view_give :: proc "contextless" (work: ^Start_Work) -> (status: system.Sta
 	// compositor runs yet. A
 	// replay has none: the compositor would write into its ring.
 	if .Start_Policy in work.start_grant_set.grants || unlock_without_window(work.name) || plan_at_start_without_window(work.name) || work.hold == .For_Replay {
+		return .Ok
+	}
+	if console_renderer != .Desktop_Terminal {
 		return .Ok
 	}
 	work.shared[0] = system.memory_create(ring.PAGE_COUNT) or_return

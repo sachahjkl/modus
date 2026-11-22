@@ -1,0 +1,3 @@
+type: Added
+
+**The console without a desktop, live.** A boot image with no compositor now runs the console in a renderer that draws no window: serial_terminal on the second serial port (COM2, so the log of the kernel on COM1 never mixes with it), or grid_terminal on the screen, with the keys of the PS/2 keyboard. The root service chooses it from the modules of the image and the screen, and a desktop image runs as before. `modustool browser-machine console` writes a console page and its signed console image, with no compositor, drawing module or font; the host of the browser machine plays COM2.

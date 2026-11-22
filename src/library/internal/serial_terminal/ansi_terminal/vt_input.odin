@@ -1,9 +1,10 @@
 // Stateful non-blocking VT100 / UTF-8 input decoder for serial_terminal
-// (src/md/features/console_renderers.md, "Input decoding").
+// (src/md/features/console_renderers.md, "Variant A: serial_terminal").
 //
-// Translates raw COM1 serial bytes into typed terminal_records.Key values
-// matching display.KEY_* and display.MODIFIER_*, refusing malformed or
-// overlong CSI sequences cleanly without blocking.
+// Translates raw serial bytes of the second serial port (COM2) into typed
+// terminal_records.Key values matching display.KEY_* and display.MODIFIER_*,
+// refusing malformed or overlong CSI sequences and overlong or surrogate
+// UTF-8 cleanly without blocking.
 package ansi_terminal
 
 import "modus:display"
@@ -24,9 +25,13 @@ Vt_Decoder :: struct {
 	csi_count:  int,
 	utf8_value: u32,
 	utf8_need:  u8,
+	utf8_least: u32, // The least code point of the length of the sequence: a smaller one is overlong.
 }
 
-// vt_decode_byte feeds one raw byte from COM1 into the decoder.
+// The replacement character, for a UTF-8 sequence that names no character.
+REPLACEMENT_CHARACTER :: rune(0xFFFD)
+
+// vt_decode_byte feeds one raw byte from the serial port into the decoder.
 // When a complete key is ready, ok is true.
 vt_decode_byte :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: terminal_records.Key, ok: bool) {
 	switch decoder.state {
@@ -53,8 +58,8 @@ vt_decode_byte :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: term
 		if decoder.utf8_need == 0 {
 			decoder.state = .Ground
 			r := rune(decoder.utf8_value)
-			if r > 0x10FFFF || (r >= 0xD800 && r <= 0xDFFF) {
-				r = 0xFFFD
+			if r > 0x10FFFF || (r >= 0xD800 && r <= 0xDFFF) || decoder.utf8_value < decoder.utf8_least {
+				r = REPLACEMENT_CHARACTER
 			}
 			return {character = r}, true
 		}
@@ -99,25 +104,37 @@ vt_ground :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: terminal_
 		decoder.state = .Utf8
 		decoder.utf8_value = u32(b & 0x1F)
 		decoder.utf8_need = 1
+		decoder.utf8_least = 0x80
 		return {}, false
 	}
 	if (b & 0xF0) == 0xE0 {
 		decoder.state = .Utf8
 		decoder.utf8_value = u32(b & 0x0F)
 		decoder.utf8_need = 2
+		decoder.utf8_least = 0x800
 		return {}, false
 	}
 	if (b & 0xF8) == 0xF0 {
 		decoder.state = .Utf8
 		decoder.utf8_value = u32(b & 0x07)
 		decoder.utf8_need = 3
+		decoder.utf8_least = 0x10000
 		return {}, false
 	}
+	// A continuation byte with no lead, 0xF8 to 0xFF, NUL and the control
+	// bytes that name no key: no key.
 	return {}, false
 }
 
 @(private = "file")
 vt_csi :: proc "contextless" (decoder: ^Vt_Decoder, b: u8) -> (key: terminal_records.Key, ok: bool) {
+	// An ESC inside a sequence starts a new one: the reader pressed a key
+	// before the sequence of the last one ended, and the new key is kept.
+	if b == 0x1B {
+		decoder.state = .Escape
+		decoder.csi_count = 0
+		return {}, false
+	}
 	// Parameter / intermediate bytes: 0x20..0x3F.
 	if b >= 0x20 && b <= 0x3F {
 		if decoder.csi_count >= CSI_BUFFER_LIMIT {

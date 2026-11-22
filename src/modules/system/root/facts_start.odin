@@ -99,6 +99,19 @@ Start_Refused_Sound_Device_Busy :: struct {
 	refused_process: value_kinds.Module_Name_Field,
 }
 
+// A renderer of the terminal refused: the holder of Terminal is not the
+// module of the renderer that the image chose.
+@(log_fact = "root: cannot start {refused_process} as the terminal of the console: it is not the renderer that the boot image chose; it gets no serial port and no screen")
+Console_Renderer_Refused_Holder :: struct {
+	refused_process: value_kinds.Module_Name_Field,
+}
+
+// A renderer of the terminal refused: one runs already.
+@(log_fact = "root: cannot start {refused_process} as the terminal of the console: a renderer runs already; one process at a time holds the serial port or the screen")
+Console_Renderer_Refused_Running :: struct {
+	refused_process: value_kinds.Module_Name_Field,
+}
+
 // A mapping that a start drops, as the list of its mappings is full: the
 // process starts without it.
 @(log_fact = "root: no room for {mapping} in the mappings of a start, which holds {capacity}: the process starts without it")

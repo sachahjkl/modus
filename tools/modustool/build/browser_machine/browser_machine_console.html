@@ -3,83 +3,169 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>modus — console</title>
+<title>modus console</title>
 <style>
   :root { color-scheme: dark; }
   html, body { margin: 0; height: 100%; background: #14171d; color: #e6ebf2; font-family: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace; }
   header { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: #1c2029; border-bottom: 1px solid #2b313e; font-size: 12px; }
-  #term { margin: 0; padding: 12px; height: calc(100% - 34px); box-sizing: border-box; overflow-y: auto; white-space: pre; font-size: 14px; line-height: 1.35; outline: none; }
+  #term { margin: 0; padding: 12px; white-space: pre; font-size: 14px; line-height: 1.3; outline: none; }
+  .cursor { outline: 1px solid #e6ebf2; }
 </style>
 </head>
 <body>
 <header>
-  <span>modus console (WebAssembly · ANSI 24-bit TrueColor · no desktop)</span>
-  <span id="status">loading...</span>
+  <span>modus console</span>
+  <span id="status">loading</span>
 </header>
 <pre id="term" tabindex="0" aria-label="modus console"></pre>
 <script type="module">
-import { BrowserMachine, LoopResult, MachineState } from "./browser_machine_host.js";
+import { BrowserMachine, MachineState } from "./browser_machine_host.js";
+
+// The screen of a VT100 terminal, as serial_terminal writes it on COM2:
+// 24-bit colors (SGR 38;2 and 48;2), cursor moves (CUP), erase of the
+// screen and of a line (ED, EL), the scroll region of the output (DECSTBM),
+// and the saved cursor of the output (DECSC, DECRC). The size is the
+// largest terminal of the system: serial_terminal places each row and
+// column itself.
+const COLUMNS = 104, ROWS = 32;
+const DEFAULT_FOREGROUND = "#e6ebf2", DEFAULT_BACKGROUND = "#14171d";
+
+class Screen {
+  constructor() {
+    this.foreground = DEFAULT_FOREGROUND;
+    this.background = DEFAULT_BACKGROUND;
+    this.cells = Array.from({ length: ROWS }, () => this.blankRow());
+    this.row = 0; this.column = 0;
+    this.saved = { row: 0, column: 0 };
+    this.top = 0; this.bottom = ROWS - 1;
+    this.state = "ground"; this.parameters = "";
+    this.decoder = new TextDecoder();
+    this.dirty = true;
+  }
+  blankCell() { return { character: " ", foreground: this.foreground, background: this.background }; }
+  blankRow() { return Array.from({ length: COLUMNS }, () => this.blankCell()); }
+  lineFeed() {
+    if (this.row === this.bottom) {
+      this.cells.splice(this.top, 1);
+      this.cells.splice(this.bottom, 0, this.blankRow());
+    } else if (this.row < ROWS - 1) {
+      this.row += 1;
+    }
+  }
+  put(character) {
+    if (this.column >= COLUMNS) { this.column = 0; this.lineFeed(); }
+    this.cells[this.row][this.column] = { character, foreground: this.foreground, background: this.background };
+    this.column += 1;
+  }
+  numbers() { return this.parameters.split(";").map((text) => (text === "" ? 0 : Number(text))); }
+  csi(final) {
+    const numbers = this.numbers();
+    switch (final) {
+      case "m":
+        for (let at = 0; at < numbers.length; at++) {
+          if (numbers[at] === 0) { this.foreground = DEFAULT_FOREGROUND; this.background = DEFAULT_BACKGROUND; }
+          else if ((numbers[at] === 38 || numbers[at] === 48) && numbers[at + 1] === 2) {
+            const color = "rgb(" + numbers.slice(at + 2, at + 5).map((value) => Math.min(Math.max(value | 0, 0), 255)).join(",") + ")";
+            if (numbers[at] === 38) this.foreground = color; else this.background = color;
+            at += 4;
+          }
+        }
+        break;
+      case "H":
+        this.row = Math.min(Math.max((numbers[0] || 1) - 1, 0), ROWS - 1);
+        this.column = Math.min(Math.max((numbers[1] || 1) - 1, 0), COLUMNS - 1);
+        break;
+      case "J":
+        if (numbers[0] === 2) this.cells = Array.from({ length: ROWS }, () => this.blankRow());
+        break;
+      case "K": {
+        const from = numbers[0] === 2 ? 0 : this.column;
+        for (let column = from; column < COLUMNS; column++) this.cells[this.row][column] = this.blankCell();
+        break;
+      }
+      case "r":
+        this.top = Math.min(Math.max((numbers[0] || 1) - 1, 0), ROWS - 1);
+        this.bottom = Math.min(Math.max((numbers[1] || ROWS) - 1, this.top), ROWS - 1);
+        break;
+    }
+  }
+  feed(byte) {
+    const text = this.decoder.decode(new Uint8Array([byte]), { stream: true });
+    for (const character of text) this.take(character);
+    this.dirty = true;
+  }
+  take(character) {
+    if (this.state === "escape") {
+      this.state = "ground";
+      if (character === "[") { this.state = "csi"; this.parameters = ""; }
+      else if (character === "7") this.saved = { row: this.row, column: this.column };
+      else if (character === "8") { this.row = this.saved.row; this.column = this.saved.column; }
+      return;
+    }
+    if (this.state === "csi") {
+      const code = character.charCodeAt(0);
+      if (code >= 0x30 && code <= 0x3f) { this.parameters += character; return; }
+      this.state = "ground";
+      if (code >= 0x40 && code <= 0x7e) this.csi(character);
+      return;
+    }
+    if (character === "\x1b") this.state = "escape";
+    else if (character === "\r") this.column = 0;
+    else if (character === "\n") this.lineFeed();
+    else if (character >= " ") this.put(character);
+  }
+  render(element) {
+    const escape = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const lines = this.cells.map((cells, row) => {
+      let html = "", run = "", style = "";
+      const flush = () => { if (run) html += '<span style="' + style + '">' + escape(run) + "</span>"; run = ""; };
+      cells.forEach((cell, column) => {
+        const cursor = row === this.row && column === this.column;
+        const cellStyle = "color:" + cell.foreground + ";background:" + cell.background;
+        if (cursor) { flush(); html += '<span class="cursor" style="' + cellStyle + '">' + escape(cell.character) + "</span>"; style = ""; return; }
+        if (cellStyle !== style) { flush(); style = cellStyle; }
+        run += cell.character;
+      });
+      flush();
+      return html;
+    });
+    element.innerHTML = lines.join("\n");
+    this.dirty = false;
+  }
+}
 
 const term = document.getElementById("term");
 const status = document.getElementById("status");
-let fg = "", bg = "";
+const screen = new Screen();
 
-function appendAnsi(chunk) {
-  let i = 0;
-  while (i < chunk.length) {
-    const esc = chunk.indexOf("\x1b[", i);
-    const plain = esc === -1 ? chunk.slice(i) : chunk.slice(i, esc);
-    if (plain.length) {
-      const span = document.createElement("span");
-      if (fg) span.style.color = fg;
-      if (bg) span.style.backgroundColor = bg;
-      span.textContent = plain;
-      term.appendChild(span);
-    }
-    if (esc === -1) break;
-    let end = esc + 2;
-    while (end < chunk.length && chunk.charCodeAt(end) < 0x40) end++;
-    const cmd = chunk[end];
-    const params = chunk.slice(esc + 2, end).split(";").map(Number);
-    if (cmd === "m") {
-      for (let p = 0; p < params.length; p++) {
-        if (params[p] === 0) { fg = ""; bg = ""; }
-        else if (params[p] === 38 && params[p + 1] === 2) { fg = `rgb(${params[p+2]},${params[p+3]},${params[p+4]})`; p += 4; }
-        else if (params[p] === 48 && params[p + 1] === 2) { bg = `rgb(${params[p+2]},${params[p+3]},${params[p+4]})`; p += 4; }
-      }
-    } else if (cmd === "J" && params[0] === 2) {
-      term.textContent = "";
-    }
-    i = end + 1;
-  }
-  term.scrollTop = term.scrollHeight;
-}
-
-const [kernelRes, imageRes] = await Promise.all([fetch("./modulus_kernel.wasm"), fetch("./boot.image")]);
-const kernelModule = await WebAssembly.compile(await kernelRes.arrayBuffer());
-const bootImage = new Uint8Array(await imageRes.arrayBuffer());
+const [kernelResponse, imageResponse] = await Promise.all([fetch("./modulus_kernel.wasm"), fetch("./console.image")]);
+const kernelModule = await WebAssembly.compile(await kernelResponse.arrayBuffer());
+const bootImage = new Uint8Array(await imageResponse.arrayBuffer());
 const machine = new BrowserMachine({
   kernelModule, bootImage, memoryMebibytes: 256, framebufferWidth: 0, framebufferHeight: 0,
   clockNanoseconds: () => BigInt(Math.round(performance.now() * 1e6)),
   idleWait: () => {},
-  onSerialLine: (line) => appendAnsi(line + "\n"),
+  // COM1 is the log of the kernel: the console of the developer shows it.
+  onSerialLine: (line) => console.log(line),
+  onConsoleBytes: (byte) => screen.feed(byte),
 });
 
-term.addEventListener("keydown", (e) => {
-  const map = { ArrowUp: "\x1b[A", ArrowDown: "\x1b[B", ArrowRight: "\x1b[C", ArrowLeft: "\x1b[D", Home: "\x1b[H", End: "\x1b[F", Delete: "\x1b[3~", Tab: e.shiftKey ? "\x1b[Z" : "\t", Enter: "\r", Backspace: "\x7f", Escape: "\x1b" };
-  let seq = map[e.key];
-  if (!seq && e.ctrlKey && e.key.length === 1) {
-    const code = e.key.toLowerCase().charCodeAt(0) - 96;
-    if (code >= 1 && code <= 26) seq = String.fromCharCode(code);
-  } else if (!seq && !e.ctrlKey && !e.metaKey && e.key.length === 1) {
-    seq = e.key;
+// The keys as a VT100 terminal sends them; serial_terminal decodes them.
+term.addEventListener("keydown", (event) => {
+  const named = { ArrowUp: "\x1b[A", ArrowDown: "\x1b[B", ArrowRight: "\x1b[C", ArrowLeft: "\x1b[D", Home: "\x1b[H", End: "\x1b[F", Delete: "\x1b[3~", PageUp: "\x1b[5~", PageDown: "\x1b[6~", Tab: event.shiftKey ? "\x1b[Z" : "\t", Enter: "\r", Backspace: "\x7f", Escape: "\x1b" };
+  let sequence = named[event.key];
+  if (!sequence && event.ctrlKey && event.key.length === 1) {
+    const code = event.key.toLowerCase().charCodeAt(0) - 96;
+    if (code >= 1 && code <= 26) sequence = String.fromCharCode(code);
+  } else if (!sequence && !event.ctrlKey && !event.metaKey && event.key.length === 1) {
+    sequence = event.key;
   }
-  if (!seq) return;
-  e.preventDefault();
-  for (const b of new TextEncoder().encode(seq)) machine.serial.input.push(b);
+  if (!sequence) return;
+  event.preventDefault();
+  machine.consolePort.type(sequence);
 });
 
-status.textContent = "booting...";
+status.textContent = "starting";
 await machine.start();
 status.textContent = "running";
 term.focus();
@@ -87,6 +173,7 @@ term.focus();
 function step() {
   if (machine.state !== MachineState.Running) { status.textContent = machine.state; return; }
   machine.runSlice(8_000_000);
+  if (screen.dirty) screen.render(term);
   requestAnimationFrame(step);
 }
 requestAnimationFrame(step);

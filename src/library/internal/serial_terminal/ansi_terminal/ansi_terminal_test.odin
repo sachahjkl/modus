@@ -57,7 +57,7 @@ ansi_render_completion_popup_draws_box_and_clears_on_close :: proc(t: ^testing.T
 	list.rows[1].length = len(row1)
 	list.rows[1].name_length = 4
 
-	emit_completion_popup(&sink, &list, 10, 80, .Dark)
+	emit_completion_popup(&sink, &list, 10, 80, 26, .Dark)
 	out := string(sink_written(&sink))
 	testing.expect(t, !sink.overflow)
 	testing.expect(t, strings.contains(out, "┌"))
@@ -68,9 +68,9 @@ ansi_render_completion_popup_draws_box_and_clears_on_close :: proc(t: ^testing.T
 	// Closing popup clears all popup lines cleanly.
 	sink2 := sink_make(buf[:])
 	empty: terminal_records.List_Shown
-	emit_completion_popup(&sink2, &empty, 10, 80, .Dark)
+	emit_completion_popup(&sink2, &empty, 10, 80, 26, .Dark)
 	testing.expect(t, !sink2.overflow)
-	testing.expect(t, strings.contains(string(sink_written(&sink2)), "\x1b[K"))
+	testing.expect(t, strings.contains(string(sink_written(&sink2)), "\x1b[2K"))
 }
 
 @(test)

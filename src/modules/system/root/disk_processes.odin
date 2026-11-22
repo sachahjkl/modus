@@ -409,9 +409,10 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 	defer if display_memory != 0 {
 		system.close(display_memory)
 	}
-	// With no screen the process gets no window, as a process of the boot
-	// image (start_view_give).
-	if !screen_absent {
+	// With no screen, or in a console image with no window server, the
+	// process gets no window, as a process of the boot image
+	// (start_view_give).
+	if !screen_absent && console_renderer == .Desktop_Terminal {
 		if display_memory, status = system.memory_create(ring.PAGE_COUNT); status != .Ok {
 			return status
 		}
