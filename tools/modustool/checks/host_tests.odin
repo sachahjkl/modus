@@ -430,4 +430,9 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/screen_reader",
 	foundation.SOURCE_FOLDER_CONTRACT + "/locale_cldr",
 	foundation.SOURCE_FOLDER_CONTRACT + "/complex_shaping",
+	foundation.SOURCE_FOLDER_CONTRACT + "/pci_topology",
+	foundation.SOURCE_FOLDER_CONTRACT + "/kernel_fault_isolation",
+	foundation.SOURCE_FOLDER_CONTRACT + "/store_crypto",
+	foundation.SOURCE_FOLDER_CONTRACT + "/machine_sync",
+	foundation.SOURCE_FOLDER_CONTRACT + "/browser_vm_runtime",
 }

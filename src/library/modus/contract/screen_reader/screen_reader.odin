@@ -33,48 +33,15 @@ append_str :: proc "contextless" (dst: []u8, pos: ^int, s: string) {
 	}
 }
 
-role_spoken_name :: proc "contextless" (role: accessibility.Role) -> string {
-	switch role {
-	case .None:         return ""
-	case .Window:       return "window"
-	case .Region:       return "region"
-	case .Toolbar:      return "toolbar"
-	case .Navigation:   return "navigation"
-	case .Main:         return "main"
-	case .Status:       return "status"
-	case .Dialog:       return "dialog"
-	case .Alert_Dialog: return "alert dialog"
-	case .Button:       return "button"
-	case .Checkbox:     return "checkbox"
-	case .Radio:        return "radio"
-	case .Switch:       return "switch"
-	case .Text_Box:     return "text box"
-	case .Slider:       return "slider"
-	case .List:         return "list"
-	case .List_Item:    return "list item"
-	case .Menu:         return "menu"
-	case .Menu_Item:    return "menu item"
-	case .Tab_List:     return "tab list"
-	case .Tab:          return "tab"
-	case .Tree:         return "tree"
-	case .Tree_Item:    return "tree item"
-	case .Table:        return "table"
-	case .Row:          return "row"
-	case .Cell:         return "cell"
-	case .Heading:      return "heading"
-	case .Label:        return "label"
-	case .Image:        return "image"
-	case .Progress_Bar: return "progress bar"
-	case .Link:         return "link"
-	case .Separator:    return "separator"
-	}
-	return ""
-}
-
-// announce_node formats a focused semantic tree node into a concise spoken
+// announce_element formats a focused semantic element into a concise spoken
 // phrase: "<name>, <role>, <states>" suitable for eSpeak NG / speech_output.
-announce_node :: proc "contextless" (
-	node: accessibility.Semantic_Node,
+// Protected fields never leak their value.
+announce_element :: proc "contextless" (
+	role: accessibility.Element_Role,
+	states: accessibility.Element_States,
+	pressed: accessibility.Toggle_State,
+	checked: accessibility.Toggle_State,
+	expanded: accessibility.Expanded_State,
 	name_bytes: []u8,
 	out: []u8,
 ) -> int {
@@ -88,24 +55,39 @@ announce_node :: proc "contextless" (
 			pos += 1
 		}
 	}
-	role_txt := role_spoken_name(node.role)
-	if len(role_txt) > 0 {
-		if pos > 0 {
-			append_str(out, &pos, ", ")
+	if role != .None {
+		role_txt := accessibility.ELEMENT_ROLE_NAMES[role]
+		if len(role_txt) > 0 {
+			if pos > 0 {
+				append_str(out, &pos, ", ")
+			}
+			append_str(out, &pos, role_txt)
 		}
-		append_str(out, &pos, role_txt)
 	}
-	if .Checked in node.states {
+	if .Protected in states {
+		append_str(out, &pos, ", protected")
+	}
+	if checked == .True {
 		append_str(out, &pos, ", checked")
+	} else if checked == .Mixed {
+		append_str(out, &pos, ", mixed")
 	}
-	if .Pressed in node.states {
+	if pressed == .True {
 		append_str(out, &pos, ", pressed")
 	}
-	if .Expanded in node.states {
+	if expanded == .Expanded {
 		append_str(out, &pos, ", expanded")
+	} else if expanded == .Collapsed {
+		append_str(out, &pos, ", collapsed")
 	}
-	if .Disabled in node.states {
+	if .Selected in states {
+		append_str(out, &pos, ", selected")
+	}
+	if .Disabled in states {
 		append_str(out, &pos, ", disabled")
+	}
+	if .Invalid in states {
+		append_str(out, &pos, ", invalid")
 	}
 	return pos
 }
@@ -156,9 +138,8 @@ magnifier_focus_on :: proc "contextless" (m: ^Magnifier_State, tx, ty: i32) {
 // Refreshable Braille Display (Unicode Braille Patterns U+2800..U+28FF)
 // ============================================================================
 
-// Standard Grade-1 dot patterns (bit0=dot1 .. bit7=dot8) for ASCII a..z and 0..9.
-@(private)
-BRAILLE_ALPHA :: [26]u8{
+@(private, rodata)
+BRAILLE_ALPHA := [26]u8{
 	0x01, 0x03, 0x09, 0x19, 0x11, 0x0B, 0x1B, 0x13, 0x0A, 0x1A, // a..j
 	0x05, 0x07, 0x0D, 0x1D, 0x15, 0x0F, 0x1F, 0x17, 0x0E, 0x1E, // k..t
 	0x25, 0x27, 0x3A, 0x2D, 0x3D, 0x35, // u..z

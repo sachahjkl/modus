@@ -12,7 +12,7 @@ zero_copy_handoff_and_large_page_split :: proc(t: ^testing.T) {
 	lp, sp, ok := pages_for_buffer(3840 * 2160 * 4)
 	testing.expect(t, ok)
 	testing.expect_value(t, lp, u32(15))
-	testing.expect_value(t, sp, u32(432))
+	testing.expect_value(t, sp, u32(420))
 
 	p: Buffer_Pool
 	pool_init(&p)
