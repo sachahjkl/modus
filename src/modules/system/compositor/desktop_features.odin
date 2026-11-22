@@ -5,6 +5,7 @@
 package compositor
 
 import "modus:contract/desktop_layout"
+import "modus:contract/enum_word"
 import "modus:contract/desktop_shell"
 import "modus:contract/notifications"
 import "modus:contract/ring"
@@ -21,14 +22,17 @@ NOTIFICATION_BANNER_GAP :: 8
 NOTIFICATION_ICON_SIZE :: 22
 NOTIFICATION_MAX_VISIBLE :: 4
 
-// Context menu action IDs for desktop right-click menu.
-CTX_ACT_NEW_CONSOLE    :: u32(1)
-CTX_ACT_OPEN_MONITOR   :: u32(2)
-CTX_ACT_OPEN_CLOCK     :: u32(3)
-CTX_ACT_TOGGLE_MAG     :: u32(4)
-CTX_ACT_RESTORE_ALL    :: u32(5)
-CTX_ACT_BAR_TOP        :: u32(6)
-CTX_ACT_BAR_BOTTOM     :: u32(7)
+// Closed set of actions offered by the desktop right-click context menu.
+Desktop_Context_Action :: enum u32 {
+	None        = 0,
+	New_Console = 1,
+	Open_Monitor = 2,
+	Open_Clock  = 3,
+	Toggle_Mag  = 4,
+	Restore_All = 5,
+	Bar_Top     = 6,
+	Bar_Bottom  = 7,
+}
 
 desktop_workspaces: desktop_layout.Workspace_Manager
 desktop_work_area: desktop_layout.Work_Area
@@ -164,13 +168,13 @@ desktop_context_menu_open :: proc "contextless" (x, y: int) {
 		return
 	}
 	items := [7]interface.Context_Menu_Item{
-		{id = CTX_ACT_NEW_CONSOLE, label = "New Console"},
-		{id = CTX_ACT_OPEN_MONITOR, label = "Open Monitor"},
-		{id = CTX_ACT_OPEN_CLOCK, label = "Open Clock"},
-		{id = CTX_ACT_TOGGLE_MAG, label = "Toggle Magnifier"},
-		{id = CTX_ACT_RESTORE_ALL, label = "Restore Minimized"},
-		{id = CTX_ACT_BAR_TOP, label = "Bar Position Top"},
-		{id = CTX_ACT_BAR_BOTTOM, label = "Bar Position Bottom"},
+		{id = u32(Desktop_Context_Action.New_Console), label = "New Console"},
+		{id = u32(Desktop_Context_Action.Open_Monitor), label = "Open Monitor"},
+		{id = u32(Desktop_Context_Action.Open_Clock), label = "Open Clock"},
+		{id = u32(Desktop_Context_Action.Toggle_Mag), label = "Toggle Magnifier"},
+		{id = u32(Desktop_Context_Action.Restore_All), label = "Restore Minimized"},
+		{id = u32(Desktop_Context_Action.Bar_Top), label = "Bar Position Top"},
+		{id = u32(Desktop_Context_Action.Bar_Bottom), label = "Bar Position Bottom"},
 	}
 	interface.context_menu_open(&desktop_context_menu, x, y, desktop_width, desktop_height, items[:])
 	damage_whole_screen()
@@ -184,28 +188,31 @@ desktop_context_menu_key :: proc "contextless" (code: u32, character: rune, pres
 	if !consumed {
 		return false
 	}
-	switch act_id {
-	case CTX_ACT_NEW_CONSOLE:
-		packed := system.name_pack("console")
-		system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
-	case CTX_ACT_OPEN_MONITOR:
-		packed := system.name_pack("monitor")
-		system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
-	case CTX_ACT_OPEN_CLOCK:
-		packed := system.name_pack("clock")
-		system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
-	case CTX_ACT_TOGGLE_MAG:
-		desktop_magnifier_toggle(i32(pointer_x), i32(pointer_y))
-	case CTX_ACT_RESTORE_ALL:
-		for &c in clients {
-			if c.created && c.minimized {
-				c.minimized = false
+	if action, ok := enum_word.member_of_word(Desktop_Context_Action, u64(act_id)); ok {
+		switch action {
+		case .None:
+		case .New_Console:
+			packed := system.name_pack("console")
+			system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
+		case .Open_Monitor:
+			packed := system.name_pack("monitor")
+			system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
+		case .Open_Clock:
+			packed := system.name_pack("clock")
+			system.send(&control.completions, ring.Record{kind = u32(display.Control.Start), values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3]}})
+		case .Toggle_Mag:
+			desktop_magnifier_toggle(i32(pointer_x), i32(pointer_y))
+		case .Restore_All:
+			for &c in clients {
+				if c.created && c.minimized {
+					c.minimized = false
+				}
 			}
+		case .Bar_Top:
+			desktop_bar_position = .Top
+		case .Bar_Bottom:
+			desktop_bar_position = .Bottom
 		}
-	case CTX_ACT_BAR_TOP:
-		desktop_bar_position = .Top
-	case CTX_ACT_BAR_BOTTOM:
-		desktop_bar_position = .Bottom
 	}
 	damage_whole_screen()
 	return true
