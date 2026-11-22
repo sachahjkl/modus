@@ -715,6 +715,9 @@ desktop_magnifier_set :: proc "contextless" (zoom_eighths: u16, tx, ty: i32) -> 
 	if !desktop_features_ready {
 		return false
 	}
+	// The principal took the magnifier over: the last assistive holder that
+	// detaches must not end a magnification that it did not ask for.
+	assistive_magnifying = false
 	if zoom_eighths == 0 {
 		desktop_magnifier.enabled = false
 		damage_whole_screen()
@@ -734,6 +737,7 @@ desktop_magnifier_toggle :: proc "contextless" (tx, ty: i32) {
 	if !desktop_features_ready {
 		return
 	}
+	assistive_magnifying = false
 	desktop_magnifier.enabled = !desktop_magnifier.enabled
 	if desktop_magnifier.enabled {
 		screen_reader.magnifier_focus_on(&desktop_magnifier, tx, ty)

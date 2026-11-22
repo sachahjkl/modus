@@ -91,6 +91,14 @@ Window_Grant_Row :: struct {
 }
 #assert(bar.WINDOW_GRANT_PROCESS_BYTES < 32 && bar.WINDOW_GRANT_RESOURCE_BYTES < 96)
 
+// One row for each holder of the assistive role that reads the trees: assistive_holders().
+Assistive_Holder_Row :: struct {
+	holder:   i64, // The number of the holder: assistive_detach takes it.
+	kind:     [16]u8, // screen_reader, magnifier or switch_input.
+	nickname: [32]u8, // The nickname that its mark in the bar shows.
+}
+#assert(bar.ASSISTIVE_NICKNAME_BYTES < 32 && ASSISTIVE_KIND_FIELD_BYTES <= 16)
+
 ERROR_ACTS_FOR_PRINCIPAL :: -1
 
 service: system.Service
@@ -589,4 +597,160 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, added: ^string, removed: ^
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Records, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_CAPACITY)
 	}
 	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
+}
+
+// assistive_attach records a holder of the assistive role, which reads the semantic trees of the windows from here on, and gives its number. The bar shows a mark in the warning color with the word assistive and the nickname while it reads. The result is the number of the holder, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Empty (-1, no nickname); Too_Long (-1, a nickname past 31 bytes); Bad_Value (-1, a nickname with a control byte or a damaged character, or a kind that names no holder: 1 screen reader, 2 magnifier, 3 switch input); Full (-1, 4 holders read already).
+//
+// **Several holders at once.** A principal with low vision uses a
+// magnifier and a screen reader together, so each holder has its own
+// number and its own mark.
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// connect("compositor")
+// compositor.assistive_attach("screen_reader", 1)
+// ```
+@(export, link_name = "assistive_attach")
+assistive_attach_export :: proc "c" (nickname: ^string, kind_word: i64, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	kind, known := bar.assistive_holder_kind_of_word(u64(kind_word))
+	if kind_word < 0 || !known || kind == .None {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 2, kind_word, i64(max(bar.Assistive_Holder_Kind)))
+	}
+	id, refusal := assistive_holder_attach(nickname^, kind)
+	switch refusal {
+	case .None:
+		return i64(id)
+	case .Kind_None:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 2, kind_word, i64(max(bar.Assistive_Holder_Kind)))
+	case .Empty_Nickname:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1, 0, bar.ASSISTIVE_NICKNAME_BYTES)
+	case .Nickname_Too_Long:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 1, i64(len(nickname^)), bar.ASSISTIVE_NICKNAME_BYTES)
+	case .Nickname_Invalid:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, 1)
+	case .Full:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Full, .Records, 0, 0, bar.ASSISTIVE_HOLDER_LIMIT)
+	}
+	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
+}
+
+// assistive_detach ends a holder of the assistive role by its number. Its mark leaves the bar; with the last holder, a magnification that a holder asked for ends too. The result is 1, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Bad_Value (-1, a number under 1); Absent (-1, no holder of that number reads).
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// connect("compositor")
+// compositor.assistive_detach(1)
+// ```
+@(export, link_name = "assistive_detach")
+assistive_detach_export :: proc "c" (holder_id: i64, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if holder_id < 1 {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Records, 1, holder_id)
+	}
+	if !assistive_holder_detach(u64(holder_id)) {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Absent, .Records, 1, holder_id)
+	}
+	return 1
+}
+
+// assistive_holders gives one row for each holder of the assistive role that reads the trees, in the order of their marks from the right: its number, its kind and its nickname. The result is the count of the holders, or a negative number with an error record. The error kind: No_Grant (-1, the caller does not act for the principal).
+//
+// If the table of the caller has fewer places than holders, the last
+// holders are missing, and the result still gives the count of all.
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// connect("compositor")
+// compositor.assistive_holders()
+// ```
+@(export, link_name = "assistive_holders")
+assistive_holders_export :: proc "c" (result: ^[]Assistive_Holder_Row, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	row := 0
+	for &holder in assistive_registry.holders {
+		if !holder.active {
+			continue
+		}
+		if row < len(result^) {
+			result[row] = {holder = i64(holder.id)}
+			copy(result[row].kind[:len(result[row].kind) - 1], ASSISTIVE_HOLDER_KIND_NAMES[holder.kind])
+			copy(result[row].nickname[:len(result[row].nickname) - 1], bar.assistive_holder_nickname(&holder))
+		}
+		row += 1
+	}
+	return i64(row)
+}
+
+// assistive_magnify draws a rectangle of the screen larger, over the whole screen, for a holder of the assistive role: the view centers on the rectangle when it fits, else it starts at its left and top edges. The rectangle is in logical pixels; the factor is in eighths, from 12 (1.5 times) to 64 (8 times). No pixel leaves the compositor. The result is 1, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-1, no assistive holder reads, so no mark would explain the magnification); Bad_Value (-1, a factor past its bounds, or a width or a height under 1); Out_Of_Range (-1, a part of the rectangle is off the screen: argument 1 for the left and the width, 2 for the top and the height).
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// connect("compositor")
+// compositor.assistive_magnify(100, 80, 200, 24, 16)
+// ```
+@(export, link_name = "assistive_magnify")
+assistive_magnify_export :: proc "c" (left, top, width, height, factor_eighths: i64, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	screen_width, screen_height := i64(desktop_width), i64(desktop_height)
+	switch bar.assistive_magnify_check(&assistive_registry, left, top, width, height, factor_eighths, screen_width, screen_height) {
+	case .None:
+		assistive_magnify_start(left, top, width, height, factor_eighths)
+		return 1
+	case .No_Holder:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Absent, .Records)
+	case .Factor_Out_Of_Range:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 5, factor_eighths, bar.ASSISTIVE_MAGNIFY_FACTOR_MOST)
+	case .Empty_Rectangle:
+		if width < 1 {
+			return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 3, width)
+		}
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .None, 4, height)
+	case .Outside_Screen:
+		if left < 0 || width > screen_width || left > screen_width - width {
+			return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Out_Of_Range, .None, 1, left, screen_width)
+		}
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Out_Of_Range, .None, 2, top, screen_height)
+	}
+	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused)
+}
+
+// assistive_magnify_end ends the magnification that a holder of the assistive role asked for. The result is 1 when a magnification ended, 0 when none was on, or a negative number with an error record. The error kinds: No_Grant (-1, the caller does not act for the principal); Absent (-1, no assistive holder reads).
+//
+// **Grant**: the caller must **act for the principal**; else the error
+// kind `No_Grant`, with the result -1.
+//
+// ```
+// connect("compositor")
+// compositor.assistive_magnify_end()
+// ```
+@(export, link_name = "assistive_magnify_end")
+assistive_magnify_end_export :: proc "c" (error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if !bar.assistive_mark_shown(&assistive_registry) {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Absent, .Records)
+	}
+	if !assistive_magnifying {
+		return 0
+	}
+	assistive_magnify_stop()
+	return 1
 }
