@@ -435,4 +435,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_CONTRACT + "/store_crypto",
 	foundation.SOURCE_FOLDER_CONTRACT + "/machine_sync",
 	foundation.SOURCE_FOLDER_CONTRACT + "/browser_vm_runtime",
+	foundation.SOURCE_FOLDER_CONTRACT + "/guest_os",
+	foundation.SOURCE_FOLDER_CONTRACT + "/rich_toolkit",
+	foundation.SOURCE_FOLDER_CONTRACT + "/serial_ring",
+	foundation.SOURCE_FOLDER_CONTRACT + "/console_prompt",
 }
