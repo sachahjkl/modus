@@ -1,0 +1,3 @@
+type: Added
+
+**The assistive face of the compositor**: `compositor.assistive_attach(nickname, kind)` records a screen reader, a magnifier or a switch input that reads the semantic trees, and the bar shows a mark in the warning color with the word `assistive` and the nickname for each holder while it reads; several holders read at once, and `assistive_detach`, `assistive_holders`, `assistive_magnify` and `assistive_magnify_end` complete the face. A conformance suite of host tests checks that hostile tables are refused with no fault, that an action that the element did not declare never runs, that a protected field publishes nothing of its value, the order of the utterances of a reader, and that a magnifier keeps the box of the focus in its view.

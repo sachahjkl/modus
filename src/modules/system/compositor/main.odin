@@ -2153,14 +2153,18 @@ screen_build :: proc "contextless" (now: u64, interface_font: ^display.Interface
 	}
 
 	// The tray, from the clock to the left: the hairline of the clock, the
-	// mark of a viewer of the remote display (capture.odin), which is never
-	// left out, then the pills of the tray. The plates of the windows take
-	// the room that is left.
+	// mark of a viewer of the remote display (capture.odin), the mark of
+	// each assistive holder (assistive.odin), which are never left out, then
+	// the pills of the tray. The plates of the windows take the room that is
+	// left.
 	tray_right := clock_x - TRAY_CLOCK_GAP
 	interface.draw_rectangle(table, tray_right + TRAY_CLOCK_GAP / 2, bar_top + 6, 1, BAR_HEIGHT - 12, graphics.colors.track)
 	capture_mark_records(table, tray_right + 16)
 	if capture_is_open() && capture_mark_drawn {
 		tray_right = capture_mark_x - TRAY_BADGE_GAP
+	}
+	if assistive_left := assistive_marks_records(table, tray_right); assistive_left < tray_right {
+		tray_right = assistive_left - TRAY_BADGE_GAP
 	}
 	desktop_taskbar_and_tray_records(table, tray_right) // desktop_features.odin
 	bar_focus_records(table) // keyboard_desktop.odin: after each item of the bar, so none covers the outline.

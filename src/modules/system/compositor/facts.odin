@@ -1208,6 +1208,28 @@ Plan_Difference_Refused :: struct {
 	plan: [PLAN_NAME_FIELD_BYTES]u8,
 }
 
+// A holder of the assistive role reads the trees from here on: the bar
+// shows its mark.
+@(log_fact = "compositor: the assistive holder {holder} reads the trees as {kind}: {nickname}")
+Assistive_Holder_Attached :: struct {
+	holder:   u64,
+	kind:     [ASSISTIVE_KIND_FIELD_BYTES]u8,
+	nickname: value_kinds.Module_Name_Field,
+}
+
+// A holder of the assistive role stopped reading the trees; holders is the
+// count that still read, and the mark goes with the last one.
+@(log_fact = "compositor: the assistive holder {holder} stopped: {nickname}; {holders} holders still read")
+Assistive_Holder_Detached :: struct {
+	holder:   u64,
+	holders:  u64,
+	nickname: value_kinds.Module_Name_Field,
+}
+
+// The bytes of the Text field of the kind of an assistive holder: the
+// longest name, "screen_reader", and a zero byte.
+ASSISTIVE_KIND_FIELD_BYTES :: 16
+
 // entry_field gives the Text field of a palette entry name.
 entry_field :: proc "contextless" (name: string) -> [ENTRY_NAME_FIELD_BYTES]u8 {
 	return value_kinds.text_field(name, ENTRY_NAME_FIELD_BYTES)
