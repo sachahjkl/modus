@@ -505,12 +505,28 @@ h2 { color: #e8ecf3; margin-top: 18px; margin-bottom: 8px; }
 p { margin-bottom: 10px; }
 a { color: #7cb8ff; }
 .lead { color: #aab3c2; margin-bottom: 14px; }
+.rail { height: 3px; background: #4f9dff; }
+.hero { background: #172133; padding: 18px 24px; margin-bottom: 16px; }
+.kicker { color: #7cb8ff; font-size: 14px; margin-bottom: 6px; }
+.badges { display: flex; flex-direction: row; gap: 8px; }
+.badge { background: #24324a; color: #cfe0ff; padding: 3px 10px; }
+.badge-ok { background: #183a2a; color: #7ee2a8; }
+.actions { display: flex; flex-direction: row; gap: 10px; margin-top: 14px; }
+.cta { background: #2f6fe0; padding: 6px 16px; }
+.cta-link { color: #ffffff; }
+.ghost { background: #232c3b; padding: 6px 16px; }
 .cards { display: flex; flex-direction: row; gap: 12px; margin-bottom: 14px; }
-.card { background: #232836; padding: 12px; width: 236px; }
+.card { background: #1f2531; width: 236px; }
+.card-body { padding: 12px 14px; }
+.card-kicker { color: #8d96a6; font-size: 14px; margin-bottom: 4px; }
 .card-title { color: #ffffff; margin-bottom: 6px; }
-.blue { background: #1d2f4a; }
-.green { background: #1c3a2c; }
-.amber { background: #40331a; }
+.bar { height: 3px; }
+.blue-bar { background: #4f9dff; }
+.green-bar { background: #3ecf8e; }
+.amber-bar { background: #f0b443; }
+.stats { display: flex; flex-direction: row; gap: 12px; margin-bottom: 6px; }
+.stat { background: #1a1f29; padding: 10px 14px; width: 208px; }
+.stat-number { color: #ffffff; font-size: 32px; }
 .rows { display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; }
 .row { display: flex; flex-direction: row; background: #1d212b; padding: 6px 8px; }
 .head { background: #2b3242; color: #ffffff; }
@@ -534,12 +550,28 @@ h2 { color: #18202c; margin-top: 18px; margin-bottom: 8px; }
 p { margin-bottom: 10px; }
 a { color: #0b57c2; }
 .lead { color: #4a5465; margin-bottom: 14px; }
+.rail { height: 3px; background: #0b57c2; }
+.hero { background: #e6eefb; padding: 18px 24px; margin-bottom: 16px; }
+.kicker { color: #0b57c2; font-size: 14px; margin-bottom: 6px; }
+.badges { display: flex; flex-direction: row; gap: 8px; }
+.badge { background: #d3e1f7; color: #10325e; padding: 3px 10px; }
+.badge-ok { background: #d6f0e0; color: #0f5e33; }
+.actions { display: flex; flex-direction: row; gap: 10px; margin-top: 14px; }
+.cta { background: #0b57c2; padding: 6px 16px; }
+.cta-link { color: #ffffff; }
+.ghost { background: #ffffff; padding: 6px 16px; }
 .cards { display: flex; flex-direction: row; gap: 12px; margin-bottom: 14px; }
-.card { background: #ffffff; padding: 12px; width: 236px; }
+.card { background: #ffffff; width: 236px; }
+.card-body { padding: 12px 14px; }
+.card-kicker { color: #5d6675; font-size: 14px; margin-bottom: 4px; }
 .card-title { color: #0d1117; margin-bottom: 6px; }
-.blue { background: #dce9fb; }
-.green { background: #dcf3e5; }
-.amber { background: #f8ecd2; }
+.bar { height: 3px; }
+.blue-bar { background: #0b57c2; }
+.green-bar { background: #157a43; }
+.amber-bar { background: #a8650f; }
+.stats { display: flex; flex-direction: row; gap: 12px; margin-bottom: 6px; }
+.stat { background: #ffffff; padding: 10px 14px; width: 208px; }
+.stat-number { color: #0d1117; font-size: 32px; }
 .rows { display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; }
 .row { display: flex; flex-direction: row; background: #ffffff; padding: 6px 8px; }
 .head { background: #e2e6ee; color: #0d1117; }
@@ -565,13 +597,23 @@ NAVIGATION :: `<p class="dim"><a href="modus://welcome">welcome</a> | <a href="m
 BUILT_IN_SOURCES := [Built_In_Page]string {
 	.Welcome    = `<title>Welcome</title>
 <body>
-` + NAVIGATION + `
+<div class="rail"></div>
+<div class="hero">
+<p class="kicker">MODUS / A PAGE BUILT INTO THE BROWSER</p>
 <h1>A light browser</h1>
 <p class="lead">Each page of this window is HTML and CSS: the browser parses it, computes its styles and its boxes, and paints the boxes into the draw table of the window.</p>
+<div class="badges"><span class="badge">the cascade</span><span class="badge">forms and a history</span><span class="badge">block, inline, flex</span><span class="badge badge-ok">one origin for each host</span></div>
+<div class="actions"><div class="cta"><a class="cta-link" href="modus://properties">The properties</a></div><div class="ghost"><a href="modus://guide">The guide</a></div><div class="ghost"><a href="modus://forms">A form</a></div></div>
+</div>
 <div class="cards">
-<div class="card blue"><p class="card-title">HTML</p><p>A tokenizer and a tree builder of a subset of the WHATWG algorithm, with fixed pools: at most 512 nodes.</p></div>
-<div class="card green"><p class="card-title">CSS</p><p>Selectors of a tag, a class and an id, the cascade by specificity, and block, inline and flex layout.</p></div>
-<div class="card amber"><p class="card-title">Origins</p><p>Each host is an origin. A page reads the state of its own origin only.</p></div>
+<div class="card"><div class="bar blue-bar"></div><div class="card-body"><p class="card-kicker">01 / PARSE</p><p class="card-title">HTML</p><p>A tokenizer and a tree builder of a subset of the WHATWG algorithm, with fixed pools: at most 512 nodes.</p></div></div>
+<div class="card"><div class="bar green-bar"></div><div class="card-body"><p class="card-kicker">02 / STYLE</p><p class="card-title">CSS</p><p>Selectors of a tag, a class and an id, the cascade by specificity, and block, inline and flex layout.</p></div></div>
+<div class="card"><div class="bar amber-bar"></div><div class="card-body"><p class="card-kicker">03 / ISOLATE</p><p class="card-title">Origins</p><p>Each host is an origin. A page reads the state of its own origin only.</p></div></div>
+</div>
+<div class="stats">
+<div class="stat"><p class="stat-number">512</p><p class="dim">nodes at most in a page</p></div>
+<div class="stat"><p class="stat-number">1</p><p class="dim">grant: its window</p></div>
+<div class="stat"><p class="stat-number">0</p><p class="dim">allocations</p></div>
 </div>
 <h2>Try it</h2>
 <div class="item"><div class="mark"></div><p>Follow a link: <a href="modus://properties">the properties of the system</a>.</p></div>
@@ -603,7 +645,7 @@ BUILT_IN_SOURCES := [Built_In_Page]string {
 ` + NAVIGATION + `
 <h1>The guide of the browser</h1>
 <h2>The parts of the window</h2>
-<div class="box"><p>The top band: back, forward, the address field, go, and the origin of the page.</p><p>The page: the boxes of the document, with a scroll bar.</p><p>The status band: the title, the nodes of the document, its document boxes, and the address of the link under the pointer.</p></div>
+<div class="box"><p>The top band: back, forward, reload, the address field, go, and the origin of the page.</p><p>The bookmarks: one button for each page built into the browser.</p><p>The page: the boxes of the document, with a scroll bar.</p><p>The status band: the title, the nodes of the document, its document boxes, and the address of the link under the pointer.</p></div>
 <h2>The keys</h2>
 <div class="rows">
 <div class="row"><span class="number code">Enter</span><span>In the address field: load the address. In a form field: send the form.</span></div>
