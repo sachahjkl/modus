@@ -28,6 +28,7 @@
 package generic_wiring
 
 import "modus:contract/errors"
+import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
@@ -66,13 +67,13 @@ hang_deadline :: proc "contextless" () -> u64 {
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "generic_wiring: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
 @(private = "file")
 wrong_refused :: proc "contextless" (text: string, status: system.Status, answer: [7]u64) -> ! {
-	system.log(.Error, "generic_wiring: WRONG: ", text, " ", u64(status), "; the error record: ", answer[0], " ", answer[1], " ", answer[2], " ", answer[3], " ", answer[4], " ", answer[5], " ", answer[6])
+	system.log_fact(.Error, Wrong_Refused{status = u64(status), error_kind = answer[0], error_unit = answer[1], error_operation = answer[2], error_argument = answer[3], error_value = answer[4], error_limit = answer[5], error_found = answer[6]}, text)
 	system.stop(.Failed)
 }
 
@@ -192,12 +193,12 @@ refused :: proc "contextless" (what: string, before: u64, status: system.Status,
 	record := errors.completion_record(answer)
 	want := errors.completion_record(expected)
 	if status != wanted || record != want {
-		system.log(.Error, "generic_wiring: WRONG: ", what, ": the status ", status, ", the kind ", record.kind, ", the unit ", record.unit, ", the operation ", record.operation, ", the argument ", record.argument, ", the value ", record.value, ", the limit ", record.limit, ", the found ", record.found)
-		system.log(.Error, "generic_wiring: WRONG: ", what, ": wanted the status ", wanted, ", the kind ", want.kind, ", the unit ", want.unit, ", the operation ", want.operation, ", the argument ", want.argument, ", the value ", want.value, ", the limit ", want.limit, ", the found ", want.found)
+		system.log_fact(.Error, Wrong_Refusal{status = op.Status_Word(status), kind = record.kind, unit = record.unit, operation = record.operation, argument = record.argument, value = record.value, limit = record.limit, found = record.found}, what)
+		system.log_fact(.Error, Wrong_Refusal_Wanted{status = op.Status_Word(wanted), kind = want.kind, unit = want.unit, operation = want.operation, argument = want.argument, value = want.value, limit = want.limit, found = want.found}, what)
 		system.stop(.Failed)
 	}
 	if after := budget_pages(); after != before {
-		system.log(.Error, "generic_wiring: WRONG: ", what, ": the budget held ", before, " pages before and ", after, " after")
+		system.log_fact(.Error, Wrong_Budget{pages_before = before, pages_after = after}, what)
 		system.stop(.Failed)
 	}
 	refusals += 1
@@ -312,7 +313,7 @@ refusals_case :: proc "contextless" (source, filter: system.Handle) {
 		status, answer := start_listed("merge", true)
 		refused("one source past the wirings of an asker", before, status, answer, .No_Slot, fail(.Start, .Full, .Wirings, 0, output.WIRINGS_OF_AN_ASKER_MOST + 1, output.WIRINGS_OF_AN_ASKER_MOST))
 	}
-	system.log(.Info, "generic_wiring: a second source of another record, a generic output with no fixed type, a record of no terms into a running generic input, a condition on no field and one source past the wirings of an asker: refused, each with its status and its error record and the budget unchanged: as it must")
+	system.log_fact(.Info, Refusals_Checked{})
 }
 
 // chain_case: source.left and source.right to merge, merge to filter with
@@ -354,14 +355,14 @@ chain_case :: proc "contextless" (source, filter: system.Handle) {
 			break
 		}
 		if read_status != .Ok || item.kind != .Record || item.serial != kept || probe.side < 1 || probe.side > 2 || probe.mark != 1 || probe.number != next_of_side[probe.side] {
-			system.log(.Error, "generic_wiring: WRONG: filter.kept gave the status word ", u64(read_status), ", the kind word ", u64(item.kind), ", the serial ", u64(item.serial), " and the probe of the side ", probe.side, ", number ", probe.number, ", mark ", probe.mark, "; wanted the serial ", u64(kept))
+			system.log_fact(.Error, Wrong_Kept_Record{status_word = u64(read_status), kind_word = u64(item.kind), serial = u64(item.serial), probe_side = probe.side, probe_number = probe.number, probe_mark = probe.mark, wanted_serial = u64(kept)})
 			system.stop(.Failed)
 		}
 		next_of_side[probe.side] += 2
 		kept += 1
 	}
 	if item.end_word != .None || item.error != {} || kept != PROBES_OF_A_SIDE {
-		system.log(.Error, "generic_wiring: WRONG: filter.kept ended with the end word ", u64(item.end_word), " and the error kind ", item.error.kind, " after ", u64(kept), " records; wanted a clean end record after ", u64(PROBES_OF_A_SIDE))
+		system.log_fact(.Error, Wrong_Kept_End{end_word = u64(item.end_word), error_kind = item.error.kind, records = u64(kept), wanted_records = PROBES_OF_A_SIDE})
 		system.stop(.Failed)
 	}
 	processes := [3]system.Handle{source, merge, filter}
@@ -369,7 +370,7 @@ chain_case :: proc "contextless" (source, filter: system.Handle) {
 	for process in processes {
 		system.close(process)
 	}
-	system.log(.Info, "generic_wiring: generic_source to merge to filter with mark = 1 to this asker, in one start list, after a refused Wire of Other into filter.source kept no type: the joined record of 0, the ", u64(kept), " probes of mark 1 of the two sides, each side in its order, then a clean end: as it must")
+	system.log_fact(.Info, Chain_Kept{probes = u64(kept)})
 }
 
 // no_field_case: filter with the terms of the field 0 ends kept at once
@@ -394,7 +395,7 @@ no_field_case :: proc "contextless" () {
 	ended, ended_status := system.asker_read(number, &probe, hang_deadline())
 	wanted := errors.error_make(.Bad_Value, .Wiring_Terms, i64(output.Condition_Terms_Field.Field), 0, PROBE_FIELDS)
 	if joined_status != .Ok || joined.kind != .Joined || joined.serial != 0 || ended_status != .Ended || ended.end_word != .None || ended.error != wanted {
-		system.log(.Error, "generic_wiring: WRONG: filter with the field 0: the joined status word ", u64(joined_status), ", the end status word ", u64(ended_status), ", the end word ", u64(ended.end_word), ", the error kind ", ended.error.kind, ", unit ", ended.error.unit, ", argument ", ended.error.argument, ", value ", ended.error.value, ", limit ", ended.error.limit)
+		system.log_fact(.Error, Wrong_No_Field_End{joined_status_word = u64(joined_status), end_status_word = u64(ended_status), end_word = u64(ended.end_word), error_kind = ended.error.kind, error_unit = ended.error.unit, error_argument = ended.error.argument, error_value = ended.error.value, error_limit = ended.error.limit})
 		system.stop(.Failed)
 	}
 	// generic_source waits for a reader of right, which this case never
@@ -408,7 +409,7 @@ no_field_case :: proc "contextless" () {
 	done_wait(done[:])
 	system.close(source)
 	system.close(filter)
-	system.log(.Info, "generic_wiring: filter with a condition on the field 0 ended kept at once with the error record of that field: as it must")
+	system.log_fact(.Info, No_Field_Ended{})
 }
 
 @(export, link_name = "entry")
@@ -425,6 +426,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	refusals_case(source, filter)
 	chain_case(source, filter)
 	no_field_case()
-	system.log(.Info, "generic_wiring: ok, after ", u64(refusals), " refusals")
+	system.log_fact(.Info, Checked{refusals = u64(refusals)})
 	system.stop(.Done)
 }

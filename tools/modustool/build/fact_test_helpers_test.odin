@@ -1,6 +1,8 @@
 package build
 
+import "modus:contract/cut_mark"
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 import "modus:sentence"
 import "core:strings"
@@ -235,4 +237,93 @@ facts_expect_text_fields_last :: proc(t: ^testing.T, file: []u8, text_bytes_most
 		}
 		testing.expectf(t, last_other_end <= first_text_offset, "the fact type %s has a field after a Text field", type_name)
 	}
+}
+
+// views_values gives the values of a fact with text views: the fixed
+// record, its views filled from texts in their order, and the out-of-line
+// area of the long texts, as system.log_fact writes them: a text of at
+// most 12 bytes in its view, a longer one in the area, and a text that the
+// area has no room for cut with the cut mark.
+@(private)
+views_values :: proc(fixed: []u8, texts: []string) -> []u8 {
+	record_size := len(fixed)
+	values := make([]u8, record_size + op.LOG_FACT_TEXT_AREA_BYTES_MOST, context.temp_allocator)
+	copy(values, fixed)
+	views_start := record_size - len(texts) * value_kinds.TEXT_VIEW_BYTES
+	area := values[record_size:]
+	area_count := 0
+	for text, index in texts {
+		view := values[views_start + index * value_kinds.TEXT_VIEW_BYTES:][:value_kinds.TEXT_VIEW_BYTES]
+		length := len(text)
+		if length <= value_kinds.TEXT_VIEW_INLINE_BYTES_MOST {
+			copy(view[4:], text)
+		} else {
+			room := area[area_count:]
+			length = copy(room, text)
+			if length < len(text) {
+				length, _, _ = cut_mark.apply(room, length, len(text) - length)
+			}
+			if length > value_kinds.TEXT_VIEW_INLINE_BYTES_MOST {
+				copy(view[4:8], room[:value_kinds.TEXT_VIEW_PREFIX_BYTES])
+				offset := u64(area_count)
+				for place in 0 ..< 8 {
+					view[8 + place] = u8(offset >> (8 * u64(place)))
+				}
+				area_count += length
+			} else {
+				for &byte_value in room[:length] {
+					byte_value = 0
+				}
+				inline: [value_kinds.TEXT_VIEW_INLINE_BYTES_MOST]u8
+				kept := copy(inline[:], text)
+				length, _, _ = cut_mark.apply(inline[:], kept, len(text) - kept)
+				copy(view[4:], inline[:length])
+			}
+		}
+		view[0], view[1], view[2], view[3] = u8(length), u8(length >> 8), u8(length >> 16), u8(length >> 24)
+	}
+	return values[:record_size + area_count]
+}
+
+// views_text_written gives the text that a view of a fact holds after the
+// write: the text, or the text cut with the cut mark.
+@(private)
+views_text_written :: proc(values: []u8, record_size, view_index, view_count: int) -> string {
+	start := record_size - (view_count - view_index) * value_kinds.TEXT_VIEW_BYTES
+	text, ok := value_kinds.text_view_read(values[start:][:value_kinds.TEXT_VIEW_BYTES], values[record_size:])
+	return ok ? strings.clone(string(text), context.temp_allocator) : "<a view that does not read>"
+}
+
+// views_render gives the sentence of a fact with text views: its fixed
+// fields, then its texts in the order of its views. The sentence is the
+// one of the texts as written, and written is that text for each view.
+@(private)
+views_render :: proc(t: ^testing.T, file: []u8, package_name, type_name: string, values: []Fact_Test_Field, texts: []string) -> (rendered_sentence: string, written: []string) {
+	key, fixed, made := fact_test_record(t, file, package_name, type_name, values)
+	if !made {
+		return "", nil
+	}
+	whole := views_values(fixed, texts)
+	written = make([]string, len(texts), context.temp_allocator)
+	for index in 0 ..< len(texts) {
+		written[index] = views_text_written(whole, len(fixed), index, len(texts))
+	}
+	rendered := false
+	rendered_sentence, rendered = fact_values_render(file, key, whole)
+	testing.expectf(t, rendered, "the fact %s.%s with texts %v is refused", package_name, type_name, texts)
+	return
+}
+
+// The texts of the views at their edges: empty, 12 bytes (whole in the
+// view), 13 (the first in the area), a long one, and one past the area
+// bound, which the write cuts with the mark.
+@(private)
+view_texts :: proc() -> []string {
+	texts := make([]string, 5, context.temp_allocator)
+	texts[0] = ""
+	texts[1] = strings.repeat("a", 12, context.temp_allocator)
+	texts[2] = strings.repeat("b", 13, context.temp_allocator)
+	texts[3] = "fault::three + 0x8 in fault (src/modules/demonstrations/fault/main.odin:15)"
+	texts[4] = strings.repeat("z", op.LOG_FACT_TEXT_AREA_BYTES_MOST + 100, context.temp_allocator)
+	return texts
 }

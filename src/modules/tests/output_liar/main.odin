@@ -39,7 +39,7 @@ hang_deadline :: proc "contextless" () -> u64 {
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "output_liar: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
@@ -71,7 +71,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wrong("no wiring ring; the status", u64(status))
 	}
 	wiring = opened
-	system.log(.Info, "output_liar: it waits for a reader")
+	system.log_fact(.Info, Waits_For_Reader{})
 	command := command_wait()
 	if command.values[output.WIRING_VALUE_TERMS] == 0 {
 		wrong("the end came with no condition; the tag", u64(command.tag))
@@ -100,7 +100,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wrong("the record does not fit the output ring", 0)
 	}
 	system.word_wake(&output_ring.commands.counters.write, system.WAKE_ALL)
-	system.log(.Info, "output_liar: wrote a record of the status 200 into a ring whose wiring has a condition: as it must")
+	system.log_fact(.Info, Record_Written_Past_Condition{})
 	// Its starter stops it; it reads no more commands.
 	deadline := hang_deadline()
 	for system.time() < deadline {

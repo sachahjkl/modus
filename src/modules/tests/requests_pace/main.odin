@@ -70,7 +70,7 @@ hang_deadline :: proc "contextless" () -> u64 {
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "requests_pace: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
@@ -78,7 +78,7 @@ wrong :: proc "contextless" (text: string, value: u64) -> ! {
 // error record of the completion too.
 @(private = "file")
 wrong_refused :: proc "contextless" (text: string, status: system.Status, answer: [7]u64) -> ! {
-	system.log(.Error, "requests_pace: WRONG: ", text, " ", u64(status), "; the error record: ", answer[0], " ", answer[1], " ", answer[2], " ", answer[3], " ", answer[4], " ", answer[5], " ", answer[6])
+	system.log_fact(.Error, Wrong_Refused{status = u64(status), error_kind = answer[0], error_unit = answer[1], error_operation = answer[2], error_argument = answer[3], error_value = answer[4], error_limit = answer[5], error_found = answer[6]}, text)
 	system.stop(.Failed)
 }
 
@@ -209,7 +209,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	server := system.Handle(answer[0])
 	number := u32(answer[1])
-	system.log(.Info, "requests_pace: server runs with three readers of requests: held of the pace Always_Holds_Writer and gapped of the pace Never_Holds_Writer, in rings of ", u64(PACE_RING_CAPACITY), ", and this process, the fast reader")
+	system.log_fact(.Info, Server_Runs{ring_capacity = PACE_RING_CAPACITY})
 
 	// The fast reader: each record of the test, in order, with no gap.
 	record: Access_Record
@@ -220,7 +220,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	for serial in u32(0) ..< PACE_REQUESTS {
 		item, read_status = system.asker_read(number, &record, hang_deadline())
 		if read_status != .Ok || item.kind != .Record || item.serial != serial {
-			system.log(.Error, "requests_pace: WRONG: the fast reader wanted the record ", u64(serial), ", and read the status word ", u64(read_status), ", the kind word ", u64(item.kind), " and the serial ", u64(item.serial))
+			system.log_fact(.Error, Wrong_Fast_Record{wanted_serial = u64(serial), status_word = u64(read_status), kind_word = u64(item.kind), serial = u64(item.serial)})
 			system.stop(.Failed)
 		}
 	}
@@ -232,7 +232,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wrong("the ring of the fast reader gives no counts", 0)
 	}
 	if counts.written != PACE_REQUESTS - 1 || counts.discarded != 0 || counts.refused != 0 || counts.held != HOLDS_OF_THE_TEST {
-		system.log(.Error, "requests_pace: WRONG: the counts of the server: written ", counts.written, ", discarded ", counts.discarded, ", refused ", counts.refused, ", held ", counts.held, "; wanted ", u64(PACE_REQUESTS - 1), ", 0, 0 and ", u64(HOLDS_OF_THE_TEST))
+		system.log_fact(.Error, Wrong_Counts{written = counts.written, discarded = counts.discarded, refused = counts.refused, held = counts.held, wanted_written = PACE_REQUESTS - 1, wanted_held = HOLDS_OF_THE_TEST})
 		system.stop(.Failed)
 	}
 
@@ -241,12 +241,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	// leaves, so a stop by this process could cut that answer. The slow
 	// reader then reads the end word of each of its rings after the records
 	// that they hold, and stops.
-	system.log(.Info, "requests_pace: the fast reader read the ", u64(PACE_REQUESTS), " records; it waits for the stop of server")
+	system.log_fact(.Info, Fast_Reader_Read{records = PACE_REQUESTS})
 	processes := [2]system.Handle{server, reader}
 	stopped_wait(processes[:])
 	for process in processes {
 		system.close(process)
 	}
-	system.log(.Info, "requests_pace: the fast reader: the joined record of 0 and the ", u64(PACE_REQUESTS), " records in order, no gap; the server was held ", counts.held, " times by the slow reader of the pace Always_Holds_Writer and refused no record: as it must")
+	system.log_fact(.Info, Fast_Reader_Checked{records = PACE_REQUESTS, held = counts.held})
 	system.stop(.Done)
 }

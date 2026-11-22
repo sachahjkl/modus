@@ -18,6 +18,7 @@
 package output_measure_reader
 
 import "modus:contract/output"
+import "modus:contract/value_kinds"
 import "modus:system"
 
 // The record of the writer: the type check of the root service compares
@@ -47,7 +48,7 @@ hang_deadline :: proc "contextless" () -> u64 {
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "output_measure_reader: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
@@ -79,7 +80,7 @@ read :: proc "contextless" (serial: u32, sample: ^Sample, wakes: ^u64 = nil) {
 		item, status = system.input_read(&samples, sample, hang_deadline())
 	}
 	if status != .Ok || item.kind != .Record || item.serial != serial {
-		system.log(.Error, "output_measure_reader: WRONG: wanted the record ", u64(serial), ", read the status word ", u64(status), ", the kind word ", u64(item.kind), " and the serial ", u64(item.serial))
+		system.log_fact(.Error, Wrong_Record{wanted_serial = u64(serial), status_word = u64(status), kind_word = u64(item.kind), serial = u64(item.serial)})
 		system.stop(.Failed)
 	}
 }
@@ -108,12 +109,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	item, status = system.input_read(&samples, &sample, hang_deadline())
 	if status != .Ended || item.kind != .End || item.error.kind != 0 || item.serial != SAMPLES_OF_A_RUN {
-		system.log(.Error, "output_measure_reader: WRONG: after ", u64(SAMPLES_OF_A_RUN), " records, the status word ", u64(status), " and the end word ", output.end_word_names[item.end_word])
+		system.log_fact(.Error, Wrong_End{records = SAMPLES_OF_A_RUN, status_word = u64(status), end_word = value_kinds.text_field(output.end_word_names[item.end_word], END_WORD_FIELD_BYTES)})
 		system.stop(.Failed)
 	}
 	if sample.readers == 1 {
 		least, median := least_and_median(times[:])
-		system.log(.Info, "output_measure_reader: the wake: from a write to the read of a reader that waits on another processor: least ", least, ", median ", median, " cycles, of ", u64(WAKE_SAMPLES), " records; a burst of ", u64(BURST_SAMPLES), " records: ", wakes, " wakes")
+		system.log_fact(.Info, Wake_Measured{least = least, median = median, wake_records = WAKE_SAMPLES, burst_records = BURST_SAMPLES, wakes = wakes})
 	}
 	system.stop(.Done)
 }

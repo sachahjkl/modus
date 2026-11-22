@@ -82,13 +82,13 @@ hang_deadline :: proc "contextless" () -> u64 {
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "log_follower: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
 @(private = "file")
 wrong_refused :: proc "contextless" (text: string, status: system.Status, answer: [7]u64) -> ! {
-	system.log(.Error, "log_follower: WRONG: ", text, " ", u64(status), "; the error record: ", answer[0], " ", answer[1], " ", answer[2], " ", answer[3], " ", answer[4], " ", answer[5], " ", answer[6])
+	system.log_fact(.Error, Wrong_Refused{status = u64(status), error_kind = answer[0], error_unit = answer[1], error_operation = answer[2], error_argument = answer[3], error_value = answer[4], error_limit = answer[5], error_found = answer[6]}, text)
 	system.stop(.Failed)
 }
 
@@ -170,12 +170,12 @@ flood :: proc "contextless" (refused_before: u64) -> (written: u64) {
 			return written
 		}
 		if system.time() >= deadline {
-			system.log(.Error, "log_follower: WRONG: the kernel took fewer than ", u64(FLOOD_TARGET), " of ", written, " lines within the hang bound, in milliseconds: ", u64(system.TEST_HANG_BOUND_MILLISECONDS))
+			system.log_fact(.Error, Wrong_Flood_Not_Taken{target = FLOOD_TARGET, written = written, bound_milliseconds = system.TEST_HANG_BOUND_MILLISECONDS})
 			system.stop(.Failed)
 		}
 		next_second_wait()
 		for _ in 0 ..< FLOOD_BATCH {
-			system.log(.Info, "log_follower: a record of the flood")
+			system.log_fact(.Info, Flood_Record{})
 			written += 1
 		}
 	}
@@ -186,7 +186,7 @@ flood :: proc "contextless" (refused_before: u64) -> (written: u64) {
 read_one :: proc "contextless" (number: u32, row: ^Follow_Row) -> system.Input_Item {
 	item, status := system.asker_read(number, row, hang_deadline())
 	if status != .Ok {
-		system.log(.Error, "log_follower: WRONG: a read of log.follow gave the status word ", u64(status), ", the kind word ", u64(item.kind), " and the end word ", u64(item.end_word))
+		system.log_fact(.Error, Wrong_Read{status_word = u64(status), kind_word = u64(item.kind), end_word = u64(item.end_word)})
 		system.stop(.Failed)
 	}
 	return item
@@ -244,21 +244,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		item := read_one(number, &row)
 		if item.kind == .Gap {
 			if rows_before == 0 || item.serial != last_serial + 1 || item.gap_count == 0 {
-				system.log(.Error, "log_follower: WRONG: the gap record of log.follow: the serial ", u64(item.serial), " and the count ", u64(item.gap_count), " after ", u64(rows_before), " rows, the last of the serial ", u64(last_serial))
+				system.log_fact(.Error, Wrong_Gap{serial = u64(item.serial), gap_count = u64(item.gap_count), rows_before = u64(rows_before), last_serial = u64(last_serial)})
 				system.stop(.Failed)
 			}
 			after := read_one(number, &row)
 			if after.kind != .Record || after.serial != item.serial + item.gap_count || row.number != last.number + i64(item.gap_count) + 1 {
-				system.log(.Error, "log_follower: WRONG: after the gap of ", u64(item.gap_count), " records from the serial ", u64(item.serial), ": the kind word ", u64(after.kind), ", the serial ", u64(after.serial), " and the number ", row.number, "; the last row before the gap had the number ", last.number)
+				system.log_fact(.Error, Wrong_After_Gap{gap_count = u64(item.gap_count), gap_serial = u64(item.serial), kind_word = u64(after.kind), serial = u64(after.serial), row_number = row.number, last_row_number = last.number})
 				system.stop(.Failed)
 			}
 			system.asker_close(number)
 			system.call_connection_end(&connection)
-			system.log(.Info, "log_follower: log.follow gave ", u64(rows_before), " rows in order, then one gap record of ", u64(item.gap_count), " records that the kernel wrote over, then the row of the number after them, after ", written, " lines of this process that the kernel took: as it must")
+			system.log_fact(.Info, Gap_Read{rows_before = u64(rows_before), gap_count = u64(item.gap_count), written = written})
 			system.stop(.Done)
 		}
 		if item.kind != .Record || item.serial != last_serial + (rows_before == 0 ? 0 : 1) || (rows_before > 0 && row.number != last.number + 1) {
-			system.log(.Error, "log_follower: WRONG: before the gap: the kind word ", u64(item.kind), ", the serial ", u64(item.serial), " and the number ", row.number, " after the serial ", u64(last_serial), " and the number ", last.number)
+			system.log_fact(.Error, Wrong_Before_Gap{kind_word = u64(item.kind), serial = u64(item.serial), row_number = row.number, last_serial = u64(last_serial), last_row_number = last.number})
 			system.stop(.Failed)
 		}
 		last, last_serial = row, item.serial

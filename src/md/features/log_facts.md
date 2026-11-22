@@ -602,6 +602,17 @@ The rules that decided each line, past those of the groups before:
 - **A Text field comes last, and holds its longest text and a zero byte.** Each file says the longest text of each field beside its size.
 - **A line stays text** when it is the subject of its module: the demonstration `errors` writes the sentences of an error record, of a load error and of a stack, and a line longer than one log record, and its main test checks each writer of them by its words and the join of the long line.
 
+### The facts of the wiring service and of the test modules
+
+The wiring service, the pair `wired_reader` and `wired_writer`, and the test modules of the record outputs, of the generic wirings, of the pace of requests and of `log.follow` convert after the demonstrations. Each has a file `facts.odin`. A host test of the tool (`tools/modustool/build/output_module_facts_test.odin`) checks each sentence against the line of before, at the edges of its fields and of its texts.
+
+The rules that decided each line, past those of the groups before:
+
+- **The check of a helper `wrong` is a text view.** Each test module stops on a failed check through one helper that takes the words of the check and one value: its fact type `Wrong` keeps the words as a text view, so one fact type serves each check, and `where(what = "...")` finds one. The helper `wrong_refused` writes the seven words of the error record of a completion as seven Integers, as the line wrote them.
+- **A word that the line wrote with an explicit number stays a number.** A status word of a record input, a kind word, an end word as a number: the line named it "the status word", and a reader compares it with the contract by its number. A status of the kernel that the line wrote as its value writes the name of its member.
+- **A sentence with "its asker " for one kind of reader is two fact types.** The wiring service writes `Log_Wired_To_Asker` and `Log_Wired`, `Output_Wired_To_Asker` and `Output_Wired`: a template has no condition.
+- **A line stays text** when the text is its subject: `log_flood` writes the text records that `output_wiring` compares byte for byte, `log_reader` reads back its own text record and measures a text line against a fact, `output_measure_writer` measures one line of text against one fact, `probe.log_long` writes a text longer than one call, and `visitor` writes three lines in its copies built outside the sources only.
+
 ### The kernel and the boot path
 
 The kernel and the boot program keep text records. The reason is not the store: the module file of the kernel is in the boot image, which a reader of the whole log holds. The reasons are two. The lines of the kernel are read on the serial port by a person at a fault of the start, with no tool: the boot stages, a stop on a fault, the report of a fault. And the kernel has no own-hash place and no `system` package: a writer of facts in the kernel is a kernel part of its own. The open question below keeps this choice open.

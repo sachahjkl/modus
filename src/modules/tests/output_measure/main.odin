@@ -47,13 +47,13 @@ hang_deadline :: proc "contextless" () -> u64 {
 
 @(private = "file")
 wrong :: proc "contextless" (text: string, value: u64) -> ! {
-	system.log(.Error, "output_measure: WRONG: ", text, " ", value)
+	system.log_fact(.Error, Wrong{value = value}, text)
 	system.stop(.Failed)
 }
 
 @(private = "file")
 wrong_refused :: proc "contextless" (text: string, status: system.Status, answer: [7]u64) -> ! {
-	system.log(.Error, "output_measure: WRONG: ", text, " ", u64(status), "; the error record: ", answer[0], " ", answer[1], " ", answer[2], " ", answer[3], " ", answer[4], " ", answer[5], " ", answer[6])
+	system.log_fact(.Error, Wrong_Refused{status = u64(status), error_kind = answer[0], error_unit = answer[1], error_operation = answer[2], error_argument = answer[3], error_value = answer[4], error_limit = answer[5], error_found = answer[6]}, text)
 	system.stop(.Failed)
 }
 
@@ -231,16 +231,16 @@ measure_log_run :: proc "contextless" () {
 			break
 		}
 		if read_status != .Ok || item.kind != .Record || item.serial != records {
-			system.log(.Error, "output_measure: WRONG: the log of the writer: the record ", u64(records), " came as the status word ", u64(read_status), ", the kind word ", u64(item.kind), " and the serial ", u64(item.serial))
+			system.log_fact(.Error, Wrong_Log_Record{record_serial = u64(records), status_word = u64(read_status), kind_word = u64(item.kind), serial = u64(item.serial)})
 			system.stop(.Failed)
 		}
 		records += 1
 	}
 	if item.end_word != .Writer_Stopped || item.stop_outcome != .Done {
-		system.log(.Error, "output_measure: WRONG: the log of the writer ended with the end word ", u64(item.end_word), " and the stop outcome ", u64(item.stop_outcome), " after ", u64(records), " records")
+		system.log_fact(.Error, Wrong_Log_End{end_word = u64(item.end_word), stop_outcome = u64(item.stop_outcome), records = u64(records)})
 		system.stop(.Failed)
 	}
-	system.log(.Info, "output_measure: the log of the writer, wired: ", u64(records), " records in order, then its stop")
+	system.log_fact(.Info, Log_Read{records = u64(records)})
 	done_wait(processes[:])
 	for process in processes {
 		system.close(process)
@@ -284,6 +284,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		measure_run(count)
 	}
 	measure_log_run()
-	system.log(.Info, "output_measure: the writer with 1, 2, 4 and 8 readers, each record read in order by each reader, and with its log wired, each log record read in order: as it must")
+	system.log_fact(.Info, Measured{})
 	system.stop(.Done)
 }

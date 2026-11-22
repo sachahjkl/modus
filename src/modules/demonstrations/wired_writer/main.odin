@@ -40,6 +40,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		_ = system.output_write(&numbers, Wired_Number{number = number, square = number * number})
 	}
 	_ = system.output_end(&numbers)
-	system.log(.Info, "wired_writer: wrote ", u64(NUMBERS_WRITTEN), " numbers to ", u64(readers), " reader, and ended numbers")
+	system.log_fact(.Info, Numbers_Written{numbers = NUMBERS_WRITTEN, readers = u64(readers)})
 	system.stop(.Done)
 }
