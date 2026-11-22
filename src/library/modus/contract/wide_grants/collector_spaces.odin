@@ -73,6 +73,7 @@ Space_Refusal :: enum u8 {
 	Bad_Limit           = 16,
 	Store_Failed        = 17, // The private store refused a read or a write: nothing changed.
 	Store_Damaged       = 18, // An object of the private store does not decode, or breaks its chain.
+	Space_Held          = 19, // Another wiring of the same source feeds the space now.
 }
 
 // The terms of a space, as space_open takes them: the kind (Keep or Audit),
@@ -138,6 +139,7 @@ Collector_Space :: struct {
 	removed:        u64,
 	refused_full:   u64,
 	forwarded:      u64,
+	unforwarded:    u64, // The kept records whose pair ended before they left: the space keeps them, and no reader got them.
 	last_hash:      blake3.Hash,
 	segment_hashes: [SPACE_SEGMENTS_MOST]blake3.Hash, // The hash of each audit segment in the private store.
 	serials:        [SPACE_RECORDS_MOST]u64,
@@ -400,6 +402,33 @@ forward_peek :: proc "contextless" (store: ^Space_Store) -> (item: ^Forward_Item
 		return nil, .Forward_Empty
 	}
 	return &store.forward[store.forward_first], .None
+}
+
+// forward_drop removes the oldest record of the queue, whose pair has no
+// ring any more, and counts it as unforwarded in its space: the space keeps
+// it, and no later reader of a new pair takes a record of another wiring.
+forward_drop :: proc "contextless" (store: ^Space_Store) -> Space_Refusal {
+	if store.forward_count == 0 {
+		return .Forward_Empty
+	}
+	item := &store.forward[store.forward_first]
+	if space := space_of(store, item.space); space != nil {
+		space.unforwarded += 1
+	}
+	item^ = {}
+	store.forward_first = (store.forward_first + 1) % FORWARD_QUEUE_CAPACITY
+	store.forward_count -= 1
+	return .None
+}
+
+// forward_waits_for says if the forward queue holds a record of a space.
+forward_waits_for :: proc "contextless" (store: ^Space_Store, space_number: u32) -> bool {
+	for offset in 0 ..< store.forward_count {
+		if store.forward[(store.forward_first + offset) % FORWARD_QUEUE_CAPACITY].space == space_number {
+			return true
+		}
+	}
+	return false
 }
 
 // forward_done removes the oldest record of the queue, which its record

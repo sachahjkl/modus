@@ -559,7 +559,8 @@ list_read_rows :: proc "contextless" (bytes: []u8, list: ^List) -> (problem: Lis
 // list of row_count start rows. It refuses, in this order: a reserved word
 // that is not 0; a writer row of 0 or past the start rows; what
 // output.wiring_row_check refuses, with its error record, the start rows
-// as the lent handles and no byte for terms or a condition; an end that the
+// as the lent handles and no byte for terms or a condition; a paired row;
+// an end that the
 // grant Start_Policy does not give; a reader row that is the writer row;
 // and a reader row after the writer row.
 @(private = "file")
@@ -575,6 +576,12 @@ wiring_row_of_record :: proc "contextless" (record: ^Wiring_Row_Record, index: i
 	checked, row_refusal, checked_ok := output.wiring_row_check(record.wiring, u32(index + 1), .Start, u32(row_count), 0, 0)
 	if !checked_ok {
 		return {}, .Wiring_Refused, row_refusal
+	}
+	// A pair needs terms that ask to forward, which a start list cannot
+	// carry, and the start policy sends the rows of one writer at a time,
+	// so a number of a row of this list names no row of what it sends.
+	if checked.paired_row != 0 {
+		return {}, .Wiring_Refused, errors.error_make(.Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Paired_Row), i64(checked.paired_row), 0, i64(index + 1))
 	}
 	if checked.writer_end != .Child || checked.reader_end != .Started {
 		return {}, .End_Not_Held, {}

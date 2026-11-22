@@ -299,7 +299,7 @@ start_list_wiring_records :: proc(rows: []Start_List_Row, wirings: []Start_List_
 			}
 			row, pairing, _, _ := module.record_output(writer_file, index)
 			if pairing == .Paired {
-				append(&found, fmt.tprintf("%s names a record output Paired, which the root service refuses until the collector", at))
+				append(&found, fmt.tprintf("%s names a record output Paired, whose pair needs terms that ask to forward, which a start list cannot carry", at))
 				continue
 			}
 			if row.record == 0 {

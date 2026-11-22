@@ -98,6 +98,9 @@ list_copy: [output.WIRING_LIST_BYTES_MOST]u8
 request_copy: ws.Resolved_Wiring_Request
 response_staging: ws.Prepared_Start_Ends
 description_copy: [output.DESCRIPTION_FILE_BYTES_MOST]u8
+// The page of the terms of a reader end: the terms, then the names of the
+// source (output.Source_Names), built here before one copy into the page.
+terms_page_copy: [output.SOURCE_NAMES_PAGE_BYTES]u8
 wire_work: wiring_core.Plan_Work
 prepared_batch: Prepared_Batch
 next_batch_id: u32 = 1
@@ -245,8 +248,47 @@ plan_writer_file :: proc "contextless" (plan: ^wiring_core.Row_Plan) -> []u8 {
 	return wiring_core.image_slice_of(image, plan.writer_file_offset, plan.writer_file_size)
 }
 
+// image_module_name gives the name of the module of the boot image whose
+// file is at offset and size, or "".
 @(private = "file")
-make_row_objects :: proc "contextless" (asker_budget: system.Handle, plan: ^wiring_core.Row_Plan, obj: ^Row_Objects, error: ^errors.Error_Record) -> system.Status {
+image_module_name :: proc "contextless" (offset, size: u64) -> string {
+	if size == 0 {
+		return ""
+	}
+	for &entry in system.image_entries(image) {
+		if entry.offset == offset && entry.size == size {
+			return system.name_of(entry.name[:])
+		}
+	}
+	return ""
+}
+
+// writer_names gives the module name of the writer process of a row and
+// the name of its record output, or log. The file of a generic record
+// output names its type, which is the file of another module: the names
+// come from the module of the writer process itself.
+@(private = "file")
+writer_names :: proc "contextless" (plan: ^wiring_core.Row_Plan, child_offset, child_size: u64) -> (source: string, output_name: string) {
+	offset, size := child_offset, child_size
+	if plan.writer_index != wiring_core.CHILD_PROCESS_INDEX {
+		if plan.writer_index < 0 || plan.writer_index >= wiring_core.PROCESS_CAPACITY || !state.processes[plan.writer_index].active {
+			return "", ""
+		}
+		offset, size = state.processes[plan.writer_index].module_offset, state.processes[plan.writer_index].module_size
+	}
+	source = image_module_name(offset, size)
+	if plan.row.writer_stream == .Log {
+		return source, output.LOG_OUTPUT_NAME
+	}
+	file := wiring_core.image_slice_of(image, offset, size)
+	if value, _, _, ok := module.record_output(file, plan.row.writer_index); ok {
+		output_name = module.string_at(file, value.name_offset, value.name_count)
+	}
+	return source, output_name
+}
+
+@(private = "file")
+make_row_objects :: proc "contextless" (asker_budget: system.Handle, plan: ^wiring_core.Row_Plan, obj: ^Row_Objects, error: ^errors.Error_Record, child_offset: u64 = 0, child_size: u64 = 0) -> system.Status {
 	writer_file := plan_writer_file(plan)
 	description, desc_ok := module.record_stream_type(writer_file, plan.description)
 	if !desc_ok {
@@ -257,7 +299,14 @@ make_row_objects :: proc "contextless" (asker_budget: system.Handle, plan: ^wiri
 	obj.ring_memory = system.memory_create(ring.compartment_pages(plan.row.capacity, compartment), asker_budget, error = error) or_return
 	obj.end_memory = system.memory_create(output.END_WORDS_PAGES, asker_budget, error = error) or_return
 	if plan.row.terms_count != 0 {
-		obj.terms_memory = page_write(asker_budget, list_copy[plan.row.terms_offset:][:plan.row.terms_count], error) or_return
+		// The names of the source after the terms. A name that does not
+		// fit its field leaves the names 0, which the border of the reader
+		// refuses: only a reader that needs them refuses the end.
+		terms_page_copy = {}
+		copy(terms_page_copy[:], list_copy[plan.row.terms_offset:][:plan.row.terms_count])
+		source, output_name := writer_names(plan, child_offset, child_size)
+		_ = output.source_names_write(terms_page_copy[:], source, output_name)
+		obj.terms_memory = page_write(asker_budget, terms_page_copy[:], error) or_return
 	}
 	if plan.has_condition {
 		condition_bytes := transmute([size_of(output.Writer_Condition)]u8)plan.condition
@@ -272,8 +321,10 @@ make_row_objects :: proc "contextless" (asker_budget: system.Handle, plan: ^wiri
 	return .Ok
 }
 
+// given_end_of_row gives the end of one side of a row. pair is the number
+// of the wiring of the source of a ring of a record output Paired, else 0.
 @(private = "file")
-given_end_of_row :: proc "contextless" (plan: ^wiring_core.Row_Plan, obj: ^Row_Objects, writer: bool) -> output.Given_End {
+given_end_of_row :: proc "contextless" (plan: ^wiring_core.Row_Plan, obj: ^Row_Objects, writer: bool, pair: u32 = 0) -> output.Given_End {
 	if writer {
 		return {
 			command   = .Writer_End,
@@ -283,10 +334,14 @@ given_end_of_row :: proc "contextless" (plan: ^wiring_core.Row_Plan, obj: ^Row_O
 			pace      = plan.row.pace,
 			end_words = op.Handle(obj.end_memory),
 			condition = op.Handle(obj.condition_memory),
+			pair      = pair,
 		}
 	}
 	cmd := plan.row.reader_end == .Asker ? output.Wiring_Command.Asker_End : output.Wiring_Command.Reader_End
-	filter := plan.has_condition ? output.Reader_Filter.By_Writer : output.Reader_Filter.None
+	// The writer of a pair gives each record the serial of its record
+	// output, which the rings of its other pairs share: the serials of one
+	// ring then move forward by any count, as on a ring with a condition.
+	filter := plan.has_condition || plan.paired ? output.Reader_Filter.By_Writer : output.Reader_Filter.None
 	return {
 		command     = cmd,
 		tag         = plan.allocated_number,
@@ -569,12 +624,7 @@ process_module_name :: proc "contextless" (idx: int) -> string {
 		return ""
 	}
 	pe := &state.processes[idx]
-	for &entry in system.image_entries(image) {
-		if entry.offset == pe.module_offset && entry.size == pe.module_size {
-			return system.name_of(entry.name[:])
-		}
-	}
-	return ""
+	return image_module_name(pe.module_offset, pe.module_size)
 }
 
 @(private = "file")
@@ -692,7 +742,7 @@ handle_prepare_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respon
 		plan := &prepared_batch.work.plans[number - 1]
 		obj := &prepared_batch.objects[number - 1]
 		err: errors.Error_Record
-		make_status := make_row_objects(asker_budget, plan, obj, &err)
+		make_status := make_row_objects(asker_budget, plan, obj, &err, cmd.module_offset, cmd.module_size)
 		if make_status != .Ok {
 			close_row_objects(obj, keep_end = false)
 			abort_prepared_batch()
@@ -803,10 +853,18 @@ handle_commit_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respons
 	}
 	asker_idx := prepared_batch.work.asker_index
 	response_staging = {batch_id = prepared_batch.id}
+	// The rows that reached both sides: a pair whose source did not reach
+	// the collector names a wiring that it does not hold, so it ends too.
+	delivered: [output.WIRING_LIST_ROW_LIMIT]bool
 	for number in 1 ..= prepared_batch.work.list.row_count {
 		plan := &prepared_batch.work.plans[number - 1]
 		obj := &prepared_batch.objects[number - 1]
 		slot := plan.allocated_slot
+		pair: u32
+		if plan.paired {
+			source := &prepared_batch.work.plans[plan.row.paired_row - 1]
+			pair = source.allocated_number
+		}
 		wiring_core.wiring_bind_child(&state, slot, child_idx)
 		if plan.writer_index == wiring_core.CHILD_PROCESS_INDEX {
 			plan.writer_index = child_idx
@@ -815,8 +873,11 @@ handle_commit_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respons
 			plan.reader_index = child_idx
 		}
 		deliv_status := system.Status.Ok
-		if plan.writer_index != child_idx {
-			deliv_status = wiring_end_give(plan.writer_index, given_end_of_row(plan, obj, true))
+		if plan.paired && !delivered[plan.row.paired_row - 1] {
+			deliv_status = .Bad_State
+		}
+		if deliv_status == .Ok && plan.writer_index != child_idx {
+			deliv_status = wiring_end_give(plan.writer_index, given_end_of_row(plan, obj, true, pair))
 		}
 		if deliv_status == .Ok && plan.reader_index != child_idx {
 			deliv_status = wiring_end_give(plan.reader_index, given_end_of_row(plan, obj, false))
@@ -838,6 +899,7 @@ handle_commit_start_wiring :: proc "contextless" (cmd: ws.Command) -> ws.Respons
 			continue
 		}
 		wiring_core.wiring_mark_delivered(&state, slot, plan)
+		delivered[number - 1] = true
 		log_wiring_created(plan, plan.allocated_number)
 		if plan.row.reader_end == .Asker && response_staging.asker_wiring_count < output.WIRING_ASKER_ROWS_OF_A_START {
 			response_staging.asker_numbers[response_staging.asker_wiring_count] = plan.allocated_number

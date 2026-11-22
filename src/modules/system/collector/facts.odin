@@ -55,6 +55,26 @@ Space_Refused_Record :: struct {
 	refusal_code: u64,
 }
 
+// A source that a wiring gave the collector, with the space that keeps
+// its records.
+@(log_fact = "collector: wiring {wiring_number} keeps {source}.{output} in space {space}")
+Source_Opened :: struct {
+	space:         u64,
+	wiring_number: u64,
+	source:        [32]u8,
+	output:        [32]u8,
+}
+
+#assert(size_of(Source_Opened) == 80)
+
+// A source that the collector closed: its names or its terms were
+// refused, or a record broke the terms of its space.
+@(log_fact = "collector: closed the source of wiring {wiring_number}, refusal {refusal_code}")
+Source_Refused :: struct {
+	wiring_number: u64,
+	refusal_code:  u64,
+}
+
 @(log_fact = "collector: act chain verification failed at index {failing_index} with refusal {refusal_code}")
 Chain_Verification_Failed :: struct {
 	failing_index: u64,

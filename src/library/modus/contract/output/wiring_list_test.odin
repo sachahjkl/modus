@@ -237,6 +237,36 @@ a_condition_out_of_its_place_or_of_another_size_is_refused :: proc(t: ^testing.T
 	testing.expect_value(t, checked.condition_offset, u32(TERMS_START))
 }
 
+// The paired row of the row 3: the row itself, a later row and the
+// largest word are no earlier row, and the record output `log` of the
+// child pairs with nothing. The rows 1 and 2 are taken last, and the
+// paired row comes through the border.
+@(test)
+a_paired_row_that_is_no_earlier_row_is_refused :: proc(t: ^testing.T) {
+	for word in ([?]u32{3, 4, max(u32)}) {
+		row := good_row()
+		row.paired_row = word
+		expect_row_refused(t, row, .Start, .Paired_Row, u64(word))
+	}
+	log_row := good_row()
+	log_row.writer_end, log_row.writer_handle, log_row.writer_stream, log_row.writer_index = u32(Wiring_End.Child), 0, u32(Writer_Stream.Log), 0
+	log_row.paired_row = 1
+	expect_row_refused(t, log_row, .Start, .Paired_Row, 1)
+	// A Wire has one row: no row comes before it.
+	wire_row := good_row()
+	wire_row.paired_row = 1
+	_, wire_refusal, wire_ok := wiring_row_check(wire_row, 1, .Wire, HANDLE_COUNT, TERMS_START, LIST_SIZE)
+	testing.expect(t, !wire_ok)
+	testing.expect_value(t, wire_refusal.argument, i64(Wiring_Field.Paired_Row))
+	for word in ([?]u32{1, 2}) {
+		row := good_row()
+		row.paired_row = word
+		checked, refusal, ok := wiring_row_check(row, 3, .Start, HANDLE_COUNT, TERMS_START, LIST_SIZE)
+		testing.expectf(t, ok, "the paired row %d is refused: %v", word, refusal)
+		testing.expect_value(t, checked.paired_row, word)
+	}
+}
+
 // Each reserved word: 1 and the largest word.
 @(test)
 a_reserved_word_of_a_row_that_is_not_zero_is_refused :: proc(t: ^testing.T) {

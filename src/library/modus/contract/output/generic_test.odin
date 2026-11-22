@@ -5,8 +5,9 @@ import "core:testing"
 import "modus:contract/module"
 import op "modus:contract/operation"
 
-// The writer side refuses first: a generic record output Paired, whatever
-// its record input says; one whose record input has no fixed type; one
+// The writer side: a generic record output Paired takes the type of the
+// source of its pair, whatever its record input says. The refusals: one
+// whose record input has no fixed type; one
 // whose record input keeps a type for each wiring, fixed or not. A record
 // output of a record, and a generic one whose record input has a fixed
 // type, pass last.
@@ -14,7 +15,7 @@ import op "modus:contract/operation"
 a_generic_record_output_takes_only_a_fixed_type :: proc(t: ^testing.T) {
 	for wirings in module.Wiring_Count {
 		for fixed in ([?]bool{false, true}) {
-			testing.expectf(t, generic_writer_step_of(0, .Paired, wirings, fixed) == .Paired_Later, "Paired with %v, fixed %v", wirings, fixed)
+			testing.expectf(t, generic_writer_step_of(0, .Paired, wirings, fixed) == .Paired_Source, "Paired with %v, fixed %v", wirings, fixed)
 		}
 	}
 	testing.expect_value(t, generic_writer_step_of(0, .Unpaired, .One, false), Generic_Writer_Step.Not_Fixed)

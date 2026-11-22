@@ -91,6 +91,7 @@ Short_Form_Wiring_Row :: struct {
 	space_kind:        wide_grants.Collector_Space_Kind,
 	space_block_limit: u64,
 	forward:           bool,
+	paired_row:        u32, // A row of collector.forward: the row of its source, from 1 (output.Wiring.paired_row).
 	has_condition:     bool,
 	condition:         output.Condition_Terms,
 }
@@ -291,7 +292,7 @@ short_form_audit :: proc "contextless" (
 
 // short_form_audited expands `audited(wire(src, dst))` into two rows:
 //   1. src -> collector.sources (Audit, forward = true, Always_Holds_Writer)
-//   2. collector.forward -> dst (Always_Holds_Writer)
+//   2. collector.forward -> dst (Always_Holds_Writer), the pair of row 1
 short_form_audited :: proc "contextless" (
 	row: Short_Form_Wiring_Row,
 	block_limit: i64 = AUDIT_BLOCK_LIMIT_DEFAULT,
@@ -345,6 +346,7 @@ short_form_audited :: proc "contextless" (
 		pace          = .Always_Holds_Writer,
 		space_kind    = .None,
 		forward       = false,
+		paired_row    = 1,
 	}
 	return built, .None
 }
@@ -538,6 +540,11 @@ short_form_list_sum :: proc "contextless" (left, right: ^Short_Form_Wiring_List)
 			}
 		}
 		built.rows[built.row_count] = right.rows[i]
+		// The pair of a row of the right list names a row of that list: it
+		// moves with the rows before it.
+		if right.rows[i].paired_row != 0 {
+			built.rows[built.row_count].paired_row = right.rows[i].paired_row + u32(left.row_count)
+		}
 		built.row_count += 1
 	}
 	return built, .None

@@ -130,6 +130,7 @@ Row_Plan :: struct {
 	resolved:              bool,
 	fixes:                 bool,
 	keeps_type:            bool,
+	paired:                bool, // The writer is a record output Paired: its ring pairs with the source of row.paired_row.
 	allocated_slot:        int, // Wiring slot index allocated in State.wirings, or -1.
 	allocated_number:      u32,
 }
@@ -376,6 +377,17 @@ deferred_type_fixed :: proc "contextless" (s: ^State, work: ^Plan_Work, image: [
 	if len(writer_file) == 0 {
 		return false
 	}
+	// A ring of a pair takes the type of its source: it is fixed once the
+	// row of the source has its type. The border keeps paired_row before
+	// the row, inside the list.
+	if _, pairing, _, output_ok := module.record_output(writer_file, plan.row.writer_index); output_ok && pairing == .Paired {
+		pair := plan.row.paired_row
+		if pair == 0 || pair >= number {
+			return true
+		}
+		source := &work.plans[pair - 1]
+		return !source.deferred || source.resolved
+	}
 	index, _, has_input := generic_input_of(writer_file)
 	if !has_input {
 		return false
@@ -522,6 +534,46 @@ resolve_end_from_request :: proc "contextless" (s: ^State, work: ^Plan_Work, req
 	return -1, facts, false
 }
 
+// paired_source_of gives the row of the source of the pair of the row
+// number, whose writer writer_idx is a record output Paired whose module
+// has the generic record input input_index. The rule
+// (src/md/features/module_outputs.md, "The collector"):
+//
+// - the writer of a pair is a process that runs, never the child of a
+//   start: it keeps the source before it forwards, so its reader end of
+//   the source reaches it before the end of the pair;
+// - the row names its source: an earlier row of the list, whose reader is
+//   the generic record input of the same process, and whose writer is
+//   another process;
+// - one source has one pair: a second row of the list that names the same
+//   source is refused with Exists.
+//
+// Each refusal names the field and the row, and changes no state.
+@(private = "file")
+paired_source_of :: proc "contextless" (work: ^Plan_Work, number: u32, writer_idx: int, input_index: u32, has_input: bool) -> (source: ^Row_Plan, status: ws.Response_Status, refusal: errors.Error_Record) {
+	plan := &work.plans[number - 1]
+	row := plan.row
+	found := i64(number)
+	op_code := work.command_op
+	if row.writer_end == .Child {
+		return nil, .Bad_Command, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Writer_End), i64(row.writer_end), 0, found)
+	}
+	pair := row.paired_row
+	if pair == 0 || pair >= number {
+		return nil, .Bad_Command, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Paired_Row), i64(pair), i64(number - 1), found)
+	}
+	source = &work.plans[pair - 1]
+	if !has_input || source.row.reader_end == .Asker || source.reader_index != writer_idx || source.row.reader_index != input_index || source.writer_index == writer_idx {
+		return nil, .Bad_Command, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Paired_Row), i64(pair), 0, found)
+	}
+	for other in 1 ..= work.list.row_count {
+		if other != number && work.plans[other - 1].paired && work.plans[other - 1].row.paired_row == pair {
+			return nil, .Bad_State, make_error(op_code, .Exists, .Wirings, i64(output.Wiring_Field.Paired_Row), i64(pair), 0, found)
+		}
+	}
+	return source, .Ok, {}
+}
+
 @(private = "file")
 resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req: ^ws.Resolved_Wiring_Request, work: ^Plan_Work, number: u32, first_pass: bool) -> (status: ws.Response_Status, refusal: errors.Error_Record) {
 	plan := &work.plans[number - 1]
@@ -588,6 +640,10 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 			return .Bad_Command, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), i64(row.writer_index), i64(outputs), found)
 		}
 		plan.description = output_row.record
+		// A pair names its source only beside a record output Paired.
+		if pairing == .Unpaired && row.paired_row != 0 {
+			return .Bad_Command, make_error(op_code, .Bad_Value, .Wiring_Rows, i64(output.Wiring_Field.Paired_Row), i64(row.paired_row), 0, found)
+		}
 		if output_row.record == 0 && first_pass {
 			plan.deferred = true
 			return .Ok, {}
@@ -605,8 +661,17 @@ resolve_row :: proc "contextless" (s: ^State, image: []u8, list_copy: []u8, req:
 				plan.description = fixed_desc
 			case .Not_Fixed:
 				return .Bad_Command, make_error(op_code, .Bad_Value, .Record_Types, 0, i64(output.Description_Difference.Not_Fixed), 0, found)
-			case .Paired_Later:
-				return .Bad_Command, make_error(op_code, .Unsupported, .Wiring_Rows, i64(output.Wiring_Field.Writer_Index), i64(row.writer_index), 0, found)
+			case .Paired_Source:
+				source, pair_status, pair_refusal := paired_source_of(work, number, writer_idx, input_index, has_input)
+				if pair_status != .Ok {
+					return pair_status, pair_refusal
+				}
+				writer_file = plan_file_slice(s, image, source.writer_is_log_file, source.writer_file_offset, source.writer_file_size)
+				plan.writer_is_log_file = source.writer_is_log_file
+				plan.writer_file_offset = source.writer_file_offset
+				plan.writer_file_size = source.writer_file_size
+				plan.description = source.description
+				plan.paired = true
 			}
 		}
 	}

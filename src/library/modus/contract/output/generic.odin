@@ -62,7 +62,7 @@ Generic_Writer_Step :: enum u8 {
 	Declared    = 0, // A record output of a record: its own.
 	Fixed_Type  = 1, // A generic record output, Unpaired, whose generic record input has a fixed type: that type.
 	Not_Fixed   = 2, // A generic record output whose generic record input has no fixed type, or the count Many_Types: refused with Not_Fixed.
-	Paired_Later = 3, // A generic record output Paired: refused with Unsupported until the collector, its one user.
+	Paired_Source = 3, // A generic record output Paired: each ring takes the type of the source of its pair, the row that its paired_row names.
 }
 
 // generic_writer_step_of gives the record of the writer side of one
@@ -76,7 +76,7 @@ generic_writer_step_of :: proc "contextless" (record: u32, pairing: module.Recor
 	}
 	switch pairing {
 	case .Paired:
-		return .Paired_Later
+		return .Paired_Source
 	case .Unpaired:
 	}
 	if input_wirings == .Many_Types || !fixed {

@@ -219,7 +219,10 @@ a_wiring_row_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.capacity = 33}), .Wiring_Refused, refused(.Capacity, 33, output.WIRING_CAPACITY_MOST)},
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.terms_offset, record.wiring.terms_count = 64, 8}), .Wiring_Refused, refused(.Terms_Offset, 64, 0)},
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.condition_offset, record.wiring.condition_count = 64, size_of(output.Condition_Terms)}), .Wiring_Refused, refused(.Condition_Offset, 64, 0)},
-		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.reserved[2] = 1}), .Wiring_Refused, refused(.Reserved, 1, 0)},
+		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.reserved[1] = 1}), .Wiring_Refused, refused(.Reserved, 1, 0)},
+		// A pair names an earlier row that the output border takes, and the
+		// start list refuses it whole.
+		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.paired_row = 1}), .Wiring_Refused, refused(.Paired_Row, 1, 0)},
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.writer_end, record.wiring.writer_handle = u32(output.Wiring_End.Connected), 7}), .End_Not_Held, {}},
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.writer_end, record.wiring.writer_handle, record.wiring.reader_end, record.wiring.reader_handle = u32(output.Wiring_End.Started), 2, u32(output.Wiring_End.Child), 0}), .End_Not_Held, {}},
 		{change(good, proc(record: ^Wiring_Row_Record) {record.wiring.reader_end, record.wiring.reader_handle, record.wiring.reader_index = u32(output.Wiring_End.Asker), 0, 0}), .End_Not_Held, {}},

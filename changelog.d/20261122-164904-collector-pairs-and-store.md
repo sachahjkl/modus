@@ -1,0 +1,3 @@
+type: Added
+
+**The pairs of the collector, and its store**: a wiring list gives `collector.forward` one ring for each source that asks to forward, named by the new field `paired_row` of its row, and the collector keeps each record of a source in its audit space, in its private store, before the ring of its pair receives it; a full space or a full ring holds the writer, and no record is lost. The collector starts on demand with the grants `Serve` and `Store`, so its audit spaces live in a store on the machine.

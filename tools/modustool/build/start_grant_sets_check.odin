@@ -27,7 +27,6 @@ SYSTEM_PART_NAMES_LIST :: "system_part_names"
 SYSTEM_PARTS_THAT_SERVE := [?]string{
 	"compositor",
 	"powerbox",
-	"collector",
 	"disk_processes",
 	"devices",
 	"principals",
