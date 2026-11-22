@@ -146,6 +146,8 @@ GRANT_VALUE_UNLOCK_MODE :: 5
 GRANT_VALUE_TERMINAL_ROWS :: 5
 // The values 6 to 8 of `unlock`: the name of the principal to create.
 GRANT_VALUE_UNLOCK_NAME :: 6
+// The value 9 of `unlock`: the number of the principal that asked for a change.
+GRANT_VALUE_UNLOCK_PRINCIPAL :: 9
 // The value 6 of a terminal: 1 when it shows the rates of its process.
 GRANT_VALUE_TERMINAL_MEASURE :: 6
 // The value 13 of a process with the grant Tpm: 1 when a seal by the TPM is

@@ -266,11 +266,16 @@ unlock_public_key: [principals.PUBLIC_KEY_SIZE]u8
 // key, until the write of its file and the start of its session after
 // Enter.
 opened_secrets: [principals.SECRET_KEYS_SIZE]u8
+// The recovery copy of a named principal under the passphrase alone
+// (NON_TPM_RECOVERY_OBJECT), when present and valid in the store.
+principal_non_tpm_recovery_present: bool
+principal_non_tpm_recovery_bytes: [principals.NON_TPM_RECOVERY_SIZE]u8
 // The file with the copy under a new recovery key, while the window shows
 // that key: it is written only after Enter, so a key that nobody saw never
 // becomes the key of the file.
 renewed_recovery_file: principals.Principal_Tpm_File
 renewed_recovery_bytes: [principals.PRINCIPAL_TPM_FILE_SIZE]u8
+renewed_non_tpm_recovery_bytes: [principals.NON_TPM_RECOVERY_SIZE]u8
 
 typed: [principals.PASSPHRASE_LIMIT]u8
 typed_count: int
@@ -1690,8 +1695,35 @@ change_proof_try :: proc "contextless" () {
 recovery_key_prepare :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8) {
 	recovery_key: [principals.RECOVERY_KEY_SIZE]u8
 	defer erase(recovery_key[:])
-	renewed_recovery_file = principal_tpm_file
 	error: errors.Error_Record
+	if principal_form == .Passphrase {
+		nonce: [principals.NONCE_SIZE]u8
+		if !random.fill_for_a_key(&generator, recovery_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, nonce[:], .Processor, &error) {
+			system.log_fact(.Info, Recovery_Key_Kept_Seed_Too_Weak{principal = number})
+			change_end(.Seed_Too_Weak)
+			return
+		}
+		if principals.non_tpm_recovery_seal(number, the_name(), secrets, &recovery_key, &nonce, &renewed_non_tpm_recovery_bytes) != .None {
+			system.log_fact(.Info, Recovery_Key_Kept_Seal_Failed{principal = number})
+			change_end(.Seal_Failed)
+			return
+		}
+		// Verify the newly built recovery record opens back to the exact keys
+		// before showing the recovery key or writing to storage.
+		reopened: [principals.SECRET_KEYS_SIZE]u8
+		defer erase(reopened[:])
+		if _, open_problem := principals.non_tpm_recovery_open(renewed_non_tpm_recovery_bytes[:], &recovery_key, number, &reopened); open_problem != .None || reopened != secrets^ {
+			system.log_fact(.Info, Recovery_Key_Kept_Seal_Failed{principal = number})
+			change_end(.Seal_Failed)
+			return
+		}
+		recovery_text = principals.recovery_key_text(&recovery_key)
+		system.log_fact(.Info, Recovery_Key_Renewed{principal = number, principal_name = principal_name_field()})
+		mode = .Principal_Recovery_Shown
+		message, message_failed = "write it down, then Enter: the file is written then", false
+		return
+	}
+	renewed_recovery_file = principal_tpm_file
 	if !random.fill_for_a_key(&generator, recovery_key[:], .Processor, &error) || !random.fill_for_a_key(&generator, renewed_recovery_file.recovery_nonce[:], .Processor, &error) {
 		system.log_fact(.Info, Recovery_Key_Kept_Seed_Too_Weak{principal = number})
 		change_end(.Seed_Too_Weak)
@@ -1729,6 +1761,23 @@ recovery_key_prepare :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SI
 // not keep the file, the recovery key before it stays the key of the file.
 recovery_key_commit :: proc "contextless" () {
 	erase(recovery_text[:])
+	if principal_form == .Passphrase {
+		switch object_write(principals.NON_TPM_RECOVERY_OBJECT, renewed_non_tpm_recovery_bytes[:]) {
+		case .Kept:
+			principal_non_tpm_recovery_bytes = renewed_non_tpm_recovery_bytes
+			principal_non_tpm_recovery_present = true
+			system.log_fact(.Info, Recovery_Key_Renewal_Kept{principal = number, principal_name = principal_name_field()})
+			object_versions_erase(principals.NON_TPM_RECOVERY_OBJECT)
+			change_end(.Recovery_Key_Changed)
+		case .Not_Kept:
+			system.log_fact(.Info, Recovery_Key_Renewal_Not_Kept{principal = number})
+			change_end(.Store_Failed)
+		case .Unknown:
+			system.log_fact(.Info, Recovery_Key_Renewal_Unknown{principal = number})
+			change_end(.Store_Unknown)
+		}
+		return
+	}
 	switch principal_file_write(renewed_recovery_bytes[:]) {
 	case .Kept:
 		principal_tpm_file, principal_tpm_file_bytes = renewed_recovery_file, renewed_recovery_bytes
@@ -1775,29 +1824,26 @@ passphrase_change_seal :: proc "contextless" () {
 			change_end(.Seal_Failed)
 			return
 		}
-		// The file goes to the disk only when it decodes: the next start
-		// reads it with the same checks.
+		// The file goes to the disk only when it decodes and reopens under
+		// the new passphrase to the exact keys being sealed: a fault of the
+		// seal then never replaces the old file.
 		if _, _, problem := principals.file_decode(renewed_bytes[:]); problem != .None {
 			system.log_fact(.Info, Changed_File_Not_Decoded{problem = problem_field(principals.file_problem_sentences[problem])})
 			change_end(.Seal_Failed)
 			return
 		}
+		verify_key: [principals.KEY_SIZE]u8
+		defer erase(verify_key[:])
+		if !derive(typed[:typed_count], renewed.salt[:], &verify_key) || principals.record_open_verify(renewed_bytes[:], &verify_key, &opened_secrets) != .None {
+			system.log_fact(.Info, Changed_File_Does_Not_Open{principal = number})
+			change_end(.Seal_Failed)
+			return
+		}
 		outcome := principal_file_write(renewed_bytes[:])
-		opens := false
 		if outcome == .Kept {
 			file, file_bytes = renewed, renewed_bytes
-			// This form has no copy under a recovery key: the version before
-			// is the one way back to the keys if the new file does not open.
-			// So the new file is opened with the new passphrase, still typed,
-			// before its versions go: one more derivation.
-			reopened: [principals.SECRET_KEYS_SIZE]u8
-			opens = principal_keys_open(&reopened) == .Opened && reopened == opened_secrets
-			erase(reopened[:])
-			if !opens {
-				system.log_fact(.Info, Changed_File_Does_Not_Open{principal = number})
-			}
 		}
-		passphrase_change_report(outcome, "its keys are sealed under the new passphrase alone", opens)
+		passphrase_change_report(outcome, "its keys are sealed under the new passphrase alone", true)
 	case .Unknown:
 		change_end(.Seal_Failed)
 	}
@@ -1883,10 +1929,28 @@ principal_recovery_try :: proc "contextless" () {
 		message, message_failed = principals.recovery_problem_sentences[problem], true
 		return
 	}
-	seal_key := principals.principal_recovery_seal_key(&recovery_key)
-	defer erase(seal_key[:])
 	secrets: [principals.SECRET_KEYS_SIZE]u8
 	defer erase(secrets[:])
+	if principal_form == .Passphrase {
+		if !principal_non_tpm_recovery_present {
+			message, message_failed = "no recovery copy exists for this principal", true
+			return
+		}
+		if _, open_problem := principals.non_tpm_recovery_open(principal_non_tpm_recovery_bytes[:], &recovery_key, number, &secrets); open_problem != .None || !public_keys_match(&secrets) {
+			refusals += 1
+			system.log_fact(.Info, Principal_Recovery_Key_Wrong{principal = number, refusals = refusals, principal_name = principal_name_field()})
+			message, message_failed = "the recovery key is wrong: nothing is unlocked", true
+			return
+		}
+		system.log_fact(.Info, Principal_Recovery_Key_Opened{principal = number, principal_name = principal_name_field()})
+		opened_secrets = secrets
+		mode = .New_Passphrase_First
+		message, message_failed = "type a new passphrase for the principal", false
+		system.log_fact(.Info, Principal_Reseal_Awaited{principal = number, principal_name = principal_name_field()})
+		return
+	}
+	seal_key := principals.principal_recovery_seal_key(&recovery_key)
+	defer erase(seal_key[:])
 	error: errors.Error_Record
 	key_text := string(seal_key[:])
 	nonce_text := string(principal_tpm_file.recovery_nonce[:])
@@ -1915,13 +1979,36 @@ principal_recovery_try :: proc "contextless" () {
 	session_start(&secrets, root_ring.Principal_Key_Origin.Opened)
 }
 
-// principal_reseal seals the keys that the recovery key opened again by the
-// TPM, to the passphrase typed and to the system that runs, writes the
-// file, and starts the session. The copy under the recovery key stays. A
-// seal that fails keeps the file as it was, and the session starts anyway:
-// the recovery key opens the keys at the next start too.
+// principal_reseal seals the keys that the recovery key opened again under
+// the new passphrase typed (by the TPM for PRINCIPT, or under the passphrase
+// alone after reopen verification for PRINCIPL), writes the file, and starts
+// the session. The copy under the recovery key stays. A seal that fails keeps
+// the file as it was, and the session starts anyway: the recovery key opens
+// the keys at the next start too.
 principal_reseal :: proc "contextless" () {
 	defer erase(opened_secrets[:])
+	if principal_form == .Passphrase {
+		renewed := file
+		renewed_bytes: [principals.FILE_SIZE]u8
+		defer erase(renewed_bytes[:])
+		verify_key: [principals.KEY_SIZE]u8
+		defer erase(verify_key[:])
+		if _, sealed := passphrase_file_seal(&opened_secrets, &renewed, &renewed_bytes); !sealed || !derive(typed[:typed_count], renewed.salt[:], &verify_key) || principals.record_open_verify(renewed_bytes[:], &verify_key, &opened_secrets) != .None {
+			system.log_fact(.Info, Principal_Not_Resealed{principal = number})
+		} else if _, status := storage.write(&client, storage.ROOT, principals.FILE_OBJECT, renewed_bytes[:]); status != .Ok {
+			system.log_fact(.Info, Principal_Reseal_Not_Kept{principal = number, status_word = u64(status)})
+		} else {
+			file, file_bytes = renewed, renewed_bytes
+			system.log_fact(.Info, Principal_Resealed{principal = number, principal_name = principal_name_field()})
+			object_versions_erase(principals.FILE_OBJECT)
+		}
+		session_start(&opened_secrets, root_ring.Principal_Key_Origin.Opened)
+		if mode != .Done {
+			system.log_fact(.Info, Session_Not_Started_After_Recovery{principal = number})
+			mode = .Done
+		}
+		return
+	}
 	renewed := principal_tpm_file
 	renewed_bytes: [principals.PRINCIPAL_TPM_FILE_SIZE]u8
 	defer erase(renewed_bytes[:])
@@ -2010,6 +2097,9 @@ session_start :: proc "contextless" (secrets: ^[principals.SECRET_KEYS_SIZE]u8, 
 	// version is then the one way back to its keys.
 	if origin == .Opened {
 		object_versions_erase(principals.FILE_OBJECT)
+		if principal_form == .Passphrase && principal_non_tpm_recovery_present {
+			object_versions_erase(principals.NON_TPM_RECOVERY_OBJECT)
+		}
 	}
 	unlock_key: [disk_process.KEY_SIZE]u8
 	copy(unlock_key[:], secrets^[principals.SECRET_KEYS_SIZE - disk_process.KEY_SIZE:])
@@ -2071,7 +2161,7 @@ machine_recovery_offered :: proc "contextless" () -> bool {
 // and the TPM seals the keys with it. A change does not offer it: the
 // recovery key is no proof of a change.
 principal_recovery_offered :: proc "contextless" () -> bool {
-	return mode == .Unlock && principals.recovery_key_offered_at_unlock(principal_form, has_tpm)
+	return mode == .Unlock && (principals.recovery_key_offered_at_unlock(principal_form, has_tpm) || (principal_form == .Passphrase && principal_non_tpm_recovery_present))
 }
 
 // machine_passphrase_back says if Enter with nothing at the recovery key of
@@ -2147,11 +2237,11 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 	case .Principal_Recovery:
 		prompt = "recovery key  "
 		enter_name = "open"
-		if has_tpm {
+		if has_tpm || principal_form == .Passphrase {
 			enter_name, clears = "open; empty: the passphrase", false
 		}
 	case .Principal_Recovery_Shown:
-		label = "keys sealed by the TPM  "
+		label = principal_form == .Passphrase ? "recovery copy  " : "keys sealed by the TPM  "
 		prompt = "recovery key  "
 		enter_name, clears, note = "done", false, "it is shown one time"
 	case .New_Passphrase_First:
@@ -2304,9 +2394,9 @@ enter :: proc "contextless" (window: ^display.Window) {
 		recovery_try()
 	case .Principal_Recovery:
 		// Enter with nothing goes back to the passphrase while the TPM
-		// service runs: after a lockout, the principal can wait for the TPM.
+		// service runs, or for a non-TPM principal using its recovery copy.
 		if typed_count == 0 {
-			if has_tpm {
+			if has_tpm || principal_form == .Passphrase {
 				system.log_fact(.Info, Principal_Recovery_Key_Not_Typed{principal = number})
 				mode = .Unlock
 				message, message_failed = "", false
@@ -2500,6 +2590,17 @@ principal_file_read :: proc "contextless" () -> (found: bool) {
 	if !record_give() {
 		system.stop(.Failed)
 	}
+	principal_non_tpm_recovery_present = false
+	if principal_form == .Passphrase {
+		recovery_buffer: [principals.NON_TPM_RECOVERY_SIZE + 1]u8
+		recovery_bytes, recovery_present, recovery_status := storage.read(&client, storage.ROOT, principals.NON_TPM_RECOVERY_OBJECT, recovery_buffer[:])
+		if recovery_status == .Ok && recovery_present {
+			if decoded, kept, decode_problem := principals.non_tpm_recovery_decode(recovery_bytes); decode_problem == .None && decoded.principal_number == number && decoded.signing_public_key == signing_public_key && decoded.unlock_public_key == unlock_public_key {
+				principal_non_tpm_recovery_bytes = kept
+				principal_non_tpm_recovery_present = true
+			}
+		}
+	}
 	return true
 }
 
@@ -2683,12 +2784,24 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		message = "type a passphrase of 8 bytes at least"
 	case .Change_Passphrase, .New_Recovery_Key:
 		// The root service starts these modes only for a principal whose
-		// session runs; the file is read again here, as the store is the
-		// truth, and its record must be the record of that session.
+		// session runs, passing that principal's number in VALUE_PRINCIPAL.
+		// The file is read again here, as the store is the truth, and its
+		// principal number must match the requesting principal.
 		change_mode = start_mode
+		requested_principal := ctx.values[principals.VALUE_PRINCIPAL]
+		if !principals.change_principal_valid(requested_principal) {
+			change_refusal_log(.Wrong_Principal)
+			change_end(.Refused, .Wrong_Principal)
+			system.stop(.Refused)
+		}
 		if !principal_file_read() {
 			system.log_fact(.Info, No_Principal_To_Change{})
 			change_end(.Refused, .Unknown_Form)
+			system.stop(.Refused)
+		}
+		if !principals.change_principal_matches(requested_principal, number) {
+			change_refusal_log(.Wrong_Principal)
+			change_end(.Refused, .Wrong_Principal)
 			system.stop(.Refused)
 		}
 		if problem := principals.change_problem(principal_form, change_mode, has_tpm, seal_allowed); problem != .None {

@@ -2,6 +2,9 @@
 package principals
 
 import "core:testing"
+import "modus:contract/byte_order"
+import "modus:contract/errors"
+import "modus:cryptography_primitives"
 import "modus:tpm2"
 
 // The store of a module has the name of the module for the machine, so
@@ -656,8 +659,8 @@ the_changes_that_a_file_takes :: proc(t: ^testing.T) {
 		{.Sealed_By_The_Tpm, .Change_Passphrase, true, false, .Seal_Not_Allowed},
 		{.Sealed_By_The_Tpm, .Change_Passphrase, false, true, .No_Tpm_Service},
 		{.Sealed_By_The_Tpm, .New_Recovery_Key, false, true, .No_Tpm_Service},
-		{.Passphrase, .New_Recovery_Key, true, true, .No_Recovery_Copy},
-		{.Passphrase, .New_Recovery_Key, false, false, .No_Recovery_Copy},
+		{.Passphrase, .New_Recovery_Key, true, true, .None},
+		{.Passphrase, .New_Recovery_Key, false, false, .None},
 		{.Sealed_By_The_Tpm, .Change_Passphrase, true, true, .None},
 		{.Sealed_By_The_Tpm, .New_Recovery_Key, true, true, .None},
 		// A new recovery key seals nothing by the TPM.
@@ -717,6 +720,268 @@ the_prompts_that_offer_the_recovery_key :: proc(t: ^testing.T) {
 	for item in cases {
 		testing.expect_value(t, recovery_key_offered_at_unlock(item.form, item.has_tpm), item.offered)
 	}
+}
+
+// Principal-number guard on passphrase/recovery changes: principal 0 and any
+// number at or past PRINCIPAL_CAPACITY are refused, and a loaded file of
+// another principal never matches.
+@(test)
+change_principal_guard_refuses_invalid_and_mismatched_principals :: proc(t: ^testing.T) {
+	invalid_numbers := [?]u64{MACHINE, PRINCIPAL_CAPACITY, PRINCIPAL_CAPACITY + 1, 1 << 32, max(u64)}
+	for bad in invalid_numbers {
+		testing.expect(t, !change_principal_valid(bad))
+		testing.expect(t, !change_principal_matches(bad, bad))
+		testing.expect(t, !change_principal_matches(bad, 1))
+		testing.expect(t, !change_principal_matches(1, bad))
+	}
+	testing.expect(t, change_principal_valid(1))
+	testing.expect(t, change_principal_matches(1, 1))
+}
+
+// Helper: builds a genuine sealed PRINCIPL record with derived Ed25519 and
+// X25519 public keys and ChaCha20-Poly1305 ciphertext under passphrase_key.
+test_sealed_principl_record :: proc(
+	name: string,
+	secrets: ^[SECRET_KEYS_SIZE]u8,
+	passphrase_key: ^[KEY_SIZE]u8,
+) -> (bytes: [FILE_SIZE]u8) {
+	file: Principal_File
+	file.name_length = copy(file.name[:], name)
+	signing, unlocking, ok := secret_keys_public_keys(secrets)
+	assert(ok)
+	file.signing_public_key = signing
+	file.unlock_public_key = unlocking
+	for index in 0 ..< SALT_SIZE {
+		file.salt[index] = u8(0x21 + index)
+	}
+	for index in 0 ..< NONCE_SIZE {
+		file.nonce[index] = u8(0x41 + index)
+	}
+	file_encode(&file, &bytes)
+	key_text := string(passphrase_key^[:])
+	nonce_text := string(file.nonce[:])
+	additional := string(file_additional_data(&bytes))
+	plain_text := string(secrets^[:])
+	sealed_slice := file.sealed[:]
+	error: errors.Error_Record
+	count := cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &plain_text, &sealed_slice, &error)
+	assert(count == SEALED_SIZE)
+	file_encode(&file, &bytes)
+	return bytes
+}
+
+// Adversarial tests for record_open_verify: corrupted, truncated, wrong-key,
+// mismatched-secret, and mismatched-public-key PRINCIPL records are refused,
+// while a genuine round-trip record passes.
+@(test)
+record_open_verify_refuses_corrupted_and_mismatched_records :: proc(t: ^testing.T) {
+	secrets: [SECRET_KEYS_SIZE]u8
+	passphrase_key: [KEY_SIZE]u8
+	for index in 0 ..< SECRET_KEYS_SIZE {
+		secrets[index] = u8(0x11 + index * 3)
+	}
+	for index in 0 ..< KEY_SIZE {
+		passphrase_key[index] = u8(0x71 + index * 5)
+	}
+	good := test_sealed_principl_record("alice", &secrets, &passphrase_key)
+
+	// Nil pointers and all-zero expected secrets are refused.
+	zero_secrets: [SECRET_KEYS_SIZE]u8
+	testing.expect_value(t, record_open_verify(good[:], nil, &secrets), Record_Verify_Problem.Bad_Arguments)
+	testing.expect_value(t, record_open_verify(good[:], &passphrase_key, nil), Record_Verify_Problem.Bad_Arguments)
+	testing.expect_value(t, record_open_verify(good[:], &passphrase_key, &zero_secrets), Record_Verify_Problem.Bad_Arguments)
+
+	// Wrong sizes (0, 1, FILE_SIZE - 1, FILE_SIZE + 1) are refused.
+	oversized: [FILE_SIZE + 1]u8
+	copy(oversized[:], good[:])
+	testing.expect_value(t, record_open_verify(nil, &passphrase_key, &secrets), Record_Verify_Problem.Decode_Failed)
+	testing.expect_value(t, record_open_verify(good[:1], &passphrase_key, &secrets), Record_Verify_Problem.Decode_Failed)
+	testing.expect_value(t, record_open_verify(good[:FILE_SIZE - 1], &passphrase_key, &secrets), Record_Verify_Problem.Decode_Failed)
+	testing.expect_value(t, record_open_verify(oversized[:], &passphrase_key, &secrets), Record_Verify_Problem.Decode_Failed)
+
+	// Wrong passphrase key fails decryption.
+	wrong_key := passphrase_key
+	wrong_key[0] ~= 0x01
+	testing.expect_value(t, record_open_verify(good[:], &wrong_key, &secrets), Record_Verify_Problem.Open_Failed)
+
+	// Flipping any single bit across the entire 216-byte record fails verification.
+	for byte_index in 0 ..< FILE_SIZE {
+		tampered := good
+		tampered[byte_index] ~= 0x80
+		problem := record_open_verify(tampered[:], &passphrase_key, &secrets)
+		testing.expectf(t, problem != .None, "bit flip at byte %d unexpectedly passed record_open_verify", byte_index)
+	}
+
+	// A validly encrypted record holding different secrets is refused with Secrets_Mismatch.
+	other_secrets := secrets
+	other_secrets[0] ~= 0x01
+	other_record := test_sealed_principl_record("alice", &other_secrets, &passphrase_key)
+	testing.expect_value(t, record_open_verify(other_record[:], &passphrase_key, &secrets), Record_Verify_Problem.Secrets_Mismatch)
+
+	// A validly encrypted record whose header public keys do not match its secrets is refused.
+	wrong_pub_file, _, decode_prob := file_decode(good[:])
+	testing.expect_value(t, decode_prob, File_Problem.None)
+	wrong_pub_file.signing_public_key[0] ~= 0x01
+	wrong_pub_bytes: [FILE_SIZE]u8
+	file_encode(&wrong_pub_file, &wrong_pub_bytes)
+	key_text := string(passphrase_key[:])
+	nonce_text := string(wrong_pub_file.nonce[:])
+	additional := string(file_additional_data(&wrong_pub_bytes))
+	plain_text := string(secrets[:])
+	sealed_slice := wrong_pub_file.sealed[:]
+	error: errors.Error_Record
+	count := cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &plain_text, &sealed_slice, &error)
+	testing.expect_value(t, count, i64(SEALED_SIZE))
+	file_encode(&wrong_pub_file, &wrong_pub_bytes)
+	testing.expect_value(t, record_open_verify(wrong_pub_bytes[:], &passphrase_key, &secrets), Record_Verify_Problem.Public_Key_Wrong)
+
+	// The genuine sealed record passes verification.
+	testing.expect_value(t, record_open_verify(good[:], &passphrase_key, &secrets), Record_Verify_Problem.None)
+}
+
+// Exhaustive adversarial tests for non-TPM principal recovery key seal/open:
+// round-trip, wrong recovery key, empty/zero recovery key, wrong principal
+// number, bit-flip tamper across all 200 bytes, size edges, and forged
+// mismatched public keys.
+@(test)
+non_tpm_recovery_seal_and_open_enforces_strict_borders :: proc(t: ^testing.T) {
+	secrets: [SECRET_KEYS_SIZE]u8
+	recovery_key: [RECOVERY_KEY_SIZE]u8
+	nonce: [NONCE_SIZE]u8
+	for index in 0 ..< SECRET_KEYS_SIZE {
+		secrets[index] = u8(0x33 + index * 7)
+	}
+	for index in 0 ..< RECOVERY_KEY_SIZE {
+		recovery_key[index] = u8(0xA1 + index * 3)
+	}
+	for index in 0 ..< NONCE_SIZE {
+		nonce[index] = u8(0x55 + index)
+	}
+
+	zero_recovery: [RECOVERY_KEY_SIZE]u8
+	zero_nonce: [NONCE_SIZE]u8
+	zero_secrets: [SECRET_KEYS_SIZE]u8
+	record_bytes: [NON_TPM_RECOVERY_SIZE]u8
+
+	// Seal border refusals first.
+	testing.expect_value(t, non_tpm_recovery_seal(1, "alice", nil, &recovery_key, &nonce, &record_bytes), Non_Tpm_Recovery_Problem.Bad_Arguments)
+	testing.expect_value(t, non_tpm_recovery_seal(1, "alice", &secrets, nil, &nonce, &record_bytes), Non_Tpm_Recovery_Problem.Bad_Arguments)
+	testing.expect_value(t, non_tpm_recovery_seal(1, "alice", &secrets, &recovery_key, nil, &record_bytes), Non_Tpm_Recovery_Problem.Bad_Arguments)
+	testing.expect_value(t, non_tpm_recovery_seal(1, "alice", &secrets, &recovery_key, &nonce, nil), Non_Tpm_Recovery_Problem.Bad_Arguments)
+	testing.expect_value(t, non_tpm_recovery_seal(MACHINE, "alice", &secrets, &recovery_key, &nonce, &record_bytes), Non_Tpm_Recovery_Problem.Bad_Principal)
+	testing.expect_value(t, non_tpm_recovery_seal(1, "", &secrets, &recovery_key, &nonce, &record_bytes), Non_Tpm_Recovery_Problem.Bad_Name)
+	testing.expect_value(t, non_tpm_recovery_seal(1, "bad name!", &secrets, &recovery_key, &nonce, &record_bytes), Non_Tpm_Recovery_Problem.Bad_Name)
+	testing.expect_value(t, non_tpm_recovery_seal(1, "alice", &secrets, &zero_recovery, &nonce, &record_bytes), Non_Tpm_Recovery_Problem.Empty_Recovery_Key)
+	testing.expect_value(t, non_tpm_recovery_seal(1, "alice", &secrets, &recovery_key, &zero_nonce, &record_bytes), Non_Tpm_Recovery_Problem.Bad_Nonce)
+	testing.expect_value(t, non_tpm_recovery_seal(1, "alice", &zero_secrets, &recovery_key, &nonce, &record_bytes), Non_Tpm_Recovery_Problem.Bad_Keys)
+
+	// Genuine seal for principal 1.
+	testing.expect_value(t, non_tpm_recovery_seal(1, "alice", &secrets, &recovery_key, &nonce, &record_bytes), Non_Tpm_Recovery_Problem.None)
+
+	// Open border refusals: nil pointers, principal 0, empty/zero recovery key,
+	// wrong principal number, wrong recovery key, size edges.
+	opened_secrets: [SECRET_KEYS_SIZE]u8
+	opened_secrets[0] = 0xFF
+	_, prob := non_tpm_recovery_open(record_bytes[:], nil, 1, &opened_secrets)
+	testing.expect_value(t, prob, Non_Tpm_Recovery_Problem.Bad_Arguments)
+	testing.expect(t, opened_secrets == zero_secrets)
+
+	_, prob = non_tpm_recovery_open(record_bytes[:], &recovery_key, 1, nil)
+	testing.expect_value(t, prob, Non_Tpm_Recovery_Problem.Bad_Arguments)
+
+	opened_secrets[0] = 0xFF
+	_, prob = non_tpm_recovery_open(record_bytes[:], &recovery_key, MACHINE, &opened_secrets)
+	testing.expect_value(t, prob, Non_Tpm_Recovery_Problem.Bad_Principal)
+	testing.expect(t, opened_secrets == zero_secrets)
+
+	opened_secrets[0] = 0xFF
+	_, prob = non_tpm_recovery_open(record_bytes[:], &zero_recovery, 1, &opened_secrets)
+	testing.expect_value(t, prob, Non_Tpm_Recovery_Problem.Empty_Recovery_Key)
+	testing.expect(t, opened_secrets == zero_secrets)
+
+	// Wrong expected principal number refused.
+	opened_secrets[0] = 0xFF
+	_, prob = non_tpm_recovery_open(record_bytes[:], &recovery_key, 2, &opened_secrets)
+	testing.expect_value(t, prob, Non_Tpm_Recovery_Problem.Wrong_Principal)
+	testing.expect(t, opened_secrets == zero_secrets)
+
+	// Rewriting principal_number in the header to 2 and requesting 2 fails AEAD + KDF binding.
+	rewritten_principal := record_bytes
+	byte_order.write_u64_little_endian(rewritten_principal[NON_TPM_RECOVERY_OFFSET_PRINCIPAL:], 0, 2)
+	opened_secrets[0] = 0xFF
+	_, prob = non_tpm_recovery_open(rewritten_principal[:], &recovery_key, 2, &opened_secrets)
+	testing.expect_value(t, prob, Non_Tpm_Recovery_Problem.Not_Authentic)
+	testing.expect(t, opened_secrets == zero_secrets)
+
+	// Wrong recovery key (1-bit flip) refused and leaves out_secrets zeroed.
+	wrong_recovery := recovery_key
+	wrong_recovery[RECOVERY_KEY_SIZE - 1] ~= 0x01
+	opened_secrets[0] = 0xFF
+	_, prob = non_tpm_recovery_open(record_bytes[:], &wrong_recovery, 1, &opened_secrets)
+	testing.expect_value(t, prob, Non_Tpm_Recovery_Problem.Not_Authentic)
+	testing.expect(t, opened_secrets == zero_secrets)
+
+	// Size edges: 0, 1, NON_TPM_RECOVERY_SIZE - 1, NON_TPM_RECOVERY_SIZE + 1.
+	oversized: [NON_TPM_RECOVERY_SIZE + 1]u8
+	copy(oversized[:], record_bytes[:])
+	_, prob = non_tpm_recovery_open(nil, &recovery_key, 1, &opened_secrets)
+	testing.expect_value(t, prob, Non_Tpm_Recovery_Problem.Wrong_Size)
+	_, prob = non_tpm_recovery_open(record_bytes[:1], &recovery_key, 1, &opened_secrets)
+	testing.expect_value(t, prob, Non_Tpm_Recovery_Problem.Wrong_Size)
+	_, prob = non_tpm_recovery_open(record_bytes[:NON_TPM_RECOVERY_SIZE - 1], &recovery_key, 1, &opened_secrets)
+	testing.expect_value(t, prob, Non_Tpm_Recovery_Problem.Wrong_Size)
+	_, prob = non_tpm_recovery_open(oversized[:], &recovery_key, 1, &opened_secrets)
+	testing.expect_value(t, prob, Non_Tpm_Recovery_Problem.Wrong_Size)
+
+	// Bit-flip tamper sweep across EVERY SINGLE byte of the 200-byte record.
+	for byte_index in 0 ..< NON_TPM_RECOVERY_SIZE {
+		tampered := record_bytes
+		tampered[byte_index] ~= 0x01
+		opened_secrets[0] = 0xFF
+		_, tamper_prob := non_tpm_recovery_open(tampered[:], &recovery_key, 1, &opened_secrets)
+		testing.expectf(t, tamper_prob != .None, "tamper at byte %d unexpectedly opened", byte_index)
+		testing.expect(t, opened_secrets == zero_secrets)
+	}
+
+	// Forged valid AEAD ciphertext whose decrypted secrets do not derive the
+	// header's public keys must be refused with Keys_Mismatch.
+	forged := record_bytes
+	forged[NON_TPM_RECOVERY_OFFSET_SIGNING_PUBLIC_KEY] ~= 0x01
+	aead_key: [KEY_SIZE]u8
+	testing.expect(t, non_tpm_recovery_derive_key(&recovery_key, 1, &aead_key))
+	key_text := string(aead_key[:])
+	nonce_text := string(nonce[:])
+	additional := string(forged[:NON_TPM_RECOVERY_OFFSET_SEALED])
+	plain_text := string(secrets[:])
+	sealed_slice := forged[NON_TPM_RECOVERY_OFFSET_SEALED:][:SEALED_SIZE]
+	error: errors.Error_Record
+	count := cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &plain_text, &sealed_slice, &error)
+	testing.expect_value(t, count, i64(SEALED_SIZE))
+	opened_secrets[0] = 0xFF
+	_, prob = non_tpm_recovery_open(forged[:], &recovery_key, 1, &opened_secrets)
+	testing.expect_value(t, prob, Non_Tpm_Recovery_Problem.Keys_Mismatch)
+	testing.expect(t, opened_secrets == zero_secrets)
+
+	// Genuine round-trip open succeeds and recovers the exact secret keys and metadata.
+	decoded, ok_prob := non_tpm_recovery_open(record_bytes[:], &recovery_key, 1, &opened_secrets)
+	testing.expect_value(t, ok_prob, Non_Tpm_Recovery_Problem.None)
+	testing.expect(t, opened_secrets == secrets)
+	testing.expect_value(t, decoded.principal_number, u64(1))
+	testing.expect_value(t, string(decoded.name[:decoded.name_length]), "alice")
+	expected_signing, expected_unlock, derived_ok := secret_keys_public_keys(&secrets)
+	testing.expect(t, derived_ok)
+	testing.expect(t, decoded.signing_public_key == expected_signing)
+	testing.expect(t, decoded.unlock_public_key == expected_unlock)
+
+	// Round-trip at edge principal number max(u64) also works cleanly.
+	max_record: [NON_TPM_RECOVERY_SIZE]u8
+	testing.expect_value(t, non_tpm_recovery_seal(max(u64), "bob", &secrets, &recovery_key, &nonce, &max_record), Non_Tpm_Recovery_Problem.None)
+	max_opened: [SECRET_KEYS_SIZE]u8
+	max_decoded, max_prob := non_tpm_recovery_open(max_record[:], &recovery_key, max(u64), &max_opened)
+	testing.expect_value(t, max_prob, Non_Tpm_Recovery_Problem.None)
+	testing.expect(t, max_opened == secrets)
+	testing.expect_value(t, max_decoded.principal_number, max(u64))
+	testing.expect_value(t, string(max_decoded.name[:max_decoded.name_length]), "bob")
 }
 
 // The line of a lock names what the `unlock` that it stops ran for: each

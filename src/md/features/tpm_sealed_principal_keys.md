@@ -208,12 +208,15 @@ Built: no window of `unlock` outlives a lock. The root service stops the `unlock
 
 Built: the erase of the old versions of the file ([version_erase.md](version_erase.md)): `unlock` erases the versions of the file after each write that the store kept (a new passphrase, a new recovery key, the new seal after a recovery), the versions of the record of the machine key after its new seal, and both each time the current file or record opened. In `modustool test principals`, the tool reads the file before the change of machine 10 from the disk on the host, and after machine 10 finds none of its salt, its keys under the seal key and its keys under the recovery key in the image of the disk, and opens the disk with no wrong block and no version of the file.
 
+Built: a new file under the passphrase alone (`PRINCIPL`) is decoded, decrypted under the newly derived passphrase key, compared byte-for-byte against the sealed secret keys, and verified against the header public keys (`principals.record_open_verify`) before replacing the stored file on disk during a passphrase change or recovery reseal, with adversarial host tests.
+
+Built: the root service passes the requesting principal's number explicitly in `unlock`'s start context (`GRANT_VALUE_UNLOCK_PRINCIPAL` / `principals.VALUE_PRINCIPAL`) when starting a passphrase or recovery key change, and `unlock` verifies that the loaded principal file matches that principal number, refusing any mismatch with `Change_Problem.Wrong_Principal`, with host tests.
+
+Built: a recovery key for a named principal on a machine with no TPM or with Secure Boot off (`principals.non_tpm_recovery_seal` and `principals.non_tpm_recovery_open`, stored in `principal_recovery` with HKDF-SHA256 key derivation bound to the principal number and ChaCha20-Poly1305 authentication over the header and public keys), wired into `unlock` for creating, renewing, and opening recovery copies with Ctrl+R, with adversarial host tests.
+
 Left:
 
 - **The file of a named principal pinned in the TPM**, so a kept old file and its old passphrase are refused.
 - **A machine test of the refusal of PCR 11 after a change of the passphrase.** Machine 11 presses Ctrl+R where it typed the changed passphrase, so no machine sees the TPM refuse on PCR 11 a passphrase that a change set; machine 9 tests that refusal with the passphrase of before. The path runs no other code. An unseal in machine 11 would move the lockout line that proves Ctrl+R sends nothing to the TPM, so the case needs a machine of its own.
-- **A recovery key for a named principal on a machine with no TPM.** The form `PRINCIPL` has no copy under a recovery key.
-- **A new file under the passphrase alone opened again before its write**, so a fault of the seal cannot lose a principal that has no recovery key.
-- **The number of the principal in the start of a change**, for several named principals.
 - **An encrypted session with the TPM** ([tpm_sealed_machine_key.md](tpm_sealed_machine_key.md)): the TPM secret and the value cross the bus encrypted.
 - **The state of the lockout hierarchy in the window of the creation.** Today only the log says that another system set the value, or that the change failed; the window of `unlock` presents the seal by the TPM the same way.

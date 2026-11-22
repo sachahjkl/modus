@@ -40,8 +40,12 @@
 package principals
 
 import "modus:contract/byte_order"
+import "modus:contract/errors"
 import "modus:contract/text_encoding"
+import "modus:contract/value_kinds"
 import blake2 "modus:cryptography/_blake2"
+import crypto "modus:cryptography/compatibility_crypto"
+import "modus:cryptography_primitives"
 import "modus:tpm2"
 
 // Principal 0 is the machine. Its record exists at each boot, and its
@@ -62,6 +66,7 @@ PASSPHRASE_LIMIT :: 128 // The most bytes of a passphrase.
 // root service gives (the store: 3).
 VALUE_MODE :: 5 // What this start of `unlock` does: the word of an Unlock_Mode.
 VALUE_NAME :: 6 // 6, 7 and 8: the name, 24 bytes with zero bytes after it.
+VALUE_PRINCIPAL :: 9 // The number of the principal that asked for a change.
 // 1: the firmware verified the boot program (Secure Boot was on), so
 // `unlock` may seal the machine key by the TPM and seal it again after a
 // recovery. 0: it may only unseal: a seal with Secure Boot off would trust
@@ -139,11 +144,12 @@ mode_words :: proc "contextless" (mode: Unlock_Mode) -> string {
 // the root ring (Principal_Change_End), so each value is explicit.
 Change_Problem :: enum u8 {
 	None             = 0, // The change can be made.
-	No_Recovery_Copy = 1, // A new recovery key for the form PRINCIPL: that form has no copy under a recovery key.
+	No_Recovery_Copy = 1, // A new recovery key for a form that has no copy under a recovery key.
 	No_Tpm_Service   = 2, // The form PRINCIPT with no TPM service: the current passphrase opens nothing without the TPM.
 	Seal_Not_Allowed = 3, // A new passphrase for the form PRINCIPT with Secure Boot off: a new seal would trust a boot program that nothing verified.
 	Unknown_Form     = 4, // The file has neither form.
 	Unknown_Change   = 5, // A mode that is not a change.
+	Wrong_Principal  = 6, // The file of the principal does not belong to the principal that asked for the change.
 }
 
 @(rodata)
@@ -154,6 +160,7 @@ change_problem_sentences := [Change_Problem]string {
 	.Seal_Not_Allowed = "the firmware did not verify the boot program (Secure Boot is off): a new seal by the TPM would trust a boot program that nothing verified",
 	.Unknown_Form     = "the file of the principal has neither form",
 	.Unknown_Change   = "the mode is not a change",
+	.Wrong_Principal  = "the file of the principal does not belong to the principal that asked for the change",
 }
 
 // How a change ended: `unlock` gives it to the root service
@@ -199,9 +206,8 @@ change_problem :: proc "contextless" (form: Principal_Record_Form, mode: Unlock_
 	case .Unknown:
 		return .Unknown_Form
 	case .Passphrase:
-		if mode == .New_Recovery_Key {
-			return .No_Recovery_Copy
-		}
+		// Both a passphrase change and a non-TPM recovery key are supported
+		// for the form under the passphrase alone.
 	case .Sealed_By_The_Tpm:
 		if !has_tpm {
 			return .No_Tpm_Service
@@ -1346,4 +1352,319 @@ tpm_and_passphrase_key :: proc "contextless" (tpm_secret: ^[TPM_SECRET_SIZE]u8, 
 // PRINCIPAL_RECOVERY_SEAL_TEXT.
 principal_recovery_seal_key :: proc "contextless" (recovery_key: ^[RECOVERY_KEY_SIZE]u8) -> [KEY_SIZE]u8 {
 	return keyed_hash(recovery_key^[:], PRINCIPAL_RECOVERY_SEAL_TEXT)
+}
+
+// change_principal_valid reports whether a principal number supplied in
+// VALUE_PRINCIPAL names a named principal that may request a change.
+change_principal_valid :: proc "contextless" (requested_principal: u64) -> bool {
+	return requested_principal != MACHINE && requested_principal < PRINCIPAL_CAPACITY
+}
+
+// change_principal_matches reports whether a loaded principal file belongs to
+// the named principal that asked for the change.
+change_principal_matches :: proc "contextless" (requested_principal: u64, loaded_principal: u64) -> bool {
+	return change_principal_valid(requested_principal) && loaded_principal == requested_principal
+}
+
+// secret_keys_public_keys derives the Ed25519 signing public key and X25519
+// unlock public key from the 64-byte principal secret keys record.
+@(private)
+secret_keys_public_keys :: proc "contextless" (secrets: ^[SECRET_KEYS_SIZE]u8) -> (signing, unlocking: [PUBLIC_KEY_SIZE]u8, ok: bool) {
+	error: errors.Error_Record
+	seed := string(secrets^[:32])
+	signing_result := signing[:]
+	if cryptography_primitives.ed25519_public_key(&seed, &signing_result, &error) != PUBLIC_KEY_SIZE {
+		return {}, {}, false
+	}
+	base_point: [PUBLIC_KEY_SIZE]u8
+	base_point[0] = 9 // The base point of X25519 (RFC 7748, section 4.1).
+	scalar := string(secrets^[32:])
+	point := string(base_point[:])
+	unlocking_result := unlocking[:]
+	if cryptography_primitives.x25519(&scalar, &point, &unlocking_result, &error) != PUBLIC_KEY_SIZE {
+		return {}, {}, false
+	}
+	return signing, unlocking, true
+}
+
+// Why record_open_verify refused a newly built PRINCIPL record.
+Record_Verify_Problem :: enum u8 {
+	None             = 0, // The record decodes, decrypts under passphrase_key, matches expected_secrets byte-for-byte, and derives the header public keys.
+	Bad_Arguments    = 1, // A nil key or expected secret pointer, or all-zero expected secrets.
+	Decode_Failed    = 2, // The record failed file_decode.
+	Open_Failed      = 3, // ChaCha20-Poly1305 authentication or decryption failed.
+	Secrets_Mismatch = 4, // The recovered secret keys differ from expected_secrets.
+	Public_Key_Wrong = 5, // The recovered secret keys do not derive the Ed25519 and X25519 public keys in the header.
+}
+
+// record_open_verify decodes a newly built PRINCIPL record, opens its
+// ChaCha20-Poly1305 seal under passphrase_key, verifies constant-time
+// byte-for-byte equality with expected_secrets, and checks that the recovered
+// secret keys derive the record's Ed25519 and X25519 public keys.
+//
+// Call this before replacing an existing principal file on disk so a faulty
+// seal can never overwrite a working file.
+record_open_verify :: proc "contextless" (
+	bytes: []u8,
+	passphrase_key: ^[KEY_SIZE]u8,
+	expected_secrets: ^[SECRET_KEYS_SIZE]u8,
+) -> Record_Verify_Problem {
+	if passphrase_key == nil || expected_secrets == nil || crypto.is_zero_constant_time(expected_secrets^[:]) == 1 {
+		return .Bad_Arguments
+	}
+	decoded, kept, decode_problem := file_decode(bytes)
+	if decode_problem != .None {
+		return .Decode_Failed
+	}
+	recovered: [SECRET_KEYS_SIZE]u8
+	defer crypto.zero_explicit(&recovered, size_of(recovered))
+	key_text := string(passphrase_key^[:])
+	nonce_text := string(decoded.nonce[:])
+	additional := string(file_additional_data(&kept))
+	sealed_text := string(decoded.sealed[:])
+	result := recovered[:]
+	error: errors.Error_Record
+	if cryptography_primitives.open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed_text, &result, &error) != SECRET_KEYS_SIZE {
+		return .Open_Failed
+	}
+	if crypto.compare_constant_time(recovered[:], expected_secrets^[:]) != 1 {
+		return .Secrets_Mismatch
+	}
+	signing, unlocking, derived_ok := secret_keys_public_keys(&recovered)
+	if !derived_ok || crypto.compare_constant_time(signing[:], decoded.signing_public_key[:]) != 1 || crypto.compare_constant_time(unlocking[:], decoded.unlock_public_key[:]) != 1 {
+		return .Public_Key_Wrong
+	}
+	return .None
+}
+
+// The recovery copy of a named principal on a machine with no TPM (or with
+// Secure Boot off): the object NON_TPM_RECOVERY_OBJECT in the store of
+// `unlock`. It seals the two secret keys of the principal under an AEAD key
+// derived from the recovery key and principal number with HKDF-SHA256,
+// authenticating the magic, format, principal number, name, public keys, and
+// nonce as additional data.
+NON_TPM_RECOVERY_OBJECT :: "principal_recovery"
+NON_TPM_RECOVERY_MAGIC :: "PRINCREC"
+NON_TPM_RECOVERY_FORMAT :: u32(1)
+NON_TPM_RECOVERY_OFFSET_MAGIC :: 0 // 8 bytes.
+NON_TPM_RECOVERY_OFFSET_FORMAT :: 8 // u32 little-endian.
+NON_TPM_RECOVERY_OFFSET_PRINCIPAL :: 12 // u64 little-endian: named principal number (> 0).
+NON_TPM_RECOVERY_OFFSET_NAME_LENGTH :: 20 // u8.
+NON_TPM_RECOVERY_OFFSET_NAME :: 21 // NAME_LIMIT bytes, zero-padded.
+NON_TPM_RECOVERY_OFFSET_SIGNING_PUBLIC_KEY :: NON_TPM_RECOVERY_OFFSET_NAME + NAME_LIMIT // 44.
+NON_TPM_RECOVERY_OFFSET_UNLOCK_PUBLIC_KEY :: NON_TPM_RECOVERY_OFFSET_SIGNING_PUBLIC_KEY + PUBLIC_KEY_SIZE // 76.
+NON_TPM_RECOVERY_OFFSET_NONCE :: NON_TPM_RECOVERY_OFFSET_UNLOCK_PUBLIC_KEY + PUBLIC_KEY_SIZE // 108.
+NON_TPM_RECOVERY_OFFSET_SEALED :: NON_TPM_RECOVERY_OFFSET_NONCE + NONCE_SIZE // 120.
+NON_TPM_RECOVERY_SIZE :: NON_TPM_RECOVERY_OFFSET_SEALED + SEALED_SIZE // 200.
+#assert(NON_TPM_RECOVERY_SIZE == 200)
+
+NON_TPM_RECOVERY_KDF_SALT :: "modus non-tpm recovery key of a named principal"
+
+// Decoded header and ciphertext of a non-TPM principal recovery copy.
+Non_Tpm_Recovery_File :: struct {
+	principal_number:   u64,
+	name:               [NAME_LIMIT]u8,
+	name_length:        int,
+	signing_public_key: [PUBLIC_KEY_SIZE]u8,
+	unlock_public_key:  [PUBLIC_KEY_SIZE]u8,
+	nonce:              [NONCE_SIZE]u8,
+	sealed:             [SEALED_SIZE]u8,
+}
+
+// Why non_tpm_recovery_seal, non_tpm_recovery_decode, or
+// non_tpm_recovery_open refused an operation.
+Non_Tpm_Recovery_Problem :: enum u8 {
+	None               = 0,
+	Bad_Arguments      = 1,
+	Bad_Principal      = 2,
+	Empty_Recovery_Key = 3,
+	Bad_Nonce          = 4,
+	Bad_Name           = 5,
+	Bad_Keys           = 6,
+	Wrong_Size         = 7,
+	Wrong_Magic        = 8,
+	Wrong_Format       = 9,
+	Bytes_After_Name   = 10,
+	Wrong_Principal    = 11,
+	Not_Authentic      = 12,
+	Keys_Mismatch      = 13,
+}
+
+// non_tpm_recovery_derive_key derives the 32-byte ChaCha20-Poly1305 key from
+// recovery_key and principal_number using HKDF-SHA256.
+@(private)
+non_tpm_recovery_derive_key :: proc "contextless" (
+	recovery_key: ^[RECOVERY_KEY_SIZE]u8,
+	principal_number: u64,
+	out_key: ^[KEY_SIZE]u8,
+) -> bool {
+	prk: [KEY_SIZE]u8
+	defer crypto.zero_explicit(&prk, size_of(prk))
+	salt := NON_TPM_RECOVERY_KDF_SALT
+	ikm := string(recovery_key^[:])
+	prk_slice := prk[:]
+	if cryptography_primitives.hkdf_sha256_extract(&salt, &ikm, &prk_slice) != KEY_SIZE {
+		return false
+	}
+	info_bytes: [8]u8
+	byte_order.write_u64_little_endian(info_bytes[:], 0, principal_number)
+	prk_text := string(prk[:])
+	info_text := string(info_bytes[:])
+	key_slice := out_key^[:]
+	error: errors.Error_Record
+	if cryptography_primitives.hkdf_sha256_expand(&prk_text, &info_text, value_kinds.Size_In_Bytes(KEY_SIZE), &key_slice, &error) != KEY_SIZE {
+		crypto.zero_explicit(out_key, size_of(out_key^))
+		return false
+	}
+	return true
+}
+
+// non_tpm_recovery_seal seals a named principal's 64-byte secret keys under a
+// recovery key bound to principal_number, without requiring a TPM.
+non_tpm_recovery_seal :: proc "contextless" (
+	principal_number: u64,
+	principal_name: string,
+	secrets: ^[SECRET_KEYS_SIZE]u8,
+	recovery_key: ^[RECOVERY_KEY_SIZE]u8,
+	nonce: ^[NONCE_SIZE]u8,
+	out: ^[NON_TPM_RECOVERY_SIZE]u8,
+) -> Non_Tpm_Recovery_Problem {
+	if out == nil || secrets == nil || recovery_key == nil || nonce == nil {
+		return .Bad_Arguments
+	}
+	out^ = {}
+	if principal_number == MACHINE {
+		return .Bad_Principal
+	}
+	if name_problem(principal_name) != .None {
+		return .Bad_Name
+	}
+	if crypto.is_zero_constant_time(recovery_key^[:]) == 1 {
+		return .Empty_Recovery_Key
+	}
+	if crypto.is_zero_constant_time(nonce^[:]) == 1 {
+		return .Bad_Nonce
+	}
+	if crypto.is_zero_constant_time(secrets^[:]) == 1 {
+		return .Bad_Keys
+	}
+	signing_public_key, unlock_public_key, derived_ok := secret_keys_public_keys(secrets)
+	if !derived_ok {
+		return .Bad_Keys
+	}
+	copy(out^[NON_TPM_RECOVERY_OFFSET_MAGIC:][:8], NON_TPM_RECOVERY_MAGIC)
+	byte_order.write_u32_little_endian(out^[NON_TPM_RECOVERY_OFFSET_FORMAT:], 0, NON_TPM_RECOVERY_FORMAT)
+	byte_order.write_u64_little_endian(out^[NON_TPM_RECOVERY_OFFSET_PRINCIPAL:], 0, principal_number)
+	out^[NON_TPM_RECOVERY_OFFSET_NAME_LENGTH] = u8(len(principal_name))
+	copy(out^[NON_TPM_RECOVERY_OFFSET_NAME:][:len(principal_name)], principal_name)
+	copy(out^[NON_TPM_RECOVERY_OFFSET_SIGNING_PUBLIC_KEY:][:PUBLIC_KEY_SIZE], signing_public_key[:])
+	copy(out^[NON_TPM_RECOVERY_OFFSET_UNLOCK_PUBLIC_KEY:][:PUBLIC_KEY_SIZE], unlock_public_key[:])
+	copy(out^[NON_TPM_RECOVERY_OFFSET_NONCE:][:NONCE_SIZE], nonce^[:])
+
+	aead_key: [KEY_SIZE]u8
+	defer crypto.zero_explicit(&aead_key, size_of(aead_key))
+	if !non_tpm_recovery_derive_key(recovery_key, principal_number, &aead_key) {
+		out^ = {}
+		return .Bad_Keys
+	}
+	key_text := string(aead_key[:])
+	nonce_text := string(nonce^[:])
+	additional := string(out^[:NON_TPM_RECOVERY_OFFSET_SEALED])
+	plain_text := string(secrets^[:])
+	sealed_slice := out^[NON_TPM_RECOVERY_OFFSET_SEALED:][:SEALED_SIZE]
+	error: errors.Error_Record
+	if cryptography_primitives.seal_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &plain_text, &sealed_slice, &error) != SEALED_SIZE {
+		out^ = {}
+		return .Bad_Keys
+	}
+	return .None
+}
+
+// non_tpm_recovery_decode copies and validates the framing of a non-TPM
+// recovery record without opening its seal.
+non_tpm_recovery_decode :: proc "contextless" (bytes: []u8) -> (record: Non_Tpm_Recovery_File, kept: [NON_TPM_RECOVERY_SIZE]u8, problem: Non_Tpm_Recovery_Problem) {
+	if len(bytes) != NON_TPM_RECOVERY_SIZE {
+		return {}, {}, .Wrong_Size
+	}
+	copy(kept[:], bytes)
+	if string(kept[NON_TPM_RECOVERY_OFFSET_MAGIC:][:8]) != NON_TPM_RECOVERY_MAGIC {
+		return {}, {}, .Wrong_Magic
+	}
+	if byte_order.read_u32_little_endian(kept[NON_TPM_RECOVERY_OFFSET_FORMAT:], 0) != NON_TPM_RECOVERY_FORMAT {
+		return {}, {}, .Wrong_Format
+	}
+	principal_number := byte_order.read_u64_little_endian(kept[NON_TPM_RECOVERY_OFFSET_PRINCIPAL:], 0)
+	if principal_number == MACHINE {
+		return {}, {}, .Bad_Principal
+	}
+	length := int(kept[NON_TPM_RECOVERY_OFFSET_NAME_LENGTH])
+	if length > NAME_LIMIT || name_problem(string(kept[NON_TPM_RECOVERY_OFFSET_NAME:][:length])) != .None {
+		return {}, {}, .Bad_Name
+	}
+	if !zero_after(kept[NON_TPM_RECOVERY_OFFSET_NAME:NON_TPM_RECOVERY_OFFSET_SIGNING_PUBLIC_KEY], length) {
+		return {}, {}, .Bytes_After_Name
+	}
+	if crypto.is_zero_constant_time(kept[NON_TPM_RECOVERY_OFFSET_NONCE:][:NONCE_SIZE]) == 1 {
+		return {}, {}, .Bad_Nonce
+	}
+	record.principal_number = principal_number
+	record.name_length = length
+	copy(record.name[:], kept[NON_TPM_RECOVERY_OFFSET_NAME:][:length])
+	copy(record.signing_public_key[:], kept[NON_TPM_RECOVERY_OFFSET_SIGNING_PUBLIC_KEY:][:PUBLIC_KEY_SIZE])
+	copy(record.unlock_public_key[:], kept[NON_TPM_RECOVERY_OFFSET_UNLOCK_PUBLIC_KEY:][:PUBLIC_KEY_SIZE])
+	copy(record.nonce[:], kept[NON_TPM_RECOVERY_OFFSET_NONCE:][:NONCE_SIZE])
+	copy(record.sealed[:], kept[NON_TPM_RECOVERY_OFFSET_SEALED:][:SEALED_SIZE])
+	return record, kept, .None
+}
+
+// non_tpm_recovery_open verifies and opens a non-TPM principal recovery copy
+// under recovery_key for expected_principal, verifying the recovered secret
+// keys derive the record's public keys before writing out_secrets.
+non_tpm_recovery_open :: proc "contextless" (
+	bytes: []u8,
+	recovery_key: ^[RECOVERY_KEY_SIZE]u8,
+	expected_principal: u64,
+	out_secrets: ^[SECRET_KEYS_SIZE]u8,
+) -> (record: Non_Tpm_Recovery_File, problem: Non_Tpm_Recovery_Problem) {
+	if out_secrets != nil {
+		crypto.zero_explicit(out_secrets, size_of(out_secrets^))
+	}
+	if recovery_key == nil || out_secrets == nil {
+		return {}, .Bad_Arguments
+	}
+	if expected_principal == MACHINE {
+		return {}, .Bad_Principal
+	}
+	if crypto.is_zero_constant_time(recovery_key^[:]) == 1 {
+		return {}, .Empty_Recovery_Key
+	}
+	decoded, kept, decode_problem := non_tpm_recovery_decode(bytes)
+	if decode_problem != .None {
+		return {}, decode_problem
+	}
+	if decoded.principal_number != expected_principal {
+		return {}, .Wrong_Principal
+	}
+	aead_key: [KEY_SIZE]u8
+	defer crypto.zero_explicit(&aead_key, size_of(aead_key))
+	if !non_tpm_recovery_derive_key(recovery_key, expected_principal, &aead_key) {
+		return {}, .Not_Authentic
+	}
+	recovered: [SECRET_KEYS_SIZE]u8
+	defer crypto.zero_explicit(&recovered, size_of(recovered))
+	key_text := string(aead_key[:])
+	nonce_text := string(decoded.nonce[:])
+	additional := string(kept[:NON_TPM_RECOVERY_OFFSET_SEALED])
+	sealed_text := string(decoded.sealed[:])
+	result := recovered[:]
+	error: errors.Error_Record
+	if cryptography_primitives.open_with_chacha20_poly1305(&key_text, &nonce_text, &additional, &sealed_text, &result, &error) != SECRET_KEYS_SIZE {
+		return {}, .Not_Authentic
+	}
+	signing, unlocking, derived_ok := secret_keys_public_keys(&recovered)
+	if !derived_ok || crypto.compare_constant_time(signing[:], decoded.signing_public_key[:]) != 1 || crypto.compare_constant_time(unlocking[:], decoded.unlock_public_key[:]) != 1 {
+		return {}, .Keys_Mismatch
+	}
+	out_secrets^ = recovered
+	return decoded, .None
 }

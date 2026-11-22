@@ -401,7 +401,9 @@ a_flood_of_forged_initials :: proc(t: ^testing.T) {
 	state: u64 = 0x464c_4f4f_4400_0001
 	for index in 0 ..< 1000 {
 		forged := forged_initial(&state)
-		remote := Remote{u32(0x0B00_0000 + index), 40_000}
+		// Spread across distinct /24 ranges so this test exercises the stateless
+		// Retry path rather than per-/24 rate limiting.
+		remote := Remote{u32(0x0B00_0001) + (u32(index) << 8), 40_000}
 		outcome := harness_server_receive(harness, remote, forged[:])
 		testing.expect(t, outcome.record < 0 && outcome.release_remote)
 	}
@@ -699,7 +701,7 @@ one_address_with_a_valid_token_cannot_spend_the_budget_of_initial_checks :: proc
 	// 4 at once, then 1 in each second, for the attacker; the real client
 	// needs one or a few.
 	testing.expectf(t, counters.authenticity_checks <= 4 + 2 * 1 + 4, "%d Initial checks; %s", counters.authenticity_checks, harness_describe(harness))
-	testing.expectf(t, counters.over_address_budget >= u64(attacks) - 4 - 2 * 1 - 1, "%s", harness_describe(harness))
+	testing.expectf(t, counters.over_address_budget + counters.over_source_budget >= u64(attacks) - 4 - 2 * 1 - 1, "%s", harness_describe(harness))
 	testing.expectf(t, counters.over_budget == 0, "%s", harness_describe(harness))
 	testing.expectf(t, counters.accepted == 1 && harness.clients[0].state == .Connected, "the real client did not connect during the attack; %s", harness_describe(harness))
 	ended := harness_run(t, harness, 4096, 10_000_000)
@@ -864,7 +866,9 @@ rotating_attack :: proc(t: ^testing.T, harness: ^Harness, address_count: int, da
 	for index in 0 ..< address_count {
 		identifier: [CONNECTION_ID_SIZE]u8
 		identifier[0], identifier[1], identifier[2] = 0x7A, u8(index >> 8), u8(index)
-		remote := Remote{u32(0x0C00_0000 + index), 40_000}
+		// Place each rotating address in its own /24 range so this test
+		// exercises the per-address budget table.
+		remote := Remote{u32(0x0C00_0001) + (u32(index) << 8), 40_000}
 		token, retry_source, has_retry := retry_of(harness, remote, identifier)
 		if !testing.expectf(t, has_retry, "no Retry for the address %d; %s", index, harness_describe(harness)) {
 			return 0
@@ -889,7 +893,7 @@ rotating_attack :: proc(t: ^testing.T, harness: ^Harness, address_count: int, da
 		}
 		for next_attack <= harness.now {
 			index := attacks % address_count
-			harness_server_receive(harness, {u32(0x0C00_0000 + index), 40_000}, garbage[index][:])
+			harness_server_receive(harness, {u32(0x0C00_0001) + (u32(index) << 8), 40_000}, garbage[index][:])
 			attacks += 1
 			next_attack += interval
 		}
