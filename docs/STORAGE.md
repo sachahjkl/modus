@@ -132,6 +132,90 @@ The format is the contract `src/library/modus/contract/store`, `STORAGE4`. A dis
 
 A pointer is a block number and a check. The check of a block of data is the first 8 bytes of its value (section 4.6); the check of each other block is the first 8 bytes of the BLAKE3 hash of its 4096 bytes.
 
+The bytes of each block, and of the records inside a block, in the order of a walk from the root block:
+
+```byte-layout store.Root store.Store_Entry store.Pointer store.Store_Block store.Tree_Header store.Object_Node store.Object_Child store.Version_Index store.Version_Leaf store.Version_Entry
+store.Root, 4096 bytes: the root block, at block 0 or block 1
+offset  size  field        type
+     0     8  magic        u64
+     8     8  generation   u64
+    16     8  disk_blocks  u64
+    24     8  time         u64
+    32     8  date         u64
+    40    24  reserved     [3]u64
+    64  3840  stores       [STORE_CAPACITY]Store_Entry
+  3904   184  padding      [BLOCK_SIZE - 64 - STORE_CAPACITY * size_of(Store_Entry) - 8]u8
+  4088     8  check        u64
+
+store.Store_Entry, 64 bytes: the cell of one store in the root block
+offset  size  field  type
+     0    32  name   [NAME_CAPACITY]u8
+    32     8  limit  u64
+    40     8  used   u64
+    48    16  store  Pointer
+
+store.Pointer, 16 bytes: how a block names another block
+offset  size  field  type
+     0     8  block  u64
+     8     8  check  u64
+
+store.Store_Block, 4096 bytes: the block of one store
+offset  size  field           type
+     0    16  tree            Pointer
+    16    16  removals        Pointer
+    32     8  next_removal    u64
+    40     8  objects         u64
+    48     8  trees           u64
+    56     8  current_blocks  u64
+    64     8  node_blocks     u64
+    72     8  removing        u64
+    80    32  reserved        [4]u64
+   112  3984  padding         [BLOCK_SIZE - 112]u8
+
+store.Tree_Header, 32 bytes: the start of a node and of an object node
+offset  size  field     type
+     0     4  level     u32
+     4     4  count     u32
+     8     4  magic     u32
+    12     4  reserved  u32
+    16    16  unused    [2]u64
+
+store.Object_Node, 4096 bytes: one node of the block tree of an object
+offset  size  field     type
+     0    32  header    Tree_Header
+    32  3584  children  [OBJECT_FANOUT]Object_Child
+  3616   480  padding   [BLOCK_SIZE - TREE_HEADER_SIZE - OBJECT_FANOUT * size_of(Object_Child)]u8
+
+store.Object_Child, 56 bytes: one child of an object node
+offset  size  field   type
+     0     8  block   u64
+     8     8  check   u64
+    16     8  blocks  u64
+    24    32  value   Block_Value
+
+store.Version_Index, 4096 bytes: the block that names the version leaves of one object
+offset  size  field           type
+     0     8  leaf_count      u64
+     8     8  version_count   u64
+    16     8  retention_time  u64
+    24     8  reserved        u64
+    32  4064  leaves          [VERSION_INDEX_CAPACITY]Pointer
+
+store.Version_Leaf, 4096 bytes: one block of version entries of one object
+offset  size  field     type
+     0     8  count     u64
+     8     8  reserved  u64
+    16  4080  entries   [VERSION_LEAF_CAPACITY]Version_Entry
+
+store.Version_Entry, 48 bytes: one version of an object
+offset  size  field       type
+     0     8  generation  u64
+     8     8  size        u64
+    16     8  time        u64
+    24     8  date        u64
+    32    16  root        Pointer
+```
+
 ### 3.2 An entry
 
 An entry is 104 bytes (`Entry` of `src/library/modus/contract/store`):
@@ -145,6 +229,19 @@ An entry is 104 bytes (`Entry` of `src/library/modus/contract/store`):
 | Hash | the hash of the object (section 4.6) | zero (not built) |
 | Pointer | the root of its block tree: an object node, or its one block of data when it has one block; none when each of its bytes is zero | its root node; none when it is empty |
 | Versions | its version index | none |
+
+```byte-layout store.Entry
+store.Entry, 104 bytes: the record of a leaf after its name of 64 bytes
+offset  size  field       type
+     0     8  kind        u64
+     8     8  size        u64
+    16     8  generation  u64
+    24     8  time        u64
+    32     8  date        u64
+    40    32  hash        [32]u8
+    72    16  pointer     Pointer
+    88    16  versions    Pointer
+```
 
 A name is one step: it has no separator, and it never names the tree above. So a name that a process looks up under a place never reaches a node outside it.
 

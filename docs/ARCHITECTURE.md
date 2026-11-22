@@ -196,6 +196,25 @@ A thread talks to the kernel through a ring, and waits through the kernel. Rings
 - **A ring between processes** is one memory object (`src/library/modus/contract/ring`): page 0 holds the counters, then come the command records, then the completion records. A record is 64 bytes: a kind, a tag and seven values. All-zero memory is an empty ring. The writer advances one counter and the reader another, each in its own cache line, so data does not pass through the kernel. A side that must wait (an empty queue, a full queue) waits on the counter with the word wait; the other side enters the kernel to wake it only when a flag says that it waits. A side never trusts the numbers of the other side: it computes the capacity from the size that the kernel gives, and a place is a count modulo the capacity. A process gets a ring as a memory handle from the process that made it; the root service makes the rings between a process and a service.
 - **Example**: `system.word_wait(&ready, 0, deadline)` waits while the word `ready` holds 0, at most until `deadline`.
 
+The bytes of a record of a ring, and of the counters of one queue in the head page:
+
+```byte-layout ring.Record ring.Counters
+ring.Record, 64 bytes: one command or one completion of a ring, the kernel ring included
+offset  size  field   type
+     0     4  kind    u32
+     4     4  tag     u32
+     8    56  values  [7]u64
+
+ring.Counters, 128 bytes: the counters of one queue of a ring, in its head page
+offset  size  field         type
+     0     4  write         u32
+     4     4  writer_waits  u32
+     8    56  reserved_0    [56]u8
+    64     4  read          u32
+    68     4  reader_waits  u32
+    72    56  reserved_1    [56]u8
+```
+
 ### K5. Device grant and interrupts
 
 A driver is a process, not a part of the kernel (P7). This system gives a device service the few things of the hardware that a process cannot take by itself.
@@ -797,6 +816,32 @@ A process names one of its threads as its fault handler (`Fault_Handler_Set`, op
 **The rule of Resume.** `Fault_Answer` accepts `Resume` for a trap (the thread continues after its instruction) and for a page fault (the handler changes what the instruction finds with `Memory_Commit` and `Memory_Protect`). For every other fault it accepts `Resume` only when `Thread_Control` wrote the registers or the extended state of the waiting thread since its fault ("The control of a thread"): the handler moved the instruction address past the instruction, or changed the register or the control word that faulted. With no such write it refuses `Resume` with `Bad_State`, and the thread still waits: `Stop` ends it with its report. Such a fault runs the same instruction on the same registers again, and faults again with no end; to accept `Resume` and charge each new record to the budget would make a loop of records that never ends and that no line of the log names. With a write, a fault that comes again is a new record that the handler reads and answers: each turn of such a loop is an operation of the handler, paid by its budget, and never a silent loop of the kernel. The mark of a write is per fault: `fault_deliver` clears it, so a write before a fault does not count for it. The refusal is visible to the handler at its first answer.
 
 **Where the ring is.** In the thread record of the handler, after its fields (`op.Thread_Record`: `fault_written`, `fault_read`, `fault_full`, and `fault_records`, 16 records of 64 bytes). The kernel already writes that page (the event word) through the direct map, and the budget of the process paid for it with the thread. So the ring needs no new memory object, no mapping, and no count of references: it lives as long as the handler. `fault_read` is memory of the process; the kernel indexes the records with its own count (`Process.fault_written`), so it never writes outside `fault_records`, and a difference with `fault_read` that is not below the capacity is a full ring. A false value of `fault_read` harms only its own process: a value above the count makes the ring full (the next fault stops the process), and a value a little below the count lets the kernel write over records that the process did not read yet (their threads wait until the process answers them, or stops).
+
+```byte-layout operation.Thread_Record operation.Fault_Record
+operation.Thread_Record, 1072 bytes: the start of the first page of the thread area of a thread
+offset  size  field           type
+     0     8  self            u64
+     8     8  parameter       u64
+    16     8  number          u64
+    24     4  events          u32
+    28     4  processors      u32
+    32     4  fault_written   u32
+    36     4  fault_read      u32
+    40     4  fault_full      u32
+    44     4  fault_reserved  u32
+    48  1024  fault_records   [FAULT_RECORD_CAPACITY]Fault_Record
+
+operation.Fault_Record, 64 bytes: one record of the fault ring
+offset  size  field        type
+     0     8  thread       u64
+     8     8  serial       u64
+    16     8  address      u64
+    24     8  access       u64
+    32     8  instruction  u64
+    40     8  kind         u64
+    48     8  error_code   u64
+    56     8  reserved     u64
+```
 
 **The rules**:
 
@@ -1580,7 +1625,36 @@ A log record has a head that the kernel sets (the number, the time, the process,
 | Form | The 192 bytes | Records of one `Log` |
 |---|---|---|
 | `Text` (0) | The value runs (24 bytes), then the text (168 bytes), UTF-8 with no control character: the kernel writes "?" for each byte of an invalid sequence | One for each 168 bytes of text, with `more` |
-| `Fact` (1) | One `op.Log_Fact`: the module hash (32 bytes), the fact key (8), the count of the value bytes (2), 6 reserved bytes, the values (144) | One, `more` is 0 |
+| `Fact` (1) | One `op.Log_Fact`: the module hash (32 bytes), the fact key (8), the count of the value bytes (2), the part (1), the count of the parts (1), 4 reserved bytes, the values (144) | One for each 144 value bytes, up to `op.LOG_FACT_RECORDS_MOST` (9), with `more` but the last |
+
+```byte-layout operation.Log_Record operation.Log_Fact
+operation.Log_Record, 256 bytes: one record of the log of the kernel
+offset  size  field           type
+     0     8  sequence        u64
+     8     8  time            u64
+    16     1  process         u8
+    17     1  thread          u8
+    18     1  level           Log_Level
+    19     1  more            u8
+    20     4  process_serial  u32
+    24     4  own_number      u32
+    28     2  text_count      u16
+    30     1  run_count       u8
+    31     1  form            u8
+    32    32  name            [PROCESS_NAME_BYTES_MOST + 1]u8
+    64    24  runs            [LOG_RUN_CAPACITY]value_kinds.Value_Run
+    88   168  text            [LOG_TEXT_CAPACITY]u8
+
+operation.Log_Fact, 192 bytes: the bytes of a log record after the name, for the form Fact
+offset  size  field        type
+     0    32  module_hash  [32]u8
+    32     8  key          u64
+    40     2  value_count  u16
+    42     1  part         u8
+    43     1  part_count   u8
+    44     4  reserved     [4]u8
+    48   144  values       [LOG_FACT_VALUE_CAPACITY]u8
+```
 
 `Log(log, address, length, level, runs, form)` takes the form as its sixth value, after the runs, so a writer of text gives five values and a zero form. The kernel takes the word through its border and refuses a word that names no form with `Bad_Operation`. For a fact it refuses runs with `Bad_Operation`, and a length below `op.LOG_FACT_HEAD_BYTES` (48) or above the 192 bytes with `Bad_Address`; its error record names the argument. It copies the bytes of the process before the log lock, as it copies a text, and under the lock writes them into one record with no filter: they are not text. It writes the count of the value bytes from the length and zeros the reserved bytes, and reads no other byte: the module hash and the key are what the writer says. A fact spends one record of the log limit. The kernel gets no operation: `Log` keeps its number, and the form is one more value. The code: `log_fact_operation` and `log_fact_record` in `src/modulus/serial.odin`.
 

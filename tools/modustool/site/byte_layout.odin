@@ -17,8 +17,12 @@ import "core:odin/parser"
 import "core:os"
 import "core:strings"
 import "modus:contract/draw_record"
+import "modus:contract/errors"
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modus:contract/output"
+import "modus:contract/ring"
+import "modus:contract/store"
 import "modustool:foundation"
 import "modustool:build"
 import "modustool:checks"
@@ -37,6 +41,17 @@ BYTE_LAYOUT_MEMBER_TEXTS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/module/me
 BYTE_LAYOUT_OUTPUT_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/output/output.odin"
 BYTE_LAYOUT_WIRING_LIST_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/output/wiring_list.odin"
 BYTE_LAYOUT_DRAW_RECORD_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/draw_record/draw_record.odin"
+BYTE_LAYOUT_RING_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/ring/ring.odin"
+BYTE_LAYOUT_ERRORS_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/errors/errors.odin"
+BYTE_LAYOUT_OPERATION_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/operation/operation.odin"
+BYTE_LAYOUT_STORE_FILE :: foundation.SOURCE_FOLDER_CONTRACT + "/store/store.odin"
+// A rectangle of whole rows with more rows than this is drawn folded: a
+// block of the disk is 512 rows, and a diagram of that height hides the
+// fields around its arrays. One cache line of rows is still drawn whole.
+BYTE_LAYOUT_FOLD_ROWS :: 8
+// The rows of the grid of a folded rectangle: its first row and its last
+// row, each with its offset, so that the jump of the offsets shows the fold.
+BYTE_LAYOUT_FOLDED_ROWS :: 2
 // The folder whose Markdown files the check and the command read: the
 // guides that the site shows.
 BYTE_LAYOUT_DOCUMENT_FOLDER :: "docs"
@@ -77,6 +92,9 @@ Byte_Layout_Piece :: struct {
 	span:   int, // Its bytes in the row.
 	rows:   int, // The rows that it covers: more than 1 only for a field over whole rows.
 	first:  bool, // The first piece of its field: it holds the size, the others say "continued".
+	folded: bool, // More than BYTE_LAYOUT_FOLD_ROWS rows: drawn with BYTE_LAYOUT_FOLDED_ROWS rows of the grid.
+	grid_row:  int, // The row of the grid, from 0: the row less the rows that the folds before it hide.
+	grid_rows: int, // The rows of the grid that it covers.
 }
 
 // A field of a struct as the parser reads it.
@@ -141,9 +159,66 @@ byte_layout_draw_record_sources :: proc() -> []Byte_Layout_Source {
 	return list
 }
 
+// byte_layout_kernel_sources gives the layouts of the records that cross
+// the border of the kernel (docs/ARCHITECTURE.md, "K4. Rings and wait"):
+// the record of a ring and its counters, the error record of a completion
+// that fails, the context of a process, and the log.
+byte_layout_kernel_sources :: proc() -> []Byte_Layout_Source {
+	file :: BYTE_LAYOUT_OPERATION_FILE
+	sources := [?]Byte_Layout_Source {
+		{key = "ring.Record", file = BYTE_LAYOUT_RING_FILE, declaration = "Record", info = type_info_of(ring.Record), what = "one command or one completion of a ring, the kernel ring included"},
+		{key = "ring.Counters", file = BYTE_LAYOUT_RING_FILE, declaration = "Counters", info = type_info_of(ring.Counters), what = "the counters of one queue of a ring, in its head page"},
+		{key = "errors.Error_Record", file = BYTE_LAYOUT_ERRORS_FILE, declaration = "Error_Record", info = type_info_of(errors.Error_Record), what = "the values of a completion that fails"},
+		{key = "operation.Context", file = file, declaration = "Context", info = type_info_of(op.Context), what = "the context of a process, at CONTEXT_ADDRESS"},
+		{key = "operation.Log_Record", file = file, declaration = "Log_Record", info = type_info_of(op.Log_Record), what = "one record of the log of the kernel"},
+		{key = "operation.Log_Fact", file = file, declaration = "Log_Fact", info = type_info_of(op.Log_Fact), what = "the bytes of a log record after the name, for the form Fact"},
+	}
+	list := make([]Byte_Layout_Source, len(sources), context.temp_allocator)
+	copy(list, sources[:])
+	return list
+}
+
+// byte_layout_fault_ring_sources gives the layouts of the fault ring
+// (docs/ARCHITECTURE.md, "The fault ring"): the thread record of the
+// handler, which holds the ring, and one record of the ring.
+byte_layout_fault_ring_sources :: proc() -> []Byte_Layout_Source {
+	file :: BYTE_LAYOUT_OPERATION_FILE
+	sources := [?]Byte_Layout_Source {
+		{key = "operation.Thread_Record", file = file, declaration = "Thread_Record", info = type_info_of(op.Thread_Record), what = "the start of the first page of the thread area of a thread"},
+		{key = "operation.Fault_Record", file = file, declaration = "Fault_Record", info = type_info_of(op.Fault_Record), what = "one record of the fault ring"},
+	}
+	list := make([]Byte_Layout_Source, len(sources), context.temp_allocator)
+	copy(list, sources[:])
+	return list
+}
+
+// byte_layout_storage_sources gives the layouts of the blocks of the data
+// disk and of the records inside them (docs/STORAGE.md, "3. The format on
+// the disk"), in the order of a walk from the root block.
+byte_layout_storage_sources :: proc() -> []Byte_Layout_Source {
+	file :: BYTE_LAYOUT_STORE_FILE
+	sources := [?]Byte_Layout_Source {
+		{key = "store.Root", file = file, declaration = "Root", info = type_info_of(store.Root), what = "the root block, at block 0 or block 1"},
+		{key = "store.Store_Entry", file = file, declaration = "Store_Entry", info = type_info_of(store.Store_Entry), what = "the cell of one store in the root block"},
+		{key = "store.Pointer", file = file, declaration = "Pointer", info = type_info_of(store.Pointer), what = "how a block names another block"},
+		{key = "store.Store_Block", file = file, declaration = "Store_Block", info = type_info_of(store.Store_Block), what = "the block of one store"},
+		{key = "store.Tree_Header", file = file, declaration = "Tree_Header", info = type_info_of(store.Tree_Header), what = "the start of a node and of an object node"},
+		{key = "store.Entry", file = file, declaration = "Entry", info = type_info_of(store.Entry), what = "the record of a leaf after its name of 64 bytes"},
+		{key = "store.Object_Node", file = file, declaration = "Object_Node", info = type_info_of(store.Object_Node), what = "one node of the block tree of an object"},
+		{key = "store.Object_Child", file = file, declaration = "Object_Child", info = type_info_of(store.Object_Child), what = "one child of an object node"},
+		{key = "store.Version_Index", file = file, declaration = "Version_Index", info = type_info_of(store.Version_Index), what = "the block that names the version leaves of one object"},
+		{key = "store.Version_Leaf", file = file, declaration = "Version_Leaf", info = type_info_of(store.Version_Leaf), what = "one block of version entries of one object"},
+		{key = "store.Version_Entry", file = file, declaration = "Version_Entry", info = type_info_of(store.Version_Entry), what = "one version of an object"},
+	}
+	list := make([]Byte_Layout_Source, len(sources), context.temp_allocator)
+	copy(list, sources[:])
+	return list
+}
+
 // byte_layout_sources gives every layout that a fence can name: the header
 // of a module file, the entry of its table directory, the record of each
-// table kind, in the order of the file, then the draw record.
+// table kind, in the order of the file, then the draw record, the output
+// ring, the kernel records, the fault ring and the data disk.
 byte_layout_sources :: proc() -> []Byte_Layout_Source {
 	file :: BYTE_LAYOUT_FORMAT_FILE
 	list := make([dynamic]Byte_Layout_Source, context.temp_allocator)
@@ -159,6 +234,15 @@ byte_layout_sources :: proc() -> []Byte_Layout_Source {
 		append(&list, source)
 	}
 	for source in byte_layout_output_ring_sources() {
+		append(&list, source)
+	}
+	for source in byte_layout_kernel_sources() {
+		append(&list, source)
+	}
+	for source in byte_layout_fault_ring_sources() {
+		append(&list, source)
+	}
+	for source in byte_layout_storage_sources() {
 		append(&list, source)
 	}
 	return list[:]
@@ -340,9 +424,12 @@ byte_layout_row_count :: proc(size: int) -> int {
 
 // byte_layout_pieces gives the rectangles of a layout. A field that starts
 // at a row and covers two rows or more is one rectangle of whole rows; any
-// other field has one rectangle for each row that it crosses.
+// other field has one rectangle for each row that it crosses. A rectangle
+// of more than BYTE_LAYOUT_FOLD_ROWS rows is folded, and the rectangles
+// after it move up by the rows that it hides.
 byte_layout_pieces :: proc(layout: Byte_Layout) -> []Byte_Layout_Piece {
 	pieces := make([dynamic]Byte_Layout_Piece, context.temp_allocator)
+	hidden_rows := 0
 	for field, index in layout.fields {
 		start := field.offset
 		end := field.offset + field.size
@@ -355,12 +442,64 @@ byte_layout_pieces :: proc(layout: Byte_Layout) -> []Byte_Layout_Piece {
 			} else {
 				piece.span = min(BYTE_LAYOUT_ROW_BYTES - piece.column, end - start)
 			}
+			piece.grid_row = piece.row - hidden_rows
+			piece.grid_rows = piece.rows
+			if piece.rows > BYTE_LAYOUT_FOLD_ROWS {
+				piece.folded = true
+				piece.grid_rows = BYTE_LAYOUT_FOLDED_ROWS
+				hidden_rows += piece.rows - BYTE_LAYOUT_FOLDED_ROWS
+			}
 			append(&pieces, piece)
 			start += piece.span * piece.rows
 			first = false
 		}
 	}
 	return pieces[:]
+}
+
+// byte_layout_grid_row_offsets gives the offset of each row of the grid of
+// a layout: each row of 8 bytes, but the rows inside a folded rectangle,
+// which shows only its first row and its last row.
+byte_layout_grid_row_offsets :: proc(layout: Byte_Layout) -> []int {
+	row_count := byte_layout_row_count(layout.size)
+	hidden := make([]bool, row_count, context.temp_allocator)
+	for piece in byte_layout_pieces(layout) {
+		if piece.folded {
+			for row in piece.row + 1 ..< piece.row + piece.rows - 1 {
+				hidden[row] = true
+			}
+		}
+	}
+	offsets := make([dynamic]int, context.temp_allocator)
+	for row in 0 ..< row_count {
+		if !hidden[row] {
+			append(&offsets, row * BYTE_LAYOUT_ROW_BYTES)
+		}
+	}
+	return offsets[:]
+}
+
+// byte_layout_of_type gives the layout of a source from its type
+// information alone, with no name of a type and no comment: the rows of
+// its grid are known with no read of its source file.
+byte_layout_of_type :: proc(source: Byte_Layout_Source) -> Byte_Layout {
+	layout := Byte_Layout{key = source.key, size = byte_layout_source_size(source)}
+	fields := make([dynamic]Site_Type_Field, context.temp_allocator)
+	structure, is_struct := runtime.type_info_base(source.info).variant.(runtime.Type_Info_Struct)
+	if source.word_size > 0 || !is_struct {
+		append(&fields, Site_Type_Field{name = "word", offset = 0, size = layout.size})
+	} else {
+		for index in 0 ..< int(structure.field_count) {
+			append(&fields, Site_Type_Field{name = structure.names[index], offset = int(structure.offsets[index]), size = structure.types[index].size})
+		}
+	}
+	rows, _ := site_type_layout(fields[:], layout.size)
+	list := make([dynamic]Byte_Layout_Field, context.temp_allocator)
+	for row in rows {
+		append(&list, Byte_Layout_Field{name = row.name, offset = row.offset, size = row.size, is_padding = row.is_padding})
+	}
+	layout.fields = list[:]
+	return layout
 }
 
 // byte_layout_pad_left gives a text with spaces before it, to a width.
@@ -634,8 +773,8 @@ byte_layout_html :: proc(site: ^Site, b: ^strings.Builder, id: string, layout: B
 		fmt.sbprintf(b, "<span class=\"byte-ruler byte-ruler-bits byte-column-%d\">%d–%d</span>", column + 1, column * 8, column * 8 + 7)
 	}
 	strings.write_byte(b, '\n')
-	for row in 0 ..< byte_layout_row_count(layout.size) {
-		fmt.sbprintf(b, "<span class=\"byte-offset byte-row-%d\">%d</span>\n", row + 1, row * BYTE_LAYOUT_ROW_BYTES)
+	for offset, grid_row in byte_layout_grid_row_offsets(layout) {
+		fmt.sbprintf(b, "<span class=\"byte-offset byte-row-%d\">%d</span>\n", grid_row + 1, offset)
 	}
 	for piece in byte_layout_pieces(layout) {
 		field := layout.fields[piece.field]
@@ -645,12 +784,17 @@ byte_layout_html :: proc(site: ^Site, b: ^strings.Builder, id: string, layout: B
 		} else if !piece.first {
 			class = "byte-cell byte-cell-continued"
 		}
-		fmt.sbprintf(b, "<div class=\"%s byte-column-%d byte-span-%d byte-row-%d byte-rows-%d\" title=\"", class, piece.column + 1, piece.span, piece.row + 1, piece.rows)
+		if piece.folded {
+			class = strings.concatenate({class, " byte-cell-folded"}, context.temp_allocator)
+		}
+		fmt.sbprintf(b, "<div class=\"%s byte-column-%d byte-span-%d byte-row-%d byte-rows-%d\" title=\"", class, piece.column + 1, piece.span, piece.grid_row + 1, piece.grid_rows)
 		foundation.html_escape(b, byte_layout_title(site, field))
 		strings.write_string(b, "\"><code>")
 		byte_layout_name_html(b, field.name)
 		strings.write_string(b, "</code><span class=\"byte-cell-size\">")
-		if piece.first {
+		if piece.first && piece.folded {
+			foundation.html_escape(b, fmt.tprintf("%s, %d rows folded", site_type_size_text(field.size), piece.rows))
+		} else if piece.first {
 			foundation.html_escape(b, site_type_size_text(field.size))
 		} else {
 			strings.write_string(b, "continued")
@@ -701,18 +845,26 @@ BYTE_LAYOUT_RULES :: `
 .byte-cell-continued code { color: var(--dim); }
 .byte-cell-padding { background: var(--background); color: var(--dim); }
 .byte-cell-padding code { color: var(--dim); }
+.byte-cell-folded { outline-style: dashed; }
 `
 
-// byte_layout_rules gives the rules of the diagrams: the rules above, then
-// the place classes of a rectangle. The rows go up to the most rows of a
-// layout of today, from the same table of sources, so a larger record gets
-// its rules at the same build. The first column of the grid holds the
-// offsets, and the first two rows the rulers.
-byte_layout_rules :: proc() -> string {
+// byte_layout_most_grid_rows gives the most rows of the grid of a layout of
+// the table of sources, folds counted.
+byte_layout_most_grid_rows :: proc() -> int {
 	most_rows := 1
 	for source in byte_layout_sources() {
-		most_rows = max(most_rows, byte_layout_row_count(byte_layout_source_size(source)))
+		most_rows = max(most_rows, len(byte_layout_grid_row_offsets(byte_layout_of_type(source))))
 	}
+	return most_rows
+}
+
+// byte_layout_rules gives the rules of the diagrams: the rules above, then
+// the place classes of a rectangle. The rows go up to the most rows of the
+// grid of a layout of today, from the same table of sources, so a larger
+// record gets its rules at the same build. The first column of the grid
+// holds the offsets, and the first two rows the rulers.
+byte_layout_rules :: proc() -> string {
+	most_rows := byte_layout_most_grid_rows()
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, BYTE_LAYOUT_RULES)
 	for column in 1 ..= BYTE_LAYOUT_ROW_BYTES {
