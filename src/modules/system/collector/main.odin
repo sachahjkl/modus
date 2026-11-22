@@ -12,6 +12,7 @@ import "modus:contract/errors"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:contract/wide_grants"
+import "modus:storage_port"
 import "modus:system"
 
 // Working memory budget for the freestanding collector and wide-grant audit service.
@@ -495,9 +496,21 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !collector_core.manager_init(&manager_state, principal_id) {
 		fail("cannot initialize collector state")
 	}
-	wide_grants.space_store_init(&space_service.store, principal_id)
+	// A process with no grant Store gets a port with no procedure: each step
+	// of the spaces is then refused, so no audit space lives in memory alone.
+	store_port, store_open := storage_port.bind(ctx)
+	wide_grants.space_store_init(&space_service.store, principal_id, store_port)
 
-	system.log_fact(.Info, Service_Ready{principal_id = principal_id, act_capacity = u64(manager_state.collector.capacity)})
+	system.log_fact(.Info, Service_Ready{principal_id = principal_id, act_capacity = u64(manager_state.collector.capacity), store = store_open ? 1 : 0})
+	if store_open {
+		// A read that fails is tried again at the first step that needs it.
+		loaded := wide_grants.space_store_ready(&space_service.store)
+		if loaded == .None {
+			system.log_fact(.Info, Spaces_Loaded{spaces = u64(wide_grants.space_count(&space_service.store)), records = wide_grants.kept_record_count(&space_service.store)})
+		} else if loaded == .Store_Damaged {
+			system.log_fact(.Error, Spaces_Store_Damaged{space = u64(space_service.store.damaged_space)})
+		}
+	}
 
 	for {
 		wait := system.wait_begin()
