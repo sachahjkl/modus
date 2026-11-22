@@ -2,6 +2,7 @@ package kernel
 
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:extended_switch"
 
 // The extended state of the processor: the x87, SSE, AVX and AVX-512
 // registers of a thread (docs/ARCHITECTURE.md, "The extended state of the
@@ -192,6 +193,12 @@ extended_state_other_setup :: proc "contextless" (cpu: ^Processor) -> bool {
 	extended_control_register_write(0, transmute(u64)extended_state_components)
 	_, size, _, _ := intrinsics.x86_cpuid(0xD, 0)
 	return u64(size) == extended_state_size && extended_state_mxcsr_mask_measure(&cpu.extended_state_written) == extended_state_mxcsr_mask
+}
+
+// extended_state_invalidate_cpu forgets whichever thread's extended state
+// lived in cpu's hardware registers so the next switch restores from memory.
+extended_state_invalidate_cpu :: #force_inline proc "contextless" (cpu: ^Processor) {
+	extended_switch.processor_invalidate(&cpu.extended_state_cache)
 }
 
 // extended_state_start writes the start state of a new thread: no register

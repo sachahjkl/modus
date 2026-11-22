@@ -13,6 +13,7 @@
 package scheduler
 
 import "base:intrinsics"
+import "internal:scheduler/share_order"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
@@ -817,21 +818,54 @@ process_weights :: proc "contextless" (slot, serial: u64) -> (weights: Process_W
 // bound of a thread, which is two requests of 3 ms.
 SHARE_PROCESSES_TIME :: 1000
 
-// case_processes_interval gives the ticks of processor time of each process
-// of a case over one interval, from the process reports. In the check the
-// interval ends when each process ran SHARE_TICKS_CHECKED ticks: a count of
-// the kernel, so a slow host makes the interval longer and leaves the
-// counts. A measure run has an interval of SHARE_PROCESSES_TIME. The rounds
-// of the policy go on during the interval, one each period. false: the
-// hang bound ended the interval, or a report was not of the process.
-case_processes_interval :: proc "contextless" (processes: []Share_Process, on: bool) -> (parts: [SHARE_PROCESS_COUNT]u64, each_ran: bool) {
+#assert(SHARE_PROCESS_COUNT == share_order.PROCESS_CAPACITY)
+
+// Per-thread tick snapshot used by case_processes_interval to attribute each
+// thread's newly accumulated ticks to the processor that ran it.
+Interval_Thread_Mark :: struct {
+	machine_number: u64,
+	run_time:       u64,
+}
+
+interval_thread_ticks: [THREAD_PLACE_LIMIT]Interval_Thread_Mark
+interval_process_on_cpu: [SHARE_PROCESS_COUNT][share_order.PROCESSOR_CAPACITY]u64
+interval_busy_base: [share_order.PROCESSOR_CAPACITY]u64
+interval_processor_ticks: [share_order.PROCESSOR_CAPACITY]u64
+
+// case_processes_interval gives the raw ticks of processor time of each
+// process over one interval (parts) and the per-processor normalized shares
+// (normalized), where each process's ticks on a processor are divided by that
+// processor's busy ticks so uneven host scheduling across virtual processors
+// does not skew the ordering. In the check the interval ends when each process
+// ran SHARE_TICKS_CHECKED ticks and each active processor ran at least
+// SHARE_TICKS_CHECKED busy ticks. A measure run has an interval of
+// SHARE_PROCESSES_TIME. The rounds of the policy go on during the interval,
+// one each period. false: the hang bound ended the interval, or a report was
+// not of the process.
+case_processes_interval :: proc "contextless" (processes: []Share_Process, on: bool) -> (parts: [SHARE_PROCESS_COUNT]u64, normalized: [SHARE_PROCESS_COUNT]u64, each_ran: bool) {
 	base: [SHARE_PROCESS_COUNT]u64
+	processor_count := int(min(u64(system.thread_record().processors), u64(share_order.PROCESSOR_CAPACITY)))
+	interval_thread_ticks = {}
+	interval_process_on_cpu = {}
+	interval_busy_base = {}
+	interval_processor_ticks = {}
+	for cpu in 0 ..< processor_count {
+		interval_busy_base[cpu] = processor_report(u64(cpu)).busy_time
+	}
 	for &started, index in processes {
 		report, status := process_report(started.slot)
 		if status != .Ok || report.process_serial != started.serial {
-			return parts, false
+			return parts, normalized, false
 		}
 		base[index] = report.run_time
+		count := policy_threads_of(started.slot, started.serial)
+		for thread_index in 0 ..< count {
+			item := &policy_table.threads[thread_index]
+			place := item.machine_number & 0xFFFF_FFFF
+			if place < THREAD_PLACE_LIMIT {
+				interval_thread_ticks[place] = {machine_number = item.machine_number, run_time = item.run_time}
+			}
+		}
 	}
 	start := system.time()
 	next_round := start + POLICY_PERIOD
@@ -846,11 +880,42 @@ case_processes_interval :: proc "contextless" (processes: []Share_Process, on: b
 		for &started, index in processes {
 			report, status := process_report(started.slot)
 			if status != .Ok || report.process_serial != started.serial {
-				return parts, false
+				return parts, normalized, false
 			}
 			parts[index] = report.run_time - base[index]
 			each_ran &&= parts[index] >= SHARE_TICKS_CHECKED
+			count := policy_threads_of(started.slot, started.serial)
+			for thread_index in 0 ..< count {
+				item := &policy_table.threads[thread_index]
+				place := item.machine_number & 0xFFFF_FFFF
+				if place >= THREAD_PLACE_LIMIT {
+					continue
+				}
+				prev := interval_thread_ticks[place]
+				delta: u64
+				if prev.machine_number == item.machine_number {
+					if item.run_time >= prev.run_time {
+						delta = item.run_time - prev.run_time
+					}
+				} else {
+					delta = item.run_time
+				}
+				interval_thread_ticks[place] = {machine_number = item.machine_number, run_time = item.run_time}
+				if delta > 0 {
+					cpu := int(item.processor != 0 ? item.processor - 1 : item.home)
+					if cpu >= 0 && cpu < processor_count {
+						interval_process_on_cpu[index][cpu] += delta
+					}
+				}
+			}
 		}
+		for cpu in 0 ..< processor_count {
+			busy_now := processor_report(u64(cpu)).busy_time
+			if busy_now >= interval_busy_base[cpu] {
+				interval_processor_ticks[cpu] = busy_now - interval_busy_base[cpu]
+			}
+		}
+		each_ran &&= share_order.processors_ran_enough(interval_process_on_cpu, interval_processor_ticks, processor_count, SHARE_TICKS_CHECKED)
 		if measured {
 			each_ran &&= system.time() - start >= SHARE_PROCESSES_TIME
 		}
@@ -858,7 +923,8 @@ case_processes_interval :: proc "contextless" (processes: []Share_Process, on: b
 			break
 		}
 	}
-	return parts, each_ran
+	normalized = share_order.normalized_process_shares(interval_process_on_cpu, interval_processor_ticks, processor_count)
+	return parts, normalized, each_ran
 }
 
 weight_of_lowered :: proc "contextless" (index: int) -> u64 {
@@ -920,7 +986,7 @@ share_case :: proc "contextless" () -> bool {
 
 	// Without the policy: the rounds only read.
 	policy_round(false)
-	without, without_ran := case_processes_interval(share_processes[:], false)
+	without, without_normalized, without_ran := case_processes_interval(share_processes[:], false)
 
 	// With the policy. Two rounds: the second one finds each weight as the
 	// first one left it.
@@ -949,7 +1015,7 @@ share_case :: proc "contextless" () -> bool {
 		weights_right &&= weights[index].new_thread_limit_least == new_part && weights[index].new_thread_limit_most == new_part
 	}
 	system.log_fact(.Info, Share_Policy_Rounds{one_thread_weight = u64(weights[0].most), two_threads_weight = u64(weights[1].most), four_threads_weight = u64(weights[2].most), eight_threads_weight = u64(weights[3].most), new_thread_limit = u64(weights[3].new_thread_limit_most), one_thread_sum = weights[0].sum, two_threads_sum = weights[1].sum, four_threads_sum = weights[2].sum, eight_threads_sum = weights[3].sum, steady = u64(steady), verdict = verdict_field(weights_right && steady)})
-	with, with_ran := case_processes_interval(share_processes[:], true)
+	with, with_normalized, with_ran := case_processes_interval(share_processes[:], true)
 
 	// A process that asks less keeps it, and a process that starts threads
 	// gets no more: this process is the example.
@@ -989,10 +1055,11 @@ share_case :: proc "contextless" () -> bool {
 	system.log_fact(.Info, Share_Policy_Off_Weights{lowered_weight = u64(lowered_after.weight), none_refused = u64(policy_refused == 0), verdict = verdict_field(back_right)})
 
 	// The order: the part of the process with 8 threads against the process
-	// with 1, with the policy and without it. Each part is a count of
-	// ticks of the kernel over one interval.
+	// with 1, with the policy and without it, normalized by the busy ticks of
+	// each processor so uneven host scheduling across virtual processors does
+	// not skew the ratio.
 	last :: SHARE_PROCESS_COUNT - 1
-	order_right := without_ran && with_ran && with[last] * without[0] < without[last] * with[0]
+	order_right := without_ran && with_ran && share_order.ratio_decreased(without_normalized[0], without_normalized[last], with_normalized[0], with_normalized[last])
 	system.log_fact(.Info, Share_Policy_Orders_Parts{verdict = verdict_field(order_right)})
 
 	without_shares := shares_of(without)
@@ -1134,7 +1201,7 @@ short_threads_case :: proc "contextless" () -> bool {
 
 	// Without the policy: the rounds only read.
 	policy_round(false)
-	without, without_ran := case_processes_interval(short_case_processes[:], false)
+	without, _, without_ran := case_processes_interval(short_case_processes[:], false)
 
 	// One round: the gap of the first round is closed by the write of the
 	// value of the process before the report.
@@ -1190,7 +1257,7 @@ short_threads_case :: proc "contextless" () -> bool {
 	}
 	case_processes_stop(started_under_policy[:])
 	system.log_fact(.Info, Started_Process_Weights{above = u64(new_part) + 1, weight = u64(started_weights.most), limit = u64(started_weights.limit_most), thread_limit = u64(started_weights.new_thread_limit_most), verdict = verdict_field(started_right && first_open)})
-	with, with_ran := case_processes_interval(short_case_processes[:], true)
+	with, _, with_ran := case_processes_interval(short_case_processes[:], true)
 	if !policy_weights_give_back() {
 		system.log_fact(.Info, Full_Limits_Not_Given_Back{})
 		return false

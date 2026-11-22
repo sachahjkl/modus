@@ -2,6 +2,7 @@ package kernel
 
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:extended_switch"
 
 // The scheduler (docs/ARCHITECTURE.md, "Scheduler"; docs/ARCHITECTURE.md,
 // "Locks of the kernel", "The scheduler"). Each processor has a run queue:
@@ -497,6 +498,7 @@ schedule :: proc "contextless" () -> ! {
 		// processor is 0. The release of the run lock orders this save
 		// before the restore of the processor that takes it.
 		extended_state_save(&thread.extended_state, extended_state_form)
+		extended_switch.record_save(&cpu.extended_state_cache, &thread.extended_switch, cpu.index, index, u64(thread.serial))
 		// The breakpoints of the thread leave the processor with it: the
 		// next thread, the idle wait and the kernel run with none.
 		if cpu.breakpoints_loaded {
@@ -559,7 +561,10 @@ schedule :: proc "contextless" () -> ! {
 		serial := thread.serial
 		if ended {
 			// This processor owns the thread: it ends it (thread_stop,
-			// process_stop).
+			// process_stop). Invalidate the processor's cached extended state
+			// because this thread will not run again.
+			extended_state_invalidate_cpu(cpu)
+			extended_switch.thread_mark_modified(&thread.extended_switch)
 			thread.state = .Stopped
 			intrinsics.atomic_add(&thread.wait_serial, 1)
 		} else if thread.state == .Ready && !held {
@@ -597,13 +602,16 @@ schedule :: proc "contextless" () -> ! {
 			cpu.stint_start = cpu.charged_from
 			stolen_time_run_start(cpu)
 			cpu.slice_left = TIME_SLICE
-			// The registers of this processor hold the thread that it left,
-			// or nothing of use: the area of the thread that it takes is
-			// complete (saved where it left, or the start state of a new
-			// thread). Also when it takes the thread that it left just now:
-			// a restore then costs a little, and keeps no rule of who owns
-			// the registers.
-			extended_state_restore(&thread.extended_state, extended_state_form)
+			// Skip xrstor/fxrstor when this processor still holds this exact
+			// thread's live extended state from its last save and the thread
+			// neither ran elsewhere nor had its saved state modified.
+			switch extended_switch.restore_decision(cpu.extended_state_cache, thread.extended_switch, cpu.index, index, u64(thread.serial)) {
+			case .Skip:
+				cpu.extended_state_restores_skipped += 1
+			case .Restore:
+				extended_state_restore(&thread.extended_state, extended_state_form)
+				extended_switch.record_restore(&cpu.extended_state_cache, &thread.extended_switch)
+			}
 			// One flag of the hot line: a thread with no breakpoint pays
 			// this test and no write of a debug register.
 			if thread.has_breakpoints {

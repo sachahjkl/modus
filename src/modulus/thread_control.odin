@@ -3,6 +3,7 @@ package kernel
 import "modus:contract/enum_word"
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:extended_switch"
 
 // The control of a thread (docs/ARCHITECTURE.md, "The control of a
 // thread"): Thread_Control stops a thread, reads and writes its registers
@@ -288,6 +289,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 				return .Bad_Operation
 			}
 			thread_frame_write(thread, &registers)
+			extended_switch.thread_mark_modified(&thread.extended_switch)
 			thread.registers_written = true
 			// A trap flag that the debugger wrote is its single step: if
 			// the debugging ends before the step, the step is dropped
@@ -307,6 +309,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 				return .Bad_Operation
 			}
 			thread.extended_state = written^
+			extended_switch.thread_mark_modified(&thread.extended_switch)
 			thread.registers_written = true
 		}
 		results[0] = size

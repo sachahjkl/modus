@@ -5,6 +5,7 @@ import "modus:contract/input_history"
 import "modus:contract/ring"
 import "base:intrinsics"
 import op "modus:contract/operation"
+import "modulus:extended_switch"
 import "modulus:processor_counters"
 
 // The objects, the handle tables, the processes and their threads
@@ -324,6 +325,10 @@ Thread :: struct #align (64) {
 	// read only by the processor running this thread.
 	replay_return_time:  u64,  // Return value placed in rax on kernel entry return.
 	record_wait_pending: bool, // Pure wait entry deferred until wake so post-wake time and point copies are recorded.
+	// Extended-state switch tracking (modulus:extended_switch): generation
+	// bumped on creation, Thread_Control writes, or stop, plus the processor
+	// (1 + index, 0 for none) that last saved this thread's extended state.
+	extended_switch: extended_switch.Thread_State,
 }
 
 #assert(offset_of(Thread, placed) < 64)
@@ -1763,6 +1768,7 @@ thread_create :: proc "contextless" (process_index: u32, budget: u32, entry, sta
 		rdi    = parameter,
 	}
 	extended_state_start(&thread.extended_state)
+	extended_switch.thread_initialize(&thread.extended_switch)
 	budgets[budget].amounts.threads -= 1
 	process.thread_areas |= 1 << number
 	process.thread_count += 1
@@ -1813,6 +1819,7 @@ thread_finish :: proc "contextless" (index: u32, serial: u32) {
 		return
 	}
 	thread.finished = true
+	extended_switch.thread_mark_modified(&thread.extended_switch)
 	wait_unregister(thread)
 	process_index := thread.process
 	process := &processes[process_index]
