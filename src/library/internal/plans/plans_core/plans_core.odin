@@ -71,10 +71,20 @@ Plans_Counters :: struct {
 // takes it whole. A port with no procedure gives no role: an apply of a plan
 // of principal 0 with a role is then refused with Roles_Refused.
 Roles_Port :: struct {
-	user:    rawptr,
-	replace: proc "contextless" (user: rawptr, set: ^rd.Plan_Roles_Set, step: rd.Plan_Roles_Step) -> (refusal: rd.Plan_Roles_Refusal),
-	// The serial of the set in force in the core, which the next set names.
-	serial:  u64,
+	user:         rawptr,
+	replace:      proc "contextless" (user: rawptr, set: ^rd.Plan_Roles_Set, step: rd.Plan_Roles_Step) -> (refusal: rd.Plan_Roles_Refusal),
+	// read gives the serial and the generation of the set in force in the
+	// core (the step Page). ok is false with no answer.
+	read:         proc "contextless" (user: rawptr) -> (serial, generation: u64, ok: bool),
+	// The serial and the generation of the set in force in the core, as
+	// this service last knew them.
+	serial:       u64,
+	generation:   u64,
+	// The core and the store name one generation. false: a set had no
+	// answer, came late, or a compensation failed, or the service started:
+	// the next set reads the core first and gives it the generation of the
+	// store (roles_reconcile).
+	synchronized: bool,
 }
 
 // The principal whose plan names the roles of the machine.
@@ -89,6 +99,9 @@ Plans_State :: struct {
 	// The refusal of the core for the last set that it refused: the log
 	// names it.
 	roles_refusal:        rd.Plan_Roles_Refusal,
+	// A compensation of the core failed since the service last read this:
+	// the log names it, and the next set reconciles first.
+	roles_compensation_failed: bool,
 	// The set that the roles port sends: too large for the stack of a
 	// service.
 	roles_set:            rd.Plan_Roles_Set,
@@ -132,9 +145,80 @@ state_init :: proc "contextless" (state: ^Plans_State, trusted_display_slot: u32
 }
 
 // roles_port_bind gives the state the port of the roles of the machine,
-// with the serial of the set in force in the core.
+// with the serial and the generation of the set in force in the core. The
+// port starts unsynchronized: a service that stopped between the answer of
+// the core and the commit of the store left them apart, and the first set
+// reconciles them (roles_reconcile).
 roles_port_bind :: proc "contextless" (state: ^Plans_State, port: Roles_Port) {
 	state.roles = port
+	state.roles.synchronized = false
+}
+
+// roles_reconcile reads the serial and the generation of the set in force in
+// the core, and when the core does not hold the roles of the current
+// generation of principal 0 in the store, gives it that generation with the
+// step Rollback. The port is then synchronized. A refusal leaves it
+// unsynchronized, and the next set tries again.
+roles_reconcile :: proc "contextless" (state: ^Plans_State) -> pr.Plan_Refusal {
+	if state.roles.replace == nil || state.roles.read == nil {
+		return .None
+	}
+	serial, generation, read := state.roles.read(state.roles.user)
+	if !read {
+		state.roles_refusal = .Stale_Serial
+		return .Roles_Refused
+	}
+	state.roles.serial, state.roles.generation = serial, generation
+	entry, entry_refusal := principal_entry(state, MACHINE_PRINCIPAL)
+	if entry_refusal != .None {
+		return entry_refusal
+	}
+	current_plan, current_record, _ := entry_current_plan(entry)
+	if generation != current_record.generation {
+		if refusal := roles_send(state, current_plan, current_record.generation, .Rollback); refusal != .None {
+			return refusal
+		}
+	}
+	state.roles.synchronized = true
+	return .None
+}
+
+// roles_send writes the set of plan with the serial in force and sends it
+// once. A set with no answer, or one that comes after another, leaves the
+// port unsynchronized.
+@(private = "file")
+roles_send :: proc "contextless" (state: ^Plans_State, plan: ^pr.Plan_Spec, generation: u64, step: rd.Plan_Roles_Step) -> pr.Plan_Refusal {
+	if !plan_roles_set_of(plan, generation, state.roles.serial, &state.roles_set) {
+		state.roles_refusal = .Duplicate_Role
+		return .Roles_Refused
+	}
+	refusal := state.roles.replace(state.roles.user, &state.roles_set, step)
+	state.roles_refusal = refusal
+	if refusal != .None {
+		if refusal == .Stale_Serial {
+			state.roles.synchronized = false
+		}
+		return .Roles_Refused
+	}
+	state.roles.serial += 1
+	state.roles.generation = generation
+	return .None
+}
+
+// roles_compensate gives the core the roles of the generation in force in
+// the store again, after the store refused a commit that the core took. A
+// failed compensation leaves the core and the store apart: the port is
+// unsynchronized, the service logs it, and the next set reconciles first.
+@(private = "file")
+roles_compensate :: proc "contextless" (state: ^Plans_State, principal: u64, entry: ^Principal_Plans_State) {
+	if principal != MACHINE_PRINCIPAL {
+		return
+	}
+	previous_plan, previous_record, _ := entry_current_plan(entry)
+	if roles_give(state, principal, previous_plan, previous_record.generation, .Rollback) != .None {
+		state.roles.synchronized = false
+		state.roles_compensation_failed = true
+	}
 }
 
 // plan_roles_set_of writes the set of the role overrides of a plan: for each
@@ -184,24 +268,32 @@ roles_give :: proc "contextless" (state: ^Plans_State, principal: u64, plan: ^pr
 	if principal != MACHINE_PRINCIPAL {
 		return .None
 	}
-	if !plan_roles_set_of(plan, generation, state.roles.serial, &state.roles_set) {
-		state.roles_refusal = .Duplicate_Role
-		return .Roles_Refused
-	}
 	if state.roles.replace == nil {
+		if !plan_roles_set_of(plan, generation, state.roles.serial, &state.roles_set) {
+			state.roles_refusal = .Duplicate_Role
+			return .Roles_Refused
+		}
 		if state.roles_set.override_count == 0 {
 			return .None
 		}
 		state.roles_refusal = .Not_In_Image
 		return .Roles_Refused
 	}
-	refusal := state.roles.replace(state.roles.user, &state.roles_set, step)
-	state.roles_refusal = refusal
-	if refusal != .None {
-		return .Roles_Refused
+	if !state.roles.synchronized {
+		if refusal := roles_reconcile(state); refusal != .None {
+			return refusal
+		}
 	}
-	state.roles.serial += 1
-	return .None
+	refusal := roles_send(state, plan, generation, step)
+	if refusal == .None || state.roles.synchronized {
+		return refusal
+	}
+	// The set had no answer or came after another: read the core, give it
+	// the generation of the store, and send the set once more.
+	if reconcile_refusal := roles_reconcile(state); reconcile_refusal != .None {
+		return reconcile_refusal
+	}
+	return roles_send(state, plan, generation, step)
 }
 
 @(private = "file")
@@ -387,8 +479,7 @@ commit_generation :: proc "contextless" (state: ^Plans_State, entry: ^Principal_
 	if pr.private_store_write(&state.store, pr.private_object_name_text(&current_name), state.object_bytes[:current_written]) != .Ok {
 		// The core took the roles of a generation that the store did not
 		// commit: it gets the roles of the generation in force again.
-		previous_plan, previous_record, _ := entry_current_plan(entry)
-		_ = roles_give(state, plan.principal, previous_plan, previous_record.generation, .Rollback)
+		roles_compensate(state, plan.principal, entry)
 		return {}, .Store_Failed
 	}
 	slot_index := entry.history_count
@@ -770,8 +861,7 @@ rollback :: proc "contextless" (
 	if pr.private_store_write(&state.store, pr.private_object_name_text(&current_name), state.object_bytes[:written]) != .Ok {
 		// The core holds the roles of a generation that the store did not
 		// make current: it gets the roles of the generation in force again.
-		previous_plan, previous_record, _ := entry_current_plan(entry)
-		_ = roles_give(state, principal, previous_plan, previous_record.generation, .Rollback)
+		roles_compensate(state, principal, entry)
 		return {}, .Store_Failed
 	}
 	entry.current_generation = selected.generation

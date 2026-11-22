@@ -215,12 +215,13 @@ table_answer_of :: proc "contextless" (principal: u64, write: bool, value: i64, 
 	if status != .Ok {
 		return {status = .Storage_Refused, values = transmute([7]u64)error^}
 	}
-	// The bytes are copied once, by table_decode, before any field is read:
-	// the storage service is a transport.
-	_, problem := disk_process.table_decode(text, &table_keys[principal].key)
+	// The bytes are copied once out of the call region, which the storage
+	// service can write at any time: the tag is verified on that copy, and
+	// only that copy goes to the place of the core.
+	_, problem := disk_process.table_decode_kept(text, &table_keys[principal].key, &table_bytes)
 	if problem == .None {
 		place := &service_region_base[offset + u64(offset_of(rd.Table_Call_Input, table))]
-		intrinsics.mem_copy_non_overlapping(place, raw_data(text), disk_process.TABLE_SIZE)
+		intrinsics.mem_copy_non_overlapping(place, &table_bytes, disk_process.TABLE_SIZE)
 	}
 	return {status = .Ok, values = {0 = u64(rd.Table_Read_Outcome.Decoded), 1 = u64(problem)}}
 }

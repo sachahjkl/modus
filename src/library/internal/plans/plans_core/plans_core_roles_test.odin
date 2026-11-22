@@ -12,11 +12,18 @@ import rd "modus:contract/root_delegation"
 // demand.
 @(private = "file")
 Test_Core :: struct {
-	serial:       u64,
-	in_force:     rd.Plan_Roles_Set,
-	calls:        int,
-	steps:        [8]rd.Plan_Roles_Step,
-	refuse:       rd.Plan_Roles_Refusal,
+	serial:        u64,
+	in_force:      rd.Plan_Roles_Set,
+	calls:         int,
+	steps:         [16]rd.Plan_Roles_Step,
+	refuse:        rd.Plan_Roles_Refusal,
+	// Refuse only the sets of this step, with refuse.
+	refuse_step:   rd.Plan_Roles_Step,
+	// Take the next set, and lose its answer: the port sees Stale_Serial,
+	// as the plans service does with no completion.
+	lose_answer:   bool,
+	reads:         int,
+	read_fails:    bool,
 }
 
 @(private = "file")
@@ -29,12 +36,26 @@ test_core_replace :: proc "contextless" (user: rawptr, set: ^rd.Plan_Roles_Set, 
 	if refusal, _ := rd.plan_roles_set_check(set, step, core.serial); refusal != .None {
 		return refusal
 	}
-	if core.refuse != .None {
+	if core.refuse != .None && (core.refuse_step == .None || core.refuse_step == step) {
 		return core.refuse
 	}
 	core.in_force = set^
 	core.serial += 1
+	if core.lose_answer {
+		core.lose_answer = false
+		return .Stale_Serial
+	}
 	return .None
+}
+
+@(private = "file")
+test_core_read :: proc "contextless" (user: rawptr) -> (serial, generation: u64, ok: bool) {
+	core := (^Test_Core)(user)
+	core.reads += 1
+	if core.read_fails {
+		return 0, 0, false
+	}
+	return core.serial, core.in_force.generation, true
 }
 
 @(private = "file")
@@ -54,7 +75,7 @@ role_plan :: proc(principal: u64, role: role_contract.Role, tag: u8) -> pr.Plan_
 roles_state :: proc(core: ^Test_Core) -> (state: ^Plans_State, store: ^pr.Memory_Private_Store) {
 	state = new(Plans_State)
 	store = plans_test_state_init(state, 0)
-	roles_port_bind(state, {user = core, replace = test_core_replace})
+	roles_port_bind(state, {user = core, replace = test_core_replace, read = test_core_read})
 	return state, store
 }
 
@@ -226,4 +247,124 @@ test_plans_roles_set_of_refuses_two_outermost_holders :: proc(t: ^testing.T) {
 	// No plan: the set of the defaults of the image.
 	testing.expect(t, plan_roles_set_of(nil, 0, 2, &set))
 	testing.expect_value(t, set.override_count, u64(0))
+}
+// The answer of a set is lost after the core took it: the port reads the
+// core, gives it the generation of the store, then the set again. The core
+// and the store end on the same generation.
+@(test)
+test_plans_roles_lost_answer_reconciles :: proc(t: ^testing.T) {
+	core: Test_Core
+	state, store := roles_state(&core)
+	defer free(state)
+	defer free(store)
+	first := role_plan(0, .Storage, 1)
+	first_record, refusal := apply_now(state, &first, {})
+	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
+	testing.expect(t, state.roles.synchronized)
+
+	core.lose_answer = true
+	reads := core.reads
+	second := role_plan(0, .Storage, 2)
+	record, second_refusal := apply_now(state, &second, first_record.plan_hash)
+	testing.expect_value(t, second_refusal, pr.Plan_Refusal.None)
+	testing.expect_value(t, record.generation, u64(2))
+	testing.expect_value(t, core.reads, reads + 1)
+	testing.expect_value(t, core.in_force.generation, u64(2))
+	testing.expect_value(t, core.in_force.overrides[0].module_hash, roles_test_hash(2))
+	testing.expect_value(t, state.roles.serial, core.serial)
+	testing.expect(t, state.roles.synchronized)
+	// The core went back to generation 1, then took generation 2 again.
+	testing.expect_value(t, core.steps[core.calls - 2], rd.Plan_Roles_Step.Rollback)
+	testing.expect_value(t, core.steps[core.calls - 1], rd.Plan_Roles_Step.Apply)
+}
+
+// Another set came first, so the serial of the port is stale: the port
+// reads the core, gives it the generation of the store, and the apply
+// commits with the core in step.
+@(test)
+test_plans_roles_stale_serial_reconciles :: proc(t: ^testing.T) {
+	core: Test_Core
+	state, store := roles_state(&core)
+	defer free(state)
+	defer free(store)
+	first := role_plan(0, .Storage, 1)
+	first_record, _ := apply_now(state, &first, {})
+	// A set that the store never named.
+	core.in_force = {generation = 9}
+	core.serial += 1
+	second := role_plan(0, .Storage, 2)
+	_, refusal := apply_now(state, &second, first_record.plan_hash)
+	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
+	testing.expect_value(t, core.in_force.generation, u64(2))
+	testing.expect_value(t, state.roles.serial, core.serial)
+
+	// A core that does not answer the read: nothing commits.
+	core.in_force = {generation = 9}
+	core.serial += 1
+	core.read_fails = true
+	third := role_plan(0, .Storage, 3)
+	_, current, _ := current_plan(state, 0)
+	_, third_refusal := apply_now(state, &third, current.plan_hash)
+	testing.expect_value(t, third_refusal, pr.Plan_Refusal.Roles_Refused)
+	testing.expect_value(t, highest_generation(state, 0), u64(2))
+	testing.expect(t, !state.roles.synchronized)
+}
+
+// The store refuses a commit that the core took, and the core refuses the
+// compensation: the port is unsynchronized and says so. The next apply
+// reconciles first, and the core and the store end on one generation.
+@(test)
+test_plans_roles_failed_compensation_recovers :: proc(t: ^testing.T) {
+	core: Test_Core
+	state, store := roles_state(&core)
+	defer free(state)
+	defer free(store)
+	first := role_plan(0, .Storage, 1)
+	first_record, _ := apply_now(state, &first, {})
+
+	store.writes_allowed = store.writes + 1
+	core.refuse, core.refuse_step = .Not_In_Image, .Rollback
+	second := role_plan(0, .Storage, 2)
+	_, refusal := apply_now(state, &second, first_record.plan_hash)
+	testing.expect_value(t, refusal, pr.Plan_Refusal.Store_Failed)
+	testing.expect(t, state.roles_compensation_failed)
+	testing.expect(t, !state.roles.synchronized)
+	testing.expect_value(t, core.in_force.generation, u64(2))
+	testing.expect_value(t, highest_generation(state, 0), u64(1))
+
+	store.writes_allowed = -1
+	core.refuse, core.refuse_step = .None, .None
+	third := role_plan(0, .Storage, 3)
+	record, third_refusal := apply_now(state, &third, first_record.plan_hash)
+	testing.expect_value(t, third_refusal, pr.Plan_Refusal.None)
+	testing.expect_value(t, record.generation, u64(2))
+	testing.expect_value(t, core.in_force.generation, u64(2))
+	testing.expect_value(t, core.in_force.overrides[0].module_hash, roles_test_hash(3))
+	testing.expect(t, state.roles.synchronized)
+	testing.expect_value(t, core.steps[core.calls - 2], rd.Plan_Roles_Step.Rollback)
+	testing.expect_value(t, core.in_force.generation, record.generation)
+}
+
+// A service that starts again finds the core on a generation that the store
+// did not commit: the bind reconciles them before any set.
+@(test)
+test_plans_roles_bind_reconciles_a_restart :: proc(t: ^testing.T) {
+	core: Test_Core
+	state, store := roles_state(&core)
+	defer free(state)
+	defer free(store)
+	first := role_plan(0, .Storage, 1)
+	_, refusal := apply_now(state, &first, {})
+	testing.expect_value(t, refusal, pr.Plan_Refusal.None)
+	// The core took generation 2, and the service stopped before the store.
+	core.in_force = {generation = 2, override_count = 1}
+	core.serial += 1
+	forget(state)
+	roles_port_bind(state, {user = &core, replace = test_core_replace, read = test_core_read, serial = core.serial, generation = 2})
+	testing.expect(t, !state.roles.synchronized)
+	testing.expect_value(t, roles_reconcile(state), pr.Plan_Refusal.None)
+	testing.expect(t, state.roles.synchronized)
+	testing.expect_value(t, core.in_force.generation, u64(1))
+	testing.expect_value(t, core.in_force.overrides[0].module_hash, roles_test_hash(1))
+	testing.expect_value(t, core.steps[core.calls - 1], rd.Plan_Roles_Step.Rollback)
 }

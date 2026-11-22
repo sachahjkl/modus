@@ -259,12 +259,13 @@ machine_seal_ask :: proc "contextless" () -> system.Status {
 // principals service, and this service keeps its hash only; the local copy
 // is erased here, and the main loop erases the slot of the ring
 // (key_ring_erase).
-machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
+machine_key_take :: proc "contextless" (values: ^[7]u64) -> system.Status {
 	table := &persisted_tables[principals.MACHINE]
 	state := table.state
 	waiting := state == .No_Passphrase || state == .Awaited || state == .Record_Unreadable
 	// A word that names no state or no form is refused, and changes nothing.
-	report, report_status := root_ring.machine_key_report_of_values(values)
+	// The report reads values[4] and values[5]: the key does not go with them.
+	report, report_status := root_ring.machine_key_report_of_values({4 = values[4], 5 = values[5]})
 	if report_status != .Ok {
 		return report_status
 	}
@@ -337,7 +338,7 @@ machine_key_take :: proc "contextless" (values: [7]u64) -> system.Status {
 // in this service, not in the code of `unlock` alone. The local copy is
 // erased here, and the main loop erases the slot of the ring
 // (key_ring_erase).
-principal_key_take :: proc "contextless" (number: u64, values: [7]u64) -> system.Status {
+principal_key_take :: proc "contextless" (number: u64, values: ^[7]u64) -> system.Status {
 	if number == principals.MACHINE || number >= principals.PRINCIPAL_CAPACITY {
 		return .Bad_Handle
 	}
@@ -565,7 +566,7 @@ persisted_table_revoked_keys_take :: proc "contextless" (table: ^Persisted_Table
 // its three handles through its ring. It gives the cause when it fails.
 persisted_table_open :: proc "contextless" (principal: u64) -> (cause: string, given: [3]system.Handle, opened: bool) {
 	table := &persisted_tables[principal]
-	if principals_process == nil || principals_ring.head == nil {
+	if principals_process == nil || principals_stopping || principals_ring.head == nil {
 		return TABLE_CAUSE_NO_SERVICE, {}, false
 	}
 	table.keeper = {}
@@ -721,12 +722,17 @@ persisted_table_failed :: proc "contextless" (principal: u64, cause: string) {
 }
 
 // persisted_tables_step ends each call whose principals service did not
-// answer in time. The answers come in principals_answers.
+// answer in time, and stops that service: its place in the transfer region
+// would stay taken for ever. The answers come in principals_answers.
 persisted_tables_step :: proc "contextless" () {
 	now := system.time()
 	for number in 0 ..< u64(principals.PRINCIPAL_CAPACITY) {
 		table := &persisted_tables[number]
 		if table.call != .None && now >= table.deadline {
+			// The stop comes first: the tries of a write that the failure
+			// starts then find no service and no key, and do not take a
+			// place of the service that is stopping.
+			principals_service_silent_stop()
 			persisted_table_failed(number, TABLE_CAUSE_SERVICE_SILENT)
 		}
 	}
