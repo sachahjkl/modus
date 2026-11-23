@@ -406,42 +406,28 @@ page_get :: proc "contextless" (counts: ^Counts, level: int, first: u64) -> (fra
 	return frame, .Good
 }
 
-// leaf_in_use_next gives the first leaf at or after the leaf that holds
-// `from` that can hold a block in use, or disk_blocks when none can: a
-// child whose free count is each block under it is passed whole, with no
-// read under it. A page that cannot be read gives its outcome and the
-// leaf where the search stopped.
-leaf_in_use_next :: proc "contextless" (counts: ^Counts, from: u64) -> (first: u64, outcome: Read) {
-	number := page_first(0, from)
-	if counts.root.block == 0 {
-		return counts.disk_blocks, .Good
+// free_blocks gives the free blocks of the disk as the top directory
+// counts them: a child with no page is free whole. A measure, not a fact
+// that a change relies on: no block is taken by it.
+free_blocks :: proc "contextless" (counts: ^Counts) -> (free: u64, outcome: Read) {
+	top: ^Frame
+	top, outcome = page_get(counts, counts.levels, 0)
+	if outcome != .Good {
+		return 0, outcome
 	}
-	search: for number < counts.disk_blocks {
-		for level := counts.levels; level >= 1; level -= 1 {
-			// A wrong directory is not read again: its leaves are taken.
-			if level == 1 && directory_is_wrong(counts, page_first(1, number)) {
-				return number, .Good
-			}
-			directory, read := page_get(counts, level, page_first(level, number))
-			if read != .Good {
-				return number, read
-			}
-			if directory == nil {
-				return number, .Good
-			}
-			page := (^format.Count_Directory)(&directory.bytes)
-			span := format.count_span(level - 1)
-			place := (number - page.first) / span
-			child := page.children[place]
-			child_first := page.first + place * span
-			if child.block == 0 || child.free >= format.count_free_blocks(level - 1, child_first, counts.disk_blocks) {
-				number = child_first + span
-				continue search
-			}
+	if top == nil {
+		return format.count_free_blocks(counts.levels, 0, counts.disk_blocks), .Good
+	}
+	directory := (^format.Count_Directory)(&top.bytes)
+	span := format.count_span(counts.levels - 1)
+	for child, place in directory.children {
+		if child.block == 0 {
+			free += format.count_free_blocks(counts.levels - 1, u64(place) * span, counts.disk_blocks)
+		} else {
+			free += child.free
 		}
-		return number, .Good
 	}
-	return counts.disk_blocks, .Good
+	return free, .Good
 }
 
 // count_get gives the count of names and the owner of a block, as the root

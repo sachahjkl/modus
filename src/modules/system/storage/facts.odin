@@ -345,17 +345,37 @@ Count_Repair_Started :: struct {
 	leaves: u64,
 }
 
-// A release met a wrong block: the service counts again, in runs when no
-// call waits, the leaves that can hold names that no state holds. Written
-// once for each recount.
-@(log_fact = "storage: a release met a wrong block, so {leaves} leaves of the count tree can hold names that no state holds: the service counts them again when no call waits, and refuses changes only during each run")
-Count_Recount_Started :: struct {
-	leaves: u64,
+// A commit left names that no state holds (dead names): a release met a
+// wrong block, or a version index or leaf was dropped. Their blocks stay in
+// use until a recount.
+@(log_fact = "storage: a release met a wrong block, so at least {blocks} keep names that no state holds: they stay in use until a recount of the count tree, which starts when fewer than {start_below} are free ({free} now) or when a principal asks for it")
+Dead_Names_Kept :: struct {
+	blocks:      value_kinds.Size_In_Blocks,
+	free:        value_kinds.Size_In_Blocks,
+	start_below: value_kinds.Size_In_Blocks,
 }
 
-// The recount of the count tree ended: its last commit wrote its leaves.
-@(log_fact = "storage: the recount of the count tree ended: the blocks that only a wrong release named are free")
-Count_Recount_Ended :: struct {}
+// The open found leaves that wait for a recount.
+@(log_fact = "storage: {leaves} leaves of the count tree can hold names that no state holds: their blocks stay in use until a recount, which starts when fewer than {start_below} are free ({free} now) or when a principal asks for it")
+Count_Recount_Waits :: struct {
+	leaves:      u64,
+	free:        value_kinds.Size_In_Blocks,
+	start_below: value_kinds.Size_In_Blocks,
+}
+
+// A recount started: a walk of each store, then the write of the leaves
+// that differ. Written once for each recount.
+@(log_fact = "storage: the recount of {leaves} leaves of the count tree started with {free} free: the service serves reads and refuses changes until it has walked each store and written the leaves that differ")
+Count_Recount_Started :: struct {
+	leaves: u64,
+	free:   value_kinds.Size_In_Blocks,
+}
+
+// The recount of the count tree ended.
+@(log_fact = "storage: the recount of the count tree ended: {freed} that only dead names held are free, and the service takes changes again")
+Count_Recount_Ended :: struct {
+	freed: value_kinds.Size_In_Blocks,
+}
 
 // A read or a write of the device failed during the repair of the count
 // tree: the walk starts again after the next call. Written once.
@@ -396,6 +416,10 @@ Count_Tree_Damaged :: struct {}
 Store_Pages_Damaged :: struct {
 	pages: u64,
 }
+
+// The disk holds a root of an earlier format, and none of this one.
+@(log_fact = "storage: the disk holds an earlier format of the storage service, which this service does not read: the service keeps the disk as it is, and serves nothing")
+Disk_Of_An_Older_Format :: struct {}
 
 // The open found no valid root.
 @(log_fact = "storage: no valid root on the disk: the service keeps the disk as it is, and serves nothing")

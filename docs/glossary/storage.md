@@ -102,11 +102,11 @@ Do not use: read-only mode, maintenance mode, fsck.
 
 ### Recount
 
-A recount is the count of the names of the blocks of the count tree again, leaf after leaf from the first, after a release that met a wrong block left names that no state holds.
+A recount is one walk of each store that counts again every name of the blocks of the leaves of the count tree that can hold names that no state holds, then writes the leaves that differ.
 
-A wrong release list or a wrong node of a released state cannot say which blocks it named, so the commit of that release writes in the top directory of the count tree that each leaf waits for a recount. When no call and no removal waits, a run of the repair counts the next leaves, up to 128, and its commit writes them and the leaves still to recount; a leaf whose blocks are all free is passed. The service is in the repair state during a run only: between two runs it takes changes, as a count that waits is too large, never too small. A loss of power keeps the leaves still to recount, as the top directory holds them. A recount is not a repair of a wrong leaf: each leaf it counts has a valid check.
+A wrong release list, a wrong node of a released state or a dropped version index cannot say which blocks it named, so the commit that leaves such dead names writes in the top directory of the count tree that each leaf waits for a recount. A dead name only keeps its block in use, so the recount starts when the free blocks of the disk fall under a sixteenth of it, or when a caller that acts for a principal calls `recount`. The walk counts each name into a tally on free blocks of the disk; then the service writes the leaves that differ, one directory of 128 leaves in each commit. The service refuses changes with `Busy`, unit `Count_Recount`, from the walk to the last commit, and serves reads. A loss of power keeps the leaves still to recount, as the top directory holds them. A recount is not a repair of a wrong leaf: each leaf that it counts has a valid check.
 
-The design: `src/md/data/storage_capacity.md`, "A recount frees the blocks that a release could not read".
+The design: `src/md/data/storage_capacity.md`, "A recount is one walk".
 
 Do not use: scrub, garbage collection, sweep.
 

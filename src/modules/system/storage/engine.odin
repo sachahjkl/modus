@@ -225,8 +225,10 @@ blocks_in_use :: proc "contextless" () -> u64 {
 // block that the plan stops naming is not (its root still names it).
 allocate :: proc "contextless" () -> u64 {
 	if opened.form == .Count_Tree {
+		// A page of the tally of a recount whose write runs is not free: the
+		// leaves after the commit still read it.
 		in_plan :: proc "contextless" (data: rawptr, number: u64) -> bool {
-			return delta_of(number) > 0
+			return delta_of(number) > 0 || storage_mount.recount_holds_block(&opened, number)
 		}
 		number := block_counts.free_search(&opened.counts, next_free, in_plan, nil)
 		if number != 0 {
@@ -614,7 +616,6 @@ state_binder := storage_mount.Memory_Binder {
 mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 	mount_reader = {read = read_through_block_service}
 	open := storage_mount.open_with_forms(&opened, &mount_reader, disk_blocks, &state_binder)
-	release_damaged_since_open, recount_cleared_since_open, recount_start_said = false, false, false
 	result = open.result
 	table_blocks_held = open.table_blocks
 	if open.no_memory {
@@ -783,7 +784,8 @@ Plan :: struct {
 	count_fault:      bool, // A count would go below 0: a fault of the engine.
 	count_overflow:   bool, // A count would pass REFERENCE_LIMIT.
 	dropped_versions: u64, // Version indexes and leaves with a wrong check that the plan drops.
-	release_damaged:  u64, // States that the plan releases with a wrong block under their root or in their list, one count for each: the blocks under it keep names until the recount that the commit starts (recount_record), or the next open of the form Tables.
+	release_damaged:  u64, // States that the plan releases with a wrong block under their root or in their list, one count for each: the blocks under it keep dead names until a recount (recount_record), or the next open of the form Tables.
+	dead_blocks:      u64, // The blocks that the plan leaves with dead names, as the parents of the wrong nodes count them: at least, as a wrong list or a dropped index gives no count.
 	tree_damaged:     bool, // A node of a tree has a wrong check or breaks a rule: the store is damaged.
 	// The trees that the commit opened, and the entries whose versions it
 	// changes (trees.odin).
@@ -1005,6 +1007,7 @@ plan_reset :: proc "contextless" (store_index: int) {
 	plan.count_fault, plan.count_overflow = false, false
 	plan.dropped_versions = 0
 	plan.release_damaged = 0
+	plan.dead_blocks = 0
 	plan.tree_damaged = false
 	plan.leaf_count = 0
 	plan.versions_change = 0
@@ -1305,7 +1308,9 @@ release_step :: proc "contextless" (list: ^format.Release_List) -> bool {
 		freed += 1
 	}
 	plan.release_damaged += releaser.damaged
+	plan.dead_blocks += releaser.damaged_blocks
 	releaser.damaged = 0
+	releaser.damaged_blocks = 0
 	if releaser.device {
 		plan.device = true
 		return false
@@ -1380,10 +1385,12 @@ child_release :: proc "contextless" (child: Object_Child, level: int) {
 	case .Wrong:
 		storage_mount.wrong_block_set(&opened, child.block)
 		plan.release_damaged += 1
+		plan.dead_blocks += max(child.blocks, 1) - 1
 	case .Good:
 		if node.header.magic != format.OBJECT_NODE_MAGIC || int(node.header.level) != level {
 			storage_mount.wrong_block_set(&opened, child.block)
 			plan.release_damaged += 1
+			plan.dead_blocks += max(child.blocks, 1) - 1
 			return
 		}
 		for item in node.children {
@@ -1846,30 +1853,50 @@ count_pages_make :: proc "contextless" (error: ^errors.Error_Record) -> (outcome
 	return .Succeeded, false
 }
 
-// The release of the plans since the open met a wrong block: the tables of
-// the form Tables hold names that no state holds.
-release_damaged_since_open: bool
-// A commit of the form Tables wrote no leaf to recount since the open.
-recount_cleared_since_open: bool
+// The record of the leaves to recount that the commit in progress writes,
+// for count_pages_install.
+plan_recount: struct {
+	dead:   bool,
+	leaves: u64,
+	set:    bool,
+}
+
+// plan_dead_names says if the plan leaves names that no state holds: a
+// release that met a wrong block, or a version index or leaf dropped with
+// the states under it.
+plan_dead_names :: proc "contextless" () -> bool {
+	return plan.release_damaged > 0 || plan.dropped_versions > 0
+}
 
 // recount_record gives the new top directory of the commit its leaves to
 // recount (src/md/data/storage_capacity.md, "A recount frees the blocks
-// that a release could not read"): each leaf after a release that met a
-// wrong block, the leaves left after the run of a recount, or none once
-// the form Tables wrote each leaf that differs from its walk.
+// that a release could not read"), as storage_mount.recount_record_decide
+// gives them.
 recount_record :: proc "contextless" (commit: ^block_counts.Commit) {
-	if plan.release_damaged > 0 {
-		release_damaged_since_open = true
-		block_counts.commit_recount_set(commit, format.count_tree_leaves(opened.counts.disk_blocks))
-		return
-	}
-	if leaves, set := storage_mount.repair_recount_after(&opened); set {
+	dead := plan_dead_names()
+	leaves, set := storage_mount.recount_record_decide(&opened, dead)
+	plan_recount = {dead = dead, leaves = leaves, set = set}
+	if set {
 		block_counts.commit_recount_set(commit, leaves)
+	}
+}
+
+// recount_ask asks for a recount, and gives the leaves that wait for it.
+recount_ask :: proc "contextless" () -> u64 {
+	if broken {
+		return 0
+	}
+	return storage_mount.recount_request(&opened)
+}
+
+// recount_waits_say writes the leaves that wait for a recount at the open,
+// with the free blocks and the bound under which the recount starts.
+recount_waits_say :: proc "contextless" () {
+	if opened.form != .Count_Tree || opened.counts.leaves_to_recount == 0 {
 		return
 	}
-	if opened.form == .Tables && !release_damaged_since_open && !recount_cleared_since_open && opened.leaves_to_write_count == 0 && opened.counts.leaves_to_recount != 0 {
-		block_counts.commit_recount_set(commit, 0)
-	}
+	free, _ := block_counts.free_blocks(&opened.counts)
+	system.log_fact(.Info, Count_Recount_Waits{leaves = opened.counts.leaves_to_recount, free = blocks_field(free), start_below = blocks_field(storage_mount.recount_free_bound(&opened))})
 }
 
 // leaf_is_to_write says if the tree does not hold a leaf yet (the form
@@ -1890,20 +1917,37 @@ count_pages_install :: proc "contextless" () {
 	}
 	repaired := storage_mount.repair_commit_waits(&opened)
 	wrong_before := opened.counts.wrong_leaf_count
-	if commit.recount_set && commit.recount == 0 && opened.form == .Tables {
-		recount_cleared_since_open = true
-	}
-	recounting := opened.counts.leaves_to_recount != 0
 	block_counts.commit_install(commit, root.counts)
+	storage_mount.recount_record_written(&opened, plan_recount.dead, plan_recount.leaves, plan_recount.set)
+	if plan_recount.dead {
+		free, _ := block_counts.free_blocks(&opened.counts)
+		system.log_fact(.Warning, Dead_Names_Kept{blocks = blocks_field(plan.dead_blocks), free = blocks_field(free), start_below = blocks_field(storage_mount.recount_free_bound(&opened))})
+	}
+	plan_recount = {}
 	if repaired {
 		storage_mount.repair_written(&opened)
 		if opened.counts.wrong_leaf_count < wrong_before {
 			system.log_fact(.Info, Count_Leaves_Repaired{})
 		}
 	}
-	if recounting && opened.counts.leaves_to_recount == 0 && opened.form == .Count_Tree {
+	// The pages that a commit of the write of a recount takes and frees
+	// change the tally of the leaves after its directory. After the install
+	// and the end of the repaired leaves: a new page of the tally takes a
+	// block that the tree gives free, never a block of this commit.
+	for at in plan.delta_places[:plan.delta_count] {
+		number := plan.delta_blocks[at]
+		change := i64(plan.delta_values[at])
+		storage_mount.recount_delta(&opened, &mount_reader, &repair_disk, number, change, change > 0 ? owner_after(number) : 0)
+	}
+	recount_ended_say()
+}
+
+// recount_ended_say writes the end of a recount once, with the blocks that
+// it freed.
+recount_ended_say :: proc "contextless" () {
+	if ended, freed := storage_mount.recount_ended_take(&opened); ended {
 		recount_start_said = false
-		system.log_fact(.Info, Count_Recount_Ended{})
+		system.log_fact(.Info, Count_Recount_Ended{freed = blocks_field(freed)})
 	}
 }
 
@@ -1972,8 +2016,9 @@ repair_refusal :: proc "contextless" (error: ^errors.Error_Record) -> (refused: 
 		return false, .Succeeded
 	}
 	walked, total := storage_mount.repair_progress(&opened)
-	// The repair ends by itself, with no act of the caller.
-	return true, refuse(error, .Callee_Busy, .Busy, .Count_Repair, 0, i64(walked), i64(total))
+	// The repair or the recount ends by itself, with no act of the caller.
+	unit := storage_mount.recount_running(&opened) ? errors.Unit.Count_Recount : errors.Unit.Count_Repair
+	return true, refuse(error, .Callee_Busy, .Busy, unit, 0, i64(walked), i64(total))
 }
 
 // repair_step runs one step of the repair of the count tree, or the commit
@@ -1983,16 +2028,23 @@ repair_step :: proc "contextless" () {
 		if opened.counts.wrong_leaf_count > 0 && !repair_start_said {
 			repair_start_said = true
 			system.log_fact(.Warning, Count_Repair_Started{leaves = u64(opened.counts.wrong_leaf_count)})
-		} else if opened.counts.wrong_leaf_count == 0 && !recount_start_said {
+		} else if opened.counts.wrong_leaf_count == 0 && !storage_mount.repair_active(&opened) && !recount_start_said {
 			recount_start_said = true
-			system.log_fact(.Info, Count_Recount_Started{leaves = opened.counts.leaves_to_recount})
+			free, _ := block_counts.free_blocks(&opened.counts)
+			system.log_fact(.Info, Count_Recount_Started{leaves = opened.counts.leaves_to_recount, free = blocks_field(free)})
 		}
 		repair_disk.root = &root
 		repair_disk.heads = store_blocks[:]
-		switch storage_mount.repair_step(&opened, &mount_reader, &repair_disk) {
+		outcome := storage_mount.repair_step(&opened, &mount_reader, &repair_disk)
+		recount_ended_say()
+		switch outcome {
 		case .Running:
 			return
 		case .Done:
+			// A run that ended with no leaf to write makes no commit.
+			if !storage_mount.repair_commit_waits(&opened) {
+				return
+			}
 		case .Device:
 			if !repair_device_said {
 				repair_device_said = true

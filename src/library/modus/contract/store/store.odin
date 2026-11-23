@@ -89,7 +89,16 @@ import "modus:contract/blake3"
 import "modus:contract/text_encoding"
 
 BLOCK_SIZE :: 4096 // The bytes of one block of the disk: one page, one block of the block service.
-ROOT_MAGIC :: u64(0x36454741524F5453) // The bytes "STORAGE6": a paged store table, names of 255 bytes, the counts of names in a count tree.
+ROOT_MAGIC :: u64(0x37454741524F5453) // The bytes "STORAGE7": a paged store table, names of 255 bytes, the counts of names in a count tree whose top directory names the leaves to recount.
+
+// root_magic_older says if the first word of a block is the mark of an
+// earlier format of the root ("STORAGE1" to "STORAGE6"), which this format
+// does not read: the open refuses the disk with a sentence, and never
+// takes it for a disk to format.
+root_magic_older :: proc "contextless" (magic: u64) -> bool {
+	digit := magic >> 56
+	return magic & 0x00FF_FFFF_FFFF_FFFF == ROOT_MAGIC & 0x00FF_FFFF_FFFF_FFFF && digit >= '1' && digit < ROOT_MAGIC >> 56
+}
 NAME_CAPACITY :: 32 // A name of a store: the name that the root service gives, with zero bytes after it.
 
 // The blocks of a disk: at least the two places of the root, and at most
