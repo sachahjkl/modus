@@ -89,7 +89,7 @@ import "modus:contract/blake3"
 import "modus:contract/text_encoding"
 
 BLOCK_SIZE :: 4096 // The bytes of one block of the disk: one page, one block of the block service.
-ROOT_MAGIC :: u64(0x35454741524F5453) // The bytes "STORAGE5": a paged store table, names of 255 bytes, a disk of any size.
+ROOT_MAGIC :: u64(0x36454741524F5453) // The bytes "STORAGE6": a paged store table, names of 255 bytes, the counts of names in a count tree.
 NAME_CAPACITY :: 32 // A name of a store: the name that the root service gives, with zero bytes after it.
 
 // The blocks of a disk: at least the two places of the root, and at most
@@ -178,10 +178,96 @@ Root :: struct {
 	time:             u64, // The time since the format of the disk at this commit, in milliseconds.
 	date:             u64, // The date of this commit in seconds since 1970 (UTC). 0: not known.
 	store_page_count: u64, // The pages of the store table: store_pages[:store_page_count] name a block each.
-	reserved:         [2]u64, // 0.
+	counts:           Pointer, // The top directory of the count tree. No block: the root names no count tree.
 	store_pages:      [STORE_PAGE_CAPACITY]Pointer, // The pages of the store table, in the order of the numbers of the stores.
-	padding:          [BLOCK_SIZE - 64 - STORE_PAGE_CAPACITY * size_of(Pointer) - 8]u8, // 0.
+	counts_complete:  u64, // 1: the count tree holds the count of each block of the disk; 0: some leaves are still to write.
 	check:            u64, // The hash of the bytes before it.
+}
+#assert(size_of(Root) == BLOCK_SIZE)
+
+// The count tree: the count of names and the owner of each block of the
+// disk, on the disk itself, so that a disk larger than the memory of the
+// service opens with no walk (src/md/data/storage_capacity.md, "The counts
+// of names live on the disk"). A leaf holds 512 blocks; a directory holds
+// 128 children, each a leaf or a directory of the level below, with the
+// count of the free blocks under it. A child with no block is 512 * 128^l
+// blocks of count 0 and owner 0. Each block of the tree has the count 1 and
+// the owner COUNT_TREE_OWNER in the tree itself. The top is always a
+// directory. Every page of the tree is copy on write.
+COUNTS_OF_A_PAGE :: 512
+COUNT_DIRECTORY_FANOUT :: 128
+COUNT_PAGE_MAGIC :: u32(0x53544E43) // The bytes "CNTS".
+// The owners of a block that are no store: a page of the store table, which
+// the root names, and a page of the count tree. A store is its number plus
+// 1, below both.
+STORE_TABLE_OWNER :: max(u16)
+COUNT_TREE_OWNER :: max(u16) - 1
+#assert(STORE_CAPACITY < int(COUNT_TREE_OWNER))
+COUNT_DIRECTORY_MAGIC :: u32(0x52494443) // The bytes "CDIR".
+// The levels of directories that the largest disk needs: 512 * 128^7 is
+// 2^58 blocks, more than DISK_BLOCKS_MAX.
+COUNT_LEVEL_LIMIT :: 7
+
+// A leaf of the count tree. 4096 bytes.
+Count_Page :: struct {
+	magic:   u32, // COUNT_PAGE_MAGIC.
+	level:   u32, // 0.
+	first:   u64, // The first block that it holds: a multiple of COUNTS_OF_A_PAGE.
+	counts:  [COUNTS_OF_A_PAGE]u32, // The count of names of each block.
+	owners:  [COUNTS_OF_A_PAGE]u16, // The store that names each block, plus 1, or a mark of the service: 0 for a free block.
+	padding: [BLOCK_SIZE - 16 - COUNTS_OF_A_PAGE * 6]u8, // 0.
+}
+#assert(size_of(Count_Page) == BLOCK_SIZE)
+
+// A child of a directory of the count tree. 24 bytes.
+Count_Child :: struct {
+	block:    u64, // 0: no page: each block under it has the count 0.
+	check:    u64, // The check of the page.
+	free:     u64, // The blocks of count 0 under it that the disk holds, past the two places of the root.
+}
+#assert(size_of(Count_Child) == 24)
+
+// A directory of the count tree. 4096 bytes.
+Count_Directory :: struct {
+	magic:    u32, // COUNT_DIRECTORY_MAGIC.
+	level:    u32, // 1 or more: its children are of the level below.
+	first:    u64, // The first block under it: a multiple of count_span(level).
+	children: [COUNT_DIRECTORY_FANOUT]Count_Child,
+	padding:  [BLOCK_SIZE - 16 - COUNT_DIRECTORY_FANOUT * size_of(Count_Child)]u8, // 0.
+}
+#assert(size_of(Count_Directory) == BLOCK_SIZE)
+
+// count_span gives the blocks under one page of the count tree of a level:
+// 512 for a leaf, 512 * 128^level for a directory. A level past
+// COUNT_LEVEL_LIMIT gives the span of that limit.
+count_span :: proc "contextless" (level: int) -> u64 {
+	span := u64(COUNTS_OF_A_PAGE)
+	for _ in 0 ..< clamp(level, 0, COUNT_LEVEL_LIMIT) {
+		span *= COUNT_DIRECTORY_FANOUT
+	}
+	return span
+}
+
+// count_tree_levels gives the level of the top directory of the count tree
+// of a disk: the least level, at least 1, whose span holds each block.
+count_tree_levels :: proc "contextless" (disk_blocks: u64) -> int {
+	level := 1
+	for level < COUNT_LEVEL_LIMIT && count_span(level) < disk_blocks {
+		level += 1
+	}
+	return level
+}
+
+// count_free_blocks gives the blocks of count 0 that a page of a level
+// that starts at `first` would hold if each count were 0: the blocks of
+// the disk under it, past the two places of the root.
+count_free_blocks :: proc "contextless" (level: int, first: u64, disk_blocks: u64) -> u64 {
+	end := first + count_span(level)
+	if end > disk_blocks || end < first {
+		end = disk_blocks
+	}
+	start := max(first, 2)
+	return end > start ? end - start : 0
 }
 
 // The block of one store: the root of its tree, its removal queue, and the
@@ -207,8 +293,14 @@ Store_Block :: struct {
 // What an entry of a tree names.
 Entry_Kind :: enum u64 {
 	None   = 0, // Not an entry: a leaf holds no such record.
-	Object = 1, // An object: bytes, with versions.
-	Tree   = 2, // A tree: names of other entries.
+	Object  = 1, // An object: bytes, with versions.
+	Tree    = 2, // A tree: names of other entries.
+	// A state of an object that no entry or version names any more, too
+	// large to free in one commit: an entry of the removal queue only,
+	// which steps free a part at a time. pointer: the root of the state;
+	// size: its bytes; generation: the first block of data that no step
+	// has freed yet (src/md/data/storage_capacity.md, "Releases in steps").
+	Release = 3,
 }
 
 // entry_kind_of_word is the border of the kind of an entry (Entry.kind): the

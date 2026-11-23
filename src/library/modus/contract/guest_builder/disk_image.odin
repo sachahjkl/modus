@@ -6,7 +6,7 @@
 //
 //   Header (64 bytes, offset 0):
 //     [0..7]   magic                 "MODGBD1"
-//     [7]      format_version        1
+//     [7]      format_version        2
 //     [8..12]  role_word             Guest_Disk_Role (1..3)
 //     [12..16] flags                 bit 0 = DISK_FLAG_READ_ONLY; other bits 0
 //     [16..20] entry_count           0 ..= MAX_DISK_ENTRIES
@@ -15,17 +15,17 @@
 //     [32..40] total_image_bytes     u64 (header + directory + payloads)
 //     [40..64] reserved_padding      all zero bytes
 //
-//   Directory entries (176 bytes each, starting at offset 64, strictly sorted
+//   Directory entries (308 bytes each, starting at offset 64, strictly sorted
 //   by UTF-8 byte order of path with no duplicate and no file/directory prefix
 //   conflict):
-//     [0..2]     path_length   u16 (1 ..= MAX_MOUNT_PATH_BYTES)
+//     [0..2]     path_length   u16 (1 ..= MAX_DISK_PATH_BYTES)
 //     [2..4]     reserved      u16 (must be 0)
-//     [4..128]   path          [124]u8, zero-padded past path_length
-//     [128..136] data_offset   u64 (monotonic, non-overlapping, >= directory end)
-//     [136..144] data_size     u64
-//     [144..176] content_hash  32-byte BLAKE3 hash of payload bytes
+//     [4..260]   path          [256]u8, zero-padded past path_length
+//     [260..268] data_offset   u64 (monotonic, non-overlapping, >= directory end)
+//     [268..276] data_size     u64
+//     [276..308] content_hash  32-byte BLAKE3 hash of payload bytes
 //
-//   Payload area (starting at offset 64 + entry_count * 176):
+//   Payload area (starting at offset 64 + entry_count * 308):
 //     Packed file payload bytes for entries 0 ..< entry_count in entry order.
 //     Any remaining bytes in a fixed-size block device past total_image_bytes
 //     must be zero.
@@ -39,7 +39,7 @@ import "modus:contract/tree_hash"
 DISK_MAGIC :: [7]u8{'M', 'O', 'D', 'G', 'B', 'D', '1'}
 
 // Current version byte immediately following DISK_MAGIC.
-DISK_FORMAT_VERSION :: u8(1)
+DISK_FORMAT_VERSION :: u8(2)
 
 // Fixed byte size of the MODGBD1 header.
 DISK_HEADER_SIZE :: 64
@@ -51,7 +51,17 @@ DISK_SECTOR_SIZE :: 512
 MAX_DISK_ENTRIES :: 64
 
 // Fixed byte size of one MODGBD1 directory entry.
-DISK_ENTRY_SIZE :: 2 + 2 + MAX_MOUNT_PATH_BYTES + 8 + 8 + blake3.HASH_SIZE
+DISK_ENTRY_SIZE :: DISK_ENTRY_HASH_AT + blake3.HASH_SIZE
+
+// The path of a file of the disk image holds one name of a store whole:
+// the guest reads and writes the files of a tree of the store.
+MAX_DISK_PATH_BYTES :: tree_hash.ENTRY_NAME_CAPACITY
+
+// The places of the fields of a directory entry.
+DISK_ENTRY_PATH_AT :: 4
+DISK_ENTRY_DATA_OFFSET_AT :: DISK_ENTRY_PATH_AT + MAX_DISK_PATH_BYTES + 1
+DISK_ENTRY_DATA_SIZE_AT :: DISK_ENTRY_DATA_OFFSET_AT + 8
+DISK_ENTRY_HASH_AT :: DISK_ENTRY_DATA_SIZE_AT + 8
 
 // Flag bit indicating a read-only disk image (Root_Image or Inputs_Read_Only).
 DISK_FLAG_READ_ONLY :: u32(1)
@@ -59,7 +69,7 @@ DISK_FLAG_READ_ONLY :: u32(1)
 // Maximum encoded byte length of one intermediate directory node during unpack.
 UNPACK_NODE_BUFFER_BYTES :: tree_hash.HEADER_SIZE + MAX_DISK_ENTRIES * tree_hash.ENTRY_SIZE_MOST
 
-#assert(DISK_ENTRY_SIZE == 176)
+#assert(DISK_ENTRY_SIZE == 308)
 #assert(DISK_HEADER_SIZE == 64)
 
 // One file supplied when packing a MODGBD1 disk image.
@@ -134,7 +144,7 @@ pack_disk_image :: proc "contextless" (
 	// absence of file/directory prefix conflicts before writing any byte.
 	for file, index in files {
 		path_bytes := transmute([]u8)file.path
-		if !validate_relative_path(path_bytes) {
+		if !validate_relative_path(path_bytes, MAX_DISK_PATH_BYTES) {
 			return 0, .Invalid_Mount_Path
 		}
 		if index > 0 {
@@ -186,10 +196,10 @@ pack_disk_image :: proc "contextless" (
 		byte_order.write_u16_little_endian(disk_buffer, entry_offset + 2, 0)
 		copy(disk_buffer[entry_offset + 4:][:len(path_bytes)], path_bytes)
 		payload_size := u64(len(file.content))
-		byte_order.write_u64_little_endian(disk_buffer, entry_offset + 128, data_cursor)
-		byte_order.write_u64_little_endian(disk_buffer, entry_offset + 136, payload_size)
+		byte_order.write_u64_little_endian(disk_buffer, entry_offset + DISK_ENTRY_DATA_OFFSET_AT, data_cursor)
+		byte_order.write_u64_little_endian(disk_buffer, entry_offset + DISK_ENTRY_DATA_SIZE_AT, payload_size)
 		content_hash := blake3.hash(file.content)
-		copy(disk_buffer[entry_offset + 144:][:blake3.HASH_SIZE], content_hash[:])
+		copy(disk_buffer[entry_offset + DISK_ENTRY_HASH_AT:][:blake3.HASH_SIZE], content_hash[:])
 		if payload_size > 0 {
 			copy(disk_buffer[data_cursor:][:payload_size], file.content)
 			data_cursor += payload_size
@@ -287,17 +297,17 @@ validate_disk_image :: proc "contextless" (
 	for index in 0 ..< int(entry_count) {
 		entry_offset := DISK_HEADER_SIZE + index * DISK_ENTRY_SIZE
 		path_length := int(byte_order.read_u16_little_endian(image, entry_offset))
-		if path_length == 0 || path_length > MAX_MOUNT_PATH_BYTES {
+		if path_length == 0 || path_length > MAX_DISK_PATH_BYTES {
 			return {}, .Malformed_Disk_Image
 		}
 		if byte_order.read_u16_little_endian(image, entry_offset + 2) != 0 {
 			return {}, .Malformed_Disk_Image
 		}
 		path_slice := image[entry_offset + 4:][:path_length]
-		if !validate_relative_path(path_slice) {
+		if !validate_relative_path(path_slice, MAX_DISK_PATH_BYTES) {
 			return {}, .Malformed_Disk_Image
 		}
-		for pad in image[entry_offset + 4 + path_length:entry_offset + 4 + MAX_MOUNT_PATH_BYTES] {
+		for pad in image[entry_offset + 4 + path_length:entry_offset + DISK_ENTRY_DATA_OFFSET_AT] {
 			if pad != 0 {
 				return {}, .Malformed_Disk_Image
 			}
@@ -318,8 +328,8 @@ validate_disk_image :: proc "contextless" (
 				return {}, .Malformed_Disk_Image
 			}
 		}
-		data_offset := byte_order.read_u64_little_endian(image, entry_offset + 128)
-		data_size := byte_order.read_u64_little_endian(image, entry_offset + 136)
+		data_offset := byte_order.read_u64_little_endian(image, entry_offset + DISK_ENTRY_DATA_OFFSET_AT)
+		data_size := byte_order.read_u64_little_endian(image, entry_offset + DISK_ENTRY_DATA_SIZE_AT)
 		if data_offset < extent_floor || data_offset > total_image_bytes {
 			return {}, .Malformed_Disk_Image
 		}
@@ -328,7 +338,7 @@ validate_disk_image :: proc "contextless" (
 		}
 		extent_floor = data_offset + data_size
 		expected_hash: blake3.Hash
-		copy(expected_hash[:], image[entry_offset + 144:][:blake3.HASH_SIZE])
+		copy(expected_hash[:], image[entry_offset + DISK_ENTRY_HASH_AT:][:blake3.HASH_SIZE])
 		actual_hash := blake3.hash(image[data_offset:][:data_size])
 		if actual_hash != expected_hash {
 			return {}, .Malformed_Disk_Image
@@ -363,13 +373,13 @@ disk_image_entry_at :: proc "contextless" (image: []u8, index: int) -> (entry: D
 		return {}, false
 	}
 	path_length := int(byte_order.read_u16_little_endian(image, entry_offset))
-	if path_length == 0 || path_length > MAX_MOUNT_PATH_BYTES {
+	if path_length == 0 || path_length > MAX_DISK_PATH_BYTES {
 		return {}, false
 	}
 	entry.path = string(image[entry_offset + 4:][:path_length])
-	entry.data_offset = byte_order.read_u64_little_endian(image, entry_offset + 128)
-	entry.data_size = byte_order.read_u64_little_endian(image, entry_offset + 136)
-	copy(entry.content_hash[:], image[entry_offset + 144:][:blake3.HASH_SIZE])
+	entry.data_offset = byte_order.read_u64_little_endian(image, entry_offset + DISK_ENTRY_DATA_OFFSET_AT)
+	entry.data_size = byte_order.read_u64_little_endian(image, entry_offset + DISK_ENTRY_DATA_SIZE_AT)
+	copy(entry.content_hash[:], image[entry_offset + DISK_ENTRY_HASH_AT:][:blake3.HASH_SIZE])
 	return entry, true
 }
 

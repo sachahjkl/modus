@@ -296,8 +296,8 @@ invalid_names_refused :: proc(t: ^testing.T) {
 
 @(test)
 unknown_entry_kind_and_bad_headers_refused :: proc(t: ^testing.T) {
-	// Border tree_entry_kind_of_word refuses 0, 3, 255, max(u64).
-	for bad_word in ([?]u64{0, 3, 4, 255, max(u64)}) {
+	// Border tree_entry_kind_of_word refuses 0, 4, 255, max(u64).
+	for bad_word in ([?]u64{0, 4, 255, max(u64)}) {
 		_, ok := tree_entry_kind_of_word(bad_word)
 		testing.expect(t, !ok)
 	}
@@ -312,8 +312,8 @@ unknown_entry_kind_and_bad_headers_refused :: proc(t: ^testing.T) {
 	written, ref := tree_encode(entries[:], buf[:])
 	testing.expect_value(t, ref, Tree_Refusal.None)
 
-	// Mutate wire kind byte to 0, 3, and 255.
-	for bad_kind in ([?]u8{0, 3, 255}) {
+	// Mutate wire kind byte to 0, 4, and 255.
+	for bad_kind in ([?]u8{0, 4, 255}) {
 		bad_buf := buf
 		bad_buf[HEADER_SIZE] = bad_kind
 		_, val_ref := tree_validate(bad_buf[:written])
@@ -438,4 +438,72 @@ entries_of_variable_length :: proc(t: ^testing.T) {
 	// A name before the first entry in the order stops the lookup there.
 	_, found, lookup := tree_lookup(buf[:written], "0")
 	testing.expect(t, !found && lookup == .None)
+}
+
+// A node of parts: parts only, 1 to PART_FANOUT of them. A node that mixes
+// parts and entries, or holds one part more, is refused at the encode and
+// at the check, in either order of the kinds.
+@(test)
+nodes_of_parts_hold_parts_only_up_to_the_fanout :: proc(t: ^testing.T) {
+	parts := make([]Tree_Entry, PART_FANOUT + 1, context.temp_allocator)
+	for &part, index in parts {
+		name := [3]u8{'p', 'a' + u8(index / 26), 'a' + u8(index % 26)}
+		part, _ = tree_entry_make(.Part, string(name[:]), make_sample_hash(u8(index)))
+	}
+	buffer := make([]u8, MAX_ENCODED_PARTS_BYTES + ENTRY_SIZE_MOST, context.temp_allocator)
+	for count in ([?]int{1, 2, PART_FANOUT}) {
+		written, refusal := tree_encode(parts[:count], buffer)
+		testing.expectf(t, refusal == .None, "a node of %d parts is encoded", count)
+		checked, check_refusal := tree_validate(buffer[:written])
+		testing.expectf(t, check_refusal == .None && checked == count, "a node of %d parts is valid", count)
+		testing.expect(t, tree_holds_parts(buffer[:written]))
+		testing.expect(t, written <= MAX_ENCODED_PARTS_BYTES)
+	}
+	// One part past the fanout.
+	_, over := tree_encode(parts, buffer)
+	testing.expect_value(t, over, Tree_Refusal.Mixed_Parts)
+	written, _ := tree_encode(parts[:PART_FANOUT], buffer)
+	forged := buffer[:written + ENTRY_FIXED_SIZE + 3]
+	copy(forged[written:], []u8{u8(Tree_Entry_Kind.Part), 3, 'z', 'z', 'z'})
+	forged[8] = PART_FANOUT + 1
+	_, forged_refusal := tree_validate(forged)
+	testing.expect_value(t, forged_refusal, Tree_Refusal.Mixed_Parts)
+	// A part and an entry, both orders.
+	object, _ := tree_entry_make(.Object, "pzz", make_sample_hash(99))
+	early, _ := tree_entry_make(.Object, "a", make_sample_hash(98))
+	for mixed in ([?][2]Tree_Entry{{parts[0], object}, {early, parts[0]}}) {
+		mixed := mixed
+		_, mixed_refusal := tree_encode(mixed[:], buffer)
+		testing.expect_value(t, mixed_refusal, Tree_Refusal.Mixed_Parts)
+	}
+	// The check of bytes: a node of entries whose second kind is a part.
+	entries := [2]Tree_Entry{early, object}
+	plain, _ := tree_encode(entries[:], buffer)
+	buffer[HEADER_SIZE + ENTRY_FIXED_SIZE + 1] = u8(Tree_Entry_Kind.Part)
+	_, plain_refusal := tree_validate(buffer[:plain])
+	testing.expect_value(t, plain_refusal, Tree_Refusal.Mixed_Parts)
+	testing.expect(t, !tree_holds_parts(buffer[:plain]), "the first entry decides only for a valid node")
+}
+
+// The part of a name: the last part whose name is at most the name.
+@(test)
+tree_part_find_gives_the_last_part_at_most_the_name :: proc(t: ^testing.T) {
+	names := [3]string{"b", "d", "f"}
+	parts: [3]Tree_Entry
+	for &part, index in parts {
+		part, _ = tree_entry_make(.Part, names[index], make_sample_hash(u8(index)))
+	}
+	buffer: [MAX_ENCODED_PARTS_BYTES]u8
+	written, _ := tree_encode(parts[:], buffer[:])
+	node := buffer[:written]
+	_, _, count, before := tree_part_find(node, "a")
+	testing.expect(t, !before && count == 3, "a name before the first part has no part")
+	cases := [?]struct {
+		name:  string,
+		index: int,
+	}{{"b", 0}, {"c", 0}, {"d", 1}, {"e", 1}, {"f", 2}, {"zzz", 2}, {"b\x01", 0}}
+	for item in cases {
+		part, index, _, found := tree_part_find(node, item.name)
+		testing.expectf(t, found && index == item.index && part.hash == make_sample_hash(u8(item.index)), "the part of %q is %d", item.name, item.index)
+	}
 }

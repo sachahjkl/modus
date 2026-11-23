@@ -112,10 +112,13 @@ root_validation_edges :: proc(t: ^testing.T) {
 	testing.expect(t, root_valid(&root, blocks_64gib))
 	testing.expect(t, !root_valid(&root, blocks_64gib - 1))
 
-	wrong_magic := root
-	wrong_magic.magic = u64(0x34454741524F5453) // "STORAGE4": the format before.
-	wrong_magic.check = root_check(&wrong_magic)
-	testing.expect(t, !root_valid(&wrong_magic, blocks_64gib))
+	// The formats before: "STORAGE5" (no count tree) and "STORAGE4".
+	for before in ([?]u64{0x35454741524F5453, 0x34454741524F5453}) {
+		wrong_magic := root
+		wrong_magic.magic = before
+		wrong_magic.check = root_check(&wrong_magic)
+		testing.expect(t, !root_valid(&wrong_magic, blocks_64gib))
+	}
 
 	wrong_check := root
 	wrong_check.check ~= 1

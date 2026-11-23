@@ -83,13 +83,15 @@ budget_exceptions := [?]Budget_Exception {
 	// module. The build writes that request on its line of budgets; a module
 	// that grows asks for more, and this row follows it.
 	{name = "linux", largest = {pages = 34932}},
-	// The storage service holds a table of each block of the data disk: 6
-	// bytes and 3 bits for each (src/modules/system/storage, MODULE_BUDGET),
-	// so a disk of 64 GiB needs 29 184 pages besides its fixed tables. It
-	// commits the tables for the disk that it opens only: a test disk of 1
-	// GiB takes about 470 pages of them. Past this budget, it uses the first
-	// blocks of a larger disk, and says so on the log.
-	{name = "storage", largest = {pages = 45056}},
+	// The storage service holds a table of each block of a data disk of up to
+	// 16 GiB, or a cache of the count tree of a larger disk
+	// (src/modules/system/storage, MODULE_BUDGET). The pages are the request
+	// of its table Budget: the 12 533 pages of working memory that its source
+	// states (1 829, and 10 704 for the tables of 16 GiB), the 72 pages of its
+	// first thread, and the 12 089 pages of its module, whose fixed tables
+	// are data. The build writes that request on its line of budgets; a
+	// module that grows asks for more, and this row follows it.
+	{name = "storage", largest = {pages = 24694}},
 	// Its cases reach the limit of processor time: a small limit makes
 	// them short.
 	{name = "limits", processor = 1_500_000},

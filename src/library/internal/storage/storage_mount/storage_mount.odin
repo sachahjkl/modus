@@ -8,6 +8,7 @@ package storage_mount
 
 import "base:intrinsics"
 import format "modus:contract/store"
+import "internal:storage/block_counts"
 import block_tree "internal:storage/storage_object"
 import tree "internal:storage/storage_tree"
 
@@ -159,8 +160,34 @@ store_block_of :: proc "contextless" (head: Store_Head) -> (block: format.Store_
 }
 
 // The owner of a page of the store table: no store, and no free block.
-STORE_TABLE_OWNER :: max(u16)
-#assert(format.STORE_CAPACITY < int(STORE_TABLE_OWNER))
+STORE_TABLE_OWNER :: format.STORE_TABLE_OWNER
+COUNT_TREE_OWNER :: format.COUNT_TREE_OWNER
+
+// Where the open and the service take the count of names and the owner of
+// a block (src/md/data/storage_capacity.md, "The open has two forms").
+Count_Form :: enum u8 {
+	// The tables of the memory hold each block: the open walks each store
+	// and checks each block; the count tree on the disk follows the tables.
+	Tables     = 0,
+	// The tables do not hold the disk: the counts come from the count tree,
+	// through a cache, and the open walks the trees of the stores only.
+	Count_Tree = 1,
+}
+
+// The pages of the count tree that one commit writes at most: a commit
+// whose counts change more leaves is refused, as each other capacity of a
+// commit.
+COUNT_STAGING_PAGES :: 1024
+
+// The pages of the cache of the count tree when the tables hold the disk:
+// the directories that a commit reads, and the leaves of the compare of the
+// open.
+COUNT_CACHE_PAGES_OF_TABLES :: 64
+
+// The wrong blocks and the blocks with damage under them that the service
+// keeps when the tables do not hold the disk: past them it stops its
+// changes, as the damage is not known whole.
+DAMAGE_SET_CAPACITY :: 16384
 
 // What the open knows of a disk. The storage service keeps it while it
 // runs; the tool makes one for each image.
@@ -223,6 +250,23 @@ State :: struct {
 	// The roots of the current objects by their hash (hash_index.odin): the
 	// walk makes it, and the service keeps it up to date.
 	hash_index:    Hash_Index,
+	form:          Count_Form,
+	// The count tree that the root names, read through a cache in the
+	// memory of the tables, and the pages of the commit in progress.
+	count_source:  block_counts.Source,
+	counts:        block_counts.Counts,
+	count_commit:  block_counts.Commit,
+	count_staging: []block_counts.Frame,
+	count_staged_slots: []i32,
+	// Bit n: leaf n of the count tree does not hold the counts of the tables
+	// (the form Tables): a commit writes it.
+	leaves_to_write: []u64,
+	leaves_to_write_count: u64,
+	// The form Count_Tree: the wrong blocks and the blocks with damage under
+	// them, in two sets; past their capacity the service makes no change.
+	wrong_set:     []u64,
+	damaged_set:   []u64,
+	damage_set_full: bool,
 }
 
 // What the open of a disk found: the counts, the damage, which root it
@@ -256,7 +300,9 @@ Mount :: struct {
 	reference_overflow:   u64, // Blocks with more names than a count holds.
 	stores_recounted:     u64, // Stores whose count in the root differs from the recount: the open takes the recount.
 	damaged_store_pages:  u64, // Pages of the store table with a wrong check: their stores are not served.
-	larger_than_capacity: bool, // The root names more blocks than the tables hold: no root is usable with this memory.
+	larger_than_capacity: bool, // The root names more blocks than the tables hold, and no complete count tree: no root is usable with this memory.
+	count_tree_damaged:   bool, // The count tree of the root has a wrong page: the commits make a new one.
+	count_leaves_differ:  u64, // The leaves of the count tree that do not hold the counts of the walk: the commits write them.
 	// Roots of current objects whose store has another root with the same
 	// first 8 bytes of hash and the same size: two copies of one object,
 	// that the hash index did not find at their commit (docs/STORAGE.md,
@@ -274,21 +320,41 @@ BLOCK_STATE_BYTES :: size_of(u32) + size_of(u16)
 
 // The places of the tables of a State in the memory that state_bind takes.
 State_Layout :: struct {
-	bitmap_words:   u64, // The words of each of the three bitmaps.
+	bitmap_words:   u64, // The words of each of the three bitmaps: 0 for the form Count_Tree.
 	references:     u64, // The byte of the counts of names.
 	owner:          u64, // The byte of the owners.
 	hash_records:   u64, // The byte of the records of the hash index.
 	hash_slots:     u64, // The byte of the slots of the hash index.
 	hash_capacity:  u64, // The records, and the slots, of the hash index: a power of two.
+	count_frames:   u64, // The byte of the frames of the cache of the count tree, then of the staging.
+	cache_pages:    u64, // The frames of the cache.
+	count_slots:    u64, // The byte of the index of the cache, then of the staging.
+	cache_slots:    u64, // The slots of the index of the cache: a power of two.
+	staging_slots:  u64, // The slots of the index of the staging: a power of two.
+	leaves:         u64, // The byte of the bitmap of the leaves to write.
+	leaf_words:     u64,
+	damage_sets:    u64, // The byte of the two sets of damage (the form Count_Tree).
 	bytes:          u64, // The bytes of the whole memory.
+}
+
+@(private)
+power_of_two_at_least :: proc "contextless" (count: u64) -> u64 {
+	size := u64(2)
+	for size < count {
+		size *= 2
+	}
+	return size
 }
 
 // state_layout gives the memory of the tables for a disk of `blocks`
 // blocks and a hash index of `hash_roots` roots. ok is false for a count
 // of blocks that no disk has, for no root, or for a size that a u64 does
 // not hold.
-state_layout :: proc "contextless" (blocks: u64, hash_roots: u64) -> (layout: State_Layout, ok: bool) {
+state_layout :: proc "contextless" (blocks: u64, hash_roots: u64, form: Count_Form = .Tables, cache_pages: u64 = COUNT_CACHE_PAGES_OF_TABLES) -> (layout: State_Layout, ok: bool) {
 	words := format.bitmap_words_for_blocks(blocks) or_return
+	if cache_pages < format.COUNT_LEVEL_LIMIT + 2 || cache_pages > u64(1) << 30 {
+		return {}, false
+	}
 	// With at most 2^52 blocks and 2^40 roots, no size below wraps a u64.
 	if hash_roots == 0 || hash_roots > u64(1) << 40 {
 		return {}, false
@@ -299,17 +365,43 @@ state_layout :: proc "contextless" (blocks: u64, hash_roots: u64) -> (layout: St
 	for layout.hash_capacity < 2 * hash_roots {
 		layout.hash_capacity *= 2
 	}
-	layout.bitmap_words = words
-	cursor := 3 * words * 8
-	layout.references = cursor
-	cursor += blocks * size_of(u32)
-	layout.owner = cursor
-	cursor += blocks * size_of(u16)
-	cursor = (cursor + 7) &~ u64(7)
+	cursor: u64
+	switch form {
+	case .Tables:
+		layout.bitmap_words = words
+		cursor = 3 * words * 8
+		layout.references = cursor
+		cursor += blocks * size_of(u32)
+		layout.owner = cursor
+		cursor += blocks * size_of(u16)
+		cursor = (cursor + 7) &~ u64(7)
+	case .Count_Tree:
+		// No table of each block: the counts are on the disk.
+	}
 	layout.hash_records = cursor
 	cursor += layout.hash_capacity * size_of(Root_Record)
 	layout.hash_slots = cursor
 	cursor += layout.hash_capacity * size_of(u64)
+	// The frames: 4096 bytes and a few words each, aligned on 8.
+	layout.count_frames = cursor
+	layout.cache_pages = cache_pages
+	cursor += (cache_pages + COUNT_STAGING_PAGES) * size_of(block_counts.Frame)
+	layout.count_slots = cursor
+	layout.cache_slots = power_of_two_at_least(2 * cache_pages)
+	layout.staging_slots = power_of_two_at_least(2 * COUNT_STAGING_PAGES)
+	cursor += (layout.cache_slots + layout.staging_slots) * size_of(i32)
+	cursor = (cursor + 7) &~ u64(7)
+	layout.leaves = cursor
+	if form == .Tables {
+		// The leaves to write follow the tables: the form Count_Tree writes
+		// each leaf that a commit changes, and no other.
+		layout.leaf_words = (blocks / format.COUNTS_OF_A_PAGE + 64) / 64
+	}
+	cursor += layout.leaf_words * 8
+	layout.damage_sets = cursor
+	if form == .Count_Tree {
+		cursor += 2 * DAMAGE_SET_CAPACITY * size_of(u64)
+	}
 	layout.bytes = cursor
 	return layout, true
 }
@@ -318,18 +410,35 @@ state_layout :: proc "contextless" (blocks: u64, hash_roots: u64) -> (layout: St
 // `blocks` blocks. The memory is aligned on 8 bytes and has at least the
 // bytes of state_layout; its contents do not matter: the open clears what
 // it uses. ok is false when the memory is too small or not aligned.
-state_bind :: proc "contextless" (state: ^State, memory: []u8, blocks: u64, hash_roots: u64) -> bool {
-	layout, ok := state_layout(blocks, hash_roots)
+state_bind :: proc "contextless" (state: ^State, memory: []u8, blocks: u64, hash_roots: u64, form: Count_Form = .Tables, cache_pages: u64 = COUNT_CACHE_PAGES_OF_TABLES) -> bool {
+	layout, ok := state_layout(blocks, hash_roots, form, cache_pages)
 	if !ok || u64(len(memory)) < layout.bytes || uintptr(raw_data(memory)) & 7 != 0 {
 		return false
 	}
 	base := raw_data(memory)
-	words := int(layout.bitmap_words)
-	state.in_use = ([^]u64)(base)[:words]
-	state.wrong_blocks = ([^]u64)(base)[words:2 * words]
-	state.damaged_under = ([^]u64)(base)[2 * words:3 * words]
-	state.references = ([^]u32)(&base[layout.references])[:blocks]
-	state.owner = ([^]u16)(&base[layout.owner])[:blocks]
+	state.form = form
+	switch form {
+	case .Tables:
+		words := int(layout.bitmap_words)
+		state.in_use = ([^]u64)(base)[:words]
+		state.wrong_blocks = ([^]u64)(base)[words:2 * words]
+		state.damaged_under = ([^]u64)(base)[2 * words:3 * words]
+		state.references = ([^]u32)(&base[layout.references])[:blocks]
+		state.owner = ([^]u16)(&base[layout.owner])[:blocks]
+		state.wrong_set, state.damaged_set = nil, nil
+	case .Count_Tree:
+		state.in_use, state.wrong_blocks, state.damaged_under = nil, nil, nil
+		state.references, state.owner = nil, nil
+		state.wrong_set = ([^]u64)(&base[layout.damage_sets])[:DAMAGE_SET_CAPACITY]
+		state.damaged_set = ([^]u64)(&base[layout.damage_sets])[DAMAGE_SET_CAPACITY:2 * DAMAGE_SET_CAPACITY]
+	}
+	frames := ([^]block_counts.Frame)(&base[layout.count_frames])[:layout.cache_pages + COUNT_STAGING_PAGES]
+	slots := ([^]i32)(&base[layout.count_slots])[:layout.cache_slots + layout.staging_slots]
+	state.counts.frames = frames[:layout.cache_pages]
+	state.counts.slots = slots[:layout.cache_slots]
+	state.count_staging = frames[layout.cache_pages:]
+	state.count_staged_slots = slots[layout.cache_slots:]
+	state.leaves_to_write = ([^]u64)(&base[layout.leaves])[:layout.leaf_words]
 	state.hash_index.records = ([^]Root_Record)(&base[layout.hash_records])[:layout.hash_capacity]
 	state.hash_index.slots = ([^]u64)(&base[layout.hash_slots])[:layout.hash_capacity]
 	state.hash_index.slot_bits = 0
@@ -352,6 +461,11 @@ state_tables_clear :: proc "contextless" (state: ^State) {
 	zero_words(state.in_use)
 	zero_words(state.wrong_blocks)
 	zero_words(state.damaged_under)
+	zero_words(state.leaves_to_write)
+	zero_words(state.wrong_set)
+	zero_words(state.damaged_set)
+	state.leaves_to_write_count = 0
+	state.damage_set_full = false
 	if len(state.references) > 0 {
 		intrinsics.mem_zero(raw_data(state.references), len(state.references) * size_of(u32))
 	}
@@ -378,7 +492,9 @@ store_numbers :: #force_inline proc "contextless" (state: ^State) -> int {
 // reference counts one more name of a block, from a store. It gives true
 // for the first name: the caller reads and checks the block one time.
 reference :: proc "contextless" (state: ^State, number: u64, store_index: int, result: ^Mount) -> (first: bool) {
-	if number >= state.capacity {
+	// The form Count_Tree counts nothing: the counts are on the disk, and
+	// the walk reads the trees of the stores only.
+	if number >= state.capacity || state.form == .Count_Tree {
 		return false
 	}
 	if state.references[number] == 0 {
@@ -407,28 +523,68 @@ reference :: proc "contextless" (state: ^State, number: u64, store_index: int, r
 	return false
 }
 
+// reference_one counts the one name of a block that the root names (a
+// page of the store table, a page of the count tree), with its owner. A
+// block that a name holds already is a fault of the engine: it gives false.
+// The form Count_Tree counts nothing.
+reference_one :: proc "contextless" (state: ^State, number: u64, owner: u16, result: ^Mount) -> bool {
+	if state.form == .Count_Tree {
+		return true
+	}
+	if number >= state.capacity || state.references[number] != 0 {
+		result.named_twice += 1
+		return false
+	}
+	state.references[number] = 1
+	state.owner[number] = owner
+	mark(state, number, true)
+	return true
+}
+
 // wrong_block says if a block was read and found wrong.
 wrong_block :: proc "contextless" (state: ^State, number: u64) -> bool {
-	return number < state.capacity && state.wrong_blocks[number / 64] >> (number % 64) & 1 != 0
+	switch state.form {
+	case .Tables:
+		return number < state.capacity && state.wrong_blocks[number / 64] >> (number % 64) & 1 != 0
+	case .Count_Tree:
+		return block_set_has(state.wrong_set, number)
+	}
+	return true
 }
 
 // wrong_block_set records that a block is wrong.
 wrong_block_set :: proc "contextless" (state: ^State, number: u64) {
-	if number < state.capacity {
-		state.wrong_blocks[number / 64] |= 1 << (number % 64)
+	switch state.form {
+	case .Tables:
+		if number < state.capacity {
+			state.wrong_blocks[number / 64] |= 1 << (number % 64)
+		}
+	case .Count_Tree:
+		block_set_add(state, state.wrong_set, number)
 	}
 }
 
 // damaged_under says if the block tree under a block has a wrong block.
 damaged_under :: proc "contextless" (state: ^State, number: u64) -> bool {
-	return number < state.capacity && state.damaged_under[number / 64] >> (number % 64) & 1 != 0
+	switch state.form {
+	case .Tables:
+		return number < state.capacity && state.damaged_under[number / 64] >> (number % 64) & 1 != 0
+	case .Count_Tree:
+		return block_set_has(state.damaged_set, number)
+	}
+	return true
 }
 
 // damaged_under_set records that the block tree under a block has a wrong
 // block.
 damaged_under_set :: proc "contextless" (state: ^State, number: u64) {
-	if number < state.capacity {
-		state.damaged_under[number / 64] |= 1 << (number % 64)
+	switch state.form {
+	case .Tables:
+		if number < state.capacity {
+			state.damaged_under[number / 64] |= 1 << (number % 64)
+		}
+	case .Count_Tree:
+		block_set_add(state, state.damaged_set, number)
 	}
 }
 
@@ -454,7 +610,9 @@ reference_state :: proc "contextless" (state: ^State, reader: ^Block_Reader, roo
 	levels := format.object_levels(size)
 	first: bool
 	outcome, first, held, _ = reference_object_child(state, reader, {block = root.block, check = root.check}, levels, 0, size, false, store_index, result, named)
-	if first || outcome != .Good || levels == 0 {
+	if first || outcome != .Good || levels == 0 || state.form == .Count_Tree {
+		// The form Count_Tree does not count the blocks of a state: the store
+		// block holds them.
 		return outcome, levels == 0 ? 1 : held
 	}
 	// A root that an earlier state named: its blocks are in its node.
@@ -470,6 +628,74 @@ reference_state :: proc "contextless" (state: ^State, reader: ^Block_Reader, roo
 	return .Good, held
 }
 
+// reference_release counts the names of a state of the removal queue that
+// steps free in parts (format.Entry_Kind.Release): the queue names its
+// root, and each node still holds the names of its children from the
+// block of data at the cursor. A child whose blocks are all before the
+// cursor was freed by a step: no name. A cursor of 0 is a whole state.
+reference_release :: proc "contextless" (state: ^State, reader: ^Block_Reader, root: format.Pointer, size: u64, cursor: u64, store_index: int, result: ^Mount, named: ^u64) -> Read {
+	levels := format.object_levels(min(size, format.OBJECT_SIZE_LIMIT))
+	if cursor == 0 || levels == 0 || size > format.OBJECT_SIZE_LIMIT || root.block == 0 {
+		// A state that no step started, or that no step can have cut: whole,
+		// the safe direction (a block named too many times stays in use).
+		outcome, _ := reference_state(state, reader, root, size, store_index, result, named)
+		return outcome
+	}
+	return reference_part(state, reader, {block = root.block, check = root.check}, levels, 0, size, cursor, store_index, result, named)
+}
+
+// reference_part counts one name of a node of the state of a release that
+// a step cut, and the names that it still holds: of each child from the
+// cursor, whole, and of the child that holds the cursor, in part.
+@(private)
+reference_part :: proc "contextless" (state: ^State, reader: ^Block_Reader, child: format.Object_Child, level: int, base: u64, size: u64, cursor: u64, store_index: int, result: ^Mount, named: ^u64) -> Read {
+	if child.block < 2 || child.block >= state.disk_size {
+		result.wrong += 1
+		return .Wrong
+	}
+	if !reference(state, child.block, store_index, result) {
+		// Another state names it too: its walk names each child.
+		return wrong_block(state, child.block) || damaged_under(state, child.block) ? .Wrong : .Good
+	}
+	named^ += 1
+	numbers := [1]u64{child.block}
+	node := &state.object_nodes[level - 1]
+	if !reader.read(reader, numbers[:], ([^]u8)(node)[:BLOCK_SIZE]) {
+		return .Device
+	}
+	result.checked += 1
+	if check_of_block(reader, child.block, ([^]u8)(node)[:BLOCK_SIZE]) != child.check || !block_tree.node_valid(node, level, base, size) {
+		result.wrong += 1
+		wrong_block_set(state, child.block)
+		damaged_under_set(state, child.block)
+		return .Wrong
+	}
+	span := format.object_span(level - 1)
+	outcome := Read.Good
+	// A deeper call reads into the node of its own level: this node stays.
+	for place in 0 ..< format.OBJECT_FANOUT {
+		item := node.children[place]
+		child_base := base + u64(place) * span
+		if item.block == 0 || child_base + span <= cursor {
+			continue
+		}
+		one: Read
+		if child_base >= cursor || level == 1 {
+			one, _, _, _ = reference_object_child(state, reader, item, level - 1, child_base, size, true, store_index, result, named)
+		} else {
+			one = reference_part(state, reader, item, level - 1, child_base, size, cursor, store_index, result, named)
+		}
+		switch one {
+		case .Device:
+			return .Device
+		case .Wrong:
+			damaged_under_set(state, child.block)
+			outcome = .Wrong
+		case .Good:
+		}
+	}
+	return outcome
+}
 // reference_object_child counts one name of an object node of `level`, or
 // of a block of data at level 0, that covers the blocks from `base`, and
 // walks under it at its first name. value_known: the parent holds the
@@ -589,13 +815,24 @@ reference_object_child :: proc "contextless" (state: ^State, reader: ^Block_Read
 	return .Good, true, blocks, value
 }
 
+// used says if a block is in use: in the form Count_Tree, its count is not
+// 0 (a block that the commit in progress takes is in its counts).
 used :: proc "contextless" (state: ^State, number: u64) -> bool {
-	return number < state.capacity && state.in_use[number / 64] >> (number % 64) & 1 != 0
+	switch state.form {
+	case .Tables:
+		return number < state.capacity && state.in_use[number / 64] >> (number % 64) & 1 != 0
+	case .Count_Tree:
+		return number < 2 || block_count(state, number) != 0
+	}
+	return true
 }
 
 // mark sets or clears the bit of a block. It gives false when the bit had
-// the value already.
+// the value already. The form Count_Tree has no bit: the count says it.
 mark :: proc "contextless" (state: ^State, number: u64, value: bool) -> bool {
+	if state.form == .Count_Tree {
+		return false
+	}
 	if number >= state.capacity || used(state, number) == value {
 		return false
 	}
@@ -607,6 +844,109 @@ mark :: proc "contextless" (state: ^State, number: u64, value: bool) -> bool {
 		state.in_use_count -= 1
 	}
 	return true
+}
+
+// block_count gives the count of names of a block as the last commit left
+// it. In the form Count_Tree, a page that cannot be read gives 0 and keeps
+// its failure in the counts (state.counts.failure): the service refuses a
+// commit after such a read, and free_search never gives such a block.
+block_count :: proc "contextless" (state: ^State, number: u64) -> u32 {
+	switch state.form {
+	case .Tables:
+		return number < state.capacity ? state.references[number] : 0
+	case .Count_Tree:
+		count, _, _ := block_counts.count_get(&state.counts, number)
+		return count
+	}
+	return 0
+}
+
+// block_owner gives the owner of a block as the last commit left it.
+block_owner :: proc "contextless" (state: ^State, number: u64) -> u16 {
+	switch state.form {
+	case .Tables:
+		return number < state.capacity ? state.owner[number] : 0
+	case .Count_Tree:
+		_, owner, _ := block_counts.count_get(&state.counts, number)
+		return owner
+	}
+	return 0
+}
+
+// block_set sets the count and the owner of a block after a commit, in the
+// form Tables. In the form Count_Tree the leaves of the commit hold them
+// already (count_commit_install).
+block_set :: proc "contextless" (state: ^State, number: u64, count: u32, owner: u16) {
+	if state.form != .Tables || number >= state.capacity {
+		return
+	}
+	state.references[number] = count
+	state.owner[number] = owner
+	mark(state, number, count != 0)
+}
+
+// blocks_in_use gives the blocks in use: the two places of the root, and
+// each block of a count that is not 0.
+blocks_in_use :: proc "contextless" (state: ^State) -> u64 {
+	switch state.form {
+	case .Tables:
+		return state.in_use_count
+	case .Count_Tree:
+		top, outcome := block_counts.page_get(&state.counts, state.counts.levels, 0)
+		if outcome != .Good || top == nil {
+			return 2
+		}
+		free: u64
+		for child in (^format.Count_Directory)(&top.bytes).children {
+			free += child.free
+		}
+		return state.disk_size > free ? state.disk_size - free : 2
+	}
+	return 0
+}
+
+// A set of blocks in the form Count_Tree: open addressing on the block
+// number, 0 for a free slot (block 0 is a place of the root, never in a
+// set).
+@(private)
+block_set_has :: proc "contextless" (set: []u64, number: u64) -> bool {
+	if len(set) == 0 || number == 0 {
+		return false
+	}
+	mask := u64(len(set) - 1)
+	at := (number * 0x9E37_79B9_7F4A_7C15 >> 20) & mask
+	for _ in 0 ..< len(set) {
+		if set[at] == number {
+			return true
+		}
+		if set[at] == 0 {
+			return false
+		}
+		at = (at + 1) & mask
+	}
+	return false
+}
+
+@(private)
+block_set_add :: proc "contextless" (state: ^State, set: []u64, number: u64) {
+	if len(set) == 0 || number == 0 || block_set_has(set, number) {
+		return
+	}
+	mask := u64(len(set) - 1)
+	at := (number * 0x9E37_79B9_7F4A_7C15 >> 20) & mask
+	filled := 0
+	for slot in set {
+		filled += int(slot != 0)
+	}
+	// Half full: the set holds no more, and the damage is not known whole.
+	if 2 * (filled + 1) > len(set) {
+		state.damage_set_full = true
+		return
+	}
+	for set[at] != 0 {
+		at = (at + 1) & mask
+	}
+	set[at] = number
 }
 
 // What a read of blocks gave.
@@ -651,11 +991,16 @@ scratch_block :: proc "contextless" (state: ^State, index: int) -> []u8 {
 // store block, a version index, a version leaf. It reads and checks it into
 // the scratch block 0.
 single :: proc "contextless" (state: ^State, reader: ^Block_Reader, pointer: format.Pointer, store_index: int, result: ^Mount, named: ^u64) -> Read {
-	if !reference(state, pointer.block, store_index, result) {
-		result.named_twice += 1
-		state.store_faulty[store_index] = true
-	} else {
-		named^ += 1
+	switch state.form {
+	case .Tables:
+		if !reference(state, pointer.block, store_index, result) {
+			result.named_twice += 1
+			state.store_faulty[store_index] = true
+		} else {
+			named^ += 1
+		}
+	case .Count_Tree:
+		// The open counts nothing: the counts are on the disk.
 	}
 	wrong, outcome := read_checked(state, reader, {pointer}, 0)
 	result.checked += 1
@@ -692,6 +1037,10 @@ Store_Walk :: struct {
 // false when the device reported an error.
 walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^format.Root, result: ^Mount) -> bool {
 	state_tables_clear(state)
+	result.count_tree_damaged, result.count_leaves_differ = false, 0
+	if !count_tree_bind(state, reader, candidate) {
+		return false
+	}
 	state.store_pages = {}
 	state.store_page_damaged = {}
 	state.store_versions = {}
@@ -733,7 +1082,142 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 			}
 		}
 	}
+	switch state.form {
+	case .Tables:
+		return walk_count_tree(state, candidate, result)
+	case .Count_Tree:
+	}
 	return true
+}
+
+// count_tree_complete says if the count tree of a root holds each count of
+// its disk: a tree that the commits completed, or no tree on a disk with no
+// store yet, whose counts are all 0.
+count_tree_complete :: proc "contextless" (root: ^format.Root) -> bool {
+	if root.counts_complete != 1 {
+		return false
+	}
+	return root.counts.block != 0 || root.store_page_count == 0
+}
+
+// count_source_read reads one block of the count tree through the reader
+// of the open, or of the service.
+count_source_read :: proc "contextless" (source: ^block_counts.Source, number: u64, into: ^block_counts.Block) -> bool {
+	reader := (^Block_Reader)(source.data)
+	numbers := [1]u64{number}
+	return reader.read(reader, numbers[:], into[:])
+}
+
+// count_tree_bind gives the reader of the count tree of a root to the
+// state: its cache is empty. The reader of the blocks stays the reader of
+// the count tree after the open.
+count_tree_bind :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^format.Root) -> bool {
+	state.count_source = {read = count_source_read, data = reader}
+	return block_counts.counts_bind(&state.counts, &state.count_source, candidate.counts, state.disk_size, state.counts.frames, state.counts.slots)
+}
+
+// leaf_to_write marks a leaf of the count tree that does not hold the
+// counts of the tables: a commit writes it.
+leaf_to_write :: proc "contextless" (state: ^State, leaf: u64) {
+	word := leaf / 64
+	if word >= u64(len(state.leaves_to_write)) || state.leaves_to_write[word] >> (leaf % 64) & 1 != 0 {
+		return
+	}
+	state.leaves_to_write[word] |= 1 << (leaf % 64)
+	state.leaves_to_write_count += 1
+}
+
+// leaf_written clears the mark of a leaf that a commit wrote.
+leaf_written :: proc "contextless" (state: ^State, leaf: u64) {
+	word := leaf / 64
+	if word >= u64(len(state.leaves_to_write)) || state.leaves_to_write[word] >> (leaf % 64) & 1 == 0 {
+		return
+	}
+	state.leaves_to_write[word] &~= 1 << (leaf % 64)
+	state.leaves_to_write_count -= 1
+}
+
+// walk_count_tree counts the one name of each page of the count tree of the
+// root (the form Tables), then compares each leaf with the counts of the
+// walk: a leaf that differs, or that the tree does not hold, is to write. A
+// damaged tree is no tree: each leaf of a count is to write, and the commits
+// make a new tree. It gives false when the device reported an error.
+walk_count_tree :: proc "contextless" (state: ^State, candidate: ^format.Root, result: ^Mount) -> bool {
+	counts := &state.counts
+	if candidate.counts.block != 0 {
+		switch count_pages_reference(state, counts.levels, 0, result) {
+		case .Good:
+		case .Device:
+			return false
+		case .Wrong:
+			result.count_tree_damaged = true
+			counts.root = {}
+			block_counts.counts_failure_clear(counts)
+		}
+	}
+	leaves := (state.disk_size + format.COUNTS_OF_A_PAGE - 1) / format.COUNTS_OF_A_PAGE
+	for leaf in 0 ..< leaves {
+		first := leaf * format.COUNTS_OF_A_PAGE
+		page, outcome := block_counts.page_get(counts, 0, first)
+		switch outcome {
+		case .Good:
+		case .Device:
+			return false
+		case .Wrong:
+			// Read once by the walk above: a page that changed since is no
+			// longer trusted.
+			leaf_to_write(state, leaf)
+			continue
+		}
+		end := min(first + format.COUNTS_OF_A_PAGE, state.disk_size)
+		same := true
+		for number in first ..< end {
+			count, owner: u32 = 0, 0
+			if page != nil {
+				held := (^format.Count_Page)(&page.bytes)
+				count, owner = held.counts[number - first], u32(held.owners[number - first])
+			}
+			if count != state.references[number] || owner != u32(state.owner[number]) {
+				same = false
+				break
+			}
+		}
+		if !same {
+			leaf_to_write(state, leaf)
+		}
+	}
+	result.count_leaves_differ = state.leaves_to_write_count
+	return true
+}
+
+// count_pages_reference counts the one name of a page of the count tree and
+// of each page under it.
+@(private)
+count_pages_reference :: proc "contextless" (state: ^State, level: int, first: u64, result: ^Mount) -> block_counts.Read {
+	frame, outcome := block_counts.page_get(&state.counts, level, first)
+	if outcome != .Good || frame == nil {
+		return outcome
+	}
+	result.checked += 1
+	if !reference_one(state, frame.block, COUNT_TREE_OWNER, result) {
+		return .Wrong
+	}
+	if level == 0 {
+		return .Good
+	}
+	// The frame can leave the cache while a child is read: the children are
+	// copied first.
+	children := (^format.Count_Directory)(&frame.bytes).children
+	span := format.count_span(level - 1)
+	for child, place in children {
+		if child.block == 0 {
+			continue
+		}
+		if under := count_pages_reference(state, level - 1, first + u64(place) * span, result); under != .Good {
+			return under
+		}
+	}
+	return .Good
 }
 
 // store_page_read counts the one name of a page of the store table, reads
@@ -747,16 +1231,11 @@ store_page_read :: proc "contextless" (state: ^State, reader: ^Block_Reader, poi
 		state.store_page_damaged[page] = true
 		return true
 	}
-	if state.references[pointer.block] != 0 {
-		// A block of one name named two times: a fault of the engine.
-		result.named_twice += 1
+	if !reference_one(state, pointer.block, STORE_TABLE_OWNER, result) {
 		result.damaged_store_pages += 1
 		state.store_page_damaged[page] = true
 		return true
 	}
-	state.references[pointer.block] = 1
-	state.owner[pointer.block] = STORE_TABLE_OWNER
-	mark(state, pointer.block, true)
 	wrong, outcome := read_checked(state, reader, {pointer}, 0)
 	result.checked += 1
 	switch outcome {
@@ -842,6 +1321,14 @@ walk_store :: proc "contextless" (state: ^State, reader: ^Block_Reader, store: ^
 		state.store_damaged[index] = true
 		walking.complete = false
 	}
+	if state.form == .Count_Tree {
+		// No block was counted: the counts of the store are those of the disk.
+		state.store_recount[index] = store.used
+		result.objects += on_disk.objects
+		result.trees += on_disk.trees
+		result.removing += on_disk.removing
+		return true
+	}
 	state.store_recount[index] = walking.named
 	wrong_count := walking.named != store.used || walking.counts != on_disk || walking.entry_count_wrong
 	if walking.named != store.used {
@@ -903,6 +1390,12 @@ visit_node_of_store :: proc "contextless" (one: ^tree.Walk, pointer: format.Poin
 	if pointer.block < 2 || pointer.block >= walking.state.disk_size {
 		return true // The read says that it is wrong.
 	}
+	if walking.state.form == .Count_Tree {
+		// No count: each node is read for its entries. The levels of a walk
+		// are bounded, so a loop of nodes ends at the bound.
+		walking.result.checked += 1
+		return true
+	}
 	if !reference(walking.state, pointer.block, walking.store_index, walking.result) {
 		// A node named two times: the walk does not read it again, so a loop
 		// of nodes ends.
@@ -923,6 +1416,20 @@ visit_entry_of_store :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u
 	index := walking.store_index
 	entry := (^format.Entry)(raw_data(value))^
 	queued := walking.in_removals && walking.nesting == 0
+	if queued && entry.kind == u64(format.Entry_Kind.Release) {
+		// A large state that steps free: its blocks from the cursor.
+		walking.counts.removing += 1
+		switch reference_release(state, walking.reader, entry.pointer, entry.size, entry.generation, index, result, &walking.named) {
+		case .Device:
+			walking.device = true
+			one.failure = .Device
+		case .Wrong:
+			result.damaged_objects += 1
+			walking.complete = false
+		case .Good:
+		}
+		return
+	}
 	if queued {
 		if entry.kind != u64(format.Entry_Kind.Tree) {
 			walking.broken = true
@@ -986,8 +1493,9 @@ visit_entry_of_store :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u
 				walking.entry_count_wrong = true
 			}
 		}
-	case .None:
-		// A leaf holds no entry of the kind None.
+	case .None, .Release:
+		// A leaf holds no entry of the kind None, and a release only at the
+		// first level of the removal queue.
 		walking.broken = true
 		one.failure = .Damaged
 	}
@@ -1107,6 +1615,12 @@ mount :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk_blocks: 
 	}
 	first, walked := -1, -1
 	for index in order {
+		if state.form == .Count_Tree && format.root_valid(&candidates[index], state.disk_size) && !count_tree_complete(&candidates[index]) {
+			// No count tree that holds each count: only the tables can open
+			// this root.
+			result.larger_than_capacity = true
+			continue
+		}
 		if !format.root_valid(&candidates[index], state.disk_size) {
 			if format.root_valid(&candidates[index], disk_blocks) {
 				// A whole root of a disk that the tables cannot hold: the open

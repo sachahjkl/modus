@@ -130,9 +130,6 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 - **The screen, the keys and the pointer in the lines of an agent.** An agent sees a frame of the screen, types and points in the windows that the principal picked, and waits for the next frame of a window, each as a line of a step. [Design](src/md/features/agent_code_mode.md)
 - **An agent edits, builds and runs a project.** An agent reads a source of a project, replaces a text in it, builds an output, runs it and reads its log, in a loop of steps, within the stores and the processes that the principal picked. [Design](src/md/features/agent_code_mode.md)
 
-- **A removal of an object larger than 1 GiB.** The storage service frees the blocks of such an object in steps, as it frees a tree, so a principal removes a video of several GiB in one call. [Design](src/md/data/storage_capacity.md)
-- **A data disk larger than the memory of the storage service.** The counts of the names of the blocks live on the disk, so a disk of several terabytes opens with a small budget. [Design](src/md/data/storage_capacity.md)
-- **A folder of more than 4096 entries in one content tree.** A content tree becomes a tree of tree nodes, so a program freezes a folder of any size into the object cache. [Design](src/md/data/storage_capacity.md)
 
 ## Maybe
 

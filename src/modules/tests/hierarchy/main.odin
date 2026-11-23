@@ -116,7 +116,9 @@ count_entries :: proc "contextless" (connection: ^storage.Client, place: storage
 				trees += 1
 			case .Object:
 				objects += 1
-			case .None:
+			case .None, .Release:
+				// A list gives the entries of a tree, never a release of the
+				// removal queue.
 				status = .Failed
 				return
 			}

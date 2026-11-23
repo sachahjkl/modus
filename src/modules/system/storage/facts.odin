@@ -311,19 +311,33 @@ No_Table_Memory :: struct {
 }
 
 // The budget of the service pays the tables of the first blocks of the
-// disk only: the service uses those.
-@(log_fact = "storage: the disk has {disk_blocks}, and the memory of the service holds the tables of the first {used_blocks}: the service uses those blocks only")
+// disk only: the service reads the counts of the blocks from the count tree
+// of the disk.
+@(log_fact = "storage: the disk has {disk_blocks}, and the memory of the service holds the tables of {used_blocks}: the service reads the counts of the blocks from the count tree of the disk")
 Disk_Larger_Than_Tables :: struct {
 	disk_blocks: value_kinds.Size_In_Blocks,
 	used_blocks: value_kinds.Size_In_Blocks,
 }
 
-// A whole root names more blocks than the tables hold: the open uses no
-// root rather than lose the blocks past them.
-@(log_fact = "storage: the root of the disk names more blocks than the {used_blocks} whose tables the memory of the service holds: the service keeps the disk as it is, and serves nothing; a larger budget of the service opens it")
+// A whole root names more blocks than the tables hold, and no count tree
+// that holds each count: the open uses no root rather than lose the blocks
+// past them.
+@(log_fact = "storage: the root of the disk names more blocks than the {used_blocks} whose tables the memory of the service holds, and no count tree that holds each count: the service keeps the disk as it is, and serves nothing; a larger budget of the service opens it")
 Root_Larger_Than_Tables :: struct {
 	used_blocks: value_kinds.Size_In_Blocks,
 }
+
+// The count tree of the disk does not hold the counts that the walk of the
+// open found: the commits after the open write the leaves that differ.
+@(log_fact = "storage: {leaves} leaves of the count tree do not hold the counts of names that the open found: the next commits write them")
+Count_Leaves_Differ :: struct {
+	leaves: u64,
+}
+
+// The count tree of the disk has a wrong page: the open counts by its
+// walk, and the commits after it write a new count tree.
+@(log_fact = "storage: the count tree of the disk has a wrong page: the service takes the counts of names that the open found, and the next commits write a new count tree")
+Count_Tree_Damaged :: struct {}
 
 // Pages of the store table have a wrong check: their stores are not
 // served, and no new store goes in them.

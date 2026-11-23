@@ -12,7 +12,7 @@
 //
 //   Entry (34 + name_length bytes each, repeated entry_count times, strictly
 //   sorted by the UTF-8 byte order of the names):
-//     [0]                   kind        Tree_Entry_Kind (1 = Object, 2 = Tree)
+//     [0]                   kind        Tree_Entry_Kind (1 = Object, 2 = Tree, 3 = Part)
 //     [1]                   name_length length in bytes (1 ..= 255)
 //     [2..2+n]              name        UTF-8 name bytes
 //     [2+n..2+n+32]         hash        32-byte BLAKE3 hash (object hash or child tree hash)
@@ -22,6 +22,18 @@
 // 255 bytes would cost 289. So an entry has no fixed place: a reader walks
 // the entries in their order (tree_entry_next). The walk is the check of
 // the whole tree too, so a lookup costs what its check costs already.
+//
+// A folder of more than MAX_TREE_ENTRIES entries is a tree of several
+// nodes. Its entries, in their order, are cut into nodes of exactly
+// MAX_TREE_ENTRIES entries, the last one with the rest (1 or more). Each
+// node becomes a Part: an entry whose name is the first name under it and
+// whose hash is the tree hash of its node. The parts, in their order, are
+// cut the same way into nodes of exactly PART_FANOUT parts, and so on up
+// to one node: the root, with 2 to PART_FANOUT parts. A node holds entries
+// or parts, never both. The cut depends on the count of the entries only,
+// so one folder has one form and one hash, and a folder of at most
+// MAX_TREE_ENTRIES entries is one node as before (src/md/data/storage_capacity.md,
+// "Folders of more than 4096 entries").
 //
 // The tree hash uses BLAKE3 derive-key mode under TREE_HASH_DOMAIN so a tree
 // hash can never collide with a plain object hash (blake3.hash).
@@ -57,6 +69,17 @@ MAX_TREE_ENTRIES :: 4096
 // Maximum size in bytes of a valid canonical tree node.
 MAX_ENCODED_TREE_BYTES :: HEADER_SIZE + MAX_TREE_ENTRIES * ENTRY_SIZE_MOST
 
+// The most parts of one node of parts: a node of parts stays small, so a
+// reader holds one for each level of a large folder.
+PART_FANOUT :: 64
+
+// The largest node of parts.
+MAX_ENCODED_PARTS_BYTES :: HEADER_SIZE + PART_FANOUT * ENTRY_SIZE_MOST
+
+// The most levels of nodes of parts above the nodes of entries: 4096 *
+// 64^4 entries, 2^36, more than a disk of 4 TiB holds.
+PART_LEVEL_LIMIT :: 4
+
 // Domain separation context string passed to blake3.derive_key so tree hashes
 // are cryptographically separated from object blob hashes.
 TREE_HASH_DOMAIN :: "modus tree v2"
@@ -65,11 +88,14 @@ TREE_HASH_DOMAIN :: "modus tree v2"
 #assert(ENTRY_SIZE_MOST == 289)
 #assert(MAX_ENCODED_TREE_BYTES == 1183760)
 
-// Closed set of entry kinds in an immutable tree node. Values match
-// store.Entry_Kind (Object = 1, Tree = 2) explicitly across the binary border.
+// Closed set of entry kinds in an immutable tree node. Object and Tree
+// match store.Entry_Kind (Object = 1, Tree = 2) explicitly across the
+// binary border. A Part names one node of a tree of several nodes: it is
+// not an entry of the folder, and a store has no such kind.
 Tree_Entry_Kind :: enum u8 {
 	Object = 1,
 	Tree   = 2,
+	Part   = 3,
 }
 
 // Closed set of validation and encoding refusals for immutable tree nodes.
@@ -85,6 +111,7 @@ Tree_Refusal :: enum u8 {
 	Too_Many_Entries = 8,
 	Trailing_Bytes   = 9,
 	Truncated        = 10,
+	Mixed_Parts      = 11, // A node holds parts and entries, or more than PART_FANOUT parts.
 }
 
 // One entry of an immutable tree node in memory.
@@ -188,10 +215,12 @@ tree_encode :: proc "contextless" (entries: []Tree_Entry, output: []u8) -> (writ
 	}
 	// Pass 1: validate every entry and strict UTF-8 byte ordering before writing.
 	previous_name: []u8
+	parts := 0
 	for &entry, index in entries {
 		if _, kind_ok := tree_entry_kind_of_word(u64(entry.kind)); !kind_ok {
 			return 0, .Bad_Entry_Kind
 		}
+		parts += int(entry.kind == .Part)
 		name_length := int(entry.name_length)
 		if name_length == 0 {
 			return 0, .Empty_Name
@@ -215,6 +244,9 @@ tree_encode :: proc "contextless" (entries: []Tree_Entry, output: []u8) -> (writ
 			}
 		}
 		previous_name = name_slice
+	}
+	if parts != 0 && (parts != len(entries) || parts > PART_FANOUT) {
+		return 0, .Mixed_Parts
 	}
 	required := tree_encoded_size(entries)
 	if len(output) < required {
@@ -293,13 +325,16 @@ tree_validate :: proc "contextless" (canonical_bytes: []u8) -> (entry_count: int
 	count := int(raw_count)
 	offset := HEADER_SIZE
 	previous_offset, previous_length := 0, 0
+	parts := 0
 	for index in 0 ..< count {
 		entry_refusal: Tree_Refusal
 		next: int
-		_, next, entry_refusal = tree_entry_read(canonical_bytes, offset)
+		read: Tree_Entry
+		read, next, entry_refusal = tree_entry_read(canonical_bytes, offset)
 		if entry_refusal != .None {
 			return 0, entry_refusal
 		}
+		parts += int(read.kind == .Part)
 		name_length := int(canonical_bytes[offset + 1])
 		if index > 0 {
 			order := compare_name_bytes(canonical_bytes[previous_offset + 2:][:previous_length], canonical_bytes[offset + 2:][:name_length])
@@ -316,7 +351,46 @@ tree_validate :: proc "contextless" (canonical_bytes: []u8) -> (entry_count: int
 	if len(canonical_bytes) > offset {
 		return 0, .Trailing_Bytes
 	}
+	if parts != 0 && (parts != count || parts > PART_FANOUT) {
+		return 0, .Mixed_Parts
+	}
 	return count, .None
+}
+
+// tree_holds_parts says if already-validated canonical bytes are a node of
+// parts: its entries are parts.
+tree_holds_parts :: proc "contextless" (canonical_bytes: []u8) -> bool {
+	return len(canonical_bytes) > HEADER_SIZE && canonical_bytes[HEADER_SIZE] == u8(Tree_Entry_Kind.Part)
+}
+
+// tree_entry_count gives the count of entries of already-validated
+// canonical bytes.
+tree_entry_count :: proc "contextless" (canonical_bytes: []u8) -> int {
+	if len(canonical_bytes) < HEADER_SIZE {
+		return 0
+	}
+	return int(byte_order.read_u32_little_endian(canonical_bytes, 8))
+}
+
+// tree_part_find gives the part of a node of parts under which `name` is:
+// the last part whose name is at most name, its place and the count of the
+// parts. found is false when name comes before the first part.
+tree_part_find :: proc "contextless" (canonical_bytes: []u8, name: string) -> (part: Tree_Entry, index: int, count: int, found: bool) {
+	count = tree_entry_count(canonical_bytes)
+	target := transmute([]u8)name
+	offset := HEADER_SIZE
+	for place in 0 ..< count {
+		entry, next, ok := tree_entry_next(canonical_bytes, offset)
+		if !ok {
+			return {}, 0, count, false
+		}
+		if compare_name_bytes(entry.name[:entry.name_length], target) > 0 {
+			break
+		}
+		part, index, found = entry, place, true
+		offset = next
+	}
+	return part, index, count, found
 }
 
 // tree_hash validates canonical_bytes and computes the domain-separated BLAKE3

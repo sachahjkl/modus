@@ -2,6 +2,7 @@
 package storage_mount
 
 import format "modus:contract/store"
+import "internal:storage/block_counts"
 import block_tree "internal:storage/storage_object"
 import "core:testing"
 
@@ -640,8 +641,20 @@ the_memory_of_the_tables :: proc(t: ^testing.T) {
 	layout, ok := state_layout(blocks_64gib, 1 << 17)
 	testing.expect(t, ok)
 	testing.expect_value(t, layout.hash_capacity, u64(1) << 18)
-	expected := 3 * (blocks_64gib / 64) * 8 + blocks_64gib * BLOCK_STATE_BYTES + (u64(1) << 18) * (size_of(Root_Record) + size_of(u64))
+	// The count tree: the cache of the directories, the staging of one
+	// commit, their indexes, and one bit for each leaf.
+	count_bytes := (COUNT_CACHE_PAGES_OF_TABLES + COUNT_STAGING_PAGES) * size_of(block_counts.Frame) + (128 + 2 * COUNT_STAGING_PAGES) * size_of(i32) + (blocks_64gib / format.COUNTS_OF_A_PAGE + 64) / 64 * 8
+	expected := 3 * (blocks_64gib / 64) * 8 + blocks_64gib * BLOCK_STATE_BYTES + (u64(1) << 18) * (size_of(Root_Record) + size_of(u64)) + count_bytes
 	testing.expect_value(t, layout.bytes, expected)
+	// The form Count_Tree: no table of each block, whatever the disk; its
+	// cache and its two sets of damage.
+	tree_layout, tree_ok := state_layout(format.DISK_BLOCKS_MAX, 1 << 17, .Count_Tree, 1 << 16)
+	testing.expect(t, tree_ok)
+	testing.expect(t, tree_layout.bytes < (u64(1) << 34), "the form Count_Tree has no table of each block")
+	testing.expect_value(t, tree_layout.bitmap_words, u64(0))
+	// A cache too small to hold a page of each level is refused.
+	_, small_cache := state_layout(1 << 20, 16, .Count_Tree, format.COUNT_LEVEL_LIMIT + 1)
+	testing.expect(t, !small_cache)
 	// The largest disk: its layout does not wrap.
 	largest, largest_ok := state_layout(format.DISK_BLOCKS_MAX, 16)
 	testing.expect(t, largest_ok && largest.bytes > format.DISK_BLOCKS_MAX * BLOCK_STATE_BYTES)

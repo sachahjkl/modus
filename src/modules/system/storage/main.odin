@@ -45,13 +45,16 @@ import "modus:system"
 // pages and the heads of the stores of the store table (4 MB), and the
 // buffers of the content trees (7 MB). The tables of the blocks have the
 // size of the disk, so they are working memory (tables_bind): 6 bytes and
-// 3 bits for each block, and 6 MiB for the hash index. The working memory
-// holds them for a disk of 64 GiB (2^24 blocks: 29 184 pages), with the
-// regions of the connections and the rest of the pages that the service
-// had before the tool counted (1 829 pages). A budget that pays less gives
-// the tables of the first blocks of the disk only.
-TABLE_PAGES_OF_64_GIB :: 29184
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1829 + TABLE_PAGES_OF_64_GIB, processes = 1, threads = 1}
+// 3 bits for each block, the hash index, the cache and the staging of the
+// count tree. The working memory holds them for a disk of 16 GiB (2^22
+// blocks: storage_mount.state_layout gives 10 704 pages), which is more
+// than the form that reads the counts from the count tree takes with its
+// largest cache (8 326 pages): a larger disk opens from its count tree
+// (src/md/data/storage_capacity.md, "The open has two forms"). With them,
+// the regions of the connections and the rest of the pages that the
+// service had before the tool counted (1 829 pages).
+STATE_PAGES_OF_16_GIB :: 10704
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 1829 + STATE_PAGES_OF_16_GIB, processes = 1, threads = 1}
 
 // failure gives the result of an export that fails with an answer: the
 // word of the member (answers.Export_Error), which the client reads back.
@@ -804,7 +807,7 @@ stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 		return errors.fail(error, failure(.Acts_For_Principal), .No_Grant, .Acts_For_Principal)
 	}
 	writer := system.Writer{buffer = result^}
-	parts := [?]system.Part{"generation ", root.generation, ", ", opened.in_use_count, " of ", root.disk_blocks, " blocks in use, ", commits, " commits, ", commits_refused, " commits refused, ", commits_undecided, " commits for the next open to decide, ", blocks_written, " blocks written and ", blocks_read_back, " blocks read back in ", read_back_nanoseconds / 1000, " microseconds since the start"}
+	parts := [?]system.Part{"generation ", root.generation, ", ", blocks_in_use(), " of ", root.disk_blocks, " blocks in use, ", commits, " commits, ", commits_refused, " commits refused, ", commits_undecided, " commits for the next open to decide, ", blocks_written, " blocks written and ", blocks_read_back, " blocks read back in ", read_back_nanoseconds / 1000, " microseconds since the start"}
 	for part in parts {
 		system.write_part(&writer, part)
 	}
@@ -931,15 +934,17 @@ versions :: proc "c" (place: i64, name: ^string, result: ^[]Version, error: ^err
 	return i64(rows)
 }
 
-// version gives the bytes of the object `name` under a place at a generation: one of its versions, or its current version. The place: as for versions. The result is the count of bytes, or a negative number with an error record.
+// version copies the bytes of the object `name` under a place at a generation (one of its versions, or its current version) from `offset` into result, up to the end of the state or of the call region. A caller reads a version larger than the call region in pieces: a generation names one state, which no commit changes. The place: as for versions. The result is the count of bytes (0 at the end), or a negative number with an error record.
 //
 // **Error kinds**
 //
 // - those of versions;
 // - `Absent` (-9, the object has no version of this generation);
+// - `Bad_Value` (-3, offset is negative);
+// - `Out_Of_Range` (-3, offset is past the end of the state);
 // - `Damaged` (-8, a block of this version has a wrong check).
 @(export, link_name = "version")
-version :: proc "c" (place: i64, name: ^string, generation: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
+version :: proc "c" (place: i64, name: ^string, generation: i64, offset: i64, result: ^[]u8, error: ^errors.Error_Record) -> i64 {
 	named, refused := named_of(place, name^, error, 1, false)
 	if refused < 0 {
 		return refused
@@ -952,10 +957,17 @@ version :: proc "c" (place: i64, name: ^string, generation: i64, result: ^[]u8, 
 	if state_refused < 0 {
 		return state_refused
 	}
-	if state.size > u64(len(result)) {
-		return i64(state.size) // The caller sees that it does not fit.
+	if offset < 0 {
+		return errors.fail(error, failure(.Name), .Bad_Value, .Bytes, 4, offset)
 	}
-	return state_read(state, 0, result^[:state.size], error, 2)
+	if u64(offset) > state.size {
+		return errors.fail(error, failure(.Name), .Out_Of_Range, .Bytes, 4, offset, i64(state.size))
+	}
+	count := min(u64(len(result)), state.size - u64(offset))
+	if count == 0 {
+		return 0
+	}
+	return state_read(state, u64(offset), result^[:count], error, 2)
 }
 
 // restore makes a version of the object `name` under a place its current version again, in one commit: the current version before it becomes a version, so nothing is lost. No block of data is written: the object names the blocks of the version. The place: as for versions. The result is the generation of the commit, or a negative number with an error record.
@@ -1365,6 +1377,13 @@ disk_open :: proc "contextless" () {
 		if mounted.damaged_store_pages != 0 {
 			system.log_fact(.Warning, Store_Pages_Damaged{pages = mounted.damaged_store_pages})
 		}
+		// A disk with no count tree yet (one that the tool wrote) has each of
+		// its leaves to write: only a tree that differs is a fact.
+		if mounted.count_tree_damaged {
+			system.log_fact(.Warning, Count_Tree_Damaged{})
+		} else if mounted.count_leaves_differ != 0 && opened.root.counts.block != 0 {
+			system.log_fact(.Warning, Count_Leaves_Differ{leaves = mounted.count_leaves_differ})
+		}
 		if mounted.named_twice != 0 || mounted.named_by_two_stores != 0 || mounted.reference_overflow != 0 {
 			faulty: u64
 			for flag in opened.store_faulty {
@@ -1381,7 +1400,7 @@ disk_open :: proc "contextless" () {
 		if mounted.stores_recounted != 0 || mounted.stores_with_wrong_count != 0 {
 			system.log_fact(.Warning, Store_Counts_Differ{stores_recounted = mounted.stores_recounted, stores_with_wrong_count = mounted.stores_with_wrong_count})
 		}
-		system.log_fact(.Info, Disk_Opened{generation = mounted.generation, stores = mounted.stores, objects = mounted.objects, trees = mounted.trees, versions = mounted.versions, in_use = blocks_field(opened.in_use_count), shared = mounted.shared, checked = mounted.checked, wrong = mounted.wrong, elapsed = milliseconds_field(elapsed)})
+		system.log_fact(.Info, Disk_Opened{generation = mounted.generation, stores = mounted.stores, objects = mounted.objects, trees = mounted.trees, versions = mounted.versions, in_use = blocks_field(blocks_in_use()), shared = mounted.shared, checked = mounted.checked, wrong = mounted.wrong, elapsed = milliseconds_field(elapsed)})
 		if mounted.removing != 0 {
 			system.log_fact(.Info, Trees_Wait_To_Be_Freed{trees = mounted.removing})
 		}

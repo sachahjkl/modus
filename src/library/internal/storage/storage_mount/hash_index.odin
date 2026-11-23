@@ -176,7 +176,7 @@ record_free :: proc "contextless" (index: ^Hash_Index, block: u64) {
 @(private = "file")
 same_key :: proc "contextless" (state: ^State, block: u64, prefix: u64, size: u64, owner: u16) -> bool {
 	record := hash_index_record(state, block)
-	return record != nil && record.hash_prefix == prefix && record.size == size && block < state.capacity && state.owner[block] == owner
+	return record != nil && record.hash_prefix == prefix && record.size == size && block < state.capacity && block_owner(state, block) == owner
 }
 
 // hash_index_reset empties the index, and keeps its key of the slots.
@@ -199,7 +199,7 @@ hash_index_reset :: proc "contextless" (state: ^State) {
 slot_insert :: proc "contextless" (state: ^State, record: ^Root_Record) -> (repeated: bool) {
 	index := &state.hash_index
 	block := record.block
-	owner := state.owner[block]
+	owner := block_owner(state, block)
 	at := hash_home(index, record.hash_prefix)
 	for _ in 0 ..< HASH_PROBE_LIMIT {
 		other := index.slots[at]
@@ -467,7 +467,7 @@ hash_index_check :: proc "contextless" (state: ^State) -> (faults: u64) {
 		for probe != u64(at) {
 			if index.slots[probe] == 0 {
 				faults += 1
-			} else if same_key(state, index.slots[probe], record.hash_prefix, record.size, state.owner[block]) {
+			} else if same_key(state, index.slots[probe], record.hash_prefix, record.size, block_owner(state, block)) {
 				faults += 1
 			}
 			probe = slot_next(index, probe)

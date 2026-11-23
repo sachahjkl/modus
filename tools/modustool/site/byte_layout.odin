@@ -210,6 +210,9 @@ byte_layout_storage_sources :: proc() -> []Byte_Layout_Source {
 		{key = "store.Version_Index", file = file, declaration = "Version_Index", info = type_info_of(store.Version_Index), what = "the block that names the version leaves of one object"},
 		{key = "store.Version_Leaf", file = file, declaration = "Version_Leaf", info = type_info_of(store.Version_Leaf), what = "one block of version entries of one object"},
 		{key = "store.Version_Entry", file = file, declaration = "Version_Entry", info = type_info_of(store.Version_Entry), what = "one version of an object"},
+		{key = "store.Count_Page", file = file, declaration = "Count_Page", info = type_info_of(store.Count_Page), what = "a leaf of the count tree: the counts of names and the owners of 512 blocks"},
+		{key = "store.Count_Directory", file = file, declaration = "Count_Directory", info = type_info_of(store.Count_Directory), what = "a directory of the count tree: 128 children"},
+		{key = "store.Count_Child", file = file, declaration = "Count_Child", info = type_info_of(store.Count_Child), what = "one child of a directory of the count tree"},
 	}
 	list := make([]Byte_Layout_Source, len(sources), context.temp_allocator)
 	copy(list, sources[:])

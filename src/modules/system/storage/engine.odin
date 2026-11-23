@@ -7,6 +7,7 @@ import "modus:contract/errors"
 import op "modus:contract/operation"
 import "modus:contract/ring"
 import format "modus:contract/store"
+import "internal:storage/block_counts"
 import "internal:storage/storage_mount"
 import block_tree "internal:storage/storage_object"
 import "internal:storage/storage_retention"
@@ -211,8 +212,26 @@ mark :: proc "contextless" (number: u64, value: bool) {
 	storage_mount.mark(&opened, number, value)
 }
 
+// blocks_in_use gives the blocks in use, in either form of the counts.
+blocks_in_use :: proc "contextless" () -> u64 {
+	return storage_mount.blocks_in_use(&opened)
+}
+
 // allocate gives a free block and marks it, or 0 when the disk is full.
+// In the form Count_Tree, a free block has the count 0 in the count tree
+// and no name in the plan: a block that the last commit freed is free, a
+// block that the plan stops naming is not (its root still names it).
 allocate :: proc "contextless" () -> u64 {
+	if opened.form == .Count_Tree {
+		in_plan :: proc "contextless" (data: rawptr, number: u64) -> bool {
+			return delta_of(number) > 0
+		}
+		number := block_counts.free_search(&opened.counts, next_free, in_plan, nil)
+		if number != 0 {
+			next_free = number + 1
+		}
+		return number
+	}
 	searched: u64
 	for searched < root.disk_blocks {
 		if next_free < 2 || next_free >= root.disk_blocks {
@@ -540,17 +559,8 @@ TABLE_BLOCKS_LEAST :: u64(1) << 12
 tables_bind :: proc "contextless" (disk_blocks: u64) -> (blocks: u64) {
 	blocks = min(disk_blocks, format.DISK_BLOCKS_MAX)
 	for blocks >= format.DISK_BLOCKS_MIN {
-		layout, ok := storage_mount.state_layout(blocks, min(blocks, HASH_ROOTS_MOST))
-		pages := (layout.bytes + BLOCK_SIZE - 1) / BLOCK_SIZE
-		if ok && pages <= op.MEMORY_PAGE_LIMIT {
-			memory, status := system.memory_create(pages)
-			if status == .Ok {
-				address, map_status := system.memory_map(memory, {.Write})
-				if map_status == .Ok && storage_mount.state_bind(&opened, ([^]u8)(address)[:layout.bytes], blocks, min(blocks, HASH_ROOTS_MOST)) {
-					return blocks
-				}
-				system.close(memory)
-			}
+		if state_memory_bind(blocks, .Tables, storage_mount.COUNT_CACHE_PAGES_OF_TABLES) {
+			return blocks
 		}
 		if blocks <= TABLE_BLOCKS_LEAST {
 			break
@@ -558,6 +568,59 @@ tables_bind :: proc "contextless" (disk_blocks: u64) -> (blocks: u64) {
 		blocks /= 2
 	}
 	return 0
+}
+
+// The pages of the cache of the count tree that the service asks for when
+// its tables do not hold the disk: 16 MiB of leaves and directories, the
+// leaves of 2^21 blocks, halved while the budget refuses, down to a page of
+// each level.
+COUNT_CACHE_PAGES_MOST :: 4096
+
+// count_tree_bind gives the state the memory of the form Count_Tree for the
+// whole disk: no table of each block, a cache of the count tree as large as
+// the budget pays. false when the budget pays not even the least cache.
+count_tree_bind :: proc "contextless" (disk_blocks: u64) -> bool {
+	for pages := u64(COUNT_CACHE_PAGES_MOST); pages >= format.COUNT_LEVEL_LIMIT + 2; pages /= 2 {
+		if state_memory_bind(min(disk_blocks, format.DISK_BLOCKS_MAX), .Count_Tree, pages) {
+			return true
+		}
+	}
+	return false
+}
+
+// The memory of the tables that the service holds now: a rebind ends it
+// first, so the two forms never hold their memory at once.
+state_memory: system.Handle
+state_memory_address: rawptr
+
+// state_memory_bind makes the memory of a form of the state, from the
+// budget of the service, and binds it.
+state_memory_bind :: proc "contextless" (blocks: u64, form: storage_mount.Count_Form, cache_pages: u64) -> bool {
+	layout, ok := storage_mount.state_layout(blocks, min(blocks, HASH_ROOTS_MOST), form, cache_pages)
+	pages := (layout.bytes + BLOCK_SIZE - 1) / BLOCK_SIZE
+	if !ok || pages > op.MEMORY_PAGE_LIMIT {
+		return false
+	}
+	if state_memory != 0 {
+		system.memory_unmap(state_memory_address, 0)
+		system.close(state_memory)
+		state_memory, state_memory_address = 0, nil
+	}
+	memory, status := system.memory_create(pages)
+	if status != .Ok {
+		return false
+	}
+	address, map_status := system.memory_map(memory, {.Write})
+	if map_status != .Ok || !storage_mount.state_bind(&opened, ([^]u8)(address)[:layout.bytes], blocks, min(blocks, HASH_ROOTS_MOST), form, cache_pages) {
+		system.close(memory)
+		return false
+	}
+	state_memory, state_memory_address = memory, address
+	// The staging of the count tree in the memory of the state: the one
+	// that each commit takes again after a large one.
+	plan_fixed.count_staging = opened.count_staging
+	plan_fixed.count_staged_slots = opened.count_staged_slots
+	return true
 }
 
 // mount opens the disk (storage_mount.mount), and formats a disk that has
@@ -572,17 +635,24 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 		result.failed = true
 		return result
 	}
-	if tables < disk_blocks {
-		system.log_fact(.Warning, Disk_Larger_Than_Tables{disk_blocks = blocks_field(disk_blocks), used_blocks = blocks_field(tables)})
-	}
 	result = storage_mount.mount(&opened, &mount_reader, disk_blocks)
+	if tables < disk_blocks && (result.larger_than_capacity || result.needs_format) {
+		// The tables do not hold the disk: the count tree on the disk opens
+		// it whole, or a new disk is formatted whole with one.
+		if count_tree_bind(disk_blocks) {
+			opened.hash_index.slot_key = slot_key
+			system.log_fact(.Info, Disk_Larger_Than_Tables{disk_blocks = blocks_field(disk_blocks), used_blocks = blocks_field(tables)})
+			result = storage_mount.mount(&opened, &mount_reader, disk_blocks)
+		}
+	}
 	disk_size = opened.disk_size
 	service_started = system.time()
 	if result.failed {
 		return result
 	}
 	if result.needs_format {
-		root = {magic = ROOT_MAGIC, generation = 1, disk_blocks = disk_size, date = date_now()}
+		// A new disk: each count is 0, so no count tree holds them all.
+		root = {magic = ROOT_MAGIC, generation = 1, disk_blocks = disk_size, date = date_now(), counts_complete = 1}
 		root.check = root_check(&root)
 		intrinsics.mem_copy_non_overlapping(raw_data(slot(0)), &root, BLOCK_SIZE)
 		root_place = 1
@@ -596,6 +666,7 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 		opened.store_page_damaged = {}
 		mark(0, true)
 		mark(1, true)
+		storage_mount.count_tree_bind(&opened, &mount_reader, &root)
 		result.generation = 1
 		return result
 	}
@@ -658,17 +729,20 @@ blocks_of :: format.object_blocks
 // object. Nothing of the state of the service changes before the root is
 // on the disk; a refusal or a failure drops the plan.
 
-// The capacities of one commit. A commit that needs more is refused with
-// Full and the unit Commit_Blocks, not with a full disk. Half of
-// DELTA_CAPACITY is the count of the blocks whose names one commit changes:
-// 262144, each block of a disk, so the remove of an object as large as the
-// disk is one commit. The writes: the blocks of data that one commit
-// changes (the pending changes of an object, PENDING_BLOCK_CAPACITY), the
-// object nodes above them (block_tree.NODE_SLOT_CAPACITY), the leaves of a
-// whole version index (a compaction or the retention rule), and the leaves
-// and indexes that thinning at the limit rewrites in other objects.
+// The fixed capacities of one commit: a commit of one call region, of the
+// trees, of the versions. A commit that needs more is refused with Full
+// and the unit Commit_Blocks, not with a full disk. Half of DELTA_CAPACITY
+// is the count of the blocks whose names one commit changes. The writes:
+// the blocks of data of one call region, the object nodes above them, the
+// leaves of a whole version index (a compaction or the retention rule),
+// and the leaves and indexes that thinning at the limit rewrites in other
+// objects. A commit of pending changes adds, in the memory of the pool of
+// its connection, the room of its own changes (plan_tables_bind); a state
+// too large to release in the room of a commit is released in steps
+// (src/md/data/storage_capacity.md, "Releases in steps").
 DELTA_CAPACITY :: 1 << 19 // Power of 2.
 WRITE_CAPACITY :: 4096
+COMMIT_SLOT_PAGES :: 24 // 1536 object nodes: one call region spread over a large object.
 LEAF_WORK_CAPACITY :: 300 // More than the leaves of one index.
 REFERENCE_LIMIT :: storage_mount.REFERENCE_LIMIT
 
@@ -701,15 +775,27 @@ Plan :: struct {
 	page_index:   int,
 	page_written: Pointer,
 	store_block: Store_Block,
-	writes:      [WRITE_CAPACITY]Write,
+	// The tables of the plan: the fixed ones (plan_fixed), or larger ones
+	// in the memory of a pending pool for the commit of its changes.
+	writes:      []Write,
 	write_count: int,
-	taken:       [WRITE_CAPACITY]u64, // Blocks that the plan allocated.
+	taken:       []u64, // Blocks that the plan allocated.
 	taken_count: int,
-	// The change of the reference counts: an open table of blocks.
-	delta_blocks: [DELTA_CAPACITY]u64,
-	delta_values: [DELTA_CAPACITY]i32,
-	delta_places: [DELTA_CAPACITY]u32, // The places in use, for the walk and the reset.
+	// The change of the reference counts: an open table of blocks, whose
+	// length is a power of 2.
+	delta_blocks: []u64,
+	delta_values: []i32,
+	delta_places: []u32, // The places in use, for the walk and the reset.
 	delta_count:  int,
+	slot_pages:   []^block_tree.Slot_Page, // The slots of the work on an object.
+	owner_count:  int, // The blocks of the table of the blocks outside the stores.
+	release_leaves:    int, // The leaves of the count tree that the release of a step changed, about: each change of leaf in the order of the blocks.
+	release_last_leaf: u64,
+	// The table of the blocks outside the stores: the fixed one, or one of
+	// the room of a large commit. A power of 2 of places.
+	outside_blocks: []u64,
+	outside_owners: []u16,
+	outside_places: []u32,
 	used_change:  i64, // The change of the distinct blocks of the store.
 	full:         bool, // The disk has no free block: the commit is refused.
 	device:       bool, // A read of the plan failed on the device.
@@ -743,11 +829,144 @@ Plan :: struct {
 
 plan: Plan
 
-plan_reset :: proc "contextless" (store_index: int) {
+// The fixed tables of the plan.
+plan_fixed: struct {
+	writes:       [WRITE_CAPACITY]Write,
+	taken:        [WRITE_CAPACITY]u64,
+	delta_blocks: [DELTA_CAPACITY]u64,
+	delta_values: [DELTA_CAPACITY]i32,
+	delta_places: [DELTA_CAPACITY]u32,
+	slot_memory:  [COMMIT_SLOT_PAGES]block_tree.Slot_Page,
+	slot_pages:   [COMMIT_SLOT_PAGES]^block_tree.Slot_Page,
+	// The blocks that the plan counts outside the stores, with their owner
+	// after the commit: the pages of the store table and of the count tree
+	// that it takes (their owner) or releases (0). An open table of blocks.
+	outside_blocks: [OUTSIDE_SLOTS]u64,
+	outside_owners: [OUTSIDE_SLOTS]u16,
+	outside_places: [OUTSIDE_SLOTS / 2]u32,
+	// The staging of the count tree that the state binds: a large commit
+	// takes one of its room from its pool, and gives it back.
+	count_staging:      []block_counts.Frame,
+	count_staged_slots: []i32,
+}
+
+// The places of the table of the blocks outside the stores: a power of 2,
+// twice the pages of the count tree that a commit takes and releases, and
+// the two pages of the store table.
+OUTSIDE_SLOTS :: 8192
+#assert(OUTSIDE_SLOTS / 2 >= 2 * storage_mount.COUNT_STAGING_PAGES + 2)
+
+// outside_find gives the place of a block in the table of the blocks
+// outside the stores.
+outside_find :: proc "contextless" (number: u64) -> (place: int, found: bool) {
+	if len(plan.outside_blocks) == 0 {
+		return -1, false
+	}
+	mask := u64(len(plan.outside_blocks) - 1)
+	at := (number * 0x9E37_79B9_7F4A_7C15 >> 20) & mask
+	for _ in 0 ..< len(plan.outside_blocks) {
+		if plan.outside_blocks[at] == number {
+			return int(at), true
+		}
+		if plan.outside_blocks[at] == 0 {
+			return int(at), false
+		}
+		at = (at + 1) & mask
+	}
+	return -1, false
+}
+
+// plan_tables_fixed clears the places of the counts that the plan used, and
+// gives the plan its fixed tables again: the memory of a pending pool can
+// end after it.
+plan_tables_fixed :: proc "contextless" () {
 	for place in plan.delta_places[:plan.delta_count] {
 		plan.delta_blocks[place] = 0
 		plan.delta_values[place] = 0
 	}
+	plan.delta_count = 0
+	plan.write_count = 0
+	plan.taken_count = 0
+	for place in plan.outside_places[:plan.owner_count] {
+		plan.outside_blocks[place] = 0
+	}
+	plan.owner_count = 0
+	plan.outside_blocks = plan_fixed.outside_blocks[:]
+	plan.outside_owners = plan_fixed.outside_owners[:]
+	plan.outside_places = plan_fixed.outside_places[:]
+	opened.count_staging = plan_fixed.count_staging
+	opened.count_staged_slots = plan_fixed.count_staged_slots
+	plan.writes = plan_fixed.writes[:]
+	plan.taken = plan_fixed.taken[:]
+	plan.delta_blocks = plan_fixed.delta_blocks[:]
+	plan.delta_values = plan_fixed.delta_values[:]
+	plan.delta_places = plan_fixed.delta_places[:]
+	if plan_fixed.slot_pages[0] == nil {
+		for &page, index in plan_fixed.slot_pages {
+			page = &plan_fixed.slot_memory[index]
+		}
+	}
+	plan.slot_pages = plan_fixed.slot_pages[:]
+}
+
+// Plan_Room is the room of the tables of a commit.
+Plan_Room :: struct {
+	writes:      int, // Blocks that the commit writes or takes.
+	delta:       int, // Places of the table of the counts: a power of 2, twice the blocks whose names change.
+	slot_pages:  int, // Pages of slots of the work on the object.
+	count_pages: int, // Pages of the count tree that the commit writes.
+	outside:     int, // Places of the table of the blocks outside the stores: a power of 2.
+}
+
+// plan_room_of_changes gives the room of a commit of `changes` changed
+// blocks of data on an object of at most `blocks` blocks: the fixed room
+// of a commit, and the blocks, nodes and releases of those changes.
+plan_room_of_changes :: proc "contextless" (changes: u64, blocks: u64) -> Plan_Room {
+	slots := block_tree.slots_needed(changes, blocks)
+	// Each changed block and node is written once, and the block or the
+	// node that it replaces loses one name.
+	written := changes + slots
+	entries := u64(DELTA_CAPACITY / 2) + 2 * written
+	delta := u64(DELTA_CAPACITY)
+	for delta < 2 * entries {
+		delta *= 2
+	}
+	// The new blocks of a commit are near each other (the search of a free
+	// block goes on from the last one), so a leaf holds many of them; a
+	// commit whose blocks spread past this room is refused, and its caller
+	// commits in parts.
+	count_pages := storage_mount.COUNT_STAGING_PAGES + 4 * (written / format.COUNTS_OF_A_PAGE + format.COUNT_LEVEL_LIMIT)
+	outside := u64(OUTSIDE_SLOTS)
+	for outside < 4 * count_pages + 8 {
+		outside *= 2
+	}
+	return {writes = WRITE_CAPACITY + int(written + count_pages), delta = int(delta), slot_pages = int(block_tree.slot_pages_needed(changes, blocks)), count_pages = int(count_pages), outside = int(outside)}
+}
+
+// plan_room_fits says if the fixed tables hold a room.
+plan_room_fits :: proc "contextless" (room: Plan_Room) -> bool {
+	return room.writes <= WRITE_CAPACITY && room.delta <= DELTA_CAPACITY && room.slot_pages <= COMMIT_SLOT_PAGES && room.count_pages <= storage_mount.COUNT_STAGING_PAGES && room.outside <= OUTSIDE_SLOTS
+}
+
+// plan_tables_bind gives the plan larger tables, right after its reset:
+// the memory of the caller, zero where the counts are.
+plan_tables_bind :: proc "contextless" (writes: []Write, taken: []u64, delta_blocks: []u64, delta_values: []i32, delta_places: []u32, slot_pages: []^block_tree.Slot_Page, count_staging: []block_counts.Frame, count_staged_slots: []i32, outside_blocks: []u64, outside_owners: []u16, outside_places: []u32) {
+	plan.writes = writes
+	plan.taken = taken
+	plan.delta_blocks = delta_blocks
+	plan.delta_values = delta_values
+	plan.delta_places = delta_places
+	plan.slot_pages = slot_pages
+	opened.count_staging = count_staging
+	opened.count_staged_slots = count_staged_slots
+	plan.outside_blocks = outside_blocks
+	plan.outside_owners = outside_owners
+	plan.outside_places = outside_places
+}
+
+plan_reset :: proc "contextless" (store_index: int) {
+	plan_tables_fixed()
+	block_counts.counts_failure_clear(&opened.counts)
 	for &work in plan.index_work[:plan.entry_count] {
 		work.loaded, work.touched = false, false
 	}
@@ -784,12 +1003,15 @@ plan_drop :: proc "contextless" () {
 		mark(number, false)
 	}
 	plan.taken_count = 0
+	block_counts.commit_drop(&opened.count_commit)
 }
 
 delta_place :: proc "contextless" (number: u64) -> (place: u32, found: bool) {
-	mask := u64(DELTA_CAPACITY - 1)
-	at := (number * 0x9E3779B97F4A7C15 >> 40) & mask
-	for _ in 0 ..< DELTA_CAPACITY {
+	mask := u64(len(plan.delta_blocks) - 1)
+	// The bits under the top 20 of the product: a table of a large commit
+	// has up to 2^30 places, and each of them is a start.
+	at := (number * 0x9E3779B97F4A7C15 >> 20) & mask
+	for _ in 0 ..< len(plan.delta_blocks) {
 		if plan.delta_blocks[at] == number {
 			return u32(at), true
 		}
@@ -808,26 +1030,68 @@ delta_of :: proc "contextless" (number: u64) -> i64 {
 
 // count_after gives the reference count of a block after the plan.
 count_after :: proc "contextless" (number: u64) -> i64 {
-	return i64(opened.references[number]) + delta_of(number)
+	return i64(storage_mount.block_count(&opened, number)) + delta_of(number)
 }
 
 // delta_add changes the reference count of a block in the plan, and the
 // count of the distinct blocks of the store.
+// delta_add_outside changes the count of a block that no store counts (a
+// page of the store table, a page of the count tree): the blocks used by
+// the store do not change, and the block takes the owner given when its
+// count is not 0 after the commit.
+delta_add_outside :: proc "contextless" (number: u64, change: i64, owner: u16) {
+	used_before := plan.used_change
+	delta_add(number, change)
+	plan.used_change = used_before
+	// A block is taken or released outside the stores at most once in a
+	// commit: a page that the commit replaces keeps its name until the
+	// root, so no new page takes its block.
+	place, found := outside_find(number)
+	if !found {
+		if place < 0 || plan.owner_count >= len(plan.outside_places) {
+			capacity_reached(len(plan.outside_places))
+			return
+		}
+		plan.outside_blocks[place] = number
+		plan.outside_places[plan.owner_count] = u32(place)
+		plan.owner_count += 1
+	}
+	plan.outside_owners[place] = change > 0 ? owner : 0
+}
+
+// outside_block says if the plan counts a block outside the stores: the
+// erase of versions writes no zeros over it, as it holds counts and names,
+// no byte of an object.
+outside_block :: proc "contextless" (number: u64) -> bool {
+	_, found := outside_find(number)
+	return found
+}
+
+// owner_after gives the owner of a block that the plan counts, after the
+// commit: the owner that delta_add_outside gave it, or the store of the
+// plan.
+owner_after :: proc "contextless" (number: u64) -> u16 {
+	if place, found := outside_find(number); found {
+		return plan.outside_owners[place]
+	}
+	return u16(plan.store_index + 1)
+}
+
 delta_add :: proc "contextless" (number: u64, change: i64) {
 	if number < 2 || number >= opened.capacity {
 		return
 	}
 	place, found := delta_place(number)
 	if !found {
-		if plan.delta_count >= DELTA_CAPACITY / 2 || plan.delta_blocks[place] != 0 {
-			capacity_reached(DELTA_CAPACITY / 2)
+		if plan.delta_count >= len(plan.delta_blocks) / 2 || plan.delta_blocks[place] != 0 {
+			capacity_reached(len(plan.delta_blocks) / 2)
 			return
 		}
 		plan.delta_blocks[place] = number
 		plan.delta_places[plan.delta_count] = place
 		plan.delta_count += 1
 	}
-	before := i64(opened.references[number]) + i64(plan.delta_values[place])
+	before := i64(storage_mount.block_count(&opened, number)) + i64(plan.delta_values[place])
 	plan.delta_values[place] += i32(change)
 	after := before + change
 	plan.used_change += i64(after > 0) - i64(before > 0)
@@ -855,8 +1119,8 @@ capacity_reached :: proc "contextless" (capacity: int) {
 }
 
 plan_allocate :: proc "contextless" () -> u64 {
-	if plan.taken_count >= WRITE_CAPACITY {
-		capacity_reached(WRITE_CAPACITY)
+	if plan.taken_count >= len(plan.taken) {
+		capacity_reached(len(plan.taken))
 		return 0
 	}
 	number := allocate()
@@ -879,8 +1143,8 @@ plan_write :: proc "contextless" (bytes: ^Block) -> Pointer {
 // caller gives (a block of data: the check of its value), or with the hash
 // of its bytes.
 plan_write_checked :: proc "contextless" (bytes: ^Block, given_check: u64, given: bool) -> Pointer {
-	if plan.write_count >= WRITE_CAPACITY {
-		capacity_reached(WRITE_CAPACITY)
+	if plan.write_count >= len(plan.writes) {
+		capacity_reached(len(plan.writes))
 		return {}
 	}
 	number := plan_allocate()
@@ -916,7 +1180,151 @@ state_release :: proc "contextless" (root: Pointer, size: u64) {
 	if size > format.OBJECT_SIZE_LIMIT {
 		return // The open found it wrong, and did not count under it.
 	}
+	// The last name of a large state: its blocks could pass the room of the
+	// counts of this commit, so the removal queue takes the name and frees
+	// the blocks in steps. A shared root only loses one name.
+	if count_after(root.block) == 1 && !state_damaged(root) {
+		held := state_blocks_of(root, size)
+		room := len(plan.delta_blocks) / 2 - plan.delta_count - RELEASE_ROOM_RESERVE
+		if i64(held) > i64(room) {
+			release_queue(root, size)
+			return
+		}
+	}
 	child_release({block = root.block, check = root.check}, format.object_levels(size))
+}
+
+// The places of the counts that a commit keeps for its other changes when
+// it releases states: the nodes of its trees, its versions and its writes.
+RELEASE_ROOM_RESERVE :: 16384
+
+// The blocks whose names one step of a release frees, at most: a step is
+// one commit, well inside the room of its counts.
+RELEASE_STEP_BLOCKS :: 65536
+
+// release_queue puts a state that lost its last name in the removal queue
+// of the store of the plan: the entry of the queue holds that name until
+// the last step.
+release_queue :: proc "contextless" (root: Pointer, size: u64) {
+	number := plan.store_block.next_removal + 1
+	plan.store_block.next_removal = number
+	key := format.removal_name(number)
+	queued := Entry{kind = u64(format.Entry_Kind.Release), pointer = root, size = size}
+	tree.put(&plan.trees[1].work, key[:], entry_bytes(&queued), false)
+	plan.trees[1].changed = true
+	plan.store_block.removing += 1
+}
+
+// release_step frees the next part of a state of the removal queue, up to
+// RELEASE_STEP_BLOCKS names, from the block of data at the cursor. It
+// gives true when the state is free whole: the queue then drops its entry.
+// The order is the order of the blocks of data, so the cursor says what is
+// free: each block before it, with each node whose blocks are all before
+// it. A node that another state names too is one name to drop, whatever
+// its size.
+release_step :: proc "contextless" (root: Pointer, size: u64, cursor: ^u64) -> bool {
+	levels := format.object_levels(size)
+	if levels == 0 || cursor^ == 0 && count_after(root.block) > 1 {
+		delta_add(root.block, -1)
+		return true
+	}
+	budget := RELEASE_STEP_BLOCKS
+	plan.release_leaves, plan.release_last_leaf = 0, max(u64)
+	return release_part({block = root.block, check = root.check}, levels, 0, cursor, &budget)
+}
+
+// release_leaf_room says if a step can change the count of one more block:
+// the leaves of the count tree that a step changes stay inside a quarter of
+// the staging of its commit, the rest for the other pages of the commit.
+release_leaf_room :: proc "contextless" (number: u64) -> bool {
+	leaf := number / format.COUNTS_OF_A_PAGE
+	if leaf == plan.release_last_leaf {
+		return true
+	}
+	if plan.release_leaves >= storage_mount.COUNT_STAGING_PAGES / 4 {
+		return false
+	}
+	plan.release_leaves += 1
+	plan.release_last_leaf = leaf
+	return true
+}
+
+// release_part frees the part of a node of a level from the block of data
+// at the cursor: the node has one name left, from its parent or from the
+// queue, so each child under it that no other state names goes too. It
+// gives true when the node is free whole.
+release_part :: proc "contextless" (node_child: Object_Child, level: int, base: u64, cursor: ^u64, budget: ^int) -> bool {
+	span := format.object_span(level - 1)
+	end := base + format.OBJECT_FANOUT * span
+	if storage_mount.wrong_block(&opened, node_child.block) || storage_mount.damaged_under(&opened, node_child.block) {
+		// As child_release: the open did not count under a wrong block, and
+		// a block that went wrong since keeps its blocks in use until the
+		// next start.
+		delta_add(node_child.block, -1)
+		cursor^ = end
+		return true
+	}
+	node := &plan.release_nodes[level]
+	switch read_single({block = node_child.block, check = node_child.check}, (^Block)(node)) {
+	case .Device:
+		plan.device = true
+		return false
+	case .Wrong:
+		storage_mount.wrong_block_set(&opened, node_child.block)
+		plan.release_damaged += 1
+		delta_add(node_child.block, -1)
+		cursor^ = end
+		return true
+	case .Good:
+	}
+	if node.header.magic != format.OBJECT_NODE_MAGIC || int(node.header.level) != level {
+		storage_mount.wrong_block_set(&opened, node_child.block)
+		plan.release_damaged += 1
+		delta_add(node_child.block, -1)
+		cursor^ = end
+		return true
+	}
+	// A deeper call reads into the nodes of its own level: the children of
+	// this node stay in plan.release_nodes[level].
+	for place in 0 ..< format.OBJECT_FANOUT {
+		item := node.children[place]
+		child_base := base + u64(place) * span
+		child_end := child_base + span
+		if item.block == 0 || child_end <= cursor^ {
+			continue
+		}
+		if budget^ <= 0 || !release_leaf_room(item.block) {
+			return false
+		}
+		if level == 1 {
+			delta_add(item.block, -1)
+			budget^ -= 1
+			cursor^ = child_end
+			continue
+		}
+		whole := child_base >= cursor^
+		if whole && count_after(item.block) > 1 {
+			// A shared node loses one name.
+			delta_add(item.block, -1)
+			budget^ -= 1
+			cursor^ = child_end
+			continue
+		}
+		if whole && i64(item.blocks) <= i64(budget^) {
+			// A node that fits the step goes whole, as in the release of one
+			// commit.
+			child_release(item, level - 1)
+			budget^ -= int(item.blocks)
+			cursor^ = child_end
+			continue
+		}
+		if !release_part(item, level - 1, child_base, cursor, budget) {
+			return false
+		}
+	}
+	delta_add(node_child.block, -1)
+	cursor^ = end
+	return true
 }
 
 // child_release counts one name less of an object node of `level`, or of a
@@ -1285,13 +1693,13 @@ plan_cell :: proc "contextless" () -> ^Store_Entry {
 
 // plan_page_write writes the page of the store table of the plan to a free
 // block, after the last change of its cell. The page is named by the root
-// only, not by the store: it takes no part in the count of the store, so
-// the plan takes its block outside the change of the reference counts, and
-// plan_commit counts it after the root. false: no free block, or no room
-// for one more write.
+// only, not by the store: its block and the block of the page before change
+// the counts outside the count of the store (delta_add_outside), with the
+// owner of the store table. false: no free block, or no room for one more
+// write.
 plan_page_write :: proc "contextless" () -> bool {
-	if plan.write_count >= WRITE_CAPACITY || plan.taken_count >= WRITE_CAPACITY {
-		capacity_reached(WRITE_CAPACITY)
+	if plan.write_count >= len(plan.writes) || plan.taken_count >= len(plan.taken) {
+		capacity_reached(len(plan.writes))
 		return false
 	}
 	number := allocate()
@@ -1301,6 +1709,10 @@ plan_page_write :: proc "contextless" () -> bool {
 	}
 	plan.taken[plan.taken_count] = number
 	plan.taken_count += 1
+	delta_add_outside(number, 1, storage_mount.STORE_TABLE_OWNER)
+	if before := root.store_pages[plan.page_index].block; before != 0 && int(plan.page_index) < int(root.store_page_count) {
+		delta_add_outside(before, -1, 0)
+	}
 	bytes := (^Block)(&plan.page)
 	plan.writes[plan.write_count] = {number = number, bytes = bytes}
 	plan.write_count += 1
@@ -1308,6 +1720,144 @@ plan_page_write :: proc "contextless" () -> bool {
 	plan.next.store_pages[plan.page_index] = plan.page_written
 	plan.next.store_page_count = max(plan.next.store_page_count, u64(plan.page_index + 1))
 	return true
+}
+
+// count_pages_make makes the pages of the count tree of the plan: each leaf
+// whose counts the plan changes, the leaves that the tree does not hold yet
+// (the form Tables, while half of the staging is free), their directories,
+// and the leaves of their own blocks. Their writes join the writes of the
+// plan, and the new root names the new tree. It gives the refusal of a
+// commit that cannot make them.
+count_pages_make :: proc "contextless" (error: ^errors.Error_Record) -> (refusal: i64, refused: bool) {
+	switch opened.counts.failure {
+	case .Good:
+	case .Device:
+		return errors.fail(error, failure(.Disk), .Device), true
+	case .Wrong:
+		return errors.fail(error, failure(.Damaged), .Damaged, .Counts), true
+	}
+	commit := &opened.count_commit
+	if !block_counts.commit_begin(commit, &opened.counts, opened.count_staging, opened.count_staged_slots) {
+		return errors.fail(error, failure(.Full), .Full, .Commit_Blocks), true
+	}
+	commit.after = count_after_commit
+	commit.take = count_page_take
+	commit.release = count_page_release
+	for place in plan.delta_places[:plan.delta_count] {
+		block_counts.commit_leaf_add(commit, plan.delta_blocks[place])
+	}
+	if opened.form == .Tables && opened.leaves_to_write_count > 0 {
+		leaves: for word, index in opened.leaves_to_write {
+			for bit in u64(0) ..< 64 {
+				if word >> bit & 1 == 0 {
+					continue
+				}
+				if commit.staged >= len(commit.staging) / 2 {
+					break leaves
+				}
+				block_counts.commit_leaf_add(commit, (u64(index) * 64 + bit) * format.COUNTS_OF_A_PAGE)
+			}
+		}
+	}
+	counts_root, made := block_counts.commit_finish(commit)
+	if !made {
+		switch commit.failure {
+		case .None, .Full:
+			return errors.fail(error, failure(.Full), .Full, .Commit_Blocks, 0, 0, storage_mount.COUNT_STAGING_PAGES), true
+		case .No_Block:
+			return errors.fail(error, failure(.Full), .Full), true
+		case .Wrong:
+			return errors.fail(error, failure(.Damaged), .Damaged, .Counts), true
+		case .Device:
+			return errors.fail(error, failure(.Disk), .Device), true
+		}
+	}
+	// The counts of the pages themselves passed through delta_add: a count
+	// out of its range, or a table of the plan that is full, refuses here.
+	if plan.capacity_reached {
+		return errors.fail(error, failure(.Full), .Full, .Commit_Blocks, 0, 0, i64(plan.capacity_limit)), true
+	}
+	if plan.count_fault || plan.count_overflow {
+		return errors.fail(error, failure(.Damaged), .Damaged, .Counts), true
+	}
+	if plan.full {
+		return errors.fail(error, failure(.Full), .Full), true
+	}
+	if plan.device {
+		return errors.fail(error, failure(.Disk), .Device), true
+	}
+	if plan.write_count + commit.staged > len(plan.writes) {
+		return errors.fail(error, failure(.Full), .Full, .Commit_Blocks, 0, 0, i64(len(plan.writes))), true
+	}
+	remaining := opened.leaves_to_write_count
+	for &page in commit.staging[:commit.staged] {
+		plan.writes[plan.write_count] = {number = page.block, bytes = &page.bytes}
+		plan.write_count += 1
+		if page.level == 0 && leaf_is_to_write(page.first / format.COUNTS_OF_A_PAGE) {
+			remaining -= 1
+		}
+	}
+	plan.next.counts = counts_root
+	plan.next.counts_complete = remaining == 0 ? 1 : 0
+	return 0, false
+}
+
+// leaf_is_to_write says if the tree does not hold a leaf yet (the form
+// Tables).
+leaf_is_to_write :: proc "contextless" (leaf: u64) -> bool {
+	word := leaf / 64
+	return word < u64(len(opened.leaves_to_write)) && opened.leaves_to_write[word] >> (leaf % 64) & 1 != 0
+}
+
+// count_pages_install makes the pages of the commit the count tree of the
+// root, after the root is on the disk.
+count_pages_install :: proc "contextless" () {
+	commit := &opened.count_commit
+	for &page in commit.staging[:commit.staged] {
+		if page.level == 0 {
+			storage_mount.leaf_written(&opened, page.first / format.COUNTS_OF_A_PAGE)
+		}
+	}
+	block_counts.commit_install(commit, root.counts)
+}
+
+// count_after_commit gives the count and the owner of a block after the
+// commit, for a leaf of the commit.
+count_after_commit :: proc "contextless" (commit: ^block_counts.Commit, number: u64) -> (count: u32, owner: u16) {
+	after := count_after(number)
+	if after <= 0 {
+		return 0, 0
+	}
+	if _, counted := delta_place(number); counted {
+		return u32(min(after, i64(REFERENCE_LIMIT))), owner_after(number)
+	}
+	return u32(min(after, i64(REFERENCE_LIMIT))), storage_mount.block_owner(&opened, number)
+}
+
+// count_page_take gives a free block to a new page of the count tree, and
+// counts it with the owner of the tree.
+count_page_take :: proc "contextless" (commit: ^block_counts.Commit) -> u64 {
+	if plan.taken_count >= len(plan.taken) {
+		capacity_reached(len(plan.taken))
+		return 0
+	}
+	number := allocate()
+	if number == 0 {
+		plan.full = true
+		return 0
+	}
+	plan.taken[plan.taken_count] = number
+	plan.taken_count += 1
+	delta_add_outside(number, 1, storage_mount.COUNT_TREE_OWNER)
+	block_counts.commit_leaf_add(commit, number)
+	return number
+}
+
+// count_page_release drops the name of a page of the count tree that a new
+// page replaces.
+count_page_release :: proc "contextless" (commit: ^block_counts.Commit, number: u64) {
+	delta_add_outside(number, -1, 0)
+	block_counts.commit_leaf_add(commit, number)
 }
 
 // plan_finish writes the leaves and the indexes that changed, and puts
@@ -1430,6 +1980,15 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		}
 		return errors.fail(error, failure(.Full), .Full, .Commit_Blocks, 0, 0, i64(plan.capacity_limit))
 	}
+	// The pages of the count tree, after the last count of the plan: each
+	// leaf whose counts change, its directories, and the leaves of their own
+	// blocks (src/md/data/storage_capacity.md, "The counts of names live on
+	// the disk").
+	if refusal, refused := count_pages_make(error); refused {
+		block_counts.commit_drop(&opened.count_commit)
+		plan_drop()
+		return refusal
+	}
 	// The blocks, REGION_BLOCKS at a time, then the root. Each one is on the
 	// disk before the next step.
 	for first := 0; first < plan.write_count; first += REGION_BLOCKS {
@@ -1516,39 +2075,32 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	root = plan.next
 	root_place = place
 	store_blocks[plan.store_index] = storage_mount.store_head_of(&plan.store_block)
-	// The page of the store table: the root names the new block, and the
-	// block of the page before is free.
+	// The page of the store table: the root names the new block; the counts
+	// of the new block and of the page before are in the plan.
 	opened.store_pages[plan.page_index] = plan.page
-	opened.references[plan.page_written.block] = 1
-	opened.owner[plan.page_written.block] = storage_mount.STORE_TABLE_OWNER
-	if page_before.block != 0 && page_before.block < opened.capacity {
-		opened.references[page_before.block] = 0
-		opened.owner[page_before.block] = 0
-		mark(page_before.block, false)
-	}
+	_ = page_before
 	commits += 1
 	opened.store_versions[plan.store_index] = u64(i64(opened.store_versions[plan.store_index]) + plan.versions_change)
 	if plan.dropped_versions != 0 {
 		system.log_fact(.Warning, Versions_Dropped_At_Commit{generation = root.generation, dropped = plan.dropped_versions, store = store_field(store_name_of(plan.store_index))})
 	}
-	owner := u16(plan.store_index + 1)
 	for place in plan.delta_places[:plan.delta_count] {
 		number := plan.delta_blocks[place]
-		before := i64(opened.references[number])
+		before := i64(storage_mount.block_count(&opened, number))
 		after := before + i64(plan.delta_values[place]) // From 0 to REFERENCE_LIMIT: delta_add refused the commit else.
-		opened.references[number] = u32(after)
-		if before < 2 && after >= 2 {
-			opened.store_shared[plan.store_index] += 1
-		} else if before >= 2 && after < 2 {
-			opened.store_shared[plan.store_index] -= 1
+		owner := owner_after(number)
+		if owner <= u16(format.STORE_CAPACITY) {
+			if before < 2 && after >= 2 {
+				opened.store_shared[plan.store_index] += 1
+			} else if before >= 2 && after < 2 {
+				opened.store_shared[plan.store_index] -= 1
+			}
 		}
-		if after == 0 {
-			mark(number, false)
-			opened.owner[number] = 0
-		} else {
-			opened.owner[number] = owner
-		}
+		storage_mount.block_set(&opened, number, u32(after), after == 0 ? 0 : owner)
 	}
+	// The leaves and the directories of the count tree: the new tree of the
+	// root. In the form Count_Tree the counts come from them from now on.
+	count_pages_install()
 	// The hash index follows the entries that the commit changed, after the
 	// owners: a root of the index is a block of its store. While the store
 	// has a writable share of a tree open, a new root is hidden: never a
@@ -1680,7 +2232,7 @@ freed_blocks_zero :: proc "contextless" () -> (zeroed: u64, not_zeroed: u64, ok:
 // freed_block says if a block of the change of the reference counts of the
 // plan is free now: the erase writes zeros over it.
 freed_block :: proc "contextless" (number: u64) -> bool {
-	return number >= 2 && number < disk_size && opened.references[number] == 0
+	return number >= 2 && number < disk_size && storage_mount.block_count(&opened, number) == 0 && !outside_block(number)
 }
 
 // zeros_read_back reads blocks that the erase wrote with zeros, and counts
@@ -1710,7 +2262,7 @@ zeros_read_back :: proc "contextless" (requests: []Request, zeroed: ^u64, not_ze
 released_blocks_kept :: proc "contextless" () -> (kept: u64) {
 	for place in plan.delta_places[:plan.delta_count] {
 		number := plan.delta_blocks[place]
-		if plan.delta_values[place] < 0 && number < opened.capacity && opened.references[number] != 0 {
+		if plan.delta_values[place] < 0 && number < opened.capacity && storage_mount.block_count(&opened, number) != 0 && !outside_block(number) {
 			kept += 1
 		}
 	}

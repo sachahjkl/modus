@@ -406,6 +406,16 @@ commit :: proc "contextless" (client: ^Client, place: Place, name: string, error
 	return measure, status
 }
 
+// drop_pending drops the pending changes of this connection on one object:
+// a read of this connection then sees the last commit. The other pending
+// objects of the connection stay. Failed with Pending: the object has no
+// pending change.
+drop_pending :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> storage_status.Status {
+	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
+	_, _, status := call(client, "drop_pending", arguments[:], error)
+	return status
+}
+
 // open_tree gives the place of the tree `name` under a place.
 open_tree :: proc "contextless" (client: ^Client, place: Place, name: string, error: ^errors.Error_Record = nil) -> (opened: Place, status: storage_status.Status) {
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}}
@@ -630,26 +640,58 @@ versions :: proc "contextless" (client: ^Client, place: Place, name: string, int
 }
 
 // version copies the bytes of an object at a generation (a version, or the
-// current version) into result. Too_Small: result is smaller than the bytes.
+// current version) into result, one piece of the call region at a time, so
+// a version larger than the call region reads whole. Too_Small: result is
+// smaller than the bytes. A generation names one state that no commit
+// changes, so the pieces are of one state.
 version :: proc "contextless" (client: ^Client, place: Place, name: string, generation: i64, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: storage_status.Status) {
-	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = u64(generation)}}
-	size: i64
+	filled := 0
+	for {
+		piece: []u8
+		piece, status = version_range(client, place, name, generation, u64(filled), result[filled:], error)
+		if status != .Ok {
+			return nil, status
+		}
+		if len(piece) == 0 {
+			return result[:filled], .Ok
+		}
+		filled += len(piece)
+		if filled == len(result) {
+			// The result is full: one more byte past it means that the
+			// version does not fit.
+			probe: [1]u8
+			more: []u8
+			more, status = version_range(client, place, name, generation, u64(filled), probe[:], error)
+			if status != .Ok {
+				return nil, status
+			}
+			if len(more) != 0 {
+				return nil, .Too_Small
+			}
+			return result[:filled], .Ok
+		}
+	}
+}
+
+// version_range copies the bytes of an object at a generation from
+// `offset` into result, up to the end of the state or of the call region.
+// bytes is empty at the end of the state.
+version_range :: proc "contextless" (client: ^Client, place: Place, name: string, generation: i64, offset: u64, result: []u8, error: ^errors.Error_Record = nil) -> (bytes: []u8, status: storage_status.Status) {
+	arguments := [4]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = u64(generation)}, {integer = offset}}
+	count: i64
 	text: []u8
-	size, text, status = call(client, "version", arguments[:], error)
-	if status == .Refused && size > i64(len(result)) {
-		return nil, .Too_Small // The service gave the size, and no bytes that fit the call region.
+	count, text, status = call(client, "version", arguments[:], error)
+	if export_failed_with(status, count, .Damaged) {
+		return nil, .Damaged
 	}
 	if status != .Ok {
 		return nil, status
 	}
-	if size > i64(len(result)) {
-		return nil, .Too_Small
-	}
-	if i64(len(text)) != size {
+	if i64(len(text)) != count {
 		return nil, .Damaged
 	}
-	count := copy(result, text)
-	return result[:count], .Ok
+	copied := copy(result, text)
+	return result[:copied], .Ok
 }
 
 // One range of bytes that differ between two states: the row of the export
@@ -706,5 +748,14 @@ erase_versions :: proc "contextless" (client: ^Client, place: Place, name: strin
 restore :: proc "contextless" (client: ^Client, place: Place, name: string, generation: i64, error: ^errors.Error_Record = nil) -> (commit: i64, status: storage_status.Status) {
 	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {integer = u64(generation)}}
 	commit, _, status = call(client, "restore", arguments[:], error)
+	return commit, status
+}
+
+// clone makes the object `new_name` under a place a copy of the object
+// `name` under the same place, in one commit: the two name the same blocks
+// until one of them changes. The result is the generation of the commit.
+clone :: proc "contextless" (client: ^Client, place: Place, name: string, new_name: string, error: ^errors.Error_Record = nil) -> (commit: i64, status: storage_status.Status) {
+	arguments := [3]isolated.Argument{{integer = u64(place)}, {text = transmute([]u8)name}, {text = transmute([]u8)new_name}}
+	commit, _, status = call(client, "clone", arguments[:], error)
 	return commit, status
 }

@@ -102,6 +102,22 @@ disk_free :: proc(disk: ^Test_Disk) {
 	free(disk)
 }
 
+// The slot pages of a work of `changes` changes on an object of any size,
+// in the temporary memory of the test.
+@(private = "file")
+test_slot_pages :: proc(changes: int) -> []^Slot_Page {
+	return test_slot_pages_of(slot_pages_needed(u64(changes), format.OBJECT_BLOCKS_LIMIT))
+}
+
+@(private = "file")
+test_slot_pages_of :: proc(count: u64) -> []^Slot_Page {
+	pages := make([]^Slot_Page, count, context.temp_allocator)
+	for &page in pages {
+		page = new(Slot_Page, context.temp_allocator)
+	}
+	return pages
+}
+
 // The blocks that some name holds, but blocks 0 and 1.
 @(private = "file")
 live_blocks :: proc(disk: ^Test_Disk) -> (count: u64) {
@@ -119,7 +135,7 @@ live_blocks :: proc(disk: ^Test_Disk) -> (count: u64) {
 commit :: proc(disk: ^Test_Disk, before: State, cut: u64, size: u64, changes: []Change) -> (after: State, finished: Finished, measure: Measure, ok: bool) {
 	work := new(Work)
 	defer free(work)
-	work_begin(work, &disk.source, &disk.counter, before, changes)
+	work_begin(work, &disk.source, &disk.counter, before, changes, test_slot_pages(len(changes)))
 	work_cut(work, cut)
 	work_resize(work, size)
 	for index in 0 ..< len(changes) {
@@ -487,7 +503,7 @@ same_object_under_two_names :: proc(t: ^testing.T) {
 	defer free(work)
 	names_before := slice.clone(disk.names[:], context.temp_allocator)
 	changes := changes_of(bytes)
-	work_begin(work, &disk.source, &disk.counter, {}, changes)
+	work_begin(work, &disk.source, &disk.counter, {}, changes, test_slot_pages(len(changes)))
 	work_cut(work, 0)
 	work_resize(work, u64(len(bytes)))
 	for index in 0 ..< len(changes) {
@@ -544,7 +560,7 @@ a_drop_after_copies :: proc(t: ^testing.T) {
 	changes := []Change{all_changes[2], all_changes[FANOUT + 1]}
 	work := new(Work)
 	defer free(work)
-	work_begin(work, &disk.source, &disk.counter, first, changes)
+	work_begin(work, &disk.source, &disk.counter, first, changes, test_slot_pages(len(changes)))
 	work_cut(work, first.size)
 	work_resize(work, first.size)
 	for index in 0 ..< len(changes) {
@@ -557,3 +573,85 @@ a_drop_after_copies :: proc(t: ^testing.T) {
 	work_drop(work)
 	testing.expect(t, slice.equal(disk.names[:], names_before), "the drop gives back each name")
 }
+
+// The bound of the slots: no wrap at the largest counts, at least the
+// chain of the levels, and never more than the nodes of each level.
+@(test)
+slots_needed_edges :: proc(t: ^testing.T) {
+	testing.expect_value(t, slots_needed(0, 0), u64(2))
+	levels := u64(format.object_levels(format.OBJECT_SIZE_LIMIT))
+	testing.expect_value(t, levels, u64(5))
+	// The largest counts: each level holds at most its nodes, so the bound
+	// is the count of the nodes of a whole object, with no wrap.
+	all_nodes: u64
+	nodes := u64(format.OBJECT_BLOCKS_LIMIT)
+	for _ in 1 ..= levels {
+		nodes = (nodes + FANOUT - 1) / FANOUT
+		all_nodes += nodes
+	}
+	testing.expect_value(t, slots_needed(max(u64), format.OBJECT_BLOCKS_LIMIT), all_nodes + 2 * levels + 2)
+	testing.expect_value(t, slots_needed(max(u64), max(u64)), all_nodes + 2 * levels + 2)
+	// One change on the largest object: two slots on each level of more
+	// than one node (the path and the block of a cut), one at the root,
+	// and the chain of 2 * 5 + 2.
+	testing.expect_value(t, slots_needed(1, format.OBJECT_BLOCKS_LIMIT), u64(4 * 2 + 1 + 12))
+	// More changes never need fewer slots.
+	before: u64
+	for changes in ([?]u64{0, 1, 63, 64, 65, 4095, 4096, 4097, 1 << 20}) {
+		needed := slots_needed(changes, 1 << 26)
+		testing.expectf(t, needed >= before, "the bound of %d changes is below the bound of fewer", changes)
+		before = needed
+	}
+}
+
+
+// A commit of more changes than one call region (4097 blocks, one in each
+// node of level 1) with the pages that slot_pages_needed gives: it commits
+// whole. With one page less, the work fails with Full and writes nothing.
+@(test)
+a_commit_of_many_changes_takes_its_slots :: proc(t: ^testing.T) {
+	CHANGES :: 4097
+	blocks := u64(CHANGES) * FANOUT
+	changes := make([]Change, CHANGES, context.temp_allocator)
+	for &change, number in changes {
+		block := new(Block, context.temp_allocator)
+		block[0] = u8(number)
+		block[1] = u8(number >> 8)
+		change = {index = u64(number) * FANOUT, bytes = block}
+	}
+	pages := slot_pages_needed(CHANGES, blocks)
+	{
+		disk := disk_make()
+		defer disk_free(disk)
+		work := new(Work)
+		defer free(work)
+		work_begin(work, &disk.source, &disk.counter, {}, changes, test_slot_pages_of(pages - 1))
+		work_resize(work, blocks * BLOCK_SIZE)
+		for index in 0 ..< len(changes) {
+			work_change(work, index)
+		}
+		finished := work_finish(work)
+		testing.expect_value(t, work.failure, Failure.Full)
+		testing.expect_value(t, finished.root.block, u64(0))
+		testing.expect_value(t, live_blocks(disk), u64(0))
+	}
+	disk := disk_make()
+	defer disk_free(disk)
+	work := new(Work)
+	defer free(work)
+	work_begin(work, &disk.source, &disk.counter, {}, changes, test_slot_pages_of(pages))
+	work_resize(work, blocks * BLOCK_SIZE)
+	for index in 0 ..< len(changes) {
+		work_change(work, index)
+	}
+	finished := work_finish(work)
+	testing.expect_value(t, work.failure, Failure.None)
+	testing.expect_value(t, work.measure.changed, u64(CHANGES))
+	state := State{root = finished.root, size = blocks * BLOCK_SIZE}
+	block := new(Block, context.temp_allocator)
+	node := new(Node, context.temp_allocator)
+	for place in ([?]int{0, 1, CHANGES / 2, CHANGES - 1}) {
+		testing.expect(t, block_read(&disk.source, state, u64(place) * FANOUT, block, node) == .Good && block^ == changes[place].bytes^, "a block of the large commit reads back")
+	}
+}
+

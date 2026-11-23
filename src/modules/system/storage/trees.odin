@@ -616,7 +616,7 @@ work_failure_take :: proc "contextless" () -> (damaged: bool) {
 	case .Wrong:
 		return true
 	case .Full:
-		capacity_reached(block_tree.NODE_SLOT_CAPACITY)
+		capacity_reached(len(plan.slot_pages) * block_tree.SLOT_PAGE_SLOTS)
 	case .Write:
 		// plan_write gave no block: it set the cause.
 		if !plan.full && !plan.capacity_reached {
@@ -687,6 +687,13 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 			plan_drop()
 			return errors.fail(error, failure(.Pending), .Absent, .Pending, name_argument, 0, 0, 1)
 		}
+		// The room of the changes, in the memory of the pool, before the
+		// first count or write of the plan.
+		size_before := found ? plan.entries[index].before.size : 0
+		if !pool_commit_tables(pending, size_before, error) {
+			plan_drop()
+			return failure(.Full)
+		}
 	}
 	if !found {
 		if kind == .Restore {
@@ -731,7 +738,12 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 			changes = whole_changes[:count]
 			size, cut = u64(len(data)), u64(len(data))
 		} else {
-			changes = pending_changes(pending)
+			made: bool
+			changes, made = pending_changes(pending, error)
+			if !made {
+				plan_drop()
+				return failure(.Full)
+			}
 			size, cut = pending.size, pending.cut
 		}
 		// A damaged state is not kept: the change replaces it whole.
@@ -739,7 +751,7 @@ object_change :: proc "contextless" (store: Store_Of, path: []Entry_Name, name: 
 		if existed && !damaged_before {
 			before = {root = old.pointer, size = old.size}
 		}
-		block_tree.work_begin(&object_work, &object_source, &object_counter, before, changes)
+		block_tree.work_begin(&object_work, &object_source, &object_counter, before, changes, plan.slot_pages)
 		block_tree.work_cut(&object_work, cut)
 		block_tree.work_resize(&object_work, size)
 		for change_index in 0 ..< len(changes) {
@@ -975,7 +987,9 @@ entry_free :: proc "contextless" (index: int) {
 		tree.put(&plan.trees[1].work, key[:], entry_bytes(&queued), false)
 		plan.trees[1].changed = true
 		plan.store_block.removing += 1
-	case .None:
+	case .None, .Release:
+		// No tree of a store holds a release: it is an entry of the removal
+		// queue only, which entry_free never frees.
 	}
 }
 
@@ -1181,7 +1195,19 @@ removal_step :: proc "contextless" () -> bool {
 		removal_failed(store_index, .No_First_Tree)
 		return true
 	}
-	if queued.kind != u64(format.Entry_Kind.Tree) || queued.pointer.block == 0 {
+	if queued.kind == u64(format.Entry_Kind.Release) {
+		// A large state: the next part of its blocks, then the queue keeps
+		// the cursor, or drops the entry with the last part.
+		cursor := queued.generation
+		if release_step(queued.pointer, queued.size, &cursor) {
+			tree.remove(&queue.work, queued_name[:])
+			plan.store_block.removing -= 1
+		} else {
+			queued.generation = cursor
+			tree.put(&queue.work, queued_name[:], entry_bytes(&queued), true)
+		}
+		queue.changed = true
+	} else if queued.kind != u64(format.Entry_Kind.Tree) || queued.pointer.block == 0 {
 		// An empty tree in the queue: it leaves the queue.
 		tree.remove(&queue.work, queued_name[:])
 		queue.changed = true
@@ -1358,7 +1384,7 @@ oldest_visit :: proc "contextless" (_: ^tree.Walk, key: []u8, value: []u8) {
 			oldest.name = name
 			oldest.found = true
 		}
-	case .None:
+	case .None, .Release:
 	}
 }
 
@@ -1537,7 +1563,7 @@ tree_usage_record :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u8) 
 		return
 	}
 	switch kind {
-	case .None:
+	case .None, .Release:
 	case .Tree:
 		tree_usage_state.trees += 1
 		tree_usage_walk(entry.pointer, tree_usage_state.nesting + 1)
@@ -1697,7 +1723,7 @@ state_at :: proc "contextless" (object: ^Entry, generation: i64, argument: i64, 
 // own_blocks gives the blocks that only one state holds: its root, when no
 // other state names it, and under it each block that no other node names.
 own_blocks :: proc "contextless" (root: Pointer, size: u64) -> u64 {
-	if root.block == 0 || root.block >= opened.capacity || opened.references[root.block] != 1 || size > format.OBJECT_SIZE_LIMIT || state_damaged(root) {
+	if root.block == 0 || root.block >= opened.capacity || storage_mount.block_count(&opened, root.block) != 1 || size > format.OBJECT_SIZE_LIMIT || state_damaged(root) {
 		return 0
 	}
 	return own_under({block = root.block, check = root.check}, format.object_levels(size))
@@ -1714,7 +1740,7 @@ own_under :: proc "contextless" (child: Object_Child, level: int) -> u64 {
 	count: u64 = 1
 	for item in node.children {
 		// The level below reads into its own node: this one stays.
-		if item.block != 0 && item.block < opened.capacity && opened.references[item.block] == 1 {
+		if item.block != 0 && item.block < opened.capacity && storage_mount.block_count(&opened, item.block) == 1 {
 			count += own_under(item, level - 1)
 		}
 	}

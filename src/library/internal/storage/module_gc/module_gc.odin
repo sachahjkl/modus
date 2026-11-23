@@ -32,6 +32,10 @@ MARK_TABLE_SLOTS :: 16384 // Power of two; load factor <= 0.5.
 MAX_COMPLETED_TREES :: 4096
 COMPLETED_TABLE_SLOTS :: 8192 // Power of two; load factor <= 0.5.
 WORK_STACK_CAPACITY :: 4096
+
+// The nodes on the path of the walk: each level of nesting, with the levels
+// of nodes of parts of a large folder under it.
+ANCESTOR_CAPACITY :: (MAX_TRAVERSAL_DEPTH + 1) * (tree_hash.PART_LEVEL_LIMIT + 1)
 REF_QUEUE_CAPACITY :: 4096
 MAX_EXTRA_REFS_PER_OBJECT :: 64
 
@@ -140,8 +144,10 @@ Collector_State :: struct {
 	completed:        Completed_Tree_Set,
 	work_stack:       [WORK_STACK_CAPACITY]Stack_Item,
 	work_top:         int,
-	ancestors:        [MAX_TRAVERSAL_DEPTH + 1]blake3.Hash,
-	ancestor_heights: [MAX_TRAVERSAL_DEPTH + 1]u8,
+	// The nodes on the path: each level of nesting, and the nodes of parts
+	// of a large folder at each of them.
+	ancestors:        [ANCESTOR_CAPACITY]blake3.Hash,
+	ancestor_heights: [ANCESTOR_CAPACITY]u8,
 	ancestor_count:   int,
 	ref_queue:        [REF_QUEUE_CAPACITY]blake3.Hash,
 	ref_head:         int,
@@ -450,7 +456,7 @@ traverse_tree_iterative :: proc "contextless" (
 		}
 
 		// Push onto active ancestor path and schedule exit marker.
-		if state.ancestor_count > max_depth || state.work_top >= WORK_STACK_CAPACITY {
+		if state.ancestor_count >= (max_depth + 1) * (tree_hash.PART_LEVEL_LIMIT + 1) || state.work_top >= WORK_STACK_CAPACITY {
 			failing^ = item.hash
 			return .Stack_Capacity_Exceeded
 		}
@@ -475,7 +481,7 @@ traverse_tree_iterative :: proc "contextless" (
 					failing^ = entry.hash
 					return status
 				}
-			case .Tree:
+			case .Tree, .Part:
 				// Check cycle against active ancestors immediately.
 				for ancestor in state.ancestors[:state.ancestor_count] {
 					if ancestor == entry.hash {
@@ -483,7 +489,11 @@ traverse_tree_iterative :: proc "contextless" (
 						return .Cycle_Detected
 					}
 				}
-				if item.depth + 1 > max_depth {
+				// A part is a node of the same folder: it is no level of
+				// nesting. Its levels have their own bound
+				// (tree_hash.PART_LEVEL_LIMIT), which the stack holds.
+				depth := entry.kind == .Tree ? item.depth + 1 : item.depth
+				if depth > max_depth {
 					failing^ = entry.hash
 					return .Depth_Exceeded
 				}
@@ -491,7 +501,7 @@ traverse_tree_iterative :: proc "contextless" (
 					failing^ = entry.hash
 					return .Stack_Capacity_Exceeded
 				}
-				state.work_stack[state.work_top] = {hash = entry.hash, depth = item.depth + 1, expanded = false}
+				state.work_stack[state.work_top] = {hash = entry.hash, depth = depth, expanded = false}
 				state.work_top += 1
 			}
 		}

@@ -80,6 +80,16 @@ The design: `docs/STORAGE.md`, "4.4 The removal of a tree".
 
 Do not use: trash, bin, garbage list.
 
+### Release
+
+A release is an entry of a removal queue that holds the last name of a state too large to free in one commit: its root, its size, and the first block of data that no step has freed.
+
+The release of a state counts each block that it frees in the commit of the release. A state of a terabyte would pass the room of any commit, so the storage service puts such a state in the removal queue, and each later step frees the next blocks, up to 65 536, in the order of its blocks of data. The remove of the object is one commit, and a loss of power loses no step. A release is not a version: nothing reads it, and no restore brings it back.
+
+The design: `src/md/data/storage_capacity.md`, "A large state is released in steps".
+
+Do not use: deferred free, orphan, zombie state.
+
 ### Version
 
 A version is the state of one object at one commit: its size, the root of its block tree, and the generation, the time and the date of that commit.
@@ -296,6 +306,16 @@ The design: `src/md/data/storage_capacity.md`.
 
 Do not use: store directory, superblock table, store list.
 
+### Count tree
+
+The count tree is the count of names and the owner of each block of a data disk, kept on the disk itself in leaves of 512 blocks under directories of 128 children, which the root block names.
+
+The storage service needs the count of each block to free a block when its last name goes. With the counts in memory only, a disk needed memory in proportion to its size, and each start walked every block to count them. Each commit writes the new leaves of the counts that it changes, with copy on write, so a disk larger than the memory of the service opens from its count tree, with a cache of its pages. When the memory holds a table of each block, the start still walks and checks each block, and compares the tree with what it found. The count tree is not a bitmap of free blocks: it holds the counts of names, which the release of a shared block needs.
+
+The design: `src/md/data/storage_capacity.md`, "The counts of names live on the disk".
+
+Do not use: allocation bitmap, free list, space map.
+
 ### Commit
 
 A commit is one change of the stores that is on the disk completely or not at all: new blocks first, then a new root block.
@@ -455,6 +475,26 @@ Pending changes group many small writes into one commit, which is one version. A
 The design: `docs/STORAGE.md`, "Ranges".
 
 Do not use: dirty page, write buffer, uncommitted write, transaction (for this).
+
+### Pending pool
+
+A pending pool is the memory of the pending changes of one connection, which the storage service takes at the first change of the connection and gives back at its commit, its drop or its end.
+
+Each connection has its own pool, so a connection that writes a large range takes no room of another one. A pool holds at most the limit of blocks of the store of its connection, and the commit of its changes takes the tables of its work from the same pool: the changes of a large text are one commit. `storage.drop_pending(place, name)` drops the pending changes of one object of the pool. A pending pool is not a cache of the disk: it holds changes that no commit made yet.
+
+The design: `src/md/data/storage_capacity.md`, "Pending changes are a pool of each connection".
+
+Do not use: write buffer, pending area, shared pool.
+
+### Part
+
+A part is an entry of a node of a frozen folder of more than 4096 entries: it names one node of that folder by the first name under it and by the tree hash of the node.
+
+A node holds at most 4096 entries, so a larger folder is cut, in the order of its names, into nodes of exactly 4096 entries, the last one with the rest; the parts of those nodes are cut the same way into nodes of 64 parts, up to one root. The cut depends on the count of the entries only, so a folder has one form and one tree hash. A part is not an entry of the folder: a lookup goes through it to the node that holds the name.
+
+The design: `src/md/data/storage_capacity.md`, "A folder of more than 4096 entries is a tree of several nodes".
+
+Do not use: chunk, page (for this), shard.
 
 ### Tree hash
 
