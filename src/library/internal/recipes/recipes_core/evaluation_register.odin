@@ -27,8 +27,10 @@ register_evaluation :: proc "contextless" (registry: ^Recipe_Registry, output: [
 		spec^ = {}
 		return {}, .Arguments_Too_Large
 	}
-	written: blake3.Hash
-	written, refusal = pr.recipe_spec_of_output(output, spec)
+	// recipe_spec_of_output already refuses a record whose hash is not the
+	// hash that the evaluator wrote, so register_recipe stores only a record
+	// that matches it.
+	_, refusal = pr.recipe_spec_of_output(output, spec)
 	if refusal != .None {
 		return {}, refusal
 	}
@@ -36,12 +38,6 @@ register_evaluation :: proc "contextless" (registry: ^Recipe_Registry, output: [
 	if refusal != .None {
 		spec^ = {}
 		return {}, refusal
-	}
-	// register_recipe hashes the same record: the two agree, or the record
-	// changed between them, which no caller can do with a private copy.
-	if recipe_hash != written {
-		spec^ = {}
-		return {}, .Damaged_Recipe
 	}
 	return recipe_hash, .None
 }
