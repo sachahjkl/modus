@@ -107,6 +107,13 @@ Step_Kind :: enum {
 	// machine needs the option serial_input; without it the step fails
 	// with its line (src/md/features/start_policy.md, "The rescue key").
 	Key_Until,
+	// Press the key text of the keyboard again and again, one press each
+	// KEY_AGAIN_PERIOD, until the log has `expected` after the last Wait,
+	// with the hang bound. A dialog of the trusted display takes a key only
+	// after its arm time, which no line of the log marks, so the step waits
+	// for the line of the decision and never for a time
+	// (src/md/features/assistant.md, "The act dialog").
+	Key_Again_Until,
 	Click, // Press the left button at (x, y).
 	// Move the pointer with one report of the virtio tablet to (x, y), or,
 	// with inside_window, from the corner of that window as the step Point
@@ -177,6 +184,7 @@ Step_Kind :: enum {
 	Power_Loss, // Wait until the disk of the last Power_Loss_Arm loses its power: it answers nothing more, and the tool ends QEMU with no warning (power_loss.odin).
 	Disk_Disconnect, // The disk that the tool serves closes its connection: QEMU fails each request that waits for an answer, so a machine whose disk went silent can end (silent_disk.odin).
 	Call, // Call an export of a service from the host (call.odin), through the remote service: what the tool prints has `expected`. With `rows_call`, that call gives the count of rows of the Table. With `repeat`, the tool also measures the round trip and the calls in one second.
+	Assistant_Turn, // One turn of the agent runner of the assistant (tools/modustool/agent_runner) through the remote service, with text as the one reply of its fake model: what the runner prints has `expected`.
 	Peer, // The peer runs the TCP case text (peer_tcp.odin) and checks its answers.
 	Point, // Move the pointer to (x, y) with no press, then read compositor.pointer(): its shape must be the name text (docs/POINTERS.md). With inside_window, (x, y) are from the corner of that window, its title bar included; a negative x is from its right side. It needs the confirmation of the pointer (a Call with pointer before it).
 	Remember, // The rest of the line after the text, in the log after the last Wait, is kept for the step Distinct (a value that the machine drew).
@@ -247,7 +255,7 @@ Step :: struct {
 	// is a named constant whose comment gives that reason: modustool check
 	// refuses a number here.
 	seconds:    int,
-	fails_on:   string, // For Wait: a text that ends the wait as a failure when the machine prints it first, or on the line of the text: the step names its two outcomes.
+	fails_on:   string, // For Wait: a text that ends the wait as a failure when the machine prints it first, or on the line of the text: the step names its two outcomes. For Key_Again_Until: the other decision of the dialog, which fails the step and stops the presses.
 	names:      string, // For Trace: the names of the functions of the first frames, separated by spaces.
 	expected:   string, // For Call: a part of what the tool prints.
 	outcome:    Call_Outcome, // For Call: Result, Failed or Refused.
@@ -1805,6 +1813,64 @@ scenario_run :: proc(machine: ^Machine, steps: []Step) -> bool {
 				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\" within %v of the character %q on its serial line", index + 1, step.expected, BOOT_HANG_BOUND, step.text)
 				return false
 			}
+		case .Key_Again_Until:
+			// The step decides a dialog of the trusted display with keys
+			// that act on its first focus, Refuse, and never move it: a test
+			// never allows an act or accepts a plan with repeated keys
+			// (src/md/features/assistant.md, "Subtle points"). Its fact
+			// fails_on names the other end of the dialog, so the presses
+			// stop when the dialog leaves, either way.
+			if step.text != "ret" && step.text != "esc" {
+				fmt.eprintfln("modustool: test failed: step %d: the step Key_Again_Until presses only ret or esc, which act on Refuse, the first focus of a dialog; it does not press %q", index + 1, step.text)
+				return false
+			}
+			if step.fails_on == "" {
+				fmt.eprintfln("modustool: test failed: step %d: the step Key_Again_Until needs fails_on, the fact of the other decision of the dialog", index + 1)
+				return false
+			}
+			decided := false
+			for start := time.now(); time.since(start) < foundation.HANG_BOUND; {
+				log := log_read(machine)
+				if len(log) > machine.seen && strings.contains(log[machine.seen:], step.fails_on) {
+					fmt.eprintfln("modustool: test failed: step %d: the machine printed \"%s\" after presses of the key %s, which only refuse", index + 1, step.fails_on, step.text)
+					return false
+				}
+				if len(log) > machine.seen && strings.contains(log[machine.seen:], step.expected) {
+					decided = true
+					break
+				}
+				if !keys_send(machine, []string{step.text}, fmt.tprintf("the key %s", step.text)) {
+					break
+				}
+				time.sleep(KEY_AGAIN_PERIOD)
+			}
+			if !decided {
+				fmt.eprintfln("modustool: test failed: step %d: the machine did not print \"%s\" within %v of the key %s", index + 1, step.expected, foundation.HANG_BOUND, step.text)
+				return false
+			}
+			foundation.test_passed_print("the machine printed \"%s\" after presses of the key %s", step.expected, step.text)
+		case .Assistant_Turn:
+			if assistant_turn_run == nil {
+				fmt.eprintfln("modustool: test failed: step %d: this binary of the tool holds no agent runner of the assistant", index + 1)
+				return false
+			}
+			if !machine.client_open {
+				if !call_client_open(&machine.client, machine.call_socket) {
+					return false
+				}
+				machine.client_open = true
+			}
+			printed, ran := assistant_turn_run(&machine.client, machine.call_socket, step.text)
+			for line in strings.split_lines(printed, context.temp_allocator) {
+				if line != "" {
+					fmt.printfln("modustool: assistant turn: %s", line)
+				}
+			}
+			if !ran || !strings.contains(printed, step.expected) {
+				fmt.eprintfln("modustool: test failed: step %d: the turn of the agent runner did not print \"%s\"", index + 1, step.expected)
+				return false
+			}
+			foundation.test_passed_print("the turn of the agent runner printed \"%s\"", step.expected)
 		case .Click_Absolute, .Press_Absolute, .Move_Absolute, .Release_Absolute:
 			x, y := step.x, step.y
 			if step.kind == .Move_Absolute {

@@ -462,7 +462,11 @@ draw_record :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: 
 // row_limit: the most rows that are drawn. When the table has more, one
 // line says how many are not shown, with rest_hint after it: how the
 // reader gets them.
-draw_table :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: []u8, row_limit: int, rest_hint: string = "") {
+//
+// total_rows: the rows of the whole table when bytes hold only its first
+// rows, as a result that crossed a bound of rows; 0, or fewer than bytes
+// hold, for the rows of bytes.
+draw_table :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: []u8, row_limit: int, rest_hint: string = "", total_rows: int = 0) {
 	sink.continuation = 0
 	described, ok := module.record_type(file, detail)
 	if !ok || described.size == 0 {
@@ -505,14 +509,15 @@ draw_table :: proc "contextless" (sink: ^Sink, file: []u8, detail: u32, bytes: [
 	}
 	sink.continuation = 0
 	count_text: [24]u8
-	if rows > shown {
-		sink.write(sink, sentence.format(count_text[:], u64(rows - shown)), .Number)
-		sink.write(sink, rows - shown == 1 ? " row more is not shown" : " rows more are not shown", .Note)
+	all_rows := max(rows, total_rows)
+	if all_rows > shown {
+		sink.write(sink, sentence.format(count_text[:], u64(all_rows - shown)), .Number)
+		sink.write(sink, all_rows - shown == 1 ? " row more is not shown" : " rows more are not shown", .Note)
 		sink.write(sink, rest_hint, .Note)
 		sink.end_line(sink)
 	}
-	sink.write(sink, sentence.format(count_text[:], u64(rows)), .Number)
-	sink.write(sink, rows == 1 ? " row of " : " rows of ", .Note)
+	sink.write(sink, sentence.format(count_text[:], u64(all_rows)), .Number)
+	sink.write(sink, all_rows == 1 ? " row of " : " rows of ", .Note)
 	sink.write(sink, module.string_at(file, described.name_offset, described.name_count), .Type)
 	sink.end_line(sink)
 }

@@ -1,6 +1,7 @@
 {
   "main": ["main_scenario.odin"],
   "tcp": ["tcp_scenario.odin"],
+  "assistant": ["assistant_scenario.odin"],
   "random": ["random_scenario.odin"],
   "quic": ["quic_scenario.odin"],
   "remote_display": ["remote_display_scenario.odin"],

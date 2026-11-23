@@ -1,0 +1,229 @@
+// The assistant: a window where the principal asks an agent for help, and
+// reads the conversation: the replies of the agent, each act that it
+// proposes, and the result of each act (src/md/features/assistant.md).
+//
+// **What it is for.** The agent runs on the host: `modustool assistant`
+// reads each request through remote, asks a language model, runs each act
+// of its reply through the host agent bridge, and gives the outcome back.
+// An act that the bridge stops for the principal shows the act dialog of
+// the trusted display; the principal decides it there, never the agent.
+//
+// **Start**: the start menu, or `start("assistant")` in the console. Type a
+// request, then Enter.
+//
+// **Grants**, as the root service gives them:
+//
+// - **Serve**: its exports, for the agent runner through remote.
+// - **Connect** to the role Display, with the boot image: the act dialog.
+//   The term **asks_acts** lets it ask the trusted display for an act
+//   dialog, and for nothing else that serves the principal: it acts for
+//   nobody.
+package assistant_window
+
+import "internal:assistant/conversation"
+import "internal:assistant/result_lines"
+import assistant_contract "modus:contract/assistant"
+import "modus:contract/errors"
+import "modus:display"
+import "modus:graphics"
+import "modus:interface"
+import "modus:system"
+
+// Room for a table of the processes: about 90 cells of the font of the
+// cells, and 24 lines.
+WIDTH :: 760
+HEIGHT :: 560
+// The window, the entries of the conversation (about 940 KiB: each act
+// keeps the cells of its typed result, 14 KiB), the kept lines of three
+// results (about 100 KiB), the two draw tables of the worst frame (about
+// 130 KiB: result_table.odin), the stack,
+// and the glyph memory of a window of paint, which this process draws as:
+// the tool counts the window at the window bound (docs/MODULE_CONTRACT.md,
+// "The budget that a module asks for").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2110, window_width = WIDTH, window_height = HEIGHT}
+
+MARGIN :: 12
+INPUT_HEIGHT :: 28
+// The time between two reads of the decision of the principal while an
+// act waits for it: shorter than a person reads a dialog.
+DECISION_POLL_MILLISECONDS :: 100
+
+// The records and the text of one frame, sized for the worst frame: a
+// window of results, each line a record for each run of one color
+// (result_table.odin).
+window_memory: interface.Window_Memory(WINDOW_RECORDS, WINDOW_TEXT_BYTES)
+
+// The text that the principal types: one request.
+typed: [assistant_contract.REQUEST_TEXT_BYTES]u8
+typed_count: int
+
+INPUT_IDENTITY :: "request"
+
+// entry_label gives the words above an entry, and their color.
+entry_label :: proc "contextless" (entry: ^conversation.Entry, buffer: []u8) -> (label: string, color: graphics.Color) {
+	switch entry.kind {
+	case .Request:
+		return system.format(buffer, "you, request ", entry.serial), graphics.colors.link
+	case .Reply:
+		return "assistant", graphics.colors.process
+	case .Reply_Refused:
+		return system.format(buffer, "the reply to request ", entry.serial, " was refused at the border"), graphics.colors.failed
+	case .Act:
+		state_color := graphics.colors.dim
+		switch entry.state {
+		case .Proposed, .Awaiting_Principal:
+			state_color = graphics.colors.warning
+		case .Done, .Allowed_By_Principal:
+			state_color = graphics.colors.process
+		case .Refused, .Refused_By_Principal, .Not_Shown:
+			state_color = graphics.colors.failed
+		}
+		return system.format(buffer, "act ", entry.act, ", ", STATE_WORDS[entry.state]), state_color
+	}
+	return "", graphics.colors.dim
+}
+
+// The fonts of the body of an entry (docs/FONTS.md, section 12.6): the
+// line of an act is code, and the result of an act that ran is a value, so
+// both are in the font of the cells, Paper Mono, which a reader compares
+// character by character (in B612 a parenthesis at 14 px reads as a
+// bracket); the words that explain are in the interface font.
+FONT_CODE :: interface.Font{}
+
+// entry_body gives the text under the label of an entry: code, in the font
+// of the cells, then words, in the interface font, or in the font of the
+// cells when they are a value. Either can be empty.
+entry_body :: proc "contextless" (entry: ^conversation.Entry, buffer: []u8) -> (code: string, words: string, words_are_value: bool) {
+	switch entry.kind {
+	case .Request, .Reply:
+		return "", string(entry.text[:entry.text_count]), false
+	case .Reply_Refused:
+		kind, _ := errors.kind_of_word(entry.error.kind)
+		unit, _ := errors.unit_of_word(entry.error.unit)
+		return "", system.format(buffer, errors.KIND_NAMES[kind], ", unit ", errors.UNIT_NAMES[unit], ", argument ", entry.error.argument, ", value ", entry.error.value, ", limit ", entry.error.limit, "; no act of it runs"), false
+	case .Act:
+		code = string(entry.line[:entry.line_count])
+		switch entry.state {
+		case .Proposed:
+			return code, "", false
+		case .Done:
+			return code, string(entry.text[:entry.text_count]), true
+		case .Refused:
+			return code, string(entry.text[:entry.text_count]), false
+		case .Awaiting_Principal:
+			if entry.dialog == 0 {
+				return code, "waiting for the trusted display", false
+			}
+			return code, "decide it in the act dialog of the trusted display", false
+		case .Allowed_By_Principal:
+			return code, "allowed; the act runs when the agent console of a wide grant runs it", false
+		case .Refused_By_Principal, .Not_Shown:
+			return code, "nothing ran", false
+		}
+	}
+	return "", "", false
+}
+
+// draw builds one frame: the conversation from the newest entry up, as far
+// as the room goes, and the field of the request at the foot.
+draw :: proc "contextless" (window: ^display.Window) {
+	frame := interface.window_frame_start(&window_memory, window)
+	table := frame.table
+	interface.background(&frame, {0, 0, window.width, window.height})
+	room := window.width - 2 * MARGIN
+	input_top := window.height - MARGIN - INPUT_HEIGHT
+	line := interface.line_height(interface.FONT_INTERFACE)
+	code_line := interface.line_height(FONT_CODE)
+	// The font of the cells has one advance: the width of a cell.
+	cell_width := max(interface.text_measured_width(table, FONT_CODE, "0"), 1)
+	bottom := input_top - MARGIN
+	// From the newest entry up: only the entries that show are measured.
+	for index := talk.entry_count - 1; index >= 0 && bottom > MARGIN; index -= 1 {
+		entry := conversation.entry_at(&talk, index)
+		label_buffer: [160]u8
+		body_buffer: [assistant_contract.REPLY_TEXT_BYTES + assistant_contract.ACT_LINE_BYTES + 160]u8
+		label, color := entry_label(entry, label_buffer[:])
+		code, words, words_are_value := entry_body(entry, body_buffer[:])
+		code_lines := code != "" ? interface.text_wrapped_line_count(table, FONT_CODE, code, room) : 0
+		// A result that came typed is drawn as the console draws it, in
+		// place of its words, within the room left above: the rows that
+		// fit, and the note of the drawer counts the others.
+		result: ^result_lines.Lines
+		if entry.kind == .Act && entry.state == .Done && entry.table.present {
+			line_room := (bottom - MARGIN - line - code_lines * code_line - MARGIN / 2) / code_line
+			if lines := result_lines_of(entry, room / cell_width, line_room); lines != nil {
+				result, words = lines, ""
+			}
+		}
+		words_font := words_are_value ? FONT_CODE : interface.FONT_INTERFACE
+		words_line := words_are_value ? code_line : line
+		word_lines := words != "" ? interface.text_wrapped_line_count(table, words_font, words, room) : 0
+		result_line_count := result != nil ? result.line_count : 0
+		height := line + code_lines * code_line + word_lines * words_line + result_line_count * code_line + MARGIN / 2
+		top := bottom - height
+		if top < MARGIN {
+			break
+		}
+		interface.draw_text(table, MARGIN, top, label, color, interface.FONT_INTERFACE_BOLD)
+		body_top := top + line
+		if code != "" {
+			interface.draw_text_wrapped(table, MARGIN, body_top, room, code, graphics.colors.text, FONT_CODE)
+			body_top += code_lines * code_line
+		}
+		if words != "" {
+			interface.draw_text_wrapped(table, MARGIN, body_top, room, words, graphics.colors.text, words_font)
+		}
+		if result != nil {
+			result_lines_paint(table, result, MARGIN, body_top, cell_width, code_line)
+		}
+		bottom = top
+	}
+	if talk.entry_count == 0 {
+		interface.draw_text_wrapped(table, MARGIN, MARGIN, room, "Ask the agent for help. It reads your request on the host, and each act that it proposes shows here before its result.", graphics.colors.dim, interface.FONT_INTERFACE)
+	}
+	// The field takes the keys when nothing else has the focus.
+	if frame.state.focus == 0 {
+		frame.state.focus = interface.identity(INPUT_IDENTITY)
+	}
+	field := interface.text_input(&frame, {MARGIN, input_top, room, INPUT_HEIGHT}, interface.identity(INPUT_IDENTITY), typed[:], &typed_count, "ask the assistant")
+	if field.activated && typed_count > 0 {
+		if request_keep(string(typed[:typed_count])) {
+			typed_count = 0
+		}
+	}
+	interface.window_frame_end(&window_memory.drawing, &frame, window)
+}
+
+// The entry of the assistant: it opens its service and its window, then
+// runs the calls of the runner and the events of the window in one loop.
+// While an act waits for the principal, the loop also wakes to read the
+// decision of the act dialog.
+@(export, link_name = "entry")
+entry :: proc "c" (ctx: ^system.Context) -> ! {
+	service, _ := system.service_open(ctx)
+	display_port_bind(ctx)
+	window, ok := display.open(ctx, WIDTH, HEIGHT, "assistant")
+	if !ok {
+		system.stop(.Failed)
+	}
+	draw(&window)
+	system.log_fact(.Info, Running{})
+	for {
+		waiting := acts_waiting_step()
+		wait: system.Wait
+		display.wait_events(&wait, &window)
+		system.service_wait(&wait, &service)
+		system.wait_end(&wait, waiting ? system.time() + DECISION_POLL_MILLISECONDS : system.WAIT_FOREVER)
+		system.service_run(&service)
+		came := interface.window_events(&window_memory.drawing, &window)
+		if came || talk.changed {
+			talk.changed = false
+			draw(&window)
+			// A request that the field kept draws in the next frame.
+			if talk.changed {
+				talk.changed = false
+				draw(&window)
+			}
+		}
+	}
+}

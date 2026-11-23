@@ -650,6 +650,56 @@ The design: `src/md/features/wide_grants.md`, "The wide scopes", and `src/md/fea
 
 Do not use: agent shell, bot session.
 
+### Assistant
+
+The assistant is the application whose window shows a conversation of the principal with an agent: the requests, the replies, each act that the agent proposes, and its result.
+
+The agent runs on the host as the agent runner; the window keeps the conversation and asks the trusted display for the act dialog. It holds no store and no network. It is not the agent console, which runs the lines of an agent under a wide grant.
+
+The design: `src/md/features/assistant.md`.
+
+Do not use: chatbot, copilot, AI window.
+
+### Agent runner
+
+The agent runner is the command `modustool assistant` on the host: it reads each request of the assistant through `remote`, asks a language model, and runs each act of the model reply through the host agent bridge.
+
+It holds the endpoint and the key of the model, which never reach the machine. It never answers an act dialog: an act that the bridge stops waits for the principal. It is not the bridge, which it calls as any agent does.
+
+The design: `src/md/features/assistant.md`, "Four parties".
+
+Do not use: bot, daemon, agent server.
+
+### Model reply
+
+A model reply is the one JSON object that a language model gives to the agent runner: the words for the principal and up to four acts.
+
+The runner reads it at one border before any act runs, and refuses a reply with an unknown, missing, duplicated or mistyped field, or a text past its bound, whole, with an error record that the window shows. It is not an act record.
+
+The design: `src/md/features/assistant.md`, "The model reply".
+
+Do not use: completion, response, output.
+
+### Act dialog
+
+The act dialog is the dialog of the trusted display that asks the principal to allow once or to refuse one act of an agent, named `service.export`.
+
+The asker is the process that called `compositor.act_ask`, which the trusted display reads from the connection; the act is two identifiers that it checks, never a word of the agent. Its focus starts on Refuse, as the dialog of a plan; a move of the focus counts only after the arm time and starts it again. Its decision goes to its asker only, and it closes with a refusal when its asker exits. It is not the grant dialog of the powerbox.
+
+The design: `src/md/features/assistant.md`, "The act dialog".
+
+Do not use: confirmation popup, approval prompt.
+
+### Right to ask an act
+
+The right to ask an act lets a process ask the trusted display for an act dialog, and for nothing else that serves the principal.
+
+It is the term `asks_acts` of a start grant set; the root service writes it as the amount `DISPLAY_AMOUNT_ACT_ASKER` of the grant of a connection to the holder of Display. The assistant holds it in place of the grant to act for the principal, which would open each export of the trusted display that serves the principal. It is not a start grant, and it opens no dialog of a plan.
+
+The design: `src/md/features/assistant.md`, "The right to ask an act".
+
+Do not use: act permission, approval right.
+
 ### Act record
 
 An act record is the record of one act done under a wide grant, written on a record output before the act runs.

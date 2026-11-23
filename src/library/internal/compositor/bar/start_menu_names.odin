@@ -7,6 +7,7 @@ package bar
 // the demonstrations, each section in the order of the alphabet.
 @(rodata)
 names := [?]string {
+	"assistant",
 	"boot",
 	"console",
 	"debugger_window",
@@ -68,6 +69,7 @@ names := [?]string {
 // The icon of each module of names, at the same index (icon_of).
 @(rodata)
 name_icons := [?]Icon {
+	.Window,
 	.Monitor,
 	.Console,
 	.Debugger,
@@ -127,5 +129,5 @@ name_icons := [?]Icon {
 }
 #assert(len(name_icons) == len(names))
 
-APPLICATION_COUNT :: 0 // The applications: the first names.
+APPLICATION_COUNT :: 1 // The applications: the first names.
 TOOL_COUNT :: 12 // The tools: the names after the applications.

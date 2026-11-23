@@ -57,7 +57,10 @@ Lex_Eval_Result :: struct {
 	text_value:    string,
 	record_name:   string,
 	columns:       []string,
-	rows:          [][]string,
+	column_kinds:  []contract.Lex_Column_Kind, // How each column is written and aligned; none: each column is a text.
+	column_units:  []i64, // The unit word of each column (contract.lex_column_unit_valid).
+	rows:          [][]string, // The text of each cell.
+	row_integers:  [][]i64, // The value of each cell of a number column, 0 in a text column; none: no number column.
 	total_rows:    i64,
 }
 
@@ -1111,6 +1114,42 @@ format_eval_lex_json :: proc(
 			}
 			json_write_escaped_string(&builder, col)
 		}
+		// The kind and the unit of each column, and the value of each cell
+		// of a number column: a reader aligns and formats a number as the
+		// console does, and never reads it back from its text.
+		strings.write_string(&builder, `],"column_kinds":[`)
+		for _, idx in res.columns {
+			if idx > 0 {
+				strings.write_byte(&builder, ',')
+			}
+			kind := idx < len(res.column_kinds) ? res.column_kinds[idx] : contract.Lex_Column_Kind.Text
+			json_write_escaped_string(&builder, contract.lex_column_kind_name(kind))
+		}
+		strings.write_string(&builder, `],"column_units":[`)
+		for _, idx in res.columns {
+			if idx > 0 {
+				strings.write_byte(&builder, ',')
+			}
+			strings.write_i64(&builder, idx < len(res.column_units) ? res.column_units[idx] : 0)
+		}
+		strings.write_string(&builder, `],"row_integers":[`)
+		for row, r_idx in res.rows {
+			if r_idx > 0 {
+				strings.write_byte(&builder, ',')
+			}
+			strings.write_byte(&builder, '[')
+			for _, c_idx in row {
+				if c_idx > 0 {
+					strings.write_byte(&builder, ',')
+				}
+				value: i64
+				if r_idx < len(res.row_integers) && c_idx < len(res.row_integers[r_idx]) {
+					value = res.row_integers[r_idx][c_idx]
+				}
+				strings.write_i64(&builder, value)
+			}
+			strings.write_byte(&builder, ']')
+		}
 		strings.write_string(&builder, `],"rows":[`)
 		for row, r_idx in res.rows {
 			if r_idx > 0 {
@@ -1265,8 +1304,8 @@ bridge_serve_stdio :: proc(bridge: ^Agent_Bridge) -> int {
 	return 0
 }
 
-// parse_hex_32 decodes an exact 64-hex-character key.
-@(private = "file")
+// parse_hex_32 decodes an exact 64-hex-character key. The agent runner of
+// the assistant reads its keys with it too.
 parse_hex_32 :: proc(text: string) -> (key: [32]u8, ok: bool) {
 	if len(text) != 64 {
 		return {}, false

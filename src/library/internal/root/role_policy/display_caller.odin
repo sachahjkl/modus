@@ -10,11 +10,20 @@ package role_policy
 import pr "modus:contract/plans_recipes"
 
 // display_caller_amount gives the amount of the grant of a connection of
-// caller_name to service_name: DISPLAY_AMOUNT_PLANS_HOLDER when the service
-// holds Display and the caller holds Plans now, else 0.
-display_caller_amount :: proc "contextless" (names: ^Holder_Names, service_name, caller_name: string) -> u64 {
-	if is_holder(names, service_name, .Display) && is_holder(names, caller_name, .Plans) {
+// caller_name to service_name: when the service holds Display,
+// DISPLAY_AMOUNT_PLANS_HOLDER for the holder of Plans now, else
+// DISPLAY_AMOUNT_ACT_ASKER for a caller whose start grant set has the term
+// asks_acts (src/md/features/assistant.md, "The right to ask an act");
+// else 0.
+display_caller_amount :: proc "contextless" (names: ^Holder_Names, service_name, caller_name: string, asks_acts: bool) -> u64 {
+	if !is_holder(names, service_name, .Display) {
+		return 0
+	}
+	if is_holder(names, caller_name, .Plans) {
 		return pr.DISPLAY_AMOUNT_PLANS_HOLDER
+	}
+	if asks_acts {
+		return pr.DISPLAY_AMOUNT_ACT_ASKER
 	}
 	return 0
 }

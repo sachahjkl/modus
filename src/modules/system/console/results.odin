@@ -5,7 +5,7 @@ import module "modus:contract/module"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:console_language"
-import "internal:console/console_results"
+import "modus:console_results"
 import "modus:lex_evaluator"
 import "modus:lex_parser"
 import "modus:contract/root_ring"
@@ -17,7 +17,7 @@ import terminal "modus:terminal"
 // A command gives a result and never writes to the terminal. The line has
 // one result: the value of its expression, or its failure. The console
 // draws it by its kind with one drawer for each kind
-// (src/library/internal/console/console_results): no command has drawing code of its own
+// (src/library/modus/console_results): no command has drawing code of its own
 // (docs/CONSOLE.md, "Results and their drawers").
 
 RESULT_ROW_LIMIT :: 20 // The most rows of a table that the console draws: the window of the console has 26 rows.

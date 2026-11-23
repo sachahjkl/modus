@@ -6,6 +6,7 @@ import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/remote"
 import "modus:contract/remote_display"
+import "modus:contract/value_kinds"
 import "modus:contract/wide_grants"
 
 @(private = "file")
@@ -695,5 +696,44 @@ test_authorization_enforces_permissions_wide_grants_and_principal_approval :: pr
 		no_key := policy
 		no_key.client_key_public = {}
 		testing.expect_value(t, bridge_authorize_command(&no_key, &key_req).refusal, Bridge_Refusal.Client_Key_Missing)
+	}
+}
+
+// The kind of a column crosses by its name: none, an unknown name and a
+// name in another case are refused; each kind keeps its name. A unit fits
+// its kind only: the edges of each unit enum, one past them, a negative
+// word and the largest word.
+@(test)
+a_column_kind_and_its_unit_cross_their_border :: proc(t: ^testing.T) {
+	for name in ([]string{"", "none", "Text", "number", "integer ", "bytes"}) {
+		_, ok := lex_column_kind_of_name(name)
+		testing.expectf(t, !ok, "the kind name %q", name)
+	}
+	for kind in Lex_Column_Kind {
+		if kind == .None {
+			continue
+		}
+		got, ok := lex_column_kind_of_name(lex_column_kind_name(kind))
+		testing.expect(t, ok && got == kind)
+	}
+	testing.expect(t, lex_column_unit_valid(.Text, 0) && !lex_column_unit_valid(.Text, 1))
+	testing.expect(t, lex_column_unit_valid(.Integer, 0) && !lex_column_unit_valid(.Integer, -1))
+	testing.expect(t, lex_column_unit_valid(.Size, i64(max(value_kinds.Size_Unit))) && !lex_column_unit_valid(.Size, i64(max(value_kinds.Size_Unit)) + 1))
+	testing.expect(t, lex_column_unit_valid(.Time, 0) && !lex_column_unit_valid(.Time, i64(max(value_kinds.Duration_Unit)) + 1))
+	testing.expect(t, lex_column_unit_valid(.Hexadecimal, 1) && lex_column_unit_valid(.Hexadecimal, 8))
+	for unit in ([]i64{0, 9, -1, max(i64), min(i64)}) {
+		testing.expectf(t, !lex_column_unit_valid(.Hexadecimal, unit), "the hexadecimal unit %d", unit)
+	}
+	for unit in ([]i64{-1, max(i64)}) {
+		testing.expect(t, !lex_column_unit_valid(.Size, unit) && !lex_column_unit_valid(.Time, unit))
+	}
+	testing.expect(t, !lex_column_unit_valid(.None, 0))
+	for word in ([]i64{0, -1, 6, 255, max(i64), min(i64)}) {
+		_, ok := lex_column_kind_of_word(word)
+		testing.expectf(t, !ok, "the kind word %d", word)
+	}
+	for kind in Lex_Column_Kind {
+		got, ok := lex_column_kind_of_word(i64(kind))
+		testing.expect(t, ok == (kind != .None) && (!ok || got == kind))
 	}
 }

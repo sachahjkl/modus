@@ -170,45 +170,129 @@ plan_difference_show :: proc "contextless" (plan_name, added, removed: string) -
 	}
 	system.log_fact(.Info, Plan_Difference_Shown{added = u64(plan_difference_dialog.added_count), removed = u64(plan_difference_dialog.removed_count), plan = value_kinds.text_field(plan_name, PLAN_NAME_FIELD_BYTES)})
 	window_switcher_cancel() // window_switcher.odin: the dialog takes the keys.
-	plan_difference_asker = system.service_caller()
+	dialog_asker_bind(system.service_caller())
 	damage_whole_screen()
 	return
 }
 
-// The connection that asked for the dialog of a plan that shows: nil when
-// the compositor itself asked.
-plan_difference_asker: ^system.Connection
+// act_dialog_show shows one act of an agent on the trusted display: the
+// asker, the name of the calling process, and the act, service.export. It
+// gives the serial, or 0 with the refusal and the argument that it names.
+// caller says what the connection of the asker may do; a call from no
+// connection is no asker.
+act_dialog_show :: proc "contextless" (asker: ^system.Connection, caller: bar.Plan_Difference_Caller, act: string) -> (serial: u64, refusal: bar.Plan_Difference_Refusal, argument: int) {
+	asker_name := asker != nil ? system.name_of(asker.caller[:]) : ""
+	serial, refusal, argument = bar.plan_difference_act_ask(&plan_difference_dialog, caller, powerbox_prompt.open, asker_name, act, system.time())
+	if refusal != .None {
+		return
+	}
+	system.log_fact(.Info, Act_Shown{asker = value_kinds.text_field(asker_name, PLAN_NAME_FIELD_BYTES), act = value_kinds.text_field(act, PLAN_NAME_FIELD_BYTES)})
+	window_switcher_cancel() // window_switcher.odin: the dialog takes the keys.
+	dialog_asker_bind(asker)
+	damage_whole_screen()
+	return
+}
 
-// plan_difference_asker_check closes the dialog of a plan when the grant of
-// its asker no longer lets it ask: the root service wrote the grant again
-// after a change of the roles, and the module that asked lost the role
-// Plans, or its connection ended. The principal never answers a dialog for
-// a module that holds no role to receive the answer. It runs after each
-// pass of the service, which applies each Grant before the next call.
+// act_dialog_cancelled records that the asker withdrew the act that
+// showed: the dialog closed with a refusal.
+act_dialog_cancelled :: proc "contextless" () {
+	dialog := &plan_difference_dialog
+	system.log_fact(.Info, Act_Cancelled{asker = value_kinds.text_field(bar.plan_difference_name(dialog), PLAN_NAME_FIELD_BYTES), act = value_kinds.text_field(bar.plan_difference_item_text(&dialog.added[0]), PLAN_NAME_FIELD_BYTES)})
+	damage_whole_screen()
+}
+
+// The connection that asked for the dialog that shows, or for the last
+// one: connection nil when the compositor itself asked, or when the
+// connection ended. The ring handle and the name tell a later caller in
+// the same place of the connection table from the asker.
+Dialog_Asker :: struct {
+	connection: ^system.Connection,
+	ring:       system.Handle,
+	name:       system.Name,
+}
+
+dialog_asker: Dialog_Asker
+
+dialog_asker_bind :: proc "contextless" (connection: ^system.Connection) {
+	dialog_asker = {}
+	if connection != nil {
+		dialog_asker = {connection = connection, ring = connection.ring_memory, name = connection.caller}
+	}
+}
+
+// dialog_asker_is says if a connection is the one that asked for the
+// last dialog: a decision goes to its asker only.
+dialog_asker_is :: proc "contextless" (connection: ^system.Connection) -> bool {
+	return connection != nil && dialog_asker.connection == connection && dialog_asker.ring == connection.ring_memory && dialog_asker.name == connection.caller
+}
+
+// dialog_asker_allowed says if the asker may still ask for the dialog of
+// the face that shows: a plan for the holder of Plans or a caller that
+// acts for its principal, an act for an act asker or such a caller.
+@(private = "file")
+dialog_asker_allowed :: proc "contextless" (grant: u64) -> bool {
+	switch plan_difference_dialog.face {
+	case .Plan:
+		return pr.plan_display_caller_allowed(grant)
+	case .Act:
+		return pr.act_display_caller_allowed(grant)
+	}
+	return false
+}
+
+// plan_difference_asker_check closes the dialog that shows when the grant
+// of its asker no longer lets it ask: the root service wrote the grant
+// again after a change of the roles, and the module that asked lost the
+// role Plans, or its connection ended (its process exited). The principal
+// never answers a dialog for a module that cannot receive the answer. It
+// runs after each pass of the service, which applies each Grant before the
+// next call. A connection that ended also loses the decision of a closed
+// dialog, so a later caller in its place never reads it.
 plan_difference_asker_check :: proc "contextless" () {
-	if !plan_difference_dialog.open || plan_difference_asker == nil {
+	asker := dialog_asker.connection
+	if asker == nil {
 		return
 	}
-	asker := plan_difference_asker
-	if asker.calls.head != nil && pr.plan_display_caller_allowed(asker.grant) {
+	ended := asker.calls.head == nil || asker.ring_memory != dialog_asker.ring || asker.caller != dialog_asker.name
+	if ended {
+		dialog_asker.connection = nil
+	}
+	if !plan_difference_dialog.open || (!ended && dialog_asker_allowed(asker.grant)) {
 		return
 	}
-	plan_difference_asker = nil
-	system.log_fact(.Warning, Plan_Difference_Asker_Lost{plan = value_kinds.text_field(bar.plan_difference_name(&plan_difference_dialog), PLAN_NAME_FIELD_BYTES)})
+	dialog_asker.connection = nil
+	switch plan_difference_dialog.face {
+	case .Plan:
+		system.log_fact(.Warning, Plan_Difference_Asker_Lost{plan = value_kinds.text_field(bar.plan_difference_name(&plan_difference_dialog), PLAN_NAME_FIELD_BYTES)})
+	case .Act:
+		system.log_fact(.Warning, Act_Asker_Lost{asker = value_kinds.text_field(bar.plan_difference_name(&plan_difference_dialog), PLAN_NAME_FIELD_BYTES)})
+	}
 	plan_difference_answer(bar.plan_difference_key(&plan_difference_dialog, .Escape, system.time()))
 }
 
 // plan_difference_answer records the decision of the principal, if the
-// last key or press made one.
+// last key or press made one, with the fact of the face of the dialog.
 plan_difference_answer :: proc "contextless" (decision: bar.Plan_Difference_Decision) {
-	plan := value_kinds.text_field(bar.plan_difference_name(&plan_difference_dialog), PLAN_NAME_FIELD_BYTES)
+	dialog := &plan_difference_dialog
+	name := value_kinds.text_field(bar.plan_difference_name(dialog), PLAN_NAME_FIELD_BYTES)
+	act := value_kinds.text_field(dialog.added_count > 0 ? bar.plan_difference_item_text(&dialog.added[0]) : "", PLAN_NAME_FIELD_BYTES)
 	switch decision {
 	case .Pending:
 		return
 	case .Accepted:
-		system.log_fact(.Info, Plan_Difference_Accepted{plan = plan})
+		switch dialog.face {
+		case .Plan:
+			system.log_fact(.Info, Plan_Difference_Accepted{plan = name})
+		case .Act:
+			system.log_fact(.Info, Act_Allowed{asker = name, act = act})
+		}
 	case .Refused:
-		system.log_fact(.Info, Plan_Difference_Refused{plan = plan})
+		switch dialog.face {
+		case .Plan:
+			system.log_fact(.Info, Plan_Difference_Refused{plan = name})
+		case .Act:
+			system.log_fact(.Info, Act_Refused{asker = name, act = act})
+		}
 	}
 	damage_whole_screen()
 }
@@ -378,14 +462,28 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	}
 	#assert(bar.PLAN_DIFFERENCE_TITLE_HEIGHT == POWERBOX_TITLE_HEIGHT)
 	x, y, width, height := bar.plan_difference_place(dialog, desktop_width, desktop_work_top(), desktop_work_bottom())
-	interface.draw_element_push(table, {x, y, width, height}, u32(interface.identity("plan difference")), .Alert_Dialog, {name = "plan difference"})
+	// The words of the face: a plan, or one act of an agent that asked.
+	element, header, name_label, accept := "plan difference", "TRUSTED PLAN DIFFERENCE", "plan", "Accept plan"
+	add_heading := "adds"
+	// The act is code, service.export, in the font of the cells, as a
+	// reader compares it character by character (docs/FONTS.md, section
+	// 12.6); the items of a plan are names in the interface font.
+	item_font := interface.FONT_INTERFACE
+	switch dialog.face {
+	case .Plan:
+	case .Act:
+		element, header, name_label, accept = "act", "TRUSTED ACT", "asker", "Allow once"
+		add_heading = "runs"
+		item_font = interface.Font{}
+	}
+	interface.draw_element_push(table, {x, y, width, height}, u32(interface.identity(element)), .Alert_Dialog, {name = element})
 	defer interface.draw_element_pop(table)
-	trusted_card_records(table, x, y, width, height, "TRUSTED PLAN DIFFERENCE")
+	trusted_card_records(table, x, y, width, height, header)
 	text_x := x + bar.PLAN_DIFFERENCE_MARGIN
 	text_room := width - 2 * bar.PLAN_DIFFERENCE_MARGIN
 	line_y := y + 2 + bar.PLAN_DIFFERENCE_TITLE_HEIGHT + 1 + bar.PLAN_DIFFERENCE_MARGIN
 	text_offset := (bar.PLAN_DIFFERENCE_LINE - graphics.CELL_HEIGHT) / 2
-	name_x := interface.draw_text(table, text_x, line_y + text_offset, "plan", graphics.colors.dim, interface.FONT_INTERFACE) + bar.PLAN_DIFFERENCE_GAP
+	name_x := interface.draw_text(table, text_x, line_y + text_offset, name_label, graphics.colors.dim, interface.FONT_INTERFACE) + bar.PLAN_DIFFERENCE_GAP
 	interface.draw_text(table, name_x, line_y + text_offset, interface.text_fit(table, interface.FONT_INTERFACE_BOLD, bar.plan_difference_name(dialog), x + width - bar.PLAN_DIFFERENCE_MARGIN - name_x), graphics.colors.text_strong, interface.FONT_INTERFACE_BOLD)
 	line_y += bar.PLAN_DIFFERENCE_LINE
 	sides := [2]struct {
@@ -393,7 +491,7 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 		items:         []bar.Plan_Difference_Item,
 		color:         graphics.Color,
 	} {
-		{"adds", "+", dialog.added[:dialog.added_count], graphics.colors.process},
+		{add_heading, "+", dialog.added[:dialog.added_count], graphics.colors.process},
 		{"removes", "-", dialog.removed[:dialog.removed_count], graphics.colors.failed},
 	}
 	for &side in sides {
@@ -405,15 +503,15 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 		line_y += bar.PLAN_DIFFERENCE_LINE
 		for &item in side.items {
 			item_x := interface.draw_text(table, text_x + 8, line_y + text_offset, side.sign, side.color, interface.FONT_INTERFACE_BOLD) + bar.PLAN_DIFFERENCE_GAP
-			shown := interface.text_fit(table, interface.FONT_INTERFACE, bar.plan_difference_item_text(&item), text_x + text_room - item_x)
-			interface.draw_text(table, item_x, line_y + text_offset, shown, side.color, interface.FONT_INTERFACE)
+			shown := interface.text_fit(table, item_font, bar.plan_difference_item_text(&item), text_x + text_room - item_x)
+			interface.draw_text(table, item_x, line_y + text_offset, shown, side.color, item_font)
 			line_y += bar.PLAN_DIFFERENCE_LINE
 		}
 	}
 	accept_x, button_y, button_width, button_height := bar.plan_difference_button_place(x, y, width, height, .Accept)
 	refuse_x, _, _, _ := bar.plan_difference_button_place(x, y, width, height, .Refuse)
 	interface.draw_text(table, text_x, button_y + (button_height - graphics.CELL_HEIGHT) / 2, "Tab: move", graphics.colors.dim, interface.FONT_INTERFACE)
-	plan_difference_button_records(table, accept_x, button_y, button_width, button_height, "Accept plan", "Enter", true, dialog.focus == .Accept)
+	plan_difference_button_records(table, accept_x, button_y, button_width, button_height, accept, "Enter", true, dialog.focus == .Accept)
 	plan_difference_button_records(table, refuse_x, button_y, button_width, button_height, "Refuse", "Esc", false, dialog.focus == .Refuse)
 }
 
