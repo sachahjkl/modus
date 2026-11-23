@@ -86,3 +86,36 @@ the_measures_of_a_fill_of_a_maze :: proc(t: ^testing.T) {
 	fmt.printfln("measure: a fill of a maze of 6000 x 4000: %v, %d spans at most (%d bytes)", filled, memory.peak, memory.peak * size_of(Fill_Span))
 }
 
+
+// The work of the window at the start of a stroke on a photo of 6000 x
+// 4000: before, the copy of the whole picture, then the first segment;
+// after, the first segment, which copies the tiles that it writes. It
+// prints each time; it asserts none.
+@(test)
+the_measures_of_a_stroke_start :: proc(t: ^testing.T) {
+	when !MEASURE {
+		return
+	}
+	WIDTH :: 6000
+	HEIGHT :: 4000
+	photo := Picture{pixels = make([]graphics.Color, WIDTH * HEIGHT)}
+	defer delete(photo.pixels)
+	picture_extend(&photo, WIDTH, HEIGHT)
+	copy_pixels := make([]graphics.Color, WIDTH * HEIGHT)
+	defer delete(copy_pixels)
+	// The copy is touched once first, so neither way pays its first pages.
+	copy(copy_pixels, photo.pixels)
+	start := time.tick_now()
+	copy(copy_pixels, photo.pixels)
+	segment_draw(&photo, 3000, 2000, 3001, 2000, 21, 0xFF0000)
+	whole := time.tick_since(start)
+	copy_before := new(Copy_Before)
+	defer free(copy_before)
+	copy_before.pixels = copy_pixels
+	start = time.tick_now()
+	photo.before = copy_before
+	segment_draw(&photo, 3100, 2100, 3101, 2100, 21, 0x00FF00)
+	tiles := time.tick_since(start)
+	fmt.printfln("measure: the start of a stroke of 21 pixels on a photo of 6000 x 4000: %v with the copy of the picture, %v with the copy of %d tiles", whole, tiles, copy_before.copied)
+}
+

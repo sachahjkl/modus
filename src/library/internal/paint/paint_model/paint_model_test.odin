@@ -316,14 +316,12 @@ a_fill_whose_stack_cannot_grow_stops :: proc(t: ^testing.T) {
 	box, outcome := fill_region(&picture, 0, 0, 0xFF0000, &memory)
 	testing.expect_value(t, outcome, Fill_Outcome.No_Memory)
 	testing.expect(t, !box_empty(box), "a part was painted")
-	picture_box_restore(&picture, before, box)
+	picture_copy_box(picture.pixels, before, WIDTH, box)
 	testing.expect(t, string(transmute([]u8)picture.pixels) == string(transmute([]u8)before), "the box from the copy gives the picture back")
 	// No room for the two first spans: nothing is painted.
 	none := Fill_Memory{}
 	box, outcome = fill_region(&picture, 0, 0, 0xFF0000, &none)
 	testing.expect(t, box_empty(box) && outcome == .No_Memory)
-	// A box past the picture is cut to it.
-	picture_box_restore(&picture, before, {-5, -5, WIDTH + 5, WIDTH + 5})
 }
 
 @(private = "file")
@@ -359,7 +357,7 @@ a_cancel_stops_a_fill_and_a_record :: proc(t: ^testing.T) {
 	box, outcome := fill_region(&picture, 30, 30, 0xFF0000, memory)
 	testing.expect_value(t, outcome, Fill_Outcome.Cancelled)
 	testing.expect(t, !box_empty(box) && memory.painted < WIDTH * WIDTH, "a part was painted")
-	picture_box_restore(&picture, before, box)
+	picture_copy_box(picture.pixels, before, WIDTH, box)
 	testing.expect(t, string(transmute([]u8)picture.pixels) == string(transmute([]u8)before))
 	// A cancel asked before the fill paints nothing.
 	box, outcome = fill_region(&picture, 30, 30, 0xFF0000, memory)
@@ -381,7 +379,7 @@ a_cancel_stops_a_fill_and_a_record :: proc(t: ^testing.T) {
 	testing.expect_value(t, history_record(&history, before, picture.pixels, WIDTH, second, bound, scratch), Record_Outcome.Cancelled)
 	scratch.cancel = false
 	testing.expect_value(t, history.count, 1)
-	picture_box_restore(&picture, before, second)
+	picture_copy_box(picture.pixels, before, WIDTH, second)
 	undone_box, undone := history_undo(&history, &picture, scratch)
 	testing.expect(t, undone && undone_box == first, "the step before the cancel undoes")
 	testing.expect_value(t, pixel_at(&picture, 5, 10), COLOR_PAPER)

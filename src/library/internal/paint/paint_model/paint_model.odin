@@ -32,6 +32,103 @@ Picture :: struct {
 	width:      int, // The extent: 0 to PICTURE_SIDE_LIMIT.
 	height:     int, // 0 to PICTURE_SIDE_LIMIT.
 	generation: u32, // Changes at each change of the pixels: the Picture record draws again.
+	// The copy before the change that runs, or nil: each tool that writes
+	// pixels gives it the box that it writes first (picture_touch).
+	before:     ^Copy_Before,
+}
+
+// The copy before a change, tile by tile (src/md/features/paint_application.md,
+// "The copy before a change"): the first write of a change in a tile of
+// COPY_TILE_SIDE pixels copies that tile, and a mark says it is copied. The
+// marks are reset at the end of the change. So a change copies the tiles
+// that it writes, never the whole picture, and a tile that it did not write
+// is still the state before it in the picture.
+COPY_TILE_SIDE :: 64
+// The tiles of the largest picture: a tile for each 64 x 64 pixels, and a
+// part tile at the end of each row and column.
+COPY_TILE_LIMIT :: PICTURE_PIXELS_LIMIT / (COPY_TILE_SIDE * COPY_TILE_SIDE) + 2 * (PICTURE_SIDE_LIMIT / COPY_TILE_SIDE) + 1
+
+Copy_Before :: struct {
+	pixels: []graphics.Color, // The copy: the memory of the caller, of the stride of the picture.
+	tiles:  [(COPY_TILE_LIMIT + 63) / 64]u64, // Bit n: tile n is copied for this change.
+	first:  int, // The marked tiles are in first to last: the reset clears them.
+	last:   int,
+	copied: int, // The tiles that the change copied: a measure.
+}
+
+// copy_before_touch copies each tile of a box of the picture that the copy
+// does not hold yet, and marks it.
+copy_before_touch :: proc "contextless" (copy_before: ^Copy_Before, picture: ^Picture, box: Box) {
+	cut := box_cut(picture, box)
+	width := picture.width
+	if box_empty(cut) || picture.height * width > len(copy_before.pixels) {
+		return
+	}
+	if copy_before.copied == 0 {
+		copy_before.first, copy_before.last = max(int), -1
+	}
+	tiles_across := (width + COPY_TILE_SIDE - 1) / COPY_TILE_SIDE
+	for tile_row in cut.top / COPY_TILE_SIDE ..= (cut.bottom - 1) / COPY_TILE_SIDE {
+		for tile_column in cut.left / COPY_TILE_SIDE ..= (cut.right - 1) / COPY_TILE_SIDE {
+			index := tile_row * tiles_across + tile_column
+			bit := u64(1) << u64(index % 64)
+			if copy_before.tiles[index / 64] & bit != 0 {
+				continue
+			}
+			copy_before.tiles[index / 64] |= bit
+			copy_before.first, copy_before.last = min(copy_before.first, index), max(copy_before.last, index)
+			copy_before.copied += 1
+			picture_copy_box(copy_before.pixels, picture.pixels, width, tile_box(picture, tile_row, tile_column))
+		}
+	}
+}
+
+@(private)
+tile_box :: proc "contextless" (picture: ^Picture, tile_row, tile_column: int) -> Box {
+	left, top := tile_column * COPY_TILE_SIDE, tile_row * COPY_TILE_SIDE
+	return {left, top, min(left + COPY_TILE_SIDE, picture.width), min(top + COPY_TILE_SIDE, picture.height)}
+}
+
+// copy_before_restore puts back the part of a box in each tile that the
+// copy holds: a change that stops gives back the picture before it. A tile
+// that the change did not copy, it did not write.
+copy_before_restore :: proc "contextless" (copy_before: ^Copy_Before, picture: ^Picture, box: Box) {
+	cut := box_cut(picture, box)
+	width := picture.width
+	if box_empty(cut) || copy_before.copied == 0 || picture.height * width > len(copy_before.pixels) {
+		return
+	}
+	tiles_across := (width + COPY_TILE_SIDE - 1) / COPY_TILE_SIDE
+	for tile_row in cut.top / COPY_TILE_SIDE ..= (cut.bottom - 1) / COPY_TILE_SIDE {
+		for tile_column in cut.left / COPY_TILE_SIDE ..= (cut.right - 1) / COPY_TILE_SIDE {
+			index := tile_row * tiles_across + tile_column
+			if copy_before.tiles[index / 64] & (u64(1) << u64(index % 64)) == 0 {
+				continue
+			}
+			tile := tile_box(picture, tile_row, tile_column)
+			part := Box{max(tile.left, cut.left), max(tile.top, cut.top), min(tile.right, cut.right), min(tile.bottom, cut.bottom)}
+			picture_copy_box(picture.pixels, copy_before.pixels, width, part)
+		}
+	}
+}
+
+// copy_before_reset clears the marks of the change that ended: the next
+// change copies its own tiles.
+copy_before_reset :: proc "contextless" (copy_before: ^Copy_Before) {
+	if copy_before.copied > 0 {
+		for &word in copy_before.tiles[copy_before.first / 64:copy_before.last / 64 + 1] {
+			word = 0
+		}
+	}
+	copy_before.copied = 0
+}
+
+// picture_touch gives the copy before the change that runs the box that a
+// tool writes next.
+picture_touch :: #force_inline proc "contextless" (picture: ^Picture, box: Box) {
+	if picture.before != nil {
+		copy_before_touch(picture.before, picture, box)
+	}
 }
 
 // picture_pixels_for gives the pixels of a picture of a size, or false for
@@ -89,6 +186,7 @@ picture_changed :: proc "contextless" (picture: ^Picture) {
 
 // picture_clear paints the extent with the paper.
 picture_clear :: proc "contextless" (picture: ^Picture) {
+	picture_touch(picture, {0, 0, picture.width, picture.height})
 	for &pixel in picture.pixels[:picture.width * picture.height] {
 		pixel = COLOR_PAPER
 	}
@@ -214,6 +312,17 @@ segment_draw :: proc "contextless" (picture: ^Picture, from_x, from_y, to_x, to_
 	if box_empty(box) {
 		return {}
 	}
+	// The copy takes the tiles along the segment, a piece of one tile side at
+	// a time: the box of a long diagonal holds many tiles that it never
+	// writes.
+	pieces := max(abs(x1 - x0), abs(y1 - y0)) / COPY_TILE_SIDE + 1
+	if picture.before != nil {
+		for piece in 0 ..< pieces {
+			start_x, start_y := x0 + (x1 - x0) * piece / pieces, y0 + (y1 - y0) * piece / pieces
+			end_x, end_y := x0 + (x1 - x0) * (piece + 1) / pieces, y0 + (y1 - y0) * (piece + 1) / pieces
+			picture_touch(picture, stroke_box(start_x, start_y, end_x, end_y, thickness))
+		}
+	}
 	graphics.line(picture_canvas(picture), x0, y0, x1, y1, thickness, color)
 	picture_changed(picture)
 	return box
@@ -234,7 +343,13 @@ rectangle_draw :: proc "contextless" (picture: ^Picture, from_x, from_y, to_x, t
 		return {}
 	}
 	width, height := shape.right - shape.left, shape.bottom - shape.top
-	graphics.outline(picture_canvas(picture), shape.left, shape.top, width, height, clamp(thickness, 1, max(min(width, height), 1)), color)
+	border := clamp(thickness, 1, max(min(width, height), 1))
+	// The copy takes the four borders, not the inside.
+	picture_touch(picture, {shape.left, shape.top, shape.right, shape.top + border})
+	picture_touch(picture, {shape.left, shape.bottom - border, shape.right, shape.bottom})
+	picture_touch(picture, {shape.left, shape.top, shape.left + border, shape.bottom})
+	picture_touch(picture, {shape.right - border, shape.top, shape.right, shape.bottom})
+	graphics.outline(picture_canvas(picture), shape.left, shape.top, width, height, border, color)
 	picture_changed(picture)
 	return box
 }
@@ -265,6 +380,7 @@ ellipse_draw :: proc "contextless" (picture: ^Picture, from_x, from_y, to_x, to_
 		left := int(center_x - outer_half + 0.5)
 		right := int(center_x + outer_half + 0.5)
 		if inner_x <= 0 || inner_y <= 0 || abs(across) >= inner_y {
+			picture_touch(picture, {left, row, right, row + 1})
 			graphics.fill(canvas, left, row, right - left, 1, color)
 			continue
 		}
@@ -272,6 +388,8 @@ ellipse_draw :: proc "contextless" (picture: ^Picture, from_x, from_y, to_x, to_
 		inner_left := int(center_x - inner_half + 0.5)
 		inner_right := int(center_x + inner_half + 0.5)
 		// A border is at least one pixel on each side.
+		picture_touch(picture, {left, row, left + max(inner_left - left, 1), row + 1})
+		picture_touch(picture, {min(inner_right, right - 1), row, min(inner_right, right - 1) + max(right - inner_right, 1), row + 1})
 		graphics.fill(canvas, left, row, max(inner_left - left, 1), 1, color)
 		graphics.fill(canvas, min(inner_right, right - 1), row, max(right - inner_right, 1), 1, color)
 	}
@@ -360,7 +478,8 @@ fill_region :: proc "contextless" (picture: ^Picture, x, y: int, color: graphics
 	}
 	painted := 0
 	// paint_run paints one run of a row, and adds it to the box.
-	paint_run :: #force_inline proc "contextless" (pixels: []graphics.Color, base, left, right, row: int, color: graphics.Color, changed: ^Box, painted: ^int) {
+	paint_run :: #force_inline proc "contextless" (picture: ^Picture, pixels: []graphics.Color, base, left, right, row: int, color: graphics.Color, changed: ^Box, painted: ^int) {
+		picture_touch(picture, {left, row, right + 1, row + 1})
 		for &pixel in pixels[base + left:base + right + 1] {
 			pixel = color
 		}
@@ -394,7 +513,7 @@ fill_region :: proc "contextless" (picture: ^Picture, x, y: int, color: graphics
 			for run_right + 1 < width && pixels[base + run_right + 1] == target {
 				run_right += 1
 			}
-			paint_run(pixels, base, run_left, run_right, row, color, &changed, &painted)
+			paint_run(picture, pixels, base, run_left, run_right, row, color, &changed, &painted)
 			ok := span_push(memory, run_left, run_right, row, direction, height)
 			if run_left < left {
 				ok &&= span_push(memory, run_left, left - 1, row, -direction, height)
@@ -422,7 +541,7 @@ fill_region :: proc "contextless" (picture: ^Picture, x, y: int, color: graphics
 			for run_right + 1 < width && pixels[base + run_right + 1] == target {
 				run_right += 1
 			}
-			paint_run(pixels, base, column, run_right, row, color, &changed, &painted)
+			paint_run(picture, pixels, base, column, run_right, row, color, &changed, &painted)
 			ok := span_push(memory, column, run_right, row, direction, height)
 			if run_right > right {
 				ok &&= span_push(memory, right + 1, run_right, row, -direction, height)
@@ -437,20 +556,6 @@ fill_region :: proc "contextless" (picture: ^Picture, x, y: int, color: graphics
 	return changed, .Done
 }
 
-// picture_box_restore copies the box of a copy of the picture, of the same
-// stride, back into the picture: a change that stops puts back what it
-// painted. A box outside either memory is cut to them.
-picture_box_restore :: proc "contextless" (picture: ^Picture, copy_pixels: []graphics.Color, box: Box) {
-	left, top := max(box.left, 0), max(box.top, 0)
-	right, bottom := min(box.right, picture.width), min(box.bottom, picture.height)
-	if right <= left || bottom <= top || bottom * picture.width > min(len(picture.pixels), len(copy_pixels)) {
-		return
-	}
-	for row in top ..< bottom {
-		start := row * picture.width
-		copy(picture.pixels[start + left:start + right], copy_pixels[start + left:start + right])
-	}
-}
 // The history of undo and redo (src/md/features/paint_application.md,
 // "The memory of the history"): a ring of steps in the memory of the
 // caller, bounded by one copy of the picture, and the one step that a
@@ -794,16 +899,27 @@ history_record :: proc "contextless" (history: ^History, before, after: []graphi
 // change. The extent never shrinks while the history lives, so the box of
 // a step is in it; a box outside it is a damaged step, refused. The extent
 // can be wider than at the record: the box names rows and columns, not
-// places in memory, so the step writes the same pixels.
+// places in memory, so the step writes the same pixels. A cancel (in the
+// scratch) stops it at a strip: in the check, nothing is written; in the
+// write, each strip is first saved into saved (memory of the stride of the
+// picture), and the saved strips are put back, so the picture is as
+// before. With no saved memory, a cancel stops the check only.
 @(private)
-history_part_apply :: proc "contextless" (picture: ^Picture, box: Box, part: []u8, scratch: ^History_Scratch) -> bool {
+history_part_apply :: proc "contextless" (picture: ^Picture, box: Box, part: []u8, scratch: ^History_Scratch, saved: []graphics.Color) -> bool {
 	if box_empty(box) || box.left < 0 || box.top < 0 || box.right > picture.width || box.bottom > picture.height {
 		return false
 	}
+	can_save := box.bottom * picture.width <= len(saved)
 	strip_bytes := ([^]u8)(raw_data(scratch.pixels[:]))[:HISTORY_STRIP_BYTES]
 	for pass in 0 ..< 2 {
 		at := 0
 		for top := box.top; top < box.bottom; top += strip_rows(box) {
+			if intrinsics.atomic_load(&scratch.cancel) && (pass == 0 || can_save) {
+				if pass == 1 {
+					picture_copy_box(picture.pixels, saved, picture.width, {box.left, box.top, box.right, top})
+				}
+				return false
+			}
 			strip := strip_of(box, top)
 			if at + HISTORY_BLOCK_HEAD_BYTES > len(part) {
 				return false
@@ -820,8 +936,12 @@ history_part_apply :: proc "contextless" (picture: ^Picture, box: Box, part: []u
 			}
 			at += length
 			if pass == 1 {
+				if can_save {
+					picture_copy_box(saved, picture.pixels, picture.width, strip)
+				}
 				box_unpack(picture.pixels, picture.width, strip, scratch.pixels[:])
 			}
+			intrinsics.atomic_add(&scratch.strips_done, 1)
 		}
 		if at != len(part) {
 			return false
@@ -831,9 +951,21 @@ history_part_apply :: proc "contextless" (picture: ^Picture, box: Box, part: []u
 	return true
 }
 
+// history_apply_strips gives the strips that an undo or a redo of a box
+// reads: each strip checked, then written.
+history_apply_strips :: proc "contextless" (box: Box) -> int {
+	if box_empty(box) {
+		return 0
+	}
+	rows := strip_rows(box)
+	return 2 * ((box.bottom - box.top + rows - 1) / rows)
+}
+
 // history_copy_exchange exchanges the box of the step in the copy between
-// the picture and the copy, row by row through the scratch. false: the
-// picture has another stride, or a memory does not hold the box; nothing
+// the picture and the copy, row by row through the scratch, a strip of
+// rows at a time. false: the picture has another stride, or a memory does
+// not hold the box, or a cancel stopped it; an exchange is its own
+// inverse, so a cancel exchanges back the rows that it did, and nothing
 // changed.
 @(private)
 history_copy_exchange :: proc "contextless" (history: ^History, picture: ^Picture, scratch: ^History_Scratch) -> bool {
@@ -843,22 +975,56 @@ history_copy_exchange :: proc "contextless" (history: ^History, picture: ^Pictur
 	   box.bottom * stride > min(len(picture.pixels), len(history.copy_pixels)) {
 		return false
 	}
-	width := box.right - box.left
-	row_bytes := width * size_of(graphics.Color)
-	for row in box.top ..< box.bottom {
-		start := row * stride + box.left
-		intrinsics.mem_copy_non_overlapping(&scratch.pixels[0], &picture.pixels[start], row_bytes)
-		intrinsics.mem_copy_non_overlapping(&picture.pixels[start], &history.copy_pixels[start], row_bytes)
-		intrinsics.mem_copy_non_overlapping(&history.copy_pixels[start], &scratch.pixels[0], row_bytes)
+	row_bytes := (box.right - box.left) * size_of(graphics.Color)
+	exchange_rows :: proc "contextless" (history: ^History, picture: ^Picture, scratch: ^History_Scratch, top, bottom, row_bytes: int) {
+		for row in top ..< bottom {
+			start := row * history.copy_stride + history.copy_box.left
+			intrinsics.mem_copy_non_overlapping(&scratch.pixels[0], &picture.pixels[start], row_bytes)
+			intrinsics.mem_copy_non_overlapping(&picture.pixels[start], &history.copy_pixels[start], row_bytes)
+			intrinsics.mem_copy_non_overlapping(&history.copy_pixels[start], &scratch.pixels[0], row_bytes)
+		}
+	}
+	for top := box.top; top < box.bottom; top += strip_rows(box) {
+		if intrinsics.atomic_load(&scratch.cancel) {
+			exchange_rows(history, picture, scratch, box.top, top, row_bytes)
+			return false
+		}
+		exchange_rows(history, picture, scratch, top, min(top + strip_rows(box), box.bottom), row_bytes)
+		intrinsics.atomic_add(&scratch.strips_done, 2)
 	}
 	picture_changed(picture)
 	return true
 }
 
+// history_undo_box gives the box of the change that undo puts back.
+history_undo_box :: proc "contextless" (history: ^History) -> (box: Box, ok: bool) {
+	switch {
+	case history.done == 0:
+		return {}, false
+	case history.in_copy:
+		return history.copy_box, true
+	}
+	return history_head(history, history.applied).box, true
+}
+
+// history_redo_box gives the box of the change that redo applies again.
+history_redo_box :: proc "contextless" (history: ^History) -> (box: Box, ok: bool) {
+	switch {
+	case history.done >= history.count:
+		return {}, false
+	case history.in_copy:
+		return history.copy_box, true
+	}
+	place := history.done == 0 ? history.oldest : history_head(history, history.applied).next
+	return history_head(history, place).box, true
+}
+
 // history_undo puts back the pixels before the last applied change, and
-// gives its box. false: no change to undo, or a damaged step; nothing
-// changed.
-history_undo :: proc "contextless" (history: ^History, picture: ^Picture, scratch: ^History_Scratch) -> (box: Box, ok: bool) {
+// gives its box. false: no change to undo, a damaged step, or a cancel
+// (in the scratch); nothing changed. saved: memory of the stride of the
+// picture that a cancel during the write uses (history_part_apply).
+history_undo :: proc "contextless" (history: ^History, picture: ^Picture, scratch: ^History_Scratch, saved: []graphics.Color = nil) -> (box: Box, ok: bool) {
+	intrinsics.atomic_store(&scratch.strips_done, 0)
 	if history.done == 0 {
 		return {}, false
 	}
@@ -870,7 +1036,7 @@ history_undo :: proc "contextless" (history: ^History, picture: ^Picture, scratc
 		return history.copy_box, true
 	}
 	head := history_head(history, history.applied)
-	if !history_part_apply(picture, head.box, history.ring[history.applied + size_of(History_Head):][:head.before_bytes], scratch) {
+	if !history_part_apply(picture, head.box, history.ring[history.applied + size_of(History_Head):][:head.before_bytes], scratch, saved) {
 		return {}, false
 	}
 	history.applied = head.previous
@@ -879,8 +1045,9 @@ history_undo :: proc "contextless" (history: ^History, picture: ^Picture, scratc
 }
 
 // history_redo applies again the first undone change, and gives its box.
-// false: no change to redo, or a damaged step; nothing changed.
-history_redo :: proc "contextless" (history: ^History, picture: ^Picture, scratch: ^History_Scratch) -> (box: Box, ok: bool) {
+// false: no change to redo, a damaged step, or a cancel; nothing changed.
+history_redo :: proc "contextless" (history: ^History, picture: ^Picture, scratch: ^History_Scratch, saved: []graphics.Color = nil) -> (box: Box, ok: bool) {
+	intrinsics.atomic_store(&scratch.strips_done, 0)
 	if history.done >= history.count {
 		return {}, false
 	}
@@ -893,7 +1060,7 @@ history_redo :: proc "contextless" (history: ^History, picture: ^Picture, scratc
 	}
 	place := history.done == 0 ? history.oldest : history_head(history, history.applied).next
 	head := history_head(history, place)
-	if !history_part_apply(picture, head.box, history.ring[place + size_of(History_Head) + head.before_bytes:][:head.after_bytes], scratch) {
+	if !history_part_apply(picture, head.box, history.ring[place + size_of(History_Head) + head.before_bytes:][:head.after_bytes], scratch, saved) {
 		return {}, false
 	}
 	history.applied = place

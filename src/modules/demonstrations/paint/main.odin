@@ -143,6 +143,9 @@ backup_arena: system.Arena
 fill_arena: system.Arena
 history_arena: system.Arena
 backup_pixels: []graphics.Color // The picture before the change in progress: the memory of backup_arena.
+// The copy before the change in progress, tile by tile, in backup_pixels:
+// the picture points to it while a change runs (change_begin).
+copy_before: paint_model.Copy_Before
 history_scratch: paint_model.History_Scratch
 fill_memory: paint_model.Fill_Memory
 // The bytes of one piece of a keep, and the header of a read: the job of
@@ -404,29 +407,45 @@ extend :: proc "c" (width, height: i64, error: ^errors.Error_Record) -> i64 {
 lines :: proc "c" () -> i64 {
 	return drawn
 }
-// change_begin keeps a copy of the picture before a change, for its step
-// of undo.
+// change_begin starts the copy before a change, for its step of undo: each
+// tool copies the tiles that it writes, at their first write, so the window
+// never copies the whole picture ("The copy before a change").
 change_begin :: proc "contextless" () {
 	// The copy serves this change: a step of the history that it held goes.
 	paint_model.history_copy_reused(&history)
-	count := picture.width * picture.height
-	copy(backup_pixels[:count], picture.pixels[:count])
+	copy_before.pixels = backup_pixels
+	picture.before = &copy_before
+}
+
+// change_finish ends the copy of a change: the marks of its tiles go, and a
+// write after it (a call of the console) copies nothing.
+change_finish :: proc "contextless" () {
+	picture.before = nil
+	paint_model.copy_before_reset(&copy_before)
 }
 
 // change_end keeps the step of undo of the pixels that a change touched.
 // A large box is compressed on the worker of the changes, and the window
 // stays responsive ("A long change runs on a worker").
 change_end :: proc "contextless" (changed: paint_model.Box) {
-	if (changed.right - changed.left) * (changed.bottom - changed.top) > RECORD_ON_THE_WINDOW_PIXELS {
+	if box_pixels(changed) > LONG_CHANGE_PIXELS {
 		change_ask({kind = .Record, box = changed})
 		return
 	}
+	// The tiles of the box that the change did not write are still the
+	// picture before it: the copy takes them, then holds the whole box.
+	paint_model.copy_before_touch(&copy_before, &picture, changed)
 	picture_changed_rows(changed)
 	switch paint_model.history_record(&history, backup_pixels, picture.pixels, picture.width, changed, history_bound(), &history_scratch) {
 	case .Kept, .Empty, .Cancelled:
 	case .Refused:
 		message = "this change cannot be undone: its box is outside the picture"
 	}
+	change_finish()
+}
+
+box_pixels :: proc "contextless" (box: paint_model.Box) -> int {
+	return paint_model.box_empty(box) ? 0 : (box.right - box.left) * (box.bottom - box.top)
 }
 
 // history_bound gives the bound of the history: one copy of the picture.
@@ -435,34 +454,40 @@ history_bound :: proc "contextless" () -> int {
 }
 
 // The long changes (src/md/features/paint_application.md, "A long change
-// runs on a worker"): a fill, then the record of its step; or the record
-// of the step of a change with a large box. Their work grows with the
-// picture, past one frame on a large one, so they run on the worker of the
-// changes, and the window draws their progress and takes Escape. While one
-// runs, nothing else reads or writes the picture, its copy, the history or
-// the stack of the fill: a stroke, an undo, a growth, the store and the
+// runs on a worker"): a fill, then the record of its step; the clear of a
+// large picture, then its record; the record of the step of a change with
+// a large box; the undo or the redo of a large step. Their work grows with
+// the picture, past one frame on a large one, so they run on the worker of
+// the changes, and the window draws their progress and takes Escape. While
+// one runs, nothing else reads or writes the picture, its copy, the history
+// or the stack of the fill: a stroke, an undo, a growth, the store and the
 // calls of the console wait (change_running).
 Change_Kind :: enum u8 {
 	Fill   = 0,
 	Record = 1,
+	Clear  = 2,
+	Undo   = 3,
+	Redo   = 4,
 }
 
 Change_Job :: struct {
 	kind:           Change_Kind,
-	picture:        paint_model.Picture, // A copy of the record of the picture: its pixels are the picture's.
+	picture:        paint_model.Picture, // A copy of the record of the picture: its pixels and its copy are the picture's.
 	x, y:           int, // Fill: the point.
 	color:          graphics.Color, // Fill: the color.
 	bound:          int, // The bound of the history.
-	box:            paint_model.Box, // Record: the box of the change; Fill: the box that it painted.
+	box:            paint_model.Box, // The box of the change; Fill: the box that it painted.
 	fill_outcome:   paint_model.Fill_Outcome,
 	record_outcome: paint_model.Record_Outcome,
+	applied:        bool, // Undo, Redo: the step was applied.
 	recording:      bool, // Set by the worker when the record starts (atomic): the progress line reads it.
 }
 
-// The pixels of a box whose record runs on the window: LZ4 compresses
-// about 22.8 million pixels in 34 to 42 ms (measured, an optimized build),
-// so 262 144 pixels take under half a millisecond, far inside a frame.
-RECORD_ON_THE_WINDOW_PIXELS :: 1 << 18
+// The pixels of a box past which a change runs on the worker: LZ4
+// compresses about 22.8 million pixels in 34 to 42 ms, and an undo puts
+// them back in 13 to 20 ms (measured, an optimized build), so 262 144
+// pixels take under half a millisecond, far inside a frame.
+LONG_CHANGE_PIXELS :: 1 << 18
 // The wake of the loop while a change runs: its progress line moves.
 PROGRESS_WAKE_MILLISECONDS :: 100
 
@@ -478,19 +503,34 @@ change_running :: proc "contextless" () -> bool {
 // no worker, on the window.
 change_job_run :: proc "contextless" (parameter: rawptr) {
 	job := &change_job
-	if job.kind == .Fill {
+	switch job.kind {
+	case .Undo:
+		// The copy before a change is free: no change runs. It keeps each
+		// strip before the undo writes it, so a cancel puts them back.
+		_, job.applied = paint_model.history_undo(&history, &job.picture, &history_scratch, backup_pixels)
+		return
+	case .Redo:
+		_, job.applied = paint_model.history_redo(&history, &job.picture, &history_scratch, backup_pixels)
+		return
+	case .Fill:
 		job.box, job.fill_outcome = paint_model.fill_region(&job.picture, job.x, job.y, job.color, &fill_memory)
 		if job.fill_outcome != .Done || paint_model.box_empty(job.box) {
 			return
 		}
+	case .Clear:
+		paint_model.picture_clear(&job.picture)
+	case .Record:
 	}
+	// The tiles of the box that the change did not write are still the
+	// picture before it: the copy takes them, then holds the whole box.
+	paint_model.copy_before_touch(&copy_before, &job.picture, job.box)
 	intrinsics.atomic_store(&job.recording, true)
 	job.record_outcome = paint_model.history_record(&history, backup_pixels, job.picture.pixels, job.picture.width, job.box, job.bound, &history_scratch)
 }
 
 // change_ask starts a long change: on the worker of the changes, or on
-// the window when there is no worker. The caller made the copy before it
-// (change_begin).
+// the window when there is no worker. A change that writes the picture
+// started its copy before (change_begin).
 change_ask :: proc "contextless" (job: Change_Job) {
 	change_job = job
 	change_job.picture = picture
@@ -506,33 +546,48 @@ change_ask :: proc "contextless" (job: Change_Job) {
 	change_taken()
 }
 
-// change_cancel asks the long change that runs to stop: the window puts
-// its box back at the take.
+// change_cancel asks the long change that runs to stop: a fill, a clear
+// or a record is put back at the take; an undo or a redo puts back what
+// it wrote itself.
 change_cancel :: proc "contextless" () {
 	intrinsics.atomic_store(&fill_memory.cancel, true)
 	intrinsics.atomic_store(&history_scratch.cancel, true)
 }
 
-// change_taken takes the result of a long change, on the window. A fill
-// or a record that stopped puts the box back from the copy before it: the
+// change_taken takes the result of a long change, on the window. A fill,
+// a clear or a record that stopped puts back the tiles that it copied: the
 // picture is as before the change, and the history keeps no step of it.
 change_taken :: proc "contextless" () {
 	job := &change_job
-	stopped := job.kind == .Fill && job.fill_outcome != .Done || job.record_outcome == .Cancelled
-	switch {
-	case stopped:
-		paint_model.picture_box_restore(&picture, backup_pixels, job.box)
-		if job.kind == .Fill && job.fill_outcome == .No_Memory {
-			message = "this fill needs more memory than the budget of paint pays: the picture stays"
-		} else {
+	cancelled := intrinsics.atomic_load(&history_scratch.cancel)
+	switch job.kind {
+	case .Undo, .Redo:
+		switch {
+		case job.applied:
+			picture_changed_rows(job.box)
+		case cancelled:
 			message = "cancelled: the picture stays"
+		case:
+			message = job.kind == .Undo ? "this step of undo is damaged" : "this step of redo is damaged"
 		}
-	case paint_model.box_empty(job.box):
-	case:
-		picture_changed_rows(job.box)
-		if job.record_outcome == .Refused {
-			message = "this change cannot be undone: its box is outside the picture"
+	case .Fill, .Clear, .Record:
+		stopped := job.kind == .Fill && job.fill_outcome != .Done || job.record_outcome == .Cancelled
+		switch {
+		case stopped:
+			paint_model.copy_before_restore(&copy_before, &picture, job.box)
+			if job.kind == .Fill && job.fill_outcome == .No_Memory {
+				message = "this fill needs more memory than the budget of paint pays: the picture stays"
+			} else {
+				message = "cancelled: the picture stays"
+			}
+		case paint_model.box_empty(job.box):
+		case:
+			picture_changed_rows(job.box)
+			if job.record_outcome == .Refused {
+				message = "this change cannot be undone: its box is outside the picture"
+			}
 		}
+		change_finish()
 	}
 	paint_model.picture_changed(&picture)
 	// A cancel asked for this change ends with it: a record on the window
@@ -551,9 +606,15 @@ picture_clear_as_step :: proc "contextless" () {
 		return
 	}
 	change_begin()
+	drawn = 0
+	// A clear writes, and so copies, the whole picture: on a large one it is
+	// a long change.
+	if box_pixels({0, 0, picture.width, picture.height}) > LONG_CHANGE_PIXELS {
+		change_ask({kind = .Clear, box = {0, 0, picture.width, picture.height}})
+		return
+	}
 	paint_model.picture_clear(&picture)
 	change_end({0, 0, picture.width, picture.height})
-	drawn = 0
 }
 
 // undo and redo are refused during a drag: the drag holds the copy of
@@ -568,6 +629,11 @@ undo :: proc "contextless" () {
 	}
 	if !paint_model.history_can_undo(&history) {
 		message = "nothing to undo"
+		return
+	}
+	// A large step undoes on the worker of the changes.
+	if box, _ := paint_model.history_undo_box(&history); box_pixels(box) > LONG_CHANGE_PIXELS {
+		change_ask({kind = .Undo, box = box})
 		return
 	}
 	box, undone := paint_model.history_undo(&history, &picture, &history_scratch)
@@ -587,6 +653,10 @@ redo :: proc "contextless" () {
 	}
 	if !paint_model.history_can_redo(&history) {
 		message = "nothing to redo"
+		return
+	}
+	if box, _ := paint_model.history_redo_box(&history); box_pixels(box) > LONG_CHANGE_PIXELS {
+		change_ask({kind = .Redo, box = box})
 		return
 	}
 	box, redone := paint_model.history_redo(&history, &picture, &history_scratch)
@@ -895,6 +965,7 @@ arena_hold :: proc "contextless" (arena: ^system.Arena, bytes: int) -> system.St
 picture_memory_take :: proc "contextless" () {
 	picture.pixels = ([^]graphics.Color)(picture_arena.base)[:picture_arena.used_bytes / size_of(graphics.Color)]
 	backup_pixels = ([^]graphics.Color)(backup_arena.base)[:backup_arena.used_bytes / size_of(graphics.Color)]
+	copy_before.pixels = backup_pixels
 	picture_memories[0] = picture.pixels
 }
 
@@ -1606,11 +1677,17 @@ status_text :: proc "contextless" (builder: ^interface.Text_Builder) -> string {
 	// stroke, an undo or a call waits for it, and this line says why.
 	if change_running() {
 		interface.text_put(builder, " | ")
-		if intrinsics.atomic_load(&change_job.recording) {
+		done := intrinsics.atomic_load(&history_scratch.strips_done)
+		if change_job.kind == .Undo || change_job.kind == .Redo {
+			interface.text_put(builder, change_job.kind == .Undo ? "undoing: " : "redoing: ")
+			interface.text_put_number(builder, u64(min(done * 100 / max(paint_model.history_apply_strips(change_job.box), 1), 100)))
+			interface.text_put(builder, " %")
+		} else if intrinsics.atomic_load(&change_job.recording) {
 			interface.text_put(builder, "keeping the step of undo: ")
-			done := intrinsics.atomic_load(&history_scratch.strips_done)
 			interface.text_put_number(builder, u64(min(done * 100 / max(paint_model.history_record_strips(change_job.box), 1), 100)))
 			interface.text_put(builder, " %")
+		} else if change_job.kind == .Clear {
+			interface.text_put(builder, "clearing")
 		} else {
 			interface.text_put(builder, "filling: ")
 			interface.text_put_number(builder, u64(intrinsics.atomic_load(&fill_memory.painted)))
