@@ -151,11 +151,14 @@ REGION_PAGES :: 16
 //               service refuses each call that changes what it keeps. The
 //               root service sets it on the connection through which the
 //               debugger service reads the debug object of a disk process.
-//               Bits 48 to 62 (CALLER_PRINCIPAL_MASK): the number of the
+//               Bits 48 to 61 (CALLER_PRINCIPAL_MASK): the number of the
 //               principal whose session the caller belongs to
 //               (docs/PRINCIPALS.md): 0 is the machine, 1 and more a named
 //               principal. It is a fact of the connection, not a grant: a
 //               service can name it in what it records.
+//               Bit 62 (CALLER_RECOUNTS): the storage service lets the
+//               caller ask for a recount of the count tree of its disk
+//               (the start grant Recount). Another service ignores it.
 //               Bit 63 (CALLER_ACTS_FOR_PRINCIPAL): the caller acts for that
 //               principal, and can see what the service holds for all
 //               callers. A caller without it sees what is its own only.
@@ -195,8 +198,9 @@ CALLER_AMOUNT_MASK :: u64(1) << 46 - 1 // The bits of the amount in values[6]: b
 CALLER_ERASES_VERSIONS :: u64(1) << 46 // The bit of values[6] set when the caller may erase the versions of its objects.
 CALLER_READS_ONLY :: u64(1) << 47 // The bit of values[6] set when the connection reads only.
 CALLER_PRINCIPAL_SHIFT :: 48 // The first bit of the number of the principal in values[6].
-CALLER_PRINCIPAL_LIMIT :: u64(1) << 15 // The numbers of principals that the field holds: 0 to 32767.
-CALLER_PRINCIPAL_MASK :: (CALLER_PRINCIPAL_LIMIT - 1) << CALLER_PRINCIPAL_SHIFT // The bits of the number of the principal in values[6]: bits 48 to 62.
+CALLER_PRINCIPAL_LIMIT :: u64(1) << 14 // The numbers of principals that the field holds: 0 to 16383.
+CALLER_PRINCIPAL_MASK :: (CALLER_PRINCIPAL_LIMIT - 1) << CALLER_PRINCIPAL_SHIFT // The bits of the number of the principal in values[6]: bits 48 to 61.
+CALLER_RECOUNTS :: u64(1) << 62 // The bit of values[6] set when the caller may ask the storage service for a recount.
 CALLER_ACTS_FOR_PRINCIPAL :: u64(1) << 63 // The bit of values[6] set when the caller acts for its principal.
 
 // caller_principal gives the number of the principal that a grant of

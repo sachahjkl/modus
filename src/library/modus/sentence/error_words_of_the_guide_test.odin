@@ -162,6 +162,11 @@ a_change_during_a_repair_of_the_counts :: proc(t: ^testing.T) {
 	record = errors.error_make(.Busy, .Requests, 0, 3, 7, 0)
 	error_text(&writer, &record, "storage.write", "")
 	testing.expect(t, !strings.contains(written(&writer), "repair"))
+	// A recount names the recount and its progress.
+	writer = Writer{buffer = buffer[:]}
+	record = errors.error_make(.Busy, .Count_Recount, 0, 3, 7, 0)
+	error_text(&writer, &record, "storage.write", "")
+	testing.expect_value(t, written(&writer), "storage.write: the storage service makes no change while it counts again the names of the blocks of its disk: it walked 3 of 7 stores; the call can be made again after the recount")
 }
 
 // A refusal under a lock of the plan names the plan as its fix, never the

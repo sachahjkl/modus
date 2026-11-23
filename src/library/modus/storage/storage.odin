@@ -150,20 +150,22 @@ connected :: proc "contextless" (client: ^Client) -> bool {
 
 // The most milliseconds that a call waits while the storage service
 // repairs the counts of the blocks of its disk, and the time between two
-// tries. Past the bound the caller gets the refusal Busy, unit Count_Repair,
-// whose sentence gives the progress of the repair.
+// tries. Past the bound the caller gets the refusal Busy, unit Count_Repair
+// or Count_Recount, whose sentence names the repair or the recount and gives
+// its progress.
 REPAIR_WAIT_BOUND_MILLISECONDS :: 60_000
 REPAIR_RETRY_MILLISECONDS :: 100
 
 // repair_retry says if a call that the storage service answered is made
-// again: a refusal Busy with the unit Count_Repair (the service makes no
-// change while it repairs its counts) before the bound. wait is the time
+// again: a refusal Busy with the unit Count_Repair or Count_Recount (the
+// service makes no change while it repairs or recounts its counts) before
+// the bound. wait is the time
 // to the next try.
 repair_retry :: proc "contextless" (status: storage_status.Status, outcome: call_outcome.Call_Outcome, record: ^errors.Error_Record, waited_milliseconds: u64) -> (retry: bool, wait_milliseconds: u64) {
 	if status != .Failed || outcome != .Callee_Busy {
 		return false, 0
 	}
-	if record.kind != i64(errors.Kind.Busy) || record.unit != i64(errors.Unit.Count_Repair) {
+	if record.kind != i64(errors.Kind.Busy) || record.unit != i64(errors.Unit.Count_Repair) && record.unit != i64(errors.Unit.Count_Recount) {
 		return false, 0
 	}
 	if waited_milliseconds >= REPAIR_WAIT_BOUND_MILLISECONDS {
@@ -712,6 +714,16 @@ Usage :: struct {
 // when the tree of a share needs more reads to count than one call makes,
 // or a block of it is wrong.
 USAGE_NOT_COUNTED :: -1
+
+// recount asks the storage service for a recount of the names of the
+// blocks of its disk, which frees the blocks that only names of no state
+// hold. It gives the leaves of the count tree that wait for it: 0 when none
+// waits, and nothing starts. Only a process with the start grant Recount
+// may ask (Failed with No_Grant, unit Count_Recount).
+recount :: proc "contextless" (client: ^Client, error: ^errors.Error_Record = nil) -> (leaves: i64, status: storage_status.Status) {
+	leaves, _, status, _ = call(client, "recount", nil, error)
+	return leaves, status
+}
 
 // usage gives the counts of the store of the connection.
 usage :: proc "contextless" (client: ^Client) -> (counts: Usage, status: storage_status.Status) {

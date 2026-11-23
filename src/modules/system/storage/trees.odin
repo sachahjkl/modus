@@ -1236,9 +1236,11 @@ removal_step :: proc "contextless" () -> bool {
 		if outcome == .Device {
 			plan.device = true
 		} else if outcome == .Wrong || !format.release_list_valid(list) {
-			// A wrong list: its states and the lists after it keep their
-			// blocks until the next open, which does not count under it
-			// either. The entry goes, the rest of the store stays.
+			// A wrong list: its states and the lists after it keep names
+			// that no state holds; the commit starts a recount of the count
+			// tree (recount_record), and the open of the form Tables does
+			// not count under it either. The entry goes, the rest of the
+			// store stays.
 			storage_mount.wrong_block_set(&opened, queued.pointer.block)
 			delta_add(queued.pointer.block, -1)
 			tree.remove(&queue.work, queued_name[:])

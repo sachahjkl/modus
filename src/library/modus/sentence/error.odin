@@ -450,6 +450,16 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 			write_part(writer, " stores; the call can be made again after the repair")
 			break
 		}
+		if record.unit == i64(errors.Unit.Count_Recount) {
+			// A refusal for a time: a recount frees the blocks that names of no
+			// state held, and ends by itself.
+			write_part(writer, "the storage service makes no change while it counts again the names of the blocks of its disk: it walked ")
+			write_part(writer, record.value)
+			write_part(writer, " of ")
+			write_part(writer, record.limit)
+			write_part(writer, " stores; the call can be made again after the recount")
+			break
+		}
 		if record.value != 0 {
 			write_part(writer, record.value)
 			write_part(writer, " requests of this kind are in flight; the receiver takes at most ")

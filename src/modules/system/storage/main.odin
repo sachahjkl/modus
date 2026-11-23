@@ -120,6 +120,7 @@ Caller :: struct {
 	principal:  u64, // The principal of the session of the caller (isolated.caller_principal).
 	read_only:  bool,
 	erases_versions: bool, // The root service gave it the grant Versions_Erase (isolated.CALLER_ERASES_VERSIONS).
+	recounts:   bool, // The root service gave it the grant Recount (isolated.CALLER_RECOUNTS).
 	depth:      int,
 	path:       [NESTING_LIMIT]Entry_Name, // The root of the connection.
 }
@@ -173,6 +174,7 @@ caller_of :: proc "contextless" () -> (caller: Caller) {
 		caller.read_only = connection.grant & isolated.CALLER_READS_ONLY != 0
 		// A share never has it: the field stays false below.
 		caller.erases_versions = connection.grant & isolated.CALLER_ERASES_VERSIONS != 0
+		caller.recounts = connection.grant & isolated.CALLER_RECOUNTS != 0
 		return caller
 	}
 	store, _, found := connection_store(item.maker, 0)
@@ -904,6 +906,24 @@ stores :: proc "c" (result: ^[]u8, error: ^errors.Error_Record) -> (outcome: cal
 	return .Succeeded, i64(writer.count + writer.dropped)
 }
 
+// recount asks for a recount of the count tree of the disk: a release or a dropped version that met a wrong block left names that no state holds, and their blocks stay in use until the service counts each name of their leaves again. With no request, the recount starts when the free blocks of the disk fall under a sixteenth of it. It starts when no call and no removal waits, and when the disk has a free block for each page of its tally (one for each leaf in use): after a recount that found no room, none starts until the free blocks grow. It walks each store: during the walk the service serves reads, and refuses each change with Busy, unit Count_Recount, with the stores walked and the stores in all. Only a process with the start grant Recount may ask, as a recount refuses the changes of every caller. A request that a failure of the recount ends is not made again. The result is the leaves of the count tree that wait for a recount: 0 when none waits, and nothing starts (a disk whose tables of each block fit in the memory of the service counts each name at its open).
+//
+// **Error kinds**
+//
+// - `No_Grant` (Grant_Or_Right_Missing, unit Count_Recount: the caller has no start grant Recount);
+// - `Device` (Callee_Unavailable: the disk went silent before the open).
+@(export, link_name = "recount")
+recount :: proc "c" (error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if refused, refusal := disk_unopened_refusal(error); refused {
+		return refusal, 0
+	}
+	caller := caller_of()
+	if !caller.recounts {
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Count_Recount)
+	}
+	return .Succeeded, i64(recount_ask())
+}
+
 // ---------------------------------------------------------------------
 // The exports of versions.
 
@@ -1381,10 +1401,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		disk_open()
 	}
 	// A removal that waits runs when no call waits, and a step of a repair
-	// after each round of calls; a service that makes no change runs none,
-	// and waits.
+	// after each round of calls; a run of a recount starts when no call and
+	// no removal waits; a service that makes no change runs none, and waits.
 	for {
-		if broken || !removal_waits() && !repair_waits() {
+		if broken || !removal_waits() && !repair_waits() && !recount_waits() {
 			wait: system.Wait
 			system.service_wait(&wait, &service)
 			for &item in shares {
@@ -1405,11 +1425,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		// A step of a repair runs after each round of calls, so a service
 		// that is never idle still ends its repair; a removal runs when no
-		// call waits.
+		// call waits, and a run of a recount when no removal waits either.
 		if repair_waits() {
 			repair_step()
 		} else if calls == 0 {
-			removal_step()
+			if !removal_step() && recount_waits() {
+				repair_step()
+			}
 		}
 	}
 }
@@ -1455,6 +1477,9 @@ disk_open :: proc "contextless" () {
 	switch {
 	case mounted.failed && mounted.no_memory:
 		// The open said why: No_Table_Memory.
+		system.stop(.Failed)
+	case mounted.failed && mounted.older_format:
+		system.log_fact(.Error, Disk_Of_An_Older_Format{})
 		system.stop(.Failed)
 	case mounted.failed && mounted.larger_than_capacity:
 		system.log_fact(.Error, Root_Larger_Than_Tables{used_blocks = blocks_field(table_blocks_held)})
@@ -1503,6 +1528,7 @@ disk_open :: proc "contextless" () {
 				system.log_fact(.Error, Engine_Fault{named_twice = u64(mounted.named_twice), named_by_two_stores = u64(mounted.named_by_two_stores), reference_overflow = u64(mounted.reference_overflow), faulty_stores = faulty})
 			}
 		}
+		recount_waits_say()
 		if mounted.stores_recounted != 0 || mounted.stores_with_wrong_count != 0 {
 			system.log_fact(.Warning, Store_Counts_Differ{stores_recounted = mounted.stores_recounted, stores_with_wrong_count = mounted.stores_with_wrong_count})
 		}

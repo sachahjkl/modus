@@ -252,6 +252,11 @@ grant_for :: proc "contextless" (caller: ^Started, service: ^Started) -> u64 {
 		if amount != 0 && .Versions_Erase in start_grant_set.grants {
 			grant |= isolated.CALLER_ERASES_VERSIONS
 		}
+		// A recount refuses the changes of each caller while it walks: only
+		// the holder of this grant asks for one.
+		if .Recount in start_grant_set.grants {
+			grant |= isolated.CALLER_RECOUNTS
+		}
 		return grant
 	}
 	amount := role_policy.display_caller_amount(&role_holder_names, service_name, system.name_of(caller.name[:]), start_grant_set.asks_acts)

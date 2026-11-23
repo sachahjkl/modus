@@ -288,6 +288,10 @@ State :: struct {
 	// The repair of the wrong leaves of the count tree (the form
 	// Count_Tree; count_repair.odin).
 	repair:        Repair,
+	// The record of a recount (recount_record_decide): a commit since the
+	// open left names that no state holds, or the form Tables wrote 0.
+	recount_dead_since_open:    bool,
+	recount_cleared_since_open: bool,
 }
 
 // What the open of a disk found: the counts, the damage, which root it
@@ -308,6 +312,7 @@ Mount :: struct {
 	older:           bool, // The newest root named a wrong block and the root before it names none: the root before it is used.
 	cut:             u64, // Not 0: the generation that a root with a wrong check gives; the open does not use it.
 	failed:          bool, // No root is usable, or the device reported an error.
+	older_format:    bool, // A root place holds the mark of an earlier format and no root of this one: the disk is refused whole.
 	versions:        u64, // The versions of all the objects.
 	damaged_versions: u64, // Versions with a wrong object node or a wrong block of data, or in a wrong leaf.
 	shared:          u64, // Blocks with a reference count of 2 or more.
@@ -468,6 +473,7 @@ state_bind :: proc "contextless" (state: ^State, memory: []u8, blocks: u64, hash
 	state.count_staged_slots = slots[layout.cache_slots:]
 	state.leaves_to_write = ([^]u64)(&base[layout.leaves])[:layout.leaf_words]
 	state.repair.nodes_per_step = REPAIR_NODES_PER_STEP
+	state.repair.tally_names_most = TALLY_NAMES_MOST
 	state.hash_index.records = ([^]Root_Record)(&base[layout.hash_records])[:layout.hash_capacity]
 	state.hash_index.slots = ([^]u64)(&base[layout.hash_slots])[:layout.hash_capacity]
 	state.hash_index.slot_bits = 0
@@ -595,6 +601,18 @@ wrong_block_set :: proc "contextless" (state: ^State, number: u64) {
 	case .Count_Tree:
 		block_set_add(state, state.wrong_set, &state.wrong_set_count, number)
 	}
+}
+
+// wrong_set_has_room says if the set of the wrong blocks takes one more
+// with no stop of the changes: the form Tables has a bit for each block.
+wrong_set_has_room :: proc "contextless" (state: ^State) -> bool {
+	switch state.form {
+	case .Tables:
+		return true
+	case .Count_Tree:
+		return 2 * (state.wrong_set_count + 1) <= len(state.wrong_set)
+	}
+	return false
 }
 
 // damaged_under says if the block tree under a block has a wrong block.
@@ -1100,6 +1118,12 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 	// come from its own walk.
 	state.repair.running, state.repair.wait_for_call, state.repair.no_room = false, false, false
 	state.repair.leaf_count = 0
+	state.repair.recount, state.repair.recount_writing, state.repair.recount_requested = false, false, false
+	state.repair.recount_settled, state.repair.recount_ended = false, false
+	state.repair.recount_blocked, state.repair.recount_room_said, state.repair.recount_damage_stopped = false, false, false
+	state.repair.tally_name_count = 0
+	state.repair.leaf_count = 0
+	state.recount_dead_since_open, state.recount_cleared_since_open = false, false
 	if !count_tree_bind(state, reader, candidate) {
 		return false
 	}
@@ -1148,6 +1172,13 @@ walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^fo
 	case .Tables:
 		return walk_count_tree(state, candidate, result)
 	case .Count_Tree:
+		// The top directory names the leaves that wait for a recount. A wrong
+		// top is found here as at any read: the service stops its changes.
+		if candidate.counts.block != 0 {
+			if _, outcome := block_counts.page_get(&state.counts, state.counts.levels, 0); outcome == .Device {
+				return false
+			}
+		}
 	}
 	return true
 }
@@ -1807,6 +1838,13 @@ mount :: proc "contextless" (state: ^State, reader: ^Block_Reader, disk_blocks: 
 	// block 0 of zero bytes says that no commit followed the first root:
 	// the disk holds no object. A first root with a wrong check is then a
 	// format that a stop cut.
+	// A disk of an earlier format is not read, and is never taken for a new
+	// disk: a format would end its objects.
+	if !format.root_valid(&candidates[0], disk_blocks) && !format.root_valid(&candidates[1], disk_blocks) && (format.root_magic_older(candidates[0].magic) || format.root_magic_older(candidates[1].magic)) {
+		result.older_format = true
+		result.failed = true
+		return result
+	}
 	if zero[0] && (zero[1] || !format.root_valid(&candidates[1], state.disk_size)) {
 		result.needs_format = true
 		result.first_cut = !zero[1]
