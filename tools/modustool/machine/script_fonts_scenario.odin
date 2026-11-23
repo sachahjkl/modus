@@ -15,7 +15,7 @@ import "modustool:resources"
 //   1. The object is the set that the build wrote. When the machine is
 //      usable, the root service reads it through disk_processes, checks
 //      its hash and its form, and maps it; interface_font, started after,
-//      draws a line of Hebrew, Arabic, Thai, ideographs, an emoji and a
+//      draws a line of Hebrew, Arabic, Thai, Devanagari, ideographs, an emoji and a
 //      geometric shape with no replacement glyph, each base glyph with ink.
 //   2. The object has one changed byte: the root service refuses it by
 //      its hash, maps nothing, and interface_font says that no set is
@@ -62,10 +62,10 @@ script_fonts_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		{kind = .Wait, text = fmt.tprintf("root: the boot image names the script font set %s", digits), any_order = true},
 		{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
 		{kind = .Wait, text = fmt.tprintf("root: reads the script font set %s from the store script_fonts of the machine", digits)},
-		{kind = .Wait, text = "6 fonts) is checked: each process that starts from now maps it, read-only", fails_on = "root: the script font set was not read"},
+		{kind = .Wait, text = "7 fonts) is checked: each process that starts from now maps it, read-only", fails_on = "root: the script font set was not read"},
 		{kind = .Launch, text = "interface_font"},
 		{kind = .Wait, text = "interface_font: 2 characters that no font of the chain has draw the replacement glyph: as it must", fails_on = "interface_font: the fallback chain of the interface is wrong: "},
-		{kind = .Wait, text = "interface_font: the line of Hebrew, Arabic, Thai, the ideographs, an emoji and a geometric shape draws ", fails_on = "interface_font: the script font set is mapped, and the character "},
+		{kind = .Wait, text = "interface_font: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs, an emoji and a geometric shape draws ", fails_on = "interface_font: the script font set is mapped, and the character "},
 		{kind = .Wait, text = "interface_font: ok, ", any_order = true},
 		{kind = .Shot, text = "interface_font_script_fonts"},
 		{kind = .Front, text = "console"},
@@ -73,7 +73,7 @@ script_fonts_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		{kind = .Wait, text = "kernel: the machine stops with code 0"},
 	}
 	machine_test(part, mapped[:], {volume = build.BOOT_VOLUME, output = self_test_file(TEST_OUTPUT_SCRIPT_FONTS, 1), exit_status = build.MACHINE_STOP_OK, data_disk = TEST_DISK_SCRIPT_FONTS}) or_return
-	foundation.test_passed_print("the root service read the script font set %s from the disk, checked it and mapped it, and interface_font drew Hebrew, Arabic, Thai, the ideographs, an emoji and a geometric shape with no replacement glyph", digits)
+	foundation.test_passed_print("the root service read the script font set %s from the disk, checked it and mapped it, and interface_font drew Hebrew, Arabic, Thai, Devanagari, the ideographs, an emoji and a geometric shape with no replacement glyph", digits)
 
 	// 2. One changed byte: refused by its hash, and the box stays.
 	changed := make([]u8, len(set))
@@ -88,7 +88,7 @@ script_fonts_tests_run :: proc(part: ^Test_Part_Run) -> bool {
 		{kind = .Wait, text = fmt.tprintf("root: refused script_fonts from the disk: its bytes have the hash "), fails_on = " fonts) is checked: each process that starts from now maps it"},
 		{kind = .Wait, text = "root: the script font set was not read: status "},
 		{kind = .Launch, text = "interface_font"},
-		{kind = .Wait, text = "interface_font: no script font set is mapped: the line of Hebrew, Arabic, Thai, the ideographs and an emoji draws the replacement glyph", fails_on = "interface_font: the line of Hebrew, Arabic, Thai, the ideographs, an emoji and a geometric shape draws "},
+		{kind = .Wait, text = "interface_font: no script font set is mapped: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs and an emoji draws the replacement glyph", fails_on = "interface_font: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs, an emoji and a geometric shape draws "},
 		{kind = .Wait, text = "interface_font: ok, ", any_order = true},
 		{kind = .Front, text = "console"},
 		{kind = .Type, text = "shutdown()"},

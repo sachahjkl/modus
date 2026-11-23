@@ -29,6 +29,7 @@ Font_Problem :: enum u8 {
 	No_Glyph, // The character has no glyph.
 	No_Face, // A collection of fonts has no face of this number.
 	No_Feature, // The table GSUB has no single substitution of this feature for this glyph.
+	No_Room, // The set of fonts of the caller has no room for one more font.
 }
 
 // The words of each problem, for the modus tool and the log.
@@ -42,6 +43,7 @@ font_problem_names := [Font_Problem]string {
 	.No_Glyph           = "the character has no glyph",
 	.No_Face            = "the collection of fonts has no face of this number",
 	.No_Feature         = "the font has no single substitution of this feature for this glyph",
+	.No_Room            = "the set of fonts has no room for one more font",
 }
 
 // The tables of a font file, as offsets in the file.
@@ -63,6 +65,7 @@ Font_File :: struct {
 	kern:                Table, // The pair adjustments; absent in many fonts (spacing.odin).
 	gsub:                Table, // The substitutions of glyphs: the forms of a script and its ligatures (substitution.odin).
 	gpos:                Table, // The positions of glyphs: the anchors of the marks (positioning.odin).
+	gdef:                Table, // The classes of the glyphs and the mark sets that the lookup flags read (gdef.odin).
 }
 
 // One table of the file: its bytes, checked to be inside the file.
@@ -93,7 +96,8 @@ COMPOSITE_DEPTH :: 4
 // the work: with no such limit, one glyph of 21 000 parts that name itself
 // gives 21 000 to the power 4 calls.
 COMPOSITE_PART_LIMIT :: 64
-// The flags of one simple glyph are read into a table of this size.
+// The points of one simple glyph of glyf. Its flags wait in the points of
+// the outline of the caller, so no table of flags is on the stack.
 POINT_LIMIT :: 1024
 // The points and the contours of one outline in the memory of a caller. A
 // glyph of CFF holds more points than a glyph of glyf of the same form:
@@ -192,6 +196,8 @@ font_open :: proc "contextless" (bytes: []u8, directory: int = 0) -> (font: Font
 			font.gsub = table
 		case "GPOS":
 			font.gpos = table
+		case "GDEF":
+			font.gdef = table
 		case "CFF ":
 			font.cff.table = table
 			font.cff.version = 1

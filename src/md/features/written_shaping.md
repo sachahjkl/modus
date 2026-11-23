@@ -1,10 +1,10 @@
-# Written shaping: marks, Arabic, Thai and direction
+# Written shaping: marks, Arabic, Thai, Devanagari and direction
 
 ## Purpose
 
 The written shaper of the text rendering places one glyph for each character ([text_rendering.md](text_rendering.md), "The interface"). A text that holds a letter and a combining mark (e and U+0301, the stacked marks of Vietnamese), a text of Arabic, whose letters change form with their neighbours and carry their dots as marks, a text of Thai, whose vowels and tone marks stack on a consonant, and a line that mixes a right-to-left script with Latin drew wrong or drew the replacement glyph.
 
-[interface_language.md](interface_language.md), "6. Shaping and fonts", sent each such run to a library module built from HarfBuzz. That module needs a C++ path that does not exist yet. This design gives the written shaper the part of that work that the scripts of the script fonts need, so that a principal reads them now. HarfBuzz stays the shaper of the scripts of India and of the rest of Southeast Asia, whose reordering is far larger ("The scripts of India and of Southeast Asia: the study").
+[interface_language.md](interface_language.md), "6. Shaping and fonts", sent each such run to a library module built from HarfBuzz. That module needs a C++ path that does not exist yet. This design gives the written shaper that work for the scripts of the script fonts, so that a principal reads them now. The study of the scripts of India and of Southeast Asia decided against HarfBuzz: an engine of the lookups in Odin, with a shaper of each OpenType model on it, shapes Devanagari today and the other scripts of India next ("The scripts of India and of Southeast Asia: the study").
 
 ## Constraints
 
@@ -48,25 +48,55 @@ Two ways shape Devanagari, the other scripts of India, Khmer, Myanmar and the sc
 | The final reordering | the reph and the pre-base matra to their places | 300 |
 | GPOS past the marks | the pairs of lookup type 2, the cursive of type 3, the marks on a ligature of type 5, and `abvm`, `blwm`, `dist` | 600 |
 
-About 3 600 lines for Devanagari, then 100 to 300 lines of rules for each other script of India, and as much again for Khmer, Myanmar and the Universal Shaping Engine. The buffer of a line of glyphs does not fit the 16 KiB of a call: it is an arena of the caller. Its proof is the shaping tests of HarfBuzz, which a host test can run as golden outputs, script by script.
+About 3 600 lines for Devanagari (built: 970 lines of the engine, 490 of the shaper of Devanagari and 120 of `GDEF`, with the readers of the lookups of the written shaper beside them), then 100 to 300 lines of rules for each other script of India, and as much again for Khmer, Myanmar and the Universal Shaping Engine. The buffer of a line of glyphs does not fit the 16 KiB of a call: it is an arena of the caller. Its proof is the shaping tests of HarfBuzz, which a host test can run as golden outputs, script by script.
 
 **HarfBuzz, as an outside module.** HarfBuzz is C++. The C compiler of modus is `chibicc`, which compiles C only ([c_compiler.md](c_compiler.md)): HarfBuzz needs the C++ path of [interface_language.md](interface_language.md), "The C++ path": `clang++` of the host through the outside source path, with no exceptions and no RTTI, and the few procedures of a C++ runtime in the thin libc. Its costs: 600 KiB to 1 MiB of code (an estimate, to measure); its memory through `hb_malloc_impl` from an arena; a stack deeper than 16 KiB (its lookups nest to 64 levels), so it runs in a call with a stack of its own, not on a worker thread of the caller; and the pin and the reuse row of a work of others. Its gains: every script and 15 years of the faults of the fonts of the world, fuzzed by OSS-Fuzz.
 
-**The decision.** Thai is built in Odin in this round: past the anchors of `GPOS`, which Arabic and Hebrew needed too, it is the split of SARA AM and a row of the chains, about 120 lines. Devanagari does not fit this round: its weight is the GSUB of contextual chains over a buffer, which is the core of HarfBuzz, and a second engine of it here doubles that work. HarfBuzz stays the shaper of the scripts of India, Khmer, Myanmar and the Universal Shaping Engine ([`ROADMAP.md`](../../../ROADMAP.md), "The shaping of the scripts of India and of Southeast Asia"); until it comes, a character of those scripts is the replacement glyph, as no font of the system has them.
+**The decision.** Thai was built first, in Odin: past the anchors of `GPOS`, it is the split of SARA AM and a row of the chains. Then the engine of the contextual lookups, in Odin, is the one engine of this shaper, not a second HarfBuzz: the written shaper already reads `GSUB` and `GPOS`, and the contextual lookups are what each complex script needs, Devanagari and the contextual forms of the fonts of Arabic too. Devanagari is built on it. HarfBuzz stays out of the system: it would need a C++ path, a stack of its own and a megabyte of code for what the engine and a shaper of each model give.
+
+## The engine of the lookups
+
+**A buffer of glyphs.** The engine (`vector_font/layout_engine.odin`) works on a buffer of at most `ENGINE_GLYPH_LIMIT` (32) glyphs: one syllable, or one word of a script that joins. Each glyph has its glyph index, the place of its first character in the run, a mask of the features that apply to it, its class of `GDEF` (base, ligature, mark, component), and its advance and its offsets in units of the font. The buffer lives on the stack of the caller: 32 glyphs of 20 bytes.
+
+**The lookups.** `GSUB`: single (type 1), multiple (2), alternate (3, the first alternate), ligature (4, its components matched over the glyphs that the lookup flags skip), contextual (5) and chaining contextual (6) in their three formats (glyphs, classes, coverages), extension (7), and reverse chaining single (8). `GPOS`: single (1), pair (2, both formats), mark-to-base (4), mark-to-ligature (5, on its last component), mark-to-mark (6), contextual (7) and chaining contextual (8), and extension (9). A contextual lookup of either table shares one matcher: the input, the backtrack and the lookahead, with the skips of the lookup flags.
+
+**The lookup flags and GDEF.** A lookup skips the bases, the ligatures or the marks that its flags name, the marks of another attachment class, and the marks out of its mark filtering set (`GDEF` 1.2). The class of a glyph comes from the class definition of `GDEF`; a glyph that a substitution makes takes the class of the new glyph.
+
+**The bounds.** A contextual lookup applies its nested lookups at most `ENGINE_NESTING_LIMIT` (4) deep: a cycle of lookups that call each other ends there. The engine applies at most `ENGINE_STEP_LIMIT` (4 096) lookups at a position for one run: a font that loops through a reverse lookup or a contextual chain stops there, with the glyphs that it made. It tries at most `ENGINE_WORK_LIMIT` (65 536) subtables, rules and ligatures in one stage. That one count bounds the work, not a count of subtables of each lookup: the conjuncts of Noto Sans Devanagari are one chaining lookup of 114 subtables, and a bound of 64 dropped half of them. A substitution that would pass 32 glyphs is not made. Each offset is checked against its table, as the rest of the reader.
+
+**The features in stages.** The caller gives the features of a stage, each with its bit of the mask; the engine merges their lookups in the order of the lookup list, and applies each to the glyphs whose mask holds the bit of a feature that names it. A stage ends before the next starts, as the OpenType models ask.
+
+## Devanagari
+
+The shaper of Devanagari (`text_rendering/indic.odin`) follows the OpenType specification of the Indic scripts (the script tags `dev2`, then `deva`), with the categories of `IndicSyllabicCategory.txt` and `IndicPositionalCategory.txt`, generated by the tool for the blocks of the scripts of India.
+
+1. **The syllable.** A consonant syllable is consonants joined by a virama (a joiner after the virama stays in it), each with its nukta, then the dependent vowels, a final virama and the modifiers; an independent vowel starts a syllable of its own; a mark with no syllable stands on the dotted circle of the font. A syllable holds at most 16 characters: the characters after them start the next syllable. The text is decoded once for a syllable.
+2. **The first reordering.** The base consonant is the last consonant, less a ra after a virama with a consonant before it (the rakar, which `rkrf` and `blwf` make). Ra and a virama at the start of a syllable with a consonant after them are a reph. A pre-base matra (ि) moves to the start, after the reph. The masks: `rphf` on the reph, `half` and `blwf` before the base, `blwf`, `abvf` and `pstf` after it; each other feature on every glyph. A non-joiner after a virama keeps the half form away.
+3. **The features of the start, one stage:** `locl` and `ccmp`. **The basic features, one stage each:** `nukt`, `akhn`, `rphf`, `rkrf`, `blwf`, `abvf`, `half`, `pstf`, `vatu`, `cjct`.
+4. **The final reordering, as HarfBuzz does it.** The pre-base matra moves after the last virama that stayed a glyph before the base; with none, it stays first. The reph, when the virama went into it, moves after an explicit virama before the base, else before the first modifier after the base, else to the end: after the base, its below forms and its vowel signs.
+5. **The presentation features, one stage:** `pres`, `abvs`, `blws`, `psts`, `haln`, with the common features of a line, `rlig`, `calt`, `clig`, `liga`, `rclt`.
+6. **The positions, one stage of `GPOS`:** `dist`, `kern`, `abvm`, `blwm`, `mark`, `mkmk`.
+
+The script tag is `dev2` when the font has it, else `deva` with the same rules. The font of a syllable is the font of its first character of the script, and each glyph of the syllable comes from it: the chain of Devanagari puts the script font first, so a danda and a digit beside a word come from the same font. Only a font of the script font set takes this path. A call of the library module opens the fonts of the boot image only, so it never runs the engine.
+
+The glyphs of a syllable go to the line as one shaped cluster: the first glyph is its base, each glyph after it with an advance and no offset is a base at the pen, and each other glyph is anchored at its pen plus its offset. The pairs of the table `kern` do not join a syllable to the glyph beside it: `dist` and `kern` of `GPOS` placed it. The cluster of a glyph is the first byte of its first character, made never to go down along the glyphs of the syllable, as HarfBuzz merges them: the ि of कि takes the byte of क.
+
+The expected glyphs of the tests come from HarfBuzz 12.3.0 on the host, through `uharfbuzz` 0.53.2 of nixpkgs, on the file of the set: 34 words, each glyph index, its advance and its offset in units of the font. The clusters are not compared: HarfBuzz merges more of them than the shaper does.
 
 ## The refused forms
 
-- **HarfBuzz for these runs now.** It is the decided shaper of the complex scripts, and its C++ path is several steps away. Arabic, Hebrew and Thai are read today; HarfBuzz takes the scripts whose reordering and contextual chains are the large part of its work.
 - **Applying NFC to the stored text.** `NFC is checked, not applied` at the borders of names ([interface_language.md](interface_language.md), "Subtle points"); the drawing picks a glyph and leaves the bytes.
 - **The joining from the glyphs of a font.** The joining type is a fact of Unicode; a font may lack a form.
 - **The presentation forms first.** They are whole glyphs, but a letter past them (the extended Arabic of U+0750 and U+08A0) drew isolated, and a vowel sign was centred on its letter, not on its dots. The forms of the font have both, and the presentation forms stay for a font that makes no form.
 - **A mark always centred.** It is right for a mark above or below one letter of Latin, and wrong for the dots of Arabic, the points of Hebrew and the stacked marks of Thai.
 - **A table of the levels for the whole text.** The places of a line are enough to draw it; the levels live on the stack for the length of one line.
 - **An array of the isolating run sequences of a line.** One sequence at a time, in the array that the order of the screen takes after it, keeps the call under its stack bound.
-- **A shaper of Devanagari in Odin now.** See "The scripts of India and of Southeast Asia: the study".
+- **HarfBuzz in the system.** A C++ path, a stack of its own and a megabyte of code, for what one engine of lookups and a shaper of each model give.
+- **A recursion with no bound.** A font can make two lookups call each other; the nesting and the steps are bounded, as each loop over hostile input.
+- **A slot for every font in each font set.** A call of the library module holds its set on a stack of 16 KiB, and each script font added a slot of 584 bytes to it: the seventh font passed the bound. A set holds a pointer to each font that it opened, in the room that its owner gives (`Font_Set.room`): the state gives a room for every font, a call a room for the five fonts of the boot image.
 
 ## State
 
-Built: the tables generated from Unicode 17.0, the cluster, the composition, the anchors of `GPOS` (mark-to-base and mark-to-mark), the mark with its dotted circle, the joining of Arabic with the forms of its font, its dots and lam-alef, Thai with SARA AM, the invisible format characters, and the reordering of a line with its isolates, with host tests.
+Built: the tables generated from Unicode 17.0, the cluster, the composition, the anchors of `GPOS` (mark-to-base and mark-to-mark), the mark with its dotted circle, the joining of Arabic with the forms of its font, its dots and lam-alef, Thai with SARA AM, the invisible format characters, the reordering of a line with its isolates, the engine of the lookups and Devanagari on it, with host tests.
 
-Left: the breaks of UAX #14 and the dictionary of Thai, the marks on a ligature (lookup type 5), and the scripts that HarfBuzz shapes.
+Left: the breaks of UAX #14 and the dictionary of Thai; the other scripts of India (`ROADMAP.md`); Khmer, Myanmar and the scripts of the Universal Shaping Engine, which need a shaper of their own model on the engine; the cursive attachment of `GPOS` (lookup type 3).

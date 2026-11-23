@@ -2890,7 +2890,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "interface_font: 2 characters that no font of the chain has draw the replacement glyph: as it must", fails_on = "interface_font: the fallback chain of the interface is wrong: "},
 	// The main machine holds no script font set: the line of those scripts
 	// draws the box (script_fonts_scenario.odin draws it with the set).
-	{kind = .Wait, text = "interface_font: no script font set is mapped: the line of Hebrew, Arabic, Thai, the ideographs and an emoji draws the replacement glyph", any_order = true},
+	{kind = .Wait, text = "interface_font: no script font set is mapped: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs and an emoji draws the replacement glyph", any_order = true},
 	{kind = .Wait, text = "interface_font: ok, ", any_order = true},
 	{kind = .Shot, text = "interface_font"},
 	{kind = .Close, text = "interface_font"},

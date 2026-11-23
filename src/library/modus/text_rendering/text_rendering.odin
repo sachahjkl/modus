@@ -110,11 +110,15 @@ Outline_Font :: enum u8 {
 	Noto_Emoji, // The emoji, in the color of the text.
 	Noto_Sans_CJK, // The ideographs, the kana and Hangul: CFF2 outlines, a collection.
 	Noto_Sans_Thai, // Thai, whose marks its GPOS places.
+	Noto_Sans_Devanagari, // Devanagari, which the engine of the lookups shapes (indic.odin).
 }
 // The fonts of the font outlines of the boot image, and the fonts of the
 // script font set.
 BOOT_FONTS :: Outline_Fonts{.B612, .B612_Bold, .Paper_Mono, .Paper_Mono_Semibold, .Noto_Sans}
-SCRIPT_FONTS :: Outline_Fonts{.Noto_Sans_Hebrew, .Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Emoji, .Noto_Sans_CJK, .Noto_Sans_Thai}
+// The fonts of the boot image: the room of a set that opens them only
+// (font_set_test checks it against BOOT_FONTS).
+BOOT_FONT_COUNT :: 5
+SCRIPT_FONTS :: Outline_Fonts{.Noto_Sans_Hebrew, .Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Emoji, .Noto_Sans_CJK, .Noto_Sans_Thai, .Noto_Sans_Devanagari}
 Outline_Fonts :: bit_set[Outline_Font]
 // The font is 4 bits in the key of the private glyph cache.
 #assert(int(max(Outline_Font)) < 1 << 4)
@@ -147,6 +151,8 @@ outline_font_name :: proc "contextless" (font: Outline_Font) -> string {
 		return "noto_sans_cjk"
 	case .Noto_Sans_Thai:
 		return "noto_sans_thai"
+	case .Noto_Sans_Devanagari:
+		return "noto_sans_devanagari"
 	}
 	return ""
 }
@@ -242,6 +248,7 @@ Script :: enum u8 {
 	Han, // The ideographs, the kana, Bopomofo, Hangul, the fullwidth forms.
 	Emoji, // U+1F000 to U+1FAFF.
 	Thai, // U+0E00 to U+0E7F.
+	Devanagari, // U+0900 to U+097F.
 }
 
 // script_name gives the name of a script for the log.
@@ -265,6 +272,8 @@ script_name :: proc "contextless" (script: Script) -> string {
 		return "emoji"
 	case .Thai:
 		return "thai"
+	case .Devanagari:
+		return "devanagari"
 	}
 	return ""
 }
@@ -309,6 +318,10 @@ scripts := [Script]Script_Row {
 	// The fonts of the boot image first: Paper Mono draws the baht sign
 	// (U+0E3F) with no script font set.
 	.Thai = {ranges = {0 = {0x0E00, 0x0E7F}}, range_count = 1, counted = true, chains = {.Interface = {.B612, .Noto_Sans, .Paper_Mono, .Noto_Sans_Thai, .None}, .Interface_Bold = {.B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .Noto_Sans_Thai, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Thai, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Thai, .None}}},
+	// The script font first: a syllable takes each of its glyphs from the
+	// font that shapes it (indic.odin), so a danda or a digit beside it
+	// comes from the same font.
+	.Devanagari = {ranges = {0 = {0x0900, 0x097F}}, range_count = 1, counted = true, chains = {.Interface = {.Noto_Sans_Devanagari, .B612, .Noto_Sans, .Paper_Mono, .None}, .Interface_Bold = {.Noto_Sans_Devanagari, .B612_Bold, .Noto_Sans, .Paper_Mono_Semibold, .None}, .Cells = {.Paper_Mono, .B612, .Noto_Sans, .Noto_Sans_Devanagari, .None}, .Cells_Bold = {.Paper_Mono_Semibold, .B612, .Noto_Sans, .Noto_Sans_Devanagari, .None}}},
 }
 
 // The chain of each face for a character of no script. A proportional
@@ -349,9 +362,51 @@ Font :: struct {
 // Font_Set: the fonts of one resource of outlines, opened. A process has
 // one in its state (open); a call of the library module text_rendering
 // opens one from the bytes of its caller, for that call only.
+//
+// A font lives in the room that the owner of the set gives (room): the
+// state gives a room for every font, a call of the library module a room
+// for the fonts of the boot image on its stack. So a script font that a
+// call never opens takes none of the stack of the call, and each font
+// added to the script font set costs the call nothing.
 Font_Set :: struct {
 	opened: bool,
-	fonts:  [Outline_Font]Font,
+	fonts:  [Outline_Font]^Font, // nil: closed (font_at).
+	room:   []Font, // The memory of the fonts that it opens, from its owner.
+	used:   int, // The fonts of the room in use.
+}
+
+// Font_Room: a room for every font.
+Font_Room :: [len(Outline_Font)]Font
+
+// A font that is not open: all zero, never written.
+@(rodata, private)
+closed_font: Font
+
+// font_at gives a font of a set: the closed font, all zero, for a font
+// that the set has not opened.
+font_at :: #force_inline proc "contextless" (set: ^Font_Set, font: Outline_Font) -> ^Font {
+	if opened := set.fonts[font]; opened != nil {
+		return opened
+	}
+	return &closed_font
+}
+
+// font_slot gives the place of a font in a set: its slot when the set has
+// one for it, else a new slot of the room, all zero, which stays the
+// font's. false when the room is full.
+@(private)
+font_slot :: proc "contextless" (set: ^Font_Set, font: Outline_Font) -> (slot: ^Font, ok: bool) {
+	if slot = set.fonts[font]; slot != nil {
+		return slot, true
+	}
+	if set.used >= len(set.room) {
+		return nil, false
+	}
+	slot = &set.room[set.used]
+	slot^ = {}
+	set.used += 1
+	set.fonts[font] = slot
+	return slot, true
 }
 
 // State: the state of this copy of the package. All zero: nothing is
@@ -363,11 +418,24 @@ State :: struct {
 
 state: State
 
+// The room of the fonts of the state.
+@(private)
+state_room: Font_Room
+
+// state_set gives the set of the state, with its room.
+@(private)
+state_set :: proc "contextless" () -> ^Font_Set {
+	if state.font_set.room == nil {
+		state.font_set.room = state_room[:]
+	}
+	return &state.font_set
+}
+
 // open opens the fonts of the outlines into the state of this copy
 // (fonts_open). A second open does nothing: the outlines never change.
 open :: proc "contextless" (outlines: ^font_outlines.Outlines) -> (missing: Outline_Fonts) {
 	outline := outline_of(&outline_memory)
-	return fonts_open(&state.font_set, outlines, &outline)
+	return fonts_open(state_set(), outlines, &outline)
 }
 
 // fonts_open opens the fonts of the outlines into a set, with the memory of
@@ -395,14 +463,14 @@ fonts_open :: proc "contextless" (set: ^Font_Set, outlines: ^font_outlines.Outli
 // the parser refuses. A font of the set that is open stays as it is.
 script_fonts_open :: proc "contextless" (outlines: ^font_outlines.Outlines) -> (missing: Outline_Fonts) {
 	outline := outline_of(&outline_memory)
-	return script_fonts_open_in(&state.font_set, outlines, &outline)
+	return script_fonts_open_in(state_set(), outlines, &outline)
 }
 
 // script_fonts_open_in is script_fonts_open over a set of fonts.
 script_fonts_open_in :: proc "contextless" (set: ^Font_Set, outlines: ^font_outlines.Outlines, outline: ^vector_font.Outline) -> (missing: Outline_Fonts) {
 	wanted: Outline_Fonts
 	for font in SCRIPT_FONTS {
-		if !set.fonts[font].opened {
+		if !font_at(set, font).opened {
 			wanted += {font}
 		}
 	}
@@ -425,7 +493,7 @@ fonts_of_outlines_open :: proc "contextless" (set: ^Font_Set, outlines: ^font_ou
 				continue
 			}
 			if font_file_open(set, font, font_outlines.font_bytes(outlines, index), outline) == .None {
-				set.fonts[font].hash = record.hash
+				font_at(set, font).hash = record.hash
 				missing -= {font}
 			}
 		}
@@ -448,7 +516,12 @@ font_file_open :: proc "contextless" (set: ^Font_Set, font: Outline_Font, bytes:
 	// The font is read in its place in the set, not in a copy on the
 	// stack: a call of the library module opens its set on a stack of a
 	// worker thread. A refused font is closed again, all zero.
-	opened := &set.fonts[font]
+	// The slot stays the font's, open or refused: a refused font is all
+	// zero, which is closed.
+	opened, has_room := font_slot(set, font)
+	if !has_room {
+		return .No_Room
+	}
 	opened^ = {}
 	defer if problem != .None {
 		opened^ = {}
@@ -501,7 +574,7 @@ font_file_open :: proc "contextless" (set: ^Font_Set, font: Outline_Font, bytes:
 // face. false for the face None. A face that is not opened draws nothing,
 // so its caller draws in Spleen or in the font of the cells.
 face_opened :: proc "contextless" (face: Face) -> bool {
-	return face != .None && state.opened && state.fonts[face_forms[face].primary].opened
+	return face != .None && state.opened && font_at(&state.font_set, face_forms[face].primary).opened
 }
 
 // frame_begin starts a frame of the process: the order of use of the
@@ -555,7 +628,7 @@ chain_fonts :: proc "contextless" (face: Face) -> (fonts: Outline_Fonts) {
 		return {}
 	}
 	for font in fonts_of_face(face) {
-		if state.fonts[font].opened {
+		if font_at(&state.font_set, font).opened {
 			fonts += {font}
 		}
 	}
@@ -595,7 +668,7 @@ font_glyph_of :: proc "contextless" (face: Face, character: rune) -> (font: Outl
 
 // font_glyph_in is font_glyph_of over a set of fonts.
 font_glyph_in :: proc "contextless" (set: ^Font_Set, face: Face, character: rune) -> (font: Outline_Font, glyph_index: int) {
-	if face == .None || !set.opened || !character_valid(character) || !set.fonts[face_forms[face].primary].opened {
+	if face == .None || !set.opened || !character_valid(character) || !font_at(set, face_forms[face].primary).opened {
 		return .None, 0
 	}
 	chain := chain_of(face, character)
@@ -603,7 +676,7 @@ font_glyph_in :: proc "contextless" (set: ^Font_Set, face: Face, character: rune
 		if each == .None {
 			break
 		}
-		opened := &set.fonts[each]
+		opened := font_at(set, each)
 		if !opened.opened {
 			continue
 		}
@@ -639,12 +712,12 @@ measures_in_frame :: proc "contextless" (face: Face, font: Outline_Font) -> vect
 @(private)
 measures_in_frame_of :: proc "contextless" (set: ^Font_Set, face: Face, font: Outline_Font) -> vector_font.Font_Measures {
 	form := face_forms[face]
-	first := &set.fonts[form.primary]
+	first := font_at(set, form.primary)
 	primary := form.proportional ? first.stated : first.own
 	if font == form.primary {
 		return primary
 	}
-	measures := set.fonts[font].stated
+	measures := font_at(set, font).stated
 	// The open accepted each font only with a cap height above 0, so the
 	// divisor is not 0; the units of a cell stay above 0, as they divide an
 	// advance.
@@ -699,7 +772,7 @@ glyph_advance_in :: proc "contextless" (set: ^Font_Set, face: Face, font: Outlin
 	if !face_forms[face].proportional {
 		return i32(vector_font.divide_rounded(i64(size), 2)), true
 	}
-	units := vector_font.glyph_advance(&set.fonts[font].file, glyph_index)
+	units := vector_font.glyph_advance(&font_at(set, font).file, glyph_index)
 	return i32(clamp(units_at_size(units, size, measures_in_frame_of(set, face, font).advance), 0, advance_limit_of_size(size))), true
 }
 
@@ -712,7 +785,7 @@ glyph_pair_in :: proc "contextless" (set: ^Font_Set, face: Face, font: Outline_F
 	if font == .None || face == .None || !face_forms[face].proportional || size_check(size) != .None {
 		return 0
 	}
-	units := vector_font.pair_adjustment(&set.fonts[font].pairs, left_index, right_index)
+	units := vector_font.pair_adjustment(&font_at(set, font).pairs, left_index, right_index)
 	if units == 0 {
 		return 0
 	}
@@ -778,7 +851,7 @@ glyph_by_index :: proc "contextless" (face: Face, font: Outline_Font, glyph_inde
 	if face == .None || size_check(size) != .None || position < 0 || position >= positions_of(face) {
 		return {}, nil, .Missing
 	}
-	if font == .None || font not_in fonts_of_face(face) || !state.fonts[font].opened || glyph_index <= 0 || glyph_index >= state.fonts[font].file.glyph_count {
+	if font == .None || font not_in fonts_of_face(face) || !font_at(&state.font_set, font).opened || glyph_index <= 0 || glyph_index >= font_at(&state.font_set, font).file.glyph_count {
 		return {}, nil, .Missing
 	}
 	return private_glyph(face, font, glyph_index, size, position)

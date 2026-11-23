@@ -50,6 +50,7 @@ Joining_Type :: enum u8 {
 	Dual, // Joins on both sides.
 	Left, // Joins the character after it only.
 	Join_Causing, // The tatweel and the zero width joiner: joins on both sides, has no form.
+	Transparent, // A mark and a format character of no width: the letters around it join through it.
 }
 
 Joining_Range :: struct {
@@ -112,6 +113,72 @@ lam_alef_of :: proc "contextless" (alef: rune, before: bool) -> rune {
 		}
 	}
 	return 0
+}
+
+// The syllabic category of a character of the scripts of India
+// (IndicSyllabicCategory.txt): Other for a character out of the table.
+Indic_Category :: enum u8 {
+	Other,
+	Avagraha,
+	Bindu,
+	Cantillation_Mark,
+	Consonant,
+	Consonant_Dead,
+	Consonant_Medial,
+	Consonant_Placeholder,
+	Consonant_Preceding_Repha,
+	Consonant_With_Stacker,
+	Gemination_Mark,
+	Joiner,
+	Modifying_Letter,
+	Non_Joiner,
+	Nukta,
+	Number,
+	Pure_Killer,
+	Syllable_Modifier,
+	Virama,
+	Visarga,
+	Vowel_Dependent,
+	Vowel_Independent,
+}
+
+// The position of a mark of the scripts of India
+// (IndicPositionalCategory.txt): None for a character out of the table.
+Indic_Position :: enum u8 {
+	None,
+	Top,
+	Right,
+	Bottom,
+	Left,
+	Left_And_Right,
+	Top_And_Right,
+	Top_And_Left,
+	Top_And_Left_And_Right,
+	Top_And_Bottom,
+}
+
+Indic_Syllabic_Range :: struct {
+	first, last: rune,
+	category:    Indic_Category,
+}
+
+Indic_Position_Range :: struct {
+	first, last: rune,
+	position:    Indic_Position,
+}
+
+indic_category_of :: proc "contextless" (character: rune) -> Indic_Category {
+	if index := range_index(character, indic_syllabic_ranges[:]); index >= 0 {
+		return indic_syllabic_ranges[index].category
+	}
+	return .Other
+}
+
+indic_position_of :: proc "contextless" (character: rune) -> Indic_Position {
+	if index := range_index(character, indic_position_ranges[:]); index >= 0 {
+		return indic_position_ranges[index].position
+	}
+	return .None
 }
 
 // range_index gives the index of the range that holds a character in a

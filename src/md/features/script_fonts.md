@@ -26,8 +26,9 @@ This design gives the system fonts past the boot image, a fallback chain for eac
 | Noto Emoji | `noto_emoji` | emoji, in the color of the text | `glyf` | 1 966 648 |
 | Noto Sans CJK | `noto_sans_cjk` | Han, kana, Hangul, the fullwidth forms | `CFF2`, a collection, face 0 | 32 682 580 |
 | Noto Sans Thai | `noto_sans_thai` | Thai | `glyf` | 94 872 |
+| Noto Sans Devanagari | `noto_sans_devanagari` | Devanagari | `glyf` | 565 836 |
 
-The set is 35 867 576 bytes.
+The set is 36 433 492 bytes.
 
 **The plan names it; the boot image names the default.** The plan of principal 0 names the set by its hash, in one entry of the kind `Script_Fonts` (`plans_recipes.plan_entry_make_script_fonts`), as the settings study plans a typed row of a policy of the machine (`src/md/features/module_settings.md` of the branch of that study, "Machine policy: the plan holds it"): a row that names a data object by its hash, which the evaluation of a declaration fills when that study is built. The entry travels to the core with the roles of the plan (`Plan_Roles_Set.script_fonts`), so the core takes the set and the roles whole, or refuses both. With no entry, the resource `script_fonts_name` of the boot image names the set: the 32 bytes of its hash, which the build writes from the set that it made (`modustool script_fonts`), and which the signed system description lists as each resource. A plan of another principal that names a set is refused (`Machine_Only`): one set serves the machine.
 
@@ -71,10 +72,10 @@ A glyph of a script font is drawn in the frame of the first font of its face, as
 
 ## Subtle points
 
-- **The key of the private glyph cache holds the font in 4 bits.** The five fonts of the boot image and the six script fonts are eleven members of `Outline_Font`, of the sixteen that the key holds.
+- **The key of the private glyph cache holds the font in 4 bits.** The five fonts of the boot image and the seven script fonts are twelve members of `Outline_Font`, of the sixteen that the key holds.
 - **The glyph index is 16 bits in the key.** Noto Sans CJK has 65 535 glyphs, the most that a font holds.
 - **A collection.** The set holds the whole file of Noto Sans CJK, and the open takes its face 0, the Japanese face, which holds the ideographs of the four languages in their Japanese forms. A face for each language waits for a principal who needs it.
-- **The library module `text_rendering`** opens the font outlines of its caller only: a call places a character of a script font as the replacement glyph. A font of the boot image is TrueType: a font with CFF outlines in the place of one is refused, so a call never runs the reader of CFF, whose machine of 4 KiB does not fit beside the font set in the 16 KiB of a call.
+- **The library module `text_rendering`** opens the font outlines of its caller only: a call places a character of a script font as the replacement glyph. A font of the boot image is TrueType: a font with CFF outlines in the place of one is refused, so a call never runs the reader of CFF, whose machine of 4 KiB does not fit beside the font set in the 16 KiB of a call. The set of a call has room for the five fonts of the boot image only (`Font_Set.room`): a script font added to the set costs a call no stack.
 - **One load at a time.** The delegated service reads one object at a time. A `start_from_disk` during the read of the set is refused as busy, with its line; the read takes the time of 36 MB once at each start. A data disk with no set ends the read at once, with one line at the level Info.
 - **The budgets.** The memory of the set comes from the budget of the root service, once: each process maps the same pages and pays its page tables only, about 18 pages for 36 MB.
 

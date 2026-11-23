@@ -49,6 +49,9 @@ TABLE_LIMIT :: u64(1) << 40
 @(private)
 Call_Fonts :: struct {
 	set:     text_rendering.Font_Set,
+	// The room of the set: a call opens the fonts of the boot image only,
+	// so a script font takes none of the stack of a call.
+	room:    [text_rendering.BOOT_FONT_COUNT]text_rendering.Font,
 	outline: text_rendering.Measure_Memory,
 }
 
@@ -99,6 +102,7 @@ call_spacing :: proc "contextless" (fonts: ^Call_Fonts, outlines: ^system.Bytes_
 		errors.fail(error, -1, .Bad_Value, .Bytes, 1, i64(problem.kind), 0, i64(problem.index) + 1)
 		return {}, false
 	}
+	fonts.set.room = fonts.room[:]
 	outline := text_rendering.measure_outline_of(&fonts.outline)
 	// Only the fonts that the chains of the face name: each open reads the
 	// outlines of 94 characters for its measures.

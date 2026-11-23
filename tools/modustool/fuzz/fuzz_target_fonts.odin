@@ -1,7 +1,9 @@
 package fuzz
 
 import "core:fmt"
+import "core:os"
 import "core:slice"
+import "core:strings"
 import "modus:contract/blake3"
 import "modus:contract/font_outlines"
 import "modus:contract/font_characters"
@@ -53,7 +55,15 @@ fuzz_font_characters := [?]rune{0, ' ', 'A', 'V', 'g', 'x', 'H', 0xE9, font_char
 // outline, advance, pair and substitution with no fault, and an outline in
 // the memory of the caller; a font whose measures it reads draws a glyph.
 fuzz_vector_font_execute :: proc(input: []u8) -> Fuzz_Verdict {
-	font, problem := vector_font.font_open(input)
+	// A collection opens at its first face; another file at its start.
+	face, face_problem := vector_font.collection_face_offset(input, 0)
+	if face_problem > max(vector_font.Font_Problem) {
+		return fuzz_broken(.Contract, "collection_face_offset gives a problem out of its enumeration: %d", u8(face_problem))
+	}
+	if face_problem != .None {
+		return FUZZ_PASSED
+	}
+	font, problem := vector_font.font_open(input, face)
 	if problem > max(vector_font.Font_Problem) {
 		return fuzz_broken(.Contract, "font_open gives a problem out of its enumeration: %d", u8(problem))
 	}
@@ -92,6 +102,9 @@ fuzz_vector_font_execute :: proc(input: []u8) -> Fuzz_Verdict {
 			}
 		}
 	}
+	if verdict := fuzz_layout_check(&font, glyphs[:]); verdict.oracle != .None {
+		return verdict
+	}
 	if pairs, pairs_problem := vector_font.pair_table_open(&font); pairs_problem == .None {
 		_ = vector_font.character_pair_adjustment(&font, &pairs, 'A', 'V')
 		_ = vector_font.pair_adjustment(&pairs, 0, max(int))
@@ -108,6 +121,271 @@ fuzz_vector_font_execute :: proc(input: []u8) -> Fuzz_Verdict {
 
 fuzz_vector_font_seeds :: proc(seeds: ^[dynamic][]u8) {
 	append(seeds, slice.clone(fuzz_font_seed), slice.clone(fuzz_font_seed[:12]), make([]u8, 0))
+	// A font with CFF outlines, one with CFF2 outlines, each with a
+	// character map of format 12, and a collection of one face.
+	append(seeds, fuzz_font_of_cff(1), fuzz_font_of_cff(2), fuzz_collection_of(fuzz_font_seed))
+	// Noto Sans Hebrew, whole, when the shell names it: GSUB, GPOS and
+	// GDEF, with mark anchors.
+	if hebrew, found := fuzz_script_font_file("noto_sans_hebrew"); found && len(hebrew) <= 64 << 10 {
+		append(seeds, hebrew)
+	}
+}
+
+// fuzz_script_font_file reads a script font that SCRIPT_FONT_SOURCES names.
+fuzz_script_font_file :: proc(name: string) -> (bytes: []u8, found: bool) {
+	sources := os.get_env("SCRIPT_FONT_SOURCES", context.temp_allocator)
+	rest := sources
+	prefix := strings.concatenate({name, "="}, context.temp_allocator)
+	for item in strings.split_iterator(&rest, ";") {
+		if strings.has_prefix(item, prefix) {
+			read, error := os.read_entire_file(item[len(prefix):], context.allocator)
+			return read, error == nil
+		}
+	}
+	return nil, false
+}
+
+// The scripts and the features that the layout check asks of each font.
+@(rodata, private = "file")
+fuzz_layout_scripts := [?]vector_font.Feature_Tag{{'a', 'r', 'a', 'b'}, {'h', 'e', 'b', 'r'}, {'d', 'e', 'v', '2'}, {'D', 'F', 'L', 'T'}}
+@(rodata, private = "file")
+fuzz_layout_features := [?]vector_font.Feature_Tag{{'c', 'c', 'm', 'p'}, {'i', 'n', 'i', 't'}, {'f', 'i', 'n', 'a'}, {'r', 'l', 'i', 'g'}, {'p', 'r', 'e', 's'}, {'h', 'a', 'l', 'f'}}
+
+// fuzz_layout_check: the substitutions, the ligatures, the anchors and the
+// engine over the glyphs of a font: each answer a refusal or glyphs of the
+// font, each sequence and each buffer within its bound, each attachment to
+// a glyph before the mark.
+fuzz_layout_check :: proc(font: ^vector_font.Font_File, glyphs: []int) -> Fuzz_Verdict {
+	// The first 16 glyphs of the font that the list names: the edges (0, 1,
+	// the last) and the glyphs of a few characters, so that one execution
+	// stays short.
+	usable := make([dynamic]int, context.temp_allocator)
+	for glyph in glyphs {
+		if glyph >= 0 && glyph < font.glyph_count && len(usable) < 16 {
+			append(&usable, glyph)
+		}
+	}
+	if len(usable) == 0 {
+		return FUZZ_PASSED
+	}
+	for script in fuzz_layout_scripts {
+		for tag in fuzz_layout_features {
+			for glyph in usable {
+				out: [vector_font.SEQUENCE_LIMIT]int
+				count, problem := vector_font.script_substitution(font, script, tag, glyph, out[:])
+				if problem == .None {
+					if count < 1 || count > len(out) {
+						return fuzz_broken(.Contract, "script_substitution gives %d glyphs", count)
+					}
+					for value in out[:count] {
+						if value < 0 || value >= font.glyph_count {
+							return fuzz_broken(.Contract, "script_substitution gives the glyph %d of %d", value, font.glyph_count)
+						}
+					}
+				}
+				if ligature, ligature_problem := vector_font.script_ligature(font, script, tag, glyph, usable[0]); ligature_problem == .None && (ligature <= 0 || ligature >= font.glyph_count) {
+					return fuzz_broken(.Contract, "script_ligature gives the glyph %d of %d", ligature, font.glyph_count)
+				}
+			}
+		}
+		for glyph in usable {
+			for attachment in vector_font.Mark_Attachment {
+				_, _, _, problem := vector_font.mark_anchor_offset(font, script, attachment, usable[0], glyph)
+				if problem > max(vector_font.Font_Problem) {
+					return fuzz_broken(.Contract, "mark_anchor_offset gives a problem out of its enumeration")
+				}
+			}
+		}
+		// The engine over the glyphs, both tables, every feature on each.
+		buffer: vector_font.Engine_Buffer
+		for glyph, index in usable[:min(len(usable), 8)] {
+			buffer.glyphs[index] = {glyph = u16(glyph), place = u8(index), mask = max(u32)}
+			buffer.count += 1
+		}
+		vector_font.engine_buffer_prepare(font, &buffer)
+		features: [len(fuzz_layout_features)]vector_font.Engine_Feature
+		for tag, index in fuzz_layout_features {
+			features[index] = {tag, 1 << uint(index)}
+		}
+		positions := [?]vector_font.Engine_Feature{{{'m', 'a', 'r', 'k'}, 1}, {{'m', 'k', 'm', 'k'}, 1}, {{'k', 'e', 'r', 'n'}, 1}, {{'d', 'i', 's', 't'}, 1}}
+		_ = vector_font.engine_stage(font, .Substitution, script, features[:], &buffer)
+		_ = vector_font.engine_stage(font, .Positioning, script, positions[:], &buffer)
+		vector_font.engine_positions_finish(&buffer)
+		if buffer.count < 0 || buffer.count > vector_font.ENGINE_GLYPH_LIMIT {
+			return fuzz_broken(.Contract, "the engine leaves %d glyphs", buffer.count)
+		}
+		for glyph, index in buffer.glyphs[:buffer.count] {
+			if int(glyph.glyph) >= font.glyph_count && glyph.glyph != 0 || int(glyph.attach) >= index {
+				return fuzz_broken(.Contract, "the engine leaves the glyph %d attached to %d at %d", glyph.glyph, glyph.attach, index)
+			}
+		}
+	}
+	return FUZZ_PASSED
+}
+
+// fuzz_collection_of wraps a font file in a collection of one face: its
+// table offsets move by the header of the collection.
+fuzz_collection_of :: proc(font: []u8) -> []u8 {
+	HEADER :: 16
+	bytes := make([]u8, HEADER + len(font))
+	copy(bytes, "ttcf")
+	bytes[5] = 1 // version 1.0
+	bytes[11] = 1 // one face
+	bytes[15] = HEADER // its offset
+	copy(bytes[HEADER:], font)
+	table_count := int(font[4]) << 8 | int(font[5])
+	for index in 0 ..< table_count {
+		at := HEADER + 12 + 16 * index + 8
+		if at + 4 > len(bytes) {
+			break
+		}
+		offset := int(bytes[at]) << 24 | int(bytes[at + 1]) << 16 | int(bytes[at + 2]) << 8 | int(bytes[at + 3]) + HEADER
+		bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3] = u8(offset >> 24), u8(offset >> 16), u8(offset >> 8), u8(offset)
+	}
+	return bytes
+}
+
+@(private = "file")
+fuzz_put :: proc(bytes: ^[dynamic]u8, value, size: int) {
+	for shift := 8 * (size - 1); shift >= 0; shift -= 8 {
+		append(bytes, u8(value >> uint(shift)))
+	}
+}
+
+// fuzz_font_of_cff writes a small OpenType font with CFF (version 1) or
+// CFF2 (version 2) outlines: three glyphs (none, a square, a triangle), a
+// character map of format 12 (A to Z, and an emoji), and the tables that
+// font_open reads.
+fuzz_font_of_cff :: proc(version: int) -> []u8 {
+	GLYPHS :: 3
+	charstrings := [GLYPHS][]u8 {
+		{139, 139, 21},
+		{139, 139, 21, 239, 139, 5, 139, 239, 5, 39, 139, 5},
+		{139, 139, 21, 239, 139, 5, 89, 239, 5},
+	}
+	index :: proc(bytes: ^[dynamic]u8, items: [][]u8, version: int) {
+		fuzz_put(bytes, len(items), version == 2 ? 4 : 2)
+		if len(items) == 0 {
+			return
+		}
+		append(bytes, 1)
+		offset := 1
+		append(bytes, u8(offset))
+		for item in items {
+			offset += len(item)
+			append(bytes, u8(offset))
+		}
+		for item in items {
+			append(bytes, ..item)
+		}
+	}
+	items := make([dynamic][]u8, context.temp_allocator)
+	for charstring in charstrings {
+		code := make([dynamic]u8, context.temp_allocator)
+		append(&code, ..charstring)
+		if version == 1 {
+			append(&code, 14) // endchar
+		}
+		append(&items, code[:])
+	}
+	cff := make([dynamic]u8, context.temp_allocator)
+	if version == 2 {
+		// The header, a top dictionary of CharStrings and FDArray, an empty
+		// global subroutine INDEX, the charstrings, a FDArray of one empty
+		// dictionary.
+		TOP :: 12
+		append(&cff, 2, 0, 5, 0, TOP)
+		char_strings_at := 5 + TOP + 4
+		char_strings := make([dynamic]u8, context.temp_allocator)
+		index(&char_strings, items[:], 2)
+		fd_array_at := char_strings_at + len(char_strings)
+		append(&cff, 29)
+		fuzz_put(&cff, char_strings_at, 4)
+		append(&cff, 17, 29)
+		fuzz_put(&cff, fd_array_at, 4)
+		append(&cff, 12, 36)
+		fuzz_put(&cff, 0, 4)
+		append(&cff, ..char_strings[:])
+		append(&cff, 0, 0, 0, 1, 1, 1, 1)
+	} else {
+		// The header, the Name INDEX, the Top DICT INDEX, the String and the
+		// global subroutine INDEX, the charstrings, an empty Private DICT.
+		append(&cff, 1, 0, 4, 1)
+		index(&cff, {{'A'}}, 1)
+		TOP :: 5 + 1 + 1 + 5 + 1
+		top_at := len(cff)
+		after_top := top_at + 2 + 1 + 2 + TOP
+		char_strings_at := after_top + 2 + 2
+		char_strings := make([dynamic]u8, context.temp_allocator)
+		index(&char_strings, items[:], 1)
+		private_at := char_strings_at + len(char_strings)
+		top := make([dynamic]u8, context.temp_allocator)
+		append(&top, 29)
+		fuzz_put(&top, char_strings_at, 4)
+		append(&top, 17, 139, 29)
+		fuzz_put(&top, private_at, 4)
+		append(&top, 18)
+		index(&cff, {top[:]}, 1)
+		append(&cff, 0, 0, 0, 0)
+		append(&cff, ..char_strings[:])
+	}
+	cmap := make([dynamic]u8, context.temp_allocator)
+	fuzz_put(&cmap, 0, 2)
+	fuzz_put(&cmap, 1, 2)
+	fuzz_put(&cmap, 3, 2)
+	fuzz_put(&cmap, 10, 2)
+	fuzz_put(&cmap, 12, 4)
+	fuzz_put(&cmap, 12, 2)
+	fuzz_put(&cmap, 0, 2)
+	fuzz_put(&cmap, 16 + 12 * 2, 4)
+	fuzz_put(&cmap, 0, 4)
+	fuzz_put(&cmap, 2, 4)
+	for group in ([2][3]int{{'A', 'Z', 1}, {0x1F600, 0x1F600, 2}}) {
+		fuzz_put(&cmap, group[0], 4)
+		fuzz_put(&cmap, group[1], 4)
+		fuzz_put(&cmap, group[2], 4)
+	}
+	head := make([dynamic]u8, 54, context.temp_allocator)
+	head[1] = 1
+	head[12], head[13], head[14], head[15] = 0x5F, 0x0F, 0x3C, 0xF5
+	head[18], head[19] = u8(1000 >> 8), u8(1000 & 0xFF)
+	hhea := make([dynamic]u8, 36, context.temp_allocator)
+	hhea[1] = 1
+	hhea[4], hhea[5] = u8(800 >> 8), u8(800 & 0xFF)
+	hhea[6], hhea[7] = 0xFF, 0x38
+	hhea[35] = GLYPHS
+	maxp := make([dynamic]u8, context.temp_allocator)
+	fuzz_put(&maxp, 0x00005000, 4)
+	fuzz_put(&maxp, GLYPHS, 2)
+	hmtx := make([dynamic]u8, context.temp_allocator)
+	for _ in 0 ..< GLYPHS {
+		fuzz_put(&hmtx, 500, 2)
+		fuzz_put(&hmtx, 0, 2)
+	}
+	Table :: struct {
+		tag:   string,
+		bytes: []u8,
+	}
+	tables := [?]Table{{version == 2 ? "CFF2" : "CFF ", cff[:]}, {"cmap", cmap[:]}, {"head", head[:]}, {"hhea", hhea[:]}, {"hmtx", hmtx[:]}, {"maxp", maxp[:]}}
+	font := make([dynamic]u8)
+	append(&font, 'O', 'T', 'T', 'O')
+	fuzz_put(&font, len(tables), 2)
+	fuzz_put(&font, 0, 6)
+	offset := 12 + 16 * len(tables)
+	for table in tables {
+		append(&font, ..transmute([]u8)table.tag)
+		fuzz_put(&font, 0, 4)
+		fuzz_put(&font, offset, 4)
+		fuzz_put(&font, len(table.bytes), 4)
+		offset += (len(table.bytes) + 3) &~ 3
+	}
+	for table in tables {
+		append(&font, ..table.bytes)
+		for len(font) % 4 != 0 {
+			append(&font, 0)
+		}
+	}
+	return font[:]
 }
 
 // ---------------------------------------------------------------------

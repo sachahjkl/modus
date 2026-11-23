@@ -172,7 +172,8 @@ test_font_open :: proc(t: ^testing.T) -> (font: vector_font.Font_File, words: []
 		delete(contours)
 	}
 	delete(list)
-	state.fonts[.B612].file = font
+	slot, _ := font_slot(state_set(), .B612)
+	slot.file = font
 	return font, words
 }
 
@@ -203,7 +204,8 @@ a_work_row_past_its_bound_is_refused :: proc(t: ^testing.T) {
 	font, words := test_font_open(t)
 	defer delete(words)
 	defer delete(font.bytes)
-	state.fonts[.B612].stated.advance = THIRD_FRAME
+	slot, _ := font_slot(state_set(), .B612)
+	slot.stated.advance = THIRD_FRAME
 	frame_begin()
 	job, problem := raster_begin(.Interface, .B612, int(Test_Glyph.Columns_512), TEXT_SIZE_OF_SCALE_ONE, 0)
 	testing.expect_value(t, problem, Raster_Problem.None)

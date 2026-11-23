@@ -171,8 +171,12 @@ run_unicode_tables :: proc(args: []string) -> int {
 			value = "Left"
 		case "C":
 			value = "Join_Causing"
+		case "T":
+			// The marks, and the format characters that draw nothing
+			// (U+200B, U+200E, U+2060): a letter joins through them.
+			value = "Transparent"
 		case:
-			continue // T: a mark is transparent by its category; U joins nothing.
+			continue // U joins nothing.
 		}
 		append(&joining, Value_Range{line.first, line.last, value})
 	}
@@ -290,6 +294,28 @@ run_unicode_tables :: proc(args: []string) -> int {
 		fmt.sbprintfln(&out, "\t{{0x%04X, 0x%04X, 0x%04X}},", int(line.alef), int(line.isolated), int(line.final))
 	}
 	fmt.sbprintln(&out, "}")
+	// The categories of the scripts of India (IndicSyllabicCategory.txt and
+	// IndicPositionalCategory.txt), for the blocks of those scripts and the
+	// joiners and the dotted circle that a syllable holds
+	// (src/md/features/written_shaping.md, "Devanagari").
+	indic_in_scope :: proc(line: Unicode_Line) -> bool {
+		return line.first >= 0x0900 && line.last <= 0x0DFF || line.first == 0x200C || line.first == 0x200D || line.first == 0x25CC
+	}
+	for table in ([2]struct {
+			file, comment, name, type: string,
+		}{{"IndicSyllabicCategory.txt", "The syllabic category of each character of the scripts of India that has one (IndicSyllabicCategory.txt)", "indic_syllabic_ranges", "Indic_Syllabic_Range"}, {"IndicPositionalCategory.txt", "The position of each mark of the scripts of India (IndicPositionalCategory.txt)", "indic_position_ranges", "Indic_Position_Range"}}) {
+		lines, _, read := unicode_lines_read(folder, table.file)
+		if !read {
+			return foundation.EXIT_FAILURE
+		}
+		ranges := make([dynamic]Value_Range, context.temp_allocator)
+		for line in lines {
+			if indic_in_scope(line) && line.fields[0] != "Other" && line.fields[0] != "NA" {
+				append(&ranges, Value_Range{line.first, line.last, line.fields[0]})
+			}
+		}
+		ranges_write(&out, table.comment, table.name, table.type, ranges_merge(ranges), ".")
+	}
 	if err := os.write_entire_file(UNICODE_TABLES_OUTPUT, transmute([]u8)strings.to_string(out)); err != nil {
 		fmt.eprintfln("modustool: cannot write %s: %v", UNICODE_TABLES_OUTPUT, err)
 		return foundation.EXIT_FAILURE

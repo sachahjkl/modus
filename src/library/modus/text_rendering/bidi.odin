@@ -9,8 +9,9 @@ import "modus:contract/text_encoding"
 // gives each glyph its place on the screen. The order of the placed glyphs
 // stays the order of the text, so a fit and a break still count bytes.
 //
-// The embeddings, the overrides and the isolates have no strength here:
-// a text of the system holds none (src/md/data/text_encoding.md).
+// The isolates (LRI, RLI, FSI, PDI) open and close their levels (X1 to
+// X10). The embeddings and the overrides are boundary neutrals: a text of
+// the system holds none (src/md/data/text_encoding.md).
 
 // The placed glyphs of a line that the pass reorders: the levels of a
 // line live on the stack, which a call of the library module keeps under

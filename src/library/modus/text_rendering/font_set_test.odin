@@ -25,17 +25,19 @@ a_candidate_font_draws_through_a_set :: proc(t: ^testing.T) {
 	defer delete(words)
 	outline := outline_of(&outline_memory)
 
-	refused: Font_Set
+	refused_room: Font_Room
+	refused := Font_Set{room = refused_room[:]}
 	testing.expect(t, font_file_open(&refused, .None, candidate_file, &outline) != .None)
 	testing.expect(t, font_file_open(&refused, .Paper_Mono, nil, &outline) != .None)
 	testing.expect(t, font_file_open(&refused, .Paper_Mono, candidate_file[:64], &outline) != .None)
-	testing.expect(t, !refused.fonts[.Paper_Mono].opened)
+	testing.expect(t, !font_at(&refused, .Paper_Mono).opened)
 	_, refused_started := glyph_bands_in(&refused, .Cells, 'A', TEXT_SIZE_OF_SCALE_ONE, 0)
 	testing.expect(t, !refused_started)
 
-	set: Font_Set
+	room: Font_Room
+	set := Font_Set{room = room[:]}
 	testing.expect_value(t, font_file_open(&set, .Paper_Mono, candidate_file, &outline), vector_font.Font_Problem.None)
-	testing.expect(t, set.opened && set.fonts[.Paper_Mono].opened)
+	testing.expect(t, set.opened && font_at(&set, .Paper_Mono).opened)
 	for face in ([3]Face{.None, .Interface, .Cells_Bold}) {
 		_, started := glyph_bands_in(&set, face, 'A', TEXT_SIZE_OF_SCALE_ONE, 0)
 		testing.expectf(t, !started, "the face %v draws from a set without its first font", face)
@@ -82,4 +84,26 @@ a_candidate_font_draws_through_a_set :: proc(t: ^testing.T) {
 		}
 	}
 	testing.expectf(t, differences == 0, "the cells of the candidate differ from glyph_render in %v words", differences)
+}
+
+// The room of a set: BOOT_FONT_COUNT holds the fonts of the boot image; a
+// set whose room is full refuses one more font with No_Room and opens
+// nothing; a font that has a slot opens again in it.
+@(test)
+a_set_opens_in_the_room_of_its_owner :: proc(t: ^testing.T) {
+	testing.expect_value(t, card(BOOT_FONTS), BOOT_FONT_COUNT)
+	test_state_take()
+	outline := outline_of(&outline_memory)
+	empty: Font_Set
+	testing.expect_value(t, font_file_open(&empty, .Paper_Mono, candidate_file, &outline), vector_font.Font_Problem.No_Room)
+	testing.expect(t, !font_at(&empty, .Paper_Mono).opened && empty.used == 0)
+	room: [1]Font
+	set := Font_Set{room = room[:]}
+	testing.expect_value(t, font_file_open(&set, .Paper_Mono, candidate_file, &outline), vector_font.Font_Problem.None)
+	testing.expect_value(t, font_file_open(&set, .Paper_Mono, candidate_file, &outline), vector_font.Font_Problem.None)
+	testing.expect_value(t, set.used, 1)
+	testing.expect_value(t, font_file_open(&set, .B612, candidate_file, &outline), vector_font.Font_Problem.No_Room)
+	testing.expect(t, !font_at(&set, .B612).opened && font_at(&set, .Paper_Mono).opened)
+	// A closed font reads as all zero.
+	testing.expect(t, font_at(&set, .Noto_Sans_Devanagari).file.bytes == nil)
 }

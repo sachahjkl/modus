@@ -334,11 +334,13 @@ SCRIPT_FONTS_STORE_BLOCKS :: SCRIPT_FONTS_BYTES_LIMIT / 4096 + 1024
 // of a machine is part of its signed system.
 SCRIPT_FONTS_NAME_RESOURCE :: "script_fonts_name"
 
-// script_fonts_check checks a script font set before it is mapped: the
-// border where the object enters, once (the root service, and the tool
-// that writes it). Its bytes give the hash that the plan names, its form is
-// valid, and each font file gives the hash of its record. Each check is a
-// refusal of the whole object: a set is never taken in part.
+// script_fonts_check checks a script font set where the tool writes it:
+// its bytes give the hash that the plan names, its form is valid, and each
+// font file gives the hash of its record. Each check is a refusal of the
+// whole object: a set is never taken in part. The root service checks the
+// hash of the whole object and its form only: the hash of the whole
+// already names these bytes (src/md/features/script_fonts.md, "The hash of
+// each font against its record in the root service").
 script_fonts_check :: proc "contextless" (bytes: []u8, named: [32]u8) -> (outlines: Outlines, problem: Problem) {
 	if blake3.hash(bytes) != named {
 		return {}, {kind = .Hash_Mismatch}
@@ -357,8 +359,8 @@ script_fonts_check :: proc "contextless" (bytes: []u8, named: [32]u8) -> (outlin
 
 // script_fonts_open validates the script font set that the starter of a
 // process mapped at SCRIPT_FONTS_ADDRESS, as open does for the font
-// outlines: Not_Mapped when the bit of its range is clear. The hashes were
-// checked once where the set entered (script_fonts_check).
+// outlines: Not_Mapped when the bit of its range is clear. The root service
+// checked the hash of the set once, where it entered.
 script_fonts_open :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64) -> (outlines: Outlines, problem: Problem) {
 	if .Script_Fonts not_in fixed_addresses.ranges_mapped(values) {
 		return {}, {kind = .Not_Mapped}

@@ -438,12 +438,14 @@ text_width :: proc "contextless" (characters: string) -> int {
 @(private)
 text_cells_of_face :: proc "contextless" (canvas: Canvas, x, y: int, bytes: []u8, face: text_rendering.Face, color: Color, size: int, alpha: u32, advance: int) -> int {
 	at, place := x, 0
+	sara_am_taken := -1
 	for {
-		cluster, read := text_rendering.cluster_read(&text_rendering.state.font_set, face, bytes, place)
+		cluster, read := text_rendering.cluster_read(&text_rendering.state.font_set, face, bytes, place, sara_am_taken)
 		if !read {
 			break
 		}
 		place = cluster.end
+		sara_am_taken = cluster.sara_am_taken
 		cells := 1
 		if cluster.base_valid && text_rendering.cell_width_of(cluster.base) == .Two {
 			cells = 2

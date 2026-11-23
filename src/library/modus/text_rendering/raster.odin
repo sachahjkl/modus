@@ -189,7 +189,7 @@ baseline_row :: proc "contextless" (face: Face, size: int) -> (row: int, ok: boo
 		return 0, false
 	}
 	form := face_forms[face]
-	first := &state.fonts[form.primary]
+	first := font_at(&state.font_set, form.primary)
 	return baseline_of(form.proportional ? first.stated : first.own, size), true
 }
 
@@ -230,7 +230,7 @@ raster_begin :: proc "contextless" (face: Face, font: Outline_Font, glyph_index,
 // raster_begin_in is raster_begin over a set of fonts.
 raster_begin_in :: proc "contextless" (set: ^Font_Set, face: Face, font: Outline_Font, glyph_index, size, position: int) -> (job: Raster_Job, problem: Raster_Problem) {
 	job.outline = outline_of(&outline_memory)
-	if vector_font.glyph_outline(&set.fonts[font].file, glyph_index, &job.outline) != .None {
+	if vector_font.glyph_outline(&font_at(set, font).file, glyph_index, &job.outline) != .None {
 		return {}, .Refused
 	}
 	return raster_place(set, face, font, size, position, job.outline)
@@ -244,7 +244,7 @@ raster_begin_in :: proc "contextless" (set: ^Font_Set, face: Face, font: Outline
 raster_place :: proc "contextless" (set: ^Font_Set, face: Face, font: Outline_Font, size, position: int, outline: vector_font.Outline) -> (job: Raster_Job, problem: Raster_Problem) {
 	form := face_forms[face]
 	job.outline = outline
-	first := &set.fonts[form.primary]
+	first := font_at(set, form.primary)
 	frame := form.proportional ? first.stated : first.own
 	job.baseline = baseline_of(frame, size)
 	job.placement = placement_at(measures_in_frame_of(set, face, font), job.baseline, size, form.grid_fit)
@@ -480,7 +480,7 @@ glyph_bands_in :: proc "contextless" (set: ^Font_Set, face: Face, character: run
 // glyph_index_bands is glyph_bands for a glyph by its index, as
 // glyph_by_index gives it: a form or a ligature of a substitution.
 glyph_index_bands :: proc "contextless" (face: Face, font: Outline_Font, glyph_index, size, position: int) -> (job: Raster_Job, ok: bool) {
-	if face == .None || size_check(size) != .None || position < 0 || position >= positions_of(face) || font == .None || font not_in fonts_of_face(face) || !state.fonts[font].opened {
+	if face == .None || size_check(size) != .None || position < 0 || position >= positions_of(face) || font == .None || font not_in fonts_of_face(face) || !font_at(&state.font_set, font).opened {
 		return {}, false
 	}
 	problem: Raster_Problem

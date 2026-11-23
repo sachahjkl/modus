@@ -61,6 +61,7 @@ fuzz_shaping_font_from_input :: proc(face: text_rendering.Face, size: int, witho
 		return fuzz_broken(.Round_Trip, "the resource that resource_write wrote is refused: %v", problem.kind)
 	}
 	set := new(text_rendering.Font_Set, context.temp_allocator)
+	set.room = new(text_rendering.Font_Room, context.temp_allocator)[:]
 	outline_memory := new(text_rendering.Outline_Memory, context.temp_allocator)
 	outline := text_rendering.outline_of(outline_memory)
 	_ = text_rendering.fonts_open(set, &outlines, &outline)
@@ -69,7 +70,7 @@ fuzz_shaping_font_from_input :: proc(face: text_rendering.Face, size: int, witho
 		return FUZZ_PASSED
 	}
 	spacing.without_pairs = without_pairs
-	placed := make([]text_rendering.Placed_Glyph, 2 * len(text) + 1, context.temp_allocator)
+	placed := make([]text_rendering.Placed_Glyph, FUZZ_GLYPHS_OF_A_CHARACTER * len(text) + 1, context.temp_allocator)
 	count, width, ok := text_rendering.shape(&spacing, text, placed)
 	if !ok || count > len(placed) {
 		return fuzz_broken(.Contract, "shape over a font of the input gives %d glyphs, %v, for %d bytes", count, ok, len(text))
@@ -98,6 +99,11 @@ fuzz_shaping_plain :: proc(text: []u8) -> bool {
 		if text_rendering.is_mark(character) || text_rendering.joining_type_of(character) != .None || text_rendering.is_invisible_format(character) {
 			return false
 		}
+		// Devanagari: the engine of the lookups shapes a syllable into
+		// other glyphs than its characters.
+		if character >= 0x0900 && character <= 0x097F {
+			return false
+		}
 		#partial switch text_rendering.bidi_class_of(character) {
 		case .R, .AL, .AN:
 			return false
@@ -106,9 +112,14 @@ fuzz_shaping_plain :: proc(text: []u8) -> bool {
 	return true
 }
 
+// The most placed glyphs of one character: a letter of Arabic is a body
+// and the marks that the font makes of it, and a syllable of Devanagari of
+// one character is at most its base and CLUSTER_MARK_LIMIT glyphs after it.
+@(private = "file")
+FUZZ_GLYPHS_OF_A_CHARACTER :: 1 + text_rendering.CLUSTER_MARK_LIMIT
+
 // fuzz_shaping_invariants: the bounds that each text keeps, plain or not.
-// At most two placed glyphs for each character (a mark with no base and
-// its dotted circle); each cluster is the first byte of a character of the
+// At most FUZZ_GLYPHS_OF_A_CHARACTER placed glyphs for each character; each cluster is the first byte of a character of the
 // text; each advance from minus half a line to one line and a half; the
 // width the sum of the advances, in an i32, and text_width the same width.
 // The places, in any order, are one chain from 0 to the width: the
@@ -118,7 +129,7 @@ fuzz_shaping_plain :: proc(text: []u8) -> bool {
 @(private = "file")
 fuzz_shaping_invariants :: proc(spacing: ^text_rendering.Spacing, text: []u8, placed: []text_rendering.Placed_Glyph, width: i64, size: int) -> Fuzz_Verdict {
 	characters := text_encoding.character_count(text)
-	if len(placed) > 2 * characters || (characters > 0 && len(placed) == 0) {
+	if len(placed) > FUZZ_GLYPHS_OF_A_CHARACTER * characters || (characters > 0 && len(placed) == 0) {
 		return fuzz_broken(.Contract, "shape gives %d glyphs for %d characters", len(placed), characters)
 	}
 	starts := make([]bool, len(text) + 1, context.temp_allocator)
@@ -187,12 +198,39 @@ fuzz_text_shaping_start :: proc() -> bool {
 		return false
 	}
 	fuzz_shaping_fonts = new(text_rendering.Font_Set)
+	fuzz_shaping_fonts.room = new(text_rendering.Font_Room)[:]
 	outline_memory := new(text_rendering.Outline_Memory)
 	defer free(outline_memory)
 	outline := text_rendering.outline_of(outline_memory)
 	missing := text_rendering.fonts_open(fuzz_shaping_fonts, &outlines, &outline)
+	// The script fonts of Arabic and Devanagari, when the shell names them:
+	// the forms of Arabic, lam-alef and the engine of the lookups are then
+	// inside the target.
+	script_inputs := make([dynamic]font_outlines.Font_Input)
+	for name in ([2]string{"noto_sans_arabic", "noto_sans_devanagari"}) {
+		if script_bytes, found := fuzz_script_font_file(name); found {
+			append(&script_inputs, font_outlines.Font_Input{name, script_bytes})
+		}
+	}
+	if len(script_inputs) > 0 {
+		script_size := font_outlines.resource_size(script_inputs[:])
+		fuzz_shaping_script_words = make([]u64, (script_size + 7) / 8)
+		script_bytes := ([^]u8)(raw_data(fuzz_shaping_script_words))[:script_size]
+		if _, written := font_outlines.resource_write(script_inputs[:], script_bytes); !written {
+			return false
+		}
+		script_outlines, script_problem := font_outlines.validate(script_bytes)
+		if script_problem.kind != .None {
+			return false
+		}
+		_ = text_rendering.script_fonts_open_in(fuzz_shaping_fonts, &script_outlines, &outline)
+	}
 	return fuzz_shaping_long_text != nil && missing == {}
 }
+
+// The resource of the script fonts of the target, when the shell names them.
+@(private = "file")
+fuzz_shaping_script_words: []u64
 
 // fuzz_shaping_part copies the next part of an input into memory of its
 // records, aligned.
@@ -277,7 +315,7 @@ fuzz_text_shaping_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	}
 	spacing.without_pairs = head.without_pairs != 0
 
-	placed := make([]text_rendering.Placed_Glyph, 2 * len(text) + 1, context.temp_allocator)
+	placed := make([]text_rendering.Placed_Glyph, FUZZ_GLYPHS_OF_A_CHARACTER * len(text) + 1, context.temp_allocator)
 	count, width, ok := text_rendering.shape(&spacing, text, placed)
 	if !ok || count > len(placed) {
 		return fuzz_broken(.Contract, "shape gives %d glyphs, %v, for %d bytes", count, ok, len(text))

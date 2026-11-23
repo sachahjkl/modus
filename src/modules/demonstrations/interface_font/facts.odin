@@ -96,12 +96,12 @@ Fonts_Ready :: struct {
 
 // The machine maps no script font set: the line of Hebrew, Arabic, CJK and
 // an emoji draws the replacement glyph.
-@(log_fact = "interface_font: no script font set is mapped: the line of Hebrew, Arabic, Thai, the ideographs and an emoji draws the replacement glyph")
+@(log_fact = "interface_font: no script font set is mapped: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs and an emoji draws the replacement glyph")
 Script_Fonts_Not_Mapped :: struct {}
 
 // Each glyph of the line of the script font set has a font, and each base
 // glyph has ink.
-@(log_fact = "interface_font: the line of Hebrew, Arabic, Thai, the ideographs, an emoji and a geometric shape draws {glyphs} glyphs, with no replacement glyph: as it must")
+@(log_fact = "interface_font: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs, an emoji and a geometric shape draws {glyphs} glyphs, with no replacement glyph: as it must")
 Script_Line_Drawn :: struct {
 	glyphs: u64,
 }

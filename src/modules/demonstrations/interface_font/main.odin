@@ -102,16 +102,16 @@ GREEK: [3]string
 // The box-drawing characters of GREEK_SENTENCE: each one from Paper Mono.
 BOX_CHARACTERS := [?]rune{0x250C, 0x2500, 0x252C, 0x2510, 0x2592, 0x2593, 0x2588}
 // Characters that no font of the system has, the script font set
-// included: the first letter of Armenian and of Devanagari. Noto Sans, the
+// included: the first letter of Armenian and of Bengali. Noto Sans, the
 // last font of the boot image, has the capital pi and the small rho that
 // B612 lacks, Latin Extended-B and the whole Cyrillic block.
-MISSING_CHARACTERS := [?]rune{0x0531, 0x0915}
+MISSING_CHARACTERS := [?]rune{0x0531, 0x0995}
 
 // A line of the scripts of the script font set (src/md/features/script_fonts.md):
-// Hebrew, Arabic, which joins, Thai with SARA AM, ideographs, an emoji and
-// a geometric shape. With the set mapped, each glyph of it has a font; with
+// Hebrew, Arabic, which joins, Thai with SARA AM, Devanagari with a
+// conjunct and a reph, ideographs, an emoji and a geometric shape. With the set mapped, each glyph of it has a font; with
 // no set, each character of those scripts is the replacement glyph.
-SCRIPT_LINE :: "שלום  مرحبا  น้ำ  中文  😀 ■"
+SCRIPT_LINE :: "שלום  مرحبا  น้ำ  नमस्ते  धर्म  中文  😀 ■"
 
 fallback_told: bool // The lines of the characters of the fallback chain are on the log.
 
@@ -235,7 +235,7 @@ fallback_lines_tell :: proc "contextless" () {
 // no set, one line says that those scripts draw the replacement glyph.
 script_line_tell :: proc "contextless" (face: text_rendering.Face) {
 	for font in text_rendering.SCRIPT_FONTS {
-		if !text_rendering.state.fonts[font].opened {
+		if !text_rendering.font_at(&text_rendering.state.font_set, font).opened {
 			system.log_fact(.Info, Script_Fonts_Not_Mapped{})
 			return
 		}
@@ -306,7 +306,7 @@ draw :: proc "contextless" (window: ^display.Window) {
 		{ENLARGED_TOP - 24, "one word at 0, 1/3 and 2/3 of a pixel, enlarged 4 times"},
 		{DIGITS_TOP - 24, "digits in columns: each digit has the same advance, so a column aligns"},
 		{GREEK_TOP - 24, "the fallback chain: Greek of B612, box drawing of Paper Mono, the next font of its chain"},
-		{SCRIPT_TOP - 8, "the script font set: Hebrew, Arabic, Thai, ideographs, an emoji, a shape; the box with no set"},
+		{SCRIPT_TOP - 8, "the script font set: Hebrew, Arabic, Thai, Devanagari, ideographs, an emoji, a shape; the box with no set"},
 	}
 	for label in labels {
 		interface.draw_text(frame.table, content.x, content.y + label.top, label.text, graphics.colors.dim)
@@ -431,7 +431,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	measure()
 	system.log_fact(.Info, Line_Measured{characters = u64(len(PARAGRAPH[1])), shaping = value_kinds.Time_In_Nanoseconds(shaping_time), drawing = value_kinds.Time_In_Nanoseconds(drawing_time), first_drawing = value_kinds.Time_In_Nanoseconds(first_drawing_time)})
 	draw(&window)
-	system.log_fact(.Info, Fonts_Ready{regular_pairs = u64(text_rendering.state.fonts[.B612].pairs.count), bold_pairs = u64(text_rendering.state.fonts[.B612_Bold].pairs.count)})
+	system.log_fact(.Info, Fonts_Ready{regular_pairs = u64(text_rendering.font_at(&text_rendering.state.font_set, .B612).pairs.count), bold_pairs = u64(text_rendering.font_at(&text_rendering.state.font_set, .B612_Bold).pairs.count)})
 	for {
 		// The input of the window: each event gives a frame.
 		list: system.Wait

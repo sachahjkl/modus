@@ -195,6 +195,7 @@
         "noto_emoji=${pkgs.noto-fonts-monochrome-emoji}/share/fonts/noto/NotoEmoji.ttf"
         "noto_sans_cjk=${pkgs.noto-fonts-cjk-sans}/share/fonts/opentype/noto-cjk/NotoSansCJK-VF.otf.ttc"
         "noto_sans_thai=${pkgs.noto-fonts}/share/fonts/noto/NotoSansThai.ttf"
+        "noto_sans_devanagari=${pkgs.noto-fonts}/share/fonts/noto/NotoSansDevanagari.ttf"
       ];
       # The Unicode Character Database, for the command "unicode_tables"
       # (src/md/features/written_shaping.md).

@@ -8,9 +8,11 @@ import "modus:vector_font"
 // Text shaping (docs/FONTS.md, "12.3 The text shaping module"): the characters of a
 // text become placed glyphs, with the advance of each character and the
 // pair adjustment of each pair of characters that follow each other. The
-// text is UTF-8 (src/library/modus/contract/text_encoding). No ligature and no
-// other script: one placed glyph for each character, and one for each
-// invalid sequence.
+// text is UTF-8 (src/library/modus/contract/text_encoding). A cluster is a
+// base and its marks, composed or placed by the anchors of its font; a
+// letter of Arabic takes the form of its font; a syllable of Devanagari
+// goes through the engine of the lookups (indic.odin); each invalid
+// sequence is one placed glyph (src/md/features/written_shaping.md).
 //
 // Each number comes from the font file of the face, at the text size of
 // the spacing: the advance of the table hmtx, and the pair of the table
@@ -152,7 +154,7 @@ spacing_of :: proc "contextless" (face: Face, size: int) -> (spacing: Spacing, o
 
 // spacing_in is spacing_of over a set of fonts.
 spacing_in :: proc "contextless" (set: ^Font_Set, face: Face, size: int) -> (spacing: Spacing, ok: bool) {
-	if face == .None || size_check(size) != .None || !set.opened || !set.fonts[face_forms[face].primary].opened {
+	if face == .None || size_check(size) != .None || !set.opened || !font_at(set, face_forms[face].primary).opened {
 		return {}, false
 	}
 	return {fonts = set, face = face, size = size}, true
@@ -266,10 +268,11 @@ Cluster :: struct {
 	base:         rune,
 	base_valid:   bool, // false: an invalid sequence, the replacement glyph.
 	dotted:       bool, // The marks had no base: base is the dotted circle.
-	marks:        [CLUSTER_MARK_LIMIT]rune,
-	mark_places:  [CLUSTER_MARK_LIMIT]u32, // The first byte of each mark.
-	mark_count:   int,
-	start, end:   int, // Its bytes.
+	marks:         [CLUSTER_MARK_LIMIT]rune,
+	mark_places:   [CLUSTER_MARK_LIMIT]u32, // The first byte of each mark.
+	mark_count:    int,
+	start, end:    int, // Its bytes.
+	sara_am_taken: int, // The byte of the SARA AM after it whose NIKHAHIT it took; -1: none.
 }
 
 // is_cluster_break says if a character takes no mark: a space, a separator
@@ -301,73 +304,34 @@ is_thai_above_mark :: proc "contextless" (character: rune) -> bool {
 	return false
 }
 
-// character_before gives the character that ends at a byte of a text, and
-// its first byte: false at the start of the text and for bytes that end no
-// valid sequence.
+// is_sara_am says if a character is SARA AM of Thai or of Lao.
 @(private)
-character_before :: proc "contextless" (text: []u8, place: int) -> (character: rune, start: int, ok: bool) {
-	for back in 1 ..= 4 {
-		start = place - back
-		if start < 0 {
-			return 0, 0, false
-		}
-		if text[start] & 0xC0 == 0x80 {
-			continue
-		}
-		decoded, length, valid := text_encoding.character_decode(text, start)
-		return decoded, start, valid && start + length == place
-	}
-	return 0, 0, false
-}
-
-// sara_am_splits says if the SARA AM at a byte of a text is two parts: the
-// fonts of the face draw both, and the characters before it are a base that
-// is no space or separator, then fewer than CLUSTER_MARK_LIMIT marks. Both
-// clusters that it touches ask it, so they agree.
-@(private)
-sara_am_splits :: proc "contextless" (set: ^Font_Set, face: Face, text: []u8, place: int) -> bool {
-	sara_am, _, valid := text_encoding.character_decode(text, place)
-	if !valid || sara_am != SARA_AM_THAI && sara_am != SARA_AM_LAO {
-		return false
-	}
-	if !character_drawn(set, face, sara_am + 0x1A) || !character_drawn(set, face, sara_am - 1) {
-		return false
-	}
-	marks := 0
-	at := place
-	for {
-		before, start, found := character_before(text, at)
-		if !found {
-			return false
-		}
-		if !is_mark(before) {
-			return !is_cluster_break(before)
-		}
-		marks += 1
-		if marks >= CLUSTER_MARK_LIMIT {
-			return false
-		}
-		at = start
-	}
+is_sara_am :: #force_inline proc "contextless" (character: rune) -> bool {
+	return character == SARA_AM_THAI || character == SARA_AM_LAO
 }
 
 // cluster_read reads the cluster that starts at a byte of a text: a base
 // and at most CLUSTER_MARK_LIMIT marks after it, in canonical order, then
-// composes them. has says if the fonts of the caller draw a character: a
-// composition that no font draws is not made.
-cluster_read :: proc "contextless" (set: ^Font_Set, face: Face, text: []u8, place: int) -> (cluster: Cluster, ok: bool) {
+// composes them. A composition that no font of the face draws is not made.
+// sara_am_taken is the byte of the SARA AM whose NIKHAHIT the cluster
+// before took (Cluster.sara_am_taken), -1 for none: the cluster that starts
+// there is its SARA AA. Each byte of the text is decoded once for the
+// cluster, so a text that another thread changes gives other glyphs, and
+// never a read or a write past a table.
+cluster_read :: proc "contextless" (set: ^Font_Set, face: Face, text: []u8, place: int, sara_am_taken := -1) -> (cluster: Cluster, ok: bool) {
 	character, length, valid := text_encoding.character_decode(text, place)
 	if length == 0 {
 		return {}, false
 	}
 	cluster.start = place
+	cluster.sara_am_taken = -1
 	at := place
 	if valid && is_mark(character) {
 		cluster.base, cluster.base_valid, cluster.dotted = DOTTED_CIRCLE, true, true
 	} else {
 		cluster.base, cluster.base_valid = character, valid
 		// The vowel of a SARA AM whose NIKHAHIT the cluster before took.
-		if sara_am_splits(set, face, text, place) {
+		if valid && is_sara_am(character) && place == sara_am_taken {
 			cluster.base = character - 1
 		}
 		at += length
@@ -388,9 +352,12 @@ cluster_read :: proc "contextless" (set: ^Font_Set, face: Face, text: []u8, plac
 	}
 	cluster.end = at
 	// The NIKHAHIT of a SARA AM after the cluster, before its tone marks
-	// and its vowels above.
-	if !cluster.dotted && sara_am_splits(set, face, text, at) {
-		sara_am, _, _ := text_encoding.character_decode(text, at)
+	// and its vowels above: when the fonts draw both of its parts and the
+	// cluster has room for one more mark. The cluster after it learns it
+	// from sara_am_taken, not from a second read of the text.
+	sara_am, sara_am_length, sara_am_valid := text_encoding.character_decode(text, at)
+	if !cluster.dotted && sara_am_length > 0 && sara_am_valid && is_sara_am(sara_am) && cluster.mark_count < CLUSTER_MARK_LIMIT && character_drawn(set, face, sara_am + 0x1A) && character_drawn(set, face, sara_am - 1) {
+		cluster.sara_am_taken = at
 		position := cluster.mark_count
 		for position > 0 && is_thai_above_mark(cluster.marks[position - 1]) {
 			position -= 1
@@ -414,12 +381,16 @@ cluster_read :: proc "contextless" (set: ^Font_Set, face: Face, text: []u8, plac
 		}
 	}
 	// The composition: each mark composes with the base unless a mark that
-	// stayed apart before it blocks it (its class is 0 or at least its own).
+	// stayed apart before it blocks it (UAX #15, D115): a kept mark of the
+	// class 0, anywhere before it, is a starter that blocks each mark
+	// after it; else the last kept mark, the highest class in canonical
+	// order, blocks a mark of its class or lower.
 	kept := 0
+	kept_starter := false
 	for index in 0 ..< cluster.mark_count {
 		mark := cluster.marks[index]
 		class := combining_class_of(mark)
-		blocked := kept > 0 && (combining_class_of(cluster.marks[kept - 1]) == 0 || combining_class_of(cluster.marks[kept - 1]) >= class)
+		blocked := kept_starter || (kept > 0 && combining_class_of(cluster.marks[kept - 1]) >= class)
 		if !blocked {
 			if composed, found := compose(cluster.base, mark); found && character_drawn(set, face, composed) {
 				cluster.base = composed
@@ -429,6 +400,7 @@ cluster_read :: proc "contextless" (set: ^Font_Set, face: Face, text: []u8, plac
 		cluster.marks[kept] = mark
 		cluster.mark_places[kept] = cluster.mark_places[index]
 		kept += 1
+		kept_starter ||= class == 0
 	}
 	cluster.mark_count = kept
 	return cluster, true
@@ -454,6 +426,10 @@ Shaped :: struct {
 	mark_count: int,
 	start, end: int,
 	script:     vector_font.Feature_Tag, // The script of its base in the tables of its font: the anchors of its marks.
+	// A syllable that the engine of the lookups shaped (indic.odin): its
+	// glyphs hold their pairs already, so no pair of the table kern joins
+	// it to the cluster beside it.
+	syllable:   bool,
 }
 
 // Shaper: the walk over the clusters of a text, with the joining type of
@@ -465,11 +441,14 @@ Shaper :: struct {
 	text:     []u8,
 	place:    int,
 	previous: Joining_Type,
+	// The byte of the SARA AM whose NIKHAHIT the last cluster took; -1:
+	// none (Cluster.sara_am_taken).
+	sara_am_taken: int,
 }
 
 @(private)
 shaper_of :: proc "contextless" (spacing: ^Spacing, text: []u8) -> Shaper {
-	return {spacing = spacing, set = spacing.fonts != nil ? spacing.fonts : &state.font_set, text = text}
+	return {spacing = spacing, set = spacing.fonts != nil ? spacing.fonts : &state.font_set, text = text, sara_am_taken = -1}
 }
 
 // The Arabic letters that make a ligature with a lam before them: the
@@ -520,7 +499,7 @@ FONT_MARK_LIMIT :: vector_font.SEQUENCE_LIMIT
 // font changes nothing.
 @(private)
 font_forms :: proc "contextless" (set: ^Font_Set, font: Outline_Font, index: int, before, after: bool, marks: ^[FONT_MARK_LIMIT]int) -> (body, mark_count: int, changed: bool) {
-	file := &set.fonts[font].file
+	file := &font_at(set, font).file
 	parts: [vector_font.SEQUENCE_LIMIT]int
 	part_count, problem := vector_font.script_substitution(file, ARAB, {'c', 'c', 'm', 'p'}, index, parts[:])
 	if problem != .None {
@@ -579,7 +558,7 @@ mark_place :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Sh
 	if font == .None || font != shaped.base.font || spacing.cell_advance > 0 {
 		return
 	}
-	file := &set.fonts[font].file
+	file := &font_at(set, font).file
 	if file.gpos.length == 0 {
 		return
 	}
@@ -606,7 +585,11 @@ mark_place :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Sh
 // shaper_next shapes the next cluster of the text; false at its end.
 @(private)
 shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
-	cluster := cluster_read(shaper.set, shaper.spacing.face, shaper.text, shaper.place) or_return
+	if indic_shaped(shaper, shaped) {
+		return true
+	}
+	cluster := cluster_read(shaper.set, shaper.spacing.face, shaper.text, shaper.place, shaper.sara_am_taken) or_return
+	shaper.sara_am_taken = cluster.sara_am_taken
 	shaped^ = {start = cluster.start, end = cluster.end}
 	spacing := shaper.spacing
 	shaped.base = resolve(spacing, cluster.base, cluster.base_valid)
@@ -615,9 +598,24 @@ shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 	type := cluster.base_valid && !cluster.dotted ? joining_type_of(cluster.base) : .None
 	ligature_cluster: Cluster
 	ligature_made := false
-	if type != .None && spacing.cell_advance == 0 && shaped.base.font != .None {
+	if type != .None && type != .Transparent && spacing.cell_advance == 0 && shaped.base.font != .None {
 		next, next_length, next_valid := text_encoding.character_decode(shaper.text, cluster.end)
+		// The letter after it, through the format characters of no width
+		// (Transparent): an LRM between two letters keeps their join. At
+		// most CLUSTER_MARK_LIMIT of them are looked through.
 		next_type := next_length > 0 && next_valid ? joining_type_of(next) : .None
+		ahead := cluster.end + next_length
+		for _ in 0 ..< CLUSTER_MARK_LIMIT {
+			if next_type != .Transparent {
+				break
+			}
+			after_next, after_length, after_valid := text_encoding.character_decode(shaper.text, ahead)
+			next_type = after_length > 0 && after_valid ? joining_type_of(after_next) : .None
+			ahead += after_length
+		}
+		if next_type == .Transparent {
+			next_type = .None
+		}
 		before := joins_after(shaper.previous) && joins_before(type)
 		after := joins_after(type) && joins_before(next_type)
 		base_cluster := shaped.base.cluster
@@ -640,7 +638,7 @@ shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 			// when its GSUB makes them and its GPOS places them; else the
 			// presentation form that Unicode names, when the font has it.
 			font := shaped.base.font
-			file := &shaper.set.fonts[font].file
+			file := &font_at(shaper.set, font).file
 			made := false
 			if file.gsub.length > 0 && file.gpos.length > 0 {
 				font_marks: [FONT_MARK_LIMIT]int
@@ -668,7 +666,11 @@ shaper_next :: proc "contextless" (shaper: ^Shaper, shaped: ^Shaped) -> bool {
 			shaped.base.cluster = base_cluster
 		}
 	}
-	shaper.previous = type
+	// A format character of no width keeps the type of the letter before
+	// it for the letter after it.
+	if type != .Transparent {
+		shaper.previous = type
+	}
 	shaper.place = cluster.end
 	marks_add(spacing, shaper.set, shaped, &cluster)
 	if ligature_made {
@@ -703,8 +705,9 @@ marks_add :: proc "contextless" (spacing: ^Spacing, set: ^Font_Set, shaped: ^Sha
 // shape places the characters of a text: it writes the placed glyphs that
 // fit from the start of placed, and gives the count of the full answer
 // (one for each cluster of a base and its composed marks, one for each mark
-// that stayed apart, one for each invalid sequence) and the width of the
-// text, the sum of the advances. ok is false for a text of more than
+// that stayed apart or that the font of a letter of Arabic made, one for
+// each glyph of a syllable of Devanagari, one for each invalid sequence)
+// and the width of the text, the sum of the advances. ok is false for a text of more than
 // TEXT_LIMIT bytes: nothing is written. Each character of the text is
 // decoded once for its cluster: a text that another thread changes during
 // the call gives other glyphs, and never a place past the text.
@@ -723,7 +726,7 @@ shape :: proc "contextless" (spacing: ^Spacing, text: []u8, placed: []Placed_Gly
 	for has_current {
 		has_next := shaper_next(&shaper, &next)
 		glyph_advance := current.base.advance
-		if has_next {
+		if has_next && !current.syllable && !next.syllable {
 			glyph_advance += pair_of(spacing, current.base, next.base)
 		}
 		if count < len(placed) {
@@ -818,7 +821,7 @@ text_fit :: proc "contextless" (spacing: ^Spacing, text: []u8, room: i64) -> (co
 			return current.start
 		}
 		x += cluster_width
-		if has_next {
+		if has_next && !current.syllable && !next.syllable {
 			x += i64(pair_of(spacing, current.base, next.base))
 		}
 		current = next

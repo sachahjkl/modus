@@ -15,10 +15,10 @@ import "modus:vector_font"
 // the flake set it.
 
 @(private = "file")
-script_font_names := [?]string{"noto_sans_hebrew", "noto_sans_arabic", "noto_sans_symbols_2", "noto_emoji", "noto_sans_cjk", "noto_sans_thai"}
+script_font_names := [?]string{"noto_sans_hebrew", "noto_sans_arabic", "noto_sans_symbols_2", "noto_emoji", "noto_sans_cjk", "noto_sans_thai", "noto_sans_devanagari"}
 
 // script_fonts_read reads the script fonts that names lists.
-@(private = "file")
+@(private)
 script_fonts_read :: proc(t: ^testing.T, names: []string) -> (fonts: [dynamic]font_outlines.Font_Input) {
 	sources := os.get_env("SCRIPT_FONT_SOURCES", context.temp_allocator)
 	testing.expect(t, sources != "", "SCRIPT_FONT_SOURCES is set: run the tests in the development shell or in the check of the flake")
@@ -39,7 +39,7 @@ script_fonts_read :: proc(t: ^testing.T, names: []string) -> (fonts: [dynamic]fo
 
 // script_set_open opens the fonts of the repository, then a script font set
 // of the fonts that names lists. The caller frees the words.
-@(private = "file")
+@(private)
 script_set_open :: proc(t: ^testing.T, names: []string) -> (words, script_words: []u64, missing: Outline_Fonts) {
 	fonts := repository_fonts()
 	_, words = outlines_open(t, fonts[:])
@@ -56,7 +56,7 @@ script_set_open :: proc(t: ^testing.T, names: []string) -> (words, script_words:
 	return words, script_words, missing
 }
 
-@(private = "file")
+@(private)
 shape_text :: proc(t: ^testing.T, face: Face, text: string, placed: []Placed_Glyph) -> (count: int, width: i64) {
 	spacing, ok := spacing_of(face, TEXT_SIZE_OF_SCALE_ONE)
 	testing.expect(t, ok)
@@ -97,6 +97,14 @@ a_mark_composes_with_its_letter :: proc(t: ^testing.T) {
 			count, _ = shape_text(t, face, text, placed[:])
 			testing.expectf(t, count == 1 && placed[0].glyph == fallback_glyph(0x1EC7), "%v: %q is ệ: %v glyphs, the glyph %x", face, text, count, placed[0].glyph)
 		}
+		// A mark of class 0 that stays apart blocks the composition of a
+		// mark after it (UAX #15, D115): e, U+034F (a mark of class 0
+		// that composes with nothing), U+0323 and U+0301 is e with
+		// three marks apart; with no U+034F, e and U+0323 compose to ẹ.
+		count, _ = shape_text(t, face, "e\u034F\u0323\u0301", placed[:])
+		testing.expectf(t, placed[0].glyph == fallback_glyph('e'), "%v: a mark of class 0 blocks the composition: %v", face, placed[:count])
+		count, _ = shape_text(t, face, "e\u0323", placed[:])
+		testing.expectf(t, count == 1 && placed[0].glyph == fallback_glyph(0x1EB9), "%v: e and U+0323 is ẹ: %v", face, placed[:count])
 		count, width = shape_text(t, face, "q\u0301", placed[:])
 		testing.expectf(t, count == 2 && placed[1].glyph == fallback_glyph(0x0301) && placed[1].advance == 0 && placed[1].cluster == 1, "%v: q and a mark apart: %v", face, placed[:count])
 		q_width, _ := text_width(&Spacing{face = face, size = TEXT_SIZE_OF_SCALE_ONE}, transmute([]u8)string("q"))
@@ -154,7 +162,7 @@ arabic_letters_join :: proc(t: ^testing.T) {
 	defer delete(words)
 	defer delete(script_words)
 	testing.expect(t, .Noto_Sans_Arabic not_in missing)
-	file := &state.fonts[.Noto_Sans_Arabic].file
+	file := &font_at(&state.font_set, .Noto_Sans_Arabic).file
 	frame_begin()
 	// The bases and the marks of a word, by their placement.
 	Word :: struct {
@@ -217,6 +225,31 @@ arabic_letters_join :: proc(t: ^testing.T) {
 		testing.expectf(t, place + 1 < count && placed[place + 1].placement == .Anchored && placed[place + 1].cluster == letter.cluster, "U+%04X: its dots follow it", int(letter.character))
 		place += 1
 	}
+	// A format character of no width is Transparent for the joining: an
+	// LRM, a zero width space or a word joiner between beh and yeh keeps
+	// the forms of the word; a space breaks them.
+	bases_of :: proc(placed: []Placed_Glyph) -> (bases: [8]u32, count: int) {
+		for glyph in placed {
+			if glyph.placement == .Base && glyph.glyph != INVISIBLE_GLYPH && count < len(bases) {
+				bases[count] = glyph.glyph
+				count += 1
+			}
+		}
+		return
+	}
+	joined, joined_count := bases_of(placed[:count])
+	for format in ([?]string{"\u200E", "\u200B", "\u2060", "\u200E\u200E"}) {
+		text := strings.concatenate({"ب", format, "يت"}, context.temp_allocator)
+		through, _ := shape_text(t, .Interface, text, placed[:])
+		bases, bases_count := bases_of(placed[:through])
+		testing.expectf(t, bases_count == joined_count && bases == joined, "%q: the forms through a format character: %v, joined: %v", text, bases[:bases_count], joined[:joined_count])
+	}
+	apart, _ := shape_text(t, .Interface, "ب يت", placed[:])
+	bases, _ := bases_of(placed[:apart])
+	testing.expect(t, bases[0] != joined[0], "a space breaks the join")
+	testing.expect_value(t, joining_type_of(0x200E), Joining_Type.Transparent)
+	testing.expect_value(t, joining_type_of(0x200D), Joining_Type.Join_Causing)
+	testing.expect_value(t, joining_type_of(0x200C), Joining_Type.None)
 	// A fatha on beh: anchored, at its own byte.
 	count, _ = shape_text(t, .Interface, "بَيت", placed[:])
 	word = word_of(t, "بَيت", placed[:count])
@@ -302,7 +335,7 @@ the_scripts_of_the_script_fonts :: proc(t: ^testing.T) {
 		character: rune,
 		font:      Outline_Font,
 	}
-	cases := [?]Case{{0x05D0, .Noto_Sans_Hebrew}, {0x0628, .Noto_Sans_Arabic}, {0x4E00, .Noto_Sans_CJK}, {0x3042, .Noto_Sans_CJK}, {0xAC00, .Noto_Sans_CJK}, {0x1F600, .Noto_Emoji}, {0x25A0, .Noto_Sans_Symbols_2}}
+	cases := [?]Case{{0x05D0, .Noto_Sans_Hebrew}, {0x0628, .Noto_Sans_Arabic}, {0x4E00, .Noto_Sans_CJK}, {0x3042, .Noto_Sans_CJK}, {0xAC00, .Noto_Sans_CJK}, {0x1F600, .Noto_Emoji}, {0x25A0, .Noto_Sans_Symbols_2}, {0x0915, .Noto_Sans_Devanagari}}
 	{
 		fonts := repository_fonts()
 		_, words := outlines_open(t, fonts[:])
@@ -326,7 +359,7 @@ the_scripts_of_the_script_fonts :: proc(t: ^testing.T) {
 		set, set_words := resource_of(t, scripts[:])
 		defer delete(set_words)
 		missing := script_fonts_open(&set)
-		testing.expect_value(t, missing, Outline_Fonts{.Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Sans_CJK, .Noto_Sans_Thai})
+		testing.expect_value(t, missing, Outline_Fonts{.Noto_Sans_Arabic, .Noto_Sans_Symbols_2, .Noto_Sans_CJK, .Noto_Sans_Thai, .Noto_Sans_Devanagari})
 		testing.expect_value(t, font_of(.Interface, 0x05D0), Outline_Font.Noto_Sans_Hebrew)
 		testing.expect_value(t, font_of(.Interface, 0x4E00), Outline_Font.None)
 	}
@@ -412,15 +445,18 @@ a_cff_font_in_the_place_of_a_boot_font_is_refused :: proc(t: ^testing.T) {
 	}
 	set := new(Font_Set)
 	defer free(set)
+	room := new(Font_Room)
+	defer free(room)
+	set.room = room[:]
 	memory := new(Measure_Memory)
 	defer free(memory)
 	outline := measure_outline_of(memory)
 	for font in BOOT_FONTS {
 		testing.expect_value(t, font_file_open(set, font, scripts[0].bytes, &outline), vector_font.Font_Problem.Unknown_Format)
-		testing.expectf(t, !set.fonts[font].opened && set.fonts[font].file.bytes == nil && set.fonts[font].own == {}, "%v stays closed", font)
+		testing.expectf(t, !font_at(set, font).opened && font_at(set, font).file.bytes == nil && font_at(set, font).own == {}, "%v stays closed", font)
 	}
 	testing.expect_value(t, font_file_open(set, .Noto_Sans_Symbols_2, scripts[0].bytes, &outline), vector_font.Font_Problem.None)
-	testing.expect(t, set.fonts[.Noto_Sans_Symbols_2].opened)
+	testing.expect(t, font_at(set, .Noto_Sans_Symbols_2).opened)
 }
 // screen_order gives the glyphs of a line that have a width, by their place
 // on the screen from the left: their indices in the order of the text.
@@ -503,6 +539,22 @@ the_isolates_of_a_line :: proc(t: ^testing.T) {
 	// right.
 	order = screen_order(deep_placed[:count])
 	testing.expectf(t, slice_equal(order[:], {131, 132, 130}), "past the depth: %v", order[:])
+	// The depth at its edge: RLI and LRI in turn each open one level, so
+	// the isolates 1 to 125 reach the levels 1 to 125 (BIDI_DEPTH_LIMIT);
+	// a 126th overflows. The Hebrew letter inside stays at the odd level
+	// 125 in both: at a level of 126 it would take 127 (I1).
+	for isolates in ([2]int{BIDI_DEPTH_LIMIT, BIDI_DEPTH_LIMIT + 1}) {
+		opening := make([dynamic]u8, context.temp_allocator)
+		for index in 0 ..< isolates {
+			append(&opening, ..transmute([]u8)string(index % 2 == 0 ? "\u2067" : "\u2066"))
+		}
+		text := strings.concatenate({string(opening[:]), "א", strings.repeat("\u2069", isolates, context.temp_allocator)}, context.temp_allocator)
+		edge_count, _ := shape_text(t, .Interface, text, deep_placed)
+		levels: [BIDI_GLYPH_LIMIT]u8
+		scratch: [BIDI_GLYPH_LIMIT]u16
+		bidi_levels(transmute([]u8)text, deep_placed[:edge_count], levels[:edge_count], scratch[:edge_count])
+		testing.expectf(t, edge_count == 2 * isolates + 1 && levels[isolates] == BIDI_DEPTH_LIMIT, "%d isolates: the letter inside at the level %d", isolates, levels[isolates])
+	}
 }
 
 @(private = "file")
@@ -571,4 +623,21 @@ thai_marks_and_sara_am :: proc(t: ^testing.T) {
 	testing.expect_value(t, text_fit(&spacing, transmute([]u8)string("กำ"), ko_width), 3)
 	// The cells of a line of Thai: a mark none, SARA AM one.
 	testing.expect_value(t, cell_count(transmute([]u8)string("ก่ำ")), 2)
+	// A consonant with its marks at the limit of a cluster: SARA AM after
+	// it stays whole, and nothing is written past the marks; one mark
+	// fewer, and it splits. Each cluster decodes the text once: a cluster
+	// read again alone at the byte of SARA AM keeps it whole.
+	many: [64]Placed_Glyph
+	for marks in ([2]int{CLUSTER_MARK_LIMIT, CLUSTER_MARK_LIMIT - 1}) {
+		text := strings.concatenate({"ก", strings.repeat("\u0E48", marks, context.temp_allocator), "ำ"}, context.temp_allocator)
+		count, _ = shape_text(t, .Interface, text, many[:])
+		last := many[count - 1]
+		if marks == CLUSTER_MARK_LIMIT {
+			testing.expectf(t, count == 1 + marks + 1 && last.glyph == fallback_glyph(0x0E33), "%d marks: SARA AM stays whole: %v", marks, many[:count])
+		} else {
+			testing.expectf(t, count == 1 + marks + 2 && last.glyph == fallback_glyph(0x0E32) && many[1].glyph == fallback_glyph(0x0E4D), "%d marks: SARA AM splits: %v", marks, many[:count])
+		}
+	}
+	alone, _ := cluster_read(&state.font_set, .Interface, transmute([]u8)string("กำ"), 3)
+	testing.expect_value(t, alone.base, rune(0x0E33))
 }

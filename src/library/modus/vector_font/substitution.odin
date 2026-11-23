@@ -128,8 +128,28 @@ Gsub_Kind :: enum u8 {
 // the order of the lookup list, which is the order in which a shaper
 // applies them.
 Layout_Lookups :: struct {
-	parts: [SUBSTITUTION_LOOKUP_LIMIT][]u8,
-	count: int,
+	parts:   [SUBSTITUTION_LOOKUP_LIMIT][]u8,
+	indices: [SUBSTITUTION_LOOKUP_LIMIT]u16, // The index of each in the lookup list.
+	count:   int,
+}
+
+// layout_has_script says if the script list of a table GSUB or GPOS names
+// a script.
+layout_has_script :: proc "contextless" (font: ^Font_File, place: Table, script: Feature_Tag) -> bool {
+	if place.length == 0 || place.offset < 0 || place.length < 0 || place.offset + place.length > len(font.bytes) {
+		return false
+	}
+	table := font.bytes[place.offset:][:place.length]
+	script_list_offset := read_u16(table, 4) or_return
+	script_list := part_at(table, script_list_offset) or_return
+	count := read_u16(script_list, 0) or_return
+	for index in 0 ..< count {
+		tag := tag_at(script_list, 2 + 6 * index) or_return
+		if tag == script {
+			return true
+		}
+	}
+	return false
 }
 
 // layout_lookups finds the lookups of a feature in the default language
@@ -205,7 +225,6 @@ layout_lookups :: proc "contextless" (font: ^Font_File, place: Table, script, ot
 		return .Too_Short
 	}
 	lookup_count := read_u16(lookup_list, 0) or_else 0
-	indices: [SUBSTITUTION_LOOKUP_LIMIT]int
 	features_seen := 0
 	for index_number in 0 ..< index_count {
 		feature_index, index_read := read_u16(language_system, 6 + 2 * index_number)
@@ -243,12 +262,12 @@ layout_lookups :: proc "contextless" (font: ^Font_File, place: Table, script, ot
 			// Each lookup once, in the order of the lookup list.
 			place_of := out.count
 			seen := false
-			for existing, position in indices[:out.count] {
-				if existing == lookup_index {
+			for existing, position in out.indices[:out.count] {
+				if int(existing) == lookup_index {
 					seen = true
 					break
 				}
-				if existing > lookup_index {
+				if int(existing) > lookup_index {
 					place_of = position
 					break
 				}
@@ -265,10 +284,10 @@ layout_lookups :: proc "contextless" (font: ^Font_File, place: Table, script, ot
 				return .Too_Short
 			}
 			for position := out.count; position > place_of; position -= 1 {
-				indices[position] = indices[position - 1]
+				out.indices[position] = out.indices[position - 1]
 				out.parts[position] = out.parts[position - 1]
 			}
-			indices[place_of] = lookup_index
+			out.indices[place_of] = u16(lookup_index)
 			out.parts[place_of] = lookup
 			out.count += 1
 		}
@@ -277,6 +296,22 @@ layout_lookups :: proc "contextless" (font: ^Font_File, place: Table, script, ot
 		return .No_Feature
 	}
 	return .None
+}
+
+// layout_lookup_of gives the lookup of an index in the lookup list of a
+// table GSUB or GPOS: a nested lookup of a contextual lookup names its
+// index.
+layout_lookup_of :: proc "contextless" (font: ^Font_File, place: Table, index: int) -> (lookup: []u8, ok: bool) {
+	if place.length < 10 || place.offset < 0 || place.offset + place.length > len(font.bytes) {
+		return nil, false
+	}
+	table := font.bytes[place.offset:][:place.length]
+	list := part_at(table, read_u16(table, 8) or_else -1) or_return
+	count := read_u16(list, 0) or_return
+	if index < 0 || index >= count {
+		return nil, false
+	}
+	return part_at(list, read_u16(list, 2 + 2 * index) or_else -1)
 }
 
 // gsub_find finds the glyph that a feature of the default language system

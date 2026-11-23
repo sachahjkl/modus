@@ -366,7 +366,7 @@ Do not use: kerning pair (for this).
 
 A font feature is a named choice of glyph forms that a font offers in its table `GSUB`, by a tag of four letters.
 
-Examples: `zero` (the slashed zero), `ss01` (a stylistic set), `numr` (numerators). A feature leads to one or more lookups, and each lookup changes glyphs. The system uses one feature, `zero` of Paper Mono, and only at the build: the tool reads it with `vector_font.single_substitution` and draws its glyph for the character `0` in the subset. The subset holds no `GSUB`, and no process reads features at run time.
+Examples: `zero` (the slashed zero), `ss01` (a stylistic set), `numr` (numerators), `half` (the half forms of Devanagari). A feature leads to one or more lookups, and each lookup changes glyphs. The tool reads `zero` of Paper Mono at the build and draws its glyph for the character `0` in the subset, which holds no `GSUB`. At run time, a process reads the features of the script fonts: the forms of Arabic, and the features of Devanagari through the engine of the lookups.
 
 The design: `docs/FONTS.md`, "Paper Mono, the font of the system".
 
@@ -376,11 +376,31 @@ Do not use: OpenType feature (for this), font option.
 
 A single substitution is a lookup of the table `GSUB` that puts one glyph in the place of another (lookup type 1).
 
-It is the simplest lookup: a coverage table lists the glyphs that it changes, and a delta or a list gives the substitute of each one. The feature `zero` of Paper Mono is one: it puts the glyph `zero.zero` in the place of the glyph of the character `0`. The system reads no other kind of lookup: no ligature, no contextual form.
+It is the simplest lookup: a coverage table lists the glyphs that it changes, and a delta or a list gives the substitute of each one. The feature `zero` of Paper Mono is one: it puts the glyph `zero.zero` in the place of the glyph of the character `0`. The engine of the lookups reads the other kinds: ligatures and contextual forms.
 
 The design: `docs/FONTS.md`, "Paper Mono, the font of the system".
 
 Do not use: glyph swap, alternate.
+
+### Engine of the lookups
+
+The engine of the lookups applies the lookups of `GSUB` and `GPOS` of a font to a buffer of at most 32 glyphs, feature by feature, in stages.
+
+A shaper of a script fills the buffer with one syllable and the features of each glyph, then asks for each stage of its model. The engine reads each lookup type but the cursive one, with the lookup flags of `GDEF`. Its nesting, its steps and its rules tried are bounded. It is not a shaper: a shaper reorders its script. Example: the conjunct द्ध of Noto Sans Devanagari is a chaining lookup that calls a ligature.
+
+The design: `src/md/features/written_shaping.md`, "The engine of the lookups".
+
+Do not use: layout engine, shaping engine, OpenType engine.
+
+### Indic syllable
+
+An Indic syllable is the unit that the shaper of Devanagari shapes at once: consonants joined by viramas, then their vowel signs and their modifiers.
+
+An independent vowel starts a syllable of its own, and a sign with no consonant before it stands on a dotted circle. The shaper reorders the glyphs of a syllable (the reph after its base, the vowel sign ि before it), so a placed glyph of a syllable can stand before the glyph of a character that comes before it in the text. A syllable holds at most 16 characters. Example: नमस्ते is three syllables, न, म and स्ते.
+
+The design: `src/md/features/written_shaping.md`, "Devanagari".
+
+Do not use: akshara (for this), cluster (for this), grapheme.
 
 ### Slashed zero
 
@@ -686,7 +706,7 @@ Do not use: character (for this), letter, glyph (for this).
 
 A combining mark is a character that draws on the character before it, its base: an accent, a dot below, a vowel sign of Hebrew or Arabic.
 
-The shaper reads a base and its marks as one cluster. It composes them to one character by the compositions of Unicode when a font draws the result: `e` then U+0301 is é, and `e` with U+0323 and U+0302, in either order, is ệ. A mark that does not compose is a placed glyph with the advance 0, placed by the mark anchors of its font, else centred on its base. A mark with no base, at the start of a text or after a space, stands on a dotted circle (U+25CC). In a grid of cells a mark takes no cell.
+The shaper reads a base and its marks as one cluster. It composes them by the compositions of Unicode when a font draws the result: `e` then U+0301 is é. A mark that does not compose is a placed glyph with the advance 0, placed by the mark anchors of its font, else centred on its base. A mark with no base, at the start of a text or after a space, stands on a dotted circle (U+25CC). In a grid of cells a mark takes no cell.
 
 The design: `src/md/features/written_shaping.md`.
 
@@ -696,7 +716,7 @@ Do not use: accent (for this), diacritic (for the character), zero-width charact
 
 A joining form is the shape that a letter of Arabic takes by its neighbours: isolated, initial, medial or final.
 
-The shaper gives each letter its form from its joining type (Unicode) and the joining types of the letters on each side; a mark between two letters does not break the join. The form is the substitution of the font: Noto Sans Arabic makes beh a dotless body and its dot, then the initial, medial or final form of the body, and its mark anchors place the dot. A font that makes no form takes the presentation form that Unicode names. Lam then alef is one glyph, their ligature. Example: in بيت the beh is initial, the yeh medial and the teh final.
+The shaper gives each letter its form from its joining type (Unicode) and the joining types of the letters on each side; a mark or an invisible format character between two letters does not break the join. The form is the substitution of the font: Noto Sans Arabic makes beh a dotless body and its dot, then the form of the body. A font that makes no form takes the presentation form that Unicode names. Lam then alef is one glyph, their ligature. Example: in بيت the beh is initial, the yeh medial and the teh final.
 
 The design: `src/md/features/written_shaping.md`.
 
@@ -706,7 +726,7 @@ Do not use: contextual form, positional form, glyph variant.
 
 The line direction is the order on the screen of the runs of one line that mixes left-to-right and right-to-left text, by the rules of UAX #9.
 
-The first strong letter of the text, outside any isolate, gives the direction of the line; each run of the other direction is reversed in place, numbers keep their order, and a bracket in a right-to-left run draws its mirrored glyph. An isolate (LRI, RLI or FSI to PDI) is one unit of the line around it, with its own direction inside; its controls draw nothing. The shaper changes only the x of each placed glyph: the placed glyphs stay in the order of the text. Example: `abc אבג 123` shows a b c, then 1 2 3, then ג ב א.
+The first strong letter of the text, outside any isolate, gives the direction of the line; each run of the other direction is reversed in place, numbers keep their order, and a bracket in a right-to-left run draws its mirrored glyph. An isolate (LRI, RLI or FSI to PDI) is one unit of the line around it, with its own direction inside; its controls draw nothing. The placed glyphs stay in the order of the text; only their x changes. Example: `abc אבג 123` shows a b c, then 1 2 3, then ג ב א.
 
 The design: `src/md/features/written_shaping.md`.
 
@@ -726,7 +746,7 @@ Do not use: attachment point (for this), mark offset, diacritic position.
 
 The script font set is the fonts of the scripts that the boot image lacks, one data object that a plan names by its hash and that a process opens at a fixed range.
 
-It holds Noto Sans Hebrew, Noto Sans Arabic, Noto Sans Thai, Noto Sans Symbols 2, Noto Emoji and Noto Sans CJK, whole, 35.9 MB, so the boot image stays small. `modustool script_fonts` writes it and prints its hash; the boot image names it by the resource `script_fonts_name`, and the plan of principal 0 can name another. On a machine it is an object of the store `script_fonts`; the root service reads it when the machine is usable, checks its hash, and maps it into each process that starts after that. A process with no set draws the replacement glyph for those scripts, and nothing waits for the set.
+It holds seven whole Noto fonts, among them Arabic, Thai, Devanagari and CJK, 36.4 MB, so the boot image stays small. `modustool script_fonts` writes it; the boot image names it by the resource `script_fonts_name`, and the plan of principal 0 can name another. On a machine it is an object of the store `script_fonts`; the root service reads it when the machine is usable, checks its hash, and maps it into each process that starts after that. A process with no set draws the replacement glyph for those scripts, and nothing waits for the set.
 
 The design: `src/md/features/script_fonts.md`.
 

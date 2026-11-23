@@ -62,6 +62,7 @@ bytes_to_read :: proc(bytes: []u8) -> system.Bytes_To_Read {
 @(private = "file")
 Package_Fonts :: struct {
 	set:     text_rendering.Font_Set,
+	room:    text_rendering.Font_Room,
 	outline: text_rendering.Outline_Memory,
 }
 
@@ -69,6 +70,7 @@ Package_Fonts :: struct {
 package_spacing :: proc(t: ^testing.T, fonts: ^Package_Fonts, outlines: ^Test_Outlines, face: text_rendering.Face, size: int) -> text_rendering.Spacing {
 	resource, problem := font_outlines.validate(outlines.bytes)
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
+	fonts.set.room = fonts.room[:]
 	outline := text_rendering.outline_of(&fonts.outline)
 	missing := text_rendering.fonts_open(&fonts.set, &resource, &outline)
 	testing.expect_value(t, missing, text_rendering.Outline_Fonts{})
@@ -555,12 +557,13 @@ a_call_opens_the_fonts_of_its_face :: proc(t: ^testing.T) {
 	testing.expect_value(t, problem.kind, font_outlines.Problem_Kind.None)
 	fonts := new(Package_Fonts)
 	defer free(fonts)
+	fonts.set.room = fonts.room[:]
 	outline := text_rendering.outline_of(&fonts.outline)
 	missing := text_rendering.fonts_open(&fonts.set, &resource, &outline, text_rendering.fonts_of_face(.Interface))
 	testing.expect_value(t, missing, text_rendering.Outline_Fonts{})
 	for font in text_rendering.Outline_Font {
 		wanted := font == .B612 || font == .Paper_Mono || font == .Noto_Sans
-		testing.expectf(t, fonts.set.fonts[font].opened == wanted, "%v is open: %v", font, fonts.set.fonts[font].opened)
+		testing.expectf(t, text_rendering.font_at(&fonts.set, font).opened == wanted, "%v is open: %v", font, text_rendering.font_at(&fonts.set, font).opened)
 	}
 }
 

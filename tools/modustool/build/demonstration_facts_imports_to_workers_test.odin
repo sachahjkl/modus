@@ -186,7 +186,7 @@ the_facts_of_the_interface_demonstrations_write_the_lines_of_before :: proc(t: ^
 		facts_expect_line(t, render_font(t, font, "Missing_Character_Has_Glyph", {{"character", count}}), line_of_before(FAULT, "the character ", count, " has a glyph, and no font of the chain has it"))
 		facts_expect_line(t, render_font(t, font, "Missing_Character_Has_Advance", {{"character", count}}), line_of_before(FAULT, "the character ", count, " has an advance of a font"))
 		facts_expect_line(t, render_font(t, font, "Replacement_Glyph_Drawn", {{"characters", count}}), line_of_before("interface_font: ", count, " characters that no font of the chain has draw the replacement glyph: as it must"))
-		facts_expect_line(t, render_font(t, font, "Script_Line_Drawn", {{"glyphs", count}}), line_of_before("interface_font: the line of Hebrew, Arabic, Thai, the ideographs, an emoji and a geometric shape draws ", count, " glyphs, with no replacement glyph: as it must"))
+		facts_expect_line(t, render_font(t, font, "Script_Line_Drawn", {{"glyphs", count}}), line_of_before("interface_font: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs, an emoji and a geometric shape draws ", count, " glyphs, with no replacement glyph: as it must"))
 		facts_expect_line(t, render_font(t, font, "Script_Line_Box", {{"character", count}}), line_of_before("interface_font: the script font set is mapped, and the character ", count, " of its line draws the replacement glyph"))
 		facts_expect_line(t, render_font(t, font, "Script_Line_Without_Ink", {{"character", count}, {"ink_rows", other}}), line_of_before("interface_font: the script font set is mapped, and the character ", count, " of its line has ", other, " rows of ink"))
 		facts_expect_line(t, render_font(t, font, "Script_Line_Too_Long", {{"glyphs", count}}), line_of_before("interface_font: the line of the script font set has ", count, " glyphs, more than one line holds"))
@@ -693,7 +693,7 @@ the_facts_with_no_value_of_the_demonstrations_write_the_lines_of_before :: proc(
 		{"interface_font", "Fallback_Without_Glyph_Memory", "interface_font: the fallback chain of the interface is wrong: this process has no glyph memory: each glyph is drawn band by band"},
 		{"interface_font", "Font_Outlines_Missing", "interface_font: the boot image gives no font outlines with the interface font"},
 		{"interface_font", "Glyph_Memory_Missing", "interface_font: this process has no glyph memory: each glyph is drawn band by band"},
-		{"interface_font", "Script_Fonts_Not_Mapped", "interface_font: no script font set is mapped: the line of Hebrew, Arabic, Thai, the ideographs and an emoji draws the replacement glyph"},
+		{"interface_font", "Script_Fonts_Not_Mapped", "interface_font: no script font set is mapped: the line of Hebrew, Arabic, Thai, Devanagari, the ideographs and an emoji draws the replacement glyph"},
 		{"interface_through_module", "Draw_Tables_Equal", "interface_through_module: ok, the two draw tables are equal"},
 		{"interface_through_module", "Draw_Tables_Differ", "interface_through_module: wrong: the two draw tables differ"},
 		{"kernel_events", "Faulter_Not_Started", "kernel_events: the child that faults did not start: the cases 3 to 8 do not run"},

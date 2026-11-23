@@ -49,8 +49,8 @@ outline_box :: proc(outline: ^Outline) -> (low_x, low_y, high_x, high_y: i32) {
 // A font of CFF outlines (Noto Sans Symbols 2) and one of CFF2 outlines in
 // a collection (Noto Sans CJK): the black square and the ideograph one have
 // closed contours inside the em of their font, as a glyph of glyf has; each
-// glyph of Noto Sans Symbols 2 and the first 4 096 glyphs of Noto Sans CJK
-// read with no problem. Each cut of the table of Noto Sans Symbols 2 at a
+// glyph of Noto Sans Symbols 2 and of Noto Sans CJK (65 535) reads with no
+// problem. Each cut of the table of Noto Sans Symbols 2 at a
 // place gives a problem or an outline, never a read past the table.
 @(test)
 the_outlines_of_cff_and_cff2 :: proc(t: ^testing.T) {
@@ -63,7 +63,7 @@ the_outlines_of_cff_and_cff2 :: proc(t: ^testing.T) {
 		version:       int,
 		glyphs_to_read: int,
 	}
-	cases := [?]Case{{"noto_sans_symbols_2", 0x25A0, 1, max(int)}, {"noto_sans_cjk", 0x4E00, 2, 4096}}
+	cases := [?]Case{{"noto_sans_symbols_2", 0x25A0, 1, max(int)}, {"noto_sans_cjk", 0x4E00, 2, max(int)}}
 	for each in cases {
 		bytes := script_font_bytes(t, each.name)
 		defer delete(bytes)

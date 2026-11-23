@@ -252,7 +252,7 @@ a_glyph_index_past_the_font_is_refused :: proc(t: ^testing.T) {
 	_, words := outlines_open(t, fonts[:])
 	defer delete(words)
 	for font in ([?]Outline_Font{.B612, .Paper_Mono}) {
-		count := state.fonts[font].file.glyph_count
+		count := font_at(&state.font_set, font).file.glyph_count
 		face := font == .B612 ? Face.Interface : Face.Cells
 		for index in ([?]int{count, count + 1, -1, max(int)}) {
 			_, problem := glyph_raster(face, font, index, TEXT_SIZE_OF_SCALE_ONE, 0)
@@ -764,7 +764,7 @@ the_cache_at_its_bound_of_entries :: proc(t: ^testing.T) {
 // glyph_index_of gives the glyph of a character in an opened font.
 @(private = "file")
 glyph_index_of :: proc(font: Outline_Font, character: rune) -> int {
-	index, _ := vector_font.glyph_of(&state.fonts[font].file, character)
+	index, _ := vector_font.glyph_of(&font_at(&state.font_set, font).file, character)
 	return index
 }
 
@@ -960,7 +960,7 @@ golden_bytes_of :: proc(t: ^testing.T, face: Face, size: int, bytes: ^[dynamic]u
 	for position in 0 ..< positions_of(face) {
 		for index in 0 ..< font_characters.CHARACTER_COUNT {
 			character, _ := font_characters.character_of_index(index)
-			glyph_index, glyph_problem := vector_font.glyph_of(&state.fonts[form.primary].file, character)
+			glyph_index, glyph_problem := vector_font.glyph_of(&font_at(&state.font_set, form.primary).file, character)
 			testing.expectf(t, glyph_problem == .None, "%v U+%04X: a glyph of its font", face, int(character))
 			box, raster_problem := glyph_raster(face, form.primary, glyph_index, size, position)
 			testing.expectf(t, raster_problem == .None, "%v U+%04X at size %v: %v", face, int(character), size, raster_problem)

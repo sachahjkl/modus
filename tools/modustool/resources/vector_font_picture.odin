@@ -39,6 +39,8 @@ Picture_Font :: struct {
 @(private = "file")
 picture_set: text_rendering.Font_Set
 @(private = "file")
+picture_room: [1]text_rendering.Font
+@(private = "file")
 picture_outline: text_rendering.Outline_Memory
 @(private = "file")
 picture_face: text_rendering.Face
@@ -49,7 +51,7 @@ picture_face: text_rendering.Face
 // draws the replacement glyph.
 @(private = "file")
 picture_text :: proc(canvas: graphics.Canvas, x, y: int, text: string, color: graphics.Color, scale: int = 1) {
-	if !picture_set.fonts[.Paper_Mono].opened {
+	if !text_rendering.font_at(&picture_set, .Paper_Mono).opened {
 		graphics.text_scaled(canvas, x, y, text, color, scale)
 		return
 	}
@@ -143,7 +145,7 @@ candidates_picture_write :: proc() -> bool {
 picture_font_use :: proc(font: Picture_Font) -> bool {
 	graphics.text_choice_set(.Spleen, .Red_Green_Blue)
 	graphics.text_state_start()
-	picture_set = {}
+	picture_set = {room = picture_room[:]}
 	picture_face = font.face
 	if font.bytes == nil {
 		return true
