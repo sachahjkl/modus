@@ -361,23 +361,24 @@ scenario_debugger_commands := [?]Step {
 	{kind = .Type, text = "debug(\"block\")"},
 	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + "System_Part" + REFUSES_THE_DEBUG_ACCESS},
 
-	// A revocation ends a debugging that the rule no longer gives. clock
-	// holds the machine with Inspect, and so does the console: the access
-	// is given. The grant machine of the console is revoked while it
-	// debugs clock, with a thread held: the root service ends the
-	// debugging, and a new attach is refused by the grant Inspect.
-	{kind = .Type, text = "start(\"clock\")"},
-	{kind = .Wait, text = "display: clock" + WINDOW_TAKEN, any_order = true},
+	// A revocation ends a debugging that the rule no longer gives.
+	// time_page holds the machine with Inspect, and so does the console:
+	// the access is given. The grant machine of the console is revoked
+	// while it debugs time_page, with a thread held: the root service ends
+	// the debugging, and a new attach is refused by the grant Inspect.
+	{kind = .Type, text = "start(\"time_page\")"},
+	{kind = .Wait, text = "display: time_page" + WINDOW_TAKEN, any_order = true},
 	{kind = .Front, text = "console"},
-	{kind = .Type, text = "columns(debug(\"clock\"), process, described)"},
-	// Two modules with a debug object: clock and the drawing module it imports.
-	{kind = .Wait, text = "[console] clock            2"},
+	{kind = .Type, text = "columns(debug(\"time_page\"), process, described)"},
+	// Two modules with a debug object: time_page and the drawing module it
+	// imports.
+	{kind = .Wait, text = "[console] time_page          2"},
 	{kind = .Type, text = "columns(hold(0), thread, state)"},
 	{kind = .Wait, text = "[console]      0  held"},
 	{kind = .Type, text = "revoke(\"console\", \"machine\")"},
 	{kind = .Wait, text = "root: revoked the grant machine of console, holdings ended: "},
-	{kind = .Wait, text = "root: ended the debugging of clock for console: the rule no longer gives the debug access, after a revocation"},
-	{kind = .Type, text = "debug(\"clock\")"},
+	{kind = .Wait, text = "root: ended the debugging of time_page for console: the rule no longer gives the debug access, after a revocation"},
+	{kind = .Type, text = "debug(\"time_page\")"},
 	{kind = .Wait, text = DEBUG_ACCESS_REFUSED_BY_THE_GRANT + "Inspect" + REFUSES_THE_DEBUG_ACCESS},
 
 	// The grant to act for the principal is revoked while the console

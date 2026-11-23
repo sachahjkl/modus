@@ -298,7 +298,7 @@ Each pair was measured in the same hour with the same tool: Spleen at the commit
 | The terminal: pictures in one second | 62 | 62 |
 | A full frame of the desktop with 16 windows, measured on a screen of 1024 x 768 (the reference screen is 1920 x 1080) | 1 683 to 3 424 us | 1 523 to 2 653 us |
 | `interface_elements`: the whole frame / the next frame in its damage | 402 / 119 us | 637 / 158 us (875 / 209 us at load 45) |
-| `clock`: one picture, the mean of 10 | 19.9 us | 31.5 to 46.3 us (211.7 us in one run) |
+| `time_page`: one picture, the mean of 10 | 19.9 us | 31.5 to 46.3 us (211.7 us in one run) |
 | The boot image | 3 566 097 bytes (`cacaf48`) | 3 778 016 bytes: +390 624 the glyph cache, +64 193 `settings`, -231 953 `vector_glyphs` (the 343 KB file of DejaVu out, six subsets in) |
 | The glyph cache | | 390 624 bytes; its hash checked by the root service in 796 to 966 us |
 

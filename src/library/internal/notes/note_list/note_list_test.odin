@@ -150,17 +150,49 @@ a_removal_shows_the_next_note_or_the_one_before_the_last :: proc(t: ^testing.T) 
 
 @(test)
 a_pause_ends_only_after_its_time_and_never_on_a_clock_that_went_back :: proc(t: ^testing.T) {
-	testing.expect(t, !pause_ended(false, 0, max(u64)))
-	testing.expect(t, !pause_ended(true, 100, 100))
-	testing.expect(t, !pause_ended(true, 100, 100 + PAUSE_MILLISECONDS - 1))
-	testing.expect(t, pause_ended(true, 100, 100 + PAUSE_MILLISECONDS))
-	testing.expect(t, !pause_ended(true, 5000, 10))
-	testing.expect(t, pause_ended(true, 0, max(u64)))
-	_, has_deadline := pause_deadline(false, 10)
+	none: Change_Wait
+	testing.expect(t, !change_wait_due(&none, max(u64)), "no change waits: nothing is due")
+	_, has_deadline := change_wait_deadline(&none)
 	testing.expect(t, !has_deadline)
-	deadline, has := pause_deadline(true, 10)
+	wait: Change_Wait
+	change_wait_mark(&wait, 100)
+	testing.expect(t, !change_wait_due(&wait, 100))
+	testing.expect(t, !change_wait_due(&wait, 100 + PAUSE_MILLISECONDS - 1))
+	testing.expect(t, change_wait_due(&wait, 100 + PAUSE_MILLISECONDS))
+	testing.expect(t, !change_wait_due(&wait, 10), "a clock that went back")
+	testing.expect(t, change_wait_due(&wait, max(u64)))
+	deadline, has := change_wait_deadline(&wait)
 	testing.expect(t, has)
-	testing.expect_value(t, deadline, u64(10 + PAUSE_MILLISECONDS))
-	deadline, _ = pause_deadline(true, max(u64) - 1)
+	testing.expect_value(t, deadline, u64(100 + PAUSE_MILLISECONDS))
+	late: Change_Wait
+	change_wait_mark(&late, max(u64) - 1)
+	deadline, _ = change_wait_deadline(&late)
 	testing.expect_value(t, deadline, max(u64))
+}
+
+// Keys less than a second apart do not hold the commit back: it is due 5
+// seconds after the first change that waits. A refused commit starts the
+// wait again from the refusal.
+@(test)
+a_change_is_due_at_most_5_seconds_after_the_first_change :: proc(t: ^testing.T) {
+	wait: Change_Wait
+	now := u64(1000)
+	change_wait_mark(&wait, now)
+	for now < 1000 + LONGEST_WAIT_MILLISECONDS - 500 {
+		now += 500
+		change_wait_mark(&wait, now)
+		testing.expectf(t, !change_wait_due(&wait, now), "at %d: no pause, and under 5 s", now)
+	}
+	testing.expect_value(t, wait.first_change, u64(1000))
+	testing.expect(t, !change_wait_due(&wait, 1000 + LONGEST_WAIT_MILLISECONDS - 1))
+	testing.expect(t, change_wait_due(&wait, 1000 + LONGEST_WAIT_MILLISECONDS))
+	deadline, _ := change_wait_deadline(&wait)
+	testing.expect_value(t, deadline, u64(1000 + LONGEST_WAIT_MILLISECONDS))
+	change_wait_again(&wait, 7000)
+	testing.expect(t, !change_wait_due(&wait, 7000), "a refusal is not due at once")
+	deadline, _ = change_wait_deadline(&wait)
+	testing.expect_value(t, deadline, u64(7000 + PAUSE_MILLISECONDS))
+	wait.waiting = false
+	change_wait_mark(&wait, 20_000)
+	testing.expect_value(t, wait.first_change, u64(20_000))
 }

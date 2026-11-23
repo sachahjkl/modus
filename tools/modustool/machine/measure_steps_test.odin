@@ -32,7 +32,7 @@ measure_record_required_numbers_are_waited_for :: proc(t: ^testing.T) {
 				waited ||= waits(scenario_measure[:], measure.pattern)
 			case checks.TEST_OUTPUT_MEASURE_SCHEDULER:
 				waited ||= waits(scenario_measure_scheduler[:], measure.pattern)
-			case checks.TEST_OUTPUT_MEASURE_CLOCK, checks.TEST_OUTPUT_MEASURE_DISK:
+			case checks.TEST_OUTPUT_MEASURE_TIME_PAGE, checks.TEST_OUTPUT_MEASURE_DISK:
 				// The log of the measure run of one process of the table.
 				for process in measure_processes {
 					if path == strings.concatenate({foundation.BUILD_FOLDER, "/test_output_measure_", process.name, ".txt"}, context.temp_allocator) {

@@ -221,6 +221,16 @@ desktop_notifications_records :: proc "contextless" (table: ^interface.Draw_Tabl
 
 		text_x := x + 24
 		text_room := NOTIFICATION_BANNER_WIDTH - 36
+		// The label of a caller: its process name, in the dim color before
+		// the title (src/md/features/tray_widgets.md, "The export notify").
+		if item.label_len > 0 {
+			label_str := string(item.label[:min(int(item.label_len), notifications.MAX_LABEL_BYTES)])
+			label_fit := interface.text_fit(table, interface.FONT_INTERFACE, label_str, text_room / 2)
+			label_y := item.body_len > 0 ? y + 12 : y + (NOTIFICATION_BANNER_HEIGHT - graphics.CELL_HEIGHT) / 2
+			after := interface.draw_text(table, text_x, label_y, label_fit, graphics.colors.dim, interface.FONT_INTERFACE)
+			text_room -= after + 8 - text_x
+			text_x = after + 8
+		}
 		title_str := string(item.title[:item.title_len])
 		title_fit := interface.text_fit(table, interface.FONT_INTERFACE, title_str, text_room)
 		if item.body_len > 0 {
@@ -1032,15 +1042,28 @@ desktop_shortcut_key :: proc "contextless" (code: u32, character: rune, pressed:
 	return false
 }
 
-desktop_notification_post :: proc "contextless" (source_id: u64, urgency: notifications.Urgency, now_ms: u64, title, body: []u8) -> u64 {
+desktop_notification_post :: proc "contextless" (source_id: u64, urgency: notifications.Urgency, now_ms: u64, title, body: []u8, label: []u8 = nil, cards_limit := 0) -> (id: u64, refusal: notifications.Notification_Refusal) {
 	if !desktop_features_ready {
-		return 0
+		return 0, .Nil_Queue
 	}
-	id, refusal := notifications.queue_post(&desktop_notifications, source_id, urgency, now_ms, 8_000, title, body)
-	if refusal == .None {
-		desktop_damage_notifications()
-		tray_notification_keep(title, body) // tray_widgets.odin
-		return id
+	id, refusal = notifications.queue_post(&desktop_notifications, source_id, urgency, now_ms, 8_000, title, body, label, cards_limit)
+	if refusal != .None {
+		return 0, refusal
 	}
-	return 0
+	desktop_damage_notifications()
+	// The history shows the label too: "clock: the timer ended". The
+	// label comes from the connection, so a card of the history names its
+	// process as the banner does.
+	// A labelled source keeps at most bar.NOTIFICATION_RECORDS_PER_SOURCE_LIMIT
+	// records in the history: it cannot push the cards of the principal out.
+	if len(label) == 0 {
+		tray_notification_keep(title, body, source_id) // tray_widgets.odin
+	} else {
+		labelled: [notifications.MAX_LABEL_BYTES + 2 + notifications.MAX_TITLE_BYTES]u8
+		count := copy(labelled[:], label)
+		count += copy(labelled[count:], ": ")
+		count += copy(labelled[count:], title)
+		tray_notification_keep(labelled[:count], body, source_id, bar.NOTIFICATION_RECORDS_PER_SOURCE_LIMIT)
+	}
+	return id, .None
 }

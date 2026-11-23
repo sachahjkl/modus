@@ -105,7 +105,7 @@ Tables as parameters: one description, three ways to call (a direct call, a call
 
 ![One queue for several writers and several readers, with no lock: the records of one second and the kernel entries, against a queue with a lock](docs/screenshots/crowd.png)
 
-![The time is a page that each process reads: the reads of one second from the page and with a kernel entry](docs/screenshots/clock.png)
+![The time is a page that each process reads: the reads of one second from the page and with a kernel entry](docs/screenshots/time_page.png)
 
 ![A terminal with no escape sequence: flood writes millions of styled lines in one second, the terminal draws only the view](docs/screenshots/terminal.png)
 

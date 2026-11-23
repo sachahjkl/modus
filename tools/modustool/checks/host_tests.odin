@@ -383,6 +383,8 @@ HOST_TEST_FOLDERS :: [?]string {
 	foundation.SOURCE_FOLDER_INTERNAL + "/notes/store_work",
 	foundation.SOURCE_FOLDER_INTERNAL + "/notes/note_session",
 	foundation.SOURCE_FOLDER_INTERNAL + "/monitor/sample_history",
+	foundation.SOURCE_FOLDER_INTERNAL + "/clock/clock_model",
+	foundation.SOURCE_FOLDER_INTERNAL + "/paint/paint_model",
 	foundation.SOURCE_FOLDER_CONTRACT + "/ring",
 	foundation.SOURCE_FOLDER_CONTRACT + "/font_characters",
 	foundation.SOURCE_FOLDER_CONTRACT + "/datagram",

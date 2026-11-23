@@ -195,6 +195,7 @@ module_builds := [?]Module_Build {
 	{name = "tally", source = DEMONSTRATION_MODULE_SOURCES + "tally", entry = true, image = true},
 	{name = "manual", source = SYSTEM_MODULE_SOURCES + "manual", category = .System_Tool, entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	{name = "clock", source = DEMONSTRATION_MODULE_SOURCES + "clock", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
+	{name = "time_page", source = DEMONSTRATION_MODULE_SOURCES + "time_page", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
 	// Log_Only: no window; modustool measure starts it and reads its measures.
 	{name = "processor_frame", source = DEMONSTRATION_MODULE_SOURCES + "processor_frame", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true, menu = .Log_Only},
 	{name = "randomness", source = DEMONSTRATION_MODULE_SOURCES + "randomness", entry = true, imports = {DRAWING_MODULE}, defines = {DRAWING_THROUGH_MODULE}, image = true},
@@ -227,6 +228,7 @@ module_builds := [?]Module_Build {
 	{name = "plan_applier", source = TEST_MODULE_SOURCES + "plan_applier", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "settings_stand_in", source = TEST_MODULE_SOURCES + "settings_stand_in", entry = true, image = true, only_in_image = BOOT_IMAGE_PLAN_AND_AUDIT},
 	{name = "log_follower", source = TEST_MODULE_SOURCES + "log_follower", entry = true, image = true},
+	{name = "notify_border_of_the_compositor", source = TEST_MODULE_SOURCES + "notify_border_of_the_compositor", entry = true, image = true},
 	{name = "output_reader", source = TEST_MODULE_SOURCES + "output_reader", entry = true, image = true},
 	{name = "output_side", source = TEST_MODULE_SOURCES + "output_side", entry = true, image = true},
 	{name = "output_counter", source = TEST_MODULE_SOURCES + "output_counter", entry = true, image = true},

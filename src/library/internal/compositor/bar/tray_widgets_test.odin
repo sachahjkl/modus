@@ -578,3 +578,37 @@ the_calendar_grid_fits_its_card :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+// A labelled source keeps at most its limit of records: its own oldest goes
+// first, and the records of the principal stay. A limit of 0 is the rule of
+// before: the oldest of the history goes.
+@(test)
+a_labelled_source_keeps_its_limit_of_records :: proc(t: ^testing.T) {
+	history: Notification_History
+	PRINCIPAL :: u64(1)
+	PROCESS :: u64(1) << 63 | 7
+	testing.expect(t, notification_history_add(&history, "principal one", "", 0, true, PRINCIPAL))
+	testing.expect(t, notification_history_add(&history, "principal two", "", 1, true, PRINCIPAL))
+	for index in 0 ..< 20 {
+		testing.expect(t, notification_history_add(&history, "process", "", i64(10 + index), true, PROCESS, NOTIFICATION_RECORDS_PER_SOURCE_LIMIT))
+	}
+	testing.expect_value(t, history.count, 2 + NOTIFICATION_RECORDS_PER_SOURCE_LIMIT)
+	own := 0
+	for &record in history.records[:history.count] {
+		own += record.source == PROCESS ? 1 : 0
+	}
+	testing.expect_value(t, own, NOTIFICATION_RECORDS_PER_SOURCE_LIMIT)
+	testing.expect_value(t, notification_title(&history.records[0]), "process")
+	testing.expect_value(t, history.records[0].seconds, i64(29))
+	testing.expect_value(t, history.records[1].seconds, i64(28))
+	testing.expect_value(t, notification_title(&history.records[history.count - 1]), "principal one")
+	// An empty title of a source changes nothing.
+	testing.expect(t, !notification_history_add(&history, "", "", 99, true, PROCESS, NOTIFICATION_RECORDS_PER_SOURCE_LIMIT))
+	testing.expect_value(t, history.records[0].seconds, i64(29))
+	// The principal posts with no limit: the oldest of the history goes.
+	for index in 0 ..< NOTIFICATION_HISTORY_CAPACITY {
+		notification_history_add(&history, "principal", "", i64(100 + index), true, PRINCIPAL)
+	}
+	testing.expect_value(t, history.count, NOTIFICATION_HISTORY_CAPACITY)
+	testing.expect_value(t, history.records[NOTIFICATION_HISTORY_CAPACITY - 1].seconds, i64(100))
+}

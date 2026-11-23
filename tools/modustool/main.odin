@@ -304,7 +304,7 @@ COMMANDS :: [?]foundation.Command {
 	//   `build/test_output_measure.txt`.
 	// - `scheduler N`: N machines that run the process `scheduler` alone, in
 	//   `build/test_output_scheduler_<n>.txt`.
-	// - `clock`, `crowd`, `disk`, `flow`, `limits`: the process alone, in
+	// - `time_page`, `crowd`, `disk`, `flow`, `limits`: the process alone, in
 	//   `build/test_output_measure_<process>.txt`; the command prints its
 	//   lines.
 	// - `windows`: each window of the interface package, alone, and a table of
@@ -315,7 +315,7 @@ COMMANDS :: [?]foundation.Command {
 	//
 	// The tool checks no speed: a process checks its counts, and the numbers
 	// are printed for a reader (docs/TOOLS.md, "The bounds of the tests").
-	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other process, then the frame at 1920x1080 of processor_frame, and stop: the numbers are in " + checks.TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the process scheduler N times; `measure clock|crowd|disk|flow|limits`: the process alone, and its lines; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
+	{name = "measure", about = "build, start the machine, run the measures of the locks of the kernel with no other process, then the frame at 1920x1080 of processor_frame, and stop: the numbers are in " + checks.TEST_OUTPUT_MEASURE + "; `measure scheduler N`: the process scheduler N times; `measure time_page|crowd|disk|flow|limits`: the process alone, and its lines; `measure windows`: each window that the interface package draws, alone, and a table of the time of its pictures; `measure without_checks ...`: the measure build, with no check in the kernel (no lock order check, no check of the frames)", run = run_measure},
 	// Builds, starts a machine that runs the scenario of a film, and films
 	// it: the pictures of the screen, taken while the scenario types, become
 	// a film with ffmpeg, which must be on the path. The film is for the
@@ -1148,7 +1148,7 @@ run_measure :: proc(args: []string) -> int {
 		return 0
 	}
 	if len(args) != 0 {
-		fmt.eprintln("modustool: measure [without_checks] [scheduler <count> | windows | address_space | shortage | clock | crowd | disk | flow | limits]")
+		fmt.eprintln("modustool: measure [without_checks] [scheduler <count> | windows | address_space | shortage | time_page | crowd | disk | flow | limits]")
 		return foundation.EXIT_USAGE
 	}
 	if !machine.machine_test(&part, machine.scenario_measure[:], {volume = build.BOOT_VOLUME_MEASURE, output = checks.TEST_OUTPUT_MEASURE, exit_status = build.MACHINE_STOP_OK}) || !checks.processor_frame_lines_check(checks.TEST_OUTPUT_MEASURE) || !checks.quality_lines_check(checks.TEST_OUTPUT_MEASURE) {

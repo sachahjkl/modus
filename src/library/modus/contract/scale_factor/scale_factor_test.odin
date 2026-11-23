@@ -206,6 +206,45 @@ the_logical_screen_of_each_scale :: proc(t: ^testing.T) {
 	}
 }
 
+// The surface of a window at the largest scale is cut to the reference
+// screen on each axis only for a resizable window whose least size fits the
+// logical screen at LARGEST. The refusals of the cut first: no least size,
+// one part of it, a negative one, a least size one past the logical screen
+// on each axis; then the edges of the size (a negative size, 0, 1), one
+// axis cut and the other not, the logical screen and one past it, and the
+// largest i32.
+@(test)
+a_window_surface_is_cut_to_the_reference_screen_only_when_the_fit_can_shrink_it :: proc(t: ^testing.T) {
+	logical_width, logical_height := logical_screen(LARGEST)
+	testing.expect(t, i64(logical_width) == LARGEST_LOGICAL_WIDTH && i64(logical_height) == LARGEST_LOGICAL_HEIGHT)
+	least_w, least_h := i32(LARGEST_LOGICAL_WIDTH), i32(LARGEST_LOGICAL_HEIGHT)
+	cases := []struct {
+		logical_width, logical_height, least_width, least_height: i32,
+		width, height:                                             i64,
+	} {
+		{1000, 696, 0, 0, 2000, 1392}, // Not resizable: hall_of_fame.
+		{1000, 696, 600, 0, 2000, 1392},
+		{1000, 696, 0, 360, 2000, 1392},
+		{1000, 696, -1, -1, 2000, 1392},
+		{1000, 696, least_w + 1, 360, 2000, 1392},
+		{1000, 696, 600, least_h + 1, 2000, 1392},
+		{min(i32), -1, 1, 1, 0, 0},
+		{0, 0, 1, 1, 0, 0},
+		{1, 1, 1, 1, 2, 2},
+		{1000, 100, 600, 50, reference_screen.WIDTH, 200},
+		{100, 1000, 50, 360, 200, reference_screen.HEIGHT},
+		{959, 539, 600, 360, 1918, 1078},
+		{960, 540, least_w, least_h, reference_screen.WIDTH, reference_screen.HEIGHT},
+		{961, 541, least_w, least_h, reference_screen.WIDTH, reference_screen.HEIGHT},
+		{1536, 864, 600, 360, reference_screen.WIDTH, reference_screen.HEIGHT},
+		{max(i32), max(i32), 1, 1, reference_screen.WIDTH, reference_screen.HEIGHT},
+	}
+	for item in cases {
+		width, height := window_surface_largest(item.logical_width, item.logical_height, item.least_width, item.least_height)
+		testing.expectf(t, width == item.width && height == item.height, "%d x %d, least %d x %d, gives %d x %d, not %d x %d", item.logical_width, item.logical_height, item.least_width, item.least_height, width, height, item.width, item.height)
+	}
+}
+
 // The least work area fits the logical screen of each scale, the largest
 // one too, so the bar and the window that sets the scale back are on the
 // screen at each scale. No part of one holder is counted: a holder with no

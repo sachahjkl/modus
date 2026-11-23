@@ -36,7 +36,7 @@ Measure_Process :: struct {
 
 @(rodata)
 measure_processes := [?]Measure_Process {
-	{name = "clock", lines = {"clock: the time page: ", " reads in one second, 0 kernel entries for one million reads"}, done = "clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page"},
+	{name = "time_page", lines = {"time_page: the time page: ", " reads in one second, 0 kernel entries for one million reads"}, done = "time_page: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page"},
 	{name = "crowd", lines = {"crowd: shared queue, 1 writers, 1 readers: ", " records in one second, "}, done = "crowd: ok, 5 runs, each record written is read one time, each event started all the threads"},
 	{name = "disk", lines = {"disk: read, 1 block in each request, 32 in flight: ", " blocks in one second, kernel entries for 100 requests: "}, done = "disk: ok, 5 runs, 0 errors, write then read back: 0 wrong"},
 	{name = "flow", lines = {"flow: capacity 32, wait at once: ", " records in one second, "}, done = "flow: ok, 4 rings, 0 records lost"},
@@ -140,7 +140,7 @@ measure_runs_of_the_record :: proc() -> bool {
 	if !machine_test(&part, scenario_measure[:], {volume = build.BOOT_VOLUME_MEASURE, output = checks.TEST_OUTPUT_MEASURE, exit_status = build.MACHINE_STOP_OK}) || !checks.processor_frame_lines_check(checks.TEST_OUTPUT_MEASURE) || !checks.quality_lines_check(checks.TEST_OUTPUT_MEASURE) {
 		return false
 	}
-	for name in ([]string{"clock", "disk", "log_reader"}) {
+	for name in ([]string{"time_page", "disk", "log_reader"}) {
 		process := measure_process_find(name) or_return
 		measure_process_run(&part, process) or_return
 	}

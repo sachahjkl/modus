@@ -144,6 +144,15 @@ scenario := [?]Step {
 	{kind = .Click_Element, text = "paint", element = "blue"},
 	{kind = .Drag, x = 760, y = 520, to_x = 560, to_y = 700},
 	{kind = .Drag, x = 800, y = 600, to_x = 960, to_y = 600},
+	// No save action (docs/PROPERTIES.md, "Persistence: no save action,
+	// and versions for all processes"): the store keeps the picture after a
+	// pause of a second. A new start of paint opens it with its drawing.
+	{kind = .Wait, text = "paint: the store keeps the picture: "},
+	{kind = .Close, text = "paint"},
+	{kind = .Wait, text = "root: paint stopped"},
+	{kind = .Launch, text = "paint"},
+	{kind = .Wait, text = "paint: the picture is open with a drawing: 640 x 352 pixels, "},
+	{kind = .Move, text = "paint", to_x = 520, to_y = 408},
 	// The palette: the key super opens it. With no letter it lists the
 	// windows, the front one first, then the processes.
 	{kind = .Key, text = "meta_l"},
@@ -1219,24 +1228,58 @@ scenario := [?]Step {
 	{kind = .Wait, text = "crowd: ok, 5 runs, each record written is read one time, each event started all the threads"},
 	{kind = .Shot, text = "crowd"},
 
-	// The time is in a page that each process reads: no kernel entry.
-	{kind = .Launch, text = "clock"},
-	{kind = .Wait, text = "compositor: window clock is resizable from 816x336 to 1216x640", any_order = true},
-	{kind = .Wait, text = "clock: the check of the time page: 1000000 reads, 0 kernel entries"},
-	{kind = .Wait, text = "clock: the check of a kernel entry: 100000 reads, "},
-	{kind = .Wait, text = "clock: the time page and the cycle counter: in "},
-	{kind = .Wait, text = "clock: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page"},
-	{kind = .Shot, text = "clock"},
-	// The pointer drags the corner of the window of clock: its process
+	// The time is in a page that each process reads: no kernel entry. The
+	// demonstration is not in the start menu: the console starts it.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "start(\"time_page\")"},
+	{kind = .Wait, text = "display: time_page" + WINDOW_TAKEN, any_order = true},
+	{kind = .Wait, text = "compositor: window time_page is resizable from 816x336 to 1216x640", any_order = true},
+	{kind = .Wait, text = "time_page: the check of the time page: 1000000 reads, 0 kernel entries"},
+	{kind = .Wait, text = "time_page: the check of a kernel entry: 100000 reads, "},
+	{kind = .Wait, text = "time_page: the time page and the cycle counter: in "},
+	{kind = .Wait, text = "time_page: ok, the time never went back, the page and the kernel give the same time, the kernel refuses to remove the time page"},
+	{kind = .Shot, text = "time_page"},
+	// The pointer drags the corner of the window of time_page: its process
 	// makes the surface of the new size and draws its next frame in it,
 	// and the compositor shows the window at that size from that frame
 	// (src/md/features/window_resize.md).
-	{kind = .Resize, text = "clock", to_x = 880, to_y = 384},
+	{kind = .Resize, text = "time_page", to_x = 880, to_y = 384},
 	// The process can draw before the compositor writes its line of the
 	// request: the two lines come in either order.
-	{kind = .Wait, text = "compositor: window clock asked to draw at 880x384", any_order = true},
-	{kind = .Wait, text = "display: clock: the first picture of 880x384 after a resize"},
-	{kind = .Shot, text = "clock_resized"},
+	{kind = .Wait, text = "compositor: window time_page asked to draw at 880x384", any_order = true},
+	{kind = .Wait, text = "display: time_page: the first picture of 880x384 after a resize"},
+	{kind = .Shot, text = "time_page_resized"},
+
+	// The clock of the desktop (src/md/features/clock_application.md): the
+	// stopwatch starts and stops, then a timer of 1 second ends and posts a
+	// card through the compositor, labelled with the name of the process.
+	{kind = .Launch, text = "clock"},
+	{kind = .Wait, text = "clock: ok, the first frame is drawn"},
+	{kind = .Click_Element, text = "clock", element = "stopwatch"},
+	{kind = .Click_Element, text = "clock", element = "start"},
+	{kind = .Wait, text = "clock: the stopwatch started"},
+	{kind = .Click_Element, text = "clock", element = "stop"},
+	{kind = .Wait, text = "clock: the stopwatch stopped at "},
+	{kind = .Click_Element, text = "clock", element = "timer"},
+	// From 5 minutes, five steps of -1 min stop at the least duration, 1 s.
+	{kind = .Click_Element, text = "clock", element = "-1 min"},
+	{kind = .Click_Element, text = "clock", element = "-1 min"},
+	{kind = .Click_Element, text = "clock", element = "-1 min"},
+	{kind = .Click_Element, text = "clock", element = "-1 min"},
+	{kind = .Click_Element, text = "clock", element = "-1 min"},
+	{kind = .Click_Element, text = "clock", element = "start"},
+	{kind = .Wait, text = "clock: the timer of 1 s ended"},
+	{kind = .Wait, text = "clock: the notification "},
+	{kind = .Shot, text = "clock_notification"},
+	{kind = .Close, text = "clock"},
+	{kind = .Wait, text = "root: clock stopped"},
+	// The border of notify for a caller that does not act for the
+	// principal: the rate, the bound of 3 cards with Full and their count,
+	// and the label of a name of 31 bytes, the longest that a process has.
+	{kind = .Front, text = "console"},
+	{kind = .Type, text = "start(\"notify_border_of_the_compositor\")"},
+	{kind = .Wait, text = "notify_border_of_the_compositor: ok, the cards of a caller stop at 3 with Full and their count"},
+	{kind = .Wait, text = "root: notify_border_of_the_compositor stopped"},
 
 	// Several processors: the kernel says that the four processors ran
 	// threads of one process at the same time. Then 1, 2 and 4 threads
@@ -1459,7 +1502,7 @@ scenario := [?]Step {
 	{kind = .Wait, text = "text: Text, color: Integer) -> Integer"},
 	// One line for three calls: each result is a line of the log, and the
 	// check of the log below needs each record since the boot.
-	{kind = .Type, text = "paint.line(40, 30, 440, 250, 1) + paint.line(40, 250, 440, 30, 3) + paint.write(150, 20, \"drawn by isolated calls\", 0)"},
+	{kind = .Type, text = "paint.line(40, 30, 440, 250, 4) + paint.line(40, 250, 440, 30, 9) + paint.write(150, 20, \"drawn by isolated calls\", 0)"},
 	{kind = .Wait, text = "[console] 26"}, // 1 and 2 lines, and 23 bytes of text.
 	{kind = .Type, text = "paint.lines()"},
 	{kind = .Wait, text = "[console] 2"},
@@ -2241,12 +2284,13 @@ scenario := [?]Step {
 	{kind = .Launch, text = "paint"},
 	{kind = .Wait, text = "compositor: surface paint"},
 	{kind = .Front, text = "console"},
-	{kind = .Type, text = "paint.line(0, 0, 10, 10, 9)"},
-	{kind = .Wait, text = "error: paint.line: the argument color has the value 9, which the call refuses; it takes at most 5"},
-	// A text below the last row of the paper, and a glider at a negative
-	// column: each is refused with its record, and draws nothing.
-	{kind = .Type, text = "paint.write(0, 296, \"below the paper\", 0)"},
-	{kind = .Wait, text = "error: paint.write: the argument y has the value 296, which the call refuses; it takes at most 295"},
+	{kind = .Type, text = "paint.line(0, 0, 10, 10, 16)"},
+	{kind = .Wait, text = "error: paint.line: the argument color has the value 16, which the call refuses; it takes at most 15"},
+	// A text below the last row of the picture, and a glider at a negative
+	// column: each is refused with its record, and draws nothing. The
+	// picture of a new window is 640 x 352.
+	{kind = .Type, text = "paint.write(0, 352, \"below the picture\", 0)"},
+	{kind = .Wait, text = "error: paint.write: the argument y has the value 352, which the call refuses; it takes at most 351"},
 	{kind = .Type, text = "life.glider(-1, 10)"},
 	{kind = .Wait, text = "error: life.glider: the argument column has -1; it must have at least 0"},
 	{kind = .Type, text = "stop(\"paint\")"},
@@ -2587,8 +2631,10 @@ scenario := [?]Step {
 	// end, over 2 lines.
 	{kind = .Type, text = "start(\"edit\")"},
 	{kind = .Wait, text = "edit: a new store: an empty text", any_order = true},
-	{kind = .Wait, text = "compositor: surface edit"},
-	{kind = .Wait, text = "edit: ok, the first picture is presented"},
+	// The process can present its first picture before the compositor
+	// writes its line of the surface: the two lines have no order.
+	{kind = .Wait, text = "compositor: surface edit", any_order = true},
+	{kind = .Wait, text = "edit: ok, the first picture is presented", any_order = true},
 	{kind = .Front, text = "edit"},
 	{kind = .Keys, text = "first line"},
 	{kind = .Key, text = "ret"},
@@ -3063,7 +3109,7 @@ scenario := [?]Step {
 	// these waits do not move the place of the log.
 	{kind = .Wait, text = "interface: monitor: a frame in the light appearance", any_order = true},
 	{kind = .Wait, text = "interface: rings: a frame in the light appearance", any_order = true},
-	{kind = .Wait, text = "interface: clock: a frame in the light appearance", any_order = true},
+	{kind = .Wait, text = "interface: time_page: a frame in the light appearance", any_order = true},
 	{kind = .Wait, text = "settings: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance light, scale 1.25; kept in the store"},
 	{kind = .Wait, text = "settings: the appearance in force is light: the setting light"},
 	{kind = .Wait, text = "compositor: the pointer form in use: light", any_order = true},
@@ -3086,8 +3132,8 @@ scenario := [?]Step {
 	{kind = .Shot, text = "monitor_light"},
 	{kind = .Front, text = "rings"},
 	{kind = .Shot, text = "rings_light"},
-	{kind = .Front, text = "clock"},
-	{kind = .Shot, text = "clock_light"},
+	{kind = .Front, text = "time_page"},
+	{kind = .Shot, text = "time_page_light"},
 	{kind = .Call, text = "settings.set(appearance = .dark)", expected = "1"},
 	{kind = .Wait, text = "settings: the appearance in force is dark: the setting dark"},
 	{kind = .Wait, text = "compositor: the pointer form in use: dark", any_order = true},

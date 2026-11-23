@@ -138,6 +138,6 @@ Three tokens came with this work, each because no token had the meaning: `warnin
 
 ## State
 
-Built: the two appearances as one table of tokens, the setting and the appearance in force on the settings page, the rule of the day with its host tests, the sole writer and edge timer in `settings`, the compositor, the interface package, the palette, the terminal and the results of the console in the tokens, each window of a process in the tokens, the host tests of the contrast in both appearances, and the machine test that sets `light`, `dark` and `auto` and takes `desktop_light.png`, `console_light.png`, `monitor_light.png`, `rings_light.png` and `clock_light.png`.
+Built: the two appearances as one table of tokens, the setting and the appearance in force on the settings page, the rule of the day with its host tests, the sole writer and edge timer in `settings`, the compositor, the interface package, the palette, the terminal and the results of the console in the tokens, each window of a process in the tokens, the host tests of the contrast in both appearances, and the machine test that sets `light`, `dark` and `auto` and takes `desktop_light.png`, `console_light.png`, `monitor_light.png`, `rings_light.png` and `time_page_light.png`.
 
 Left: none of the work of this design.

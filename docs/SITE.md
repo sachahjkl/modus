@@ -694,7 +694,7 @@ A rate over a duration comes from a measure run (`docs/TOOLS.md`, "A check by co
 | Number | Log in `build/` | Text of the line | Required |
 |---|---|---|---|
 | Kernel entries in one second, 1, 2 and 4 lockers | `test_output_measure.txt` | `locks: kernel entries in one second` | yes |
-| Reads of the time page in one second | `test_output_measure_clock.txt` | `clock: the time page:` | yes |
+| Reads of the time page in one second | `test_output_measure_time_page.txt` | `time_page: the time page:` | yes |
 | Wakes in one second under EEVDF | `test_output_scheduler_1.txt` | `scheduler: EEVDF: two threads that wake each other` | yes |
 | One glyph of the vector font | `test_output.txt` | `vector_glyphs: one glyph from its outline` | yes |
 | A full frame of the compositor at 1920 × 1080, with the windows of the main test (the last line) | `test_output.txt` | `compositor: a full frame of 1920x1080 ` | no |

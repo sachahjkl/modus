@@ -177,8 +177,7 @@ layout: text_model.Layout // The rows of the text that the pane shows: computed 
 columns := text_model.COLUMNS_LEAST // The cells of a row: from the width of the window.
 top_row: int
 visible_rows := 1
-waiting: bool // A change of the text waits for its commit.
-last_change: u64 // The time of the last change, in milliseconds of the clock of the system.
+change_wait: note_list.Change_Wait // A change of the text that waits for its commit, and when.
 
 problem_shown: Window_Problem
 request_serial: u64 // The serial of the last request.
@@ -300,29 +299,28 @@ title_refresh :: proc "contextless" () {
 // never written. The first commit of a new note gives it its object. A
 // full queue keeps the change waiting for one more pause.
 commit :: proc "contextless" () {
-	if !waiting {
+	if !change_wait.waiting {
 		return
 	}
 	if !note_session.commit_allowed(&session) || shown < 0 {
-		waiting = false
+		change_wait.waiting = false
 		return
 	}
 	note := &notes.notes[shown]
 	if note_list.note_name_take(&notes, shown) != .None {
-		problem_shown, waiting = .Not_Kept, false
+		problem_shown, change_wait.waiting = .Not_Kept, false
 		return
 	}
 	if _, put := request_of_note(.Write, note, 0, text_model.text_bytes(&text)); !put {
-		last_change = system.time()
+		note_list.change_wait_again(&change_wait, system.time())
 		return
 	}
-	waiting = false
+	change_wait.waiting = false
 }
 
 // change_end records a change of the text: it waits for the pause.
 change_end :: proc "contextless" () {
-	waiting = true
-	last_change = system.time()
+	note_list.change_wait_mark(&change_wait, system.time())
 	if problem_shown == .Full || problem_shown == .Selection || problem_shown == .Busy {
 		problem_shown = .None
 	}
@@ -383,7 +381,7 @@ note_show :: proc "contextless" (index: int) {
 	if index < 0 || index >= notes.count || index == shown {
 		return
 	}
-	if !room_for(note_session.show_room(&session, waiting, notes.notes[index].name_count > 0)) {
+	if !room_for(note_session.show_room(&session, change_wait.waiting, notes.notes[index].name_count > 0)) {
 		return
 	}
 	commit()
@@ -403,7 +401,7 @@ note_show :: proc "contextless" (index: int) {
 
 // note_new makes an empty note at the end of the list and shows it.
 note_new :: proc "contextless" () {
-	if !room_for(note_session.show_room(&session, waiting, false)) {
+	if !room_for(note_session.show_room(&session, change_wait.waiting, false)) {
 		return
 	}
 	commit()
@@ -449,7 +447,7 @@ note_delete :: proc "contextless" () {
 	}
 	title_buffer: [TITLE_BYTES]u8
 	title := string(title_buffer[:copy(title_buffer[:], note_list.note_title(note))])
-	waiting = false
+	change_wait.waiting = false
 	after, _ := note_list.list_remove(&notes, shown)
 	shown = -1
 	system.log_fact(.Info, Note_Deleted{notes = u64(notes.count), title = title_field(title)})
@@ -467,7 +465,7 @@ versions_open :: proc "contextless" () {
 	if shown < 0 || session.loading || session.locked || !session.keeping {
 		return
 	}
-	commit_room := waiting && note_session.commit_allowed(&session) ? 1 : 0
+	commit_room := change_wait.waiting && note_session.commit_allowed(&session) ? 1 : 0
 	if !room_for(commit_room + 1) {
 		return
 	}
@@ -641,7 +639,7 @@ result_apply :: proc "contextless" (result: ^store_work.Result) {
 		system.log_fact(.Info, Version_Restored{generation = restore_generation, commit = result.generation, title = title_field(text_title(&preview))})
 		bar = {}
 		top_row = 0
-		waiting = false
+		change_wait.waiting = false
 		// The note is what the store made current: the window loads it,
 		// and never takes its preview for it.
 		note_load_ask()
@@ -1044,7 +1042,7 @@ draw :: proc "contextless" (window: ^display.Window) -> interface.Action_Bar_Res
 			state = "loading"
 		case !session.keeping, session.write_refused:
 			state = "not kept"
-		case waiting:
+		case change_wait.waiting:
 			state = "a change waits"
 		}
 		// A note that could not be read has its problem at the left, which
@@ -1150,7 +1148,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for result_take(&window_result) {
 			result_apply(&window_result)
 		}
-		if note_list.pause_ended(waiting, last_change, system.time()) {
+		if note_list.change_wait_due(&change_wait, system.time()) {
 			commit()
 		}
 		bar_result := draw(&window)
@@ -1167,7 +1165,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.wait_event(&wait, &results_event, results_seen)
-		deadline, has_deadline := note_list.pause_deadline(waiting, last_change)
+		deadline, has_deadline := note_list.change_wait_deadline(&change_wait)
 		system.wait_end(&wait, has_deadline ? deadline : system.WAIT_FOREVER)
 		for event in display.next_event(&window) {
 			switch event.kind {

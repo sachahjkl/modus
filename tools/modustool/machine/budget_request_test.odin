@@ -79,7 +79,7 @@ budget_window_resolve_takes_the_constants_of_the_package :: proc(t: ^testing.T) 
 	testing.expect(t, build.budget_request_read(budget_file, &budget))
 	build.integer_constants_read(budget_file, &constants)
 	build.integer_constants_read(layout_file, &constants)
-	testing.expect_value(t, budget.window_names, [2]string{"WIDTH", "HEIGHT"})
+	testing.expect_value(t, budget.window_names, [4]string{"WIDTH", "HEIGHT", "", ""})
 	testing.expect(t, build.budget_window_resolve(&budget, constants))
 	testing.expect_value(t, budget.parts, build.Stated_Budget{working_memory_pages = 100, window_width = 1000, window_height = 704})
 	_, has_expression := constants["MARGIN"]
@@ -106,6 +106,102 @@ budget_window_resolve_takes_the_constants_of_the_package :: proc(t: ^testing.T) 
 	}
 }
 
+// The least parts of a resizable window: names only, both or neither, with
+// a window, no larger than it, and the names that each call of
+// resizable_set in the package passes. Each refusal first; the accepted
+// form last, and its count cut to the screen while a window with no least
+// parts is not cut.
+@(test)
+budget_least_parts_follow_the_calls_of_resizable_set :: proc(t: ^testing.T) {
+	HEAD :: "package p\nWIDTH :: 1536\nHEIGHT :: 864\nLEAST_WIDTH :: 600\nLEAST_HEIGHT :: 360\nOTHER :: 500\nHUGE :: 2000\n// Why.\n"
+	BUDGET :: "MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}\n"
+	CALL :: "start :: proc() {\n\tdisplay.resizable_set(&window, {least_width = LEAST_WIDTH, least_height = LEAST_HEIGHT, largest_width = WIDTH, largest_height = HEIGHT})\n}\n"
+	Stage :: enum {
+		Read, // budget_request_read refuses it.
+		Resolve, // budget_window_resolve refuses it.
+		Check, // budget_resizable_check refuses it.
+	}
+	refused := [?]struct {
+		about, source: string,
+		stage:         Stage,
+	} {
+		{"a least part that is a number", HEAD + "MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT, window_least_width = 600, window_least_height = LEAST_HEIGHT}\n" + CALL, .Read},
+		{"one least part", HEAD + "MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT, window_least_width = LEAST_WIDTH}\n" + CALL, .Read},
+		{"least parts with no window", HEAD + "MODULE_BUDGET :: system.Stated_Budget{window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}\n" + CALL, .Read},
+		{"a least part that names no constant", HEAD + "MODULE_BUDGET :: system.Stated_Budget{window_width = WIDTH, window_height = HEIGHT, window_least_width = DEPTH, window_least_height = LEAST_HEIGHT}\n" + CALL, .Resolve},
+		{"a least size larger than the window", HEAD + "MODULE_BUDGET :: system.Stated_Budget{window_width = OTHER, window_height = HEIGHT, window_least_width = LEAST_WIDTH, window_least_height = LEAST_HEIGHT}\n" + CALL, .Resolve},
+		{"least parts and no call", HEAD + BUDGET, .Check},
+		{"a call of other names", HEAD + BUDGET + "start :: proc() {\n\tdisplay.resizable_set(&window, {least_width = OTHER, least_height = LEAST_HEIGHT})\n}\n", .Check},
+		{"a call of a number", HEAD + BUDGET + "start :: proc() {\n\tdisplay.resizable_set(&window, {least_width = 600, least_height = LEAST_HEIGHT})\n}\n", .Check},
+		{"a call of a record that is not a literal", HEAD + BUDGET + "start :: proc() {\n\tlimits := display.Size_Limits{}\n\tdisplay.resizable_set(&window, limits)\n}\n", .Check},
+		{"a second call that differs", HEAD + BUDGET + CALL + "again :: proc() {\n\tresizable_set(&window, {least_width = LEAST_WIDTH, least_height = OTHER})\n}\n", .Check},
+	}
+	for item in refused {
+		state: build.Describe_State
+		file, parsed := build.parse_source("case.odin", item.source, &state)
+		if !testing.expectf(t, parsed, "%s: the parser takes it", item.about) {
+			continue
+		}
+		budget: build.Budget_Description
+		read := build.budget_request_read(file, &budget)
+		if item.stage == .Read {
+			testing.expectf(t, !read, "%s: refused when read", item.about)
+			continue
+		}
+		testing.expectf(t, read, "%s: the constant is read", item.about)
+		constants := make(map[string]u64, context.temp_allocator)
+		build.integer_constants_read(file, &constants)
+		resolved := build.budget_window_resolve(&budget, constants)
+		if item.stage == .Resolve {
+			testing.expectf(t, !resolved, "%s: refused when resolved", item.about)
+			continue
+		}
+		testing.expectf(t, resolved, "%s: resolved", item.about)
+		calls := make([dynamic]build.Resizable_Call, context.temp_allocator)
+		build.resizable_calls_read(file, &calls)
+		testing.expectf(t, !build.budget_resizable_check(&budget, calls[:]), "%s: refused by the check", item.about)
+	}
+
+	// The accepted form: the least parts and the call name the same
+	// constants, in another file of the package too.
+	state: build.Describe_State
+	file, parsed := build.parse_source("main.odin", HEAD + BUDGET, &state)
+	call_file, call_parsed := build.parse_source("start.odin", "package p\n" + CALL, &state)
+	if !testing.expect(t, parsed && call_parsed) {
+		return
+	}
+	budget: build.Budget_Description
+	testing.expect(t, build.budget_request_read(file, &budget))
+	constants := make(map[string]u64, context.temp_allocator)
+	build.integer_constants_read(file, &constants)
+	testing.expect(t, build.budget_window_resolve(&budget, constants))
+	calls := make([dynamic]build.Resizable_Call, context.temp_allocator)
+	build.resizable_calls_read(file, &calls)
+	build.resizable_calls_read(call_file, &calls)
+	testing.expect_value(t, len(calls), 1)
+	testing.expect(t, build.budget_resizable_check(&budget, calls[:]))
+	testing.expect_value(t, budget.parts, build.Stated_Budget{window_width = 1536, window_height = 864, window_least_width = 600, window_least_height = 360})
+	// Cut: 1920 x 1080, two pictures, 4050 pages. With no least parts: 3072
+	// x 1728, 10368 pages.
+	cut, cut_ok := build.budget_count(budget.parts, 0, nil)
+	testing.expect(t, cut_ok)
+	testing.expect_value(t, cut.window_pages, 4050)
+	whole, whole_ok := build.budget_count({window_width = 1536, window_height = 864}, 0, nil)
+	testing.expect(t, whole_ok)
+	testing.expect_value(t, whole.window_pages, u64(3072 * 1728 * 8 / 4096))
+	// A least size past the logical screen at the largest scale: no cut.
+	past, past_ok := build.budget_count({window_width = 1536, window_height = 864, window_least_width = 961, window_least_height = 360}, 0, nil)
+	testing.expect(t, past_ok)
+	testing.expect_value(t, past.window_pages, whole.window_pages)
+	// A least size larger than the window is refused by the count too.
+	_, larger_ok := build.budget_count({window_width = 500, window_height = 864, window_least_width = 600, window_least_height = 360}, 0, nil)
+	testing.expect(t, !larger_ok)
+	// A budget with no least parts and a call of resizable_set: no cut, and
+	// no refusal.
+	plain_budget := build.Budget_Description{stated = true}
+	testing.expect(t, build.budget_resizable_check(&plain_budget, calls[:]))
+}
+
 // The sum on one module: the stated working memory, the pages of the
 // module and of its two imports, the first thread and two more, and the
 // two pictures of a window of 1000 x 704.
@@ -125,7 +221,7 @@ budget_count_adds_the_counted_parts :: proc(t: ^testing.T) {
 	testing.expect_value(t, counted.thread_pages, 72 + 2 * 19)
 	// 1000 x 704 logical pixels at the largest scale, 2: 2000 x 1408
 	// pixels of the screen of 4 bytes, two pictures: 22528000 bytes, 5500
-	// pages.
+	// pages. No least size: no cut.
 	testing.expect_value(t, counted.window_pages, 5500)
 	testing.expect_value(t, counted.request, module.Budget_Request{pages = 2536 + 190 + 110 + 5500, processes = 2, threads = 3})
 
@@ -138,8 +234,18 @@ budget_count_adds_the_counted_parts :: proc(t: ^testing.T) {
 	at_limit, at_limit_ok := build.budget_count({window_width = build.BUDGET_WINDOW_PART_LIMIT, window_height = build.BUDGET_WINDOW_PART_LIMIT}, 0, nil)
 	testing.expect(t, at_limit_ok)
 	// 2048 logical pixels are 4096 pixels of the screen at the largest
-	// scale, 2.
+	// scale, 2; with a least size, cut to the screen.
 	testing.expect_value(t, at_limit.window_pages, u64(4096 * 4096 * 8 / 4096))
+	at_limit_cut, _ := build.budget_count({window_width = build.BUDGET_WINDOW_PART_LIMIT, window_height = build.BUDGET_WINDOW_PART_LIMIT, window_least_width = 1, window_least_height = 1}, 0, nil)
+	testing.expect_value(t, at_limit_cut.window_pages, 4050)
+	// The cut on one axis only: 1000 x 100 are 1920 x 200 pixels; and a
+	// window under the screen is not cut: 512 x 256 are 1024 x 512.
+	one_axis, one_axis_ok := build.budget_count({window_width = 1000, window_height = 100, window_least_width = 600, window_least_height = 50}, 0, nil)
+	testing.expect(t, one_axis_ok)
+	testing.expect_value(t, one_axis.window_pages, u64(1920 * 200 * 8 / 4096))
+	under, under_ok := build.budget_count({window_width = 512, window_height = 256, window_least_width = 100, window_least_height = 100}, 0, nil)
+	testing.expect(t, under_ok)
+	testing.expect_value(t, under.window_pages, u64(1024 * 512 * 8 / 4096))
 
 	// No part of threads: the tool counts the first thread, and the table
 	// leaves the part to the starter. No window: no pictures.

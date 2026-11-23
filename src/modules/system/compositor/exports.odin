@@ -4,6 +4,7 @@ import "internal:compositor/bar"
 import "modus:contract/desktop_shell"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import "modus:contract/notifications"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/pointer_pictures"
 import "modus:contract/ring"
@@ -339,20 +340,70 @@ screen_state :: proc "c" (result: ^[]Screen, error: ^errors.Error_Record) -> i64
 // corner below the bar and returns its assigned notification identifier, or a
 // negative number with an error record.
 //
-// **Grant**: the caller must **act for the principal**.
+// A caller that acts for the principal posts as the principal. Any other
+// caller posts under its own process name, which the card shows before the
+// title, and holds at most 3 cards at once
+// (src/md/features/tray_widgets.md, "The export notify").
+//
+// The error kinds:
+//
+// - Empty: an empty title (argument 1), or a caller whose connection has
+//   no name (argument 0).
+// - Too_Long: a title past 96 bytes (argument 1) or a body past 256 bytes
+//   (argument 2).
+// - Full, unit Requests: the caller shows 3 cards already; limit 3, found
+//   the cards that it shows.
+// - Full, unit Records: the desktop shows 64 cards already; limit 64.
+// - Busy, unit Milliseconds: a post within 500 ms of the last one of the
+//   caller; limit 500.
+// - Refused: the notifications are off (do not disturb), or the desktop
+//   is not ready.
+//
+// **Grant**: a connection to the compositor.
 @(export, link_name = "notify")
 notify_export :: proc "c" (title: ^string, body: ^string, error: ^errors.Error_Record) -> i64 {
-	if !acts_for_principal() {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
-	}
 	if len(title^) == 0 {
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
 	}
-	id := desktop_notification_post(1, .Normal, system.time(), transmute([]u8)(title^), transmute([]u8)(body^))
-	if id == 0 {
-		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Bad_Value, .Bytes, 1)
+	source := notifications.PRINCIPAL_SOURCE
+	label: []u8
+	cards_limit := 0
+	if !acts_for_principal() {
+		// The name of the connection, as the root service gave it: never
+		// a text of the caller. A card with no name would name nobody.
+		caller := system.service_caller()
+		name := system.name_of(caller.caller[:])
+		if len(name) == 0 {
+			return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 0, 0, notifications.MAX_LABEL_BYTES)
+		}
+		source = notifications.source_of_caller_name(name)
+		label = transmute([]u8)name
+		cards_limit = notifications.CARDS_PER_SOURCE_LIMIT
 	}
-	return i64(id)
+	id, refusal := desktop_notification_post(source, .Normal, system.time(), transmute([]u8)(title^), transmute([]u8)(body^), label, cards_limit)
+	switch refusal {
+	case .None:
+		return i64(id)
+	case .Source_Full:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Full, .Requests, 0, 0, notifications.CARDS_PER_SOURCE_LIMIT, i64(notifications.source_card_count(&desktop_notifications, source)))
+	case .Empty_Title:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Empty, .Bytes, 1)
+	case .Title_Too_Long:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 1, i64(len(title^)), notifications.MAX_TITLE_BYTES)
+	case .Body_Too_Long:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 2, i64(len(body^)), notifications.MAX_BODY_BYTES)
+	case .Label_Too_Long:
+		// The root service names a process in 32 bytes at most: no name
+		// of a connection is longer.
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Too_Long, .Bytes, 0, i64(len(label)), notifications.MAX_LABEL_BYTES)
+	case .Queue_Full:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Full, .Records, 0, 0, notifications.MAX_NOTIFICATIONS, notifications.MAX_NOTIFICATIONS)
+	case .Rate_Limited:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Busy, .Milliseconds, 0, 0, i64(desktop_notifications.min_interval_ms))
+	case .Suppressed, .Nil_Queue, .Not_Found:
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused, .None)
+	}
+	return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .Refused, .None)
 }
 
 // magnifier sets the desktop viewport magnifier zoom factor in eighths

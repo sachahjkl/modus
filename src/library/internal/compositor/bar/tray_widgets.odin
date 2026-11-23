@@ -418,8 +418,14 @@ tray_pointer_move :: proc "contextless" (state: ^Tray_State, layout: Layout, scr
 NOTIFICATION_HISTORY_CAPACITY :: 6
 NOTIFICATION_TITLE_BYTES :: 48
 NOTIFICATION_BODY_BYTES :: 96
+// The records that one labelled source keeps in the history: a process that
+// posts often replaces its own records, and the cards of the principal and
+// of the other processes stay (src/md/features/tray_widgets.md, "The export
+// notify").
+NOTIFICATION_RECORDS_PER_SOURCE_LIMIT :: 2
 
 Notification_Record :: struct {
+	source:       u64, // The source of the card: notifications.PRINCIPAL_SOURCE, or the source of a process.
 	seconds:      i64, // The local time of the post in seconds since 1970, or the seconds since the boot when dated is false.
 	title_length: u8,
 	body_length:  u8,
@@ -449,18 +455,36 @@ text_cut :: proc "contextless" (text: string, limit: int) -> string {
 }
 
 // notification_history_add puts a notification at the head of the
-// history; the oldest leaves a full history. A title or a body past its
-// room is cut on a character. It refuses an empty title, as the queue of
-// the banners does, and changes nothing then.
-notification_history_add :: proc "contextless" (history: ^Notification_History, title, body: string, seconds: i64, dated: bool) -> bool {
+// history; the oldest leaves a full history. A source with a limit above 0
+// that holds that many records already loses its own oldest record in
+// place of the oldest of the history. A title or a body past its room is
+// cut on a character. It refuses an empty title, as the queue of the
+// banners does, and changes nothing then.
+notification_history_add :: proc "contextless" (history: ^Notification_History, title, body: string, seconds: i64, dated: bool, source: u64 = 0, source_limit := 0) -> bool {
 	if len(title) == 0 {
 		return false
 	}
-	kept := min(history.count, NOTIFICATION_HISTORY_CAPACITY - 1)
+	count := clamp(history.count, 0, NOTIFICATION_HISTORY_CAPACITY)
+	if source_limit > 0 {
+		own, oldest_own := 0, -1
+		for index in 0 ..< count {
+			if history.records[index].source == source {
+				own += 1
+				oldest_own = index
+			}
+		}
+		if own >= source_limit && oldest_own >= 0 {
+			for index in oldest_own ..< count - 1 {
+				history.records[index] = history.records[index + 1]
+			}
+			count -= 1
+		}
+	}
+	kept := min(count, NOTIFICATION_HISTORY_CAPACITY - 1)
 	for index := kept; index > 0; index -= 1 {
 		history.records[index] = history.records[index - 1]
 	}
-	record := Notification_Record{seconds = seconds, dated = dated}
+	record := Notification_Record{source = source, seconds = seconds, dated = dated}
 	title_kept := text_cut(title, NOTIFICATION_TITLE_BYTES)
 	body_kept := text_cut(body, NOTIFICATION_BODY_BYTES)
 	copy(record.title[:], title_kept)

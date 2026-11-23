@@ -22,6 +22,10 @@ SERIAL_LIMIT :: 999_999 // The largest serial of SERIAL_DIGITS digits.
 // The pause of the keys after which the change of a note is a commit, in
 // milliseconds of the clock of the system.
 PAUSE_MILLISECONDS :: 1000
+// The longest wait of a change for its commit, from the first change that
+// waits, whatever the pauses: a principal who never pauses would else keep
+// it waiting with no end.
+LONGEST_WAIT_MILLISECONDS :: 5000
 
 Note :: struct {
 	name:        [NAME_BYTES]u8,
@@ -206,20 +210,50 @@ list_newest :: proc "contextless" (list: ^Note_List) -> int {
 	return newest
 }
 
-// pause_ended says if the change that waits has waited PAUSE_MILLISECONDS
-// with no key. A clock that went back ends no pause.
-pause_ended :: proc "contextless" (waiting: bool, last_change, now: u64) -> bool {
-	return waiting && now >= last_change && now - last_change >= PAUSE_MILLISECONDS
+// A change of the text that waits for its commit, and when: times of the
+// clock of the system, in milliseconds.
+Change_Wait :: struct {
+	waiting:      bool,
+	first_change: u64, // The first change that waits.
+	last_change:  u64,
 }
 
-// pause_deadline gives the time at which the pause of a change that waits
-// ends. has_deadline is false when no change waits: the wait has no end.
-pause_deadline :: proc "contextless" (waiting: bool, last_change: u64) -> (deadline: u64, has_deadline: bool) {
-	if !waiting {
+// change_wait_mark records a change at a time: the first one that waits
+// starts the longest wait.
+change_wait_mark :: proc "contextless" (wait: ^Change_Wait, now: u64) {
+	if !wait.waiting {
+		wait.first_change = now
+	}
+	wait.waiting = true
+	wait.last_change = now
+}
+
+// change_wait_again starts the wait again at a time, for a change whose
+// commit the queue refused: both ends count from the refusal, so the loop
+// does not try again at once.
+change_wait_again :: proc "contextless" (wait: ^Change_Wait, now: u64) {
+	wait^ = {waiting = true, first_change = now, last_change = now}
+}
+
+// change_wait_due says if the change that waits is due for its commit: a
+// pause of PAUSE_MILLISECONDS with no key, or LONGEST_WAIT_MILLISECONDS
+// since the first change. A clock that went back makes nothing due.
+change_wait_due :: proc "contextless" (wait: ^Change_Wait, now: u64) -> bool {
+	if !wait.waiting {
+		return false
+	}
+	paused := now >= wait.last_change && now - wait.last_change >= PAUSE_MILLISECONDS
+	waited := now >= wait.first_change && now - wait.first_change >= LONGEST_WAIT_MILLISECONDS
+	return paused || waited
+}
+
+// change_wait_deadline gives the time at which the change that waits is
+// due: the nearer end. has_deadline is false when no change waits.
+change_wait_deadline :: proc "contextless" (wait: ^Change_Wait) -> (deadline: u64, has_deadline: bool) {
+	if !wait.waiting {
 		return 0, false
 	}
-	if last_change > max(u64) - PAUSE_MILLISECONDS {
-		return max(u64), true
-	}
-	return last_change + PAUSE_MILLISECONDS, true
+	pause_end := wait.last_change > max(u64) - PAUSE_MILLISECONDS ? max(u64) : wait.last_change + PAUSE_MILLISECONDS
+	longest_end := wait.first_change > max(u64) - LONGEST_WAIT_MILLISECONDS ? max(u64) : wait.first_change + LONGEST_WAIT_MILLISECONDS
+	return min(pause_end, longest_end), true
 }
