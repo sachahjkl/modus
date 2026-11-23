@@ -19,6 +19,9 @@
 //     leave the same state.
 //   - The fetch of an instruction byte in the page of the last fetch reads
 //     the frame of that page with no lookup (mmu.odin, `Fetch_Page`).
+//   - With a cache of decoded blocks, `processor_run` runs each block of
+//     instructions that it decoded before from its decoded form, after a
+//     compare of its bytes with the memory (blocks.odin).
 //
 // This package is freestanding (`"contextless"`), allocates no memory, and
 // imports only `base:` and `modus:contract/` packages.
@@ -142,6 +145,9 @@ Processor_State :: struct {
 	// The ports that in and out reach. With none, each in and each out is
 	// a protection fault, as for a process with no port.
 	ports:                Port_Bus,
+	// The decoded blocks of this processor (blocks.odin). With none, each
+	// instruction is fetched and decoded at each run.
+	blocks:               ^Block_Cache,
 	tlb:                  Software_Tlb,
 	outcome:              Step_Outcome,
 	fault_address:        u64,
@@ -232,6 +238,25 @@ Instruction_Cursor :: struct {
 	start_rip:     u64,
 	current_rip:   u64,
 	bytes_fetched: int,
+	// The bytes of the instruction in a decoded block: a fetch of one of
+	// them reads it here, with no translation. Each entry of the block
+	// compared them with the memory (blocks.odin).
+	cached_bytes:  [^]u8,
+	cached_count:  int,
+	// Each byte that a fetch read from the memory, in order: the record of
+	// a decoded block keeps them.
+	fetched_bytes: [MAX_INSTRUCTION_BYTES]u8,
+}
+
+// One instruction of a decoded block: the result of its prefix loop, and
+// its place in the bytes of the block.
+@(private)
+Decoded_Instruction :: struct {
+	prefixes:   Decoded_Prefixes,
+	opcode:     u8,
+	opcode_end: u8, // The count of its bytes up to and with the opcode.
+	offset:     u8, // Its first byte, from the first byte of the block.
+	length:     u8,
 }
 
 @(private)
@@ -292,7 +317,23 @@ record_fault :: proc "contextless" (cpu: ^Processor_State, instruction_start_rip
 }
 
 @(private)
-fetch_u8 :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, cursor: ^Instruction_Cursor) -> (value: u8, outcome: Step_Outcome) {
+fetch_u8 :: #force_inline proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, cursor: ^Instruction_Cursor) -> (value: u8, outcome: Step_Outcome) {
+	// The bytes of a decoded block are at most the bytes of one
+	// instruction, so they never reach the limit of its length. Inline:
+	// most fetches of a run are this read.
+	if cursor.bytes_fetched < cursor.cached_count {
+		value = cursor.cached_bytes[cursor.bytes_fetched]
+		cursor.current_rip += 1
+		cursor.bytes_fetched += 1
+		return value, .Running
+	}
+	return fetch_u8_from_memory(cpu, physical_memory, cursor)
+}
+
+// fetch_u8_from_memory fetches the next byte of an instruction through the
+// page of the last fetch, or the walk, and keeps it for a record.
+@(private)
+fetch_u8_from_memory :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, cursor: ^Instruction_Cursor) -> (value: u8, outcome: Step_Outcome) {
 	if cursor.bytes_fetched >= MAX_INSTRUCTION_BYTES {
 		return 0, record_fault(cpu, cursor.start_rip, .General_Protection, cursor.current_rip)
 	}
@@ -300,6 +341,7 @@ fetch_u8 :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, cu
 	if res.status != .Ok {
 		return 0, record_translation_fault(cpu, cursor.start_rip, res)
 	}
+	cursor.fetched_bytes[cursor.bytes_fetched] = byte
 	cursor.current_rip += 1
 	cursor.bytes_fetched += 1
 	return byte, .Running
@@ -320,6 +362,14 @@ fetch_u16 :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, c
 
 @(private)
 fetch_u32 :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, cursor: ^Instruction_Cursor) -> (value: u32, outcome: Step_Outcome) {
+	// A displacement or an immediate in the bytes of a decoded block: one
+	// read of four bytes.
+	if cursor.bytes_fetched + 4 <= cursor.cached_count {
+		bytes := cursor.cached_bytes[cursor.bytes_fetched:]
+		cursor.current_rip += 4
+		cursor.bytes_fetched += 4
+		return u32(bytes[0]) | u32(bytes[1]) << 8 | u32(bytes[2]) << 16 | u32(bytes[3]) << 24, .Running
+	}
 	b0, o0 := fetch_u8(cpu, physical_memory, cursor)
 	if o0 != .Running {
 		return 0, o0
@@ -1348,6 +1398,18 @@ processor_step :: proc "contextless" (cpu: ^Processor_State, physical_memory: []
 // form, up to step_allowance of its iterations, each counted as one step.
 @(private)
 processor_step_within :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, step_allowance: u64) -> Step_Outcome {
+	// instruction_execute sets each field of the cursor that it reads.
+	cursor: Instruction_Cursor = ---
+	decoded: Decoded_Instruction
+	return instruction_step(cpu, physical_memory, step_allowance, &cursor, &decoded, false)
+}
+
+// instruction_step runs one instruction: from the bytes in memory, which
+// fills the cursor with the bytes that it fetched and decoded with its
+// prefixes, or, with decoded_given, from a decoded block, whose cursor the
+// caller sets past the opcode.
+@(private)
+instruction_step :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, step_allowance: u64, cursor: ^Instruction_Cursor, decoded: ^Decoded_Instruction, decoded_given: bool) -> Step_Outcome {
 	// A fault on x86-64 is precise, but a read-modify-write form computes its
 	// flags, and some forms write a register, before the memory write that
 	// can fault. The state before the instruction comes back here, in one
@@ -1355,7 +1417,7 @@ processor_step_within :: proc "contextless" (cpu: ^Processor_State, physical_mem
 	cpu.rflags |= RFLAGS_RESERVED_ONE
 	registers_before := cpu.registers
 	rflags_before := cpu.rflags
-	outcome := instruction_execute(cpu, physical_memory, step_allowance)
+	outcome := instruction_execute(cpu, physical_memory, step_allowance, cursor, decoded, decoded_given)
 	switch outcome {
 	case .Page_Fault, .General_Protection, .Invalid_Opcode, .Divide_Error, .Simd_Floating_Point:
 		cpu.registers = registers_before
@@ -1367,15 +1429,19 @@ processor_step_within :: proc "contextless" (cpu: ^Processor_State, physical_mem
 
 // instruction_execute decodes and executes one instruction for processor_step.
 @(private)
-instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, step_allowance: u64) -> Step_Outcome {
+instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, step_allowance: u64, cursor: ^Instruction_Cursor, decoded: ^Decoded_Instruction, decoded_given: bool) -> Step_Outcome {
 	cpu.fault_address = 0
 	cpu.fault_error_code = 0
 	cpu.outcome = .Running
-
-	cursor := Instruction_Cursor {
-		start_rip   = cpu.rip,
-		current_rip = cpu.rip,
+	if decoded_given {
+		return instruction_execute_opcode(cpu, physical_memory, cursor, decoded.prefixes, decoded.opcode, step_allowance)
 	}
+
+	cursor.start_rip = cpu.rip
+	cursor.current_rip = cpu.rip
+	cursor.bytes_fetched = 0
+	cursor.cached_bytes = nil
+	cursor.cached_count = 0
 
 	prefixes: Decoded_Prefixes
 	opcode := u8(0)
@@ -1383,7 +1449,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 	// Decode legacy prefixes and REX prefix. A legacy prefix appearing after a
 	// REX byte cancels the earlier REX per x86-64 rules.
 	prefix_loop: for {
-		byte, o_fetch := fetch_u8(cpu, physical_memory, &cursor)
+		byte, o_fetch := fetch_u8(cpu, physical_memory, cursor)
 		if o_fetch != .Running {
 			return o_fetch
 		}
@@ -1450,10 +1516,19 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 			break prefix_loop
 		}
 	}
+	decoded.prefixes = prefixes
+	decoded.opcode = opcode
+	decoded.opcode_end = u8(cursor.bytes_fetched)
+	return instruction_execute_opcode(cpu, physical_memory, cursor, prefixes, opcode, step_allowance)
+}
 
+// instruction_execute_opcode executes one instruction from its opcode: the
+// cursor is past the opcode, and the prefixes are the ones before it.
+@(private)
+instruction_execute_opcode :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u8, cursor: ^Instruction_Cursor, prefixes: Decoded_Prefixes, opcode: u8, step_allowance: u64) -> Step_Outcome {
 	// Two-byte opcode escape (0x0F).
 	if opcode == 0x0F {
-		return step_two_byte_opcode(cpu, physical_memory, &cursor, prefixes)
+		return step_two_byte_opcode(cpu, physical_memory, cursor, prefixes)
 	}
 
 	width := operand_width_from_prefixes(prefixes)
@@ -1468,7 +1543,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 		switch form {
 		case 0:
 			// ALU r/m8, r8
-			modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+			modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 			if o_modrm != .Running {
 				return o_modrm
 			}
@@ -1486,7 +1561,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 			}
 		case 1:
 			// ALU r/m, r
-			modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+			modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 			if o_modrm != .Running {
 				return o_modrm
 			}
@@ -1504,7 +1579,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 			}
 		case 2:
 			// ALU r8, r/m8
-			modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+			modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 			if o_modrm != .Running {
 				return o_modrm
 			}
@@ -1519,7 +1594,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 			}
 		case 3:
 			// ALU r, r/m
-			modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+			modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 			if o_modrm != .Running {
 				return o_modrm
 			}
@@ -1534,7 +1609,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 			}
 		case 4:
 			// ALU AL, imm8
-			imm, o_imm := fetch_u8(cpu, physical_memory, &cursor)
+			imm, o_imm := fetch_u8(cpu, physical_memory, cursor)
 			if o_imm != .Running {
 				return o_imm
 			}
@@ -1545,7 +1620,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 			}
 		case 5:
 			// ALU rAX, imm16/32
-			imm, o_imm := fetch_sign_extended_immediate(cpu, physical_memory, &cursor, width)
+			imm, o_imm := fetch_sign_extended_immediate(cpu, physical_memory, cursor, width)
 			if o_imm != .Running {
 				return o_imm
 			}
@@ -1592,7 +1667,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 
 	// Jcc rel8 (0x70..0x7F).
 	if opcode >= 0x70 && opcode <= 0x7F {
-		rel8, o_rel := fetch_u8(cpu, physical_memory, &cursor)
+		rel8, o_rel := fetch_u8(cpu, physical_memory, cursor)
 		if o_rel != .Running {
 			return o_rel
 		}
@@ -1616,7 +1691,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 	// MOV r8, imm8 (0xB0..0xB7).
 	if opcode >= 0xB0 && opcode <= 0xB7 {
 		reg := (opcode - 0xB0) | (prefixes.rex_b ? u8(8) : 0)
-		imm, o_imm := fetch_u8(cpu, physical_memory, &cursor)
+		imm, o_imm := fetch_u8(cpu, physical_memory, cursor)
 		if o_imm != .Running {
 			return o_imm
 		}
@@ -1635,13 +1710,13 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 		case .Bits_8:
 			return record_fault(cpu, cursor.start_rip, .Invalid_Opcode, cursor.start_rip)
 		case .Bits_16:
-			v, o := fetch_u16(cpu, physical_memory, &cursor)
+			v, o := fetch_u16(cpu, physical_memory, cursor)
 			imm, o_imm = u64(v), o
 		case .Bits_32:
-			v, o := fetch_u32(cpu, physical_memory, &cursor)
+			v, o := fetch_u32(cpu, physical_memory, cursor)
 			imm, o_imm = u64(v), o
 		case .Bits_64:
-			imm, o_imm = fetch_u64(cpu, physical_memory, &cursor)
+			imm, o_imm = fetch_u64(cpu, physical_memory, cursor)
 		}
 		if o_imm != .Running {
 			return o_imm
@@ -1655,7 +1730,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 	switch opcode {
 	case 0x63:
 		// MOVSXD r64/32/16, r/m32.
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 		if o_modrm != .Running {
 			return o_modrm
 		}
@@ -1676,13 +1751,13 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 		imm := u64(0)
 		o_imm := Step_Outcome.Running
 		if opcode == 0x6A {
-			v, o := fetch_u8(cpu, physical_memory, &cursor)
+			v, o := fetch_u8(cpu, physical_memory, cursor)
 			imm, o_imm = u64(i64(i8(v))), o
 		} else if push_width == .Bits_16 {
-			v, o := fetch_u16(cpu, physical_memory, &cursor)
+			v, o := fetch_u16(cpu, physical_memory, cursor)
 			imm, o_imm = u64(v), o
 		} else {
-			v, o := fetch_u32(cpu, physical_memory, &cursor)
+			v, o := fetch_u32(cpu, physical_memory, cursor)
 			imm, o_imm = u64(i64(i32(v))), o
 		}
 		if o_imm != .Running {
@@ -1698,17 +1773,17 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 
 	case 0x69, 0x6B:
 		// IMUL r, r/m, imm32/imm16 (0x69) or imm8 (0x6B).
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 		if o_modrm != .Running {
 			return o_modrm
 		}
 		imm := u64(0)
 		o_imm := Step_Outcome.Running
 		if opcode == 0x6B {
-			v, o := fetch_u8(cpu, physical_memory, &cursor)
+			v, o := fetch_u8(cpu, physical_memory, cursor)
 			imm, o_imm = u64(i64(i8(v))), o
 		} else {
-			imm, o_imm = fetch_sign_extended_immediate(cpu, physical_memory, &cursor, width)
+			imm, o_imm = fetch_sign_extended_immediate(cpu, physical_memory, cursor, width)
 		}
 		if o_imm != .Running {
 			return o_imm
@@ -1726,20 +1801,20 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 	case 0x80, 0x81, 0x83:
 		// Immediate Group 1: ALU r/m, imm.
 		op_width := Operand_Width.Bits_8 if opcode == 0x80 else width
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 		if o_modrm != .Running {
 			return o_modrm
 		}
 		imm := u64(0)
 		o_imm := Step_Outcome.Running
 		if opcode == 0x80 {
-			v, o := fetch_u8(cpu, physical_memory, &cursor)
+			v, o := fetch_u8(cpu, physical_memory, cursor)
 			imm, o_imm = u64(v), o
 		} else if opcode == 0x83 {
-			v, o := fetch_u8(cpu, physical_memory, &cursor)
+			v, o := fetch_u8(cpu, physical_memory, cursor)
 			imm, o_imm = u64(i64(i8(v))), o
 		} else {
-			imm, o_imm = fetch_sign_extended_immediate(cpu, physical_memory, &cursor, width)
+			imm, o_imm = fetch_sign_extended_immediate(cpu, physical_memory, cursor, width)
 		}
 		if o_imm != .Running {
 			return o_imm
@@ -1766,7 +1841,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 	case 0x84, 0x85:
 		// TEST r/m, r.
 		op_width := Operand_Width.Bits_8 if opcode == 0x84 else width
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 		if o_modrm != .Running {
 			return o_modrm
 		}
@@ -1783,7 +1858,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 	case 0x86, 0x87:
 		// XCHG r/m, r.
 		op_width := Operand_Width.Bits_8 if opcode == 0x86 else width
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 		if o_modrm != .Running {
 			return o_modrm
 		}
@@ -1804,7 +1879,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 	case 0x88, 0x89:
 		// MOV r/m, r.
 		op_width := Operand_Width.Bits_8 if opcode == 0x88 else width
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 		if o_modrm != .Running {
 			return o_modrm
 		}
@@ -1820,7 +1895,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 	case 0x8A, 0x8B:
 		// MOV r, r/m.
 		op_width := Operand_Width.Bits_8 if opcode == 0x8A else width
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 		if o_modrm != .Running {
 			return o_modrm
 		}
@@ -1835,7 +1910,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 
 	case 0x8D:
 		// LEA r, m (never reads memory; refuses register source mod == 3).
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 		if o_modrm != .Running {
 			return o_modrm
 		}
@@ -1851,8 +1926,8 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 	case 0x8F:
 		// POP r/m64/16 (0x8F /0). Memory addressing using RSP observes the
 		// post-increment RSP, and faults roll RSP back cleanly.
-		modrm_cursor := cursor
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+		modrm_cursor := cursor^
+		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 		if o_modrm != .Running {
 			return o_modrm
 		}
@@ -1982,7 +2057,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 			rdi := cpu.registers[int(General_Register.Rdi)]
 			src_addr := rsi + (cpu.gs_base if prefixes.has_gs_override else 0)
 			if step_allowance > 1 && (cpu.rflags & RFLAGS_DF) == 0 {
-				if moved := repeated_move_page_chunk(cpu, physical_memory, &cursor, src_addr, rdi, min(rcx, step_allowance)); moved != 0 {
+				if moved := repeated_move_page_chunk(cpu, physical_memory, cursor, src_addr, rdi, min(rcx, step_allowance)); moved != 0 {
 					cpu.registers[int(General_Register.Rsi)] = rsi + moved
 					cpu.registers[int(General_Register.Rdi)] = rdi + moved
 					cpu.registers[int(General_Register.Rcx)] = rcx - moved
@@ -2088,7 +2163,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 			}
 			rdi := cpu.registers[int(General_Register.Rdi)]
 			if step_allowance > 1 && (cpu.rflags & RFLAGS_DF) == 0 {
-				if stored := repeated_store_page_chunk(cpu, physical_memory, &cursor, rdi, al, min(rcx, step_allowance)); stored != 0 {
+				if stored := repeated_store_page_chunk(cpu, physical_memory, cursor, rdi, al, min(rcx, step_allowance)); stored != 0 {
 					cpu.registers[int(General_Register.Rdi)] = rdi + stored
 					cpu.registers[int(General_Register.Rcx)] = rcx - stored
 					cpu.rip = cursor.current_rip if rcx == stored else cursor.start_rip
@@ -2159,7 +2234,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 	case 0xA8, 0xA9:
 		// TEST AL, imm8 (0xA8) or TEST rAX, imm16/32 (0xA9).
 		op_width := Operand_Width.Bits_8 if opcode == 0xA8 else width
-		imm, o_imm := fetch_sign_extended_immediate(cpu, physical_memory, &cursor, op_width)
+		imm, o_imm := fetch_sign_extended_immediate(cpu, physical_memory, cursor, op_width)
 		if o_imm != .Running {
 			return o_imm
 		}
@@ -2172,13 +2247,13 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 	case 0xC0, 0xC1, 0xD0, 0xD1, 0xD2, 0xD3:
 		// Shift/Rotate Group 2.
 		op_width := Operand_Width.Bits_8 if (opcode == 0xC0 || opcode == 0xD0 || opcode == 0xD2) else width
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 		if o_modrm != .Running {
 			return o_modrm
 		}
 		shift_count := u8(1)
 		if opcode == 0xC0 || opcode == 0xC1 {
-			c, o_c := fetch_u8(cpu, physical_memory, &cursor)
+			c, o_c := fetch_u8(cpu, physical_memory, cursor)
 			if o_c != .Running {
 				return o_c
 			}
@@ -2221,7 +2296,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 		// RET imm16 (0xC2) or RET (0xC3).
 		pop_extra := u64(0)
 		if opcode == 0xC2 {
-			imm16, o_imm := fetch_u16(cpu, physical_memory, &cursor)
+			imm16, o_imm := fetch_u16(cpu, physical_memory, cursor)
 			if o_imm != .Running {
 				return o_imm
 			}
@@ -2243,14 +2318,14 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 	case 0xC6, 0xC7:
 		// MOV r/m, imm (only /0 is architectural).
 		op_width := Operand_Width.Bits_8 if opcode == 0xC6 else width
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 		if o_modrm != .Running {
 			return o_modrm
 		}
 		if (modrm.reg_index & 7) != 0 {
 			return record_fault(cpu, cursor.start_rip, .Invalid_Opcode, cursor.start_rip)
 		}
-		imm, o_imm := fetch_sign_extended_immediate(cpu, physical_memory, &cursor, op_width)
+		imm, o_imm := fetch_sign_extended_immediate(cpu, physical_memory, cursor, op_width)
 		if o_imm != .Running {
 			return o_imm
 		}
@@ -2293,7 +2368,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 		}
 		port: u16
 		if opcode <= 0xE7 {
-			immediate, o_immediate := fetch_u8(cpu, physical_memory, &cursor)
+			immediate, o_immediate := fetch_u8(cpu, physical_memory, cursor)
 			if o_immediate != .Running {
 				return o_immediate
 			}
@@ -2317,7 +2392,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 
 	case 0xE8:
 		// CALL rel32.
-		rel32, o_rel := fetch_u32(cpu, physical_memory, &cursor)
+		rel32, o_rel := fetch_u32(cpu, physical_memory, cursor)
 		if o_rel != .Running {
 			return o_rel
 		}
@@ -2335,7 +2410,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 
 	case 0xE9:
 		// JMP rel32.
-		rel32, o_rel := fetch_u32(cpu, physical_memory, &cursor)
+		rel32, o_rel := fetch_u32(cpu, physical_memory, cursor)
 		if o_rel != .Running {
 			return o_rel
 		}
@@ -2349,7 +2424,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 
 	case 0xEB:
 		// JMP rel8.
-		rel8, o_rel := fetch_u8(cpu, physical_memory, &cursor)
+		rel8, o_rel := fetch_u8(cpu, physical_memory, cursor)
 		if o_rel != .Running {
 			return o_rel
 		}
@@ -2364,7 +2439,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 	case 0xF6, 0xF7:
 		// Unary Group 3: TEST, NOT, NEG, MUL, IMUL, DIV, IDIV.
 		op_width := Operand_Width.Bits_8 if opcode == 0xF6 else width
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 		if o_modrm != .Running {
 			return o_modrm
 		}
@@ -2372,7 +2447,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 		switch sub {
 		case 0, 1:
 			// TEST r/m, imm.
-			imm, o_imm := fetch_sign_extended_immediate(cpu, physical_memory, &cursor, op_width)
+			imm, o_imm := fetch_sign_extended_immediate(cpu, physical_memory, cursor, op_width)
 			if o_imm != .Running {
 				return o_imm
 			}
@@ -2598,7 +2673,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 
 	case 0xFE:
 		// INC r/m8 (/0) or DEC r/m8 (/1); preserves CF.
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 		if o_modrm != .Running {
 			return o_modrm
 		}
@@ -2623,7 +2698,7 @@ instruction_execute :: proc "contextless" (cpu: ^Processor_State, physical_memor
 
 	case 0xFF:
 		// Group 5: INC (/0), DEC (/1), CALL r/m64 (/2), JMP r/m64 (/4), PUSH r/m64 (/6).
-		modrm, o_modrm := decode_modrm(cpu, physical_memory, &cursor, prefixes)
+		modrm, o_modrm := decode_modrm(cpu, physical_memory, cursor, prefixes)
 		if o_modrm != .Running {
 			return o_modrm
 		}
@@ -2713,7 +2788,12 @@ processor_run :: proc "contextless" (cpu: ^Processor_State, physical_memory: []u
 		if steps_used >= max_steps {
 			break
 		}
-		outcome := processor_step_within(cpu, physical_memory, max_steps - steps_used)
+		outcome: Step_Outcome
+		if cpu.blocks != nil {
+			outcome = block_step(cpu, physical_memory, max_steps - steps_used)
+		} else {
+			outcome = processor_step_within(cpu, physical_memory, max_steps - steps_used)
+		}
 		if outcome != .Running {
 			return outcome
 		}

@@ -112,6 +112,22 @@ Software_Tlb :: struct {
 	// translation that the walk allowed for an execute, and every flush of
 	// the TLB empties it, as the TLB of instructions of a processor.
 	fetch_page:             Fetch_Page,
+	// The frame of the decoded block that runs, while code_frame_active:
+	// each write of this processor into it, and each accessed or dirty bit
+	// that a walk sets in it, sets code_frame_written, and the block ends
+	// after the instruction (blocks.odin).
+	code_frame:             u64,
+	code_frame_active:      bool,
+	code_frame_written:     bool,
+}
+
+// code_frame_write_note marks a write of this processor into the frame of
+// the decoded block that runs.
+@(private = "file")
+code_frame_write_note :: #force_inline proc "contextless" (tlb: ^Software_Tlb, physical_address: u64) {
+	if tlb.code_frame_active && physical_address & ~PAGE_OFFSET_MASK == tlb.code_frame {
+		tlb.code_frame_written = true
+	}
 }
 
 // The page of the last instruction fetch that the walk allowed.
@@ -272,6 +288,9 @@ translate_virtual_address_internal :: proc "contextless" (
 			}
 			if privilege_ok && access_ok {
 				tlb.hits += 1
+				if access == .Write {
+					code_frame_write_note(tlb, cached.physical_page)
+				}
 				return Translation_Result {
 					physical_address = cached.physical_page | page_offset,
 					status           = .Ok,
@@ -422,9 +441,15 @@ translate_virtual_address_internal :: proc "contextless" (
 				bits_to_set |= PAGE_DIRTY
 			}
 			page_table_entry_set_bits(physical_memory, walked_offsets[index], bits_to_set)
+			if tlb != nil {
+				code_frame_write_note(tlb, walked_offsets[index])
+			}
 		}
 
 		if tlb != nil {
+			if access == .Write {
+				code_frame_write_note(tlb, resolved_frame)
+			}
 			leaf_entry := byte_order.read_u64_little_endian(physical_memory, int(walked_offsets[walked_count - 1]))
 			slot := (virtual_page >> 12) & TLB_INDEX_MASK
 			tlb.entries[slot] = Tlb_Entry {
@@ -620,17 +645,35 @@ mmu_fetch_u8 :: proc "contextless" (
 	virtual_address: u64,
 	privilege: Privilege_Level,
 ) -> (value: u8, result: Translation_Result) {
+	translated := mmu_fetch_translate(tlb, physical_memory, page_table_root, virtual_address, privilege)
+	if translated.status != .Ok {
+		return 0, translated
+	}
+	return physical_memory[int(translated.physical_address)], translated
+}
+
+// mmu_fetch_translate translates the place of an instruction fetch with
+// Execute permission, through the page of the last fetch, and keeps the
+// page that the walk allowed as that page. The entry of a decoded block
+// calls it, so its walk, its bits and its faults are the ones of the fetch
+// of the first byte.
+mmu_fetch_translate :: proc "contextless" (
+	tlb: ^Software_Tlb,
+	physical_memory: []u8,
+	page_table_root: u64,
+	virtual_address: u64,
+	privilege: Privilege_Level,
+) -> Translation_Result {
 	virtual_page := virtual_address & ~PAGE_OFFSET_MASK
 	if tlb != nil {
 		page := &tlb.fetch_page
 		if page.valid && page.virtual_page == virtual_page && page.page_table_root == page_table_root && page.privilege == privilege {
-			physical_address := page.physical_page | (virtual_address & PAGE_OFFSET_MASK)
-			return physical_memory[int(physical_address)], Translation_Result{physical_address = physical_address, status = .Ok}
+			return Translation_Result{physical_address = page.physical_page | (virtual_address & PAGE_OFFSET_MASK), status = .Ok}
 		}
 	}
 	translated := translate_virtual_address_internal(tlb, physical_memory, page_table_root, virtual_address, privilege, .Execute, true)
 	if translated.status != .Ok {
-		return 0, translated
+		return translated
 	}
 	if tlb != nil {
 		tlb.fetch_page = Fetch_Page {
@@ -641,7 +684,7 @@ mmu_fetch_u8 :: proc "contextless" (
 			valid           = true,
 		}
 	}
-	return physical_memory[int(translated.physical_address)], translated
+	return translated
 }
 
 // mmu_read_u8 reads one data byte from virtual memory.

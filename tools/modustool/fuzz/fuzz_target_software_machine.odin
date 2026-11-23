@@ -52,7 +52,9 @@ FUZZ_MACHINE_FLAGS_KNOWN :: software_machine.RFLAGS_CF | software_machine.RFLAGS
 FUZZ_MACHINE_FAULT_BITS_KNOWN :: software_machine.PAGE_FAULT_PRESENT | software_machine.PAGE_FAULT_WRITE | software_machine.PAGE_FAULT_USER | software_machine.PAGE_FAULT_RESERVED | software_machine.PAGE_FAULT_INSTRUCTION
 
 // Two machines: one steps one instruction at a time, the other runs the
-// budget in one call. The memories are large for the stack of an execution.
+// budget in one call, with a cache of decoded blocks, so each input also
+// compares the decoded blocks with the steps. The memories are large for
+// the stack of an execution.
 @(private = "file")
 fuzz_machine_state: struct {
 	memory:         [FUZZ_MACHINE_MEMORY_BYTES]u8,
@@ -62,6 +64,7 @@ fuzz_machine_state: struct {
 	processor:      software_machine.Processor_State,
 	before_step:    software_machine.Processor_State,
 	run_processor:  software_machine.Processor_State,
+	run_blocks:     software_machine.Block_Cache,
 }
 
 @(private = "file")
@@ -197,6 +200,9 @@ fuzz_software_machine_execute :: proc(input: []u8) -> Fuzz_Verdict {
 	software_machine.processor_init(&state.processor, root, FUZZ_MACHINE_CODE_ADDRESS, registers[int(software_machine.General_Register.Rsp)])
 	state.processor.registers = registers
 	state.run_processor = state.processor
+	// An empty cache for each input, so an input gives its verdict alone.
+	state.run_blocks = {}
+	state.run_processor.blocks = &state.run_blocks
 	run_outcome := software_machine.processor_run(&state.run_processor, state.run_memory[:], FUZZ_MACHINE_STEP_LIMIT)
 	if run_outcome > max(software_machine.Step_Outcome) || run_outcome == .Running || run_outcome == .Halted {
 		return fuzz_broken(.Contract, "software_machine.processor_run gives the outcome %d", u8(run_outcome))

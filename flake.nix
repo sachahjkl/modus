@@ -101,10 +101,12 @@
     # clang of LLVM 18, the one that the Odin compiler links with: it links
     # the instrumented child of the fuzzing from the objects that llc made,
     # with the flags that the compiler prints (src/md/infrastructure/fuzzing.md).
+    buildTools = [odin llvm pkgs.llvmPackages.lld pkgs.llvmPackages_18.clang pkgs.nasm qemu pkgs.coreutils pkgs.openssl pkgs.swtpm pkgs.sbsigntool pkgs.python3Packages.virt-firmware pkgs.zstd];
     # Node 24 runs the host of the browser machine: the tests of its stage
-    # tracker in "modustool check", and "modustool browser-machine boot".
-    # The slim package: no npm.
-    buildTools = [odin llvm pkgs.llvmPackages.lld pkgs.llvmPackages_18.clang pkgs.nasm qemu pkgs.coreutils pkgs.openssl pkgs.swtpm pkgs.sbsigntool pkgs.python3Packages.virt-firmware pkgs.zstd pkgs.nodejs-slim_24];
+    # tracker in "modustool check", and "modustool browser-machine boot" in
+    # the development shell. Only those two take it, so no other derivation
+    # changes with it. The slim package: no npm.
+    browserMachineHost = pkgs.nodejs-slim_24;
 
     # The pointer theme of the owner (docs/POINTERS.md): "Posy's Cursor", the
     # package of nixpkgs, pinned by flake.lock. Its license is CC-BY-NC-4.0,
@@ -499,7 +501,7 @@
           fileset = checkFiles;
         };
         inherit screenshotNames;
-        nativeBuildInputs = buildTools ++ [modustoolBinary];
+        nativeBuildInputs = buildTools ++ [modustoolBinary browserMachineHost];
         buildPhase = ''
           export HOME=$TMPDIR
           mkdir -p build docs/screenshots
@@ -565,7 +567,7 @@
       default = pkgs.mkShell ({
           # ffmpeg: the command "film" of modustool. sops: the keys of the
           # publisher in secrets/production.yaml (secrets/README.md).
-          packages = buildTools ++ [modustool pkgs.ffmpeg pkgs.sops] ++ preCommitCheck.enabledPackages;
+          packages = buildTools ++ [modustool browserMachineHost pkgs.ffmpeg pkgs.sops] ++ preCommitCheck.enabledPackages;
           inherit (preCommitCheck) shellHook;
         }
         // guestImages

@@ -112,13 +112,23 @@ Do not use: web VM, wasm port, Linux in the browser (for this).
 
 ### Software processor
 
-The software processor is the part of the kernel of a browser machine that runs the x86-64 code of the processes: it decodes their instructions, runs them, compiles the hot blocks to WebAssembly, and translates each address through the page tables of the kernel.
+The software processor is the part of the kernel of a browser machine that runs the x86-64 code of the processes: it decodes their instructions, keeps them as decoded blocks, runs them, compiles the hot blocks to WebAssembly, and translates each address through the page tables of the kernel.
 
 It is the processor and the MMU of a browser machine. Its walk reads the tables that the kernel writes, in the format of x86-64, and gives the same page faults as the hardware. A thread stays its frame, so the scheduler, the debugger and the fault ring do not change. It adds no kernel operation.
 
 The design: `src/md/features/browser_machine.md`, "The software MMU".
 
 Do not use: CPU emulator, kwemu, interpreter (for this), JIT (for this).
+
+### Decoded block
+
+A decoded block is a run of instructions inside one page that the software processor fetched and decoded once, and runs again from its cache with no fetch through the page tables and no decode of the prefixes.
+
+Each processor of a browser machine keeps a cache of decoded blocks of a fixed size, keyed by the physical address of the first byte. At each entry, the software processor translates the place for an execute and compares the bytes of the block with the memory, so a block never runs code that a write changed. A decoded block is not a block of a disk, and not a compiled module: the compiled tier compiles the decoded blocks that run often.
+
+The design: `src/md/features/browser_machine.md`, "The decoded blocks".
+
+Do not use: translation block, trace, basic block (for this).
 
 ### Processor record
 
