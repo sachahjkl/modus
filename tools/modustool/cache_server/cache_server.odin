@@ -540,7 +540,7 @@ cache_server_handle_frame :: proc(
 
 // tcp_read_exact reads exactly len(buffer) bytes from socket.
 // When allow_eof_at_start is true and 0 bytes are read at offset 0, sets eof.
-@(private = "file")
+@(private)
 tcp_read_exact :: proc(socket: net.TCP_Socket, buffer: []u8, allow_eof_at_start: bool) -> (ok: bool, eof: bool) {
 	received := 0
 	for received < len(buffer) {
@@ -570,33 +570,6 @@ tcp_write_all :: proc(socket: net.TCP_Socket, data: []u8) -> bool {
 		sent += count
 	}
 	return true
-}
-
-// cache_server_read_response_frame reads one framed response from socket
-// (usable by host clients and integration tests).
-cache_server_read_response_frame :: proc(
-	socket: net.TCP_Socket,
-	allocator := context.allocator,
-) -> (frame: []u8, ok: bool) {
-	header: [object_cache.FRAME_HEADER_SIZE]u8
-	read_ok, _ := tcp_read_exact(socket, header[:], false)
-	if !read_ok {
-		return nil, false
-	}
-	_, _, body_length, header_refusal := object_cache.inspect_response_header(header[:])
-	if header_refusal != .None {
-		return nil, false
-	}
-	frame = make([]u8, object_cache.FRAME_HEADER_SIZE + body_length, allocator)
-	copy(frame[:object_cache.FRAME_HEADER_SIZE], header[:])
-	if body_length > 0 {
-		body_ok, _ := tcp_read_exact(socket, frame[object_cache.FRAME_HEADER_SIZE:], false)
-		if !body_ok {
-			delete(frame, allocator)
-			return nil, false
-		}
-	}
-	return frame, true
 }
 
 // cache_server_serve_connection serves sequential object cache frames over one
@@ -724,7 +697,7 @@ cache_server_serve :: proc(options: Cache_Serve_Options) -> bool {
 	return true
 }
 
-@(private = "file")
+@(private)
 decode_hex_32 :: proc(text: string) -> (bytes: [32]u8, ok: bool) {
 	trimmed := strings.trim_space(text)
 	if len(trimmed) != 64 {

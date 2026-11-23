@@ -537,42 +537,26 @@ loopback_tcp_server_end_to_end :: proc(t: ^testing.T) {
 		thread.destroy(worker)
 	}
 
-	client, dial_err := net.dial_tcp(bound)
-	testing.expect_value(t, dial_err, nil)
-	defer net.close(client)
-	_ = net.set_option(client, .Receive_Timeout, foundation.HANG_BOUND)
+	// Put_Object, then Get_Object, then Has over one TCP stream, through the
+	// client of the commands.
+	client, connect_outcome := cache_client_connect(net.endpoint_to_string(bound, context.temp_allocator))
+	testing.expect_value(t, connect_outcome, Cache_Client_Outcome.Done)
+	defer cache_client_close(&client)
 
-	// Send Put_Object, then Get_Object, then Has over one TCP stream.
 	payload := transmute([]u8)string("tcp framed blob payload")
-	blob_h := blake3.hash(payload)
-	put_req := make_signed_put_object_request(.Blob, blob_h, payload, &priv, pub)
-	put_frame := encode_req_alloc(t, &put_req)
-	defer delete(put_frame)
-	testing.expect(t, tcp_write_all(client, put_frame))
+	blob_h, put_outcome := cache_client_put_object(&client, &priv, .Blob, payload)
+	testing.expect_value(t, put_outcome, Cache_Client_Outcome.Done)
+	testing.expect_value(t, blob_h, blake3.hash(payload))
 
-	put_resp_raw, put_read_ok := cache_server_read_response_frame(client)
-	testing.expect(t, put_read_ok)
-	defer delete(put_resp_raw)
-	put_resp, put_dec_ref := object_cache.decode_response(put_resp_raw)
-	testing.expect_value(t, put_dec_ref, object_cache.Wire_Refusal.None)
-	testing.expect_value(t, put_resp.status, object_cache.Cache_Response_Status.Ok)
+	got, get_outcome := cache_client_get_object(&client, .Blob, blob_h)
+	defer delete(got)
+	testing.expect_value(t, get_outcome, Cache_Client_Outcome.Done)
+	testing.expect_value(t, string(got), string(payload))
 
-	get_req := object_cache.Cache_Request {
-		kind        = .Get_Object,
-		object_hash = blob_h,
-		object_kind = .Blob,
-	}
-	get_frame := encode_req_alloc(t, &get_req)
-	defer delete(get_frame)
-	testing.expect(t, tcp_write_all(client, get_frame))
-
-	get_resp_raw, get_read_ok := cache_server_read_response_frame(client)
-	testing.expect(t, get_read_ok)
-	defer delete(get_resp_raw)
-	get_resp, get_dec_ref := object_cache.decode_response(get_resp_raw)
-	testing.expect_value(t, get_dec_ref, object_cache.Wire_Refusal.None)
-	testing.expect_value(t, get_resp.status, object_cache.Cache_Response_Status.Ok)
-	testing.expect_value(t, string(get_resp.payload), string(payload))
+	hashes := [2]blake3.Hash{blob_h, blake3.hash(transmute([]u8)string("absent"))}
+	present, has_outcome := cache_client_has(&client, hashes[:])
+	testing.expect_value(t, has_outcome, Cache_Client_Outcome.Done)
+	testing.expect_value(t, present, u64(1))
 }
 
 @(test)

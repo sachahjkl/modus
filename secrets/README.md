@@ -4,7 +4,7 @@ This folder holds the keys of the publisher of the system, encrypted with SOPS f
 
 | File | Use |
 |---|---|
-| `production.yaml` | The four values of the key folder of the publisher: the source of the secrets of the workflow of a release |
+| `production.yaml` | The five values of the key folder of the publisher: the source of the secrets of the workflow of a release |
 
 No other file of the repository holds a private key of the publisher. The test keys of `resources/keys` are published on purpose, and a release refuses them.
 
@@ -18,8 +18,9 @@ Each name is the name of a key of `production.yaml` and the name of a secret of 
 | `FIRMWARE_SIGNING_KEY` | The firmware signing key: the RSA-2048 private key, PEM | `firmware_signing_key.pem` |
 | `FIRMWARE_CERTIFICATE` | The certificate of the firmware signing key, PEM. It is not secret; it is here so that the workflow has the whole key folder | `firmware_signing_key.crt` |
 | `RELEASE_SIGNING_KEY` | The release signing key: its 32-byte seed in base64url with no padding | `release_signing_key` |
+| `CACHE_SIGNING_KEY` | The cache signing key: the 64 hexadecimal digits of its seed. Only the job `cache` of the workflow reads it | `cache_signing_key` |
 
-The workflow of a release (`.github/workflows/release.yml`) gives each secret to `modustool key write` as the variable of the same name with `_TEXT` at its end: `SYSTEM_SIGNING_KEY` names the path of the signing key in the tool, so a value cannot have that name.
+The workflow of a release (`.github/workflows/release.yml`) gives each secret to `modustool key write` as the variable of the same name with `_TEXT` at its end: `SYSTEM_SIGNING_KEY` names the path of the signing key in the tool, so a value cannot have that name. The job `build` takes the first four; the job `cache` takes `CACHE_SIGNING_KEY` alone, with `modustool key write cache` (`src/md/infrastructure/cache_publication.md`).
 
 ## Make the keys
 
@@ -31,14 +32,17 @@ Do this once, on a computer of the publisher, outside the repository. Nothing he
    nix develop -c modustool key new ~/keys/modus
    ```
 
-   The tool writes the signing key, the firmware signing key and its certificate, and the release signing key, each private file readable by its owner only, in a folder that only its owner can open.
+   The tool writes the signing key, the firmware signing key and its certificate, the release signing key and the cache signing key, each private file readable by its owner only, in a folder that only its owner can open. A folder made before the cache signing key existed gets it alone with `nix develop -c modustool key new cache ~/keys/modus`.
 
 2. Commit the public key of the release signing key, so that a reader can verify a release, and the certificate of the firmware signing key, so that a principal can enrol it for Secure Boot. Neither is secret. `modustool release image` refuses a key folder whose public key or certificate differs from these files.
 
    ```sh
    cp ~/keys/modus/release_signing_key.public resources/keys/release_signing_key.public
    cp ~/keys/modus/firmware_signing_key.crt resources/keys/firmware_signing_key.crt
+   cp ~/keys/modus/cache_signing_key.public resources/keys/cache_signing_key.public
    ```
+
+   The deployment of the public object cache authorises the cache signing key with `--authorized-key resources/keys/cache_signing_key.public`. `modustool key write cache` refuses a key whose public key is not this file.
 
 3. Copy the folder to two media that stay offline, in two places (`docs/TRUSTED_BOOT.md`, "Backup").
 
@@ -51,7 +55,7 @@ export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt
 sops secrets/production.yaml
 ```
 
-The editor of `sops` opens a new file. Write the four names of the table, each with the whole text of its file as a value (a PEM file as a block of YAML, `|`), save, and commit `secrets/production.yaml`. `sops` encrypts each value before it writes the file.
+The editor of `sops` opens a new file. Write the five names of the table, each with the whole text of its file as a value (a PEM file as a block of YAML, `|`), save, and commit `secrets/production.yaml`. `sops` encrypts each value before it writes the file.
 
 ## Make the environment `release` and protect the tags
 
@@ -78,6 +82,7 @@ gh secret set SYSTEM_SIGNING_KEY --env release < ~/keys/modus/signing_key
 gh secret set FIRMWARE_SIGNING_KEY --env release < ~/keys/modus/firmware_signing_key.pem
 gh secret set FIRMWARE_CERTIFICATE --env release < ~/keys/modus/firmware_signing_key.crt
 gh secret set RELEASE_SIGNING_KEY --env release < ~/keys/modus/release_signing_key
+gh secret set CACHE_SIGNING_KEY --env release < ~/keys/modus/cache_signing_key
 ```
 
 From SOPS, on another computer, for one value:
@@ -102,4 +107,5 @@ Remove the copy of the folder after the build.
 ## A lost or stolen key
 
 - The release signing key: make a new one, commit its public key in `resources/keys/release_signing_key.public`, and replace the value in SOPS and on GitHub. No machine changes.
+- The cache signing key: make a new one (`key new cache` in an empty folder), commit its public key in `resources/keys/cache_signing_key.public`, replace the value in SOPS and on GitHub, and give the deployment the new `--authorized-key` in place of the old one. A principal whose substitution policy names the old key removes it. No machine changes, and no system or release signature changes.
 - The signing key or the firmware signing key: `docs/TRUSTED_BOOT.md`, "Loss" and "Theft".

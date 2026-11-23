@@ -23,9 +23,10 @@ The format of the two Ed25519 files: 64 hexadecimal digits, then an end of line.
 
 ## The public files of the publisher
 
-Two files here are not test keys. Neither holds a private key. The publisher of the system commits them once, from the key folder (`secrets/README.md`):
+Three files here are not test keys. Neither holds a private key. The publisher of the system commits them once, from the key folder (`secrets/README.md`):
 
 - `release_signing_key.public`: the public key of the release signing key, 32 bytes in base64url with no padding. `modustool verify` and a reader verify the files of a release with it.
 - `firmware_signing_key.crt`: the certificate of the firmware signing key of the publisher, PEM. A principal enrols it in the firmware for Secure Boot (`docs/INSTALL.md`, "4. Start with Secure Boot").
+- `cache_signing_key.public`: the public key of the cache signing key, 64 hexadecimal digits. The public object cache authorises it with `--authorized-key`, `modustool cache-get` checks the realisations of the publisher with it, and a principal names it in a substitution policy (`src/md/infrastructure/cache_publication.md`).
 
 `modustool release image` refuses a key folder whose release signing key or certificate differs from these files. Until they are committed, no release publishes an image. The release command refuses the test keys of this folder.

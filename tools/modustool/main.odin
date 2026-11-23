@@ -703,6 +703,22 @@ COMMANDS :: [?]foundation.Command {
 	// - `--authorized-key <path>` (optional, repeatable): a 64-hex-digit Ed25519
 	//   public key file allowed to upload objects and signed realisations.
 	{name = "cache-serve", about = "cache-serve --dir <path> [--listen <host:port>] [--signer-key <path>] [--authorized-key <path>] [--status-listen <host:port>] [--endpoint <host:port>] [--site <address>]: serve an object cache of blobs, canonical trees and signed realisations, and with --status-listen its page and status.json over HTTP", run = cache_server.run_cache_serve},
+	// The client of an object cache (src/md/infrastructure/cache_publication.md).
+	//
+	// - `blob <file>...`: puts each file as a blob and prints its hash.
+	// - `release <boot image>`: puts each file of the image that the cache
+	//   does not hold, then the cache test recipe, its output and its
+	//   realisation signed with the key. The release workflow runs it.
+	{name = "cache-put", about = "cache-put <host:port> --key <seed file> blob <file>... | release <boot image>: put files, or each file of a boot image and the signed realisation of the cache test recipe, on an object cache", run = cache_server.run_cache_put},
+	// Gets from an object cache and checks: a blob against its hash, a
+	// realisation against a trusted signer, each file of a boot image and the
+	// cache test recipe. The signer is resources/keys/cache_signing_key.public
+	// unless --signer names another. It needs the network for a public cache:
+	//
+	// ```
+	// nix develop -c modustool cache-get cache.modus.systems:5010 test-recipe
+	// ```
+	{name = "cache-get", about = "cache-get <host:port> blob <hash> [<output file>] | realisation <recipe hash> --signer <public key file> | release <boot image> [--signer <file>] | test-recipe [--signer <file>]: take from an object cache and refuse what does not verify", run = cache_server.run_cache_get},
 	// Serves the typed host agent bridge over line-delimited JSON-RPC 2.0 on
 	// standard input and output, enforcing client-key permissions, remote key
 	// uses, active wide-grant window scopes, append-only BLAKE3 act recording,
@@ -735,7 +751,7 @@ main :: proc() {
 	}
 	// Commands that operate on external directories or unpacked SDKs can run
 	// outside a repository checkout.
-	outside_repo_ok := os.args[1] == "module-build" || os.args[1] == "cache-serve" || os.args[1] == "sdk-verify" || os.args[1] == "sdk-convert" || os.args[1] == "agent-bridge" || os.args[1] == "assistant"
+	outside_repo_ok := os.args[1] == "module-build" || os.args[1] == "cache-serve" || os.args[1] == "cache-put" || os.args[1] == "cache-get" || os.args[1] == "sdk-verify" || os.args[1] == "sdk-convert" || os.args[1] == "agent-bridge" || os.args[1] == "assistant"
 	if !outside_repo_ok && !os.exists(foundation.ROOT_MARK) {
 		fmt.eprintln("modustool: start it from the root of the repository")
 		os.exit(foundation.EXIT_USAGE)

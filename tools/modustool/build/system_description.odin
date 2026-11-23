@@ -613,6 +613,22 @@ measure_expected :: proc(description: []u8) -> (value: [32]u8) {
 // uses. `key test-firmware-new` writes the test firmware signing key of the
 // repository.
 run_key :: proc(args: []string) -> int {
+	// The cache signing key alone: the job that uploads to an object cache
+	// holds no other key.
+	if len(args) >= 2 && args[1] == "cache" || len(args) == 2 && args[0] == "show" && args[1] == "cache" {
+		switch {
+		case len(args) == 2 && args[0] == "show":
+			return cache_signing_key_show() ? 0 : foundation.EXIT_FAILURE
+		case len(args) == 3 && args[0] == "new":
+			if path_inside_repository(args[2]) {
+				fmt.eprintfln("modustool: %s is inside the repository: a private key stays outside it", args[2])
+				return foundation.EXIT_USAGE
+			}
+			return cache_signing_key_new(args[2]) ? 0 : foundation.EXIT_FAILURE
+		case len(args) == 3 && args[0] == "write":
+			return cache_signing_key_write(args[2]) ? 0 : foundation.EXIT_FAILURE
+		}
+	}
 	if len(args) == 1 && args[0] == "show" {
 		key, ok := signing_key_read()
 		if !ok {
@@ -636,7 +652,7 @@ run_key :: proc(args: []string) -> int {
 		return key_folder_write(args[1]) ? 0 : foundation.EXIT_FAILURE
 	}
 	if len(args) != 2 || args[0] != "new" {
-		fmt.eprintln("modustool: key new <folder outside the repository> | key write <folder outside the repository> | key show | key test-firmware-new")
+		fmt.eprintln("modustool: key new <folder outside the repository> | key write <folder outside the repository> | key show | key new cache <folder> | key write cache <folder> | key show cache | key test-firmware-new")
 		return foundation.EXIT_USAGE
 	}
 	folder := args[1]
@@ -650,7 +666,8 @@ run_key :: proc(args: []string) -> int {
 	firmware_certificate_path := strings.concatenate({folder, "/", FIRMWARE_CERTIFICATE_FILE_NAME}, context.temp_allocator)
 	release_key_path := strings.concatenate({folder, "/", RELEASE_SIGNING_KEY_FILE_NAME}, context.temp_allocator)
 	release_public_path := strings.concatenate({release_key_path, SIGNING_KEY_PUBLIC_SUFFIX}, context.temp_allocator)
-	if os.exists(private_path) || os.exists(public_path) || os.exists(firmware_key_path) || os.exists(firmware_certificate_path) || os.exists(release_key_path) || os.exists(release_public_path) {
+	cache_key_path := strings.concatenate({folder, "/", foundation.CACHE_SIGNING_KEY_FILE_NAME}, context.temp_allocator)
+	if os.exists(private_path) || os.exists(public_path) || os.exists(firmware_key_path) || os.exists(firmware_certificate_path) || os.exists(release_key_path) || os.exists(release_public_path) || os.exists(cache_key_path) {
 		fmt.eprintfln("modustool: %s already holds a signing key: a new key does not replace one", folder)
 		return foundation.EXIT_FAILURE
 	}
@@ -708,6 +725,11 @@ run_key :: proc(args: []string) -> int {
 	// The release signing key, for the files of a release, in the same
 	// folder.
 	if !release_signing_key_new(folder) {
+		return foundation.EXIT_FAILURE
+	}
+	// The cache signing key, for the uploads to an object cache, in the same
+	// folder.
+	if !cache_signing_key_new(folder) {
 		return foundation.EXIT_FAILURE
 	}
 	fmt.printfln("modustool: keep a copy of %s on a second medium, offline; then set %s=%s for each build (docs/TRUSTED_BOOT.md, \"The signing key\")", private_path, SIGNING_KEY_VARIABLE, private_path)
