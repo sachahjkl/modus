@@ -135,3 +135,8 @@ unended_read :: proc "contextless" () {
 	}
 	system.log_fact(.Info, Unended_Read{stop_cause = op.Stop_Cause_Word(end.stop_cause), stop_outcome = op.Stop_Outcome_Word(end.stop_outcome), end_word = value_kinds.text_field(output.end_word_names[end.end_word], END_WORD_FIELD_BYTES)})
 }
+
+// The least budget of 2048 pages, in which it ran before its floor was
+// counted. It leaves when the peak of its budget at its first state of
+// work is read (src/md/features/module_budget_request.md, "State").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2048}

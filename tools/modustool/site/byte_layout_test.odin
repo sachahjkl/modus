@@ -35,7 +35,7 @@ expected_fields :: proc() -> []Expected_Field {
 	record: module.Record
 	field: module.Field
 	documentation: module.Documentation
-	budget: module.Budget_Request
+	budget: module.Floor
 	fact: module.Fact
 	own_hash_place: module.Own_Hash_Place
 	record_output: module.Record_Output
@@ -145,9 +145,9 @@ expected_fields :: proc() -> []Expected_Field {
 		{"module.Field", "kind", offset_of(module.Field, kind), size_of(field.kind)},
 		{"module.Field", "contract_enum", offset_of(module.Field, contract_enum), size_of(field.contract_enum)},
 		{"module.Field", "reserved", offset_of(module.Field, reserved), size_of(field.reserved)},
-		{"module.Budget_Request", "pages", offset_of(module.Budget_Request, pages), size_of(budget.pages)},
-		{"module.Budget_Request", "processes", offset_of(module.Budget_Request, processes), size_of(budget.processes)},
-		{"module.Budget_Request", "threads", offset_of(module.Budget_Request, threads), size_of(budget.threads)},
+		{"module.Floor", "pages", offset_of(module.Floor, pages), size_of(budget.pages)},
+		{"module.Floor", "processes", offset_of(module.Floor, processes), size_of(budget.processes)},
+		{"module.Floor", "threads", offset_of(module.Floor, threads), size_of(budget.threads)},
 		{"module.Fact", "key", offset_of(module.Fact, key), size_of(fact.key)},
 		{"module.Fact", "record", offset_of(module.Fact, record), size_of(fact.record)},
 		{"module.Fact", "template_offset", offset_of(module.Fact, template_offset), size_of(fact.template_offset)},

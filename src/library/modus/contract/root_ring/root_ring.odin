@@ -536,6 +536,17 @@ Root_Command :: enum u32 {
 	// the other values 0. The root service ends the grant with the reason
 	// Duplicate_Connection. Only the holder of Remote_Clients sends it.
 	Wide_Grant_Second_Connection = 38,
+	// Ready says that the sender reached its first state of work: its start
+	// is done, and it waits for its work. Each value is 0; a record with a
+	// value that is not is refused with `Bad_Value`, argument 1, the first
+	// such value in the field of the value. The
+	// root service reads the peak of the budget of the sender at the first
+	// Ready alone, and writes it with the floor of its start as a fact
+	// (src/md/features/module_budget_request.md, "The peak of a budget").
+	// A later Ready changes nothing. A Ready that runs has no completion, so
+	// the sender waits for nothing; a refused one has its completion with
+	// its error record.
+	Ready = 39,
 }
 
 // The step of a Screen_Budget, in values[0].
@@ -852,6 +863,7 @@ ROOT_COMMAND_SENDERS := [Root_Command]Root_Command_Sender {
 	.Wide_Grant_End         = .Root_Ring,
 	.Wide_Grant_Agent_Ask   = .Remote_Clients,
 	.Wide_Grant_Second_Connection = .Remote_Clients,
+	.Ready                  = .Each_Ring,
 }
 
 // The start grants that give a process a root ring. A process with none of
@@ -1252,6 +1264,7 @@ root_command_names := [Root_Command]string {
 	.Wide_Grant_End         = "Wide_Grant_End",
 	.Wide_Grant_Agent_Ask   = "Wide_Grant_Agent_Ask",
 	.Wide_Grant_Second_Connection = "Wide_Grant_Second_Connection",
+	.Ready                  = "Ready",
 }
 
 // The name of the argument 1 of an error record of each command: the name
@@ -1297,6 +1310,7 @@ root_first_argument_names := [Root_Command]string {
 	.Wide_Grant_End         = "key",
 	.Wide_Grant_Agent_Ask   = "key",
 	.Wide_Grant_Second_Connection = "key",
+	.Ready                  = "values",
 }
 
 // The name of the argument 2 of an error record of each command: values[4],
@@ -1343,6 +1357,7 @@ root_second_argument_names := [Root_Command]string {
 	.Wide_Grant_End         = "",
 	.Wide_Grant_Agent_Ask   = "scopes",
 	.Wide_Grant_Second_Connection = "",
+	.Ready                  = "",
 }
 
 // command_of_record reads the command that an error record names: the

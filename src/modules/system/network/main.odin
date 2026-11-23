@@ -1482,3 +1482,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 // blocks of TCP ports, under the largest port.
 #assert(PORT_FIRST + ENDPOINT_CAPACITY <= TCP_PORT_FIRST && TCP_PORT_FIRST + ENDPOINT_CAPACITY * datagram.PORT_BLOCK <= 65536)
 #assert(SEND_HEADER_COPIED <= datagram.DATAGRAM_LEAST && SEND_HEADER_COPIED <= datagram.SEGMENT_LEAST)
+
+// The least budget of 2048 pages, in which it ran before its floor was
+// counted. It leaves when the peak of its budget at its first state of
+// work is read (src/md/features/module_budget_request.md, "State").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2048}

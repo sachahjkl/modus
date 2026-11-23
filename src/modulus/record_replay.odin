@@ -398,7 +398,7 @@ point_copy_frame_allocate :: proc "contextless" (history_region: u32) -> (frame:
 		lock_free(&frame_lock, .Frame)
 		return 0, false
 	}
-	budgets[budget].amounts.pages -= 1
+	budget_pages_spend(&budgets[budget], 1)
 	lock_free(&frame_lock, .Frame)
 	frames_zero(frame, 1)
 	return frame, true

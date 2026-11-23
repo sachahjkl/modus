@@ -176,8 +176,8 @@ Module_Parts :: struct {
 	category:           module.Module_Category, // What the module is to a reader, in the header.
 	tags:               module.Module_Tags, // What the module is about, in the header.
 	text:               string, // The documentation text of the module, in its Markdown.
-	has_budget:         bool, // The module asks for a budget: the file has the table Budget.
-	budget:             module.Budget_Request,
+	has_floor:          bool, // A module with an entry: the file has the table Floor.
+	floor:              module.Floor,
 	record_outputs:     []Record_Output_Part, // At most module.RECORD_STREAM_INDEX_MOST: the file has the table Record_Outputs when there is one.
 	record_inputs:      []Record_Input_Part, // At most module.RECORD_STREAM_INDEX_MOST: the table Record_Inputs.
 }
@@ -451,8 +451,8 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 	}
 	add(&layout, &cursor, .Strings, string_bytes, 1)
 	add(&layout, &cursor, .Documentation, 2, size_of(module.Documentation))
-	if parts.has_budget {
-		add(&layout, &cursor, .Budget, 2, size_of(module.Budget_Request))
+	if parts.has_floor {
+		add(&layout, &cursor, .Floor, 2, size_of(module.Floor))
 	}
 	layout.tables_end = cursor
 	// The data of each segment starts on its own page of the file. A
@@ -1097,8 +1097,8 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 	if parts.has_own_hash_place {
 		store(file, place(directory, .Own_Hash, 1), module.Own_Hash_Place{memory_offset = parts.own_hash_place})
 	}
-	if parts.has_budget {
-		store(file, place(directory, .Budget, 1), parts.budget)
+	if parts.has_floor {
+		store(file, place(directory, .Floor, 1), parts.floor)
 	}
 
 	header := module.Header {

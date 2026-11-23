@@ -468,6 +468,7 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 		}
 	}
 	process: system.Handle
+	process_budget: Start_Budget
 	// Its request, up to the largest budget of a disk process, paid by the
 	// one budget of the disk processes: a file of a disk cannot take what
 	// the processes of the boot image need. Its name selects no exception.
@@ -480,12 +481,16 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 		return root_ring.refuse(refusal, .Data_Damaged, kind, .Damaged, .Records)
 	}
 	if status == .Ok {
-		process_budget := disk_budget_of(file, name, disk_processes)
-		source := load_source()
-		source.files = store_files
-		process, status = system.process_start(file, name, context_grants.grants, random.values_with_seed(&process_generator, values.values), process_budget, mappings[:mapping_count], nil, source, load_error, disk_processes)
-		if status == .No_Budget {
-			budget_refusal_log(name, process_budget, disk_processes, "the disk processes")
+		budget_ok: bool
+		if process_budget, budget_ok = disk_budget_of(file, name, disk_processes); !budget_ok {
+			status = .No_Budget
+		} else {
+			source := load_source()
+			source.files = store_files
+			process, status = system.process_start(file, name, context_grants.grants, random.values_with_seed(&process_generator, values.values), process_budget.amounts, mappings[:mapping_count], nil, source, load_error, disk_processes)
+			if status == .No_Budget {
+				budget_refusal_log(name, process_budget.amounts, disk_processes, "the disk processes")
+			}
 		}
 	}
 	if status != .Ok {

@@ -607,3 +607,20 @@ the_wide_grant_commands_keep_their_senders :: proc(t: ^testing.T) {
 		testing.expect(t, ok && read == outcome)
 	}
 }
+// Ready comes from each process with a root ring, whatever its start
+// grants, and from no process without one: the root service checks the
+// floor of each process that can say its first state of work.
+@(test)
+ready_comes_from_each_process_with_a_root_ring :: proc(t: ^testing.T) {
+	for grant in ROOT_RING_GRANTS {
+		decision := dispatch_decide(u32(Root_Command.Ready), {grant}, false)
+		testing.expectf(t, decision.step == .Command && decision.command == .Ready, "Ready with the start grant %v", grant)
+	}
+	refused := dispatch_decide(u32(Root_Command.Ready), {}, false)
+	testing.expect_value(t, refused.step, Dispatch_Step.Sender)
+	testing.expect_value(t, root_command_name(i64(Root_Command.Ready)), "Ready")
+	testing.expect_value(t, root_argument_name(i64(Root_Command.Ready), 1), "values")
+	// The word one past Ready names no command.
+	past := dispatch_decide(u32(Root_Command.Ready) + 1, {.Root_Ring}, false)
+	testing.expect_value(t, past.step, Dispatch_Step.Border)
+}

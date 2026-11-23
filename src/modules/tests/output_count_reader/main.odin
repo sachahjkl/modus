@@ -64,3 +64,8 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Counts_Read{joined_serial = u64(joined.serial), records = RECORDS_READ, first_serial = serials[0], second_serial = serials[1], third_serial = serials[2]})
 	system.stop(.Done)
 }
+
+// The least budget of 2048 pages, in which it ran before its floor was
+// counted. It leaves when the peak of its budget at its first state of
+// work is read (src/md/features/module_budget_request.md, "State").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2048}

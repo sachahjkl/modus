@@ -679,7 +679,7 @@ frame_paid_held :: proc "contextless" (budget_field: ^u32) -> u64 {
 			frame = frames_take(1)
 		}
 		if frame != 0 {
-			budgets[budget].amounts.pages -= 1
+			budget_pages_spend(&budgets[budget], 1)
 		}
 	}
 	return frame

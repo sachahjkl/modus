@@ -23,8 +23,8 @@
 // - `Function`, `Type`, `Direction`, `Record`, `Field`, `Table_Place`: the
 //   call form of an export (docs/MODULE_CONTRACT.md, section 4).
 // - `Documentation`: the help of the module and of each export.
-// - `Budget_Request`: the budget that the module asks for its process
-//   (`budget_request`).
+// - `Floor`: what its process needs to reach its first state of work
+//   (`floor_read`).
 // - `Fact`, `Own_Hash_Place` (`facts.odin`): the log facts that the module
 //   writes, and the place where a loader writes the hash of the module.
 // - `Record_Output`, `Record_Input` (`record_streams.odin`): the record
@@ -135,7 +135,7 @@ Table_Kind :: enum u32 {
 	Documentation = 8, // `Documentation` records: the help of the module and of each export.
 	Records       = 9, // `Record` records: the descriptions of the records that the exports take and give.
 	Fields        = 10, // `Field` records: the fields of those records.
-	Budget        = 11, // One `Budget_Request` record, at index 1: the budget that the module asks for.
+	Floor         = 11, // One `Floor` record, at index 1: what the process of the module needs to reach its first state of work.
 	Facts         = 12, // `Fact` records: the log facts that the module writes, sorted by fact key.
 	Own_Hash      = 13, // One `Own_Hash_Place` record, at index 1: where a loader writes the hash of the module.
 	Record_Outputs = 14, // `Record_Output` records: the record outputs that the module declares, sorted by name.
@@ -491,28 +491,27 @@ Documentation :: struct {
 }
 #assert(size_of(Documentation) == 16)
 
-// The budget that a module asks for: record 1 of the table Budget
-// (docs/MODULE_CONTRACT.md, "The budget that a module asks for"). It is a
-// request, never a grant: the starter of the process accepts it, limits it
-// or widens it. A part that is 0 asks for the least budget of that part, and
-// a file with no table Budget asks for the least budget. No loader reads it.
-// The build writes it: the parts that the source states (system.Stated_Budget)
-// and the pages that the tool counts, of the modules, the threads and the
-// pictures of the window.
+// The floor of a module: record 1 of the table Floor
+// (src/md/features/module_budget_request.md, "The chosen form"). It is what
+// the process needs to reach its first state of work, a fact of the module
+// and of the build, never a grant: the starter adds the parts of the
+// machine and of the plan to it (the floor of a start), reserves it, and
+// gives a size from its own policy (system.budget_size). The build writes
+// it for each module with an entry: the parts that the source states
+// (system.Stated_Budget, its start objects and its children) and the pages
+// that the tool counts. A file with no table Floor does not start: before
+// 1.0 nothing is kept for an older tool. No loader reads it.
 //
-// The record can gain fields at its end: a reader reads a part that a
-// shorter record does not have as 0, the least.
-//
-// Example: `{pages = 4096, processes = 1, threads = 2}` asks for 16 MiB, the
+// Example: `{pages = 4096, processes = 1, threads = 2}` needs 16 MiB, the
 // process itself and no child, and two threads.
-Budget_Request :: struct {
-	pages:    u64, // Pages of memory: its modules, its stacks, its pictures and its working memory.
-	processes: u64, // Process slots: the process itself, and each child that runs at one time.
-	threads:  u64, // Thread slots: each thread that runs at one time, the first one included, and the threads of its children.
+Floor :: struct {
+	pages:    u64, // Pages of memory: its modules, their load, its stacks, its pictures, its start objects, the floors of its children and its working memory.
+	processes: u64, // Process slots: the process itself, and each child that runs at one time. At least 1.
+	threads:  u64, // Thread slots: each thread that runs at one time, the first one included, and the threads of its children. At least 1.
 	// Pictures of the size of the screen in force, 4 bytes a pixel, that the
 	// process holds: the copies of a screen of the compositor and of the
 	// remote display. A build cannot know the screen, so the starter adds
-	// their pages for the screen of the machine (budget_request_of_screen),
+	// their pages for the screen of the machine (floor_of_screen),
 	// and a 4K machine pays a 4K screen. SCREEN_PICTURES_LIMIT at most.
 	screen_pictures: u64,
 	// The pages of the rings of the wirings that the process asks for, in
@@ -521,7 +520,7 @@ Budget_Request :: struct {
 	// reads 0 (src/md/features/module_outputs.md, "The bounds of the wirings").
 	wiring_pages: u64,
 }
-#assert(size_of(Budget_Request) == 40)
+#assert(size_of(Floor) == 40)
 
 // The most screen pictures that a module asks for: the compositor holds
 // two, the remote display three.
@@ -533,37 +532,38 @@ screen_picture_pages :: proc "contextless" (width, height: u64) -> u64 {
 	return (width * height * 4 + PAGE_SIZE - 1) / PAGE_SIZE
 }
 
-// budget_request_of_screen gives the request of a module with the pages of
-// its screen pictures added, for a screen of width x height: the request
-// that the starter decides. plan_screen_pages is the most pages that a row
+// floor_of_screen gives the floor of a module with the pages of its screen
+// pictures added, for a screen of width x height: a part of the floor of a
+// start. plan_screen_pages is the most pages that a row
 // of the plan of principal 0 gives these pictures, 0 for no row: the screen
 // is a fact of the machine, and its cost a machine policy, which a plan may
-// lower and never raise. ok is false for a request of more than
+// lower and never raise. ok is false for a floor of more than
 // SCREEN_PICTURES_LIMIT pictures, or a screen whose pages pass 64 bits:
 // the starter refuses the module, as a file that is not valid.
 //
 // Example: 3 pictures of 3840 x 2160 add 3 x 8100 pages; with a plan row of
 // 10 000 pages they add 10 000.
-budget_request_of_screen :: proc "contextless" (request: Budget_Request, width, height: u64, plan_screen_pages: u64 = 0) -> (with_screen: Budget_Request, ok: bool) {
-	if request.screen_pictures > SCREEN_PICTURES_LIMIT || width > 1 << 20 || height > 1 << 20 {
+floor_of_screen :: proc "contextless" (floor: Floor, width, height: u64, plan_screen_pages: u64 = 0) -> (with_screen: Floor, ok: bool) {
+	if floor.screen_pictures > SCREEN_PICTURES_LIMIT || width > 1 << 20 || height > 1 << 20 {
 		return {}, false
 	}
-	screen := request.screen_pictures * screen_picture_pages(width, height)
+	screen := floor.screen_pictures * screen_picture_pages(width, height)
 	if plan_screen_pages != 0 {
 		screen = min(screen, plan_screen_pages)
 	}
-	with_screen = request
+	with_screen = floor
 	with_screen.pages += screen
 	with_screen.screen_pictures = 0
-	if with_screen.pages < request.pages {
+	if with_screen.pages < floor.pages {
 		return {}, false
 	}
 	return with_screen, true
 }
 
 // The largest budget of a process of the boot image is a share of the
-// memory and of the threads of the machine: a request above it starts with
-// the largest budget (largest_budget_of_machine). The share is a value of
+// memory and of the threads of the machine: no size passes it, and a floor
+// above it is the size (largest_budget_of_machine, system.budget_size).
+// Until the growth exists, the share is the most that a start gets. The share is a value of
 // the plan of principal 0, because it spends a resource of the machine
 // (src/md/features/module_budget_request.md): a share of n gives one
 // process at most 1/n of the machine. With no value in the plan, the share
@@ -588,13 +588,34 @@ budget_share_of_word :: proc "contextless" (word: u64) -> (share: u64, ok: bool)
 // sizes its memory to run on any machine checks its sum against these
 // pages at compile time.
 LARGEST_BUDGET_LEAST_PAGES :: 16384
-LARGEST_BUDGET_LEAST :: Budget_Request{pages = LARGEST_BUDGET_LEAST_PAGES, processes = 8, threads = 32}
+LARGEST_BUDGET_LEAST :: op.Budget_Amounts{pages = LARGEST_BUDGET_LEAST_PAGES, processes = 8, threads = 32}
 
-// The machine of the machine tests: 1 GiB (the tool checks it against its
-// machine), whose root service holds at least 200 000 pages at its start,
-// less the kernel. A system module whose request passes the largest budget
-// of that machine would write Budget_Part_Limited at each boot of a test:
-// a module that asks more than the least checks its sum against this one.
+// The size of a budget with no row of the plan is the floor of its start
+// times this factor (system.budget_size). A value of the plan of principal
+// 0, default_growth_factor, because the size spends the memory of the
+// machine; 2 is its default: a process can double its start memory before
+// it needs a growth or a row, and its default follows its real need, not a
+// fixed count (src/md/features/module_budget_request.md, "The size, part
+// by part"). The plan carries no such row yet, so the starter reads this
+// default.
+DEFAULT_GROWTH_FACTOR :: 2
+
+// growth_factor_of_word is the border of the growth factor that a plan
+// gives: the factor, or false for 0, which would give a size below the
+// floor. A factor of 1 gives the floor alone. No upper border: a size never
+// passes the share of the machine (system.budget_size).
+growth_factor_of_word :: proc "contextless" (word: u64) -> (factor: u64, ok: bool) {
+	if word == 0 {
+		return 0, false
+	}
+	return word, true
+}
+
+// The least machine that the system supports, and the machine of the
+// machine tests: 1 GiB (the tool checks it against its machine), whose root
+// service holds at least 200 000 pages at its start, less the kernel. The
+// tool proves at the build that the floors of the default start list fit
+// in these pages (start_lists.odin), so the default image starts there.
 TEST_MACHINE_MEMORY_MIB :: 1024
 TEST_MACHINE_ROOT_PAGES :: 200_000
 TEST_MACHINE_LARGEST_BUDGET_PAGES :: TEST_MACHINE_ROOT_PAGES / LARGEST_BUDGET_SHARE_DEFAULT
@@ -608,7 +629,7 @@ TEST_MACHINE_LARGEST_BUDGET_PAGES :: TEST_MACHINE_ROOT_PAGES / LARGEST_BUDGET_SH
 //
 // Example: 200 000 pages and 1023 threads (a machine of 1 GiB) with the
 // share 4 give 50 000 pages and 255 threads; 0 pages give 16 384.
-largest_budget_of_machine :: proc "contextless" (machine: Budget_Request, share: u64) -> Budget_Request {
+largest_budget_of_machine :: proc "contextless" (machine: op.Budget_Amounts, share: u64) -> op.Budget_Amounts {
 	parts := max(share, LARGEST_BUDGET_SHARE_LEAST)
 	largest := LARGEST_BUDGET_LEAST
 	largest.pages = max(machine.pages / parts, LARGEST_BUDGET_LEAST_PAGES)

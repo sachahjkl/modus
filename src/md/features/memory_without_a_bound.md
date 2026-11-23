@@ -36,7 +36,7 @@ Two kinds of arena are planned:
 - **The growable arena.** It holds data that lives as long as a thing of the process: a document, a page of the web, a heap of a language. It ends with that thing.
 - **The scratch arena of a frame.** It holds what one frame computes and drops: the boxes of a layout, a text that a frame shapes. The process sets its end back to 0 at the start of each frame and keeps its committed pages, so a frame commits nothing in the usual case. Its committed size is the largest frame so far, and the process can give back the pages past a mark that it chooses.
 
-The process learns its limit from `Budget_Read`: the pages that its budget still holds. It reads it at its start to choose the size of each reservation, and after a refusal to say what was refused. The budget that a module asks for in its file states the working memory of its tables; a process with arenas states there the pages that it expects for its usual data, and it receives at most the largest budget of its starter.
+The process learns its limit from `Budget_Read`: the pages that its budget still holds. It reads it at its start to choose the size of each reservation, and after a refusal to say what was refused. The floor of a module in its file holds what its process needs to reach its first state of work; a process with arenas grows past it inside its size, twice its floor by default, and at most the largest budget of its starter ([module_budget_request.md](module_budget_request.md)).
 
 ## Why this form
 

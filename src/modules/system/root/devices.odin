@@ -343,6 +343,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		}
 	}
 
+	driver_budget: Start_Budget
 	armed: Armed_Device
 	armed, status = device_arm(place, identity, DEVICE_SERVICE_LAYOUT, &context_grants)
 	if status != .Ok {
@@ -358,10 +359,13 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 		driver_mappings: [1]system.Mapping
 		driver_mapping_count := 0
 		fresh_bytes_page_give(driver, driver_mappings[:], &driver_mapping_count, &values)
+		budget_ok: bool
 		if context_refused(service_name, &context_grants, &values) {
 			status = .Bad_State
+		} else if driver_budget, budget_ok = budget_of(image_file_checked(service_name), service_name); !budget_ok {
+			status = .No_Budget
 		} else {
-			driver.process, status = system.process_start(image_file_checked(service_name), service_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(image_file_checked(service_name), service_name), driver_mappings[:driver_mapping_count], &prepared, load_source())
+			driver.process, status = system.process_start(image_file_checked(service_name), service_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), driver_budget.amounts, driver_mappings[:driver_mapping_count], &prepared, load_source())
 		}
 	}
 	if status != .Ok {
@@ -376,6 +380,7 @@ driver_start :: proc "contextless" (place: pci.Place, kind: Driver = DRIVER_BLOC
 	if behind_conventional_bridge {
 		driver.bridge_group = group
 	}
+	start_budget_note(driver, driver_budget)
 	driver.start_grant_set = start_grant_set
 	driver.granted = {.Log}
 	copy(driver.name[:len(driver.name) - 1], kind.name)

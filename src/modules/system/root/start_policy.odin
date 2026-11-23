@@ -301,6 +301,11 @@ start_policy_launch :: proc "contextless" (list: Start_Policy_List) {
 	if list_entry := system.image_resource_find(image, START_POLICY_LIST_NAMES[list]); list_entry != nil {
 		list_hash = list_entry.hash
 		start_list_audits, start_list_wiring_pages = start_list_facts_of(list_entry)
+		// The floors of the rows first, before the start policy, which pays
+		// the wirings of the list, and before any row starts.
+		if image_entry_give(list_entry) {
+			start_list_reserve(image[list_entry.offset:][:list_entry.size])
+		}
 	}
 	// A start policy of the boot image starts unmeasured, with the line of
 	// the cause: it is signed and measured with the system in PCR 11.

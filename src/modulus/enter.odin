@@ -1188,6 +1188,7 @@ execute :: proc "contextless" (index: u32, command: ring.Record, results: ^[7]u6
 						start_time     = about.start_time,
 						entries        = about.entries,
 						budget         = budgets[about.budget].amounts,
+						budget_least_pages = budgets[about.budget].least_pages,
 					}
 				}
 			}

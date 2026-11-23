@@ -438,8 +438,71 @@ module_request_pages :: proc(files: Module_Files, name: string) -> u64 {
 	if !found || module.validate(file) != .None {
 		return 0
 	}
-	request, _ := module.budget_request(file)
+	request, _ := module.floor_read(file)
 	return request.pages
+}
+
+// start_list_floors_problem refuses a list whose floors do not fit in the
+// least machine of the system: the root service reserves the floor of the
+// start of each row before the first row starts, and its own floor and the
+// floor of the start policy are paid before them
+// (src/md/features/module_budget_request.md, "The sum first"). The floors
+// are at the reference screen, which is the screen of the least machine.
+// machine_pages is what the root service holds at its start there,
+// module.TEST_MACHINE_ROOT_PAGES.
+start_list_floors_problem :: proc(floors: []Start_List_Floor, machine_pages: u64) -> string {
+	sum: u64 = 0
+	for item in floors {
+		if item.pages > machine_pages - min(sum, machine_pages) {
+			return fmt.tprintf("the floors of the root service, of the start policy and of the rows need more than the %d pages of the least machine, %d MiB: %s adds %d pages to %d", machine_pages, module.TEST_MACHINE_MEMORY_MIB, item.name, item.pages, sum)
+		}
+		sum += item.pages
+	}
+	return ""
+}
+
+// The floor of the start of one module of a list, at the reference screen.
+Start_List_Floor :: struct {
+	name:  string,
+	pages: u64,
+}
+
+// start_list_floors gives the floor of the start of the root service, of
+// the start policy and of the module of each row, at the reference
+// screen, with the pages that the root service adds: the audits of the
+// collector and the wirings of the list for the start policy. problem
+// names a module with no file or no table Floor.
+start_list_floors :: proc(rows: []Start_List_Row, files: Module_Files, audits: u64, wiring_pages: u64) -> (floors: []Start_List_Floor, problem: string) {
+	list := make([dynamic]Start_List_Floor, context.temp_allocator)
+	names := make([dynamic]string, context.temp_allocator)
+	append(&names, "root", foundation.START_POLICY_MODULE)
+	for row in rows {
+		append(&names, start_list.root_procedure_of(row.name) == .Display ? foundation.DISPLAY_HOLDER_MODULE : row.name)
+	}
+	for name in names {
+		file, found := files[name]
+		floor: module.Floor
+		has_floor := false
+		if found && module.validate(file) == .None {
+			floor, has_floor = module.floor_read(file)
+		}
+		if !has_floor {
+			return nil, fmt.tprintf("the module %s has no table Floor: the root service cannot start it", name)
+		}
+		with_screen, screen_ok := module.floor_of_screen(floor, reference_screen.WIDTH, reference_screen.HEIGHT)
+		if !screen_ok {
+			return nil, fmt.tprintf("the module %s asks for more pictures of the screen than a module holds", name)
+		}
+		pages := with_screen.pages
+		if name == wide_grants.COLLECTOR_MODULE_NAME {
+			pages += audits * wide_grants.SPACE_AUDIT_PAGES
+		}
+		if name == foundation.START_POLICY_MODULE {
+			pages += wiring_pages
+		}
+		append(&list, Start_List_Floor{name = name, pages = pages})
+	}
+	return list[:], ""
 }
 
 // start_list_problems gives each fault of a list against the modules of an
@@ -540,6 +603,35 @@ start_list_resources :: proc(path: string, without: string) -> (files: []resourc
 			}
 		}
 		problems := start_list_problems(kind.rows, modules, kind.rescue, kind.wirings, files)
+		// The floors of the list fit in the least machine: the image starts
+		// there. The files of each row, of the root service and of the start
+		// policy.
+		if len(problems) == 0 {
+			floor_files := make(Module_Files, context.temp_allocator)
+			floor_names := make([dynamic]string, context.temp_allocator)
+			append(&floor_names, "root", foundation.START_POLICY_MODULE)
+			for row in kind.rows {
+				append(&floor_names, start_list.root_procedure_of(row.name) == .Display ? foundation.DISPLAY_HOLDER_MODULE : row.name)
+			}
+			for name in floor_names {
+				if file, read := foundation.read_file(foundation.module_path(name)); read {
+					floor_files[name] = file
+				}
+			}
+			records, sizes, _ := start_list_wiring_records(kind.rows, kind.wirings, files)
+			_, list, _ := start_list_bytes(kind.rows, records, sizes)
+			audits: u64 = 0
+			for wiring in kind.wirings {
+				audits += u64(wiring.audit_bound != 0)
+			}
+			floors, floors_problem := start_list_floors(kind.rows, floor_files, audits, list.wiring_pages)
+			if floors_problem == "" {
+				floors_problem = start_list_floors_problem(floors, module.TEST_MACHINE_ROOT_PAGES)
+			}
+			if floors_problem != "" {
+				problems = []string{floors_problem}
+			}
+		}
 		refused_on_purpose := lists.start_refused_on_purpose && !kind.rescue
 		if refused_on_purpose {
 			if !refused_for_the_rows(problems, REFUSED_ON_PURPOSE_ROWS[:]) {

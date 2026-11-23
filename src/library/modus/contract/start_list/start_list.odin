@@ -585,15 +585,29 @@ list_audit_count :: proc "contextless" (list: ^List) -> (count: int) {
 // into wirings, which holds list_wiring_count rows at least.
 list_read :: proc "contextless" (bytes: []u8, list: ^List, wirings: []Wiring_Row) -> (problem: List_Problem, place: int, refusal: errors.Error_Record) {
 	list^ = {wirings = wirings}
-	problem, place, refusal = list_read_rows(bytes, list)
+	problem, place, refusal = list_read_rows(bytes, list, true)
 	if problem != .None {
 		list^ = {wirings = wirings}
 	}
 	return
 }
 
+// list_rows_read reads the start rows of a list through the border of its
+// header and of its rows into list, and leaves its wiring rows: the root
+// service reserves the floor of the start of each row, and reads no
+// wiring. The start policy reads the whole list (list_read), and refuses a
+// list that this read takes for a fault of a wiring row.
+list_rows_read :: proc "contextless" (bytes: []u8, list: ^List) -> (problem: List_Problem, place: int) {
+	list^ = {}
+	problem, place, _ = list_read_rows(bytes, list, false)
+	if problem != .None {
+		list^ = {}
+	}
+	return
+}
+
 @(private = "file")
-list_read_rows :: proc "contextless" (bytes: []u8, list: ^List) -> (problem: List_Problem, place: int, refusal: errors.Error_Record) {
+list_read_rows :: proc "contextless" (bytes: []u8, list: ^List, with_wirings: bool) -> (problem: List_Problem, place: int, refusal: errors.Error_Record) {
 	if len(bytes) < size_of(List_Header) {
 		return .Too_Short, 0, {}
 	}
@@ -622,7 +636,7 @@ list_read_rows :: proc "contextless" (bytes: []u8, list: ^List) -> (problem: Lis
 		return .Bytes_After_Rows, 0, {}
 	}
 	// The bytes hold the rows: the place of the reader must too.
-	if wiring_count > len(list.wirings) {
+	if with_wirings && wiring_count > len(list.wirings) {
 		return .Too_Many_Wirings, 0, {}
 	}
 	for index in 0 ..< row_count {
@@ -640,6 +654,9 @@ list_read_rows :: proc "contextless" (bytes: []u8, list: ^List) -> (problem: Lis
 		list.rows[index] = row
 	}
 	list.row_count = row_count
+	if !with_wirings {
+		return .None, 0, {}
+	}
 	wirings_start := size_of(List_Header) + row_count * size_of(Row_Record)
 	for index in 0 ..< wiring_count {
 		record: Wiring_Row_Record

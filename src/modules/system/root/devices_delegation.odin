@@ -110,16 +110,20 @@ devices_service_start :: proc "contextless" () -> bool {
 		region_address, status = system.memory_map(region_memory, {.Write})
 	}
 	process: system.Handle
+	devices_budget: Start_Budget
 	if status == .Ok {
 		grants: system.Context_Grants
 		values: system.Context_Values
 		system.grant_put(&grants, rd.DEVICES_RING_SLOT, {ring_memory, {.Read, .Write}})
 		system.grant_put(&grants, rd.DEVICES_REGION_SLOT, {region_memory, {.Read, .Write}})
 		system.grant_put(&grants, op.CONTEXT_LOG, log_grant(start_grant_set_of("devices")))
+		budget_ok: bool
 		if context_refused("devices", &grants, &values) {
 			status = .Bad_State
+		} else if devices_budget, budget_ok = budget_of(file, "devices"); !budget_ok {
+			status = .No_Budget
 		} else {
-			process, status = system.process_start(file, "devices", grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, "devices"), nil, &prepared, load_source())
+			process, status = system.process_start(file, "devices", grants.grants, random.values_with_seed(&process_generator, values.values), devices_budget.amounts, nil, &prepared, load_source())
 		}
 	}
 	if status != .Ok {
@@ -138,6 +142,7 @@ devices_service_start :: proc "contextless" () -> bool {
 		return false
 	}
 	part_place_fill(slot, "devices", process)
+	start_budget_note(slot, devices_budget)
 	devices_process = slot
 	devices_ring_memory, devices_ring = ring_memory, ring_opened
 	devices_region_memory = region_memory

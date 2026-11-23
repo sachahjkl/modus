@@ -368,8 +368,13 @@ Started :: struct {
 	wiring_budget:   system.Handle,
 	// The pages of the budget of the process at its start: a growth of the
 	// budgets of a screen of memory adds an extra budget within its share
-	// (screen_budgets.odin).
+	// (screen_budgets.odin), and the check of its first state of work reads
+	// its peak against them (ready_command).
 	budget_pages:    u64,
+	// The floor of its start (start_floor_of); 0: a start that noted none.
+	floor_pages:     u64,
+	// The first Ready of the process was read: a later one changes nothing.
+	ready_read:      bool,
 	// The wiring ring of a process that declares record streams or asked
 	// for a list page: handed to the delegated `wiring` service, never
 	// mapped in the root core.
@@ -996,7 +1001,13 @@ input_start :: proc "contextless" () -> system.Status {
 		device_arm_undo(&tablet)
 		return .Bad_State
 	}
-	process, status := system.process_start(image_file_checked(input_name), input_name, context_grants.grants, random.values_with_seed(&process_generator, input_values.values), budget_of(image_file_checked(input_name), input_name), input_mappings[:input_mapping_count], &prepared, load_source())
+	input_budget, input_budget_ok := budget_of(image_file_checked(input_name), input_name)
+	if !input_budget_ok {
+		fresh_bytes_forget(slot)
+		device_arm_undo(&tablet)
+		return .No_Budget
+	}
+	process, status := system.process_start(image_file_checked(input_name), input_name, context_grants.grants, random.values_with_seed(&process_generator, input_values.values), input_budget.amounts, input_mappings[:input_mapping_count], &prepared, load_source())
 	if status != .Ok {
 		fresh_bytes_forget(slot)
 		device_arm_undo(&tablet)
@@ -1004,6 +1015,7 @@ input_start :: proc "contextless" () -> system.Status {
 		return status
 	}
 	part_place_fill(slot, input_name, process)
+	start_budget_note(slot, input_budget)
 	if tablet_armed {
 		device_arm_keep(slot, &tablet)
 	}
@@ -1169,10 +1181,14 @@ display_holder_start :: proc "contextless" (screen_of_memory: [2]u32 = {}) -> sy
 	// image as the source of its imports. Pass Start_Wiring so its `acts`
 	// record output receives a wiring ring for wide-grant auditing.
 	display_holder_load_error: module.Load_Error
-	display_budget := budget_of(image_file_checked(display_name), display_name)
-	served.budget_pages = display_budget.pages
+	display_budget, display_budget_ok := budget_of(image_file_checked(display_name), display_name)
+	if !display_budget_ok {
+		display_holder_place_free(served)
+		return .No_Budget
+	}
+	start_budget_note(served, display_budget)
 	display_wiring: system.Start_Wiring
-	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), display_budget, mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error, wiring = &display_wiring)
+	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), display_budget.amounts, mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error, wiring = &display_wiring)
 	if status != .Ok {
 		if display_holder_load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Error, Compositor_Load_Refused{})
@@ -2039,7 +2055,12 @@ renderer_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started,
 		return .Bad_State
 	}
 	load_error: module.Load_Error
-	process, status := system.process_start(image_file_checked(terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(image_file_checked(terminal_name), terminal_name), mappings[:mapping_count], &prepared, load_source(), &load_error)
+	terminal_budget, terminal_budget_ok := budget_of(image_file_checked(terminal_name), terminal_name)
+	if !terminal_budget_ok {
+		fresh_bytes_forget(view)
+		return .No_Budget
+	}
+	process, status := system.process_start(image_file_checked(terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), terminal_budget.amounts, mappings[:mapping_count], &prepared, load_source(), &load_error)
 	if status != .Ok {
 		fresh_bytes_forget(view)
 		if load_error.stage != u32(module.Load_Stage.None) {
@@ -2048,6 +2069,7 @@ renderer_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started,
 		}
 		return status
 	}
+	start_budget_note(view, terminal_budget)
 	view.process, view.writer, view.is_terminal = process, writer, true
 	view.start_grant_set = start_grant_set
 	view.principal = writer.principal // The lock stops the terminal of a process of the session with it.
@@ -2110,7 +2132,13 @@ window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, r
 	// The terminal imports the drawing module: its load needs the boot
 	// image as the source of its imports.
 	load_error: module.Load_Error
-	process, status := system.process_start(image_file_checked(terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(image_file_checked(terminal_name), terminal_name), mappings[:mapping_count], &prepared, load_source(), &load_error)
+	terminal_budget, terminal_budget_ok := budget_of(image_file_checked(terminal_name), terminal_name)
+	if !terminal_budget_ok {
+		fresh_bytes_forget(view)
+		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
+		return .No_Budget
+	}
+	process, status := system.process_start(image_file_checked(terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), terminal_budget.amounts, mappings[:mapping_count], &prepared, load_source(), &load_error)
 	if status != .Ok {
 		fresh_bytes_forget(view)
 		if load_error.stage != u32(module.Load_Stage.None) {
@@ -2120,6 +2148,7 @@ window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, r
 		system.send(&control.commands, ring.Record{kind = u32(display.Control.Client_Remove), values = {0 = u64(client)}})
 		return status
 	}
+	start_budget_note(view, terminal_budget)
 	view.process, view.client, view.writer, view.is_terminal = process, client, writer, true
 	view.start_grant_set = start_grant_set
 	view.principal = writer.principal // The lock stops the terminal of a process of the session with it.

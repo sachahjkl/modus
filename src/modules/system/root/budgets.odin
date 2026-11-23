@@ -1,43 +1,47 @@
 package root
 
+import "modus:contract/call_outcome"
 import module "modus:contract/module"
 import op "modus:contract/operation"
 import "modus:contract/reference_screen"
+import "modus:contract/ring"
+import "modus:contract/root_ring"
+import "modus:contract/start_list"
 import "modus:contract/value_kinds"
+import "modus:contract/wide_grants"
 import "modus:disk_process"
+import "modus:principals"
 import "modus:system"
 
-// The budget of each process that this service starts. The module asks for
-// it: the table Budget of its file, which the build writes from the
-// constant MODULE_BUDGET of its source and the pages that the tool counts
-// (docs/MODULE_CONTRACT.md, "The budget that a module asks for"). This
-// service decides: it accepts the request up to the largest budget of a
-// process, which is a share of the memory of the machine, and limits a
-// request above it. A short table holds the limits in time of a few
-// modules, each with its reason. The budget of a process of the boot image
-// comes from the budget of this service; the budget of a disk process
-// comes from the one budget of the disk processes. It returns when the
-// process stops.
-
-// The budget of a module that asks for nothing, and of each part of a
-// request that is 0. A module with a window states its size, and the tool
-// counts its pictures at the largest scale that the setting takes
-// (docs/MODULE_CONTRACT.md, "The budget that a module asks for"), so the
-// least budget does not grow with the scale.
-LEAST_BUDGET :: system.Budget_Request{pages = 2048, processes = 1, threads = 1}
+// The budget of each process that this service starts
+// (src/md/features/module_budget_request.md). The module gives its floor:
+// the table Floor of its file, which the build writes. This service adds
+// the parts of the machine and of the plan to it, the floor of the start,
+// and decides the size: twice that floor by default, at most a share of
+// the machine, never below the floor. The floors of the start list are
+// reserved first, and the pages left are divided by one rule before the
+// first row starts, so the start order decides nothing. A floor that this
+// service cannot pay refuses the start with one line that names both
+// amounts. The budget of a process of the boot image comes from the budget
+// of this service; the budget of a disk process comes from the one budget
+// of the disk processes. It returns when the process stops.
 
 // The most that a process of the boot image gets on this machine: one share
 // of the pages and the threads that this service held at its start
-// (module.largest_budget_of_machine). A request above it starts with this.
-// Until budgets_start reads the budget, the least largest budget.
-largest_budget: system.Budget_Request = module.LARGEST_BUDGET_LEAST
+// (module.largest_budget_of_machine). No size passes it; a floor above it
+// is the size. Until budgets_start reads the budget, the least largest
+// budget.
+largest_budget: system.Budget_Amounts = module.LARGEST_BUDGET_LEAST
 // The share in force: the value of the plan of principal 0, or the default
-// (src/md/features/module_budget_request.md, "The largest budget is a
-// share of the machine").
+// (src/md/features/module_budget_request.md, "The size, part by part").
 budget_share: u64 = module.LARGEST_BUDGET_SHARE_DEFAULT
+// The growth factor in force: the value default_growth_factor of the plan
+// of principal 0, or the default of the contract. No plan gives the value
+// yet (growth_factor_take).
+growth_factor: u64 = module.DEFAULT_GROWTH_FACTOR
 // What this service held at its start: the share is of the machine, not of
 // what the processes left.
-machine_at_start: system.Budget_Request
+machine_at_start: system.Budget_Amounts
 // budgets_start reads the budget of this service once, before the first
 // start, and decides the largest budget of this machine. The pages of a
 // later read are lower by what the processes hold, so the share is of the
@@ -61,6 +65,16 @@ budget_share_take :: proc "contextless" (word: u64) -> bool {
 	return true
 }
 
+// growth_factor_take is the one place where the growth factor that the
+// plan of principal 0 gives enters this service: the word passes its
+// border (module.growth_factor_of_word), and the size of each next start
+// follows it. A refused word changes nothing.
+growth_factor_take :: proc "contextless" (word: u64) -> bool {
+	factor := module.growth_factor_of_word(word) or_return
+	growth_factor = factor
+	return true
+}
+
 // screen_in_force gives the size of the screen of this machine: the screen
 // of the firmware, or with none, the size of the screen of memory at the
 // start of the compositor, else the reference screen. A size that a viewer
@@ -79,7 +93,7 @@ screen_in_force :: proc "contextless" () -> (width, height: u64) {
 // The rows of the plan that lower the pages of the screen pictures of a
 // module. The cost of the screen is a machine policy, which only a plan of
 // principal 0 gives, and which may lower that cost and never raise it
-// (module.budget_request_of_screen). The plan carries no row of machine
+// (module.floor_of_screen). The plan carries no row of machine
 // policy yet (src/md/features/declarations.md), so the table stays empty
 // and each module pays its whole screen.
 PLAN_SCREEN_ROW_CAPACITY :: 8
@@ -89,8 +103,6 @@ Plan_Screen_Row :: struct {
 }
 plan_screen_rows: [PLAN_SCREEN_ROW_CAPACITY]Plan_Screen_Row
 plan_screen_row_count: int
-// The line of a refused request names the limit of screen pictures.
-#assert(module.SCREEN_PICTURES_LIMIT == 4)
 
 // plan_screen_pages_of gives the pages that a row of the plan gives the
 // screen pictures of a module, or 0: no row.
@@ -130,7 +142,7 @@ LOG_RECORDS_OF_LOG_FLOOD :: 0
 #assert(LOG_RECORDS_OF_LOG_FLOOD <= LOG_RECORDS_OF_A_PROCESS)
 
 // One process of the boot image that gets another limit of processor time
-// than one processor for each thread. A request holds no limit in time, so
+// than one processor for each thread. A floor holds no limit in time, so
 // these rows are the one place of such a limit. No row gives pages: the
 // largest budget of a process is the share of the machine for each one.
 Processor_Exception :: struct {
@@ -183,53 +195,181 @@ log_records_of :: proc "contextless" (name: string) -> u64 {
 	return LOG_RECORDS_OF_A_PROCESS
 }
 
-// budget_decided reads the request of a module file and decides it by the
-// rule of the starter, with a line on the log for each part that the
-// process gets less of than it asks. who names the largest budget in that
-// line. A file that is not valid asks for nothing: the loader refuses it
-// after.
-budget_decided :: proc "contextless" (file: []u8, name: string, largest: system.Budget_Request, who: string) -> system.Budget_Request {
-	request: system.Budget_Request
-	if module.validate(file) == .None {
-		request, _ = module.budget_request(file)
+// start_floor_of gives the floor of the start of a module: the floor of its
+// file, the pages of its screen pictures at the screen of this machine,
+// and, for a module of the boot image, the pages that this service adds
+// from the plan: the audits of the collector of principal 0 and the
+// wirings of the start list for the start policy. A disk process gets no
+// such part: its name is a nickname that a file chooses. ok is false for a file that is not valid, a file with no table
+// Floor, a floor of no process or no thread, a floor of screen pictures
+// past the limit, and a sum past 64 bits: the start does not happen, and
+// one line names the module.
+start_floor_of :: proc "contextless" (file: []u8, name: string, principal: u64, of_the_image: bool) -> (floor: system.Floor, ok: bool) {
+	if module.validate(file) != .None {
+		return {}, false
+	}
+	floor = module.floor_read(file) or_return
+	if !system.floor_usable(floor) {
+		return {}, false
 	}
 	// The screen pictures of the module have the size of the screen of this
-	// machine. A request past the limit of pictures gets no screen: the
-	// module gets the rest of its request, and one line names the part.
-	// A budget is a reservation of the pages of this service: the pictures
-	// of a screen of memory are paid at the size of its start, never at a
-	// size that a viewer may ask one day (src/md/features/screen_of_memory.md,
-	// "The budget of a screen of memory").
+	// machine: a budget is a reservation of the pages of this service, paid
+	// at the size of the screen at its start, never at a size that a
+	// viewer may ask one day (src/md/features/screen_of_memory.md, "The
+	// budget of a screen of memory").
 	width, height := screen_in_force()
-	with_screen, screen_ok := module.budget_request_of_screen(request, width, height, plan_screen_pages_of(name))
-	if !screen_ok {
-		system.log_fact(.Warning, Budget_Screen_Pictures_Refused{screen_pictures = request.screen_pictures, started_process = module_name_field(name)})
-		with_screen = request
-		with_screen.screen_pictures = 0
+	floor = module.floor_of_screen(floor, width, height, plan_screen_pages_of(name)) or_return
+	added: u64 = 0
+	if !of_the_image {
+		return floor, true
 	}
-	request = with_screen
-	granted, limited := system.budget_decide(request, LEAST_BUDGET, largest)
-	for part in limited {
-		system.log_fact(.Warning, Budget_Part_Limited{asked = system.budget_part(request, part), largest = system.budget_part(largest, part), granted = system.budget_part(granted, part), started_process = module_name_field(name), budget_part = text_field(system.budget_part_names[part], 16), largest_of = text_field(who, 16)})
+	// The collector of principal 0 keeps the audits of the start list:
+	// this service pays their memory (start_policy.odin, start_list_audits).
+	if name == wide_grants.COLLECTOR_MODULE_NAME && principal == principals.MACHINE {
+		added = start_list_audits * wide_grants.SPACE_AUDIT_PAGES
 	}
-	return granted
+	// The start policy pays the wirings of its list: the header gives their
+	// pages (start_policy.odin).
+	if is_role_holder(name, .Start_Policy) {
+		added += start_list_wiring_pages
+	}
+	if floor.pages > max(u64) - added {
+		return {}, false
+	}
+	floor.pages += added
+	return floor, true
 }
 
-// budget_of gives the budget of a process of the boot image from the
-// request of its module file, up to the largest budget of this machine.
-budget_of :: proc "contextless" (file: []u8, name: string) -> system.Budget_Amounts {
-	exception_processor, has_exception := processor_of(name)
-	granted := budget_decided(file, name, largest_budget, "a process")
-	own, _ := system.budget_read()
-	amounts := system.Budget_Amounts {
-		pages    = granted.pages,
-		processes = granted.processes,
-		threads  = granted.threads,
+// The budget of one start: its amounts and the floor of the start, which
+// the check of its first state of work reads (ready_command).
+Start_Budget :: struct {
+	amounts:     system.Budget_Amounts,
+	floor_pages: u64,
+}
+
+// One row of the start list that has not started yet: the floor of its
+// start, which this service keeps for it, and the size that the division
+// gave it (system.start_list_sizes). A row leaves at its first start.
+Start_List_Reserve :: struct {
+	name:  system.Name,
+	floor: u64,
+	size:  u64,
+}
+// At most the rows of one list, a fact of its format.
+start_list_reserves: [start_list.ROW_CAPACITY]Start_List_Reserve
+start_list_reserve_count: int
+
+// The list of start_list_reserve, in the memory of this service: a list is
+// read whole.
+@(private = "file")
+reserve_list: start_list.List
+
+// start_list_reserve reads the rows of a start list before the start
+// policy starts, reserves the floor of the start of each row whose module
+// the image holds and does not run, and divides the pages left by the rule of the starter
+// (system.start_list_sizes). One share of the machine stays with this
+// service, for itself and for the starts after the list: the most that one
+// later start gets. The sum of the floors of the default list fits in the
+// least machine (the tool proves it at the build); a list whose floors do
+// not fit here keeps the floors alone, and each row past what this service
+// holds is refused at its start, with its line. A list that is not valid
+// reserves nothing: the start policy refuses it.
+start_list_reserve :: proc "contextless" (bytes: []u8) {
+	start_list_reserve_count = 0
+	if problem, _ := start_list.list_rows_read(bytes, &reserve_list); problem != .None {
+		return
 	}
-	processor := has_exception ? exception_processor : granted.threads * PROCESSOR_OF_A_THREAD
-	amounts.processor = min(processor, own.processor)
-	amounts.log_records = log_records_of(name)
-	return amounts
+	sizes: [start_list.ROW_CAPACITY]system.Start_Size
+	for &row in reserve_list.rows[:reserve_list.row_count] {
+		row_name := start_list.row_name(&row)
+		module_name := start_list.root_procedure_of(row_name) == .Display ? role_holder_name(.Display) : row_name
+		// A row whose module runs already, after a list that this one
+		// replaces, holds its budget: no floor is kept for it twice.
+		if find_running(module_name) != nil {
+			continue
+		}
+		floor, ok := start_floor_of(image_file_checked(module_name), module_name, principals.MACHINE, true)
+		if !ok {
+			continue
+		}
+		reserve := &start_list_reserves[start_list_reserve_count]
+		reserve^ = {floor = floor.pages}
+		copy(reserve.name[:len(reserve.name) - 1], module_name)
+		sizes[start_list_reserve_count] = {floor = floor.pages, size = system.budget_size(floor.pages, largest_budget.pages, growth_factor)}
+		start_list_reserve_count += 1
+	}
+	own, _ := system.budget_read()
+	if !system.start_list_sizes(sizes[:start_list_reserve_count], own.pages, largest_budget.pages) {
+		for &size in sizes[:start_list_reserve_count] {
+			size.size = size.floor
+		}
+	}
+	for &reserve, index in start_list_reserves[:start_list_reserve_count] {
+		reserve.size = sizes[index].size
+	}
+}
+
+// start_list_reserved_pages gives the floors that this service keeps for
+// the rows of the start list that have not started, but the row of name.
+start_list_reserved_pages :: proc "contextless" (name: string) -> (pages: u64) {
+	for &reserve in start_list_reserves[:start_list_reserve_count] {
+		if system.name_of(reserve.name[:]) != name {
+			pages += reserve.floor
+		}
+	}
+	return pages
+}
+
+// start_list_reserve_take gives the size that the division gave the row of
+// name, and ends its reserve: its first start pays it. found is false for
+// a name with no reserve: a start after the list, or a restart.
+start_list_reserve_take :: proc "contextless" (name: string) -> (size: u64, found: bool) {
+	for index in 0 ..< start_list_reserve_count {
+		if system.name_of(start_list_reserves[index].name[:]) != name {
+			continue
+		}
+		size = start_list_reserves[index].size
+		start_list_reserve_count -= 1
+		start_list_reserves[index] = start_list_reserves[start_list_reserve_count]
+		return size, true
+	}
+	return 0, false
+}
+
+// budget_of gives the budget of a process of the boot image: the floor of
+// its start, its size (system.budget_size, or the size of the division of
+// the start list), at most what this service holds past the floors that it
+// keeps for the rows of the start list that did not start. ok is false
+// when the start must not happen: the file gives no floor, or its floor is
+// more than this service can give; one line says why, and no page moves.
+budget_of :: proc "contextless" (file: []u8, name: string, principal: u64 = principals.MACHINE) -> (budget: Start_Budget, ok: bool) {
+	floor, floor_ok := start_floor_of(file, name, principal, true)
+	if !floor_ok {
+		system.log_fact(.Warning, Start_Refused_No_Floor{refused_process = module_name_field(name)})
+		return {}, false
+	}
+	own, _ := system.budget_read()
+	reserved := start_list_reserved_pages(name)
+	payable := own.pages - min(own.pages, reserved)
+	if floor.pages > payable {
+		system.log_fact(.Warning, Start_Refused_Floor{floor = value_kinds.Size_In_Pages(min(floor.pages, u64(max(i64)))), held = value_kinds.Size_In_Pages(min(payable, u64(max(i64)))), refused_process = module_name_field(name), paying_budget = text_field("this service", 24)})
+		return {}, false
+	}
+	size := system.budget_size(floor.pages, largest_budget.pages, growth_factor)
+	if divided, found := start_list_reserve_take(name); found {
+		size = max(divided, floor.pages)
+	}
+	exception_processor, has_exception := processor_of(name)
+	processor := has_exception ? exception_processor : floor.threads * PROCESSOR_OF_A_THREAD
+	budget.amounts = {
+		pages       = min(size, payable),
+		processes   = floor.processes,
+		threads     = floor.threads,
+		processor   = min(processor, own.processor),
+		log_records = log_records_of(name),
+	}
+	budget.floor_pages = floor.pages
+	return budget, true
 }
 
 // The one budget that pays each disk process (disk_process.PROCESSES_BUDGET).
@@ -255,43 +395,107 @@ disk_processes_budget_get :: proc "contextless" () -> (budget: system.Handle, st
 	return budget, .Ok
 }
 
-// disk_budget_of gives the budget of a disk process from the request of
-// its module file: at most disk_process.LARGEST_BUDGET, with no exception,
-// and limits in time that the budget of the disk processes bounds.
-disk_budget_of :: proc "contextless" (file: []u8, name: string, disk_processes: system.Handle) -> system.Budget_Amounts {
-	granted := budget_decided(file, name, disk_process.LARGEST_BUDGET, "a disk process")
+// disk_budget_of gives the budget of a disk process: its floor, its size at
+// most disk_process.LARGEST_BUDGET and what the budget of the disk
+// processes holds, with no exception, and limits in time that this budget
+// bounds. A disk process gets no row by its name: a file chooses its name.
+// ok is false when the start must not happen: the file gives no floor, a
+// floor of processes or threads above those of a disk process, or a floor
+// of pages above the most of a disk process or above what the budget of
+// the disk processes holds; one line says why.
+disk_budget_of :: proc "contextless" (file: []u8, name: string, disk_processes: system.Handle) -> (budget: Start_Budget, ok: bool) {
+	floor, floor_ok := start_floor_of(file, name, principals.MACHINE, false)
+	if !floor_ok {
+		system.log_fact(.Warning, Start_Refused_No_Floor{refused_process = module_name_field(name)})
+		return {}, false
+	}
+	largest := disk_process.LARGEST_BUDGET
+	needed := system.Budget_Amounts{pages = floor.pages, processes = floor.processes, threads = floor.threads}
+	if part, short := system.budget_first_short_part(needed, largest); short && part != .Pages {
+		system.log_fact(.Warning, Start_Refused_Budget_Part{needed = system.budget_part(needed, part), held = system.budget_part(largest, part), refused_process = module_name_field(name), budget_part = text_field(system.budget_part_names[part], 16), paying_budget = text_field("a disk process", 24)})
+		return {}, false
+	}
 	holds, _ := system.budget_read(disk_processes)
-	return {
-		pages = granted.pages,
-		processes = granted.processes,
-		threads = granted.threads,
-		processor = min(granted.threads * PROCESSOR_OF_A_THREAD, holds.processor),
+	payable := min(holds.pages, largest.pages)
+	if floor.pages > payable {
+		system.log_fact(.Warning, Start_Refused_Floor{floor = value_kinds.Size_In_Pages(min(floor.pages, u64(max(i64)))), held = value_kinds.Size_In_Pages(min(payable, u64(max(i64)))), refused_process = module_name_field(name), paying_budget = text_field("the disk processes", 24)})
+		return {}, false
+	}
+	budget.amounts = {
+		pages       = min(system.budget_size(floor.pages, largest.pages, growth_factor), payable),
+		processes   = floor.processes,
+		threads     = floor.threads,
+		processor   = min(floor.threads * PROCESSOR_OF_A_THREAD, holds.processor),
 		log_records = min(LOG_RECORDS_OF_A_PROCESS, holds.log_records),
 	}
+	budget.floor_pages = floor.pages
+	return budget, true
 }
 
-// budget_refusal_log writes the line of a start that failed for the budget:
-// what the process was to get, what the budget that pays holds (0: the
-// budget of this service), and the first part that is short. holder names
-// that budget in the line. When it holds each part, the budget of the
-// process was too small for its own load: its request is too small.
+// budget_refusal_log writes the line of a start that the kernel refused
+// for the budget: what the process was to get, what the budget that pays
+// holds (0: the budget of this service), and the first part that is short.
+// holder names that budget in the line. When it holds each part, the
+// budget of the process was too small for its own load: its floor is too
+// small.
 budget_refusal_log :: proc "contextless" (name: string, amounts: system.Budget_Amounts, holder_budget: system.Handle, holder: string) {
-	needed := system.Budget_Request{pages = amounts.pages, processes = amounts.processes, threads = amounts.threads}
-	holder_amounts, _ := system.budget_read(holder_budget)
-	holds := system.Budget_Request{pages = holder_amounts.pages, processes = holder_amounts.processes, threads = holder_amounts.threads}
-	if part, short := system.budget_first_short_part(needed, holds); short {
-		system.log_fact(.Warning, Start_Refused_Budget_Part{needed = system.budget_part(needed, part), held = system.budget_part(holds, part), refused_process = module_name_field(name), budget_part = text_field(system.budget_part_names[part], 16), paying_budget = text_field(holder, 24)})
+	holds, _ := system.budget_read(holder_budget)
+	if part, short := system.budget_first_short_part(amounts, holds); short {
+		system.log_fact(.Warning, Start_Refused_Budget_Part{needed = system.budget_part(amounts, part), held = system.budget_part(holds, part), refused_process = module_name_field(name), budget_part = text_field(system.budget_part_names[part], 16), paying_budget = text_field(holder, 24)})
 		return
 	}
 	// The log records of each second move as the pages; the processor time
 	// of the process is at most the limit of the holder.
-	if holder_amounts.log_records < amounts.log_records {
-		system.log_fact(.Warning, Start_Refused_Log_Records{log_records = amounts.log_records, held_log_records = holder_amounts.log_records, refused_process = module_name_field(name), paying_budget = text_field(holder, 24)})
+	if holds.log_records < amounts.log_records {
+		system.log_fact(.Warning, Start_Refused_Log_Records{log_records = amounts.log_records, held_log_records = holds.log_records, refused_process = module_name_field(name), paying_budget = text_field(holder, 24)})
 		return
 	}
-	if holder_amounts.processor < amounts.processor {
-		system.log_fact(.Warning, Start_Refused_Processor_Time{processor = amounts.processor, processor_limit = holder_amounts.processor, refused_process = module_name_field(name), paying_budget = text_field(holder, 24)})
+	if holds.processor < amounts.processor {
+		system.log_fact(.Warning, Start_Refused_Processor_Time{processor = amounts.processor, processor_limit = holds.processor, refused_process = module_name_field(name), paying_budget = text_field(holder, 24)})
 		return
 	}
 	system.log_fact(.Warning, Start_Refused_Budget_Too_Small{pages = value_kinds.Size_In_Pages(amounts.pages), processes = amounts.processes, threads = amounts.threads, refused_process = module_name_field(name)})
+}
+
+// start_budget_note keeps, in the place of a process that started, the
+// pages of its budget at its creation and the floor of its start: the check
+// of its first state of work reads both (ready_command).
+start_budget_note :: proc "contextless" (slot: ^Started, budget: Start_Budget) {
+	slot.budget_pages = budget.amounts.pages
+	slot.floor_pages = budget.floor_pages
+}
+
+// ready_command serves Ready: the sender reached its first state of work.
+// At its first Ready alone, this service reads the least count of free
+// pages of the budget of the sender since its creation, and writes its
+// peak, its pages at the creation less that count, with the floor of its
+// start: one fact, Budget_Peak_At_Ready, a measure of each build, and a
+// second one, Budget_Floor_Passed, when the peak passed the floor, which
+// the machine test refuses (src/md/features/module_budget_request.md, "The
+// peak of a budget"). A process whose start this service did not note has
+// no floor to check: the fact gives no line. A later Ready changes nothing.
+ready_command :: proc "contextless" (item: ^Started, record: ring.Record, values: ^[7]u64) -> call_outcome.Call_Outcome {
+	for value in record.values {
+		if value != 0 {
+			values^ = root_ring.word_refusal(.Ready, 1, value, 0)
+			return .Argument_Refused
+		}
+	}
+	if item.ready_read || item.floor_pages == 0 {
+		return .Succeeded
+	}
+	item.ready_read = true
+	report: op.Process_Report
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), item.process_slot, u64(uintptr(&report)), size_of(report)); status != .Ok || report.process_serial != item.process_serial {
+		return .Succeeded
+	}
+	peak := item.budget_pages - min(item.budget_pages, report.budget_least_pages)
+	name := system.name_of(item.name[:])
+	peak_field := value_kinds.Size_In_Pages(min(peak, u64(max(i64))))
+	floor_field := value_kinds.Size_In_Pages(min(item.floor_pages, u64(max(i64))))
+	system.log_fact(.Info, Budget_Peak_At_Ready{peak = peak_field, floor = floor_field, ready_process = module_name_field(name)})
+	if peak > item.floor_pages {
+		system.log_fact(.Warning, Budget_Floor_Passed{peak = peak_field, floor = floor_field, ready_process = module_name_field(name)})
+	}
+	return .Succeeded
 }

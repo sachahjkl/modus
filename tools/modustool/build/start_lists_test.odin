@@ -413,3 +413,22 @@ the_input_service_restarts_within_a_window :: proc(t: ^testing.T) {
 	allowed, _ = start_list.restart_window_take(&window, INPUT_RESTARTS, INPUT_RESTART_WINDOW_SECONDS, FIRST + WINDOW + 1)
 	testing.expect(t, allowed)
 }
+// The floors of a list against the least machine, edges first: no floor,
+// the floors at the pages exactly, one page more, a floor alone past the
+// pages, and floors whose sum passes the end of 64 bits. A refusal names
+// the module that does not fit.
+@(test)
+the_floors_of_a_list_fit_in_the_least_machine :: proc(t: ^testing.T) {
+	pages := u64(module.TEST_MACHINE_ROOT_PAGES)
+	testing.expect_value(t, start_list_floors_problem(nil, pages), "")
+	exact := []Start_List_Floor{{"root", 1000}, {"start_policy", 200}, {"compositor", pages - 1200}}
+	testing.expect_value(t, start_list_floors_problem(exact, pages), "")
+	past := []Start_List_Floor{{"root", 1000}, {"start_policy", 200}, {"compositor", pages - 1199}}
+	problem := start_list_floors_problem(past, pages)
+	testing.expect(t, strings.contains(problem, "compositor adds"), problem)
+	alone := []Start_List_Floor{{"terminal", pages + 1}}
+	testing.expect(t, start_list_floors_problem(alone, pages) != "")
+	wrapping := []Start_List_Floor{{"a", max(u64)}, {"b", max(u64)}}
+	testing.expect(t, start_list_floors_problem(wrapping, max(u64)) != "")
+	testing.expect_value(t, start_list_floors_problem(exact, 0) != "", true)
+}

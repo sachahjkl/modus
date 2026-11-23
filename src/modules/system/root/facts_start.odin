@@ -64,24 +64,45 @@ Compositor_On_Screen_Of_Memory :: struct {
 	height: u64,
 }
 
-// A process gets less of one part of its budget than its module asks for:
-// the starter gives it the largest budget of that part.
-@(log_fact = "root: {started_process} asks for {asked} {budget_part}, and {largest_of} gets at most {largest}: it starts with {granted}")
-Budget_Part_Limited :: struct {
-	asked:           u64,
-	largest:         u64,
-	granted:         u64,
-	started_process: value_kinds.Module_Name_Field,
-	budget_part:     [16]u8,
-	largest_of:      [16]u8,
+// A start refused: the module file gives no floor that can start a
+// process (no table Floor, no process or no thread, more pictures of the
+// screen than a module may hold, a file that is not valid). No page moved.
+@(log_fact = "root: cannot start {refused_process}: its module file gives no floor")
+Start_Refused_No_Floor :: struct {
+	refused_process: value_kinds.Module_Name_Field,
 }
 
-// A module asks for more pictures of the screen than a module may: the
-// starter gives it no page for its screen pictures.
-@(log_fact = "root: {started_process} asks for {screen_pictures} pictures of the screen, past the 4 that a module may ask for: its budget pays no picture of the screen")
-Budget_Screen_Pictures_Refused :: struct {
-	screen_pictures: u64,
-	started_process: value_kinds.Module_Name_Field,
+// A start refused: the floor of its start is more than the budget that pays
+// can give it, past the floors that it keeps for the start list. No page
+// moved (src/md/features/module_budget_request.md, "The size, part by
+// part").
+@(log_fact = "root: cannot start {refused_process}: its floor is {floor}, and {paying_budget} can give {held}")
+Start_Refused_Floor :: struct {
+	floor:           value_kinds.Size_In_Pages,
+	held:            value_kinds.Size_In_Pages,
+	refused_process: value_kinds.Module_Name_Field,
+	paying_budget:   [24]u8,
+}
+
+// The peak of the budget of a process at its first state of work, with the
+// floor of its start: a measure of each build, which a reader follows over
+// the releases (src/md/features/module_budget_request.md, "The peak of a
+// budget").
+@(log_fact = "root: {ready_process} reached its first state of work with a peak of {peak}, for a floor of {floor}")
+Budget_Peak_At_Ready :: struct {
+	peak:          value_kinds.Size_In_Pages,
+	floor:         value_kinds.Size_In_Pages,
+	ready_process: value_kinds.Module_Name_Field,
+}
+
+// A process paid more than its floor before its first state of work: the
+// floor that its module states is wrong. The machine test stops on this
+// line (tools/modustool/machine/floor_check.odin).
+@(log_fact = "root: {ready_process} passed its floor before its first state of work: a peak of {peak}, for a floor of {floor}")
+Budget_Floor_Passed :: struct {
+	peak:          value_kinds.Size_In_Pages,
+	floor:         value_kinds.Size_In_Pages,
+	ready_process: value_kinds.Module_Name_Field,
 }
 
 // The one budget of the disk processes, made at the first of them.

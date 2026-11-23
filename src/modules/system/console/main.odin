@@ -291,6 +291,9 @@ entry :: proc "c" (start_context: ^system.Context) -> ! {
 	// yet: the history has one user. The keys that come meanwhile wait in
 	// the terminal ring.
 	history_load()
+	// The prompt is drawn and the history read: the console waits for its
+	// first key, its first state of work.
+	system.ready(&requests)
 
 	for {
 		seen := intrinsics.atomic_load_explicit(&changes, .Acquire)

@@ -383,7 +383,7 @@ export compute
 	testing.expect(t, own_place > 0)
 
 	// Budget table exists and includes working memory + module + import + first thread pages.
-	budget, has_budget := module.budget_request(built)
+	budget, has_budget := module.floor_read(built)
 	testing.expect(t, has_budget)
 	testing.expect(t, budget.pages > 4)
 	testing.expect_value(t, budget.threads, u64(1))

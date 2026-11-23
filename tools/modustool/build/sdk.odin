@@ -1297,13 +1297,15 @@ sdk_build_outside_odin :: proc(abs_sdk, abs_source, build_file_path, output_path
 	if !streams_ok || !record_streams_merge(&description, stream_outputs, stream_inputs) {
 		return fmt.tprintf("failed to extract record streams of `%s`", described.name)
 	}
-	if description.budget.stated && len(imports) > 0 {
-		import_sizes := make([]u64, len(imports), context.temp_allocator)
+	// A module from outside with an entry runs as a disk process: it has
+	// its table Floor, counted from its parts and its imports.
+	description.budget.has_entry = description_has_entry(description)
+	if (description.budget.has_entry || description.budget.stated) && len(imports) > 0 {
+		import_costs := make([]Module_Cost, len(imports), context.temp_allocator)
 		for imp, idx in imports {
-			imp_head, _ := module.header(imp.file)
-			import_sizes[idx] = imp_head.memory_size
+			import_costs[idx], _ = module_cost_of_file(imp.file)
 		}
-		description.budget.import_memory_sizes = import_sizes
+		description.budget.import_costs = import_costs
 	}
 
 	// Link only described exports as global symbols.

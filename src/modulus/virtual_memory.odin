@@ -106,7 +106,7 @@ memory_commit :: proc "contextless" (process: ^Process, region_index: u32, range
 		if !budget.live || budget.amounts.pages < needed {
 			return 0, .No_Budget
 		}
-		budget.amounts.pages -= needed
+		budget_pages_spend(budget, needed)
 		reserved_pages += needed
 		region.committed += needed
 		for range in ranges {

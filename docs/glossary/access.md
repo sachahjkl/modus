@@ -338,21 +338,55 @@ Time does not return, so it does not move as pages do. A limit holds for the bud
 
 Do not use: quota, cap, bandwidth, rate limit.
 
-### Budget request
+### Floor
 
-A budget request is the pages, the processes and the threads that a module asks for its process: the table `Budget` of its file (`module.Budget_Request`).
+A floor is what the process of a module needs to reach its first state of work: the pages, the processes, the threads and the screen pictures of the table `Floor` of its file (`module.Floor`).
 
-The source states its stated budget; the build adds the counted parts and writes the table, so the hash of the module names it. It is never a grant: the starter decides, by its least budget and its largest budget, and a budget exception can widen or limit it. A part that is 0, or a file with no table, asks for the least budget. Processor time and log records are not in it: the starter sets them.
+It is a fact of the module, never a grant. The source states its stated budget and its start objects; the tool adds the counted parts and writes the sum, which the hash of the module names. Each module with an entry has one; a file with no table `Floor` does not start. The starter reserves it before any size, and the peak of the budget checks it.
 
-The design: `docs/MODULE_CONTRACT.md`, "The budget that a module asks for".
+The design: `src/md/features/module_budget_request.md`; the guide: `docs/MODULE_CONTRACT.md`, "The floor of a module".
 
-Do not use: budget grant, resource manifest, reservation.
+Do not use: budget request, least budget, minimum budget, reservation.
+
+### Floor of a start
+
+The floor of a start is the floor of the file of a module with the parts that its starter adds from the machine and from the plan: its screen pictures at the screen of the machine, the audits of the collector, the wirings of the start list.
+
+The starter reserves it, refuses a start whose floor of a start it cannot pay, and gives a size from it (`system.budget_size`): twice it by default, at most the largest budget. The root service reserves the floors of the start of the rows of its start list before the first row starts. The tool proves at each build that these floors fit in the least machine.
+
+Do not use: start budget, effective floor.
+
+### Start object
+
+A start object is a memory object of a fixed size that a module or a package makes before the first state of work of its process, named in the floor by the constant that its code passes to `memory_create`.
+
+The package of a module lists them in `MODULE_START_OBJECTS`, another package in `PACKAGE_START_OBJECTS`, each an array of `system.Start_Object` whose elements name constants of one integer literal. The tool prices each one as the kernel charges it: its pages, its frame list and the tables of its mapping. A table that every start uses is a variable of the package, not a start object.
+
+Example: `MODULE_START_OBJECTS :: [?]system.Start_Object{RING_PAGES, LENT_PAGES}`.
+
+Do not use: start memory, initial allocation.
+
+### Peak of a budget
+
+The peak of a budget is the most pages that it paid at one time since its creation: its pages at the creation less the least count of its free pages, which the kernel keeps in the budget.
+
+The kernel writes the least count where it takes pages from a budget, under the frame lock, and `Process_Report` gives it (`budget_least_pages`). The root service reads it at the first state of work of a process and writes it with the floor of the start; a peak past the floor fails the machine test. It is a measure, never a limit.
+
+Do not use: high-water mark, maximum use.
+
+### First state of work
+
+The first state of work of a process is the moment when its start is done and it waits for its work: the console shows its prompt, a service waits for its first call.
+
+The process says it with `system.ready`, which sends `Root_Command.Ready` on its root ring; the process alone knows it, so no kernel guess and no idle wait stands for it. The floor holds what the process needs up to it, and the root service checks the peak of its budget there.
+
+Do not use: ready state, startup end.
 
 ### Stated budget
 
-A stated budget is the part of a budget request that the source of a module states: its working memory, its processes, its threads and the size of its window.
+A stated budget is the part of a floor that the source of a module states: its working memory, its processes, its threads, the size of its window and its screen pictures.
 
-It is one constant of the source, `MODULE_BUDGET`, of the type `system.Stated_Budget`, with the reasons in its comment. It holds only what the tool cannot count. The build adds the counted parts to it and writes the sum as the budget request. A window part names the constant of the size that the process passes to `display.open`, or is a literal.
+It is one constant of the source, `MODULE_BUDGET`, of the type `system.Stated_Budget`, with the reasons in its comment. It holds only what the tool cannot count. The build adds the counted parts and the start objects to it and writes the sum as the floor. A window part names the constant of the size that the process passes to `display.open`, or is a literal. A module with an entry and no constant has a floor of its counted parts, one process and one thread.
 
 Example: `MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3799, processes = 1, threads = 2}`.
 
@@ -362,35 +396,27 @@ Do not use: budget manifest, declared budget.
 
 ### Working memory
 
-The working memory is the pages that a process chooses to use: its tables, its caches, the budgets of its children, a stack of another size, its page tables.
+The working memory is the pages of a floor that the counted parts do not hold yet: a table, a cache, a budget of a child that the module table does not name, a stack of another size.
 
-It is the part `working_memory_pages` of a stated budget. It holds what no file of the build shows. A table in the data of the module is not working memory: the tool counts it with the module.
+It is the part `working_memory_pages` of a stated budget, a number that the hand writes. It leaves module by module: each part becomes a counted part, a start object or a child, and the peak of the budget checks the floor that is left. A table in the data of the module is not working memory: the tool counts it with the module.
 
 Do not use: heap, scratch memory.
 
 ### Counted part
 
-A counted part is a part of a budget request that the tool computes from the files of the build: the module pages, the thread pages and the window pages.
+A counted part is a part of a floor that the tool computes from the files of the build: the module pages, the load pages, the thread pages, the window pages, the start objects and the floors of the children.
 
-The module pages are the memory size of the module and of each module that it imports. The thread pages are a stack and a thread area for each thread: 72 pages for the first one, with the context and the own log ring of the process, and 19 for each other one. The window pages are the two pictures of its window. A counted part changes with a build, with no change of the source.
+The load pages are the frame lists and the page tables of the load, of the stacks and of the pictures, priced at their worst case by the cost functions of the contract. The thread pages are 72 for the first thread, with the context and the own log ring, and 19 for each other one. A counted part changes with a build, with no change of the source.
 
-The design: `src/md/features/module_budget_request.md`; the guide: `docs/MODULE_CONTRACT.md`, "The budget that a module asks for".
+The design: `src/md/features/module_budget_request.md`; the guide: `docs/MODULE_CONTRACT.md`, "The floor of a module".
 
 Do not use: overhead, estimate, automatic budget.
 
-### Least budget
-
-The least budget is the budget that a starter gives to a module that asks for nothing, and for each part of a budget request that is 0.
-
-The least budget of the root service is 2048 pages, one process and one thread (`LEAST_BUDGET` in `src/modules/system/root/budgets.odin`). A module whose request is smaller gets its smaller request: the least budget fills a part that the module does not state, it is no floor.
-
-Do not use: default budget, minimum budget.
-
 ### Largest budget
 
-The largest budget is the most that a starter gives to one process for each part of a budget request.
+The largest budget is the most pages, processes and threads that a starter gives to one process: no size passes it.
 
-A part above it starts the process with the largest budget of that part, and the starter writes one line on the log. The largest budget of the root service for a process of the boot image is one share of the pages and of the threads of the machine, a quarter unless the plan of principal 0 gives another share, never less than 16384 pages and 32 threads, with 8 processes (`module.largest_budget_of_machine`). A disk process, and a module of another project, has a smaller one, 16384 pages, one process and 4 threads; one stated budget of 32768 pages, 4 processes and 16 threads pays all of them together (`src/library/modus/disk_process/budget.odin`).
+A floor of a start above it is the size: the floor is what the process needs. For a process of the boot image it is one share of the pages and of the threads of the machine, a quarter unless the plan of principal 0 gives another share, never less than 16384 pages and 32 threads (`module.largest_budget_of_machine`). A disk process has 16384 pages, one process and 4 threads, and a floor above one of these does not start (`src/library/modus/disk_process/budget.odin`).
 
 Do not use: maximum budget, cap, ceiling.
 

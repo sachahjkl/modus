@@ -40,7 +40,7 @@ make_minimal_valid_module :: proc(allocator := context.temp_allocator, function_
 	doc_text_off, doc_text_len := add_str(&str_buf, "Detailed documentation for sample library.")
 	str_bytes := transmute([]u8)strings.to_string(str_buf)
 
-	table_count :: u32(module.Table_Kind.Budget) + 1
+	table_count :: u32(module.Table_Kind.Floor) + 1
 	header_size := size_of(module.Header)
 	dir_size := int(table_count) * size_of(module.Table_Entry)
 	exports_off := header_size + dir_size
@@ -52,7 +52,7 @@ make_minimal_valid_module :: proc(allocator := context.temp_allocator, function_
 	docs_off := strings_off + strings_size
 	docs_size := 2 * size_of(module.Documentation)
 	budget_off := docs_off + docs_size
-	budget_size := 2 * size_of(module.Budget_Request)
+	budget_size := 2 * size_of(module.Floor)
 	total := budget_off + budget_size
 
 	out := make([]u8, total, allocator)
@@ -74,7 +74,7 @@ make_minimal_valid_module :: proc(allocator := context.temp_allocator, function_
 	dir[module.Table_Kind.Functions] = {offset = u64(funcs_off), count = u32(export_count + 1), record_size = size_of(module.Function)}
 	dir[module.Table_Kind.Strings] = {offset = u64(strings_off), count = u32(strings_size), record_size = 1}
 	dir[module.Table_Kind.Documentation] = {offset = u64(docs_off), count = 2, record_size = size_of(module.Documentation)}
-	dir[module.Table_Kind.Budget] = {offset = u64(budget_off), count = 2, record_size = size_of(module.Budget_Request)}
+	dir[module.Table_Kind.Floor] = {offset = u64(budget_off), count = 2, record_size = size_of(module.Floor)}
 
 	exports := ([^]module.Export)(raw_data(out[exports_off:]))
 	for index in 1 ..= export_count {
@@ -113,7 +113,7 @@ make_minimal_valid_module :: proc(allocator := context.temp_allocator, function_
 		text_count   = doc_text_len,
 	}
 
-	budgets := ([^]module.Budget_Request)(raw_data(out[budget_off:]))
+	budgets := ([^]module.Floor)(raw_data(out[budget_off:]))
 	budgets[1] = {pages = 16, processes = 1, threads = 2}
 
 	return out

@@ -102,6 +102,9 @@ fuzz_root_ring_start_grant_set_of :: proc(word: u64) -> (start_grant_set: bit_se
 //   (docs/TOOLS.md, "The debugger");
 // - Connect comes from Root_Ring, or from Connect to a service of the list
 //   of its start grant set; Disconnect from each ring, for a connection that it holds;
+// - Ready from each ring: each process with a root ring says its first
+//   state of work (src/md/features/module_budget_request.md, "The peak of
+//   a budget");
 // - the start policy, with Start_Policy, sends Start and Stop as the
 //   console does, and alone sends Machine_Usable
 //   (src/md/features/start_policy.md);
@@ -132,7 +135,7 @@ fuzz_root_ring_sender_model :: proc(command: root_ring.Root_Command, start_grant
 		return .Debugger in start_grant_set
 	case .Connect:
 		return .Root_Ring in start_grant_set || .Connect in start_grant_set && listed
-	case .Disconnect:
+	case .Disconnect, .Ready:
 		return true
 	case .Machine_Usable:
 		return .Start_Policy in start_grant_set

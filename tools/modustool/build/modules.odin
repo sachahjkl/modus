@@ -601,10 +601,14 @@ module_convert :: proc(build: foundation.Module_Build) -> bool {
 	// the tables Record_Outputs and Record_Inputs and their records.
 	outputs, inputs := record_streams_of_sources(build.source, sources) or_return
 	record_streams_merge(&description, outputs, inputs) or_return
-	// The request of the table Budget counts the pages of each import, at
-	// each level.
-	if description.budget.stated {
-		description.budget.import_memory_sizes = budget_import_memory_sizes(build) or_return
+	// The floor of the table Floor counts the load of each import, at each
+	// level, the start objects of the packages that the compiler read, and
+	// the floors of the children.
+	description.budget.has_entry = build.entry
+	if build.entry || description.budget.stated {
+		description.budget.import_costs = floor_import_costs(build) or_return
+		description.budget.start_objects = start_objects_of_sources(build.source, sources) or_return
+		description.budget.children = floor_children_of(build) or_return
 	}
 	elf := foundation.read_file(module_linked_file(build.name)) or_return
 	imports := make([dynamic]Import_File, context.temp_allocator)
@@ -838,24 +842,33 @@ test_descriptions :: proc() -> bool {
 			}
 			foundation.test_passed_print("the record %s}}, %d bytes, of %s comes from its source", strings.to_string(layout), item.size, build.name)
 		}
-		// The budget that the module asks for: the table Budget holds the
-		// stated budget of the source and the counted parts, computed here
-		// again from the source and the files; a source with none gives no
-		// table.
-		request, stated := module.budget_request(file)
-		if stated != described.budget.stated {
-			fmt.eprintfln("modustool: test failed: %s has %s table Budget, and its source %s", build.name, stated ? "a" : "no", described.budget.stated ? "states a budget" : "states none")
+		// The floor of the module: the table Floor of each module with an
+		// entry holds the parts that the source states and the counted
+		// parts, computed here again from the sources and the files; a
+		// library has no table.
+		floor, has_floor := module.floor_read(file)
+		if has_floor != (build.entry || described.budget.stated) {
+			fmt.eprintfln("modustool: test failed: %s has %s table Floor, and it %s", build.name, has_floor ? "a" : "no", build.entry ? "has an entry" : "has no entry")
 			return false
 		}
-		if stated {
-			head, _ := module.header(file)
-			import_sizes := budget_import_memory_sizes(build) or_return
-			counted, counted_ok := budget_count(described.budget.parts, head.memory_size, import_sizes)
-			if !counted_ok || request != counted.request {
-				fmt.eprintfln("modustool: test failed: the budget that %s asks for, %d pages, %d processes, %d threads, is not its stated budget and its counted parts: %s", build.name, request.pages, request.processes, request.threads, budget_count_line(counted))
+		if has_floor {
+			inputs := Floor_Inputs{stated = described.budget.parts}
+			own, own_ok := module_cost_of_file(file)
+			if !own_ok {
 				return false
 			}
-			foundation.test_passed_print("the budget that %s asks for is its stated budget and its counted parts: %s", build.name, budget_count_line(counted))
+			modules := make([dynamic]Module_Cost, context.temp_allocator)
+			append(&modules, own)
+			append(&modules, ..(floor_import_costs(build) or_return))
+			inputs.modules = modules[:]
+			inputs.start_objects = start_objects_of_sources(build.source, sources) or_return
+			inputs.children = floor_children_of(build) or_return
+			counted, counted_ok := floor_count(inputs)
+			if !counted_ok || floor != counted.floor {
+				fmt.eprintfln("modustool: test failed: the floor of %s, %d pages, %d processes, %d threads, is not its stated parts and its counted parts: %s", build.name, floor.pages, floor.processes, floor.threads, floor_count_line(counted))
+				return false
+			}
+			foundation.test_passed_print("the floor of %s is its stated parts and its counted parts: %s", build.name, floor_count_line(counted))
 		}
 		// The log facts: each row of the table Facts is the fact type of its
 		// source, in the order of the keys, and the template is valid.

@@ -21,3 +21,8 @@ entry :: proc "c" (_: ^system.Context) -> ! {
 	system.log_fact(.Info, Refuses_On_Purpose{})
 	system.stop(.Refused)
 }
+
+// The least budget of 2048 pages, in which it ran before its floor was
+// counted. It leaves when the peak of its budget at its first state of
+// work is read (src/md/features/module_budget_request.md, "State").
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 2048}
