@@ -21,10 +21,12 @@
 package assistant_window
 
 import "internal:assistant/conversation"
-import "internal:assistant/result_lines"
+import "internal:assistant/conversation_view"
 import assistant_contract "modus:contract/assistant"
 import "modus:contract/errors"
-import "modus:contract/text_encoding"
+import "modus:contract/module"
+import "modus:contract/reference_screen"
+import "modus:contract/scale_factor"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
@@ -34,14 +36,40 @@ import "modus:system"
 // cells, and 24 lines.
 WIDTH :: 760
 HEIGHT :: 560
-// The window, the entries of the conversation (288 entries of 16 KiB text
-// and a pool of 16 typed 64-row tables plus staging, about 6.6 MiB), the
-// kept lines of three results (about 192 KiB), the two draw tables of the
-// worst frame (about 130 KiB: result_table.odin), the stack, and the glyph
-// memory of a window of paint, which this process draws as: the tool
-// counts the window at the window bound (docs/MODULE_CONTRACT.md, "The
-// budget that a module asks for").
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 3800, window_width = WIDTH, window_height = HEIGHT}
+// The working memory, counted from the sizes of the state below (the
+// checks after it tie the literal to them; the tool counts the window at
+// the window bound, docs/MODULE_CONTRACT.md, "The budget that a module asks
+// for"):
+//
+//   talk               6 738 376 bytes  288 entries of 16 KiB, 16 kept tables of 64 rows and the staging copy
+//   view_layouts         617 472        the layout of each entry: its lines
+//   view_places            4 624        the place of each entry in the view
+//   result_slots         394 032        the lines of 6 results that a frame paints
+//   layout_lines          65 624        the lines that measure a result at its layout
+//   result_scratch        20 480        the description and the rows of one draw
+//   window_memory        139 256        the two draw tables of the worst frame
+//   typed                  4 096        the request that the principal types
+//   the rest of the state, the port of the act dialog: some hundred bytes
+//
+// 1950 pages; then 1748 pages for the stack, the small tables and the glyph
+// memory, as paint states them for itself, which this process draws as,
+// and the glyph memory of the copy of the text rendering of the drawing
+// module, 354 pages (display.TEXT_MEMORY_PAGES): 1950 + 1748 + 354 = 4052.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 4052, window_width = WIDTH, window_height = HEIGHT}
+
+// The pages of the stack, the small tables and the glyph memory, as paint
+// counts them (src/modules/demonstrations/paint/main.odin).
+STACK_AND_GLYPH_PAGES :: 1748
+STATE_BYTES :: size_of(talk) + size_of(view_layouts) + size_of(view_places) + size_of(view_scroll) + size_of(result_slots) + size_of(layout_lines) + size_of(result_scratch) + size_of(window_memory) + size_of(typed) + size_of(typed_count) + size_of(display_port)
+STATE_PAGES :: (STATE_BYTES + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+#assert(MODULE_BUDGET.working_memory_pages == STATE_PAGES + STACK_AND_GLYPH_PAGES + display.TEXT_MEMORY_PAGES)
+// The window at the largest scale, cut to the reference screen, two
+// pictures, as the tool counts it: the budget stays under the largest
+// budget of a module.
+WINDOW_SCREEN_WIDTH :: min((u64(WIDTH) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.WIDTH))
+WINDOW_SCREEN_HEIGHT :: min((u64(HEIGHT) * u64(scale_factor.LARGEST) + scale_factor.EIGHTHS_OF_ONE / 2) / scale_factor.EIGHTHS_OF_ONE, u64(reference_screen.HEIGHT))
+WINDOW_PAGES :: (2 * WINDOW_SCREEN_WIDTH * WINDOW_SCREEN_HEIGHT * 4 + system.PAGE_SIZE - 1) / system.PAGE_SIZE
+#assert(u64(MODULE_BUDGET.working_memory_pages) + WINDOW_PAGES <= module.LARGEST_BUDGET_PAGES)
 
 MARGIN :: 12
 INPUT_HEIGHT :: 28
@@ -153,7 +181,7 @@ entry_body :: proc "contextless" (entry: ^conversation.Entry, buffer: []u8) -> (
 		case .Step_Limit:
 			return "", "The request reached the limit of 16 steps.", false
 		case .Repeated_Step:
-			return "", "The agent proposed the same acts as in the step before, so the loop stopped.", false
+			return "", "The agent ran the acts of the step before again and got the same results, so the loop stopped.", false
 		case .Stopped_By_Principal:
 			return "", "You stopped the agent.", false
 		case .Model_Failed:
@@ -167,172 +195,54 @@ entry_body :: proc "contextless" (entry: ^conversation.Entry, buffer: []u8) -> (
 	return "", "", false
 }
 
-// fold_summary writes the short label of a folded act result button.
-@(private = "file")
-fold_summary :: proc "contextless" (entry: ^conversation.Entry, table: ^conversation.Act_Table, buffer: []u8) -> string {
-	if table != nil {
-		name := conversation.act_table_name(table)
-		switch table.shape {
-		case .Table:
-			return system.format(buffer, "Show ", u64(table.total_rows), " rows of ", name)
-		case .Record:
-			return system.format(buffer, "Show ", name)
-		}
-	}
-	preview_limit := min(entry.text_count, 48)
-	preview_count := text_encoding.complete_characters(entry.text[:preview_limit])
-	preview := string(entry.text[:preview_count])
-	if preview_count < entry.text_count {
-		return system.format(buffer, "Show result: ", preview, "...")
-	}
-	return system.format(buffer, "Show result: ", preview)
-}
-
-// draw builds one frame: the conversation from the newest entry up, as far
-// as the room goes, and the field of the request (with Stop while running)
-// at the foot.
+// draw builds one frame: the view of the conversation, its scroll bar, and
+// the field of the request (with Stop while a loop runs) at the foot.
 draw :: proc "contextless" (window: ^display.Window) {
 	frame := interface.window_frame_start(&window_memory, window)
 	table := frame.table
 	interface.background(&frame, {0, 0, window.width, window.height})
 	room := window.width - 2 * MARGIN
 	input_top := window.height - MARGIN - INPUT_HEIGHT
-	line := interface.line_height(interface.FONT_INTERFACE)
-	code_line := interface.line_height(FONT_CODE)
-	fold_height := line + 4
-	// The font of the cells has one advance: the width of a cell.
-	cell_width := max(interface.text_measured_width(table, FONT_CODE, "0"), 1)
+	metrics := view_metrics(table)
 	running := conversation.request_running(&talk)
-	if running != nil {
-		for &key in frame.input.keys[:frame.input.key_count] {
-			if !key.taken && key.code == display.KEY_ESCAPE {
-				key.taken = true
-				request_stop()
-				break
-			}
+	view_area := interface.Area{MARGIN, MARGIN, room - interface.SCROLL_BAR_THICKNESS - MARGIN / 2, input_top - 2 * MARGIN}
+	bar_area := interface.Area{MARGIN + room - interface.SCROLL_BAR_THICKNESS, MARGIN, interface.SCROLL_BAR_THICKNESS, view_area.height}
+	view_layout(table, view_area.width, view_area.height, metrics)
+	conversation_view.settle(&view_scroll, &view_places, view_area.height)
+	// A page key moves the view by its height less one line, so the line at
+	// an edge shows again; Control with Home or End goes to an end.
+	page := max(view_area.height - metrics.line, metrics.line)
+	for &key in frame.input.keys[:frame.input.key_count] {
+		if key.taken {
+			continue
+		}
+		control := key.modifiers & display.MODIFIER_CONTROL != 0
+		switch {
+		case key.code == display.KEY_ESCAPE && running != nil:
+			request_stop()
+		case key.code == display.KEY_PAGE_UP:
+			conversation_view.scroll_set(&view_scroll, &view_places, view_area.height, view_scroll.first - page)
+		case key.code == display.KEY_PAGE_DOWN:
+			conversation_view.scroll_set(&view_scroll, &view_places, view_area.height, view_scroll.first + page)
+		case key.code == display.KEY_HOME && control:
+			conversation_view.scroll_set(&view_scroll, &view_places, view_area.height, 0)
+		case key.code == display.KEY_END && control:
+			conversation_view.scroll_set(&view_scroll, &view_places, view_area.height, conversation_view.total(&view_places))
+		case:
+			continue
+		}
+		key.taken = true
+	}
+	// The bar shows only when the content is taller than the view; its room
+	// stays, so a new entry never moves the lines sideways.
+	total := conversation_view.total(&view_places)
+	if total > view_area.height {
+		moved := interface.scroll_bar(&frame, bar_area, interface.identity("conversation scroll bar"), .Vertical, {total = total, visible = view_area.height, first = view_scroll.first}, {line = metrics.line, page = page}, "conversation", view_area)
+		if moved.changed {
+			conversation_view.scroll_set(&view_scroll, &view_places, view_area.height, moved.first)
 		}
 	}
-	bottom := input_top - MARGIN
-	// From the newest entry up: only the entries that show are measured.
-	for index := talk.entry_count - 1; index >= 0 && bottom > MARGIN; index -= 1 {
-		entry := conversation.entry_at(&talk, index)
-		label_buffer: [160]u8
-		body_buffer: [256]u8
-		fold_buffer: [128]u8
-		page_buffer: [64]u8
-		label, color := entry_label(entry, label_buffer[:])
-		code, words, words_are_value := entry_body(entry, body_buffer[:])
-		code_lines := code != "" ? interface.text_wrapped_line_count(table, FONT_CODE, code, room) : 0
-		folded_default := conversation.act_folded_by_default(&talk, entry)
-		folded := conversation.act_folded(&talk, entry)
-		act_tbl := entry.kind == .Act && entry.state == .Done ? conversation.act_table_of(&talk, entry) : nil
-		fold_label := ""
-		toggle_height := 0
-		if folded {
-			fold_label = fold_summary(entry, act_tbl, fold_buffer[:])
-			toggle_height = fold_height
-			words = ""
-		} else if folded_default {
-			fold_label = "Hide result"
-			toggle_height = fold_height
-		}
-		// A result that came typed is drawn as the console draws it, in
-		// place of its words, within the room left above: the rows that
-		// fit, with Previous/Next paging when more carried rows exist.
-		result: ^result_lines.Lines
-		page_height := 0
-		row_offset := int(entry.table_row_offset)
-		if !folded && act_tbl != nil {
-			// Reserve space for the paging bar when the carried table might
-			// need more than one page.
-			max_lines := (bottom - MARGIN - line - code_lines * code_line - toggle_height - MARGIN / 2) / code_line
-			needs_paging := act_tbl.shape == .Table && (row_offset > 0 || act_tbl.row_count + 4 > max_lines)
-			reserved := needs_paging ? fold_height : 0
-			line_room := (bottom - MARGIN - line - code_lines * code_line - toggle_height - reserved - MARGIN / 2) / code_line
-			if lines := result_lines_of(entry, act_tbl, room / cell_width, line_room, row_offset); lines != nil {
-				result, words = lines, ""
-				if act_tbl.shape == .Table && (row_offset > 0 || row_offset + lines.shown_rows < act_tbl.row_count) {
-					page_height = fold_height
-				}
-			}
-		}
-		words_font := words_are_value ? FONT_CODE : interface.FONT_INTERFACE
-		words_line := words_are_value ? code_line : line
-		word_lines := words != "" ? interface.text_wrapped_line_count(table, words_font, words, room) : 0
-		result_line_count := result != nil ? result.line_count : 0
-		height := line + code_lines * code_line + toggle_height + word_lines * words_line + result_line_count * code_line + page_height + MARGIN / 2
-		top := bottom - height
-		// The newest entry always shows: a reply of up to 16 KiB can be
-		// taller than the window, so it shows its start, cut to the room,
-		// and its text is bounded so the frame keeps its records.
-		clipped := false
-		if top < MARGIN {
-			if bottom != input_top - MARGIN || words == "" {
-				break
-			}
-			room_lines := max((bottom - MARGIN - line - code_lines * code_line - toggle_height) / words_line, 1)
-			byte_bound := room_lines * max(room / cell_width, 1) * 2
-			if len(words) > byte_bound {
-				words = words[:text_encoding.complete_characters(transmute([]u8)words[:byte_bound])]
-			}
-			top = MARGIN
-			interface.draw_clip_push(table, 0, MARGIN, window.width, bottom - MARGIN)
-			clipped = true
-		}
-		defer if clipped {
-			interface.draw_clip_pop(table)
-		}
-		interface.draw_text(table, MARGIN, top, label, color, interface.FONT_INTERFACE_BOLD)
-		body_top := top + line
-		if code != "" {
-			interface.draw_text_wrapped(table, MARGIN, body_top, room, code, graphics.colors.text, FONT_CODE)
-			body_top += code_lines * code_line
-		}
-		if toggle_height > 0 {
-			fold_width := min(interface.text_measured_width(table, interface.FONT_INTERFACE, fold_label) + 20, room)
-			fold_id := interface.identity_with(interface.identity("act_fold"), int(entry.act))
-			toggle_result := interface.button(&frame, {MARGIN, body_top, fold_width, fold_height}, fold_id, fold_label, toggle = folded ? .False : .True)
-			if toggle_result.activated {
-				conversation.act_fold_toggle(&talk, entry)
-			}
-			body_top += fold_height
-		}
-		if words != "" {
-			interface.draw_text_wrapped(table, MARGIN, body_top, room, words, graphics.colors.text, words_font)
-		}
-		if result != nil {
-			result_lines_paint(table, result, MARGIN, body_top, cell_width, code_line)
-			body_top += result.line_count * code_line
-			if page_height > 0 {
-				page_x := MARGIN
-				step_rows := max(result.shown_rows, 1)
-				if row_offset > 0 {
-					prev_w := interface.text_measured_width(table, interface.FONT_INTERFACE, "Previous rows") + 16
-					prev_id := interface.identity_with(interface.identity("act_prev"), int(entry.act))
-					if interface.button(&frame, {page_x, body_top, prev_w, fold_height}, prev_id, "Previous rows").activated {
-						conversation.act_table_page(&talk, entry, max(row_offset - step_rows, 0))
-					}
-					page_x += prev_w + MARGIN / 2
-				}
-				if row_offset + result.shown_rows < act_tbl.row_count {
-					next_w := interface.text_measured_width(table, interface.FONT_INTERFACE, "Next rows") + 16
-					next_id := interface.identity_with(interface.identity("act_next"), int(entry.act))
-					if interface.button(&frame, {page_x, body_top, next_w, fold_height}, next_id, "Next rows").activated {
-						conversation.act_table_page(&talk, entry, row_offset + step_rows)
-					}
-					page_x += next_w + MARGIN / 2
-				}
-				first_row := u64(min(row_offset + 1, act_tbl.row_count))
-				last_row := u64(min(row_offset + result.shown_rows, act_tbl.row_count))
-				page_text := system.format(page_buffer[:], "rows ", first_row, " to ", last_row, " of ", u64(act_tbl.row_count))
-				interface.draw_text(table, page_x, body_top + 2, page_text, graphics.colors.dim, interface.FONT_INTERFACE)
-			}
-		}
-		bottom = top
-		if clipped {
-			break
-		}
-	}
+	view_paint(&frame, view_area, metrics)
 	if talk.entry_count == 0 {
 		interface.draw_text_wrapped(table, MARGIN, MARGIN, room, "Ask the agent for help. It reads your request on the host, and each act that it proposes shows here before its result.", graphics.colors.dim, interface.FONT_INTERFACE)
 	}
@@ -345,6 +255,8 @@ draw :: proc "contextless" (window: ^display.Window) {
 	if field.activated && typed_count > 0 {
 		if request_keep(string(typed[:typed_count])) {
 			typed_count = 0
+			// A new request shows: the view follows the newest entry again.
+			view_scroll.following = true
 		}
 	}
 	if running != nil {
@@ -377,10 +289,17 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		wait: system.Wait
 		display.wait_events(&wait, &window)
 		system.service_wait(&wait, &service)
-		system.wait_end(&wait, waiting ? system.time() + DECISION_POLL_MILLISECONDS : system.WAIT_FOREVER)
+		deadline := waiting ? system.time() + DECISION_POLL_MILLISECONDS : system.WAIT_FOREVER
+		// A held arrow of the scroll bar takes its next step at a time of
+		// the clock: the wait ends there at the latest.
+		step_time, step_due := interface.window_scroll_bar_wake(&window_memory.drawing)
+		if step_due {
+			deadline = min(deadline, step_time)
+		}
+		system.wait_end(&wait, deadline)
 		system.service_run(&service)
 		came := interface.window_events(&window_memory.drawing, &window)
-		if came || talk.changed {
+		if came || talk.changed || (step_due && system.time() >= step_time) {
 			talk.changed = false
 			draw(&window)
 			// A request that the field kept draws in the next frame.

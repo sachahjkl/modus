@@ -691,3 +691,61 @@ act_table_rows_appends_and_enforces_bounds :: proc(t: ^testing.T) {
 	result, _ = act_table_rows(talk2, true, 1, first[:], &error)
 	expect_refusal(t, result, error, .State, 1)
 }
+
+// Each entry has a number that grows and stays while older entries leave
+// the ring; each change of what the window shows of an entry grows its
+// revision and the layout serial; a refused call changes neither.
+@(test)
+the_numbers_and_revisions_follow_each_change_and_no_refusal :: proc(t: ^testing.T) {
+	talk := taken_conversation(t)
+	error: errors.Error_Record
+	request := request_of(talk, 1)
+	testing.expect_value(t, request.number, 1)
+	serial := talk.layout_serial
+	reply(talk, true, 1, "one act", 1, &error)
+	_, entry := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
+	testing.expect_value(t, entry.number, 3)
+	testing.expect(t, talk.layout_serial > serial)
+	revision, serial_before := entry.revision, talk.layout_serial
+	// A refused outcome changes nothing.
+	result, _ := act_result(talk, true, 1, 99, "x", &error)
+	expect_refusal(t, result, error, .Bad_Value, 2)
+	testing.expect(t, entry.revision == revision && talk.layout_serial == serial_before)
+	act_result(talk, true, 1, i64(assistant_contract.Act_State.Done), "42 rows of Module", &error)
+	testing.expect(t, entry.revision > revision && talk.layout_serial > serial_before)
+	revision = entry.revision
+	entry_expand_toggle(talk, entry)
+	testing.expect(t, entry.expanded && entry.revision > revision)
+	entry_expand_toggle(talk, entry)
+	testing.expect(t, !entry.expanded)
+	// The ring turns: the numbers stay with their entries and keep growing.
+	for _ in 0 ..< assistant_contract.CONVERSATION_ENTRY_CAPACITY {
+		request_keep(talk, "more")
+	}
+	testing.expect(t, act_of(talk, 1) == nil)
+	first := entry_at(talk, 0)
+	last := entry_at(talk, talk.entry_count - 1)
+	testing.expect_value(t, last.number, u64(3 + assistant_contract.CONVERSATION_ENTRY_CAPACITY))
+	testing.expect_value(t, last.number - first.number, u64(talk.entry_count - 1))
+}
+
+// The fold of an act needs no search: the acts of the newest request fold
+// when a later step of it has acts, and every act of an older request folds.
+@(test)
+the_fold_of_an_act_follows_the_newest_request :: proc(t: ^testing.T) {
+	talk := taken_conversation(t)
+	error: errors.Error_Record
+	reply(talk, true, 1, "one", 1, &error)
+	_, first := act(talk, true, 1, 1, "manual.modules()", "manual", "modules", &error)
+	act_result(talk, true, 1, i64(assistant_contract.Act_State.Done), "done", &error)
+	testing.expect_value(t, talk.newest_last_act_step, 1)
+	testing.expect(t, !act_folded(talk, first))
+	// A final reply with no act keeps the step of the last acts.
+	reply(talk, true, 1, "answer", 0, &error)
+	testing.expect_value(t, talk.newest_last_act_step, 1)
+	testing.expect(t, !act_folded(talk, first))
+	// A new request: every act of the request before folds.
+	request_keep(talk, "next")
+	testing.expect_value(t, talk.newest_last_act_step, 0)
+	testing.expect(t, act_folded(talk, first))
+}

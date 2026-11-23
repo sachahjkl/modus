@@ -187,6 +187,21 @@ acts_equal :: proc(first, second: []Model_Act) -> bool {
 	return true
 }
 
+// step_repeats says if a step repeats the step before: the same acts, in
+// order, with the same outcomes. The same acts whose results changed are
+// no repeat: the agent can wait for a state that moves.
+step_repeats :: proc(acts, previous_acts: []Model_Act, outcomes, previous_outcomes: []string) -> bool {
+	if len(acts) == 0 || !acts_equal(acts, previous_acts) || len(outcomes) != len(previous_outcomes) {
+		return false
+	}
+	for outcome, index in outcomes {
+		if outcome != previous_outcomes[index] {
+			return false
+		}
+	}
+	return true
+}
+
 Step_Report :: struct {
 	step:      int,
 	text:      string,
@@ -412,6 +427,7 @@ runner_turn :: proc(runner: ^Runner) -> (report: Turn_Report) {
 	conversation_bound(runner)
 
 	previous_acts: [assistant_contract.MODEL_ACT_CAPACITY]Model_Act
+	previous_outcomes: [assistant_contract.MODEL_ACT_CAPACITY]string
 	previous_act_count := 0
 
 	for step := 1; step <= assistant_contract.AGENT_LOOP_STEP_CAPACITY; step += 1 {
@@ -446,13 +462,6 @@ runner_turn :: proc(runner: ^Runner) -> (report: Turn_Report) {
 		}
 		if stopped {
 			finish_with_loop_end(window, &report, .Stopped_By_Principal)
-			return
-		}
-
-		// A step that repeats the exact acts of the previous step stops cleanly
-		// without running the duplicate acts.
-		if step > 1 && reply.act_count > 0 && previous_act_count > 0 && acts_equal(reply.acts[:reply.act_count], previous_acts[:previous_act_count]) {
-			finish_with_loop_end(window, &report, .Repeated_Step)
 			return
 		}
 
@@ -557,7 +566,14 @@ runner_turn :: proc(runner: ^Runner) -> (report: Turn_Report) {
 			return
 		}
 
+		// The acts of a step are read-only: a repeat is known only from its
+		// results, so its acts ran, and the loop ends after them.
+		if step > 1 && step_repeats(reply.acts[:reply.act_count], previous_acts[:previous_act_count], outcomes[:reply.act_count], previous_outcomes[:previous_act_count]) {
+			finish_with_loop_end(window, &report, .Repeated_Step)
+			return
+		}
 		previous_acts = reply.acts
+		previous_outcomes = outcomes
 		previous_act_count = reply.act_count
 	}
 

@@ -32,6 +32,9 @@ Turn_State :: enum u8 {
 
 Entry :: struct {
 	kind:           Entry_Kind,
+	number:         u64, // The place of the entry in the order of all the entries of the run, from 1: it stays while other entries leave the ring.
+	revision:       u32, // Grows at each change of what the window shows of the entry: the window lays out an entry again only then.
+	expanded:       bool, // The principal asked for every line of a long text, past the room of the view.
 	serial:         u64, // The request of the entry.
 	act:            u64, // An Act: its number.
 	act_kind:       assistant_contract.Act_Kind,
@@ -171,7 +174,15 @@ Conversation :: struct {
 	entry_count:      int,
 	last_serial:      u64, // The serial of the last request kept: the next one is one more.
 	last_act:         u64, // The number of the last act: the next one is one more.
+	last_entry:       u64, // The number of the last entry: the next one is one more.
+	// The latest step with acts of the newest request: its acts stay open,
+	// the acts of each step before it fold (act_folded_by_default).
+	newest_last_act_step: u8,
 	changed:          bool, // The conversation changed: the window draws again.
+	// Grows at each change: the window lays out its view again when it
+	// differs from the serial of its last layout, and never in a frame
+	// where nothing changed.
+	layout_serial:    u64,
 	// The act dialog of an act whose entry left the ring while it showed:
 	// the loop of the window cancels it (acts_waiting_step), outside an
 	// export, so the principal never decides an act that the window no
@@ -222,9 +233,32 @@ entry_add :: proc "contextless" (conversation: ^Conversation, kind: Entry_Kind, 
 	// temporary on the stack.
 	intrinsics.mem_zero(entry, size_of(Entry))
 	entry.kind, entry.serial = kind, serial
+	conversation.last_entry += 1
+	entry.number = conversation.last_entry
+	entry.revision = 1
 	conversation.entry_count += 1
-	conversation.changed = true
+	conversation_changed(conversation)
 	return entry
+}
+
+// conversation_changed says that the conversation changed: the window
+// draws again and lays out its view again.
+conversation_changed :: proc "contextless" (conversation: ^Conversation) {
+	conversation.changed = true
+	conversation.layout_serial += 1
+}
+
+// entry_touch says that what the window shows of an entry changed.
+entry_touch :: proc "contextless" (conversation: ^Conversation, entry: ^Entry) {
+	entry.revision += 1
+	conversation_changed(conversation)
+}
+
+// entry_expand_toggle shows every line of a long text of an entry, or the
+// lines that the room of the view holds again.
+entry_expand_toggle :: proc "contextless" (conversation: ^Conversation, entry: ^Entry) {
+	entry.expanded = !entry.expanded
+	entry_touch(conversation, entry)
 }
 
 request_of :: proc "contextless" (conversation: ^Conversation, serial: i64) -> ^Entry {
@@ -260,6 +294,7 @@ request_keep :: proc "contextless" (conversation: ^Conversation, text: string) -
 		return nil
 	}
 	conversation.last_serial += 1
+	conversation.newest_last_act_step = 0
 	entry := entry_add(conversation, .Request, conversation.last_serial)
 	entry.text_count = copy(entry.text[:], text)
 	return entry
@@ -372,6 +407,9 @@ reply :: proc "contextless" (conversation: ^Conversation, acts_for_principal: bo
 	} else {
 		request.last_act_step = step
 		request.turn = .Acts_Coming
+		if u64(serial) == conversation.last_serial {
+			conversation.newest_last_act_step = step
+		}
 	}
 	kept = entry_add(conversation, .Reply, u64(serial))
 	kept.step = step
@@ -522,7 +560,7 @@ principal_stop :: proc "contextless" (conversation: ^Conversation) -> ^Entry {
 		return nil
 	}
 	request.stop_requested = true
-	conversation.changed = true
+	conversation_changed(conversation)
 	return request
 }
 
@@ -536,14 +574,11 @@ act_folded_by_default :: proc "contextless" (conversation: ^Conversation, entry:
 	if entry.state != .Done && entry.state != .Refused {
 		return false
 	}
+	// Constant time: the window asks it for each entry at each layout.
 	if entry.serial < conversation.last_serial {
 		return true
 	}
-	request := request_of(conversation, i64(entry.serial))
-	if request == nil {
-		return true
-	}
-	return entry.step > 0 && entry.step < request.last_act_step
+	return entry.step > 0 && entry.step < conversation.newest_last_act_step
 }
 
 // act_folded says if the window currently folds the result of an act.
@@ -560,7 +595,7 @@ act_fold_toggle :: proc "contextless" (conversation: ^Conversation, entry: ^Entr
 		return
 	}
 	entry.fold_toggled = !entry.fold_toggled
-	conversation.changed = true
+	entry_touch(conversation, entry)
 }
 
 // act_table_page moves the first displayed row of an act's table.
@@ -572,7 +607,7 @@ act_table_page :: proc "contextless" (conversation: ^Conversation, entry: ^Entry
 	clamped := clamp(offset, 0, table.row_count - 1)
 	if int(entry.table_row_offset) != clamped {
 		entry.table_row_offset = u8(clamped)
-		conversation.changed = true
+		entry_touch(conversation, entry)
 	}
 }
 
@@ -602,7 +637,7 @@ act_result :: proc "contextless" (conversation: ^Conversation, acts_for_principa
 	}
 	entry.state = new_state
 	entry.text_count = copy(entry.text[:], text)
-	conversation.changed = true
+	entry_touch(conversation, entry)
 	return 1, entry
 }
 
@@ -675,13 +710,13 @@ acts_waiting_step :: proc "contextless" (conversation: ^Conversation, port: Act_
 				return true, .None, nil, ""
 			case .Refused:
 				candidate.state = .Not_Shown
-				conversation.changed = true
+				entry_touch(conversation, candidate)
 				// The next act that waits asks at the next turn.
 				return true, .Not_Shown, candidate, refusal_cause
 			case .Shown:
 			}
 			candidate.dialog = serial
-			conversation.changed = true
+			entry_touch(conversation, candidate)
 			return true, .Shown, candidate, ""
 		}
 		decision, known := port.poll(candidate.dialog)
@@ -690,6 +725,7 @@ acts_waiting_step :: proc "contextless" (conversation: ^Conversation, port: Act_
 			// asker shows again: the act never takes a decision that it did
 			// not see.
 			candidate.dialog = 0
+			entry_touch(conversation, candidate)
 			return true, .None, nil, ""
 		}
 		switch decision {
@@ -700,7 +736,7 @@ acts_waiting_step :: proc "contextless" (conversation: ^Conversation, port: Act_
 		case .Refused:
 			candidate.state = .Refused_By_Principal
 		}
-		conversation.changed = true
+		entry_touch(conversation, candidate)
 		return true, .Decided, candidate, ""
 	}
 	return false, .None, nil, ""
@@ -801,7 +837,7 @@ act_table :: proc "contextless" (conversation: ^Conversation, acts_for_principal
 	intrinsics.mem_copy_non_overlapping(&conversation.tables[slot_index], staging, size_of(Act_Table))
 	entry.table_given = true
 	entry.table_slot = u8(slot_index)
-	conversation.changed = true
+	entry_touch(conversation, entry)
 	return 1, entry
 }
 
@@ -852,6 +888,6 @@ act_table_rows :: proc "contextless" (conversation: ^Conversation, acts_for_prin
 		table.cells[start_cell + index] = staging.cells[index]
 	}
 	table.row_count += extra_rows
-	conversation.changed = true
+	entry_touch(conversation, entry)
 	return i64(table.row_count), entry
 }

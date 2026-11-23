@@ -16,7 +16,7 @@ import "modus:interface"
 // which a conversation of a window of this height holds few of. The lines
 // of a result are computed when its act, the width or the room changes,
 // never at each frame (the table of a done act never changes).
-RESULT_CACHE_SLOTS :: 3
+RESULT_CACHE_SLOTS :: 6
 
 Result_Slot :: struct {
 	valid:       bool,
@@ -93,12 +93,18 @@ WINDOW_TEXT_BYTES :: (LINES_IN_A_FRAME * (WIDTH / graphics.CELL_WIDTH) * 4 + 409
 
 // result_lines_paint draws the lines at a place in the font of the cells:
 // the parts of one color in a row, with the blanks between them, are one
-// record at the column of their first part.
-result_lines_paint :: proc "contextless" (draw_table: ^interface.Draw_Table, lines: ^result_lines.Lines, x, y, cell_width, line_height: int) {
+// record at the column of their first part. A line out of the band from
+// visible_top to visible_bottom draws nothing: the text of a frame holds
+// only the lines that the view shows.
+result_lines_paint :: proc "contextless" (draw_table: ^interface.Draw_Table, lines: ^result_lines.Lines, x, y, cell_width, line_height, visible_top, visible_bottom: int) {
 	run: [1024]u8
 	run_count, run_column, column, line := 0, 0, 0, -1
 	run_color: graphics.Color
-	flush :: proc "contextless" (draw_table: ^interface.Draw_Table, run: []u8, count: ^int, x, y, column, cell_width: int, color: graphics.Color) {
+	flush :: proc "contextless" (draw_table: ^interface.Draw_Table, run: []u8, count: ^int, x, y, column, cell_width: int, color: graphics.Color, visible_top, visible_bottom, line_height: int) {
+		if y + line_height <= visible_top || y >= visible_bottom {
+			count^ = 0
+			return
+		}
 		// Blanks at the end of a run draw nothing.
 		end := count^
 		for end > 0 && run[end - 1] == ' ' {
@@ -112,7 +118,7 @@ result_lines_paint :: proc "contextless" (draw_table: ^interface.Draw_Table, lin
 	for index in 0 ..< lines.part_count {
 		part := lines.parts[index]
 		if int(part.line) != line {
-			flush(draw_table, run[:], &run_count, x, y + line * line_height, run_column, cell_width, run_color)
+			flush(draw_table, run[:], &run_count, x, y + line * line_height, run_column, cell_width, run_color, visible_top, visible_bottom, line_height)
 			line, column = int(part.line), 0
 		}
 		text := string(lines.text[part.start:][:part.count])
@@ -137,11 +143,11 @@ result_lines_paint :: proc "contextless" (draw_table: ^interface.Draw_Table, lin
 		case color == run_color && run_count + len(text) <= len(run):
 			run_count += copy(run[run_count:], text)
 		case:
-			flush(draw_table, run[:], &run_count, x, y + line * line_height, run_column, cell_width, run_color)
+			flush(draw_table, run[:], &run_count, x, y + line * line_height, run_column, cell_width, run_color, visible_top, visible_bottom, line_height)
 			run_column, run_color = column, color
 			run_count = copy(run[:], text)
 		}
 		column += console_results.text_columns(text)
 	}
-	flush(draw_table, run[:], &run_count, x, y + line * line_height, run_column, cell_width, run_color)
+	flush(draw_table, run[:], &run_count, x, y + line * line_height, run_column, cell_width, run_color, visible_top, visible_bottom, line_height)
 }

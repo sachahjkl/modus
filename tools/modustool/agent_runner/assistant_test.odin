@@ -688,6 +688,7 @@ Loop_Transport :: struct {
 	lines:     [dynamic]string,
 	after_act: proc(state: ^Loop_Transport),
 	stop_talk: ^conversation.Conversation,
+	vary:      bool, // Each call of manual.signature gives another text: a state that moves.
 }
 
 @(private = "file")
@@ -728,6 +729,9 @@ loop_eval_lex :: proc(user_data: rawptr, line: string, allocator: mem.Allocator)
 		row_ints[0] = i0
 		return {value_kind = .Table, record_name = "Export", columns = cols, column_kinds = kinds, column_units = units, rows = rows, row_integers = row_ints, total_rows = 1}, "", true
 	case strings.has_prefix(line, "manual.signature("):
+		if state.vary {
+			return {value_kind = .Text, text_value = fmt.aprintf("processes() -> Table, call %d", len(state.lines), allocator = allocator)}, "", true
+		}
 		return {value_kind = .Text, text_value = "processes() -> Table"}, "", true
 	case:
 		cols := make([]string, 2, allocator)
@@ -848,9 +852,44 @@ multi_step_loop_stops_on_repeated_step :: proc(t: ^testing.T) {
 
 	report := runner_turn(&runner)
 	testing.expect_value(t, report.end, Agent_Loop_End.Repeated_Step)
-	testing.expect_value(t, report.step_count, 1)
-	testing.expect_value(t, len(lt.lines), 1)
+	// A repeat is known from its results: the second step ran, and the
+	// model gets no third reply.
+	testing.expect_value(t, report.step_count, 2)
+	testing.expect_value(t, len(lt.lines), 2)
+	testing.expect_value(t, fake.next, 2)
 	testing.expect_value(t, conversation.request_of(talk, 1).end_cause, Agent_Loop_End.Repeated_Step)
+}
+
+// The same acts whose results changed are no repeat: the loop goes on to
+// the final reply. The same acts in another order, or one act more, are no
+// repeat either.
+@(test)
+the_same_acts_with_new_results_are_no_repeat :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	talk := new(conversation.Conversation, context.temp_allocator)
+	testing.expect(t, conversation.request_keep(talk, "wait for a change") != nil)
+	win := Memory_Window{talk = talk, acts_for_principal = true}
+	lt := Loop_Transport{lines = make([dynamic]string, context.temp_allocator), vary = true}
+	bridge: agent_bridge.Agent_Bridge
+	testing.expect(t, agent_bridge.bridge_init(&bridge, runner_policy({1 = 15}, 0), {user_data = &lt, eval_lex = loop_eval_lex}))
+	defer agent_bridge.bridge_destroy(&bridge)
+	same := `{"text": "Again", "acts": [{"kind": "eval_lex", "line": "manual.signature(\"monitor\", 1)"}]}`
+	replies := []string{same, same, same, `{"text": "It changed three times."}`}
+	fake := Fake_Model{replies = replies}
+	runner := Runner{window = memory_window_port(&win), bridge = &bridge, model = fake_model(&fake)}
+	defer conversation_close(&runner)
+	report := runner_turn(&runner)
+	testing.expect_value(t, report.end, Agent_Loop_End.Final_Reply)
+	testing.expect_value(t, report.step_count, 4)
+	testing.expect_value(t, len(lt.lines), 3)
+	// The rule alone, at its edges.
+	a := Model_Act{kind = .Eval_Lex, line = "manual.modules()"}
+	b := Model_Act{kind = .Eval_Lex, line = "manual.exports(\"monitor\")"}
+	testing.expect(t, step_repeats({a, b}, {a, b}, {"x", "y"}, {"x", "y"}))
+	testing.expect(t, !step_repeats({a, b}, {b, a}, {"x", "y"}, {"y", "x"}))
+	testing.expect(t, !step_repeats({a, b}, {a}, {"x", "y"}, {"x"}))
+	testing.expect(t, !step_repeats({a}, {a}, {"x"}, {"x2"}))
+	testing.expect(t, !step_repeats({}, {}, {}, {}))
 }
 
 // Principal stop: pressing Stop during step 1 stops the loop before step 2

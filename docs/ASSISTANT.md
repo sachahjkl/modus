@@ -35,11 +35,15 @@ Each entry has a label and words:
 | `act N, not shown by the trusted display` | The trusted display refused its act dialog, or the window has no connection to it: nothing ran, and the window does not ask again |
 | `the reply to request N was refused at the border` | The words of the error record of the reply; no act of it runs |
 | `step N, limit reached` | The request took 16 steps; the agent stopped |
-| `step N, repeated step` | The agent proposed the acts of the step before again; they did not run, and the agent stopped |
+| `step N, repeated step` | The agent ran the acts of the step before again and got the same results, so it stopped. The same acts with new results go on: the agent can wait for a change |
 | `request N, stopped` | You stopped the agent |
 | `request N, model did not answer`, `window call stopped`, `grant ended` | Why the agent stopped before its answer |
 
 **Stop the agent.** While the agent works, a button Stop stands beside the field of the request. Press it, or press Escape: the agent stops before its next step or its next act.
+
+**Move through the conversation.** The newest entry shows until you move up: turn the wheel over the conversation, drag the scroll bar at its right, or press Page Up and Page Down; Control with Home or End goes to the first or the last entry. The view then stays where you put it while the agent goes on. Move to the end, or send a request, and the view follows the newest entry again.
+
+**A long text fits the view.** A reply or a result longer than the view shows the lines that fit, and a button such as "Show 140 more lines". Press it to read every line, and "Show fewer lines" to fold them again.
 
 **Older steps fold.** The result of an act of an older step, or of an older request, folds to one button, such as "Show 12 rows of Process". Press it to open the result, and "Hide result" to fold it again.
 
@@ -122,4 +126,4 @@ The runner cannot write the states 5, 6 and 7: `act_result` refuses them with `B
 
 ## 7. The tests
 
-The machine test part `assistant` (`docs/TOOLS.md`, "The parts of the machine test") runs the runner with a fake model: a step with an act that reads then a final reply, a grant-adding act that you refuse in the act dialog, and a malformed reply. The step that decides the act dialog presses only Enter or Escape, which refuse; a test never allows an act with repeated keys. The host tests of `tools/modustool/agent_runner`, `src/library/modus/contract/assistant`, `src/library/internal/assistant/conversation` and `src/library/internal/compositor/bar` give each refused form, and drive whole loops of steps with a fake model: discovery, a query and an answer; 16 steps; a repeated step; a stop; a malformed reply at a later step; the end of a grant.
+The machine test part `assistant` (`docs/TOOLS.md`, "The parts of the machine test") runs the runner with a fake model: a step with an act that reads then a final reply, a grant-adding act that you refuse in the act dialog, and a malformed reply. The step that decides the act dialog presses only Enter or Escape, which refuse; a test never allows an act with repeated keys. The host tests of `tools/modustool/agent_runner`, `src/library/modus/contract/assistant`, `src/library/internal/assistant/conversation`, `src/library/internal/assistant/conversation_view` (the scroll and the bound of the lines) and `src/library/internal/compositor/bar` give each refused form, and drive whole loops of steps with a fake model: discovery, a query and an answer; 16 steps; a repeated step; the same acts with new results; a stop; a malformed reply at a later step; the end of a grant.

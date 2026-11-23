@@ -214,7 +214,7 @@ Why this order: each layer gives a working loop; the reach grows only after the 
 
 The first layer is built: the runner runs up to 16 steps of up to 16 single calls of the read-only list for one request, through the bridge; `manual.modules`, `manual.exports` and `manual.signature` are on the read-only list, and the instructions of the runner name no service; the window shows each step once, folds the results of the older steps, and stops the loop with Stop or Escape through the export `stop_requested`; each end of the loop is a member of `Agent_Loop_End`, which the window shows with `loop_end`. The design of the first layer as built is in [assistant.md](assistant.md), "The agent loop". Left: the layers 2 to 5.
 
-In the first layer a step is the acts of one model reply, not lines of an agent console: the repeat check compares the acts of two steps, not their results, because a single call has no name to bind, and the results of one step can differ for the same acts.
+In the first layer a step is the acts of one model reply, not lines of an agent console. The repeat check compares the acts of two steps and their outcomes, as the model reads them: the acts of a repeat run once more before the loop ends, which costs nothing, because each act of the first layer reads only.
 
 Open:
 
