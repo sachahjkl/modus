@@ -1,11 +1,12 @@
 // The worker of the processor of a browser machine
 // (src/md/features/browser_machine.md, "The constraints": the thread of the
 // document never runs a processor). It runs the kernel with the host of
-// browser_machine_host.js, sends the lines of the serial ports and the
-// pixels of the framebuffer to the page, and gives the keys and the
+// browser_machine_host.js, sends the stages of the start, the lines of the
+// serial ports and the pixels of the framebuffer to the page, and gives
+// the keys and the
 // pointer of the page to the PS/2 controller, and the text of the console
 // page to COM2.
-import { BrowserMachine, LoopResult, MachineState, trustDescriptionHashParse } from "./browser_machine_host.js";
+import { BOOT_STAGE_SENTENCES, BootStage, BootStageTracker, BrowserMachine, LoopResult, MachineState, trustDescriptionHashParse } from "./browser_machine_host.js";
 
 // The time of one slice of the loop before the worker reads its messages.
 const SLICE_NANOSECONDS = 8000000;
@@ -76,12 +77,47 @@ async function trustOf(bootImageUrl) {
   return hash;
 }
 
+// The stage of the start, for the page: a message at each new stage, with
+// its sentence, and the bytes of the download as they come. The document
+// imports nothing of the host: the worker gives the words.
+const postStage = (stage, loaded = 0, total = 0) => self.postMessage({ kind: "stage", stage, sentence: BOOT_STAGE_SENTENCES[stage], loaded, total });
+
+// bytesOf reads the body of a response and posts the bytes that came, at
+// most one message for each 64 KiB.
+async function bytesOf(response) {
+  const total = Number(response.headers.get("content-length")) || 0;
+  const reader = response.body.getReader();
+  const chunks = [];
+  let loaded = 0, posted = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    if (loaded - posted >= 65536) {
+      posted = loaded;
+      postStage(BootStage.Download, loaded, total);
+    }
+  }
+  const bytes = new Uint8Array(loaded);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  postStage(BootStage.Download, loaded, total);
+  return bytes;
+}
+
 async function start({ kernelUrl, bootImageUrl, memoryMebibytes, width = 0, height = 0, cacheBaseUrl = "" }) {
+  const tracker = new BootStageTracker({ desktop: width > 0 && height > 0, onStage: (stage) => postStage(stage) });
+  postStage(BootStage.Download);
   const kernelModule = await WebAssembly.compileStreaming(fetch(kernelUrl));
   const response = await fetch(bootImageUrl);
-  const bootImage = response.ok ? new Uint8Array(await response.arrayBuffer()) : undefined;
+  const bootImage = response.ok ? await bytesOf(response) : undefined;
   if (!response.ok) pendingLines.push("page: no boot image at " + bootImageUrl + ": the kernel starts with none");
   const trustDescriptionHash = bootImage ? await trustOf(bootImageUrl) : null;
+  tracker.enter(BootStage.Kernel);
   machine = new BrowserMachine({
     kernelModule,
     bootImage,
@@ -92,8 +128,14 @@ async function start({ kernelUrl, bootImageUrl, memoryMebibytes, width = 0, heig
     cacheBaseUrl,
     clockNanoseconds,
     idleWait,
-    onSerialLine: (line) => pendingLines.push(line),
-    onConsoleLine: (line) => pendingConsoleLines.push(line),
+    onSerialLine: (line) => {
+      pendingLines.push(line);
+      tracker.serialLine(line);
+    },
+    onConsoleLine: (line) => {
+      pendingConsoleLines.push(line);
+      tracker.consoleLine(line);
+    },
   });
   if (cacheBaseUrl && !machine.objectCache.configured) pendingLines.push("page: the object cache address is refused: the machine has no object cache");
   await machine.start();

@@ -439,8 +439,9 @@ bar_in_interface_font: bool
 // bar_measure writes once in the log the time of one whole frame of the
 // bar with the start menu open, built and drawn, in the font of
 // the cells and in the interface font: the least of 20 rounds, so that a
-// round that the host stops in its middle does not count. It runs before
-// the first frame, which draws the whole screen after it.
+// round that the host stops in its middle does not count. It runs after
+// the first frame of a measure run only (start_measures_run), and the
+// frame after it draws the whole screen.
 bar_measure :: proc "contextless" () {
 	ROUNDS :: 20
 	font := display.interface_font_of()
@@ -732,8 +733,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	background_build()
 	pointer_x, pointer_y = desktop_width / 2, desktop_height / 2
 	bar_mark_build()
-	memory_measure()
-	title_measure()
 	pointer_theme_open(ctx) // pointer_picture.odin
 	damage_whole_screen()
 	full_measure = true
@@ -750,7 +749,6 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	display.script_coverage_tell("compositor")
 	palette_start() // palette.odin
 	bar_layout_update()
-	bar_measure()
 	settings_seen: u32
 	// settings_seen starts at 0: when the boot pass of settings wrote the page
 	// before this read, the first turn of the loop sees a change and tells
@@ -1071,9 +1069,28 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			frames += 1
 			if frames == 1 {
 				system.log_fact(.Info, First_Frame{})
+				if system.measure_run() {
+					start_measures_run()
+				}
 			}
 		}
 	}
+}
+
+// start_measures_run runs the measures of the copies, of a title bar, of
+// the blend of the arrow and of the bar, once, after the first frame of a
+// measure run (system.measure_run). They are never on the path to the first
+// frame: on the software processor of a browser machine they took more
+// than 100 s. Each one writes over the frame in memory, so the next frame
+// draws the whole screen.
+start_measures_run :: proc "contextless" () {
+	memory_measure()
+	title_measure()
+	if pointer_theme != nil {
+		pointer_blend_measure() // pointer_picture.odin
+	}
+	bar_measure()
+	damage_whole_screen()
 }
 
 // settings_changed gives the new font to the text of the desktop, draws the
@@ -1565,6 +1582,7 @@ draw :: proc "contextless" (now: u64) {
 		move_longest = max(move_longest, spent)
 	}
 	pointer_frame_end()
+	pointer_motion_frame_end(system.nanoseconds()) // pointer_picture.odin
 	if full_measure {
 		full_measure = false
 		system.log_fact(.Info, Full_Frame_Measured{width = u64(screen.width), height = u64(screen.height), windows = u64(order_count), elapsed = value_kinds.Time_In_Microseconds(spent / 1000)})

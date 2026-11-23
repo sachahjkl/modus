@@ -110,7 +110,7 @@ wiring_service_start :: proc "contextless" () -> bool {
 	if slot == nil {
 		return false
 	}
-	file := system.image_find(image, "wiring")
+	file := image_file_checked("wiring")
 	if len(file) == 0 {
 		return false
 	}
@@ -141,7 +141,7 @@ wiring_service_start :: proc "contextless" () -> bool {
 		if context_refused("wiring", &grants, &values) {
 			status = .Bad_State
 		} else {
-			process, status = system.process_start(file, "wiring", grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, "wiring"), nil, &prepared)
+			process, status = system.process_start(file, "wiring", grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, "wiring"), nil, &prepared, load_source())
 		}
 	}
 	if status != .Ok {
@@ -666,7 +666,11 @@ start_with_wiring_begin :: proc "contextless" (asker: ^Started, tag: u32, name: 
 	child_offset, child_size: u64
 	for &entry in system.image_entries(image) {
 		if system.name_of(entry.name[:]) == name && entry.offset <= u64(len(image)) && entry.size <= u64(len(image)) - entry.offset {
-			child_offset, child_size = entry.offset, entry.size
+			// The wiring service reads the module at this offset: its bytes
+			// have the hash of their entry first.
+			if image_entry_give(&entry) {
+				child_offset, child_size = entry.offset, entry.size
+			}
 			break
 		}
 	}

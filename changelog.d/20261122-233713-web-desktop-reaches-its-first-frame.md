@@ -1,0 +1,3 @@
+type: Fixed
+
+**The web desktop reaches its first frame**: on a browser machine the root service checks the table of the boot image at its start and hashes each file at its first load or give, once, and refuses a file whose hash differs before any read of it; on a machine whose boot program checked the files, it hashes each one once at its start, as before, and no load or give hashes it again. The compositor validates only the pointer theme in force, and runs its measures of copies, title bar, arrow and bar only in a measure run, after its first frame. Before, the start of the desktop in a page passed the hang bound of the start policy, and the rescue start policy stopped it before its first frame.

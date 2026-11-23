@@ -240,7 +240,6 @@ grep "root: the resource font_outlines" build/test_output.txt
 |---|---|---|
 | `vector_glyphs: one glyph ...` | after "from the private glyph cache:": one glyph in ns, the least of 50 batches; after "Spleen 8x16:": one glyph of Spleen | 309 ns from the glyph cache of the boot image before it left, Spleen 35 ns (`docs/FONTS.md`, section 5) |
 | `compositor: the blend of the arrow of 32x32 ...` | the blend of the arrow in ns, and a copy of the same size | 824 to 1008 ns, a copy 151 to 153 ns |
-| `root: the resource font_outlines (its size, its hash checked in N us) ...` | the hash of the font outlines in us | not measured yet; the glyph cache of 390 624 bytes that it replaces took 796 to 966 us (`docs/FONTS.md`, section 5) |
 
 On the host, with the optimisation of a module. Each test prints the time of each form, and fails only when the forms give different bytes:
 

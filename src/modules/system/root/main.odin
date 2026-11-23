@@ -436,7 +436,7 @@ replacement_records: [system.REPLACEMENT_CAPACITY]module.Replacement
 // load_source gives what the loader of a process that this service starts can
 // read: the boot image, and the replacements of this time.
 load_source :: proc "contextless" () -> system.Load_Source {
-	return {image = image, replacements = system.replacements_read(replacement_table, &replacement_records)}
+	return {image = image, replacements = system.replacements_read(replacement_table, &replacement_records), image_checks = &image_checks}
 }
 
 // The boot display (package bootscreen), on the screen of the machine.
@@ -490,7 +490,7 @@ shortage_start :: proc "contextless" () -> system.Status {
 		processor   = own.processor,
 		log_records = LOG_RECORDS_OF_A_PROCESS,
 	}
-	process, status := system.process_start(system.image_find(image, "shortage"), "shortage", context_grants.grants, random.values_with_seed(&process_generator, values.values), amounts, nil, &prepared)
+	process, status := system.process_start(image_file_checked("shortage"), "shortage", context_grants.grants, random.values_with_seed(&process_generator, values.values), amounts, nil, &prepared, load_source())
 	if status != .Ok {
 		system.log_fact(.Info, Shortage_Start_Failed{status = status})
 		shortage_failed()
@@ -565,7 +565,7 @@ operation_fuzzing_start :: proc "contextless" () -> system.Status {
 		processor   = own.processor,
 		log_records = LOG_RECORDS_OF_A_PROCESS,
 	}
-	process, status := system.process_start(system.image_find(image, OPERATION_FUZZING_NAME), OPERATION_FUZZING_NAME, context_grants.grants, random.values_with_seed(&process_generator, values.values), amounts, nil, &prepared)
+	process, status := system.process_start(image_file_checked(OPERATION_FUZZING_NAME), OPERATION_FUZZING_NAME, context_grants.grants, random.values_with_seed(&process_generator, values.values), amounts, nil, &prepared, load_source())
 	if status != .Ok {
 		system.log_fact(.Error, Operation_Fuzzing_Start_Failed{status = status})
 		return status
@@ -910,7 +910,7 @@ input_start :: proc "contextless" () -> system.Status {
 		fresh_bytes_forget(slot)
 		return .Bad_State
 	}
-	process, status := system.process_start(system.image_find(image, input_name), input_name, context_grants.grants, random.values_with_seed(&process_generator, input_values.values), budget_of(system.image_find(image, input_name), input_name), input_mappings[:input_mapping_count], &prepared)
+	process, status := system.process_start(image_file_checked(input_name), input_name, context_grants.grants, random.values_with_seed(&process_generator, input_values.values), budget_of(image_file_checked(input_name), input_name), input_mappings[:input_mapping_count], &prepared, load_source())
 	if status != .Ok {
 		fresh_bytes_forget(slot)
 		system.log_fact(.Warning, Input_Start_Failed{status = status})
@@ -1015,6 +1015,11 @@ display_holder_start :: proc "contextless" () -> system.Status {
 	mapping_count := 0
 	for &item in system.image_entries(image) {
 		if system.name_of(item.name[:]) == display_name && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
+			file_mapping, given := image_entry_mapping(&item, isolated.FILE_ADDRESS)
+			if !given {
+				served^ = {}
+				return .Bad_Operation
+			}
 			served.service_memory, served.service, status = system.ring_create()
 			if status != .Ok {
 				system.log_fact(.Warning, Compositor_Service_Ring_Failed{status = status})
@@ -1024,7 +1029,7 @@ display_holder_start :: proc "contextless" () -> system.Status {
 			system.grant_put(&context_grants, system.GRANT_SERVICE, {served.service_memory, {.Read, .Write}})
 			system.value_put(&values, COMPOSITOR_VALUE_FILE_ADDRESS, isolated.FILE_ADDRESS)
 			system.value_put(&values, COMPOSITOR_VALUE_FILE_SIZE, item.size)
-			mappings[0] = {memory = image_memory, address = isolated.FILE_ADDRESS, first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
+			mappings[0] = file_mapping
 			mapping_count = 1
 			served.hash = item.hash
 		}
@@ -1053,7 +1058,7 @@ display_holder_start :: proc "contextless" () -> system.Status {
 	// The compositor imports the drawing module: its load needs the boot
 	// image as the source of its imports.
 	display_holder_load_error: module.Load_Error
-	display_holder, status = system.process_start(system.image_find(image, display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, display_name), display_name), mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error)
+	display_holder, status = system.process_start(image_file_checked(display_name), display_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(image_file_checked(display_name), display_name), mappings[:mapping_count], &prepared, load_source(), &display_holder_load_error)
 	if status != .Ok {
 		if display_holder_load_error.stage != u32(module.Load_Stage.None) {
 			system.log_fact(.Error, Compositor_Load_Refused{})
@@ -1874,7 +1879,7 @@ renderer_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started,
 		return .Bad_State
 	}
 	load_error: module.Load_Error
-	process, status := system.process_start(system.image_find(image, terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, terminal_name), terminal_name), mappings[:mapping_count], &prepared, load_source(), &load_error)
+	process, status := system.process_start(image_file_checked(terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(image_file_checked(terminal_name), terminal_name), mappings[:mapping_count], &prepared, load_source(), &load_error)
 	if status != .Ok {
 		fresh_bytes_forget(view)
 		if load_error.stage != u32(module.Load_Stage.None) {
@@ -1945,7 +1950,7 @@ window_terminal_start :: proc "contextless" (view: ^Started, writer: ^Started, r
 	// The terminal imports the drawing module: its load needs the boot
 	// image as the source of its imports.
 	load_error: module.Load_Error
-	process, status := system.process_start(system.image_find(image, terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(system.image_find(image, terminal_name), terminal_name), mappings[:mapping_count], &prepared, load_source(), &load_error)
+	process, status := system.process_start(image_file_checked(terminal_name), terminal_name, context_grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(image_file_checked(terminal_name), terminal_name), mappings[:mapping_count], &prepared, load_source(), &load_error)
 	if status != .Ok {
 		fresh_bytes_forget(view)
 		if load_error.stage != u32(module.Load_Stage.None) {

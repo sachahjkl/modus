@@ -38,6 +38,8 @@ Each value comes from the first measure below, on the test machine (one processo
 
 ### The three measures on the path of the system
 
+**The start measures are not on the path.** The compositor also measures its copies and fills, a title bar, the blend of the arrow and the bar with its start menu. Those run once, after the first frame, and only in a measure run (`system.measure_run`, the boot image of `modustool measure`): before, they ran at each boot before the first frame, and on the software processor of a browser machine they took more than 100 s (the bar 69 s and 20 s, the copies 17 s). The three measures below are of the path itself, and cost one read of the clock.
+
 The compositor measures all three, with `system.nanoseconds()`, the clock of the system that the kernel keeps for each process: never a clock of the host. Each measure is one sentence of the log, and the tool keeps it in the measure record; no test reads a time.
 
 | Measure | From | To | Its line |
@@ -52,6 +54,12 @@ The compositor measures all three, with `system.nanoseconds()`, the clock of the
 compositor: measure: the time of a frame, from the first record that the compositor reads to the flip: least <t> us, median <t> us, over <n> frames
 compositor: measure: the time of a key to the screen, from its record in the input service to the flip that shows it: least <t> us, median <t> us, over <n> keys
 compositor: measure: the start of the window <name>, from Process_Start to its first frame: <t> us
+```
+
+**The rate of the frames while the pointer moves.** A fourth line, beside the three: over a series of 120 frames that each show a pointer record that came after the frame before, with no gap of more than 250 ms, the compositor writes the frames, the time from the flip of the first to the flip of the last, the frames each second and the pointer records. It says whether a pointer that moves gets a frame at each step of the pacing, which the time of a frame alone does not say. A gap ends a series with no line.
+
+```
+compositor: measure: the pointer moved in <n> frames over <t> us: <n> frames each second, for <n> pointer records
 ```
 
 **The tie of a key to its effect.** A frame shows a key only when the process says so. The path:

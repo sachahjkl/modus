@@ -77,6 +77,7 @@ trust_check :: proc "contextless" (boot: ^info.Boot_Info, image: []u8) -> (descr
 	}
 	verifier := secure_boot_on() ? info.Verifier.Firmware_And_Boot_Program : info.Verifier.Boot_Program
 	trust.verifier = u64(verifier)
+	trust.file_check = u64(info.File_Check.Boot_Program)
 	trust.description_hash = blake3.hash(description)
 	trust.entry_count = u64(len(list))
 	trust.check_cycles = u64(intrinsics.read_cycle_counter()) - start

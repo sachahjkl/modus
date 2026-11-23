@@ -631,6 +631,16 @@ Pointer_Picture_Measured :: struct {
 	longest_time: value_kinds.Time_In_Nanoseconds,
 }
 
+// The rate of the frames while the pointer moves, over a series of frames
+// that each show a new pointer record.
+@(log_fact = "compositor: measure: the pointer moved in {frames} frames over {span}: {frames_each_second} frames each second, for {records} pointer records")
+Pointer_Motion_Measured :: struct {
+	frames:             u64,
+	span:               value_kinds.Nanoseconds_As_Microseconds,
+	frames_each_second: u64,
+	records:            u64,
+}
+
 // The blend of the arrow and a copy of the same size.
 @(log_fact = "compositor: the blend of the arrow of {width}x{height} ({transparent_pixels} of {pixels} pixels transparent): {blend_time}; a copy of the same size: {copy_time}")
 Arrow_Blend_Measured :: struct {

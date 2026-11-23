@@ -97,6 +97,22 @@ Boot_Image_Agrees :: struct {
 	check_time:      value_kinds.Time_In_Microseconds,
 }
 
+// No boot program checked the files: this service checked the table of
+// the boot image and its own module at its start, and hashes each other
+// file at its first use.
+@(log_fact = "root: no boot program verified the system description: its hash is the one of the boot record, and nothing verified its signature; this service checked the table of its {checked_entries} modules and resources and its own module in {check_time}, and hashes each other file at its first use")
+Image_Checked_At_Load :: struct {
+	checked_entries: u64,
+	check_time:      value_kinds.Time_In_Microseconds,
+}
+
+// A file of the boot image whose bytes do not have the hash of its entry,
+// at its first use: it is not used.
+@(log_fact = "root: the file {file} of the boot image does not have the hash of its entry: it is not used")
+Image_File_Hash_Wrong :: struct {
+	file: value_kinds.Module_Name_Field,
+}
+
 // The time of the check of the signature and of every hash by the boot
 // program.
 @(log_fact = "root: the boot program checked the signature and every hash in {check_time}")

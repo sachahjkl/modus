@@ -29,8 +29,8 @@ settings_boot_pass: bool
 // text_settings_create makes the settings page and finds the font
 // outlines. It writes the initial defaults before any process starts and
 // immediately unmaps its writable mapping so `settings` is the sole writer
-// of the settings page. Font outlines are given only when their hash is
-// right (resource_mapping) and their format is valid: a resource shorter
+// of the settings page. Font outlines are given only when their format is
+// valid; their hash was checked with the whole image (trust_check): a resource shorter
 // than its header, or whose header states another size than the resource,
 // is not given, so a process that reads the size in the header reads only
 // mapped bytes. With no outlines, each process draws with Spleen 8x16, and

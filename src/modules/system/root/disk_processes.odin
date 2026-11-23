@@ -459,8 +459,13 @@ disk_process_run :: proc "contextless" (name: string, file: []u8, hash: [disk_pr
 		system.grant_put(&context_grants, system.GRANT_STORAGE_SERVICE, {storage_service.process, {.Read}})
 		for &item in system.image_entries(image) {
 			if is_role_holder(system.name_of(item.name[:]), .Storage) && item.offset % system.PAGE_SIZE == 0 && item.offset <= u64(len(image)) && item.size <= u64(len(image)) - item.offset {
+				mapping, given := image_entry_mapping(&item, storage.FILE_ADDRESS)
+				if !given {
+					release(slot) // The compositor forgets the ring.
+					return .Bad_Operation
+				}
 				system.value_put(&values, system.GRANT_VALUE_STORAGE_FILE_SIZE, item.size)
-				mappings[mapping_count] = {memory = image_memory, address = storage.FILE_ADDRESS, first = item.offset / system.PAGE_SIZE, page_count = (item.size + system.PAGE_SIZE - 1) / system.PAGE_SIZE}
+				mappings[mapping_count] = mapping
 				mapping_count += 1
 			}
 		}

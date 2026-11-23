@@ -241,9 +241,10 @@ allocator_check :: proc() -> bool {
 	return true
 }
 
-// The command rule-checks: the five checks alone. The third is in
+// The command rule-checks: the six checks alone. The third is in
 // export_error_record_check.odin, the fourth in choice_constant_check.odin,
-// and the fifth in processor_random_check.odin.
+// the fifth in processor_random_check.odin, and the sixth in
+// image_checks_field_check.odin.
 run_rule_checks :: proc(args: []string) -> int {
-	return operation_count_check() && allocator_check() && export_error_record_check() && choice_constant_check() && processor_random_check() ? 0 : foundation.EXIT_FAILURE
+	return operation_count_check() && allocator_check() && export_error_record_check() && choice_constant_check() && processor_random_check() && image_checks_field_check() ? 0 : foundation.EXIT_FAILURE
 }

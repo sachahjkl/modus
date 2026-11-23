@@ -139,7 +139,7 @@ PLAN_ROLE_RING_FACE_CAPACITY :: 8
 // protocol of each ring.
 @(private = "file")
 plan_role_module_fills :: proc "contextless" (user: rawptr, role: role_contract.Role, module_name: string) -> bool {
-	file := system.image_find(image, module_name)
+	file := image_file_checked(module_name)
 	if module.validate(file) != .None {
 		return false
 	}

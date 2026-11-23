@@ -261,6 +261,7 @@ Boot_Trust :: struct {
 	key_floor:           u64, // The lowest key number that the TPM lets start. 0: none.
 	key_floor_state:     u64, // What the read of the key floor found: the word of a Floor_State (floor_state_of_word).
 	floor_status:        u64, // The status of the firmware, or the response code of the TPM, of the first read that failed.
+	file_check:          u64, // The word of a File_Check (file_check_of_word): who checks the hash of each file of the boot image, and when.
 }
 
 // What the boot program found at the index of a TPM floor. In each state but
@@ -328,6 +329,74 @@ Verifier :: enum u64 {
 // false for a word that names no verifier.
 verifier_of_word :: proc "contextless" (word: u64) -> (verifier: Verifier, ok: bool) {
 	return enum_word.member_of_word(Verifier, word)
+}
+
+// Who checks the bytes of each file of the boot image against the hash that
+// the system description names, and when (docs/TRUSTED_BOOT.md, "Layer 1:
+// the signed system description"). The record says only what happened: a
+// machine where nothing checked the files before the kernel names the root
+// service, never the boot program.
+File_Check :: enum u64 {
+	None                 = 0, // No member: the root service refuses the record.
+	Boot_Program         = 1, // The boot program hashed each file before the kernel; the root service hashes each one again at its start.
+	Root_Service_At_Load = 2, // Nothing hashed the files before the kernel; the root service hashes each one at its first use, a load or a give, and refuses one whose hash differs.
+}
+
+// file_check_of_word is the border of Boot_Trust.file_check: the member, or
+// false for a word that names no member.
+file_check_of_word :: proc "contextless" (word: u64) -> (check: File_Check, ok: bool) {
+	return enum_word.member_of_word(File_Check, word)
+}
+
+// What the root service decides from a trust record, before it reads the
+// description: the record names who checked the files and who verified
+// the description, and the two must agree with what can have happened.
+Trust_Decision :: enum u8 {
+	Accepted                      = 0,
+	No_File_Check                 = 1, // The file check is None.
+	Unknown_File_Check            = 2, // A word that names no File_Check.
+	Unknown_Verifier              = 3, // A word that names no Verifier.
+	Boot_Program_Without_Verifier = 4, // The boot program hashed the files, and the record names no verifier of the description.
+	Verifier_Without_Boot_Program = 5, // Nothing hashed the files before the kernel, and the record names a verifier of the description.
+}
+
+// trust_decision reads the two words of a trust record through their
+// borders and decides. With Accepted, file_check and verifier are the
+// members; with any other decision, the record is refused.
+trust_decision :: proc "contextless" (trust: Boot_Trust) -> (file_check: File_Check, verifier: Verifier, decision: Trust_Decision) {
+	check_ok, verifier_ok: bool
+	file_check, check_ok = file_check_of_word(trust.file_check)
+	if !check_ok {
+		return .None, .None, .Unknown_File_Check
+	}
+	verifier, verifier_ok = verifier_of_word(trust.verifier)
+	if !verifier_ok {
+		return file_check, .None, .Unknown_Verifier
+	}
+	switch file_check {
+	case .None:
+		return file_check, verifier, .No_File_Check
+	case .Boot_Program:
+		if verifier == .None {
+			return file_check, verifier, .Boot_Program_Without_Verifier
+		}
+	case .Root_Service_At_Load:
+		if verifier != .None {
+			return file_check, verifier, .Verifier_Without_Boot_Program
+		}
+	}
+	return file_check, verifier, .Accepted
+}
+
+// The sentence of each refusal, for the log and the boot display.
+@(rodata)
+trust_decision_sentences := [Trust_Decision]string {
+	.Accepted                      = "the trust record is accepted",
+	.No_File_Check                 = "the boot record names no check of the files of the boot image",
+	.Unknown_File_Check            = "the boot record names a check of the files that no member names",
+	.Unknown_Verifier              = "the boot record names a verifier of the system description that no member names",
+	.Boot_Program_Without_Verifier = "the boot program did not verify the system description",
+	.Verifier_Without_Boot_Program = "the boot record names a verifier of the system description, and no check of its files before the kernel",
 }
 
 // The kind of the key that signed the system description.

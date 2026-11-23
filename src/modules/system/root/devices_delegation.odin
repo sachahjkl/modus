@@ -91,7 +91,7 @@ devices_service_start :: proc "contextless" () -> bool {
 	}
 	devices_starts += 1
 	slot := part_place_take()
-	file := system.image_find(image, "devices")
+	file := image_file_checked("devices")
 	if slot == nil {
 		system.log_fact(.Warning, Devices_Service_Start_Failed{status = .No_Slot})
 		return false
@@ -119,7 +119,7 @@ devices_service_start :: proc "contextless" () -> bool {
 		if context_refused("devices", &grants, &values) {
 			status = .Bad_State
 		} else {
-			process, status = system.process_start(file, "devices", grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, "devices"), nil, &prepared)
+			process, status = system.process_start(file, "devices", grants.grants, random.values_with_seed(&process_generator, values.values), budget_of(file, "devices"), nil, &prepared, load_source())
 		}
 	}
 	if status != .Ok {

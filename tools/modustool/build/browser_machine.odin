@@ -11,6 +11,7 @@ import "core:strings"
 import "core:time"
 import "modus:contract/blake3"
 import info "modus:contract/boot_info"
+import "modus:contract/pointer_pictures"
 import "modus:contract/replacement_list"
 import "modus:contract/start_list"
 import "modus:contract/system_description"
@@ -21,6 +22,9 @@ BROWSER_MACHINE_KERNEL_FILE :: "modulus_kernel.wasm"
 BROWSER_MACHINE_BOOT_IMAGE_FILE :: "boot.image"
 BROWSER_MACHINE_HOST_FILE :: "browser_machine_host.js"
 BROWSER_MACHINE_KERNEL_PATH :: BROWSER_MACHINE_FOLDER + "/" + BROWSER_MACHINE_KERNEL_FILE
+// The features of WebAssembly past the base set that the kernel uses. Not
+// atomics yet: its idle wait would wait on a memory that is not shared.
+BROWSER_MACHINE_KERNEL_TARGET_FEATURES :: "bulk-memory"
 BROWSER_MACHINE_BOOT_IMAGE_PATH :: BROWSER_MACHINE_FOLDER + "/" + BROWSER_MACHINE_BOOT_IMAGE_FILE
 BROWSER_MACHINE_HOST_PATH :: BROWSER_MACHINE_FOLDER + "/" + BROWSER_MACHINE_HOST_FILE
 // The boot image of the page before its signature: the input of the signed
@@ -445,7 +449,11 @@ browser_machine_build :: proc() -> bool {
 		return false
 	}
 	kernel := BROWSER_MACHINE_KERNEL_PATH
-	if !foundation.run({"odin", "build", foundation.SOURCE_FOLDER_KERNEL, "-target:freestanding_wasm64p32", "-o:speed", "-no-entry-point", "-default-to-nil-allocator", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG, "-extra-linker-flags:--export=" + BROWSER_MACHINE_STACK_POINTER_EXPORT, "-out:" + BROWSER_MACHINE_KERNEL_PATH}) {
+	// bulk-memory makes each copy of the compiler one memory.copy. Without
+	// it, a copy calls the memcpy of the runtime, a loop of one byte, and the
+	// software processor copies its register file at each instruction
+	// (src/md/features/browser_machine.md, "The size and the speed").
+	if !foundation.run({"odin", "build", foundation.SOURCE_FOLDER_KERNEL, "-target:freestanding_wasm64p32", "-target-features:" + BROWSER_MACHINE_KERNEL_TARGET_FEATURES, "-o:speed", "-no-entry-point", "-default-to-nil-allocator", foundation.SOURCE_LIBRARY_FLAG, foundation.INTERNAL_LIBRARY_FLAG, foundation.KERNEL_LIBRARY_FLAG, foundation.CUSTOM_ATTRIBUTES_FLAG, "-extra-linker-flags:--export=" + BROWSER_MACHINE_STACK_POINTER_EXPORT, "-out:" + BROWSER_MACHINE_KERNEL_PATH}) {
 		return false
 	}
 	bytes, read_error := os.read_entire_file(kernel, context.temp_allocator)
@@ -570,9 +578,30 @@ browser_machine_page_image_files :: proc(base: []u8, image := Browser_Machine_Im
 	module_count = len(list)
 	switch image {
 	case .Desktop:
+		// One pointer theme: the first of the order of preference that the
+		// base holds, the one that the compositor takes at its start. The
+		// root service of a page hashes each resource that it gives, and a
+		// second theme would cost its hash on the software processor with
+		// no use (browser_machine.md, "The boot image of the page").
+		theme_kept := ""
+		preference := pointer_pictures.RESOURCE_PREFERENCE
+		for theme in preference {
+			for &entry in resources {
+				if theme_kept == "" && system_description.name_of(&entry.name) == theme {
+					theme_kept = theme
+				}
+			}
+		}
 		for &entry in resources {
 			name := system_description.name_of(&entry.name)
 			if name == system_description.RESOURCE_DESCRIPTION || name == system_description.RESOURCE_SIGNATURE || name == replacement_list.RESOURCE_NAME {
+				continue
+			}
+			is_theme := false
+			for theme in preference {
+				is_theme ||= name == theme
+			}
+			if is_theme && name != theme_kept {
 				continue
 			}
 			bytes, inside := info.image_entry_bytes(base, &entry)
@@ -663,6 +692,44 @@ browser_machine_console_write :: proc() -> bool {
 	return browser_machine_page_image_write(BOOT_IMAGE, .Console)
 }
 
+// The tests of the stage tracker of the host, which modustool check and
+// browser-machine boot run in Node.
+BROWSER_MACHINE_HOST_TEST_TEXT :: #load("browser_machine/browser_machine_host_test.js", string)
+
+// The folder where browser_machine_host_tests_run writes the host that the
+// tests import: a check of the flake has no folder of the page.
+BROWSER_MACHINE_HOST_TEST_FOLDER :: foundation.BUILD_FOLDER + "/browser_machine_host_test"
+
+// browser_machine_host_tests_run runs the tests of the stage tracker in
+// Node on the host as the tool holds it, and says whether they passed. A
+// host with no node fails: the development shell and the checks of the
+// flake give it.
+browser_machine_host_tests_run :: proc() -> bool {
+	if error := os.make_directory_all(BROWSER_MACHINE_HOST_TEST_FOLDER); error != nil && error != .Exist {
+		fmt.eprintfln("modustool: cannot make %s: %v", BROWSER_MACHINE_HOST_TEST_FOLDER, error)
+		return false
+	}
+	host_path := strings.concatenate({BROWSER_MACHINE_HOST_TEST_FOLDER, "/", BROWSER_MACHINE_HOST_FILE}, context.temp_allocator)
+	host_text := ""
+	files := BROWSER_MACHINE_PAGE_FILES
+	for file in files {
+		if file.name == BROWSER_MACHINE_HOST_FILE {
+			host_text = file.text
+		}
+	}
+	if error := os.write_entire_file(host_path, transmute([]u8)host_text); error != nil {
+		fmt.eprintfln("modustool: cannot write %s: %v", host_path, error)
+		return false
+	}
+	state, output, error_output, error := os.process_exec({command = {"node", "--input-type=module", "--eval", BROWSER_MACHINE_HOST_TEST_TEXT, host_path}}, context.temp_allocator)
+	if error != nil || !state.success {
+		fmt.eprintfln("modustool: the tests of the stage tracker of %s failed (code %d, %v): %s%s", BROWSER_MACHINE_HOST_FILE, state.exit_code, error, string(output), string(error_output))
+		return false
+	}
+	foundation.test_passed_print("the stage tracker of the host: %s", strings.trim_space(string(output)))
+	return true
+}
+
 // The console page: the host of the page with the second serial port as
 // its terminal. The site publishes the desktop page only.
 BROWSER_MACHINE_CONSOLE_PAGE_TEXT :: #load("browser_machine/browser_machine_console.html", string)
@@ -735,8 +802,9 @@ browser_machine_trust_write :: proc(image_path: string) -> bool {
 // the bound. Its arguments: the host module, the kernel, the boot image
 // (empty: none), the bound in milliseconds, the usable line, the command,
 // the prefix and the text of the answer line. After the answer it writes
-// "framebuffer: <pixels that are not black> <pixels>". Its last line is
-// "machine: <state> <stop code> <trap>".
+// "framebuffer: <pixels that are not black> <pixels>". At each stage of the
+// start (BootStageTracker of the host) it writes "stage: <stage> at <time>".
+// Its last line is "machine: <state> <stop code> <trap>".
 BROWSER_MACHINE_NODE_PROGRAM :: `
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -750,6 +818,8 @@ const idleWord = new Int32Array(new SharedArrayBuffer(4));
 let usable = false, typed = false, answered = false;
 const started = Date.now();
 const end = started + Number(boundText);
+const tracker = new host.BootStageTracker({ desktop: true, onStage: (stage) => console.log("stage: " + stage + " at " + ((Date.now() - started) / 1000).toFixed(1) + " s") });
+tracker.enter(host.BootStage.Kernel);
 const machine = new host.BrowserMachine({
   kernelModule, bootImage, trustDescriptionHash, memoryMebibytes: 512, framebufferWidth: 1280, framebufferHeight: 800,
   clockNanoseconds: () => process.hrtime.bigint(),
@@ -760,6 +830,7 @@ const machine = new host.BrowserMachine({
   },
   onSerialLine: (line) => {
     console.log("serial: " + line);
+    tracker.serialLine(line);
     if (!usable && line.includes(usableLine)) usable = true;
     if (typed && line.startsWith(answerPrefix) && line.includes(answerText)) answered = true;
   },
@@ -816,6 +887,11 @@ browser_machine_boot :: proc(boot_image: string) -> bool {
 		fmt.eprintfln("modustool: browser-machine boot needs node %d or later on the path; found %d (0: none)", BROWSER_MACHINE_NODE_MAJOR_VERSION, major)
 		return false
 	}
+	// The stage tracker of the host first: the stages that the page shows
+	// come from it.
+	if !browser_machine_host_tests_run() {
+		return false
+	}
 	trust_hash_hex := ""
 	if boot_image != "" {
 		image_bytes, read_error := os.read_entire_file(boot_image, context.temp_allocator)
@@ -855,6 +931,8 @@ browser_machine_boot :: proc(boot_image: string) -> bool {
 			answered_line = line
 		} else if strings.has_prefix(line, "framebuffer: ") {
 			framebuffer_line = line
+		} else if strings.has_prefix(line, "stage: ") {
+			fmt.printfln("modustool: measure: the browser machine in node: the stage %s", line[len("stage: "):])
 		}
 	}
 	fmt.printfln("modustool: measure: the browser machine in node: %.1f s, %s", time.duration_seconds(time.tick_since(started)), machine_line)

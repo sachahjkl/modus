@@ -120,6 +120,44 @@ one_changed_byte_names_its_entry :: proc(t: ^testing.T) {
 	testing.expect_value(t, kernel_result.index, 0)
 }
 
+// The check without the bytes refuses each fault of the table and of the
+// places, and leaves the bytes to the check at the first use: a changed
+// byte passes it, and the hash that the image states is the one of the
+// description.
+@(test)
+the_check_without_bytes_refuses_the_table_and_leaves_the_bytes :: proc(t: ^testing.T) {
+	system := system_make()
+	{
+		image := copy_of(system.image)
+		modules, _, _ := info.image_tables(image)
+		modules[1].hash[0] ~= 1
+		result := image_check_without_bytes(system.description, image)
+		testing.expect_value(t, result.fault, Check_Fault.Stated_Hash_Differs)
+		testing.expect_value(t, name_of(&result.name), "beta")
+	}
+	{
+		image := copy_of(system.image)
+		_, resources, _ := info.image_tables(image)
+		resources[0].offset = u64(len(image))
+		testing.expect_value(t, image_check_without_bytes(system.description, image).fault, Check_Fault.Outside_Image)
+	}
+	{
+		image := copy_of(system.image)
+		modules, _, _ := info.image_tables(image)
+		modules[0].size += 1
+		testing.expect_value(t, image_check_without_bytes(system.description, image).fault, Check_Fault.Size_Differs)
+	}
+	testing.expect_value(t, image_check_without_bytes({}, system.image).fault, Check_Fault.Not_Valid)
+	// A changed byte: the check with the bytes refuses it, the check
+	// without them does not read it.
+	image := copy_of(system.image)
+	modules, _, _ := info.image_tables(image)
+	image[modules[0].offset] ~= 1
+	testing.expect_value(t, image_check(system.description, image).fault, Check_Fault.Hash_Differs)
+	testing.expect_value(t, image_check_without_bytes(system.description, image).fault, Check_Fault.None)
+	testing.expect(t, modules[0].hash != blake3.hash(image[modules[0].offset:][:modules[0].size]), "the stated hash no longer names the bytes")
+}
+
 @(test)
 the_image_entries_must_agree :: proc(t: ^testing.T) {
 	system := system_make()
