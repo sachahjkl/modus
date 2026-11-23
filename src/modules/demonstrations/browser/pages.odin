@@ -104,8 +104,6 @@ BUILT_IN_HOSTS := [Built_In_Page]string {
 	.Forms      = "forms",
 }
 
-HOME_ADDRESS :: "modus://welcome"
-
 // What the page of an address is. The fact of the load names it.
 Page_Kind :: enum u8 {
 	Built_In,

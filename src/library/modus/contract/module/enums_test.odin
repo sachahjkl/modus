@@ -93,7 +93,7 @@ setter_of :: proc(enum_index, getter: u32, optional: bool) -> (function: Functio
 	function.parameters[0] = u8(Type.Enum)
 	function.parameter_details[0], _ = enum_detail_make(enum_index, getter)
 	function.result = u8(Type.Integer)
-	function.optional_parameters = optional ? 1 : 0
+	function.parameter_needs[0] = u8(optional ? Parameter_Need.Optional : Parameter_Need.Required)
 	return function
 }
 
@@ -148,14 +148,9 @@ an_enum_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 		{{"Font", 4, true, {{"vector", 0}, {"vector", 1}}, {}}, .Bad_Member_Name},
 		{{"Font", 1, true, {{"vector", 256}}, {}}, .Bad_Member_Value},
 		{{"Font", 1, true, {{"vector", -1}}, {}}, .Bad_Member_Value},
-		{{"Font", 1, true, {{"vector", 255}}, {}}, .Bad_Member_Value},
 		{{"Font", 1, false, {{"vector", 128}}, {}}, .Bad_Member_Value},
 		{{"Font", 1, false, {{"vector", -129}}, {}}, .Bad_Member_Value},
-		{{"Font", 1, false, {{"vector", -1}}, {}}, .Bad_Member_Value},
-		{{"Font", 4, true, {{"vector", 0xFFFF_FFFF}}, {}}, .Bad_Member_Value},
 		{{"Font", 4, true, {{"vector", 1 << 32}}, {}}, .Bad_Member_Value},
-		{{"Font", 8, true, {{"vector", -1}}, {}}, .Bad_Member_Value},
-		{{"Font", 8, false, {{"vector", -1}}, {}}, .Bad_Member_Value},
 		{{"Font", 4, true, {{"vector", 1}, {"spleen", 1}}, {}}, .Bad_Member_Value},
 	}
 	for item in cases {
@@ -184,10 +179,12 @@ an_enum_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 		testing.expectf(t, problem == .Bad_Member_Count, "the members %v give %v", item, problem)
 	}
 	// The edges that are taken: a value at the top of each size and sign,
-	// the last value under the absent word, a name of the largest length.
+	// the largest value of an unsigned byte, which no absent word takes now,
+	// a name of the largest length.
 	taken := [?]Test_Enum {
-		{"Font", 1, true, {{"a", 0}, {"b", 254}}, {}},
-		{"Font", 1, false, {{"a", -128}, {"b", 127}}, {}},
+		{"Font", 1, true, {{"a", 0}, {"b", 255}}, {}},
+		{"Font", 1, false, {{"a", -128}, {"b", 127}, {"c", -1}}, {}},
+		{"Font", 4, true, {{"a", 0xFFFF_FFFF}}, {}},
 		{"Font", 8, true, {{"a", 0}, {"b", max(i64)}, {"c", min(i64)}}, {}},
 		{"Font", 4, true, {{"abcdefghijklmnopqrstuvwxyzabcde", 0}}, {}},
 		{"Font", 4, true, too_many[:ENUM_MEMBER_CAPACITY], {}},
@@ -201,10 +198,9 @@ an_enum_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 
 // The getter of a parameter is refused when it names no export, takes a
 // parameter, gives an error record or no Enum, or gives another enum; an
-// optional bit is refused on a parameter that is no Enum and past the
-// parameters; an Enum result with the bits of a getter is refused.
+// Enum result with the bits of a getter is refused.
 @(test)
-a_getter_or_an_optional_bit_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
+a_getter_that_breaks_a_rule_is_refused :: proc(t: ^testing.T) {
 	enums := []Test_Enum{{"Keyboard_Layout", 4, true, LAYOUT_MEMBERS[:], {}}, {"Font", 4, true, FONT_MEMBERS[:], {}}}
 	with_parameter := getter_of(1)
 	with_parameter.parameter_count, with_parameter.parameters[0] = 1, u8(Type.Integer)
@@ -216,12 +212,6 @@ a_getter_or_an_optional_bit_that_breaks_a_rule_is_refused :: proc(t: ^testing.T)
 		problem:   Enum_Problem,
 		parameter: int,
 	}
-	optional_integer := Function{parameter_count = 1, optional_parameters = 1}
-	optional_integer.parameters[0] = u8(Type.Integer)
-	optional_past := setter_of(1, 0, true)
-	optional_past.optional_parameters = 0b10
-	optional_largest := setter_of(1, 0, true)
-	optional_largest.optional_parameters = max(u16)
 	getter_bits_on_result := getter_of(1)
 	getter_bits_on_result.result_detail, _ = enum_detail_make(1, 1)
 	cases := [?]Case {
@@ -234,9 +224,6 @@ a_getter_or_an_optional_bit_that_breaks_a_rule_is_refused :: proc(t: ^testing.T)
 		{{setter_of(1, 2, false), getter_of(3)}, .Getter_Type, 0},
 		{{setter_of(0, 0, false)}, .No_Enum, 0},
 		{{setter_of(3, 0, false)}, .No_Enum, 0},
-		{{optional_integer}, .Bad_Optional, 0},
-		{{optional_past}, .Bad_Optional, -1},
-		{{optional_largest}, .Bad_Optional, -1},
 		{{getter_bits_on_result}, .No_Enum, -1},
 		{{getter_of(0)}, .No_Enum, -1},
 	}
@@ -297,8 +284,7 @@ a_name_of_no_member_or_of_another_enum_gives_no_value :: proc(t: ^testing.T) {
 }
 
 // The integer result of a getter holds the enum in its low bytes only:
-// the reader keeps those bytes and their sign, and the absent word is all
-// ones of the size.
+// the reader keeps those bytes and their sign.
 @(test)
 the_result_of_a_getter_is_read_at_the_size_of_its_enum :: proc(t: ^testing.T) {
 	unsigned_byte := Enum_Type{size = 1, unsigned = true}
@@ -311,15 +297,6 @@ the_result_of_a_getter_is_read_at_the_size_of_its_enum :: proc(t: ^testing.T) {
 	testing.expect_value(t, enum_value_of_register(signed_byte, 0x17F), 127)
 	testing.expect_value(t, enum_value_of_register(unsigned_word, -1), 0xFFFF_FFFF)
 	testing.expect_value(t, enum_value_of_register(whole, min(i64)), min(i64))
-	testing.expect_value(t, enum_absent_word(unsigned_byte), 255)
-	testing.expect_value(t, enum_absent_word(signed_byte), -1)
-	testing.expect_value(t, enum_absent_word(unsigned_word), 0xFFFF_FFFF)
-	testing.expect_value(t, enum_absent_word(whole), -1)
-	// The absent word that a caller gives, -1 in the register, is the
-	// absent word of each size once read at that size.
-	for described in ([4]Enum_Type{unsigned_byte, signed_byte, unsigned_word, whole}) {
-		testing.expect_value(t, enum_value_of_register(described, -1), enum_absent_word(described))
-	}
 }
 
 // The check of a replacement refuses an Enum parameter of another enum,

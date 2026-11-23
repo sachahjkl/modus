@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The principal chooses the edge of the screen that holds the bar of the desktop: the top, or the bottom (`desktop_shell.Bar_Position`, through the export `bar_position` of the compositor or the right-click menu of the desktop). The whole bar moves: its surface, the heron button, the button of the windows, the window plates, the tray with the mark of a viewer, and the clock. The look of each part is in [desktop_shell_look.md](desktop_shell_look.md). Each menu and each popover that the bar opens opens away from the edge: down from a bar at the top, up from a bar at the bottom.
+The principal chooses the edge of the screen that holds the bar of the desktop: the top, or the bottom (`desktop_shell.Bar_Position`, through the setter `compositor.set(bar_edge = .bottom)`, the right-click menu of the desktop, the menu of the bar or the tile of the control center). The edge is a setting of the role Display: the compositor keeps it in the store of its role, so a restart of the compositor and a module that the plan puts in its place keep it ([module_settings.md](module_settings.md), "The role store"). The whole bar moves: its surface, the heron button, the button of the windows, the window plates, the tray with the mark of a viewer, and the clock. The look of each part is in [desktop_shell_look.md](desktop_shell_look.md). Each menu and each popover that the bar opens opens away from the edge: down from a bar at the top, up from a bar at the bottom.
 
 ## Constraints
 

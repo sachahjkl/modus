@@ -7,12 +7,16 @@ import op "modus:contract/operation"
 // its one client (src/md/features/missing_hardware.md). The wait ends at a
 // deadline, or when the process that must answer stops, never later.
 
-// The bound of a wait for an answer. A device answers in microseconds, so
-// the bound only ends a hang: it is the hang bound of a process, never a
-// measure of a device, so that a slow device is not called silent. The line
-// of the service that gives up then comes before the bound of a step of a
-// machine test.
-ANSWER_BOUND_MILLISECONDS :: TEST_HANG_BOUND_MILLISECONDS
+// The bound of a wait for an answer of another part of the machine: a
+// device, a device service, a delegated service of the root service, the
+// holder of a role. Each of them answers in microseconds, so a peer that is
+// silent for a minute hangs: the bound is never a measure of a device, and
+// a slow device is not called silent. It is a constant of the services, not
+// a setting: a principal who tunes it fixes no fault. Each contract that
+// waits for an answer names its own deadline from it. The hang bound of the
+// tests is not under it (test_bounds.odin), so that a machine test reads the
+// line of the service that gives up before its own report.
+ANSWER_BOUND_MILLISECONDS :: 60_000
 
 // answer_deadline gives the deadline of an answer to a request given at the
 // time now. A time so large that the sum passes the largest time gives the

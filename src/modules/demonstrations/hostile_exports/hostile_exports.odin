@@ -191,4 +191,3 @@ mode_get :: proc "c" () -> Mode {
 	system.log_fact(.Info, Getter_Ran{})
 	return .Slow
 }
-

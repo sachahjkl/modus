@@ -12,6 +12,11 @@ package system
 // test in modustool (HANG_BOUND, 120 s), so that the report of the process
 // comes first.
 TEST_HANG_BOUND_MILLISECONDS :: 60_000
+// A service gives up on a silent peer no later than a check gives up on the
+// service: the report of the service comes first.
+#assert(ANSWER_BOUND_MILLISECONDS <= TEST_HANG_BOUND_MILLISECONDS)
+// Only a check reads the two bounds of this file: modustool rule-checks
+// refuses them in a service or a library (service_deadline_check.odin).
 // The whole run of a case that writes a count of its progress: it ends a
 // case that goes on for ever while its count still grows. The step of
 // modustool that waits for such a case has a larger bound of its own

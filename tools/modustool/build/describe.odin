@@ -130,7 +130,7 @@ describe_package :: proc(folder: string) -> (description: Module_Description, ok
 			}
 		}
 	}
-	if !enum_getters_resolve(list[:], description.enums) {
+	if !enum_getters_resolve(list[:], description.enums) || !parameter_settings_resolve(list[:]) {
 		return {}, false
 	}
 	// The display texts after each export: a table names an enum that an
@@ -642,14 +642,13 @@ enum_of :: proc(state: ^Describe_State, type: ^ast.Expr) -> (number: u32, is_enu
 	}
 	described := Enum_Description{name = name, size = u8(size), unsigned = unsigned, members = members[:]}
 	// The rules of the reader, here with a sentence: a value that the size
-	// does not hold, the absent word, a name or a value given twice.
+	// does not hold, a name or a value given twice.
 	if len(members) == 0 || len(members) > module.ENUM_MEMBER_CAPACITY {
 		return 0, true, describe_fail(found.path, found.type, "the enum %s has %d members: an enum parameter has 1 to %d", name, len(members), module.ENUM_MEMBER_CAPACITY)
 	}
-	absent := module.enum_absent_word({size = described.size, unsigned = unsigned})
 	for member, index in members {
-		if !module.enum_value_fits(described.size, unsigned, member.value) || member.value == absent {
-			return 0, true, describe_fail(found.path, found.type, "the enum %s: the value %d of %s is past its backing type, or is the word of each bit set, which says that a call leaves the parameter out", name, member.value, member.name)
+		if !module.enum_value_fits(described.size, unsigned, member.value) {
+			return 0, true, describe_fail(found.path, found.type, "the enum %s: the value %d of %s is past its backing type", name, member.value, member.name)
 		}
 		for other in members[:index] {
 			if other.name == member.name || other.value == member.value {
@@ -794,6 +793,7 @@ describe_source :: proc(path, source: string, list: ^[dynamic]Export_Description
 	}
 	describe_file(file, list, &state) or_return
 	enum_getters_resolve(list[:], state.enum_descriptions[:]) or_return
+	parameter_settings_resolve(list[:]) or_return
 	texts := make([dynamic]Member_Text_Description, context.temp_allocator)
 	member_texts_read(file, &state, &texts) or_return
 	ordered := member_texts_order(path, texts[:]) or_return
@@ -938,7 +938,7 @@ palette_rows_fit :: proc(module_name: string, exports: []Export_Description, enu
 		if !row {
 			row = true
 			for type, index in item.parameters {
-				if type != .Enum || item.optional_parameters >> u16(index) & 1 == 0 {
+				if type != .Enum || index >= len(item.needs) || item.needs[index] != .Optional {
 					row = false
 				}
 			}
@@ -1020,7 +1020,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		}
 		name := identifier.name
 		exported := false
-		getters_text, optional_text := "", ""
+		getters_text, ranges_text, choices_text, instances_text := "", "", "", ""
 		for attribute in declaration.attributes {
 			for element in attribute.elems {
 				#partial switch item in element.derived {
@@ -1033,7 +1033,7 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 						continue
 					}
 					switch field.name {
-					case "link_name", foundation.ENUM_GETTERS_ATTRIBUTE_NAME, foundation.OPTIONAL_PARAMETERS_ATTRIBUTE_NAME:
+					case "link_name", foundation.ENUM_GETTERS_ATTRIBUTE_NAME, foundation.PARAMETER_RANGES_ATTRIBUTE_NAME, foundation.PARAMETER_CHOICES_ATTRIBUTE_NAME, foundation.PARAMETER_INSTANCES_ATTRIBUTE_NAME:
 						if !is_literal || literal.tok.kind != .String {
 							return describe_fail(path, declaration, "the attribute %s takes a text", field.name)
 						}
@@ -1044,14 +1044,18 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 						name = text
 					case foundation.ENUM_GETTERS_ATTRIBUTE_NAME:
 						getters_text = text
-					case foundation.OPTIONAL_PARAMETERS_ATTRIBUTE_NAME:
-						optional_text = text
+					case foundation.PARAMETER_RANGES_ATTRIBUTE_NAME:
+						ranges_text = text
+					case foundation.PARAMETER_CHOICES_ATTRIBUTE_NAME:
+						choices_text = text
+					case foundation.PARAMETER_INSTANCES_ATTRIBUTE_NAME:
+						instances_text = text
 					}
 				}
 			}
 		}
-		if !exported && (getters_text != "" || optional_text != "") {
-			return describe_fail(path, declaration, "%s is no export: the attributes %s and %s describe the parameters of an export", name, foundation.ENUM_GETTERS_ATTRIBUTE_NAME, foundation.OPTIONAL_PARAMETERS_ATTRIBUTE_NAME)
+		if !exported && (getters_text != "" || ranges_text != "" || choices_text != "" || instances_text != "") {
+			return describe_fail(path, declaration, "%s is no export: the attributes %s, %s, %s and %s describe the parameters of an export", name, foundation.ENUM_GETTERS_ATTRIBUTE_NAME, foundation.PARAMETER_RANGES_ATTRIBUTE_NAME, foundation.PARAMETER_CHOICES_ATTRIBUTE_NAME, foundation.PARAMETER_INSTANCES_ATTRIBUTE_NAME)
 		}
 		if !exported {
 			continue
@@ -1131,6 +1135,10 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		names := make([dynamic]string, context.temp_allocator)
 		details := make([dynamic]u32, context.temp_allocator)
 		directions := make([dynamic]module.Direction, context.temp_allocator)
+		needs := make([dynamic]module.Parameter_Need, context.temp_allocator)
+		// The name of the parameter that the module.Presence parameter before
+		// names: it is optional (src/md/features/module_settings.md).
+		presence_of := ""
 		// An error record: the last parameter, with the name `error`, after
 		// the buffer of a result too.
 		if count := len(fields); count > 0 && len(fields[count - 1].names) == 1 && fields[count - 1].type != nil {
@@ -1154,6 +1162,13 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 			last := index == len(fields) - 1 && len(field.names) == 1
 			first_name, _ := field.names[0].derived.(^ast.Ident)
 			is_result := last && first_name != nil && first_name.name == "result"
+			if type_text(source, field.type) == PRESENCE_TYPE_TEXT {
+				if presence_of != "" || len(field.names) != 1 || first_name == nil || !strings.has_suffix(first_name.name, PRESENCE_SUFFIX) || len(first_name.name) == len(PRESENCE_SUFFIX) {
+					return describe_fail(path, field, "%s: a %s parameter is alone in its declaration, has the name of the parameter after it with %s, and comes before that parameter", name, PRESENCE_TYPE_TEXT, PRESENCE_SUFFIX)
+				}
+				presence_of = strings.trim_suffix(first_name.name, PRESENCE_SUFFIX)
+				continue
+			}
 			switch text := type_text(source, field.type); text {
 			case "i64":
 				kind = .Integer
@@ -1227,11 +1242,25 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 				if !is_identifier || parameter.name == "_" || len(parameter.name) > 255 {
 					return describe_fail(path, field, "%s: each parameter has a name", name)
 				}
+				need := module.Parameter_Need.Required
+				if presence_of != "" {
+					if parameter.name != presence_of || len(field.names) != 1 {
+						return describe_fail(path, field, "%s: the parameter %s%s comes just before the parameter %s, alone in its declaration", name, presence_of, PRESENCE_SUFFIX, presence_of)
+					}
+					if !module.optional_type_allowed(kind) {
+						return describe_fail(path, field, "%s: the parameter %s is optional, and only an Integer, a Handle, an Enum or a Text can be: a Record, a Table and Bytes are places in the memory of the caller", name, parameter.name)
+					}
+					need, presence_of = .Optional, ""
+				}
 				append(&parameters, kind)
 				append(&names, parameter.name)
 				append(&details, detail)
 				append(&directions, direction)
+				append(&needs, need)
 			}
+		}
+		if presence_of != "" {
+			return describe_fail(path, declaration, "%s: the parameter %s%s names no parameter after it", name, presence_of, PRESENCE_SUFFIX)
 		}
 		result_enum: u32
 		result_is_enum := false
@@ -1272,15 +1301,23 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 		if returns_outcome && description.result == .Enum {
 			return describe_fail(path, declaration, "%s can fail: the value of the pair is an i64", name)
 		}
-		if arguments := module.call_argument_count(len(parameters), u8(description.result), description.error_record != 0); arguments > module.PARAMETER_CAPACITY {
-			return describe_fail(path, declaration, "%s takes %d arguments in the call form, the buffer of a result and the error record included; an export takes at most %d", name, arguments, module.PARAMETER_CAPACITY)
+		if len(parameters) > module.PARAMETER_CAPACITY {
+			return describe_fail(path, declaration, "%s takes %d parameters; an export takes at most %d", name, len(parameters), module.PARAMETER_CAPACITY)
+		}
+		words := len(parameters)
+		for need in needs {
+			words += need == .Optional ? 1 : 0
+		}
+		if arguments := module.call_argument_count(words, u8(description.result), description.error_record != 0); arguments > module.CALL_WORD_CAPACITY {
+			return describe_fail(path, declaration, "%s takes %d arguments in the call form, two words for an optional parameter, the buffer of a result and the error record included; an export takes at most %d", name, arguments, module.CALL_WORD_CAPACITY)
 		}
 		description.parameters = parameters[:]
 		description.names = names[:]
 		description.details = details[:]
 		description.directions = directions[:]
+		description.needs = needs[:]
 		description.getter_names = make([]string, len(parameters))
-		if !parameter_attributes_read(path, declaration, &description, getters_text, optional_text) {
+		if !parameter_attributes_read(path, declaration, &description, getters_text) || !parameter_settings_read(path, declaration, &description, ranges_text, choices_text, instances_text) {
 			return false
 		}
 		handles := 0
@@ -1308,42 +1345,32 @@ describe_file :: proc(file: ^ast.File, list: ^[dynamic]Export_Description, state
 	return true
 }
 
-// parameter_attributes_read reads the two attributes of an export that
-// describe its Enum parameters (src/md/features/enum_parameters.md):
-//
-// - `enum_getters = "font = font, scale = scale"`: each pair names an Enum
-//   parameter, then the export that gives its value in use, its getter.
-// - `optional_parameters = "font, scale"`: the Enum parameters that a call
-//   may leave out.
-//
-// A name of no parameter, a parameter that is no Enum, a name given twice
-// and a pair with no "=" are refused. The getter is resolved into the
-// detail once each export of the package is known (enum_getters_resolve).
+// The type of the parameter that makes the parameter after it optional, and
+// the end of its name: `font_presence: module.Presence, font: settings.Font`
+// (src/md/features/module_settings.md, "The description of a parameter").
+PRESENCE_TYPE_TEXT :: "module.Presence"
+PRESENCE_SUFFIX :: "_presence"
+
+// parameter_find gives the index of the parameter of a name, or -1.
 @(private = "file")
-parameter_attributes_read :: proc(path: string, declaration: ^ast.Value_Decl, description: ^Export_Description, getters_text, optional_text: string) -> bool {
-	parameter_find :: proc(description: ^Export_Description, name: string) -> int {
-		for item, index in description.names {
-			if item == name {
-				return index
-			}
-		}
-		return -1
-	}
-	if strings.trim_space(optional_text) != "" {
-		for part in strings.split(optional_text, ",", context.temp_allocator) {
-			parameter_name := strings.trim_space(part)
-			index := parameter_find(description, parameter_name)
-			switch {
-			case index < 0:
-				return describe_fail(path, declaration, "%s: the attribute %s names %q, which is no parameter", description.name, foundation.OPTIONAL_PARAMETERS_ATTRIBUTE_NAME, parameter_name)
-			case description.parameters[index] != .Enum:
-				return describe_fail(path, declaration, "%s: the attribute %s names %s, which is no enum: only an enum parameter has a word that says that a call leaves it out", description.name, foundation.OPTIONAL_PARAMETERS_ATTRIBUTE_NAME, parameter_name)
-			case description.optional_parameters >> u16(index) & 1 != 0:
-				return describe_fail(path, declaration, "%s: the attribute %s names %s twice", description.name, foundation.OPTIONAL_PARAMETERS_ATTRIBUTE_NAME, parameter_name)
-			}
-			description.optional_parameters |= 1 << u16(index)
+parameter_find :: proc(description: ^Export_Description, name: string) -> int {
+	for item, index in description.names {
+		if item == name {
+			return index
 		}
 	}
+	return -1
+}
+
+// parameter_attributes_read reads the attribute of an export that names the
+// getter of each Enum parameter (src/md/features/enum_parameters.md):
+// `enum_getters = "font = font, scale = scale"`: each pair names an Enum
+// parameter, then the export that gives its value in use. A name of no
+// parameter, a parameter that is no Enum, a name given twice and a pair
+// with no "=" are refused. The getter is resolved into the detail once
+// each export of the package is known (enum_getters_resolve).
+@(private = "file")
+parameter_attributes_read :: proc(path: string, declaration: ^ast.Value_Decl, description: ^Export_Description, getters_text: string) -> bool {
 	if strings.trim_space(getters_text) == "" {
 		return true
 	}
@@ -1365,6 +1392,132 @@ parameter_attributes_read :: proc(path: string, declaration: ^ast.Value_Decl, de
 			return describe_fail(path, declaration, "%s: the attribute %s gives %s no getter", description.name, foundation.ENUM_GETTERS_ATTRIBUTE_NAME, parameter_name)
 		}
 		description.getter_names[index] = getter_name
+	}
+	return true
+}
+
+// parameter_settings_read reads the three attributes of an export that give
+// the settings of its parameters (src/md/features/module_settings.md, "The
+// description of a parameter"):
+//
+// - `parameter_ranges = "notification_show_milliseconds = 1000..60000"`:
+//   the least and the largest value of an Integer parameter, decimal
+//   integers.
+// - `parameter_choices = "font_name = fonts"`: the export that gives the
+//   choices of an Integer parameter.
+// - `parameter_instances = "screen = screens"`: the export that gives the
+//   instances that the first parameter, an Integer, names.
+//
+// A name of no parameter, a parameter named twice in one attribute, a
+// range on a parameter that is no Integer or whose least is above its
+// largest, and a pair with no "=" are refused. The exports are resolved
+// once each export of the package is known (parameter_settings_resolve).
+@(private = "file")
+parameter_settings_read :: proc(path: string, declaration: ^ast.Value_Decl, description: ^Export_Description, ranges_text, choices_text, instances_text: string) -> bool {
+	sources := make([dynamic]Parameter_Setting_Source, context.temp_allocator)
+	source_of :: proc(sources: ^[dynamic]Parameter_Setting_Source, parameter: int) -> ^Parameter_Setting_Source {
+		for &item in sources {
+			if item.parameter == parameter {
+				return &item
+			}
+		}
+		append(sources, Parameter_Setting_Source{parameter = parameter})
+		return &sources[len(sources) - 1]
+	}
+	Attribute :: struct {
+		name, text: string,
+	}
+	attributes := [3]Attribute{{foundation.PARAMETER_RANGES_ATTRIBUTE_NAME, ranges_text}, {foundation.PARAMETER_CHOICES_ATTRIBUTE_NAME, choices_text}, {foundation.PARAMETER_INSTANCES_ATTRIBUTE_NAME, instances_text}}
+	for attribute, attribute_index in attributes {
+		if strings.trim_space(attribute.text) == "" {
+			continue
+		}
+		for part in strings.split(attribute.text, ",", context.temp_allocator) {
+			pair := strings.split(part, "=", context.temp_allocator)
+			if len(pair) != 2 {
+				return describe_fail(path, declaration, "%s: the attribute %s holds pairs `parameter = value`, separated by commas; %q is none", description.name, attribute.name, strings.trim_space(part))
+			}
+			parameter_name, value := strings.trim_space(pair[0]), strings.trim_space(pair[1])
+			index := parameter_find(description, parameter_name)
+			if index < 0 {
+				return describe_fail(path, declaration, "%s: the attribute %s names %q, which is no parameter", description.name, attribute.name, parameter_name)
+			}
+			// A range is of an Integer, or the bound of the bytes of a Text;
+			// choices and instances are of an Integer.
+			if description.parameters[index] != .Integer && !(attribute_index == 0 && description.parameters[index] == .Text) {
+				return describe_fail(path, declaration, "%s: the attribute %s names %s, which is no Integer: a range is of an Integer or a Text, choices and instances are of an Integer", description.name, attribute.name, parameter_name)
+			}
+			item := source_of(&sources, index)
+			switch attribute_index {
+			case 0:
+				bounds := strings.split(value, "..", context.temp_allocator)
+				least, most: i64
+				least_ok, most_ok: bool
+				if len(bounds) == 2 {
+					least, least_ok = strconv.parse_i64_of_base(strings.trim_space(bounds[0]), 10)
+					most, most_ok = strconv.parse_i64_of_base(strings.trim_space(bounds[1]), 10)
+				}
+				switch {
+				case !least_ok || !most_ok:
+					return describe_fail(path, declaration, "%s: the range of %s is `least..most`, two decimal integers; %q is none", description.name, parameter_name, value)
+				case item.has_range:
+					return describe_fail(path, declaration, "%s: the attribute %s names %s twice", description.name, attribute.name, parameter_name)
+				case least > most:
+					return describe_fail(path, declaration, "%s: the range of %s starts at %d, above its end %d", description.name, parameter_name, least, most)
+				case description.parameters[index] == .Text && least < 0:
+					return describe_fail(path, declaration, "%s: the range of the Text %s is the bound of its bytes, and starts at 0 or more, not at %d", description.name, parameter_name, least)
+				}
+				item.has_range, item.least, item.most = true, least, most
+			case 1:
+				if item.choices_name != "" || value == "" {
+					return describe_fail(path, declaration, "%s: the attribute %s names %s twice, or gives it no export", description.name, attribute.name, parameter_name)
+				}
+				item.choices_name = value
+			case 2:
+				if item.instances_name != "" || value == "" || index != 0 {
+					return describe_fail(path, declaration, "%s: the attribute %s names %s twice, gives it no export, or names a parameter other than the first: the instances are those that the first parameter names", description.name, attribute.name, parameter_name)
+				}
+				item.instances_name = value
+			}
+		}
+	}
+	slice.sort_by(sources[:], proc(a, b: Parameter_Setting_Source) -> bool {return a.parameter < b.parameter})
+	description.setting_sources = sources[:]
+	return true
+}
+
+// parameter_settings_resolve gives each export the rows of its parameter
+// settings, with the index of each choices and instances export. An export
+// that names no export of the module, or one that takes a parameter or
+// gives no Table, is refused.
+parameter_settings_resolve :: proc(exports: []Export_Description) -> bool {
+	for &item, export_index in exports {
+		rows := make([]module.Parameter_Setting, len(item.setting_sources), context.temp_allocator)
+		for source, row_index in item.setting_sources {
+			row := module.Parameter_Setting{export_index = u32(export_index + 1), parameter = u8(source.parameter), has_range = source.has_range ? module.PARAMETER_RANGE_GIVEN : module.PARAMETER_RANGE_NONE, least = source.least, most = source.most}
+			Named :: struct {
+				name:  string,
+				index: ^u32,
+			}
+			for named in ([2]Named{{source.choices_name, &row.choices_export}, {source.instances_name, &row.instances_export}}) {
+				if named.name == "" {
+					continue
+				}
+				found := -1
+				for other, other_index in exports {
+					if other.name == named.name {
+						found = other_index
+					}
+				}
+				if found < 0 || len(exports[found].parameters) != 0 || exports[found].result != .Table {
+					fmt.eprintfln("modustool: describe %s(%d): %s: the export %s of the parameter %s must be an export of the module that takes no parameter and gives a table", item.file, item.line, item.name, named.name, item.names[source.parameter])
+					return false
+				}
+				named.index^ = u32(found + 1)
+			}
+			rows[row_index] = row
+		}
+		item.setting_rows = rows
 	}
 	return true
 }

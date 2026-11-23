@@ -103,7 +103,7 @@ export add_pair
 	enum_idx, getter_idx := module.enum_detail_of(add_pair.details[1])
 	testing.expect_value(t, enum_idx, u32(1))
 	testing.expect_value(t, getter_idx, u32(2))
-	testing.expect_value(t, add_pair.optional_parameters, u16(1 << 1))
+	testing.expect(t, len(add_pair.needs) == 6 && add_pair.needs[1] == .Optional && add_pair.needs[0] == .Required)
 	testing.expect_value(t, add_pair.details[2], value_kinds.integer_unit_detail(value_kinds.size_in(.Pages)))
 	expected_rights := op.Rights{.Read, .Write}
 	testing.expect_value(t, add_pair.details[3], transmute(u32)expected_rights)
@@ -168,8 +168,6 @@ manifest_parse_refusals :: proc(t: ^testing.T) {
 		{"enum bad backing type", "module: m\nabout: Ok.\nenum Bad f32\n", "unknown backing type"},
 		{"enum value past u8 bound", "module: m\nabout: Ok.\nenum E u8\n  member a = 256\n", "does not fit"},
 		{"enum negative u8 value", "module: m\nabout: Ok.\nenum E u8\n  member a = -1\n", "does not fit"},
-		{"enum reserved absent word u8", "module: m\nabout: Ok.\nenum E u8\n  member a = 255\n", "reserved as the absent word"},
-		{"enum reserved absent word i32", "module: m\nabout: Ok.\nenum E i32\n  member a = -1\n", "reserved as the absent word"},
 		{"enum uppercase member name", "module: m\nabout: Ok.\nenum E u32\n  member Fast = 0\n", "not a valid lowercase member name"},
 		{"enum duplicate member value", "module: m\nabout: Ok.\nenum E u32\n  member a = 1\n  member b = 1\n", "used twice"},
 		{"record past 256 bytes", "module: m\nabout: Ok.\nrecord Big size=257\n", "must be 0 to 256"},
@@ -183,12 +181,13 @@ manifest_parse_refusals :: proc(t: ^testing.T) {
 		{"entry with parameter", "module: m\nabout: Ok.\nexport entry\n  param x: integer\n", "takes no described parameter"},
 		{"export unknown param type", "module: m\nabout: Ok.\nexport f\n  about: Test.\n  param x: float\n", "unknown parameter type"},
 		{"export unknown result type", "module: m\nabout: Ok.\nexport f\n  about: Test.\n  result: float\n", "unknown result type"},
-		{"export optional non-enum", "module: m\nabout: Ok.\nexport f\n  about: Test.\n  param x: integer optional\n", "allowed on enum parameters only"},
+		{"export optional bytes", "module: m\nabout: Ok.\nexport f\n  about: Test.\n  param x: bytes(read) optional\n", "allowed on integer, handle, enum and text parameters only"},
 		{"export getter missing", "module: m\nabout: Ok.\nenum E u32\n  member a = 0\nexport f\n  about: Test.\n  param e: enum(E) getter=missing\n", "names no export"},
 		{"export getter wrong return", "module: m\nabout: Ok.\nenum E u32\n  member a = 0\nexport g\n  about: Bad getter.\n  result: integer\nexport f\n  about: Test.\n  param e: enum(E) getter=g\n", "return an enum"},
 		{"export error_record with enum result", "module: m\nabout: Ok.\nenum E u32\n  member a = 0\nrecord Err size=8\n  field c offset=0 type=i64\nexport f\n  about: Test.\n  result: enum(E)\n  error_record: Err\n", "cannot be an enum"},
 		{"export table record with handle", "module: m\nabout: Ok.\nrecord With_Handle size=8\n  field h offset=0 type=handle(read)\nexport f\n  about: Test.\n  param t: table(With_Handle, read)\n", "cannot contain a handle"},
-		{"export 13 call arguments", "module: m\nabout: Ok.\nexport f\n  about: Test.\n  param p1: integer\n  param p2: integer\n  param p3: integer\n  param p4: integer\n  param p5: integer\n  param p6: integer\n  param p7: integer\n  param p8: integer\n  param p9: integer\n  param p10: integer\n  param p11: integer\n  param p12: integer\n  result: text\n", "at most 12"},
+		{"export 13 parameters", "module: m\nabout: Ok.\nexport f\n  about: Test.\n  param p1: integer\n  param p2: integer\n  param p3: integer\n  param p4: integer\n  param p5: integer\n  param p6: integer\n  param p7: integer\n  param p8: integer\n  param p9: integer\n  param p10: integer\n  param p11: integer\n  param p12: integer\n  param p13: integer\n", "has more than 12 parameters"},
+		{"export 17 call words", "module: m\nabout: Ok.\nexport f\n  about: Test.\n  param p1: integer optional\n  param p2: integer optional\n  param p3: integer optional\n  param p4: integer optional\n  param p5: integer\n  param p6: integer\n  param p7: integer\n  param p8: integer\n  param p9: integer\n  param p10: integer\n  param p11: integer\n  param p12: integer\n  result: text\n", "at most 12 and 16"},
 		{"export duplicate name", "module: m\nabout: Ok.\nexport f\n  about: One.\nexport f\n  about: Two.\n", "declared twice"},
 	}
 

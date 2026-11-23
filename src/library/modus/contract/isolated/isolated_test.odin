@@ -147,11 +147,14 @@ decode_random :: proc(t: ^testing.T) {
 			continue
 		}
 		accepted += 1
-		types := function.parameters
+		// The slot of each slice is its word of the call form: the random
+		// needs are Required, so a parameter is its word, and the buffer of a
+		// Text result is the word after the last parameter, 12 at most of 16.
+		types: [module.CALL_WORD_CAPACITY]u8
+		copy(types[:], function.parameters[:])
 		count := int(function.parameter_count)
 		if function.result == u8(module.Type.Text) {
-			// The buffer of the result is one more slice.
-			testing.expect(t, count < module.PARAMETER_CAPACITY)
+			testing.expect(t, count < module.CALL_WORD_CAPACITY)
 			types[count] = u8(module.Type.Text)
 			count += 1
 		}
@@ -203,10 +206,13 @@ text_result :: proc(t: ^testing.T) {
 	testing.expect(t, !complete, "a buffer that is not in the call region")
 
 	full := integer_description(module.PARAMETER_CAPACITY)
+	for index in 0 ..< module.CALL_WORD_CAPACITY - module.PARAMETER_CAPACITY {
+		full.parameter_needs[index] = u8(module.Parameter_Need.Optional)
+	}
 	full.result = u8(module.Type.Text)
 	none: [module.PARAMETER_CAPACITY]Argument
 	_, _, _, ok := encode(nil, full, none[:], region[:])
-	testing.expect(t, !ok, "as many parameters as an export has leave no argument for the buffer")
+	testing.expect(t, !ok, "as many words as the call form has leave no word for the buffer")
 }
 
 // integer_description gives the description of an export with `count`
@@ -255,16 +261,21 @@ nine_parameters_round_trip :: proc(t: ^testing.T) {
 	testing.expect(t, raw_data(buffer) == &region[result.start] && u64(len(buffer)) == result.count)
 	testing.expect_value(t, call.arguments[10], u64(uintptr(&call.error_record)))
 
-	// The bound: twelve arguments fit, thirteen do not.
+	// The bound: sixteen words of the call form fit, seventeen do not.
+	// Eleven parameters, four of them optional Integers, a Text result and
+	// an error record are seventeen words.
 	_, described := record_size(function)
 	testing.expect(t, described)
 	function.parameters[9], function.parameters[10] = u8(module.Type.Integer), u8(module.Type.Integer)
 	function.parameter_count = 11
+	for index in ([4]int{0, 2, 9, 10}) {
+		function.parameter_needs[index] = u8(module.Parameter_Need.Optional)
+	}
 	_, described = record_size(function)
-	testing.expect(t, !described, "eleven parameters, a Text result and an error record are thirteen arguments")
+	testing.expect(t, !described, "eleven parameters, four optional, a Text result and an error record are seventeen words")
 	function.error_record = 0
 	_, described = record_size(function)
-	testing.expect(t, described, "eleven parameters and a Text result are twelve arguments")
+	testing.expect(t, described, "eleven parameters, four optional, and a Text result are sixteen words")
 }
 
 // A module file with one record: {handle at 0, integer at 8}, 16 bytes.
@@ -437,9 +448,12 @@ error_record_of_the_receiver :: proc(t: ^testing.T) {
 	// decode gives each call a zero record: no record of an earlier call
 	// reaches the caller.
 	testing.expect_value(t, call.error_record, errors.Error_Record{})
-	// An export with an error record and as many parameters as an export
-	// has: no argument is free for the record.
+	// An export with an error record and as many words as the call form
+	// has: no word is free for the record.
 	full := integer_description(module.PARAMETER_CAPACITY)
+	for index in 0 ..< module.CALL_WORD_CAPACITY - module.PARAMETER_CAPACITY {
+		full.parameter_needs[index] = u8(module.Parameter_Need.Optional)
+	}
 	full.error_record = 1
 	none: [module.PARAMETER_CAPACITY]Argument
 	_, _, _, encoded = encode(nil, full, none[:], region[:])

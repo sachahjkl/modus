@@ -74,13 +74,21 @@ text_settings_create :: proc "contextless" () {
 	script_fonts_name_read()
 }
 
-// text_settings_give adds the settings page and the font outlines,
-// read-only, to the mappings of a process that has a surface or a
-// terminal, and sets the bit of each range in its values. The mapping of
+// Where the text settings of a process come from.
+Text_Settings_Page :: enum u8 {
+	Presentation, // A page of its own, that its display library writes from the presentation record (presentation_pages.odin): each window.
+	Machine, // The settings page of the machine, read-only: `settings`, the date service and the holder of the display.
+}
+
+// text_settings_give adds the page of the text settings and the font
+// outlines to the mappings of a process that has a surface or a terminal,
+// and sets the bit of each range in its values. A window gets its own
+// presentation page (item is its place); a holder that applies the
+// settings of the machine gets the settings page, read-only. The mapping of
 // the outlines has no flag: the right Read only, for every process, the
 // process `settings` included. Its pages come from the boot image, whose
 // one handle (of this service) has no right Write.
-text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^system.Context_Values) {
+text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^int, values: ^system.Context_Values, page: Text_Settings_Page, item: ^Started = nil) {
 	if settings_memory == 0 {
 		return
 	}
@@ -89,9 +97,16 @@ text_settings_give :: proc "contextless" (mappings: []system.Mapping, count: ^in
 		mapping_dropped_log("the settings page and the font outlines", len(mappings))
 		return
 	}
-	mappings[count^] = {memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}
-	count^ += 1
-	system.range_mapped_put(values, .Settings_Page)
+	switch page {
+	case .Presentation:
+		if item != nil {
+			presentation_page_give(item, mappings, count, values)
+		}
+	case .Machine:
+		mappings[count^] = {memory = settings_memory, address = settings.PAGE_ADDRESS, first = 0, page_count = 1}
+		count^ += 1
+		system.range_mapped_put(values, .Settings_Page)
+	}
 	if font_outlines_mapping.page_count != 0 {
 		mappings[count^] = font_outlines_mapping
 		mappings[count^].flags = {}

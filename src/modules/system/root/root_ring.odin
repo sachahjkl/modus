@@ -246,6 +246,8 @@ root_command_run :: proc "contextless" (item: ^Started, command: root_ring.Root_
 		answer.outcome = wide_grant_agent_ask(item, record, &answer.values)
 	case .Wide_Grant_Second_Connection:
 		answer.outcome = wide_grant_second_connection(item, record, &answer.values)
+	case .Plan_Values:
+		answer.outcome = plan_values_command(item, record.values, &answer.values) // plan_values.odin
 	}
 	return answer
 }
@@ -376,7 +378,7 @@ edit_store_limit :: proc "contextless" (store_name: string) -> u64 {
 	}
 	row := start_grant_set_of(base)
 	if .Store in row.grants {
-		return start_grant_set_store_blocks(&row)
+		return store_blocks_planned(base, &row)
 	}
 	edit_row := start_grant_set_of("edit")
 	return start_grant_set_store_blocks(&edit_row)

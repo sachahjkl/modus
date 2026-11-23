@@ -109,6 +109,10 @@ Evaluation_Pools :: struct {
 MAP_NAME :: "map"
 FILTER_NAME :: "filter"
 
+// The `plan { … }` values of one console line: a line applies one plan, and
+// compares two at most.
+TAGGED_RECORD_CAPACITY :: 4
+
 // The two ways that the one evaluator runs.
 Evaluation_Mode :: enum u8 {
 	Console     = 0, // In the console: each effect runs, and each line is forced whole.
@@ -229,7 +233,7 @@ Command_Signature :: struct {
 	has_effect:      bool, // An effect: mode `declaration` refuses the call.
 	parameter_count: int,
 	optional_last:   bool, // A call may leave out the last parameter.
-	optional:        [lex_parser.ARGUMENT_CAPACITY]bool, // A call may leave out this parameter, an Enum: the host gives its absent word.
+	optional:        [lex_parser.ARGUMENT_CAPACITY]bool, // A call may leave out this parameter: the host gives the Presence word Absent and the value 0.
 	names:           [lex_parser.ARGUMENT_CAPACITY]string, // The name of each parameter, or "": the command has none.
 	kinds:           [lex_parser.ARGUMENT_CAPACITY]Kind,
 	files:           [lex_parser.ARGUMENT_CAPACITY][]u8, // A Record or an Enum parameter: the module that describes its record or its enum, or nil.
@@ -280,6 +284,8 @@ Evaluation :: struct {
 	list_item_count:     int,
 	hashes:              [HASH_CAPACITY]blake3.Hash,
 	hash_count:          int,
+	// Inline tagged records for console lines: `plan { … }` in a line.
+	inline_tagged_records: [TAGGED_RECORD_CAPACITY]Value,
 	slots:               [lex_parser.NODE_CAPACITY]i16, // Inline slots for console lines.
 	slot_counts:         [lex_parser.NODE_CAPACITY]u16, // Inline slot counts for console lines.
 	stack_bytes:         uint, // The bytes of stack that the evaluation may take.
@@ -318,6 +324,7 @@ evaluation_start :: proc "contextless" (evaluation: ^Evaluation, tree: ^lex_pars
 		call_thunks = evaluation.call_thunks[:],
 		list_items  = evaluation.list_items[:],
 		hashes      = evaluation.hashes[:],
+		tagged_records = evaluation.inline_tagged_records[:],
 		depth_limit = 0,
 	}
 	evaluation_start_with_pools(evaluation, tree, mode, host, pools, budget, stack_bytes)
@@ -1359,7 +1366,7 @@ call_compute :: proc "contextless" (evaluation: ^Evaluation, index: lex_parser.N
 	}
 	// A parameter that the call does not give: an optional one, and the
 	// last one that a call may leave out, get no value; the host gives an
-	// optional Enum its absent word. A call with named arguments gives each
+	// optional parameter the Presence word Absent and the value 0. A call with named arguments gives each
 	// other parameter; a call by place that misses one is refused by the
 	// host, which counts its arguments.
 	missing := false

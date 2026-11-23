@@ -55,9 +55,9 @@ START_POLICY_LIST_WORDS := [Start_Policy_List]string {
 START_POLICY_NAME :: "start_policy"
 
 // The time that a start policy has to say that the machine is usable: the
-// hang bound of the system, so that only a start policy that hangs meets
-// it, never a slow machine.
-START_POLICY_HANG_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
+// answer bound of the services, so that only a start policy that hangs
+// meets it, never a slow machine.
+START_POLICY_HANG_BOUND_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
 start_policy_stage: Start_Policy_Stage
 start_policy_list: Start_Policy_List

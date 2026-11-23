@@ -52,9 +52,10 @@ plan_roles_command :: proc "contextless" (item: ^Started, values: [7]u64, answer
 		}
 	}
 	switch step {
-	case .None:
-		// The border refuses it; the case keeps the switch whole.
-		return root_ring.refuse(answer, .Argument_Refused, u32(root_ring.Root_Command.Plan_Roles), .Bad_Value, .None, 1)
+	case .None, .Committed:
+		// plan_roles_step_of_word refuses None; Committed is a step of
+		// Plan_Values only: a set of roles is in force from its answer.
+		return root_ring.refuse(answer, .Argument_Refused, u32(root_ring.Root_Command.Plan_Roles), .Bad_Value, .None, 1, i64(step), i64(rd.Plan_Roles_Step.Loaded))
 	case .Page:
 		return plan_roles_page_give(item, answer)
 	case .Loaded:
@@ -74,9 +75,7 @@ plan_roles_command :: proc "contextless" (item: ^Started, values: [7]u64, answer
 	// The grant of each connection before the change: the roles of its two
 	// sides give its amount (grant_for).
 	plan_roles_saved = role_override_names
-	for &connection, index in connections {
-		plan_roles_grants_before[index] = connection.caller == nil ? 0 : connection_grant(&connection)
-	}
+	grants_change_begin()
 	resolver := role_policy.Holder_Resolver {
 		name_of_hash = plan_role_module_of_hash,
 		fills        = plan_role_module_fills,
@@ -90,12 +89,12 @@ plan_roles_command :: proc "contextless" (item: ^Started, values: [7]u64, answer
 	// each service ring has room for its grants: else the change is undone
 	// whole, and no connection keeps the trust of a role that its caller
 	// lost (role_policy.grants_room_short).
-	if !plan_roles_grants_room() {
+	if !grants_change_room() {
 		role_policy.holder_overrides_restore(&role_holder_names, &role_override_names, &plan_roles_saved)
 		system.log_fact(.Warning, Plan_Roles_Refused{refusal_code = u64(rd.Plan_Roles_Refusal.Grants_Busy), override_index = 0, generation = plan_roles_copy.generation, serial = role_override_names.serial})
 		return root_ring.refuse(answer, .Callee_Busy, u32(root_ring.Root_Command.Plan_Roles), .Refused, .Records, 0, 0, 0, i64(rd.Plan_Roles_Refusal.Grants_Busy))
 	}
-	plan_roles_grants_send()
+	grants_change_send()
 	// The script font set of the plan holds with its roles.
 	script_fonts_planned(plan_roles_copy.script_fonts)
 	system.log_fact(.Info, Plan_Roles_Replaced{generation = role_override_names.generation, serial = role_override_names.serial, overrides = plan_roles_copy.override_count, rollback = step == .Rollback ? 1 : 0})
@@ -103,57 +102,65 @@ plan_roles_command :: proc "contextless" (item: ^Started, values: [7]u64, answer
 	return .Succeeded
 }
 
-// The overrides before a change of the roles, and the grant of each
-// connection before it, by the place of the connection.
+// The overrides before a change of the roles.
 plan_roles_saved: role_policy.Override_Names
-plan_roles_grants_before: [CONNECTION_CAPACITY]u64
+
+// The grant of each connection before a change of the roles or of the plan
+// values, by the place of the connection.
+grants_change_before: [CONNECTION_CAPACITY]u64
 
 // The services whose ring takes a grant of the change, and the count of
 // their grants: at most one service for each connection.
-plan_roles_grant_services: [CONNECTION_CAPACITY]^Started
-plan_roles_grant_counts: [CONNECTION_CAPACITY]u32
-plan_roles_grant_rooms: [CONNECTION_CAPACITY]u32
+grants_change_services: [CONNECTION_CAPACITY]^Started
+grants_change_counts: [CONNECTION_CAPACITY]u32
+grants_change_rooms: [CONNECTION_CAPACITY]u32
 
-// plan_roles_grants_room counts, for each service ring, the grants that
-// the change of the roles changed, and says if each ring has room for
-// them.
-@(private = "file")
-plan_roles_grants_room :: proc "contextless" () -> bool {
+// grants_change_begin keeps the grant of each connection before a change:
+// the roles of its two sides and the quota of a store give its amount
+// (grant_for).
+grants_change_begin :: proc "contextless" () {
+	for &connection, index in connections {
+		grants_change_before[index] = connection.caller == nil ? 0 : connection_grant(&connection)
+	}
+}
+
+// grants_change_room counts, for each service ring, the grants that the
+// change changed, and says if each ring has room for them.
+grants_change_room :: proc "contextless" () -> bool {
 	service_count := 0
 	for &connection, index in connections {
-		if connection.caller == nil || connection_grant(&connection) == plan_roles_grants_before[index] {
+		if connection.caller == nil || connection_grant(&connection) == grants_change_before[index] {
 			continue
 		}
 		place := 0
-		for place < service_count && plan_roles_grant_services[place] != connection.service {
+		for place < service_count && grants_change_services[place] != connection.service {
 			place += 1
 		}
 		if place == service_count {
 			commands := &connection.service.service.commands
-			plan_roles_grant_services[place] = connection.service
-			plan_roles_grant_counts[place] = 0
-			plan_roles_grant_rooms[place] = ring.capacity(commands) - ring.count(commands)
+			grants_change_services[place] = connection.service
+			grants_change_counts[place] = 0
+			grants_change_rooms[place] = ring.capacity(commands) - ring.count(commands)
 			service_count += 1
 		}
-		plan_roles_grant_counts[place] += 1
+		grants_change_counts[place] += 1
 	}
-	short, _ := role_policy.grants_room_short(plan_roles_grant_counts[:service_count], plan_roles_grant_rooms[:service_count])
+	short, _ := role_policy.grants_room_short(grants_change_counts[:service_count], grants_change_rooms[:service_count])
 	return !short
 }
 
-// plan_roles_grants_send writes again each grant that the change of the
-// roles changed: the amount of a connection to the holder of Storage or of
-// Display whose side moved, and the connections of a module that lost or
-// took the role Plans. The room was checked, and this service is the one
-// writer of a service ring.
-@(private = "file")
-plan_roles_grants_send :: proc "contextless" () {
+// grants_change_send writes again each grant that the change changed: the
+// amount of a connection to the holder of Storage or of Display whose side
+// moved, the connections of a module that lost or took the role Plans, and
+// the quota of a store that the plan values changed. The room was checked,
+// and this service is the one writer of a service ring.
+grants_change_send :: proc "contextless" () {
 	for &connection, index in connections {
 		if connection.caller == nil {
 			continue
 		}
 		grant := connection_grant(&connection)
-		if grant == plan_roles_grants_before[index] {
+		if grant == grants_change_before[index] {
 			continue
 		}
 		_ = system.send(&connection.service.service.commands, ring.Record{kind = u32(isolated.Service_Command.Grant), values = {0 = u64(connection.ring), 6 = grant}})

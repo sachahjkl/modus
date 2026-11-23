@@ -76,6 +76,42 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 				if _, _, _, problem := module.member_text_row(file, index); problem > max(module.Member_Text_Problem) {
 					return fuzz_broken(.Contract, "member_text_row gives a value out of its enumeration: %d", u8(problem))
 				}
+			case .Parameter_Settings:
+				row, _ := module.record(file, kind, index, module.Parameter_Setting)
+				if problem := module.parameter_setting_row(file, row); problem > max(module.Parameter_Setting_Problem) {
+					return fuzz_broken(.Contract, "parameter_setting_row gives a value out of its enumeration: %d", u8(problem))
+				}
+			}
+		}
+	}
+	// The check of the settings of the parameters gives a row of the table,
+	// or 0 with None, and a row that it takes is found by its key.
+	setting_row, setting_problem := module.parameter_settings_check(file)
+	if setting_problem > max(module.Parameter_Setting_Problem) || (setting_problem == .None) != (setting_row == 0) || setting_row >= max(module.count(file, .Parameter_Settings), 1) {
+		return fuzz_broken(.Contract, "parameter_settings_check gives the row %d and the problem %d", setting_row, u8(setting_problem))
+	}
+	if setting_problem == .None {
+		for index in u32(1) ..< min(module.count(file, .Parameter_Settings), FUZZ_MODULE_INDEX_LIMIT) {
+			row, _ := module.record(file, .Parameter_Settings, index, module.Parameter_Setting)
+			if found, found_ok := module.parameter_setting(file, row.export_index, int(row.parameter)); !found_ok || found != row {
+				return fuzz_broken(.Model, "the row %d of the table Parameter_Settings is not found by its key", index)
+			}
+		}
+	}
+	// Each word of a need is a member or refused, and the words of the
+	// call form count two for an optional parameter.
+	for index in 1 ..= min(module.count(file, .Exports), FUZZ_MODULE_INDEX_LIMIT) {
+		function, function_ok := module.function(file, u32(index))
+		if !function_ok {
+			continue
+		}
+		if _, valid := module.function_needs_check(function); valid {
+			optional := 0
+			for number in 0 ..< min(int(function.parameter_count), module.PARAMETER_CAPACITY) {
+				optional += module.parameter_optional(function, number) ? 1 : 0
+			}
+			if module.parameter_word_count(function) != min(int(function.parameter_count), module.PARAMETER_CAPACITY) + optional {
+				return fuzz_broken(.Model, "parameter_word_count of the export %d is not its parameters and its optional ones", index)
 			}
 		}
 	}
@@ -124,7 +160,7 @@ fuzz_module_readers :: proc(file: []u8) -> Fuzz_Verdict {
 		}
 		for number in 0 ..< described.member_count {
 			member, _ := module.enum_member(file, described, number)
-			if !module.enum_member_name_valid(module.string_at(file, member.name_offset, member.name_count)) || !module.enum_value_fits(described.size, described.unsigned, member.value) || member.value == module.enum_absent_word(described) {
+			if !module.enum_member_name_valid(module.string_at(file, member.name_offset, member.name_count)) || !module.enum_value_fits(described.size, described.unsigned, member.value) {
 				return fuzz_broken(.Contract, "enum_type accepts the enum %d with a member that breaks a rule: member %d", index, number)
 			}
 		}
@@ -317,6 +353,8 @@ fuzz_module_record_type :: proc(kind: module.Table_Kind) -> (type: typeid, size:
 		return module.Member, size_of(module.Member)
 	case .Member_Texts:
 		return module.Member_Text, size_of(module.Member_Text)
+	case .Parameter_Settings:
+		return module.Parameter_Setting, size_of(module.Parameter_Setting)
 	}
 	return nil, 0
 }

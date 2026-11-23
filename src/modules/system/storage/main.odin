@@ -29,6 +29,8 @@ import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/ring"
+import "modus:contract/value_kinds"
+import "internal:storage/storage_retention"
 import format "modus:contract/store"
 import answers "modus:storage"
 import "base:intrinsics"
@@ -1295,6 +1297,7 @@ shares_serve :: proc "contextless" () -> (calls: int) {
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	date_page = date.page_of(ctx)
+	retention_rule_read(ctx)
 	// The key of the slots of the hash index: a new one at each start, so
 	// that no party can choose hashes whose first slots make one long run.
 	// The generator is local: it serves this one draw, and leaves no state
@@ -1379,7 +1382,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					system.wait_records(&wait, &item.connection.calls.commands)
 				}
 			}
+			system.plan_values_wait(&wait, &ctx.values, &retention_plan_copy)
 			system.wait_end(&wait)
+		}
+		if system.plan_values_changed(&ctx.values, &retention_plan_copy) {
+			retention_rule_read(ctx)
 		}
 		calls := system.service_run(&service)
 		calls += shares_serve()
@@ -1395,6 +1402,30 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			removal_step()
 		}
 	}
+}
+
+// The copy of the plan values page that the retention rule is read from.
+retention_plan_copy: system.Plan_Values_Copy
+
+// retention_rule_read reads the retention rule of the plan of principal 0
+// from the plan values page: at the start, and at each change of the plan.
+// Storage starts before the holder of Plans, which needs it, so the rule of
+// the plan in force comes with that change, and not at the start
+// (src/md/features/module_settings.md, "How the values reach their
+// owner"). The next pass of the retention runs with the new rule.
+retention_rule_read :: proc "contextless" (ctx: ^system.Context) {
+	plan, planned := system.plan_values_of_process(&ctx.values, &retention_plan_copy)
+	if !planned {
+		return
+	}
+	rule, order_refused := storage_retention.rule_of(plan)
+	// The line says a change: a plan with no rule at the start of storage,
+	// and a change of the plan that leaves the rule, write nothing.
+	if rule == retention_rule && !order_refused {
+		return
+	}
+	retention_rule = rule
+	system.log_fact(.Info, Retention_Rule_Of_The_Plan{keep_all = value_kinds.Time_In_Milliseconds(i64(rule.keep_all_milliseconds)), hours_end = value_kinds.Time_In_Milliseconds(i64(rule.hours_end_milliseconds)), order_refused = order_refused ? 1 : 0})
 }
 
 // disk_open opens the disk (mount) and writes its lines. A disk that goes

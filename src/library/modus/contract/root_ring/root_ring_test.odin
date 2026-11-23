@@ -252,6 +252,8 @@ each_ring_grant_sends_its_own_commands_only :: proc(t: ^testing.T) {
 	testing.expect(t, grow_ok && grow == {step = .Grow, width = 2560, height = 1440})
 	release, _, last_ok := screen_budget_words_of_values({0 = u64(Screen_Budget_Step.Release), 1 = max(u64)})
 	testing.expect(t, last_ok && release == {step = .Release, growth = max(u64)})
+	testing.expect(t, !sender_allowed(.Plan_Values, {.Root_Ring, .Connect, .Principals, .Debugger, .Start_Policy, .Acts_For_Principal}))
+	testing.expect(t, sender_allowed(.Plan_Values, {.Plans}))
 	testing.expect(t, !sender_allowed(.Start, {.Plans}))
 	testing.expect(t, !sender_allowed(.Connect, {.Plans}))
 	testing.expect(t, !sender_allowed(.Start, {.Connect, .Principals, .Debugger}))

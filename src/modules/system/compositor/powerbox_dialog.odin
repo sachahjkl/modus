@@ -45,6 +45,7 @@ Powerbox_Prompt_State :: struct {
 	picker_selected: int,
 	picker_first:    int,
 	last_decision:   powerbox.Item_Decision,
+	shown_milliseconds: u64, // When the dialog showed: a grant counts only after the arm time of the principal.
 }
 
 
@@ -77,6 +78,7 @@ powerbox_prompt_open :: proc "contextless" (kind: powerbox.Request_Item_Kind, pr
 		process_len   = min(len(process_name), POWERBOX_TEXT_LIMIT),
 		resource_len  = min(len(resource_text), POWERBOX_TEXT_LIMIT),
 		last_decision = .None,
+		shown_milliseconds = system.time(),
 	}
 	if kind == .Store_Share {
 		// The stores of the principal, from the powerbox, shown only to the
@@ -93,6 +95,12 @@ powerbox_prompt_open :: proc "contextless" (kind: powerbox.Request_Item_Kind, pr
 powerbox_prompt_decide :: proc "contextless" (allow: bool) -> bool {
 	if !powerbox_prompt.open {
 		return false
+	}
+	// The arm time of the principal holds for this door as for the
+	// difference of a plan: a grant before it is no act, and the dialog takes
+	// the key. A refusal counts at once: it gives nothing.
+	if allow && !powerbox.consent_armed(powerbox_prompt.shown_milliseconds, system.time(), display_choices_in_force.consent_arm_milliseconds) {
+		return true
 	}
 	if powerbox_prompt.kind == .Store_Share {
 		// A share needs a store that the powerbox checks: the prompt waits
@@ -683,16 +691,17 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 	// The words of the face: a plan, or one act of an agent that asked.
 	element, header, name_label, accept := "plan difference", "TRUSTED PLAN DIFFERENCE", "plan", "Accept plan"
 	add_heading := "adds"
-	// The act is code, service.export, in the font of the cells, as a
-	// reader compares it character by character (docs/FONTS.md, section
-	// 12.6); the items of a plan are names in the interface font.
-	item_font := interface.FONT_INTERFACE
+	// Each item is in the font of the cells, as a reader compares it
+	// character by character (docs/FONTS.md, section 12.6): an act,
+	// service.export, and an item of a plan, whose value can be a text. A
+	// cell has one width, so the lines of an item are known before the
+	// draw (bar.plan_difference_item_line).
+	item_font := interface.Font{}
 	switch dialog.face {
 	case .Plan:
 	case .Act:
 		element, header, name_label, accept = "act", "TRUSTED ACT", "asker", "Allow once"
 		add_heading = "runs"
-		item_font = interface.Font{}
 	}
 	interface.draw_element_push(table, {x, y, width, height}, u32(interface.identity(element)), .Alert_Dialog, {name = element})
 	defer interface.draw_element_pop(table)
@@ -720,7 +729,10 @@ plan_difference_records :: proc "contextless" (table: ^interface.Draw_Table) {
 			interface.draw_text(table, text_x, line_y + text_offset, line.added ? add_heading : "removes", graphics.colors.dim, interface.FONT_CAPTION)
 		} else {
 			item_x := interface.draw_text(table, text_x + 8, line_y + text_offset, line.added ? "+" : "-", color, interface.FONT_INTERFACE_BOLD) + bar.PLAN_DIFFERENCE_GAP
-			shown := interface.text_fit(table, item_font, bar.plan_difference_item_text(line.item), text_x + text_room - item_x)
+			// text_fit cuts nothing here: a line of an item fits its room; it
+			// stays as the guard of the box of the dialog.
+			#assert(bar.PLAN_DIFFERENCE_LINE_CHARACTERS * graphics.CELL_WIDTH <= bar.PLAN_DIFFERENCE_WIDTH - 2 * bar.PLAN_DIFFERENCE_MARGIN - 24)
+			shown := interface.text_fit(table, item_font, bar.plan_difference_item_line(line.item, line.item_line), text_x + text_room - item_x)
 			interface.draw_text(table, item_x, line_y + text_offset, shown, color, item_font)
 		}
 		line_y += bar.PLAN_DIFFERENCE_LINE

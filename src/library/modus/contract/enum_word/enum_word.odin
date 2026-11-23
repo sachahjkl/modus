@@ -32,26 +32,14 @@ member_of_word :: proc "contextless" ($Enum: typeid, word: u64) -> (member: Enum
 
 // member_of_argument is the border of an Enum parameter of an export
 // (src/md/features/enum_parameters.md): the argument comes in a register
-// that the caller wrote, so it can hold a value that names no member.
-// given is false for the absent word of an optional parameter that the call
-// left out: each bit of the size of the enum set (module.enum_absent_word).
-// ok is false for any other value that names no member: the export answers
-// it with an error record.
+// that the caller wrote, so it can hold a value that names no member. ok
+// is false for a value that names no member: the export answers it with an
+// error record. An optional parameter has its Presence word before it
+// (module.optional_member_of_arguments).
 //
 // Example: with `Font :: enum u32 {Vector = 0, Spleen = 1}`,
-// `member_of_argument(Font(1))` is `.Spleen, true, true`,
-// `member_of_argument(Font(0xFFFF_FFFF))` is `{}, false, true`, and
-// `member_of_argument(Font(2))` is `{}, true, false`.
-member_of_argument :: proc "contextless" (argument: $Enum) -> (member: Enum, given: bool, ok: bool) where intrinsics.type_is_enum(Enum) {
-	argument := argument
-	bytes := transmute([size_of(Enum)]u8)argument
-	absent := true
-	for byte in bytes {
-		absent &= byte == 0xFF
-	}
-	if absent {
-		return {}, false, true
-	}
-	member, ok = member_of_word(Enum, u64(argument))
-	return member, true, ok
+// `member_of_argument(Font(1))` is `.Spleen, true`, and
+// `member_of_argument(Font(2))` is `{}, false`.
+member_of_argument :: proc "contextless" (argument: $Enum) -> (member: Enum, ok: bool) where intrinsics.type_is_enum(Enum) {
+	return member_of_word(Enum, u64(argument))
 }

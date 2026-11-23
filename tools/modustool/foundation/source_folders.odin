@@ -121,12 +121,17 @@ INTERNAL_LIBRARY_FLAG :: "-collection:" + INTERNAL_LIBRARY_NAME + "=" + SOURCE_F
 // and ignores it with the flag below; the tool reads it from the syntax
 // tree.
 LOG_FACT_ATTRIBUTE_NAME :: "log_fact"
-// The names of the two attributes of an export that describe its Enum
-// parameters (src/md/features/enum_parameters.md): the getter of each one,
-// and the ones that a call may leave out. The tool reads them as it reads
-// the attribute of a fact type.
+// The name of the attribute of an export that names the getter of each
+// Enum parameter (src/md/features/enum_parameters.md). The tool reads it as
+// it reads the attribute of a fact type.
 ENUM_GETTERS_ATTRIBUTE_NAME :: "enum_getters"
-OPTIONAL_PARAMETERS_ATTRIBUTE_NAME :: "optional_parameters"
+// The names of the attributes of an export that give the settings of its
+// parameters (src/md/features/module_settings.md, "The description of a
+// parameter"): the range of an Integer, the export that gives its choices,
+// and the export that gives the instances that its first parameter names.
+PARAMETER_RANGES_ATTRIBUTE_NAME :: "parameter_ranges"
+PARAMETER_CHOICES_ATTRIBUTE_NAME :: "parameter_choices"
+PARAMETER_INSTANCES_ATTRIBUTE_NAME :: "parameter_instances"
 // The name of the attribute of a declared table of display texts of the
 // members of an enum, whose value is the language of the texts
 // (src/md/features/enum_parameters.md, "The display text of a member").
@@ -137,7 +142,7 @@ MEMBER_TEXTS_ATTRIBUTE_NAME :: "member_texts"
 // the boot program, each host test, and each compile and check of this
 // tool, which compiles packages of src/ in. flake.nix gives the same flag
 // when it builds this tool.
-CUSTOM_ATTRIBUTES_FLAG :: "-custom-attribute:" + LOG_FACT_ATTRIBUTE_NAME + "," + ENUM_GETTERS_ATTRIBUTE_NAME + "," + OPTIONAL_PARAMETERS_ATTRIBUTE_NAME + "," + MEMBER_TEXTS_ATTRIBUTE_NAME
+CUSTOM_ATTRIBUTES_FLAG :: "-custom-attribute:" + LOG_FACT_ATTRIBUTE_NAME + "," + ENUM_GETTERS_ATTRIBUTE_NAME + "," + MEMBER_TEXTS_ATTRIBUTE_NAME + "," + PARAMETER_RANGES_ATTRIBUTE_NAME + "," + PARAMETER_CHOICES_ATTRIBUTE_NAME + "," + PARAMETER_INSTANCES_ATTRIBUTE_NAME
 
 // The source library of the kernel, modulus: the pure kernel parts in the
 // folders under src/modulus that the kernel alone compiles in

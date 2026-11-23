@@ -1142,6 +1142,16 @@ The design: `docs/TOOLS.md`, "The bounds of the tests".
 
 Do not use: timeout (for a test), deadline (for a test), time limit.
 
+### Answer bound
+
+The answer bound is the time after which a service calls a silent peer hung: a device, a device service, a delegated service of the root service or the holder of a role.
+
+Each peer of the machine answers in microseconds, so the bound is a minute and ends a hang only: it is never a measure of a device. It is `system.ANSWER_BOUND_MILLISECONDS`, and each contract that waits names its deadline from it. It is not the hang bound of the tests, which only a check reads (`modustool rule-checks`), and it is not a setting.
+
+The design: `docs/TOOLS.md`, "The rules that a check holds".
+
+Do not use: timeout, hang bound (for a service).
+
 ### Stall
 
 A stall is a case that writes a count of its progress and whose count did not grow for the hang bound.

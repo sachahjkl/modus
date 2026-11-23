@@ -158,22 +158,25 @@ import "base:intrinsics"
 //   (display.TEXT_MEMORY_PAGES) = 708 pages;
 // - the wait room of the loop (COMPOSITOR_WAIT_WORDS): 10 pages, which the
 //   kernel takes at the first wait;
-// - the end of its record output of the acts of a wide grant: 4 pages.
-// 130 + 128 + 3 + 2 + 2031 + 1647 + 8576 + 8576 + 708 + 10 + 4 = 21815: the
-// bound of 128 windows at the largest surface, more than the least largest budget
-// of a process, and less than the share of a machine of 1 GiB. Page tables
-// are paid as the windows map, so a machine with a smaller share still runs
-// the desktop, with fewer such windows. A screen whose frame and background
-// the budget cannot pay is named on one line, and the compositor stops
-// (entry). Three threads: the interface, the ranking of the palette, and
-// the reading of a plan difference (powerbox_dialog.odin), whose work is in
-// proportion to the difference.
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 21815, processes = 1, threads = 3, screen_pictures = 2}
-#assert(MODULE_BUDGET.working_memory_pages == 130 + 128 + 3 + 2 + 2031 + 1647 + 2 * CLIENT_CAPACITY * 67 + 708 + COMPOSITOR_WAIT_ROOM_PAGES + 4)
+// - the end of its record output of the acts of a wide grant: 4 pages;
+// - the stack of the worker of the role store (display_choices.odin),
+//   interface.BACKGROUND_STACK_PAGES.
+// 130 + 128 + 3 + 2 + 2031 + 1647 + 8576 + 8576 + 708 + 10 + 4 + 64 = 21879:
+// the bound of 128 windows at the largest surface, more than the least
+// largest budget of a process, and less than the share of a machine of 1
+// GiB. Page tables are paid as the windows map, so a machine with a smaller
+// share still runs the desktop, with fewer such windows. A screen whose
+// frame and background the budget cannot pay is named on one line, and the
+// compositor stops (entry). Four threads: the interface, the ranking of the
+// palette, the reading of a plan difference (powerbox_dialog.odin), whose
+// work is in proportion to the difference, and the worker of the role
+// store.
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 21879, processes = 1, threads = 4, screen_pictures = 2}
+#assert(MODULE_BUDGET.working_memory_pages == 130 + 128 + 3 + 2 + 2031 + 1647 + 2 * CLIENT_CAPACITY * 67 + 708 + COMPOSITOR_WAIT_ROOM_PAGES + 4 + interface.BACKGROUND_STACK_PAGES)
 // The request on the machine of the machine tests, whose screen is the
-// reference screen: 21815 working pages, 2 x 2025 pages of the frame and
+// reference screen: 21879 working pages, 2 x 2025 pages of the frame and
 // the background, and the code, the data and the stacks that the tool
-// counts, under a bound of 8192 pages: 34057 pages, under the largest
+// counts, under a bound of 8192 pages: 34121 pages, under the largest
 // budget of that machine (50 000 pages), so no boot of a test writes
 // Budget_Part_Limited for the compositor. It passes the least largest
 // budget (16384 pages): a machine whose root holds less than about 128 000
@@ -252,7 +255,7 @@ Client :: struct {
 	declined_scale: scale_factor.Scale,
 	// The fit at a new scale (window_resize.md, "The fit at a new scale"): scale_due holds the scale in force for this window until its
 	// fit request ends; fit_due says that the fit to the newest work area is
-	// not asked yet; scale_told is the scale of the last Settings_Changed.
+	// not asked yet; scale_told is the scale of the last Presentation.
 	scale_due:  bool,
 	fit_due:    bool,
 	scale_told: scale_factor.Scale,
@@ -819,6 +822,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	width := int(ctx.values[VALUE_WIDTH])
 	height := int(ctx.values[VALUE_HEIGHT])
 	date_page = date.page_of(ctx)
+	display_choices_open(ctx) // display_choices.odin: the role store; its read waits for the first frame.
 	address, status := system.memory_map(ctx.handles[GRANT_FRAMEBUFFER])
 	input_status, control_status: system.Status
 	input, input_status = system.ring_open(ctx.handles[GRANT_INPUT])
@@ -921,6 +925,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		pointer_theme_choose(first_choice.pointer_theme)
 		pointer_form_choose(pointer_form_in_force(first_choice)) // pointer_picture.odin
+		// The first presentation record of each window: a compositor that
+		// starts after the boot pass names the settings in force.
+		presentation_told = settings.presentation_words_of(first_choice)
+		settings_count_told = u64(first_choice.change_count)
 	}
 
 	next_frame: u64
@@ -953,8 +961,12 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		}
 		palette_wait(&wait) // palette.odin
 		deadline = gpu_scanout_wait(&wait, deadline) // gpu_scanout.odin
+		if display_choices_wait(&wait) { // display_choices.odin
+			deadline = 0
+		}
 		now := system.wait_end(&wait, deadline)
 		gpu_scanout_poll(now)
+		display_choices_step()
 		desktop_features_tick(now) // desktop_features.odin
 		quality_turn_start() // quality_measures.odin
 		if display.settings_page != nil {
@@ -1250,6 +1262,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			frames += 1
 			if frames == 1 {
 				system.log_fact(.Info, First_Frame{})
+				// The choices of the principal, after the first frame: the
+				// screen never waits for a store (display_choices.odin).
+				display_choices_load()
 				if system.measure_run() {
 					start_measures_run()
 				}
@@ -1286,6 +1301,7 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 	// scale in force in the choice of a refused page.
 	rescaled := desktop_scale_take(choice, true)
 	settings_count_told = u64(choice.change_count)
+	presentation_told = settings.presentation_words_of(choice)
 	windows_declined_told = windows_declined_count() // scale.odin
 	// A new appearance: the background and the mark of the bar are pixels
 	// that the compositor keeps, so it draws them again; each record of the
@@ -1331,8 +1347,12 @@ settings_changed :: proc "contextless" (choice: settings.Choice) {
 }
 
 // The change count of the last choice that the windows were told: the
-// first word of each Settings_Changed.
+// first word of each Presentation.
 settings_count_told: u64
+
+// The words of the presentation record of the last choice that the windows
+// were told (settings.presentation_words_of).
+presentation_told: [settings.PRESENTATION_WORDS]u64
 
 // work_area_send names the work area to a window, as the display contract
 // asks of each holder: the desktop without the bar, in logical pixels.
@@ -1549,13 +1569,12 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	client.surface_serial, client.surface_scale = 1, surface_scale
 	client.width, client.height = int(facts.width), int(facts.height)
 	client.wanted_width, client.wanted_height = client.width, client.height
-	// The process read another scale than the scale in force: the
-	// compositor names its own, and the window rescales to it. Until then
-	// its surface is cut to its interior.
+	// The first presentation record of the window, always: the window
+	// draws with it, and a process that read another scale than the scale
+	// in force rescales to the scale that it names. Until then its surface
+	// is cut to its interior.
 	client.scale_told = surface_scale
-	if surface_scale != scale {
-		settings_changed_send(client) // scale.odin
-	}
+	settings_changed_send(client) // scale.odin
 	// A disk process could title its window as a process of the system: its
 	// window has the nickname that the root service gave.
 	client.title = client.from_disk ? client.nickname : system.name_unpack({record.values[3], record.values[4], record.values[5], record.values[6]})
@@ -1582,7 +1601,7 @@ surface_create :: proc "contextless" (index: int, record: ring.Record) {
 	work_area_send(client)
 	// A window larger than the work area gets at most the work area from its
 	// first surface, and scrolls its layout (src/md/features/window_scroll.md).
-	// A window of another scale releases its surface at the Settings_Changed
+	// A window of another scale releases its surface at the Presentation
 	// above, and a window between two surfaces declines a request: its fit
 	// waits for its surface of the scale in force (window_fit_after_scale).
 	if surface_scale != scale {

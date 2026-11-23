@@ -204,7 +204,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 					cells[shown][y][x] = 1
 					board_generation += 1
 				}
-			case .None, .Settings_Changed, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Surface_Answer, .Work_Area:
+			case .None, .Presentation, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Surface_Answer, .Work_Area:
 				// next_event never gives None, and this window does nothing for the other events.
 			}
 		}

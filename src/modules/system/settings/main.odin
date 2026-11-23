@@ -70,13 +70,16 @@
 package settings_process
 
 import "base:intrinsics"
-import "internal:settings/appearance_rule"
 import "modus:contract/accessibility"
+import "modus:contract/chosen_values"
 import "modus:contract/date"
 import "modus:contract/call_outcome"
+import "modus:contract/enum_word"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/language_tag"
+import "modus:contract/module"
+import "modus:contract/plan_values"
 import op "modus:contract/operation"
 import "modus:contract/scale_factor"
 import "modus:contract/settings"
@@ -196,20 +199,136 @@ with_value :: proc "contextless" (choice: settings.Choice, setting: settings.Set
 	return changed, true, .None
 }
 
-// keep writes the record of the values and the zone to the private store:
-// one object, one commit. It gives false, with a log line, when the store
-// refuses; with no store (No_Store at the start), it gives false at once.
-keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -> bool {
+// The kept record of this run (src/md/features/module_settings.md, "The
+// precedence"): the record of chosen values as the store holds it, the
+// language list when the principal chose one, and the settings that they
+// give with the defaults. A record that this release cannot read is never
+// written over, but by a change of the principal, which starts a new one.
+// A record that the store did not give (a refused read) is another case:
+// its choices are not known, so no change is written over it until a read
+// gives it (kept_record_unread), as modus:kept_choices does.
+kept_record_bytes: [system.PAGE_SIZE]u8
+kept_record_length: int
+kept_record_readable: bool = true
+kept_record_unread: bool
+kept_languages_bytes: [size_of(settings.Language_List)]u8
+kept_languages_found: bool
+kept_choice: settings.Choice
+kept_zone_offset_minutes: i32
+kept_layers: settings.Kept_Layers
+
+// The plan values of this owner: its defaults and its locks, from the page
+// of its start (src/md/features/module_settings.md, "Plan records").
+kept_plan: plan_values.Owner_Values
+// The copy of the plan values page that kept_plan points into.
+kept_plan_copy: system.Plan_Values_Copy
+
+// What the read of the kept record found.
+Kept_Load :: enum u8 {
+	Nothing_Kept, // No record: the principal chose nothing.
+	Kept, // A record of chosen values.
+	Unreadable, // A record that this release cannot read: the defaults hold, and the record stays.
+	Read_Refused, // The store gave no record.
+	No_Store, // The process has no private store.
+}
+
+// kept_load reads the kept record and the language list once, at the start
+// of each pass: a change goes on the record that the store holds, so it
+// never loses a choice that this process does not know.
+kept_load :: proc "contextless" () -> Kept_Load {
+	// With no store the defaults of the plan still hold.
+	kept_choice, kept_zone_offset_minutes, kept_layers = settings.choice_of_kept({}, nil, false, kept_plan)
+	if !has_store {
+		return .No_Store
+	}
+	error: errors.Error_Record
+	bytes, found, status := storage.read(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, kept_record_bytes[:], &error)
+	if status != .Ok {
+		kept_record_unread = true
+		return .Read_Refused
+	}
+	kept_record_unread = false
+	kept_record_readable = true
+	load := Kept_Load.Nothing_Kept
+	record: chosen_values.Record
+	if found {
+		problem: chosen_values.Record_Problem
+		if record, problem = chosen_values.read_record(bytes); problem != .None {
+			kept_record_readable = false
+			record = {}
+			load = .Unreadable
+		} else {
+			kept_record_length = len(bytes)
+			load = .Kept
+		}
+	}
+	languages, languages_found, languages_status := storage.read(&store, storage.ROOT, settings.KEPT_LANGUAGES_OBJECT_NAME, kept_languages_bytes[:], &error)
+	kept_languages_found = languages_status == .Ok && languages_found && len(languages) == len(kept_languages_bytes)
+	if kept_languages_found && load == .Nothing_Kept {
+		load = .Kept
+	}
+	kept_choice, kept_zone_offset_minutes, kept_layers = settings.choice_of_kept(record, kept_languages_bytes[:], kept_languages_found, kept_plan)
+	return load
+}
+
+// keep writes what changed from the kept settings to the private store: the
+// record of the chosen values (one object, one commit) and the language
+// list (its own object). A value that changed, or that the act names,
+// becomes a choice. It
+// gives false, with a log line, when the store refuses; with no store
+// (No_Store at the start), it gives false at once, and the kept settings
+// stay as they were.
+keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32, given: settings.Given) -> bool {
 	if !has_store {
 		return false
 	}
-	kept := settings.kept_of(choice, zone_offset_minutes)
-	error: errors.Error_Record
-	_, status := storage.write(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, ([^]u8)(&kept)[:size_of(kept)], &error)
-	if status != .Ok {
-		system.log_fact(.Warning, Store_Refused(errors.error_record_fact_fields(error)))
+	// The store did not give the record at the last read: it is read again,
+	// and while the store does not give it, a write would replace choices
+	// that this process does not know.
+	if kept_record_unread && kept_load() == .Read_Refused {
+		system.log_fact(.Warning, Kept_Record_Unread{})
 		return false
 	}
+	changes := settings.kept_changes_of(kept_choice, kept_zone_offset_minutes, choice, zone_offset_minutes, given)
+	return kept_write(changes.changes[:changes.count], changes.languages_changed, choice.languages)
+}
+
+// kept_write writes changes of the record of chosen values, and the
+// language list when write_languages. A record that this release cannot
+// read gives way to a new one: the principal acted.
+kept_write :: proc "contextless" (changes: []chosen_values.Change, write_languages: bool, languages: settings.Language_List) -> bool {
+	error: errors.Error_Record
+	if len(changes) > 0 {
+		record: chosen_values.Record
+		if kept_record_readable {
+			record, _ = chosen_values.read_record(kept_record_bytes[:kept_record_length])
+		}
+		written_bytes: [system.PAGE_SIZE]u8
+		written, problem := chosen_values.write_record(record, changes, written_bytes[:])
+		if problem != .None {
+			system.log_fact(.Warning, Kept_Record_Refused{problem = value_kinds.text_field(chosen_values.RECORD_PROBLEM_NAMES[problem], PROBLEM_FIELD_BYTES)})
+			return false
+		}
+		if _, status := storage.write(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, written_bytes[:written], &error); status != .Ok {
+			system.log_fact(.Warning, Store_Refused(errors.error_record_fact_fields(error)))
+			return false
+		}
+		copy(kept_record_bytes[:], written_bytes[:written])
+		kept_record_length = written
+		kept_record_readable = true
+	}
+	if write_languages {
+		list := languages
+		list_bytes := transmute([size_of(settings.Language_List)]u8)list
+		if _, status := storage.write(&store, storage.ROOT, settings.KEPT_LANGUAGES_OBJECT_NAME, list_bytes[:], &error); status != .Ok {
+			system.log_fact(.Warning, Store_Refused(errors.error_record_fact_fields(error)))
+			return false
+		}
+		kept_languages_bytes = list_bytes
+		kept_languages_found = true
+	}
+	record, _ := chosen_values.read_record(kept_record_bytes[:kept_record_length])
+	kept_choice, kept_zone_offset_minutes, kept_layers = settings.choice_of_kept(record, kept_languages_bytes[:], kept_languages_found, kept_plan)
 	return true
 }
 
@@ -222,15 +341,7 @@ keep :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -
 // not have yet.
 in_force_at :: proc "contextless" (choice: settings.Choice, now: u64) -> (settings.Appearance_In_Force, appearance.Moment) {
 	moment := appearance.moment_of(date_page, now)
-	hour, minute, second: i32
-	time_known := false
-	if moment.known {
-		refusal: appearance_rule.Appearance_Time_Refusal
-		hour, minute, second, _, refusal = appearance_rule.local_hms_of_utc(moment.milliseconds, moment.zone_offset_seconds)
-		time_known = refusal == .None
-	}
-	in_force, _ := appearance_rule.appearance_for_time(choice.appearance, hour, minute, second, time_known)
-	return in_force, moment
+	return appearance.in_force_of(choice.appearance, moment), moment
 }
 
 // in_force_now evaluates the appearance in force at the current system time.
@@ -272,11 +383,14 @@ appearance_edge_step :: proc "contextless" (wait: ^system.Wait) -> u64 {
 		settings.write(page, choice, choice.zone_offset_minutes, in_force)
 		system.word_wake(&page.change_count, 64)
 	}
-	wait_ms, has_edge, refusal := appearance_rule.next_edge_milliseconds(choice.appearance, moment.milliseconds, moment.zone_offset_seconds, moment.known)
-	if refusal != .None || !has_edge || wait_ms > system.WAIT_FOREVER - now {
+	if choice.appearance != .Auto || !moment.known {
 		return system.WAIT_FOREVER
 	}
-	return now + wait_ms
+	wait_milliseconds := u64(appearance.next_edge(moment) - moment.milliseconds)
+	if wait_milliseconds > system.WAIT_FOREVER - now {
+		return system.WAIT_FOREVER
+	}
+	return now + wait_milliseconds
 }
 
 // page_choice reads the page that this process writes. A refused page (a
@@ -313,17 +427,26 @@ change_decision :: proc "contextless" (changes_nothing, kept: bool) -> Change_De
 // change keeps the values, the zone and the language list in the private
 // store, then writes them on the page and wakes the compositor and the
 // process `date`. A change that the store refuses changes nothing on the
-// page: it writes its fact, and gives false (change_decision).
-change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32) -> bool {
+// page: it writes its fact, and gives false (change_decision). A change that
+// a lock of the plan holds changes nothing, and gives false too.
+change :: proc "contextless" (choice: settings.Choice, zone_offset_minutes: i32, given: settings.Given = {}) -> bool {
 	current, current_ok := page_choice()
 	zone := settings.zone_offset_minutes_valid(zone_offset_minutes)
 	values_same := current_ok && settings.values_of(current) == settings.values_of(choice)
 	languages_same := current_ok && current.languages == choice.languages
-	changes_nothing := values_same && languages_same && current.zone_offset_minutes == zone
+	// An act that names a default keeps a choice, with no change of a value.
+	changes_nothing := values_same && languages_same && current.zone_offset_minutes == zone && !settings.given_not_chosen(given, kept_layers)
 	if changes_nothing {
 		return change_decision(true, true).kept
 	}
-	kept := keep(choice, zone)
+	// A lock of the plan holds over every door: a call, a press in the
+	// window, the next appearance. A change that meets one changes nothing.
+	if locked_setting, zone_locked, locked := settings.change_locked(kept_plan, current, current.zone_offset_minutes, choice, zone, given); locked {
+		name := zone_locked ? settings.TIME_ZONE_NAME : settings.descriptions[locked_setting].name
+		system.log_fact(.Warning, Change_Locked{setting = value_kinds.text_field(name, LOCKED_NAME_FIELD_BYTES)})
+		return false
+	}
+	kept := keep(choice, zone, given)
 	decision := change_decision(false, kept)
 	if !decision.write_page {
 		system.log_fact(.Warning, Change_Not_Kept{})
@@ -416,30 +539,63 @@ copied :: proc "contextless" (text: string, buffer: []u8) -> (string, bool) {
 // - `Absent`: the call gives no setting.
 // - `Bad_Value`: a value that names no member of the enum of its setting; the record names the argument and
 //   holds the value. No setting changes.
+// - `No_Grant`, unit `Plan_Lock`: a lock of the plan of principal 0 holds a setting that the call gives; the
+//   record names its argument. No setting changes, and the choice before stays kept.
 // - `Refused`: the store did not keep the values. The page keeps the values before: a change is kept in the
 //   store first, so no window shows a value that the next start of the machine loses.
 //
 // Example: `settings.set(font = .spleen)`, then `settings.font()` gives `.spleen`.
-@(export, link_name = "set", enum_getters = "font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance, scale = scale", optional_parameters = "font, subpixel_order, pointer_theme, grid_fit, keyboard_layout, appearance, scale")
-set :: proc "c" (font: settings.Font, subpixel_order: settings.Subpixel_Order, pointer_theme: settings.Pointer_Theme, grid_fit: settings.Grid_Fit, keyboard_layout: settings.Keyboard_Layout, appearance: settings.Appearance, scale: scale_factor.Scale, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+@(export, link_name = "set", enum_getters = "font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance, scale = scale")
+set :: proc "c" (
+	font_presence: module.Presence,
+	font: settings.Font,
+	subpixel_order_presence: module.Presence,
+	subpixel_order: settings.Subpixel_Order,
+	pointer_theme_presence: module.Presence,
+	pointer_theme: settings.Pointer_Theme,
+	grid_fit_presence: module.Presence,
+	grid_fit: settings.Grid_Fit,
+	keyboard_layout_presence: module.Presence,
+	keyboard_layout: settings.Keyboard_Layout,
+	appearance_presence: module.Presence,
+	appearance: settings.Appearance,
+	scale_presence: module.Presence,
+	scale: scale_factor.Scale,
+	error: ^errors.Error_Record,
+) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
 	current, _ := settings.read(page)
-	arguments := settings.Set_Arguments{font, subpixel_order, pointer_theme, grid_fit, keyboard_layout, appearance, scale}
+	arguments := settings.Set_Arguments{font_presence, font, subpixel_order_presence, subpixel_order, pointer_theme_presence, pointer_theme, grid_fit_presence, grid_fit, keyboard_layout_presence, keyboard_layout, appearance_presence, appearance, scale_presence, scale}
 	changed, refused, problem := settings.choice_of_arguments(current, arguments)
 	// The argument of a setting is its place in the parameters, from 1: the
 	// parameters are in the order of the settings.
 	argument := i64(refused) + 1
 	words := settings.values_of({font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance, scale = scale})
+	presences := [settings.Setting]module.Presence{.Font = font_presence, .Subpixel_Order = subpixel_order_presence, .Pointer_Theme = pointer_theme_presence, .Grid_Fit = grid_fit_presence, .Keyboard_Layout = keyboard_layout_presence, .Appearance = appearance_presence, .Scale = scale_presence}
 	switch problem {
 	case .None:
 	case .Nothing_Given:
 		return call_outcome.fail(error, .Argument_Refused, .Absent, .None, 0)
 	case .Bad_Value:
+		// A Presence word past Given is the value that the record holds;
+		// otherwise the word that names no member.
+		if _, presence_ok := module.presence_of_word(presences[refused]); !presence_ok {
+			return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, i64(presences[refused]))
+		}
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, argument, i64(words[refused]))
 	}
-	if !change(changed, current.zone_offset_minutes) {
+	// A lock of the plan holds over the choice: a call that names a locked
+	// setting changes none (src/md/features/module_settings.md, "The lock").
+	if locked, found := settings.first_locked(kept_plan, presences); found {
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Plan_Lock, i64(locked) + 1)
+	}
+	given: settings.Given
+	for setting in settings.Setting {
+		given.values[setting] = presences[setting] == .Given
+	}
+	if !change(changed, current.zone_offset_minutes, given) {
 		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 0)
 	}
 	return .Succeeded, 1
@@ -497,6 +653,23 @@ scale_get :: proc "c" () -> scale_factor.Scale {
 	return current.scale
 }
 
+// plan_only describes the value of the plan that the time zone takes: a number of minutes from UTC, which the plan of principal 0 gives as a default or a lock (src/md/features/module_settings.md, "Plan records"). The console and the plans service type a plan by this description. Each call is refused.
+//
+// - **time_zone**: the offset in minutes, -720 to 840; the zone takes a whole quarter of an hour, and the border of the zone refuses another number at the start of this service.
+//
+// The result is -1 with an error record: No_Grant, unit Plan_Lock: a principal changes the zone with set_time_zone.
+//
+// ```
+// plans.apply("zone", plan { values = { settings = { time_zone = 480 } } }, {})
+// ```
+@(export, link_name = "plan_only", parameter_ranges = "time_zone = -720..840")
+plan_only_export :: proc "c" (time_zone_presence: module.Presence, time_zone: i64, error: ^errors.Error_Record) -> i64 {
+	return errors.fail(error, -1, .No_Grant, .Plan_Lock, 0)
+}
+
+// The range of the description is the range of the border of the zone.
+#assert(settings.ZONE_OFFSET_MINUTES_LEAST == -720 && settings.ZONE_OFFSET_MINUTES_MOST == 840)
+
 // set_time_zone changes the time zone of the system, and keeps it in the store: set_time_zone("+08:00").
 //
 // The time zone is a fixed offset from UTC, with no summer time: a sign, the hours and the minutes, from "-12:00"
@@ -509,6 +682,7 @@ scale_get :: proc "c" () -> scale_factor.Scale {
 // The caller must act for the principal (**Acts_For_Principal**). The result is 1, or a failure with its call outcome and an error record:
 //
 // - `No_Grant`: the caller does not act for the principal.
+// - `No_Grant`, unit `Plan_Lock`: a lock of the plan of principal 0 holds the zone.
 // - `Empty`: the zone is empty.
 // - `Too_Small`: the zone has fewer than 6 bytes ("+8:00", "UTC").
 // - `Too_Long`: the zone has more than 6 bytes.
@@ -546,8 +720,11 @@ set_time_zone :: proc "c" (zone: ^string, error: ^errors.Error_Record) -> (outco
 	case .Not_Quarter:
 		return call_outcome.fail(error, .Argument_Refused, .Not_Multiple, .None, 1, detail_value, i64(settings.ZONE_OFFSET_MINUTES_STEP), detail_found)
 	}
+	if settings.time_zone_locked(kept_plan) {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 1)
+	}
 	current, _ := settings.read(page)
-	if !change(current, minutes) {
+	if !change(current, minutes, {time_zone = true}) {
 		return call_outcome.fail(error, .Callee_Unavailable, .Refused, .None, 1)
 	}
 	return .Succeeded, 1
@@ -657,6 +834,127 @@ languages_get :: proc "c" (result: ^[]Language_Row) -> i64 {
 	return i64(count)
 }
 
+// reset_and_write makes chosen values absent, then writes the settings that
+// the defaults give on the page: the store first, then the page.
+reset_and_write :: proc "contextless" (changes: []chosen_values.Change, languages: bool) -> bool {
+	if !has_store {
+		return false
+	}
+	// As keep: a record that the store did not give is read again, and no
+	// reset is written over choices that this process does not know.
+	if kept_record_unread && kept_load() == .Read_Refused {
+		system.log_fact(.Warning, Kept_Record_Unread{})
+		return false
+	}
+	if len(changes) > 0 && !kept_write(changes, false, {}) {
+		return false
+	}
+	if languages {
+		error: errors.Error_Record
+		// No object is no choice already: the reset holds.
+		if result, status := storage.remove(&store, storage.ROOT, settings.KEPT_LANGUAGES_OBJECT_NAME, &error); status != .Ok && !storage.export_failed_with(status, result, .Absent) {
+			system.log_fact(.Warning, Store_Refused(errors.error_record_fact_fields(error)))
+			return false
+		}
+		kept_languages_found = false
+		record, _ := chosen_values.read_record(kept_record_bytes[:kept_record_length])
+		kept_choice, kept_zone_offset_minutes, kept_layers = settings.choice_of_kept(record, nil, false, kept_plan)
+	}
+	choice := kept_choice
+	current, _ := page_choice()
+	choice.change_count = current.change_count
+	page_write(choice, kept_zone_offset_minutes)
+	return true
+}
+
+// reset makes the choice of one setting absent: its default holds again. The
+// result is 1, or an error record: `No_Grant` (-1) for a caller that does
+// not act for the principal or (unit `Plan_Lock`) for a setting that a lock
+// of the plan holds, `Bad_Value` (-3) for a word that names no setting,
+// `Refused` (-4) when the store did not keep the change.
+//
+// ```
+// settings.reset(.font)
+// ```
+@(export, link_name = "reset")
+reset :: proc "c" (setting: settings.Setting, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	member, ok := enum_word.member_of_word(settings.Setting, u64(setting))
+	if !ok {
+		return errors.fail(error, ERROR_VALUE, .Bad_Value, .None, 1, i64(setting))
+	}
+	if settings.setting_locked(kept_plan, member) {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 1)
+	}
+	changes := [1]chosen_values.Change{{name = settings.descriptions[member].name, kind = .Reset}}
+	if !reset_and_write(changes[:], false) {
+		return errors.fail(error, ERROR_STORE, .Refused, .None, 1)
+	}
+	return 1
+}
+
+// reset_time_zone makes the choice of the time zone absent: UTC holds again.
+// The result is 1, or an error record as for reset.
+@(export, link_name = "reset_time_zone")
+reset_time_zone :: proc "c" (error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if settings.time_zone_locked(kept_plan) {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Plan_Lock, 0)
+	}
+	changes := [1]chosen_values.Change{{name = settings.TIME_ZONE_NAME, kind = .Reset}}
+	if !reset_and_write(changes[:], false) {
+		return errors.fail(error, ERROR_STORE, .Refused, .None, 0)
+	}
+	return 1
+}
+
+// reset_languages makes the choice of the language list absent: English
+// holds again. The result is 1, or an error record as for reset.
+@(export, link_name = "reset_languages")
+reset_languages :: proc "c" (error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	if !reset_and_write(nil, true) {
+		return errors.fail(error, ERROR_STORE, .Refused, .None, 0)
+	}
+	return 1
+}
+
+// The state of one setting: the setting (its number in settings.Setting,
+// then 7 for the time zone and 8 for the language list), the layer that
+// gives its value (0 the default of the contract, 1 a default of the plan,
+// 2 a choice of the principal, 3 a lock of the plan), and the word of its value (the count of the languages for the
+// language list).
+Setting_State :: struct {
+	setting: i64,
+	layer:   i64,
+	value:   i64,
+}
+
+// settings_state gives one row for each setting: which layer gives its
+// value, and the value. A reader sees that a choice hides a default. The
+// result is the count of the rows, 9, or an error record.
+@(export, link_name = "settings_state")
+settings_state :: proc "c" (result: ^[]Setting_State, error: ^errors.Error_Record) -> i64 {
+	if !acts_for_principal() {
+		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
+	}
+	values := settings.values_of(kept_choice)
+	rows: [len(settings.Setting) + 2]Setting_State
+	for setting in settings.Setting {
+		rows[int(setting)] = {setting = i64(setting), layer = i64(kept_layers.values[setting]), value = i64(values[setting])}
+	}
+	rows[len(settings.Setting)] = {setting = i64(len(settings.Setting)), layer = i64(kept_layers.time_zone), value = i64(kept_zone_offset_minutes)}
+	rows[len(settings.Setting) + 1] = {setting = i64(len(settings.Setting) + 1), layer = i64(kept_layers.languages), value = i64(kept_choice.languages.count)}
+	copy(result^, rows[:])
+	return i64(len(rows))
+}
+
 // repeat keeps count records in the store, one commit each, with the font and the subpixel order of each record from its number: the case of the loss of power of the machine test (a loss in the middle gives the record before or the record in flight, never a mix).
 //
 // It is a test export, not a setting that a reader changes. The machine test calls it, then cuts the power of the
@@ -688,7 +986,7 @@ repeat :: proc "c" (count: i64, error: ^errors.Error_Record) -> (outcome: call_o
 	for number in 0 ..< count {
 		choice.font = fonts[number % 2]
 		choice.subpixel_order = orders[number % 3]
-		if !keep(choice, choice.zone_offset_minutes) {
+		if !keep(choice, choice.zone_offset_minutes, {}) {
 			// The store kept the records before this one; the page did
 			// not change.
 			if number > 0 {
@@ -717,7 +1015,9 @@ appearance_next_pass :: proc "contextless" () -> ! {
 	}
 	before := choice.appearance
 	choice.appearance = settings.appearance_next(before)
-	kept := change(choice, choice.zone_offset_minutes)
+	given: settings.Given
+	given.values[.Appearance] = true
+	kept := change(choice, choice.zone_offset_minutes, given)
 	system.log_fact(.Info, Appearance_Next_Kept{before = value_kinds.text_field(settings.value_name_of(.Appearance, u32(before)), VALUE_NAME_FIELD_BYTES), after = value_field(choice, .Appearance), store = store_field(kept)})
 	system.stop(kept ? .Done : .Failed)
 }
@@ -726,41 +1026,24 @@ appearance_next_pass :: proc "contextless" () -> ! {
 // the boot, with no window.
 boot_pass :: proc "contextless" () -> ! {
 	start := system.nanoseconds()
-	buffer: [size_of(settings.Kept_Settings) + 64]u8
-	choice := settings.choice_default()
-	zone_offset_minutes: i32
-	source := Boot_Pass_Source.Nothing_Kept
-	// A store that fails a read or refuses the write of the defaults: the
-	// page still holds the defaults, and the stop says that the pass failed.
+	// The kept record holds the choices of the principal only: the defaults
+	// are never written, so a later default holds where the principal chose
+	// none. A record that this release cannot read stays as it is.
+	load := kept_load()
+	choice, zone_offset_minutes := kept_choice, kept_zone_offset_minutes
+	source: Boot_Pass_Source
 	store_refused := false
-	if has_store {
-		bytes, found, status := storage.read(&store, storage.ROOT, settings.KEPT_OBJECT_NAME, buffer[:])
-		switch {
-		case status != .Ok:
-			source = .Read_Refused
-			store_refused = true
-		case !found:
-		case:
-			read, read_zone, valid := settings.kept_read(bytes)
-			if valid {
-				choice = read
-				zone_offset_minutes = read_zone
-				source = .Kept
-			} else {
-				// A record of another version (a disk of an older system),
-				// or a record with a value that its setting does not have:
-				// the defaults take its place in the store, so the next boot
-				// reads a valid record and the defaults hold once, not at
-				// each boot until the next change of a setting.
-				if keep(choice, zone_offset_minutes) {
-					source = .Record_Refused_Defaults_Kept
-				} else {
-					source = .Record_Refused_Defaults_Not_Kept
-					store_refused = true
-				}
-			}
-		}
-	} else {
+	switch load {
+	case .Nothing_Kept:
+		source = .Nothing_Kept
+	case .Kept:
+		source = .Kept
+	case .Unreadable:
+		source = .Record_Unreadable
+	case .Read_Refused:
+		source = .Read_Refused
+		store_refused = true
+	case .No_Store:
 		source = .No_Store
 	}
 	page_write(choice, zone_offset_minutes, always = true)
@@ -775,10 +1058,8 @@ boot_pass :: proc "contextless" () -> ! {
 		system.log_fact(.Info, Boot_Pass_Read_Refused{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value, scale = scale_value})
 	case .Kept:
 		system.log_fact(.Info, Boot_Pass_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value, scale = scale_value})
-	case .Record_Refused_Defaults_Kept:
-		system.log_fact(.Info, Boot_Pass_Record_Refused_Defaults_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value, scale = scale_value})
-	case .Record_Refused_Defaults_Not_Kept:
-		system.log_fact(.Info, Boot_Pass_Record_Refused_Defaults_Not_Kept{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value, scale = scale_value})
+	case .Record_Unreadable:
+		system.log_fact(.Info, Boot_Pass_Record_Unreadable{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value, scale = scale_value})
 	case .No_Store:
 		system.log_fact(.Info, Boot_Pass_No_Store{elapsed = elapsed, font = font, subpixel_order = subpixel_order, pointer_theme = pointer_theme, grid_fit = grid_fit, keyboard_layout = keyboard_layout, appearance = appearance_value, scale = scale_value})
 	}
@@ -1223,6 +1504,8 @@ setting_header_add :: proc "contextless" (builder: ^Layout_Builder, table: ^inte
 }
 
 ZONE_TITLE :: "Time zone"
+// After the name of a setting that a lock of the plan of principal 0 holds.
+LOCKED_MARK :: "locked by the plan"
 ZONE_EXPLANATION :: "A fixed offset from UTC: it does not follow summer time."
 LANGUAGES_TITLE :: "Languages"
 LANGUAGES_EXPLANATION :: "The languages that you read, the first first. Each text is in the first one that has it, else in English."
@@ -1438,7 +1721,9 @@ scale_track_draw :: proc "contextless" (frame: ^interface.Frame, area: interface
 		}
 		if result.activated && !in_use {
 			if changed, changed_ok, _ := with_value(choice, .Scale, place); changed_ok {
-				change(changed, choice.zone_offset_minutes)
+				given: settings.Given
+				given.values[.Scale] = true
+				change(changed, choice.zone_offset_minutes, given)
 			}
 		}
 	}
@@ -1446,8 +1731,14 @@ scale_track_draw :: proc "contextless" (frame: ^interface.Frame, area: interface
 
 // setting_header_draw draws the name of a setting and the line of what it
 // does.
-setting_header_draw :: proc "contextless" (frame: ^interface.Frame, title, explanation: interface.Area, title_text, explanation_text: string, tokens: layout.Element_Tokens) {
+setting_header_draw :: proc "contextless" (frame: ^interface.Frame, title, explanation: interface.Area, title_text, explanation_text: string, tokens: layout.Element_Tokens, locked := false) {
 	interface.draw_text(frame.table, title.x, title.y, title_text, tokens.text, interface.FONT_INTERFACE_BOLD)
+	// A setting that a lock of the plan holds says so after its name: its
+	// buttons take no press.
+	if locked {
+		after := title.x + interface.text_measured_width(frame.table, interface.FONT_INTERFACE_BOLD, title_text) + int(tokens.gap)
+		interface.draw_text(frame.table, after, title.y, LOCKED_MARK, tokens.text_dim, interface.FONT_INTERFACE)
+	}
 	interface.draw_caption(frame, explanation.x, explanation.y, explanation.width, explanation_text)
 }
 
@@ -1461,7 +1752,7 @@ text_on_button_line :: proc "contextless" (frame: ^interface.Frame, area: interf
 // languages to add.
 region_draw :: proc "contextless" (frame: ^interface.Frame, boxes: ^Settings_Boxes, choice: settings.Choice, texts: ^Frame_Texts, tokens: layout.Element_Tokens, focus_area: ^interface.Area) {
 	tree := &layout_tree
-	setting_header_draw(frame, area_of(tree, boxes.zone_title), area_of(tree, boxes.zone_explanation), ZONE_TITLE, ZONE_EXPLANATION, tokens)
+	setting_header_draw(frame, area_of(tree, boxes.zone_title), area_of(tree, boxes.zone_explanation), ZONE_TITLE, ZONE_EXPLANATION, tokens, settings.time_zone_locked(kept_plan))
 	zone_area := area_of(tree, boxes.zone_list)
 	chosen := max(texts.zone_chosen, 0)
 	zone_result := interface.list_with_choice(frame, zone_area, interface.identity("time zone list"), texts.zone_lines[:texts.zone_line_count], &chosen, {name = "time zone"})
@@ -1471,7 +1762,7 @@ region_draw :: proc "contextless" (frame: ^interface.Frame, boxes: ^Settings_Box
 	if zone_result.changed && chosen != texts.zone_chosen {
 		place := chosen - (texts.zone_first_extra ? 1 : 0)
 		if place >= 0 && place < len(zone_places) {
-			change(choice, zone_places[place].minutes)
+			change(choice, zone_places[place].minutes, {time_zone = true})
 		}
 	}
 
@@ -1563,7 +1854,7 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 			interface.card(&frame, area_of(tree, boxes.cards[section]), section_titles[section], "", graphics.colors.kernel)
 			for setting in settings_of_section(section) {
 				setting_boxes := &boxes.setting_boxes[setting]
-				setting_header_draw(&frame, area_of(tree, setting_boxes.title), area_of(tree, setting_boxes.explanation), setting_texts[setting].title, setting_texts[setting].explanation, tokens)
+				setting_header_draw(&frame, area_of(tree, setting_boxes.title), area_of(tree, setting_boxes.explanation), setting_texts[setting].title, setting_texts[setting].explanation, tokens, settings.setting_locked(kept_plan, setting))
 				if setting == .Scale {
 					if boxes.scale_value != layout.NO_BOX {
 						in_force := int(choice.scale) - int(min(scale_factor.Scale))
@@ -1588,7 +1879,9 @@ draw :: proc "contextless" (window: ^display.Window) -> Draw_Outcome {
 					}
 					if result.activated && !in_use {
 						if changed, changed_ok, _ := with_value(choice, setting, place); changed_ok {
-							change(changed, choice.zone_offset_minutes)
+							given: settings.Given
+							given.values[setting] = true
+							change(changed, choice.zone_offset_minutes, given)
 						}
 					}
 				}
@@ -1691,6 +1984,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	if !has_store {
 		system.log_fact(.Warning, No_Store{})
 	}
+	kept_plan, _ = system.plan_values_of_process(&ctx.values, &kept_plan_copy)
 	pass, pass_ok := settings.pass_of_word(ctx.values[settings.VALUE_PASS])
 	if !pass_ok {
 		system.log_fact(.Warning, Pass_Refused{word = ctx.values[settings.VALUE_PASS]})
@@ -1698,9 +1992,11 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 	switch pass {
 	case .Window:
+		_ = kept_load()
 	case .Boot:
 		boot_pass()
 	case .Appearance_Next:
+		_ = kept_load()
 		appearance_next_pass()
 	}
 	window, ok := display.open(ctx, WIDTH, HEIGHT, "settings")

@@ -20,6 +20,17 @@ Segment_Image :: struct {
 	data:   []u8, // The bytes of the segment from its memory_offset.
 }
 
+// The settings of one parameter as the attributes of its export name them
+// (src/md/features/module_settings.md, "The description of a parameter"):
+// the exports by name, before the describe step resolves them.
+Parameter_Setting_Source :: struct {
+	parameter:      int, // From 0.
+	has_range:      bool,
+	least, most:    i64,
+	choices_name:   string, // "" for none.
+	instances_name: string, // "" for none.
+}
+
 // The description of an export: what module.Function holds.
 Export_Description :: struct {
 	name:       string,
@@ -34,7 +45,9 @@ Export_Description :: struct {
 	// a Handle: the rights that the callee needs.
 	details:             []u32,
 	directions:          []module.Direction, // The direction of each Table or Bytes parameter (module.Function.parameter_directions).
-	optional_parameters: u16, // Bit n: a call may leave out the Enum parameter n (module.Function.optional_parameters).
+	needs:               []module.Parameter_Need, // Optional for a parameter that a module.Presence parameter comes before in the source (module.Function.parameter_needs).
+	setting_sources:     []Parameter_Setting_Source, // The settings that the attributes of the export give, by parameter.
+	setting_rows:        []module.Parameter_Setting, // The rows of the table Parameter_Settings of the export, once each export is known (parameter_settings_resolve).
 	getter_names:        []string, // The name of the getter export of each Enum parameter, "" for none: describe writes it into the detail.
 	result_detail:       u32,
 	error_record:        u32, // Not 0: the export gives an error record, with this record (module.Function.error_record).
@@ -555,7 +568,7 @@ export_part_from_description :: proc(description: Export_Description, code_offse
 		parameter_names      = description.names,
 		parameter_details    = description.details,
 		parameter_directions = description.directions,
-		optional_parameters  = description.optional_parameters,
+		parameter_needs      = description.needs,
 		result               = description.result,
 		result_detail        = description.result_detail,
 		error_record         = description.error_record,
@@ -626,6 +639,13 @@ module_parts_finalize :: proc(
 		input_parts[index] = {name = item.name, about = item.about, text = item.text, record_index = item.record_index, terms_index = item.terms_index, wirings = item.wirings, place = place}
 	}
 
+	// The rows of the settings of the parameters, in the order of the
+	// exports, as the file numbers them.
+	setting_rows := make([dynamic]module.Parameter_Setting, context.temp_allocator)
+	for item in description.exports {
+		append(&setting_rows, ..item.setting_rows)
+	}
+
 	parts := module_file_writer.Module_Parts {
 		segments           = segment_parts,
 		exports            = export_parts,
@@ -635,6 +655,7 @@ module_parts_finalize :: proc(
 		records            = description.records,
 		enums              = description.enums,
 		member_texts       = description.member_texts,
+		parameter_settings = setting_rows[:],
 		facts              = fact_parts,
 		has_own_hash_place = has_place,
 		own_hash_place     = own_hash_place,
@@ -708,6 +729,13 @@ module_file_refusal_text :: proc(parts: module_file_writer.Module_Parts, refusal
 	case .Member_Texts:
 		if refusal.index < u64(len(parts.member_texts)) {
 			part = fmt.tprintf(" (display text \"%s\")", parts.member_texts[refusal.index].text)
+		}
+	case .Parameter_Settings:
+		if refusal.index < u64(len(parts.parameter_settings)) {
+			row := parts.parameter_settings[refusal.index]
+			if row.export_index >= 1 && int(row.export_index) <= len(parts.exports) {
+				part = fmt.tprintf(" (the parameter %d of %s)", row.parameter + 1, parts.exports[row.export_index - 1].name)
+			}
 		}
 	case .None, .Segments, .Imports, .Import_Slots, .Rebases, .Strings, .Documentation, .Budget, .Facts, .Own_Hash:
 	}

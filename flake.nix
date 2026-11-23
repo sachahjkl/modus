@@ -355,7 +355,7 @@
       if [ ! -x "$system/build/tool/modustool" ]; then
         mkdir -p "$system/build/tool"
         # The compiler reads the paths of the tool from the folder of the system.
-        (cd "$system" && odin build tools/modustool -vet -collection:modus=src/library/modus -collection:internal=src/library/internal -collection:modulus=src/modulus -collection:modustool=tools/modustool -custom-attribute:log_fact,enum_getters,optional_parameters,member_texts -out:build/tool/modustool.first && mv build/tool/modustool.first build/tool/modustool) || exit 1
+        (cd "$system" && odin build tools/modustool -vet -collection:modus=src/library/modus -collection:internal=src/library/internal -collection:modulus=src/modulus -collection:modustool=tools/modustool -custom-attribute:log_fact,enum_getters,member_texts,parameter_ranges,parameter_choices,parameter_instances -out:build/tool/modustool.first && mv build/tool/modustool.first build/tool/modustool) || exit 1
       fi
       exec "$system/build/tool/modustool" "$@"
     '';
@@ -388,7 +388,7 @@
         nativeBuildInputs = [odin pkgs.nasm];
         buildPhase = ''
           export HOME=$TMPDIR
-          odin build tools/modustool -vet -collection:modus=src/library/modus -collection:internal=src/library/internal -collection:modulus=src/modulus -collection:modustool=tools/modustool -custom-attribute:log_fact,enum_getters,optional_parameters,member_texts -define:TOOL_BUILDS_ITSELF=false -show-timings -out:modustool
+          odin build tools/modustool -vet -collection:modus=src/library/modus -collection:internal=src/library/internal -collection:modulus=src/modulus -collection:modustool=tools/modustool -custom-attribute:log_fact,enum_getters,member_texts,parameter_ranges,parameter_choices,parameter_instances -define:TOOL_BUILDS_ITSELF=false -show-timings -out:modustool
         '';
         installPhase = ''
           install -D modustool $out/bin/modustool

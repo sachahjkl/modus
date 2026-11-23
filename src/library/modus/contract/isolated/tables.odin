@@ -208,7 +208,7 @@ refuse :: proc "contextless" (refusal: ^errors.Error_Record, kind: errors.Kind, 
 // memory object is listed in call.mappings: the receiver maps it, and sets
 // the address of the place. A refusal writes its error record.
 @(private)
-table_decode :: proc "contextless" (file: []u8, word: u8, detail: u32, direction: module.Direction, index: int, field: Table_Field, field_offset: u64, region: []u8, call: ^Call, ranges: ^Region_Ranges, refusal: ^errors.Error_Record) -> (ok: bool) {
+table_decode :: proc "contextless" (file: []u8, word: u8, detail: u32, direction: module.Direction, index: int, word_index: int, field: Table_Field, field_offset: u64, region: []u8, call: ^Call, ranges: ^Region_Ranges, refusal: ^errors.Error_Record) -> (ok: bool) {
 	argument := i64(index + 1)
 	size, alignment, described := table_record(file, word, detail)
 	if !described {
@@ -271,7 +271,7 @@ table_decode :: proc "contextless" (file: []u8, word: u8, detail: u32, direction
 	if direction == .Append {
 		call.count_offsets[index] = field_offset + u64(offset_of(Table_Field, count))
 	}
-	call.arguments[index] = u64(uintptr(place))
+	call.arguments[word_index] = u64(uintptr(place))
 	return true
 }
 

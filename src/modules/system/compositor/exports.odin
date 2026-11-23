@@ -1,10 +1,13 @@
 package compositor
 
 import "internal:compositor/bar"
+import "modus:contract/chosen_values"
 import "modus:contract/desktop_shell"
 import "modus:contract/call_outcome"
+import "modus:contract/display_choices"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import "modus:contract/module"
 import "modus:contract/notifications"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/pointer_pictures"
@@ -399,6 +402,10 @@ notify_export :: proc "c" (title: ^string, body: ^string, error: ^errors.Error_R
 		return call_outcome.fail(error, .Callee_Busy, .Full, .Records, 0, 0, notifications.MAX_NOTIFICATIONS, notifications.MAX_NOTIFICATIONS)
 	case .Rate_Limited:
 		return call_outcome.fail(error, .Callee_Busy, .Busy, .Milliseconds, 0, 0, i64(desktop_notifications.min_interval_ms))
+	case .Show_Time_Out_Of_Range:
+		// The compositor gives the time, never the caller: a time out of
+		// the range is the setting that its border refused.
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Milliseconds, 0, 0, i64(notifications.SHOW_MILLISECONDS_LEAST), i64(notifications.SHOW_MILLISECONDS_MOST))
 	case .Suppressed, .Nil_Queue, .Not_Found:
 		return call_outcome.fail(error, .Wrong_State, .Refused, .None)
 	}
@@ -504,23 +511,154 @@ powerbox_pick_store_export :: proc "c" (process_name: ^string, mode: ^string, er
 	return .Succeeded, i64(id)
 }
 
-// bar_position moves the bar of the desktop to Top (1) or Bottom (2), and
-// returns 1, or a failure with its call outcome and an error record. Left (3) and Right
-// (4) are taken and keep the bar at the top: the compositor draws no
-// vertical bar yet (src/md/features/bar_edge.md).
+// set changes the settings of the role Display, each optional: the edge of
+// the bar, "do not disturb", how long a card of a notification shows (in
+// milliseconds, 1000 to 60000), the factor of the magnifier when the
+// principal turns it on (in eighths, 12 to 64), and the arm time of a dialog
+// of the trusted display (in milliseconds, 500 to 10000: nothing makes it
+// shorter than 500). The change holds at once; the keeper writes it to the
+// store of the role after, on its worker, so a restart of the compositor
+// keeps it (src/md/features/module_settings.md, modus:kept_choices). A
+// write that the store refuses leaves the change for this run only, with
+// one line of the log. The result is 1, or -1 with an error record:
+// No_Grant for a caller that does not act for the principal, Absent for a
+// call that gives no setting, Bad_Value for a word that names no member or
+// a number out of its range (argument: its place, from 1), or for changes
+// that the kept record has no room for, Refused with the unit Store when
+// the compositor has no role store, No_Grant with the unit Plan_Lock for a
+// setting that a lock of the plan holds (argument: its place). A refused
+// call changes nothing. The edges left and right are kept and draw the bar at the top:
+// the compositor draws no vertical bar yet (src/md/features/bar_edge.md).
 //
 // **Grant**: the caller must **act for the principal**.
-@(export, link_name = "bar_position")
-bar_position_export :: proc "c" (pos_word: i64, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+//
+// ```
+// connect("compositor")
+// compositor.set(bar_edge = .bottom, notification_show_milliseconds = 12000)
+// ```
+@(export, link_name = "set", enum_getters = "bar_edge = bar_edge, do_not_disturb = do_not_disturb", parameter_ranges = "notification_show_milliseconds = 1000..60000, magnifier_eighths = 12..64, consent_arm_milliseconds = 500..10000")
+display_set_export :: proc "c" (
+	bar_edge_presence: module.Presence,
+	bar_edge: desktop_shell.Bar_Position,
+	do_not_disturb_presence: module.Presence,
+	do_not_disturb: display_choices.Do_Not_Disturb,
+	notification_show_milliseconds_presence: module.Presence,
+	notification_show_milliseconds: i64,
+	magnifier_eighths_presence: module.Presence,
+	magnifier_eighths: i64,
+	consent_arm_milliseconds_presence: module.Presence,
+	consent_arm_milliseconds: i64,
+	error: ^errors.Error_Record,
+) -> (outcome: call_outcome.Call_Outcome, value: i64) {
 	if !acts_for_principal() {
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	}
-	pos, ok := desktop_shell.bar_position_of_word(u64(pos_word))
-	if pos_word <= 0 || !ok {
-		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Counts, 1, pos_word)
+	arguments := display_choices.Set_Arguments{bar_edge_presence, bar_edge, do_not_disturb_presence, do_not_disturb, notification_show_milliseconds_presence, notification_show_milliseconds, magnifier_eighths_presence, magnifier_eighths, consent_arm_milliseconds_presence, consent_arm_milliseconds}
+	changes, count, argument, problem := display_choices.changes_of_set(arguments)
+	switch problem {
+	case .None:
+	case .Nothing_Given:
+		return call_outcome.fail(error, .Argument_Refused, .Absent, .None, 0)
+	case .Bad_Value:
+		words := [5]i64{i64(bar_edge), i64(do_not_disturb), notification_show_milliseconds, magnifier_eighths, consent_arm_milliseconds}
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, i64(argument), words[argument - 1])
 	}
-	desktop_bar_position_set(pos)
-	return .Succeeded, 1
+	// A lock of the plan holds over the choice: a call that names a locked
+	// setting changes none (src/md/features/module_settings.md, "The lock").
+	presences := [display_choices.Setting]module.Presence{.Bar_Edge = bar_edge_presence, .Do_Not_Disturb = do_not_disturb_presence, .Notification_Show_Time = notification_show_milliseconds_presence, .Magnifier_Factor = magnifier_eighths_presence, .Consent_Arm_Time = consent_arm_milliseconds_presence}
+	if locked, found := display_choices.first_locked(display_plan, presences); found {
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Plan_Lock, i64(locked) + 1)
+	}
+	return choice_change_fail(display_choices_change(changes[:count]), error, 0, 0)
+}
+
+// bar_edge gives the edge of the screen that holds the bar.
+@(export, link_name = "bar_edge")
+bar_edge_get :: proc "c" () -> desktop_shell.Bar_Position {
+	return display_choices_in_force.bar_edge
+}
+
+// do_not_disturb gives whether a card that is not critical shows: `.off`,
+// they show; `.on`, only a critical card shows.
+@(export, link_name = "do_not_disturb")
+do_not_disturb_get :: proc "c" () -> display_choices.Do_Not_Disturb {
+	return display_choices_in_force.do_not_disturb
+}
+
+// notification_time gives how long a card of a notification shows, in
+// milliseconds.
+@(export, link_name = "notification_time")
+notification_time_get :: proc "c" () -> i64 {
+	return i64(display_choices_in_force.notification_show_milliseconds)
+}
+
+// magnifier_factor gives the factor of the magnifier when it turns on, in
+// eighths.
+@(export, link_name = "magnifier_factor")
+magnifier_factor_get :: proc "c" () -> i64 {
+	return i64(display_choices_in_force.magnifier_eighths)
+}
+
+// consent_arm_time gives the arm time of a dialog of the trusted display, in
+// milliseconds.
+@(export, link_name = "consent_arm_time")
+consent_arm_time_get :: proc "c" () -> i64 {
+	return i64(display_choices_in_force.consent_arm_milliseconds)
+}
+
+// reset makes the choice of one setting of the role absent: the default
+// holds for it again. The value is 1. A failure gives its call outcome and an error record:
+// No_Grant (unit Plan_Lock: a lock of the plan holds it), Bad_Value for a word that names no setting, Refused when the
+// store did not keep the change.
+//
+// **Grant**: the caller must **act for the principal**.
+//
+// ```
+// compositor.reset(.bar_edge)
+// ```
+@(export, link_name = "reset")
+display_reset_export :: proc "c" (setting: display_choices.Setting, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if !acts_for_principal() {
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
+	}
+	member, ok := display_choices.setting_of_word(u64(setting))
+	if !ok {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1, i64(setting))
+	}
+	if display_choices.setting_locked(display_plan, member) {
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Plan_Lock, 1)
+	}
+	changes := [1]chosen_values.Change{{name = display_choices.SETTING_NAMES[member], kind = .Reset}}
+	return choice_change_fail(display_choices_change(changes[:]), error, 1, i64(setting))
+}
+
+// The state of one setting of the role: the setting, the layer that gives
+// its value (0 the contract default, 1 a default of the plan, 2 a choice of
+// the principal, 3 a lock of the plan), and the word of its value.
+Setting_State :: struct {
+	setting: i64,
+	layer:   i64,
+	value:   i64,
+}
+
+// settings_state gives one row for each setting of the role Display: which
+// layer gives its value, and the value. A reader sees that a choice hides a
+// default. The value is the count of the settings. A failure gives its
+// call outcome and an error record.
+//
+// **Grant**: the caller must **act for the principal**.
+@(export, link_name = "settings_state")
+settings_state_export :: proc "c" (result: ^[]Setting_State, error: ^errors.Error_Record) -> (outcome: call_outcome.Call_Outcome, value: i64) {
+	if !acts_for_principal() {
+		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
+	}
+	for setting in display_choices.Setting {
+		row := int(setting)
+		if row < len(result^) {
+			result[row] = {setting = i64(setting), layer = i64(display_choices_in_force.layers[setting]), value = i64(display_choices.word_of(display_choices_in_force, setting))}
+		}
+	}
+	return .Succeeded, i64(len(display_choices.Setting))
 }
 
 // tray_widget_open opens the card of a tray widget, as a press on its part of the bar does, or closes the card that is open: 0 closes, 1 the control center, 2 the notification center, 3 the calendar. Opening a card closes the start menu, the menu of the windows, the list of the viewers and the context menu of the desktop. The result is 1, or a failure with its call outcome and an error record. The error kinds: No_Grant (the caller does not act for the principal); Bad_Value (a word that names no tray widget).
@@ -638,7 +776,7 @@ revoke_grant_export :: proc "c" (grant_id: i64, error: ^errors.Error_Record) -> 
 	return .Succeeded, 1
 }
 
-// plan_diff_ask shows the difference of a plan on the trusted display: its name, and a memory object that holds the grants and roles that it adds, then the ones that it removes, each a list of names that commas separate, of any count. The caller gives the object through the call ring of its connection, with Read only; `difference` is that handle as the display names it, and the display keeps it until it read the object. The dialog shows at once, with "Reading the difference"; a worker of the display reads the lines. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a failure with its call outcome and an error record. The error kinds: No_Grant (Grant_Or_Right_Missing: the caller does not act for the principal); Busy (Callee_Busy: a dialog of the trusted display shows); Empty (Argument_Refused: no name, or nothing added and nothing removed); Too_Long (Argument_Refused: a name past 48 bytes); Bad_Value (Argument_Refused, argument 2: the object did not come through the ring of the caller, is no memory object, holds another right than Read, or has other pages than its two sides). An empty item or an item past 48 bytes, which the worker finds, ends the dialog with no decision: a poll gives unknown (3).
+// plan_diff_ask shows the difference of a plan on the trusted display: its name, and a memory object that holds the grants and roles that it adds, then the ones that it removes, each a list of items that line feeds separate, of any count, an item at most 384 bytes of UTF-8 with no control byte, shown in lines of 53 characters. The caller gives the object through the call ring of its connection, with Read only; `difference` is that handle as the display names it, and the display keeps it until it read the object. The dialog shows at once, with "Reading the difference"; a worker of the display reads the lines. The principal accepts or refuses it whole; the log says the decision. The result is the serial of the dialog, or a failure with its call outcome and an error record. The error kinds: No_Grant (Grant_Or_Right_Missing: the caller does not act for the principal); Busy (Callee_Busy: a dialog of the trusted display shows); Empty (Argument_Refused: no name, or nothing added and nothing removed); Too_Long (Argument_Refused: a name past 48 bytes); Bad_Value (Argument_Refused, argument 2: the object did not come through the ring of the caller, is no memory object, holds another right than Read, or has other pages than its two sides). An empty item, an item past 384 bytes or an item that is not UTF-8 or holds a control byte, which the worker finds, ends the dialog with no decision: a poll gives unknown (3).
 //
 // **The act.** The focus starts on Refuse. An act counts 500 ms after the
 // dialog showed: Enter acts on the button that has the focus, Tab, Left and
@@ -690,6 +828,8 @@ plan_diff_ask_export :: proc "c" (plan_name: ^string, difference: i64, added_byt
 		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, i64(argument), 0, bar.PLAN_DIFFERENCE_ITEM_BYTES)
 	case .Too_Many_Items:
 		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Budget, .Records, i64(argument))
+	case .Item_Not_Text:
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Byte, .Bytes, i64(argument))
 	case .Not_A_Name, .Not_An_Act, .No_Grant, .Bad_Serial:
 		// The plan face checks no identifier, and its caller is checked
 		// above: only the act face and a poll give these.
@@ -735,7 +875,7 @@ dialog_poll_result :: proc "contextless" (decision: bar.Plan_Difference_Decision
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	case .Bad_Serial:
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, serial, max(i64))
-	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Not_A_Name, .Not_An_Act, .Not_A_Difference:
+	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Item_Not_Text, .Not_A_Name, .Not_An_Act, .Not_A_Difference:
 		// A poll shows nothing: it gives none of the refusals of a show.
 		return call_outcome.fail(error, .Argument_Refused, .Refused)
 	}
@@ -801,7 +941,7 @@ act_ask_export :: proc "c" (act: ^string, error: ^errors.Error_Record) -> (outco
 	case .Not_A_Name, .Not_An_Act:
 		// The argument of the export is the act; the asker is no argument.
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Bytes, i64(argument == 2 ? 1 : 0), i64(len(act^)), bar.PLAN_DIFFERENCE_ITEM_BYTES)
-	case .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Bad_Serial, .Not_A_Difference:
+	case .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Item_Not_Text, .Bad_Serial, .Not_A_Difference:
 		// The act face gives none of the refusals of a plan or of a poll.
 	}
 	return call_outcome.fail(error, .Argument_Refused, .Refused)
@@ -845,7 +985,7 @@ act_cancel_export :: proc "c" (serial: i64, error: ^errors.Error_Record) -> (out
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Acts_For_Principal)
 	case .Bad_Serial:
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, serial, max(i64))
-	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Not_A_Name, .Not_An_Act, .Not_A_Difference:
+	case .Busy, .Empty_Name, .Name_Too_Long, .No_Change, .Empty_Item, .Item_Too_Long, .Too_Many_Items, .Item_Not_Text, .Not_A_Name, .Not_An_Act, .Not_A_Difference:
 		return call_outcome.fail(error, .Argument_Refused, .Refused)
 	}
 	if !closed {

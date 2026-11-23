@@ -48,6 +48,28 @@ scale_get :: proc "c" () -> scale_factor.Scale {
 	return settings.choice_default().scale
 }
 
+// reset refuses each setting: this holder keeps no setting.
+//
+// The result is a negative number with the error record Unsupported.
+@(export, link_name = "reset")
+reset :: proc "c" (setting: settings.Setting, error: ^errors.Error_Record) -> i64 {
+	return errors.fail(error, -1, .Unsupported, .None, 1)
+}
+
+// The state of one setting, as the contract of the role names it.
+Setting_State :: struct {
+	setting: i64,
+	layer:   i64,
+	value:   i64,
+}
+
+// settings_state gives no row: this holder keeps no setting, so each
+// value is its default.
+@(export, link_name = "settings_state")
+settings_state :: proc "c" (result: ^[]Setting_State, error: ^errors.Error_Record) -> i64 {
+	return 0
+}
+
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
 	pass, known := settings.pass_of_word(ctx.values[settings.VALUE_PASS])

@@ -4,7 +4,7 @@
 // allocation:
 // - requesting process must own a visible window;
 // - per-session pending dialog queue cap (MAX_PENDING_DIALOGS);
-// - anti-clickjacking minimum display arm time (250 ms), per-process request
+// - the arm time of every consent door (powerbox.CONSENT_ARM_MILLISECONDS), per-process request
 //   rate limit (500 ms), dialog expiry (60 s), quiet time after whole refusal
 //   (60 s), and per-run refusal cap (3 whole refusals);
 // - already-held shortcut (Held without prompting the principal) for start
@@ -39,10 +39,6 @@ MAX_ALWAYS_ROWS :: 64
 
 // Maximum Always rows kept for a single disk module hash.
 MAX_ALWAYS_ROWS_PER_MODULE :: 8
-
-// Anti-clickjacking minimum time a dialog must be whole on screen before any
-// deliberate press or answer is accepted.
-MIN_DISPLAY_ARM_MILLISECONDS :: u64(250)
 
 // Minimum monotonic spacing between requests from one asking process.
 RATE_LIMIT_MILLISECONDS :: u64(500)
@@ -1035,7 +1031,7 @@ mark_dialog_shown :: proc "contextless" (
 }
 
 // resolve_answer validates a Grant_Answer from the trusted Display holder,
-// enforces anti-clickjacking focus delay (250 ms) and expiry (60 s), and
+// enforces the arm time of every consent door and expiry (60 s), and
 // atomically mints attenuated grants only when every check succeeds. On any
 // refusal, zero grants are issued.
 resolve_answer :: proc "contextless" (
@@ -1108,18 +1104,26 @@ resolve_answer :: proc "contextless" (
 	}
 
 	// Anti-clickjacking monotonic delay check: dialog must have been visible on
-	// screen for at least MIN_DISPLAY_ARM_MILLISECONDS (250 ms) before both the
-	// press start and the answer commit. Subtraction is guarded against u64
-	// underflow and addition overflow.
+	// screen for the arm time before both the press start and the answer
+	// commit. The arm time is the one that the principal chose, as the display
+	// reports it, never under powerbox.CONSENT_ARM_MILLISECONDS: one rule for
+	// each door (powerbox.consent_arm_milliseconds). A reported arm time past
+	// its most is no time that a display applies. Subtraction is guarded
+	// against u64 underflow and addition overflow.
+	if answer.arm_milliseconds > powerbox.CONSENT_ARM_MILLISECONDS_MOST {
+		resolution.refusal = .Untrusted_Answer
+		return resolution
+	}
+	arm := powerbox.consent_arm_milliseconds(answer.arm_milliseconds)
 	if answer.shown_timestamp_ms != entry.shown_ms {
 		resolution.refusal = .Untrusted_Answer
 		return resolution
 	}
-	if now_ms < entry.shown_ms || (now_ms - entry.shown_ms) < MIN_DISPLAY_ARM_MILLISECONDS {
+	if now_ms < entry.shown_ms || (now_ms - entry.shown_ms) < arm {
 		resolution.refusal = .Untrusted_Answer
 		return resolution
 	}
-	if answer.input_press_timestamp_ms < entry.shown_ms || (answer.input_press_timestamp_ms - entry.shown_ms) < MIN_DISPLAY_ARM_MILLISECONDS {
+	if answer.input_press_timestamp_ms < entry.shown_ms || (answer.input_press_timestamp_ms - entry.shown_ms) < arm {
 		resolution.refusal = .Untrusted_Answer
 		return resolution
 	}
@@ -1127,7 +1131,7 @@ resolve_answer :: proc "contextless" (
 		resolution.refusal = .Untrusted_Answer
 		return resolution
 	}
-	if (answer.answer_timestamp_ms - entry.shown_ms) < MIN_DISPLAY_ARM_MILLISECONDS {
+	if (answer.answer_timestamp_ms - entry.shown_ms) < arm {
 		resolution.refusal = .Untrusted_Answer
 		return resolution
 	}

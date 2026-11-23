@@ -110,7 +110,8 @@ Read_Region_Refused :: struct {
 #assert(size_of(Endpoint_Listens_Udp_From_Address) == 8 + value_kinds.MODULE_NAME_FIELD_BYTES + ADDRESS_FIELD_BYTES)
 #assert(size_of(Frame_Service_Silent) == 8 + COMMAND_FIELD_BYTES)
 #assert(size_of(Service_Failed) == FAILURE_FIELD_BYTES)
-#assert(size_of(Ready_Link_Up) == 8 + INTERFACE_ADDRESS_FIELD_BYTES)
+#assert(size_of(Ready_Link_Up) == 8 + HARDWARE_ADDRESS_FIELD_BYTES)
+#assert(size_of(Address_Bound) == 16 + 2 * ADDRESS_FIELD_BYTES)
 #assert(size_of(Payload_Passes_Checked) == 16 + value_kinds.MODULE_NAME_FIELD_BYTES + PROTOCOL_FIELD_BYTES)
 
 // The bytes of the Text field of the failure that stops the service: the
@@ -118,10 +119,9 @@ Read_Region_Refused :: struct {
 // network, "no handle of the frame service with the right Read: a wait
 // for the device would have no end", has 91 bytes, and a zero byte.
 FAILURE_FIELD_BYTES :: 96
-// The bytes of the Text field of the address of the interface: an IPv4
-// address, its prefix and the hardware address, at most
-// "255.255.255.255/24 ff:ff:ff:ff:ff:ff", 36 bytes, and a zero byte.
-INTERFACE_ADDRESS_FIELD_BYTES :: 40
+// The bytes of the Text field of a hardware address: "ff:ff:ff:ff:ff:ff",
+// 17 bytes, and a zero byte, in a multiple of 8.
+HARDWARE_ADDRESS_FIELD_BYTES :: 24
 // The bytes of the Text field of the protocol of an endpoint: "TCP" or
 // "UDP", and a zero byte.
 PROTOCOL_FIELD_BYTES :: 8
@@ -165,18 +165,19 @@ Udp_Passes_Measured :: struct {
 	owner:           value_kinds.Module_Name_Field,
 }
 
-// The service is ready, and the link of the device is up.
-@(log_fact = "network: ok, the address {interface_address}, the gateway 10.0.2.2, the link is up, {receive_places} places for frames that arrive")
+// The service is ready, and the link of the device is up. The address of
+// the machine has its own line: Address_Static or Address_Bound.
+@(log_fact = "network: ok, the hardware address {hardware_address}, the link is up, {receive_places} places for frames that arrive")
 Ready_Link_Up :: struct {
-	receive_places:    u64,
-	interface_address: [40]u8,
+	receive_places:   u64,
+	hardware_address: [24]u8, // N written out: the tool reads the size of a Text field from the source.
 }
 
 // The service is ready, and the link of the device is down.
-@(log_fact = "network: ok, the address {interface_address}, the gateway 10.0.2.2, the link is down, {receive_places} places for frames that arrive")
+@(log_fact = "network: ok, the hardware address {hardware_address}, the link is down, {receive_places} places for frames that arrive")
 Ready_Link_Down :: struct {
-	receive_places:    u64,
-	interface_address: [40]u8,
+	receive_places:   u64,
+	hardware_address: [24]u8,
 }
 
 // A measure: the time of the headers of IPv4 and Ethernet of one frame,
@@ -225,6 +226,50 @@ command_field :: proc "contextless" (name: string) -> [COMMAND_FIELD_BYTES]u8 {
 // a time in milliseconds.
 answer_bound_field :: proc "contextless" () -> value_kinds.Time_In_Milliseconds {
 	return value_kinds.Time_In_Milliseconds(system.ANSWER_BOUND_MILLISECONDS)
+}
+
+// The plan of principal 0 gives the address of the machine.
+@(log_fact = "network: the static address {address}/{prefix} of the plan, the gateway {gateway}")
+Address_Static :: struct {
+	prefix:  u64,
+	address: [16]u8, // N written out: the tool reads the size of a Text field from the source.
+	gateway: [16]u8,
+}
+
+// The plan gives a static address that its border refuses
+// (network.interface_address_of_text): the problem says which rule.
+@(log_fact = "network: the static address of the plan is refused ({address_problem}); the address comes from DHCP")
+Address_Static_Refused :: struct {
+	address_problem: [72]u8, // N written out: the tool reads the size of a Text field from the source.
+}
+
+// The bytes of the Text field of a problem of a static address: the
+// longest of network.INTERFACE_TEXT_PROBLEM_TEXTS, and a zero byte.
+ADDRESS_PROBLEM_FIELD_BYTES :: size_of(Address_Static_Refused{}.address_problem)
+
+@(log_fact = "network: no fresh bytes for the transaction words of DHCP: the machine holds no address")
+Address_No_Seed :: struct {}
+
+// A DHCP reply that the border refused: nothing changed.
+@(log_fact = "network: refused a DHCP reply ({reply_problem}): nothing changed")
+Address_Reply_Refused :: struct {
+	reply_problem: [24]u8, // N written out: the tool reads the size of a Text field from the source.
+}
+
+// DHCP gave the machine its address.
+@(log_fact = "network: the address {address}/{prefix} from DHCP, the gateway {gateway}, a lease of {lease}")
+Address_Bound :: struct {
+	prefix:  u64,
+	lease:   value_kinds.Time_In_Seconds,
+	address: [16]u8,
+	gateway: [16]u8,
+}
+
+// The lease ended, or the server refused its renewal: no frame leaves
+// until the next address.
+@(log_fact = "network: the lease of the address {address} ended: no frame leaves until DHCP gives an address")
+Address_Lost :: struct {
+	address: [16]u8,
 }
 
 // address_field gives the Text field of an IPv4 address, in the digits of

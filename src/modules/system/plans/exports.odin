@@ -10,6 +10,8 @@ import "modus:contract/blake3"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
 import "modus:contract/isolated"
+import description "modus:contract/plan_value_description"
+import "modus:contract/plan_values"
 import pr "modus:contract/plans_recipes"
 import "modus:system"
 
@@ -67,7 +69,7 @@ plan_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, refusal: p
 		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Records, 1, 0, i64(pr.PLAN_ENTRY_COUNT_LIMIT), found)
 	case .No_Memory:
 		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Budget, .Pages, 1, 0, 0, found)
-	case .Bad_Entry_Kind, .Bad_Role, .Zero_Module_Hash, .Bad_Start_Grant, .Bad_Store_Rights, .Invalid_Name, .Duplicate_Entry, .Cyclic_Role_Chain, .Trusted_Path_Forbidden, .Principal_Mismatch:
+	case .Bad_Entry_Kind, .Bad_Role, .Zero_Module_Hash, .Bad_Start_Grant, .Bad_Store_Rights, .Invalid_Name, .Duplicate_Entry, .Cyclic_Role_Chain, .Trusted_Path_Forbidden, .Principal_Mismatch, .Bad_Value:
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, i64(bad_index), 0, found)
 	case .Buffer_Too_Small, .Truncated, .Trailing_Bytes, .Bad_Header, .Zero_Plan_Hash:
 		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Versions, 0, 0, 0, found)
@@ -98,6 +100,16 @@ plan_refusal_fail :: proc "contextless" (error: ^errors.Error_Record, refusal: p
 		// An entry that only the plan of principal 0 names: the plan of
 		// another principal has no grant for it.
 		return call_outcome.fail(error, .Grant_Or_Right_Missing, .No_Grant, .Records, 1, i64(bad_index), 0, found)
+	case .Values_Refused:
+		// The core refused the values of the plan: no value changed.
+		return call_outcome.fail(error, .Argument_Refused, .Refused, .Records, 1, 0, 0, found)
+	case .Value_Not_Described:
+		// The value is the entry, from 0; the log names the problem.
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .Records, 1, i64(bad_index), 0, found)
+	case .Values_Too_Large:
+		// The values of one owner do not fit its page: the value is the
+		// entry that passes it, the limit the bytes of a page.
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Bytes, 1, i64(bad_index), plan_values.OWNER_BYTES_MOST, found)
 	}
 	return call_outcome.fail(error, .Argument_Refused, .Refused, .None, 0, 0, 0, found)
 }
@@ -132,24 +144,32 @@ plan_of_table :: proc "contextless" (rows: ^system.Table_To_Read(pr.Plan_Entry_R
 		export_plan_memory = memory
 		export_plan = pr.plan_of_memory(principal, memory)
 	}
-	// Each row is read once out of the call region, into the plan.
+	// Each row is read once out of the call region, into the plan: a row
+	// is a new entry, or the next part of the text of the entry before.
 	pr.plan_clear(&export_plan)
 	export_plan.principal = principal
 	for index in 0 ..< int(count) {
 		row := intrinsics.volatile_load(&rows.records[index])
-		if !pr.plan_entry_of_row(&row, &export_plan.entries[index]) {
+		if row_refusal := pr.plan_row_add(&export_plan, &row); row_refusal != .None {
 			pr.plan_clear(&export_plan)
-			system.log_fact(.Warning, Plan_Command_Refused{principal = principal, refusal_code = u64(pr.Plan_Refusal.Invalid_Name)})
-			failure, _ = plan_refusal_fail(error, .Invalid_Name, u32(index))
+			system.log_fact(.Warning, Plan_Command_Refused{principal = principal, refusal_code = u64(row_refusal)})
+			failure, _ = plan_refusal_fail(error, row_refusal, u32(index))
 			return failure, false
 		}
 	}
-	export_plan.entry_count = u32(count)
 	refusal, bad_index := pr.plan_validate(&export_plan)
 	if refusal != .None {
 		pr.plan_clear(&export_plan)
 		system.log_fact(.Warning, Plan_Command_Refused{principal = principal, refusal_code = u64(refusal)})
 		failure, _ = plan_refusal_fail(error, refusal, bad_index)
+		return failure, false
+	}
+	// Each value is typed by the description of its owner, as the console
+	// types a plan that a principal writes: a table of rows that a program
+	// writes holds no word that its owner would refuse at its start.
+	if described, index := description.entries_check(plans_image(), &export_plan); described.problem != .None {
+		system.log_fact(.Warning, Plan_Value_Not_Described{principal = principal, entry = u64(index), problem = u64(described.problem)})
+		failure, _ = plan_refusal_fail(error, .Value_Not_Described, index)
 		return failure, false
 	}
 	return .Succeeded, true
@@ -158,8 +178,9 @@ plan_of_table :: proc "contextless" (rows: ^system.Table_To_Read(pr.Plan_Entry_R
 // difference computes the difference between the current plan of the
 // principal of the caller and the plan of rows, and applies nothing.
 //
-// - **rows**: the entries of the proposed plan: at least 1, as many as the
-//   memory of the service holds.
+// - **rows**: the rows of the proposed plan: at least 1, as many entries
+//   as the memory of the service holds, a text taking one row for each 40
+//   bytes of it.
 // - **summary**: one row: the counts, whether an apply needs the consent of
 //   the principal, and the hash of the current plan that apply expects.
 // - **result**: one row for each change, in the order of the difference.
@@ -198,8 +219,9 @@ difference :: proc "c" (rows: ^system.Table_To_Read(pr.Plan_Entry_Row), summary:
 // decision and commits an accepted plan.
 //
 // - **plan_name**: the name that the dialog shows, 1 to 48 bytes.
-// - **rows**: the entries of the plan: at least 1, as many as the memory of
-//   the service holds.
+// - **rows**: the rows of the plan: at least 1, as many entries as the
+//   memory of the service holds, a text taking one row for each 40 bytes
+//   of it.
 // - **expected**: the hash of the current plan that a difference gave; zero
 //   when the principal has no applied plan. An apply whose current plan
 //   changed since is refused, so a principal never accepts a difference that
@@ -264,6 +286,7 @@ apply_poll :: proc "c" (ticket: i64, result: ^[]pr.Plan_Generation_Row, error: ^
 	}
 	record, finished, refusal := plans_core.apply_poll(&service_state, &service_display, principal, u64(ticket), system.time(), &export_difference)
 	roles_compensation_tell(&service_state)
+	values_resend_tell(&service_state)
 	roles_busy_tell(&service_state)
 	if refusal != .None {
 		system.log_fact(.Warning, Plan_Command_Refused{principal = principal, refusal_code = u64(refusal)})
@@ -332,6 +355,7 @@ rollback_poll :: proc "c" (ticket: i64, result: ^[]pr.Plan_Generation_Row, error
 	}
 	selected, finished, refusal := plans_core.rollback_poll(&service_state, &service_display, principal, u64(ticket))
 	roles_compensation_tell(&service_state)
+	values_resend_tell(&service_state)
 	roles_busy_tell(&service_state)
 	if refusal != .None {
 		system.log_fact(.Warning, Plan_Command_Refused{principal = principal, refusal_code = u64(refusal)})

@@ -304,9 +304,9 @@ start_action_do :: proc "contextless" (action: bar.Start_Action) {
 	case .Bar_Edge:
 		switch bar_layout.edge {
 		case .Top:
-			desktop_bar_position_set(.Bottom)
+			display_bar_edge_choose(.Bottom)
 		case .Bottom:
-			desktop_bar_position_set(.Top)
+			display_bar_edge_choose(.Top)
 		}
 	case .Magnifier:
 		desktop_magnifier_toggle(i32(pointer_x), i32(pointer_y))

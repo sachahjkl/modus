@@ -7,16 +7,21 @@ package bar
 
 import op "modus:contract/operation"
 import pr "modus:contract/plans_recipes"
+import "modus:contract/powerbox"
+import "modus:contract/text_encoding"
 
-PLAN_DIFFERENCE_NAME_BYTES :: 48
-PLAN_DIFFERENCE_ITEM_BYTES :: 48
-// A side has any count of items, in memory that the caller of
-// plan_difference_open gives. The body scrolls past
-// PLAN_DIFFERENCE_VISIBLE_LINES, and the accept counts only once the view
-// showed the last row, so the principal never accepts a line that it did
-// not see.
-// The lines of the body that show at once: the headings and the items. They
-// fit the reference screen with the title and the buttons.
+// The bounds of the contract of a plan: one fact in one place.
+PLAN_DIFFERENCE_NAME_BYTES :: pr.PLAN_DISPLAY_NAME_BYTES
+PLAN_DIFFERENCE_ITEM_BYTES :: pr.PLAN_DISPLAY_ITEM_BYTES
+// An item is cut into lines of PLAN_DIFFERENCE_LINE_CHARACTERS characters,
+// never cut short. A side has any count of items, in memory that the
+// caller of plan_difference_open gives. The body scrolls past
+// PLAN_DIFFERENCE_VISIBLE_LINES lines, which count each line of each item,
+// and the accept counts only once the view showed the last line of the
+// last item, so the principal never accepts a line that it did not see.
+PLAN_DIFFERENCE_LINE_CHARACTERS :: pr.PLAN_DISPLAY_LINE_CHARACTERS
+// The lines of the body that show at once: the headings and the lines of
+// the items. They fit the reference screen with the title and the buttons.
 PLAN_DIFFERENCE_VISIBLE_LINES :: 12
 
 // The places of the dialog, in pixels.
@@ -73,6 +78,7 @@ Plan_Difference_Refusal :: enum u8 {
 	Empty_Item, // A list holds an item with no byte: two commas, or a comma at an end.
 	Item_Too_Long, // An item past PLAN_DIFFERENCE_ITEM_BYTES.
 	Too_Many_Items, // The two sides have more items than the memory that the caller gave.
+	Item_Not_Text, // An item that is not UTF-8, or holds a control byte: the lines of the dialog would not be the item.
 	No_Change, // Nothing added and nothing removed: nothing to accept.
 	Not_A_Name, // The asker of an act is not an identifier: a name of a process.
 	Not_An_Act, // The act is not two identifiers with a period between them.
@@ -93,8 +99,10 @@ Plan_Difference_Caller :: struct {
 }
 
 Plan_Difference_Item :: struct {
-	text:   [PLAN_DIFFERENCE_ITEM_BYTES]u8,
-	length: int,
+	text:       [PLAN_DIFFERENCE_ITEM_BYTES]u8,
+	length:     int,
+	lines:      int, // The lines of the item, PLAN_DIFFERENCE_LINE_CHARACTERS characters each.
+	first_line: int, // The lines of the items before it in its side.
 }
 
 Plan_Difference_Dialog :: struct {
@@ -112,6 +120,7 @@ Plan_Difference_Dialog :: struct {
 	act_item:             [1]Plan_Difference_Item,
 	shown_at_milliseconds: u64, // The clock of the system when the dialog showed.
 	armed_from_milliseconds: u64, // An act counts from this time on: the show, plus the arm time; on the act face, the last move of the focus too.
+	arm_milliseconds_of_the_principal: u64, // A longer arm time that the principal chose; under the one of the contract it changes nothing.
 	focus:                Plan_Difference_Button,
 	decision:             Plan_Difference_Decision, // Of the last dialog.
 	first_line:           int, // The first line of the body that shows.
@@ -127,8 +136,8 @@ Plan_Difference_Dialog :: struct {
 }
 
 // plan_difference_open shows the difference of a plan: its name, and the
-// grants and roles that it adds and removes, each a list of names that
-// commas separate, with the spaces around a name dropped. The items of the
+// grants, roles and values that it adds and removes, each a list of items
+// that line feeds separate, with the spaces around an item dropped. The items of the
 // two sides go to items, memory of the caller that stays while the dialog
 // shows: plan_difference_items_needed gives its length. It gives the
 // serial of the dialog, or 0 with the refusal and the argument that it
@@ -369,6 +378,7 @@ plan_difference_act_open :: proc "contextless" (dialog: ^Plan_Difference_Dialog,
 	dialog.act_item = {}
 	copy(dialog.act_item[0].text[:], act)
 	dialog.act_item[0].length = len(act)
+	dialog.act_item[0].lines = pr.plan_display_item_lines(act)
 	dialog.added = dialog.act_item[:]
 	dialog.added_count = 1
 	dialog.removed = nil
@@ -400,8 +410,8 @@ identifier_valid :: proc "contextless" (text: string) -> bool {
 }
 
 // plan_difference_items_needed gives the items that plan_difference_open
-// needs for two lists: one for each comma of a list that is not blank, and
-// one more. It checks nothing: the open does.
+// needs for two lists: one for each line feed of a list that is not blank,
+// and one more. It checks nothing: the open does.
 plan_difference_items_needed :: proc "contextless" (added, removed: string) -> (needed: int) {
 	for list in ([2]string{added, removed}) {
 		if len(plan_difference_trim(list)) == 0 {
@@ -409,7 +419,7 @@ plan_difference_items_needed :: proc "contextless" (added, removed: string) -> (
 		}
 		needed += 1
 		for character in transmute([]u8)list {
-			if character == ',' {
+			if character == '\n' {
 				needed += 1
 			}
 		}
@@ -417,8 +427,12 @@ plan_difference_items_needed :: proc "contextless" (added, removed: string) -> (
 	return needed
 }
 
-// plan_difference_items splits a list of names into items, or with no
-// items only counts and checks them. An empty list has no item.
+// plan_difference_items splits a list of items, which a line feed separates
+// (pr.PLAN_DISPLAY_ITEM_SEPARATOR): an item can hold a comma. An empty list
+// has no item. An item is text with no control byte. With no items it only
+// counts and checks them; with items, each one keeps its lines and the
+// line of its side where it starts, so a line of the body is found with no
+// walk of the items.
 @(private = "file")
 plan_difference_items :: proc "contextless" (list: string, items: []Plan_Difference_Item) -> (count: int, refusal: Plan_Difference_Refusal) {
 	if len(plan_difference_trim(list)) == 0 {
@@ -426,8 +440,13 @@ plan_difference_items :: proc "contextless" (list: string, items: []Plan_Differe
 	}
 	start := 0
 	for index in 0 ..= len(list) {
-		if index < len(list) && list[index] != ',' {
+		if index < len(list) && list[index] != '\n' {
 			continue
+		}
+		// text_valid refuses a control character and a sequence that is not
+		// UTF-8: the line feeds are between the items, never in one.
+		if !text_encoding.text_valid(transmute([]u8)list[start:index]) {
+			return 0, .Item_Not_Text
 		}
 		item := plan_difference_trim(list[start:index])
 		start = index + 1
@@ -441,6 +460,8 @@ plan_difference_items :: proc "contextless" (list: string, items: []Plan_Differe
 			items[count] = {}
 			copy(items[count].text[:], item)
 			items[count].length = len(item)
+			items[count].lines = pr.plan_display_item_lines(item)
+			items[count].first_line = count == 0 ? 0 : items[count - 1].first_line + items[count - 1].lines
 		}
 		count += 1
 	}
@@ -464,6 +485,40 @@ plan_difference_name :: proc "contextless" (dialog: ^Plan_Difference_Dialog) -> 
 	return string(dialog.plan_name[:dialog.plan_name_length])
 }
 
+// plan_difference_side_lines gives the lines of the items of one side,
+// from the last item: each item holds the lines before it.
+plan_difference_side_lines :: proc "contextless" (items: []Plan_Difference_Item) -> int {
+	if len(items) == 0 {
+		return 0
+	}
+	last := &items[len(items) - 1]
+	return last.first_line + last.lines
+}
+
+// plan_difference_item_line gives the line of an item from 0: at most
+// PLAN_DIFFERENCE_LINE_CHARACTERS whole characters. The dialog draws each
+// line of each item, so no item is cut short.
+plan_difference_item_line :: proc "contextless" (item: ^Plan_Difference_Item, line: int) -> string {
+	text := plan_difference_item_text(item)
+	start, characters := 0, 0
+	for index in 0 ..< len(text) {
+		if text[index] & 0xC0 == 0x80 {
+			continue
+		}
+		if characters == line * PLAN_DIFFERENCE_LINE_CHARACTERS {
+			start = index
+		}
+		if characters == (line + 1) * PLAN_DIFFERENCE_LINE_CHARACTERS {
+			return text[start:index]
+		}
+		characters += 1
+	}
+	if characters <= line * PLAN_DIFFERENCE_LINE_CHARACTERS {
+		return ""
+	}
+	return text[start:]
+}
+
 // plan_difference_item_text gives the text of an item.
 plan_difference_item_text :: proc "contextless" (item: ^Plan_Difference_Item) -> string {
 	return string(item.text[:item.length])
@@ -473,7 +528,14 @@ plan_difference_item_text :: proc "contextless" (item: ^Plan_Difference_Item) ->
 // time after the show, and on the act face after the last move of the
 // focus too.
 plan_difference_armed :: proc "contextless" (dialog: ^Plan_Difference_Dialog, now_milliseconds: u64) -> bool {
-	return dialog.open && now_milliseconds >= dialog.armed_from_milliseconds + pr.PLAN_DISPLAY_ARM_MILLISECONDS
+	return dialog.open && powerbox.consent_armed(dialog.armed_from_milliseconds, now_milliseconds, dialog.arm_milliseconds_of_the_principal)
+}
+
+// plan_difference_arm_milliseconds gives the arm time of the dialog: the
+// longer one that the principal chose, never one shorter than the one of the
+// contract, whatever the field holds.
+plan_difference_arm_milliseconds :: proc "contextless" (dialog: ^Plan_Difference_Dialog) -> u64 {
+	return powerbox.consent_arm_milliseconds(dialog.arm_milliseconds_of_the_principal)
 }
 
 // plan_difference_focus_move gives the focus to a button. On the act face
@@ -564,39 +626,56 @@ plan_difference_key :: proc "contextless" (dialog: ^Plan_Difference_Dialog, key:
 plan_difference_body_lines :: proc "contextless" (dialog: ^Plan_Difference_Dialog) -> int {
 	lines := 0
 	if dialog.added_count > 0 {
-		lines += 1 + dialog.added_count
+		lines += 1 + plan_difference_side_lines(dialog.added[:dialog.added_count])
 	}
 	if dialog.removed_count > 0 {
-		lines += 1 + dialog.removed_count
+		lines += 1 + plan_difference_side_lines(dialog.removed[:dialog.removed_count])
 	}
 	return lines
 }
 
-// The line of the body at an index: a heading of a side, or an item.
+// The line of the body at an index: a heading of a side, or a line of an
+// item.
 Plan_Difference_Line :: struct {
-	heading: bool,
-	added:   bool, // The side: the additions, or the removals.
-	item:    ^Plan_Difference_Item, // nil on a heading.
+	heading:   bool,
+	added:     bool, // The side: the additions, or the removals.
+	item:      ^Plan_Difference_Item, // nil on a heading.
+	item_line: int, // The line inside the item, from 0 (plan_difference_item_line).
 }
 
 // plan_difference_line gives the line of the body at an index, from 0.
 plan_difference_line :: proc "contextless" (dialog: ^Plan_Difference_Dialog, index: int) -> (line: Plan_Difference_Line, ok: bool) {
+	// The item of a line of a side: the last item that starts at or before
+	// it, by a binary search on the first lines.
+	side_line :: proc "contextless" (items: []Plan_Difference_Item, at: int, added: bool) -> Plan_Difference_Line {
+		low, high := 0, len(items) - 1
+		for low < high {
+			middle := (low + high + 1) / 2
+			if items[middle].first_line <= at {
+				low = middle
+			} else {
+				high = middle - 1
+			}
+		}
+		return {added = added, item = &items[low], item_line = at - items[low].first_line}
+	}
 	rest := index
 	if dialog.added_count > 0 {
+		lines := plan_difference_side_lines(dialog.added[:dialog.added_count])
 		if rest == 0 {
 			return {heading = true, added = true}, true
 		}
-		if rest <= dialog.added_count {
-			return {added = true, item = &dialog.added[rest - 1]}, true
+		if rest <= lines {
+			return side_line(dialog.added[:dialog.added_count], rest - 1, true), true
 		}
-		rest -= 1 + dialog.added_count
+		rest -= 1 + lines
 	}
 	if dialog.removed_count > 0 && rest >= 0 {
 		if rest == 0 {
 			return {heading = true}, true
 		}
-		if rest <= dialog.removed_count {
-			return {item = &dialog.removed[rest - 1]}, true
+		if rest <= plan_difference_side_lines(dialog.removed[:dialog.removed_count]) {
+			return side_line(dialog.removed[:dialog.removed_count], rest - 1, false), true
 		}
 	}
 	return {}, false

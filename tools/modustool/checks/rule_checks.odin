@@ -251,8 +251,8 @@ allocator_check :: proc() -> bool {
 // outcome_binding_check.odin, the fourth in choice_constant_check.odin,
 // the fifth in processor_random_check.odin, the sixth in
 // image_checks_field_check.odin, the seventh in
-// global_initializer_check.odin, and the eighth in
-// display_text_check.odin.
+// global_initializer_check.odin, the eighth in display_text_check.odin,
+// and the ninth in service_deadline_check.odin.
 run_rule_checks :: proc(args: []string) -> int {
-	return operation_count_check() && allocator_check() && outcome_binding_check() && choice_constant_check() && processor_random_check() && image_checks_field_check() && global_initializer_check() && display_text_check() ? 0 : foundation.EXIT_FAILURE
+	return operation_count_check() && allocator_check() && outcome_binding_check() && choice_constant_check() && processor_random_check() && image_checks_field_check() && global_initializer_check() && display_text_check() && service_deadline_check() ? 0 : foundation.EXIT_FAILURE
 }

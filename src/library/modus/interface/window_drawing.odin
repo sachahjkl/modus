@@ -455,7 +455,7 @@ window_events :: proc "contextless" (drawing: ^Window_Drawing, window: ^display.
 		came = true
 		// A new font: each record is the same, each pixel of text is not.
 		// The next frame of each picture draws the whole window.
-		if event.kind == .Settings_Changed {
+		if event.kind == .Presentation {
 			draw_whole_window_next(drawing)
 		}
 		// An answer of the rescale: the window may draw a new surface, of
@@ -515,7 +515,7 @@ clipboard_answer :: proc "contextless" (drawing: ^Window_Drawing, frame: ^Frame,
 
 // draw_whole_window_next makes the next frame of each picture of the
 // surface a whole frame: no picture is known. A process that reads its
-// events with no window_events calls it on Settings_Changed.
+// events with no window_events calls it on Presentation.
 draw_whole_window_next :: proc "contextless" (drawing: ^Window_Drawing) {
 	drawing.debts = {}
 }
@@ -525,7 +525,7 @@ window_frame_begin :: proc "contextless" (drawing: ^Window_Drawing, window: ^dis
 	drawing.build_start = system.nanoseconds()
 	// The choice of the settings page, read at each frame: the appearance
 	// in force, the font, the order of the stripes and the grid fit. A
-	// change holds from this frame, also before the event Settings_Changed
+	// change holds from this frame, also before the event Presentation
 	// comes, and also when it never comes: the compositor tells only a
 	// window with a surface, so a window that read the page before the boot
 	// pass of `settings` and made its surface after it gets none. The

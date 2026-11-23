@@ -37,7 +37,7 @@ import op "modus:contract/operation"
 // The band of the fixed ranges: one slot of 1 TiB for each range.
 BAND_START :: 0x0000_3000_0000_0000
 SLOT :: 0x0000_0100_0000_0000 // 1 TiB: the addresses of one range.
-SLOT_COUNT :: 19 // The slots of the band: the values 0 to 18 of Fixed_Range, the slots 3, 4, 5, 9, 10 and 13 with no member.
+SLOT_COUNT :: 19 // The slots of the band: the values 0 to 18 of Fixed_Range, the slots 5, 9, 10 and 13 with no member.
 BAND_END :: BAND_START + SLOT_COUNT * SLOT
 // The first address of a mapping that a process places by its own choice.
 OWN_CHOICE_START :: BAND_END
@@ -79,10 +79,22 @@ Fixed_Range :: enum u8 {
 	// read-only, in the compositor, and gives the address and the size of
 	// each one in the values of its context.
 	Settings_Page = 2, // The settings page (modus:contract/settings).
-	// One page, read-only, that the process `settings` writes and every
-	// process with a surface or a terminal reads: the value of each setting
-	// of the machine. The root service maps it. A process reads a change at
-	// its next read of the page, with no message.
+	// One page, read-only, that the process `settings` writes: the value
+	// of each setting of the machine. The root service maps it in
+	// `settings`, the date service, the input service and the holder of the
+	// display only. A process reads a change at its next read of the page,
+	// with no message.
+	Presentation_Page = 3, // The presentation page of the process (modus:contract/settings, PRESENTATION_PAGE_ADDRESS).
+	// One page of this process alone, with Write, in the format of the
+	// settings page: its display library writes there the presentation
+	// record that the holder of the display gives on its window ring, and
+	// its drawing module reads it (src/md/features/module_settings.md, "The
+	// presentation record"). No other process maps it.
+	Plan_Values_Page = 4, // The plan values of the process, read-only (modus:contract/plan_values).
+	// One page that the root service writes at the start of an owner of
+	// settings, from the plan of principal 0: the defaults and the locks of
+	// that owner (src/md/features/module_settings.md, "Plan records"). No
+	// process writes it after the start.
 	Date_Page = 6, // The date page (modus:contract/date).
 	// One page, read-only, that the process `date` writes from the
 	// real-time clock: each process reads the date of the day there with
@@ -174,6 +186,8 @@ range_mapped_add :: proc "contextless" (values: ^[op.CONTEXT_VALUES]u64, range: 
 MODULE_FILES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Module_Files)
 POINTER_THEMES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Pointer_Themes)
 SETTINGS_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Settings_Page)
+PRESENTATION_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Presentation_Page)
+PLAN_VALUES_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Plan_Values_Page)
 DATE_PAGE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Date_Page)
 STORAGE_FILE_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Storage_File)
 MODULE_TABLES_ADDRESS :: BAND_START + SLOT * u64(Fixed_Range.Module_Tables)

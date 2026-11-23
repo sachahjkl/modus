@@ -2,6 +2,7 @@ package build
 
 import "core:strings"
 import "core:testing"
+import "modus:contract/chosen_values"
 import "modustool:foundation"
 
 // The log facts of the browser against the sentences that its readers
@@ -25,6 +26,11 @@ the_facts_of_the_browser_write_their_sentences :: proc(t: ^testing.T) {
 	most := make(map[string]u32, context.temp_allocator)
 	most["kind"] = u32(len(longest_kind))
 	most["cause"] = u32(len(longest_cause))
+	problems := make([dynamic]string, context.temp_allocator)
+	for name in chosen_values.RECORD_PROBLEM_NAMES {
+		append(&problems, name)
+	}
+	most["problem"] = longest(problems[:])
 	facts_expect_text_fields_last(t, file, most)
 	for count in BROWSER_EDGE_COUNTS {
 		other := max(u64) - count

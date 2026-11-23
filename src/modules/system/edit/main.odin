@@ -1451,7 +1451,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if display.surface_resize(&window, event.width, event.height) == .Ok {
 					interface.draw_whole_window_next(&window_memory.drawing)
 				}
-			case .Settings_Changed, .Surface_Answer:
+			case .Presentation, .Surface_Answer:
 				// A new appearance or a new surface: each pixel changes.
 				interface.draw_whole_window_next(&window_memory.drawing)
 			case .None, .Go_To, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Work_Area:

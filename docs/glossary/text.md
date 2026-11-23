@@ -172,13 +172,13 @@ Do not use: glyph atlas, local cache, per-program cache.
 
 ### Setting
 
-A setting is one choice of the principal of the machine that each process follows: the font, the order of the subpixel bands, the pointer theme, the grid fit, the layout of the keyboard, the appearance or the time zone.
+A setting is a value that a principal changes with a setter: an optional parameter of a setter export of its owner, which names its getter.
 
-Each setting is one value of the settings page, with 0 as its default: `font`, `subpixel_order`, `pointer_theme`, `grid_fit`, `keyboard_layout`, `appearance`, and `time_zone`, a fixed offset from UTC. The process `settings` is the one writer: its window, `settings.set(keyboard_layout = .french)`, `settings.set_time_zone(zone)`, and the getters, `settings.font()`. A caller that does not act for the principal gets `No_Grant`. A change takes effect while processes run, and the values survive a stop in the private store of `settings`. A setting is not a configuration file of one process, and the scheduling strategy is not a setting.
+The owner of a setting is the holder of a role or an application. It keeps the value, checks it at one border and serves its getter: `settings` owns the font and the scale, the compositor the edge of the bar. A change holds at once, and the chosen value survives a stop in the store of its owner. A value that widens an access, spends a resource of the machine, lowers a protection or destroys data is a plan-only value, not a setting. A limit of a table is never a setting.
 
-The design: `docs/FONTS.md`, "7. The setting".
+The design: `src/md/features/module_settings.md`.
 
-Do not use: preference, option, configuration.
+Do not use: preference, option, configuration, registry key.
 
 ### Language tag
 
@@ -236,7 +236,7 @@ Do not use: theme (for this: a pointer theme is a set of pointer pictures), dark
 
 The appearance in force is the appearance, dark or light, that each process draws now.
 
-It is one word of the settings page. With `dark` or `light` it is that value; with `auto` it is the rule of the day (`src/library/internal/settings/appearance_rule`) over the date page. The process `settings` is its sole writer: on value changes, date-page changes, and at 07:00 and 19:00 local time. A process reads it at each frame through `src/library/modus/display`, which gives it to `graphics.appearance_use`; the compositor sends `Settings_Changed` to each window when it changes, so each window draws once.
+It is one word of the settings page. With `dark` or `light` it is that value; with `auto` it is the rule of the day (`src/library/internal/settings/appearance`) over the date page. The process `settings` is its sole writer: on value changes, date-page changes, and at 07:00 and 19:00 local time. A process reads it at each frame through `src/library/modus/display`, which gives it to `graphics.appearance_use`; the compositor sends `Presentation` to each window when it changes, so each window draws once.
 
 The design: `src/md/features/appearance.md`.
 
@@ -486,7 +486,7 @@ Do not use: span (for this), slice.
 
 The boot pass is the start of the process `settings` that the root service makes at the start of the machine, with no window, to put the kept settings on the settings page.
 
-The settings survive a stop as one record (`Kept_Settings`) in the private store of `settings`. The root service cannot read the store itself, so it starts `settings` with the pass `Boot` at `VALUE_PASS` of its context. The process reads the record, writes the page, wakes the compositor and stops. A record of another version, or none, gives the defaults. Until the boot pass ends, the boot display and the first frames use the defaults; then each window draws again.
+The chosen values (Chosen value) survive a stop in the private store of `settings`. The root service cannot read that store, so it starts `settings` with the pass `Boot` at `VALUE_PASS` of its context. The process reads the record, writes the page, wakes the compositor and stops. A setting that the record does not hold, or holds with a word that its border refuses, gives its default. Until the boot pass ends, the boot display and the first frames use the defaults; then each window draws again.
 
 The design: `docs/FONTS.md`, "7. The setting".
 

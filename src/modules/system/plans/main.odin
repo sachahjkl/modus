@@ -131,6 +131,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	plans_core.state_init(&service_state, 0, store_port, memory_port)
 	root_requests_bind(ctx)
 	service_display = display_port_bind(ctx)
+	// The values first: the start of the roles gives the core the values
+	// of the generation in force (plans_core.roles_start).
+	values_port_bind(&service_state)
 	roles_open := roles_port_bind(&service_state)
 	system.log_fact(.Info, Service_Ready{store = store_open ? 1 : 0, display = service_display.ask != nil ? 1 : 0, roles = roles_open ? 1 : 0})
 

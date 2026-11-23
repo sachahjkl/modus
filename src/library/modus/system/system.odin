@@ -72,10 +72,10 @@ foreign _ {
 	export_call :: proc "c" (address: uintptr, integers: ^[CALL_INTEGERS]u64, floats: ^[CALL_FLOATS]u64, results: ^[CALL_RESULTS]u64) ---
 }
 
-// The integer arguments of the call form: `module.PARAMETER_CAPACITY`. The
-// first 6 are in registers, the others on the stack; enter.asm writes 6
+// The integer arguments of the call form: `module.CALL_WORD_CAPACITY`. The
+// first 6 are in registers, the others on the stack; enter.asm writes 10
 // words of stack, so a change of this number changes export_call too.
-CALL_INTEGERS :: 12
+CALL_INTEGERS :: 16
 CALL_FLOATS :: 8 // The float registers of the call form.
 CALL_RESULTS :: 4 // The results of the call form: two integers, then two floats.
 

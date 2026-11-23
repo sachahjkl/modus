@@ -17,9 +17,12 @@
 //    contract of Settings (generic_source): the same.
 //
 // The last case is the plan that commits: settings_stand_in as the holder
-// of Settings, accepted, generation 1.
+// of Settings and the value storage.keep_all_minutes = 90, accepted,
+// generation 1. Storage runs before plans, so the value reaches it at the
+// apply, and at the next start of the machine when plans gives the values
+// of the generation in force.
 //
-// The display takes a decision only PLAN_DISPLAY_ARM_MILLISECONDS after it
+// The display takes a decision only powerbox.CONSENT_ARM_MILLISECONDS after it
 // showed the difference: this process writes one line for each dialog when
 // that time passed after the answer of `apply`, which came after the
 // dialog showed, so a key that the tool presses after that line counts.
@@ -36,10 +39,12 @@ package plan_applier
 
 import "modus:contract/blake3"
 import "modus:contract/call_outcome"
+import "modus:contract/chosen_values"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
 import pr "modus:contract/plans_recipes"
+import "modus:contract/powerbox"
 import "modus:contract/role_contract"
 import "modus:contract/value_kinds"
 import "modus:system"
@@ -99,11 +104,33 @@ holder_row :: proc "contextless" (hash: blake3.Hash, name: string) -> (row: pr.P
 	return row
 }
 
+// The value of the plan that the committed plan gives storage: each
+// version kept 90 minutes, which the tool reads in the line of the rule of
+// storage, 5400000 ms.
+KEEP_ALL_MINUTES :: 90
+
+// keep_all_row gives the row of the value storage.keep_all_minutes.
+@(private = "file")
+keep_all_row :: proc "contextless" () -> (row: pr.Plan_Entry_Row) {
+	row.kind_word = i64(pr.Plan_Entry_Kind.Value)
+	copy(row.name[:], "storage.keep_all_minutes")
+	row.value_kind_word = i64(chosen_values.Entry_Kind.Word)
+	row.value_word = KEEP_ALL_MINUTES
+	row.value_layer_word = i64(chosen_values.Layer.Plan_Default)
+	return row
+}
+
 // apply calls plans.apply with one row.
 @(private = "file")
 apply :: proc "contextless" (plan_name: string, row: ^pr.Plan_Entry_Row, expected: ^pr.Plan_Expected, error: ^errors.Error_Record) -> (ticket: i64, outcome: call_outcome.Call_Outcome) {
+	return apply_rows(plan_name, ([^]pr.Plan_Entry_Row)(row)[:1], expected, error)
+}
+
+// apply_rows calls plans.apply with a table of rows.
+@(private = "file")
+apply_rows :: proc "contextless" (plan_name: string, rows: []pr.Plan_Entry_Row, expected: ^pr.Plan_Expected, error: ^errors.Error_Record) -> (ticket: i64, outcome: call_outcome.Call_Outcome) {
 	name := plan_name
-	arguments := [3]isolated.Argument{{text = transmute([]u8)name}, {table = {records = bytes_of(row), count = 1}}, {record = bytes_of(expected)}}
+	arguments := [3]isolated.Argument{{text = transmute([]u8)name}, {table = {records = ([^]u8)(raw_data(rows))[:len(rows) * size_of(pr.Plan_Entry_Row)], count = u64(len(rows))}}, {record = bytes_of(expected)}}
 	error^ = {}
 	return system.call_isolated(&plans.connection, plans.file, plans.apply_export, arguments[:], error)
 }
@@ -113,7 +140,7 @@ apply :: proc "contextless" (plan_name: string, row: ^pr.Plan_Entry_Row, expecte
 @(private = "file")
 decision_wait :: proc "contextless" (plan_name: string, ticket: i64, asked_at: u64, generation_row: ^pr.Plan_Generation_Row, error: ^errors.Error_Record) -> (generation: i64, outcome: call_outcome.Call_Outcome) {
 	armed := false
-	deadline := asked_at + pr.PLAN_DISPLAY_ARM_MILLISECONDS + system.TEST_HANG_BOUND_MILLISECONDS
+	deadline := asked_at + powerbox.CONSENT_ARM_MILLISECONDS + system.TEST_HANG_BOUND_MILLISECONDS
 	for {
 		rows: [1]pr.Plan_Generation_Row
 		arguments := [1]isolated.Argument{{integer = u64(ticket)}}
@@ -124,7 +151,7 @@ decision_wait :: proc "contextless" (plan_name: string, ticket: i64, asked_at: u
 			return generation, outcome
 		}
 		now := system.time()
-		if !armed && now >= asked_at + pr.PLAN_DISPLAY_ARM_MILLISECONDS {
+		if !armed && now >= asked_at + powerbox.CONSENT_ARM_MILLISECONDS {
 			armed = true
 			system.log_fact(.Info, Dialog_Armed{ticket = u64(ticket)}, plan_name)
 		}
@@ -234,10 +261,13 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		refused_after_dialog(PLAN_CONTRACT_NOT_FILLED, &not_filling, .Roles_Refused, .Argument_Refused, .Refused, .Grants, 1)
 	}
 
-	// The plan that commits, last.
+	// The plan that commits, last: the holder of Settings, and a value of
+	// the plan for storage, which started before plans and gets it at the
+	// apply and at each later start of the machine.
+	rows := [2]pr.Plan_Entry_Row{0 = holder, 1 = keep_all_row()}
 	expected: pr.Plan_Expected
 	error: errors.Error_Record
-	ticket, applied := apply(PLAN_COMMITTED, &holder, &expected, &error)
+	ticket, applied := apply_rows(PLAN_COMMITTED, rows[:], &expected, &error)
 	if applied != .Succeeded || ticket <= 0 {
 		wrong_call("plans.apply refused the plan", applied, error)
 	}

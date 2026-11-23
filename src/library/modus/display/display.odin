@@ -184,7 +184,7 @@ Command :: enum u32 {
 	// the compositor, after its release: the window declines that scale and
 	// draws nothing. The compositor draws the frame with the background,
 	// counts the window among those that declined the scale in force, and
-	// names the count in Settings_Changed; it sends no answer. The window
+	// names the count in Presentation; it sends no answer. The window
 	// offers the next serial at the next scale. values: the serial of the
 	// offer, one past the serial released, and the word of the scale.
 	Surface_Declined = 21,
@@ -503,13 +503,17 @@ Event_Kind :: enum u32 {
 	None             = 0, // No event.
 	Key              = 1, // values: code, character, 1 when pressed, modifiers, then at KEY_EVENT_SERIAL the serial of the key (0: the compositor does not measure it)
 	Pointer          = 2, // values: x, y in the surface (signed), buttons, wheel notches (signed: WHEEL_TOWARD_THE_END for each notch toward the end of the content)
-	// The settings of the owner changed (modus:contract/settings): next_event
-	// already gave the new font to src/library/modus/graphics; the process draws its
-	// window again. values: the change count of the settings page, the word
-	// of the scale of the compositor, to which the window rescales, and the
+	// The presentation record of the window (src/md/features/module_settings.md,
+	// "The presentation record"): how the window draws now. The holder of
+	// the display sends it at the first event of the window and at each
+	// change. next_event writes it on the presentation page of the process
+	// and gives the new font to src/library/modus/graphics; the process
+	// draws its window again. values: the change count of the settings, the
+	// word of the scale of the compositor, to which the window rescales, the
 	// count of the windows that declined that scale (Surface_Declined), up
-	// to WINDOWS_DECLINED_LIMIT.
-	Settings_Changed = 3,
+	// to WINDOWS_DECLINED_LIMIT, then the settings.PRESENTATION_WORDS words
+	// of settings.presentation_words_of.
+	Presentation = 3,
 	// The palette goes to an element of this window: the compositor raised
 	// it. values[0]: the act_name_hash of the act name. The window layer
 	// puts the focus on the element that names it
@@ -701,12 +705,12 @@ BUTTON_RIGHT :: 2 // The bit set while the right button is down.
 // and the budget of the window pays its pixels.
 SURFACE_LIMIT :: 8192
 
-// The most windows that a Settings_Changed counts as declining the scale:
+// The most windows that a Presentation counts as declining the scale:
 // more than a compositor holds, so a larger word is no count.
 WINDOWS_DECLINED_LIMIT :: 64
 
 // The windows that declined the scale in force, as the newest
-// Settings_Changed of the compositor named them: the window of settings
+// Presentation of the compositor named them: the window of settings
 // shows a notice while it is not 0.
 windows_declined_scale: int
 
@@ -815,8 +819,9 @@ Event :: struct {
 	clipboard_serial: u64, // Copy_Asked and Pasted: the serial of the key, never 0; the answer names it.
 	copy_action:    Copy_Action, // Copy_Asked: Copy (Ctrl+C) or Cut (Ctrl+X).
 	key_serial: u64, // A key: the serial that the compositor gave it, or 0. A process that shows the key names it (key_shown).
-	scale: scale_factor.Scale, // Settings_Changed: the scale of the compositor.
-	windows_declined: int, // Settings_Changed: the windows that declined that scale, 0 to WINDOWS_DECLINED_LIMIT.
+	scale: scale_factor.Scale, // Presentation: the scale of the compositor.
+	windows_declined: int, // Presentation: the windows that declined that scale, 0 to WINDOWS_DECLINED_LIMIT.
+	presentation: settings.Choice, // Presentation: what the window draws with, through settings.presentation_of_words.
 	surface_answer: Surface_Answer_Kind, // Surface_Answer: the answer.
 	surface_serial: u64, // Surface_Answer: the serial that it names.
 	surface_memory: system.Handle, // Surface_Answer of a surface made (surface_answer_gives_surface): the copy for this process; else 0.
@@ -1365,9 +1370,8 @@ compositor_took_the_last_present :: proc "contextless" (window: ^Window) -> bool
 // The bound of canvas_wait, in milliseconds. It is not the time that a
 // picture takes: the compositor takes a Present in one turn of its loop.
 // It only ends a wait for a compositor that does not read at all, so it is
-// the hang bound of a check, the same for each host
-// (docs/TOOLS.md, "The bounds of the tests").
-CANVAS_WAIT_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
+// the answer bound of the services, the same for each host.
+CANVAS_WAIT_BOUND_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
 // canvas_wait waits until the process can draw in window.canvas: until the
 // compositor took the last Present. The thread waits on the count of the
@@ -1495,7 +1499,8 @@ next_event :: proc "contextless" (window: ^Window) -> (event: Event, ok: bool) {
 		// The rescale takes the scale that the compositor names, and its
 		// answers (scale.odin): the window never reads the scale of the
 		// page for it.
-		if read.kind == .Settings_Changed {
+		if read.kind == .Presentation {
+			presentation_page_write(read.presentation)
 			_ = text_settings_apply()
 			rescale_take(window, {kind = .Scale_Named, scale = read.scale})
 			windows_declined_scale = read.windows_declined
@@ -1591,15 +1596,21 @@ event_of_record :: proc "contextless" (record: ring.Record) -> (event: Event, ok
 		// The compositor writes the notches: a count past the limit is cut,
 		// so that a sum of them stays far inside an int.
 		event.wheel = int(clamp(i64(record.values[key_path.POINTER_RECORD_WHEEL]), -key_path.WHEEL_NOTCHES_LIMIT, key_path.WHEEL_NOTCHES_LIMIT))
-	case .Settings_Changed:
+	case .Presentation:
 		// The scale of the compositor: a member of the range, never a word
 		// that names no scale for a window to rescale to.
 		scale, problem := scale_factor.scale_of_word(record.values[1])
 		if problem != .None || record.values[2] > WINDOWS_DECLINED_LIMIT {
 			return {}, false
 		}
+		words := [settings.PRESENTATION_WORDS]u64{record.values[3], record.values[4], record.values[5], record.values[6]}
+		presentation, presentation_ok := settings.presentation_of_words(words, scale)
+		if !presentation_ok {
+			return {}, false
+		}
 		event.scale = scale
 		event.windows_declined = int(record.values[2])
+		event.presentation = presentation
 	case .Surface_Answer:
 		answer, answer_ok := surface_answer_of_word(record.values[0])
 		if !answer_ok || record.values[1] == 0 {
@@ -1685,8 +1696,26 @@ work_area :: proc "contextless" (window: ^Window) -> (width, height: int, named:
 	return window.work_area_width, window.work_area_height, window.work_area_width != 0
 }
 
-// The settings page of this process (modus:contract/settings), or nil.
+// The page that the text settings of this process come from, or nil: its
+// presentation page, which next_event writes from the presentation record,
+// or the settings page of the machine in a holder that maps it (settings,
+// the holder of the display).
 settings_page: ^settings.Page
+
+// The page is the presentation page of this process: next_event writes it.
+settings_page_is_presentation: bool
+
+// presentation_page_write writes a presentation record on the presentation
+// page of this process, in the format of the settings page, so that its
+// drawing module, which reads the page at its fixed address, draws with it.
+// A process that maps the settings page of the machine writes nothing: it
+// reads the settings there.
+presentation_page_write :: proc "contextless" (presentation: settings.Choice) {
+	if settings_page == nil || !settings_page_is_presentation {
+		return
+	}
+	settings.write(settings_page, presentation, presentation.zone_offset_minutes, presentation.appearance_in_force)
+}
 
 // The text state of the graphics package has its table of the blend: the
 // first text_settings_load filled it.
@@ -1759,10 +1788,19 @@ text_settings_load :: proc "contextless" (ctx: ^system.Context) -> (problems: Te
 		graphics.text_state_start()
 		text_state_started = true
 	}
-	if .Settings_Page not_in fixed_addresses.ranges_mapped(&ctx.values) || settings_page != nil {
+	mapped := fixed_addresses.ranges_mapped(&ctx.values)
+	if settings_page != nil {
 		return {}, false
 	}
-	settings_page = (^settings.Page)(uintptr(settings.PAGE_ADDRESS))
+	switch {
+	case .Presentation_Page in mapped:
+		settings_page = (^settings.Page)(uintptr(settings.PRESENTATION_PAGE_ADDRESS))
+		settings_page_is_presentation = true
+	case .Settings_Page in mapped:
+		settings_page = (^settings.Page)(uintptr(settings.PAGE_ADDRESS))
+	case:
+		return {}, false
+	}
 	problems.outlines, problems.fonts_missing = fallback_load(ctx)
 	_ = text_settings_apply()
 	return problems, true
@@ -1856,7 +1894,7 @@ cell_faces := [settings.Grid_Fit]text_rendering.Face {
 // compares that number with the number of its last frame: the true of one
 // call goes to that caller only, and next_event calls it too.
 // interface.window_frame_begin calls it at each frame, as the drawing
-// module does at each draw. The event Settings_Changed alone is not
+// module does at each draw. The event Presentation alone is not
 // enough: the compositor tells only the windows that have a surface, and a
 // window that read the page before the boot pass of `settings` and made
 // its surface after it gets no event, while its cells, which the drawing

@@ -148,7 +148,7 @@ site_types_sizes_agree_with_the_asserts :: proc(t: ^testing.T) {
 	testing.expect_value(t, sizes["operation.Module_Record"], 88)
 	testing.expect_value(t, sizes["errors.Error_Record"], 56)
 	testing.expect_value(t, sizes["module.Table_Place"], 24)
-	testing.expect_value(t, sizes["module.Function"], 168)
+	testing.expect_value(t, sizes["module.Function"], 180)
 }
 
 // The rows of a struct: each field at its offset, a row of padding for each

@@ -16,6 +16,24 @@ MAX_LABEL_BYTES :: 32
 // the corner of the screen (src/md/features/tray_widgets.md, "The export
 // notify").
 CARDS_PER_SOURCE_LIMIT :: 3
+// The least time between two cards of one source that are not critical.
+// The compositor and each test read this one number.
+RATE_INTERVAL_MILLISECONDS :: u64(500)
+
+// How long a card shows: its range and its default. The default is a
+// choice of the principal past the range of the contract: a reader who
+// needs more time to read a card asks for more (WCAG 2.2, 2.2.1).
+SHOW_MILLISECONDS_LEAST :: u64(1_000)
+SHOW_MILLISECONDS_MOST :: u64(60_000)
+SHOW_MILLISECONDS_DEFAULT :: u64(8_000)
+#assert(SHOW_MILLISECONDS_LEAST <= SHOW_MILLISECONDS_DEFAULT && SHOW_MILLISECONDS_DEFAULT <= SHOW_MILLISECONDS_MOST)
+
+// show_milliseconds_valid says if a time of a card is in the range of the
+// contract.
+show_milliseconds_valid :: proc "contextless" (milliseconds: u64) -> bool {
+	return milliseconds >= SHOW_MILLISECONDS_LEAST && milliseconds <= SHOW_MILLISECONDS_MOST
+}
+
 // The source of the cards of the principal. A labelled source never has
 // this number: source_of_caller_name sets the top bit.
 PRINCIPAL_SOURCE :: u64(1)
@@ -42,6 +60,7 @@ Notification_Refusal :: enum u8 {
 	Not_Found     = 8,
 	Label_Too_Long = 9, // The label passes MAX_LABEL_BYTES.
 	Source_Full   = 10, // The source shows its bound of cards already.
+	Show_Time_Out_Of_Range = 11, // The time that the card shows is outside SHOW_MILLISECONDS_LEAST to SHOW_MILLISECONDS_MOST.
 }
 
 Notification :: struct {
@@ -71,7 +90,6 @@ Notification_Queue :: struct {
 	items:               [MAX_NOTIFICATIONS]Notification,
 	next_id:             u64,
 	do_not_disturb:      bool,
-	min_interval_ms:     u64,
 	rate_sources:        [RATE_SOURCES]u64, // The source of each slot; 0 is a free slot.
 	rate_times_ms:       [RATE_SOURCES]u64, // The time of the last post of the source of the slot.
 }
@@ -92,11 +110,11 @@ rate_slot :: proc "contextless" (q: ^Notification_Queue, source_id: u64) -> (slo
 	return oldest, false
 }
 
-queue_init :: proc "contextless" (q: ^Notification_Queue, min_interval_ms: u64 = 1_000) {
+queue_init :: proc "contextless" (q: ^Notification_Queue) {
 	if q == nil {
 		return
 	}
-	q^ = {next_id = 1, min_interval_ms = min_interval_ms}
+	q^ = {next_id = 1}
 }
 
 // source_of_caller_name gives the source of the cards of a caller by its
@@ -130,7 +148,7 @@ queue_post :: proc "contextless" (
 	source_id: u64,
 	urgency: Urgency,
 	now_ms: u64,
-	ttl_ms: u64,
+	show_milliseconds: u64,
 	title: []u8,
 	body: []u8,
 	label: []u8 = nil,
@@ -151,6 +169,9 @@ queue_post :: proc "contextless" (
 	if len(label) > MAX_LABEL_BYTES {
 		return 0, .Label_Too_Long
 	}
+	if !show_milliseconds_valid(show_milliseconds) || now_ms > max(u64) - show_milliseconds {
+		return 0, .Show_Time_Out_Of_Range
+	}
 	if q.do_not_disturb && urgency != .Critical {
 		return 0, .Suppressed
 	}
@@ -160,9 +181,9 @@ queue_post :: proc "contextless" (
 	// Rate-limit non-critical notifications per source_id. The check only
 	// reads: the time of the post is kept after the last refusal, so a
 	// refused post costs the source nothing.
-	rated := urgency != .Critical && q.min_interval_ms > 0
+	rated := urgency != .Critical
 	slot, has_slot := rate_slot(q, source_id)
-	if rated && has_slot && now_ms >= q.rate_times_ms[slot] && now_ms - q.rate_times_ms[slot] < q.min_interval_ms {
+	if rated && has_slot && now_ms >= q.rate_times_ms[slot] && now_ms - q.rate_times_ms[slot] < RATE_INTERVAL_MILLISECONDS {
 		return 0, .Rate_Limited
 	}
 	free_idx := -1
@@ -187,7 +208,7 @@ queue_post :: proc "contextless" (
 		source_id  = source_id,
 		urgency    = urgency,
 		created_ms = now_ms,
-		expire_ms  = ttl_ms > 0 ? now_ms + ttl_ms : 0,
+		expire_ms  = now_ms + show_milliseconds,
 		title_len  = u16(len(title)),
 		body_len   = u16(len(body)),
 		label_len  = u8(len(label)),
@@ -217,7 +238,7 @@ queue_expire :: proc "contextless" (q: ^Notification_Queue, now_ms: u64) -> int 
 	}
 	removed := 0
 	for &it in q.items {
-		if it.active && it.expire_ms != 0 && now_ms >= it.expire_ms {
+		if it.active && now_ms >= it.expire_ms {
 			it.active = false
 			removed += 1
 		}

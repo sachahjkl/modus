@@ -506,7 +506,7 @@ kept_settings_of :: proc(contents: ^fuzz.Disk_Contents) -> (text: string, found:
 		if item.store != "settings" || item.name != settings.KEPT_OBJECT_NAME {
 			continue
 		}
-		choice, _, ok := settings.kept_read(item.bytes)
+		choice, _, _, ok := settings.kept_read(item.bytes)
 		if !ok {
 			return "", true, false
 		}

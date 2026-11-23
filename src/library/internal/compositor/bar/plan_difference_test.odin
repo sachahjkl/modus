@@ -3,7 +3,7 @@ package bar
 
 import "core:strings"
 import "core:testing"
-import pr "modus:contract/plans_recipes"
+import "modus:contract/powerbox"
 
 @(test)
 plan_difference_open_refuses_each_bad_input_and_changes_nothing :: proc(t: ^testing.T) {
@@ -21,10 +21,16 @@ plan_difference_open_refuses_each_bad_input_and_changes_nothing :: proc(t: ^test
 		{long_name, "notes: store documents", "", .Name_Too_Long, 1},
 		{"home", "", "", .No_Change, 2},
 		{"home", "   ", " ", .No_Change, 2},
-		{"home", "a,,b", "", .Empty_Item, 2},
-		{"home", "a,", "", .Empty_Item, 2},
-		{"home", ",a", "", .Empty_Item, 2},
-		{"home", "a", " , ", .Empty_Item, 3},
+		{"home", "a\n\nb", "", .Empty_Item, 2},
+		{"home", "a\n", "", .Empty_Item, 2},
+		{"home", "\na", "", .Empty_Item, 2},
+		{"home", "a", " \n ", .Empty_Item, 3},
+		// A byte that would break the lines, and a text that is not UTF-8.
+		{"home", "a\tb", "", .Item_Not_Text, 2},
+		{"home", "a\rb", "", .Item_Not_Text, 2},
+		{"home", "a\x7fb", "", .Item_Not_Text, 2},
+		{"home", "a", "\xff", .Item_Not_Text, 3},
+		{"home", "a\xc3", "", .Item_Not_Text, 2},
 		{"home", long_item, "", .Item_Too_Long, 2},
 		{"home", "", past_capacity, .Too_Many_Items, 3},
 		{"home", past_capacity, "", .Too_Many_Items, 2},
@@ -79,7 +85,7 @@ plan_difference_act_before_the_arm_time_is_no_act :: proc(t: ^testing.T) {
 	testing.expect_value(t, plan_difference_key(&dialog, .Next, 1000), Plan_Difference_Decision.Pending)
 	testing.expect_value(t, dialog.focus, Plan_Difference_Button.Accept)
 	// Enter at the show, and one millisecond before the arm: no act.
-	for now in ([?]u64{0, 1000, 1000 + pr.PLAN_DISPLAY_ARM_MILLISECONDS - 1}) {
+	for now in ([?]u64{0, 1000, 1000 + powerbox.CONSENT_ARM_MILLISECONDS - 1}) {
 		testing.expect_value(t, plan_difference_key(&dialog, .Act, now), Plan_Difference_Decision.Pending)
 		testing.expect(t, dialog.open)
 	}
@@ -93,7 +99,7 @@ plan_difference_act_before_the_arm_time_is_no_act :: proc(t: ^testing.T) {
 	testing.expect_value(t, plan_difference_key(&dialog, .Other, 9000), Plan_Difference_Decision.Pending)
 	testing.expect(t, dialog.open)
 	// At the arm time, Enter on Accept accepts.
-	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + pr.PLAN_DISPLAY_ARM_MILLISECONDS), Plan_Difference_Decision.Accepted)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + powerbox.CONSENT_ARM_MILLISECONDS), Plan_Difference_Decision.Accepted)
 	testing.expect(t, !dialog.open)
 	testing.expect_value(t, dialog.decision, Plan_Difference_Decision.Accepted)
 	// A closed dialog takes no act.
@@ -129,7 +135,7 @@ plan_difference_escape_refuses_at_once :: proc(t: ^testing.T) {
 plan_difference_press_acts_on_its_buttons_only :: proc(t: ^testing.T) {
 	SCREEN_WIDTH, WORK_TOP, WORK_BOTTOM :: 1280, 32, 768
 	dialog: Plan_Difference_Dialog
-	test_open(&dialog, "home", "notes: store documents, paint: network", "clock: settings", 1000)
+	test_open(&dialog, "home", "notes: store documents\npaint: network", "clock: settings", 1000)
 	x, y, width, height := plan_difference_place(&dialog, SCREEN_WIDTH, WORK_TOP, WORK_BOTTOM)
 	testing.expect(t, y >= WORK_TOP && y + height <= WORK_BOTTOM)
 	accept_x, accept_y, accept_width, accept_height := plan_difference_button_place(x, y, width, height, .Accept)
@@ -160,7 +166,7 @@ plan_difference_grows_with_its_items_and_stays_in_the_room :: proc(t: ^testing.T
 	test_open(&dialog, "home", "a", "", 0)
 	_, _, _, one := plan_difference_place(&dialog, 1280, 32, 768)
 	dialog.open = false
-	test_open(&dialog, "home", "a, b, c, d, e, f, g, h", "a, b, c, d, e, f, g, h", 0)
+	test_open(&dialog, "home", "a\nb\nc\nd\ne\nf\ng\nh", "a\nb\nc\nd\ne\nf\ng\nh", 0)
 	_, y, _, most := plan_difference_place(&dialog, 1280, 32, 768)
 	// The view grows with the lines of the body, up to its visible lines.
 	testing.expect_value(t, most - one, (PLAN_DIFFERENCE_VISIBLE_LINES - 2) * PLAN_DIFFERENCE_LINE)
@@ -258,9 +264,9 @@ plan_difference_act_open_refuses_each_word_that_is_no_identifier :: proc(t: ^tes
 plan_difference_act_face_refuses_on_the_first_enter :: proc(t: ^testing.T) {
 	dialog: Plan_Difference_Dialog
 	serial, _, _ := plan_difference_act_open(&dialog, "assistant", "plans.apply", 1000)
-	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + pr.PLAN_DISPLAY_ARM_MILLISECONDS - 1), Plan_Difference_Decision.Pending)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + powerbox.CONSENT_ARM_MILLISECONDS - 1), Plan_Difference_Decision.Pending)
 	testing.expect(t, dialog.open)
-	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + pr.PLAN_DISPLAY_ARM_MILLISECONDS), Plan_Difference_Decision.Refused)
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + powerbox.CONSENT_ARM_MILLISECONDS), Plan_Difference_Decision.Refused)
 	decision, known := plan_difference_decision_of_serial(&dialog, serial)
 	testing.expect(t, known && decision == .Refused)
 	plan_serial, _, _ := test_open(&dialog, "home", "a", "", 5000)
@@ -275,7 +281,7 @@ plan_difference_act_face_refuses_on_the_first_enter :: proc(t: ^testing.T) {
 // first arm time, never allows; Enter after the arm time of the move does.
 @(test)
 plan_difference_act_face_arms_again_after_each_move_of_the_focus :: proc(t: ^testing.T) {
-	ARM :: pr.PLAN_DISPLAY_ARM_MILLISECONDS
+	ARM :: powerbox.CONSENT_ARM_MILLISECONDS
 	dialog: Plan_Difference_Dialog
 	plan_difference_act_open(&dialog, "assistant", "plans.apply", 1000)
 	// Tab before the arm time: no move, and Enter then refuses.
@@ -314,7 +320,7 @@ plan_difference_act_face_arms_again_after_each_move_of_the_focus :: proc(t: ^tes
 // only, under the same arm rule; a second press after the arm time acts.
 @(test)
 plan_difference_act_face_press_on_the_other_button_moves_the_focus_only :: proc(t: ^testing.T) {
-	ARM :: pr.PLAN_DISPLAY_ARM_MILLISECONDS
+	ARM :: powerbox.CONSENT_ARM_MILLISECONDS
 	SCREEN_WIDTH, WORK_TOP, WORK_BOTTOM :: 1280, 32, 768
 	dialog: Plan_Difference_Dialog
 	plan_difference_act_open(&dialog, "assistant", "plans.apply", 1000)
@@ -416,8 +422,6 @@ plan_difference_act_cancel_closes_the_dialog_of_its_asker_only :: proc(t: ^testi
 	testing.expect(t, !closed)
 }
 
-// items_text gives a list of count distinct names that commas separate.
-@(private = "file")
 // The items of a side in the tests: past the 64 of a dialog of a fixed
 // size. test_open gives the memory of two such sides.
 TEST_SIDE_ITEMS :: 300
@@ -428,11 +432,14 @@ test_open :: proc(dialog: ^Plan_Difference_Dialog, plan_name, added, removed: st
 	return plan_difference_open(dialog, plan_name, added, removed, now_milliseconds, items)
 }
 
+// items_text gives a list of count distinct items that line feeds
+// separate.
+@(private = "file")
 items_text :: proc(count: int) -> string {
 	builder := strings.builder_make(context.temp_allocator)
 	for index in 0 ..< count {
 		if index > 0 {
-			strings.write_string(&builder, ", ")
+			strings.write_string(&builder, "\n")
 		}
 		strings.write_string(&builder, "item ")
 		strings.write_int(&builder, index)
@@ -500,4 +507,86 @@ plan_difference_accept_counts_only_after_the_last_line_showed :: proc(t: ^testin
 	plan_difference_key(&dialog, .Page_Previous, 1000)
 	testing.expect(t, dialog.seen_through)
 	testing.expect_value(t, plan_difference_key(&dialog, .Act, 1000 + ARM), Plan_Difference_Decision.Accepted)
+// A longer arm time of the principal delays the act; a shorter one, 0 and
+// the largest value of the type change nothing below the one of the
+// contract, and a time past the most of a principal holds as the most: one
+// rule for each door (powerbox.consent_arm_milliseconds), with no sum that
+// wraps.
+@(test)
+plan_difference_arm_time_of_the_principal_is_never_shorter :: proc(t: ^testing.T) {
+	ARM :: powerbox.CONSENT_ARM_MILLISECONDS
+	for shorter in ([?]u64{0, 1, ARM - 1}) {
+		dialog: Plan_Difference_Dialog
+		dialog.arm_milliseconds_of_the_principal = shorter
+		_, refusal, _ := plan_difference_act_open(&dialog, "assistant", "notes.open", 1000)
+		testing.expect_value(t, refusal, Plan_Difference_Refusal.None)
+		testing.expect_value(t, plan_difference_arm_milliseconds(&dialog), ARM)
+		testing.expect(t, !plan_difference_armed(&dialog, 1000 + ARM - 1))
+		testing.expect(t, plan_difference_armed(&dialog, 1000 + ARM))
+	}
+	dialog: Plan_Difference_Dialog
+	dialog.arm_milliseconds_of_the_principal = 2_000
+	_, refusal, _ := plan_difference_act_open(&dialog, "assistant", "notes.open", 1000)
+	testing.expect_value(t, refusal, Plan_Difference_Refusal.None)
+	testing.expect(t, !plan_difference_armed(&dialog, 1000 + ARM))
+	testing.expect(t, !plan_difference_armed(&dialog, 2999))
+	testing.expect(t, plan_difference_armed(&dialog, 3000))
+	testing.expect_value(t, plan_difference_key(&dialog, .Act, 2999), Plan_Difference_Decision.Pending)
+	// The largest word: the most of a principal, ten seconds, and no act
+	// one millisecond before it.
+	MOST :: powerbox.CONSENT_ARM_MILLISECONDS_MOST
+	largest: Plan_Difference_Dialog
+	largest.arm_milliseconds_of_the_principal = max(u64)
+	_, refusal, _ = plan_difference_act_open(&largest, "assistant", "notes.open", 1000)
+	testing.expect_value(t, refusal, Plan_Difference_Refusal.None)
+	testing.expect_value(t, plan_difference_arm_milliseconds(&largest), MOST)
+	testing.expect(t, !plan_difference_armed(&largest, 1000 + ARM))
+	testing.expect(t, !plan_difference_armed(&largest, 1000 + MOST - 1))
+	testing.expect(t, plan_difference_armed(&largest, 1000 + MOST))
+	testing.expect(t, plan_difference_armed(&largest, max(u64)))
+	// A clock before the show is no act.
+	testing.expect(t, !plan_difference_armed(&dialog, 999))
+}
+
+// An item takes a line for each 53 characters, cut at a whole character:
+// a comma stays in its item, a character of two bytes is never split, and
+// the lines of an item give back the item. The dialog grows with its
+// lines, with no bound of lines: 32 lines are shown whole.
+@(test)
+plan_difference_wraps_an_item_and_counts_its_lines :: proc(t: ^testing.T) {
+	dialog: Plan_Difference_Dialog
+	// 53 characters of two bytes, then one: 2 lines.
+	item := strings.concatenate({strings.repeat("é", PLAN_DIFFERENCE_LINE_CHARACTERS, context.temp_allocator), ",z"}, context.temp_allocator)
+	_, refusal, _ := test_open(&dialog, "home", item, "", 0)
+	testing.expect_value(t, refusal, Plan_Difference_Refusal.None)
+	testing.expect_value(t, dialog.added_count, 1)
+	testing.expect_value(t, plan_difference_side_lines(dialog.added[:1]), 2)
+	first, second, third := plan_difference_item_line(&dialog.added[0], 0), plan_difference_item_line(&dialog.added[0], 1), plan_difference_item_line(&dialog.added[0], 2)
+	testing.expect(t, first == strings.repeat("é", PLAN_DIFFERENCE_LINE_CHARACTERS, context.temp_allocator) && second == ",z" && third == "")
+	testing.expect_value(t, strings.concatenate({first, second}, context.temp_allocator), item)
+	// An item of exactly one line, and the empty line past it.
+	dialog.open = false
+	exact := strings.repeat("q", PLAN_DIFFERENCE_LINE_CHARACTERS, context.temp_allocator)
+	test_open(&dialog, "home", exact, "", 0)
+	testing.expect(t, plan_difference_side_lines(dialog.added[:1]) == 1 && plan_difference_item_line(&dialog.added[0], 0) == exact && plan_difference_item_line(&dialog.added[0], 1) == "")
+	// 32 lines: 8 items of 4 lines on one side, each item whole.
+	dialog.open = false
+	four := strings.repeat("w", 3 * PLAN_DIFFERENCE_LINE_CHARACTERS + 1, context.temp_allocator)
+	side := strings.join({four, four, four, four, four, four, four, four}, "\n", context.temp_allocator)
+	_, many_refusal, _ := test_open(&dialog, "home", side, "", 0)
+	testing.expect_value(t, many_refusal, Plan_Difference_Refusal.None)
+	testing.expect_value(t, plan_difference_side_lines(dialog.added[:dialog.added_count]), 32)
+	// The body counts each line of each item: the heading and 32 lines, of
+	// which the view shows PLAN_DIFFERENCE_VISIBLE_LINES; a line of the body
+	// names its item and its line inside it.
+	testing.expect_value(t, plan_difference_body_lines(&dialog), 1 + 32)
+	testing.expect_value(t, plan_difference_visible_lines(&dialog), PLAN_DIFFERENCE_VISIBLE_LINES)
+	for at in ([?][3]int{{1, 0, 0}, {4, 0, 3}, {5, 1, 0}, {32, 7, 3}}) {
+		line, line_ok := plan_difference_line(&dialog, at[0])
+		testing.expect(t, line_ok && line.added && line.item == &dialog.added[at[1]] && line.item_line == at[2])
+	}
+	_, past_ok := plan_difference_line(&dialog, 33)
+	testing.expect(t, !past_ok)
+	testing.expect(t, !dialog.seen_through, "a body past the view is not seen through at the open")
+}
 }

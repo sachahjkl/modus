@@ -9,6 +9,7 @@ import "modus:contract/blake3"
 import "modus:contract/errors"
 import "modus:contract/isolated"
 import "modus:contract/module"
+import description "modus:contract/plan_value_description"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/ring"
 import "modus:contract/role_contract"
@@ -84,6 +85,23 @@ display_port_bind :: proc "contextless" (ctx: ^system.Context) -> (port: plans_c
 	}
 	display_image = ([^]u8)(address)[:ctx.values[system.GRANT_VALUE_IMAGE_SIZE]]
 	return {ask = display_ask, poll = display_poll}
+}
+
+// plans_image gives the boot image to the description of the values of a
+// plan (exports.odin, plan_of_table). With no image, no owner is found,
+// and a plan with a value is refused.
+plans_image :: proc "contextless" () -> description.Image {
+	of_name :: proc "contextless" (user: rawptr, name: string) -> []u8 {
+		return system.image_find(display_image, name)
+	}
+	of_hash :: proc "contextless" (user: rawptr, hash: blake3.Hash) -> []u8 {
+		entry := system.image_entry_of(display_image, hash)
+		if entry == nil {
+			return nil
+		}
+		return display_image[entry.offset:][:entry.size]
+	}
+	return {module_of_name = of_name, module_of_hash = of_hash}
 }
 
 // display_connect makes the connection at the first use, and again after a

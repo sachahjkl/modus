@@ -6,6 +6,7 @@ import "modus:contract/call_outcome"
 import "modus:contract/memory_screen"
 import module "modus:contract/module"
 import op "modus:contract/operation"
+import "modus:contract/plan_values"
 import "modus:contract/replacement_list"
 import "modus:contract/start_grant"
 import "modus:contract/system_description"
@@ -56,8 +57,8 @@ CHANGE_ENDS := [?]string{"unlock stopped before the end: the old or the new secr
 @(private = "file")
 FAILURE_CAUSES := [?]string{"the rescue start policy is absent from the boot image", "the rescue start policy did not start", "the rescue start policy stopped before the machine was usable", "the rescue start policy stopped after the machine was usable", "the rescue start policy sent no Machine_Usable within the hang bound"}
 
-// The longest text of a list.
-@(private = "file")
+// The longest text of a list: the most bytes of a Text field that writes
+// one of them.
 longest :: proc(texts: []string) -> u32 {
 	most: u32 = 0
 	for text in texts {
@@ -116,6 +117,11 @@ root_text_bytes_most :: proc() -> map[string]u32 {
 		append(&problems, problem)
 	}
 	most["problem"] = longest(problems[:])
+	set_problems := make([dynamic]string, context.temp_allocator)
+	for name in plan_values.SET_PROBLEM_NAMES {
+		append(&set_problems, name)
+	}
+	most["set_problem"] = longest(set_problems[:])
 	most["failure"] = ROOT_FAILURE_MOST
 	most["call_failure"] = longest(TABLE_CALL_FAILURES[:])
 	most["table_problem"] = longest(TABLE_PROBLEMS_IN_A_FIELD[:])

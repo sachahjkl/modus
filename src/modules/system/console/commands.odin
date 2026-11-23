@@ -1971,7 +1971,7 @@ callable_by_console :: proc "contextless" (file: []u8, function: module.Function
 	// The result is a byte of a module file: a byte that names no type, a
 	// Handle and Bytes have no value of the console as a result.
 	result_type, result_ok := module.function_result_type(function)
-	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || module.call_argument_count(int(function.parameter_count), function.result, function.error_record != 0) > system.CALL_INTEGERS || !result_ok || result_type == .Bytes || result_type == .Handle {
+	if function.name_count == 0 || function.parameter_count > ARGUMENT_CAPACITY || module.call_argument_count(module.parameter_word_count(function), function.result, function.error_record != 0) > system.CALL_INTEGERS || !result_ok || result_type == .Bytes || result_type == .Handle {
 		return false
 	}
 	if result_type == .Record || result_type == .Table {
@@ -2085,37 +2085,48 @@ call_export :: proc "contextless" (item: ^Command, arguments: []Value) -> Value 
 	// holds the changed rows after the call.
 	places: [ARGUMENT_CAPACITY]module.Table_Place
 	for &argument, index in arguments {
+		// The word of the value in the call form: an optional parameter
+		// has its Presence word before it, and one that the line leaves
+		// out gives Absent and 0.
+		word := module.parameter_word_index(item.function, index)
+		if module.parameter_optional(item.function, index) {
+			integers[word - 1] = u64(argument.kind == .None ? module.Presence.Absent : module.Presence.Given)
+			if argument.kind == .None {
+				continue
+			}
+		}
 		if index < int(item.parameter_count) && (item.parameters[index] == .Table || item.parameters[index] == .Bytes) {
 			bytes := argument.kind == .Text ? transmute([]u8)argument.text : argument.record
 			size, _, _ := isolated.table_record(item.file, u8(type_of_kind(item.parameters[index])), item.function.parameter_details[index])
 			count := u64(len(bytes)) / max(size, 1)
 			places[index] = {address = u64(uintptr(raw_data(bytes))), count = count, capacity = count}
-			integers[index] = u64(uintptr(&places[index]))
+			integers[word] = u64(uintptr(&places[index]))
 			continue
 		}
 		switch argument.kind {
 		case .Text:
-			integers[index] = u64(uintptr(&argument.text))
+			integers[word] = u64(uintptr(&argument.text))
 		case .Record:
-			integers[index] = u64(uintptr(raw_data(argument.record)))
+			integers[word] = u64(uintptr(raw_data(argument.record)))
 		case .None, .Integer, .Handle, .Table, .Bytes, .Stream, .Record_Input, .Record_Literal, .Enum, .Member, .Function, .List, .Hash, .Boolean, .Record_With, .Module_Ref, .Tree_Ref, .Recipe_Ref, .Follow_Ref, .Store_Ref, .Plan_Value, .Project_Value:
 			// The check of the line gave each other kind its integer: a
-			// handle is its number, a member its value or the absent word,
-			// and a Table or Bytes parameter took its place above. An export
-			// takes no Stream: argument_accepted refused it.
-			integers[index] = u64(argument.integer)
+			// handle is its number, a member its value, and a Table or
+			// Bytes parameter took its place above. An export takes no
+			// Stream: argument_accepted refused it.
+			integers[word] = u64(argument.integer)
 		}
 	}
 	// The table of error details: the last parameter, after those of the
 	// input. The export appends to it only when it fails.
-	parameter_total := len(arguments)
 	details: [ERROR_DETAILS_CAPACITY]errors.Error_Record
 	details_place: module.Table_Place
 	if item.details_parameter != 0 {
 		details_place = {address = u64(uintptr(&details[0])), count = 0, capacity = ERROR_DETAILS_CAPACITY}
-		integers[parameter_total] = u64(uintptr(&details_place))
-		parameter_total += 1
+		integers[module.parameter_word_index(item.function, len(arguments))] = u64(uintptr(&details_place))
 	}
+	// The buffer of a result and the error record come after the words of
+	// the parameters.
+	parameter_total := module.parameter_word_count(item.function)
 	// A Record result: the export writes it in the memory of the line.
 	record: []u8
 	if item.result == .Record {
@@ -2535,6 +2546,10 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 	encoded: [ARGUMENT_CAPACITY]isolated.Argument
 	for argument, index in arguments {
 		encoded[index] = {integer = u64(argument.integer), text = transmute([]u8)argument.text, record = argument.record}
+		// An optional parameter that the line leaves out: Absent.
+		if module.parameter_optional(item.function, index) {
+			encoded[index].presence = argument.kind == .None ? .Absent : .Given
+		}
 		// A Table or Bytes parameter: the records go into the call region,
 		// and those of a Change table come back.
 		if item.parameters[index] == .Table || item.parameters[index] == .Bytes {

@@ -16,7 +16,7 @@ import "internal:compositor/bar"
 import "modus:system"
 
 // The scale of the desktop: the scale of the settings page. The compositor
-// names it to each window in Settings_Changed, and each window rescales to
+// names it to each window in Presentation, and each window rescales to
 // it (src/md/features/window_resize.md, "The rescale").
 scale: scale_factor.Scale = scale_factor.DEFAULT
 
@@ -92,7 +92,7 @@ interior_screen_box :: proc "contextless" (client: ^Client) -> bar.Screen_Box {
 }
 
 // The count of the windows that declined the scale in force, as the last
-// Settings_Changed named it to each window.
+// Presentation named it to each window.
 windows_declined_told: int
 
 // window_declined_scale_in_force says if a window declined the scale in
@@ -120,7 +120,7 @@ windows_declined_count :: proc "contextless" () -> int {
 settings_changed_send :: proc "contextless" (client: ^Client) {
 	told := client.scale_due ? client.scale_told : scale
 	client.scale_told = told
-	send(client, .Settings_Changed, {0 = settings_count_told, 1 = u64(told), 2 = u64(windows_declined_told)})
+	send(client, .Presentation, {0 = settings_count_told, 1 = u64(told), 2 = u64(windows_declined_told), 3 = presentation_told[0], 4 = presentation_told[1], 5 = presentation_told[2], 6 = presentation_told[3]})
 }
 
 // window_scale_step names the scale in force to a window whose scale is
@@ -130,7 +130,7 @@ settings_changed_send :: proc "contextless" (client: ^Client) {
 // end of its request calls this again; a fit that grows the window waits
 // until the window shows its surface at the new scale (window_fit_after_scale),
 // since the larger size at the old, larger scale can pass its budget. It
-// gives true when it sent the Settings_Changed.
+// gives true when it sent the Presentation.
 window_scale_step :: proc "contextless" (client: ^Client) -> (sent: bool) {
 	if !client.scale_due || client.resize_asked {
 		return false
@@ -216,7 +216,7 @@ window_fit_now :: proc "contextless" (client: ^Client) {
 }
 
 // windows_declined_tell names a new count of the windows that declined the
-// scale in force to each window, in a Settings_Changed of the same scale:
+// scale in force to each window, in a Presentation of the same scale:
 // the window of settings shows it, and each other window rescales to the
 // scale that it has already, which changes nothing.
 windows_declined_tell :: proc "contextless" () {
@@ -250,7 +250,7 @@ windows_at_scale_check :: proc "contextless" () {
 			continue
 		}
 		// A window that declined the scale in force is settled: it waits
-		// for another scale, and the count of Settings_Changed names it.
+		// for another scale, and the count of Presentation names it.
 		if window_declined_scale_in_force(&client) {
 			continue
 		}

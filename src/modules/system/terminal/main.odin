@@ -1586,7 +1586,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for event in interface.window_next_event(&drawing, &window, .Every_Event) {
 			// A new font: each record of the frame is the same, each pixel
 			// of text is not. The next frame of each picture is whole.
-			if event.kind == .Settings_Changed {
+			if event.kind == .Presentation {
 				interface.draw_whole_window_next(&drawing)
 				dirty = true
 				continue

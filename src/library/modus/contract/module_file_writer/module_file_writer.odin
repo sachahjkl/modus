@@ -63,7 +63,7 @@ Export_Part :: struct {
 	code_offset:          u64, // The memory offset of its first instruction, in a segment with Execute.
 	about:                string, // One line of help.
 	text:                 string, // The documentation text, in its Markdown.
-	parameters:           []module.Type, // At most module.PARAMETER_CAPACITY arguments in the call form (module.call_argument_count).
+	parameters:           []module.Type, // One type for each parameter, at most module.PARAMETER_CAPACITY; the call form takes two words for an optional parameter, at most module.CALL_WORD_CAPACITY in all (module.parameter_word_count).
 	parameter_names:      []string, // The name of each parameter: one for each.
 	// What the type of each parameter needs (module.Function.parameter_details):
 	// a Record or a Table: the number of its record, from 1, in
@@ -73,7 +73,7 @@ Export_Part :: struct {
 	// from 1, in Module_Parts.enums, and of the number of its getter, from
 	// 1, in Module_Parts.exports, or 0.
 	parameter_directions: []module.Direction, // At most one for each parameter; a missing one is Read.
-	optional_parameters:  u16, // Bit n: a call may leave out the parameter n, an Enum (module.Function.optional_parameters).
+	parameter_needs:      []module.Parameter_Need, // At most one for each parameter; a missing one is Required. Optional on an Integer, a Handle, an Enum or a Text only (module.optional_type_allowed).
 	result:               module.Type,
 	result_detail:        u32, // A Record or Table result: the number of its record, from 1. An Enum result: the number of its enum, from 1.
 	error_record:         u32, // Not 0: the number of the record of its error record, from 1.
@@ -169,6 +169,7 @@ Module_Parts :: struct {
 	records:            []Record_Description,
 	enums:              []Enum_Description, // The file has the tables Enums and Members when there is one.
 	member_texts:       []Member_Text_Description, // The file has the table Member_Texts when there is one.
+	parameter_settings: []module.Parameter_Setting, // The rows of the table Parameter_Settings, in its order: the file has the table when there is one.
 	facts:              []Fact_Part,
 	has_own_hash_place: bool, // The module has an own-hash place: a module that writes a fact must have one.
 	own_hash_place:     u64, // module.HASH_SIZE bytes in a segment with Write and no Execute.
@@ -214,16 +215,22 @@ Refusal :: enum u32 {
 	// generic record input or with two. index: the row from 1, 0 for the tables; value: the
 	// module.Record_Stream_Fault.
 	Record_Streams_Not_Valid      = 24,
-	// An Enum parameter or result names no enum of the parts or a getter past the exports, an optional bit is on
-	// a parameter that is no Enum, or module.enum_type and module.function_enums_check refuse the written file.
+	// An Enum parameter or result names no enum of the parts or a getter past the exports, or module.enum_type
+	// and module.function_enums_check refuse the written file.
 	// value: the module.Enum_Problem: No_Enum for a number of an enum that names nothing, No_Getter for a getter
-	// past the exports, Bad_Optional for an optional bit.
+	// past the exports.
 	Enum_Not_Valid                = 25,
 	// A display text names no enum of the parts or no member of its enum, has a tag that is not well-formed
 	// or not in its canonical case, has a text that is empty, past module.MEMBER_TEXT_CAPACITY or no display
 	// text, is not after the text before it, or module.member_texts_check refuses the written file. index: the text, from 0; value: the
 	// module.Member_Text_Problem.
 	Member_Text_Not_Valid         = 26,
+	// The need of a parameter is Optional on a type that one word does not carry, or the needs are more than
+	// the parameters (module.function_needs_check). index: the export, from 0; value: the parameter, from 0.
+	Need_Not_Valid                = 27,
+	// A row of the table Parameter_Settings breaks a rule of module.parameter_settings_check. index: the row,
+	// from 0; value: the module.Parameter_Setting_Problem.
+	Parameter_Setting_Not_Valid   = 28,
 }
 
 // The refusal of the writer, and where it is.
@@ -357,6 +364,7 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 		{.Records, len(parts.records)},
 		{.Enums, len(parts.enums)},
 		{.Member_Texts, len(parts.member_texts)},
+		{.Parameter_Settings, len(parts.parameter_settings)},
 		{.Facts, len(parts.facts)},
 	}
 	for item in counts {
@@ -448,6 +456,9 @@ plan :: proc "contextless" (parts: Module_Parts) -> (layout: Layout, refusal: Re
 	}
 	if len(parts.member_texts) > 0 {
 		add(&layout, &cursor, .Member_Texts, u64(len(parts.member_texts)) + 1, size_of(module.Member_Text))
+	}
+	if len(parts.parameter_settings) > 0 {
+		add(&layout, &cursor, .Parameter_Settings, u64(len(parts.parameter_settings)) + 1, size_of(module.Parameter_Setting))
 	}
 	add(&layout, &cursor, .Strings, string_bytes, 1)
 	add(&layout, &cursor, .Documentation, 2, size_of(module.Documentation))
@@ -619,19 +630,23 @@ exports_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
 	}
 	for item, index in parts.exports {
 		where_it_is := Refusal_Record{table = .Exports, index = u64(index)}
-		arguments := module.call_argument_count(len(item.parameters), u8(item.result), item.error_record != 0)
-		if arguments > module.PARAMETER_CAPACITY {
+		words := len(item.parameters)
+		for need in item.parameter_needs {
+			words += need == .Optional ? 1 : 0
+		}
+		arguments := module.call_argument_count(words, u8(item.result), item.error_record != 0)
+		if arguments > module.CALL_WORD_CAPACITY || len(item.parameters) > module.PARAMETER_CAPACITY {
 			where_it_is.refusal, where_it_is.value = .Too_Many_Arguments, u64(arguments)
 			return where_it_is
 		}
-		if len(item.parameter_names) != len(item.parameters) || len(item.parameter_details) > len(item.parameters) || len(item.parameter_directions) > len(item.parameters) {
+		if len(item.parameter_names) != len(item.parameters) || len(item.parameter_details) > len(item.parameters) || len(item.parameter_directions) > len(item.parameters) || len(item.parameter_needs) > len(item.parameters) {
 			where_it_is.refusal = .Parameter_Lists_Disagree
 			return where_it_is
 		}
 		for type, parameter in item.parameters {
 			detail := parameter < len(item.parameter_details) ? item.parameter_details[parameter] : 0
-			if module.parameter_optional({optional_parameters = item.optional_parameters}, parameter) && type != .Enum {
-				where_it_is.refusal, where_it_is.value = .Enum_Not_Valid, u64(module.Enum_Problem.Bad_Optional)
+			if parameter < len(item.parameter_needs) && item.parameter_needs[parameter] == .Optional && !module.optional_type_allowed(type) {
+				where_it_is.refusal, where_it_is.value = .Need_Not_Valid, u64(parameter)
 				return where_it_is
 			}
 			if type == .Enum {
@@ -653,10 +668,6 @@ exports_check :: proc "contextless" (parts: Module_Parts) -> Refusal_Record {
 				where_it_is.refusal, where_it_is.value = .Export_Without_Description, u64(detail)
 				return where_it_is
 			}
-		}
-		if item.optional_parameters >> u16(min(len(item.parameters), 16)) != 0 {
-			where_it_is.refusal, where_it_is.value = .Enum_Not_Valid, u64(module.Enum_Problem.Bad_Optional)
-			return where_it_is
 		}
 		if (item.result == .Record || item.result == .Table) && !described(item.result_detail, parts.records) {
 			where_it_is.refusal, where_it_is.value = .Export_Without_Description, u64(item.result_detail)
@@ -959,7 +970,6 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 			about_count     = u32(len(item.about)),
 			text_count      = u32(len(item.text)),
 			parameter_count = u8(len(item.parameters)),
-			optional_parameters = item.optional_parameters,
 			result          = u8(item.result),
 			result_detail   = item.result_detail,
 			error_record    = item.error_record,
@@ -972,6 +982,9 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 		}
 		for direction, parameter in item.parameter_directions {
 			function.parameter_directions[parameter] = u8(direction)
+		}
+		for need, parameter in item.parameter_needs {
+			function.parameter_needs[parameter] = u8(need)
 		}
 		function.name_offset = string_append(&strings, item.name)
 		function.about_offset = string_append(&strings, item.about)
@@ -1094,6 +1107,9 @@ tables_write :: proc "contextless" (parts: Module_Parts, layout: Layout, file: [
 		row.tag_offset = string_append(&strings, item.tag)
 		store(file, place(directory, .Member_Texts, index + 1), row)
 	}
+	for row, index in parts.parameter_settings {
+		store(file, place(directory, .Parameter_Settings, index + 1), row)
+	}
 	if parts.has_own_hash_place {
 		store(file, place(directory, .Own_Hash, 1), module.Own_Hash_Place{memory_offset = parts.own_hash_place})
 	}
@@ -1153,6 +1169,14 @@ written_file_check :: proc "contextless" (parts: Module_Parts, file: []u8) -> Re
 		if _, problem := module.function_enums_check(file, function); problem != .None {
 			return {refusal = .Enum_Not_Valid, table = .Functions, index = u64(index), value = u64(problem)}
 		}
+		if parameter, valid := module.function_needs_check(function); !valid {
+			return {refusal = .Need_Not_Valid, table = .Functions, index = u64(index), value = u64(parameter)}
+		}
+	}
+	// The settings of the parameters: the readers take a row through this
+	// check, so the writer writes none that they refuse.
+	if row, problem := module.parameter_settings_check(file); problem != .None {
+		return {refusal = .Parameter_Setting_Not_Valid, table = .Parameter_Settings, index = u64(row) - 1, value = u64(problem)}
 	}
 	// The display texts: the readers take a text through this check, so
 	// the writer writes none that they refuse.

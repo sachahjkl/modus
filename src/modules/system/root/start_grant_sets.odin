@@ -115,7 +115,9 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	// principal. It starts at its first connection, so the table of the
 	// processes needs no start of its own, in each start policy, the rescue
 	// included.
-	{name = "monitor", grants = {.Inspect, .Serve}, terms = {on_demand = true}},
+	// Its private store (Store) keeps the settings that the principal
+	// chose.
+	{name = "monitor", grants = {.Inspect, .Serve, .Store}, terms = {on_demand = true}},
 	// The debugger service (docs/TOOLS.md, "The debugger"):
 	// - **Serve**: its exports are the commands of the debugger.
 	// - **Debugger**: it asks this service for the handle of a process
@@ -440,9 +442,11 @@ start_grant_sets := [?]Start_Grant_Set_Row {
 	{name = "fault"},
 	// The cards of the people whose work inspired the system.
 	{name = "hall_of_fame"},
-	// A light browser: the pages that it shows are built into it, so its
-	// window is its one handle.
-	{name = "browser"},
+	// A light browser: the pages that it shows are built into it.
+	// - **Serve**: its settings (set, home, reset, settings_state).
+	// - **Store**: its private store keeps the settings that the principal
+	//   chose.
+	{name = "browser", grants = {.Serve, .Store}},
 	// A node of `rings`: its starter gives it four memory objects.
 	{name = "node"},
 	// Five threads in one address space.

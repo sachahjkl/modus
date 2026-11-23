@@ -55,7 +55,7 @@ table_count :: proc "contextless" (count: int, problem: information.Problem, err
 			return call_outcome.fail(error, .Answer_Unreadable, .Refused, .None, 0, 0, 0, i64(problem.value))
 		}
 		return call_outcome.fail(error, system.outcome_of_own_status(status), .Refused, .None, 0, 0, 0, i64(problem.value))
-	case .Header, .Table, .Segment, .Entry, .Export, .Text, .Function, .Record, .Import_Slot, .Direction, .Enum, .Member_Text:
+	case .Header, .Table, .Segment, .Entry, .Export, .Text, .Function, .Record, .Import_Slot, .Direction, .Enum, .Member_Text, .Need, .Parameter_Setting:
 		// Each of these is a fault of the module file that the boot image holds.
 	}
 	return call_outcome.fail(error, .Data_Damaged, .Damaged, .None, 1, i64(problem.kind), 0, i64(problem.offset))

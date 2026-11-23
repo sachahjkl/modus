@@ -508,6 +508,76 @@ The design: `src/md/features/roles_and_contracts.md`.
 
 Do not use: provider (for this), implementation, daemon, server.
 
+### Role store
+
+The role store is the private store that the root service gives the holder of a role: it belongs to the role in its scope, not to the module that holds it.
+
+A new holder of the role, a holder that the plan replaced or the same module after a restart, gets the same store, and reads the objects of the one before through the record types of the role contract. So the edge of the bar and the time of a notification survive a restart of the compositor and a change of the module that holds Display. Its name is the name of the role.
+
+The design: `src/md/features/module_settings.md`, "The role store".
+
+Do not use: shared store, settings database, registry.
+
+### Chosen value
+
+A chosen value is a value of a setting that the principal set with a setter, and that its owner keeps.
+
+The record that an owner keeps holds the chosen values only: a field that the principal did not set is absent, so a later default of the plan or of the contract holds for it. A lock keeps the chosen value and hides it; when the lock ends, the chosen value holds again. A reset makes a chosen value absent. An apply of a plan never changes a chosen value.
+
+The design: `src/md/features/module_settings.md`, "The precedence".
+
+Do not use: user override, saved setting, preference.
+
+### Plan default
+
+A plan default is a value that the plan gives a setting of an owner, which holds while the principal chose none.
+
+The plan of principal 0 gives the default of each principal; the plan of a principal gives its own, under the plan of principal 0. The owner reads its plan record at its start, from a page that nobody writes after the start. The order of the four layers is: locked, chosen, plan default, contract default, which is the zero value.
+
+The design: `src/md/features/module_settings.md`, "The precedence".
+
+Do not use: site default, mandatory default.
+
+### Locked value
+
+A locked value is a value of a setting that the plan of principal 0 fixes: the setter of its owner refuses a change with `No_Grant`, unit `Plan_Lock`, and names the lock.
+
+A lock writes nothing: the chosen value stays kept under it and holds again when the lock ends. The state of the owner says which layer gives each value, so a reader sees a lock. A lock is a plan record, so a principal sees it in a difference on the trusted display.
+
+The design: `src/md/features/module_settings.md`, "The lock".
+
+Do not use: mandatory setting, enforced policy, group policy.
+
+### Plan-only value
+
+A plan-only value is a value of an owner that changes only through the plan, never with a setter, because it widens an access, spends a resource of the machine, lowers a protection or destroys data.
+
+The owner states it in its contract: the value has no setter. Examples: the retention of the snapshots, the quota of a store, the budget share of a process, a static network address. A change shows its difference on the trusted display before it holds, and the owner checks the whole record at one border.
+
+The design: `src/md/features/module_settings.md`, "The two doors".
+
+Do not use: policy setting, admin setting, system setting.
+
+### Plan values page
+
+The plan values page is the read-only page at the fixed range `Plan_Values_Page` that holds the plan defaults and the locks of one owner, as the core mapped them at its start.
+
+The holder of Plans gives the core the whole set of the values of an accepted plan of principal 0 with the root ring command `Plan_Values`. At the start of an owner, the core writes the values of that owner, by the name of its store, on a page of its own. Nobody writes the page after the start, so an owner takes a new value at its next start. An owner reads it with `system.plan_values_of_process`.
+
+The design: `src/md/features/module_settings.md`, "Plan records".
+
+Do not use: policy page, configuration page.
+
+### Consent arm time
+
+The consent arm time is the time after which an answer to a dialog of the trusted display counts: 500 ms from the moment the dialog is whole on the screen, and again from each change of its rows or of its focus.
+
+It is one constant of the contract of the powerbox for each consent door: the grant dialog, the difference of a plan, the act of an agent. A key or a press meant for a window never answers a dialog. A principal who needs more time sets a longer arm time; no setter and no plan makes it shorter.
+
+The design: `src/md/features/powerbox.md`.
+
+Do not use: focus delay, clickjacking timeout.
+
 ### Interposed holder
 
 An interposed holder is a role holder that stands between the clients of a role and the holder below it, and fills the same role contract.

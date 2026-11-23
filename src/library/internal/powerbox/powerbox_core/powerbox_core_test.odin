@@ -106,17 +106,7 @@ make_grant_answer :: proc(
 	decision: powerbox.Item_Decision = .Granted,
 	duration: powerbox.Grant_Duration = .This_Run,
 ) -> powerbox.Grant_Answer {
-	ans := powerbox.Grant_Answer {
-		dialog_serial            = dialog.dialog_serial,
-		request_serial           = dialog.request_serial,
-		dialog_record_hash       = dialog.record_hash,
-		display_holder_slot      = TRUSTED_DISPLAY_SLOT,
-		input_origin_word        = u64(powerbox.Input_Origin.Local_Machine),
-		shown_timestamp_ms       = shown_ms,
-		input_press_timestamp_ms = press_ms,
-		answer_timestamp_ms      = answer_ms,
-		item_count               = dialog.item_count,
-	}
+	ans := powerbox.grant_answer_make(dialog, TRUSTED_DISPLAY_SLOT, .Local_Machine, shown_ms, press_ms, answer_ms, 0)
 	for i in u32(0) ..< dialog.item_count {
 		ans.items[i] = {
 			decision_word = u64(decision),
@@ -138,7 +128,9 @@ make_test_state :: proc() -> ^Powerbox_State {
 }
 
 @(test)
-anti_clickjacking_enforces_250ms_arm_time_and_monotonic_clocks :: proc(t: ^testing.T) {
+anti_clickjacking_enforces_the_consent_arm_time_and_monotonic_clocks :: proc(t: ^testing.T) {
+	ARM :: powerbox.CONSENT_ARM_MILLISECONDS
+	#assert(ARM == 500)
 	state := make_test_state()
 
 	batch := make_batch(1, 10, 1, .Disk_Module, 0x11, "reader", make_network_item(0x0A00_0264, 443))
@@ -164,15 +156,15 @@ anti_clickjacking_enforces_250ms_arm_time_and_monotonic_clocks :: proc(t: ^testi
 	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
 	testing.expect_value(t, active_grant_count(state), u32(0))
 
-	// Answer at 249 ms after Shown -> refused, 0 grants.
-	at_249 := make_grant_answer(&dialog, 1100, 1349, 1349)
-	res = resolve_answer(state, &at_249, 1349)
+	// Answer one millisecond before the arm time -> refused, 0 grants.
+	at_249 := make_grant_answer(&dialog, 1100, 1100 + ARM - 1, 1100 + ARM - 1)
+	res = resolve_answer(state, &at_249, 1100 + ARM - 1)
 	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
 	testing.expect_value(t, active_grant_count(state), u32(0))
 
-	// Key/press started at 249 ms (before arm time) even though released at 300 ms -> refused, 0 grants.
-	pre_arm_press := make_grant_answer(&dialog, 1100, 1349, 1400)
-	res = resolve_answer(state, &pre_arm_press, 1400)
+	// Key/press started before the arm time even though released after it -> refused, 0 grants.
+	pre_arm_press := make_grant_answer(&dialog, 1100, 1100 + ARM - 1, 1100 + ARM + 50)
+	res = resolve_answer(state, &pre_arm_press, 1100 + ARM + 50)
 	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
 	testing.expect_value(t, active_grant_count(state), u32(0))
 
@@ -183,28 +175,28 @@ anti_clickjacking_enforces_250ms_arm_time_and_monotonic_clocks :: proc(t: ^testi
 	testing.expect_value(t, active_grant_count(state), u32(0))
 
 	// Forged earlier shown_timestamp_ms in answer -> refused.
-	forged_shown := make_grant_answer(&dialog, 800, 1349, 1349)
-	res = resolve_answer(state, &forged_shown, 1349)
+	forged_shown := make_grant_answer(&dialog, 800, 1100 + ARM, 1100 + ARM)
+	res = resolve_answer(state, &forged_shown, 1100 + ARM)
 	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
 	testing.expect_value(t, active_grant_count(state), u32(0))
 
-	// Remote_Display input after 250 ms -> still refused.
-	remote_ans := make_grant_answer(&dialog, 1100, 1350, 1350)
+	// Remote_Display input after the arm time -> still refused.
+	remote_ans := make_grant_answer(&dialog, 1100, 1100 + ARM, 1100 + ARM)
 	remote_ans.input_origin_word = u64(powerbox.Input_Origin.Remote_Display)
-	res = resolve_answer(state, &remote_ans, 1350)
+	res = resolve_answer(state, &remote_ans, 1100 + ARM)
 	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
 	testing.expect_value(t, active_grant_count(state), u32(0))
 
-	// Answer at exact 250 ms (1100 + 250 = 1350) -> accepted!
-	at_250 := make_grant_answer(&dialog, 1100, 1350, 1350)
-	res = resolve_answer(state, &at_250, 1350)
+	// Answer at the exact arm time -> accepted.
+	at_250 := make_grant_answer(&dialog, 1100, 1100 + ARM, 1100 + ARM)
+	res = resolve_answer(state, &at_250, 1100 + ARM)
 	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.None)
 	testing.expect_value(t, res.items[0].decision, powerbox.Item_Decision.Granted)
 	testing.expect(t, res.items[0].granted_handle_id != 0)
 	testing.expect_value(t, active_grant_count(state), u32(1))
 
 	// Replaying the same answer after resolution is refused.
-	replay := resolve_answer(state, &at_250, 1400)
+	replay := resolve_answer(state, &at_250, 1100 + ARM + 50)
 	testing.expect_value(t, replay.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
 	testing.expect_value(t, active_grant_count(state), u32(1))
 }
@@ -296,27 +288,27 @@ rate_limit_quiet_time_refusal_cap_and_no_window_order :: proc(t: ^testing.T) {
 
 	// Refuse 3 dialogs whole -> after 3rd whole refusal, process is blocked for rest of run.
 	testing.expect_value(t, mark_dialog_shown(state, d1.dialog_serial, TRUSTED_DISPLAY_SLOT, 1600), powerbox.Powerbox_Refusal.None)
-	refuse1 := make_grant_answer(&d1, 1600, 1900, 1900, .Refused)
-	res_ref1 := resolve_answer(state, &refuse1, 1900)
+	refuse1 := make_grant_answer(&d1, 1600, 2150, 2150, .Refused)
+	res_ref1 := resolve_answer(state, &refuse1, 2150)
 	testing.expect_value(t, res_ref1.refusal, powerbox.Powerbox_Refusal.None)
 	testing.expect_value(t, res_ref1.items[0].decision, powerbox.Item_Decision.Refused)
 
-	// During 60 s quiet time (1900 + 59_999), new request is Rate_Limited.
+	// During 60 s quiet time (2150 + 59_999), new request is Rate_Limited.
 	b3 := make_batch(4, 40, 1, .Disk_Module, 0x40, "bg_proc", make_service_item("manual"))
-	r_quiet, _, _ := submit_batch(state, &b3, 1900 + QUIET_TIME_AFTER_REFUSAL_MILLISECONDS - 1)
+	r_quiet, _, _ := submit_batch(state, &b3, 2150 + QUIET_TIME_AFTER_REFUSAL_MILLISECONDS - 1)
 	testing.expect_value(t, r_quiet.refusal, powerbox.Powerbox_Refusal.Rate_Limited)
 
 	// Complete 2 more whole refusals after quiet time to hit MAX_WHOLE_REFUSALS_PER_RUN (3).
-	t_now := 1900 + QUIET_TIME_AFTER_REFUSAL_MILLISECONDS
+	t_now := 2150 + QUIET_TIME_AFTER_REFUSAL_MILLISECONDS
 	for round in u64(0) ..< 2 {
 		b := make_batch(10 + round, 40, 1, .Disk_Module, 0x40, "bg_proc", make_service_item("manual"))
 		sub_r, dlg, has_d := submit_batch(state, &b, t_now)
 		testing.expect_value(t, sub_r.refusal, powerbox.Powerbox_Refusal.None)
 		testing.expect(t, has_d)
 		testing.expect_value(t, mark_dialog_shown(state, dlg.dialog_serial, TRUSTED_DISPLAY_SLOT, t_now + 10), powerbox.Powerbox_Refusal.None)
-		ans := make_grant_answer(&dlg, t_now + 10, t_now + 300, t_now + 300, .Refused)
-		_ = resolve_answer(state, &ans, t_now + 300)
-		t_now += 300 + QUIET_TIME_AFTER_REFUSAL_MILLISECONDS
+		ans := make_grant_answer(&dlg, t_now + 10, t_now + 600, t_now + 600, .Refused)
+		_ = resolve_answer(state, &ans, t_now + 600)
+		t_now += 600 + QUIET_TIME_AFTER_REFUSAL_MILLISECONDS
 	}
 
 	// After 3 whole refusals, even much later in the same run, requests stay Rate_Limited.
@@ -342,8 +334,8 @@ always_grant_bound_to_hash_not_nickname_and_boot_module_refused :: proc(t: ^test
 	testing.expect(t, has_bd)
 	testing.expect(t, !boot_dlg.allow_always_duration)
 	testing.expect_value(t, mark_dialog_shown(state, boot_dlg.dialog_serial, TRUSTED_DISPLAY_SLOT, 1050), powerbox.Powerbox_Refusal.None)
-	bad_boot_ans := make_grant_answer(&boot_dlg, 1050, 1400, 1400, .Granted, .Always)
-	res_boot_ans := resolve_answer(state, &bad_boot_ans, 1400)
+	bad_boot_ans := make_grant_answer(&boot_dlg, 1050, 1650, 1650, .Granted, .Always)
+	res_boot_ans := resolve_answer(state, &bad_boot_ans, 1650)
 	testing.expect_value(t, res_boot_ans.refusal, powerbox.Powerbox_Refusal.Always_Forbidden_For_Boot_Module)
 	testing.expect_value(t, active_grant_count(state), u32(0))
 
@@ -353,8 +345,8 @@ always_grant_bound_to_hash_not_nickname_and_boot_module_refused :: proc(t: ^test
 	_, dlg_a, has_da := submit_batch(state, &disk_a, 2000)
 	testing.expect(t, has_da && dlg_a.allow_always_duration)
 	testing.expect_value(t, mark_dialog_shown(state, dlg_a.dialog_serial, TRUSTED_DISPLAY_SLOT, 2050), powerbox.Powerbox_Refusal.None)
-	ans_a := make_grant_answer(&dlg_a, 2050, 2400, 2400, .Granted, .Always)
-	res_a := resolve_answer(state, &ans_a, 2400)
+	ans_a := make_grant_answer(&dlg_a, 2050, 2650, 2650, .Granted, .Always)
+	res_a := resolve_answer(state, &ans_a, 2650)
 	testing.expect_value(t, res_a.refusal, powerbox.Powerbox_Refusal.None)
 	testing.expect_value(t, res_a.items[0].decision, powerbox.Item_Decision.Granted)
 	testing.expect_value(t, res_a.items[0].duration, powerbox.Grant_Duration.Always)
@@ -409,8 +401,8 @@ held_shortcut_and_partial_held_batch :: proc(t: ^testing.T) {
 	testing.expect_value(t, dlg_mix.item_count, u32(1))
 
 	testing.expect_value(t, mark_dialog_shown(state, dlg_mix.dialog_serial, TRUSTED_DISPLAY_SLOT, 1650), powerbox.Powerbox_Refusal.None)
-	ans_mix := make_grant_answer(&dlg_mix, 1650, 2000, 2000, .Granted, .This_Run)
-	final_mix := resolve_answer(state, &ans_mix, 2000)
+	ans_mix := make_grant_answer(&dlg_mix, 1650, 2250, 2250, .Granted, .This_Run)
+	final_mix := resolve_answer(state, &ans_mix, 2250)
 	testing.expect_value(t, final_mix.refusal, powerbox.Powerbox_Refusal.None)
 	testing.expect_value(t, final_mix.item_count, u32(2))
 	testing.expect_value(t, final_mix.items[0].decision, powerbox.Item_Decision.Held)
@@ -440,27 +432,27 @@ plan_difference_rejects_partial_ticks_and_applies_or_refuses_whole :: proc(t: ^t
 		display_holder_slot      = TRUSTED_DISPLAY_SLOT,
 		input_origin_word        = u64(powerbox.Input_Origin.Local_Machine),
 		shown_timestamp_ms       = 1100,
-		input_press_timestamp_ms = 1400,
-		answer_timestamp_ms      = 1400,
+		input_press_timestamp_ms = 1650,
+		answer_timestamp_ms      = 1650,
 		whole_plan_accepted      = true,
 		item_count               = 1,
 	}
 	bad_partial.items[0] = {decision_word = u64(powerbox.Item_Decision.Refused), duration_word = u64(powerbox.Grant_Duration.None)}
-	res_bad := resolve_answer(state, &bad_partial, 1400)
+	res_bad := resolve_answer(state, &bad_partial, 1650)
 	testing.expect_value(t, res_bad.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
 	testing.expect_value(t, active_grant_count(state), u32(0))
 
 	// Providing a duration on Show_Plan_Difference -> refused, 0 grants.
 	bad_dur := bad_partial
 	bad_dur.items[0] = {decision_word = u64(powerbox.Item_Decision.Granted), duration_word = u64(powerbox.Grant_Duration.This_Run)}
-	res_dur := resolve_answer(state, &bad_dur, 1400)
+	res_dur := resolve_answer(state, &bad_dur, 1650)
 	testing.expect_value(t, res_dur.refusal, powerbox.Powerbox_Refusal.Invalid_Duration)
 	testing.expect_value(t, active_grant_count(state), u32(0))
 
 	// Whole accept with zero duration succeeds.
 	good_accept := bad_partial
 	good_accept.items[0] = {decision_word = u64(powerbox.Item_Decision.Granted), duration_word = u64(powerbox.Grant_Duration.None)}
-	res_ok := resolve_answer(state, &good_accept, 1400)
+	res_ok := resolve_answer(state, &good_accept, 1650)
 	testing.expect_value(t, res_ok.refusal, powerbox.Powerbox_Refusal.None)
 	testing.expect_value(t, res_ok.items[0].decision, powerbox.Item_Decision.Granted)
 	testing.expect(t, res_ok.items[0].granted_handle_id != 0)
@@ -493,23 +485,23 @@ picker_isolation_and_out_of_bounds_index_issues_zero_grants :: proc(t: ^testing.
 
 	// Out-of-bounds picker index (2 == count) on item 1 MUST fail whole answer with ZERO grants issued
 	// (item 0 Network_Endpoint must NOT leak!).
-	bad_pick := make_grant_answer(&dlg, 1100, 1400, 1400, .Granted, .This_Run)
+	bad_pick := make_grant_answer(&dlg, 1100, 1650, 1650, .Granted, .This_Run)
 	bad_pick.items[1].picker_selected = true
 	bad_pick.items[1].picker_index = 2 // One past upper bound (0, 1).
 	bad_pick.items[1].picker_change_count = dlg.picker_change_count
 	bad_pick.items[1].picker_name_hash = dlg.picker_candidates[0].name_hash
-	res_bad := resolve_answer(state, &bad_pick, 1400)
+	res_bad := resolve_answer(state, &bad_pick, 1650)
 	testing.expect_value(t, res_bad.refusal, powerbox.Powerbox_Refusal.Picker_Selection_Invalid)
 	testing.expect_value(t, active_grant_count(state), u32(0))
 
 	// Valid pick of candidate 1 ("photos", store_id 202) succeeds and mints ONE attenuated
 	// single-store handle strictly bound to store 202 and Read_Only.
-	good_pick := make_grant_answer(&dlg, 1100, 1400, 1400, .Granted, .This_Run)
+	good_pick := make_grant_answer(&dlg, 1100, 1650, 1650, .Granted, .This_Run)
 	good_pick.items[1].picker_selected = true
 	good_pick.items[1].picker_index = 1
 	good_pick.items[1].picker_change_count = dlg.picker_change_count
 	good_pick.items[1].picker_name_hash = dlg.picker_candidates[1].name_hash
-	res_good := resolve_answer(state, &good_pick, 1400)
+	res_good := resolve_answer(state, &good_pick, 1650)
 	testing.expect_value(t, res_good.refusal, powerbox.Powerbox_Refusal.None)
 	testing.expect_value(t, res_good.items[0].decision, powerbox.Item_Decision.Granted)
 	testing.expect_value(t, res_good.items[1].decision, powerbox.Item_Decision.Granted)
@@ -537,9 +529,9 @@ never_ask_again_and_process_stop_withdrawal :: proc(t: ^testing.T) {
 	_, dlg, has_dlg := submit_batch(state, &b_net, 1000)
 	testing.expect(t, has_dlg)
 	testing.expect_value(t, mark_dialog_shown(state, dlg.dialog_serial, TRUSTED_DISPLAY_SLOT, 1050), powerbox.Powerbox_Refusal.None)
-	refuse_forever := make_grant_answer(&dlg, 1050, 1400, 1400, .Refused)
+	refuse_forever := make_grant_answer(&dlg, 1050, 1650, 1650, .Refused)
 	refuse_forever.never_ask_again = true
-	res := resolve_answer(state, &refuse_forever, 1400)
+	res := resolve_answer(state, &refuse_forever, 1650)
 	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.None)
 
 	// Even past quiet time, Network_Endpoint from process 95 is refused Rate_Limited.
@@ -558,8 +550,8 @@ never_ask_again_and_process_stop_withdrawal :: proc(t: ^testing.T) {
 	withdrawn, _ := withdraw_for_process(state, 95)
 	testing.expect_value(t, withdrawn, u32(1))
 	testing.expect_value(t, pending_count_for_session(state, 1), u32(0))
-	late_ans := make_grant_answer(&dlg_svc, 100_050, 100_400, 100_400, .Granted, .This_Run)
-	res_late := resolve_answer(state, &late_ans, 100_400)
+	late_ans := make_grant_answer(&dlg_svc, 100_050, 100_650, 100_650, .Granted, .This_Run)
+	res_late := resolve_answer(state, &late_ans, 100_650)
 	testing.expect_value(t, res_late.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
 	testing.expect_value(t, active_grant_count(state), u32(0))
 }
@@ -686,4 +678,40 @@ powerbox_tables_refuse_at_their_own_size :: proc(t: ^testing.T) {
 	state_init(state, TRUSTED_DISPLAY_SLOT, {stores = one[:]})
 	testing.expect_value(t, register_session_store(state, 1, "documents", 101), powerbox.Picker_Store_Refusal.None)
 	testing.expect_value(t, register_session_store(state, 1, "photos", 202), powerbox.Picker_Store_Refusal.Table_Full)
+}
+
+// The arm time that the display reports for the principal holds at the
+// border of the core too: a press after the contract time and before the
+// time of the principal is refused, a time past the most is no time that a
+// display applies, and a press at the time of the principal is taken.
+@(test)
+the_arm_time_of_the_principal_holds_at_the_core :: proc(t: ^testing.T) {
+	PRINCIPAL :: u64(2_000)
+	state := make_test_state()
+	batch := make_batch(1, 10, 1, .Disk_Module, 0x11, "reader", make_network_item(0x0A00_0264, 443))
+	sub, dialog, has_dialog := submit_batch(state, &batch, 1000)
+	testing.expect(t, sub.refusal == .None && has_dialog)
+	testing.expect_value(t, mark_dialog_shown(state, dialog.dialog_serial, TRUSTED_DISPLAY_SLOT, 1100), powerbox.Powerbox_Refusal.None)
+	early := make_grant_answer(&dialog, 1100, 1100 + PRINCIPAL - 1, 1100 + PRINCIPAL - 1)
+	early.arm_milliseconds = PRINCIPAL
+	res := resolve_answer(state, &early, 1100 + PRINCIPAL - 1)
+	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
+	after_contract := make_grant_answer(&dialog, 1100, 1100 + powerbox.CONSENT_ARM_MILLISECONDS, 1100 + powerbox.CONSENT_ARM_MILLISECONDS)
+	after_contract.arm_milliseconds = PRINCIPAL
+	res = resolve_answer(state, &after_contract, 1100 + powerbox.CONSENT_ARM_MILLISECONDS)
+	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
+	past_most := make_grant_answer(&dialog, 1100, 1100 + 20_000, 1100 + 20_000)
+	past_most.arm_milliseconds = powerbox.CONSENT_ARM_MILLISECONDS_MOST + 1
+	res = resolve_answer(state, &past_most, 1100 + 20_000)
+	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
+	largest := past_most
+	largest.arm_milliseconds = max(u64)
+	res = resolve_answer(state, &largest, 1100 + 20_000)
+	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.Untrusted_Answer)
+	testing.expect_value(t, active_grant_count(state), u32(0))
+	at_time := make_grant_answer(&dialog, 1100, 1100 + PRINCIPAL, 1100 + PRINCIPAL)
+	at_time.arm_milliseconds = PRINCIPAL
+	res = resolve_answer(state, &at_time, 1100 + PRINCIPAL)
+	testing.expect_value(t, res.refusal, powerbox.Powerbox_Refusal.None)
+	testing.expect_value(t, res.items[0].decision, powerbox.Item_Decision.Granted)
 }

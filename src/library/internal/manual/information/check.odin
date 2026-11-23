@@ -21,6 +21,8 @@ Problem_Kind :: enum u32 {
 	Direction = 12, // A direction of a parameter is not Read, Change or Append, or a parameter that is not a Table or Bytes has one.
 	Enum      = 13, // An Enum parameter or result breaks a rule of module.function_enums_check: `value` is the module.Enum_Problem.
 	Member_Text = 14, // A row of the table Member_Texts breaks a rule of module.member_texts_check: `value` is the module.Member_Text_Problem.
+	Need      = 15, // The need of a parameter breaks a rule of module.function_needs_check: `value` is the parameter, from 0.
+	Parameter_Setting = 16, // A row of the table Parameter_Settings breaks a rule of module.parameter_settings_check: `value` is the module.Parameter_Setting_Problem.
 }
 
 // The name of each problem kind in a row (`Module.problem`).
@@ -41,6 +43,8 @@ problem_names := [Problem_Kind]string {
 	.Direction = "direction",
 	.Enum      = "enum",
 	.Member_Text = "member text",
+	.Need      = "need",
+	.Parameter_Setting = "parameter setting",
 }
 
 // The name of each table in a row (`Module.place`): "header" for the header
@@ -66,6 +70,7 @@ table_names := [module.Table_Kind]string {
 	.Enums          = "Enums",
 	.Members        = "Members",
 	.Member_Texts   = "Member_Texts",
+	.Parameter_Settings = "Parameter_Settings",
 }
 
 // An error value with its detail. kind None: no problem.
@@ -130,6 +135,8 @@ problem_texts := [Problem_Kind]string {
 	.Direction = "a parameter has a direction that its type does not take",
 	.Enum      = "an enum of the export, its members or its getter break a rule",
 	.Member_Text = "a display text names no member, breaks its bound, or is given twice for one language",
+	.Need      = "a parameter is optional and one word does not carry its type, or the need names nothing",
+	.Parameter_Setting = "the settings of a parameter name no export or parameter, or break their form",
 }
 
 // place gives the byte of the file where a field of record `index` of a
@@ -223,6 +230,11 @@ check :: proc "contextless" (file: []u8) -> Problem {
 	if row, problem := module.member_texts_check(file); problem != .None {
 		return {kind = .Member_Text, table = .Member_Texts, index = row, offset = place(file, .Member_Texts, row, 0), value = u64(problem)}
 	}
+	// The console refuses a value out of a range before the call: a row
+	// of no export or of the wrong form is a fault of the file.
+	if row, problem := module.parameter_settings_check(file); problem != .None {
+		return {kind = .Parameter_Setting, table = .Parameter_Settings, index = row, offset = place(file, .Parameter_Settings, row, 0), value = u64(problem)}
+	}
 	documentation, _ := module.record(file, .Documentation, 1, module.Documentation)
 	for pair, number in ([2][2]u32{{documentation.about_offset, documentation.about_count}, {documentation.text_offset, documentation.text_count}}) {
 		if value, limit, inside := text_inside(file, pair[0], pair[1]); !inside {
@@ -258,7 +270,7 @@ function_check :: proc "contextless" (file: []u8, index: u32, function: module.F
 	}
 	// The buffer of a result and the error record are arguments of the call
 	// form too: the parameters alone can fit and the call not.
-	if arguments := module.call_argument_count(int(function.parameter_count), function.result, function.error_record != 0); arguments > module.PARAMETER_CAPACITY {
+	if arguments := module.call_argument_count(module.parameter_word_count(function), function.result, function.error_record != 0); arguments > module.CALL_WORD_CAPACITY {
 		return {kind = .Function, table = .Functions, index = index, offset = at + u64(offset_of(module.Function, parameter_count)), value = u64(arguments), limit = module.PARAMETER_CAPACITY + 1}
 	}
 	for word, number in function.parameters[:function.parameter_count] {
@@ -316,13 +328,19 @@ function_check :: proc "contextless" (file: []u8, index: u32, function: module.F
 	// of the file.
 	if parameter, problem := module.function_enums_check(file, function); problem != .None {
 		offset := at + u64(offset_of(module.Function, result_detail))
-		switch {
-		case parameter >= 0:
+		if parameter >= 0 {
 			offset = at + u64(offset_of(module.Function, parameter_details)) + 4 * u64(parameter)
-		case problem == .Bad_Optional:
-			offset = at + u64(offset_of(module.Function, optional_parameters))
 		}
 		return {kind = .Enum, table = .Functions, index = index, offset = offset, value = u64(problem)}
+	}
+	// A caller gives two words for an optional parameter: a need that
+	// breaks a rule moves each word after it.
+	if parameter, valid := module.function_needs_check(function); !valid {
+		offset := at + u64(offset_of(module.Function, reserved))
+		if parameter >= 0 {
+			offset = at + u64(offset_of(module.Function, parameter_needs)) + u64(parameter)
+		}
+		return {kind = .Need, table = .Functions, index = index, offset = offset, value = u64(max(parameter, 0))}
 	}
 	return {}
 }

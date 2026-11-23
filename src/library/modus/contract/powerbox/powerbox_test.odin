@@ -720,3 +720,37 @@ picker_ring_command_border_refuses_unknown_words :: proc(t: ^testing.T) {
 	command, ok := picker_ring_command_of_word(u32(Picker_Ring_Command.Pick))
 	testing.expect(t, ok && command == .Pick)
 }
+
+// The arm time of a door: the contract time under it and at 0, the time of
+// the principal between, the most past it and at the largest word; an act
+// at the show, one millisecond early, at the arm time, before the show,
+// and with a show near the largest time.
+@(test)
+the_arm_time_of_a_door_is_the_principal_s_never_under_the_contract :: proc(t: ^testing.T) {
+	testing.expect_value(t, consent_arm_milliseconds(0), CONSENT_ARM_MILLISECONDS)
+	testing.expect_value(t, consent_arm_milliseconds(CONSENT_ARM_MILLISECONDS - 1), CONSENT_ARM_MILLISECONDS)
+	testing.expect_value(t, consent_arm_milliseconds(2000), u64(2000))
+	testing.expect_value(t, consent_arm_milliseconds(CONSENT_ARM_MILLISECONDS_MOST), CONSENT_ARM_MILLISECONDS_MOST)
+	testing.expect_value(t, consent_arm_milliseconds(CONSENT_ARM_MILLISECONDS_MOST + 1), CONSENT_ARM_MILLISECONDS_MOST)
+	testing.expect_value(t, consent_arm_milliseconds(max(u64)), CONSENT_ARM_MILLISECONDS_MOST)
+	testing.expect(t, !consent_armed(1000, 1000, 2000))
+	testing.expect(t, !consent_armed(1000, 2999, 2000))
+	testing.expect(t, consent_armed(1000, 3000, 2000))
+	testing.expect(t, !consent_armed(1000, 999, 0))
+	testing.expect(t, consent_armed(1000, 1000 + CONSENT_ARM_MILLISECONDS, 0))
+	testing.expect(t, !consent_armed(max(u64) - 10, max(u64), 0))
+	testing.expect(t, consent_armed(0, max(u64), 0))
+}
+
+// An answer that a display makes carries the arm time that it applied:
+// the contract time for 0 and under it, the time of the principal, the most
+// for a word past it; the rest of the answer names the dialog.
+@(test)
+an_answer_carries_the_arm_time_of_the_principal :: proc(t: ^testing.T) {
+	dialog := Dialog_Record{dialog_serial = 7, request_serial = 9, item_count = 2}
+	for item in ([?][2]u64{{0, CONSENT_ARM_MILLISECONDS}, {CONSENT_ARM_MILLISECONDS - 1, CONSENT_ARM_MILLISECONDS}, {2000, 2000}, {CONSENT_ARM_MILLISECONDS_MOST + 1, CONSENT_ARM_MILLISECONDS_MOST}, {max(u64), CONSENT_ARM_MILLISECONDS_MOST}}) {
+		answer := grant_answer_make(&dialog, 3, .Local_Machine, 100, 700, 800, item[0])
+		testing.expectf(t, answer.arm_milliseconds == item[1], "%d gives %d", item[0], answer.arm_milliseconds)
+		testing.expect(t, answer.dialog_serial == 7 && answer.request_serial == 9 && answer.item_count == 2 && answer.display_holder_slot == 3 && answer.shown_timestamp_ms == 100 && answer.input_press_timestamp_ms == 700 && answer.answer_timestamp_ms == 800)
+	}
+}

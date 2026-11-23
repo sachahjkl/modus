@@ -30,6 +30,7 @@
 // so a pin and the project that it belongs to never disagree.
 package plans_recipes
 
+import "base:intrinsics"
 import "modus:contract/blake3"
 import "modus:contract/byte_order"
 import "modus:contract/isolated"
@@ -377,15 +378,31 @@ memory_private_store_list :: proc "contextless" (user: rawptr, after: string, ro
 // name, and an item of a side. A side has any count of items: the plans
 // service gives each side as bytes in a memory object (plan_diff_ask),
 // the dialog scrolls, and its accept counts only after the principal saw
-// its last row. The compositor checks its own bounds against these.
-PLAN_DISPLAY_NAME_BYTES :: 48
-PLAN_DISPLAY_ITEM_BYTES :: 48
+// its last row. An item is in the font of the cells, cut into lines of
+// PLAN_DISPLAY_LINE_CHARACTERS characters: the room of a line of the
+// dialog, 424 pixels, in cells of 8 pixels. No item is cut short. The
+// compositor checks its own bounds against these (src/md/features/powerbox.md,
+// "The relation to the other paths").
+PLAN_DISPLAY_NAME_BYTES :: 48 // Format property: the room of the name in the head of the dialog.
+PLAN_DISPLAY_ITEM_BYTES :: 64 + MAX_ENTRY_NAME_BYTES + PLAN_VALUE_TEXT_BYTES // Format property: the kind, the name, " = " and a text in quotes.
+PLAN_DISPLAY_LINE_CHARACTERS :: 53 // Format property: 424 pixels of a line in cells of 8.
+// Between two items of a list: a line feed, which no item holds (the border
+// of a plan refuses a control byte in a text, and a name has none).
+PLAN_DISPLAY_ITEM_SEPARATOR :: "\n"
 
-// The arm time of the dialog of a difference: the trusted display takes a
-// decision only this long after it showed the difference, so a key or a
-// press meant for a window does not accept the plan. A caller of apply
-// knows from it when a key of the principal counts.
-PLAN_DISPLAY_ARM_MILLISECONDS :: 500
+// plan_display_item_lines gives the lines that an item takes in the dialog:
+// its characters, PLAN_DISPLAY_LINE_CHARACTERS on each line, and 1 for the
+// empty item.
+plan_display_item_lines :: proc "contextless" (item: string) -> int {
+	characters := 0
+	for byte in transmute([]u8)item {
+		// A byte that starts a character: not a continuation byte of UTF-8.
+		if byte & 0xC0 != 0x80 {
+			characters += 1
+		}
+	}
+	return max(1, (characters + PLAN_DISPLAY_LINE_CHARACTERS - 1) / PLAN_DISPLAY_LINE_CHARACTERS)
+}
 
 // The amount (isolated.CALLER_AMOUNT_MASK) of the grant of a connection to
 // the holder of Display whose caller holds the role Plans now. Each service
@@ -450,13 +467,18 @@ plan_display_decision_of_word :: proc "contextless" (word: i64) -> (decision: Pl
 	return .Unknown, false
 }
 
-// The magic of a generation object and of a current object.
-PLAN_GENERATION_MAGIC :: [8]u8{'M', 'O', 'D', 'P', 'G', 'E', 'N', '1'}
+// The magic of a generation object and of a current object. The 2 of a
+// generation object names its entry row with the kind of a value and its
+// text (PLAN_ENTRY_ROW_WIRE_SIZE): a reader refuses an object of the row
+// before with Bad_Header, never reads it at the wrong size.
+PLAN_GENERATION_MAGIC :: [8]u8{'M', 'O', 'D', 'P', 'G', 'E', 'N', '2'}
 PLAN_CURRENT_MAGIC :: [8]u8{'M', 'O', 'D', 'P', 'C', 'U', 'R', '1'}
 
-// The bytes of one entry row in a generation object: four words, three
-// hashes and the name.
-PLAN_ENTRY_ROW_WIRE_SIZE :: 4 * 8 + 3 * blake3.HASH_SIZE + MAX_ENTRY_NAME_BYTES
+// The bytes of one entry row in a generation object: the words, three
+// hashes, the name and the text of a value.
+PLAN_ENTRY_ROW_WIRE_SIZE :: 7 * 8 + 3 * blake3.HASH_SIZE + MAX_ENTRY_NAME_BYTES + PLAN_VALUE_TEXT_BYTES
+// The store keeps the whole text of a value in its row, as the entry holds
+// it: a row of the store is no record that a call carries.
 
 // The head of a generation object: its magic, the applied plan record and
 // the count of its rows (4 bytes, then 4 zero bytes).
@@ -467,7 +489,6 @@ PLAN_GENERATION_HEAD_SIZE :: 8 + APPLIED_PLAN_WIRE_SIZE + 8
 // the highest generation, and the hash of the current plan.
 PLAN_CURRENT_WIRE_SIZE :: 8 + 3 * 8 + blake3.HASH_SIZE
 
-#assert(PLAN_ENTRY_ROW_WIRE_SIZE == size_of(Plan_Entry_Row))
 
 // The pointer of the generations of a principal that its current object holds.
 Plan_Current_Record :: struct {
@@ -604,16 +625,21 @@ encode_plan_generation :: proc "contextless" (record: ^Applied_Plan_Record, plan
 	byte_order.write_u32_little_endian(output, head_rest, plan.entry_count)
 	byte_order.write_u32_little_endian(output, head_rest + 4, 0)
 	for index in 0 ..< int(plan.entry_count) {
-		row := plan_entry_row_of_entry(&plan.entries[plan.order[index]])
+		entry := &plan.entries[plan.order[index]]
 		place := PLAN_GENERATION_HEAD_SIZE + index * PLAN_ENTRY_ROW_WIRE_SIZE
-		byte_order.write_u64_little_endian(output, place, u64(row.kind_word))
-		byte_order.write_u64_little_endian(output, place + 8, u64(row.role_word))
-		byte_order.write_u64_little_endian(output, place + 16, u64(row.start_grants_mask))
-		byte_order.write_u64_little_endian(output, place + 24, u64(row.store_rights_word))
-		copy(output[place + 32:place + 64], row.module_hash[:])
-		copy(output[place + 64:place + 96], row.interposed_over_hash[:])
-		copy(output[place + 96:place + 128], row.recipe_hash[:])
-		copy(output[place + 128:place + 192], row.name[:])
+		intrinsics.mem_zero(&output[place], PLAN_ENTRY_ROW_WIRE_SIZE)
+		byte_order.write_u64_little_endian(output, place, entry.kind_word)
+		byte_order.write_u64_little_endian(output, place + 8, entry.role_word)
+		byte_order.write_u64_little_endian(output, place + 16, entry.start_grants_mask)
+		byte_order.write_u64_little_endian(output, place + 24, entry.store_rights_word)
+		copy(output[place + 32:place + 64], entry.module_hash[:])
+		copy(output[place + 64:place + 96], entry.interposed_over_hash[:])
+		copy(output[place + 96:place + 128], entry.recipe_hash[:])
+		copy(output[place + 128:place + 192], entry.name_bytes[:min(int(entry.name_length), MAX_ENTRY_NAME_BYTES)])
+		byte_order.write_u64_little_endian(output, place + 192, entry.value_word)
+		byte_order.write_u64_little_endian(output, place + 200, entry.value_layer_word)
+		byte_order.write_u64_little_endian(output, place + 208, entry.value_kind_word)
+		copy(output[place + 216:place + 216 + PLAN_VALUE_TEXT_BYTES], entry.value_text[:min(int(entry.value_text_length), PLAN_VALUE_TEXT_BYTES)])
 	}
 	return size, .None
 }
@@ -684,26 +710,35 @@ decode_plan_generation :: proc "contextless" (input: []u8, principal: u64, gener
 	if int(count) > len(out.entries) || int(count) > len(out.order) {
 		return {}, .Buffer_Too_Small
 	}
-	// Each row crosses one row of memory into the plan, so a generation of
-	// any count needs no table of rows.
+	// Each row of the store is one entry, its whole text included: its name
+	// and its text end at their first zero byte, with zeros after them, so
+	// one plan has one form; then the border of a plan checks it whole.
+	out.principal = principal
 	for index in 0 ..< int(count) {
 		place := PLAN_GENERATION_HEAD_SIZE + index * PLAN_ENTRY_ROW_WIRE_SIZE
-		row_value: Plan_Entry_Row
-		row := &row_value
-		row.kind_word = i64(byte_order.read_u64_little_endian(input, place))
-		row.role_word = i64(byte_order.read_u64_little_endian(input, place + 8))
-		row.start_grants_mask = i64(byte_order.read_u64_little_endian(input, place + 16))
-		row.store_rights_word = i64(byte_order.read_u64_little_endian(input, place + 24))
-		copy(row.module_hash[:], input[place + 32:place + 64])
-		copy(row.interposed_over_hash[:], input[place + 64:place + 96])
-		copy(row.recipe_hash[:], input[place + 96:place + 128])
-		copy(row.name[:], input[place + 128:place + 192])
-		if !plan_entry_of_row(row, &out.entries[index]) {
+		entry := &out.entries[index]
+		entry^ = {}
+		entry.kind_word = byte_order.read_u64_little_endian(input, place)
+		entry.role_word = byte_order.read_u64_little_endian(input, place + 8)
+		entry.start_grants_mask = byte_order.read_u64_little_endian(input, place + 16)
+		entry.store_rights_word = byte_order.read_u64_little_endian(input, place + 24)
+		copy(entry.module_hash[:], input[place + 32:place + 64])
+		copy(entry.interposed_over_hash[:], input[place + 64:place + 96])
+		copy(entry.recipe_hash[:], input[place + 96:place + 128])
+		name_length, name_ok := text_field_length(input[place + 128:place + 192])
+		text_length, text_ok := text_field_length(input[place + 216:place + 216 + PLAN_VALUE_TEXT_BYTES])
+		if !name_ok || name_length == 0 || !text_ok {
 			plan_clear(out)
 			return {}, .Store_Damaged
 		}
+		copy(entry.name_bytes[:], input[place + 128:][:name_length])
+		entry.name_length = u8(name_length)
+		entry.value_word = byte_order.read_u64_little_endian(input, place + 192)
+		entry.value_layer_word = byte_order.read_u64_little_endian(input, place + 200)
+		entry.value_kind_word = byte_order.read_u64_little_endian(input, place + 208)
+		copy(entry.value_text[:], input[place + 216:][:text_length])
+		entry.value_text_length = u16(text_length)
 	}
-	out.principal = principal
 	out.entry_count = count
 	digest, hash_refusal := plan_hash(out)
 	if hash_refusal != .None || digest != record.plan_hash {

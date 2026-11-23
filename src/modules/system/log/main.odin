@@ -833,7 +833,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for event in interface.window_next_event(&hand_picture.drawing, &window) {
 			// A new appearance or a new font: each pixel of the window
 			// changes, with no new record.
-			if event.kind == .Settings_Changed {
+			if event.kind == .Presentation {
 				picture_owed = true
 			}
 		}

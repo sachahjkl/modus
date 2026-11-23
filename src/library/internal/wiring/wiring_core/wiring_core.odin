@@ -51,7 +51,7 @@ GENERIC_TYPES_OF_A_PROCESS_MOST :: 4
 
 // Monotonic stall bound (milliseconds) before an Always_Holds_Writer wiring
 // whose ring stays full without reader progress is revoked (matches
-// system.TEST_HANG_BOUND_MILLISECONDS; verified by #assert in wiring/main.odin).
+// system.ANSWER_BOUND_MILLISECONDS; verified by #assert in wiring/main.odin).
 STALL_HANG_BOUND_MS :: u64(60_000)
 
 // Sentinel process index representing the child of a Start wiring list

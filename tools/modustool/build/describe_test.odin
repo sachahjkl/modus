@@ -418,7 +418,7 @@ describe_rejects_what_has_no_description :: proc(t: ^testing.T) {
 		{"a buffer that is not the last parameter", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (result: ^[]u8, x: i64) -> i64 {return 0}\n"},
 		{"a Text result with no count", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (result: ^[]u8) {}\n"},
 		{"thirteen parameters", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (a, b, c, d, e, g, h, i, j, k, l, m, n: i64) -> i64 {return 0}\n"},
-		{"a Text result and twelve parameters", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (a, b, c, d, e, g, h, i, j, k, l, m: i64, result: ^[]u8) -> i64 {return 0}\n"},
+		{"a Text result and twelve parameters, four of them optional: seventeen words", "package p\nimport \"modus:contract/module\"\n// f gives x.\n@(export)\nf :: proc \"c\" (a_presence: module.Presence, a: i64, b_presence: module.Presence, b: i64, c_presence: module.Presence, c: i64, d_presence: module.Presence, d: i64, e, g, h, i, j, k, l, m: i64, result: ^[]u8) -> i64 {return 0}\n"},
 		{"a function that does not return", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (x: i64) -> ! {for {}}\n"},
 		{"an entry with two parameters", "package p\n@(export)\nentry :: proc \"c\" (a, b: rawptr) -> ! {for {}}\n"},
 		{"a record with a float field", "package p\nR :: struct {a: f32}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
@@ -426,7 +426,8 @@ describe_rejects_what_has_no_description :: proc(t: ^testing.T) {
 		{"a record that is too large", "package p\nR :: struct {a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y, z, aa, ab, ac, ad, ae, af, ag: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^R) -> i64 {return 0}\n"},
 		{"a result record with a handle", "package p\nR :: struct {h: Lent({.Read})}\n// f gives x.\n@(export)\nf :: proc \"c\" (x: i64, result: ^R) {}\n"},
 		{"a record result and a result type", "package p\nR :: struct {a: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (x: i64, result: ^R) -> i64 {return 0}\n"},
-		{"a record result and twelve parameters", "package p\nR :: struct {a: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (a, b, c, d, e, g, h, i, j, k, l, m: i64, result: ^R) {}\n"},
+		{"thirteen parameters", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (a, b, c, d, e, g, h, i, j, k, l, m, n: i64) -> i64 {return 0}\n"},
+		{"a record result and twelve parameters, four of them optional: seventeen words", "package p\nimport \"modus:contract/module\"\nR :: struct {a: i64}\n// f gives x.\n@(export)\nf :: proc \"c\" (a_presence: module.Presence, a: i64, b_presence: module.Presence, b: i64, c_presence: module.Presence, c: i64, d_presence: module.Presence, d: i64, e, g, h, i, j, k, l, m: i64, result: ^R) {}\n"},
 		{"a pointer to an unknown type", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (r: ^Other) -> i64 {return 0}\n"},
 		{"a right that does not exist", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (h: Lent({.Fly})) -> i64 {return 0}\n"},
 		{"a handle result", "package p\n// f gives x.\n@(export)\nf :: proc \"c\" (x: i64) -> Lent({.Read}) {return {}}\n"},
@@ -573,13 +574,11 @@ describe_refuses_an_enum_parameter_that_breaks_a_rule :: proc(t: ^testing.T) {
 		{"an enum with no backing type", "package p\nMode :: enum {Slow, Fast}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 		{"an enum with no member", "package p\nMode :: enum u32 {}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 		{"a member whose value is an expression", "package p\nBASE :: 4\nMode :: enum u32 {Slow = BASE, Fast}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
-		{"a member whose value is the absent word", "package p\nMode :: enum u8 {Slow = 0, Fast = 255}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 		{"a member past its backing type", "package p\nMode :: enum u8 {Slow = 0, Fast = 256}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 		{"two members of one value", "package p\nMode :: enum u32 {Slow = 1, Fast = 1}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 		{"two members of one name in lower case", "package p\nMode :: enum u32 {Slow = 0, SLOW = 1}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 		{"a member with a name of 32 bytes", "package p\nMode :: enum u32 {Abcdefghijklmnopqrstuvwxyzabcdef = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 		{"a member that starts with _", "package p\nMode :: enum u32 {_Slow = 0}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
-		{"a signed member whose value is the absent word", "package p\nMode :: enum i16 {Slow = -2, Fast}\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 		{"a getter that is no export", HEAD + "// f sets x.\n@(export, enum_getters = \"mode = g\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 		{"a getter that gives another enum", HEAD + "// g gives x.\n@(export)\ng :: proc \"c\" () -> Other {return .Slow}\n// f sets x.\n@(export, enum_getters = \"mode = g\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 		{"a getter that gives an Integer", HEAD + "// g gives x.\n@(export)\ng :: proc \"c\" () -> i64 {return 0}\n// f sets x.\n@(export, enum_getters = \"mode = g\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
@@ -589,10 +588,24 @@ describe_refuses_an_enum_parameter_that_breaks_a_rule :: proc(t: ^testing.T) {
 		{"a parameter given two getters", HEAD + "// g gives x.\n@(export)\ng :: proc \"c\" () -> Mode {return .Slow}\n// f sets x.\n@(export, enum_getters = \"mode = g, mode = g\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 		{"a pair with no =", HEAD + "// f sets x.\n@(export, enum_getters = \"mode\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
 		{"a getter that is no text", HEAD + "// f sets x.\n@(export, enum_getters = 4)\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
-		{"an optional parameter that is no enum", HEAD + "// f sets x.\n@(export, optional_parameters = \"x\")\nf :: proc \"c\" (mode: Mode, x: i64) -> i64 {return 0}\n"},
-		{"an optional parameter that does not exist", HEAD + "// f sets x.\n@(export, optional_parameters = \"speed\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
-		{"an optional parameter named twice", HEAD + "// f sets x.\n@(export, optional_parameters = \"mode, mode\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
-		{"the attributes on no export", HEAD + "// f sets x.\n@(optional_parameters = \"mode\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a presence before a record", HEAD + "import \"modus:contract/module\"\nR :: struct {a: i64}\n// f sets x.\n@(export)\nf :: proc \"c\" (name_presence: module.Presence, name: ^R) -> i64 {return 0}\n"},
+		{"a bound of a text below 0", HEAD + "// f sets x.\n@(export, parameter_ranges = \"name = -1..160\")\nf :: proc \"c\" (name: ^string) -> i64 {return 0}\n"},
+		{"choices of a text", HEAD + "// f sets x.\n@(export, parameter_choices = \"name = f\")\nf :: proc \"c\" (name: ^string) -> i64 {return 0}\n"},
+		{"a presence of another name", HEAD + "import \"modus:contract/module\"\n// f sets x.\n@(export)\nf :: proc \"c\" (speed_presence: module.Presence, mode: Mode) -> i64 {return 0}\n"},
+		{"a presence with no name before its suffix", HEAD + "import \"modus:contract/module\"\n// f sets x.\n@(export)\nf :: proc \"c\" (_presence: module.Presence, mode: Mode) -> i64 {return 0}\n"},
+		{"a presence that ends the parameters", HEAD + "import \"modus:contract/module\"\n// f sets x.\n@(export)\nf :: proc \"c\" (mode: Mode, mode_presence: module.Presence) -> i64 {return 0}\n"},
+		{"two presences in a row", HEAD + "import \"modus:contract/module\"\n// f sets x.\n@(export)\nf :: proc \"c\" (mode_presence: module.Presence, other_presence: module.Presence, mode: Mode) -> i64 {return 0}\n"},
+		{"a presence in a shared declaration", HEAD + "import \"modus:contract/module\"\n// f sets x.\n@(export)\nf :: proc \"c\" (a_presence, b_presence: module.Presence, mode: Mode) -> i64 {return 0}\n"},
+		{"a range on an enum", HEAD + "// f sets x.\n@(export, parameter_ranges = \"mode = 0..1\")\nf :: proc \"c\" (mode: Mode) -> i64 {return 0}\n"},
+		{"a range of no parameter", HEAD + "// f sets x.\n@(export, parameter_ranges = \"speed = 0..1\")\nf :: proc \"c\" (x: i64) -> i64 {return 0}\n"},
+		{"a range that starts above its end", HEAD + "// f sets x.\n@(export, parameter_ranges = \"x = 2..1\")\nf :: proc \"c\" (x: i64) -> i64 {return 0}\n"},
+		{"a range that is no range", HEAD + "// f sets x.\n@(export, parameter_ranges = \"x = 2\")\nf :: proc \"c\" (x: i64) -> i64 {return 0}\n"},
+		{"a range past the integers", HEAD + "// f sets x.\n@(export, parameter_ranges = \"x = 0..9223372036854775808\")\nf :: proc \"c\" (x: i64) -> i64 {return 0}\n"},
+		{"a range given twice", HEAD + "// f sets x.\n@(export, parameter_ranges = \"x = 0..1, x = 0..2\")\nf :: proc \"c\" (x: i64) -> i64 {return 0}\n"},
+		{"choices of no export", HEAD + "// f sets x.\n@(export, parameter_choices = \"x = nothing\")\nf :: proc \"c\" (x: i64) -> i64 {return 0}\n"},
+		{"choices of an export with no table", HEAD + "// g gives x.\n@(export)\ng :: proc \"c\" () -> i64 {return 0}\n// f sets x.\n@(export, parameter_choices = \"x = g\")\nf :: proc \"c\" (x: i64) -> i64 {return 0}\n"},
+		{"instances of a second parameter", HEAD + "// f sets x.\n@(export, parameter_instances = \"y = f\")\nf :: proc \"c\" (x: i64, y: i64) -> i64 {return 0}\n"},
+		{"the attributes on no export", HEAD + "// f sets x.\n@(parameter_ranges = \"x = 0..1\")\nf :: proc \"c\" (x: i64) -> i64 {return 0}\n"},
 		{"an enum result with an error record", "package p\nimport \"modus:contract/errors\"\nMode :: enum u32 {Slow = 0}\n// g gives x.\n@(export)\ng :: proc \"c\" (error: ^errors.Error_Record) -> Mode {return .Slow}\n"},
 	}
 	for item in cases {
@@ -603,7 +616,7 @@ describe_refuses_an_enum_parameter_that_breaks_a_rule :: proc(t: ^testing.T) {
 	// the next value after a value, the getter in the detail, the optional
 	// bit, and an enum of a getter that is one description with the enum of
 	// its parameter.
-	source := "package p\nMode :: enum i16 {Slow = -3, Fast, Very_Fast = 7}\n// mode gives x.\n@(export, link_name = \"mode\")\nmode_get :: proc \"c\" () -> Mode {return .Slow}\n// f sets x.\n@(export, enum_getters = \"mode = mode\", optional_parameters = \"mode\")\nf :: proc \"c\" (count: i64, mode: Mode) -> i64 {return 0}\n"
+	source := "package p\nimport \"modus:contract/module\"\nMode :: enum i16 {Slow = -3, Fast, Very_Fast = 7}\n// mode gives x.\n@(export, link_name = \"mode\")\nmode_get :: proc \"c\" () -> Mode {return .Slow}\n// f sets x.\n@(export, enum_getters = \"mode = mode\", parameter_ranges = \"count = -5..9223372036854775807\")\nf :: proc \"c\" (count: i64, mode_presence: module.Presence, mode: Mode) -> i64 {return 0}\n"
 	list := make([dynamic]Export_Description, context.temp_allocator)
 	enums: []Enum_Description
 	if !testing.expect(t, describe_source("case.odin", source, &list, nil, nil, &enums)) || !testing.expect_value(t, len(list), 2) || !testing.expect_value(t, len(enums), 1) {
@@ -614,5 +627,16 @@ describe_refuses_an_enum_parameter_that_breaks_a_rule :: proc(t: ^testing.T) {
 	testing.expect(t, list[0].result == .Enum && list[0].result_detail == 1)
 	setter := list[1]
 	enum_index, getter := module.enum_detail_of(setter.details[1])
-	testing.expect(t, setter.parameters[1] == .Enum && enum_index == 1 && getter == 1 && setter.optional_parameters == 0b10)
+	testing.expect(t, setter.parameters[1] == .Enum && enum_index == 1 && getter == 1 && len(setter.needs) == 2 && setter.needs[0] == .Required && setter.needs[1] == .Optional)
+	testing.expect(t, len(setter.setting_rows) == 1 && setter.setting_rows[0] == {export_index = 2, parameter = 0, has_range = 1, least = -5, most = max(i64)})
+	// An optional Text with the bound of its bytes: two words of the call
+	// form, and a row of its bound.
+	text_source := "package p\nimport \"modus:contract/module\"\n// f sets x.\n@(export, parameter_ranges = \"home = 0..160\")\nf :: proc \"c\" (home_presence: module.Presence, home: ^string) -> i64 {return 0}\n"
+	texts := make([dynamic]Export_Description, context.temp_allocator)
+	if !testing.expect(t, describe_source("text.odin", text_source, &texts, nil, nil, nil)) || !testing.expect_value(t, len(texts), 1) {
+		return
+	}
+	text_setter := texts[0]
+	testing.expect(t, text_setter.parameters[0] == .Text && len(text_setter.needs) == 1 && text_setter.needs[0] == .Optional)
+	testing.expect(t, len(text_setter.setting_rows) == 1 && text_setter.setting_rows[0] == {export_index = 1, parameter = 0, has_range = 1, least = 0, most = 160})
 }

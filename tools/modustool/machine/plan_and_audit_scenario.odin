@@ -18,7 +18,9 @@ import "modustool:foundation"
 //      that the principal accepts and the root service refuses (a hash of
 //      no module of the image, a module that does not fill the contract of
 //      Settings). Then the plan that names `settings_stand_in` as the
-//      holder of Settings, which the principal accepts: generation 1.
+//      holder of Settings and gives storage each version kept 90 minutes,
+//      which the principal accepts: generation 1. Storage, which runs
+//      since before plans, takes the rule at once.
 //      `audit_asker` gets two lists of pairs refused, then starts
 //      `generic_source` with an audited list: each probe of left comes to
 //      it through the pair of collector.forward. The console reads the two
@@ -39,7 +41,8 @@ import "modustool:foundation"
 //   2. The same disk: the plans service gives the roles of the stored plan
 //      before the start policy, so the row "settings" of the start list
 //      starts settings_stand_in, with the boot pass, and never
-//      `settings`. The collector reads its two audit spaces back, and each
+//      `settings`. Its values reach storage, which started before plans:
+//      the rule of 90 minutes holds after the restart. The collector reads its two audit spaces back, and each
 //      chain holds.
 
 TEST_PLAN_AND_AUDIT_DISK :: foundation.BUILD_FOLDER + "/test_plan_and_audit_disk.img"
@@ -52,6 +55,10 @@ PLAN_AT_START_STOPPED_LINE :: "root: the plans service stopped before it read th
 
 // The audit spaces of generic_source: 20 probes of left and 20 of right.
 AUDIT_SPACES_LOADED_LINE :: "collector: read 2 audit spaces with 40 records from its store"
+
+// The rule of the retention that the committed plan gives storage: each
+// version kept 90 minutes, and the default end of the hours, one day.
+RETENTION_OF_THE_PLAN_LINE :: "storage: the retention rule of the plan: each version kept 5400000 ms, the newest of each hour until 86400000 ms, order refused 0"
 
 // The refusal of each case of plan_applier, and the line of the root
 // service that refuses the roles of the two plans that the principal
@@ -112,6 +119,7 @@ scenario_plan_and_audit_first := [?]Step {
 	{kind = .Wait, text = "compositor: the difference of the plan settings stand-in is accepted", fails_on = "compositor: the difference of the plan settings stand-in is refused"},
 	{kind = .Wait, text = "root: the roles of the plan of generation 1 are in force: 1 overrides, serial 1, rollback 0", any_order = true},
 	{kind = .Wait, text = "plans: applied generation 1 for principal 0", any_order = true},
+	{kind = .Wait, text = RETENTION_OF_THE_PLAN_LINE, any_order = true},
 	{kind = .Wait, text = "plan_applier: the principal accepted the plan: generation 1, whose holder of the role Settings is settings_stand_in", fails_on = PLAN_APPLIER_WRONG},
 	{kind = .Wait, text = "root: plan_applier stopped: itself, done"},
 	// The audit: two lists of pairs refused before any source reaches the
@@ -213,6 +221,10 @@ scenario_plan_and_audit_first := [?]Step {
 
 scenario_plan_and_audit_second := [?]Step {
 	// The roles of the stored plan hold before the start policy starts.
+	// The values of the stored plan reach storage, which started first, at
+	// the commit that plans sends at its start: the wait does not move the
+	// place of the log, so the order of this line and of the roles is free.
+	{kind = .Wait, text = RETENTION_OF_THE_PLAN_LINE, any_order = true},
 	{kind = .Wait, text = "root: the roles of generation 1 of the plan of principal 0 hold from the start: 1 overrides, serial ", fails_on = PLAN_AT_START_LATE_LINE},
 	{kind = .Wait, text = "root: started start_policy", fails_on = PLAN_AT_START_STOPPED_LINE},
 	// The row "settings" reaches the holder of the plan, from the first

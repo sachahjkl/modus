@@ -37,6 +37,16 @@ Fresh_Bytes_Pages_Failed :: struct {
 	status: op.Status,
 }
 
+@(log_fact = "root: cannot create the pages of the plan values: status {status}: each owner holds the defaults of its contract")
+Plan_Values_Pages_Failed :: struct {
+	status: op.Status,
+}
+
+@(log_fact = "root: cannot create the presentation pages: status {status}: each window draws with the defaults")
+Presentation_Pages_Failed :: struct {
+	status: op.Status,
+}
+
 @(log_fact = "root: cannot start shortage: status {status}")
 Shortage_Start_Failed :: struct {
 	status: op.Status,
@@ -76,6 +86,11 @@ Compositor_Control_Ring_Failed :: struct {
 
 @(log_fact = "root: cannot start the compositor: no service ring: status {status}")
 Compositor_Service_Ring_Failed :: struct {
+	status: op.Status,
+}
+
+@(log_fact = "root: the holder of the display gets no role store (status {status}): it draws with the defaults of its contract, and keeps no choice")
+Display_Role_Store_Not_Given :: struct {
 	status: op.Status,
 }
 

@@ -1620,6 +1620,10 @@ versions_release :: proc "contextless" (entry_index: int) {
 times: [format.VERSIONS_LIMIT]u64
 keep: [format.VERSIONS_LIMIT]bool
 
+// The retention rule in force: the plan values of the owner `storage`, read
+// at the start of this service (storage_retention.rule_of).
+retention_rule: storage_retention.Rule = storage_retention.DEFAULT_RULE
+
 // retention applies the retention rule to the versions of an object, when
 // it did not run in the last minute.
 retention :: proc "contextless" (entry_index: int, now: u64) {
@@ -1644,7 +1648,7 @@ retention :: proc "contextless" (entry_index: int, now: u64) {
 			count += 1
 		}
 	}
-	if storage_retention.keeps(times[:count], rule_now, keep[:count]) == 0 {
+	if storage_retention.keeps(times[:count], rule_now, keep[:count], retention_rule) == 0 {
 		return
 	}
 	at := 0

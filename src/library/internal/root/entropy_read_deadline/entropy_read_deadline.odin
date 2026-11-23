@@ -5,9 +5,9 @@ package entropy_read_deadline
 import "modus:system"
 
 // The time that a read has, from the moment the root service asked for it.
-// It is the hang bound of the system, not a measure of the speed of the
-// device: a slow device is not called absent.
-READ_DEADLINE_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
+// It is the answer bound of the services, not a measure of the speed of
+// the device: a slow device is not called absent.
+READ_DEADLINE_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
 // read_deadline gives the time at which a read asked at asked_at counts as
 // refused. A time so late that the sum does not fit gives the largest time:

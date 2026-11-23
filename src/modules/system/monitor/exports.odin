@@ -83,7 +83,6 @@ pictures: u64
 
 // acts_for_principal says if the caller of the export that runs acts for the principal.
 // A call of the monitor itself has no caller: it acts for the principal.
-@(private = "file")
 acts_for_principal :: proc "contextless" () -> bool {
 	caller := system.service_caller()
 	return caller == nil || caller.grant & isolated.CALLER_ACTS_FOR_PRINCIPAL != 0

@@ -95,5 +95,5 @@ each_compile_accepts_the_attribute_of_a_fact_type :: proc(t: ^testing.T) {
 	testing.expect_value(t, count_of_flag(boot_program_compile_command(release_boot_volume())), 1)
 	tool := TOOL_COMPILE_COMMAND
 	testing.expect_value(t, count_of_flag(tool[:]), 1)
-	testing.expect_value(t, foundation.CUSTOM_ATTRIBUTES_FLAG, "-custom-attribute:log_fact,enum_getters,optional_parameters,member_texts")
+	testing.expect_value(t, foundation.CUSTOM_ATTRIBUTES_FLAG, "-custom-attribute:log_fact,enum_getters,member_texts,parameter_ranges,parameter_choices,parameter_instances")
 }

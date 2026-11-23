@@ -901,7 +901,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				if event.pressed {
 					key_take(event.character)
 				}
-			case .Settings_Changed:
+			case .Presentation:
 				// A new font: each text of the band is drawn again.
 				interface.draw_whole_window_next(&window_memory.drawing)
 			case .None, .Pointer, .Go_To, .Resized, .Copy_Asked, .Pasted, .Capture_Size, .Capture_Frame, .Capture_Disconnect, .Capture_Opened, .Surface_Answer, .Work_Area:

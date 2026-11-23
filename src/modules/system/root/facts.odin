@@ -530,6 +530,65 @@ Plan_Roles_Refused :: struct {
 	serial:         u64,
 }
 
+// The core replaced the plan values with the set of a generation of the
+// plan of principal 0, wrote again the page of each owner that runs, and
+// wrote again the grant of each store whose quota changed.
+@(log_fact = "root: the plan values of generation {generation} are in force for {owners} owners; {pages} pages of running owners written again")
+Plan_Values_Replaced :: struct {
+	generation: u64,
+	owners:     u64,
+	pages:      u64,
+}
+
+// A module with the name of a role that it does not hold asked for its
+// store: the store of a role goes to the holder of the role only.
+@(log_fact = "root: {caller} holds no role of its name: the store of the role is its holder's, and the connection is refused")
+Role_Store_Refused :: struct {
+	caller: value_kinds.Module_Name_Field,
+}
+
+// The values of one owner did not fit its page: the owner holds no value
+// of the plan, the defaults of its contract. The border of the set keeps
+// each owner within a page, so this line names a fault of the core.
+@(log_fact = "root: the plan values of an owner do not fit its page: it holds the defaults of its contract")
+Plan_Values_Page_Too_Small :: struct {}
+
+// The core took the set of plan values of a generation: it holds from the
+// commit of the store of the holder of Plans (the step Committed).
+@(log_fact = "root: took the plan values of generation {generation} for {owners} owners: they hold once the store commits it")
+Plan_Values_Taken :: struct {
+	generation: u64,
+	owners:     u64,
+}
+
+// The core refused the commit of a set of plan values because a service
+// ring has no room for the grants of the quotas that the set changes: no
+// value changed, the set stays taken, and the holder of Plans sends the
+// step Committed again.
+@(log_fact = "root: the plan values of generation {generation} wait: a service ring has no room for the changed quotas of the stores; the values before stay in force")
+Plan_Values_Grants_Busy :: struct {
+	generation: u64,
+}
+
+// The values of the owner `root` that the core holds from the start of the
+// holder of the display. sizes_refused is 1 when the start size of the
+// screen of memory passed its largest size, and the four defaults hold.
+@(log_fact = "root: the plan values of the core: the share {budget_share}, the screen of memory from {start_width} x {start_height} to {most_width} x {most_height}, sizes refused {sizes_refused}")
+Root_Plan_Values_Read :: struct {
+	budget_share:  u64,
+	start_width:   u64,
+	start_height:  u64,
+	most_width:    u64,
+	most_height:   u64,
+	sizes_refused: u64,
+}
+
+// The core refused a set of plan values: no value changed.
+@(log_fact = "root: refused the plan values ({set_problem}): the values before stay in force")
+Plan_Values_Refused :: struct {
+	set_problem: [24]u8, // N written out: the tool reads the size of a Text field from the source.
+}
+
 // One hash of the role contracts, as the root service computes it at its
 // start (root_delegation.role_contracts_digest): encoded counts the
 // contracts that pass their canonical encoding.

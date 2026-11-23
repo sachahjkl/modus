@@ -228,14 +228,16 @@ test_plans_apply_request_refuses_each_bad_input_and_asks_nothing :: proc(t: ^tes
 	_, no_display := apply_request(state, nil, "home", &plan, {}, &difference, &lists)
 	testing.expect_value(t, no_display, pr.Plan_Refusal.Consent_Required)
 
-	// An item past the bytes of an item: a name of 48 bytes after "disk ".
-	long_entry := test_plan(0, 1)
-	long_entry.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, strings.repeat("m", 44, context.temp_allocator), trusted_test_hash(1), 0)
-	_, item_too_long := apply_request(state, &port, "home", &long_entry, {}, &difference, &lists)
-	testing.expect_value(t, item_too_long, pr.Plan_Refusal.Display_Refused)
-	// The last byte that fits: "disk " and 43 bytes.
-	edge_entry := test_plan(0, 1)
-	edge_entry.entries[0], _ = pr.plan_entry_make_module(.Disk_Module, strings.repeat("m", 43, context.temp_allocator), trusted_test_hash(1), 0)
+	// The lines of the dialog: a text value of 256 bytes is the item
+	// `value o.f0 = "…"` of 271 characters, 6 lines of 53. Four of them are
+	// shown whole: the dialog has no bound of lines.
+	long_text := strings.repeat("a", pr.PLAN_VALUE_TEXT_BYTES, context.temp_allocator)
+	testing.expect_value(t, pr.plan_display_item_lines(strings.concatenate({"value o.f0 = \"", long_text, "\""}, context.temp_allocator)), 6)
+	fields := [4]string{"f0", "f1", "f2", "f3"}
+	edge_entry := test_plan(0, 4)
+	for field, index in fields {
+		edge_entry.entries[index], _ = pr.plan_entry_make_text_value("o", field, long_text, .Plan_Default)
+	}
 
 	// The display that does not show the dialog: nothing is pending.
 	display.refuse_to_ask = true
@@ -248,7 +250,8 @@ test_plans_apply_request_refuses_each_bad_input_and_asks_nothing :: proc(t: ^tes
 
 	ticket, shown := apply_request(state, &port, "home", &edge_entry, {}, &difference, &lists)
 	testing.expect_value(t, shown, pr.Plan_Refusal.None)
-	testing.expect_value(t, len(display.added), pr.PLAN_DISPLAY_ITEM_BYTES)
+	// Four items of 271 bytes and the three line feeds between them.
+	testing.expect_value(t, len(display.added), 4 * 271 + 3)
 
 	// A second apply while the dialog of the first shows is refused, and the
 	// first stays pending.
@@ -452,7 +455,16 @@ test_plans_display_lists_name_each_side :: proc(t: ^testing.T) {
 	plans_test_state_init(lists_state, 5)
 	testing.expect_value(t, display_lists_of_difference(lists_state, &difference, &lists), pr.Plan_Refusal.None)
 	testing.expect_value(t, string(lists.added[:lists.added_length]), "store documents read write")
-	testing.expect_value(t, string(lists.removed[:lists.removed_length]), "disk calc narrowed, store notes read, start clock")
+	testing.expect_value(t, string(lists.removed[:lists.removed_length]), "disk calc narrowed\nstore notes read\nstart clock")
+	// A text value shows whole, in quotes, a comma included: the line feed
+	// is the one separator.
+	text_plan := pr.Plan_Spec{principal = 0, entry_count = 1}
+	text_plan.entries[0], _ = pr.plan_entry_make_text_value("browser", "home", "http://a.example/x,y", .Locked)
+	text_difference: pr.Plan_Difference
+	testing.expect_value(t, pr.plan_diff_compute(nil, &text_plan, &text_difference), pr.Plan_Refusal.None)
+	text_lists: Plan_Display_Lists
+	testing.expect_value(t, display_lists_of_difference(&text_difference, &text_lists), pr.Plan_Refusal.None)
+	testing.expect_value(t, string(text_lists.added[:text_lists.added_length]), "lock browser.home = \"http://a.example/x,y\"")
 }
 
 // A rollback restores grants, so it shows its difference on the trusted

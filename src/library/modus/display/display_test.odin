@@ -10,6 +10,7 @@ import "modus:contract/text_encoding"
 import "modus:key_path"
 import "modus:system"
 import "core:testing"
+import "modus:contract/settings"
 
 // A part of Capture_Viewers is refused with a count past the capacity, a
 // place that is not a multiple of a part or that is past the count, and a
@@ -679,14 +680,14 @@ event_of_record_reads_each_event :: proc(t: ^testing.T) {
 	testing.expect(t, ok)
 	testing.expect_value(t, event, Event{kind = .Pointer, x = -3, y = 7, buttons = BUTTON_LEFT, wheel = WHEEL_TOWARD_THE_END})
 
-	// Settings_Changed names the scale of the compositor: a word that names
+	// Presentation names the scale of the compositor: a word that names
 	// no scale refuses the record: 0, 7 under the scale 1, 17 past 2, and the
 	// largest word.
-	settings_changed := ring.Record{kind = u32(Event_Kind.Settings_Changed)}
+	settings_changed := ring.Record{kind = u32(Event_Kind.Presentation)}
 	for word in ([?]u64{0, scale_factor.EIGHTHS_OF_ONE - 1, u64(scale_factor.Scale.Sixteen_Eighths) + 1, max(u64)}) {
 		settings_changed.values[1] = word
 		_, scale_ok := event_of_record(settings_changed)
-		testing.expectf(t, !scale_ok, "a Settings_Changed with the scale word %d is taken", word)
+		testing.expectf(t, !scale_ok, "a Presentation with the scale word %d is taken", word)
 	}
 	// The count of the windows that declined the scale: one past its limit
 	// and the largest word are refused; the limit is taken.
@@ -694,7 +695,7 @@ event_of_record_reads_each_event :: proc(t: ^testing.T) {
 	for word in ([?]u64{WINDOWS_DECLINED_LIMIT + 1, max(u64)}) {
 		settings_changed.values[2] = word
 		_, declined_ok := event_of_record(settings_changed)
-		testing.expectf(t, !declined_ok, "a Settings_Changed that counts %d windows is taken", word)
+		testing.expectf(t, !declined_ok, "a Presentation that counts %d windows is taken", word)
 	}
 	settings_changed.values[2] = WINDOWS_DECLINED_LIMIT
 	limit_event, limit_ok := event_of_record(settings_changed)
@@ -702,7 +703,24 @@ event_of_record_reads_each_event :: proc(t: ^testing.T) {
 	settings_changed.values[2] = 0
 	event, ok = event_of_record(settings_changed)
 	testing.expect(t, ok)
-	testing.expect_value(t, event, Event{kind = .Settings_Changed, scale = .Eleven_Eighths})
+	zeros_presentation, _ := settings.presentation_of_words({}, .Eleven_Eighths)
+	testing.expect_value(t, event, Event{kind = .Presentation, scale = .Eleven_Eighths, presentation = zeros_presentation})
+	// The words of the presentation: one word that its border refuses
+	// refuses the record, at each place (settings.presentation_of_words).
+	for place in 3 ..< 7 {
+		refused := settings_changed
+		refused.values[place] = max(u64)
+		_, presentation_ok := event_of_record(refused)
+		testing.expectf(t, !presentation_ok, "a Presentation with the word %x at %d is taken", max(u64), place)
+	}
+	chosen := settings.choice_default()
+	chosen.font, chosen.appearance_in_force, chosen.zone_offset_minutes = .Spleen, .Light, -210
+	words := settings.presentation_words_of(chosen)
+	for word, index in words {
+		settings_changed.values[3 + index] = word
+	}
+	event, ok = event_of_record(settings_changed)
+	testing.expect(t, ok && event.presentation.font == .Spleen && event.presentation.appearance_in_force == .Light && event.presentation.zone_offset_minutes == -210)
 
 	// Surface_Answer: a word of no answer and the serial 0 are refused.
 	answer := ring.Record{kind = u32(Event_Kind.Surface_Answer)}

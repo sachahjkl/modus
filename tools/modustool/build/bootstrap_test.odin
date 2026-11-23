@@ -166,7 +166,7 @@ main :: proc() {{
 			"-collection:internal=src/library/internal",
 			"-collection:modulus=src/modulus",
 			"-collection:modustool=tools/modustool",
-			"-custom-attribute:log_fact,enum_getters,optional_parameters,member_texts",
+			"-custom-attribute:log_fact,enum_getters,member_texts,parameter_ranges,parameter_choices,parameter_instances",
 			"-define:TOOL_BUILDS_ITSELF=false",
 			"-source-code-locations:filename",
 			"-use-single-module",

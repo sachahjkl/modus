@@ -313,6 +313,7 @@ Unit :: enum i64 {
 	Device_Windows = 63, // Full: the device windows of the IOMMU, which the objects that a service declares and that are not contiguous hold; limit their count.
 	Count_Repair = 64, // Busy: the storage service repairs the counts of the blocks of its disk and makes no change until the end (src/md/data/storage_capacity.md). value: the stores that the repair walked; limit: the stores in all.
 	Act_Records = 65, // Full: the act record of a call under a wide grant found no room, and the call did not run (src/md/features/wide_grants.md, "The size of the act records"): the audit space of the grant in the collector is full, or its ring did not take the record. found: the wide_grants.Act_Write_Status of the write.
+	Plan_Lock      = 66, // No_Grant: a setting that a lock of the plan of principal 0 holds (src/md/features/module_settings.md, "The lock"). argument: the setting, from 1.
 }
 
 // The name of each error kind, as the contract names it: a column of a
@@ -434,6 +435,7 @@ UNIT_MEMBER_NAMES := [Unit]string {
 	.Device_Windows     = "Device_Windows",
 	.Count_Repair       = "Count_Repair",
 	.Act_Records        = "Act_Records",
+	.Plan_Lock          = "Plan_Lock",
 }
 
 // The word of a Kind as the record of another party holds it: a field of a
@@ -599,6 +601,7 @@ UNIT_NAMES := [Unit]string {
 	.Device_Windows = "device windows of the IOMMU",
 	.Count_Repair = "repair of the counts of the blocks",
 	.Act_Records   = "act records of the wide grant",
+	.Plan_Lock   = "lock of the plan",
 }
 
 // A ring completion (src/library/modus/contract/ring) has the status of the contract of its

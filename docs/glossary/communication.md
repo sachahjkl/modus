@@ -438,7 +438,7 @@ Do not use: progress bar hack, carriage return.
 
 The call form is where a call of an export puts each of its arguments and finds each result: the C convention of the machine, in a subset that every compiler gives.
 
-On x86-64 an export takes up to 12 integer arguments (`module.PARAMETER_CAPACITY`): the first 6 in registers, the others on the stack, one word of 8 bytes each. The results are in `rax` and `rdx`. A record, a slice and a table are never passed by value: the argument is an address. The one routine `export_call` calls each export from an array of values. It is not the calling convention of a language: an Odin procedure of the convention `"odin"` passes one more argument, its context.
+On x86-64 an export takes up to 16 integer arguments (`module.CALL_WORD_CAPACITY`), for at most 12 parameters: the first 6 in registers, the others on the stack, one word of 8 bytes each. The results are in `rax` and `rdx`. A record, a slice and a table are never passed by value: the argument is an address. The one routine `export_call` calls each export from an array of values. It is not the calling convention of a language: an Odin procedure of the convention `"odin"` passes one more argument, its context.
 
 The design: `docs/MODULE_CONTRACT.md`, "4. The call form".
 

@@ -53,11 +53,10 @@ Enum_Problem :: enum u8 {
 	Bad_Size         = 2, // The size is not 1, 2, 4 or 8, or a reserved byte is not 0.
 	Bad_Member_Count = 3, // No member, more than ENUM_MEMBER_CAPACITY, or members outside the table Members.
 	Bad_Member_Name  = 4, // A name that is empty, too long, not a name of Lex in lower case, outside the string table, or given twice.
-	Bad_Member_Value = 5, // A value that the size and the sign do not hold, the absent word, or a value given twice.
+	Bad_Member_Value = 5, // A value that the size and the sign do not hold, or a value given twice.
 	No_Getter        = 6, // The getter names no export of the module.
 	Bad_Getter       = 7, // The getter takes a parameter, gives an error record, or gives no Enum.
 	Getter_Type      = 8, // The getter gives another enum than its parameter takes.
-	Bad_Optional     = 9, // An optional bit on a parameter that is no Enum, or past the parameters.
 }
 
 // enum_detail_of reads the detail of an Enum parameter: the index of its
@@ -76,12 +75,6 @@ enum_detail_make :: proc "contextless" (enum_index: u32, getter: u32) -> (detail
 	return enum_index | getter << 16, true
 }
 
-// parameter_optional says if a call may leave out the parameter index of
-// an export.
-parameter_optional :: proc "contextless" (function: Function, index: int) -> bool {
-	return index >= 0 && index < PARAMETER_CAPACITY && function.optional_parameters >> u16(index) & 1 != 0
-}
-
 // enum_value_fits says if a value is one that an enum of a size and a sign
 // holds.
 enum_value_fits :: proc "contextless" (size: u8, unsigned: bool, value: i64) -> bool {
@@ -93,17 +86,6 @@ enum_value_fits :: proc "contextless" (size: u8, unsigned: bool, value: i64) -> 
 		return value >= 0 && u64(value) < u64(1) << bits
 	}
 	return value >= -(i64(1) << (bits - 1)) && value < i64(1) << (bits - 1)
-}
-
-// enum_absent_word gives the word that a call gives for an optional Enum
-// parameter that it leaves out: each bit of the size of the enum set. A
-// callee that reads the low bytes of the register reads all ones; no member
-// has that value (enum_type refuses it).
-enum_absent_word :: proc "contextless" (of: Enum_Type) -> i64 {
-	if of.size >= 8 || !of.unsigned {
-		return -1
-	}
-	return i64(u64(1) << (8 * u64(of.size)) - 1)
 }
 
 // enum_value_of_register reads the integer result of an export that gives
@@ -173,7 +155,6 @@ enum_type :: proc "contextless" (file: []u8, index: u32) -> (value: Enum_Type, p
 	if name := string_at(file, value.name_offset, value.name_count); len(name) == 0 {
 		return {}, .Bad_Member_Name
 	}
-	absent := enum_absent_word(value)
 	for number in 0 ..< value.member_count {
 		item, item_ok := enum_member(file, value, number)
 		if !item_ok {
@@ -183,7 +164,7 @@ enum_type :: proc "contextless" (file: []u8, index: u32) -> (value: Enum_Type, p
 		if u32(len(name)) != item.name_count || !enum_member_name_valid(name) {
 			return {}, .Bad_Member_Name
 		}
-		if !enum_value_fits(value.size, value.unsigned, item.value) || item.value == absent {
+		if !enum_value_fits(value.size, value.unsigned, item.value) {
 			return {}, .Bad_Member_Value
 		}
 		for earlier in 0 ..< number {
@@ -254,18 +235,14 @@ enums_equal :: proc "contextless" (file: []u8, index: u32, other_file: []u8, oth
 
 // function_enums_check checks the enums of the description of an export:
 // each Enum parameter names a valid enum, and a getter that is an export
-// with no parameter and no error record whose result is an equal enum;
-// each optional bit is on an Enum parameter; an Enum result names a valid
-// enum and no getter. parameter is the parameter of the problem, from 0,
-// or -1 for the result and for the optional bits.
+// with no parameter and no error record whose result is an equal enum; an
+// Enum result names a valid enum and no getter. parameter is the parameter
+// of the problem, from 0, or -1 for the result.
 function_enums_check :: proc "contextless" (file: []u8, function: Function) -> (parameter: int, problem: Enum_Problem) {
 	function := function
 	count := min(int(function.parameter_count), PARAMETER_CAPACITY)
 	for word, index in function.parameters[:count] {
 		if word != u8(Type.Enum) {
-			if parameter_optional(function, index) {
-				return index, .Bad_Optional
-			}
 			continue
 		}
 		enum_index, getter := enum_detail_of(function.parameter_details[index])
@@ -285,9 +262,6 @@ function_enums_check :: proc "contextless" (file: []u8, function: Function) -> (
 		if !enums_equal(file, enum_index, file, getter_function.result_detail) {
 			return index, .Getter_Type
 		}
-	}
-	if function.optional_parameters >> u16(count) != 0 {
-		return -1, .Bad_Optional
 	}
 	if function.result == u8(Type.Enum) {
 		enum_index, getter := enum_detail_of(function.result_detail)

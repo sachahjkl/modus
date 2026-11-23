@@ -27,6 +27,8 @@
 package plans_core
 
 import "modus:contract/blake3"
+import "modus:contract/chosen_values"
+import "modus:contract/plan_values"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/powerbox"
 import "modus:contract/role_contract"
@@ -176,6 +178,18 @@ Plans_State :: struct {
 	trusted_display_slot: u32,
 	store:                pr.Private_Store_Port,
 	roles:                Roles_Port,
+	values:               Values_Port,
+	// The refusal of the core for the last set of values that it refused,
+	// and the cause of the last send that it did not take.
+	values_problem:       plan_values.Set_Problem,
+	values_cause:         Values_Cause,
+	// A send again of the values of the generation in force, or a commit,
+	// failed since the service last read this: the core may hold the values
+	// of another generation. The log names it, with that generation.
+	values_unreconciled:            bool,
+	values_unreconciled_generation: u64,
+	// The set that the values port sends: too large for the stack.
+	values_set:           [plan_values.SET_SIZE]u8,
 	// The refusal of the core for the last set that it refused: the log
 	// names it.
 	roles_refusal:        rd.Plan_Roles_Refusal,
@@ -426,6 +440,14 @@ roles_start :: proc "contextless" (state: ^Plans_State) -> rd.Plan_Roles_Load_Ou
 	}
 	refusal := roles_reconcile(state)
 	if refusal == .None {
+		// The core gets the values of the generation in force at each start
+		// of this service: it keeps none across a start of the machine.
+		if current, record, found := current_plan(state, MACHINE_PRINCIPAL); found {
+			// The store holds the generation: the set holds at once.
+			if values_resend(state, MACHINE_PRINCIPAL, current, record.generation) {
+				values_commit(state, MACHINE_PRINCIPAL, record.generation)
+			}
+		}
 		if state.roles_stored_refusal != .None {
 			return .Plan_Refused
 		}
@@ -489,6 +511,7 @@ roles_compensate :: proc "contextless" (state: ^Plans_State, principal: u64, ent
 		return
 	}
 	previous_plan, previous_record, _ := entry_current_plan(entry)
+	_ = values_resend(state, principal, previous_plan, previous_record.generation)
 	if roles_give(state, principal, previous_plan, previous_record.generation, .Rollback) != .None {
 		state.roles.synchronized = false
 		state.roles_compensation_failed = true
@@ -542,7 +565,7 @@ plan_roles_set_of :: proc "contextless" (plan: ^pr.Plan_Spec, generation, serial
 // roles_give sends the core the roles of plan as the set of a generation.
 // Only the plan of principal 0 names the roles of the machine: the plan of
 // another principal sends nothing.
-@(private = "file")
+@(private = "package")
 roles_give :: proc "contextless" (state: ^Plans_State, principal: u64, plan: ^pr.Plan_Spec, generation: u64, step: rd.Plan_Roles_Step) -> pr.Plan_Refusal {
 	if principal != MACHINE_PRINCIPAL {
 		return .None
@@ -812,7 +835,8 @@ commit_generation :: proc "contextless" (state: ^Plans_State, entry: ^Principal_
 	}
 	// The roles go to the core before the commit: a set that the core
 	// refuses commits nothing.
-	if refusal = roles_give(state, plan.principal, &kept, next_generation, .Apply); refusal != .None {
+	previous_plan, previous_record, _ := entry_current_plan(entry)
+	if refusal = plan_give(state, plan.principal, &kept, next_generation, .Apply, previous_plan, previous_record.generation); refusal != .None {
 		return {}, refusal
 	}
 	current_name := pr.plan_object_name(plan.principal, 0, true)
@@ -822,6 +846,8 @@ commit_generation :: proc "contextless" (state: ^Plans_State, entry: ^Principal_
 		roles_compensate(state, plan.principal, entry)
 		return {}, .Store_Failed
 	}
+	// The store committed: the values of the generation hold now.
+	values_commit(state, plan.principal, next_generation)
 	slot_index := entry.history_count
 	entry.plans[slot_index] = kept
 	entry.plan_memory[slot_index] = kept_memory
@@ -918,6 +944,25 @@ apply_plan :: proc "contextless" (
 	return record, .None
 }
 
+// decimal_put writes a word in decimal after length, as text_put writes a
+// text: the bytes that do not fit are not written, and the length still
+// counts them, so the caller refuses a line past its bound.
+@(private = "file")
+decimal_put :: proc "contextless" (text: []u8, length: int, word: u64) -> int {
+	digits: [20]u8
+	place := len(digits)
+	value := word
+	for {
+		place -= 1
+		digits[place] = u8('0' + value % 10)
+		value /= 10
+		if value == 0 {
+			break
+		}
+	}
+	return text_put(text, length, string(digits[place:]))
+}
+
 // display_lists_of_difference writes the two lists that the trusted display
 // shows for difference. An item names the kind and the name of its entry;
 // an added entry, and a changed one that adds or widens a grant or changes a
@@ -964,9 +1009,26 @@ display_lists_of_difference :: proc "contextless" (state: ^Plans_State, differen
 		case .Script_Fonts:
 		// Its one name, script_fonts, says what it is: a kind before it
 		// would say it twice.
+		case .Value:
+			// A lock and a default read apart: a lock holds over the choice
+			// of the principal.
+			layer_word := item.change == .Removed ? item.old_value_layer_word : item.new_value_layer_word
+			kind_text = layer_word == u64(chosen_values.Layer.Locked) ? "lock " : "value "
 		}
 		length = text_put(text[:], length, kind_text)
 		length = text_put(text[:], length, string(item.name_bytes[:item.name_length]))
+		if item.entry_kind == .Value && item.change != .Removed {
+			length = text_put(text[:], length, " = ")
+			if item.new_value_kind_word == u64(chosen_values.Entry_Kind.Text) {
+				// In quotes: the border of the plan took no control byte, so
+				// the text is one item of the list, whole.
+				length = text_put(text[:], length, "\"")
+				length = text_put(text[:], length, string(item.new_value_text[:min(int(item.new_value_text_length), pr.PLAN_VALUE_TEXT_BYTES)]))
+				length = text_put(text[:], length, "\"")
+			} else {
+				length = decimal_put(text[:], length, item.new_value_word)
+			}
+		}
 		addition := true
 		switch item.change {
 		case .None:
@@ -978,10 +1040,12 @@ display_lists_of_difference :: proc "contextless" (state: ^Plans_State, differen
 		case .Removed:
 			addition = false
 		case .Changed:
-			widens := item.added_grants_mask != 0 || item.old_module_hash != item.new_module_hash || (item.old_store_rights == .Read_Only && item.new_store_rights == .Read_Write)
+			// A value of the plan can widen an access or spend a resource:
+			// each change of one is on the side of the additions.
+			widens := item.added_grants_mask != 0 || item.old_module_hash != item.new_module_hash || (item.old_store_rights == .Read_Only && item.new_store_rights == .Read_Write) || item.entry_kind == .Value
 			if item.entry_kind == .Store_Grant {
 				length = text_put(text[:], length, item.new_store_rights == .Read_Write ? " read write" : " read")
-			} else {
+			} else if item.entry_kind != .Value {
 				length = text_put(text[:], length, widens ? " changed" : " narrowed")
 			}
 			addition = widens
@@ -991,13 +1055,13 @@ display_lists_of_difference :: proc "contextless" (state: ^Plans_State, differen
 		}
 		if addition {
 			if lists.added_count > 0 {
-				lists.added_length = text_put(lists.added[:], lists.added_length, ", ")
+				lists.added_length = text_put(lists.added[:], lists.added_length, pr.PLAN_DISPLAY_ITEM_SEPARATOR)
 			}
 			lists.added_length = text_put(lists.added[:], lists.added_length, string(text[:length]))
 			lists.added_count += 1
 		} else {
 			if lists.removed_count > 0 {
-				lists.removed_length = text_put(lists.removed[:], lists.removed_length, ", ")
+				lists.removed_length = text_put(lists.removed[:], lists.removed_length, pr.PLAN_DISPLAY_ITEM_SEPARATOR)
 			}
 			lists.removed_length = text_put(lists.removed[:], lists.removed_length, string(text[:length]))
 			lists.removed_count += 1
@@ -1383,7 +1447,8 @@ rollback_commit :: proc "contextless" (
 	if selected_index < 0 {
 		return {}, .Unknown_Generation
 	}
-	if refusal = roles_give(state, principal, &entry.plans[selected_index], selected.generation, .Rollback); refusal != .None {
+	previous_plan, previous_record, _ := entry_current_plan(entry)
+	if refusal = plan_give(state, principal, &entry.plans[selected_index], selected.generation, .Rollback, previous_plan, previous_record.generation); refusal != .None {
 		return {}, refusal
 	}
 	current_name := pr.plan_object_name(principal, 0, true)
@@ -1393,6 +1458,7 @@ rollback_commit :: proc "contextless" (
 		roles_compensate(state, principal, entry)
 		return {}, .Store_Failed
 	}
+	values_commit(state, principal, selected.generation)
 	entry.current_generation = selected.generation
 	state.counters.total_rollbacks += 1
 	return selected, .None

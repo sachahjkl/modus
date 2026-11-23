@@ -13,9 +13,9 @@
 //
 // **Start**: `start("browser")` in the console.
 //
-// **Grants**: none. The window is its one handle: the pages that it shows
-// are built into it (modus://welcome, modus://properties, modus://guide,
-// modus://forms). An address of HTTP or HTTPS gets a page that shows the
+// **Grants**: Serve, for its settings (settings.odin), and Store, which
+// keeps them. The pages that it shows are built into it (modus://welcome,
+// modus://properties, modus://guide, modus://forms). An address of HTTP or HTTPS gets a page that shows the
 // request that the worker of its origin writes, and says that this window
 // has no grant of the network.
 //
@@ -39,6 +39,7 @@ import "modus:contract/value_kinds"
 import "modus:display"
 import "modus:graphics"
 import "modus:interface"
+import "modus:kept_choices"
 import box_layout "modus:layout"
 import "modus:system"
 
@@ -72,10 +73,13 @@ LARGEST_HEIGHT :: 900
 // its need alone when the budget does not pay twice: 8192 pages hold the
 // page, its growth and the frame lists of the 13 reservations. A larger
 // page takes the pages that the budget holds, and past them it is cut.
-// 2604 + 8192 = 10796 (DOCUMENT_PAGES: the document).
-MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10796, processes = 1, threads = 1, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
-// The second surface, the glyph memory, and the document.
-#assert(MODULE_BUDGET.working_memory_pages == 2250 + 354 + DOCUMENT_PAGES)
+// The keeper of the settings (settings.odin) runs a worker thread: its
+// stack past the 16 pages that the tool counts for a thread, 48 pages.
+// 2604 + 8192 + 48 = 10844 (DOCUMENT_PAGES: the document).
+MODULE_BUDGET :: system.Stated_Budget{working_memory_pages = 10844, processes = 1, threads = 2, window_width = LARGEST_WIDTH, window_height = LARGEST_HEIGHT}
+// The second surface, the glyph memory, the document and the stack of the
+// keeper of the settings.
+#assert(MODULE_BUDGET.working_memory_pages == 2250 + 354 + DOCUMENT_PAGES + 48)
 DOCUMENT_PAGES :: 8192
 
 LINE :: graphics.LINE_HEIGHT
@@ -360,6 +364,10 @@ html_css_attribute :: proc "contextless" (node: u32, name: string) -> (value: st
 }
 
 act_run :: proc "contextless" (act: Act) -> bool {
+	// A page that the principal asked for stays when the kept home comes.
+	if act.kind != .None && act.kind != .Reload {
+		page_chosen_after_start = true
+	}
 	switch act.kind {
 	case .None:
 		return false
@@ -684,13 +692,20 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.log_fact(.Warning, Document_Memory_Refused{status = u64(status)})
 		system.stop(.Failed)
 	}
-	page_load(HOME_ADDRESS, true)
+	service, _ := system.service_open(ctx)
+	settings_open(ctx) // settings.odin: its read waits for the first frame.
+	page_load(home_text(), true)
 	frame_build(&window)
 	system.log_fact(.Info, Window_Ready{pages = u64(len(Built_In_Page))})
+	kept_choices.kept_load(&browser_kept)
 	for {
 		wait: system.Wait
 		display.wait_events(&wait, &window)
-		system.wait_end(&wait)
+		system.service_wait(&wait, &service)
+		ready := kept_choices.kept_wait(&browser_kept, &wait)
+		system.wait_end(&wait, ready ? system.time() : system.WAIT_FOREVER)
+		system.service_run(&service)
+		settings_step()
 		if interface.window_events(&window_memory.drawing, &window) {
 			frame_build(&window)
 		}

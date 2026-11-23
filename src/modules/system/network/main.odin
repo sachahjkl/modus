@@ -89,18 +89,9 @@ import op "modus:contract/operation"
 import "modus:contract/ring"
 import "modus:contract/value_kinds"
 import "modus:network"
+import "internal:network/dhcp_client"
 import "modus:system"
 
-LOCAL_ADDRESS :: 0x0A00020F // 10.0.2.15
-GATEWAY_ADDRESS :: 0x0A000202 // 10.0.2.2
-// The length of the prefix of the network of the machine: 24 bits on the
-// network of QEMU. The code reads the mask from it (interface_mask), so a
-// network of another length changes this one value.
-PREFIX_LENGTH :: 24
-// The address of the interface, which interface_address_check checks at the
-// start, and the mask of its prefix.
-interface_address := network.Interface_Address{local = LOCAL_ADDRESS, gateway = GATEWAY_ADDRESS, prefix_length = PREFIX_LENGTH}
-interface_mask: u32
 
 PLACE_COUNT :: 256 // The places of the frame region, frame.PLACE_SIZE bytes each.
 RECEIVE_PLACES :: 128 // Places 0 to 127: frames that arrive. 128 to 255: frames to send.
@@ -291,7 +282,7 @@ next_identification :: proc "contextless" () -> u16 {
 
 // next_hop gives the address whose hardware address a frame to address needs.
 next_hop :: proc "contextless" (address: u32) -> u32 {
-	return network.next_hop(interface_address, interface_mask, address)
+	return address & network_mask == local_address & network_mask ? address : gateway_address
 }
 
 neighbor_of :: proc "contextless" (address: u32) -> (hardware: network.Hardware, ok: bool) {
@@ -324,7 +315,7 @@ arp_request :: proc "contextless" (address: u32) {
 	if !ok {
 		return // The request that waits ends without an answer.
 	}
-	length := network.arp_frame(place_bytes(place), network.ARP_REQUEST, hardware, LOCAL_ADDRESS, {}, address)
+	length := network.arp_frame(place_bytes(place), network.ARP_REQUEST, hardware, local_address, {}, address)
 	frame_send(place, length)
 }
 
@@ -367,7 +358,7 @@ payload_send :: proc "contextless" (endpoint: ^Endpoint, index: int, tag: u32, p
 	// The length that ipv4_frame gives counts zero bytes after a short
 	// frame; the device adds those itself after the second part, so the
 	// first part ends after the copy of the header.
-	network.ipv4_frame(place_bytes(place), destination, hardware, LOCAL_ADDRESS, address, protocol, length, next_identification())
+	network.ipv4_frame(place_bytes(place), destination, hardware, local_address, address, protocol, length, next_identification())
 	headers := network.IPV4_DATA + SEND_HEADER_COPIED
 	frame_command(.Send, u32(place), {0 = u64(place * frame.PLACE_SIZE), 1 = u64(headers), 2 = data_place + SEND_HEADER_COPIED, 3 = u64(length - SEND_HEADER_COPIED), 4 = u64(index)})
 	send_owners[place - RECEIVE_PLACES] = {busy = true, endpoint = index, tag = tag}
@@ -401,7 +392,7 @@ echo_send :: proc "contextless" (endpoint_index: int, destination: network.Hardw
 	for index in 0 ..< bytes {
 		frame_bytes[network.ICMP_DATA + index] = u8(index)
 	}
-	length := network.echo_frame(frame_bytes, destination, hardware, LOCAL_ADDRESS, address, network.ICMP_ECHO_REQUEST, u16(ECHO_IDENTIFIER + endpoint_index), sequence, bytes, next_identification())
+	length := network.echo_frame(frame_bytes, destination, hardware, local_address, address, network.ICMP_ECHO_REQUEST, u16(ECHO_IDENTIFIER + endpoint_index), sequence, bytes, next_identification())
 	frame_send(place, length)
 	return true
 }
@@ -515,7 +506,7 @@ command :: proc "contextless" (endpoint: ^Endpoint, index: int, record: ring.Rec
 		for byte, place in hardware {
 			hardware_value |= u64(byte) << (8 * uint(place))
 		}
-		complete(endpoint, tag, .Succeeded, {LOCAL_ADDRESS, u64(endpoint.local_port), GATEWAY_ADDRESS, PREFIX_LENGTH, hardware_value, u64(link_up), datagram.grant_pack(endpoint.grant)})
+		complete(endpoint, tag, .Succeeded, {u64(local_address), u64(endpoint.local_port), u64(gateway_address), u64(address_prefix), hardware_value, u64(link_up), datagram.grant_pack(endpoint.grant)})
 	case .Send:
 		place, count := values[0], values[1]
 		if endpoint.region == nil {
@@ -672,16 +663,21 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 		problem(found)
 		return
 	}
+	// With no address, the service answers nothing but DHCP: an ARP or a
+	// segment for 0.0.0.0 names no machine.
+	if local_address == 0 && packet.kind != .Udp {
+		return
+	}
 	switch packet.kind {
 	case .None:
 	case .Arp:
-		if packet.target_address != LOCAL_ADDRESS {
+		if packet.target_address != local_address {
 			return // For another machine of the link.
 		}
 		asked := neighbor_answer(packet.sender_address, packet.sender_hardware, now)
 		if packet.operation == network.ARP_REQUEST {
 			if send_place, ok := send_place_take(); ok {
-				total := network.arp_frame(place_bytes(send_place), network.ARP_REPLY, hardware, LOCAL_ADDRESS, packet.sender_hardware, packet.sender_address)
+				total := network.arp_frame(place_bytes(send_place), network.ARP_REPLY, hardware, local_address, packet.sender_hardware, packet.sender_address)
 				frame_send(send_place, total)
 			}
 		}
@@ -689,7 +685,7 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 			resolved(packet.sender_address, packet.sender_hardware, now)
 		}
 	case .Icmp:
-		if packet.destination_address != LOCAL_ADDRESS {
+		if packet.destination_address != local_address {
 			return
 		}
 		if packet.icmp_kind == network.ICMP_ECHO_REQUEST {
@@ -700,7 +696,7 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 			}
 			reply := place_bytes(send_place)
 			copy(reply[network.ICMP_DATA:], packet.data)
-			total := network.echo_frame(reply, packet.source, hardware, LOCAL_ADDRESS, packet.source_address, network.ICMP_ECHO_REPLY, packet.identifier, packet.sequence, min(len(packet.data), network.ICMP_DATA_LIMIT), next_identification())
+			total := network.echo_frame(reply, packet.source, hardware, local_address, packet.source_address, network.ICMP_ECHO_REPLY, packet.identifier, packet.sequence, min(len(packet.data), network.ICMP_DATA_LIMIT), next_identification())
 			frame_send(send_place, total)
 			answered += 1
 			return
@@ -713,7 +709,13 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 			}
 		}
 	case .Udp:
-		if packet.destination_address != LOCAL_ADDRESS {
+		// A reply of a DHCP server comes to the broadcast address or to the
+		// address that it offers, before the machine holds it.
+		if packet.destination_port == dhcp_client.CLIENT_PORT && packet.source_port == dhcp_client.SERVER_PORT {
+			dhcp_arrived(packet, now)
+			return
+		}
+		if packet.destination_address != local_address || local_address == 0 {
 			return
 		}
 		endpoint := udp_endpoint_of(packet.destination_port)
@@ -733,7 +735,7 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 		}
 		deliver(endpoint, packet)
 	case .Tcp:
-		if packet.destination_address != LOCAL_ADDRESS {
+		if packet.destination_address != local_address {
 			return
 		}
 		// The endpoint of the local TCP port: a listen port, or a port of
@@ -767,7 +769,7 @@ arrived :: proc "contextless" (place: int, length: int, now: u64) {
 				network.problem_count(&endpoint.problems, {kind = .Not_Granted, layer = .Tcp, offset = offset, value = u32(packet.source_port), limit = u32(grant.port)}, .Endpoint)
 				return
 			}
-			if !network.source_valid(packet.source_address, LOCAL_ADDRESS, interface_mask) {
+			if !network.source_valid(packet.source_address, local_address, network_mask) {
 				network.problem_count(&endpoint.problems, {kind = .Bad_Header, layer = .Ipv4, offset = network.ETHERNET_HEADER + 12, value = packet.source_address}, .Endpoint)
 				return
 			}
@@ -833,7 +835,7 @@ udp_remote_admitted :: proc "contextless" (endpoint: ^Endpoint, packet: network.
 	case data_bytes < datagram.LISTEN_FIRST_LEAST:
 		network.problem_count(&endpoint.problems, {kind = .Bad_Length, layer = .Udp, offset = offset + 4, value = u32(data_bytes), limit = datagram.LISTEN_FIRST_LEAST}, .Endpoint)
 		return false
-	case !network.source_valid(packet.source_address, LOCAL_ADDRESS, interface_mask):
+	case !network.source_valid(packet.source_address, local_address, network_mask):
 		network.problem_count(&endpoint.problems, {kind = .Bad_Header, layer = .Ipv4, offset = network.ETHERNET_HEADER + 12, value = packet.source_address}, .Endpoint)
 		return false
 	case endpoint.posted_count == 0:
@@ -1277,19 +1279,6 @@ frame_service_check :: proc "contextless" () {
 // process that needs an endpoint (src/md/features/missing_hardware.md).
 @(export, link_name = "entry")
 entry :: proc "c" (ctx: ^system.Context) -> ! {
-	// The address of the interface, before any frame: a prefix that does
-	// not fit the address would send each frame to the wrong hop.
-	mask, interface_problem := network.interface_address_check(interface_address)
-	switch interface_problem {
-	case .None:
-		interface_mask = mask
-	case .Prefix_Length:
-		fail("the prefix of the address of the interface is not 1 to 32 bits")
-	case .Local_Address:
-		fail("the address of the interface is not the address of a host of its prefix")
-	case .Gateway:
-		fail("the gateway is not a host on the link of the prefix of the interface")
-	}
 	frames_memory = ctx.handles[frame.GRANT_RING]
 	control_memory = ctx.handles[datagram.SERVICE_CONTROL]
 	status: system.Status
@@ -1331,25 +1320,23 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	info := call(.Info, TAG_INFO)
 	hardware = frame.hardware(info.values[0])
 	link_up = info.values[1] != 0
+	// The address: the static address of the plan, or DHCP (dhcp.odin).
+	address_start(ctx, system.time())
 	for place in RECEIVE_PLACES ..< PLACE_COUNT {
 		send_place_free(place)
 	}
 	for place in 0 ..< min(RECEIVE_PLACES, int(info.values[3])) {
 		frame_receive(place)
 	}
-	text: [64]u8
+	text: [HARDWARE_ADDRESS_FIELD_BYTES]u8
 	writer := system.Writer{buffer = text[:]}
-	network.address_write(&writer, LOCAL_ADDRESS)
-	system.write_bytes(&writer, {'/'})
-	system.write_unsigned(&writer, u64(interface_address.prefix_length))
-	system.write_bytes(&writer, {' '})
 	network.hardware_write(&writer, hardware)
 	// The state of the link is a case of the sentence: each one is a fact
 	// type.
 	if link_up {
-		system.log_fact(.Info, Ready_Link_Up{receive_places = u64(min(RECEIVE_PLACES, int(info.values[3]))), interface_address = value_kinds.text_field(system.written(&writer), INTERFACE_ADDRESS_FIELD_BYTES)})
+		system.log_fact(.Info, Ready_Link_Up{receive_places = u64(min(RECEIVE_PLACES, int(info.values[3]))), hardware_address = value_kinds.text_field(system.written(&writer), HARDWARE_ADDRESS_FIELD_BYTES)})
 	} else {
-		system.log_fact(.Info, Ready_Link_Down{receive_places = u64(min(RECEIVE_PLACES, int(info.values[3]))), interface_address = value_kinds.text_field(system.written(&writer), INTERFACE_ADDRESS_FIELD_BYTES)})
+		system.log_fact(.Info, Ready_Link_Down{receive_places = u64(min(RECEIVE_PLACES, int(info.values[3]))), hardware_address = value_kinds.text_field(system.written(&writer), HARDWARE_ADDRESS_FIELD_BYTES)})
 	}
 	// The cost of what this process writes for each datagram or segment that leaves:
 	// the headers of IPv4 and Ethernet, with the checksum of the IPv4
@@ -1361,7 +1348,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		place, _ := send_place_take()
 		start := system.time()
 		for round in 0 ..< ROUNDS {
-			network.ipv4_frame(place_bytes(place), hardware, hardware, LOCAL_ADDRESS, GATEWAY_ADDRESS, network.PROTOCOL_UDP, PAYLOAD, u16(round))
+			network.ipv4_frame(place_bytes(place), hardware, hardware, local_address, gateway_address, network.PROTOCOL_UDP, PAYLOAD, u16(round))
 		}
 		took := system.time() - start
 		send_place_free(place)
@@ -1425,8 +1412,10 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		for record in system.receive(&control.commands) {
 			controlled(record)
 		}
+		// While no address holds, a request of an endpoint waits in its ring:
+		// no frame of a process leaves from 0.0.0.0 (src/md/features/dhcp_client.md).
 		for &endpoint, index in endpoints {
-			if endpoint.ring_memory == 0 {
+			if endpoint.ring_memory == 0 || local_address == 0 {
 				continue
 			}
 			for ring.count(&endpoint.datagram_ring.completions) + endpoint.in_flight + 1 < ring.capacity(&endpoint.datagram_ring.completions) {
@@ -1445,7 +1434,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 				}
 			}
 		}
-		deadline := expire(now)
+		deadline := min(expire(now), dhcp_step(now))
 		if frames_changed {
 			frames_changed = false
 			system.wake_reader(&frames.commands)
@@ -1462,7 +1451,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		system.wait_records(&wait, &frames.completions)
 		system.wait_records(&wait, &control.commands)
 		for &endpoint in endpoints {
-			if endpoint.ring_memory != 0 && !endpoint.has_held && ring.count(&endpoint.datagram_ring.completions) + endpoint.in_flight + 1 < ring.capacity(&endpoint.datagram_ring.completions) {
+			if endpoint.ring_memory != 0 && local_address != 0 && !endpoint.has_held && ring.count(&endpoint.datagram_ring.completions) + endpoint.in_flight + 1 < ring.capacity(&endpoint.datagram_ring.completions) {
 				system.wait_records(&wait, &endpoint.datagram_ring.commands)
 			}
 		}

@@ -348,10 +348,10 @@ What follows from the rule:
 
 | Process | The answer for the console |
 |---|---|
-| A process with no grant (`debug_target`, `plasma`, `fault`, `hall_of_fame`, `browser`, each process that the root service gives only the log and a window) | Given |
+| A process with no grant (`debug_target`, `plasma`, `fault`, `hall_of_fame`, each process that the root service gives only the log and a window) | Given |
 | A process with a right of the machine that the console holds, Inspect or Stop (`time_page`, `processors`, `pages`, `flow`, `crowd`) | Given, until the grant `machine` of the console is revoked |
 | A process with the boot image, with or without Inspect (`pointers`, `rings`, `boot`, `rights`, `frames`, `locks`, `address_space`, `imports`, `return_fault`, `fault_ring`, `debugged`, `replay_probe`, `cryptography_vectors`, `interface_through_module`) | Given, until the grant `image` of the console is revoked |
-| A process with a private store (`notes`, `hierarchy`, `ranges`, `errors`, `unlock`) | Refused: the grant Store |
+| A process with a private store (`notes`, `browser`, `hierarchy`, `ranges`, `errors`, `unlock`) | Refused: the grant Store |
 | A service (`storage`, `monitor`, `inspect`, `log`, `settings`, `date`, `manual`, `server`, `debugger`, the compositor) | Refused: the grant Serve |
 | A process with a terminal (`flood`, a second console) | Refused: the grant Terminal |
 | A process with an endpoint of the network (`net`, `fetch`, `quic_echo`, `remote`) | Refused: the grant Network, or Connect |
@@ -917,7 +917,9 @@ modustool: src/library/modus/contract/root_delegation/role_catalog.odin:368: the
 
 **The display texts of the modules.** Each display text of a module — a `member_texts` table, a `Setting_Text` title, explanation or value label, a `*_EXPLANATION` constant, a `window_problem_texts` sentence, an action bar item, a button label, and a context menu item — must obey `docs/WRITING.md`. `display_text_check` (`tools/modustool/checks/display_text_check.odin`) parses each non-test source under `src/modules` and refuses forbidden words (`invalid`, `illegal`, `fatal`, `catastrophic`, `please`, `sorry`, `abort`, `kill`, `terminate`, `unable to`), contractions, `Error` or `Failure` titles, `failed` with no cause after it, non-sentence case, a label that ends with a period, and a sentence that lacks an end period or question mark.
 
-**When they run.** `modustool check` runs the eight after the check of the imports, and `modustool rule-checks` runs them alone. Host tests of the tool hold the same conditions on the sources of the repository.
+**A bound of the tests is for a check.** `service_deadline_check` (`tools/modustool/checks/service_deadline_check.odin`) refuses `TEST_HANG_BOUND_MILLISECONDS` and `TEST_PROGRESS_OVERALL_BOUND_MILLISECONDS` in each source of `src/` but a host test, a test module, a demonstration (each is a case of a machine test) and `src/library/modus/system/test_bounds.odin`. A service or a library that waits for another part of the machine names a deadline of its contract from `system.ANSWER_BOUND_MILLISECONDS`, which is not over the hang bound of the tests, so that the line of the service that gives up comes before the report of the check.
+
+**When they run.** `modustool check` runs the nine after the check of the imports, and `modustool rule-checks` runs them alone. Host tests of the tool hold the same conditions on the sources of the repository.
 
 ## The reuse list
 
@@ -1295,7 +1297,7 @@ All the automation of the project is one program of the host, `tools/modustool`.
 | `mark <what> [options]` | Makes one file of the mark: the still mark, a frame, an animation, a tile map, the table of a tile map, the picture for a developer, as a PNG file, an icon file, a vector file or an animated PNG file; `mark uses` prints the table of the uses ("The pictures of the mark") |
 | `similarity`, `similarity near <file>:<line>`, `similarity pair <file>:<line> <file>:<line>` | Measures how similar the code pieces of `src/` and `tools/` are: families with their factoring template, ranked by the nodes that a factoring saves, in `build/similarity/`; or the procedures most similar to one; or the score of two procedures ("The similarity finder") |
 | `library-imports` | Checks that each import of each source file of `src/` follows the rule of its file, that the kernel and a contract package import no support package, and that each host test that imports a package of `core:` starts with `#+build !freestanding` ("The imports of the sources of the system") |
-| `rule-checks` | Checks the count of the kernel operations against the properties, that no source of the system calls an allocator, that each export that fails gives an error record, that no family of integer constants is a closed set of choices, that no cast of a word to an enum skips its border, that no stop word skips its border, that no source outside the one file of the seed uses `rdrand` or `rdseed`, that only the loader and the root service name the field `image_checks`, that no package variable needs a start of the runtime, and that module display texts keep `docs/WRITING.md` ("The rules that a check holds") |
+| `rule-checks` | Checks the count of the kernel operations against the properties, that no source of the system calls an allocator, that each export that fails gives an error record, that no family of integer constants is a closed set of choices, that no cast of a word to an enum skips its border, that no stop word skips its border, that no source outside the one file of the seed uses `rdrand` or `rdseed`, that only the loader and the root service name the field `image_checks`, that no package variable needs a start of the runtime, that module display texts keep `docs/WRITING.md`, and that no service or library names a bound of the tests ("The rules that a check holds") |
 | `cryptography-take`, `cryptography-system-hashes`, `cryptography-origin` | Take a file of the cryptography of Odin, list the files that the project wrote, and check the origin of each taken file (`docs/CRYPTOGRAPHY.md`) |
 | `film [terminal \| palette \| heron \| boot \| desktop \| console \| program]` | Films a scenario of the machine while the scenario types: `build/films/<name>.mp4`, `build/films/<name>.webm` and the cue file `build/films/<name>.cues` ("The film", "The film cues"; needs ffmpeg), and `docs/films/<name>.webm` when a news entry names the film ("The film of a document"). No argument: the film of the terminal |
 

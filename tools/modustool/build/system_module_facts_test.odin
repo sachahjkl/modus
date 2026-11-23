@@ -376,7 +376,8 @@ the_late_facts_of_the_device_services_write_the_lines_of_before :: proc(t: ^test
 	failure_texts := failures()
 	counts, edges := edges_make().counts, edges_make().sizes
 	protocols := [2]string{"TCP", "UDP"}
-	interface_addresses := [2]string{"255.255.255.255/24 ff:ff:ff:ff:ff:ff", "10.0.2.15/24 52:54:00:12:34:56"}
+	hardware_addresses := [2]string{"ff:ff:ff:ff:ff:ff", "52:54:00:12:34:56"}
+	ip_addresses := [2]string{"255.255.255.255", "10.0.2.15"}
 	for item, index in modules {
 		file, ok := facts_file_of_folder(t, strings.concatenate({foundation.SYSTEM_MODULE_SOURCES, item.folder}, context.temp_allocator))
 		if !ok {
@@ -430,9 +431,16 @@ the_late_facts_of_the_device_services_write_the_lines_of_before :: proc(t: ^test
 				}
 			}
 		}
-		for address in interface_addresses {
-			facts_expect_line(t, fact_test_render(t, network, "network_service", "Ready_Link_Up", {{"receive_places", count}, {"interface_address", address}}), line_of_before("network: ok, the address ", address, ", the gateway 10.0.2.2, the link is ", "up", ", ", count, " places for frames that arrive"))
-			facts_expect_line(t, fact_test_render(t, network, "network_service", "Ready_Link_Down", {{"receive_places", count}, {"interface_address", address}}), line_of_before("network: ok, the address ", address, ", the gateway 10.0.2.2, the link is ", "down", ", ", count, " places for frames that arrive"))
+		for address in hardware_addresses {
+			facts_expect_line(t, fact_test_render(t, network, "network_service", "Ready_Link_Up", {{"receive_places", count}, {"hardware_address", address}}), line_of_before("network: ok, the hardware address ", address, ", the link is ", "up", ", ", count, " places for frames that arrive"))
+			facts_expect_line(t, fact_test_render(t, network, "network_service", "Ready_Link_Down", {{"receive_places", count}, {"hardware_address", address}}), line_of_before("network: ok, the hardware address ", address, ", the link is ", "down", ", ", count, " places for frames that arrive"))
+		}
+		// The address lines of DHCP and of the plan, which the machine tests
+		// wait for.
+		for address in ip_addresses {
+			facts_expect_line(t, fact_test_render(t, network, "network_service", "Address_Bound", {{"prefix", count}, {"lease", u64(3600)}, {"address", address}, {"gateway", address}}), line_of_before("network: the address ", address, "/", count, " from DHCP, the gateway ", address, ", a lease of ", sentence.Duration{3600, .Seconds}))
+			facts_expect_line(t, fact_test_render(t, network, "network_service", "Address_Static", {{"prefix", count}, {"address", address}, {"gateway", address}}), line_of_before("network: the static address ", address, "/", count, " of the plan, the gateway ", address))
+			facts_expect_line(t, fact_test_render(t, network, "network_service", "Address_Lost", {{"address", address}}), line_of_before("network: the lease of the address ", address, " ended: no frame leaves until DHCP gives an address"))
 		}
 	}
 }

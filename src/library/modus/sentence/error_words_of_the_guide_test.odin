@@ -162,4 +162,17 @@ a_change_during_a_repair_of_the_counts :: proc(t: ^testing.T) {
 	record = errors.error_make(.Busy, .Requests, 0, 3, 7, 0)
 	error_text(&writer, &record, "storage.write", "")
 	testing.expect(t, !strings.contains(written(&writer), "repair"))
+// A refusal under a lock of the plan names the plan as its fix, never the
+// starter of the process; a reset with no argument names the setting.
+@(test)
+a_lock_of_the_plan_names_the_plan :: proc(t: ^testing.T) {
+	buffer: [512]u8
+	writer := Writer{buffer = buffer[:]}
+	record := errors.error_make(.No_Grant, .Plan_Lock, 1)
+	error_text(&writer, &record, "monitor.set", "sample_interval")
+	testing.expect_value(t, written(&writer), "monitor.set: the argument sample_interval is locked by the plan of principal 0: the value of the plan holds, and only a new plan changes it")
+	writer = Writer{buffer = buffer[:]}
+	record = errors.error_make(.No_Grant, .Plan_Lock, 0)
+	error_text(&writer, &record, "browser.reset", "")
+	testing.expect_value(t, written(&writer), "browser.reset: the setting is locked by the plan of principal 0: the value of the plan holds, and only a new plan changes it")
 }

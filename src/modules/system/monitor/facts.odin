@@ -1,5 +1,6 @@
 package monitor
 
+import "modus:contract/errors"
 import "modus:contract/value_kinds"
 import process_page "modus:contract/disk_process_page"
 
@@ -36,3 +37,21 @@ No_Inspect_Grant :: struct {}
 // The first picture of the monitor is drawn.
 @(log_fact = "monitor: ok")
 Window_Ready :: struct {}
+
+// The bytes of the Text field of a problem of the kept record: the longest
+// of chosen_values.RECORD_PROBLEM_NAMES, and a zero byte.
+SETTINGS_PROBLEM_FIELD_BYTES :: size_of(Settings_Unreadable{}.problem)
+
+@(log_fact = "monitor: no private store: the settings hold for this run only")
+Settings_Not_Kept :: struct {}
+
+@(log_fact = "monitor: the store did not give the kept settings, so the defaults hold and the record stays as it is: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Settings_Not_Read :: distinct errors.Error_Record_Fact_Fields
+
+@(log_fact = "monitor: the kept settings are a record that this release cannot read ({problem}): the defaults hold, and the record stays as it is until the principal changes a setting")
+Settings_Unreadable :: struct {
+	problem: [24]u8, // N written out: the tool reads the size of a Text field from the source.
+}
+
+@(log_fact = "monitor: the store did not keep a setting, which holds for this run only: kind {kind}, unit {unit}, operation {operation}, argument {argument}, value {value}, limit {limit}, found {found}")
+Settings_Write_Refused :: distinct errors.Error_Record_Fact_Fields

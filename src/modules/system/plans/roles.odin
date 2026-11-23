@@ -9,6 +9,8 @@ import "base:intrinsics"
 import "internal:plans/plans_core"
 import "modus:contract/call_outcome"
 import "modus:contract/enum_word"
+import "modus:contract/plan_values"
+import "modus:contract/value_kinds"
 import rd "modus:contract/root_delegation"
 import "modus:contract/ring"
 import "modus:contract/root_ring"
@@ -16,7 +18,7 @@ import "modus:system"
 
 // The bound of the wait for the completion of a Plan_Roles: the core
 // answers at once, so only a core that hangs meets it.
-ROLES_ANSWER_BOUND_MILLISECONDS :: system.TEST_HANG_BOUND_MILLISECONDS
+ROLES_ANSWER_BOUND_MILLISECONDS :: system.ANSWER_BOUND_MILLISECONDS
 
 // The roles page that the core lent, mapped.
 roles_page: ^rd.Plan_Roles_Set
@@ -116,6 +118,7 @@ roles_port_bind :: proc "contextless" (state: ^plans_core.Plans_State) -> bool {
 	plans_core.roles_port_bind(state, {replace = roles_replace, read = roles_read, pause = roles_pause, serial = serial, generation = generation})
 	outcome := plans_core.roles_start(state)
 	roles_busy_tell(state)
+	values_resend_tell(state)
 	switch outcome {
 	case .None, .No_Plan, .Applied:
 	case .Plan_Refused:
@@ -167,6 +170,20 @@ roles_compensation_tell :: proc "contextless" (state: ^plans_core.Plans_State) {
 	}
 	state.roles_compensation_failed = false
 	system.log_fact(.Warning, Plan_Roles_Unreconciled{generation = state.roles.generation, refusal_code = u64(state.roles_refusal)})
+}
+
+// values_resend_tell writes the line of values that the core did not take,
+// sent again or committed, once.
+values_resend_tell :: proc "contextless" (state: ^plans_core.Plans_State) {
+	if !state.values_unreconciled {
+		return
+	}
+	state.values_unreconciled = false
+	cause := plans_core.VALUES_CAUSE_NAMES[state.values_cause]
+	if state.values_cause == .Refused {
+		cause = plan_values.SET_PROBLEM_NAMES[state.values_problem]
+	}
+	system.log_fact(.Warning, Plan_Values_Unreconciled{generation = state.values_unreconciled_generation, cause = value_kinds.text_field(cause, VALUES_CAUSE_FIELD_BYTES)})
 }
 
 // roles_replace writes a set in the roles page and asks the core to take it.

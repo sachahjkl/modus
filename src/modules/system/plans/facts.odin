@@ -25,6 +25,18 @@ Plan_Roles_Unreconciled :: struct {
 	refusal_code: u64,
 }
 
+// The root service did not take the values of a generation that the store
+// holds, sent again or committed, within the tries of a send: it holds
+// other values until the next set that it takes. cause names why: no
+// answer, the problem of a refused set, or a commit not taken.
+@(log_fact = "plans: the root service did not take the values of generation {generation} ({cause}): it holds other values until the next apply or rollback")
+Plan_Values_Unreconciled :: struct {
+	generation: u64,
+	cause:      [24]u8, // N written out: the tool reads the size of a Text field from the source.
+}
+
+VALUES_CAUSE_FIELD_BYTES :: size_of(Plan_Values_Unreconciled{}.cause)
+
 // The root service refused the roles of a plan of principal 0: nothing was
 // committed.
 @(log_fact = "plans: the root service refused the roles of generation {generation} with refusal {refusal_code}")
@@ -80,6 +92,15 @@ Plan_Rollback_Asked :: struct {
 Plan_Rolled_Back :: struct {
 	generation: u64,
 	principal:  u64,
+}
+
+// A value of a plan that the description of its owner refuses: the entry,
+// from 0, and the problem (plan_value_description.Problem).
+@(log_fact = "plans: refused a plan of principal {principal}: its entry {entry} is a value that its owner does not describe (problem {problem})")
+Plan_Value_Not_Described :: struct {
+	principal: u64,
+	entry:     u64,
+	problem:   u64,
 }
 
 @(log_fact = "plans: refused command for principal {principal} with refusal {refusal_code}")

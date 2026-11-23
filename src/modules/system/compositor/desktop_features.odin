@@ -116,10 +116,11 @@ desktop_features_init :: proc "contextless" (screen_w, screen_h, bar_h: i32) {
 		bar_height    = bar_h,
 	}
 	_ = desktop_layout.workspace_manager_init(&desktop_workspaces)
-	notifications.queue_init(&desktop_notifications, min_interval_ms = 500)
-	_ = screen_reader.magnifier_init(&desktop_magnifier, screen_w, screen_h, 16)
+	notifications.queue_init(&desktop_notifications)
+	_ = screen_reader.magnifier_init(&desktop_magnifier, screen_w, screen_h, u16(display_choices_in_force.magnifier_eighths))
 	desktop_magnifier.enabled = false
-	desktop_bar_position = .Top
+	desktop_bar_position = display_choices_in_force.bar_edge
+	desktop_notifications.do_not_disturb = display_choices_in_force.do_not_disturb == .On
 	desktop_tray = {}
 	desktop_shell.tray_set(&desktop_tray, .Locale, true, false, "EN")
 	desktop_context_menu = {}
@@ -337,9 +338,9 @@ desktop_context_action :: proc "contextless" (act_id: u32) {
 				}
 			}
 		case .Bar_Top:
-			desktop_bar_position_set(.Top)
+			display_bar_edge_choose(.Top)
 		case .Bar_Bottom:
-			desktop_bar_position_set(.Bottom)
+			display_bar_edge_choose(.Bottom)
 		case .Snap_Left:
 			_ = desktop_snap_front_window(.Left_Half)
 		case .Snap_Right:
@@ -1087,7 +1088,7 @@ desktop_notification_post :: proc "contextless" (source_id: u64, urgency: notifi
 	if !desktop_features_ready {
 		return 0, .Nil_Queue
 	}
-	id, refusal = notifications.queue_post(&desktop_notifications, source_id, urgency, now_ms, 8_000, title, body, label, cards_limit)
+	id, refusal = notifications.queue_post(&desktop_notifications, source_id, urgency, now_ms, display_choices_in_force.notification_show_milliseconds, title, body, label, cards_limit)
 	if refusal != .None {
 		return 0, refusal
 	}

@@ -10,6 +10,7 @@
 package plans_recipes
 
 import "modus:contract/blake3"
+import "modus:contract/chosen_values"
 import "modus:contract/declaration_eval"
 import "modus:contract/enum_word"
 import "modus:contract/object_cache"
@@ -32,7 +33,12 @@ CONSOLE_MODULE_NAME_PREFIX :: "module_"
 CONSOLE_MODULE_NAME_DIGITS :: 16
 
 // One entry of a plan, as a row of the table that plans.difference and
-// plans.apply take.
+// plans.apply take. A row is a record that a call carries, at most
+// module.RECORD_SIZE_LIMIT bytes, so the text of a value of the kind Text
+// takes one row for each PLAN_ROW_TEXT_BYTES of it: the rows of one text
+// follow each other, with its name, its layer and the kind Text, and the
+// number of the part in value_word, from 0 (plan_rows_of_entry). The border
+// joins them into one entry (plan_of_rows).
 Plan_Entry_Row :: struct {
 	kind_word:            i64,
 	role_word:            i64,
@@ -42,9 +48,18 @@ Plan_Entry_Row :: struct {
 	interposed_over_hash: value_kinds.Hash_Field,
 	recipe_hash:          value_kinds.Hash_Field,
 	name:                 [64]u8,
+	value_word:           i64, // A Value of the kind Word: the word of the field. Of the kind Text: the number of the part of the text in this row, from 0.
+	value_layer_word:     i64, // A Value: Plan_Default (1) or Locked (3).
+	value_kind_word:      i64, // A Value: Word (1) or Text (2) (chosen_values.Entry_Kind); 0 for another kind of entry.
+	value_text:           [40]u8, // A Value of the kind Text: one part of its text, PLAN_ROW_TEXT_BYTES bytes but in its last part, then zero bytes.
 }
 
-#assert(size_of(Plan_Entry_Row) == 192)
+// The bytes of the text of a value in one row.
+PLAN_ROW_TEXT_BYTES :: 40
+#assert(size_of(Plan_Entry_Row) == 256) // module.RECORD_SIZE_LIMIT: a call carries the row.
+#assert(len(Plan_Entry_Row{}.value_text) == PLAN_ROW_TEXT_BYTES)
+// The rows of the longest text.
+PLAN_TEXT_ROWS_MOST :: (PLAN_VALUE_TEXT_BYTES + PLAN_ROW_TEXT_BYTES - 1) / PLAN_ROW_TEXT_BYTES
 #assert(len(Plan_Entry_Row{}.name) == MAX_ENTRY_NAME_BYTES)
 
 // Whether an apply of a difference needs the consent of the principal on the
@@ -67,9 +82,14 @@ Plan_Diff_Row :: struct {
 	old_module_hash:       value_kinds.Hash_Field,
 	new_module_hash:       value_kinds.Hash_Field,
 	name:                  [64]u8,
+	old_value_word:        i64, // A Value: the word before, 0 for an added one.
+	new_value_word:        i64, // A Value: the word after, 0 for a removed one.
+	old_value_layer_word:  i64,
+	new_value_layer_word:  i64,
+	new_value_kind_word:   i64, // A Value: the kind after, Word (1) or Text (2); 0 for a removed one. A text is not in the row: the trusted display shows it.
 }
 
-#assert(size_of(Plan_Diff_Row) == 184)
+#assert(size_of(Plan_Diff_Row) == 224)
 
 // The counts of a difference and the two plan hashes. An apply names
 // current_plan_hash, so an apply of a difference that another apply made
@@ -85,6 +105,9 @@ Plan_Difference_Summary :: struct {
 	added_stores:       i64,
 	removed_stores:     i64,
 	changed_stores:     i64,
+	added_values:       i64,
+	removed_values:     i64,
+	changed_values:     i64,
 	added_grants:       i64,
 	removed_grants:     i64,
 	consent_word:       i64,
@@ -92,7 +115,7 @@ Plan_Difference_Summary :: struct {
 	proposed_plan_hash: value_kinds.Hash_Field,
 }
 
-#assert(size_of(Plan_Difference_Summary) == 168)
+#assert(size_of(Plan_Difference_Summary) == 192)
 
 // The hash of the current plan that an apply expects. Zero: the principal
 // has no applied plan yet.
@@ -219,8 +242,9 @@ text_field_length :: proc "contextless" (field: []u8) -> (length: int, ok: bool)
 
 // plan_of_rows is the border of a plan that an export takes: it fills out
 // from rows for principal, then checks it whole with plan_validate. out
-// holds the plan in its own memory: more rows than it holds are
-// Too_Many_Entries. On a refusal, out is empty and keeps its memory.
+// holds the plan in its own memory: more entries than it holds are
+// Too_Many_Entries. The rows of the parts of one text join into one entry.
+// On a refusal, out is empty and keeps its memory.
 plan_of_rows :: proc "contextless" (principal: u64, rows: []Plan_Entry_Row, out: ^Plan_Spec) -> (refusal: Plan_Refusal, bad_index: u32) {
 	if out == nil {
 		return .Buffer_Too_Small, 0
@@ -229,17 +253,13 @@ plan_of_rows :: proc "contextless" (principal: u64, rows: []Plan_Entry_Row, out:
 	if len(rows) == 0 {
 		return .Empty_Plan, 0
 	}
-	if len(rows) > int(PLAN_ENTRY_COUNT_LIMIT) || len(rows) > len(out.entries) || len(rows) > len(out.order) {
-		return .Too_Many_Entries, 0
-	}
 	out.principal = principal
 	for index in 0 ..< len(rows) {
-		if !plan_entry_of_row(&rows[index], &out.entries[index]) {
+		if row_refusal := plan_row_add(out, &rows[index]); row_refusal != .None {
 			plan_clear(out)
-			return .Invalid_Name, u32(index)
+			return row_refusal, u32(index)
 		}
 	}
-	out.entry_count = u32(len(rows))
 	refusal, bad_index = plan_validate(out)
 	if refusal != .None {
 		plan_clear(out)
@@ -247,14 +267,42 @@ plan_of_rows :: proc "contextless" (principal: u64, rows: []Plan_Entry_Row, out:
 	return refusal, bad_index
 }
 
-// plan_entry_of_row writes the entry of a row: false when the name of the
-// row is no text or is empty. The other fields are checked whole by
-// plan_validate.
-plan_entry_of_row :: proc "contextless" (row: ^Plan_Entry_Row, entry: ^Plan_Entry) -> bool {
+// plan_row_add adds one row to the plan that out holds: a new entry, or
+// the next part of the text of the entry before it. A caller that reads
+// its rows one at a time out of memory that another process can change
+// (the region of a call) copies each row once and adds it; plan_validate
+// then checks the plan whole. On a refusal, out is as it was before the
+// row, and the caller clears it.
+plan_row_add :: proc "contextless" (out: ^Plan_Spec, row: ^Plan_Entry_Row) -> Plan_Refusal {
+	count := int(out.entry_count)
 	length, text_ok := text_field_length(row.name[:])
 	if !text_ok || length == 0 {
-		return false
+		return .Invalid_Name
 	}
+	// A part of a text: it follows the part before it, of the same name,
+	// layer and kind, and the part before is whole.
+	part_length, part_whole := text_field_length(row.value_text[:])
+	is_text := row.kind_word == i64(Plan_Entry_Kind.Value) && row.value_kind_word == i64(chosen_values.Entry_Kind.Text)
+	if !part_whole {
+		return .Bad_Value
+	}
+	if is_text && row.value_word != 0 {
+		before := count > 0 ? &out.entries[count - 1] : nil
+		parts := before == nil ? 0 : (int(before.value_text_length) + PLAN_ROW_TEXT_BYTES - 1) / PLAN_ROW_TEXT_BYTES
+		whole_before := before != nil && int(before.value_text_length) == parts * PLAN_ROW_TEXT_BYTES
+		if before == nil || before.value_kind_word != u64(chosen_values.Entry_Kind.Text) || string(before.name_bytes[:before.name_length]) != string(row.name[:length]) || before.value_layer_word != u64(row.value_layer_word) || row.value_word != i64(parts) || !whole_before || part_length == 0 || int(before.value_text_length) + part_length > PLAN_VALUE_TEXT_BYTES {
+			return .Bad_Value
+		}
+		copy(before.value_text[before.value_text_length:], row.value_text[:part_length])
+		before.value_text_length += u16(part_length)
+		return .None
+	}
+	// The memory of the plan holds its entries: one past it is refused at
+	// its row.
+	if count >= len(out.entries) || count >= len(out.order) || count >= int(PLAN_ENTRY_COUNT_LIMIT) {
+		return .Too_Many_Entries
+	}
+	entry := &out.entries[count]
 	entry^ = {}
 	entry.kind_word = u64(row.kind_word)
 	copy(entry.name_bytes[:length], row.name[:length])
@@ -265,12 +313,21 @@ plan_entry_of_row :: proc "contextless" (row: ^Plan_Entry_Row, entry: ^Plan_Entr
 	entry.recipe_hash = blake3.Hash(row.recipe_hash)
 	entry.start_grants_mask = u64(row.start_grants_mask)
 	entry.store_rights_word = u64(row.store_rights_word)
-	return true
+	entry.value_layer_word = u64(row.value_layer_word)
+	entry.value_kind_word = u64(row.value_kind_word)
+	// A text keeps the word 0; its first part is its first bytes.
+	entry.value_word = is_text ? 0 : cast(u64)row.value_word
+	copy(entry.value_text[:], row.value_text[:part_length])
+	entry.value_text_length = u16(part_length)
+	out.entry_count = u32(count + 1)
+	return .None
 }
 
-// plan_entry_row_of_entry gives the row of an entry, the form back of
-// plan_of_rows.
-plan_entry_row_of_entry :: proc "contextless" (entry: ^Plan_Entry) -> (row: Plan_Entry_Row) {
+// plan_rows_of_entry writes the rows of an entry, the form back of
+// plan_of_rows: one row, or one for each part of a text. count is the rows
+// written; 0 when out has no room for them.
+plan_rows_of_entry :: proc "contextless" (entry: ^Plan_Entry, out: []Plan_Entry_Row) -> (count: int) {
+	row: Plan_Entry_Row
 	length := min(int(entry.name_length), MAX_ENTRY_NAME_BYTES)
 	copy(row.name[:length], entry.name_bytes[:length])
 	row.kind_word = i64(entry.kind_word)
@@ -280,7 +337,28 @@ plan_entry_row_of_entry :: proc "contextless" (entry: ^Plan_Entry) -> (row: Plan
 	row.module_hash = value_kinds.Hash_Field(entry.module_hash)
 	row.interposed_over_hash = value_kinds.Hash_Field(entry.interposed_over_hash)
 	row.recipe_hash = value_kinds.Hash_Field(entry.recipe_hash)
-	return row
+	row.value_word = cast(i64)entry.value_word
+	row.value_layer_word = i64(entry.value_layer_word)
+	row.value_kind_word = i64(entry.value_kind_word)
+	if entry.value_kind_word != u64(chosen_values.Entry_Kind.Text) {
+		if len(out) < 1 {
+			return 0
+		}
+		out[0] = row
+		return 1
+	}
+	text := plan_value_text(entry)
+	parts := max(1, (len(text) + PLAN_ROW_TEXT_BYTES - 1) / PLAN_ROW_TEXT_BYTES)
+	if len(out) < parts {
+		return 0
+	}
+	for part in 0 ..< parts {
+		out[part] = row
+		out[part].value_word = i64(part)
+		start := part * PLAN_ROW_TEXT_BYTES
+		copy(out[part].value_text[:], text[start:min(len(text), start + PLAN_ROW_TEXT_BYTES)])
+	}
+	return parts
 }
 
 // plan_diff_row_of_item gives the row of one item of a difference.
@@ -296,6 +374,9 @@ plan_diff_row_of_item :: proc "contextless" (item: ^Plan_Diff_Item) -> (row: Pla
 	row.new_store_rights_word = i64(item.new_store_rights)
 	row.old_module_hash = value_kinds.Hash_Field(item.old_module_hash)
 	row.new_module_hash = value_kinds.Hash_Field(item.new_module_hash)
+	row.old_value_word, row.new_value_word = cast(i64)item.old_value_word, cast(i64)item.new_value_word
+	row.old_value_layer_word, row.new_value_layer_word = i64(item.old_value_layer_word), i64(item.new_value_layer_word)
+	row.new_value_kind_word = i64(item.new_value_kind_word)
 	return row
 }
 
@@ -316,6 +397,9 @@ plan_difference_summary_of :: proc "contextless" (difference: ^Plan_Difference) 
 		added_stores       = i64(difference.added_stores),
 		removed_stores     = i64(difference.removed_stores),
 		changed_stores     = i64(difference.changed_stores),
+		added_values       = i64(difference.added_values),
+		removed_values     = i64(difference.removed_values),
+		changed_values     = i64(difference.changed_values),
 		added_grants       = i64(difference.added_grants_count),
 		removed_grants     = i64(difference.removed_grants_count),
 		consent_word       = i64(consent),

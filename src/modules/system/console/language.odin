@@ -827,6 +827,11 @@ host_name_value :: proc "contextless" (data: rawptr, name: string) -> (value: Va
 // parameter of an export. Each command of the console has an effect: the
 // names of the evaluation, which have none, are not built.
 host_command_find :: proc "contextless" (data: rawptr, name: string) -> (signature: lex_evaluator.Command_Signature, found: bool) {
+	// The names of the evaluation that make the values of a plan come before
+	// a command of the same name (plan_rows.odin).
+	if plan_signature, is_plan_name := plan_name_signature(name); is_plan_name {
+		return plan_signature, true
+	}
 	// The arguments are forced before the call connects a service
 	// (command_find_connecting in call_run): a signature from the image
 	// connects nothing.
@@ -851,8 +856,10 @@ host_command_find :: proc "contextless" (data: rawptr, name: string) -> (signatu
 		if item.parameters[index] == .Enum {
 			enum_index, _ := module.enum_detail_of(item.function.parameter_details[index])
 			signature.files[index], signature.details[index] = item.file, enum_index
-			signature.optional[index] = module.parameter_optional(item.function, index)
 		}
+		// Any parameter of an export can be optional: an Integer, a Handle
+		// or an Enum (src/md/features/module_settings.md).
+		signature.optional[index] = item.run == nil && module.parameter_optional(item.function, index)
 	}
 	return signature, true
 }
@@ -869,6 +876,10 @@ host_record_memory :: proc "contextless" (data: rawptr, size: int) -> (bytes: []
 }
 
 host_call_run :: proc "contextless" (data: rawptr, name: string, arguments: []Value) -> (value: Value, ok: bool) {
+	if _, is_plan_name := plan_name_signature(name); is_plan_name {
+		value = plan_name_run(name, arguments)
+		return value, !failed
+	}
 	value = call_run(name, arguments)
 	return value, !failed
 }
@@ -1180,16 +1191,31 @@ call_run :: proc "contextless" (name: string, arguments: []Value) -> Value {
 	}
 	for kind, index in found.parameters[:count] {
 		argument := &arguments[index]
-		// An optional Enum that the line leaves out has no value: the call
-		// gives the absent word, which names no member.
-		if kind == .Enum && argument.kind == .None && found.run == nil && module.parameter_optional(found.function, index) {
-			enum_index, _ := module.enum_detail_of(found.function.parameter_details[index])
-			described, _ := module.enum_type(found.file, enum_index)
-			argument^ = {kind = .Enum, integer = module.enum_absent_word(described), file = found.file, detail = enum_index}
+		// An optional parameter that the line leaves out has no value: the
+		// call gives the Presence word Absent, then 0.
+		if argument.kind == .None && found.run == nil && module.parameter_optional(found.function, index) {
 			continue
+		}
+		// A plan given to a table of the rows of a plan becomes those rows
+		// (plan_rows.odin); a refusal fails the line with its sentence.
+		if !plan_rows_of_argument(found, index, argument) && failed {
+			return {}
 		}
 		if !argument_accepted(found, index, argument^) {
 			return argument_refusal(name, found, index, argument^)
+		}
+		// The range of an Integer: the console refuses a value out of it
+		// before the call; the export checks it again at its border.
+		if kind == .Integer && found.run == nil && found.record == 0 {
+			if setting, has_setting := module.parameter_setting(found.file, found.export, index); has_setting && module.parameter_setting_ranged(setting) && (argument.integer < setting.least || argument.integer > setting.most) {
+				return fail(name, ": the argument ", found.parameter_names[index], " is ", argument.integer, ", outside its range ", setting.least, " to ", setting.most)
+			}
+		}
+		// The bound of the bytes of a Text, as for a range.
+		if kind == .Text && found.run == nil && found.record == 0 {
+			if setting, has_setting := module.parameter_setting(found.file, found.export, index); has_setting && !module.text_in_bound(setting, argument.text) {
+				return fail(name, ": the argument ", found.parameter_names[index], " has ", i64(len(argument.text)), " bytes, outside its bound of ", setting.least, " to ", setting.most, " bytes")
+			}
 		}
 		if kind == .Record {
 			// A copy: the export can write in its record, and a call

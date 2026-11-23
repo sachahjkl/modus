@@ -165,7 +165,7 @@ Manifest_Export_Builder :: struct {
 	parameter_names:     [dynamic]string,
 	parameter_details:   [dynamic]u32,
 	parameter_directions: [dynamic]module.Direction,
-	optional_parameters: u16,
+	parameter_needs:     [dynamic]module.Parameter_Need,
 	getter_names:        [dynamic]string,
 	result:              module.Type,
 	result_detail:       u32,
@@ -298,9 +298,13 @@ manifest_parse :: proc(text: string) -> (manifest: Module_Manifest, problem: str
 		if builder.error_record != 0 && builder.result == .Enum {
 			return {}, fmt.tprintf("line %d: export %s has an error_record, so it can fail: the value of its pair is an integer, and its result cannot be an enum", builder.line, builder.name)
 		}
-		arguments := module.call_argument_count(len(builder.parameters), u8(builder.result), builder.error_record != 0)
-		if arguments > module.PARAMETER_CAPACITY {
-			return {}, fmt.tprintf("line %d: export %s takes %d call arguments; at most %d are allowed", builder.line, builder.name, arguments, module.PARAMETER_CAPACITY)
+		words := len(builder.parameters)
+		for need in builder.parameter_needs {
+			words += need == .Optional ? 1 : 0
+		}
+		arguments := module.call_argument_count(words, u8(builder.result), builder.error_record != 0)
+		if arguments > module.CALL_WORD_CAPACITY || len(builder.parameters) > module.PARAMETER_CAPACITY {
+			return {}, fmt.tprintf("line %d: export %s takes %d parameters and %d call arguments; at most %d and %d are allowed", builder.line, builder.name, len(builder.parameters), arguments, module.PARAMETER_CAPACITY, module.CALL_WORD_CAPACITY)
 		}
 		exports[index] = Export_Description {
 			name                = builder.name,
@@ -312,7 +316,7 @@ manifest_parse :: proc(text: string) -> (manifest: Module_Manifest, problem: str
 			markdown            = builder.about,
 			details             = builder.parameter_details[:],
 			directions          = builder.parameter_directions[:],
-			optional_parameters = builder.optional_parameters,
+			needs               = builder.parameter_needs[:],
 			getter_names        = builder.getter_names[:],
 			result_detail       = builder.result_detail,
 			error_record        = builder.error_record,
@@ -544,10 +548,6 @@ manifest_parse_enum_member :: proc(line_number: int, line: string, builder: ^Man
 	}
 	if !module.enum_value_fits(builder.size, builder.unsigned, value) {
 		return fmt.tprintf("line %d: enum %s: value %s does not fit backing size %d", line_number, builder.name, value_text, builder.size)
-	}
-	absent := module.enum_absent_word({size = builder.size, unsigned = builder.unsigned})
-	if value == absent {
-		return fmt.tprintf("line %d: enum %s: value %s is reserved as the absent word for optional parameters", line_number, builder.name, value_text)
 	}
 	for other in builder.members {
 		if other.name == member_name {
@@ -877,8 +877,8 @@ manifest_parse_export_parameter :: proc(line_number: int, line: string, builder:
 	for modifier in strings.fields(modifiers_text, context.temp_allocator) {
 		switch {
 		case modifier == "optional":
-			if param_type != .Enum {
-				return fmt.tprintf("line %d: export %s: `optional` is allowed on enum parameters only", line_number, builder.name)
+			if !module.optional_type_allowed(param_type) {
+				return fmt.tprintf("line %d: export %s: `optional` is allowed on integer, handle, enum and text parameters only: the call gives a presence word, then the value", line_number, builder.name)
 			}
 			if is_optional {
 				return fmt.tprintf("line %d: export %s: `optional` is written twice on parameter `%s`", line_number, builder.name, param_name)
@@ -900,15 +900,12 @@ manifest_parse_export_parameter :: proc(line_number: int, line: string, builder:
 		}
 	}
 
-	param_index := len(builder.parameters)
 	append(&builder.parameters, param_type)
 	append(&builder.parameter_names, param_name)
 	append(&builder.parameter_details, param_detail)
 	append(&builder.parameter_directions, param_direction)
 	append(&builder.getter_names, getter_name)
-	if is_optional {
-		builder.optional_parameters |= u16(1) << uint(param_index)
-	}
+	append(&builder.parameter_needs, is_optional ? module.Parameter_Need.Optional : module.Parameter_Need.Required)
 	return ""
 }
 
