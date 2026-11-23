@@ -213,7 +213,7 @@ byte_layout_storage_sources :: proc() -> []Byte_Layout_Source {
 		{key = "store.Count_Page", file = file, declaration = "Count_Page", info = type_info_of(store.Count_Page), what = "a leaf of the count tree: the counts of names and the owners of 512 blocks"},
 		{key = "store.Count_Directory", file = file, declaration = "Count_Directory", info = type_info_of(store.Count_Directory), what = "a directory of the count tree: 128 children"},
 		{key = "store.Count_Child", file = file, declaration = "Count_Child", info = type_info_of(store.Count_Child), what = "one child of a directory of the count tree"},
-		{key = "store.Release_List", file = file, declaration = "Release_List", info = type_info_of(store.Release_List), what = "a list of the states of a release in the removal queue"},
+		{key = "store.Release_List", file = file, declaration = "Release_List", info = type_info_of(store.Release_List), what = "a list of the states of a release in the removal queue, which names the next list"},
 		{key = "store.Release_State", file = file, declaration = "Release_State", info = type_info_of(store.Release_State), what = "one state of a release list"},
 	}
 	list := make([]Byte_Layout_Source, len(sources), context.temp_allocator)

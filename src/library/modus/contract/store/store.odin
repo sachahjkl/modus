@@ -198,9 +198,11 @@ COUNTS_OF_A_PAGE :: 512
 COUNT_DIRECTORY_FANOUT :: 128
 COUNT_PAGE_MAGIC :: u32(0x53544E43) // The bytes "CNTS".
 // A list of the states that one commit gave to the removal queue
-// (Entry_Kind.Release): one block, named by its entry of the queue, so a
-// commit that releases many large states makes one entry for each 127. A
-// block of the store, counted as each block of its store.
+// (Entry_Kind.Release): one block of up to 127 states, which names the next
+// list of the same commit, so a commit that releases any count of large
+// states makes one entry of the queue. A block of the store, counted as
+// each block of its store; the list before names it, and the entry names
+// the first.
 RELEASE_LIST_MAGIC :: u32(0x534C4552) // The bytes "RELS".
 RELEASES_OF_A_LIST :: 127
 
@@ -214,22 +216,32 @@ Release_State :: struct {
 
 // A release list. 4096 bytes.
 Release_List :: struct {
-	magic:    u32, // RELEASE_LIST_MAGIC.
-	count:    u32, // The states: 1 ..= RELEASES_OF_A_LIST.
-	reserved: u64, // 0.
-	states:   [RELEASES_OF_A_LIST]Release_State,
-	padding:  [BLOCK_SIZE - 16 - RELEASES_OF_A_LIST * size_of(Release_State)]u8, // 0.
+	magic:   u32, // RELEASE_LIST_MAGIC.
+	count:   u32, // The states: 1 ..= RELEASES_OF_A_LIST.
+	next:    Pointer, // The next list of the commit: no block and the check 0 for the last.
+	states:  [RELEASES_OF_A_LIST]Release_State,
+	padding: [BLOCK_SIZE - 24 - RELEASES_OF_A_LIST * size_of(Release_State)]u8, // 0.
 }
 #assert(size_of(Release_List) == BLOCK_SIZE)
 
 // release_list_valid says if a block is a release list: its magic, a count
-// in its bound, and zero bytes in the places of no state.
+// in its bound, a next list of a block past the two roots or none (then
+// with the check 0), and zero bytes in the places of no state and in the
+// padding.
 release_list_valid :: proc "contextless" (list: ^Release_List) -> bool {
-	if list.magic != RELEASE_LIST_MAGIC || list.count == 0 || list.count > RELEASES_OF_A_LIST || list.reserved != 0 {
+	if list.magic != RELEASE_LIST_MAGIC || list.count == 0 || list.count > RELEASES_OF_A_LIST {
+		return false
+	}
+	if list.next.block == 1 || list.next.block == 0 && list.next.check != 0 {
 		return false
 	}
 	for state in list.states[list.count:] {
 		if state != {} {
+			return false
+		}
+	}
+	for byte in list.padding {
+		if byte != 0 {
 			return false
 		}
 	}
@@ -336,7 +348,7 @@ Entry_Kind :: enum u64 {
 	Tree    = 2, // A tree: names of other entries.
 	// States of objects that no entry or version names any more, too large
 	// to free in one commit: an entry of the removal queue only, which steps
-	// free a part at a time. pointer: a Release_List that holds the states;
+	// free a part at a time. pointer: the first Release_List of the states;
 	// the other fields are 0 (src/md/data/storage_capacity.md, "A large state
 	// is released in steps").
 	Release = 3,

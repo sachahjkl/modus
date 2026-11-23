@@ -335,14 +335,34 @@ Count_Leaves_Differ :: struct {
 }
 
 // The repair of wrong leaves of the count tree ended: a commit wrote them.
-@(log_fact = "storage: the leaves of the count tree that had a wrong check are counted again and written")
+@(log_fact = "storage: the leaves of the count tree that had a wrong check are counted again and written: the service takes changes again")
 Count_Leaves_Repaired :: struct {}
 
-// A repair of the count tree stopped before its end: a read failed on the
-// device, a node was wrong, or the walk passed its bound. No repair starts
-// again before the next start.
-@(log_fact = "storage: the repair of the count tree stopped in the store {store}: the store takes no change, and the leaves of the count tree stay wrong until the next start")
-Count_Repair_Stopped :: struct {
+// Leaves of the count tree have a wrong check: the service enters the
+// repair state.
+@(log_fact = "storage: {leaves} leaves of the count tree have a wrong check: the service makes no change until it has counted the names of their blocks again, and serves the reads")
+Count_Repair_Started :: struct {
+	leaves: u64,
+}
+
+// A read or a write of the device failed during the repair of the count
+// tree: the walk starts again after the next call. Written once.
+@(log_fact = "storage: a read or a write of the disk failed during the repair of the count tree: the repair starts again after the next call")
+Count_Repair_Device :: struct {}
+
+// The disk has no free block for the scratch of the repair: the service
+// takes changes again. Written once.
+@(log_fact = "storage: the disk has no free block for the scratch of the repair of the count tree: the service takes changes again, and the repair starts again after the next commit")
+Count_Repair_No_Room :: struct {}
+
+// The commit of the repaired leaves failed on the device. Written once.
+@(log_fact = "storage: the commit of the repaired leaves of the count tree did not reach the disk: the service makes it again after the next call")
+Count_Repair_Commit_Failed :: struct {}
+
+// The repair found a wrong node of a tree of a store: the blocks under it
+// are not counted, as at an open.
+@(log_fact = "storage: the repair of the count tree found a wrong node of a tree in the store {store}: the store takes no change, and the repair goes on with the other stores")
+Count_Repair_Store_Damaged :: struct {
 	store: [40]u8,
 }
 

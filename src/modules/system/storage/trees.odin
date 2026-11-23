@@ -441,6 +441,10 @@ store_prepare :: proc "contextless" (store: Store_Of, create: bool, error: ^erro
 	if broken {
 		return -1, errors.fail(error, failure(.Disk), .Device, .None, 0, 0, 0, 1)
 	}
+	// The repair state: each change waits for the end of the repair.
+	if refused, refusal := repair_refusal(error); refused {
+		return -1, refusal
+	}
 	// The form Count_Tree keeps the damage that it finds in sets: past a
 	// full set the damage is not known whole, and a change could name a
 	// damaged block as whole.
@@ -992,13 +996,6 @@ entry_free :: proc "contextless" (index: int) {
 			plan.store_block.trees -= 1
 			return
 		}
-		// A tree that moves to the removal queue moves its entries: the
-		// walk of a repair of the count tree would count them twice or not
-		// at all. The remove waits for the end of the repair.
-		if storage_mount.repair_running(&opened) {
-			plan.repair_conflict = true
-			return
-		}
 		number := plan.store_block.next_removal + 1
 		plan.store_block.next_removal = number
 		key := format.removal_name(number)
@@ -1117,12 +1114,6 @@ path_under :: proc "contextless" (path: []Entry_Name, tree_path: []Entry_Name, n
 // tree at `from_path` to the tree at `to_path`, with a new name. A tree
 // moves with all under it: its entry moves, nothing else is written.
 entry_rename :: proc "contextless" (store: Store_Of, from_path: []Entry_Name, from: Kept_Name, to_path: []Entry_Name, to: Kept_Name, error: ^errors.Error_Record) -> i64 {
-	// The walk of a repair of the count tree resumes by names: an entry
-	// that moves between two of its steps would be counted twice or not at
-	// all. A rename waits for the end of the repair.
-	if storage_mount.repair_running(&opened) {
-		return errors.fail(error, failure(.Damaged), .Damaged, .Counts)
-	}
 	if path_under(to_path, from_path, from.key) {
 		return errors.fail(error, failure(.Name), .Bad_Value, .Trees, 3, 0, 0)
 	}
@@ -1185,6 +1176,11 @@ removal_values: [REMOVAL_STEP_LIMIT]Entry
 
 // removal_waits says if a store has a removal to continue.
 removal_waits :: proc "contextless" () -> bool {
+	// A removal that removal_step would not run does not wait: the loop of
+	// the service then waits for a call, and does not spin.
+	if broken || opened.damage_set_full || opened.counts.wrong_leaves_full || storage_mount.repair_active(&opened) {
+		return false
+	}
 	for index in 0 ..< store_numbers() {
 		if store_listed(index) && store_blocks[index].removing != 0 && !removal_stalled[index] && !store_damaged[index] && !store_faulty[index] {
 			return true
@@ -1198,7 +1194,7 @@ removal_waits :: proc "contextless" () -> bool {
 // them goes into the queue in its turn. It gives false when no store has a
 // removal to continue.
 removal_step :: proc "contextless" () -> bool {
-	if broken || opened.damage_set_full || opened.counts.wrong_leaves_full {
+	if broken || opened.damage_set_full || opened.counts.wrong_leaves_full || storage_mount.repair_active(&opened) {
 		return false
 	}
 	store_index := -1
@@ -1223,14 +1219,16 @@ removal_step :: proc "contextless" () -> bool {
 	}
 	if queued.kind == u64(format.Entry_Kind.Release) {
 		// A list of large states: the next parts of their blocks, then the
-		// list again with what is left, or no list with the last part.
+		// list again with what is left, or the next list of the chain, or no
+		// entry after the last part of the last list.
 		list := &plan_fixed.step_list
 		outcome := read_single(queued.pointer, (^Block)(list))
 		if outcome == .Device {
 			plan.device = true
 		} else if outcome == .Wrong || !format.release_list_valid(list) {
-			// A wrong list: its states keep their blocks until the next open,
-			// which does not count under it either.
+			// A wrong list: its states and the lists after it keep their
+			// blocks until the next open, which does not count under it
+			// either. The entry goes, the rest of the store stays.
 			storage_mount.wrong_block_set(&opened, queued.pointer.block)
 			delta_add(queued.pointer.block, -1)
 			tree.remove(&queue.work, queued_name[:])
@@ -1240,7 +1238,10 @@ removal_step :: proc "contextless" () -> bool {
 		} else {
 			empty := release_step(list)
 			delta_add(queued.pointer.block, -1)
-			if empty {
+			if empty && list.next.block != 0 {
+				queued.pointer = list.next
+				tree.put(&queue.work, queued_name[:], entry_bytes(&queued), true)
+			} else if empty {
 				tree.remove(&queue.work, queued_name[:])
 				plan.store_block.removing -= 1
 			} else {

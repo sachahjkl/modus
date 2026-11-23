@@ -405,7 +405,7 @@ expected_fields :: proc() -> []Expected_Field {
 		{"store.Count_Child", "free", offset_of(store.Count_Child, free), size_of(count_child.free)},
 		{"store.Release_List", "magic", offset_of(store.Release_List, magic), size_of(release_list.magic)},
 		{"store.Release_List", "count", offset_of(store.Release_List, count), size_of(release_list.count)},
-		{"store.Release_List", "reserved", offset_of(store.Release_List, reserved), size_of(release_list.reserved)},
+		{"store.Release_List", "next", offset_of(store.Release_List, next), size_of(release_list.next)},
 		{"store.Release_List", "states", offset_of(store.Release_List, states), size_of(release_list.states)},
 		{"store.Release_List", "padding", offset_of(store.Release_List, padding), size_of(release_list.padding)},
 		{"store.Release_State", "root", offset_of(store.Release_State, root), size_of(release_state.root)},

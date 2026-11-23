@@ -85,6 +85,7 @@ Export_Error :: enum i64 {
 	Exists             = -11, // The tree has an entry with this name already.
 	Place              = -12, // The place is not a place of this connection, or the connection reads only.
 	Pending            = -13, // The object has no pending change on this connection, or another change of the object came first.
+	Busy               = -14, // The service makes no change while it repairs the counts of the blocks of its disk: the call can be made again after the repair.
 }
 
 // export_error_of_result is the border of the result of a failed export:

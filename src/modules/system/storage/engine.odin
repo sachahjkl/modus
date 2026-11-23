@@ -623,6 +623,9 @@ mount :: proc "contextless" (disk_blocks: u64) -> (result: Mount) {
 	}
 	disk_size = opened.disk_size
 	service_started = system.time()
+	// The pages of the scratch of a repair carry it: a page that a start
+	// before wrote is not taken for a page of this start.
+	repair_disk.nonce = date_now() ~ (service_started << 20) ~ (u64(disk_tag) << 40)
 	if result.failed {
 		return result
 	}
@@ -766,8 +769,7 @@ Plan :: struct {
 	slot_pages:   []^block_tree.Slot_Page, // The slots of the work on an object.
 	owner_count:  int, // The blocks of the table of the blocks outside the stores.
 	leaves_touched: int, // The distinct leaves of the count tree that the changes of the plan touch.
-	repair_conflict: bool, // The plan moves a tree while a repair of the count tree runs: refused.
-	release_count:  int, // The states of plan_fixed.release_states: the commit gives them to the removal queue.
+	release_count:  int, // The states in plan_fixed.release_lists: the commit gives them to the removal queue.
 	// The table of the blocks outside the stores: the fixed one, or one of
 	// the room of a large commit. A power of 2 of places.
 	outside_blocks: []u64,
@@ -829,9 +831,8 @@ plan_fixed: struct {
 	// open table of 1 + the leaf, with the places in use.
 	leaf_slots:  [LEAF_SLOTS]u64,
 	leaf_places: [LEAF_SLOTS / 2]u32,
-	// The states that the commit gives to the removal queue, and the lists
-	// that it writes for them.
-	release_states: [RELEASE_STATES_MOST]format.Release_State,
+	// The lists of the states that the commit gives to the removal queue,
+	// filled in their order.
 	release_lists:  [RELEASE_LISTS_MOST]format.Release_List,
 	// The list of a step of the queue, as it reads it and writes it again.
 	step_list:      format.Release_List,
@@ -841,11 +842,13 @@ plan_fixed: struct {
 // counts as one more leaf.
 LEAF_SLOTS :: 8192
 
-// The lists of the states that one commit gives to the removal queue: each
-// one entry of the queue and one block, so the removal queue takes at most
-// this many puts from one commit.
-RELEASE_LISTS_MOST :: 64
-RELEASE_STATES_MOST :: RELEASE_LISTS_MOST * format.RELEASES_OF_A_LIST
+// The lists of the states that one commit gives to the removal queue, one
+// block each, chained under one entry of the queue. A commit releases the
+// versions of the leaves that it holds and the current states of its
+// entries, so no commit passes this many lists: a count of large states
+// never refuses a commit.
+RELEASE_STATES_MOST :: LEAF_WORK_CAPACITY * format.VERSION_LEAF_CAPACITY + PLAN_ENTRY_CAPACITY
+RELEASE_LISTS_MOST :: (RELEASE_STATES_MOST + format.RELEASES_OF_A_LIST - 1) / format.RELEASES_OF_A_LIST
 
 // leaf_note counts a leaf of the count tree that a change of the plan
 // touches.
@@ -914,7 +917,6 @@ plan_tables_fixed :: proc "contextless" () {
 	}
 	plan.leaves_touched = 0
 	plan.release_count = 0
-	plan.repair_conflict = false
 	plan.outside_blocks = plan_fixed.outside_blocks[:]
 	plan.outside_owners = plan_fixed.outside_owners[:]
 	plan.outside_places = plan_fixed.outside_places[:]
@@ -1242,36 +1244,45 @@ RELEASE_ROOM_RESERVE :: 16384
 // of the store of the plan: the entry of the queue holds that name until
 // the last step.
 release_queue :: proc "contextless" (root: Pointer, size: u64) {
-	if plan.release_count >= len(plan_fixed.release_states) {
-		capacity_reached(len(plan_fixed.release_states))
+	if plan.release_count >= RELEASE_STATES_MOST {
+		capacity_reached(RELEASE_STATES_MOST)
 		return
 	}
-	plan_fixed.release_states[plan.release_count] = {root = root, size = size}
+	list := &plan_fixed.release_lists[plan.release_count / format.RELEASES_OF_A_LIST]
+	place := plan.release_count % format.RELEASES_OF_A_LIST
+	if place == 0 {
+		list^ = {magic = format.RELEASE_LIST_MAGIC}
+	}
+	list.states[place] = {root = root, size = size}
+	list.count = u32(place + 1)
 	plan.release_count += 1
 }
 
-// release_lists_write writes the states that the commit gives to the
-// removal queue in lists of 127, each one block and one entry of the queue
-// (format.Release_List): the queue takes one put for each list.
+// release_lists_write writes the lists of the states that the commit gives
+// to the removal queue, the last first, so that each one names the next by
+// its check, and puts one entry of the queue that names the first.
 release_lists_write :: proc "contextless" () {
-	for first := 0; first < plan.release_count; first += format.RELEASES_OF_A_LIST {
-		count := min(plan.release_count - first, format.RELEASES_OF_A_LIST)
-		list := &plan_fixed.release_lists[first / format.RELEASES_OF_A_LIST]
-		list^ = {magic = format.RELEASE_LIST_MAGIC, count = u32(count)}
-		copy(list.states[:], plan_fixed.release_states[first:][:count])
-		pointer := plan_write((^Block)(list))
-		if pointer.block == 0 {
+	if plan.release_count == 0 {
+		return
+	}
+	lists := (plan.release_count + format.RELEASES_OF_A_LIST - 1) / format.RELEASES_OF_A_LIST
+	plan.release_count = 0
+	next: Pointer
+	for index := lists - 1; index >= 0; index -= 1 {
+		list := &plan_fixed.release_lists[index]
+		list.next = next
+		next = plan_write((^Block)(list))
+		if next.block == 0 {
 			return // plan_write gave the cause.
 		}
-		number := plan.store_block.next_removal + 1
-		plan.store_block.next_removal = number
-		key := format.removal_name(number)
-		queued := Entry{kind = u64(format.Entry_Kind.Release), pointer = pointer}
-		tree.put(&plan.trees[1].work, key[:], entry_bytes(&queued), false)
-		plan.trees[1].changed = true
-		plan.store_block.removing += 1
 	}
-	plan.release_count = 0
+	number := plan.store_block.next_removal + 1
+	plan.store_block.next_removal = number
+	key := format.removal_name(number)
+	queued := Entry{kind = u64(format.Entry_Kind.Release), pointer = next}
+	tree.put(&plan.trees[1].work, key[:], entry_bytes(&queued), false)
+	plan.trees[1].changed = true
+	plan.store_block.removing += 1
 }
 
 // release_step frees the next parts of the states of a release list of the
@@ -1279,7 +1290,8 @@ release_lists_write :: proc "contextless" () {
 // up to its bound of names, and of leaves of the count tree, a quarter of
 // the staging of the commit, the rest for the other pages of the commit.
 // It leaves in the list the states that are not free, each with its cursor,
-// and gives true when the list is empty: the queue then drops its entry.
+// and gives true when the list is empty: the entry of the queue then names
+// the next list, or the queue drops it.
 release_step :: proc "contextless" (list: ^format.Release_List) -> bool {
 	storage_release.step_begin(&releaser, len(opened.count_staging) / 4)
 	// The states in their order: each free one leaves the list, and the
@@ -1857,34 +1869,132 @@ count_pages_install :: proc "contextless" () {
 	}
 }
 
-// repair_waits says if a step of the repair of the count tree waits.
-repair_waits :: proc "contextless" () -> bool {
-	return !broken && storage_mount.repair_waits(&opened)
+// The service in the repair state (src/md/data/storage_capacity.md, "The
+// repair state"): the walk gives the roots of the last commit, and the
+// writes of its scratch go through the block service.
+repair_disk := storage_mount.Repair_Disk {
+	write = proc "contextless" (_: ^storage_mount.Repair_Disk, number: u64, bytes: ^[BLOCK_SIZE]u8) -> bool {
+		intrinsics.mem_copy_non_overlapping(raw_data(slot(0)), bytes, BLOCK_SIZE)
+		if !transfer(.Write, {{number = number, slot = 0}}) {
+			return false
+		}
+		blocks_written += 1
+		return true
+	},
+	store_damaged = proc "contextless" (_: ^storage_mount.Repair_Disk, store_index: int) {
+		// Its counts are not whole either: the blocks under the wrong node
+		// have no name of it.
+		store_damaged[store_index] = true
+		store_faulty[store_index] = true
+		system.log_fact(.Error, Count_Repair_Store_Damaged{store = store_field(store_name_of(store_index))})
+	},
 }
 
-// repair_step runs one step of the repair of the count tree.
+// The lines of the repair that the service writes once for each repair:
+// a device that fails at each try writes one line, not one for each call.
+repair_start_said: bool
+repair_device_said: bool
+repair_room_said: bool
+repair_commit_said: bool
+// The commit of the repaired leaves failed: it is made again after the
+// next call.
+repair_commit_waits_call: bool
+
+// repair_waits says if a step of the repair of the count tree waits: a
+// walk, or the commit of the leaves that it counted.
+repair_waits :: proc "contextless" () -> bool {
+	if broken {
+		return false
+	}
+	if len(opened.counts.repaired) != 0 {
+		return !repair_commit_waits_call
+	}
+	return storage_mount.repair_waits(&opened)
+}
+
+// repair_call_came says that a call came: a repair or its commit that
+// failed on the device tries again.
+repair_call_came :: proc "contextless" () {
+	storage_mount.repair_call_came(&opened)
+	repair_commit_waits_call = false
+}
+
+// repair_refusal refuses a change while the service repairs its count
+// tree: Busy, with the stores that the walk ended and the stores in all.
+// The caller can make the call again after the repair.
+repair_refusal :: proc "contextless" (error: ^errors.Error_Record) -> (refused: bool, result: i64) {
+	if broken || !storage_mount.repair_active(&opened) {
+		return false, 0
+	}
+	walked, total := storage_mount.repair_progress(&opened)
+	return true, errors.fail(error, failure(.Busy), .Busy, .Count_Repair, 0, i64(walked), i64(total))
+}
+
+// repair_step runs one step of the repair of the count tree, or the commit
+// of the leaves that it counted.
 repair_step :: proc "contextless" () {
-	stop := storage_mount.repair_step(&opened, &mount_reader, repair_roots)
-	switch stop {
-	case .None:
-	case .Device, .Damaged, .Bound:
-		// The repair does not start again before the next open: the store
-		// whose walk it stopped in takes no change, the others go on, and
-		// the wrong leaves stay passed.
-		index := opened.repair_failed_store
-		name := ""
-		if index >= 0 && index < store_numbers() {
-			store_faulty[index] = true
-			name = store_name_of(index)
+	if len(opened.counts.repaired) == 0 {
+		if !repair_start_said {
+			repair_start_said = true
+			system.log_fact(.Warning, Count_Repair_Started{leaves = u64(opened.counts.wrong_leaf_count)})
 		}
-		system.log_fact(.Warning, Count_Repair_Stopped{store = store_field(name)})
+		repair_disk.root = &root
+		repair_disk.heads = store_blocks[:]
+		switch storage_mount.repair_step(&opened, &mount_reader, &repair_disk) {
+		case .Running:
+			return
+		case .Done:
+		case .Device:
+			if !repair_device_said {
+				repair_device_said = true
+				system.log_fact(.Warning, Count_Repair_Device{})
+			}
+			return
+		case .No_Room:
+			if !repair_room_said {
+				repair_room_said = true
+				system.log_fact(.Warning, Count_Repair_No_Room{})
+			}
+			return
+		}
+	}
+	if !repair_commit() {
+		repair_commit_waits_call = true
+		if !repair_commit_said {
+			repair_commit_said = true
+			system.log_fact(.Warning, Count_Repair_Commit_Failed{})
+		}
 	}
 }
 
-// repair_roots gives the roots of a store as the last commit left them.
-repair_roots :: proc "contextless" (_: ^storage_mount.State, store_index: int) -> (tree: Pointer, removals: Pointer) {
-	head := store_blocks[store_index]
-	return head.tree, head.removals
+// repair_commit writes the leaves that the repair counted in one commit
+// that changes no store; the service then leaves the repair state.
+repair_commit :: proc "contextless" () -> bool {
+	plan_reset(-1)
+	error: errors.Error_Record
+	if _, refused := count_pages_make(&error); refused {
+		block_counts.commit_drop(&opened.count_commit)
+		plan_drop()
+		return false
+	}
+	place, _, written := plan_write_with_root(&error)
+	if !written {
+		return false
+	}
+	root = plan.next
+	root_place = place
+	commits += 1
+	// The commit changes the counts of the pages of the count tree only.
+	for at in plan.delta_places[:plan.delta_count] {
+		number := plan.delta_blocks[at]
+		after := i64(storage_mount.block_count(&opened, number)) + i64(plan.delta_values[at])
+		storage_mount.block_set(&opened, number, u32(max(after, 0)), after <= 0 ? 0 : owner_after(number))
+	}
+	count_pages_install()
+	plan.taken_count = 0
+	storage_mount.repair_commit_came(&opened)
+	repair_start_said, repair_device_said, repair_room_said, repair_commit_said = false, false, false, false
+	return true
 }
 
 // count_after_commit gives the count and the owner of a block after the
@@ -2004,6 +2114,95 @@ cache_later :: proc "contextless" (pointer: Pointer, bytes: ^Block) {
 	}
 }
 
+// plan_write_with_root writes the blocks of the plan, REGION_BLOCKS at a
+// time, reads them back, then writes the root of the plan in the other
+// place and reads it back. written is false with the refusal of the call;
+// the plan is then dropped.
+plan_write_with_root :: proc "contextless" (error: ^errors.Error_Record) -> (place: u64, refusal: i64, written: bool) {
+	// The blocks, REGION_BLOCKS at a time, then the root. Each one is on the
+	// disk before the next step.
+	for first := 0; first < plan.write_count; first += REGION_BLOCKS {
+		part := plan.writes[first:min(first + REGION_BLOCKS, plan.write_count)]
+		requests: [REGION_BLOCKS]Request
+		for write, index in part {
+			intrinsics.mem_copy_non_overlapping(raw_data(slot(u64(index))), write.bytes, BLOCK_SIZE)
+			requests[index] = {number = write.number, slot = u64(index)}
+		}
+		if !transfer(.Write, requests[:len(part)]) {
+			plan_drop()
+			return 0, errors.fail(error, failure(.Disk), .Device), false
+		}
+		blocks_written += u64(len(part))
+	}
+	if !flush() {
+		plan_drop()
+		return 0, errors.fail(error, failure(.Disk), .Device), false
+	}
+	plan.next.generation = root.generation + 1
+	// The device answered Ok to each write; a disk that did not keep one
+	// gives other bytes at the read. The blocks are read back before the
+	// root: a commit with a dropped block then never has a root on the
+	// disk, and no later write can make that root whole
+	// (src/md/features/dropped_write.md).
+	differ, blocks_state := commit_blocks_read_back()
+	switch blocks_state {
+	case .Good:
+	case .Wrong:
+		// Nothing on the disk names the blocks of the commit, and the state
+		// in memory is still the state of the root before: the service goes
+		// on from it.
+		plan_drop()
+		commits_refused += 1
+		if differ == 1 {
+			system.log_fact(.Error, Commit_Block_Dropped{generation = plan.next.generation, generation_before = root.generation})
+		} else {
+			system.log_fact(.Error, Commit_Blocks_Dropped{generation = plan.next.generation, blocks = differ, generation_before = root.generation})
+		}
+		return 0, errors.fail(error, failure(.Disk), .Device, .Dropped_Writes, 0, 0, 0, i64(differ)), false
+	case .Device:
+		// No root names the blocks: the disk holds the state before.
+		plan_drop()
+		commits_refused += 1
+		system.log_fact(.Error, Commit_Read_Back_Failed{generation = plan.next.generation})
+		return 0, errors.fail(error, failure(.Disk), .Device), false
+	}
+	plan.next.time = time_now()
+	plan.next.date = date_now()
+	plan.next.check = root_check(&plan.next)
+	intrinsics.mem_copy_non_overlapping(raw_data(slot(0)), &plan.next, BLOCK_SIZE)
+	place = 1 - root_place
+	if !transfer(.Write, {{number = place, slot = 0}}) || !flush() {
+		// The root on the disk is the old one, or the new one: the service
+		// cannot know. It stops serving changes.
+		plan_drop()
+		root_undecided(plan.next.generation, .Write)
+		return 0, errors.fail(error, failure(.Disk), .Device), false
+	}
+	blocks_written += 1
+	// The root too: if the disk did not keep it, the root before is still
+	// the newest on the disk, and a commit that took this state would write
+	// over the blocks that the root before names.
+	switch root_read_back(place, &plan.next) {
+	case .Good:
+	case .Wrong:
+		// The place holds an older root or other bytes, and the root before
+		// stays the newest: the service goes on from it, and the next commit
+		// writes its root in that place.
+		plan_drop()
+		commits_refused += 1
+		system.log_fact(.Error, Commit_Root_Dropped{generation = plan.next.generation, generation_before = root.generation})
+		root_refused_in_a_row()
+		return 0, errors.fail(error, failure(.Disk), .Device, .Dropped_Writes, 0, 0, 0, 1), false
+	case .Device:
+		// The root can be on the disk: as for a failed write of a root.
+		plan_drop()
+		root_undecided(plan.next.generation, .Read_Back)
+		return 0, errors.fail(error, failure(.Disk), .Device), false
+	}
+	roots_refused_in_a_row = 0
+	return place, 0, true
+}
+
 // plan_commit writes the blocks of the plan, then the root, and gives the
 // new state to the service. It gives the generation, or the word of an Export_Error
 // with the record.
@@ -2019,9 +2218,11 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 		plan_drop()
 		return errors.fail(error, failure(.Disk), .Device)
 	}
-	if plan.repair_conflict {
+	// No commit runs while the service repairs its count tree: its walk
+	// counts the trees of the last commit.
+	if refused, result := repair_refusal(error); refused {
 		plan_drop()
-		return errors.fail(error, failure(.Damaged), .Damaged, .Counts)
+		return result
 	}
 	// A read of the count tree that failed comes first: the counts that it
 	// gave are not the counts of the disk, so they are no fault of the
@@ -2070,89 +2271,17 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	if refusal, refused := count_pages_make(error); refused {
 		block_counts.commit_drop(&opened.count_commit)
 		plan_drop()
+		// A leaf that this commit found wrong starts the repair state: the
+		// call can be made again after the repair, as each change after it.
+		if busy, result := repair_refusal(error); busy {
+			return result
+		}
 		return refusal
 	}
-	// The blocks, REGION_BLOCKS at a time, then the root. Each one is on the
-	// disk before the next step.
-	for first := 0; first < plan.write_count; first += REGION_BLOCKS {
-		part := plan.writes[first:min(first + REGION_BLOCKS, plan.write_count)]
-		requests: [REGION_BLOCKS]Request
-		for write, index in part {
-			intrinsics.mem_copy_non_overlapping(raw_data(slot(u64(index))), write.bytes, BLOCK_SIZE)
-			requests[index] = {number = write.number, slot = u64(index)}
-		}
-		if !transfer(.Write, requests[:len(part)]) {
-			plan_drop()
-			return errors.fail(error, failure(.Disk), .Device)
-		}
-		blocks_written += u64(len(part))
+	place, refusal, written := plan_write_with_root(error)
+	if !written {
+		return refusal
 	}
-	if !flush() {
-		plan_drop()
-		return errors.fail(error, failure(.Disk), .Device)
-	}
-	plan.next.generation = root.generation + 1
-	// The device answered Ok to each write; a disk that did not keep one
-	// gives other bytes at the read. The blocks are read back before the
-	// root: a commit with a dropped block then never has a root on the
-	// disk, and no later write can make that root whole
-	// (src/md/features/dropped_write.md).
-	differ, blocks_state := commit_blocks_read_back()
-	switch blocks_state {
-	case .Good:
-	case .Wrong:
-		// Nothing on the disk names the blocks of the commit, and the state
-		// in memory is still the state of the root before: the service goes
-		// on from it.
-		plan_drop()
-		commits_refused += 1
-		if differ == 1 {
-			system.log_fact(.Error, Commit_Block_Dropped{generation = plan.next.generation, generation_before = root.generation})
-		} else {
-			system.log_fact(.Error, Commit_Blocks_Dropped{generation = plan.next.generation, blocks = differ, generation_before = root.generation})
-		}
-		return errors.fail(error, failure(.Disk), .Device, .Dropped_Writes, 0, 0, 0, i64(differ))
-	case .Device:
-		// No root names the blocks: the disk holds the state before.
-		plan_drop()
-		commits_refused += 1
-		system.log_fact(.Error, Commit_Read_Back_Failed{generation = plan.next.generation})
-		return errors.fail(error, failure(.Disk), .Device)
-	}
-	plan.next.time = time_now()
-	plan.next.date = date_now()
-	plan.next.check = root_check(&plan.next)
-	intrinsics.mem_copy_non_overlapping(raw_data(slot(0)), &plan.next, BLOCK_SIZE)
-	place := 1 - root_place
-	if !transfer(.Write, {{number = place, slot = 0}}) || !flush() {
-		// The root on the disk is the old one, or the new one: the service
-		// cannot know. It stops serving changes.
-		plan_drop()
-		root_undecided(plan.next.generation, .Write)
-		return errors.fail(error, failure(.Disk), .Device)
-	}
-	blocks_written += 1
-	// The root too: if the disk did not keep it, the root before is still
-	// the newest on the disk, and a commit that took this state would write
-	// over the blocks that the root before names.
-	switch root_read_back(place, &plan.next) {
-	case .Good:
-	case .Wrong:
-		// The place holds an older root or other bytes, and the root before
-		// stays the newest: the service goes on from it, and the next commit
-		// writes its root in that place.
-		plan_drop()
-		commits_refused += 1
-		system.log_fact(.Error, Commit_Root_Dropped{generation = plan.next.generation, generation_before = root.generation})
-		root_refused_in_a_row()
-		return errors.fail(error, failure(.Disk), .Device, .Dropped_Writes, 0, 0, 0, 1)
-	case .Device:
-		// The root can be on the disk: as for a failed write of a root.
-		plan_drop()
-		root_undecided(plan.next.generation, .Read_Back)
-		return errors.fail(error, failure(.Disk), .Device)
-	}
-	roots_refused_in_a_row = 0
 	// The commit is on the disk: the service takes its state.
 	page_before := root.store_pages[plan.page_index]
 	root = plan.next
@@ -2198,6 +2327,8 @@ plan_commit :: proc "contextless" (error: ^errors.Error_Record) -> i64 {
 	}
 	later_count = 0
 	plan.taken_count = 0
+	// A commit can free the blocks that a repair found no room for.
+	storage_mount.repair_commit_came(&opened)
 	return i64(root.generation)
 }
 

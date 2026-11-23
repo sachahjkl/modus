@@ -412,6 +412,16 @@ error_text :: proc "contextless" (writer: ^Writer, record: ^errors.Error_Record,
 	case .Link_Down:
 		write_part(writer, "the link of the network device is down")
 	case .Busy:
+		if record.unit == i64(errors.Unit.Count_Repair) {
+			// A refusal for a time, not a count of requests: the call can be
+			// made again after the repair.
+			write_part(writer, "the storage service makes no change while it repairs the counts of the blocks of its disk: it walked ")
+			write_part(writer, record.value)
+			write_part(writer, " of ")
+			write_part(writer, record.limit)
+			write_part(writer, " stores; the call can be made again after the repair")
+			break
+		}
 		if record.value != 0 {
 			write_part(writer, record.value)
 			write_part(writer, " requests of this kind are in flight; the receiver takes at most ")

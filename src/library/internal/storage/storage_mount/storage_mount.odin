@@ -285,24 +285,9 @@ State :: struct {
 	visited:       []u64,
 	visited_count: u64,
 	node_reads:    u64,
-	// The repair of wrong leaves of the count tree (the form Count_Tree): a
-	// walk of each store, one store at each step, that counts the names of
-	// the blocks of those leaves only.
-	repairing:     bool,
-	repair_store:  int, // The store that the repair walks: -1 before the first.
-	repair_count:  int,
-	repair_leaves: [block_counts.WRONG_LEAVES_MOST]block_counts.Repaired_Leaf,
-	repair_result: Mount, // What the walk of a repair counted: no part of the open.
-	repair_frames: [format.NESTING_LIMIT + 1]Repair_Frame, // The path of the walk in the store.
-	repair_depth:  int,
-	repair_which:  int, // 0: the tree of the store; 1: its removal queue.
-	repair_nodes:  [format.TREE_DEPTH_LIMIT + 1][BLOCK_SIZE]u8, // One node of a tree for each level of the walk.
-	repair_seen:   [REPAIR_SEEN_SLOTS]u64, // The nodes of trees in a wrong leaf that the repair counted.
-	repair_step_reads: int, // The nodes that the step in progress read.
-	repair_nodes_per_step: int, // The bound of a step: REPAIR_NODES_PER_STEP; a host test takes a smaller one.
-	repair_stop:   Repair_Stop,
-	repair_off:    bool, // A repair stopped: none starts again until the next open.
-	repair_failed_store: int, // The store whose walk the repair stopped in.
+	// The repair of the wrong leaves of the count tree (the form
+	// Count_Tree; count_repair.odin).
+	repair:        Repair,
 }
 
 // What the open of a disk found: the counts, the damage, which root it
@@ -482,7 +467,7 @@ state_bind :: proc "contextless" (state: ^State, memory: []u8, blocks: u64, hash
 	state.count_staging = frames[layout.cache_pages:]
 	state.count_staged_slots = slots[layout.cache_slots:]
 	state.leaves_to_write = ([^]u64)(&base[layout.leaves])[:layout.leaf_words]
-	state.repair_nodes_per_step = REPAIR_NODES_PER_STEP
+	state.repair.nodes_per_step = REPAIR_NODES_PER_STEP
 	state.hash_index.records = ([^]Root_Record)(&base[layout.hash_records])[:layout.hash_capacity]
 	state.hash_index.slots = ([^]u64)(&base[layout.hash_slots])[:layout.hash_capacity]
 	state.hash_index.slot_bits = 0
@@ -541,12 +526,7 @@ store_numbers :: #force_inline proc "contextless" (state: ^State) -> int {
 // for the first name: the caller reads and checks the block one time.
 reference :: proc "contextless" (state: ^State, number: u64, store_index: int, result: ^Mount) -> (first: bool) {
 	// The form Count_Tree counts nothing: the counts are on the disk, and
-	// the walk reads the trees of the stores only. Its repair counts the
-	// names of the blocks of the wrong leaves, and walks each node once.
-	if state.repairing {
-		repair_name(state, number, u16(store_index + 1))
-		return repair_node_first(state, number)
-	}
+	// the walk reads the trees of the stores only.
 	if number >= state.capacity || state.form == .Count_Tree {
 		return false
 	}
@@ -759,11 +739,6 @@ reference_object_child :: proc "contextless" (state: ^State, reader: ^Block_Read
 		result.wrong += 1
 		return .Wrong, false, child.blocks, child.value
 	}
-	if state.repairing && level == 0 {
-		// A repair counts a block of data and reads none.
-		repair_name(state, child.block, u16(store_index + 1))
-		return .Good, false, 1, child.value
-	}
 	if !reference(state, child.block, store_index, result) {
 		bad := wrong_block(state, child.block) || damaged_under(state, child.block)
 		return bad ? .Wrong : .Good, false, child.blocks, child.value
@@ -814,10 +789,6 @@ reference_object_child :: proc "contextless" (state: ^State, reader: ^Block_Read
 			if item.block >= state.disk_size {
 				result.wrong += 1
 				damaged = true
-				continue
-			}
-			if state.repairing {
-				repair_name(state, item.block, u16(store_index + 1))
 				continue
 			}
 			if reference(state, item.block, store_index, result) {
@@ -966,76 +937,6 @@ blocks_in_use :: proc "contextless" (state: ^State) -> u64 {
 		return blocks > free ? blocks - free : 2
 	}
 	return 0
-}
-
-// repair_name counts one name of a block if it is in a leaf that the
-// repair counts again.
-repair_name :: proc "contextless" (state: ^State, number: u64, owner: u16) {
-	first := number - number % format.COUNTS_OF_A_PAGE
-	for &leaf in state.repair_leaves[:state.repair_count] {
-		if leaf.first == first {
-			place := number - first
-			if u64(leaf.counts[place]) < REFERENCE_LIMIT {
-				leaf.counts[place] += 1
-			}
-			leaf.owners[place] = owner
-			return
-		}
-	}
-}
-
-// repair_waits says if a step of a repair of the count tree waits: a
-// repair in progress, or wrong leaves that no repair counted yet. A repair
-// that stopped waits for the next open.
-repair_waits :: proc "contextless" (state: ^State) -> bool {
-	if state.form != .Count_Tree || state.repair_off {
-		return false
-	}
-	return state.repairing || state.counts.wrong_leaf_count > 0 && len(state.counts.repaired) == 0
-}
-
-// repair_count_pages names each page of the count tree under a page: the
-// directories that the cache reads, and the blocks of their children,
-// wrong leaves too.
-@(private)
-repair_count_pages :: proc "contextless" (state: ^State, level: int, first: u64) -> block_counts.Read {
-	frame, outcome := block_counts.page_get(&state.counts, level, first)
-	if outcome != .Good || frame == nil {
-		return outcome
-	}
-	if level == state.counts.levels {
-		repair_name(state, frame.block, COUNT_TREE_OWNER)
-	}
-	children := (^format.Count_Directory)(&frame.bytes).children
-	span := format.count_span(level - 1)
-	for child, place in children {
-		if child.block == 0 {
-			continue
-		}
-		repair_name(state, child.block, COUNT_TREE_OWNER)
-		if level > 1 {
-			if under := repair_count_pages(state, level - 1, first + u64(place) * span); under == .Device {
-				return under
-			}
-		}
-	}
-	return .Good
-}
-
-// repair_written forgets the repaired leaves: a commit wrote them.
-repair_written :: proc "contextless" (state: ^State) {
-	counts := &state.counts
-	kept := 0
-	for index in 0 ..< counts.wrong_leaf_count {
-		first := counts.wrong_leaves[index]
-		if block_counts.leaf_repaired(counts, first) == nil {
-			counts.wrong_leaves[kept] = first
-			kept += 1
-		}
-	}
-	counts.wrong_leaf_count = kept
-	counts.repaired = nil
-	state.repair_count = 0
 }
 
 @(private)
@@ -1195,6 +1096,10 @@ Store_Walk :: struct {
 walk :: proc "contextless" (state: ^State, reader: ^Block_Reader, candidate: ^format.Root, result: ^Mount) -> bool {
 	state_tables_clear(state)
 	result.count_tree_damaged, result.count_leaves_differ = false, 0
+	// A repair of an open before does not go on: the counts of this root
+	// come from its own walk.
+	state.repair.running, state.repair.wait_for_call, state.repair.no_room = false, false, false
+	state.repair.leaf_count = 0
 	if !count_tree_bind(state, reader, candidate) {
 		return false
 	}
@@ -1675,44 +1580,57 @@ visit_entry_of_store :: proc "contextless" (one: ^tree.Walk, _: []u8, value: []u
 	entry := (^format.Entry)(raw_data(value))^
 	queued := walking.in_removals && walking.nesting == 0
 	if queued && entry.kind == u64(format.Entry_Kind.Release) {
-		// A list of large states that steps free: the list, then the blocks
-		// of each state from its cursor. A wrong list damages the store: its
-		// states are not known.
+		// A chain of lists of large states that steps free: each list, then
+		// the blocks of each of its states from its cursor. A wrong list ends
+		// the chain: its states and those of the lists after it are not
+		// known, so their blocks are free, and a step drops the entry, as the
+		// service does at run time. The rest of the store is whole.
 		walking.counts.removing += 1
-		if entry.pointer.block == 0 || entry.size != 0 || entry.generation != 0 || entry.versions.block != 0 {
+		if entry.size != 0 || entry.generation != 0 || entry.versions.block != 0 {
 			walking.broken = true
 			one.failure = .Damaged
 			return
 		}
-		switch single(state, walking.reader, entry.pointer, index, result, &walking.named) {
-		case .Device:
-			walking.device = true
-			one.failure = .Device
-			return
-		case .Wrong:
-			walking.broken = true
-			one.failure = .Damaged
-			return
-		case .Good:
-		}
-		list := (^format.Release_List)(raw_data(scratch_block(state, 0)))^
-		if !format.release_list_valid(&list) {
-			wrong_block_set(state, entry.pointer.block)
-			walking.broken = true
-			one.failure = .Damaged
-			return
-		}
-		for released in list.states[:list.count] {
-			switch reference_release(state, walking.reader, released.root, released.size, released.cursor, index, result, &walking.named) {
+		list_pointer := entry.pointer
+		for lists := u64(0); list_pointer.block != 0; lists += 1 {
+			if lists >= state.disk_size {
+				return // More lists than blocks: a loop of lists, whose end the walk does not wait for.
+			}
+			if list_pointer.block < 2 || list_pointer.block >= state.disk_size {
+				result.wrong += 1
+				walking.complete = false
+				return
+			}
+			switch single(state, walking.reader, list_pointer, index, result, &walking.named) {
 			case .Device:
 				walking.device = true
 				one.failure = .Device
 				return
 			case .Wrong:
-				result.damaged_objects += 1
 				walking.complete = false
+				return
 			case .Good:
 			}
+			list := (^format.Release_List)(raw_data(scratch_block(state, 0)))^
+			if !format.release_list_valid(&list) {
+				result.wrong += 1
+				wrong_block_set(state, list_pointer.block)
+				walking.complete = false
+				return
+			}
+			for released in list.states[:list.count] {
+				switch reference_release(state, walking.reader, released.root, released.size, released.cursor, index, result, &walking.named) {
+				case .Device:
+					walking.device = true
+					one.failure = .Device
+					return
+				case .Wrong:
+					result.damaged_objects += 1
+					walking.complete = false
+				case .Good:
+				}
+			}
+			list_pointer = list.next
 		}
 		return
 	}
