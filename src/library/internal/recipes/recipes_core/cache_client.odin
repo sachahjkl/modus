@@ -13,6 +13,7 @@
 package recipes_core
 
 import "modus:contract/blake3"
+import "modus:contract/builder"
 import "modus:contract/errors"
 import "modus:contract/object_cache"
 import pr "modus:contract/plans_recipes"
@@ -32,8 +33,13 @@ CACHE_CLIENT_EXCHANGE_TIMEOUT_US :: u64(10_000_000)
 // Plan value: maximum Busy retries while waiting for a server outboard build.
 CACHE_CLIENT_BUSY_LIMIT :: 4096
 
-// Plan value: maximum pending objects tracked while fetching a Tree closure.
-CACHE_CLOSURE_QUEUE_CAPACITY :: 1024
+// Format/contract bound: matches builder.MAX_INPUT_OBJECTS (4096) so any valid
+// build output tree closure fits without premature refusal.
+CACHE_CLOSURE_QUEUE_CAPACITY :: builder.MAX_INPUT_OBJECTS
+
+// Staging object name used during multi-frame QUIC downloads so partial
+// unverified bytes never land under the final <64-hex> content name.
+FETCH_STAGING_NAME :: "fetch_staging"
 
 // Closed set of transport and protocol outcomes from Cache_Quic_Client.
 Cache_Client_Error :: enum u8 {
@@ -380,10 +386,20 @@ cache_quic_fetch_object_to_store :: proc "contextless" (
 	obj_name := pr.blob_object_name(expected_hash)
 	obj_name_text := pr.private_object_name_text(&obj_name)
 
+	// Keep an already-present verified object intact: a malicious cache must
+	// never overwrite or delete an existing valid <64-hex> object.
+	existing_present := false
+	if existing_size, sz_status := pr.private_store_size(&state.store, obj_name_text); sz_status == .Ok {
+		existing_present = true
+		if stored_output_check(state, expected_hash, kind, existing_size) == .Whole {
+			return existing_size, .None
+		}
+	}
+
 	// Fetch frame 0 first (retrying monotonically on .Busy).
-	resp0, busy_ok := fetch_frame_with_busy(client, expected_hash, kind, 0)
-	if !busy_ok {
-		return 0, .Cache_Miss
+	resp0, frame0_refusal := fetch_frame_with_busy(client, expected_hash, kind, 0)
+	if frame0_refusal != .None {
+		return 0, frame0_refusal
 	}
 	if resp0.status == .Not_Found {
 		return 0, .Cache_Miss
@@ -418,28 +434,43 @@ cache_quic_fetch_object_to_store :: proc "contextless" (
 		return 0, .Malformed_Output
 	}
 
-	// Multi-frame Blob: stream frame 0, then frames 1 ..< frame_count,
-	// verifying each Bao frame before writing it. Remove partial object on any failure.
-	if pr.private_store_write_range(&state.store, obj_name_text, 0, resp0.payload, object_size, false) != .Ok {
-		_ = pr.private_store_remove(&state.store, obj_name_text)
+	// Multi-frame Blob: stream all frames into FETCH_STAGING_NAME first so a
+	// crash or mid-transfer fault never leaves partial unverified bytes under
+	// <64-hex>, and rename atomically only after the final frame proves object_size.
+	_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
+	if pr.private_store_write_range(&state.store, FETCH_STAGING_NAME, 0, resp0.payload, object_size, false) != .Ok {
+		_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
 		return 0, .Store_Failed
 	}
 	for frame_index in u64(1) ..< frame_count {
 		offset := frame_index * object_cache.FRAME_PAYLOAD_BYTES
-		resp, frame_ok := fetch_frame_with_busy(client, expected_hash, .Blob, offset)
-		if !frame_ok || resp.status != .Ok || resp.object_kind != .Blob || resp.object_size != object_size || resp.offset != offset {
-			_ = pr.private_store_remove(&state.store, obj_name_text)
+		resp, frame_refusal := fetch_frame_with_busy(client, expected_hash, .Blob, offset)
+		if frame_refusal != .None {
+			_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
+			return 0, frame_refusal
+		}
+		if resp.status != .Ok || resp.object_kind != .Blob || resp.object_size != object_size || resp.offset != offset {
+			_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
 			return 0, .Malformed_Output
 		}
 		if object_cache.object_frame_verify(.Blob, expected_hash, object_size, frame_index, resp.proof, resp.payload) != .Trust_By_Hash {
-			_ = pr.private_store_remove(&state.store, obj_name_text)
+			_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
 			return 0, .Hash_Mismatch
 		}
 		is_final := frame_index == frame_count - 1
-		if pr.private_store_write_range(&state.store, obj_name_text, offset, resp.payload, object_size, is_final) != .Ok {
-			_ = pr.private_store_remove(&state.store, obj_name_text)
+		if pr.private_store_write_range(&state.store, FETCH_STAGING_NAME, offset, resp.payload, object_size, is_final) != .Ok {
+			_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
 			return 0, .Store_Failed
 		}
+	}
+	// Remove a previously damaged target (already proven non-Whole above)
+	// before atomically renaming the verified staging object into place.
+	if existing_present {
+		_ = pr.private_store_remove(&state.store, obj_name_text)
+	}
+	if pr.private_store_rename(&state.store, FETCH_STAGING_NAME, obj_name_text) != .Ok {
+		_ = pr.private_store_remove(&state.store, FETCH_STAGING_NAME)
+		return 0, .Store_Failed
 	}
 	return object_size, .None
 }
@@ -450,7 +481,7 @@ fetch_frame_with_busy :: proc "contextless" (
 	object_hash: blake3.Hash,
 	kind: object_cache.Cache_Object_Kind,
 	offset: u64,
-) -> (response: object_cache.Cache_Response, ok: bool) {
+) -> (response: object_cache.Cache_Response, refusal: pr.Recipe_Refusal) {
 	req := object_cache.Cache_Request {
 		kind        = .Get_Object,
 		object_hash = object_hash,
@@ -462,19 +493,29 @@ fetch_frame_with_busy :: proc "contextless" (
 	for _ in 0 ..< CACHE_CLIENT_BUSY_LIMIT {
 		resp, err := cache_quic_client_exchange(client, &req)
 		if err != .None {
-			return {}, false
+			switch err {
+			case .Bad_Server_Key:
+				return {}, .Untrusted_Realisation
+			case .Bad_Response, .Stream_Reset:
+				return {}, .Malformed_Output
+			case .None, .Not_Configured, .Start_Failed, .Handshake_Fail, .Timed_Out, .Disconnected, .Bad_Request:
+				return {}, .Cache_Miss
+			}
 		}
 		if resp.status != .Busy {
-			return resp, true
+			return resp, .None
+		}
+		if resp.frame_count == 0 {
+			return {}, .Malformed_Output
 		}
 		if expected_frames == 0 {
 			expected_frames = resp.frame_count
 		} else if resp.frame_count != expected_frames || resp.frames_built <= last_built {
-			return {}, false
+			return {}, .Malformed_Output
 		}
 		last_built = resp.frames_built
 	}
-	return {}, false
+	return {}, .Malformed_Output
 }
 
 // cache_quic_fetch_closure_to_store fetches root_hash (and for Tree outputs,
@@ -582,12 +623,14 @@ cache_quic_fetch_realisation :: proc "contextless" (
 	}
 	resp, err := cache_quic_client_exchange(ctx.client, &req)
 	if err != .None {
-		// Network unreachable or handshake failure is treated as a cache miss
-		// so Prefer_Cache can fall back to local build and Cache_Only refuses Cache_Miss.
-		if err == .Bad_Server_Key {
+		switch err {
+		case .Bad_Server_Key:
 			return false, .Untrusted_Realisation
+		case .Bad_Response, .Stream_Reset:
+			return false, .Malformed_Output
+		case .None, .Not_Configured, .Start_Failed, .Handshake_Fail, .Timed_Out, .Disconnected, .Bad_Request:
+			return false, .None
 		}
-		return false, .None
 	}
 	if resp.status == .Not_Found {
 		return false, .None

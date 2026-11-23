@@ -11,6 +11,7 @@
 // under "module".
 package c_builder
 
+import "base:intrinsics"
 import "modus:contract/blake3"
 import "modus:contract/call_outcome"
 import "modus:contract/errors"
@@ -37,8 +38,9 @@ C_MODULE_FIRST_BYTES_MORE :: 64 * 1024
 // Computed/Plan value: pages kept by c_builder while a child call host runs.
 BUILDER_PAGES_KEPT :: 512
 
-// BSS scratch for reading canonical tree nodes without using the stack.
+// BSS scratch for reading canonical tree nodes and arguments without using the stack.
 tree_buffer: [tree_hash.MAX_ENCODED_TREE_BYTES]u8
+copied_arguments: [pr.MAX_RECIPE_ARG_BYTES]u8
 child_load_error: module.Load_Error
 
 @(private = "file")
@@ -59,8 +61,16 @@ child_seed_values :: proc "contextless" (ctx: ^system.Context) -> (values: [op.C
 	for index in 0 ..< op.CONTEXT_VALUE_SEED_COUNT {
 		values[op.CONTEXT_VALUE_SEED + index] = ctx.values[op.CONTEXT_VALUE_SEED + index]
 	}
-	values[op.CONTEXT_VALUE_SEED_STRENGTH] = u64(op.Seed_Strength.Weak)
+	// Preserve Seed_Strength.None: the recipe hash seed is public and deterministic.
+	values[op.CONTEXT_VALUE_SEED_STRENGTH] = u64(op.Seed_Strength.None)
 	return values
+}
+
+@(private = "file")
+log_builder_failure :: proc "contextless" (step: u64, error: ^errors.Error_Record) {
+	kind := error != nil ? error.kind : 0
+	value := error != nil ? error.value : 0
+	system.log_fact(.Warning, C_Builder_Failed{step = step, error_kind = kind, error_value = value})
 }
 
 @(private = "file")
@@ -107,6 +117,9 @@ resolve_source_in_tree :: proc "contextless" (
 		args := [2]isolated.Argument{{integer = u64(storage.ROOT)}, {text = name[:]}}
 		tree_size, text, status, _ := storage.call(input_store, "tree_read", args[:], error)
 		if status != .Ok || tree_size < 0 || len(text) > len(tree_buffer) {
+			if error == nil || error.kind == 0 {
+				return {}, fail_outcome(error, .Callee_Unavailable, .Refused, .Store, 1, 0, 0, i64(status))
+			}
 			return {}, .Callee_Unavailable
 		}
 		copy(tree_buffer[:], text)
@@ -155,12 +168,12 @@ read_blob_to_memory :: proc "contextless" (
 	pages := (u64(size) + system.PAGE_SIZE - 1) / system.PAGE_SIZE
 	mem_handle, create_status := system.memory_create(pages)
 	if create_status != .Ok {
-		return 0, nil, nil, system.outcome_of_own_status(create_status)
+		return 0, nil, nil, fail_outcome(error, system.outcome_of_own_status(create_status), .Refused, .Kernel_Status, 1, 0, 0, i64(create_status))
 	}
 	mapped, map_status := system.memory_map(mem_handle, {.Write})
 	if map_status != .Ok {
 		system.close(mem_handle)
-		return 0, nil, nil, system.outcome_of_own_status(map_status)
+		return 0, nil, nil, fail_outcome(error, system.outcome_of_own_status(map_status), .Refused, .Kernel_Status, 1, 0, 0, i64(map_status))
 	}
 	dst := ([^]u8)(mapped)[:size]
 	read_total := u64(0)
@@ -170,6 +183,9 @@ read_blob_to_memory :: proc "contextless" (
 		if read_status != .Ok || len(chunk) == 0 || u64(len(chunk)) > u64(size) - read_total {
 			system.memory_unmap(mapped)
 			system.close(mem_handle)
+			if error == nil || error.kind == 0 {
+				return 0, nil, nil, fail_outcome(error, .Callee_Unavailable, .Refused, .Store, 1, 0, 0, i64(read_status))
+			}
 			return 0, nil, nil, .Callee_Unavailable
 		}
 		read_total += u64(len(chunk))
@@ -249,7 +265,7 @@ call_child_sized :: proc "contextless" (
 		pages := max((bytes + system.PAGE_SIZE - 1) / system.PAGE_SIZE, 1)
 		mem_handle, create_status := system.memory_create(pages)
 		if create_status != .Ok {
-			return 0, 0, system.outcome_of_own_status(create_status)
+			return 0, 0, fail_outcome(error, system.outcome_of_own_status(create_status), .Refused, .Kernel_Status, 0, 0, 0, i64(create_status))
 		}
 		arguments[output_index].integer = u64(mem_handle)
 		added := system.Call_Host_Context{pages = child_host_pages(), processes = 1}
@@ -275,7 +291,7 @@ call_child_sized :: proc "contextless" (
 		}
 		return 0, 0, call_out
 	}
-	return 0, 0, .Callee_Unavailable
+	return 0, 0, fail_outcome(error, .Callee_Unavailable, .Refused, .Modules)
 }
 
 // build is the export of the modus:contract/builder contract.
@@ -287,8 +303,17 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 	if arguments == nil {
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 2)
 	}
-	argument_bytes := arguments.bytes[:arguments.count]
-	path, has_path := argument_path(argument_bytes)
+	arg_count := intrinsics.volatile_load(&arguments.count)
+	if arg_count > pr.MAX_RECIPE_ARG_BYTES {
+		return call_outcome.fail(error, .Argument_Refused, .Too_Long, .Bytes, 2, i64(min(arg_count, 1 << 62)), pr.MAX_RECIPE_ARG_BYTES)
+	}
+	if arg_count > 0 && arguments.bytes == nil {
+		return call_outcome.fail(error, .Argument_Refused, .Bad_Address, .None, 2)
+	}
+	if arg_count > 0 {
+		intrinsics.mem_copy_non_overlapping(&copied_arguments[0], arguments.bytes, int(arg_count))
+	}
+	path, has_path := argument_path(copied_arguments[:arg_count])
 	if !has_path {
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2)
 	}
@@ -311,7 +336,7 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 	// 1. Resolve and verify the C source file inside the verified source tree.
 	source_file_hash, resolve_out := resolve_source_in_tree(&input_store, source_tree_hash, path, error)
 	if resolve_out != .Succeeded {
-		system.log_fact(.Warning, C_Builder_Failed{step = 1, error_kind = error.kind, error_value = error.value})
+		log_builder_failure(1, error)
 		return resolve_out, 0
 	}
 
@@ -371,19 +396,21 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 		error,
 	)
 	if compile_out != .Succeeded {
-		system.log_fact(.Warning, C_Builder_Failed{step = 2, error_kind = error.kind, error_value = error.value})
+		log_builder_failure(2, error)
 		return compile_out, 0
 	}
 	defer system.close(text_mem)
 
 	text_pages, _ := system.memory_size(text_mem)
 	if refusal := pr.c_build_written_refusal(text_size, i64(min(text_pages * system.PAGE_SIZE, pr.C_TEXT_BYTES_LIMIT))); refusal.kind != 0 {
-		error^ = refusal
+		if error != nil {
+			error^ = refusal
+		}
 		return .Callee_Unavailable, 0
 	}
 	text_addr, text_map_status := system.memory_map(text_mem, {})
 	if text_map_status != .Ok {
-		return system.outcome_of_own_status(text_map_status), 0
+		return call_outcome.fail(error, system.outcome_of_own_status(text_map_status), .Refused, .Kernel_Status, 0, 0, 0, i64(text_map_status))
 	}
 	defer system.memory_unmap(text_addr)
 	text_bytes := ([^]u8)(text_addr)[:text_size]
@@ -405,31 +432,38 @@ build :: proc "c" (inputs: ^system.Table_To_Read(pr.Recipe_Input_Row), arguments
 		error,
 	)
 	if assemble_out != .Succeeded {
-		system.log_fact(.Warning, C_Builder_Failed{step = 3, error_kind = error.kind, error_value = error.value})
+		log_builder_failure(3, error)
 		return assemble_out, 0
 	}
 	defer system.close(module_mem)
 
 	module_pages, _ := system.memory_size(module_mem)
 	if refusal := pr.c_build_written_refusal(module_size, i64(min(module_pages * system.PAGE_SIZE, pr.C_MODULE_BYTES_LIMIT))); refusal.kind != 0 {
-		error^ = refusal
+		if error != nil {
+			error^ = refusal
+		}
 		return .Callee_Unavailable, 0
 	}
 	module_addr, module_map_status := system.memory_map(module_mem, {})
 	if module_map_status != .Ok {
-		return system.outcome_of_own_status(module_map_status), 0
+		return call_outcome.fail(error, system.outcome_of_own_status(module_map_status), .Refused, .Kernel_Status, 0, 0, 0, i64(module_map_status))
 	}
 	defer system.memory_unmap(module_addr)
 	module_bytes := ([^]u8)(module_addr)[:module_size]
 
 	if refusal := pr.c_build_module_refusal(module_bytes); refusal.kind != 0 {
-		error^ = refusal
+		if error != nil {
+			error^ = refusal
+		}
 		return .Callee_Unavailable, 0
 	}
 
 	// 5. Write validated module into the empty output store under "module".
 	if !write_output_blob(&output_store, "module", module_bytes, error) {
-		system.log_fact(.Warning, C_Builder_Failed{step = 4, error_kind = error.kind, error_value = error.value})
+		if error != nil && error.kind == 0 {
+			_, _ = call_outcome.fail(error, .Callee_Unavailable, .Refused, .Store)
+		}
+		log_builder_failure(4, error)
 		return .Callee_Unavailable, 0
 	}
 

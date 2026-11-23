@@ -30,6 +30,7 @@ import "core:fmt"
 import "core:io"
 import "core:net"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:time"
@@ -134,9 +135,12 @@ Cache_Serve_Options :: struct {
 	authorized_public_keys: [][object_cache.PUBLIC_KEY_SIZE]u8,
 	// Optional Ed25519 private key for the QUIC UDP listener on listen_address.
 	// When has_quic_private_key is false and disable_quic is false, the server
-	// generates a fresh key and prints its public key.
+	// loads <directory>/quic_server.key or creates it on first run so the
+	// pinned server public key stays stable across restarts.
 	quic_private_key:       [quic.ED25519_KEY_SIZE]u8,
 	has_quic_private_key:   bool,
+	// Plan value: concurrent QUIC clients served (0 uses CACHE_QUIC_DEFAULT_CONNECTIONS).
+	quic_connections:       int,
 	disable_quic:           bool,
 	// The listener of the page and of the status record; empty: none.
 	status_listen_address:  string,
@@ -1308,6 +1312,14 @@ handle_get_references :: proc(
 				}
 				return encode_response_into(conn.response_buffer, &response)
 			}
+			// If bytes starting with MODTREE2 hash neither as a tree nor as a
+			// plain blob to request.object_hash, quarantine the damaged file.
+			blob_hash := blake3.hash(tree_bytes)
+			if !object_cache.hashes_equal_constant_time(blob_hash, request.object_hash) {
+				os.close(obj_file)
+				store_move_damaged(server, hex_name, object_size)
+				return status_response(conn.response_buffer, .Get_References, .Not_Found)
+			}
 		}
 
 		// Case 2: modus module file — read its Imports table directly without
@@ -1711,15 +1723,16 @@ cache_server_serve :: proc(options: Cache_Serve_Options) -> bool {
 	if !options.disable_quic {
 		quic_key := options.quic_private_key
 		if !options.has_quic_private_key {
-			if !cache_quic_random_private_key(&quic_key) {
-				fmt.eprintln("modustool: cache-serve: cannot generate QUIC server key")
+			if !cache_quic_load_or_create_key(server.root_directory, &quic_key) {
+				fmt.eprintln("modustool: cache-serve: cannot load or create QUIC server key")
 				return false
 			}
 		}
 		defer crypto_compat.zero_explicit(&quic_key, size_of(quic_key))
 		quic_endpoint := bound_err == nil ? bound : endpoint
 		quic_err_text: string
-		quic_running, quic_err_text = cache_quic_start(&server, quic_endpoint, quic_key)
+		quic_conns := options.quic_connections > 0 ? options.quic_connections : CACHE_QUIC_DEFAULT_CONNECTIONS
+		quic_running, quic_err_text = cache_quic_start(&server, quic_endpoint, quic_key, quic_conns)
 		if quic_running == nil {
 			fmt.eprintfln("modustool: cache-serve: cannot start QUIC listener on %s: %s", net.endpoint_to_string(quic_endpoint, context.temp_allocator), quic_err_text)
 			return false
@@ -1858,14 +1871,15 @@ read_private_key_file :: proc(command, path: string) -> (seed: [quic.ED25519_KEY
 	return decoded, true
 }
 
-// run_cache_serve implements `modustool cache-serve --dir <path> [--listen <addr>] [--quic-key <path>] [--signer-key <path>] [--authorized-key <path>]`.
+// run_cache_serve implements `modustool cache-serve --dir <path> [--listen <addr>] [--quic-key <path>] [--quic-connections <n>] [--signer-key <path>] [--authorized-key <path>]`.
 run_cache_serve :: proc(args: []string) -> int {
-	usage_text :: "modustool: cache-serve --dir <path> [--listen <host:port>] [--quic-key <path>] [--signer-key <path>] [--authorized-key <path>] [--status-listen <host:port>] [--endpoint <host:port>] [--site <address>]"
+	usage_text :: "modustool: cache-serve --dir <path> [--listen <host:port>] [--quic-key <path>] [--quic-connections <n>] [--signer-key <path>] [--authorized-key <path>] [--status-listen <host:port>] [--endpoint <host:port>] [--site <address>]"
 	directory := ""
 	listen_address := DEFAULT_LISTEN_ADDRESS
 	status_listen_address := ""
 	quic_private_key: [quic.ED25519_KEY_SIZE]u8
 	has_quic_private_key := false
+	quic_connections := CACHE_QUIC_DEFAULT_CONNECTIONS
 	defer crypto_compat.zero_explicit(&quic_private_key, size_of(quic_private_key))
 	page := Cache_Page_Settings {
 		site_address = DEFAULT_SITE_ADDRESS,
@@ -1902,6 +1916,18 @@ run_cache_serve :: proc(args: []string) -> int {
 			}
 			quic_private_key = key
 			has_quic_private_key = true
+		case "--quic-connections":
+			if index + 1 >= len(args) {
+				fmt.eprintln(usage_text)
+				return foundation.EXIT_USAGE
+			}
+			index += 1
+			parsed_conns, parse_ok := strconv.parse_int(args[index])
+			if !parse_ok || parsed_conns < 1 || parsed_conns > CACHE_QUIC_MAX_CONNECTIONS {
+				fmt.eprintfln("modustool: cache-serve: --quic-connections must be 1 to %d", CACHE_QUIC_MAX_CONNECTIONS)
+				return foundation.EXIT_USAGE
+			}
+			quic_connections = parsed_conns
 		case "--signer-key":
 			if index + 1 >= len(args) {
 				fmt.eprintln(usage_text)
@@ -1966,6 +1992,7 @@ run_cache_serve :: proc(args: []string) -> int {
 		authorized_public_keys = authorized[:],
 		quic_private_key       = quic_private_key,
 		has_quic_private_key   = has_quic_private_key,
+		quic_connections       = quic_connections,
 		status_listen_address  = status_listen_address,
 		page                   = page,
 	}

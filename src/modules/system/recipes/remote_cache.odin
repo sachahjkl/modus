@@ -4,6 +4,10 @@
 // Speaks ONE cache transport only — QUIC over UDP (default port 5010,
 // ALPN = "modus-object-cache") via modus:quic over the scoped datagram
 // endpoint granted to recipes by root. Never passed to builders or guests.
+//
+// Cache endpoints and trusted signers are keyed strictly per principal
+// (Property 21; src/md/features/recipes.md:207, 335, 337): a configuration
+// set by one principal never applies to another principal.
 package recipes_service
 
 import "base:intrinsics"
@@ -58,21 +62,46 @@ REMOTE_CACHE_SEND_FIRST :: REMOTE_CACHE_RECV_SLOTS
 REMOTE_CACHE_SEND_SLOTS :: 64
 REMOTE_CACHE_SEND_TAG :: u32(1000)
 REMOTE_CACHE_INFO_TAG :: u32(100_000)
+// Hang bound: wait for the network service to answer .Info at startup.
+REMOTE_CACHE_INFO_WAIT_MS :: system.ANSWER_BOUND_MILLISECONDS
+// Hang bound: wait for a free send slot when all 64 datagram send slots are in flight.
+REMOTE_CACHE_SEND_SLOT_WAIT_MS :: system.ANSWER_BOUND_MILLISECONDS
+// Policy bound matching Put_Ledger: distinct principals with cache configs.
+REMOTE_CACHE_PRINCIPALS_MOST :: recipes_core.PUT_PRINCIPALS_MOST
+
+Principal_Cache_Config :: struct {
+	used:       bool,
+	principal:  u64,
+	server_key: [object_cache.PUBLIC_KEY_SIZE]u8,
+	signer_key: [object_cache.PUBLIC_KEY_SIZE]u8,
+}
+
+Pending_Recv_Completion :: struct {
+	place:          int,
+	length:         u64,
+	remote_address: u32,
+}
 
 Remote_Cache_State :: struct {
-	net_ready:      bool,
-	datagrams:      ring.Ring,
-	region:         [^]u8,
-	region_bytes:   u64,
-	local_address:  u32,
-	local_port:     u16,
-	remote_address: u32,
-	remote_port:    u16,
-	send_next:      int,
-	generator:      random.Generator,
-	cryptography:   quic.Cryptography,
-	client:         recipes_core.Cache_Quic_Client,
-	fetch_ctx:      recipes_core.Cache_Quic_Fetch_Context,
+	net_ready:         bool,
+	datagrams:         ring.Ring,
+	region:            [^]u8,
+	region_bytes:      u64,
+	local_address:     u32,
+	local_port:        u16,
+	remote_address:    u32,
+	remote_port:       u16,
+	send_next:         int,
+	send_in_use:       [REMOTE_CACHE_SEND_SLOTS]bool,
+	pending_recv:      [REMOTE_CACHE_RECV_SLOTS]Pending_Recv_Completion,
+	pending_recv_head: int,
+	pending_recv_tail: int,
+	pending_recv_len:  int,
+	generator:         random.Generator,
+	cryptography:      quic.Cryptography,
+	client:            recipes_core.Cache_Quic_Client,
+	fetch_ctx:         recipes_core.Cache_Quic_Fetch_Context,
+	configs:           [REMOTE_CACHE_PRINCIPALS_MOST]Principal_Cache_Config,
 }
 
 // Package-level BSS state so the ~2.3 MiB QUIC client never lives on the stack.
@@ -103,6 +132,69 @@ remote_cache_post_receive :: proc "contextless" (place: int) {
 }
 
 @(private = "file")
+remote_cache_note_completion :: proc "contextless" (record: ring.Record) {
+	if record.tag >= REMOTE_CACHE_SEND_TAG && record.tag < REMOTE_CACHE_SEND_TAG + REMOTE_CACHE_SEND_SLOTS {
+		remote_cache.send_in_use[record.tag - REMOTE_CACHE_SEND_TAG] = false
+		return
+	}
+	place := int(record.tag)
+	if place < 0 || place >= REMOTE_CACHE_RECV_SLOTS {
+		return
+	}
+	if record.kind != u32(call_outcome.Call_Outcome.Succeeded) {
+		remote_cache_post_receive(place)
+		return
+	}
+	if remote_cache.pending_recv_len >= len(remote_cache.pending_recv) {
+		remote_cache_post_receive(place)
+		return
+	}
+	remote_cache.pending_recv[remote_cache.pending_recv_tail] = {
+		place          = place,
+		length         = record.values[1],
+		remote_address = u32(record.values[2]),
+	}
+	remote_cache.pending_recv_tail = (remote_cache.pending_recv_tail + 1) % len(remote_cache.pending_recv)
+	remote_cache.pending_recv_len += 1
+}
+
+@(private = "file")
+remote_cache_drain_completions :: proc "contextless" () {
+	for _ in 0 ..< ring.CAPACITY {
+		record, got := system.receive(&remote_cache.datagrams.completions)
+		if !got {
+			break
+		}
+		remote_cache_note_completion(record)
+	}
+}
+
+@(private = "file")
+remote_cache_acquire_send_slot :: proc "contextless" () -> (slot_idx: int, ok: bool) {
+	deadline := system.time() + REMOTE_CACHE_SEND_SLOT_WAIT_MS
+	for {
+		remote_cache_drain_completions()
+		for step in 0 ..< REMOTE_CACHE_SEND_SLOTS {
+			idx := (remote_cache.send_next + step) % REMOTE_CACHE_SEND_SLOTS
+			if !remote_cache.send_in_use[idx] {
+				remote_cache.send_next = (idx + 1) % REMOTE_CACHE_SEND_SLOTS
+				remote_cache.send_in_use[idx] = true
+				return idx, true
+			}
+		}
+		if system.time() >= deadline {
+			return 0, false
+		}
+		wait := system.wait_begin()
+		system.wait_records(&wait, &remote_cache.datagrams.completions)
+		if system.wait_spin(&wait) {
+			continue
+		}
+		_ = system.wait_end(&wait, deadline)
+	}
+}
+
+@(private = "file")
 remote_cache_transport_now_us :: proc "contextless" (_: rawptr) -> u64 {
 	return system.time() * 1000 + 1
 }
@@ -112,8 +204,11 @@ remote_cache_transport_send :: proc "contextless" (bytes: []u8, _: rawptr) -> bo
 	if !remote_cache.net_ready || len(bytes) == 0 || len(bytes) > datagram.DATA_LIMIT {
 		return false
 	}
-	place := REMOTE_CACHE_SEND_FIRST + remote_cache.send_next
-	remote_cache.send_next = (remote_cache.send_next + 1) % REMOTE_CACHE_SEND_SLOTS
+	slot_idx, slot_ok := remote_cache_acquire_send_slot()
+	if !slot_ok {
+		return false
+	}
+	place := REMOTE_CACHE_SEND_FIRST + slot_idx
 	slot := remote_cache_place(place)
 	copy(slot[network.UDP_HEADER:], bytes)
 	whole := network.udp_header_write(
@@ -125,9 +220,14 @@ remote_cache_transport_send :: proc "contextless" (bytes: []u8, _: rawptr) -> bo
 		len(bytes),
 	)
 	if whole <= 0 {
+		remote_cache.send_in_use[slot_idx] = false
 		return false
 	}
-	return remote_cache_ring_send_cmd(.Send, REMOTE_CACHE_SEND_TAG + u32(place), {0 = u64(place * REMOTE_CACHE_PLACE_SIZE), 1 = u64(whole), 2 = u64(remote_cache.remote_address)})
+	if !remote_cache_ring_send_cmd(.Send, REMOTE_CACHE_SEND_TAG + u32(slot_idx), {0 = u64(place * REMOTE_CACHE_PLACE_SIZE), 1 = u64(whole), 2 = u64(remote_cache.remote_address)}) {
+		remote_cache.send_in_use[slot_idx] = false
+		return false
+	}
+	return true
 }
 
 @(private = "file")
@@ -137,27 +237,19 @@ remote_cache_transport_recv :: proc "contextless" (buffer: []u8, deadline_us: u6
 	}
 	deadline_ms := (deadline_us + 999) / 1000
 	for {
-		if record, got := system.receive(&remote_cache.datagrams.completions); got {
-			if record.tag >= REMOTE_CACHE_SEND_TAG {
-				continue
-			}
-			place := int(record.tag)
-			if place < 0 || place >= REMOTE_CACHE_RECV_SLOTS {
-				continue
-			}
-			if record.kind != u32(call_outcome.Call_Outcome.Succeeded) {
-				remote_cache_post_receive(place)
-				continue
-			}
-			whole := remote_cache_place(place)[:min(record.values[1], REMOTE_CACHE_PLACE_SIZE)]
-			payload, valid := network.udp_data_read(whole, u32(record.values[2]), remote_cache.local_address, .Verify)
+		remote_cache_drain_completions()
+		for remote_cache.pending_recv_len > 0 {
+			item := remote_cache.pending_recv[remote_cache.pending_recv_head]
+			remote_cache.pending_recv_head = (remote_cache.pending_recv_head + 1) % len(remote_cache.pending_recv)
+			remote_cache.pending_recv_len -= 1
+			whole := remote_cache_place(item.place)[:min(item.length, REMOTE_CACHE_PLACE_SIZE)]
+			payload, valid := network.udp_data_read(whole, item.remote_address, remote_cache.local_address, .Verify)
 			if valid && len(payload) > 0 && len(payload) <= len(buffer) {
 				copied := copy(buffer, payload)
-				remote_cache_post_receive(place)
+				remote_cache_post_receive(item.place)
 				return copied, true
 			}
-			remote_cache_post_receive(place)
-			continue
+			remote_cache_post_receive(item.place)
 		}
 		if system.time() >= deadline_ms {
 			return 0, false
@@ -186,6 +278,75 @@ remote_cache_ed25519_verify :: proc "contextless" (
 	err: errors.Error_Record
 	outcome, _ := ed25519_verify(&pub_str, &msg_str, &sig_str, &err)
 	return outcome == .Succeeded
+}
+
+@(private = "file")
+remote_cache_config_find :: proc "contextless" (principal: u64, create: bool) -> ^Principal_Cache_Config {
+	for &cfg in remote_cache.configs {
+		if cfg.used && cfg.principal == principal {
+			return &cfg
+		}
+	}
+	if !create {
+		return nil
+	}
+	for &cfg in remote_cache.configs {
+		if !cfg.used {
+			return &cfg
+		}
+	}
+	return nil
+}
+
+// remote_cache_prepare_for_principal binds the QUIC remote cache client and
+// returns a Substitution_Policy carrying ONLY the trusted signer configured by
+// principal. If principal has not configured a cache, remote_cache_fetch is
+// cleared so another principal's cache or signer is never consulted.
+@(private)
+remote_cache_prepare_for_principal :: proc "contextless" (
+	principal: u64,
+	signer_slot: ^[1][object_cache.PUBLIC_KEY_SIZE]u8,
+) -> (policy: object_cache.Substitution_Policy) {
+	service_state.remote_cache_fetch = nil
+	service_state.remote_cache_user = nil
+	if !remote_cache.net_ready {
+		return {}
+	}
+	cfg := remote_cache_config_find(principal, false)
+	if cfg == nil {
+		return {}
+	}
+	if !remote_cache.client.configured || remote_cache.client.server_public_key != cfg.server_key {
+		recipes_core.cache_quic_client_close(&remote_cache.client)
+		transport := recipes_core.Cache_Datagram_Transport {
+			send   = remote_cache_transport_send,
+			recv   = remote_cache_transport_recv,
+			now_us = remote_cache_transport_now_us,
+		}
+		if !recipes_core.cache_quic_client_init(
+			&remote_cache.client,
+			cfg.server_key,
+			&remote_cache.cryptography,
+			&remote_cache.generator,
+			transport,
+		) {
+			return {}
+		}
+	}
+	remote_cache.fetch_ctx = {
+		client           = &remote_cache.client,
+		verify_signature = remote_cache_ed25519_verify,
+	}
+	service_state.remote_cache_fetch = recipes_core.cache_quic_fetch_realisation
+	service_state.remote_cache_user = &remote_cache.fetch_ctx
+	signer_slot[0] = cfg.signer_key
+	return {trusted_signers = signer_slot[:]}
+}
+
+@(private)
+remote_cache_clear_active :: proc "contextless" () {
+	service_state.remote_cache_fetch = nil
+	service_state.remote_cache_user = nil
 }
 
 // remote_cache_bind opens the scoped UDP datagram endpoint granted to recipes
@@ -234,7 +395,7 @@ remote_cache_bind :: proc "contextless" (ctx: ^system.Context) {
 	if !remote_cache_ring_send_cmd(.Info, REMOTE_CACHE_INFO_TAG) {
 		return
 	}
-	deadline := system.time() + 2000
+	deadline := system.time() + REMOTE_CACHE_INFO_WAIT_MS
 	info_ok := false
 	info: ring.Record
 	for system.time() < deadline {
@@ -264,9 +425,9 @@ remote_cache_bind :: proc "contextless" (ctx: ^system.Context) {
 	remote_cache.net_ready = true
 }
 
-// configure_cache configures the remote QUIC object cache endpoint's pinned
-// Ed25519 server public key and trusted realisation signer public key (each
-// 64 lowercase hexadecimal digits).
+// configure_cache configures the caller principal's remote QUIC object cache
+// pinned Ed25519 server public key and trusted realisation signer public key
+// (each 64 lowercase hexadecimal digits). Scoped strictly to caller_principal().
 @(export, link_name = "configure_cache")
 configure_cache :: proc "c" (
 	server_public_key_hex: ^system.Bytes_To_Read,
@@ -307,29 +468,15 @@ configure_cache :: proc "c" (
 		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 2)
 	}
 
-	recipes_core.cache_quic_client_close(&remote_cache.client)
-	transport := recipes_core.Cache_Datagram_Transport {
-		send   = remote_cache_transport_send,
-		recv   = remote_cache_transport_recv,
-		now_us = remote_cache_transport_now_us,
+	principal := caller_principal()
+	cfg := remote_cache_config_find(principal, true)
+	if cfg == nil {
+		return call_outcome.fail(error, .Budget_Or_Capacity_Exhausted, .Over_Limit, .Objects, 0, REMOTE_CACHE_PRINCIPALS_MOST, REMOTE_CACHE_PRINCIPALS_MOST)
 	}
-	if !recipes_core.cache_quic_client_init(
-		&remote_cache.client,
-		server_key,
-		&remote_cache.cryptography,
-		&remote_cache.generator,
-		transport,
-	) {
-		return call_outcome.fail(error, .Argument_Refused, .Bad_Value, .None, 1)
-	}
-	remote_cache.fetch_ctx = {
-		client           = &remote_cache.client,
-		verify_signature = remote_cache_ed25519_verify,
-	}
-	service_state.remote_cache_fetch = recipes_core.cache_quic_fetch_realisation
-	service_state.remote_cache_user = &remote_cache.fetch_ctx
-	service_state.remote_cache_signers[0] = signer_key
-	service_state.remote_cache_signer_count = 1
+	cfg.used = true
+	cfg.principal = principal
+	cfg.server_key = server_key
+	cfg.signer_key = signer_key
 	system.log_fact(.Info, Remote_Cache_Configured{port = u64(remote_cache.remote_port), server_key = value_kinds.Hash_Field(server_key)})
 	return .Succeeded, 1
 }

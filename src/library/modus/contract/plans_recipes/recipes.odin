@@ -48,6 +48,33 @@ Recipe_Build_Outcome :: enum u8 {
 	Building      = 4, // A guest build runs on the build thread of the service: the history gives its end.
 }
 
+// recipe_build_outcome_of_word converts a transport word to Recipe_Build_Outcome,
+// refusing unknown values and None.
+recipe_build_outcome_of_word :: proc "contextless" (word: u64) -> (outcome: Recipe_Build_Outcome, ok: bool) {
+	member := enum_word.member_of_word(Recipe_Build_Outcome, word) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
+}
+
+// Closed set of provenance origins recorded in Realisation_Row.origin_word.
+Provenance_Origin :: enum u8 {
+	None         = 0,
+	Local_Build  = 1,
+	Remote_Cache = 2,
+}
+
+// provenance_origin_of_word converts a transport word to Provenance_Origin,
+// refusing unknown values and None.
+provenance_origin_of_word :: proc "contextless" (word: u64) -> (origin: Provenance_Origin, ok: bool) {
+	member := enum_word.member_of_word(Provenance_Origin, word) or_return
+	if member == .None {
+		return .None, false
+	}
+	return member, true
+}
+
 // Closed set of refusal reasons for recipe validation, cache verification,
 // and sandboxed builds.
 Recipe_Refusal :: enum u8 {

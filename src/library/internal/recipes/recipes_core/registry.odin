@@ -7,6 +7,7 @@
 package recipes_core
 
 import "modus:contract/blake3"
+import "modus:contract/object_cache"
 import pr "modus:contract/plans_recipes"
 
 // The recipes that the service holds at once.
@@ -94,7 +95,7 @@ Builder_Start :: struct {
 // recipe of the inputs tree builder itself, and each other builder with
 // start, in its own process (src/md/features/recipes.md, "The builder").
 // With no start, another builder is refused with Builder_Needs_Sandbox.
-build_registered :: proc "contextless" (state: ^Recipes_State, registry: ^Recipe_Registry, recipe_hash: blake3.Hash, mode: pr.Build_Mode, start: ^Builder_Start = nil) -> (result: pr.Recipe_Build_Result) {
+build_registered :: proc "contextless" (state: ^Recipes_State, registry: ^Recipe_Registry, recipe_hash: blake3.Hash, mode: pr.Build_Mode, start: ^Builder_Start = nil, policy: object_cache.Substitution_Policy = {}) -> (result: pr.Recipe_Build_Result) {
 	spec := registered_recipe(registry, recipe_hash)
 	if spec == nil {
 		state.counters.total_refusals += 1
@@ -104,12 +105,12 @@ build_registered :: proc "contextless" (state: ^Recipes_State, registry: ^Recipe
 	}
 	if start != nil && start.invoke != nil && spec.builder_hash != pr.inputs_tree_builder_hash() {
 		start.refusal = .None
-		result = build_recipe(state, spec, mode, {}, nil, start.invoke, nil, nil, start)
+		result = build_recipe(state, spec, mode, policy, nil, start.invoke, nil, nil, start)
 		if result.refusal == .Builder_Failed && start.refusal != .None {
 			result.refusal = start.refusal
 		}
 	} else {
-		result = build_with_inputs_tree(state, spec, mode)
+		result = build_with_inputs_tree(state, spec, mode, policy)
 	}
 	history_add(registry, &result, mode)
 	return result
@@ -118,9 +119,9 @@ build_registered :: proc "contextless" (state: ^Recipes_State, registry: ^Recipe
 // build_with_inputs_tree builds spec in mode with the inputs tree builder as
 // the one builder that the service runs itself, and gives the cause of a
 // refusal of that builder in place of Builder_Failed.
-build_with_inputs_tree :: proc "contextless" (state: ^Recipes_State, spec: ^pr.Recipe_Spec, mode: pr.Build_Mode) -> (result: pr.Recipe_Build_Result) {
+build_with_inputs_tree :: proc "contextless" (state: ^Recipes_State, spec: ^pr.Recipe_Spec, mode: pr.Build_Mode, policy: object_cache.Substitution_Policy = {}) -> (result: pr.Recipe_Build_Result) {
 	call := Inputs_Tree_Call{}
-	result = build_recipe(state, spec, mode, {}, nil, inputs_tree_invoke, nil, nil, &call)
+	result = build_recipe(state, spec, mode, policy, nil, inputs_tree_invoke, nil, nil, &call)
 	if result.refusal == .Builder_Failed && call.refusal != .None {
 		result.refusal = call.refusal
 	}

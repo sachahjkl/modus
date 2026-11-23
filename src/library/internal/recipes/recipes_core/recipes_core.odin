@@ -15,13 +15,14 @@
 //
 // The local store is the private store of the service, and an index of it
 // in the memory of the service (src/md/features/recipes.md, "The local
-// store"): each output is the object "blob_<hash>" of any size that the
-// store holds, and each realisation the object "realisation_<recipe hash>"
-// that names it. The output is written before its realisation, so a
-// realisation never names an output that the store lacks; a build of the
-// same recipe after a start reads them back, checks the output against its
-// hash, and builds nothing. A retention rule removes the oldest
-// realisations when an output would pass the share of the store.
+// store"): each content-addressed object is stored at storage.ROOT under its
+// exact 64 lowercase hexadecimal BLAKE3 hash, and each realisation is the
+// object "realisation_<recipe hash>" that names it. The output is written
+// before its realisation, so a realisation never names an output that the
+// store lacks; a build of the same recipe after a start reads them back,
+// checks the output against its hash, and builds nothing. A retention rule
+// removes the oldest realisations when an output would pass the share of the
+// store.
 package recipes_core
 
 import "modus:contract/blake3"
@@ -58,11 +59,7 @@ RETENTION_LIST_ROWS :: 32
 STORE_BLOCK_BYTES :: 4096
 
 // Where a recorded realisation came from for provenance auditing.
-Provenance_Origin :: enum u8 {
-	None         = 0,
-	Local_Build  = 1,
-	Remote_Cache = 2,
-}
+Provenance_Origin :: pr.Provenance_Origin
 
 // Callback to query a remote object cache for a realisation and its payload.
 Cache_Lookup_Proc :: #type proc "contextless" (
@@ -167,12 +164,11 @@ Recipes_State :: struct {
 	building:            ^pr.Recipe_Spec,
 	retention_keep:      proc "contextless" (hash: blake3.Hash, user_data: rawptr) -> bool,
 	retention_keep_user: rawptr,
-	// Streaming remote object cache hook (QUIC UDP:5010) and its trusted
-	// realisation signers. nil when no remote cache is configured.
-	remote_cache_fetch:        Cache_Fetch_Proc,
-	remote_cache_user:         rawptr,
-	remote_cache_signers:      [REMOTE_CACHE_SIGNERS_CAPACITY][object_cache.PUBLIC_KEY_SIZE]u8,
-	remote_cache_signer_count: int,
+	// Streaming remote object cache hook (QUIC UDP:5010). nil when no remote
+	// cache is active for the current caller's principal. Trusted signers are
+	// always supplied per-call in Substitution_Policy, never globally.
+	remote_cache_fetch: Cache_Fetch_Proc,
+	remote_cache_user:  rawptr,
 }
 
 // state_init zeroes state, binds the private store that keeps the
@@ -228,7 +224,6 @@ Stored_Output :: enum u8 {
 // piece, and checks its length and its hash. A tree is read whole into the
 // staging of the cache, as its hash needs its encoding whole: a tree has at
 // most STAGING_BYTES.
-@(private)
 stored_output_check :: proc "contextless" (state: ^Recipes_State, hash: blake3.Hash, kind: object_cache.Cache_Object_Kind, length: u64) -> Stored_Output {
 	name := pr.blob_object_name(hash)
 	text := pr.private_object_name_text(&name)
@@ -750,13 +745,9 @@ build_recipe :: proc "contextless" (
 				}
 			}
 		} else if state.remote_cache_fetch != nil {
-			fetch_policy := effective_policy
-			if len(fetch_policy.trusted_signers) == 0 && state.remote_cache_signer_count > 0 {
-				fetch_policy.trusted_signers = state.remote_cache_signers[:state.remote_cache_signer_count]
-			}
 			remote_real: object_cache.Realisation_Record
 			remote_length: u64 = 0
-			found, fetch_refusal := state.remote_cache_fetch(state, spec, rhash, fetch_policy, &remote_real, &remote_length, state.remote_cache_user)
+			found, fetch_refusal := state.remote_cache_fetch(state, spec, rhash, effective_policy, &remote_real, &remote_length, state.remote_cache_user)
 			if fetch_refusal != .None {
 				if fetch_refusal != .Untrusted_Realisation || checked_mode == .Cache_Only || checked_mode == .Verify {
 					state.counters.total_refusals += 1

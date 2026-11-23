@@ -13,8 +13,6 @@ import "modus:contract/object_cache"
 import pr "modus:contract/plans_recipes"
 import "modus:contract/tree_hash"
 import "modus:contract/value_kinds"
-import "modus:storage"
-import "modus:storage_port"
 import "modus:system"
 
 // The failures of the exports of this file, each with its error record:
@@ -289,7 +287,7 @@ build_cancel :: proc "c" (recipe: ^system.Bytes_To_Read, error: ^errors.Error_Re
 // caller_principal gives the number of the principal of the caller of the
 // call that runs: the key of its quota of put and of its share of the
 // queue. A connection that closes and opens again keeps it.
-@(private = "file")
+@(private)
 caller_principal :: proc "contextless" () -> u64 {
 	connection := system.service_caller()
 	if connection == nil {
@@ -318,7 +316,10 @@ build_of_hash :: proc "contextless" (recipe_hash: blake3.Hash, checked_mode: pr.
 		}
 		return .Succeeded, 1
 	}
-	export_result = recipes_core.build_registered(&service_state, &service_registry, recipe_hash, checked_mode, &builder_start)
+	signer_slot: [1][object_cache.PUBLIC_KEY_SIZE]u8
+	policy := remote_cache_prepare_for_principal(caller_principal(), &signer_slot)
+	defer remote_cache_clear_active()
+	export_result = recipes_core.build_registered(&service_state, &service_registry, recipe_hash, checked_mode, &builder_start, policy)
 	system.log_fact(.Info, Recipe_Build_Completed{outcome = u64(export_result.outcome), refusal_code = u64(export_result.refusal)})
 	if export_result.refusal != .None {
 		return recipe_refusal_fail(error, export_result.refusal, 1)
@@ -460,11 +461,19 @@ put_memory :: proc "c" (kind: i64, memory: system.Lent({.Read}), size: i64, resu
 		digest = blake3.hasher_finish(&hasher)
 		final_name := pr.blob_object_name(digest)
 		final_text := pr.private_object_name_text(&final_name)
-		if existing_size, sz_status := pr.private_store_size(&service_state.store, final_text); sz_status == .Ok && existing_size == total {
+		existing_valid := false
+		if existing_size, sz_status := pr.private_store_size(&service_state.store, final_text); sz_status == .Ok {
+			if existing_size == total && recipes_core.stored_output_check(&service_state, digest, .Blob, existing_size) == .Whole {
+				existing_valid = true
+			} else {
+				// Replace damaged or truncated object under final_text.
+				_ = pr.private_store_remove(&service_state.store, final_text)
+			}
+		}
+		if existing_valid {
 			_ = pr.private_store_remove(&service_state.store, STAGING_NAME)
 		} else {
-			rename_err: errors.Error_Record
-			if _, rename_status := storage.rename(&storage_port.store_client, storage.ROOT, STAGING_NAME, storage.ROOT, final_text, &rename_err); rename_status != .Ok {
+			if pr.private_store_rename(&service_state.store, STAGING_NAME, final_text) != .Ok {
 				_ = pr.private_store_remove(&service_state.store, STAGING_NAME)
 				return recipe_refusal_fail(error, .Store_Failed, 2)
 			}
@@ -561,8 +570,11 @@ read_output :: proc "c" (output_hash_hex: ^system.Bytes_To_Read, entry_name: ^st
 	if sz_status == .Absent {
 		return call_outcome.fail(error, .Nothing_Has_That_Name, .Absent, .Objects, 1)
 	}
-	if sz_status != .Ok || target_size > pr.C_MODULE_BYTES_LIMIT {
-		return call_outcome.fail(error, .Data_Damaged, .Out_Of_Range, .Bytes, 1, i64(target_size), i64(pr.C_MODULE_BYTES_LIMIT))
+	if sz_status != .Ok {
+		return call_outcome.fail(error, .Data_Damaged, .Damaged, .Objects, 1)
+	}
+	if target_size > recipes_core.PUT_MEMORY_BYTES_MOST {
+		return call_outcome.fail(error, .Argument_Refused, .Out_Of_Range, .Bytes, 1, i64(target_size), i64(recipes_core.PUT_MEMORY_BYTES_MOST))
 	}
 
 	out_pages, out_sz_status := system.memory_size(out_memory.handle)

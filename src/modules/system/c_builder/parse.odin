@@ -28,6 +28,7 @@ argument_path :: proc "contextless" (arguments: []u8) -> (path: string, ok: bool
 	if count_refusal != .None {
 		return "", false
 	}
+	found_path := false
 	for _ in 0 ..< count {
 		field, field_refusal := declaration_eval.output_read_string(&reader)
 		if field_refusal != .None {
@@ -39,21 +40,26 @@ argument_path :: proc "contextless" (arguments: []u8) -> (path: string, ok: bool
 			return "", false
 		}
 		if field == "path" {
-			if value_tag != .Text {
+			if found_path || value_tag != .Text {
 				return "", false
 			}
 			value, text_refusal := declaration_eval.output_read_string(&reader)
 			if text_refusal != .None || !source_path_valid(value) {
 				return "", false
 			}
-			return value, true
+			path = value
+			found_path = true
+			continue
 		}
 		reader.offset = start
 		if declaration_eval.output_skip_value(&reader, 1) != .None {
 			return "", false
 		}
 	}
-	return "", false
+	if !found_path || reader.offset != len(arguments) {
+		return "", false
+	}
+	return path, true
 }
 
 // source_path_valid validates a relative forward-slash path inside a source tree.

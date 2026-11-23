@@ -249,10 +249,33 @@ port_write_range :: proc "contextless" (user: rawptr, name: string, offset: u64,
 			return write_large_abandon_with(user, CLIENT_LARGE_OPS, &pending_state, name)
 		}
 	}
-	if status := CLIENT_LARGE_OPS.commit(user, name, &error); status != .Ok {
-		return write_large_abandon_with(user, CLIENT_LARGE_OPS, &pending_state, name)
+	end_offset := offset + u64(len(data))
+	// Commit on the final range or when crossing a COMMIT_STEP_BYTES boundary
+	// (matching write_large_with) so large streamed writes avoid commit
+	// amplification per 32 KiB call-region piece.
+	if final || (len(data) > 0 && offset / COMMIT_STEP_BYTES != end_offset / COMMIT_STEP_BYTES) {
+		if status := CLIENT_LARGE_OPS.commit(user, name, &error); status != .Ok {
+			return write_large_abandon_with(user, CLIENT_LARGE_OPS, &pending_state, name)
+		}
 	}
 	return .Ok
+}
+
+@(private)
+port_rename :: proc "contextless" (user: rawptr, from_name: string, to_name: string) -> pr.Private_Store_Status {
+	if user == nil {
+		return .Failed
+	}
+	client := (^storage.Client)(user)
+	error: errors.Error_Record
+	_, status := storage.rename(client, storage.ROOT, from_name, storage.ROOT, to_name, &error)
+	if status == .Ok {
+		return .Ok
+	}
+	if status == .Failed && error.kind == i64(errors.Kind.Absent) {
+		return .Absent
+	}
+	return .Failed
 }
 
 @(private)

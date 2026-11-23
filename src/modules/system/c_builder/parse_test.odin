@@ -47,6 +47,27 @@ argument_path_refusals_and_valid_paths :: proc(t: ^testing.T) {
 		testing.expect(t, ok)
 		testing.expect_value(t, got, good)
 	}
+
+	// Trailing bytes after a valid record must be refused.
+	encoded_good := encode_record_with_path(buf[:], "path", "collatz.c")
+	buf[len(encoded_good)] = 0xAA
+	_, ok_trailing := argument_path(buf[:len(encoded_good) + 1])
+	testing.expect(t, !ok_trailing)
+
+	// Duplicate "path" field must be refused.
+	w := declaration_eval.Output_Writer{buffer = buf[:]}
+	rec_tag := [1]u8{u8(declaration_eval.Value_Tag.Record)}
+	txt_tag := [1]u8{u8(declaration_eval.Value_Tag.Text)}
+	declaration_eval.output_write_bytes(&w, rec_tag[:])
+	declaration_eval.output_write_u32(&w, 2)
+	declaration_eval.output_write_string(&w, "path")
+	declaration_eval.output_write_bytes(&w, txt_tag[:])
+	declaration_eval.output_write_string(&w, "a.c")
+	declaration_eval.output_write_string(&w, "path")
+	declaration_eval.output_write_bytes(&w, txt_tag[:])
+	declaration_eval.output_write_string(&w, "b.c")
+	_, ok_dup := argument_path(buf[:w.written])
+	testing.expect(t, !ok_dup)
 }
 
 @(test)

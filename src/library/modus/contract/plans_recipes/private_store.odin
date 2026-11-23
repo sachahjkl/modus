@@ -20,9 +20,9 @@
 //
 // The recipes service keeps one realisation object for each recipe that it
 // realised, "realisation_<recipe hash>": the realisation record, its origin
-// and the count of the bytes of its output; and each output as the object
-// "blob_<output hash>", of any size that its store holds. A build of the
-// same recipe after a start takes them from the store and builds nothing.
+// and the count of the bytes of its output; and each content-addressed object
+// under its exact 64 lowercase hexadecimal BLAKE3 hash at storage.ROOT. A build
+// of the same recipe after a start takes them from the store and builds nothing.
 //
 // The projects service keeps one project object for each project of a
 // principal, "project_<principal>_<hash of the name>": the name, the
@@ -56,6 +56,7 @@ Private_Store_Port :: struct {
 	read:        proc "contextless" (user: rawptr, name: string, into: []u8) -> (count: int, status: Private_Store_Status),
 	write:       proc "contextless" (user: rawptr, name: string, data: []u8) -> Private_Store_Status,
 	write_range: proc "contextless" (user: rawptr, name: string, offset: u64, data: []u8, total_size: u64, final: bool) -> Private_Store_Status,
+	rename:      proc "contextless" (user: rawptr, from_name: string, to_name: string) -> Private_Store_Status,
 	size:        proc "contextless" (user: rawptr, name: string) -> (bytes: u64, status: Private_Store_Status),
 	read_range:  proc "contextless" (user: rawptr, name: string, offset: u64, into: []u8) -> (count: int, status: Private_Store_Status),
 	remove:      proc "contextless" (user: rawptr, name: string) -> Private_Store_Status,
@@ -106,6 +107,15 @@ private_store_remove :: proc "contextless" (port: ^Private_Store_Port, name: str
 		return .Failed
 	}
 	return port.remove(port.user, name)
+}
+
+// private_store_rename atomically renames from_name to to_name at storage.ROOT.
+// The destination must not already exist (callers remove any damaged target first).
+private_store_rename :: proc "contextless" (port: ^Private_Store_Port, from_name: string, to_name: string) -> Private_Store_Status {
+	if port == nil || port.rename == nil {
+		return .Failed
+	}
+	return port.rename(port.user, from_name, to_name)
 }
 
 // private_store_list gives a page of the entries of the store after the
@@ -246,6 +256,7 @@ memory_private_store_port :: proc "contextless" (store: ^Memory_Private_Store) -
 		read = memory_private_store_read,
 		write = memory_private_store_write,
 		write_range = memory_private_store_write_range,
+		rename = memory_private_store_rename,
 		size = memory_private_store_size,
 		read_range = memory_private_store_read_range,
 		remove = memory_private_store_remove,
@@ -380,6 +391,29 @@ memory_private_store_write_range :: proc "contextless" (
 		store.writes += 1
 		object.generation = i64(store.writes)
 	}
+	return .Ok
+}
+
+@(private = "file")
+memory_private_store_rename :: proc "contextless" (user: rawptr, from_name: string, to_name: string) -> Private_Store_Status {
+	store := (^Memory_Private_Store)(user)
+	if len(from_name) == 0 || len(to_name) == 0 || len(to_name) > MEMORY_PRIVATE_STORE_NAME_BYTES {
+		return .Failed
+	}
+	src := memory_private_store_find(store, from_name)
+	if src == nil {
+		return .Absent
+	}
+	if from_name == to_name {
+		return .Ok
+	}
+	if memory_private_store_find(store, to_name) != nil {
+		return .Failed
+	}
+	copy(src.name[:], to_name)
+	src.name_length = len(to_name)
+	store.writes += 1
+	src.generation = i64(store.writes)
 	return .Ok
 }
 

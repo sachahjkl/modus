@@ -8,18 +8,25 @@ package cache_server
 
 import "core:crypto"
 import "core:net"
+import "core:os"
+import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
 import "modus:contract/errors"
 import "modus:contract/object_cache"
+import crypto_compat "modus:cryptography/compatibility_crypto"
 import "modus:cryptography/ed25519"
 import "modus:cryptography_primitives"
 import "modus:quic"
 import "modus:random"
 
-// Plan value: concurrent QUIC clients served by one cache-serve instance.
-CACHE_QUIC_CONNECTIONS :: 8
+// Plan value: default concurrent QUIC clients served by one cache-serve instance
+// (overridable with --quic-connections up to CACHE_QUIC_MAX_CONNECTIONS).
+CACHE_QUIC_DEFAULT_CONNECTIONS :: 32
+
+// Plan value: upper bound on concurrent QUIC clients accepted by --quic-connections.
+CACHE_QUIC_MAX_CONNECTIONS :: 256
 
 // Plan value: concurrent bidirectional streams allowed per QUIC client.
 CACHE_QUIC_STREAMS_PER_CONNECTION :: 4
@@ -54,20 +61,21 @@ Cache_Quic_Client_Slot :: struct {
 
 // Running QUIC listener state and its worker thread.
 Cache_Quic_Running :: struct {
-	server:         ^Cache_Server,
-	socket:         net.UDP_Socket,
-	bound_endpoint: net.Endpoint,
-	public_key:     [quic.ED25519_KEY_SIZE]u8,
-	stop:           bool,
-	worker:         ^thread.Thread,
-	cryptography:   quic.Cryptography,
-	generator:      random.Generator,
-	quic_server:    quic.Server,
-	connections:    []quic.Connection,
-	records:        []quic.Server_Record,
-	streams:        []quic.Stream,
-	slots:          []Cache_Quic_Client_Slot,
-	start_tick:     time.Tick,
+	server:          ^Cache_Server,
+	socket:          net.UDP_Socket,
+	bound_endpoint:  net.Endpoint,
+	public_key:      [quic.ED25519_KEY_SIZE]u8,
+	max_connections: int,
+	stop:            bool,
+	worker:          ^thread.Thread,
+	cryptography:    quic.Cryptography,
+	generator:       random.Generator,
+	quic_server:     quic.Server,
+	connections:     []quic.Connection,
+	records:         []quic.Server_Record,
+	streams:         []quic.Stream,
+	slots:           []Cache_Quic_Client_Slot,
+	start_tick:      time.Tick,
 }
 
 // cache_quic_cryptography builds a quic.Cryptography table backed by the modus
@@ -100,6 +108,32 @@ cache_quic_random_private_key :: proc(out: ^[quic.ED25519_KEY_SIZE]u8) -> bool {
 	return ed25519.private_key_set_bytes(&parsed, out[:])
 }
 
+// cache_quic_load_or_create_key loads <root_directory>/quic_server.key if it
+// exists, or generates a fresh Ed25519 seed and persists it as 64 hex digits
+// so the pinned server public key stays stable across restarts.
+cache_quic_load_or_create_key :: proc(root_directory: string, out: ^[quic.ED25519_KEY_SIZE]u8) -> bool {
+	key_path := strings.concatenate({root_directory, "/quic_server.key"}, context.temp_allocator)
+	if os.exists(key_path) {
+		loaded, ok := read_private_key_file("cache-serve", key_path)
+		if !ok {
+			return false
+		}
+		out^ = loaded
+		crypto_compat.zero_explicit(&loaded, size_of(loaded))
+		return true
+	}
+	if !cache_quic_random_private_key(out) {
+		return false
+	}
+	hex_bytes := hash_to_hex(out^)
+	defer crypto_compat.zero_explicit(&hex_bytes, size_of(hex_bytes))
+	if os.write_entire_file(key_path, hex_bytes[:]) != nil {
+		crypto_compat.zero_explicit(out, size_of(out^))
+		return false
+	}
+	return true
+}
+
 // cache_quic_public_key_of_private derives the 32-byte Ed25519 public key for
 // private_key.
 cache_quic_public_key_of_private :: proc(private_key: [quic.ED25519_KEY_SIZE]u8) -> (public_key: [quic.ED25519_KEY_SIZE]u8, ok: bool) {
@@ -113,7 +147,7 @@ cache_quic_public_key_of_private :: proc(private_key: [quic.ED25519_KEY_SIZE]u8)
 	return public_key, true
 }
 
-@(private = "file")
+@(private)
 endpoint_to_quic_remote :: proc(ep: net.Endpoint) -> (remote: quic.Remote, ok: bool) {
 	ip4, is_ip4 := ep.address.(net.IP4_Address)
 	if !is_ip4 || ep.port <= 0 || ep.port > int(max(u16)) {
@@ -123,7 +157,7 @@ endpoint_to_quic_remote :: proc(ep: net.Endpoint) -> (remote: quic.Remote, ok: b
 	return quic.Remote{address = address, port = u16(ep.port)}, true
 }
 
-@(private = "file")
+@(private)
 quic_remote_to_endpoint :: proc(remote: quic.Remote) -> net.Endpoint {
 	ip4 := net.IP4_Address{
 		u8(remote.address >> 24),
@@ -324,7 +358,8 @@ cache_quic_worker :: proc(t: ^thread.Thread) {
 	running := cast(^Cache_Quic_Running)t.data
 	receive_buffer: [quic.DATAGRAM_LIMIT]u8
 	answer_buffer: [quic.MAX_DATAGRAM_SIZE]u8
-	released: [CACHE_QUIC_CONNECTIONS]quic.Remote
+	released := make([]quic.Remote, running.max_connections)
+	defer delete(released)
 
 	for !sync.atomic_load(&running.stop) && !sync.atomic_load(&running.server.stop) {
 		defer free_all(context.temp_allocator)
@@ -379,13 +414,13 @@ cache_quic_worker :: proc(t: ^thread.Thread) {
 		}
 
 		now = cache_quic_now_us(running)
-		for index in 0 ..< CACHE_QUIC_CONNECTIONS {
+		for index in 0 ..< running.max_connections {
 			slot_service_streams(running, index)
 		}
 		quic.server_time_passes(&running.quic_server, now)
 		cache_quic_drain_sends(running, now)
-		_ = quic.server_sweep(&running.quic_server, released[:])
-		for index in 0 ..< CACHE_QUIC_CONNECTIONS {
+		_ = quic.server_sweep(&running.quic_server, released)
+		for index in 0 ..< running.max_connections {
 			if !running.records[index].in_use && running.slots[index].generation != 0 {
 				slot_reset_for_new_connection(&running.slots[index], 0)
 			}
@@ -400,13 +435,17 @@ cache_quic_start :: proc(
 	server: ^Cache_Server,
 	endpoint: net.Endpoint,
 	private_key: [quic.ED25519_KEY_SIZE]u8,
+	max_connections: int = CACHE_QUIC_DEFAULT_CONNECTIONS,
 ) -> (running: ^Cache_Quic_Running, err_text: string) {
 	if server == nil {
 		return nil, "cache server is nil"
 	}
+	if max_connections < 1 || max_connections > CACHE_QUIC_MAX_CONNECTIONS {
+		return nil, "QUIC connection capacity is out of range"
+	}
 	public_key, pub_ok := cache_quic_public_key_of_private(private_key)
 	if !pub_ok {
-		return nil, "invalid Ed25519 private key"
+		return nil, "Ed25519 private key is not accepted"
 	}
 	socket, bind_err := net.make_bound_udp_socket(endpoint.address, endpoint.port)
 	if bind_err != nil {
@@ -423,6 +462,7 @@ cache_quic_start :: proc(
 	running.socket = socket
 	running.bound_endpoint = bound
 	running.public_key = public_key
+	running.max_connections = max_connections
 	running.cryptography = cache_quic_cryptography()
 	running.start_tick = time.tick_now()
 
@@ -430,10 +470,10 @@ cache_quic_start :: proc(
 	crypto.rand_bytes(seed[:])
 	random.generator_seed(&running.generator, &seed, .Processor)
 
-	running.connections = make([]quic.Connection, CACHE_QUIC_CONNECTIONS)
-	running.records = make([]quic.Server_Record, CACHE_QUIC_CONNECTIONS)
-	running.streams = make([]quic.Stream, CACHE_QUIC_CONNECTIONS * CACHE_QUIC_STREAMS_PER_CONNECTION)
-	running.slots = make([]Cache_Quic_Client_Slot, CACHE_QUIC_CONNECTIONS)
+	running.connections = make([]quic.Connection, max_connections)
+	running.records = make([]quic.Server_Record, max_connections)
+	running.streams = make([]quic.Stream, max_connections * CACHE_QUIC_STREAMS_PER_CONNECTION)
+	running.slots = make([]Cache_Quic_Client_Slot, max_connections)
 	for &slot in running.slots {
 		cache_connection_init(&slot.conn)
 	}
@@ -446,9 +486,10 @@ cache_quic_start :: proc(
 			server_private_key  = private_key,
 		},
 	}
+	defer crypto_compat.zero_explicit(&cfg.tls.server_private_key, size_of(cfg.tls.server_private_key))
 	cfg.tls.application_protocol_length = copy(cfg.tls.application_protocol[:], object_cache.APPLICATION_PROTOCOL)
 
-	limits := quic.server_limits_of_one_address(CACHE_QUIC_CONNECTIONS)
+	limits := quic.server_limits_of_one_address(max_connections)
 	init_error: errors.Error_Record
 	if !quic.server_init(
 		&running.quic_server,
@@ -484,6 +525,7 @@ cache_quic_free_resources :: proc(running: ^Cache_Quic_Running) {
 	for &slot in running.slots {
 		cache_connection_destroy(&slot.conn)
 	}
+	crypto_compat.zero_explicit(&running.quic_server, size_of(running.quic_server))
 	delete(running.slots)
 	delete(running.streams)
 	delete(running.records)

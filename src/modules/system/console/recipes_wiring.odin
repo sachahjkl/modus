@@ -10,7 +10,6 @@ package console
 import "base:intrinsics"
 import "modus:contract/blake3"
 import "modus:contract/declaration_eval"
-import "modus:contract/enum_word"
 import module "modus:contract/module"
 import "modus:contract/object_cache"
 import pr "modus:contract/plans_recipes"
@@ -38,14 +37,6 @@ RECIPES_CATALOG_MODULES_MOST :: 256
 // Policy bound matching declaration_eval OUTPUT_BYTES_MOST (256 KiB).
 RECIPES_EVAL_OUTPUT_FIRST_PAGES :: 16
 RECIPES_EVAL_OUTPUT_BYTES_MOST :: u64(256 * 1024)
-
-// Closed provenance origin values exported in Realisation_Row.origin_word.
-@(private = "file")
-Recipes_Provenance_Origin :: enum u8 {
-	None         = 0,
-	Local_Build  = 1,
-	Remote_Cache = 2,
-}
 
 @(private = "file")
 recipes_entry_pool: [RECIPES_INGEST_POOL_CAPACITY]tree_hash.Tree_Entry
@@ -518,6 +509,128 @@ recipes_read_small_store_file :: proc "contextless" (client: ^storage.Client, sa
 	return string(dst), true
 }
 
+// recipes_collect_lex_entries recursively gathers all .lex files under place
+// (root and nested subdirectories) into recipes_bundle_entries, failing if the
+// project exceeds declaration_eval.BUNDLE_ENTRY_LIMIT - 1 files or arena space.
+@(private = "file")
+recipes_collect_lex_entries :: proc "contextless" (
+	client: ^storage.Client,
+	sandbox: ^Sandbox,
+	place: storage.Place,
+	prefix: string,
+	depth: int,
+	bundle_count: ^int,
+	lex_used: ^int,
+	has_catalog: ^bool,
+) -> bool {
+	if depth > RECIPES_TREE_DEPTH_MOST {
+		_ = fail("recipes.build_project: directory nesting exceeds ", i64(RECIPES_TREE_DEPTH_MOST), " levels")
+		return false
+	}
+	rows: [RECIPES_LIST_PAGE_ROWS]storage.Listed
+	names: [RECIPES_LIST_PAGE_NAMES]u8
+	after_buf: [tree_hash.ENTRY_NAME_CAPACITY]u8
+	after_len := 0
+	for {
+		page, list_status := storage.list(client, place, string(after_buf[:after_len]), rows[:], names[:])
+		recipes_storage_sync(client, sandbox)
+		if list_status != .Ok {
+			_ = fail("recipes.build_project: cannot list entries of the project store")
+			return false
+		}
+		if len(page) == 0 {
+			break
+		}
+		for row in page {
+			if row.name_offset < 0 || row.name_count <= 0 || row.name_offset + row.name_count > i64(len(names)) {
+				continue
+			}
+			entry_name := string(names[row.name_offset : row.name_offset + row.name_count])
+			if len(entry_name) <= len(after_buf) {
+				copy(after_buf[:], entry_name)
+				after_len = len(entry_name)
+			}
+			entry_kind, kind_ok := storage.entry_kind_of_word(row.kind)
+			if !kind_ok {
+				continue
+			}
+			rel_len := len(prefix) > 0 ? len(prefix) + 1 + len(entry_name) : len(entry_name)
+			switch entry_kind {
+			case .Tree:
+				if rel_len > declaration_eval.DECLARATION_PATH_LIMIT {
+					continue
+				}
+				sub_path_buf: [declaration_eval.DECLARATION_PATH_LIMIT]u8
+				at := 0
+				if len(prefix) > 0 {
+					copy(sub_path_buf[:], prefix)
+					at = len(prefix)
+					sub_path_buf[at] = '/'
+					at += 1
+				}
+				copy(sub_path_buf[at:], entry_name)
+				at += len(entry_name)
+				sub_place, open_status := storage.open_tree(client, place, entry_name)
+				recipes_storage_sync(client, sandbox)
+				if open_status != .Ok {
+					_ = fail("recipes.build_project: cannot open subtree ", string(sub_path_buf[:at]))
+					return false
+				}
+				sub_ok := recipes_collect_lex_entries(client, sandbox, sub_place, string(sub_path_buf[:at]), depth + 1, bundle_count, lex_used, has_catalog)
+				_ = storage.close_tree(client, sub_place)
+				recipes_storage_sync(client, sandbox)
+				if !sub_ok {
+					return false
+				}
+			case .Object:
+				if len(prefix) == 0 && entry_name == "project.lex" {
+					continue
+				}
+				if rel_len > declaration_eval.DECLARATION_PATH_LIMIT {
+					continue
+				}
+				if lex_used^ + rel_len > len(recipes_lex_arena) {
+					_ = fail("recipes.build_project: declaration files exceed bundle arena")
+					return false
+				}
+				path_slice := recipes_lex_arena[lex_used^ : lex_used^ + rel_len]
+				at := 0
+				if len(prefix) > 0 {
+					copy(path_slice[:], prefix)
+					at = len(prefix)
+					path_slice[at] = '/'
+					at += 1
+				}
+				copy(path_slice[at:], entry_name)
+				path_kept := string(path_slice)
+				if !declaration_eval.declaration_path_valid(path_kept) {
+					continue
+				}
+				if bundle_count^ >= declaration_eval.BUNDLE_ENTRY_LIMIT - 1 {
+					_ = fail("recipes.build_project: project has more than ", i64(declaration_eval.BUNDLE_ENTRY_LIMIT - 1), " .lex files")
+					return false
+				}
+				lex_used^ += rel_len
+				content, read_ok := recipes_read_small_store_file(client, sandbox, place, entry_name, recipes_lex_arena[:], lex_used)
+				if !read_ok {
+					return false
+				}
+				recipes_bundle_entries[bundle_count^] = {
+					kind    = .File_Path,
+					path    = path_kept,
+					content = content,
+				}
+				bundle_count^ += 1
+				if path_kept == "catalog.lex" {
+					has_catalog^ = true
+				}
+			case .Release, .None:
+			}
+		}
+	}
+	return true
+}
+
 // recipes_build_project_command evaluates a project's project.lex (with here()
 // ingested into recipes's object store) through the isolated zero-grant
 // declaration_eval call host, registers the evaluation with recipes, and runs
@@ -537,7 +650,7 @@ recipes_build_project_command :: proc "contextless" (arguments: []Value) -> Valu
 		return {}
 	}
 
-	// 2. Read project.lex and root .lex imports from the project store.
+	// 2. Read project.lex and all .lex imports from the project store (root and nested).
 	client, sandbox, borrowed := recipes_storage_borrow()
 	if !borrowed {
 		return {}
@@ -560,61 +673,8 @@ recipes_build_project_command :: proc "contextless" (arguments: []Value) -> Valu
 
 	bundle_count := 0
 	has_catalog := false
-	rows: [RECIPES_LIST_PAGE_ROWS]storage.Listed
-	names: [RECIPES_LIST_PAGE_NAMES]u8
-	after_buf: [tree_hash.ENTRY_NAME_CAPACITY]u8
-	after_len := 0
-	for {
-		page, list_status := storage.list(&client, root_place, string(after_buf[:after_len]), rows[:], names[:])
-		recipes_storage_sync(&client, sandbox)
-		if list_status != .Ok || len(page) == 0 {
-			break
-		}
-		for row in page {
-			if row.name_offset < 0 || row.name_count <= 0 || row.name_offset + row.name_count > i64(len(names)) {
-				continue
-			}
-			entry_name := string(names[row.name_offset : row.name_offset + row.name_count])
-			if len(entry_name) <= len(after_buf) {
-				copy(after_buf[:], entry_name)
-				after_len = len(entry_name)
-			}
-			entry_kind, kind_ok := storage.entry_kind_of_word(row.kind)
-			if !kind_ok || entry_kind != .Object || entry_name == "project.lex" {
-				continue
-			}
-			if !declaration_eval.declaration_path_valid(entry_name) {
-				continue
-			}
-			if bundle_count >= declaration_eval.BUNDLE_ENTRY_LIMIT - 1 {
-				break
-			}
-			// Keep a persistent copy of the path in recipes_lex_arena so the
-			// bundle entry slice stays valid across storage.list pages.
-			if lex_used + len(entry_name) > len(recipes_lex_arena) {
-				return fail("recipes.build_project: declaration files exceed bundle arena")
-			}
-			path_slice := recipes_lex_arena[lex_used : lex_used + len(entry_name)]
-			copy(path_slice, entry_name)
-			lex_used += len(entry_name)
-			path_kept := string(path_slice)
-			content, read_ok := recipes_read_small_store_file(&client, sandbox, root_place, path_kept, recipes_lex_arena[:], &lex_used)
-			if !read_ok {
-				if failed {
-					return {}
-				}
-				continue
-			}
-			recipes_bundle_entries[bundle_count] = {
-				kind    = .File_Path,
-				path    = path_kept,
-				content = content,
-			}
-			bundle_count += 1
-			if path_kept == "catalog.lex" {
-				has_catalog = true
-			}
-		}
+	if !recipes_collect_lex_entries(&client, sandbox, root_place, "", 0, &bundle_count, &lex_used, &has_catalog) {
+		return {}
 	}
 
 	if !has_catalog {
@@ -705,14 +765,26 @@ recipes_build_project_command :: proc "contextless" (arguments: []Value) -> Valu
 		return fail("recipes.build_stored: did not return a build result row")
 	}
 	row := (^pr.Recipe_Build_Row)(raw_data(table_row(build_table, build_table_val, 0)))^
+	if row.outcome_word < 0 {
+		return fail("recipes.build_project: recipes.build_stored returned an unknown build outcome")
+	}
+	build_outcome, outcome_ok := pr.recipe_build_outcome_of_word(u64(row.outcome_word))
+	if !outcome_ok {
+		return fail("recipes.build_project: recipes.build_stored returned an unknown build outcome")
+	}
+	outcome_label: string
+	switch build_outcome {
+	case .Built_Locally:
+		outcome_label = "built"
+	case .From_Cache:
+		outcome_label = "cached"
+	case .Building:
+		outcome_label = "building"
+	case .Refused, .None:
+		return fail("recipes.build_project: build was refused")
+	}
 	out_hex_buf: [64]u8
 	disk_process.hash_write(&out_hex_buf, blake3.Hash(row.output_hash))
-	outcome_label := "built"
-	if row.outcome_word == i64(pr.Recipe_Build_Outcome.From_Cache) {
-		outcome_label = "cached"
-	} else if row.outcome_word == i64(pr.Recipe_Build_Outcome.Building) {
-		outcome_label = "building"
-	}
 	return {kind = .Text, text = scratch_text(outcome_label, ": recipe ", string(recipe_hex_buf[:]), " output ", string(out_hex_buf[:]))}
 }
 
@@ -741,22 +813,25 @@ recipes_provenance_command :: proc "contextless" (arguments: []Value) -> Value {
 		if blake3.Hash(row.recipe_hash) != target_hash {
 			continue
 		}
+		if row.origin_word < 0 {
+			return fail("recipes.provenance: realisation row carries an unknown origin")
+		}
+		origin, origin_ok := pr.provenance_origin_of_word(u64(row.origin_word))
+		if !origin_ok {
+			return fail("recipes.provenance: realisation row carries an unknown origin")
+		}
+		origin_label: string
+		switch origin {
+		case .Local_Build:
+			origin_label = "local_build"
+		case .Remote_Cache:
+			origin_label = "remote_cache"
+		case .None:
+			return fail("recipes.provenance: realisation row carries origin None")
+		}
 		out_hex, signer_hex: [64]u8
 		disk_process.hash_write(&out_hex, blake3.Hash(row.output_hash))
 		disk_process.hash_write(&signer_hex, blake3.Hash(row.signer_public_key))
-		origin_label := "unknown"
-		if row.origin_word >= 0 {
-			if origin, origin_ok := enum_word.member_of_word(Recipes_Provenance_Origin, u64(row.origin_word)); origin_ok {
-				switch origin {
-				case .None:
-					origin_label = "none"
-				case .Local_Build:
-					origin_label = "local_build"
-				case .Remote_Cache:
-					origin_label = "remote_cache"
-				}
-			}
-		}
 		return {kind = .Text, text = scratch_text("recipe ", hex_arg, " output ", string(out_hex[:]), " origin ", origin_label, " signer ", string(signer_hex[:]))}
 	}
 	return fail("recipes.provenance: no realisation exists for recipe ", hex_arg)

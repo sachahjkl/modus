@@ -1,10 +1,10 @@
 // The retention of the private store of the recipes service
-// (src/md/features/recipes.md, "The retention of the store"). The objects
-// that a guest build keeps and that put keeps are named blob_<hash>; one
-// pass removes each of them that nothing names: no realisation of the
-// store, no recipe of the store or of the registry, and no put of this run
-// of the service. A pass that cannot read all that it must, or whose marks
-// pass their bound, removes nothing.
+// (src/md/features/recipes.md, "The retention of the store"). The content-addressed
+// objects kept by builds, cache fetches, and puts are named by their exact
+// 64 lowercase hexadecimal BLAKE3 hash; one pass removes each of them that
+// nothing names: no realisation of the store, no recipe of the store or of
+// the registry, and no put of this run of the service. A pass that cannot read
+// all that it must, or whose marks pass their bound, removes nothing.
 package recipes_core
 
 import "modus:contract/blake3"
@@ -70,7 +70,7 @@ Retention_Kind :: enum u8 {
 Retention_Result :: struct {
 	refusal: Retention_Refusal,
 	marked:  int,
-	kept:    int, // The objects blob_ that something names.
+	kept:    int, // The content-addressed objects that something names.
 	removed: int,
 }
 
@@ -240,7 +240,7 @@ retention_name_key :: proc "contextless" (text: string) -> (key: [RETENTION_NAME
 // retention_collect runs one pass over the private store of state: it
 // marks what each realisation object and each recipe object of the store,
 // each recipe of registry and each hash of extra names, then removes each
-// object blob_ that is not marked. extra holds the objects that put kept
+// content-addressed object that is not marked. extra holds the objects that put kept
 // in the recent windows, which a recipe may name later, and queue the
 // guest builds that wait or run, whose specs name what they will read.
 retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recipe_Registry, extra: []blake3.Hash, workspace: ^Retention_Workspace, queue: ^Guest_Queue = nil) -> (result: Retention_Result) {
@@ -320,7 +320,7 @@ retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recip
 				}
 				continue
 			}
-			// A realisation names its output, the object blob_ of its output
+			// A realisation names its output object under its exact 64-hex hash.
 			// hash, and its output tree names the rest. A damaged realisation
 			// names nothing: no build takes it.
 			if len(bytes) < pr.REALISATION_OBJECT_HEAD_SIZE {
@@ -345,7 +345,7 @@ retention_collect :: proc "contextless" (state: ^Recipes_State, registry: ^Recip
 	}
 	result.marked = workspace.mark_count
 
-	// The sweep: each object blob_ that nothing names. The removes change
+	// The sweep: each content-addressed object that nothing names. The removes change
 	// no name before the last one read, so the next page starts after it.
 	after_length = 0
 	for {
