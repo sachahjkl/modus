@@ -55,6 +55,10 @@ How a module adds its operations: it exports a described function and is a servi
 - **A locked principal.** The console runs in the session of the machine. With a named principal locked, the palette offers what the console offers. This is a fact of the console, not a new hole of the palette; it is a question for the design of the principals.
 - **When the console does not run**, the palette lists the processes and the windows and says that the commands are absent. `console` is a process of the list, so the palette starts it.
 
+## Enter with nothing to run
+
+Enter in the search with no chosen entry runs nothing, and the panel stays open with its typed part, so the principal can change it. It is not silent: the detail line, where the chosen entry says what it does, says "nothing to run" in the color of a failure (`palette.nothing_to_run_show`, `palette.detail_note`). The note goes at the next edit of the typed part and at the next open, and a chosen entry takes the line again. The list says why when it is empty ("nothing has … in its name"); the note says what Enter did, which the list cannot say. A refused form: Enter that closes the panel, which loses the typed part for a key that did nothing.
+
 ## The scheduling strategy
 
 The palette reaches each operation that a command of the console reaches. No command set the scheduling strategy: only the window of the process `scheduler` did.

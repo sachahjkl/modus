@@ -83,6 +83,11 @@ scenario := [?]Step {
 	// service runs.
 	{kind = .Wait, text = "root: connected console to the store of its line history in the service storage, 4 blocks", any_order = true},
 	{kind = .Wait, text = "console: no line history kept: the history starts empty", any_order = true},
+	// The first window takes the free place at the top left of the work
+	// area (src/md/features/window_placement.md); the steps of this
+	// scenario press the titles of the windows that it moves over the
+	// console at the place where the console stood in a cascade.
+	{kind = .Move, text = "console", to_x = 64, to_y = 56},
 	{kind = .Wait, text = "settings: the boot pass: no settings kept: the defaults: font vector, subpixel order rgb, pointer theme owner, grid fit on, keyboard layout us, appearance auto, scale 1.25; in ", any_order = true},
 	{kind = .Wait, text = "root: settings stopped: itself, done"},
 
