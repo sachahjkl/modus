@@ -1835,8 +1835,15 @@ root_refusal_text :: proc "contextless" (buffer: []u8, completion: ring.Record) 
 service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record = nil, not_ready: ^bool = nil) -> system.Status {
 	// The root service can start the service first: only the hang bound
 	// of an answer ends this wait, never a time of a start.
-	completion, answered := request_record(.Connect, sandbox.name, 0, system.ANSWER_BOUND_MILLISECONDS)
+	completion, answered := request_record(.Connect, sandbox.name, 0, system.ANSWER_BOUND_MILLISECONDS, stoppable = true)
 	if !answered {
+		// The root service can still answer: it would keep the connection
+		// and refuse the next Connect, and its handles would stay here.
+		if requests.head != nil {
+			connect_tag := request_count
+			request_count += 1
+			system.connect_give_up(&requests, connect_tag, request_count, system.name_pack(sandbox.name))
+		}
 		return .Bad_State
 	}
 	if status, refusal := system.status_of_word(completion.kind); status != .Ok {
@@ -1868,7 +1875,10 @@ service_connect :: proc "contextless" (sandbox: ^Sandbox, refused: ^ring.Record 
 	// The service maps the call ring when it reads the Connect of the root
 	// service, which can be after its start on demand: a lend before the
 	// ready completion has no receiver (src/md/api/call_ring_ready.md).
-	if system.connection_ready_wait(&sandbox.ring, sandbox.process) != .Ready {
+	intrinsics.atomic_store(&work.call_stoppable, 1)
+	ready := system.connection_ready_wait(&sandbox.ring, sandbox.process, &work.cancel)
+	intrinsics.atomic_store(&work.call_stoppable, 0)
+	if ready != .Ready {
 		service_disconnect(sandbox)
 		if not_ready != nil {
 			not_ready^ = true
@@ -2256,7 +2266,10 @@ sandbox_start :: proc "contextless" (sandbox: ^Sandbox) -> system.Status {
 	// The first completion of the call host says if it loaded the module.
 	// With Load_Failed, the record of the failure is in the call region:
 	// the console copies it, and reads it as values.
-	switch system.connection_ready_wait(&sandbox.ring, sandbox.process) {
+	intrinsics.atomic_store(&work.call_stoppable, 1)
+	ready := system.connection_ready_wait(&sandbox.ring, sandbox.process, &work.cancel)
+	intrinsics.atomic_store(&work.call_stoppable, 0)
+	switch ready {
 	case .Ready:
 		return .Ok
 	case .Load_Failed:
@@ -2660,7 +2673,7 @@ call_isolated :: proc "contextless" (item: ^Command, arguments: []Value) -> Valu
 
 // request_record sends one command to the root service and waits for its
 // completion. answered is false when the root service gave none.
-request_record :: proc "contextless" (kind: root_ring.Root_Command, name: string, value: u64 = 0, time_limit: u64 = 3000) -> (completion: ring.Record, answered: bool) {
+request_record :: proc "contextless" (kind: root_ring.Root_Command, name: string, value: u64 = 0, time_limit: u64 = 3000, stoppable := false) -> (completion: ring.Record, answered: bool) {
 	if requests.head == nil {
 		return {}, false
 	}
@@ -2673,12 +2686,27 @@ request_record :: proc "contextless" (kind: root_ring.Root_Command, name: string
 	request_count += 1
 	system.send(&requests.commands, ring.Record{kind = u32(kind), tag = request_count, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = value}})
 	// A completion with another tag answers a command that this process
-	// waits for no more: root_answer_step skips it.
+	// waits for no more: root_answer_step skips it. stoppable: a wait of a
+	// line, which Escape ends as a wait with no answer; the root service
+	// can start a service first, and the principal must not wait for it
+	// with no way out. A wait outside a line reads no Escape.
 	deadline := system.time() + time_limit
+	if stoppable {
+		intrinsics.atomic_store(&work.call_stoppable, 1)
+	}
+	defer if stoppable {
+		intrinsics.atomic_store(&work.call_stoppable, 0)
+	}
 	for {
 		wait := system.wait_begin()
 		if record, came, done := system.root_answer_step(&requests, request_count, system.time(), deadline); done {
 			return record, came
+		}
+		if stoppable {
+			if intrinsics.atomic_load_explicit(&work.cancel, .Relaxed) != 0 {
+				return {}, false
+			}
+			system.wait_word(&wait, &work.cancel, 0)
 		}
 		system.wait_records(&wait, &requests.completions)
 		system.wait_end(&wait, deadline)

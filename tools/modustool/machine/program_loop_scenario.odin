@@ -20,14 +20,31 @@ TEST_PROGRAM_LOOP_DISK :: foundation.BUILD_FOLDER + "/test_program_loop_disk.img
 // The window of edit, by its title: the name of the object that it edits.
 PROGRAM_LOOP_EDIT_WINDOW :: "edit: hello.c"
 
+// The lines of a build and of a run that a refusal must not reach.
+PROGRAM_BUILT :: "recipes: built "
+PROGRAM_RAN :: "console: ran "
+
 // The lines that a failed step of the loop writes.
 PROGRAM_BUILD_FAILED :: "recipes: the C build failed at the step "
 
 scenario_program_loop := [?]Step {
 	{kind = .Wait, text = "display: console" + WINDOW_TAKEN, any_order = true},
+	// The refusals first, each before anything is built. A reserved name is
+	// no name of a project.
+	{kind = .Type, text = "projects.new(\"module_files\")"},
+	{kind = .Wait, text = "[console] error: projects.new: the argument project_name: the tree has an entry with this name already", fails_on = "projects: made the project module_files"},
+	{kind = .Type, text = "build(\"module_files\", \"hello.c\")"},
+	{kind = .Wait, text = "[console] error: build: \"module_files\" is no name of a project", fails_on = PROGRAM_BUILT},
+	// An empty name of a grant names no grant.
+	{kind = .Type, text = "run(\"hello\", \"\")"},
+	{kind = .Wait, text = "[console] error: run: the name of the grant is empty", fails_on = PROGRAM_RAN},
 	// The project and its source.
 	{kind = .Type, text = "projects.new(\"hello\")"},
 	{kind = .Wait, text = "projects: made the project hello of principal 0"},
+	// A run before any build: the store module_files has no module of the
+	// project.
+	{kind = .Type, text = "run(\"hello\")"},
+	{kind = .Wait, text = "[console] error: module_files.read: ", fails_on = PROGRAM_RAN},
 	{kind = .Type, text = "edit(\"hello\", \"hello.c\")"},
 	{kind = .Wait, text = "edit: ok, the first picture is presented", any_order = true},
 	{kind = .Wait, text = "compositor: surface edit"},
@@ -35,8 +52,12 @@ scenario_program_loop := [?]Step {
 	{kind = .Keys, text = "long main(void) { return 42; }"},
 	{kind = .Key, text = "ret"},
 	{kind = .Wait, text = "edit: kept a text of 31 bytes in the generation "},
-	// The first build compiles; run calls the module.
 	{kind = .Front, text = "console"},
+	// A build of a source that the store of the project does not hold: the
+	// store exists from the first text that edit kept.
+	{kind = .Type, text = "build(\"hello\", \"absent.c\")"},
+	{kind = .Wait, text = "[console] error: storage.read: ", fails_on = PROGRAM_BUILT},
+	// The first build compiles; run calls the module.
 	{kind = .Type, text = "build(\"hello\", \"hello.c\")"},
 	{kind = .Wait, text = "recipes: built hello.c into a module of ", fails_on = PROGRAM_BUILD_FAILED},
 	{kind = .Wait, text = "module_files: put hello: "},

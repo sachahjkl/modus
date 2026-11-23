@@ -51,7 +51,7 @@ build(inputs: Table(Build_Input, Read), arguments: Build_Arguments) -> Build_Sta
 - `Build_Status` is an enum, with an error record when it is not `Done` ([api/export_error_records.md](../api/export_error_records.md)).
 - The output is not a parameter. It is the store "out" of the context of the builder.
 
-The root service starts a builder in a sandbox:
+`recipes` starts each builder in a call host with no grant, the sandbox of the builder (see the builder design):
 
 - an input store: a clone of each input tree under its name, with the right Read only (a clone shares its blocks, so no byte is copied);
 - an empty store "out", with Write and a limit of blocks that the recipe states;
@@ -85,7 +85,7 @@ One recipe runs no module: a recipe whose builder hash is `inputs_tree_builder_h
 - **The recipes service builds it itself.** Its output is a function of the input table only, so no code of a caller runs and nothing needs a sandbox. A cache miss of such a recipe is a bounded step in the service: at most 32 entries, no network, no clock.
 - **Why it exists.** It joins the outputs of several recipes into one tree, the output of a project with several parts, and it is the first recipe that `recipes.build` realises end to end before the root service starts builders in a sandbox.
 - **Refused: a builder module for it.** A module that only joins hashes would need a start, a sandbox and a store "out" for 32 hashes, and its realisation would depend on the trust of its module hash. The service computes the same bytes with `tree_hash`, which each machine checks.
-- **Refused: run any builder in the service.** Any other builder hash is refused with `Builder_Needs_Sandbox`: a builder runs foreign code, and only the root service starts it with the sandbox of "The builder".
+- **Refused: run any builder in the service.** A builder runs foreign code: `recipes` starts each builder in a call host with no grant, the sandbox of "The builder", and never runs it in its own process. A builder hash that has no such start yet is refused with `Builder_Needs_Sandbox`.
 - **The recipe of the inputs of a project.** `projects.build_recipe(project)` gives a recipe of this builder with one input for each pin of the project, a tree by the tree hash of the pin. `recipes.register` then `recipes.build` realise it, so the inputs of a project are one tree hash, and a moved pin gives another recipe.
 
 ### The recipe of a declaration

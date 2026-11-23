@@ -393,6 +393,10 @@ run_lines :: proc "c" (parameter: rawptr) -> ! {
 		done += 1
 		services_check()
 		run_line(string(work.text[:work.count]))
+		// An Escape stops the line that ran, and nothing after it: the
+		// getters of the palette and the waits outside a line read the word
+		// too.
+		intrinsics.atomic_store(&work.cancel, 0)
 		// The palette: the answer to its choice, then the table of the
 		// commands of now (palette_provider.odin).
 		chosen_by_palette := palette_tag != 0

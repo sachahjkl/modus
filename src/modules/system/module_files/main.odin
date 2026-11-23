@@ -395,7 +395,8 @@ store_failure :: proc "contextless" (error: ^errors.Error_Record, store_error: ^
 // starts, the deadline of a load. The result is 64, or a negative number with an error record:
 //
 // - `No_Grant` (-1): the caller does not act for the principal of the store.
-// - `Empty`, `Too_Long`, `Bad_Byte` or `Reserved` (-2): the nickname.
+// - `Empty`, `Too_Long` or `Bad_Byte` (-2): the nickname; `Exists` (-2): `module_files` or `grant_table`, which the
+//   store keeps.
 // - `Empty`, `Too_Long` or `Bad_Byte` (-3): the path; for `Bad_Byte`, the record holds the place of the byte.
 // - `No_Answer`, `Full` or `Refused` (-4): the connection to the web server, or the deadline.
 // - `Refused`, `Malformed`, `Too_Long` or `Too_Small` (-5): the answer: a status that is not 200 (the record holds
@@ -409,7 +410,7 @@ receive :: proc "c" (nickname: ^string, path: ^string, result: ^[]u8, error: ^er
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	name_copy: [disk_process.NAME_LIMIT]u8
-	name, name_failure := nickname_check(nickname, &name_copy, error)
+	name, name_failure := nickname_check(nickname, &name_copy, .Make, error)
 	if name_failure != 0 {
 		return name_failure
 	}

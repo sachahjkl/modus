@@ -20,26 +20,13 @@ ERROR_MEMORY :: -7
 // nickname_check copies a nickname of a call one time, then checks the copy:
 // the caller can change its call region during the call. It gives the
 // name, in the place of the caller, or a failure with its error record.
-nickname_check :: proc "contextless" (nickname: ^string, name_copy: ^[disk_process.NAME_LIMIT]u8, error: ^errors.Error_Record) -> (name: string, failure: i64) {
+nickname_check :: proc "contextless" (nickname: ^string, name_copy: ^[disk_process.NAME_LIMIT]u8, use: disk_process.Nickname_Use, error: ^errors.Error_Record) -> (name: string, failure: i64) {
 	nickname_text := nickname^
 	name_length := copy(name_copy[:], nickname_text)
-	if len(nickname_text) > disk_process.NAME_LIMIT {
-		return "", errors.fail(error, ERROR_NAME, .Too_Long, .Bytes, 1, i64(len(nickname_text)), disk_process.NAME_LIMIT)
-	}
 	name = string(name_copy[:name_length])
-	problem, offset := disk_process.name_problem(name)
-	switch problem {
-	case .None:
-	case .Empty:
-		return "", errors.fail(error, ERROR_NAME, .Empty, .Bytes, 1, 0, disk_process.NAME_LIMIT)
-	case .Too_Long:
-		return "", errors.fail(error, ERROR_NAME, .Too_Long, .Bytes, 1, i64(name_length), disk_process.NAME_LIMIT)
-	case .Bad_Byte:
-		return "", errors.fail(error, ERROR_NAME, .Bad_Byte, .Bytes, 1, i64(offset), 0, i64(name_copy[offset]))
-	case .Store_Name, .Table_Name:
-		// The disk grant table of the principal is an object of this
-		// store: no file is written over it, and none is read as a module.
-		return "", errors.fail(error, ERROR_NAME, .Reserved, .None, 1)
+	if refusal := disk_process.nickname_refusal(name, len(nickname_text), 1, use); refusal.kind != 0 {
+		error^ = refusal
+		return "", ERROR_NAME
 	}
 	return name, 0
 }
@@ -60,7 +47,8 @@ nickname_check :: proc "contextless" (nickname: ^string, name_copy: ^[disk_proce
 // with an error record:
 //
 // - `No_Grant` (-1): the caller does not act for the principal of the store.
-// - `Empty`, `Too_Long`, `Bad_Byte` or `Reserved` (-2): the nickname.
+// - `Empty`, `Too_Long` or `Bad_Byte` (-2): the nickname; `Exists` (-2): `module_files` or `grant_table`, which the
+//   store keeps.
 // - `Refused` (-6): the service has no store, or the storage service refused the file.
 // - `Out_Of_Range` (-7, argument 3): a size of 0, past 4 MiB, or past the memory object; `Refused` (-7): the memory
 //   object does not map.
@@ -72,16 +60,17 @@ put :: proc "c" (nickname: ^string, module: system.Lent({.Read}), size: i64, res
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	name_copy: [disk_process.NAME_LIMIT]u8
-	name, name_failure := nickname_check(nickname, &name_copy, error)
+	name, name_failure := nickname_check(nickname, &name_copy, .Make, error)
 	if name_failure != 0 {
 		return name_failure
 	}
-	if size < 1 || size > disk_process.FILE_BYTES_LIMIT {
-		return errors.fail(error, ERROR_MEMORY, .Out_Of_Range, .Bytes, 3, size, disk_process.FILE_BYTES_LIMIT)
-	}
 	pages, size_status := system.memory_size(module.handle)
-	if size_status != .Ok || u64(size) > pages * system.PAGE_SIZE {
-		return errors.fail(error, ERROR_MEMORY, .Out_Of_Range, .Bytes, 3, size, i64(min(pages * system.PAGE_SIZE, u64(max(i64)))))
+	if size_status != .Ok {
+		pages = 0
+	}
+	if refusal := disk_process.put_size_refusal(size, pages * system.PAGE_SIZE, 3); refusal.kind != 0 {
+		error^ = refusal
+		return ERROR_MEMORY
 	}
 	if store_client.ring_memory == 0 || !storage.connected(&store_client) {
 		return errors.fail(error, ERROR_STORE, .Refused, .Store)
@@ -119,7 +108,8 @@ put :: proc "c" (nickname: ^string, module: system.Lent({.Read}), size: i64, res
 // a negative number with an error record:
 //
 // - `No_Grant` (-1): the caller does not act for the principal of the store.
-// - `Empty`, `Too_Long`, `Bad_Byte` or `Reserved` (-2): the nickname.
+// - `Empty`, `Too_Long` or `Bad_Byte` (-2): the nickname; `Absent` (-2): `module_files` or `grant_table`, which no
+//   module file has.
 // - `Absent` (-6): no object of the nickname; `Refused` (-6): the service has no store, or the storage service refused
 //   the read.
 // - `Too_Small` (-7, argument 2): the memory object holds fewer bytes than the file; `Refused` (-7): it does not map.
@@ -131,7 +121,7 @@ read :: proc "c" (nickname: ^string, module: system.Lent({.Read, .Write}), error
 		return errors.fail(error, ERROR_ACTS_FOR_PRINCIPAL, .No_Grant, .Acts_For_Principal)
 	}
 	name_copy: [disk_process.NAME_LIMIT]u8
-	name, name_failure := nickname_check(nickname, &name_copy, error)
+	name, name_failure := nickname_check(nickname, &name_copy, .Read, error)
 	if name_failure != 0 {
 		return name_failure
 	}
@@ -140,14 +130,13 @@ read :: proc "c" (nickname: ^string, module: system.Lent({.Read, .Write}), error
 	}
 	store_error: errors.Error_Record
 	object_size, size_status := storage.size(&store_client, storage.ROOT, name, &store_error)
-	if size_status != .Ok {
-		if size_status == .Failed && store_error.kind == i64(errors.Kind.Absent) {
-			return errors.fail(error, ERROR_STORE, .Absent, .Objects, 1)
-		}
+	absent := size_status == .Failed && store_error.kind == i64(errors.Kind.Absent)
+	if size_status != .Ok && !absent {
 		return store_failure(error, &store_error, size_status, .File, name)
 	}
-	if object_size <= 0 || object_size > disk_process.FILE_BYTES_LIMIT {
-		return errors.fail(error, ERROR_STORE, .Out_Of_Range, .Bytes, 1, object_size, disk_process.FILE_BYTES_LIMIT)
+	if refusal := disk_process.stored_file_refusal(object_size, absent, 1); refusal.kind != 0 {
+		error^ = refusal
+		return ERROR_STORE
 	}
 	count := int(object_size)
 	received := 0
@@ -160,8 +149,12 @@ read :: proc "c" (nickname: ^string, module: system.Lent({.Read, .Write}), error
 		received += len(bytes)
 	}
 	pages, pages_status := system.memory_size(module.handle)
-	if pages_status != .Ok || u64(count) > pages * system.PAGE_SIZE {
-		return errors.fail(error, ERROR_MEMORY, .Too_Small, .Bytes, 2, i64(min(pages * system.PAGE_SIZE, u64(max(i64)))), i64(count))
+	if pages_status != .Ok {
+		pages = 0
+	}
+	if refusal := disk_process.read_room_refusal(i64(count), pages * system.PAGE_SIZE, 2); refusal.kind != 0 {
+		error^ = refusal
+		return ERROR_MEMORY
 	}
 	address, map_status := system.memory_map(module.handle, {.Write})
 	if map_status != .Ok {

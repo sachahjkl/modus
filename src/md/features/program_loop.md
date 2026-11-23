@@ -38,7 +38,7 @@ hello: substituted, module 81d2…, recipe 5e30…
 1. **The project.** `projects.new(name)` records a project of the principal of the caller in the private store of `projects`: its name, the store of its source, which has the name of the project, and its grants, none at its creation. The name follows the rules of a nickname of a disk process (`disk_process.name_problem`), so the module of the project can have the name of the project in the store `module_files`.
 2. **The source.** `edit(name, file)` edits the object `file` of the store `name` ([editor.md](editor.md), "Subtle points and hazards"). The editor has no save action: each group of changes is a version of the object.
 3. **The build.** `build(project, file)` is a command of the console. The console acts for its principal, so it reads the object `file` of the store of the project. It gives the bytes to `recipes.build_c`, which builds or substitutes. The console then gives the module to `module_files.put`, which writes it as the object named by the project in the store `module_files`, and gives the hash of its bytes.
-4. **The run.** `run(project)` reads the module of the project from the store `module_files` (`module_files.read`), checks its hash, isolates it in a call host as `isolate_memory` does, and calls its export `main`. The console shows the result, and writes one line of the log with the name of the project and the hash of the module.
+4. **The run.** `run(project)` reads the module of the project from the store `module_files` (`module_files.read`), and compares the hash of its bytes with the hash that the last build of this console gave for the project: other bytes are refused, and the principal builds again. A project built in another console has no such hash: the run names the hash of what it runs in the log. The console isolates the module in a call host as `isolate_memory` does, and calls the export `main` of that module, not a command `main` of another module that it loaded. It shows the result, and writes one line of the log with the name of the project and the hash of the module.
 
 ### The native C builder
 
@@ -50,13 +50,17 @@ The recipe of a build:
 
 `recipes.build_c` computes the recipe hash. In the local store of the realisations, a realisation of that recipe gives the module with no compile: the build is substituted. Else the service builds:
 
-1. It starts the module `c_compiler` of the boot image in a call host, and calls `compile` with the source and a memory object for the text of the assembly.
-2. It starts the module `assemble` in a call host, and calls `assemble` with that text and a memory object for the module.
+1. It copies the source into a new memory object, starts the module `c_compiler` of the boot image in a call host, and calls `compile` with the source in that object, which the call host maps with Read only, and a new memory object for the text of the assembly.
+2. It starts the module `assemble` in a call host, and calls `assemble` with that text in its memory object, mapped with Read only, and a new memory object for the module.
 3. It checks the module file (`module.validate`), computes its hash, writes the realisation and the module in its private store ([recipes.md](recipes.md), "The local store of the realisations"), then gives the module to its caller.
 
 Each call host holds the module and the memory that the service lends for the call, and nothing else: no store, no network, no root ring. The seed of each is the recipe hash. A call host ends after its one call: `chibicc` keeps its state in static variables, and takes one source for each call host ([c_compiler.md](c_compiler.md), "One source for each call host").
 
-**A C error builds nothing.** `compile` fails with its error record, whose value is the byte of the source that the diagnostic names. The service gives that record to its caller, writes no realisation, and the console shows the place: `build: hello.c, byte 31`, with the first line of the diagnostic in the log.
+**Each build has its own memory objects.** The source, the text and the module are in memory objects that the build makes and closes. A memory object kept from one build to the next would give the compiler of one principal the assembly of another, and would let a call host that writes nothing give the bytes of the build before as its output: a new memory object is all zero, so such a host gives a module that `module.validate` refuses.
+
+**Each call has the hang bound.** `compile` and `assemble` run foreign input: a source can make either one loop. Each call ends at the hang bound of an answer with the call status `Deadline_Passed`, the service ends the call host, and the build fails with the error record `No_Answer`; a stop of the call host ends it at once ([../api/call_ring_ready.md](../api/call_ring_ready.md)).
+
+**A C error builds nothing.** `compile` fails with its error record `Bad_Byte`, whose value is the offset of the byte of the source that the diagnostic names. `recipes.build_c` gives that record to its caller as a record of its own argument `source`, writes no realisation, and the console shows its sentence: the argument, the byte and its offset. The log has the line of the diagnostic.
 
 ### The grants of a program
 
@@ -78,7 +82,7 @@ A program runs in a call host with no grant. Its project declares the grants tha
 
 ## Refused forms
 
-- **The root service starts the native builder as a process** ([recipes.md](recipes.md), "The builder"). A call host of `recipes` with no grant is the same sandbox: it holds only the memory that its caller lends, and it needs no new command of the root ring, no input store and no store "out" for one source and one module. A builder of foreign code, whose inputs are trees, still needs the start of the root service with an input store and a store "out".
+- **A process of the root service for the native builder.** It needs a new command of the root ring for one source and one module. `recipes` starts each builder in a call host with no grant ([recipes.md](recipes.md), "The builder"), with the inputs of its recipe and an empty output, and the recipe hash as its seed: the native C builder is the first builder of that form.
 - **A builder module `c_builder` that imports `c_compiler` and `assemble`.** `chibicc` takes one source for each process, and the two steps are two modules of the boot image already; a module that only calls the two adds a third hash to the builder and no check.
 - **The console builds.** The console holds the grants of its principal: a compiler that runs there runs with all of them.
 - **`start_from_disk` for the program.** A module that `chibicc` writes has exports and no `entry`, and calls nothing of the system: it cannot run as a process. A call of its export `main` is what the program can do now.
@@ -87,8 +91,10 @@ A program runs in a call host with no grant. Its project declares the grants tha
 
 ## Subtle points
 
-- **The source is read whole, at most 64 KiB**: the bound of an object of the local store of `recipes`, under the 256 KiB of `compile`. The text of the assembly and the module have the same bound.
-- **The text of the assembly and the module have the bounds of their memory objects.** A larger output fails the build with `Full`.
+- **The bounds of a build** are three named numbers (`plans_recipes`): a source of at most 256 KiB, the bound of `compile`; a text of the assembly of at most 1 MiB, because one line of C gives several lines of assembly; a module of at most 64 KiB, the bound of an object of the local store of `recipes`. Each crosses its own memory object, never the call region. A count that a call host gives past its memory object, or of no byte, fails the build with `Out_Of_Range` or `Empty`.
+- **The console reads the source with `storage.read`**, whose text comes back through the call region of its connection to the storage service: `build` takes a source of at most what that region holds beside the record of the call, under the 256 KiB of `recipes.build_c`.
+- **The borders are pure procedures of the libraries**, with their host tests: `plans_recipes.c_build_*_refusal` for `recipes.build_c`, `disk_process.nickname_refusal`, `put_size_refusal`, `stored_file_refusal` and `read_room_refusal` for `module_files` and `projects.new`.
+- **An empty name of a grant is refused**: `run(project, "")` names no grant, so it is no run with no grant either.
 - **The run unloads the module of the run before**, so a run after a build calls the new module.
 - **A substituted build reads the module from the store of `recipes`**, and checks its hash against the output hash of the realisation: a realisation that the service reads back from its private store keeps its object under the hash of its record, with no new hash of the bytes. A difference refuses the build with `Damaged`, and no module goes out.
 

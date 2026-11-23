@@ -496,7 +496,7 @@ Do not use: channel, pipe.
 
 A ready completion is the first completion of a call ring: the tag 0, the kind Ok, no value, which the call host or the service sends once it maps the ring with the consent to receive handles.
 
-A caller sends its first call only after it: before it, the kernel has no receiver for a handle that the call lends. `system.call_host_start`, `system.service_connection`, the console and `remote` wait for it, and end a connection whose service stops first, or does not answer before the hang bound of an answer. A call host that does not load sends `Load_Failed` in its place.
+A caller sends its first call only after it: before it, the kernel has no receiver for a handle that the call lends. `system.call_host_start`, `system.service_connection`, `storage.open`, `storage.open_handles`, the console and `remote` wait for it, and end a connection whose service stops first, or does not answer before the hang bound of an answer. A call host that does not load sends `Load_Failed` in its place.
 
 The design: `src/md/api/call_ring_ready.md`.
 

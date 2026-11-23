@@ -147,6 +147,13 @@ open :: proc "contextless" (ctx: ^system.Context) -> (client: Client, ok: bool) 
 	if module.validate(client.file) != .None {
 		return {}, false
 	}
+	// The root service made this connection: no call before the storage
+	// service maps its ring (src/md/api/call_ring_ready.md).
+	if system.connection_ready_wait(&client.calls, client.service) != .Ready {
+		system.ring_close(&client.calls)
+		system.memory_unmap(raw_data(client.region))
+		return {}, false
+	}
 	return client, true
 }
 
@@ -517,8 +524,7 @@ Shared :: struct {
 }
 
 // share makes a new connection whose root is the tree of a place, and
-// gives a Client of it: its two handles can go to another process, which
-// opens it with open_handles. number is for unshare.
+// gives a Client of it. number is for unshare.
 share :: proc "contextless" (client: ^Client, place: Place, read_only: bool, error: ^errors.Error_Record = nil) -> (shared: Client, number: i64, status: storage_status.Status) {
 	arguments := [2]isolated.Argument{{integer = u64(place)}, {integer = read_only ? 1 : 0}}
 	bytes: []u8
@@ -531,16 +537,33 @@ share :: proc "contextless" (client: ^Client, place: Place, read_only: bool, err
 	}
 	row := (^Shared)(raw_data(bytes))^
 	ok: bool
-	shared, ok = open_handles(system.Handle(row.ring), system.Handle(row.region), client.service, client.file)
+	shared, ok = open_mapped(system.Handle(row.ring), system.Handle(row.region), client.service, client.file)
 	if !ok {
 		return {}, row.share, .Refused
 	}
 	return shared, row.share, .Ok
 }
 
-// open_handles opens a connection from its call ring and its call region,
-// with the file of the storage service that describes its exports.
+// open_handles opens a connection that the root service made, from its
+// call ring and its call region, with the file of the storage service that
+// describes its exports. It waits for the ready completion of the storage
+// service (src/md/api/call_ring_ready.md).
 open_handles :: proc "contextless" (ring_memory, region_memory: system.Handle, service: system.Handle, file: []u8) -> (client: Client, ok: bool) {
+	client = open_mapped(ring_memory, region_memory, service, file) or_return
+	if system.connection_ready_wait(&client.calls, service) != .Ready {
+		system.ring_close(&client.calls)
+		system.memory_unmap(raw_data(client.region))
+		return {}, false
+	}
+	return client, true
+}
+
+// open_mapped maps a call ring and a call region of a connection. A share
+// is ready when the storage service gives it: the service maps its ring
+// before it gives the handles (system.connection_make), and sends no ready
+// completion. The process that made the share opens it.
+@(private = "file")
+open_mapped :: proc "contextless" (ring_memory, region_memory: system.Handle, service: system.Handle, file: []u8) -> (client: Client, ok: bool) {
 	client.ring_memory = ring_memory
 	client.region_memory = region_memory
 	client.service = service

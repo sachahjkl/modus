@@ -166,7 +166,8 @@ load :: proc "c" (tree_name: ^string, project_evaluation: ^system.Bytes_To_Read,
 //
 // The result is 0, or a negative number with an error record:
 // ERROR_NO_CALLER, ERROR_ACTS_FOR_PRINCIPAL, ERROR_NOT_READY, or
-// ERROR_PROJECT: Empty, Too_Long, Bad_Byte or Reserved for the name, or the
+// ERROR_PROJECT: Empty, Too_Long, Bad_Byte, or Exists for module_files and
+// grant_table, which the store module_files keeps, for the name, or the
 // refusal of the project as the value found.
 //
 // Example: `projects.new("hello")`.
@@ -180,17 +181,9 @@ new_project :: proc "c" (project_name: ^string, error: ^errors.Error_Record) -> 
 	if !name_ok {
 		return name_failure
 	}
-	problem, offset := disk_process.name_problem(string(name))
-	switch problem {
-	case .None:
-	case .Empty:
-		return errors.fail(error, ERROR_PROJECT, .Empty, .Bytes, 1, 0, disk_process.NAME_LIMIT)
-	case .Too_Long:
-		return errors.fail(error, ERROR_PROJECT, .Too_Long, .Bytes, 1, i64(len(name)), disk_process.NAME_LIMIT)
-	case .Bad_Byte:
-		return errors.fail(error, ERROR_PROJECT, .Bad_Byte, .Bytes, 1, i64(offset), 0, i64(name[offset]))
-	case .Store_Name, .Table_Name:
-		return errors.fail(error, ERROR_PROJECT, .Reserved, .None, 1)
+	if refusal := disk_process.nickname_refusal(string(name), len(name), 1, .Make); refusal.kind != 0 {
+		error^ = refusal
+		return ERROR_PROJECT
 	}
 	evaluation: [pr.PROJECT_NEW_EVALUATION_BYTES]u8
 	written, written_ok := pr.project_new_evaluation(string(name), evaluation[:])

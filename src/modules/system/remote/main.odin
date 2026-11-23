@@ -161,10 +161,8 @@ RECEIVE_PLACES :: 64 // Places 0 to 63: datagrams that arrive. The others: datag
 #assert(CAPACITY <= quic_server.MAX_CAPACITY)
 
 CALL_LIMIT :: 5000 // Milliseconds: an isolated call that takes longer ends the connection to its service.
-// Milliseconds for the root service to make a connection. It can start the
-// service first, which a loaded host makes many times longer: the bound only
-// ends a hang (src/md/api/call_ring_ready.md).
-CONNECT_LIMIT :: system.ANSWER_BOUND_MILLISECONDS
+// serve gives it for a request whose connection is not ready yet.
+SERVE_PENDING :: -1
 LOG_REFUSALS :: 16 // The refusals that this process writes on the log; it counts the others.
 LOG_LIMIT :: 50 // Lines of connections and of streams in one second at most: a host that opens many must not fill the log limit of the process.
 
@@ -215,6 +213,10 @@ Call :: struct {
 	answer_written:   int, // The bytes of the answer that the stream took.
 	phase_started_at: u64, // Milliseconds of the machine: the start of the bound of the phase.
 	order:            u64, // The turn of a whole request.
+	// The connection to the service of the request is not ready yet: the
+	// call waits, and serve_next takes the next one, until a connection
+	// changes its state.
+	service_pending: bool,
 }
 calls: [CALL_COUNT]Call
 next_order: u64
@@ -250,10 +252,27 @@ Record_Client :: struct {
 }
 record_clients: [CAPACITY]Record_Client
 
+// Where a connection to a service is. The waits for the root service and
+// for the ready completion of the service are states of the loop, not
+// waits of it: a service that starts slowly, or never, holds no other
+// client (src/md/api/call_ring_ready.md).
+Service_Connection_State :: enum u8 {
+	Free, // The place is free.
+	Connecting, // Connect is sent; the answer of the root service has not come.
+	Readying, // The connection is mapped; the ready completion of the service has not come.
+	Ready, // Calls go through it.
+	Refused, // It did not become ready: refusal holds why, for the first call that waits for it.
+	Giving_Up, // Connect had no answer within the hang bound: Disconnect is sent, and a late answer of Connect has its handles closed.
+}
+
 // A connection to one service: the root service made it, for one row of
 // the client table.
 Service_Connection :: struct {
-	name:          [32]u8, // Empty: the place is free.
+	state:         Service_Connection_State,
+	connect_tag:   u32, // Connecting and Giving_Up: the tag of the Connect.
+	deadline:      u64, // Connecting, Readying and Giving_Up: the hang bound of the state.
+	refusal:       errors.Error_Record, // Refused and Giving_Up: why.
+	name:          [32]u8,
 	row:           int, // The row of the client table that the connection is for.
 	serial:        u64, // The serial of that row: the grant that the connection carries.
 	principal:     u64, // The principal of that row: the root service gave it to the connection.
@@ -577,7 +596,9 @@ service_connections_of_ended_grants :: proc "contextless" () {
 	ended := 0
 	in_use := 0
 	for &item in service_connections {
-		if item.name[0] == 0 {
+		// A connection that is not ready yet reaches Ready or Refused in the
+		// loop first; this check ends it on its next pass.
+		if item.state != .Ready {
 			continue
 		}
 		if remote.client_grant_holds(&client_rows, item.row, item.serial, .Calls) {
@@ -713,7 +734,7 @@ call_bounds_pause :: proc "contextless" (place_calls: []Call, paused: u64) {
 serve_next :: proc "contextless" () -> (served: bool, duration: u64) {
 	chosen := -1
 	for &call, index in calls {
-		if call.phase == .Waiting && (chosen < 0 || call.order < calls[chosen].order) {
+		if call.phase == .Waiting && !call.service_pending && (chosen < 0 || call.order < calls[chosen].order) {
 			chosen = index
 		}
 	}
@@ -747,7 +768,15 @@ serve_next :: proc "contextless" () -> (served: bool, duration: u64) {
 		return true, 0
 	}
 	call_started_at := system.time()
-	call.answer_length = serve(call_buffers[chosen][:], call.received, client)
+	length := serve(call_buffers[chosen][:], call.received, client)
+	if length == SERVE_PENDING {
+		// The request waits for its connection; the next call can go.
+		call.service_pending = true
+		return true, 0
+	}
+	counts.requests += 1
+	counts.bytes_in += u64(call.received)
+	call.answer_length = length
 	call_ended_at := system.time()
 	duration = call_ended_at - min(call_started_at, call_ended_at)
 	// The other calls: their streams did not move during the isolated call.
@@ -809,95 +838,204 @@ recent_add :: proc "contextless" (service: string, export: u32, answer: remote.A
 }
 
 // connection_find gives the connection to a service for the row of the
-// client of a call, and asks the root service for one when this process
-// has none: the root service gives it the principal of the row. On a
-// failure it gives the error record of the answer.
-connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> (connection: ^Service_Connection, error: errors.Error_Record) {
+// client of a call. With none, it asks the root service for one, which
+// gives it the principal of the row, and gives pending: the loop moves the
+// connection on (connections_progress), and the call waits. A connection
+// that did not become ready gives its refusal to the first call that finds
+// it.
+connection_find :: proc "contextless" (name: string, client: ^Record_Client) -> (connection: ^Service_Connection, error: errors.Error_Record, pending: bool) {
 	free: ^Service_Connection
 	for &item in service_connections {
-		if item.name[0] == 0 {
+		if item.state == .Free {
 			free = &item
-		} else if remote.name_text(&item.name) == name && item.row == client.row && item.serial == client.serial {
-			return &item, {}
+			continue
+		}
+		if remote.name_text(&item.name) != name || item.row != client.row || item.serial != client.serial {
+			continue
+		}
+		switch item.state {
+		case .Ready:
+			return &item, {}, false
+		case .Connecting, .Readying:
+			return nil, {}, true
+		case .Refused:
+			refusal := item.refusal
+			item = {}
+			return nil, refusal, false
+		case .Giving_Up:
+			return nil, item.refusal, false
+		case .Free:
 		}
 	}
 	if free == nil {
-		return nil, errors.error_make(.Full, .None, remote.FIELD_SERVICE, 0, SERVICE_CONNECTION_CAPACITY)
+		return nil, errors.error_make(.Full, .None, remote.FIELD_SERVICE, 0, SERVICE_CONNECTION_CAPACITY), false
 	}
 	packed := system.name_pack(name)
 	request_tag += 1
 	// values[4] names the row from 1, as the root service takes it.
 	if !system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Connect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(client.row + 1), 5 = client.serial}}) {
-		return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(system.Status.No_Slot))
+		return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(system.Status.No_Slot)), false
 	}
-	limit := system.time() + CONNECT_LIMIT
-	for {
-		for record in system.receive(&requests.completions) {
-			if record.tag != request_tag {
+	free^ = {
+		state       = .Connecting,
+		connect_tag = request_tag,
+		deadline    = system.answer_deadline(system.time()),
+		row         = client.row,
+		serial      = client.serial,
+		principal   = client.principal,
+	}
+	copy(free.name[:len(free.name) - 1], name)
+	return nil, {}, true
+}
+
+// connection_answer reads the answer of the root service to the Connect of
+// a connection: a refusal, or the handles, which it maps. The connection
+// then waits for the ready completion of the service.
+@(private = "file")
+connection_answer :: proc "contextless" (connection: ^Service_Connection, record: ring.Record, now: u64) {
+	// The root service writes the word: a word that names no status is the
+	// refusal of status_of_word, and its record.
+	status, status_refusal := system.status_of_word(record.kind)
+	refusal: errors.Error_Record
+	if status_refusal.kind != 0 {
+		refusal = status_refusal
+		refusal.argument = remote.FIELD_SERVICE
+	} else {
+		switch status {
+		case .Ok:
+		case .Bad_Handle:
+			// No service runs with this name.
+			refusal = errors.error_make(.Absent, .None, remote.FIELD_SERVICE)
+		case .No_Right:
+			refusal = errors.error_make(.No_Grant, .Connection, remote.FIELD_SERVICE)
+		case .Bad_State:
+			// The root service wrote why: the grant of the row ended, or the
+			// session of its principal is locked. The field at fault is the
+			// service that the call names.
+			refusal = errors.completion_record(record.values)
+			refusal.argument = remote.FIELD_SERVICE
+		case .Bad_Operation, .Bad_Address, .No_Memory, .No_Slot, .No_Budget:
+			refusal = errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(status))
+		}
+	}
+	if refusal.kind != 0 {
+		connection.state, connection.refusal = .Refused, refusal
+		return
+	}
+	connection.process = system.Handle(record.values[0])
+	connection.ring_memory = system.Handle(record.values[1])
+	connection.region_memory = system.Handle(record.values[2])
+	connection.hash = transmute([32]u8)[4]u64{record.values[3], record.values[4], record.values[5], record.values[6]}
+	ring_status: system.Status
+	connection.calls, ring_status = system.ring_open(connection.ring_memory, receive_handles = true)
+	address, map_status := system.memory_map(connection.region_memory)
+	region_pages, size_status := system.memory_size(connection.region_memory)
+	if ring_status != .Ok || map_status != .Ok || size_status != .Ok {
+		refused := ring_status != .Ok ? ring_status : map_status != .Ok ? map_status : size_status
+		connection_refuse(connection, false, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(refused)))
+		return
+	}
+	connection.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
+	connection.state = .Readying
+	connection.deadline = system.answer_deadline(now)
+}
+
+// connection_refuse ends what this process holds of a connection that did
+// not become ready, and keeps its place with the refusal for the first call
+// that waits for it.
+@(private = "file")
+connection_refuse :: proc "contextless" (connection: ^Service_Connection, tell: bool, refusal: errors.Error_Record) {
+	kept := connection^
+	connection_end(connection, tell)
+	connection^ = {state = .Refused, refusal = refusal, name = kept.name, row = kept.row, serial = kept.serial, principal = kept.principal}
+}
+
+// connections_progress moves each connection that waits: the answers of
+// the root service, the ready completion of each service, and the hang
+// bound of each state. It never waits. changed: a connection reached
+// Ready or Refused, so each call that waits for one is tried again.
+connections_progress :: proc "contextless" (now: u64) -> (changed: bool) {
+	// Each answer that names no connection is of a Disconnect: it holds no
+	// handle.
+	for record in system.receive(&requests.completions) {
+		for &connection in service_connections {
+			if record.tag == 0 || connection.connect_tag != record.tag {
 				continue
 			}
-			// The root service writes the word: a word that names no status
-			// is the refusal of status_of_word, and its record.
-			status, status_refusal := system.status_of_word(record.kind)
-			if status_refusal.kind != 0 {
-				status_refusal.argument = remote.FIELD_SERVICE
-				return nil, status_refusal
+			#partial switch connection.state {
+			case .Connecting:
+				connection_answer(&connection, record, now)
+				changed = true
+			case .Giving_Up:
+				// The late answer of a Connect given up: its handles are
+				// closed, and the Disconnect ends the side of the root service.
+				system.connect_answer_close(record)
+				connection = {}
 			}
-			switch status {
-			case .Ok:
-			case .Bad_Handle:
-				// No service runs with this name.
-				return nil, errors.error_make(.Absent, .None, remote.FIELD_SERVICE)
-			case .No_Right:
-				return nil, errors.error_make(.No_Grant, .Connection, remote.FIELD_SERVICE)
-			case .Bad_State:
-				// The root service wrote why: the grant of the row ended, or
-				// the session of its principal is locked. The field at fault
-				// is the service that the call names.
-				refused := errors.completion_record(record.values)
-				refused.argument = remote.FIELD_SERVICE
-				return nil, refused
-			case .Bad_Operation, .Bad_Address, .No_Memory, .No_Slot, .No_Budget:
-				return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(status))
-			}
-			connection = free
-			connection^ = {
-				row           = client.row,
-				serial        = client.serial,
-				principal     = client.principal,
-				process       = system.Handle(record.values[0]),
-				ring_memory   = system.Handle(record.values[1]),
-				region_memory = system.Handle(record.values[2]),
-				hash          = transmute([32]u8)[4]u64{record.values[3], record.values[4], record.values[5], record.values[6]},
-			}
-			copy(connection.name[:len(connection.name) - 1], name)
-			ring_status: system.Status
-			connection.calls, ring_status = system.ring_open(connection.ring_memory, receive_handles = true)
-			address, map_status := system.memory_map(connection.region_memory)
-			region_pages, size_status := system.memory_size(connection.region_memory)
-			if ring_status != .Ok || map_status != .Ok || size_status != .Ok {
-				connection_end(connection, false)
-				refused := ring_status != .Ok ? ring_status : map_status != .Ok ? map_status : size_status
-				return nil, errors.error_make(.Refused, .None, remote.FIELD_SERVICE, 0, 0, i64(refused))
-			}
-			connection.region = ([^]u8)(address)[:region_pages * system.PAGE_SIZE]
-			// The service maps the call ring when it reads the Connect of the
-			// root service, which can be after its start on demand: a call of
-			// the client that lends a handle before the ready completion has no
-			// receiver (src/md/api/call_ring_ready.md).
-			if system.connection_ready_wait(&connection.calls, connection.process) != .Ready {
-				connection_end(connection, true)
-				return nil, errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS)
-			}
-			system.log_fact(.Info, Service_Connected{principal = client.principal, service = value_kinds.module_name_field(name)})
-			return connection, {}
-		}
-		wait: system.Wait
-		system.wait_records(&wait, &requests.completions)
-		if system.wait_end(&wait, limit) >= limit {
-			return nil, errors.error_make(.Over_Limit, .Milliseconds, remote.FIELD_SERVICE, CONNECT_LIMIT, CONNECT_LIMIT)
 		}
 	}
+	for &connection in service_connections {
+		switch connection.state {
+		case .Free, .Ready, .Refused:
+		case .Connecting:
+			if now >= connection.deadline {
+				packed := system.name_pack(remote.name_text(&connection.name))
+				request_tag += 1
+				system.send(&requests.commands, ring.Record{kind = u32(root_ring.Root_Command.Disconnect), tag = request_tag, values = {0 = packed[0], 1 = packed[1], 2 = packed[2], 3 = packed[3], 4 = u64(connection.row + 1)}})
+				connection.state = .Giving_Up
+				connection.refusal = errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS)
+				connection.deadline = system.answer_deadline(now)
+				changed = true
+			}
+		case .Readying:
+			state, _, _ := system.process_state(connection.process)
+			reading, done := system.connection_ready_step(&connection.calls, now, connection.deadline, state)
+			if !done {
+				continue
+			}
+			if reading == .Ready {
+				connection.state = .Ready
+				system.log_fact(.Info, Service_Connected{principal = connection.principal, service = value_kinds.module_name_field(remote.name_text(&connection.name))})
+			} else {
+				connection_refuse(&connection, true, errors.error_make(.No_Answer, .Milliseconds, remote.FIELD_SERVICE, 0, system.ANSWER_BOUND_MILLISECONDS))
+			}
+			changed = true
+		case .Giving_Up:
+			// The root service did not answer the Connect nor end it: the
+			// place is free again after one more hang bound.
+			if now >= connection.deadline {
+				connection = {}
+			}
+		}
+	}
+	if changed {
+		for &call in calls {
+			call.service_pending = false
+		}
+	}
+	return changed
+}
+
+// connections_wait adds to a wait what the connections that move wait for,
+// and gives the nearest hang bound of a state, or WAIT_FOREVER.
+connections_wait :: proc "contextless" (wait: ^system.Wait) -> (limit: u64) {
+	limit = system.WAIT_FOREVER
+	asked := false
+	for &connection in service_connections {
+		switch connection.state {
+		case .Free, .Ready, .Refused:
+			continue
+		case .Connecting, .Giving_Up:
+			asked = true
+		case .Readying:
+			system.wait_records(wait, &connection.calls.completions)
+		}
+		limit = min(limit, connection.deadline)
+	}
+	if asked {
+		system.wait_records(wait, &requests.completions)
+	}
+	return limit
 }
 
 // connection_end closes what this process holds of a connection to a
@@ -973,10 +1111,10 @@ isolated_call_make :: proc "contextless" (connection: ^Service_Connection, reque
 // serve reads one whole request in the buffer of its stream, makes the
 // call for the principal of the row of its client, and writes the answer in
 // the same buffer: the request is copied into the call region before the
-// answer is written. It gives the length of the answer.
+// answer is written. It gives the length of the answer, or SERVE_PENDING
+// when the connection to the service of the request is not ready yet: the
+// request stays in its buffer, and the loop serves it again later.
 serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client) -> int {
-	counts.requests += 1
-	counts.bytes_in += u64(received)
 	// The first word of the stream chooses the protocol: a mesh frame of a
 	// machine, or a call request of a client of the client table.
 	if machine_wire.stream_is_mesh(buffer[:received]) {
@@ -994,7 +1132,10 @@ serve :: proc "contextless" (buffer: []u8, received: int, client: ^Record_Client
 		return refuse(buffer, error)
 	}
 	service := remote.name_text(&request.service)
-	connection, connection_error := connection_find(service, client)
+	connection, connection_error, pending := connection_find(service, client)
+	if pending {
+		return SERVE_PENDING
+	}
 	if connection == nil {
 		return refuse(buffer, connection_error, service)
 	}
@@ -1189,6 +1330,9 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 		// One isolated call in each pass: the datagrams of the connections
 		// move between two calls, for a while after a slow one.
 		served := false
+		if connections_progress(system.time()) {
+			dirty = true
+		}
 		if system.time() >= exchange_until {
 			duration: u64
 			served, duration = serve_next()
@@ -1248,6 +1392,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 			limit = min(limit, deadline / 1000 + 1)
 		}
 		limit = min(limit, calls_deadline())
+		limit = min(limit, connections_wait(&wait))
 		if exchange_until > system.time() {
 			limit = min(limit, exchange_until)
 		}

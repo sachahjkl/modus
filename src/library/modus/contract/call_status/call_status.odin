@@ -23,6 +23,11 @@ Call_Status :: enum u32 {
 	// count from before the call. The reason of the failure stays in the
 	// record; the status says that the details are missing.
 	Failed_With_Wrong_Details = 9,
+	// The deadline that the caller gave passed during the call, while the
+	// other process ran: the caller ends the call. The deadline only ends a
+	// hang (src/md/api/call_ring_ready.md; the call outcome
+	// Deadline_Passed_During_The_Call of src/md/api/call_outcome.md).
+	Deadline_Passed = 10,
 }
 
 // The name of each member, as Call_Status names it.
@@ -38,6 +43,7 @@ CALL_STATUS_NAMES := [Call_Status]string {
 	.Failed                    = "Failed",
 	.Not_Done                  = "Not_Done",
 	.Failed_With_Wrong_Details = "Failed_With_Wrong_Details",
+	.Deadline_Passed           = "Deadline_Passed",
 }
 
 // The word of a Call_Status in 8 bytes, for a record that holds it beside
