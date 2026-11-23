@@ -16,8 +16,12 @@ import "modus:system"
 
 #assert(root_ring.ROOT_WAIT_PERSISTED_TABLES == principals.PRINCIPAL_CAPACITY)
 // STARTED_CAPACITY processes could hold two queues each, more than the wait
-// holds, so honest use reaches the bound.
+// holds, so honest use reaches the bound: the root service holds 122 queues
+// (a root ring, a control ring of the network or a wiring ring each) for
+// all its STARTED_CAPACITY places, and refuses a start that brings one more
+// (waited_queues_refusal). A process with none of the three takes no word.
 #assert(root_ring.ROOT_WAITED_QUEUES_MOST < 2 * STARTED_CAPACITY)
+#assert(root_ring.ROOT_WAITED_QUEUES_MOST == 122)
 
 // The wait of a pass did not fit once: the line is written once.
 root_wait_full_told: bool
@@ -61,7 +65,7 @@ waited_queues_refusal :: proc "contextless" (command: root_ring.Root_Command, ad
 // not fit. The bound keeps each list in the wait: the line tells of a
 // fault of this count.
 root_wait_full_tell :: proc "contextless" (wait: ^system.Wait) {
-	if wait.full && !root_wait_full_told {
+	if wait.refused && !root_wait_full_told {
 		root_wait_full_told = true
 		system.log_fact(.Error, Root_Wait_Full{word_capacity = u64(op.WORD_WAIT_CAPACITY)})
 	}

@@ -17,6 +17,7 @@
 package iommu
 
 import "modus:contract/bridge_requester"
+import "modulus:slot_set"
 
 // The table DMAR: the ACPI header, the host address width minus 1, the
 // flags, 10 reserved bytes, then the remapping structures.
@@ -575,6 +576,53 @@ queue_tail_register :: proc "contextless" (index: u32) -> u64 {
 WINDOW_BASE :: u64(1) << 38
 WINDOW_SIZE :: u64(1) << 27 // 128 MiB: the largest object that is not contiguous that a device gets.
 WINDOW_PAGES :: WINDOW_SIZE / 4096
+
+// The windows of a domain: WINDOW_COUNT, of which the window 0 is never
+// given, so 0 names no window.
+WINDOW_COUNT :: int(WINDOW_BASE / WINDOW_SIZE)
+#assert(u64(WINDOW_COUNT) * WINDOW_SIZE == WINDOW_BASE)
+
+// The windows that memory objects hold (src/md/infrastructure/iommu.md,
+// "Device addresses"). A declared object takes one at its first
+// declaration, and gives it back when no device has its pages any more,
+// after the invalidation of each domain that had them: a window serves a
+// new object only when no unit can still translate it to the frames of the
+// old one. The zero value is a table with every window free.
+Window_Table :: struct {
+	taken: slot_set.Slot_Set(WINDOW_COUNT),
+}
+
+// window_take gives the lowest free window. false: each of the
+// WINDOW_COUNT - 1 windows is taken, and nothing changed.
+window_take :: proc "contextless" (table: ^Window_Table) -> (window: u32, ok: bool) {
+	for candidate in u32(1) ..< u32(WINDOW_COUNT) {
+		if !slot_set.has(&table.taken, candidate) {
+			slot_set.add(&table.taken, candidate)
+			return candidate, true
+		}
+	}
+	return 0, false
+}
+
+// window_table_full says if each window is taken.
+window_table_full :: proc "contextless" (table: ^Window_Table) -> bool {
+	for candidate in u32(1) ..< u32(WINDOW_COUNT) {
+		if !slot_set.has(&table.taken, candidate) {
+			return false
+		}
+	}
+	return true
+}
+
+// window_give gives a window back. false: the window 0, a window past the
+// count, or a window that is free: nothing changed.
+window_give :: proc "contextless" (table: ^Window_Table, window: u32) -> bool {
+	if window == 0 || !slot_set.has(&table.taken, window) {
+		return false
+	}
+	slot_set.remove(&table.taken, window)
+	return true
+}
 
 // window_address gives the device address of the first page of a window
 // of a memory object that is not contiguous.

@@ -549,7 +549,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	}
 
 	for {
-		wait := system.wait_begin()
+		wait := system.wait_begin(&collector_wait_set)
 		now_ms := system.time()
 		if expired := collector_core.manager_expire_grants(&manager_state, now_ms); expired > 0 {
 			system.log_fact(.Info, Grants_Expired{expired_grants = u64(expired)})

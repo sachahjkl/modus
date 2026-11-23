@@ -35,20 +35,20 @@ a_writer_that_needs_two_places_and_finds_one_waits_for_a_read :: proc(t: ^testin
 	wait_room_for(&wait, queue, 2)
 	testing.expect(t, !wait.full, "one place for two records: the writer must wait")
 	testing.expect_value(t, wait.count, 1)
-	testing.expect_value(t, wait.words[0].address, u64(uintptr(&queue.counters.read)))
-	testing.expect_value(t, u32(wait.words[0].value), queue.counters.read)
-	testing.expect_value(t, wait.flags[0], &queue.counters.writer_waits)
-	testing.expect_value(t, wait.other_flags[0], &queue.counters.reader_waits)
+	testing.expect_value(t, wait.inline_words[0].address, u64(uintptr(&queue.counters.read)))
+	testing.expect_value(t, u32(wait.inline_words[0].value), queue.counters.read)
+	testing.expect_value(t, wait.inline_parts[0].flag, &queue.counters.writer_waits)
+	testing.expect_value(t, wait.inline_parts[0].other_flag, &queue.counters.reader_waits)
 
 	// wait_room ends at once on the same queue: the loop with no wait.
 	not_full: Wait
 	wait_room(&not_full, queue)
-	testing.expect(t, not_full.words[0].value != u64(queue.counters.read), "wait_room does not hold a writer that finds one place")
+	testing.expect(t, not_full.inline_words[0].value != u64(queue.counters.read), "wait_room does not hold a writer that finds one place")
 
 	// The reader takes one record: the word changes, the wait ends.
 	_, popped := ring.pop(queue)
 	testing.expect(t, popped)
-	testing.expect(t, u64(queue.counters.read) != wait.words[0].value)
+	testing.expect(t, u64(queue.counters.read) != wait.inline_words[0].value)
 	again: Wait
 	wait_room_for(&again, queue, 2)
 	testing.expect(t, again.full, "two places now: the wait ends at once")

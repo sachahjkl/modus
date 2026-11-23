@@ -14,7 +14,6 @@ package collector_service
 
 import "modus:contract/errors"
 import "modus:contract/module"
-import op "modus:contract/operation"
 import "modus:contract/output"
 import "modus:contract/wide_grants"
 import "modus:system"
@@ -231,13 +230,17 @@ pairs_orphaned_close :: proc "contextless" () {
 	}
 }
 
+// The places of the wait of the loop: the rings of the sources and the
+// pairs take more than a wait on the stack holds.
+collector_wait_set: system.Wait_Set
+
 // sources_wait adds the rings of the sources and the full rings of the
 // pairs to the wait of the loop, in the room that its other words leave.
 // It says if a ring found no room in the list: the loop then wakes after
 // PENDING_RETRY_MILLISECONDS.
 sources_wait :: proc "contextless" (waiting: ^system.Wait) -> (not_waited: bool) {
 	system.wait_wiring(waiting)
-	room := op.WORD_WAIT_CAPACITY - waiting.count - waiting.flag_count - COLLECTOR_WAIT_WORDS_KEPT
+	room := system.wait_room_left(waiting) - COLLECTOR_WAIT_WORDS_KEPT
 	rings := max(room, 0) / system.INPUT_RECORDS_WAIT_WORDS
 	source_rings := rings / 2
 	pair_rings := rings - source_rings

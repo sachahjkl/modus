@@ -50,6 +50,9 @@ STALL_POLL_INTERVAL_MS :: u64(1_000)
 WIRING_WAIT_FIXED_WORDS :: 1 + 2 + 2
 WIRING_WAITED_RINGS_MOST :: (op.WORD_WAIT_CAPACITY - WIRING_WAIT_FIXED_WORDS) / 2
 #assert(WIRING_WAIT_FIXED_WORDS + 2 * WIRING_WAITED_RINGS_MOST <= op.WORD_WAIT_CAPACITY)
+// The places of the wait of the main loop: more than a wait on the stack
+// holds.
+wiring_wait_set: system.Wait_Set
 
 // Kernel handles associated with one registered Process_Entry in `state`.
 Process_Handles :: struct {
@@ -1155,7 +1158,7 @@ entry :: proc "c" (ctx: ^system.Context) -> ! {
 	system.log_fact(.Info, Ready{image_bytes = image_size})
 
 	for {
-		wait := system.wait_begin()
+		wait := system.wait_begin(&wiring_wait_set)
 		// Serve core commands (Register_Process, Commit_Start_Wiring) before
 		// stops_drain so a short-lived child that exits immediately after start
 		// commits its wiring batch before its stop notice unregisters it.

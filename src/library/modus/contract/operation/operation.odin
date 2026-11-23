@@ -82,8 +82,11 @@ CHOSEN_BASE :: 0x0000_1000_0000_0000 // Where the kernel puts a mapping with no 
 MODULE_BASE :: 0x0000_2000_0000_0000
 // The first address above the stack of the first thread. The stack grows
 // down from here: its `STACK_PAGES` pages end at this address. The starter
-// maps it, and gives it to `Process_Start` as the stack address.
-STACK_TOP :: 0x0000_7FFF_FFE0_0000
+// maps it, and gives it to `Process_Start` as the stack address. The page
+// at this address has no mapping: a write past the top faults. The stack,
+// the context and the first 8 thread areas share one page table
+// (src/md/data/table_sizes.md).
+STACK_TOP :: CONTEXT_ADDRESS - PAGE_SIZE
 // The pages of the stack of the first thread: 64 pages, 256 KiB. A thread
 // that `system.thread_start` makes has its own count (`THREAD_STACK_PAGES`).
 STACK_PAGES :: 64
@@ -93,8 +96,9 @@ STACK_PAGES :: 64
 // (docs/MODULE_CONTRACT.md, "The budget that a module asks for").
 THREAD_STACK_PAGES :: 16
 // The address of the context of the process (`Context`): the starter maps one
-// page there and gives this address as the parameter of the entry.
-CONTEXT_ADDRESS :: 0x0000_7FFF_FFF0_0000
+// page there and gives this address as the parameter of the entry. One page
+// with no mapping separates it from the thread areas.
+CONTEXT_ADDRESS :: THREAD_AREA_BASE - 2 * PAGE_SIZE
 // The thread areas: one per thread, THREAD_AREA_PAGES pages each. An area
 // is the thread record (one page), the kernel ring, and one page with no
 // memory.
@@ -102,12 +106,17 @@ CONTEXT_ADDRESS :: 0x0000_7FFF_FFF0_0000
 // The thread number n has its area at `THREAD_AREA_BASE + n *
 // THREAD_AREA_PAGES * PAGE_SIZE`. The page with no memory is a guard page: a
 // write past the kernel ring faults and touches no other thread.
-THREAD_AREA_BASE :: 0x0000_7FFF_FFF4_0000
+THREAD_AREA_BASE :: TIME_ADDRESS - THREAD_CAPACITY * THREAD_AREA_PAGES * PAGE_SIZE
 THREAD_AREA_PAGES :: 4 // One page of thread record, the two pages of the kernel ring (`ring.PAGE_COUNT`), one guard page.
 // The threads of one process, at the same time. `Thread_Create` gives
-// `No_Slot` when all the thread numbers are in use. The 32 thread areas end
-// below `TIME_ADDRESS`.
-THREAD_CAPACITY :: 32
+// `No_Slot` when all the thread numbers are in use. The 256 thread areas,
+// 4 MiB, end at `TIME_ADDRESS`. A compiler or a server starts a thread for
+// each processor of a large machine.
+THREAD_CAPACITY :: 256
+#assert(THREAD_AREA_BASE == 0x0000_7FFF_FFBE_0000)
+#assert(STACK_TOP == 0x0000_7FFF_FFBD_D000)
+// The stack, the context and the first areas are in one span of 2 MiB.
+#assert((STACK_TOP - STACK_PAGES * PAGE_SIZE) / (2 << 20) == THREAD_AREA_BASE / (2 << 20))
 // The time page: one page that the kernel writes and that each process can
 // only read. A process reads the time with no kernel entry.
 TIME_ADDRESS :: 0x0000_7FFF_FFFE_0000
@@ -931,8 +940,10 @@ Operation :: enum u32 {
 	//   registers; or the device is behind a conventional bridge, and the caller does not hold the registers
 	//   of each device behind that bridge, which all share its requester and its domain (the log names the
 	//   device that it misses).
-	// - `No_Slot`: the caller holds the registers of more than 4 devices, or the 32 slots of the devices of
-	//   the kernel are in use.
+	// - `No_Slot`: the caller holds the registers of more than 4 devices, the 32 slots of the devices of
+	//   the kernel are in use, or the object is not contiguous and each of the 2047 device windows is held
+	//   (the record `Full` of the unit `Device_Windows`). A window returns when no device has the pages of
+	//   its object.
 	// - `No_Budget`: the budget of the caller cannot pay for a page of the tables of the device.
 	Process_Module = 26, // (process, record: Module_Record).
 	// Records a module that a loader put in a process, in the module records of the process. The kernel
@@ -3246,7 +3257,7 @@ Thread_Report :: struct {
 }
 #assert(size_of(Thread_Report) == 80)
 
-THREAD_REPORT_CAPACITY :: 32 // The thread areas of one process: `THREAD_CAPACITY`.
+THREAD_REPORT_CAPACITY :: THREAD_CAPACITY // The thread areas of one process.
 
 // The threads of one process, with the state of the scheduler of each.
 // `Inspect` with the kind `Threads` writes it.
@@ -3411,18 +3422,24 @@ LOG_RECORDS_OF_THE_KERNEL :: 64
 // The log records of each second of a process of normal use: what the root
 // service gives each process that it starts.
 LOG_RECORDS_OF_A_PROCESS :: 1000
-// The process slots of the kernel. A log record keeps the slot of its
-// process in one byte (`Log_Record.process`), so the slots are 256 at most.
-PROCESS_SLOTS_OF_THE_MACHINE :: 256
-#assert(PROCESS_SLOTS_OF_THE_MACHINE <= 1 << 8)
+// The process slots of the kernel: the kernel chooses their count once, at
+// its start, from the memory of the machine (src/md/data/table_sizes.md),
+// from PROCESS_SLOTS_LEAST to PROCESS_SLOTS_MOST, and gives it in
+// `System_Report.process_slots`. A process that reads each slot reads that
+// count. The tables of the services that have one entry for each process
+// slot have the size of PROCESS_SLOTS_MOST.
+PROCESS_SLOTS_LEAST :: 64
+PROCESS_SLOTS_MOST :: 1024
+#assert(PROCESS_SLOTS_MOST <= 1 << 16) // Log_Record.process has two bytes.
 // The bytes of the name of a process (`Process_Create`). The kernel keeps
 // the name with a zero byte after it.
 PROCESS_NAME_BYTES_MOST :: 31
-// The log records of each second of the whole machine: the amount of the
-// root budget, which divides it among every budget, a process of normal use
-// in each process slot. The serial port can lose the lines of a flood of
+// The log records of each second of the whole machine at its most: the
+// root budget holds LOG_RECORDS_OF_A_PROCESS for each process slot of the
+// machine, and divides it among every budget, a process of normal use in
+// each process slot. The serial port can lose the lines of a flood of
 // these records, and says how many (src/md/features/log_side_channels.md).
-LOG_RECORDS_OF_THE_MACHINE :: PROCESS_SLOTS_OF_THE_MACHINE * LOG_RECORDS_OF_A_PROCESS
+LOG_RECORDS_OF_THE_MACHINE_MOST :: PROCESS_SLOTS_MOST * LOG_RECORDS_OF_A_PROCESS
 
 // The pages of the own log ring of a process: the kernel keeps a copy of
 // each record of the process there, which only the records of that process
@@ -3457,31 +3474,35 @@ Log_Head :: struct {
 // principal the records of those two numbers only, numbered by `own_number`
 // (modus:contract/log_scope), from the own log ring of its process
 // (`Log_Read`): the kernel writes each record of a process in the whole log
-// and in that ring. The process slot and the number of the thread
-// in its process have one byte each: the kernel has at most 256 process
-// slots and a process at most 256 threads, which leaves room for the two
-// numbers in 256 bytes. See [log record](term:log-record).
+// and in that ring. The process slot has two bytes, and the number
+// of the thread in its process and the count of the bytes of the text one
+// byte each: the kernel has at most PROCESS_SLOTS_MOST process slots, a
+// process at most 256 threads, and a record at most 168 bytes of text,
+// which leaves room for the serial and the own number in a head of 32
+// bytes. See [log record](term:log-record).
 //
 // Example: the line `[console] started` on the serial port is one record
 // with `name = "console"`, `level = .Info`, `text_count = 7`.
 Log_Record :: struct {
 	sequence:       u64, // The number of the record in the whole log, from 0.
 	time:           u64, // Microseconds since the start of the machine.
-	process:        u8, // The process slot. 0: the kernel.
+	process:        u16, // The process slot. 0: the kernel.
 	thread:         u8, // The number of the thread in its process: its thread area. 0 for a record of the kernel, whose process is 0.
 	level:          Log_Level, // The level that the writer gave.
 	more:           u8, // 1: the text continues in the next record.
-	process_serial: u32, // The process serial: it changes for each new process in the slot. 0: the kernel.
-	own_number:     u32, // The number of the record among the records of its process, from 0 at its start; it starts again from 0 after 2^32 records. 0 for the kernel.
-	text_count:     u16, // The bytes of `text` in use, at most `LOG_TEXT_CAPACITY`. 0 for a fact.
+	text_count:     u8, // The bytes of `text` in use, at most `LOG_TEXT_CAPACITY`. 0 for a fact.
 	run_count:      u8, // The value runs of the text: runs[:run_count]. 0 for a fact.
 	form:           u8, // The byte of a `Log_Record_Form` (`log_record_form`): what the bytes after the name hold. 0: a text.
+	process_serial: u32, // The process serial: it changes for each new process in the slot. 0: the kernel.
+	own_number:     u32, // The number of the record among the records of its process, from 0 at its start; it starts again from 0 after 2^32 records. 0 for the kernel.
 	name:           [PROCESS_NAME_BYTES_MOST + 1]u8, // The name of the process, or "kernel".
 	runs:           [LOG_RUN_CAPACITY]value_kinds.Value_Run, // In order, inside text[:text_count]. A fact: the first bytes of its `Log_Fact`.
 	text:           [LOG_TEXT_CAPACITY]u8, // The text, UTF-8, `text_count` bytes. A fact: the rest of its `Log_Fact`.
 }
 
 #assert(size_of(Log_Record) == 256)
+#assert(LOG_TEXT_CAPACITY < 1 << 8) // Log_Record.text_count has one byte.
+#assert(PROCESS_SLOTS_MOST <= 1 << 16) // The process slot fits Log_Record.process.
 #assert(THREAD_CAPACITY <= 1 << 8) // The number of a thread in its process fits Log_Record.thread.
 #assert(offset_of(Log_Record, name) == 32)
 #assert(offset_of(Log_Record, runs) == 64)

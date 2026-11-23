@@ -19,7 +19,11 @@ import "modus:system"
 // to 64), and a full table refuses the load of the next process
 // (memory_create of a writable segment gives No_Slot).
 
-fresh_bytes_memory: system.Handle // STARTED_CAPACITY pages; 0: no fresh bytes.
+fresh_bytes_memory: system.Handle // fresh_bytes_places pages; 0: no fresh bytes.
+// The places of `started` that have a page: one for each process slot of
+// this machine but the one of this service, at most STARTED_CAPACITY. A
+// small machine pays no page for a place that no process can take.
+fresh_bytes_places: int
 fresh_bytes_address: uintptr // The object, mapped with Write in this service.
 fresh_bytes_given: [STARTED_CAPACITY]bool // The process of the place maps the page of the place.
 
@@ -27,7 +31,8 @@ fresh_bytes_given: [STARTED_CAPACITY]bool // The process of the place maps the p
 // start: the processes then get no page, and the log says it once.
 fresh_bytes_create :: proc "contextless" () {
 	status: system.Status
-	fresh_bytes_memory, status = system.memory_create(STARTED_CAPACITY)
+	fresh_bytes_places = clamp(int(machine_process_slots) - 1, 1, STARTED_CAPACITY)
+	fresh_bytes_memory, status = system.memory_create(u64(fresh_bytes_places))
 	address: rawptr
 	if status == .Ok {
 		address, status = system.memory_map(fresh_bytes_memory)
@@ -57,7 +62,7 @@ fresh_bytes_page_give :: proc "contextless" (item: ^Started, mappings: []system.
 		return
 	}
 	index := disk_process_page_index(item)
-	if index < 0 || index >= STARTED_CAPACITY {
+	if index < 0 || index >= fresh_bytes_places {
 		return
 	}
 	if count^ >= len(mappings) {
@@ -75,7 +80,7 @@ fresh_bytes_page_give :: proc "contextless" (item: ^Started, mappings: []system.
 // no more bytes are written there until the next process of the place.
 fresh_bytes_forget :: proc "contextless" (item: ^Started) {
 	index := disk_process_page_index(item)
-	if fresh_bytes_memory == 0 || index < 0 || index >= STARTED_CAPACITY || !fresh_bytes_given[index] {
+	if fresh_bytes_memory == 0 || index < 0 || index >= fresh_bytes_places || !fresh_bytes_given[index] {
 		return
 	}
 	fresh_bytes_given[index] = false

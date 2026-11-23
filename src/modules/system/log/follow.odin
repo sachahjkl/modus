@@ -46,6 +46,9 @@ MAIN_WAIT_WORDS_BESIDE_FOLLOW :: 1 + 4 + 1 + 2 + 2 * (1 + isolated.SERVICE_CONNE
 FOLLOW_RINGS_WAITED_MOST :: (op.WORD_WAIT_CAPACITY - MAIN_WAIT_WORDS_BESIDE_FOLLOW) / system.OUTPUT_ROOM_WAIT_WORDS
 #assert(FOLLOW_RINGS_WAITED_MOST >= 1)
 #assert(MAIN_WAIT_WORDS_BESIDE_FOLLOW + FOLLOW_RINGS_WAITED_MOST * system.OUTPUT_ROOM_WAIT_WORDS <= op.WORD_WAIT_CAPACITY)
+// The places of the main wait, which waits on these rings: more than a
+// wait on the stack holds.
+log_wait_set: system.Wait_Set
 
 // One row of log.follow: one record of the whole log, as records() gives
 // it, with no byte that no field names. A fact has no text, as in

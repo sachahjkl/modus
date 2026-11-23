@@ -110,28 +110,28 @@ The same picture in text:
 
 ## Kernel systems
 
-The kernel, `modulus`, is small on purpose: it does only what a process cannot do safely for itself (P1, P4). It has five systems, and the kernel operations reach them (`src/library/modus/contract/operation`, `Operation`; their count is in `PROPERTIES.md`, "1. Small kernel with a small, counted interface"). Each system owns a small set of flat tables of fixed size (P13), so the kernel allocates nothing while it runs.
+The kernel, `modulus`, is small on purpose: it does only what a process cannot do safely for itself (P1, P4). It has five systems, and the kernel operations reach them (`src/library/modus/contract/operation`, `Operation`; their count is in `PROPERTIES.md`, "1. Small kernel with a small, counted interface"). Each system owns a small set of flat tables (P13), sized once at the start of the kernel, so the kernel allocates nothing while it runs.
 
-The fixed sizes of the tables, from `src/modulus/process.odin`, `src/modulus/processor.odin` and `src/library/modus/contract/operation`:
+The sizes of the tables, from `src/modulus/tables.odin`, `src/modulus/process.odin`, `src/modulus/processor.odin` and `src/library/modus/contract/operation`:
 
-| Table | Capacity | Why a fixed size is enough |
+| Table | Capacity | Why this size |
 |---|---|---|
-| Processes | 256 (`PROCESS_CAPACITY`) | A log record keeps the process slot in one byte (`op.Log_Record`). A set of process slots is an array of words (`modulus:slot_set`) |
+| Processes | One slot for each 4 MiB of usable memory, from 64 to 1024 (`process_capacity`, `op.PROCESS_SLOTS_LEAST`, `op.PROCESS_SLOTS_MOST`): 256 on a machine of 1 GiB | A log record keeps the process slot in two bytes (`op.Log_Record`). A set of process slots is an array of words (`modulus:slot_set`) |
 | Handles of one process | 1024 (`HANDLE_CAPACITY`) | A server with a ring and a region for each of hundreds of clients |
 | Mappings of one process | 1024 (`MAPPING_CAPACITY`) | One mapping covers a range of any size, also a reserved range with no pages paid |
-| Threads of the machine | 1024 (`THREAD_TABLE_CAPACITY`); 32 for one process (`THREAD_CAPACITY`) | The extended state area of each thread is a field of its slot ("The extended state of the processor", section 2). A log record names a thread by its number in its process, so this table has no bound of one byte |
-| Memory objects | 16384 (`REGION_CAPACITY`) | An IOMMU window is not the slot of its object: only a declared object takes one of the 2047 windows (`IOMMU_WINDOW_CAPACITY`) |
-| Budgets | 1024 (`BUDGET_CAPACITY`) | |
+| Threads of the machine | 4 for each process slot (`thread_table_capacity`); 256 for one process (`op.THREAD_CAPACITY`) | The extended state area of each thread is a field of its slot ("The extended state of the processor", section 2). A log record names a thread by its number in its process, so this table has no bound of one byte |
+| Memory objects | 64 for each process slot (`region_capacity`) | An IOMMU window is not the slot of its object: only a declared object takes one of the 2047 windows (`IOMMU_WINDOW_CAPACITY`), and gives it back when it is no longer declared |
+| Budgets | 4096 (`BUDGET_CAPACITY`) | |
 | Processors | 64 (`PROCESSOR_CAPACITY`) | |
-| Words of one wait | 256 (`op.WORD_WAIT_CAPACITY`) | A `system.Wait` holds them on the stack of its thread: about 12 KiB |
+| Words of one wait | 256 (`op.WORD_WAIT_CAPACITY`) | A `system.Wait` holds 64 of them on the stack of its thread; a thread that waits on more gives a `system.Wait_Set` of its own memory |
 
 A full table is a status of the operation that asks for one more entry (`No_Slot`), never a failure of the kernel.
 
 ### The tables of the kernel
 
-The tables are memory of the kernel, in its writable data: no budget pays them, so the root budget holds the free memory less their size. Measured on the object of the kernel: about 50 MiB in all, of which 23 MiB are the process records (each with its handle table and its mappings, about 90 KiB), 8 MiB the origin tree (a link for each handle and mapping of each process), 6 MiB the records of a recorded process, 5.5 MiB the thread records (each with its extended state area and its waited words) and 3 MiB the links of the word wait. A test machine of 1 GiB keeps more than 900 MiB for the budgets. A record of the size of a process is never a composite literal: the kernel stack, 64 KiB, cannot hold its copy, so the kernel writes it in place (`process_reset`).
+The tables are memory of the kernel: `tables_start` takes them from the free frames, after the memory map and before the root budget, so no budget pays them and the root budget holds the free memory less their size. Their cost for each process slot, measured, and the reasons of the rule are in `src/md/data/table_sizes.md`. A record of the size of a process is never a composite literal: the kernel stack, 64 KiB, cannot hold its copy, so the kernel writes it in place (`process_reset`).
 
-The sizes are bounds of the tables, not budgets. A process gets its slot, its threads and its pages from a budget that its starter divides (`PROPERTIES.md`, "20. No ambient access: the other holes to close", line 16). The tables that grow with the memory of the machine, in a reserve of addresses that the kernel sizes at its start, are planned work (`ROADMAP.md`).
+The sizes are bounds of the tables, not budgets. A process gets its slot, its threads and its pages from a budget that its starter divides (`PROPERTIES.md`, "20. No ambient access: the other holes to close", line 16).
 
 ### K1. Handle table
 
@@ -1648,15 +1648,15 @@ operation.Log_Record, 256 bytes: one record of the log of the kernel
 offset  size  field           type
      0     8  sequence        u64
      8     8  time            u64
-    16     1  process         u8
-    17     1  thread          u8
-    18     1  level           Log_Level
-    19     1  more            u8
-    20     4  process_serial  u32
-    24     4  own_number      u32
-    28     2  text_count      u16
-    30     1  run_count       u8
-    31     1  form            u8
+    16     2  process         u16
+    18     1  thread          u8
+    19     1  level           Log_Level
+    20     1  more            u8
+    21     1  text_count      u8
+    22     1  run_count       u8
+    23     1  form            u8
+    24     4  process_serial  u32
+    28     4  own_number      u32
     32    32  name            [PROCESS_NAME_BYTES_MOST + 1]u8
     64    24  runs            [LOG_RUN_CAPACITY]value_kinds.Value_Run
     88   168  text            [LOG_TEXT_CAPACITY]u8

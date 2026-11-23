@@ -70,7 +70,7 @@ the_nickname_and_the_hash_prefix :: proc(t: ^testing.T) {
 a_write_past_the_rows_changes_nothing :: proc(t: ^testing.T) {
 	page := new(Page)
 	defer free(page)
-	testing.expect(t, ROW_CAPACITY == op.PROCESS_SLOTS_OF_THE_MACHINE - 1)
+	testing.expect(t, ROW_CAPACITY == op.PROCESS_SLOTS_MOST - 1)
 	testing.expect(t, PAGE_PAGES * 4096 >= size_of(Page))
 	for place in ([?]int{-1, ROW_CAPACITY, ROW_CAPACITY + 1, max(int)}) {
 		row_write(page, place, row_of(7, 1, "outside", {}))

@@ -27,7 +27,7 @@ Wait_Link :: struct {
 }
 
 wait_buckets: [WAIT_BUCKETS]Wait_Bucket
-wait_links: [THREAD_TABLE_CAPACITY * op.WORD_WAIT_CAPACITY]Wait_Link
+wait_links: []Wait_Link // WORD_WAIT_CAPACITY for each thread: tables_start.
 
 wait_bucket :: #force_inline proc "contextless" (word: u64) -> ^Wait_Bucket {
 	return &wait_buckets[((word >> 2) * 0x9E37_79B9_7F4A_7C15) >> 58]

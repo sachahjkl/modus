@@ -151,7 +151,7 @@ control_free :: proc "contextless" () {
 
 // The lock of each process. It is out of the process record: a new process
 // in a slot does not reset it.
-process_locks: [PROCESS_CAPACITY]Lock
+process_locks: [PROCESS_CAPACITY_MOST]Lock
 
 // process_lock takes the lock of a process, unless this processor holds it
 // already. true: this call took it; give it to process_unlock.

@@ -23,7 +23,7 @@ import "modus:random"
 import "modus:system"
 
 // The process slots that a round reads: the slot 0 holds no process.
-PROCESS_SLOT_LIMIT :: op.PROCESS_SLOTS_OF_THE_MACHINE
+PROCESS_SLOT_LIMIT :: op.PROCESS_SLOTS_MOST
 // The places of the thread table of the kernel: the low half of a machine
 // number is the place of its thread.
 THREAD_PLACE_LIMIT :: 1024
@@ -239,7 +239,7 @@ policy_round :: proc "contextless" (on: bool) {
 	rounds_done += 1
 	round_now = {number = rounds_done, on = on, elapsed = max(now - round_time_before, 1)}
 	round_time_before = now
-	for slot in u64(1) ..< PROCESS_SLOT_LIMIT {
+	for slot in u64(1) ..< min(system_report().process_slots, PROCESS_SLOT_LIMIT) {
 		report, status := process_report(slot)
 		if status != .Ok || !process_lives(report.state) {
 			slots_before[slot] = {}
@@ -378,7 +378,7 @@ POLICY_GIVE_BACK_PASSES :: 4
 policy_weights_give_back :: proc "contextless" () -> bool {
 	for _ in 0 ..< POLICY_GIVE_BACK_PASSES {
 		written, refused: u64
-		for slot in u64(1) ..< PROCESS_SLOT_LIMIT {
+		for slot in u64(1) ..< min(system_report().process_slots, PROCESS_SLOT_LIMIT) {
 			report, status := process_report(slot)
 			if status != .Ok || !process_lives(report.state) {
 				continue
@@ -486,8 +486,8 @@ acts_for_principal :: proc "contextless" () -> bool {
 // round robin reads no weight.
 //
 // - **name**: the name of the processes, 31 bytes at most.
-// - **weight**: the process weight, from 32 to 1024. 1024 is the weight of
-//   a process with no setting. A process has at most 32 threads, so 32 is
+// - **weight**: the process weight, from 256 to 1024. 1024 is the weight of
+//   a process with no setting. A process has at most 256 threads, so 256 is
 //   the least weight that gives each thread a weight of 1 or more.
 //
 // The result is the process weight that the name had. It fails with -1 and
@@ -496,12 +496,12 @@ acts_for_principal :: proc "contextless" () -> bool {
 // - `No_Grant`: the caller does not act for the principal;
 // - `Empty`: the name has no byte;
 // - `Too_Long`: the name has more than 31 bytes;
-// - `Too_Small`: the weight is under 32;
+// - `Too_Small`: the weight is under 256;
 // - `Bad_Value`: the weight is above 1024;
 // - `Full`: 16 names have a setting.
 //
 // Example: `scheduler.share("paint", 256)` gives the process `paint` a
-// quarter of the weight of another process.
+// quarter of the weight of another process, the least share.
 @(export, link_name = "share")
 share :: proc "c" (name: ^string, weight: i64, error: ^errors.Error_Record) -> i64 {
 	if !acts_for_principal() {
@@ -729,7 +729,7 @@ case_processes_start :: proc "contextless" (processes: []Share_Process, describe
 	deadline := system.time() + system.TEST_HANG_BOUND_MILLISECONDS
 	for &started, index in processes {
 		for started.slot == 0 && system.time() < deadline {
-			for slot in u64(1) ..< PROCESS_SLOT_LIMIT {
+			for slot in u64(1) ..< min(system_report().process_slots, PROCESS_SLOT_LIMIT) {
 				report, status := process_report(slot)
 				if status == .Ok && process_lives(report.state) && system.name_of(report.name[:]) == described[index].name {
 					started.slot, started.serial = slot, report.process_serial

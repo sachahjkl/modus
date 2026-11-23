@@ -102,7 +102,7 @@ attenuated_rights_allowed :: proc "contextless" (kind: Attenuated_Grant_Kind, he
 }
 
 // Canonical identity of a process: its kernel process slot and serial.
-// Both must be non-zero, and slot must be below op.PROCESS_SLOTS_OF_THE_MACHINE.
+// Both must be non-zero, and slot must be below op.PROCESS_SLOTS_MOST.
 Process_Identity :: struct {
 	slot:   u64,
 	serial: u64,
@@ -111,7 +111,7 @@ Process_Identity :: struct {
 // process_identity_valid checks whether a process slot and serial can name
 // a running process of the machine.
 process_identity_valid :: proc "contextless" (identity: Process_Identity) -> bool {
-	return identity.slot >= 1 && identity.slot < op.PROCESS_SLOTS_OF_THE_MACHINE && identity.serial != 0
+	return identity.slot >= 1 && identity.slot < op.PROCESS_SLOTS_MOST && identity.serial != 0
 }
 
 // Flags describing a process registered with `wiring`. The values cross

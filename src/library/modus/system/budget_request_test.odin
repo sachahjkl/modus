@@ -2,6 +2,7 @@
 package system
 
 import module "modus:contract/module"
+import op "modus:contract/operation"
 import "modus:disk_process"
 import "core:testing"
 
@@ -50,29 +51,34 @@ budget_decide_accepts_limits_and_fills :: proc(t: ^testing.T) {
 	testing.expect_value(t, limited, Budget_Parts{})
 }
 
-// The largest budget of a process of the boot image is a quarter of the
-// pages of the machine, never below the least largest budget. The edges
-// first: no page, one page, the pages where the share reaches the least,
-// one more, and the largest count that a machine can name.
+// The largest budget of a process of the boot image is one share of the
+// pages and the threads of the machine, never below the least largest
+// budget, never more threads than a process holds. The edges first: no
+// page, one page, the pages where the share reaches the least, one more,
+// and the largest count that a machine can name.
 @(test)
 the_largest_budget_is_a_share_of_the_machine :: proc(t: ^testing.T) {
 	least := module.LARGEST_BUDGET_LEAST
-	share := u64(module.LARGEST_BUDGET_SHARE_OF_THE_MACHINE)
-	testing.expect_value(t, module.largest_budget_of_machine(0), least)
-	testing.expect_value(t, module.largest_budget_of_machine(1), least)
+	share := u64(module.LARGEST_BUDGET_SHARE_DEFAULT)
+	of_pages :: proc(pages: u64, share: u64) -> Budget_Request {
+		return module.largest_budget_of_machine({pages = pages}, share)
+	}
+	testing.expect_value(t, of_pages(0, share), least)
+	testing.expect_value(t, of_pages(1, share), least)
 	at_least := least.pages * share
-	testing.expect_value(t, module.largest_budget_of_machine(at_least - 1).pages, least.pages)
-	testing.expect_value(t, module.largest_budget_of_machine(at_least).pages, least.pages)
-	testing.expect_value(t, module.largest_budget_of_machine(at_least + share).pages, least.pages + 1)
-	most := module.largest_budget_of_machine(max(u64))
+	testing.expect_value(t, of_pages(at_least - 1, share).pages, least.pages)
+	testing.expect_value(t, of_pages(at_least, share).pages, least.pages)
+	testing.expect_value(t, of_pages(at_least + share, share).pages, least.pages + 1)
+	most := module.largest_budget_of_machine({pages = max(u64), threads = max(u64)}, share)
 	testing.expect_value(t, most.pages, max(u64) / share)
-	// The processes and the threads do not follow the memory.
+	testing.expect_value(t, most.threads, u64(op.THREAD_CAPACITY))
 	testing.expect_value(t, most.processes, least.processes)
-	testing.expect_value(t, most.threads, least.threads)
 	// A machine of 1 GiB less the kernel: the address space test and the
-	// Linux guest fit, which needed rows of exceptions under a cap of 64 MiB.
-	machine := module.largest_budget_of_machine(200_000)
+	// Linux guest fit, which needed rows of exceptions under a cap of 64 MiB,
+	// and a process starts a thread for each of many processors.
+	machine := module.largest_budget_of_machine({pages = 200_000, threads = 1023}, share)
 	testing.expect_value(t, machine.pages, 50_000)
+	testing.expect_value(t, machine.threads, 255)
 	testing.expect(t, machine.pages >= 42338 && machine.pages >= 34932)
 	// A request at the share is accepted, one page past it is limited.
 	granted, limited := budget_decide({pages = machine.pages}, {pages = 2048, processes = 1, threads = 1}, machine)
@@ -83,24 +89,35 @@ the_largest_budget_is_a_share_of_the_machine :: proc(t: ^testing.T) {
 	testing.expect_value(t, limited, Budget_Parts{.Pages})
 }
 
-// The budget of the disk processes follows the largest budget of the
-// machine, and one disk process gets half of it: never all of it, and
-// never less than on the smallest machine.
+// The share of the plan passes one border: a word below the least, 0, past
+// the most and the largest word are refused; the least and the most pass,
+// and a share of 1 gives one process the whole machine.
 @(test)
-the_disk_budgets_follow_the_machine :: proc(t: ^testing.T) {
-	smallest := disk_process.processes_budget_of(module.LARGEST_BUDGET_LEAST)
-	testing.expect_value(t, smallest, disk_process.PROCESSES_BUDGET_LEAST)
-	testing.expect_value(t, disk_process.largest_budget_of(smallest), disk_process.LARGEST_BUDGET_LEAST)
-	// A largest budget below the least, which no machine gives, still gives
-	// the least: the shared budget never shrinks under it.
-	testing.expect_value(t, disk_process.processes_budget_of({pages = 1, processes = 1, threads = 1}), disk_process.PROCESSES_BUDGET_LEAST)
-	shared := disk_process.processes_budget_of(module.largest_budget_of_machine(200_000))
-	testing.expect_value(t, shared.pages, 50_000)
-	testing.expect_value(t, shared.processes, disk_process.PROCESSES_BUDGET_LEAST.processes)
-	testing.expect_value(t, shared.threads, disk_process.PROCESSES_BUDGET_LEAST.threads)
-	one := disk_process.largest_budget_of(shared)
-	testing.expect_value(t, one, Budget_Request{pages = 25_000, processes = 1, threads = 4})
-	testing.expect(t, one.pages < shared.pages)
+the_share_of_a_plan_passes_its_border :: proc(t: ^testing.T) {
+	for word in ([?]u64{0, module.LARGEST_BUDGET_SHARE_MOST + 1, max(u64)}) {
+		_, ok := module.budget_share_of_word(word)
+		testing.expectf(t, !ok, "the share %d is taken", word)
+	}
+	least, least_ok := module.budget_share_of_word(module.LARGEST_BUDGET_SHARE_LEAST)
+	most, most_ok := module.budget_share_of_word(module.LARGEST_BUDGET_SHARE_MOST)
+	testing.expect(t, least_ok && most_ok && least == 1 && most == 64)
+	whole := module.largest_budget_of_machine({pages = 200_000, threads = 1023}, least)
+	testing.expect_value(t, whole.pages, 200_000)
+	testing.expect_value(t, whole.threads, u64(op.THREAD_CAPACITY))
+	small := module.largest_budget_of_machine({pages = 200_000, threads = 1023}, most)
+	testing.expect_value(t, small.pages, module.LARGEST_BUDGET_LEAST_PAGES)
+	// A share of 0 that skipped the border still divides by one, never by 0.
+	testing.expect_value(t, module.largest_budget_of_machine({pages = 8}, 0).pages, module.LARGEST_BUDGET_LEAST_PAGES)
+}
+
+// The budget of the disk processes is stated, not a share: it never
+// returns to the root service, so it covers their need and no more, and
+// one disk process gets half of it.
+@(test)
+the_disk_budgets_are_stated :: proc(t: ^testing.T) {
+	testing.expect_value(t, disk_process.PROCESSES_BUDGET, Budget_Request{pages = 32768, processes = 4, threads = 16})
+	testing.expect_value(t, disk_process.LARGEST_BUDGET, Budget_Request{pages = 16384, processes = 1, threads = 4})
+	testing.expect(t, disk_process.LARGEST_BUDGET.pages < disk_process.PROCESSES_BUDGET.pages)
 }
 
 // A disk process gets at most one process slot and 4 threads, whatever its
@@ -110,13 +127,13 @@ the_disk_budgets_follow_the_machine :: proc(t: ^testing.T) {
 @(test)
 a_disk_process_gets_at_most_its_own_largest_budget :: proc(t: ^testing.T) {
 	least := Budget_Request{pages = 2048, processes = 1, threads = 1}
-	largest := disk_process.LARGEST_BUDGET_LEAST
-	shared := disk_process.PROCESSES_BUDGET_LEAST
+	largest := disk_process.LARGEST_BUDGET
+	shared := disk_process.PROCESSES_BUDGET
 
 	// A hostile file asks for everything: it gets the largest of a disk
 	// process, each part named on the log.
 	granted, limited := budget_decide({pages = max(u64), processes = 63, threads = 255}, least, largest)
-	testing.expect_value(t, granted, Budget_Request{pages = 8192, processes = 1, threads = 4})
+	testing.expect_value(t, granted, Budget_Request{pages = 16384, processes = 1, threads = 4})
 	testing.expect_value(t, limited, Budget_Parts{.Pages, .Processes, .Threads})
 
 	// A file with no request gets the least budget, which the largest holds.

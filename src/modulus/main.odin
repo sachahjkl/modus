@@ -115,6 +115,9 @@ entry :: proc "c" (boot: ^info.Boot_Info) -> ! {
 	stage_cycles[.Firmware] = boot.cycles_start
 	stage_cycles[.Boot_Program_Load] = boot.cycles_loaded
 	memory_start(boot)
+	// The tables of the processes, the threads and the memory objects, at
+	// the size of this machine, before any part of the kernel reads them.
+	tables_start()
 	stage_end(.Kernel_Memory)
 	processor_start()
 	stage_end(.Kernel_Processor)
@@ -223,7 +226,7 @@ root_start :: proc "contextless" (boot: ^info.Boot_Info) {
 	ROOT_BUDGET :: 1
 	budgets[ROOT_BUDGET] = {
 		live = true,
-		amounts = {pages = free_frames, processes = PROCESS_CAPACITY - 1, threads = THREAD_TABLE_CAPACITY - 1, processor = u64(processor_count) * 1_000_000, log_records = op.LOG_RECORDS_OF_THE_MACHINE},
+		amounts = {pages = free_frames, processes = u64(process_capacity) - 1, threads = u64(thread_table_capacity) - 1, processor = u64(processor_count) * 1_000_000, log_records = u64(process_capacity) * op.LOG_RECORDS_OF_A_PROCESS},
 	}
 	index, _ := process_create(ROOT_BUDGET, transmute([]u8)name)
 	// The kernel writes the module and the context through the direct map:

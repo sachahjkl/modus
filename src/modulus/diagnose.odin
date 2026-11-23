@@ -167,7 +167,7 @@ read_own_full :: proc "contextless" (process: ^Process) -> (mappings, modules, t
 			modules = false
 		}
 	}
-	threads = process.thread_areas == max(u32)
+	threads = process.thread_count >= op.THREAD_CAPACITY
 	return mappings, modules, threads
 }
 
@@ -1199,6 +1199,16 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Proc
 		}
 		record_set(record, .Full, .Modules, 0, 0, op.PROCESS_MODULE_CAPACITY, 0)
 		return true
+	case .Memory_Physical:
+		// It makes no handle. The device windows are named only when the
+		// object needs one and none is free: a requester past the slots is
+		// another cause, and stays Refused.
+		slot, found := read_handle_find(process, v[1], .Memory)
+		if !found || !iommu_windows_wanted(slot.object) {
+			return false
+		}
+		record_set(record, .Full, .Device_Windows, 0, 0, u64(IOMMU_WINDOW_CAPACITY) - 1, 0)
+		return true
 	case .Handle_Give:
 		// The one cause of No_Slot here: the handle table of the target.
 		record_set(record, .Full, .Handles, 1, v[0], HANDLE_CAPACITY - 1, 0)
@@ -1225,12 +1235,12 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Proc
 		if !read_regions_full() {
 			return false
 		}
-		record_set(record, .Full, .Memory, 0, 0, REGION_CAPACITY - 1, 0)
+		record_set(record, .Full, .Memory, 0, 0, u64(region_capacity) - 1, 0)
 	case .Process_Create:
 		if !read_machine_full().processes {
 			return false
 		}
-		record_set(record, .Full, .Processes, 0, 0, PROCESS_CAPACITY - 1, 0)
+		record_set(record, .Full, .Processes, 0, 0, u64(process_capacity) - 1, 0)
 	case .Thread_Create, .Process_Start:
 		// The causes: the thread areas of the process, its mappings (the
 		// thread area is a mapping), the memory objects of the machine (the
@@ -1261,7 +1271,7 @@ slot_explain :: proc "contextless" (record: ^errors.Error_Record, process: ^Proc
 		case device_kind == .Message && read_machine_full().messages:
 			record_set(record, .Full, .Interrupts, 0, 0, op.MESSAGE_CAPACITY, 0)
 		case (device_kind == .Memory || device_kind == .Display_Memory) && read_regions_full():
-			record_set(record, .Full, .Memory, 0, 0, REGION_CAPACITY - 1, 0)
+			record_set(record, .Full, .Memory, 0, 0, u64(region_capacity) - 1, 0)
 		case:
 			return false
 		}

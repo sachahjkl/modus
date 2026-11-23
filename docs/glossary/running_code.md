@@ -840,7 +840,7 @@ Do not use: child weight, inherited weight, creation weight.
 
 A process weight is a number from 32 to 1024 that the share policy divides between the threads of one process: the share of processor time of that process against the other processes.
 
-The principal sets it for the processes with one name: `scheduler.share("paint", 256)`. A process with no setting has 1024. It is a setting of the process `scheduler`: the kernel knows the weight of each thread only. The least value is 32 because a process has at most 32 threads, so each thread has a weight of 1 or more. It has an effect only while the share policy is on. Example: with the process weight 1024, the 8 threads of a process that compute have the weight 128 each.
+The principal sets it for the processes with one name: `scheduler.share("paint", 256)`. A process with no setting has 1024. It is a setting of the process `scheduler`: the kernel knows the weight of each thread only. The least value is 256 because a process has at most 256 threads, so each thread has a weight of 1 or more. It has an effect only while the share policy is on. Example: with the process weight 1024, the 8 threads of a process that compute have the weight 128 each.
 
 The design: `docs/SCHEDULING.md`, "A share for each process".
 

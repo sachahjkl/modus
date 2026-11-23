@@ -115,7 +115,7 @@ log_region: u32
 // its process in one byte each, so that it has room for the process serial
 // and the own number in its 256 bytes. The slot of the thread in the table
 // of the kernel does not fit a byte.
-#assert(PROCESS_CAPACITY <= 1 << 8)
+#assert(PROCESS_CAPACITY_MOST <= 1 << 16)
 #assert(op.THREAD_CAPACITY <= 1 << 8)
 log_serial_only: bool // The kernel reports its own fault: it takes no lock, and writes the serial port only.
 // The log lock protects the records of the log and their counter, and the
@@ -1023,7 +1023,7 @@ log_record :: proc "contextless" (process: u32, process_serial: u32, owner: ^Pro
 		}
 		rest = rest[len(part):]
 		record, written, own_count := log_record_open(process, process_serial, owner, thread, name, level, len(rest) != 0)
-		record.text_count = u16(len(part))
+		record.text_count = u8(len(part))
 		copy(record.text[:], part)
 		record.run_count = u8(value_kinds.value_runs_of_record(runs, offset, len(part), record.runs[:]))
 		offset += len(part)
@@ -1057,7 +1057,7 @@ log_record_open :: proc "contextless" (process: u32, process_serial: u32, owner:
 	record^ = {
 		sequence       = written,
 		time           = microseconds(cycles_now()),
-		process        = u8(process),
+		process        = u16(process),
 		thread         = u8(thread == 0 ? 0 : threads[thread].number),
 		process_serial = process_serial,
 		own_number     = u32(own_count), // The low bits: a reader names a record by its distance to the count (op.own_log_window).

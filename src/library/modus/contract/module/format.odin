@@ -38,6 +38,7 @@
 package module
 
 import "modus:contract/enum_word"
+import op "modus:contract/operation"
 import "modus:contract/value_kinds"
 
 MAGIC :: u64(0x0000_454C_5544_4F4D) // The bytes "MODULE", then two zero bytes.
@@ -511,11 +512,27 @@ Budget_Request :: struct {
 #assert(size_of(Budget_Request) == 24)
 
 // The largest budget of a process of the boot image is a share of the
-// memory of the machine: a request above it starts with the largest
-// budget (largest_budget_of_machine). The share is one quarter, so the
-// largest process of a machine leaves three quarters to the others; a
-// machine of 1 GiB gives about 190 MiB to one process.
-LARGEST_BUDGET_SHARE_OF_THE_MACHINE :: 4
+// memory and of the threads of the machine: a request above it starts with
+// the largest budget (largest_budget_of_machine). The share is a value of
+// the plan of principal 0, because it spends a resource of the machine
+// (src/md/features/module_budget_request.md): a share of n gives one
+// process at most 1/n of the machine. With no value in the plan, the share
+// is one quarter, so the largest process leaves three quarters to the
+// others.
+LARGEST_BUDGET_SHARE_DEFAULT :: 4
+// The share of a plan: 1 (one process can take the whole machine) to 64.
+LARGEST_BUDGET_SHARE_LEAST :: 1
+LARGEST_BUDGET_SHARE_MOST :: 64
+
+// budget_share_of_word is the border of the share that a plan gives: the
+// share, or false for a word below LARGEST_BUDGET_SHARE_LEAST or above
+// LARGEST_BUDGET_SHARE_MOST. A refused word changes no budget.
+budget_share_of_word :: proc "contextless" (word: u64) -> (share: u64, ok: bool) {
+	if word < LARGEST_BUDGET_SHARE_LEAST || word > LARGEST_BUDGET_SHARE_MOST {
+		return 0, false
+	}
+	return word, true
+}
 // The least largest budget: what a process of the boot image can always
 // get, on the smallest machine that the system supports. A module that
 // sizes its memory to run on any machine checks its sum against these
@@ -524,14 +541,18 @@ LARGEST_BUDGET_LEAST_PAGES :: 16384
 LARGEST_BUDGET_LEAST :: Budget_Request{pages = LARGEST_BUDGET_LEAST_PAGES, processes = 8, threads = 32}
 
 // largest_budget_of_machine gives the largest budget of a process of the
-// boot image on a machine whose root service holds machine_pages pages at
-// its start: one share of them, and never less than LARGEST_BUDGET_LEAST.
+// boot image on a machine whose root service holds machine at its start:
+// one share of its pages and of its threads, never less than
+// LARGEST_BUDGET_LEAST, and never more threads than a process holds
+// (op.THREAD_CAPACITY). share passed its border (budget_share_of_word).
 //
-// Example: 200 000 pages (a machine of 1 GiB, less the kernel) give 50 000
-// pages; 0 pages, and 60 000 pages, give 16 384.
-largest_budget_of_machine :: proc "contextless" (machine_pages: u64) -> Budget_Request {
+// Example: 200 000 pages and 1023 threads (a machine of 1 GiB) with the
+// share 4 give 50 000 pages and 255 threads; 0 pages give 16 384.
+largest_budget_of_machine :: proc "contextless" (machine: Budget_Request, share: u64) -> Budget_Request {
+	parts := max(share, LARGEST_BUDGET_SHARE_LEAST)
 	largest := LARGEST_BUDGET_LEAST
-	largest.pages = max(machine_pages / LARGEST_BUDGET_SHARE_OF_THE_MACHINE, LARGEST_BUDGET_LEAST_PAGES)
+	largest.pages = max(machine.pages / parts, LARGEST_BUDGET_LEAST_PAGES)
+	largest.threads = clamp(machine.threads / parts, LARGEST_BUDGET_LEAST.threads, op.THREAD_CAPACITY)
 	return largest
 }
 

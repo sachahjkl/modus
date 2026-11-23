@@ -25,7 +25,7 @@ import "modulus:slot_set"
 // writes: a holding is in the list of the holdings of its origin, with a
 // link in each direction.
 HOLDINGS_PER_PROCESS :: HANDLE_CAPACITY + MAPPING_CAPACITY
-#assert(u64(PROCESS_CAPACITY) * HOLDINGS_PER_PROCESS <= u64(max(u32)))
+#assert(u64(PROCESS_CAPACITY_MOST) * HOLDINGS_PER_PROCESS <= u64(max(u32)))
 
 Holding :: u32
 
@@ -51,7 +51,7 @@ Origin_Link :: struct {
 // link of a holding changes under the origin lock; a path that ends a
 // holding also holds the process lock of the holder.
 origin_lock: Lock
-origins: [PROCESS_CAPACITY * HOLDINGS_PER_PROCESS]Origin_Link
+origins: []Origin_Link // HOLDINGS_PER_PROCESS for each process slot: tables_start.
 origin_changes: u64 // Detaches since boot: a revocation sees that another processor changed the tree.
 revoking: bool // A revocation lists and ends holdings: a path with no control lock adds none.
 revoke_lost: Process_Set // The processes of which Handle_Revoke ended a holding. Control lock.

@@ -150,7 +150,9 @@ mapping_at :: proc "contextless" (report: ^op.Process_Mapping_Report, address: u
 
 // find_self finds the slot of this process by its name in the reports.
 find_self :: proc "contextless" () {
-	for index in u64(1) ..< op.PROCESS_SLOTS_OF_THE_MACHINE {
+	machine_report: op.System_Report
+	system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&machine_report)), size_of(machine_report))
+	for index in u64(1) ..< machine_report.process_slots {
 		report: op.Process_Report
 		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), index, u64(uintptr(&report)), size_of(report)); status != .Ok {
 			continue

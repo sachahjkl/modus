@@ -212,7 +212,7 @@ Guest :: struct {
 	page_switches:  u64, // The pages that switched between Write and Execute: a measure. Process lock of the guest.
 	own_page_writes: u64, // The runs that ended with Writes_Own_Page: a measure. Process lock of the guest.
 }
-guests: [PROCESS_CAPACITY]Guest
+guests: [PROCESS_CAPACITY_MOST]Guest
 
 // The general registers of a guest processor that the control block does
 // not keep, in the order of guest_enter in processor.asm.

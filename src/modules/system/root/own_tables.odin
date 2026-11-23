@@ -49,7 +49,7 @@ own_slot_find :: proc "contextless" () -> bool {
 		return true
 	}
 	report: op.Process_Report
-	for index in u64(1) ..< op.PROCESS_SLOTS_OF_THE_MACHINE {
+	for index in u64(1) ..< machine_process_slots {
 		if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.Process), index, u64(uintptr(&report)), size_of(report)); status != .Ok {
 			continue
 		}

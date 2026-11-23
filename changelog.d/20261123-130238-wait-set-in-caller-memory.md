@@ -1,0 +1,3 @@
+type: Changed
+
+**A wait set in the memory of the caller.** A `system.Wait` holds 64 words on the stack of its thread, about 3.5 KiB in place of 12 KiB, and a thread that waits on more gives a `system.Wait_Set` of its own memory for the 256 words of the kernel. A word past the room is refused: the wait then ends only at its deadline, with one line on the log, and no loop turns with no wait. The compositor sizes its wait to its 96 windows, and the root service holds 122 queues (root rings, control rings of the network and wiring rings) for all its processes, and refuses a start that brings one more.

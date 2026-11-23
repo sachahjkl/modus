@@ -200,7 +200,7 @@ Processor :: struct {
 	// The serial of process n when the operation stopped it: read only for
 	// a bit of operation.stopped_processes, so the reset of the record at
 	// each command does not write it.
-	stopped_serials: [PROCESS_CAPACITY]u32,
+	stopped_serials: [PROCESS_CAPACITY_MOST]u32,
 	// The event ring of this processor (events.odin): only this processor
 	// writes these fields and the ring, while observed_kinds is not 0; the
 	// control path writes them only while it is 0 and after a

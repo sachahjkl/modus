@@ -1364,7 +1364,7 @@ scenario := [?]Step {
 	// The share policy: four processes with 1, 2, 4 and 8 spinning threads.
 	// Each condition is a value that the kernel gives back, or an order of
 	// two counts of ticks; the shares are a measure.
-	{kind = .Wait, text = "scheduler: the share policy, three rounds: each thread of the processes with 1, 2, 4 and 8 spinning threads has the weight and the weight limit 1024, 512, 256 and 128, and the new-thread weight limit 32; the weights of each process sum to 1024, 1024, 1024 and 1024; the third round wrote none of their threads: 1: as it must"},
+	{kind = .Wait, text = "scheduler: the share policy, three rounds: each thread of the processes with 1, 2, 4 and 8 spinning threads has the weight and the weight limit 1024, 512, 256 and 128, and the new-thread weight limit 4; the weights of each process sum to 1024, 1024, 1024 and 1024; the third round wrote none of their threads: 1: as it must"},
 	{kind = .Wait, text = "scheduler: under the share policy, a thread of this process created with the weight 30 has the weight 30, and the weight 15 after it lowered itself to 15; after this process started 7 threads more, its 9 threads have the weights 15 to 113, which sum to 919 of 1024: as it must"},
 	{kind = .Wait, text = "scheduler: the share policy off: each thread of the 4 processes and the first thread of this process have the weight 1024 and the two full weight limits again, the thread that lowered itself has the weight 15 and the two full weight limits, and no write of the policy was refused: 1: as it must"},
 	{kind = .Wait, text = "scheduler: the process with 8 spinning threads against the process with 1, by the ticks of the kernel over one interval: its part is smaller under the share policy than without it: as it must"},
@@ -1374,9 +1374,9 @@ scenario := [?]Step {
 	// saw have the new-thread weight limit of their process; a creating
 	// thread whose own value is full creates under the value of its
 	// process. All are states; the parts of the two processes are a measure.
-	{kind = .Wait, text = "scheduler: the share policy and a process that keeps 6 short threads alive, after one round: 24 of its threads that no round saw, read through the machine handle, each had the weight, the weight limit and the new-thread weight limit 32: 1, and those of one read summed to under 1024: 1: as it must"},
-	{kind = .Wait, text = "scheduler: under the share policy the first thread of this process got through the machine handle a new-thread weight limit of its own above 33: 1, and the process has the new-thread weight limit 32; a new thread with the weight 33 Bad_Operation, and the error record names 32; a new thread with the weight 0 has the weight, the weight limit and the new-thread weight limit 32, 32 and 32: as it must"},
-	{kind = .Wait, text = "scheduler: the first thread of a process started under the share policy, by a thread whose own new-thread weight limit is above 33, has the weight, the weight limit and the new-thread weight limit 32, 32 and 32: as it must"},
+	{kind = .Wait, text = "scheduler: the share policy and a process that keeps 6 short threads alive, after one round: 24 of its threads that no round saw, read through the machine handle, each had the weight, the weight limit and the new-thread weight limit 4: 1, and those of one read summed to under 1024: 1: as it must"},
+	{kind = .Wait, text = "scheduler: under the share policy the first thread of this process got through the machine handle a new-thread weight limit of its own above 5: 1, and the process has the new-thread weight limit 4; a new thread with the weight 5 Bad_Operation, and the error record names 4; a new thread with the weight 0 has the weight, the weight limit and the new-thread weight limit 4, 4 and 4: as it must"},
+	{kind = .Wait, text = "scheduler: the first thread of a process started under the share policy, by a thread whose own new-thread weight limit is above 5, has the weight, the weight limit and the new-thread weight limit 4, 4 and 4: as it must"},
 	{kind = .Wait, text = "scheduler: the process of short threads got "},
 	{kind = .Wait, text = "scheduler: ok, no spinner starved under 3 strategies, a wake ended "},
 	{kind = .Wait, text = "scheduler: the window took "},

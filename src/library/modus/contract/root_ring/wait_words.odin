@@ -6,9 +6,10 @@ import "modus:contract/start_grant"
 
 // The words of the one wait of the loop of the root service
 // (src/md/features/module_outputs.md, "The words of the wait of the root
-// service"). A wait holds op.WORD_WAIT_CAPACITY words. A list that does
-// not fit ends each wait at once: the loop then turns with no wait, and
-// the queues past the capacity are never waited on. The root service
+// service"). A wait of the kernel holds op.WORD_WAIT_CAPACITY words, in a
+// wait set of the root service. A word that does not fit is refused, and
+// the wait then ends only at its deadline: the queues past the capacity
+// would be waited on late. The root service
 // counts its queues and refuses a new one past the bound where it is
 // made; the count of what runs is its state, and the decision is here.
 

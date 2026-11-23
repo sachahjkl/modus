@@ -424,7 +424,7 @@ connections: [CONNECTION_CAPACITY]Connection
 
 // The processes that this service starts: each process slot of the
 // kernel but its own.
-STARTED_CAPACITY :: op.PROCESS_SLOTS_OF_THE_MACHINE - 1
+STARTED_CAPACITY :: op.PROCESS_SLOTS_MOST - 1
 
 machine: system.Handle
 image: []u8
@@ -1159,13 +1159,17 @@ display_holder_end :: proc "contextless" () {
 	}
 }
 
+// The places of the one wait of the loop (root_ring.ROOT_WAITED_QUEUES_MOST):
+// more than a wait on the stack holds.
+root_wait_set: system.Wait_Set
+
 // root_loop_pass is one pass of the loop of this service: the control ring
 // of the compositor, the root ring of each process, the answers of the
 // services that it waits for, the reap of the processes that stopped, then
 // one wait for the next event or deadline.
 root_loop_pass :: proc "contextless" () {
 	// The stop of a process is an event.
-	wait := system.wait_begin()
+	wait := system.wait_begin(&root_wait_set)
 	control_ring_serve()
 	for &item in started {
 		if item.process != 0 && item.requests.head != nil {

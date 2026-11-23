@@ -35,7 +35,7 @@ PAGE_ADDRESS :: fixed_addresses.DISK_PROCESS_PAGE_ADDRESS // Where a process map
 // The rows of the page: the root service starts a process in each process
 // slot but its own, and a row is the place of the slot of the process in its
 // table of started processes.
-ROW_CAPACITY :: op.PROCESS_SLOTS_OF_THE_MACHINE - 1
+ROW_CAPACITY :: op.PROCESS_SLOTS_MOST - 1
 
 // The most bytes of a nickname: three words of a row, with a zero byte
 // after it, as the root ring carries it.

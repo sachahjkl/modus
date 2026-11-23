@@ -6,10 +6,8 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Next
 
-- **The kernel tables sized from the memory of the machine.** The kernel sizes its tables of processes, threads, memory objects and budgets at its start, in a reserve of addresses, so a large machine runs more processes and a small one keeps more pages for its budgets; today the tables have fixed sizes that a machine of 1 GiB holds.
-- **More threads in one process.** A compiler or a server starts a thread for each processor of a large machine, past the 32 threads that the thread areas of a process hold today; the areas, the thread reports and the log record get their room.
-- **The largest budget set by the plan of the principal.** The plan of a principal says the share of the machine that one process and the disk processes get, in place of the fixed quarter, and a row of the plan gives a module a limit of processor time in place of a row in the code of the root service.
-- **A wait set in the memory of the caller.** A process waits on the rings of thousands of clients with a set of words in its own memory, in place of 256 words on the stack of its thread.
+- **The largest budget set by the plan of the principal.** The plan of principal 0 gives the share of the machine that one process gets through the border that the root service has for it (`budget_share_take`), in place of the default quarter, and a row of the plan gives a module a limit of processor time in place of a row in the code of the root service. [Design](src/md/features/module_budget_request.md)
+- **The tables of the services sized from the process slots of the machine.** The root service, the disk process page and the bind places of the devices service size their tables for each process from `System_Report.process_slots` at their start, so a small machine keeps the pages of 1024 places for its budgets. [Design](src/md/data/table_sizes.md)
 - **The words of the windows and the notifications.** Each window, notification, dialog and status line says the problem, the cause and what to do, in the words of `docs/WRITING.md`: no "invalid", no "failed" alone, buttons that name their action, and "you" where a window says "principal".
 - **A check of the display texts of the modules.** `modustool check` refuses a display text, a description of a setting and a label of a module file that uses a word that `docs/WRITING.md` refuses, that is not in sentence case, or that has a wrong end period, so a new text keeps the guide with no review.
 - **The cache signing key authorised, and the first publication to the cache.** The deployment of `cache.modus.systems` names `resources/keys/cache_signing_key.public` in `--authorized-key`, and the next release fills the public object cache, which `cache-get cache.modus.systems:5010 test-recipe` then proves; until then the job `cache` of a release fails and the release is published. [Design](src/md/infrastructure/cache_publication.md)
@@ -51,6 +49,7 @@ This file holds the planned work of modus. **Now** is the work that is in progre
 
 ## Later
 
+- **Process weights below a quarter.** `scheduler.share` gives a process less than a quarter of the weight of another one, with 256 threads in a process: the full weight or the rule of the division grows, so each thread keeps a weight of 1 or more. [Design](src/md/features/scheduling_policy.md)
 - **An allowed act of the assistant runs.** An act that the principal allowed once in the act dialog runs in an agent console of a wide grant, with an act record bound to that act, so the assistant does what the principal allowed and nothing else. [Design](src/md/features/assistant.md)
 - **More acts for the assistant.** The model of the assistant reads the log facts, sees the screen and types into a window that a wide grant names, through the same capabilities of the bridge. [Design](src/md/features/assistant.md)
 - **The conversation of the assistant kept.** The conversation stays in a store of the principal across a stop of the window, so a principal reads what the agent proposed and did yesterday. [Design](src/md/features/assistant.md)

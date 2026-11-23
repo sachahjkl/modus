@@ -17,7 +17,10 @@ WINDOW_GRANT_PROCESS_BYTES :: 31
 WINDOW_GRANT_RESOURCE_BYTES :: 95
 
 // The windows of the desktop at one time: the clients of the compositor.
-WINDOW_CAPACITY :: 128
+// The loop of the compositor waits on the ring of each client in one wait
+// of the kernel, so their count follows the words of a wait
+// (src/modules/system/compositor/main.odin, COMPOSITOR_WAIT_FIXED_WORDS).
+WINDOW_CAPACITY :: 96
 
 // The rows of the menu of the windows: each window and each grant.
 WINDOWS_MENU_ROW_CAPACITY :: WINDOW_CAPACITY + WINDOW_GRANT_CAPACITY

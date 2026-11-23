@@ -329,19 +329,19 @@ The step that describes the exports reads the constant from the tree of the pars
 | The least budget | 2048 | 1 | 1 |
 | The largest budget of a process | 16384 | 8 | 32 |
 
-Each process gets one processor of time for each of its threads, and 1000 log records in each second (`op.LOG_RECORDS_OF_A_PROCESS`), which leave the budget of the root service while it runs: the machine has 256 000 (`op.LOG_RECORDS_OF_THE_MACHINE`), 1000 for each process slot (`src/md/features/log_side_channels.md`). The largest budget of a process of the boot image is a quarter of the pages that the root service holds at its start, never less than 16384 pages (`module.largest_budget_of_machine`): a machine of 1 GiB gives one process about 190 MiB. The root service keeps a table of budget exceptions (`processor_exceptions` in `src/modules/system/root/budgets.odin`): a row names one module of the boot image, gives it another limit of processor time, and holds its reason. No row gives pages. A disk process and a module of another project have no row.
+Each process gets one processor of time for each of its threads, and 1000 log records in each second (`op.LOG_RECORDS_OF_A_PROCESS`), which leave the budget of the root service while it runs: the machine has 1000 for each process slot, 256 000 on a machine of 1 GiB and at most 1 024 000 (`op.LOG_RECORDS_OF_THE_MACHINE_MOST`; `src/md/features/log_side_channels.md`). The largest budget of a process of the boot image is one share of the pages and of the threads that the root service holds at its start, a quarter unless the plan of principal 0 gives another share, never less than 16384 pages (`module.largest_budget_of_machine`; `src/md/features/module_budget_request.md`): a machine of 1 GiB gives one process about 190 MiB. The root service keeps a table of budget exceptions (`processor_exceptions` in `src/modules/system/root/budgets.odin`): a row names one module of the boot image, gives it another limit of processor time, and holds its reason. No row gives pages. A disk process and a module of another project have no row.
 
 **A disk process** is paid by one budget that the root service makes from its own at the first disk process, and keeps (`src/library/modus/disk_process/budget.odin`):
 
 | Amount | Pages | Processes | Threads | Processor | Log records |
 |---|---|---|---|---|---|
-| The budget of all disk processes | 16384 | 4 | 16 | two processors | 4000 in each second |
-| The largest budget of one disk process | 8192 | 1 | 4 | one processor for each thread | 1000 in each second |
+| The budget of all disk processes | 32768 | 4 | 16 | two processors | 4000 in each second |
+| The largest budget of one disk process | 16384 | 1 | 4 | one processor for each thread | 1000 in each second |
 
 A file chooses its own request, so the sum of all disk processes has one bound: the processes of the boot image keep the rest of the budget of the root service, also when several hostile files run. A disk process holds no grant that starts a process, so one process slot loses nothing. The log has one line when the budget of the disk processes is made:
 
 ```
-root: the disk processes share one budget of 64 MiB, 4 processes and 16 threads
+root: the disk processes share one budget of 128 MiB, 4 processes and 16 threads
 ```
 
 A request above the largest budget starts the process with the largest budget, and the log has one line for each part:

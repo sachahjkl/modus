@@ -1263,10 +1263,10 @@ output_gap :: proc "contextless" (stream: ^Record_Output($Record_Type, $pairing)
 // ring with room at that read add nothing.
 //
 // Each ring takes OUTPUT_ROOM_WAIT_WORDS words of the list, which holds
-// op.WORD_WAIT_CAPACITY; a list that overflows ends its wait at once, and
-// the loop of the caller would turn with no wait. So the caller gives the
-// most rings that its list has room for, and asserts its sum at compile
-// time. A full ring past that count is not waited on: its reader gets the
+// the places of its wait (wait_room_left); a word that does not fit is
+// refused, and the wait then ends only at its deadline. So the caller
+// gives the most rings that its list has room for, and asserts its sum at
+// compile time. A full ring past that count is not waited on: its reader gets the
 // row that waits at the next wake of the writer for another cause. It
 // gives the count of those rings, for a count of the caller.
 OUTPUT_ROOM_WAIT_WORDS :: 3 // The read and its flag, and the end word.
@@ -1586,9 +1586,9 @@ asker_close :: proc "contextless" (number: u32) -> bool {
 }
 
 // One wait of a reader holds each end of the process: the 16 ends at most
-// fit the 64 words of a wait (output.reader_wait_words), so a read never
-// needs groups of rings.
-#assert(output.READER_WAIT_WORDS_BESIDE_RINGS + output.READER_WAIT_WORDS_OF_A_RING * STREAM_END_CAPACITY <= op.WORD_WAIT_CAPACITY)
+// fit the 64 places of a wait on the stack (output.reader_wait_words), so a
+// read never needs groups of rings, nor a wait set.
+#assert(output.READER_WAIT_WORDS_BESIDE_RINGS + output.READER_WAIT_WORDS_OF_A_RING * STREAM_END_CAPACITY <= WAIT_INLINE_WORDS)
 
 // stream_read is the reader of input_read and asker_read: the ends of one
 // record input, or the one end of an asker. A record input reads its ends

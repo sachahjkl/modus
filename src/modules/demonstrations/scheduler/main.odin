@@ -351,7 +351,7 @@ machine_number_is_this_thread :: proc "contextless" (candidate: u64) -> bool {
 // number in its report is the calling thread. false: not found.
 find_self :: proc "contextless" () -> bool {
 	number := u32(system.thread_record().number)
-	for index in u64(1) ..< op.PROCESS_SLOTS_OF_THE_MACHINE {
+	for index in u64(1) ..< system_report().process_slots {
 		report, status := process_report(index)
 		if status != .Ok || system.name_of(report.name[:]) != "scheduler" || report.state == .Stopped || report.state == .None {
 			continue
@@ -1083,7 +1083,7 @@ schedule_refusals :: proc "contextless" () -> bool {
 // schedule that the thread had.
 other_process_schedule :: proc "contextless" () -> bool {
 	slot, serial: u64
-	for index in u64(1) ..< op.PROCESS_SLOTS_OF_THE_MACHINE {
+	for index in u64(1) ..< system_report().process_slots {
 		report, status := process_report(index)
 		if status == .Ok && system.name_of(report.name[:]) == "root" && report.state != .Stopped && report.state != .None && report.process_serial != self_serial {
 			slot, serial = index, report.process_serial

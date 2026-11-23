@@ -66,7 +66,7 @@ import "modus:system"
 SAMPLE_INTERVAL :: 250 // Milliseconds.
 KEY_TAB :: 0x0F
 FILTER_CAPACITY :: 24
-PROCESS_SLOTS :: op.PROCESS_SLOTS_OF_THE_MACHINE // The process slots of the kernel (System_Report.process_slots).
+PROCESS_SLOTS :: op.PROCESS_SLOTS_MOST // The process slots of the kernel (System_Report.process_slots).
 
 Entry :: struct {
 	slot:           u64,
@@ -115,9 +115,25 @@ inspect_call :: proc "contextless" (kind: op.Inspect_Kind, index: u64, record: r
 	return status == .Ok
 }
 
+// The process slots of this machine (System_Report.process_slots), read
+// once: the kernel chose them at its start. 0 until then.
+machine_process_slots: u64
+
+// process_slots gives the slots to read: those of this machine, at most
+// PROCESS_SLOTS.
+process_slots :: proc "contextless" () -> u64 {
+	if machine_process_slots == 0 {
+		report: op.System_Report
+		if inspect_call(.System, 0, &report, size_of(report)) {
+			machine_process_slots = min(report.process_slots, u64(PROCESS_SLOTS))
+		}
+	}
+	return machine_process_slots
+}
+
 // slot_of gives the slot of the process with a name, or 0.
 slot_of :: proc "contextless" (name: string) -> u64 {
-	for slot in 1 ..< u64(PROCESS_SLOTS) {
+	for slot in 1 ..< process_slots() {
 		report: op.Process_Report
 		if inspect_call(.Process, slot, &report, size_of(report)) && report.state != .None && system.name_of(report.name[:]) == name {
 			return slot
@@ -130,7 +146,7 @@ slot_of :: proc "contextless" (name: string) -> u64 {
 // filter keeps.
 list_read :: proc "contextless" () {
 	entry_count = 0
-	for slot in 1 ..< u64(PROCESS_SLOTS) {
+	for slot in 1 ..< process_slots() {
 		report: op.Process_Report
 		if !inspect_call(.Process, slot, &report, size_of(report)) || report.state == .None {
 			continue

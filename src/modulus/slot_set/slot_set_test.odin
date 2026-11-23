@@ -68,3 +68,24 @@ a_remove_takes_only_its_slot :: proc(t: ^testing.T) {
 	slot, found := first(&set)
 	testing.expect(t, found && slot == 70)
 }
+
+// The atomic forms refuse the same slots, and a copy holds what was added.
+@(test)
+the_atomic_forms_keep_the_rules :: proc(t: ^testing.T) {
+	set: Slot_Set(1024)
+	testing.expect(t, !add_atomic(&set, 1024))
+	testing.expect(t, !add_atomic(&set, max(u32)))
+	testing.expect(t, empty(&set))
+	testing.expect(t, add_atomic(&set, 1023))
+	testing.expect(t, add_atomic(&set, 1))
+	copied := copy_atomic(&set)
+	slot, found := take(&copied)
+	testing.expect(t, found && slot == 1)
+	slot, found = take(&copied)
+	testing.expect(t, found && slot == 1023)
+	testing.expect(t, empty(&copied))
+	testing.expect(t, has(&set, 1) && has(&set, 1023))
+	remove_atomic(&set, 1024)
+	remove_atomic(&set, 1)
+	testing.expect(t, !has(&set, 1) && has(&set, 1023))
+}

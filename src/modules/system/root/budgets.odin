@@ -26,31 +26,54 @@ import "modus:system"
 LEAST_BUDGET :: system.Budget_Request{pages = 2048, processes = 1, threads = 1}
 
 // The most that a process of the boot image gets on this machine: one share
-// of the pages that this service held at its start
+// of the pages and the threads that this service held at its start
 // (module.largest_budget_of_machine). A request above it starts with this.
 // Until budgets_start reads the budget, the least largest budget.
 largest_budget: system.Budget_Request = module.LARGEST_BUDGET_LEAST
-// The budget of the disk processes and the most that one of them gets, from
-// the same share (disk_process.processes_budget_of, largest_budget_of).
-disk_processes_shared: system.Budget_Request = disk_process.PROCESSES_BUDGET_LEAST
-disk_process_largest: system.Budget_Request = disk_process.LARGEST_BUDGET_LEAST
+// The share in force: the value of the plan of principal 0, or the default
+// (src/md/features/module_budget_request.md, "The largest budget is a
+// share of the machine").
+budget_share: u64 = module.LARGEST_BUDGET_SHARE_DEFAULT
+// What this service held at its start: the share is of the machine, not of
+// what the processes left.
+machine_at_start: system.Budget_Request
+// The process slots of this machine (System_Report.process_slots), which
+// the kernel chose at its start: a walk over the slots reads them, never
+// op.PROCESS_SLOTS_MOST.
+machine_process_slots: u64
 
-// budgets_start reads the pages of this service once, before the first
-// start, and decides the largest budgets of this machine from them. The
-// pages of a later read are lower by what the processes hold, so the share
-// is of the machine, not of what is left.
+// budgets_start reads the budget of this service and the slots of the
+// kernel once, before the first start, and decides the largest budget of
+// this machine. The pages of a later read are lower by what the processes
+// hold, so the share is of the machine, not of what is left.
 budgets_start :: proc "contextless" () {
 	own, _ := system.budget_read()
-	largest_budget = module.largest_budget_of_machine(own.pages)
-	disk_processes_shared = disk_process.processes_budget_of(largest_budget)
-	disk_process_largest = disk_process.largest_budget_of(disk_processes_shared)
+	machine_at_start = {pages = own.pages, processes = own.processes, threads = own.threads}
+	largest_budget = module.largest_budget_of_machine(machine_at_start, budget_share)
+	report: op.System_Report
+	if _, status := system.call(.Inspect, u64(machine), u64(op.Inspect_Kind.System), 0, u64(uintptr(&report)), size_of(report)); status == .Ok {
+		machine_process_slots = report.process_slots
+	}
+}
+
+// budget_share_take is the one place where the share that the plan of
+// principal 0 gives enters this service: the word passes its border
+// (module.budget_share_of_word), and the largest budget of each next start
+// follows it. A refused word changes nothing. No plan gives the value yet:
+// the settings of the plan that spend a resource of the machine are a
+// later step, and until then the share is the default.
+budget_share_take :: proc "contextless" (word: u64) -> bool {
+	share := module.budget_share_of_word(word) or_return
+	budget_share = share
+	largest_budget = module.largest_budget_of_machine(machine_at_start, budget_share)
+	return true
 }
 
 // The processor time of a process is one processor for each of its threads.
 PROCESSOR_OF_A_THREAD :: 1_000_000
 
 // The log records of each second. The kernel gives this service
-// op.LOG_RECORDS_OF_THE_MACHINE, and each budget holds its part: a process
+// op.LOG_RECORDS_OF_THE_MACHINE_MOST, and each budget holds its part: a process
 // that starts takes its records from this service, and gives them back at
 // its stop (src/md/features/log_side_channels.md). The sum of every part
 // fits: each process of the boot image and each disk process takes at most
@@ -60,8 +83,8 @@ LOG_RECORDS_OF_A_PROCESS :: op.LOG_RECORDS_OF_A_PROCESS
 LOG_RECORDS_OF_THIS_SERVICE :: op.LOG_RECORDS_OF_A_PROCESS
 // The process slots of the budget of this service: the slots of the kernel
 // less its own.
-PROCESS_SLOTS :: op.PROCESS_SLOTS_OF_THE_MACHINE - 1
-#assert(PROCESS_SLOTS * LOG_RECORDS_OF_A_PROCESS + LOG_RECORDS_OF_THIS_SERVICE <= op.LOG_RECORDS_OF_THE_MACHINE)
+PROCESS_SLOTS :: op.PROCESS_SLOTS_MOST - 1
+#assert(PROCESS_SLOTS * LOG_RECORDS_OF_A_PROCESS + LOG_RECORDS_OF_THIS_SERVICE <= op.LOG_RECORDS_OF_THE_MACHINE_MOST)
 // The log records of the rows of log_records_exceptions: none above
 // LOG_RECORDS_OF_A_PROCESS, so the sum above holds.
 LOG_RECORDS_OF_LIMITS :: 40 // Its burst of 100 reaches the limit.
@@ -160,7 +183,7 @@ budget_of :: proc "contextless" (file: []u8, name: string) -> system.Budget_Amou
 	return amounts
 }
 
-// The one budget that pays each disk process (disk_processes_shared).
+// The one budget that pays each disk process (disk_process.PROCESSES_BUDGET).
 // 0 until the first disk process: a machine that starts none keeps its
 // pages. It stays after its processes stop: what they held returns to it.
 disk_processes_budget: system.Handle
@@ -172,7 +195,7 @@ disk_processes_budget_get :: proc "contextless" () -> (budget: system.Handle, st
 		return disk_processes_budget, .Ok
 	}
 	own, _ := system.budget_read()
-	shared := disk_processes_shared
+	shared := disk_process.PROCESSES_BUDGET
 	budget, status = system.budget_create({pages = shared.pages, processes = shared.processes, threads = shared.threads, processor = min(disk_process.SHARED_PROCESSOR_TIME, own.processor), log_records = shared.processes * LOG_RECORDS_OF_A_PROCESS})
 	if status != .Ok {
 		system.log_fact(.Warning, Disk_Processes_Budget_Refused{status = status})
@@ -184,10 +207,10 @@ disk_processes_budget_get :: proc "contextless" () -> (budget: system.Handle, st
 }
 
 // disk_budget_of gives the budget of a disk process from the request of
-// its module file: at most disk_process_largest, with no exception,
+// its module file: at most disk_process.LARGEST_BUDGET, with no exception,
 // and limits in time that the budget of the disk processes bounds.
 disk_budget_of :: proc "contextless" (file: []u8, name: string, disk_processes: system.Handle) -> system.Budget_Amounts {
-	granted := budget_decided(file, name, disk_process_largest, "a disk process")
+	granted := budget_decided(file, name, disk_process.LARGEST_BUDGET, "a disk process")
 	holds, _ := system.budget_read(disk_processes)
 	return {
 		pages = granted.pages,

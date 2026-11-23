@@ -24,7 +24,7 @@ command_from_record_refuses_unknown_and_zero_command_words :: proc(t: ^testing.T
 // and non-zero trailing reserved words are refused on every command.
 @(test)
 command_from_record_refuses_invalid_fields_and_flags :: proc(t: ^testing.T) {
-	bad_slots := [?]u64{0, op.PROCESS_SLOTS_OF_THE_MACHINE, op.PROCESS_SLOTS_OF_THE_MACHINE + 1, max(u64)}
+	bad_slots := [?]u64{0, op.PROCESS_SLOTS_MOST, op.PROCESS_SLOTS_MOST + 1, max(u64)}
 	for slot in bad_slots {
 		_, ok := command_from_record({kind = u32(Command_Kind.List_Page), values = {slot, 1, 0, 0, 0, 0, 0}})
 		testing.expectf(t, !ok, "List_Page accepted invalid slot %d", slot)
@@ -107,7 +107,7 @@ command_from_record_refuses_invalid_fields_and_flags :: proc(t: ^testing.T) {
 	testing.expect(t, !ok)
 	_, ok = command_from_record({kind = u32(Command_Kind.Query), values = {u64(Query_Kind.Asker_Count), 0, 0, 0, 0, 0, 0}})
 	testing.expect(t, !ok)
-	_, ok = command_from_record({kind = u32(Command_Kind.Query), values = {u64(Query_Kind.Process_Ends), op.PROCESS_SLOTS_OF_THE_MACHINE, 1, 0, 0, 0, 0}})
+	_, ok = command_from_record({kind = u32(Command_Kind.Query), values = {u64(Query_Kind.Process_Ends), op.PROCESS_SLOTS_MOST, 1, 0, 0, 0, 0}})
 	testing.expect(t, !ok)
 }
 
@@ -153,7 +153,7 @@ stop_notice_from_record_refuses_invalid_notices :: proc(t: ^testing.T) {
 		_, ok := stop_notice_from_record({kind = bad_kind, values = {1, 1, u64(op.Stop_Cause.Holder), 0, 0, 0, 0}})
 		testing.expectf(t, !ok, "bad stop notice kind %d accepted", bad_kind)
 	}
-	for bad_slot in ([?]u64{0, op.PROCESS_SLOTS_OF_THE_MACHINE, max(u64)}) {
+	for bad_slot in ([?]u64{0, op.PROCESS_SLOTS_MOST, max(u64)}) {
 		_, ok := stop_notice_from_record({kind = u32(Stop_Notice_Kind.Process_Stopped), values = {bad_slot, 1, u64(op.Stop_Cause.Holder), 0, 0, 0, 0}})
 		testing.expect(t, !ok)
 	}

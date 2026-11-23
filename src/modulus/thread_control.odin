@@ -158,7 +158,7 @@ thread_control :: proc "contextless" (caller_index: u32, v: [7]u64, results: ^[7
 			}
 			by_machine = true
 			place, serial := v[1] & 0xFFFF_FFFF, u32(v[1] >> 32)
-			if place == 0 || place >= THREAD_TABLE_CAPACITY {
+			if place == 0 || place >= u64(thread_table_capacity) {
 				return thread_control_state_refuse(.Thread_Absent, 2, v[1])
 			}
 			// No handle keeps the place for this thread: a place serves a
@@ -480,7 +480,7 @@ process_schedule_control :: proc "contextless" (caller_process: ^Process, comman
 		return .Bad_Address
 	}
 	slot, serial := v[1] & 0xFFFF_FFFF, u32(v[1] >> 32)
-	if slot == 0 || slot >= PROCESS_CAPACITY {
+	if slot == 0 || slot >= u64(process_capacity) {
 		return thread_control_state_refuse(.Process_Absent, 2, v[1])
 	}
 	// A slot serves a new process only under the control lock
