@@ -5,8 +5,10 @@
 // An object cache serves two distinct things over a framed byte stream:
 //
 //   1. Content-addressed objects (Blob or Tree) fetched by exact hash.
-//      A Blob is verified by plain blake3.hash; a Tree is verified by
-//      tree_hash.tree_hash (canonical encoding plus domain-separated BLAKE3).
+//      A Blob keeps its one identity, plain blake3.hash of its whole bytes,
+//      and travels in aligned FRAME_PAYLOAD_BYTES frames verified against
+//      the root hash with a BLAKE3 inclusion proof (object_frames.odin).
+//      A Tree fits in one frame and is verified by tree_hash.tree_hash.
 //      Objects check themselves and need no signer.
 //
 //   2. Signed realisations mapping a recipe hash to an output hash and kind.
@@ -34,8 +36,8 @@ APPLICATION_PROTOCOL :: "modus-object-cache"
 REQUEST_MAGIC :: [4]u8{'M', 'O', 'C', 'Q'}
 RESPONSE_MAGIC :: [4]u8{'M', 'O', 'C', 'R'}
 
-// Current version of the binary wire framing.
-WIRE_VERSION :: u8(1)
+// Current version of the binary wire framing (ranged verified frames).
+WIRE_VERSION :: u8(2)
 
 // Fixed size of the leading frame header for both requests and responses:
 //   Request:  [0..4] magic, [4] version, [5] request_kind, [6..8] reserved (0), [8..12] body_length
@@ -50,24 +52,24 @@ SIGNATURE_SIZE :: 64
 // in the 64-bit response bitset).
 MAX_HAS_HASHES :: 64
 
-// Upper bound on one blob payload carried in a single frame (16 MiB).
-MAX_OBJECT_PAYLOAD_BYTES :: 16 * 1024 * 1024
-
 // Upper bound on one canonical tree payload (matches tree_hash).
 MAX_TREE_PAYLOAD_BYTES :: tree_hash.MAX_ENCODED_TREE_BYTES
 
 // Exact wire body sizes for fixed-size messages and message headers.
 HAS_HEADER_SIZE :: 4
-GET_OBJECT_BODY_SIZE :: blake3.HASH_SIZE + 1 + 3
+GET_OBJECT_BODY_SIZE :: blake3.HASH_SIZE + 1 + 3 + 8
 GET_REALISATION_BODY_SIZE :: blake3.HASH_SIZE
-PUT_OBJECT_HEADER_SIZE :: blake3.HASH_SIZE + 1 + 3 + PUBLIC_KEY_SIZE + SIGNATURE_SIZE + 4
+PUT_OBJECT_BODY_SIZE :: blake3.HASH_SIZE + 1 + 3 + 8 + PUBLIC_KEY_SIZE + SIGNATURE_SIZE
+PUT_OBJECT_FRAME_HEADER_SIZE :: blake3.HASH_SIZE + 8 + 4
 REALISATION_WIRE_SIZE :: blake3.HASH_SIZE + blake3.HASH_SIZE + 1 + 3 + PUBLIC_KEY_SIZE + SIGNATURE_SIZE
 HAS_RESPONSE_BODY_SIZE :: 8
-GET_OBJECT_RESPONSE_HEADER_SIZE :: 1 + 3 + 4
+GET_OBJECT_RESPONSE_HEADER_SIZE :: 1 + 1 + 2 + 4 + 8 + 8
+PUT_OBJECT_RESPONSE_BODY_SIZE :: 1 + 7 + 8
 
 // Maximum valid body lengths for any request or response frame.
-MAX_REQUEST_BODY_BYTES :: PUT_OBJECT_HEADER_SIZE + MAX_OBJECT_PAYLOAD_BYTES
-MAX_RESPONSE_BODY_BYTES :: GET_OBJECT_RESPONSE_HEADER_SIZE + MAX_OBJECT_PAYLOAD_BYTES
+// Both are bounded by one frame (FRAME_PAYLOAD_BYTES), never by object size.
+MAX_REQUEST_BODY_BYTES :: PUT_OBJECT_FRAME_HEADER_SIZE + FRAME_PAYLOAD_BYTES
+MAX_RESPONSE_BODY_BYTES :: GET_OBJECT_RESPONSE_HEADER_SIZE + MAX_PROOF_DEPTH * PROOF_ENTRY_SIZE + FRAME_PAYLOAD_BYTES
 
 // Domain separation prefixes for Ed25519 signatures.
 REALISATION_SIGNING_DOMAIN :: "modus realisation v1"
@@ -90,26 +92,29 @@ REALISATION_SIGNING_BYTES_SIZE :: len(REALISATION_SIGNING_DOMAIN) + 1 + 1 + 2 + 
 //     [20]     object_kind (u8)
 //     [21..24] 0x000000 reserved
 //     [24..56] object_hash
-//     [56..64] payload_length (u64 LE)
+//     [56..64] object_size (u64 LE)
 //     [64..96] uploader_public_key
 PUT_OBJECT_SIGNING_BYTES_SIZE :: len(PUT_OBJECT_SIGNING_DOMAIN) + 1 + 1 + 3 + blake3.HASH_SIZE + 8 + PUBLIC_KEY_SIZE
 
 #assert(FRAME_HEADER_SIZE == 12)
-#assert(GET_OBJECT_BODY_SIZE == 36)
+#assert(GET_OBJECT_BODY_SIZE == 44)
 #assert(GET_REALISATION_BODY_SIZE == 32)
-#assert(PUT_OBJECT_HEADER_SIZE == 136)
+#assert(PUT_OBJECT_BODY_SIZE == 140)
+#assert(PUT_OBJECT_FRAME_HEADER_SIZE == 44)
 #assert(REALISATION_WIRE_SIZE == 164)
-#assert(GET_OBJECT_RESPONSE_HEADER_SIZE == 8)
+#assert(GET_OBJECT_RESPONSE_HEADER_SIZE == 24)
+#assert(PUT_OBJECT_RESPONSE_BODY_SIZE == 16)
 #assert(REALISATION_SIGNING_BYTES_SIZE == 120)
 #assert(PUT_OBJECT_SIGNING_BYTES_SIZE == 96)
 
 // Closed set of request kinds on the object cache wire protocol.
 Cache_Request_Kind :: enum u8 {
-	Has             = 1,
-	Get_Object      = 2,
-	Get_Realisation = 3,
-	Put_Object      = 4,
-	Put_Realisation = 5,
+	Has              = 1,
+	Get_Object       = 2,
+	Get_Realisation  = 3,
+	Put_Object       = 4,
+	Put_Realisation  = 5,
+	Put_Object_Frame = 6,
 }
 
 // Closed set of response statuses returned by an object cache server.
@@ -121,6 +126,13 @@ Cache_Response_Status :: enum u8 {
 	Bad_Hash      = 5,
 	Bad_Signature = 6,
 	Unauthorized  = 7,
+	Out_Of_Range  = 8,
+}
+
+// Closed set of states returned by Put_Object when accepted.
+Put_Object_State :: enum u8 {
+	Accept_Frames   = 1,
+	Already_Present = 2,
 }
 
 // Closed set of content-addressed object kinds stored in the cache.
@@ -162,6 +174,9 @@ Wire_Refusal :: enum u8 {
 	Bad_Count           = 10,
 	Buffer_Too_Small    = 11,
 	Reserved_Nonzero    = 12,
+	Unaligned_Offset    = 13,
+	Bad_Range           = 14,
+	Bad_Put_State       = 15,
 }
 
 // Signed record binding a recipe hash to its output hash and object kind.
@@ -174,13 +189,19 @@ Realisation_Record :: struct {
 }
 
 // Decoded or buildable request message for the object cache wire protocol.
-// For Put_Object, payload borrows directly from the input frame during decode.
+// For Put_Object_Frame, payload borrows directly from the input frame during decode.
 Cache_Request :: struct {
 	kind:                Cache_Request_Kind,
 	hash_count:          u8,
 	hashes:              [MAX_HAS_HASHES]blake3.Hash,
 	object_hash:         blake3.Hash,
 	object_kind:         Cache_Object_Kind,
+	// Put_Object: the size of the whole object, which the signature covers.
+	object_size:         u64,
+	// Get_Object and Put_Object_Frame: the first byte of one frame, a
+	// multiple of FRAME_PAYLOAD_BYTES. The length is the length of that
+	// frame, so no length travels.
+	offset:              u64,
 	recipe_hash:         blake3.Hash,
 	uploader_public_key: [PUBLIC_KEY_SIZE]u8,
 	uploader_signature:  [SIGNATURE_SIZE]u8,
@@ -189,13 +210,18 @@ Cache_Request :: struct {
 }
 
 // Decoded or buildable response message for the object cache wire protocol.
-// For Get_Object with status == .Ok, payload borrows directly from the input frame.
+// For Get_Object with status == .Ok, proof and payload borrow directly from
+// the input frame.
 Cache_Response :: struct {
 	request_kind:   Cache_Request_Kind,
 	status:         Cache_Response_Status,
 	present_bitset: u64,
 	object_kind:    Cache_Object_Kind,
+	object_size:    u64,
+	offset:         u64,
+	proof:          []u8,
 	payload:        []u8,
+	put_state:      Put_Object_State,
 	realisation:    Realisation_Record,
 }
 
@@ -242,6 +268,10 @@ cache_response_status_of_word :: proc "contextless" (word: u64) -> (status: Cach
 	return enum_word.member_of_word(Cache_Response_Status, word)
 }
 
+put_object_state_of_word :: proc "contextless" (word: u64) -> (state: Put_Object_State, ok: bool) {
+	return enum_word.member_of_word(Put_Object_State, word)
+}
+
 cache_object_kind_of_word :: proc "contextless" (word: u64) -> (kind: Cache_Object_Kind, ok: bool) {
 	return enum_word.member_of_word(Cache_Object_Kind, word)
 }
@@ -274,13 +304,13 @@ hashes_equal_constant_time :: proc "contextless" (left, right: [32]u8) -> bool {
 	return difference == 0
 }
 
-// payload_bound_for_kind returns the maximum allowed payload length for kind.
-payload_bound_for_kind :: proc "contextless" (kind: Cache_Object_Kind) -> int {
+// payload_bound_for_kind returns the maximum allowed object size for kind.
+payload_bound_for_kind :: proc "contextless" (kind: Cache_Object_Kind) -> u64 {
 	switch kind {
 	case .Blob:
-		return MAX_OBJECT_PAYLOAD_BYTES
+		return MAX_OBJECT_BYTES
 	case .Tree:
-		return MAX_TREE_PAYLOAD_BYTES
+		return u64(MAX_TREE_PAYLOAD_BYTES)
 	}
 	return 0
 }
@@ -316,7 +346,7 @@ realisation_signing_bytes :: proc "contextless" (record: ^Realisation_Record) ->
 put_object_signing_bytes :: proc "contextless" (
 	object_kind: Cache_Object_Kind,
 	object_hash: blake3.Hash,
-	payload_length: u64,
+	object_size: u64,
 	uploader_public_key: [PUBLIC_KEY_SIZE]u8,
 ) -> (signing_bytes: [PUT_OBJECT_SIGNING_BYTES_SIZE]u8, ok: bool) {
 	checked_kind, kind_ok := cache_object_kind_of_word(u64(object_kind))
@@ -326,7 +356,7 @@ put_object_signing_bytes :: proc "contextless" (
 	if hash_is_zero(object_hash) {
 		return {}, false
 	}
-	if payload_length > u64(payload_bound_for_kind(checked_kind)) {
+	if object_size > payload_bound_for_kind(checked_kind) {
 		return {}, false
 	}
 	domain := PUT_OBJECT_SIGNING_DOMAIN
@@ -339,7 +369,7 @@ put_object_signing_bytes :: proc "contextless" (
 	signing_bytes[22] = 0
 	signing_bytes[23] = 0
 	copy(signing_bytes[24:56], hash_copy[:])
-	byte_order.write_u64_little_endian(signing_bytes[:], 56, payload_length)
+	byte_order.write_u64_little_endian(signing_bytes[:], 56, object_size)
 	copy(signing_bytes[64:96], key_copy[:])
 	return signing_bytes, true
 }
@@ -399,6 +429,18 @@ decode_realisation_record :: proc "contextless" (input: []u8) -> (record: Realis
 	return record, .None
 }
 
+// validate_offset checks frame alignment and upper bound for an object offset.
+@(private)
+validate_offset :: proc "contextless" (offset: u64) -> Wire_Refusal {
+	if offset % FRAME_PAYLOAD_BYTES != 0 {
+		return .Unaligned_Offset
+	}
+	if offset >= MAX_OBJECT_BYTES {
+		return .Bad_Range
+	}
+	return .None
+}
+
 // validate_request checks all fields of request and returns the exact wire body
 // length required to encode it.
 @(private)
@@ -425,8 +467,15 @@ validate_request :: proc "contextless" (request: ^Cache_Request) -> (checked_kin
 		if hash_is_zero(request.object_hash) {
 			return {}, 0, .Zero_Hash
 		}
-		if _, obj_ok := cache_object_kind_of_word(u64(request.object_kind)); !obj_ok {
+		obj_kind, obj_ok := cache_object_kind_of_word(u64(request.object_kind))
+		if !obj_ok {
 			return {}, 0, .Bad_Object_Kind
+		}
+		if off_ref := validate_offset(request.offset); off_ref != .None {
+			return {}, 0, off_ref
+		}
+		if obj_kind == .Tree && request.offset != 0 {
+			return {}, 0, .Bad_Range
 		}
 		return kind, GET_OBJECT_BODY_SIZE, .None
 	case .Get_Realisation:
@@ -442,10 +491,10 @@ validate_request :: proc "contextless" (request: ^Cache_Request) -> (checked_kin
 		if !obj_ok {
 			return {}, 0, .Bad_Object_Kind
 		}
-		if len(request.payload) > payload_bound_for_kind(obj_kind) {
+		if request.object_size > payload_bound_for_kind(obj_kind) {
 			return {}, 0, .Too_Large
 		}
-		return kind, PUT_OBJECT_HEADER_SIZE + len(request.payload), .None
+		return kind, PUT_OBJECT_BODY_SIZE, .None
 	case .Put_Realisation:
 		if hash_is_zero(request.realisation.recipe_hash) || hash_is_zero(request.realisation.output_hash) {
 			return {}, 0, .Zero_Hash
@@ -454,6 +503,17 @@ validate_request :: proc "contextless" (request: ^Cache_Request) -> (checked_kin
 			return {}, 0, .Bad_Object_Kind
 		}
 		return kind, REALISATION_WIRE_SIZE, .None
+	case .Put_Object_Frame:
+		if hash_is_zero(request.object_hash) {
+			return {}, 0, .Zero_Hash
+		}
+		if off_ref := validate_offset(request.offset); off_ref != .None {
+			return {}, 0, off_ref
+		}
+		if u64(len(request.payload)) > FRAME_PAYLOAD_BYTES {
+			return {}, 0, .Too_Large
+		}
+		return kind, PUT_OBJECT_FRAME_HEADER_SIZE + len(request.payload), .None
 	}
 	return {}, 0, .Bad_Request_Kind
 }
@@ -503,6 +563,7 @@ encode_request :: proc "contextless" (request: ^Cache_Request, output: []u8) -> 
 		body[33] = 0
 		body[34] = 0
 		body[35] = 0
+		byte_order.write_u64_little_endian(body, 36, request.offset)
 	case .Get_Realisation:
 		copy(body[0:32], request.recipe_hash[:])
 	case .Put_Object:
@@ -511,14 +572,21 @@ encode_request :: proc "contextless" (request: ^Cache_Request, output: []u8) -> 
 		body[33] = 0
 		body[34] = 0
 		body[35] = 0
-		copy(body[36:68], request.uploader_public_key[:])
-		copy(body[68:132], request.uploader_signature[:])
-		byte_order.write_u32_little_endian(body, 132, u32(len(request.payload)))
-		copy(body[PUT_OBJECT_HEADER_SIZE:], request.payload)
+		byte_order.write_u64_little_endian(body, 36, request.object_size)
+		copy(body[44:76], request.uploader_public_key[:])
+		copy(body[76:140], request.uploader_signature[:])
 	case .Put_Realisation:
 		_, record_refusal := encode_realisation_record(&request.realisation, body)
 		if record_refusal != .None {
 			return 0, record_refusal
+		}
+	case .Put_Object_Frame:
+		copy(body[0:32], request.object_hash[:])
+		byte_order.write_u64_little_endian(body, 32, request.offset)
+		byte_order.write_u32_little_endian(body, 40, u32(len(request.payload)))
+		dst := body[PUT_OBJECT_FRAME_HEADER_SIZE:]
+		if len(request.payload) > 0 && raw_data(dst) != raw_data(request.payload) {
+			copy(dst, request.payload)
 		}
 	}
 	return total_size, .None
@@ -555,7 +623,8 @@ inspect_request_header :: proc "contextless" (header: []u8) -> (kind: Cache_Requ
 
 // decode_request strictly validates a complete binary request frame.
 // Refuses bad magic, unknown version, unknown enum words, non-zero reserved
-// bytes, zero hashes, oversized payloads, truncation, and trailing bytes.
+// bytes, zero hashes, unaligned offsets, offsets past the bound, oversized frames,
+// truncation, and trailing bytes.
 decode_request :: proc "contextless" (frame: []u8) -> (request: Cache_Request, refusal: Wire_Refusal) {
 	kind, body_length, header_refusal := inspect_request_header(frame)
 	if header_refusal != .None {
@@ -615,7 +684,15 @@ decode_request :: proc "contextless" (frame: []u8) -> (request: Cache_Request, r
 		if body[33] != 0 || body[34] != 0 || body[35] != 0 {
 			return {}, .Reserved_Nonzero
 		}
+		offset := byte_order.read_u64_little_endian(body, 36)
+		if off_ref := validate_offset(offset); off_ref != .None {
+			return {}, off_ref
+		}
+		if obj_kind == .Tree && offset != 0 {
+			return {}, .Bad_Range
+		}
 		request.object_kind = obj_kind
+		request.offset = offset
 	case .Get_Realisation:
 		if len(body) < GET_REALISATION_BODY_SIZE {
 			return {}, .Truncated
@@ -628,8 +705,11 @@ decode_request :: proc "contextless" (frame: []u8) -> (request: Cache_Request, r
 			return {}, .Zero_Hash
 		}
 	case .Put_Object:
-		if len(body) < PUT_OBJECT_HEADER_SIZE {
+		if len(body) < PUT_OBJECT_BODY_SIZE {
 			return {}, .Truncated
+		}
+		if len(body) > PUT_OBJECT_BODY_SIZE {
+			return {}, .Trailing_Bytes
 		}
 		copy(request.object_hash[:], body[0:32])
 		if hash_is_zero(request.object_hash) {
@@ -642,29 +722,82 @@ decode_request :: proc "contextless" (frame: []u8) -> (request: Cache_Request, r
 		if body[33] != 0 || body[34] != 0 || body[35] != 0 {
 			return {}, .Reserved_Nonzero
 		}
-		copy(request.uploader_public_key[:], body[36:68])
-		copy(request.uploader_signature[:], body[68:132])
-		raw_payload_length := byte_order.read_u32_little_endian(body, 132)
-		if u64(raw_payload_length) > u64(payload_bound_for_kind(obj_kind)) {
+		object_size := byte_order.read_u64_little_endian(body, 36)
+		if object_size > payload_bound_for_kind(obj_kind) {
 			return {}, .Too_Large
 		}
-		expected_body := PUT_OBJECT_HEADER_SIZE + int(raw_payload_length)
-		if len(body) < expected_body {
-			return {}, .Truncated
-		}
-		if len(body) > expected_body {
-			return {}, .Trailing_Bytes
-		}
+		copy(request.uploader_public_key[:], body[44:76])
+		copy(request.uploader_signature[:], body[76:140])
 		request.object_kind = obj_kind
-		request.payload = body[PUT_OBJECT_HEADER_SIZE:expected_body]
+		request.object_size = object_size
 	case .Put_Realisation:
 		record, record_refusal := decode_realisation_record(body)
 		if record_refusal != .None {
 			return {}, record_refusal
 		}
 		request.realisation = record
+	case .Put_Object_Frame:
+		if len(body) < PUT_OBJECT_FRAME_HEADER_SIZE {
+			return {}, .Truncated
+		}
+		copy(request.object_hash[:], body[0:32])
+		if hash_is_zero(request.object_hash) {
+			return {}, .Zero_Hash
+		}
+		offset := byte_order.read_u64_little_endian(body, 32)
+		if off_ref := validate_offset(offset); off_ref != .None {
+			return {}, off_ref
+		}
+		raw_frame_length := byte_order.read_u32_little_endian(body, 40)
+		if u64(raw_frame_length) > FRAME_PAYLOAD_BYTES {
+			return {}, .Too_Large
+		}
+		expected_body := PUT_OBJECT_FRAME_HEADER_SIZE + int(raw_frame_length)
+		if len(body) < expected_body {
+			return {}, .Truncated
+		}
+		if len(body) > expected_body {
+			return {}, .Trailing_Bytes
+		}
+		request.offset = offset
+		request.payload = body[PUT_OBJECT_FRAME_HEADER_SIZE:expected_body]
 	}
 	return request, .None
+}
+
+// validate_get_object_response checks that object_size, offset, proof, and
+// frame payload length are mutually consistent for object_kind.
+@(private)
+validate_get_object_response :: proc "contextless" (
+	object_kind: Cache_Object_Kind,
+	object_size: u64,
+	offset: u64,
+	proof_bytes: int,
+	payload_bytes: int,
+) -> (proof_count: u8, refusal: Wire_Refusal) {
+	if object_size > payload_bound_for_kind(object_kind) {
+		return 0, .Too_Large
+	}
+	if off_ref := validate_offset(offset); off_ref != .None {
+		return 0, off_ref
+	}
+	frame_index, idx_ok := object_offset_to_frame_index(offset)
+	if !idx_ok {
+		return 0, .Bad_Range
+	}
+	expected_length, len_ok := object_frame_length(object_size, frame_index)
+	if !len_ok || u64(payload_bytes) != expected_length {
+		return 0, .Bad_Range
+	}
+	frame_count, count_ok := object_frame_count(object_size)
+	if !count_ok {
+		return 0, .Bad_Range
+	}
+	path, path_ok := object_frame_path(frame_count, frame_index)
+	if !path_ok || proof_bytes != path.depth * PROOF_ENTRY_SIZE {
+		return 0, .Bad_Range
+	}
+	return u8(path.depth), .None
 }
 
 // validate_response checks all fields of response and returns the exact wire
@@ -693,10 +826,10 @@ validate_response :: proc "contextless" (response: ^Cache_Response) -> (checked_
 		if !obj_ok {
 			return {}, {}, 0, .Bad_Object_Kind
 		}
-		if len(response.payload) > payload_bound_for_kind(obj_kind) {
-			return {}, {}, 0, .Too_Large
+		if _, check_ref := validate_get_object_response(obj_kind, response.object_size, response.offset, len(response.proof), len(response.payload)); check_ref != .None {
+			return {}, {}, 0, check_ref
 		}
-		return kind, status, GET_OBJECT_RESPONSE_HEADER_SIZE + len(response.payload), .None
+		return kind, status, GET_OBJECT_RESPONSE_HEADER_SIZE + len(response.proof) + len(response.payload), .None
 	case .Get_Realisation:
 		if hash_is_zero(response.realisation.recipe_hash) || hash_is_zero(response.realisation.output_hash) {
 			return {}, {}, 0, .Zero_Hash
@@ -706,8 +839,24 @@ validate_response :: proc "contextless" (response: ^Cache_Response) -> (checked_
 		}
 		return kind, status, REALISATION_WIRE_SIZE, .None
 	case .Put_Object:
-		return kind, status, 0, .None
+		put_state, state_ok := put_object_state_of_word(u64(response.put_state))
+		if !state_ok {
+			return {}, {}, 0, .Bad_Put_State
+		}
+		switch put_state {
+		case .Accept_Frames:
+			if off_ref := validate_offset(response.offset); off_ref != .None {
+				return {}, {}, 0, off_ref
+			}
+		case .Already_Present:
+			if response.offset != 0 {
+				return {}, {}, 0, .Reserved_Nonzero
+			}
+		}
+		return kind, status, PUT_OBJECT_RESPONSE_BODY_SIZE, .None
 	case .Put_Realisation:
+		return kind, status, 0, .None
+	case .Put_Object_Frame:
 		return kind, status, 0, .None
 	}
 	return {}, {}, 0, .Bad_Request_Kind
@@ -749,20 +898,41 @@ encode_response :: proc "contextless" (response: ^Cache_Response, output: []u8) 
 	case .Has:
 		byte_order.write_u64_little_endian(body, 0, response.present_bitset)
 	case .Get_Object:
+		proof_count := u8(len(response.proof) / PROOF_ENTRY_SIZE)
 		body[0] = u8(response.object_kind)
-		body[1] = 0
+		body[1] = proof_count
 		body[2] = 0
 		body[3] = 0
 		byte_order.write_u32_little_endian(body, 4, u32(len(response.payload)))
-		copy(body[GET_OBJECT_RESPONSE_HEADER_SIZE:], response.payload)
+		byte_order.write_u64_little_endian(body, 8, response.object_size)
+		byte_order.write_u64_little_endian(body, 16, response.offset)
+		proof_end := GET_OBJECT_RESPONSE_HEADER_SIZE + len(response.proof)
+		if len(response.proof) > 0 {
+			proof_dst := body[GET_OBJECT_RESPONSE_HEADER_SIZE:proof_end]
+			if raw_data(proof_dst) != raw_data(response.proof) {
+				copy(proof_dst, response.proof)
+			}
+		}
+		if len(response.payload) > 0 {
+			payload_dst := body[proof_end:]
+			if raw_data(payload_dst) != raw_data(response.payload) {
+				copy(payload_dst, response.payload)
+			}
+		}
 	case .Get_Realisation:
 		_, record_refusal := encode_realisation_record(&response.realisation, body)
 		if record_refusal != .None {
 			return 0, record_refusal
 		}
 	case .Put_Object:
-		// No response body on Ok.
+		body[0] = u8(response.put_state)
+		for index in 1 ..< 8 {
+			body[index] = 0
+		}
+		byte_order.write_u64_little_endian(body, 8, response.offset)
 	case .Put_Realisation:
+		// No response body on Ok.
+	case .Put_Object_Frame:
 		// No response body on Ok.
 	}
 	return total_size, .None
@@ -840,22 +1010,36 @@ decode_response :: proc "contextless" (frame: []u8) -> (response: Cache_Response
 		if !obj_ok {
 			return {}, .Bad_Object_Kind
 		}
-		if body[1] != 0 || body[2] != 0 || body[3] != 0 {
+		proof_count := body[1]
+		if int(proof_count) > MAX_PROOF_DEPTH {
+			return {}, .Bad_Range
+		}
+		if body[2] != 0 || body[3] != 0 {
 			return {}, .Reserved_Nonzero
 		}
-		raw_payload_length := byte_order.read_u32_little_endian(body, 4)
-		if u64(raw_payload_length) > u64(payload_bound_for_kind(obj_kind)) {
+		raw_frame_length := byte_order.read_u32_little_endian(body, 4)
+		if u64(raw_frame_length) > FRAME_PAYLOAD_BYTES {
 			return {}, .Too_Large
 		}
-		expected_body := GET_OBJECT_RESPONSE_HEADER_SIZE + int(raw_payload_length)
+		object_size := byte_order.read_u64_little_endian(body, 8)
+		offset := byte_order.read_u64_little_endian(body, 16)
+		proof_bytes := int(proof_count) * PROOF_ENTRY_SIZE
+		expected_body := GET_OBJECT_RESPONSE_HEADER_SIZE + proof_bytes + int(raw_frame_length)
 		if len(body) < expected_body {
 			return {}, .Truncated
 		}
 		if len(body) > expected_body {
 			return {}, .Trailing_Bytes
 		}
+		if _, check_ref := validate_get_object_response(obj_kind, object_size, offset, proof_bytes, int(raw_frame_length)); check_ref != .None {
+			return {}, check_ref
+		}
+		proof_end := GET_OBJECT_RESPONSE_HEADER_SIZE + proof_bytes
 		response.object_kind = obj_kind
-		response.payload = body[GET_OBJECT_RESPONSE_HEADER_SIZE:expected_body]
+		response.object_size = object_size
+		response.offset = offset
+		response.proof = body[GET_OBJECT_RESPONSE_HEADER_SIZE:proof_end]
+		response.payload = body[proof_end:expected_body]
 	case .Get_Realisation:
 		record, record_refusal := decode_realisation_record(body)
 		if record_refusal != .None {
@@ -863,10 +1047,39 @@ decode_response :: proc "contextless" (frame: []u8) -> (response: Cache_Response
 		}
 		response.realisation = record
 	case .Put_Object:
+		if len(body) < PUT_OBJECT_RESPONSE_BODY_SIZE {
+			return {}, .Truncated
+		}
+		if len(body) > PUT_OBJECT_RESPONSE_BODY_SIZE {
+			return {}, .Trailing_Bytes
+		}
+		put_state, state_ok := put_object_state_of_word(u64(body[0]))
+		if !state_ok {
+			return {}, .Bad_Put_State
+		}
+		for index in 1 ..< 8 {
+			if body[index] != 0 {
+				return {}, .Reserved_Nonzero
+			}
+		}
+		next_offset := byte_order.read_u64_little_endian(body, 8)
+		switch put_state {
+		case .Accept_Frames:
+			if off_ref := validate_offset(next_offset); off_ref != .None {
+				return {}, off_ref
+			}
+		case .Already_Present:
+			if next_offset != 0 {
+				return {}, .Reserved_Nonzero
+			}
+		}
+		response.put_state = put_state
+		response.offset = next_offset
+	case .Put_Realisation:
 		if len(body) > 0 {
 			return {}, .Trailing_Bytes
 		}
-	case .Put_Realisation:
+	case .Put_Object_Frame:
 		if len(body) > 0 {
 			return {}, .Trailing_Bytes
 		}
@@ -891,7 +1104,7 @@ verify_object_content :: proc "contextless" (
 	}
 	switch checked_kind {
 	case .Blob:
-		if len(payload) > MAX_OBJECT_PAYLOAD_BYTES {
+		if u64(len(payload)) > MAX_OBJECT_BYTES {
 			return .Refuse_Malformed
 		}
 		computed := blake3.hash(payload)

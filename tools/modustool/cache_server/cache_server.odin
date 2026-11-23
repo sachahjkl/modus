@@ -3,6 +3,7 @@
 //
 // On-disk layout inside root_directory:
 //   objects/<64-lowercase-hex-blake3>        raw blob or canonical tree bytes
+//   outboards/<64-lowercase-hex-blake3>      pre-order parent chaining values for multi-frame blobs
 //   realisations/<64-lowercase-hex-recipe>   canonical 164-byte Realisation_Record
 //   tmp/<hex>.<sequence>.tmp                 staging area for atomic rename
 //
@@ -10,16 +11,20 @@
 //   - Every Put_Object and Put_Realisation requires an authorized Ed25519
 //     signer key and a valid Ed25519 signature over the domain-separated
 //     canonical signing bytes.
-//   - Every Put_Object recomputes its BLAKE3 hash (Blob) or canonical
-//     tree_hash (Tree) BEFORE writing atomically via temp file + rename.
+//   - Every Put_Object streams frames into temporary files under tmp/,
+//     verifies the computed BLAKE3 root (Blob) or canonical tree_hash (Tree)
+//     when the final frame arrives, and renames atomically only on a match.
+//     Any refusal or disconnect deletes the temporary files.
 //   - Every file path is built exclusively from a validated 64-character
 //     lowercase hexadecimal string inside a closed Store_Directory enum,
 //     preventing path traversal.
-//   - Every Get_Object re-verifies the object's content hash and kind against
-//     the requested hash and kind before returning bytes to a client.
+//   - Every Get_Object frame is verified against the requested object hash
+//     and kind (with its inclusion proof for multi-frame blobs) before
+//     sending bytes to a client.
 package cache_server
 
 import "core:fmt"
+import "core:io"
 import "core:net"
 import "core:os"
 import "core:strings"
@@ -39,6 +44,32 @@ Store_Directory :: enum u8 {
 	Objects      = 1,
 	Realisations = 2,
 	Temp         = 3,
+	Outboards    = 4,
+}
+
+// In-flight streaming upload state held per connection.
+Put_Session :: struct {
+	active:             bool,
+	object_hash:        blake3.Hash,
+	object_kind:        object_cache.Cache_Object_Kind,
+	object_size:        u64,
+	frame_count:        u64,
+	next_frame:         u64,
+	hex_name:           [64]u8,
+	data_temp_path:     string,
+	data_file:          ^os.File,
+	outboard_temp_path: string,
+	outboard_file:      ^os.File,
+	builder:            object_cache.Frame_Tree_Builder,
+}
+
+// Per-connection reusable frame buffers and active streaming Put session.
+// Holding one request buffer and one response buffer keeps server memory
+// bounded (~2 MiB per connection) for any object size.
+Cache_Connection :: struct {
+	put:             Put_Session,
+	request_buffer:  []u8,
+	response_buffer: []u8,
 }
 
 // Running state of an on-disk object cache store.
@@ -99,6 +130,8 @@ store_directory_name :: proc(directory: Store_Directory) -> string {
 		return "realisations"
 	case .Temp:
 		return "tmp"
+	case .Outboards:
+		return "outboards"
 	}
 	return ""
 }
@@ -119,6 +152,120 @@ store_path_for_hex :: proc(
 		return "", false
 	}
 	return strings.concatenate({root_directory, "/", sub, "/", hex_name}, allocator), true
+}
+
+// cache_connection_init allocates the fixed request and response buffers for
+// one connection.
+cache_connection_init :: proc(conn: ^Cache_Connection, allocator := context.allocator) {
+	conn^ = {}
+	conn.request_buffer = make([]u8, object_cache.FRAME_HEADER_SIZE + object_cache.MAX_REQUEST_BODY_BYTES, allocator)
+	conn.response_buffer = make([]u8, object_cache.FRAME_HEADER_SIZE + object_cache.MAX_RESPONSE_BODY_BYTES, allocator)
+}
+
+// cache_connection_destroy aborts any unfinished upload (removing its
+// temporary files) and frees the connection buffers.
+cache_connection_destroy :: proc(conn: ^Cache_Connection, allocator := context.allocator) {
+	if conn == nil {
+		return
+	}
+	put_session_abort(&conn.put)
+	delete(conn.request_buffer, allocator)
+	delete(conn.response_buffer, allocator)
+	conn.request_buffer = nil
+	conn.response_buffer = nil
+}
+
+// put_session_abort closes and deletes any temporary staging files of an
+// unfinished upload, leaving no partial object in the store.
+put_session_abort :: proc(session: ^Put_Session) {
+	if session == nil {
+		return
+	}
+	if session.data_file != nil {
+		_ = os.close(session.data_file)
+		session.data_file = nil
+	}
+	if session.data_temp_path != "" {
+		_ = os.remove(session.data_temp_path)
+		delete(session.data_temp_path)
+		session.data_temp_path = ""
+	}
+	if session.outboard_file != nil {
+		_ = os.close(session.outboard_file)
+		session.outboard_file = nil
+	}
+	if session.outboard_temp_path != "" {
+		_ = os.remove(session.outboard_temp_path)
+		delete(session.outboard_temp_path)
+		session.outboard_temp_path = ""
+	}
+	session^ = {}
+}
+
+// put_session_clear releases path memory after temporary files have been
+// committed by atomic rename.
+@(private = "file")
+put_session_clear :: proc(session: ^Put_Session) {
+	if session.data_file != nil {
+		_ = os.close(session.data_file)
+	}
+	if session.outboard_file != nil {
+		_ = os.close(session.outboard_file)
+	}
+	if session.data_temp_path != "" {
+		delete(session.data_temp_path)
+	}
+	if session.outboard_temp_path != "" {
+		delete(session.outboard_temp_path)
+	}
+	session^ = {}
+}
+
+// file_read_exact_at reads exactly len(buffer) bytes from file starting at offset.
+@(private)
+file_read_exact_at :: proc(file: ^os.File, buffer: []u8, offset: i64) -> bool {
+	received := 0
+	for received < len(buffer) {
+		count, err := os.read_at(file, buffer[received:], offset + i64(received))
+		if count > 0 {
+			received += count
+		}
+		if received == len(buffer) {
+			return err == nil || err == io.Error.EOF
+		}
+		if err != nil || count == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// file_write_all writes all bytes of data sequentially to file.
+@(private)
+file_write_all :: proc(file: ^os.File, data: []u8) -> bool {
+	written := 0
+	for written < len(data) {
+		count, err := os.write(file, data[written:])
+		if err != nil || count == 0 {
+			return false
+		}
+		written += count
+	}
+	return true
+}
+
+// file_write_all_at writes all bytes of data to file starting at offset.
+@(private)
+file_write_all_at :: proc(file: ^os.File, data: []u8, offset: i64) -> bool {
+	written := 0
+	for written < len(data) {
+		count, err := os.write_at(file, data[written:], offset + i64(written))
+		if err != nil || count == 0 {
+			return false
+		}
+		written += count
+	}
+	return true
 }
 
 // cache_server_open initializes the on-disk directory layout and copies
@@ -243,8 +390,8 @@ cache_server_verify_ed25519 :: proc(
 	return ed25519.verify(&parsed, message, sig_copy[:])
 }
 
-// cache_server_has returns true when hash is stored as either an object or a
-// realisation.
+// cache_server_has returns true when hash is stored as either a complete
+// object or a realisation. In-flight uploads under tmp/ never appear here.
 cache_server_has :: proc(server: ^Cache_Server, value: blake3.Hash) -> bool {
 	if server == nil || object_cache.hash_is_zero(value) {
 		return false
@@ -261,33 +408,33 @@ cache_server_has :: proc(server: ^Cache_Server, value: blake3.Hash) -> bool {
 }
 
 @(private = "file")
-encode_response_alloc :: proc(
+encode_response_into :: proc(
+	buffer: []u8,
 	response: ^object_cache.Cache_Response,
-	allocator := context.allocator,
 ) -> (frame: []u8, status: object_cache.Cache_Response_Status) {
-	size, size_refusal := object_cache.encoded_response_size(response)
-	if size_refusal != .None {
-		fallback := object_cache.Cache_Response {
-			request_kind = .Has,
-			status       = .Refused,
-		}
-		fallback_frame := make([]u8, object_cache.FRAME_HEADER_SIZE, allocator)
-		_, _ = object_cache.encode_response(&fallback, fallback_frame)
-		return fallback_frame, .Refused
-	}
-	frame = make([]u8, size, allocator)
-	_, enc_refusal := object_cache.encode_response(response, frame)
+	written, enc_refusal := object_cache.encode_response(response, buffer)
 	if enc_refusal != .None {
-		delete(frame, allocator)
 		fallback := object_cache.Cache_Response {
 			request_kind = .Has,
 			status       = .Refused,
 		}
-		fallback_frame := make([]u8, object_cache.FRAME_HEADER_SIZE, allocator)
-		_, _ = object_cache.encode_response(&fallback, fallback_frame)
-		return fallback_frame, .Refused
+		fallback_written, _ := object_cache.encode_response(&fallback, buffer)
+		return buffer[:fallback_written], .Refused
 	}
-	return frame, response.status
+	return buffer[:written], response.status
+}
+
+@(private = "file")
+status_response :: proc(
+	buffer: []u8,
+	kind: object_cache.Cache_Request_Kind,
+	status: object_cache.Cache_Response_Status,
+) -> (frame: []u8, out_status: object_cache.Cache_Response_Status) {
+	response := object_cache.Cache_Response {
+		request_kind = kind,
+		status       = status,
+	}
+	return encode_response_into(buffer, &response)
 }
 
 @(private = "file")
@@ -301,16 +448,537 @@ opposite_object_kind :: proc(kind: object_cache.Cache_Object_Kind) -> object_cac
 	return .Blob
 }
 
-// cache_server_handle_frame decodes one binary request frame, validates
-// authentication, signatures, and content hashes, serves or updates the store,
-// and returns the encoded binary response frame (allocated with allocator).
-cache_server_handle_frame :: proc(
+// read_proof_from_outboard reads the sibling chaining values along path from
+// outboard_file into proof_dst (length path.depth * PROOF_ENTRY_SIZE).
+@(private = "file")
+read_proof_from_outboard :: proc(
+	outboard_file: ^os.File,
+	path: ^object_cache.Frame_Path,
+	proof_dst: []u8,
+) -> bool {
+	for level in 0 ..< path.depth {
+		entry: [object_cache.OUTBOARD_ENTRY_SIZE]u8
+		pos := i64(path.parent_index[level] * object_cache.OUTBOARD_ENTRY_SIZE)
+		if !file_read_exact_at(outboard_file, entry[:], pos) {
+			return false
+		}
+		sibling := object_cache.frame_proof_entry(entry, path.in_left[level])
+		copy(proof_dst[level * object_cache.PROOF_ENTRY_SIZE:(level + 1) * object_cache.PROOF_ENTRY_SIZE], sibling[:])
+	}
+	return true
+}
+
+// ensure_outboard opens the pre-order outboard file for a multi-frame blob.
+// If the outboard is missing or has the wrong size, it streams obj_file once
+// using scratch_frame (at least FRAME_PAYLOAD_BYTES), verifies the BLAKE3
+// root against expected_hash, and writes the outboard atomically.
+@(private = "file")
+ensure_outboard :: proc(
 	server: ^Cache_Server,
+	obj_file: ^os.File,
+	hex_name: string,
+	expected_hash: blake3.Hash,
+	object_size: u64,
+	scratch_frame: []u8,
+) -> (outboard_file: ^os.File, status: object_cache.Cache_Response_Status) {
+	expected_bytes, out_ok := object_cache.object_outboard_bytes(object_size)
+	if !out_ok || expected_bytes == 0 {
+		return nil, .Refused
+	}
+	outboard_path, path_ok := store_path_for_hex(server.root_directory, .Outboards, hex_name, context.temp_allocator)
+	if !path_ok {
+		return nil, .Refused
+	}
+	if os.exists(outboard_path) {
+		existing, open_err := os.open(outboard_path)
+		if open_err == nil {
+			sz, sz_err := os.file_size(existing)
+			if sz_err == nil && u64(sz) == expected_bytes {
+				return existing, .Ok
+			}
+			_ = os.close(existing)
+		}
+	}
+
+	// Build outboard by streaming obj_file in 1 MiB frames.
+	builder, start_ok := object_cache.frame_tree_builder_start(object_size)
+	if !start_ok {
+		return nil, .Refused
+	}
+	sequence := sync.atomic_add(&server.temp_sequence, 1)
+	temp_path := fmt.tprintf("%s/%s/%s.%d.outboard.tmp", server.root_directory, store_directory_name(.Temp), hex_name, sequence)
+	temp_file, create_err := os.create(temp_path)
+	if create_err != nil {
+		return nil, .Refused
+	}
+	cleaned := false
+	defer if !cleaned {
+		_ = os.close(temp_file)
+		_ = os.remove(temp_path)
+	}
+
+	for frame_index in u64(0) ..< builder.frame_count {
+		frame_len, len_ok := object_cache.object_frame_length(object_size, frame_index)
+		if !len_ok {
+			return nil, .Refused
+		}
+		frame_slice := scratch_frame[:int(frame_len)]
+		if frame_len > 0 && !file_read_exact_at(obj_file, frame_slice, i64(frame_index * object_cache.FRAME_PAYLOAD_BYTES)) {
+			return nil, .Refused
+		}
+		parents: [object_cache.MAX_PROOF_DEPTH]object_cache.Frame_Parent
+		parent_count, add_ok := object_cache.frame_tree_builder_add(&builder, frame_slice, &parents)
+		if !add_ok {
+			return nil, .Refused
+		}
+		for p in 0 ..< parent_count {
+			entry := object_cache.frame_parent_entry(parents[p])
+			pos := i64(parents[p].index * object_cache.OUTBOARD_ENTRY_SIZE)
+			if !file_write_all_at(temp_file, entry[:], pos) {
+				return nil, .Refused
+			}
+		}
+	}
+	if !builder.finished || !object_cache.hashes_equal_constant_time(builder.root, expected_hash) {
+		return nil, .Bad_Hash
+	}
+	if close_err := os.close(temp_file); close_err != nil {
+		_ = os.remove(temp_path)
+		cleaned = true
+		return nil, .Refused
+	}
+	if rename_err := os.rename(temp_path, outboard_path); rename_err != nil {
+		_ = os.remove(temp_path)
+		cleaned = true
+		return nil, .Refused
+	}
+	cleaned = true
+
+	reopened, reopen_err := os.open(outboard_path)
+	if reopen_err != nil {
+		return nil, .Refused
+	}
+	return reopened, .Ok
+}
+
+// object_already_present_verified checks whether the store already holds a
+// verified object with the exact requested hash, kind, and size.
+@(private = "file")
+object_already_present_verified :: proc(
+	server: ^Cache_Server,
+	conn: ^Cache_Connection,
+	hex_name: string,
+	kind: object_cache.Cache_Object_Kind,
+	expected_hash: blake3.Hash,
+	object_size: u64,
+	frame_count: u64,
+) -> bool {
+	obj_path, path_ok := store_path_for_hex(server.root_directory, .Objects, hex_name, context.temp_allocator)
+	if !path_ok || !os.exists(obj_path) {
+		return false
+	}
+	obj_file, open_err := os.open(obj_path)
+	if open_err != nil {
+		return false
+	}
+	defer os.close(obj_file)
+	raw_size, sz_err := os.file_size(obj_file)
+	if sz_err != nil || raw_size < 0 || u64(raw_size) != object_size {
+		return false
+	}
+	if frame_count == 1 {
+		slice := conn.response_buffer[:int(object_size)]
+		if object_size > 0 && !file_read_exact_at(obj_file, slice, 0) {
+			return false
+		}
+		return object_cache.verify_object_content(kind, expected_hash, slice) == .Trust_By_Hash
+	}
+	if kind != .Blob {
+		return false
+	}
+	// The whole object is hashed again: a read of the disk costs less than
+	// the upload that it saves, and a stored object with a damaged byte is
+	// then written again instead of kept. The outboard is checked frame by
+	// frame at each get, and built again when a frame does not verify.
+	builder, start_ok := object_cache.frame_tree_builder_start(object_size)
+	if !start_ok {
+		return false
+	}
+	for frame_index in u64(0) ..< frame_count {
+		frame_length, length_ok := object_cache.object_frame_length(object_size, frame_index)
+		if !length_ok {
+			return false
+		}
+		frame := conn.response_buffer[:int(frame_length)]
+		if frame_length > 0 && !file_read_exact_at(obj_file, frame, i64(frame_index * object_cache.FRAME_PAYLOAD_BYTES)) {
+			return false
+		}
+		parents: [object_cache.MAX_PROOF_DEPTH]object_cache.Frame_Parent
+		if _, add_ok := object_cache.frame_tree_builder_add(&builder, frame, &parents); !add_ok {
+			return false
+		}
+	}
+	return builder.finished && object_cache.hashes_equal_constant_time(builder.root, expected_hash)
+}
+
+// handle_get_object serves one aligned frame of a stored object with its
+// BLAKE3 inclusion proof, reading and verifying directly in conn.response_buffer.
+@(private = "file")
+handle_get_object :: proc(
+	server: ^Cache_Server,
+	conn: ^Cache_Connection,
+	request: ^object_cache.Cache_Request,
+) -> (response_frame: []u8, status: object_cache.Cache_Response_Status) {
+	hex_bytes := hash_to_hex(request.object_hash)
+	hex_name := string(hex_bytes[:])
+	obj_path, path_ok := store_path_for_hex(server.root_directory, .Objects, hex_name, context.temp_allocator)
+	if !path_ok {
+		return status_response(conn.response_buffer, .Get_Object, .Refused)
+	}
+	if !os.exists(obj_path) {
+		return status_response(conn.response_buffer, .Get_Object, .Not_Found)
+	}
+	obj_file, open_err := os.open(obj_path)
+	if open_err != nil {
+		return status_response(conn.response_buffer, .Get_Object, .Refused)
+	}
+	defer os.close(obj_file)
+
+	raw_size, sz_err := os.file_size(obj_file)
+	if sz_err != nil || raw_size < 0 {
+		return status_response(conn.response_buffer, .Get_Object, .Refused)
+	}
+	object_size := u64(raw_size)
+
+	// A multi-frame or oversized blob cannot be a canonical Tree: report Not_Found
+	// so blob/tree confusion matches the single-frame behavior.
+	if request.object_kind == .Tree && object_size > u64(object_cache.MAX_TREE_PAYLOAD_BYTES) {
+		return status_response(conn.response_buffer, .Get_Object, .Not_Found)
+	}
+
+	frame_index, idx_ok := object_cache.object_offset_to_frame_index(request.offset)
+	if !idx_ok {
+		return status_response(conn.response_buffer, .Get_Object, .Refused)
+	}
+	frame_count, count_ok := object_cache.object_frame_count(object_size)
+	if !count_ok {
+		return status_response(conn.response_buffer, .Get_Object, .Bad_Hash)
+	}
+	if frame_index >= frame_count {
+		return status_response(conn.response_buffer, .Get_Object, .Out_Of_Range)
+	}
+	frame_len, len_ok := object_cache.object_frame_length(object_size, frame_index)
+	if !len_ok {
+		return status_response(conn.response_buffer, .Get_Object, .Out_Of_Range)
+	}
+	proof_start := object_cache.FRAME_HEADER_SIZE + object_cache.GET_OBJECT_RESPONSE_HEADER_SIZE
+	if frame_count == 1 {
+		payload_dst := conn.response_buffer[proof_start:proof_start + int(frame_len)]
+		if frame_len > 0 && !file_read_exact_at(obj_file, payload_dst, 0) {
+			return status_response(conn.response_buffer, .Get_Object, .Refused)
+		}
+		// Re-verify stored bytes against requested hash and kind to prevent
+		// blob/tree confusion and detect on-disk corruption.
+		decision := object_cache.verify_object_content(request.object_kind, request.object_hash, payload_dst)
+		if decision != .Trust_By_Hash {
+			other := opposite_object_kind(request.object_kind)
+			if object_cache.verify_object_content(other, request.object_hash, payload_dst) == .Trust_By_Hash {
+				return status_response(conn.response_buffer, .Get_Object, .Not_Found)
+			}
+			return status_response(conn.response_buffer, .Get_Object, .Bad_Hash)
+		}
+		response := object_cache.Cache_Response {
+			request_kind = .Get_Object,
+			status       = .Ok,
+			object_kind  = request.object_kind,
+			object_size  = object_size,
+			offset       = 0,
+			proof        = nil,
+			payload      = payload_dst,
+		}
+		return encode_response_into(conn.response_buffer, &response)
+	}
+
+	// A blob of several frames: the proof comes from its outboard. A frame
+	// that does not verify is checked once more with an outboard built again
+	// from the object, so a damaged outboard is repaired and a damaged
+	// object is refused. The outboard is built in the answer buffer, before
+	// the proof and the frame are read into it.
+	path, path_ok2 := object_cache.object_frame_path(frame_count, frame_index)
+	if !path_ok2 {
+		return status_response(conn.response_buffer, .Get_Object, .Refused)
+	}
+	proof_len := path.depth * object_cache.PROOF_ENTRY_SIZE
+	proof_dst := conn.response_buffer[proof_start:proof_start + proof_len]
+	payload_start := proof_start + proof_len
+	payload_dst := conn.response_buffer[payload_start:payload_start + int(frame_len)]
+	for attempt in 0 ..< 2 {
+		if attempt == 1 {
+			outboard_path, outboard_path_ok := store_path_for_hex(server.root_directory, .Outboards, hex_name, context.temp_allocator)
+			if !outboard_path_ok {
+				return status_response(conn.response_buffer, .Get_Object, .Refused)
+			}
+			_ = os.remove(outboard_path)
+		}
+		outboard_file, out_status := ensure_outboard(server, obj_file, hex_name, request.object_hash, object_size, conn.response_buffer)
+		if out_status != .Ok {
+			return status_response(conn.response_buffer, .Get_Object, out_status)
+		}
+		proof_read := read_proof_from_outboard(outboard_file, &path, proof_dst)
+		_ = os.close(outboard_file)
+		if !proof_read {
+			continue
+		}
+		if frame_len > 0 && !file_read_exact_at(obj_file, payload_dst, i64(request.offset)) {
+			return status_response(conn.response_buffer, .Get_Object, .Refused)
+		}
+		if object_cache.object_frame_verify(.Blob, request.object_hash, object_size, frame_index, proof_dst, payload_dst) == .Trust_By_Hash {
+			response := object_cache.Cache_Response {
+				request_kind = .Get_Object,
+				status       = .Ok,
+				object_kind  = .Blob,
+				object_size  = object_size,
+				offset       = request.offset,
+				proof        = proof_dst,
+				payload      = payload_dst,
+			}
+			return encode_response_into(conn.response_buffer, &response)
+		}
+	}
+	return status_response(conn.response_buffer, .Get_Object, .Bad_Hash)
+}
+
+// handle_put_object validates authorization, signature, size, and free disk
+// space, then either answers Already_Present or opens temporary staging files
+// and answers Accept_Frames at offset 0.
+@(private = "file")
+handle_put_object :: proc(
+	server: ^Cache_Server,
+	conn: ^Cache_Connection,
+	request: ^object_cache.Cache_Request,
+) -> (response_frame: []u8, status: object_cache.Cache_Response_Status) {
+	// Starting a new Put_Object aborts any unfinished upload on this connection.
+	put_session_abort(&conn.put)
+
+	if !object_cache.signer_is_trusted(server.authorized_signers[:], request.uploader_public_key) {
+		return status_response(conn.response_buffer, .Put_Object, .Unauthorized)
+	}
+	signing_bytes, sign_ok := object_cache.put_object_signing_bytes(
+		request.object_kind,
+		request.object_hash,
+		request.object_size,
+		request.uploader_public_key,
+	)
+	if !sign_ok {
+		return status_response(conn.response_buffer, .Put_Object, .Refused)
+	}
+	if !cache_server_verify_ed25519(request.uploader_public_key, signing_bytes[:], request.uploader_signature) {
+		return status_response(conn.response_buffer, .Put_Object, .Bad_Signature)
+	}
+	frame_count, count_ok := object_cache.object_frame_count(request.object_size)
+	outboard_bytes, out_ok := object_cache.object_outboard_bytes(request.object_size)
+	if !count_ok || !out_ok {
+		return status_response(conn.response_buffer, .Put_Object, .Too_Large)
+	}
+
+	hex_bytes := hash_to_hex(request.object_hash)
+	hex_name := string(hex_bytes[:])
+
+	if object_already_present_verified(server, conn, hex_name, request.object_kind, request.object_hash, request.object_size, frame_count) {
+		cache_status_record_object(&server.status, request.object_size, false, time.now())
+		response := object_cache.Cache_Response {
+			request_kind = .Put_Object,
+			status       = .Ok,
+			put_state    = .Already_Present,
+			offset       = 0,
+		}
+		return encode_response_into(conn.response_buffer, &response)
+	}
+
+	// Bound accepted object size by available disk space for content plus outboard.
+	if free_bytes, free_known := cache_disk_free_bytes(server.root_directory); free_known {
+		if request.object_size + outboard_bytes > free_bytes {
+			return status_response(conn.response_buffer, .Put_Object, .Too_Large)
+		}
+	}
+
+	builder, builder_ok := object_cache.frame_tree_builder_start(request.object_size)
+	if !builder_ok {
+		return status_response(conn.response_buffer, .Put_Object, .Too_Large)
+	}
+
+	sequence := sync.atomic_add(&server.temp_sequence, 1)
+	data_temp_path := fmt.aprintf("%s/%s/%s.%d.tmp", server.root_directory, store_directory_name(.Temp), hex_name, sequence)
+	data_file, create_err := os.create(data_temp_path)
+	if create_err != nil {
+		delete(data_temp_path)
+		return status_response(conn.response_buffer, .Put_Object, .Refused)
+	}
+
+	outboard_temp_path := ""
+	outboard_file: ^os.File
+	if frame_count > 1 {
+		outboard_temp_path = fmt.aprintf("%s/%s/%s.%d.outboard.tmp", server.root_directory, store_directory_name(.Temp), hex_name, sequence)
+		out_err: os.Error
+		outboard_file, out_err = os.create(outboard_temp_path)
+		if out_err != nil {
+			_ = os.close(data_file)
+			_ = os.remove(data_temp_path)
+			delete(data_temp_path)
+			delete(outboard_temp_path)
+			return status_response(conn.response_buffer, .Put_Object, .Refused)
+		}
+	}
+
+	conn.put = Put_Session {
+		active             = true,
+		object_hash        = request.object_hash,
+		object_kind        = request.object_kind,
+		object_size        = request.object_size,
+		frame_count        = frame_count,
+		next_frame         = 0,
+		hex_name           = hex_bytes,
+		data_temp_path     = data_temp_path,
+		data_file          = data_file,
+		outboard_temp_path = outboard_temp_path,
+		outboard_file      = outboard_file,
+		builder            = builder,
+	}
+
+	response := object_cache.Cache_Response {
+		request_kind = .Put_Object,
+		status       = .Ok,
+		put_state    = .Accept_Frames,
+		offset       = 0,
+	}
+	return encode_response_into(conn.response_buffer, &response)
+}
+
+// handle_put_object_frame accepts one aligned frame of the active Put_Session,
+// writes it to the temporary staging file, updates the frame tree and outboard,
+// and atomically renames into place only when the final root matches.
+@(private = "file")
+handle_put_object_frame :: proc(
+	server: ^Cache_Server,
+	conn: ^Cache_Connection,
+	request: ^object_cache.Cache_Request,
+) -> (response_frame: []u8, status: object_cache.Cache_Response_Status) {
+	session := &conn.put
+	if !session.active || !object_cache.hashes_equal_constant_time(request.object_hash, session.object_hash) {
+		put_session_abort(session)
+		return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
+	}
+	expected_offset := session.next_frame * object_cache.FRAME_PAYLOAD_BYTES
+	if request.offset != expected_offset {
+		put_session_abort(session)
+		return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
+	}
+	expected_len, len_ok := object_cache.object_frame_length(session.object_size, session.next_frame)
+	if !len_ok || u64(len(request.payload)) != expected_len {
+		put_session_abort(session)
+		return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
+	}
+
+	switch session.object_kind {
+	case .Tree:
+		// Canonical trees always fit in one frame and verify by domain-separated tree_hash.
+		if object_cache.verify_object_content(.Tree, session.object_hash, request.payload) != .Trust_By_Hash {
+			put_session_abort(session)
+			return status_response(conn.response_buffer, .Put_Object_Frame, .Bad_Hash)
+		}
+		if len(request.payload) > 0 && !file_write_all(session.data_file, request.payload) {
+			put_session_abort(session)
+			return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
+		}
+		session.next_frame += 1
+
+	case .Blob:
+		if len(request.payload) > 0 && !file_write_all(session.data_file, request.payload) {
+			put_session_abort(session)
+			return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
+		}
+		parents: [object_cache.MAX_PROOF_DEPTH]object_cache.Frame_Parent
+		parent_count, add_ok := object_cache.frame_tree_builder_add(&session.builder, request.payload, &parents)
+		if !add_ok {
+			put_session_abort(session)
+			return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
+		}
+		for p in 0 ..< parent_count {
+			entry := object_cache.frame_parent_entry(parents[p])
+			pos := i64(parents[p].index * object_cache.OUTBOARD_ENTRY_SIZE)
+			if !file_write_all_at(session.outboard_file, entry[:], pos) {
+				put_session_abort(session)
+				return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
+			}
+		}
+		session.next_frame += 1
+		if session.next_frame < session.frame_count {
+			return status_response(conn.response_buffer, .Put_Object_Frame, .Ok)
+		}
+		if !session.builder.finished || !object_cache.hashes_equal_constant_time(session.builder.root, session.object_hash) {
+			put_session_abort(session)
+			return status_response(conn.response_buffer, .Put_Object_Frame, .Bad_Hash)
+		}
+	}
+
+	// Final frame verified: close staging files and rename atomically into place.
+	hex_name := string(session.hex_name[:])
+	final_obj_path, obj_path_ok := store_path_for_hex(server.root_directory, .Objects, hex_name, context.temp_allocator)
+	if !obj_path_ok {
+		put_session_abort(session)
+		return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
+	}
+	if close_err := os.close(session.data_file); close_err != nil {
+		session.data_file = nil
+		put_session_abort(session)
+		return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
+	}
+	session.data_file = nil
+
+	if session.outboard_file != nil {
+		if out_close_err := os.close(session.outboard_file); out_close_err != nil {
+			session.outboard_file = nil
+			put_session_abort(session)
+			return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
+		}
+		session.outboard_file = nil
+		final_out_path, out_path_ok := store_path_for_hex(server.root_directory, .Outboards, hex_name, context.temp_allocator)
+		if !out_path_ok {
+			put_session_abort(session)
+			return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
+		}
+		// Rename outboard before object so objects/<hex> is the single publication barrier.
+		if out_rename_err := os.rename(session.outboard_temp_path, final_out_path); out_rename_err != nil {
+			put_session_abort(session)
+			return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
+		}
+		delete(session.outboard_temp_path)
+		session.outboard_temp_path = ""
+	}
+
+	object_size := session.object_size
+	added := !os.exists(final_obj_path)
+	if rename_err := os.rename(session.data_temp_path, final_obj_path); rename_err != nil {
+		put_session_abort(session)
+		return status_response(conn.response_buffer, .Put_Object_Frame, .Refused)
+	}
+	put_session_clear(session)
+	cache_status_record_object(&server.status, object_size, added, time.now())
+	return status_response(conn.response_buffer, .Put_Object_Frame, .Ok)
+}
+
+// cache_server_handle_connection_frame decodes one binary request frame,
+// validates authentication, signatures, ranges, and content hashes, serves or
+// updates the store, and returns the encoded binary response frame inside
+// conn.response_buffer (zero heap allocations per frame).
+cache_server_handle_connection_frame :: proc(
+	server: ^Cache_Server,
+	conn: ^Cache_Connection,
 	request_frame: []u8,
-	allocator := context.allocator,
 ) -> (response_frame: []u8, status: object_cache.Cache_Response_Status) {
 	request, refusal := object_cache.decode_request(request_frame)
 	if refusal != .None {
+		put_session_abort(&conn.put)
 		err_status: object_cache.Cache_Response_Status = refusal == .Too_Large ? .Too_Large : .Refused
 		echo_kind := object_cache.Cache_Request_Kind.Has
 		if len(request_frame) >= 6 {
@@ -318,19 +986,12 @@ cache_server_handle_frame :: proc(
 				echo_kind = parsed_kind
 			}
 		}
-		err_response := object_cache.Cache_Response {
-			request_kind = echo_kind,
-			status       = err_status,
-		}
-		return encode_response_alloc(&err_response, allocator)
+		return status_response(conn.response_buffer, echo_kind, err_status)
 	}
 
 	if server == nil {
-		err_response := object_cache.Cache_Response {
-			request_kind = request.kind,
-			status       = .Refused,
-		}
-		return encode_response_alloc(&err_response, allocator)
+		put_session_abort(&conn.put)
+		return status_response(conn.response_buffer, request.kind, .Refused)
 	}
 
 	switch request.kind {
@@ -346,196 +1007,84 @@ cache_server_handle_frame :: proc(
 			status         = .Ok,
 			present_bitset = present,
 		}
-		return encode_response_alloc(&response, allocator)
+		return encode_response_into(conn.response_buffer, &response)
 
 	case .Get_Object:
-		hex_bytes := hash_to_hex(request.object_hash)
-		data, found, read_ok := store_read_by_hex(server, .Objects, string(hex_bytes[:]), context.temp_allocator)
-		if !read_ok {
-			response := object_cache.Cache_Response {
-				request_kind = .Get_Object,
-				status       = .Refused,
-			}
-			return encode_response_alloc(&response, allocator)
-		}
-		if !found {
-			response := object_cache.Cache_Response {
-				request_kind = .Get_Object,
-				status       = .Not_Found,
-			}
-			return encode_response_alloc(&response, allocator)
-		}
-		// Re-verify stored bytes against requested hash and kind to prevent
-		// blob/tree confusion and detect on-disk corruption.
-		decision := object_cache.verify_object_content(request.object_kind, request.object_hash, data)
-		if decision != .Trust_By_Hash {
-			other := opposite_object_kind(request.object_kind)
-			if object_cache.verify_object_content(other, request.object_hash, data) == .Trust_By_Hash {
-				response := object_cache.Cache_Response {
-					request_kind = .Get_Object,
-					status       = .Not_Found,
-				}
-				return encode_response_alloc(&response, allocator)
-			}
-			response := object_cache.Cache_Response {
-				request_kind = .Get_Object,
-				status       = .Bad_Hash,
-			}
-			return encode_response_alloc(&response, allocator)
-		}
-		response := object_cache.Cache_Response {
-			request_kind = .Get_Object,
-			status       = .Ok,
-			object_kind  = request.object_kind,
-			payload      = data,
-		}
-		return encode_response_alloc(&response, allocator)
+		return handle_get_object(server, conn, &request)
 
 	case .Get_Realisation:
 		hex_bytes := hash_to_hex(request.recipe_hash)
 		data, found, read_ok := store_read_by_hex(server, .Realisations, string(hex_bytes[:]), context.temp_allocator)
 		if !read_ok {
-			response := object_cache.Cache_Response {
-				request_kind = .Get_Realisation,
-				status       = .Refused,
-			}
-			return encode_response_alloc(&response, allocator)
+			return status_response(conn.response_buffer, .Get_Realisation, .Refused)
 		}
 		if !found {
-			response := object_cache.Cache_Response {
-				request_kind = .Get_Realisation,
-				status       = .Not_Found,
-			}
-			return encode_response_alloc(&response, allocator)
+			return status_response(conn.response_buffer, .Get_Realisation, .Not_Found)
 		}
 		record, rec_refusal := object_cache.decode_realisation_record(data)
 		if rec_refusal != .None || !object_cache.hashes_equal_constant_time(record.recipe_hash, request.recipe_hash) {
-			response := object_cache.Cache_Response {
-				request_kind = .Get_Realisation,
-				status       = .Refused,
-			}
-			return encode_response_alloc(&response, allocator)
+			return status_response(conn.response_buffer, .Get_Realisation, .Refused)
 		}
 		signing_bytes, sign_ok := object_cache.realisation_signing_bytes(&record)
 		if !sign_ok || !cache_server_verify_ed25519(record.signer_public_key, signing_bytes[:], record.signature) {
-			response := object_cache.Cache_Response {
-				request_kind = .Get_Realisation,
-				status       = .Bad_Signature,
-			}
-			return encode_response_alloc(&response, allocator)
+			return status_response(conn.response_buffer, .Get_Realisation, .Bad_Signature)
 		}
 		response := object_cache.Cache_Response {
 			request_kind = .Get_Realisation,
 			status       = .Ok,
 			realisation  = record,
 		}
-		return encode_response_alloc(&response, allocator)
+		return encode_response_into(conn.response_buffer, &response)
 
 	case .Put_Object:
-		if !object_cache.signer_is_trusted(server.authorized_signers[:], request.uploader_public_key) {
-			response := object_cache.Cache_Response {
-				request_kind = .Put_Object,
-				status       = .Unauthorized,
-			}
-			return encode_response_alloc(&response, allocator)
-		}
-		signing_bytes, sign_ok := object_cache.put_object_signing_bytes(
-			request.object_kind,
-			request.object_hash,
-			u64(len(request.payload)),
-			request.uploader_public_key,
-		)
-		if !sign_ok {
-			response := object_cache.Cache_Response {
-				request_kind = .Put_Object,
-				status       = .Refused,
-			}
-			return encode_response_alloc(&response, allocator)
-		}
-		if !cache_server_verify_ed25519(request.uploader_public_key, signing_bytes[:], request.uploader_signature) {
-			response := object_cache.Cache_Response {
-				request_kind = .Put_Object,
-				status       = .Bad_Signature,
-			}
-			return encode_response_alloc(&response, allocator)
-		}
-		if object_cache.verify_object_content(request.object_kind, request.object_hash, request.payload) != .Trust_By_Hash {
-			response := object_cache.Cache_Response {
-				request_kind = .Put_Object,
-				status       = .Bad_Hash,
-			}
-			return encode_response_alloc(&response, allocator)
-		}
-		hex_bytes := hash_to_hex(request.object_hash)
-		written, added := store_write_atomic(server, .Objects, string(hex_bytes[:]), request.payload)
-		if !written {
-			response := object_cache.Cache_Response {
-				request_kind = .Put_Object,
-				status       = .Refused,
-			}
-			return encode_response_alloc(&response, allocator)
-		}
-		cache_status_record_object(&server.status, u64(len(request.payload)), added, time.now())
-		response := object_cache.Cache_Response {
-			request_kind = .Put_Object,
-			status       = .Ok,
-		}
-		return encode_response_alloc(&response, allocator)
+		return handle_put_object(server, conn, &request)
+
+	case .Put_Object_Frame:
+		return handle_put_object_frame(server, conn, &request)
 
 	case .Put_Realisation:
 		if !object_cache.signer_is_trusted(server.authorized_signers[:], request.realisation.signer_public_key) {
-			response := object_cache.Cache_Response {
-				request_kind = .Put_Realisation,
-				status       = .Unauthorized,
-			}
-			return encode_response_alloc(&response, allocator)
+			return status_response(conn.response_buffer, .Put_Realisation, .Unauthorized)
 		}
 		signing_bytes, sign_ok := object_cache.realisation_signing_bytes(&request.realisation)
 		if !sign_ok {
-			response := object_cache.Cache_Response {
-				request_kind = .Put_Realisation,
-				status       = .Refused,
-			}
-			return encode_response_alloc(&response, allocator)
+			return status_response(conn.response_buffer, .Put_Realisation, .Refused)
 		}
 		if !cache_server_verify_ed25519(request.realisation.signer_public_key, signing_bytes[:], request.realisation.signature) {
-			response := object_cache.Cache_Response {
-				request_kind = .Put_Realisation,
-				status       = .Bad_Signature,
-			}
-			return encode_response_alloc(&response, allocator)
+			return status_response(conn.response_buffer, .Put_Realisation, .Bad_Signature)
 		}
 		encoded_record: [object_cache.REALISATION_WIRE_SIZE]u8
 		_, enc_refusal := object_cache.encode_realisation_record(&request.realisation, encoded_record[:])
 		if enc_refusal != .None {
-			response := object_cache.Cache_Response {
-				request_kind = .Put_Realisation,
-				status       = .Refused,
-			}
-			return encode_response_alloc(&response, allocator)
+			return status_response(conn.response_buffer, .Put_Realisation, .Refused)
 		}
 		hex_bytes := hash_to_hex(request.realisation.recipe_hash)
 		written, added := store_write_atomic(server, .Realisations, string(hex_bytes[:]), encoded_record[:])
 		if !written {
-			response := object_cache.Cache_Response {
-				request_kind = .Put_Realisation,
-				status       = .Refused,
-			}
-			return encode_response_alloc(&response, allocator)
+			return status_response(conn.response_buffer, .Put_Realisation, .Refused)
 		}
 		cache_status_record_realisation(&server.status, request.realisation, added, time.now())
-		response := object_cache.Cache_Response {
-			request_kind = .Put_Realisation,
-			status       = .Ok,
-		}
-		return encode_response_alloc(&response, allocator)
+		return status_response(conn.response_buffer, .Put_Realisation, .Ok)
 	}
 
-	err_response := object_cache.Cache_Response {
-		request_kind = .Has,
-		status       = .Refused,
-	}
-	return encode_response_alloc(&err_response, allocator)
+	return status_response(conn.response_buffer, .Has, .Refused)
+}
+
+// cache_server_handle_frame serves a single stateless request frame, allocating
+// the returned response slice with allocator. Multi-frame Put sequences use
+// cache_server_handle_connection_frame with a persistent Cache_Connection.
+cache_server_handle_frame :: proc(
+	server: ^Cache_Server,
+	request_frame: []u8,
+	allocator := context.allocator,
+) -> (response_frame: []u8, status: object_cache.Cache_Response_Status) {
+	conn: Cache_Connection
+	cache_connection_init(&conn, context.allocator)
+	defer cache_connection_destroy(&conn, context.allocator)
+	frame, out_status := cache_server_handle_connection_frame(server, &conn, request_frame)
+	copied := make([]u8, len(frame), allocator)
+	copy(copied, frame)
+	return copied, out_status
 }
 
 // tcp_read_exact reads exactly len(buffer) bytes from socket.
@@ -573,37 +1122,38 @@ tcp_write_all :: proc(socket: net.TCP_Socket, data: []u8) -> bool {
 }
 
 // cache_server_serve_connection serves sequential object cache frames over one
-// stream socket until clean EOF or a framing error.
+// stream socket until clean EOF or a framing error. On disconnect, any
+// unfinished Put_Object session is aborted and its temporary files removed.
 cache_server_serve_connection :: proc(server: ^Cache_Server, socket: net.TCP_Socket) {
 	_ = net.set_option(socket, .Receive_Timeout, foundation.HANG_BOUND)
 	_ = net.set_option(socket, .Send_Timeout, foundation.HANG_BOUND)
+	conn: Cache_Connection
+	cache_connection_init(&conn)
+	defer cache_connection_destroy(&conn)
 	for !sync.atomic_load(&server.stop) {
 		defer free_all(context.temp_allocator)
-		header: [object_cache.FRAME_HEADER_SIZE]u8
-		header_ok, eof := tcp_read_exact(socket, header[:], true)
+		header := conn.request_buffer[:object_cache.FRAME_HEADER_SIZE]
+		header_ok, eof := tcp_read_exact(socket, header, true)
 		if eof {
 			return
 		}
 		if !header_ok {
 			return
 		}
-		_, body_length, header_refusal := object_cache.inspect_request_header(header[:])
+		_, body_length, header_refusal := object_cache.inspect_request_header(header)
 		if header_refusal != .None {
-			err_frame, _ := cache_server_handle_frame(server, header[:], context.temp_allocator)
+			err_frame, _ := cache_server_handle_connection_frame(server, &conn, header)
 			_ = tcp_write_all(socket, err_frame)
 			return
 		}
-		request_frame := make([]u8, object_cache.FRAME_HEADER_SIZE + body_length)
-		defer delete(request_frame)
-		copy(request_frame[:object_cache.FRAME_HEADER_SIZE], header[:])
+		total := object_cache.FRAME_HEADER_SIZE + body_length
 		if body_length > 0 {
-			body_ok, _ := tcp_read_exact(socket, request_frame[object_cache.FRAME_HEADER_SIZE:], false)
+			body_ok, _ := tcp_read_exact(socket, conn.request_buffer[object_cache.FRAME_HEADER_SIZE:total], false)
 			if !body_ok {
 				return
 			}
 		}
-		response_frame, _ := cache_server_handle_frame(server, request_frame)
-		defer delete(response_frame)
+		response_frame, _ := cache_server_handle_connection_frame(server, &conn, conn.request_buffer[:total])
 		if !tcp_write_all(socket, response_frame) {
 			return
 		}

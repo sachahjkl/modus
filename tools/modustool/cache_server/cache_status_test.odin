@@ -1,5 +1,6 @@
 package cache_server
 
+import "core:fmt"
 import "core:net"
 import "core:os"
 import "core:strings"
@@ -435,29 +436,31 @@ status_counts_follow_each_write :: proc(t: ^testing.T) {
 
 	// A refused put changes nothing: an unknown key, a bad signature, a
 	// wrong hash.
-	stranger_put := make_signed_put_object_request(.Blob, object_hash, payload, &stranger_key, stranger_public)
-	testing.expect_value(t, put_frame(t, &server, &stranger_put), object_cache.Cache_Response_Status.Unauthorized)
-	forged_put := make_signed_put_object_request(.Blob, object_hash, payload, &private_key, public_key)
+	stranger_put := make_signed_put_object_request(.Blob, object_hash, u64(len(payload)), &stranger_key, stranger_public)
+	testing.expect_value(t, test_put_object_on_server(&server, &stranger_put, payload), object_cache.Cache_Response_Status.Unauthorized)
+	forged_put := make_signed_put_object_request(.Blob, object_hash, u64(len(payload)), &private_key, public_key)
 	forged_put.uploader_signature[0] ~= 1
-	testing.expect_value(t, put_frame(t, &server, &forged_put), object_cache.Cache_Response_Status.Bad_Signature)
+	testing.expect_value(t, test_put_object_on_server(&server, &forged_put, payload), object_cache.Cache_Response_Status.Bad_Signature)
 	wrong_hash := blake3.hash(transmute([]u8)string("other bytes"))
-	wrong_put := make_signed_put_object_request(.Blob, wrong_hash, payload, &private_key, public_key)
-	testing.expect_value(t, put_frame(t, &server, &wrong_put), object_cache.Cache_Response_Status.Bad_Hash)
+	wrong_put := make_signed_put_object_request(.Blob, wrong_hash, u64(len(payload)), &private_key, public_key)
+	testing.expect_value(t, test_put_object_on_server(&server, &wrong_put, payload), object_cache.Cache_Response_Status.Bad_Hash)
 	before := cache_status_snapshot(&server.status)
 	testing.expect_value(t, before.counts, snapshot.counts)
 
 	// A put of an object: one more object and its bytes.
-	object_put := make_signed_put_object_request(.Blob, object_hash, payload, &private_key, public_key)
-	testing.expect_value(t, put_frame(t, &server, &object_put), object_cache.Cache_Response_Status.Ok)
+	object_put := make_signed_put_object_request(.Blob, object_hash, u64(len(payload)), &private_key, public_key)
+	testing.expect_value(t, test_put_object_on_server(&server, &object_put, payload), object_cache.Cache_Response_Status.Ok)
 	after_object := cache_status_snapshot(&server.status)
 	testing.expect_value(t, after_object.counts.objects, 1)
 	testing.expect_value(t, after_object.counts.object_bytes, u64(len(payload)))
+	testing.expect_value(t, after_object.counts.largest_object_bytes, u64(len(payload)))
 	testing.expect(t, after_object.counts.last_write._nsec != 0)
 
 	// The same object again adds nothing.
-	testing.expect_value(t, put_frame(t, &server, &object_put), object_cache.Cache_Response_Status.Ok)
+	testing.expect_value(t, test_put_object_on_server(&server, &object_put, payload), object_cache.Cache_Response_Status.Ok)
 	testing.expect_value(t, cache_status_snapshot(&server.status).counts.objects, 1)
 	testing.expect_value(t, cache_status_snapshot(&server.status).counts.object_bytes, u64(len(payload)))
+	testing.expect_value(t, cache_status_snapshot(&server.status).counts.largest_object_bytes, u64(len(payload)))
 
 	// A refused realisation changes nothing.
 	recipe_hash := blake3.hash(transmute([]u8)string("a recipe of the page test"))
@@ -503,6 +506,7 @@ status_counts_follow_each_write :: proc(t: ^testing.T) {
 	counted := cache_status_snapshot(&reopened.status)
 	testing.expect_value(t, counted.counts.objects, full.counts.objects)
 	testing.expect_value(t, counted.counts.object_bytes, full.counts.object_bytes)
+	testing.expect_value(t, counted.counts.largest_object_bytes, full.counts.largest_object_bytes)
 	testing.expect_value(t, counted.counts.realisations, full.counts.realisations)
 	testing.expect_value(t, counted.counts.realisation_bytes, full.counts.realisation_bytes)
 	testing.expect_value(t, counted.recent_count, RECENT_REALISATION_COUNT)
@@ -611,20 +615,10 @@ status_snapshots_while_another_thread_puts :: proc(t: ^testing.T) {
 		private_key, public_key, _ := make_test_keypair(0x51)
 		for index in 0 ..< CONCURRENT_PUT_COUNT {
 			payload := transmute([]u8)strings.repeat("p", index + 1, context.temp_allocator)
-			request := make_signed_put_object_request(.Blob, blake3.hash(payload), payload, &private_key, public_key)
-			size, size_refusal := object_cache.encoded_request_size(&request)
-			if size_refusal != .None {
-				writer.failures += 1
-				continue
-			}
-			frame := make([]u8, size)
-			_, encode_refusal := object_cache.encode_request(&request, frame)
-			answer, status := cache_server_handle_frame(writer.server, frame)
-			if encode_refusal != .None || status != .Ok {
+			request := make_signed_put_object_request(.Blob, blake3.hash(payload), u64(len(payload)), &private_key, public_key)
+			if test_put_object_on_server(writer.server, &request, payload) != .Ok {
 				writer.failures += 1
 			}
-			delete(answer)
-			delete(frame)
 		}
 	})
 	// Each copy is whole: the counts only grow, and the bytes match the
@@ -690,8 +684,8 @@ status_answers_the_page_the_record_and_the_style_sheet :: proc(t: ^testing.T) {
 
 	payload := transmute([]u8)string("an object that the page counts")
 	object_hash := blake3.hash(payload)
-	object_put := make_signed_put_object_request(.Blob, object_hash, payload, &private_key, public_key)
-	testing.expect_value(t, put_frame(t, &test.server, &object_put), object_cache.Cache_Response_Status.Ok)
+	object_put := make_signed_put_object_request(.Blob, object_hash, u64(len(payload)), &private_key, public_key)
+	testing.expect_value(t, test_put_object_on_server(&test.server, &object_put, payload), object_cache.Cache_Response_Status.Ok)
 	recipe_hash := blake3.hash(transmute([]u8)string("the recipe that the page lists"))
 	record := make_signed_realisation_record(recipe_hash, object_hash, .Blob, &private_key, public_key)
 	realisation_put := object_cache.Cache_Request{kind = .Put_Realisation, realisation = record}
@@ -719,6 +713,7 @@ status_answers_the_page_the_record_and_the_style_sheet :: proc(t: ^testing.T) {
 	testing.expect_value(t, answer_line(record_answer), "HTTP/1.1 200 OK")
 	json := answer_body(record_answer)
 	testing.expect(t, strings.contains(json, "\"objects\": 1,"))
+	testing.expect(t, strings.contains(json, fmt.tprintf("\"largest_object_bytes\": %d,", len(payload))))
 	testing.expect(t, strings.contains(json, "\"realisations\": 1,"))
 	testing.expect(t, strings.contains(json, strings.concatenate({"\"recipe\": \"", string(recipe_hex[:]), "\""}, context.temp_allocator)))
 	testing.expect(t, strings.contains(json, strings.concatenate({"\"signer_keys\": [\"", string(key_hex[:]), "\"]"}, context.temp_allocator)))

@@ -27,9 +27,9 @@ A key of its own, an Ed25519 key pair, separate from the signing key and from th
 `tools/modustool/cache_server/cache_client.odin` is the one client of the binary protocol: the commands use it, and the host tests of `cache-serve` drive the server through it.
 
 - **One connection, one request at a time, one deadline for each exchange.** The send of a request and the read of its whole answer share one deadline, by default the hang bound of the tool (120 s). Each send and each read waits at most the time that remains, and the client checks the deadline between two reads: a server that sends one byte before each timeout still ends at the deadline (`Deadline_Passed`). A bound of each read alone let such a server hold the client for hours. A socket option that the system refuses refuses the exchange. The endpoint is `host:port` with the rule of `--endpoint` ([public_object_cache.md](public_object_cache.md), "One program"); the host name is resolved once.
-- **The border of an answer.** The client reads the head of 12 bytes and refuses, before it allocates: a wrong magic, a version that is not 1, a kind or a status that names no member, a body past `MAX_RESPONSE_BODY_BYTES`. It then reads the body whole or refuses the answer as cut. An answer whose kind is not the kind of the request is refused, and so is `Not_Found` as the answer to a `Has` or a put: only a get finds nothing.
-- **The client trusts no server.** An object is kept only when its BLAKE3 hash (a blob) or its tree hash (a tree) is the hash that it asked for. A realisation is kept only when it names the recipe that it asked for, its signer is the key that the caller gave, and its signature verifies. A refusal names its cause: `Hash_Mismatch`, `Untrusted_Signer`, `Bad_Signature`, `Damaged_Answer`, `Unreachable`, or the status of the server (`Not_Found`, `Unauthorized`, ...).
-- **Before a put,** the client refuses a payload past the bound of its kind, so no frame that the server must refuse leaves the host.
+- **The border of an answer.** The client reads the head of 12 bytes and refuses, before it allocates: a wrong magic, a version that is not 2, a kind or a status that names no member, a body past `MAX_RESPONSE_BODY_BYTES`, which is one frame, its proof and its head. It then reads the body whole or refuses the answer as cut. An answer whose kind is not the kind of the request is refused, and so is `Not_Found` or `Out_Of_Range` as the answer to a `Has` or a put: only a get finds nothing, or asks past the end.
+- **The client trusts no server.** An object travels in frames of 1 MiB, and the client checks each frame against the hash of the whole object with the proof of the frame before it writes the frame ([../features/recipes.md](../features/recipes.md), "Objects of any size"). A tree is one frame and is checked with its tree hash. `cache-put` and `cache-get` stream a file of any size with a few buffers of one frame, and `cache-get` resumes from its part file. A realisation is kept only when it names the recipe that it asked for, its signer is the key that the caller gave, and its signature verifies. A refusal names its cause: `Hash_Mismatch`, `Untrusted_Signer`, `Bad_Signature`, `Damaged_Answer`, `Unreachable`, or the status of the server (`Not_Found`, `Out_Of_Range`, `Unauthorized`, ...).
+- **Before a put,** the client refuses an object past the bound of its kind (`MAX_OBJECT_BYTES` for a blob, `MAX_TREE_PAYLOAD_BYTES` for a tree), so no request that the server must refuse leaves the host.
 
 ### What a release publishes
 
@@ -48,9 +48,9 @@ Each put is preceded by `Has`, 64 hashes at a time: a second run of the publicat
 
 | Command | What it does |
 |---|---|
-| `cache-put <host:port> --key <seed file> blob <file>...` | Puts each file as a blob, and prints its hash |
+| `cache-put <host:port> --key <seed file> blob <file>...` | Puts each file of any size as a blob, frame by frame, and prints its hash |
 | `cache-put <host:port> --key <seed file> release <boot image>` | The publication of a release: the files of the image, then the cache test recipe |
-| `cache-get <host:port> blob <hash> [<output file>]` | Gets a blob and checks its hash |
+| `cache-get <host:port> blob <hash> [<output file>]` | Gets a blob of any size and checks each frame against its hash; with an output file, it writes `<output file>.<hash>.part` and resumes it at the next run |
 | `cache-get <host:port> realisation <recipe hash> --signer <public key file>` | Gets a realisation and checks its recipe, its signer and its signature |
 | `cache-get <host:port> release <boot image> [--signer <public key file>]` | Checks each file of the image and the cache test recipe on the cache |
 | `cache-get <host:port> test-recipe [--signer <public key file>]` | Checks the cache test recipe alone: its realisation, its tree computed again, and its input |

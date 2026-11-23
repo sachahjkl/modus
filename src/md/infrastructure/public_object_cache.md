@@ -40,6 +40,8 @@ The server counts the objects, the realisations and their bytes once, when it op
 - a write of a name that the store held (the same object again, or another realisation of one recipe) adds nothing, and moves the time of the last write;
 - a refused write changes nothing.
 
+The size of the largest object is kept the same way: the listing at the open gives the largest size of the folder, and each write of a larger object raises it. An upload in progress is a file of `tmp`, not of `objects`, so it counts only after its rename.
+
 The counts sit behind one lock, which the thread of the protocol takes at a write and the thread of the page takes to copy them. A request of the page does no work in proportion to the store.
 
 - **The free space of the disk** comes from one `statfs` of the folder, kept at most 10 seconds: a flood of requests makes at most one call each 10 seconds. A host with no `statfs` shows no free space.
@@ -79,8 +81,8 @@ Each fact once, in this order:
 1. The heading "public object cache", then one sentence on what `modus` is, with a link to the site, and what this host keeps: objects (blobs and trees) by their BLAKE3 hash, and realisations, signed records that say which output a recipe gave.
 2. **The trust.** A client trusts a hash or a signer key, never this host: an object is checked against its hash, and a realisation is used only when a key that the substitution policy of the client trusts signed it.
 3. **The signer keys**: the hexadecimal form of each key of `--authorized-key` and `--signer-key`, whole. These are the keys whose uploads the host accepts. The page says that this list is no reason to trust a key: a client takes the key of a publisher from the publisher.
-4. **The endpoint and the protocol**: the endpoint, what the server speaks today (binary frames `MOCQ` and `MOCR` over TCP), a link to the entry "Object cache" of the glossary on the site, the lines of a substitution policy that name this host, and the command that runs an object cache of one's own.
-5. **The store now**: objects, realisations, bytes, free space, the last write, the start of the server.
+4. **The endpoint and the protocol**: the endpoint, what the server speaks today (binary frames `MOCQ` and `MOCR` over TCP; an object of any size travels in frames of 1 MiB, each checked against the hash of the whole object), a link to the entry "Object cache" of the glossary on the site, the lines of a substitution policy that name this host, and the command that runs an object cache of one's own.
+5. **The store now**: objects, realisations, bytes, the size of the largest object, free space, the last write, the start of the server.
 6. **The last 10 realisations**: the recipe hash, the output hash and its kind, the signer, the time. Each hash shows its first 12 digits; the whole value is in the `title` of its element and in `status.json`. The column of the signer is shown only when the rows name more than one signer: with one, each row repeats one key, which the list of the keys already gives. The heads of the hash columns carry the icon of the kind Version, as the head of the column of the time carries the icon of Time: a column whose cells are all of one kind shows its icon once, in its head ([`docs/SITE.md`](../../../docs/SITE.md), "The kinds of values").
 
 The lines of the policy follow the fields of `Substitution` (`sources`, `signers`, `mode`; [../features/declarations.md](../features/declarations.md), "A record literal is typed by its use") and the table `keys` of the publisher keys that a principal trusts. The literal of a source is not fixed yet ("Open questions").

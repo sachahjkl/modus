@@ -469,7 +469,7 @@ recipe_hash_output :: proc "contextless" (output_kind: object_cache.Cache_Object
 	}
 	switch checked_kind {
 	case .Blob:
-		if len(payload) > object_cache.MAX_OBJECT_PAYLOAD_BYTES {
+		if u64(len(payload)) > object_cache.MAX_OBJECT_BYTES {
 			return {}, .Malformed_Output
 		}
 		return blake3.hash(payload), .None

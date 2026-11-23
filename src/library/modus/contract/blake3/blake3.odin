@@ -198,6 +198,25 @@ root_of_children :: proc "contextless" (left, right: Chaining_Value) -> (result:
 	return
 }
 
+// chaining_value_bytes gives the 32 bytes of a chaining value, each word
+// little endian: the form of a chaining value in a proof and an outboard
+// of the object cache.
+chaining_value_bytes :: proc "contextless" (value: Chaining_Value) -> [HASH_SIZE]u8 {
+	return words_to_hash(value)
+}
+
+// chaining_value_of_bytes reads a chaining value from its 32 bytes.
+chaining_value_of_bytes :: proc "contextless" (bytes: [HASH_SIZE]u8) -> (value: Chaining_Value) {
+	for index in 0 ..< 8 {
+		value[index] =
+			u32(bytes[index * 4 + 0]) |
+			u32(bytes[index * 4 + 1]) << 8 |
+			u32(bytes[index * 4 + 2]) << 16 |
+			u32(bytes[index * 4 + 3]) << 24
+	}
+	return
+}
+
 // left_size gives the size of the left subtree of an input of more than one
 // chunk: the largest power of two of chunks that is less than the input.
 @(private)

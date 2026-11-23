@@ -23,11 +23,12 @@ Recent_Realisation :: struct {
 // The counts of the store. A zero last_write means that the store holds no
 // entry and the server wrote none.
 Store_Counts :: struct {
-	objects:           u64,
-	object_bytes:      u64,
-	realisations:      u64,
-	realisation_bytes: u64,
-	last_write:        time.Time,
+	objects:              u64,
+	object_bytes:         u64,
+	largest_object_bytes: u64,
+	realisations:         u64,
+	realisation_bytes:    u64,
+	last_write:           time.Time,
 }
 
 // The facts that the thread of the protocol changes and the thread of the
@@ -92,6 +93,9 @@ cache_status_record_object :: proc(status: ^Cache_Status, size: u64, added: bool
 	if added {
 		status.counts.objects += 1
 		status.counts.object_bytes += size
+	}
+	if size > status.counts.largest_object_bytes {
+		status.counts.largest_object_bytes = size
 	}
 	status.counts.last_write = time_later(status.counts.last_write, written)
 }
@@ -160,6 +164,9 @@ cache_status_scan :: proc(server: ^Cache_Server) -> bool {
 			case .Objects:
 				counts.objects += 1
 				counts.object_bytes += u64(entry.size)
+				if u64(entry.size) > counts.largest_object_bytes {
+					counts.largest_object_bytes = u64(entry.size)
+				}
 			case .Realisations:
 				counts.realisations += 1
 				counts.realisation_bytes += u64(entry.size)
@@ -178,7 +185,7 @@ cache_status_scan :: proc(server: ^Cache_Server) -> bool {
 					newest[place].written = entry.modification_time
 					newest_count = min(newest_count + 1, RECENT_REALISATION_COUNT)
 				}
-			case .Temp:
+			case .Temp, .Outboards:
 			}
 		}
 		// A listing cut short gives counts that are too low: the open is refused,
